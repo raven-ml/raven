@@ -15,12 +15,11 @@
 #define RIG_POOL_HOST_H
 
 /* rig_pool_cgroup_cpus (root) is ceil q of rig_pool_cores (), read under
-   root. It reads cgroup v2 and the cgroup v1 hierarchy that holds the cpu
-   controller. In each, the process's cgroup is the path of the hierarchy's
-   line in root/proc/self/cgroup, found below the mount of
-   root/proc/self/mountinfo that holds it, and the quota files read are
+   root from cgroup v2. The process's cgroup is the path of the line
+   "0::PATH" in root/proc/self/cgroup, found below the cgroup2 mount of
+   root/proc/self/mountinfo that holds it, and the cpu.max files read are
    those of that cgroup and its ancestors up to the mount. It is -1 without
-   a quota on those paths, or without either hierarchy. */
+   a quota on those paths, or without cgroup v2. */
 long rig_pool_cgroup_cpus(const char *root);
 
 /* rig_pool_performance_cpus (root, cpus, n) is the number of the [n] CPUs

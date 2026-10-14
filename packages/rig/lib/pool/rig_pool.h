@@ -43,10 +43,9 @@
 
    References. The counts of cores come from sched_getaffinity(2), the
    cpu.max files of the Linux kernel's cgroup v2
-   (Documentation/admin-guide/cgroup-v2.rst), the cpu.cfs_quota_us and
-   cpu.cfs_period_us files of its cgroup v1 (Documentation/scheduler/
-   sched-bwc.rst), the cpu_capacity and acpi_cppc/highest_perf files of its
-   CPUs (Documentation/ABI/testing/sysfs-devices-system-cpu, and
+   (Documentation/admin-guide/cgroup-v2.rst), the cpu_capacity and
+   acpi_cppc/highest_perf files of its CPUs
+   (Documentation/ABI/testing/sysfs-devices-system-cpu, and
    Documentation/admin-guide/acpi/cppc_sysfs.rst), from sysctl(3) on macOS,
    and from GetActiveProcessorCount on Windows. */
 
@@ -74,10 +73,10 @@
    On Linux it is min (a, ceil q). a is the number of CPUs in the affinity
    mask of the thread that makes the first call, or of the online CPUs if
    the mask cannot be read. q is the smallest quota / period of the
-   process's cgroups and their ancestors, from cgroup v2's cpu.max and
-   cgroup v1's cpu.cfs_quota_us and cpu.cfs_period_us, and without a quota
-   the count is a. On macOS it is the physical cores, on Windows the active
-   processors, and elsewhere the online CPUs. */
+   process's cgroup and its ancestors, from cgroup v2's cpu.max, and
+   without a quota the count is a. cgroup v1's quotas are not read. On
+   macOS it is the physical cores, on Windows the active processors, and
+   elsewhere the online CPUs. */
 int rig_pool_cores(void);
 
 /* rig_pool_performance_cores () is the number of the cores the process may

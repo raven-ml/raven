@@ -166,31 +166,11 @@ scan_under(const char *root, const char *name, int n, const char *format,
   return read == n;
 }
 
-/* Whether the comma-separated [list] holds [token]. */
-static int has_token(const char *list, const char *token) {
-  size_t n = strlen(token);
-  for (const char *s = list;; s++) {
-    if (strncmp(s, token, n) == 0 && (s[n] == ',' || s[n] == '\0')) return 1;
-    s = strchr(s, ',');
-    if (s == NULL) return 0;
-  }
-}
-
-/* The hierarchies that may bound the CPU time: cgroup v2's, and cgroup
-   v1's that holds the cpu controller. A host mounts either or both, the
-   cpu controller in one of them. */
-typedef enum { V2, V1 } hierarchy;
-
-/* Whether a line "ID:CONTROLLERS:PATH" of proc/self/cgroup is [h]'s, with
-   its path written to [path]: v2's line is "0::PATH", v1's lists cpu among
-   its controllers. */
-static int cgroup_line(hierarchy h, const char *line, char *path) {
-  if (h == V2)
-    return strncmp(line, "0::", 3) == 0 &&
-           sscanf(line + 3, "%4095[^\n]", path) == 1;
-  char controllers[4096];
-  return sscanf(line, "%*d:%4095[^:]:%4095[^\n]", controllers, path) == 2 &&
-         has_token(controllers, "cpu");
+/* The process's cgroup path, written to [path], from its cgroup v2 line
+   "0::PATH" of proc/self/cgroup. */
+static int cgroup_line(const char *line, char *path) {
+  return strncmp(line, "0::", 3) == 0 &&
+         sscanf(line + 3, "%4095[^\n]", path) == 1;
 }
 
 /* mountinfo quotes spaces, tabs, newlines and backslashes as octal bytes.
@@ -211,21 +191,14 @@ static void mount_path(char *path) {
   *out = '\0';
 }
 
-/* Whether a line of proc/self/mountinfo mounts [h], with its root, the
-   cgroup it shows, written to [mount] and its mount point to [point]. The
-   filesystem type and its options follow " - ": "cgroup2", or "cgroup"
-   with cpu among the options. */
-static int cgroup_mount(hierarchy h, const char *line, char *mount,
-                        char *point) {
-  char type[64], options[4096];
+/* Whether a line of proc/self/mountinfo mounts cgroup v2, with its root,
+   the cgroup it shows, written to [mount] and its mount point to [point].
+   The filesystem type follows " - ". */
+static int cgroup_mount(const char *line, char *mount, char *point) {
+  char type[64];
   const char *fields = strstr(line, " - ");
-  if (fields == NULL ||
-      sscanf(fields + 3, "%63s %*s %4095s", type, options) != 2)
-    return 0;
-  int mounts = h == V2 ? strcmp(type, "cgroup2") == 0
-                       : strcmp(type, "cgroup") == 0 &&
-                             has_token(options, "cpu");
-  if (!mounts ||
+  if (fields == NULL || sscanf(fields + 3, "%63s", type) != 1 ||
+      strcmp(type, "cgroup2") != 0 ||
       sscanf(line, "%*s %*s %*s %4095s %4095s", mount, point) != 2)
     return 0;
   mount_path(mount);
@@ -233,20 +206,19 @@ static int cgroup_mount(hierarchy h, const char *line, char *mount,
   return 1;
 }
 
-/* The process's cgroup directory of [h] under [root], written to [dir]:
-   the mount of [h] that holds the path of the hierarchy's line in
-   proc/self/cgroup. A mount's root is the cgroup it shows, so the
-   directory is the mount point joined with the path below that root.
-   Returns the length of [root] and the mount point, where the walk to the
-   ancestors stops, or 0 if there is none. */
-static size_t cgroup_dir(hierarchy h, const char *root, char *dir,
-                         size_t size) {
+/* The process's cgroup directory under [root], written to [dir]: the
+   cgroup v2 mount that holds the path of proc/self/cgroup's line. A
+   mount's root is the cgroup it shows, so the directory is the mount
+   point joined with the path below that root. Returns the length of
+   [root] and the mount point, where the walk to the ancestors stops, or 0
+   if there is none. */
+static size_t cgroup_dir(const char *root, char *dir, size_t size) {
   char line[4096], path[4096], mount[4096], point[4096];
   FILE *f = open_under(root, "/proc/self/cgroup");
   if (f == NULL) return 0;
   int found = 0;
   while (!found && fgets(line, sizeof line, f))
-    found = cgroup_line(h, line, path);
+    found = cgroup_line(line, path);
   fclose(f);
   if (!found || path[0] != '/') return 0;
 
@@ -254,7 +226,7 @@ static size_t cgroup_dir(hierarchy h, const char *root, char *dir,
   f = open_under(root, "/proc/self/mountinfo");
   if (f == NULL) return 0;
   while (stop == 0 && fgets(line, sizeof line, f)) {
-    if (!cgroup_mount(h, line, mount, point)) continue;
+    if (!cgroup_mount(line, mount, point)) continue;
     size_t n = strcmp(mount, "/") == 0 ? 0 : strlen(mount);
     if (strncmp(path, mount, n) != 0 || (path[n] != '/' && path[n] != '\0'))
       continue;
@@ -270,37 +242,29 @@ static long tighter(long a, long b) {
   return a < 0 || (b >= 0 && b < a) ? b : a;
 }
 
-/* The quota of the cgroup [dir] of [h] in CPUs, ceil (quota / period), or
-   -1 without one. Rounded up: n threads spend at most n CPUs a period, so
-   rounding a quota of 1.5 down would leave a third of it idle. v2's
-   cpu.max reads "max PERIOD" without a quota and "QUOTA PERIOD" with one;
-   v1's cpu.cfs_quota_us reads -1 without one, beside cpu.cfs_period_us. */
-static long quota_cpus(hierarchy h, const char *dir) {
+/* The quota of the cgroup [dir] in CPUs, ceil (quota / period), or -1
+   without one. Rounded up: n threads spend at most n CPUs a period, so
+   rounding a quota of 1.5 down would leave a third of it idle. cpu.max
+   reads "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
+static long quota_cpus(const char *dir) {
   long quota = -1, period = -1;
-  if (h == V2)
-    scan_under(dir, "/cpu.max", 2, "%ld %ld", &quota, &period);
-  else if (scan_under(dir, "/cpu.cfs_quota_us", 1, "%ld", &quota))
-    scan_under(dir, "/cpu.cfs_period_us", 1, "%ld", &period);
+  scan_under(dir, "/cpu.max", 2, "%ld %ld", &quota, &period);
   return quota > 0 && period > 0 ? (quota + period - 1) / period : -1;
 }
 
-/* The tightest quota of the cgroup of [h] and its ancestors, since limits
-   nest. */
-static long hierarchy_cpus(hierarchy h, const char *root) {
+/* The tightest quota of the process's cgroup and its ancestors, since
+   limits nest. */
+long rig_pool_cgroup_cpus(const char *root) {
   char dir[4096];
-  size_t stop = cgroup_dir(h, root, dir, sizeof dir);
+  size_t stop = cgroup_dir(root, dir, sizeof dir);
   if (stop == 0) return -1;
   long least = -1;
   for (;;) {
-    least = tighter(least, quota_cpus(h, dir));
+    least = tighter(least, quota_cpus(dir));
     char *slash = strrchr(dir, '/');
     if (strlen(dir) <= stop || slash == NULL) return least;
     *slash = '\0';
   }
-}
-
-long rig_pool_cgroup_cpus(const char *root) {
-  return tighter(hierarchy_cpus(V2, root), hierarchy_cpus(V1, root));
 }
 
 /* The rating [file] of CPU [cpu] under [root], or -1 without one. */

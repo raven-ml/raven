@@ -1228,7 +1228,7 @@ end
     {ul
     {- On Linux, the CPUs in the affinity mask of the first thread to ask
        whose reported capacity is more than half the largest, or all of them
-       where no capacity is reported, and at most the process's cgroup
+       where no capacity is reported, and at most the process's cgroup v2
        quotas allow.}
     {- On macOS, the performance cores where the system reports them.}
     {- Otherwise, the cores the process may occupy.}} *)

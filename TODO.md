@@ -65,7 +65,7 @@ raven / llama.cpp (Vulkan; ROCm):
   one VFIO container per machine; `reaches` true only under one root port
 - rig remote and host pool: check for the bugs dropped with nx's runtime
   (_plans/rig-release/dropped-patches/); the remote join dials serially
-  within a 10 s budget; the pool reads cgroup v2's `cpu.max` only
+  within a 10 s budget
 - rig profile: a Copy event names a side by where its bytes are (Pinned
   staging and image loads record `d→d`); a span names its submission, so a
   search under a second domain times only its own kernels

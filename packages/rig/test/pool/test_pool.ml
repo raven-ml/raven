@@ -204,23 +204,18 @@ let cpu_max cgroup = "sys/fs/cgroup" ^ cgroup ^ "/cpu.max"
 let quota q = strf "%d 100000\n" q
 let no_quota = "max 100000\n"
 
-(* cgroup v1's hierarchy of [controllers], mounted at [point]. *)
-let v1_mount ?(root = "/") ?(controllers = "cpu,cpuacct") point =
+(* cgroup v1's hierarchy of the cpu controller, mounted at [point]. *)
+let v1_mount point =
   String.concat " "
-    [
-      "36 24 0:31";
-      root;
-      point;
-      "rw shared:10 - cgroup cgroup rw," ^ controllers;
-    ]
+    [ "36 24 0:31"; "/"; point; "rw shared:10 - cgroup cgroup rw,cpu,cpuacct" ]
 
 let v1_point = "/sys/fs/cgroup/cpu,cpuacct"
 let v1_line = "4:cpu,cpuacct:" ^ session
 
 (* cgroup v1's quota files of [cgroup], a quota of [q] microseconds a period of
-   100 ms, -1 for none. *)
-let cfs ?(point = v1_point) cgroup q =
-  let dir = String.sub point 1 (String.length point - 1) ^ cgroup in
+   100 ms. *)
+let cfs cgroup q =
+  let dir = String.sub v1_point 1 (String.length v1_point - 1) ^ cgroup in
   [
     (dir ^ "/cpu.cfs_quota_us", strf "%d\n" q);
     (dir ^ "/cpu.cfs_period_us", "100000\n");
@@ -285,28 +280,14 @@ let trees =
       cpus = 2;
     };
     {
-      name = "cgroup v1's quota";
+      name = "cgroup v1's quota is not read";
       cgroup = [ v1_line ];
       mounts = [ v1_mount v1_point ];
       limits = cfs session 150000;
-      cpus = 2;
-    };
-    {
-      name = "cgroup v1 without a quota";
-      cgroup = [ v1_line ];
-      mounts = [ v1_mount v1_point ];
-      limits = cfs session (-1) @ cfs "/user.slice" (-1);
       cpus = -1;
     };
     {
-      name = "the tightest of a cgroup v1 and its ancestors";
-      cgroup = [ v1_line ];
-      mounts = [ v1_mount v1_point ];
-      limits = cfs session 400000 @ cfs "/user.slice" 250000;
-      cpus = 3;
-    };
-    {
-      name = "cgroup v1 reads no cpu.max";
+      name = "a cpu.max under a cgroup v1 mount";
       cgroup = [ v1_line ];
       mounts = [ v1_mount v1_point ];
       limits =
@@ -314,38 +295,18 @@ let trees =
       cpus = -1;
     };
     {
-      name = "a cgroup v1 hierarchy without the cpu controller";
-      cgroup = [ "3:cpuset:" ^ session; "5:cpuacct:" ^ session ];
-      mounts =
-        [
-          v1_mount ~controllers:"cpuset" "/sys/fs/cgroup/cpuset";
-          v1_mount ~controllers:"cpuacct" "/sys/fs/cgroup/cpuacct";
-        ];
-      limits =
-        cfs ~point:"/sys/fs/cgroup/cpuset" session 100000
-        @ cfs ~point:"/sys/fs/cgroup/cpuacct" session 100000;
-      cpus = -1;
-    };
-    {
-      name = "a mount of a cgroup v1 below the hierarchy's root";
-      cgroup = [ "4:cpu,cpuacct:/docker/c1" ];
-      mounts = [ v1_mount ~root:"/docker/c1" v1_point ];
-      limits = cfs "" 200000;
-      cpus = 2;
-    };
-    {
-      name = "the tighter of cgroup v2 and v1";
+      name = "cgroup v2 beside a tighter cgroup v1 quota";
       cgroup = [ v1_line; "0::" ^ session ];
       mounts = [ v1_mount v1_point; mount "/sys/fs/cgroup/unified" ];
       limits =
         ("sys/fs/cgroup/unified" ^ session ^ "/cpu.max", quota 300000)
         :: cfs session 200000;
-      cpus = 2;
+      cpus = 3;
     };
   ]
 
 (* mountinfo quotes its path fields; proc/self/cgroup keeps the path's
-   whitespace and backslashes. Both hierarchies use those same spellings. *)
+   whitespace and backslashes. *)
 let path_trees =
   let paths =
     [
@@ -406,28 +367,19 @@ let path_trees =
         "/pool/job" );
     ]
   in
-  List.concat_map
+  List.map
     (fun (name, root, point, path, dir) ->
-      [
-        {
-          name = "cgroup v2: " ^ name;
-          cgroup = [ "0::" ^ path ];
-          mounts = [ mount ~root point ];
-          limits =
-            [
-              ( String.sub dir 1 (String.length dir - 1) ^ "/cpu.max",
-                quota 150000 );
-            ];
-          cpus = 2;
-        };
-        {
-          name = "cgroup v1: " ^ name;
-          cgroup = [ "4:cpu,cpuacct:" ^ path ];
-          mounts = [ v1_mount ~root point ];
-          limits = cfs ~point:dir "" 150000;
-          cpus = 2;
-        };
-      ])
+      {
+        name;
+        cgroup = [ "0::" ^ path ];
+        mounts = [ mount ~root point ];
+        limits =
+          [
+            ( String.sub dir 1 (String.length dir - 1) ^ "/cpu.max",
+              quota 150000 );
+          ];
+        cpus = 2;
+      })
     paths
 
 (* [with_files files f] is [f dir], with each (path, contents) of [files]
@@ -597,8 +549,7 @@ let cores_tests =
       cases
         ~name:(fun (t : tree) -> t.name)
         "Linux's cgroup bound is the least ceil (quota / period) up the \
-         process's cgroups of v2 and of v1's cpu controller, read from any \
-         tree"
+         process's cgroup v2, read from any tree"
         trees test_cgroup;
       cases
         ~name:(fun (t : tree) -> t.name)
