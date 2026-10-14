@@ -434,6 +434,38 @@ val interrupt_in_wait : (unit -> 'a) -> 'a * bool
     that returns to OCaml. The boolean is whether the signal was raised. It
     raises [Failure] where not {!sees_waits}. *)
 
+(** What lands at the allocation {!interrupted} counts to. *)
+type landing =
+  | Raise
+      (** That allocation and every one after it until the function returns
+          raise [Exit], as an asynchronous exception does, so handlers that
+          allocate meet it again. *)
+  | Signal
+      (** That allocation raises SIGINT, which the next poll point turns into
+          [Sys.Break], as a Ctrl-C does. A poll point that follows no
+          allocation is reached so: a callback deferred from an allocation in
+          C runs at a poll point, after the signals pending there. *)
+  | Call of (unit -> unit)
+      (** That allocation calls the function, which may raise, or interrupt
+          ({!interrupt}) under a handler of the caller's. *)
+
+val interrupted :
+  ?from:(Gc.Memprof.allocation -> bool) ->
+  ?landing:landing ->
+  int ->
+  (unit -> unit) ->
+  bool
+(** [interrupted ~from ~landing n f] runs [f ()] while a memory profile
+    samples every allocation of the domain, and is whether [f] reached the
+    [n]-th allocation of the calling thread among those [from] holds for
+    (every one from [f]'s start by default), where [landing] (default
+    {!Raise}) lands. Once it was reached,
+    [Exit] and [Sys.Break] from [f] are the landing's and are dropped; any
+    other exception passes through. Under {!Signal}, SIGINT's handler raises
+    [Sys.Break] until [f] returns and a signal still pending has landed.
+    Walking [n] from [1] until it is [false] lands at every
+    allocation [f] makes. *)
+
 val set_address_space : int -> int
 (** [set_address_space n] sets the process's soft limit of its address space
     to [n] bytes: [0], the errno of a refusal, or [-1] off Linux, where the

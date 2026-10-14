@@ -1664,6 +1664,35 @@ let timeline =
         unload_after_stop;
     ]
 
+(* Interrupts *)
+
+(* An exception at any allocation of an alloc, a free, an entry or an unload
+   leaves the device's guard free: the driver's next calls and its stop run. *)
+let interrupted_calls () =
+  let fill = S.fixture ~dir:"fixtures" "fill" in
+  S.with_driver @@ fun g ->
+  let calls () =
+    Rig_metal.free g (alloc_on g 64);
+    match require_ok (Rig_metal.image g fill) with
+    | Rig_edge.Loaded i ->
+        ignore (found (Rig_metal.entry i "fill"));
+        Rig_metal.unload g i
+    | Place (n, _) -> failf "the device asked to place %d bytes of code" n
+  in
+  let rec from n =
+    let raised = Rig_support.interrupted n calls in
+    calls ();
+    if raised then from (n + 1)
+  in
+  from 1
+
+let interrupts =
+  group ~timeout:60. "interrupts"
+    [
+      test "an exception at any allocation of a call leaves the guard free"
+        interrupted_calls;
+    ]
+
 (* Opening and misuse *)
 
 let two_devices () =
@@ -1731,5 +1760,6 @@ let () =
          file_tests;
          images;
          timeline;
+         interrupts;
          opening;
        ])

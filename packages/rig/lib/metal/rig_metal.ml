@@ -270,9 +270,14 @@ let capability d = d.cap
    driver promises 256 and checks it. *)
 let region_align = 256
 
-(* [locked d g r] is [g d r] under [d.guard], which an exception also releases.
-   [g] is a toplevel function, so a call makes no closure: every alloc and free
-   takes the guard. *)
+external reraise : exn -> 'a = "%reraise"
+
+(* [locked d g r] is [g d r] under [d.guard]. The guard is taken as the last
+   step before the handler and given back as the first step of both exits,
+   where nothing allocates, so an exception anywhere in [g], an asynchronous
+   one too, leaves it free for the next call and the stop. [g] is a toplevel
+   function, so a call makes no closure: every alloc and free takes the
+   guard. *)
 let locked d g r =
   Mutex.lock d.guard;
   match g d r with
@@ -280,15 +285,16 @@ let locked d g r =
       Mutex.unlock d.guard;
       x
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
       Mutex.unlock d.guard;
-      Printexc.raise_with_backtrace e bt
+      reraise e
+
+let live d (handle, n) =
+  match !(d.tables) with
+  | Some t -> Hashtbl.replace t.regions handle n
+  | None -> ()
 
 (* Makes [d]'s [n]-byte region [r] live. *)
-let enter d (r : region) n =
-  Mutex.lock d.guard;
-  Option.iter (fun t -> Hashtbl.replace t.regions r.handle n) !(d.tables);
-  Mutex.unlock d.guard
+let enter d (r : region) n = locked d live (r.handle, n)
 
 let alloc d _ n =
   if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
@@ -367,17 +373,16 @@ let entry_held (i : image) f =
             threads = Some threads;
           }
         in
-        Mutex.lock i.device_guard;
-        Option.iter
-          (fun t -> Hashtbl.replace t.pipelines e.code threads)
-          !(i.tables);
-        Mutex.unlock i.device_guard;
+        Mutex.protect i.device_guard (fun () ->
+            Option.iter
+              (fun t -> Hashtbl.replace t.pipelines e.code threads)
+              !(i.tables));
         i.entries.(k) <- e;
         Entry e
     | exception Failure why ->
         invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
 
-(* Holds [i.guard], taken without a closure. *)
+(* Holds [i.guard], taken without a closure, in [locked]'s form. *)
 let entry (i : image) f =
   Mutex.lock i.guard;
   match entry_held i f with
@@ -385,9 +390,8 @@ let entry (i : image) f =
       Mutex.unlock i.guard;
       e
   | exception x ->
-      let bt = Printexc.get_raw_backtrace () in
       Mutex.unlock i.guard;
-      Printexc.raise_with_backtrace x bt
+      reraise x
 
 (* Takes [i]'s pipelines out of the ones an icb may record. *)
 let forget_pipelines d (i : image) =

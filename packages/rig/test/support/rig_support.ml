@@ -667,6 +667,54 @@ let interrupt_in_wait f =
   let r = Fun.protect ~finally:(fun () -> raised := interrupter_stop ()) f in
   (r, !raised)
 
+type landing = Raise | Signal | Call of (unit -> unit)
+
+(* Only the calling thread's allocations count, from [f]'s start: callbacks
+   the profile's start deferred run in a [Gc.minor] before. Once [f] ends, a
+   [Gc.minor] lands a signal still pending, before the profile stops, so
+   nothing of the walk's own meets the landing. *)
+let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
+  let me = Thread.id (Thread.self ()) in
+  let left = ref n and armed = ref false in
+  let alloc a =
+    if !armed && Thread.id (Thread.self ()) = me && from a then begin
+      decr left;
+      match landing with
+      | Raise -> if !left <= 0 then raise Exit
+      | Signal -> if !left = 0 then interrupt ()
+      | Call g -> if !left = 0 then g ()
+    end;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+  in
+  let breaks = match landing with Signal -> true | Raise | Call _ -> false in
+  let previous =
+    if not breaks then Sys.Signal_default
+    else Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Sys.Break))
+  in
+  let ended profile =
+    armed := false;
+    (try Gc.minor () with Sys.Break -> ());
+    Gc.Memprof.stop ();
+    Gc.Memprof.discard profile;
+    if breaks then Sys.set_signal Sys.sigint previous
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  Gc.minor ();
+  armed := true;
+  match f () with
+  | () ->
+      ended profile;
+      !left <= 0
+  | exception (Exit | Sys.Break) when !left <= 0 ->
+      ended profile;
+      true
+  | exception e ->
+      ended profile;
+      raise e
+
 let time_scale =
   match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with
   | None -> 1.
