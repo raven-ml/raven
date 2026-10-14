@@ -35,7 +35,31 @@ type plan = {
   order : int array; (* The kernel's axes in the result's names' order. *)
   names : int array; (* The result's names' extents, in written order. *)
   shape : int array; (* The result's shape. *)
+  kernel : int array; (* The kernel's result: batch, a's free axes, b's. *)
+  a_whole : bool; (* The operand [a] already has [a]: no reshape. *)
+  b_whole : bool;
+  y_whole : bool; (* The kernel's permuted result already has [shape]. *)
 }
+
+(* Whether [s]'s extents are non-negative and those other than 0 multiply
+   to at most a layout's elements: Nx_kernel.Shape's rule, which it does
+   not export. *)
+let admitted s =
+  let rec go i n =
+    i = Array.length s
+    ||
+    let d = s.(i) in
+    d >= 0
+    &&
+    if d = 0 then go (i + 1) n
+    else d <= Nx_array.Layout.max_numel / n && go (i + 1) (n * d)
+  in
+  go 0 1
+
+(* Whether [x] and [y] hold the same ints. *)
+let same (x : int array) (y : int array) =
+  let rec go i = i = Array.length x || (x.(i) = y.(i) && go (i + 1)) in
+  Array.length x = Array.length y && go 0
 
 let rec mem (n : int) = function [] -> false | x :: l -> x = n || mem n l
 
@@ -80,6 +104,10 @@ let lower ~ext na nb nr shape =
     order = ints (fun n -> index_of n kernel) nr;
     names = ints (Array.get ext) nr;
     shape;
+    kernel = ints (Array.get ext) kernel;
+    a_whole = false;
+    b_whole = false;
+    y_whole = false;
   }
 
 (* Patterns *)
@@ -370,12 +398,25 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
         else move ~by (M.Permute (inverse pl.order)) i)
       init
   in
+  (* The kernel's result past a layout's axes or elements raises naming
+     [by], as the contraction's rule (Nx_kernel.Shape.contract) words it. *)
+  let kernel = pl.kernel in
+  if Array.length kernel > Nx_array.Layout.max_rank then
+    invalid_argf "%s: a result of rank %d" by (Array.length kernel);
+  if not (admitted kernel) then
+    invalid_argf "%s: a contraction of shape %a has more than %d elements" by
+      pp_shape kernel Nx_array.Layout.max_numel;
+  let batch = pl.batch and contracting = pl.contracting in
+  let rows = Prim.free_extent ~batch ~contracting pl.a fst in
+  let columns = Prim.free_extent ~batch ~contracting pl.b snd in
   let y =
-    Eval.contract ~by ~batch:pl.batch ~contracting:pl.contracting ~acc dt
-      (reshape ~by pl.a a) (reshape ~by pl.b b) init
+    Eval.contract ~by ~shape:kernel ~rows ~columns ~batch ~contracting ~acc dt
+      (if pl.a_whole then a else reshape ~by pl.a a)
+      (if pl.b_whole then b else reshape ~by pl.b b)
+      init
   in
   let y = if identity pl.order then y else move ~by (M.Permute pl.order) y in
-  reshape ~by pl.shape y
+  if pl.y_whole then y else reshape ~by pl.shape y
 
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
@@ -482,6 +523,16 @@ let matmul ~by a b =
       order;
       names = shape;
       shape;
+      kernel =
+        (if identity order then shape
+         else begin
+           let s = Array.make r 0 in
+           Array.iteri (fun i o -> s.(o) <- shape.(i)) order;
+           s
+         end);
+      a_whole = same ea sa;
+      b_whole = same eb sb;
+      y_whole = true;
     }
   in
   run ~by (Prim.dtype a) pl a b
@@ -515,6 +566,10 @@ let dot ~by a b =
       order = Array.init r Fun.id;
       names = shape;
       shape;
+      kernel = shape;
+      a_whole = true;
+      b_whole = true;
+      y_whole = true;
     }
   in
   run ~by (Prim.dtype a) pl a b

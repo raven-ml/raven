@@ -1317,13 +1317,16 @@ let free_extent ~batch ~contracting s side =
   done;
   !n
 
-let contract_order ~batch ~contracting a b : Nx_kernel.order =
-  let rows = free_extent ~batch ~contracting (shape a) fst in
-  let columns = free_extent ~batch ~contracting (shape b) snd in
+let contract_order_of ~rows ~columns a b : Nx_kernel.order =
   match (at a, at b) with
   | Some p, _ | None, Some p ->
       Devices.contract_order (Devices.set p) ~rows ~columns
   | None, None -> Devices.contract_order Devices.host ~rows ~columns
+
+let contract_order ~batch ~contracting a b =
+  let rows = free_extent ~batch ~contracting (shape a) fst in
+  let columns = free_extent ~batch ~contracting (shape b) snd in
+  contract_order_of ~rows ~columns a b
 
 (* A contraction [op]'s route. *)
 let contract_route (type a b c e v s d r) ~by (op : r prim) (a : (a, b, d) t)

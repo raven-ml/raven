@@ -1493,7 +1493,7 @@ let rec apply3 : type a b v s d.
    whose set has kernels, computed by them without building the operation.
    [None] elsewhere, and where the kernels decline it: the operation decides
    those. *)
-let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
+let contract (type v s a b c e d) ~by ~order ~shape ~batch ~contracting ~acc
     (dt : (v, s) D.t)
     (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
@@ -1511,8 +1511,7 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
       in
       match (array, Grid.one (Devices.grid at), Devices.kernels set) with
       | Some array, Some k, Some (module K) -> (
-          let s = Prim.contract_shape ~by ~batch ~contracting ~acc x y init in
-          let dst = A.create (Devices.rig set k) dt s in
+          let dst = A.create (Devices.rig set k) dt shape in
           match
             K.contract ~order ~batch ~contracting ~acc ~dst ~init:array rx.a
               ry.a

@@ -261,11 +261,11 @@ let apply3 ~by k c x y =
       if Interp.quiet () then Exec.apply3 ~by k c x y
       else eval3 ~by k c x y
 
-let contract ~by ~batch ~contracting ~acc dt a b init =
-  let order = Prim.contract_order ~batch ~contracting a b in
+let contract ~by ~shape ~rows ~columns ~batch ~contracting ~acc dt a b init =
+  let order = Prim.contract_order_of ~rows ~columns a b in
   let fast =
     if Interp.quiet () then
-      Exec.contract ~by ~order ~batch ~contracting ~acc dt a b init
+      Exec.contract ~by ~order ~shape ~batch ~contracting ~acc dt a b init
     else None
   in
   match fast with

@@ -1175,8 +1175,30 @@ let errors =
   let refuses name want f =
     test name (fun () -> equal string want (message f))
   in
+  let units r = x (Array.make r 1) in
+  let wide s = Nx.broadcast_to s (x [||]) in
   group "errors"
     [
+      refuses "a dot whose result has more axes than a layout"
+        "Nx.dot: a result of rank 33"
+        (fun () -> Nx.dot (units 17) (units 18));
+      refuses "a contraction whose result has more axes than a layout"
+        "Nx.contract: a result of rank 33"
+        (fun () ->
+          let names p n = List.init n (fun i -> p ^ string_of_int i) in
+          let p =
+            Printf.sprintf "%s k, k %s -> %s %s | k"
+              (String.concat " " (names "a" 16))
+              (String.concat " " (names "b" 17))
+              (String.concat " " (names "a" 16))
+              (String.concat " " (names "b" 17))
+          in
+          Nx.contract Nx.float32 (Nx.Pattern.v p) (units 17) (units 18));
+      refuses "a dot whose result has more elements than a layout"
+        "Nx.dot: a contraction of shape [134217728; 134217728] has more than \
+         9007199254740992 elements"
+        (fun () ->
+          Nx.dot (wide [| 1 lsl 27; 1 |]) (wide [| 1; 1 lsl 27 |]));
       refuses "paired extents differ"
         {|Nx.contract: "i k, k j -> i j | k": k is 3 in a and 4 in b|}
         (fun () ->
