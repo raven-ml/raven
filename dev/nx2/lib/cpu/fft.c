@@ -413,8 +413,29 @@ static void plan_put(void *p, int rdt, int kind);
 #define CAT(a, b) CAT2(a, b)
 #define F(name) CAT(name, SFX)
 
+/* The bytes of a vector of L lanes: the 32 of x86-64's v3, also on
+   targets of 16-byte vectors where clang builds, but their 16 where gcc
+   builds, which computes a 32-byte vector there lane by lane through
+   memory. Which lanes share a vector changes no bit. Lines of complex64
+   / complex128 points, µs, M1, one core, by 32 and 16 bytes:
+
+                     gcc 32        gcc 16        clang 32      clang 16
+     1024            3.36 / 5.44   1.59 / 4.00   1.34 / 3.08   1.47 / 3.68
+     2^16            311 / 535     163 / 498     145 / 312     157 / 489
+     2^20 (ms)       9.12 / 19.2   4.79 / 10.6   4.35 / 9.47   4.81 / 10.7
+     64 × 1024       216 / 360     102 / 263     88 / 201      93 / 240
+     side by side    214 / 385     117 / 525     98 / 347      115 / 485
+
+   Under gcc, 16 bytes but for complex128 lines side by side, whose two
+   lanes read 32 bytes of a 128-byte cache line. */
+#if defined(__AVX__) || defined(__clang__) || !defined(__GNUC__)
+#define VEC_BYTES 32
+#else
+#define VEC_BYTES 16
+#endif
+
 #define T float
-#define L 8
+#define L (VEC_BYTES / 4)
 #define SFX f32
 #define RDT NX_FLOAT32
 #include "fft_body.h"
@@ -424,7 +445,7 @@ static void plan_put(void *p, int rdt, int kind);
 #undef RDT
 
 #define T double
-#define L 4
+#define L (VEC_BYTES / 8)
 #define SFX f64
 #define RDT NX_FLOAT64
 #include "fft_body.h"

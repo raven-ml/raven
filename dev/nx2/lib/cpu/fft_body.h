@@ -62,6 +62,18 @@ static inline void F(transpose)(VEC *r) {
     r[i + 4] = SH(b[i], b[i + 4], 4, 5, 6, 7, 12, 13, 14, 15);
   }
 }
+#elif L == 2
+#define DEAL_RE(a, b) SH(a, b, 0, 2)
+#define DEAL_IM(a, b) SH(a, b, 1, 3)
+#define ZIP_LO(a, b) SH(a, b, 0, 2)
+#define ZIP_HI(a, b) SH(a, b, 1, 3)
+#define REV(a) SH(a, a, 1, 0)
+
+static inline void F(transpose)(VEC *r) {
+  VEC a = SH(r[0], r[1], 0, 2), b = SH(r[0], r[1], 1, 3);
+  r[0] = a;
+  r[1] = b;
+}
 #else
 #define DEAL_RE(a, b) SH(a, b, 0, 2, 4, 6)
 #define DEAL_IM(a, b) SH(a, b, 1, 3, 5, 7)
@@ -550,6 +562,9 @@ static inline void F(nt)(T *d, VEC lo, VEC hi) {
 #elif defined(__AVX__)
   _mm256_stream_pd(d, (__m256d)lo);
   _mm256_stream_pd(d + L, (__m256d)hi);
+#elif defined(__aarch64__) && VEC_BYTES == 16
+  __asm__ volatile("stnp %q0, %q1, [%2]" : : "w"(lo), "w"(hi), "r"(d)
+                   : "memory");
 #elif defined(__aarch64__)
   typedef T Q __attribute__((vector_size(16)));
   Q q[4];
