@@ -157,6 +157,12 @@ module type S = sig
   (** [open_as m] is {!open_}, the device handed to rig under the driver [m],
       such as [D] wrapped to declare other facts. *)
 
+  val open_own : (module Rig_edge.Driver with type t = gpu) -> t
+  (** [open_own m] is {!open_as}[ m], the driver's [make] given a word
+      outside rig's array that holds the slot word's value, as a caller that
+      calls [make] itself may give: a driver whose work writes only words
+      it maps then keeps a word of its own ({!Rig_edge.type-facts}). *)
+
   val close : t -> unit
   (** [close t] is {!Rig.close}[ t.d]. *)
 
@@ -195,6 +201,26 @@ end
 
 (** [Make (G)] opens [G]'s GPU under the name [G.class_ ^ ":test"]. *)
 module Make (G : Gpu) : S with type gpu = G.D.t
+
+(** {1:watch A driver's word} *)
+
+(** [Watch (D)] is [D], which also counts, for each device whose facts rig
+    read, the frees of its word and the reads of it after a free. *)
+module Watch (D : Rig_edge.Driver) : sig
+  include
+    Rig_edge.Driver
+      with type t = D.t
+       and type region = D.region
+       and type image = D.image
+
+  val word_frees : t -> int
+  (** [word_frees h] is the number of {!Rig_edge.Driver.free} calls on the
+      word [h]'s facts give, by physical equality. *)
+
+  val late_reads : t -> int
+  (** [late_reads h] is the number of {!Rig_edge.Driver.signaled} calls on
+      [h] after a free of its word. *)
+end
 
 (** {1:conformance Conformance}
 

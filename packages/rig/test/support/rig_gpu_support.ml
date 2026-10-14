@@ -139,6 +139,7 @@ module type S = sig
   val present : unit -> bool
   val open_ : unit -> t
   val open_as : (module Rig_edge.Driver with type t = gpu) -> t
+  val open_own : (module Rig_edge.Driver with type t = gpu) -> t
   val close : t -> unit
   val with_ : (t -> 'a) -> 'a
   val driver : unit -> gpu
@@ -203,6 +204,29 @@ module Make (G : Gpu) = struct
 
   let open_ () = open_as (module G.D)
 
+  (* One word outside rig's array serves every open: each [make] copies the
+     slot word's value into it first, and a device of a word of its own starts
+     its own from that value. *)
+  let outside = lazy (Nativeint.to_int (Host.word ()))
+
+  let open_own driver =
+    prepare_open ();
+    let raw = ref None in
+    let make ~word =
+      let at = Lazy.force outside in
+      Host.set64 at (Host.get64 (Nativeint.to_int word));
+      Result.map
+        (fun g ->
+          raw := Some g;
+          g)
+        (G.open_ ~word:(Nativeint.of_int at))
+    in
+    match Rig.open_ { name; driver; make } with
+    | Ok d ->
+        opened := In_rig d;
+        { d; g = Option.get !raw }
+    | Error why -> failf "%s in rig on a word of its own: %s" name why
+
   let close t =
     Rig.close t.d;
     match !opened with In_rig d when d == t.d -> opened := Nothing | _ -> ()
@@ -249,6 +273,50 @@ module Make (G : Gpu) = struct
   let submit_work t ws =
     let s, run, buffers = prepare t.d ws in
     Rig.submit s ~run ~buffers
+end
+
+(* Watching a driver's word *)
+
+module Watch (D : Rig_edge.Driver) = struct
+  include D
+
+  (* Each device's word, as its facts give it, with the frees of it and the
+     reads that followed one, under [lock]. *)
+  type watched = { h : D.t; word : D.region; frees : int; late_reads : int }
+
+  let lock = Mutex.create ()
+  let watched = ref []
+
+  let update h f =
+    Mutex.protect lock @@ fun () ->
+    watched := List.map (fun w -> if w.h == h then f w else w) !watched
+
+  let facts h =
+    let f = D.facts h in
+    Mutex.protect lock (fun () ->
+        if not (List.exists (fun w -> w.h == h) !watched) then
+          let w = { h; word = f.word; frees = 0; late_reads = 0 } in
+          watched := w :: !watched);
+    f
+
+  let find h =
+    Mutex.protect lock @@ fun () ->
+    match List.find_opt (fun w -> w.h == h) !watched with
+    | Some w -> w
+    | None -> invalid_arg "Watch: a device whose facts were not read"
+
+  let free h r =
+    update h (fun w ->
+        if w.word == r then { w with frees = w.frees + 1 } else w);
+    D.free h r
+
+  let signaled h =
+    if (find h).frees > 0 then
+      update h (fun w -> { w with late_reads = w.late_reads + 1 });
+    D.signaled h
+
+  let word_frees h = (find h).frees
+  let late_reads h = (find h).late_reads
 end
 
 (* Conformance *)

@@ -264,6 +264,14 @@ struct polled {
   char why[64]; /* what a hand-over failing from [fail_from] reports */
   struct polled_run *run;
   struct polled *prev, *next; /* in the list of every device ([all]) */
+  int room_gated, room_waiters; /* [room] blocks while gated */
+  _Atomic int freed; /* rig freed its word of its own */
+  /* The mappings rig holds of it ([map_peer], [map_host]), by address. */
+  struct held_map {
+    uintptr_t at;
+    size_t bytes;
+  } *maps;
+  int nmaps, cmaps;
 };
 
 /* A Polled device's state, in a custom block that frees it once collected
@@ -277,6 +285,45 @@ static rig_settle_fn polled_settle;
 
 static const struct rig_driver polled_driver = {polled_room, polled_submit,
                                                 polled_commit, polled_settle};
+
+/* What rig must not do, as Polled sees it: read or free twice a word of
+   the driver's own after rig freed it, free a word in its array, or hand a
+   queue a wait whose word rig gave back. Each is recorded, the first
+   BROKEN_KEPT in the order seen ([rig_test_polled_broken]), and raised as a
+   Failure where the call that saw it returns to OCaml. */
+#define BROKE_READ_FREED 0
+#define BROKE_FREED_TWICE 1
+#define BROKE_GAVE_BACK 2
+#define BROKE_FREED_ARRAY 3
+#define BROKEN_KEPT 64
+
+static lock_t broken_mu = LOCK_INITIALIZER;
+static int broken[BROKEN_KEPT], nbroken;
+
+static void broke(int what) {
+  lock(&broken_mu);
+  if (nbroken < BROKEN_KEPT) broken[nbroken++] = what;
+  unlock(&broken_mu);
+}
+
+value rig_test_polled_broke(value v_what) {
+  broke(Int_val(v_what));
+  return Val_unit;
+}
+
+/* What was broken, oldest first. */
+value rig_test_polled_broken(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(a);
+  int kept[BROKEN_KEPT], n;
+  lock(&broken_mu);
+  n = nbroken;
+  memcpy(kept, broken, sizeof kept);
+  unlock(&broken_mu);
+  a = caml_alloc_tuple((mlsize_t)n);
+  for (int i = 0; i < n; i++) Store_field(a, i, Val_int(kept[i]));
+  CAMLreturn(a);
+}
 
 /* Every Polled device not yet collected, linked through the devices so
    that enrolling allocates nothing: a sleep runs the ones whose words the
@@ -331,6 +378,7 @@ static void polled_finalize(value v) {
   if (p->itself) return;
   unenrol(p);
   free_run(p->run);
+  free(p->maps);
 #ifndef _WIN32
   pthread_mutex_destroy(&p->mu);
   pthread_cond_destroy(&p->cv);
@@ -573,9 +621,35 @@ static int wait_holds(const struct rig_wait *wait) {
                                                             : w == wait->value;
 }
 
-static int waits_hold(struct queued *s) {
-  for (int i = 0; i < s->nwaits; i++)
+/* What [p]'s queue breaks by reading the word of the wait [wait], or -1:
+   a word outside rig's array, which lives for the process, that is a word
+   of a Polled device's own that rig freed, or that no mapping [p] holds
+   covers. A mapping of another device's word lies at that word's address,
+   so a mapping rig gave back is seen only once [p] holds none of that
+   word. [p]'s lock is held. */
+static int wait_breaks(struct polled *p, const struct rig_wait *wait) {
+  if (wait->kind != RIG_WORD) return -1;
+  uintptr_t at = (uintptr_t)wait->at, words = (uintptr_t)rig_words();
+  if (at >= words && at < words + RIG_WORDS_BYTES) return -1;
+  struct polled *q = enrolled(at);
+  if (q != NULL && atomic_load(&q->freed)) return BROKE_READ_FREED;
+  for (int i = 0; i < p->nmaps; i++)
+    if (at >= p->maps[i].at && at < p->maps[i].at + p->maps[i].bytes)
+      return -1;
+  return BROKE_GAVE_BACK;
+}
+
+/* Whether [s]'s waits hold, counting in [*broken] the waits that break
+   rig's contract, which are still read: Polled's words are its own. */
+static int waits_hold(struct polled *p, struct queued *s, int *broken) {
+  for (int i = 0; i < s->nwaits; i++) {
+    int b = wait_breaks(p, &s->waits[i]);
+    if (b >= 0) {
+      broke(b);
+      (*broken)++;
+    }
     if (!wait_holds(&s->waits[i])) return 0;
+  }
   return 1;
 }
 
@@ -651,13 +725,14 @@ static void run_one(struct polled *p, struct queued *s) {
 }
 
 /* Runs the queued submissions whose waits hold, in order: answers how
-   many ran, none once stopped. */
-static int run(struct polled *p) {
+   many ran, none once stopped, and counts in [*broken] the waits that broke
+   rig's contract ([wait_breaks]). */
+static int run(struct polled *p, int *broken) {
   lock(&p->mu);
   struct polled_run *r = p->run;
   int k = 0;
   while (r != NULL && k < r->n && committed(r, &r->q[k]) &&
-         waits_hold(&r->q[k]))
+         waits_hold(p, &r->q[k], broken))
     run_one(p, &r->q[k++]);
   if (k > 0) {
     memmove(r->q, r->q + k, (size_t)(r->n - k) * sizeof *r->q);
@@ -668,8 +743,15 @@ static int run(struct polled *p) {
   return k;
 }
 
+static void raise_broken(int broken) {
+  if (broken > 0) caml_failwith("Polled: a wait read a word rig gave back");
+}
+
 value rig_test_polled_run(value v_p) {
-  return Val_int(run(Polled_val(v_p)));
+  int broken = 0;
+  int k = run(Polled_val(v_p), &broken);
+  raise_broken(broken);
+  return Val_int(k);
 }
 
 /* How deep a sleep follows Polled devices waiting on one another. */
@@ -683,7 +765,7 @@ value rig_test_polled_run(value v_p) {
    work while the host sleeps on another one. Answers how many ran, or
    STUCK if none did while that submission, or the work of one of those
    devices it waits for, is not committed. */
-static int drive(struct polled *p, int depth) {
+static int drive(struct polled *p, int depth, int *broken) {
   struct polled *wanted[LAST];
   int n = 0, stuck = 0;
   lock(&p->mu);
@@ -698,13 +780,17 @@ static int drive(struct polled *p, int depth) {
   }
   unlock(&p->mu);
   for (int i = 0; i < n; i++)
-    if (wanted[i] != p && drive(wanted[i], depth - 1) == STUCK) stuck = 1;
-  int k = run(p);
+    if (wanted[i] != p && drive(wanted[i], depth - 1, broken) == STUCK)
+      stuck = 1;
+  int k = run(p, broken);
   return k == 0 && stuck ? STUCK : k;
 }
 
 value rig_test_polled_drive(value v_p) {
-  return Val_int(drive(Polled_val(v_p), DRIVE_DEPTH));
+  int broken = 0;
+  int k = drive(Polled_val(v_p), DRIVE_DEPTH, &broken);
+  raise_broken(broken);
+  return Val_int(k);
 }
 
 /* A device that runs itself: its thread runs the queue as work arrives and,
@@ -718,7 +804,8 @@ static void engine(struct polled *p) {
       cond_wait(&p->work, &p->mu);
     unlock(&p->mu);
     if (r == NULL) return;
-    if (run(p) == 0) nap();
+    int broken = 0;
+    if (run(p, &broken) == 0) nap();
   }
 }
 
@@ -786,7 +873,14 @@ static int polled_room(void *self, const struct rig_part *parts, int n,
       return RIG_NEVER;
   }
   if (n > r->capacity) return RIG_NEVER;
-  if (r->may_block) return RIG_FITS;
+  if (r->may_block) {
+    lock(&p->mu);
+    p->room_waiters++;
+    while (p->room_gated) cond_wait(&p->cv, &p->mu);
+    p->room_waiters--;
+    unlock(&p->mu);
+    return RIG_FITS;
+  }
   lock(&p->mu);
   int full = r->held + n > r->capacity;
   unlock(&p->mu);
@@ -999,6 +1093,70 @@ value rig_test_polled_stop(value v_p) {
   cond_broadcast(&p->work);
   unlock(&p->mu);
   free_run(r);
+  return Val_unit;
+}
+
+/* Makes the device's [room] block, if [v_gated], until it is called with
+   false. */
+value rig_test_polled_gate_room(value v_p, value v_gated) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->room_gated = Bool_val(v_gated);
+  cond_broadcast(&p->cv);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+value rig_test_polled_room_waiters(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  int n = p->room_waiters;
+  unlock(&p->mu);
+  return Val_int(n);
+}
+
+/* Notes that rig freed the device's word: what that broke, or -1 for a
+   word outside rig's array freed once. */
+value rig_test_polled_free_word(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  uintptr_t at = (uintptr_t)p->word, words = (uintptr_t)rig_words();
+  if (at >= words && at < words + RIG_WORDS_BYTES)
+    return Val_int(BROKE_FREED_ARRAY);
+  return Val_int(atomic_exchange(&p->freed, 1) == 0 ? -1 : BROKE_FREED_TWICE);
+}
+
+/* Notes a mapping rig holds of the [v_n] bytes at [v_at]. */
+value rig_test_polled_mapped(value v_p, value v_at, value v_n) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  if (p->nmaps == p->cmaps) {
+    int c = p->cmaps == 0 ? 8 : 2 * p->cmaps;
+    struct held_map *m = realloc(p->maps, (size_t)c * sizeof *m);
+    if (m == NULL) {
+      unlock(&p->mu);
+      caml_raise_out_of_memory();
+    }
+    p->maps = m;
+    p->cmaps = c;
+  }
+  p->maps[p->nmaps].at = (uintptr_t)Long_val(v_at);
+  p->maps[p->nmaps++].bytes = (size_t)Long_val(v_n);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+/* Notes that rig gave back a mapping of the [v_n] bytes at [v_at]. */
+value rig_test_polled_unmapped(value v_p, value v_at, value v_n) {
+  struct polled *p = Polled_val(v_p);
+  uintptr_t at = (uintptr_t)Long_val(v_at);
+  size_t n = (size_t)Long_val(v_n);
+  lock(&p->mu);
+  for (int i = 0; i < p->nmaps; i++)
+    if (p->maps[i].at == at && p->maps[i].bytes == n) {
+      p->maps[i] = p->maps[--p->nmaps];
+      break;
+    }
+  unlock(&p->mu);
   return Val_unit;
 }
 

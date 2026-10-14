@@ -45,6 +45,19 @@ external polled_word_at : polled -> int = "rig_test_polled_word_at"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
 external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
+external polled_free_word : polled -> int = "rig_test_polled_free_word"
+
+
+external polled_mapped : polled -> int -> int -> unit
+  = "rig_test_polled_mapped"
+
+external polled_unmapped : polled -> int -> int -> unit
+  = "rig_test_polled_unmapped"
+
+external polled_gate_room : polled -> bool -> unit = "rig_test_polled_gate_room"
+external polled_room_waiters : polled -> int = "rig_test_polled_room_waiters"
+external polled_broke : int -> unit = "rig_test_polled_broke"
+external polled_broken : unit -> int array = "rig_test_polled_broken"
 external polled_bind : polled -> nativeint -> int -> bool -> unit
   = "rig_test_polled_bind"
 external host_alloc : int -> int = "rig_test_alloc"
@@ -139,7 +152,7 @@ module Driver = struct
   }
 
   (* A region the driver allocated has a kind; a mapping has none, and names
-     the device that made it. *)
+     the device that made it; the word has neither. *)
   type region = {
     at : int;
     kind : kind option;
@@ -259,6 +272,35 @@ module Driver = struct
     | [] -> []
     | y :: l -> if y = x then l else y :: remove x l
 
+  (* What rig must not do, in [rig_support_stubs.c]'s order of [BROKE_*]. *)
+  let broken =
+    [|
+      "Polled: a freed word was read";
+      "Polled: a word was freed twice";
+      "Polled: a wait read a mapping rig gave back";
+      "Polled: rig freed a word in its array";
+    |]
+
+  let read_freed = 0
+
+  let broke what =
+    polled_broke what;
+    failwith broken.(what)
+
+  let violations () =
+    Array.to_list (Array.map (fun w -> broken.(w)) (polled_broken ()))
+
+  let is_word r = r.kind = None && r.mapper = None
+
+  (* rig frees only a word outside its array, which is the driver's own,
+     once, after which a read of it breaks rig's contract. *)
+  let free_word d r =
+    note d "free";
+    let w = polled_word d.c in
+    Mutex.protect d.lock (fun () -> d.frees <- (r.at, w) :: d.frees);
+    (match polled_free_word d.c with -1 -> () | what -> broke what);
+    run_before d "free"
+
   (* A free waits at the free gate while it is shut. A mapping's is logged as
      ["unmap"]. *)
   let free_region d r =
@@ -280,10 +322,11 @@ module Driver = struct
         | Some k -> d.held <- remove (k, r.bytes) d.held
         | None -> d.mapped <- remove r.bytes d.mapped);
     if r.kind <> None then host_free r.at
+    else polled_unmapped d.c r.at r.bytes
 
   (* A faulted device's free gives the region back, then raises. *)
   let free d r =
-    free_region d r;
+    if is_word r then free_word d r else free_region d r;
     match Mutex.protect d.lock (fun () -> d.fault) with
     | Some why -> raise (Fault why)
     | None -> ()
@@ -312,6 +355,7 @@ module Driver = struct
 
   let mapping d m =
     Mutex.protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
+    polled_mapped d.c m.at m.bytes;
     Some m
 
   let map_peer d _ r =
@@ -362,13 +406,19 @@ module Driver = struct
 
   let unload d _ = ignore (counted d "unload" : bool)
 
-  (* Reads the fault under the lock without a closure, so that a read of the
-     word allocates nothing, as a driver's must not. *)
+  let rec freed_at a = function
+    | [] -> false
+    | (x, _) :: l -> x = a || freed_at a l
+
+  (* Reads the fault and the frees under the lock without a closure, so that
+     a read of the word allocates nothing, as a driver's must not. *)
   let signaled d =
     Mutex.lock d.lock;
     let fault = d.word_fault and break = d.word_break in
+    let freed = freed_at d.word_at d.frees in
     d.word_break <- false;
     Mutex.unlock d.lock;
+    if freed then broke read_freed;
     if break then raise Sys.Break;
     match fault with
     | Some why -> raise (Fault why)
@@ -605,6 +655,9 @@ module Polled = struct
 
   let launches d = Array.to_list (Array.map launch (polled_launches d.c))
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
+
+  let word_frees d =
+    List.length (List.filter (fun (a, _) -> a = d.word_at) (frees d))
   let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)
   let allocated d kind = Mutex.protect d.lock (fun () -> holding d kind)
@@ -628,6 +681,14 @@ module Polled = struct
 
   let gate_locates d =
     Mutex.protect d.lock (fun () -> d.locates_gated <- true)
+
+  let gate_room d =
+    if not d.may_block then
+      invalid_arg "Polled.gate_room: a device that does not block";
+    polled_gate_room d.c true
+
+  let open_room d = polled_gate_room d.c false
+  let in_room d = polled_room_waiters d.c
 
   let locaters d = Mutex.protect d.lock (fun () -> d.locaters)
 

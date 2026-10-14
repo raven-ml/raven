@@ -9,7 +9,17 @@
     runs it: a wait that returns before it slept leaves work unrun. A sleep
     first runs the queues of the Polled devices whose words its first queued
     submission waits for and has not seen, as a device runs its own work while
-    the host sleeps on another. Every driver call is logged. *)
+    the host sleeps on another. Every driver call is logged.
+
+    Polled checks that rig keeps the word promises of {!Rig_edge}: rig frees
+    only a word outside its array, which is the driver's own, once, and then
+    reads it no more, and a queue's wait reads a word that rig's array or a
+    live mapping of the queue's device holds. A breach is recorded ({!violations}) and raises
+    [Failure] where the call that saw it returns to OCaml: a [signaled] or a
+    [free] of the word, or a {!run} or sleep that read the wait. A device
+    that runs itself records it alone. A mapping of another device's word
+    lies at that word's address, so a wait through a mapping rig gave back
+    is seen only once the device holds no mapping of that word. *)
 module Polled : sig
   include Rig_edge.Driver
 
@@ -143,7 +153,8 @@ module Polled : sig
       or stop that {!log} names [call], such as ["entry"], or of the function
       of the next [Place] its [image] answers, ["place"]: a point inside a
       call rig makes, where a test can change what rig was given, hold the
-      call or raise from it. A free runs it once it passed the free gate. *)
+      call or raise from it. A free runs it once it passed the free gate,
+      and a free of the word once it gave the word back. *)
 
   val fault_word : t -> string -> unit
   (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise
@@ -196,17 +207,25 @@ module Polled : sig
       ([completion]). *)
 
   val log : t -> string list
-  (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
-      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["sleep"],
+  (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"] (of
+      a region or of the word), ["map_host"], ["map_peer"], ["unmap"] (a
+      mapping's free), ["sleep"],
       ["stop"], ["image"], ["entry"], ["unload"]. Consecutive sleeps are one
       ["sleep"]; {!sleeps} counts them. *)
 
   val sleeps : t -> int
   (** [sleeps d] is the number of [d]'s sleeps. *)
 
+  val violations : unit -> string list
+  (** [violations ()] is each breach of the word promises any Polled device
+      saw, oldest first, the first 64. *)
+
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with
       [d]'s word when it was freed. *)
+
+  val word_frees : t -> int
+  (** [word_frees d] is the number of times rig freed [d]'s word. *)
 
   val allocs : t -> (Rig_edge.memory * int * bool) list
   (** [allocs d] is each allocation asked of [d], oldest first: its kind, its
@@ -304,6 +323,20 @@ module Polled : sig
 
   val locaters : t -> int
   (** [locaters d] is the number of locates of [d]'s mappings blocked. *)
+
+  val gate_room : t -> unit
+  (** [gate_room d] makes the [room] of [d], made with [may_block], block
+      until {!open_room}: a submit there holds [d]'s turn, its waits
+      checked and no value taken yet.
+
+      Raises [Invalid_argument] if [d] was made without [may_block]. *)
+
+  val open_room : t -> unit
+  (** [open_room d] lets [d]'s blocked [room] calls go on. *)
+
+  val in_room : t -> int
+  (** [in_room d] is the number of [d]'s [room] calls under way, those
+      blocked at the gate included. *)
 
   val interrupt : t -> unit
   (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
