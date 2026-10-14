@@ -223,17 +223,18 @@ module Shape = struct
 
   let contract ~batch ~contracting a b =
     let ra = Array.length a and rb = Array.length b in
-    let used = [| Array.make ra false; Array.make rb false |] in
+    (* Whether a pair names each axis: [a]'s, then [b]'s. *)
+    let used = Array.make (ra + rb) false in
     let pair what k (i, j) =
       if i < 0 || i >= ra then errorf "%s pair %d: no axis %d of a" what k i
       else if j < 0 || j >= rb then errorf "%s pair %d: no axis %d of b" what k j
-      else if used.(0).(i) then errorf "axis %d of a is in two pairs" i
-      else if used.(1).(j) then errorf "axis %d of b is in two pairs" j
+      else if used.(i) then errorf "axis %d of a is in two pairs" i
+      else if used.(ra + j) then errorf "axis %d of b is in two pairs" j
       else if a.(i) <> b.(j) then
         errorf "%s pair %d: extents %d and %d" what k a.(i) b.(j)
       else begin
-        used.(0).(i) <- true;
-        used.(1).(j) <- true;
+        used.(i) <- true;
+        used.(ra + j) <- true;
         Ok ()
       end
     in
@@ -245,17 +246,20 @@ module Shape = struct
     in
     let* () = pairs "batch" batch 0 in
     let* () = pairs "contracting" contracting 0 in
-    let free side x =
-      List.filteri (fun ax _ -> not used.(side).(ax)) (Array.to_list x)
-    in
-    let y =
-      Array.concat
-        [
-          Array.map (fun (i, _) -> a.(i)) batch;
-          Array.of_list (free 0 a);
-          Array.of_list (free 1 b);
-        ]
-    in
+    (* The batch extents, then the free ones: [a]'s, then [b]'s. *)
+    let nb = Array.length batch in
+    let paired = nb + Array.length contracting in
+    let y = Array.make (nb + ra + rb - (2 * paired)) 0 in
+    for k = 0 to nb - 1 do
+      y.(k) <- a.(fst batch.(k))
+    done;
+    let k = ref nb in
+    for ax = 0 to ra + rb - 1 do
+      if not used.(ax) then begin
+        y.(!k) <- (if ax < ra then a.(ax) else b.(ax - ra));
+        incr k
+      end
+    done;
     if Array.length y > L.max_rank then
       errorf "a result of rank %d" (Array.length y)
     else admit "a contraction" y

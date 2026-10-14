@@ -896,6 +896,122 @@ let dtypes =
 
 (* matmul *)
 
+(* Operand shapes for matmul: leading axes where each operand holds the
+   result's extent, holds 1 or lacks the axis, 0 among the extents, and 1-d
+   operands, which have no leading axis. *)
+let matmul_shapes =
+  let open Gen in
+  let extent hi = frequency [ (1, constant 0); (16, int_range 1 hi) ] in
+  (* Both operands hold the extent, or one holds an extent other than 1 and
+     the other 1. *)
+  let alone = frequency [ (1, constant 0); (16, int_range 2 3) ] in
+  let axis =
+    frequency
+      [
+        (1, map (fun e -> (e, e)) (extent 3));
+        (1, map (fun e -> (e, 1)) alone);
+        (1, map (fun e -> (1, e)) alone);
+      ]
+  in
+  let last n l = List.filteri (fun i _ -> i >= List.length l - n) l in
+  let edge =
+    frequency [ (1, constant None); (6, map Option.some (extent 4)) ]
+  in
+  let held = frequency [ (1, int_range 0 2); (2, constant 3) ] in
+  (let+ axes =
+     list ~size:held axis
+   and+ na = held
+   and+ nb = held
+   and+ rows = edge
+   and+ cols = edge
+   and+ k = frequency [ (1, constant 0); (4, int_range 1 5) ] in
+   let sa =
+     match rows with
+     | None -> [| k |]
+     | Some m -> Array.of_list (List.map fst (last na axes) @ [ m; k ])
+   in
+   let sb =
+     match cols with
+     | None -> [| k |]
+     | Some n -> Array.of_list (List.map snd (last nb axes) @ [ k; n ])
+   in
+   (sa, sb))
+  |> with_pp (fun ppf (sa, sb) ->
+      Format.fprintf ppf "a %a b %a" pp_shape sa pp_shape sb)
+
+(* matmul's meaning: each result element is the sum along the inner axis, its
+   leading index read in each operand along the axes it has, at 0 where its
+   extent is 1. *)
+let matmul_meaning sa xa sb xb =
+  let ra = Array.length sa and rb = Array.length sb in
+  let k = sa.(ra - 1) in
+  let lead s r = if r = 1 then [||] else Array.sub s 0 (r - 2) in
+  let la = lead sa ra and lb = lead sb rb in
+  let l = max (Array.length la) (Array.length lb) in
+  let at s i =
+    let j = i - (l - Array.length s) in
+    if j < 0 then 1 else s.(j)
+  in
+  let lead = Array.init l (fun i -> if at la i = 1 then at lb i else at la i) in
+  let m = if ra = 1 then 1 else sa.(ra - 2) in
+  let n = if rb = 1 then 1 else sb.(rb - 1) in
+  let rows = if ra = 1 then [||] else [| m |] in
+  let cols = if rb = 1 then [||] else [| n |] in
+  let shape = Array.concat [ lead; rows; cols ] in
+  (* The offset in [s]'s leading block of the result's leading index [r]. *)
+  let offset s r =
+    let off = ref 0 and r = ref r and stride = ref 1 in
+    for i = l - 1 downto 0 do
+      let x = !r mod lead.(i) in
+      r := !r / lead.(i);
+      let j = i - (l - Array.length s) in
+      if j >= 0 then begin
+        if s.(j) <> 1 then off := !off + (x * !stride);
+        stride := !stride * s.(j)
+      end
+    done;
+    !off
+  in
+  let y =
+    Array.init (numel shape) (fun o ->
+        let j = o mod n and i = o / n mod m and r = o / (m * n) in
+        let a0 = ((offset la r * m) + i) * k in
+        let b0 = (offset lb r * k * n) + j in
+        let s = ref 0. in
+        for kk = 0 to k - 1 do
+          s := !s +. (xa.(a0 + kk) *. xb.(b0 + (kk * n)))
+        done;
+        !s)
+  in
+  (shape, y)
+
+let matmul_is_its_meaning =
+  prop "matmul is its meaning" matmul_shapes (fun (sa, sb) ->
+      let ra = Array.length sa and rb = Array.length sb in
+      let lead s r = Array.to_list (Array.sub s 0 (max 0 (r - 2))) in
+      let la = lead sa ra and lb = lead sb rb in
+      let alone ours theirs =
+        let d = List.length ours - List.length theirs in
+        List.exists Fun.id
+          (List.mapi
+             (fun i e ->
+               e <> 1 && (i < d || List.nth theirs (i - d) = 1))
+             ours)
+      in
+      cover "a 1-d operand" (ra = 1 || rb = 1);
+      cover "operands with leading axes of different counts"
+        (List.length la <> List.length lb);
+      cover "leading axes of a alone and of b alone"
+        (alone la lb && alone lb la);
+      cover "a zero extent" (Array.mem 0 sa || Array.mem 0 sb);
+      cover "an empty sum" (sa.(ra - 1) = 0);
+      (* Exact in float64: {!operand}'s products and their sums of 5 fit. *)
+      let xa = operand (numel sa) and xb = operand (numel sb) in
+      let y = Nx.matmul (host D.Float64 sa xa) (host D.Float64 sb xb) in
+      let shape, want = matmul_meaning sa xa sb xb in
+      equal (array int) shape (Nx.shape y);
+      equal (array float_exact) want (read y))
+
 let matmul =
   let x s = host D.Float32 s (operand (numel s)) in
   let shape_of name sa sb want =
@@ -904,6 +1020,7 @@ let matmul =
   in
   group "matmul"
     [
+      matmul_is_its_meaning;
       shape_of "two matrices" [| 2; 3 |] [| 3; 4 |] [| 2; 4 |];
       shape_of "leading axes broadcast" [| 5; 1; 2; 3 |] [| 4; 3; 6 |]
         [| 5; 4; 2; 6 |];

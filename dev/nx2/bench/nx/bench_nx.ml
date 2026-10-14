@@ -419,8 +419,8 @@ let dtype_rows =
 
 let contract_rows =
   Thumper.group "contract"
-    (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows
-   @ chain_rows @ [ plan_row 11 ] @ dtype_rows)
+    (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 64 @ matmul_rows 1024
+   @ decode_rows @ chain_rows @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
    writes its row into a copy of the cache, and concatenate copies its result

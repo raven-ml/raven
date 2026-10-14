@@ -24,6 +24,9 @@ let pp_shape ppf s =
 
 (* Plans *)
 
+(* Below a pattern, names are numbers: operands and results list them, and
+   [ext.(n)] is name [n]'s extent. *)
+
 type plan = {
   a : int array; (* [a] with each name an axis. *)
   b : int array;
@@ -33,6 +36,42 @@ type plan = {
   names : int array; (* The result's names' extents, in written order. *)
   shape : int array; (* The result's shape. *)
 }
+
+let rec mem (n : int) = function [] -> false | x :: l -> x = n || mem n l
+
+let index_of (n : int) l =
+  let rec go i = function
+    | [] -> raise Not_found
+    | x :: rest -> if x = n then i else go (i + 1) rest
+  in
+  go 0 l
+
+(* The contraction of operands named [na] and [nb] into the names [nr], of the
+   result [shape]. A name both operands hold is a batch name where the result
+   keeps it, else summed; the batch and summed names pair in [a]'s order, the
+   order in which the kernel sums. *)
+let lower ~ext na nb nr shape =
+  let shape_of ns = Array.of_list (List.map (Array.get ext) ns) in
+  let pairs ns =
+    Array.of_list (List.map (fun n -> (index_of n na, index_of n nb)) ns)
+  in
+  let both = List.filter (fun n -> mem n nb) na in
+  let batch = List.filter (fun n -> mem n nr) both in
+  let summed = List.filter (fun n -> not (mem n nr)) both in
+  let free_a = List.filter (fun n -> not (mem n nb)) na in
+  let free_b = List.filter (fun n -> not (mem n na)) nb in
+  let kernel = batch @ free_a @ free_b in
+  {
+    a = shape_of na;
+    b = shape_of nb;
+    batch = pairs batch;
+    contracting = pairs summed;
+    order = Array.of_list (List.map (fun n -> index_of n kernel) nr);
+    names = shape_of nr;
+    shape;
+  }
+
+(* Patterns *)
 
 (* [l] with its ellipsis replaced by [n] names that no pattern writes. *)
 let expand l n =
@@ -51,13 +90,6 @@ let names l =
     l
 
 let written l = List.length (List.filter (( <> ) Pattern.Ellipsis) l)
-
-let index_of n l =
-  let rec go i = function
-    | [] -> raise Not_found
-    | x :: rest -> if String.equal x n then i else go (i + 1) rest
-  in
-  go 0 l
 
 (* Raises naming [by] and the pattern [p]. *)
 let failf ~by p fmt =
@@ -164,32 +196,10 @@ let extents ~by ~pat ~sizes layouts =
     groups;
   fun n -> Option.get (ext n)
 
-(* The contraction of operands named [na] and [nb] into the names [nr], of the
-   result [shape], summing [summed]: the batch and summed names pair in [a]'s
-   order. *)
-let lower ~ext ~summed na nb nr shape =
-  let shape_of ns = Array.of_list (List.map ext ns) in
-  let pairs ns =
-    Array.of_list (List.map (fun n -> (index_of n na, index_of n nb)) ns)
-  in
-  let batch = List.filter (fun n -> List.mem n nb && List.mem n nr) na in
-  let summed = List.filter (fun n -> List.mem n summed) na in
-  let free_a = List.filter (fun n -> not (List.mem n nb)) na in
-  let free_b = List.filter (fun n -> not (List.mem n na)) nb in
-  let kernel = batch @ free_a @ free_b in
-  {
-    a = shape_of na;
-    b = shape_of nb;
-    batch = pairs batch;
-    contracting = pairs summed;
-    order = Array.of_list (List.map (fun n -> index_of n kernel) nr);
-    names = shape_of nr;
-    shape;
-  }
-
-(* The operands' names, with ellipses written out, each name's extent, and
-   the result's names and shape: [p]'s operand layouts [ls] met with the
-   operands [xs], each a label for messages, a dtype's name and a shape. *)
+(* The operands' names, numbered, with ellipses written out, each name's
+   extent, and the result's names and shape: [p]'s operand layouts [ls] met
+   with the operands [xs], each a label for messages, a dtype's name and a
+   shape. A name's number is its first place among the operands' names. *)
 let prepare ~by ~sizes (p : Pattern.t) ls xs =
   let err fmt = failf ~by p fmt in
   let covered l (label, dt, s) =
@@ -224,12 +234,17 @@ let prepare ~by ~sizes (p : Pattern.t) ls xs =
         | None -> err "%s in the result multiplies past an int" (render ns))
     | Unit | Ellipsis -> 1
   in
-  (List.map names ls, ext, names lr, Array.of_list (List.map entry lr))
+  let number n = Option.get (List.find_index (String.equal n) all) in
+  let numbered l = List.map number (names l) in
+  ( List.map numbered ls,
+    Array.of_list (List.map ext all),
+    numbered lr,
+    Array.of_list (List.map entry lr) )
 
 let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
-  let la, lb, summed =
+  let la, lb =
     match p.kind with
-    | Many { operands = [ a; b ]; summed } -> (a, b, summed)
+    | Many { operands = [ a; b ]; _ } -> (a, b)
     | Many { operands; _ } ->
         invalid_argf "%s: %a has %d operands; use Nx.einsum" by Pattern.pp p
           (List.length operands)
@@ -239,7 +254,7 @@ let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
   let ns, ext, nr, shape =
     prepare ~by ~sizes p [ la; lb ] [ ("a", da, sa); ("b", db, sb) ]
   in
-  lower ~ext ~summed (List.nth ns 0) (List.nth ns 1) nr shape
+  lower ~ext (List.nth ns 0) (List.nth ns 1) nr shape
 
 (* Accumulators *)
 
@@ -257,11 +272,11 @@ let width (type v s) (dt : (v, s) D.t) =
 
 let accumulator (type v s) ~by ?acc (dt : (v, s) D.t) (D.Any a) (D.Any b) =
   let ka = kind_of a and kb = kind_of b in
-  let floats =
-    List.filter (fun (k, _) -> k <> Integers) [ (ka, width a); (kb, width b) ]
-  in
-  let wide = List.fold_left (fun w (_, x) -> max w x) 0 floats in
-  let complex = List.exists (fun (k, _) -> k = Complexes) floats in
+  (* The widest float or complex operand's width, and whether one is
+     complex. *)
+  let float_width k w = match k with Integers -> 0 | Floats | Complexes -> w in
+  let wide = Int.max (float_width ka (width a)) (float_width kb (width b)) in
+  let complex = ka = Complexes || kb = Complexes in
   let (D.Any acc) =
     match acc with
     | Some acc -> acc
@@ -292,9 +307,8 @@ let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
 let reshape ~by s x = if Prim.has_shape x s then x else move ~by (M.Reshape s) x
 
 let identity order =
-  let ok = ref true in
-  Array.iteri (fun i j -> if i <> j then ok := false) order;
-  !ok
+  let rec go i = i = Array.length order || (order.(i) = i && go (i + 1)) in
+  go 0
 
 let inverse order =
   let inv = Array.make (Array.length order) 0 in
@@ -332,10 +346,12 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
 
-(* The leading axes, aligned at their last, name batch axes where both operands
-   have the extent, and free axes of the operand whose extent is not 1 where the
-   other's is: an operand's unit axis drops, and no operand is broadcast. A 1-d
-   [a] has no row and a 1-d [b] no column. *)
+(* The leading axes, aligned at their last, are batch axes where both operands
+   hold the result's extent, and free axes of the operand that holds it where
+   the other's extent is 1 or the other lacks the axis: an operand's unit axis
+   drops, and no operand is broadcast. A 1-d [a] has no row and a 1-d [b] no
+   column. The plan is read off the shapes: the kernel's axes are the batch
+   axes, a's free axes and row, then b's free axes and column. *)
 let matmul ~by a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let ra = Array.length sa and rb = Array.length sb in
@@ -359,48 +375,78 @@ let matmul ~by a b =
         invalid_argf "%s: the leading axes do not broadcast; %s" by (both ())
   in
   let l = Array.length lead in
-  let at s i =
+  let holds s i =
     let j = i - (l - Array.length s) in
-    if j < 0 then None else Some s.(j)
+    j >= 0 && s.(j) = lead.(i)
   in
-  (* CR: These names only encode axis identity. Use leading indices and
-     distinct row, column and inner ids, with an extent array. Structural
-     equality in index_of lets the same lower keep handling parsed strings.
-     This removes string construction and hashing; preserve the list order.
-     Check matmul-f32-4 and a small reused-pattern einsum before landing. *)
-  let extents = Hashtbl.create 8 in
-  let name i e =
-    let n = "l" ^ string_of_int i in
-    Hashtbl.replace extents n e;
-    [ n ]
+  let in_a i = holds lead_a i in
+  let in_b i = holds lead_b i || not (in_a i) in
+  let count p =
+    let c = ref 0 in
+    for i = 0 to l - 1 do
+      if p i then incr c
+    done;
+    !c
   in
-  let na = ref [] and nb = ref [] and nr = ref [] and shape = ref [] in
-  for i = l - 1 downto 0 do
-    let ea = at lead_a i and eb = at lead_b i and ext = lead.(i) in
-    let named = name i ext in
-    (* The extents broadcast: the axis is both operands' where they agree,
-       else the one whose extent is the result's. *)
-    (match (ea, eb) with
-    | Some x, Some y when x = y ->
-        na := named @ !na;
-        nb := named @ !nb
-    | Some x, _ when x = ext -> na := named @ !na
-    | _ -> nb := named @ !nb);
-    nr := named @ !nr;
-    shape := ext :: !shape
+  let la = count in_a and lb = count in_b in
+  let nbatch = la + lb - l in
+  let rows = if ra = 1 then 0 else 1 and cols = if rb = 1 then 0 else 1 in
+  let r = l + rows + cols in
+  let ea = Array.make (la + rows + 1) k and eb = Array.make (lb + 1 + cols) k in
+  let batch = Array.make nbatch (0, 0) in
+  let shape = Array.make r 0 and order = Array.make r 0 in
+  (* The next place of each kind: [next_a] and [next_b] among each operand's
+     axes; [next_batch], [next_free_a] and [next_free_b] among the kernel's
+     axes, for a batch axis, a free axis of a after the batch axes, and one of
+     b after a's row. *)
+  let next_a = ref 0 and next_b = ref 0 in
+  let next_batch = ref 0 in
+  let next_free_a = ref nbatch and next_free_b = ref (la + rows) in
+  for i = 0 to l - 1 do
+    let of_a = in_a i and of_b = in_b i in
+    shape.(i) <- lead.(i);
+    if of_a && of_b then begin
+      batch.(!next_batch) <- (!next_a, !next_b);
+      order.(i) <- !next_batch;
+      incr next_batch
+    end
+    else if of_a then begin
+      order.(i) <- !next_free_a;
+      incr next_free_a
+    end
+    else begin
+      order.(i) <- !next_free_b;
+      incr next_free_b
+    end;
+    if of_a then begin
+      ea.(!next_a) <- lead.(i);
+      incr next_a
+    end;
+    if of_b then begin
+      eb.(!next_b) <- lead.(i);
+      incr next_b
+    end
   done;
-  let rows = if ra = 1 then [] else [ ("i", sa.(ra - 2)) ] in
-  let cols = if rb = 1 then [] else [ ("j", sb.(rb - 1)) ] in
-  List.iter
-    (fun (n, e) -> Hashtbl.replace extents n e)
-    ((("k", k) :: rows) @ cols);
-  let ns = List.map fst in
+  if rows = 1 then begin
+    ea.(la) <- sa.(ra - 2);
+    shape.(l) <- sa.(ra - 2);
+    order.(l) <- la
+  end;
+  if cols = 1 then begin
+    eb.(lb + 1) <- sb.(rb - 1);
+    shape.(r - 1) <- sb.(rb - 1);
+    order.(r - 1) <- r - 1
+  end;
   let pl =
-    lower ~ext:(Hashtbl.find extents) ~summed:[ "k" ]
-      (!na @ ns rows @ [ "k" ])
-      (!nb @ [ "k" ] @ ns cols)
-      (!nr @ ns rows @ ns cols)
-      (Array.of_list (!shape @ List.map snd rows @ List.map snd cols))
+    {
+      a = ea;
+      b = eb;
+      batch;
+      contracting = [| (la + rows, lb) |];
+      order;
+      names = shape;
+      shape;
+    }
   in
   run ~by (Prim.dtype a) pl a b
 
@@ -459,17 +505,17 @@ let better t t' =
 let order ~ext ~result ops =
   let n = Array.length ops in
   let full = (1 lsl n) - 1 in
-  let names = List.sort_uniq String.compare (List.concat (Array.to_list ops)) in
+  let names = List.sort_uniq Int.compare (List.concat (Array.to_list ops)) in
   let holders nm =
     let h = ref 0 in
-    Array.iteri (fun i ns -> if List.mem nm ns then h := !h lor (1 lsl i)) ops;
+    Array.iteri (fun i ns -> if mem nm ns then h := !h lor (1 lsl i)) ops;
     !h
   in
   let tb =
     {
       held = Array.of_list (List.map holders names);
-      kept = Array.of_list (List.map (fun nm -> List.mem nm result) names);
-      extent = Array.of_list (List.map ext names);
+      kept = Array.of_list (List.map (fun nm -> mem nm result) names);
+      extent = Array.of_list (List.map (Array.get ext) names);
     }
   in
   let total = Array.make (full + 1) 0 and split = Array.make (full + 1) 0 in
@@ -528,12 +574,9 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
      the names both hold and [names] lacks are summed. *)
   let pair (type x y) (into : (x, y) D.t) names shape (na, l) (nb, r) :
       (x, y, d) Value.t =
-    let summed =
-      List.filter (fun n -> List.mem n nb && not (List.mem n names)) na
-    in
     match (l, r) with
     | Value.Any a, Value.Any b ->
-        run ~by ~acc:(D.Any w) into (lower ~ext ~summed na nb names shape) a b
+        run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
   in
   let leaf i = (ns.(i), Value.Any xs.(i)) in
   if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
@@ -552,15 +595,15 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
         let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
         let rec outside nm i =
           i < n
-          && (((1 lsl i) land s = 0 && List.mem nm ns.(i)) || outside nm (i + 1))
+          && (((1 lsl i) land s = 0 && mem nm ns.(i)) || outside nm (i + 1))
         in
-        let needed nm = List.mem nm nr || outside nm 0 in
+        let needed nm = mem nm nr || outside nm 0 in
         let names =
-          List.filter (fun nm -> List.mem nm nb && needed nm) na
-          @ List.filter (fun nm -> not (List.mem nm nb)) na
-          @ List.filter (fun nm -> not (List.mem nm na)) nb
+          List.filter (fun nm -> mem nm nb && needed nm) na
+          @ List.filter (fun nm -> not (mem nm nb)) na
+          @ List.filter (fun nm -> not (mem nm na)) nb
         in
-        let shape = Array.of_list (List.map ext names) in
+        let shape = Array.of_list (List.map (Array.get ext) names) in
         (names, Value.Any (pair w names shape l r))
     in
     let t = split.(full) in

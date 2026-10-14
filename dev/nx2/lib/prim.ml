@@ -1303,19 +1303,18 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
 (* The product of [s]'s extents along the axes no pair names on [side],
    [max_int] past it. *)
 let free_extent ~batch ~contracting s side =
-  let named i =
-    Array.exists (fun p -> side p = i) batch
-    || Array.exists (fun p -> side p = i) contracting
+  let rec names ps i k =
+    k < Array.length ps && (side ps.(k) = i || names ps i (k + 1))
   in
   let n = ref 1 in
-  Array.iteri
-    (fun i e ->
-      if not (named i) then
-        n :=
-          if !n = 0 || e = 0 then 0
-          else if !n > max_int / e then max_int
-          else !n * e)
-    s;
+  for i = 0 to Array.length s - 1 do
+    let e = s.(i) in
+    if not (names batch i 0 || names contracting i 0) then
+      n :=
+        if !n = 0 || e = 0 then 0
+        else if !n > max_int / e then max_int
+        else !n * e
+  done;
   !n
 
 let contract_order ~batch ~contracting a b : Nx_kernel.order =
