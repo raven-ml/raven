@@ -552,18 +552,7 @@ let rec held = function
           Any Bool;
           Any Bit;
         ]
-  | _ ->
-      D.
-        [
-          Any Float64;
-          Any Float32;
-          Any Float16;
-          Any Bfloat16;
-          Any Int32;
-          Any Uint32;
-          Any Int8;
-          Any Bool;
-        ]
+  | _ -> D.[ Any Float64; Any Int32; Any Uint32 ] @ held (D.Any D.Float32)
 
 let accs = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
@@ -585,6 +574,26 @@ let computed =
          case_of ~acc ~out:acc ~dts:(held acc) ()))
 
 let examples = List.concat_map regimes accs
+
+(* The floats narrower than float32, which a float32 sum is rounded to. *)
+let narrow =
+  D.
+    [
+      Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
+      Any Float4_e2m1fn;
+    ]
+
+(* Cases into a result of another dtype than acc: mostly a narrow float, at
+   times any dtype. *)
+let rounded =
+  let pick = Gen.of_list ~pp:pp_dtype in
+  Gen.with_pp pp_case
+    (Gen.bind (pick (accs @ integer_accs)) (fun acc ->
+         Gen.bind
+           (Gen.frequency [ (3, pick narrow); (1, pick D.all) ])
+           (fun out ->
+             let dts = if is_integer acc then integers else held acc in
+             case_of ~acc ~out ~dts ())))
 
 (* Cases nx.cpu may decline: accumulators it lacks, other results, operands an
    accumulator does not hold. *)
@@ -783,14 +792,14 @@ let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
   K.contract ~order:c.order ~batch:c.batch ~contracting:c.contracting
     ~acc:c.acc ~dst:d ~init a b
 
-(* Whether nx_cpu.mli says nx.cpu computes [c]: its dtypes, at any layout. *)
+(* Whether nx_cpu.mli says nx.cpu computes [c]: its acc and its operands'
+   dtypes, init's being the result's, into any result, at any layout. *)
 let cpu_computes c =
   let acc = c.acc in
   let (D.Any dt) = acc in
   let integer = is_integer acc && D.bits dt >= 8 in
   let takes = if integer then integers else held acc in
   (List.mem acc accs || integer)
-  && c.out = acc
   && Array.for_all
        (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) takes)
        (operands c)
@@ -1186,6 +1195,32 @@ let law_order b c =
              let w = want o in
              if bits x = bits w then None
              else Some (Printf.sprintf "%h, expected %h" x w)))
+
+(* A result of another dtype than acc is the result in acc, from init cast
+   to acc, cast to it: the sum rounds once. *)
+let law_rounds_once b c =
+  cover "a narrow float result" (List.mem c.out narrow);
+  cover "an integer acc" (is_integer c.acc);
+  cover "a complex acc" (is_complex c.acc);
+  cover "init" (c.init <> None);
+  cover "a group of several runs"
+    (let rb, rr, rc, rk = runs c in
+     rb > 1 || rr > 1 || rc > 1 || rk > 1);
+  match run b c with
+  | None when cpu_computes c ->
+      failf "nx.cpu declined a case nx_cpu.mli says it computes"
+  | None -> cover "declined" true
+  | Some y -> (
+      let c' =
+        { c with out = c.acc; init = Option.map (cast_to c.acc) c.init }
+      in
+      match run b c' with
+      | None -> failf "nx.cpu declined the case into acc"
+      | Some ya ->
+          cover "computed" true;
+          let want = cast_to c.out ya in
+          equal (list string) []
+            (differ_bits c.out ~other:"the cast of acc's" y want))
 
 (* Integers *)
 
@@ -1682,6 +1717,8 @@ let cpu (b : Support.backend) =
       prop ~examples:quad_examples
         "8-bit operands into 32 bits wrap as integers do" quad_cases
         (run (law_wraps ~covers:quad_covers b));
+      prop "a result of another dtype rounds the sum in acc once" rounded
+        (run (law_rounds_once b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
       prop ~count:500

@@ -22,10 +22,12 @@
     [Shape_mismatch].
 
     [contract] computes contractions in [float32], [float64], [complex64],
-    [complex128] or an integer of 8 to 64 bits whose [dst] has their [acc]'s
-    dtype, and whose [a], [b] and [init] each convert exactly into a float
-    or complex [acc] or are integers or booleans for an integer one, at any
-    layout; it answers [Declined] for the others. [float32] holds [bool],
+    [complex128] or an integer of 8 to 64 bits whose [a], [b] and [init]
+    each convert exactly into a float or complex [acc] or are integers or
+    booleans for an integer one, into a [dst] of any dtype, at any layout;
+    it answers [Declined] for the others. A [dst] of another dtype than
+    [acc] takes the sum in [acc] rounded once, as {!apply1}'s [Cast]
+    rounds it. [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
     [float64] also [int32], [uint32] and [float64]. A complex dtype holds
     what its parts' dtype holds and the complex numbers of at most its

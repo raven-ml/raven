@@ -568,6 +568,11 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
 void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
                       const nx_loop *l);
 
+/* Casts the loop [l]'s operand 1, [src], into its operand 0, [dst], as a
+   cast's walk does (copy.c): each element rounds once to [dst]'s dtype. */
+void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
+                      const nx_loop *l);
+
 /* Padded loads */
 
 /* A padding, Nx_kernel.pad, copied out of OCaml: [lo], [hi] and

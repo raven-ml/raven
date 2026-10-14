@@ -66,8 +66,10 @@
    alone (fastest): on the M1, the cores' vector units take products of
    few rows, and small ones, from its matrix unit.
 
-   R, the sum in acc, is dst itself: nx.cpu computes a dst of acc's dtype.
-   Each tile starts as init, or +0, when its first KC block is computed. */
+   R, the sum in acc, is dst itself where dst is of acc's dtype, and
+   otherwise scratch in acc that a cast walk rounds into dst once every
+   product is in (Results of another dtype). Each tile starts as init, or
+   +0, when its first KC block is computed. */
 
 #include <math.h>
 #include <stdatomic.h>
@@ -228,11 +230,10 @@ static int holds(int acc, int d) {
   }
 }
 
-/* Whether nx.cpu computes a contraction in [acc] into a dst of [out] of
-   the [n] operands of dtypes [dts]. */
-static int computes(int acc, int out, const int *dts, int n) {
-  if (out != acc || nx_cpu_table->gemm[part_of(acc)].kernel.f == NULL)
-    return 0;
+/* Whether nx.cpu computes a contraction in [acc] of the [n] operands of
+   dtypes [dts], into a dst of any dtype. */
+static int computes(int acc, const int *dts, int n) {
+  if (nx_cpu_table->gemm[part_of(acc)].kernel.f == NULL) return 0;
   for (int i = 0; i < n; i++)
     if (!holds(acc, dts[i])) return 0;
   return 1;
@@ -1602,7 +1603,7 @@ static nx_array as_parts(const nx_array *x, int r) {
 
 /* Operand [o] of [v], rows along the axis [x1] of numbers along [x0], as
    [u]'s operand [y] of parts: in place, or under [copy] copied into [acc]
-   in memory of its own, each batch element's rows C-contiguous, one
+   in scratch (nx_cpu_take), each batch element's rows C-contiguous, one
    element where [o] steps 0 along the batch. Answers the copy, NULL in
    place or if allocation fails. */
 static uint8_t *parts_of(const nx_contract_view *v, const nx_array *const *op,
@@ -1618,7 +1619,7 @@ static uint8_t *parts_of(const nx_contract_view *v, const nx_array *const *op,
     return NULL;
   }
   int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH];
-  uint8_t *d = alloc(ne * n1 * n0 * 2 * w);
+  uint8_t *d = nx_cpu_take(ne * n1 * n0 * 2 * w);
   if (d == NULL) return NULL;
   for (int64_t e = 0; e < ne; e++)
     nx_cpu_stage_as(op[o], v->offset[o] + e * s[BATCH], s[x0], s[x1], n0, n1,
@@ -1643,11 +1644,16 @@ static int complex_on(int acc, int order, const nx_contract_view *v,
   int copy_a = op[A]->dtype != acc || (v->stride[A][CON] != 1 && k > 1);
   int64_t eb = v->stride[B][BATCH] == 0 ? 1 : batch;
   uint8_t *ab = parts_of(v, op, A, CON, ROW, acc, copy_a, &u, &x[A]);
-  uint8_t *bb = nx_cpu_take(eb * 4 * k * n * w);
-  if (op[INIT]) parts_of(v, op, INIT, COL, ROW, acc, 0, &u, &x[INIT]);
+  uint8_t *bb = nx_cpu_take(eb * 4 * k * n * w), *ib = NULL;
+  /* An init of another dtype than acc, a result's of another dtype, is
+     copied into acc's parts. */
+  int copy_i = op[INIT] && op[INIT]->dtype != acc;
+  if (op[INIT])
+    ib = parts_of(v, op, INIT, COL, ROW, acc, copy_i, &u, &x[INIT]);
   parts_of(v, op, DST, COL, ROW, acc, 0, &u, &x[DST]);
   int done = 0;
-  if ((copy_a && ab == NULL) || bb == NULL) goto out;
+  if ((copy_a && ab == NULL) || (copy_i && ib == NULL) || bb == NULL)
+    goto out;
   u.stride[A][CON] = 1;
   blocks_job j = {.b = op[B], .v = v, .acc = acc, .w = w, .d = bb};
   /* Each number of b read, two parts, and its block written, four. */
@@ -1675,7 +1681,8 @@ static int complex_on(int acc, int order, const nx_contract_view *v,
     done = nx_cpu_contract_on(r, order, &up, ops);
   }
 out:
-  free(ab);
+  nx_cpu_give(ab);
+  nx_cpu_give(ib);
   nx_cpu_give(bb);
   return done;
 }
@@ -2319,6 +2326,65 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   return done;
 }
 
+/* Results of another dtype
+
+   A dst of another dtype than acc takes the sum in acc rounded once, as a
+   cast of it would round it: R is scratch in acc, laid out C-contiguous
+   over the batch's, rows' and columns' runs, and a cast walk takes it
+   into dst once every product is in. */
+
+/* [r]'s view as runs: one a group. */
+static void runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
+  for (int g = BATCH; g <= CON; g++) {
+    r->runs[g] = 1;
+    r->extent[g][0] = v->extent[g];
+    for (int o = A; o <= DST; o++) r->stride[o][g][0] = v->stride[o][g];
+  }
+  for (int o = A; o <= DST; o++) r->offset[o] = v->offset[o];
+}
+
+/* The contraction of [r]'s groups over [op] in [acc] into op[DST] of
+   another dtype, through scratch R: 0 if an allocation failed. */
+static int rounded_on(int acc, int order, int da, int db, nx_contract_runs *r,
+                      const nx_array *const *op) {
+  /* The loop the cast walks, dst its operand 0 and R its 1, over the runs
+     of more than one element; R's steps C-contiguous over them. */
+  nx_loop l = {.first = {r->offset[DST], 0}};
+  int64_t *at[NX_MAX_RANK], n = 1;
+  int rank = 0;
+  for (int g = BATCH; g <= COL; g++)
+    for (int k = 0; k < r->runs[g]; k++) {
+      int64_t e = r->extent[g][k], s = r->stride[DST][g][k];
+      if (e == 0) return 1;
+      r->stride[DST][g][k] = 0;
+      if (e == 1) continue;
+      l.extent[rank] = e;
+      l.step[0][rank] = s;
+      at[rank++] = &r->stride[DST][g][k];
+    }
+  for (int d = rank - 1; d >= 0; d--) {
+    l.step[1][d] = n;
+    *at[d] = n;
+    n *= l.extent[d];
+  }
+  r->offset[DST] = 0;
+  nx_array y = *op[DST];
+  y.dtype = acc;
+  y.bits = nx_dtype_row_of(acc).bits;
+  y.offset = 0;
+  y.alias = 0;
+  y.base = nx_cpu_take(n * nx_cpu_width(acc));
+  if (y.base == NULL) return 0;
+  const nx_array *ops[4] = {op[A], op[B], op[INIT], &y};
+  int done = runs_on(acc, order, da, db, r, ops);
+  if (done) {
+    l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
+    nx_cpu_cast_loop(op[DST], &y, &l);
+  }
+  nx_cpu_give(y.base);
+  return done;
+}
+
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
    on the stack, or their runs where a group makes several, answering what
    the fill answers where it does not fit, declines what it does not
@@ -2335,12 +2401,12 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   if (fit != NX_OK && !runs) return Val_int(fit);
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb),
                 nx_array_dtype(vinit)};
-  if (acc < 0 || acc >= NX_DTYPE_COUNT ||
-      !computes(acc, nx_array_dtype(vdst), dts, 2 + init))
+  int out = nx_array_dtype(vdst);
+  if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc, dts, 2 + init))
     return Val_int(NX_DECLINED);
   nx_operand in[4] = {{va, dts[0], 0},
                       {vb, dts[1], 0},
-                      {vdst, acc, 1},
+                      {vdst, out, 1},
                       {vinit, dts[2], 0}};
   nx_array a[4];
   int n = 3 + init;
@@ -2350,9 +2416,12 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   /* Only chain order has integer kernels, and an integer sum is exact
      modulo acc's width in any order, so chain order computes it whatever
      the order asked. */
-  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder);
-  int done = runs ? runs_on(acc, order, dts[0], dts[1], &r, op)
-                  : contract_view(acc, order, dts[0], dts[1], &v, op);
+  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
+  if (out != acc) {
+    if (!runs) runs_of_view(&r, &v);
+    done = rounded_on(acc, order, dts[0], dts[1], &r, op);
+  } else if (runs) done = runs_on(acc, order, dts[0], dts[1], &r, op);
+  else done = contract_view(acc, order, dts[0], dts[1], &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);

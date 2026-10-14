@@ -120,6 +120,16 @@ void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
   nx_cpu_walk(2, pair, l, COPY_MOST, 1, copy_block, pair);
 }
 
+void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
+                      const nx_loop *l) {
+  nx_array pair[2] = {*dst, *src};
+  if (dst->dtype == src->dtype)
+    nx_cpu_walk(2, pair, l, COPY_MOST, 1, copy_block, pair);
+  else
+    nx_cpu_walk(2, pair, l, cast_most(src->dtype, dst->dtype), 1, cast_block,
+                pair);
+}
+
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
    and walks them with [f]. */
 static value walk_operands(value vd, value vs, int d, int s, int64_t most,
