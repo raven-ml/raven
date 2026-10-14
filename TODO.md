@@ -316,8 +316,9 @@ raven / llama.cpp (Vulkan; ROCm):
   Precompiled normalizer; the parity tests skip without downloaded
   tokenizers: commit trimmed ones with their generator
 - munin: GPU metrics (NVML by dlopen, IOKit, AMD sysfs); 64 MDX-skipped doc
-  fences; the metrics table omits `sys/disk_*`; the latest-run test orders
-  runs by a 10 ms sleep
+  fences; the metrics table omits `sys/disk_*`; `Store.latest_run` picks
+  among runs started in the same second at random (a run id is a seconds
+  stamp and a random suffix)
 - quill's TUI suite tests a copy of quill_tui.ml, bypassing its .mli
 - quill prints an `Invalid_argument` or `Failure` message raw in a cell's
   output; multi-line messages (talon's plan problems) arrive escaped

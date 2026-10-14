@@ -1026,14 +1026,15 @@ let test_store_latest_run_with_filter () =
     Session.start ~store ~experiment:"exp" ~tags:[ "train" ] ~name:"a" ()
   in
   Session.finish s1;
-  Unix.sleepf 0.01;
   let s2 =
     Session.start ~store ~experiment:"exp" ~tags:[ "eval" ] ~name:"b" ()
   in
   Session.finish s2;
   let latest = Store.latest_run store ~tag:"train" () in
-  is_true ~msg:"latest with tag filter"
-    (match latest with Some run -> Run.name run = Some "a" | None -> false)
+  equal ~msg:"latest with tag filter"
+    (option (option string))
+    (Some (Some "a"))
+    (Option.map Run.name latest)
 
 let test_store_latest_run_parent () =
   with_temp_dir @@ fun root ->
@@ -1041,16 +1042,15 @@ let test_store_latest_run_parent () =
   let parent = Session.start ~store ~experiment:"exp" () in
   Session.finish parent;
   let parent_run = Session.run parent in
-  Unix.sleepf 0.01;
   let child =
     Session.start ~store ~experiment:"exp" ~parent:parent_run ~name:"child" ()
   in
   Session.finish child;
   let latest = Store.latest_run store ~parent:(Run.id parent_run) () in
-  is_true ~msg:"latest with parent filter"
-    (match latest with
-    | Some run -> Run.name run = Some "child"
-    | None -> false)
+  equal ~msg:"latest with parent filter"
+    (option (option string))
+    (Some (Some "child"))
+    (Option.map Run.name latest)
 
 let test_store_delete_run () =
   with_temp_dir @@ fun root ->
