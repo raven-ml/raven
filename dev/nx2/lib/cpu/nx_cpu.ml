@@ -346,7 +346,14 @@ external c2r_c :
 let shape a = Nx_array.Layout.shape (Nx_array.layout a)
 
 (* Whether [dst] has the shape [Nx_kernel.Shape] gives, if it gives one. *)
-let fits want dst = match want with Ok s -> s = shape dst | Error _ -> false
+let fits want dst =
+  match want with
+  | Error _ -> false
+  | Ok s ->
+      let l = Nx_array.layout dst in
+      let dim = Nx_array.Layout.dim l in
+      let rec same i = i = Array.length s || (s.(i) = dim i && same (i + 1)) in
+      Array.length s = Nx_array.Layout.rank l && same 0
 
 let c2c_on ~threads d ~axes ~dst x =
   if not (fits (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then

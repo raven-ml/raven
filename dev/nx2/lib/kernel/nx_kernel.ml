@@ -151,8 +151,12 @@ module Shape = struct
 
   (* [axes] strictly increasing axes of a rank [r]. *)
   let check_axes axes r =
-    let bad i a = a < 0 || a >= r || (i > 0 && a <= axes.(i - 1)) in
-    if Array.exists Fun.id (Array.mapi bad axes) then
+    let rec bad i =
+      i < Array.length axes
+      && (let a = axes.(i) in
+          a < 0 || a >= r || (i > 0 && a <= axes.(i - 1)) || bad (i + 1))
+    in
+    if bad 0 then
       errorf "axes %a are not strictly increasing axes of a rank %d" pp axes r
     else Ok ()
 
@@ -265,7 +269,7 @@ module Shape = struct
     else admit "a contraction" y
 
   let c2c ~axes x =
-    if axes = [||] then Error "a transform along no axis"
+    if Array.length axes = 0 then Error "a transform along no axis"
     else
       let* () = check_axes axes (Array.length x) in
       Ok x
