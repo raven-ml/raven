@@ -445,15 +445,21 @@ static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
   pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
+/* Whether a sliver of [n] columns of b is packed: unless b is read in
+   place and the kernel reads its n columns. */
+static int packs_b(const problem *p, int64_t n) {
+  int nr = p->g->kernel.nr;
+  nx_cpu_b_read r = p->g->kernel.b;
+  return !(p->b_in && (n == nr || r == NX_CPU_B_COLUMNS ||
+                       (r == NX_CPU_B_HALVES && 2 * n >= nr)));
+}
+
 /* b's sliver of columns [j, j + n) of element [e], the block of k from
-   [pc]: in place where b is read so and the kernel reads its n columns,
-   else packed into [d]. */
+   [pc]: in place, or packed into [d] (packs_b). */
 static src b_sliver(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                     int64_t n, int64_t pc, int64_t kc, uint8_t *d) {
   int nr = p->g->kernel.nr;
-  nx_cpu_b_read r = p->g->kernel.b;
-  if (p->b_in && (n == nr || r == NX_CPU_B_COLUMNS ||
-                  (r == NX_CPU_B_HALVES && 2 * n >= nr)))
+  if (!packs_b(p, n))
     return (src){p->op[B].x->base + pos(p, B, e, 0, j, pc) * p->w, 0,
                  p->op[B].st[CON]};
   pack_b(p, move, e, j, n, nr, pc, kc, d);
@@ -618,8 +624,10 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   problem *p = r->p;
   int64_t m = p->ext[ROW], n_all = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t kc_most = min64(p->g->kc, k), nr = r->k.nr;
-  uint8_t *bp = scratch(p, nr * kc_most * w);
-  if (bp == NULL) return;
+  /* Scratch where a sliver is packed: the edge, or every one. */
+  int packs = packs_b(p, nr) || (n_all % nr && packs_b(p, n_all % nr));
+  uint8_t *bp = packs ? scratch(p, nr * kc_most * w) : NULL;
+  if (packs && bp == NULL) return;
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / r->slivers, j = u % r->slivers * nr;
     int64_t n = min64(nr, n_all - j), pc = 0;
@@ -634,7 +642,7 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
       pc += kc;
     }
   }
-  nx_cpu_give(bp);
+  if (packs) nx_cpu_give(bp);
 }
 
 /* A job of the table's kernels, each of its bodies run between the table's

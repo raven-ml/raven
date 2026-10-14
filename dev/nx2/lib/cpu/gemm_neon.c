@@ -16,8 +16,14 @@
 
    a's elements are broadcast one at a time, so that its rows are read in
    place wherever they lie. A tile of fewer rows points its missing rows at
-   its last and stores only its own; one of fewer columns moves its outputs
-   through a row on the stack. */
+   its last and stores only its own. A tile reads b's n columns and no
+   more (NX_CPU_B_COLUMNS), so that b is read in place at any width: its
+   vectors start every L columns, the last at n - L where L does not
+   divide n, as BLIS's armv8a small-matrix kernels (bli_gemmsup, BSD-3)
+   take a sliver's edge with narrower tiles. The last vector's lanes
+   overlap the one before: they compute the same chains and store the
+   same bits. Fewer than L columns move through a vector on the
+   stack. */
 
 #include <math.h>
 #include <string.h>
@@ -35,40 +41,66 @@
 #define MR 8
 #define NV 3
 
-/* A kernel of MR rows by NV vectors of [L] lanes of [T]. */
+/* A kernel of MR rows by at most NV vectors of [L] lanes of [T]. A tile
+   of [nv] vectors, a constant where it is inlined, reads b's columns from
+   at[v] for vector v; one of fewer than L columns reads them through [t],
+   L elements on the stack. */
 #define KERNEL(name, T, V, L, LOAD, STORE, DUP, FMA, ZERO)                   \
+  static inline __attribute__((always_inline)) void name##_tile(            \
+      int nv, int64_t rows, int64_t n, int64_t k, const T *const *ar,       \
+      int64_t a_k, const T *b, int64_t b_k, T *y, int64_t ldc,              \
+      nx_cpu_from from) {                                                   \
+    int narrow = nv == 1 && n < L;                                          \
+    int64_t at[NV];                                                         \
+    T t[L] = {0};                                                           \
+    V c[MR][NV];                                                            \
+    for (int v = 0; v < nv; v++)                                            \
+      at[v] = v + 1 < nv || n % L == 0 ? L * v : n - L;                     \
+    for (int i = 0; i < MR; i++)                                            \
+      for (int v = 0; v < nv; v++) {                                        \
+        if (from == NX_CPU_FROM_ZERO || i >= rows) c[i][v] = ZERO;          \
+        else if (narrow) {                                                  \
+          for (int64_t j = 0; j < n; j++) t[j] = y[i * ldc + j];            \
+          c[i][v] = LOAD(t);                                                \
+        } else c[i][v] = LOAD(y + i * ldc + at[v]);                         \
+      }                                                                     \
+    for (int64_t p = 0, q = 0; p < k; p++, q += a_k, b += b_k) {            \
+      V bv[NV];                                                             \
+      for (int v = 0; v < nv; v++) {                                        \
+        if (narrow) {                                                       \
+          for (int64_t j = 0; j < n; j++) t[j] = b[j];                      \
+          bv[v] = LOAD(t);                                                  \
+        } else bv[v] = LOAD(b + at[v]);                                     \
+      }                                                                     \
+      for (int i = 0; i < MR; i++) {                                        \
+        V x = DUP(ar[i] + q);                                               \
+        for (int v = 0; v < nv; v++) c[i][v] = FMA(c[i][v], bv[v], x);      \
+      }                                                                     \
+    }                                                                       \
+    for (int i = 0; i < rows; i++)                                          \
+      for (int v = 0; v < nv; v++) {                                        \
+        if (!narrow) {                                                      \
+          STORE(y + i * ldc + at[v], c[i][v]);                              \
+          continue;                                                         \
+        }                                                                   \
+        STORE(t, c[i][v]);                                                  \
+        for (int64_t j = 0; j < n; j++) y[i * ldc + j] = t[j];              \
+      }                                                                     \
+  }                                                                         \
   static void name(int64_t m, int64_t n, int64_t k, const void *va,         \
                    int64_t a_row, int64_t a_k, const void *vb, int64_t b_k, \
                    void *vc, int64_t ldc, nx_cpu_from from) {               \
     for (int64_t i0 = 0; i0 < m; i0 += MR) {                                \
       int64_t rows = m - i0 < MR ? m - i0 : MR;                             \
       const T *a = (const T *)va + i0 * a_row, *b = vb, *ar[MR];            \
-      T *y = (T *)vc + i0 * ldc, t[NV * L] = {0};                           \
-      V c[MR][NV];                                                          \
-      for (int i = 0; i < MR; i++) {                                        \
+      T *y = (T *)vc + i0 * ldc;                                            \
+      for (int i = 0; i < MR; i++)                                          \
         ar[i] = a + (i < rows ? i : rows - 1) * a_row;                      \
-        if (from == NX_CPU_FROM_ZERO || i >= rows) {                        \
-          for (int v = 0; v < NV; v++) c[i][v] = ZERO;                      \
-          continue;                                                         \
-        }                                                                   \
-        const T *r = y + i * ldc;                                           \
-        if (n < NV * L) r = memcpy(t, r, (size_t)n * sizeof(T));            \
-        for (int v = 0; v < NV; v++) c[i][v] = LOAD(r + L * v);             \
-      }                                                                     \
-      for (int64_t p = 0, q = 0; p < k; p++, q += a_k, b += b_k) {          \
-        V b0 = LOAD(b), b1 = LOAD(b + L), b2 = LOAD(b + 2 * L);             \
-        for (int i = 0; i < MR; i++) {                                      \
-          V x = DUP(ar[i] + q);                                             \
-          c[i][0] = FMA(c[i][0], b0, x);                                    \
-          c[i][1] = FMA(c[i][1], b1, x);                                    \
-          c[i][2] = FMA(c[i][2], b2, x);                                    \
-        }                                                                   \
-      }                                                                     \
-      for (int i = 0; i < rows; i++) {                                      \
-        T *r = n < NV * L ? t : y + i * ldc;                                \
-        for (int v = 0; v < NV; v++) STORE(r + L * v, c[i][v]);             \
-        if (n < NV * L) memcpy(y + i * ldc, t, (size_t)n * sizeof(T));      \
-      }                                                                     \
+      if (n > 2 * L)                                                        \
+        name##_tile(3, rows, n, k, ar, a_k, b, b_k, y, ldc, from);          \
+      else if (n > L)                                                       \
+        name##_tile(2, rows, n, k, ar, a_k, b, b_k, y, ldc, from);          \
+      else name##_tile(1, rows, n, k, ar, a_k, b, b_k, y, ldc, from);       \
     }                                                                       \
   }
 
@@ -255,7 +287,7 @@ static nx_cpu_gemm integers(nx_cpu_kernel f, int lanes) {
                                   .mr = MR,
                                   .nr = NV * lanes,
                                   .a = NX_CPU_A_ELEMENTS,
-                                  .b = NX_CPU_B_SLIVER,
+                                  .b = NX_CPU_B_COLUMNS,
                                   .flops_per_byte = SPEED32 * lanes / 4,
                                   .shared = 1},
                        .mc = MC,
@@ -270,7 +302,7 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
                  .mr = MR,
                  .nr = 12,
                  .a = NX_CPU_A_ELEMENTS,
-                 .b = NX_CPU_B_SLIVER,
+                 .b = NX_CPU_B_COLUMNS,
                  .flops_per_byte = SPEED32,
                  .shared = 1},
       .mc = MC,
@@ -282,7 +314,7 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
                  .mr = MR,
                  .nr = 6,
                  .a = NX_CPU_A_ELEMENTS,
-                 .b = NX_CPU_B_SLIVER,
+                 .b = NX_CPU_B_COLUMNS,
                  .flops_per_byte = SPEED64,
                  .shared = 1},
       .mc = MC,
