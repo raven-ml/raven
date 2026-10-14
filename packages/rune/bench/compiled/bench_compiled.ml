@@ -145,11 +145,26 @@ let split =
 (* Gathers are loads at computed indices, and a scatter into a value the call
    consumes stores its rows at their indices: 512 rows of a 32768 x 1024 table,
    8 of 1024 entries in each of 4096 rows, and 16 rows of 1024 written into a
-   4096-row cache that each call takes from the one before. *)
+   4096-row cache that each call takes from the one before. The gradient of a
+   take is a scatter: an embedding's, 1024 tokens of a 32768 x 64 table, adds
+   each token's row into a table of zeros. *)
 let indexed =
   let rows = 32768 and width = 1024 in
+  let dim = 64 and tokens = 1024 in
   Thumper.group ~id:"indexed" "indexed"
     [
+      compiled_call "take-grad-1024-of-32768x64-host"
+        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        (fun table i ->
+          let loss t =
+            let e = Nx.take ~axis:0 ~indices:i t in
+            Nx.sum (Nx.mul e e)
+          in
+          Rune.grad' loss table)
+        (fun () ->
+          let table = uniform [| rows; dim |] in
+          let i = int64s [| tokens |] rows in
+          fun g -> g table i);
       compiled_call "take-512-rows-of-32768x1024-host"
         Nx.Ptree.(tensor @-> tensor @-> returns tensor)
         (fun table i -> Nx.take ~axis:0 ~indices:i table)

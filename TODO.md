@@ -232,6 +232,11 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
+- a compiled `Nx.take` gradient costs the table times the tokens:
+  `indexed/take-grad-1024-of-32768x64-host` takes 94 ms on the M1 (load 20)
+  against ~2 ms eager. At 128256 rows a plain loop measured 17 ms and thumper
+  0.67-1.05 s, unexplained. The row has no baselines yet (Mac, fudge,
+  nonnormal)
 - `Total.collect` around a compiled function on a device without eager
   kernels raises `has no eager kernels` (total.ml:62,86)
 - jit compiles no complex tensor (lower.ml:36); ymir's `test_quantity`
@@ -352,7 +357,7 @@ raven / llama.cpp (Vulkan; ROCm):
   (tolk, norn and ymir benches, kaun's load bench): shared data in a
   declared `test/support/`
 - benches: sowilo's and talon's 10 MB of committed seeded data generated at
-  bench start; rune/bench/indexed_store folded into rune's bench or deleted
+  bench start
 - dune stale builds: a source rewritten within seconds is digested in one
   version and copied in another; a passive server stops seeing changes yet
   answers `rpc ping`; under load it loops on "Event queue overflow".
