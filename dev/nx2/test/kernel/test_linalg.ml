@@ -93,18 +93,20 @@ let bits x =
 
 let same_bits = array (pair int64 int64)
 
-type how = Contiguous | Transposed | Stepped
+type how = Contiguous | Transposed | Stepped | Reversed
 
 let pp_how ppf h =
   Format.pp_print_string ppf
     (match h with
     | Contiguous -> "contiguous"
     | Transposed -> "transposed"
-    | Stepped -> "stepped")
+    | Stepped -> "stepped"
+    | Reversed -> "reversed")
 
 (* [x]'s values laid out another way: C-contiguous, a copy whose last two
-   axes are swapped in memory viewed back through a permutation, or every
-   other element of a copy twice as wide. *)
+   axes are swapped in memory viewed back through a permutation, every
+   other element of a copy twice as wide, or a copy whose columns lie in
+   reverse viewed back through a negative stride. *)
 let laid_out how (A.Any x) =
   let s = L.shape (A.layout x) in
   let r = Array.length s in
@@ -124,6 +126,13 @@ let laid_out how (A.Any x) =
       let w = A.create Rig.host (A.dtype x) wide in
       let range i d = { M.start = 0; count = d; step = (if i = r - 1 then 2 else 1) } in
       into (Option.get (A.move (M.Slice (Array.mapi range s)) w))
+  | Reversed ->
+      let t = A.create Rig.host (A.dtype x) s in
+      let range i d =
+        if i = r - 1 && d > 0 then { M.start = d - 1; count = d; step = -1 }
+        else { M.start = 0; count = d; step = 1 }
+      in
+      into (Option.get (A.move (M.Slice (Array.mapi range s)) t))
 
 (* Double-double sums *)
 
@@ -314,17 +323,20 @@ type routine =
       unit_diagonal : bool;
     }
 
+let fresh (D.Any dt) s = A.Any (A.create Rig.host dt s)
+
 (* [b]'s results of [r] on [ops], or [None] if it declined: Lu's positions
    int64, eig's results complex of a's precision, every other result of a's
-   dtype, of the shapes Nx_kernel.Shape gives. *)
-let run (b : Support.backend) r ops =
+   dtype, of the shapes Nx_kernel.Shape gives, made by [alloc] (defaults to
+   fresh arrays on the host). *)
+let run ?(alloc = fresh) (b : Support.backend) r ops =
   let module K = (val b.kernels) in
   let module Shape = Nx_kernel.Shape in
   let (A.Any a) = ops.(0) in
   let dt = A.dtype a in
   let shape (A.Any x) = L.shape (A.layout x) in
-  let make s = A.create Rig.host dt s in
-  let index s = A.create Rig.host D.Int64 s in
+  let make s = A.expect dt (alloc (D.Any dt) s) in
+  let index s = A.expect D.Int64 (alloc (D.Any D.Int64) s) in
   let ok = Result.get_ok in
   let dsts, answer =
     match r with
@@ -356,9 +368,9 @@ let run (b : Support.backend) r ops =
     | Eig vectors -> (
         let sw, sv = ok (Shape.eig (Vectors ()) (shape ops.(0))) in
         let eig (type c) (cdt : (Complex.t, c) D.t) =
-          let w = A.create Rig.host cdt sw in
+          let w = A.expect cdt (alloc (D.Any cdt) sw) in
           if vectors then
-            let v = A.create Rig.host cdt sv in
+            let v = A.expect cdt (alloc (D.Any cdt) sv) in
             ([| A.Any w; A.Any v |], K.eig ~w ~v a)
           else ([| A.Any w |], K.eig ~w a)
         in
@@ -2124,6 +2136,66 @@ let test_dtypes (b : Support.backend) () =
         ])
     D.all
 
+(* Guard pages *)
+
+(* Cases of orders about a vector's tail and a block's, a few matrices at
+   most, their operands through any layout. *)
+let guard_cases =
+  Gen.pair
+    (Gen.with_pp pp_case
+       (let open Gen in
+        let* c = case in
+        let* n =
+          of_list ~pp:Format.pp_print_int
+            [ 0; 1; 2; 3; 5; 8; 9; 17; 26; 33; 63; 64; 65 ]
+        in
+        let* batch = array ~size:(int_range 0 1) (int_range 1 2) in
+        let+ how =
+          of_list ~pp:pp_how [ Contiguous; Transposed; Stepped; Reversed ]
+        in
+        { c with n; batch; how }))
+    Elements.sides
+
+(* Each routine gives the same bits with its operands, through the case's
+   layout, and its results against an inaccessible page. *)
+let law_guards (b : Support.backend) (c, side) =
+  cover "a column-reversed operand at the page after"
+    (c.how = Reversed && side = Support.After);
+  cover "a stepped operand at the page after"
+    (c.how = Stepped && side = Support.After);
+  cover "a transposed operand at the page before"
+    (c.how = Transposed && side = Support.Before);
+  cover "a block's order or past" (c.n >= 64);
+  let lay = laid_out c.how in
+  let _, lu_x = lu_operand c in
+  let _, _, svd_x = svd_operand c in
+  let routines =
+    [
+      (Cholesky c.triangle, [| cholesky_operand c |]);
+      (Lu, [| lu_x |]);
+      (Qr (factors c), [| lu_x |]);
+      (Eigh (c.seed mod 2 = 0), [| eigh_operand c |]);
+      (Svd (if c.seed mod 3 = 0 then None else Some (factors c)), [| svd_x |]);
+      (Eig (c.seed mod 2 = 1), [| eig_operand c |]);
+      (solve c, solve_operands c);
+    ]
+  in
+  List.iter
+    (fun (r, ops) ->
+      let ops = Array.map lay ops in
+      let want = Option.get (run b r ops) in
+      Elements.with_guards side (fun guard place ->
+          match run ~alloc:place b r (Array.map guard ops) with
+          | None -> failf "%s declined on guarded memory" (routine_name r)
+          | Some got ->
+              Array.iteri
+                (fun i w ->
+                  equal ~msg:(routine_name r)
+                    (array (pair int64 int64))
+                    (result_bits w) (result_bits got.(i)))
+                want))
+    routines
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -2202,6 +2274,10 @@ let cpu (b : Support.backend) =
         (run (law_cpu_refuses b));
       test "refuses dtypes and shapes" (fun () ->
           b.around (test_cpu_refusals b));
+      prop ~count:100
+        "reads and writes no byte past its operands and results, whatever \
+         pages lie beside them"
+        guard_cases (run (law_guards b));
     ]
 
 let () =
