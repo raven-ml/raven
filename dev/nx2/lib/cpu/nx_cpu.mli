@@ -15,14 +15,13 @@
     and the 8- to 64-bit integers, and declines the others.
     [apply1] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype]. [map] computes a program whose outputs, loads and
-    coordinate axes number at most [NX_MAX_OPERANDS] of [nx_array.h], and
-    whose nodes, evaluated in the program's order, hold at most 256 values
-    at once, a value held from the node that computes it through the last
-    node that reads it, or to the end for an output; it answers [Declined]
-    for the others. A padded load is first copied padded into host memory,
-    which the call holds until it returns; a pad that fits no operand of its
-    load's shape is refused with [Shape_mismatch].
+    [Wrong_dtype]. [map] computes a program whose nodes, evaluated in the
+    program's order, hold at most 256 values at once, a value held from the
+    node that computes it through the last node that reads it, or to the end
+    for an output; it answers [Declined] for the others. A padded load is
+    first copied padded into host memory, which the call holds until it
+    returns; a pad that fits no operand of its load's shape is refused with
+    [Shape_mismatch].
 
     [contract] computes contractions in [float32], [float64], [complex64],
     [complex128] or an integer of 8 to 64 bits whose [dst] has their [acc]'s

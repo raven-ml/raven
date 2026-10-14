@@ -5,11 +5,11 @@
 
 /* Maps: a scalar program run over blocks.
 
-   A map's loop operands are its outputs, written, then its loads, then one
-   coordinate per axis its Coord nodes read: an int64 operand of no buffer
-   that steps one along that axis and none along the others, so that
-   coalescing keeps the axes it needs and its position at an index is the
-   index along its axis. The loop is walked in blocks. Per block, plane by
+   A map's loop operands are its outputs, written, then its loads, then,
+   where its Coord nodes read it, the index: an int64 operand of no
+   buffer, C-contiguous over the loop's shape, whose position at an index
+   is that index's place in C order, from which each coordinate is
+   divided out. The loop is walked in blocks. Per block, plane by
    plane, each node runs in order over values held in slots of an arena on
    the stack, through the target table's rows, as apply.c's kinds do:
 
@@ -20,7 +20,7 @@
    - a load identical to an output is staged, since a node may write the
      output first, and so is any other load: into its slot;
    - a constant is read in place with a step of 0;
-   - a coordinate fills its slot with its positions;
+   - a coordinate fills its slot from the index's positions;
    - Copy, a Cast into the operand's own dtype and a Bitcast between byte
      wide dtypes read their operand's value, a Bitcast between sub-byte
      ones its codes;
@@ -39,9 +39,8 @@
    arena is cut into one slot per value held at once, and TEMPS more where
    a node casts or holds a dtype other than its carrier, so that the more
    values a program holds, the fewer elements a block has. A
-   program that holds more than HELD values at once, or needs more
-   operands than a loop holds, is declined: its caller runs the nodes one
-   by one.
+   program that holds more than HELD values at once is declined: its
+   caller runs the nodes one by one.
 
    A padded load is first copied padded into C-heap memory (assemble.c),
    which the call holds until it returns, and read from there as a plain
@@ -103,7 +102,7 @@ typedef struct {
   int slot;   /* its slot, or -1 for a value read elsewhere */
   int alias;  /* the node whose value it is, itself no alias, or -1 */
   int last;   /* the last node that reads its value; an output's is past all */
-  int k;      /* In and Coord: its loop operand */
+  int k;      /* In: its loop operand */
   int out;    /* the output it is written into in place, or -1 */
   void *f;    /* a kind's row */
   uint8_t bits[16]; /* Const: its element, held */
@@ -112,6 +111,9 @@ typedef struct {
 typedef struct {
   const nx_array *a;
   int n, nouts, nnodes;
+  int index; /* the index's loop operand, or -1 */
+  /* The loop's extents, and the product of those past each axis. */
+  int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
   const step *s;
   int32_t outs[NX_MAX_OPERANDS];
   int nheld; /* the values held at once: their slots come first */
@@ -250,6 +252,41 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
   return (view){t, 1, p->n0 * width(c)};
 }
 
+/* Fills [v] with each element's index along axis [a] of plane [p]: from
+   the index's position q at the element, (q / inner) % extent. Along a
+   row q steps by s0, a product of the extents past some axis as inner is,
+   so one divides the other: the coordinate steps by s0 / inner each
+   element, wrapping at the extent, or holds for runs of inner / s0. Each
+   run, and each stretch between wraps, is a loop of its own, which
+   vectorises. */
+static void coords(const prog *j, const nx_cpu_block *p, int a, int64_t *v) {
+  int k = j->index;
+  int64_t inner = j->inner[a], extent = j->extent[a], s0 = p->s0[k];
+  int64_t n0 = p->n0;
+  for (int64_t r = 0; r < p->n1; r++) {
+    int64_t q = p->at[k] + r * p->s1[k], c = q / inner % extent;
+    int64_t *row = v + r * n0;
+    if (s0 >= inner) {
+      int64_t m = s0 / inner % extent;
+      for (int64_t e = 0; e < n0;) {
+        int64_t span = m == 0 ? n0 - e : (extent - c + m - 1) / m;
+        if (span > n0 - e) span = n0 - e;
+        for (int64_t i = 0; i < span; i++) row[e + i] = c + i * m;
+        e += span;
+        c += span * m - extent;
+      }
+      continue;
+    }
+    int64_t run = inner / s0;
+    for (int64_t e = 0, left = run - q % inner / s0; e < n0; left = run) {
+      int64_t span = left < n0 - e ? left : n0 - e;
+      for (int64_t i = 0; i < span; i++) row[e + i] = c;
+      e += span;
+      if (++c == extent) c = 0;
+    }
+  }
+}
+
 /* Runs node [i] over plane [f] into its slot. */
 static void run(const prog *j, const plane *f, int i) {
   const step *s = &j->s[i];
@@ -272,10 +309,7 @@ static void run(const prog *j, const plane *f, int i) {
     return;
   }
   if (s->tag == NX_NODE_COORD) {
-    int64_t *v = (int64_t *)d, at = p->at[s->k];
-    int64_t s0 = p->s0[s->k], s1 = p->s1[s->k];
-    for (int64_t r = 0; r < n1; r++)
-      for (int64_t e = 0; e < n0; e++) v[r * n0 + e] = at + r * s1 + e * s0;
+    coords(j, p, s->x[0], (int64_t *)d);
     return;
   }
   if (s->tag == NX_NODE_OP1 && s->kind == NX_OP1_BITCAST) {
@@ -416,15 +450,13 @@ static void const_of(step *s) {
 }
 
 /* Fills the steps [s], copied from a program of [nn] nodes and outputs
-   [outs], whose loop of rank [rank] has [n] operands before its
-   coordinates, and answers NX_OK, NX_SHAPE for a coordinate past the rank,
-   or NX_DECLINED; on NX_OK [n] counts the coordinates too, [axis] gives
-   each one's axis and [slots] counts the values held at once. */
+   [outs] over a loop of rank [rank], and answers NX_OK, NX_SHAPE for a
+   coordinate past the rank, or NX_DECLINED; on NX_OK [index] says whether
+   a coordinate reads the index and [slots] counts the values held at
+   once. */
 static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
-                  int *n, int *axis, int *slots) {
-  int base = *n;
-  int coord[NX_MAX_RANK];
-  for (int i = 0; i < NX_MAX_RANK; i++) coord[i] = -1;
+                  int *index, int *slots) {
+  *index = 0;
   for (int i = 0; i < nn; i++) {
     step *t = &s[i];
     t->arity = 0;
@@ -436,12 +468,7 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
       case NX_NODE_IN: t->k = nouts + a; break;
       case NX_NODE_COORD:
         if (a >= rank) return NX_SHAPE;
-        if (coord[a] < 0) {
-          if (*n == NX_MAX_OPERANDS) return NX_DECLINED;
-          axis[*n - base] = a;
-          coord[a] = (*n)++;
-        }
-        t->k = coord[a];
+        *index = 1;
         break;
       case NX_NODE_CONST: const_of(t); break;
       case NX_NODE_OP1: {
@@ -508,13 +535,16 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
 
 /* The entry */
 
-/* The coordinate along axis [i] of a loop over [a]'s shape: a descriptor
-   coalescing reads, of no buffer. */
-static nx_array coordinate(const nx_array *a, int i) {
+/* The index of a loop over [a]'s shape, C-contiguous: a descriptor
+   coalescing reads, of no buffer. Fills [extent] and [inner], the
+   product of the extents past each axis. */
+static nx_array index_of(const nx_array *a, int64_t *extent, int64_t *inner) {
   nx_array c = {.dtype = NX_INT64, .bits = 64, .rank = a->rank};
-  for (int d = 0; d < a->rank; d++) {
-    c.dim[d] = a->dim[d];
-    c.dim[a->rank + d] = d == i;
+  int64_t past = 1;
+  for (int d = a->rank - 1; d >= 0; d--) {
+    extent[d] = c.dim[d] = a->dim[d];
+    inner[d] = c.dim[a->rank + d] = past;
+    past *= a->dim[d];
   }
   return c;
 }
@@ -552,12 +582,15 @@ static int widest(const step *s, int nn) {
    [outs], over the [n] operands [a] the door read, its outputs first. */
 static int run_map(step *s, int nn, int nouts, const int32_t *outs,
                    nx_array *a, int n) {
-  int loop = n, slots, e;
-  int axis[NX_MAX_OPERANDS];
-  if ((e = decode(s, nn, nouts, outs, a[0].rank, &loop, axis, &slots)))
-    return e;
-  for (int k = n; k < loop; k++) a[k] = coordinate(&a[0], axis[k - n]);
-  prog j = {a, loop, nouts, nn, s, {0}, slots, temps(s, nn), widest(s, nn)};
+  int index, slots, e;
+  if ((e = decode(s, nn, nouts, outs, a[0].rank, &index, &slots))) return e;
+  prog j = {.a = a, .n = n, .nouts = nouts, .nnodes = nn, .index = -1,
+            .s = s, .nheld = slots, .temps = temps(s, nn),
+            .w = widest(s, nn)};
+  if (index) {
+    a[n] = index_of(&a[0], j.extent, j.inner);
+    j.index = j.n++;
+  }
   memcpy(j.outs, outs, sizeof(int32_t) * (size_t)nouts);
   /* A program of constants alone holds nothing in the arena: its blocks
      take SLOT bytes, as one of few slots does. */
@@ -565,8 +598,8 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   int64_t bytes = held > 0 ? ARENA / held / LINE * LINE : SLOT;
   if (bytes > SLOT) bytes = SLOT;
   nx_loop l;
-  if (!(e = nx_coalesce(loop, a, &l)))
-    nx_cpu_walk(loop, a, &l, bytes / j.w, kinds(s, nn), block, &j);
+  if (!(e = nx_coalesce(j.n, a, &l)))
+    nx_cpu_walk(j.n, a, &l, bytes / j.w, kinds(s, nn), block, &j);
   return e;
 }
 
@@ -680,7 +713,9 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
   int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_ARITY));
-  if (n > NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
+  /* Prog.v holds a program to one operand fewer than a loop: room for
+     the index. */
+  if (n >= NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_ARITY));
   paddings p;
   if ((e = paddings_of(vloads, vpads, nins, &p))) CAMLreturn(Val_int(e));
   step local[STEPS], *s = local;

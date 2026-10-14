@@ -1633,6 +1633,37 @@ let law_map_split ?declines ?(labels = true) ?length (b : Support.backend)
             (Iarray.to_array p.outs)
       | r -> failf "map answered %a" Nx_array_support.pp_answer r)
 
+(* A program of as many loads and outputs as a program has, reading the
+   coordinate along every axis, as its nodes run one by one. *)
+let law_map_full (b : Support.backend) (Case x) =
+  let module K = (val b.kernels) in
+  let shape = L.shape (A.layout x) in
+  let rank = Array.length shape and nins = P.max_operands - 1 in
+  let i64 = D.Any D.Int64 in
+  let coord a = [ P.Coord a; P.Op2 (Binary Add, nins + (2 * a), nins + (2 * a) + 1) ] in
+  let nodes =
+    List.init nins (fun k -> P.In k)
+    @ (P.Op1 (Cast, i64, 0) :: List.concat_map coord (List.init rank Fun.id))
+  in
+  let p =
+    P.v
+      ~ins:(Iarray.init nins (fun _ -> D.Any (A.dtype x)))
+      (Iarray.of_list nodes)
+      ~outs:[| List.length nodes - 1 |]
+  in
+  let types = Array.init (List.length nodes) (P.dtype p) in
+  let x = on b x in
+  let ops = Array.make nins (A.Any x) in
+  cover "coordinates" (rank > 0);
+  match split b p types shape ops with
+  | exception Skip -> fail "a node declined"
+  | values ->
+      let dst = A.create b.device D.Int64 shape in
+      equal ~msg:"map" answer A.Done
+        (K.map p ~dsts:[| A.Any dst |] (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops));
+      let (A.Any want) = values.(List.length nodes - 1) in
+      equal (array int) (bits_of (host want)) (bits_of (host dst))
+
 (* In place *)
 
 (* [k dst a] into a fresh destination, then into [a] itself as a C-contiguous
@@ -1935,6 +1966,10 @@ let cpu =
               law_map_split ~length:400 ~labels:false
                 ~declines:(fun p _ -> held p > most_held)
                 b c));
+      prop
+        (strf "%s computes a map of every operand with coordinates" b.name)
+        case
+        (fun c -> b.around (fun () -> law_map_full b c));
       prop ~count:32
         (strf "%s computes maps over large views" b.name)
         (Gen.pair large_pairs Gen.int)

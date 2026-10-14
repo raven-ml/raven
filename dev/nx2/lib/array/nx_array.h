@@ -45,7 +45,9 @@
 #include "nx_dtype.h"
 
 #define NX_MAX_RANK 32
-#define NX_MAX_OPERANDS 16
+/* The most operands of a loop: a program's sixteen, Prog.max_operands,
+   and the index a map adds. */
+#define NX_MAX_OPERANDS 17
 
 /* A layout's flags, computed when it is made. */
 enum {

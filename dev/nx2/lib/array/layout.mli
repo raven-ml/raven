@@ -113,7 +113,7 @@ val coalesce : t array -> t array
     at least one axis.
 
     Raises [Invalid_argument] unless [ls] has 1 to 16 layouts, the most
-    operands a kernel of this library takes, all of one shape. *)
+    operands and outputs of a program, all of one shape. *)
 
 (** {1:eq Equality} *)
 
