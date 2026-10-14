@@ -710,6 +710,51 @@ let row_scatters = Gen.with_pp pp_scatter row_scatters
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
 
+(* Guard pages *)
+
+let covers_views ~after views =
+  cover "a stepped operand at the page before"
+    ((not after) && List.exists (String.ends_with ~suffix:"stepped") views);
+  cover "a reversed operand at the page after"
+    (after && List.exists (String.ends_with ~suffix:"reversed") views);
+  cover "broadcast positions" (List.mem "idx broadcast" views)
+
+(* The same result with the operand and positions, through their views, and
+   the destination against an inaccessible page. *)
+let law_gather_guards (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  let r = Array.length (shape_of c.x) in
+  cover "along the innermost axis" (c.axis = r - 1);
+  cover "along an outer axis" (c.axis < r - 1);
+  covers_views ~after:(side = Support.After) c.gviews;
+  let call xs ds =
+    let (A.Any x) = xs.(1) in
+    let dst = A.expect (A.dtype x) ds.(0) in
+    K.gather ~axis:c.axis ~dst (A.expect D.Int64 xs.(0)) x
+  in
+  equal answer A.Done
+    (same_guarded side ~call [| c.idx; c.x |]
+       [| (dtype_of c.x, shape_of c.idx) |])
+
+let law_scatter_guards (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  let r = Array.length (shape_of c.into) in
+  cover (combine_name c.combine) true;
+  cover "along the innermost axis" (c.saxis = r - 1);
+  cover "along an outer axis" (c.saxis < r - 1);
+  covers_views ~after:(side = Support.After) c.sviews;
+  let call xs ds =
+    let (A.Any into) = xs.(0) in
+    let dst = A.expect (A.dtype into) ds.(0) in
+    let idx = A.expect D.Int64 xs.(1) in
+    let updates = A.expect (A.dtype into) xs.(2) in
+    K.scatter c.combine ~unique:false ~axis:c.saxis ~dst ~into idx updates
+  in
+  equal answer A.Done
+    (same_guarded side ~call
+       [| c.into; c.sidx; c.updates |]
+       [| (dtype_of c.into, shape_of c.into) |])
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -762,6 +807,16 @@ let cpu (b : Support.backend) =
         (run (law_scatter_refuses b));
       test "refuses shapes that do not fit and an Add of booleans" (fun () ->
           b.around (test_refusals b));
+      prop ~count:300
+        "a gather reads and writes no byte past its operands and dst, \
+         whatever pages lie beside them"
+        (Gen.pair (gather_gen ~shapes:tail_shapes ()) sides)
+        (run (law_gather_guards b));
+      prop ~count:300
+        "a scatter reads and writes no byte past its operands and dst, \
+         whatever pages lie beside them"
+        (Gen.pair (scatter_gen ~shapes:tail_shapes ()) sides)
+        (run (law_scatter_guards b));
     ]
 
 let () =
