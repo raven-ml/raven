@@ -218,15 +218,23 @@ let alloc g (kind : Rig_edge.memory) n =
   | Ok None -> None
   | Error why -> raise (Amd.Fault why)
 
-let map_host g a n =
-  match protect g (fun () -> Memory.map_host g.memory a n) with
+(* A mapping's [Error] is the GPU's refusal of the memory, such as pages the
+   machine does not pin or another GPU's memory this one does not reach,
+   unless the GPU's function [fn] can no longer be reached: that is the
+   path's failure, a fault. *)
+let mapped fn = function
   | Ok (Some r) -> Some (memory r)
-  | Ok None | Error _ -> None
+  | Ok None -> None
+  | Error _ -> (
+      match Rig_pci.Function.failed fn with
+      | Some why -> raise (Amd.Fault why)
+      | None -> None)
 
-let map_peer g (m : Memory.region Amd.memory) =
-  match protect g (fun () -> Memory.map_peer g.memory m.data) with
-  | Ok (Some r) -> Some (memory r)
-  | Ok None | Error _ -> None
+let map_host g fn a n =
+  mapped fn (protect g (fun () -> Memory.map_host g.memory a n))
+
+let map_peer g fn (m : Memory.region Amd.memory) =
+  mapped fn (protect g (fun () -> Memory.map_peer g.memory m.data))
 
 let free g (m : Memory.region Amd.memory) =
   protect g (fun () -> Memory.free g.memory m.data)
@@ -275,9 +283,9 @@ let path g h fn ~index : Memory.region Amd.path =
     map_host =
       (match Rig_pci.Function.addressing fn with
       | Machine.Physical -> None
-      | Iommu -> Some (fun a n -> guard (fun () -> map_host mem a n)));
+      | Iommu -> Some (fun a n -> guard (fun () -> map_host mem fn a n)));
     reaches = reaches on ~index;
-    map_peer = (fun m -> guard (fun () -> map_peer mem m));
+    map_peer = (fun m -> guard (fun () -> map_peer mem fn m));
     free = (fun m -> guard (fun () -> free mem m));
     queue =
       (fun kind ~ring ~bytes ~read ~write ->

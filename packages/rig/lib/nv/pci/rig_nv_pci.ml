@@ -202,15 +202,23 @@ let alloc g (kind : Rig_edge.memory) n =
   | Ok None -> None
   | Error why -> raise (Rig_nv.Fault why)
 
-let map_host g a n =
-  match protect g (fun () -> Memory.map_host g.memory a n) with
+(* A mapping's [Error] is the GPU's refusal of the memory, such as pages the
+   machine does not pin or another GPU's memory this one does not reach,
+   unless the GPU's function can no longer be reached: that is the path's
+   failure, a fault. *)
+let mapped g = function
   | Ok (Some r) -> Some (memory g r)
-  | Ok None | Error _ -> None
+  | Ok None -> None
+  | Error _ -> (
+      match Function.failed g.fn with
+      | Some why -> raise (Rig_nv.Fault why)
+      | None -> None)
+
+let map_host g a n =
+  mapped g (protect g (fun () -> Memory.map_host g.memory a n))
 
 let map_peer g (m : Memory.region Rig_nv.memory) =
-  match protect g (fun () -> Memory.map_peer g.memory m.data) with
-  | Ok (Some r) -> Some (memory g r)
-  | Ok None | Error _ -> None
+  mapped g (protect g (fun () -> Memory.map_peer g.memory m.data))
 
 let free g (m : Memory.region Rig_nv.memory) =
   protect g @@ fun () ->

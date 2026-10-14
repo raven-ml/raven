@@ -44,8 +44,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - a peer view of a stopped driver-less NV GPU can crash: the stop unmaps
   the BAR windows another GPU's flush entry or view still reads
-- AMD's and NV's PCI paths turn every `map_host`/`map_peer` error into
-  `None` (rig_amd_pci.ml:221, rig_nv_pci.ml:205): pass a fault on as a fault
 - exceptions: amdgpu's and NV's tables must still serve stop, free and
   unload after an exception
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
