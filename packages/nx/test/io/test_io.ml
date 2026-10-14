@@ -719,29 +719,6 @@ let loads_gguf_tensors (g : Gguf.t) =
         (Gguf.info name g))
     gguf_tensors
 
-(* The GGUF files in the caches of the Hugging Face hub and llama.cpp. *)
-let cached_gguf () =
-  let home = Option.value (Sys.getenv_opt "HOME") ~default:"" in
-  let dirs =
-    List.map (Filename.concat home)
-      [
-        ".cache/huggingface/hub"; ".cache/llama.cpp"; "Library/Caches/llama.cpp";
-      ]
-  in
-  let rec find dir =
-    match Sys.readdir dir with
-    | exception Sys_error _ -> None
-    | names ->
-        Array.sort compare names;
-        Array.to_seq names
-        |> Seq.find_map (fun name ->
-            let path = Filename.concat dir name in
-            if Filename.check_suffix name ".gguf" then Some path
-            else if Sys.is_directory path then find path
-            else None)
-  in
-  List.find_map find dirs
-
 let gguf_group =
   let disk = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   let off_disk (g : Gguf.t) =
@@ -830,28 +807,6 @@ let gguf_group =
          (fun (_, path) ->
            let path = path () in
            fails ~naming:path (fun () -> Nx_io.load_gguf path)));
-      test "a file in the model caches loads" (fun () ->
-          match cached_gguf () with
-          | None -> skip ~reason:"no GGUF file in the model caches" ()
-          | Some path ->
-              let g = Nx_io.load_gguf path in
-              (match
-                 List.assoc_opt "general.architecture" (Gguf.metadata g)
-               with
-              | Some (String _) -> ()
-              | v ->
-                  failf "general.architecture is %a"
-                    (Format.pp_print_option pp_value)
-                    v);
-              equal ~msg:"off the disk" (list string) [] (off_disk g);
-              List.iter
-                (fun (name, Nx.P t) ->
-                  let i = Gguf.info name g in
-                  let n = Array.length i.shape in
-                  equal ~msg:name (array int)
-                    (Array.sub i.shape 0 (n - 1))
-                    (Array.sub (Nx.shape t) 0 (n - 1)))
-                (listed (Gguf.tensors g)));
     ]
 
 (* Text *)

@@ -266,8 +266,6 @@ raven / llama.cpp (Vulkan; ROCm):
   errors 6e-7 at n=16, 9e-9 at n=32
 - `truncated_normal` loses accuracy in the tails (float64 2.5e-11, float32
   1.5e-2 at 5σ): an erfc-based tail inversion
-- nx.io's GGUF test loads the first `.gguf` under `$HOME` in runtest:
-  delete it, or move it outside runtest saying why
 - nx.wide's `chunk_levels` was tuned when each chunk compiled two kernels:
   time `compile/wide/sum-1e6` at 2-5 levels
 - `betaincinv`, once tolk compiles long programs (~20-25k ops)
