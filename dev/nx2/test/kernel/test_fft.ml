@@ -495,8 +495,41 @@ let law_bound c =
   in
   at_most float_exact ~than:bound err
 
+let specials = [| Float.nan; Float.infinity; Float.neg_infinity |]
+
+(* Cases whose operand holds, half the time, NaNs and infinities at up to three
+   drawn points. *)
+let special_gen =
+  let open Gen in
+  with_pp pp_case
+  @@ let* c = case_gen in
+     let* count = frequency [ (1, constant 0); (1, int_range 1 3) ] in
+     let+ seed = int in
+     let n = Array.length c.xs in
+     if n = 0 then c
+     else begin
+       let rs = Random.State.make [| seed |] and xs = Array.copy c.xs in
+       for _ = 1 to count do
+         let x = specials.(Random.State.int rs 3) in
+         let j = Random.State.int rs n in
+         xs.(j) <-
+           (if c.kind <> R2c && Random.State.bool rs then
+              { (xs.(j)) with im = x }
+            else { (xs.(j)) with re = x })
+       done;
+       { c with xs }
+     end
+
+(* A result's parts as bits, every NaN as one: nx_cpu.mli leaves a NaN's sign
+   and payload unspecified, and fixes the rest. *)
+let bits_of y =
+  let bits x =
+    if Float.is_nan x then 0x7ff8000000000000L else Int64.bits_of_float x
+  in
+  Array.map (fun (z : Complex.t) -> (bits z.re, bits z.im)) (complexes y)
+
 (* The same bits through every view, on one thread as on the job's, in place,
-   and for each line transformed alone. *)
+   and for each line transformed alone, NaNs and infinities included. *)
 let law_bits c =
   let lanes = if c.wide then 4 else 8 in
   let last = c.axes.(Array.length c.axes - 1) in
@@ -510,12 +543,18 @@ let law_bits c =
     (rows8 ~wide:c.wide (complex_points c last)
     && last < r - 1
     && c.shape.(r - 1) >= lanes);
+  cover "a NaN or an infinity among the points"
+    (Array.exists
+       (fun (z : Complex.t) ->
+         not (Float.is_finite z.re && Float.is_finite z.im))
+       c.xs);
   let x = operand c in
   let plain = { c with view = plain r; xs = complexes x } in
   let px = operand plain in
-  let want = elements (run plain px) in
-  equal (array string) want (elements (run c x));
-  equal (array string) want (elements (run ~threads:1 plain px));
+  let bits = array (pair int64 int64) in
+  let want = bits_of (run plain px) in
+  equal bits want (bits_of (run c x));
+  equal bits want (bits_of (run ~threads:1 plain px));
   (match c.kind with
   | C2c d ->
       let (A.Any y) = px in
@@ -532,12 +571,12 @@ let law_bits c =
             A.Any y
         | _ -> invalid_arg "law_bits"
       in
-      equal (array string) want (elements got)
+      equal bits want (bits_of got)
   | R2c | C2r _ -> ());
   (* Each line along a single axis, alone: its bits in the batch's. *)
   let s = snd (result c) in
   if Array.length c.axes = 1 && total s > 0 then begin
-    let ys = complexes (run plain px) in
+    let ys = bits_of (run plain px) in
     let lines = total s / s.(last) in
     List.iter
       (fun l ->
@@ -558,14 +597,8 @@ let law_bits c =
             xs = Array.init c.shape.(last) (fun j -> plain.xs.(at j c.shape));
           }
         in
-        let got = complexes (run alone (operand alone)) in
-        let want = Array.init s.(last) (fun j -> ys.(at j s)) in
-        let bits (z : Complex.t) =
-          (Int64.bits_of_float z.re, Int64.bits_of_float z.im)
-        in
-        equal
-          (array (pair int64 int64))
-          (Array.map bits want) (Array.map bits got))
+        let got = bits_of (run alone (operand alone)) in
+        equal bits (Array.init s.(last) (fun j -> ys.(at j s))) got)
       (List.sort_uniq compare [ 0; lines - 1 ])
   end
 
@@ -766,7 +799,7 @@ let laws (b : Support.backend) =
   group ("nx.cpu " ^ b.name)
     [
       prop "transforms are within nx_cpu.mli's bound" case_gen (run law_bound);
-      prop "bits do not depend on views, threads, place or batch" case_gen
+      prop "bits do not depend on views, threads, place or batch" special_gen
         (run law_bits);
     ]
 
