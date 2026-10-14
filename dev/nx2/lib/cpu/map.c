@@ -40,8 +40,8 @@
    a node casts or holds a dtype other than its carrier, so that the more
    values a program holds, the fewer elements a block has, down to LEAST.
    An arena of more than ARENA bytes, as a program of many values of a
-   wide dtype needs, comes from the thread's kept scratch (job.c) in place
-   of the stack.
+   wide dtype needs, comes from the heap in place of the stack, once per
+   block the walk runs at a time: a block puts it back for the next.
 
    A padded load is first copied padded into C-heap memory (assemble.c),
    which the call holds until it returns, and read from there as a plain
@@ -115,7 +115,7 @@ typedef struct {
   const nx_array *a;
   int n, nouts, nnodes;
   int index; /* the index's loop operand, or -1 */
-  int *failed; /* set where a block's arena cannot be had */
+  struct heap *heap; /* the arenas past ARENA bytes */
   /* The loop's extents, and the product of those past each axis. */
   int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
   const step *s;
@@ -400,19 +400,47 @@ static void store(const prog *j, const plane *f, int o) {
   nx_cpu_unstage(a, p, o, v.p, v.s1, h);
 }
 
+/* Arenas on the heap, of [bytes] each, which a walk's blocks share: a
+   block takes a spare one or allocates one, and puts it back, so a walk
+   allocates as many as it runs blocks at once; past SPARES spares, an
+   arena given back is freed. [failed] is set where one cannot be had. */
+#define SPARES 64
+
+struct heap {
+  int64_t bytes;
+  void *spare[SPARES];
+  int failed;
+};
+
+static void *arena_take(struct heap *h) {
+  for (int i = 0; i < SPARES; i++) {
+    void *p = __atomic_exchange_n(&h->spare[i], NULL, __ATOMIC_ACQ_REL);
+    if (p != NULL) return p;
+  }
+  void *p = malloc((size_t)h->bytes);
+  if (p == NULL) __atomic_store_n(&h->failed, 1, __ATOMIC_RELAXED);
+  return p;
+}
+
+static void arena_give(struct heap *h, void *p) {
+  for (int i = 0; i < SPARES; i++) {
+    void *none = NULL;
+    if (__atomic_compare_exchange_n(&h->spare[i], &none, p, 0,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+      return;
+  }
+  free(p);
+}
+
 static void block(const nx_cpu_block *b, void *ctx) {
   const prog *j = ctx;
   /* The arena, as long as the block needs, on a cache line: on the stack
-     up to ARENA bytes, else from the kept scratch, whose buffers start on
-     one. */
+     up to ARENA bytes, else from the heap. */
   int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) / LINE * LINE;
   int64_t size = (j->nheld + j->temps) * bytes + LINE;
   uint8_t stack[size <= ARENA + LINE ? size : 1];
-  uint8_t *room = size <= ARENA + LINE ? stack : nx_cpu_take(size);
-  if (room == NULL) {
-    __atomic_store_n(j->failed, 1, __ATOMIC_RELAXED);
-    return;
-  }
+  uint8_t *room = size <= ARENA + LINE ? stack : arena_take(j->heap);
+  if (room == NULL) return;
   plane f = {*b, room + (LINE - (uintptr_t)room % LINE) % LINE, bytes};
   f.p.n2 = 1;
   /* A row of one element steps nowhere: every operand's is contiguous. */
@@ -424,7 +452,7 @@ static void block(const nx_cpu_block *b, void *ctx) {
       if (j->s[i].slot >= 0) run(j, &f, i);
     for (int o = 0; o < j->nouts; o++) store(j, &f, o);
   }
-  if (room != stack) nx_cpu_give(room);
+  if (room != stack) arena_give(j->heap, room);
 }
 
 /* Decoding */
@@ -597,10 +625,11 @@ static int widest(const step *s, int nn) {
    [outs], over the [n] operands [a] the door read, its outputs first. */
 static int run_map(step *s, int nn, int nouts, const int32_t *outs,
                    nx_array *a, int n) {
-  int index, slots, e, failed = 0;
+  int index, slots, e;
+  struct heap heap = {0};
   if ((e = decode(s, nn, nouts, outs, a[0].rank, &index, &slots))) return e;
   prog j = {.a = a, .n = n, .nouts = nouts, .nnodes = nn, .index = -1,
-            .failed = &failed, .s = s, .nheld = slots,
+            .heap = &heap, .s = s, .nheld = slots,
             .temps = temps(s, nn), .w = widest(s, nn)};
   if (index) {
     a[n] = index_of(&a[0], j.extent, j.inner);
@@ -613,10 +642,13 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   int64_t bytes = held > 0 ? ARENA / held / LINE * LINE : SLOT;
   if (bytes > SLOT) bytes = SLOT;
   if (bytes < LEAST * j.w) bytes = LEAST * j.w;
+  /* A block's arena takes at most its slots of [bytes] on a cache line. */
+  heap.bytes = held * ((bytes + LINE - 1) / LINE * LINE) + LINE;
   nx_loop l;
   if (!(e = nx_coalesce(j.n, a, &l)))
     nx_cpu_walk(j.n, a, &l, bytes / j.w, kinds(s, nn), block, &j);
-  return failed ? -1 : e;
+  for (int i = 0; i < SPARES; i++) free(heap.spare[i]);
+  return heap.failed ? -1 : e;
 }
 
 /* Copies the program [vp], a Prog.t, into the steps [s], one per node: its

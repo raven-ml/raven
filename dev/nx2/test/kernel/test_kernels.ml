@@ -2354,7 +2354,7 @@ let law_map_held ?(small = false) (b : Support.backend)
       cover "guarded" (side <> None);
       let numel = Array.fold_left ( * ) 1 shape in
       if small then cover "a few elements" (numel <= 4)
-      else cover "hundreds of elements" (numel >= 200);
+      else cover "a thousand elements or more" (numel >= 1000);
       match split b p types shape [| A.Any x |] with
       | exception Skip -> fail "a node declined"
       | values ->
@@ -2400,6 +2400,34 @@ let law_map_held ?(small = false) (b : Support.backend)
                     (array int) (bits_of (host want)) (bits_of (host got)))
                 (Iarray.to_array p.outs)))
 
+(* Arrays of a few hundred to two thousand elements through each view of
+   [large_at]: past a block's 16 elements, so a held program's walk runs
+   many blocks on the job's threads, its arena on the heap past 1040
+   values. *)
+let held_views =
+  Gen.with_pp pp_case
+    (let open Gen in
+     let* (D.Any dt) = dtypes in
+     let* h = of_list ~pp:Format.pp_print_int [ 17; 33 ] in
+     let* w = of_list ~pp:Format.pp_print_int [ 7; 65 ] in
+     let* view = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3 ] in
+     let+ seed = int in
+     large_at dt h w view seed)
+
+(* Arenas past the stack's at both ends of the widths: over a thousand
+   int8 values, and three hundred complex128 ones, each slot of 16
+   elements 256 bytes. *)
+let heap_arenas =
+  [
+    (large_at D.Int8 33 65 1 1, D.Any D.Int8, 1200, Never, None, 1);
+    ( large_at D.Complex128 33 65 2 2,
+      D.Any D.Complex128,
+      300,
+      Never,
+      Some Support.After,
+      2 );
+  ]
+
 let held_cases cases =
   let open Gen in
   let* c = cases in
@@ -2426,9 +2454,9 @@ let cpu =
         (strf "%s computes held programs of a few elements" b.name)
         (held_cases case)
         (fun c -> b.around (fun () -> law_map_held ~small:true b c));
-      prop ~count:12
-        (strf "%s computes held programs over large views" b.name)
-        (held_cases large)
+      prop ~count:12 ~examples:heap_arenas
+        (strf "%s computes held programs over views" b.name)
+        (held_cases held_views)
         (fun c -> b.around (fun () -> law_map_held b c));
       prop ~count:20
         (strf "%s computes a map of hundreds of values held at once" b.name)
