@@ -17,7 +17,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - llama.cpp b11344 Vulkan, b11342 ROCm; tinygrad needs Resizable BAR here
 
 - re-record both on rig: GptOss rows and first call on fudge (kimchi's CPU
-  and GPU; kimchi is retired) and nonnormal, llama.cpp at a stated build
+  and GPU; kimchi is retired) and an AMD host, llama.cpp at a stated build
 - the port's gates on rig: gpt-oss decode and first call, sofo/symo, rune's
   test_jit on CUDA, NV and AMD, the tolk, rune, nx and kaun decode benches
   against the pre-port main; remat memory over its bound on NV/AMD; jit
@@ -143,8 +143,9 @@ raven / llama.cpp (Vulkan; ROCm):
   Metal conformance must name a failing law
 - hardware runs: AMD over PCI since the exception and own-word changes;
   NV over PCI's open/close law and test_nv; the PCI clocks' stamp check;
-  VFIO behind an IOMMU (nonnormal needs VT-d); multi-GPU peers, mlx5, bnxt
-- baselines: one quiet window per machine (Mac, fudge, nonnormal) records
+  VFIO behind an IOMMU; multi-GPU peers, mlx5, bnxt. Every AMD run waits
+  for an AMD host (nonnormal is off limits)
+- baselines: one quiet window per machine (Mac, fudge) records
   every row in _plans/device-dev/owed-rows.md, then deletes it; the vendor
   comparison (bench/compare/run.py) on each machine, the Mac first
 
@@ -217,7 +218,7 @@ raven / llama.cpp (Vulkan; ROCm):
   kernel clang -O2 takes over 8 min on
 - host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
-  fudge and nonnormal
+  fudge
 - an expensive elementwise producer (sin/cos) recomputed in each consumer's
   kernel: jera root-newton-kepler-1k compiled 2.2 ms against eager 0.57
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
@@ -233,8 +234,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - a compiled `Nx.take` gradient costs the table times the tokens:
   `indexed/take-grad-1024-of-32768x64-host` takes 94 ms on the M1 (load 20)
   against ~2 ms eager. At 128256 rows a plain loop measured 17 ms and thumper
-  0.67-1.05 s, unexplained. The row has no baselines yet (Mac, fudge,
-  nonnormal)
+  0.67-1.05 s, unexplained. The row has no baselines yet (Mac, fudge)
 - `Total.collect` around a compiled function on a device without eager
   kernels raises `has no eager kernels` (total.ml:62,86)
 - jit compiles no complex tensor (lower.ml:36); ymir's `test_quantity`
