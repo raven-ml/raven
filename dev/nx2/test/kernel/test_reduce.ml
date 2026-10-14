@@ -1277,12 +1277,12 @@ let pp_moments ppf (c : moments) =
     (A.dtype x) L.pp (A.layout x)
     (String.concat ", " c.views)
 
-(* A ninth of the operands are one axis of more than 4096 terms, the law's
-   "long" case, which [shape_gen] alone draws too rarely for every run to
-   cover. Four ninths are tiles: 2 to 130 slices of 32, 33 or more terms,
-   scanned along the last axis, whose lanes the results hold a row apart,
-   or along the first through a transposed operand, whose lanes it holds a
-   row apart. *)
+(* A tenth of the operands are one axis of more than 4096 terms, the law's
+   "long" case, and a tenth slices of one term, its "one term" case, which
+   [shape_gen] alone draws too rarely for every run to cover. Four tenths
+   are tiles: 2 to 130 slices of 32, 33 or more terms, scanned along the
+   last axis, whose lanes the results hold a row apart, or along the first
+   through a transposed operand, whose lanes it holds a row apart. *)
 let moments_case =
   Gen.with_pp pp_moments
     (let open Gen in
@@ -1294,6 +1294,7 @@ let moments_case =
        (s, axis, false)
      in
      let long = map (fun n -> ([| n |], 0, false)) (int_range 4097 6000) in
+     let one = map (fun n -> ([| n; 1 |], 1, false)) (int_range 1 40) in
      let tiles =
        let* len =
          frequency
@@ -1310,7 +1311,9 @@ let moments_case =
        let+ last = bool in
        if last then ([| slices; len |], 1, false) else ([| len; slices |], 0, true)
      in
-     let* s, axis, transposed = frequency [ (4, any); (1, long); (4, tiles) ] in
+     let* s, axis, transposed =
+       frequency [ (4, any); (1, long); (1, one); (4, tiles) ]
+     in
      let* v = view_of (Array.length s) in
      let v = if transposed then { v with perm = [| 1; 0 |] } else v in
      let* specials =
