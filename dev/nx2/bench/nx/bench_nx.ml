@@ -280,6 +280,14 @@ let matmul_rows n =
       (gemm_direct ~contracting:[| (1, 0) |] a b [| n; n |]);
   ]
 
+(* Nx.dot of two matrices, the product Nx.matmul times beside it. *)
+let dot_rows =
+  let a = matrix D.Float32 [| 8; 8 |] and b = matrix D.Float32 [| 8; 8 |] in
+  [
+    Thumper.bench "dot-f32-8" (fun () ->
+        Nx.Repr.array (Nx.dot (Thumper.black_box a) b));
+  ]
+
 let rows_by_weight = Nx.Pattern.v "m k, n k -> m n | k"
 
 let decode_rows =
@@ -422,7 +430,7 @@ let dtype_rows =
 let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
-   @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows @ chain_rows
+   @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ decode_rows @ chain_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
