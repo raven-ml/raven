@@ -24,17 +24,6 @@ raven / llama.cpp (Vulkan; ROCm):
   replay's words on x86; the engine's wrong answers on Metal+host staged
   loops
 
-## needs a decision
-
-- rig.amd.pci: GC 9.5.0 gets a quiesced reset before reuse (never run, no
-  MI350); tinygrad keeps an override instead
-- talon plan problems print escaped inside `Invalid_argument`: accept it,
-  have quill print them raw, or give them an exception with a printer
-- munin.sys samples every 2 s (~16k events an hour; the guides said 15 s)
-- ymir.units spelling: `Vocabulary.spell` puts the power of ten on the
-  first word, so km/s/Mpc prints `mm pc-1 s-1`; state the rule in
-  ymir_units.mli
-
 ## rig
 
 ### semantics
@@ -72,6 +61,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4); `fail()` in rig_amd_ring.c can overrun an
   AQL segment by 4 bytes
+- rig.amd.pci: a dirty or faulted GC 9.5.0 that rig marked gets a partial
+  boot (queues stopped, compute engines soft-reset), as tinygrad does: a
+  mode 1 reset over its live state can stop its fabric until a power cycle
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
   terminal index outside [taken, posted] counts as none; poll and wait issue
   no firmware command; fix the leak when `Qp.make` refuses
@@ -164,6 +156,14 @@ raven / llama.cpp (Vulkan; ROCm):
 - a collected buffer's release allocates in the call that drains it; done
   when a drain allocates nothing and kaun's GPU decode rows measure
   allocation again (bench_decode.ml's gpu_metrics)
+- a host buffer reused from rig's cache still paces the major GC as new
+  memory: rig_heap.c heap_bigarray (~line 636) allocates every buffer of
+  64 KiB or more with `caml_alloc_custom`'s full size even when
+  `heap_take` reused it, so a loop of 8 MiB results advances the major GC
+  8 MiB a call. On fudge, nx's c2c-1M on 6 P-cores in bench_nx (~300 MB
+  heap) runs 1.48-1.59 ms ±20%, and 0.76-0.80 ms with OCAMLRUNPARAM=M=1000,
+  with no page fault a call. Pace a cache hit as no new memory, keeping
+  the full pacing for fresh allocations
 - a pool job's start and join on fudge's 6 P-cores: an empty job costs
   0.45 µs, and units run 20-40% slower than on one core (5% of it the
   frequency drop). That is most of nx's f32 64³ gap to MKL on 6 cores
@@ -319,6 +319,11 @@ raven / llama.cpp (Vulkan; ROCm):
   fences; the metrics table omits `sys/disk_*`; the latest-run test orders
   runs by a 10 ms sleep
 - quill's TUI suite tests a copy of quill_tui.ml, bypassing its .mli
+- quill prints an `Invalid_argument` or `Failure` message raw in a cell's
+  output; multi-line messages (talon's plan problems) arrive escaped
+- munin.sys samples every 15 s by default, as its guides say (2 s today,
+  16k events an hour); munin_sys.mli states which metrics are interval
+  means and which are instants
 
 ## ymir, sowilo
 
@@ -329,6 +334,9 @@ raven / llama.cpp (Vulkan; ROCm):
   time-dependent frames and ephemerides
 - sowilo: `threshold` and `canny` return `Nx.bool_t` and morphology takes a
   bool kernel
+- ymir.units: `Vocabulary.spell`'s doc states its rule (one prefix, on the
+  first word with a positive exponent, masses through `g`) and that a
+  caller who chose its words keeps its text; a property test holds it
 
 ## repo
 
