@@ -104,6 +104,13 @@ typedef void (*nx_cpu_lane_tile)(const void *a, int64_t a_k, const void *b,
                                  int64_t b_k, int64_t k, int64_t c,
                                  void *y);
 
+/* A gemv adds into each of the [m] contiguous accumulators y[i] the [k]
+   products of a's element at a + (i + p·lda)·w and x's [p]th, in
+   increasing p, each fused: y += A x for the m × k A whose columns lie
+   lda apart. */
+typedef void (*nx_cpu_gemv)(int64_t m, int64_t k, const void *a, int64_t lda,
+                            const void *x, void *y);
+
 /* A quads dot sets y[i·ldy + c], for each of 2 rows i of a, at a + i·lda,
    and 4 columns c of b, at b + c·ldb, to the sum of the products of the
    [n] words of the row and of the column: each word four elements of
@@ -316,7 +323,7 @@ typedef struct {
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
      the target has none. dot[acc], axpy[acc] and tile[acc] are lane
-     order's.
+     order's; gemv[dt] serves the factorisations' leaves (linalg.c).
      quads[d] contracts operands of the 8-bit dtype d into 32 bits in
      chain order, each element of a and b a 32-bit word of four of d along
      k, each product of words the sum of their four products (gemm.c,
@@ -333,6 +340,7 @@ typedef struct {
   nx_cpu_dot dot[NX_DTYPE_COUNT];
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   nx_cpu_lane_tile tile[NX_DTYPE_COUNT];
+  nx_cpu_gemv gemv[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
      (nx_prog.h's code) at dt, fma[dt] fma: NULL where the table declines
      (rows.c). */

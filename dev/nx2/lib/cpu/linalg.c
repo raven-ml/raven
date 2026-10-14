@@ -43,19 +43,35 @@
 
 #include "cpu.h"
 
-/* The most columns a recursive routine computes by scalar loops; the
-   columns of the blocks of reflectors eigh, svd and eig reduce and apply;
-   the columns of Cholesky's update panels; the least columns of a
-   triangular solve's units on the call's threads. */
+/* The most columns of a recursive routine's leaf; the columns of the
+   blocks of reflectors eigh, svd and eig reduce and apply; the columns of
+   Cholesky's update panels; the least columns of a triangular solve's
+   units on the call's threads, or rows of x ← x l⁻ᴴ's. */
 #define LEAF 24
 #define NB 32
 #define HERK 128
 #define SOLVE_COLUMNS 32
 
-/* The elements each row of QR's factored matrix takes past its n, so that
-   for a power-of-two n its rows lie no power of two apart: a block's
-   products read down its columns, and rows that far apart share one set
-   of the cache. */
+/* The columns of LU's blocks: LU_NB where a matrix holds LU_BLOCKS of
+   them, else half as many, so that a smaller matrix keeps blocks enough
+   for the lookahead to overlap; a tile of a step's update is at least a
+   block wide. On the i9-9900K's 16 threads, ABBA over 8 rounds, against
+   64 columns and tiles of at least 32: 32 columns took 0.77 of the time
+   of lu-f64-256 and 0.79 of lu-c128-256; at order 1024, tiles of at
+   least 64 took 0.90 (f64) and 0.84 (f32), where 32 columns took
+   1.03-1.17, 48 1.04-1.12, and 96 or 128 1.10-1.26. */
+#define LU_NB 64
+#define LU_BLOCKS 16
+
+/* The bytes of a vector of the base targets', SSE2's and NEON's: an LU
+   leaf's scan for its pivot compares that many at once. */
+#define VECTOR_BYTES 16
+
+/* The elements each row of QR's factored matrix takes past its n, and
+   each column of an LU leaf past its rows, so that for a power-of-two
+   length they lie no power of two apart: a block's products read down
+   QR's columns and across a leaf's, and lines that far apart share one
+   set of the cache. */
 #define PAD 8
 
 /* The columns of QR's blocks. On one core of the i9-9900K, blocks of 32,
@@ -204,27 +220,77 @@ static uint8_t *matrix_at(const call *c, int k, int64_t b) {
   return x->base + at * (x->bits / 8);
 }
 
-/* Copies matrix [b] of operand [k] into [d], rows [ld] apart, transposed
-   under [transposed]. */
-static void stage(const call *c, int k, int64_t b, void *d, int64_t ld,
-                  int transposed) {
-  const nx_array *x = &c->a[k];
-  int r = x->rank;
-  int64_t rows = x->dim[r - 2], cols = x->dim[r - 1];
+/* A stage: matrix [b] of operand [k] into [d], rows [ld] apart,
+   transposed under [transposed]. */
+typedef struct {
+  const call *c;
+  int k, transposed;
+  int64_t b, ld;
+  uint8_t *d;
+} staging;
+
+/* Rows [lo, hi) of the stage's destination. */
+static void stage_rows(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const staging *g = ctx;
+  const nx_array *x = &g->c->a[g->k];
+  int r = x->rank, w = x->bits / 8;
+  int64_t cols = x->dim[r - 1];
   int64_t sr = x->dim[2 * r - 2], sc = x->dim[2 * r - 1];
-  if (transposed) {
-    int64_t t = rows;
-    rows = cols;
-    cols = t;
-    t = sr;
+  if (g->transposed) {
+    int64_t t = sr;
+    cols = x->dim[r - 2];
     sr = sc;
     sc = t;
   }
-  nx_box box = {.extent = {1, rows, cols},
+  nx_box box = {.extent = {1, hi - lo, cols},
                 .first = {0, 0},
-                .step = {{0, ld, 1}, {0, sr, sc}}};
-  if (rows > 0 && cols > 0)
-    nx_copy_box(d, matrix_at(c, k, b), &box, x->bits);
+                .step = {{0, g->ld, 1}, {0, sr, sc}}};
+  if (hi > lo && cols > 0)
+    nx_copy_box(g->d + lo * g->ld * w,
+                matrix_at(g->c, g->k, g->b) + lo * sr * w, &box, x->bits);
+}
+
+/* The cost of a job (job.c) on [bytes] that computes [flops] in the
+   real dtype [rdt], [cplx] 1 for its complex numbers, whose flops are
+   four real ones each. A unit of the job runs on one thread: its larger
+   products run on the M1's matrix unit, which four cores share, at about
+   3.25 flops a byte in float32 and 0.81 in float64 a thread, and its
+   leaves on scalar loops. Flops are priced at the speed of the core's
+   vector kernel, which lies between, an estimate. */
+static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
+  return bytes + (cplx ? 4 : 1) * flops / nx_cpu_core_speed(rdt);
+}
+
+/* The cost of a job of [units] units on [bytes] that computes [flops],
+   as job_cost, where it takes the call's threads, else 0: where the
+   matrix has them in [s], there are units to share and the cost asks for
+   more than one thread. A matrix without them prices nothing. */
+static double threaded(const arena *s, int64_t units, int64_t bytes,
+                       double flops, int rdt, int cplx) {
+  if (s->workers == NULL || units < 2) return 0;
+  double cost = job_cost(bytes, flops, rdt, cplx);
+  return nx_cpu_threads(bytes, cost) > 1 ? cost : 0;
+}
+
+/* Copies matrix [b] of operand [k] into [d], rows [ld] apart, transposed
+   under [transposed]: by bands of rows on the call's threads where [s]
+   holds them, since a matrix the call factors alone is copied while the
+   threads wait. */
+static void stage(const call *c, int k, int64_t b, void *d, int64_t ld,
+                  int transposed, const arena *s) {
+  const nx_array *x = &c->a[k];
+  int r = x->rank;
+  int64_t rows = x->dim[r - 2 + (transposed != 0)];
+  int64_t bytes = rows * x->dim[r - 1 - (transposed != 0)] * (x->bits / 8);
+  staging g = {.c = c, .k = k, .transposed = transposed, .b = b, .ld = ld,
+               .d = d};
+  double cost = threaded(s, rows, 2 * bytes, 0, NX_FLOAT64, 0);
+  if (cost == 0) {
+    stage_rows(0, rows, 0, &g);
+    return;
+  }
+  nx_cpu_job(rows, 2 * bytes, cost, stage_rows, &g);
 }
 
 /* A matrix of host memory: element (i, j) at p + (i·rs + j·cs)·w, w its
@@ -274,28 +340,6 @@ static void nans(void *p, int64_t n, int dt) {
     for (int64_t i = 0; i < n; i++) ((double *)p)[i] = NAN;
 }
 
-/* The cost of a job (job.c) on [bytes] that computes [flops] in the
-   real dtype [rdt], [cplx] 1 for its complex numbers, whose flops are
-   four real ones each. A unit of the job runs on one thread: its larger
-   products run on the M1's matrix unit, which four cores share, at about
-   3.25 flops a byte in float32 and 0.81 in float64 a thread, and its
-   leaves on scalar loops. Flops are priced at the speed of the core's
-   vector kernel, which lies between, an estimate. */
-static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
-  return bytes + (cplx ? 4 : 1) * flops / nx_cpu_core_speed(rdt);
-}
-
-/* The cost of a job of [units] units on [bytes] that computes [flops],
-   as job_cost, where it takes the call's threads, else 0: where the
-   matrix has them in [s], there are units to share and the cost asks for
-   more than one thread. A matrix without them prices nothing. */
-static double threaded(const arena *s, int64_t units, int64_t bytes,
-                       double flops, int rdt, int cplx) {
-  if (s->workers == NULL || units < 2) return 0;
-  double cost = job_cost(bytes, flops, rdt, cplx);
-  return nx_cpu_threads(bytes, cost) > 1 ? cost : 0;
-}
-
 /* The routines, per dtype */
 
 #define CAT2(a, b) a##_##b
@@ -313,6 +357,7 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
 #define IMAG(x) ((R)0)
 #define SQRT sqrtf
 #define COPYSIGN copysignf
+#define WORD int32_t
 #include "linalg_body.h"
 
 #define T double
@@ -326,6 +371,7 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
 #define IMAG(x) ((R)0)
 #define SQRT sqrt
 #define COPYSIGN copysign
+#define WORD int64_t
 #include "linalg_body.h"
 
 #define T float complex
@@ -340,6 +386,7 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
 #define IMAG cimagf
 #define SQRT sqrtf
 #define COPYSIGN copysignf
+#define WORD int32_t
 #include "linalg_body.h"
 
 #define T double complex
@@ -354,6 +401,7 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
 #define IMAG cimag
 #define SQRT sqrt
 #define COPYSIGN copysign
+#define WORD int64_t
 #include "linalg_body.h"
 
 /* The job */

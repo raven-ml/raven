@@ -781,7 +781,10 @@ let assembly_rows =
 (* Factorisations and triangular solves. An operand is symmetric, values in
    [-1, 1] off its diagonal and n on it, so positive definite and well
    conditioned; a solve's triangle is its Cholesky factor; eig's operand
-   has the same values without the symmetry. The floors are the peak of
+   has the same values without the symmetry. A pivoting LU's operand has
+   values in [-1, 1] from a multiplicative hash of the position and no
+   large diagonal, so that its rows interchange: the operand's values
+   repeat every 251 rows, which would make it singular. The floors are the peak of
    fused multiply-adds at LAPACK's flop counts: n³/3 for Cholesky, 2n³/3
    for LU, 4n³/3 for QR and as many to form Q, 4n³/3 for eigh's reduction
    and 2n³ to apply it to the vectors, 8n³/3 for svd's bidiagonalisation
@@ -789,12 +792,17 @@ let assembly_rows =
    vectors (Golub and Van Loan), n² r for a solve, four real flops a
    complex one. *)
 
-let operand (type v s) ~symmetric (dt : (v, s) D.t) ~batch n : (v, s) A.t =
+let operand (type v s) ?(dominant = true) ~symmetric (dt : (v, s) D.t) ~batch n
+    : (v, s) A.t =
   let v i j = float_of_int ((((i * n) + j) * 7919 mod 251) - 125) /. 125. in
+  let hashed k =
+    float_of_int (((k * 0x9E3779B1) land 0xFFFFFFFF mod 2001) - 1000) /. 1000.
+  in
   let a =
     Array.init (n * n) (fun k ->
         let i = k / n and j = k mod n in
-        if i = j then float_of_int n
+        if not dominant then hashed k
+        else if i = j then float_of_int n
         else if symmetric then v (min i j) (max i j)
         else v i j)
   in
@@ -822,12 +830,14 @@ let linalg_rows =
     | D.Complex128 -> F.Fma (D.Any f64, 4 * n)
     | _ -> F.Fma (D.Any dt, n)
   in
-  let routine ?(symmetric = true) name call dt ?(batch = 1) n ~count =
+  let routine ?(symmetric = true) ?(dominant = true) name call dt ?(batch = 1)
+      n ~count =
     let name =
       if batch = 1 then strf "%s-%s-%d" name (short dt) n
       else strf "%s-%s-%dx%d" name (short dt) batch n
     in
-    let call k = call k (operand ~symmetric dt ~batch n) in
+    let name = if dominant then name else name ^ "-pivoting" in
+    let call k = call k (operand ~dominant ~symmetric dt ~batch n) in
     { bench = linalg name call; work = [ flops dt (batch * count) ] }
   in
   let cholesky dt ?batch n =
@@ -837,8 +847,8 @@ let linalg_rows =
         fun () -> K.cholesky Lower ~dst a)
       dt ?batch n ~count:(n * n * n / 3)
   in
-  let lu dt ?batch n =
-    routine "lu"
+  let lu ?(dominant = true) dt ?batch n =
+    routine ~symmetric:dominant ~dominant "lu"
       (fun (module K : Nx_kernel.S) a ->
         let y, p, q = Result.get_ok (Nx_kernel.Shape.lu (shape a)) in
         let lu = like a y and pivots = positions_of p and perm = positions_of q in
@@ -926,6 +936,7 @@ let linalg_rows =
     solve 1024 1024;
     lu f64 256;
     lu f64 1024;
+    lu ~dominant:false f64 1024;
     lu f32 1024;
     lu D.Complex128 256;
     lu f64 ~batch:16 32;

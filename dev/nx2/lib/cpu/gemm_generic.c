@@ -101,14 +101,30 @@
     }                                                                       \
   }
 
+/* Adds into each of the [m] elements of [y] the [k] products of a's
+   column p, [lda] apart, and [x]'s pth, in increasing p. */
+#define GEMV(name, T, FMA)                                                  \
+  static void name(int64_t m, int64_t k, const void *va, int64_t lda,       \
+                   const void *vx, void *vy) {                              \
+    const T *a = va, *x = vx;                                               \
+    T *y = vy;                                                              \
+    for (int64_t i = 0; i < m; i++) {                                       \
+      T s = y[i];                                                           \
+      for (int64_t p = 0; p < k; p++) s = FMA(a[i + p * lda], x[p], s);     \
+      y[i] = s;                                                             \
+    }                                                                       \
+  }
+
 KERNEL(kernel_f32, float, fmaf)
 DOT(dot_f32, float, fmaf)
 AXPY(axpy_f32, float, fmaf)
 TILE(tile_f32, float, fmaf)
+GEMV(gemv_f32, float, fmaf)
 KERNEL(kernel_f64, double, fma)
 DOT(dot_f64, double, fma)
 AXPY(axpy_f64, double, fma)
 TILE(tile_f64, double, fma)
+GEMV(gemv_f64, double, fma)
 
 /* z + x·y modulo the width of the [T] it is stored in: computed in an
    unsigned type no narrower than int, which C does not promote to int. */
@@ -150,6 +166,8 @@ static void set(nx_cpu_target *t) {
   t->axpy[NX_FLOAT64] = axpy_f64;
   t->tile[NX_FLOAT32] = tile_f32;
   t->tile[NX_FLOAT64] = tile_f64;
+  t->gemv[NX_FLOAT32] = gemv_f32;
+  t->gemv[NX_FLOAT64] = gemv_f64;
 }
 
 #if defined(NX_CPU_V3)

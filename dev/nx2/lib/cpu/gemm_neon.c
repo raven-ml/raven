@@ -263,6 +263,7 @@ DOT(dot4_f32, float, 4, 4, 4, fmaf)
 DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
 AXPY(axpy_f32, float, 4, fmaf)
 TILE(tile_f32, float, 4, fmaf)
+GEMV(gemv_f32, float, 4, fmaf)
 #undef VT
 #undef LOAD
 #undef STORE
@@ -280,6 +281,7 @@ DOT(dot2_f64, double, 2, 8, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 2, fma)
 TILE(tile_f64, double, 2, fma)
+GEMV(gemv_f64, double, 2, fma)
 
 /* The rows of a block of a, and those up to which a product streams b
    past all of a (cpu.h's mc and few). */
@@ -332,6 +334,8 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
   t->axpy[NX_FLOAT64] = axpy_f64;
   t->tile[NX_FLOAT32] = tile_f32;
   t->tile[NX_FLOAT64] = tile_f64;
+  t->gemv[NX_FLOAT32] = gemv_f32;
+  t->gemv[NX_FLOAT64] = gemv_f64;
   t->gemm[NX_INT8] = t->gemm[NX_UINT8] = integers(kernel_u8, 16);
   t->gemm[NX_INT16] = t->gemm[NX_UINT16] = integers(kernel_u16, 8);
   t->gemm[NX_INT32] = t->gemm[NX_UINT32] = integers(kernel_u32, 4);

@@ -1597,6 +1597,23 @@ let test_pivots (b : Support.backend) () =
       pivot ~msg:"|re| + |im|, not the modulus" dt [| c 3. 0.; c 2. 2. |] 1)
     D.[ Any Complex64; Any Complex128 ]
 
+(* A pivot whose reciprocal is subnormal, past 2^1022 in float64 and
+   2^126 in float32: the 2 × 1 matrix [p; x]'s L meets γ(2). *)
+let test_huge_pivot (b : Support.backend) () =
+  let lu dt p x =
+    let a = [| { Complex.re = p; im = 0. }; { Complex.re = x; im = 0. } |] in
+    match run b Lu [| of_values dt [| 2; 1 |] a |] with
+    | None -> ()
+    | Some y ->
+        let v = values y.(0) in
+        let u = v.(0).re and l = v.(1).re in
+        at_most ~msg:"|l u - x|" float_exact
+          ~than:(gamma dt 2 *. Float.abs (l *. u))
+          (Float.abs (Float.fma l u (-.x)))
+  in
+  lu D.(Any Float64) 0x1.8p1023 (-0x1.2000ce6d1d565p+1022);
+  lu D.(Any Float32) 0x1.8p127 (-0x1.2000cep+126)
+
 (* Failures and reads *)
 
 (* Matrix [m] of [v], [rows] × [cols] each. *)
@@ -2153,6 +2170,8 @@ let laws (b : Support.backend) =
         (run (law_solve_reads b));
       prop "bits do not depend on layouts" case (run (law_layouts b));
       test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
+      test "a pivot whose reciprocal is subnormal meets LU's bound" (fun () ->
+          b.around (test_huge_pivot b));
       test "eigh solves Reference-LAPACK issue 1166's secular equation"
         (fun () -> b.around (test_eigh_secular b));
       test "eig balances a graded matrix" (fun () ->

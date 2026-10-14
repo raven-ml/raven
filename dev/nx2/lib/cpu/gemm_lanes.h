@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Lane order's dot and axpy (cpu.h), written once over a target's vector
-   operations of W lanes.
+/* Lane order's dot, axpy and tile, and the factorisations' gemv
+   (cpu.h), written once over a target's vector operations of W lanes.
 
    A dot takes R rows of a against one column of b, each row's
    NX_CPU_LANES lanes in L vectors, lane q in vector q / W. A step of
@@ -34,11 +34,21 @@
    order are TILE's. On fudge a 4 × 64 × 64 float32 product's tiles took
    0.34 µs so, 0.51 by TILE; float64's 0.63 against 1.07.
 
+   A gemv holds GEMV_VECTORS vectors of y in accumulators while it adds
+   their k products, one chain a vector, enough chains in flight to cover
+   the fused multiply-add's latency; then one vector at a time, then the
+   last elements one at a time. It adds what k axpy calls would, in the
+   same order; its gain is y held in registers across the k columns,
+   where each axpy loads and stores it. On the i9-9900K's 16 threads, k
+   axpy calls in its place took 1.18 of lu-f64-256's time, 1.39 of
+   lu-f64-16x32's, 1.13 of cholesky-f64-256's, 1.27 of
+   cholesky-c128-256's and 1.16 of trsm-f64-256x16's.
+
    A target file defines VT (the vector type), LOAD, STORE, BCAST (one
    element into every lane), ADD and FMA (c + a·b, rounded once) before
    it includes this header, then instantiates DOT for its row counts, DOTS
-   over them, AXPY and TILE or TILE_PAIRS. gcc at -O2 vectorises none of
-   these loops written plainly. */
+   over them, AXPY, TILE or TILE_PAIRS, and GEMV. gcc at -O2 vectorises
+   none of these loops written plainly. */
 
 #ifndef NX_CPU_GEMM_LANES_H
 #define NX_CPU_GEMM_LANES_H
@@ -261,6 +271,42 @@
       PAIR_PASS(3, 7, 11, 15, pu3, pv3)                                  \
       STORE(y + j, TREE4(pu0, pu1, pu2, pu3));                           \
       STORE(y + jv, TREE4(pv0, pv1, pv2, pv3));                          \
+    }                                                                    \
+  }
+
+#define GEMV_VECTORS 8
+#define GEMV_EACH(F, W) \
+  F(0, W) F(1, W) F(2, W) F(3, W) F(4, W) F(5, W) F(6, W) F(7, W)
+#define GEMV_LOAD(v, W) VT y##v = LOAD(y + i + v * W);
+#define GEMV_ADD(v, W) y##v = FMA(y##v, LOAD(ap + v * W), xp);
+#define GEMV_STORE(v, W) STORE(y + i + v * W, y##v);
+
+/* [name], cpu.h's gemv, adding the last elements by [SFMA]. */
+#define GEMV(name, T, W, SFMA)                                           \
+  static void name(int64_t m, int64_t k, const void *va, int64_t lda,    \
+                   const void *vx, void *vy) {                           \
+    const T *a = va, *x = vx;                                            \
+    T *y = vy;                                                           \
+    int64_t i = 0;                                                       \
+    for (; i + GEMV_VECTORS * W <= m; i += GEMV_VECTORS * W) {           \
+      GEMV_EACH(GEMV_LOAD, W)                                            \
+      for (int64_t p = 0; p < k; p++) {                                  \
+        const T *ap = a + i + p * lda;                                   \
+        VT xp = BCAST(x[p]);                                             \
+        GEMV_EACH(GEMV_ADD, W)                                           \
+      }                                                                  \
+      GEMV_EACH(GEMV_STORE, W)                                           \
+    }                                                                    \
+    for (; i + W <= m; i += W) {                                         \
+      VT y0 = LOAD(y + i);                                               \
+      for (int64_t p = 0; p < k; p++)                                    \
+        y0 = FMA(y0, LOAD(a + i + p * lda), BCAST(x[p]));                \
+      STORE(y + i, y0);                                                  \
+    }                                                                    \
+    for (; i < m; i++) {                                                 \
+      T s = y[i];                                                        \
+      for (int64_t p = 0; p < k; p++) s = SFMA(a[i + p * lda], x[p], s); \
+      y[i] = s;                                                          \
     }                                                                    \
   }
 

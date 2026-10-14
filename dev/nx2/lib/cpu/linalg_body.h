@@ -13,13 +13,30 @@
 /* linalg.c's routines on matrices of one dtype, included once per dtype
    with T the element, R its real part's type, RDT that real type's dtype
    code, CPLX 1 for complex, C the complex type of R's precision, CSQRT
-   its square root on complex dtypes, and CONJ, REAL, IMAG, SQRT and
-   COPYSIGN for T and R, which it undefines at its end. F(name) names the
+   its square root on complex dtypes, WORD the signed integer of R's
+   width, and CONJ, REAL, IMAG, SQRT and COPYSIGN for T and R, which it
+   undefines at its end. F(name) names the
    dtype's instance.
 
    Matrices are dense and row-major, row i at a + i·ld. Each routine runs
    by scalar loops on blocks of at most LEAF columns and updates the rest
    of the matrix by products (F(gemm)). */
+
+/* The unit roundoff and the least normal number. */
+#define EPS ((R)(sizeof(R) == 4 ? FLT_EPSILON / 2 : DBL_EPSILON / 2))
+#define TINY ((R)(sizeof(R) == 4 ? FLT_MIN : DBL_MIN))
+
+static R F(abs)(R x) { return x < 0 ? -x : x; }
+
+#if CPLX
+/* The complex number [re] + i [im], whatever its parts. */
+static T F(cplx)(R re, R im) {
+  T z;
+  ((R *)&z)[0] = re;
+  ((R *)&z)[1] = im;
+  return z;
+}
+#endif
 
 /* Products */
 
@@ -137,6 +154,55 @@ static void F(divide)(T *x, int64_t r, T d) {
   for (int64_t j = 0; j < r; j++) x[j] /= d;
 }
 
+/* A leaf's columns: the [h] × [n] [a], rows [ld] apart, copied out by
+   nx_copy_box's square blocks into [q], column c's real parts at
+   q[c·hw], then on complex dtypes its imaginary parts lp = h + PAD after,
+   hw = lp or 2 lp, so that a column streams and complex products run on
+   reals in a vector's lanes. In place, each of a column's elements is a
+   line of its own, rows a power of two apart sharing one set of the
+   cache. [q] holds n·hw reals, then on complex dtypes hw more of scratch,
+   through which each column's complex numbers are split into their parts
+   and joined back. */
+static int64_t F(leaf_pitch)(int64_t h) { return (CPLX + 1) * (h + PAD); }
+
+static void F(leaf_in)(R *q, const T *a, int64_t h, int64_t n, int64_t ld) {
+  int64_t hw = F(leaf_pitch)(h);
+  nx_box in = {.extent = {1, h, n},
+               .step = {{0, 1, hw / (CPLX + 1)}, {0, ld, 1}}};
+  nx_copy_box((uint8_t *)q, (const uint8_t *)a, &in, 8 * (int)sizeof(T));
+#if CPLX
+  int64_t lp = h + PAD;
+  R *t = q + n * hw;
+  for (int64_t c = 0; c < n; c++) {
+    R *x = q + c * hw;
+    memcpy(t, x, 2 * h * sizeof(R));
+    for (int64_t i = 0; i < h; i++) {
+      x[i] = t[2 * i];
+      x[lp + i] = t[2 * i + 1];
+    }
+  }
+#endif
+}
+
+static void F(leaf_out)(T *a, R *q, int64_t h, int64_t n, int64_t ld) {
+  int64_t hw = F(leaf_pitch)(h);
+#if CPLX
+  int64_t lp = h + PAD;
+  R *t = q + n * hw;
+  for (int64_t c = 0; c < n; c++) {
+    R *x = q + c * hw;
+    for (int64_t i = 0; i < h; i++) {
+      t[2 * i] = x[i];
+      t[2 * i + 1] = x[lp + i];
+    }
+    memcpy(x, t, 2 * h * sizeof(R));
+  }
+#endif
+  nx_box out = {.extent = {1, h, n},
+                .step = {{0, ld, 1}, {0, 1, hw / (CPLX + 1)}}};
+  nx_copy_box((uint8_t *)a, (const uint8_t *)q, &out, 8 * (int)sizeof(T));
+}
+
 /* Triangular solves
 
    x ← l⁻¹ x for the lower triangular n × n [l] and the n × r [x], or
@@ -148,18 +214,33 @@ static void F(divide)(T *x, int64_t r, T d) {
 
      x[i] = (x[i] − Σ_{p before i} l[i][p] x[p]) / l[i][i],
 
-   with no division under [unit]. Answers 1, or 0 if an allocation
-   failed. */
+   the sum in the order of p, with no division under [unit]: on reals by
+   the target's gemv, each product fused, the rows of x before i the
+   columns of its matrix. Answers 1, or 0 if an allocation failed. */
+
+/* x[i] − Σ l[i][p] x[p] over the [k] rows p of x from [x0], [l] the
+   first of their k elements of l's row i. */
+static void F(substitute)(const T *l, const T *x0, int64_t k, int64_t ldx,
+                          T *xi, int64_t r) {
+#if CPLX
+  for (int64_t p = 0; p < k; p++) {
+    T c = l[p];
+    const T *xp = x0 + p * ldx;
+    for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
+  }
+#else
+  R nl[LEAF];
+  for (int64_t p = 0; p < k; p++) nl[p] = -l[p];
+  if (k > 0) nx_cpu_table->gemv[RDT](r, k, x0, ldx, nl, xi);
+#endif
+}
+
 static int F(lower)(const T *l, int64_t n, int64_t ld, T *x, int64_t r,
                     int64_t ldx, int unit, arena *s) {
   if (n <= LEAF) {
     for (int64_t i = 0; i < n; i++) {
       T *xi = x + i * ldx;
-      for (int64_t p = 0; p < i; p++) {
-        T c = l[i * ld + p];
-        const T *xp = x + p * ldx;
-        for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
-      }
+      F(substitute)(l + i * ld, x, i, ldx, xi, r);
       if (!unit) F(divide)(xi, r, l[i * ld + i]);
     }
     return 1;
@@ -177,11 +258,7 @@ static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
   if (n <= LEAF) {
     for (int64_t i = n - 1; i >= 0; i--) {
       T *xi = x + i * ldx;
-      for (int64_t p = i + 1; p < n; p++) {
-        T c = u[i * ld + p];
-        const T *xp = x + p * ldx;
-        for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
-      }
+      F(substitute)(u + i * ld + i + 1, xi + ldx, n - i - 1, ldx, xi, r);
       if (!unit) F(divide)(xi, r, u[i * ld + i]);
     }
     return 1;
@@ -194,17 +271,68 @@ static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
          F(upper)(u, n1, ld, x, r, ldx, unit, s);
 }
 
-/* A solve by units of columns of x, which are independent, on the
-   call's threads: one a thread, of SOLVE_COLUMNS columns at least, each
-   solved whole. Every product adds in chain order (product), whatever
-   its shape, so each column's arithmetic and bits are the whole solve's,
-   whatever the units and threads.
+/* x ← x L⁻ᴴ for the r × n [x], rows [ldx] apart, and the lower L of
+   order n at [l], rows [ld] apart, its diagonal real, as Cholesky's: as
+   ReLAPACK's recursive xTRSM, x1 of L11, then x2 − x1 L21ᴴ by a product,
+   then x2 of L22. A leaf of at most LEAF columns is copied out column by
+   column (leaf_in), each column then taking those to its left by the
+   target's gemv, each product fused, and divided by the diagonal's real
+   part. On complex numbers, re y takes re x (−re l), then im x (−im l),
+   and im y takes re x im l, then im x (−re l). */
+static int F(rleaf)(const T *l, int64_t n, int64_t ld, T *x, int64_t r,
+                    int64_t ldx, arena *s) {
+  int64_t lp = r + PAD, hw = F(leaf_pitch)(r);
+  R *q = room(s, (n + CPLX) * hw * (int64_t)sizeof(R));
+  if (q == NULL) return 0;
+  nx_cpu_gemv gemv = nx_cpu_table->gemv[RDT];
+  F(leaf_in)(q, x, r, n, ldx);
+#if CPLX
+  R ur[2 * LEAF], ui[2 * LEAF];
+#else
+  R nu[LEAF];
+#endif
+  for (int64_t p = 0; p < n; p++) {
+    R *y = q + p * hw, d = REAL(l[p * ld + p]);
+    for (int64_t c = 0; c < p; c++) {
+#if CPLX
+      R re = REAL(l[p * ld + c]), im = IMAG(l[p * ld + c]);
+      ur[2 * c] = ui[2 * c + 1] = -re;
+      ur[2 * c + 1] = -im;
+      ui[2 * c] = im;
+#else
+      nu[c] = -l[p * ld + c];
+#endif
+    }
+#if CPLX
+    if (p > 0) {
+      gemv(r, 2 * p, q, lp, ur, y);
+      gemv(r, 2 * p, q, lp, ui, y + lp);
+    }
+    for (int64_t i = 0; i < r; i++) y[lp + i] /= d;
+#else
+    if (p > 0) gemv(r, p, q, lp, nu, y);
+#endif
+    for (int64_t i = 0; i < r; i++) y[i] /= d;
+  }
+  F(leaf_out)(x, q, r, n, ldx);
+  return 1;
+}
 
-   ADJOINT_LOWER's x is r × n and solved as l t' = t for t = xᴴ, since
-   x lᴴ is the old x: a unit copies its rows of x conjugate transposed into
-   its worker's copy buffer, solves them there and copies them back, since
-   columns of x read in place would step a row's length apart, which at a
-   power of two maps every row to one set of the cache. */
+static int F(rband)(const T *l, int64_t n, int64_t ld, T *x, int64_t r,
+                    int64_t ldx, arena *s) {
+  if (n <= LEAF) return F(rleaf)(l, n, ld, x, r, ldx, s);
+  int64_t n1 = split(n), n2 = n - n1;
+  return F(rband)(l, n1, ld, x, r, ldx, s) &&
+         F(gemm)(r, n2, n1, -1, F(op)(x, ldx, 1), F(op_h)(l + n1 * ld, ld),
+                 x + n1, ldx, s) &&
+         F(rband)(l + n1 * ld + n1, n2, ld, x + n1, r, ldx, s);
+}
+
+/* A solve by parts of x, which are independent, on the call's threads:
+   units of SOLVE_COLUMNS columns at least, one a thread, of rows under
+   ADJOINT_LOWER, each solved whole. Every product adds in chain order
+   (product), whatever its shape, so each column's or row's arithmetic
+   and bits are the whole solve's, whatever the units and threads. */
 typedef struct {
   const T *l;
   T *x;
@@ -214,8 +342,8 @@ typedef struct {
   arena *workers;
 } F(solve_job);
 
-static int F(columns)(const F(solve_job) *j, int64_t c0, int64_t c,
-                      arena *s) {
+/* Columns [c0, c0 + c) of x, or its rows under ADJOINT_LOWER. */
+static int F(part)(const F(solve_job) *j, int64_t c0, int64_t c, arena *s) {
   int64_t n = j->n, ld = j->ld, ldx = j->ldx;
   switch (j->kind) {
     case LOWER: return F(lower)(j->l, n, ld, j->x + c0, c, ldx, 0, s);
@@ -224,23 +352,22 @@ static int F(columns)(const F(solve_job) *j, int64_t c0, int64_t c,
     case UNIT_UPPER: return F(upper)(j->l, n, ld, j->x + c0, c, ldx, 1, s);
     case ADJOINT_LOWER: break;
   }
-  T *x = j->x + c0 * ldx, *t = room(s->copy, n * c * (int64_t)sizeof(T));
-  if (t == NULL) return 0;
-  for (int64_t i = 0; i < c; i++)
-    for (int64_t p = 0; p < n; p++) t[p * c + i] = CONJ(x[i * ldx + p]);
-  int ok = F(lower)(j->l, n, ld, t, c, c, 0, s);
-  for (int64_t i = 0; i < c; i++)
-    for (int64_t p = 0; p < n; p++) x[i * ldx + p] = CONJ(t[p * c + i]);
-  return ok;
+  return F(rband)(j->l, n, ld, j->x + c0 * ldx, c, ldx, s);
 }
 
+/* A unit runs on its worker's arena alone, its own work starting no job:
+   a nested job's units would share worker 0's arena with the thread that
+   holds it. LU's steps' units do the same. */
 static void F(solve_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
   F(solve_job) *j = ctx;
+  arena *s = &j->workers[worker], *all = s->workers;
+  s->workers = NULL;
   for (int64_t u = lo; u < hi; u++) {
     int64_t c0 = u * j->r / j->units, c1 = (u + 1) * j->r / j->units;
-    if (!F(columns)(j, c0, c1 - c0, &j->workers[worker]))
+    if (!F(part)(j, c0, c1 - c0, s))
       __atomic_store_n(&j->failed, 1, __ATOMIC_RELAXED);
   }
+  s->workers = all;
 }
 
 /* The solve [kind] by the n × n triangle [l] of the n × r [x], or of the
@@ -253,7 +380,7 @@ static int F(solve)(solve kind, const T *l, int64_t n, int64_t ld, T *x,
   double cost = threaded(s, units, bytes, (double)n * n * r, RDT, CPLX);
   F(solve_job) j = {.l = l, .x = x, .n = n, .ld = ld, .r = r, .ldx = ldx,
                     .kind = kind, .workers = s->workers};
-  if (cost == 0) return F(columns)(&j, 0, r, s);
+  if (cost == 0) return F(part)(&j, 0, r, s);
   int threads = nx_cpu_threads(bytes, cost);
   j.units = units < threads ? units : threads;
   nx_cpu_job(j.units, bytes, cost, F(solve_unit), &j);
@@ -310,19 +437,32 @@ static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
 
 /* LU
 
-   P a = L U with partial pivoting, in place in the m × n [a], as LAPACK's
-   recursive xGETRF2 (ReLAPACK's xGETRF): the panel of a block of columns
-   factors its left half, solves the top rows of its right half by L11,
-   updates the rest of its right half by a22 − L21 U12, then factors that.
-   Interchanges swap whole rows of [a], so every column sees them as they
-   happen. At a leaf of at most LEAF columns, LAPACK's xGETF2: column by
-   column, the pivot is found by a scan of the column from the diagonal
-   down that moves to each later row whose magnitude (|re| + |im|) is
-   greater than the current pivot's, NaN never greater; its row swaps with
-   the diagonal's; a nonzero pivot divides the column below it; the
-   panel's columns to its right take the rank-1 update. Columns past the
-   first k = min m n take U = L⁻¹ a, unit lower L. [pivots] and [perm]
-   take k and m positions. Answers 1, or 0 if an allocation failed. */
+   P a = L U with partial pivoting, in place in the m × n [a], by blocks
+   of LU_NB or LU_NB / 2 columns (linalg.c), right-looking with a
+   lookahead of one block: once block k is factored, block k + 1's
+   columns take its update, k's interchanges, U12 = L11⁻¹ a12 and
+   a22 − L21 U12, the product on the call's threads; then a job factors
+   block k + 1 in its first unit while the others update the columns past
+   it by tiles, so that the next panel's factorisation runs beside the
+   update rather than after it. Every column takes its updates in the
+   same order on every thread and tiling, so the bits do not depend on
+   them. The columns left of a block take its interchanges at the end.
+
+   A block's panel is factored as LAPACK's recursive xGETRF2 (ReLAPACK's
+   xGETRF): it factors its left half, solves the top rows of its right
+   half by L11, updates the rest of its right half by a22 − L21 U12, then
+   factors that. Interchanges swap the block's rows as they happen, so
+   that its columns all see them. A leaf of at most LEAF columns runs
+   column by column in Crout's order: a column takes the updates of those
+   to its left, then its pivot is found by a scan of the column from the
+   diagonal down that moves to each later row whose magnitude (|re| +
+   |im|) is greater than the current pivot's, NaN never greater; its row
+   swaps with the diagonal's; a nonzero pivot scales the column below it
+   by its reciprocal where its magnitude lies in [TINY, 1 / TINY], so
+   that the reciprocal is finite and not subnormal, and divides it
+   otherwise. Columns past the first k = min m n take U = L⁻¹ a, unit
+   lower L. [pivots] and [perm] take k and m positions. Answers 1, or 0
+   if an allocation failed. */
 
 static R F(magnitude)(T x) {
   R re = REAL(x), im = IMAG(x);
@@ -337,68 +477,288 @@ static void F(swap)(T *x, T *y, int64_t n) {
   }
 }
 
-/* The panel of columns [j0, j0 + n) from row j0 down to row [m], in the
-   matrix [a] of [width] columns. */
-static int F(panel)(T *a, int64_t m, int64_t width, int64_t ld, int64_t j0,
-                    int64_t n, int64_t *pivots, int64_t *perm, arena *s) {
-  if (n <= LEAF) {
-    /* The panel's columns, copied contiguous (column c's row i at
-       q[c·h + i − j0]), so that a column streams: in place, each of its
-       elements is a line of its own, rows a power of two apart sharing one
-       set of the cache. */
-    int64_t h = m - j0;
-    T *q = room(s, h * n * (int64_t)sizeof(T));
-    if (q == NULL) return 0;
-    for (int64_t i = 0; i < h; i++)
-      for (int64_t c = 0; c < n; c++) q[c * h + i] = a[(j0 + i) * ld + j0 + c];
-    for (int64_t j = 0; j < n; j++) {
-      T *qj = q + j * h;
-      int64_t p = j;
-      R best = F(magnitude)(qj[j]);
-      for (int64_t i = j + 1; i < h; i++) {
-        R v = F(magnitude)(qj[i]);
-        if (v > best) {
-          best = v;
-          p = i;
-        }
+/* A vector of base's reals, and as many words: a comparison's lanes. */
+#define LANES (VECTOR_BYTES / (int)sizeof(R))
+typedef R F(lanes) __attribute__((vector_size(VECTOR_BYTES)));
+typedef WORD F(words) __attribute__((vector_size(VECTOR_BYTES)));
+
+/* [v] = the LANES reals at [x] without their signs. */
+static void F(abs_lanes)(const R *x, F(lanes) *v) {
+  const F(words) bits = (F(words)){0} + (WORD)((~(uint64_t)0) >> 1 >>
+                                               (64 - 8 * sizeof(R)));
+  memcpy(v, x, sizeof *v);
+  *v = (F(lanes))((F(words))*v & bits);
+}
+
+/* The greater of [v] and [top] in each lane, [top] where [v] is NaN. */
+static void F(greater)(F(lanes) v, F(lanes) *top) {
+  F(words) g = v > *top;
+  *top = (F(lanes))(((F(words))v & g) | ((F(words))*top & ~g));
+}
+
+/* The magnitude of row [i] of the leaf's column [x], its parts [lp]
+   apart, and [v] = those of rows [i, i + LANES), each sign cleared. */
+#if CPLX
+#define MAGNITUDE(x, lp, i) (F(abs)((x)[i]) + F(abs)((x)[(lp) + (i)]))
+#define MAGNITUDES(v, x, lp, i)             \
+  do {                                      \
+    F(lanes) im_;                           \
+    F(abs_lanes)((x) + (i), &(v));          \
+    F(abs_lanes)((x) + (lp) + (i), &im_);   \
+    (v) += im_;                             \
+  } while (0)
+#else
+#define MAGNITUDE(x, lp, i) F(abs)((x)[i])
+#define MAGNITUDES(v, x, lp, i) F(abs_lanes)((x) + (i), &(v))
+#endif
+
+/* The leaf of columns [j0, j0 + n), n at most LEAF, as panel's, on its
+   columns copied out (leaf_in). A pivot is the greatest magnitude, taken
+   in vectors' lanes, which no order changes as NaN is never taken, then
+   the first row that holds it, sought a vector at a time (a sign cleared
+   in a lane turns −0 into +0, which compares equal). On the i9-9900K's
+   16 threads a scalar scan in its place took 1.04 of lu-f64-1024's time,
+   1.05 of lu-f64-1024-pivoting's and 1.14 of lu-f32-1024's (minima of 6
+   ABBA rounds).
+
+   Each column takes the updates of the columns to its left when its turn
+   comes, as Crout's order does, in their order: its rows above the
+   diagonal one at a time, row r from those above it, then its rows from
+   the diagonal down at once, by the target's gemv (cpu.h), each product
+   fused, which holds them in registers while the columns stream. Above
+   the diagonal, a gemv call a row took longer than its few products. On
+   complex numbers each column to the left is two of reals: re y takes
+   re l (−re u) then im l im u, and im y takes re l (−im u) then im l
+   (−re u). */
+static int F(crout)(T *a, int64_t m, int64_t b0, int64_t b1, int64_t ld,
+                    int64_t j0, int64_t n, int64_t *pivots, int64_t *perm,
+                    arena *s) {
+  int64_t h = m - j0, lp = h + PAD, hw = F(leaf_pitch)(h);
+  R *q = room(s, (n + CPLX) * hw * (int64_t)sizeof(R));
+  if (q == NULL) return 0;
+  nx_cpu_gemv gemv = nx_cpu_table->gemv[RDT];
+  T *a0 = a + j0 * ld + j0;
+  F(leaf_in)(q, a0, h, n, ld);
+  /* −u, column j's rows above the diagonal negated: on complex numbers
+     re y's coefficients and im y's, two a column to the left. */
+#if CPLX
+  R ur[2 * LEAF], ui[2 * LEAF];
+#else
+  R nu[LEAF];
+#endif
+  for (int64_t j = 0; j < n; j++) {
+    R *x = q + j * hw;
+#if CPLX
+    for (int64_t r = 0; r < j; r++) {
+      for (int64_t u = 0; u < 2 * r; u++) {
+        x[r] += q[u * lp + r] * ur[u];
+        x[lp + r] += q[u * lp + r] * ui[u];
       }
-      pivots[j0 + j] = j0 + p;
-      if (p != j) {
-        F(swap)(a + (j0 + j) * ld, a + (j0 + p) * ld, width);
-        for (int64_t c = 0; c < n; c++)
-          F(swap)(q + c * h + j, q + c * h + p, 1);
-        int64_t t = perm[j0 + j];
-        perm[j0 + j] = perm[j0 + p];
-        perm[j0 + p] = t;
+      ur[2 * r] = ui[2 * r + 1] = -x[r];
+      ur[2 * r + 1] = x[lp + r];
+      ui[2 * r] = -x[lp + r];
+    }
+    if (j > 0) {
+      gemv(h - j, 2 * j, q + j, lp, ur, x + j);
+      gemv(h - j, 2 * j, q + j, lp, ui, x + lp + j);
+    }
+#else
+    for (int64_t r = 0; r < j; r++) {
+      for (int64_t p = 0; p < r; p++) x[r] += q[p * lp + r] * nu[p];
+      nu[r] = -x[r];
+    }
+    if (j > 0) gemv(h - j, j, q + j, lp, nu, x + j);
+#endif
+    R best = MAGNITUDE(x, lp, j);
+    int64_t p = j;
+    if (best == best) {
+      F(lanes) top0 = (F(lanes)){0} + best, top1 = top0, v0, v1;
+      int64_t i = j + 1;
+      for (; i + 2 * LANES <= h; i += 2 * LANES) {
+        MAGNITUDES(v0, x, lp, i);
+        MAGNITUDES(v1, x, lp, i + LANES);
+        F(greater)(v0, &top0);
+        F(greater)(v1, &top1);
       }
-      T d = qj[j];
-      if (d != 0)
-        for (int64_t i = j + 1; i < h; i++) qj[i] /= d;
-      for (int64_t c = j + 1; c < n; c++) {
-        T *qc = q + c * h, u = qc[j];
-        for (int64_t i = j + 1; i < h; i++) qc[i] -= qj[i] * u;
+      for (; i < h; i++) {
+        R v = MAGNITUDE(x, lp, i);
+        best = v > best ? v : best;
+      }
+      for (int t = 0; t < LANES; t++) {
+        best = top0[t] > best ? top0[t] : best;
+        best = top1[t] > best ? top1[t] : best;
+      }
+      for (top0 = (F(lanes)){0} + best; p + LANES <= h; p += LANES) {
+        MAGNITUDES(v0, x, lp, p);
+        F(words) equal = v0 == top0;
+        WORD any = 0;
+        for (int t = 0; t < LANES; t++) any |= equal[t];
+        if (any) break;
+      }
+      while (MAGNITUDE(x, lp, p) != best) p++;
+    }
+    pivots[j0 + j] = j0 + p;
+    if (p != j) {
+      F(swap)(a + (j0 + j) * ld + b0, a + (j0 + p) * ld + b0, b1 - b0);
+      /* Each column's parts, lp reals each. */
+      for (int64_t c = 0; c < hw * n; c += lp) {
+        R t = q[c + j];
+        q[c + j] = q[c + p];
+        q[c + p] = t;
+      }
+      int64_t t = perm[j0 + j];
+      perm[j0 + j] = perm[j0 + p];
+      perm[j0 + p] = t;
+    }
+    int64_t k = h - j - 1;
+    R *xr = x + j + 1;
+#if CPLX
+    R dr = x[j], di = x[lp + j], *xi = xr + lp;
+    T d = F(cplx)(dr, di);
+    R mag = F(abs)(dr) + F(abs)(di);
+    if (mag >= TINY && mag <= 1 / TINY) {
+      T r = 1 / d;
+      R rr = REAL(r), ri = IMAG(r);
+      for (int64_t i = 0; i < k; i++) {
+        R u = xr[i], v = xi[i];
+        xr[i] = u * rr - v * ri;
+        xi[i] = u * ri + v * rr;
+      }
+    } else if (d != 0) {
+      for (int64_t i = 0; i < k; i++) {
+        T z = F(cplx)(xr[i], xi[i]) / d;
+        xr[i] = REAL(z);
+        xi[i] = IMAG(z);
       }
     }
-    for (int64_t i = 0; i < h; i++)
-      for (int64_t c = 0; c < n; c++) a[(j0 + i) * ld + j0 + c] = q[c * h + i];
-    return 1;
+#else
+    R d = x[j], mag = F(abs)(d);
+    if (mag >= TINY && mag <= 1 / TINY) {
+      R r = 1 / d;
+      for (int64_t i = 0; i < k; i++) xr[i] *= r;
+    } else if (d != 0) {
+      for (int64_t i = 0; i < k; i++) xr[i] /= d;
+    }
+#endif
   }
+  F(leaf_out)(a0, q, h, n, ld);
+  return 1;
+}
+
+#undef MAGNITUDE
+#undef MAGNITUDES
+#undef LANES
+
+/* The panel of columns [j0, j0 + n) from row j0 down to row [m], in the
+   block of columns [b0, b1) of [a], whose rows its interchanges swap. */
+static int F(panel)(T *a, int64_t m, int64_t b0, int64_t b1, int64_t ld,
+                    int64_t j0, int64_t n, int64_t *pivots, int64_t *perm,
+                    arena *s) {
+  if (n <= LEAF) return F(crout)(a, m, b0, b1, ld, j0, n, pivots, perm, s);
   int64_t n1 = split(n), n2 = n - n1, j1 = j0 + n1;
   T *a11 = a + j0 * ld + j0, *a12 = a11 + n1, *a21 = a11 + n1 * ld;
-  return F(panel)(a, m, width, ld, j0, n1, pivots, perm, s) &&
+  return F(panel)(a, m, b0, b1, ld, j0, n1, pivots, perm, s) &&
          F(solve)(UNIT_LOWER, a11, n1, ld, a12, n2, ld, s) &&
          F(gemm)(m - j1, n2, n1, -1, F(op)(a21, ld, 1), F(op)(a12, ld, 1),
                  a21 + n1, ld, s) &&
-         F(panel)(a, m, width, ld, j1, n2, pivots, perm, s);
+         F(panel)(a, m, b0, b1, ld, j1, n2, pivots, perm, s);
+}
+
+/* The interchanges of rows i and pivots[i], i from [k0] to [k1] in turn,
+   on columns [c0, c1) of [a]. */
+static void F(laswp)(T *a, int64_t ld, int64_t c0, int64_t c1,
+                     const int64_t *pivots, int64_t k0, int64_t k1) {
+  for (int64_t i = k0; i < k1; i++)
+    if (pivots[i] != i)
+      F(swap)(a + i * ld + c0, a + pivots[i] * ld + c0, c1 - c0);
+}
+
+/* A step of LU: block [k, k + kb) factored and the next block's columns
+   [next, next + nb) updated by it, the next block factored and the
+   columns past it updated, by [units] units: the first the next block,
+   the others [tile] columns each of the rest. */
+typedef struct {
+  T *a;
+  int64_t m, n, ld, k, kb, next, nb, tile, units;
+  int64_t *pivots, *perm;
+  int failed;
+  arena *workers;
+} F(lu_step);
+
+/* Columns [c0, c1) updated by the step's block: its interchanges, its
+   L11⁻¹ and its L21. */
+static int F(lu_update)(const F(lu_step) *t, int64_t c0, int64_t c1,
+                        arena *s) {
+  int64_t k = t->k, kb = t->kb, ld = t->ld;
+  T *a = t->a, *l = a + k * ld + k;
+  if (c1 <= c0) return 1;
+  F(laswp)(a, ld, c0, c1, t->pivots, k, k + kb);
+  return F(lower)(l, kb, ld, a + k * ld + c0, c1 - c0, ld, 1, s) &&
+         F(gemm)(t->m - k - kb, c1 - c0, kb, -1, F(op)(l + kb * ld, ld, 1),
+                 F(op)(a + k * ld + c0, ld, 1), a + (k + kb) * ld + c0, ld,
+                 s);
+}
+
+static int F(lu_unit_on)(const F(lu_step) *t, int64_t u, arena *s) {
+  int64_t next = t->next, nb = t->nb;
+  if (u > 0) {
+    int64_t c0 = next + nb + (u - 1) * t->tile;
+    int64_t c1 = c0 + t->tile < t->n ? c0 + t->tile : t->n;
+    return F(lu_update)(t, c0, c1, s);
+  }
+  return nb == 0 || F(panel)(t->a, t->m, next, next + nb, t->ld, next, nb,
+                             t->pivots, t->perm, s);
+}
+
+/* A unit runs on its worker's arena alone, as a solve's do. */
+static void F(lu_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  F(lu_step) *t = ctx;
+  arena *s = &t->workers[worker], *all = s->workers;
+  s->workers = NULL;
+  for (int64_t u = lo; u < hi; u++)
+    if (!F(lu_unit_on)(t, u, s))
+      __atomic_store_n(&t->failed, 1, __ATOMIC_RELAXED);
+  s->workers = all;
 }
 
 static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
                  int64_t *perm, arena *s) {
-  int64_t k = m < n ? m : n;
+  int64_t kk = m < n ? m : n;
+  int64_t bw = kk >= LU_BLOCKS * LU_NB ? LU_NB : LU_NB / 2;
   for (int64_t i = 0; i < m; i++) perm[i] = i;
-  if (k == 0) return 1;
-  return F(panel)(a, m, n, ld, 0, k, pivots, perm, s) &&
-         F(solve)(UNIT_LOWER, a, k, ld, a + k, n - k, ld, s);
+  if (kk == 0) return 1;
+  int64_t nb0 = kk < bw ? kk : bw;
+  if (!F(panel)(a, m, 0, nb0, ld, 0, nb0, pivots, perm, s)) return 0;
+  for (int64_t k = 0; k < kk; k += bw) {
+    int64_t kb = kk - k < bw ? kk - k : bw, next = k + kb;
+    int64_t nb = kk - next < bw ? kk - next : bw, rest = n - next - nb;
+    int64_t bytes = (m - k) * (n - k) * (int64_t)sizeof(T);
+    /* The next block a unit, and the rest's columns at most one each. */
+    double cost = threaded(s, 1 + rest, bytes,
+                           2.0 * (m - next) * (n - next) * kb, RDT, CPLX);
+    int64_t threads = cost > 0 ? nx_cpu_threads(bytes, cost) : 1;
+    int64_t tile = rest / (threads > 1 ? threads - 1 : 1);
+    tile = tile < bw ? bw : tile;
+    F(lu_step) t = {.a = a, .m = m, .n = n, .ld = ld, .k = k, .kb = kb,
+                    .next = next, .nb = nb, .tile = tile,
+                    .units = 1 + (rest + tile - 1) / tile, .pivots = pivots,
+                    .perm = perm, .workers = s->workers};
+    if (!F(lu_update)(&t, next, next + nb, s)) return 0;
+    if (cost == 0) {
+      for (int64_t u = 0; u < t.units; u++)
+        if (!F(lu_unit_on)(&t, u, s)) return 0;
+    } else {
+      nx_cpu_job(t.units, bytes, cost, F(lu_unit), &t);
+      if (t.failed) return 0;
+    }
+  }
+  /* Each block's columns take the interchanges of the blocks right of
+     it. */
+  for (int64_t b0 = 0; b0 < kk; b0 += bw) {
+    int64_t b1 = kk - b0 < bw ? kk : b0 + bw;
+    F(laswp)(a, ld, b0, b1, pivots, b1, kk);
+  }
+  return 1;
 }
 
 /* Householder reflectors */
@@ -408,8 +768,6 @@ static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
 #define SAFMIN \
   ((R)(sizeof(R) == 4 ? FLT_MIN / (FLT_EPSILON / 2)                         \
                       : DBL_MIN / (DBL_EPSILON / 2)))
-
-static R F(abs)(R x) { return x < 0 ? -x : x; }
 
 /* |a| with the sign of b. */
 static R F(sign)(R a, R b) { return COPYSIGN(a, b); }
@@ -700,10 +1058,6 @@ static int F(back)(const T *x, int64_t rs, int64_t cs, reading how,
    (i, j) at a[i + j·ld], so that the routines follow LAPACK's index for
    index; it is staged transposed, which on a Hermitian matrix swaps the
    triangles: a's lower triangle is read. */
-
-/* The unit roundoff and the least normal number. */
-#define EPS ((R)(sizeof(R) == 4 ? FLT_EPSILON / 2 : DBL_EPSILON / 2))
-#define TINY ((R)(sizeof(R) == 4 ? FLT_MIN : DBL_MIN))
 
 /* xᴴ y over [n] elements, in four parts by the index mod 4 so that no
    addition waits on the one before. */
@@ -1839,7 +2193,7 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
                                ~(uintptr_t)7);
   T *wo = (T *)matrix_at(c, c->nops, b);
   T *v = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
-  stage(c, 0, b, a, n, 1);
+  stage(c, 0, b, a, n, 1, s);
   R big = 0;
   int finite = 1;
   for (int64_t j = 0; j < n; j++) {
@@ -3010,7 +3364,7 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
     *vb = ub + k * k, *work = vb + k * k;
   R *iw = work + 3 * (k + 1) * (k + 1) + 4 * k;
   int64_t *iwork = (int64_t *)(((uintptr_t)iw + 7) & ~(uintptr_t)7);
-  stage(c, 0, b, a, ld, qrf == wide);
+  stage(c, 0, b, a, ld, qrf == wide, s);
   R big = 0;
   int finite = 1;
   for (int64_t i = 0; i < mm * k; i++) {
@@ -3792,7 +4146,7 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
   C *xv = (C *)(cn + n);
   R *wo = (R *)matrix_at(c, c->nops, b);
   R *vo = c->vectors ? (R *)matrix_at(c, c->nops + 1, b) : NULL;
-  stage(c, 0, b, a, n, 1);
+  stage(c, 0, b, a, n, 1, s);
   int finite = 1;
   for (int64_t i = 0; i < nn; i++)
     finite &= REAL(a[i]) - REAL(a[i]) == 0 && IMAG(a[i]) - IMAG(a[i]) == 0;
@@ -3923,6 +4277,32 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
 
 /* Matrices of a call */
 
+/* Cholesky's factor [d] of order [n], its other triangle to be +0, or
+   under [upper] U = Lᴴ in place. */
+typedef struct {
+  T *d;
+  int64_t n;
+  int upper;
+} F(triangle);
+
+/* Rows [lo, hi) of the triangle: each row's part right of the diagonal,
+   and under upper the column below it, which no other row touches. */
+static void F(other_triangle)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const F(triangle) *t = ctx;
+  T *d = t->d;
+  int64_t n = t->n;
+  for (int64_t i = lo; i < hi; i++)
+    for (int64_t j = i + 1; j < n; j++) {
+      if (!t->upper) {
+        d[i * n + j] = 0;
+        continue;
+      }
+      d[i * n + j] = CONJ(d[j * n + i]);
+      d[j * n + i] = 0;
+    }
+}
+
 /* The routine on matrix [b] of the call [c], with the scratch [w] of
    linalg.c's own elements and the arena [s]. Answers 0 if an allocation
    failed. */
@@ -3938,42 +4318,37 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
     int64_t lf = n + PAD;
     T *f = w, *tau = f + m * lf, *ts = tau + k, *rest = ts + qr_ts(k);
     T *r = (T *)matrix_at(c, c->nops + 1, b);
-    stage(c, 0, b, f, lf, 0);
+    stage(c, 0, b, f, lf, 0, s);
     if (!F(qr)(f, m, n, lf, tau, ts, rest, s)) return 0;
     for (int64_t i = 0; i < qc; i++)
       for (int64_t j = 0; j < n; j++) r[i * n + j] = j >= i ? f[i * lf + j] : 0;
     return F(form_q)(f, m, n, lf, ts, d, qc, qc, rest, s);
   }
   if (c->routine == LU) {
-    stage(c, 0, b, d, n, 0);
+    stage(c, 0, b, d, n, 0, s);
     int64_t *pivots = (int64_t *)matrix_at(c, 2, b);
     int64_t *perm = (int64_t *)matrix_at(c, 3, b);
     return F(lu)(d, m, n, n, pivots, perm, s);
   }
   if (c->routine == CHOLESKY) {
-    stage(c, 0, b, d, n, 0);
+    stage(c, 0, b, d, n, 0, s);
     int ok = F(cholesky)(d, n, n, s);
     if (ok < 0) return 0;
     if (ok == 0) {
       nans(d, n * n * (CPLX + 1), RDT);
       return 1;
     }
-    /* The other triangle +0, or under Upper, U = Lᴴ in place. */
-    for (int64_t i = 0; i < n; i++)
-      for (int64_t j = i + 1; j < n; j++) {
-        if (!c->upper) {
-          d[i * n + j] = 0;
-          continue;
-        }
-        d[i * n + j] = CONJ(d[j * n + i]);
-        d[j * n + i] = 0;
-      }
+    F(triangle) t = {.d = d, .n = n, .upper = c->upper};
+    int64_t bytes = n * n * (int64_t)sizeof(T);
+    double cost = threaded(s, n, bytes, 0, RDT, CPLX);
+    if (cost == 0) F(other_triangle)(0, n, 0, &t);
+    else nx_cpu_job(n, bytes, cost, F(other_triangle), &t);
     return 1;
   }
   /* Solve_triangular: op(a) staged into w, x staged into d. */
   int64_t r = c->r;
-  stage(c, 1, b, d, r, 0);
-  stage(c, 0, b, w, n, c->adjoint);
+  stage(c, 1, b, d, r, 0, s);
+  stage(c, 0, b, w, n, c->adjoint, s);
   int upper = c->upper != c->adjoint;
 #if CPLX
   if (c->adjoint)
@@ -4000,6 +4375,7 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
 #undef IMAG
 #undef SQRT
 #undef COPYSIGN
+#undef WORD
 #undef C
 #undef CSQRT
 #undef SAFMIN
