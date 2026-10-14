@@ -13,6 +13,7 @@
 
 open Windtrap
 open Elements
+module Support = Nx_kernels_support
 
 (* Double-double numbers *)
 
@@ -603,6 +604,73 @@ let test_long () =
       check ~wide (C2r 30030) 30030 5)
     [ false; true ]
 
+(* Every target's bits *)
+
+(* A digest of each length's transforms, forward, inverse, r2c and c2r, at
+   both widths: the same on each target this CPU runs, and on every CPU, since
+   a line's arithmetic is a function of its length alone. *)
+let test_digests () =
+  let lengths = [ 7; 60; 64; 241; 100; 1000; 1024; 4096; 257; 1031; 514 ] in
+  let digest wide n =
+    let one kind =
+      let s = match kind with C2r n -> [| (n / 2) + 1 |] | _ -> [| n |] in
+      let rs = Random.State.make [| n |] in
+      let xs =
+        Array.init s.(0) (fun _ ->
+            let re = value wide rs in
+            let im = match kind with R2c -> 0. | _ -> value wide rs in
+            { Complex.re; im })
+      in
+      let c = { kind; wide; shape = s; axes = [| 0 |]; view = plain 1; xs } in
+      String.concat "" (Array.to_list (elements (run c (operand c))))
+    in
+    let all = List.map one [ C2c Forward; C2c Inverse; R2c; C2r n ] in
+    String.sub (Digest.to_hex (Digest.string (String.concat "" all))) 0 16
+  in
+  let table () =
+    List.concat_map
+      (fun n ->
+        List.map
+          (fun wide ->
+            Printf.sprintf "%d %s %s" n
+              (if wide then "f64" else "f32")
+              (digest wide n))
+          [ false; true ])
+      lengths
+    |> String.concat "\n"
+  in
+  match Support.cpus with
+  | [] -> fail "no target"
+  | first :: rest ->
+      let t = first.around table in
+      List.iter
+        (fun (b : Support.backend) -> equal text t (b.around table) ~msg:b.name)
+        rest;
+      expect t @@ __POS_OF__ {|
+        7 f32 25fc4490bddde05e
+        7 f64 103173224a3c62a3
+        60 f32 d3a7aaecc9170471
+        60 f64 a09269231c08e518
+        64 f32 03980dbe5fc31474
+        64 f64 4e11c0ee2fcd11fa
+        241 f32 b35843e8d1006799
+        241 f64 7c89018ba17c56a4
+        100 f32 3e380cd2344fc918
+        100 f64 843090a5d39338e3
+        1000 f32 9f7496c9f569e4b4
+        1000 f64 429f0b3827908fdc
+        1024 f32 348239c8ad312acd
+        1024 f64 06a68c714648e330
+        4096 f32 565572e3e5171eca
+        4096 f64 d61210f2d5bb445a
+        257 f32 cc59d550e2e47f14
+        257 f64 0deee0529736803a
+        1031 f32 82ef31e36a702475
+        1031 f64 ee8d9a2b3e80e82a
+        514 f32 05d1f0b872a90809
+        514 f64 ad9633a6b7805e61
+        |}
+
 (* Empty transforms and refusals *)
 
 let test_empty () =
@@ -656,5 +724,7 @@ let () =
              test "long lines are within the bound, one thread's bits" test_long;
              test "a transform of no point is the empty sum" test_empty;
              test "refuses dtypes and shapes" test_refusals;
+             test "digests of transforms, the same on every target"
+               test_digests;
            ];
        ])
