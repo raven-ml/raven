@@ -87,6 +87,28 @@ let test_system_monitor_stop_idempotent () =
   Munin_sys.stop monitor;
   Session.finish session
 
+(* A process's CPU percentage is its CPU time over the interval, whatever the
+   interval and however many cores the time came from. *)
+let test_proc_cpu_mean =
+  let gen = Gen.pair (Gen.float_range 0.02 3600.) (Gen.float_range 0. 64.) in
+  prop "process CPU is a mean over the interval" gen @@ fun (dt, cores) ->
+  let cpu = cores *. dt in
+  let prev =
+    {
+      Munin_sys.Stat.Proc.Self.utime = 0.;
+      stime = 0.;
+      rss_bytes = 0L;
+      vsize_bytes = 0L;
+    }
+  in
+  let next = { prev with utime = cpu /. 2.; stime = cpu /. 2. } in
+  cover "interval past 10 s" (dt > 10.);
+  cover "more than 8 cores busy" (cores > 8.);
+  let stats =
+    Munin_sys.Stat.Proc.Self.compute ~prev ~next ~dt ~num_cores:None
+  in
+  equal (float_rel ~rel:1e-9 ~abs:1e-9) (cores *. 100.) stats.cpu_percent
+
 let system_monitor_tests =
   [
     test "logs metrics" test_system_monitor_logs_metrics;
@@ -94,4 +116,10 @@ let system_monitor_tests =
     test "stop idempotent" test_system_monitor_stop_idempotent;
   ]
 
-let () = exit (run "Munin_sys" [ group "System monitor" system_monitor_tests ])
+let () =
+  exit
+    (run "Munin_sys"
+       [
+         group "System monitor" system_monitor_tests;
+         group "Stat" [ test_proc_cpu_mean ];
+       ])

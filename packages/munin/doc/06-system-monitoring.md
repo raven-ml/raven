@@ -37,14 +37,16 @@ statistics at a fixed interval and logs them as scalar metrics.
 
 ### Configuring the interval
 
-The default sampling interval is 2 seconds. Override it with `~interval`:
+The default sampling interval is 15 seconds. Override it with `~interval`:
 
 <!-- $MDX skip -->
 ```ocaml
 let monitor = Munin_sys.start ~interval:5.0 session
 ```
 
-The first sample is taken after one interval elapses.
+The first sample is taken after one interval elapses. Rates (`sys/cpu_*`,
+`sys/proc_cpu_pct`, `sys/disk_*`) are means over the interval, computed from
+cumulative counters; memory metrics are the value at the sample's instant.
 
 ## Logged metrics
 

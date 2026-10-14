@@ -318,13 +318,10 @@ module Proc : sig
         yielding a value in [0.0] to [100.0]. Without normalization, the value
         can exceed [100.0] on multi-core systems.
 
-        The result is clamped to prevent spurious values from timing anomalies:
-        - With [num_cores]: capped at [100.0]
-        - Without [num_cores]: capped at [800.0]
+        With [num_cores], the result is capped at [100.0].
 
-        If [dt] is outside the range [(0.01, 10.0)], returns [0.0] for
-        [cpu_percent] to avoid division by near-zero or implausibly large
-        intervals.
+        If [dt] is at most [0.01], returns [0.0] for [cpu_percent] to avoid
+        division by a near-zero interval.
 
         Raises [Invalid_argument] if [dt <= 0.0]. *)
   end

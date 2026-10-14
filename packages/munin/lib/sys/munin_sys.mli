@@ -56,10 +56,12 @@ type t
 val start : ?interval:float -> Munin.Session.t -> t
 (** [start session] begins periodic system monitoring of [session].
 
-    All [sys/] metrics are defined with [~summary:`Last] so the final sampled
-    value appears in run summaries.
+    Every [interval] seconds the monitor logs one sample per metric. Rates
+    ([sys/cpu_*], [sys/proc_cpu_pct], [sys/disk_*]) are means over the interval,
+    computed from cumulative counters; memory metrics are the value at the
+    sample's instant.
 
-    [interval] defaults to [2.0] seconds. The first sample is taken after one
+    [interval] defaults to [15.0] seconds. The first sample is taken after one
     interval. The monitor thread is a daemon thread. *)
 
 val stop : t -> unit

@@ -1226,6 +1226,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Munin_sys.start` samples every 15 s by default, down from 2 s, which
+  logged about 16,000 events an hour. `Stat.Proc.Self.compute` gives the
+  mean CPU percentage over any interval past 10 ms: it read 0 past 10 s, and
+  800 at most without `~num_cores`.
 - Artifact digests are BLAKE2b-256 from the standard library instead of
   SHA-256, so `munin` no longer depends on the `sha` package. Blobs live
   under `blobs/blake2b` in the store.

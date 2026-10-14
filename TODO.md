@@ -321,9 +321,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - quill's TUI suite tests a copy of quill_tui.ml, bypassing its .mli
 - quill prints an `Invalid_argument` or `Failure` message raw in a cell's
   output; multi-line messages (talon's plan problems) arrive escaped
-- munin.sys samples every 15 s by default, as its guides say (2 s today,
-  16k events an hour); munin_sys.mli states which metrics are interval
-  means and which are instants
 
 ## ymir, sowilo
 

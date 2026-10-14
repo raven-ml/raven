@@ -958,17 +958,16 @@ module Proc = struct
         : stats =
       if dt <= 0.0 then invalid_arg "Proc.Self.compute: dt must be positive";
 
-      let dt_ok = dt > 0.01 && dt < 10.0 in
       let cpu_delta = next.utime -. prev.utime +. (next.stime -. prev.stime) in
       let cpu_delta = max 0.0 cpu_delta in
 
       let cpu_percent =
-        if not dt_ok then 0.0
+        if dt <= 0.01 then 0.0
         else
           let raw = cpu_delta /. dt *. 100.0 in
           match num_cores with
-          | Some n when n > 0 && n <= 128 -> min (raw /. float_of_int n) 100.0
-          | _ -> min raw 800.0
+          | Some n when n > 0 -> min (raw /. float_of_int n) 100.0
+          | _ -> raw
       in
       {
         cpu_percent;
