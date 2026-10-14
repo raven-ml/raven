@@ -40,8 +40,7 @@ raven / llama.cpp (Vulkan; ROCm):
   turn up (K2); `R_AMDGPU_RELATIVE64` relocations (A1); the doc sentences of
   F3, F5, O5, Q1, R4 and C4
 - an opener whose `make` opens its own name raises `Invalid_argument`
-  instead of waiting for good; one `STILL_MS` in C that dev.ml reads; a heap
-  law for the stamp words of lost points
+  instead of waiting for good; a heap law for the stamp words of lost points
 
 ### drivers
 

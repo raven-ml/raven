@@ -1035,6 +1035,11 @@ value caml_rig_failed(value unit) {
   return caml_alloc_some(caml_copy_string(why));
 }
 
+value caml_rig_still_ms(value unit) {
+  (void)unit;
+  return Val_int(STILL_MS);
+}
+
 /* The process's first failure: 0 for none, the index of the device whose
    loss it was, or -1 for [fail]'s. */
 value caml_rig_first(value unit) {

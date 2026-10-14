@@ -95,10 +95,12 @@ external now_ns : unit -> (int[@untagged])
   = "caml_rig_edge_now_byte" "caml_rig_edge_now"
 [@@noalloc]
 
+external still : unit -> int = "caml_rig_still_ms" [@@noalloc]
+
 (* How long a wait sees no progress before it blocks in the driver, and the
    longest a blocking call of a wait lasts: each returns to OCaml within it,
-   where a pending [Sys.Break] raises. *)
-let still_ms = 200
+   where a pending [Sys.Break] raises. [rig_device.c]'s STILL_MS. *)
+let still_ms = still ()
 
 (* How long a wait reads a word the device writes before it releases the
    domain lock to spin: past a submission's round trip on the GPUs measured
