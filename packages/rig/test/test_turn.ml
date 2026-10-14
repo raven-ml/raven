@@ -175,6 +175,33 @@ let test_break_in_wait () =
   equal bool true (breaks (fun () -> Rig.Point.wait first));
   still_works d p ~last:first
 
+(* A wait that loses its device to the hang bound, with an exception at any
+   allocation from the loss on, leaves the device's stop to run once: by the
+   wait, or by the close. *)
+let test_hang_interrupted () =
+  let rec from n =
+    let name = Printf.sprintf "turn:hang-interrupted-%d" n in
+    let d, p = P.open_ ~hang_ms:20 name in
+    let first = point (empty_run d) in
+    P.stall p max_int;
+    let wait () =
+      match Rig.Point.wait first with
+      | () -> fail "the stalled work completed"
+      | exception Rig.Lost (d', "no progress for 20 ms") when Rig.equal d d'
+        ->
+          ()
+    in
+    let reached =
+      Support.interrupted ~from:(fun _ -> Rig.lost d <> None) n wait
+    in
+    Rig.close d;
+    equal ~msg:"the loss" (option string) (Some "no progress for 20 ms")
+      (Rig.lost d);
+    equal ~msg:"stops" int 1 (P.stops p);
+    if reached then from (n + 1)
+  in
+  from 1
+
 (* A signal whose handler returns ends a wait's sleep early, as a system call
    that a signal interrupts returns: the wait sleeps again, and returns once
    its value is reached, the device live and nothing assigned. *)
@@ -297,6 +324,9 @@ let tests =
     group ~timeout "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
+        test "an exception at any allocation of a wait lost to a hang leaves \
+              its stop to run once"
+          test_hang_interrupted;
         test "a signal whose handler returns ends no wait" test_signal_in_wait;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;

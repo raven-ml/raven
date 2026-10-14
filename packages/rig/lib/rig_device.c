@@ -1000,6 +1000,17 @@ value caml_rig_claim(value unit) {
   return Val_int(claimed);
 }
 
+/* Owes [d]'s stop again, which its claimant gave up before it called the
+   driver's stop. */
+value caml_rig_unclaim(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  int released = take(d);
+  atomic_store(&d->line->state, RIG_OWED);
+  atomic_fetch_add(&owed, 1);
+  give(d, released);
+  return Val_unit;
+}
+
 /* Records that [d]'s stop returned: ENDED, and out of the walks. */
 value caml_rig_stopped(value v_d) {
   CAMLparam1(v_d);

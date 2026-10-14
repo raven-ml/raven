@@ -204,7 +204,8 @@ val run_owed : unit -> unit
     and a counted call that finds its device lost each call it. It is one
     load while no stop is owed. A fault of a stop is dropped. Another
     exception a stop raises is raised again once the state has moved on,
-    without running {!answered}. *)
+    without running {!answered}. An exception that lands after a stop is
+    claimed and before the driver's stop is called owes the stop again. *)
 
 val lose : device -> string -> 'a
 (** [lose d why] loses [d] for the reason [why] if [d] is live, which makes

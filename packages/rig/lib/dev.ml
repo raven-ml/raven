@@ -59,6 +59,7 @@ external c_await_stop : c -> int -> bool = "caml_rig_await_stop"
 external c_owed : unit -> int = "caml_rig_owed" [@@noalloc]
 external c_free : c -> device -> bool = "caml_rig_free"
 external c_claim : unit -> int = "caml_rig_claim"
+external c_unclaim : c -> unit = "caml_rig_unclaim"
 external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
@@ -415,11 +416,11 @@ let free_slot d =
   && fst l.pending == []
   && c_free l.c d
 
-let stop_handle d =
+(* Calls the driver's stop, allocating nothing before it does. *)
+let stop_handle d fault =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      let fault = if c_faulted d.live.c then Some (why d) else None in
       try D.stop h ~fault with D.Fault _ -> ())
   | Io { m; h } -> (
       let module I = (val m) in
@@ -439,23 +440,30 @@ let returned d =
       c_stopped d.live.c;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* The state moves on whatever the driver's stop did: the device must count as
-   stopped or not. *)
-let stop d =
-  (match stop_handle d with
-  | () -> returned d
-  | exception e ->
-      returned d;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()));
-  !answered d
+(* Claims an owed stop and runs it: whether it claimed one. Nothing polls
+   between the claim and its handlers, so an asynchronous exception lands
+   before the claim or within them. An exception before the driver's stop is
+   called owes the stop again; from the driver's stop on, the state moves on
+   whatever it did: the device must count as stopped or not. *)
+let stop_owed () =
+  match c_claim () with
+  | 0 -> false
+  | i ->
+      let d = of_index i in
+      (match if c_faulted d.live.c then Some (why d) else None with
+      | exception e ->
+          c_unclaim d.live.c;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+      | fault -> (
+          match stop_handle d fault with
+          | () -> returned d
+          | exception e ->
+              returned d;
+              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
+      !answered d;
+      true
 
-let rec run_owed () =
-  if c_owed () > 0 then
-    match c_claim () with
-    | 0 -> ()
-    | i ->
-        stop (of_index i);
-        run_owed ()
+let rec run_owed () = if c_owed () > 0 && stop_owed () then run_owed ()
 
 let lose d why =
   ignore (c_lose d.live.c why true);
