@@ -168,6 +168,7 @@ typedef struct {
 } problem;
 
 static int64_t ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t gcd(int64_t a, int64_t b) { return b == 0 ? a : gcd(b, a % b); }
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 
 /* The position of operand [o]'s element (e, i, j, k). */
@@ -595,14 +596,27 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 /* Products of few rows (streams). One job packs a whole, each KC block as
    the kernel reads it (packed_a), unless a is read in place; then a unit
-   is a sliver of b's columns of one element, which it reads in place or
-   packs, KC block by KC block, and adds into R. b, the large operand, is
-   read once, by one thread, along all of k. */
+   is a sliver of b's columns of one element and a block of a's rows,
+   which it reads in place or packs, KC block by KC block, and adds into
+   R. b, the large operand, is read once along all of k, by one thread.
+   Where b is read in place, within the caches, and its slivers do not
+   share evenly among the job's threads, the rows split into the fewest
+   blocks that make the units a multiple of the threads, each reading the
+   sliver again; a block holds at least two of the kernel's tiles of rows,
+   and where that leaves fewer blocks, the floor wins and the units stay
+   uneven. Every table's kernels take this path, the M1's NEON integers
+   and AMX float64 among them. On fudge's six performance cores a 24 × 24 × 512 float32 product took
+   3.40 µs on b's 2 slivers, 2.29 in blocks; 64³ float64 2.63 on 8
+   slivers, 2.13; 8 × 512 × 64 float32 2.26 in one-tile blocks against
+   2.13 unsplit, and int8 128 rows by a 4096 × 4096 weight, b from
+   memory, 1.61 ms in two blocks against 1.42. */
 typedef struct {
   problem *p;
   nx_cpu_micro k;
   nx_cpu_pack move_a, move_b; /* each job's pack, or NULL */
   int64_t lda, kblocks, slivers;
+  int64_t rows;    /* a block's rows of a, a multiple of the kernel's */
+  int64_t mblocks; /* the blocks of a's rows a sliver of b is split into */
   uint8_t *a; /* element e's step q at a + (e·K + q)·lda·w, or NULL */
 } few_rows_job;
 
@@ -629,16 +643,21 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   uint8_t *bp = packs ? scratch(p, nr * kc_most * w) : NULL;
   if (packs && bp == NULL) return;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t e = u / r->slivers, j = u % r->slivers * nr;
-    int64_t n = min64(nr, n_all - j), pc = 0;
-    start(p, e, 0, m, j, j + n);
+    /* One division a unit where the rows do not split. */
+    int64_t v = u, i = 0;
+    if (r->mblocks > 1) i = v % r->mblocks * r->rows, v /= r->mblocks;
+    int64_t e = v / r->slivers, j = v % r->slivers * nr;
+    int64_t n = min64(nr, n_all - j), mc = min64(r->rows, m - i), pc = 0;
+    start(p, e, i, i + mc, j, j + n);
     while (pc < k) {
       int64_t kc = min64(kc_most, k - pc);
-      src a = r->a ? packed_a(p, r->a + (e * k + pc) * r->lda * w,
-                              r->lda, kc)
-                   : a_at(p, e, 0, pc);
+      src a = a_at(p, e, i, pc);
+      if (r->a) {
+        a = packed_a(p, r->a + (e * k + pc) * r->lda * w, r->lda, kc);
+        a.at += i * a.row * w;
+      }
       src b = b_sliver(p, r->move_b, e, j, n, pc, kc, bp);
-      tile(p, r->k, pc, kc, a, b, e, 0, j, m, n);
+      tile(p, r->k, pc, kc, a, b, e, i, j, mc, n);
       pc += kc;
     }
   }
@@ -768,11 +787,22 @@ static void few_rows(problem *p) {
   }
   int64_t bytes = batch * (n + m) * k * w;
   double cost = flop_cost(km, 2.0 * batch * m * n * k) + bytes;
+  int64_t threads = nx_cpu_threads_at(bytes, cost, thread_bytes(g));
+  int64_t blocks = 1;
+  if (p->b_in && threads > 1)
+    blocks = min64(threads / gcd(batch * r.slivers, threads),
+                   ceil_div(m, km.mr) / 2);
+  r.rows = m, r.mblocks = 1;
+  if (blocks > 1) {
+    r.rows = padded(km, ceil_div(m, blocks));
+    r.mblocks = ceil_div(m, r.rows);
+  }
+  int64_t total = batch * r.slivers * r.mblocks;
   r.move_a = mover(p, batch * r.kblocks, packed, PACK_COST * packed);
-  r.move_b = mover(p, batch * r.slivers, bytes, cost);
+  r.move_b = mover(p, total, bytes, cost);
   if (!p->a_in)
     job(p, batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack, &r);
-  job(p, batch * r.slivers, bytes, cost, few_rows_unit, &r);
+  job(p, total, bytes, cost, few_rows_unit, &r);
   if (!p->a_in) nx_cpu_give(r.a);
 }
 
