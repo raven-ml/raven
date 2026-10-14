@@ -1550,9 +1550,8 @@ let describe (p : P.t) =
   String.concat "; "
     (List.mapi (fun i n -> strf "%d: %s" i (node n)) (Iarray.to_list p.nodes))
 
-(* The most values [p] holds at once, as nx_cpu.mli counts them: each from
-   the node that computes it through the last node that reads it, or to the
-   end for an output. *)
+(* The most values [p] holds at once: each from the node that computes it
+   through the last node that reads it, or to the end for an output. *)
 let held (p : P.t) =
   let n = Iarray.length p.nodes in
   let last = Array.init n Fun.id in
@@ -1580,12 +1579,23 @@ let held (p : P.t) =
   done;
   !most
 
+(* [x] as a padded load of no padding, filled with zeros: it reads [x] as
+   a plain load does. *)
+let unpadded (type v s) (x : (v, s) A.t) =
+  let none = Array.make (L.rank (A.layout x)) 0 in
+  let pad =
+    { Nx_kernel.lo = none; hi = none; interior = none; windows = [||] }
+  in
+  let zero = B.of_string (String.make (D.bytes (A.dtype x) 1) '\000') in
+  let fill = A.get (A.v (A.dtype x) (L.contiguous [||]) zero) [||] in
+  Nx_kernel.Padded { x; fill; pad }
+
 (* A program's results are its nodes' results, each node run on its own,
    bit for bit: an intermediate holds its dtype's value exactly. With
    [declines], a map that declines a program [declines] does not accept
    fails. [length] bounds the program's nodes past its loads. *)
-let law_map_split ?declines ?(labels = true) ?length (b : Support.backend)
-    (Pair (x, y), seed) =
+let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
+    (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
   let st = Random.State.make [| seed |] in
   let dt = D.Any (A.dtype x) and shape = L.shape (A.layout x) in
@@ -1598,7 +1608,8 @@ let law_map_split ?declines ?(labels = true) ?length (b : Support.backend)
      map. *)
   let rank = Array.length shape in
   let p, types = program ?length st ins ~room:16 ~rank in
-  let loads = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops in
+  let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
+  let loads = Array.map load ops in
   match split b p types shape ops with
   | exception Skip -> cover "a node declined" true
   | values -> (
@@ -1688,6 +1699,48 @@ let law_map_full (b : Support.backend) (Case x) =
       equal ~msg:"map" answer A.Done
         (K.map p ~dsts:[| A.Any dst |] (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops));
       let (A.Any want) = values.(List.length nodes - 1) in
+      equal (array int) (bits_of (host want)) (bits_of (host dst))
+
+(* A program that holds hundreds of values at once, over a padded load and
+   the coordinates, as its nodes run one by one: [m] products of the operand,
+   cast to int64, by a constant or a coordinate, all summed at the end. *)
+let law_map_wide (b : Support.backend) ((Case x), m) =
+  let module K = (val b.kernels) in
+  let shape = L.shape (A.layout x) in
+  let rank = Array.length shape and i64 = D.Any D.Int64 in
+  let nodes = ref [ P.Op1 (Cast, i64, 0); P.In 0 ] in
+  let add n =
+    nodes := n :: !nodes;
+    List.length !nodes - 1
+  in
+  let coords = List.init rank (fun a -> add (P.Coord a)) in
+  let c = 1 in
+  let factor i =
+    match coords with
+    | [] -> add (P.Const (i64, P.bits D.Int64 (Int64.of_int i)))
+    | _ -> List.nth coords (i mod rank)
+  in
+  let values = List.init m (fun i -> add (P.Op2 (Binary Mul, c, factor i))) in
+  let sum =
+    List.fold_left (fun acc v -> add (P.Op2 (Binary Add, acc, v)))
+      (List.hd values) (List.tl values)
+  in
+  let nodes = Array.of_list (List.rev !nodes) in
+  let p =
+    P.v ~ins:(Iarray.init 1 (fun _ -> D.Any (A.dtype x)))
+      (Iarray.of_list (Array.to_list nodes)) ~outs:[| sum |]
+  in
+  let types = Array.init (Array.length nodes) (P.dtype p) in
+  let x = on b x in
+  cover "more than 256 values held" (held p > 256);
+  cover "coordinates" (rank > 0);
+  match split b p types shape [| A.Any x |] with
+  | exception Skip -> fail "a node declined"
+  | v ->
+      let dst = A.create b.device D.Int64 shape in
+      equal ~msg:"map" answer A.Done
+        (K.map p ~dsts:[| A.Any dst |] [| unpadded x |]);
+      let (A.Any want) = v.(sum) in
       equal (array int) (bits_of (host want)) (bits_of (host dst))
 
 (* In place *)
@@ -1957,9 +2010,6 @@ let law_erf_ranges (near, seed) =
   equal answer A.Done (Nx_cpu.apply1 (Unary Erf) ~dst:x x);
   equal ~msg:"in place" (array int64) want (Array.map Int64.bits_of_float (A.to_array x))
 
-(* The values nx_cpu.mli says a map it computes holds at most at once. *)
-let most_held = 256
-
 (* A job begun from a job's body runs to its end and adds what it is given,
    whether the outer job runs on the pool's threads or on the calling thread
    with the runtime released: 64 units of 64 MiB each, and 1 unit of 2 MiB.
@@ -1974,6 +2024,161 @@ let test_nested_jobs () =
         (Support.nested n cost))
     [ (64, 64 * 1024 * 1024); (1, 2 * 1024 * 1024); (3, 0) ]
 
+(* Programs that hold hundreds to thousands of values at once *)
+
+(* How a held program's values are made: each straight from the operand, so
+   that no slot is reused before the end, or each after a few steps, some
+   folded into the sum as they go, so that slots are reused. *)
+type pattern = Never | Reuse
+
+let pp_pattern ppf p =
+  Format.pp_print_string ppf (match p with Never -> "never" | Reuse -> "reuse")
+
+let pp_side ppf = function
+  | None -> Format.pp_print_string ppf "unguarded"
+  | Some Support.Before -> Format.pp_print_string ppf "before"
+  | Some Support.After -> Format.pp_print_string ppf "after"
+
+(* A program over one operand of [xt]: its cast to [dt], then [k] values of
+   [dt] made from it by kinds of one operand and of two with a constant,
+   held as [pattern] says and summed by kinds of two; its outputs the sum
+   and, sometimes, the cast. Raises [Skip] where [dt] takes no cast from
+   [xt] or no kind of two operands. *)
+let held_program st (D.Any xt) (D.Any dt) ~k ~pattern =
+  let t = D.Any dt in
+  let rev = ref [] and tys = ref [] and n = ref 0 in
+  let add node ty =
+    rev := node :: !rev;
+    tys := ty :: !tys;
+    incr n;
+    !n - 1
+  in
+  let x = add (P.In 0) (D.Any xt) in
+  if not (P.accepts1 Cast xt dt) then raise Skip;
+  let base = add (P.Op1 (Cast, t, x)) t in
+  let bins =
+    List.filter
+      (fun k -> match k with P.Binary _ -> P.accepts2 k dt | _ -> false)
+      op2s
+  in
+  let uns = List.filter (fun (u, _) -> P.accepts1 (Unary u) dt dt) unaries in
+  if bins = [] then raise Skip;
+  let pick l = List.nth l (Random.State.int st (List.length l)) in
+  let const () =
+    let e = bits_of (seeded dt [| 1 |] (Random.State.bits st)) in
+    let e = if D.is D.Boolean dt then [| e.(0) land 1 |] else e in
+    add (P.Const (t, String.init (Array.length e) (fun i -> Char.chr e.(i)))) t
+  in
+  let step prev =
+    if uns <> [] && Random.State.bool st then
+      add (P.Op1 (Unary (fst (pick uns)), t, prev)) t
+    else
+      let c = const () in
+      add (P.Op2 (pick bins, prev, c)) t
+  in
+  let acc = ref None and pending = Queue.create () in
+  let fold v =
+    acc :=
+      Some
+        (match !acc with
+        | None -> v
+        | Some a -> add (P.Op2 (pick bins, a, v)) t)
+  in
+  for _ = 1 to k do
+    let r = match pattern with Never -> 0 | Reuse -> Random.State.int st 5 in
+    let prev = ref base in
+    for _ = 1 to r do
+      prev := step !prev
+    done;
+    Queue.push (step !prev) pending;
+    if pattern = Reuse && Random.State.int st 4 = 0 then
+      fold (Queue.pop pending)
+  done;
+  Queue.iter fold pending;
+  let last = Option.get !acc in
+  let nodes = Array.of_list (List.rev !rev) in
+  let outs = if Random.State.bool st then [| last |] else [| last; base |] in
+  ( P.v ~ins:(Iarray.of_list [ D.Any xt ]) (Iarray.of_array nodes)
+      ~outs:(Iarray.of_array outs),
+    Array.of_list (List.rev !tys) )
+
+(* A map of a held program gives the bits of its nodes run one by one, at
+   every dtype, its operand and destinations in memory of their own beside
+   a guard page or not. *)
+let law_map_held ?(small = false) (b : Support.backend)
+    (Case x, D.Any dt, k, pattern, side, seed) =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| seed |] in
+  let shape = L.shape (A.layout x) in
+  match held_program st (D.Any (A.dtype x)) (D.Any dt) ~k ~pattern with
+  | exception Skip -> cover "cast declined" true
+  | p, types -> (
+      let h = held p in
+      cover "more than 256 held" (h > 256);
+      cover "more than 1040 held" (h > 1040);
+      cover "reuse" (pattern = Reuse);
+      cover "never" (pattern = Never);
+      cover "guarded" (side <> None);
+      let numel = Array.fold_left ( * ) 1 shape in
+      if small then cover "a few elements" (numel <= 4)
+      else cover "hundreds of elements" (numel >= 200);
+      match split b p types shape [| A.Any x |] with
+      | exception Skip -> fail "a node declined"
+      | values ->
+          let frees = ref [] in
+          let guard (type v s) (dt : (v, s) D.t) l : (v, s) A.t =
+            match side with
+            | None -> A.create b.device dt (L.shape l)
+            | Some s ->
+                let g, free = Support.guarded s dt l in
+                frees := free :: !frees;
+                g
+          in
+          Fun.protect
+            ~finally:(fun () -> List.iter (fun f -> f ()) !frees)
+            (fun () ->
+              let x' =
+                match side with
+                | None -> x
+                | Some _ ->
+                    let g = guard (A.dtype x) (L.contiguous shape) in
+                    equal ~msg:"copy" answer A.Done
+                      (Nx_cpu.apply1 P.Copy ~dst:g x);
+                    g
+              in
+              let dsts =
+                Array.map
+                  (fun o ->
+                    let (D.Any d) = types.(o) in
+                    A.Any (guard d (L.contiguous shape)))
+                  (Iarray.to_array p.outs)
+              in
+              equal ~msg:"map" answer A.Done
+                (K.map p ~dsts [| Nx_kernel.Plain x' |]);
+              Array.iteri
+                (fun i o ->
+                  let (A.Any want) = values.(o) in
+                  let (A.Any got) = dsts.(i) in
+                  equal
+                    ~msg:
+                      (strf "output %d, %d nodes, %d held, %s from %s" i
+                         (Iarray.length p.nodes) h (D.name dt)
+                         (D.name (A.dtype x)))
+                    (array int) (bits_of (host want)) (bits_of (host got)))
+                (Iarray.to_array p.outs)))
+
+let held_cases cases =
+  let open Gen in
+  let* c = cases in
+  let* dt = dtypes in
+  let* k = frequency [ (3, int_range 257 400); (1, int_range 1000 1600) ] in
+  let* pattern = of_list ~pp:pp_pattern [ Never; Reuse ] in
+  let* side =
+    of_list ~pp:pp_side [ None; Some Support.Before; Some Support.After ]
+  in
+  let+ seed = int in
+  (c, dt, k, pattern, side, seed)
+
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
    Nx_kernel.S. *)
 let cpu =
@@ -1984,14 +2189,26 @@ let cpu =
         (strf "%s computes every map its loop holds" b.name)
         (Gen.pair pairs Gen.int)
         (fun c -> b.around (fun () -> law_map_split ~declines:never b c));
+      prop ~count:300
+        (strf "%s computes held programs of a few elements" b.name)
+        (held_cases case)
+        (fun c -> b.around (fun () -> law_map_held ~small:true b c));
+      prop ~count:12
+        (strf "%s computes held programs over large views" b.name)
+        (held_cases large)
+        (fun c -> b.around (fun () -> law_map_held b c));
+      prop ~count:20
+        (strf "%s computes a map of hundreds of values held at once" b.name)
+        (Gen.pair case (Gen.int_range 257 1000))
+        (fun c -> b.around (fun () -> law_map_wide b c));
       prop ~count:100
-        (strf "%s computes every map its loop holds of up to %d held values"
-           b.name most_held)
+        (strf "%s computes programs of hundreds of nodes over padded loads"
+           b.name)
         (Gen.pair pairs Gen.int)
         (fun c ->
           b.around (fun () ->
               law_map_split ~length:400 ~labels:false
-                ~declines:(fun p _ -> held p > most_held)
+                ~padded:true ~declines:never
                 b c));
       prop
         (strf "%s computes a map of every operand with coordinates" b.name)

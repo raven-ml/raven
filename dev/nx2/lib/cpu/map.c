@@ -38,9 +38,10 @@
    is no longer held, so that a node never writes a slot it reads. The
    arena is cut into one slot per value held at once, and TEMPS more where
    a node casts or holds a dtype other than its carrier, so that the more
-   values a program holds, the fewer elements a block has. A
-   program that holds more than HELD values at once is declined: its
-   caller runs the nodes one by one.
+   values a program holds, the fewer elements a block has, down to LEAST.
+   An arena of more than ARENA bytes, as a program of many values of a
+   wide dtype needs, comes from the thread's kept scratch (job.c) in place
+   of the stack.
 
    A padded load is first copied padded into C-heap memory (assemble.c),
    which the call holds until it returns, and read from there as a plain
@@ -55,13 +56,15 @@
 
 #include "cpu.h"
 
-/* A block's values live in an arena on the stack: a slot for each value
-   the program holds at once, at most HELD, and where needed TEMPS
-   temporaries, which a node decodes its operands into and computes in
-   before it encodes. A
-   program that holds HELD values gets LEAST elements of the widest
-   carrier, complex128's, a slot; one that holds fewer gets longer blocks,
-   up to SLOT bytes a slot. */
+/* A block's values live in an arena: a slot for each value the program
+   holds at once, and where needed TEMPS temporaries, which a node decodes
+   its operands into and computes in before it encodes. A program that
+   holds HELD values gets LEAST elements of the widest carrier,
+   complex128's, a slot in ARENA bytes; one that holds fewer gets longer
+   blocks, up to SLOT bytes a slot; one that holds more gets LEAST
+   elements of its widest carrier a slot. The arena is on the stack up to
+   ARENA bytes, past them from the heap: at a carrier of one byte, up to
+   1040 values stay on the stack. */
 #define HELD 256
 #define TEMPS 4
 #define LEAST 16
@@ -112,6 +115,7 @@ typedef struct {
   const nx_array *a;
   int n, nouts, nnodes;
   int index; /* the index's loop operand, or -1 */
+  int *failed; /* set where a block's arena cannot be had */
   /* The loop's extents, and the product of those past each axis. */
   int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
   const step *s;
@@ -398,9 +402,17 @@ static void store(const prog *j, const plane *f, int o) {
 
 static void block(const nx_cpu_block *b, void *ctx) {
   const prog *j = ctx;
-  /* The arena, as long as the block needs, on a cache line. */
+  /* The arena, as long as the block needs, on a cache line: on the stack
+     up to ARENA bytes, else from the kept scratch, whose buffers start on
+     one. */
   int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) / LINE * LINE;
-  uint8_t room[(j->nheld + j->temps) * bytes + LINE];
+  int64_t size = (j->nheld + j->temps) * bytes + LINE;
+  uint8_t stack[size <= ARENA + LINE ? size : 1];
+  uint8_t *room = size <= ARENA + LINE ? stack : nx_cpu_take(size);
+  if (room == NULL) {
+    __atomic_store_n(j->failed, 1, __ATOMIC_RELAXED);
+    return;
+  }
   plane f = {*b, room + (LINE - (uintptr_t)room % LINE) % LINE, bytes};
   f.p.n2 = 1;
   /* A row of one element steps nowhere: every operand's is contiguous. */
@@ -412,6 +424,7 @@ static void block(const nx_cpu_block *b, void *ctx) {
       if (j->s[i].slot >= 0) run(j, &f, i);
     for (int o = 0; o < j->nouts; o++) store(j, &f, o);
   }
+  if (room != stack) nx_cpu_give(room);
 }
 
 /* Decoding */
@@ -451,9 +464,9 @@ static void const_of(step *s) {
 
 /* Fills the steps [s], copied from a program of [nn] nodes and outputs
    [outs] over a loop of rank [rank], and answers NX_OK, NX_SHAPE for a
-   coordinate past the rank, or NX_DECLINED; on NX_OK [index] says whether
-   a coordinate reads the index and [slots] counts the values held at
-   once. */
+   coordinate past the rank, NX_DECLINED, or -1 where memory runs out; on
+   NX_OK [index] says whether a coordinate reads the index and [slots]
+   counts the values held at once. */
 static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
                   int *index, int *slots) {
   *index = 0;
@@ -519,17 +532,19 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
   }
   /* A value takes the first slot whose value is no longer held: owner[k]
      is slot k's latest value. */
-  int owner[HELD];
+  int local[HELD], *owner = local;
+  if (nn > HELD && (owner = malloc(sizeof(int) * (size_t)nn)) == NULL)
+    return -1;
   *slots = 0;
   for (int i = 0; i < nn; i++) {
     if (s[i].alias >= 0 || s[i].tag == NX_NODE_CONST) continue;
     int k = 0;
     while (k < *slots && s[owner[k]].last >= i) k++;
-    if (k == HELD) return NX_DECLINED;
     if (k == *slots) (*slots)++;
     owner[k] = i;
     s[i].slot = k;
   }
+  if (owner != local) free(owner);
   return NX_OK;
 }
 
@@ -582,11 +597,11 @@ static int widest(const step *s, int nn) {
    [outs], over the [n] operands [a] the door read, its outputs first. */
 static int run_map(step *s, int nn, int nouts, const int32_t *outs,
                    nx_array *a, int n) {
-  int index, slots, e;
+  int index, slots, e, failed = 0;
   if ((e = decode(s, nn, nouts, outs, a[0].rank, &index, &slots))) return e;
   prog j = {.a = a, .n = n, .nouts = nouts, .nnodes = nn, .index = -1,
-            .s = s, .nheld = slots, .temps = temps(s, nn),
-            .w = widest(s, nn)};
+            .failed = &failed, .s = s, .nheld = slots,
+            .temps = temps(s, nn), .w = widest(s, nn)};
   if (index) {
     a[n] = index_of(&a[0], j.extent, j.inner);
     j.index = j.n++;
@@ -597,10 +612,11 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   int held = slots + j.temps;
   int64_t bytes = held > 0 ? ARENA / held / LINE * LINE : SLOT;
   if (bytes > SLOT) bytes = SLOT;
+  if (bytes < LEAST * j.w) bytes = LEAST * j.w;
   nx_loop l;
   if (!(e = nx_coalesce(j.n, a, &l)))
     nx_cpu_walk(j.n, a, &l, bytes / j.w, kinds(s, nn), block, &j);
-  return e;
+  return failed ? -1 : e;
 }
 
 /* Copies the program [vp], a Prog.t, into the steps [s], one per node: its
