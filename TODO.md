@@ -346,8 +346,8 @@ raven / llama.cpp (Vulkan; ROCm):
   theirs)
 - licences: replace lena.png and the Gaia DR1 fixture; stop calling talon's
   bench TPC-H; rewrite talon's Schubfach (OpenJDK, GPL) and ymir's WCS pole
-  (WCSLIB, LGPL) from their papers; one copyright line; a LICENSE in fehu,
-  sowilo and ymir; brot's and quill's README links to ../../LICENSE
+  (WCSLIB, LGPL) from their papers; one copyright line: the LICENSE files
+  say "2025, Thibaut Mattio", the source headers "2026 The Raven authors"
 - docs: introduction.md and support-raven.md name "JIT via tolk" as the
   next milestone and call it the only path, and pitch unikernels
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and

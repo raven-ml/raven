@@ -50,4 +50,4 @@ See the [Raven monorepo README](../README.md) for contribution guidelines.
 
 ## License
 
-ISC License. See [LICENSE](../LICENSE) for details.
+ISC License. See [LICENSE](../../LICENSE) for details.
