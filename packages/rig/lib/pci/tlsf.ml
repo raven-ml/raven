@@ -3,51 +3,95 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Blocks tile the range. Each knows the start of the block before it; the one
-   after it starts where it ends. Free blocks are also on the list of their
-   class: first level [f], the bit length of their size, and second level [s],
-   the four bits below the top one. [firsts] has bit [f] set iff level [f] has a
-   free block, and [seconds.(f)] bit [s] iff class [(f, s)] has one. No two free
-   blocks are neighbours: a freed block merges at once.
+(* Blocks tile the range. Each knows the blocks before and after it. Free
+   blocks are also on the list of their class: first level [f], the bit length
+   of their size, and second level [s], the four bits below the top one.
+   [firsts] has bit [f] set iff level [f] has a free block, and [seconds.(f)]
+   bit [s] iff class [(f, s)] has one. No two free blocks are neighbours: a
+   freed block merges at once.
 
-   Starts are relative to [base]; [none] ends a chain. *)
+   A call allocates everything it needs first: the result, and the records of
+   the blocks it makes, bound in the table while unlinked. It then changes
+   the blocks and their lists with nothing that allocates or polls, and last
+   unbinds the blocks a free joined. An exception therefore leaves the blocks
+   as they were before the call or as the call made them, and at most
+   unlinked records in the table, which a free ignores and a later block at
+   their start replaces.
+
+   Starts are relative to [base]; [nil] ends a chain. *)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let second_bits = 4
 let classes = 1 lsl second_bits
 let levels = Sys.int_size
-let none = -1
 
 (* The smallest block handed out: a smaller tail stays with its block. *)
 let min_block = 16
 
+type state = Taken | Free | Unlinked
+
 type block = {
+  start : int;
   mutable size : int;
-  mutable prev : int; (* the block before it *)
-  mutable free : bool;
-  mutable next_free : int; (* on its class's list *)
-  mutable prev_free : int;
+  mutable state : state;
+  mutable prev : block; (* the block before it *)
+  mutable next : block; (* the block after it *)
+  mutable prev_free : block; (* on its class's list *)
+  mutable next_free : block;
 }
+
+let rec nil =
+  {
+    start = -1;
+    size = 0;
+    state = Unlinked;
+    prev = nil;
+    next = nil;
+    prev_free = nil;
+    next_free = nil;
+  }
 
 type t = {
   base : int;
   length : int;
   blocks : block Tables.Address.t;
-  heads : int array; (* the first free block of each class *)
+  bottom : block; (* the block at the range's start, [nil] for none *)
+  heads : block array; (* the first free block of each class *)
   seconds : int array;
   mutable firsts : int;
 }
 
 (* Bits *)
 
-(* The number of bits of [n > 0], in six steps. *)
+(* The number of bits of [n > 0], in six steps, with no loop, so that the
+   changes of a call reach no poll point. *)
 let bit_length n =
-  let rec go n k step =
-    if step = 0 then k + n
-    else if n lsr step <> 0 then go (n lsr step) (k + step) (step / 2)
-    else go n k (step / 2)
-  in
-  go n 0 32
+  let n = ref n and k = ref 0 in
+  if !n lsr 32 <> 0 then begin
+    n := !n lsr 32;
+    k := !k + 32
+  end;
+  if !n lsr 16 <> 0 then begin
+    n := !n lsr 16;
+    k := !k + 16
+  end;
+  if !n lsr 8 <> 0 then begin
+    n := !n lsr 8;
+    k := !k + 8
+  end;
+  if !n lsr 4 <> 0 then begin
+    n := !n lsr 4;
+    k := !k + 4
+  end;
+  if !n lsr 2 <> 0 then begin
+    n := !n lsr 2;
+    k := !k + 2
+  end;
+  if !n lsr 1 <> 0 then begin
+    n := !n lsr 1;
+    k := !k + 1
+  end;
+  !k + !n
 
 (* The index of the lowest set bit of [m <> 0]. *)
 let lowest m = bit_length (m land -m) - 1
@@ -79,18 +123,16 @@ let slot f s = (f * classes) + s
 
 (* Free lists *)
 
-let find t start = Tables.Address.find t.blocks start
-
-let insert t start b =
+let insert t b =
   let f = first b.size in
   let s = second f b.size in
   let i = slot f s in
   let head = t.heads.(i) in
-  b.free <- true;
-  b.prev_free <- none;
+  b.state <- Free;
+  b.prev_free <- nil;
   b.next_free <- head;
-  if head <> none then (find t head).prev_free <- start;
-  t.heads.(i) <- start;
+  if head != nil then head.prev_free <- b;
+  t.heads.(i) <- b;
   t.seconds.(f) <- t.seconds.(f) lor (1 lsl s);
   t.firsts <- t.firsts lor (1 lsl f)
 
@@ -98,83 +140,80 @@ let remove t b =
   let f = first b.size in
   let s = second f b.size in
   let i = slot f s in
-  if b.prev_free <> none then (find t b.prev_free).next_free <- b.next_free
+  if b.prev_free != nil then b.prev_free.next_free <- b.next_free
   else t.heads.(i) <- b.next_free;
-  if b.next_free <> none then (find t b.next_free).prev_free <- b.prev_free;
-  if t.heads.(i) = none then begin
+  if b.next_free != nil then b.next_free.prev_free <- b.prev_free;
+  if t.heads.(i) == nil then begin
     t.seconds.(f) <- t.seconds.(f) land lnot (1 lsl s);
     if t.seconds.(f) = 0 then t.firsts <- t.firsts land lnot (1 lsl f)
-  end;
-  b.free <- false
+  end
 
-(* The first free block of class [(f, s)] or a larger one, or [none]. *)
+(* The first free block of class [(f, s)] or a larger one, or [nil]. *)
 let suitable t f s =
   let m = from s t.seconds.(f) in
   if m <> 0 then t.heads.(slot f (lowest m))
   else
     let m = from (f + 1) t.firsts in
-    if m = 0 then none
+    if m = 0 then nil
     else
       let f = lowest m in
       t.heads.(slot f (lowest t.seconds.(f)))
 
 (* Blocks *)
 
-(* Shrinks the block [b] at [start] to [n] bytes and is the block made of the
-   rest, at [start + n], which is on no list. *)
-let carve t start b n =
-  let rest = start + n in
-  let r =
+(* A record for the block at [start], bound in [blocks], unlinked. *)
+let unlinked blocks start =
+  let b =
     {
-      size = b.size - n;
-      prev = start;
-      free = false;
-      next_free = none;
-      prev_free = none;
+      start;
+      size = 0;
+      state = Unlinked;
+      prev = nil;
+      next = nil;
+      prev_free = nil;
+      next_free = nil;
     }
   in
-  (match Tables.Address.find_opt t.blocks (start + b.size) with
-  | Some next -> next.prev <- rest
-  | None -> ());
-  b.size <- n;
-  Tables.Address.replace t.blocks rest r;
-  r
+  Tables.Address.replace blocks start b;
+  b
 
-(* Joins the block at [next] to [b], before it. Neither is on a list. *)
-let absorb t start b next =
-  let n = find t next in
+(* Shrinks the block [b] to [n] bytes and makes [r], at [b.start + n], the
+   block of the rest. *)
+let split b r n =
+  r.size <- b.size - n;
+  r.prev <- b;
+  r.next <- b.next;
+  if b.next != nil then b.next.prev <- r;
+  b.next <- r;
+  b.size <- n
+
+(* Joins [n], the block after [b], to [b]. Neither is on a list. *)
+let absorb b n =
   b.size <- b.size + n.size;
-  Tables.Address.remove t.blocks next;
-  match Tables.Address.find_opt t.blocks (start + b.size) with
-  | Some after -> after.prev <- start
-  | None -> ()
+  b.next <- n.next;
+  if n.next != nil then n.next.prev <- b;
+  n.state <- Unlinked
 
 (* Allocators *)
 
 let create ~base length =
   if length < 0 then invalid_argf "Tlsf.create: %d" length;
+  let blocks = Tables.Address.create 64 in
+  let bottom = if length > 0 then unlinked blocks 0 else nil in
   let t =
     {
       base;
       length;
-      blocks = Tables.Address.create 64;
-      heads = Array.make (levels * classes) none;
+      blocks;
+      bottom;
+      heads = Array.make (levels * classes) nil;
       seconds = Array.make levels 0;
       firsts = 0;
     }
   in
   if length > 0 then begin
-    let b =
-      {
-        size = length;
-        prev = none;
-        free = false;
-        next_free = none;
-        prev_free = none;
-      }
-    in
-    Tables.Address.replace t.blocks 0 b;
-    insert t 0 b
+    bottom.size <- length;
+    insert t bottom
   end;
   t
 
@@ -182,40 +221,46 @@ let base t = t.base
 let length t = t.length
 let round_up n a = (n + a - 1) / a * a
 
-(* Takes [req] bytes at the aligned start of the free block [b] at [start]: the
-   gap below and the tail above stay free. *)
-let take_from t ~align start b req =
-  remove t b;
-  (* The gap below the aligned start stays free. Its neighbour before was [b]'s,
-     which is not free. *)
-  let gap = round_up (t.base + start) align - t.base - start in
-  let at = start + gap in
-  let b =
-    if gap = 0 then b
-    else begin
-      let ab = carve t start b gap in
-      insert t start b;
-      ab
-    end
-  in
+(* Takes [req] bytes at the aligned start of the free block [b]: the gap below
+   and the tail above stay free. *)
+let take_from t ~align b req =
+  let gap = round_up (t.base + b.start) align - t.base - b.start in
+  let at = b.start + gap in
   (* The tail above the request is free, unless smaller than a block. *)
-  if b.size - req >= min_block then insert t (at + req) (carve t at b req);
-  Some (t.base + at)
+  let tail = b.size - gap - req >= min_block in
+  let got = Some (t.base + at) in
+  let ab = if gap = 0 then b else unlinked t.blocks at in
+  let rest = if tail then unlinked t.blocks (at + req) else nil in
+  remove t b;
+  (* The gap below the aligned start stays free. Its neighbour before was
+     [b]'s, which is not free. *)
+  if gap > 0 then begin
+    split b ab gap;
+    insert t b
+  end;
+  if tail then begin
+    split ab rest req;
+    insert t rest
+  end;
+  ab.state <- Taken;
+  got
 
 (* The first free block, in address order, that holds [req] bytes at an aligned
    start ending at or below [below]: a walk of the blocks, for a request that
    the bound excludes part of the range for. *)
 let first_below t ~align ~below req =
-  let rec walk start =
-    if start >= t.length || t.base + start >= below then None
+  let rec walk b =
+    if b == nil || t.base + b.start >= below then None
     else
-      let b = find t start in
-      let at = round_up (t.base + start) align - t.base in
-      if b.free && at + req <= start + b.size && t.base + at + req <= below then
-        take_from t ~align start b req
-      else walk (start + b.size)
+      let at = round_up (t.base + b.start) align - t.base in
+      if
+        b.state = Free
+        && at + req <= b.start + b.size
+        && t.base + at + req <= below
+      then take_from t ~align b req
+      else walk b.next
   in
-  walk 0
+  walk t.bottom
 
 let alloc ?(align = 1) ?below t n =
   if n < 0 then invalid_argf "Tlsf.alloc: %d bytes" n;
@@ -234,27 +279,29 @@ let alloc ?(align = 1) ?below t n =
         if need < 0 then None
         else
           let f = first need in
-          let start = suitable t f (second f need) in
-          if start = none then None
-          else take_from t ~align start (find t start) req
+          let b = suitable t f (second f need) in
+          if b == nil then None else take_from t ~align b req
 
 let free t x =
-  let start = x - t.base in
-  match Tables.Address.find_opt t.blocks start with
-  | Some b when not b.free ->
-      let start, b =
-        match Tables.Address.find_opt t.blocks b.prev with
-        | Some p when p.free ->
-            remove t p;
-            absorb t b.prev p start;
-            (b.prev, p)
-        | _ -> (start, b)
+  match Tables.Address.find_opt t.blocks (x - t.base) with
+  | Some b when b.state = Taken ->
+      let p = b.prev and n = b.next in
+      let join_p = p != nil && p.state = Free in
+      let join_n = n != nil && n.state = Free in
+      let m =
+        if join_p then begin
+          remove t p;
+          absorb p b;
+          p
+        end
+        else b
       in
-      (match Tables.Address.find_opt t.blocks (start + b.size) with
-      | Some n when n.free ->
-          remove t n;
-          absorb t start b (start + b.size)
-      | _ -> ());
-      insert t start b;
+      if join_n then begin
+        remove t n;
+        absorb m n
+      end;
+      insert t m;
+      if join_p then Tables.Address.remove t.blocks b.start;
+      if join_n then Tables.Address.remove t.blocks n.start;
       true
   | _ -> false

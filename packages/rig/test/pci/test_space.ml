@@ -252,6 +252,59 @@ let test_interrupted () =
   in
   from 1
 
+(* A space of 256 pages whose first 127 pages are taken one at a time and the
+   odd ones freed again: an alloc of two pages then carves the gap below its
+   aligned start and the tail above it, a free of a taken page joins both
+   neighbours, and its blocks are as many as make the allocator's table grow
+   at the alloc's first new block. Is the space and its taken pages. *)
+let fragmented () =
+  let s = Space.create ~base:(1 lsl 40) (256 * 4096) in
+  let pages = List.init 127 (fun _ -> Option.get (Space.alloc s 4096)) in
+  let freed, taken = List.partition (fun a -> (a lsr 12) land 1 = 1) pages in
+  List.iter (Space.free s) freed;
+  (s, taken)
+
+(* Whether [s], a space of 256 pages, is whole: half of it, aligned to half,
+   is served only from a free block of all 256 pages. The fit bound of
+   tlsf.mli does not promise this; the allocator's search does, since it
+   looks for a block of the request plus its alignment less one, 256 pages
+   less a byte, rounded up to its class, which starts at 256 pages. *)
+let whole s = Space.alloc s (128 * 4096)
+
+(* An exception at any allocation of an alloc or a free loses no range: once
+   the ranges that the calls hold are freed, the interrupted one's if it
+   returned, the space is whole again. A free interrupted before it returned
+   may have freed its range or not. *)
+let test_lost () =
+  let rec from n =
+    let s, taken = fragmented () in
+    let got = ref None in
+    let reached =
+      Rig_support.interrupted n (fun () -> got := Space.alloc s 0x2000)
+    in
+    List.iter (Space.free s) taken;
+    Option.iter (Space.free s) !got;
+    let at what = Printf.sprintf "whole, %s interrupted at %d" what n in
+    is_some ~msg:(at "an alloc") (whole s);
+    let s, taken = fragmented () in
+    let x = List.nth taken 10 in
+    let freed = ref false in
+    let reached' =
+      Rig_support.interrupted n (fun () ->
+          Space.free s x;
+          freed := true)
+    in
+    List.iter
+      (fun a ->
+        if a <> x then Space.free s a
+        else if not !freed then
+          try Space.free s a with Invalid_argument _ -> ())
+      taken;
+    is_some ~msg:(at "a free") (whole s);
+    if reached || reached' then from (n + 1)
+  in
+  from 1
+
 let () =
   exit
   @@ run "rig_pci.space"
@@ -267,5 +320,7 @@ let () =
              test "an exception at any allocation of a call leaves the lock \
                    free"
                test_interrupted;
+             test "an exception at any allocation of a call loses no range"
+               test_lost;
            ];
        ]

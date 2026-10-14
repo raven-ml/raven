@@ -46,9 +46,8 @@ raven / llama.cpp (Vulkan; ROCm):
   the BAR windows another GPU's flush entry or view still reads
 - AMD's and NV's PCI paths turn every `map_host`/`map_peer` error into
   `None` (rig_amd_pci.ml:221, rig_nv_pci.ml:205): pass a fault on as a fault
-- exceptions: `Tlsf` removes a block, then allocates before reinserting
-  (tlsf.ml:186, 241); `Atomic.incr`/`decr` allocate first at rig_disk.ml:222,
-  262 (an exception skips `close`) and rig_mlx5.ml:729; amdgpu's and NV's
+- exceptions: `Atomic.incr`/`decr` allocate first at rig_disk.ml:222, 262
+  (an exception skips `close`) and rig_mlx5.ml:729; amdgpu's and NV's
   tables must still serve stop, free and unload after an exception
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)

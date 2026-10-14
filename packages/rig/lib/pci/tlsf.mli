@@ -17,7 +17,9 @@
     free block of [2 * (max n 16 + a)] bytes exists, and may fail with a smaller
     one that would fit.
 
-    The allocator's owner calls one function at a time.
+    The allocator's owner calls one function at a time. An exception inside a
+    call, such as an asynchronous one where it allocates or polls, leaves
+    the allocator as the call found it or as the call made it.
 
     {b Reference.} M. Masmano, I. Ripoll, A. Crespo and J. Real. "TLSF: a new
     dynamic memory allocator for real-time systems".
