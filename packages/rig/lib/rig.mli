@@ -1971,12 +1971,15 @@ module Profile : sig
             bytes leave and reach, so a {!Buffer.borrow} names the device
             whose memory it borrows.
 
-            Each copy part of a submission records an event with the times of
-            the submission's span where its device times the work. Otherwise,
-            as for a copy the host or an io device runs, the event runs from
-            when the copy was asked, at the submit, to when the host saw it
-            done. A copy through staging memory records each piece into and
-            out of it, with {!host} as one side, and no event of its own. *)
+            Each copy part of a submission records an event with the times
+            of the submission's span where its device times the work.
+            Otherwise the event starts when the copy was asked, at the
+            submit. It ends when the copy ended where the submit runs it, as
+            for a copy the host, an io device or a {!memory_device} runs,
+            and otherwise when {!take} reads that it is done, so the event
+            then lasts at least as long as the copy. A copy through staging
+            memory records each piece into and out of it, with {!host} as
+            one side, and no event of its own. *)
 
   val take : (unit -> 'a) -> 'a * event list
   (** [take f] is [f ()] and the events recorded while it ran, in time order

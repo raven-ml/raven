@@ -1346,8 +1346,8 @@ static int take_pair(struct rig_times *t) {
   return k;
 }
 
-/* The pair [v_k] of the device [v_d], as [(start, stop)], given back. The
-   value it timed is reached, so its driver wrote it. */
+/* The pair [v_k] of the device [v_d], as [(start, stop)]. The value it
+   timed is reached, so its driver wrote it. */
 value caml_rig_times_read(value v_d, value v_k) {
   CAMLparam2(v_d, v_k);
   CAMLlocal1(v);
@@ -1355,12 +1355,20 @@ value caml_rig_times_read(value v_d, value v_k) {
   mutex_lock(&t->mu);
   uint64_t *p = pair_at(t, Int_val(v_k));
   uint64_t start = p[0], stop = p[1];
-  t->free[t->nfree++] = Int_val(v_k);
   mutex_unlock(&t->mu);
   v = caml_alloc_tuple(2);
   Store_field(v, 0, Val_long((intnat)start));
   Store_field(v, 1, Val_long((intnat)stop));
   CAMLreturn(v);
+}
+
+/* Gives back the pair [v_k] of the device [v_d]. */
+value caml_rig_times_free(value v_d, value v_k) {
+  struct rig_times *t = &Device_val(v_d)->times;
+  mutex_lock(&t->mu);
+  t->free[t->nfree++] = Int_val(v_k);
+  mutex_unlock(&t->mu);
+  return Val_unit;
 }
 
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next

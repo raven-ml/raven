@@ -229,6 +229,7 @@ struct polled_run {
   int blocked; /* submits waiting for room */
   int nlast;   /* the waits of the last submit, the first [LAST] of them */
   struct rig_wait last[LAST];
+  uint64_t *last_times; /* where the last submit's times go */
   int nsides; /* the copy.local of each copy run, the first [LAST_COPIES] */
   int sides[LAST_COPIES];
   int device_memory[LAST_COPIES];
@@ -264,7 +265,8 @@ struct polled {
   char why[64]; /* what a hand-over failing from [fail_from] reports */
   struct polled_run *run;
   struct polled *prev, *next; /* in the list of every device ([all]) */
-  int room_gated, room_waiters; /* [room] blocks while gated */
+  int room_gated, room_waiters;     /* [room] blocks while gated */
+  int settle_gated, settle_waiters; /* and [settle] */
   _Atomic int freed; /* rig freed its word of its own */
   /* The mappings rig holds of it ([map_peer], [map_host]), by address. */
   struct held_map {
@@ -516,6 +518,14 @@ value rig_test_polled_blocked(value v_p) {
   int n = p->run != NULL ? p->run->blocked : 0;
   unlock(&p->mu);
   return Val_int(n);
+}
+
+value rig_test_polled_last_times(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  intnat at = p->run != NULL ? (intnat)p->run->last_times : 0;
+  unlock(&p->mu);
+  return Val_long(at);
 }
 
 /* The waits of the last submit, as [| kind; at; value; … |]. */
@@ -973,6 +983,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
       r->layout_after[i][j] = parts[i].after[j];
   }
   if (r->nlast > 0) memcpy(r->last, waits, (size_t)r->nlast * sizeof *waits);
+  r->last_times = times;
   struct rig_wait *ws = malloc((size_t)(nwaits + 1) * sizeof *waits);
   struct rig_part *ps = malloc((size_t)(nparts + 1) * sizeof *parts);
   uint8_t *bs = NULL;
@@ -1030,11 +1041,14 @@ static int polled_commit(void *self, uint64_t v, const char **failure) {
 
 /* A settle does nothing, since the queue's run writes a value's times
    before its word shows it, or fails as [rig_test_polled_fail_settle]
-   asked. */
+   asked. It waits while gated. */
 static int polled_settle(void *self, uint64_t v, const char **failure) {
   struct polled *p = self;
   (void)v;
   lock(&p->mu);
+  p->settle_waiters++;
+  while (p->settle_gated) cond_wait(&p->cv, &p->mu);
+  p->settle_waiters--;
   int fail = p->run->fail_settle;
   p->run->fail_settle = 0;
   unlock(&p->mu);
@@ -1105,6 +1119,25 @@ value rig_test_polled_gate_room(value v_p, value v_gated) {
   cond_broadcast(&p->cv);
   unlock(&p->mu);
   return Val_unit;
+}
+
+/* Makes the device's [settle] block, if [v_gated], until it is called with
+   false. */
+value rig_test_polled_gate_settle(value v_p, value v_gated) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->settle_gated = Bool_val(v_gated);
+  cond_broadcast(&p->cv);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+value rig_test_polled_settle_waiters(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  int n = p->settle_waiters;
+  unlock(&p->mu);
+  return Val_int(n);
 }
 
 value rig_test_polled_room_waiters(value v_p) {

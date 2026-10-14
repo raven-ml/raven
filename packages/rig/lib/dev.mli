@@ -331,10 +331,9 @@ val signaled : device -> int
 (** [signaled d] is {!Rig.signaled}[ d]. *)
 
 val wait : device -> int -> unit
-(** [wait d v] commits [d]'s work if [v] is not committed, blocks until [d]
-    reached [v], then runs the {!after} functions due, raising the first
-    exception one raised once all have run. Raises [Invalid_argument] if [v]
-    exceeds [submitted d], and {!Lost} if [d] is or becomes lost. *)
+(** [wait d v] commits [d]'s work if [v] is not committed and blocks until
+    [d] reached [v]. Raises [Invalid_argument] if [v] exceeds [submitted d],
+    and {!Lost} if [d] is or becomes lost. *)
 
 val wait_value : device -> int -> unit
 (** [wait_value d v] is {!wait} for a value [d] assigned, such as a point's,
@@ -350,10 +349,6 @@ val wait_point : int -> bool -> int -> unit
     raises {!Lost} if [p] is not done and its device is or becomes lost, or,
     before it blocks, if a lost device did not reach a point of [st] that
     the access depends on. It never raises [Invalid_argument]. *)
-
-val after : device -> int -> (unit -> unit) -> unit
-(** [after d v f] runs [f] in the first {!wait} or {!wait_point} on [d] that
-    finds [v] reached, on that wait's domain. Nothing else runs it. *)
 
 val is_done : int -> bool
 (** [is_done p] is [true] iff [p] is done. It may raise {!Lost} as {!word}

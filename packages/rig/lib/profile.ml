@@ -64,26 +64,42 @@ let order e e' =
 let recorded_order (n, e) (n', e') =
   match order e e' with 0 -> Int.compare n n' | c -> c
 
-let drop_afters l = l.afters <- []
+(* What [pop] answers when [p] has no pending entry. *)
+let no_pending =
+  { Prof.device = Dev.host; value = 0; read = ignore; drop = ignore }
 
-(* Waits for the values whose events are still to be read, such as the times of
-   the submissions it timed, the host's among them; a device lost meanwhile has
-   them dropped. *)
-let read_pending () =
-  let read (d : device) =
-    let l = d.live in
-    if l.afters <> [] then
-      let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
-      try Dev.wait d v with Dev.Lost _ -> Lock.protect l.lock drop_afters l
-  in
-  read Dev.host;
-  Dev.iter read
+let rec pop (p : Prof.t) =
+  match Atomic.get p.pending with
+  | Reading (e :: l) as before ->
+      if Atomic.compare_and_set p.pending before (Reading l) then e else pop p
+  | Open _ | Reading [] | Closed -> no_pending
+
+(* Reads the entries [p] took into it, newest first, which waits for the
+   last value first. Each waits for its value and reads its events, or none
+   if its device is lost meanwhile. An entry leaves [p] as its wait starts
+   and is dropped however its read ends, so an exception, such as
+   [Sys.Break] in the wait, leaves the rest in [p] for [stop] to drop. *)
+let rec read_all p =
+  let e = pop p in
+  if e != no_pending then begin
+    (match
+       match Dev.wait e.device e.value with
+       | () -> e.read p
+       | exception Dev.Lost _ -> ()
+     with
+    | () -> e.drop ()
+    | exception x ->
+        e.drop ();
+        Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ()));
+    read_all p
+  end
 
 let take f =
   let p = Prof.start () in
   match
     let r = f () in
-    read_pending ();
+    Prof.seal p;
+    read_all p;
     r
   with
   | r ->

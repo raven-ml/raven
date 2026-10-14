@@ -22,8 +22,27 @@
 type t = {
   events : (int * Def.event) list option Atomic.t;
       (** Numbered in the order recorded, newest first; [None] once stopped. *)
+  pending : intake Atomic.t;
+      (** Its {!pending} entries, newest first. *)
 }
 (** The type for profiles. *)
+
+(** The type for a profile's entries: it takes them while [take]'s function
+    runs, then only gives up those it took to [take]'s reads, until its
+    stop. *)
+and intake = Open of pending list | Reading of pending list | Closed
+
+(** The type for the events of [device]'s work up to [value] that [read]
+    adds to a profile once the device reached it, such as a submission's
+    span. Each profile that timed the work holds an entry of its own; [drop]
+    ends the entry, read or not, and the last [drop] of the work's entries
+    lets go of what they read. *)
+and pending = {
+  device : Def.device;
+  value : int;
+  read : t -> unit;
+  drop : unit -> unit;
+}
 
 val active : unit -> t list
 (** [active ()] is the open profiles, oldest first, and stopped ones that
@@ -38,8 +57,15 @@ val start : unit -> t
     goes into. *)
 
 val stop : t -> (int * Def.event) list
-(** [stop p] closes [p] and is its events, newest first. Calls after the
-    first are [[]]. *)
+(** [stop p] closes [p], drops its pending entries, and is its events,
+    newest first. Calls after the first are [[]]. *)
+
+val pend : t -> pending -> unit
+(** [pend p e] adds [e] to [p]'s pending entries, or drops it once {!seal}
+    or {!stop} ran on [p]. *)
+
+val seal : t -> unit
+(** [seal p] makes [p] take no more entries: [take]'s function returned. *)
 
 val add : t list -> Def.event -> unit
 (** [add ps e] records [e] under one number in each profile of [ps] still

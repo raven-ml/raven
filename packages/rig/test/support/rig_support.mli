@@ -239,6 +239,10 @@ module Polled : sig
   val allocated : t -> Rig_edge.memory -> int
   (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 
+  val last_times : t -> int
+  (** [last_times d] is the host address where the run of [d]'s last submit
+      writes its times, [0] for nowhere. *)
+
   val last_waits : t -> (int * int * int) list
   (** [last_waits d] is the waits [d]'s last submit received, at most 8, as
       [(kind, at, value)], [kind] one of {!rig_word} and {!rig_object}. *)
@@ -337,6 +341,20 @@ module Polled : sig
 
   val in_room : t -> int
   (** [in_room d] is the number of [d]'s [room] calls under way, those
+      blocked at the gate included. *)
+
+  val gate_settle : t -> unit
+  (** [gate_settle d] makes the [settle] of [d], made with [may_block], block
+      until {!open_settle}: a profile's read of a value's times there holds
+      [d]'s turn.
+
+      Raises [Invalid_argument] if [d] was made without [may_block]. *)
+
+  val open_settle : t -> unit
+  (** [open_settle d] lets [d]'s blocked [settle] calls go on. *)
+
+  val settlers : t -> int
+  (** [settlers d] is the number of [d]'s [settle] calls under way, those
       blocked at the gate included. *)
 
   val interrupt : t -> unit

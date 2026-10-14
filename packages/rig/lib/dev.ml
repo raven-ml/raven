@@ -168,7 +168,6 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       words = 0;
       word_maps = [];
       mapped = Cache.create 4;
-      afters = [];
     }
   in
   {
@@ -675,28 +674,6 @@ let live_word d =
   if d.live.word <> 0 then slot_word d
   else try word d with Lost (d', _) when d' == d -> -1
 
-let take_afters (l, w) =
-  let due, later = List.partition (fun (v, _) -> v <= w) l.afters in
-  l.afters <- later;
-  due
-
-(* Runs the functions registered on [d]'s values up to [w], re-raising the first
-   exception one raised once all ran. *)
-let run_afters d w =
-  let l = d.live in
-  let due = Lock.protect l.lock take_afters (l, w) in
-  let first = ref None in
-  List.iter
-    (fun (_, f) -> try f () with e -> if !first = None then first := Some e)
-    (List.rev due);
-  Option.iter raise !first
-
-let add_after (l, a) = l.afters <- a :: l.afters
-
-let after d v f =
-  let l = d.live in
-  Lock.protect l.lock add_after (l, (v, f))
-
 (* A device whose unreached work waits in its queue on another's surfaces that
    producer's unseen fault: its sleep raises it. A producer is the device its
    slot holds, as no entry of an earlier device's points is unreached. *)
@@ -717,16 +694,15 @@ let rec spin_held (d : device) v until =
     spin_held d v until
   end
 
-(* Waits for [d]'s value [v], the word having read [seen] since [since]: the
-   word once it reads [v] or [d] is lost. Until [v] is committed, each round
+(* Waits for [d]'s value [v], the word having read [seen] since [since],
+   until the word reads [v] or [d] is lost. Until [v] is committed, each round
    commits [d]'s work unless another holds [d]'s turn throughout the still
    interval, such as a submit blocked in its driver, whose earlier work runs
    without another call, so the turn frees and a later round commits. Top
    level, so a wait that finds its value reached allocates nothing. *)
 let rec wait_from d v seen since =
   let w = word d in
-  if w >= v || is_lost d then w
-  else begin
+  if w < v && not (is_lost d) then begin
     if committed d < v then ignore (commit_once d : bool);
     let now = now_ms () in
     let since = if w <> seen then now else since in
@@ -752,9 +728,8 @@ let rec wait_from d v seen since =
    [still_ms] the wait sleeps in the driver between reads. *)
 let wait_value d v =
   let w = word d in
-  let w = if w >= v || is_lost d then w else wait_from d v w (now_ms ()) in
-  if is_lost d then raise_lost d;
-  if d.live.afters != [] then run_afters d w
+  if w < v && not (is_lost d) then wait_from d v w (now_ms ());
+  if is_lost d then raise_lost d
 
 let wait d v =
   let s = submitted d in
@@ -764,9 +739,7 @@ let wait d v =
 (* Waits for [d]'s value [v] from the word [w], until [d] is lost: a loss its
    sleep raises is judged by the caller. *)
 let wait_until_lost d v w =
-  match wait_from d v w (now_ms ()) with
-  | w -> w
-  | exception Lost (d', _) when d' == d -> 0
+  try wait_from d v w (now_ms ()) with Lost (d', _) when d' == d -> ()
 
 (* Points
 
@@ -799,15 +772,12 @@ let wait_point st every p =
   else
     let v = Point.value p in
     let w = live_word d in
-    let w =
-      if w >= v || is_lost d then w
-      else
-        let q = c_stamps_lost st every in
-        if q <> 0 then raise_point_lost q;
-        wait_until_lost d v w
-    in
+    if w < v && not (is_lost d) then begin
+      let q = c_stamps_lost st every in
+      if q <> 0 then raise_point_lost q;
+      wait_until_lost d v w
+    end;
     if is_lost d then check p
-    else if d.live.afters != [] then run_afters d w
 
 (* The word is read before the loss is, as [wait_point] reads them. *)
 let is_done p =

@@ -25,6 +25,7 @@ external polled_steps : polled -> int = "rig_test_polled_steps"
 external polled_fail_at : polled -> int -> int -> string -> unit
   = "rig_test_polled_fail_at"
 
+external polled_last_times : polled -> int = "rig_test_polled_last_times"
 external polled_last_waits : polled -> int array
   = "rig_test_polled_last_waits"
 
@@ -56,6 +57,11 @@ external polled_unmapped : polled -> int -> int -> unit
 
 external polled_gate_room : polled -> bool -> unit = "rig_test_polled_gate_room"
 external polled_room_waiters : polled -> int = "rig_test_polled_room_waiters"
+external polled_gate_settle : polled -> bool -> unit
+  = "rig_test_polled_gate_settle"
+
+external polled_settle_waiters : polled -> int
+  = "rig_test_polled_settle_waiters"
 external polled_broke : int -> unit = "rig_test_polled_broke"
 external polled_broken : unit -> int array = "rig_test_polled_broken"
 external polled_bind : polled -> nativeint -> int -> bool -> unit
@@ -607,6 +613,8 @@ module Polled = struct
   let stops d = polled_stops d.c
   let blocked d = polled_blocked d.c
 
+  let last_times d = polled_last_times d.c
+
   let last_waits d =
     let a = polled_last_waits d.c in
     List.init
@@ -692,6 +700,14 @@ module Polled = struct
 
   let open_room d = polled_gate_room d.c false
   let in_room d = polled_room_waiters d.c
+
+  let gate_settle d =
+    if not d.may_block then
+      invalid_arg "Polled.gate_settle: a device that does not block";
+    polled_gate_settle d.c true
+
+  let open_settle d = polled_gate_settle d.c false
+  let settlers d = polled_settle_waiters d.c
 
   let locaters d = Mutex.protect d.lock (fun () -> d.locaters)
 

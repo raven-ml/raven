@@ -365,6 +365,89 @@ let test_failed_recipient () =
   in
   equal ~msg:"later timings still work" (list string) [ "fills" ] (named events)
 
+(* A span whose value another domain's wait finds reached is in the profile
+   that timed it: [take] returns with it. The device's settles wait at a
+   gate, which opens once [take] returned, or once the wait returned and a
+   settle waits: a wait that read the span's times itself is still held
+   there as [take] returns. *)
+let test_span_reached_elsewhere () =
+  let d, p = P.open_ ~may_block:true "profile:reached-elsewhere" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  P.gate_settle p;
+  let waited = Atomic.make false and taken = Atomic.make false in
+  let take () =
+    let r =
+      Prof.take (fun () ->
+          let pt = submit_parts ~buffers:[| arg |] d [| bump |] in
+          ignore (P.run p);
+          let waiter =
+            Domain.spawn (fun () ->
+                Rig.Point.wait pt;
+                Atomic.set waited true)
+          in
+          Support.await "the wait's return, or its settle" (fun () ->
+              Atomic.get waited || P.settlers p > 0);
+          waiter)
+    in
+    Atomic.set taken true;
+    r
+  in
+  let taker = Domain.spawn take in
+  Support.await "the take's return, or its settle" (fun () ->
+      Atomic.get taken || (Atomic.get waited && P.settlers p > 0));
+  P.open_settle p;
+  let waiter, events = Domain.join taker in
+  Domain.join waiter;
+  equal (list string) [ "fills" ] (named events)
+
+(* A Ctrl-C in [take]'s wait for a timed value drops the value's entry, whose
+   time pair goes back: the device's next timed submit writes its times to
+   that pair. *)
+let test_break_in_take () =
+  let d, p = P.open_ "profile:break-take" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  P.interrupt p;
+  Sys.catch_break true;
+  let broke =
+    Fun.protect
+      ~finally:(fun () -> Sys.catch_break false)
+      (fun () ->
+        let f () = submit_parts ~buffers:[| arg |] d [| bump |] in
+        match Prof.take f with
+        | _ -> false
+        | exception Sys.Break -> true)
+  in
+  equal ~msg:"the take's wait broke" bool true broke;
+  let pair = P.last_times p in
+  ignore (P.run p);
+  let _, events =
+    Prof.take (fun () ->
+        let pt = submit_parts ~buffers:[| arg |] d [| bump |] in
+        ignore (P.run p);
+        pt)
+  in
+  equal ~msg:"the next submit's pair" int pair (P.last_times p);
+  equal (list string) [ "fills" ] (named events)
+
+(* [take] reads only the work timed while its function ran: a submit that
+   another domain makes while [take] waits for that work adds nothing to the
+   profile, and [take] does not wait for it. *)
+let test_take_reads_its_own () =
+  let d, p = P.open_ "profile:its-own" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  P.gate p;
+  let taker =
+    Domain.spawn (fun () ->
+        Prof.take (fun () -> submit_parts ~buffers:[| arg |] d [| bump |]))
+  in
+  Support.await "take's wait" (fun () -> P.sleepers p = 1);
+  let later = submit_parts ~buffers:[| arg |] d [| bump |] in
+  P.open_gate p;
+  let _, events = Domain.join taker in
+  ignore (P.run p);
+  Rig.Point.wait later;
+  equal (list string) [ "fills" ] (named events)
+
 (* A host span can finish on another domain after one recipient closes. Its
    other recipient survives, while the closed one's earlier payload is freed. *)
 let test_late_span () =
@@ -737,6 +820,12 @@ let tests =
         test "a failed recipient preserves another profile's device timing"
           test_failed_recipient;
         test "a late span preserves its remaining recipient" test_late_span;
+        test "a span another domain's wait reached is in the profile"
+          test_span_reached_elsewhere;
+        test "a Ctrl-C in take's wait gives back the span's time pair"
+          test_break_in_take;
+        test "take reads only the work timed while its function ran"
+          test_take_reads_its_own;
       ];
     group ~timeout "copies"
       [

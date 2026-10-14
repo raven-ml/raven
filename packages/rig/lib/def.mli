@@ -195,8 +195,6 @@ and live = {
           lock: the mapping goes back with the entry, or once it is Stopped,
           whichever comes first. Emptied, it goes back to its smallest
           size. *)
-  mutable afters : (int * (unit -> unit)) list;
-      (** Functions a wait runs once it finds their value reached. *)
 }
 
 (** The type for how a device's queues wait for the values of a producer

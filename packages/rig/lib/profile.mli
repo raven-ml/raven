@@ -7,14 +7,14 @@
     {!Prof}.
 
     Events that the host sees as they happen, such as a load, an allocation or a
-    copy the host ran, are recorded immediately. Events of work a device runs
-    are recorded once a wait finds their value reached. A submit that a profile
-    times registers a function with {!Dev.after}, which reads the times its
-    driver wrote. When {!take}'s function returns, [take] waits for the last
-    value each device has such a function on before it stops its profile, so
-    those events are in. When the function raises, [take] stops the profile
-    immediately and the functions stay registered. A device lost meanwhile has
-    every such function dropped. *)
+    copy the host ran, are recorded immediately. A submit that a profile times
+    leaves the profile an entry ({!Prof.pending}) that reads the times its
+    driver wrote. When {!take}'s function returns, its profile takes no more
+    entries, and [take] reads those it took into it alone, one at a time, so
+    those events are in, then stops it. An entry leaves the profile as [take] starts to
+    wait for its value, and is dropped however its read ends. When the
+    function raises, [take] stops the profile immediately, which drops its
+    entries. A device lost meanwhile has its entries dropped. *)
 
 open Def
 
