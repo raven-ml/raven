@@ -1163,6 +1163,8 @@ let quad_covers (c : case) =
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
   cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);
+  cover "an odd count of rows by quads' dots, the last alone"
+    (dots && min m n <= quad_rows && min m n mod 2 = 1);
   cover "b read in place by chain order" (in_place c.b snd && min m n > quad_rows);
   cover "fewer than 4 products" (k < 4);
   cover "products not a multiple of 4" (k mod 4 <> 0)
@@ -1277,7 +1279,7 @@ let cpu (b : Support.backend) =
     [
       prop ~examples "each output adds its products in the order given"
         computed (run (law_order b));
-      prop ~examples:(List.concat_map regimes D.[ Any Int8; Any Uint16; Any Int32; Any Uint64 ])
+      prop ~examples:(List.concat_map regimes integer_accs)
         "an integer output is its products' sum modulo the accumulator"
         integer_cases
         (run (law_wraps ~covers:integer_covers b));
