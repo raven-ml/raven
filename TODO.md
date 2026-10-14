@@ -47,9 +47,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
   stdlib Hashtbls, which an exception while one grows loses: they must still
   serve stop, free and unload after an exception, as NV's do
-- exceptions: Metal's `regions` and `pipelines` are stdlib Hashtbls too;
-  the mlx5 wait loses an event's count to an exception after the kernel
-  delivered it
+- exceptions: the mlx5 wait loses an event's count to an exception after
+  the kernel delivered it
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a

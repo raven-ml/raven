@@ -1,11 +1,29 @@
 (test
  (name test_metal)
+ (modules test_metal)
  (locks %{workspace_root}/gpu)
  (libraries
   rig
   rig_disk
   rig_edge
   rig_gpu_support
+  rig_metal
+  rig_metal_abi
+  rig_metal_support
+  rig_support
+  windtrap)
+ (deps
+  (source_tree fixtures)))
+
+; test_interrupt walks a call once per allocation it makes, each on a
+; device of its own: a suite of its own, which runs no other test.
+
+(test
+ (name test_interrupt)
+ (modules test_interrupt)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig_edge
   rig_metal
   rig_metal_abi
   rig_metal_support

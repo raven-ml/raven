@@ -12,6 +12,7 @@
 
 #define _GNU_SOURCE
 
+#include <errno.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -49,6 +51,83 @@ enum {
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
 
 static value object(id o) { return caml_copy_nativeint((intnat)o); }
+
+_Atomic intptr_t rig_metal_pipelines, rig_metal_buffers;
+
+/* Guards */
+
+/* A device's guard: a mutex of its own memory, which a custom block holds
+   and destroys once collected. */
+#define Guard_val(v) (*(pthread_mutex_t **)Data_custom_val(v))
+
+/* The guard this thread holds, if any. A thread holds at most one, as it
+   holds at most one of rig's locks (lock.mli): a signal handler, finaliser
+   or Gc.Memprof callback that runs while its thread holds a guard and takes
+   one would wait for good on its own, or take two in no fixed order. */
+static _Thread_local pthread_mutex_t *holding;
+
+static void guard_finalize(value v) {
+  pthread_mutex_t *m = Guard_val(v);
+  if (m == NULL) return;
+  pthread_mutex_destroy(m);
+  free(m);
+}
+
+static struct custom_operations guard_ops = {
+    "rig.metal.guard",          guard_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_metal_guard(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&guard_ops, sizeof(pthread_mutex_t *), 0, 1);
+  Guard_val(v) = NULL;
+  pthread_mutex_t *m = malloc(sizeof *m);
+  if (m == NULL) caml_raise_out_of_memory();
+  int err = pthread_mutex_init(m, NULL);
+  if (err != 0) {
+    free(m);
+    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
+    char why[96];
+    snprintf(why, sizeof why, "Rig_metal: a device's guard: %s", strerror(err));
+    caml_failwith(why);
+  }
+  Guard_val(v) = m;
+  CAMLreturn(v);
+}
+
+/* Takes the guard [v_g]: by try-lock, and otherwise after releasing the
+   runtime without running pending signal handlers, which run at the
+   caller's next poll point. Raises Invalid_argument, before it takes
+   anything, if this thread holds a guard; no other exception can end the
+   take, so a caller that polls nowhere until it gives the guard back runs
+   whole. */
+value caml_rig_metal_guard_take(value v_g) {
+  if (holding != NULL)
+    caml_invalid_argument("Rig_metal: called from a signal handler, finaliser "
+                          "or Gc.Memprof callback while this thread holds a "
+                          "device's guard");
+  pthread_mutex_t *m = Guard_val(v_g);
+  if (pthread_mutex_trylock(m) != 0) {
+    caml_enter_blocking_section_no_pending();
+    int err = pthread_mutex_lock(m);
+    caml_leave_blocking_section();
+    if (err != 0) {
+      fprintf(stderr, "Rig_metal: a device's guard: %s\n", strerror(err));
+      abort();
+    }
+  }
+  holding = m;
+  return Val_unit;
+}
+
+value caml_rig_metal_guard_give(value v_g) {
+  holding = NULL;
+  pthread_mutex_unlock(Guard_val(v_g));
+  return Val_unit;
+}
 
 static value triple(value a, value b, value c) {
   CAMLparam3(a, b, c);
@@ -175,6 +254,7 @@ value caml_rig_metal_facts(value v_d) {
    [None] for nil. */
 static value resident(struct rig_metal_run *r, id<MTLBuffer> b) {
   if (b == nil) return Val_none;
+  atomic_fetch_add(&rig_metal_buffers, 1);
   pthread_mutex_lock(&r->set_mutex);
   [r->set addAllocation:b];
   r->changed = 1;
@@ -215,6 +295,7 @@ value caml_rig_metal_free(value v_d, value v_buffer) {
     pthread_mutex_unlock(&r->set_mutex);
   }
   [Object_val(v_buffer) release];
+  atomic_fetch_sub(&rig_metal_buffers, 1);
   return Val_unit;
 }
 
@@ -322,6 +403,7 @@ value caml_rig_metal_pipeline(value v_lib, value v_f) {
   NSUInteger n = p.maxTotalThreadsPerThreadgroup;
   n = MIN(n, MIN(axes.width, MIN(axes.height, axes.depth)));
   e->pipeline = p;
+  atomic_fetch_add(&rig_metal_pipelines, 1);
   e->threads = (uint32_t)n;
   e->shared = (uint32_t)(library.device.maxThreadgroupMemoryLength -
                          p.staticThreadgroupMemoryLength);
@@ -345,16 +427,28 @@ value caml_rig_metal_entry_params(value v_e) {
   return Val_long((intnat)e->params);
 }
 
-/* Releases the entry [v_e] and its pipeline. */
-value caml_rig_metal_release(value v_e) {
-  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+/* Releases the entry [e] and its pipeline. */
+static void free_entry(struct rig_metal_entry *e) {
   [e->pipeline release];
   free(e);
+  atomic_fetch_sub(&rig_metal_pipelines, 1);
+}
+
+value caml_rig_metal_release(value v_e) {
+  free_entry((struct rig_metal_entry *)Nativeint_val(v_e));
   return Val_unit;
 }
 
-value caml_rig_metal_release_object(value v_o) {
-  [Object_val(v_o) release];
+/* Releases each entry of the array [v_entries] whose code is not 0, those an
+   [entry] made, then the library [v_library]: an image's unload, in one
+   call that allocates nothing. */
+value caml_rig_metal_unload(value v_entries, value v_library) {
+  for (mlsize_t k = 0; k < Wosize_val(v_entries); k++) {
+    value v_e = Field(v_entries, k);
+    if (Long_val(Field(v_e, 0)) == 0) continue;
+    free_entry((struct rig_metal_entry *)Nativeint_val(Field(v_e, 1)));
+  }
+  [Object_val(v_library) release];
   return Val_unit;
 }
 
@@ -511,6 +605,9 @@ CAMLnoret static void no_metal(void) { abort(); }
 #define NO_METAL3(f) \
   value f(value a, value b, value c) { (void)a, (void)b, (void)c, no_metal(); }
 
+NO_METAL1(caml_rig_metal_guard)
+NO_METAL1(caml_rig_metal_guard_take)
+NO_METAL1(caml_rig_metal_guard_give)
 NO_METAL1(caml_rig_metal_facts)
 NO_METAL2(caml_rig_metal_alloc)
 NO_METAL3(caml_rig_metal_map_host)
@@ -521,7 +618,7 @@ NO_METAL2(caml_rig_metal_pipeline)
 NO_METAL1(caml_rig_metal_entry_code)
 NO_METAL1(caml_rig_metal_entry_threads)
 NO_METAL1(caml_rig_metal_entry_params)
-NO_METAL1(caml_rig_metal_release_object)
+NO_METAL2(caml_rig_metal_unload)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)
 NO_METAL1(caml_rig_metal_failure)

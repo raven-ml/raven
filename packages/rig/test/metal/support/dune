@@ -4,7 +4,7 @@
 
 (library
  (name rig_metal_support)
- (libraries rig rig_gpu_support rig_metal rig_metal_abi)
+ (libraries rig rig_edge rig_gpu_support rig_metal rig_metal_abi)
  (foreign_stubs
   (language c)
   (names rig_metal_support_ring)
@@ -12,6 +12,7 @@
  (foreign_stubs
   (language c)
   (names rig_metal_support_stubs)
+  (include_dirs ../../../lib/metal)
   (flags
    (:standard
     (:include ../../../lib/metal/objc_flags.sexp)))))

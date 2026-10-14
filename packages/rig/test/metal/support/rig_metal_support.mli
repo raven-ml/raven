@@ -110,3 +110,11 @@ val alive : nativeint -> bool
 
 val uptime : unit -> int
 (** [uptime ()] is the host clock of Metal's times, in nanoseconds. *)
+
+val pipelines : unit -> int
+(** [pipelines ()] is the number of pipelines that the entries of the
+    process's Metal devices hold. *)
+
+val buffers : unit -> int
+(** [buffers ()] is the number of buffers that the regions of the process's
+    Metal devices hold, their allocations and mappings. *)

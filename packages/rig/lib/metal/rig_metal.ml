@@ -22,6 +22,8 @@ external map_buffer : int -> int -> int -> buffer option
   = "caml_rig_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
+[@@noalloc]
+
 external release : nativeint -> unit = "caml_rig_metal_release"
 
 external load : int -> string -> string * nativeint * string array
@@ -36,7 +38,9 @@ external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
 external entry_params : nativeint -> int = "caml_rig_metal_entry_params"
 [@@noalloc]
 
-external release_object : nativeint -> unit = "caml_rig_metal_release_object"
+external release_image : Rig_edge.entry array -> nativeint -> unit
+  = "caml_rig_metal_unload"
+[@@noalloc]
 
 external make_icb :
   int -> nativeint -> int array -> int array -> nativeint array
@@ -55,39 +59,80 @@ external split : unit -> nativeint = "caml_rig_metal_split"
 
 let split = split ()
 
+(* A device's guard, a mutex whose take runs no signal handler. A thread
+   holds at most one: a take while it holds one raises [Invalid_argument]
+   before it takes anything. *)
+type guard
+
+external guard : unit -> guard = "caml_rig_metal_guard"
+external take_guard : guard -> unit = "caml_rig_metal_guard_take"
+external give_guard : guard -> unit = "caml_rig_metal_guard_give" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* [locked g f r] is [f r] under the guard [g]. The guard is taken as the
+   last step before the handler and given back as the first step of both
+   exits, where nothing allocates or polls, so an exception anywhere in [f],
+   an asynchronous one too, leaves it free for the next call and the stop.
+   [f] is a toplevel function, so a call makes no closure. *)
+let locked g f r =
+  take_guard g;
+  match f r with
+  | x ->
+      give_guard g;
+      x
+  | exception e ->
+      give_guard g;
+      reraise e
+
 exception Fault of string
 
 (* Memory *)
 
 (* A region is its location, made once by the C side, so [locate] allocates
-   nothing. It is live while its device's [regions] holds its handle. *)
+   nothing. It is live while its device's [regions] holds a cell of its
+   handle that its free has not zeroed. *)
 type region = Rig_edge.location
 
 let locate (r : region) = r
 
 (* Opening *)
 
-(* What an icb checks its dispatches against, until the device stops. The
-   handle outlives the device in its properties, so stop drops them. *)
+module Codes = Map.Make (Int)
+module Handles = Map.Make (Nativeint)
+
+(* The bytes an icb may address in a region, [0] once the region is freed. *)
+type cell = { mutable bytes : int }
+
+(* What an icb checks its dispatches against, until the device stops, under
+   the device's guard. The handle outlives the device in its properties, so
+   stop drops them. Each map changes by one store of a map made first, so an
+   exception leaves it whole. *)
 type tables = {
-  pipelines : (int, int) Hashtbl.t;
-      (* the pipelines an icb may record, those entries of loaded images gave,
-         with each one's most threads per threadgroup *)
-  regions : (nativeint, int) Hashtbl.t;
-      (* the live regions' handles, its allocations and mappings, with the
-         bytes an icb may address in each *)
+  mutable pipelines : (int * image) Codes.t;
+      (* the pipelines entries gave, with each one's most threads per
+         threadgroup and its image; an icb records those of loaded images *)
+  mutable unloads : int;
+      (* the images unloaded since [pipelines] last dropped their
+         pipelines *)
+  mutable regions : cell Handles.t;
+      (* the cells of the regions' handles, its allocations and mappings;
+         an icb addresses those not freed *)
+  mutable frees : int;
+      (* the regions freed since [regions] last dropped their cells *)
 }
 
 (* An image's entries, [none] until its first [entry], under [guard]: an [entry]
    compiles holding it, so calls for one function from several domains make one
-   pipeline. [tables] and [device_guard] are its device's. *)
-type image = {
+   pipeline. [tables] and [device_guard] are its device's, which guards
+   [unloaded]. *)
+and image = {
   library : nativeint;
   names : string array;
   entries : Rig_edge.entry array;
   guard : Mutex.t;
   tables : tables option ref;
-  device_guard : Mutex.t;
+  device_guard : guard;
+  mutable unloaded : bool;
 }
 
 let none = { Rig_edge.code = 0; launch = 0n; params = None; threads = None }
@@ -96,7 +141,9 @@ type t = {
   self : int;
   facts : region Rig_edge.facts;
   cap : Rig_metal_abi.t;
-  guard : Mutex.t; (* held by an icb call, by stop, over [tables] *)
+  guard : guard;
+      (* held over [tables] by an icb, an entry's [keep], an allocation's or
+         mapping's [enter], a free, an unload and the stop *)
   tables : tables option ref; (* [None] once stop began *)
 }
 
@@ -104,10 +151,13 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i = 0 then "METAL" else strf "METAL:%d" i
 
-(* The most threads per threadgroup of [p], a pipeline in [pipelines], else
-   [0]. An icb asks it of every dispatch, so it allocates nothing. *)
+(* The most threads per threadgroup of [p], a pipeline of a loaded image in
+   [pipelines], else [0]. An icb asks it of every dispatch, so it allocates
+   nothing. *)
 let limit pipelines p =
-  match Hashtbl.find pipelines p with l -> l | exception Not_found -> 0
+  match Codes.find p pipelines with
+  | l, i -> if i.unloaded then 0 else l
+  | exception Not_found -> 0
 
 (* Why dispatch [i] cannot be recorded with a [bytes]-byte argument buffer:
    [Invalid_argument] for a pipeline [entry] never gave or an offset outside the
@@ -134,6 +184,38 @@ let refusal pipelines bytes i (d : Rig_metal_abi.dispatch) =
           most %d in all"
          i tx ty tz max)
   else None
+
+(* Under the device's guard: the icb of [ds], whose pipelines and sizes are
+   [pipelines] and [sizes], with the argument buffer [buffer], if [tables]
+   allows it. *)
+let recorded (self, tables, buffer, ds, pipelines, sizes) =
+  match !tables with
+  | None -> Error "the device was stopped"
+  | Some { pipelines = live; regions; _ } -> (
+      let bytes =
+        match Handles.find_opt buffer regions with
+        | Some { bytes } when bytes > 0 -> bytes
+        | _ ->
+            invalid_arg
+              "Rig_metal_abi.icb: the argument buffer is no live region of the \
+               device"
+      in
+      let why = ref None in
+      for i = 0 to Array.length ds - 1 do
+        let r = refusal live bytes i ds.(i) in
+        if Option.is_none !why then why := r
+      done;
+      match !why with
+      | Some why -> Error why
+      | None -> (
+          match make_icb self buffer pipelines sizes with
+          | [||] -> Error "Metal made no indirect command buffer"
+          | objects ->
+              let native = objects.(0) in
+              let commands = Array.sub objects 2 (Array.length ds) in
+              Ok
+                (Rig_metal_abi.icb ~handle:objects.(1) ~commands
+                   ~collect:(fun () -> release_icb native))))
 
 (* Compiled code calls a device's [icb] beside every other call, so [icb],
    [stop], an [unload] and a [free] exclude each other under the device's
@@ -163,34 +245,7 @@ let icb self guard tables align buffer (ds : Rig_metal_abi.dispatch array) =
   let pipelines =
     Array.map (fun (d : Rig_metal_abi.dispatch) -> d.pipeline) ds
   in
-  Mutex.protect guard @@ fun () ->
-  match !tables with
-  | None -> Error "the device was stopped"
-  | Some { pipelines = live; regions } -> (
-      let bytes =
-        match Hashtbl.find_opt regions buffer with
-        | Some bytes -> bytes
-        | None ->
-            invalid_arg
-              "Rig_metal_abi.icb: the argument buffer is no live region of the \
-               device"
-      in
-      let why = ref None in
-      for i = 0 to Array.length ds - 1 do
-        let r = refusal live bytes i ds.(i) in
-        if Option.is_none !why then why := r
-      done;
-      match !why with
-      | Some why -> Error why
-      | None -> (
-          match make_icb self buffer pipelines sizes with
-          | [||] -> Error "Metal made no indirect command buffer"
-          | objects ->
-              let native = objects.(0) in
-              let commands = Array.sub objects 2 (Array.length ds) in
-              Ok
-                (Rig_metal_abi.icb ~handle:objects.(1) ~commands
-                   ~collect:(fun () -> release_icb native))))
+  locked guard recorded (self, tables, buffer, ds, pipelines, sizes)
 
 (* The minimum constant buffer offset alignment of Apple GPU families, from the
    Metal feature set tables (May 21, 2026, page 7). The tables list none for Mac
@@ -218,6 +273,7 @@ let open_ ~word i =
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
   else
+    let guard = guard () in
     let self = open_device word in
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error open_failures.(-self - 1)
@@ -232,9 +288,16 @@ let open_ ~word i =
       in
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
-      let guard = Mutex.create () in
-      let pipelines = Hashtbl.create 16 and regions = Hashtbl.create 64 in
-      let tables = ref (Some { pipelines; regions }) in
+      let tables =
+        ref
+          (Some
+             {
+               pipelines = Codes.empty;
+               unloads = 0;
+               regions = Handles.empty;
+               frees = 0;
+             })
+      in
       let icb = icb self guard tables align in
       let cap = { Rig_metal_abi.align; icb; split } in
       let facts =
@@ -270,31 +333,31 @@ let capability d = d.cap
    driver promises 256 and checks it. *)
 let region_align = 256
 
-external reraise : exn -> 'a = "%reraise"
+(* The cells of [t] without those of freed regions, once a region was freed
+   since they last went. *)
+let alive t =
+  if t.frees = 0 then t.regions
+  else Handles.filter (fun _ c -> c.bytes > 0) t.regions
 
-(* [locked d g r] is [g d r] under [d.guard]. The guard is taken as the last
-   step before the handler and given back as the first step of both exits,
-   where nothing allocates, so an exception anywhere in [g], an asynchronous
-   one too, leaves it free for the next call and the stop. [g] is a toplevel
-   function, so a call makes no closure: every alloc and free takes the
-   guard. *)
-let locked d g r =
-  Mutex.lock d.guard;
-  match g d r with
-  | x ->
-      Mutex.unlock d.guard;
-      x
-  | exception e ->
-      Mutex.unlock d.guard;
-      reraise e
-
-let live d (handle, n) =
+(* Under [d.guard]: makes the [n]-byte region [handle] one an icb addresses.
+   The two stores follow each other with nothing between them that
+   allocates or polls. *)
+let live (d, handle, n) =
   match !(d.tables) with
-  | Some t -> Hashtbl.replace t.regions handle n
+  | Some t ->
+      let regions = Handles.add handle { bytes = n } (alive t) in
+      t.regions <- regions;
+      t.frees <- 0
   | None -> ()
 
-(* Makes [d]'s [n]-byte region [r] live. *)
-let enter d (r : region) n = locked d live (r.handle, n)
+(* Makes [d]'s [n]-byte region [r] live, or frees it if an exception, such
+   as an asynchronous one where the table allocates, keeps it out. *)
+let enter d (r : region) n =
+  match locked d.guard live (d, r.handle, n) with
+  | () -> ()
+  | exception e ->
+      free_buffer d.self r.handle;
+      reraise e
 
 let alloc d _ n =
   if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
@@ -329,12 +392,33 @@ let peer _ _ = false
 
 let map_peer _ _ _ = None
 
-(* Frees [r] under [d.guard]. *)
-let give d (r : region) =
-  Option.iter (fun t -> Hashtbl.remove t.regions r.handle) !(d.tables);
-  free_buffer d.self r.handle
+(* The cell of no region, which [cell] answers so that it allocates
+   nothing. *)
+let no_region = { bytes = 0 }
 
-let free d r = locked d give r
+(* The cell of [d]'s region [r], or [no_region] for a device stopped. Read
+   without the guard: every map stored since [r] was entered holds the one
+   cell of [r]'s handle, until [r]'s free zeroes it. *)
+let cell d (r : region) =
+  match !(d.tables) with
+  | None -> no_region
+  | Some t -> (
+      match Handles.find r.handle t.regions with
+      | c -> c
+      | exception Not_found -> no_region)
+
+(* Zeroes [r]'s cell under [d.guard], so that no icb addresses [r], then
+   frees [r]'s buffer; the next [enter] drops the cell. Nothing from [cell]
+   to the give of the guard allocates or polls, so an exception cannot end
+   the free with [r] live or its buffer held. The take's [Invalid_argument]
+   ends it before it changed anything. *)
+let free d r =
+  let c = cell d r in
+  take_guard d.guard;
+  c.bytes <- 0;
+  (match !(d.tables) with Some t -> t.frees <- t.frees + 1 | None -> ());
+  free_buffer d.self r.handle;
+  give_guard d.guard
 
 (* Images *)
 
@@ -346,7 +430,15 @@ let image d b =
       let tables = d.tables and device_guard = d.guard in
       Ok
         (Rig_edge.Loaded
-           { library; names; entries; guard; tables; device_guard })
+           {
+             library;
+             names;
+             entries;
+             guard;
+             tables;
+             device_guard;
+             unloaded = false;
+           })
   | why, _, _ -> Error why
 
 (* The index of [f] in [names] from [k], or [-1]. *)
@@ -355,30 +447,55 @@ let rec index names f k =
   else if String.equal (Array.unsafe_get names k) f then k
   else index names f (k + 1)
 
+(* The pipelines of [t] without those of unloaded images, once an image was
+   unloaded since they last went. *)
+let loaded t =
+  if t.unloads = 0 then t.pipelines
+  else Codes.filter (fun _ (_, i) -> not i.unloaded) t.pipelines
+
+(* Under [i.device_guard]: makes [e], whose pipeline runs at most [threads]
+   threads per threadgroup, [i]'s [k]-th entry, and its pipeline one an icb
+   records. The stores of values made first follow each other with nothing
+   between them that allocates or polls, so an exception leaves the tables
+   and [i]'s entries in step. *)
+let keep ((i : image), k, (e : Rig_edge.entry), threads) =
+  match !(i.tables) with
+  | None -> i.entries.(k) <- e
+  | Some t ->
+      let pipelines = Codes.add e.code (threads, i) (loaded t) in
+      t.pipelines <- pipelines;
+      t.unloads <- 0;
+      i.entries.(k) <- e
+
 (* [entry i f] under [i.guard]. A refusal is not kept: a later call compiles
-   again. *)
+   again. The pipeline is [i]'s once [keep] stored it: an exception before,
+   such as an asynchronous one where the entry allocates, releases it. *)
 let entry_held (i : image) f =
   let k = index i.names f 0 in
   if k < 0 then Rig_edge.Absent
   else if i.entries.(k).code <> 0 then Entry i.entries.(k)
   else
     match pipeline i.library f with
-    | launch ->
-        let params = entry_params launch and threads = entry_threads launch in
-        let e =
-          {
-            Rig_edge.code = entry_code launch;
-            launch;
-            params = (if params < 0 then None else Some params);
-            threads = Some threads;
-          }
-        in
-        Mutex.protect i.device_guard (fun () ->
-            Option.iter
-              (fun t -> Hashtbl.replace t.pipelines e.code threads)
-              !(i.tables));
-        i.entries.(k) <- e;
-        Entry e
+    | launch -> (
+        match
+          let params = entry_params launch
+          and threads = entry_threads launch in
+          let e =
+            {
+              Rig_edge.code = entry_code launch;
+              launch;
+              params = (if params < 0 then None else Some params);
+              threads = Some threads;
+            }
+          in
+          let answer = Rig_edge.Entry e in
+          locked i.device_guard keep (i, k, e, threads);
+          answer
+        with
+        | answer -> answer
+        | exception x ->
+            release launch;
+            reraise x)
     | exception Failure why ->
         invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
 
@@ -393,21 +510,18 @@ let entry (i : image) f =
       Mutex.unlock i.guard;
       reraise x
 
-(* Takes [i]'s pipelines out of the ones an icb may record. *)
-let forget_pipelines d (i : image) =
-  match !(d.tables) with
-  | None -> ()
-  | Some t ->
-      for k = 0 to Array.length i.entries - 1 do
-        Hashtbl.remove t.pipelines i.entries.(k).code
-      done
-
+(* Takes [i]'s pipelines out of the ones an icb records, then releases them
+   and its library. rig unloads an image once, so the unload allocates
+   nothing and polls nowhere, the take of the guard included: an exception
+   cannot end it with pipelines held, or with one an icb still records. The
+   take's [Invalid_argument] ends it before it changed anything. The next
+   entry drops them from the device's table. *)
 let unload d (i : image) =
-  locked d forget_pipelines i;
-  Array.iter
-    (fun (e : Rig_edge.entry) -> if e.code <> 0 then release e.launch)
-    i.entries;
-  release_object i.library
+  take_guard d.guard;
+  i.unloaded <- true;
+  (match !(d.tables) with Some t -> t.unloads <- t.unloads + 1 | None -> ());
+  release_image i.entries i.library;
+  give_guard d.guard
 
 (* Timeline and loss *)
 
@@ -416,10 +530,13 @@ let signaled d = signaled_word d.self
 let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
-let stop d ~fault:_ =
-  Mutex.protect d.guard @@ fun () ->
+(* Ends what the device runs, with no closure, so an exception cannot end
+   it before the guard was taken. *)
+let halt d =
   d.tables := None;
   stop_ring d.self
+
+let stop d ~fault:_ = locked d.guard halt d
 
 module Driver = struct
   type nonrec t = t

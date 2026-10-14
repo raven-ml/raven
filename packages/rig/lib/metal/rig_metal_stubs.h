@@ -44,6 +44,10 @@ struct rig_metal_entry {
   int64_t params;
 };
 
+/* The pipelines that entries hold and the buffers that regions hold,
+   across devices, which a test counts. */
+extern _Atomic intptr_t rig_metal_pipelines, rig_metal_buffers;
+
 /* What a device runs work with, from its open to its stop and the end of
    the work committed before it: each committed command buffer holds it
    until its completion handler returns, and the device until its stop

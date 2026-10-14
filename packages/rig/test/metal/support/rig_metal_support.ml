@@ -115,6 +115,8 @@ let fixture ~dir f =
 external weak : nativeint -> nativeint = "rig_metal_test_weak"
 external alive : nativeint -> bool = "rig_metal_test_alive"
 external uptime : unit -> int = "rig_metal_test_uptime"
+external buffers : unit -> int = "rig_metal_test_buffers"
+external pipelines : unit -> int = "rig_metal_test_pipelines"
 
 (* Conformance *)
 
