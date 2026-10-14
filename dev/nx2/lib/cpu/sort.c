@@ -10,11 +10,12 @@
    nx_kinds.h's domains: a float's bits with every bit flipped where the
    sign is set and the sign flipped elsewhere, so -0 sits below +0; every
    NaN the greatest key, so NaNs are equal and last; a narrow float its
-   float32 carrier's key; a signed integer its bits with the sign flipped; a
-   complex number its real part's key, then its imaginary part's. A
-   descending sort complements the keys, so that sorting them ascending,
-   stably, gives the reversed order with equal elements in increasing
-   position.
+   float32 carrier's key, float4's its code ranked as a float's bits; a
+   signed integer its bits with the sign flipped; a complex number its real
+   part's key, then its imaginary part's. A sub-byte slice's codes are read
+   one per byte first. A descending sort complements the keys, so that
+   sorting them ascending, stably, gives the reversed order with equal
+   elements in increasing position.
 
    Keys sort with their positions, stably: by insertion below SMALL
    elements; into k slots where a sort keeps k of many; otherwise by LSD
@@ -58,7 +59,7 @@
 
 typedef struct {
   const nx_array *a; /* the values, the positions, the operand */
-  int dt, w, kb;     /* the dtype, its bytes and its keys' */
+  int dt, bits, w, kb; /* the dtype, its bits, its bytes and its keys' */
   int descending;
   int64_t n, keep;   /* a slice's elements, and those it keeps */
   int64_t sx, sv, sp; /* steps along the axis */
@@ -84,8 +85,14 @@ static inline uint64_t key64(double f) {
   return f != f ? ~0ull : rank64(nx_double_bits(f));
 }
 
-/* The key of the element of dtype [dt] at [p]; a complex128's is its
-   imaginary part's, real_key gives the other. */
+/* A 4-bit float's code ranked as rank32 ranks a float32's bits. */
+static inline uint64_t rank4(uint8_t b) {
+  return b & 8 ? ~b & 15u : b | 8u;
+}
+
+/* The key of the element of dtype [dt] at [p], a sub-byte one's code in
+   the low bits of the byte at [p], int4's sign-extended or not; a
+   complex128's is its imaginary part's, real_key gives the other. */
 static inline uint64_t key_of(int dt, const uint8_t *p) {
   switch (dt) {
     case NX_FLOAT32: return key32(*(const float *)p);
@@ -98,6 +105,8 @@ static inline uint64_t key_of(int dt, const uint8_t *p) {
     case NX_INT32: return *(const uint32_t *)p ^ 0x80000000u;
     case NX_INT16: return (uint16_t)(*(const uint16_t *)p ^ 0x8000u);
     case NX_INT8: return (uint8_t)(*p ^ 0x80u);
+    case NX_INT4: return (*p ^ 8u) & 15u;
+    case NX_FLOAT4_E2M1FN: return rank4(*p);
     case NX_UINT64: return *(const uint64_t *)p;
     case NX_UINT32: return *(const uint32_t *)p;
     case NX_UINT16: return *(const uint16_t *)p;
@@ -111,7 +120,7 @@ static inline uint64_t key_of(int dt, const uint8_t *p) {
       return c[0] != c[0] || c[1] != c[1] ? ~0ull : key64(c[1]);
     }
     case NX_BOOL: return *p != 0; /* a boolean is true where not zero */
-    default: return *p; /* uint8 */
+    default: return *p; /* uint8, uint4 and bit */
   }
 }
 
@@ -137,7 +146,7 @@ static int key_bytes(int dt) {
     case NX_FLOAT8_E5M2: return 4;
     case NX_COMPLEX64:
     case NX_COMPLEX128: return 8;
-    default: return nx_dtype_row_of(dt).bits / 8;
+    default: return nx_cpu_width(dt);
   }
 }
 
@@ -490,15 +499,17 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
 /* Slices */
 
 /* Makes the keys of the slice at [x] into [k], xored with [flip], and
-   their least and greatest into [span]. The common dtypes have loops of
-   their own, where key_of's switch folds away and the loop vectorises;
-   keys of at most 4 bytes find their span in 32 bits, which x86's base
-   vectors compare and 64 bits they do not. Through key_of's switch,
-   fudge's sort-f32-rows-512x512 ran 7% slower. */
+   their least and greatest into [span], the slice's elements [step] bytes
+   apart. The common dtypes have loops of their own, where key_of's switch
+   folds away and the loop vectorises; keys of at most 4 bytes find their
+   span in 32 bits, which x86's base vectors compare and 64 bits they do
+   not. Through key_of's switch, fudge's sort-f32-rows-512x512 ran 7%
+   slower. */
 static __attribute__((flatten)) void make_keys(const sorter *s,
-                                               const uint8_t *x, uint64_t flip,
-                                               uint64_t *k, uint64_t span[2]) {
-  int64_t n = s->n, step = s->sx * s->w;
+                                               const uint8_t *x, int64_t step,
+                                               uint64_t flip, uint64_t *k,
+                                               uint64_t span[2]) {
+  int64_t n = s->n;
 #define KEYS(U, dt)                                                          \
   do {                                                                       \
     U least = (U)~0ull, most = 0;                                            \
@@ -551,9 +562,20 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
   uint64_t *k = scratch, *k2 = scratch + n;
   int64_t *p = (int64_t *)(scratch + 2 * n), *p2 = (int64_t *)(scratch + 3 * n);
   const uint8_t *x = s->a[2].base + px * s->w;
+  int64_t step = s->sx * s->w;
+  /* A sub-byte slice's codes, a byte each, wait in k2 for their keys. */
+  if (s->bits < 8) {
+    uint8_t *c = (uint8_t *)k2;
+    if (s->sx == 1) nx_sub_unpack_run(s->a[2].base, s->dt, px, c, n);
+    else
+      for (int64_t i = 0; i < n; i++)
+        c[i] = (uint8_t)nx_sub_load(s->a[2].base, s->bits, px + i * s->sx);
+    x = c;
+    step = 1;
+  }
   uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   uint64_t flip = s->descending ? mask : 0, span[2];
-  make_keys(s, x, flip, k, span);
+  make_keys(s, x, step, flip, k, span);
   int64_t keep = s->keep;
   int few = keep <= KEEP && keep * SPARE <= n;
   if (s->dt != NX_COMPLEX128 && n >= SMALL && !few)
@@ -575,8 +597,14 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
   }
   int64_t *pos = (int64_t *)s->a[1].base + pp;
   for (int64_t i = 0; i < keep; i++) pos[i * s->sp] = p[i];
-  uint8_t *v = s->a[0].base + pv * s->w;
   int64_t sv = s->sv, sx = s->sx;
+  if (s->bits < 8) {
+    for (int64_t i = 0; i < keep; i++)
+      nx_sub_store(s->a[0].base, s->bits, pv + i * sv,
+                   nx_sub_load(s->a[2].base, s->bits, px + p[i] * sx));
+    return;
+  }
+  uint8_t *v = s->a[0].base + pv * s->w;
   switch (s->w) {
 #define MOVE(T)                                                              \
   for (int64_t i = 0; i < keep; i++)                                         \
@@ -618,7 +646,6 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
   intnat axis = Long_val(vaxis);
   int descending = Bool_val(vdescending);
   int dt = nx_array_dtype(vx);
-  if (nx_dtype_row_of(dt).bits < 8) CAMLreturn(Val_int(NX_DECLINED));
   int64_t xd[2 * NX_MAX_RANK], vd[2 * NX_MAX_RANK], pd[2 * NX_MAX_RANK], off;
   int rank = nx_array_layout(vx, xd, &off), rv = nx_array_layout(vv, vd, &off),
       rp = nx_array_layout(vp, pd, &off);
@@ -644,6 +671,7 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
   }
   sorter s = {.a = a,
               .dt = dt,
+              .bits = nx_dtype_row_of(dt).bits,
               .w = nx_dtype_row_of(dt).bits / 8,
               .kb = key_bytes(dt),
               .descending = descending,
@@ -668,10 +696,11 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
   int64_t bytes = slices * s.n * (s.w + 8), cost = 8 * bytes;
   int64_t workers = nx_cpu_threads(bytes, cost);
   /* One long slice sorts on the job's threads, a block of its items each;
-     a complex128's two keys, and keeping a few, stay on one. */
+     a complex128's two keys, a sub-byte slice, whose blocks would read
+     their elements by byte, and keeping a few, stay on one. */
   int slots = keep <= KEEP && keep * SPARE <= s.n;
   if (slices == 1 && workers > 1 && s.n >= LONG && dt != NX_COMPLEX128 &&
-      !slots && s.n <= UINT32_MAX) {
+      s.bits >= 8 && !slots && s.n <= UINT32_MAX) {
     int e = sort_long(&s, workers, bytes);
     nx_done(3, a);
     if (e) caml_raise_out_of_memory();

@@ -6,7 +6,7 @@
 (* Sorts through every kernel library the host runs: the values are the operand
    at the positions, in order, and keeping k gives the first k of the whole
    sort. nx.cpu's group checks the order Nx_kernel.S.sort states against a
-   stable sort built here, at every dtype it computes, through views, with NaN
+   stable sort built here, at every dtype, through views, with NaN
    payloads, -0 and ties. *)
 
 open Windtrap
@@ -42,9 +42,6 @@ let pp_case ppf c =
     | Spread -> "spread"
     | Skewed -> "skewed")
     (String.concat ", " c.views)
-
-(* Sub-byte dtypes sort through bytes: nx.cpu declines them. *)
-let computed = List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all
 
 (* Shapes: small ones of any rank, slices at the edges of the insertion sort's,
    and long ones that sort by radix or keep a few. *)
@@ -83,7 +80,7 @@ let drawn draw d s v seed =
           String.init (String.length base) (fun _ ->
               Char.chr (Random.State.int rs 256)))
 
-let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
+let case_gen ?(dtypes = D.all) ?(shapes = shape_gen) () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
   let* s = shapes in
@@ -104,7 +101,7 @@ let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
     frequency
       [
         (4, constant Tied);
-        (1, map (fun low -> Narrow low) (int_range 1 (D.bits dt / 8)));
+        (1, map (fun low -> Narrow low) (int_range 1 (max 1 (D.bits dt / 8))));
         (1, constant Spread);
       ]
   in
@@ -113,15 +110,16 @@ let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
 
 (* A constructed case along the last axis, drawn from seed 1, so that every seed
    reaches its regime. *)
-let example ?k ?(descending = false) ?(draw = Tied) d s =
+let example ?k ?(descending = false) ?(draw = Tied) ?view d s =
   let r = Array.length s in
+  let v = Option.value view ~default:(plain r) in
   {
     axis = r - 1;
     descending;
     k;
-    x = drawn draw d s (plain r) 1;
+    x = drawn draw d s v 1;
     draw;
-    views = [];
+    views = view_names v;
   }
 
 let kept c = match c.k with None -> (shape_of c.x).(c.axis) | Some k -> k
@@ -188,6 +186,9 @@ let law_reference (b : Support.backend) c =
   cover "keeps some" (c.k <> None && kept c < n);
   cover "radix" (n >= 64 && c.k = None);
   cover "complex128's two keys" (dtype_of c.x = D.Any D.Complex128 && n >= 2);
+  cover "sub-byte"
+    (let (D.Any d) = dtype_of c.x in
+     D.bits d < 8 && n >= 2);
   cover "narrow 8-byte keys"
     (let (D.Any d) = dtype_of c.x in
      (match c.draw with Narrow _ -> true | _ -> false)
@@ -208,6 +209,9 @@ let law_large (b : Support.backend) c =
   cover "long wide keys spread" (wide && c.draw = Spread);
   cover "long wide keys skewed" (wide && c.draw = Skewed);
   cover "long wide keys, keeping all" (wide && c.k = None);
+  cover "sub-byte slices on the job's threads"
+    (let (D.Any d) = dtype_of c.x in
+     D.bits d < 8 && total (shape_of c.x) >= 100_000);
   agrees b c
 
 (* Laws for every library *)
@@ -310,6 +314,8 @@ let examples =
     example (D.Any D.Complex128) [| 9 |] ~descending:true;
     example (D.Any D.Int64) [| 2; 300 |] ~draw:(Narrow 3);
     example (D.Any D.Complex64) [| 300 |] ~draw:(Narrow 5) ~descending:true;
+    example (D.Any D.Int4) [| 3; 70 |];
+    example (D.Any D.Float4_e2m1fn) [| 9 |] ~descending:true;
   ]
 
 (* Slices the job's threads share, and one long slice. *)
@@ -332,6 +338,14 @@ let large_examples =
     example (D.Any D.Uint64) [| 200_000 |] ~draw:Skewed;
     example (D.Any D.Float64) [| 200_000 |] ~draw:Skewed ~k:150_000;
     example (D.Any D.Int64) [| 200_000 |] ~draw:(Narrow 3);
+    (* Sub-byte slices on the job's threads, of an odd length, so that
+       neighbouring slices' values share a byte, read through views. *)
+    example (D.Any D.Int4) [| 400; 501 |]
+      ~view:{ (plain 2) with stepped = true; reversed = Some 1 };
+    example (D.Any D.Uint4) [| 400; 501 |] ~descending:true ~k:301
+      ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example (D.Any D.Bit) [| 400; 501 |]
+      ~view:{ (plain 2) with reversed = Some 0 };
   ]
 
 let laws (b : Support.backend) =

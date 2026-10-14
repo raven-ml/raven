@@ -101,11 +101,10 @@
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right.
 
-    [sort] computes every dtype of a byte or more and declines the sub-byte
-    ones. [fold] computes [float32], [float64] and the 8- to 64-bit integers
-    and declines the others. [assemble] computes every dtype. The three
-    refuse with [Shape_mismatch] operands and destinations whose shapes do
-    not fit.
+    [sort] and [assemble] compute every dtype. [fold] computes [float32],
+    [float64] and the 8- to 64-bit integers and declines the others. The
+    three refuse with [Shape_mismatch] operands and destinations whose
+    shapes do not fit.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take, and compute the others.

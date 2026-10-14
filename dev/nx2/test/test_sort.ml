@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Sort through Nx.Prim: the order and stability Nx_kernel.S.sort states,
-   against a stable sort of the slices, its rule before any kernel, a split
-   placement, a sub-byte dtype the host's kernels decline, and a library that
-   declines every sort, whose sorts are nx's expansion. *)
+   against a stable sort of the slices, sub-byte dtypes in one kernel call, its
+   rule before any kernel, a split placement, and a library that declines every
+   sort, whose sorts are nx's expansion. *)
 
 open Windtrap
 module A = Nx_array
@@ -127,6 +127,34 @@ let law_stable (s, axis, descending, xs) =
   equal ~msg:"values" (array int32) want_v (read v);
   equal ~msg:"positions" (array int64) want_p (read p)
 
+let test_sub_byte () =
+  let check (type v s) name (dt : (v, s) D.t) (pp : v testable) (xs : v array)
+      (want : v array) (positions : int64 array) =
+    let x = Nx.place Count.on (value (A.of_array dt [| Array.length xs |] xs)) in
+    C.reset ();
+    let v, p = sort 0 x in
+    equal ~msg:(name ^ " in one kernel call") int 1 (C.calls ());
+    equal ~msg:(name ^ " values") (array pp) want (read v);
+    equal ~msg:(name ^ " positions") (array int64) positions (read p)
+  in
+  check "int4" D.Int4 int [| 3; -8; 7; 0; -8 |] [| -8; -8; 0; 3; 7 |]
+    [| 1L; 4L; 3L; 0L; 2L |];
+  check "uint4" D.Uint4 int [| 15; 0; 9 |] [| 0; 9; 15 |] [| 1L; 2L; 0L |];
+  check "bit" D.Bit bool [| true; false; true |] [| false; true; true |]
+    [| 1L; 0L; 2L |];
+  let x =
+    Nx.place Count.on
+      (value (A.of_array D.Float4_e2m1fn [| 4 |] [| 0.; -0.; 6.; -1.5 |]))
+  in
+  C.reset ();
+  let v, p = sort 0 x in
+  equal ~msg:"float4_e2m1fn in one kernel call" int 1 (C.calls ());
+  equal ~msg:"float4_e2m1fn, -0 below +0" (array int64)
+    (Array.map bits [| -1.5; -0.; 0.; 6. |])
+    (Array.map bits (read v));
+  equal ~msg:"float4_e2m1fn positions" (array int64) [| 3L; 1L; 0L; 2L |]
+    (read p)
+
 (* Rules and placements *)
 
 let test_rules () =
@@ -152,27 +180,6 @@ let test_split () =
        (Some (Count2.split ~axis:0)))
 
 (* Declines *)
-
-let test_sub_byte () =
-  let check (type v s) name (dt : (v, s) D.t) (pp : v testable) (xs : v array)
-      (want : v array) (positions : int64 array) =
-    let v, p = sort 0 (value (A.of_array dt [| Array.length xs |] xs)) in
-    equal ~msg:(name ^ " values") (array pp) want (read v);
-    equal ~msg:(name ^ " positions") (array int64) positions (read p)
-  in
-  check "int4" D.Int4 int [| 3; -8; 7; 0; -8 |] [| -8; -8; 0; 3; 7 |]
-    [| 1L; 4L; 3L; 0L; 2L |];
-  check "uint4" D.Uint4 int [| 15; 0; 9 |] [| 0; 9; 15 |] [| 1L; 2L; 0L |];
-  check "bit" D.Bit bool [| true; false; true |] [| false; true; true |]
-    [| 1L; 0L; 2L |];
-  let v, p =
-    sort 0 (value (A.of_array D.Float4_e2m1fn [| 4 |] [| 0.; -0.; 6.; -1.5 |]))
-  in
-  equal ~msg:"float4_e2m1fn, -0 below +0" (array int64)
-    (Array.map bits [| -1.5; -0.; 0.; 6. |])
-    (Array.map bits (read v));
-  equal ~msg:"float4_e2m1fn positions" (array int64) [| 3L; 1L; 0L; 2L |]
-    (read p)
 
 (* Each element's bits, read as unsigned integers of its width: two per
    complex128. *)
@@ -303,6 +310,7 @@ let () =
              test "floats: -inf < -0 < +0 < +inf < NaN, stable" test_float_order;
              test "k keeps the first elements" test_k;
              prop "each slice is a stable sort" case law_stable;
+             test "sub-byte dtypes sort in one kernel call" test_sub_byte;
            ];
          group "rules and placements"
            [
@@ -311,7 +319,6 @@ let () =
            ];
          group "declines"
            [
-             test "a sub-byte sort computes at its accumulator" test_sub_byte;
              prop "a library that declines sorts as nx.cpu" declined_case
                law_declined;
            ];
