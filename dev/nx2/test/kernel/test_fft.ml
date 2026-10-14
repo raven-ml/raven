@@ -686,8 +686,9 @@ let test_streamed () =
   let x = operand c in
   equal (array string) (elements (run c x)) (elements (run ~threads:1 c x));
   (* 512 complex64 lines of 1024 points side by side, a 4 MiB result
-     written past the caches by rows of 8 in registers: each line's bits
-     alone, whose 8 KiB result stays in cache. *)
+     written past the caches by rows of 8 in registers, on the job's
+     threads and on one: each line's bits alone, whose 8 KiB result stays
+     in cache. *)
   let n = 1024 and lines = 512 in
   let rs = Random.State.make [| 10 |] in
   let xs =
@@ -697,6 +698,8 @@ let test_streamed () =
   in
   let c = { c with wide = false; shape = [| n; lines |]; view = plain 2; xs } in
   let ys = bits_of (run c (operand c)) in
+  (* One thread: x86-64 streams only there. *)
+  equal (array (pair int64 int64)) ys (bits_of (run ~threads:1 c (operand c)));
   List.iter
     (fun l ->
       let alone =
