@@ -1127,6 +1127,20 @@ let errors =
             (Nx.Pattern.v "i k, k j -> i j | k")
             (x [| 2; 3 |])
             (x [| 4; 2 |]));
+      refuses "axes under ... that differ"
+        {|Nx.contract: "... i k, ... k j -> ... i j | k": ...0 is 2 in a and 3 in b|}
+        (fun () ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "... i k, ... k j -> ... i j | k")
+            (x [| 2; 2; 3 |])
+            (x [| 3; 3; 2 |]));
+      refuses "a size an operand contradicts"
+        {|Nx.contract: "i k, k j -> i j | k": k is 5 in sizes and 3 in a|}
+        (fun () ->
+          Nx.contract ~sizes:[ ("k", 5) ] Nx.float32
+            (Nx.Pattern.v "i k, k j -> i j | k")
+            (x [| 2; 3 |])
+            (x [| 3; 2 |]));
       refuses "a rank the pattern does not give"
         {|Nx.contract: "i k, k j -> i j | k" names 2 axes for a; a is float32 [2; 3; 4]|}
         (fun () ->

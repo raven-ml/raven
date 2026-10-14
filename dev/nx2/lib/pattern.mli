@@ -12,13 +12,14 @@
 
 (** {1:patterns Patterns} *)
 
-type axis =
-  | Name of string
-  | Group of string list  (** Merged axes, major first: at least one name. *)
+(** An axis, its names written as ['n]: as parsed, or numbered. *)
+type 'n axis =
+  | Name of 'n
+  | Group of 'n list  (** Merged axes, major first: at least one name. *)
   | Unit  (** [1]: an axis of extent [1]. *)
   | Ellipsis  (** [...]: the axes no name covers. *)
 
-type layout = axis list
+type layout = string axis list
 
 type plan
 (** A one-operand pattern prepared for {!moves}: its names numbered, so that a
@@ -27,13 +28,19 @@ type plan
 (** The type for a pattern's operands. *)
 type kind = private
   | One of { operand : layout; plan : plan }
-  | Many of { operands : layout list; summed : string list }
-      (** Two operands or more. [summed] is the names after [|], in order. An
+  | Many of {
+      names : string array;
+      operands : int axis list list;
+      result : int axis list;
+    }
+      (** Two operands or more, each name numbered by its place in [names],
+          where it stands once, in its first place among the operands. An
           [Ellipsis] leads every layout or none. *)
 
 type t = private {
   text : string;  (** As written, for messages. *)
   result : layout;
+      (** As written; [Many]'s [result] is the same layout numbered. *)
   kind : kind;
 }
 (** A pattern whose structure holds the rules of [Nx.Pattern.v]. *)

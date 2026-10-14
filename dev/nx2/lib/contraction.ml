@@ -46,12 +46,23 @@ let index_of (n : int) l =
   in
   go 0 l
 
+(* [f] of each of [ns]: an int array filled without a write barrier, which
+   [Array.of_list] pays per element. *)
+let ints f (ns : int list) =
+  let a = Array.make (List.length ns) 0 in
+  let rec fill i = function
+    | [] -> a
+    | n :: ns ->
+        a.(i) <- f n;
+        fill (i + 1) ns
+  in
+  fill 0 ns
+
 (* The contraction of operands named [na] and [nb] into the names [nr], of the
    result [shape]. A name both operands hold is a batch name where the result
    keeps it, else summed; the batch and summed names pair in [a]'s order, the
    order in which the kernel sums. *)
 let lower ~ext na nb nr shape =
-  let shape_of ns = Array.of_list (List.map (Array.get ext) ns) in
   let pairs ns =
     Array.of_list (List.map (fun n -> (index_of n na, index_of n nb)) ns)
   in
@@ -62,34 +73,36 @@ let lower ~ext na nb nr shape =
   let free_b = List.filter (fun n -> not (mem n na)) nb in
   let kernel = batch @ free_a @ free_b in
   {
-    a = shape_of na;
-    b = shape_of nb;
+    a = ints (Array.get ext) na;
+    b = ints (Array.get ext) nb;
     batch = pairs batch;
     contracting = pairs summed;
-    order = Array.of_list (List.map (fun n -> index_of n kernel) nr);
-    names = shape_of nr;
+    order = ints (fun n -> index_of n kernel) nr;
+    names = ints (Array.get ext) nr;
     shape;
   }
 
 (* Patterns *)
 
-(* [l] with its ellipsis replaced by [n] names that no pattern writes. *)
-let expand l n =
+(* A pattern's names are numbered when it is parsed. Met with operands whose
+   ellipsis covers [c] axes, the covered axes are numbered on from its [n]
+   names: [n] to [n + c - 1]. *)
+
+(* [l]'s names in order, those in groups included, its ellipsis written out. *)
+let named ~n ~c l =
   List.concat_map
     (function
-      | Pattern.Ellipsis ->
-          List.init n (fun i -> Pattern.Name ("..." ^ string_of_int i))
-      | x -> [ x ])
+      | Pattern.Name i -> [ i ]
+      | Group is -> is
+      | Unit -> []
+      | Ellipsis -> List.init c (fun j -> n + j))
     l
 
-(* [l]'s names in order, those in groups included. *)
-let names l =
-  List.concat_map
-    (function
-      | Pattern.Name n -> [ n ] | Group ns -> ns | Unit | Ellipsis -> [])
-    l
+let is_ellipsis = function Pattern.Ellipsis -> true | _ -> false
 
-let written l = List.length (List.filter (( <> ) Pattern.Ellipsis) l)
+(* The number of axes [l] names, besides its ellipsis. *)
+let written l =
+  List.fold_left (fun w x -> if is_ellipsis x then w else w + 1) 0 l
 
 (* Raises naming [by] and the pattern [p]. *)
 let failf ~by p fmt =
@@ -109,58 +122,72 @@ let product ds =
       (Some 1) ds
 
 (* Each name's extent, from [sizes], the operands' axes and the division of
-   their groups. A group with a known extent of 0 has no element, whatever
-   its other names, which stay unknown; otherwise its known extents divide
-   its axis exactly, their product checked, and leave the last unknown name
-   the quotient. *)
-let extents ~by ~pat ~sizes layouts =
-  let known = Hashtbl.create 16 in
-  let learn n d where =
-    match Hashtbl.find_opt known n with
-    | Some (d', where') when d' <> d ->
-        failf ~by pat "%s is %d in %s and %d in %s" n d' where' d where
-    | Some _ -> ()
-    | None -> Hashtbl.replace known n (d, where)
+   their groups, for [n] names and the [c] axes an ellipsis covers. A group
+   with a known extent of 0 has no element, whatever its other names, which
+   stay unknown; otherwise its known extents divide its axis exactly, their
+   product checked, and leave the last unknown name the quotient. [name] and
+   [label] give a name and an operand in messages. *)
+let extents ~by ~pat ~name ~label ~sizes ~n ~c layouts =
+  let ext = Array.make (n + c) (-1) in
+  (* Where each extent was learned: an operand's place, or [-1] for
+     [~sizes]. *)
+  let where = Array.make (n + c) (-1) in
+  let source k = if k < 0 then "sizes" else label k in
+  let learn i d k =
+    if ext.(i) < 0 then begin
+      ext.(i) <- d;
+      where.(i) <- k
+    end
+    else if ext.(i) <> d then
+      failf ~by pat "%s is %d in %s and %d in %s" (name i) ext.(i)
+        (source where.(i)) d (source k)
   in
   List.iter
-    (fun (n, d) ->
-      if d < 0 then failf ~by pat "%s = %d in ~sizes is negative" n d;
-      learn n d "sizes")
+    (fun (i, d) ->
+      if d < 0 then failf ~by pat "%s = %d in ~sizes is negative" (name i) d;
+      learn i d (-1))
     sizes;
-  List.iter
-    (fun (label, l, s) ->
-      List.iteri
-        (fun i x ->
+  (* The groups, in order, each with its operand and its axis's extent. *)
+  let groups = ref [] in
+  List.iteri
+    (fun k (l, s) ->
+      let ax = ref 0 in
+      List.iter
+        (fun x ->
           match x with
-          | Pattern.Name n -> learn n s.(i) label
+          | Pattern.Name i ->
+              learn i s.(!ax) k;
+              incr ax
           | Unit ->
-              if s.(i) <> 1 then
-                failf ~by pat "axis %d of %s is 1 in the pattern and %d in %s" i
-                  label s.(i) label
-          | Group _ | Ellipsis -> ())
+              if s.(!ax) <> 1 then
+                failf ~by pat "axis %d of %s is 1 in the pattern and %d in %s"
+                  !ax (label k) s.(!ax) (label k);
+              incr ax
+          | Group is ->
+              groups := (k, is, s.(!ax)) :: !groups;
+              incr ax
+          | Ellipsis ->
+              for j = 0 to c - 1 do
+                learn (n + j) s.(!ax + j) k
+              done;
+              ax := !ax + c)
         l)
     layouts;
-  let groups =
-    List.concat_map
-      (fun (label, l, s) ->
-        List.concat
-          (List.mapi
-             (fun i -> function
-               | Pattern.Group ns -> [ (label, ns, s.(i)) ] | _ -> [])
-             l))
-      layouts
-  in
-  let ext n = Option.map fst (Hashtbl.find_opt known n) in
+  let groups = List.rev !groups in
+  let known i = ext.(i) >= 0 in
+  let group is = render (List.map name is) in
   (* One pass over the groups; [true] if it learned an extent. *)
   let pass () =
     List.fold_left
-      (fun progress (label, ns, d) ->
-        let found = List.filter_map ext ns in
+      (fun progress (k, is, d) ->
+        let found =
+          List.filter_map (fun i -> if known i then Some ext.(i) else None) is
+        in
         let multiply p =
           failf ~by pat "%s is %d in %s, and its names multiply to %s"
-            (render ns) d label p
+            (group is) d (label k) p
         in
-        match (List.filter (fun n -> ext n = None) ns, product found) with
+        match (List.filter (fun i -> not (known i)) is, product found) with
         | _, Some 0 ->
             if d <> 0 then multiply "0";
             progress
@@ -169,17 +196,17 @@ let extents ~by ~pat ~sizes layouts =
             progress
         | [], None -> multiply "more than an int counts"
         | [ u ], None when d = 0 ->
-            learn u 0 label;
+            learn u 0 k;
             true
         | [ u ], Some p when d mod p = 0 ->
-            learn u (d / p) label;
+            learn u (d / p) k;
             true
         | [ _ ], p ->
             let p =
               Option.fold ~none:"a product past an int" ~some:string_of_int p
             in
-            failf ~by pat "%s is %d in %s, which %s does not divide"
-              (render ns) d label p
+            failf ~by pat "%s is %d in %s, which %s does not divide" (group is)
+              d (label k) p
         | _ -> progress)
       false groups
   in
@@ -187,74 +214,81 @@ let extents ~by ~pat ~sizes layouts =
     ()
   done;
   List.iter
-    (fun (label, ns, _) ->
-      match List.filter (fun n -> ext n = None) ns with
+    (fun (k, is, _) ->
+      match List.filter (fun i -> not (known i)) is with
       | [] -> ()
       | us ->
           failf ~by pat "%s in %s leaves %s unknown; give one in ~sizes"
-            (render ns) label (String.concat " and " us))
+            (group is) (label k)
+            (String.concat " and " (List.map name us)))
     groups;
-  fun n -> Option.get (ext n)
+  ext
 
-(* The operands' names, numbered, with ellipses written out, each name's
-   extent, and the result's names and shape: [p]'s operand layouts [ls] met
-   with the operands [xs], each a label for messages, a dtype's name and a
-   shape. A name's number is its first place among the operands' names. *)
-let prepare ~by ~sizes (p : Pattern.t) ls xs =
+(* The operands' names, with ellipses written out, each name's extent, and
+   the result's names and shape: [p]'s numbered [names], operand layouts [ls]
+   and result [lr] met with the operands [xs], each a dtype's name and a
+   shape; [label] names an operand in messages. *)
+let prepare ~by ~sizes ~label (p : Pattern.t) names ls lr xs =
   let err fmt = failf ~by p fmt in
-  let covered l (label, dt, s) =
+  let covered k l (dt, s) =
     let w = written l and r = Array.length s in
-    let dots = List.mem Pattern.Ellipsis l in
+    let dots = List.exists is_ellipsis l in
     if (dots && r < w) || ((not dots) && r <> w) then
       invalid_argf "%s: %a names %s for %s; %s is %s %a" by Pattern.pp p
-        (axes w) label label dt pp_shape s
+        (axes w) (label k) (label k) dt pp_shape s
     else r - w
   in
-  let cs = List.map2 covered ls xs in
-  let c = List.hd cs and first, _, _ = List.hd xs in
-  List.iter2
-    (fun c' (label, _, _) ->
-      if c' <> c then err "... is %s in %s and %d in %s" (axes c) first c' label)
-    cs xs;
-  let ls = List.map (fun l -> expand l c) ls and lr = expand p.result c in
-  let all = List.concat_map names ls in
-  List.iter
-    (fun (n, _) ->
-      if not (List.mem n all) then err "~sizes names %s, which it lacks" n)
-    sizes;
+  let cs = List.mapi (fun k (l, x) -> covered k l x) (List.combine ls xs) in
+  let c = List.hd cs in
+  List.iteri
+    (fun k c' ->
+      if c' <> c then
+        err "... is %s in %s and %d in %s" (axes c) (label 0) c' (label k))
+    cs;
+  let n = Array.length names in
+  let name i = if i < n then names.(i) else "..." ^ string_of_int (i - n) in
+  let sizes =
+    List.map
+      (fun (s, d) ->
+        match Array.find_index (String.equal s) names with
+        | Some i -> (i, d)
+        | None -> err "~sizes names %s, which it lacks" s)
+      sizes
+  in
   let ext =
-    extents ~by ~pat:p ~sizes
-      (List.map2 (fun l (label, _, s) -> (label, l, s)) ls xs)
+    extents ~by ~pat:p ~name ~label ~sizes ~n ~c
+      (List.map2 (fun l (_, s) -> (l, s)) ls xs)
   in
   let entry = function
-    | Pattern.Name n -> ext n
-    | Group ns -> (
-        match product (List.map ext ns) with
-        | Some p -> p
-        | None -> err "%s in the result multiplies past an int" (render ns))
-    | Unit | Ellipsis -> 1
+    | Pattern.Name i -> [ ext.(i) ]
+    | Group is -> (
+        match product (List.map (Array.get ext) is) with
+        | Some p -> [ p ]
+        | None ->
+            err "%s in the result multiplies past an int"
+              (render (List.map name is)))
+    | Unit -> [ 1 ]
+    | Ellipsis -> List.init c (fun j -> ext.(n + j))
   in
-  let number n = Option.get (List.find_index (String.equal n) all) in
-  let numbered l = List.map number (names l) in
-  ( List.map numbered ls,
-    Array.of_list (List.map ext all),
-    numbered lr,
-    Array.of_list (List.map entry lr) )
+  ( List.map (named ~n ~c) ls,
+    ext,
+    named ~n ~c lr,
+    Array.of_list (List.concat_map entry lr) )
 
 let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
-  let la, lb =
-    match p.kind with
-    | Many { operands = [ a; b ]; _ } -> (a, b)
-    | Many { operands; _ } ->
-        invalid_argf "%s: %a has %d operands; use Nx.einsum" by Pattern.pp p
-          (List.length operands)
-    | One _ ->
-        invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
-  in
-  let ns, ext, nr, shape =
-    prepare ~by ~sizes p [ la; lb ] [ ("a", da, sa); ("b", db, sb) ]
-  in
-  lower ~ext (List.nth ns 0) (List.nth ns 1) nr shape
+  match p.kind with
+  | Many { names; operands = [ la; lb ]; result } ->
+      let label k = if k = 0 then "a" else "b" in
+      let ns, ext, nr, shape =
+        prepare ~by ~sizes ~label p names [ la; lb ] result
+          [ (da, sa); (db, sb) ]
+      in
+      lower ~ext (List.nth ns 0) (List.nth ns 1) nr shape
+  | Many { operands; _ } ->
+      invalid_argf "%s: %a has %d operands; use Nx.einsum" by Pattern.pp p
+        (List.length operands)
+  | One _ ->
+      invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
 
 (* Accumulators *)
 
@@ -545,11 +579,11 @@ let order ~ext ~result ops =
 
 let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
-  let layouts =
+  let names, layouts, result =
     match p.kind with
     | One _ ->
         invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
-    | Many { operands; _ } -> operands
+    | Many { names; operands; result } -> (names, operands, result)
   in
   let k = List.length layouts and n = List.length xs in
   if k > max_operands then
@@ -562,12 +596,11 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
       k n;
   let dt = Prim.dtype (List.hd xs) in
   if D.is D.Boolean dt then invalid_argf "%s: the operands are booleans" by;
-  let labels =
-    List.mapi
-      (fun i x -> ("x" ^ string_of_int (i + 1), D.name dt, Prim.shape x))
-      xs
+  let label k = "x" ^ string_of_int (k + 1) in
+  let ns, ext, nr, shape =
+    prepare ~by ~sizes ~label p names layouts result
+      (List.map (fun x -> (D.name dt, Prim.shape x)) xs)
   in
-  let ns, ext, nr, shape = prepare ~by ~sizes p layouts labels in
   let xs = Array.of_list xs and ns = Array.of_list ns in
   let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
   (* Two parts' contraction into [into], of names [names] and shape [shape]:

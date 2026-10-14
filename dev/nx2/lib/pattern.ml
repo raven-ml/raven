@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type axis = Name of string | Group of string list | Unit | Ellipsis
-type layout = axis list
+type 'n axis = Name of 'n | Group of 'n list | Unit | Ellipsis
+type layout = string axis list
 
 (* An axis of a one-operand pattern, over its names numbered in their order on
    the left: a name or a group, [1], or [...]. *)
@@ -21,7 +21,11 @@ type plan = {
 
 type kind =
   | One of { operand : layout; plan : plan }
-  | Many of { operands : layout list; summed : string list }
+  | Many of {
+      names : string array;
+      operands : int axis list list;
+      result : int axis list;
+    }
 
 type t = { text : string; result : layout; kind : kind }
 
@@ -226,6 +230,24 @@ let plan operand result =
     rest = before 0 operand;
   }
 
+(* A pattern of several operands with its names numbered in their first
+   place among the operands. *)
+let many operands result =
+  let ns = Array.of_list (uniq (List.concat_map names operands)) in
+  let number = function
+    | Name n -> Name (index_of ns n)
+    | Group g -> Group (List.map (index_of ns) g)
+    | Unit -> Unit
+    | Ellipsis -> Ellipsis
+  in
+  let numbered l = List.map number l in
+  Many
+    {
+      names = ns;
+      operands = List.map numbered operands;
+      result = numbered result;
+    }
+
 let words ~by s =
   let ts = tokens ~by s in
   let left, right =
@@ -253,7 +275,7 @@ let words ~by s =
         One { operand; plan = plan operand result }
     | operands ->
         check_many ~by s operands result summed;
-        Many { operands; summed }
+        many operands result
   in
   { text = s; result; kind }
 
