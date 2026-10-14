@@ -49,10 +49,6 @@ val protect : t -> ('a -> 'b) -> 'a -> 'b
     back [l] before it allocates. Callers pass a closed function, defined at
     the top level, and its argument, so the call allocates no closure. *)
 
-val busy : t -> bool
-(** [busy l] is [true] if a call held [l] when [busy] tried to take it, or
-    the thread holds a lock. *)
-
 val wait : t -> unit
 (** [wait l], holding [l], gives it up until a {!broadcast} on [l], a spurious
     wake-up or 200 ms, which no step of the wall clock lengthens, then takes

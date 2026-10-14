@@ -637,6 +637,48 @@ let test_pinned_reclaims () =
   with_host_budget (Support.host_held ()) (fun () ->
       equal int n (B.length (B.create ~memory:Pinned a n)))
 
+(* A reclamation round waits for a device whose lock another thread holds:
+   the device's cached memory charged to the host's budget returns to a host
+   allocation the budget refused. The other thread holds the lock while its
+   drain reads the device's word behind the transport, until the round waits
+   for the lock. *)
+let test_round_waits_for_lock () =
+  if not Support.sees_waits then skip ~reason:"no view of lock waits" ();
+  let d, p = P.open_ ~host_visible:false ~transport:true "memory:round-busy" in
+  let n = 64 * kib in
+  let at = dropped ~memory:Pinned d n in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  ignore (dropped_written s d kib);
+  collect d;
+  let held = Atomic.make false and round = Atomic.make None in
+  let returned = Atomic.make false in
+  P.before p "signaled" (fun () ->
+      Atomic.set held true;
+      Support.await "the round's wait for the lock" (fun () ->
+          Atomic.get returned
+          ||
+          match Atomic.get round with
+          | Some t -> Support.waits_for_lock t
+          | None -> false));
+  let holder = Thread.create (fun () -> ignore (B.create d 0)) () in
+  Support.await "the device's lock held" (fun () -> Atomic.get held);
+  let allocated =
+    with_host_budget (Support.host_held ()) (fun () ->
+        Domain.join
+          (Domain.spawn (fun () ->
+               Atomic.set round (Some (Support.self ()));
+               let r =
+                 match B.create Rig.host (n / 2) with
+                 | b -> string_of_int (B.length b)
+                 | exception e -> Printexc.to_string e
+               in
+               Atomic.set returned true;
+               r)))
+  in
+  Thread.join holder;
+  equal ~msg:"the host allocation" string (string_of_int (n / 2)) allocated;
+  equal ~msg:"the cached memory" bool true (freed p at)
+
 (* A host buffer a device borrowed, dropped, returns its bytes when a pinned
    allocation the host's budget refuses reclaims: the reclaim drains the host,
    whose list holds the buffer, and the allocation is made. *)
@@ -1030,6 +1072,8 @@ let tests =
         test "mapped memory is the device's" test_mapped;
         test "pinned memory another device keeps returns to a refused one"
           test_pinned_reclaims;
+        test "a round waits for a device whose lock another thread holds"
+          test_round_waits_for_lock;
         test
           "a dropped host buffer a device borrowed returns to a pinned \
            allocation"

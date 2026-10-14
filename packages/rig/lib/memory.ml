@@ -1003,9 +1003,6 @@ let take_cached d kind n =
   let l = d.live in
   Lock.protect l.lock take_cached_key (l, key n kind)
 
-(* Whether a call holds [d]'s lock: a walk over every device passes it by. *)
-let busy d = Lock.busy d.live.lock
-
 (* The out-of-memory ladder *)
 
 (* Four tries with a round ([reclaim_round]) between each two, as rig.mli's
@@ -1037,11 +1034,10 @@ let holds_back (pool, l) =
   let front, back = l.pending in
   List.exists holds front || List.exists holds back
 
-(* Drains every device, the host included, skipping one whose lock another call
-   holds. *)
+(* Drains every device, the host included. *)
 let drain_all () =
   drain Dev.host;
-  Dev.iter (fun d -> if not (busy d) then drain d)
+  Dev.iter drain
 
 let () = Dev.drain_all := drain_all
 
@@ -1056,11 +1052,9 @@ let () = Dev.drain_all := drain_all
 let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
-      if not (busy d) then begin
-        if Dev.protect d holds_back (pool, d.live) && not (Dev.is_lost d) then
-          wait_for d (Dev.submitted d);
-        release_cache_if ~wait:true d (charged pool)
-      end);
+      if Dev.protect d holds_back (pool, d.live) && not (Dev.is_lost d) then
+        wait_for d (Dev.submitted d);
+      release_cache_if ~wait:true d (charged pool));
   drain_all ();
   if round >= 2 then begin
     Gc.full_major ();

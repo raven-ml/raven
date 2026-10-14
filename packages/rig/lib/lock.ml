@@ -22,10 +22,3 @@ let protect l f x =
   | exception e ->
       release l;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-let busy l =
-  if try_take l then begin
-    release l;
-    false
-  end
-  else true
