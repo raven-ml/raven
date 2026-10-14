@@ -1207,7 +1207,7 @@ let moves_of s buffers =
 (* What a submit reads for the profiles taken before it hands its work over: the
    profiles, each copy part's move, and when the copies were asked. *)
 type taking = {
-  ps : Prof.t list;
+  ps : Profile.t list;
   moves : (device * device * int) array;
   asked : int;
 }
@@ -1225,7 +1225,7 @@ let untaken = { ps = []; moves = [||]; asked = 0 }
 let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev and value = Point.value p in
   let c = device.live.c in
-  let seen = if Dev.is_done p then Prof.now () else -1 in
+  let seen = if Dev.is_done p then Profile.now () else -1 in
   let left = Atomic.make (List.length ps) in
   let drop () =
     if Atomic.fetch_and_add left (-1) = 1 && pair >= 0 then times_free c pair
@@ -1234,17 +1234,17 @@ let record s (lane, name) { ps; moves; asked } p pair =
     let copies start stop =
       Array.iter
         (fun (src, dst, bytes) ->
-          Prof.add [ prof ] (Copy { src; dst; bytes; start; stop }))
+          Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
         moves
     in
     if pair < 0 || Dev.settle device value then
       match if pair < 0 then (0, 0) else times_read c pair with
-      | 0, 0 -> copies asked (if seen >= 0 then seen else Prof.now ())
+      | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
       | start, stop ->
-          Prof.add [ prof ] (Span { device; lane; name; start; stop });
+          Profile.add [ prof ] (Span { device; lane; name; start; stop });
           copies start stop
   in
-  List.iter (fun prof -> Prof.pend prof { device; value; read; drop }) ps
+  List.iter (fun prof -> Profile.pend prof { device; value; read; drop }) ps
 
 (* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
    form, and the stamps and templates it names without a reference, with the
@@ -1255,10 +1255,10 @@ let taken s run buffers waits =
      untimed, since no entry would give its time pair back. *)
   let t =
     match s.span with
-    | Some _ when Prof.enabled () -> (
-        match Prof.active () with
+    | Some _ when Profile.enabled () -> (
+        match Profile.active () with
         | [] -> untaken
-        | ps -> { ps; moves = moves_of s buffers; asked = Prof.now () })
+        | ps -> { ps; moves = moves_of s buffers; asked = Profile.now () })
     | _ -> untaken
   in
   run_timed run (t != untaken);

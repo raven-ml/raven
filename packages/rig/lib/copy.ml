@@ -24,15 +24,15 @@ let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
    which it sees done now, between the devices of their allocations, as a submit
    records a copy part. *)
 let record src dst bytes start =
-  if Prof.enabled () then
-    Prof.record
+  if Profile.enabled () then
+    Profile.record
       (Copy
          {
            src = src.mem.alloc.owner;
            dst = dst.mem.alloc.owner;
            bytes;
            start;
-           stop = Prof.now ();
+           stop = Profile.now ();
          })
 
 (* Staging memory, as copy.mli states it, made at the first copy that needs
@@ -229,7 +229,7 @@ let on_host transfer src dst n start =
    The host records its transfer, a submit a queued one. Is whether it ran. *)
 let direct ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
-  let start = Prof.now () in
+  let start = Profile.now () in
   if local src.mem && local dst.mem then on_host Move src dst n start
   else if Dev.is_io sd && local dst.mem then on_host Io_read src dst n start
   else if Dev.is_io dd && local src.mem then on_host Io_write src dst n start

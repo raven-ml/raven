@@ -89,8 +89,8 @@ let load d binary =
         Dev.raise_lost d
       end;
       let image = { idev = d; loaded; itoken } in
-      if Prof.enabled () then
-        Prof.record (Load { image; binary; time = Prof.now () });
+      if Profile.enabled () then
+        Profile.record (Load { image; binary; time = Profile.now () });
       Ok image
 
 let device image = image.idev

@@ -35,9 +35,98 @@ type event = Def.event =
   | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
-let now = Prof.now
-let enabled = Prof.enabled
-let record = Prof.record
+(* Taking *)
+
+type t = {
+  events : (int * event) list option Atomic.t;
+      (* [None] is closed. Closing detaches history from pending callbacks. *)
+  pending : intake Atomic.t;
+}
+
+(* A profile's entries: it takes them while [take]'s function runs, then
+   only gives up those it took to [take]'s reads, until its stop. *)
+and intake = Open of pending list | Reading of pending list | Closed
+
+and pending = {
+  device : device;
+  value : int;
+  read : t -> unit;
+  drop : unit -> unit;
+}
+
+(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
+external now : unit -> (int[@untagged])
+  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
+[@@noalloc]
+
+let profiles : t list Atomic.t = Atomic.make []
+let numbers = Atomic.make 0
+let active () = Atomic.get profiles
+let is_open p = Option.is_some (Atomic.get p.events)
+
+let enabled () =
+  match Atomic.get profiles with [] -> false | ps -> List.exists is_open ps
+
+(* Sets the list to [f] of it without the stopped profiles. *)
+let rec change f =
+  let ps = Atomic.get profiles in
+  if not (Atomic.compare_and_set profiles ps (f (List.filter is_open ps))) then
+    change f
+
+let start () =
+  let p = { events = Atomic.make (Some []); pending = Atomic.make (Open []) } in
+  change (fun ps -> ps @ [ p ]);
+  p
+
+let drop (e : pending) = e.drop ()
+
+(* The exchange is the stop: an exception that ends the call after it, at an
+   allocation, leaves [p] in the list stopped, and the next change drops it.
+   The pending entries left are dropped first, with no allocation. *)
+let stop p =
+  let events = Atomic.exchange p.events None in
+  (match Atomic.exchange p.pending Closed with
+  | Open l | Reading l -> List.iter drop l
+  | Closed -> ());
+  change Fun.id;
+  match events with None -> [] | Some events -> events
+
+let rec pend p e =
+  match Atomic.get p.pending with
+  | Open l as before ->
+      if not (Atomic.compare_and_set p.pending before (Open (e :: l))) then
+        pend p e
+  | Reading _ | Closed -> e.drop ()
+
+(* Takes no more entries into [p]: [take]'s function returned. *)
+let rec seal p =
+  match Atomic.get p.pending with
+  | Open l as before ->
+      if not (Atomic.compare_and_set p.pending before (Reading l)) then seal p
+  | Reading _ | Closed -> ()
+
+(* What [pop] answers when [p] has no pending entry. *)
+let no_pending = { device = Dev.host; value = 0; read = ignore; drop = ignore }
+
+let rec pop p =
+  match Atomic.get p.pending with
+  | Reading (e :: l) as before ->
+      if Atomic.compare_and_set p.pending before (Reading l) then e else pop p
+  | Open _ | Reading [] | Closed -> no_pending
+
+let rec push a x =
+  match Atomic.get a with
+  | None -> ()
+  | Some l as before ->
+      if not (Atomic.compare_and_set a before (Some (x :: l))) then push a x
+
+let add ps e =
+  let n = Atomic.fetch_and_add numbers 1 in
+  List.iter (fun p -> push p.events (n, e)) ps
+
+let record e = match active () with [] -> () | ps -> add ps e
+
+(* Events *)
 
 let time = function
   | Span s -> s.start
@@ -64,16 +153,6 @@ let order e e' =
 let recorded_order (n, e) (n', e') =
   match order e e' with 0 -> Int.compare n n' | c -> c
 
-(* What [pop] answers when [p] has no pending entry. *)
-let no_pending =
-  { Prof.device = Dev.host; value = 0; read = ignore; drop = ignore }
-
-let rec pop (p : Prof.t) =
-  match Atomic.get p.pending with
-  | Reading (e :: l) as before ->
-      if Atomic.compare_and_set p.pending before (Reading l) then e else pop p
-  | Open _ | Reading [] | Closed -> no_pending
-
 (* Reads the entries [p] took into it, newest first, which waits for the
    last value first. Each waits for its value and reads its events, or none
    if its device is lost meanwhile. An entry leaves [p] as its wait starts
@@ -95,30 +174,30 @@ let rec read_all p =
   end
 
 let take f =
-  let p = Prof.start () in
+  let p = start () in
   match
     let r = f () in
-    Prof.seal p;
+    seal p;
     read_all p;
     r
   with
   | r ->
-      let events = Prof.stop p in
+      let events = stop p in
       (r, List.map snd (List.stable_sort recorded_order events))
   | exception e ->
       (* Stopped before the backtrace is taken, whose allocation an
          asynchronous exception may interrupt. *)
-      ignore (Prof.stop p);
+      ignore (stop p);
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let span name f =
-  match if Prof.enabled () then Prof.active () else [] with
+  match if enabled () then active () else [] with
   | [] -> f ()
   | ps ->
       let lane = strf "domain %d" (Domain.self () :> int) in
       let start = now () in
       let finish () =
-        Prof.add ps
+        add ps
           (Span { device = Dev.host; lane; name; start; stop = now () })
       in
       Fun.protect ~finally:finish f

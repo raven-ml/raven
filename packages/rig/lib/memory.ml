@@ -272,9 +272,10 @@ let locate (Region { m; r; _ }) =
 let allocated d = if d == Dev.host then heap_held () else d.live.used
 
 let note d =
-  if Prof.enabled () then
-    Prof.record
-      (Allocation { device = d; time = Prof.now (); allocated = allocated d })
+  if Profile.enabled () then
+    Profile.record
+      (Allocation
+         { device = d; time = Profile.now (); allocated = allocated d })
 
 (* Driver calls *)
 

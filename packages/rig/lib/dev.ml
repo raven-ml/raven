@@ -90,6 +90,11 @@ let owed_state = 2
 let ended_state = 4
 let orphaned_state = 5
 
+(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
+external now_ns : unit -> (int[@untagged])
+  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
+[@@noalloc]
+
 (* How long a wait sees no progress before it blocks in the driver, and the
    longest a blocking call of a wait lasts: each returns to OCaml within it,
    where a pending [Sys.Break] raises. *)
@@ -597,7 +602,7 @@ let word d =
         w
     | _ -> slot_word d
 
-let now_ms () = Prof.now () / 1_000_000
+let now_ms () = now_ns () / 1_000_000
 
 (* How long a sleep may watch the word [w] under [d]'s hang bound [hang], or a
    loss of [d] once the bound passed. The clock restarts when the word moved or
@@ -688,7 +693,7 @@ let look_at_producers d =
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
 let rec spin_held (d : device) v until =
   let w = slot_word d in
-  if w >= v || Prof.now () >= until then w
+  if w >= v || now_ns () >= until then w
   else begin
     Domain.cpu_relax ();
     spin_held d v until
@@ -715,7 +720,7 @@ let rec wait_from d v seen since =
         look_at_producers d;
         sleep d ~seen:w ~still_ms
     | Store | Object _ ->
-        if spin_held d v (Prof.now () + held_ns) < v then
+        if spin_held d v (now_ns () + held_ns) < v then
           ignore (c_spin l.c v (still_ms - still)));
     wait_from d v w since
   end
