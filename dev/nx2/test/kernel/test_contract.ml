@@ -1474,13 +1474,15 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   product ~dst:want a x;
   let ga, free_a = guard a and gx, free_x = guard x in
   let gd, free_d = guard want in
-  product ~dst:gd ga gx;
-  let bits y = Array.map Int64.bits_of_float (A.to_array y) in
-  let got = bits gd in
-  free_a ();
-  free_x ();
-  free_d ();
-  equal (array int64) (bits want) got
+  Fun.protect
+    ~finally:(fun () ->
+      free_a ();
+      free_x ();
+      free_d ())
+    (fun () ->
+      product ~dst:gd ga gx;
+      let bits y = Array.map Int64.bits_of_float (A.to_array y) in
+      equal (array int64) (bits want) (bits gd))
 
 let law_guards (b : Support.backend) g =
   let half = if g.f64 then 8 else 16 in
@@ -1490,6 +1492,11 @@ let law_guards (b : Support.backend) g =
     (g.side = Support.After && g.c0 + g.n = g.cols);
   cover "b's window starting at the page"
     (g.side = Support.Before && g.c0 = 0);
+  cover "a half-tile sliver of b ending at the page, rows past one tile"
+    (g.n mod (2 * half) = half
+    && g.side = Support.After
+    && g.c0 + g.n = g.cols
+    && g.m > 2 * half);
   if g.f64 then guarded_product b D.Float64 g
   else guarded_product b D.Float32 g
 

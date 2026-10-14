@@ -148,7 +148,7 @@ static intnat page_bytes(void) {
 #endif
 }
 
-/* [vbytes] bytes, a uint8 bigarray over memory of its own, whose bytes from
+/* [vbytes] bytes, a char bigarray over memory of its own, whose bytes from
    [vfrom] on are readable up to an inaccessible page: their last byte just
    before it where [vafter], else their first byte, [vfrom], just after it.
    The bytes before [vfrom] lie in the page where [vafter] is false. With
@@ -184,7 +184,7 @@ value nx_kernels_support_guarded(value vafter, value vfrom, value vbytes) {
 #else
   mprotect(guard, (size_t)page, PROT_NONE);
 #endif
-  ba = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
+  ba = caml_ba_alloc_dims(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
                           1, data, bytes);
   r = caml_alloc_tuple(3);
   Store_field(r, 0, ba);
