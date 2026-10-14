@@ -344,8 +344,8 @@ let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
 
 (* int8 operands into an int32 accumulator, as quantized weights are: squares,
-   a decode step against a weight stored [n × k], and that weight by a
-   vector. *)
+   a decode step and a prefill of 128 rows against a weight stored [n × k],
+   and that weight by a vector; and int32's prefill, past a core's L2. *)
 let widened_rows =
   List.map
     (fun n ->
@@ -357,13 +357,24 @@ let widened_rows =
     [ 64; 256; 1024 ]
   @
   let x = filled D.Int8 [| 1; 4096 |] 1
+  and x128 = filled D.Int8 [| 128; 4096 |] 1
   and v = filled D.Int8 [| 4096 |] 1
-  and w = filled D.Int8 [| 4096; 4096 |] 1 in
+  and w = filled D.Int8 [| 4096; 4096 |] 1
+  and xi = filled D.Int32 [| 128; 4096 |] 1l
+  and wi = filled D.Int32 [| 4096; 4096 |] 1l in
   [
     Thumper.bench "contract-i8-i32-m1x4096x4096" (fun () ->
         Nx.Repr.array
           (Nx.contract ~acc:D.Int32 D.Int32 rows_by_weight
              (Thumper.black_box x) w));
+    Thumper.bench "contract-i8-i32-m128x4096x4096" (fun () ->
+        Nx.Repr.array
+          (Nx.contract ~acc:D.Int32 D.Int32 rows_by_weight
+             (Thumper.black_box x128) w));
+    Thumper.bench "contract-i32-m128x4096x4096" (fun () ->
+        Nx.Repr.array
+          (Nx.contract ~acc:D.Int32 D.Int32 rows_by_weight
+             (Thumper.black_box xi) wi));
     Thumper.bench "contract-i8-i32-n1x4096x4096" (fun () ->
         Nx.Repr.array
           (Nx.contract ~acc:D.Int32 D.Int32 weight_by_vector w
