@@ -304,6 +304,50 @@ let test_refusals (b : Support.backend) () =
        ~positions:(A.create Rig.host D.Int64 [| 2; 4 |])
        x)
 
+(* Guard pages *)
+
+(* Slices of one element to a few vectors past the widest, at the edges of
+   the insertion sort's, and long enough to sort by radix. *)
+let guard_shapes =
+  let open Gen in
+  let* n =
+    frequency
+      [
+        (6, int_range 1 72);
+        (1, of_list ~pp:Format.pp_print_int [ 63; 64; 65; 127; 128; 129 ]);
+        (2, int_range 100 3000);
+      ]
+  in
+  let+ outer = array ~size:(int_range 0 2) (int_range 1 4) in
+  Array.append outer [| n |]
+
+(* The same values and positions with the operand, through its view, and
+   both destinations against an inaccessible page. *)
+let law_guards (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  let after = side = Support.After in
+  let s = shape_of c.x in
+  cover "along the innermost axis" (c.axis = Array.length s - 1);
+  cover "along an outer axis" (c.axis < Array.length s - 1);
+  cover "by radix" (s.(c.axis) >= 100);
+  cover "keeping some" (kept c < s.(c.axis));
+  cover "sub-byte" (let (D.Any dt) = dtype_of c.x in D.bits dt < 8);
+  cover "a stepped operand at the page before"
+    ((not after) && List.mem "stepped" c.views);
+  cover "a reversed operand at the page after"
+    (after && List.mem "reversed" c.views);
+  let y = Array.copy s in
+  y.(c.axis) <- kept c;
+  let call xs ds =
+    let (A.Any x) = xs.(0) in
+    let values = A.expect (A.dtype x) ds.(0) in
+    let positions = A.expect D.Int64 ds.(1) in
+    K.sort ~axis:c.axis ~descending:c.descending ~values ~positions x
+  in
+  equal answer A.Done
+    (same_guarded side ~call [| c.x |]
+       [| (dtype_of c.x, y); (D.Any D.Int64, y) |])
+
 (* The suite *)
 
 let cases = Gen.with_pp pp_case (case_gen ())
@@ -371,6 +415,11 @@ let cpu (b : Support.backend) =
         (run (law_refuses b));
       test "refuses results of another shape" (fun () ->
           b.around (test_refusals b));
+      prop ~count:300
+        "reads and writes no byte past the operand and destinations, \
+         whatever pages lie beside them"
+        (Gen.pair (case_gen ~shapes:guard_shapes ()) sides)
+        (run (law_guards b));
     ]
 
 let () =
