@@ -256,20 +256,23 @@ static void kernel_f64(int64_t m, int64_t n, int64_t k, const void *a,
   kernel(8, m, n, k, a, a_row, a_k, b, b_k, c, ldc, from);
 }
 
-/* Transposes [rows] rows, at most 2L, × 2L steps from [s] into [d], rows
-   [ld] and steps [pitch] bytes apart, on the unit, and stores steps
-   [first] to 2L - 1. The rows load as a tile's (zload); step k is then
-   lane k mod L of row i's half k / L, a column of Z, which extrv c =
-   w·(k mod L) + k / L moves into Y for the rows below L and c + 2 for
-   the others. Steps that start on 128 bytes store in one instruction,
-   others in two. A move rounds nothing, so every bit moves, a NaN's
-   payload included; past [rows], a step holds what Z held. */
+/* Transposes [rows] rows, at most 2L, of [steps] steps, L to 2L, from [s]
+   into [d], rows [ld] and steps [pitch] bytes apart, on the unit, and
+   stores steps [first] to [steps] - 1. The rows load as a tile's (zload),
+   their halves the first L steps and the last L, [hi] bytes apart; step k
+   is then lane k of row i's first half, k < L, or lane k - hi / w of its
+   second, a column of Z, which extrv c = w·lane + half moves into Y for
+   the rows below L and c + 2 for the others. Steps that start on 128 bytes
+   store in one instruction, others in two. A move rounds nothing, so
+   every bit moves, a NaN's payload included; past [rows], a step holds
+   what Z held. */
 INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
-                      int64_t pitch, int64_t rows, int64_t first) {
+                      int64_t pitch, int64_t rows, int64_t first,
+                      int64_t steps, int64_t hi) {
   int l = LANES(w), out_pairs = on128(d, pitch);
-  zload(w, s, ld, 64, rows);
-  for (int k = first; k < SIDE(w); k++) {
-    int c = w * (k % l) + k / l;
+  zload(w, s, ld, hi, rows);
+  for (int k = first; k < steps; k++) {
+    int half = k >= l, c = w * (half ? k - (int)(hi / w) : k) + half;
     if (w == 4) {
       NX_AMX_EXTRV32(0, c);
       NX_AMX_EXTRV32(64, c + 2);
@@ -281,14 +284,42 @@ INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
   }
 }
 
+/* The elements below which rows of L to 2L steps, contiguous across, move
+   element by element rather than through transposes, whose latency on
+   the unit a small product waits for. On the M1 Max, transposing every
+   such pack made float64 products of 9³ to 14³ (81 to 196 elements of a)
+   5-10% slower; float32 18³ (324) is 7% faster. */
+#define SHORT_LEAST 320
+
+/* [n0] rows of [n1] steps, L to 2L, contiguous across, [s0] elements
+   apart, into [d]: 2L rows at a time through transpose, as their first L
+   steps and their last L. Apart from pack, into which its transposes
+   inlined made float64 products whose packs move element by element 3-5%
+   slower on the M1 Max (14³, 16 × 12 × 16). */
+static __attribute__((noinline)) void short_steps(int w, int64_t n0,
+                                                  int64_t n1,
+                                                  const uint8_t *s,
+                                                  int64_t s0, uint8_t *d,
+                                                  int64_t pitch) {
+  int64_t side = SIDE(w), hi = (n1 - LANES(w)) * w;
+  for (int64_t i = 0; i < n0; i += side) {
+    int64_t rows = n0 - i < side ? n0 - i : side;
+    const uint8_t *from = s + i * s0 * w;
+    if (w == 4)
+      transpose(4, from, s0 * 4, d + i * 4, pitch * 4, rows, 0, n1, hi);
+    else transpose(8, from, s0 * 8, d + i * 8, pitch * 8, rows, 0, n1, hi);
+  }
+}
+
 /* The pack. Contiguous rows of at least L elements move 2L at a time
    through X, four rows to the eight registers, then the rest L at a time,
    eight rows, the last L ending at the row's end; shorter rows move by
    copy_short. Rows contiguous across move 2L × 2L at a time through Z
    (transpose), a block of fewer rows storing whole steps into d's
    padding (cpu.h); a block of fewer steps loads the 2L steps that end at
-   its last, all within its rows, and stores its own. Rows of fewer than
-   2L steps move element by element. */
+   its last, all within its rows, and stores its own. Rows of L to 2L
+   steps transpose as their first L steps and their last L where they are
+   SHORT_LEAST elements or more; others move element by element. */
 INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
                  int64_t s1, void *vd, int64_t pitch) {
   const uint8_t *s = vs;
@@ -323,6 +354,10 @@ INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
     return;
   }
   if (n1 < side) {
+    if (n1 >= LANES(w) && n0 * n1 >= SHORT_LEAST) {
+      short_steps(w, n0, n1, s, s0, d, pitch);
+      return;
+    }
     for (int64_t j = 0; j < n1; j++)
       for (int64_t i = 0; i < n0; i++)
         memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, (size_t)w);
@@ -335,8 +370,8 @@ INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
       const uint8_t *from = s + (i * s0 + j - back) * w;
       uint8_t *to = d + ((j - back) * pitch + i) * w;
       if (rows == side && back == 0)
-        transpose(w, from, s0 * w, to, pitch * w, side, 0);
-      else transpose(w, from, s0 * w, to, pitch * w, rows, back);
+        transpose(w, from, s0 * w, to, pitch * w, side, 0, side, 64);
+      else transpose(w, from, s0 * w, to, pitch * w, rows, back, side, 64);
     }
 }
 
