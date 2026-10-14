@@ -6,8 +6,8 @@
 (* Folds through every kernel library the host runs: a fold is the padded load's
    adjoint over integers. nx.cpu's group checks each result element against a
    reference that adds, from +0, the elements the load reads from it in C order
-   of their taps, bit for bit, through views of the operand, at the dtypes
-   nx_cpu.mli lists. *)
+   of their taps, bit for bit, through views of the operand, at every dtype
+   but the booleans. *)
 
 open Windtrap
 open Elements
@@ -32,8 +32,7 @@ let pp_case ppf c =
 (* The shape a load by [p] gives an array of shape [s], if any. *)
 let loaded (p : Nx_kernel.pad) s = Result.to_option (Nx_kernel.Shape.padded p s)
 
-let folded =
-  D.[ Any Float32; Any Float64; Any Int32; Any Int8; Any Uint16; Any Int64 ]
+let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
 
 (* How a case's first axis leads: as drawn; unwindowed and unpadded, so
    that the fold's units are slabs of the result; or unwindowed and padded,
@@ -132,12 +131,21 @@ let target c xi =
   in
   if Array.exists (fun v -> v < 0) i then None else Some (flat c.shape i)
 
-(* Prog.Add on two elements of [d]: floats by {!Elements.add_bits}, integers
-   wrapping. *)
-let add d a b =
+(* Prog.Add on two elements of [d]: floats of 32 and 64 bits by
+   {!Elements.add_bits}, integers wrapping, and narrow floats and complex
+   numbers as nx.cpu's [apply2] adds two elements. *)
+let add (D.Any dt as d) a b =
   if D.Any D.Float32 = d || D.Any D.Float64 = d then
     add_bits ~w:(String.length a) a b
-  else int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
+  else if D.is D.Signed dt || D.is D.Unsigned dt then
+    int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
+  else
+    let (A.Any x) = of_elements d [| 1 |] [| a |] in
+    let y = A.expect (A.dtype x) (of_elements d [| 1 |] [| b |]) in
+    let dst = A.create Rig.host (A.dtype x) [| 1 |] in
+    match Nx_cpu.apply2 (Binary Add) ~dst x y with
+    | A.Done -> (elements (A.Any dst)).(0)
+    | r -> failf "an add answered %a" Nx_array_support.pp_answer r
 
 let expected c =
   let d = dtype_of c.x in
@@ -190,6 +198,10 @@ let law_reference (b : Support.backend) = function
         (work && n > 0 && not (slabs c));
       let taps = Array.sub (shape_of c.x) r (Array.length c.pad.windows) in
       cover "taps innermost" (work && n < r && total taps > 1);
+      (let (D.Any d) = dtype_of c.x in
+       cover "a narrow float" (work && is_narrow (D.Any d));
+       cover "sub-byte" (work && D.bits d < 8);
+       cover "complex" (work && D.is D.Complex d));
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
       | Some y -> equal (array string) (expected c) (elements y))
@@ -224,7 +236,8 @@ let law_adjoint (b : Support.backend) = function
           Array.iteri (fun i v -> rhs := Int64.add !rhs (Int64.mul a.(i) v)) fs;
           equal int64 !lhs !rhs)
 
-(* A convolution's input gradient, large enough for the job's threads. *)
+(* A convolution's input gradient, large enough for the job's threads, at
+   float32, int4 and bfloat16, the last two from views of the operand. *)
 let test_threads (b : Support.backend) () =
   let w axis = { M.axis; size = 3; step = 1; dilation = 1 } in
   let pad =
@@ -235,15 +248,48 @@ let test_threads (b : Support.backend) () =
       windows = [| w 2; w 3 |];
     }
   in
-  let shape = [| 8; 16; 20; 20 |] in
-  let d = D.Any D.Float32 and rs = Random.State.make [| 11 |] in
-  let x =
-    operand d (Option.get (loaded pad shape)) (plain 6) (fun _ -> element d rs)
+  let fold d shape v =
+    let rs = Random.State.make [| 11 |] in
+    let x =
+      operand d (Option.get (loaded pad shape)) v (fun _ -> element d rs)
+    in
+    let c = { shape; pad; x; views = view_names v } in
+    match fold_on b c with
+    | None -> failf "%s declined a fold" b.name
+    | Some y -> equal (array string) (expected c) (elements y)
   in
-  let c = { shape; pad; x; views = [] } in
-  match fold_on b c with
-  | None -> failf "%s declined a fold" b.name
-  | Some y -> equal (array string) (expected c) (elements y)
+  fold (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
+  (* Slabs of an odd number of int4 elements: neighbouring units' results
+     share a byte. *)
+  fold (D.Any D.Int4) [| 8; 16; 21; 21 |] { (plain 6) with stepped = true };
+  fold (D.Any D.Bfloat16) [| 8; 16; 21; 21 |] { (plain 6) with reversed = Some 3 }
+
+(* Rows longer than a slot of float32, of a narrow float and of int4: they add
+   through their carrier a piece at a time. *)
+let test_long_rows (b : Support.backend) () =
+  let pad =
+    {
+      Nx_kernel.lo = [| 0; 1 |];
+      hi = [| 0; 1 |];
+      interior = [| 0; 0 |];
+      windows = [| { M.axis = 1; size = 3; step = 1; dilation = 1 } |];
+    }
+  in
+  let shape = [| 2; 5000 |] in
+  List.iter
+    (fun d ->
+      let rs = Random.State.make [| 13 |] in
+      let x =
+        operand d
+          (Option.get (loaded pad shape))
+          (plain 3)
+          (fun _ -> element d rs)
+      in
+      let c = { shape; pad; x; views = [] } in
+      match fold_on b c with
+      | None -> failf "%s declined a fold" b.name
+      | Some y -> equal (array string) (expected c) (elements y))
+    D.[ Any Bfloat16; Any Int4 ]
 
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
@@ -291,6 +337,7 @@ let cpu (b : Support.backend) =
         (run (law_reference b));
       test "a convolution's gradient on the job's threads" (fun () ->
           b.around (test_threads b));
+      test "long rows of narrow dtypes" (fun () -> b.around (test_long_rows b));
       test "refuses shapes that do not fit and booleans" (fun () ->
           b.around (test_refusals b));
     ]

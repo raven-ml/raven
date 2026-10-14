@@ -37,7 +37,8 @@
    that copies strided rows (nx_cpu_target's copy_strided), where the
    slab fits half the L2, a unit first copies it into scratch with the
    taps outermost, through the copy's transposed tiles, and adds each
-   tap's rows from there in unit steps. */
+   tap's rows from there in unit steps. A narrow float's or sub-byte
+   dtype's rows, which the stage gathers into slots anyway, do not. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -467,6 +468,14 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
 
 /* Folds */
 
+/* Zeroes the [n] elements of [a] from position [p], contiguous: a
+   sub-byte dtype's as a run (nx_array.h), whose end bytes other units'
+   runs may share. */
+static void zero_run(const nx_array *a, int64_t p, int64_t n) {
+  if (a->bits < 8) nx_sub_fill_run(a->base, a->bits, p, n, 0);
+  else memset(a->base + p * (a->bits / 8), 0, (size_t)(n * (a->bits / 8)));
+}
+
 /* An axis of a tap's box: [count] operand indices from [x0] stepping [xs],
    landing on result indices from [d0] stepping [ds]. */
 typedef struct {
@@ -494,6 +503,36 @@ static span span_of(int64_t n, int64_t step, int64_t j, int64_t dilation,
   return a;
 }
 
+/* Adds the [n] elements of operand 1 from position [x], [sx] apart, into
+   those of operand 0 from [d], [sd] apart, by [add], the row of their
+   carrier. A narrow float or a sub-byte dtype adds through slots of its
+   carrier, a piece at a time, each sum rounded to it on the store, as
+   Prog.Add rounds; the stage's ends of a sub-byte row are atomic, so
+   units whose rows share a byte may add at once. */
+static void add_row(const nx_cpu_row2 add, const nx_array *a, int w,
+                    int64_t n, int64_t d, int64_t sd, int64_t x, int64_t sx) {
+  int c = nx_cpu_carrier(a[0].dtype);
+  if (c == a[0].dtype) {
+    uint8_t *dp = a[0].base + d * w;
+    add(n, dp, sd, dp, sd, a[1].base + x * w, sx);
+    return;
+  }
+  _Alignas(64) uint8_t ds[NX_CPU_SLOT], xs[NX_CPU_SLOT];
+  int64_t cw = nx_cpu_width(c), most = NX_CPU_SLOT / cw;
+  nx_cpu_block b = {.n1 = 1, .n2 = 1};
+  b.s0[0] = sd;
+  b.s0[1] = sx;
+  for (int64_t i = 0; i < n; i += most) {
+    b.n0 = n - i < most ? n - i : most;
+    b.at[0] = d + i * sd;
+    b.at[1] = x + i * sx;
+    nx_cpu_stage(&a[0], &b, 0, ds, b.n0 * cw);
+    nx_cpu_stage(&a[1], &b, 1, xs, b.n0 * cw);
+    add(b.n0, ds, 1, ds, 1, xs, 1);
+    nx_cpu_unstage(&a[0], &b, 0, ds, b.n0 * cw, c);
+  }
+}
+
 /* Adds the box of [r] spans from the operand's position [px] into the
    result's [pd], each span's steps scaled by the strides [sx] and [sd]. */
 static void add_box(const nx_cpu_row2 add, const nx_array *a, int w, int r,
@@ -518,9 +557,7 @@ static void add_box(const nx_cpu_row2 add, const nx_array *a, int w, int r,
       d += at[i] * step[0][i];
       x += at[i] * step[1][i];
     }
-    uint8_t *dp = a[0].base + d * w;
-    add(extent[n - 1], dp, step[0][n - 1], dp, step[0][n - 1],
-        a[1].base + x * w, step[1][n - 1]);
+    add_row(add, a, w, extent[n - 1], d, step[0][n - 1], x, step[1][n - 1]);
     for (int i = n - 2; i >= 0 && ++at[i] == extent[i]; i--) at[i] = 0;
   }
 }
@@ -530,7 +567,7 @@ typedef struct {
   nx_cpu_row2 add;
   int w, r, leading; /* bytes, rank, leading axes no window takes */
   int64_t taps;
-  int64_t slab; /* bytes a unit zeroes first, or 0 */
+  int64_t slab; /* elements a unit zeroes first, or 0 */
   /* Whether a unit copies its operand slab into [scratch_bytes] of
      scratch, taps first: the slab's copy there from position 0, its
      elements per tap and its steps along the result's axes. */
@@ -562,7 +599,7 @@ static void fold_units(int64_t lo, int64_t hi, int worker, void *ctx) {
       px += (b->x0 + k * b->xs) * f->sx[i];
     }
     int rest = f->r - f->leading;
-    if (f->slab > 0) memset(f->a[0].base + pd * f->w, 0, (size_t)f->slab);
+    if (f->slab > 0) zero_run(&f->a[0], pd, f->slab);
     if (scratch == NULL) {
       for (int64_t t = 0; t < f->taps; t++)
         add_box(f->add, f->a, f->w, rest, f->boxes[t] + f->leading,
@@ -626,9 +663,8 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   int dt = nx_array_dtype(vx);
   if (nx_dtype_row_of(dt).kind == NX_KIND_BOOLEAN)
     CAMLreturn(Val_int(NX_DTYPE));
-  nx_cpu_row2 add = nx_cpu_table->op2[NX_OP2_ADD][dt];
-  if (add == NULL || nx_cpu_carrier(dt) != dt)
-    CAMLreturn(Val_int(NX_DECLINED));
+  nx_cpu_row2 add = nx_cpu_table->op2[NX_OP2_ADD][nx_cpu_carrier(dt)];
+  if (add == NULL) CAMLreturn(Val_int(NX_DECLINED));
   /* The operand's shape: the padded extents, each window's axis by its
      count, then the windows' sizes. */
   nx_cpu_pad pad;
@@ -657,8 +693,7 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   /* An operand with no element adds nothing. */
   int64_t xn = 1;
   for (int i = 0; i < r + nw; i++) xn *= xs[i];
-  if (total > 0 && xn == 0)
-    memset(a[0].base + a[0].offset * w, 0, (size_t)(total * w));
+  if (total > 0 && xn == 0) zero_run(&a[0], a[0].offset, total);
   if (total > 0 && xn > 0) {
     folder f = {.a = a, .add = add, .w = w, .r = r, .taps = taps};
     f.boxes = malloc((size_t)taps * sizeof *f.boxes);
@@ -695,15 +730,16 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
     }
     /* The leading axes no window takes have one span for every tap: their
        indices cut the work into units of disjoint results. */
-    int64_t units = 1, slab = w;
+    int64_t units = 1, slab = 1;
     while (f.leading < r && !windowed[f.leading])
       units *= f.boxes[0][f.leading++].count;
     for (int i = f.leading; i < r; i++) slab *= shape[i];
-    if (units * slab == total * w) f.slab = slab;
-    else memset(a[0].base + a[0].offset * w, 0, (size_t)(total * w));
+    if (units * slab == total) f.slab = slab;
+    else zero_run(&a[0], a[0].offset, total);
     int64_t bytes = xn * w + taps * total * w;
-    f.tap_major = nx_cpu_table->copy_strided && r > f.leading &&
-                  f.sx[r - 1] != 1 && slab_copy(&f, a, xs, win, nw);
+    f.tap_major = nx_cpu_table->copy_strided && nx_cpu_carrier(dt) == dt &&
+                  r > f.leading && f.sx[r - 1] != 1 &&
+                  slab_copy(&f, a, xs, win, nw);
     nx_cpu_job(units, bytes, bytes, fold_units, &f);
     free(f.boxes);
     free(f.tap_px);

@@ -109,7 +109,23 @@ let test_fold () =
   in
   let y = Nx.Prim.eval ~by:"t" (Fold { shape = [| 4 |]; pad = p; x = ones }) in
   equal ~msg:"each element, the number of taps that read it" (array float_exact)
-    [| 2.; 3.; 3.; 2. |] (read y)
+    [| 2.; 3.; 3.; 2. |] (read y);
+  (* A narrow float and a sub-byte dtype fold in one kernel call. *)
+  let counts (type v s) (dt : (v, s) D.t) (one : v) (pp : v testable) want =
+    let ones =
+      Nx.place Count.on (host (A.of_array dt [| 4; 3 |] (Array.make 12 one)))
+    in
+    C.reset ();
+    let y =
+      Nx.Prim.eval ~by:"t" (Fold { shape = [| 4 |]; pad = p; x = ones })
+    in
+    let got = read y in
+    equal ~msg:(D.name dt ^ " in one kernel call") int 1 (C.calls ());
+    equal ~msg:(D.name dt) (array pp) want got
+  in
+  counts D.Bfloat16 1. float_exact [| 2.; 3.; 3.; 2. |];
+  counts D.Float4_e2m1fn 1. float_exact [| 2.; 3.; 3.; 2. |];
+  counts D.Int4 1 int [| 2; 3; 3; 2 |]
 
 let test_rules () =
   let x = Nx.place Count.on (host (f32 [| 1.; 2.; 3. |])) in
