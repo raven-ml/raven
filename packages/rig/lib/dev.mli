@@ -125,8 +125,8 @@ val local : 'a key -> device -> 'a
 
 val drop_values : device -> unit
 (** [drop_values d] drops every key's value on [d], and every value stored
-    for [d] from then on. {!run_owed} calls it once the driver's stop
-    returned. *)
+    for [d] from then on. The call that runs [d]'s stop calls it once the
+    driver's stop returned. *)
 
 (** {1:loss Loss and stops}
 
@@ -145,14 +145,19 @@ val drop_values : device -> unit
     whose unreached work waits in its queue on an unreached value of the
     lost one, and from each of those in turn. A device lost by this spread
     has the reason ["<name> lost"], where <name> is the device it waited on,
-    or, under {!fail}, [fail]'s reason. The stop is then owed, and
-    {!run_owed} runs it once no counted call on the device is in flight. An
-    Ended device is {e Stopped} once its word reads its last submitted
-    value. An io device is Stopped as soon as it is Ended, since its reads
-    and writes run inside the calls that ask for them. Work a driver's
-    device took before the loss may run until then, and only then are its
-    memory and objects given back. Its word, records and line stay for the
-    process.
+    or, under {!fail}, [fail]'s reason. The stop is then owed. It runs once
+    no counted call on the device is in flight, in a call that acts for the
+    device ({!run_own}): its counted calls but a wait's, a submit on it, a
+    commit or settle that fails, a counted call it refuses as lost, a drain
+    of its memory, its {!close}, its publication, an open of its name and
+    {!fail}. Every round of reclamation and an open that finds every slot
+    held drain every device. A wait runs none: an interrupt there half-runs
+    no driver's stop. An Ended device is {e Stopped} once its word reads its
+    last submitted value. An io device is Stopped as soon as it is Ended,
+    since its reads and writes run inside the calls that ask for them. Work
+    a driver's device took before the loss may run until then, and only
+    then are its memory and objects given back. Its word, records and line
+    stay for the process.
 
     A forked child makes every lock anew. Each driver's device it inherited
     is Orphaned, and lost with the reason ["forked"] unless it was lost
@@ -199,22 +204,22 @@ val free_slot : device -> bool
     slot's line. *)
 
 val answered : (device -> unit) ref
-(** [answered] is called with each device whose stop returned, from
-    {!run_owed}. {!Memory} sets it to {!Memory.drain}. *)
+(** [answered] is called with each device whose stop returned, by the call
+    that ran the stop. {!Memory} sets it to {!Memory.drain}. *)
 
-val run_owed : unit -> unit
-(** [run_owed ()] runs each owed stop whose device has no counted call in
-    flight, then {!answered}. A loss, the end of a counted call, a submit,
-    and a counted call that finds its device lost each call it. It is one
-    load while no stop is owed. A fault of a stop is dropped. Another
-    exception a stop raises is raised again once the state has moved on,
-    without running {!answered}. An exception that lands after a stop is
-    claimed and before the driver's stop is called owes the stop again. *)
+val run_own : device -> unit
+(** [run_own d] runs [d]'s stop if it is owed and [d] has no counted call in
+    flight, then {!answered}. It is one load while [d]'s stop is not owed. A
+    fault of the stop is dropped. Another exception the stop raises is
+    raised again once the state has moved on, without running {!answered}.
+    An exception that lands after the stop is claimed and before the
+    driver's stop is called owes the stop again. *)
 
 val lose : device -> string -> 'a
 (** [lose d why] loses [d] for the reason [why] if [d] is live, which makes
-    the loss the process's {!failure} if none came before. It then runs the
-    owed stops and raises {!Lost} with the reason of [d]'s first loss. *)
+    the loss the process's {!failure} if none came before, and raises
+    {!Lost} with the reason of [d]'s first loss. A wait calls it, so it runs
+    no stop. *)
 
 (** Which exceptions besides a fault lose a device when they escape a counted
     call: none, every one, or every one but a constructor's, which are the
@@ -227,7 +232,7 @@ val counted : device -> scope -> (unit -> 'a) -> 'a
     loses [d] and raises {!Lost}. Another exception loses [d] with its text
     if [scope] names it, and passes through either way. The loss and the
     end of the count are one C call, the handler's first step. Raises
-    {!Lost} without calling [f] if [d] is lost, running the owed stops
+    {!Lost} without calling [f] if [d] is lost, running [d]'s owed stop
     first. *)
 
 val give : device -> scope -> (unit -> unit) -> bool
@@ -312,14 +317,15 @@ end
 val commit : device -> int -> unit
 (** [commit d v] commits [d]'s submitted work unless [v] is committed,
     waiting while another call is submitting or committing on [d]. A commit
-    that fails loses [d]; on a lost device it does nothing. *)
+    that fails loses [d] and runs its stop; on a lost device it does
+    nothing. *)
 
 val settle : device -> int -> bool
 (** [settle d v] is [true] iff [d]'s driver wrote the times of [d]'s value
     [v], which its submit was given while a profile was taken. It has the
     driver write them, waiting while another call is submitting or
-    committing on [d]. [v] must be reached. A settle that fails loses [d];
-    on a lost device it does nothing and is [false]. *)
+    committing on [d]. [v] must be reached. A settle that fails loses [d]
+    and runs its stop; on a lost device it does nothing and is [false]. *)
 
 val signaled : device -> int
 (** [signaled d] is {!Rig.signaled}[ d]. *)

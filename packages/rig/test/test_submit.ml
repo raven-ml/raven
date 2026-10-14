@@ -315,7 +315,7 @@ let hang_ms = 100
 let lost = function Rig.Lost _ -> true | _ -> false
 
 (* Work whose word stands still past the bound loses the device, not before the
-   bound, and the driver's stop is given the reason. *)
+   bound, and the driver's stop, which its close runs, is given the reason. *)
 let test_hang () =
   let d, p = P.open_ ~hang_ms "submit:hang" in
   let pt = submit (empty d) in
@@ -325,6 +325,7 @@ let test_hang () =
   let waited = (Rig.Profile.now () - t0) / 1_000_000 in
   let why = Printf.sprintf "no progress for %d ms" hang_ms in
   equal (option string) ~msg:"the loss" (Some why) (Rig.lost d);
+  Rig.close d;
   equal (option string) ~msg:"the stop's fault" (Some why) (P.stop_fault p);
   at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
 

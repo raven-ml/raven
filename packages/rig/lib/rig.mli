@@ -101,12 +101,13 @@ val host : t
 (** {2:opening Opening and closing}
 
     An open returns [Error why] when the device cannot be opened, and raises
-    [Invalid_argument] when it is misused. Every open is [Error] after the
-    process has failed ({!fail}), while the name's device is lost and its
-    driver's stop ({!Rig_edge.Driver.val-stop}) has not returned, when the
-    machine's host ({!section-machines}) is lost or closed, and while 65,535
-    devices hold every device slot. For a lost or closed host, [why] is what
-    that host's {!Lost} prints.
+    [Invalid_argument] when it is misused. An open of a lost device's name
+    first runs the device's owed stop ({!section-stops}). Every open is
+    [Error] after the process has failed ({!fail}), while the name's
+    device is lost and its driver's stop ({!Rig_edge.Driver.val-stop}) has
+    not returned, when the machine's host ({!section-machines}) is lost or
+    closed, and while 65,535 devices hold every device slot. For a lost or
+    closed host, [why] is what that host's {!Lost} prints.
 
     A device holds a slot of the process's 65,535, a bound that comes from a
     point fitting an OCaml int ({!Point}). It holds its slot while it is
@@ -176,8 +177,9 @@ val close : t -> unit
     {- On another machine's host ({!host_of}), lost or not, [close] first
        closes every device of that machine, including those still opening,
        and opens on that machine are [Error] from then on.}
-    {- On any other lost [d], [close] only waits for the stop. An io device
-       ends immediately.}
+    {- On any other lost [d], [close] only runs its owed stop, or waits for
+       the call that runs it ({!section-stops}). An io device ends
+       immediately.}
     {- A close that [Sys.Break] interrupted finishes when [close] is called
        again.}}
     A close is never the process's {!failure}.
@@ -545,6 +547,24 @@ val signaled : t -> int
     keep ({!Submission.make}) return. A device that never reports that value
     keeps them for the life of the process.
 
+    From its loss on, a device's stop is {e owed} until a call runs it,
+    which happens once none of the device's driver calls is in flight.
+    {!close} runs it, after waiting for those calls. An open of the
+    device's name runs it, and is [Error] while those calls are in flight.
+    {!fail}, every round of reclamation and an open that finds every device
+    slot held run each owed stop whose device has no driver call in
+    flight. Another call that uses the device may run it sooner, except
+    while it waits ({!section-domains}). A lost device that no such call
+    reaches keeps its stop owed, and with it its memory, its slot and the
+    values its submissions keep. So a program that has no more use for a
+    lost device closes it, and the device's memory returns once it has
+    stopped.
+
+    A call that runs a stop takes the time of the driver's stop, and raises
+    again any exception other than a fault that escapes it. An interrupt
+    during a wait leaves no stop half run, since no call runs one while it
+    waits.
+
     In a child of [fork], every driver's device inherited from the parent is
     lost, with the reason ["forked"] unless it was lost before, and its
     points count as never reached. The child never calls that device's
@@ -565,9 +585,12 @@ val signaled : t -> int
 
     An {e asynchronous} exception is one the runtime raises where the call
     allocates OCaml values or polls, such as [Sys.Break],
-    [Stdlib.Out_of_memory], or an exception from a signal handler or a
-    [Gc.Memprof] callback, or where a function of the call starts, as
-    [Stack_overflow] is. It may leak the memory of the call it interrupts.
+    [Stdlib.Out_of_memory], or an exception from a signal handler, a
+    finaliser or a [Gc.Memprof] callback, or where a function of the call
+    starts, as [Stack_overflow] is. It may leak the memory of the call it
+    interrupts. One that interrupts a driver's stop ({!section-stops}) may
+    leave that device never stopped, holding its memory and its slot for
+    the rest of the process.
 
     A driver changes the memory and code that a device's work uses when it
     allocates, maps or gives back memory, and when it loads, looks up or
@@ -612,8 +635,9 @@ val fail : string -> unit
     is lost with [why], as a fault loses a device, and devices already lost
     keep their reason. Every {!open_} and {!open_io} that starts afterwards
     returns [Error why] without calling its opener, and one that races
-    [fail] makes a lost device. [fail] returns once each loss is recorded,
-    without waiting for the drivers to stop. Only the first call acts. *)
+    [fail] makes a lost device. [fail] runs each owed stop it can
+    ({!section-stops}), and returns without waiting for any device to have
+    stopped. Only the first call acts. *)
 
 val failure : unit -> string option
 (** [failure ()] is the process's first failure, if any: the first loss of a

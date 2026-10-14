@@ -31,9 +31,10 @@ let sticky name f =
 
 (* Value 1 stores to address 0; value 2, queued behind it, would copy into a
    watched host buffer and write the word. Value 3, of no parts, submitted after
-   the fault through rig, makes no CUDA call; the wait for it commits, meets the
-   fault, which loses the device and stops it. An image loaded before the fault,
-   with one kernel entered, serves the calls that need one after it. *)
+   the fault through rig, makes no CUDA call; the wait for it commits and meets
+   the fault, which loses the device, and its close stops it. An image loaded
+   before the fault, with one kernel entered, serves the calls that need one
+   after it. *)
 let faults () =
   let ({ S.d; g } as t) = S.open_ () in
   let image = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
@@ -79,6 +80,7 @@ let faults () =
   | () -> fail "a wait after the fault is no loss"
   | exception Rig.Lost (_, why) ->
       contains ~msg:"wait" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why);
+  Rig.close d;
   let w = C.signaled g in
   equal int ~msg:"the word after stop" 3 w;
   still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;

@@ -64,10 +64,9 @@ external c_raised : c -> exn -> Obj.Extension_constructor.t -> scope -> bool
 external c_faulted : c -> bool = "caml_rig_faulted" [@@noalloc]
 external c_stopped : c -> unit = "caml_rig_stopped"
 external c_await_stop : c -> int -> bool = "caml_rig_await_stop"
-external c_owed : unit -> int = "caml_rig_owed" [@@noalloc]
 external c_free : c -> device -> bool = "caml_rig_free"
 external c_next_value : c -> int = "caml_rig_next_value"
-external c_claim : unit -> int = "caml_rig_claim"
+external c_claim_own : c -> bool = "caml_rig_claim_own"
 external c_unclaim : c -> unit = "caml_rig_unclaim"
 external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
@@ -87,6 +86,7 @@ external c_next : int -> int = "caml_rig_next" [@@noalloc]
 
 (* The C line's states: [rig_stubs.h]'s enum. *)
 let live_state = 0
+let owed_state = 2
 let ended_state = 4
 let orphaned_state = 5
 
@@ -464,53 +464,65 @@ let returned d =
       c_stopped d.live.c;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* Claims an owed stop and runs it: whether it claimed one. Nothing polls
-   between the claim and its handlers, so an asynchronous exception lands
-   before the claim or within them. An exception before the driver's stop is
-   called owes the stop again; from the driver's stop on, the state moves on
-   whatever it did: the device must count as stopped or not. *)
-let stop_owed () =
-  match c_claim () with
-  | 0 -> false
-  | i ->
-      let d = of_index i in
-      (match if c_faulted d.live.c then Some (why d) else None with
+(* Runs the stop of [d], which the caller claimed just before. It ends in no
+   tail call, so the compiler puts no poll at its start, and nothing polls
+   between the claim and its handlers. An exception before the driver's stop
+   is called owes the stop again; from the driver's stop on, the state moves
+   on whatever it did: the device must count as stopped or not. *)
+let run_stop d =
+  (match if c_faulted d.live.c then Some (why d) else None with
+  | exception e ->
+      c_unclaim d.live.c;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  | fault -> (
+      match stop_handle d fault with
+      | () -> returned d
       | exception e ->
-          c_unclaim d.live.c;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-      | fault -> (
-          match stop_handle d fault with
-          | () -> returned d
-          | exception e ->
-              returned d;
-              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
-      !answered d;
-      true
+          returned d;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
+  !answered d;
+  ()
 
-let rec run_owed () = if c_owed () > 0 && stop_owed () then run_owed ()
+(* Runs [d]'s stop if it is owed and no counted call runs on [d]: whether
+   this call ran it. *)
+let own_stop d =
+  state d = owed_state
+  && c_claim_own d.live.c
+  && begin
+    run_stop d;
+    true
+  end
 
+let run_own d = ignore (own_stop d : bool)
+
+(* A wait's hang loss runs no stop: a wait does no device's work. *)
 let lose d why =
   ignore (c_lose d.live.c why true);
-  run_owed ();
   raise_lost d
 
 let leave d =
   c_exit d.live.c;
-  run_owed ()
+  run_own d
 
 (* Ends the counted call on [d] that raised [e]. Its first step is one C call
    that loses [d] for a fault or an exception in [scope] and ends the count,
    and nothing allocates or polls before it: a second exception landing in
    this handler finds both done. It returns for a fault, and raises another
-   exception again. *)
+   exception again. A wait's call runs no stop ([wait_raised]). *)
 let raised d scope e =
   let fault = c_raised d.live.c e d.live.fault scope in
   let bt = Printexc.get_raw_backtrace () in
-  run_owed ();
+  run_own d;
   if not fault then Printexc.raise_with_backtrace e bt
 
+let wait_raised d e =
+  let fault = c_raised d.live.c e d.live.fault Faults in
+  let bt = Printexc.get_raw_backtrace () in
+  if not fault then Printexc.raise_with_backtrace e bt;
+  raise_lost d
+
 let refused d =
-  run_owed ();
+  run_own d;
   raise_lost d
 
 let counted d scope f =
@@ -540,7 +552,7 @@ let give d scope f =
     true
   end
   else if c_enter d.live.c <> 0 then begin
-    run_owed ();
+    run_own d;
     false
   end
   else
@@ -552,7 +564,7 @@ let give d scope f =
         raised d scope e;
         true
 
-let fail why = if c_fail why then run_owed ()
+let fail why = if c_fail why then iter run_own
 
 let failure () =
   match c_first () with
@@ -571,15 +583,13 @@ let word d =
     match d.kind with
     | Driver { m; h; _ } ->
         let module D = (val m) in
-        if c_enter l.c <> 0 then refused d;
+        if c_enter l.c <> 0 then raise_lost d;
         let w =
           match D.signaled h with
           | w ->
-              leave d;
+              c_exit l.c;
               w
-          | exception e ->
-              raised d Faults e;
-              raise_lost d
+          | exception e -> wait_raised d e
         in
         c_raise_word d.index w;
         w
@@ -621,12 +631,10 @@ let sleep d ~seen ~still_ms =
         | None -> still_ms
         | Some hang -> bounded d seen ~still_ms hang
       in
-      if c_enter l.c <> 0 then refused d;
+      if c_enter l.c <> 0 then raise_lost d;
       match D.sleep h ~seen ~still_ms with
-      | () -> leave d
-      | exception e ->
-          raised d Faults e;
-          raise_lost d)
+      | () -> c_exit l.c
+      | exception e -> wait_raised d e)
   | _ -> ()
 
 module Answer = struct
@@ -641,17 +649,18 @@ end
 
 (* Commits [d]'s submitted work if [d]'s turn frees within the still interval:
    whether it did, or found [d] lost. A commit that fails has lost [d], whose
-   stop is then owed. *)
-let commit_once d =
-  let r = c_commit d.live.c in
-  if r = Answer.failed then run_owed ();
-  r <> Answer.busy
+   stop is then owed: a wait's commit leaves it so. *)
+let commit_once d = c_commit d.live.c <> Answer.busy
 
-let rec commit d v = if committed d < v && not (commit_once d) then commit d v
+let rec commit d v =
+  if committed d < v then
+    let r = c_commit d.live.c in
+    if r = Answer.failed then run_own d
+    else if r = Answer.busy then commit d v
 
 let rec settle d v =
   let r = c_settle d.live.c v in
-  if r = Answer.failed then run_owed ();
+  if r = Answer.failed then run_own d;
   if r = Answer.busy then settle d v else r = Answer.ok
 
 let signaled = word
@@ -816,7 +825,7 @@ let settled p =
 (* Runs the stop if it is owed and claimable, and waits for it, returning to
    OCaml every still interval. *)
 let rec await_stop d =
-  run_owed ();
+  run_own d;
   if not (c_await_stop d.live.c still_ms) then await_stop d
 
 let close_one d =
@@ -828,7 +837,6 @@ let close_one d =
   await_stop d
 
 (* Opening *)
-
 
 (* The device [r] published, if any: [r]'s slot holds a device of [r]'s open,
    which may have stopped and given the slot to a later one. *)
@@ -888,7 +896,8 @@ let host_down machine =
   | On h -> down h
   | Hosts m -> Option.bind (Strings.find_opt machines m) down
 
-(* A failed process opens nothing, not calling [make]. *)
+(* A failed process opens nothing, not calling [make]. A lost device whose
+   stop has not returned is [`Stop], for the open to run the stop. *)
 let rec find r =
   match (c_failed (), host_down r.machine, Names.find_opt table r.k) with
   | Some why, _, _ | None, Some why, _ -> `Error why
@@ -903,9 +912,7 @@ let rec find r =
         invalid_argf "Rig.%s: %s is open as another driver's device" r.fn
           r.full;
       `Open d
-  | None, None, Some (Open d) ->
-      if stop_returned d then `Make
-      else `Error (strf "%s is lost and its stop has not answered" r.full)
+  | None, None, Some (Open d) -> if stop_returned d then `Make else `Stop d
   | None, None, None -> `Make
 
 (* Under the table's lock: the device open under [r]'s name, or the slot
@@ -921,6 +928,15 @@ let claim r =
         Option.iter (fun m -> Strings.replace hosting m r.full) (fst r.k);
       `Make
   | found -> found
+
+(* [claim] of [r], after running the owed stop of a lost device that holds
+   its name. A stop takes the table's lock as it returns, so it runs holding
+   none. *)
+let rec claimed r =
+  match Lock.protect table_lock claim r with
+  | `Stop d when own_stop d -> claimed r
+  | `Stop _ -> `Error (strf "%s is lost and its stop has not answered" r.full)
+  | (`Open _ | `Error _ | `Make) as found -> found
 
 (* Opens the device [name] on [machine] with [make], which builds it from its
    index and full name, once no open of that name runs. From the moment the
@@ -951,15 +967,16 @@ let open_named ~fn ~machine ~name ~key make =
     result
   in
   match
-    match Lock.protect table_lock claim r with
+    match claimed r with
     | `Open d -> Ok d
     | `Error e -> Error e
     | `Make ->
         let index =
           match c_take r.index with
           | 0 ->
-              (* Every slot is held: a collection may return the last memory
-                 of stopped devices, whose drains then free their slots. *)
+              (* Every slot is held: a collection may return the last
+                 memory of lost devices, whose drains then run their stops
+                 and free their slots. *)
               Gc.full_major ();
               !drain_all ();
               c_take r.index
@@ -997,7 +1014,7 @@ let completion_of = function
    process is stopped here. *)
 let publish d slot =
   c_publish d.live.c slot;
-  run_owed ()
+  run_own d
 
 (* The device of the driver's handle [h], in the tables and not published.
    Every fact is read before the C record is published: a fault reading one

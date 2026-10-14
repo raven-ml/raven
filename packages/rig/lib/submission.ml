@@ -1104,7 +1104,7 @@ let rec wait_points s run n i count =
 let rec hand_over s run nwaits =
   let d = s.dev in
   let r = c_submit s.c run in
-  Dev.run_owed ();
+  Dev.run_own d;
   if r = Dev.Answer.ok then Point.make d.index (run_value run)
   else if r = Dev.Answer.busy then hand_over s run nwaits
   else if r = Dev.Answer.no_room then begin

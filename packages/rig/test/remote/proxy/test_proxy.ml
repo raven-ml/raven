@@ -635,6 +635,8 @@ let in_flight_fails () =
   raises_match
     (function Rig.Lost (_, why) -> why = "failed in flight" | _ -> false)
     (fun () -> Rig.Point.wait p);
+  (* The close runs the stop, which raises the word. *)
+  Rig.close m.host;
   until ~what:"the word at the last value handed over" (fun () ->
       Rig.signaled m.host = Rig.Point.value p)
 

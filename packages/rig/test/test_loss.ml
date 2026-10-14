@@ -29,12 +29,15 @@ let test_failed_submit () =
   raises_match (lost d) (fun () -> B.create d 8);
   equal int 1 (count "stop" p)
 
+(* A fault a wait finds loses the device, whose stop the next call that
+   uses it runs: an allocation. *)
 let test_fault () =
   let d, p = P.open_ "loss:fault" in
   let pt = submit (empty d) in
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> Rig.Point.wait pt);
   equal (option string) (Some "the engine hung") (Rig.lost d);
+  raises_match (lost d) (fun () -> B.create d 8);
   equal int 1 (count "stop" p)
 
 (* After the stop answered, only frees reach the driver: of memory and of
@@ -224,7 +227,7 @@ let test_reached () =
   raises_match (lost d) (fun () -> Rig.Point.wait dropped)
 
 (* Two domains sleep on a device that faults: each raises its Lost, and the
-   device is lost and stopped once. *)
+   device is lost once, and stopped once by its close. *)
 let test_two_sleeps () =
   let d, p = P.open_ "loss:two-sleeps" in
   let pt = submit (empty d) in
@@ -242,6 +245,7 @@ let test_two_sleeps () =
     [ "the engine hung"; "the engine hung" ]
     (List.map Domain.join waiters);
   equal (option string) (Some "the engine hung") (Rig.lost d);
+  Rig.close d;
   equal int 1 (count "stop" p)
 
 (* A lost device still answers its facts: its name, architecture, budget and

@@ -926,6 +926,37 @@ let test_reopen () =
   not_equal device d d';
   equal (option string) None (Rig.lost d')
 
+(* An open of a lost device's name runs the device's owed stop, then opens the
+   name anew. [x1] and [x2], lost together, [x2] by spread, owe their stops;
+   the first stop to run raises, and leaves the other owed. *)
+let test_reopen_owed () =
+  let x1, p1 = P.open_ "open:owed-1" in
+  let x2, p2 = P.open_ ~waits_on:[ `Host ] "open:owed-2" in
+  let raised = Atomic.make false in
+  let stop () =
+    if not (Atomic.exchange raised true) then failwith "the first stop"
+  in
+  P.before p1 "stop" stop;
+  P.before p2 "stop" stop;
+  let first = submit (Rig.Submission.make x1 [||]) in
+  ignore (submit (Rig.Submission.make x2 [||]) ~waits:[| first |]);
+  P.fail p1;
+  (match submit (Rig.Submission.make x1 [||]) with
+  | _ -> fail "the failed submit returned"
+  | exception (Failure _ | Rig.Lost _) -> ());
+  let reopen name =
+    match Rig.open_ (P.opener name (P.make ())) with
+    | Ok d -> d
+    | Error e -> failf "%s: %s" name e
+  in
+  let owed, ran = if P.stops p1 = 0 then ("1", "2") else ("2", "1") in
+  let y = reopen ("open:owed-" ^ owed) in
+  let y' = reopen ("open:owed-" ^ ran) in
+  equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2);
+  List.iter
+    (fun (x, y) -> not_equal device x y)
+    [ (x1, y); (x1, y'); (x2, y); (x2, y') ]
+
 (* Collects, then frees [d]'s cache, which first drains [d]: a closed device's
    memory collected after its stop returns so. *)
 let settle d =
@@ -1344,6 +1375,8 @@ let tests =
       test "a fault reading a device's facts stops its handle"
         test_fault_at_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;
+      test "an open of a lost device's name runs its owed stop"
+        test_reopen_owed;
       test "a blocked opener holds back no other name" test_blocked_opener;
       test "an open waiting for its name's open takes Sys.Break"
         test_break_waiting_open;

@@ -351,10 +351,8 @@ static rig_mutex locks_mu = SRWLOCK_INIT;
 static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-/* The process's loss facts: the devices whose stop is owed; the first
-   failure, 0 for none, a device's index for its loss, -1 for [fail]'s; and
-   [fail]'s reason. */
-static _Atomic int owed;
+/* The process's loss facts: the first failure, 0 for none, a device's index
+   for its loss, -1 for [fail]'s; and [fail]'s reason. */
 static _Atomic int first;
 static _Atomic(char *) failed;
 
@@ -374,8 +372,7 @@ static char no_memory_why[] = "out of memory";
    a word may be a page the child shares with its parent, or does not map.
    An io device's state is its io library's, which decides what a fork does
    to it: rig leaves it as it was, and runs a stop that a thread of the
-   parent claimed or owed. [owed] is counted anew, without the orphans. A
-   device the child opens is its own. */
+   parent claimed or owed. A device the child opens is its own. */
 #ifndef _WIN32
 static void forking(void) {
   mutex_lock(&table_mu);
@@ -395,7 +392,7 @@ static void forked_child(void) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
   }
-  int n = atomic_load(&top), owing = 0;
+  int n = atomic_load(&top);
   for (int i = 0; i <= n; i++) {
     struct rig_line *l = line_of(i);
     struct rig_device *d = atomic_load(&devices[i]);
@@ -404,7 +401,6 @@ static void forked_child(void) {
     d->turn = d->inside = 0;
     if (d->io) {
       if (stopping(d)) atomic_store(&l->state, RIG_OWED);
-      owing += line_state(l) == RIG_OWED;
     } else if (i > 0) {
       char *none = NULL;
       atomic_compare_exchange_strong(&d->lost, &none, forked_why);
@@ -412,7 +408,6 @@ static void forked_child(void) {
       set_running(i, 0);
     }
   }
-  atomic_store(&owed, owing);
 }
 
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
@@ -854,18 +849,15 @@ static int lose_locked(struct rig_device *d, char *why, int own, int counts) {
 static int claim_locked(struct rig_device *d) {
   if (state(d) != RIG_OWED || d->inside != 0) return 0;
   atomic_store(&d->line->state, RIG_STOPPING);
-  atomic_fetch_sub(&owed, 1);
   return 1;
 }
 
-/* Ends [d]'s spreading: its stop is owed. The loser claims it next
-   ([caml_rig_claim]), or, while a counted call is inside, the call that
-   leaves last. The count moves under the mutex, so a counted call that
-   leaves after it sees it. */
+/* Ends [d]'s spreading: its stop is owed, and a call that acts for [d]
+   claims it ([claim_locked]). The state moves under the mutex, so a
+   counted call that leaves after it sees it. */
 static void finish(struct rig_device *d) {
   mu_lock(d);
   atomic_store(&d->line->state, RIG_OWED);
-  atomic_fetch_add(&owed, 1);
   mu_unlock(d);
 }
 
@@ -1057,30 +1049,14 @@ value caml_rig_first(value unit) {
   return Val_int(atomic_load(&first));
 }
 
-value caml_rig_owed(value unit) {
-  (void)unit;
-  return Val_int(atomic_load_explicit(&owed, memory_order_relaxed));
-}
-
-/* Claims an owed stop whose device runs no counted call: the device's
-   index, whose stop the caller runs, or 0 if there is none. */
-value caml_rig_claim(value unit) {
-  (void)unit;
-  if (atomic_load(&owed) == 0) return Val_int(0);
-  int claimed = 0;
-  caml_enter_blocking_section_no_pending();
-  mutex_lock(&table_mu);
-  for (int i = next_running(1); i != 0 && claimed == 0;
-       i = next_running(i + 1)) {
-    struct rig_device *d = device_of(i);
-    if (d == NULL || state(d) != RIG_OWED) continue;
-    mu_lock(d);
-    if (claim_locked(d)) claimed = i;
-    mu_unlock(d);
-  }
-  mutex_unlock(&table_mu);
-  caml_leave_blocking_section();
-  return Val_int(claimed);
+/* Claims the stop of [v_d] if it is owed and [v_d] runs no counted call:
+   whether the caller runs it. */
+value caml_rig_claim_own(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  int released = take(d);
+  int claimed = claim_locked(d);
+  give(d, released);
+  return Val_bool(claimed);
 }
 
 /* Owes [d]'s stop again, which its claimant gave up before it called the
@@ -1089,7 +1065,6 @@ value caml_rig_unclaim(value v_d) {
   struct rig_device *d = Device_val(v_d);
   int released = take(d);
   atomic_store(&d->line->state, RIG_OWED);
-  atomic_fetch_add(&owed, 1);
   give(d, released);
   return Val_unit;
 }

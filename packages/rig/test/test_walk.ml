@@ -94,6 +94,8 @@ let attempt op failure =
   mem ~msg:("outcome" ^ at) string got (allowed failure);
   let lost = match failure with Fault _ -> Some why | _ -> None in
   equal ~msg:("lost" ^ at) (option string) lost (Rig.lost d);
+  (* A lost device's stop runs at its next call of its own, its close here. *)
+  if lost <> None then Rig.close d;
   settle d;
   equal ~msg:("regions left with the driver" ^ at) (list int) [] (left p);
   equal ~msg:("stops" ^ at) int (if lost = None then 0 else 1) (count "stop" p);

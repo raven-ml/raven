@@ -203,8 +203,8 @@ let test_hang_interrupted () =
   from 1
 
 (* A Ctrl-C landing at any poll point after an exception escaped a driver
-   leaves the stop the loss owes to run once, by the next call that runs owed
-   stops, here a call on another device. Backtraces are recorded, as
+   leaves the stop the loss owes to run once, by the device's next call of
+   its own, here its close. Backtraces are recorded, as
    OCAMLRUNPARAM=b records them: the handler's fetch of one allocates in C,
    whose sample's callback, and so the signal, comes at a later poll point. *)
 let test_break_after_escape () =
@@ -212,7 +212,6 @@ let test_break_after_escape () =
   Printexc.record_backtrace true;
   Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
   @@ fun () ->
-  let other, _ = P.open_ "turn:break-after-escape" in
   let rec from n =
     let d, p = P.open_ (Printf.sprintf "turn:break-after-escape-%d" n) in
     let escaped = ref false in
@@ -229,9 +228,8 @@ let test_break_after_escape () =
         alloc
     in
     equal ~msg:"the loss" (option string) (Some "Stdlib.Exit") (Rig.lost d);
-    ignore (B.create other 8);
-    equal ~msg:"stops" int 1 (P.stops p);
     Rig.close d;
+    equal ~msg:"stops" int 1 (P.stops p);
     if reached then from (n + 1)
   in
   from 1
@@ -371,6 +369,50 @@ let test_break_waiting_stop () =
   equal (option string) (Some "the submission failed") (Rig.lost d);
   equal int 1 (count "stop" p)
 
+(* Stops *)
+
+(* A wait does no other device's work. [x2], lost by spread from [x1], owes
+   its stop once [x1]'s, the first to run, raised. A wait on another device
+   [z] that sleeps returns while [x2]'s stop stays owed, and the stop runs at
+   [x2]'s close. A stop run later blocks until the test releases it, so one
+   run inside the wait shows. *)
+let test_wait_runs_no_stop () =
+  let x1, p1 = P.open_ "turn:owed-1" in
+  let x2, p2 = P.open_ ~waits_on:[ `Host ] "turn:owed-2" in
+  let raised = Atomic.make false and held = Atomic.make false in
+  let go = Atomic.make false in
+  let stop () =
+    if not (Atomic.exchange raised true) then failwith "the first stop"
+    else begin
+      Atomic.set held true;
+      Support.await "the stop's release" (fun () -> Atomic.get go)
+    end
+  in
+  P.before p1 "stop" stop;
+  P.before p2 "stop" stop;
+  let z, _ = P.open_ "turn:owed-waiter" in
+  let p = point (empty_run z) and returned = Atomic.make false in
+  ignore (submit (empty x2) ~waits:[| submit (empty x1) |]);
+  P.fail p1;
+  (match submit (empty x1) with
+  | _ -> fail "the failed submit returned"
+  | exception (Failure _ | Rig.Lost _) -> ());
+  let join =
+    spawn (fun () ->
+        Rig.Point.wait p;
+        Atomic.set returned true;
+        0)
+  in
+  Support.await "the wait's return, or a stop held in it" (fun () ->
+      Atomic.get returned || Atomic.get held);
+  let held_in_wait = Atomic.get held in
+  Atomic.set go true;
+  equal ~msg:"the wait" outcome (Ok 0) (join ());
+  equal ~msg:"another device's stop ran in the wait" bool false held_in_wait;
+  Rig.close x1;
+  Rig.close x2;
+  equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2)
+
 let tests =
   [
     group ~timeout "room"
@@ -410,6 +452,10 @@ let tests =
           test_break_in_close;
         test "a close waiting for another thread's stop takes Sys.Break"
           test_break_waiting_stop;
+      ];
+    group ~timeout "stops"
+      [
+        test "a wait runs no other device's stop" test_wait_runs_no_stop;
       ];
   ]
 

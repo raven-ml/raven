@@ -78,7 +78,7 @@ let wait_points m = wait_all m.alloc true
 let wait_write m = wait_all m.alloc false
 
 (* Visit every point even after a refusal: reading a later transport word may
-   discover a loss and stop its device. The walk carries no allocated state. *)
+   discover its device's loss. The walk carries no allocated state. *)
 let rec all_from f c i ok =
   if c = 0 then ok
   else if i = uses then all_from f (stamps_next c) 0 ok
@@ -893,12 +893,15 @@ let kept_locked l =
    retires is in the cell or among the retired ones. *)
 let kept d = Dev.protect d kept_locked d.live
 
-(* A device whose stop returned frees its slot once its last memory and
-   mapping went back and its last kept value went, then lets go of its
-   word. Every drain gives back the words that lost their last mapping. *)
+(* A lost device's memory returns once it has stopped, so its drain runs its
+   owed stop first. A device whose stop returned frees its slot once its last
+   memory and mapping went back and its last kept value went, then lets go
+   of its word. Every drain gives back the words that lost their last
+   mapping. *)
 let drain d =
   if Dev.orphaned d then forget d
   else begin
+    if Dev.is_lost d then Dev.run_own d;
     if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
     if Dev.stop_returned d && (not (kept d)) && Dev.free_slot d then
       let_go_word d;
@@ -1032,12 +1035,13 @@ let drain_all () =
 
 let () = Dev.drain_all := drain_all
 
-(* A round of the ladder for [pool]'s budget: every cached memory on any device
-   that counts in it returns once its device's handed work is done, waited for;
-   for the host, its kept buffers too. A device whose handed work holds back the
-   return of memory that counts in it is waited for too, so that memory returns
-   and a loss shows as one. Then every device drains, which returns collected
-   memory and runs the unmaps that hold it; from the second round a collection
+(* A round of the ladder for [pool]'s budget: every cached memory on any
+   device that counts in it returns once its device's handed work is done,
+   waited for; for the host, its kept buffers too. A device whose handed
+   work holds back the return of memory that counts in it is waited for
+   too, so that memory returns and a loss shows as one. Then every device
+   drains, which runs a lost device's owed stop, returns collected memory
+   and runs the unmaps that hold it; from the second round a collection
    finds the memory unreachable since, and every device drains again. *)
 let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
