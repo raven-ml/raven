@@ -76,13 +76,35 @@ let apply3 k ~dst c x y =
   then Nx_array.Wrong_dtype
   else apply3_c k dst c x y
 
-(* Maps (map.c) *)
+(* Loads: a load's operand, and a padded one's pad and its fill's bits. *)
 
-external map :
+let operand : Nx_kernel.load -> Nx_array.any = function
+  | Plain x -> Any x
+  | Padded { x; _ } -> Any x
+
+let padding : Nx_kernel.load -> _ = function
+  | Plain _ -> None
+  | Padded { x; fill; pad } ->
+      Some (pad, Nx_kernel.Prog.bits (Nx_array.dtype x) fill)
+
+(* Maps (map.c): each load passes its padding, or none passes any where
+   no load is padded, so that a plain map allocates nothing. *)
+
+external map_c :
   Nx_kernel.Prog.t ->
-  dsts:Nx_array.any array ->
+  Nx_array.any array ->
   Nx_kernel.load array ->
+  (Nx_kernel.pad * string) option array ->
   Nx_array.answer = "nx_cpu_map"
+
+let padded : Nx_kernel.load -> bool = function
+  | Plain _ -> false
+  | Padded _ -> true
+
+let map p ~dsts loads =
+  if Array.exists padded loads then
+    map_c p dsts loads (Array.map padding loads)
+  else map_c p dsts loads [||]
 
 (* Reductions and scans (reduce.c). nx.cpu computes a program's one
    operand, unchanged: one [Sum], [Prod], [Max] or [Min] into its own dtype
@@ -173,16 +195,6 @@ let reduction (r : Nx_kernel.reduction) x dsts =
   | Moments, [| mean; var |] when floats dt && same mean x && same var x ->
       Some Moments
   | _ -> None
-
-(* A load's operand, and a padded one's pad and its fill's bits. *)
-let operand : Nx_kernel.load -> Nx_array.any = function
-  | Plain x -> Any x
-  | Padded { x; _ } -> Any x
-
-let padding : Nx_kernel.load -> _ = function
-  | Plain _ -> None
-  | Padded { x; fill; pad } ->
-      Some (pad, Nx_kernel.Prog.bits (Nx_array.dtype x) fill)
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =

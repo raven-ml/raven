@@ -1799,16 +1799,8 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
   int padded = Is_block(vpad);
   nx_cpu_pad pad;
   uint8_t bits[16] = {0};
-  if (padded) {
-    int64_t xs[2 * NX_MAX_RANK], ys[NX_MAX_RANK], off;
-    int rank = nx_array_layout(vx, xs, &off);
-    value fill = Field(Field(vpad, 0), 1);
-    size_t n = caml_string_length(fill);
-    memcpy(bits, String_val(fill), n < sizeof bits ? n : sizeof bits);
-    if (nx_cpu_pad_of(Field(Field(vpad, 0), 0), &pad) ||
-        nx_cpu_padded_shape(&pad, rank, xs, ys))
-      CAMLreturn(Val_int(NX_SHAPE));
-  }
+  if (padded && nx_cpu_padding_of(Field(vpad, 0), vx, &pad, bits))
+    CAMLreturn(Val_int(NX_SHAPE));
   nx_operand in[3] = {{d0, dt, 1}, {d1, arg ? NX_INT64 : dt, 1}};
   in[nd] = (nx_operand){vx, dt, 0};
   nx_array a[3], loaded, *x = &a[nd];

@@ -402,6 +402,18 @@ int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
   return NX_OK;
 }
 
+int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill) {
+  int64_t xs[2 * NX_MAX_RANK], ys[NX_MAX_RANK], off;
+  int rank = nx_array_layout(x, xs, &off);
+  value bits = Field(v, 1);
+  size_t n = caml_string_length(bits);
+  memset(fill, 0, 16);
+  memcpy(fill, String_val(bits), n < 16 ? n : 16);
+  if (nx_cpu_pad_of(Field(v, 0), p) || nx_cpu_padded_shape(p, rank, xs, ys))
+    return NX_SHAPE;
+  return NX_OK;
+}
+
 /* Padded loads, staged as an assembly of one piece: the fill, then the
    operand's elements that land inside the padded array, lo + t·(interior
    + 1) along each axis, then the windows as a layout over the copy. */

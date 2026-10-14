@@ -38,9 +38,13 @@
    arena is cut into one slot per value held at once, and TEMPS more where
    a node casts or holds a dtype other than its carrier, so that the more
    values a program holds, the fewer elements a block has. A
-   program that holds more than HELD values at once, has a padded load,
-   needs more operands than a loop holds, or bitcasts a sub-byte dtype is
-   declined: its caller runs the nodes one by one. */
+   program that holds more than HELD values at once, needs more operands
+   than a loop holds, or bitcasts a sub-byte dtype is declined: its caller
+   runs the nodes one by one.
+
+   A padded load is first copied padded into C-heap memory (assemble.c),
+   which the call holds until it returns, and read from there as a plain
+   one. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -594,20 +598,68 @@ static void copy_prog(value vp, step *s, int *ins, int32_t *outs) {
   }
 }
 
-/* The external: the program [vp], the destinations [vdsts] and the loads
-   [vloads]. A load's array is its first field, Plain's or Padded's. The
-   program is copied before the door, which can run OCaml code. */
-value nx_cpu_map(value vp, value vdsts, value vloads) {
-  CAMLparam3(vp, vdsts, vloads);
+/* The paddings of a map's loads, copied out of OCaml: [padded[k]] where
+   load k is padded, with its pad and its fill's bits. */
+typedef struct {
+  int any;
+  int padded[NX_MAX_OPERANDS];
+  nx_cpu_pad pad[NX_MAX_OPERANDS];
+  uint8_t fill[NX_MAX_OPERANDS][16];
+} paddings;
+
+/* Copies the paddings [vpads] of the [nins] loads [vloads] into [p] and
+   answers NX_OK, or NX_SHAPE for a pad that fits no operand of its load's
+   shape. [vpads] is empty where no load is padded. */
+static int paddings_of(value vloads, value vpads, int nins, paddings *p) {
+  p->any = Wosize_val(vpads) > 0;
+  for (int k = 0; k < nins; k++) {
+    value v = p->any ? Field(vpads, k) : Val_none;
+    p->padded[k] = Is_block(v);
+    value x = Field(Field(vloads, k), 0);
+    if (p->padded[k] &&
+        nx_cpu_padding_of(Field(v, 0), x, &p->pad[k], p->fill[k]))
+      return NX_SHAPE;
+  }
+  return NX_OK;
+}
+
+/* Runs the map over the [n] operands [a] the door read, its loads from
+   [nouts], each padded one through its padded copy. Answers -1 if host
+   memory runs out. */
+static int run_padded(step *s, int nn, int nouts, const int32_t *outs,
+                      nx_array *a, int n, const paddings *p) {
+  if (!p->any) return run_map(s, nn, nouts, outs, a, n);
+  nx_array run[NX_MAX_OPERANDS];
+  int copied = nouts, e = 0;
+  memcpy(run, a, sizeof(nx_array) * (size_t)n);
+  for (; copied < n && !e; copied++) {
+    int k = copied - nouts;
+    if (p->padded[k] && nx_cpu_unpad(&a[copied], &p->pad[k], p->fill[k],
+                                     &run[copied]))
+      e = -1;
+  }
+  if (!e) e = run_map(s, nn, nouts, outs, run, n);
+  /* A copy that failed left its base NULL: free skips it. */
+  for (int i = nouts; i < copied; i++)
+    if (p->padded[i - nouts]) free(run[i].base);
+  return e;
+}
+
+/* The external: the program [vp], the destinations [vdsts], the loads
+   [vloads] and their paddings [vpads], each Some (pad, fill's bits) for a
+   padded load, or none where no load is padded. A load's array is its
+   first field, Plain's or Padded's. The program and the paddings are
+   copied before the door, which can run OCaml code. */
+value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
+  CAMLparam4(vp, vdsts, vloads, vpads);
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
   int nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
   int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_ARITY));
   if (n > NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
-  for (int k = 0; k < nins; k++)
-    if (Tag_val(Field(vloads, k)) == NX_LOAD_PADDED)
-      CAMLreturn(Val_int(NX_DECLINED));
+  paddings p;
+  if ((e = paddings_of(vloads, vpads, nins, &p))) CAMLreturn(Val_int(e));
   step local[STEPS], *s = local;
   if (nn > STEPS && (s = malloc(sizeof(step) * (size_t)nn)) == NULL)
     caml_raise_out_of_memory();
@@ -621,9 +673,10 @@ value nx_cpu_map(value vp, value vdsts, value vloads) {
     in[nouts + k] = (nx_operand){Field(Field(vloads, k), 0), ins[k], 0};
   nx_array a[NX_MAX_OPERANDS];
   if (!(e = nx_read(n, in, a))) {
-    e = run_map(s, nn, nouts, outs, a, n);
+    e = run_padded(s, nn, nouts, outs, a, n, &p);
     nx_done(n, a);
   }
   if (s != local) free(s);
+  if (e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }

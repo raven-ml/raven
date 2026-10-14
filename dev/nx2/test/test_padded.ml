@@ -30,6 +30,9 @@ module Unpadded = struct
       (function Nx_kernel.Padded _ -> true | Nx_kernel.Plain _ -> false)
       loads
 
+  let map p ~dsts loads =
+    if padded loads then A.Declined else Nx_cpu.map p ~dsts loads
+
   let reduce p ~axes rs ~dsts loads =
     if padded loads then A.Declined else Nx_cpu.reduce p ~axes rs ~dsts loads
 
@@ -287,7 +290,12 @@ let law_padded c =
       if c.s.(0) mod 2 = 0 then
         equal ~msg:"declined map, split" (array float_exact) want
           (read (on (Dec2.split ~axis:0)));
-      equal ~msg:"nx.cpu's map" (array float_exact) want (read (on Count.on));
+      let x = Nx.place Count.on (host a) in
+      C.reset ();
+      let y = load x ~fill:c.fill c.p in
+      if Array.fold_left ( * ) 1 shape > 0 then
+        equal ~msg:"nx.cpu's map in one kernel call" int 1 (C.calls ());
+      equal ~msg:"nx.cpu's map" (array float_exact) want (read y);
       if Array.length shape > 0 then
         equal ~msg:"declined sum, as nx.cpu's" (array float_exact)
           (read (sum_of (Nx.place Count.on (host a)) ~fill:c.fill c.p))

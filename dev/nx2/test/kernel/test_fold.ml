@@ -7,20 +7,30 @@
    adjoint over integers. nx.cpu's group checks each result element against a
    reference that adds, from +0, the elements the load reads from it in C order
    of their taps, bit for bit, through views of the operand, at every dtype
-   but the booleans. *)
+   but the booleans; and its maps of padded loads, through the same geometry:
+   a loaded element is the element the fold adds it into, or the fill. *)
 
 open Windtrap
 open Elements
 module Support = Nx_kernels_support
 
-type case = { shape : int array; pad : Nx_kernel.pad; x : A.any; views : string list }
+(* A fold's case; [load] views the operand of the map whose padded load
+   reads the fold's geometry. *)
+type case = {
+  shape : int array;
+  pad : Nx_kernel.pad;
+  x : A.any;
+  views : string list;
+  load : view;
+}
 
 let pp_case ppf c =
   let (A.Any x) = c.x in
   Format.fprintf ppf
-    "fold into %a of %a %a: lo %a hi %a interior %a, windows %s (%s)" pp_ints
-    c.shape D.pp (A.dtype x) pp_ints (shape_of c.x) pp_ints c.pad.lo pp_ints
-    c.pad.hi pp_ints c.pad.interior
+    "fold into %a of %a %a: lo %a hi %a interior %a, windows %s (%s), load \
+     (%s)"
+    pp_ints c.shape D.pp (A.dtype x) pp_ints (shape_of c.x) pp_ints
+    c.pad.lo pp_ints c.pad.hi pp_ints c.pad.interior
     (String.concat "; "
        (Array.to_list
           (Array.map
@@ -28,6 +38,7 @@ let pp_case ppf c =
                Printf.sprintf "%d:%dx%d+%d" w.axis w.size w.step w.dilation)
              c.pad.windows)))
     (String.concat ", " c.views)
+    (String.concat ", " (view_names c.load))
 
 (* The shape a load by [p] gives an array of shape [s], if any. *)
 let loaded (p : Nx_kernel.pad) s = Result.to_option (Nx_kernel.Shape.padded p s)
@@ -91,13 +102,14 @@ let case_gen ?(dtypes = folded) () =
   let* seed = int in
   let xs = loaded pad shape in
   let rx = match xs with Some s -> Array.length s | None -> 0 in
-  let+ v = view_of rx in
+  let* v = view_of rx in
+  let+ load = view_of r in
   match xs with
   | None -> None
   | Some xs ->
       let rs = Random.State.make [| seed |] in
       let x = operand d xs v (fun _ -> element d rs) in
-      Some { shape; pad; x; views = view_names v }
+      Some { shape; pad; x; views = view_names v; load }
 
 (* Folds into a destination of other elements: the fold writes each. *)
 let fold_on (b : Support.backend) c =
@@ -236,6 +248,43 @@ let law_adjoint (b : Support.backend) = function
           Array.iteri (fun i v -> rhs := Int64.add !rhs (Int64.mul a.(i) v)) fs;
           equal int64 !lhs !rhs)
 
+(* A map of the padded load of an array of the case's result shape, seen
+   through the case's [load] view, loads at each index the element the fold
+   would add that index into, or the fill where the load reads padding. *)
+let law_load (b : Support.backend) = function
+  | None -> assume false
+  | Some c -> (
+      let module K = (val b.kernels) in
+      let (A.Any x) = c.x in
+      let dt = A.dtype x and d = dtype_of c.x in
+      let rs = Random.State.make [| 7 |] in
+      let a = A.expect dt (operand d c.shape c.load (fun _ -> element d rs)) in
+      let drawn = Rig.Buffer.of_string (element d rs) in
+      let fill = A.get (A.v dt (L.contiguous [||]) drawn) [||] in
+      let fill_bits = Nx_kernel.Prog.bits dt fill in
+      let xs = shape_of c.x in
+      let dst = A.create Rig.host dt xs in
+      let p = Nx_kernel.Prog.v ~ins:[| d |] [| In 0 |] ~outs:[| 0 |] in
+      let some = total xs > 0 in
+      cover "padding read" (some && total c.shape < total xs);
+      cover "a windowed load" (some && c.pad.windows <> [||]);
+      cover "sub-byte" (some && D.bits dt < 8);
+      cover "a stepped operand" (some && c.load.stepped);
+      cover "a reversed operand" (some && c.load.reversed <> None);
+      let load = Nx_kernel.Padded { x = a; fill; pad = c.pad } in
+      match K.map p ~dsts:[| A.Any dst |] [| load |] with
+      | A.Declined -> failf "%s declined a padded map" b.name
+      | A.Done ->
+          let es = elements (A.Any a) in
+          let want =
+            Array.init (total xs) (fun k ->
+                match target c (index_of xs k) with
+                | Some y -> es.(y)
+                | None -> fill_bits)
+          in
+          equal (array string) want (elements (A.Any dst))
+      | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
+
 (* A convolution's input gradient, large enough for the job's threads, at
    float32, int4 and bfloat16, the last two from views of the operand. *)
 let test_threads (b : Support.backend) () =
@@ -253,7 +302,7 @@ let test_threads (b : Support.backend) () =
     let x =
       operand d (Option.get (loaded pad shape)) v (fun _ -> element d rs)
     in
-    let c = { shape; pad; x; views = view_names v } in
+    let c = { shape; pad; x; views = view_names v; load = plain 4 } in
     match fold_on b c with
     | None -> failf "%s declined a fold" b.name
     | Some y -> equal (array string) (expected c) (elements y)
@@ -285,7 +334,7 @@ let test_long_rows (b : Support.backend) () =
           (plain 3)
           (fun _ -> element d rs)
       in
-      let c = { shape; pad; x; views = [] } in
+      let c = { shape; pad; x; views = []; load = plain 2 } in
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
       | Some y -> equal (array string) (expected c) (elements y))
@@ -303,6 +352,12 @@ let test_refusals (b : Support.backend) () =
        (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]));
   equal ~msg:"a destination of another shape" answer A.Shape_mismatch
     (K.fold p ~dst:(A.create Rig.host D.Float32 [| 4 |]) x);
+  let id = Nx_kernel.Prog.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |] in
+  let bad = { p with lo = [| 1; 0 |] } in
+  equal ~msg:"a map's pad of another rank" answer A.Shape_mismatch
+    (K.map id
+       ~dsts:[| A.Any (A.create Rig.host D.Float32 [| 7 |]) |]
+       [| Padded { x; fill = 0.; pad = bad } |]);
   equal ~msg:"booleans" answer A.Wrong_dtype
     (K.fold p
        ~dst:(A.create Rig.host D.Bool [| 3 |])
@@ -315,6 +370,12 @@ let cases =
     (fun ppf -> function
       | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
     (case_gen ())
+
+let all_cases =
+  Gen.with_pp
+    (fun ppf -> function
+      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
+    (case_gen ~dtypes:D.all ())
 
 let int_cases =
   Gen.with_pp
@@ -335,10 +396,12 @@ let cpu (b : Support.backend) =
     [
       prop "adds each element's taps in order from +0" cases
         (run (law_reference b));
+      prop "a map's padded load reads what the fold adds into" all_cases
+        (run (law_load b));
       test "a convolution's gradient on the job's threads" (fun () ->
           b.around (test_threads b));
       test "long rows of narrow dtypes" (fun () -> b.around (test_long_rows b));
-      test "refuses shapes that do not fit and booleans" (fun () ->
+      test "refuses shapes and pads that do not fit, and booleans" (fun () ->
           b.around (test_refusals b));
     ]
 

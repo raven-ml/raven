@@ -593,6 +593,14 @@ int nx_cpu_pad_of(value v, nx_cpu_pad *p);
 int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
                         int64_t *y);
 
+/* Copies a load's padding [v], a (Nx_kernel.pad * string) of the pad and
+   its fill's bits, into [p] and [fill], 16 bytes zero-padded, and answers
+   NX_OK, or NX_SHAPE where the pad fits no operand of the shape of [x],
+   the load's array. Reads [v] and [x] alone and allocates nothing, so a
+   kernel copies it before the door, which can run OCaml code
+   (assemble.c). */
+int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill);
+
 /* Fills [out] with the padded load [p] of the operand [a]: a plain
    descriptor over a C-contiguous copy of [a] padded with the element of
    bits [fill], laid out by [p]'s windows, which a kernel reads as any
