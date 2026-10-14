@@ -527,31 +527,59 @@ static void F(gather)(CV *restrict d, const lines *x, const int64_t *o,
     }
 }
 
-#if NT_STORES
-/* scatter's lanes side by side, points [st] reals apart from [d], by
-   x86's non-temporal stores (stream_of): [d] on 32 bytes. */
-static void F(stream)(T *d, int64_t st, int64_t n, int conj,
-                      const CV *restrict s) {
-  for (int64_t j = 0; j < n; j++) {
-    VEC re = s[j].re, im = conj ? -s[j].im : s[j].im;
-    VEC lo = ZIP_LO(re, im), hi = ZIP_HI(re, im);
-#if L == 8
-    _mm256_stream_ps(d + j * st, (__m256)lo);
-    _mm256_stream_ps(d + j * st + L, (__m256)hi);
+/* Stores lo then hi, 2 L reals at [d] on 32 bytes, past the caches
+   (stream_of): x86's non-temporal stores, or arm64's stnp, in assembly
+   since clang lowers __builtin_nontemporal_store to plain stores there. */
+static inline void F(nt)(T *d, VEC lo, VEC hi) {
+#if defined(__AVX__) && L == 8
+  _mm256_stream_ps(d, (__m256)lo);
+  _mm256_stream_ps(d + L, (__m256)hi);
+#elif defined(__AVX__)
+  _mm256_stream_pd(d, (__m256d)lo);
+  _mm256_stream_pd(d + L, (__m256d)hi);
+#elif defined(__aarch64__)
+  typedef T Q __attribute__((vector_size(16)));
+  Q q[4];
+  memcpy(q, &lo, sizeof lo);
+  memcpy(q + 2, &hi, sizeof hi);
+  __asm__ volatile("stnp %q0, %q1, [%2]\n\tstnp %q3, %q4, [%2, #32]"
+                   :
+                   : "w"(q[0]), "w"(q[1]), "r"(d), "w"(q[2]), "w"(q[3])
+                   : "memory");
 #else
-    _mm256_stream_pd(d + j * st, (__m256d)lo);
-    _mm256_stream_pd(d + j * st + L, (__m256d)hi);
+  memcpy(d, &lo, sizeof lo);
+  memcpy(d + L, &hi, sizeof hi);
 #endif
-  }
-  _mm_sfence();
 }
+
+/* Orders the stores past the caches before what follows: x86's are
+   weakly ordered and need a fence. arm64's stnp relaxes ordering only
+   for a load's address dependency (the non-temporal hint), so like any
+   store it is ordered by the release with which a job's worker leaves
+   (rig_pool.c) and the acquire with which its caller sees the job end. */
+static inline void F(drain)(void) {
+#if defined(__AVX__)
+  _mm_sfence();
 #endif
+}
+
+/* Whether y's pieces of 2 L reals, the first at [d] and the others [st]
+   reals apart, are stored past the caches: where y streams, its points
+   lie apart, and the pieces lie on 32 bytes. */
+static int F(streams)(const lines *y, const T *d, int64_t st) {
+  return NT_STORES && y->stream && st > 2 * L && st % L == 0 &&
+         (uintptr_t)d % 32 == 0;
+}
 
 /* Writes the lanes of [s] at [d] as L complex numbers side by side,
-   their conjugates where [conj]. */
-static inline void F(zip)(T *d, CV s, int conj) {
+   their conjugates where [conj], past the caches where [nt]. */
+static inline void F(zip)(T *d, CV s, int conj, int nt) {
   VEC im = conj ? -s.im : s.im;
   VEC lo = ZIP_LO(s.re, im), hi = ZIP_HI(s.re, im);
+  if (nt) {
+    F(nt)(d, lo, hi);
+    return;
+  }
   memcpy(d, &lo, sizeof lo);
   memcpy(d + L, &hi, sizeof hi);
 }
@@ -565,14 +593,9 @@ static void F(scatter)(const lines *y, const int64_t *o, int lanes,
   int64_t io = y->io;
   int conj = y->conj;
   if (lanes == L && side_by_side(y, o, L)) {
-#if NT_STORES
-    T *d = b + o[0];
-    if (y->stream && st > 2 * L && st % L == 0 && (uintptr_t)d % 32 == 0) {
-      F(stream)(d, st, n, conj, s);
-      return;
-    }
-#endif
-    for (int64_t j = 0; j < n; j++) F(zip)(b + o[0] + j * st, s[j], conj);
+    int nt = F(streams)(y, b + o[0], st);
+    for (int64_t j = 0; j < n; j++) F(zip)(b + o[0] + j * st, s[j], conj, nt);
+    if (nt) F(drain)();
     return;
   }
   int64_t j = 0;
@@ -586,7 +609,7 @@ static void F(scatter)(const lines *y, const int64_t *o, int lanes,
       TRANSPOSE(re);
       TRANSPOSE(im);
       for (int v = 0; v < L; v++)
-        F(zip)(b + o[v] + 2 * j, (CV){re[v], im[v]}, 0);
+        F(zip)(b + o[v] + 2 * j, (CV){re[v], im[v]}, 0, 0);
     }
   for (; j < n; j++)
     for (int v = 0; v < lanes; v++) {
@@ -725,11 +748,11 @@ static inline __attribute__((always_inline)) void F(eight)(const PLAN *p2,
 /* Rows [h, h + lanes) of a line of n1 × 8 points into y at [to], from
    its columns' transforms [r]: twiddled, transposed, transformed and
    written side by side at [out] where it is not NULL, conjugated where
-   [conj]. Inlined with lanes = L, its tests vanish from the line's every
-   block but the last. */
+   [conj], past the caches where [nt]. Inlined with lanes = L, its tests
+   vanish from the line's every block but the last. */
 static inline __attribute__((always_inline)) void F(rows8)(
     const PLAN *p, const CV *const *r, int64_t h, int lanes, const lines *y,
-    int64_t to, T *out, int conj) {
+    int64_t to, T *out, int conj, int nt) {
   int64_t n1 = p->n1;
   CV c[8], z[8];
   for (int g = 0; g < G8; g++)
@@ -737,7 +760,7 @@ static inline __attribute__((always_inline)) void F(rows8)(
   F(eight)(p->p2, c, z);
   if (out != NULL && lanes == L) {
     for (int k2 = 0; k2 < 8; k2++)
-      F(zip)(out + 2 * (h + n1 * k2), z[k2], conj);
+      F(zip)(out + 2 * (h + n1 * k2), z[k2], conj, nt);
     return;
   }
   /* scatter reads a copy, w: with z's address taken, the compiler kept z
@@ -770,9 +793,11 @@ static int F(within8)(const PLAN *p, const lines *x, const lines *y,
      points are adjacent complex numbers (side_by_side asks it of lines). */
   int conj = y->conj;
   T *out = y->step == 2 && y->io == 1 && !y->real ? (T *)y->base + to : NULL;
+  int nt = out != NULL && F(streams)(y, out, 2 * n1);
   int64_t h = 0;
-  for (; h + L <= n1; h += L) F(rows8)(p, r, h, L, y, to, out, conj);
-  if (h < n1) F(rows8)(p, r, h, (int)(n1 - h), y, to, out, conj);
+  for (; h + L <= n1; h += L) F(rows8)(p, r, h, L, y, to, out, conj, nt);
+  if (h < n1) F(rows8)(p, r, h, (int)(n1 - h), y, to, out, conj, nt);
+  if (nt) F(drain)();
   nx_cpu_give(buf);
   return 1;
 }
@@ -814,19 +839,20 @@ static int F(across)(const PLAN *p, const lines *x, const lines *y,
      scatter (both as n / 8 × 8; M1, one thread). */
   T *out = n2 == 8 && side_by_side(y, q, L) ? (T *)y->base + q[0] : NULL;
   int64_t st = y->step;
-  int conj = y->conj;
+  int conj = y->conj, nt = out != NULL && F(streams)(y, out, st);
   for (int64_t k1 = 0; k1 < n1; k1++) {
     if (out != NULL) {
       CV z[8];
       F(eight)(p->p2, s + k1 * 8, z);
       for (int k2 = 0; k2 < 8; k2++)
-        F(zip)(out + (k1 + n1 * k2) * st, z[k2], conj);
+        F(zip)(out + (k1 + n1 * k2) * st, z[k2], conj, nt);
       continue;
     }
     int64_t c[L];
     for (int v = 0; v < L; v++) c[v] = q[v] + k1 * y->step;
     F(scatter)(y, c, L, n2, n1 * y->step, F(run_passes)(p->p2, s + k1 * n2, b));
   }
+  if (nt) F(drain)();
   nx_cpu_give(a);
   nx_cpu_give(b);
   nx_cpu_give(s);
@@ -1225,9 +1251,11 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
                         int64_t count, int threads) {
   int64_t n = p->n, bytes = 4 * (int64_t)sizeof(T) * n * count;
   double cost = cost_of(bytes, n, p->kind == BLUESTEIN ? p->m : 0);
-  /* A result streams from one thread alone (stream_of). */
+  /* Where the target asks it, a result streams from one thread alone
+     (stream_of). */
   lines cached;
-  if (y->stream && threads != 1 && nx_cpu_threads(bytes, cost) != 1) {
+  if (STREAM_ALONE && y->stream && threads != 1 &&
+      nx_cpu_threads(bytes, cost) != 1) {
     cached = *y;
     cached.stream = 0;
     y = &cached;

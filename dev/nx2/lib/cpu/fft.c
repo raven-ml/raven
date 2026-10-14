@@ -53,12 +53,23 @@
 #include "cpu.h"
 #include "nx_kinds.h"
 
-/* x86-64's v3 stores 32 bytes past the caches (stream_of). */
+/* Stores of 32 bytes past the caches (stream_of), where the target has
+   them: x86-64's v3 for a result over a core's L2 on one thread, arm64
+   for a result over half of it on any threads (measured on the M1
+   alone). */
 #if defined(__AVX__)
 #include <immintrin.h>
 #define NT_STORES 1
+#define STREAM_BYTES(l2) (l2)
+#define STREAM_ALONE 1
+#elif defined(__aarch64__)
+#define NT_STORES 1
+#define STREAM_BYTES(l2) ((l2) / 2)
+#define STREAM_ALONE 0
 #else
 #define NT_STORES 0
+#define STREAM_BYTES(l2) (l2)
+#define STREAM_ALONE 1
 #endif
 
 #if !defined(NX_CPU_V3) || defined(__x86_64__)
@@ -197,16 +208,21 @@ static lines lines_of(const nx_array *a, int axis, const int *order, int w) {
 }
 
 /* Whether a transform may write [a]'s lines by stores that bypass the
-   caches: where [a] exceeds a core's L2, which a smaller result stays in
-   for its reader, and where the transform runs on one thread (transform).
-   The four steps' rows write a line's points in pieces of 64 bytes a row
-   apart, and each piece took a read of the cache line it fills:
-   non-temporal stores, which take none, cut a line of 2^20 points from
-   4.2 to 3.1 ms and fft2 of 1024 × 1024 from 3.7 to 3.2 on one core
-   (Arrow Lake). On six, whose reads overlap, they made the line 1.46
-   times as slow and fft2 1.14. */
+   caches: where [a] exceeds STREAM_BYTES of a core's L2, which a smaller
+   result stays in for its reader, and on x86-64 where the transform runs
+   on one thread (STREAM_ALONE, transform). The four steps' rows write a
+   line's points in pieces of 64 bytes a row apart, and each piece took a
+   read of the cache line it fills: non-temporal stores, which take none,
+   cut a line of 2^20 points from 4.2 to 3.1 ms and fft2 of 1024 × 1024
+   from 3.7 to 3.2 on one core (Arrow Lake). On six, whose reads overlap,
+   they made the line 1.46 times as slow and fft2 1.14. On the M1 they
+   gain on any threads: 2^20 complex64 points 4.0 to 3.3 ms on one core
+   and 0.65 to 0.56 on its threads, 1024 lines of 1024 side by side 3.1
+   to 1.5 and 0.52 to 0.26, 2^18 points 0.61 to 0.58 on one core; below
+   half of a core's L2 (1.5 MiB), lines of 2^16 points (0.5 to 1 MiB)
+   lost up to 5% on its threads. */
 static int stream_of(const nx_array *a) {
-  return numel(a) * (a->bits / 8) > nx_cpu_table->l2;
+  return numel(a) * (a->bits / 8) > STREAM_BYTES(nx_cpu_table->l2);
 }
 
 /* Sets every element of [a] to +0. */

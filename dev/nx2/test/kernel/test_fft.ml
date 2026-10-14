@@ -664,7 +664,8 @@ let test_long () =
     [ false; true ]
 
 (* A complex128 line of 2^19 points, whose 8 MiB result exceeds a core's
-   L2, so that one thread writes it past the caches: the job's bits. *)
+   L2, so that one thread writes it past the caches: the job's bits. And
+   lines side by side whose result streams: each line's bits alone. *)
 let test_streamed () =
   let rs = Random.State.make [| 19 |] in
   let xs =
@@ -683,7 +684,34 @@ let test_streamed () =
     }
   in
   let x = operand c in
-  equal (array string) (elements (run c x)) (elements (run ~threads:1 c x))
+  equal (array string) (elements (run c x)) (elements (run ~threads:1 c x));
+  (* 512 complex64 lines of 1024 points side by side, a 4 MiB result
+     written past the caches by rows of 8 in registers: each line's bits
+     alone, whose 8 KiB result stays in cache. *)
+  let n = 1024 and lines = 512 in
+  let rs = Random.State.make [| 10 |] in
+  let xs =
+    Array.init (n * lines) (fun _ ->
+        let re = value false rs in
+        { Complex.re; im = value false rs })
+  in
+  let c = { c with wide = false; shape = [| n; lines |]; view = plain 2; xs } in
+  let ys = bits_of (run c (operand c)) in
+  List.iter
+    (fun l ->
+      let alone =
+        {
+          c with
+          shape = [| n |];
+          view = plain 1;
+          xs = Array.init n (fun j -> xs.((j * lines) + l));
+        }
+      in
+      equal
+        (array (pair int64 int64))
+        (Array.init n (fun j -> ys.((j * lines) + l)))
+        (bits_of (run alone (operand alone))))
+    [ 0; 255; lines - 1 ]
 
 (* Every target's bits *)
 
@@ -812,7 +840,7 @@ let () =
              [
                test "long lines are within the bound, one thread's bits"
                  test_long;
-               test "a line past a core's L2 has one thread's bits"
+               test "results written past the caches keep their bits"
                  test_streamed;
                test "a transform of no point is the empty sum" test_empty;
                test "refuses dtypes and shapes" test_refusals;
