@@ -731,10 +731,28 @@ let test_stopped_unmaps () =
     [ ("free, then drain", free_stopped, drain);
       ("drain, then free", drain, free_stopped) ]
 
+(* A point that a device reached stays done when the device is lost by the
+   read of its word that a later submit's wait makes: the submit and a wait
+   on the point return. The device's word lies behind a transport, whose
+   link goes down after the point was waited for. *)
+let test_reached_at_loss () =
+  let consumer, _ = P.open_ "loss:reached-consumer" in
+  let d, p = P.open_ ~transport:true "loss:reached-producer" in
+  let q = submit (empty d) in
+  Rig.Point.wait q;
+  P.fault_word p "the link went down";
+  Rig.Point.wait (submit ~waits:[| q |] (empty consumer));
+  Rig.Point.wait q;
+  equal (option string) (Some "the link went down") (Rig.lost d);
+  Rig.close d;
+  Rig.close consumer
+
 let tests =
   [
     group ~timeout "loss"
       [
+        test "a reached point stays done when its device's word read loses it"
+          test_reached_at_loss;
         test "a failed hand-over loses the device once" test_failed_submit;
         test "a fault a wait finds loses the device" test_fault;
         test "a stopped device is only freed" test_after_stop;

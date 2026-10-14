@@ -643,6 +643,13 @@ let rec settle d v =
 
 let signaled = word
 
+(* The word of a live device, or [-1] once a read of a word of its driver's
+   own found it lost, which its line then answers for. A word in rig's array
+   is read with no handler, as no read of it raises. *)
+let live_word d =
+  if d.live.word <> 0 then slot_word d
+  else try word d with Lost (d', _) when d' == d -> -1
+
 let take_afters (l, w) =
   let due, later = List.partition (fun (v, _) -> v <= w) l.afters in
   l.afters <- later;
@@ -766,7 +773,7 @@ let wait_point st every p =
   if not (owns d p) then check p
   else
     let v = Point.value p in
-    let w = word d in
+    let w = live_word d in
     let w =
       if w >= v || is_lost d then w
       else
@@ -782,7 +789,7 @@ let is_done p =
   let d = of_index (Point.index p) in
   if not (owns d p) then c_done p
   else
-    let w = word d in
+    let w = live_word d in
     if is_lost d then c_done p else w >= Point.value p
 
 let settled p =
