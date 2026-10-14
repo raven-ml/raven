@@ -448,7 +448,9 @@ static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
 static src b_sliver(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                     int64_t n, int64_t pc, int64_t kc, uint8_t *d) {
   int nr = p->g->kernel.nr;
-  if (p->b_in && (n == nr || p->g->kernel.b == NX_CPU_B_COLUMNS))
+  nx_cpu_b_read r = p->g->kernel.b;
+  if (p->b_in && (n == nr || r == NX_CPU_B_COLUMNS ||
+                  (r == NX_CPU_B_HALVES && 2 * n >= nr)))
     return (src){p->op[B].x->base + pos(p, B, e, 0, j, pc) * p->w, 0,
                  p->op[B].st[CON]};
   pack_b(p, move, e, j, n, nr, pc, kc, d);

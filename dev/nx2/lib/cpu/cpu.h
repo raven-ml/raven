@@ -67,10 +67,16 @@ typedef void (*nx_cpu_kernel)(int64_t m, int64_t n, int64_t k, const void *a,
    padding, any value (nx_cpu_pack). */
 typedef enum { NX_CPU_A_ELEMENTS, NX_CPU_A_PACKED } nx_cpu_a_read;
 
-/* How a microkernel reads b: NR columns a step, so that a sliver of fewer
-   columns is packed; or the n columns it is given, so that such a sliver
-   is read in place too. */
-typedef enum { NX_CPU_B_SLIVER, NX_CPU_B_COLUMNS } nx_cpu_b_read;
+/* How a microkernel reads b. NX_CPU_B_SLIVER: NR columns a step, so that
+   a sliver of fewer columns is packed. NX_CPU_B_COLUMNS: the n columns it
+   is given, so that such a sliver is read in place too. NX_CPU_B_HALVES:
+   the n columns it is given where n is at least NR / 2, so that only a
+   sliver of fewer is packed. */
+typedef enum {
+  NX_CPU_B_SLIVER,
+  NX_CPU_B_COLUMNS,
+  NX_CPU_B_HALVES
+} nx_cpu_b_read;
 
 /* A dot adds, for each of [r] contiguous rows of [a], row i at
    a + i·lda·w, r at most NX_CPU_DOT_ROWS, the [n] products with the

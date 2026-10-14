@@ -20,6 +20,13 @@
    increasing k: the chain NEON's kernels compute, bit for bit on every
    result but a NaN, which the unit gives as the default NaN.
 
+   A sliver of n columns, L ≤ n < 2L, is a tile whose column halves are
+   its first L columns and its last L, read in place and stored straight
+   to c: the columns in both halves are computed twice, in the same order,
+   and stored twice with the same bits. Narrower slivers are packed and
+   computed into a buffer (edge). On the M1 Max a 50³ float32 product took
+   1.59 us with its 18-column sliver packed and copied out, 1.17 so.
+
    The kernel and the pack run in a live state of the unit that enter makes
    and leave ends, once per body of the driver's jobs (gemm.c): a state per
    call drained the unit at each end. A thread holds none between jobs. A
@@ -89,35 +96,41 @@ static int on128(const void *p, int64_t step) {
   return ((uintptr_t)p | (uintptr_t)step) % ROW_BYTES == 0;
 }
 
-/* The load or store [move] of the 128 bytes at [p] to or from registers
-   [r] and [r + 1]: in one instruction where [paired], else in two. */
-#define MOVE2(move, p, r, paired)                                    \
+/* The load or store [move] of registers [r] and [r + 1] from or to the
+   64 bytes at [p] and those [hi] bytes past it: in one instruction where
+   [paired], which needs [hi] 64 and [p] on 128 bytes, else in two. */
+#define MOVE2(move, p, r, hi, paired)                                \
   do {                                                               \
     if (paired) move((uint64_t)(p) | NX_AMX_PAIR, r);                \
     else {                                                           \
       move(p, r);                                                    \
-      move((p) + 64, (r) + 1);                                       \
+      move((p) + (hi), (r) + 1);                                     \
     }                                                                \
   } while (0)
 
 /* Moves the first [rows] rows of the tile at [c], [ldc] bytes apart, into
-   Z and back: row L·h + i of the tile is the Z rows ZROW(w, i, 0) + 2h and
-   the next, adjacent, so that where its rows start on 128 bytes each moves
-   in one instruction, else in two. One loop over the rows, rather than
-   these over h and i, made the pack's transposes a quarter slower on the
-   M1 Max. */
-INLINE void zload(int w, const uint8_t *c, int64_t ldc, int64_t rows) {
-  int paired = on128(c, ldc), l = LANES(w);
+   Z and back, each row's column halves [hi] bytes apart: row L·h + i of
+   the tile is the Z rows ZROW(w, i, 0) + 2h and the next, adjacent, so
+   that where its halves are adjacent and its rows start on 128 bytes each
+   moves in one instruction, else in two. One loop over the rows, rather
+   than these over h and i, made the pack's transposes a quarter slower on
+   the M1 Max. */
+INLINE void zload(int w, const uint8_t *c, int64_t ldc, int64_t hi,
+                  int64_t rows) {
+  int paired = hi == 64 && on128(c, ldc), l = LANES(w);
   for (int h = 0; h < 2; h++)
     for (int i = 0; i < l && l * h + i < rows; i++)
-      MOVE2(NX_AMX_LDZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, paired);
+      MOVE2(NX_AMX_LDZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, hi,
+            paired);
 }
 
-INLINE void zstore(int w, uint8_t *c, int64_t ldc, int64_t rows) {
-  int paired = on128(c, ldc), l = LANES(w);
+INLINE void zstore(int w, uint8_t *c, int64_t ldc, int64_t hi,
+                   int64_t rows) {
+  int paired = hi == 64 && on128(c, ldc), l = LANES(w);
   for (int h = 0; h < 2; h++)
     for (int i = 0; i < l && l * h + i < rows; i++)
-      MOVE2(NX_AMX_STZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, paired);
+      MOVE2(NX_AMX_STZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, hi,
+            paired);
 }
 
 /* A row of +0, a pair of Y registers for zeroing Z. */
@@ -142,36 +155,49 @@ INLINE void outer4(int w, int r) {
 }
 
 /* The first [rows] rows of the tile at [c]: a's packed steps from [a],
-   each on 128 bytes, times b's 2L columns; steps [a_k] and [b_k] bytes
-   apart. The rows past [rows] are computed from a's padding and not
-   stored. */
+   each on 128 bytes, times b's columns in two halves of L, the second [hi]
+   bytes past the first in b and in c; steps [a_k] and [b_k] bytes apart.
+   The rows past [rows] are computed from a's padding and not stored. */
 INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
                  const uint8_t *b, int64_t b_k, uint8_t *c, int64_t ldc,
-                 int64_t rows, nx_cpu_from from) {
-  int pair_b = on128(b, b_k);
-  if (from == NX_CPU_FROM_TILE) zload(w, c, ldc, rows);
+                 int64_t hi, int64_t rows, nx_cpu_from from) {
+  int pair_b = hi == 64 && on128(b, b_k);
+  if (from == NX_CPU_FROM_TILE) zload(w, c, ldc, hi, rows);
   else zzero();
   int64_t p = 0;
   for (; p + 4 <= k; p += 4) {
     for (int s = 0; s < 4; s++) {
       NX_AMX_LDY((uint64_t)(a + (p + s) * a_k) | NX_AMX_PAIR, 2 * s);
-      MOVE2(NX_AMX_LDX, b + (p + s) * b_k, 2 * s, pair_b);
+      MOVE2(NX_AMX_LDX, b + (p + s) * b_k, 2 * s, hi, pair_b);
     }
     for (int s = 0; s < 4; s++) outer4(w, 2 * s);
   }
   for (; p < k; p++) {
     NX_AMX_LDY((uint64_t)(a + p * a_k) | NX_AMX_PAIR, 0);
-    MOVE2(NX_AMX_LDX, b + p * b_k, 0, pair_b);
+    MOVE2(NX_AMX_LDX, b + p * b_k, 0, hi, pair_b);
     outer4(w, 0);
   }
-  zstore(w, c, ldc, rows);
+  zstore(w, c, ldc, hi, rows);
+}
+
+/* Copies [bytes] from [s] to [d], a multiple of 4 below 64, by moves of
+   16, 8 or 4 bytes, the last ending at [bytes]: inline, where memcpy would
+   be a call. */
+INLINE void copy_short(uint8_t *d, const uint8_t *s, int64_t bytes) {
+  if (bytes >= 16) {
+    for (int64_t i = 0; i + 16 < bytes; i += 16) memcpy(d + i, s + i, 16);
+    memcpy(d + bytes - 16, s + bytes - 16, 16);
+  } else if (bytes >= 8) {
+    memcpy(d, s, 8);
+    memcpy(d + bytes - 8, s + bytes - 8, 8);
+  } else if (bytes > 0) memcpy(d, s, 4);
 }
 
 /* The rows of an edge's buffer: a block of a's, MC below. */
 #define EDGE_ROWS 128
 
 /* [m] rows, at most EDGE_ROWS (the kernel splits more into pieces of
-   EDGE_ROWS), of [n] columns, fewer than 2L: each of their tiles whole
+   EDGE_ROWS), of [n] columns, fewer than L: each of their tiles whole
    into one buffer on the stack, then copied out. A load
    of the cores waits for the unit's stores before it: on the M1 Max the
    first load after STZ and CLR waits about 160 ns, whatever it reads, so
@@ -185,16 +211,16 @@ static __attribute__((noinline)) void edge(
     int64_t n, nx_cpu_from from) {
   _Alignas(ROW_BYTES) uint8_t t[EDGE_ROWS * ROW_BYTES];
   for (int64_t i = 0; from == NX_CPU_FROM_TILE && i < m; i++)
-    memcpy(t + ROW_BYTES * i, y + i * ldc, (size_t)(n * w));
+    copy_short(t + ROW_BYTES * i, y + i * ldc, n * w);
   for (int64_t i0 = 0; i0 < m; i0 += SIDE(w)) {
     int64_t rows = m - i0 < SIDE(w) ? m - i0 : SIDE(w);
     const uint8_t *ai = a + i0 * a_row;
     uint8_t *ti = t + i0 * ROW_BYTES;
-    if (w == 4) tile(4, k, ai, a_k, b, b_k, ti, ROW_BYTES, rows, from);
-    else tile(8, k, ai, a_k, b, b_k, ti, ROW_BYTES, rows, from);
+    if (w == 4) tile(4, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, from);
+    else tile(8, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, from);
   }
   for (int64_t i = 0; i < m; i++)
-    memcpy(y + i * ldc, t + ROW_BYTES * i, (size_t)(n * w));
+    copy_short(y + i * ldc, t + ROW_BYTES * i, n * w);
 }
 
 /* a is packed (NX_CPU_A_PACKED), its rows adjacent. */
@@ -203,13 +229,15 @@ INLINE void kernel(int w, int64_t m, int64_t n, int64_t k, const void *va,
                    void *vc, int64_t ldc, nx_cpu_from from) {
   const uint8_t *a = va, *b = vb;
   uint8_t *c = vc;
-  int64_t step = n == SIDE(w) ? SIDE(w) : EDGE_ROWS;
+  int wide = n >= LANES(w);
+  int64_t step = wide ? SIDE(w) : EDGE_ROWS;
   for (int64_t i0 = 0; i0 < m; i0 += step) {
     int64_t rows = m - i0 < step ? m - i0 : step;
     const uint8_t *ai = a + i0 * a_row * w;
     uint8_t *ci = c + i0 * ldc * w;
-    if (n == SIDE(w))
-      tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, from);
+    if (wide)
+      tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, (n - LANES(w)) * w,
+           rows, from);
     else
       edge(w, rows, k, ai, a_row * w, a_k * w, b, b_k * w, ci, ldc * w, n,
            from);
@@ -239,7 +267,7 @@ static void kernel_f64(int64_t m, int64_t n, int64_t k, const void *a,
 INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
                       int64_t pitch, int64_t rows, int64_t first) {
   int l = LANES(w), out_pairs = on128(d, pitch);
-  zload(w, s, ld, rows);
+  zload(w, s, ld, 64, rows);
   for (int k = first; k < SIDE(w); k++) {
     int c = w * (k % l) + k / l;
     if (w == 4) {
@@ -249,14 +277,14 @@ INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
       NX_AMX_EXTRV64(0, c);
       NX_AMX_EXTRV64(64, c + 2);
     }
-    MOVE2(NX_AMX_STY, d + k * pitch, 0, out_pairs);
+    MOVE2(NX_AMX_STY, d + k * pitch, 0, 64, out_pairs);
   }
 }
 
-/* The pack. Contiguous rows move 2L elements at a time through X, four
-   rows to the eight registers, and their last elements one at a time,
-   which the compiler keeps in registers where memcpy would be a call a
-   row. Rows contiguous across move 2L × 2L at a time through Z
+/* The pack. Contiguous rows of at least L elements move 2L at a time
+   through X, four rows to the eight registers, then the rest L at a time,
+   eight rows, the last L ending at the row's end; shorter rows move by
+   copy_short. Rows contiguous across move 2L × 2L at a time through Z
    (transpose), a block of fewer rows storing whole steps into d's
    padding (cpu.h); a block of fewer steps loads the 2L steps that end at
    its last, all within its rows, and stores its own. Rows of fewer than
@@ -266,20 +294,32 @@ INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
   const uint8_t *s = vs;
   uint8_t *d = vd;
   int64_t side = SIDE(w);
-  if (s0 == 1) {
-    int64_t i_most = n0 / side * side;
+  if (s0 == 1 && n0 >= LANES(w)) {
+    int64_t l = LANES(w), i_most = n0 / side * side;
     for (int64_t j = 0; j < n1; j += 4) {
       int rows = n1 - j < 4 ? (int)(n1 - j) : 4;
       for (int64_t i = 0; i < i_most; i += side) {
         for (int u = 0; u < rows; u++)
-          MOVE2(NX_AMX_LDX, s + ((j + u) * s1 + i) * w, 2 * u, 0);
+          MOVE2(NX_AMX_LDX, s + ((j + u) * s1 + i) * w, 2 * u, 64, 0);
         for (int u = 0; u < rows; u++)
-          MOVE2(NX_AMX_STX, d + ((j + u) * pitch + i) * w, 2 * u, 0);
+          MOVE2(NX_AMX_STX, d + ((j + u) * pitch + i) * w, 2 * u, 64, 0);
       }
     }
+    for (int64_t j = 0; j < n1; j += 8) {
+      int rows = n1 - j < 8 ? (int)(n1 - j) : 8;
+      for (int64_t i = i_most; i < n0; i += l) {
+        int64_t at = i + l > n0 ? n0 - l : i;
+        for (int u = 0; u < rows; u++)
+          NX_AMX_LDX(s + ((j + u) * s1 + at) * w, u);
+        for (int u = 0; u < rows; u++)
+          NX_AMX_STX(d + ((j + u) * pitch + at) * w, u);
+      }
+    }
+    return;
+  }
+  if (s0 == 1) {
     for (int64_t j = 0; j < n1; j++)
-      for (int64_t i = i_most; i < n0; i++)
-        memcpy(d + (j * pitch + i) * w, s + (j * s1 + i) * w, (size_t)w);
+      copy_short(d + j * pitch * w, s + j * s1 * w, n0 * w);
     return;
   }
   if (n1 < side) {
@@ -341,7 +381,7 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
                  .mr = SIDE(4),
                  .nr = SIDE(4),
                  .a = NX_CPU_A_PACKED,
-                 .b = NX_CPU_B_SLIVER,
+                 .b = NX_CPU_B_HALVES,
                  .flops_per_byte = SPEED32,
                             .shared = shared},
       .mc = MC,
@@ -360,7 +400,7 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
                  .mr = SIDE(8),
                  .nr = SIDE(8),
                  .a = NX_CPU_A_PACKED,
-                 .b = NX_CPU_B_SLIVER,
+                 .b = NX_CPU_B_HALVES,
                  .flops_per_byte = SPEED64,
                             .shared = shared},
       .mc = MC,
