@@ -19,6 +19,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
 exception Fault of string
+exception Refused of string
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
    int, or CUDA's status negated. *)
@@ -742,6 +743,7 @@ module Driver = struct
   type nonrec image = image
 
   exception Fault = Fault
+  exception Refused = Refused
 
   let key = key
   let facts = facts

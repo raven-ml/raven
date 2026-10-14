@@ -881,7 +881,7 @@ let map_words d =
       match (Memory.locate m).address with
       | Some at -> (at, Some m)
       | None ->
-          Memory.unmap d m;
+          ignore (Memory.unmap d m : Dev.given);
           (host_wait, None))
 
 (* Keeps [d]'s mapping of the array, unless another decision came first or
@@ -907,7 +907,7 @@ let words_at d =
     match Lock.protect l.lock set_words (d, at, mapping) with
     | None -> at
     | Some first ->
-        Option.iter (Memory.unmap d) mapping;
+        Option.iter (fun m -> ignore (Memory.unmap d m : Dev.given)) mapping;
         first
 
 (* How [d], a device of [p]'s driver, waits in its queue for [p]'s word where
@@ -928,7 +928,7 @@ let map_word d p r =
         match (Memory.locate m).address with
         | Some at -> (at, Some (m, p))
         | None ->
-            Memory.unmap_word d (m, p);
+            ignore (Memory.unmap_word d (m, p) : Dev.given);
             (host_wait, None))
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
@@ -1008,11 +1008,11 @@ let pair d (p : device) =
     let way, map = decide d p in
     match Lock.protect d.live.lock set_pair (d, p, way, map) with
     | Taken first ->
-        Option.iter (Memory.unmap_word d) map;
+        Option.iter (fun m -> ignore (Memory.unmap_word d m : Dev.given)) map;
         first
     | Decided cell -> cell
     | Replaced cell ->
-        Memory.give_retired d;
+        ignore (Memory.give_retired d : Dev.given);
         cell
 
 (* The way the run [run] of [d] waits for [p]'s values in its queue. A way

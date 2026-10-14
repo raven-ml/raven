@@ -352,6 +352,20 @@ type entry_answer =
     A {!Driver.Fault} from a counted call, and a failed [submit] or [commit]
     of the driver, lose the device.
 
+    A driver's function may refuse a call that would wait for good: one from
+    a signal handler, finaliser or [Gc.Memprof] callback that interrupts the
+    driver's code on the same thread, including code that compiled code
+    calls through the device's {!type-capability}, while that thread holds a
+    lock the call needs or a lock that must be taken after it. A refusal
+    raises the driver's {!Driver.Refused} and changes nothing.
+    {!Driver.locate}, {!Driver.peer} and {!Driver.val-signaled}, which must
+    not block, refuse no call. rig counts a refused call as not made: it
+    keeps the device, raises [Invalid_argument] to a caller that needs the
+    call, and makes a refused {!Driver.val-free}, {!Driver.unload} or
+    {!Driver.val-stop} again at a later call. The stop of a handle whose open
+    failed is the exception: nothing holds the handle to stop it later, so
+    the open raises [Invalid_argument].
+
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
     {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-image}, the
     function of a [Place], {!Driver.val-entry} or {!Driver.unload} on a
@@ -373,13 +387,13 @@ type entry_answer =
     rig guarantees these properties, so that a driver checks none of them:
     {ul
     {- it frees each region at most once, on its device, and never again
-       after a [free] of it raised;}
+       after a [free] of it raised anything but {!Driver.Refused};}
     {- it frees a region only after every {!Driver.val-map_peer} region over
        it;}
     {- it calls {!Driver.peer} and {!Driver.val-map_peer} with two distinct
        devices of the driver;}
-    {- it unloads each image once, and calls {!Driver.val-entry} only on a
-       loaded image;}
+    {- it unloads each image once, a refused unload counting as not made,
+       and calls {!Driver.val-entry} only on a loaded image;}
     {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
        [None];}
     {- it bounds hangs itself ([hang_ms]), so {!Driver.sleep} never times out
@@ -397,6 +411,10 @@ module type Driver = sig
   exception Fault of string
   (** [Fault why] reports that the device faulted. Any counted call may raise
       it. *)
+
+  exception Refused of string
+  (** [Refused why] reports that the driver refused a call that would wait
+      for good, having changed nothing ({!section-drivers}). *)
 
   val key : t Type.Id.t
   (** [key] identifies the driver. rig asks {!val-map_peer} only of two
@@ -524,12 +542,15 @@ end
 
     An io device holds memory that the host does not address, such as a
     file, and runs no work. Its reads and writes are synchronous, in the
-    caller. Of the exceptions its library raises, only {!Fault} loses the
+    caller. Of the exceptions its library raises, only {!Io.Fault} loses the
     device. Any other reaches the caller, since no work of the device can
     see a change it left half done. The library must leave each region it
     made readable, writable and freeable after an exception escapes any of
     its calls, and must give back its locks as a driver does
-    ({!section-drivers}). *)
+    ({!section-drivers}).
+
+    The library may refuse a call as a driver does ({!section-drivers}), with
+    its {!Io.Refused}. *)
 module type Io = sig
   type t
   (** The type for open io devices. *)
@@ -540,6 +561,10 @@ module type Io = sig
   exception Fault of string
   (** [Fault why] reports that the device failed, such as a closed
       connection. *)
+
+  exception Refused of string
+  (** [Refused why] reports that the library refused a call that would wait
+      for good, having changed nothing ({!module-type-Io}). *)
 
   val region_key : region Type.Id.t
   (** [region_key] identifies the io library and its regions.

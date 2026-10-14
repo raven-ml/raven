@@ -20,6 +20,7 @@ module Pm4 = Abi.Pm4
 module Sdma = Abi.Sdma
 
 exception Fault of string
+exception Refused of string
 
 type 'm memory = { address : int; host : int option; data : 'm }
 type clock = Source of int | Round_trip

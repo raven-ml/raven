@@ -229,9 +229,11 @@ val map_peer_region : device -> region -> region option
     device of [d]'s driver, or [None] for another driver's region or where
     [d] maps none. *)
 
-val unmap : device -> region -> unit
-(** [unmap d r] gives back [d]'s mapping [r], which counts in no memory, now
-    or once [d] stopped. *)
+val unmap : device -> region -> Dev.given
+(** [unmap d r] gives back [d]'s mapping [r], which counts in no memory, now,
+    or later among [d]'s pending releases: once [d] stopped, or, if its
+    driver refused, first, at the next drain. It is what {!Dev.give}
+    answered. *)
 
 (** {2:words Mappings of words}
 
@@ -257,9 +259,10 @@ val word_unmapped : device -> unit
     is its driver's own, leaves the word to the next drain. It calls no
     driver. *)
 
-val unmap_word : device -> region * device -> unit
+val unmap_word : device -> region * device -> Dev.given
 (** [unmap_word d (r, p)] gives back [d]'s mapping [r] of [p]'s word now, or
-    once [d] stopped, then {!word_unmapped}[ p]. *)
+    later among [d]'s retired mappings, then {!word_unmapped}[ p]. It is
+    what {!Dev.give} answered. *)
 
 val retire_locked : device -> region * device -> unit
 (** [retire_locked d m] puts [d]'s mapping [m] of a producer's word among
@@ -267,10 +270,11 @@ val retire_locked : device -> region * device -> unit
     [d]'s queue ran every submit that may wait through it. The caller holds
     [d]'s lock. *)
 
-val give_retired : device -> unit
+val give_retired : device -> Dev.given
 (** [give_retired d] gives back [d]'s retired mappings whose value [d]
-    reached. It frees no memory, and leaves a word that loses its last
-    mapping to the next drain ({!word_unmapped}). *)
+    reached, up to the first that does not go back, and is that answer. It
+    frees no memory, and leaves a word that loses its last mapping to the
+    next drain ({!word_unmapped}). *)
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]
@@ -314,8 +318,10 @@ val drain : device -> unit
     releases whose value [d] reached, which let go of the values that [d]'s
     collected submissions kept. On an orphaned device it only routes [d]'s
     release list and lets go of the kept values pending on it, since its
-    frees would call its parent's driver. It may raise {!Dev.Lost} when the
-    read of a word with no host address loses its device. *)
+    frees would call its parent's driver. A release a driver refuses ends
+    the drain, first among its device's pending releases for the next one.
+    It may raise {!Dev.Lost} when the read of a word with no host address
+    loses its device. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]
@@ -329,19 +335,23 @@ val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 val room : device -> int
 (** [room d] is the bytes left in [d]'s budget, [0] if it holds more. *)
 
-val free_entry : entry -> unit
+val free_entry : entry -> Dev.given
 (** [free_entry e] gives [e]'s region back to its driver, and its bytes to
     their keeper, once no other device maps its allocation. Each mapping is
     released once its mapper's work submitted until now is done, and the
-    last release gives [e] back. *)
+    last release gives [e] back. A release that does not go back waits
+    among its device's pending releases, first if its driver refused it. It
+    is [Refused] if the driver refused [e]'s own free. *)
 
 val retire : device -> entry -> unit
 (** [retire d e] frees [e] once [d] has reached the value it has submitted now,
     or, if [d] is lost, once it is Stopped. *)
 
-val unload : device -> loaded -> unit
-(** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}), once
-    [d] is Stopped if it is lost and not Stopped. *)
+val unload : device -> loaded -> entry option -> unit
+(** [unload d i code] releases what [d]'s driver made for [i] ({!Dev.give}),
+    then gives back [i]'s code memory [code]. Both wait among [d]'s pending
+    releases, as one, once [d] is Stopped if it is lost and not Stopped, or
+    until the next drain if the driver refuses the unload. *)
 
 val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a

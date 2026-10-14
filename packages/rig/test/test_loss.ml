@@ -629,6 +629,7 @@ module Store = struct
   type region = unit
 
   exception Fault of string
+  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget _ = max_int
@@ -666,6 +667,250 @@ let test_alloc_fault () =
   raises_match (lost d) (fun () -> B.create d 64);
   equal (option string) (Some "the device fell off the bus") (Rig.lost d);
   equal int 1 (count "stop" p)
+
+(* Refusals: a driver's [Refused], raised where the call would wait for
+   good, having changed nothing ({!Rig_edge.Driver}). *)
+
+let refuse p call =
+  P.before p call (fun () -> raise (P.Refused ("Polled: " ^ call ^ " refused")))
+
+(* Refuses each of [p]'s calls [call] while the result holds [true]; [first]
+   runs in the first of them before it refuses. *)
+let hold ?(first = ignore) p call =
+  let held = Atomic.make true and first = ref first in
+  let rec hook () =
+    if Atomic.get held then begin
+      P.before p call hook;
+      let f = !first in
+      first := ignore;
+      f ();
+      raise (P.Refused ("Polled: " ^ call ^ " refused"))
+    end
+  in
+  P.before p call hook;
+  held
+
+let refused = function Invalid_argument _ -> true | _ -> false
+
+let[@inline never] dropped make d = ignore (Sys.opaque_identity (make d))
+
+(* Loses [d] from inside one of [p]'s calls: a faulted device's image load
+   raises the loss. *)
+let lose_inside d p =
+  P.fault p "the device fell off the bus";
+  raises_match (lost d) (fun () -> Rig.Image.load d "functions")
+
+(* A free the driver refuses keeps the device and the memory, which a later
+   free of the cache gives back. *)
+let test_refused_free () =
+  let d, p = P.open_ "loss:refused-free" in
+  dropped (fun d -> B.create d 64) d;
+  Gc.full_major ();
+  refuse p "free";
+  Rig.free_cache d;
+  is_none ~msg:"the loss" (Rig.lost d);
+  equal ~msg:"bytes held" int 64 (Rig.allocated d);
+  Rig.free_cache d;
+  equal ~msg:"bytes held after" int 0 (Rig.allocated d);
+  equal ~msg:"frees" int 2 (count "free" p);
+  equal ~msg:"a buffer after" int 8 (B.length (B.create d 8))
+
+(* An unload the driver refuses keeps the device, and a later free of the
+   cache unloads the image. *)
+let test_refused_unload () =
+  let d, p = P.open_ "loss:refused-unload" in
+  dropped (fun d -> Result.get_ok (Rig.Image.load d "functions")) d;
+  Gc.full_major ();
+  refuse p "unload";
+  Rig.free_cache d;
+  is_none ~msg:"the loss" (Rig.lost d);
+  Rig.free_cache d;
+  equal ~msg:"unloads" int 2 (count "unload" p);
+  is_ok ~msg:"an image after" (Rig.Image.load d "functions")
+
+(* Whether [p]'s next free comes after every unload: [check ()] asserts it
+   once the free ran. *)
+let free_after_unloads p =
+  let at_free = ref (-1) in
+  P.before p "free" (fun () -> at_free := count "unload" p);
+  fun () ->
+    equal ~msg:"unloads before the code memory's free" int
+      (count "unload" p) !at_free
+
+(* An image's code memory waits for a refused unload: a load whose device is
+   lost while it places the code raises the loss and unloads the image,
+   refused. The code memory stays while a free of the cache meets the unload
+   refused again, and goes back after the unload at a later one. *)
+let test_refused_unload_code () =
+  let d, p = P.open_ ~copies:false "loss:refused-unload-code" in
+  dropped (fun d -> B.create d 128) d;
+  Gc.full_major ();
+  P.before p "place" (fun () ->
+      P.fault p "the device fell off the bus";
+      Rig.free_cache d);
+  let held = hold p "unload" in
+  raises_match (lost d) (fun () -> Rig.Image.load d "code:64");
+  equal ~msg:"unloads" int 1 (count "unload" p);
+  equal ~msg:"regions held" (list int) [ 64 ] (P.outstanding p);
+  Rig.free_cache d;
+  equal ~msg:"regions held while the unload is refused" (list int) [ 64 ]
+    (P.outstanding p);
+  let check = free_after_unloads p in
+  Atomic.set held false;
+  Rig.free_cache d;
+  equal ~msg:"regions held after" (list int) [] (P.outstanding p);
+  check ()
+
+(* A loss that lands in a refused unload runs the device's stop as the unload
+   ends, and the stop's drain meets the unload before the image's code
+   memory. The load fails on a live device, whose code memory the host cannot
+   address to place the code. *)
+let test_refused_unload_loss () =
+  let d, p =
+    P.open_ ~copies:false ~host_visible:false "loss:refused-unload-loss"
+  in
+  let held = hold p "unload" in
+  raises_match refused (fun () -> Rig.Image.load d "code:64");
+  is_none ~msg:"the loss after the load" (Rig.lost d);
+  equal ~msg:"regions held" (list int) [ 64 ] (P.outstanding p);
+  Atomic.set held false;
+  let held = hold ~first:(fun () -> lose_inside d p) p "unload" in
+  Rig.free_cache d;
+  equal ~msg:"the loss" (option string) (Some "the device fell off the bus")
+    (Rig.lost d);
+  equal ~msg:"regions held while the unload is refused" (list int) [ 64 ]
+    (P.outstanding p);
+  let check = free_after_unloads p in
+  Atomic.set held false;
+  Rig.free_cache d;
+  equal ~msg:"regions held after" (list int) [] (P.outstanding p);
+  check ()
+
+(* A loss in the middle of a drain whose stop the driver refuses leaves the
+   releases left to after the stop: the drain returns. Two images wait to be
+   unloaded, and the first unload loses the device. *)
+let test_refused_stop_in_drain () =
+  let d, p = P.open_ "loss:refused-stop-drain" in
+  dropped (fun d -> Result.get_ok (Rig.Image.load d "functions")) d;
+  dropped (fun d -> Result.get_ok (Rig.Image.load d "functions")) d;
+  Gc.full_major ();
+  let stops = hold p "stop" in
+  P.before p "unload" (fun () -> lose_inside d p);
+  Rig.free_cache d;
+  equal ~msg:"the loss" (option string) (Some "the device fell off the bus")
+    (Rig.lost d);
+  equal ~msg:"unloads" int 1 (count "unload" p);
+  Atomic.set stops false;
+  Rig.free_cache d;
+  equal ~msg:"unloads after the stop" int 2 (count "unload" p)
+
+(* An unmap of a peer's memory that the mapper's driver refuses keeps both
+   devices. The memory goes back to its driver once a later drain of the
+   mapper unmaps it. *)
+let test_refused_unmap () =
+  let d, p = P.open_ "loss:refused-unmap" in
+  let other, q = P.open_ "loss:refused-unmap-owner" in
+  dropped
+    (fun d ->
+      let m = B.create other 64 in
+      Option.get (B.borrow d m))
+    d;
+  Gc.full_major ();
+  refuse p "unmap";
+  Rig.free_cache other;
+  is_none ~msg:"the mapper's loss" (Rig.lost d);
+  is_none ~msg:"the owner's loss" (Rig.lost other);
+  equal ~msg:"frees of the memory" int 0 (count "free" q);
+  Rig.free_cache d;
+  equal ~msg:"unmaps" int 2 (count "unmap" p);
+  equal ~msg:"frees of the memory after" int 1 (count "free" q);
+  equal ~msg:"the owner's bytes after" int 0 (Rig.allocated other)
+
+(* A free that faults loses the device and runs its stop, whose drain frees
+   the device's other cached memory. A refusal of that free ends the drain
+   and keeps the memory for a later one, and the first free is not made
+   again. *)
+let test_refused_in_stop () =
+  let d, p = P.open_ "loss:refused-in-stop" in
+  dropped (fun d -> B.create d 64) d;
+  dropped (fun d -> B.create d 64) d;
+  Gc.full_major ();
+  P.before p "free" (fun () ->
+      P.fault p "the device fell off the bus";
+      refuse p "free");
+  Rig.free_cache d;
+  equal ~msg:"the loss" (option string) (Some "the device fell off the bus")
+    (Rig.lost d);
+  equal ~msg:"frees" int 2 (count "free" p);
+  equal ~msg:"regions held" (list int) [ 64 ] (P.outstanding p);
+  Rig.free_cache d;
+  equal ~msg:"frees after" int 3 (count "free" p);
+  equal ~msg:"regions held after" (list int) [] (P.outstanding p)
+
+(* A stop the driver refuses makes the close raise [Invalid_argument], the
+   device lost, and a later close runs the stop. *)
+let test_refused_stop () =
+  let d, p = P.open_ "loss:refused-stop" in
+  refuse p "stop";
+  raises_match refused (fun () -> Rig.close d);
+  equal ~msg:"the loss" (option string) (Some "closed") (Rig.lost d);
+  equal ~msg:"stops" int 1 (P.stops p);
+  Rig.close d;
+  equal ~msg:"stops after" int 2 (P.stops p)
+
+(* A stop the driver refuses after a loss stays owed, and a later call on the
+   device runs it. *)
+let test_refused_stop_later () =
+  let d, p = P.open_ "loss:refused-stop-later" in
+  refuse p "stop";
+  P.fault p "the device fell off the bus";
+  raises_match (lost d) (fun () -> B.create d 64);
+  equal ~msg:"stops" int 1 (P.stops p);
+  raises_match (lost d) (fun () -> B.create d 8);
+  equal ~msg:"stops after a later call" int 2 (P.stops p);
+  Rig.close d;
+  equal ~msg:"stops after a close" int 2 (P.stops p)
+
+(* An open of a lost device's name runs its owed stop: it raises
+   [Invalid_argument] while the driver refuses the stop, and opens once the
+   stop ran. *)
+let test_refused_stop_open () =
+  let name = "loss:refused-stop-open" in
+  let d, p = P.open_ name in
+  refuse p "stop";
+  P.fault p "the device fell off the bus";
+  raises_match (lost d) (fun () -> B.create d 64);
+  refuse p "stop";
+  raises_match refused (fun () -> P.open_ name);
+  equal ~msg:"stops" int 2 (P.stops p);
+  let d', _ = P.open_ name in
+  equal ~msg:"stops after an open" int 3 (P.stops p);
+  is_none ~msg:"the new device's loss" (Rig.lost d')
+
+(* An open that fails stops the handle it made, and raises [Invalid_argument]
+   where the driver refuses that stop: a fault of its facts, and facts that
+   break the contract (a hang bound of 0 ms). *)
+let test_refused_open_stop () =
+  let faulted = P.make () in
+  P.fault faulted "the device fell off the bus";
+  List.iter
+    (fun (what, p) ->
+      refuse p "stop";
+      raises_match ~msg:what refused (fun () ->
+          Rig.open_ (P.opener ("loss:refused-open-" ^ what) p));
+      equal ~msg:(what ^ ": stops") int 1 (P.stops p))
+    [ ("fault", faulted); ("facts", P.make ~hang_ms:0 ()) ]
+
+(* A sleep the driver refuses raises [Invalid_argument] from the wait and
+   keeps the device, whose point a later wait reaches. *)
+let test_refused_sleep () =
+  let d, p = P.open_ "loss:refused-sleep" in
+  let pt = submit (empty d) in
+  refuse p "sleep";
+  raises_match refused (fun () -> Rig.Point.wait pt);
+  is_none ~msg:"the loss" (Rig.lost d);
+  Rig.Point.wait pt;
+  equal ~msg:"the point's device's value" int 1 (Rig.signaled d)
 
 (* A device that maps a host buffer and has stopped, with no drain since: an
    Unknown answer leaves its word unreached at the stop, and the word is set
@@ -851,6 +1096,22 @@ let tests =
           test_close_fault;
         test "the host is never closed" test_close_host;
         test "an io device's close ends it at once" test_close_io;
+      ];
+    group ~timeout "a driver's refusal keeps the device"
+      [
+        test "of a free" test_refused_free;
+        test "of an unload" test_refused_unload;
+        test "of an unload with code memory" test_refused_unload_code;
+        test "of an unload that a loss lands in" test_refused_unload_loss;
+        test "of a stop, met in the middle of a drain"
+          test_refused_stop_in_drain;
+        test "of the stop of a failed open" test_refused_open_stop;
+        test "of a sleep" test_refused_sleep;
+        test "of an unmap" test_refused_unmap;
+        test "of a free in a stop's drain" test_refused_in_stop;
+        test "of a stop" test_refused_stop;
+        test "of a stop, run by a later call" test_refused_stop_later;
+        test "of a stop, run by an open" test_refused_stop_open;
       ];
   ]
 

@@ -179,6 +179,7 @@ module Nothing = struct
   type region = unit
 
   exception Fault of string
+  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int

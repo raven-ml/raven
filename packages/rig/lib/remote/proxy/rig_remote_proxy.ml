@@ -9,6 +9,7 @@ module Link = Link
 let strf = Printf.sprintf
 
 exception Fault of string
+exception Refused of string
 
 (* A region is memory of the agent, named by its id, or a proxy's word: its
    agent's id and the shadow's host address. *)
@@ -172,6 +173,7 @@ module Driver = struct
   type nonrec image = image
 
   exception Fault = Fault
+  exception Refused = Refused
 
   let key = key
   let facts = facts

@@ -30,6 +30,12 @@ type ('a, 'r, 'i) dm =
 (** The type for an io library's module with its types exposed. *)
 type ('a, 'r) im = (module Rig_edge.Io with type t = 'a and type region = 'r)
 
+(** The type for a driver's or io library's refusal
+    ({!Rig_edge.Driver.Refused}). *)
+module type Refusal = sig
+  exception Refused of string
+end
+
 (** The type for a region of a driver, with the module and the device that
     hold it, and the witness of its type, which equates the regions of one
     device. *)
@@ -155,6 +161,7 @@ and live = {
           Raised only from a positive count. *)
   fault : Obj.Extension_constructor.t;
       (** The constructor of its driver's or io library's [Fault]. *)
+  refusal : (module Refusal);  (** Its driver's or io library's [Refused]. *)
   release : int;  (** Its C release list, in its C record. *)
   lock : Lock.t;
       (** Guards the mutable fields after it. The atomic ones among them are

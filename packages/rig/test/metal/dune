@@ -23,6 +23,7 @@
  (modules test_interrupt)
  (locks %{workspace_root}/gpu)
  (libraries
+  rig
   rig_edge
   rig_metal
   rig_metal_abi

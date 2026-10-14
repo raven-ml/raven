@@ -175,6 +175,7 @@ module Driver = struct
   type image = { code : region option; owner : t }
 
   exception Fault of string
+  exception Refused of string
 
   let note d call = Mutex.protect d.lock (fun () -> d.calls <- call :: d.calls)
   let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
@@ -463,14 +464,13 @@ module Driver = struct
   (* Consecutive sleeps are one entry of the log: two domains' waits sleep
      without bound, and a device the program keeps would hold every one. *)
   let sleep d ~seen ~still_ms =
-    match
-      Mutex.protect d.lock (fun () ->
-          d.sleeps <- d.sleeps + 1;
-          (match d.calls with
-          | "sleep" :: _ -> ()
-          | calls -> d.calls <- "sleep" :: calls);
-          next d)
-    with
+    Mutex.protect d.lock (fun () ->
+        d.sleeps <- d.sleeps + 1;
+        match d.calls with
+        | "sleep" :: _ -> ()
+        | calls -> d.calls <- "sleep" :: calls);
+    run_before d "sleep";
+    match Mutex.protect d.lock (fun () -> next d) with
     | `Fault why -> raise (Fault why)
     | `Interrupt -> interrupt ()
     | `Stall -> Thread.delay (float still_ms /. 1000.)
@@ -839,6 +839,7 @@ module Empty = struct
   type region = unit
 
   exception Fault of string
+  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int

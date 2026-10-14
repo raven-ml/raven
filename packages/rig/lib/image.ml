@@ -57,7 +57,7 @@ let loaded d binary =
                     let i, code = Dev.counted d Dev.Any (fun () -> lay r) in
                     (try place d e region code
                      with x ->
-                       Memory.unload d (Loaded { m; h; i });
+                       Memory.unload d (Loaded { m; h; i }) None;
                        raise x);
                     i
                   with
@@ -84,8 +84,7 @@ let load d binary =
           (Memory.room d) (-1)
       in
       if itoken == Memory.no_token then begin
-        Memory.unload d loaded;
-        Option.iter Memory.free_entry code;
+        Memory.unload d loaded code;
         Dev.raise_lost d
       end;
       let image = { idev = d; loaded; itoken } in

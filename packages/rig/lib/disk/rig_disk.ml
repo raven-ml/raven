@@ -370,6 +370,7 @@ module Io = struct
   type region = file
 
   exception Fault of string
+  exception Refused of string
 
   let region_key : file Type.Id.t = Type.Id.make ()
   let budget () = max_int

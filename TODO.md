@@ -49,9 +49,22 @@ raven / llama.cpp (Vulkan; ROCm):
   serve stop, free and unload after an exception, as NV's do
 - exceptions: the mlx5 wait loses an event's count to an exception after
   the kernel delivered it
-- a driver's `Invalid_argument` from free or unload (a callback re-entering
-  Metal's guard) loses the device through `Dev.give`: rig_edge needs a rule
-  for it; Metal's per-image guard in `entry` is still a `Mutex` (`Sys_error`)
+- refusals: rig.amd's `entry`, `unload`, `stop` and `grow_scratch`, and
+  its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
+  callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
+  holder check; `launch` leaks its C launch when `grow_scratch` raises
+- refusals: rig.cuda's `graph` capability, `stop` and `entry` hold a
+  `Mutex`: refuse a re-entered call with `Rig_cuda.Refused`
+- refusals: rig.nv's `grow`, `count`, `stop`, `entry` and `unload` hold a
+  `Mutex`: refuse a re-entered call with `Rig_nv.Refused`
+- refusals: the remote proxy's `launches_lock`: refuse a re-entered call
+  with `Rig_remote_proxy.Refused`
+- refusals: rig.disk's table lock, a `Mutex` that its io `free` takes and
+  that `read`, `write` and `pages` take to reopen a file: refuse a
+  re-entered call with its io library's `Refused`
+- rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
+  memory and memory it maps already, which `Rig_edge.Driver.map_peer`
+  allows
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a

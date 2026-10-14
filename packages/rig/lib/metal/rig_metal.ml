@@ -59,15 +59,24 @@ external split : unit -> nativeint = "caml_rig_metal_split"
 
 let split = split ()
 
-(* A device's guard, a mutex whose take runs no signal handler. A thread
-   holds at most one: a take while it holds one raises [Invalid_argument]
-   before it takes anything. *)
+(* A guard, a mutex whose take runs no signal handler, of a rank. A thread
+   takes guards in rising rank, an image's before its device's: a take while
+   it holds one of the same or a higher rank, as a callback that runs inside
+   the holder's section would, raises [Refused] before it takes anything. *)
 type guard
 
-external guard : unit -> guard = "caml_rig_metal_guard"
+exception Refused of string
+
+let () = Callback.register_exception "Rig_metal.Refused" (Refused "")
+
+external guard : int -> guard = "caml_rig_metal_guard"
 external take_guard : guard -> unit = "caml_rig_metal_guard_take"
 external give_guard : guard -> unit = "caml_rig_metal_guard_give" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
+
+(* The ranks of guards: a thread takes an image's before its device's. *)
+let image_rank = 0
+let device_rank = 1
 
 (* [locked g f r] is [f r] under the guard [g]. The guard is taken as the
    last step before the handler and given back as the first step of both
@@ -129,7 +138,7 @@ and image = {
   library : nativeint;
   names : string array;
   entries : Rig_edge.entry array;
-  guard : Mutex.t;
+  guard : guard;
   tables : tables option ref;
   device_guard : guard;
   mutable unloaded : bool;
@@ -273,7 +282,7 @@ let open_ ~word i =
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
   else
-    let guard = guard () in
+    let guard = guard device_rank in
     let self = open_device word in
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error open_failures.(-self - 1)
@@ -410,8 +419,8 @@ let cell d (r : region) =
 (* Zeroes [r]'s cell under [d.guard], so that no icb addresses [r], then
    frees [r]'s buffer; the next [enter] drops the cell. Nothing from [cell]
    to the give of the guard allocates or polls, so an exception cannot end
-   the free with [r] live or its buffer held. The take's [Invalid_argument]
-   ends it before it changed anything. *)
+   the free with [r] live or its buffer held. The take's [Refused] ends it
+   before it changed anything. *)
 let free d r =
   let c = cell d r in
   take_guard d.guard;
@@ -426,7 +435,7 @@ let image d b =
   match load d.self b with
   | "", library, names ->
       let entries = Array.make (Array.length names) none in
-      let guard = Mutex.create () in
+      let guard = guard image_rank in
       let tables = d.tables and device_guard = d.guard in
       Ok
         (Rig_edge.Loaded
@@ -499,23 +508,24 @@ let entry_held (i : image) f =
     | exception Failure why ->
         invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
 
-(* Holds [i.guard], taken without a closure, in [locked]'s form. *)
+(* Holds [i.guard], taken without a closure, in [locked]'s form. The take's
+   [Refused] ends it before it changed anything. *)
 let entry (i : image) f =
-  Mutex.lock i.guard;
+  take_guard i.guard;
   match entry_held i f with
   | e ->
-      Mutex.unlock i.guard;
+      give_guard i.guard;
       e
   | exception x ->
-      Mutex.unlock i.guard;
+      give_guard i.guard;
       reraise x
 
 (* Takes [i]'s pipelines out of the ones an icb records, then releases them
-   and its library. rig unloads an image once, so the unload allocates
-   nothing and polls nowhere, the take of the guard included: an exception
-   cannot end it with pipelines held, or with one an icb still records. The
-   take's [Invalid_argument] ends it before it changed anything. The next
-   entry drops them from the device's table. *)
+   and its library. rig unloads an image once, a refused unload counting as
+   not made, so the unload allocates nothing and polls nowhere, the take of
+   the guard included: an exception cannot end it with pipelines held, or
+   with one an icb still records. The take's [Refused] ends it before it
+   changed anything. The next entry drops them from the device's table. *)
 let unload d (i : image) =
   take_guard d.guard;
   i.unloaded <- true;
@@ -544,6 +554,7 @@ module Driver = struct
   type nonrec image = image
 
   exception Fault = Fault
+  exception Refused = Refused
 
   let key = key
   let facts = facts

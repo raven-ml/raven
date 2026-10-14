@@ -137,7 +137,13 @@ type t = {
           {- a pipeline belongs to no image loaded on the device;}
           {- a dispatch's offset is negative, lies outside [buffer] or is not
              a multiple of {!field-align};}
-          {- one of a dispatch's sizes is less than [1].}} *)
+          {- one of a dispatch's sizes is less than [1].}}
+
+          A call from a signal handler, finaliser or [Gc.Memprof] callback
+          may raise [Rig_metal.Refused], having changed nothing, when the
+          callback interrupts an [icb], or [Rig_metal]'s [alloc], [map_host]
+          or first [entry] of a function, of any Metal device on the same
+          thread. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which ends

@@ -148,7 +148,8 @@ let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most =
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~most_parts ~host_addresses ~word
-    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
+    ~word_region ~key ~memory_device ~fault ~refusal ~capability ~budget
+    ~opened =
   let live =
     {
       c;
@@ -162,6 +163,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       word_region;
       word_unmaps = 1;
       fault;
+      refusal;
       release = c_release c;
       lock = Lock.create ();
       used = 0;
@@ -196,8 +198,12 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     opened;
   }
 
-(* The host's fault, which nothing raises. *)
+(* The host's fault and refusal, which nothing raises. *)
 exception No_fault
+
+module No_refusal = struct
+  exception Refused of string
+end
 
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
    and waits on the host for other devices' points. *)
@@ -212,6 +218,7 @@ let host =
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:[%extension_constructor No_fault]
+      ~refusal:(module No_refusal : Refusal)
       ~capability:None ~budget:max_int ~opened:0
   in
   d
@@ -476,9 +483,11 @@ let returned d =
 (* Runs the stop of [d], which the caller claimed just before. It ends in no
    tail call, so the compiler puts no poll at its start, and nothing polls
    between the claim and its handlers. An exception before the driver's stop
-   is called owes the stop again; from the driver's stop on, the state moves
-   on whatever it did: the device must count as stopped or not. *)
+   is called, or a driver's stop that refused, owes the stop again; from the
+   driver's stop on, the state moves on whatever else it did: the device must
+   count as stopped or not. *)
 let run_stop d =
+  let module R = (val d.live.refusal) in
   (match if c_faulted d.live.c then Some (why d) else None with
   | exception e ->
       c_unclaim d.live.c;
@@ -486,6 +495,9 @@ let run_stop d =
   | fault -> (
       match stop_handle d fault with
       | () -> returned d
+      | exception (R.Refused _ as e) ->
+          c_unclaim d.live.c;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
       | exception e ->
           returned d;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
@@ -493,7 +505,7 @@ let run_stop d =
   ()
 
 (* Runs [d]'s stop if it is owed and no counted call runs on [d]: whether
-   this call ran it. *)
+   this call ran it. Raises the driver's refusal of the stop. *)
 let own_stop d =
   state d = owed_state
   && c_claim_own d.live.c
@@ -502,7 +514,22 @@ let own_stop d =
     true
   end
 
-let run_own d = ignore (own_stop d : bool)
+(* A refused stop stays owed, for a later call that acts for [d]: the call
+   that runs it here has done its own work. *)
+let run_own d =
+  if state d = owed_state then
+    let module R = (val d.live.refusal) in
+    try ignore (own_stop d : bool) with R.Refused _ -> ()
+
+(* [own_stop d] for a close of [d] or an open of its name, which raises
+   [Invalid_argument] where the driver refuses the stop: a close or an open
+   cannot do its work without it. *)
+let stop_now d =
+  let module R = (val d.live.refusal) in
+  try own_stop d
+  with R.Refused why ->
+    Printexc.raise_with_backtrace (Invalid_argument why)
+      (Printexc.get_raw_backtrace ())
 
 (* A wait's hang loss runs no stop: a wait does no device's work. *)
 let lose d why =
@@ -524,54 +551,73 @@ let raised d scope e =
   run_own d;
   if not fault then Printexc.raise_with_backtrace e bt
 
+(* A wait's refusal raises [Invalid_argument] and keeps [d], as a counted
+   call's does. *)
 let wait_raised d e =
   let fault = c_raised d.live.c e d.live.fault Faults in
   let bt = Printexc.get_raw_backtrace () in
-  if not fault then Printexc.raise_with_backtrace e bt;
-  raise_lost d
+  let module R = (val d.live.refusal) in
+  match e with
+  | _ when fault -> raise_lost d
+  | R.Refused why -> Printexc.raise_with_backtrace (Invalid_argument why) bt
+  | e -> Printexc.raise_with_backtrace e bt
 
 let refused d =
   run_own d;
   raise_lost d
 
+(* A driver's refusal changed nothing: the call ends as one that returned,
+   its count first, as [leave] ends it, and its caller gets
+   [Invalid_argument]. *)
 let counted d scope f =
+  let module R = (val d.live.refusal) in
   match c_enter d.live.c with
   | 0 -> (
       match f () with
       | r ->
           leave d;
           r
+      | exception R.Refused why ->
+          c_exit d.live.c;
+          let bt = Printexc.get_raw_backtrace () in
+          run_own d;
+          Printexc.raise_with_backtrace (Invalid_argument why) bt
       | exception e ->
           raised d scope e;
           raise_lost d)
   | _ -> refused d
 
+type given = Given | Later | Refused
+
 (* On a stopped device a failure of the call, its fault or its memory's, gives
    back nothing more. On a live one a fault loses the device, which its caller
-   never sees: a give is no use of the device. *)
+   never sees: a give is no use of the device. An object that did not go back
+   is still in the caller's hand, so [d]'s owed stop is the caller's to run
+   once the object is back in its place: the stop's drain would otherwise
+   give back what waits behind it first, such as an image's code memory
+   behind its unload. *)
 let give d scope f =
-  if orphaned d then true
-  else if stopped d then begin
-    (match f () with
-    | () -> ()
-    | exception Sys_error _ -> ()
-    | exception e
-      when Obj.Extension_constructor.of_val e == d.live.fault ->
-        ());
-    true
-  end
-  else if c_enter d.live.c <> 0 then begin
-    run_own d;
-    false
-  end
+  let module R = (val d.live.refusal) in
+  if orphaned d then Given
+  else if stopped d then
+    match f () with
+    | () -> Given
+    | exception R.Refused _ -> Refused
+    | exception Sys_error _ -> Given
+    | exception e when Obj.Extension_constructor.of_val e == d.live.fault ->
+        Given
+  else if c_enter d.live.c <> 0 then Later
   else
     match f () with
     | () ->
         leave d;
-        true
+        Given
+    | exception R.Refused _ ->
+        c_exit d.live.c;
+        Refused
     | exception e ->
         raised d scope e;
-        true
+        Given
 
 let fail why = if c_fail why then iter run_own
 
@@ -805,7 +851,7 @@ let settled p =
 (* Runs the stop if it is owed and claimable, and waits for it, returning to
    OCaml every still interval. *)
 let rec await_stop d =
-  run_own d;
+  ignore (stop_now d : bool);
   if not (c_await_stop d.live.c still_ms) then await_stop d
 
 let close_one d =
@@ -914,7 +960,7 @@ let claim r =
    none. *)
 let rec claimed r =
   match Lock.protect table_lock claim r with
-  | `Stop d when own_stop d -> claimed r
+  | `Stop d when stop_now d -> claimed r
   | `Stop _ -> `Error (strf "%s is lost and its stop has not answered" r.full)
   | (`Open _ | `Error _ | `Make) as found -> found
 
@@ -1041,6 +1087,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
+      ~refusal:(module D : Refusal)
       ~capability:(Some f.capability) ~budget:f.budget ~opened
   in
   register d;
@@ -1056,7 +1103,9 @@ let open_driver (type a) ?(memory_device = false)
   | Ok h -> (
       (* Until the device is published, a failure stops the handle: a fault is
          a loss, and any other exception, such as facts that break the
-         contract, is raised again. *)
+         contract, is raised again, a refusal as [Invalid_argument]. Nothing
+         holds the handle to stop it later, so a refused stop raises
+         [Invalid_argument] in place of the open's failure. *)
       match
         driver_device (module D) h ~index ~opened ~name:full ~machine
           ~memory_device
@@ -1065,11 +1114,17 @@ let open_driver (type a) ?(memory_device = false)
           publish d slot;
           Ok d
       | exception D.Fault why ->
-          (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
+          (try D.stop h ~fault:(Some why) with
+          | D.Fault _ -> ()
+          | D.Refused why -> invalid_arg why);
           Error (strf "%s: %s" full why)
       | exception e ->
-          (try D.stop h ~fault:None with D.Fault _ -> ());
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+          let bt = Printexc.get_raw_backtrace () in
+          (try D.stop h ~fault:None with
+          | D.Fault _ -> ()
+          | D.Refused why -> invalid_arg why);
+          let e = match e with D.Refused why -> Invalid_argument why | e -> e in
+          Printexc.raise_with_backtrace e bt)
 
 let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =
@@ -1091,6 +1146,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~host_addresses:false
             ~word:0 ~word_region:None ~key ~memory_device:false
             ~fault:[%extension_constructor I.Fault]
+            ~refusal:(module I : Refusal)
             ~capability:None ~budget ~opened
         in
         register d;
@@ -1100,11 +1156,17 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
           publish d slot;
           Ok d
       | exception I.Fault why ->
-          (try I.stop h with I.Fault _ -> ());
+          (try I.stop h with
+          | I.Fault _ -> ()
+          | I.Refused why -> invalid_arg why);
           Error (strf "%s: %s" full why)
       | exception e ->
-          (try I.stop h with I.Fault _ -> ());
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+          let bt = Printexc.get_raw_backtrace () in
+          (try I.stop h with
+          | I.Fault _ -> ()
+          | I.Refused why -> invalid_arg why);
+          let e = match e with I.Refused why -> Invalid_argument why | e -> e in
+          Printexc.raise_with_backtrace e bt)
 
 (* Closing *)
 

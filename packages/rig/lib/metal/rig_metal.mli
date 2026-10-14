@@ -77,6 +77,14 @@
     domains. {!sleep} and the first {!entry} for a function let other domains
     run while they wait for Metal.
 
+    A call of {!alloc}, {!map_host}, {!free}, {!entry}, {!unload}, {!stop}
+    or an [icb] ({!Rig_metal_abi}) from a signal handler, finaliser or
+    [Gc.Memprof] callback may raise {!exception-Refused}, having changed
+    nothing, when the callback interrupts an [icb], an {!alloc}, a
+    {!map_host} or the first {!entry} of a function of any Metal device on
+    the same thread. An {!entry} may also raise it when the callback
+    interrupts another {!entry}.
+
     Compiled code can encode Metal commands of its own, such as indirect
     command buffers, in a fill: a C function that the driver's [submit] calls
     with the open command buffer's encoder ({!Rig_metal_abi}).

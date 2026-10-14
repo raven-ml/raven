@@ -210,7 +210,9 @@ val answered : (device -> unit) ref
 val run_own : device -> unit
 (** [run_own d] runs [d]'s stop if it is owed and [d] has no counted call in
     flight, then {!answered}. It is one load while [d]'s stop is not owed. A
-    fault of the stop is dropped. Another exception the stop raises is
+    fault of the stop is dropped. A stop the driver refuses (its
+    {!Rig_edge.Driver.Refused}) stays owed, for a later call that acts for
+    [d], and the refusal is dropped. Another exception the stop raises is
     raised again once the state has moved on, without running {!answered}.
     An exception that lands after the stop is claimed and before the
     driver's stop is called owes the stop again. *)
@@ -223,26 +225,38 @@ val lose : device -> string -> 'a
 
 (** Which exceptions besides a fault lose a device when they escape a counted
     call: none, every one, or every one but a constructor's, which are the
-    caller's. *)
+    caller's. A refusal of [d]'s driver ({!Rig_edge.Driver.Refused}) loses
+    none. *)
 type scope = Faults | Any | Any_but of Obj.Extension_constructor.t
 
 val counted : device -> scope -> (unit -> 'a) -> 'a
 (** [counted d scope f] is [f ()] as a counted call on [d], so [d]'s stop
     runs only once no counted call is in flight. A fault that [f] raises
-    loses [d] and raises {!Lost}. Another exception loses [d] with its text
-    if [scope] names it, and passes through either way. The loss and the
-    end of the count are one C call, the handler's first step. Raises
+    loses [d] and raises {!Lost}. A refusal of [d]'s driver
+    ({!Rig_edge.Driver.Refused}) that [f] raises raises [Invalid_argument]
+    with its text. Another exception loses [d] with its text if [scope]
+    names it, and passes through either way. The loss and the end of the
+    count are one C call, the handler's first step. Raises
     {!Lost} without calling [f] if [d] is lost, running [d]'s owed stop
     first. *)
 
-val give : device -> scope -> (unit -> unit) -> bool
-(** [give d scope f] gives an object back to [d]'s driver through [f], and
-    is [false], without calling [f], if [d] is lost and not yet Stopped; the
-    caller must give the object again after the stop. On a live device it is
-    a counted call under [scope], as for {!counted}, but a fault of [f] is
-    not raised. On a Stopped device it is uncounted, and drops a fault or a
-    [Sys_error] of [f]. An Orphaned device's objects are forgotten: [give]
-    is [true] without calling [f]. *)
+(** The outcome of a {!give}: the object went back, must go back after [d]'s
+    stop, or must go back at a later call since the driver refused it. *)
+type given = Given | Later | Refused
+
+val give : device -> scope -> (unit -> unit) -> given
+(** [give d scope f] gives an object back to [d]'s driver through [f]. It is
+    [Later], without calling [f], if [d] is lost and not yet Stopped, and
+    [Refused] if [f] raised a refusal of [d]'s driver
+    ({!Rig_edge.Driver.Refused}), having given nothing back. On a live
+    device it is a counted call under [scope], as for {!counted}, but a
+    fault of [f] is not raised. On a Stopped device it is uncounted, and
+    drops a fault or a [Sys_error] of [f]. An Orphaned device's objects are
+    forgotten: [give] is [Given] without calling [f].
+
+    [Later] and [Refused] run no stop: the caller puts the object back where
+    a drain finds it, then calls {!run_own}, so that the stop's drain meets
+    the object in its place, ahead of what waits behind it. *)
 
 val close : device -> unit
 (** [close d] is {!Rig.close}[ d]. *)
@@ -332,8 +346,10 @@ val signaled : device -> int
 
 val wait : device -> int -> unit
 (** [wait d v] commits [d]'s work if [v] is not committed and blocks until
-    [d] reached [v]. Raises [Invalid_argument] if [v] exceeds [submitted d],
-    and {!Lost} if [d] is or becomes lost. *)
+    [d] reached [v]. Raises [Invalid_argument] if [v] exceeds [submitted d]
+    or a sleep of [d]'s or of a producer's driver is refused
+    ({!Rig_edge.Driver.Refused}), and
+    {!Lost} if [d] is or becomes lost. *)
 
 val wait_value : device -> int -> unit
 (** [wait_value d v] is {!wait} for a value [d] assigned, such as a point's,

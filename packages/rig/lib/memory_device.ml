@@ -19,6 +19,7 @@ module D = struct
   type image = unit
 
   exception Fault of string
+  exception Refused of string
 
   let key : t Type.Id.t = Type.Id.make ()
   let capability_key : unit Type.Id.t = Type.Id.make ()

@@ -29,6 +29,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
 exception Fault of string
+exception Refused of string
 
 (* Paths *)
 
