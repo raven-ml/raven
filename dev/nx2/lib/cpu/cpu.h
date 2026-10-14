@@ -285,6 +285,8 @@ typedef struct {
   int64_t l2;
   /* The bytes of L1 data cache of the cores a job runs on (target.c). */
   int64_t l1;
+  /* The bytes of the largest cache the host reports (target.c). */
+  int64_t llc;
   /* Whether a kernel that reads operand rows several times at a step other
      than one copies them into unit steps first: on x86-64, where strided
      loads cost more than the copy. In cache, adding rows 9 elements apart

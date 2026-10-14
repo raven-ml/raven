@@ -226,10 +226,21 @@ let panels = 8 * 1024 * 1024
 
 (* The most rows gemm.c's quads' dots and its axpys take, and the most
    bytes of a unit's sums in the axpys, AXPY_SUMS: more columns than fit
-   take several units whatever the threads. *)
+   take several units whatever the threads. The axpys take more than
+   [axpy_few] rows only by k of [axpy_deep] or more and columns enough for
+   every thread, 64 a thread: [axpy_wide] at the 16 threads of the most
+   threaded host here; and more than [axpy_many] only by a b of more than
+   an eighth of the host's largest cache: [axpy_cached] bytes pass it on
+   every host here, [axpy_held] on none. *)
 let quad_rows = 32
 let axpy_rows = 128
 let axpy_sums = 32 * 1024
+let axpy_few = 16
+let axpy_deep = 512
+let axpy_wide = 64 * 16
+let axpy_many = 32
+let axpy_cached = 4 * 1024 * 1024
+let axpy_held = 1024 * 1024
 
 (* The rows of the quads kernel's tile, MR, from which the axpys run it
    over b's rows zipped: 6 on x86, AVX2's and AVX-VNNI-INT8's alike, 8 on
@@ -1057,8 +1068,11 @@ let shifted (A.Any x as a) =
    most rows; one column of b, copied; few columns, with a and b swapped,
    alone and in a batch. Quads' axpys, b stored [k × n]: a batch over
    partial blocks of columns and of b's rows, and the same by the tile at
-   its rows; the most rows over several groups of columns, past the most
-   sums a unit holds; either side of x86's tile and by NEON's, every
+   its rows; rows past few and past many over a column a thread, by the
+   least k and b they take them by, and by a b held in cache; few rows over several groups of columns, past
+   the most sums a unit holds; 64 rows by 64 columns and 64 along k, which
+   chain order takes; few rows by few columns, in bands of rows; either
+   side of x86's tile and by NEON's, every
    element of a and b at the dtype's extreme and init at the
    accumulator's largest value, so that two products pass 16 bits and
    every sum wraps. Copies whose rows would lie 4 KiB apart: b's of 1024
@@ -1106,7 +1120,13 @@ let quad_examples =
         stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
         case Lane ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
         case Chain ([||], [| quad_mr_most |], [| 70 |], [| 130 |]) (plain 2);
-        case Chain ([||], [| axpy_rows |], [| 130 |], [| 20 |]) (plain 2);
+        case Chain ([||], [| axpy_many |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
+        case Chain ([||], [| axpy_many + 1 |], [| axpy_wide |],
+                    [| axpy_cached / axpy_wide |]) (plain 2);
+        case Chain ([||], [| 64 |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
+        case Chain ([||], [| axpy_few |], [| 600 |], [| 20 |]) (plain 2);
+        case Chain ([||], [| 64 |], [| 64 |], [| 64 |]) (plain 2);
+        extreme Chain ([||], [| axpy_few |], [| 40 |], [| 2048 |]) (plain 2);
         extreme Chain ([||], [| quad_mr_least - 1 |], [| 100 |], [| 70 |]) (plain 2);
         extreme Chain ([||], [| quad_mr_least |], [| 100 |], [| 70 |]) (plain 2);
         extreme Chain ([||], [| quad_mr_most |], [| 100 |], [| 70 |]) (plain 2);
@@ -1203,8 +1223,22 @@ let quad_covers (c : case) =
   let m, n = rows_cols c in
   let by_rows = k > 1 && not (adjacent c.b snd) && columns_adjacent in
   cover "b's rows interleaved" (by_rows && k >= 4 && m > axpy_rows);
-  let axpys = by_rows && m > 0 && m <= axpy_rows in
+  let b_bytes = Array.fold_left ( * ) 1 (shape_of c.b) in
+  let axpys =
+    by_rows && m > 0
+    && (m <= axpy_few
+       || m <= axpy_rows && k >= axpy_deep && n >= axpy_wide
+          && (m <= axpy_many || b_bytes >= axpy_cached))
+  in
   cover "few rows by quads' axpys" axpys;
+  cover "more rows than few by quads' axpys" (axpys && m > axpy_few);
+  cover "quads' axpys in bands of rows" (axpys && m > 1 && n <= 64 && k >= 1024);
+  cover "more rows than few by few columns in chain order"
+    (by_rows && m > axpy_few && m <= axpy_rows && n <= 64);
+  cover "more rows than many by quads' axpys" (axpys && m > axpy_many);
+  cover "more rows than many by a b held in cache, in chain order"
+    (by_rows && m > axpy_many && m <= axpy_rows && k >= axpy_deep
+    && n >= axpy_wide && b_bytes <= axpy_held);
   cover "quads' axpys over several groups of columns"
     (axpys && n > axpy_sums / 4 / m / 64 * 64);
   cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
@@ -1242,12 +1276,28 @@ let law_wraps ~covers b (c : case) =
       let _, oa, ob, walk = index c in
       let a = ints c.a and bv = ints c.b and init = Option.map ints c.init in
       let got = ints y and bad = ref [] in
+      (* An accumulator narrower than OCaml's 63-bit ints sums in them: their
+         arithmetic wraps modulo 2^63, a multiple of its width. *)
+      let (D.Any acc) = c.acc in
+      let sum =
+        if D.bits acc < 63 then (
+          let a = Array.map Int64.to_int a and bv = Array.map Int64.to_int bv in
+          fun s0 ra rb ->
+            let s = ref (Int64.to_int s0) in
+            for t = 0 to Array.length oa - 1 do
+              s := !s + (a.(ra + oa.(t)) * bv.(rb + ob.(t)))
+            done;
+            Int64.of_int !s)
+        else fun s0 ra rb ->
+          let s = ref s0 in
+          for t = 0 to Array.length oa - 1 do
+            s := Int64.add !s (Int64.mul a.(ra + oa.(t)) bv.(rb + ob.(t)))
+          done;
+          !s
+      in
       walk (fun yi k ra rb ->
-          let s = ref (match init with Some i -> i.(k) | None -> 0L) in
-          Array.iteri
-            (fun t o -> s := Int64.add !s (Int64.mul a.(ra + o) bv.(rb + ob.(t))))
-            oa;
-          let want = wrap c.acc !s in
+          let s0 = match init with Some i -> i.(k) | None -> 0L in
+          let want = wrap c.acc (sum s0 ra rb) in
           if want <> got.(k) && List.length !bad < 8 then
             bad := Format.asprintf "%a: %Ld, expected %Ld" pp_ints yi got.(k) want :: !bad);
       equal (list string) [] (List.rev !bad)

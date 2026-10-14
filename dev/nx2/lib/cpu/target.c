@@ -69,6 +69,30 @@ static int64_t l1_bytes(void) {
   return most > 0 ? most : L1_UNKNOWN;
 }
 
+/* The bytes of the largest cache the host reports: on Linux the largest
+   of CPU 0's caches (sysfs-devices-system-cpu's cache/indexN), the last
+   level; on macOS the performance cores' L2, the last level it reports
+   (the M1 Max's 48 MB system cache it does not). 8 MiB, the least of the
+   hosts here, where the host does not say. */
+#define LLC_UNKNOWN (8 * 1024 * 1024)
+
+static int64_t llc_bytes(void) {
+  int64_t most = 0;
+#if defined(__APPLE__)
+  size_t n = sizeof most;
+  if (sysctlbyname("hw.perflevel0.l2cachesize", &most, &n, NULL, 0) != 0)
+    most = 0;
+#elif defined(__linux__)
+  for (int i = 0;; i++) {
+    char size[16];
+    if (!sysfs(0, i, "size", size, sizeof size)) break;
+    int64_t kib = strtoll(size, NULL, 10);
+    if (kib * 1024 > most) most = kib * 1024;
+  }
+#endif
+  return most > 0 ? most : LLC_UNKNOWN;
+}
+
 #if defined(__x86_64__)
 #include <cpuid.h>
 #endif
@@ -142,6 +166,7 @@ static int64_t l2_bytes(void) {
 __attribute__((constructor)) static void init(void) {
   nx_cpu_base.l2 = l2_bytes();
   nx_cpu_base.l1 = l1_bytes();
+  nx_cpu_base.llc = llc_bytes();
   nx_cpu_set_convert_base(&nx_cpu_base);
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);
@@ -161,6 +186,7 @@ __attribute__((constructor)) static void init(void) {
   if (!has_v3()) return;
   nx_cpu_v3.l2 = nx_cpu_base.l2;
   nx_cpu_v3.l1 = nx_cpu_base.l1;
+  nx_cpu_v3.llc = nx_cpu_base.llc;
   nx_cpu_set_convert_v3(&nx_cpu_v3);
   nx_cpu_set_gemm_v3(&nx_cpu_v3);
   nx_cpu_set_rows_v3(&nx_cpu_v3);
