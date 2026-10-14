@@ -16,7 +16,8 @@
    Max, with operands in the caches. Four steps load at a time, into all
    eight X and Y registers. a is packed, each step on 128 bytes; b may be
    read in place, by pairs of registers where its steps lie on 128 bytes,
-   else a register at a time. Each output adds a[i]·b[j] fused, in
+   else a register at a time where they lie on 64, else through the 64-byte
+   lines that hold them (tile). Each output adds a[i]·b[j] fused, in
    increasing k: the chain NEON's kernels compute, bit for bit on every
    result but a NaN, which the unit gives as the default NaN.
 
@@ -154,28 +155,60 @@ static void zzero(void) {
     NX_AMX_FMA32_SKIP(0, 0, q, NX_AMX_SKIP_Z | NX_AMX_SKIP_X);
 }
 
-/* The four outer products of the step in X and Y's registers [r] and
-   [r + 1]. */
-INLINE void outer4(int w, int r) {
-  int o = 64 * r;
+/* The four outer products of a step whose column halves lie at X's bytes
+   [x0] and [x1] and whose row halves at Y's [y] and [y + 64]. */
+INLINE void outer(int w, int x0, int x1, int y) {
   for (int q = 0; q < 4; q++) {
-    int x = o + 64 * (q % 2), y = o + 64 * (q / 2);
-    if (w == 4) NX_AMX_FMA32(x, y, q);
-    else NX_AMX_FMA64(x, y, q);
+    int x = q % 2 ? x1 : x0, yq = y + 64 * (q / 2);
+    if (w == 4) NX_AMX_FMA32(x, yq, q);
+    else NX_AMX_FMA64(x, yq, q);
   }
 }
+
+/* The four outer products of the step in X and Y's registers [r] and
+   [r + 1]. */
+INLINE void outer4(int w, int r) { outer(w, 64 * r, 64 * r + 64, 64 * r); }
+
+/* How a tile loads b's steps: as they lie, or through the 64-byte lines
+   that hold them (tile). */
+typedef enum { B_AS_LAID, B_BY_LINES } b_load;
 
 /* The first [rows] rows of the tile at [c]: a's packed steps from [a],
    each on 128 bytes, times b's columns in two halves of L, the second [hi]
    bytes past the first in b and in c; steps [a_k] and [b_k] bytes apart.
-   The rows past [rows] are computed from a's padding and not stored. */
+   The rows past [rows] are computed from a's padding and not stored.
+
+   By B_BY_LINES, each step of b loads the one to three aligned lines that
+   hold its two halves, no line past them, one step at a time, and the
+   outer products read X from the step's offset into them, as a load off
+   64 bytes costs the unit more: an outer product reads its 64 bytes from
+   any offset of X, wrapping (corsix/amx's fma.md, MIT). On the M1 Max a
+   100³ float32 product, its rows 400 bytes apart, took 4.86 µs with b's
+   loads off 64 bytes, 4.29 so; 56³ 1.06 and 0.98. A tile that reads its
+   steps once keeps the loads off 64 bytes, four steps at a time: 24³ took
+   3% longer through the lines. */
 INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
                  const uint8_t *b, int64_t b_k, uint8_t *c, int64_t ldc,
-                 int64_t hi, int64_t rows, nx_cpu_from from) {
+                 int64_t hi, int64_t rows, b_load load, nx_cpu_from from) {
   int pair_b = hi == 64 && on128(b, b_k);
   if (from == NX_CPU_FROM_TILE) zload(w, c, ldc, hi, rows);
   else zzero();
   int64_t p = 0;
+  if (load == B_BY_LINES) {
+    for (; p < k; p++) {
+      const uint8_t *row = b + p * b_k;
+      const uint8_t *line =
+          (const uint8_t *)((uintptr_t)row & ~(uintptr_t)63);
+      int off = (int)(row - line);
+      NX_AMX_LDY((uint64_t)(a + p * a_k) | NX_AMX_PAIR, 0);
+      NX_AMX_LDX(line, 0);
+      if (off + hi > 0) NX_AMX_LDX(line + 64, 1);
+      if (off + hi > 64) NX_AMX_LDX(line + 128, 2);
+      outer(w, off, off + (int)hi, 0);
+    }
+    zstore(w, c, ldc, hi, rows);
+    return;
+  }
   for (; p + 4 <= k; p += 4) {
     for (int s = 0; s < 4; s++) {
       NX_AMX_LDY((uint64_t)(a + (p + s) * a_k) | NX_AMX_PAIR, 2 * s);
@@ -227,8 +260,9 @@ static __attribute__((noinline)) void edge(
     int64_t rows = m - i0 < SIDE(w) ? m - i0 : SIDE(w);
     const uint8_t *ai = a + i0 * a_row;
     uint8_t *ti = t + i0 * ROW_BYTES;
-    if (w == 4) tile(4, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, from);
-    else tile(8, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, from);
+    if (w == 4)
+      tile(4, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, B_AS_LAID, from);
+    else tile(8, k, ai, a_k, b, b_k, ti, ROW_BYTES, 64, rows, B_AS_LAID, from);
   }
   for (int64_t i = 0; i < m; i++)
     copy_short(y + i * ldc, t + ROW_BYTES * i, n * w);
@@ -242,13 +276,18 @@ INLINE void kernel(int w, int64_t m, int64_t n, int64_t k, const void *va,
   uint8_t *c = vc;
   int wide = n >= LANES(w);
   int64_t step = wide ? SIDE(w) : EDGE_ROWS;
+  /* b's steps off 64 bytes that tiles of several blocks of rows reread
+     load through their lines (tile). */
+  b_load load = m > SIDE(w) && ((uintptr_t)b | (uintptr_t)(b_k * w)) % 64
+                    ? B_BY_LINES
+                    : B_AS_LAID;
   for (int64_t i0 = 0; i0 < m; i0 += step) {
     int64_t rows = m - i0 < step ? m - i0 : step;
     const uint8_t *ai = a + i0 * a_row * w;
     uint8_t *ci = c + i0 * ldc * w;
     if (wide)
       tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, (n - LANES(w)) * w,
-           rows, from);
+           rows, load, from);
     else
       edge(w, rows, k, ai, a_row * w, a_k * w, b, b_k * w, ci, ldc * w, n,
            from);
