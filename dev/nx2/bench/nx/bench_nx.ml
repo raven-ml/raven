@@ -752,11 +752,14 @@ let order_rows =
 
 (* Fourier transforms of host values, each against vDSP and pocketfft at the
    same size: complex64 lines of 2^10, 2^16 and 2^20 points, a float32 line of
-   2^20, and a complex64 1024 × 1024 along both axes. *)
+   2^20 and its inverse, a complex64 line of the prime 65537 points (by
+   Bluestein's convolution), and a complex64 1024 × 1024 along both axes. *)
 let fft f = Nx.Prim.eval ~by:"bench" (Fft f)
 let c1k = on_host (Nx.slice [ R (0, 1024) ] c1m)
 let c64k = on_host (Nx.slice [ R (0, 1 lsl 16) ] c1m)
 let c1024x1024 = Nx.reshape [| 1024; 1024 |] c1m
+let c65537 = on_host (Nx.slice [ R (0, 65537) ] c1m)
+let bins1m = on_host (Nx.slice [ R (0, (1 lsl 19) + 1) ] c1m)
 
 let c2c axes x =
   fft (C2c { direction = Forward; axes; x = Thumper.black_box x })
@@ -775,6 +778,16 @@ let fft_rows =
                  axes = [| 0 |];
                  x = Thumper.black_box f1m;
                }));
+      Thumper.bench "irfft-1M-f32" (fun () ->
+          fft
+            (C2r
+               {
+                 dtype = D.Float32;
+                 n = 1 lsl 20;
+                 axes = [| 0 |];
+                 x = Thumper.black_box bins1m;
+               }));
+      Thumper.bench "c2c-65537-c64" (fun () -> c2c [| 0 |] c65537);
       Thumper.bench "fft2-1024x1024-c64" (fun () -> c2c [| 0; 1 |] c1024x1024);
     ]
 
