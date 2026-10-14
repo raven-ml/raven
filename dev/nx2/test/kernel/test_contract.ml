@@ -349,7 +349,8 @@ let case_of ?same ~acc ~out ~dts () =
    contraction, over several panels, without init, and with no product and
    no init; few columns by many rows with a read in place, over several
    blocks of the contraction and over one; few rows of a batch whose
-   slivers of b are fewer than the threads, in blocks of rows. The few
+   slivers of b are fewer than the threads, in blocks of rows, with a in
+   place and with a alone stored transposed. The few
    rows' case again, and in float64 the chain path over
    several groups, with a and b stored transposed. Each in the order whose
    path it names, then cases in the other order: chain order in few rows or
@@ -370,17 +371,25 @@ let regimes acc =
     let ti = if init then Some (plain ry) else None in
     make ~order ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
   in
+  let swap r =
+    { (plain r) with
+      perm = Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i) }
+  in
+  let copy (A.Any x) = A.Any (A.copy x) in
   (* [case] with a and b stored transposed, which every table packs. *)
   let apart (order, init, e) =
     let ra, rb, ry = ranks e in
-    let swap r =
-      { (plain r) with
-        perm = Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i) }
-    in
     let ti = if init then Some (plain ry) else None in
     let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
-    let copy (A.Any x) = A.Any (A.copy x) in
     { c with a = copy c.a; b = copy c.b }
+  in
+  (* [case] with a alone stored transposed: few rows pack it, and blocks of
+     its rows read the pack from their first row. *)
+  let a_apart (order, init, e) =
+    let ra, rb, ry = ranks e in
+    let ti = if init then Some (plain ry) else None in
+    let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
+    { c with a = copy c.a }
   in
   let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
   let rows = few_rows_most + 1 in
@@ -411,7 +420,9 @@ let regimes acc =
   if is_complex acc then apart few :: List.map case complex
   else if is_integer acc then apart few :: List.map case integer
   else
-    [ apart few ] @ groups
+    [ apart few;
+      a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
+    @ groups
     @ List.map case
       ([
          (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
