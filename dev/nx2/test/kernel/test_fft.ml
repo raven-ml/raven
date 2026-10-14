@@ -604,6 +604,28 @@ let test_long () =
       check ~wide (C2r 30030) 30030 5)
     [ false; true ]
 
+(* A complex128 line of 2^19 points, whose 8 MiB result exceeds a core's
+   L2, so that one thread writes it past the caches: the job's bits. *)
+let test_streamed () =
+  let rs = Random.State.make [| 19 |] in
+  let xs =
+    Array.init (1 lsl 19) (fun _ ->
+        let re = value true rs in
+        { Complex.re; im = value true rs })
+  in
+  let c =
+    {
+      kind = C2c Forward;
+      wide = true;
+      shape = [| 1 lsl 19 |];
+      axes = [| 0 |];
+      view = plain 1;
+      xs;
+    }
+  in
+  let x = operand c in
+  equal (array string) (elements (run c x)) (elements (run ~threads:1 c x))
+
 (* Every target's bits *)
 
 (* A digest of each length's transforms, forward, inverse, r2c and c2r, at
@@ -731,6 +753,8 @@ let () =
              [
                test "long lines are within the bound, one thread's bits"
                  test_long;
+               test "a line past a core's L2 has one thread's bits"
+                 test_streamed;
                test "a transform of no point is the empty sum" test_empty;
                test "refuses dtypes and shapes" test_refusals;
                test "digests of transforms, the same on every target"

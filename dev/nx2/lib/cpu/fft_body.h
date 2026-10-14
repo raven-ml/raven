@@ -512,14 +512,42 @@ static void F(gather)(CV *restrict d, const lines *x, const int64_t *o,
     }
 }
 
+#if NT_STORES
+/* scatter's lanes side by side, points [st] reals apart from [d], by
+   x86's non-temporal stores (stream_of): [d] on 32 bytes. */
+static void F(stream)(T *d, int64_t st, int64_t n, int conj,
+                      const CV *restrict s) {
+  for (int64_t j = 0; j < n; j++) {
+    VEC re = s[j].re, im = conj ? -s[j].im : s[j].im;
+    VEC lo = ZIP_LO(re, im), hi = ZIP_HI(re, im);
+#if L == 8
+    _mm256_stream_ps(d + j * st, (__m256)lo);
+    _mm256_stream_ps(d + j * st + L, (__m256)hi);
+#else
+    _mm256_stream_pd(d + j * st, (__m256d)lo);
+    _mm256_stream_pd(d + j * st + L, (__m256d)hi);
+#endif
+  }
+  _mm_sfence();
+}
+#endif
+
 /* Writes lanes [0, lanes) of [s], points [0, n) of lines [o] of y, [st]
-   reals apart. */
+   reals apart: lanes side by side by stores past the caches where y
+   streams and its points lie apart. */
 static void F(scatter)(const lines *y, const int64_t *o, int lanes,
                        int64_t n, int64_t st, const CV *restrict s) {
   T *b = (T *)y->base;
   int64_t io = y->io;
   int conj = y->conj;
   if (lanes == L && side_by_side(y, o, L)) {
+#if NT_STORES
+    T *d = b + o[0];
+    if (y->stream && st > 2 * L && st % L == 0 && (uintptr_t)d % 32 == 0) {
+      F(stream)(d, st, n, conj, s);
+      return;
+    }
+#endif
     for (int64_t j = 0; j < n; j++) {
       VEC re = s[j].re, im = conj ? -s[j].im : s[j].im;
       VEC lo = ZIP_LO(re, im), hi = ZIP_HI(re, im);
@@ -1075,6 +1103,13 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
                         int64_t count, int threads) {
   int64_t n = p->n, bytes = 4 * (int64_t)sizeof(T) * n * count;
   double cost = cost_of(bytes, n, p->kind == BLUESTEIN ? p->m : 0);
+  /* A result streams from one thread alone (stream_of). */
+  lines cached;
+  if (y->stream && threads != 1 && nx_cpu_threads(bytes, cost) != 1) {
+    cached = *y;
+    cached.stream = 0;
+    y = &cached;
+  }
   F(job) j = {.step = LINES, .p = p, .x = x, .y = y, .count = count};
   j.per = p->kind == FOUR ? 1 : L;
   int64_t units = (count + j.per - 1) / j.per;
@@ -1164,6 +1199,7 @@ static int F(c2c)(const nx_array *x, const nx_array *y, const int *axes,
     lines xs = lines_of(i == 0 ? x : y, a, order, 2),
           ys = lines_of(y, a, order, 2);
     xs.conj = ys.conj = inverse;
+    ys.stream = stream_of(y);
     PLAN *p = plan_get(n, RDT, COMPLEX);
     if (p == NULL) return 0;
     int ok = F(transform)(p, &xs, &ys, count, threads);
@@ -1188,6 +1224,7 @@ static int F(r2c)(const nx_array *x, const nx_array *y, const int *axes,
   others(y, l, order);
   lines xs = lines_of(x, l, order, 1), ys = lines_of(y, l, order, 2);
   xs.real = 1;
+  ys.stream = stream_of(y);
   REAL_PLAN *rp = plan_get(n, RDT, REAL);
   if (rp == NULL) return 0;
   int ok = F(r2c_lines)(rp, &xs, &ys, count, threads);
@@ -1223,6 +1260,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
   others(y, l, order);
   lines xs = lines_of(&copy, l, order, 2), ys = lines_of(y, l, order, 1);
   ys.real = 1;
+  ys.stream = stream_of(y);
   REAL_PLAN *rp = plan_get(n, RDT, REAL);
   int ok = rp != NULL && F(c2r_lines)(rp, &xs, &ys, count, threads);
   if (rp != NULL) plan_put(rp, RDT, REAL);

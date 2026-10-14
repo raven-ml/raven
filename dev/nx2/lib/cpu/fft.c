@@ -51,6 +51,14 @@
 #include "cpu.h"
 #include "nx_kinds.h"
 
+/* x86-64's v3 stores 32 bytes past the caches (stream_of). */
+#if defined(__AVX__)
+#include <immintrin.h>
+#define NT_STORES 1
+#else
+#define NT_STORES 0
+#endif
+
 #if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 /* The most points a line computes by passes alone. Above, the four steps
@@ -108,11 +116,12 @@ enum {
    and its imaginary part [io] further, at(l) the position of line l in C
    order of the [rank] extents [dim] stepping [stride]. A [real] line has
    no imaginary part: it reads +0 and writes none. A [conj] line reads and
-   writes conjugates. */
+   writes conjugates. A [stream] line is written, where its points lie
+   apart, by stores that bypass the caches (stream_of). */
 typedef struct {
   uint8_t *base;
   int64_t step, io;
-  int real, conj, rank;
+  int real, conj, stream, rank;
   int64_t dim[NX_MAX_RANK], stride[NX_MAX_RANK];
 } lines;
 
@@ -173,6 +182,19 @@ static lines lines_of(const nx_array *a, int axis, const int *order, int w) {
     x.stride[i] = w * a->dim[a->rank + order[i]];
   }
   return x;
+}
+
+/* Whether a transform may write [a]'s lines by stores that bypass the
+   caches: where [a] exceeds a core's L2, which a smaller result stays in
+   for its reader, and where the transform runs on one thread (transform).
+   The four steps' rows write a line's points in pieces of 64 bytes a row
+   apart, and each piece took a read of the cache line it fills:
+   non-temporal stores, which take none, cut a line of 2^20 points from
+   4.2 to 3.1 ms and fft2 of 1024 × 1024 from 3.7 to 3.2 on one core
+   (Arrow Lake). On six, whose reads overlap, they made the line 1.46
+   times as slow and fft2 1.14. */
+static int stream_of(const nx_array *a) {
+  return numel(a) * (a->bits / 8) > nx_cpu_table->l2;
 }
 
 /* Sets every element of [a] to +0. */
