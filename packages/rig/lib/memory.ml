@@ -591,7 +591,7 @@ let viewed (e : entry) =
 (* Puts [e] in its owner's cache, for reuse. The owner's lock is held. *)
 let cache (e : entry) =
   let l = e.owner.live and k = cache_key e in
-  let es = Option.value ~default:[] (Cache.find_opt l.cache k) in
+  let es = try Cache.find l.cache k with Not_found -> [] in
   Cache.replace l.cache k (e :: es);
   l.cached <- l.cached + e.bytes
 
@@ -704,14 +704,14 @@ let cache_keys l = Cache.fold (fun k _ ks -> k :: ks) l.cache []
    if [pick] holds of it. Entries of one key share their owner and their
    kind of memory, so [pick] answers alike for each. *)
 let take_picked (l, k, pick) =
-  match Cache.find_opt l.cache k with
-  | Some (e :: rest) when pick e ->
+  match Cache.find l.cache k with
+  | e :: rest when pick e ->
       (match rest with
       | [] -> Cache.remove l.cache k
       | _ -> Cache.replace l.cache k rest);
       l.cached <- l.cached - e.bytes;
       Some e
-  | _ -> None
+  | _ | (exception Not_found) -> None
 
 (* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
    the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
@@ -1003,8 +1003,8 @@ let () = Dev.answered := drain
 (* The cache *)
 
 let take_cached_key (l, k) =
-  match Cache.find_opt l.cache k with
-  | Some (e :: rest) ->
+  match Cache.find l.cache k with
+  | e :: rest ->
       (match rest with
       | [] -> Cache.remove l.cache k
       | _ -> Cache.replace l.cache k rest);
@@ -1013,7 +1013,7 @@ let take_cached_key (l, k) =
          its memory's previous lifetime, an unordered use included. *)
       stamps_clear e.stamps;
       Some e
-  | _ -> None
+  | [] | (exception Not_found) -> None
 
 let take_cached d kind n =
   let l = d.live in

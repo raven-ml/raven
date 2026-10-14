@@ -26,16 +26,21 @@ struct
   let length t = t.size
   let index buckets k = K.hash k land (Array.length buckets - 1)
 
-  let rec find k = function
+  let rec cell k = function
     | Nil -> Nil
-    | Cell c as cell -> if K.equal c.key k then cell else find k c.next
+    | Cell c as found -> if K.equal c.key k then found else cell k c.next
+
+  let find t k =
+    match cell k t.buckets.(index t.buckets k) with
+    | Cell c -> c.v
+    | Nil -> raise Not_found
 
   let find_opt t k =
-    match find k t.buckets.(index t.buckets k) with
+    match cell k t.buckets.(index t.buckets k) with
     | Cell c -> Some c.v
     | Nil -> None
 
-  let mem t k = find k t.buckets.(index t.buckets k) != Nil
+  let mem t k = cell k t.buckets.(index t.buckets k) != Nil
 
   let rec copy_into buckets = function
     | Nil -> ()
@@ -53,7 +58,7 @@ struct
   (* A new binding grows the table first, then links its cell: the link is
      the last store, so the call has bound [k] only once it returns. *)
   let replace t k v =
-    match find k t.buckets.(index t.buckets k) with
+    match cell k t.buckets.(index t.buckets k) with
     | Cell c -> c.v <- v
     | Nil ->
         if t.size >= 2 * Array.length t.buckets then grow t;

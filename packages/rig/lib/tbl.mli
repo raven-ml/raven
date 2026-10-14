@@ -36,6 +36,11 @@ end) : sig
   val length : 'a t -> int
   (** [length t] is the number of bindings of [t]. *)
 
+  val find : 'a t -> key -> 'a
+  (** [find t k] is [k]'s value in [t]. It allocates nothing beyond [K.hash] and
+      [K.equal]. Raises
+      [Not_found] if [t] binds no [k]. *)
+
   val find_opt : 'a t -> key -> 'a option
   (** [find_opt t k] is [k]'s value in [t], if any. *)
 
