@@ -27,13 +27,15 @@ typedef struct {
 } CV;
 
 /* Shuffles: the real and imaginary parts of 2L interleaved values, the
-   inverse, and the transpose of L vectors as an L × L tile. */
+   inverse, the lanes reversed, and the transpose of L vectors as an L × L
+   tile. */
 #define SH __builtin_shufflevector
 #if L == 8
 #define DEAL_RE(a, b) SH(a, b, 0, 2, 4, 6, 8, 10, 12, 14)
 #define DEAL_IM(a, b) SH(a, b, 1, 3, 5, 7, 9, 11, 13, 15)
 #define ZIP_LO(a, b) SH(a, b, 0, 8, 1, 9, 2, 10, 3, 11)
 #define ZIP_HI(a, b) SH(a, b, 4, 12, 5, 13, 6, 14, 7, 15)
+#define REV(a) SH(a, a, 7, 6, 5, 4, 3, 2, 1, 0)
 
 static inline void F(transpose)(VEC *r) {
   VEC a[8], b[8];
@@ -56,6 +58,7 @@ static inline void F(transpose)(VEC *r) {
 #define DEAL_IM(a, b) SH(a, b, 1, 3, 5, 7)
 #define ZIP_LO(a, b) SH(a, b, 0, 4, 1, 5)
 #define ZIP_HI(a, b) SH(a, b, 2, 6, 3, 7)
+#define REV(a) SH(a, a, 3, 2, 1, 0)
 
 static inline void F(transpose)(VEC *r) {
   VEC a[4];
@@ -806,13 +809,57 @@ static int F(serial)(const PLAN *p, const lines *x, const lines *y,
    E_k = (Z_k + conj Z_(h-k)) / 2 and D_k = (Z_k - conj Z_(h-k)) / 2,
    bins k and h - k computed together. */
 
+/* Whether [x]'s complex points lie side by side, interleaved, read and
+   written as they are. */
+static int F(dense)(const lines *x) {
+  return x->step == 2 && x->io == 1 && !x->real && !x->conj;
+}
+
+/* L points from [p], interleaved, in lanes; and back. */
+static inline CV F(load_lanes)(const T *p) {
+  VEC lo, hi;
+  memcpy(&lo, p, sizeof lo);
+  memcpy(&hi, p + L, sizeof hi);
+  return (CV){DEAL_RE(lo, hi), DEAL_IM(lo, hi)};
+}
+
+static inline void F(store_lanes)(T *p, CV z) {
+  VEC lo = ZIP_LO(z.re, z.im), hi = ZIP_HI(z.re, z.im);
+  memcpy(p, &lo, sizeof lo);
+  memcpy(p + L, &hi, sizeof hi);
+}
+
+/* Whether pairs [k, k + L), past 0 and below [hi), compute in lanes:
+   their bins h - k - L < j <= h - k lie apart from bins [k, k + L), so
+   no pair reads a bin another writes. */
+static int F(pair_lanes)(int64_t k, int64_t hi, int64_t h) {
+  return k > 0 && k + L <= hi && 2 * (k + L) - 1 <= h;
+}
+
 /* Pairs [lo, hi) of k <= h / 2 of the line at [o] of y, Z in its first
-   h bins, into X. */
+   h bins, into X. Where y's points lie side by side, L pairs compute a
+   vector, bins h - k in reversed lanes, each pair's arithmetic as one
+   pair's. */
 static void F(split)(const REAL_PLAN *rp, const lines *y, int64_t o,
                      int64_t lo, int64_t hi) {
   int64_t h = rp->n / 2;
   const T *w = rp->w;
+  int dense = F(dense)(y);
+  T *p = (T *)y->base + o;
   for (int64_t k = lo; k < hi; k++) {
+    if (dense && F(pair_lanes)(k, hi, h)) {
+      int64_t m = h - k - (L - 1);
+      CV a = F(load_lanes)(p + 2 * k), b = F(load_lanes)(p + 2 * m),
+         wk = F(load_lanes)(w + 2 * k);
+      VEC br = REV(b.re), bi = REV(b.im);
+      VEC er = (a.re + br) * (T)0.5, ei = (a.im - bi) * (T)0.5;
+      VEC dr = (a.re - br) * (T)0.5, di = (a.im + bi) * (T)0.5;
+      VEC fr = -(wk.re * di + wk.im * dr), fi = wk.re * dr - wk.im * di;
+      F(store_lanes)(p + 2 * m, (CV){REV(er + fr), REV(-(ei + fi))});
+      F(store_lanes)(p + 2 * k, (CV){er - fr, ei - fi});
+      k += L - 1;
+      continue;
+    }
     T ar, ai, br, bi;
     F(load)(y, o, k, &ar, &ai);
     if (k == 0) {
@@ -834,12 +881,26 @@ static void F(split)(const REAL_PLAN *rp, const lines *y, int64_t o,
 /* The inverse: Z_k = S_k + i conj ω^k D_k with S_k = X_k + conj X_(h-k)
    and D_k = X_k - conj X_(h-k), the imaginary parts of X_0 and X_h
    taken as +0. Pairs [lo, hi) of k <= h / 2 of the line at [o] of x into
-   the row [z] of h points. */
+   the row [z] of h points, L pairs a vector as split's. */
 static void F(merge)(const REAL_PLAN *rp, const lines *x, int64_t o, T *z,
                      int64_t lo, int64_t hi) {
   int64_t h = rp->n / 2;
   const T *w = rp->w;
+  int dense = F(dense)(x);
+  const T *p = (const T *)x->base + o;
   for (int64_t k = lo; k < hi; k++) {
+    if (dense && F(pair_lanes)(k, hi, h)) {
+      int64_t m = h - k - (L - 1);
+      CV a = F(load_lanes)(p + 2 * k), b = F(load_lanes)(p + 2 * m),
+         wk = F(load_lanes)(w + 2 * k);
+      VEC br = REV(b.re), bi = REV(b.im);
+      VEC sr = a.re + br, si = a.im - bi, dr = a.re - br, di = a.im + bi;
+      VEC gr = wk.im * dr - wk.re * di, gi = wk.re * dr + wk.im * di;
+      F(store_lanes)(z + 2 * m, (CV){REV(sr - gr), REV(-(si - gi))});
+      F(store_lanes)(z + 2 * k, (CV){sr + gr, si + gi});
+      k += L - 1;
+      continue;
+    }
     T ar, ai, br, bi;
     F(load)(x, o, k, &ar, &ai);
     F(load)(x, o, h - k, &br, &bi);
@@ -1174,6 +1235,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
 #undef DEAL_IM
 #undef ZIP_LO
 #undef ZIP_HI
+#undef REV
 #undef TRANSPOSE
 #undef VEC
 #undef CV
