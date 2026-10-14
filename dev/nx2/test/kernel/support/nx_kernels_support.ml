@@ -27,20 +27,8 @@ let with_target t f =
   use t;
   Fun.protect ~finally:(fun () -> use before) f
 
-(* nx_cpu.mli's promise: [Iota] at the base dtypes, the other kinds at every
-   dtype. *)
-let base (Nx_array.Dtype.Any dt) =
-  let module D = Nx_array.Dtype in
-  match dt with
-  | D.Float32 | D.Float64 | D.Int8 | D.Uint8 | D.Int16 | D.Uint16 | D.Int32
-  | D.Uint32 | D.Int64 | D.Uint64 | D.Bool ->
-      true
-  | _ -> false
-
-let cpu_computes k d =
-  match k with
-  | K0 (Iota _) -> base d
-  | K0 (Fill _) | K1 _ | K2 _ | K3 _ -> true
+(* nx_cpu.mli's promise: every kind at every dtype of its domain. *)
+let cpu_computes _ _ = true
 
 let cpu target =
   {

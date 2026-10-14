@@ -1066,25 +1066,38 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
       (fun dst -> K.apply0 (Iota axis) ~dst)
   end
 
-(* A fill into a C-contiguous destination at an offset into a larger
-   buffer, mid-byte for a sub-byte dtype, stores its element at each of the
-   destination's elements and leaves the elements around it. *)
-let law_fill_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed) =
+(* Fill, and Iota along each axis, into a C-contiguous destination at an
+   offset into a larger buffer, mid-byte for a sub-byte dtype, store what
+   they store into a fresh array and leave the elements around it. *)
+let law_apply0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
+    =
   let module K = (val b.kernels) in
   let n = Array.fold_left ( * ) 1 s in
-  let whole = on b (seeded dt [| lead + n + trail |] seed) in
   let strides = L.strides (L.contiguous s) in
-  let dst = A.v dt (L.v ~offset:lead ~strides s) (A.buffer whole) in
-  let before = bits_of (host whole) in
-  let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
-  let w = Array.length e in
-  let fill = String.init w (fun i -> Char.chr e.(i)) in
+  let w = max 1 (D.bits dt / 8) in
   cover "sub-byte, mid-byte" (D.bits dt < 8 && lead mod (8 / D.bits dt) <> 0);
   cover "on the job's threads" (n >= 1_000_000);
-  equal answer A.Done (K.apply0 (Fill fill) ~dst);
-  let inside i = i / w >= lead && i / w < lead + n in
-  let want = Array.mapi (fun i x -> if inside i then e.(i mod w) else x) before in
-  equal (array int) want (bits_of (host whole))
+  let inside k =
+    let whole = on b (seeded dt [| lead + n + trail |] seed) in
+    let dst = A.v dt (L.v ~offset:lead ~strides s) (A.buffer whole) in
+    let fresh = A.create b.device dt s in
+    equal ~msg:"fresh" answer A.Done (K.apply0 k ~dst:fresh);
+    let before = bits_of (host whole) and e = bits_of (host fresh) in
+    equal ~msg:"inside" answer A.Done (K.apply0 k ~dst);
+    let want =
+      Array.mapi
+        (fun i x ->
+          if i / w >= lead && i / w < lead + n then e.(i - (lead * w)) else x)
+        before
+    in
+    equal (array int) want (bits_of (host whole))
+  in
+  let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
+  inside (P.Fill (String.init (Array.length e) (fun i -> Char.chr e.(i))));
+  if P.accepts0 (Iota 0) dt then
+    for axis = 0 to Array.length s - 1 do
+      inside (P.Iota axis)
+    done
 
 let fill_insides =
   Gen.with_pp
@@ -1098,7 +1111,8 @@ let fill_insides =
      let+ seed = nat in
      (d, s, around, seed))
 
-(* Sub-byte fills of a million elements, starting and ending mid-byte. *)
+(* Sub-byte destinations of a million elements, starting and ending
+   mid-byte. *)
 let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
@@ -1878,9 +1892,9 @@ let laws (b : Support.backend) =
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
       prop ~examples:large_fills
-        "fill stores its element inside a buffer and nothing around it"
+        "fill and iota store inside a buffer and nothing around it"
         fill_insides
-        (run (law_fill_inside b));
+        (run (law_apply0_inside b));
       test "a declined map writes nothing" (unit (test_declined_map b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));

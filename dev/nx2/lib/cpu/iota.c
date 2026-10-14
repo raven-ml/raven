@@ -9,7 +9,9 @@
    elements in C order: along it the index is constant for [inner]
    elements, the product of the extents past [axis], and counts up to the
    axis's extent and back to 0. Another layout runs on one thread, an
-   odometer over its axes. */
+   odometer over its axes. A dtype of no loop of its own, a narrow float,
+   int4 or uint4, runs the odometer too, each row's indices made as int64
+   a slot at a time and converted into it as a cast does (stage.c). */
 
 #include <caml/mlvalues.h>
 
@@ -90,6 +92,30 @@ static const iota_fns iotas[NX_DTYPE_COUNT] = {
     [NX_UINT32] = IOTA_FNS(u32),  [NX_UINT64] = IOTA_FNS(u64),
 };
 
+/* An iota of [a], a dtype of no loop of its own, along [axis]. */
+static void iota_converted(const nx_array *a, int axis) {
+  enum { SLOT = NX_CPU_SLOT / 8 };
+  int64_t v[SLOT];
+  int r = a->rank;
+  int64_t idx[NX_MAX_RANK] = {0}, n = a->dim[r - 1];
+  nx_cpu_block b = {.n1 = 1, .n2 = 1};
+  b.s0[0] = a->dim[2 * r - 1];
+  for (;;) {
+    int64_t p = a->offset;
+    for (int i = 0; i < r - 1; i++) p += idx[i] * a->dim[r + i];
+    for (int64_t i = 0; i < n; i += SLOT) {
+      b.n0 = n - i < SLOT ? n - i : SLOT;
+      b.at[0] = p + i * b.s0[0];
+      for (int64_t k = 0; k < b.n0; k++)
+        v[k] = axis == r - 1 ? i + k : idx[axis];
+      nx_cpu_unstage(a, &b, 0, (const uint8_t *)v, b.n0 * 8, NX_INT64);
+    }
+    int i = r - 2;
+    while (i >= 0 && ++idx[i] == a->dim[i]) idx[i--] = 0;
+    if (i < 0) return;
+  }
+}
+
 /* Elements of an iota's unit of work. */
 #define IOTA_UNIT (16 * 1024)
 
@@ -101,10 +127,11 @@ static void iota_body(int64_t lo, int64_t hi, int worker, void *ctx) {
   j->run(j->base, lo * IOTA_UNIT, end, j->inner, j->ext);
 }
 
+/* The external, of a float or integer dtype: nx_cpu.ml's apply0 refuses
+   the others by Prog.accepts0 before it calls. */
 value nx_cpu_iota(value vaxis, value vd) {
   int d = nx_array_dtype(vd), axis = Int_val(vaxis);
   const iota_fns *f = &iotas[d];
-  if (f->run == NULL) return Val_int(NX_DECLINED);
   nx_operand in[1] = {{vd, d, 1}};
   nx_array a[1];
   int e = nx_read(1, in, a);
@@ -116,7 +143,8 @@ value nx_cpu_iota(value vaxis, value vd) {
   int64_t numel = 1, inner = 1;
   for (int i = 0; i < a->rank; i++) numel *= a->dim[i];
   for (int i = axis + 1; i < a->rank; i++) inner *= a->dim[i];
-  if (numel > 0 && (a->flags & NX_CONTIGUOUS)) {
+  if (numel > 0 && f->run == NULL) iota_converted(a, axis);
+  else if (numel > 0 && (a->flags & NX_CONTIGUOUS)) {
     int w = a->bits / 8;
     iota_job j = {a->base + a->offset * w, numel, inner, a->dim[axis], f->run};
     int64_t units = (numel + IOTA_UNIT - 1) / IOTA_UNIT;
