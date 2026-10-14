@@ -1068,7 +1068,9 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
 
 (* Fill, and Iota along each axis, into a C-contiguous destination at an
    offset into a larger buffer, mid-byte for a sub-byte dtype, store what
-   they store into a fresh array and leave the elements around it. *)
+   they store into a fresh array and leave the elements around it; a
+   library that declines one there declines it inside too, writing
+   nothing. *)
 let law_apply0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
     =
   let module K = (val b.kernels) in
@@ -1076,21 +1078,31 @@ let law_apply0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
   let strides = L.strides (L.contiguous s) in
   let w = max 1 (D.bits dt / 8) in
   cover "sub-byte, mid-byte" (D.bits dt < 8 && lead mod (8 / D.bits dt) <> 0);
-  cover "on the job's threads" (n >= 1_000_000);
+  if Rig.equal b.device Rig.host then
+    cover "on the job's threads" (n >= 1_000_000);
   let inside k =
     let whole = on b (seeded dt [| lead + n + trail |] seed) in
     let dst = A.v dt (L.v ~offset:lead ~strides s) (A.buffer whole) in
     let fresh = A.create b.device dt s in
-    equal ~msg:"fresh" answer A.Done (K.apply0 k ~dst:fresh);
-    let before = bits_of (host whole) and e = bits_of (host fresh) in
-    equal ~msg:"inside" answer A.Done (K.apply0 k ~dst);
-    let want =
-      Array.mapi
-        (fun i x ->
-          if i / w >= lead && i / w < lead + n then e.(i - (lead * w)) else x)
-        before
-    in
-    equal (array int) want (bits_of (host whole))
+    let before = bits_of (host whole) in
+    match K.apply0 k ~dst:fresh with
+    | A.Declined ->
+        check_declined b (K0 k) (D.Any dt);
+        equal ~msg:"inside" answer A.Declined (K.apply0 k ~dst);
+        equal ~msg:"declined writes nothing" (array int) before
+          (bits_of (host whole))
+    | r ->
+        equal ~msg:"fresh" answer A.Done r;
+        let e = bits_of (host fresh) in
+        equal ~msg:"inside" answer A.Done (K.apply0 k ~dst);
+        let want =
+          Array.mapi
+            (fun i x ->
+              if i / w >= lead && i / w < lead + n then e.(i - (lead * w))
+              else x)
+            before
+        in
+        equal (array int) want (bits_of (host whole))
   in
   let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
   inside (P.Fill (String.init (Array.length e) (fun i -> Char.chr e.(i))));
@@ -1112,7 +1124,7 @@ let fill_insides =
      (d, s, around, seed))
 
 (* Sub-byte destinations of a million elements, starting and ending
-   mid-byte. *)
+   mid-byte, on nx.cpu's job threads: its tables alone run them. *)
 let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
@@ -1891,7 +1903,8 @@ let laws (b : Support.backend) =
       prop "fill stores its element and iota each index"
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
-      prop ~examples:large_fills
+      prop
+        ~examples:(if Rig.equal b.device Rig.host then large_fills else [])
         "fill and iota store inside a buffer and nothing around it"
         fill_insides
         (run (law_apply0_inside b));
