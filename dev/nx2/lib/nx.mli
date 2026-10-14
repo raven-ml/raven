@@ -661,9 +661,9 @@ val scatter :
 
     Each raises [Invalid_argument] naming itself if the shapes do not broadcast,
     or if its operation does not take the operands' dtype: what each takes is
-    stated with it. The host computes every dtype stated; on a set whose kernels
-    do not compute one, as the GPU libraries complex numbers today, the function
-    raises naming itself. *)
+    stated with it. The host computes every dtype stated. Where a device's
+    kernels do not compute one, as a GPU's may not compute complex numbers,
+    the function raises naming itself. *)
 
 val add : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [add a b] is the elementwise sum. Every dtype but booleans. *)
@@ -1098,23 +1098,27 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A reduction folds [x]'s elements along [axes], every axis by default, a
     negative one counted from the end, and drops them, or keeps each with extent
     [1] where [keepdims]. Its order of association depends on the shape alone. A
-    float result that a NaN reaches is the first NaN in C order. The float
+    float result that a NaN reaches is the first NaN in C order. A complex
+    number with a NaN part is a NaN to {!prod}, {!max}, {!min}, their
+    positions and scans; {!sum} and {!cumsum} add the parts apart. The float
     formats narrower than 32 bits accumulate at [float32] and round once.
 
     Each raises [Invalid_argument] naming itself for an axis outside [x]'s rank
-    or repeated, or a dtype it does not take. *)
+    or repeated, or a dtype it does not take. The host computes every dtype
+    stated. Where a device's kernels do not compute one, as a GPU's may not
+    compute complex numbers, the function raises naming itself. *)
 
 val sum : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sum ~axes x] adds the elements from [+0]: a sum of [-0.] terms is [+0.],
     and a sum of none is [+0.]. Integers wrap. Every dtype but booleans. *)
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [prod ~axes x] multiplies the elements from [1], as {!sum}. Floats and
-    integers. *)
+(** [prod ~axes x] multiplies the elements from the first, as {!sum}, and a
+    product of none is [1]. Floats, integers and complex numbers. *)
 
 val max : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [max ~axes x] is the greatest element, as {!maximum} orders them: [-0.]
-    below [+0.], any on booleans. Floats, integers and booleans.
+    below [+0.], any on booleans. Every dtype.
 
     Raises [Invalid_argument] where an axis it reduces is empty. *)
 
@@ -1143,7 +1147,7 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('v, 's, 'd) t -> 'd int64_t
     greatest as {!max} orders them: the first NaN where there is one, and
     [1] for [[-0.; 0.]]. Without [axis], the position in C order among all of
     [x]'s elements, of rank [0], or every axis of extent [1] where
-    [keepdims]. Floats, integers and booleans, as {!max}.
+    [keepdims]. Every dtype.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank,
     or where there is no element to choose from. *)
@@ -1213,12 +1217,11 @@ val cumsum : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     dtype it does not take. *)
 
 val cumprod : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [cumprod ~axis x] is the running product, as {!cumsum}. Floats and integers.
-*)
+(** [cumprod ~axis x] is the running product, as {!cumsum}. Floats, integers
+    and complex numbers, as {!prod}. *)
 
 val cummax : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [cummax ~axis x] is the running {!max}, as {!cumsum}. Floats, integers and
-    booleans. *)
+(** [cummax ~axis x] is the running {!max}, as {!cumsum}. Every dtype. *)
 
 val cummin : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [cummin ~axis x] is the running {!min}, as {!cummax}. *)

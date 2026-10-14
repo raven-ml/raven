@@ -284,10 +284,8 @@ let documented (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
   match (D.kind dt, m) with
   | (D.Float | D.Signed | D.Unsigned), _ -> true
   | D.Boolean, (Max | Min) -> true
-  | D.Complex, Sum -> true
-  | D.Boolean, (Sum | Prod | Logsumexp)
-  | D.Complex, (Prod | Max | Min | Logsumexp) ->
-      false
+  | D.Complex, (Sum | Prod | Max | Min) -> true
+  | D.Boolean, (Sum | Prod | Logsumexp) | D.Complex, Logsumexp -> false
 
 let reductions =
   [
@@ -1341,6 +1339,279 @@ let test_arg_scan_cases () =
         (want [| z 1. 0.; z 2. a; z 2. a |] [| 0L; 1L; 1L |])
         (parts (arg Max D.Complex128 [| 3 |] [| z 1. 0.; z 2. a; z 5. 0. |])))
 
+(* Complex products, extremes and their first positions, reduced and scanned
+   through Nx on the host, against folds of their terms. A number with a NaN
+   part is a NaN. A product's terms are Gaussian integers whose parts are 0 or
+   ± a power of two, so every order of multiplication gives the exact product
+   but for the sign of a zero part: products compare by value, NaNs by bits. *)
+
+type zcase =
+  | Zcase : {
+      dt : (Complex.t, 's) D.t;
+      s : int array;
+      axes : int list option;
+      strided : bool;
+      xs : Complex.t array;
+    }
+      -> zcase
+
+let znan (c : Complex.t) = Float.is_nan c.re || Float.is_nan c.im
+let zbits (c : Complex.t) = (bits c.re, bits c.im)
+let pp_z ppf (c : Complex.t) = Format.fprintf ppf "%h%+hi" c.re c.im
+let z_bits = Testable.make ~pp:pp_z ~equal:(fun a b -> zbits a = zbits b)
+
+let z_value =
+  Testable.make ~pp:pp_z ~equal:(fun (a : Complex.t) b ->
+      if znan a || znan b then zbits a = zbits b
+      else a.re = b.re && a.im = b.im)
+
+(* A NaN of payload [k] in bits float32 keeps. *)
+let payload k = nan_with (Int64.shift_left (Int64.of_int k) 29)
+
+(* A NaN in one part or both. *)
+let nan_term =
+  let open Gen in
+  let* k = int_range 1 1000 in
+  let+ which = int_range 0 2 in
+  match which with
+  | 0 -> { Complex.re = payload k; im = 1. }
+  | 1 -> { Complex.re = -0.; im = payload k }
+  | _ -> { Complex.re = payload k; im = payload (k + 1) }
+
+(* Shapes of a few elements, and long ones: an output of more than a block's
+   1024 terms, a scan longer than a chunk's 4096, rows of many outputs. *)
+let zshape =
+  let open Gen in
+  frequency
+    [
+      (3, shape);
+      (1, map (fun n -> [| n |]) (int_range 3000 9000));
+      ( 1,
+        let* a = int_range 2 5 in
+        let+ b = int_range 17 1100 in
+        [| a; b |] );
+      ( 1,
+        let* a = int_range 17 1100 in
+        let+ b = int_range 2 40 in
+        [| a; b |] );
+    ]
+
+(* [xs] with at most [most] of its elements replaced by draws of [rare]. *)
+let sprinkle xs ~most rare =
+  let open Gen in
+  let n = Array.length xs in
+  if n = 0 then constant xs
+  else
+    let+ picks =
+      list ~size:(int_range 0 most) (pair (int_range 0 (n - 1)) rare)
+    in
+    let xs = Array.copy xs in
+    List.iter (fun (i, x) -> xs.(i) <- x) picks;
+    xs
+
+(* Terms of a product: units, zeros where [zeros], at most 40 of [1 ± i] and
+   [2], and NaNs where [nans]. Extremes: parts of a few values, so that ties
+   are common, signed zeros and infinities, and NaNs where [nans]. *)
+let zcase ~product =
+  let open Gen in
+  let z re im = { Complex.re; im } in
+  let make (type s) (dt : (Complex.t, s) D.t) =
+    let* s = zshape in
+    let* axes = axes_of (Array.length s) in
+    let* strided = bool in
+    let* nans = bool in
+    let n = Array.fold_left ( * ) 1 s in
+    let* xs =
+      if product then
+        let* zeros = bool in
+        let unit = of_list [ z 1. 0.; z (-1.) 0.; z 0. 1.; z 0. (-1.) ] in
+        let* xs =
+          array ~size:(constant n)
+            (frequency
+               [ (30, unit); ((if zeros then 1 else 0), constant (z 0. 0.)) ])
+        in
+        sprinkle xs ~most:40 (of_list [ z 1. 1.; z 1. (-1.); z 2. 0. ])
+      else
+        let part =
+          frequency
+            [
+              (8, of_list [ -1.; -0.; 0.; 1.; 2. ]);
+              (1, of_list [ Float.infinity; Float.neg_infinity ]);
+            ]
+        in
+        array ~size:(constant n)
+          (let* re = part in
+           let+ im = part in
+           z re im)
+    in
+    let+ xs = if nans then sprinkle xs ~most:3 nan_term else constant xs in
+    (* The terms as stored. *)
+    let xs = A.to_array (A.of_array dt s xs) in
+    Zcase { dt; s; axes; strided; xs }
+  in
+  with_pp
+    (fun ppf (Zcase { dt; s; axes; strided; _ }) ->
+      Format.fprintf ppf "%a %a over %s%s" D.pp dt pp_ints s
+        (match axes with
+        | None -> "all"
+        | Some l -> String.concat "," (List.map string_of_int l))
+        (if strided then ", transposed" else ""))
+    (let* c128 = bool in
+     if c128 then make D.Complex128 else make D.Complex64)
+
+(* A product starts from its first term, and is 1 for none. *)
+let product ts =
+  match (List.find_opt znan ts, ts) with
+  | Some t, _ -> t
+  | None, [] -> Complex.one
+  | None, t :: ts -> List.fold_left Complex.mul t ts
+
+(* Whether [t] is past [b] in Max's order, or Min's where [flip]: real parts,
+   then imaginary parts, [-0] below [+0], and a NaN past every number. *)
+let zbeats flip (t : Complex.t) (b : Complex.t) =
+  if znan t || znan b then znan t && not (znan b)
+  else
+    let part x y =
+      if x = y then Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+      else Float.compare x y
+    in
+    let c = part t.re b.re in
+    let c = if c <> 0 then c else part t.im b.im in
+    if flip then c < 0 else c > 0
+
+(* The first extreme of [ts] and its position, in one pass. *)
+let zextreme flip ts =
+  let _, best, at =
+    List.fold_left
+      (fun (i, best, at) t ->
+        if i = 0 || zbeats flip t best then (i + 1, t, i)
+        else (i + 1, best, at))
+      (0, Complex.zero, 0) ts
+  in
+  (best, Int64.of_int at)
+
+(* Steps of a running extreme and a running product: a NaN stays. *)
+let zrunning beats acc t =
+  if znan acc then acc else if beats t acc then t else acc
+
+let zprod acc t =
+  if znan acc then acc else if znan t then t else Complex.mul acc t
+
+let law_complex_prod (Zcase { dt; s; axes; strided; xs }) =
+  let ax = normal (Array.length s) axes in
+  let ts = terms s ax xs in
+  cover "more than a block of terms"
+    (Array.exists (fun t -> List.length t > 1024) ts);
+  cover "a NaN result" (Array.exists (fun t -> List.exists znan t) ts);
+  cover "a product other than a unit"
+    (Array.exists (fun t -> Complex.norm (product t) > 1.) ts);
+  cover "transposed" (strided && Array.length s > 1);
+  let x = transposed value strided (A.of_array dt s xs) in
+  equal ~msg:"prod" (array z_value) (Array.map product ts)
+    (read (Nx.prod ?axes x));
+  let axis = match axes with Some (a :: _) -> Some a | _ -> None in
+  let n = Array.length xs in
+  let want =
+    match axis with
+    | None -> running zprod [| n |] 0 xs
+    | Some a ->
+        running zprod s (List.hd (normal (Array.length s) (Some [ a ]))) xs
+  in
+  cover "a scan longer than a chunk" (n > 4096 && axis = None);
+  equal ~msg:"cumprod" (array z_value) want (read (Nx.cumprod ?axis x))
+
+let law_complex_extremes (Zcase { dt; s; axes; strided; xs }) =
+  let r = Array.length s in
+  let ax = normal r axes in
+  let ts = terms s ax xs in
+  let x = transposed value strided (A.of_array dt s xs) in
+  cover "a NaN result" (Array.exists (fun t -> List.exists znan t) ts);
+  cover "transposed" (strided && r > 1);
+  let empty = List.exists (fun a -> s.(a) = 0) ax in
+  List.iter
+    (fun (name, flip, f, arg, scan) ->
+      if not empty then begin
+        cover "more than a block of terms"
+          (Array.exists (fun t -> List.length t > 1024) ts);
+        equal ~msg:name (array z_bits)
+          (Array.map (fun t -> fst (zextreme flip t)) ts)
+          (read (f ?axes x))
+      end;
+      let axis = match axes with Some (a :: _) -> Some a | _ -> None in
+      let along = Option.map (fun a -> if a < 0 then a + r else a) axis in
+      let arg_terms =
+        match along with
+        | None -> [| Array.to_list xs |]
+        | Some a -> terms s [ a ] xs
+      in
+      let terms_along =
+        Option.fold ~none:true ~some:(fun a -> s.(a) > 0) along
+      in
+      if Array.length xs > 0 && terms_along then
+        equal ~msg:("arg" ^ name) (array int64)
+          (Array.map (fun t -> snd (zextreme flip t)) arg_terms)
+          (read (arg ?axis x));
+      let want =
+        match along with
+        | None -> running (zrunning (zbeats flip)) [| Array.length xs |] 0 xs
+        | Some a -> running (zrunning (zbeats flip)) s a xs
+      in
+      equal ~msg:("cum" ^ name) (array z_bits) want (read (scan ?axis x)))
+    [
+      ( "max",
+        false,
+        (fun ?axes x -> Nx.max ?axes x),
+        (fun ?axis x -> Nx.argmax ?axis x),
+        fun ?axis x -> Nx.cummax ?axis x );
+      ( "min",
+        true,
+        (fun ?axes x -> Nx.min ?axes x),
+        (fun ?axis x -> Nx.argmin ?axis x),
+        fun ?axis x -> Nx.cummin ?axis x );
+    ]
+
+let test_complex_cases () =
+  let z re im = { Complex.re; im } in
+  let v dt xs = value (A.of_array dt [| Array.length xs |] xs) in
+  equal ~msg:"a product of no term is 1 + 0i" (array z_bits) [| z 1. 0. |]
+    (read (Nx.prod (v D.Complex64 [||])));
+  (* (∞ + 0i)(0 + i) is NaN + ∞i, as Mul's textbook product gives it. *)
+  let quiet = Int64.float_of_bits 0x7ff8_0000_0000_0000L in
+  equal ~msg:"a NaN product of numbers is the quiet NaN in each part"
+    (array z_bits) [| z quiet quiet |]
+    (read (Nx.prod (v D.Complex128 [| z Float.infinity 0.; z 0. 1. |])));
+  (* 1 + 0i times either would make a NaN part or flip a zero's sign. *)
+  equal ~msg:"a product of one term is that term" (array z_bits)
+    [| z Float.infinity 0.; z 3. (-0.) |]
+    (read
+       (Nx.prod ~axes:[ 1 ]
+          (value
+             (A.of_array D.Complex64 [| 2; 1 |]
+                [| z Float.infinity 0.; z 3. (-0.) |]))));
+  equal ~msg:"and so is a scan's first result" (array z_bits)
+    [| z (-0.) (-0.); z 0. (-0.) |]
+    (read (Nx.cumprod (v D.Complex128 [| z (-0.) (-0.); z 1. 0. |])));
+  let ws = [| z 1. 2.; z 2. (-5.); z 2. (-7.); z 2. (-5.) |] in
+  equal ~msg:"max orders real parts, then imaginary parts" (array z_bits)
+    [| z 2. (-5.) |]
+    (read (Nx.max (v D.Complex128 ws)));
+  equal ~msg:"argmax: the first of the greatest" (array int64) [| 1L |]
+    (read (Nx.argmax (v D.Complex128 ws)));
+  equal ~msg:"min: a -0 part below +0" (array z_bits) [| z 1. (-0.) |]
+    (read (Nx.min (v D.Complex64 [| z 1. 0.; z 1. (-0.) |])));
+  names "max" (fun () -> Nx.max (v D.Complex64 [||]));
+  names "argmin" (fun () -> Nx.argmin (v D.Complex128 [||]))
+
+let complex_group =
+  group "complex reductions"
+    [
+      prop "prod and cumprod are the products of their terms"
+        (zcase ~product:true) law_complex_prod;
+      prop "max, min, their args and scans are the first extremes"
+        (zcase ~product:false) law_complex_extremes;
+      test "complex reductions' cases" test_complex_cases;
+    ]
+
 (* The prefix law: a scan's result at an index is a function of the terms up
    to it alone, for each reduction, by the expansion on {!Core} and on the
    host. Axes and prefixes are 1 or 2 long, a power of two or next to one,
@@ -1607,4 +1878,5 @@ let reductions_group =
         test_scan_expansions;
     ]
 
-let () = exit (run "nx reduce" [ reductions_group; optional_group ])
+let () =
+  exit (run "nx reduce" [ reductions_group; complex_group; optional_group ])

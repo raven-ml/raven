@@ -241,14 +241,18 @@ enum {
 #define NX_CPU_STATEFUL (NX_CPU_REDUCTIONS - NX_CPU_MONOIDS)
 
 /* The state of a block of an output's terms, or of several merged: Arg's
-   extreme's bits [v] and its position [at], or a value [s] of the terms
-   and their count [n]: Logsumexp's maximum, or its sum, and Moments' sums,
-   [d] the deviations' with [s] their squares'. A float is its dtype's
-   value, which a double holds exactly. */
+   extreme's bits [v], a complex128's at most, and its position [at], or a
+   value [s] of the terms and their count [n]: Logsumexp's maximum, or its
+   sum, and Moments' sums, [d] the deviations' with [s] their squares'. A
+   float is its dtype's value, which a double holds exactly. */
 typedef struct {
   int64_t n, at;
-  uint64_t v;
-  double s, d;
+  union {
+    uint8_t v[16];
+    struct {
+      double s, d;
+    };
+  };
 } nx_cpu_state;
 
 /* A pass of a stateful reduction at a dtype (reduce.c). [block] stores

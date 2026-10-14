@@ -119,38 +119,47 @@ let edges =
   |]
 
 (* [n] elements of [dt] as the bytes of a C-contiguous array, from [seed]:
-   floats of full precision in (-4, 4), with [-0.], infinities and NaNs of
-   drawn payloads at the rate [specials] (one in that many, none for 0);
-   integers small, or at the edges of the widths at that rate. *)
+   floats, and complex numbers' parts, of full precision in (-4, 4), with
+   [-0.], infinities and NaNs of drawn payloads at the rate [specials] (one
+   in that many, none for 0); integers small, or at the edges of the widths
+   at that rate. *)
 let elements (type v s) (dt : (v, s) D.t) n ~specials seed =
   let r = Random.State.make [| seed |] in
   let special () = specials > 0 && Random.State.int r specials = 0 in
   let pick a = a.(Random.State.int r (Array.length a)) in
   let b = Bytes.create (max 1 (D.bytes dt n)) in
+  let f32 at =
+    let bits =
+      if special () then
+        pick (Array.append nans32 [| 0x80000000l; 0x7F800000l; 0xFF800000l |])
+      else Int32.bits_of_float (full r 23)
+    in
+    Bytes.set_int32_le b at bits
+  in
+  let f64 at =
+    let bits =
+      if special () then
+        pick
+          (Array.append nans64
+             [|
+               Int64.bits_of_float (-0.);
+               Int64.bits_of_float infinity;
+               Int64.bits_of_float neg_infinity;
+             |])
+      else Int64.bits_of_float (full r 52)
+    in
+    Bytes.set_int64_le b at bits
+  in
   for i = 0 to n - 1 do
     match dt with
-    | D.Float32 ->
-        let bits =
-          if special () then
-            pick
-              (Array.append nans32
-                 [| 0x80000000l; 0x7F800000l; 0xFF800000l |])
-          else Int32.bits_of_float (full r 23)
-        in
-        Bytes.set_int32_le b (4 * i) bits
-    | D.Float64 ->
-        let bits =
-          if special () then
-            pick
-              (Array.append nans64
-                 [|
-                   Int64.bits_of_float (-0.);
-                   Int64.bits_of_float infinity;
-                   Int64.bits_of_float neg_infinity;
-                 |])
-          else Int64.bits_of_float (full r 52)
-        in
-        Bytes.set_int64_le b (8 * i) bits
+    | D.Float32 -> f32 (4 * i)
+    | D.Float64 -> f64 (8 * i)
+    | D.Complex64 ->
+        f32 (8 * i);
+        f32 ((8 * i) + 4)
+    | D.Complex128 ->
+        f64 (16 * i);
+        f64 ((16 * i) + 8)
     | _ when D.bits dt >= 8 ->
         let v =
           if special () then pick edges
@@ -562,21 +571,24 @@ let op (D.Any dt as d) m =
   | Logsumexp -> invalid_arg "op: Logsumexp"
 
 (* [ts] reduced in nx.cpu's order: blocks of 1024 terms in 16 lanes from
-   the identity, term t into lane t mod 16, the lanes' tree, then the
-   blocks' tree whose left part holds the largest power of two of blocks
-   below their count. An extreme's lanes start from its first term, which
-   is no order's choice: the extremes are exact. *)
-let ordered (f, id) ts =
+   the identity, or from their first term where [first], term t into lane
+   t mod 16, the lanes' tree, in which a lane holding no term takes no
+   part, then the blocks' tree whose left part holds the largest power of
+   two of blocks below their count. *)
+let ordered ?(first = false) (f, id) ts =
   let k = Array.length ts in
   let block x =
     let l = Array.make 16 id in
-    for t = x * 1024 to min k ((x + 1) * 1024) - 1 do
-      l.(t mod 16) <- f l.(t mod 16) ts.(t)
+    let hi = min k ((x + 1) * 1024) in
+    for t = x * 1024 to hi - 1 do
+      l.(t mod 16) <-
+        (if first && t - (x * 1024) < 16 then ts.(t) else f l.(t mod 16) ts.(t))
     done;
+    let used = min 16 (hi - (x * 1024)) in
     List.iter
       (fun w ->
         for i = 0 to w - 1 do
-          l.(i) <- f l.(i) l.(i + w)
+          if i + w < used then l.(i) <- f l.(i) l.(i + w)
         done)
       [ 8; 4; 2; 1 ];
     l.(0)
@@ -667,20 +679,16 @@ let position s idx =
   Array.iteri (fun i j -> p := (!p * s.(i)) + j) idx;
   !p
 
-(* The expected results of [c] in C order of the result's indices. *)
-let expected c =
-  let (A.Any x) = c.x in
-  let m = op (D.Any (A.dtype x)) c.monoid in
-  let made = made (D.Any (A.dtype x)) in
-  let ts = terms c.x in
-  if not c.scan then
-    Array.of_list
-      (List.map (fun o -> settle made o (ordered m o)) (outputs c ts))
+(* The results of [c] in C order of the result's indices, from its terms
+   [ts]: [reduce] of each output's terms, or [scan] of each slice's. [fill]
+   fills the array before. *)
+let results c ts ~reduce ~scan ~fill =
+  if not c.scan then Array.of_list (List.map reduce (outputs c ts))
   else
     let s = shape_of c.x and a = c.axes.(0) in
     let r = Array.length s in
     let ks = Array.of_list (List.filter (( <> ) a) (List.init r Fun.id)) in
-    let y = Array.make (total s) Some_nan in
+    let y = Array.make (total s) fill in
     List.iter
       (fun o ->
         let idx = Array.make r 0 in
@@ -690,9 +698,18 @@ let expected c =
           position s idx
         in
         let slice = Array.init s.(a) (fun j -> ts.(at j)) in
-        Array.iteri (fun j w -> y.(at j) <- w) (scanned made m slice))
+        Array.iteri (fun j w -> y.(at j) <- w) (scan slice))
       (indices (Array.map (fun i -> s.(i)) ks));
     y
+
+(* The expected results of [c] in C order of the result's indices. *)
+let expected c =
+  let (A.Any x) = c.x in
+  let m = op (D.Any (A.dtype x)) c.monoid in
+  let made = made (D.Any (A.dtype x)) in
+  results c (terms c.x) ~fill:Some_nan
+    ~reduce:(fun o -> settle made o (ordered m o))
+    ~scan:(scanned made m)
 
 (* The kernels' result's bits in C order. *)
 let got y =
@@ -718,6 +735,237 @@ let differ want y =
         bad := Printf.sprintf "result %d: %Lx, expected %s" i (bits_of g.(i)) (show w) :: !bad)
     want;
   List.rev !bad
+
+(* Complex numbers *)
+
+(* A complex term: its parts' values, which a double holds exactly, and
+   their bits as stored, a float32's sign-extended. A number with a NaN part
+   is a NaN. *)
+type z = { re : float; im : float; bits : int64 * int64 }
+
+let znan z = Float.is_nan z.re || Float.is_nan z.im
+
+(* The number of parts [re] and [im], of float32 where [narrow]. *)
+let zof narrow re im =
+  let b v =
+    if narrow then Int64.of_int32 (Int32.bits_of_float v)
+    else Int64.bits_of_float v
+  in
+  { re; im; bits = (b re, b im) }
+
+let narrow (A.Any x) = D.equal (A.dtype x) D.Complex64
+
+(* [x]'s complex elements in C order of indices. *)
+let zterms (A.Any x as a) =
+  let c = A.copy x in
+  let bits =
+    match A.dtype c with
+    | D.Complex64 ->
+        let p = Option.get (A.bitcast D.Float32 c) in
+        Array.map Int64.of_int32 (A.to_array (Option.get (A.bitcast D.Int32 p)))
+    | D.Complex128 ->
+        let p = Option.get (A.bitcast D.Float64 c) in
+        A.to_array (Option.get (A.bitcast D.Int64 p))
+    | _ -> invalid_arg "zterms: not a complex array"
+  in
+  let v b =
+    if narrow a then Int32.float_of_bits (Int64.to_int32 b)
+    else Int64.float_of_bits b
+  in
+  Array.init
+    (Array.length bits / 2)
+    (fun i ->
+      let rb = bits.(2 * i) and ib = bits.((2 * i) + 1) in
+      { re = v rb; im = v ib; bits = (rb, ib) })
+
+(* The float32 next to [x] toward [y]. *)
+let step32 x y =
+  if x = 0. then Float.copy_sign 0x1p-149 y
+  else
+    let b = Int32.bits_of_float x in
+    Int32.float_of_bits
+      (if y > x = (x > 0.) then Int32.succ b else Int32.pred b)
+
+(* [a b + c] of float32s rounded once to float32. The exact product is a
+   double; their sum [s] rounds as the exact value does, since every
+   float32 midpoint is a double, but at a midpoint, where the sum's error
+   [e] (Knuth's TwoSum) decides. *)
+let fma32 a b c =
+  let p = Sys.opaque_identity (a *. b) in
+  let s = p +. c in
+  let r = round32 s in
+  if r = s || not (Float.is_finite s) then r
+  else
+    let t = s -. p in
+    let e = (p -. (s -. t)) +. (c -. t) in
+    let o = step32 r s in
+    if (r +. o) /. 2. <> s || e = 0. then r
+    else if e > 0. = (o > r) then o
+    else r
+
+(* nx_kinds.h's complex Mul: each part one fma over the other product. *)
+let zmul narrow a b =
+  let rd = if narrow then round32 else Fun.id in
+  let fma = if narrow then fma32 else Float.fma in
+  let ii = rd (a.im *. b.im) and ir = rd (a.im *. b.re) in
+  zof narrow (fma a.re b.re (-.ii)) (fma a.re b.im ir)
+
+(* The order of real parts, then imaginary parts, [-0] below [+0]. *)
+let zorder a b =
+  let part x y =
+    if x = y then Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+    else Float.compare x y
+  in
+  let c = part a.re b.re in
+  if c <> 0 then c else part a.im b.im
+
+(* [m] at the complex dtype, float32's where [narrow], and its identity: a
+   NaN operand of an extreme gives the first. *)
+let zop narrow m =
+  let extreme keep a b =
+    if znan a then a
+    else if znan b then b
+    else if keep (zorder a b) then a
+    else b
+  in
+  match m with
+  | Prod -> (zmul narrow, zof narrow 1. 0.)
+  | Max -> (extreme (fun c -> c >= 0), zof narrow neg_infinity neg_infinity)
+  | Min -> (extreme (fun c -> c <= 0), zof narrow infinity infinity)
+  | Sum | Logsumexp -> invalid_arg "zop: Sum or Logsumexp"
+
+(* The quiet NaN of a clear sign bit in each part. *)
+let zmade narrow =
+  let q = Int64.float_of_bits 0x7FF8_0000_0000_0000L in
+  (zof narrow q q).bits
+
+(* A NaN result's bits are its first NaN term's, else [zmade]'s. *)
+let zsettle narrow ts r =
+  if not (znan r) then r.bits
+  else
+    match Array.find_opt znan ts with
+    | Some t -> t.bits
+    | None -> zmade narrow
+
+(* [ts] scanned as [scanned] does, in bits, but from the first term where
+   [first]: the first chunk then has no carry. *)
+let zscanned narrow ~first ((f, id) as m) ts =
+  let n = Array.length ts in
+  let out = Array.make n id in
+  let step a t = match a with None -> t | Some a -> f a t in
+  let carry = ref (if first then None else Some id) in
+  for c = 0 to ((n + 4095) / 4096) - 1 do
+    let lo = 4096 * c and hi = min n (4096 * (c + 1)) in
+    let acc = ref !carry in
+    for i = lo to hi - 1 do
+      acc := Some (step !acc ts.(i));
+      out.(i) <- Option.get !acc
+    done;
+    carry := Some (step !carry (ordered ~first m (Array.sub ts lo (hi - lo))))
+  done;
+  let first = Array.find_index znan ts in
+  Array.mapi
+    (fun i v ->
+      match first with
+      | Some k when i >= k -> ts.(k).bits
+      | _ -> if znan v then zmade narrow else v.bits)
+    out
+
+(* A product starts from its first term: 1 + 0i times a term would change
+   its signed zeros and make NaN parts from its infinite ones. *)
+let zexpected c =
+  let narrow = narrow c.x and first = c.monoid = Prod in
+  let m = zop narrow c.monoid in
+  results c (zterms c.x) ~fill:(0L, 0L)
+    ~reduce:(fun o -> zsettle narrow o (ordered ~first m o))
+    ~scan:(zscanned narrow ~first m)
+
+(* Complex products and extremes, reduced and scanned, in nx.cpu's order,
+   bit for bit. *)
+let law_complex (b : Support.backend) c =
+  let s = shape_of c.x in
+  let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
+  cover "no term" (per = 0 && total (result_shape c) > 0);
+  cover "several blocks" (per > 1024);
+  let ts = zterms c.x in
+  cover "a NaN term" (Array.exists znan ts);
+  (* A product whose last block leaves lanes without a term, which its tree
+     leaves out, of a zero part, whose sign 1 + 0i times would change. *)
+  let zero t = t.re = 0. || t.im = 0. in
+  cover "a product of a lane of no term and a zero part"
+    (c.monoid = Prod && per mod 1024 > 0 && per mod 1024 < 16
+    && Array.exists zero ts);
+  List.iter
+    (fun v -> cover v (List.mem v c.views))
+    [ "permuted"; "stepped"; "reversed"; "broadcast" ];
+  match run b c with
+  | None -> failf "%s declined a complex %s" b.name (monoid_name c.monoid)
+  | Some y ->
+      let want = zexpected c and got = zterms y in
+      let bad = ref [] in
+      Array.iteri
+        (fun i (wr, wi) ->
+          let gr, gi = got.(i).bits in
+          if (gr, gi) <> (wr, wi) && List.length !bad < 8 then
+            bad :=
+              Printf.sprintf "result %d: %Lx %Lx, expected %Lx %Lx" i gr gi wr
+                wi
+              :: !bad)
+        want;
+      equal (list string) [] (List.rev !bad)
+
+let complex_case =
+  Gen.with_pp pp_case
+    (case_of ~monoids:[ Prod; Max; Min ] D.[ Any Complex64; Any Complex128 ])
+
+(* [n] terms, -0 - i then 1 - 0i, whose products in every order are
+   -0 - i; 1 + 0i times that would be +0 - i. *)
+let units n =
+  let z re im = { Complex.re; im } in
+  A.Any
+    (A.of_array D.Complex64 [| n |]
+       (Array.init n (fun i -> if i = 0 then z (-0.) (-1.) else z 1. (-0.))))
+
+(* Products of one term, which are that term: -0 - 0i, which 1 + 0i times
+   would make (+0, -0), 3 - 0i, (3, +0), and inf + 0i, (inf, NaN); the
+   scans of two, whose first results are so; and scans past a chunk, of
+   one slice, of slices side by side and of rows. *)
+let complex_examples =
+  let one ~scan dt ts =
+    {
+      scan;
+      monoid = Prod;
+      axes = [| 0 |];
+      x = A.Any (A.of_array dt [| Array.length ts |] ts);
+      views = [];
+    }
+  in
+  let z re im = Complex.{ re; im } in
+  [
+    one ~scan:false D.Complex128 [| z (-0.) (-0.) |];
+    one ~scan:false D.Complex64 [| z 3. (-0.) |];
+    one ~scan:false D.Complex128 [| z infinity 0. |];
+    one ~scan:true D.Complex64 [| z infinity 0.; z 2. 0. |];
+    one ~scan:true D.Complex128 [| z (-0.) (-0.); z 1. 1. |];
+  ]
+  @ List.map
+      (fun (s, axis) ->
+        let plain =
+          {
+            perm = Array.init (Array.length s) Fun.id;
+            stepped = false;
+            reversed = None;
+            broadcast = false;
+          }
+        in
+        {
+          scan = true;
+          monoid = Prod;
+          axes = [| axis |];
+          x = operand_with units s plain;
+          views = [];
+        })
+      [ ([| 9000 |], 0); ([| 3; 5000 |], 1); ([| 4100; 3 |], 0) ]
 
 (* Covers *)
 
@@ -856,11 +1104,17 @@ let law_declined (b : Support.backend) c =
 
 (* nx.cpu's cases and order *)
 
-(* Whether nx_cpu.mli says nx.cpu computes [c]: the base dtypes, booleans
-   for the extremes alone. *)
-let cpu_computes c =
+(* Whether [b] is nx.cpu under one of its tables. *)
+let on_cpu (b : Support.backend) =
+  List.exists (fun (c : Support.backend) -> c.name = b.name) Support.cpus
+
+(* Whether [b] computes [c] as nx_cpu.mli says nx.cpu does: the base
+   dtypes, booleans for the extremes alone, and on nx.cpu complex numbers
+   but for sums, which nx.cuda declines. *)
+let cpu_computes b c =
   let (A.Any x) = c.x in
   List.mem (D.Any (A.dtype x)) base
+  || (on_cpu b && D.is D.Complex (A.dtype x) && c.monoid <> Sum)
 
 (* Whether a float result of [c] is a NaN made from numbers: one whose terms,
    a scan's up to it, hold no NaN. *)
@@ -883,12 +1137,13 @@ let law_order (b : Support.backend) c =
   covers c;
   cover "a NaN made from numbers" (makes_nan c);
   match run b c with
-  | None when cpu_computes c -> failf "%s declined a case it states it computes" b.name
+  | None when cpu_computes b c ->
+      failf "%s declined a case it states it computes" b.name
   | None -> cover "declined" true
   | Some y -> equal (list string) [] (differ (expected c) y)
 
 let law_computes b c =
-  let computes = cpu_computes c in
+  let computes = cpu_computes b c in
   cover "computed" computes;
   cover "declined" (not computes);
   equal ~msg:"computed" bool computes (Option.is_some (run b c))
@@ -2214,6 +2469,9 @@ let cpu (b : Support.backend) =
     [
       prop ~examples:dot_examples "a sum of one axis is a contraction with ones"
         dots (run (law_contract b));
+      prop ~examples:complex_examples
+        "complex products and extremes fold in nx.cpu's order" complex_case
+        (run (law_complex b));
       prop ~count:20 ~examples:large_examples "one thread gives the job's bits"
         large (run (law_threads b));
       prop ~examples:padded_examples "a padded load reduces as the array it reads"

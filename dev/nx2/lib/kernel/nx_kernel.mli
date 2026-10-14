@@ -62,7 +62,10 @@ type extreme = Max | Min
     the reduced axes' indices.
 
     - [Monoid Sum] adds the terms from [+0], as {!Prog.Add} does: a sum of [-0]
-      terms is [+0]. [Monoid Prod] multiplies them from [1]. Integers wrap.
+      terms is [+0]. [Monoid Prod] multiplies them from the first, never by
+      [1], which would change a complex term's signed zeros or make NaN
+      parts from its infinite ones; the product of no term is [1]. Integers
+      wrap.
     - [Monoid Max] and [Monoid Min] are {!Prog.Maximum} and {!Prog.Minimum} of
       the terms: [-0] below [+0], any and all on booleans.
     - [Monoid Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum:
@@ -77,7 +80,10 @@ type extreme = Max | Min
 
     A NaN result, where a term it reduces is a NaN, is the first such term, its
     bits unchanged; with no NaN term it is the quiet NaN of a clear sign bit,
-    the NaN {!Prog}'s kinds make from numbers on every target. A float [Sum]
+    the NaN {!Prog}'s kinds make from numbers on every target. To every
+    reduction but [Sum], a complex number with a NaN part is a NaN, and the
+    NaN made from numbers is that quiet NaN in each part; a complex [Sum]
+    adds each part as a float sum. A float [Sum]
     or [Prod] associates in an order that is a function of the shapes alone
     ({!section-orders}), and each kernel library states its order, the
     bounds of [Logsumexp], reduced and scanned, and those of [Moments]
@@ -131,9 +137,10 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
 
     {e Lane order} puts the terms into blocks of 1024 consecutive numbers and,
     within a block, into 16 lanes by number modulo 16, each lane adding its
-    terms in increasing number from [+0] ([1] for a product). Lane [i] takes
-    lane [i + 8] for [i] below 8, then lane [i + 4] for [i] below 4, then
-    [i + 2] for [i] below 2, then lane 0 takes lane 1. The blocks are combined
+    terms in increasing number from [+0], or multiplying them from its
+    first. Lane [i] takes lane [i + 8] for [i] below 8, then lane [i + 4]
+    for [i] below 4, then [i + 2] for [i] below 2, then lane 0 takes lane
+    1, a lane holding no term taking no part. The blocks are combined
     by a binary tree whose left part holds the largest power of two of blocks
     below their count, each part combined the same way; then [init] is added.
     *)

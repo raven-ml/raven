@@ -186,8 +186,10 @@ let test_arg_cases () =
   equal int64 1L (at Nx.argmin (f64 [| 1.; nan; nan; -5. |]));
   equal int64 0L (at Nx.argmax (Nx.create Nx.uint8 [| 2 |] [| 200; 1 |]));
   equal int64 1L (at Nx.argmax (Nx.create Nx.bool [| 3 |] [| false; true; true |]));
-  invalid ~by:"Nx.argmax" (fun () ->
-      Nx.argmax (Nx.create Nx.complex128 [| 1 |] [| Complex.one |]));
+  equal int64 1L
+    (at Nx.argmax
+       (Nx.create Nx.complex128 [| 3 |]
+          [| Complex.one; { re = 1.; im = 2. }; { re = 1.; im = 2. } |]));
   let m = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 9l; 3l; 7l; 2l; 9l |] in
   equal int64 1L (at Nx.argmax m);
   equal (array int) [| 1; 1 |] (Nx.shape (Nx.argmax ~keepdims:true m));

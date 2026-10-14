@@ -154,7 +154,8 @@ external moments_c :
   Nx_array.answer = "nx_cpu_moments_scan_byte" "nx_cpu_moments_scan"
 
 (* Whether the kernels reduce terms of [dt] by [m]: the four monoids at
-   float32, float64 and the 8- to 64-bit integers, extremes at bool. *)
+   float32, float64 and the 8- to 64-bit integers, extremes at bool, and
+   all but [Sum] at the complex dtypes. *)
 let reduces (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
   match (m, dt) with
   | Logsumexp, _ -> false
@@ -163,10 +164,12 @@ let reduces (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
       | Int64 | Uint64 ) ) ->
       true
   | (Max | Min), Bool -> true
+  | (Prod | Max | Min), (Complex64 | Complex128) -> true
   | (Sum | Prod), Bool -> false
+  | Sum, (Complex64 | Complex128) -> false
   | ( (Sum | Prod | Max | Min),
       ( Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn
-      | Int4 | Uint4 | Complex128 | Complex64 | Bit ) ) ->
+      | Int4 | Uint4 | Bit ) ) ->
       false
 
 (* Whether the kernels compute [Logsumexp] and [Moments] of terms of [dt]. *)
@@ -183,14 +186,18 @@ let of_monoid : Nx_kernel.monoid -> reduction = function
   | Logsumexp -> Logsumexp
 
 (* The reduction the kernels compute for [r] of [x] into [dsts], if they
-   do: an [Arg] at the dtypes [Sum] reduces, into [x]'s dtype and int64. *)
+   do: an [Arg] at the dtypes [Max] reduces but bool, into [x]'s dtype and
+   int64. *)
 let reduction (r : Nx_kernel.reduction) x dsts =
   let dt = Nx_array.dtype x in
   match (r, dsts) with
   | Monoid Logsumexp, [| y |] when floats dt && same y x -> Some Logsumexp
   | Monoid m, [| y |] when reduces m dt && same y x -> Some (of_monoid m)
   | Arg e, [| y; Nx_array.Any i |]
-    when reduces Sum dt && same y x && D.equal (Nx_array.dtype i) D.Int64 ->
+    when reduces Max dt
+         && (not (D.equal dt D.Bool))
+         && same y x
+         && D.equal (Nx_array.dtype i) D.Int64 ->
       Some (match e with Max -> Arg_max | Min -> Arg_min)
   | Moments, [| mean; var |] when floats dt && same mean x && same var x ->
       Some Moments

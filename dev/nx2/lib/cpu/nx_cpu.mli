@@ -55,8 +55,9 @@
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at
-    [float32], [float64] and the 8- to 64-bit integers, and [Max] and [Min]
-    at [bool]; [reduce] also computes one [Arg] so at those dtypes but
+    [float32], [float64] and the 8- to 64-bit integers, [Max] and [Min] at
+    [bool], and [Prod], [Max] and [Min] at [complex64] and [complex128];
+    [reduce] also computes one [Arg] so at the dtypes [Max] computes but
     [bool], and one [Logsumexp] or [Moments] at [float32] and [float64];
     [scan] also computes [Moments] so at [float32] and [float64]. They
     answer [Wrong_dtype] where {!Nx_kernel.accepts} is [false] of a
@@ -68,12 +69,17 @@
     shapes are not the ones they give.
 
     A float sum or product adds each output's terms in lane order
-    ({!Nx_kernel.section-orders}). A scan cuts each slice along its
-    axis into chunks of 4096 from its start. A chunk's total is its terms
-    reduced in that order. The carry into the first chunk is [+0] ([1]), into
-    the next the carry into this one combined with this one's total; each
-    result of a chunk is its carry combined with the chunk's terms up to it,
-    left to right.
+    ({!Nx_kernel.section-orders}), and a complex product multiplies them so
+    by {!Nx_kernel.Prog.Mul}. Each complex multiplication errs by at most
+    twice the parts' unit roundoff [u], so a product of [n] terms is within
+    a normwise relative [γ(2n - 2)] of the exact one, barring overflow and
+    underflow. A scan cuts each slice along its axis into chunks of 4096
+    from its start. A chunk's total is its terms reduced in that order. The
+    carry into the first chunk is [+0] for a sum, and a product's first
+    chunk has none: its results start from the slice's first term. The
+    carry into the next chunk is the carry into this one combined with this
+    one's total; each result of a chunk is its carry combined with the
+    chunk's terms up to it, left to right.
 
     [Logsumexp] and [Moments] reduce an output's terms in two passes, each
     summing in lane order.
