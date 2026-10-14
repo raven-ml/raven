@@ -794,6 +794,12 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (r == RIG_AMD_COPY && LOW32(v) == 0) r = RIG_AMD_COMPUTE;
   refresh_slot(d, v);
 
+  /* The submission's segment bytes lie in one run, which never wraps; a
+     refused submission's prefix and release lie there too. */
+  uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
+  struct rig_amd_segment *g = &d->segment;
+  if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
+
   /* Room budgets RIG_AMD_WAITS waits, and a GPU without 64-bit waits has
      an empty wait template: either would hand over work that does not
      wait. */
@@ -807,11 +813,6 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
              "a wait on a word; the device's compute queue cannot wait");
     return fail(&s, failure);
   }
-
-  /* The submission's segment bytes lie in one run, which never wraps. */
-  uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
-  struct rig_amd_segment *g = &d->segment;
-  if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
 
   struct rig_amd_ring *compute = &d->rings[RIG_AMD_COMPUTE];
   s.timed = take_slot(d, v, nparts > 0 ? times : NULL);
