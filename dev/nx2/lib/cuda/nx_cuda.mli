@@ -27,9 +27,11 @@
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of output
     [0] of a program that is its one operand, read plain, into that operand's
     dtype, at [float32], [float64] and the 8- to 64-bit integers, and [Max]
-    and [Min] at [bool]; they answer [Declined] for the others. They refuse
-    with [Wrong_dtype] an operand of another dtype than the program's, and
-    with [Shape_mismatch] what {!Nx_kernel.Shape.reduce} and
+    and [Min] at [bool]; they answer [Declined] for the others. [reduce]
+    first refuses with [Shape_mismatch] loads whose shape once loaded is not
+    its [shape], whatever the case, as nx.cpu does. They refuse with
+    [Wrong_dtype] an operand of another dtype than the program's, and with
+    [Shape_mismatch] what {!Nx_kernel.Shape.reduce} and
     {!Nx_kernel.Shape.scan} answer [Error] for and destinations whose shapes
     are not the ones they give. They associate as nx.cpu states, so that the
     two give the same bits: in blocks of 1024 terms, 16 lanes a block, the

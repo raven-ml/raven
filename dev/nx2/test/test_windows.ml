@@ -660,8 +660,8 @@ module Expanding = struct
 
   let map _ ~dsts:_ _ = decline ()
 
-  let reduce p ~axes rs ~dsts loads =
-    if core rs && plain loads then Nx_cpu.reduce p ~axes rs ~dsts loads
+  let reduce p ~shape ~axes rs ~dsts loads =
+    if core rs && plain loads then Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
     else decline ()
 
   let scan p ~axis r ~dsts loads =

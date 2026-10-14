@@ -65,8 +65,9 @@
     padded operand is first copied padded into host memory, which the call
     holds until it returns. They refuse with [Shape_mismatch] what
     {!Nx_kernel.Shape.padded} and {!Nx_kernel.Shape.reduce} or
-    {!Nx_kernel.Shape.scan} answer [Error] for, and destinations whose
-    shapes are not the ones they give.
+    {!Nx_kernel.Shape.scan} answer [Error] for, a reduction's loads whose
+    shape once loaded is not its [shape], and destinations whose shapes are
+    not the ones they give.
 
     A float sum or product adds each output's terms in lane order
     ({!Nx_kernel.section-orders}), a complex sum each part's as a float
@@ -197,6 +198,7 @@ include Nx_kernel.S
 val reduce_on :
   threads:int ->
   Nx_kernel.Prog.t ->
+  shape:int array ->
   axes:int array ->
   (Nx_kernel.reduction * int) array ->
   dsts:Nx_array.any array ->

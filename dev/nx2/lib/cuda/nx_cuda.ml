@@ -274,10 +274,16 @@ let reduce_on p x ~dst shape plan =
               let buffers = Reduce.buffers l ~workspace in
               submit ~written ~read sub buffers (Reduce.write l)))
 
+(* Whether [loads] have the loop's [shape] once loaded: no load has none to
+   differ. *)
+let fits shape (loads : Nx_kernel.load array) =
+  loads = [||] || Nx_kernel.Shape.loaded loads = Ok shape
+
 (* Reduce computes a monoid of output 0 of the program into one destination,
    read plain. *)
-let reduce p ~axes rs ~dsts loads =
+let reduce p ~shape ~axes rs ~dsts loads =
   if not (Array.for_all (accepted p) rs) then A.Wrong_dtype
+  else if not (fits shape loads) then A.Shape_mismatch
   else
     match (rs, dsts, loads) with
     | [| (Nx_kernel.Monoid m, 0) |], [| dst |], [| Nx_kernel.Plain x |] ->

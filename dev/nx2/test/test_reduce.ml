@@ -271,7 +271,7 @@ let rec reference : type v s.
       in
       let dst = A.create Rig.host dt out in
       match
-        Nx_cpu.reduce (identity dt) ~axes
+        Nx_cpu.reduce (identity dt) ~shape:s ~axes
           [| (Monoid m, 0) |]
           ~dsts:[| A.Any dst |]
           [| Plain a |]
@@ -386,9 +386,9 @@ module Core_only = struct
     | Monoid (Sum | Prod | Max | Min) -> true
     | _ -> false
 
-  let reduce p ~axes rs ~dsts loads =
+  let reduce p ~shape ~axes rs ~dsts loads =
     match rs with
-    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~axes rs ~dsts loads
+    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
     | _ -> A.Declined
 
   let scan p ~axis ((r, _) as rk) ~dsts loads =

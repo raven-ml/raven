@@ -226,8 +226,8 @@ module Shape : sig
       fitting its axis. *)
 
   val loaded : load array -> t result
-  (** [loaded ls] is the one shape the loads [ls] have once loaded. A loop
-      with no load has no shape of its own, and is an [Error]. *)
+  (** [loaded ls] is the one shape the loads [ls] have once loaded.
+      [loaded [||]] is an [Error]. *)
 
   val reduce : axes:int array -> reduction array -> t -> t result
   (** [reduce ~axes rs y] is the shape of each destination of reductions
@@ -405,12 +405,15 @@ module type S = sig
 
   (** {1:loops Loops}
 
-      A loop runs a program at every index of one shape, the shape its loads
-      have once loaded ({!Shape.loaded}), reading load [i] as the program's
-      operand [i]. Its loads are one per operand of the program, each of that
-      operand's dtype. Its [Coord] nodes read axes of that shape: a loop
-      that computes a program with one past its rank answers
-      [Shape_mismatch] instead. *)
+      A loop runs a program at every index of one shape, its destinations'
+      shape, but for a reduction: its destinations drop [axes], so it is
+      given its shape. It reads load [i] as the program's operand [i]. Its
+      loads are one per operand of the program, each of that operand's
+      dtype, and each has the loop's shape once loaded ({!Shape.loaded}); a
+      loop of no load runs over its shape alone. Its [Coord] nodes read axes
+      of that shape: a loop that computes a program with one past its rank
+      answers [Shape_mismatch] instead, as one whose loads have another
+      shape does. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
@@ -418,16 +421,18 @@ module type S = sig
 
   val reduce :
     Prog.t ->
+    shape:int array ->
     axes:int array ->
     (reduction * int) array ->
     dsts:any array ->
     load array ->
     answer
-  (** [reduce p ~axes rs ~dsts loads] reduces, for each [(r, k)] of [rs],
-      output [k] of [p] along [axes] by [r], in that output's dtype, rounded
-      once to its destination's. Destinations follow [rs]: one for a [Monoid],
-      the mean then the variance for [Moments], the extreme then its [int64]
-      position for [Arg]. Each has the shape {!Shape.reduce} gives. It answers
+  (** [reduce p ~shape ~axes rs ~dsts loads] reduces, for each [(r, k)] of
+      [rs], output [k] of [p] over the loop of shape [shape] along [axes] by
+      [r], in that output's dtype, rounded once to its destination's.
+      Destinations follow [rs]: one for a [Monoid], the mean then the
+      variance for [Moments], the extreme then its [int64] position for
+      [Arg]. Each has the shape {!Shape.reduce} gives of [shape]. It answers
       [Wrong_dtype] where {!accepts} is [false] of a reduction and its
       output's dtype. *)
 
@@ -440,7 +445,7 @@ module type S = sig
       for [Moments]. The result at an index is a function of the terms up to
       it alone: the scan of a prefix of the axis is the prefix of the scan,
       bit for bit. A scan's last result need not equal the reduction of the
-      same terms. Destinations are as {!reduce}'s, each of the loaded shape
+      same terms. Destinations are as {!reduce}'s, each of the loop's shape
       ({!Shape.scan}). It answers [Wrong_dtype] where {!accepts} is
       [false] of [r] and output [k]'s dtype. *)
 

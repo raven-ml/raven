@@ -730,9 +730,9 @@ module Core_only = struct
     | Monoid (Sum | Prod | Max | Min) -> true
     | _ -> false
 
-  let reduce p ~axes rs ~dsts loads =
+  let reduce p ~shape ~axes rs ~dsts loads =
     match rs with
-    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~axes rs ~dsts loads
+    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
     | _ -> A.Declined
 
   let scan p ~axis ((r, _) as rk) ~dsts loads =

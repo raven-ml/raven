@@ -33,8 +33,9 @@ module Unpadded = struct
   let map p ~dsts loads =
     if padded loads then A.Declined else Nx_cpu.map p ~dsts loads
 
-  let reduce p ~axes rs ~dsts loads =
-    if padded loads then A.Declined else Nx_cpu.reduce p ~axes rs ~dsts loads
+  let reduce p ~shape ~axes rs ~dsts loads =
+    if padded loads then A.Declined
+    else Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
 
   let fold _ ~dst:_ _ = A.Declined
 end

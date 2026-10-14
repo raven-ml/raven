@@ -379,6 +379,7 @@ module type S = sig
 
   val reduce :
     Prog.t ->
+    shape:int array ->
     axes:int array ->
     (reduction * int) array ->
     dsts:any array ->

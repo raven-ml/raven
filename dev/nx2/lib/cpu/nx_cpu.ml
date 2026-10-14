@@ -209,10 +209,17 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
 let rec all_accepted p rs i =
   i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
 
+(* Whether [loads] have the loop's [shape] once loaded: no load has none to
+   differ. *)
+let fits shape (loads : Nx_kernel.load array) =
+  loads = [||] || Nx_kernel.Shape.loaded loads = Ok shape
+
 (* nx.cpu computes a program that is its one operand's identity. A padded
    load passes its pad and its fill's bits. *)
-let reduce_on ~threads p ~axes rs ~dsts (loads : Nx_kernel.load array) =
+let reduce_on ~threads p ~shape ~axes rs ~dsts (loads : Nx_kernel.load array)
+    =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
+  else if not (fits shape loads) then Nx_array.Shape_mismatch
   else if not (Nx_kernel.Prog.is_identity p) then Nx_array.Declined
   else
     match (rs, loads) with
@@ -241,7 +248,9 @@ let scan_on ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
         else moments_c axis mean var x (padding l) threads
     | _ -> Nx_array.Declined
 
-let reduce p ~axes rs ~dsts loads = reduce_on ~threads:0 p ~axes rs ~dsts loads
+let reduce p ~shape ~axes rs ~dsts loads =
+  reduce_on ~threads:0 p ~shape ~axes rs ~dsts loads
+
 let scan p ~axis rk ~dsts loads = scan_on ~threads:0 p ~axis rk ~dsts loads
 
 (* Gathers and scatters (index.c) *)

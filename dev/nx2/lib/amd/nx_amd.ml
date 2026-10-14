@@ -185,7 +185,7 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
   let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
 
-let reduce p ~axes:_ rs ~dsts:_ _ =
+let reduce p ~shape:_ ~axes:_ rs ~dsts:_ _ =
   if Array.for_all (accepted p) rs then A.Declined else A.Wrong_dtype
 
 let scan p ~axis:_ rk ~dsts:_ _ =

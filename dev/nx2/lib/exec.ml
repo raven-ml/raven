@@ -587,10 +587,10 @@ let call : type r.
   match op with
   | Value.Map { prog; loads; _ } ->
       map_on ~by kernels d prog (Array.map kernel_load loads) (dsts_at op r j)
-  | Value.Reduce { axes; prog; reductions; loads; _ } ->
+  | Value.Reduce { layout; axes; prog; reductions; loads } ->
       let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
-      let rs = Prim.reductions reductions in
-      ran_loads ~by (K.reduce prog ~axes rs ~dsts loads) dsts loads
+      let rs = Prim.reductions reductions and shape = L.shape layout in
+      ran_loads ~by (K.reduce prog ~shape ~axes rs ~dsts loads) dsts loads
   | Value.Scan { axis; prog; reduction; loads; _ } ->
       let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
       let reduction = Prim.reduction reduction in

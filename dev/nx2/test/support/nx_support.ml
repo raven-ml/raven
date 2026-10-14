@@ -37,9 +37,9 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.map p ~dsts loads
 
-  let reduce p ~axes rs ~dsts loads =
+  let reduce p ~shape ~axes rs ~dsts loads =
     Atomic.incr count;
-    Nx_cpu.reduce p ~axes rs ~dsts loads
+    Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
 
   let scan p ~axis r ~dsts loads =
     Atomic.incr count;

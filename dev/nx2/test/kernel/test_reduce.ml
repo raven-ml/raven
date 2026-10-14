@@ -55,6 +55,17 @@ let pp_case ppf c =
 let identity dt = P.v ~ins:[| dt |] [| P.In 0 |] ~outs:[| 0 |]
 
 let plain_of (A.Any x) = Nx_kernel.Plain x
+
+(* The loop's shape: the loads' once loaded, else, for a padding that fits
+   none, the first load's operand's, which the kernels refuse with the
+   padding. *)
+let loop_shape (loads : Nx_kernel.load array) =
+  match Nx_kernel.Shape.loaded loads with
+  | Ok s -> s
+  | Error _ -> (
+      match loads.(0) with
+      | Plain x -> L.shape (A.layout x)
+      | Padded { x; _ } -> L.shape (A.layout x))
 let dtype_of (A.Any x) = D.Any (A.dtype x)
 let accepts m (D.Any dt) = Nx_kernel.accepts (Monoid m) dt
 
@@ -62,7 +73,9 @@ let accepts m (D.Any dt) = Nx_kernel.accepts (Monoid m) dt
    its scan along [axes.(0)], of [loads] into [dst]. *)
 let compute (module K : Nx_kernel.S) ~scan p m axes dst loads =
   if scan then K.scan p ~axis:axes.(0) (Monoid m, 0) ~dsts:[| dst |] loads
-  else K.reduce p ~axes [| (Monoid m, 0) |] ~dsts:[| dst |] loads
+  else
+    K.reduce p ~shape:(loop_shape loads) ~axes [| (Monoid m, 0) |]
+      ~dsts:[| dst |] loads
 
 (* The result's shape. *)
 let result_shape c =
@@ -1286,6 +1299,11 @@ let test_refusals (b : Support.backend) () =
   equal ~msg:"a sum of no term" answer A.Done (reduce Sum dst empty);
   equal ~msg:"is +0" (array float_exact) [| 0.; 0. |]
     (A.to_array (A.expect D.Float32 (host dst)));
+  let sum = [| (Nx_kernel.Monoid Sum, 0) |] in
+  equal ~msg:"a load of another shape than the loop's" answer A.Shape_mismatch
+    (K.reduce p ~shape:[| 2; 4 |] ~axes:[| 1 |] sum
+       ~dsts:[| on (A.create Rig.host D.Float32 [| 2 |]) |]
+       [| plain_of x |]);
   let ints = on (A.of_array D.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]) in
   let mean = on (A.create Rig.host D.Int32 [| 2; 3 |]) in
   let var = on (A.create Rig.host D.Int32 [| 2; 3 |]) in
@@ -1294,7 +1312,8 @@ let test_refusals (b : Support.backend) () =
        ~dsts:[| mean; var |] [| plain_of ints |]);
   let bools = on (A.create Rig.host D.Bool [| 2; 3 |]) in
   equal ~msg:"a Sum of bool" answer A.Wrong_dtype
-    (K.reduce (identity (D.Any D.Bool)) ~axes:[| 1 |] [| (Monoid Sum, 0) |]
+    (K.reduce (identity (D.Any D.Bool)) ~shape:[| 2; 3 |] ~axes:[| 1 |]
+       [| (Monoid Sum, 0) |]
        ~dsts:[| on (A.create Rig.host D.Bool [| 2 |]) |]
        [| plain_of bools |])
 
@@ -1929,8 +1948,8 @@ let run_stat k c =
   let module K = (val k : Nx_kernel.S) in
   let dsts = stat_dsts c in
   match
-    K.reduce (identity (dtype_of c.x)) ~axes:c.axes [| (c.r, 0) |] ~dsts
-      [| plain_of c.x |]
+    K.reduce (identity (dtype_of c.x)) ~shape:(shape_of c.x) ~axes:c.axes
+      [| (c.r, 0) |] ~dsts [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
@@ -2249,7 +2268,8 @@ let test_stateful_cases (b : Support.backend) () =
   let module K = (val b.kernels) in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let reduce r x dsts =
-    K.reduce (identity (dtype_of x)) ~axes:[| 1 |] [| (r, 0) |] ~dsts [| plain_of x |]
+    K.reduce (identity (dtype_of x)) ~shape:(shape_of x) ~axes:[| 1 |]
+      [| (r, 0) |] ~dsts [| plain_of x |]
   in
   let make dt s = A.Any (A.create Rig.host dt s) in
   let pos = make D.Int64 [| 2 |] in
@@ -2372,7 +2392,8 @@ let law_guards (b : Support.backend) ((g : guard), side) =
   let call xs ds =
     let p = identity dt and loads = [| plain_of xs.(0) |] in
     if g.scan then K.scan p ~axis:g.axes.(0) (g.r, 0) ~dsts:ds loads
-    else K.reduce p ~axes:g.axes [| (g.r, 0) |] ~dsts:ds loads
+    else K.reduce p ~shape:(loop_shape loads) ~axes:g.axes [| (g.r, 0) |]
+      ~dsts:ds loads
   in
   equal Elements.answer A.Done
     (Elements.same_guarded side ~call [| g.x |] dsts)
@@ -2476,8 +2497,9 @@ let order (b : Support.backend) =
       test "8- and 16-bit products and sums wrap at their extremes" (fun () ->
           b.around (test_wrap b));
       test
-        "refuses a destination of another shape and an extreme of nothing, \
-         answers Wrong_dtype for dtypes a reduction does not take"
+        "refuses a destination or a reduction's load of another shape and an \
+         extreme of nothing, answers Wrong_dtype for dtypes a reduction does \
+         not take"
         (fun () -> b.around (test_refusals b));
     ]
 

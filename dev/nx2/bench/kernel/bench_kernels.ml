@@ -481,8 +481,9 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
         | Moments -> [| like (); like () |]
         | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 y) |]
       in
-      (identity dt, [| (r, 0) |], [| Nx_kernel.Plain x |], dsts))
-    (fun (p, rs, loads, dsts) -> ok (K.reduce p ~axes rs ~dsts loads))
+      (identity dt, s, [| (r, 0) |], [| Nx_kernel.Plain x |], dsts))
+    (fun (p, shape, rs, loads, dsts) ->
+      ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
 let scan name r ~axis a (module K : Nx_kernel.S) =
   row name
