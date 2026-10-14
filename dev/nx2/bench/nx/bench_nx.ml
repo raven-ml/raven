@@ -347,8 +347,9 @@ let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
    a decode step and a prefill of 128 rows against a weight stored [n × k],
    a decode step against a weight stored [k × n] read from memory, a call
    each of six weights in turn (96 MiB, past the M1 Max's 48 MB system
-   cache) as a model's layers are, and the first weight by a vector; and
-   int32's prefill, past a core's L2. *)
+   cache) as a model's layers are, 8 rows against the first weight stored
+   [k × n], and the first weight by a vector; and int32's prefill, past a
+   core's L2. *)
 let widened_rows =
   List.map
     (fun n ->
@@ -360,6 +361,7 @@ let widened_rows =
     [ 64; 256; 1024 ]
   @
   let x = filled D.Int8 [| 1; 4096 |] 1
+  and x8 = filled D.Int8 [| 8; 4096 |] 1
   and x128 = filled D.Int8 [| 128; 4096 |] 1
   and v = filled D.Int8 [| 4096 |] 1
   and w = filled D.Int8 [| 4096; 4096 |] 1
@@ -386,6 +388,10 @@ let widened_rows =
          Nx.Repr.array
            (Nx.contract ~acc:D.Int32 D.Int32 rows_by_columns
               (Thumper.black_box x) ws.(!turn))));
+    Thumper.bench "contract-i8-i32-m8x4096x4096-kn" (fun () ->
+        Nx.Repr.array
+          (Nx.contract ~acc:D.Int32 D.Int32 rows_by_columns
+             (Thumper.black_box x8) w));
     Thumper.bench "contract-i8-i32-n1x4096x4096" (fun () ->
         Nx.Repr.array
           (Nx.contract ~acc:D.Int32 D.Int32 weight_by_vector w
