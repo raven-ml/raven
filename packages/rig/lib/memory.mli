@@ -204,8 +204,10 @@ val mark_outside : alloc -> bool
     first borrow makes it and later ones share it. The mapping is released
     when the entry is freed ({!free_entry}) or once the device is Stopped
     ({!drain}), whichever comes first, and the entry goes back to its driver
-    after its last mapping is released. A device's mapping of another's word, which its
-    queue waits on, is released once the device is Stopped. *)
+    after its last mapping is released. A device's mapping of rig's array,
+    which its queue waits on, is released once the device is Stopped, and
+    its mapping of another device's word once its queue passed the waits
+    that may read it ({!section-words}). *)
 
 val map_host_range : device -> int -> int -> region option
 (** [map_host_range d p n] is [d]'s mapping of the [n] bytes of host memory
@@ -219,6 +221,45 @@ val map_peer_region : device -> region -> region option
 val unmap : device -> region -> unit
 (** [unmap d r] gives back [d]'s mapping [r], which counts in no memory, now
     or once [d] stopped. *)
+
+(** {2:words Mappings of words}
+
+    A device counts the mappings of its word that other devices hold, in
+    their pairs ({!Def.live.pairs}) or among their retired mappings
+    ({!Def.live.retired}), plus one until its slot is freed
+    ({!Def.live.word_unmaps}). A word of its driver's own goes back to the
+    driver at the first drain ({!drain}) after the count reached [0], when
+    no queue can wait on it: a submit gives back mappings of words, and must
+    not wait for a driver's free. *)
+
+val undecided : pair
+(** [undecided] is the pair of no device: its [occupant] is [-1], it waits
+    on the host and holds no mapping. *)
+
+val hold_word : device -> bool
+(** [hold_word p] counts a mapping of [p]'s word about to be made, and is
+    [false], counting nothing, once [p]'s count reached [0]: [p] has
+    stopped and its points are done. *)
+
+val word_unmapped : device -> unit
+(** [word_unmapped p] takes one off [p]'s count, and at [0], if [p]'s word
+    is its driver's own, leaves the word to the next drain. It calls no
+    driver. *)
+
+val unmap_word : device -> region * device -> unit
+(** [unmap_word d (r, p)] gives back [d]'s mapping [r] of [p]'s word now, or
+    once [d] stopped, then {!word_unmapped}[ p]. *)
+
+val retire_locked : device -> region * device -> unit
+(** [retire_locked d m] puts [d]'s mapping [m] of a producer's word among
+    [d]'s retired mappings at {!Dev.next_value}[ d]: [m] goes back once
+    [d]'s queue ran every submit that may wait through it. The caller holds
+    [d]'s lock. *)
+
+val give_retired : device -> unit
+(** [give_retired d] gives back [d]'s retired mappings whose value [d]
+    reached. It frees no memory, and leaves a word that loses its last
+    mapping to the next drain ({!word_unmapped}). *)
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]

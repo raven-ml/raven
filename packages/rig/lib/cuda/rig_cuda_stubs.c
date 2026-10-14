@@ -436,10 +436,13 @@ struct device {
    stopped. A stop that finds work running leaves its context, an event
    behind the work on each stream, which [caml_rig_cuda_ended] asks, or,
    where it cannot ask CUDA, the state, which [caml_rig_cuda_ended] stops
-   again. */
+   again. A word of the device's own goes back once rig frees it, and the
+   edge's word is then [kept], which holds its last value
+   ([caml_rig_cuda_keep_word]). */
 struct edge {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
+  _Atomic uint64_t kept;
   uint64_t last;
   struct device *d;
   CUcontext context;
@@ -1456,6 +1459,20 @@ int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
 value caml_rig_cuda_signaled(value v_self) {
   return Val_long(
       atomic_load_explicit(Edge_val(v_self)->word, memory_order_acquire));
+}
+
+/* Points [v_self]'s word at the edge's [kept], which takes the word's
+   value, so that the word can be freed: a later claim of the GPU asks the
+   edge whether its work ended ([caml_rig_cuda_ended]) and reads [kept].
+   The caller holds the claims' lock, under which every such read runs.
+   Answers the host address of the word to free. */
+value caml_rig_cuda_keep_word(value v_self) {
+  struct edge *e = Edge_val(v_self);
+  _Atomic uint64_t *w = e->word;
+  atomic_store_explicit(&e->kept, atomic_load_explicit(w, memory_order_acquire),
+                        memory_order_relaxed);
+  e->word = &e->kept;
+  return Val_long((intnat)w);
 }
 
 /* The host address of the device's word. */

@@ -6,11 +6,13 @@
 (* Any domain may call any function, as the interface states. The loader, the
    table of GPUs and the page-lock registry are the process's, each behind a
    mutex of its own; a device's C state is written only by [submit] and [stop],
-   which their caller serialises, and freed with its word. Compiled code calls a
-   device's graph maker beside every other call, so native construction and
-   [stop] exclude each other under the device's [guard]. Memory, modules and
-   graphs are the GPU's primary context's, which the process keeps: their calls
-   take the context, so they also serve after the device's C state is gone. *)
+   which their caller serialises, and freed by the stop. A word of the
+   device's own goes back when rig frees it, after the stop. Compiled code
+   calls a device's graph maker beside every other call, so native
+   construction and [stop] exclude each other under the device's [guard].
+   Memory, modules and graphs are the GPU's primary context's, which the
+   process keeps: their calls take the context, so they also serve after the
+   device's C state is gone. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -197,6 +199,7 @@ external ended : int -> int = "caml_rig_cuda_ended"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
 external word_at : int -> int = "caml_rig_cuda_word_at" [@@noalloc]
+external keep_word : int -> int = "caml_rig_cuda_keep_word" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
@@ -622,7 +625,13 @@ let free g (r : region) =
         registry := List.filter (fun e' -> e' != e) !registry;
         ignore (lock g.context false e.start 0 : int)
       end
-  | Word | Own_word | Locked None | Peer _ -> ()
+  | Own_word ->
+      (* The edge keeps the word's value for later claims of the GPU, which
+         read it under [held_lock]; the free runs outside it, as CUDA may
+         wait for the GPU. *)
+      let w = Mutex.protect held_lock (fun () -> keep_word g.self) in
+      ignore (free_memory g.context true w)
+  | Word | Locked None | Peer _ -> ()
 
 (* Images *)
 

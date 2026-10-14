@@ -1140,6 +1140,23 @@ let open_close (module G : Gpu) () =
   at_most int ~msg:"the OCaml heap's growth over the opens"
     ~than:(2 * opens * kept_ml) (live () - ml)
 
+(* A device whose [make] is given a word outside rig's array has a word of
+   its driver's own, or keeps the given word: rig gives it back once, after
+   the device stopped, and reads it no more. *)
+let own_words = 8
+
+let own_word (module G : Gpu) () =
+  let module W = Rig_gpu_support.Watch (G.D) in
+  for i = 1 to own_words do
+    let t = G.open_own (module W) in
+    Rig.Point.wait (G.submit t [||]);
+    G.close t;
+    Rig.free_cache t.d;
+    equal int ~msg:(strf "the word's frees after close %d" i) 1
+      (W.word_frees t.g);
+    equal int ~msg:"the reads of the word after its free" 0 (W.late_reads t.g)
+  done
+
 let stale_seen (module G : Gpu) () =
   G.with_ @@ fun t ->
   let p = G.submit t [||] in
@@ -1659,6 +1676,8 @@ let laws (module G : Gpu) =
       test "a close of an idle device leaves the word at the last value"
         (idle_close g);
       test "opens and closes keep a fixed record per open" (open_close g);
+      test "a word of the driver's own goes back once, after its stop"
+        (own_word g);
       test "sleep returns at once when the word differs from seen"
         (stale_seen g);
       test "sleeps over long work raise no fault, and block" (long_work g);

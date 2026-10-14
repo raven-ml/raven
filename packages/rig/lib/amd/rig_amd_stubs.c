@@ -57,7 +57,8 @@ value caml_rig_amd_create(value unit) {
   return Val_long((intnat)e);
 }
 
-/* Frees the run state of a stopped device: its edge and word stay. */
+/* Frees the run state of a stopped device: its edge stays, and rig frees a
+   word of its own. */
 value caml_rig_amd_end(value v_self) {
   struct rig_amd_edge *e = Edge_val(v_self);
   free(e->d);

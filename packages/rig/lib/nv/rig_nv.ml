@@ -784,8 +784,8 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
           let* code_host = host "copy kernel" code in
           Ok (Some (c, k, code, code_host))
     in
-    (* An own word stays for the process, which reads it; rig's word goes
-       back with the device's mapping of it. *)
+    (* rig's word goes back with the device's mapping of it; rig frees a
+       word of the device's own, with its page, once no queue waits on it. *)
     let owned =
       [ block; launches; stamps; fst compute_notifier; fst copy_notifier ]
       @ match mapped with Some m -> [ m; words ] | None -> []

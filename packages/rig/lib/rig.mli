@@ -117,12 +117,18 @@ val host : t
     value the slot's earlier devices were given, so the number of opens a
     process makes has no bound. Each open still costs what its driver keeps
     for the process, as the driver's documentation states: the GPU drivers
-    keep a few dozen bytes of C state per open, and a timeline word of the
-    device's own where it has one. A device whose queue waited on another
-    device's word of its own keeps its mapping of that word until it stops:
-    one per producer device it waited on. A device lost before it reached
-    every value it was given leaves its slot too, and keeps its record for
-    the rest of the process, which its dropped points raise {!Lost} with.
+    keep a few dozen bytes of C state per open. A device whose queue waits
+    on another device's word through a mapping keeps one such mapping for
+    each slot it waits on, of the slot's device it waited on last. One of an
+    earlier device of that slot goes back at the first of these after the
+    device's queue has passed the waits that read it: the device's next
+    submit whose queue waits on a later device of a slot it waited on, a
+    call that moves its collected memory ({!section-reclaim}), or its stop.
+    A timeline word of a device's own goes back at the first call that moves
+    collected memory after the device has left its slot and no other device
+    maps it. A device lost before it reached every value it was given
+    leaves its slot too, and keeps its record for the rest of the process,
+    which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -555,8 +561,10 @@ val signaled : t -> int
     during such a change may leave it half done. rig then loses the device,
     with the exception's text as the reason ({!Lost}), and raises the
     exception again. Calls that allocate, borrow, load or ask for a
-    function ({!Image.mem}) make such changes, and so does reclamation
-    ({!section-reclaim}), on whichever device's memory returns. An
+    function ({!Image.mem}) make such changes, and so do reclamation
+    ({!section-reclaim}), on whichever device's memory returns, and a
+    submit that gives back its device's mappings of other devices' words
+    ({!section-opening}). An
     asynchronous exception from any of these calls may therefore lose a
     device. Every other exception leaves the device serving later calls,
     such as one that interrupts a wait ({!section-domains}), one from an io

@@ -91,12 +91,6 @@ type backing =
     of the monotonic clock. *)
 type progress = { seen : int; idle : bool; since : int }
 
-type pair = { occupant : int; way : int }
-(** How a device's queues wait for the values of a producer slot's device
-    [occupant] (its [opened]): [way] is [-1] on the host, otherwise the
-    producer's object or its word's address as the waiting device maps
-    it. *)
-
 type c
 (** The type for custom blocks that hold a device's C record
     ([struct rig_device] in [rig_stubs.h]), which goes with the block once
@@ -131,7 +125,9 @@ type device = {
       (** The value its timeline started after, which its slot's word held
           when it opened: its points' values lie above it, and those of the
           earlier devices of its slot at or below it. *)
-  opened : int;  (** The open that made it, unique for the process. *)
+  opened : int;
+      (** The open that made it, unique for the process. The open takes it
+          after its slot, so a later device of the slot has a larger one. *)
 }
 
 (** The type for a device's state: its C record, its lock, its memory and
@@ -152,6 +148,11 @@ and live = {
       (** Its word's host address, in rig's array, or [0] for a word of its
           driver's own, which rig reads through its driver. *)
   word_region : region option;  (** The region its word lies in. *)
+  mutable word_unmaps : int; [@atomic]
+      (** Other devices' mappings of its word not given back, plus one until
+          its slot is freed. A word of its driver's own goes back to its
+          driver at the first drain after [0] ({!Memory.section-words}).
+          Raised only from a positive count. *)
   fault : Obj.Extension_constructor.t;
       (** The constructor of its driver's or io library's [Fault]. *)
   release : int;  (** Its C release list, in its C record. *)
@@ -172,17 +173,21 @@ and live = {
   mutable pairs : pair array;
       (** By producer index, how its queues wait for the values of the slot's
           device it was decided for. A cell holds an immutable pair, so a
-          read without the lock sees its two fields together. Grown by
-          replacement, written under the lock, and read without it. Emptied
-          once the device is Stopped. *)
+          read without the lock sees its fields together. Grown by
+          replacement, written under the lock, and read without it. Emptied,
+          its mappings given back, once the device is Stopped. *)
+  mutable retired : (int * (region * device)) list; [@atomic]
+      (** Its mappings of words of a slot's earlier devices, which a pair of
+          a later device replaced, each with the value after every submit
+          that may wait through it ({!Dev.next_value}), written under the
+          lock. *)
   mutable words : int; [@atomic]
       (** How its queues read rig's array of words: [0] undecided, [-1] they
           do not, or the array's address as its work addresses it, through
           one mapping. Set once under the lock, and read without it. *)
   mutable word_maps : region list; [@atomic]
-      (** Its mappings of rig's array and of producers' words outside it that
-          [pairs] names, written under the lock. They go back to its driver
-          once it is Stopped. *)
+      (** Its mapping of rig's array, written under the lock. It goes back to
+          its driver once the device is Stopped. *)
   mapped : (entry * mapping) Tbl.Make(Int).t;
       (** The entries it maps, by [id], with its mapping of each, under the
           lock: the mapping goes back with the entry, or once it is Stopped,
@@ -190,6 +195,17 @@ and live = {
           size. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
+}
+
+(** The type for how a device's queues wait for the values of a producer
+    slot's device [occupant] (its [opened]): [way] is [-1] on the host,
+    otherwise the producer's object or its word's address as the waiting
+    device maps it; [word_map] is the waiting device's mapping of the
+    producer's word, with that producer, whose [word_unmaps] counts it. *)
+and pair = {
+  occupant : int;
+  way : int;
+  word_map : (region * device) option;
 }
 
 (** The type for a device's machine: this process's, another one of which

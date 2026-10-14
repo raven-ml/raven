@@ -201,7 +201,7 @@ type t = {
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
   maps_host : bool;
-  word : region; (* kept, with the C edge, for the process *)
+  word : region; (* rig frees a word of the device's own after stop *)
   reaches : int -> bool; (* the path's *)
   capability : Abi.Capability.t;
   guard : Mutex.t;
@@ -796,8 +796,8 @@ let make (type m) ~word (p : m path) =
        words: the path's first map of the array on the GPU makes it, and the
        others count against it. Where the path maps no host memory, or the
        word a caller gave lies outside the array, a word of the device's
-       own, started at the given word's value, which stays for the
-       process. *)
+       own, started at the given word's value, which rig frees once no
+       queue waits on it. *)
     let word = Nativeint.to_int word in
     let start, bytes = words () in
     let in_array = word >= start && word + 8 <= start + bytes in

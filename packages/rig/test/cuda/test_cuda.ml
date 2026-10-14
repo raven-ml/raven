@@ -657,6 +657,68 @@ let spans_after_idle () =
   Unix.sleepf 8.5;
   within "after the idle"
 
+(* The hang bound of the devices of {!own_word_after_running}. *)
+let own_hang_ms = 300
+
+(* A device on a word of its own, lost past its hang bound while a kernel
+   runs, gives its word back once that work ended, which writes the last
+   value, and a drain found it stopped. The GPU's next open asks whether the
+   stopped device's work ended, and reads the value its edge kept, never the
+   freed word. *)
+let own_word_after_running () =
+  let module W = Rig_gpu_support.Watch (C) in
+  let module Capped = struct
+    include W
+
+    let facts h = { (W.facts h) with hang_ms = Some own_hang_ms }
+  end in
+  (* The process's first failure keeps its slot, and so its word: a Polled
+     device fails first. *)
+  if Rig.failure () = None then begin
+    let d, p = Rig_support.Polled.open_ "CUDA:first-failure" in
+    Rig_support.Polled.fault p "the first failure";
+    ignore (lost (fun () -> Rig.Buffer.create d 8));
+    Rig.close d
+  end;
+  let rounds = 3 in
+  for i = 1 to rounds do
+    let t = S.open_own (module Capped) in
+    if S.attribute watchdog <> 0 then begin
+      S.close t;
+      skip ~reason:"a display watchdog ends long kernels" ()
+    end;
+    let flag = require_some (C.alloc t.g Pinned 8) in
+    H.set64 (host flag) 0;
+    (* The kernel runs from a module the driver loaded, which rig does not
+       hold: nothing of the device stays reachable once it closed. *)
+    let m, kernel = S.kernels t.g in
+    let spinning =
+      S.spinning (kernel "spin") ~flag:(address flag) ~ns:(10 * second)
+    in
+    let p = S.submit_work t [ S.part t.d spinning ] in
+    raises_match ~msg:"the wait past the hang bound"
+      (function Rig.Lost _ -> true | _ -> false)
+      (fun () -> Rig.Point.wait p);
+    S.close t;
+    H.set64 (host flag) 1;
+    (* The submission's record holds the slot until it is collected. *)
+    let t0 = Rig.Profile.now () in
+    while
+      Gc.full_major ();
+      Rig.free_cache t.d;
+      W.word_frees t.g = 0
+    do
+      if Rig.Profile.now () - t0 > 10 * second then
+        failf "round %d: the word did not go back within 10 s" i;
+      Unix.sleepf 0.01
+    done;
+    equal int ~msg:(strf "round %d: the word's frees" i) 1 (W.word_frees t.g);
+    equal int ~msg:"the reads of the word after its free" 0 (W.late_reads t.g);
+    C.unload t.g m;
+    C.free t.g flag
+  done;
+  S.with_ @@ fun t -> Rig.Point.wait (S.submit t [||])
+
 let timeline =
   group ~timeout:60. "timeline"
     [
@@ -677,6 +739,8 @@ let timeline =
       test "an image a close left loaded is unloaded after it" unload_after_stop;
       test "an unload after the GPU opened again leaves the new device working"
         unload_after_reopen;
+      test "a word of its own goes back once the running work ended"
+        own_word_after_running;
     ]
 
 (* Graphs *)

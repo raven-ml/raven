@@ -152,11 +152,10 @@ val capability : t -> Rig_cuda_abi.t
     On a GPU that registers no host memory, or when the word [make] was
     given lies outside rig's array, the word is eight bytes of the device's
     own page-locked memory, which starts at that value and has no host
-    address in its location: rig reads it through {!signaled}. That word
-    stays for the process, since another device's queue may still wait on
-    it after the device's slot passed on: each such open keeps one 8-byte
-    [cuMemHostAlloc] allocation, whose page-locked footprint the CUDA driver
-    rounds up.
+    address in its location: rig reads it through {!signaled}. That word,
+    one 8-byte [cuMemHostAlloc] allocation, goes back when rig frees it
+    ({!Rig_edge.type-facts}). Its free, as every free of host memory, may
+    wait for the GPU's work.
 
     The streams wait on any aligned 64-bit word the device's work addresses,
     whoever writes it. A submission's waits go to its stream in batches, as

@@ -77,6 +77,8 @@ external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
 
 external sub_seal : c -> unit = "caml_rig_sub_seal"
 
+external reraise : exn -> 'a = "%reraise"
+
 external sub_id : c -> int = "caml_rig_sub_id" [@@noalloc]
 
 external sub_fixed : c -> int -> int -> use -> unit
@@ -123,6 +125,8 @@ external run_point : run -> int -> int = "caml_rig_run_point" [@@noalloc]
 
 external run_wait : run -> int -> int -> int -> int -> unit
   = "caml_rig_run_wait"
+
+external run_check : run -> unit = "caml_rig_run_check" [@@noalloc]
 
 external run_value : run -> int = "caml_rig_run_value" [@@noalloc]
 external run_no_room_at : run -> int = "caml_rig_run_no_room_at" [@@noalloc]
@@ -900,17 +904,24 @@ let words_at d =
 
 (* How [d], a device of [p]'s driver, waits in its queue for [p]'s word where
    it does not reach rig's array: through its driver's mapping of [p]'s word
-   region [r], as for a device of another machine. Is the way, with the
-   mapping, which [d] keeps until it is Stopped. *)
-let map_word d r =
-  match Memory.map_peer_region d r with
-  | None -> (host_wait, None)
-  | Some m -> (
-      match (Memory.locate m).address with
-      | Some at -> (at, Some m)
-      | None ->
-          Memory.unmap d m;
-          (host_wait, None))
+   region [r], which counts among [p]'s word unmaps. A [p] whose unmaps ended
+   has stopped and its points are done: [d] waits on the host. *)
+let map_word d p r =
+  if not (Memory.hold_word p) then (host_wait, None)
+  else
+    match Memory.map_peer_region d r with
+    | exception e ->
+        Memory.word_unmapped p;
+        reraise e
+    | None ->
+        Memory.word_unmapped p;
+        (host_wait, None)
+    | Some m -> (
+        match (Memory.locate m).address with
+        | Some at -> (at, Some (m, p))
+        | None ->
+            Memory.unmap_word d (m, p);
+            (host_wait, None))
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
@@ -932,51 +943,77 @@ let decide d p =
     | _, _ when d.maps_host && pl.word <> 0 ->
         let at = words_at d in
         ((if at = host_wait then at else at + (pl.word - words_start)), None)
-    | _, Some r when d.key = p.key -> map_word d r
+    | _, Some r when d.key = p.key -> map_word d p r
     | _, _ -> (host_wait, None)
 
-(* An undecided pair: no device has [opened] [-1]. *)
-let undecided = { occupant = -1; way = host_wait }
+let known_pair pairs i =
+  if i < Array.length pairs then pairs.(i) else Memory.undecided
 
-let known_pair pairs i = if i < Array.length pairs then pairs.(i) else undecided
+(* Grows [l.pairs] by replacement to hold the index [i]. *)
+let grow l i =
+  let n = Int.max (i + 1) (2 * Array.length l.pairs) in
+  let a = Array.make n Memory.undecided in
+  Array.blit l.pairs 0 a 0 (Array.length l.pairs);
+  l.pairs <- a
 
-(* Sets [d]'s pair of [p] to [way], growing [l.pairs] by replacement, and
-   keeps its [mapping], unless another decision for [p] came first: that
-   decision's way. A pair decided for an earlier device of [p]'s slot is
-   replaced, its mapping kept until [d] is Stopped, as its queued waits may
-   read it. A device whose stop returned keeps no mapping: its drain gives
-   back the ones it keeps. *)
-let set_pair (d, (p : device), way, mapping) =
+type decided = Decided of pair | Replaced of pair | Taken of pair
+
+(* Sets [d]'s pair of [p] to [way] with its mapping [map], unless a decision
+   for [p] or a later device of its slot came first, or [d]'s stop returned,
+   after which its drain owns its pairs: then the pair to use, and the caller
+   gives [map] back. A pair decided for an earlier device of the slot is
+   replaced, and its mapping goes among [d]'s retired ones at the value after
+   every submit that may wait through it ({!Dev.next_value}), in the same
+   section, so that a drain finds it in the cell or among them. Nothing
+   allocates between the two stores. *)
+let set_pair (d, (p : device), way, map) =
   let l = d.live and i = p.index in
   let known = known_pair l.pairs i in
-  if known.occupant = p.opened then Some known.way
-  else if Option.is_some mapping && Dev.stop_returned d then Some host_wait
+  if known.occupant = p.opened then Taken known
+  else if known.occupant > p.opened || Dev.stop_returned d then
+    Taken Memory.undecided
   else begin
-    Option.iter (fun m -> l.word_maps <- m :: l.word_maps) mapping;
-    if i >= Array.length l.pairs then begin
-      let n = Int.max (i + 1) (2 * Array.length l.pairs) in
-      let a = Array.make n undecided in
-      Array.blit l.pairs 0 a 0 (Array.length l.pairs);
-      l.pairs <- a
-    end;
-    l.pairs.(i) <- { occupant = p.opened; way };
-    None
+    let cell = { occupant = p.opened; way; word_map = map } in
+    if i >= Array.length l.pairs then grow l i;
+    (match known.word_map with
+    | Some m -> Memory.retire_locked d m
+    | None -> ());
+    l.pairs.(i) <- cell;
+    if known.occupant >= 0 then Replaced cell else Decided cell
   end
 
 (* [l.pairs] is replaced whole under [d]'s lock and its cells are immutable
    pairs, so a read takes no lock. A pair decided for another device of [p]'s
    slot, or a stale undecided one, decides it again: the decision that comes
-   second gives its mapping back. *)
+   second gives its mapping back. A decision for an earlier device of the
+   slot comes from a submit whose point's device has since stopped: its wait
+   on the host returns at once. A replacement gives back [d]'s retired
+   mappings that are due, so a device that only submits gives back the ones
+   it replaced. It frees no memory, since CUDA's frees of memory wait for
+   every kernel running on the GPU: a word that loses its last mapping goes
+   back at the next drain. A mapping's free waits for no work: CUDA's does
+   nothing, and NV's and AMD's unmap at once. Is the pair to wait by. *)
 let pair d (p : device) =
   let known = known_pair d.live.pairs p.index in
-  if known.occupant = p.opened then known.way
+  if known.occupant = p.opened then known
   else
-    let way, mapping = decide d p in
-    match Lock.protect d.live.lock set_pair (d, p, way, mapping) with
-    | None -> way
-    | Some first ->
-        Option.iter (Memory.unmap d) mapping;
+    let way, map = decide d p in
+    match Lock.protect d.live.lock set_pair (d, p, way, map) with
+    | Taken first ->
+        Option.iter (Memory.unmap_word d) map;
         first
+    | Decided cell -> cell
+    | Replaced cell ->
+        Memory.give_retired d;
+        cell
+
+(* The way the run [run] of [d] waits for [p]'s values in its queue. A way
+   through a mapping that [d] may give back makes the submit check its waits
+   ({!Dev.next_value}). *)
+let way_of d run (p : device) =
+  let c = pair d p in
+  if Option.is_some c.word_map then run_check run;
+  c.way
 
 (* Submit *)
 
@@ -1045,10 +1082,12 @@ let rec wait_points s run n i count =
       else
         let way =
           if count >= s.dev.live.waits.most then host_wait
-          else pair s.dev producer
+          else way_of s.dev run producer
         in
         if way = host_wait then begin
-          Dev.wait producer v;
+          (* The producer may have stopped since: a point it reached is
+             done. *)
+          Dev.wait_point 0 true p;
           wait_points s run n (i + 1) count
         end
         else begin

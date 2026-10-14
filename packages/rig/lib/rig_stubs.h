@@ -332,6 +332,9 @@ struct rig_run {
   int nwaits, cwaits;
   struct rig_wait *waits;
   int *producers;
+  /* Whether a wait reads a word through a mapping its device may give back
+     ([record_waits]). */
+  int checks;
   uint64_t sub; /* the submission the fixed and slot arrays were fitted to */
   /* What the submit answered: for a producer the device's queue would wait
      for that is lost, the point it did not reach. */

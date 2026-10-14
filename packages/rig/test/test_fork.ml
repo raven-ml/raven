@@ -394,6 +394,46 @@ let test_keep_drained () =
   equal ~msg:"in the parent before the fork" int 0 (Atomic.get runs);
   collected_in_child d p runs (ref None)
 
+(* A child gives back nothing of a word its parent's devices hold: neither a
+   consumer's mapping of a producer's word of its own nor the word, of a
+   producer whose slot was freed before the fork. The parent gives the word
+   back once, after its consumer closed. *)
+let test_word_maps () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let consumer, c = P.open_ ~waits_on:[ `Host ] "fork:word-consumer" in
+  let d, p = P.open_ ~transport:true "fork:word-producer" in
+  let q = submit (empty d) in
+  let w = submit ~waits:[| q |] (empty consumer) in
+  equal ~msg:"the consumer's waits in its queue" int 1
+    (List.length (P.last_waits c));
+  ignore (P.run p);
+  Rig.Point.wait w;
+  Rig.close d;
+  Rig.free_cache d;
+  let since calls p =
+    String.concat " " (List.filteri (fun i _ -> i >= calls) (P.log p))
+  in
+  let calls_c = List.length (P.log c) and calls_p = List.length (P.log p) in
+  let lines, ended =
+    in_child (fun () ->
+        Rig.free_cache d;
+        Rig.free_cache consumer;
+        Rig.close consumer;
+        Gc.full_major ();
+        Rig.free_cache consumer;
+        [
+          Printf.sprintf "consumer calls: %s" (since calls_c c);
+          Printf.sprintf "producer calls: %s" (since calls_p p);
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "consumer calls: "; "producer calls: " ] lines;
+  equal ~msg:"the word's frees while the consumer is open" int 0
+    (P.word_frees p);
+  Rig.close consumer;
+  equal ~msg:"the word's frees once the consumer closed" int 1 (P.word_frees p);
+  equal ~msg:"Polled's violations" (list string) [] (P.violations ())
+
 let tests =
   [
     group ~timeout "fork"
@@ -417,6 +457,8 @@ let tests =
           test_keep;
         test "a kept value drained before a fork is let go in the child"
           test_keep_drained;
+        test "a forked child gives back no word its parent's devices hold"
+          test_word_maps;
       ];
   ]
 

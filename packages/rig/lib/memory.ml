@@ -391,6 +391,73 @@ let unload d l = if not (unload_now d l) then defer d (Unload (l, None))
 
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
+(* Words *)
+
+(* Takes one of [p]'s word unmaps for a mapping about to be made: false once
+   [p]'s slot is freed and no mapping is left, when its points are done and
+   its word may be gone. *)
+let rec hold_word p =
+  let n = Atomic.Loc.get [%atomic.loc p.live.word_unmaps] in
+  n > 0
+  && (Atomic.Loc.compare_and_set [%atomic.loc p.live.word_unmaps] n (n + 1)
+     || hold_word p)
+
+(* The devices whose words of their drivers' own lost their last mapping,
+   which the next drain gives back: a submit gives back mappings of words,
+   and must not wait for a free, which CUDA's does for the GPU's running
+   work. A device enters once, after its slot was freed, and a drain that
+   raises nothing empties the list. *)
+let unmapped : device list Atomic.t = Atomic.make []
+
+let rec push_unmapped p =
+  let l = Atomic.get unmapped in
+  if not (Atomic.compare_and_set unmapped l (p :: l)) then push_unmapped p
+
+let word_unmapped p =
+  if
+    Atomic.Loc.fetch_and_add [%atomic.loc p.live.word_unmaps] (-1) = 1
+    && p.live.word = 0
+  then push_unmapped p
+
+(* Gives back the unmapped words one at a time. A device whose slot was
+   freed has stopped, so [Dev.give] calls its driver at once. A word is
+   taken off the list before its free, so a free that raises reaches the
+   drain's caller and the word is not freed again ({!Rig_edge.Driver}); the
+   rest wait for the next drain. *)
+let rec give_words () =
+  match Atomic.get unmapped with
+  | [] -> ()
+  | p :: rest as l ->
+      (if Atomic.compare_and_set unmapped l rest then
+         match p.live.word_region with
+         | Some r -> ignore (free_region p r : bool)
+         | None -> ());
+      give_words ()
+
+let retire_at (d, v, m) = d.live.retired <- (v, m) :: d.live.retired
+let retire_locked d m = retire_at (d, Dev.next_value d, m)
+
+external reraise : exn -> 'a = "%reraise"
+
+(* Gives back [d]'s mapping [r] of [p]'s word now, or once [d] stopped. A
+   free that raises is not run again ([Dev.give]), so [p]'s count drops
+   before the exception passes on, with nothing allocated first. *)
+let unmap_word d ((r, p) as m) =
+  match free_region d r with
+  | true -> word_unmapped p
+  | false -> Dev.protect d retire_at (d, 0, m)
+  | exception e ->
+      word_unmapped p;
+      reraise e
+
+(* Drops [d]'s own unmap once this call freed its slot. The lock is passed
+   first: a refresh that began while [d] held its slot reads the word under
+   it ({!Dev.stopped}), and one after reads none. *)
+let let_go_word d =
+  Lock.hold d.live.lock;
+  Lock.release d.live.lock;
+  word_unmapped d
+
 (* Gives [e]'s region back to its driver, and its bytes to their keeper; once
    its device stopped if it is lost and not stopped. *)
 let give_back (e : entry) =
@@ -581,16 +648,35 @@ let take_all_cached (l, freed) =
   l.cached <- 0;
   freed
 
-(* Empties [l]'s pairs and its way to rig's array, and takes one of its
-   mappings of words. *)
-let pop_word_map l =
-  l.pairs <- [||];
+(* Ends [l]'s way to rig's array, and takes its mapping of the array. *)
+let pop_words_map l =
   l.words <- -1;
   match l.word_maps with
   | r :: rest ->
       l.word_maps <- rest;
       Some r
   | [] -> None
+
+let undecided = { occupant = -1; way = -1; word_map = None }
+
+(* The first of [pairs] from [i] that holds a mapping, or [-1]. *)
+let rec first_mapped pairs i =
+  if i >= Array.length pairs then -1
+  else if Option.is_some (Array.unsafe_get pairs i).word_map then i
+  else first_mapped pairs (i + 1)
+
+(* Takes the mapping of the first of [l]'s pairs from [i] that holds one,
+   with its index, emptying its cell, or empties [l]'s pairs after the
+   last. *)
+let pop_pair_map (l, i) =
+  match first_mapped l.pairs i with
+  | -1 ->
+      l.pairs <- [||];
+      None
+  | i ->
+      let taken = Some (i, Option.get l.pairs.(i).word_map) in
+      l.pairs.(i) <- undecided;
+      taken
 
 let mapped_ids l = Cache.fold (fun id _ ids -> id :: ids) l.mapped []
 
@@ -611,19 +697,28 @@ let take_back ((e : entry), mp) =
     true
   end
 
-(* Gives back the Stopped [d]'s mappings of producers' words and of memory
-   that outlives it, one at a time: an exception loses at most the one in
-   hand, and the next drain finds the rest. *)
+(* Gives back the Stopped [d]'s mappings of words and of memory that
+   outlives it, one at a time: an exception loses at most the one in hand,
+   and the next drain finds the rest. A Stopped device's pairs change no
+   more ({!Submission}), so the walk over them ends. *)
 let give_maps d =
   let l = d.live in
   let rec words () =
-    match Lock.protect l.lock pop_word_map l with
+    match Lock.protect l.lock pop_words_map l with
     | Some r ->
         unmap d r;
         words ()
     | None -> ()
   in
   words ();
+  let rec pairs i =
+    match Lock.protect l.lock pop_pair_map (l, i) with
+    | Some (i, m) ->
+        unmap_word d m;
+        pairs (i + 1)
+    | None -> ()
+  in
+  pairs 0;
   List.iter
     (fun id ->
       match Lock.protect l.lock pop_mapped (d, id) with
@@ -664,15 +759,49 @@ let take_pending (l, w) =
   let front, back = l.pending in
   take front back
 
+(* The value up to which [d]'s releases are due: [d]'s word, none while it
+   is lost and not Stopped, and all once it is Stopped, since it runs
+   nothing, also no submit it never gave a value. *)
+let due_at d =
+  if not (Dev.is_lost d) then Dev.word d
+  else if Dev.stopped d then max_int
+  else -1
+
 (* Takes the pending releases whose value [d] reached. *)
 let due_pending d =
   let l = d.live in
   match l.pending with
   | [], _ -> []
   | (v, _) :: _, _ ->
-      let lost = Dev.is_lost d in
-      let w = if lost && not (Dev.stopped d) then -1 else Dev.word d in
+      let w = due_at d in
       if w < v then [] else Lock.protect l.lock take_pending (l, w)
+
+(* Takes one of [l]'s retired mappings of words whose value [w] reached. *)
+let take_retired (l, w) =
+  let rec take before = function
+    | [] -> None
+    | (v, m) :: rest when v <= w ->
+        let taken = Some m in
+        l.retired <- List.rev_append before rest;
+        taken
+    | r :: rest -> take (r :: before) rest
+  in
+  take [] l.retired
+
+(* Gives back [d]'s retired mappings of words whose waits its queue passed,
+   one at a time, as [give_maps] does. *)
+let give_retired d =
+  let l = d.live in
+  if l.retired != [] then
+    let w = due_at d in
+    let rec give () =
+      match Lock.protect l.lock take_retired (l, w) with
+      | Some m ->
+          unmap_word d m;
+          give ()
+      | None -> ()
+    in
+    give ()
 
 (* A release that [d], lost and not stopped since, cannot run waits again: its
    code memory only after the image's unload. *)
@@ -728,7 +857,8 @@ let route_released d =
 let drain_own d =
   if released_any d.live.release then route_released d;
   free_all (due d);
-  run_all d (due_pending d)
+  run_all d (due_pending d);
+  give_retired d
 
 let is_let_go = function _, Let_go _ -> true | _ -> false
 
@@ -750,23 +880,29 @@ let forget d =
 (* Whether [l] has nothing to drain: no collected memory, nothing waiting for a
    value. A drain of an idle device allocates nothing. *)
 let idle l =
-  l.retiring == [] && fst l.pending == [] && not (released_any l.release)
+  l.retiring == [] && fst l.pending == [] && l.retired == []
+  && not (released_any l.release)
 
-let maps_any l = Cache.length l.mapped > 0
+let kept_locked l =
+  l.cached > 0 || l.word_maps != [] || l.retired != []
+  || Cache.length l.mapped > 0
+  || first_mapped l.pairs 0 >= 0
 
 (* Whether the lost [d] keeps what returns once it is Stopped: its cache and
-   its mappings. *)
-let kept d =
-  let l = d.live in
-  l.cached > 0 || l.word_maps != [] || Dev.protect d maps_any l
+   its mappings. Read under the lock: a pair's mapping that a decision
+   retires is in the cell or among the retired ones. *)
+let kept d = Dev.protect d kept_locked d.live
 
-(* A device whose stop returned frees its slot once its last memory went
-   back and its last kept value went. *)
+(* A device whose stop returned frees its slot once its last memory and
+   mapping went back and its last kept value went, then lets go of its
+   word. Every drain gives back the words that lost their last mapping. *)
 let drain d =
   if Dev.orphaned d then forget d
   else begin
     if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
-    if Dev.stop_returned d then ignore (Dev.free_slot d : bool)
+    if Dev.stop_returned d && (not (kept d)) && Dev.free_slot d then
+      let_go_word d;
+    give_words ()
   end
 
 let () = Dev.answered := drain

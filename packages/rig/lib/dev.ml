@@ -66,6 +66,7 @@ external c_stopped : c -> unit = "caml_rig_stopped"
 external c_await_stop : c -> int -> bool = "caml_rig_await_stop"
 external c_owed : unit -> int = "caml_rig_owed" [@@noalloc]
 external c_free : c -> device -> bool = "caml_rig_free"
+external c_next_value : c -> int = "caml_rig_next_value"
 external c_claim : unit -> int = "caml_rig_claim"
 external c_unclaim : c -> unit = "caml_rig_unclaim"
 external c_fail : string -> bool = "caml_rig_fail"
@@ -152,6 +153,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       progress = { seen = 0; idle = true; since = 0 };
       word;
       word_region;
+      word_unmaps = 1;
       fault;
       release = c_release c;
       lock = Lock.create ();
@@ -161,6 +163,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       retiring = [];
       pending = ([], []);
       pairs = [||];
+      retired = [];
       words = 0;
       word_maps = [];
       mapped = Cache.create 4;
@@ -263,6 +266,11 @@ let slot_word (d : device) =
   if w >= 0 then w else c_final d.live.c
 let committed d = c_committed d.live.c
 
+(* One past [d]'s last value, read under its C mutex: a value that every
+   submit whose waits were checked before it took, or will take ([+ 1] covers
+   the submit between its check and its value). *)
+let next_value d = c_next_value d.live.c
+
 (* Locks *)
 
 let protect d f x = Lock.protect d.live.lock f x
@@ -345,7 +353,7 @@ let drop_values d = Lock.protect locals_lock drop_locked d
    it, [index] holds the device slot it took, [0] for none and negated once
    its device is published, which the C stubs that take, give back and
    publish store, [ended] says that an exception ended it, and [id] is unique
-   for the process. *)
+   for the process, [-1] until the open took its slot. *)
 type request = {
   fn : string;
   machine : machine;
@@ -356,7 +364,7 @@ type request = {
   mutable opening : bool;
   index : int Atomic.t;
   mutable ended : bool; [@atomic]
-  id : int;
+  mutable id : int;
 }
 
 (* Takes a device slot and stores it in [a] ([0] if every slot is held), and
@@ -394,15 +402,19 @@ let forget_locked d =
 let answered : (device -> unit) ref = ref ignore
 
 (* Reads a lost device's own word through its driver, which may be called
-   after [stop], so that its slot's word moves on. *)
-let refresh d =
+   after [stop], so that its slot's word moves on: only while its record owns
+   its line, under its lock, which the drop of its own word unmap passes
+   ({!Memory.let_go_word}), so that no read meets a freed word. *)
+let refresh_owned d =
   match d.kind with
-  | Driver { m; h; _ } when d.live.word = 0 -> (
+  | Driver { m; h; _ } when c_word d.index d.opened >= 0 -> (
       let module D = (val m) in
       match D.signaled h with
       | w -> c_raise_word d.index w
       | exception D.Fault _ -> ())
   | _ -> ()
+
+let refresh d = if d.live.word = 0 then protect d refresh_owned d
 
 let stop_returned (d : device) = state d >= ended_state
 
@@ -417,13 +429,14 @@ let stopped (d : device) =
 
 (* Frees [d]'s slot once [d] has stopped and nothing of it remains to give
    back: no token its drains have not routed, nothing in its cache, among its
-   retiring memory or waiting for a value. [caml_rig_free] checks the rest.
+   retiring memory or its retired mappings, or waiting for a value.
+   [caml_rig_free] checks the rest.
    Its record then answers as it stood, and a later device takes the slot,
-   continuing its timeline. Whether it is free. *)
+   continuing its timeline. Whether this call freed it. *)
 let free_slot d =
   let l = d.live in
   d.index > 0 && stopped d
-  && l.cached = 0 && l.retiring == []
+  && l.cached = 0 && l.retiring == [] && l.retired == []
   && fst l.pending == []
   && c_free l.c d
 
@@ -930,7 +943,7 @@ let open_named ~fn ~machine ~name ~key make =
       opening = false;
       index = Atomic.make 0;
       ended = false;
-      id = Atomic.fetch_and_add opens 1;
+      id = -1;
     }
   in
   let finish result =
@@ -957,7 +970,12 @@ let open_named ~fn ~machine ~name ~key make =
             (Error
                (strf "%s: %d devices hold every device slot" full
                   Point.max_index))
-        else finish (make ~index ~slot:r.index ~opened:r.id ~name:full)
+        else begin
+          (* Taken after the slot, so that a slot's later device has a larger
+             id: one that took an id before waiting for the slot would not. *)
+          r.id <- Atomic.fetch_and_add opens 1;
+          finish (make ~index ~slot:r.index ~opened:r.id ~name:full)
+        end
   with
   | result -> result
   | exception e when r.opening ->

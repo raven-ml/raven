@@ -92,13 +92,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     path that maps no host memory, or when the word [make] was given lies
     outside the array, the word is eight bytes of the device's own [Pinned]
     memory, which starts at the given word's value and which rig reads through
-    {!signaled}. That word, in a page of the device's own, stays for the
-    process, since another device's queue may still wait on it after the
-    device's slot passed on: each such open keeps the page. The device's values
-    start after that value. The word holds, as an unsigned 64-bit integer in the
-    host's byte order, the last value [v] such that the work of every value up
-    to [v] has completed. A channel writes it once its work has completed and
-    that work's writes are visible to the system. A read returns the value
+    {!signaled}. That word, in a page of the device's own, goes back when rig
+    frees it ({!Rig_edge.type-facts}). The device's values start after that
+    value. The word holds, as an unsigned 64-bit integer in the host's byte
+    order, the last value [v] such that the work of every value up to [v] has
+    completed. A channel writes it once its work has completed and that work's
+    writes are visible to the system. A read returns the value
     before a release or the value after it. This assumes the copy engine writes
     a 64-bit release as one store. The capability's [local] grows the local
     memory the compute channel gives kernels ({!Rig_nv_abi.Gpu.t.local}). A
@@ -272,8 +271,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
 
     Either way the stop frees the C state the device ran work with, its
     templates and the channels' records, which the channels never read. The
-    edge that reads the word, 24 bytes, stays for the process, and so does a
-    word of the device's own.
+    edge that reads the word, 24 bytes, stays for the process.
 
     Once the word shows the last value and {!val-stop} has returned, no work
     of the device writes it. A channel's release of a value follows its work,

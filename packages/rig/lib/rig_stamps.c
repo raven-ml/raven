@@ -603,7 +603,7 @@ value caml_rig_run_fit(value v_r, value v_s) {
 value caml_rig_run_give(value v_r) {
   struct rig_run *r = Run_val(v_r);
   for (int k = 0; k < r->nslots; k++) r->slots[k].stamps = NULL;
-  r->npoints = r->nwaits = 0;
+  r->npoints = r->nwaits = r->checks = 0;
   atomic_store(&r->busy, RUN_IDLE);
   return Val_unit;
 }
@@ -754,7 +754,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits) {
   if (s->nslotted > 0) set_copies(s, r);
   for (int k = 0; k < s->ncodes; k++)
     memcpy(r->args + s->codes[k].at, &s->codes[k].code, sizeof(uint64_t));
-  r->npoints = r->nwaits = 0;
+  r->npoints = r->nwaits = r->checks = 0;
   for (int k = 0; k < s->nfixed; k++)
     r->fixed[k] =
         add_memory(r, own, base, s->fixed[k].stamps, s->fixed[k].use);
@@ -801,6 +801,13 @@ value caml_rig_run_wait(value v_r, value v_producer, value v_at,
                                           Int_val(v_kind)};
   r->producers[r->nwaits] = Int_val(v_producer);
   r->nwaits++;
+  return Val_unit;
+}
+
+/* Notes that a wait of the run reads a word through a mapping its device
+   may give back, which its submit then checks ([record_waits]). */
+value caml_rig_run_check(value v_r) {
+  Run_val(v_r)->checks = 1;
   return Val_unit;
 }
 

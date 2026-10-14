@@ -659,9 +659,10 @@ value caml_rig_routed(value v_l, value v_n) {
    is given back. The record keeps final copies of its line and answers from
    them from then on; the slot goes to a later device, whose timeline goes
    on from the word, unless the word passed RETIRED. Answers whether it
-   freed the slot, or freed it before. Under [table_mu] and [d]'s mutex. */
+   freed the slot: 0 for a slot freed before, so that one call alone answers
+   1. Under [table_mu] and [d]'s mutex. */
 static int free_locked(struct rig_device *d, struct rig_range *r, int *used) {
-  if (atomic_load(&devices[d->index]) != d) return 1;
+  if (atomic_load(&devices[d->index]) != d) return 0;
   struct rig_line *l = d->line;
   uint64_t w = line_word(l), v = atomic_load(&l->submitted);
   uint64_t reached = atomic_load_explicit(&l->reached, memory_order_acquire);
@@ -720,6 +721,21 @@ value caml_rig_free(value v_d, value v_dev) {
     free(r);
   }
   CAMLreturn(Val_bool(freed));
+}
+
+/* One past [v_d]'s last value, read under its mutex, which every submit
+   checks its waits under ([record_waits]). At most one submit is between
+   that check and storing its value ([begin_turn]), and that value is at
+   most this one. A record whose slot passed on answers past its final
+   value. */
+value caml_rig_next_value(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  caml_enter_blocking_section_no_pending();
+  mu_lock(d);
+  uint64_t v = (owner(d) ? atomic_load(&d->line->submitted) : d->final) + 1;
+  mu_unlock(d);
+  caml_leave_blocking_section();
+  return Val_long((intnat)v);
 }
 
 /* The host's record, of index 0: never lost, with its driver, whose work
@@ -1273,7 +1289,11 @@ static int give_turn(struct rig_device *d, int released, int r) {
 /* Records the run [r]'s in-queue waits in [d]'s record, for spread, after
    dropping the entries [d]'s word shows reached, and refuses a wait for a
    point a lost device did not reach, of the slot's device or an earlier
-   one: [r]'s [producer] is then that point. The mutex is held. */
+   one: [r]'s [producer] is then that point. A run whose waits read words
+   through mappings [d] may give back drops a wait for a point already done,
+   so the driver never reads its word: that word, or [d]'s mapping of it,
+   may be given back once [d] passed its next value
+   ([caml_rig_next_value]). The mutex is held. */
 static int record_waits(struct rig_device *d, struct rig_run *r) {
   /* Nothing to drop or record reads no word: the device writes its line,
      so a read is a cache miss on every submit. */
@@ -1283,21 +1303,25 @@ static int record_waits(struct rig_device *d, struct rig_run *r) {
   for (int j = 0; j < d->nrecord; j++)
     if (d->record[j].u > w) d->record[k++] = d->record[j];
   d->nrecord = k;
-  if (r->nwaits == 0) return SUBMIT_OK;
-  if (k + r->nwaits > d->crecord) return SUBMIT_NEED_RECORD;
-  uint64_t u = atomic_load(&d->line->submitted) + 1;
-  for (int j = 0; j < r->nwaits; j++)
-    d->record[k + j] =
-        (struct rig_entry){r->producers[j], r->waits[j].value, u};
-  d->nrecord = k + r->nwaits;
+  int n = 0;
   for (int j = 0; j < r->nwaits; j++) {
     uint64_t p = RIG_POINT(r->producers[j], r->waits[j].value);
     if (rig_point_lost(p)) {
-      d->nrecord = k;
       r->producer = p;
       return SUBMIT_PRODUCER_LOST;
     }
+    if (r->checks && rig_point_done(p)) continue;
+    r->producers[n] = r->producers[j];
+    r->waits[n++] = r->waits[j];
   }
+  r->nwaits = n;
+  if (n == 0) return SUBMIT_OK;
+  if (k + n > d->crecord) return SUBMIT_NEED_RECORD;
+  uint64_t u = atomic_load(&d->line->submitted) + 1;
+  for (int j = 0; j < n; j++)
+    d->record[k + j] =
+        (struct rig_entry){r->producers[j], r->waits[j].value, u};
+  d->nrecord = k + n;
   return SUBMIT_OK;
 }
 

@@ -23,8 +23,10 @@
 
     Any domain may call any function. A device's lock ({!protect}) guards the
     mutable fields of its {!Def.live}. No driver call and no wait runs under
-    it, and it is not reentrant. The host is never lost. The life of a
-    device from its loss to its stop, and what a fork does, are in
+    it but a lost device's read of a word of its driver's own ({!stopped})
+    and a read of its next value ({!next_value}), which waits for its C
+    mutex alone, and it is not reentrant. The host is never lost. The life
+    of a device from its loss to its stop, and what a fork does, are in
     {!section-loss}. {!Rig.section-timeline} and {!Rig.section-loss} state
     what timelines and a loss mean to a caller. *)
 
@@ -181,18 +183,20 @@ val stopped : device -> bool
 (** [stopped d] is [true] iff [d] is Stopped: Ended, and its word reads its
     last submitted value, so no work of [d] runs and its objects may be
     given back. For a word of its driver's own it asks the driver for the
-    word. *)
+    word under [d]'s lock, while [d] holds its slot, so its caller does not
+    hold that lock. *)
 
 val free_slot : device -> bool
 (** [free_slot d] frees [d]'s slot if [d] is Stopped and nothing of it
     remains to give back: no token of its release list that its drains have
-    not routed, nothing in its cache, among its retiring memory or waiting
-    for a value. [d] must not be the process's first {!failure}, which
+    not routed, nothing in its cache, among its retiring memory or its
+    retired mappings, or waiting for a value. [d] must not be the process's first {!failure}, which
     keeps its slot. A [d] lost before it reached every value it was given
     leaves those values on the slot's line as a range that holds [d], so
-    its dropped points raise its loss for good. It is whether the slot is
-    free. A later open takes the slot: [d] answers from then on as it
-    stood, and its points from the slot's line. *)
+    its dropped points raise its loss for good. It is whether this call
+    freed the slot, [false] for a slot freed before. A later open takes the
+    slot: [d] answers from then on as it stood, and its points from the
+    slot's line. *)
 
 val answered : (device -> unit) ref
 (** [answered] is called with each device whose stop returned, from
@@ -260,6 +264,12 @@ val failure : unit -> string option
 
 val submitted : device -> int
 (** [submitted d] is {!Rig.submitted}[ d]. *)
+
+val next_value : device -> int
+(** [next_value d] is one past [d]'s last submitted value, read under [d]'s
+    C mutex, under which every submit checks its waits: every submit whose
+    check came before has a value at most this one. A device whose slot
+    passed on answers one past its final value. *)
 
 val committed : device -> int
 (** [committed d] is the last value of [d] known committed, by {!commit} or
