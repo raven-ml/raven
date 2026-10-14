@@ -152,8 +152,8 @@ and live = {
       (** Its word's host address, in rig's array, or [0] for a word of its
           driver's own, which rig reads through its driver. *)
   word_region : region option;  (** The region its word lies in. *)
-  fault : exn -> string option;
-      (** The reason of a driver fault, [None] for another exception. *)
+  fault : Obj.Extension_constructor.t;
+      (** The constructor of its driver's or io library's [Fault]. *)
   release : int;  (** Its C release list, in its C record. *)
   lock : Lock.t;
       (** Guards the mutable fields after it. The atomic ones among them are

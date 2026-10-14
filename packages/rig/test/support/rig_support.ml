@@ -56,6 +56,8 @@ external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
 external interrupt : unit -> unit = "rig_test_interrupt" [@@noalloc]
+external interrupt_after_ms : int -> unit = "rig_test_interrupt_after"
+external interrupt_join : unit -> unit = "rig_test_interrupt_join"
 external park : unit -> unit = "rig_test_park"
 external parked : unit -> bool = "rig_test_parked"
 external unpark : unit -> unit = "rig_test_unpark"
@@ -122,6 +124,7 @@ module Driver = struct
     mutable failure : string;
     mutable fault : string option;
     mutable word_fault : string option;
+    mutable word_break : bool;
     mutable interrupt_next : bool;
     mutable stalls : int;
     mutable gated : bool;
@@ -267,7 +270,9 @@ module Driver = struct
           done;
           d.freers <- d.freers - 1
         end);
-    note d (if r.kind = None then "unmap" else "free");
+    let call = if r.kind = None then "unmap" else "free" in
+    note d call;
+    run_before d call;
     let w = polled_word d.c in
     Mutex.protect d.lock (fun () ->
         d.frees <- (r.at, w) :: d.frees;
@@ -336,7 +341,10 @@ module Driver = struct
           let n = int_of_string n in
           Ok
             (Rig_edge.Place
-               (n, fun r -> ({ code = Some r; owner = d }, String.make n 'c')))
+               ( n,
+                 fun r ->
+                   run_before d "place";
+                   ({ code = Some r; owner = d }, String.make n 'c') ))
       | [ "functions" ] -> Ok (Rig_edge.Loaded { code = None; owner = d })
       | _ -> Error "not a polled binary"
 
@@ -358,8 +366,10 @@ module Driver = struct
      word allocates nothing, as a driver's must not. *)
   let signaled d =
     Mutex.lock d.lock;
-    let fault = d.word_fault in
+    let fault = d.word_fault and break = d.word_break in
+    d.word_break <- false;
     Mutex.unlock d.lock;
+    if break then raise Sys.Break;
     match fault with
     | Some why -> raise (Fault why)
     | None ->
@@ -469,6 +479,7 @@ module Polled = struct
         failure = "";
         fault = None;
         word_fault = None;
+        word_break = false;
         interrupt_next = false;
         stalls = 0;
         gated = false;
@@ -536,6 +547,7 @@ module Polled = struct
   let fault_word d why =
     Mutex.protect d.lock (fun () -> d.word_fault <- Some why)
 
+  let break_word d = Mutex.protect d.lock (fun () -> d.word_break <- true)
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
   let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
@@ -660,6 +672,8 @@ external resident : unit -> int = "rig_test_resident"
 let watchdog_s = 10.
 
 let sees_waits = sees_waits ()
+
+let interrupt_after s = interrupt_after_ms (int_of_float (s *. 1000.))
 
 let interrupt_in_wait f =
   interrupter_start ();

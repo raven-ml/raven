@@ -108,6 +108,71 @@ let test_fail_first =
   lose d p;
   [ failure () ]
 
+(* An exception other than a fault escaping a driver's counted call loses the
+   device with the exception's constructor's name, and is the process's
+   failure; the call raises it, and the device stops once. [prepare]
+   readies the call, and is the call: the exception comes at its [call]. *)
+let escaping call prepare =
+  let name = "fail:escaping-" ^ call in
+  child_case
+    [
+      "raised Stdlib.Exit";
+      "Stdlib.Exit";
+      "stops: 1";
+      name ^ " lost: Stdlib.Exit";
+    ]
+  @@ fun () ->
+  let d, p = P.open_ name in
+  let run = prepare d in
+  P.before p call (fun () -> raise Exit);
+  let raised =
+    match run () with
+    | () -> "returned"
+    | exception e -> "raised " ^ Printexc.to_string e
+  in
+  [
+    raised;
+    Option.value ~default:"not lost" (Rig.lost d);
+    Printf.sprintf "stops: %d" (P.stops p);
+    failure ();
+  ]
+
+(* What collected memory gives back to [d]'s driver, from a buffer or an image
+   made here and dropped. *)
+let[@inline never] dropped make d = ignore (Sys.opaque_identity (make d))
+
+let returning d () =
+  Gc.full_major ();
+  Rig.free_cache d
+
+let escapes =
+  [
+    ("alloc", fun d () -> ignore (B.create d 8));
+    ( "free",
+      fun d ->
+        dropped (fun d -> B.create d 64) d;
+        returning d );
+    ( "map_host",
+      fun d ->
+        let h = B.create Rig.host (1 lsl 16) in
+        fun () -> ignore (B.borrow d h) );
+    ( "map_peer",
+      fun d ->
+        let other, _ = P.open_ "fail:escaping-peer" in
+        let m = B.create other 64 in
+        fun () -> ignore (B.borrow d m) );
+    ("image", fun d () -> ignore (Rig.Image.load d "functions"));
+    ("place", fun d () -> ignore (Rig.Image.load d "code:64"));
+    ( "entry",
+      fun d ->
+        let i = Result.get_ok (Rig.Image.load d "functions") in
+        fun () -> ignore (Rig.Image.mem i "fill") );
+    ( "unload",
+      fun d ->
+        dropped (fun d -> Result.get_ok (Rig.Image.load d "functions")) d;
+        returning d );
+  ]
+
 (* An io library whose memory holds nothing. *)
 module Nothing = struct
   type t = unit
@@ -248,6 +313,13 @@ let test_fail_beside_opens () =
 
 let tests =
   [
+    group ~timeout "an exception escaping a driver"
+      (List.map
+         (fun (call, prepare) ->
+           test
+             (call ^ ": loses the device with its text, and is the failure")
+             (escaping call prepare))
+         escapes);
     group ~timeout "fail"
       [
         test "a close is no failure, a loss is" test_close_no_failure;

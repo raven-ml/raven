@@ -24,6 +24,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/printexc.h>
 #include <caml/signals.h>
 #include <caml/threads.h>
 
@@ -878,28 +879,77 @@ static void spread(struct rig_device *p, char *shared) {
   if (why != shared) free(why);
 }
 
-/* Loses [d] for the reason [v_why], a fault of a counted call and a
-   failure of the process if [v_fault]: whether this call lost it. [v_why]
-   is copied before the runtime is released. */
-value caml_rig_lose(value v_d, value v_why, value v_fault) {
-  CAMLparam1(v_d);
-  struct rig_device *d = Device_val(v_d);
-  char *why = strdup(String_val(v_why));
-  if (why == NULL) caml_raise_out_of_memory();
+/* Loses [d] with the reason [why] as [lose_locked] does, a fault if
+   [fault], and ends [ending] counted calls, under the mutex taken once: a
+   loss this call won is spread and its stop owed. [why] is freed if [own]
+   and the loss was not this call's. Whether this call lost [d]. The domain
+   lock is released here, after the caller read its values. */
+static int lose_ending(struct rig_device *d, char *why, int own, int counts,
+                       int fault, int ending) {
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
-  int won = lose_locked(d, why, 1, Bool_val(v_fault));
-  if (won) d->faulted = Bool_val(v_fault);
+  int won = lose_locked(d, why, own, counts);
+  if (won) d->faulted = fault;
+  d->inside -= ending;
   mu_unlock(d);
   if (won) {
     mutex_lock(&table_mu);
     spread(d, NULL);
     mutex_unlock(&table_mu);
     finish(d);
-  } else
+  } else if (own)
     free(why);
   caml_leave_blocking_section();
-  CAMLreturn(Val_bool(won));
+  return won;
+}
+
+/* Ends a counted call on [d] that loses nothing. */
+static void leave_count(struct rig_device *d) {
+  int released = take(d);
+  d->inside--;
+  give(d, released);
+}
+
+/* Loses [d] for the reason [v_why], a fault of a counted call and a
+   failure of the process if [v_fault]: whether this call lost it. [v_why]
+   is copied before the runtime is released. */
+value caml_rig_lose(value v_d, value v_why, value v_fault) {
+  struct rig_device *d = Device_val(v_d);
+  int fault = Bool_val(v_fault);
+  char *why = strdup(String_val(v_why));
+  if (why == NULL) caml_raise_out_of_memory();
+  return Val_bool(lose_ending(d, why, 1, fault, fault, 0));
+}
+
+/* Ends the counted call on [v_d] that raised [v_exn], losing [v_d] first
+   if [v_exn] is of [v_fault], the constructor of its driver's faults, or
+   of one the scope [v_scope] names: none other for [Faults] (0), every
+   other for [Any] (1), every other but its constructor's for [Any_but].
+   A fault's loss keeps its message and counts as a fault
+   ([caml_rig_faulted]); another exception's keeps its constructor's name
+   and its integer and string arguments ([caml_format_exception]), or "out
+   of memory" if the C heap has no room. Either is the process's failure if
+   none came before. The loss and the end of the count take the mutex once,
+   and no OCaml runs in this call, so an exception that lands in the
+   caller's handler after it finds both done. Answers whether [v_exn] is a
+   fault. */
+value caml_rig_raised(value v_d, value v_exn, value v_fault, value v_scope) {
+  struct rig_device *d = Device_val(v_d);
+  value k = Tag_val(v_exn) == 0 ? Field(v_exn, 0) : v_exn;
+  int fault = k == v_fault;
+  int loses = fault || v_scope == Val_int(1) ||
+              (Is_block(v_scope) && Field(v_scope, 0) != k);
+  if (!loses) {
+    leave_count(d);
+    return Val_false;
+  }
+  char *text = fault ? NULL : caml_format_exception(v_exn);
+  const char *given = fault ? String_val(Field(v_exn, 1)) : text;
+  char *why = given != NULL ? strdup(given) : NULL;
+  if (text != NULL) caml_stat_free(text);
+  int own = why != NULL;
+  lose_ending(d, own ? why : no_memory_why, own, 1, fault, 1);
+  return Val_bool(fault);
 }
 
 /* Whether [v_d] was lost for a fault of a counted call. Read by its stop,
@@ -1054,12 +1104,8 @@ value caml_rig_enter(value v_d) {
 
 /* Ends a counted call on [d]. */
 value caml_rig_exit(value v_d) {
-  CAMLparam1(v_d);
-  struct rig_device *d = Device_val(v_d);
-  int released = take(d);
-  d->inside--;
-  give(d, released);
-  CAMLreturn(Val_unit);
+  leave_count(Device_val(v_d));
+  return Val_unit;
 }
 
 /* Spins on [d]'s word, yielding the processor with the domain lock

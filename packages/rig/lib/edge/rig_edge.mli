@@ -294,8 +294,8 @@ type ('region, 'image) code =
           [n], that rig places at the region's start. The driver must make
           nothing on the device before the function is called, so a [Place]
           whose function is never called leaves nothing to release. The
-          function must call nothing that may block or fault, and must raise
-          nothing. *)
+          function must call nothing that may block or fault. rig calls it
+          as a counted call ({!section-drivers}). *)
 
 type entry = {
   code : int;
@@ -332,18 +332,39 @@ type entry_answer =
 
     rig counts the calls in flight on each device that is not lost, and
     calls {!Driver.val-stop} once, when none is. Every call of the driver's
-    OCaml functions is {e counted} except {!Driver.locate} and
-    {!Driver.peer}, which must call nothing that may block or fault, and
-    which rig calls at any time. Calls of the C functions are counted where
-    the device declares [may_block]. After [stop], rig calls only
-    {!Driver.val-free}, {!Driver.unload} and {!Driver.signaled}, and lets go
-    of the values the device's submissions keep ([Rig.Submission.make]). A
-    {!Driver.Fault} from a counted call, and a failed [submit] or [commit] of
-    the driver, lose the device.
+    OCaml functions is {e counted} except {!Driver.val-facts},
+    {!Driver.locate}, {!Driver.peer} and {!Driver.val-stop}. rig calls
+    [locate] and [peer] at any time, and they must call nothing that may
+    block or fault. Calls of the C functions are counted where the device
+    declares [may_block]. After [stop], rig calls only {!Driver.val-free},
+    {!Driver.unload} and {!Driver.signaled}, and lets go of the values the
+    device's submissions keep ([Rig.Submission.make]).
+
+    A {!Driver.Fault} from a counted call, and a failed [submit] or [commit]
+    of the driver, lose the device.
+
+    Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
+    {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-image}, the
+    function of a [Place], {!Driver.val-entry} or {!Driver.unload} on a
+    device that is not lost also loses it, with the exception's text, since
+    the call may have left the driver's state half changed. An
+    [Invalid_argument] from [entry] loses nothing. Neither does any
+    exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
+    or one other than [Fault] from {!Driver.sleep} or
+    {!Driver.val-signaled}.
+
+    An asynchronous exception ([Rig]'s Errors section) can end any OCaml
+    code of the driver, and rig calls {!Driver.val-stop},
+    {!Driver.val-free} and {!Driver.unload} after it. A driver must
+    therefore take each lock it holds while OCaml code runs immediately
+    before the handler that gives it back, with no allocation or call in
+    between, and must give it back first in both the return and the raise,
+    as [Mutex.protect] does.
 
     rig guarantees these properties, so that a driver checks none of them:
     {ul
-    {- it frees each region once, on its device;}
+    {- it frees each region at most once, on its device, and never again
+       after a [free] of it raised;}
     {- it calls {!Driver.peer} and {!Driver.val-map_peer} with two distinct
        devices of the driver;}
     {- it unloads each image once, and calls {!Driver.val-entry} only on a
@@ -448,6 +469,11 @@ module type Driver = sig
       sleeps again while it is unmoved. rig may call it while the driver's
       [submit] or [commit] runs. Counted.
 
+      An exception other than {!Fault} that escapes [sleep] loses nothing
+      ({!section-drivers}). The driver must record each event it consumes,
+      such as a fault's report, before it consumes it, so that the next
+      call of [sleep] still raises {!Fault} for it.
+
       Raises {!Fault} once the device has faulted. *)
 
   (** {1:stopping Stopping} *)
@@ -484,7 +510,12 @@ end
 
     An io device holds memory that the host does not address, such as a
     file, and runs no work. Its reads and writes are synchronous, in the
-    caller. *)
+    caller. Of the exceptions its library raises, only {!Fault} loses the
+    device. Any other reaches the caller, since no work of the device can
+    see a change it left half done. The library must leave each region it
+    made readable, writable and freeable after an exception escapes any of
+    its calls, and must give back its locks as a driver does
+    ({!section-drivers}). *)
 module type Io = sig
   type t
   (** The type for open io devices. *)

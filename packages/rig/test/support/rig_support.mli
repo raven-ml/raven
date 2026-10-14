@@ -139,14 +139,19 @@ module Polled : sig
       and its frees raise it once they gave their region back. *)
 
   val before : t -> string -> (unit -> unit) -> unit
-  (** [before d call f] runs [f] once, at the start of [d]'s next fallible call
-      or stop that {!log} names [call], such as ["entry"]: a point inside a
-      call rig makes, where a test can change what rig was given or hold the
-      call. *)
+  (** [before d call f] runs [f] once, at the start of [d]'s next counted call
+      or stop that {!log} names [call], such as ["entry"], or of the function
+      of the next [Place] its [image] answers, ["place"]: a point inside a
+      call rig makes, where a test can change what rig was given, hold the
+      call or raise from it. A free runs it once it passed the free gate. *)
 
   val fault_word : t -> string -> unit
   (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise
       [Fault why] from now on, as a transport's that lost its link. *)
+
+  val break_word : t -> unit
+  (** [break_word d] makes [d]'s next read of its word ([signaled]) raise
+      [Sys.Break], as a Ctrl-C landing in it does. *)
 
   val fail_at : t -> int -> [ `Fault of string | `Refuse of int ] -> unit
   (** [fail_at d n how] fails [d]'s fallible calls from the [n]-th from now on,
@@ -426,6 +431,17 @@ val interrupt : unit -> unit
     poll point: the runtime records the signal, and the thread's next poll
     point runs its handler when the caller runs alone. With other domains,
     the first to poll runs it. *)
+
+val interrupt_after : float -> unit
+(** [interrupt_after s] starts a thread that runs no OCaml code and raises
+    SIGINT [s] seconds later, as a Ctrl-C does: its handler runs on the next
+    thread that returns to OCaml. One such thread runs until
+    {!interrupt_join}. It raises [Failure] on Windows. *)
+
+val interrupt_join : unit -> unit
+(** [interrupt_join ()] waits until the thread {!interrupt_after} started,
+    if any, has ended, then runs the handlers of the signals pending, so its
+    SIGINT lands here if no poll point took it before. *)
 
 val interrupt_in_wait : (unit -> 'a) -> 'a * bool
 (** [interrupt_in_wait f] is [f ()], run while a new thread that runs no OCaml

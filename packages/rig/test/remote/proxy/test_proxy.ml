@@ -549,6 +549,30 @@ let room_idle () =
   let p = submit (copy_submission m.host ~src:a ~dst:b) in
   Rig.Point.wait p
 
+(* A Ctrl-C during a wait for a proxy's work loses nothing: the wait raises
+   Sys.Break, and the next wait reaches the value. The agent holds the work
+   until the wait broke. *)
+let break_in_wait () =
+  if Sys.win32 then skip ~reason:"Windows has no SIGINT from a thread" ();
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let d = m.devices.(0) in
+  let a = B.create d 64 and b = B.create d 64 in
+  pause m.ag;
+  let p = submit (copy_submission d ~src:a ~dst:b) in
+  Sys.catch_break true;
+  let broke =
+    Fun.protect ~finally:(fun () ->
+        (try Rig_support.interrupt_join () with Sys.Break -> ());
+        Sys.catch_break false)
+    @@ fun () ->
+    Rig_support.interrupt_after 0.1;
+    match Rig.Point.wait p with () -> false | exception Sys.Break -> true
+  in
+  resume m.ag;
+  equal ~msg:"the wait took Sys.Break" bool true broke;
+  equal ~msg:"lost" lost_w None (Rig.lost d);
+  Rig.Point.wait p
+
 let work =
   group "work"
     [
@@ -557,6 +581,8 @@ let work =
       test "a wait on another device of the link reaches the agent" waits_travel;
       test "a submission waits while more than 64 MiB are in flight" room_later;
       test "an idle device takes a submission of any size" room_idle;
+      test "a Ctrl-C in a wait loses nothing, and the next wait reaches it"
+        break_in_wait;
     ]
 
 (* Code *)

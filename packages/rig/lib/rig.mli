@@ -453,6 +453,8 @@ val signaled : t -> int
     A device becomes lost when:
     {ul
     {- its driver reports a fault, or fails to take or commit work;}
+    {- another exception escapes its driver while the driver changes the
+       device's memory or code ({!section-errors});}
     {- its progress stands still past its hang bound ({!section-hangs});}
     {- its queue waits for a value that a lost device never reached;}
     {- {!close} ends it;}
@@ -539,20 +541,36 @@ val signaled : t -> int
     An exception raised inside a call to rig leaves rig's own state
     consistent: its devices, names, timelines, stamps and memory. Every later
     call behaves as its doc states as far as that state decides it. No later
-    call waits on the call the exception ended, no name stays opening, and
-    the device or name that call used serves later calls. A driver's own
-    state is its driver's ({!Rig_edge}). An {e asynchronous} exception is one
-    the runtime raises where the call allocates OCaml values or polls, such
-    as [Sys.Break], [Stdlib.Out_of_memory], or an exception from a signal
-    handler or a [Gc.Memprof] callback, or where a function of the call
-    starts, as [Stack_overflow] is. It may leak the memory of the call it
-    interrupts. *)
+    call waits on the call the exception ended, and no name stays opening.
+
+    An {e asynchronous} exception is one the runtime raises where the call
+    allocates OCaml values or polls, such as [Sys.Break],
+    [Stdlib.Out_of_memory], or an exception from a signal handler or a
+    [Gc.Memprof] callback, or where a function of the call starts, as
+    [Stack_overflow] is. It may leak the memory of the call it interrupts.
+
+    A driver changes the memory and code that a device's work uses when it
+    allocates, maps or gives back memory, and when it loads, looks up or
+    unloads code. An exception other than a fault that escapes the driver
+    during such a change may leave it half done. rig then loses the device,
+    with the exception's text as the reason ({!Lost}), and raises the
+    exception again. Calls that allocate, borrow, load or ask for a
+    function ({!Image.mem}) make such changes, and so does reclamation
+    ({!section-reclaim}), on whichever device's memory returns. An
+    asynchronous exception from any of these calls may therefore lose a
+    device. Every other exception leaves the device serving later calls,
+    such as one that interrupts a wait ({!section-domains}), one from an io
+    device's call, and the [Invalid_argument] of a function the device
+    cannot run ({!Image.mem}). *)
 
 exception Lost of t * string
 (** [Lost (d, why)] is raised by a use that the loss of [d] makes invalid
     ({!section-loss_memory}). [why] is one of:
     {ul
     {- the driver's message for a fault or a failed [submit] or [commit];}
+    {- for another exception that escaped the driver ({!section-errors}),
+       its constructor's name and its integer and string arguments, such as
+       ["Stdlib.Sys.Break"], ["Out_of_memory"] or ["Failure(\"no queue\")"];}
     {- ["no progress for n ms"] for a hang ({!section-hangs});}
     {- ["NAME lost"] for a device lost because its queue waited for the lost
        device named [NAME];}
@@ -750,7 +768,7 @@ module Buffer : sig
 
       Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
       device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is
-      lost or the allocation loses it. *)
+      lost or its driver faults during the allocation. *)
 
   val of_string : string -> t
   (** [of_string s] is a buffer on {!host} holding [s]'s bytes, placed as
@@ -792,9 +810,9 @@ module Buffer : sig
       borrow on [d] of one allocation shares one mapping, which lasts until
       the allocation returns or [d] has stopped.
 
-      Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is lost or the
-      borrow loses it; and [Sys_error] if asking an io device for [b]'s pages
-      fails transiently ({!Rig_edge.Io.pages}). *)
+      Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is lost or its
+      driver faults during the borrow; and [Sys_error] if asking an io device
+      for [b]'s pages fails transiently ({!Rig_edge.Io.pages}). *)
 
   (** {1:properties Properties}
 
@@ -1073,8 +1091,8 @@ module Image : sig
       Raises [Invalid_argument] if [d] is an io device, which loads no code,
       or its driver places the code in [d]'s memory ([Place] in
       {!Rig_edge.type-code}) where [d] has no copy engine and the host does
-      not address that memory; and {!Lost} if [d] is lost or the load loses
-      it. *)
+      not address that memory; and {!Lost} if [d] is lost or its driver
+      faults during the load. *)
 
   val device : t -> device
   (** [device i] is the device [i] is loaded on. *)
@@ -1485,7 +1503,7 @@ module Submission : sig
       Raises {!Out_of_memory} if [d] has no memory for what the function of
       a launch or an entry ref needs, such as its scratch, after the rounds
       of reclamation ({!Rig.section-reclaim}), and {!Lost} if [d] is lost or
-      asking its driver for such a function loses it. *)
+      its driver faults while asked for such a function. *)
 
   type block
   (** The type for a launch's or a fill's block in a run of one submission

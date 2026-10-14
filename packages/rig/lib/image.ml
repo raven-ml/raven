@@ -39,7 +39,7 @@ let loaded d binary =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d (fun () -> D.image h binary) with
+      match Dev.counted d Dev.Any (fun () -> D.image h binary) with
       | Error why -> Error (strf "%s: %s" d.name why)
       | Ok (Rig_edge.Loaded i) -> Ok (Loaded { m; h; i }, None)
       | Ok (Place (n, lay)) -> (
@@ -54,7 +54,7 @@ let loaded d binary =
                      may use it is done, or, lost, once [d] counts as stopped,
                      and raises its own exception. *)
                   match
-                    let i, code = lay r in
+                    let i, code = Dev.counted d Dev.Any (fun () -> lay r) in
                     (try place d e region code
                      with x ->
                        Memory.unload d (Loaded { m; h; i });

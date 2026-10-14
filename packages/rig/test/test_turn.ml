@@ -202,6 +202,75 @@ let test_hang_interrupted () =
   in
   from 1
 
+(* A Ctrl-C landing at any poll point after an exception escaped a driver
+   leaves the stop the loss owes to run once, by the next call that runs owed
+   stops, here a call on another device. Backtraces are recorded, as
+   OCAMLRUNPARAM=b records them: the handler's fetch of one allocates in C,
+   whose sample's callback, and so the signal, comes at a later poll point. *)
+let test_break_after_escape () =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+  @@ fun () ->
+  let other, _ = P.open_ "turn:break-after-escape" in
+  let rec from n =
+    let d, p = P.open_ (Printf.sprintf "turn:break-after-escape-%d" n) in
+    let escaped = ref false in
+    P.before p "alloc" (fun () ->
+        escaped := true;
+        raise Exit);
+    let alloc () =
+      match B.create d 8 with
+      | _ -> fail "the allocation returned"
+      | exception Exit -> ()
+    in
+    let reached =
+      Support.interrupted ~from:(fun _ -> !escaped) ~landing:Support.Signal n
+        alloc
+    in
+    equal ~msg:"the loss" (option string) (Some "Stdlib.Exit") (Rig.lost d);
+    ignore (B.create other 8);
+    equal ~msg:"stops" int 1 (P.stops p);
+    Rig.close d;
+    if reached then from (n + 1)
+  in
+  from 1
+
+(* Sys.Break landing in a driver's read of a word of its own, which a wait
+   makes, loses nothing. *)
+let test_break_in_signaled () =
+  let d, p = P.open_ ~transport:true "turn:break-signaled" in
+  let base = Rig.submitted d in
+  let first = point (empty_run d) in
+  equal int (base + 1) (Rig.Point.value first);
+  P.break_word p;
+  equal bool true (breaks (fun () -> Rig.Point.wait first));
+  still_works d p ~last:first
+
+(* A fault of a counted call loses its device, whatever exception lands at any
+   allocation after it: the device is never left live, and its stop runs
+   once, by the close if the exception came before it. *)
+let test_fault_interrupted () =
+  let rec from n =
+    let d, p = P.open_ (Printf.sprintf "turn:fault-interrupted-%d" n) in
+    let faulted = ref false and fault = P.Fault "the engine hung" in
+    P.before p "alloc" (fun () ->
+        faulted := true;
+        raise fault);
+    let alloc () =
+      match B.create d 8 with
+      | _ -> fail "the faulted call returned"
+      | exception Rig.Lost _ -> ()
+    in
+    let reached = Support.interrupted ~from:(fun _ -> !faulted) n alloc in
+    equal ~msg:"the loss" (option string) (Some "the engine hung")
+      (Rig.lost d);
+    Rig.close d;
+    equal ~msg:"stops" int 1 (P.stops p);
+    if reached then from (n + 1)
+  in
+  from 1
+
 (* A signal whose handler returns ends a wait's sleep early, as a system call
    that a signal interrupts returns: the wait sleeps again, and returns once
    its value is reached, the device live and nothing assigned. *)
@@ -324,9 +393,16 @@ let tests =
     group ~timeout "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
+        test "Sys.Break in a driver's read of its word loses nothing"
+          test_break_in_signaled;
+        test "a fault interrupted at any allocation after it loses the device"
+          test_fault_interrupted;
         test "an exception at any allocation of a wait lost to a hang leaves \
               its stop to run once"
           test_hang_interrupted;
+        test "a Ctrl-C at any poll point after a driver's exception leaves \
+              its stop to run once"
+          test_break_after_escape;
         test "a signal whose handler returns ends no wait" test_signal_in_wait;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;

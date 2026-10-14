@@ -53,6 +53,14 @@ external c_raise_word : int -> int -> unit = "caml_rig_raise_word" [@@noalloc]
 external c_stamps_lost : int -> bool -> int = "caml_rig_stamps_lost"
 [@@noalloc]
 external c_lose : c -> string -> bool -> bool = "caml_rig_lose"
+
+(* [caml_rig_raised] reads a scope as [Faults] 0, [Any] 1, or [Any_but]'s
+   block. *)
+type scope = Faults | Any | Any_but of Obj.Extension_constructor.t
+
+external c_raised : c -> exn -> Obj.Extension_constructor.t -> scope -> bool
+  = "caml_rig_raised"
+
 external c_faulted : c -> bool = "caml_rig_faulted" [@@noalloc]
 external c_stopped : c -> unit = "caml_rig_stopped"
 external c_await_stop : c -> int -> bool = "caml_rig_await_stop"
@@ -178,6 +186,9 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     opened;
   }
 
+(* The host's fault, which nothing raises. *)
+exception No_fault
+
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
    and waits on the host for other devices' points. *)
 let host =
@@ -190,7 +201,7 @@ let host =
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
-      ~fault:(fun _ -> None)
+      ~fault:[%extension_constructor No_fault]
       ~capability:None ~budget:max_int ~opened:0
   in
   d
@@ -474,45 +485,48 @@ let leave d =
   c_exit d.live.c;
   run_owed ()
 
-(* Ends the counted call on [d] that raised [e]: a fault of [d] loses it. The
-   call ends before anything allocates, since a second exception would keep
-   it counted for good. *)
-let raised d e =
-  c_exit d.live.c;
+(* Ends the counted call on [d] that raised [e]. Its first step is one C call
+   that loses [d] for a fault or an exception in [scope] and ends the count,
+   and nothing allocates or polls before it: a second exception landing in
+   this handler finds both done. It returns for a fault, and raises another
+   exception again. *)
+let raised d scope e =
+  let fault = c_raised d.live.c e d.live.fault scope in
   let bt = Printexc.get_raw_backtrace () in
   run_owed ();
-  match d.live.fault e with
-  | Some why -> lose d why
-  | None -> Printexc.raise_with_backtrace e bt
+  if not fault then Printexc.raise_with_backtrace e bt
 
 let refused d =
   run_owed ();
   raise_lost d
 
-let counted d f =
+let counted d scope f =
   match c_enter d.live.c with
   | 0 -> (
       match f () with
       | r ->
           leave d;
           r
-      | exception e -> raised d e)
+      | exception e ->
+          raised d scope e;
+          raise_lost d)
   | _ -> refused d
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
    back nothing more. On a live one a fault loses the device, which its caller
    never sees: a give is no use of the device. *)
-let give d f =
-  let l = d.live in
+let give d scope f =
   if orphaned d then true
   else if stopped d then begin
     (match f () with
     | () -> ()
     | exception Sys_error _ -> ()
-    | exception e when Option.is_some (l.fault e) -> ());
+    | exception e
+      when Obj.Extension_constructor.of_val e == d.live.fault ->
+        ());
     true
   end
-  else if c_enter l.c <> 0 then begin
+  else if c_enter d.live.c <> 0 then begin
     run_owed ();
     false
   end
@@ -521,16 +535,9 @@ let give d f =
     | () ->
         leave d;
         true
-    | exception e -> (
-        c_exit l.c;
-        let bt = Printexc.get_raw_backtrace () in
-        run_owed ();
-        match l.fault e with
-        | Some why ->
-            ignore (c_lose l.c why true : bool);
-            run_owed ();
-            true
-        | None -> Printexc.raise_with_backtrace e bt)
+    | exception e ->
+        raised d scope e;
+        true
 
 let fail why = if c_fail why then run_owed ()
 
@@ -557,7 +564,9 @@ let word d =
           | w ->
               leave d;
               w
-          | exception e -> raised d e
+          | exception e ->
+              raised d Faults e;
+              raise_lost d
         in
         c_raise_word d.index w;
         w
@@ -602,7 +611,9 @@ let sleep d ~seen ~still_ms =
       if c_enter l.c <> 0 then refused d;
       match D.sleep h ~seen ~still_ms with
       | () -> leave d
-      | exception e -> raised d e)
+      | exception e ->
+          raised d Faults e;
+          raise_lost d)
   | _ -> ()
 
 module Answer = struct
@@ -1007,7 +1018,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
-      ~fault:(function D.Fault why -> Some why | _ -> None)
+      ~fault:[%extension_constructor D.Fault]
       ~capability:(Some f.capability) ~budget:f.budget ~opened
   in
   register d;
@@ -1057,7 +1068,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~waits:no_waits ~hang_ms:None ~maps_host:false ~most_parts:0
             ~host_addresses:false
             ~word:0 ~word_region:None ~key ~memory_device:false
-            ~fault:(function I.Fault why -> Some why | _ -> None)
+            ~fault:[%extension_constructor I.Fault]
             ~capability:None ~budget ~opened
         in
         register d;

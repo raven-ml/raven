@@ -1163,6 +1163,30 @@ let long_work (module G : Gpu) () =
   Rig.Point.wait done_;
   G.D.sleep t.g ~seen:(v - 1) ~still_ms:600_000
 
+(* A Ctrl-C during a wait for work that runs loses nothing: the wait raises
+   Sys.Break, and the next wait reaches the value. AMD driven over PCI skips:
+   its sleep may consume a fault's report that an interrupt then drops. *)
+let break_in_wait (module G : Gpu) () =
+  if Sys.win32 then skip ~reason:"Windows has no SIGINT from a thread" ();
+  if G.class_ = "AMD" && Rig_amd_support.driverless () then
+    skip ~reason:"AMD's sleep over PCI may drop a report it consumed" ();
+  G.with_ @@ fun t ->
+  let p = submit t.d [ G.spin t ~ns:500_000_000 ] ~uses:[] in
+  Sys.catch_break true;
+  let broke =
+    Fun.protect ~finally:(fun () ->
+        (* A SIGINT that came after the wait lands here, not in the runner. *)
+        (try Rig_support.interrupt_join () with Sys.Break -> ());
+        Sys.catch_break false)
+    @@ fun () ->
+    Rig_support.interrupt_after 0.1;
+    match Rig.Point.wait p with () -> false | exception Sys.Break -> true
+  in
+  equal ~msg:"the wait took Sys.Break" bool true broke;
+  equal ~msg:"lost" (option string) None (Rig.lost t.d);
+  Rig.Point.wait p;
+  at_least ~msg:"the word" int ~than:(Rig.Point.value p) (Rig.signaled t.d)
+
 (* One domain sleeps on the word while another submits: each sleep returns as
    the word moves. *)
 let sleep_aside (module G : Gpu) () =
@@ -1643,6 +1667,8 @@ let laws (module G : Gpu) =
       test "sleeps over long work raise no fault, and block" (long_work g);
       test "sleep returns as the word moves while another domain submits"
         (sleep_aside g);
+      test "a Ctrl-C in a wait loses nothing, and the next wait reaches it"
+        (break_in_wait g);
       test "handed-over work runs with no further call" (runs_alone g);
       test "the driver commits on its own while work is submitted"
         (own_commits g);

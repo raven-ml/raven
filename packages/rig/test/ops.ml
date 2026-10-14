@@ -76,16 +76,16 @@ let borrow_of ?opener name make =
         | None -> equal ~msg:"borrow refused" bool true (refusing failure))
 
 (* The device whose memory [borrow peer] borrows, one for every walk of a
-   process, opened with the first device that borrows from it: a forked child
-   opens its own. *)
+   process while it is not lost, opened with the first device that borrows
+   from it: a forked child opens its own. *)
 let peers = ref None
 
 let peer () =
   let pid = Unix.getpid () in
   match !peers with
-  | Some (pid', d) when pid' = pid -> d
+  | Some (pid', d) when pid' = pid && Rig.lost d = None -> d
   | _ ->
-      let d = fst (P.open_ (Printf.sprintf "walk:peer:%d" pid)) in
+      let d = fst (P.open_ (fresh (Printf.sprintf "peer:%d" pid))) in
       peers := Some (pid, d);
       d
 

@@ -7,11 +7,13 @@
    forked child, with every allocation from that one on raising until the
    operation returns, as an asynchronous exception does, and handlers that
    allocate meet it again. It then runs so again from the first allocation at
-   the same call stack. After that, rig is consistent: the device is not lost,
-   no profile is left taken, its name answers the same device, and the device
-   runs the operation again, closes, and its name opens a device that runs it.
-   rig promises no return of memory after an asynchronous exception, so the
-   walk checks none. *)
+   the same call stack. After that, rig is consistent: no profile is left
+   taken, and the device is either lost, by an exception that escaped a call
+   of its driver, with the exception's text and stopped once, or live, its
+   name answering it, and it runs the operation again and closes. Either way
+   its name then opens a device that runs the operation. rig promises no
+   return of memory after an asynchronous exception, so the walk checks
+   none. *)
 
 open Windtrap
 open Ops
@@ -178,14 +180,21 @@ let interrupt start op n =
         got = "raised Injected"
       in
       let raised = run (Nth n) in
-      Option.iter (fun s -> ignore (run (Site s))) !site;
-      equal ~msg:"lost" (option string) None (Rig.lost d);
+      if Rig.lost d = None then
+        Option.iter (fun s -> ignore (run (Site s))) !site;
       equal ~msg:"profiles" bool false (Rig.Profile.enabled ());
-      equal ~msg:"its name answers it" bool true (answers name d);
-      op.prepare d None;
-      Rig.close d;
-      equal ~msg:"closed" (option string) (Some "closed") (Rig.lost d);
-      equal ~msg:"stops" int 1 (count "stop" p);
+      (match Rig.lost d with
+      | Some why ->
+          equal ~msg:"the loss" string (Printexc.to_string Injected) why;
+          (* The close runs the stop if the interrupt left it owed. *)
+          Rig.close d;
+          equal ~msg:"stops" int 1 (P.stops p)
+      | None ->
+          equal ~msg:"its name answers it" bool true (answers name d);
+          op.prepare d None;
+          Rig.close d;
+          equal ~msg:"closed" (option string) (Some "closed") (Rig.lost d);
+          equal ~msg:"stops" int 1 (count "stop" p));
       let d, _ = op.opener name in
       op.prepare d None;
       if !held <> [] then begin
@@ -205,8 +214,7 @@ let interrupt start op n =
         Rig.close d;
         List.iter (fun (p, _) -> Rig.close p) !producers;
         List.iter
-          (fun (_, pp) ->
-            equal ~msg:"a producer's stops" int 1 (count "stop" pp))
+          (fun (_, pp) -> equal ~msg:"a producer's stops" int 1 (P.stops pp))
           !producers
       end;
       raised)
@@ -336,7 +344,8 @@ let interrupt_kept n =
       let runs = Atomic.make 0 in
       submit_kept d runs;
       Gc.full_major ();
-      let drain () = ignore (Sys.opaque_identity (B.create d 8)) in
+      (* An empty buffer calls no driver, so the device stays live. *)
+      let drain () = ignore (Sys.opaque_identity (B.create d 0)) in
       let got = outcome (fun () -> interrupting (Nth n) (ref None) drain) in
       mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
       drain ();

@@ -1378,6 +1378,49 @@ value rig_test_interrupt(value unit) {
   return Val_unit;
 }
 
+/* A thread of no OCaml code that raises SIGINT [ms] milliseconds after it
+   starts, as a Ctrl-C does, kept until [rig_test_interrupt_join] joins it. */
+#ifndef _WIN32
+static pthread_t later;
+static int later_runs;
+
+static void *interrupt_later(void *p) {
+  sleep_ms((uint64_t)(uintptr_t)p);
+  raise(SIGINT);
+  return NULL;
+}
+#endif
+
+value rig_test_interrupt_after(value v_ms) {
+#ifdef _WIN32
+  (void)v_ms;
+  caml_failwith("Rig_support.interrupt_after: no thread on Windows");
+#else
+  if (later_runs) caml_failwith("Rig_support.interrupt_after: one runs");
+  if (pthread_create(&later, NULL, interrupt_later,
+                     (void *)(uintptr_t)Long_val(v_ms)) != 0)
+    caml_failwith("Rig_support.interrupt_after: no thread");
+  later_runs = 1;
+#endif
+  return Val_unit;
+}
+
+/* Joins the thread [rig_test_interrupt_after] started, then runs the
+   handlers of the signals pending, so its SIGINT lands here. */
+value rig_test_interrupt_join(value unit) {
+  (void)unit;
+#ifndef _WIN32
+  if (later_runs) {
+    caml_enter_blocking_section_no_pending();
+    pthread_join(later, NULL);
+    caml_leave_blocking_section();
+    later_runs = 0;
+  }
+#endif
+  caml_process_pending_actions();
+  return Val_unit;
+}
+
 value rig_test_move(value v_dst, value v_src, value v_len) {
   move_bytes((uintptr_t)Long_val(v_dst), (uintptr_t)Long_val(v_src),
              (size_t)Long_val(v_len));

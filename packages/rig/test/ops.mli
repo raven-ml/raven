@@ -62,7 +62,7 @@ val count : string -> Rig_support.Polled.t -> int
 
 val peer : unit -> Rig.t
 (** [peer ()] is the device whose memory the borrow operations borrow, which
-    this process opens at its first call. *)
+    this process opens at its first call, and again after a loss. *)
 
 val peer_devices : unit -> Rig.t list
 (** [peer_devices ()] is the device whose memory the borrow operations

@@ -287,10 +287,10 @@ let new_entry d (kind : memory_kind) n =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d (fun () -> D.alloc h kind n) with
+      match Dev.counted d Dev.Any (fun () -> D.alloc h kind n) with
       | None -> None
       | Some r when d.host_addresses && (D.locate r).host = None ->
-          ignore (Dev.give d (fun () -> D.free h r) : bool);
+          ignore (Dev.give d Dev.Any (fun () -> D.free h r) : bool);
           invalid_argf
             "Rig: %s's driver states the host addresses its memory, and \
              allocated a region without a host address"
@@ -301,7 +301,7 @@ let new_entry d (kind : memory_kind) n =
             (entry d (Driver_memory { memory = kind; region }) n (stamps_new ())))
   | Io { m; h } -> (
       let module I = (val m) in
-      match Dev.counted d (fun () -> I.alloc h n) with
+      match Dev.counted d Dev.Faults (fun () -> I.alloc h n) with
       | None -> None
       | Some r ->
           let region = Io_region { m; h; r } in
@@ -312,17 +312,17 @@ let new_entry d (kind : memory_kind) n =
    whether it did, which a device lost and not stopped does not ([Dev.give]). *)
 let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
-  Dev.give d (fun () -> D.free h r)
+  Dev.give d Dev.Any (fun () -> D.free h r)
 
 let free_io d (Io_region { m; h; r }) =
   let module I = (val m) in
-  Dev.give d (fun () -> I.free h r)
+  Dev.give d Dev.Faults (fun () -> I.free h r)
 
 (* Linked code is unmapped once its record is collected. *)
 let unload_now d = function
   | Loaded { m; h; i } ->
       let module D = (val m) in
-      Dev.give d (fun () -> D.unload h i)
+      Dev.give d Dev.Any (fun () -> D.unload h i)
   | Linked _ -> true
 
 (* The budget memory of [kind] on [d] counts in. Pinned memory is [d]'s own
@@ -924,6 +924,10 @@ let rec reclaim_from d pool n f round =
 
 let reclaiming d ~pool n f = reclaim_from d pool n f 1
 
+(* A driver's entry raises [Invalid_argument] for a function that needs more
+   than the device offers, which loses nothing. *)
+let entry_scope = Dev.Any_but [%extension_constructor Invalid_argument]
+
 (* [image] stays reachable until the driver's call returns: its collection
    unloads [i], whose entry a driver may still be compiling, as Metal does. A
    function the device has no memory for is asked again after each round of the
@@ -940,7 +944,7 @@ let kernel_entry image f =
   | Loaded { m; i; _ } ->
       let module D = (val m) in
       let d = image.idev in
-      let ask () = Dev.counted d (fun () -> D.entry i f) in
+      let ask () = Dev.counted d entry_scope (fun () -> D.entry i f) in
       let again () =
         match ask () with
         | Rig_edge.Entry e -> Some (Some e)
@@ -1121,7 +1125,7 @@ let map_host_range d start n =
   | Driver _ when not d.maps_host -> None
   | Driver { m = dm; h; rid } -> (
       let module D = (val dm) in
-      match Dev.counted d (fun () -> D.map_host h start n) with
+      match Dev.counted d Dev.Any (fun () -> D.map_host h start n) with
       | Some r -> Some (Region { m = dm; h; r; rid })
       | None -> None)
   | _ -> None
@@ -1135,7 +1139,7 @@ let map_peer_region d (Region { m = om; h = oh; r; rid }) =
       let module O = (val om) in
       match Type.Id.provably_equal D.key O.key with
       | Some Type.Equal -> (
-          match Dev.counted d (fun () -> O.map_peer h oh r) with
+          match Dev.counted d Dev.Any (fun () -> O.map_peer h oh r) with
           | Some r -> Some (Region { m = om; h; r; rid })
           | None -> None)
       | None -> None)
@@ -1217,7 +1221,7 @@ let pages (a : alloc) =
       | Io_memory { region = Io_region { m = im; h; r }; _ } ->
           let module I = (val im) in
           let got =
-            match Dev.counted a.owner (fun () -> I.pages h r) with
+            match Dev.counted a.owner Dev.Faults (fun () -> I.pages h r) with
             | Some ba -> Pages ba
             | None -> No_pages
           in

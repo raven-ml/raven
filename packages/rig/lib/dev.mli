@@ -212,21 +212,28 @@ val lose : device -> string -> 'a
     the loss the process's {!failure} if none came before. It then runs the
     owed stops and raises {!Lost} with the reason of [d]'s first loss. *)
 
-val counted : device -> (unit -> 'a) -> 'a
-(** [counted d f] is [f ()] as a counted call on [d], so [d]'s stop runs
-    only once no counted call is in flight. A driver fault that [f] raises
-    loses [d] and raises {!Lost}; another exception passes through. Raises
+(** Which exceptions besides a fault lose a device when they escape a counted
+    call: none, every one, or every one but a constructor's, which are the
+    caller's. *)
+type scope = Faults | Any | Any_but of Obj.Extension_constructor.t
+
+val counted : device -> scope -> (unit -> 'a) -> 'a
+(** [counted d scope f] is [f ()] as a counted call on [d], so [d]'s stop
+    runs only once no counted call is in flight. A fault that [f] raises
+    loses [d] and raises {!Lost}. Another exception loses [d] with its text
+    if [scope] names it, and passes through either way. The loss and the
+    end of the count are one C call, the handler's first step. Raises
     {!Lost} without calling [f] if [d] is lost, running the owed stops
     first. *)
 
-val give : device -> (unit -> unit) -> bool
-(** [give d f] gives an object back to [d]'s driver through [f], and is
-    [false], without calling [f], if [d] is lost and not yet Stopped; the
-    caller must give the object again after the stop. On a live device it
-    is a counted call, and a fault of [f] loses [d] without being raised. On
-    a Stopped device it is uncounted, and drops a fault or a [Sys_error] of
-    [f]. An Orphaned device's objects are forgotten: [give] is [true]
-    without calling [f]. *)
+val give : device -> scope -> (unit -> unit) -> bool
+(** [give d scope f] gives an object back to [d]'s driver through [f], and
+    is [false], without calling [f], if [d] is lost and not yet Stopped; the
+    caller must give the object again after the stop. On a live device it is
+    a counted call under [scope], as for {!counted}, but a fault of [f] is
+    not raised. On a Stopped device it is uncounted, and drops a fault or a
+    [Sys_error] of [f]. An Orphaned device's objects are forgotten: [give]
+    is [true] without calling [f]. *)
 
 val close : device -> unit
 (** [close d] is {!Rig.close}[ d]. *)
