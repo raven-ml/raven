@@ -367,3 +367,64 @@ let axis_near s =
 
 (* [s] with [n] along [axis], where it has that axis. *)
 let along s axis n = Array.mapi (fun i d -> if i = axis then n else d) s
+
+(* Guard pages *)
+
+let pp_side ppf s =
+  Format.pp_print_string ppf
+    (match s with Nx_kernels_support.Before -> "before" | After -> "after")
+
+let sides =
+  Gen.with_pp pp_side
+    (Gen.of_list [ Nx_kernels_support.Before; Nx_kernels_support.After ])
+
+(* [f guard place], where [guard x] is a copy of [x] against an inaccessible
+   page on [side], laid out as [x] is, and [place d s] a C-contiguous array
+   of the dtype [d] and shape [s] placed likewise; their memory freed once [f]
+   returns. *)
+let with_guards side f =
+  let frees = ref [] in
+  let keep (a, free) =
+    frees := free :: !frees;
+    A.Any a
+  in
+  let guard (A.Any x) = keep (Nx_kernels_support.guard side x) in
+  let place (D.Any dt) s =
+    keep (Nx_kernels_support.guarded side dt (L.contiguous s))
+  in
+  Fun.protect
+    ~finally:(fun () -> List.iter (fun free -> free ()) !frees)
+    (fun () -> f guard place)
+
+(* Extents of one element to a few vectors past the widest. *)
+let tails =
+  Gen.frequency
+    [
+      (6, Gen.int_range 1 72);
+      (1, Gen.of_list ~pp:Format.pp_print_int [ 127; 128; 129; 255; 256; 257 ]);
+    ]
+
+(* Shapes of up to two short outer axes and a last extent of {!tails}. *)
+let tail_shapes =
+  let open Gen in
+  let* n = tails in
+  let+ outer = array ~size:(int_range 0 2) (int_range 1 4) in
+  Array.append outer [| n |]
+
+(* [call xs dsts] into fresh destinations of the dtypes and shapes [dsts], then
+   with [xs] and the destinations as {!with_guards} places them: the same
+   answer and, where it is [Done], the same elements, bit for bit. The
+   answer. *)
+let same_guarded side ~call xs dsts =
+  let fresh =
+    Array.map (fun (D.Any dt, s) -> A.Any (A.create Rig.host dt s)) dsts
+  in
+  let want = call xs fresh in
+  with_guards side (fun guard place ->
+      let ds = Array.map (fun (d, s) -> place d s) dsts in
+      equal answer want (call (Array.map guard xs) ds);
+      if want = A.Done then
+        Array.iteri
+          (fun i d -> equal (array string) (elements fresh.(i)) (elements d))
+          ds);
+  want

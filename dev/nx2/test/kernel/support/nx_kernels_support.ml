@@ -92,3 +92,17 @@ let guarded side dt l =
   Bigarray.Array1.fill (Bigarray.Array1.sub ba first (bytes - first)) '\000';
   let a = Nx_array.v dt l (Rig.Buffer.of_bigarray ba) in
   (a, fun () -> unguard base total)
+
+let guard side x =
+  let dt = Nx_array.dtype x and l = Nx_array.layout x in
+  let g, free = guarded side dt l in
+  let lo, hi = Nx_array.Layout.span l in
+  let first = lo * Nx_array.Dtype.bits dt / 8 in
+  let bytes a =
+    Nx_array.v Nx_array.Dtype.Uint8
+      (Nx_array.Layout.v ~offset:first ~strides:[| 1 |]
+         [| Nx_array.Dtype.bytes dt hi - first |])
+      (Nx_array.buffer a)
+  in
+  Nx_array.blit ~src:(bytes x) ~dst:(bytes g);
+  (g, free)

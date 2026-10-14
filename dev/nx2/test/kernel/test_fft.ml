@@ -402,10 +402,15 @@ let result c =
   in
   (dt, s)
 
-(* The kernels' result of [c] on [x], answering [Done] or failing. *)
-let run ?(threads = 0) c (A.Any x) =
+(* The kernels' result of [c] on [x], into [dst] or a fresh array, answering
+   [Done] or failing. *)
+let run ?(threads = 0) ?dst c (A.Any x) =
   let D.Any dt, s = result c in
-  let y = A.create Rig.host dt s in
+  let y =
+    match dst with
+    | Some d -> A.expect dt d
+    | None -> A.create Rig.host dt s
+  in
   let got =
     match (c.kind, A.dtype x, dt) with
     | C2c d, (D.Complex64 as cx), D.Complex64 ->
@@ -716,6 +721,52 @@ let test_streamed () =
         (bits_of (run alone (operand alone))))
     [ 0; 255; lines - 1 ]
 
+(* Guard pages *)
+
+(* The same bits with the operand, through its view, and the result each
+   against an inaccessible page. *)
+let law_guards (c, side) =
+  let after = side = Support.After in
+  cover "a stepped operand's first element at the page before"
+    (c.view.stepped && not after);
+  cover "a reversed operand at the page after"
+    (c.view.reversed <> None && after);
+  cover "a line of four steps" (four_steps (points c).(c.axes.(0)));
+  let call xs ds =
+    ignore (run ~dst:ds.(0) c xs.(0));
+    A.Done
+  in
+  ignore (same_guarded side ~call [| operand c |] [| result c |])
+
+(* The streamed results of test_streamed, on one thread and on the job's,
+   each against the page. *)
+let test_streamed_guards () =
+  let line n lines wide seed =
+    let rs = Random.State.make [| seed |] in
+    let xs =
+      Array.init (n * lines) (fun _ ->
+          let re = value wide rs in
+          { Complex.re; im = value wide rs })
+    in
+    let shape = if lines = 1 then [| n |] else [| n; lines |] in
+    let r = Array.length shape in
+    { kind = C2c Forward; wide; shape; axes = [| 0 |]; view = plain r; xs }
+  in
+  List.iter
+    (fun c ->
+      List.iter
+        (fun side ->
+          List.iter
+            (fun threads ->
+              let call xs ds =
+                ignore (run ~threads ~dst:ds.(0) c xs.(0));
+                A.Done
+              in
+              ignore (same_guarded side ~call [| operand c |] [| result c |]))
+            [ 0; 1 ])
+        Support.[ Before; After ])
+    [ line (1 lsl 19) 1 true 19; line 1024 512 false 10 ]
+
 (* Every target's bits *)
 
 (* A digest of each length's transforms, forward, inverse, r2c and c2r, at
@@ -832,6 +883,10 @@ let laws (b : Support.backend) =
       prop "transforms are within nx_cpu.mli's bound" case_gen (run law_bound);
       prop "bits do not depend on views, threads, place or batch" special_gen
         (run law_bits);
+      prop ~count:300
+        "reads and writes no byte past the operand and the result, whatever \
+         pages lie beside them"
+        (Gen.pair case_gen sides) (run law_guards);
     ]
 
 let () =
@@ -845,6 +900,8 @@ let () =
                  test_long;
                test "results written past the caches keep their bits"
                  test_streamed;
+               test "streamed results write no byte past their end"
+                 test_streamed_guards;
                test "a transform of no point is the empty sum" test_empty;
                test "refuses dtypes and shapes" test_refusals;
                test "digests of transforms, the same on every target"

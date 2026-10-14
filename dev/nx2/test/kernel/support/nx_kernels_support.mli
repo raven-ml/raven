@@ -56,3 +56,9 @@ val guarded :
     inaccessible page on [side], so that a kernel reading a byte past them on
     that side faults; and the function that frees the memory, after which the
     array is not used. [l]'s positions start at the memory's first byte. *)
+
+val guard : side -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t * (unit -> unit)
+(** [guard side x] is {!guarded} [side] over [x]'s layout, holding the bytes of
+    [x]'s span: [x]'s elements, bit for bit, against the page, strided,
+    reversed or broadcast as [x] is. With the function that frees it. [x] is
+    on host memory. *)
