@@ -60,4 +60,3 @@ val guarded :
     inaccessible page on [side], so that a kernel reading a byte past them on
     that side faults; and the function that frees the memory, after which the
     array is not used. [l]'s positions start at the memory's first byte. *)
-

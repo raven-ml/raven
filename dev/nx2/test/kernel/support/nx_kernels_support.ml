@@ -147,4 +147,3 @@ let guarded side dt l =
   Bigarray.Array1.fill (Bigarray.Array1.sub ba first (bytes - first)) '\000';
   let a = Nx_array.v dt l (Rig.Buffer.of_bigarray ba) in
   (a, fun () -> unguard base total)
-
