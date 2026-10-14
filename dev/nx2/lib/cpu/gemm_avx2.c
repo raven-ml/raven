@@ -32,6 +32,8 @@
 
 #if defined(__x86_64__) && defined(__AVX2__) && defined(__FMA__)
 
+#include "gemm_avx2.h"
+
 /* The kernels' speed (cpu.h): 151 GFLOP/s of float32 and 75.7 of float64
    on a performance core of fudge, against the 151 GB/s its memcpy moves. */
 #define SPEED32 1.0
@@ -46,8 +48,6 @@
 #define SPEED8 1.2
 #define SPEEDQ 0.25
 
-#define MR 6
-
 /* The masks of a vector's first q lanes, q from 0 to its lanes: a run of
    ones then zeros, read from q lanes before the zeros. */
 static const int32_t ones32[16] = {-1, -1, -1, -1, -1, -1, -1, -1};
@@ -55,10 +55,6 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
 #define MASK32(q) _mm256_loadu_si256((const __m256i *)(ones32 + 8 - (q)))
 #define MASK64(q) _mm256_loadu_si256((const __m256i *)(ones64 + 4 - (q)))
 
-/* Row i's two accumulators and its row of a. */
-#define DECL(V, T, i)                                       \
-  V c##i##0, c##i##1;                                       \
-  const T *a##i = a + (i < rows ? i : rows - 1) * a_row
 #define LOADC(LOAD, MLOAD, ZERO, W, i)                             \
   if (from == NX_CPU_FROM_ZERO || i >= rows) {                     \
     c##i##0 = ZERO;                                                \
@@ -70,10 +66,6 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
     c##i##0 = MLOAD(y + i * ldc, m0);                              \
     c##i##1 = MLOAD(y + i * ldc + W, m1);                          \
   }
-#define STEP(BCAST, FMA, i)          \
-  ai = BCAST(a##i + q);              \
-  c##i##0 = FMA(ai, b0, c##i##0);    \
-  c##i##1 = FMA(ai, b1, c##i##1)
 #define STOREC(STORE, MSTORE, W, i)            \
   if (i < rows && n == 2 * W) {                \
     STORE(y + i * ldc, c##i##0);               \
@@ -82,9 +74,6 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
     MSTORE(y + i * ldc, m0, c##i##0);          \
     MSTORE(y + i * ldc + W, m1, c##i##1);      \
   }
-#define ROWS(M, ...)                                                     \
-  M(__VA_ARGS__, 0); M(__VA_ARGS__, 1); M(__VA_ARGS__, 2);               \
-  M(__VA_ARGS__, 3); M(__VA_ARGS__, 4); M(__VA_ARGS__, 5)
 
 #define KERNEL(name, T, V, W, MASK, LOAD, MLOAD, BLOAD, STORE, MSTORE,      \
                BCAST, FMA, ZERO)                                            \
@@ -164,57 +153,9 @@ TILES(kernel_f64, f64, 8)
    multiplies it, and each column's two pair sums add once, when the tile
    is stored. */
 
-/* Row i's accumulators from y, or zero; stored, where the row is the
-   tile's. */
-#define ISTART(START, i)                        \
-  if (from == NX_CPU_FROM_ZERO || i >= rows)    \
-    c##i##0 = c##i##1 = _mm256_setzero_si256(); \
-  else                                          \
-    START(y + i * ld, c##i##0, c##i##1)
-#define IFINISH(FINISH, i) \
-  if (i < rows) FINISH(y + i * ld, c##i##0, c##i##1, from)
-
-#define INTS(name, T, NR, LOADB, BCAST, MAC, START, FINISH)                 \
-  static void name(int64_t m, int64_t n, int64_t k, const void *va,         \
-                   int64_t a_row, int64_t a_k, const void *vb, int64_t b_k, \
-                   void *vc, int64_t ldc, nx_cpu_from from) {               \
-    _Alignas(32) T t[MR * NR];                                              \
-    size_t row = (size_t)n * sizeof(T);                                     \
-    for (int64_t i0 = 0; i0 < m; i0 += MR) {                                \
-      int64_t rows = m - i0 < MR ? m - i0 : MR, ld = ldc;                   \
-      const T *a = (const T *)va + i0 * a_row, *b = vb;                     \
-      T *y = (T *)vc + i0 * ldc;                                            \
-      if (n < NR) {                                                         \
-        for (int64_t i = 0; i < rows && from == NX_CPU_FROM_TILE; i++)      \
-          memcpy(t + i * NR, y + i * ldc, row);                             \
-        y = t;                                                              \
-        ld = NR;                                                            \
-      }                                                                     \
-      ROWS(DECL, __m256i, T);                                               \
-      ROWS(ISTART, START);                                                  \
-      for (int64_t p = 0, q = 0; p < k; p++, q += a_k, b += b_k) {          \
-        __m256i b0, b1, ai;                                                 \
-        LOADB(b, b0, b1);                                                   \
-        ROWS(STEP, BCAST, MAC);                                             \
-      }                                                                     \
-      ROWS(IFINISH, FINISH);                                                \
-      for (int64_t i = 0; i < rows && n < NR; i++)                          \
-        memcpy((T *)vc + (i0 + i) * ldc, t + i * NR, row);                  \
-    }                                                                       \
-  }
-
-#define VLOAD(p) _mm256_loadu_si256((const __m256i *)(p))
-#define VSTORE(p, x) _mm256_storeu_si256((__m256i *)(p), x)
-#define LOAD2(p, x0, x1, W) (x0 = VLOAD(p), x1 = VLOAD((p) + W))
-#define STORE2(p, x0, x1, W) (VSTORE(p, x0), VSTORE((p) + W, x1))
-
-#define LOADB32(b, b0, b1) LOAD2(b, b0, b1, 8)
 #define LOADB16(b, b0, b1) LOAD2(b, b0, b1, 16)
-#define START32(y, c0, c1) LOAD2(y, c0, c1, 8)
 #define START16(y, c0, c1) LOAD2(y, c0, c1, 16)
-#define FINISH32(y, c0, c1, from) STORE2(y, c0, c1, 8)
 #define FINISH16(y, c0, c1, from) STORE2(y, c0, c1, 16)
-#define BCAST32(p) _mm256_set1_epi32((int32_t) * (p))
 #define BCAST16(p) _mm256_set1_epi16((int16_t) * (p))
 #define MAC32(a, b, c) _mm256_add_epi32(c, _mm256_mullo_epi32(a, b))
 #define MAC16(a, b, c) _mm256_add_epi16(c, _mm256_mullo_epi16(a, b))
@@ -256,70 +197,8 @@ INTS(kernel_u8, uint8_t, 32, LOADB8, BCAST8, MAC16, START8, FINISH8)
 INTS(kernel_sq, uint32_t, 8, LOADB_S, BCAST_S, MADD, START_Q, FINISH_Q)
 INTS(kernel_uq, uint32_t, 8, LOADB_U, BCAST_U, MADD, START_Q, FINISH_Q)
 
-/* Quads' dots, as gemm_neon.c's: a tile of two rows of a by four columns
-   of b, a step of four words of each widened to 16 bits, eight
-   accumulators of pair sums, whose lanes add at the end. A tail of fewer
-   than four words goes through words zeroed on the stack. A tile whose
-   rows are one (lda 0, a product's last row alone) computes it once:
-   decoding a token is one row, and its second would double the work. */
-#define QDOT_ROW(i, x, v0, v1, v2, v3) \
-  c##i##0 = MADD(x, v0, c##i##0);      \
-  c##i##1 = MADD(x, v1, c##i##1);      \
-  c##i##2 = MADD(x, v2, c##i##2);      \
-  c##i##3 = MADD(x, v3, c##i##3);
-#define QDOT_STEP(W, R, r, q)                                           \
-  {                                                                     \
-    __m256i x = W(r[0] + q), v0 = W(r[2] + q), v1 = W(r[3] + q),        \
-            v2 = W(r[4] + q), v3 = W(r[5] + q);                         \
-    QDOT_ROW(0, x, v0, v1, v2, v3)                                      \
-    if (R > 1) {                                                        \
-      x = W(r[1] + q);                                                  \
-      QDOT_ROW(1, x, v0, v1, v2, v3)                                    \
-    }                                                                   \
-  }
-
-/* A row's four sums: VPHADDD twice leaves each column's two halves, one
-   per 128-bit lane. */
-static inline __m128i sums4(__m256i c0, __m256i c1, __m256i c2, __m256i c3) {
-  __m256i h = _mm256_hadd_epi32(_mm256_hadd_epi32(c0, c1),
-                                _mm256_hadd_epi32(c2, c3));
-  return _mm_add_epi32(_mm256_castsi256_si128(h),
-                       _mm256_extracti128_si256(h, 1));
-}
-
-/* The dot of [R] rows, 1 or 2; a row alone stores its sums twice. */
-#define QDOT_R(name, W, R)                                                 \
-  static void name(const uint32_t *a, int64_t lda, const uint32_t *b,     \
-                   int64_t ldb, int64_t n, uint32_t *y, int64_t ldy) {    \
-    __m256i c00 = _mm256_setzero_si256(), c01 = c00, c02 = c00, c03 = c00; \
-    __m256i c10 = c00, c11 = c00, c12 = c00, c13 = c00;                   \
-    const uint32_t *r[6] = {a, a + lda, b, b + ldb, b + 2 * ldb,          \
-                            b + 3 * ldb};                                 \
-    int64_t q = 0;                                                        \
-    for (; q + 4 <= n; q += 4) QDOT_STEP(W, R, r, q)                      \
-    if (q < n) {                                                          \
-      uint32_t t[6][4] = {{0}};                                           \
-      const uint32_t *z[6];                                               \
-      for (int i = 0; i < 6; i++) {                                       \
-        memcpy(t[i], r[i] + q, (size_t)(n - q) * 4);                      \
-        z[i] = t[i];                                                      \
-      }                                                                   \
-      QDOT_STEP(W, R, z, 0)                                               \
-    }                                                                     \
-    _mm_storeu_si128((__m128i *)y, sums4(c00, c01, c02, c03));            \
-    _mm_storeu_si128((__m128i *)(y + ldy),                                \
-                     R > 1 ? sums4(c10, c11, c12, c13)                    \
-                           : sums4(c00, c01, c02, c03));                  \
-  }
-#define QDOT(name, W)                                                     \
-  QDOT_R(name##_1, W, 1)                                                  \
-  QDOT_R(name##_2, W, 2)                                                  \
-  static void name(const uint32_t *a, int64_t lda, const uint32_t *b,     \
-                   int64_t ldb, int64_t n, uint32_t *y, int64_t ldy) {    \
-    (lda == 0 ? name##_1 : name##_2)(a, lda, b, ldb, n, y, ldy);          \
-  }
-QDOT(quads_dot_s8, WIDEN_S)
-QDOT(quads_dot_u8, WIDEN_U)
+QDOT(quads_dot_s8, WIDEN_S, 4, MADD)
+QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
 
 /* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
    float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
@@ -349,15 +228,6 @@ DOT(dot1_f64, double, 4, 4, 1, fma)
 DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
-
-/* The rows at most which a product may stream b past all of a (gemm.c's
-   streams), each sliver of b reading all of a's. On the i9-9900K's 16
-   threads a 4096 × 4096 weight stored n × k takes 5.1 ms so against 128
-   rows, 6.7 in chain order. A bound from the threads instead (stream
-   where b's slivers are enough units and a's KC rows fit in L2) took no
-   less time on the i9, and on fudge's six cores lost to this one: 64³
-   float32 took 1.08 times as long, 1024³ float64 1.12. */
-#define FEW 256
 
 /* The rows of a block of a (cpu.h's mc). */
 #define MC 96

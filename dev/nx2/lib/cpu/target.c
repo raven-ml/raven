@@ -87,6 +87,14 @@ static int has_v3(void) {
   if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;
   return ((b >> 5) & 1) && ((b >> 8) & 1); /* AVX2, BMI2 */
 }
+
+/* AVX-VNNI-INT8: CPUID leaf 7 subleaf 1, EDX bit 4 (Intel SDM vol. 2A), its
+   state the AVX state has_v3 checks. */
+static int has_vnni_int8(void) {
+  unsigned a, b, c, d;
+  if (!__get_cpuid_count(7, 1, &a, &b, &c, &d)) return 0;
+  return (d >> 4) & 1;
+}
 #endif
 
 #if defined(__x86_64__)
@@ -158,6 +166,7 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_rows_v3(&nx_cpu_v3);
   nx_cpu_set_reduce_v3(&nx_cpu_v3);
   nx_cpu_set_avx2(&nx_cpu_v3);
+  if (has_vnni_int8()) nx_cpu_set_vnni(&nx_cpu_v3);
   nx_cpu_table = &nx_cpu_v3;
 #endif
 }

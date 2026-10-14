@@ -1043,8 +1043,9 @@ let shifted (A.Any x as a) =
    operands adjacent along k at an odd offset; an empty batch of operands
    adjacent along k. Quads' dots: a batch of few rows by b stored [n × k],
    over columns and words that do not fill the dot's 4 columns and 4
-   words; the most rows; one column of b, copied; few columns, with a and
-   b swapped, alone and in a batch. *)
+   words; 11 words, a step of 8 and a tail, by odd rows and columns; the
+   most rows; one column of b, copied; few columns, with a and b swapped,
+   alone and in a batch. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
@@ -1070,6 +1071,7 @@ let quad_examples =
          { c with a = shifted c.a; b = shifted c.b });
         stored Chain ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
         stored Chain ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
+        stored Chain ([||], [| 3 |], [| 6 |], [| 44 |]) (by_rows 2);
         stored Lane ([||], [| quad_rows |], [| 33 |], [| 64 |]) (by_rows 2);
         case Chain ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
         stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
@@ -1163,6 +1165,9 @@ let quad_covers (c : case) =
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
   cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);
+  let words = (k + 3) / 4 in
+  cover "quads' dots over 8 words and a tail"
+    (dots && min m n <= quad_rows && words > 8 && words mod 8 <> 0);
   cover "an odd count of rows by quads' dots, the last alone"
     (dots && min m n <= quad_rows && min m n mod 2 = 1);
   cover "b read in place by chain order" (in_place c.b snd && min m n > quad_rows);

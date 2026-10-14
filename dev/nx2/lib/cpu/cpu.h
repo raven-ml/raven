@@ -316,8 +316,9 @@ typedef struct {
 /* The tables, each set when the program starts on a host that runs it, by
    convert.c, gemm_generic.c, rows.c and reduce.c compiled for its target,
    then by the kernels of its instructions: gemm_neon.c's on arm64,
-   gemm_avx2.c's for v3. amx is base's table with gemm_amx.c's kernels for
-   the matrix unit of Apple's M1. */
+   gemm_avx2.c's for v3, and gemm_vnni.c's quads where the host has
+   AVX-VNNI-INT8. amx is base's table with gemm_amx.c's kernels for the
+   matrix unit of Apple's M1. */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_set_convert_base(nx_cpu_target *t);
 void nx_cpu_set_gemm_base(nx_cpu_target *t);
@@ -338,6 +339,7 @@ void nx_cpu_set_gemm_v3(nx_cpu_target *t);
 void nx_cpu_set_rows_v3(nx_cpu_target *t);
 void nx_cpu_set_reduce_v3(nx_cpu_target *t);
 void nx_cpu_set_avx2(nx_cpu_target *t);
+void nx_cpu_set_vnni(nx_cpu_target *t);
 #endif
 
 /* The table the kernels run: the best one whose instructions the host

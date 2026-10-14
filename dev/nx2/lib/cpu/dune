@@ -5,7 +5,9 @@
 ; rows_v3.c and reduce_v3.c for v3,
 ; with v3's instructions on x86-64 and as empty units elsewhere.
 ; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
-; v3's instructions, x86-64's; gemm_amx.c the M1 matrix unit's, empty off
+; v3's instructions, x86-64's; gemm_vnni.c, with AVX-VNNI-INT8's too where
+; the C compiler has them (probe/vnni.ml asks it), its quads kernels;
+; gemm_amx.c the M1 matrix unit's, empty off
 ; Apple's arm64. target.c picks the table at run time.
 ;
 ; gcc vectorises at -O2 only the loops that need no remainder and no check
@@ -31,7 +33,12 @@
    -DNX_CPU_V3
    (:include vector_flags.sexp)
    (:include v3_flags.sexp))
-  (names convert_v3 gemm_generic_v3 rows_v3 reduce_v3 gemm_avx2)))
+  (names convert_v3 gemm_generic_v3 rows_v3 reduce_v3 gemm_avx2))
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array ../kernel)
+  (flags :standard (:include v3_flags.sexp) (:include vnni_flags.sexp))
+  (names gemm_vnni)))
 
 (rule
  (copy convert.c convert_v3.c))
@@ -56,6 +63,24 @@
 
 (rule
  (target v3_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target vnni_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/vnni.ml} %{cc}))))
+
+(rule
+ (target vnni_flags.sexp)
  (enabled_if
   (<> %{architecture} amd64))
  (action
