@@ -443,8 +443,8 @@ let matmul ~by a b =
   let k = sa.(ra - 1) and k' = if rb = 1 then sb.(0) else sb.(rb - 2) in
   if k <> k' then
     invalid_argf "%s: inner extents %d and %d differ; %s" by k k' (both ());
-  let lead_a = if ra = 1 then [||] else Array.sub sa 0 (ra - 2) in
-  let lead_b = if rb = 1 then [||] else Array.sub sb 0 (rb - 2) in
+  let lead_a = if ra <= 2 then [||] else Array.sub sa 0 (ra - 2) in
+  let lead_b = if rb <= 2 then [||] else Array.sub sb 0 (rb - 2) in
   let lead =
     match Prim.merge lead_a lead_b with
     | Ok s -> s
@@ -470,7 +470,7 @@ let matmul ~by a b =
   let rows = if ra = 1 then 0 else 1 and cols = if rb = 1 then 0 else 1 in
   let r = l + rows + cols in
   let ea = Array.make (la + rows + 1) k and eb = Array.make (lb + 1 + cols) k in
-  let batch = Array.make nbatch (0, 0) in
+  let batch = if nbatch = 0 then [||] else Array.make nbatch (0, 0) in
   let shape = Array.make r 0 and order = Array.make r 0 in
   (* The next place of each kind: [next_a] and [next_b] among each operand's
      axes; [next_batch], [next_free_a] and [next_free_b] among the kernel's

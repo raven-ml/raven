@@ -107,12 +107,12 @@ let pp_shape ppf s =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let merge s s' =
-  let r = max (Array.length s) (Array.length s') in
+  let r = Int.max (Array.length s) (Array.length s') in
   let at s i =
     let k = i - (r - Array.length s) in
     if k < 0 then 1 else s.(k)
   in
-  let out = Array.make r 1 in
+  let out = if r = 0 then [||] else Array.make r 1 in
   let rec go i =
     if i = r then Ok out
     else
