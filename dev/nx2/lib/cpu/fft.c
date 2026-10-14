@@ -44,6 +44,7 @@
 #include <caml/mlvalues.h>
 
 #include "cpu.h"
+#include "nx_kinds.h"
 
 /* The most points a line computes by passes alone. Above, the four steps
    give a single line every lane: a line of 256 points took 0.7 us by them
@@ -217,20 +218,69 @@ static double cost_of(int64_t bytes, int64_t n, int64_t m) {
 
 static int halved(int64_t n) { return n % 2 == 0 && n >= HALVED_POINTS; }
 
-/* π/2 rounded to double. <math.h>'s M_PI_2 is not ISO C: glibc declares
-   it only under _DEFAULT_SOURCE. */
-#define HALF_PI 1.57079632679489661923
-
 /* Numbers */
 
-/* e^(-2πi m / n), 0 <= m < n, within about an ulp of double: θ = 2π m / n
-   is (π/2) (q + r / n) in integers, its angle within the quarter taken
-   from the nearer end, at most π/4, and turned by q quarters exactly. */
+/* π/2 as a double-double: rounded to double, then the rest rounded. */
+#define HALF_PI_HI 0x1.921fb54442d18p0
+#define HALF_PI_LO 0x1.1a62633145c07p-54
+
+/* cos θ and sin θ, θ = (π/2) t / n, 0 <= t <= n / 2, so that θ <= π/4.
+   θ is a + e in double-double, to about 2^-104 relatively; sin a and cos a
+   are nx_kinds.h's polynomials, their leading terms' rounding errors and
+   e's first-order terms added: sin θ = a + a³S(a²) + e (1 - a²/2) and
+   cos θ = 1 - a²/2 + a⁴C(a²) - a e, a² exact as z + ez.
+
+   A transform multiplies by many twiddles in turn, so the error of |w|²
+   compounds across its passes where each value's alone does not. Where
+   the pair's |w|² - 1, computed exactly (hc - 1 and its sum with hs are
+   exact by Sterbenz's lemma), exceeds half an ulp of 1, the value whose
+   estimated rounding error pushes |w|² that way most moves one ulp back;
+   at θ = π/4 it moves cos, so that c ≠ s there. With values rounded as
+   computed, float64's c2r of 8 points erred 6% more than the
+   expansion's; so, no route errs more (test_fft.ml).
+
+   Only +, -, ×, ÷, fma and nextafter round, so every machine gives the
+   same bits, where macOS's and glibc's cos and sin, and with them the
+   transforms, differed in the last bit. Against MPFR, over every θ of
+   every n up to 12000 and of n = 2062, 65538, 131072, 262202 and 2^20 to
+   2^22: values within 0.77 ulp, |w|² within half an ulp of 1, where cos
+   and sin of θ rounded to double were within 2.4 ulp of the values. */
+static void quarter(int64_t t, int64_t n, double *c, double *s) {
+  double yh = (double)t / (double)n;
+  double yl = nx_fmad(-yh, (double)n, (double)t) / (double)n;
+  double ah = HALF_PI_HI * yh;
+  double al = nx_fmad(HALF_PI_HI, yh, -ah) +
+              nx_fmad(HALF_PI_HI, yl, HALF_PI_LO * yh);
+  double a = ah + al, e = al - (a - ah);
+  double z = a * a, ez = nx_fmad(a, a, -z);
+  double hz = 0.5 * z, w = 1.0 - hz;
+  double ts = nx_fmad(a * z, nx_sincos_p_f64(z, 0), e * (1.0 - hz));
+  double tc = ((1.0 - w) - hz) + nx_fmad(z * z, nx_sincos_p_f64(z, 1),
+                                         -nx_fmad(0.5, ez, a * e));
+  double sv = a + ts, cv = w + tc;
+  double hc = cv * cv, hs = sv * sv;
+  double dn = ((hc - 1.0) + hs) +
+              (nx_fmad(cv, cv, -hc) + nx_fmad(sv, sv, -hs));
+  if (fabs(dn) > 0x1p-53) {
+    /* The final additions' rounding errors, exact - rounded (Fast2Sum),
+       which miss ts's and tc's own. */
+    double es = ts - (sv - a), ec = tc - (cv - w);
+    double ps = -dn * sv * es, pc = -dn * cv * ec;
+    double *v = ps > pc ? &sv : &cv;
+    *v = nextafter(*v, dn > 0 ? 0.0 : 2.0);
+  }
+  *s = sv;
+  *c = cv;
+}
+
+/* e^(-2πi m / n), 0 <= m < n: θ = 2π m / n is (π/2) (q + r / n) in
+   integers, its angle within the quarter taken from the nearer end, at
+   most π/4 (quarter), and turned by q quarters exactly. */
 static void unit(int64_t m, int64_t n, double *re, double *im) {
   int64_t q = 4 * m / n, r = 4 * m - q * n;
   int far = 2 * r > n;
-  double a = HALF_PI * (double)(far ? n - r : r) / (double)n;
-  double c = cos(a), s = sin(a);
+  double c, s;
+  quarter(far ? n - r : r, n, &c, &s);
   if (far) {
     double t = c;
     c = s;
