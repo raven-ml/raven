@@ -352,13 +352,15 @@ let case_of ?same ~acc ~out ~dts () =
    several groups, with a and b stored transposed. Each in the order whose
    path it names, then cases in the other order: chain order in few rows or
    columns, lane order in many rows and columns over several passes and
-   blocks of lanes. The drawn cases reach each a few times in a hundred or
-   never, so a run of a hundred can miss one. A complex contraction is a
-   real one of twice the columns and products, and an integer one takes
-   chain order's paths, which the floats' cases reach: their own are few,
-   each order over several blocks of products, no product, a batch, and
-   the few rows' case stored transposed; an integer's also the chain path
-   over several blocks of the contraction. *)
+   blocks of lanes; the lane tile in 2 rows by 1 to 9 columns, 15 to 17 and
+   64, either side of each width's one and two vectors, by k off a step of
+   the lanes, one step and a whole block. The drawn cases reach each a few
+   times in a hundred or never, so a run of a hundred can miss one. A
+   complex contraction is a real one of twice the columns and products, and
+   an integer one takes chain order's paths, which the floats' cases reach:
+   their own are few, each order over several blocks of products, no
+   product, a batch, and the few rows' case stored transposed; an integer's
+   also the chain path over several blocks of the contraction. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let case (order, init, e) =
@@ -443,7 +445,14 @@ let regimes acc =
          (lane, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
          (lane, true, ([||], [| rows |], [| rows + 3 |], [| 30 |]));
          (lane, false, ([||], [| rows |], [| rows |], [| 0 |]));
-       ])
+       ]
+      @ List.map
+          (fun (n, k) -> (lane, n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])))
+          [
+            (1, 17); (2, 3); (3, 33); (4, 16); (5, 47); (6, 1); (7, 15);
+            (8, 64); (9, 100); (15, 31); (16, 1024); (17, 5); (64, 64);
+            (64, 255);
+          ])
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them: a complex
    one its parts' and the complex numbers of at most its width. *)
