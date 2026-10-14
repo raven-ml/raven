@@ -44,9 +44,9 @@ Owl deserves credit for the amount of work and love that has been poured into it
 
 However, Owl can't compete with NumPy or PyTorch on performance, and performance parity isn't optional if we want teams to seriously consider OCaml over Python.
 
-The reality is that we can't realistically match NumPy and PyTorch's performance through traditional optimization. These projects have hundreds of developers working on hand-optimized kernels. With our small team, JIT compilation is our only viable path to competitive performance.
+Raven reaches for that performance two ways. Nx runs each operation eagerly on kernels written for each device, and `Rune.jit` compiles a whole function through tolk, fusing its operations into few kernels.
 
-This creates a fundamental constraint. Building for JIT-first changes everything about your design: API choices, memory layouts, operator fusion strategies, even how you structure the development experience. Rather than retrofitting these assumptions onto existing work, we decided a clean slate would be more effective.
+Building for the JIT changes everything about your design: API choices, memory layouts, operator fusion strategies, even how you structure the development experience. Rather than retrofitting these assumptions onto existing work, we decided a clean slate would be more effective.
 
 There's also the ecosystem question. Despite Owl's technical achievements, it hasn't generated the kind of flourishing community we need. We suspect this is partly due to its lack of modularity: without libraries designed as composable building blocks, it's challenging to build a broader ecosystem around the foundation.
 
@@ -82,7 +82,7 @@ While we aim to feel familiar to Python users, Raven brings genuine innovations 
 
 **Quill** rethinks notebooks. Notebooks are plain markdown files — git-friendly, readable without special tooling, and editable in any text editor. Quill runs them as a TUI in the terminal or as a web frontend in the browser, with all Raven packages pre-loaded and zero setup.
 
-**Deployment** is where Raven's story diverges most from Python. AOT compilation generates all compute kernels at compile time, producing binaries with no BLAS or CUDA runtime dependency. This makes it possible to deploy models as MirageOS unikernels — minimal attack surface, millisecond boot, deterministic behavior — or as static binaries with no Python runtime, no dependency hell.
+**Deployment** is where Raven's story diverges most from Python. The goal is to compile a whole application, model included, into one static binary holding the weights, the tokenizer, the inference engine and the GPU kernels, with nothing to install on the host beyond the GPU's kernel driver.
 
 **Current Focus**
-The alpha milestone is complete — we've trained GPT-2 end-to-end on CPU using the full Raven stack. We're now focused on integrating tolk as a JIT transformation in Rune, with the goal of matching PyTorch performance. After that, V1 brings production-ready training and deployment: AOT compilation, inference serving, ONNX import, and MirageOS unikernel deployment. See the [roadmap](roadmap.md) for details.
+The beta milestone is met: a GPT-2 training step compiles into one GPU program and trains on an H100, with every layer in Raven. The next milestone is 1.0, held to two goal posts: fine-tuning Llama 3.1 70B at 90% or better of PyTorch's throughput, and serving open-weight models from a static binary at 90% or better of vLLM's. See the [roadmap](roadmap.md) for details.

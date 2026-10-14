@@ -4,31 +4,26 @@
 
 Python's monopoly on scientific computing forces an impossible choice: ship everything in Python (endure runtime crashes, the GIL's multicore ceiling, and gigabyte containers), or prototype in Python then rewrite for production (doubling the work and creating siloed teams).
 
-**We think there's a better way.** OCaml lets you prototype as quickly as Python and scale the same code to production. Same expressiveness, strong typing catches bugs before they crash your ML pipeline, while JIT compilation matches NumPy/PyTorch performance. One language from research to production — it just needs a production-grade ML stack.
+**We think there's a better way.** OCaml lets you prototype as quickly as Python and scale the same code to production. Same expressiveness, strong typing catches bugs before they crash your ML pipeline, while eager kernels and JIT compilation aim at NumPy/PyTorch performance. One language from research to production — it just needs a production-grade ML stack.
 
-**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy as a MirageOS unikernel or a static binary — no Python, no CUDA dependency hell, no 5 GB Docker images. We built Raven for teams that want both development speed and reliable systems.
+**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy them as one static binary that needs nothing on the host beyond the GPU's kernel driver. We built Raven for teams that want both development speed and reliable systems.
 
 _Learn more: [Introduction](introduction.md)_
 
-_We're in alpha with the full stack working end-to-end (we've trained GPT-2 on CPU). Next milestone: JIT compilation via tolk with performance close to PyTorch._
+_The full stack works end-to-end: a GPT-2 training step compiles into one GPU program and trains on an H100. Next milestone: 1.0, fine-tuning and serving open-weight LLMs at 90% or better of PyTorch's and vLLM's throughput._
 
 ## Roadmap & Funding Goals
 
 _See the [full roadmap](roadmap.md) for our complete vision and timeline._
 
-### Beta — JIT Compilation & Performance
-- Integrate tolk (tinygrad-based compiler) as a JIT transformation in Rune
-- Target CPU, CUDA, Metal, OpenCL, and HIP
-- Kernel fusion and optimization
-- Performance within 2x of PyTorch on standard workloads
-
-### V1 — Production-Ready Training & Deployment
-- Production training: gradient accumulation, mixed precision, gradient checkpointing, flash attention
-- ONNX import for PyTorch model portability
+### 1.0 — Production Training & Deployment
+- Training: fine-tune Llama 3.1 70B at 90% or better of PyTorch's throughput, with LoRA on one 8×H100 node and in full across two
+- Deployment: serve open-weight models behind an OpenAI-compatible API from a dependency-free static binary at 90% or better of vLLM's throughput
+- Mixed precision, memory-efficient attention, and GEMMs at cuBLAS throughput
+- Distributed training: data parallelism, FSDP-style sharding, and multi-node collectives
 - AOT compilation to standalone binaries (CPU and GPU)
 - Inference engine with KV cache, continuous batching, and PagedAttention
-- MirageOS unikernel deployment
-- Post-training quantization (INT8/INT4)
+- Post-training quantization (INT8/INT4) and mixture-of-experts serving
 
 We're also open to discussing custom sponsorship packages based on your needs.
 

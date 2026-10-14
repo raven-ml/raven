@@ -94,7 +94,7 @@ See the [installation guide](https://raven-ml.dev/docs/installation/) for system
 
 ## Support
 
-Building a scientific computing ecosystem takes sustained effort. Sponsorships help us ship JIT compilation, distributed training, better developer tooling, and production deployment through MirageOS.
+Building a scientific computing ecosystem takes sustained effort. Sponsorships help us ship distributed training, better developer tooling, and production deployment as static binaries.
 
 **[Support Raven →](https://raven-ml.dev/docs/support-raven/)**
 
