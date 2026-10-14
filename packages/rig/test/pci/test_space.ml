@@ -237,6 +237,21 @@ let test_whole () =
   List.iter (Space.free s) (List.rev all);
   is_some ~msg:"a quarter" (Space.alloc s (1 lsl 22))
 
+(* Interrupts *)
+
+(* An exception at any allocation of an alloc or a free, the first making the
+   allocator, leaves the space's lock free: the next alloc and free run. The
+   interrupted call may leave its ranges taken. *)
+let test_interrupted () =
+  let rec from n =
+    let s = Space.create ~base:(1 lsl 40) (1 lsl 30) in
+    let calls () = Option.iter (Space.free s) (Space.alloc s 0x3000) in
+    let raised = Rig_support.interrupted n calls in
+    calls ();
+    if raised then from (n + 1)
+  in
+  from 1
+
 let () =
   exit
   @@ run "rig_pci.space"
@@ -249,5 +264,8 @@ let () =
                ~count:50 (commands ~covered:false);
              test "creating a space allocates nothing but its handle" test_lazy;
              test "freeing every range makes the space whole" test_whole;
+             test "an exception at any allocation of a call leaves the lock \
+                   free"
+               test_interrupted;
            ];
        ]

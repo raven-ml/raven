@@ -1737,6 +1737,127 @@ let waits =
       test "a released function waits as its machine does" test_wait_released;
     ]
 
+(* Interrupts *)
+
+(* A function of a fixture of one GPU, taken physically, which the test
+   releases. *)
+let fixture () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let bus = "0000:03:00.0" in
+  let root = Tree.make [ Tree.gpu bus ] in
+  (root, require_ok (Function.take (Machine.at root) bus))
+
+(* [f]'s release returns, on a domain of its own: it waits until no pin, DMA
+   allocation or wait uses [f], so a use an exception left open holds it for
+   good. *)
+let releases f =
+  let released = Atomic.make false in
+  ignore
+    (Domain.spawn (fun () ->
+         Function.release f;
+         Atomic.set released true)
+      : unit Domain.t);
+  equal ~msg:"the release returned" bool true
+    (poll (fun () -> Atomic.get released))
+
+(* An exception at any allocation of a wait that reads the configuration space
+   at its bound ends the wait's use of the function. *)
+let test_interrupted_wait () =
+  let _, f = fixture () in
+  Function.set_config16 f 0 0xffff;
+  let wait () =
+    ignore (Function.wait f ~us:0 "the fence" (fun () -> false) : _ result)
+  in
+  let rec from n = if Rig_support.interrupted n wait then from (n + 1) in
+  from 1;
+  releases f
+
+(* An exception at any allocation of a DMA allocation and its free leaves the
+   function's lock free and ends the allocation's use of the function: the
+   next allocation runs, and the release returns. *)
+let test_interrupted_dma () =
+  let root, f = fixture () in
+  reserved f;
+  let page = Machine.page Machine.this in
+  ignore (frames root free_base (8 * mib));
+  let next = ref free_base in
+  let dma () =
+    let va = !next in
+    next := va + page;
+    let w, _ = given (Function.alloc_dma ~va f page) in
+    Function.free_dma f w
+  in
+  let rec from n =
+    let raised = Rig_support.interrupted n dma in
+    dma ();
+    if raised then from (n + 1)
+  in
+  from 1;
+  releases f
+
+(* Whether [a] allocates the [Invalid_argument] of a refusal: its innermost
+   frame is [Stdlib.invalid_arg]. *)
+let refusal (a : Gc.Memprof.allocation) =
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots when Array.length slots > 0 ->
+      Printexc.Slot.name slots.(0) = Some "Stdlib.invalid_arg"
+  | Some _ | None -> false
+
+(* A use that an exception ends while another domain holds the function's
+   lock, with SIGINT pending, ends: the release returns. The other domain
+   refuses to unpin a range never pinned, and parks as it allocates the
+   refusal, under the lock. The use, a pin of no bytes, allocates its own
+   refusal with SIGINT then pending, and raises it with no poll point
+   before its end, which meets the held lock and the signal at once. *)
+let test_interrupted_held () =
+  let _, f = fixture () in
+  let page = Machine.page Machine.this in
+  let go = Atomic.make false in
+  let holder =
+    Domain.spawn (fun () ->
+        while not (Atomic.get go) do
+          Domain.cpu_relax ()
+        done;
+        let unpin () =
+          try Function.unpin f page page with Invalid_argument _ -> ()
+        in
+        Rig_support.(interrupted ~from:refusal ~landing:(Call park) 1 unpin))
+  in
+  let hold () =
+    Atomic.set go true;
+    while not (Rig_support.parked ()) do
+      Domain.cpu_relax ()
+    done;
+    Rig_support.interrupt ()
+  in
+  let pin () =
+    try ignore (Function.pin f page 0) with Invalid_argument _ -> ()
+  in
+  Sys.catch_break true;
+  let reached =
+    Fun.protect ~finally:(fun () -> Sys.catch_break false) @@ fun () ->
+    Rig_support.(interrupted ~from:refusal ~landing:(Call hold) 1 pin)
+  in
+  Rig_support.unpark ();
+  equal ~msg:"the unpin's refusal" bool true (Domain.join holder);
+  equal ~msg:"the pin's refusal" bool true reached;
+  releases f
+
+let interrupts =
+  group ~timeout:patience "interrupts"
+    [
+      test "an exception at any allocation of a wait ends its use"
+        test_interrupted_wait;
+      test
+        "an exception at any allocation of a DMA allocation leaves the lock \
+         free and ends its use"
+        test_interrupted_dma;
+      test
+        "a use an exception ends while another domain holds the lock, with \
+         SIGINT pending, ends"
+        test_interrupted_held;
+    ]
+
 let this_machine =
   group ~timeout:patience "this machine"
     [
@@ -1767,5 +1888,6 @@ let () =
              misuse_refused;
              tree_files;
              system_memory;
+             interrupts;
              this_machine;
            ]
