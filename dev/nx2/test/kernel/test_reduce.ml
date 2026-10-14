@@ -920,6 +920,14 @@ let law_contract (b : Support.backend) c =
       | _ -> cover "declined" true)
   | _ -> cover "not a sum of one float axis" true
 
+(* nx.cpu with its reductions and scans on one thread. *)
+module One = struct
+  include Nx_cpu
+
+  let reduce = Nx_cpu.reduce_on ~threads:1
+  let scan = Nx_cpu.scan_on ~threads:1
+end
+
 (* One thread gives the bits of the job's threads. *)
 let law_threads (b : Support.backend) c =
   let (A.Any x) = c.x in
@@ -930,7 +938,7 @@ let law_threads (b : Support.backend) c =
     | A.Done -> A.Any dst
     | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
   in
-  let one = into Support.serial and many = into b.kernels in
+  let one = into (module One) and many = into b.kernels in
   cover "scan" c.scan;
   cover "few outputs" (total (result_shape c) < 64);
   let exact y = Array.map (fun t -> Bits (bits_of t)) (terms y) in
@@ -1495,7 +1503,10 @@ let law_moments (b : Support.backend) (c : moments) =
           | Some (m, v) ->
               equal ~msg (list string) [] (misses (exact mean) m);
               equal ~msg (list string) [] (misses (exact var) v))
-        [ ("one thread", Support.serial, c); ("a copy", b.kernels, copy) ]
+        [
+          ("one thread", (module One : Nx_kernel.S), c);
+          ("a copy", b.kernels, copy);
+        ]
 
 (* Stateful reductions *)
 
@@ -1792,7 +1803,10 @@ let law_stateful (b : Support.backend) c =
           | None -> failf "%s declined" msg
           | Some g ->
               Array.iteri (fun i w -> equal ~msg (list string) [] (misses w g.(i))) exact)
-        [ ("one thread", Support.serial, c); ("a copy", b.kernels, { c with x = A.Any (A.copy x) }) ]
+        [
+          ("one thread", (module One : Nx_kernel.S), c);
+          ("a copy", b.kernels, { c with x = A.Any (A.copy x) });
+        ]
 
 let stat_example r d s axes ?view ?(outliers = 0) ?(specials = 0) values =
   let rank = Array.length s in

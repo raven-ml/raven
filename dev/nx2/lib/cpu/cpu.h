@@ -480,18 +480,6 @@ int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
    (gemm.c). It prices work whose units each run on one thread. */
 double nx_cpu_core_speed(int acc);
 
-/* nx.cpu's matrix routines (linalg.c): each external's arguments, its
-   attributes read into C ([upper] for the triangle Upper), and its
-   destinations and operands; then [threads]:
-   the matrices on one thread where [threads] is 1, on as many as the job
-   gives where it is 0. The bits do not change. */
-value nx_cpu_cholesky_on(int upper, value dst, value a, int threads);
-value nx_cpu_lu_on(value lu, value pivots, value perm, value a, int threads);
-value nx_cpu_qr_on(value q, value r, value a, int threads);
-value nx_cpu_eigh_on(value w, value v, value a, int threads);
-value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
-                                 value a, value b, int threads);
-
 /* Walks */
 
 /* A block of a loop: [n2] planes of [n1] rows of [n0] elements. Operand k's

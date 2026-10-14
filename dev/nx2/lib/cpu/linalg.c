@@ -512,9 +512,9 @@ static int has_shape(value v, const int64_t *s, int r) {
 }
 
 /* Runs [c], its routine and attributes set, on [arrays], its operands then
-   its results, on [threads] threads as cpu.h states. The caller roots the
-   arrays: they are read before nx_read, which may run OCaml code. */
-static value run(call c, const value *arrays, int threads) {
+   its results. The caller roots the arrays: they are read before nx_read,
+   which may run OCaml code. */
+static value run(call c, const value *arrays) {
   int solve = c.routine == SOLVE_TRIANGULAR;
   c.nops = 1 + solve;
   c.nres = c.routine == LU || (c.routine == SVD && c.vectors) ? 3
@@ -573,12 +573,11 @@ static value run(call c, const value *arrays, int threads) {
   }
   for (int i = 0; i < cores; i++) {
     c.packs[i].copy = &c.copies[i];
-    if (c.matrices < t && threads != 1) c.packs[i].workers = c.packs;
+    if (c.matrices < t) c.packs[i].workers = c.packs;
   }
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;
-    if (threads == 1) matrices(0, units, 0, &c);
-    else nx_cpu_job(units, bytes, cost, matrices, &c);
+    nx_cpu_job(units, bytes, cost, matrices, &c);
   }
   for (int i = 0; i < cores; i++) {
     free(c.packs[i].p);
@@ -591,79 +590,35 @@ static value run(call c, const value *arrays, int threads) {
   return Val_int(NX_OK);
 }
 
-value nx_cpu_cholesky_on(int upper, value dst, value a, int threads) {
+value nx_cpu_cholesky(value triangle, value dst, value a) {
   CAMLparam2(dst, a);
   value arrays[] = {a, dst};
-  CAMLreturn(run((call){.routine = CHOLESKY, .upper = upper}, arrays, threads));
-}
-
-value nx_cpu_lu_on(value lu, value pivots, value perm, value a, int threads) {
-  CAMLparam4(lu, pivots, perm, a);
-  value arrays[] = {a, lu, pivots, perm};
-  CAMLreturn(run((call){.routine = LU}, arrays, threads));
-}
-
-value nx_cpu_qr_on(value q, value r, value a, int threads) {
-  CAMLparam3(q, r, a);
-  value arrays[] = {a, q, r};
-  CAMLreturn(run((call){.routine = QR}, arrays, threads));
-}
-
-value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
-                                 value a, value b, int threads) {
-  CAMLparam3(dst, a, b);
-  value arrays[] = {a, b, dst};
-  call c = {.routine = SOLVE_TRIANGULAR,
-            .upper = upper,
-            .adjoint = adjoint,
-            .unit = unit};
-  CAMLreturn(run(c, arrays, threads));
-}
-
-value nx_cpu_eigh_on(value w, value v, value a, int threads) {
-  CAMLparam3(w, v, a);
-  int vectors = Is_some(v);
-  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
-  CAMLreturn(run((call){.routine = EIGH, .vectors = vectors}, arrays, threads));
-}
-
-value nx_cpu_eig_on(value w, value v, value a, int threads) {
-  CAMLparam3(w, v, a);
-  int vectors = Is_some(v);
-  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
-  CAMLreturn(run((call){.routine = EIG, .vectors = vectors}, arrays, threads));
-}
-
-value nx_cpu_svd_on(value s, value vectors, value a, int threads) {
-  CAMLparam3(s, vectors, a);
-  CAMLlocal2(u, vh);
-  int some = Is_some(vectors);
-  if (some) {
-    u = Field(Some_val(vectors), 0);
-    vh = Field(Some_val(vectors), 1);
-  }
-  value arrays[] = {a, s, some ? u : Val_unit, some ? vh : Val_unit};
-  CAMLreturn(run((call){.routine = SVD, .vectors = some}, arrays, threads));
-}
-
-value nx_cpu_cholesky(value triangle, value dst, value a) {
-  return nx_cpu_cholesky_on(Int_val(triangle) == NX_TRIANGLE_UPPER, dst, a,
-                            0);
+  call c = {.routine = CHOLESKY,
+            .upper = Int_val(triangle) == NX_TRIANGLE_UPPER};
+  CAMLreturn(run(c, arrays));
 }
 
 value nx_cpu_lu(value lu, value pivots, value perm, value a) {
-  return nx_cpu_lu_on(lu, pivots, perm, a, 0);
+  CAMLparam4(lu, pivots, perm, a);
+  value arrays[] = {a, lu, pivots, perm};
+  CAMLreturn(run((call){.routine = LU}, arrays));
 }
 
 value nx_cpu_qr(value q, value r, value a) {
-  return nx_cpu_qr_on(q, r, a, 0);
+  CAMLparam3(q, r, a);
+  value arrays[] = {a, q, r};
+  CAMLreturn(run((call){.routine = QR}, arrays));
 }
 
 value nx_cpu_solve_triangular(value triangle, value adjoint, value unit,
                               value dst, value a, value b) {
-  return nx_cpu_solve_triangular_on(Int_val(triangle) == NX_TRIANGLE_UPPER,
-                                    Bool_val(adjoint), Bool_val(unit), dst, a,
-                                    b, 0);
+  CAMLparam3(dst, a, b);
+  value arrays[] = {a, b, dst};
+  call c = {.routine = SOLVE_TRIANGULAR,
+            .upper = Int_val(triangle) == NX_TRIANGLE_UPPER,
+            .adjoint = Bool_val(adjoint),
+            .unit = Bool_val(unit)};
+  CAMLreturn(run(c, arrays));
 }
 
 value nx_cpu_solve_triangular_byte(value *argv, int argn) {
@@ -673,13 +628,27 @@ value nx_cpu_solve_triangular_byte(value *argv, int argn) {
 }
 
 value nx_cpu_eigh(value w, value v, value a) {
-  return nx_cpu_eigh_on(w, v, a, 0);
+  CAMLparam3(w, v, a);
+  int vectors = Is_some(v);
+  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
+  CAMLreturn(run((call){.routine = EIGH, .vectors = vectors}, arrays));
 }
 
 value nx_cpu_eig(value w, value v, value a) {
-  return nx_cpu_eig_on(w, v, a, 0);
+  CAMLparam3(w, v, a);
+  int vectors = Is_some(v);
+  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
+  CAMLreturn(run((call){.routine = EIG, .vectors = vectors}, arrays));
 }
 
 value nx_cpu_svd(value s, value vectors, value a) {
-  return nx_cpu_svd_on(s, vectors, a, 0);
+  CAMLparam3(s, vectors, a);
+  CAMLlocal2(u, vh);
+  int some = Is_some(vectors);
+  if (some) {
+    u = Field(Some_val(vectors), 0);
+    vh = Field(Some_val(vectors), 1);
+  }
+  value arrays[] = {a, s, some ? u : Val_unit, some ? vh : Val_unit};
+  CAMLreturn(run((call){.routine = SVD, .vectors = some}, arrays));
 }

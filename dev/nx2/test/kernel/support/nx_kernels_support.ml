@@ -84,47 +84,6 @@ let backends = cpus @ gpus ()
 (* Jobs begun from jobs' bodies. *)
 external nested : int -> int -> int = "nx_kernels_support_nested"
 
-(* nx.cpu with its reductions, scans and matrices on one thread: the serial
-   entries of cpu.h for the matrices. *)
-module Serial = struct
-  include Nx_cpu
-
-  let reduce = Nx_cpu.reduce_on ~threads:1
-  let scan = Nx_cpu.scan_on ~threads:1
-
-  external cholesky :
-    Nx_kernel.triangle ->
-    dst:('v, 's) Nx_array.t ->
-    ('v, 's) Nx_array.t ->
-    Nx_array.answer = "nx_kernels_support_serial_cholesky"
-
-  external lu :
-    lu:('v, 's) Nx_array.t ->
-    pivots:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
-    perm:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
-    ('v, 's) Nx_array.t ->
-    Nx_array.answer = "nx_kernels_support_serial_lu"
-
-  external qr :
-    q:('v, 's) Nx_array.t ->
-    r:('v, 's) Nx_array.t ->
-    ('v, 's) Nx_array.t ->
-    Nx_array.answer = "nx_kernels_support_serial_qr"
-
-  external solve_triangular :
-    Nx_kernel.triangle ->
-    adjoint:bool ->
-    unit_diagonal:bool ->
-    dst:('v, 's) Nx_array.t ->
-    ('v, 's) Nx_array.t ->
-    ('v, 's) Nx_array.t ->
-    Nx_array.answer
-    = "nx_kernels_support_serial_solve_triangular_byte"
-      "nx_kernels_support_serial_solve_triangular"
-end
-
-let serial = (module Serial : Nx_kernel.S)
-
 (* Guard pages *)
 
 type side = Before | After

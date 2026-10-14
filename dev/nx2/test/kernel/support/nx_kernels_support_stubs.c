@@ -99,34 +99,6 @@ value nx_kernels_support_nested(value n, value cost) {
   return Val_long(atomic_load(&q.sum));
 }
 
-/* nx.cpu's matrix routines, their matrices on one thread. */
-value nx_kernels_support_serial_cholesky(value t, value dst, value a) {
-  return nx_cpu_cholesky_on(Int_val(t) == NX_TRIANGLE_UPPER, dst, a, 1);
-}
-
-value nx_kernels_support_serial_lu(value lu, value pivots, value perm,
-                                   value a) {
-  return nx_cpu_lu_on(lu, pivots, perm, a, 1);
-}
-
-value nx_kernels_support_serial_qr(value q, value r, value a) {
-  return nx_cpu_qr_on(q, r, a, 1);
-}
-
-value nx_kernels_support_serial_solve_triangular(value t, value adjoint,
-                                                 value unit, value dst,
-                                                 value a, value b) {
-  return nx_cpu_solve_triangular_on(Int_val(t) == NX_TRIANGLE_UPPER,
-                                    Bool_val(adjoint), Bool_val(unit), dst, a,
-                                    b, 1);
-}
-
-value nx_kernels_support_serial_solve_triangular_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernels_support_serial_solve_triangular(
-      argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
-}
-
 /* Guard pages */
 
 #if defined(_WIN32)

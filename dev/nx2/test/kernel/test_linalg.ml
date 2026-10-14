@@ -314,11 +314,11 @@ type routine =
       unit_diagonal : bool;
     }
 
-(* [k]'s results of [r] on [ops], or [None] if it declined: Lu's positions
+(* [b]'s results of [r] on [ops], or [None] if it declined: Lu's positions
    int64, eig's results complex of a's precision, every other result of a's
    dtype, of the shapes Nx_kernel.Shape gives. *)
-let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
-  let module K = (val Option.value k ~default:b.kernels) in
+let run (b : Support.backend) r ops =
+  let module K = (val b.kernels) in
   let module Shape = Nx_kernel.Shape in
   let (A.Any a) = ops.(0) in
   let dt = A.dtype a in
@@ -1792,45 +1792,87 @@ let law_layouts (b : Support.backend) c =
 
 (* nx.cpu *)
 
-(* CR: Through public linalg, compare each matrix's complete results alone
-   and in a batch, including QR's R and LU's positions omitted here. Keep
-   generated cases and a varied batch large enough for parallel work.
-   This removes Support.serial and its production threads switch; nested
-   GEMMs choose their threads in both current paths. *)
+(* The bits of a result, a position's as its value's. *)
+let result_bits (A.Any x as r) =
+  match A.dtype x with
+  | D.Int64 -> Array.map (fun p -> (Int64.of_int p, 0L)) (int64s r)
+  | _ -> bits r
 
-(* nx.cpu computes the routines of [c] at its dtype, and on one thread
-   gives the job's bits. *)
-let threads_agree (b : Support.backend) c =
-  let x = cholesky_operand c and ops = solve_operands c in
-  let _, lu = lu_operand c in
+(* [o] repeated along [c]'s batch. *)
+let repeated c (A.Any x as o) =
+  let v = values o in
+  let s = L.shape (A.layout x) in
+  of_values c.dt (Array.append c.batch s)
+    (Array.concat (List.init (count c) (fun _ -> v)))
+
+(* [c] with a batch of at least as many matrices as the host has cores,
+   along one axis or two by its seed: nx.cpu then computes each matrix
+   on one thread. *)
+let wide c =
+  let t = Domain.recommended_domain_count () in
+  let batch = if c.seed mod 2 = 0 then [| t |] else [| 2; (t + 1) / 2 |] in
+  { c with batch }
+
+(* The routines with work of their own on a matrix's threads, besides
+   their products: solves' units, LU's steps, eigh's and svd's
+   matrix-vector products and eigh's merges. svd's are in its reduction,
+   which its values alone take. *)
+let with_units = [ "cholesky"; "solve"; "lu"; "eigh"; "svd's values" ]
+
+(* nx.cpu computes [routines], by name, of [c]'s matrix alone, on the
+   call's threads, and of copies of it in a wide batch, one a thread:
+   every result of the batch's first and last matrices has the bits of
+   the matrix's alone. *)
+let threads_agree (b : Support.backend) routines c =
+  let c = wide c in
+  let k = count c in
+  let one = { c with batch = [||] } in
+  let x = cholesky_operand one and ops = solve_operands one in
+  let _, lu = lu_operand one in
+  let _, _, s = svd_operand one in
+  let part i r =
+    let v = result_bits r in
+    let n = Array.length v / k in
+    Array.sub v (i * n) n
+  in
+  let agree msg y z i =
+    Array.iteri
+      (fun j z ->
+        let msg = Printf.sprintf "%s's result %d, matrix %d" msg j i in
+        equal ~msg same_bits (part i y.(j)) (result_bits z))
+      z
+  in
   List.iter
     (fun (msg, r, ops) ->
-      match (run b r ops, run ~k:Support.serial b r ops) with
-      | Some y, Some z -> equal ~msg same_bits (bits y.(0)) (bits z.(0))
-      | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
+      if List.mem msg routines then
+        match (run b r (Array.map (repeated c) ops), run b r ops) with
+        | Some y, Some z -> List.iter (agree msg y z) [ 0; k - 1 ]
+        | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
     [
       ("cholesky", Cholesky Lower, [| x |]);
-      ("solve", solve c, ops);
+      ("solve", solve one, ops);
       ("lu", Lu, [| lu |]);
-      ("qr", Qr (factors c), [| lu |]);
-      ("eigh", Eigh true, [| eigh_operand c |]);
-      ("svd", Svd (Some (factors c)), [| (let _, _, x = svd_operand c in x) |]);
-      ("eig", Eig true, [| eig_operand c |]);
+      ("qr", Qr (factors one), [| lu |]);
+      ("eigh", Eigh true, [| eigh_operand one |]);
+      ("svd", Svd (Some (factors one)), [| s |]);
+      ("svd's values", Svd None, [| s |]);
+      ("eig", Eig true, [| eig_operand one |]);
     ]
 
-(* nx.cpu computes its routines at the four dtypes, and
-   its matrices on one thread give the job's bits. *)
+(* nx.cpu computes its routines at the four dtypes, and a matrix alone
+   gives the bits it has in a batch. *)
 let law_cpu_threads b c =
-  threads_agree b { c with batch = (if c.n > 17 then [| 2 |] else [| 9 |]) }
+  threads_agree b ([ "qr"; "svd"; "eig" ] @ with_units) c
 
-(* One matrix of order 256 and 160 right-hand sides: Cholesky's solve of
-   128 rows, LU's of 128 columns and the solve's of 160 split into units
-   of columns on the threads, and eigh's products of its trailing matrix
-   with a vector into blocks of columns and its merges' roots into units,
+(* Matrices of order 256 and 160 right-hand sides, of the routines with
+   units: alone, Cholesky's solve of 128 rows, LU's of 128 columns and
+   the solve's of 160 split into units on the threads, eigh's products of
+   its trailing matrix with a vector into blocks of columns and its
+   merges' roots into units, and svd's products into rows or columns,
    which give the bits of one thread. *)
 let law_cpu_units b c =
   cover "units on the threads" (Domain.recommended_domain_count () > 1);
-  threads_agree b { c with batch = [||]; n = 256; r = 160 }
+  threads_agree b with_units { c with n = 256; r = 160 }
 
 (* One matrix of order 272: Cholesky's update of its trailing 136
    columns runs in more than one panel, reading a transposed operand. *)
@@ -2131,10 +2173,11 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop ~count:30 "computes every dtype, one thread giving the job's bits"
-        case (run (law_cpu_threads b));
-      prop ~count:8 "a solve's units of columns give one thread's bits" case
-        (run (law_cpu_units b));
+      prop ~count:30
+        "computes every dtype, a matrix alone giving its bits in a batch" case
+        (run (law_cpu_threads b));
+      prop ~count:8 "a matrix's units on the threads give its bits in a batch"
+        case (run (law_cpu_units b));
       prop ~count:4 "Cholesky's factor of order 272 meets its relation" case
         (run (law_cpu_large b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits

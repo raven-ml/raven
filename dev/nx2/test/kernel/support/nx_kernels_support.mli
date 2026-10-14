@@ -34,10 +34,6 @@ val backends : backend list
 (** [backends] is {!cpus}, then nx.cuda on the machine's NVIDIA GPU 0 where it
     has one, as ["cuda"] through CUDA and as ["cuda/nv"] through rig.nv. *)
 
-val serial : (module Nx_kernel.S)
-(** [serial] is nx.cpu with its reductions, scans and matrices each on one
-    thread. *)
-
 val nested : int -> int -> int
 (** [nested n cost] runs, through nx.cpu's jobs, a job of [n] units of
     [cost] bytes whose every unit begins a job of [n] units of [cost] bytes
