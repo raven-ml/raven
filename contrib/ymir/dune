@@ -2,11 +2,23 @@
 ; default warnings, which leave unused values, opens and fields unreported.
 ; Keep dune's stricter development set. An odoc warning is an error in every
 ; profile.
+;
+; ymir is a project of its own, so the workspace root's env does not reach it.
+; CACHEDB and XDG_CACHE_HOME put tolk's disk cache, and the files tolk caches
+; beside it, in a directory cache of each action's working directory, inside
+; _build: a test run reads no entry a user's run wrote and writes none to the
+; user's cache.
 
 (env
  (dev
   (flags
    (:standard %{dune-warnings}))
-  (odoc (warnings fatal)))
+  (odoc (warnings fatal))
+  (env-vars
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache)))
  (_
-  (odoc (warnings fatal))))
+  (odoc (warnings fatal))
+  (env-vars
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache))))

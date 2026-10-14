@@ -185,8 +185,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - the disk cache never evicts (96 GB on the Mac): bound it, state the bound
   in helpers.mli, and test that its size holds past the bound
-- runtest reads and writes the user's cache: set `CACHEDB` in the root
-  `dune` env; done when no runtest action touches a cache outside `_build`
 - tolk.engine refuses a back edge whose flag moves with the run's words
   (tolk_engine.ml:775); no GPU test of a loop whose body mixes a GPU kernel
   and a host program
@@ -262,6 +260,9 @@ raven / llama.cpp (Vulkan; ROCm):
   in `Nx_quant`) and matches the reference's logits
 - tests read other packages' test trees: rune reads nx's goldens and links
   nx's and tolk's test kits; ppx_ptree's suite links rune, vega and kaun
+- on a cold tolk cache, rune's test_special takes 348 s (38 s warm) and
+  test_laws' "a gradient through a compiled function" 28 s (3 s warm),
+  past its 60 s timeout under load: the user's cache hid their compiles
 
 ## nx
 

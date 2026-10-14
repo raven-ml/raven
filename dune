@@ -34,6 +34,11 @@
 ; cannot block a shared watch server. Under tsan it is 15 times longer,
 ; ThreadSanitizer's slowdown at most, and RIG_TEST_TIME_SCALE makes rig's
 ; suites scale their own timeouts as much.
+;
+; CACHEDB and XDG_CACHE_HOME put tolk's disk cache, and the files tolk caches
+; beside it, in a directory cache of each action's working directory, inside
+; _build: a test run reads no entry a user's run wrote and writes none to the
+; user's cache.
 
 (env
  (dev
@@ -44,14 +49,18 @@
   (odoc
    (warnings fatal))
   (env-vars
-   (WINDTRAP_TIMEOUT 60)))
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache)))
  (release
   (c_flags
    (:standard -std=c11 -Wall -Wextra))
   (odoc
    (warnings fatal))
   (env-vars
-   (WINDTRAP_TIMEOUT 60)))
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache)))
  (sanitize
   (c_flags
    (:standard
@@ -68,7 +77,9 @@
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1:protect_shadow_gap=0)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
-   (WINDTRAP_TIMEOUT 60))
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache))
   (odoc
    (warnings fatal)))
  (tsan
@@ -85,7 +96,9 @@
    (TSAN_OPTIONS
     second_deadlock_stack=1:die_after_fork=0:allocator_may_return_null=1)
    (RIG_TEST_TIME_SCALE 15)
-   (WINDTRAP_TIMEOUT 900))
+   (WINDTRAP_TIMEOUT 900)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache))
   (odoc
    (warnings fatal)))
  (_
@@ -94,4 +107,6 @@
   (odoc
    (warnings fatal))
   (env-vars
-   (WINDTRAP_TIMEOUT 60))))
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache))))
