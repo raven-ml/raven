@@ -328,7 +328,7 @@ DOT(dot2_f32, float, 8, 2, 2, fmaf)
 DOT(dot4_f32, float, 8, 2, 4, fmaf)
 DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
 AXPY(axpy_f32, float, 8, fmaf)
-TILE(tile8_f32, float, 8, fmaf)
+TILE_PAIRS(tile8_f32, float, 8, fmaf)
 #undef VT
 #undef LOAD
 #undef STORE
@@ -345,7 +345,7 @@ DOT(dot1_f64, double, 4, 4, 1, fma)
 DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
-TILE(tile4_f64, double, 4, fma)
+TILE_PAIRS(tile4_f64, double, 4, fma)
 #undef VT
 #undef LOAD
 #undef STORE
@@ -363,7 +363,7 @@ TILE(tile4_f64, double, 4, fma)
 #define BCAST _mm_set1_ps
 #define ADD _mm_add_ps
 #define FMA(c, a, b) _mm_fmadd_ps(a, b, c)
-TILE(tile4_f32, float, 4, fmaf)
+TILE_PAIRS(tile4_f32, float, 4, fmaf)
 #undef VT
 #undef LOAD
 #undef STORE
@@ -376,7 +376,7 @@ TILE(tile4_f32, float, 4, fmaf)
 #define BCAST _mm_set1_pd
 #define ADD _mm_add_pd
 #define FMA(c, a, b) _mm_fmadd_pd(a, b, c)
-TILE(tile2_f64, double, 2, fma)
+TILE_PAIRS(tile2_f64, double, 2, fma)
 
 /* cpu.h's lane tile of [c] columns: 256-bit vectors from a vector's
    columns, 128-bit ones below. */
