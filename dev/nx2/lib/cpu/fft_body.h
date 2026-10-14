@@ -30,6 +30,11 @@ typedef struct {
    inverse, the lanes reversed, and the transpose of L vectors as an L × L
    tile. */
 #define SH __builtin_shufflevector
+
+/* Unrolls the small loop that follows over vectors of an array: gcc -O2
+   left such loops rolled and their arrays in memory, and the rows of 8 of
+   a line of 1024 points took 0.54 µs against 0.26 by clang (Arrow Lake). */
+#define UNROLL _Pragma("GCC unroll 8")
 #if L == 8
 #define DEAL_RE(a, b) SH(a, b, 0, 2, 4, 6, 8, 10, 12, 14)
 #define DEAL_IM(a, b) SH(a, b, 1, 3, 5, 7, 9, 11, 13, 15)
@@ -39,15 +44,19 @@ typedef struct {
 
 static inline void F(transpose)(VEC *r) {
   VEC a[8], b[8];
+  UNROLL
   for (int i = 0; i < 8; i += 2) {
     a[i] = SH(r[i], r[i + 1], 0, 8, 1, 9, 4, 12, 5, 13);
     a[i + 1] = SH(r[i], r[i + 1], 2, 10, 3, 11, 6, 14, 7, 15);
   }
+  UNROLL
   for (int i = 0; i < 8; i += 4)
+    UNROLL
     for (int k = 0; k < 2; k++) {
       b[i + 2 * k] = SH(a[i + k], a[i + k + 2], 0, 1, 8, 9, 4, 5, 12, 13);
       b[i + 2 * k + 1] = SH(a[i + k], a[i + k + 2], 2, 3, 10, 11, 6, 7, 14, 15);
     }
+  UNROLL
   for (int i = 0; i < 4; i++) {
     r[i] = SH(b[i], b[i + 4], 0, 1, 2, 3, 8, 9, 10, 11);
     r[i + 4] = SH(b[i], b[i + 4], 4, 5, 6, 7, 12, 13, 14, 15);
@@ -62,10 +71,12 @@ static inline void F(transpose)(VEC *r) {
 
 static inline void F(transpose)(VEC *r) {
   VEC a[4];
+  UNROLL
   for (int i = 0; i < 4; i += 2) {
     a[i] = SH(r[i], r[i + 1], 0, 4, 2, 6);
     a[i + 1] = SH(r[i], r[i + 1], 1, 5, 3, 7);
   }
+  UNROLL
   for (int k = 0; k < 2; k++) {
     r[k] = SH(a[k], a[k + 2], 0, 1, 4, 5);
     r[k + 2] = SH(a[k], a[k + 2], 2, 3, 6, 7);
@@ -506,6 +517,7 @@ static void F(gather)(CV *restrict d, const lines *x, const int64_t *o,
   if (lanes == L && st == 2 && io == 1 && !x->real)
     for (; j + L <= n; j += L) {
       VEC re[L], im[L];
+      UNROLL
       for (int v = 0; v < L; v++) {
         VEC lo, hi;
         memcpy(&lo, b + o[v] + 2 * j, sizeof lo);
@@ -516,6 +528,7 @@ static void F(gather)(CV *restrict d, const lines *x, const int64_t *o,
       }
       TRANSPOSE(re);
       TRANSPOSE(im);
+      UNROLL
       for (int u = 0; u < L; u++) d[j + u] = (CV){re[u], im[u]};
     }
   for (; j < n; j++)
@@ -602,12 +615,14 @@ static void F(scatter)(const lines *y, const int64_t *o, int lanes,
   if (lanes == L && st == 2 && io == 1 && !y->real)
     for (; j + L <= n; j += L) {
       VEC re[L], im[L];
+      UNROLL
       for (int u = 0; u < L; u++) {
         re[u] = s[j + u].re;
         im[u] = conj ? -s[j + u].im : s[j + u].im;
       }
       TRANSPOSE(re);
       TRANSPOSE(im);
+      UNROLL
       for (int v = 0; v < L; v++)
         F(zip)(b + o[v] + 2 * j, (CV){re[v], im[v]}, 0, 0);
     }
@@ -665,6 +680,7 @@ static int64_t F(grid)(const PLAN *p) {
    t[v] holds the L points' lane v. */
 static inline void F(twist)(const CV *r, const CV *tw, int lanes, CV *t) {
   VEC re[L], im[L];
+  UNROLL
   for (int u = 0; u < L; u++) {
     CV z = u < lanes ? F(mulv)(r[u], tw[u]) : (CV){0};
     re[u] = z.re;
@@ -672,6 +688,7 @@ static inline void F(twist)(const CV *r, const CV *tw, int lanes, CV *t) {
   }
   TRANSPOSE(re);
   TRANSPOSE(im);
+  UNROLL
   for (int v = 0; v < L; v++) t[v] = (CV){re[v], im[v]};
 }
 
@@ -745,6 +762,7 @@ static inline __attribute__((always_inline)) void F(eight)(const PLAN *p2,
   CV ya[4], yd[4];
   F(four)(a[0], a[1], a[2], a[3], ya);
   F(four)(d[0], d[1], d[2], d[3], yd);
+  UNROLL
   for (int u = 0; u < 4; u++) {
     z[2 * u] = ya[u];
     z[2 * u + 1] = yd[u];
@@ -761,10 +779,12 @@ static inline __attribute__((always_inline)) void F(rows8)(
     int64_t to, T *out, int conj, int nt) {
   int64_t n1 = p->n1;
   CV c[8], z[8];
+  UNROLL
   for (int g = 0; g < G8; g++)
     F(twist)(r[g] + h, p->tw4 + g * n1 + h, lanes, c + g * L);
   F(eight)(p->p2, c, z);
   if (out != NULL && lanes == L) {
+    UNROLL
     for (int k2 = 0; k2 < 8; k2++)
       F(zip)(out + 2 * (h + n1 * k2), z[k2], conj, nt);
     return;
@@ -831,14 +851,9 @@ static int F(across)(const PLAN *p, const lines *x, const lines *y,
     F(gather)(a, x, c, L, n1, n2 * x->step);
     CV *r = F(run_passes)(p->p1, a, b);
     const CV *tw = p->tw4 + j2 / L * n1;
-    for (int64_t k1 = 0; k1 < n1; k1++) {
-      CV t;
-      for (int v = 0; v < L; v++) {
-        t.re[v] = tw[k1].re[j2 % L];
-        t.im[v] = tw[k1].im[j2 % L];
-      }
-      s[k1 * n2 + j2] = F(mulv)(r[k1], t);
-    }
+    for (int64_t k1 = 0; k1 < n1; k1++)
+      s[k1 * n2 + j2] =
+          F(mul)(r[k1], tw[k1].re[j2 % L], tw[k1].im[j2 % L]);
   }
   /* Rows of 8 run in registers where the lines lie side by side: 64
      lines of 1024 points took 90 us against 108 by run_passes and
@@ -1424,6 +1439,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
 }
 
 #undef SH
+#undef UNROLL
 #undef DEAL_RE
 #undef DEAL_IM
 #undef ZIP_LO
