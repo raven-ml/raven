@@ -124,3 +124,27 @@ module Serial = struct
 end
 
 let serial = (module Serial : Nx_kernel.S)
+
+(* Guard pages *)
+
+type side = Before | After
+
+external guarded_bytes :
+  bool ->
+  int ->
+  int ->
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  * nativeint
+  * int = "nx_kernels_support_guarded"
+
+external unguard : nativeint -> int -> unit = "nx_kernels_support_unguard"
+
+let guarded side dt l =
+  let lo, hi = Nx_array.Layout.span l in
+  let first = lo * Nx_array.Dtype.bits dt / 8 in
+  let bytes = Nx_array.Dtype.bytes dt hi in
+  let ba, base, total = guarded_bytes (side = After) first bytes in
+  Bigarray.Array1.fill (Bigarray.Array1.sub ba first (bytes - first)) '\000';
+  let a = Nx_array.v dt l (Rig.Buffer.of_bigarray ba) in
+  (a, fun () -> unguard base total)
+

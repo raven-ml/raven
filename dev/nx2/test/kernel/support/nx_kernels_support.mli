@@ -42,3 +42,22 @@ val nested : int -> int -> int
 (** [nested n cost] runs, through nx.cpu's jobs, a job of [n] units of
     [cost] bytes whose every unit begins a job of [n] units of [cost] bytes
     adding [0] to [n - 1]: the total of the sums. *)
+
+(** {1:guards Guard pages} *)
+
+(** The type for the side of an array's bytes an inaccessible page lies on. *)
+type side =
+  | Before  (** The first byte of its span lies just after the page. *)
+  | After  (** The last byte of its span lies just before the page. *)
+
+val guarded :
+  side ->
+  ('v, 's) Nx_array.Dtype.t ->
+  Nx_array.Layout.t ->
+  ('v, 's) Nx_array.t * (unit -> unit)
+(** [guarded side dt l] is an array of [dt] over [l] on host memory of its own,
+    zeroed, whose span's bytes ({!Nx_array.Layout.span}) lie against an
+    inaccessible page on [side], so that a kernel reading a byte past them on
+    that side faults; and the function that frees the memory, after which the
+    array is not used. [l]'s positions start at the memory's first byte. *)
+

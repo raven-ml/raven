@@ -1394,6 +1394,105 @@ let laws (b : Support.backend) =
         "a destination identical to init gives a fresh one's bits" computed (run (law_in_place b));
     ]
 
+(* Guard pages *)
+
+(* A [m × k] by [k × n] product whose operands and dst each lie against an
+   inaccessible page on [side]: b a window of columns [c0, c0 + n) of a
+   [k × cols] array, so that its rows lie off any alignment, and the
+   window ends at the page where [c0 + n = cols]. Slivers of a matrix
+   unit's half and whole tiles (16 and 32 float32 columns, 8 and 16
+   float64) and rows past one tile are drawn often. *)
+type guard_case = {
+  f64 : bool;
+  side : Support.side;
+  m : int;
+  n : int;
+  k : int;
+  cols : int;
+  c0 : int;
+  seed : int;
+}
+
+let pp_guard ppf g =
+  Format.fprintf ppf "%s %s m %d n %d k %d cols %d c0 %d seed %d"
+    (if g.f64 then "float64" else "float32")
+    (match g.side with Support.Before -> "before" | After -> "after")
+    g.m g.n g.k g.cols g.c0 g.seed
+
+let guard_cases =
+  let open Gen in
+  Gen.with_pp pp_guard
+    (let* f64 = bool in
+     let half = if f64 then 8 else 16 in
+     let* after = bool in
+     let side = if after then Support.After else Support.Before in
+     let* m = frequency [ (1, int_range 1 32); (2, int_range 33 72) ] in
+     let* k = int_range 1 140 in
+     let* tiles = int_range 0 2 in
+     let* edge =
+       frequency
+         [ (2, constant half); (1, int_range 1 (2 * half - 1)); (1, constant 0) ]
+     in
+     let n = max 1 ((tiles * 2 * half) + edge) in
+     let* extra = int_range 0 8 in
+     let* c0 = frequency [ (1, constant extra); (2, int_range 0 extra) ] in
+     let+ seed = int in
+     { f64; side; m; n; k; cols = n + extra; c0; seed })
+
+let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let st = Random.State.make [| g.seed |] in
+  let values s =
+    A.of_array dt s
+      (Array.init (total s) (fun _ -> Random.State.float st 2. -. 1.))
+  in
+  let window x =
+    let all c = { Nx_array.Move.start = 0; count = c; step = 1 } in
+    Option.get
+      (A.move
+         (Nx_array.Move.Slice
+            [| all g.k; { Nx_array.Move.start = g.c0; count = g.n; step = 1 } |])
+         x)
+  in
+  let product ~dst a x =
+    match
+      K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting:[| (1, 0) |]
+        ~acc:(D.Any dt) ~dst ~init:None a (window x)
+    with
+    | A.Done -> ()
+    | r -> failf "contract answered %a" Nx_array_support.pp_answer r
+  in
+  let guard x =
+    let g', free = Support.guarded g.side dt (A.layout x) in
+    (match Nx_cpu.apply1 Nx_kernel.Prog.Copy ~dst:g' x with
+    | A.Done -> ()
+    | r -> failf "a copy answered %a" Nx_array_support.pp_answer r);
+    (g', free)
+  in
+  let a = values [| g.m; g.k |] and x = values [| g.k; g.cols |] in
+  let want = A.create Rig.host dt [| g.m; g.n |] in
+  product ~dst:want a x;
+  let ga, free_a = guard a and gx, free_x = guard x in
+  let gd, free_d = guard want in
+  product ~dst:gd ga gx;
+  let bits y = Array.map Int64.bits_of_float (A.to_array y) in
+  let got = bits gd in
+  free_a ();
+  free_x ();
+  free_d ();
+  equal (array int64) (bits want) got
+
+let law_guards (b : Support.backend) g =
+  let half = if g.f64 then 8 else 16 in
+  cover "a sliver of half a matrix unit's tile" (g.n mod (2 * half) = half);
+  cover "rows past one tile" (g.m > 2 * half);
+  cover "b's window ending at the page"
+    (g.side = Support.After && g.c0 + g.n = g.cols);
+  cover "b's window starting at the page"
+    (g.side = Support.Before && g.c0 = 0);
+  if g.f64 then guarded_product b D.Float64 g
+  else guarded_product b D.Float32 g
+
 (* nx.cpu under each table the host runs. *)
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
@@ -1410,6 +1509,10 @@ let cpu (b : Support.backend) =
         (run (law_wraps ~covers:quad_covers b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
+      prop ~count:500
+        "reads and writes no byte past its operands and dst, whatever pages lie \
+         beside them"
+        guard_cases (run (law_guards b));
       test "with no products, a float32 output is init's bits"
         (run (empty b D.Uint32 D.Float32 int32
                 [| 0x80000000l; 0x7F800001l; 0x3FC00000l |]));

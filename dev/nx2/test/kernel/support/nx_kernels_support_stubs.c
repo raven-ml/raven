@@ -126,3 +126,80 @@ value nx_kernels_support_serial_solve_triangular_byte(value *argv, int argn) {
   return nx_kernels_support_serial_solve_triangular(
       argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
+
+/* Guard pages */
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+#include <caml/bigarray.h>
+
+static intnat page_bytes(void) {
+#if defined(_WIN32)
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  return (intnat)si.dwPageSize;
+#else
+  return (intnat)sysconf(_SC_PAGESIZE);
+#endif
+}
+
+/* [vbytes] bytes, a uint8 bigarray over memory of its own, whose bytes from
+   [vfrom] on are readable up to an inaccessible page: their last byte just
+   before it where [vafter], else their first byte, [vfrom], just after it.
+   The bytes before [vfrom] lie in the page where [vafter] is false. With
+   the mapping's start and length, to give to unguard. */
+value nx_kernels_support_guarded(value vafter, value vfrom, value vbytes) {
+  CAMLparam0();
+  CAMLlocal2(ba, r);
+  intnat page = page_bytes(), bytes = Long_val(vbytes);
+  intnat from = Long_val(vfrom), readable = bytes - from;
+  intnat pages = 1 + (readable + page - 1) / page;
+  if (pages < 2) pages = 2;
+  size_t total = (size_t)(pages * page);
+#if defined(_WIN32)
+  uint8_t *base = VirtualAlloc(NULL, total, MEM_RESERVE | MEM_COMMIT,
+                               PAGE_READWRITE);
+  if (base == NULL) caml_raise_out_of_memory();
+#else
+  uint8_t *base = mmap(NULL, total, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANON, -1, 0);
+  if (base == MAP_FAILED) caml_raise_out_of_memory();
+#endif
+  uint8_t *guard, *data;
+  if (Bool_val(vafter)) {
+    guard = base + total - page;
+    data = guard - bytes;
+  } else {
+    guard = base;
+    data = base + page - from;
+  }
+#if defined(_WIN32)
+  DWORD old;
+  VirtualProtect(guard, (size_t)page, PAGE_NOACCESS, &old);
+#else
+  mprotect(guard, (size_t)page, PROT_NONE);
+#endif
+  ba = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
+                          1, data, bytes);
+  r = caml_alloc_tuple(3);
+  Store_field(r, 0, ba);
+  Store_field(r, 1, caml_copy_nativeint((intnat)base));
+  Store_field(r, 2, Val_long((intnat)total));
+  CAMLreturn(r);
+}
+
+value nx_kernels_support_unguard(value vbase, value vtotal) {
+  void *base = (void *)Nativeint_val(vbase);
+#if defined(_WIN32)
+  (void)vtotal;
+  VirtualFree(base, 0, MEM_RELEASE);
+#else
+  munmap(base, (size_t)Long_val(vtotal));
+#endif
+  return Val_unit;
+}
