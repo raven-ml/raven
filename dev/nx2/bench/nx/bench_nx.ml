@@ -248,7 +248,9 @@ let rng_rows =
 
 (* Contractions at the shapes of nx.cpu's and nx.cuda's rows, each beside its
    kernel called directly, so that the frontend's cost over it shows: squares,
-   and a decode step's one row against a weight stored as [n × k]. *)
+   from 4³, summed in lane order, through those a call's fixed cost and its
+   choice of hardware decide, and a decode step's one row against a weight
+   stored as [n × k]. *)
 
 let matrix dt s =
   Nx.Repr.of_array Nx.Host.v
@@ -419,8 +421,9 @@ let dtype_rows =
 
 let contract_rows =
   Thumper.group "contract"
-    (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 64 @ matmul_rows 1024
-   @ decode_rows @ chain_rows @ [ plan_row 11 ] @ dtype_rows)
+    (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
+   @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows @ chain_rows
+   @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
    writes its row into a copy of the cache, and concatenate copies its result
