@@ -1,8 +1,8 @@
 ; Kernels for host memory.
 ;
-; convert.c, gemm_generic.c, rows.c and reduce.c are compiled once per target:
-; as themselves for base, and as their copies convert_v3.c, gemm_generic_v3.c,
-; rows_v3.c and reduce_v3.c for v3,
+; convert.c, gemm_generic.c, rows.c, reduce.c and fft.c are compiled once per
+; target: as themselves for base, and as their copies convert_v3.c,
+; gemm_generic_v3.c, rows_v3.c, reduce_v3.c and fft_v3.c for v3,
 ; with v3's instructions on x86-64 and as empty units elsewhere.
 ; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
 ; v3's instructions, x86-64's; gemm_vnni.c, with AVX-VNNI-INT8's too where
@@ -33,7 +33,7 @@
    -DNX_CPU_V3
    (:include vector_flags.sexp)
    (:include v3_flags.sexp))
-  (names convert_v3 gemm_generic_v3 rows_v3 reduce_v3 gemm_avx2))
+  (names convert_v3 gemm_generic_v3 rows_v3 reduce_v3 fft_v3 gemm_avx2))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
@@ -51,6 +51,9 @@
 
 (rule
  (copy reduce.c reduce_v3.c))
+
+(rule
+ (copy fft.c fft_v3.c))
 
 (rule
  (target v3_flags.sexp)

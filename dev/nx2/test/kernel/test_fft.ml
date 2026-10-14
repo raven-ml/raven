@@ -712,19 +712,28 @@ let test_refusals () =
   equal answer A.Shape_mismatch
     (Nx_cpu.c2r ~axes:[| 2 |] ~dst:(f64 [| 4 |]) (c128 [| 3 |]))
 
+(* The laws under each target table the host runs. *)
+let laws (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  group ("nx.cpu " ^ b.name)
+    [
+      prop "transforms are within nx_cpu.mli's bound" case_gen (run law_bound);
+      prop "bits do not depend on views, threads, place or batch" case_gen
+        (run law_bits);
+    ]
+
 let () =
   exit
     (Windtrap.run "nx_kernel.fft"
-       [
-         group "nx.cpu"
-           [
-             prop "transforms are within nx_cpu.mli's bound" case_gen law_bound;
-             prop "bits do not depend on views, threads, place or batch"
-               case_gen law_bits;
-             test "long lines are within the bound, one thread's bits" test_long;
-             test "a transform of no point is the empty sum" test_empty;
-             test "refuses dtypes and shapes" test_refusals;
-             test "digests of transforms, the same on every target"
-               test_digests;
-           ];
-       ])
+       (List.map laws Support.cpus
+       @ [
+           group "nx.cpu"
+             [
+               test "long lines are within the bound, one thread's bits"
+                 test_long;
+               test "a transform of no point is the empty sum" test_empty;
+               test "refuses dtypes and shapes" test_refusals;
+               test "digests of transforms, the same on every target"
+                 test_digests;
+             ];
+         ]))

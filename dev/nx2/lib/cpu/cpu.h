@@ -337,11 +337,16 @@ typedef struct {
   /* stateful[r - NX_CPU_MONOIDS][dt] reduces by r (NX_CPU_LOGSUMEXP to
      NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
   nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];
+  /* fft runs fft.c's transform t (its C2C, R2C or C2R; inverse for C2C's
+     Inverse) of x into y along [axes] on [threads] threads: 0 if memory
+     runs out. */
+  int (*fft)(int t, int inverse, const nx_array *x, const nx_array *y,
+             const int *axes, int na, int threads);
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by
-   convert.c, gemm_generic.c, rows.c and reduce.c compiled for its target,
-   then by the kernels of its instructions: gemm_neon.c's on arm64,
+   convert.c, gemm_generic.c, rows.c, reduce.c and fft.c compiled for its
+   target, then by the kernels of its instructions: gemm_neon.c's on arm64,
    gemm_avx2.c's for v3, and gemm_vnni.c's quads where the host has
    AVX-VNNI-INT8. amx is base's table with gemm_amx.c's kernels for the
    matrix unit of Apple's M1. */
@@ -350,6 +355,7 @@ void nx_cpu_set_convert_base(nx_cpu_target *t);
 void nx_cpu_set_gemm_base(nx_cpu_target *t);
 void nx_cpu_set_rows_base(nx_cpu_target *t);
 void nx_cpu_set_reduce_base(nx_cpu_target *t);
+void nx_cpu_set_fft_base(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
@@ -364,6 +370,7 @@ void nx_cpu_set_convert_v3(nx_cpu_target *t);
 void nx_cpu_set_gemm_v3(nx_cpu_target *t);
 void nx_cpu_set_rows_v3(nx_cpu_target *t);
 void nx_cpu_set_reduce_v3(nx_cpu_target *t);
+void nx_cpu_set_fft_v3(nx_cpu_target *t);
 void nx_cpu_set_avx2(nx_cpu_target *t);
 void nx_cpu_set_vnni(nx_cpu_target *t);
 #endif

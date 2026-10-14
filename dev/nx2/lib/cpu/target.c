@@ -171,6 +171,7 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);
   nx_cpu_set_reduce_base(&nx_cpu_base);
+  nx_cpu_set_fft_base(&nx_cpu_base);
 #if defined(__aarch64__)
   nx_cpu_set_neon(&nx_cpu_base);
 #endif
@@ -191,6 +192,7 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_gemm_v3(&nx_cpu_v3);
   nx_cpu_set_rows_v3(&nx_cpu_v3);
   nx_cpu_set_reduce_v3(&nx_cpu_v3);
+  nx_cpu_set_fft_v3(&nx_cpu_v3);
   nx_cpu_set_avx2(&nx_cpu_v3);
   if (has_vnni_int8()) nx_cpu_set_vnni(&nx_cpu_v3);
   nx_cpu_table = &nx_cpu_v3;

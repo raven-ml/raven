@@ -32,7 +32,12 @@
 
    Plans are kept for the next call in a cache of PLANS, shared by every
    thread. A job's units are lines where there are enough for its
-   threads; else each line's steps are jobs of their own. */
+   threads; else each line's steps are jobs of their own.
+
+   fft.c is compiled once per target, as rows.c is, each copy with its
+   own cache; the entries run the table's. Base x86-64 has no shuffle of
+   a VEC's 32 bytes, and gcc moves its lanes one at a time through
+   memory. */
 
 #include <math.h>
 #include <pthread.h>
@@ -45,6 +50,8 @@
 
 #include "cpu.h"
 #include "nx_kinds.h"
+
+#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 /* The most points a line computes by passes alone. Above, the four steps
    give a single line every lane: a line of 256 points took 0.7 us by them
@@ -524,6 +531,25 @@ static void plan_put(void *p, int rdt, int kind) {
 
 enum { C2C, R2C, C2R };
 
+/* The table's fft (cpu.h). */
+static int run(int t, int inverse, const nx_array *x, const nx_array *y,
+               const int *axes, int na, int threads) {
+  int single = (t == C2R ? x->dtype : y->dtype) == NX_COMPLEX64;
+  if (t == C2C)
+    return single ? c2c_f32(x, y, axes, na, inverse, threads)
+                  : c2c_f64(x, y, axes, na, inverse, threads);
+  if (t == R2C)
+    return single ? r2c_f32(x, y, axes, na, threads)
+                  : r2c_f64(x, y, axes, na, threads);
+  return single ? c2r_f32(x, y, axes, na, threads)
+                : c2r_f64(x, y, axes, na, threads);
+}
+
+#if defined(NX_CPU_V3)
+void nx_cpu_set_fft_v3(nx_cpu_target *t) { t->fft = run; }
+#else
+void nx_cpu_set_fft_base(nx_cpu_target *t) { t->fft = run; }
+
 /* Runs the transform [t], [inverse] for c2c's Inverse, of x into dst
    along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked, on
    [threads] threads as cpu.h states. The caller roots its values. */
@@ -536,16 +562,7 @@ static value transform(int t, int inverse, value vaxes, value dst, value x,
   nx_array a[2];
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  int single = (t == C2R ? a[0].dtype : a[1].dtype) == NX_COMPLEX64, ok;
-  if (t == C2C)
-    ok = single ? c2c_f32(&a[0], &a[1], axes, na, inverse, threads)
-                : c2c_f64(&a[0], &a[1], axes, na, inverse, threads);
-  else if (t == R2C)
-    ok = single ? r2c_f32(&a[0], &a[1], axes, na, threads)
-                : r2c_f64(&a[0], &a[1], axes, na, threads);
-  else
-    ok = single ? c2r_f32(&a[0], &a[1], axes, na, threads)
-                : c2r_f64(&a[0], &a[1], axes, na, threads);
+  int ok = nx_cpu_table->fft(t, inverse, &a[0], &a[1], axes, na, threads);
   nx_done(2, a);
   if (!ok) caml_raise_out_of_memory();
   return Val_int(NX_OK);
@@ -567,3 +584,6 @@ value nx_cpu_c2r(value threads, value axes, value dst, value x) {
   CAMLparam3(axes, dst, x);
   CAMLreturn(transform(C2R, 0, axes, dst, x, Int_val(threads)));
 }
+#endif
+
+#endif
