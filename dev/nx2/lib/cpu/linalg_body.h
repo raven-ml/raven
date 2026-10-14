@@ -2798,12 +2798,12 @@ static int F(bdsdc)(int64_t n, R *d, R *e, R *u, int64_t ldu, R *v,
   return 1;
 }
 
-/* y[j·ys] += s Σ_i conj(a[i + j·lda]) x[i] for j < [n], i < [m]: y += s aᴴ
+/* y[j] += s Σ_i conj(a[i + j·lda]) x[i] for j < [n], i < [m]: y += s aᴴ
    x for the column-major a (xGEMV's 'C'). By four columns at a time,
    which share x's loads, each product in four parts by the index mod 4
    as dot's, so that a column's bits do not depend on its neighbours. */
 static void F(mvh)(int64_t m, int64_t n, const T *a, int64_t lda,
-                   const T *x, T *y, int64_t ys, R s) {
+                   const T *x, T *y, R s) {
   int64_t j = 0;
   for (; j + 4 <= n; j += 4) {
     const T *c[4] = {a + j * lda, a + (j + 1) * lda, a + (j + 2) * lda,
@@ -2816,21 +2816,20 @@ static void F(mvh)(int64_t m, int64_t n, const T *a, int64_t lda,
     for (; r < m; r++)
       for (int q = 0; q < 4; q++) p[q][r & 3] += CONJ(c[q][r]) * x[r];
     for (int q = 0; q < 4; q++)
-      y[(j + q) * ys] += s * ((p[q][0] + p[q][1]) + (p[q][2] + p[q][3]));
+      y[j + q] += s * ((p[q][0] + p[q][1]) + (p[q][2] + p[q][3]));
   }
-  for (; j < n; j++) y[j * ys] += s * F(dot)(a + j * lda, x, m);
+  for (; j < n; j++) y[j] += s * F(dot)(a + j * lda, x, m);
 }
 
-/* y[i] += s Σ_j a[i + j·lda] x[j·xs] for i < [m], j < [n]: y += s a x for
+/* y[i] += s Σ_j a[i + j·lda] x[j] for i < [m], j < [n]: y += s a x for
    the column-major a (xGEMV's 'N'), by four columns at a time, which
    share y's loads and stores. */
 static void F(mvn)(int64_t m, int64_t n, const T *a, int64_t lda,
-                   const T *x, int64_t xs, T *y, R s) {
+                   const T *x, T *y, R s) {
   int64_t j = 0;
   for (; j + 4 <= n; j += 4) {
     const T *c0 = a + j * lda, *c1 = c0 + lda, *c2 = c1 + lda, *c3 = c2 + lda;
-    T t0 = s * x[j * xs], t1 = s * x[(j + 1) * xs], t2 = s * x[(j + 2) * xs],
-      t3 = s * x[(j + 3) * xs];
+    T t0 = s * x[j], t1 = s * x[j + 1], t2 = s * x[j + 2], t3 = s * x[j + 3];
     for (int64_t i = 0; i < m; i++) {
       T u = y[i];
       u += c0[i] * t0;
@@ -2842,9 +2841,58 @@ static void F(mvn)(int64_t m, int64_t n, const T *a, int64_t lda,
   }
   for (; j < n; j++) {
     const T *aj = a + j * lda;
-    T t = s * x[j * xs];
+    T t = s * x[j];
     for (int64_t i = 0; i < m; i++) y[i] += aj[i] * t;
   }
+}
+
+typedef struct {
+  int64_t m, n, lda;
+  const T *a, *x;
+  T *y;
+  R s;
+} F(mv_job);
+
+static void F(mvn_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const F(mv_job) *j = ctx;
+  int64_t r0 = lo * MV_ROWS, r1 = hi * MV_ROWS < j->m ? hi * MV_ROWS : j->m;
+  F(mvn)(r1 - r0, j->n, j->a + r0, j->lda, j->x, j->y + r0, j->s);
+}
+
+static void F(mvh_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const F(mv_job) *j = ctx;
+  int64_t c0 = lo * MV_COLUMNS;
+  int64_t c1 = hi * MV_COLUMNS < j->n ? hi * MV_COLUMNS : j->n;
+  F(mvh)(j->m, c1 - c0, j->a + c0 * j->lda, j->lda, j->x, j->y + c0, j->s);
+}
+
+/* mvn and mvh by units of MV_ROWS rows of y or MV_COLUMNS columns of a on
+   the call's threads where [sa] holds them. Each element of y adds its
+   terms in mvn's or mvh's order on whichever unit, so the bits are
+   theirs. */
+static void F(mvn_on)(int64_t m, int64_t n, const T *a, int64_t lda,
+                      const T *x, T *y, R s, arena *sa) {
+  F(mv_job) j = {.m = m, .n = n, .lda = lda, .a = a, .x = x, .y = y, .s = s};
+  int64_t units = (m + MV_ROWS - 1) / MV_ROWS, bytes = m * n * sizeof(T);
+  double cost = threaded(sa, units, bytes, (double)m * n, RDT, CPLX);
+  if (cost > 0)
+    nx_cpu_job(units, bytes, cost, F(mvn_unit), &j);
+  else
+    F(mvn)(m, n, a, lda, x, y, s);
+}
+
+static void F(mvh_on)(int64_t m, int64_t n, const T *a, int64_t lda,
+                      const T *x, T *y, R s, arena *sa) {
+  F(mv_job) j = {.m = m, .n = n, .lda = lda, .a = a, .x = x, .y = y, .s = s};
+  int64_t units = (n + MV_COLUMNS - 1) / MV_COLUMNS,
+          bytes = m * n * sizeof(T);
+  double cost = threaded(sa, units, bytes, (double)m * n, RDT, CPLX);
+  if (cost > 0)
+    nx_cpu_job(units, bytes, cost, F(mvh_unit), &j);
+  else
+    F(mvh)(m, n, a, lda, x, y, s);
 }
 
 /* The panel of the first [nb] columns and rows of the [m] × [n] [a], m >=
@@ -2856,18 +2904,19 @@ static void F(mvn)(int64_t m, int64_t n, const T *a, int64_t lda,
    elements 1. [x], m × nb, and [y], n × nb, columns [ldx] and [ldy]
    apart, get X and Y with the rest of a updated as a − V Yᴴ − X U. [r]
    holds n + nb elements: the conjugated row, contiguous, and a short
-   vector. */
+   vector. The products of the rest with v_i and u_i run on the call's
+   threads where [s] holds them. */
 static void F(labrd)(T *a, int64_t m, int64_t n, int64_t nb, int64_t lda,
                      R *d, R *e, T *tauq, T *taup, T *x, int64_t ldx, T *y,
-                     int64_t ldy, T *r) {
+                     int64_t ldy, T *r, arena *s) {
   T *row = r + nb;
   for (int64_t i = 0; i < nb; i++) {
     T *ai = a + i * lda, *xi = x + i * ldx, *yi = y + i * ldy,
       *xr = xi + i + 1, *yr = yi + i + 1;
     int64_t mr = m - i - 1, nr = n - i - 1;
     for (int64_t p = 0; p < i; p++) r[p] = CONJ(y[i + p * ldy]);
-    F(mvn)(m - i, i, a + i, lda, r, 1, ai + i, -1);
-    F(mvn)(m - i, i, x + i, ldx, ai, 1, ai + i, -1);
+    F(mvn)(m - i, i, a + i, lda, r, ai + i, -1);
+    F(mvn)(m - i, i, x + i, ldx, ai, ai + i, -1);
     T alpha = ai[i];
     tauq[i] = F(reflector)(&alpha, ai + i + 1, mr, 1);
     d[i] = REAL(alpha);
@@ -2875,31 +2924,31 @@ static void F(labrd)(T *a, int64_t m, int64_t n, int64_t nb, int64_t lda,
     /* Y's column i: τ_i times aᴴ v_i less the panel's products. */
     ai[i] = 1;
     memset(yi, 0, sizeof(T) * n);
-    F(mvh)(m - i, nr, ai + lda + i, lda, ai + i, yr, 1, 1);
-    F(mvh)(m - i, i, a + i, lda, ai + i, yi, 1, 1);
-    F(mvn)(nr, i, y + i + 1, ldy, yi, 1, yr, -1);
+    F(mvh_on)(m - i, nr, ai + lda + i, lda, ai + i, yr, 1, s);
+    F(mvh)(m - i, i, a + i, lda, ai + i, yi, 1);
+    F(mvn)(nr, i, y + i + 1, ldy, yi, yr, -1);
     memset(yi, 0, sizeof(T) * i);
-    F(mvh)(m - i, i, x + i, ldx, ai + i, yi, 1, 1);
-    F(mvh)(i, nr, ai + lda, lda, yi, yr, 1, -1);
+    F(mvh)(m - i, i, x + i, ldx, ai + i, yi, 1);
+    F(mvh)(i, nr, ai + lda, lda, yi, yr, -1);
     for (int64_t p = 0; p < nr; p++) yr[p] *= tauq[i];
     /* Row i, conjugated into row, then G_i. */
     for (int64_t p = 0; p < nr; p++) row[p] = CONJ(ai[(p + 1) * lda + i]);
     for (int64_t p = 0; p <= i; p++) r[p] = CONJ(a[i + p * lda]);
-    F(mvn)(nr, i + 1, y + i + 1, ldy, r, 1, row, -1);
+    F(mvn)(nr, i + 1, y + i + 1, ldy, r, row, -1);
     for (int64_t p = 0; p < i; p++) r[p] = CONJ(x[i + p * ldx]);
-    F(mvh)(i, nr, ai + lda, lda, r, row, 1, -1);
+    F(mvh)(i, nr, ai + lda, lda, r, row, -1);
     T beta = row[0];
     taup[i] = F(reflector)(&beta, row + 1, nr - 1, 1);
     e[i] = REAL(beta);
     row[0] = 1;
     /* X's column i: τ_i times a u_i less the panel's products. */
     memset(xi, 0, sizeof(T) * m);
-    F(mvn)(mr, nr, ai + lda + i + 1, lda, row, 1, xr, 1);
-    F(mvh)(nr, i + 1, y + i + 1, ldy, row, xi, 1, 1);
-    F(mvn)(mr, i + 1, a + i + 1, lda, xi, 1, xr, -1);
+    F(mvn_on)(mr, nr, ai + lda + i + 1, lda, row, xr, 1, s);
+    F(mvh)(nr, i + 1, y + i + 1, ldy, row, xi, 1);
+    F(mvn)(mr, i + 1, a + i + 1, lda, xi, xr, -1);
     memset(xi, 0, sizeof(T) * i);
-    F(mvn)(i, nr, ai + lda, lda, row, 1, xi, 1);
-    F(mvn)(mr, i, x + i + 1, ldx, xi, 1, xr, -1);
+    F(mvn)(i, nr, ai + lda, lda, row, xi, 1);
+    F(mvn)(mr, i, x + i + 1, ldx, xi, xr, -1);
     for (int64_t p = 0; p < mr; p++) xr[p] *= taup[i];
     for (int64_t p = 0; p < nr; p++) ai[(p + 1) * lda + i] = CONJ(row[p]);
   }
@@ -2920,7 +2969,7 @@ static int F(gebrd)(T *a, int64_t m, int64_t n, int64_t lda, R *d, R *e,
     int64_t nb = NB < n - i ? NB : n - i, m2 = m - i - nb, n2 = n - i - nb;
     T *p = a + i + i * lda, *c = p + nb + nb * lda;
     F(labrd)(p, m - i, n - i, nb, lda, d + i, e + i, tauq + i, taup + i, x,
-             m, y, n, r);
+             m, y, n, r, s);
     if (n2 == 0) continue;
     if (!F(gemm)(n2, m2, nb, -1, (operand){y + nb, 1, n, CPLX},
                  F(op)(p + nb, lda, 1), c, lda, s) ||

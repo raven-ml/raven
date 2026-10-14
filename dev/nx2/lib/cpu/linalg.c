@@ -85,6 +85,16 @@ static int64_t svd_scratch(int64_t mm, int64_t k) {
   return qr > block ? qr : block;
 }
 
+/* The rows of y and the columns of a in a unit of svd's reduction's
+   products of its trailing matrix with a vector on the threads (xGEMV
+   'N' and 'C'). MV_COLUMNS is four of mvh's groups of four columns, a
+   multiple of 4 so that each unit's columns group as the whole's do. On
+   the i9-9900K's 16 threads, svd of a 1024 × 1024 float64 matrix took
+   190.6 ms at 128 rows and 16 columns, 193.4 at 64 rows, 198.3 at 256,
+   192.3 at 8 columns and 195.7 at 32; at 256 × 256 all within 3%. */
+#define MV_ROWS 128
+#define MV_COLUMNS 16
+
 /* The roots of a divide and conquer merge in a unit of its work on the
    threads (xLAED3's loops over the roots). */
 #define MERGE_ROOTS 32
