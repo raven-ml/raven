@@ -46,9 +46,9 @@ type dev = { d : Rig.t; p : P.t; mutable n : int }
 
 let opened = ref 0
 
-let dev () =
+let dev ?transport () =
   incr opened;
-  let d, p = P.open_ (strf "bench:%d" !opened) in
+  let d, p = P.open_ ?transport (strf "bench:%d" !opened) in
   { d; p; n = 0 }
 
 let drained t =
@@ -97,6 +97,57 @@ let foreign () =
   Rig.Point.wait p;
   let s = costing_sub ~uses:(Array.make slots Sub.read) t.d in
   (t, s, costing_run s, Array.map (fun b -> Option.get (B.borrow t.d b)) bs)
+
+(* A submission whose queue waits for a pending point of each of [waiters]
+   other devices: each submit checks every wait under the device's mutex and
+   records it. With [transport], each other device has a word of its own,
+   which the queue reads through a mapping, and a submit also checks that
+   each wait's point is not done. Every [drain] submits the other devices and
+   the queue run, and the next points are taken. *)
+let waiters = 8
+
+type waiting = {
+  t : dev;
+  producers : (dev * Sub.t * Sub.Run.t) array;
+  s : Sub.t;
+  run : Sub.Run.t;
+  points : Rig.Point.t array;
+}
+
+let next_points w =
+  for i = 0 to waiters - 1 do
+    let _, s, run = w.producers.(i) in
+    w.points.(i) <- Rig.submit s ~run ~buffers:[||]
+  done
+
+let waiting ~transport () =
+  incr opened;
+  let d, p = P.open_ ~waits_on:[ `Host ] (strf "bench:%d" !opened) in
+  let producer _ =
+    let o = dev ~transport () in
+    (o, Sub.make o.d [||], Sub.Run.make ())
+  in
+  let s = costing_sub d in
+  let producers = Array.init waiters producer in
+  let point (_, s, run) = Rig.submit s ~run ~buffers:[||] in
+  {
+    t = { d; p; n = 0 };
+    producers;
+    s;
+    run = costing_run s;
+    points = Array.map point producers;
+  }
+
+let waited w =
+  w.t.n <- w.t.n + 1;
+  if w.t.n mod drain = 0 then begin
+    for i = 0 to waiters - 1 do
+      let o, _, _ = w.producers.(i) in
+      ignore (P.run o.p)
+    done;
+    ignore (P.run w.t.p);
+    next_points w
+  end
 
 (* Another domain submitting to the same device until the row ends, with its own
    run. *)
@@ -184,6 +235,12 @@ let submit_rows =
       row "fixed-200" fixing (fun (t, s, run) ->
           ignore (submit ~run s);
           drained t);
+      row "waits-8" (waiting ~transport:false) (fun w ->
+          ignore (Rig.submit ~waits:w.points w.s ~run:w.run ~buffers:[||]);
+          waited w);
+      row "waits-8-mapped" (waiting ~transport:true) (fun w ->
+          ignore (Rig.submit ~waits:w.points w.s ~run:w.run ~buffers:[||]);
+          waited w);
       row "make-4096" making (fun (t, parts, fixed) ->
           ignore (Sub.make ~fixed t.d parts));
       row "launch-refs-8" launching (fun (t, s, run, b, buffers) ->
