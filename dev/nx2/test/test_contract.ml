@@ -1066,6 +1066,63 @@ let matmul =
             (message (fun () -> Nx.matmul (x [| 2; 3 |]) (x [| 4; 2 |]))));
     ]
 
+(* dot against einsum *)
+
+(* What a call gives: the result's shape and bits, or that it raises. *)
+let outcome f =
+  match f () with
+  | y ->
+      Format.asprintf "%a %s" pp_shape (Nx.shape y)
+        (String.concat " "
+           (Array.to_list
+              (Array.map (fun x -> Int32.to_string (Int32.bits_of_float x))
+                 (read y))))
+  | exception Invalid_argument _ -> "raises"
+
+let f32_operand n = Array.init n (fun _ -> f32 (Random.float 2. -. 1.))
+
+(* The pattern of names [a] and [b] into [out], summing [k]. *)
+let pattern a b out =
+  let words = String.concat " " in
+  Nx.Pattern.v
+    (Printf.sprintf "%s, %s -> %s | k" (words a) (words b) (words out))
+
+let named p n = List.init n (fun i -> p ^ string_of_int i)
+
+(* Operands of 0 to 3 extents each, of any ranks dot takes, the summed
+   extents unequal one draw in six. *)
+let dot_cases =
+  let open Gen in
+  let ext = int_range 0 3 in
+  (let+ la = list ~size:(int_range 0 2) ext
+   and+ lb = list ~size:(int_range 0 2) ext
+   and+ k = ext
+   and+ k' = frequency [ (5, constant None); (1, map Option.some ext) ]
+   and+ c = ext
+   and+ vector = frequency [ (1, constant true); (3, constant false) ] in
+   let kb = Option.value k' ~default:k in
+   ( Array.of_list (la @ [ k ]),
+     if vector then [| kb |] else Array.of_list (lb @ [ kb; c ]) ))
+  |> with_pp (fun ppf (sa, sb) ->
+      Format.fprintf ppf "a %a b %a" pp_shape sa pp_shape sb)
+
+let dot_is_einsum =
+  prop "dot gives einsum's bits over its pattern, and raises where it does"
+    dot_cases (fun (sa, sb) ->
+      let ra = Array.length sa and rb = Array.length sb in
+      cover "a vector b" (rb = 1);
+      cover "summed extents that differ" (sa.(ra - 1) <> sb.(max 0 (rb - 2)));
+      cover "an empty result or sum" (Array.mem 0 sa || Array.mem 0 sb);
+      let la = named "a" (ra - 1) and lb = named "b" (max 0 (rb - 2)) in
+      let pb, out_b =
+        if rb = 1 then ([ "k" ], []) else (lb @ [ "k"; "c" ], lb @ [ "c" ])
+      in
+      let p = pattern (la @ [ "k" ]) pb (la @ out_b) in
+      let a = host D.Float32 sa (f32_operand (numel sa)) in
+      let b = host D.Float32 sb (f32_operand (numel sb)) in
+      equal string (outcome (fun () -> Nx.einsum p [ a; b ]))
+        (outcome (fun () -> Nx.dot a b)))
+
 (* Placements *)
 
 module S2 = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
@@ -1313,6 +1370,7 @@ let () =
          init;
          dtypes;
          matmul;
+         dot_is_einsum;
          placements;
          errors;
        ])

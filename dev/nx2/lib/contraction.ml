@@ -380,6 +380,14 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
 
+(* [a] and [b], of shapes [sa] and [sb], for a message. *)
+let both a b sa sb =
+  Format.asprintf "%s %a and %s %a"
+    (D.name (Prim.dtype a))
+    pp_shape sa
+    (D.name (Prim.dtype b))
+    pp_shape sb
+
 (* The leading axes, aligned at their last, are batch axes where both operands
    hold the result's extent, and free axes of the operand that holds it where
    the other's extent is 1 or the other lacks the axis: an operand's unit axis
@@ -389,13 +397,7 @@ let contract ~by ?(sizes = []) ?acc ?init dt p a b =
 let matmul ~by a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let ra = Array.length sa and rb = Array.length sb in
-  let both () =
-    Format.asprintf "%s %a and %s %a"
-      (D.name (Prim.dtype a))
-      pp_shape sa
-      (D.name (Prim.dtype b))
-      pp_shape sb
-  in
+  let both () = both a b sa sb in
   if ra = 0 || rb = 0 then invalid_argf "%s: an operand is 0-d; %s" by (both ());
   let k = sa.(ra - 1) and k' = if rb = 1 then sb.(0) else sb.(rb - 2) in
   if k <> k' then
@@ -478,6 +480,39 @@ let matmul ~by a b =
       batch;
       contracting = [| (la + rows, lb) |];
       order;
+      names = shape;
+      shape;
+    }
+  in
+  run ~by (Prim.dtype a) pl a b
+
+(* [a]'s last axis against [b]'s only axis or its second to last, the
+   result's axes [a]'s others then [b]'s: the kernel's own axes, so the plan
+   moves no operand and no result. *)
+let dot ~by a b =
+  let sa = Prim.shape a and sb = Prim.shape b in
+  let ra = Array.length sa and rb = Array.length sb in
+  if ra = 0 || rb = 0 then
+    invalid_argf "%s: an operand is 0-d; %s" by (both a b sa sb);
+  let kb = if rb = 1 then 0 else rb - 2 in
+  if sa.(ra - 1) <> sb.(kb) then
+    invalid_argf "%s: summed extents %d and %d differ; %s" by sa.(ra - 1)
+      sb.(kb) (both a b sa sb);
+  let r = ra + rb - 2 in
+  let shape =
+    Array.init r (fun i ->
+        if i < ra - 1 then sa.(i)
+        else
+          let j = i - (ra - 1) in
+          if j < kb then sb.(j) else sb.(j + 1))
+  in
+  let pl =
+    {
+      a = sa;
+      b = sb;
+      batch = [||];
+      contracting = [| (ra - 1, kb) |];
+      order = Array.init r Fun.id;
       names = shape;
       shape;
     }

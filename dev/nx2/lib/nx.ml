@@ -2250,28 +2250,7 @@ let diag ?(k = 0) v =
       on_diagonal ~by (dtype v) n n k v
   | _ -> invalid_argf "%s: %a is neither a vector nor a matrix" by pp_value v
 
-(* Axis names [p0], [p1], ... *)
-let names p n = List.init n (fun i -> p ^ string_of_int i)
-
-let dot a b =
-  let by = "Nx.dot" in
-  let ra = ndim a and rb = ndim b in
-  if ra = 0 || rb = 0 then
-    invalid_argf "%s: %a and %a: an operand is 0-d" by pp_value a pp_value b;
-  let la = names "a" (ra - 1) @ [ "k" ] in
-  let lb, out_b =
-    if rb = 1 then ([ "k" ], [])
-    else
-      let lead = names "b" (rb - 2) in
-      (lead @ [ "k"; "c" ], lead @ [ "c" ])
-  in
-  let words l = String.concat " " l in
-  let p =
-    Pattern.v
-      (Printf.sprintf "%s, %s -> %s | k" (words la) (words lb)
-         (words (names "a" (ra - 1) @ out_b)))
-  in
-  Contraction.contract ~by (dtype a) p a b
+let dot a b = Contraction.dot ~by:"Nx.dot" a b
 
 let vdot a b =
   let by = "Nx.vdot" in
