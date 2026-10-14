@@ -463,8 +463,11 @@ let vector_rows =
         Nx.Repr.array (Nx.matmul (Thumper.black_box x) w));
   ]
 
+(* Squares of each dtype; bfloat16's are summed in float32 and rounded
+   once into a bfloat16 result, as int8's in int32 into int8. *)
 let dtype_rows =
-  square_rows "c64" D.Complex64 Complex.one [ 64; 256; 1024 ]
+  square_rows "bf16" D.Bfloat16 1. [ 64; 256; 1024 ]
+  @ square_rows "c64" D.Complex64 Complex.one [ 64; 256; 1024 ]
   @ square_rows "c128" D.Complex128 Complex.one [ 64; 256; 1024 ]
   @ vector_rows
   @ square_rows "i32" D.Int32 1l [ 64; 256; 1024 ]
