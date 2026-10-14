@@ -96,6 +96,45 @@ static int fits(int g, int count, int n, const int *ops, const layout *l,
   return 1;
 }
 
+/* Whether operand [o] spans group [g]: batch all, rows a, init and dst,
+   columns b, init and dst, contracted a and b. */
+static const int spans[4][4] = {
+    [A] = {[BATCH] = 1, [ROW] = 1, [CONTRACTED] = 1},
+    [B] = {[BATCH] = 1, [COLUMN] = 1, [CONTRACTED] = 1},
+    [I] = {[BATCH] = 1, [ROW] = 1, [COLUMN] = 1},
+    [Y] = {[BATCH] = 1, [ROW] = 1, [COLUMN] = 1}};
+
+/* The view where each group holds [count[g]] of at most one axis, as a
+   product of matrices' groups do: each group's extent is its first
+   operand's (b's for the columns, a's for the others), which every other
+   operand's must equal, and each operand steps along its axis, 0 over at
+   most one element, as fits and group check and write them, without
+   their lists. On the M1 Max it took an 8³ product's fill from 38 to 18
+   ns. */
+static int single(nx_contract_view *w, const layout *l, int init,
+                  const int *count, int8_t axes[4][4][NX_MAX_RANK]) {
+  int64_t ext[4];
+  for (int g = BATCH; g <= CONTRACTED; g++) {
+    int o = g == COLUMN ? B : A;
+    ext[g] = count[g] ? l[o].dim[axes[o][g][0]] : 1;
+  }
+  for (int o = A; o <= Y; o++)
+    for (int g = BATCH; g <= CONTRACTED; g++)
+      if ((o != I || init) && count[g] && spans[o][g] &&
+          l[o].dim[axes[o][g][0]] != ext[g])
+        return NX_SHAPE;
+  memset(w, 0, sizeof *w);
+  for (int o = A; o <= Y; o++) {
+    if (o == I && !init) continue;
+    w->offset[o] = l[o].offset;
+    for (int g = BATCH; g <= CONTRACTED; g++)
+      if (count[g] && spans[o][g] && ext[g] > 1)
+        w->stride[o][g] = l[o].dim[l[o].rank + axes[o][g][0]];
+  }
+  for (int g = BATCH; g <= CONTRACTED; g++) w->extent[g] = ext[g];
+  return NX_OK;
+}
+
 int nx_contract_view_fill(nx_contract_view *w, value vbatch,
                           value vcontracting, value y, value a, value b,
                           value i) {
@@ -133,6 +172,8 @@ int nx_contract_view_fill(nx_contract_view *w, value vbatch,
     for (int k = 0; k < fa; k++) axes[o][ROW][k] = nb + k;
     for (int k = 0; k < fb; k++) axes[o][COLUMN][k] = nb + fa + k;
   }
+  if (nb <= 1 && fa <= 1 && fb <= 1 && nc <= 1)
+    return single(w, l, init, (int[4]){nb, fa, fb, nc}, axes);
   /* Each group's operands: batch over all, rows over a, init and dst,
      columns over b, init and dst, contracted over a and b. */
   int batch[4] = {A, B, Y, I}, row[3] = {A, Y, I}, column[3] = {B, Y, I};

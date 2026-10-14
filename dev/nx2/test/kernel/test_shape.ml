@@ -1016,6 +1016,31 @@ let law_canonical c =
   equal ~msg:"groups" string "grouped" (outcome v);
   Result.iter (check_view c) v
 
+(* [v]'s extents, offsets and strides in C's order, 0 for an axis an
+   operand lacks and for an absent init. *)
+let fields ~init v =
+  let present o = o <> V.Init || init in
+  let has o x =
+    present o
+    &&
+    match (o, x) with
+    | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
+    | _ -> true
+  in
+  let axes = V.[| Batch; Row; Column; Contracted |] in
+  let operands = V.[| A; B; Init; Dst |] in
+  Array.concat
+    [
+      Array.map (V.extent v) axes;
+      Array.map (fun o -> if present o then V.offset v o else 0) operands;
+      Array.concat
+        (Array.to_list
+           (Array.map
+              (fun o ->
+                Array.map (fun x -> if has o x then V.stride v o x else 0) axes)
+              operands));
+    ]
+
 (* C's nx_contract_view_fill groups what the view gives, and 0 for an axis
    an operand lacks and for an absent init. *)
 let law_view_in_c c =
@@ -1026,33 +1051,64 @@ let law_view_in_c c =
   equal ~msg:"answers as the view" string (outcome (view c)) (outcome f);
   match (view c, f) with
   | Error _, _ | _, Error _ -> ()
-  | Ok v, Ok f ->
-      let present o = o <> V.Init || Option.is_some c.li in
-      let has o x =
-        present o
-        &&
-        match (o, x) with
-        | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
-        | _ -> true
-      in
-      let axes = V.[| Batch; Row; Column; Contracted |] in
-      let operands = V.[| A; B; Init; Dst |] in
-      let want =
-        Array.concat
-          [
-            Array.map (V.extent v) axes;
-            Array.map (fun o -> if present o then V.offset v o else 0) operands;
-            Array.concat
-              (Array.to_list
-                 (Array.map
-                    (fun o ->
-                      Array.map
-                        (fun x -> if has o x then V.stride v o x else 0)
-                        axes)
-                    operands));
-          ]
-      in
-      equal (array int) want f
+  | Ok v, Ok f -> equal (array int) (fields ~init:(Option.is_some c.li) v) f
+
+(* [l] with two axes of extent 1 and stride [s] after its last. *)
+let with_unit_axes s l =
+  L.v ~offset:(L.offset l)
+    ~strides:(Array.append (L.strides l) [| s; s |])
+    (Array.append (L.shape l) [| 1; 1 |])
+
+(* [l]'s shape, C-contiguous, with axis [ax] one longer; [l] where it has no
+   such axis. *)
+let longer ax l =
+  let sh = L.shape l in
+  if ax < 0 || ax >= Array.length sh then l
+  else L.contiguous (Array.mapi (fun i e -> if i = ax then e + 1 else e) sh)
+
+(* A view of groups of at most one axis each equals the view of the same
+   contraction with two unit axes more in its contracted group, which the
+   general grouping takes, and refuses where it refuses. [misfit] picks
+   what does not fit: nothing, dst's first axis, init's, a's first axis,
+   or b's axis in the first batch pair. *)
+let law_one_axis (c, (misfit, s)) =
+  let batch, contracting = pairs_of c in
+  let la, lb, ly, li =
+    match misfit with
+    | 1 -> (c.la, c.lb, longer 0 c.ly, c.li)
+    | 2 -> (c.la, c.lb, c.ly, Option.map (longer 0) c.li)
+    | 3 -> (longer 0 c.la, c.lb, c.ly, c.li)
+    | 4 when Array.length batch > 0 -> (c.la, longer (snd batch.(0)) c.lb, c.ly, c.li)
+    | _ -> (c.la, c.lb, c.ly, c.li)
+  in
+  let dst = over ly and init = Option.map over li in
+  let v = V.v ~batch ~contracting ~dst ~init (over la) (over lb) in
+  let ra = L.rank la and rb = L.rank lb in
+  let v' =
+    V.v ~batch
+      ~contracting:(Array.append contracting [| (ra, rb); (ra + 1, rb + 1) |])
+      ~dst ~init
+      (over (with_unit_axes s la))
+      (over (with_unit_axes s lb))
+  in
+  let one =
+    List.for_all
+      (fun g -> Array.length g <= 1)
+      [ c.batch; c.rows; c.columns; c.contracted ]
+  in
+  cover "one-axis groups, grouped" (one && Result.is_ok v);
+  cover "one-axis groups, refused" (one && Result.is_error v);
+  cover "one-axis groups, a batch misfit between a and b"
+    (one && misfit = 4 && Array.length batch > 0);
+  cover "one-axis groups, an empty operand"
+    (one && (L.numel la = 0 || L.numel lb = 0));
+  cover "one-axis groups, a batch axis" (one && Array.length c.batch = 1);
+  equal ~msg:"answers" string (outcome v') (outcome v);
+  match (v, v') with
+  | Ok v, Ok v' ->
+      let init = Option.is_some li in
+      equal (array int) (fields ~init v') (fields ~init v)
+  | _ -> ()
 
 (* A view refuses operands that do not fit its pairs, and declines a call
    whose group does not merge. *)
@@ -1212,6 +1268,11 @@ let tests =
           test_view_declines;
         prop "C groups what the accessors give, and 0 where they raise"
           any_case law_view_in_c;
+        (* One-axis groups are about 1 draw in 5, a batch misfit among
+           them 1 in 10: 1000 draws reach it about 20 times. *)
+        prop ~count:1000 "a view of one-axis groups is the general grouping's"
+          (Gen.pair any_case (Gen.pair (Gen.int_range 0 4) (Gen.int_range 0 3)))
+          law_one_axis;
         test "C's fill allocates nothing" test_view_allocates_nothing;
       ];
   ]
