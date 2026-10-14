@@ -332,9 +332,6 @@ raven / llama.cpp (Vulkan; ROCm):
   time-dependent frames and ephemerides
 - sowilo: `threshold` and `canny` return `Nx.bool_t` and morphology takes a
   bool kernel
-- ymir.units: `Vocabulary.spell`'s doc states its rule (one prefix, on the
-  first word with a positive exponent, masses through `g`) and that a
-  caller who chose its words keeps its text; a property test holds it
 
 ## repo
 

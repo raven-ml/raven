@@ -328,6 +328,10 @@ let rows =
       kilo metre / second / mega parsec,
       Some "mm pc^-1 s^-1" );
     ("Jy km/s", "astro", jansky * kilo metre / second, Some "kJy m s^-1");
+    ( "1e-15 A2/kg",
+      "si",
+      decimal "1e-15" * (ampere ** 2) / kilogram,
+      Some "A^2 Eg^-1" );
     ( "1e-17 erg/s/cm2/angstrom",
       "astro",
       decimal "1e-17" * erg / second / (cm ** 2) / (decimal "1e-10" * metre),
@@ -695,6 +699,26 @@ let integer_words voc u =
         s.words
   | Some _ | None -> ()
 
+(* [one_prefix s] states that [s] has at most one prefix, and none beside a
+   decade. The prefix lands on the first word that takes it, which may follow
+   words that take none and may have a negative exponent. *)
+let one_prefix (s : Vocabulary.spelling) =
+  let prefixed =
+    List.filter (fun (x : Vocabulary.word) -> x.prefix <> 0) s.words
+  in
+  let negative (x : Vocabulary.word) = x.num < 0 in
+  cover "a prefix on the first word"
+    (match s.words with first :: _ -> first.prefix <> 0 | [] -> false);
+  cover "a prefix on a later word"
+    (match s.words with
+    | first :: _ -> prefixed <> [] && first.prefix = 0
+    | [] -> false);
+  cover "a prefix on a negative word after a positive one"
+    (List.exists negative prefixed && not (List.for_all negative s.words));
+  cover "a decade" (s.decade <> 0);
+  at_most ~msg:"prefixed words" int ~than:1 (List.length prefixed);
+  if prefixed <> [] then equal ~msg:"decade beside a prefix" int 0 s.decade
+
 let law =
   group "Names never change a unit"
     [
@@ -717,6 +741,8 @@ let law =
         (fun (_, voc, es, u) -> agrees es voc u);
       prop ~count:500 "integer exponents in the unit give integer words"
         near_pairs (fun (_, voc, _, u) -> integer_words voc u);
+      prop ~count:1000 "a spelling has at most one prefix" near_pairs
+        (fun (_, voc, _, u) -> Option.iter one_prefix (Vocabulary.spell voc u));
     ]
 
 (* The ranking *)

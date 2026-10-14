@@ -968,6 +968,12 @@ module Vocabulary : sig
       symbol ([kg] becomes [mg]). No prefix is written where it and its symbol
       read as another symbol of [voc]. [decade] holds what no prefix takes.
 
+      So a spelling has at most one prefix, whatever prefixes built the unit:
+      km s{^ -1} Mpc{^ -1} is [mm pc^-1 s^-1], and 10{^ -15} A{^ 2} kg{^ -1} is
+      [A^2 Eg^-1], as no prefix squared is 10{^ -15}. A unit holds no words: a
+      caller who chose its words, as an astronomer writes km s{^ -1}
+      Mpc{^ -1}, keeps that text and reads its unit with the text's syntax.
+
       The cheapest product has the fewest items, a decade counting as one; then
       no entry over two or more symbols; then the least sum of exponent
       magnitudes, a decade counting one; then no decade; then the earliest
