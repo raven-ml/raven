@@ -99,10 +99,12 @@ let regions_gen shape =
   in
   frequency [ (2, any); (1, concat); (1, pad) ]
 
-let case_gen ?(dtypes = D.all) () =
+let small = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 5)
+
+let case_gen ?(dtypes = D.all) ?(shapes = small) () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
-  let* shape = array ~size:(int_range 0 3) (int_range 0 5) in
+  let* shape = shapes in
   let* form, regions = regions_gen shape in
   let* views =
     array ~size:(constant (Array.length regions)) (view_of (Array.length shape))
@@ -298,6 +300,23 @@ let test_refusals (b : Support.backend) () =
        ~dst:(A.create Rig.host D.Float32 [| 4; 1 |])
        [| (region, x) |])
 
+(* Guard pages *)
+
+(* The same result with the pieces, through their views, and the
+   destination against an inaccessible page. *)
+let law_guards (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  cover c.form true;
+  cover "at the page after" (side = Support.After);
+  cover "at the page before" (side = Support.Before);
+  let (D.Any dt) = c.dtype in
+  let call xs ds =
+    let pieces = Array.map2 (fun r x -> (r, A.expect dt x)) c.regions xs in
+    K.assemble ~fill:(value dt c.fill) ~dst:(A.expect dt ds.(0)) pieces
+  in
+  equal answer A.Done
+    (same_guarded side ~call c.pieces [| (c.dtype, c.shape) |])
+
 (* The suite *)
 
 let cases = Gen.with_pp pp_case (case_gen ())
@@ -335,6 +354,11 @@ let cpu (b : Support.backend) =
         (run (law_refuses b));
       test "refuses shapes that do not fit" (fun () ->
           b.around (test_refusals b));
+      prop ~count:300
+        "reads and writes no byte past the pieces and dst, whatever pages lie \
+         beside them"
+        (Gen.pair (case_gen ~shapes:tail_shapes ()) sides)
+        (run (law_guards b));
     ]
 
 let () =
