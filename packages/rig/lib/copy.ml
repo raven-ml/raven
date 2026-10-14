@@ -431,7 +431,7 @@ let blit_from_string s i b j n =
   if Buffer.host_addressed b then begin
     Claim.wait fn Buffer.Read_write b;
     Buffer.blit_string s i b j n;
-    Claim.drop b
+    Memory.claim_drop b
   end
   else begin
     (* The view would otherwise name itself for a dead buffer; the check that
@@ -449,7 +449,7 @@ let blit_to_bytes b i s j n =
   if Buffer.host_addressed b then begin
     Claim.wait fn Buffer.Read b;
     Buffer.blit_bytes b i s j n;
-    Claim.drop b
+    Memory.claim_drop b
   end
   else begin
     Buffer.check_live fn b;
@@ -464,7 +464,7 @@ let fill b c =
   if Buffer.host_addressed b then begin
     Claim.wait fn Buffer.Read_write b;
     Buffer.set_bytes b 0 (Buffer.length b) c;
-    Claim.drop b
+    Memory.claim_drop b
   end
   else
     (* The halves keep [c] once the first two pieces filled them. *)

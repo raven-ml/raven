@@ -10,36 +10,29 @@ let count (a : alloc) = Atomic.Loc.get [%atomic.loc a.count]
 let swap (a : alloc) w w' =
   Atomic.Loc.compare_and_set [%atomic.loc a.count] w w'
 
-(* Adds a read claim to [a]; the loop retries only a compare-and-set another
-   domain's claim beat. *)
-let rec read_claim fn a =
-  let n = count a in
-  if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
-  else if not (swap a n (n + Memory.one_claim)) then read_claim fn a
-
-(* Ends a read claim in C, so that no poll point, and so no asynchronous
-   exception, comes between [f]'s return and the release. *)
-external drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
+let read_claim fn b =
+  if not (Memory.claim_hold b) then
+    invalid_argf "Rig.%s: the memory is held exclusive" fn
 
 let hold fn b f =
-  read_claim fn b.mem.alloc;
+  read_claim fn b;
   match
     Buffer.check_live fn b;
     f ()
   with
   | r ->
-      drop b;
+      Memory.claim_drop b;
       r
   | exception e ->
-      drop b;
+      Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* [hold] of two buffers with no closure, for a staged copy's sides. *)
 let hold2 fn a b f x =
-  read_claim fn a.mem.alloc;
-  match read_claim fn b.mem.alloc with
+  read_claim fn a;
+  match read_claim fn b with
   | exception e ->
-      drop a;
+      Memory.claim_drop a;
       raise e
   | () -> (
       match
@@ -48,19 +41,19 @@ let hold2 fn a b f x =
         f a b x
       with
       | r ->
-          drop a;
-          drop b;
+          Memory.claim_drop a;
+          Memory.claim_drop b;
           r
       | exception e ->
-          drop a;
-          drop b;
+          Memory.claim_drop a;
+          Memory.claim_drop b;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 (* [Buffer.wait]'s checks and wait under a read claim. A loss raises where the
    wait for [access] meets it, so a read depends on every device's last write
    alone. *)
 let wait fn (access : access) b =
-  read_claim fn b.mem.alloc;
+  read_claim fn b;
   match
     Buffer.check_live fn b;
     Memory.check_owner b.mem;
@@ -68,7 +61,7 @@ let wait fn (access : access) b =
   with
   | () -> ()
   | exception e ->
-      drop b;
+      Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* Host access to [b]'s bytes under a read claim: [f] runs on them once the
@@ -78,15 +71,15 @@ let scope fn access b k f =
   wait fn access b;
   match Buffer.array fn k b with
   | exception e ->
-      drop b;
+      Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
   | a -> (
       match f a with
       | r ->
-          drop b;
+          Memory.claim_drop b;
           r
       | exception e ->
-          drop b;
+          Memory.claim_drop b;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 let read_bytes b k f = scope "Buffer.read" Read b k f

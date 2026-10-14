@@ -44,7 +44,8 @@
     asynchronous exception, such as [Sys.Break] or a signal handler's,
     leaves no claim behind.
 
-    {!Submission.submit} takes read claims of its own, in C, on the buffers
+    {!Submission.submit} takes read claims of its own, with
+    {!Memory.claim_hold}, on the buffers
     of a run and the fixed memory, and releases them once the driver's
     [submit] has returned. A copy, blit or fill ({!Copy}) holds read claims
     on its buffers until it returns ({!hold2}, {!wait}). *)
@@ -67,14 +68,11 @@ val write_bytes :
 val wait : string -> Def.access -> Def.buffer -> unit
 (** [wait fn access b] takes a read claim on [b]'s memory for a call of [fn],
     then checks [b] under it and waits as {!Rig.Buffer.wait}[ b access] does.
-    The caller ends the claim with {!drop}. It allocates nothing when the
-    work the access follows is done.
+    The caller ends the claim with {!Memory.claim_drop}. It allocates nothing
+    when the work the access follows is done.
 
     Raises as {!hold} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
     holding no claim. *)
-
-val drop : Def.buffer -> unit
-(** [drop b] ends a read claim on [b]'s memory, in C, with no poll point. *)
 
 val hold : string -> Def.buffer -> (unit -> 'a) -> 'a
 (** [hold fn b f] is [f ()] under a read claim on [b]'s memory for a call of

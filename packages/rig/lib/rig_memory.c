@@ -450,9 +450,10 @@ caml_result rig_buffer_wait(value b, enum rig_access access) {
   return caml_callback2_res(*f, b, Val_int(access));
 }
 
-/* A read claim on [v_b]'s memory, with no check of [v_b], for a submit,
-   which checks its buffers under the claims: false, claiming nothing, if
-   the memory is held exclusive. */
+/* A read claim on [v_b]'s memory, with no check of [v_b], for
+   Memory.claim_hold once another domain's claim beat its compare-and-set:
+   false, claiming nothing, if the memory is held exclusive. The loop is in
+   C so nothing polls between its read and its claim. */
 value caml_rig_claim_hold(value v_b) {
   _Atomic value *word = claim_word(v_b);
   value w = atomic_load_explicit(word, memory_order_relaxed);
@@ -475,7 +476,7 @@ static void claim_end(value b, const char *who) {
     caml_fatal_error("%s: no read claim to end", who);
 }
 
-/* Ends a claim of [caml_rig_claim_hold]. */
+/* Ends a read claim of Memory.claim_hold. */
 value caml_rig_claim_drop(value v_b) {
   claim_end(v_b, "caml_rig_claim_drop");
   return Val_unit;

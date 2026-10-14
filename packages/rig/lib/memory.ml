@@ -205,6 +205,21 @@ let read_only = 2
 let one_claim = 4
 let exclusive = -1
 
+external claim_retry : buffer -> bool = "caml_rig_claim_hold" [@@noalloc]
+
+(* One compare-and-set in OCaml: with one domain running, the runtime's is a
+   plain store, which a C take's locked one is not. A retry, after another
+   domain's claim beat it, loops in C, since an OCaml loop's back edge
+   polls. *)
+let claim_hold b =
+  let a = b.mem.alloc in
+  let w = Atomic.Loc.get [%atomic.loc a.count] in
+  w >= 0
+  && (Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w + one_claim)
+     || claim_retry b)
+
+external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
+
 (* The claim word of a new lifetime of [e] that keeps [keep]: outside the
    claims for the caller's bigarray and an io library's region, read-only for
    memory that admits only reads. *)

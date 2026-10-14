@@ -193,6 +193,17 @@ val one_claim : int
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 
+val claim_hold : buffer -> bool
+(** [claim_hold b] adds a read claim to [b]'s memory, with no check of [b],
+    unless the memory is held exclusive: whether it did. It tries one
+    compare-and-set and retries in C, so in native code nothing in it polls
+    or allocates, contended or not, and a sequence of takes needs no
+    handler between them. *)
+
+external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
+(** [claim_drop b] ends a read claim on [b]'s memory, in C, so no poll point
+    comes between a section's end and the claim's. *)
+
 val mark_outside : alloc -> bool
 (** [mark_outside a] marks [a]'s memory outside the claims for good. It is
     [false], changing nothing, while claims hold the memory exclusive. *)

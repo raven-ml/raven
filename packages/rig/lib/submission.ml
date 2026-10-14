@@ -1127,9 +1127,6 @@ let rec hand_over s run nwaits =
   else if r = Dev.Answer.producer_lost then Dev.raise_point_lost (run_producer run)
   else Dev.raise_lost d
 
-external claim_hold : buffer -> bool = "caml_rig_claim_hold" [@@noalloc]
-external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
-
 external release_fixed : buffer array -> int -> unit
   = "caml_rig_claim_drop_prefix"
 [@@noalloc]
@@ -1139,28 +1136,28 @@ let held_exclusive () = invalid_arg "Rig.submit: the memory is held exclusive"
 (* Read claims on the [m] buffers of a frame, [m] from 1 to 4, taken in order:
    one that fails releases those taken before it. *)
 let hold_frame m b0 b1 b2 b3 =
-  if not (claim_hold b0) then held_exclusive ();
-  if m > 1 && not (claim_hold b1) then begin
-    claim_drop b0;
+  if not (Memory.claim_hold b0) then held_exclusive ();
+  if m > 1 && not (Memory.claim_hold b1) then begin
+    Memory.claim_drop b0;
     held_exclusive ()
   end;
-  if m > 2 && not (claim_hold b2) then begin
-    claim_drop b0;
-    claim_drop b1;
+  if m > 2 && not (Memory.claim_hold b2) then begin
+    Memory.claim_drop b0;
+    Memory.claim_drop b1;
     held_exclusive ()
   end;
-  if m > 3 && not (claim_hold b3) then begin
-    claim_drop b0;
-    claim_drop b1;
-    claim_drop b2;
+  if m > 3 && not (Memory.claim_hold b3) then begin
+    Memory.claim_drop b0;
+    Memory.claim_drop b1;
+    Memory.claim_drop b2;
     held_exclusive ()
   end
 
 let release_frame m b0 b1 b2 b3 =
-  claim_drop b0;
-  if m > 1 then claim_drop b1;
-  if m > 2 then claim_drop b2;
-  if m > 3 then claim_drop b3
+  Memory.claim_drop b0;
+  if m > 1 then Memory.claim_drop b1;
+  if m > 2 then Memory.claim_drop b2;
+  if m > 3 then Memory.claim_drop b3
 
 (* Names the run's buffers from the [k]th on, then hands the work over. Each
    buffer is read once from its array and stays reachable in a frame until the
@@ -1276,7 +1273,7 @@ let submit_run s run buffers waits =
        donation cannot overwrite them before hand-over publishes their use. *)
     while !claimed < Array.length s.fixed do
       let b = Array.unsafe_get s.fixed !claimed in
-      if not (claim_hold b) then held_exclusive ();
+      if not (Memory.claim_hold b) then held_exclusive ();
       incr claimed;
       Buffer.check_live fn b;
       check_owner s b
