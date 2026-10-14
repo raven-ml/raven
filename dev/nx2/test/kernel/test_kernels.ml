@@ -1857,6 +1857,239 @@ let test_real_transforms (b : Support.backend) () =
         D.[ Complex Complex64; Complex Complex128 ])
     reals
 
+(* Guard pages *)
+
+(* What an elementwise kernel computes, with its result's dtype. *)
+type elementwise =
+  | K0 of P.op0
+  | K1 of P.op1 * D.any
+  | K2 of P.op2
+  | K3 of P.op3
+
+(* A kernel of [kind] at [dt] over [ops], each drawn through a view, into a
+   result of shape [shape]. *)
+type guard = {
+  kind : elementwise;
+  dt : D.any;
+  shape : int array;
+  ops : A.any array;
+  views : string list;
+}
+
+let kind_name = function
+  | K0 (Fill _) -> "fill"
+  | K0 (Iota _) -> "iota"
+  | K1 (Copy, _) -> "copy"
+  | K1 (Cast, _) -> "cast"
+  | K1 (Bitcast, _) -> "bitcast"
+  | K1 (Unary u, _) -> List.assoc u unaries
+  | K2 k -> name2 k
+  | K3 Where -> "where"
+  | K3 Fma -> "fma"
+
+let pp_guard ppf g =
+  Format.fprintf ppf "%s at %a into %a of %a (%s)" (kind_name g.kind) pp_dtype
+    g.dt pp_ints g.shape
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf (A.Any x) ->
+         Format.fprintf ppf "%a %a" D.pp (A.dtype x) L.pp (A.layout x)))
+    (Array.to_list g.ops)
+    (String.concat ", " g.views)
+
+(* Shapes whose last extent runs from one element to a few vectors past the
+   widest, sub-byte ones' bits included. *)
+let guard_shape =
+  let open Gen in
+  let* n =
+    frequency
+      [
+        (6, int_range 1 72);
+        (2, int_range 73 300);
+        ( 1,
+          of_list ~pp:Format.pp_print_int [ 511; 512; 513; 1023; 1024; 1025 ]
+        );
+      ]
+  in
+  let+ outer = array ~size:(int_range 0 2) (int_range 1 3) in
+  Array.append outer [| n |]
+
+(* An operand of [d] and shape [s] through a drawn view, broadcast along
+   its first axis one time in four, its elements from [rs]. *)
+let guard_operand d s rs =
+  let open Gen in
+  let r = Array.length s in
+  let* lead = frequency [ (3, constant false); (1, constant (r >= 2)) ] in
+  let+ v = Elements.view_of ~broadcast:(if lead then [ 0 ] else []) r in
+  ( Elements.operand d s v (fun _ -> Elements.element d rs),
+    Elements.view_names v )
+
+let guard_case =
+  Gen.with_pp pp_guard
+    (let open Gen in
+     let* (D.Any dt as d) = dtypes in
+     let* shape = guard_shape in
+     let* to_ = dtypes in
+     let* fill = int in
+     let width = List.filter (fun (D.Any w) -> D.bits w = D.bits dt) D.all in
+     let* same = of_list ~pp:pp_dtype width in
+     let* cond = of_list ~pp:pp_dtype D.[ Any Bool; Any Bit ] in
+     let ones =
+       List.filter_map
+         (fun (u, _) -> if P.accepts1 (Unary u) dt dt then Some u else None)
+         unaries
+     in
+     let twos = List.filter (fun k -> P.accepts2 k dt) op2s in
+     let* axis = int_range 0 (Array.length shape - 1) in
+     let rs = Random.State.make [| fill |] in
+     let accepts = function
+       | K0 k -> P.accepts0 k dt
+       | K1 (k, D.Any y) -> P.accepts1 k dt y
+       | K2 k -> P.accepts2 k dt
+       | K3 Where ->
+           let (D.Any c) = cond in
+           P.accepts3 Where c dt
+       | K3 Fma -> P.accepts3 Fma dt dt
+     in
+     let some =
+       List.filter_map (fun (w, k) ->
+           if accepts k then Some (w, constant k) else None)
+     in
+     let unary =
+       if ones = [] then []
+       else [ (4, map (fun u -> K1 (Unary u, d)) (of_list ones)) ]
+     in
+     let binary =
+       if twos = [] then [] else [ (4, map (fun k -> K2 k) (of_list twos)) ]
+     in
+     let* kind =
+       frequency
+         (some
+            [
+              (* Sub-byte fills, whose end bytes are shared, come more
+                 often. *)
+              ( (if D.bits dt < 8 then 6 else 1),
+                K0 (Fill (Elements.element d rs)) );
+              (1, K0 (Iota axis));
+              (1, K1 (Copy, d));
+              (2, K1 (Cast, to_));
+              (1, K1 (Bitcast, same));
+              (1, K3 Where);
+              (1, K3 Fma);
+            ]
+         @ unary @ binary)
+     in
+     let ds =
+       match kind with
+       | K0 _ -> []
+       | K1 _ -> [ d ]
+       | K2 _ -> [ d; d ]
+       | K3 Where -> [ cond; d; d ]
+       | K3 Fma -> [ d; d; d ]
+     in
+     let rec operands = function
+       | [] -> constant []
+       | d :: rest ->
+           let* x = guard_operand d shape rs in
+           let+ xs = operands rest in
+           x :: xs
+     in
+     let+ ops = operands ds in
+     {
+       kind;
+       dt = d;
+       shape;
+       ops = Array.of_list (List.map fst ops);
+       views = List.concat_map snd ops;
+     })
+
+(* The result's dtype. *)
+let result_dtype g =
+  match g.kind with
+  | K1 (_, d) -> d
+  | K2 (Compare _) -> D.Any D.Bool
+  | K0 _ | K2 (Binary _) | K3 _ -> g.dt
+
+(* The same answer and bits with the operands, through their views, and the
+   result against an inaccessible page. *)
+let law_guards (b : Support.backend) (g, side) =
+  let module K = (val b.kernels) in
+  let after = side = Support.After in
+  collect (kind_name g.kind);
+  cover "of no operand" (match g.kind with K0 _ -> true | _ -> false);
+  cover "a sub-byte fill"
+    (match (g.kind, g.dt) with
+    | K0 (Fill _), D.Any dt -> D.bits dt < 8
+    | _ -> false);
+  cover "a cast" (match g.kind with K1 (Cast, _) -> true | _ -> false);
+  cover "a bitcast" (match g.kind with K1 (Bitcast, _) -> true | _ -> false);
+  cover "a unary kind" (match g.kind with K1 (Unary _, _) -> true | _ -> false);
+  cover "a binary kind" (match g.kind with K2 (Binary _) -> true | _ -> false);
+  cover "a comparison" (match g.kind with K2 (Compare _) -> true | _ -> false);
+  cover "of three operands" (match g.kind with K3 _ -> true | _ -> false);
+  cover "sub-byte" (let (D.Any dt) = g.dt in D.bits dt < 8);
+  cover "a stepped operand at the page before"
+    ((not after) && List.mem "stepped" g.views);
+  cover "a reversed operand at the page after"
+    (after && List.mem "reversed" g.views);
+  cover "a broadcast operand" (List.mem "broadcast" g.views);
+  let call xs ds =
+    let (A.Any dst) = ds.(0) in
+    match g.kind with
+    | K0 k -> K.apply0 k ~dst
+    | K1 (k, _) ->
+        let (A.Any x) = xs.(0) in
+        K.apply1 k ~dst x
+    | K2 k ->
+        let (A.Any x) = xs.(0) in
+        K.apply2 k ~dst x (A.expect (A.dtype x) xs.(1))
+    | K3 k ->
+        let (A.Any c) = xs.(0) in
+        let (A.Any x) = xs.(1) in
+        K.apply3 k ~dst:(A.expect (A.dtype x) ds.(0)) c x
+          (A.expect (A.dtype x) xs.(2))
+  in
+  match
+    Elements.same_guarded side ~call g.ops [| (result_dtype g, g.shape) |]
+  with
+  | A.Done -> cover "computed" true
+  | A.Declined -> cover "declined" true
+  | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
+
+(* Large copies and casts, staged through blocks and threads, with the
+   operand and the result against the page. *)
+let law_large_guards (b : Support.backend) ((Case a as c), d, side) =
+  let module K = (val b.kernels) in
+  covers_large c;
+  List.iter
+    (fun (k, d) ->
+      let call xs ds =
+        let (A.Any x) = xs.(0) in
+        let (A.Any dst) = ds.(0) in
+        K.apply1 k ~dst x
+      in
+      equal answer A.Done
+        (Elements.same_guarded side ~call [| A.Any a |]
+           [| (d, L.shape (A.layout a)) |]))
+    [ (P.Copy, D.Any (A.dtype a)); (Cast, d) ]
+
+(* A map's outputs with its loads, plain or padded, through their views,
+   and its destinations against the page. *)
+let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| seed |] in
+  let dt = D.Any (A.dtype x) and shape = L.shape (A.layout x) in
+  let ins, ops =
+    if Random.State.bool st then ([| dt; dt |], [| A.Any x; A.Any y |])
+    else ([| dt |], [| A.Any x |])
+  in
+  let padded = Random.State.bool st in
+  cover "padded loads" padded;
+  cover "plain loads" (not padded);
+  let p, types = program st ins ~room:16 ~rank:(Array.length shape) in
+  let dsts = Array.map (fun o -> (types.(o), shape)) (Iarray.to_array p.outs) in
+  let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
+  let call xs ds = K.map p ~dsts:ds (Array.map load xs) in
+  equal answer A.Done (Elements.same_guarded side ~call ops dsts)
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -2214,6 +2447,35 @@ let cpu =
         (strf "%s computes a map of every operand with coordinates" b.name)
         case
         (fun c -> b.around (fun () -> law_map_full b c));
+      prop ~count:1000
+        (strf
+           "%s's elementwise kernels read and write no byte past their \
+            operands and dst, whatever pages lie beside them"
+           b.name)
+        (Gen.pair guard_case Elements.sides)
+        (fun c -> b.around (fun () -> law_guards b c));
+      prop ~count:300
+        (strf
+           "%s's maps read and write no byte past their loads and dsts, \
+            whatever pages lie beside them"
+           b.name)
+        (Gen.pair (Gen.pair pairs Gen.int) Elements.sides)
+        (fun c -> b.around (fun () -> law_map_guards b c));
+      prop ~count:32
+        ~examples:
+          (List.concat_map
+             (fun c ->
+               [
+                 (c, D.Any D.Float64, Support.Before);
+                 (c, D.Any D.Int8, Support.After);
+               ])
+             large_views)
+        (strf
+           "%s's large copies and casts read and write no byte past their \
+            operand and dst"
+           b.name)
+        (Gen.triple large dtypes Elements.sides)
+        (fun c -> b.around (fun () -> law_large_guards b c));
       prop ~count:32
         (strf "%s computes maps over large views" b.name)
         (Gen.pair large_pairs Gen.int)
