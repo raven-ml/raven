@@ -176,8 +176,11 @@ let matmul_like m n k =
 
 let cases_of_sizes =
   let open Gen in
-  (let+ m = int_range 1 9
-   and+ n = int_range 1 9
+  (* Extents to 12 make at least 64 outputs about one case in five (35 of
+     144 pairs), so the order law reaches both of nx.cpu's orders in every
+     run; to 9 it was 4 of 81, which 100 cases missed about once in 70 runs. *)
+  (let+ m = int_range 1 12
+   and+ n = int_range 1 12
    and+ k = frequency [ (1, constant 0); (5, int_range 1 40) ]
    and+ which = int_range 0 5 in
    let c =
