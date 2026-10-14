@@ -654,6 +654,12 @@ static int64_t F(four_lanes)(const PLAN *p) {
   return (big + L - 1) / L * L;
 }
 
+/* The vectors of a line's grid s: blocks of L rows, each as wide as n2
+   rounded up to L, a vector a column. */
+static int64_t F(grid)(const PLAN *p) {
+  return (p->n1 + L - 1) / L * ((p->n2 + L - 1) / L * L);
+}
+
 /* L consecutive points of a column group's transform [r], lanes [0,
    lanes) of them twiddled by [tw] and the rest +0, transposed into [t]:
    t[v] holds the L points' lane v. */
@@ -703,7 +709,7 @@ static int F(within)(const PLAN *p, const lines *x, const lines *y,
                      int64_t l) {
   int64_t width = (p->n2 + L - 1) / L * L, blocks = (p->n1 + L - 1) / L;
   int64_t lanes = F(four_lanes)(p);
-  CV *s = nx_cpu_take(sizeof(CV) * blocks * width),
+  CV *s = nx_cpu_take(sizeof(CV) * F(grid)(p)),
      *a = nx_cpu_take(sizeof(CV) * lanes), *b = nx_cpu_take(sizeof(CV) * lanes);
   int ok = s != NULL && a != NULL && b != NULL;
   for (int64_t g = 0; ok && g < width / L; g++) F(column)(p, x, l, g, s, a, b);
@@ -1267,8 +1273,7 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
       units >= nx_cpu_threads(bytes, cost))
     return F(run)(&j, units, bytes, cost, threads);
   int four = p->kind == FOUR;
-  int64_t shared = four ? (int64_t)sizeof(CV) * (p->n1 + L - 1) / L * L *
-                              ((p->n2 + L - 1) / L * L)
+  int64_t shared = four ? (int64_t)sizeof(CV) * F(grid)(p)
                         : (int64_t)sizeof(T) * 2 * p->m;
   void *buffer = nx_cpu_take(shared);
   if (buffer == NULL) return 0;
