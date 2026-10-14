@@ -11,9 +11,8 @@
    operand; a group that makes several runs takes an outer loop or a copy
    (Groups of several runs). An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
-   the target's conversion takes the carrier into acc. A float or complex
-   acc takes only dtypes it holds each value of, so operands convert
-   exactly; an integer acc takes every integer, modulo its width, and
+   the target's conversion takes the carrier into acc: each element as a
+   cast to acc gives it, exact where acc holds its values. An integer acc
    computes on chain order's paths whatever the order asked. Lane order
    reads b in place where it is acc and adjacent along the axis it streams.
 
@@ -211,25 +210,6 @@ static int is_integer(int dt) {
   return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED;
 }
 
-/* Whether an [acc] takes operands of [d], as nx_cpu.mli lists them: the
-   booleans; for an integer [acc] every integer, which converts modulo its
-   width; for another, the values it holds exactly: the floats of at most
-   the width of [acc]'s parts, the integers of at most half of it, and for
-   a complex [acc] the complex numbers of at most its width. */
-static int holds(int acc, int d) {
-  nx_dtype_row r = nx_dtype_row_of(d), a = nx_dtype_row_of(acc);
-  int width = nx_dtype_row_of(part_of(acc)).bits;
-  if (is_integer(acc)) return r.kind == NX_KIND_BOOLEAN || is_integer(d);
-  switch (r.kind) {
-    case NX_KIND_BOOLEAN: return 1;
-    case NX_KIND_FLOAT: return r.bits <= width;
-    case NX_KIND_SIGNED:
-    case NX_KIND_UNSIGNED: return r.bits <= width / 2;
-    case NX_KIND_COMPLEX: return a.kind == NX_KIND_COMPLEX && r.bits <= a.bits;
-    default: return 0;
-  }
-}
-
 /* The dtype a sum in [acc] is computed in: int8 and uint8 for int4 and
    uint4, whose sums modulo 2^8 are theirs modulo 2^4 once narrowed, as
    the int8 kernels' are; [acc] itself otherwise. */
@@ -238,14 +218,10 @@ static int summed_in(int acc) {
   return acc == NX_UINT4 ? NX_UINT8 : acc;
 }
 
-/* Whether nx.cpu computes a contraction in [acc] of the [n] operands of
-   dtypes [dts], into a dst of any dtype. */
-static int computes(int acc, const int *dts, int n) {
-  if (nx_cpu_table->gemm[part_of(summed_in(acc))].kernel.f == NULL)
-    return 0;
-  for (int i = 0; i < n; i++)
-    if (!holds(acc, dts[i])) return 0;
-  return 1;
+/* Whether nx.cpu computes a contraction in [acc]: one its kernels sum
+   in, of operands of any dtype, into a dst of any dtype. */
+static int computes(int acc) {
+  return nx_cpu_table->gemm[part_of(summed_in(acc))].kernel.f != NULL;
 }
 
 /* Staging */
@@ -2232,12 +2208,12 @@ static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-/* Copies operand [o] of [r] (a or b) into scratch (nx_cpu_take) where its
-   runs lie in C order, groups [gs] in turn, contracted last, skipping
-   runs it steps 0 along but the contracted ones, and lays [r] out over it
-   in [x]: 0 if the scratch could not be allocated. The copies hold a's
-   and b's elements, O(a + b). */
-static int stage_runs(nx_contract_runs *r, int o, const int *gs,
+/* Copies operand [o] of [r] into scratch (nx_cpu_take) of the dtype [dt],
+   cast where it is not [src]'s, where its runs lie in C order, groups [gs]
+   in turn, skipping runs it steps 0 along but the contracted ones, and
+   lays [r] out over it in [x]: 0 if the scratch could not be allocated.
+   The copies hold the operand's elements, O(a + b) for a and b. */
+static int stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
                       const nx_array *src, nx_array *x) {
   nx_loop l = {.first = {0, r->offset[o]}};
   int64_t *at[NX_MAX_RANK], n = 1;
@@ -2256,15 +2232,36 @@ static int stage_runs(nx_contract_runs *r, int o, const int *gs,
     *at[d] = n;
     n *= l.extent[d];
   }
-  uint8_t *base = nx_cpu_take((n * src->bits + 7) / 8);
+  int bits = nx_dtype_row_of(dt).bits;
+  uint8_t *base = nx_cpu_take((n * bits + 7) / 8);
   if (base == NULL) return 0;
-  l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-  nx_cpu_copy_loop(base, src->base, src->bits, &l);
   *x = *src;
   x->base = base;
+  x->dtype = dt;
+  x->bits = bits;
   x->offset = 0;
   x->alias = 0;
+  l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
+  if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l);
+  else nx_cpu_cast_loop(x, src, &l);
   r->offset[o] = 0;
+  return 1;
+}
+
+/* Whether [r]'s contracted runs coalesce into one over a and b, which
+   then holds it. */
+static int merges(nx_contract_runs *r) {
+  int64_t ext[NX_MAX_RANK], st[2][NX_MAX_RANK];
+  for (int k = 0; k < r->runs[CON]; k++) {
+    ext[k] = r->extent[CON][k];
+    st[0][k] = r->stride[A][CON][k];
+    st[1][k] = r->stride[B][CON][k];
+  }
+  if (nx_coalesce_dims(2, r->runs[CON], ext, st) != 1) return 0;
+  r->runs[CON] = 1;
+  r->extent[CON][0] = ext[0];
+  r->stride[A][CON][0] = st[0][0];
+  r->stride[B][CON][0] = st[1][0];
   return 1;
 }
 
@@ -2277,26 +2274,17 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
       if (r->extent[g][k] == 0) return 1;
   nx_array x[2];
   const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
-  int staged = r->runs[CON] > 1, done = 0;
+  int staged = r->runs[CON] > 1 && !merges(r), done = 0;
   if (staged) {
     static const int ga[3] = {BATCH, ROW, CON}, gb[3] = {BATCH, COL, CON};
-    if (!stage_runs(r, A, ga, op[A], &x[A])) return 0;
-    if (!stage_runs(r, B, gb, op[B], &x[B])) {
+    if (!stage_runs(r, A, ga, op[A]->dtype, op[A], &x[A])) return 0;
+    if (!stage_runs(r, B, gb, op[B]->dtype, op[B], &x[B])) {
       nx_cpu_give(x[A].base);
       return 0;
     }
     ops[A] = &x[A];
     ops[B] = &x[B];
-    int64_t ext[NX_MAX_RANK], st[2][NX_MAX_RANK];
-    for (int k = 0; k < r->runs[CON]; k++) {
-      ext[k] = r->extent[CON][k];
-      st[0][k] = r->stride[A][CON][k];
-      st[1][k] = r->stride[B][CON][k];
-    }
-    r->runs[CON] = nx_coalesce_dims(2, r->runs[CON], ext, st);
-    r->extent[CON][0] = ext[0];
-    r->stride[A][CON][0] = st[0][0];
-    r->stride[B][CON][0] = st[1][0];
+    merges(r);
   }
   outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops};
   atomic_init(&q.failed, 0);
@@ -2357,8 +2345,8 @@ static void runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
 /* The contraction of [r]'s groups over [op] in [acc], summed in [sum],
    into op[DST] of another dtype than [sum], through scratch R: 0 if an
    allocation failed. */
-static int rounded_on(int acc, int sum, int order, int da, int db,
-                      nx_contract_runs *r, const nx_array *const *op) {
+static int rounded_on(int acc, int sum, int order, nx_contract_runs *r,
+                      const nx_array *const *op) {
   /* The loop the cast walks, dst its operand 0 and R its 1, over the runs
      of more than one element; R's steps C-contiguous over them. */
   nx_loop l = {.first = {r->offset[DST], 0}};
@@ -2388,7 +2376,29 @@ static int rounded_on(int acc, int sum, int order, int da, int db,
   y.base = nx_cpu_take(n * nx_cpu_width(sum));
   if (y.base == NULL) return 0;
   const nx_array *ops[4] = {op[A], op[B], op[INIT], &y};
-  int done = runs_on(sum, order, da, db, r, ops);
+  /* A 4-bit acc's float and complex operands saturate into its range, as
+     a cast into it does, and an 8-bit sum's would into the 8 bits': they
+     are cast into acc first, and the sum reads integers, which convert
+     modulo 2^8. Where the contracted runs are several, a and b are both
+     cast so, contracted last, so that the runs merge and runs_on copies
+     neither again. */
+  static const int gs[3][3] = {[A] = {BATCH, ROW, CON},
+                               [B] = {BATCH, COL, CON},
+                               [INIT] = {BATCH, ROW, COL}};
+  nx_array z[3];
+  int done = 1;
+  for (int o = A; o <= INIT && done; o++) {
+    int kind = op[o] ? nx_dtype_row_of(op[o]->dtype).kind : NX_KIND_BOOLEAN;
+    int split = o != INIT && r->runs[CON] > 1;
+    if (acc == sum ||
+        (!split && kind != NX_KIND_FLOAT && kind != NX_KIND_COMPLEX))
+      continue;
+    done = stage_runs(r, o, gs[o], acc, op[o], &z[o]);
+    if (done) ops[o] = &z[o];
+  }
+  if (done) done = runs_on(sum, order, ops[A]->dtype, ops[B]->dtype, r, ops);
+  for (int o = A; o <= INIT; o++)
+    if (ops[o] == &z[o]) nx_cpu_give(z[o].base);
   int narrows = acc != sum && op[DST]->dtype != acc;
   nx_array t = y;
   t.base = NULL;
@@ -2432,7 +2442,7 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb),
                 nx_array_dtype(vinit)};
   int out = nx_array_dtype(vdst);
-  if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc, dts, 2 + init))
+  if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc))
     return Val_int(NX_DECLINED);
   nx_operand in[4] = {{va, dts[0], 0},
                       {vb, dts[1], 0},
@@ -2450,7 +2460,7 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   int sum = summed_in(acc);
   if (out != acc || sum != acc) {
     if (!runs) runs_of_view(&r, &v);
-    done = rounded_on(acc, sum, order, dts[0], dts[1], &r, op);
+    done = rounded_on(acc, sum, order, &r, op);
   } else if (runs) done = runs_on(acc, order, dts[0], dts[1], &r, op);
   else done = contract_view(acc, order, dts[0], dts[1], &v, op);
   nx_done(n, a);

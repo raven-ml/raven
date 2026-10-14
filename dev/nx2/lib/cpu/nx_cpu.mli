@@ -21,37 +21,40 @@
     returns; a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
 
-    [contract] computes contractions in [float32], [float64], [complex64],
-    [complex128] or an integer of 4 to 64 bits whose [a], [b] and [init]
-    each convert exactly into a float or complex [acc] or are integers or
-    booleans for an integer one, into a [dst] of any dtype, at any layout;
-    it answers [Declined] for the others. A [dst] of another dtype than
-    [acc] takes the sum in [acc] rounded once, as {!apply1}'s [Cast]
-    rounds it. [float32] holds [bool],
+    [contract] computes every contraction in [float32], [float64],
+    [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
+    and [init] of any dtype, into a [dst] of any dtype, at any layout. Each
+    element of [a], [b] and [init] enters [acc] as {!apply1}'s [Cast] casts
+    it. That is exact where [acc] holds its value: [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
-    [float64] also [int32], [uint32] and [float64]. A complex dtype holds
-    what its parts' dtype holds and the complex numbers of at most its
-    width. An integer [acc] of [w] bits converts each operand modulo [2^w],
-    as a cast does, and its sum is exact modulo [2^w] whatever the order.
+    [float64] also [int32], [uint32] and [float64]; a complex dtype what its
+    parts' dtype holds and the complex numbers of at most its width; an
+    integer [acc] of [w] bits every integer modulo [2^w]. Otherwise it
+    rounds once as [Cast] rounds it: an integer or a float to the nearest
+    value of a float [acc], a complex number by its real part into a real
+    one, a float toward zero and saturated into an integer one. An integer
+    sum is exact modulo [2^w] whatever the order. A [dst] of another dtype
+    than [acc] takes the sum in [acc] rounded once, as [Cast] rounds it.
 
     A float or complex contraction adds in the order it is given
     ({!Nx_kernel.section-orders}), at any shape.
     [contract_order ~rows ~columns] is [Chain] where [rows] and [columns]
     are both above 4 and multiply to at least 64, and [Lane] otherwise.
-    With no products, an output is [init]'s bits, or [+0]. Otherwise a NaN
-    result's sign and payload are unspecified.
+    With no products, an output is [init] as [acc] holds it, rounded into
+    [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
+    a NaN result's sign and payload are unspecified.
 
     A complex output of [K] products is within
-    [γ(2K + 2) (|init| + Σ|a||b|)] of the exact one, where
-    [γ(n) = n u / (1 - n u)] and [u] is its parts' unit roundoff, barring
-    overflow and underflow. A rounding errs by at most [u] times the modulus
-    of the partial sum it rounds, both parts at once, and a partial sum of
-    any of the terms has a modulus of at most [|init| + Σ|a||b|]: chain
-    order rounds [2K] times. Lane order holds a product's two terms in
-    neighbouring lanes until lane 0 takes lane 1: before, a term passes at
-    most [⌈2K/16⌉ + 3] roundings and a product's two weigh at most
-    [√2 |a||b|]; after, at most [log₂] of the blocks [+ 2]. Both stay within
-    [2K + 2] roundings.
+    [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]
+    as [acc] holds them, where [γ(n) = n u / (1 - n u)] and [u] is its
+    parts' unit roundoff, barring overflow and underflow. A rounding errs
+    by at most [u] times the modulus of the partial sum it rounds, both
+    parts at once, and a partial sum of any of the terms has a modulus of
+    at most [|init| + Σ|a||b|]: chain order rounds [2K] times. Lane order
+    holds a product's two terms in neighbouring lanes until lane 0 takes
+    lane 1: before, a term passes at most [⌈2K/16⌉ + 3] roundings and a
+    product's two weigh at most [√2 |a||b|]; after, at most [log₂] of the
+    blocks [+ 2]. Both stay within [2K + 2] roundings.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at

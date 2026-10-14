@@ -393,7 +393,8 @@ let case_of ?same ~acc ~out ~dts () =
    product, a batch, and the few rows' case stored transposed; an integer's
    also the chain path over several blocks of the contraction. Every
    kind's contracted axes stored apart, and the floats' attention heads,
-   whose groups make several runs. *)
+   whose groups make several runs; every kind's a of a dtype it does not
+   hold. *)
 let regimes acc =
   let plain r =
     let axes = Array.init r Fun.id in
@@ -452,6 +453,20 @@ let regimes acc =
       ( chain, false, ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
         [| 0; 2; 1; 3 |], [| 0; 3; 1; 2 |] )
   in
+  (* a of a dtype acc does not hold, cast into it: float64 into float32 or
+     an integer, complex128 into complex64, int64 into float64 and
+     complex128. *)
+  let unheld =
+    let wide =
+      match acc with
+      | D.Any D.Float32 -> D.Any D.Float64
+      | D.Any D.Complex64 -> D.Any D.Complex128
+      | D.Any (D.Float64 | D.Complex128) -> D.Any D.Int64
+      | _ -> D.Any D.Float64
+    in
+    let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
+    make ~order:chain ~acc ~out:acc e (wide, plain 2) (acc, plain 2) None 1
+  in
   let rows = few_rows_most + 1 in
   let few =
     (chain, true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
@@ -477,10 +492,11 @@ let regimes acc =
     ]
   in
   let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
-  if is_complex acc then (apart few :: split) @ List.map case complex
-  else if is_integer acc then (apart few :: split) @ List.map case integer
+  if is_complex acc then (apart few :: unheld :: split) @ List.map case complex
+  else if is_integer acc then
+    (apart few :: unheld :: split) @ List.map case integer
   else
-    [ apart few; heads;
+    [ apart few; heads; unheld;
       a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
     @ split @ groups
     @ List.map case
@@ -572,10 +588,21 @@ let integers =
       Any Int8; Any Uint8; Any Int4; Any Uint4; Any Bool; Any Bit;
     ]
 
+(* The dtypes of [D.all] not in [dts]. *)
+let others dts = List.filter (fun d -> not (List.mem d dts)) D.all
+
+(* Cases of each float and complex acc, of operands it holds, or at times
+   of dtypes it does not. *)
 let computed =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype accs) (fun acc ->
-         case_of ~acc ~out:acc ~dts:(held acc) ()))
+         Gen.bind
+           (Gen.frequency
+              [
+                (2, Gen.constant (held acc));
+                (1, Gen.constant (others (held acc)));
+              ])
+           (fun dts -> case_of ~acc ~out:acc ~dts ())))
 
 let examples = List.concat_map regimes accs
 
@@ -712,7 +739,7 @@ let index c =
    C-contiguous float64 planes, each output's factors at offsets computed
    once. *)
 let outputs c =
-  let flat = planes c.acc in
+  let flat x = planes c.acc (cast_to c.acc x) in
   let a = flat c.a and b = flat c.b and init = Option.map flat c.init in
   let y, oa, ob, walk = index c in
   let each f =
@@ -796,16 +823,17 @@ let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
   K.contract ~order:c.order ~batch:c.batch ~contracting:c.contracting
     ~acc:c.acc ~dst:d ~init a b
 
-(* Whether nx_cpu.mli says nx.cpu computes [c]: its acc and its operands'
-   dtypes, init's being the result's, into any result, at any layout. *)
-let cpu_computes c =
-  let acc = c.acc in
-  let integer = is_integer acc in
-  let takes = if integer then integers else held acc in
-  (List.mem acc accs || integer)
-  && Array.for_all
-       (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) takes)
-       (operands c)
+(* Whether nx_cpu.mli says nx.cpu computes [c]: an acc it computes in, of
+   operands of any dtype, into any result, at any layout. *)
+let cpu_computes c = List.mem c.acc accs || is_integer c.acc
+
+(* Whether [c] has an operand of a dtype its acc does not hold, which it
+   reads cast to acc. *)
+let converted c =
+  let takes = if is_integer c.acc then integers else held c.acc in
+  Array.exists
+    (fun (A.Any x) -> not (List.mem (D.Any (A.dtype x)) takes))
+    (operands c)
 
 (* The runs each group of [c] makes, batch, rows, columns and contracted,
    as nx_coalesce_dims makes them over the group's operands (gemm.c): its
@@ -912,6 +940,7 @@ let complex_covers c =
 let covers c =
   let y, k, batch = sizes c in
   let per = per_batch c in
+  cover "an operand acc does not hold" (converted c);
   cover "no output" (total y = 0);
   cover "one output" (total y = 1);
   cover "no product" (k = 0 && total y > 0);
@@ -1233,7 +1262,12 @@ let law_rounds_once b c =
 let integer_cases =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype integer_accs) (fun acc ->
-         case_of ~acc ~out:acc ~dts:integers ()))
+         Gen.bind
+           (Gen.frequency
+              [
+                (2, Gen.constant integers); (1, Gen.constant (others integers));
+              ])
+           (fun dts -> case_of ~acc ~out:acc ~dts ())))
 
 (* [x]'s values in an array one element longer along its last axis, read
    from its second element: adjacent along that axis, at an odd offset. *)
@@ -1368,6 +1402,15 @@ let integer_covers (c : case) =
   let (D.Any acc) = c.acc in
   cover "a 64-bit accumulator" (D.bits acc = 64);
   cover "a 4-bit accumulator" (D.bits acc = 4);
+  cover "an operand acc does not hold" (converted c);
+  cover "a float or complex operand into a 4-bit accumulator"
+    (D.bits acc = 4
+    && Array.exists
+         (fun (A.Any x) ->
+           match D.kind (A.dtype x) with
+           | D.Float | D.Complex -> true
+           | _ -> false)
+         (operands c));
   cover "more than 128 rows and columns over 513 products or more"
     (m > 128 && n > 128 && k > 512)
 
@@ -1477,6 +1520,7 @@ let law_wraps ~covers b (c : case) =
   | None -> cover "declined" true
   | Some y ->
       let _, oa, ob, walk = index c in
+      let ints x = ints (cast_to c.acc x) in
       let a = ints c.a and bv = ints c.b and init = Option.map ints c.init in
       let got = ints y and bad = ref [] in
       (* An accumulator narrower than OCaml's 63-bit ints sums in them: their
@@ -1506,10 +1550,9 @@ let law_wraps ~covers b (c : case) =
       equal (list string) [] (List.rev !bad)
 
 let law_computes b c =
-  let computes = cpu_computes c in
-  cover "computed" computes;
-  cover "declined" (not computes);
-  equal ~msg:"computed" bool computes (Option.is_some (run b c))
+  cover "an operand acc does not hold" (converted c);
+  cover "a result of another dtype" (c.out <> c.acc);
+  equal ~msg:"computed" bool (cpu_computes c) (Option.is_some (run b c))
 
 (* With no products nx.cpu gives each output init's bits, -0 and a
    signalling NaN included, below 64 outputs and from 64, in either order:
@@ -1726,7 +1769,7 @@ let cpu (b : Support.backend) =
         (run (law_wraps ~covers:quad_covers b));
       prop "a result of another dtype rounds the sum in acc once" rounded
         (run (law_rounds_once b));
-      prop "computes the cases nx_cpu.mli lists, declines others"
+      prop "computes every contraction nx_cpu.mli lists"
         any_case (run (law_computes b));
       prop ~count:500
         "reads and writes no byte past its operands and dst, whatever pages lie \
