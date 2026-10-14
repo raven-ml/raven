@@ -191,9 +191,10 @@ value nx_array_support_blit_out(value ba, value at, value dst, value len) {
 }
 
 /* Late: a device over host memory whose work runs only when a wait sleeps
-   on it. A submit queues its fills and records its value; the next sleep,
-   or the stop, runs the queued fills in order and makes the last value the
-   word's. Sleeps on two domains run the queue one at a time. A submit of no
+   on it. Its word is the one rig gives its opener, and its values continue
+   from the value that word holds. A submit queues its fills and records its
+   value; the next sleep, or the stop, runs the queued fills in order and
+   makes the last value the word's. Sleeps on two domains run the queue one at a time. A submit of no
    fill, and a sleep with none queued, take no lock: a submit raises
    [queued] before [last], so a sleep that reads a value then finds its
    fills queued. */
@@ -208,7 +209,7 @@ struct late_fill {
 
 struct late {
   const struct rig_driver *driver;
-  _Atomic uint64_t word;
+  _Atomic uint64_t *word;
   _Atomic uint64_t last;
   _Atomic int queued;
   atomic_flag busy;
@@ -226,9 +227,9 @@ static void late_unlock(struct late *l) {
 
 /* Makes [v] the word's unless it already shows a later value. */
 static void late_show(struct late *l, uint64_t v) {
-  uint64_t w = atomic_load_explicit(&l->word, memory_order_relaxed);
+  uint64_t w = atomic_load_explicit(l->word, memory_order_relaxed);
   while (w < v && !atomic_compare_exchange_weak_explicit(
-                      &l->word, &w, v, memory_order_release,
+                      l->word, &w, v, memory_order_release,
                       memory_order_relaxed))
     ;
 }
@@ -241,18 +242,20 @@ static rig_commit_fn late_commit;
 static const struct rig_driver late_driver = {late_room, late_submit,
                                               late_commit, NULL};
 
-value nx_array_support_late_new(value unit) {
-  (void)unit;
+/* A Late device over the word at [v_word]. */
+value nx_array_support_late_new(value v_word) {
   struct late *l = calloc(1, sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
   l->driver = &late_driver;
+  l->word = (_Atomic uint64_t *)Nativeint_val(v_word);
+  atomic_init(&l->last, atomic_load(l->word));
   atomic_flag_clear(&l->busy);
   return caml_copy_nativeint((intnat)l);
 }
 
 /* The host address of the Late device [self]'s word. */
 value nx_array_support_late_word(value self) {
-  return Val_long((intnat)&((struct late *)Nativeint_val(self))->word);
+  return Val_long((intnat)((struct late *)Nativeint_val(self))->word);
 }
 
 value nx_array_support_late_publish(value self) {
@@ -274,7 +277,7 @@ value nx_array_support_late_publish(value self) {
 
 value nx_array_support_late_signaled(value self) {
   struct late *l = (struct late *)Nativeint_val(self);
-  return Val_long((intnat)atomic_load_explicit(&l->word, memory_order_acquire));
+  return Val_long((intnat)atomic_load_explicit(l->word, memory_order_acquire));
 }
 
 /* Late runs fills only, as many as its queue holds. */

@@ -106,7 +106,7 @@ let read_only n =
 (* Late, a device over host memory whose work runs only when a wait sleeps on
    it: its submit queues the work, its sleep and its stop run it. *)
 
-external late_new : unit -> nativeint = "nx_array_support_late_new"
+external late_new : nativeint -> nativeint = "nx_array_support_late_new"
 external late_publish : nativeint -> unit = "nx_array_support_late_publish"
 external late_signaled : nativeint -> int = "nx_array_support_late_signaled"
 external late_word : nativeint -> int = "nx_array_support_late_word"
@@ -177,11 +177,15 @@ module Late = struct
   type t = Driver.t
 
   let open_ name =
-    let t = { Driver.self = late_new (); fault = Atomic.make None } in
-    match
-      Rig.open_ { name; driver = (module Driver); make = (fun () -> Ok t) }
-    with
-    | Ok d -> (d, t)
+    let fault = Atomic.make None in
+    let made = ref None in
+    let make ~word =
+      let t = { Driver.self = late_new word; fault } in
+      made := Some t;
+      Ok t
+    in
+    match Rig.open_ { name; driver = (module Driver); make } with
+    | Ok d -> (d, Option.get !made)
     | Error e -> failwith e
 
   let fault (t : t) why = Atomic.set t.fault (Some why)
