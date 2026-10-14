@@ -316,6 +316,24 @@ let chain_rows =
         Nx.Repr.array (Nx.einsum mmv [ Thumper.black_box a; b; v ]));
   ]
 
+(* Attention's scores over heads stored [b; s; h; d], as a projection
+   leaves them, read as [b; h; s; d]: their batch steps apart, so the
+   product loops over b outside its batch of heads; and the same product
+   on heads stored contiguous. *)
+let attention_rows =
+  let scores = Nx.Pattern.v "b h i d, b h j d -> b h i j | d" in
+  let heads () =
+    Nx.transpose ~axes:[ 0; 2; 1; 3 ] (matrix D.Float32 [| 2; 128; 8; 64 |])
+  in
+  let q = heads () and k = heads () in
+  let qc = Nx.copy q and kc = Nx.copy k in
+  [
+    Thumper.bench "einsum-f32-attention-2x8x128x64" (fun () ->
+        Nx.Repr.array (Nx.einsum scores [ Thumper.black_box q; k ]));
+    Thumper.bench "einsum-f32-attention-2x8x128x64-contiguous" (fun () ->
+        Nx.Repr.array (Nx.einsum scores [ Thumper.black_box qc; kc ]));
+  ]
+
 (* Planning at the most operands einsum takes: [n] one-element operands in a
    ring, each sharing a summed name with the two before it and the two after,
    so that every split of a set meets names. *)
@@ -458,7 +476,7 @@ let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
    @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ tile_rows @ split_rows
-   @ decode_rows @ chain_rows
+   @ decode_rows @ chain_rows @ attention_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
