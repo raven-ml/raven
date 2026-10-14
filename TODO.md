@@ -28,6 +28,8 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
+- a profile stop that drops an unread entry gives its time pair back while
+  the device may still write it; a later submit can then take the pair
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required
   `~waits` against its callers (none in nx, rune or tolk pass waits), and
   count exact-zero tests with `Gc.allocated_bytes`; `Buffer.free`; both
@@ -47,6 +49,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
   stdlib Hashtbls, which an exception while one grows loses: they must still
   serve stop, free and unload after an exception, as NV's do
+- exceptions: Metal's `regions` and `pipelines` are stdlib Hashtbls too;
+  the mlx5 wait loses an event's count to an exception after the kernel
+  delivered it
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
