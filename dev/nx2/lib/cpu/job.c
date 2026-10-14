@@ -80,13 +80,26 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
   nx_cpu_job_at(total, bytes, cost, NX_CPU_THREAD_BYTES, body, ctx);
 }
 
+void nx_cpu_one_thread(int64_t total, double cost, rig_pool_body body,
+                       void *ctx) {
+  if (total <= 0) return;
+  if (cost < HOLD_BYTES || released) {
+    body(0, total, 0, ctx);
+    return;
+  }
+  job j = {body, ctx};
+  caml_enter_blocking_section_no_pending();
+  run_released(0, total, 0, &j);
+  caml_leave_blocking_section();
+}
+
 void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
                    double thread_bytes, rig_pool_body body, void *ctx) {
   if (total <= 0) return;
   int64_t threads = nx_cpu_threads_at(bytes, cost, thread_bytes);
   if (threads > total) threads = total;
-  if (threads <= 1 && cost < HOLD_BYTES) {
-    body(0, total, 0, ctx);
+  if (threads <= 1) {
+    nx_cpu_one_thread(total, cost, body, ctx);
     return;
   }
   job j = {body, ctx};

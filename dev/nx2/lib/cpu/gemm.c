@@ -1224,22 +1224,36 @@ static void rows(problem *p, int64_t bytes, double cost) {
   free(f.lanes);
 }
 
+/* [p]'s cost in lane order, its operands' [bytes] set: the cores'
+   kernels run a flop in the time memcpy moves a byte. */
+static double lane_cost(const problem *p, int64_t *bytes) {
+  int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
+  int64_t k = p->ext[CON];
+  *bytes = batch * (m + n) * k * p->w;
+  return 2.0 * batch * m * n * k + *bytes;
+}
+
 static void lane_pass(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
-  int64_t k = p->ext[CON], w = p->w;
-  if (k == 0) {
+  int64_t w = p->w, bytes;
+  if (p->ext[CON] == 0) {
     nx_cpu_job(batch, batch * m * n * w, batch * m * n * w, empty, p);
     return;
   }
-  /* The cores' kernels run a flop in the time memcpy moves a byte. */
-  int64_t bytes = batch * (m + n) * k * w;
-  double cost = 2.0 * batch * m * n * k + bytes;
+  double cost = lane_cost(p, &bytes);
   if (p->op[B].st[CON] == 1) dots(p, bytes, cost);
   else rows(p, bytes, cost);
 }
 
-/* Passes of LANE_ROWS rows: each moves a, init and dst on by its rows. */
-static void lanes(problem *p) {
+/* Passes of LANE_ROWS rows: each moves a, init and dst on by its rows.
+   The call is the one unit of a job of one thread at its whole cost
+   (nx_cpu_one_thread), so that it releases the runtime where it costs
+   as much as a held job may, though each pass's jobs cost less: on one
+   core a 2000 × 2000 × 16 float32 product held it for 45 ms, in 250
+   passes of 0.6 MiB each. */
+static void lanes(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo, (void)hi, (void)worker;
+  problem *p = ctx;
   if (p->ext[COL] < p->ext[ROW]) transpose(p);
   int64_t m = p->ext[ROW];
   for (int64_t i = 0; i < m && !atomic_load(&p->failed); i += LANE_ROWS) {
@@ -1325,8 +1339,10 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
   p.init_is_dst = init_is_dst(&p);
   atomic_init(&p.failed, 0);
-  if (order == NX_CPU_LANE) lanes(&p);
-  else {
+  if (order == NX_CPU_LANE) {
+    int64_t bytes;
+    nx_cpu_one_thread(1, lane_cost(&p, &bytes), lanes, &p);
+  } else {
     /* Kept in place, whether or not a stays in the caches: on the
        i9-9900K a 300 × 16 × 600 float64 product takes 91 µs on one core
        so against 166 transposed, a 256 × 64 × 256 one 24 µs on 16 threads

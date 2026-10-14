@@ -422,6 +422,14 @@ void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
                    double thread_bytes, rig_pool_body body, void *ctx);
 int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes);
 
+/* nx_cpu_job's work of one thread: [body] over [0, total) on the calling
+   thread, with the runtime released where [cost] is as much as a held
+   job may take (job.c), as for a job nx_cpu_threads gives one thread.
+   For work that decides its threads itself, as a contraction's call
+   does (gemm.c). */
+void nx_cpu_one_thread(int64_t total, double cost, rig_pool_body body,
+                       void *ctx);
+
 /* Scratch */
 
 /* [bytes] of scratch on 128 bytes, NULL if they cannot be allocated: one
