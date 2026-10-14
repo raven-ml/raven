@@ -20,10 +20,9 @@
     whose nodes, evaluated in the program's order, hold at most 256 values
     at once, a value held from the node that computes it through the last
     node that reads it, or to the end for an output; it answers [Declined]
-    for the others and for a program that bitcasts a sub-byte dtype. A
-    padded load is first copied padded into host memory, which the call
-    holds until it returns; a pad that fits no operand of its load's shape
-    is refused with [Shape_mismatch].
+    for the others. A padded load is first copied padded into host memory,
+    which the call holds until it returns; a pad that fits no operand of its
+    load's shape is refused with [Shape_mismatch].
 
     [contract] computes contractions in [float32], [float64], [complex64],
     [complex128] or an integer of 8 to 64 bits whose [dst] has their [acc]'s

@@ -22,7 +22,8 @@
    - a constant is read in place with a step of 0;
    - a coordinate fills its slot with its positions;
    - Copy, a Cast into the operand's own dtype and a Bitcast between byte
-     wide dtypes read their operand's value;
+     wide dtypes read their operand's value, a Bitcast between sub-byte
+     ones its codes;
    - each output's value is stored into its destination.
 
    A node's value is held as its dtype's element exactly, so that a program
@@ -38,9 +39,9 @@
    arena is cut into one slot per value held at once, and TEMPS more where
    a node casts or holds a dtype other than its carrier, so that the more
    values a program holds, the fewer elements a block has. A
-   program that holds more than HELD values at once, needs more operands
-   than a loop holds, or bitcasts a sub-byte dtype is declined: its caller
-   runs the nodes one by one.
+   program that holds more than HELD values at once, or needs more
+   operands than a loop holds, is declined: its caller runs the nodes one
+   by one.
 
    A padded load is first copied padded into C-heap memory (assemble.c),
    which the call holds until it returns, and read from there as a plain
@@ -162,6 +163,20 @@ static void round_held(int dt, const uint8_t *s, uint8_t *d, uint8_t *t,
   }
 }
 
+/* [n] values of the 4-bit dtype [dt], held, at [d] from the held values
+   [x] of the 4-bit dtype [xt] whose codes they share: through [codes], a
+   byte each. */
+static void sub_bitcast(int xt, int dt, const uint8_t *x, uint8_t *codes,
+                        uint8_t *d, int64_t n) {
+  if (xt == NX_FLOAT4_E2M1FN)
+    nx_cpu_table->convert[NX_FLOAT32][xt](x, codes, n);
+  else
+    for (int64_t i = 0; i < n; i++) codes[i] = x[i] & 15;
+  if (dt == NX_FLOAT4_E2M1FN)
+    nx_cpu_table->convert[dt][NX_FLOAT32](codes, d, n);
+  else round_held(dt, codes, d, NULL, n);
+}
+
 /* Whether the plane [p] reads one element of operand [k]. */
 static int repeated(const nx_cpu_block *p, int k) {
   return p->s0[k] == 0 && (p->s1[k] == 0 || p->n1 == 1);
@@ -261,6 +276,14 @@ static void run(const prog *j, const plane *f, int i) {
     int64_t s0 = p->s0[s->k], s1 = p->s1[s->k];
     for (int64_t r = 0; r < n1; r++)
       for (int64_t e = 0; e < n0; e++) v[r * n0 + e] = at + r * s1 + e * s0;
+    return;
+  }
+  if (s->tag == NX_NODE_OP1 && s->kind == NX_OP1_BITCAST) {
+    int xt = j->s[s->x[0]].dt;
+    view v = runs(value_of(j, f, s->x[0]), held(xt), p, temp(j, f, 1));
+    for (int64_t r = 0; r < n1; r++)
+      sub_bitcast(xt, dt, v.p + r * v.s1, temp(j, f, 0), d + r * n0 * width(h),
+                  n0);
     return;
   }
   view t = home(j, f, i);
@@ -427,8 +450,8 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
         if (t->kind == NX_OP1_COPY || (t->kind == NX_OP1_CAST && xt == t->dt))
           t->alias = a;
         else if (t->kind == NX_OP1_BITCAST) {
-          if (nx_dtype_row_of(xt).bits < 8) return NX_DECLINED;
-          t->alias = a;
+          /* A sub-byte bitcast into another dtype computes its codes. */
+          if (nx_dtype_row_of(xt).bits >= 8 || xt == t->dt) t->alias = a;
         } else if (t->kind != NX_OP1_CAST &&
                    (t->f = row_of(t, xt, xt)) == NULL)
           return NX_DECLINED;
