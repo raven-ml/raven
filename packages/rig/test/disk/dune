@@ -1,5 +1,5 @@
 (tests
- (names test_rig_disk test_walk)
+ (names test_rig_disk test_walk test_interrupt)
  (libraries rig_disk rig rig_support unix windtrap)
  (foreign_stubs
   (language c)

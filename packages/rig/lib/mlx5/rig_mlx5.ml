@@ -726,7 +726,7 @@ let wait nic ~ms =
     | Completed tag -> (
         match find (fun () -> nic.cqs) tag with
         | Some c ->
-            Atomic.incr c.sequence;
+            ignore (Atomic.fetch_and_add c.sequence 1);
             Some (Completion c)
         | None -> None)
     | Cq_error tag ->

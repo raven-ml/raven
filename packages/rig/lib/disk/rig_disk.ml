@@ -219,7 +219,7 @@ let close_fd f =
   if fd >= 0 then begin
     f.fd <- -1;
     if listed f then begin
-      Atomic.decr in_table;
+      ignore (Atomic.fetch_and_add in_table (-1));
       unlink f
     end;
     f.users <- 0;
@@ -259,7 +259,7 @@ let trim () = close_down max_open
 let admit f fd =
   f.fd <- fd;
   if listed f then begin
-    Atomic.incr in_table;
+    ignore (Atomic.fetch_and_add in_table 1);
     touch f
   end
 
@@ -298,12 +298,16 @@ let reopen f =
    stale, so the table never stays beyond its bound once its pins end. *)
 
 (* [f]'s descriptor, opened again by its path if it was closed, pinned. Holds
-   the table's lock. *)
+   the table's lock. A trim that raises ends the pin, which no caller would
+   end: the exception leaves the call before its caller's handler. *)
 let pinned f =
   if f.fd < 0 then reopen f;
-  Atomic.Loc.incr [%atomic.loc f.users];
-  trim ();
-  f.fd
+  ignore (Atomic.Loc.fetch_and_add [%atomic.loc f.users] 1);
+  match trim () with
+  | () -> f.fd
+  | exception e ->
+      ignore (Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1));
+      raise e
 
 (* The end of a pin that left [f] unpinned. Holds the table's lock. *)
 let unpinned f =
@@ -322,7 +326,7 @@ let rec pin f =
     let fd = f.fd in
     if fd >= 0 then fd
     else begin
-      Atomic.Loc.decr [%atomic.loc f.users];
+      ignore (Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1));
       locked pinned f
     end
 
