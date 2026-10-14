@@ -542,13 +542,13 @@ module type S = sig
       underflow.
 
       A float sum's association, which fixes its bits, is a function of
-      [order], the dtypes, and the factors its library names as depending on
-      the extents, such as a count of splits of the contracted axes; the
-      kernels of one order never compute a call given the other. A library
-      that states it follows {!section-orders} adds each output's products in
-      [order], whatever the extents. Another states the association it
-      computes for each order. A NaN result's sign and payload are
-      unspecified. *)
+      [order], the dtypes and the contracted extent alone: the batch, row and
+      column extents, the layouts and the device's size never enter it, so a
+      window of [dst] computed alone has the whole's bits. The kernels of one
+      order never compute a call given the other. A library that states it
+      follows {!section-orders} adds each output's products in [order].
+      Another states the association it computes for each order. A NaN
+      result's sign and payload are unspecified. *)
 
   (** {1:fft Fourier transforms}
 

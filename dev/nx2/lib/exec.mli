@@ -29,10 +29,7 @@
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever the
-    operands lie. One exception holds on GPUs: a window of a batched
-    contraction's batch, where the contracted extent is long, can add in another
-    order than the whole, as a GPU library chooses how many parts to split the
-    contracted extent into from every extent, the batch's included. *)
+    operands lie. *)
 
 val run : by:string -> 'r Value.prim -> 'r
 (** [run ~by op] is [op]'s meaning where no interpretation reaches it.
