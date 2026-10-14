@@ -1838,8 +1838,8 @@ let with_units = [ "cholesky"; "solve"; "lu"; "eigh"; "svd's values" ]
 
 (* nx.cpu computes [routines], by name, of [c]'s matrix alone, on the
    call's threads, and of copies of it in a wide batch, one a thread:
-   every result of the batch's first and last matrices has the bits of
-   the matrix's alone. *)
+   every result of every matrix of the batch has the bits of the
+   matrix's alone. *)
 let threads_agree (b : Support.backend) routines c =
   let c = wide c in
   let k = count c in
@@ -1847,23 +1847,22 @@ let threads_agree (b : Support.backend) routines c =
   let x = cholesky_operand one and ops = solve_operands one in
   let _, lu = lu_operand one in
   let _, _, s = svd_operand one in
-  let part i r =
-    let v = result_bits r in
-    let n = Array.length v / k in
-    Array.sub v (i * n) n
-  in
-  let agree msg y z i =
+  let agree msg y z =
     Array.iteri
       (fun j z ->
-        let msg = Printf.sprintf "%s's result %d, matrix %d" msg j i in
-        equal ~msg same_bits (part i y.(j)) (result_bits z))
+        let v = result_bits y.(j) and want = result_bits z in
+        let n = Array.length want in
+        for i = 0 to k - 1 do
+          let msg = Printf.sprintf "%s's result %d, matrix %d" msg j i in
+          equal ~msg same_bits want (Array.sub v (i * n) n)
+        done)
       z
   in
   List.iter
     (fun (msg, r, ops) ->
       if List.mem msg routines then
         match (run b r (Array.map (repeated c) ops), run b r ops) with
-        | Some y, Some z -> List.iter (agree msg y z) [ 0; k - 1 ]
+        | Some y, Some z -> agree msg y z
         | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
     [
       ("cholesky", Cholesky Lower, [| x |]);
