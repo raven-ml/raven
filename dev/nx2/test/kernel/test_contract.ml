@@ -243,10 +243,15 @@ let axpy_cached = 4 * 1024 * 1024
 let axpy_held = 1024 * 1024
 
 (* The rows of the quads kernel's tile, MR, from which the axpys run it
-   over b's rows zipped: 6 on x86, AVX2's and AVX-VNNI-INT8's alike, 8 on
-   NEON. *)
+   over b's rows zipped: 6 by AVX-VNNI-INT8, 8 on NEON; AVX2's axpys never
+   zip. *)
 let quad_mr_least = 6
 let quad_mr_most = 8
+
+(* AVX2's axpys of several rows: the columns of b they widen at once, and
+   the most rows of a group besides the first. *)
+let axpy_cols = 256
+let axpy_group = 6
 
 (* Extents of the batch, row, column and contracted axes, in profiles: any
    ranks over a few elements; one output; 64 outputs or more with edge
@@ -1072,7 +1077,9 @@ let shifted (A.Any x as a) =
    least k and b they take them by, and by a b held in cache; few rows over several groups of columns, past
    the most sums a unit holds; 64 rows by 64 columns and 64 along k, which
    chain order takes; few rows by few columns, in bands of rows; either
-   side of x86's tile and by NEON's, every
+   side of AVX-VNNI-INT8's tile and by NEON's; two rows over more columns
+   than AVX2's axpys widen at once, by an odd k; a row and a full group; a
+   row and three groups. Each with every
    element of a and b at the dtype's extreme and init at the
    accumulator's largest value, so that two products pass 16 bits and
    every sum wraps. Copies whose rows would lie 4 KiB apart: b's of 1024
@@ -1134,6 +1141,9 @@ let quad_examples =
         case Chain ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
         (let c = stored Chain ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
          { c with a = shifted c.a });
+        extreme Chain ([||], [| 2 |], [| axpy_cols + 44 |], [| 37 |]) (plain 2);
+        extreme Chain ([||], [| axpy_group + 1 |], [| 40 |], [| 33 |]) (plain 2);
+        extreme Chain ([||], [| (2 * axpy_group) + 3 |], [| 20 |], [| 18 |]) (plain 2);
       ])
     D.[ (Any Int32, Any Int8, -128L, 0x7FFFFFFFL);
         (Any Uint32, Any Uint8, 255L, 0xFFFFFFFFL) ]
@@ -1244,6 +1254,11 @@ let quad_covers (c : case) =
   cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
   cover "quads' axpys below the tile" (axpys && m < quad_mr_least);
   cover "quads' axpys by the tile" (axpys && m >= quad_mr_most);
+  cover "quads' axpys of two rows" (axpys && m = 2);
+  cover "quads' axpys over more rows than a group holds"
+    (axpys && m - 1 > axpy_group);
+  cover "quads' axpys of several rows over more columns than they widen"
+    (axpys && m > 1 && n > axpy_cols);
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
   cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);

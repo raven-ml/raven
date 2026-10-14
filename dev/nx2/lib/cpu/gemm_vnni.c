@@ -65,6 +65,8 @@ void nx_cpu_set_vnni(nx_cpu_target *t) {
   t->quads[NX_UINT8] = quads(kernel_u8);
   t->quads_dot[NX_INT8] = quads_dot_s8;
   t->quads_dot[NX_UINT8] = quads_dot_u8;
+  /* From this kernel's tile, the zips run it in place of AVX2's axpys. */
+  t->quads_zip_rows = MR;
 }
 
 #elif defined(__x86_64__)

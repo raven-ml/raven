@@ -172,11 +172,9 @@ QDOT(quads_dot_u8, UDOT)
   const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;                  \
   const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;                  \
   uint32x4_t x = vld1q_dup_u32((const uint32_t *)(a + t));
-#define QAXPY(name, DOT, T)                                               \
+#define QAXPY_1(name, DOT, T)                                             \
   static void name(const uint8_t *a, const uint8_t *b, int64_t ldb,       \
-                   int64_t k, int64_t n, uint32_t *y,                     \
-                   const uint8_t *next) {                                 \
-    (void)next;                                                           \
+                   int64_t k, int64_t n, uint32_t *y) {                   \
     int64_t j = 0;                                                        \
     for (; j + 64 <= n; j += 64) {                                        \
       uint32x4_t c[16];                                                   \
@@ -202,6 +200,16 @@ QDOT(quads_dot_u8, UDOT)
     for (; j < n; j++)                                                    \
       for (int64_t t = 0; t < k; t++)                                     \
         y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);                  \
+  }
+/* The rows one at a time. */
+#define QAXPY(name, DOT, T)                                               \
+  QAXPY_1(name##_1, DOT, T)                                               \
+  static void name(const uint8_t *a, int64_t lda, int64_t rows,           \
+                   const uint8_t *b, int64_t ldb, int64_t k, int64_t n,   \
+                   uint32_t *y, int64_t ldy, const uint8_t *next) {       \
+    (void)next;                                                           \
+    for (int64_t i = 0; i < rows; i++)                                    \
+      name##_1(a + i * lda, b, ldb, k, n, y + i * ldy);                   \
   }
 QAXPY(quads_axpy_s8, SDOT, int8_t)
 QAXPY(quads_axpy_u8, UDOT, uint8_t)
@@ -295,6 +303,10 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
   t->quads_dot[NX_UINT8] = quads_dot_u8;
   t->quads_axpy[NX_INT8] = quads_axpy_s8;
   t->quads_axpy[NX_UINT8] = quads_axpy_u8;
+  /* On the M1 Max by a 4096 × 4096 weight stored [k × n], zipping for
+     fewer than MR rows took 1 row 1.7 times as long, and the axpy for MR
+     or more 1.3 to 1.9 times as long. */
+  t->quads_zip_rows = MR;
 #endif
 }
 

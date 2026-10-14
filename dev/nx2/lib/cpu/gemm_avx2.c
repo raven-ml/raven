@@ -25,6 +25,7 @@
    cold, where the hardware's prefetchers follow each row once it
    streams. */
 
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -203,65 +204,90 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
 /* Quads' axpys: b's rows read in place, two at a time interleaved by
    VPUNPCKLBW and VPUNPCKHBW into pairs of elements along k per column,
    widened to 16 bits, each column's pair against the broadcast pair of
-   a's elements by VPMADDWD, exact as in the quads kernel: 64 columns at a
-   time in 8 accumulators, then 16 in 2, then one at a time. Rows past k
-   repeat the last, which a's elements there, zeros, cancel. Each step of
-   64 columns prefetches the same 4 rows of [next] (gemm.c says why,
-   above AXPY_ROWS): on the i9-9900K one row by a 4096 × 4096 weight took
-   141 µs against 263 without, from memory 508 against 964. No reference
-   was ported. */
+   a's elements by VPMADDWD, exact as in the quads kernel. Rows past k
+   repeat the last, which a's elements there, zeros, cancel. Each row of b
+   prefetches the same row of [next] (gemm.c says why, above AXPY_ROWS):
+   on the i9-9900K one row by a 4096 × 4096 weight took 141 µs against
+   263 without, from memory 508 against 964.
+
+   The interleaving and widening run on port 5 alone, a shuffle for each
+   VPMADDWD, which bounds a row alone. Several rows widen b once: the
+   first runs as a row alone and keeps the pairs it widens, and the others
+   broadcast a's pairs, widened on the stack, against them with no
+   shuffle. On the i9-9900K at 16 threads by a 4096 × 4096 weight stored
+   [k × n], against a row at a time below 6 rows and the quads kernel over
+   zipped rows from 6: 2 rows took 200 µs against 208, 4 243 against 377,
+   5 263 against 461, 8 358 against 575, 32 1.04 ms against 1.38, 128
+   4.18 against 4.80. Groups of 6 rather than 4 ran 6 rows on one core
+   1.16 times as fast. No reference was ported. */
 #define CVT_S _mm256_cvtepi8_epi16
 #define CVT_U _mm256_cvtepu8_epi16
-/* 16 columns from [at] of rows [r0] and [r1] times a's pair [x]. */
-#define QPAIR(S, c0, c1, x, r0, r1, at)                         \
+/* The rows of b and the columns a step of several rows widens into pairs
+   at once: 8 KiB on the stack. */
+#define QK 16
+#define QCOLS 256
+/* The most rows of a group: 12 accumulators, b's 2 vectors and a's
+   broadcast. */
+#define QG 6
+/* 16 columns from [at] of rows [r0] and [r1] times a's pair [x], their
+   pairs kept at [p] where KEEP. */
+#define QPAIR(S, KEEP, c0, c1, x, r0, r1, at, p)                \
   {                                                             \
     __m128i v0 = _mm_loadu_si128((const __m128i *)((r0) + at)); \
     __m128i v1 = _mm_loadu_si128((const __m128i *)((r1) + at)); \
-    c0 = MADD(x, CVT_##S(_mm_unpacklo_epi8(v0, v1)), c0);       \
-    c1 = MADD(x, CVT_##S(_mm_unpackhi_epi8(v0, v1)), c1);       \
+    __m256i lo = CVT_##S(_mm_unpacklo_epi8(v0, v1));            \
+    __m256i hi = CVT_##S(_mm_unpackhi_epi8(v0, v1));            \
+    if (KEEP) (p)[(at) / 8] = lo, (p)[(at) / 8 + 1] = hi;       \
+    c0 = MADD(x, lo, c0);                                       \
+    c1 = MADD(x, hi, c1);                                       \
   }
 /* 16 columns from [at]: rows t and t + 1, then t + 2 and t + 3. */
-#define QZIP(S, c0, c1, at)         \
-  QPAIR(S, c0, c1, x01, r0, r1, at) \
-  QPAIR(S, c0, c1, x23, r2, r3, at)
-/* Rows t to t + 3 of b from column j, and a's pairs at t and t + 2. */
-#define QROWS(S)                                    \
-  const uint8_t *r0 = b + t * ldb + j;              \
-  const uint8_t *r1 = t + 1 < k ? r0 + ldb : r0;    \
-  const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;    \
-  const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;    \
-  __m256i x = BCAST_##S((const uint32_t *)(a + t)); \
-  __m256i x01 = _mm256_shuffle_epi32(x, 0x00);      \
-  __m256i x23 = _mm256_shuffle_epi32(x, 0x55);
+#define QZIP(S, KEEP, c0, c1, at)              \
+  QPAIR(S, KEEP, c0, c1, x01, r0, r1, at, p01) \
+  QPAIR(S, KEEP, c0, c1, x23, r2, r3, at, p01 + QCOLS / 8)
+/* Rows t to t + 3 of b from column j, a's pairs at t and t + 2, and
+   where the pairs of b's rows are kept. */
+#define QROWS(S, KEEP)                                           \
+  const uint8_t *r0 = b + t * ldb + j;                           \
+  const uint8_t *r1 = t + 1 < k ? r0 + ldb : r0;                 \
+  const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;                 \
+  const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;                 \
+  __m256i x = BCAST_##S((const uint32_t *)(a + t));              \
+  __m256i x01 = _mm256_shuffle_epi32(x, 0x00);                   \
+  __m256i x23 = _mm256_shuffle_epi32(x, 0x55);                   \
+  __m256i *p01 = KEEP ? pb + t / 2 * (QCOLS / 8) + j / 8 : NULL;
 /* A row of [next] where [r] is a row of b. */
 #define QAHEAD(r) _mm_prefetch((const char *)((r) + ahead), _MM_HINT_T0)
-#define QAXPY(name, S, T)                                           \
+/* A row: 64 columns at a time in 8 accumulators, then 16 in 2, then one
+   at a time. Where KEEP, at most QK rows of b and QCOLS columns, whose
+   pairs it keeps at [pb] for the other rows. */
+#define QAXPY_1(name, S, T, KEEP)                                   \
   static void name(const uint8_t *a, const uint8_t *b, int64_t ldb, \
                    int64_t k, int64_t n, uint32_t *y,               \
-                   const uint8_t *next) {                           \
+                   const uint8_t *next, __m256i *pb) {              \
     int64_t ahead = next - b;                                       \
     int64_t j = 0;                                                  \
     for (; j + 64 <= n; j += 64) {                                  \
       __m256i c[8];                                                 \
       for (int v = 0; v < 8; v++) c[v] = VLOAD(y + j + 8 * v);      \
       for (int64_t t = 0; t < k; t += 4) {                          \
-        QROWS(S)                                                    \
+        QROWS(S, KEEP)                                              \
         QAHEAD(r0);                                                 \
         QAHEAD(r1);                                                 \
         QAHEAD(r2);                                                 \
         QAHEAD(r3);                                                 \
-        QZIP(S, c[0], c[1], 0)                                      \
-        QZIP(S, c[2], c[3], 16)                                     \
-        QZIP(S, c[4], c[5], 32)                                     \
-        QZIP(S, c[6], c[7], 48)                                     \
+        QZIP(S, KEEP, c[0], c[1], 0)                                \
+        QZIP(S, KEEP, c[2], c[3], 16)                               \
+        QZIP(S, KEEP, c[4], c[5], 32)                               \
+        QZIP(S, KEEP, c[6], c[7], 48)                               \
       }                                                             \
       for (int v = 0; v < 8; v++) VSTORE(y + j + 8 * v, c[v]);      \
     }                                                               \
     for (; j + 16 <= n; j += 16) {                                  \
       __m256i c0 = VLOAD(y + j), c1 = VLOAD(y + j + 8);             \
       for (int64_t t = 0; t < k; t += 4) {                          \
-        QROWS(S)                                                    \
-        QZIP(S, c0, c1, 0)                                          \
+        QROWS(S, KEEP)                                              \
+        QZIP(S, KEEP, c0, c1, 0)                                    \
       }                                                             \
       VSTORE(y + j, c0);                                            \
       VSTORE(y + j + 8, c1);                                        \
@@ -269,6 +295,104 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
     for (; j < n; j++)                                              \
       for (int64_t t = 0; t < k; t++)                               \
         y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);            \
+  }
+/* Row i's accumulators, named: gcc -O2 keeps an array indexed by a loop
+   over the rows in memory. */
+#define QLOAD(R, i)                   \
+  if (R > i)                          \
+    c##i##0 = VLOAD(y + i * ldy + j), \
+    c##i##1 = VLOAD(y + i * ldy + j + 8);
+#define QSTORE(R, i)                  \
+  if (R > i)                          \
+    VSTORE(y + i * ldy + j, c##i##0), \
+    VSTORE(y + i * ldy + j + 8, c##i##1);
+/* Row i's pair [t], a word of two 16-bit elements, times b's. */
+#define QMADD(R, i)                              \
+  if (R > i) {                                   \
+    __m256i x = _mm256_set1_epi32((int)w[i][t]); \
+    c##i##0 = MADD(x, lo, c##i##0);              \
+    c##i##1 = MADD(x, hi, c##i##1);              \
+  }
+/* [R] rows, 1 to QG, from [a], [lda] apart, over the [kp] pairs of rows
+   of b kept at [pb], into the 16-column groups of [c] columns of y, [ldy]
+   apart: a's pairs widened into [w], then 2 accumulators a row. */
+#define QGROUP(name, S, T, R)                                             \
+  static void name(const uint8_t *a, int64_t lda, const __m256i *pb,      \
+                   int64_t kp, int64_t c, uint32_t *y, int64_t ldy) {     \
+    _Alignas(32) uint32_t w[R][QK / 2];                                   \
+    for (int i = 0; i < R; i++) {                                         \
+      const T *e = (const T *)(a + i * lda);                              \
+      if (kp == QK / 2) {                                                 \
+        VSTORE(w[i], CVT_##S(_mm_loadu_si128((const __m128i *)e)));       \
+        continue;                                                         \
+      }                                                                   \
+      /* An odd k's last pair ends on a's zero past it. */                \
+      for (int64_t t = 0; t < kp; t++)                                    \
+        w[i][t] =                                                         \
+            (uint16_t)e[2 * t] | (uint32_t)(uint16_t)e[2 * t + 1] << 16;  \
+    }                                                                     \
+    for (int64_t j = 0; j < c; j += 16) {                                 \
+      __m256i c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51; \
+      QLOAD(R, 0) QLOAD(R, 1) QLOAD(R, 2)                                 \
+      QLOAD(R, 3) QLOAD(R, 4) QLOAD(R, 5)                                 \
+      const __m256i *p = pb + j / 8;                                      \
+      for (int64_t t = 0; t < kp; t++, p += QCOLS / 8) {                  \
+        __m256i lo = p[0], hi = p[1];                                     \
+        QMADD(R, 0) QMADD(R, 1) QMADD(R, 2)                               \
+        QMADD(R, 3) QMADD(R, 4) QMADD(R, 5)                               \
+      }                                                                   \
+      QSTORE(R, 0) QSTORE(R, 1) QSTORE(R, 2)                              \
+      QSTORE(R, 3) QSTORE(R, 4) QSTORE(R, 5)                              \
+    }                                                                     \
+  }
+/* Several rows: by steps of QK rows and QCOLS columns of b, the first row
+   as a row alone, keeping the pairs of b's rows it widens, then the others
+   over them, in groups of at most QG whose sizes differ by at most one: 6
+   others as 6, 7 as 3 and 4. Each line of b is read once: a step's rows,
+   4 KiB apart, fall in one set of the L1 cache, whose 8 ways a second
+   read of 16 rows would miss. Columns past the last 16 go one at a
+   time. */
+#define QAXPY(name, S, T)                                                    \
+  QAXPY_1(name##_1, S, T, 0)                                                 \
+  QAXPY_1(name##_keep, S, T, 1)                                              \
+  QGROUP(name##_g1, S, T, 1)                                                 \
+  QGROUP(name##_g2, S, T, 2)                                                 \
+  QGROUP(name##_g3, S, T, 3)                                                 \
+  QGROUP(name##_g4, S, T, 4)                                                 \
+  QGROUP(name##_g5, S, T, 5)                                                 \
+  QGROUP(name##_g6, S, T, 6)                                                 \
+  static void name(const uint8_t *a, int64_t lda, int64_t rows,              \
+                   const uint8_t *b, int64_t ldb, int64_t k, int64_t n,      \
+                   uint32_t *y, int64_t ldy, const uint8_t *next) {          \
+    if (rows == 1) {                                                         \
+      name##_1(a, b, ldb, k, n, y, next, NULL);                              \
+      return;                                                                \
+    }                                                                        \
+    static void (*const group[QG + 1])(const uint8_t *, int64_t,             \
+                                       const __m256i *, int64_t, int64_t,    \
+                                       uint32_t *, int64_t) = {              \
+        NULL,      name##_g1, name##_g2, name##_g3,                          \
+        name##_g4, name##_g5, name##_g6};                                    \
+    _Alignas(32) __m256i pb[QK / 2 * (QCOLS / 8)];                           \
+    int64_t groups = (rows - 1 + QG - 1) / QG;                               \
+    for (int64_t t0 = 0; t0 < k; t0 += QK) {                                 \
+      int64_t kb = k - t0 < QK ? k - t0 : QK, kp = (kb + 1) / 2;             \
+      for (int64_t j0 = 0; j0 < n; j0 += QCOLS) {                            \
+        int64_t cb = n - j0 < QCOLS ? n - j0 : QCOLS, c = cb / 16 * 16;      \
+        int64_t at = t0 * ldb + j0;                                          \
+        name##_keep(a + t0, b + at, ldb, kb, cb, y + j0, next + at, pb);     \
+        for (int64_t g = 0, i = 1; g < groups; g++) {                        \
+          int64_t r = (rows - i) / (groups - g);                             \
+          group[r](a + i * lda + t0, lda, pb, kp, c, y + i * ldy + j0, ldy); \
+          i += r;                                                            \
+        }                                                                    \
+        for (int64_t j = j0 + c; j < j0 + cb; j++)                           \
+          for (int64_t i = 1; i < rows; i++)                                 \
+            for (int64_t t = t0; t < t0 + kb; t++)                           \
+              y[i * ldy + j] += (uint32_t)((T)a[i * lda + t] *               \
+                                           (T)b[t * ldb + j]);               \
+      }                                                                      \
+    }                                                                        \
   }
 QAXPY(quads_axpy_s8, S, int8_t)
 QAXPY(quads_axpy_u8, U, uint8_t)
@@ -361,6 +485,9 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->quads_dot[NX_UINT8] = quads_dot_u8;
   t->quads_axpy[NX_INT8] = quads_axpy_s8;
   t->quads_axpy[NX_UINT8] = quads_axpy_u8;
+  /* The axpys outran the zips at every count of rows they take (above,
+     at the quads' axpys). */
+  t->quads_zip_rows = INT_MAX;
 }
 
 #else

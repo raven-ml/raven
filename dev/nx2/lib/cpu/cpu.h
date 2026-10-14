@@ -102,14 +102,17 @@ typedef void (*nx_cpu_quads_dot)(const uint32_t *a, int64_t lda,
                                  const uint32_t *b, int64_t ldb, int64_t n,
                                  uint32_t *y, int64_t ldy);
 
-/* A quads axpy adds into y[j], for each of [n] columns j, the sum over
-   the [k] elements t of a row of a, adjacent, of a[t] · b[t·ldb + j], b's
-   rows adjacent along their columns: elements of quads[d]'s 8-bit dtype,
-   the sum in 32 bits (gemm.c, Quads). It may prefetch the [k] rows of [n]
-   elements at [next], [ldb] apart, the b of a later call. */
-typedef void (*nx_cpu_quads_axpy)(const uint8_t *a, const uint8_t *b,
-                                  int64_t ldb, int64_t k, int64_t n,
-                                  uint32_t *y, const uint8_t *next);
+/* A quads axpy adds into y[i·ldy + j], for each of [rows] rows i of a,
+   at a + i·lda, and [n] columns j, the sum over the [k] elements t of the
+   row, adjacent, of a[t] · b[t·ldb + j], b's rows adjacent along their
+   columns: elements of quads[d]'s 8-bit dtype, the sum in 32 bits (gemm.c,
+   Quads). A row of a holds zeros past k to a multiple of 4, which the axpy
+   may read. It may prefetch the [k] rows of [n] elements at [next], [ldb]
+   apart, the b of a later call. */
+typedef void (*nx_cpu_quads_axpy)(const uint8_t *a, int64_t lda,
+                                  int64_t rows, const uint8_t *b, int64_t ldb,
+                                  int64_t k, int64_t n, uint32_t *y,
+                                  int64_t ldy, const uint8_t *next);
 
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of
@@ -305,11 +308,13 @@ typedef struct {
      k, each product of words the sum of their four products (gemm.c,
      Quads); its kernel is NULL where the target has none. quads_dot[d]
      and quads_axpy[d] are its dot and axpy for products of few rows, or
-     NULL where the target has none. */
+     NULL where the target has none; from quads_zip_rows rows, quads[d]'s
+     kernel over b's rows zipped into words outruns the axpy. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
   nx_cpu_gemm quads[NX_DTYPE_COUNT];
   nx_cpu_quads_dot quads_dot[NX_DTYPE_COUNT];
   nx_cpu_quads_axpy quads_axpy[NX_DTYPE_COUNT];
+  int quads_zip_rows;
   nx_cpu_dot dot[NX_DTYPE_COUNT];
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k

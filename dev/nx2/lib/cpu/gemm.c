@@ -1680,8 +1680,8 @@ static const uint32_t *words_at(const problem *p, int o, int64_t e,
    takes fewer: with one core busy elsewhere, one unit a thread took 1 row
    from memory in 250-400 µs against 225-275, 8 rows in 660-900 against
    435-585. Its rows' sums, at most AXPY_SUMS bytes, stay in L1.
-   Below the quads kernel's MR rows, the axpy zips four rows of b in
-   registers for each row of a, AXPY_STEP rows of b at a time; from MR,
+   Below the target's quads_zip_rows, the axpy zips rows of b in
+   registers for the rows of a, AXPY_STEP rows of b at a time; from there,
    AXPY_ZIPS bytes of b's rows are zipped into words once, by
    interleave(), and the quads kernel runs all rows over them, as chain
    order would without padding a's rows. A unit's rows lie a row of b
@@ -1694,8 +1694,7 @@ static const uint32_t *words_at(const problem *p, int o, int64_t e,
    µs against 825-831, and 192-227 from memory against 880-920 (148 to
    read the weight); 8 rows 268-287 against 810-877; 32 rows 694-735
    against 1.31-1.35 ms; 64 1.25 ms against 2.0; 128 2.6 against 3.1.
-   Zipping into L1 for fewer than MR rows took 1 row 1.7 times as long;
-   the axpy for MR or more, 1.3 to 1.9 times as long. Steps of 16 rows ran
+   Steps of 16 rows ran
    1 row in 140 µs where 64 and 256 swung from 120 to 320. Splitting k
    across units as well read a cached weight 1.4 times faster but one
    from memory 1.15 times slower, and memory is where a model's weights
@@ -1716,7 +1715,15 @@ static const uint32_t *words_at(const problem *p, int o, int64_t e,
    bands' threads cost more than they save. 32 by n = k = 512 took 15.7
    µs at best against 22.3, but lost 7 of 8 rounds with a busy core: 8
    groups of columns give the 8 threads a unit each, no slack to
-   rebalance; 32 by n = k = 1024 61 against 65. */
+   rebalance; 32 by n = k = 1024 61 against 65. On the i9-9900K at 16
+   threads (16 MiB of L3), with AVX2's axpys of several rows, by the
+   axpys against chain order: 16 by n = k = 256 6.9 µs in bands against
+   11.2, by n 64, k 4096 23.7 against 23.4; 32 by n = k = 1024 73 against
+   97; 64 by n = k = 4096 2.10 ms against 3.22. Of those chain order
+   takes: 32 by n 64, k 4096 43 µs against 32 and 64 by n = k = 64 4.4
+   against 4.0, as the bounds mean; 32 by n 4096, k 256 91 against 114
+   and 64 by n = k = 1024 136 against 152, which the axpys would win here
+   and lose on the M1. */
 #define AXPY_FEW 16
 #define AXPY_MANY 32
 /* The share of the largest cache that b passes past AXPY_MANY rows: on
@@ -1826,25 +1833,25 @@ static void zip_rows(const problem *p, int64_t e, int64_t j0, int64_t c,
 }
 
 /* A unit's sums [s] of [m] rows from [i0] and [c] columns from [j0] of
-   element [e]: by the axpy below the quads kernel's MR rows, else by that
-   kernel over b's rows zipped into [z], AXPY_ZIPS bytes. */
+   element [e]: by the axpy below the target's quads_zip_rows, else by the
+   quads kernel over b's rows zipped into [z], AXPY_ZIPS bytes. */
 static void quad_unit(const quad_axpys_job *j, int64_t e, int64_t i0,
                       int64_t m, int64_t j0, int64_t c, uint32_t *s,
                       uint32_t *z) {
   const problem *p = j->p;
   int64_t ldb = p->op[B].st[CON];
   nx_cpu_micro km = p->g->kernel;
-  if (m < km.mr) {
+  if (m < nx_cpu_table->quads_zip_rows) {
+    const uint8_t *a = (const uint8_t *)words_at(p, A, e, i0, 0);
+    int64_t lda = 4 * p->op[A].st[ROW];
     for (int64_t q = 0; q < j->k; q += AXPY_STEP) {
       const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
       /* The next step's rows, or b's last AXPY_STEP, or all of b. */
       int64_t ahead = min64(q + AXPY_STEP, j->k - AXPY_STEP);
       if (ahead < 0) ahead = 0;
       const uint8_t *next = b + (ahead - q) * ldb;
-      for (int64_t i = 0; i < m; i++) {
-        const uint8_t *a = (const uint8_t *)words_at(p, A, e, i0 + i, 0) + q;
-        j->axpy(a, b, ldb, min64(AXPY_STEP, j->k - q), c, s + i * c, next);
-      }
+      j->axpy(a + q, lda, m, b, ldb, min64(AXPY_STEP, j->k - q), c, s, c,
+              next);
     }
     return;
   }
@@ -1867,7 +1874,7 @@ static void quad_axpys(int64_t lo, int64_t hi, int worker, void *ctx) {
   _Alignas(16) uint32_t s[AXPY_SUMS / 4];
   /* A tile reads past its last column: a sliver's width beyond the zips. */
   uint32_t *z = NULL;
-  if (j->rows >= p->g->kernel.mr) {
+  if (j->rows >= nx_cpu_table->quads_zip_rows) {
     z = (uint32_t *)scratch(p, AXPY_ZIPS + 4 * p->g->kernel.nr);
     if (z == NULL) return;
   }
@@ -1910,8 +1917,13 @@ static int axpys_fit(const nx_cpu_gemm *g, const nx_contract_view *v,
 
 /* [u]'s product in [acc] of a's words and b's [k] elements along k by
    quads' axpys: 0 if a worker's scratch could not be allocated. Where the
-   groups of columns are fewer than the threads, units split rows too, in
-   bands of whole tiles of the quads kernel where they hold one. */
+   groups of columns are fewer than the threads, units split rows too.
+   Where the product zips b's rows (the target's quads_zip_rows), bands
+   keep the quads kernel's MR rows, which zip as the whole would, unless
+   whole tiles leave more than half the threads idle: on fudge, bands of
+   4 rows took 8 rows by n = k = 256 1.38 times as long as bands of whole
+   tiles, and on the M1 Max 2 bands of 8 rows took 16 rows by n 64, k 4096
+   29.7 µs against 15 in 8 bands of 2. */
 static int quad_axpys_on(nx_cpu_quads_axpy axpy, const nx_cpu_gemm *g,
                          int acc, int64_t k, const nx_contract_view *u,
                          const nx_array *const *op) {
@@ -1925,8 +1937,11 @@ static int quad_axpys_on(nx_cpu_quads_axpy axpy, const nx_cpu_gemm *g,
                        AXPY_SUMS / 4 / m / AXPY_TILE) * AXPY_TILE;
   int64_t groups = ceil_div(n, cols), mr = g->kernel.mr;
   int64_t threads = nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);
-  int64_t rows = ceil_div(m, min64(m, ceil_div(threads, batch * groups)));
-  if (rows >= mr) rows = ceil_div(rows, mr) * mr;
+  int64_t bands = min64(m, ceil_div(threads, batch * groups));
+  int64_t whole = min64(bands, m / mr);
+  int zips = m >= nx_cpu_table->quads_zip_rows;
+  if (zips && 2 * batch * groups * whole >= threads) bands = whole;
+  int64_t rows = ceil_div(m, bands);
   quad_axpys_job j = {.p = &p, .axpy = axpy, .k = k, .cols = cols,
                       .groups = groups, .rows = rows,
                       .bands = ceil_div(m, rows)};
