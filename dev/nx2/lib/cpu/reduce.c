@@ -36,7 +36,8 @@
    NaN. A float result that is NaN, or a complex one with a NaN part, is
    replaced by its first such term in index order, found by a second walk
    taken only then, or by nx_kinds.h's NaN, in each part of a complex,
-   where no term is NaN. A scan's results stay NaN once they are, since
+   where no term is NaN. A complex sum's parts are float sums, each
+   replaced so apart. A scan's results stay NaN once they are, since
    adding, multiplying and the extremes keep a NaN: where a slice's last
    result is NaN, every result from its first NaN term on is that term, and
    every NaN result before it nx_kinds.h's.
@@ -306,10 +307,15 @@ MONOID(min_f64, double, nx_minimum_f64)
 MONOID(max_b, uint8_t, ANY)
 MONOID(min_b, uint8_t, ALL)
 
-/* Complex products and extremes: nx_kinds.h's Mul, whose lanes start from
-   their first term (plan's [first]), and its Maximum and Minimum, which
-   order the real parts, then the imaginary ones. */
+/* Complex sums, products and extremes. A sum adds each part as a float
+   sum does; a product is nx_kinds.h's Mul, whose lanes start from their
+   first term (plan's [first]); the extremes are its Maximum and Minimum,
+   which order the real parts, then the imaginary ones. */
 #define COMPLEX(C)                                                           \
+  static inline nx_##C cadd_##C(nx_##C a, nx_##C b) {                        \
+    return nx_##C##_of(a.re + b.re, a.im + b.im);                            \
+  }                                                                          \
+  MONOID(sum_##C, nx_##C, cadd_##C)                                          \
   MONOID(prod_##C, nx_##C, nx_mul_##C)                                       \
   MONOID(max_##C, nx_##C, nx_maximum_##C)                                    \
   MONOID(min_##C, nx_##C, nx_minimum_##C)
@@ -788,11 +794,6 @@ STATES(double, f64, NX_NAN_F64, -708)
       (nx_cpu_monoid){lanes_##F, combine_##F, scan_##F, blocks_##F, few_##F,  \
                     column_##F}
 
-#define PROD_MAX_MIN(DT, D)                                                  \
-  SET(NX_MONOID_PROD, DT, prod_##D);                                          \
-  SET(NX_MONOID_MAX, DT, max_##D);                                            \
-  SET(NX_MONOID_MIN, DT, min_##D)
-
 #define ALL4(DT, D)                                                          \
   SET(NX_MONOID_SUM, DT, sum_##D);                                            \
   SET(NX_MONOID_PROD, DT, prod_##D);                                          \
@@ -844,8 +845,8 @@ static void set(nx_cpu_target *t) {
   ALL4(NX_UINT64, u64);
   SET(NX_MONOID_MAX, NX_BOOL, max_b);
   SET(NX_MONOID_MIN, NX_BOOL, min_b);
-  PROD_MAX_MIN(NX_COMPLEX64, c64);
-  PROD_MAX_MIN(NX_COMPLEX128, c128);
+  ALL4(NX_COMPLEX64, c64);
+  ALL4(NX_COMPLEX128, c128);
   t->moments[NX_FLOAT32] = moments_f32;
   t->moments[NX_FLOAT64] = moments_f64;
 }
@@ -914,6 +915,7 @@ typedef struct {
   int part, parts;          /* the dtype of a float or its parts, 1 or 2 */
   int first;                /* lanes, rows and slices start from their
                                first term: a complex product's */
+  int slots;                /* 2 for a complex sum's parts, NaN apart, or 1 */
   int64_t size;             /* the bytes of an output's value */
   _Alignas(16) uint8_t id[WIDEST];
   /* The destinations, the second the first again for one, and the operand
@@ -990,12 +992,11 @@ static void fill(const plan *q, uint8_t *d, int64_t n) {
     memcpy(d + k * q->w, d, (k < n - k ? k : n - k) * q->w);
 }
 
-/* Whether one of the [n] values at [v] is NaN, a complex one where a part
-   is, in one pass the compiler vectorises. */
-static int any_nan(const plan *q, const uint8_t *v, int64_t n) {
+/* Whether one of the [n] floats of dtype [part] at [v] is NaN, in one pass
+   the compiler vectorises. */
+static int floats_nan(int part, const uint8_t *v, int64_t n) {
   int bad = 0;
-  n *= q->parts;
-  if (q->part == NX_FLOAT32) {
+  if (part == NX_FLOAT32) {
     const float *f = (const float *)v;
     for (int64_t j = 0; j < n; j++) bad |= f[j] != f[j];
   } else {
@@ -1005,17 +1006,29 @@ static int any_nan(const plan *q, const uint8_t *v, int64_t n) {
   return bad;
 }
 
+/* Whether one of the [n] values at [v] is NaN, a complex one where a part
+   is. */
+static int any_nan(const plan *q, const uint8_t *v, int64_t n) {
+  return floats_nan(q->part, v, n * q->parts);
+}
+
 static int is_nan(const plan *q, const uint8_t *p) { return any_nan(q, p, 1); }
+
+/* A value's slots are NaN or not as a whole: the value, or each part of a
+   complex sum, whose parts are float sums. Whether the slot at [s] is. */
+static int slot_nan(const plan *q, const uint8_t *s) {
+  return floats_nan(q->part, s, q->parts / q->slots);
+}
 
 static const uint8_t *at(const plan *q, int64_t p) {
   return q->src->base + p * q->w;
 }
 
-/* Writes the NaN nx_kinds.h makes from numbers at [d], in each part of a
-   complex. */
+/* Writes the NaN nx_kinds.h makes from numbers into the slot at [d], in
+   each of its parts. */
 static void made_nan(const plan *q, uint8_t *d) {
   parts_at(d, q->part, q->part == NX_FLOAT32 ? NX_NAN_F32 : NX_NAN_F64,
-           q->parts);
+           q->parts / q->slots);
 }
 
 /* The operand's position of term [t] of the output at [p]. */
@@ -1051,13 +1064,18 @@ static int64_t next(const plan *q, int64_t *idx, int64_t pos) {
   return pos;
 }
 
-/* Replaces the NaN result at [e] of the output at [p] by its first NaN
-   term, or by nx_kinds.h's NaN where none is. */
+/* Replaces each NaN slot of the result at [e] of the output at [p] by its
+   first term's slot that is NaN, or by nx_kinds.h's NaN where none is. */
 static void first_nan(const plan *q, int64_t p, uint8_t *e) {
-  int64_t t = 0;
-  while (t < q->terms && !is_nan(q, at(q, term(q, p, t)))) t++;
-  if (t < q->terms) memcpy(e, at(q, term(q, p, t)), q->w);
-  else made_nan(q, e);
+  int64_t sw = q->w / q->slots;
+  for (int k = 0; k < q->slots; k++) {
+    uint8_t *s = e + k * sw;
+    if (!slot_nan(q, s)) continue;
+    int64_t t = 0;
+    while (t < q->terms && !slot_nan(q, at(q, term(q, p, t)) + k * sw)) t++;
+    if (t < q->terms) memcpy(s, at(q, term(q, p, t)) + k * sw, sw);
+    else made_nan(q, s);
+  }
 }
 
 /* Blocks */
@@ -1519,24 +1537,29 @@ static void rescan(const plan *q, const unit *x, int64_t c, uint8_t *a) {
   }
 }
 
-/* Each of the unit's slices whose last result is NaN takes its first NaN
-   term from that term on, and nx_kinds.h's NaN for each NaN result before
-   it. */
+/* Slot [k] of the slice at [p] whose results start at [d]: where its last
+   result is NaN, it takes its first NaN term's from that term on, and
+   nx_kinds.h's NaN for each NaN result before it. */
+static void settle_slot(const plan *q, int64_t p, int64_t d, int k) {
+  int64_t sw = q->w / q->slots;
+  uint8_t *y = q->dst->base + k * sw;
+  if (!slot_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) return;
+  int64_t i = 0;
+  while (i < q->terms && !slot_nan(q, at(q, p + i * q->rs[0]) + k * sw)) i++;
+  for (int64_t t = 0; t < i; t++) {
+    uint8_t *e = y + (d + t * q->rd) * q->w;
+    if (slot_nan(q, e)) made_nan(q, e);
+  }
+  for (int64_t t = i; t < q->terms; t++)
+    memcpy(y + (d + t * q->rd) * q->w, at(q, p + i * q->rs[0]) + k * sw, sw);
+}
+
+/* Settles each slot of each of the unit's slices. */
 static void settle(const plan *q, const unit *x) {
   if (!q->nan || q->terms == 0) return;
-  uint8_t *y = q->dst->base;
-  for (int64_t j = 0; j < x->W; j++) {
-    int64_t p = x->p + j * x->s, d = x->d + j * x->sd;
-    if (!is_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) continue;
-    int64_t k = 0;
-    while (k < q->terms && !is_nan(q, at(q, p + k * q->rs[0]))) k++;
-    for (int64_t t = 0; t < k; t++) {
-      uint8_t *e = y + (d + t * q->rd) * q->w;
-      if (is_nan(q, e)) made_nan(q, e);
-    }
-    for (int64_t t = k; t < q->terms; t++)
-      memcpy(y + (d + t * q->rd) * q->w, at(q, p + k * q->rs[0]), q->w);
-  }
+  for (int64_t j = 0; j < x->W; j++)
+    for (int k = 0; k < q->slots; k++)
+      settle_slot(q, x->p + j * x->s, x->d + j * x->sd, k);
 }
 
 /* The carry [a] of [W] slices into the chunk after [c], from [a] into [c]
@@ -1724,6 +1747,7 @@ static int reduce_into(task op, int r, int dt, const int *axes, int naxes,
             .part = p,
             .parts = p == dt ? 1 : 2,
             .first = r == NX_MONOID_PROD && p != dt,
+            .slots = p != dt && r == NX_MONOID_SUM ? 2 : 1,
             .size = stateful ? (int64_t)sizeof(nx_cpu_state) : w,
             .dst = y,
             .dst1 = y1,

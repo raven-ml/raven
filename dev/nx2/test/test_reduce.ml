@@ -343,8 +343,8 @@ let test_mean () =
   let none = value (A.of_array D.Float64 [| 0 |] [||]) in
   equal bool true (Float.is_nan (A.to_array (host_array (Nx.mean none))).(0))
 
-(* Scans through their expansions: a complex sum adds the parts, and a narrow
-   float accumulates at float32, rounding each prefix once. *)
+(* Scans of complex numbers and narrow floats: a complex sum adds the parts,
+   and a narrow float accumulates at float32, rounding each prefix once. *)
 let test_scan_expansions () =
   let z =
     A.of_array D.Complex64 [| 3 |]
@@ -1874,7 +1874,7 @@ let reductions_group =
         "bad axes, empty extremes and refused dtypes raise naming the function"
         test_errors;
       test "mean divides the sum by the count" test_mean;
-      test "scans of complex numbers and narrow floats expand"
+      test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_expansions;
     ]
 

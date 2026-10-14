@@ -154,19 +154,17 @@ external moments_c :
   Nx_array.answer = "nx_cpu_moments_scan_byte" "nx_cpu_moments_scan"
 
 (* Whether the kernels reduce terms of [dt] by [m]: the four monoids at
-   float32, float64 and the 8- to 64-bit integers, extremes at bool, and
-   all but [Sum] at the complex dtypes. *)
+   float32, float64, the complex dtypes and the 8- to 64-bit integers, and
+   extremes at bool. *)
 let reduces (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
   match (m, dt) with
   | Logsumexp, _ -> false
   | ( (Sum | Prod | Max | Min),
-      ( Float32 | Float64 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32
-      | Int64 | Uint64 ) ) ->
+      ( Float32 | Float64 | Complex64 | Complex128 | Int8 | Uint8 | Int16
+      | Uint16 | Int32 | Uint32 | Int64 | Uint64 ) ) ->
       true
   | (Max | Min), Bool -> true
-  | (Prod | Max | Min), (Complex64 | Complex128) -> true
   | (Sum | Prod), Bool -> false
-  | Sum, (Complex64 | Complex128) -> false
   | ( (Sum | Prod | Max | Min),
       ( Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn
       | Int4 | Uint4 | Bit ) ) ->

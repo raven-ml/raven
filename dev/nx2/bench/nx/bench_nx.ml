@@ -705,6 +705,8 @@ let statistics_rows =
           Nx.std ~axes:[ 1 ] (Thumper.black_box m1024));
       Thumper.bench "logsumexp-f32-1M" (fun () ->
           Nx.logsumexp (Thumper.black_box f1m));
+      Thumper.bench "sum-c64-1M" (fun () -> Nx.sum (Thumper.black_box c1m));
+      Thumper.bench "cumsum-c64-1M" (fun () -> Nx.cumsum (Thumper.black_box c1m));
       Thumper.bench "sigmoid-f32-1M" (fun () -> Nx.sigmoid (Thumper.black_box f1m));
       Thumper.bench "softplus-f32-1M" (fun () ->
           Nx.softplus (Thumper.black_box f1m));

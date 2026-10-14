@@ -871,17 +871,36 @@ let zscanned narrow ~first ((f, id) as m) ts =
       | _ -> if znan v then zmade narrow else v.bits)
     out
 
+(* A complex sum's results: each part's, a float sum of the terms' parts in
+   nx.cpu's order. *)
+let zsums c ts =
+  let part = if narrow c.x then D.Any D.Float32 else D.Any D.Float64 in
+  let m = op part Sum and made = made part in
+  let sums f =
+    results c (Array.map f ts) ~fill:Some_nan
+      ~reduce:(fun o -> settle made o (ordered m o))
+      ~scan:(scanned made m)
+  in
+  let bits = function Bits b -> b | Some_nan -> invalid_arg "zsums: a NaN" in
+  Array.map2
+    (fun r i -> (bits r, bits i))
+    (sums (fun t -> F (t.re, fst t.bits)))
+    (sums (fun t -> F (t.im, snd t.bits)))
+
 (* A product starts from its first term: 1 + 0i times a term would change
    its signed zeros and make NaN parts from its infinite ones. *)
 let zexpected c =
   let narrow = narrow c.x and first = c.monoid = Prod in
-  let m = zop narrow c.monoid in
-  results c (zterms c.x) ~fill:(0L, 0L)
-    ~reduce:(fun o -> zsettle narrow o (ordered ~first m o))
-    ~scan:(zscanned narrow ~first m)
+  let ts = zterms c.x in
+  if c.monoid = Sum then zsums c ts
+  else
+    let m = zop narrow c.monoid in
+    results c ts ~fill:(0L, 0L)
+      ~reduce:(fun o -> zsettle narrow o (ordered ~first m o))
+      ~scan:(zscanned narrow ~first m)
 
-(* Complex products and extremes, reduced and scanned, in nx.cpu's order,
-   bit for bit. *)
+(* Complex sums, products and extremes, reduced and scanned, in nx.cpu's
+   order, bit for bit. *)
 let law_complex (b : Support.backend) c =
   let s = shape_of c.x in
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
@@ -916,7 +935,7 @@ let law_complex (b : Support.backend) c =
 
 let complex_case =
   Gen.with_pp pp_case
-    (case_of ~monoids:[ Prod; Max; Min ] D.[ Any Complex64; Any Complex128 ])
+    (case_of D.[ Any Complex64; Any Complex128 ])
 
 (* [n] terms, -0 - i then 1 - 0i, whose products in every order are
    -0 - i; 1 + 0i times that would be +0 - i. *)
@@ -1109,12 +1128,11 @@ let on_cpu (b : Support.backend) =
   List.exists (fun (c : Support.backend) -> c.name = b.name) Support.cpus
 
 (* Whether [b] computes [c] as nx_cpu.mli says nx.cpu does: the base
-   dtypes, booleans for the extremes alone, and on nx.cpu complex numbers
-   but for sums, which nx.cuda declines. *)
+   dtypes, booleans for the extremes alone, and on nx.cpu the complex
+   dtypes, which nx.cuda declines. *)
 let cpu_computes b c =
   let (A.Any x) = c.x in
-  List.mem (D.Any (A.dtype x)) base
-  || (on_cpu b && D.is D.Complex (A.dtype x) && c.monoid <> Sum)
+  List.mem (D.Any (A.dtype x)) base || (on_cpu b && D.is D.Complex (A.dtype x))
 
 (* Whether a float result of [c] is a NaN made from numbers: one whose terms,
    a scan's up to it, hold no NaN. *)
@@ -2470,8 +2488,8 @@ let cpu (b : Support.backend) =
       prop ~examples:dot_examples "a sum of one axis is a contraction with ones"
         dots (run (law_contract b));
       prop ~examples:complex_examples
-        "complex products and extremes fold in nx.cpu's order" complex_case
-        (run (law_complex b));
+        "complex sums, products and extremes fold in nx.cpu's order"
+        complex_case (run (law_complex b));
       prop ~count:20 ~examples:large_examples "one thread gives the job's bits"
         large (run (law_threads b));
       prop ~examples:padded_examples "a padded load reduces as the array it reads"
