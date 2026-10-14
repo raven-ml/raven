@@ -167,19 +167,33 @@ INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
   zstore(w, c, ldc, rows);
 }
 
-/* A tile of [rows] and [n] columns, fewer than 2L, through a whole one on
-   the stack. Apart from the kernel, so that the kernel's frame holds no
-   tile, which macOS would probe page by page at each call. */
+/* The rows of an edge's buffer: a block of a's, MC below. */
+#define EDGE_ROWS 128
+
+/* [m] rows, at most EDGE_ROWS (the kernel splits more into pieces of
+   EDGE_ROWS), of [n] columns, fewer than 2L: each of their tiles whole
+   into one buffer on the stack, then copied out. A load
+   of the cores waits for the unit's stores before it: on the M1 Max the
+   first load after STZ and CLR waits about 160 ns, whatever it reads, so
+   that a profile charges the unit's work to the next code that loads. A
+   copy per tile waited on each tile in turn; one copy waits once. Apart
+   from the kernel, so that the kernel's frame holds no buffer, which
+   macOS would probe page by page at each call. */
 static __attribute__((noinline)) void edge(
-    int w, int64_t k, const uint8_t *a, int64_t a_k, const uint8_t *b,
-    int64_t b_k, uint8_t *y, int64_t ldc, int64_t rows, int64_t n,
-    nx_cpu_from from) {
-  _Alignas(ROW_BYTES) uint8_t t[NX_CPU_TILE];
-  for (int64_t i = 0; from == NX_CPU_FROM_TILE && i < rows; i++)
+    int w, int64_t m, int64_t k, const uint8_t *a, int64_t a_row,
+    int64_t a_k, const uint8_t *b, int64_t b_k, uint8_t *y, int64_t ldc,
+    int64_t n, nx_cpu_from from) {
+  _Alignas(ROW_BYTES) uint8_t t[EDGE_ROWS * ROW_BYTES];
+  for (int64_t i = 0; from == NX_CPU_FROM_TILE && i < m; i++)
     memcpy(t + ROW_BYTES * i, y + i * ldc, (size_t)(n * w));
-  if (w == 4) tile(4, k, a, a_k, b, b_k, t, ROW_BYTES, rows, from);
-  else tile(8, k, a, a_k, b, b_k, t, ROW_BYTES, rows, from);
-  for (int64_t i = 0; i < rows; i++)
+  for (int64_t i0 = 0; i0 < m; i0 += SIDE(w)) {
+    int64_t rows = m - i0 < SIDE(w) ? m - i0 : SIDE(w);
+    const uint8_t *ai = a + i0 * a_row;
+    uint8_t *ti = t + i0 * ROW_BYTES;
+    if (w == 4) tile(4, k, ai, a_k, b, b_k, ti, ROW_BYTES, rows, from);
+    else tile(8, k, ai, a_k, b, b_k, ti, ROW_BYTES, rows, from);
+  }
+  for (int64_t i = 0; i < m; i++)
     memcpy(y + i * ldc, t + ROW_BYTES * i, (size_t)(n * w));
 }
 
@@ -189,13 +203,16 @@ INLINE void kernel(int w, int64_t m, int64_t n, int64_t k, const void *va,
                    void *vc, int64_t ldc, nx_cpu_from from) {
   const uint8_t *a = va, *b = vb;
   uint8_t *c = vc;
-  for (int64_t i0 = 0; i0 < m; i0 += SIDE(w)) {
-    int64_t rows = m - i0 < SIDE(w) ? m - i0 : SIDE(w);
+  int64_t step = n == SIDE(w) ? SIDE(w) : EDGE_ROWS;
+  for (int64_t i0 = 0; i0 < m; i0 += step) {
+    int64_t rows = m - i0 < step ? m - i0 : step;
     const uint8_t *ai = a + i0 * a_row * w;
     uint8_t *ci = c + i0 * ldc * w;
     if (n == SIDE(w))
       tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, from);
-    else edge(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, n, from);
+    else
+      edge(w, rows, k, ai, a_row * w, a_k * w, b, b_k * w, ci, ldc * w, n,
+           from);
   }
 }
 
