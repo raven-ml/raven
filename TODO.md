@@ -28,8 +28,8 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- step 5: a submission run's take as a hold; one claim take (D8), net lines
-  <= 0. Step 6: the boxed `Some` on the cache path
+- step 5: one claim take (D8), net lines <= 0. Step 6: the boxed `Some` on
+  the cache path
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required
   `~waits` against its callers (none in nx, rune or tolk pass waits), and
   count exact-zero tests with `Gc.allocated_bytes`; `Buffer.free`; both

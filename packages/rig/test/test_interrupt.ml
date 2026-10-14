@@ -264,6 +264,18 @@ let waiting =
       let run = Sub.Run.make () in
       Rig.Point.wait (Rig.submit s ~run ~buffers:[||] ~waits:[| v |]))
 
+(* The run every [kept_run] submits with. *)
+let kept = Sub.Run.make ()
+
+(* Submits a copy under a profile with [kept], which serves each call in turn:
+   an exception in one submit leaves the run to the next. *)
+let kept_run =
+  op "profiled submit with a kept run" (fun d _ ->
+      let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+      let buffers = [| B.create d 8; B.create d 8 |] in
+      let submit () = Rig.Point.wait (once ~buffers ~run:kept s) in
+      ignore (Rig.Profile.take submit))
+
 (* Interrupts a close of a machine's host, which holds a device of the
    machine, from its [n]-th allocation, then checks that the machine answers
    as the close left it: an open host opens devices and a closed one opens
@@ -461,7 +473,7 @@ let () =
                   test (op.name ^ ", on a device it ran on")
                     (interrupts Used op);
                 ])
-              ((opens :: caches :: borrow_kept :: waiting :: ops)
+              ((opens :: caches :: borrow_kept :: waiting :: kept_run :: ops)
               @ staged @ List.map unmapped staged)
            @ [
                test "close of a machine's host" test_close;

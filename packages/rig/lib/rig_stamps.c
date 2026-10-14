@@ -599,6 +599,11 @@ value caml_rig_run_fit(value v_r, value v_s) {
   return Val_unit;
 }
 
+/* Whether a submit or a store holds the run [v_r]. */
+value caml_rig_run_busy(value v_r) {
+  return Val_bool(atomic_load(&Run_val(v_r)->busy) != RUN_IDLE);
+}
+
 /* Forgets the run's buffers and its waits, and gives it back. */
 value caml_rig_run_give(value v_r) {
   struct rig_run *r = Run_val(v_r);

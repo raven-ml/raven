@@ -95,6 +95,7 @@ external run_new : unit -> run = "caml_rig_run_new"
 external run_take : run -> c -> int = "caml_rig_run_take" [@@noalloc]
 external run_fit : run -> c -> unit = "caml_rig_run_fit"
 external run_give : run -> unit = "caml_rig_run_give" [@@noalloc]
+external run_busy : run -> bool = "caml_rig_run_busy" [@@noalloc]
 
 (* Takes [run] for a submit of [c], fitting it to [c] unless it served [c] last:
    whether no other submit held it. *)
@@ -1246,24 +1247,31 @@ let record s (lane, name) { ps; moves; asked } p pair =
   in
   List.iter (fun prof -> Profile.pend prof { device; value; read; drop }) ps
 
-(* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
-   form, and the stamps and templates it names without a reference, with the
-   runtime released: their owners stay reachable until the run is given back.
-   While a profile is taken, a submission with parts times its value. *)
-let taken s run buffers waits =
-  (* The last profile may stop between the two reads: the work is then
-     untimed, since no entry would give its time pair back. *)
-  let t =
-    match s.span with
-    | Some _ when Profile.enabled () -> (
-        match Profile.active () with
-        | [] -> untaken
-        | ps -> { ps; moves = moves_of s buffers; asked = Profile.now () })
-    | _ -> untaken
-  in
-  run_timed run (t != untaken);
-  let claimed = ref 0 in
+(* The taking of a submit of [s] with [buffers]. The last profile may stop
+   between the two reads: the work is then untimed, since no entry would give
+   its time pair back. *)
+let taking s buffers =
+  match s.span with
+  | Some _ when Profile.enabled () -> (
+      match Profile.active () with
+      | [] -> untaken
+      | ps -> { ps; moves = moves_of s buffers; asked = Profile.now () })
+  | _ -> untaken
+
+(* Takes [run] and submits [s] with it. The take is the last step before the
+   trap that gives the run back, so in native code an exception anywhere
+   after it, such as one where the taking allocates, leaves the run to the
+   next submit. The C submit reads [s]'s C form, and the stamps and templates
+   it names without a reference, with the runtime released: their owners stay
+   reachable until the run is given back. While a profile is taken, a
+   submission with parts times its value. *)
+let submit_run s run buffers waits =
+  if not (take run s.c) then
+    invalid_argf "Rig.%s: another submit is using the run" fn;
+  let t = ref untaken and claimed = ref 0 in
   match
+    t := taking s buffers;
+    run_timed run (!t != untaken);
     (* Fixed and part-owned buffers need the same protection as run buffers:
        donation cannot overwrite them before hand-over publishes their use. *)
     while !claimed < Array.length s.fixed do
@@ -1280,7 +1288,7 @@ let taken s run buffers waits =
       let pair = run_pair run in
       run_give run;
       (match s.span with
-      | Some span when t != untaken -> record s span t p pair
+      | Some span when !t != untaken -> record s span !t p pair
       | _ -> ());
       ignore (Sys.opaque_identity s.c);
       ignore (Sys.opaque_identity s.fixed);
@@ -1295,12 +1303,12 @@ let taken s run buffers waits =
 let submit ?(waits = [||]) s ~run ~buffers =
   if Dev.is_lost s.dev then Dev.raise_lost s.dev;
   check_count s buffers;
-  if not (take run s.c) then
-    invalid_argf "Rig.%s: another submit is using the run" fn;
-  taken s run buffers waits
+  submit_run s run buffers waits
 
 (* Each domain's run for copies; one another thread of the domain holds is
-   replaced by a fresh one for the copy. *)
+   replaced by a fresh one for the copy. In native code no poll point comes
+   between the read of the run and its take, so no other thread of the domain
+   runs between them. *)
 let copy_runs = Domain.DLS.new_key run_new
 
 (* Each device's submission of one copy from slot 0 into slot 1, which [make]
@@ -1309,13 +1317,7 @@ let copiers =
   Dev.new_key (fun d -> make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |])
 
 let run_copy d ~src ~dst =
-  let s = Dev.local copiers d in
+  let s = Dev.local copiers d and buffers = [| src; dst |] in
   let run = Domain.DLS.get copy_runs in
-  let run =
-    if take run s.c then run
-    else
-      let fresh = run_new () in
-      ignore (take fresh s.c : bool);
-      fresh
-  in
-  taken s run [| src; dst |] [||]
+  let run = if run_busy run then run_new () else run in
+  submit_run s run buffers [||]
