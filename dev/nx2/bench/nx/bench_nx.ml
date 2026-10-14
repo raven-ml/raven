@@ -364,6 +364,19 @@ let tile_rows =
         Nx.Repr.array (Nx.matmul (Thumper.black_box a64) b64));
   ]
 
+(* Few rows on several threads, b's slivers fewer than the threads (24 ×
+   24 × 512) or not a multiple of them (64³ float64 on six cores). *)
+let split_rows =
+  let a = matrix D.Float32 [| 24; 512 |] in
+  let b = matrix D.Float32 [| 512; 24 |] in
+  let x = filled D.Float64 [| 64; 64 |] 1. in
+  [
+    Thumper.bench "matmul-f32-24x24x512" (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box a) b));
+    Thumper.bench "matmul-f64-64" (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box x) x));
+  ]
+
 let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
 
@@ -444,8 +457,8 @@ let dtype_rows =
 let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
-   @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ tile_rows @ decode_rows
-   @ chain_rows
+   @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ tile_rows @ split_rows
+   @ decode_rows @ chain_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
