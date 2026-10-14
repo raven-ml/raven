@@ -1988,6 +1988,140 @@ let test_stateful_cases (b : Support.backend) () =
   equal ~msg:"an Arg of no term" answer A.Shape_mismatch
     (reduce (Arg Min) (make D.Float32 [| 2; 0 |]) [| make D.Float32 [| 2 |]; pos |])
 
+(* Guard pages *)
+
+(* A reduction by [r] along [axes], or a scan along [axes.(0)], of [x]
+   through the views [views]: each that nx.cpu computes. *)
+type guard = {
+  scan : bool;
+  r : Nx_kernel.reduction;
+  axes : int array;
+  x : A.any;
+  views : string list;
+}
+
+let pp_guard ppf (g : guard) =
+  let (A.Any x) = g.x in
+  Format.fprintf ppf "%s %s along %a of %a %a (%s)"
+    (if g.scan then "scan" else "reduce")
+    (reduction_name g.r) pp_ints g.axes D.pp (A.dtype x) L.pp (A.layout x)
+    (String.concat ", " g.views)
+
+(* Innermost extents of one element to a few vectors of the widest dtype
+   past the widest vector, and at the edges of lane blocks and scan
+   chunks. *)
+let inner =
+  let open Gen in
+  frequency
+    [
+      (6, int_range 1 72);
+      (2, of_list ~pp:Format.pp_print_int [ 127; 128; 129; 255; 256; 257 ]);
+      (1, of_list ~pp:Format.pp_print_int [ 1023; 1025; 4095; 4097 ]);
+    ]
+
+let guard_case =
+  Gen.with_pp pp_guard
+    (let open Gen in
+     let* d = of_list ~pp:pp_dtype (floats @ floats @ floats @ floats @ base) in
+     let* scan = bool in
+     let float = is_float d and boolean = d = D.Any D.Bool in
+     (* Moments and Logsumexp, which floats alone take, come twice as
+        often. *)
+     let* r =
+       of_list
+         (Nx_kernel.[ Monoid Max; Monoid Min ]
+         @ (if boolean then [] else Nx_kernel.[ Monoid Sum; Monoid Prod ])
+         @ (if float then Nx_kernel.[ Moments; Moments ] else [])
+         @
+         if scan || boolean then []
+         else
+           Nx_kernel.[ Arg Max; Arg Min ]
+           @
+           if float then Nx_kernel.[ Monoid Logsumexp; Monoid Logsumexp ]
+           else [])
+     in
+     let* n = inner in
+     let* outer = array ~size:(int_range 0 2) (int_range 1 5) in
+     let s = Array.append outer [| n |] in
+     let rank = Array.length s in
+     let* axes =
+       if scan then map (fun a -> [| a |]) (int_range 0 (rank - 1))
+       else
+         let+ keep = array ~size:(constant rank) bool in
+         Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
+     in
+     let* v = view_of rank in
+     let* specials = frequency [ (3, constant 0); (1, constant 20) ] in
+     let+ seed = int in
+     { scan; r; axes; x = operand d s v ~specials seed; views = view_names v })
+
+(* The same bits with the operand, through its view, and each destination
+   against an inaccessible page. *)
+let law_guards (b : Support.backend) ((g : guard), side) =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let after = side = Support.After in
+  let rank = Array.length (shape_of g.x) in
+  let n = (shape_of g.x).(rank - 1) in
+  collect (Printf.sprintf "%s %s" (if g.scan then "scan" else "reduce")
+       (reduction_name g.r));
+  let is r = g.r = r in
+  cover "a monoid reduced" ((not g.scan) && is (Monoid Sum));
+  cover "a monoid scanned" (g.scan && is (Monoid Max));
+  cover "Logsumexp" (is (Monoid Logsumexp));
+  cover "an Arg" (is (Arg Max) || is (Arg Min));
+  cover "Moments reduced" ((not g.scan) && is Moments);
+  cover "Moments scanned" (g.scan && is Moments);
+  cover "the innermost axis reduced" (Array.mem (rank - 1) g.axes);
+  cover "outer axes alone reduced"
+    (g.axes <> [||] && not (Array.mem (rank - 1) g.axes));
+  cover "an innermost extent past a vector, not a multiple of one"
+    (n > 32 && n mod 16 <> 0);
+  cover "a stepped operand at the page before"
+    ((not after) && List.mem "stepped" g.views);
+  cover "a reversed operand at the page after"
+    (after && List.mem "reversed" g.views);
+  cover "a broadcast operand" (List.mem "broadcast" g.views);
+  let (A.Any x) = g.x in
+  let dt = D.Any (A.dtype x) in
+  let s =
+    let s = shape_of g.x in
+    if g.scan then s
+    else
+      Array.of_list
+        (List.filteri (fun i _ -> not (Array.mem i g.axes)) (Array.to_list s))
+  in
+  let dsts =
+    match g.r with
+    | Arg _ -> [| (dt, s); (D.Any D.Int64, s) |]
+    | Moments -> [| (dt, s); (dt, s) |]
+    | Monoid _ -> [| (dt, s) |]
+  in
+  let call xs ds =
+    let p = identity dt and loads = [| plain_of xs.(0) |] in
+    if g.scan then K.scan p ~axis:g.axes.(0) (g.r, 0) ~dsts:ds loads
+    else K.reduce p ~axes:g.axes [| (g.r, 0) |] ~dsts:ds loads
+  in
+  equal Elements.answer A.Done
+    (Elements.same_guarded side ~call [| g.x |] dsts)
+
+(* A padded load's operand, which nx.cpu copies padded first, against the
+   page, and the destination likewise. *)
+let law_padded_guards (b : Support.backend) (p, side) =
+  match p.loaded with
+  | Refused _ -> reject ()
+  | Reads c ->
+      cover "windows" (p.pad.windows <> [||]);
+      cover "cropped" (Array.exists (fun l -> l < 0) p.pad.lo);
+      cover "at the page after" (side = Support.After);
+      cover "at the page before" (side = Support.Before);
+      let dt = dtype_of p.x in
+      let call xs ds =
+        compute b.kernels ~scan:c.scan (identity dt) c.monoid c.axes ds.(0)
+          [| padded_load xs.(0) p.fill p.pad |]
+      in
+      equal Elements.answer A.Done
+        (Elements.same_guarded side ~call [| p.x |] [| (dt, result_shape c) |])
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -2095,6 +2229,16 @@ let cpu (b : Support.backend) =
         (run (law_record b));
       test "declines Arg at bool and narrow floats, refuses an Arg of nothing"
         (fun () -> b.around (test_stateful_cases b));
+      prop ~count:500
+        "reads and writes no byte past the operand and destinations, \
+         whatever pages lie beside them"
+        (Gen.pair guard_case Elements.sides)
+        (run (law_guards b));
+      prop ~count:200
+        "reads no byte past a padded load's operand, whatever pages lie \
+         beside it"
+        (Gen.pair padded_case Elements.sides)
+        (run (law_padded_guards b));
     ]
 
 let () =
