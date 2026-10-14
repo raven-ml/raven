@@ -350,6 +350,20 @@ let square_rows (type v s) name (dt : (v, s) D.t) (v : v) sizes =
           Nx.Repr.array (Nx.matmul (Thumper.black_box a) b)))
     sizes
 
+(* 4 rows by a 64 × 64 matrix, which lane order sums in the target's tile. *)
+let tile_rows =
+  let a = matrix D.Float32 [| 4; 64 |] and b = matrix D.Float32 [| 64; 64 |] in
+  let a64 = filled D.Float64 [| 4; 64 |] 1. in
+  let b64 = filled D.Float64 [| 64; 64 |] 1. in
+  [
+    Thumper.bench "matmul-f32-4x64x64" (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box a) b));
+    Thumper.bench "matmul-f32-4x64x64-direct"
+      (gemm_direct ~contracting:[| (1, 0) |] a b [| 4; 64 |]);
+    Thumper.bench "matmul-f64-4x64x64" (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box a64) b64));
+  ]
+
 let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
 
@@ -430,7 +444,8 @@ let dtype_rows =
 let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
-   @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ decode_rows @ chain_rows
+   @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ tile_rows @ decode_rows
+   @ chain_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
