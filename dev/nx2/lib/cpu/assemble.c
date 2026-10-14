@@ -58,7 +58,7 @@ typedef struct {
 } filling;
 
 /* Stores the fill into a block's elements: rows by the target table's fill,
-   a sub-byte dtype's element by element. */
+   a sub-byte dtype's rows of unit step as runs (nx_array.h). */
 static void fill_block(const nx_cpu_block *b, void *ctx) {
   const filling *f = ctx;
   int bits = f->dst->bits, w = bits / 8;
@@ -66,7 +66,9 @@ static void fill_block(const nx_cpu_block *b, void *ctx) {
   for (int64_t q = 0; q < b->n2; q++)
     for (int64_t r = 0; r < b->n1; r++) {
       int64_t p = b->at[0] + q * b->s2[0] + r * b->s1[0];
-      if (bits < 8)
+      if (bits < 8 && b->s0[0] == 1)
+        nx_sub_fill_run(f->dst->base, bits, p, b->n0, f->fill[0]);
+      else if (bits < 8)
         for (int64_t j = 0; j < b->n0; j++)
           nx_sub_store(f->dst->base, bits, p + j * b->s0[0], f->fill[0]);
       else

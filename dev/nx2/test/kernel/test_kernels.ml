@@ -1066,6 +1066,43 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
       (fun dst -> K.apply0 (Iota axis) ~dst)
   end
 
+(* A fill into a C-contiguous destination at an offset into a larger
+   buffer, mid-byte for a sub-byte dtype, stores its element at each of the
+   destination's elements and leaves the elements around it. *)
+let law_fill_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed) =
+  let module K = (val b.kernels) in
+  let n = Array.fold_left ( * ) 1 s in
+  let whole = on b (seeded dt [| lead + n + trail |] seed) in
+  let strides = L.strides (L.contiguous s) in
+  let dst = A.v dt (L.v ~offset:lead ~strides s) (A.buffer whole) in
+  let before = bits_of (host whole) in
+  let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
+  let w = Array.length e in
+  let fill = String.init w (fun i -> Char.chr e.(i)) in
+  cover "sub-byte, mid-byte" (D.bits dt < 8 && lead mod (8 / D.bits dt) <> 0);
+  cover "on the job's threads" (n >= 1_000_000);
+  equal answer A.Done (K.apply0 (Fill fill) ~dst);
+  let inside i = i / w >= lead && i / w < lead + n in
+  let want = Array.mapi (fun i x -> if inside i then e.(i mod w) else x) before in
+  equal (array int) want (bits_of (host whole))
+
+let fill_insides =
+  Gen.with_pp
+    (fun ppf (d, s, (lead, trail), _) ->
+      Format.fprintf ppf "%a %a after %d, before %d" pp_dtype d
+        Nx_array_gen.pp_ints s lead trail)
+    (let open Gen in
+     let* d = dtypes in
+     let* s = shape in
+     let* around = pair (int_range 0 9) (int_range 0 9) in
+     let+ seed = nat in
+     (d, s, around, seed))
+
+(* Sub-byte fills of a million elements, starting and ending mid-byte. *)
+let large_fills =
+  D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
+  |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
+
 (* NaN bits *)
 
 (* nx.cpu under each target table the host runs. *)
@@ -1447,17 +1484,6 @@ let split (b : Support.backend) (p : P.t) (types : D.any array) shape
           let dst = A.create b.device D.Int64 shape in
           run (K.apply0 (Iota a) ~dst);
           A.Any dst
-      | Const (D.Any d, bits) when D.bits d < 8 ->
-          (* Fill declines sub-byte dtypes: every byte holds the code in
-             each of its elements. *)
-          let w = D.bits d and c = Char.code bits.[0] in
-          let byte = ref 0 in
-          for e = 0 to (8 / w) - 1 do
-            byte := !byte lor (c lsl (e * w))
-          done;
-          let n = Array.fold_left ( * ) 1 shape in
-          let data = String.make (max 1 (D.bytes d n)) (Char.chr !byte) in
-          A.Any (on b (A.v d (L.contiguous shape) (B.of_string data)))
       | Const (_, bits) ->
           let (A.Any dst) = fresh i in
           run (K.apply0 (Fill bits) ~dst);
@@ -1829,6 +1855,10 @@ let laws (b : Support.backend) =
       prop "fill stores its element and iota each index"
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
+      prop ~examples:large_fills
+        "fill stores its element inside a buffer and nothing around it"
+        fill_insides
+        (run (law_fill_inside b));
       test "a declined map writes nothing" (unit (test_declined_map b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));

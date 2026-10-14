@@ -332,6 +332,20 @@ static inline __attribute__((always_inline)) void nx_sub_pack_run(
   }
 }
 
+/* Writes the low [bits] of [v] to every element: the bytes the run holds
+   whole all at once, a byte of [v] repeated. */
+static inline void nx_sub_fill_run(uint8_t *base, int bits, int64_t p,
+                                   int64_t n, uint32_t v) {
+  int per = 8 / bits;
+  int64_t i = 0;
+  for (; i < n && (p + i) % per != 0; i++) nx_sub_store(base, bits, p + i, v);
+  uint8_t byte = bits == 1 ? (uint8_t)-(v & 1) : (uint8_t)((v & 15) * 0x11);
+  uint8_t *b = base + (p + i) / per;
+  int64_t whole = (n - i) / per;
+  for (int64_t k = 0; k < whole; k++) b[k] = byte;
+  for (i += whole * per; i < n; i++) nx_sub_store(base, bits, p + i, v);
+}
+
 /* Runs
 
    The codecs of nx_dtype.h over [n] contiguous elements, for host

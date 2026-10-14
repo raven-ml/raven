@@ -13,6 +13,8 @@ module D = Nx_array.Dtype
 let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
+module C = Nx_support.Counting
+module Count = (val Nx.devices ~kernels:(module C) [ m 2 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
@@ -349,6 +351,21 @@ let test_like_every_set () =
   equal bool true (Nx.placement (Nx.scalar_like x 5) = None);
   equal (array int) [| 1; 1; 1 |] (Nx.to_array (Nx.ones_like x))
 
+(* A sub-byte fill is one kernel call on a device of nx.cpu's kernels. *)
+let test_like_sub_byte () =
+  let check (type v s) (dt : (v, s) D.t) (v : v) =
+    let x = Nx.place Count.on (Nx.zeros dt [| 13 |]) in
+    C.reset ();
+    let y = Nx.full_like x v in
+    let got = Nx.to_array y in
+    equal ~msg:(D.name dt ^ " in one kernel call") int 1 (C.calls ());
+    equal_elements dt (Array.make 13 v) got
+  in
+  check D.Int4 (-7);
+  check D.Uint4 11;
+  check D.Float4_e2m1fn (-3.);
+  check D.Bit true
+
 let test_like_host () =
   let x = Nx.create Nx.bool [| 2 |] [| false; false |] in
   equal bool true
@@ -363,6 +380,7 @@ let like =
       test "a reference of every set gives values of every set"
         test_like_every_set;
       test "a host reference gives host values" test_like_host;
+      test "a sub-byte reference fills in one kernel call" test_like_sub_byte;
       refusals
         [
           ("Nx.full_like", fun () -> ignore (Nx.full_like (Nx.zeros Nx.uint4 [| 1 |]) 16));

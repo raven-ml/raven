@@ -14,7 +14,8 @@
    place is one already in its compute dtype; the stage brings any other
    input into a slot first, as it does an input whose rows step more than
    one element, and the unstage stores a slot into a destination of
-   another dtype. Fill moves bits too, at every dtype of a byte or more.
+   another dtype. Fill moves bits too, a sub-byte dtype's code into each
+   element.
 
    OCaml passes a kind as its value: a constant constructor is its index
    among the type's constant constructors, a constructor with an argument a
@@ -176,14 +177,22 @@ static void block(const nx_cpu_block *b, void *ctx) {
   }
 }
 
-/* A fill stores its element through the target table's row of its width. */
+/* A fill stores its element through the target table's row of its width,
+   a sub-byte one's rows of unit step as runs (nx_array.h). */
 static void fill_block(const nx_cpu_block *b, void *ctx) {
   const op *j = ctx;
-  nx_cpu_row0 f = nx_cpu_table->fill[width_index(j->a[0].bits / 8)];
+  const nx_array *d = &j->a[0];
+  nx_cpu_row0 f = nx_cpu_table->fill[width_index(nx_cpu_width(d->dtype))];
   for (int64_t q = 0; q < b->n2; q++)
-    for (int64_t r = 0; r < b->n1; r++)
-      f(b->n0, at(j->a, 0, b->at[0] + q * b->s2[0] + r * b->s1[0]), b->s0[0],
-        j->bits);
+    for (int64_t r = 0; r < b->n1; r++) {
+      int64_t p = b->at[0] + q * b->s2[0] + r * b->s1[0];
+      if (d->bits >= 8) f(b->n0, at(j->a, 0, p), b->s0[0], j->bits);
+      else if (b->s0[0] == 1)
+        nx_sub_fill_run(d->base, d->bits, p, b->n0, j->bits[0]);
+      else
+        for (int64_t i = 0; i < b->n0; i++)
+          nx_sub_store(d->base, d->bits, p + i * b->s0[0], j->bits[0]);
+    }
 }
 
 /* Reads the [n] operands [in] through the door and walks them with [f]. A
@@ -267,13 +276,11 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
 
 value nx_cpu_fill(value vbits, value vd) {
   CAMLparam2(vbits, vd);
-  int d = nx_array_dtype(vd), bits = nx_dtype_row_of(d).bits;
-  if (bits < 8 || width_index(bits / 8) < 0) CAMLreturn(Val_int(NX_DECLINED));
-  if (caml_string_length(vbits) != (size_t)(bits / 8))
-    CAMLreturn(Val_int(NX_DTYPE));
+  int d = nx_array_dtype(vd), w = nx_cpu_width(d);
+  if (caml_string_length(vbits) != (size_t)w) CAMLreturn(Val_int(NX_DTYPE));
   /* The door may run OCaml code, which may move the string. */
   uint8_t element[16];
-  memcpy(element, String_val(vbits), bits / 8);
+  memcpy(element, String_val(vbits), (size_t)w);
   nx_operand in[1] = {{vd, d, 1}};
   op j = {.bits = element};
   CAMLreturn(walk_operands(1, in, fill_block, &j));

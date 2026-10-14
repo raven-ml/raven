@@ -11,8 +11,8 @@
     call. It answers [Done] once its work is done, or, before any write, a
     refusal: the door's, or [Shape_mismatch] if the operands' shapes differ.
 
-    [apply0] computes [Fill] at every dtype of a byte or more and [Iota] at
-    float32, float64 and the 8- to 64-bit integers, and declines the others.
+    [apply0] computes [Fill] at every dtype and [Iota] at float32, float64
+    and the 8- to 64-bit integers, and declines the others.
     [apply1] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with
     [Wrong_dtype]. [map] computes a program of plain loads whose outputs,
