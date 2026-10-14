@@ -160,10 +160,14 @@ val report :
 (** {1:opening Opening}
 
     The GSP reports a channel it stopped and a fault its MMU queued, and the
-    device raises them from {!Rig_nv.sleep}. Only the process uses a GPU it
-    has booted, so the GPU's work waits for nobody else's, and rig loses the
-    device once its timeline makes no progress for
-    {!Rig_pci.Gpus.hang_ms} (the device's [hang_ms]).
+    device raises them from {!Rig_nv.sleep}. An exception in a sleep, such
+    as [Sys.Break], drops no report: the next sleep raises it. The GSP may
+    also ask the process to run a sequence of register operations, which
+    runs once, front to back: one an exception cuts short is a fault, which
+    loses the GPU. Only the process uses a GPU it has booted, so the GPU's
+    work waits for nobody else's, and rig loses the device once its timeline
+    makes no progress for {!Rig_pci.Gpus.hang_ms} (the device's
+    [hang_ms]).
 
     Two GPUs map each other's memory only if both are taken physically, on
     one machine, and each BAR reaches all of its GPU's memory.

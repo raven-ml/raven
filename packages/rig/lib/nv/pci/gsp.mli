@@ -90,7 +90,10 @@ val gpu : t -> Rig_nv.rm -> subdevice:int -> (Rig_nv.gpu, string) result
 
 val check : t -> string option
 (** [check g] handles the events the GSP sent since the last call, and is the
-    first fault one reported ({!Rpc.fault}). Once it is [Some], it
-    stays. It never waits for the GSP's lock: while a call holds it, the
-    call's own reads handle the events, and [check] returns what they
-    found. *)
+    first fault one reported ({!Rpc.fault}). A message that cannot be read
+    is a fault too. Once it is [Some], it stays. An event stays in the GSP's queue until it is handled, so an
+    exception that interrupts [check] or a call leaves it for the next one;
+    one that interrupts a CPU sequence the GSP asked for counts as a fault,
+    since a sequence runs once, front to back. It never waits for the GSP's
+    lock: while a call holds it, the call's own reads handle the events, and
+    [check] returns what they found. *)

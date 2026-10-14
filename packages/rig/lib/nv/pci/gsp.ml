@@ -58,6 +58,7 @@ type t = {
   meta : int; (* the WPR metadata's bus address *)
   start : start;
   mutable fault : string option;
+  mutable sequencing : bool; (* a CPU sequence runs, or an exception cut it *)
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
   mutable runlists : (int * int) list; (* each engine's runlist *)
@@ -202,21 +203,50 @@ let radix3 sys (image : Images.range) =
 (* How long the GSP takes to answer a call, and to boot. *)
 let answer_ms = 10_000
 
+let cut_short = "the GSP's CPU sequence was cut short"
+
+(* Runs the sequence of [m], which stays in the queue until it ran, and
+   records a failure as the GPU's fault before it consumes it. A sequence
+   runs once, front to back, as open-gpu-kernel-modules runs it
+   (kgspExecuteSequencerBuffer): one an exception cut short is found still
+   in the queue, and consumed as a fault without running again. *)
+let sequence g (m : Rpc.message) =
+  let ran =
+    if g.sequencing then Error cut_short
+    else begin
+      g.sequencing <- true;
+      let* ops = Rpc.sequence ~libos:g.libos m.body in
+      Falcon.run g.p.chip ops
+    end
+  in
+  (match ran with
+  | Error why when g.fault = None -> g.fault <- Some why
+  | Ok () | Error _ -> ());
+  Msgq.consume g.q;
+  g.sequencing <- false;
+  ran
+
+(* Each message is handled, its fault recorded, before it is consumed, so an
+   exception between leaves it for the next drain. *)
 let drain g ~want =
   let rec go () =
-    match Msgq.receive g.q with
+    match Msgq.next g.q with
     | None -> Ok None
-    | Some (Error why) -> Error why
+    | Some (Error why) ->
+        if g.fault = None then g.fault <- Some why;
+        Msgq.consume g.q;
+        Error why
     | Some (Ok (m : Rpc.message)) -> (
         let* () =
-          if m.fn <> Defs.nv_vgpu_msg_event_gsp_run_cpu_sequencer then Ok ()
-          else
-            let* ops = Rpc.sequence ~libos:g.libos m.body in
-            Falcon.run g.p.chip ops
+          if m.fn <> Defs.nv_vgpu_msg_event_gsp_run_cpu_sequencer then begin
+            (match Rpc.fault m with
+            | Some f when g.fault = None -> g.fault <- Some f
+            | _ -> ());
+            Msgq.consume g.q;
+            Ok ()
+          end
+          else sequence g m
         in
-        (match Rpc.fault m with
-        | Some f when g.fault = None -> g.fault <- Some f
-        | _ -> ());
         match want with
         | Some fn when m.fn = fn ->
             if m.result <> 0 then
@@ -256,10 +286,8 @@ let call g fn body =
 
 external reraise : exn -> 'a = "%reraise"
 
-let drained g =
-  match drain g ~want:None with
-  | Ok _ -> ()
-  | Error why -> if g.fault = None then g.fault <- Some why
+(* Every error of a drain is recorded as the GPU's fault inside it. *)
+let drained g = ignore (drain g ~want:None : (_, _) result)
 
 (* The lock is taken as the last step before the handler and given back as the
    first step of both exits, so an exception in the drain, an asynchronous one
@@ -825,6 +853,7 @@ let take p (fw : Images.t) fwsec ~taken =
       meta = first meta;
       start;
       fault = None;
+      sequencing = false;
       next = first_handle;
       clients = first_client;
       runlists = [];

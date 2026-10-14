@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (** The GSP's two message queues in system memory: the command queue, which
-    the process writes and the GSP reads, and the status queue back. {!send}
-    and {!receive} reach them through windows on this machine or another,
-    and never wait. *)
+    the process writes and the GSP reads, and the status queue back. {!send},
+    {!next} and {!consume} reach them through windows on this machine or
+    another, and never wait. *)
 
 type t
 (** The type for the two queues of one GSP. *)
@@ -25,9 +25,17 @@ val send : t -> int -> string -> bool
     doorbell after each, or is [false], writing nothing, if the command queue
     has no room for them. *)
 
-val receive : t -> (Rpc.message, string) result option
-(** [receive q] is the next message of the status queue, if the GSP wrote one,
-    which it consumes: [Error] if its elements are not a GSP message
-    ({!Rpc.message}).
+val next : t -> (Rpc.message, string) result option
+(** [next q] is the next message of the status queue, if the GSP wrote one:
+    [Error] if its elements are not a GSP message ({!Rpc.message}). It stays
+    in the queue until {!consume}, so a caller handles a message before it
+    consumes it.
+
+    Raises [Invalid_argument] if [q] is not {!ready}. *)
+
+val consume : t -> unit
+(** [consume q] gives the GSP back the elements of the message the last
+    {!next} read: the whole message, or one element when its count is out of
+    range. It does nothing if [next] read none since the last [consume].
 
     Raises [Invalid_argument] if [q] is not {!ready}. *)

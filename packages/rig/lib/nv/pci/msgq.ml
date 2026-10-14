@@ -31,6 +31,7 @@ type t = {
   mutable cmd_read : Window.t option; (* the GSP's position in [cmd] *)
   mutable stat_read : Window.t option; (* the process's position in [stat] *)
   mutable seq : int;
+  mutable taken : int; (* the elements of the message [next] last read *)
 }
 
 (* The elements start after a page of header. *)
@@ -56,6 +57,7 @@ let create w ~doorbell =
     cmd_read = None;
     stat_read = None;
     seq = 0;
+    taken = 0;
   }
 
 let header w f = Window.get32 w (fst f)
@@ -113,7 +115,7 @@ let send q fn body =
     true
   end
 
-let receive q =
+let next q =
   match (q.stat, q.stat_read) with
   | Some stat, Some read ->
       Window.barrier ();
@@ -132,10 +134,18 @@ let receive q =
         in
         (* A message the process cannot read is consumed whole, or the queue's
            one element when its count is out of range. *)
-        let count = if count < 1 || count >= stat.count then 1 else count in
-        Window.barrier ();
-        Window.set32 read 0 ((rp + count) mod stat.count);
-        Window.barrier ();
+        q.taken <- (if count < 1 || count >= stat.count then 1 else count);
         Some r
       end
-  | _ -> invalid_arg "Msgq.receive: the GSP has not started its queue"
+  | _ -> invalid_arg "Msgq.next: the GSP has not started its queue"
+
+(* Nothing allocates from the read of the position to its write. *)
+let consume q =
+  match (q.stat, q.stat_read) with
+  | Some stat, Some read ->
+      let rp = Window.get32 read 0 in
+      Window.barrier ();
+      Window.set32 read 0 ((rp + q.taken) mod stat.count);
+      Window.barrier ();
+      q.taken <- 0
+  | _ -> invalid_arg "Msgq.consume: the GSP has not started its queue"
