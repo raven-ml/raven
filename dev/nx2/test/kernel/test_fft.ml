@@ -222,6 +222,13 @@ let four_steps n = n > 64 && List.length (factors n 2) > 1
 
 let by_bluestein n = List.exists (fun p -> p > 250) (factors n 2)
 
+(* Whether the four steps of n points take rows of 8: lines of at most 8 KiB. *)
+let rows8 ~wide n =
+  four_steps n
+  && (not (by_bluestein n))
+  && n mod 8 = 0
+  && n * (if wide then 16 else 8) <= 8192
+
 let pow2 n =
   let rec go p = if p >= n then p else go (2 * p) in
   go 1
@@ -350,6 +357,14 @@ let points c =
     (fun a e -> match c.kind with C2r n when a = last -> n | _ -> e)
     c.shape
 
+(* The points of the complex lines a transform runs on along [a]: half a
+   real line's where it is even and at least 512. *)
+let complex_points c a =
+  let n = (points c).(a) and last = c.axes.(Array.length c.axes - 1) in
+  match c.kind with
+  | (R2c | C2r _) when a = last && n mod 2 = 0 && n >= 512 -> n / 2
+  | _ -> n
+
 (* The operand: complex or real, through the case's view, made from the values
    [xs]. *)
 let operand c =
@@ -448,6 +463,13 @@ let law_bound c =
          let n = (points c).(a) in
          four_steps n && not (by_bluestein n))
        c.axes);
+  cover "rows of 8, the last block short of a vector's lanes"
+    (Array.exists
+       (fun a ->
+         let n = complex_points c a in
+         let lanes = if c.wide then 4 else 8 in
+         rows8 ~wide:c.wide n && n / 8 mod lanes <> 0)
+       c.axes);
   cover "several axes" (Array.length c.axes > 1);
   cover "a real line through complex ones of n points"
     (match c.kind with
@@ -482,6 +504,10 @@ let law_bits c =
   cover "the four steps, lines side by side"
     (four_steps n
     && (not (by_bluestein n))
+    && last < r - 1
+    && c.shape.(r - 1) >= lanes);
+  cover "rows of 8, lines side by side"
+    (rows8 ~wide:c.wide (complex_points c last)
     && last < r - 1
     && c.shape.(r - 1) >= lanes);
   let x = operand c in
@@ -679,17 +705,17 @@ let test_digests () =
         241 f64 7c89018ba17c56a4
         100 f32 3e380cd2344fc918
         100 f64 843090a5d39338e3
-        1000 f32 9f7496c9f569e4b4
+        1000 f32 e602dba7a6c0bceb
         1000 f64 429f0b3827908fdc
-        1024 f32 348239c8ad312acd
-        1024 f64 06a68c714648e330
+        1024 f32 8e7ebe6021ecff18
+        1024 f64 32a0959d1c06a257
         4096 f32 565572e3e5171eca
         4096 f64 d61210f2d5bb445a
-        257 f32 cc59d550e2e47f14
+        257 f32 1299a99be866a7a0
         257 f64 0deee0529736803a
         1031 f32 82ef31e36a702475
         1031 f64 ee8d9a2b3e80e82a
-        514 f32 05d1f0b872a90809
+        514 f32 2fb192795424f835
         514 f64 ad9633a6b7805e61
         |}
 

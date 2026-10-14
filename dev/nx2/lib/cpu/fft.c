@@ -10,22 +10,24 @@
 
    A transform runs along one axis at a time, over lines: the points along
    that axis at one index of the others. A line of n points has a plan,
-   which depends on n alone:
+   which depends on n and its precision alone:
 
      a prime factor        Bluestein's convolution, by two transforms of
      > BLUESTEIN_PRIME     m >= 2n - 1 points
      n <= DIRECT_POINTS    passes of radix 2, 3, 4, 5 and odd primes
      or n prime            (pocketfft's), L lines a vector, one a lane
      else                  Bailey's four steps: n = n1 n2, columns of n1
-                           points by passes, a twiddle, rows of n2
+                           points by passes, a twiddle, rows of n2; for
+                           8 | n, n2 = 8 up to ROWS8_BYTES
 
    A pass computes L lines at once, a lane each, in vectors of L
    numbers: lines side by side, or L points of one line, or, for the four
    steps, L columns then L rows of one line. Which lines share a vector
-   changes no bit: a line's arithmetic is a function of n alone. The
-   inverse is the conjugate of the forward transform of the conjugate,
-   read and written so. Real lines of even n >= HALVED_POINTS go through
-   complex ones of n / 2 points, others through complex ones of n.
+   changes no bit: a line's arithmetic is a function of n and its
+   precision alone. The inverse is the conjugate of the forward transform
+   of the conjugate, read and written so. Real lines of even n >=
+   HALVED_POINTS go through complex ones of n / 2 points, others through
+   complex ones of n.
 
      x ──gather──► lanes ──passes──► lanes ──scatter──► y
                      (L × L tiles transposed where points lie side by side)
@@ -68,6 +70,16 @@
    against 19 by passes (M1, one thread); they take the four steps all the
    same, since a line's arithmetic depends on n alone. */
 #define DIRECT_POINTS 64
+
+/* The most bytes of a line whose four steps take rows of 8, n2 = 8,
+   each L of them twiddled, transposed, transformed and written in
+   registers: one sweep where rows of about √n points take a twiddle and
+   transpose into a grid, their passes and a scatter. Lines of 2^10
+   complex64 points took 1.25 us against 1.58 (M1, one thread). Those
+   are the lines job.c gives one thread: a longer line alone splits its
+   steps across threads, and n / 8 × 8 has too few columns to split, so
+   that 2^11 points took 3.7 us on the M1's threads against 2.5. */
+#define ROWS8_BYTES 8192
 
 /* The most passes of a plan: one a factor of n < 2^64. */
 #define MAX_PASSES 64

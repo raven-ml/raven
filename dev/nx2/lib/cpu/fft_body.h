@@ -168,7 +168,10 @@ static PLAN *F(plan_make)(int64_t n, int kind);
 /* The passes of [p]: pocketfft's factorisation, fours first, a two
    moved to the front, then the odd factors in increasing order. Radix 8
    (pocketfft's C++ pass8) took 10 to 20% longer: its eight inputs of L
-   lanes spill registers. */
+   lanes spill registers. Within the rows of 8 (within8) it bought
+   nothing: columns of 128 points by passes 2, 8, 8 took 1.22 us a line
+   of 1024 points against 1.20 by 2, 4, 4, 4 (M1, one thread). F(eight)
+   computes eight points by this factorisation's passes, 2 then 4. */
 static int F(passes_make)(PLAN *p) {
   int64_t n = p->n, rest = n;
   int *f = p->radix;
@@ -207,17 +210,20 @@ static int F(passes_make)(PLAN *p) {
   return 1;
 }
 
-/* The four steps' plans and twiddles: n1 the largest divisor of n up to
+/* The four steps' plans and twiddles: n1 = n / 8 where 8 | n and the
+   line holds at most ROWS8_BYTES, else n1 the largest divisor of n up to
    its square root of the fewest passes of n1 and n / n1 (1024 points as
    16 × 64 took 11% less time than as 32 × 32 across 64 lines). ω^(k1 j2)
    is the product, in double, of unit's values at its exponent's low and
    high halves. */
 static int F(four_make)(PLAN *p) {
   int64_t n = p->n, n1 = 1;
-  for (int64_t d = 2; d * d <= n; d++)
-    if (n % d == 0 && passes_of(d) + passes_of(n / d) <=
-                          passes_of(n1) + passes_of(n / n1))
-      n1 = d;
+  if (n % 8 == 0 && n * 2 * (int64_t)sizeof(T) <= ROWS8_BYTES) n1 = n / 8;
+  else
+    for (int64_t d = 2; d * d <= n; d++)
+      if (n % d == 0 && passes_of(d) + passes_of(n / d) <=
+                            passes_of(n1) + passes_of(n / n1))
+        n1 = d;
   int64_t n2 = n / n1, groups = (n2 + L - 1) / L;
   p->n1 = n1;
   p->n2 = n2;
@@ -362,23 +368,32 @@ static void F(pass3)(int64_t ido, int64_t l1, const CV *restrict cc,
     }
 }
 
+/* The radix-4 butterfly of c0, c1, c2, c3 into y, untwiddled. */
+static inline void F(four)(CV c0, CV c1, CV c2, CV c3, CV *y) {
+  CV t1 = F(sub)(c0, c2), t2 = F(add)(c0, c2), t3 = F(add)(c1, c3),
+     t4 = F(sub)(c1, c3);
+  y[0] = F(add)(t2, t3);
+  y[1] = F(minus_i)(t1, t4);
+  y[2] = F(sub)(t2, t3);
+  y[3] = F(plus_i)(t1, t4);
+}
+
 static void F(pass4)(int64_t ido, int64_t l1, const CV *restrict cc,
                      CV *restrict ch, const T *tw) {
   const int ip = 4;
   for (int64_t k = 0; k < l1; k++)
     for (int64_t i = 0; i < ido; i++) {
-      CV c0 = CC(i, 0, k), c1 = CC(i, 1, k), c2 = CC(i, 2, k), c3 = CC(i, 3, k);
-      CV t1 = F(sub)(c0, c2), t2 = F(add)(c0, c2), t3 = F(add)(c1, c3),
-         t4 = F(sub)(c1, c3);
-      CH(i, k, 0) = F(add)(t2, t3);
+      CV y[4];
+      F(four)(CC(i, 0, k), CC(i, 1, k), CC(i, 2, k), CC(i, 3, k), y);
+      CH(i, k, 0) = y[0];
       if (i == 0) {
-        CH(i, k, 1) = F(minus_i)(t1, t4);
-        CH(i, k, 2) = F(sub)(t2, t3);
-        CH(i, k, 3) = F(plus_i)(t1, t4);
+        CH(i, k, 1) = y[1];
+        CH(i, k, 2) = y[2];
+        CH(i, k, 3) = y[3];
       } else {
-        CH(i, k, 1) = F(mul)(F(minus_i)(t1, t4), TW(0, i));
-        CH(i, k, 2) = F(mul)(F(sub)(t2, t3), TW(1, i));
-        CH(i, k, 3) = F(mul)(F(plus_i)(t1, t4), TW(2, i));
+        CH(i, k, 1) = F(mul)(y[1], TW(0, i));
+        CH(i, k, 2) = F(mul)(y[2], TW(1, i));
+        CH(i, k, 3) = F(mul)(y[3], TW(2, i));
       }
     }
 }
@@ -532,6 +547,15 @@ static void F(stream)(T *d, int64_t st, int64_t n, int conj,
 }
 #endif
 
+/* Writes the lanes of [s] at [d] as L complex numbers side by side,
+   their conjugates where [conj]. */
+static inline void F(zip)(T *d, CV s, int conj) {
+  VEC im = conj ? -s.im : s.im;
+  VEC lo = ZIP_LO(s.re, im), hi = ZIP_HI(s.re, im);
+  memcpy(d, &lo, sizeof lo);
+  memcpy(d + L, &hi, sizeof hi);
+}
+
 /* Writes lanes [0, lanes) of [s], points [0, n) of lines [o] of y, [st]
    reals apart: lanes side by side by stores past the caches where y
    streams and its points lie apart. */
@@ -548,12 +572,7 @@ static void F(scatter)(const lines *y, const int64_t *o, int lanes,
       return;
     }
 #endif
-    for (int64_t j = 0; j < n; j++) {
-      VEC re = s[j].re, im = conj ? -s[j].im : s[j].im;
-      VEC lo = ZIP_LO(re, im), hi = ZIP_HI(re, im);
-      memcpy(b + o[0] + j * st, &lo, sizeof lo);
-      memcpy(b + o[0] + j * st + L, &hi, sizeof hi);
-    }
+    for (int64_t j = 0; j < n; j++) F(zip)(b + o[0] + j * st, s[j], conj);
     return;
   }
   int64_t j = 0;
@@ -566,11 +585,8 @@ static void F(scatter)(const lines *y, const int64_t *o, int lanes,
       }
       TRANSPOSE(re);
       TRANSPOSE(im);
-      for (int v = 0; v < L; v++) {
-        VEC lo = ZIP_LO(re[v], im[v]), hi = ZIP_HI(re[v], im[v]);
-        memcpy(b + o[v] + 2 * j, &lo, sizeof lo);
-        memcpy(b + o[v] + 2 * j + L, &hi, sizeof hi);
-      }
+      for (int v = 0; v < L; v++)
+        F(zip)(b + o[v] + 2 * j, (CV){re[v], im[v]}, 0);
     }
   for (; j < n; j++)
     for (int v = 0; v < lanes; v++) {
@@ -615,6 +631,21 @@ static int64_t F(four_lanes)(const PLAN *p) {
   return (big + L - 1) / L * L;
 }
 
+/* L consecutive points of a column group's transform [r], lanes [0,
+   lanes) of them twiddled by [tw] and the rest +0, transposed into [t]:
+   t[v] holds the L points' lane v. */
+static inline void F(twist)(const CV *r, const CV *tw, int lanes, CV *t) {
+  VEC re[L], im[L];
+  for (int u = 0; u < L; u++) {
+    CV z = u < lanes ? F(mulv)(r[u], tw[u]) : (CV){0};
+    re[u] = z.re;
+    im[u] = z.im;
+  }
+  TRANSPOSE(re);
+  TRANSPOSE(im);
+  for (int v = 0; v < L; v++) t[v] = (CV){re[v], im[v]};
+}
+
 /* Step one of line [l]: column group [g] into s, through [a] and [b]. */
 static void F(column)(const PLAN *p, const lines *x, int64_t l, int64_t g,
                       CV *s, CV *a, CV *b) {
@@ -627,18 +658,9 @@ static void F(column)(const PLAN *p, const lines *x, int64_t l, int64_t g,
   F(gather)(a, x, o, lanes, n1, n2 * x->step);
   CV *r = F(run_passes)(p->p1, a, b);
   const CV *tw = p->tw4 + g * n1;
-  for (int64_t h = 0; h < rows; h += L) {
-    VEC re[L], im[L];
-    for (int u = 0; u < L; u++) {
-      CV z = h + u < n1 ? F(mulv)(r[h + u], tw[h + u]) : (CV){0};
-      re[u] = z.re;
-      im[u] = z.im;
-    }
-    TRANSPOSE(re);
-    TRANSPOSE(im);
-    CV *t = s + h / L * width + g * L;
-    for (int u = 0; u < L; u++) t[u] = (CV){re[u], im[u]};
-  }
+  for (int64_t h = 0; h < rows; h += L)
+    F(twist)(r + h, tw + h, n1 - h < L ? (int)(n1 - h) : L,
+             s + h / L * width + g * L);
 }
 
 /* Step two of line [l]: row block [h] of s into y, through [b]. */
@@ -667,6 +689,92 @@ static int F(within)(const PLAN *p, const lines *x, const lines *y,
   nx_cpu_give(a);
   nx_cpu_give(b);
   return ok;
+}
+
+/* The column groups of a line of n1 × 8 points. */
+#define G8 (8 / L)
+
+/* The transform of the eight points c into z by the arithmetic of the
+   rows' plan p2 of the four steps of n1 × 8 points: its pass of radix 2,
+   sums and differences turned by its twiddles ω_8^i, then its pass of
+   radix 4 on each half (passes_make). Written out, without loops, and
+   always inlined, so that gcc too keeps the points in registers: it kept
+   pass2's loop of four, then a call of eight, and with them the points
+   in memory. */
+static inline __attribute__((always_inline)) void F(eight)(const PLAN *p2,
+                                                          const CV *c, CV *z) {
+  const T *w = p2->tw[0];
+  CV a[4], d[4];
+  a[0] = F(add)(c[0], c[4]);
+  a[1] = F(add)(c[1], c[5]);
+  a[2] = F(add)(c[2], c[6]);
+  a[3] = F(add)(c[3], c[7]);
+  d[0] = F(sub)(c[0], c[4]);
+  d[1] = F(mul)(F(sub)(c[1], c[5]), w[2], w[3]);
+  d[2] = F(mul)(F(sub)(c[2], c[6]), w[4], w[5]);
+  d[3] = F(mul)(F(sub)(c[3], c[7]), w[6], w[7]);
+  CV ya[4], yd[4];
+  F(four)(a[0], a[1], a[2], a[3], ya);
+  F(four)(d[0], d[1], d[2], d[3], yd);
+  for (int u = 0; u < 4; u++) {
+    z[2 * u] = ya[u];
+    z[2 * u + 1] = yd[u];
+  }
+}
+
+/* Rows [h, h + lanes) of a line of n1 × 8 points into y at [to], from
+   its columns' transforms [r]: twiddled, transposed, transformed and
+   written side by side at [out] where it is not NULL, conjugated where
+   [conj]. Inlined with lanes = L, its tests vanish from the line's every
+   block but the last. */
+static inline __attribute__((always_inline)) void F(rows8)(
+    const PLAN *p, const CV *const *r, int64_t h, int lanes, const lines *y,
+    int64_t to, T *out, int conj) {
+  int64_t n1 = p->n1;
+  CV c[8], z[8];
+  for (int g = 0; g < G8; g++)
+    F(twist)(r[g] + h, p->tw4 + g * n1 + h, lanes, c + g * L);
+  F(eight)(p->p2, c, z);
+  if (out != NULL && lanes == L) {
+    for (int k2 = 0; k2 < 8; k2++)
+      F(zip)(out + 2 * (h + n1 * k2), z[k2], conj);
+    return;
+  }
+  /* scatter reads a copy, w: with z's address taken, the compiler kept z
+     in memory on the zip path too, and the line took 10% longer. */
+  CV w[8];
+  int64_t q[L];
+  for (int k2 = 0; k2 < 8; k2++) w[k2] = z[k2];
+  for (int v = 0; v < L; v++) q[v] = to + (h + (v < lanes ? v : 0)) * y->step;
+  F(scatter)(y, q, lanes, 8, n1 * y->step, w);
+}
+
+/* Line [l] of n1 × 8 points by the four steps, on this thread: the
+   columns by passes, then the rows L at a time in registers (rows8),
+   with no grid s. */
+static int F(within8)(const PLAN *p, const lines *x, const lines *y,
+                      int64_t l) {
+  int64_t n1 = p->n1;
+  CV *buf = nx_cpu_take(sizeof(CV) * 2 * G8 * n1);
+  if (buf == NULL) return 0;
+  const CV *r[G8];
+  int64_t at = line_at(x, l), to = line_at(y, l), o[L];
+  for (int g = 0; g < G8; g++) {
+    for (int v = 0; v < L; v++) o[v] = at + (g * L + v) * x->step;
+    CV *a = buf + 2 * g * n1;
+    F(gather)(a, x, o, L, n1, 8 * x->step);
+    r[g] = F(run_passes)(p->p1, a, a + n1);
+  }
+  /* The stores might alias y: its fields are read once, here. A block's
+     L rows are L points of one line, side by side where the line's
+     points are adjacent complex numbers (side_by_side asks it of lines). */
+  int conj = y->conj;
+  T *out = y->step == 2 && y->io == 1 && !y->real ? (T *)y->base + to : NULL;
+  int64_t h = 0;
+  for (; h + L <= n1; h += L) F(rows8)(p, r, h, L, y, to, out, conj);
+  if (h < n1) F(rows8)(p, r, h, (int)(n1 - h), y, to, out, conj);
+  nx_cpu_give(buf);
+  return 1;
 }
 
 /* Lines [l, l + L), side by side, by the four steps. */
@@ -701,7 +809,20 @@ static int F(across)(const PLAN *p, const lines *x, const lines *y,
       s[k1 * n2 + j2] = F(mulv)(r[k1], t);
     }
   }
+  /* Rows of 8 run in registers where the lines lie side by side: 64
+     lines of 1024 points took 90 us against 108 by run_passes and
+     scatter (both as n / 8 × 8; M1, one thread). */
+  T *out = n2 == 8 && side_by_side(y, q, L) ? (T *)y->base + q[0] : NULL;
+  int64_t st = y->step;
+  int conj = y->conj;
   for (int64_t k1 = 0; k1 < n1; k1++) {
+    if (out != NULL) {
+      CV z[8];
+      F(eight)(p->p2, s + k1 * 8, z);
+      for (int k2 = 0; k2 < 8; k2++)
+        F(zip)(out + (k1 + n1 * k2) * st, z[k2], conj);
+      continue;
+    }
     int64_t c[L];
     for (int v = 0; v < L; v++) c[v] = q[v] + k1 * y->step;
     F(scatter)(y, c, L, n2, n1 * y->step, F(run_passes)(p->p2, s + k1 * n2, b));
@@ -820,7 +941,8 @@ static int F(serial)(const PLAN *p, const lines *x, const lines *y,
           if (!F(across)(p, x, y, l)) return 0;
           l += L;
         } else {
-          if (!F(within)(p, x, y, l)) return 0;
+          int ok = p->n2 == 8 ? F(within8)(p, x, y, l) : F(within)(p, x, y, l);
+          if (!ok) return 0;
           l++;
         }
       return 1;
@@ -1275,6 +1397,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
 #undef ZIP_HI
 #undef REV
 #undef TRANSPOSE
+#undef G8
 #undef VEC
 #undef CV
 #undef PLAN
