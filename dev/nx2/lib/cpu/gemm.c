@@ -379,15 +379,26 @@ static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
   return threads <= engines(p->g->kernel) ? p->g->pack : NULL;
 }
 
-/* Moves operand [o]'s block as stage_acc does, through [move] where it is
-   a pack, the operand is in acc and its rows or its columns are
-   contiguous. */
+/* Moves operand [o]'s block as stage_acc does. A block in acc moves through
+   [move] where it is a pack and the block's rows or columns are
+   contiguous, else by a memcpy a row where its rows are contiguous: for a
+   small block the stage's setup costs more than the copy. */
 static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
                  int64_t s0, int64_t s1, int64_t n0, int64_t n1, uint8_t *d,
                  int64_t pitch) {
   const nx_array *x = p->op[o].x;
-  if (move && x->dtype == p->acc && (s0 == 1 || s1 == 1)) {
-    move(n0, n1, x->base + at * p->w, s0, s1, d, pitch);
+  int w = p->w;
+  if (x->dtype != p->acc) {
+    stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
+    return;
+  }
+  if (move && (s0 == 1 || s1 == 1)) {
+    move(n0, n1, x->base + at * w, s0, s1, d, pitch);
+    return;
+  }
+  if (s0 == 1) {
+    for (int64_t j = 0; j < n1; j++)
+      memcpy(d + j * pitch * w, x->base + (at + j * s1) * w, (size_t)(n0 * w));
     return;
   }
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
