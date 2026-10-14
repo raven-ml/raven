@@ -85,6 +85,42 @@ static int64_t svd_scratch(int64_t mm, int64_t k) {
   return qr > block ? qr : block;
 }
 
+/* The roots of a divide and conquer merge in a unit of its work on the
+   threads (xLAED3's loops over the roots). */
+#define MERGE_ROOTS 32
+
+/* The columns of a lower triangle of order h that a block of eigh's
+   products of its trailing matrix with a vector (xHEMV) takes on
+   average, and the most blocks: h / HEMV_COLUMNS blocks, at least one
+   and at most HEMV_BLOCKS, each into its own rows of y, summed after,
+   block after block; one block computes in y alone. Each block reads and
+   adds h more elements: on the i9-9900K's 16 threads, eigh of a 1024 ×
+   1024 float64 matrix took 81.7 ms in at most 16 blocks, 85.4 in 24 and
+   84.9 in 32 (h / 32); of 2048 × 2048, 503 against 525 and 521. The
+   sums follow the blocks alone, whatever the thread count, so a host of
+   more threads splits a product 16 ways at most. */
+#define HEMV_COLUMNS 32
+#define HEMV_BLOCKS 16
+
+/* The blocks of a product of order [h]. */
+static int64_t hemv_blocks(int64_t h) {
+  int64_t b = h / HEMV_COLUMNS;
+  return b < 1 ? 1 : b > HEMV_BLOCKS ? HEMV_BLOCKS : b;
+}
+
+/* The first column of block [b] of [blocks] of a lower triangle of order
+   [h], h past the last: the blocks hold about equal areas, and the
+   triangle right of column j holds (h − j)² / 2, so block b starts where
+   h − j = h √(1 − b / blocks). The start is a multiple of 4, as
+   hemv_block takes its columns four at a time from it, so that no group
+   but the triangle's last falls short. A function of h alone, so a
+   product's sums, and bits, do not depend on the threads. */
+static int64_t hemv_bound(int64_t h, int64_t blocks, int64_t b) {
+  if (b >= blocks) return h;
+  double rest = sqrt(1 - (double)b / (double)blocks);
+  return (int64_t)((double)h * (1 - rest)) / 4 * 4;
+}
+
 /* The columns a recursive routine on [n] computes first: half, a
    multiple of 8 from 16 on (ReLAPACK's split). */
 static int64_t split(int64_t n) { return n >= 16 ? (n + 8) / 16 * 8 : n / 2; }
@@ -116,6 +152,12 @@ enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH, SVD, EIG };
 /* A triangular solve: x ← t⁻¹ x for the triangle t, its diagonal read
    or taken as ones; or x ← x l⁻ᴴ for the lower l. */
 typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
+
+/* A divide and conquer merge's work on its roots, element by element,
+   each the same arithmetic on whichever thread: the roots and their
+   vectors (ROOTS), z's weights recomputed from them (WEIGHTS), then the
+   vectors from the weights (VECTORS). */
+typedef enum { ROOTS, WEIGHTS, VECTORS } secular;
 
 /* The order a sort leaves values in. */
 typedef enum { ASCENDING, DESCENDING } order;
@@ -233,6 +275,17 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
   return bytes + (cplx ? 4 : 1) * flops / nx_cpu_core_speed(rdt);
 }
 
+/* The cost of a job of [units] units on [bytes] that computes [flops],
+   as job_cost, where it takes the call's threads, else 0: where the
+   matrix has them in [s], there are units to share and the cost asks for
+   more than one thread. A matrix without them prices nothing. */
+static double threaded(const arena *s, int64_t units, int64_t bytes,
+                       double flops, int rdt, int cplx) {
+  if (s->workers == NULL || units < 2) return 0;
+  double cost = job_cost(bytes, flops, rdt, cplx);
+  return nx_cpu_threads(bytes, cost) > 1 ? cost : 0;
+}
+
 /* The routines, per dtype */
 
 #define CAT2(a, b) a##_##b
@@ -344,10 +397,10 @@ static double flops(const call *c) {
 /* The elements of scratch a matrix of [c] takes besides its products':
    a solve's triangle; QR's factored matrix, its τ and qr_scratch; eigh's
    reduced matrix, its τ, a panel's W or a block's V, T, two products of a
-   block, then as reals T's diagonals, Z and divide and conquer's work,
-   and its indices; svd's B, QR's R, the τ, a panel's X and Y, svd_scratch,
-   X or W, then as reals B's diagonals, U_B,
-   V_B and divide and conquer's work, and its indices; eig's balanced
+   block, hemv's blocks of y, then as reals T's diagonals, Z and divide
+   and conquer's work, and its indices; svd's B, QR's R, the τ, a panel's
+   X and Y, svd_scratch, X or W, then as reals B's diagonals, U_B, V_B and
+   divide and conquer's work, and its indices; eig's balanced
    matrix, H, Z, X, v on reals, Q's τ, the scratch of its blocks, then as
    reals the eigenvalues, the scales and S's column norms, and a complex
    column (linalg_body.h). */
@@ -356,7 +409,8 @@ static int64_t scratch(const call *c) {
   switch (c->routine) {
     case SOLVE_TRIANGULAR: return n * n;
     case QR: return m * (n + PAD) + k + qr_scratch(m, n);
-    case EIGH: return 4 * n * n + 16 * n + 2 + (3 * n + NB) * NB;
+    case EIGH:
+      return 4 * n * n + (16 + hemv_blocks(n)) * n + 2 + (3 * n + NB) * NB;
     case SVD: {
       int64_t tmp = m >= n ? k * k : big * (c->complete ? big : k);
       return big * k + 3 * k * k + 3 * (k + 1) * (k + 1) + 19 * k + 2 +
@@ -494,8 +548,10 @@ static value run(call c, const value *arrays, int threads) {
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
   double cost = job_cost(bytes, c.matrices * flops(&c), rdt, cplx);
   /* A matrix a unit where there are enough for the threads, else one unit
-     of all, whose GEMM updates take the threads. */
-  c.per = c.matrices >= nx_cpu_threads(bytes, cost) ? 1 : c.matrices;
+     of all, whose GEMM updates and own jobs take the threads where the
+     call asks for more than one. */
+  int t = nx_cpu_threads(bytes, cost);
+  c.per = c.matrices >= t ? 1 : c.matrices;
   int cores = rig_pool_cores();
   c.packs = calloc((size_t)cores, sizeof(arena));
   c.copies = calloc((size_t)cores, sizeof(arena));
@@ -507,7 +563,7 @@ static value run(call c, const value *arrays, int threads) {
   }
   for (int i = 0; i < cores; i++) {
     c.packs[i].copy = &c.copies[i];
-    if (c.per == c.matrices && threads != 1) c.packs[i].workers = c.packs;
+    if (c.matrices < t && threads != 1) c.packs[i].workers = c.packs;
   }
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;

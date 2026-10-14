@@ -1825,7 +1825,9 @@ let law_cpu_threads b c =
 
 (* One matrix of order 256 and 160 right-hand sides: Cholesky's solve of
    128 rows, LU's of 128 columns and the solve's of 160 split into units
-   of columns on the threads, which give the bits of one thread. *)
+   of columns on the threads, and eigh's products of its trailing matrix
+   with a vector into blocks of columns and its merges' roots into units,
+   which give the bits of one thread. *)
 let law_cpu_units b c =
   cover "units on the threads" (Domain.recommended_domain_count () > 1);
   threads_agree b { c with batch = [||]; n = 256; r = 160 }

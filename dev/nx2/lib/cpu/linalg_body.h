@@ -249,14 +249,14 @@ static void F(solve_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
    failed. */
 static int F(solve)(solve kind, const T *l, int64_t n, int64_t ld, T *x,
                     int64_t r, int64_t ldx, arena *s) {
-  int64_t bytes = n * (n + r) * (int64_t)sizeof(T);
-  double cost = job_cost(bytes, (double)n * n * r, RDT, CPLX);
-  int64_t units = nx_cpu_threads(bytes, cost);
-  if (units > r / SOLVE_COLUMNS) units = r / SOLVE_COLUMNS;
+  int64_t bytes = n * (n + r) * (int64_t)sizeof(T), units = r / SOLVE_COLUMNS;
+  double cost = threaded(s, units, bytes, (double)n * n * r, RDT, CPLX);
   F(solve_job) j = {.l = l, .x = x, .n = n, .ld = ld, .r = r, .ldx = ldx,
-                    .units = units, .kind = kind, .workers = s->workers};
-  if (s->workers == NULL || units < 2) return F(columns)(&j, 0, r, s);
-  nx_cpu_job(units, bytes, cost, F(solve_unit), &j);
+                    .kind = kind, .workers = s->workers};
+  if (cost == 0) return F(columns)(&j, 0, r, s);
+  int threads = nx_cpu_threads(bytes, cost);
+  j.units = units < threads ? units : threads;
+  nx_cpu_job(j.units, bytes, cost, F(solve_unit), &j);
   return !j.failed;
 }
 
@@ -716,21 +716,24 @@ static T F(dot)(const T *x, const T *y, int64_t n) {
   return (p[0] + p[1]) + (p[2] + p[3]);
 }
 
-/* y = A v for A of order [h], Hermitian, its lower triangle and its
-   diagonal's real parts read, columns [ld] apart (xHEMV). By four columns
-   at a time, which update y and take their products with v in one pass
-   over their rows, each product in two parts, by rows' parity, so that
-   none waits on its own additions. */
-static void F(hemv)(const T *restrict a, int64_t h, int64_t ld,
-                    const T *restrict v, T *restrict y) {
-  for (int64_t r = 0; r < h; r++) y[r] = 0;
-  for (int64_t j = 0; j < h; j += 4) {
-    int64_t e = j + 4 < h ? j + 4 : h;
+/* Columns [j0, j1) of y = A v for A of order [h], Hermitian, its lower
+   triangle and its diagonal's real parts read, columns [ld] apart
+   (xHEMV), into rows [j0, h) of [y]: the columns' products below their
+   diagonal and their products with v. By four columns at a time, which
+   update y and take their products with v in one pass over their rows,
+   each product in two parts, by rows' parity, so that none waits on its
+   own additions. */
+static void F(hemv_block)(const T *restrict a, int64_t h, int64_t ld,
+                          const T *restrict v, int64_t j0, int64_t j1,
+                          T *restrict y) {
+  for (int64_t r = j0; r < h; r++) y[r] = 0;
+  for (int64_t j = j0; j < j1; j += 4) {
+    int64_t e = j + 4 < j1 ? j + 4 : j1;
     const T *c[4];
     T vq[4], t[4] = {0, 0, 0, 0}, s[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
     for (int q = 0; q < 4; q++) {
-      c[q] = a + (j + q < h ? j + q : j) * ld;
-      vq[q] = j + q < h ? v[j + q] : 0;
+      c[q] = a + (j + q < e ? j + q : j) * ld;
+      vq[q] = j + q < e ? v[j + q] : 0;
     }
     /* The columns' triangle, then the rows below it. */
     for (int64_t q = j; q < e; q++) {
@@ -754,15 +757,58 @@ static void F(hemv)(const T *restrict a, int64_t h, int64_t ld,
   }
 }
 
+typedef struct {
+  const T *a, *v;
+  int64_t h, ld, blocks;
+  T *yp; /* a block's rows of y, h elements a block */
+} F(hemv_job);
+
+static void F(hemv_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const F(hemv_job) *j = ctx;
+  for (int64_t u = lo; u < hi; u++)
+    F(hemv_block)(j->a, j->h, j->ld, j->v, hemv_bound(j->h, j->blocks, u),
+                  hemv_bound(j->h, j->blocks, u + 1), j->yp + u * j->h);
+}
+
+/* y = A v as hemv_block, by hemv_blocks(h) blocks of columns into [yp],
+   that many times h elements, on the call's threads where [s] holds
+   them, then y their sum, block after block; one block into y. Blocks of
+   columns read the lower triangle down its columns, as stored, and give
+   both their rows' products and their columns' in one pass; blocks of
+   rows would read each row's left part across the columns. */
+static void F(hemv)(const T *restrict a, int64_t h, int64_t ld,
+                    const T *restrict v, T *restrict y, T *restrict yp,
+                    arena *s) {
+  int64_t blocks = hemv_blocks(h);
+  if (blocks == 1) {
+    F(hemv_block)(a, h, ld, v, 0, h, y);
+    return;
+  }
+  F(hemv_job) j = {.a = a, .v = v, .h = h, .ld = ld, .blocks = blocks,
+                   .yp = yp};
+  int64_t bytes = h * h / 2 * (int64_t)sizeof(T);
+  double cost = threaded(s, blocks, bytes, (double)h * h, RDT, CPLX);
+  if (cost > 0)
+    nx_cpu_job(blocks, bytes, cost, F(hemv_unit), &j);
+  else
+    F(hemv_unit)(0, blocks, 0, &j);
+  for (int64_t r = 0; r < h; r++) y[r] = 0;
+  for (int64_t u = 0; u < blocks; u++)
+    for (int64_t r = hemv_bound(h, blocks, u); r < h; r++)
+      y[r] += yp[u * h + r];
+}
+
 /* The panel of the [nb] columns of the [n] × [n] [a] by reflectors, as
    LAPACK's xLATRD (lower): column i, the products of the panel's earlier
    reflectors deferred until now applied to it, is reduced below its
    subdiagonal by H_i = I − τ_i v_i v_iᴴ, its subdiagonal into e[i], v_i
    below it with v_i[0] = 1 stored; [w], [n] × nb with columns [ldw]
-   apart, gets W with the rest of a updated as a − V Wᴴ − W Vᴴ. Only the
-   lower triangle is read, and diagonals' real parts. */
+   apart, gets W with the rest of a updated as a − V Wᴴ − W Vᴴ; [yp] is
+   hemv's scratch. Only the lower triangle is read, and diagonals' real
+   parts. */
 static void F(latrd)(T *a, int64_t n, int64_t nb, int64_t ld, R *e, T *tau,
-                     T *w, int64_t ldw) {
+                     T *w, int64_t ldw, T *yp, arena *s) {
   for (int64_t i = 0; i < nb; i++) {
     T *ai = a + i * ld, *wi = w + i * ldw;
     for (int64_t p = 0; p < i; p++) {
@@ -781,7 +827,7 @@ static void F(latrd)(T *a, int64_t n, int64_t nb, int64_t ld, R *e, T *tau,
        ½ τ (that ᴴ v) v, A the not yet updated trailing matrix (xHEMV). */
     const T *v = ai + i + 1;
     T *y = wi + i + 1, *x = wi;
-    F(hemv)(a + (i + 1) * ld + i + 1, h, ld, v, y);
+    F(hemv)(a + (i + 1) * ld + i + 1, h, ld, v, y, yp, s);
     for (int k = 0; k < 2; k++) {
       /* x = Uᴴ v, then y −= U' x, for (U, U') = (W, V) then (V, W). */
       const T *u = k == 0 ? w : a, *u2 = k == 0 ? a : w;
@@ -807,14 +853,14 @@ static void F(latrd)(T *a, int64_t n, int64_t nb, int64_t ld, R *e, T *tau,
    H_(n−2) as reflectors below the subdiagonal, their τ in [tau]. By
    panels of NB columns (latrd), each followed by the rest's update
    a − V Wᴴ − W Vᴴ (xHER2K) by products on column blocks of its lower
-   triangle. The scratch [w] holds n × NB elements. Answers 0 if an
-   allocation failed. */
+   triangle. The scratch [w] holds n × NB elements, [yp]
+   hemv_blocks(n) × n. Answers 0 if an allocation failed. */
 static int F(hetrd)(T *a, int64_t n, int64_t ld, R *d, R *e, T *tau, T *w,
-                    arena *s) {
+                    T *yp, arena *s) {
   for (int64_t i0 = 0; i0 < n - 1; i0 += NB) {
     int64_t nb = NB < n - 1 - i0 ? NB : n - 1 - i0, h = n - i0, m = h - nb;
     T *p = a + i0 * ld + i0;
-    F(latrd)(p, h, nb, ld, e + i0, tau + i0, w, h);
+    F(latrd)(p, h, nb, ld, e + i0, tau + i0, w, h, yp, s);
     for (int64_t j = 0; j < nb; j++) d[i0 + j] = REAL(p[j * ld + j]);
     /* The rest's lower triangle, as the row-major upper triangle of its
        transpose: rows j0 on of conj W Vᵀ + conj V Wᵀ. */
@@ -1487,6 +1533,65 @@ static int F(rgemm)(int64_t m, int64_t n, int64_t k, const R *a, int64_t lda,
   return F(raccum)(m, n, k, a, lda, b, ldb, c, ldc);
 }
 
+/* A merge's work on its [k] roots (secular), element by element. */
+typedef struct {
+  secular phase;
+  int64_t k, ldq;
+  R *q, *dlambda, *w, *t, *d, rho;
+  const int64_t *indxc;
+  int failed;
+} F(secular_job);
+
+static void F(secular_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  F(secular_job) *j = ctx;
+  int64_t k = j->k, ldq = j->ldq, i0 = lo * MERGE_ROOTS;
+  int64_t i1 = hi * MERGE_ROOTS < k ? hi * MERGE_ROOTS : k;
+  R *q = j->q, *dl = j->dlambda, *w = j->w;
+  switch (j->phase) {
+    case ROOTS:
+      for (int64_t i = i0; i < i1; i++)
+        if (!F(laed4)(k, i, dl, w, q + i * ldq, j->rho, j->d + i))
+          __atomic_store_n(&j->failed, 1, __ATOMIC_RELAXED);
+      break;
+    case WEIGHTS:
+      /* Down the columns, so that the rows' products are independent and
+         read q as stored; each still multiplies in the columns' order. */
+      for (int64_t i = i0; i < i1; i++) w[i] = q[i + i * ldq];
+      for (int64_t c = 0; c < k; c++)
+        for (int64_t i = i0; i < i1; i++)
+          if (i != c) w[i] *= q[i + c * ldq] / (dl[i] - dl[c]);
+      break;
+    case VECTORS:
+      for (int64_t i = i0; i < i1; i++) {
+        R *qc = q + i * ldq, *t = j->t + i * k, big = 0, sum = 0;
+        for (int64_t r = 0; r < k; r++) {
+          t[r] = w[r] / qc[r];
+          big = F(abs)(t[r]) > big ? F(abs)(t[r]) : big;
+        }
+        for (int64_t r = 0; r < k; r++) sum += (t[r] / big) * (t[r] / big);
+        R norm = big * SQRT(sum);
+        for (int64_t r = 0; r < k; r++) qc[r] = t[j->indxc[r]] / norm;
+      }
+      break;
+  }
+}
+
+/* [j]'s phase over its k roots, by units of MERGE_ROOTS on the call's
+   threads where [s] holds them. Answers 0 if a root did not converge. */
+static int F(secular)(F(secular_job) *j, secular phase, arena *s) {
+  int64_t k = j->k, units = (k + MERGE_ROOTS - 1) / MERGE_ROOTS;
+  int64_t bytes = k * k * (int64_t)sizeof(R);
+  double cost = threaded(s, units, bytes,
+                         (double)k * k * (phase == ROOTS ? 8 : 1), RDT, 0);
+  j->phase = phase;
+  if (cost > 0)
+    nx_cpu_job(units, bytes, cost, F(secular_unit), j);
+  else
+    F(secular_unit)(0, units, 0, j);
+  return !j->failed;
+}
+
 /* Merges the spectra of the halves of [n] values, the first [n1], each
    ascending as indxq orders it, with the eigenvectors in the columns of
    q, [ldq] apart, torn by ρ (xLAED1): the values into d, their order into
@@ -1494,7 +1599,8 @@ static int F(rgemm)(int64_t m, int64_t n, int64_t k, const R *a, int64_t lda,
    indices. Answers 1, 0 if a root does not converge, or −1 if an
    allocation failed. */
 static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
-                    int64_t *indxq, R rho, R *work, int64_t *iwork) {
+                    int64_t *indxq, R rho, R *work, int64_t *iwork,
+                    arena *sa) {
   int64_t n2 = n - n1, k = 0, k2 = n, ctot[4] = {0}, psm[4];
   R *z = work, *dlambda = z + n, *w = dlambda + n, *q2 = w + n,
     *s = q2 + n * n;
@@ -1616,8 +1722,9 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
   }
   /* The k roots, their vectors of the secular equation in q's first k
      rows (xLAED3). */
-  for (int64_t i = 0; i < k; i++)
-    if (!F(laed4)(k, i, dlambda, w, q + i * ldq, rho, d + i)) return 0;
+  F(secular_job) sj = {.k = k, .ldq = ldq, .q = q, .dlambda = dlambda,
+                       .w = w, .t = s, .d = d, .rho = rho, .indxc = indxc};
+  if (!F(secular)(&sj, ROOTS, sa)) return 0;
   if (k == 2)
     for (int64_t i = 0; i < 2; i++) {
       R *c = q + i * ldq, w0 = c[0], w1 = c[1];
@@ -1628,21 +1735,9 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
     /* z recomputed from the roots (Gu and Eisenstat), so that the vectors
        are orthogonal to working accuracy. */
     memcpy(s, w, sizeof(R) * k);
-    for (int64_t i = 0; i < k; i++) w[i] = q[i + i * ldq];
-    for (int64_t c = 0; c < k; c++)
-      for (int64_t i = 0; i < k; i++)
-        if (i != c) w[i] *= q[i + c * ldq] / (dlambda[i] - dlambda[c]);
+    F(secular)(&sj, WEIGHTS, sa);
     for (int64_t i = 0; i < k; i++) w[i] = F(sign)(SQRT(-w[i]), s[i]);
-    for (int64_t c = 0; c < k; c++) {
-      R *qc = q + c * ldq, big = 0, sum = 0;
-      for (int64_t i = 0; i < k; i++) {
-        s[i] = w[i] / qc[i];
-        big = F(abs)(s[i]) > big ? F(abs)(s[i]) : big;
-      }
-      for (int64_t i = 0; i < k; i++) sum += (s[i] / big) * (s[i] / big);
-      R norm = big * SQRT(sum);
-      for (int64_t i = 0; i < k; i++) qc[i] = s[indxc[i]] / norm;
-    }
+    F(secular)(&sj, VECTORS, sa);
   }
   /* The halves' vectors times the secular ones, each half by the rows of
      the columns nonzero in it. */
@@ -1662,7 +1757,7 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
    depth first); [indxq] orders d ascending. [work] and [iwork] as for
    merge. Answers as merge. */
 static int F(laed0)(int64_t n, int levels, R *d, R *e, R *q, int64_t ldq,
-                    int64_t *indxq, R *work, int64_t *iwork) {
+                    int64_t *indxq, R *work, int64_t *iwork, arena *s) {
   if (levels == 0) {
     for (int64_t i = 0; i < n; i++) indxq[i] = i;
     return F(steqr)(n, d, e, q, n, ldq, work);
@@ -1671,11 +1766,12 @@ static int F(laed0)(int64_t n, int levels, R *d, R *e, R *q, int64_t ldq,
   R rho = e[n1 - 1];
   d[n1 - 1] -= F(abs)(rho);
   d[n1] -= F(abs)(rho);
-  int ok = F(laed0)(n1, levels - 1, d, e, q, ldq, indxq, work, iwork);
+  int ok = F(laed0)(n1, levels - 1, d, e, q, ldq, indxq, work, iwork, s);
   if (ok == 1)
     ok = F(laed0)(n - n1, levels - 1, d + n1, e + n1, q + n1 + n1 * ldq, ldq,
-                  indxq + n1, work, iwork);
-  return ok == 1 ? F(merge)(n, n1, d, q, ldq, indxq, rho, work, iwork) : ok;
+                  indxq + n1, work, iwork, s);
+  return ok == 1 ? F(merge)(n, n1, d, q, ldq, indxq, rho, work, iwork, s)
+                 : ok;
 }
 
 /* The eigenvalues of the symmetric tridiagonal T of the diagonal [d] and
@@ -1686,7 +1782,7 @@ static int F(laed0)(int64_t n, int levels, R *d, R *e, R *q, int64_t ldq,
    steqr. [work] holds 3n + 2n² reals and [iwork] 5n indices. Answers 1,
    0 if an iteration does not converge, or −1 if an allocation failed. */
 static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
-                    int64_t *iwork) {
+                    int64_t *iwork, arena *s) {
   if (n <= SMLSIZ) return F(steqr)(n, d, e, z, n, ldz, work);
   for (int64_t start = 0, end; start < n; start = end + 1) {
     for (end = start; end < n - 1; end++)
@@ -1708,7 +1804,8 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
     F(scale)(ds, es, 0, m - 1, big, 1);
     int levels = 0;
     for (int64_t s = m; s > SMLSIZ; s = (s + 1) / 2) levels++;
-    int ok = F(laed0)(m, levels, ds, es, zs, ldz, iwork + 4 * n, work, iwork);
+    int ok =
+        F(laed0)(m, levels, ds, es, zs, ldz, iwork + 4 * n, work, iwork, s);
     if (ok != 1) return ok;
     /* The block's values and vectors in ascending order. */
     for (int64_t i = 0; i < m; i++) {
@@ -1735,8 +1832,8 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
    failed. */
 static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   int64_t n = c->n;
-  T *a = x, *tau = a + n * n, *w = tau + n;
-  R *d = (R *)(w + (3 * n + NB) * NB), *e = d + n, *z = e + n,
+  T *a = x, *tau = a + n * n, *w = tau + n, *yp = w + (3 * n + NB) * NB;
+  R *d = (R *)(yp + hemv_blocks(n) * n), *e = d + n, *z = e + n,
     *work = z + n * n;
   int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) &
                                ~(uintptr_t)7);
@@ -1759,11 +1856,11 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   if (sigma != 1)
     for (int64_t j = 0; j < n; j++)
       for (int64_t i = j; i < n; i++) a[j * n + i] *= sigma;
-  if (finite && !F(hetrd)(a, n, n, d, e, tau, w, s)) return 0;
+  if (finite && !F(hetrd)(a, n, n, d, e, tau, w, yp, s)) return 0;
   int ok = finite;
   if (ok && v) {
     for (int64_t i = 0; i < n * n; i++) z[i] = i % (n + 1) == 0;
-    ok = F(stedc)(n, d, e, z, n, work, iwork);
+    ok = F(stedc)(n, d, e, z, n, work, iwork, s);
     if (ok < 0) return 0;
   } else if (ok)
     ok = F(steqr)(n, d, e, NULL, 0, 0, work);
