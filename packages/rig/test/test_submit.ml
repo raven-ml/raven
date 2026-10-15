@@ -1411,6 +1411,7 @@ type watched = {
 type device = {
   d : Rig.t;
   p : P.t;
+  base : int;  (** The value its word held when it opened. *)
   mutable watched : watched list;
   mutable last_point : Rig.Point.t option;
 }
@@ -1430,7 +1431,7 @@ let devices = Atomic.make 0
 let open_device () =
   let n = Atomic.fetch_and_add devices 1 in
   let d, p = P.open_ (Printf.sprintf "submit:lifetime-%d" n) in
-  { d; p; watched = []; last_point = None }
+  { d; p; base = Rig.submitted d; watched = []; last_point = None }
 
 let frees t = List.length (P.frees t.p)
 
@@ -1477,7 +1478,7 @@ let submit_sub sub =
   let v = Rig.Point.value pt in
   sub.parts.last <- v;
   ignore (watch t ~dropped:(frees t) ~last:v [ at ]);
-  v
+  v - t.base
 
 let drop sub =
   sub.s <- None;

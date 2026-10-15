@@ -815,13 +815,13 @@ let wraps () =
   S.pattern sa n 5;
   S.pattern da n 6;
   let byte b i = B.view b ~first:i ~length:1 in
-  let last = ref None in
+  let base = Rig.submitted t.d and last = ref None in
   for i = 0 to n - 1 do
     ignore (S.submit t [||]);
     last := Some (S.submit t [| S.copy ~dst:(byte dst i) (byte src i) |])
   done;
   Option.iter Rig.Point.wait !last;
-  equal int ~msg:"the word" (2 * n) (N.signaled t.g);
+  equal int ~msg:"the word" (base + (2 * n)) (N.signaled t.g);
   equal int ~msg:"the first byte that differs" (-1) (S.mismatch da n 5)
 
 (* 40,000 copies of 16 bytes on COPY:0, each waited for, pass the end of the
