@@ -30,7 +30,7 @@ let names ds = List.map Rig.name ds
 let devices_in_devices () =
   with_job @@ fun j agents ->
   let h = List.hd (Rig_remote.hosts j) in
-  let at = machine (List.hd agents) in
+  let at = at (List.hd agents) (Rig.name h) in
   let first = ref [] in
   walk (fun n ->
       let outer = ref (Ok []) and inner = ref None in
@@ -78,7 +78,7 @@ let first_in_first () =
   walk (fun n ->
       with_job @@ fun j agents ->
       let h = List.hd (Rig_remote.hosts j) in
-      let at = machine (List.hd agents) in
+      let at = at (List.hd agents) (Rig.name h) in
       let outer = ref (Ok []) and inner = ref None in
       let call () =
         match Rig_remote.devices h "MEM" with

@@ -23,7 +23,7 @@ let two_agents () =
   with_job ~n:2 @@ fun j agents ->
   List.iter2
     (fun h a ->
-      equal string ("CPU@" ^ machine a) (Rig.name h);
+      equal string ("CPU@" ^ at a (Rig.name h)) (Rig.name h);
       let d = List.hd (mem h) in
       let s = "to " ^ machine a in
       equal string s (read (far_of_string d s)))
@@ -42,7 +42,7 @@ let wrong_key () =
   | Ok j ->
       Rig_remote.close j;
       fail "a job with another key"
-  | Error why -> starts_with ~affix:(machine a ^ ": ") why);
+  | Error why -> starts_with ~affix:": " (snd (split (machine a) why)));
   let j = connect agents in
   Rig_remote.close j;
   equal exit_w (0, [ "closed" ]) (finish a)
@@ -61,7 +61,9 @@ let unreachable () =
   | Ok j ->
       Rig_remote.close j;
       fail "a job with no agent"
-  | Error why -> starts_with ~affix:(Printf.sprintf "127.0.0.1:%d: " port) why
+  | Error why ->
+      starts_with ~affix:": "
+        (snd (split (Printf.sprintf "127.0.0.1:%d" port) why))
 
 (* A second controller proves the key to an agent in a job. *)
 let second_controller () =
@@ -141,8 +143,16 @@ let second_connection () =
   let second = connect agents in
   let h2 = List.hd (Rig_remote.hosts second) in
   Rig_remote.close second;
-  equal string ("CPU@" ^ machine a) (Rig.name h1);
-  equal string ("CPU@" ^ machine a ^ "#2") (Rig.name h2);
+  (* The connection to [a]'s address that a machine's name names, from 1. *)
+  let nth name =
+    match String.index_opt name '#' with
+    | None -> 1
+    | Some i ->
+        int_of_string (String.sub name (i + 1) (String.length name - i - 1))
+  in
+  equal string
+    (Printf.sprintf "CPU@%s#%d" (machine a) (nth (at a (Rig.name h1)) + 1))
+    (Rig.name h2);
   equal exit_w (0, [ "closed" ]) (finish a)
 
 (* An agent's serve returned: it listens no more, though its process goes on. A
@@ -405,7 +415,7 @@ let hosts () =
   equal bool false (Rig.shares_host_memory h);
   (match Rig.capability h Rig_remote_abi.key with
   | Some (Rig_remote_abi.Host r) ->
-      equal string (machine a) r.machine;
+      equal string (at a (Rig.name h)) r.machine;
       equal ~msg:"threads of no program"
         (array (option int))
         [||]
@@ -423,7 +433,7 @@ let devices () =
   let h = List.hd (Rig_remote.hosts j) and a = List.hd agents in
   let ds = mem h in
   equal (list string)
-    [ "MEM:0@" ^ machine a; "MEM:1@" ^ machine a ]
+    [ "MEM:0@" ^ at a (Rig.name h); "MEM:1@" ^ at a (Rig.name h) ]
     (List.map Rig.name ds);
   equal bool true (List.for_all2 Rig.equal ds (mem h));
   let l0, l1 = local_pair () in

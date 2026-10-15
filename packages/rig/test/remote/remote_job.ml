@@ -58,6 +58,31 @@ type agent = {
 let address a = ("127.0.0.1", a.port)
 let machine a = Printf.sprintf "127.0.0.1:%d" a.port
 
+(* [split addr s] is the name of a machine at [addr], "HOST:PORT", at the start
+   of [s], and the rest of [s]. The process names the machine of its first
+   connection to [addr] [addr], and of its [n]th "[addr]#n". The system may
+   give a fresh agent the port of an earlier agent of the process, so a fresh
+   agent's machine may be "[addr]#n". *)
+let split addr s =
+  let n = String.length addr and len = String.length s in
+  if not (String.starts_with ~prefix:addr s) then
+    failf "%S does not start with a name of the machine at %s" s addr;
+  let digit i = i < len && s.[i] >= '0' && s.[i] <= '9' in
+  let rec past i = if digit i then past (i + 1) else i in
+  let i = if n < len && s.[n] = '#' && digit (n + 1) then past (n + 1) else n in
+  (String.sub s 0 i, String.sub s i (len - i))
+
+(* [at a s] is the name of [a]'s machine after the first "@" of [s], a host's
+   or a device's name. *)
+let at a s =
+  match String.index_opt s '@' with
+  | None -> failf "%S names no machine" s
+  | Some i -> (
+      let after = String.sub s (i + 1) (String.length s - i - 1) in
+      match split (machine a) after with
+      | name, "" -> name
+      | _ -> failf "%S names no machine but %s's" s (machine a))
+
 (* This process's environment and the variables [vars]. *)
 let environment vars =
   Array.append (Unix.environment ())
