@@ -43,6 +43,8 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - a peer view of a stopped driver-less NV GPU can crash: the stop unmaps
   the BAR windows another GPU's flush entry or view still reads
+- NV: each open and close of a device on fudge grows glibc's C heap by
+  about 19.6 KB: find whether rig or the RM leaks it
 - exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
   stdlib Hashtbls, which an exception while one grows loses: they must still
   serve stop, free and unload after an exception, as NV's do
