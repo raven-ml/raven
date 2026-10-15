@@ -1332,6 +1332,20 @@ let test_blocked_opener () =
   equal int 2 !calls;
   Rig.close reopened
 
+(* An opener whose make opens its own name: the inner open raises
+   Invalid_argument, which ends the outer one, and the name then opens. *)
+let test_opener_opens_itself () =
+  let rec opener : P.t Rig_edge.opener =
+    { name = "open:itself"; driver = (module P); make }
+  and make ~word =
+    ignore (Rig.open_ opener);
+    Ok (P.bind (P.make ()) ~word)
+  in
+  raises_match ~msg:"the open" Exn.invalid_arg (fun () -> Rig.open_ opener);
+  let d, _ = P.open_ "open:itself" in
+  equal string "open:itself" (Rig.name d);
+  Rig.close d
+
 let tests =
   group ~timeout "opening"
     [
@@ -1380,6 +1394,7 @@ let tests =
       test "an open of a lost device's name runs its owed stop"
         test_reopen_owed;
       test "a blocked opener holds back no other name" test_blocked_opener;
+      test "an opener that opens its own name raises" test_opener_opens_itself;
       test "an open waiting for its name's open takes Sys.Break"
         test_break_waiting_open;
       test "a Ctrl-C in a close's wait for an open leaves the machine open"

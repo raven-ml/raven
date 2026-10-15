@@ -37,8 +37,7 @@ raven / llama.cpp (Vulkan; ROCm):
   the parent's owed stops (F8); host and memory work runs after giving the
   turn up (K2); `R_AMDGPU_RELATIVE64` relocations (A1); the doc sentences of
   F3, F5, O5, Q1, R4 and C4
-- an opener whose `make` opens its own name raises `Invalid_argument`
-  instead of waiting for good; a heap law for the stamp words of lost points
+- a heap law for the stamp words of lost points
 
 ### drivers
 
@@ -59,8 +58,6 @@ raven / llama.cpp (Vulkan; ROCm):
   GPU 2 held for good): atomic `held` and `spent`, release the function
   outside `holds`, run `Gsp.sys`, `give_back` and `Machine.reserve` under a
   path lock
-- refusals: a `Rig.open_` of a name from a callback inside that name's own
-  open waits forever in `Dev.find`
 - refusals: rig.remote's agent.ml and rig_remote.ml still take `Mutex`es a
   callback can re-enter: refuse with its own guards
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own

@@ -363,11 +363,12 @@ let drop_values d = Lock.protect locals_lock drop_locked d
 (* The table of names *)
 
 (* An open of a name: its slot in the table of names is [k], the machine's
-   name and the device's. [opening] says whether the slot reads [Opening] for
-   it, [index] holds the device slot it took, [0] for none and negated once
-   its device is published, which the C stubs that take, give back and
-   publish store, [ended] says that an exception ended it, and [id] is unique
-   for the process, [-1] until the open took its slot. *)
+   name and the device's. [thread] is the number of the thread that runs it.
+   [opening] says whether the slot reads [Opening] for it, [index] holds the
+   device slot it took, [0] for none and negated once its device is
+   published, which the C stubs that take, give back and publish store,
+   [ended] says that an exception ended it, and [id] is unique for the
+   process, [-1] until the open took its slot. *)
 type request = {
   fn : string;
   machine : machine;
@@ -375,6 +376,7 @@ type request = {
   full : string;
   key : int;
   host : bool;
+  thread : int;
   mutable opening : bool;
   index : int Atomic.t;
   mutable ended : bool; [@atomic]
@@ -386,6 +388,9 @@ type request = {
    exception comes between the move of the slot and its record. *)
 external c_take : int Atomic.t -> int = "caml_rig_take"
 external c_give : int Atomic.t -> unit = "caml_rig_give"
+
+(* The calling thread's number, which no other thread of the process has. *)
+external c_thread : unit -> int = "caml_rig_thread" [@@noalloc]
 
 (* Drains every device ({!Memory.drain_all}), which may free slots. *)
 let drain_all : (unit -> unit) ref = ref ignore
@@ -923,13 +928,17 @@ let host_down machine =
   | Hosts m -> Option.bind (Strings.find_opt machines m) down
 
 (* A failed process opens nothing, not calling [make]. A lost device whose
-   stop has not returned is [`Stop], for the open to run the stop. *)
+   stop has not returned is [`Stop], for the open to run the stop. An open
+   of a name that [r]'s own thread is opening, from its opener or a
+   callback inside that open, would wait for good: it raises. *)
 let rec find r =
   match (c_failed (), host_down r.machine, Names.find_opt table r.k) with
   | Some why, _, _ | None, Some why, _ -> `Error why
   | None, None, Some (Opening o) when o.ended ->
       end_open (o, made o);
       find r
+  | None, None, Some (Opening o) when o.thread = r.thread ->
+      invalid_argf "Rig.%s: %s is opening on the calling thread" r.fn r.full
   | None, None, Some (Opening _) ->
       Lock.wait table_lock;
       find r
@@ -982,6 +991,7 @@ let open_named ~fn ~machine ~name ~key make =
       full;
       key;
       host;
+      thread = c_thread ();
       opening = false;
       index = Atomic.make 0;
       ended = false;
@@ -1182,11 +1192,20 @@ let devices_of m h =
       match slot with Open d when m' = Some m && d != h -> d :: acc | _ -> acc)
     table []
 
+(* Whether an open on machine [m] is in flight. Raises [Invalid_argument]
+   for one the calling thread runs: a close of [m]'s host from its opener
+   or from a callback inside it would wait for good. *)
 let opening_on m =
+  let self = c_thread () in
   Names.fold
     (fun (m', _) slot acc ->
-      let opening = match slot with Opening _ -> true | Open _ -> false in
-      acc || (m' = Some m && opening))
+      match slot with
+      | Opening r when m' = Some m ->
+          if r.thread = self then
+            invalid_argf "Rig.close: %s is opening on the calling thread"
+              r.full;
+          true
+      | Opening _ | Open _ -> acc)
     table false
 
 (* Under the table's lock: marks the host [d] of machine [m] closing, waits

@@ -464,6 +464,99 @@ let test_reentry () =
   in
   greater ~msg:"calls that raised" int ~than:0 (from 1 0)
 
+(* Whether [why] refuses an open because its thread is opening the name. *)
+let opening_here why =
+  String.ends_with ~suffix:" is opening on the calling thread" why
+
+(* Opens a name from a [Gc.Memprof] callback at the [n]-th allocation of that
+   name's own open: inside the open, the callback's open raises
+   [Invalid_argument], at a lock of rig's or because its thread is the one
+   opening the name, and nothing waits for good. Outside it, the callback's
+   open answers the name's device. Either way the outer open answers it too.
+   Is whether the allocation was reached, and whether the call raised because
+   its thread is opening the name. *)
+let reenter_own n =
+  let at = Printf.sprintf ", re-entered at allocation %d" n in
+  in_child at (fun () ->
+      let name = fresh "reenter:own" in
+      let refused = ref false and inner = ref None and outer = ref None in
+      let call () =
+        match Rig.memory_device name with
+        | d -> inner := Some d
+        | exception Invalid_argument why when opening_here why ->
+            refused := true
+        | exception Invalid_argument _ -> ()
+      in
+      let open_ () = outer := Some (Rig.memory_device name) in
+      let reached = S.interrupted ~landing:(Call call) n open_ in
+      let d = Rig.memory_device name in
+      List.iter
+        (fun (what, opened) ->
+          Option.iter
+            (fun o -> equal ~msg:what bool true (Rig.equal o d))
+            opened)
+        [ ("the outer open", !outer); ("the callback's open", !inner) ];
+      (reached, !refused))
+
+let test_reentry_own () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n refused =
+    match reenter_own n with
+    | true, r -> from (n + 1) (if r then refused + 1 else refused)
+    | false, _ -> refused
+  in
+  greater ~msg:"opens refused as their thread is opening the name" int ~than:0
+    (from 1 0)
+
+(* Closes a machine's host from a [Gc.Memprof] callback at the [n]-th
+   allocation of an open on that machine. Inside the open the close raises
+   [Invalid_argument] and leaves the host open, and nothing waits for good.
+   A later close ends the machine, each of its devices stopped once. Is
+   whether the allocation was reached, and whether the close raised. *)
+let close_in_open n =
+  let at = Printf.sprintf ", closed at allocation %d" n in
+  in_child at (fun () ->
+      let drivers = ref [] in
+      let polled ~word =
+        let p = P.make () in
+        drivers := p :: !drivers;
+        Ok (P.bind p ~word)
+      in
+      let host =
+        Rig.open_host ~machine:(fresh "close-in-open")
+          { name = "CPU"; driver = (module P); make = polled }
+        |> Result.get_ok
+      in
+      let raised = ref false in
+      let call () =
+        try Rig.close host with Invalid_argument _ -> raised := true
+      in
+      let open_ () =
+        let o = { Rig_edge.name = "gpu"; driver = (module P); make = polled } in
+        ignore (Rig.open_ ~machine:host o)
+      in
+      let reached = S.interrupted ~landing:(Call call) n open_ in
+      if !raised then
+        is_none ~msg:"the host after a refused close" (Rig.lost host);
+      Rig.close host;
+      equal ~msg:"the host once closed" (option string) (Some "closed")
+        (Rig.lost host);
+      List.iter
+        (fun p -> equal ~msg:"a device's stops" int 1 (P.stops p))
+        !drivers;
+      (reached, !raised))
+
+let test_close_in_open () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n raised =
+    match close_in_open n with
+    | true, r -> from (n + 1) (if r then raised + 1 else raised)
+    | false, _ -> raised
+  in
+  greater ~msg:"closes that raised" int ~than:0 (from 1 0)
+
 (* Opens [names] devices, as many as make the table of names grow, and checks
    that each name answers the device it opened before. *)
 let names = 40
@@ -511,5 +604,11 @@ let () =
                test "a drain that lets go of kept values" test_kept;
                test "a drain that routes memory into the cache" test_cached;
                test "a callback that calls rig inside a lock" test_reentry;
+               test "a callback that opens the name an open is opening"
+                 test_reentry_own;
+               test
+                 "a callback that closes a machine's host inside an open on \
+                  it"
+                 test_close_in_open;
              ]);
        ]

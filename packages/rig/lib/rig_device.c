@@ -611,6 +611,22 @@ static void put(struct rig_device *d) {
   if (d->index > 0) set_running(d->index, 1);
 }
 
+/* Threads */
+
+/* A number for the calling thread that no other thread of the process
+   has, given at its first call. An open records its thread's, so that a
+   call on that thread that would wait for the open, from its opener or a
+   callback inside it, raises instead. */
+static _Atomic intnat threads_numbered;
+static _Thread_local intnat thread_number;
+
+value caml_rig_thread(value unit) {
+  (void)unit;
+  if (thread_number == 0)
+    thread_number = atomic_fetch_add(&threads_numbered, 1) + 1;
+  return Val_long(thread_number);
+}
+
 /* Slots */
 
 /* An open's slot, an [int Atomic.t] (dev.ml's [request]): a take and a

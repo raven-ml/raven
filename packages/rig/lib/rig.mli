@@ -150,7 +150,9 @@ val open_ : ?machine:t -> 'a Rig_edge.opener -> (t, string) result
     ({!Rig_edge.type-facts}) raises its driver's [Fault reason].
 
     Raises [Invalid_argument] if the device open under that name is another
-    driver's, or the facts break a rule of {!Rig_edge.type-facts}. *)
+    driver's, if the facts break a rule of {!Rig_edge.type-facts}, or if
+    called on the thread that runs an open of that name, from the opener's
+    [make] or a callback inside that open ({!section-domains}). *)
 
 val open_io : ?machine:t -> 'a Rig_edge.io_opener -> (t, string) result
 (** [open_io ~machine o] is {!open_} for an io device ({!Rig_edge.Io}). *)
@@ -188,8 +190,11 @@ val close : t -> unit
        again.}}
     A close is never the process's {!failure}.
 
-    Raises [Invalid_argument] if [d] is {!host}, or if its driver's stop
-    refuses the call ({!section-stops}); [d] is then lost. *)
+    Raises [Invalid_argument], leaving [d] as it was, if [d] is {!host}, or
+    if [d] is a machine's host and the call runs on the thread of an open on
+    that machine, from its opener's [make] or a callback inside it
+    ({!section-domains}). Raises [Invalid_argument] with [d] lost if its
+    driver's stop refuses the call ({!section-stops}). *)
 
 (** {2:properties Properties}
 
