@@ -14,7 +14,15 @@
    that nothing written later can reach its launcher; - "fork" forks a child
    that exits 0, then prints "going on" if its job did not fail, and closes it;
    - "exec" runs [sh -c SCRIPT], SCRIPT its second argument, then closes the
-   job.
+   job; - "reenter" closes its hosts, then closes the job with another close
+   from a Gc.Memprof callback at its allocation N, its second argument, which
+   may raise Invalid_argument, and prints "reached" if the close reached it
+   and "past" otherwise; - "exit-in-close" closes its hosts, then closes the
+   job with an [exit 0] from a Gc.Memprof callback at its allocation N, and
+   prints "past" if the close did not reach it; - "raise-in-close" closes its
+   hosts, then closes the job with [Exit] raised at its allocation N and each
+   one after it, prints "reached" or "past" likewise, and exits 0, which
+   closes the job again.
 
    In mode "open", its second argument a PORT, it first connects to the agent
    at the loopback's PORT with the launcher's key, then calls launched with
@@ -30,6 +38,25 @@ let rec failed t0 =
   | None ->
       Unix.sleepf 0.01;
       failed t0
+
+(* Closes [j] once its hosts are closed, with [landing] at its [n]-th
+   allocation, and prints whether it reached it. *)
+let close_under landing j n =
+  List.iter Rig.close (Rig_remote.hosts j);
+  print_endline
+    (if Rig_support.interrupted ~landing n (fun () -> Rig_remote.close j) then
+       "reached"
+     else "past")
+
+(* The callback's close raises Invalid_argument where it closes a host inside
+   a lock of rig's. *)
+let reenter j n =
+  let call () =
+    match Rig_remote.close j with
+    | () -> ()
+    | exception Invalid_argument _ -> ()
+  in
+  close_under (Call call) j n
 
 let run mode j =
   match mode with
@@ -54,6 +81,10 @@ let run mode j =
       in
       ignore (Unix.waitpid [] pid);
       Rig_remote.close j
+  | "reenter" -> reenter j (int_of_string Sys.argv.(2))
+  | "exit-in-close" ->
+      close_under (Call (fun () -> exit 0)) j (int_of_string Sys.argv.(2))
+  | "raise-in-close" -> close_under Raise j (int_of_string Sys.argv.(2))
   | m -> failwith ("no mode " ^ m)
 
 let open_first port =

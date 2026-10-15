@@ -12,14 +12,18 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* Machines *)
 
+(* The state below changes by atomic swaps of immutable values and takes no
+   lock, so a signal handler, finaliser or Gc.Memprof callback inside a call
+   of this module waits for no lock of this module's. *)
+module Names = Map.Make (String)
+
 (* A machine of a job: its agent's link and the devices opened there. *)
 type machine = {
   name : string;
   agent : int;  (** Its agent's process. *)
   link : Link.t;
   mutable host : Rig.t option;
-  kinds : (string, Rig.t list) Hashtbl.t;  (** Guarded by [lock]. *)
-  lock : Mutex.t;
+  kinds : Rig.t list Names.t Atomic.t;  (** The devices of each kind opened. *)
 }
 
 type t = {
@@ -31,22 +35,23 @@ type t = {
 (* Each machine's name names it for the life of the process: the [n]th
    connection named [base], such as ["HOST:PORT"], is ["base#n"] from the second
    on. *)
-let names : (string, int) Hashtbl.t = Hashtbl.create 4
-let names_lock = Mutex.create ()
+let names : int Names.t Atomic.t = Atomic.make Names.empty
 
-let machine_name base =
-  Mutex.protect names_lock @@ fun () ->
-  let n = 1 + Option.value ~default:0 (Hashtbl.find_opt names base) in
-  Hashtbl.replace names base n;
-  if n = 1 then base else strf "%s#%d" base n
+let rec machine_name base =
+  let seen = Atomic.get names in
+  let n = 1 + Option.value ~default:0 (Names.find_opt base seen) in
+  if not (Atomic.compare_and_set names seen (Names.add base n seen)) then
+    machine_name base
+  else if n = 1 then base
+  else strf "%s#%d" base n
 
-(* The machines of the open job, by name, which a host's record names. *)
-let machines : (string, machine) Hashtbl.t = Hashtbl.create 4
-let current : t option ref = ref None
-let lock = Mutex.create ()
+(* The process's last job to start, whose machines a host's record names. *)
+let current : t option Atomic.t = Atomic.make None
 
 let machine_of_name name =
-  Mutex.protect lock (fun () -> Hashtbl.find_opt machines name)
+  match Atomic.get current with
+  | None -> None
+  | Some j -> List.find_opt (fun m -> String.equal m.name name) j.machines
 
 (* Requests *)
 
@@ -141,15 +146,28 @@ let machine_of_host h =
       | _ -> None)
   | _ -> None
 
-(* The job's state comes first, under the machine's lock: a kind opened before
-   the job ended answers as a new one does. *)
+(* Keeps [ds] as [m]'s devices of [kind], unless a call kept some first:
+   those. *)
+let rec keep m kind ds =
+  let kept = Atomic.get m.kinds in
+  match Names.find_opt kind kept with
+  | Some ds -> ds
+  | None ->
+      if Atomic.compare_and_set m.kinds kept (Names.add kind ds kept) then ds
+      else keep m kind ds
+
+(* The job's state comes first: a kind opened before the job ended answers as
+   a new one does. Two calls that find no devices of [kind], from two domains
+   or from a callback inside the other, both ask the agent, which answers an
+   open of a kind with the accounts it gave first, so both open the same
+   devices ({!Rig.open_}). *)
 let devices h kind =
   match machine_of_host h with
   | None -> invalid_arg "Rig_remote.devices: the device is no host of a job"
   | Some m -> (
-      Mutex.protect m.lock @@ fun () ->
       match
-        (Link.wait (Link.job_of m.link) ~ms:0, Hashtbl.find_opt m.kinds kind)
+        ( Link.wait (Link.job_of m.link) ~ms:0,
+          Names.find_opt kind (Atomic.get m.kinds) )
       with
       | Link.Closed, _ -> Error (strf "%s: the job is closed" m.name)
       | Link.Failed why, _ -> Error why
@@ -169,9 +187,7 @@ let devices h kind =
                     | Ok d -> all (d :: acc) rest
                     | Error why -> Error why)
               in
-              let r = all [] accounts in
-              Result.iter (Hashtbl.replace m.kinds kind) r;
-              r))
+              Result.map (keep m kind) (all [] accounts)))
 
 (* Jobs *)
 
@@ -187,9 +203,21 @@ let close j =
   Agent.ended j.report
     (match Link.failed j.job with Some why -> `Failed why | None -> `Closed)
 
+(* The process closes its last job at exit. A close that rig refuses, from a
+   callback inside a call of rig's on the exiting thread, fails the job with
+   the refusal instead: its exception would end the process with a fatal
+   error, and leave the job's report without its end. *)
 let () =
-  at_exit (fun () ->
-      Option.iter close (Mutex.protect lock (fun () -> !current)))
+  at_exit @@ fun () ->
+  match Atomic.get current with
+  | None -> ()
+  | Some j -> (
+      match close j with
+      | () -> ()
+      | exception Invalid_argument why ->
+          Link.fail j.job why;
+          let why = Option.value ~default:why (Link.failed j.job) in
+          Agent.ended j.report (`Failed why))
 
 (* Fails [j] with [why] and is [why] after the machine's name. *)
 let abandon job name why =
@@ -220,8 +248,7 @@ let rec dial ~key job acc i = function
                   agent = i;
                   link;
                   host = None;
-                  kinds = Hashtbl.create 4;
-                  lock = Mutex.create ();
+                  kinds = Atomic.make Names.empty;
                 }
               in
               dial ~key job (m :: acc) (i + 1) rest))
@@ -240,19 +267,17 @@ let join job agents ms =
       (fun m (_, host, port) -> { Wire.name = m.name; host; port })
       ms agents
   in
-  let answers = Array.make (List.length ms) None in
-  let lock = Mutex.create () in
+  let answers = Array.init (List.length ms) (fun _ -> Atomic.make None) in
   let ask i m =
     match request m (Wire.Join { agents }) with
-    | Ok a -> Mutex.protect lock (fun () -> answers.(i) <- Some a)
+    | Ok a -> Atomic.set answers.(i) (Some a)
     | Error why -> Link.fail job why
   in
   let threads = List.mapi (fun i m -> Thread.create (ask i) m) ms in
   let until = Unix.gettimeofday () +. join_answer_s in
   let rec wait () =
     let unanswered =
-      Mutex.protect lock (fun () ->
-          List.filteri (fun i _ -> Option.is_none answers.(i)) ms)
+      List.filteri (fun i _ -> Option.is_none (Atomic.get answers.(i))) ms
     in
     match unanswered with
     | [] -> ()
@@ -265,7 +290,7 @@ let join job agents ms =
   List.iter Thread.join threads;
   match Link.failed job with
   | Some why -> Error why
-  | None -> Ok (List.filter_map Fun.id (Array.to_list answers))
+  | None -> Ok (List.filter_map Atomic.get (Array.to_list answers))
 
 (* Opens each machine's host. On a failure it closes those it opened and fails
    the job. *)
@@ -294,11 +319,10 @@ let check_agents agents =
 (* Starts a job with the agents at [agents]' hosts and ports, each machine named
    after its base, reporting on [report]. [fn] names the caller. *)
 let start ~fn ~key ~report agents =
-  Mutex.protect lock (fun () ->
-      match !current with
-      | Some j when Link.wait j.job ~ms:0 = Link.Open ->
-          invalid_argf "Rig_remote.%s: a job of the process is open" fn
-      | _ -> ());
+  (match Atomic.get current with
+  | Some j when Link.wait j.job ~ms:0 = Link.Open ->
+      invalid_argf "Rig_remote.%s: a job of the process is open" fn
+  | _ -> ());
   match Rig.failure () with
   | Some why -> Error why
   | None -> (
@@ -310,10 +334,7 @@ let start ~fn ~key ~report agents =
           | Error _ as e -> e
           | Ok () ->
               let j = { job; machines = ms; report } in
-              Mutex.protect lock (fun () ->
-                  Hashtbl.reset machines;
-                  List.iter (fun m -> Hashtbl.replace machines m.name m) ms;
-                  current := Some j);
+              Atomic.set current (Some j);
               Agent.watch report job;
               Ok j))
 

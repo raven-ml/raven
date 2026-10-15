@@ -31,7 +31,11 @@
       any process ends the whole job ({!section-failure}).
 
     The functions of this module are safe to call from several domains in
-    parallel. *)
+    parallel. They are also safe to call from a signal handler, finaliser or
+    [Gc.Memprof] callback that interrupts one of them on the same thread:
+    such a call waits for no lock its thread holds, and raises
+    [Invalid_argument] where a call to rig that it makes does
+    ({!Rig.section-domains}). *)
 
 (** {1:keys Keys and trust}
 
@@ -128,7 +132,8 @@ val connect : key:key -> (string * int) list -> (t, string) result
     job's processes connects and proves [key] ({!section-keys}). Each
     connection, handshake reply and connection between agents comes within
     10 seconds, or the job fails. The process closes the job at exit
-    ({!close}).
+    ({!close}), and fails it with the reason where that close raises
+    [Invalid_argument].
 
     [Error why] if an agent cannot be reached, serves another job, speaks
     another version of the protocol or holds another key, or if two agents
@@ -167,7 +172,8 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
     closed, [why] its root cause or that it has closed.
 
     Raises [Invalid_argument] if [h] is not a host that {!hosts} gave for the
-    process's last job. *)
+    process's last job, or as {!Rig.open_} does for a device of [kind], such
+    as from a callback inside that device's open. *)
 
 (** {1:launchers Launchers}
 
@@ -253,10 +259,13 @@ val close : t -> unit
     closes them first. Each agent then receives a close. It closes the
     devices it opened, which frees their memory, and lets go of the job's
     objects on its host, whose memory returns once they are collected. It
-    then stops listening and returns from {!serve}. [close] returns once every agent has stopped
-    listening, or immediately if [j] has failed or closed. After a close,
-    {!failed} of [j] is [None], and the process may start another
-    job. *)
+    then stops listening and returns from {!serve}. [close] returns once
+    every agent has stopped listening, or immediately if [j] has failed or
+    closed. After a close, {!failed} of [j] is [None], and the process may
+    start another job.
+
+    Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
+    inside a call of rig's on the same thread. *)
 
 (** {1:agents Agents} *)
 

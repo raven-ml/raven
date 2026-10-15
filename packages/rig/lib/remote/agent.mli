@@ -51,7 +51,10 @@ val started : report option -> unit
 
 val ended : report option -> [ `Closed | `Failed of string ] -> unit
 (** [ended r e] writes ["closed"] or ["failed WHY"] on [r], unless it wrote an
-    end before. *)
+    end before, and returns once the end is written: a call from another
+    thread waits for one in progress. A call from a signal handler, finaliser
+    or [Gc.Memprof] callback on the thread that writes on [r] waits for
+    nothing. *)
 
 (** {1:fate The job's fate} *)
 

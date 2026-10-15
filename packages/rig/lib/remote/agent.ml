@@ -27,10 +27,13 @@ let report_var = "RIG_REMOTE_REPORT"
 type report = {
   fd : Unix.file_descr;
   pid : int;  (** The process that reports. *)
-  lock : Mutex.t;
+  lock : Mutex.t;  (** Held across a line's write. *)
+  holder : int Atomic.t;  (** The thread that holds [lock], or [nobody]. *)
   mutable started : bool;
   mutable ended : bool;
 }
+
+let nobody = -1
 
 let take name =
   let v = Sys.getenv_opt name in
@@ -50,61 +53,61 @@ let report fd =
           fd;
           pid = Unix.getpid ();
           lock = Mutex.create ();
+          holder = Atomic.make nobody;
           started = false;
           ended = false;
         }
   | None -> Error (strf "%s=%S is no open file descriptor" report_var fd)
 
-(* Writes [s] from byte [at] on [fd], up to the first failure other than an
-   interruption. *)
-let rec write_all fd s at =
-  let n = String.length s - at in
-  if n > 0 then
-    match Unix.single_write_substring fd s at n with
-    | k -> if k > 0 then write_all fd s (at + k)
-    | exception Unix.Unix_error (EINTR, _, _) -> write_all fd s at
-    | exception Unix.Unix_error _ -> ()
+(* [report_line fd pid line] writes [line] on [fd] if this process is [pid],
+   ignoring every error, and runs no OCaml code: no signal handler, finaliser
+   or Gc.Memprof callback. *)
+external report_line : Unix.file_descr -> int -> string -> unit
+  = "caml_rig_remote_report_line"
 
-(* Writes [s] on [fd], ignoring every error. A pipe whose reader is gone raises
-   SIGPIPE on the writing thread, which would end the process: the signal is
-   blocked in this thread while it writes, and the one the write raised is taken
-   before it is unblocked. *)
-let report_write fd s =
-  if Sys.win32 then write_all fd s 0
+(* [s] as a line, a reason's newlines as spaces. *)
+let line s = String.map (function '\n' -> ' ' | c -> c) s ^ "\n"
+
+(* [locked r f] is [f ()] under [r]'s lock, so that a call from another thread
+   returns once the line [f] writes is written. Each [f] claims its line and
+   writes it in one step, which allocates nothing and raises nothing. A signal
+   handler, finaliser or Gc.Memprof callback that finds this thread the holder
+   runs [f ()] without the lock, which it would otherwise wait for for good:
+   [f] writes the line unless the call it interrupts wrote it. A signal
+   handler that runs inside [Mutex.lock] runs before the take, with the lock
+   not this thread's. *)
+let locked r f =
+  let me = Thread.id (Thread.self ()) in
+  if Atomic.get r.holder = me then f ()
   else begin
-    let old = Thread.sigmask SIG_BLOCK [ Sys.sigpipe ] in
-    let pending () = List.mem Sys.sigpipe (Unix.sigpending ()) in
-    let was_pending = pending () in
-    write_all fd s 0;
-    if (not was_pending) && pending () then
-      ignore (Unix.sigwait [ Sys.sigpipe ]);
-    ignore (Thread.sigmask SIG_SETMASK old)
+    Mutex.lock r.lock;
+    Atomic.set r.holder me;
+    f ();
+    Atomic.set r.holder nobody;
+    Mutex.unlock r.lock
   end
-
-(* Writes [line] in one write, a reason's newlines as spaces, unless this
-   process is a child of the one that reports. *)
-let write r line =
-  if Unix.getpid () = r.pid then
-    report_write r.fd (String.map (function '\n' -> ' ' | c -> c) line ^ "\n")
 
 let started = function
   | None -> ()
   | Some r ->
-      Mutex.protect r.lock @@ fun () ->
+      let l = line "started" in
+      locked r @@ fun () ->
       if not (r.started || r.ended) then begin
         r.started <- true;
-        write r "started"
+        report_line r.fd r.pid l
       end
 
 let ended report e =
   match report with
   | None -> ()
   | Some r ->
-      Mutex.protect r.lock @@ fun () ->
+      let l =
+        line (match e with `Closed -> "closed" | `Failed why -> "failed " ^ why)
+      in
+      locked r @@ fun () ->
       if not r.ended then begin
         r.ended <- true;
-        write r
-          (match e with `Closed -> "closed" | `Failed why -> "failed " ^ why)
+        report_line r.fd r.pid l
       end
 
 (* The job's fate *)
@@ -187,10 +190,9 @@ type obj =
   | Rail of Rig_remote_abi.end_
   | Program of Rig_program.loaded
 
-(* Where an agent is in its life: each change is one step under its lock, so two
-   serves or two controllers find each other. *)
+(* Where an agent is in its life once a serve claimed it: each change is one
+   step under its lock, so two controllers find each other. *)
 type phase =
-  | Listening  (** No serve yet. *)
   | Claimed  (** A serve waits for a controller. *)
   | Admitting of Link.job
       (** A controller was admitted, its handshake not yet done: the job. *)
@@ -201,9 +203,13 @@ type t = {
   key : string;
   socket : Unix.file_descr;
   port : int;
+  claimed : bool Atomic.t;
+      (** Once a serve claimed it. The claim takes no lock, and the sections
+          under [lock] run only once the agent is claimed, so a callback
+          inside one that calls [serve] raises [Invalid_argument]. *)
   lock : Mutex.t;
   changed : Condition.t;
-  mutable phase : phase;
+  mutable phase : phase;  (** Read once [claimed]. *)
   accepted : (int, Unix.file_descr) Hashtbl.t;
       (** Connections of the job's agents before this one, admitted, waiting for
           the join that names their machines. *)
@@ -244,9 +250,10 @@ let listen ~key host port =
               key;
               socket = fd;
               port;
+              claimed = Atomic.make false;
               lock = Mutex.create ();
               changed = Condition.create ();
-              phase = Listening;
+              phase = Claimed;
               accepted = Hashtbl.create 4;
               peers = Hashtbl.create 4;
               stopped = false;
@@ -273,7 +280,6 @@ let admit a mine p =
       | exception Invalid_argument why -> Error why)
   | Wire.Controller, (Admitting _ | Serving _) ->
       Error "the agent serves another job"
-  | Wire.Controller, Listening -> Error "the agent serves no job yet"
   | Wire.Agent j, Serving { self; _ } when j < self -> Ok ()
   | Wire.Agent _, _ -> Error "the agent does not expect this agent"
 
@@ -344,7 +350,7 @@ let break a why =
     Condition.broadcast a.changed;
     match a.phase with
     | Serving { job; _ } -> Some job
-    | Listening | Claimed | Admitting _ -> None
+    | Claimed | Admitting _ -> None
   in
   Option.iter (fun job -> Link.fail job why) serving
 
@@ -713,8 +719,8 @@ let job a =
       match (a.phase, a.broken) with
       | Serving { job; self; controller }, broken ->
           Ok ((job, self, controller), broken)
-      | (Listening | Claimed), Some why -> Error why
-      | (Listening | Claimed | Admitting _), _ ->
+      | Claimed, Some why -> Error why
+      | (Claimed | Admitting _), _ ->
           Condition.wait a.changed a.lock;
           serving ()
     in
@@ -795,15 +801,8 @@ let serve a kinds =
   let names = List.map fst kinds in
   if List.length (List.sort_uniq String.compare names) <> List.length names then
     invalid_arg "Rig_remote.serve: kinds names a kind twice";
-  let claimed =
-    Mutex.protect a.lock @@ fun () ->
-    match a.phase with
-    | Listening ->
-        a.phase <- Claimed;
-        true
-    | Claimed | Admitting _ | Serving _ -> false
-  in
-  if not claimed then invalid_arg "Rig_remote.serve: the agent served already";
+  if Atomic.exchange a.claimed true then
+    invalid_arg "Rig_remote.serve: the agent served already";
   match take report_var with
   | None -> run a kinds None
   | Some fd -> (

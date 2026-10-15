@@ -58,8 +58,6 @@ raven / llama.cpp (Vulkan; ROCm):
   GPU 2 held for good): atomic `held` and `spent`, release the function
   outside `holds`, run `Gsp.sys`, `give_back` and `Machine.reserve` under a
   path lock
-- refusals: rig.remote's agent.ml and rig_remote.ml still take `Mutex`es a
-  callback can re-enter: refuse with its own guards
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
