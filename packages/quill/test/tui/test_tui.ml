@@ -5,34 +5,17 @@
 
 open Windtrap
 open Quill
-module T = Quill_tui_internal.Quill_tui
 
-let kernel =
-  {
-    Kernel.execute = (fun ~cell_id:_ ~code:_ -> ());
-    interrupt = ignore;
-    complete = (fun ~code:_ ~pos:_ -> []);
-    type_at = None;
-    diagnostics = None;
-    is_complete = None;
-    status = (fun () -> Kernel.Idle);
-    shutdown = ignore;
-  }
-
-(* A notebook of one code cell, running or idle, in [mode]. *)
-let model ~running mode =
-  let path = Filename.temp_file "quill_tui" ".md" in
-  let m, _ = T.init ~create_kernel:(fun ~on_event:_ -> kernel) ~path () in
-  Sys.remove path;
+(* A notebook of one code cell, running or idle. *)
+let session ~running =
   let c = Cell.code "1" in
-  let session = Session.create (Doc.of_cells [ c ]) in
-  let session =
-    if running then Session.mark_running (Cell.id c) session else session
-  in
-  { m with T.session; mode }
+  let s = Session.create (Doc.of_cells [ c ]) in
+  if running then Session.mark_running (Cell.id c) s else s
 
-let footer m =
-  List.map (fun (a : T.footer_action) -> (a.key, a.label)) (T.footer_actions m)
+let footer mode ~running =
+  List.map
+    (fun (a : Quill_tui.footer_action) -> (a.key, a.label))
+    (Quill_tui.footer_actions mode (session ~running))
 
 let actions = list (pair string string)
 
@@ -43,7 +26,7 @@ let footer_tests =
           [
             ("Enter", "Edit"); ("x", "Run"); ("j/k", "Navigate"); ("?", "Help");
           ]
-          (footer (model ~running:false T.Normal)));
+          (footer Quill_tui.Normal ~running:false));
     test "a running cell puts Ctrl-C Interrupt in place of Run" (fun () ->
         equal actions
           [
@@ -52,7 +35,7 @@ let footer_tests =
             ("j/k", "Navigate");
             ("?", "Help");
           ]
-          (footer (model ~running:true T.Normal)));
+          (footer Quill_tui.Normal ~running:true));
     test "so it does while a cell is edited" (fun () ->
         equal actions
           [
@@ -61,7 +44,7 @@ let footer_tests =
             ("Esc", "Exit");
             ("?", "Help");
           ]
-          (footer (model ~running:true T.Editing)));
+          (footer Quill_tui.Editing ~running:true));
   ]
 
 let () = exit (run "Quill_tui" [ group "footer" footer_tests ])

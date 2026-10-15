@@ -327,7 +327,6 @@ raven / llama.cpp (Vulkan; ROCm):
   fences; the metrics table omits `sys/disk_*`; `Store.latest_run` picks
   among runs started in the same second at random (a run id is a seconds
   stamp and a random suffix)
-- quill's TUI suite tests a copy of quill_tui.ml, bypassing its .mli
 
 ## ymir, sowilo
 

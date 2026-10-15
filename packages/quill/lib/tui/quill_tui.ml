@@ -996,18 +996,16 @@ let update msg m =
 
 (* ───── View Components ───── *)
 
-let running_count m =
+let running_count session =
   List.fold_left
     (fun acc cell ->
       match cell with
       | Cell.Code { id; _ } ->
-          if Session.cell_status id m.session = Session.Running then acc + 1
+          if Session.cell_status id session = Session.Running then acc + 1
           else acc
       | _ -> acc)
     0
-    (Doc.cells (Session.doc m.session))
-
-let has_running m = running_count m > 0
+    (Doc.cells (Session.doc session))
 
 let view_header m =
   let n = cell_count m in
@@ -1021,7 +1019,7 @@ let view_header m =
       ]
   in
   let center =
-    let rc = running_count m in
+    let rc = running_count m.session in
     if rc > 0 then
       box ~flex_direction:Row ~gap:(gap 1) ~align_items:Center
         [
@@ -1288,35 +1286,35 @@ let footer_mode_label m =
   match m.mode with Normal -> "NORMAL" | Editing -> "EDIT"
 
 let footer_kernel_label m =
-  let rc = running_count m in
+  let rc = running_count m.session in
   if rc > 0 then Printf.sprintf "running %d" rc else "idle"
 
-let footer_actions m =
-  if m.confirm_quit then
-    [
-      { key = "q"; label = "Confirm" };
-      { key = "s"; label = "Save" };
-      { key = "Esc"; label = "Cancel" };
-    ]
-  else
-    (* While a cell runs, interrupting it takes the place of running one. *)
-    let interrupt = { key = "Ctrl-C"; label = "Interrupt" } in
-    match m.mode with
-    | Editing ->
-        [
-          (if has_running m then interrupt
-           else { key = "Shift-Enter"; label = "Run" });
-          { key = "Tab"; label = "Complete" };
-          { key = "Esc"; label = "Exit" };
-          { key = "?"; label = "Help" };
-        ]
-    | Normal ->
-        [
-          { key = "Enter"; label = "Edit" };
-          (if has_running m then interrupt else { key = "x"; label = "Run" });
-          { key = "j/k"; label = "Navigate" };
-          { key = "?"; label = "Help" };
-        ]
+let confirm_quit_actions =
+  [
+    { key = "q"; label = "Confirm" };
+    { key = "s"; label = "Save" };
+    { key = "Esc"; label = "Cancel" };
+  ]
+
+let footer_actions mode session =
+  (* While a cell runs, interrupting it takes the place of running one. *)
+  let running = running_count session > 0 in
+  let interrupt = { key = "Ctrl-C"; label = "Interrupt" } in
+  match mode with
+  | Editing ->
+      [
+        (if running then interrupt else { key = "Shift-Enter"; label = "Run" });
+        { key = "Tab"; label = "Complete" };
+        { key = "Esc"; label = "Exit" };
+        { key = "?"; label = "Help" };
+      ]
+  | Normal ->
+      [
+        { key = "Enter"; label = "Edit" };
+        (if running then interrupt else { key = "x"; label = "Run" });
+        { key = "j/k"; label = "Navigate" };
+        { key = "?"; label = "Help" };
+      ]
 
 let footer_action_limit tier =
   match tier with Wide -> 4 | Medium -> 3 | Compact -> 2 | Tiny -> 1
@@ -1377,7 +1375,10 @@ let view_footer_actions tier m =
   let desc_style = Ansi.Style.make ~fg:hint_fg () in
   let actions =
     if tier = Tiny then [ { key = "?"; label = "Help" } ]
-    else take (footer_action_limit tier) (footer_actions m)
+    else
+      take (footer_action_limit tier)
+        (if m.confirm_quit then confirm_quit_actions
+         else footer_actions m.mode m.session)
   in
   let view_action action =
     let label = footer_action_label tier action.label in
