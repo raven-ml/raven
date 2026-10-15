@@ -12,7 +12,11 @@
    construction and [stop] exclude each other under the device's [guard].
    Memory, modules and graphs are the GPU's primary context's, which the
    process keeps: their calls take the context, so they also serve after the
-   device's C state is gone. *)
+   device's C state is gone.
+
+   Every lock is a guard, which a thread holds at most one of: a call from a
+   signal handler, finaliser or Gc.Memprof callback inside a guard's section
+   raises [Refused] at its first take, before it changed anything. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -20,6 +24,32 @@ let ( let* ) = Result.bind
 
 exception Fault of string
 exception Refused of string
+
+let () = Callback.register_exception "Rig_cuda.Refused" (Refused "")
+
+(* A guard, a mutex whose take runs no signal handler. A take while the
+   thread holds a guard, as a callback inside a section would, raises
+   [Refused] before it takes anything. *)
+type guard
+
+external guard : unit -> guard = "caml_rig_cuda_guard"
+external take_guard : guard -> unit = "caml_rig_cuda_guard_take"
+external give_guard : guard -> unit = "caml_rig_cuda_guard_give" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* [protect g f] is [f ()] under the guard [g], taken as the last step
+   before the handler and given back as the first step of both exits, where
+   nothing allocates or polls, so an exception anywhere in [f], an
+   asynchronous one too, leaves it free. *)
+let protect g f =
+  take_guard g;
+  match f () with
+  | x ->
+      give_guard g;
+      x
+  | exception e ->
+      give_guard g;
+      reraise e
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
    int, or CUDA's status negated. *)
@@ -78,10 +108,10 @@ type gpus = {
 
 let unheld = 0
 let taken = 1
-let lock = Mutex.create ()
+let lock = guard ()
 
 (* Held by a claim of a GPU. *)
-let held_lock = Mutex.create ()
+let held_lock = guard ()
 let gpus = ref None
 
 let discover () =
@@ -130,7 +160,7 @@ let discover () =
    they are found: a failed load is tried again by the next call, so a driver
    installed meanwhile is found. *)
 let find_gpus () =
-  Mutex.protect lock @@ fun () ->
+  protect lock @@ fun () ->
   match !gpus with
   | Some g -> Ok g
   | None ->
@@ -173,7 +203,7 @@ type image = {
   owner : int; (* the C state of the device that loaded it *)
   context : int;
   m : int;
-  lock : Mutex.t;
+  lock : guard;
   mutable entries : (string * Rig_edge.entry) list; [@atomic]
   (* twice the references, plus one after unload *)
   mutable graphs : int; [@atomic]
@@ -188,7 +218,7 @@ type t = {
   held : int Atomic.t;
   images : image list Atomic.t; (* loaded, whose functions a graph may run *)
   pending : graph_cleanup list Atomic.t;
-  guard : Mutex.t; (* held by a graph call and by stop *)
+  guard : guard; (* held by a graph call and by stop *)
   stopped : bool Atomic.t; (* stop began *)
   cap : Rig_cuda_abi.t;
 }
@@ -300,8 +330,8 @@ let release_image (m : image) =
 let graph context guard stopped images pending
     (ks : Rig_cuda_abi.kernel array) =
   let sizes = Array.concat (Array.to_list (Array.mapi sizes ks)) in
+  protect guard @@ fun () ->
   drain pending;
-  Mutex.protect guard @@ fun () ->
   if Atomic.get stopped then Error "making the graph: the device was stopped"
   else begin
     let refuse i =
@@ -364,7 +394,7 @@ let graph context guard stopped images pending
    device at a time: two would wait on each other's words through the
    context's shared hardware queues, an order CUDA does not see. *)
 let claim held =
-  Mutex.protect held_lock @@ fun () ->
+  protect held_lock @@ fun () ->
   let p = Atomic.get held in
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
@@ -392,7 +422,7 @@ let reaches (g : gpus) i c j c' =
 (* Enables access between GPU [i], of primary context [c], and every GPU opened
    before it, both ways, recording the GPUs each reaches. *)
 let enable_peers (g : gpus) i c =
-  Mutex.protect lock @@ fun () ->
+  protect lock @@ fun () ->
   let add i j = Atomic.set g.reached.(i) (j :: Atomic.get g.reached.(i)) in
   let enable j = function
     | None -> ()
@@ -412,7 +442,7 @@ let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
 (* The registrations [map_host] made, with the regions over each. *)
 let registry : registration list ref = ref []
-let registry_lock = Mutex.create ()
+let registry_lock = guard ()
 
 (* rig's array of timeline words: its address and its bytes. *)
 external words : unit -> int * int = "caml_rig_edge_words"
@@ -422,7 +452,7 @@ external words : unit -> int * int = "caml_rig_edge_words"
    counts against it, and it is never given back. *)
 let note_words () =
   let start, bytes = words () in
-  Mutex.protect registry_lock @@ fun () ->
+  protect registry_lock @@ fun () ->
   if not (List.exists (fun e -> e.start = start) !registry) then
     registry := { start; bytes; maps = 1 } :: !registry
 
@@ -478,7 +508,7 @@ let open_ ~word i =
           let arch = strf "sm_%d%d" major minor in
           let images = Atomic.make [] in
           let pending = g.pending.(i) in
-          let guard = Mutex.create () and stopped = Atomic.make false in
+          let guard = guard () and stopped = Atomic.make false in
           let graph = graph context guard stopped images pending in
           let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
           let facts =
@@ -586,7 +616,7 @@ let map_host g a n =
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
   if not g.facts.maps_host then None
   else
-    Mutex.protect registry_lock @@ fun () ->
+    protect registry_lock @@ fun () ->
     let inside e = e.start <= a && a + n <= e.start + e.bytes in
     match List.find_opt inside !registry with
     | Some e -> (
@@ -620,7 +650,7 @@ let free g (r : region) =
          context, which the process keeps. *)
       ignore (free_memory g.context (r.kind = Host) r.address)
   | Locked (Some e) ->
-      Mutex.protect registry_lock @@ fun () ->
+      protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
       if e.maps = 0 then begin
         registry := List.filter (fun e' -> e' != e) !registry;
@@ -630,7 +660,7 @@ let free g (r : region) =
       (* The edge keeps the word's value for later claims of the GPU, which
          read it under [held_lock]; the free runs outside it, as CUDA may
          wait for the GPU. *)
-      let w = Mutex.protect held_lock (fun () -> keep_word g.self) in
+      let w = protect held_lock (fun () -> keep_word g.self) in
       ignore (free_memory g.context true w)
   | Word | Locked None | Peer _ -> ()
 
@@ -658,7 +688,7 @@ let image g bin =
           owner = g.self;
           context = g.context;
           m;
-          lock = Mutex.create ();
+          lock = guard ();
           entries = [];
           graphs = 0;
         }
@@ -672,7 +702,7 @@ let image g bin =
 let entry (m : image) f =
   if String.contains f '\000' then Rig_edge.Absent
   else
-    Mutex.protect m.lock @@ fun () ->
+    protect m.lock @@ fun () ->
     match List.assoc_opt f m.entries with
     | Some e -> Rig_edge.Entry e
     | None -> (
@@ -732,7 +762,7 @@ let sleep g ~seen ~still_ms =
 (* Loss *)
 
 let stop g ~fault:_ =
-  Mutex.protect g.guard @@ fun () ->
+  protect g.guard @@ fun () ->
   Atomic.set g.stopped true;
   let stopped = stop_device g.self in
   Atomic.set g.held (if stopped then unheld else -g.self)

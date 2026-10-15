@@ -149,7 +149,13 @@ type t = {
 
           Raises [Invalid_argument] if a kernel's function belongs to no image
           loaded on the device, or a size is outside the range that
-          {!kernel} gives. *)
+          {!kernel} gives.
+
+          A call from a signal handler, finaliser or [Gc.Memprof] callback
+          may raise [Rig_cuda.Refused], having changed nothing, when the
+          callback interrupts a [graph] call, or [Rig_cuda]'s [count],
+          [map_host], [free], [entry], [stop] or an opener's [make], of any
+          CUDA device on the same thread. *)
 }
 (** The type for what compiled code needs from a CUDA device. *)
 

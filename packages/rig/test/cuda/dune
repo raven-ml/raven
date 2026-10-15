@@ -2,7 +2,7 @@
 ; their process, so each is a suite of its own.
 
 (tests
- (names test_cuda test_fault test_stop_fault test_graph_fork)
+ (names test_cuda test_fault test_stop_fault test_graph_fork test_interrupt)
  (locks %{workspace_root}/gpu)
  (libraries
   rig

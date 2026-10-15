@@ -133,7 +133,9 @@ val host : t
     which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
-    asynchronously ({!section-errors}), is raised again. The name is then
+    asynchronously ({!section-errors}), is raised again, except a driver's
+    refusal of [make] ({!section-domains}), which raises [Invalid_argument].
+    The name is then
     unopened, or open with the device the open made, which the next open
     returns. A handle that [make] returned and that no device holds is
     stopped once ({!Rig_edge.Driver.val-stop}). If its driver refuses that

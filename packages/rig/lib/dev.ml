@@ -1098,7 +1098,12 @@ let open_driver (type a) ?(memory_device = false)
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~slot ~opened ~name:full ->
+  (* A refused [make] opened nothing; the open cannot do its work without
+     it. *)
   match make ~word:(c_slot_word index) with
+  | exception D.Refused why ->
+      Printexc.raise_with_backtrace (Invalid_argument why)
+        (Printexc.get_raw_backtrace ())
   | Error e -> Error e
   | Ok h -> (
       (* Until the device is published, a failure stops the handle: a fault is

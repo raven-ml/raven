@@ -36,4 +36,8 @@ val openers : unit -> (string * (unit -> (Rig.t, string) result)) list
 
     [openers] counts each path's GPUs, which loads the vendor's library or reads
     the system's devices, and opens no GPU. Opening has a cost and takes the
-    GPU, so a program opens only the GPU it uses. *)
+    GPU, so a program opens only the GPU it uses.
+
+    Raises {!Rig_cuda.exception-Refused} as {!Rig_cuda.count} does, from a
+    signal handler, finaliser or [Gc.Memprof] callback that interrupts a
+    call of {!Rig_cuda} on the same thread. *)

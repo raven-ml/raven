@@ -21,6 +21,8 @@
 
 #define _GNU_SOURCE
 
+#include <errno.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,6 +32,8 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/callback.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -232,6 +236,82 @@ value caml_rig_cuda_load(value unit) {
   Store_field(r, 0, Val_int(code));
   Store_field(r, 1, s);
   CAMLreturn(r);
+}
+
+/* Guards */
+
+/* A guard: a mutex of its own memory, which a custom block holds and
+   destroys once collected. No section of the driver's takes a second guard,
+   so a thread holds at most one: a signal handler, finaliser or Gc.Memprof
+   callback that runs while its thread holds a guard and takes one would
+   wait for good on its own, or take two in no fixed order. */
+#define Guard_val(v) (*(pthread_mutex_t **)Data_custom_val(v))
+
+/* Whether this thread holds a guard. */
+static _Thread_local int holding;
+
+static void guard_finalize(value v) {
+  pthread_mutex_t *m = Guard_val(v);
+  if (m == NULL) return;
+  pthread_mutex_destroy(m);
+  free(m);
+}
+
+static struct custom_operations guard_ops = {
+    "rig.cuda.guard",           guard_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_cuda_guard(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&guard_ops, sizeof(pthread_mutex_t *), 0, 1);
+  Guard_val(v) = NULL;
+  pthread_mutex_t *m = malloc(sizeof *m);
+  if (m == NULL) caml_raise_out_of_memory();
+  int err = pthread_mutex_init(m, NULL);
+  if (err != 0) {
+    free(m);
+    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
+    char why[96];
+    snprintf(why, sizeof why, "Rig_cuda: a guard: %s", strerror(err));
+    caml_failwith(why);
+  }
+  Guard_val(v) = m;
+  CAMLreturn(v);
+}
+
+/* Takes the guard [v_g]: by try-lock, and otherwise after releasing the
+   runtime without running pending signal handlers, which run at the
+   caller's next poll point. Raises Rig_cuda.Refused, which rig_cuda.ml
+   registers, before it takes anything, if this thread holds a guard; no
+   other exception can end the take, so a caller that takes it as the last
+   step before its handler gives it back on every exit. */
+value caml_rig_cuda_guard_take(value v_g) {
+  if (holding)
+    caml_raise_with_string(*caml_named_value("Rig_cuda.Refused"),
+                           "Rig_cuda: called from a signal handler, "
+                           "finaliser or Gc.Memprof callback while this "
+                           "thread holds a lock of the driver's");
+  pthread_mutex_t *m = Guard_val(v_g);
+  if (pthread_mutex_trylock(m) != 0) {
+    caml_enter_blocking_section_no_pending();
+    int err = pthread_mutex_lock(m);
+    caml_leave_blocking_section();
+    if (err != 0) {
+      fprintf(stderr, "Rig_cuda: a guard: %s\n", strerror(err));
+      abort();
+    }
+  }
+  holding = 1;
+  return Val_unit;
+}
+
+value caml_rig_cuda_guard_give(value v_g) {
+  holding = 0;
+  pthread_mutex_unlock(Guard_val(v_g));
+  return Val_unit;
 }
 
 /* Errors */

@@ -654,7 +654,10 @@ type 'a opener = {
     [make] itself owns the handle and must stop it, and gives it 8 bytes of
     host memory, aligned to 8, that live as long as the handle. Each
     driver's opener states whether [make] opens another handle while an
-    earlier one is not stopped. *)
+    earlier one is not stopped. [make] may refuse a call as a driver's
+    function does ({!section-drivers}): it raises the driver's
+    {!Driver.Refused}, having opened nothing, and [Rig.open_] raises
+    [Invalid_argument]. *)
 
 type 'a io_opener = {
   name : string;  (** The device's name, without a machine suffix. *)

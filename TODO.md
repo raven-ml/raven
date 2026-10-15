@@ -53,8 +53,6 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check; `launch` leaks its C launch when `grow_scratch` raises
-- refusals: rig.cuda's `graph` capability, `stop` and `entry` hold a
-  `Mutex`: refuse a re-entered call with `Rig_cuda.Refused`
 - refusals: rig.nv's `grow`, `count`, `stop`, `entry` and `unload` hold a
   `Mutex`: refuse a re-entered call with `Rig_nv.Refused`
 - refusals: the remote proxy's `launches_lock`: refuse a re-entered call

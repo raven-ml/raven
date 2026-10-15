@@ -59,6 +59,12 @@
     call any function of this module, at the same time as other domains. A
     function that waits for CUDA lets other domains run while it waits.
 
+    A call of {!count}, an opener's [make], {!map_host}, {!free}, {!entry},
+    {!stop} or the [graph] function of {!val-capability} from a signal
+    handler, finaliser or [Gc.Memprof] callback may raise
+    {!exception-Refused}, having changed nothing, when the callback
+    interrupts one of these calls, of any CUDA device, on the same thread.
+
     {!Rig_edge} states how rig drives a device through its driver, and
     {!Rig_edge.section-calls} how it hands the driver work. *)
 
