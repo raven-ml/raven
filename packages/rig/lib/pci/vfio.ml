@@ -180,13 +180,17 @@ let config_offset bus device =
 
 (* Containers *)
 
-(* Device addresses behind an IOMMU are taken from 4 GiB up to 1 TiB. 40 bits is
-   the narrowest DMA mask Linux's amdgpu gives a GPU (gmc_v7 and gmc_v8; gfx9
-   and later take 44, NVIDIA's parts more), and an address a device truncates to
-   32 bits falls below 4 GiB, where nothing is mapped, and faults. The window is
-   the largest part of that range the IOMMU maps. *)
+(* Device addresses behind an IOMMU are taken from 4 GiB up to 2^44. 44 bits is
+   the narrowest DMA mask Linux gives a function this library drives: amdgpu's
+   for GC 11 and GC 12.0 (gmc_v11_0.c, gmc_v12_0.c), where GC 9.4.2 and later
+   take 48 (gmc_v9_0.c), GC 12.1 52, NVIDIA's GPUs 47 from Turing to Ada and 52
+   from Hopper (open-gpu-kernel-modules' hwproject.h,
+   NV_CHIP_EXTENDED_SYSTEM_PHYSICAL_ADDRESS_BITS), and mlx5 and bnxt 64. An
+   address a device truncates to 32 bits falls below 4 GiB, where nothing is
+   mapped, and faults. The window is the largest part of that range the IOMMU
+   maps. *)
 let iova_low = 1 lsl 32
-let iova_high = 1 lsl 40
+let iova_high = 1 lsl 44
 
 (* The window of an IOMMU that maps pages of [page_sizes], a bitmap, at the
    [(first, last)] device address ranges, all of them if [[]]: [(base, n)]. *)
@@ -211,7 +215,8 @@ let window bus page_sizes ranges =
   match List.fold_left best None (List.filter_map piece ranges) with
   | None ->
       Fail.fail
-        "the IOMMU of %s maps no device addresses between 4 GiB and 1 TiB" bus
+        "the IOMMU of %s maps no device addresses between 4 GiB and 16 TiB"
+        bus
   | Some w -> w
 
 let iova bus fd =

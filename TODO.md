@@ -101,8 +101,8 @@ raven / llama.cpp (Vulkan; ROCm):
   past it); parameter bytes per compiled function;
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
   it; mlx5's CQ from `max_cqe`
-- NV address spaces: Device memory in the 49-bit space on the PCI path,
-  VFIO's window 2^44; 80 borrows of one 1 GiB shm file on fudge stop at 39 GiB,
+- NV address spaces: Device memory in the 49-bit space on the PCI path;
+  80 borrows of one 1 GiB shm file on fudge stop at 39 GiB,
   where the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA`
 - size cuts: 13 open in _plans/rig-size-audit/SUMMARY.md §A (core, PCI,
   rig.program, NV), each to its design without losing a capability
