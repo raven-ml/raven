@@ -21,6 +21,15 @@ let open_ ?root () =
 
 let list_experiments t = Fs.list_dirs (Filename.concat t.root "experiments")
 
+(* Newest first by start time. A run id stamps only the second, and its random
+   suffix orders runs started within that second arbitrarily; [started_at] has
+   the clock's sub-second resolution. Equal start times fall back to the id so
+   the order stays total. *)
+let newest_first a b =
+  match Float.compare (Run.started_at b) (Run.started_at a) with
+  | 0 -> String.compare (Run.id b) (Run.id a)
+  | c -> c
+
 (* Index-based listing: filter on header fields, return lazy Run.t *)
 let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
   Hashtbl.to_seq index |> List.of_seq
@@ -37,7 +46,7 @@ let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
         && Option.fold ~none:true ~some:(fun g -> entry.group = Some g) group
       then Some (run_of_entry ~root id entry)
       else None)
-  |> List.sort (fun a b -> String.compare (Run.id b) (Run.id a))
+  |> List.sort newest_first
 
 (* Filesystem-based listing: fallback when no index *)
 let list_runs_scan ~root ?experiment ?status ?tag ?parent ?group () =
@@ -50,7 +59,7 @@ let list_runs_scan ~root ?experiment ?status ?tag ?parent ?group () =
         |> List.concat_map (fun experiment ->
             Run.list ~root ~experiment ?status ?tag ?parent ?group ())
   in
-  List.sort (fun a b -> String.compare (Run.id b) (Run.id a)) runs
+  List.sort newest_first runs
 
 let list_runs t ?experiment ?status ?tag ?parent ?group () =
   match Index.read t.root with

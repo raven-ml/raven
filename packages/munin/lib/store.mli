@@ -36,7 +36,8 @@ val list_runs :
   Run.t list
 (** [list_runs t ()] is the persisted runs in [t], filtered when the optional
     selectors are provided. When [experiment] is omitted, searches across all
-    experiments. Results are sorted by identifier descending (newest first). *)
+    experiments. Results are sorted newest first by {!Run.started_at}, and by
+    identifier descending among runs with equal start times. *)
 
 val find_run : t -> string -> Run.t option
 (** [find_run t id] is the run with identifier [id], if present. Searches across
@@ -52,7 +53,7 @@ val latest_run :
   unit ->
   Run.t option
 (** [latest_run t ()] is the head of {!list_runs} with the same filters, that is
-    the most recently started matching run by identifier ordering. *)
+    the most recently started matching run. *)
 
 (** {1:artifacts Artifacts} *)
 

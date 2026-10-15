@@ -514,4 +514,3 @@ let list ~root ~experiment ?status:status_filter ?tag ?parent
            ~some:(fun parent -> parent_id run = Some parent)
            parent
       && Option.fold ~none:true ~some:(fun g -> group run = Some g) group_filter)
-  |> List.sort (fun a b -> String.compare (id b) (id a))

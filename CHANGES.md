@@ -1464,6 +1464,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Store.latest_run` and `Store.list_runs` order runs by `Run.started_at`.
+  A run id stamps only the second, so runs started within one second came
+  back in random order.
 - `Munin_sys.start` samples every 15 s by default, down from 2 s, which
   logged about 16,000 events an hour. `Stat.Proc.Self.compute` gives the
   mean CPU percentage over any interval past 10 ms: it read 0 past 10 s, and

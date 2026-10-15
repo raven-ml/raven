@@ -680,11 +680,9 @@ let test_run_list_sorted_descending () =
   let s2 = Session.start ~store ~experiment:"exp" () in
   Session.finish s2;
   let runs = Store.list_runs store ~experiment:"exp" () in
-  equal ~msg:"count" int 2 (List.length runs);
-  let ids = List.map Run.id runs in
-  (* Sorted descending by id *)
-  is_true ~msg:"descending order"
-    (String.compare (List.nth ids 0) (List.nth ids 1) > 0)
+  equal ~msg:"newest first" (list string)
+    [ Session.id s2; Session.id s1 ]
+    (List.map Run.id runs)
 
 let test_run_list_filter_status () =
   with_temp_dir @@ fun root ->
@@ -1052,6 +1050,32 @@ let test_store_latest_run_parent () =
     (Some (Some "child"))
     (Option.map Run.name latest)
 
+(* Runs started back to back mostly share a second; with sixteen of them, an
+   order that guesses within a second gets one wrong. *)
+let test_store_latest_run_same_second () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let ids =
+    List.init 16 (fun i ->
+        let session = Session.start ~store ~experiment:"exp" () in
+        Session.finish session;
+        let latest = Option.map Run.id (Store.latest_run store ()) in
+        equal
+          ~msg:(Printf.sprintf "latest after run %d" i)
+          (option string)
+          (Some (Session.id session))
+          latest;
+        Session.id session)
+  in
+  let runs = Store.list_runs store () in
+  let seconds =
+    List.sort_uniq Float.compare
+      (List.map (fun run -> Float.floor (Run.started_at run)) runs)
+  in
+  less ~msg:"seconds spanned, so two runs share one" int ~than:16
+    (List.length seconds);
+  equal ~msg:"newest first" (list string) (List.rev ids) (List.map Run.id runs)
+
 let test_store_delete_run () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
@@ -1132,6 +1156,7 @@ let store_tests =
     test "latest_run" test_store_latest_run;
     test "latest_run with filter" test_store_latest_run_with_filter;
     test "latest_run with parent" test_store_latest_run_parent;
+    test "latest_run within a second" test_store_latest_run_same_second;
     test "delete_run" test_store_delete_run;
     test "delete_run cleans experiment" test_store_delete_run_cleans_experiment;
     test "gc" test_store_gc;
