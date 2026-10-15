@@ -53,9 +53,6 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check; `launch` leaks its C launch when `grow_scratch` raises
-- refusals: rig.disk's table lock, a `Mutex` that its io `free` takes and
-  that `read`, `write` and `pages` take to reopen a file: refuse a
-  re-entered call with its io library's `Refused`
 - refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
   `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
   (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves

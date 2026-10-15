@@ -1558,13 +1558,14 @@ let maps d m =
 
 (* Asks an io device to read ahead the bytes that a borrow on [d], a device
    other than the host, reaches through its pages. It is a hint, so its
-   failures are dropped. *)
+   failures and refusals are dropped. *)
 let prefetch d (m : memory) ~at ~len =
   match m.alloc.entry.backing with
   | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
     -> (
       let module I = (val im) in
-      try I.prefetch h r ~at ~len with I.Fault _ | Sys_error _ -> ())
+      try I.prefetch h r ~at ~len
+      with I.Fault _ | I.Refused _ | Sys_error _ -> ())
   | _ -> ()
 
 let of_io d r ~access n =

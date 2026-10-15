@@ -7,7 +7,15 @@
    by one lock ([locked]). A copy pins its file's descriptor, taking the lock
    only to reopen it (Pins), and moves its bytes outside it, so copies of
    several domains run at once and a pinned descriptor is never closed under a
-   transfer. *)
+   transfer.
+
+   Every lock is a guard of one of two ranks, taken in this order: a file's
+   sync lock, the table's lock. A take while the thread holds a guard of the
+   same or a later rank, as a signal handler, finaliser or Gc.Memprof
+   callback inside a section would, raises [Refused] before it takes
+   anything. A call takes its first guard before it changes anything, and
+   later ones of a later rank, so a call whose first take succeeded is
+   refused no later one. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -46,6 +54,24 @@ external msync : pages -> unit = "caml_rig_disk_msync"
 external watch_forks : unit -> unit = "caml_rig_disk_watch_forks" [@@noalloc]
 external forks : unit -> int = "caml_rig_disk_forks" [@@noalloc]
 
+(* Guards *)
+
+exception Refused of string
+
+let () = Callback.register_exception "Rig_disk.Refused" (Refused "")
+
+type guard
+
+external guard : int -> guard = "caml_rig_disk_guard"
+external take : guard -> unit = "caml_rig_disk_guard_take"
+external give : guard -> unit = "caml_rig_disk_guard_give" [@@noalloc]
+external refuses : guard -> bool = "caml_rig_disk_guard_refuses" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* The ranks of guards, in the order a thread takes them. *)
+let sync_rank = 0
+let table_rank = 1
+
 (* [open_path]'s modes, and the descriptor it answers for a path that names
    no regular file. *)
 let read_mode = 0
@@ -80,13 +106,13 @@ type file = {
   mutable unsynced : bool; [@atomic] (* written since its last sync *)
   mutable failure : exn; [@atomic]
       (* its first sync's [Unix_error], [No_failure] before one *)
-  mutable syncing : int * Mutex.t; [@atomic]
+  mutable syncing : int * guard; [@atomic]
       (* its sync lock and the forks it was made after, [no_lock] before *)
 }
 
 exception No_failure
 
-let no_lock = (-1, Mutex.create ())
+let no_lock = (-1, guard sync_rank)
 
 (* The ring's ends: a file of no path, never open. *)
 let rec ring =
@@ -147,7 +173,7 @@ let rec sync_lock f =
   else begin
     ignore
       (Atomic.Loc.compare_and_set [%atomic.loc f.syncing] l
-         (n, Mutex.create ())
+         (n, guard sync_rank)
         : bool);
     sync_lock f
   end
@@ -168,29 +194,29 @@ let in_table = Atomic.make 0
    lock anew at its first use: a thread of its parent may have held it. *)
 let lock =
   watch_forks ();
-  Atomic.make (forks (), Mutex.create ())
+  Atomic.make (forks (), guard table_rank)
 
 let rec table_lock () =
   let ((made, m) as l) = Atomic.get lock and n = forks () in
   if made = n then m
   else begin
-    ignore (Atomic.compare_and_set lock l (n, Mutex.create ()));
+    ignore (Atomic.compare_and_set lock l (n, guard table_rank));
     table_lock ()
   end
 
-(* [locked g x] is [g x] under the table's lock. [g] is a toplevel function, so
-   a call makes no closure. *)
+(* [locked g x] is [g x] under the table's lock, taken as the last step before
+   the handler and given back as the first step of both exits. [g] is a
+   toplevel function, so a call makes no closure. *)
 let locked g x =
   let m = table_lock () in
-  Mutex.lock m;
+  take m;
   match g x with
   | r ->
-      Mutex.unlock m;
+      give m;
       r
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Mutex.unlock m;
-      Printexc.raise_with_backtrace e bt
+      give m;
+      reraise e
 
 (* Whether the table holds [f]'s descriptor while it is open. *)
 let listed f = f.identity <> ""
@@ -330,11 +356,16 @@ let rec pin f =
       locked pinned f
     end
 
+(* An unpin on a thread inside the table's lock, as in a callback that
+   interrupts a section, leaves its file where it is. The table is then beyond
+   its bound only while another descriptor is pinned, whose unpin trims, or
+   before the section's own trim. *)
 let unpin f =
   if
     Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1) = 1
     && listed f
     && (ring.newer != f || Atomic.get in_table > max_open)
+    && not (refuses (table_lock ()))
   then locked unpinned f
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
@@ -370,7 +401,7 @@ module Io = struct
   type region = file
 
   exception Fault of string
-  exception Refused of string
+  exception Refused = Refused
 
   let region_key : file Type.Id.t = Type.Id.make ()
   let budget () = max_int
@@ -476,6 +507,7 @@ let open_file path mode n =
           Error (strf "%s: %s" path (Unix.error_message e))
     in
     match locked opened () with
+    | exception Refused why -> invalid_arg why
     | Error _ as e -> e
     | Ok f -> (
         let access = if writable then Rig.Read_write else Read in
@@ -522,12 +554,12 @@ let synced f =
    syncs, since nothing marks writes through it. *)
 let sync_file f =
   let m = sync_lock f in
-  Mutex.lock m;
+  take m;
   match if f.unsynced || Option.is_some f.pages then synced f with
-  | () -> Mutex.unlock m
+  | () -> give m
   | exception e ->
-      Mutex.unlock m;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+      give m;
+      reraise e
 
 let barrier b =
   (* The message is formatted only on failure: a partial application of a format
@@ -547,7 +579,7 @@ let barrier b =
       (* A device's work writing through a borrow writes the file once done: the
          barrier orders after it, as a copy reading [b] would. *)
       Rig.Buffer.wait b Read;
-      sync_file f;
+      (try sync_file f with Refused why -> invalid_arg why);
       (* Until the descriptor is unpinned: collecting [b] would close it. *)
       ignore (Sys.opaque_identity b);
       match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()

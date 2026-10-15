@@ -15,14 +15,19 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/callback.h>
+#include <caml/custom.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/osdeps.h>
+#include <caml/signals.h>
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -592,11 +597,122 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
 
 #endif
 
+/* Guards
+
+   A guard: a mutex of its own memory, which a custom block holds and
+   destroys once collected, and its rank. A thread takes guards in rising
+   rank, so no two threads wait for each other. [below] is the rank its
+   holder held before it took the guard. */
+
+#ifdef _WIN32
+typedef SRWLOCK guard_mutex;
+static int guard_init(guard_mutex *m) {
+  InitializeSRWLock(m);
+  return 0;
+}
+static void guard_destroy(guard_mutex *m) { (void)m; }
+static int guard_try(guard_mutex *m) { return TryAcquireSRWLockExclusive(m); }
+static void guard_lock(guard_mutex *m) { AcquireSRWLockExclusive(m); }
+static void guard_unlock(guard_mutex *m) { ReleaseSRWLockExclusive(m); }
+#else
+typedef pthread_mutex_t guard_mutex;
+static int guard_init(guard_mutex *m) { return pthread_mutex_init(m, NULL); }
+static void guard_destroy(guard_mutex *m) { pthread_mutex_destroy(m); }
+static int guard_try(guard_mutex *m) { return pthread_mutex_trylock(m) == 0; }
+static void guard_lock(guard_mutex *m) { pthread_mutex_lock(m); }
+static void guard_unlock(guard_mutex *m) { pthread_mutex_unlock(m); }
+#endif
+
+struct guard {
+  guard_mutex mutex;
+  int rank;
+  int below;
+};
+
+#define Guard_val(v) (*(struct guard **)Data_custom_val(v))
+
+/* The rank of the last guard this thread took, -1 for none. A take of a
+   guard of no higher rank raises: a signal handler, finaliser or
+   Gc.Memprof callback that runs while its thread holds a guard and takes
+   one would wait for good on its own, or take two in no fixed order. */
+static _Thread_local int held = -1;
+
+static void guard_finalize(value v) {
+  struct guard *g = Guard_val(v);
+  if (g == NULL) return;
+  guard_destroy(&g->mutex);
+  free(g);
+}
+
+static struct custom_operations guard_ops = {
+    "rig.disk.guard",           guard_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_disk_guard(value v_rank) {
+  CAMLparam1(v_rank);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&guard_ops, sizeof(struct guard *), 0, 1);
+  Guard_val(v) = NULL;
+  struct guard *g = malloc(sizeof *g);
+  if (g == NULL) caml_raise_out_of_memory();
+  int err = guard_init(&g->mutex);
+  if (err != 0) {
+    free(g);
+    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
+    char why[96];
+    snprintf(why, sizeof why, "Rig_disk: a guard: %s", strerror(err));
+    caml_failwith(why);
+  }
+  g->rank = Int_val(v_rank);
+  g->below = -1;
+  Guard_val(v) = g;
+  CAMLreturn(v);
+}
+
+/* Takes the guard [v_g]: by try-lock, and otherwise after releasing the
+   runtime without running pending signal handlers, which run at the
+   caller's next poll point. Raises Rig_disk.Refused, which rig_disk.ml
+   registers, before it takes anything, if this thread holds a guard of the
+   same or a higher rank; no other exception can end the take, so a caller
+   that takes it as the last step before its handler gives it back on every
+   exit. */
+value caml_rig_disk_guard_take(value v_g) {
+  struct guard *g = Guard_val(v_g);
+  if (held >= g->rank)
+    caml_raise_with_string(*caml_named_value("Rig_disk.Refused"),
+                           "Rig_disk: called from a signal handler, "
+                           "finaliser or Gc.Memprof callback while this "
+                           "thread holds a lock the call takes, or one "
+                           "taken after it");
+  if (!guard_try(&g->mutex)) {
+    caml_enter_blocking_section_no_pending();
+    guard_lock(&g->mutex);
+    caml_leave_blocking_section();
+  }
+  g->below = held;
+  held = g->rank;
+  return Val_unit;
+}
+
+/* Whether a take of the guard [v_g] by this thread would raise. */
+value caml_rig_disk_guard_refuses(value v_g) {
+  return Val_bool(held >= Guard_val(v_g)->rank);
+}
+
+value caml_rig_disk_guard_give(value v_g) {
+  struct guard *g = Guard_val(v_g);
+  held = g->below;
+  guard_unlock(&g->mutex);
+  return Val_unit;
+}
+
 /* Forks
 
    A forked child makes anew what a thread of its parent may have held at the
-   fork: the descriptor table's lock, which the OCaml side makes anew once
-   [forks] has moved, and the io_uring ring. */
+   fork: the descriptor table's lock and the files' sync locks, which the
+   OCaml side makes anew once [forks] has moved, and the io_uring ring. */
 
 #ifndef _WIN32
 static atomic_int forks;

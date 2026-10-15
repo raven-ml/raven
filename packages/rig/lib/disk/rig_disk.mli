@@ -76,7 +76,10 @@ val of_file : string -> (Rig.Buffer.t, string) result
 
     The result is [Error why] if [path] holds a NUL byte, cannot be opened
     for reading, or names no regular file, such as a directory or a FIFO.
-    [why] starts with [path]. [of_file] never blocks opening a FIFO. *)
+    [why] starts with [path]. [of_file] never blocks opening a FIFO.
+
+    Raises [Invalid_argument] from a callback that interrupts a section
+    holding the disk's lock on the same thread ({!descriptors}). *)
 
 val create_file : string -> int -> (Rig.Buffer.t, string) result
 (** [create_file path n] is a new file at [path] of [n] zero bytes, as a
@@ -87,8 +90,9 @@ val create_file : string -> int -> (Rig.Buffer.t, string) result
     The result is [Error why] if [path] holds a NUL byte or names something,
     or if the file cannot be created or sized. [why] starts with [path].
 
-    Raises [Invalid_argument] if [n < 0]. A file the call created is removed
-    if it could not be sized or the call raises. *)
+    Raises [Invalid_argument] if [n < 0], or from a callback that interrupts
+    a section holding the disk's lock ({!descriptors}). A file the call
+    created is removed if it could not be sized or the call raises. *)
 
 (** {1:copies Copies}
 
@@ -132,10 +136,11 @@ val barrier : Rig.Buffer.t -> unit
     failure once, and the bytes it could not store may be lost.
 
     Raises [Invalid_argument] if [b] is dead or is neither a buffer of
-    {!device} nor a borrow of one, [Sys_error] for a failure to store the
-    file's bytes, as above, or if the file cannot be reopened
-    ({!descriptors}), and {!Rig.Lost} if work it waits for is on a lost
-    device. *)
+    {!device} nor a borrow of one, or from a callback that interrupts a
+    section of the disk on the same thread ({!descriptors}). Raises
+    [Sys_error] for a failure to store the file's bytes, as above, or if the
+    file cannot be reopened ({!descriptors}), and {!Rig.Lost} if work it
+    waits for is on a lost device. *)
 
 (** {1:borrows Borrows}
 
@@ -183,4 +188,14 @@ val barrier : Rig.Buffer.t -> unit
     system without file handles, of FAT, exFAT or a network file system on
     macOS, and of any other operating system. Holding many of them can
     exhaust the process's descriptors, and then {!of_file} and {!create_file}
-    return [Error] for too many open files. *)
+    return [Error] for too many open files.
+
+    The disk holds a lock while it opens or closes a descriptor, and a lock
+    of the file's while a barrier syncs it. A signal handler, finaliser or
+    [Gc.Memprof] callback that interrupts such a section on the same thread
+    may call the disk, which then raises [Invalid_argument] where waiting
+    would wait for good ({!Rig.section-domains}), having changed nothing.
+    Inside a section that holds the disk's lock, {!of_file}, {!create_file},
+    {!barrier} and a copy or borrow that must reopen its file raise it.
+    Inside a barrier's sync, {!barrier} raises it. A buffer collected
+    meanwhile closes its file's descriptor at a later call. *)
