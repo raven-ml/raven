@@ -25,17 +25,21 @@
 #define RIG_METAL_RING_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 
 /* A command buffer between its take and its release. The taker sets [v]
    (0 for a buffer that is not its submission's last) and the [start],
    [end] and [first] cells (NULL for none) before it commits the buffer:
    its completion writes its start time at [start] and [first], and its end
-   time at [end]. [first] is set on the first buffer of a timed value. */
+   time at [end]. [first] is set on the first buffer of a timed value.
+   [arena_end] is the count of parameter arena bytes taken up to the last
+   launch the buffer holds, which its release gives back. */
 struct rig_metal_slot {
   uint64_t v;
   uint64_t *start, *end, *first;
   int state;
+  _Atomic uint64_t arena_end;
 };
 
 struct rig_metal_ring {
@@ -44,6 +48,7 @@ struct rig_metal_ring {
   struct rig_metal_slot *slots;
   uint64_t nslots, head, tail; /* slots [head, tail) are taken */
   uint64_t *word;
+  _Atomic uint64_t arena_freed; /* the largest released slot's arena_end */
   int held;          /* a released slot failed: the word stays */
   uint64_t drain;    /* written once no slot is taken, after stop; 0: none */
   char failure[512]; /* the first failure, "" if none */

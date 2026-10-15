@@ -239,15 +239,6 @@ let v_shared = 8
 (* The sizes in the order of rig_nv_stubs.h's launch limits. *)
 let dims = Abi.Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
 
-(* rig_nv_stubs.h's most bytes of a launch's structure. *)
-let structure_bytes = 1024
-
-(* The most bytes of a launch's constant bank 0: rig_nv_stubs.h's
-   BANK_MAX, which the device's most parts assumes. *)
-external bank_max : unit -> int = "caml_rig_nv_bank_max"
-
-let bank_max = bank_max ()
-
 (* A pending local memory is one word: bit 0 clear, the number of its address's
    4 KiB page in the [local_page_bits] bits above, which hold the 49 bits of an
    address the local memory methods take (clc7c0.h,
@@ -681,6 +672,31 @@ let image_bytes c ~base =
   List.iter patch (Cubin.patches c ~base);
   Bytes.unsafe_to_string b
 
+(* [t] without its zero bytes past its last nonzero byte and its patches'
+   words. Bank 0's template runs up to the kernel's parameters, which ptxas
+   places at byte 0x1a80 of a kernel of more than 4 KiB of them on sm_89,
+   past a structure's bytes. Below them bank 0 holds the driver's words, at
+   the offsets of any kernel's, then zeros: the cubin's own .nv.constant0
+   section is zeros there, such a kernel reads only the driver's words below
+   its parameters (test/nv/fixtures/launch.cu's wide reads c[0x0][0x28] and
+   c[0x0][0x118]), and tinygrad's NV runtime (NVProgramData in
+   tinygrad/runtime/ops_nv.py) builds bank 0 as zeros up to the offset
+   EIATTR_PARAM_CBANK gives, with the same words set. The driver's words end
+   within a structure, and dispatch writes the zeros after them. *)
+let trimmed (t : Template.t) =
+  let width bits =
+    if bits <= 8 then 1 else if bits <= 16 then 2 else if bits <= 32 then 4 else 8
+  in
+  let last =
+    List.fold_left
+      (fun n (p : Template.patch) -> Int.max n (p.at + width p.bits))
+      0 t.patches
+  in
+  let rec length n =
+    if n > last && t.bytes.[n - 1] = '\000' then length (n - 1) else n
+  in
+  { t with bytes = String.sub t.bytes 0 (length (String.length t.bytes)) }
+
 (* Descriptors and bank 0 for a launch whose local memory is already backed. *)
 let descriptors l base code per_thread (k : Cubin.kernel) =
   let open Template in
@@ -710,15 +726,10 @@ let descriptors l base code per_thread (k : Cubin.kernel) =
   let strings =
     List.concat_map
       (fun (t : Template.t) -> [ t.bytes; patches t ])
-      (qmds @ [ Abi.Qmd.parameters l d ])
+      (qmds @ [ trimmed (Abi.Qmd.parameters l d) ])
   in
-  if k.params_offset > structure_bytes then
-    invalid_arg "Rig_nv.entry: a launch places parameters past 1 KiB";
-  if bank0_bytes > bank_max then
-    invalid_argf "Rig_nv.entry: a kernel's constant bank 0 takes %d bytes, \
-                  more than %d" bank0_bytes bank_max;
   let ints =
-    [ k.params_offset; bank0_bytes ]
+    [ k.params_offset; k.params_bytes; bank0_bytes ]
     @ List.map Abi.Qmd.max_size dims
     @ [ Launch.max_threads l; Launch.dynamic_shared l ]
   in

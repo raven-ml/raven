@@ -890,9 +890,6 @@ let refusals =
     ( "parameters of no whole word",
       (fun d -> with_params (String.make 6 '\000') (base d)),
       one );
-    ( "parameters over 4096 bytes",
-      (fun d -> with_params (String.make 4100 '\000') (base d)),
-      one );
     ( "an address on no device",
       (fun d ->
         {

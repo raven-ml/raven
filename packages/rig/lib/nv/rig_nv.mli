@@ -170,6 +170,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     hold them. Words, and longer copies, take the entries their sizes
     take.
 
+    A launch's constant bank 0 is its kernel's, of at most
+    {!Rig_nv_abi.Launch.max_bank_bytes}: its first KiB holds the driver's
+    parameters, and the kernel's own start where its compiler places them.
+    A launch's bytes past those the kernel reads ({!Rig.Image.params}) are
+    left out.
+
     It reads the word first, so [RIG_LATER] means that a value the device
     was given is not yet reached. [rig_nv_submit] returns [RIG_COMMITTED],
     since the channels run work as soon as they fetch it, and rig never asks
@@ -263,9 +269,8 @@ val capability : t -> Rig_nv_abi.Gpu.t
     to serve it ({!Rig_nv_abi.Gpu.t.local}). It answers [No_memory n],
     having made nothing, if the GPU has no memory for the [n] bytes of that
     local memory, and raises [Invalid_argument] with the reason if the
-    function takes more than a launch can, such as parameters placed past 1
-    KiB of its constant bank 0, or a constant bank 0 of more than 5120
-    bytes. {!unload} frees the launch
+    function takes more than a launch can, such as a constant bank 0 of more
+    than 64 KiB. {!unload} frees the launch
     descriptors of the image's functions, and leaves its code region to
     rig. *)
 

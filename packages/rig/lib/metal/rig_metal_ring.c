@@ -60,6 +60,7 @@ void rig_metal_ring_init(struct rig_metal_ring *r,
   r->word = word;
   r->held = 0;
   r->drain = 0;
+  atomic_init(&r->arena_freed, 0);
   r->failure[0] = '\0';
 }
 
@@ -73,7 +74,10 @@ int rig_metal_ring_take(struct rig_metal_ring *r) {
   while (r->tail - r->head == r->nslots)
     pthread_cond_wait(&r->changed, &r->mutex);
   int i = (int)(r->tail++ % r->nslots);
-  r->slots[i] = (struct rig_metal_slot){0, NULL, NULL, NULL, taken};
+  struct rig_metal_slot *s = &r->slots[i];
+  s->v = 0;
+  s->start = s->end = s->first = NULL;
+  s->state = taken;
   pthread_mutex_unlock(&r->mutex);
   return i;
 }
@@ -93,6 +97,11 @@ void rig_metal_ring_complete(struct rig_metal_ring *r, int i,
     struct rig_metal_slot *h = &r->slots[r->head % r->nslots];
     if (h->state == taken) break;
     if (h->state == failed) r->held = 1;
+    /* The arena's bytes come back before the word shows the value, so a
+       room that finds the value reached finds them too. */
+    uint64_t e = atomic_load_explicit(&h->arena_end, memory_order_acquire);
+    if (e > atomic_load_explicit(&r->arena_freed, memory_order_relaxed))
+      atomic_store_explicit(&r->arena_freed, e, memory_order_release);
     if (h->v > 0 && !r->held) __atomic_store_n(r->word, h->v, __ATOMIC_RELEASE);
     r->head++;
   }

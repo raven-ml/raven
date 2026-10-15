@@ -190,6 +190,7 @@ static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
   d->driver = &driver;
   r->device = device;
+  r->longest = (uint64_t)device.maxBufferLength;
   r->queue = [device newCommandQueueWithMaxCommandBufferCount:ring_slots];
   r->fence = [device newFence];
   r->set = [device newResidencySetWithDescriptor:desc error:NULL];
@@ -206,6 +207,7 @@ static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
   [r->queue addResidencySet:r->set];
   pthread_mutex_init(&r->set_mutex, NULL);
   pthread_mutex_init(&r->open_mutex, NULL);
+  pthread_mutex_init(&r->grown_mutex, NULL);
   r->open = (struct rig_metal_queue){nil, nil, -1, r};
   d->at = (uint64_t *)word;
   r->last = atomic_load_explicit(word, memory_order_acquire);
@@ -225,11 +227,47 @@ void rig_metal_release(struct rig_metal_run *r) {
   if (atomic_fetch_sub_explicit(&r->holds, 1, memory_order_acq_rel) != 1)
     return;
   [r->queue release], [r->fence release], [r->set release];
+  [r->arena release], [r->grown release];
+  pthread_mutex_destroy(&r->grown_mutex);
   [r->device release];
   pthread_mutex_destroy(&r->set_mutex);
   pthread_mutex_destroy(&r->open_mutex);
   rig_metal_ring_end(&r->ring);
   free(r);
+}
+
+/* Makes the arena the submission whose room answered RIG_GROW on this
+   thread needs, for the next room to install: the least power of two from
+   ARENA_MIN bytes that holds twice its parameters, at most the device's
+   longest buffer. Growths of other submissions run beside it, so the
+   arena handed to room is the largest one made, as NV's rings are
+   (caml_rig_nv_hand): a growth that finds one as large made makes none,
+   and one that makes a smaller one gives it back. The handed arena is read
+   under [grown_mutex], since room installs and may release it meanwhile.
+   0, or the bytes Metal made no buffer of. */
+value caml_rig_metal_grow(value v_d) {
+  struct rig_metal_run *r = Run_val(v_d);
+  uint64_t n = ARENA_MIN;
+  while (n < 2 * rig_metal_asked) n *= 2;
+  if (n > r->longest) n = r->longest;
+  pthread_mutex_lock(&r->grown_mutex);
+  int held = r->grown != nil && r->grown.length >= n;
+  pthread_mutex_unlock(&r->grown_mutex);
+  if (held) return Val_long(0);
+  id<MTLBuffer> b =
+      [r->device newBufferWithLength:n
+                             options:MTLResourceStorageModeShared |
+                                     MTLResourceHazardTrackingModeUntracked];
+  if (b == nil) return Val_long((intnat)n);
+  pthread_mutex_lock(&r->grown_mutex);
+  id<MTLBuffer> lost = b;
+  if (r->grown == nil || r->grown.length < n) {
+    lost = r->grown;
+    r->grown = b;
+  }
+  pthread_mutex_unlock(&r->grown_mutex);
+  [lost release];
+  return Val_long(0);
 }
 
 value caml_rig_metal_open(value v_word) {
@@ -646,6 +684,7 @@ NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)
 NO_METAL1(caml_rig_metal_failure)
 NO_METAL1(caml_rig_metal_stop)
+NO_METAL1(caml_rig_metal_grow)
 
 value caml_rig_metal_icb(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();

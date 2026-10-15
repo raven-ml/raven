@@ -135,13 +135,22 @@ value rig_amd_test_submit(value v_self, value v_v, value v_waits,
   uint64_t *slots = malloc((size_t)(nslots + 1) * sizeof *slots);
   if (slots == NULL) caml_raise_out_of_memory();
   for (int i = 0; i < nslots; i++) slots[i] = (uint64_t)at(v_slots, i);
+  /* A submit may write its blocks' places: it gets a copy of [v_args]. */
+  mlsize_t nargs = caml_string_length(v_args);
+  uint8_t *args = malloc(nargs + 1);
+  if (args == NULL) {
+    free(slots);
+    caml_raise_out_of_memory();
+  }
+  memcpy(args, String_val(v_args), nargs);
   void *mem = edge(v_waits, v_parts, &w, &p, &scratch);
   const char *failure = NULL;
   int r = driver_of(v_self)->submit(
       (void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v), w,
       (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts), scratch,
-      (const uint8_t *)String_val(v_args), slots, nslots, NULL, &failure);
+      args, slots, nslots, NULL, &failure);
   free(mem);
+  free(args);
   free(slots);
   if (r != RIG_FAILED) CAMLreturn(Val_none);
   v_why = caml_copy_string(failure ? failure : "");

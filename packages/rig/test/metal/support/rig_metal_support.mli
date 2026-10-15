@@ -94,6 +94,11 @@ val resize : nativeint -> groups:int -> threads:int -> unit
 val macos : bool
 (** [macos] is [true] iff the suite was built for macOS. *)
 
+val room :
+  Rig_metal.t -> Rig_edge.entry -> params:int -> [ `Fits | `Later | `Never | `Grow ]
+(** [room g e ~params] is what [g]'s room answers for one launch of [e], over
+    one thread, with [params] bytes of parameters. *)
+
 val virtual_mac : bool
 (** [virtual_mac] is [true] iff this Mac is a virtual machine
     ([kern.hv_vmm_present]), whose paravirtual GPU makes no residency set: the

@@ -113,18 +113,14 @@ enum {
 #define QMD_ALIGN 256
 #define BANK_ALIGN 64
 
-/* The most bytes of a launch's constant bank 0: the driver's parameters,
-   which end within a structure, then the kernel's. */
-#define BANK_MAX (STRUCTURE_BYTES + RIG_PARAMS)
-
 struct launch {
   /* [qmd[s][c]]: without (s = 0) or with dynamic shared memory, chaining
      no descriptor (c = 0) or the one at V_NEXT */
   struct template qmd[2][2];
   struct template bank0;
-  /* where the kernel's parameters start in bank 0, and the bank's bytes the
-     descriptor names */
-  uint32_t params_at, bank0_bytes;
+  /* where the kernel's parameters start in bank 0, how many it reads, and
+     the bank's bytes the descriptor names, which hold them */
+  uint32_t params_at, params, bank0_bytes;
   /* the most groups of a grid and threads of a group along X, Y and Z, the
      most threads of a group, and the most dynamic shared memory */
   uint32_t max[6], max_threads, max_shared;

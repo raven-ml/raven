@@ -85,7 +85,7 @@ static int memory_room(void *self, const struct rig_part *parts, int n,
    observable. Its handles are host addresses. */
 static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
-                         void *scratch, const uint8_t *args,
+                         void *scratch, uint8_t *args,
                          const uint64_t *slots, int nslots, uint64_t *times,
                          const char **failure) {
   (void)scratch;

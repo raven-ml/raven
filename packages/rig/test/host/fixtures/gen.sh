@@ -46,5 +46,5 @@ fixture() {
   linked_x86_64.o linked_aarch64.o linked_x86_64_windows.o \
   many_x86_64.o many_aarch64.o \
   scale_x86_64.o scale_aarch64.o undefined_x86_64.o undefined_aarch64.o \
-  writable_x86_64.o writable_aarch64.o
+  wide_x86_64.o wide_aarch64.o writable_x86_64.o writable_aarch64.o
 for f in "$@"; do fixture "$f"; done

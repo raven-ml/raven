@@ -370,7 +370,6 @@ let test_make_refusals () =
   refused ~msg:"an image of another device" (fun () ->
       make ~image:(functions other) [||]);
   refused ~msg:"no such function" (fun () -> make ~kernel:"absent" [||]);
-  refused ~msg:"4097 parameter bytes" (fun () -> make ~params:4097 [||]);
   refused ~msg:"negative parameter bytes" (fun () -> make ~params:(-1) [||]);
   refused ~msg:"a ref at 4" (fun () -> make [| at 4 0 |]);
   refused ~msg:"a ref ending past the parameters" (fun () -> make [| at 16 0 |]);

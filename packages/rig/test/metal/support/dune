@@ -12,7 +12,7 @@
  (foreign_stubs
   (language c)
   (names rig_metal_support_stubs)
-  (include_dirs ../../../lib/metal)
+  (include_dirs ../../../lib/metal ../../../lib/edge)
   (flags
    (:standard
     (:include ../../../lib/metal/objc_flags.sexp)))))

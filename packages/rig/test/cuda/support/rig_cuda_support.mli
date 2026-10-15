@@ -74,8 +74,10 @@ val part : Rig.t -> fill -> Rig_gpu_support.work
 (** [part d f] is [f] as work on [d], with its run parameters and private
     state. *)
 
-val failing : int -> fill
-(** [failing code] returns [code] and enqueues nothing. *)
+val failing : ?bytes:int -> int -> fill
+(** [failing ~bytes code] returns [code] and enqueues nothing. Its argument
+    holds [code] in its first 4 bytes, then zeros up to [bytes] (defaults to
+    4). *)
 
 val context : unit -> fill
 (** [context ()] records the context current while it runs ({!seen}). *)

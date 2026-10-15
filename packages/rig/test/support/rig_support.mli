@@ -400,6 +400,10 @@ val poke : nativeint
 (** [poke] is a fill storing the second 64-bit word of its argument at the
     address its first holds. *)
 
+val far : nativeint
+(** [far] is a fill of 8,192 bytes of argument storing the 64-bit word at its
+    byte 4,096 at the address its last 8 bytes hold. *)
+
 val countdown : nativeint
 (** [countdown] is a fill taking one from the 64-bit word at the address in its
     argument, which fails if that makes the word zero. *)

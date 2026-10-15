@@ -90,6 +90,28 @@ let test_mixed () =
   equal int 1 (P.run p);
   equal (list int) [ 17; 29; 43 ] (List.init 3 (fun i -> word out (i * 8)))
 
+(* A fill's argument holds 8,192 bytes, past the 4,096 a part had: [far]
+   stores its word at byte 4,096 through the ref in its last 8, on a device
+   that runs it at its submit and on one that runs it later. *)
+let test_wide_fill () =
+  let wide d =
+    let s =
+      Sub.make d
+        [| fill ~params:8192 ~refs:[| Sub.write 0 ~at:8184 |] Support.far |]
+    in
+    let run = Run.make () and block = Sub.block s 0 in
+    Run.int64 run block 4096 59;
+    Run.int64 run block 8184 8;
+    let out = B.create d 16 in
+    (out, submit s run [| out |])
+  in
+  let out, _ = wide (Rig.memory_device "args:wide-memory") in
+  equal ~msg:"the memory device" int 59 (word out 8);
+  let d, p = P.open_ "args:wide-polled" in
+  let out, _ = wide d in
+  ignore (P.run p);
+  equal ~msg:"Polled" int 59 (word out 8)
+
 let test_refs () =
   let d, p = P.open_ "args:refs" in
   let refs = [| Sub.write 0 ~at:0; Sub.read 1 ~at:8 |] in
@@ -117,7 +139,6 @@ let test_refusals () =
     (fun (msg, f) -> raises_match ~msg Exn.invalid_arg f)
     [
       ("negative parameters", fun () -> make (-1) [||]);
-      ("4097 parameters", fun () -> make 4097 [||]);
       ("unaligned ref", fun () -> make 16 [| at 4 0 |]);
       ("negative ref", fun () -> make 16 [| at (-8) 0 |]);
       ("overflowing ref", fun () -> make 16 [| at (max_int - 7) 0 |]);
@@ -212,6 +233,7 @@ let () =
            test_synchronous;
          test "mixed Launch and Fill blocks stay independent" test_mixed;
          test "Fill resolves distinct refs copied at make" test_refs;
+         test "a fill's argument holds 8,192 bytes" test_wide_fill;
          test "Fill refuses invalid blocks and refs" test_refusals;
          test "address refs refuse handle-only memory before submit"
            test_handle_only;

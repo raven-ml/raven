@@ -31,8 +31,12 @@ let default_bank0 = { Cubin.index = 0; offset = 0; bytes = 0x160 }
 
 (* What a kernel may use, as CUDA states it for compute capabilities 8.0 to 12.0
    (CUDA C++ Programming Guide, "Technical Specifications per Compute
-   Capability"), and the banks a descriptor names, 0 to 7 (clc7c0qmd.h,
-   clcec0qmd.h: CONSTANT_BUFFER_VALID(i)). Every descriptor field holds them. *)
+   Capability"; a bank's bytes from its section 5.1, Compute Capabilities,
+   Table 31, "Constant memory size: 64 KB",
+   https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html),
+   and the banks a descriptor names, 0 to 7 (clc7c0qmd.h, clcec0qmd.h:
+   CONSTANT_BUFFER_VALID(i)). Every descriptor field holds them: a bank's
+   size is CONSTANT_BUFFER_SIZE_SHIFTED4, 13 bits of 16 bytes. *)
 let max_registers = 255
 let max_bank_bytes = 0x10000
 let descriptor_banks = 8

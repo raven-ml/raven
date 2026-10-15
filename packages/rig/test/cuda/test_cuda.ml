@@ -610,6 +610,17 @@ let write_after_failure () =
     Domain.cpu_relax ()
   done
 
+(* Two fills on one queue in one C submission, the first with 64 bytes of
+   argument: each runs on its own argument, wherever the first placed its
+   own, and the second's failure answers the submit. *)
+let fills_own_arguments () =
+  if not (S.present ()) then skip ~reason:"the machine has no CUDA GPU" ();
+  S.release ();
+  let g = require_ok (Rig_gpu_support.opened (C.gpu 0)) in
+  Fun.protect ~finally:(fun () -> C.stop g ~fault:None) @@ fun () ->
+  is_some ~msg:"the second fill's failure"
+    (S.submit_edge g ~v:1 [ (1, S.failing ~bytes:64 0); (1, S.failing 3) ])
+
 let registry_is_the_process () =
   let p = H.pages H.page in
   let a = S.open_ () in
@@ -735,6 +746,8 @@ let timeline =
         stop_running;
       test "a write after a failure follows the work before it"
         write_after_failure;
+      test "each fill of a submission runs on its own argument"
+        fills_own_arguments;
       test "page-locking is the process's" registry_is_the_process;
       test "an image a close left loaded is unloaded after it" unload_after_stop;
       test "an unload after the GPU opened again leaves the new device working"

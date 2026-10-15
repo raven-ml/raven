@@ -204,8 +204,10 @@ val capability : t -> Rig_metal_abi.t
     A fill receives the open compute encoder, encodes into it, and may start
     new command buffers ({!Rig_metal_abi}).
 
-    [rig_metal_room] never returns [RIG_LATER]. [rig_metal_submit] instead
-    blocks, before it opens a command buffer, while the device has 1,024
+    [rig_metal_room] returns [RIG_LATER] and [RIG_GROW] for launches'
+    parameters alone ({!section-launches}). For command buffers,
+    [rig_metal_submit] instead blocks, before it opens a command buffer,
+    while the device has 1,024
     command buffers, as many as its Metal queue holds, counting the open one
     and the committed ones not yet completed. [rig_metal_commit] commits the
     open command buffer, which holds the work of every value not yet
@@ -215,13 +217,33 @@ val capability : t -> Rig_metal_abi.t
 
     A launch dispatches its function once, in the open command buffer's
     encoder. It sets the function's pipeline; its parameters as kernel buffer
-    [0] ([setBytes:length:atIndex:]), unless it has none; its threadgroup
-    memory, rounded up to a multiple of 16 bytes, as threadgroup memory [0]
+    [0], unless it has none: up to 4 KB, the most
+    [setBytes:length:atIndex:] takes, with it, and longer ones in the
+    device's {e parameter arena}, a shared buffer bound with
+    [setBuffer:offset:atIndex:]; its threadgroup memory, rounded up to a
+    multiple of 16 bytes, as threadgroup memory [0]
     ([setThreadgroupMemoryLength:atIndex:]), unless it is [0]; and its grid
     ([dispatchThreadgroups:threadsPerThreadgroup:]). The function reads its
     parameters as a [constant] structure at [[[buffer(0)]]], and each ref's 8
     bytes as a device pointer, the GPU address of the ref's buffer plus the
     offset.
+
+    The Metal Feature Set Tables bound a buffer's contents by its length
+    alone, so the device's [maxBufferLength] bounds a launch's parameters.
+    The launches take the arena's bytes in turn, each on 256 bytes, the
+    largest constant buffer offset alignment, and the bytes of a command
+    buffer's launches come back once its work completes. [rig_metal_room]
+    returns [RIG_LATER] for parts whose parameters the arena holds only once
+    earlier work completes, and [RIG_GROW] for parts whose parameters exceed
+    the empty arena. The growth ({!val-grow}) makes an arena of the least
+    power of two of bytes, at least 64 KiB and at most [maxBufferLength],
+    that holds twice them, and the next submission takes it; the command
+    buffers that use the old one keep it until their work completes. A
+    growth Metal has no memory for answers [Short], so a launch rig cannot
+    find memory for raises [Rig.Out_of_memory]. The arena never shrinks: it
+    stays until the device stops, and counts in no budget, since a budget
+    counts buffers, images' code and caches ({!Rig.section-reclaim}),
+    as no driver's queues count in one.
 
     [rig_metal_room] refuses a launch if:
     {ul
@@ -232,6 +254,8 @@ val capability : t -> Rig_metal_abi.t
     {- its threadgroup memory, rounded, exceeds the device's
        [maxThreadgroupMemoryLength] less the function's
        [staticThreadgroupMemoryLength].}}
+    It also refuses parts whose parameters past 4 KB take more than
+    [maxBufferLength] together.
 
     {2:profiles Profiles}
 
@@ -348,14 +372,15 @@ val capability : t -> Rig_metal_abi.t
       [MTLResidencySet.h] ([addAllocation:], [commit]), [MTLDevice.h]
       ([newBufferWithLength:options:],
       [newBufferWithBytesNoCopy:length:options:deallocator:],
-      [recommendedMaxWorkingSetSize], [supportsFamily:],
+      [recommendedMaxWorkingSetSize], [maxBufferLength], [supportsFamily:],
       [maxThreadsPerThreadgroup], [maxThreadgroupMemoryLength]),
       [MTLBuffer.h] ([gpuAddress], [contents]), [MTLLibrary.h]
       ([newLibraryWithData:error:], [functionNames], [newFunctionWithName:]),
       [MTLFunction.h] ([functionType]), [MTLComputePipeline.h]
       ([supportIndirectCommandBuffers], [maxTotalThreadsPerThreadgroup],
       [staticThreadgroupMemoryLength]), [MTLComputeCommandEncoder.h]
-      ([setBytes:length:atIndex:], [setThreadgroupMemoryLength:atIndex:],
+      ([setBytes:length:atIndex:], [setBuffer:offset:atIndex:],
+      [setThreadgroupMemoryLength:atIndex:],
       [dispatchThreadgroups:threadsPerThreadgroup:]),
       [MTLIndirectCommandBuffer.h].
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
@@ -367,4 +392,5 @@ val capability : t -> Rig_metal_abi.t
       starts at a page.
     - {{:https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf}Metal
        feature set tables}: GPU families, minimum constant buffer offset
-      alignment. *)
+      alignment, the 4 KB of inlined buffer contents [setBytes] takes, and
+      buffer contents limited only by the buffer's length. *)

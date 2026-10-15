@@ -194,8 +194,7 @@ let check_part t sizes = function
   | Fill { fill; params; _ } ->
       check_leaf t ~images:(Iarray.length t.images) fill;
       let n = String.length params.bytes in
-      if n mod 4 <> 0 || n > 4096 then
-        refuse "fill: invalid parameter length %d" n;
+      if n mod 4 <> 0 then refuse "fill: invalid parameter length %d" n;
       check_holes "fill parameters" n (check_value t) params.holes
   | Copy { src_offset; dst_offset; length; _ } ->
       if length < 0 then refuse "a copy of %d bytes" length;
@@ -209,10 +208,9 @@ let check_part t sizes = function
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Iarray.length t.images) image;
       let n = String.length params.bytes in
-      if n mod 4 <> 0 || n > 4096 then
+      if n mod 4 <> 0 then
         refuse
-          "image %d: %d bytes of parameters, not a whole number of 32-bit \
-           words up to 4096"
+          "image %d: %d bytes of parameters, not a whole number of 32-bit words"
           image n;
       check_holes
         (strf "image %d's parameters" image)

@@ -115,9 +115,7 @@ raven / llama.cpp (Vulkan; ROCm):
   keeps 16,384 entries and refuses Words past them: size it from the RAMFC
   field, remake the channel at idle, or state the bound on
   `Rig.Submission.words`; NV's 65,535 parts (the 16-bit index of
-  `v << 16 | i + 1`): a per-channel join counter has no bound; parameter
-  bytes per compiled function, a per-device fact (Metal's 4 KiB `setBytes`;
-  CUDA 32,764 since 12.1; NV and AMD read them from memory);
+  `v << 16 | i + 1`): a per-channel join counter has no bound;
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
   it; mlx5's CQ from `max_cqe` (ceiling 2^24) and its QP from
   `max_send_wqebb` under 2^15 (`context` changes: API review)

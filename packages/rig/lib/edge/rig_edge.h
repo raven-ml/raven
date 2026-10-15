@@ -50,19 +50,28 @@ struct rig_wait {
 /* A part's kinds. 0 is no part: a room check answers RIG_NEVER for it. */
 enum { RIG_WORDS = 1, RIG_FILL, RIG_COPY, RIG_LAUNCH };
 
-/* The most parameter bytes a launch or fill has: Metal's limit for setBytes,
-   4 KB in Apple's Metal Feature Set Tables, the least of the drivers' limits.
-   CUDA's has been 32,764 bytes since CUDA 12.1. */
-#define RIG_PARAMS 4096
-
 /* A launch's or a fill's block in a run's [args]: the groups of its grid
    along x, y and z, the threads of a group, a group's dynamic shared memory
    in bytes, then its parameters. A fill uses only the parameters. A block
-   starts on 16 bytes. */
+   starts on 16 bytes. Its parameters, rounded up to 16 bytes, are followed
+   by its place (rig_place), as rig_block_bytes lays them out. */
 struct rig_block {
   uint32_t groups[3], threads[3], shared, unused;
   uint8_t params[];
 };
+
+/* [params] rounded up to the 16 bytes a block's parts start on. */
+static inline uint64_t rig_round16(uint64_t params) {
+  return (params + 15) & ~(uint64_t)15;
+}
+
+/* The bytes of a block of [params] parameter bytes in [args]: its header,
+   its parameters and its place, each up to a multiple of 16 bytes. The next
+   block starts there. Whoever lays out blocks for a submit lays them out so,
+   since the driver's submit may write each place. */
+static inline uint64_t rig_block_bytes(uint64_t params) {
+  return sizeof(struct rig_block) + 2 * rig_round16(params);
+}
 
 /* A launch's or a fill's reference to a run's buffer: the 8 parameter bytes
    at [at] hold an offset into the run's buffer [slot], to which the driver
@@ -104,9 +113,9 @@ struct rig_args {
      [launch.launch] (the [code] and [launch] the driver's [entry] gave) run
      once, over the grid of the struct rig_block at byte [launch.args.block]
      of the submission's [args], with its parameters [launch.args]. The
-     driver copies the parameters into memory of its own before it adds the
-     addresses (rig_params): [args] is the caller's, and is read only during
-     the call.
+     driver places the parameters, with the addresses added (rig_params),
+     into memory of its own or into the block's place (rig_place): [args] is
+     the caller's, and is used only during the call.
    The part runs after the parts of the same submission before it on its
    queue, and after the parts whose indices the [nafter] ints at [after]
    list, each below its own: [after] orders parts of different queues, and
@@ -158,7 +167,8 @@ typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
 /* Encodes [parts] on the device's queues as the work of [v], the value
    after the last one it received, which starts after [waits] and runs
    without another call. The word shows [v] once [v] is committed and its
-   work completed. [args] holds the launches' and fills' blocks and [slots]
+   work completed. [args] holds the launches' and fills' blocks, of which
+   the driver writes only their places (rig_place), and [slots]
    the address of each of the run's [nslots] buffers, as the device's work
    addresses it, for their refs. [times] is NULL unless a profile is
    being taken; otherwise the driver stores at [times[0]] and [times[1]] the
@@ -173,7 +183,7 @@ typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
    message, which lives as long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
-                         void *scratch, const uint8_t *args,
+                         void *scratch, uint8_t *args,
                          const uint64_t *slots, int nslots, uint64_t *times,
                          const char **failure);
 
@@ -228,7 +238,7 @@ static inline void rig_raise(_Atomic uint64_t *word, uint64_t last) {
 /* Writes into [dst] the parameters [a] of a launch or a fill: the
    [a->params] bytes of its block in [args], each ref's 8 bytes, a 64-bit
    integer in the host's byte order, plus [slots[slot]]. [dst] holds as many
-   bytes and lies outside [args]. */
+   bytes and shares none with the block's parameters. */
 static inline void rig_params(uint8_t *dst, const struct rig_args *a,
                               const uint8_t *args, const uint64_t *slots) {
   const uint8_t *src = args + a->block + sizeof(struct rig_block);
@@ -240,6 +250,15 @@ static inline void rig_params(uint8_t *dst, const struct rig_args *a,
     x += slots[r->slot];
     memcpy(dst + r->at, &x, sizeof x);
   }
+}
+
+/* The place of the block of [a] in [args]: [a->params] bytes, on 16 bytes,
+   that its driver's submit may write during the call, such as to place the
+   parameters (rig_params) for an API that copies them at a call or for
+   code the host runs. Its bytes are undefined when the call starts, and
+   rig never reads them. */
+static inline uint8_t *rig_place(const struct rig_args *a, uint8_t *args) {
+  return args + a->block + sizeof(struct rig_block) + rig_round16(a->params);
 }
 
 /* Timeline words
@@ -275,7 +294,7 @@ uint64_t rig_now_ns(void);
 void rig_code_sync(void);
 
 /* Calls the fill [p] with the queue's context [queue] and the value [v], on
-   its argument placed into memory of the call's own (rig_params), after
+   its argument placed into its block's place (rig_place), after
    rig_code_sync (). A driver that calls the fill after its submit returns
    keeps its own copy: [args] and [slots] are the caller's. */
 #if defined(__clang__)
@@ -283,9 +302,8 @@ void rig_code_sync(void);
 __attribute__((no_sanitize("function")))
 #endif
 static inline int rig_fill(void *queue, const struct rig_part *p,
-                           const uint8_t *args, const uint64_t *slots,
-                           uint64_t v) {
-  _Alignas(16) uint8_t arg[RIG_PARAMS];
+                           uint8_t *args, const uint64_t *slots, uint64_t v) {
+  uint8_t *arg = rig_place(&p->fill.args, args);
   rig_params(arg, &p->fill.args, args, slots);
   rig_code_sync();
   return p->fill.fn(queue, arg, v);

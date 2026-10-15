@@ -1210,17 +1210,18 @@ let test_part_word () =
         (fun () -> Sub.make d [| Sub.words (B.create Rig.host n) |]))
     [ 1; 6; 7 ]
 
-(* Blocks of 4096 bytes of parameters each, one per part, together reach 2^32
-   bytes: [make] refuses them, with every part placed and ordered first. *)
+(* Fills of 4,096 bytes of parameters: as many as a run holds, each counting
+   16 bytes plus its parameters against 2^31 - 1, are made, and one more is
+   refused. *)
 let test_blocks_bound () =
   let d, _ = P.open_ "submit:blocks-bound" in
   let params = 4096 in
-  let parts =
-    Array.make ((1 lsl 32) / params) (Sub.fill Support.noop ~params)
-  in
+  let most = ((1 lsl 31) - 1) / (16 + params) in
+  let fills n = Array.make n (Sub.fill Support.noop ~params) in
+  ignore (Sub.make d (fills most));
   raises_match
-    (Exn.invalid_arg ~substring:"exceed 2^32 - 1 bytes")
-    (fun () -> Sub.make d parts)
+    (Exn.invalid_arg ~substring:"take more than a run holds")
+    (fun () -> Sub.make d (fills (most + 1)))
 
 (* [make]'s stack does not grow with its parts: 2^20 fills make within a stack
    of 2^16 words, whatever the parts' count. *)
@@ -1910,7 +1911,7 @@ let tests =
           test_words_order;
         test "words of a length no multiple of 4 are refused at make"
           test_part_word;
-        test "blocks beyond 2^32 - 1 bytes are refused at make"
+        test "launches and fills past what a run holds are refused at make"
           test_blocks_bound;
       ];
     group ~timeout "order"

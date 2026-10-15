@@ -258,3 +258,4 @@ let spin t ~ns =
     (fun run b -> Sub.Run.int64 run b 8 ns)
 
 let launch_binary () = Some (fixture ~dir:fixtures "launch_sm89.cubin")
+let wide_binary _ = launch_binary ()

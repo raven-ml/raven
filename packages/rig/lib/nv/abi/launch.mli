@@ -33,6 +33,10 @@ val make : Gpu.t -> Cubin.kernel -> (t, string) result
     {!Gpu.t} names, or if [g.sass_version] is outside \[[0];[0xff]\], the
     versions a launch descriptor holds. *)
 
+val max_bank_bytes : int
+(** [max_bank_bytes] is the most bytes of a constant bank a launch reads, 64
+    KiB: {!make} refuses a kernel's bank of more. *)
+
 val banks : t -> Cubin.bank list
 (** [banks l] is the constant banks a launch addresses: the kernel's
     ({!Cubin.type-kernel}), with a bank [0] of 352 bytes at offset [0] first if

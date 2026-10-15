@@ -9,8 +9,11 @@
    the runtime: none blocks. */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#include "rig_edge.h"
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -29,6 +32,28 @@ value rig_metal_test_macos(value unit) {
 #else
   return Val_false;
 #endif
+}
+
+/* The answer of the room of the device whose C state is [v_edge] for one
+   launch, over one thread, of the function whose [launch] is [v_launch],
+   with [v_params] bytes of parameters: RIG_FITS, RIG_LATER, RIG_NEVER or
+   RIG_GROW. */
+value rig_metal_test_room(value v_edge, value v_launch, value v_params) {
+  uint64_t n = (uint64_t)Long_val(v_params);
+  uint8_t *args = calloc(1, rig_block_bytes(n));
+  if (args == NULL) caml_raise_out_of_memory();
+  struct rig_block *b = (struct rig_block *)args;
+  for (int k = 0; k < 3; k++) b->groups[k] = b->threads[k] = 1;
+  struct rig_part p;
+  memset(&p, 0, sizeof p);
+  p.kind = RIG_LAUNCH;
+  p.launch.launch = Ptr_val(v_launch);
+  p.launch.args.params = (uint32_t)n;
+  uint8_t scratch[RIG_SCRATCH];
+  void *self = Ptr_val(v_edge);
+  int r = rig_driver_of(self)->room(self, &p, 1, scratch, args);
+  free(args);
+  return Val_int(r);
 }
 
 /* Fills */

@@ -76,6 +76,17 @@ let attribute_can_use_64_bit_stream_mem_ops = 122
 let attribute_host_register_supported = 99
 let attribute_kernel_exec_timeout = 17
 
+(* The most parameter bytes of a kernel CUDA launches: 32,764 on Volta
+   (compute capability 7.0) and later, 4,096 below. NVIDIA, "CUDA 12.1
+   Supports Large Kernel Parameters": "The parameter limit remains at 4,096
+   bytes on architectures below NVIDIA Volta". The larger bound also needs a
+   12.1 driver, which the 12.4 library rig requires implies. ptxas refuses
+   a kernel past these, so an image of one fails to load first and
+   [entry]'s refusal guards what no test reaches. *)
+let large_params = 32764
+let small_params = 4096
+let large_params_major = 7
+
 (* Work that no display's watchdog bounds is hung once it has not advanced for
    30 s, the bound of a GPU driven without a kernel driver. *)
 let hang_ms = 30_000
@@ -207,6 +218,7 @@ type image = {
   mutable entries : (string * Rig_edge.entry) list; [@atomic]
   (* twice the references, plus one after unload *)
   mutable graphs : int; [@atomic]
+  params_bound : int; (* its device's [params_bound] *)
 }
 
 type t = {
@@ -221,6 +233,7 @@ type t = {
   guard : guard; (* held by a graph call and by stop *)
   stopped : bool Atomic.t; (* stop began *)
   cap : Rig_cuda_abi.t;
+  params_bound : int; (* the most parameter bytes of a kernel it launches *)
 }
 
 external open_device : int -> nativeint -> bool -> int = "caml_rig_cuda_open"
@@ -506,6 +519,9 @@ let open_ ~word i =
             region i kind ~address:(word_at self) ~handle:(word_address self)
           in
           let arch = strf "sm_%d%d" major minor in
+          let params_bound =
+            if major >= large_params_major then large_params else small_params
+          in
           let images = Atomic.make [] in
           let pending = g.pending.(i) in
           let guard = guard () and stopped = Atomic.make false in
@@ -551,6 +567,7 @@ let open_ ~word i =
               guard;
               stopped;
               cap;
+              params_bound;
             }
         end
 
@@ -691,6 +708,7 @@ let image g bin =
           lock = guard ();
           entries = [];
           graphs = 0;
+          params_bound = g.params_bound;
         }
       in
       update g.images (List.cons i);
@@ -707,6 +725,13 @@ let entry (m : image) f =
     | Some e -> Rig_edge.Entry e
     | None -> (
         match make_entry m.context m.m f with
+        | p when p >= 0 && entry_params p > m.params_bound ->
+            let n = entry_params p in
+            forget p;
+            invalid_argf
+              "Rig_cuda.entry: %s takes %d bytes of parameters, more than the \
+               %d this GPU and driver launch"
+              f n m.params_bound
         | p when p >= 0 ->
             let e =
               {

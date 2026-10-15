@@ -403,23 +403,18 @@ value caml_rig_sub_seal(value v_s) {
   return Val_unit;
 }
 
-/* The bytes of a block of [params] parameter bytes: its header, then its
-   parameters, up to the 16 bytes the next block starts on. */
-static size_t block_bytes(size_t params) {
-  return sizeof(struct rig_block) + ((params + 15) & ~(size_t)15);
-}
-
 /* Places the parameters [a] of a launch or a fill, of [v_params] bytes
    with the refs [v_refs], stored from [v_at] on in [s]'s refs, in a block
-   after the last one's. Answers the block, as RIG_BLOCK_START and
-   RIG_BLOCK_PARAMS read it. */
+   after the last one's. Answers where the block starts. [v_params] is below
+   2^62, so [rig_block_bytes] does not wrap. */
 static intnat sub_args(struct rig_sub *s, struct rig_args *a, value v_params,
                        value v_refs, value v_at) {
-  size_t start = s->args, params = (size_t)Long_val(v_params);
-  size_t bytes = block_bytes(params);
+  uint64_t start = s->args, params = (uint64_t)Long_val(v_params);
+  uint64_t bytes = rig_block_bytes(params);
   if (start > UINT32_MAX || bytes > UINT32_MAX - start)
     caml_invalid_argument(
-        "Rig.Submission.make: run blocks exceed 2^32 - 1 bytes");
+        "Rig.Submission.make: the launches and fills take more than a run "
+        "holds");
   int at = Int_val(v_at), n = (int)Wosize_val(v_refs);
   for (int j = 0; j < n; j++) {
     value r = Field(v_refs, j);
@@ -431,7 +426,7 @@ static intnat sub_args(struct rig_sub *s, struct rig_args *a, value v_params,
   a->refs = n == 0 ? NULL : &s->refs[at];
   a->nrefs = n;
   s->args = start + bytes;
-  return (intnat)((start << RIG_BLOCK_BITS) | params);
+  return (intnat)start;
 }
 
 /* Part [v_i] launches the function [v_code], [v_launch] with [v_params]
@@ -453,12 +448,13 @@ value caml_rig_sub_launch_byte(value *argv, int argn) {
 }
 
 /* The submission's [v_k]th entry ref writes [v_code] at byte [v_at] of the
-   parameters of the block [v_block], as [sub_args] answers it. */
+   parameters of the block that starts at [v_block], as [sub_args] answers
+   it. */
 value caml_rig_sub_code(value v_s, value v_k, value v_block, value v_at,
                         value v_code) {
   struct rig_sub *s = Sub_val(v_s);
   s->codes[Int_val(v_k)] = (struct rig_code){
-      RIG_BLOCK_START(Long_val(v_block)) + sizeof(struct rig_block) +
+      (size_t)Long_val(v_block) + sizeof(struct rig_block) +
           (size_t)Long_val(v_at),
       (uint64_t)Long_val(v_code)};
   return Val_unit;
@@ -850,13 +846,14 @@ value caml_rig_run_producer(value v_r) {
 
 /* Blocks */
 
-/* A block, as Submission.block makes it: its submission's id, where it lies
-   in a run, the most threads a group of its function has or 0 for none, and
-   the function's name. */
+/* A block, as Submission.block makes it: its submission's id, where it
+   starts in a run, its parameter bytes, the most threads a group of its
+   function has or 0 for none, and the function's name. */
 #define BLOCK_SUB(v) ((uint64_t)Long_val(Field(v, 0)))
-#define BLOCK_AT(v) Long_val(Field(v, 1))
-#define BLOCK_MOST(v) Long_val(Field(v, 2))
-#define BLOCK_FN(v) String_val(Field(v, 3))
+#define BLOCK_AT(v) ((size_t)Long_val(Field(v, 1)))
+#define BLOCK_PARAMS(v) ((size_t)Long_val(Field(v, 2)))
+#define BLOCK_MOST(v) Long_val(Field(v, 3))
+#define BLOCK_FN(v) String_val(Field(v, 4))
 
 /* Stores the [size] bytes at [src] at byte [at] of the run [v_r]'s block
    [v_b], growing the run to hold the whole block. It takes the run as a
@@ -869,9 +866,8 @@ value caml_rig_run_producer(value v_r) {
 static void block_store(value v_r, value v_b, intnat at, const void *src,
                         intnat size) {
   struct rig_run *r = Run_val(v_r);
-  intnat b = BLOCK_AT(v_b);
   uint64_t sub = BLOCK_SUB(v_b);
-  size_t params = RIG_BLOCK_PARAMS(b);
+  size_t params = BLOCK_PARAMS(v_b);
   if (at < 0 || (size_t)(at + size) > sizeof(struct rig_block) + params)
     caml_invalid_argument(
         "Rig.Submission.Run: the bytes lie outside the block's parameters");
@@ -885,7 +881,7 @@ static void block_store(value v_r, value v_b, intnat at, const void *src,
     r->nargs = 0;
     r->owner = sub;
   }
-  size_t start = RIG_BLOCK_START(b), end = start + block_bytes(params);
+  size_t start = BLOCK_AT(v_b), end = start + rig_block_bytes(params);
   if (end > r->cargs) {
     size_t c = 2 * r->cargs > end ? 2 * r->cargs : end;
     uint8_t *args = realloc(r->args, c);

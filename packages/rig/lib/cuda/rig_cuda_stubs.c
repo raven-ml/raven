@@ -1148,7 +1148,7 @@ struct submission {
   struct device *d;
   const struct rig_wait *waits;
   int nwaits;
-  const uint8_t *args;
+  uint8_t *args;
   const uint64_t *slots;
   int entered[2];
   int waited;
@@ -1236,15 +1236,16 @@ static CUresult follow(struct submission *s, int q) {
 }
 
 /* Launches the function of the launch [p] on [stream] over the grid of its
-   block, with its parameters copied and each ref's word raised by its
-   slot's address: CUDA copies the parameters at the call. CUDA refuses a
-   buffer of another size than the function's parameters, so the launch's
-   bytes past them, which rig allows, are left out. */
+   block, with its parameters placed in the block's place and each ref's
+   word raised by its slot's address: CUDA copies the parameters at the
+   call. CUDA refuses a buffer of another size than the function's
+   parameters, so the launch's bytes past them, which rig allows, are left
+   out. */
 static CUresult launch(const struct submission *s, CUstream stream,
                        const struct rig_part *p) {
   const struct function *fn = p->launch.launch;
   const struct rig_block *b = (const void *)(s->args + p->launch.args.block);
-  _Alignas(16) uint8_t params[RIG_PARAMS];
+  uint8_t *params = rig_place(&p->launch.args, s->args);
   size_t size = fn->params;
   void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, params,
                    CU_LAUNCH_PARAM_BUFFER_SIZE, &size, CU_LAUNCH_PARAM_END};
@@ -1448,7 +1449,7 @@ int rig_cuda_room(void *self, const struct rig_part *p, int n,
 
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                     int nwaits, const struct rig_part *parts, int nparts,
-                    void *scratch, const uint8_t *args,
+                    void *scratch, uint8_t *args,
                     const uint64_t *slots, int nslots, uint64_t *times,
                     const char **failure) {
   (void)scratch;

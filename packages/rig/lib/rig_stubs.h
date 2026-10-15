@@ -320,13 +320,6 @@ struct rig_sub {
   size_t args;            /* where its last block ends in a run */
 };
 
-/* A launch's or a fill's block in a run, as [Submission.block] encodes it:
-   where it starts, in bytes, above the RIG_BLOCK_BITS bits of its parameter
-   count. */
-#define RIG_BLOCK_BITS 13
-#define RIG_BLOCK_START(b) ((uint64_t)(b) >> RIG_BLOCK_BITS)
-#define RIG_BLOCK_PARAMS(b) ((uint64_t)(b) & ((1u << RIG_BLOCK_BITS) - 1))
-
 /* Who holds a run: one submit or one store at a time takes it by a
    compare-and-set from RUN_IDLE. */
 enum { RUN_IDLE, RUN_SUBMIT, RUN_STORE };

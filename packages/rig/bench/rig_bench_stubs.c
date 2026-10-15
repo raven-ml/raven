@@ -50,6 +50,9 @@ static void turn_unlock(turn *t) { pthread_mutex_unlock(t); }
 #include <unistd.h>
 #endif
 
+/* The most parameter bytes of a floor's part: the rows' parts take few. */
+#define FLOOR_PARAMS 4096
+
 struct floor {
   void *self;
   struct rig_driver driver;
@@ -58,8 +61,9 @@ struct floor {
   turn *turn;
   struct rig_part part;
   _Alignas(8) uint8_t scratch[RIG_SCRATCH]; /* the part's */
-  /* A launch's or a fill's block, with a launch's geometry set to one. */
-  _Alignas(16) uint8_t args[sizeof(struct rig_block) + RIG_PARAMS];
+  /* A launch's or a fill's block and its place (rig_place), with a
+     launch's geometry set to one. */
+  _Alignas(16) uint8_t args[sizeof(struct rig_block) + 2 * FLOOR_PARAMS];
 };
 
 #define Floor_val(v) ((struct floor *)Nativeint_val(v))
@@ -84,7 +88,7 @@ value rig_bench_floor_new(value v_edge, value v_fill) {
 value rig_bench_floor_fill(value v_f, value v_fill, value v_params) {
   CAMLparam3(v_f, v_fill, v_params);
   mlsize_t n = caml_string_length(v_params);
-  if (n > RIG_PARAMS)
+  if (n > FLOOR_PARAMS)
     caml_invalid_argument("rig_bench_floor_fill: too many parameters");
   struct floor *f = Floor_val(v_f);
   f->part = (struct rig_part){0};
@@ -136,6 +140,8 @@ value rig_bench_floor_copy(value v_f, value v_queue, value v_dst, value v_src,
 value rig_bench_floor_launch(value v_f, value v_code, value v_launch,
                              value v_params) {
   struct floor *f = Floor_val(v_f);
+  if (Long_val(v_params) < 0 || Long_val(v_params) > FLOOR_PARAMS)
+    caml_invalid_argument("rig_bench_floor_launch: too many parameters");
   struct rig_block *b = (struct rig_block *)f->args;
   for (int k = 0; k < 3; k++) b->groups[k] = b->threads[k] = 1;
   f->part = (struct rig_part){0};

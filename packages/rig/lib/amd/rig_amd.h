@@ -52,7 +52,7 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
    converts to the host's clock. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    int nwaits, const struct rig_part *parts, int nparts,
-                   void *routes, const uint8_t *args,
+                   void *routes, uint8_t *args,
                    const uint64_t *slots, int nslots, uint64_t *times,
                    const char **failure);
 

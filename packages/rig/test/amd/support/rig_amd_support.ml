@@ -176,6 +176,7 @@ let spin t ~ns =
   w
 
 let launch_binary () = Some (fixture "launch_gfx1201.hsaco")
+let wide_binary _ = launch_binary ()
 
 (* The C entries *)
 
@@ -242,7 +243,11 @@ module Edge = struct
       make ~queue:0 ~kind:rig_launch ~after ~launch:e.launch ~code:e.code
         ~params:(String.length params) words
     in
-    { p with block = Bytes.to_string header ^ params }
+    (* As rig_edge.h's rig_block_bytes lays a block out: its header, its
+       parameters and its place, each up to a multiple of 16 bytes. *)
+    let n = (String.length params + 15) land lnot 15 in
+    let padded = params ^ String.make (n - String.length params) '\000' in
+    { p with block = Bytes.to_string header ^ padded ^ String.make n '\000' }
 
   (* The parts' ints with each launch's block offset, and the args. *)
   let args ps =

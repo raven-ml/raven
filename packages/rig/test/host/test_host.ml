@@ -154,12 +154,42 @@ let test_deep () =
         (deep_launch groups))
     [ 1; 4 * S.workers () ]
 
+(* wide.c with 8,192 bytes of parameters, past the 4,096 a launch had: the
+   words at bytes 4,096 and 8,188 reach it. *)
+let test_wide () =
+  let out = S.words 1 in
+  ignore
+    (launch (load "wide") "wide"
+       ~refs:Sub.[| write 0 ~at:0 |]
+       ~params:8192
+       ~set:(fun run k ->
+         Run.int32 run k 4096 41;
+         Run.int32 run k 8188 43)
+       (words [| out |]));
+  equal (pair int int) (41, 43)
+    (Int64.(to_int (logand out.{0} 0xffff_ffffL), to_int (shift_right_logical out.{0} 32)))
+
+(* The host bounds a launch's parameters only by what a run holds: one
+   launch counts 16 bytes plus its parameters rounded up to 16 against
+   2^31 - 1, so 2^31 - 32 bytes are made and 2^31 - 31 refused. *)
+let test_run_bound () =
+  let make n =
+    Sub.make Rig.host [| Sub.launch (load "wide") "wide" ~params:n |]
+  in
+  ignore (make ((1 lsl 31) - 32));
+  raises_match
+    (Exn.invalid_arg ~substring:"take more than a run holds")
+    (fun () -> make ((1 lsl 31) - 31))
+
 let program_tests =
   group ~timeout "launches"
     [
       prop "a launch runs its function on its parameters over every thread"
         affine_case test_affine;
       test "a profile records a launch's span" test_profiled;
+      test "a launch reads 8,192 bytes of parameters" test_wide;
+      test "a launch's parameters are bounded only by what a run holds"
+        test_run_bound;
       test
         "a function calls the process's cbrt and its own function, and reads \
          its constants"

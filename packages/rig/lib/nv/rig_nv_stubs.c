@@ -440,7 +440,7 @@ value caml_rig_nv_template(value v_self, value v_k, value v_bytes,
 /* Launches */
 
 /* The fields of [caml_rig_nv_launch]'s ints. */
-enum { l_params_at, l_bank0_bytes, l_max, l_max_threads = l_max + 6,
+enum { l_params_at, l_params, l_bank0_bytes, l_max, l_max_threads = l_max + 6,
        l_max_shared, l_fields };
 
 /* A function set up for launch: [v_structures] holds the bytes and patches
@@ -462,22 +462,18 @@ value caml_rig_nv_launch(value v_structures, value v_ints) {
                         VALUES);
 #define F(i) ((uint32_t)Long_val(Field(v_ints, i)))
   l->params_at = F(l_params_at);
+  l->params = F(l_params);
   l->bank0_bytes = F(l_bank0_bytes);
   for (int i = 0; i < 6; i++) l->max[i] = F(l_max + i);
   l->max_threads = F(l_max_threads);
   l->max_shared = F(l_max_shared);
 #undef F
-  if (!ok || l->params_at > STRUCTURE_BYTES) {
+  if (!ok || (uint64_t)l->params_at + l->params > l->bank0_bytes) {
     free(l);
     caml_invalid_argument(OUT_OF_BOUNDS);
   }
   Nativeint_val(result) = (intnat)l;
   CAMLreturn(result);
-}
-
-value caml_rig_nv_bank_max(value v_unit) {
-  (void)v_unit;
-  return Val_long(BANK_MAX);
 }
 
 value caml_rig_nv_most_parts(value v_self) {

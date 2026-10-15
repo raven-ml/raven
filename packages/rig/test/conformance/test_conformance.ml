@@ -962,7 +962,7 @@ let empty_launches (module G : Gpu) =
 let most_parts_cap = 1024
 
 (* An idle device runs [min (most_parts d) most_parts_cap] launches in one
-   submission, each with 4096 bytes of parameters, the most a launch gives:
+   submission, each with 4096 bytes of parameters, the size most_parts covers:
    launch [i] stores [i + 1] into word [i]. *)
 let largest_launches (module G : Gpu) =
   let launcher = launcher (module G) in
@@ -987,6 +987,55 @@ let largest_launches (module G : Gpu) =
     equal (array int) ~msg:(strf "%d launches' words" n)
       (Array.init n (fun i -> i + 1))
       (words (get out) ~at:0 n)
+
+(* The bytes of [wide]'s parameters: its [out], then words past 4,096 bytes,
+   the most a launch had on Metal's setBytes. *)
+let wide_bytes = 8192
+
+(* The bytes [extra_params] gives [wide], eight times those it reads. *)
+let wide_cap = 65536
+
+(* [wide] loaded on [t], from its driver's [wide_binary], skipping the law
+   where [t] runs no launch of it. *)
+let wider (module G : Gpu) (t : G.t) =
+  match G.wide_binary t with
+  | Some b -> require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d b)
+  | None -> skip ~reason:"the device runs no launch of wide" ()
+
+(* A launch of [wide] with [n] bytes of parameters, storing words 0 and 1 of
+   [out] from its bytes 4,096 and 8,188. *)
+let wide l ~out n =
+  launch_work l "wide" ~params:n
+    [| (out, Rig.Read_write, 0) |]
+    (fun run k ->
+      Sub.Run.groups run k 1 1 1;
+      Sub.Run.threads run k 1 1 1;
+      Sub.Run.int32 run k 4096 41;
+      Sub.Run.int32 run k 8188 43)
+
+(* [wide] with 8,192 bytes of parameters runs, and its words at bytes 4,096
+   and 8,188 reach the kernel. *)
+let wide_params (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    ignore (launches_on launcher t : Rig.Image.t);
+    let out = filled t.d (String.make 8 '\000') in
+    let w = wide (wider (module G) t) ~out wide_bytes in
+    Rig.Point.wait (submit t.d [ w ] ~uses:[ (out, Rig.Read_write) ]);
+    equal (array int) [| 41; 43 |] (words (get out) ~at:0 2)
+
+(* [wide] given [wide_cap] bytes, more than it reads, runs: the bytes past the
+   8,192 it reads change nothing it reads. *)
+let extra_params (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    ignore (launches_on launcher t : Rig.Image.t);
+    let out = filled t.d (String.make 8 '\000') in
+    let w = wide (wider (module G) t) ~out wide_cap in
+    Rig.Point.wait (submit t.d [ w ] ~uses:[ (out, Rig.Read_write) ]);
+    equal (array int) [| 41; 43 |] (words (get out) ~at:0 2)
 
 (* What the image states of [ids], whose parameters end at byte 24, holds: a
    launch that gives fewer bytes is refused at make, and so is a ref past them.
@@ -1730,6 +1779,9 @@ let laws (module G : Gpu) =
       test "a launch gives the parameters, and a run sets at most the threads, \
             its image states"
         (entry_facts g);
+      test "a launch of 8,192 bytes of parameters runs" (wide_params g);
+      test "a launch of 64 KiB of parameters to a kernel of 8 KiB runs"
+        (extra_params g);
       test "a value's launches start once every earlier value's work completed"
         (launch_order g);
       prop ~count:30 "a launch reads what its submission wrote into a workspace"

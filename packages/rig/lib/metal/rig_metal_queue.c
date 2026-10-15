@@ -104,6 +104,8 @@ static const char *begin(struct rig_metal_queue *q) {
   struct rig_metal_run *r = q->r;
   int slot = rig_metal_ring_take(&r->ring);
   q->slot = slot;
+  atomic_store_explicit(&r->ring.slots[slot].arena_end, r->arena_put,
+                        memory_order_relaxed);
   q->buffer = [r->queue commandBuffer];
   if (q->buffer == nil) return fail(q, "Metal made no command buffer");
   [q->buffer retain];
@@ -205,12 +207,94 @@ static int fits(const struct rig_part *p, const uint8_t *args) {
   return p->kind == RIG_FILL;
 }
 
+/* The most bytes [setBytes:] copies: "Maximum length of inlined buffer
+   contents using setBytes", 4 KB in every family of Apple's Metal Feature
+   Set Tables. */
+#define SET_BYTES_MAX 4096
+
+/* The parameter arena
+
+   A launch's parameters past SET_BYTES_MAX go into the device's arena, a
+   shared buffer whose bytes the launches take in turn, ARENA_ALIGN apart
+   and none across its end. Bytes are counted from the device's open:
+   [arena_put] are taken, and a count from [arena_base] on lies at its
+   offset from it, modulo the arena's size. A command buffer's slot holds
+   the count its launches took up to, and the ring gives those bytes back
+   as it releases the slot. Metal bounds a buffer's contents by its length
+   alone (the Feature Set Tables), so the device's longest buffer bounds a
+   launch. Room answers RIG_GROW for parts the empty arena does not hold,
+   and the growth (caml_rig_metal_grow) makes an arena that holds twice
+   them, which the next room installs: the command buffers that use the
+   old one keep it until their work completes. */
+
+_Thread_local uint64_t rig_metal_asked;
+
+/* The arena bytes part [p] takes. */
+static uint64_t arena_bytes(const struct rig_part *p) {
+  uint64_t n = p->kind == RIG_LAUNCH ? p->launch.args.params : 0;
+  if (n <= SET_BYTES_MAX) return 0;
+  return (n + ARENA_ALIGN - 1) & ~(uint64_t)(ARENA_ALIGN - 1);
+}
+
+/* The count once [n] bytes are taken at [put]: from the arena's first byte
+   where they would cross its end. */
+static uint64_t take(const struct rig_metal_run *r, uint64_t put, uint64_t n) {
+  uint64_t at = (put - r->arena_base) % r->arena_size;
+  return (at + n > r->arena_size ? put + r->arena_size - at : put) + n;
+}
+
+/* Installs the arena a growth made, if it is larger, from the next byte
+   taken on. */
+static void install(struct rig_metal_run *r) {
+  pthread_mutex_lock(&r->grown_mutex);
+  id<MTLBuffer> g = r->grown;
+  r->grown = nil;
+  pthread_mutex_unlock(&r->grown_mutex);
+  if (g == nil) return;
+  if (g.length <= r->arena_size) {
+    [g release];
+    return;
+  }
+  [r->arena release];
+  r->arena = g;
+  r->arena_host = g.contents;
+  r->arena_size = g.length;
+  r->arena_base = r->arena_put;
+}
+
+/* Whether the arena holds the parts' parameters: RIG_FITS, RIG_LATER once
+   the work of earlier values gives bytes back, RIG_GROW for more than the
+   empty arena holds, and RIG_NEVER for more than the longest buffer. Once
+   every byte taken is given back, the next is the arena's first. */
+static int arena_room(struct rig_metal_run *r, const struct rig_part *parts,
+                      int n) {
+  uint64_t need = 0;
+  for (int i = 0; i < n; i++) need += arena_bytes(&parts[i]);
+  if (need == 0) return RIG_FITS;
+  if (need > r->longest) return RIG_NEVER;
+  install(r);
+  if (need > r->arena_size) {
+    rig_metal_asked = need;
+    return RIG_GROW;
+  }
+  uint64_t freed =
+      atomic_load_explicit(&r->ring.arena_freed, memory_order_acquire);
+  if (freed >= r->arena_put) r->arena_base = r->arena_put;
+  if (freed < r->arena_base) freed = r->arena_base;
+  uint64_t put = r->arena_put;
+  for (int i = 0; i < n; i++) {
+    uint64_t b = arena_bytes(&parts[i]);
+    if (b > 0) put = take(r, put, b);
+  }
+  return put - freed <= r->arena_size ? RIG_FITS : RIG_LATER;
+}
+
 int rig_metal_room(void *self, const struct rig_part *parts, int n,
                    void *scratch, const uint8_t *args) {
-  (void)self, (void)scratch;
+  (void)scratch;
   for (int i = 0; i < n; i++)
     if (!fits(&parts[i], args)) return RIG_NEVER;
-  return RIG_FITS;
+  return arena_room(((struct rig_metal *)self)->run, parts, n);
 }
 
 /* Commits the residency set's additions, so that the work of this
@@ -224,19 +308,32 @@ static void commit_residency(struct rig_metal_run *r) {
 
 /* Encodes the launch [p], its block in [args], into [q]'s encoder: its
    pipeline, its parameters as buffer 0, each ref's word plus its slot's
-   address, its threadgroup memory, and its grid. Metal copies the
-   parameters at [setBytes:], so a copy on the stack serves. Every state the
+   address, its threadgroup memory, and its grid. Metal copies parameters
+   of up to SET_BYTES_MAX bytes at [setBytes:], from the block's place, and
+   longer ones lie in the arena, which room made hold them. Every state the
    dispatch reads is set here, as a fill sets its own. */
 static void launch(struct rig_metal_queue *q, const struct rig_part *p,
-                   const uint8_t *args, const uint64_t *slots) {
+                   uint8_t *args, const uint64_t *slots) {
+  struct rig_metal_run *r = q->r;
   const struct rig_metal_entry *e = p->launch.launch;
   const struct rig_block *b = (const void *)(args + p->launch.args.block);
-  _Alignas(16) uint8_t params[RIG_PARAMS];
   uint32_t n = p->launch.args.params;
-  rig_params(params, &p->launch.args, args, slots);
   id<MTLComputeCommandEncoder> c = q->encoder;
   [c setComputePipelineState:e->pipeline];
-  if (n > 0) [c setBytes:params length:n atIndex:0];
+  uint64_t taken = arena_bytes(p);
+  if (taken > 0) {
+    uint64_t put = take(r, r->arena_put, taken);
+    uint64_t at = (put - taken - r->arena_base) % r->arena_size;
+    rig_params(r->arena_host + at, &p->launch.args, args, slots);
+    [c setBuffer:r->arena offset:at atIndex:0];
+    r->arena_put = put;
+    atomic_store_explicit(&r->ring.slots[q->slot].arena_end, put,
+                          memory_order_release);
+  } else if (n > 0) {
+    uint8_t *params = rig_place(&p->launch.args, args);
+    rig_params(params, &p->launch.args, args, slots);
+    [c setBytes:params length:n atIndex:0];
+  }
   if (b->shared > 0)
     [c setThreadgroupMemoryLength:shared_length(b->shared) atIndex:0];
   [c dispatchThreadgroups:MTLSizeMake(b->groups[0], b->groups[1], b->groups[2])
@@ -252,7 +349,7 @@ static void launch(struct rig_metal_queue *q, const struct rig_part *p,
    start and the last's end are [v]'s. The open mutex is held. */
 static const char *run(struct rig_metal_run *r, uint64_t v,
                        const struct rig_part *parts, int n,
-                       const uint8_t *args, const uint64_t *slots,
+                       uint8_t *args, const uint64_t *slots,
                        uint64_t *times, int *committed) {
   struct rig_metal_queue *q = &r->open;
   const char *why = NULL;
@@ -296,7 +393,7 @@ static const char *run(struct rig_metal_run *r, uint64_t v,
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                      int nwaits, const struct rig_part *parts, int nparts,
-                     void *scratch, const uint8_t *args,
+                     void *scratch, uint8_t *args,
                      const uint64_t *slots, int nslots, uint64_t *times,
                      const char **failure) {
   (void)waits, (void)nwaits, (void)scratch, (void)nslots;

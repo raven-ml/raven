@@ -1134,8 +1134,8 @@ let no_params () =
   wait t p;
   equal int (Rig.Point.value p) (Rig_metal.signaled t.g)
 
-(* 4,096 bytes of parameters, the most a launch has: [last] sums the 1,022 words
-   before its ref, the last 8 bytes. *)
+(* 4,096 bytes of parameters, the most setBytes copies: [last] sums the 1,022
+   words before its ref, the last 8 bytes. *)
 let widest () =
   let t = dev () in
   let image = launch_image t.d in
@@ -1153,6 +1153,104 @@ let widest () =
   Run.int64 run k 4088 0;
   run_wait s run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
+
+(* 4,097 bytes of parameters, one past what setBytes takes, so the first
+   size the parameter arena holds: [last] reads its 4,096 of them. *)
+let past_set_bytes () =
+  let t = dev () in
+  let image = launch_image t.d in
+  let out = zeroed t.d 4 in
+  let s =
+    Sub.make t.d
+      [| launch image "last" ~params:4097 [ Sub.write 0 ~at:4088 ] |]
+  in
+  let run = Run.make () in
+  let k = Sub.block s 0 in
+  set_grid run k one;
+  for w = 0 to 1021 do
+    Run.int32 run k (4 * w) (w + 1)
+  done;
+  Run.int64 run k 4088 0;
+  run_wait s run [| out |];
+  equal int (1022 * 1023 / 2) (words out).(0)
+
+(* Launches of [wide] with 8 KiB of parameters, past what setBytes takes:
+   200 values of one launch, more than the first parameter arena holds at
+   once, then one value of 16 launches, more than it holds at all. Each
+   launch stores its own two words, as the arena's bytes come back, wrap and
+   grow. *)
+let arena () =
+  let t = dev () in
+  let image = launch_image t.d in
+  let values = 200 and together = 16 in
+  let n = values + together in
+  let out = zeroed t.d (8 * n) in
+  let set run k i =
+    set_grid run k one;
+    Run.int64 run k 0 (8 * i);
+    Run.int32 run k 4096 i;
+    Run.int32 run k 8188 (1000 + i)
+  in
+  let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
+  let s = Sub.make t.d [| wide |] in
+  let run = Run.make () in
+  for i = 0 to values - 1 do
+    set run (Sub.block s 0) i;
+    ignore (Rig.submit s ~run ~buffers:[| out |])
+  done;
+  let s = Sub.make t.d (Array.make together wide) in
+  let run = Run.make () in
+  for j = 0 to together - 1 do
+    set run (Sub.block s j) (values + j)
+  done;
+  run_wait s run [| out |];
+  equal (array int)
+    (Array.init (2 * n) (fun w -> if w mod 2 = 0 then w / 2 else 1000 + (w / 2)))
+    (words out)
+
+(* Two growths of the parameter arena beside each other keep the larger,
+   whichever is made last: the rooms of a launch of 1 MiB and, on another
+   domain, of one of 128 KiB answer RIG_GROW, then the 1 MiB launch's growth
+   runs, then the 128 KiB one's. Both launches then fit. *)
+let growths_keep_larger () =
+  let g = second () in
+  Fun.protect ~finally:(fun () -> Rig_metal.stop g ~fault:None) @@ fun () ->
+  let image =
+    match require_ok (Rig_metal.image g (S.fixture ~dir:"fixtures" "launch")) with
+    | Rig_edge.Loaded i -> i
+    | Place (n, _) -> failf "the device asked to place %d bytes of code" n
+  in
+  let wide = found (Rig_metal.entry image "wide") in
+  let large = 1 lsl 20 and small = 128 * 1024 in
+  let name = function
+    | `Fits -> "fits"
+    | `Later -> "later"
+    | `Never -> "never"
+    | `Grow -> "grow"
+  in
+  let room params = name (S.room g wide ~params) in
+  equal ~msg:"the large launch's room" string "grow" (room large);
+  let asked = Atomic.make false and go = Atomic.make false in
+  let other =
+    Domain.spawn (fun () ->
+        let first = room small in
+        Atomic.set asked true;
+        while not (Atomic.get go) do
+          Domain.cpu_relax ()
+        done;
+        let grown = Rig_metal.grow g in
+        (first, grown, room small))
+  in
+  while not (Atomic.get asked) do Domain.cpu_relax () done;
+  let grown = Rig_metal.grow g in
+  Atomic.set go true;
+  let small_room, small_grown, small_after = Domain.join other in
+  equal ~msg:"the small launch's room" string "grow" small_room;
+  equal ~msg:"the growths" bool true
+    (grown = Rig_edge.Grown && small_grown = Rig_edge.Grown);
+  equal ~msg:"the small launch after both growths" string "fits" small_after;
+  equal ~msg:"the large launch after both growths" string "fits" (room large);
+  Rig_metal.unload g image
 
 (* Geometry beyond a function's limits is refused, by the setter or at submit,
    before any hand-over, and the device runs on: an empty axis of groups or
@@ -1273,6 +1371,14 @@ let launches =
       test "a launch of no parameters runs" no_params;
       test "a launch reads 4,096 bytes of parameters, a ref in the last 8"
         widest;
+      test "a launch of 4,097 bytes of parameters reads them from the arena"
+        past_set_bytes;
+      test
+        "launches of 8 KiB of parameters each read their own as the arena's \
+         bytes come back, wrap and grow"
+        arena;
+      test "two growths of the parameter arena keep the larger"
+        growths_keep_larger;
       test
         "geometry beyond a function's limits is refused, and the device runs on"
         refused_geometry;

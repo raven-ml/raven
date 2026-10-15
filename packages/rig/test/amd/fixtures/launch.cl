@@ -30,6 +30,18 @@ kernel void twice(global uint *dst, global const uint *src, uint c) {
   dst[k] = 2 * src[k] + c;
 }
 
+/* The words of wide's parameters after [out]. */
+typedef struct {
+  uint w[2046];
+} wide_words;
+
+/* The conformance laws' wide: out[0] and out[1] = the words at bytes 4,096
+   and 8,188 of its 8,192 bytes of explicit arguments, [out] the first 8. */
+kernel void wide(global uint *out, wide_words p) {
+  out[0] = p.w[1022];
+  out[1] = p.w[2045];
+}
+
 /* out[i] = i for the work-items i of a group of n, through n words of the
    dynamic LDS at tile, after the 64 words of LDS the kernel takes itself. */
 kernel void lds(global uint *out, local uint *tile, uint n) {

@@ -269,6 +269,14 @@ module type Conformance = sig
       - [twice], parameters [dst] (0), [src] (8) and [c] (16, u32), over a grid
         of one dimension: stores [2 x + c] modulo [2{^32}], [x] the 32-bit word
         [k] at [src], into the 32-bit word [k] at [dst]. *)
+
+  val wide_binary : t -> string option
+  (** [wide_binary t] is a binary of the driver's fixtures holding [wide], or
+      [None] where [t] runs no launch of it: no launch at all, or, on CUDA,
+      compute capability below 7.0, where kernels take at most 4,096 bytes
+      of parameters. Its parameters are [out] (0) then 32-bit words up to
+      byte 8,192; it stores the words at bytes 4,096 and 8,188 into the
+      32-bit words 0 and 1 at [out]. *)
 end
 
 val loader : (unit -> string) -> Rig.t -> Rig.Image.t

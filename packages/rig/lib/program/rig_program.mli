@@ -232,9 +232,8 @@ type part =
       fill : leaf;
           (** The function the fill calls: an [Entry] or a [Ready]. *)
       params : value data;
-          (** Its parameters' bytes, a whole number of 32-bit words and at
-              most 4096 bytes, each hole written into the run's block before
-              each submit. *)
+          (** Its parameters' bytes, a whole number of 32-bit words, each
+              hole written into the run's block before each submit. *)
       refs : ref iarray;
     }
   | Copy of {
@@ -259,9 +258,8 @@ type part =
       image : int;
       name : string;
       params : value data;
-          (** Its parameters' bytes, a whole number of 32-bit words and at
-              most 4096 bytes, each hole written into the run's block before
-              each submit. *)
+          (** Its parameters' bytes, a whole number of 32-bit words, each
+              hole written into the run's block before each submit. *)
       refs : ref iarray;
       groups : value * value * value;
       threads : value * value * value;

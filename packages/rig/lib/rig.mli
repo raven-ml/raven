@@ -1511,9 +1511,9 @@ module Submission : sig
       ({!val-block}), with the [params] bytes of parameters of that block and
       each of [refs] (defaults to [[||]]) placed ({!type-ref}). [image] must be
       loaded on the device and have a function [f] ({!Image.mem}). [params]
-      must be from 0 to 4096 and, where [f]'s driver knows the bytes [f]
-      reads ({!Image.params}), at least that many, with each ref's 8 bytes
-      among them. *)
+      must not be negative and, where [f]'s driver knows the bytes [f] reads
+      ({!Image.params}), at least that many, with each ref's 8 bytes among
+      them. *)
 
   val fill : ?refs:ref array -> nativeint -> params:int -> part
   (** [fill ~refs f ~params] calls the C function at [f] from the driver's
@@ -1521,8 +1521,8 @@ module Submission : sig
       address of its argument and the work's value. The argument is a copy of
       the [params] bytes of parameters of the fill's block in the run
       ({!val-block}), with each of [refs] (defaults to [[||]]) placed
-      ({!type-ref}), and is valid only during the call. [params] must be from
-      0 to 4096. The function must call no function of the OCaml runtime,
+      ({!type-ref}), and is valid only during the call. [params] must not be
+      negative. The function must call no function of the OCaml runtime,
       since the driver's [submit] may call it with the runtime released. It
       returns [0], or another value for a failure, which loses the device. *)
 
@@ -1572,7 +1572,9 @@ module Submission : sig
          copy;}
       {- a buffer of a part or of [fixed] is dead, or a buffer of [fixed] is
          not on [d] or is written on [Read] memory;}
-      {- the blocks together exceed [2{^32} - 1] bytes.}}
+      {- its launches and fills take more than a run holds: [2{^31} - 1]
+         bytes, each counting [16] bytes plus its parameters rounded up to a
+         multiple of 16.}}
       Raises {!Out_of_memory} if [d] has no memory for what the function of
       a launch or an entry ref needs, such as its scratch, after the rounds
       of reclamation ({!Rig.section-reclaim}), and {!Lost} if [d] is lost or

@@ -208,10 +208,11 @@ struct polled_kernel {
 #define LAST_AFTER 8
 #define LAST_LAUNCHES 8
 
-/* A launch's block as it ran: its [bytes] bytes of header and parameters. */
+/* A launch's block as it ran: its [bytes] bytes of header and parameters,
+   a copy of its own. */
 struct launched {
   uint32_t bytes;
-  uint8_t block[sizeof(struct rig_block) + RIG_PARAMS];
+  uint8_t *block;
 };
 
 /* A time pair a submit was given, the value it timed, and whether a settle
@@ -384,6 +385,7 @@ static void free_run(struct polled_run *r) {
   }
   free(r->q);
   free(r->timed);
+  for (int i = 0; i < r->nlaunched; i++) free(r->launched[i].block);
   free(r);
 }
 
@@ -723,11 +725,13 @@ static void commit_upto(struct polled *p, uint64_t v) {
 }
 
 /* Keeps the [n] bytes of the block [b] as run, among the first
-   LAST_LAUNCHES. [p]'s lock is held. */
+   LAST_LAUNCHES, unless memory lacks for a copy. [p]'s lock is held. */
 static void keep_launch(struct polled_run *r, const void *b, uint32_t n) {
   if (r->nlaunched == LAST_LAUNCHES) return;
-  r->launched[r->nlaunched].bytes = n;
-  memcpy(r->launched[r->nlaunched++].block, b, n);
+  uint8_t *block = malloc(n);
+  if (block == NULL) return;
+  memcpy(block, b, n);
+  r->launched[r->nlaunched++] = (struct launched){n, block};
 }
 
 /* Runs the launch [part] of [s]: its function once per group, x fastest.
@@ -1006,7 +1010,7 @@ static int give_pair(struct polled_run *r, uint64_t *times, uint64_t v) {
 
 static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
-                         void *scratch, const uint8_t *args,
+                         void *scratch, uint8_t *args,
                          const uint64_t *slots, int nslots, uint64_t *times,
                          const char **failure) {
   (void)nslots;
@@ -1337,6 +1341,23 @@ value rig_test_poke(value unit) {
   return caml_copy_nativeint((intnat)&poke);
 }
 
+/* A fill of 8,192 bytes of argument that stores the 64-bit word at byte
+   4,096 at the address the last 8 bytes hold. */
+static int far(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  uint64_t x, at;
+  memcpy(&x, (const uint8_t *)arg + 4096, sizeof x);
+  memcpy(&at, (const uint8_t *)arg + 8184, sizeof at);
+  atomic_store((_Atomic uint64_t *)(uintptr_t)at, x);
+  return 0;
+}
+
+value rig_test_far(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&far);
+}
+
 /* The parked thread: one that blocks outside OCaml, holding no runtime lock,
    until it is unparked or [park_ticks] ticks of 10 ms pass. */
 static const int park_ticks = 500;
@@ -1636,7 +1657,7 @@ value rig_test_polled_kernel(value v_name) {
 }
 
 /* The blocks of the first LAST_LAUNCHES launches run since the last call,
-   each as it ran, which it forgets. */
+   each as it ran, which it forgets and frees. */
 value rig_test_polled_launches(value v_p) {
   CAMLparam1(v_p);
   CAMLlocal2(a, s);
@@ -1658,6 +1679,7 @@ value rig_test_polled_launches(value v_p) {
                                       (const char *)copy[i].block);
     Store_field(a, i, s);
   }
+  for (int i = 0; i < n; i++) free(copy[i].block);
   free(copy);
   CAMLreturn(a);
 }

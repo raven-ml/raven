@@ -68,6 +68,16 @@ struct rig_metal_run {
   _Atomic int open_values;     /* the values the open buffer ends */
   _Atomic int wanted;          /* a handler found the open mutex held */
   _Atomic int holds; /* beside the fields handlers write */
+  /* The parameter arena (rig_metal_queue.c): its buffer and host address,
+     nil and NULL until a growth, its bytes, the arena bytes taken since
+     the open, the count its first byte holds, the growth room installs
+     next, under [grown_mutex], and the device's longest buffer. */
+  id<MTLBuffer> arena;
+  uint8_t *arena_host;
+  uint64_t arena_size, arena_put, arena_base;
+  pthread_mutex_t grown_mutex;
+  id<MTLBuffer> grown;
+  uint64_t longest;
   struct rig_metal_ring ring;
   struct rig_metal_slot slots[ring_slots];
 };
@@ -79,6 +89,17 @@ struct rig_metal {
   uint64_t *at; /* the word */
   struct rig_metal_run *run; /* NULL once stopped */
 };
+
+/* The parameter arena's alignment of each launch's bytes: the largest
+   "Minimum constant buffer offset alignment" of the Metal Feature Set
+   Tables, 256 B on Mac2 (4 B on Apple GPUs). A growth makes an arena of at
+   least ARENA_MIN bytes. */
+#define ARENA_ALIGN 256
+#define ARENA_MIN 65536
+
+/* The arena bytes the parts whose room answered RIG_GROW on this thread
+   take (rig_metal_room). */
+extern _Thread_local uint64_t rig_metal_asked;
 
 /* Takes a hold of [r]'s, as a committed command buffer does. */
 void rig_metal_hold(struct rig_metal_run *r);

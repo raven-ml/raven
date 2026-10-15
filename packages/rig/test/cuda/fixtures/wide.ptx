@@ -1,0 +1,26 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+// The conformance suite's wide, apart from launch.ptx since PTX 8.1 for
+// sm_70 is the first to take its 8,192 bytes of parameters: a GPU or a
+// driver below that loads launch.ptx still.
+
+.version 8.1
+.target sm_70
+.address_size 64
+
+// Stores the 32-bit words at bytes 4,096 and 8,188 of its 8,192 bytes of
+// parameters into words 0 and 1 at out, its first 8.
+.visible .entry wide(.param .u64 out, .param .align 4 .b8 w[8184])
+{
+  .reg .u32 %r<3>;
+  .reg .u64 %rd<2>;
+  ld.param.u64 %rd1, [out];
+  ld.param.u32 %r1, [w+4088];
+  ld.param.u32 %r2, [w+8180];
+  st.u32 [%rd1], %r1;
+  st.u32 [%rd1+4], %r2;
+  ret;
+}

@@ -145,11 +145,11 @@ external times_due : Def.c -> int = "caml_rig_times_due" [@@noalloc]
 external times_give : Def.c -> int -> unit = "caml_rig_times_give" [@@noalloc]
 
 (* A launch's or a fill's block, as the setters' C reads it: the id of its
-   submission's C form, where it lies in a run, as [caml_rig_sub_launch]
-   encodes it, and the most threads a group of its function has, [0] for a
-   fill or where the driver states none, which [Run.threads] checks, with the
-   function's name for its refusal. *)
-type block = int * int * int * string
+   submission's C form, where it starts in a run, its parameter bytes, and the
+   most threads a group of its function has, [0] for a fill or where the
+   driver states none, which [Run.threads] checks, with the function's name
+   for its refusal. *)
+type block = int * int * int * int * string
 
 (* Each setter is an external that takes the block as it is, untagged ints
    and unboxed floats, so no argument is boxed at a call, inlined or not. *)
@@ -220,7 +220,7 @@ type t = {
   copies : (side * side) array;  (** The copy parts' sides, in order. *)
 }
 
-let no_block = (0, -1, 0, "")
+let no_block = (0, -1, 0, 0, "")
 
 let kind_of = function
   | Words _ -> Rig_edge.Words
@@ -302,17 +302,12 @@ let check_device fn d =
   if Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name
 
-(* The most parameter bytes of a launch, [rig_edge.h]'s RIG_PARAMS. *)
-let max_params = 4096
-
-(* Refuses part [i]'s parameters unless they are at most [max_params] bytes and
-   its refs lie among them and share no [at]. A ref's end is checked as [at >
-   params - 8] once [params] is bounded: [at + 8] wraps for an [at] near
-   [max_int]. *)
+(* Refuses part [i]'s parameters unless they are not negative and its refs lie
+   among them and share no [at]. A ref's end is checked as [at > params - 8],
+   since [at + 8] wraps for an [at] near [max_int]. *)
 let check_args fn i params refs =
-  if params < 0 || params > max_params then
-    invalid_argf "Rig.%s: part %d has %d parameter bytes, not 0 to %d" fn i
-      params max_params;
+  if params < 0 then
+    invalid_argf "Rig.%s: part %d has %d parameter bytes" fn i params;
   Array.iter
     (fun r ->
       let at = ref_at r in
@@ -782,7 +777,7 @@ let build keep ~fixed d parts =
       | Fill f ->
           let place = sub_fill c i f.fill f.params slots.(i) !r in
           place_codes i place;
-          blocks.(i) <- (sub_id c, place, 0, "");
+          blocks.(i) <- (sub_id c, place, f.params, 0, "");
           r := !r + Array.length slots.(i)
       | Copy { src; dst } ->
           let slot = function Slot k -> k | Buffer _ -> -1 in
@@ -802,7 +797,7 @@ let build keep ~fixed d parts =
           let place = sub_launch c i e.code e.launch l.params slots.(i) !r in
           place_codes i place;
           let most = Option.value e.threads ~default:0 in
-          blocks.(i) <- (sub_id c, place, most, l.kernel);
+          blocks.(i) <- (sub_id c, place, l.params, most, l.kernel);
           r := !r + Array.length slots.(i);
           images := l.image :: !images)
     parts;

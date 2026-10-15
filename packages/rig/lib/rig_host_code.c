@@ -359,10 +359,11 @@ static int host_room(void *self, const struct rig_part *parts, int n,
 
 /* Runs launch [p] over its grid: the pool cuts its threads into one chunk
    per group and runs them on at most a thread per performance core. Every
-   range shares one copy of the parameters, refs placed. */
-static void launch(const struct rig_part *p, const uint8_t *args,
+   range shares one copy of the parameters, refs placed, in its block's
+   place. */
+static void launch(const struct rig_part *p, uint8_t *args,
                    const uint64_t *slots) {
-  _Alignas(16) uint8_t params[RIG_PARAMS];
+  uint8_t *params = rig_place(&p->launch.args, args);
   rig_params(params, &p->launch.args, args, slots);
   uint64_t groups, n = threads_of(block_of(p, args), &groups);
   job j = {(entry)(uintptr_t)p->launch.code, params};
@@ -380,7 +381,7 @@ static struct {
 
 static int host_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        int nwaits, const struct rig_part *parts, int nparts,
-                       void *scratch, const uint8_t *args,
+                       void *scratch, uint8_t *args,
                        const uint64_t *slots, int nslots, uint64_t *times,
                        const char **failure) {
   (void)self;

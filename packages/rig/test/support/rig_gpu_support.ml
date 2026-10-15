@@ -331,6 +331,7 @@ module type Conformance = sig
   val spin : t -> ns:int -> work
   val clock_error : since:int -> int
   val launch_binary : unit -> string option
+  val wide_binary : t -> string option
 end
 
 let loader bin =

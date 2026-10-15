@@ -192,11 +192,19 @@ static int launchable(const struct rig_part *p, const uint8_t *args) {
          round_up(b->shared, 128) <= l->max_shared;
 }
 
+/* The parameter bytes a launch of [l] given [params] places: those its
+   kernel reads, so that the bank the descriptor names holds them, as CUDA
+   leaves out a launch's bytes past its function's. */
+static uint64_t placed(const struct launch *l, uint64_t params) {
+  return params < l->params ? params : l->params;
+}
+
 /* The bytes of [l]'s constant bank 0 with [params] bytes of parameters: the
-   driver's parameters, the kernel's and the bank the descriptor names,
-   whichever ends last. */
+   driver's parameters, the kernel's it places and the bank the descriptor
+   names, whichever ends last, at most the bank: entry checked that the
+   kernel's parameters end within it. */
 static uint64_t bank_bytes(const struct launch *l, uint64_t params) {
-  uint64_t n = (uint64_t)l->params_at + params;
+  uint64_t n = (uint64_t)l->params_at + placed(l, params);
   if (n < l->bank0.nbytes) n = l->bank0.nbytes;
   return n < l->bank0_bytes ? l->bank0_bytes : n;
 }
@@ -375,23 +383,22 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
 static uint64_t larger(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 /* The most parts an idle device runs in one submission, each of the largest
-   size the guarantee covers, by [need]'s costs: a launch whose descriptor
-   takes STRUCTURE_BYTES and whose constant bank takes BANK_MAX bytes, or a
-   copy of one COPY_MAX piece, each joined to the part before it on its
-   queue and to one of the other queue. Both channels are used, and either
-   may release the value. The segment and launch rings grow to hold them, so
-   the ring's entries bound them, through the closes of their segments, and
-   a join tag's index. */
+   size the guarantee covers, by [need]'s costs: a launch, whose descriptor
+   and constant bank take no ring entry and lie in the launch ring, which
+   grows to hold them, or a copy of one COPY_MAX piece, each joined to the
+   part before it on its queue and to one of the other queue. Both channels
+   are used, and either may release the value. The segment ring grows to
+   hold them too, so the ring's entries bound them, through the closes of
+   their segments, and a join tag's index. */
 int rig_nv_most_parts(const struct device *d) {
   struct cost room = room_of(d), fixed = {0}, launch = {0}, copy = {0};
   uint64_t release = larger(end_bytes(d, COMPUTE), end_bytes(d, COPY));
   uint64_t qmd = STRUCTURE_BYTES + QMD_ALIGN - 1;
-  uint64_t bank = BANK_MAX + BANK_ALIGN - 1;
   for (int q = 0; q < CHANNELS; q++) {
     channel_cost(d, q, &fixed);
     fixed.bytes[q] += release;
   }
-  part_cost(d, COMPUTE, 0, 2, qmd, bank, 0, &launch);
+  part_cost(d, COMPUTE, 0, 2, qmd, 0, 0, &launch);
   part_cost(d, COPY, 0, 2, 0, 0, 1, &copy);
   uint64_t n = MAX_PARTS;
   for (int q = 0; q < CHANNELS; q++) {
@@ -770,10 +777,10 @@ static void settle(const struct channel *c, struct pending *o, uint64_t next) {
 
 /* Places a launch of [l] over [b] on COMPUTE, after [waited] says its part
    placed waits for the other channel: its descriptor and its constant bank
-   0 in the launch ring, with the driver's parameters; then, unless the
-   launch before it there chains it, a wait for idle if launches run, and
-   its schedule. Answers where its [n] bytes of parameters go, which the
-   caller writes. */
+   0 in the launch ring, with the driver's parameters and zeros up to the
+   kernel's; then, unless the launch before it there chains it, a wait for
+   idle if launches run, and its schedule. Answers where its [n] bytes of
+   parameters go, which the caller writes. */
 static uint8_t *dispatch(struct submission *s, const struct launch *l,
                          const struct rig_block *b, uint64_t n, int waited) {
   struct device *d = s->d;
@@ -785,6 +792,9 @@ static uint8_t *dispatch(struct submission *s, const struct launch *l,
   uint8_t w[STRUCTURE_BYTES];
   rig_nv_fill(&l->bank0, next.v, w);
   memcpy(host_at(c, bank), w, l->bank0.nbytes);
+  if (l->params_at > l->bank0.nbytes)
+    memset(host_at(c, bank) + l->bank0.nbytes, 0,
+           l->params_at - l->bank0.nbytes);
   int chain = s->open.l != NULL && !waited;
   settle(c, &s->open, chain ? qmd : 0);
   if (!chain) {
@@ -795,11 +805,15 @@ static uint8_t *dispatch(struct submission *s, const struct launch *l,
   return host_at(c, bank) + l->params_at;
 }
 
+/* Every ref of a launch lies among the bytes its kernel reads, which rig
+   checks against the entry's [params], so a launch places those alone. */
 static void launch(struct submission *s, const struct rig_part *p,
                    const uint8_t *args, const uint64_t *slots, int waited) {
-  uint8_t *params = dispatch(s, p->launch.launch, block_of(p, args),
-                             p->launch.args.params, waited);
-  rig_params(params, &p->launch.args, args, slots);
+  const struct launch *l = p->launch.launch;
+  struct rig_args a = p->launch.args;
+  a.params = (uint32_t)placed(l, a.params);
+  uint8_t *params = dispatch(s, l, block_of(p, args), a.params, waited);
+  rig_params(params, &a, args, slots);
 }
 
 /* Each thread copies vectors in a grid-stride loop; a bounded grid makes a
@@ -838,7 +852,7 @@ static void place(struct device *d, struct channel *c,
 
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *p, int n,
-                  void *scratch, const uint8_t *args,
+                  void *scratch, uint8_t *args,
                   const uint64_t *slots, int nslots, uint64_t *times,
                   const char **failure) {
   (void)nslots;

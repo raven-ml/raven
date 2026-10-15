@@ -68,7 +68,7 @@ kernel void step(constant step_args &p [[buffer(0)]]) {
 }
 
 // out[0] = the sum of the 1,022 words before [out]: 4,096 bytes of
-// parameters, the most a launch has, whose last 8 are a ref.
+// parameters, the most setBytes copies, whose last 8 are a ref.
 struct last_args {
   uint w[1022];
   device uint *out;
@@ -78,6 +78,18 @@ kernel void last(constant last_args &p [[buffer(0)]]) {
   uint s = 0;
   for (uint k = 0; k < 1022; k++) s += p.w[k];
   p.out[0] = s;
+}
+
+// out[0] and out[1] = the words at bytes 4,096 and 8,188 of 8,192 bytes of
+// parameters, past the 4 KB that setBytes copies; [out] is the first 8.
+struct wide_args {
+  device uint *out;
+  uint w[2046];
+};
+
+kernel void wide(constant wide_args &p [[buffer(0)]]) {
+  p.out[0] = p.w[1022];
+  p.out[1] = p.w[2045];
 }
 
 // Nothing: a launch whose cost is the launch's alone.

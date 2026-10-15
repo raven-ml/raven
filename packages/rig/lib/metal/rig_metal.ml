@@ -548,8 +548,11 @@ let halt d =
 
 let stop d ~fault:_ = locked d.guard halt d
 
-(* Its room never answers RIG_GROW. *)
-let grow _ = Rig_edge.Grown
+external grow_arena : int -> int = "caml_rig_metal_grow"
+
+(* Its room answers RIG_GROW for parameters its arena does not hold. *)
+let grow d =
+  match grow_arena d.self with 0 -> Rig_edge.Grown | n -> Short n
 
 module Driver = struct
   type nonrec t = t

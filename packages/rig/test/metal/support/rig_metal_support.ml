@@ -6,6 +6,14 @@
 module D = Rig_metal
 
 external virtual_mac : unit -> bool = "rig_metal_test_virtual"
+external room_c : nativeint -> nativeint -> int -> int = "rig_metal_test_room"
+
+let room g (e : Rig_edge.entry) ~params =
+  match room_c (Rig_metal.facts g).edge e.launch params with
+  | 0 -> `Fits
+  | 1 -> `Later
+  | 2 -> `Never
+  | _ -> `Grow
 
 let virtual_mac = virtual_mac ()
 
@@ -126,6 +134,7 @@ let binary () =
 
 let second ~word = Some ((Rig_metal.gpu 0).make ~word)
 let launch_binary () = Some (fixture ~dir:"../metal/fixtures" "launch")
+let wide_binary _ = launch_binary ()
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 
 let launching = Rig_gpu_support.launching

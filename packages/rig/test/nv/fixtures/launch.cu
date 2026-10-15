@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The kernels of launches, whose parameters a launch's block holds: ids and
-   twice for the conformance suite's launch laws, rotate, turn and pick for
+/* The kernels of launches, whose parameters a launch's block holds: ids,
+   twice and wide for the conformance suite's launch laws, rotate, turn and pick for
    the NV suite. A
    thread's index k is g * T + t: g its group's index in the grid, x fastest,
    t its index in its group, x fastest, and T the threads of a group. */
@@ -82,4 +82,16 @@ __device__ __noinline__ u64 element(const void *p, u32 i, u32 t) {
 extern "C" __global__ void pick(u32 *out, const void *src, u32 t) {
   u32 i = blockIdx.x * blockDim.x + threadIdx.x;
   out[i] = (u32)element(src, i, t);
+}
+
+/* The words of wide's parameters after [out]. */
+struct wide_words {
+  u32 w[2046];
+};
+
+/* Stores the 32-bit words at bytes 4,096 and 8,188 of its 8,192 bytes of
+   parameters into words 0 and 1 at [out], its first 8. */
+extern "C" __global__ void wide(u32 *out, struct wide_words p) {
+  out[0] = p.w[1022];
+  out[1] = p.w[2045];
 }

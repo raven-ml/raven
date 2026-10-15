@@ -46,6 +46,9 @@ external load_start : int -> unit = "rig_metal_bench_load_start"
 external load_stop : unit -> unit = "rig_metal_bench_load_stop"
 
 let metallib = S.fixture ~dir:"../../test/metal/fixtures" "fill"
+
+(* The conformance suite's kernels, [wide] among them. *)
+let launch_lib = S.fixture ~dir:"../../test/metal/fixtures" "launch"
 let kib = 1024
 let mib = 1024 * kib
 
@@ -125,6 +128,19 @@ let launches t n =
     Sub.Run.groups run b 1 1 1;
     Sub.Run.threads run b 1 1 1
   done;
+  (s, run, t.buffers)
+
+(* [wide] launched once over one thread with [n] bytes of parameters, its
+   ref writing [out]. *)
+let wide t n =
+  let module Sub = Rig.Submission in
+  let image = get (Rig.Image.load t.d launch_lib) in
+  let w = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] image "wide" ~params:n in
+  let s = Sub.make t.d [| w |] in
+  let run = Sub.Run.make () in
+  let b = Sub.block s 0 in
+  Sub.Run.groups run b 1 1 1;
+  Sub.Run.threads run b 1 1 1;
   (s, run, t.buffers)
 
 let wait t = Rig.Point.wait t.last
@@ -227,6 +243,12 @@ let launch_rows =
   Thumper.group "launch"
     [
       row "1" (launched 1) run_launches;
+      (* Past the 4 KB setBytes takes: the parameters go in the arena. *)
+      row "params-8192"
+        (fun () ->
+          let t = dev () in
+          (t, wide t 8192))
+        run_launches;
       row "64" (launched 64) run_launches;
       row "submits-64" (launched 1) (submits 64);
       row "submits-1024" (launched 1) (submits 1024);

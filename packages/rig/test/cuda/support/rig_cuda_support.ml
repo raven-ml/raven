@@ -119,8 +119,14 @@ let part d f =
     init;
   }
 
-let failing code =
-  { fn = failing_fill (); arg = failing_arg code; state = None; keep = Kept () }
+let failing ?(bytes = 4) code =
+  let short = failing_arg code in
+  let arg =
+    Bigarray.Array1.init Bigarray.char Bigarray.c_layout
+      (Int.max bytes (Bigarray.Array1.dim short))
+      (fun i -> if i < Bigarray.Array1.dim short then short.{i} else '\000')
+  in
+  { fn = failing_fill (); arg; state = None; keep = Kept () }
 
 let context () =
   {
@@ -210,6 +216,13 @@ let binary () =
     [ "empty"; "double_index"; "spin"; "step"; "fault" ] )
 
 let launch_binary () = Some (fixture ~dir:"../cuda/fixtures" "launch.ptx")
+(* [wide] is PTX for sm_70, the first compute capability whose kernels take
+   8,192 bytes of parameters. *)
+let wide_binary t =
+  let arch = (Rig_cuda.facts t.g).arch in
+  let major = int_of_string (String.sub arch 3 (String.length arch - 4)) in
+  if major < 7 then None
+  else Some (fixture ~dir:"../cuda/fixtures" "wide.ptx")
 let modules = Rig_gpu_support.loader (fun () -> fst (binary ()))
 let launches = Rig_gpu_support.loader (fun () -> Option.get (launch_binary ()))
 

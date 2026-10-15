@@ -424,11 +424,6 @@ value rig_cuda_test_spinning_fill(value unit) {
 
 /* The C entry */
 
-/* A fill's block in a submit's [args]: its struct rig_block, then its
-   parameters, on 16 bytes. */
-#define BLOCK_BYTES(params)                                                    \
-  ((sizeof(struct rig_block) + (params) + 15) & ~(size_t)15)
-
 /* What the C submit of the device [v_self] answers for the fills [v_parts],
    each [(queue, fn, params)], as the value [v_v] with no waits: [None], or
    [Some why] for RIG_FAILED. */
@@ -438,7 +433,7 @@ value rig_cuda_test_submit(value v_self, value v_v, value v_parts) {
   int n = (int)Wosize_val(v_parts);
   size_t bytes = 0;
   for (int i = 0; i < n; i++)
-    bytes += BLOCK_BYTES(caml_string_length(Field(Field(v_parts, i), 2)));
+    bytes += rig_block_bytes(caml_string_length(Field(Field(v_parts, i), 2)));
   struct rig_part *p = calloc((size_t)n + 1, sizeof *p);
   void *scratch = calloc((size_t)n + 1, RIG_SCRATCH);
   uint8_t *args = calloc(bytes + 1, 1);
@@ -458,7 +453,7 @@ value rig_cuda_test_submit(value v_self, value v_v, value v_parts) {
     p[i].fill.args.block = (uint32_t)at;
     p[i].fill.args.params = (uint32_t)params;
     memcpy(args + at + sizeof(struct rig_block), String_val(v_params), params);
-    at += BLOCK_BYTES(params);
+    at += rig_block_bytes(params);
   }
   void *self = Ptr_val(v_self);
   const char *failure = NULL;

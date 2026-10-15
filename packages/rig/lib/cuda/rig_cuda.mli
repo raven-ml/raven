@@ -237,7 +237,9 @@ val capability : t -> Rig_cuda_abi.t
 
     A launch runs its function with [cuLaunchKernel] over the groups,
     threads and dynamic shared memory of its block, and passes its
-    parameters as one buffer ([CU_LAUNCH_PARAM_BUFFER_POINTER]).
+    parameters as one buffer ([CU_LAUNCH_PARAM_BUFFER_POINTER]). A launch's
+    bytes past those its function reads ({!Rig.Image.params}) are not
+    passed.
 
     [rig_cuda_room] refuses a launch if:
     {ul
@@ -328,7 +330,9 @@ val capability : t -> Rig_cuda_abi.t
     Its [params] end at the kernel's last parameter
     ([cuFuncGetParamInfo]), and its [threads] are the most threads above. A
     launch hands CUDA those [params] bytes of its parameters, since CUDA
-    refuses a buffer of another size.
+    refuses a buffer of another size. {!entry} raises [Invalid_argument] for
+    a kernel of more parameter bytes than CUDA launches on the GPU: 32,764
+    on compute capability 7.0 or later, and 4,096 below.
 
     After {!unload}, no new graph may record the image's functions. Its CUDA
     module stays loaded until every graph that recorded one of its functions
@@ -408,4 +412,9 @@ val capability : t -> Rig_cuda_abi.t
       ([cuMemHostAlloc], [cuMemHostRegister]), Unified Addressing, Peer
       Context Memory Access, Module Management, Graph Management
       ([cuGraphAddKernelNode], [cuGraphInstantiateWithFlags]), Error
-      Handling ([CUDA_ERROR_ILLEGAL_ADDRESS]). *)
+      Handling ([CUDA_ERROR_ILLEGAL_ADDRESS]), Version Management
+      ([cuDriverGetVersion]).
+    - {{:https://developer.nvidia.com/blog/cuda-12-1-supports-large-kernel-parameters/}
+       CUDA 12.1 Supports Large Kernel Parameters}: a kernel's parameters
+      take up to 32,764 bytes on Volta and later under a CUDA 12.1 driver or
+      newer, and 4,096 below Volta. *)
