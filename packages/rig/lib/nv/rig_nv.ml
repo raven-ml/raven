@@ -147,17 +147,42 @@ type 'm path = {
 
 let is_gpu ~vendor ~class_ = vendor = 0x10de && class_ lsr 16 = 0x03
 
-(* The memory [m] of [n] bytes a path answered, below [address_limit] as
-   every path's interface promises. *)
-let address_limit = 1 lsl 40
+(* GPU addresses. Ring segments, launch descriptors and semaphores lie below
+   2^40: a GPFIFO entry holds 40 bits of a segment's address (clc56f.h,
+   GP_ENTRY1_GET_HI 7:0), and a semaphore method and a descriptor's release
+   40 bits of theirs (SEM_ADDR_HI_OFFSET 7:0; clc9c0qmd.h,
+   RELEASE0_ADDRESS_UPPER 807:800). Kernels see their local and shared memory
+   through windows in two slots of [window_slot] bytes below 2^40, the local one
+   first. Each starts on 4 GiB, as Hopper's shared window must, and spans less:
+   Mesa's NVK places the two 16 MiB apart (nvk_cmd_dispatch.c). *)
+let semaphore_limit = 1 lsl 40
+let window_slot = 4 lsl 30
+let windows = semaphore_limit - (2 * window_slot)
+let local_window = windows
+let shared_window = windows + window_slot
 
-let below n = function
+(* Where a path's memory must lie: memory the host addresses, where the device
+   places its own words, rings and descriptors, below the windows; Device
+   memory anywhere outside them. *)
+type reach = Below_windows | Outside_windows
+
+let reach_of : Rig_edge.memory -> reach = function
+  | Device -> Outside_windows
+  | Pinned | Mapped -> Below_windows
+
+(* The memory [m] of [n] bytes a path answered, where every path's interface
+   promises it lies. *)
+let placed reach n = function
   | Some (m : _ memory) as r ->
-      assert (m.address + n <= address_limit);
+      let last = m.address + n in
+      (match reach with
+      | Below_windows -> assert (last <= windows)
+      | Outside_windows ->
+          assert (last <= windows || m.address >= semaphore_limit));
       r
   | None -> None
 
-let path_alloc (p : _ path) kind n = below n (p.alloc kind n)
+let path_alloc (p : _ path) kind n = placed (reach_of kind) n (p.alloc kind n)
 
 (* Constants *)
 
@@ -187,11 +212,6 @@ let stamps_bytes = slots * 48
 (* The compute channel's launch ring holds [launch_bytes] bytes of launches'
    descriptors and banks, a power of two: a launch takes about 1 KiB. *)
 let launch_bytes = 1 lsl 20
-
-(* The addresses at which kernels see their shared and local memory, above 2^40,
-   where no memory the device maps lies. *)
-let shared_window = 0x7294_0000_0000
-let local_window = 0x7293_0000_0000
 
 (* rig_nv_stubs.h's templates, by index. *)
 let t_acquire = 0
@@ -228,12 +248,23 @@ external bank_max : unit -> int = "caml_rig_nv_bank_max"
 
 let bank_max = bank_max ()
 
-(* A pending local memory is one word: its address, below 2^40 and 4 KiB
-   aligned, and its bytes per cluster in units of 32 KiB above them. The
-   submission of value [v] that takes it leaves [v lsl 1 lor 1] in its
-   place. *)
-let local_address_bits = 40
+(* A pending local memory is one word: bit 0 clear, the number of its address's
+   4 KiB page in the [local_page_bits] bits above, which hold the 49 bits of an
+   address the local memory methods take (clc7c0.h,
+   SET_SHADER_LOCAL_MEMORY_A_ADDRESS_UPPER 16:0), and its bytes per cluster in
+   units of 32 KiB above them. The submission of value [v] that takes it leaves
+   [v lsl 1 lor 1] in its place. *)
+let local_page_shift = 12
+let local_page_bits = 37
 let local_unit_shift = 15
+
+let local_word address ~per_tpc =
+  assert (address land ((1 lsl local_page_shift) - 1) = 0);
+  assert (address lsr local_page_shift < 1 lsl local_page_bits);
+  assert (
+    per_tpc lsr local_unit_shift < 1 lsl (Sys.int_size - 2 - local_page_bits));
+  ((per_tpc lsr local_unit_shift) lsl (1 + local_page_bits))
+  lor ((address lsr local_page_shift) lsl 1)
 
 (* The multiprocessors whose errors the RM reports, at most. *)
 let sm_errors =
@@ -535,9 +566,7 @@ let grow d n =
         match path_alloc l.path Device need.bytes with
         | None -> Short need.bytes
         | Some m ->
-            publish d l m
-              (m.address
-              lor ((need.per_tpc lsr local_unit_shift) lsl local_address_bits));
+            publish d l m (local_word m.address ~per_tpc:need.per_tpc);
             l.per_thread <- need.per_thread;
             Served)
 
@@ -704,7 +733,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     | None -> None
     | Some _ when word < start || word + 8 > start + bytes -> None
     | Some map -> (
-        match below chunk (map at chunk) with
+        match placed Below_windows chunk (map at chunk) with
         | None -> None
         | Some m ->
             taken (fun () -> p.free m);
@@ -1028,7 +1057,7 @@ let map_peer (T d) (T _) (R r) =
   | Some Type.Equal -> (
       let l = live d in
       let m = l.path.map_peer r.mem in
-      match below r.bytes m with
+      match placed Outside_windows r.bytes m with
       | None -> None
       | Some m -> (
           match r.flush with
@@ -1044,7 +1073,7 @@ let map_host (T d) a n =
   match p.map_host with
   | None -> None
   | Some map ->
-      let m = below n (map a n) in
+      let m = placed Below_windows n (map a n) in
       Option.map (region d p None n) m
 
 (* Images *)

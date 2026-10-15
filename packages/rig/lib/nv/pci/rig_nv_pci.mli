@@ -62,9 +62,9 @@
     memory BAR (BAR 1), the range of the GPU's memory that the host
     addresses over PCI. [Pinned] memory is the machine's system memory
     ({!Rig_pci.Function.alloc_dma}). The GPUs' addresses and the process's
-    addresses of system memory coincide, from 64 GiB to 1 TiB, which the
-    process reserves at its first open; every GPU it opens takes its
-    addresses from that range.
+    addresses of system memory coincide, from 64 GiB to {!Rig_nv.windows},
+    which the process reserves at its first open; every GPU it opens takes
+    its addresses from that range.
     - Behind an IOMMU, system memory counts against the process's limit on
       locked memory ([RLIMIT_MEMLOCK]), and {!Rig_nv.val-alloc} returns
       [None] once it is reached. Raise the limit to allocate more.

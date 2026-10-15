@@ -661,9 +661,17 @@ address"). Not run: no arm64 host with a discrete GPU here.
 A GPFIFO entry holds 40 bits of segment address: bits 31:2 in `GET` and bits
 7:0 of the high word in `GET_HI` (`clc56f.h`). The NVIDIA kernel path maps
 memory that the host also maps at the same address on both sides, and keeps
-every GPU address it hands out below 2^40, reserving the range in the process
-so that nothing else maps there. This caps a GPU's mapped memory at
-1 TiB.
+those addresses below 2^40, reserving the range in the process so that
+nothing else maps there. Device memory lies at addresses the process reserves
+for each allocation wherever it has room. Unified memory maps a range for a
+GPU only in the lower half of the CPU's addresses (`uvm_gpu_can_address`),
+which bounds where the kernel places a mapping without a hint.
+
+On the kernel path of an RTX 5000 Ada with 62 GiB of RAM, the RM refuses
+`NV_ESC_RM_MAP_MEMORY_DMA` with `NV_ERR_NO_MEMORY` once about 39 GiB of host
+memory is mapped for the GPU in 4 KiB pages, however it is split: after 39
+maps of 1 GiB, or 156 of 256 MiB, of one shared memory file. Run on fudge,
+driver 615.
 
 ### x86_64 AddressSanitizer owns 2.25 GiB to 2 TiB
 

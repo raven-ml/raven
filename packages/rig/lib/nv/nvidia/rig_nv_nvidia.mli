@@ -28,8 +28,8 @@
       kernel driver keeps it for the process, made from that open's
       [root/dev]. The client is three open files and a reservation of the
       process's addresses from 384 GiB to [2{^40}], where the GPUs' memory
-      lies. Every later open uses it, whatever its [root] and whether or not
-      that open succeeds.
+      that the host maps too lies. Every later open uses it, whatever its
+      [root] and whether or not that open succeeds.
     + The first open of a GPU makes the GPU's objects in the RM, which stay
       for the process. Later opens of that GPU reuse them.
     + The open makes the device ({!Rig_nv.make}). A GPU has one device at a
@@ -42,13 +42,17 @@
 
     [Pinned] and [Mapped] memory lie at the same address for the host and
     the GPU. [Mapped] memory lies in the GPU's BAR1, whose size the kernel
-    driver sets. Host memory that {!Rig_nv.val-map_host} maps lies at a GPU
-    address of its own, since the host's address may lie higher. The kernel
-    driver pins those pages for writing while they are mapped, for the long
-    term on x86-64. From Linux 6.5 on, Linux refuses such a pin of a shared
-    mapping of a file whose file system tracks its dirty pages, such as
-    ext4's but not tmpfs's, so there {!Rig_nv.val-map_host} returns [None]
-    for those pages, as for unmapped ones.
+    driver sets. [Device] memory lies at GPU addresses that the process
+    reserves for each allocation, with no access, wherever its address space
+    has room outside the client's reservation, so it may lie above
+    [2{^40}]. Host memory
+    that {!Rig_nv.val-map_host} maps lies at a GPU address of its own, since
+    the host's address may lie higher. The kernel driver pins those pages
+    for writing while they are mapped, for the long term on x86-64. From
+    Linux 6.5 on, Linux refuses such a pin of a shared mapping of a file
+    whose file system tracks its dirty pages, such as ext4's but not
+    tmpfs's, so there {!Rig_nv.val-map_host} returns [None] for those pages,
+    as for unmapped ones.
 
     {!buses}, {!count} and an opener's [make] read the machine's files under
     the directory [root] (defaults to ["/"]): its PCI functions under

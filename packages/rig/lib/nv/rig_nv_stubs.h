@@ -280,8 +280,9 @@ struct device {
   struct template t[TEMPLATES];
   /* an entry is address + base + words * word */
   uint64_t entry_base, entry_word;
-  /* a pending local memory, address | per_tpc / 32 KiB << 40, or once a
-     submission took it, v << 1 | LOCAL_TAKEN for its value v */
+  /* a pending local memory, per_tpc / 32 KiB << (1 + LOCAL_PAGE_BITS) |
+     address / 4 KiB << 1, or once a submission took it, v << 1 | LOCAL_TAKEN
+     for its value v */
   _Atomic uint64_t local;
   /* whether the compute caches are owed an invalidation */
   _Atomic int invalidate;
@@ -351,10 +352,12 @@ int rig_nv_measure(const struct device *d, struct measure *m,
 /* The join word of channel [q]: its GPU address. */
 #define JOIN_GPU(d, q) ((d)->join_gpu + 8 * (1 + (q)))
 
-/* A pending local memory's fields. */
-#define LOCAL_ADDRESS_BITS 40
+/* A pending local memory's fields: its address's 4 KiB page from bit 1, in
+   the 37 bits of a 49-bit address's page, and its bytes per cluster in units
+   of 32 KiB above. Its bit 0 is clear. */
+#define LOCAL_PAGE_SHIFT 12
+#define LOCAL_PAGE_BITS 37
 #define LOCAL_UNIT_SHIFT 15
-/* A pending memory's address is 4 KiB aligned: its bit 0 is clear. */
 #define LOCAL_TAKEN UINT64_C(1)
 
 /* The most parts of the largest size an idle device runs in one

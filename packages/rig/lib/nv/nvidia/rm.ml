@@ -20,6 +20,7 @@ external map_raw : int -> int -> int -> unit = "caml_rig_nv_nvidia_map"
 external reserve_raw : int -> int -> unit = "caml_rig_nv_nvidia_reserve"
 external unmap_raw : int -> int -> unit = "caml_rig_nv_nvidia_unmap"
 external unreserve_raw : int -> int -> unit = "caml_rig_nv_nvidia_unreserve"
+external reserve_any_raw : int -> int -> int = "caml_rig_nv_nvidia_reserve_any"
 external address : Rig_nv.params -> int = "caml_rig_nv_nvidia_address"
 external host_page : unit -> int = "caml_rig_nv_nvidia_page_size" [@@noalloc]
 
@@ -88,6 +89,10 @@ let unmap at n = try unmap_raw at n with Unix.Unix_error _ -> ()
    is dropped for the same reason. *)
 let unreserve at n = try unreserve_raw at n with Unix.Unix_error _ -> ()
 
+let reserve_any ~align n =
+  guard "reserving the GPU's addresses" @@ fun () ->
+  match reserve_any_raw n align with 0 -> None | at -> Some at
+
 (* The RM *)
 
 (* Linux's _IOWR(type, nr, size) (asm-generic/ioctl.h): read and write in bits
@@ -120,7 +125,6 @@ type t = {
   layouts : (module D.RELEASE);
   release : int;
   low : Va.t;
-  main : Va.t;
 }
 
 let status_name (module R : D.RELEASE) s =
@@ -198,13 +202,13 @@ let uvm_call c cmd p status what =
 
 (* The client *)
 
-(* The GPU addresses the process allocates, reserved in the process so that
-   nothing else maps there: memory the host maps too from 384 GiB, the rest from
-   448 GiB, all below 2^40, the widest address of a channel's segments. They
-   start above 258 GiB, where AddressSanitizer on x86_64 maps the shadow of its
-   shadow gap when the gap is unprotected ([protect_shadow_gap=0]). *)
+(* The GPU addresses of memory the host maps too, reserved in the process so
+   that nothing else maps there: from 384 GiB to the windows
+   ({!Rig_nv.windows}), and the windows up to 2^40 too, so that no address the
+   process gives another allocation lies in them. They start above 258 GiB,
+   where AddressSanitizer on x86_64 maps the shadow of its shadow gap when the
+   gap is unprotected ([protect_shadow_gap=0]). *)
 let low_base = 0x60_0000_0000
-let main_base = 0x70_0000_0000
 let top = 1 lsl 40
 
 (* The release branch of a driver version, such as 615 of "615.71.09". *)
@@ -264,10 +268,8 @@ let make_client ~dev =
     taken (fun () -> close uvm_fd);
     let* mm = open_file uvm_path in
     taken (fun () -> close mm);
-    let* () = reserve low_base (main_base - low_base) in
-    taken (fun () -> unreserve low_base (main_base - low_base));
-    let* () = reserve main_base (top - main_base) in
-    taken (fun () -> unreserve main_base (top - main_base));
+    let* () = reserve low_base (top - low_base) in
+    taken (fun () -> unreserve low_base (top - low_base));
     let c =
       {
         ctl;
@@ -275,8 +277,7 @@ let make_client ~dev =
         root;
         layouts;
         release = number;
-        low = Va.make ~base:low_base (main_base - low_base);
-        main = Va.make ~base:main_base (top - main_base);
+        low = Va.make ~base:low_base (Rig_nv.windows - low_base);
       }
     in
     let module I = D.Uvm_initialize in

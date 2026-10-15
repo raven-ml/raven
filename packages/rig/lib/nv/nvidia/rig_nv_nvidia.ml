@@ -84,6 +84,16 @@ type gpu = {
    which takes it back once the object is freed. *)
 type naming = Rm_named | Self_named
 
+(* Where a range's GPU addresses come from: the client's range of memory the
+   host maps too ([Rm.t]'s [low]), or the process's own addresses, reserved
+   for the range alone wherever the process has room ({!Rm.reserve_any}), out
+   of the client's range. The GPU's MMU takes 49-bit addresses, and unified
+   memory maps a range for a GPU in the lower half of the CPU's addresses
+   (open-gpu-kernel-modules' uvm_gpu.c, uvm_gpu_can_address): below 2^47 on
+   x86-64, 2^48 on arm64, which bound the addresses the kernel gives a
+   mapping placed without a hint. *)
+type space = Host_visible | Process
+
 type mem = {
   va : int;
   handle : int;
@@ -104,7 +114,7 @@ and range = {
   memory : int; (* the memory object mapped there *)
   naming : naming; (* who chose [memory] *)
   parent : gpu; (* the GPU the object belongs to *)
-  space : Va.t; (* where [gpu_addr] was taken *)
+  space : space; (* where [gpu_addr] was taken *)
   mapped : int option; (* where the process maps the object, if it does *)
   mutable users : (gpu * int) list;
 }
@@ -325,22 +335,35 @@ let video_params g ~contiguous ~page_size size =
    lor D.nvos32_alloc_flags_persistent_vidmem);
   p
 
+(* Takes [size] addresses of [space] at a multiple of [align]: [None] if it
+   has no room. *)
+let addresses g space ~align size =
+  match space with
+  | Host_visible -> Ok (Va.alloc g.c.low ~align size)
+  | Process -> Rm.reserve_any ~align size
+
+let free_addresses g space va size =
+  match space with
+  | Host_visible -> Va.free g.c.low va size
+  | Process -> Rm.unreserve va size
+
 (* Takes [size] addresses of [space] for [f], giving them back if [f] fails or
    answers [None]. *)
-let with_addresses space ~align size f =
-  match Va.alloc space ~align size with
+let with_addresses g space ~align size f =
+  let* taken = addresses g space ~align size in
+  match taken with
   | None -> Ok None
   | Some va -> (
       match f va with
       | Ok (Some _) as r -> r
       | (Ok None | Error _) as r ->
-          Va.free space va size;
+          free_addresses g space va size;
           r)
 
 (* Host memory the process allocates and describes to the RM, [size] a
    multiple of the host's page. *)
 let alloc_host g size =
-  with_addresses g.c.low ~align:(Rm.host_page ()) size @@ fun va ->
+  with_addresses g Host_visible ~align:(Rm.host_page ()) size @@ fun va ->
   let* () = Rm.map (-1) va size in
   match describe g va size with
   | (Error _ | Ok None) as r ->
@@ -364,9 +387,9 @@ let alloc_video g ~cpu size =
   let* ok = fits g "allocating GPU memory" s in
   if not ok then Ok None
   else
-    let space = if cpu then g.c.low else g.c.main in
+    let space = if cpu then Host_visible else Process in
     let placed =
-      with_addresses space ~align:page_size size @@ fun va ->
+      with_addresses g space ~align:page_size size @@ fun va ->
       let* bar = if not cpu then Ok true else map_to_cpu g h size va in
       if not bar then Ok None
       else
@@ -414,7 +437,7 @@ let alloc g (kind : Rig_edge.memory) n =
       Ok
         (Option.map
            (fun (h, va) ->
-             allocated g ~video:None ~host:(Some va) ~space:g.c.low
+             allocated g ~video:None ~host:(Some va) ~space:Host_visible
                ~naming:Self_named h va size)
            x)
   | (Device | Mapped) as k ->
@@ -454,7 +477,7 @@ let give g r =
         fault (uvm_free g.c r.gpu_addr r.bytes);
         free_object ~naming:r.naming r.parent r.memory;
         Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
-        Va.free r.space r.gpu_addr r.bytes
+        free_addresses r.parent r.space r.gpu_addr r.bytes
       end
 
 (* Each call maps a range of its own, over the whole pages that hold the
@@ -469,7 +492,7 @@ let map_host g a n =
   | None -> None
   | Some h -> (
       let placed =
-        with_addresses g.c.low ~align:page size @@ fun va ->
+        with_addresses g Host_visible ~align:page size @@ fun va ->
         let* ok = uvm_map g va size h in
         Ok (if ok then Some va else None)
       in
@@ -482,7 +505,7 @@ let map_host g a n =
               memory = h;
               naming = Self_named;
               parent = g;
-              space = g.c.low;
+              space = Host_visible;
               mapped = None;
               users = [ (g, 1) ];
             }

@@ -121,8 +121,11 @@ let capability () =
       ("sms_per_tpc", c.sms_per_tpc);
       ("warps_per_sm", c.warps_per_sm);
     ];
-  at_least int ~msg:"shared window" ~than:(1 lsl 40) c.shared_window;
-  at_least int ~msg:"local window" ~than:(1 lsl 40) c.local_window;
+  List.iter
+    (fun (what, w) ->
+      at_least int ~msg:what ~than:N.windows w;
+      less int ~msg:what ~than:(1 lsl 40) w)
+    [ ("shared window", c.shared_window); ("local window", c.local_window) ];
   equal (result unit string) ~msg:"local 0" (Ok ()) (c.local 0)
 
 (* rig finds the record the device's facts declare, and none on the host. *)
@@ -133,8 +136,9 @@ let declared () =
   | None -> fail "no record under the key");
   is_none ~msg:"the host" (Rig.capability Rig.host A.Gpu.key)
 
-(* The host addresses every kind but Device memory, and the GPU all of them
-   below 2^40. *)
+(* The host addresses every kind but Device memory. The GPU addresses the
+   kinds the host addresses below the windows, and Device memory outside
+   them. *)
 let kinds_of_memory () =
   S.with_driver @@ fun g ->
   List.iter
@@ -144,14 +148,18 @@ let kinds_of_memory () =
         ~msg:(name ^ ": the host addresses it")
         (kind <> Device)
         (Option.is_some (N.locate r).host);
-      less int ~msg:(name ^ ": its last byte") ~than:(1 lsl 40)
-        (address r + 4095);
+      let first = address r and last = address r + 4095 in
+      if kind <> Device then
+        less int ~msg:(name ^ ": its last byte") ~than:N.windows last
+      else if last >= N.windows then
+        at_least int ~msg:"Device: its first byte, its last past the windows"
+          ~than:(1 lsl 40) first;
       N.free g r)
     [ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ];
   if (N.facts g).maps_host then begin
     let p = H.pages H.page in
     let r = require_some ~msg:"map_host" (N.map_host g p H.page) in
-    less int ~msg:"map_host: its last byte" ~than:(1 lsl 40)
+    less int ~msg:"map_host: its last byte" ~than:N.windows
       (address r + H.page - 1);
     N.free g r;
     H.free_pages p H.page

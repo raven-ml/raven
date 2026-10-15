@@ -17,9 +17,11 @@
     compiled code finds it under {!key}. Neither library links the
     other.
 
-    Every address at which the GPU reaches memory the driver gives it is
-    below [2{^40}], where ring segments, launch descriptors and semaphores
-    must lie ({!Method}). The windows are at or above [2{^40}]. *)
+    Ring segments, launch descriptors and semaphores must lie below [2{^40}]
+    ({!Method}), and the driver keeps the memory that holds them there. The
+    windows lie in the 8 GiB below [2{^40}], where no memory the driver gives
+    lies; its [Device] memory may lie at any other address the GPU's
+    channels reach. *)
 
 type t = {
   compute_class : int;

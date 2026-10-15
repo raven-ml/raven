@@ -602,8 +602,9 @@ static void enter(struct submission *s, int q) {
   uint64_t local = atomic_load_explicit(&d->local, memory_order_acquire);
   if (local != 0 && !(local & LOCAL_TAKEN)) {
     local = atomic_exchange(&d->local, s->v << 1 | LOCAL_TAKEN);
-    uint64_t address = local & ((UINT64_C(1) << LOCAL_ADDRESS_BITS) - 1);
-    uint64_t per_tpc = (local >> LOCAL_ADDRESS_BITS) << LOCAL_UNIT_SHIFT;
+    uint64_t page = (local >> 1) & ((UINT64_C(1) << LOCAL_PAGE_BITS) - 1);
+    uint64_t address = page << LOCAL_PAGE_SHIFT;
+    uint64_t per_tpc = (local >> (1 + LOCAL_PAGE_BITS)) << LOCAL_UNIT_SHIFT;
     emit(d, c, T_LOCAL, address, per_tpc, 0);
   }
   if (atomic_exchange(&d->invalidate, 0))

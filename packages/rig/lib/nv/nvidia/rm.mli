@@ -37,6 +37,15 @@ val unmap : int -> int -> unit
 (** [unmap at n] returns the [n] bytes {!map} mapped at [at] to the process's
     reservation of the GPU's addresses. *)
 
+val reserve_any : align:int -> int -> (int option, string) result
+(** [reserve_any ~align n] is the first of [n] of the process's addresses that
+    it reserves, inaccessible, wherever it has room for them, at a multiple of
+    [align], a power of two of at least a page; [None] if it has no room. *)
+
+val unreserve : int -> int -> unit
+(** [unreserve at n] gives back the [n] addresses from [at] that
+    {!reserve_any} reserved. *)
+
 (** {1:client The client} *)
 
 type t = {
@@ -46,14 +55,14 @@ type t = {
   layouts : (module Defs.RELEASE);  (** The layouts of the driver's release. *)
   release : int;  (** The release's number, such as [615]. *)
   low : Va.t;  (** The GPU's addresses of memory the host maps too. *)
-  main : Va.t;  (** The GPU's addresses of the rest. *)
 }
 (** The type for the process's client. *)
 
 val client : dev:string -> (t, string) result
 (** [client ~dev] is the process's client, opened at its first call from the
     device files in the directory [dev]: the RM's client, the unified memory
-    driver, and the GPU's addresses, reserved in the process below [2{^40}].
+    driver, and the GPU's addresses of memory the host maps too, reserved in
+    the process from 384 GiB to [2{^40}].
     Later calls return it whatever their [dev], since a process has one
     client of the machine's kernel driver. It is [Error] if the kernel
     driver's release is none of {!Defs.releases}. *)

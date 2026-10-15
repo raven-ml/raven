@@ -92,12 +92,13 @@ let report ~firmware ~chip ~vbios =
 
 (* Memory *)
 
-(* The GPU addresses of every NVIDIA GPU this path opens, [64 GiB, 1 TiB) of the
-   process: below 2^40, as a device requires of every memory, and where an IOMMU
-   maps device addresses. System memory lies at the same address for the process
-   and the GPU, so the range is reserved on the GPU's machine. One range serves
-   every GPU: a peer's memory maps at its owner's address. *)
-let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
+(* The GPU addresses of every NVIDIA GPU this path opens, from 64 GiB of the
+   process to the windows ({!Rig_nv.windows}): below them, as a device requires
+   of memory the host addresses, and where an IOMMU maps device addresses.
+   System memory lies at the same address for the process and the GPU, so the
+   range is reserved on the GPU's machine. One range serves every GPU: a peer's
+   memory maps at its owner's address. *)
+let space = Space.create ~base:(64 * gib) (Rig_nv.windows - (64 * gib))
 
 module Handles = Map.Make (Int)
 

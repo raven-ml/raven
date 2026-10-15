@@ -342,10 +342,12 @@ type gpu = {
 
 type 'm memory = {
   address : int;
-      (** The GPU address of its first byte. The memory lies below [2{^40}],
-          its last byte included ({!Rig_nv_abi.Gpu}). A path may map host
-          memory at a GPU address of its own, as the host's may lie
-          higher. *)
+      (** The GPU address of its first byte. No byte of it lies from
+          {!windows} to [2{^40}]. [Pinned] and [Mapped] memory, and host
+          memory the path maps, lie below {!windows}, since the device's
+          rings, descriptors and semaphores lie in such memory
+          ({!Rig_nv_abi.Gpu}). A path may map host memory at a GPU address
+          of its own, as the host's may lie higher. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
@@ -491,6 +493,11 @@ val make : word:nativeint -> 'm path -> (t, string) result
     cannot read the timer. A failed [make] frees
     what it allocated. [p]'s own objects stay allocated, and another [make] may
     use them once this one has failed or its device has stopped. *)
+
+val windows : int
+(** [windows] is [2{^40} - 8 GiB], the first of the GPU addresses at which a
+    device's kernels see their local and shared memory, which end at
+    [2{^40}]. A path gives no memory there ({!type-memory}). *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and

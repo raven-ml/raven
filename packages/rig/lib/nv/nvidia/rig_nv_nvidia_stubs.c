@@ -119,6 +119,28 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
   return Val_unit;
 }
 
+/* Reserves [v_n] bytes, inaccessible, wherever the process has room for
+   them, at a multiple of [v_align], a power of two of at least a page: their
+   address, or 0 if the process has no room. The kernel places the mapping
+   [v_align] bytes longer, and the bytes around the aligned ones go back. */
+value caml_rig_nv_nvidia_reserve_any(value v_n, value v_align) {
+  size_t n = (size_t)Long_val(v_n), align = (size_t)Long_val(v_align);
+  if (n > SIZE_MAX - align) return Val_long(0);
+  size_t length = n + align;
+  void *p = mmap(NULL, length, PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (p == MAP_FAILED) {
+    if (errno == ENOMEM) return Val_long(0);
+    caml_unix_error(errno, "mmap", Nothing);
+  }
+  uintptr_t start = (uintptr_t)p;
+  uintptr_t at = (start + align - 1) & ~(uintptr_t)(align - 1);
+  if (at > start) munmap(p, at - start);
+  if (start + length > at + n)
+    munmap((void *)(at + n), start + length - at - n);
+  return Val_long((intnat)at);
+}
+
 /* Gives back the reservation of the [v_n] bytes at [v_at]. */
 value caml_rig_nv_nvidia_unreserve(value v_at, value v_n) {
   if (munmap(PTR(v_at), (size_t)Long_val(v_n)) != 0)
@@ -274,6 +296,12 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
 value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
   (void)v_at;
   (void)v_n;
+  return nosys();
+}
+
+value caml_rig_nv_nvidia_reserve_any(value v_n, value v_align) {
+  (void)v_n;
+  (void)v_align;
   return nosys();
 }
 
