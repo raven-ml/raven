@@ -548,6 +548,9 @@ let halt d =
 
 let stop d ~fault:_ = locked d.guard halt d
 
+(* Its room never answers RIG_GROW. *)
+let grow _ = Rig_edge.Grown
+
 module Driver = struct
   type nonrec t = t
   type nonrec region = region
@@ -570,6 +573,7 @@ module Driver = struct
   let signaled = signaled
   let sleep = sleep
   let stop = stop
+  let grow = grow
 end
 
 let gpu i : t Rig_edge.opener =

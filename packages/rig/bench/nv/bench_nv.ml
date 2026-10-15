@@ -209,7 +209,9 @@ let launching t count =
    Launch parts, which the driver chains on one channel. Chained launches in one
    part of ring words are their floor; [64-parts] orders launches as ring words
    of parts of one queue, each scheduled after a wait for idle, and [4096-parts]
-   shows what the writer costs per part of a large submission. *)
+   shows what the writer costs per part of a large submission. [4096] is 4,096
+   Launch parts in one submission, more than the launch ring holds when the
+   device opens. *)
 let launch_rows =
   let launching_as how count () =
     let t = dev () in
@@ -260,6 +262,7 @@ let launch_rows =
       row "floor-submits-64-unreleased" floor_apart (fun (_, _, ws) ->
           floor_rung ws false);
       row "4096-parts" (launching_as `Apart 4096) (fun (_, _, _, s) -> run s);
+      row "4096" (launch_parts 4096) (fun (_, s) -> run s);
     ]
 
 let copy_rows =

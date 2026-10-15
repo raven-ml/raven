@@ -82,11 +82,13 @@ static void close_segment(const struct device *d, struct channel *c) {
 /* Writes template [k] with the values [a], [b], [n] into the open segment
    of [c]. A segment never wraps: one whose words would pass the ring's end,
    including one that ends exactly there, is closed first, and the words go
-   at the start of the ring when they do not fit before its end. */
+   at the start of the ring when they do not fit before its end. A segment
+   whose words would pass SEGMENT_BYTES_MAX is closed first too. */
 static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
                  uint64_t b, uint64_t n) {
   const struct template *t = &d->t[k];
   uint64_t bytes = t->nbytes;
+  if (4 * c->open_words + bytes > SEGMENT_BYTES_MAX) close_segment(d, c);
   uint64_t start = c->open & (c->size - 1);
   if (start + 4 * c->open_words + bytes > c->size) {
     close_segment(d, c);
@@ -101,9 +103,12 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
   c->open_words += bytes / 4;
 }
 
-/* Copies [n] words of ring entries, two words each, low first. */
+/* Copies [n] words of ring entries, two words each, low first, after the
+   open segment's entry. No words place nothing, so the segment stays
+   open. */
 static void put_entries(const struct device *d, struct channel *c,
                         const uint32_t *words, size_t n) {
+  if (n == 0) return;
   close_segment(d, c);
   for (size_t i = 0; i + 1 < n; i += 2)
     c->ring[c->put++ & (c->entries - 1)] =
@@ -112,14 +117,16 @@ static void put_entries(const struct device *d, struct channel *c,
 
 /* Room */
 
-/* Returns to [c] what the submissions up to [seen] used. */
+/* Returns to [c] what the submissions up to [seen] used. A submission
+   before a growth used rings the growth replaced, of which nothing returns
+   to [c]: the OCaml side frees them once [seen] passes them. */
 static void reclaim(struct channel *c, uint64_t seen) {
   while (c->count > 0) {
     const struct mark *m = &c->marks[c->first];
     if (m->v > seen) return;
     c->freed = m->put;
-    c->reclaimed = m->written;
-    c->landed = m->launched;
+    if (m->v >= c->segments_from) c->reclaimed = m->written;
+    if (m->v >= c->launches_from) c->landed = m->launched;
     c->first = (c->first + 1) & (c->entries - 1);
     c->count--;
   }
@@ -278,11 +285,14 @@ static void channel_cost(const struct device *d, int q, struct cost *k) {
 /* Adds what a part on channel [q] takes that places [words] ring words,
    waits for [joins] parts of the other channel, schedules a launch of a
    [qmd]-byte descriptor and a [bank]-byte constant bank (both 0 for none),
-   and copies [pieces] pieces of at most COPY_MAX bytes. */
+   and copies [pieces] pieces of at most COPY_MAX bytes. Its ring words
+   take an entry each two, after the entry that closes the segment before
+   them; the driver's own words go into segments, whose closes
+   [segment_closes] counts. */
 static void part_cost(const struct device *d, int q, uint64_t words,
                       uint64_t joins, uint64_t qmd, uint64_t bank,
                       uint64_t pieces, struct cost *k) {
-  k->entries[q] += 2 + words / 2;
+  if (words > 0) k->entries[q] += 1 + words / 2;
   k->bytes[q] += joins * bytes_of(d, T_ACQUIRE) +
                  pieces * bytes_of(d, T_COPY) + release_bytes(d, q);
   if (qmd + bank > 0) {
@@ -290,6 +300,14 @@ static void part_cost(const struct device *d, int q, uint64_t words,
     k->launched += qmd + bank;
   }
   if (q == COMPUTE) k->bytes[q] += bytes_of(d, T_IDLE);
+}
+
+/* The entries that close segments of [bytes] of the driver's words when
+   they reach SEGMENT_BYTES_MAX, beyond those [channel_cost] counts: a
+   segment closes so after at least half of that, as a template takes far
+   less. */
+static uint64_t segment_closes(uint64_t bytes) {
+  return bytes / (SEGMENT_BYTES_MAX / 2);
 }
 
 /* The most a submission may take: fewer entries than a channel's ring
@@ -339,6 +357,8 @@ static struct cost need(const struct device *d, const struct route *routes,
   for (int q = 0; q < CHANNELS; q++)
     if (used[q]) channel_cost(d, q, &k);
   k.bytes[r] += end_bytes(d, r);
+  for (int q = 0; q < CHANNELS; q++)
+    k.entries[q] += segment_closes(k.bytes[q]);
   if (k.launched > 0) k.launched += wasted;
   return k;
 }
@@ -355,11 +375,13 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
 static uint64_t larger(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 /* The most parts an idle device runs in one submission, each of the largest
-   size the guarantee covers, by [need]'s costs and [room_of]'s bounds: a
-   launch whose descriptor takes STRUCTURE_BYTES and whose constant bank
-   takes BANK_MAX bytes, or a copy of one COPY_MAX piece, each joined to the
-   part before it on its queue and to one of the other queue. Both channels
-   are used, and either may release the value. */
+   size the guarantee covers, by [need]'s costs: a launch whose descriptor
+   takes STRUCTURE_BYTES and whose constant bank takes BANK_MAX bytes, or a
+   copy of one COPY_MAX piece, each joined to the part before it on its
+   queue and to one of the other queue. Both channels are used, and either
+   may release the value. The segment and launch rings grow to hold them, so
+   the ring's entries bound them, through the closes of their segments, and
+   a join tag's index. */
 int rig_nv_most_parts(const struct device *d) {
   struct cost room = room_of(d), fixed = {0}, launch = {0}, copy = {0};
   uint64_t release = larger(end_bytes(d, COMPUTE), end_bytes(d, COPY));
@@ -369,18 +391,78 @@ int rig_nv_most_parts(const struct device *d) {
     channel_cost(d, q, &fixed);
     fixed.bytes[q] += release;
   }
-  fixed.launched = larger(qmd, bank);
   part_cost(d, COMPUTE, 0, 2, qmd, bank, 0, &launch);
   part_cost(d, COPY, 0, 2, 0, 0, 1, &copy);
   uint64_t n = MAX_PARTS;
   for (int q = 0; q < CHANNELS; q++) {
-    n = least(n, room.entries[q], fixed.entries[q],
-              larger(launch.entries[q], copy.entries[q]));
-    n = least(n, room.bytes[q], fixed.bytes[q],
+    uint64_t closes = room.entries[q] - fixed.entries[q];
+    n = least(n, closes * (SEGMENT_BYTES_MAX / 2), fixed.bytes[q],
               larger(launch.bytes[q], copy.bytes[q]));
   }
-  n = least(n, room.launched, fixed.launched, launch.launched);
   return (int)n;
+}
+
+/* Adds [r] to [d]'s retired rings, which work after [until] never uses. */
+static void retire(struct device *d, struct ring *r, uint64_t until) {
+  r->until = until;
+  r->next = atomic_load_explicit(&d->retired, memory_order_relaxed);
+  while (!atomic_compare_exchange_weak_explicit(
+      &d->retired, &r->next, r, memory_order_release, memory_order_relaxed)) {
+  }
+}
+
+/* Installs the rings a growth made that [d]'s rings are smaller than, for
+   the work of the next value on. A ring one
+   replaces is retired once the work before that value is done, as earlier
+   work may still read it; a ring no larger than [d]'s is retired at once,
+   as no work used it. */
+static void install(struct device *d) {
+  uint64_t v = atomic_load_explicit(&d->last, memory_order_relaxed) + 1;
+  for (int i = 0; i <= CHANNELS; i++) {
+    struct ring *g = atomic_exchange(&d->grown[i], NULL);
+    if (g == NULL) continue;
+    struct channel *c = &d->ch[i < CHANNELS ? i : COMPUTE];
+    if (i < CHANNELS && g->size > c->size) {
+      c->segments = g->host;
+      c->segments_gpu = g->gpu;
+      c->size = g->size;
+      c->written = c->reclaimed = c->open = c->open_words = 0;
+      c->segments_from = v;
+    } else if (i == CHANNELS && g->size > c->launches_size) {
+      c->launches = g->host;
+      c->launches_gpu = g->gpu;
+      c->launches_size = g->size;
+      c->bar = g->bar;
+      c->launched = c->landed = 0;
+      c->launches_from = v;
+    } else {
+      retire(d, g, 0);
+      continue;
+    }
+    struct ring *replaced = atomic_exchange(&d->current[i], g);
+    if (replaced != NULL) retire(d, replaced, v - 1);
+  }
+}
+
+/* Whether [d]'s rings hold what [k] takes, besides the work on them. */
+static int holds(const struct device *d, const struct cost *k) {
+  for (int q = 0; q < CHANNELS; q++)
+    if (k->bytes[q] > d->ch[q].size) return 0;
+  return k->launched <= d->ch[COMPUTE].launches_size;
+}
+
+_Thread_local struct asked rig_nv_asked;
+
+/* Records, for the growth rig asks next on this thread, the bytes each of
+   [d]'s rings lacks to hold [k]. Each submission's growth makes what it
+   needs, so another's growth, larger or short of memory, never stands in
+   for it. */
+static void ask(const struct device *d, const struct cost *k) {
+  rig_nv_asked.d = d;
+  for (int q = 0; q < CHANNELS; q++)
+    rig_nv_asked.bytes[q] = k->bytes[q] > d->ch[q].size ? k->bytes[q] : 0;
+  rig_nv_asked.bytes[CHANNELS] =
+      k->launched > d->ch[COMPUTE].launches_size ? k->launched : 0;
 }
 
 int rig_nv_room(void *self, const struct rig_part *p, int n,
@@ -390,9 +472,12 @@ int rig_nv_room(void *self, const struct rig_part *p, int n,
   route(d, scratch, p, n);
   struct cost k = need(d, scratch, p, n), room = room_of(d);
   for (int q = 0; q < CHANNELS; q++)
-    if (k.entries[q] > room.entries[q] || k.bytes[q] > room.bytes[q])
-      return RIG_NEVER;
-  if (k.launched > room.launched) return RIG_NEVER;
+    if (k.entries[q] > room.entries[q]) return RIG_NEVER;
+  if (!holds(d, &k)) install(d);
+  if (!holds(d, &k)) {
+    ask(d, &k);
+    return RIG_GROW;
+  }
   const struct channel *compute = &d->ch[COMPUTE];
   uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
   for (int q = 0; q < CHANNELS; q++) {

@@ -51,7 +51,8 @@ enum {
   SUBMIT_LOST_AFTER,
   SUBMIT_PRODUCER_LOST,
   SUBMIT_FAILED,
-  SUBMIT_NEED_RECORD
+  SUBMIT_NEED_RECORD,
+  SUBMIT_GROW
 };
 
 /* Mutexes and conditions */
@@ -1460,6 +1461,7 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   const struct rig_part *parts = s->nslotted > 0 ? r->parts : s->parts;
   int room = d->driver.room(d->self, parts, s->nparts, s->scratch, r->args);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
+  if (room == RIG_GROW) return SUBMIT_GROW;
   if (room == RIG_LATER) {
     r->no_room_at = atomic_load(&d->line->submitted);
     return SUBMIT_NO_ROOM;
@@ -1502,7 +1504,8 @@ value caml_rig_submit(value v_s, value v_r) {
   begin_turn(d);
   r = admit(d, s, run);
   end_turn(d);
-  if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER) d->nrecord -= run->nwaits;
+  if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER || r == SUBMIT_GROW)
+    d->nrecord -= run->nwaits;
   if (r == SUBMIT_FAILED) r = fail_locked(d, run->why);
   else if (r == SUBMIT_OK && is_lost(d)) r = SUBMIT_LOST_AFTER;
   return Val_int(give_turn(d, released, r));

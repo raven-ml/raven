@@ -705,6 +705,7 @@ module Answer = struct
   let producer_lost = 6
   let failed = 7
   let need_record = 8
+  let grow = 9
 end
 
 (* Commits [d]'s submitted work if [d]'s turn frees within the still interval:

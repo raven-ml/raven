@@ -232,9 +232,10 @@ val runs_on_host : t -> bool
 
 val most_parts : t -> int
 (** [most_parts d] is the most parts that an idle [d] always runs in one
-    submission, as [d]'s driver states it ({!Rig_edge.type-facts}): [max_int]
-    where its driver has no such bound, and [0] for an io device. For a
-    device of another machine, it is that machine's device's.
+    submission, given memory for its queues to grow ({!submit}), as [d]'s
+    driver states it ({!Rig_edge.type-facts}): [max_int] where its driver
+    has no such bound, and [0] for an io device. For a device of another
+    machine, it is that machine's device's.
 
     The count holds for launches and fills up to the argument size, and
     copies up to the length, that [d]'s driver's [.mli] states. Words parts,
@@ -719,7 +720,11 @@ val failure : unit -> string option
        rig frees the cached memory charged to that budget, waits for the work
        that holds back other collected memory, from the second round on runs
        the collector, and tries again. The allocation raises {!Out_of_memory}
-       after three such rounds.}} *)
+       after three such rounds.}
+    {- A growth of a device's queues ({!submit}) that its driver has no
+       memory for reclaims as an allocation does, both the device's budget
+       and the host's, as the driver may grow them in memory that counts in
+       either.}} *)
 
 val budget : t -> int
 (** [budget d] is [d]'s budget ({!section-reclaim}). It starts at [max_int]
@@ -1719,10 +1724,13 @@ val submit :
 
     [submit] blocks while [d]'s queues have no room for the work, while it
     waits for a point on the host, and where its driver's interface says it
-    blocks, as some do while a profile is being taken. It allocates nothing
-    unless it waits or a profile is being taken. Once it has assigned [v],
-    [d]'s driver receives [v]'s work or [d] is lost, and the stamps of every
-    allocation the work uses name [(d, v)] either way.
+    blocks, as some do while a profile is being taken. Where the work
+    exceeds [d]'s queues and its driver grows them
+    ({!Rig_edge.Driver.grow}), [submit] grows them first. It allocates
+    nothing unless it waits, a profile is being taken or [d]'s queues grow.
+    Once it has assigned [v], [d]'s driver receives [v]'s work or [d] is
+    lost, and the stamps of every allocation the work uses name [(d, v)]
+    either way.
 
     Raises [Invalid_argument] if:
     {ul
@@ -1736,11 +1744,13 @@ val submit :
        on [d];}
     {- a ref names handle-only memory;}
     {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}).}}
-    Raises {!Lost} if [d] is lost before [submit] returns, if its driver
-    fails to take the work, or if a point of [waits] is a lost device's and
-    that device never reached it. A submit after [d]'s value [2]{^ 47}[ - 1],
-    the last a point holds, loses [d] with that reason and assigns
-    nothing. *)
+    Raises {!Out_of_memory} if [d]'s queues must grow for the work and [d]
+    has no memory for the growth after the rounds of reclamation
+    ({!section-reclaim}). Raises {!Lost} if [d] is lost before [submit]
+    returns, if its driver fails to take the work, or if a point of [waits]
+    is a lost device's and that device never reached it. A submit after
+    [d]'s value [2]{^ 47}[ - 1], the last a point holds, loses [d] with that
+    reason and assigns nothing. *)
 
 (** {1:per_device Values per device}
 

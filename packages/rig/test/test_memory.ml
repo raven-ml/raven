@@ -637,6 +637,19 @@ let test_pinned_reclaims () =
   with_host_budget (Support.host_held ()) (fun () ->
       equal int n (B.length (B.create ~memory:Pinned a n)))
 
+(* A growth of a device's queues short of memory reclaims the host's budget
+   too, which the device's pinned memory counts in: its cached pinned memory
+   returns before the submit raises Out_of_memory. *)
+let test_growth_reclaims_pinned () =
+  let d, p =
+    P.open_ ~host_visible:false ~capacity:4 ~grows:8 "memory:growth-pinned"
+  in
+  let at = dropped ~memory:Pinned d (64 * kib) in
+  collect d;
+  let s = Sub.make d (Array.make 9 (Support.touching [||])) in
+  raises_match (out_of_memory d 4096) (fun () -> submit s);
+  equal ~msg:"its cached pinned memory freed" bool true (freed p at)
+
 (* A reclamation round waits for a device whose lock another thread holds:
    the device's cached memory charged to the host's budget returns to a host
    allocation the budget refused. The other thread holds the lock while its
@@ -1072,6 +1085,8 @@ let tests =
         test "mapped memory is the device's" test_mapped;
         test "pinned memory another device keeps returns to a refused one"
           test_pinned_reclaims;
+        test "a growth short of memory reclaims the host's budget"
+          test_growth_reclaims_pinned;
         test "a round waits for a device whose lock another thread holds"
           test_round_waits_for_lock;
         test

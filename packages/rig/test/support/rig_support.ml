@@ -7,6 +7,8 @@ type polled
 
 external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
 external polled_edge : polled -> nativeint = "rig_test_polled_edge"
+external polled_grows : polled -> int -> unit = "rig_test_polled_grows"
+external polled_grow : polled -> bool -> bool = "rig_test_polled_grow"
 external polled_fail : polled -> unit = "rig_test_polled_fail"
 external polled_fail_commit : polled -> unit = "rig_test_polled_fail_commit"
 external polled_fail_settle : polled -> unit = "rig_test_polled_fail_settle"
@@ -416,6 +418,10 @@ module Driver = struct
 
   let unload d _ = ignore (counted d "unload" : bool)
 
+  let grow d =
+    let refused = counted d "grow" in
+    if polled_grow d.c refused then Rig_edge.Grown else Short 4096
+
   let rec freed_at a = function
     | [] -> false
     | (x, _) :: l -> x = a || freed_at a l
@@ -490,7 +496,7 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?most_parts ?(copies = true)
+  let make ?(capacity = 1024) ?grows ?most_parts ?(copies = true)
       ?(host_visible = true) ?(addresses = true) ?(transport = false)
       ?(peers = true) ?(maps_host = true) ?(budget = 1 lsl 30)
       ?(memory = max_int) ?(window = max_int) ?(may_block = false)
@@ -553,6 +559,7 @@ module Polled = struct
       }
     in
     if runs = `Itself then polled_start d.c;
+    Option.iter (polled_grows d.c) grows;
     d
 
   let bind ?(start = 0) d ~word =
@@ -567,13 +574,13 @@ module Polled = struct
       make = (fun ~word -> Ok (bind ?start d ~word));
     }
 
-  let open_ ?capacity ?most_parts ?copies ?host_visible ?addresses ?transport
-      ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
-      ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
+  let open_ ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
+      ?transport ?peers ?maps_host ?budget ?memory ?window ?may_block
+      ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
     let p =
-      make ?capacity ?most_parts ?copies ?host_visible ?addresses ?transport
-        ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
-        ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms ()
+      make ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
+        ?transport ?peers ?maps_host ?budget ?memory ?window ?may_block
+        ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

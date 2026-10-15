@@ -97,8 +97,11 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - limits no hardware or spec imposes, one commit each
   (_plans/rig-device-reuse/70-, 71-): AMD's 512 parts per submission;
-  rings that grow (`Rig.most_parts` goes, NV's GPFIFO refuses only `Words`
-  past it); parameter bytes per compiled function;
+  AMD's rings that grow as NV's do (`Rig.most_parts` goes); NV's GPFIFO
+  entry count, rig's choice, sized from need; NV's 65,535 parts, from its
+  join-tag layout (with `Rig.most_parts`); parameter bytes per compiled
+  function, a per-device fact (Metal's 4 KiB `setBytes`; CUDA 32,764 since
+  12.1; NV and AMD read them from memory);
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
   it; mlx5's CQ from `max_cqe`
 - NV address spaces: Device memory in the 49-bit space on the PCI path;

@@ -1194,6 +1194,26 @@ let kernel_entry image f =
       ignore (Sys.opaque_identity image);
       e
 
+(* The growth of [d]'s queues a submission asks at round [round] of the
+   ladder, after a Short of [lacked] bytes, or 0. Every answer takes a round,
+   so a submission asks at most [rounds] times whatever its room answers. A
+   round reclaims the host's budget too: a driver may grow its queues in
+   pinned memory, which counts there. Only a driver's room answers that its
+   queues grow. *)
+let grow_queues d ~round ~lacked =
+  if round > rounds then raise (Dev.Out_of_memory (d, lacked));
+  match d.kind with
+  | Driver { m; h; _ } -> (
+      let module D = (val m) in
+      match Dev.counted d Dev.Any (fun () -> D.grow h) with
+      | Rig_edge.Grown -> (round + 1, lacked)
+      | Short n ->
+          if round >= rounds then raise (Dev.Out_of_memory (d, n));
+          reclaim_round d round;
+          reclaim_round Dev.host round;
+          (round + 1, n))
+  | Io _ | Host -> invalid_argf "Rig: %s has no queues to grow" d.name
+
 (* Allocation *)
 
 let room d = Int.max 0 (d.budget - d.live.used)

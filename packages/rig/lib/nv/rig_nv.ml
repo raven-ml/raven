@@ -323,6 +323,15 @@ external free_launch : nativeint -> unit = "caml_rig_nv_launch_free" [@@noalloc]
 external free_launches : nativeint list -> unit = "caml_rig_nv_launches_free"
 [@@noalloc]
 
+external needed : int -> int array = "caml_rig_nv_needed"
+
+external hand : int -> int -> int -> int -> int -> bool -> int
+  = "caml_rig_nv_hand_bytecode" "caml_rig_nv_hand"
+[@@noalloc]
+
+external retired : int -> int -> int = "caml_rig_nv_retired" [@@noalloc]
+external rings_retired : int -> bool = "caml_rig_nv_retiring" [@@noalloc]
+
 external install_copy : int -> nativeint -> int -> string -> unit
   = "caml_rig_nv_copy_kernel"
 [@@noalloc]
@@ -372,12 +381,20 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
    [until], the value of the submission that took its successor. *)
 type 'm retired = { mem : 'm memory; mutable until : int }
 
+(* A ring a growth makes, listed before the path's call so that its memory is
+   reachable from what stop frees as the path returns it: [None] until
+   then. *)
+type 'm ring = { mutable ring : 'm memory option }
+
 (* What only a running device uses. The handle outlives the device in its
    properties, so stop drops it. *)
 type 'm live = {
   path : 'm path;
   error_names : (int * string) list;
   owned : 'm memory list;
+  mutable rings : 'm ring list;
+      (* the rings growths made, under [local_lock], until the device retired
+         them and its word passed their work (rig_nv_stubs.h) *)
   group : int;
   debugger : int;
   channels : int list;
@@ -402,7 +419,9 @@ type 'm dev = {
   capability : Abi.Gpu.t;
   flush : int option; (* the path's flush word *)
   word : 'm reg; (* kept, with the C state, for the process *)
-  local_lock : lock; (* held by [grow], and by stop over [live] *)
+  local_lock : lock;
+      (* held by [grow_local], [grow] and the retirement of rings, and by stop
+         over [live] *)
   mutable live : 'm live option; (* [None] once stop began *)
 }
 
@@ -548,12 +567,12 @@ let publish d l m packed =
       give l.path.free p
   | None -> l.local_pending <- pending
 
-type grown = Served | Stopped | Short of int
+type served = Served | Stopped | Short of int
 
 (* Makes the local memory serve kernels whose threads need [n] bytes each:
    [Short bytes] if the GPU has no memory for the [bytes] that takes. Raises
    [Fault] if the path does. *)
-let grow d n =
+let grow_local d n =
   protect d.local_lock @@ fun () ->
   match d.live with
   | None -> Stopped
@@ -570,8 +589,28 @@ let grow d n =
             l.per_thread <- need.per_thread;
             Served)
 
+(* Retired rings *)
+
+(* Gives back the ring at the GPU address [a], which no work uses. It leaves
+   [rings] just before its free, with nothing allocated between. *)
+let drop_ring l a =
+  let at r = match r.ring with Some m -> m.address = a | None -> false in
+  match List.find_opt at l.rings with
+  | Some ({ ring = Some m; _ } as r) ->
+      l.rings <- List.filter (fun r' -> r' != r) l.rings;
+      give l.path.free m
+  | Some { ring = None; _ } | None -> ()
+
+(* Gives back the rings the device retired whose work its word passed. *)
+let rec retire_rings d l =
+  match retired d.self (read_word d.self) with
+  | 0 -> ()
+  | a ->
+      drop_ring l a;
+      retire_rings d l
+
 let local d n =
-  match grow d n with
+  match grow_local d n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
   | Short bytes ->
@@ -951,6 +990,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
               path = p;
               error_names = R.robust_channel_errors;
               owned;
+              rings = [];
               group;
               debugger;
               channels = [ compute; copy ];
@@ -1015,6 +1055,9 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   let l = live d in
   let p = l.path in
+  (* Rings the device retired go back first where no growth holds them. *)
+  if rings_retired d.self then
+    ignore (try_protect d.local_lock (fun () -> retire_rings d l) : bool);
   match memory with
   | Device | Pinned ->
       Option.map (region d p None n) (path_alloc p memory n)
@@ -1076,6 +1119,66 @@ let map_host (T d) a n =
       let m = placed Below_windows n (map a n) in
       Option.map (region d p None n) m
 
+(* Rings *)
+
+(* The rings [needed] numbers: each channel's segment ring, then the launch
+   ring. *)
+let launch_ring = 2
+
+(* The bytes of a ring a growth makes for [want] bytes: the first power of two
+   from a page that holds twice them, so that a submission of that size takes
+   at most half of it, and growths come at doublings. *)
+let grown_bytes want =
+  let rec up n = if n >= 2 * want then n else up (2 * n) in
+  up page
+
+(* Makes [r] ring [i] of [n] bytes, and answers whether the host writes it
+   through the BAR: as at open, the launch ring in the GPU's memory where the
+   BAR has room and a flush word orders the host's writes, every other in
+   [Pinned] memory. [r] stays [None] without memory. *)
+let make_ring (p : _ path) i n r =
+  if i = launch_ring && Option.is_some p.flush then
+    r.ring <- path_alloc p Mapped n;
+  Option.is_some r.ring
+  || begin
+    r.ring <- path_alloc p Pinned n;
+    false
+  end
+
+(* Hands [m], ring [i] of [n] bytes, to the next room that needs it, and gives
+   back the ring the hand did not keep. *)
+let hand_ring d l i n bar (m : _ memory) =
+  match hand d.self i (Option.get m.host) m.address n bar with
+  | -1 -> raise (Fault "no host memory for a ring's record")
+  | 0 -> ()
+  | a -> drop_ring l a
+
+(* The rings the submission whose room answered RIG_GROW on this thread
+   needs, each listed before its allocation. A growth short of memory for one
+   still hands those it made, and the submission's room asks for the rest
+   anew after its round of reclamation. *)
+let grow (T d) =
+  protect d.local_lock @@ fun () ->
+  let l = live d in
+  retire_rings d l;
+  let w = needed d.self in
+  let sizes = Array.map grown_bytes w in
+  let rings = Array.map (fun _ -> { ring = None }) w in
+  let bars = Array.make (Array.length w) false in
+  l.rings <- Array.fold_right List.cons rings l.rings;
+  let short = ref 0 in
+  for i = 0 to Array.length w - 1 do
+    if w.(i) > 0 then begin
+      bars.(i) <- make_ring l.path i sizes.(i) rings.(i);
+      if Option.is_none rings.(i).ring && !short = 0 then short := sizes.(i)
+    end
+  done;
+  l.rings <- List.filter (fun r -> Option.is_some r.ring) l.rings;
+  Array.iteri
+    (fun i r -> Option.iter (hand_ring d l i sizes.(i) bars.(i)) r.ring)
+    rings;
+  if !short = 0 then Rig_edge.Grown else Short !short
+
 (* Images *)
 
 module Names = Map.Make (String)
@@ -1089,7 +1192,7 @@ type image = {
   base : int;
   cubin : Cubin.t;
   gpu : Abi.Gpu.t;
-  grow : int -> grown; (* its device's [grow] *)
+  grow_local : int -> served; (* its device's [grow_local] *)
   lock : lock;
   mutable entries : Rig_edge.entry Names.t;
   mutable launches : nativeint list; (* the entries' *)
@@ -1106,7 +1209,7 @@ let lay d c r =
       base;
       cubin = c;
       gpu = d.capability;
-      grow = grow d;
+      grow_local = grow_local d;
       lock = guard image_rank;
       entries = Names.empty;
       launches = [];
@@ -1129,7 +1232,7 @@ let set_up c name (k : Cubin.kernel) =
     | Error why -> invalid_arg ("Rig_nv.entry: " ^ why)
   in
   let bytes = Launch.local_bytes l in
-  match c.grow bytes with
+  match c.grow_local bytes with
   | Short n -> Rig_edge.No_memory n
   | Stopped -> raise (Fault "the device is stopped")
   | Served -> (
@@ -1297,6 +1400,7 @@ let halt d l =
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
     List.iter (give l.path.free) l.owned;
+    List.iter (fun r -> Option.iter (give l.path.free) r.ring) l.rings;
     Option.iter (give l.path.free) l.local_current;
     Option.iter (give l.path.free) l.local_pending;
     List.iter (fun (r : _ retired) -> give l.path.free r.mem) l.local_retired

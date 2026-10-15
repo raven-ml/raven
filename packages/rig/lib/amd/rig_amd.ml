@@ -734,6 +734,9 @@ let entry m f =
             }
       | Error bytes -> No_memory bytes)
 
+(* Its room never answers RIG_GROW. *)
+let grow _ = Rig_edge.Grown
+
 (* The image's code is in a region rig frees; the launches [entry] made go
    here. *)
 let unload _ m =

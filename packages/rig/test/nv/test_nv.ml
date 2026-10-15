@@ -725,6 +725,112 @@ let launches_wrap () =
   Option.iter Rig.Point.wait !last;
   equal (array int) (Array.init n Fun.id) (words out ~at:0 n)
 
+(* A submission of [n] launches on [d], launch [i] writing [i] into the 32-bit
+   word [i] of its buffer, and its run. *)
+let numbered d n =
+  let image = launch_image d in
+  let s =
+    Sub.make d
+      (Array.init n (fun _ ->
+           launch_part image "ids" ~params:24 [| refer 0 0 |]))
+  in
+  let run = Run.make () in
+  for i = 0 to n - 1 do
+    let b = Sub.block s i in
+    Run.groups run b 1 1 1;
+    Run.threads run b 1 1 1;
+    ids_params run b ~offset:(4 * i) ~a:i ~b:0
+  done;
+  (s, run)
+
+(* [n] numbered launches submitted on [d], into a buffer of their own: their
+   point, and the words they wrote, read once the point is reached. *)
+let numbered_submit d n =
+  let out = B.create d (4 * n) in
+  let s, run = numbered d n in
+  let p = submitted s run ~buffers:[| out |] in
+  let written () =
+    Rig.Point.wait p;
+    words out ~at:0 n
+  in
+  (p, written)
+
+(* One submission of more launches than the launch and segment rings hold
+   runs once they grew, as one value, each launch writing its word. *)
+let many_launches n =
+  S.with_ @@ fun { d; _ } ->
+  ignore (launch_image d);
+  let before = Rig.submitted d in
+  let p, written = numbered_submit d n in
+  equal int ~msg:"its value" (before + 1) (Rig.Point.value p);
+  equal (array int) (Array.init n Fun.id) (written ())
+
+(* While a growth runs, holding no turn, a submission of another domain that
+   needs a growth too takes the device's next value. The first submission
+   takes the one after, and every launch of both writes its word. *)
+let growth_interleaved () =
+  let held = Atomic.make None and growths = Atomic.make 0 in
+  let module Held = struct
+    include N
+
+    let grow g =
+      Atomic.incr growths;
+      Option.iter (fun f -> f ()) (Atomic.exchange held None);
+      N.grow g
+  end in
+  let t = S.open_as (module Held) in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  ignore (launch_image t.d);
+  let before = Rig.submitted t.d in
+  let other = ref None in
+  let submits () = numbered_submit t.d 2_000 in
+  Atomic.set held
+    (Some (fun () -> other := Some (Domain.join (Domain.spawn submits))));
+  let p, written = numbered_submit t.d 4_096 in
+  let q, other_written = Option.get !other in
+  equal int ~msg:"the other domain's value" (before + 1) (Rig.Point.value q);
+  equal int ~msg:"its value" (before + 2) (Rig.Point.value p);
+  equal (array int) ~msg:"its words" (Array.init 4_096 Fun.id) (written ());
+  equal (array int) ~msg:"the other's words" (Array.init 2_000 Fun.id)
+    (other_written ());
+  equal int ~msg:"growths" 2 (Atomic.get growths)
+
+(* The bytes of the GPU's mappings that are not reservations ([---p]). *)
+let mapped_bytes () =
+  List.fold_left
+    (fun n line ->
+      Scanf.sscanf line "%x-%x %s" (fun a b perms ->
+          if perms = "---p" then n else n + (b - a)))
+    0
+    (Rig_nv_nvidia_support.mappings ())
+
+(* The bytes [t]'s process maps for the GPU once [n] numbered launches ran
+   after [sizes] did, each in a submission of its own, and its collected and
+   cached memory went back. A driver allocation then runs, the device's
+   first since the launches. *)
+let mapped_after t sizes n =
+  ignore (launch_image t.S.d);
+  List.iter (fun k -> ignore (snd (numbered_submit t.d k) ())) (sizes @ [ n ]);
+  for _ = 1 to 3 do
+    Gc.full_major ();
+    Rig.free_cache t.d
+  done;
+  N.free t.g (alloc t.g Pinned H.page);
+  mapped_bytes ()
+
+(* The rings a growth replaces go back once the device reached the work on
+   them: a device whose rings grew in steps maps what one whose rings grew at
+   once to the same size maps. Submissions the rings hold make nothing
+   more. *)
+let rings_given_back () =
+  let n = 16_384 and last = 8_192 in
+  S.with_ (fun t -> ignore (mapped_after t [] 1 : int));
+  let at_once = S.with_ (fun t -> mapped_after t [ last ] n) in
+  S.with_ @@ fun t ->
+  let stepped = mapped_after t [ 1_024; 2_048; 4_096; last ] n in
+  equal int ~msg:"grown in steps" at_once stepped;
+  equal int ~msg:"after three more" stepped (mapped_after t [ n; n; n ] n)
+
 (* A function whose threads keep 2 KiB of local memory runs as a launch: its
    entry made the channel's local memory serve it. *)
 let local_launch () =
@@ -795,6 +901,12 @@ let launches =
       test "a launch after a copy after a launch reads the copy"
         launch_copy_launch;
       test "4,000 launches pass the launch ring's end" launches_wrap;
+      cases ~name:(strf "%d launches")
+        "a submission of launches runs whatever their number"
+        [ 1; 1_000; 4_096; 16_384 ] many_launches;
+      test "a submission of another domain runs while a growth runs"
+        growth_interleaved;
+      test "rings a growth replaced go back" rings_given_back;
       test "a function with local memory runs as a launch" local_launch;
       cases
         ~name:(fun (g, t) -> strf "%d groups of %d" g t)
@@ -967,9 +1079,29 @@ let carry_tear () =
   S.free_launches l;
   List.iter (N.free g) words
 
+(* Words parts of no words take no ring entry: after a part that writes a
+   word, more of them than a channel's ring holds run as one value, and the
+   first part's write lands. *)
+let empty_words () =
+  S.with_ @@ fun t ->
+  let l = S.launches t.g and w = alloc t.g Pinned 8 in
+  H.set64 (host w) 0;
+  let none = Sub.words (B.view (B.create Rig.host 8) ~first:0 ~length:0) in
+  let parts = Array.make 20_001 none in
+  parts.(0) <- S.words (release l (address w) 1);
+  let before = Rig.submitted t.d in
+  let p = S.submit t parts in
+  S.watchdog "20,000 empty Words parts" (fun () -> Rig.Point.wait p);
+  equal int ~msg:"its value" (before + 1) (Rig.Point.value p);
+  equal int ~msg:"the first part's word" 1 (H.get64 (host w));
+  equal (option string) ~msg:"the device's loss" None (Rig.lost t.d);
+  S.free_launches l;
+  N.free t.g w
+
 let room =
   group ~timeout:300. "room"
     [
+      test "20,000 Words parts of no words run as one value" empty_words;
       test "40,000 submissions wrap both channels and every copy arrives" wraps;
       test "40,000 copies one after the other pass the segment ring's end"
         sequential;

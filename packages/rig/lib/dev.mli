@@ -326,6 +326,10 @@ module Answer : sig
 
   val need_record : int
   (** The device's record of waits in its queues must grow first. *)
+
+  val grow : int
+  (** The driver's room answered that the parts fit once its queues grow
+      ({!Rig_edge.Driver.grow}). *)
 end
 
 val commit : device -> int -> unit

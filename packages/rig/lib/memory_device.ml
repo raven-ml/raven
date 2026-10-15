@@ -63,6 +63,9 @@ module D = struct
   let signaled d = load d.word
   let sleep _ ~seen:_ ~still_ms:_ = ()
   let stop d ~fault:_ = drop d.self
+
+  (* It has no queues. *)
+  let grow _ = Rig_edge.Grown
 end
 
 let open_ name =

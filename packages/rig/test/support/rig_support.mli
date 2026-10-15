@@ -30,6 +30,7 @@ module Polled : sig
 
   val make :
     ?capacity:int ->
+    ?grows:int ->
     ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
@@ -54,9 +55,13 @@ module Polled : sig
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
       1024), the most one submission holds: beyond it [room] answers
       [`Later], or, with [may_block], submit waits for room, and it answers
-      [`Never] for a submission of more. Its facts state [most_parts]
-      (defaults to [capacity]), at most [capacity], so that an idle queue
-      runs that many parts. Without
+      [`Never] for a submission of more. With [grows] it answers [RIG_GROW]
+      for such a submission instead, and its [grow] makes the queue hold the
+      parts of the submission whose [room] answered so on the calling
+      thread, up to [grows] parts. For more, and where it refuses
+      ({!fail_at}), [grow] answers [Short 4096]. Its facts state
+      [most_parts] (defaults to [capacity]), at most [capacity], so that an
+      idle queue runs that many parts. Without
       [copies] (defaults to [true]) it lists no copy queue. Its compute queue
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
@@ -108,6 +113,7 @@ module Polled : sig
 
   val open_ :
     ?capacity:int ->
+    ?grows:int ->
     ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
@@ -178,9 +184,9 @@ module Polled : sig
       device that faulted; from then on a commit of uncommitted values fails
       with [why] too, uncounted. With [`Refuse k] that call and the [k - 1]
       after it refuse where they can, as on a device short of memory: [alloc],
-      [map_peer] and [map_host] answer [None], [image] [Error] and [entry]
-      [No_memory entry_scratch]; other calls go on. [`Refuse 0] ends an
-      earlier refusal. *)
+      [map_peer] and [map_host] answer [None], [image] [Error], [entry]
+      [No_memory entry_scratch] and [grow] [Short 4096]; other calls go on.
+      [`Refuse 0] ends an earlier refusal. *)
 
   val steps : t -> int
   (** [steps d] is the number of fallible calls [d] received. *)

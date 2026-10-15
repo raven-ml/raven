@@ -353,6 +353,19 @@ val unload : device -> loaded -> entry option -> unit
     releases, as one, once [d] is Stopped if it is lost and not Stopped, or
     until the next drain if the driver refuses the unload. *)
 
+val grow_queues : device -> round:int -> lacked:int -> int * int
+(** [grow_queues d ~round ~lacked] grows [d]'s queues for the parts its
+    driver's room answered [RIG_GROW] for on this thread, a counted call
+    ({!Rig_edge.Driver.grow}), as ask [round] of a submission's ladder
+    ({!reclaiming}), [1] for its first, after the driver last lacked
+    [lacked] bytes, [0] for none. It is the round and the lacked bytes of
+    the submission's next ask: [round + 1] either way, after a round of the
+    ladder for [d]'s budget and the host's when the driver had no memory for
+    the growth. The caller asks room again after it. Raises
+    {!Dev.Out_of_memory} once the driver has no memory for it at the last
+    round, or if [round] is past the last, and [Invalid_argument] if [d] is
+    the host or an io device. *)
+
 val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a
     counted call ({!Rig_edge.Driver.entry}), or [None] if [i] has no [f]. It

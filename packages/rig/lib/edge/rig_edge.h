@@ -27,8 +27,9 @@
 
 /* What a room check answers: the parts fit the device's queues now; they
    fit once one of the device's values is reached; they never fit the
-   device's empty queues. */
-enum { RIG_FITS, RIG_LATER, RIG_NEVER };
+   device's empty queues; they fit the queues once these grow
+   (Rig_edge.Driver.grow). */
+enum { RIG_FITS, RIG_LATER, RIG_NEVER, RIG_GROW };
 
 /* What a submission and a commit answer: done; failed, and the device is
    lost; and, for a submission, done with every value up to it committed. */
@@ -146,11 +147,11 @@ struct rig_part {
    call. */
 #define RIG_SCRATCH 8
 
-/* Answers RIG_FITS, RIG_LATER or RIG_NEVER for the [n] parts at [parts],
-   whose launches' and fills' blocks lie in [args]. A launch never fits whose
-   grid or group has a size of 0 along an axis, whose groups or threads exceed
-   the device's or the function's limits, or whose shared memory exceeds the
-   function's. */
+/* Answers RIG_FITS, RIG_LATER, RIG_NEVER or RIG_GROW for the [n] parts at
+   [parts], whose launches' and fills' blocks lie in [args]. A launch never
+   fits whose grid or group has a size of 0 along an axis, whose groups or
+   threads exceed the device's or the function's limits, or whose shared
+   memory exceeds the function's. */
 typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
                         void *scratch, const uint8_t *args);
 

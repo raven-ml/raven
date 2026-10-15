@@ -52,6 +52,10 @@ enum {
 #define TEMPLATE_VALUES 3
 #define COPY_MAX (UINT64_C(1) << 31)
 
+/* The most bytes of a segment: an entry's length holds 2^21 - 1 words
+   (clc56f.h, GP_ENTRY1_LENGTH 30:10). */
+#define SEGMENT_BYTES_MAX (4 * ((UINT64_C(1) << 21) - 1))
+
 /* A patch, Rig_nv_abi.Template.patch: the little-endian word of [width]
    bytes (1, 2, 4 or 8) at byte [at] whose low [bits] bits take
    (value [slot] + [add]) >> [shift]; its other bits stay. */
@@ -132,6 +136,18 @@ struct mark {
   uint64_t v, put, written, launched;
 };
 
+/* A ring a growth made, at its host and GPU addresses, of [size] bytes, a
+   power of two: a channel's segment ring, or COMPUTE's launch ring, in the
+   GPU's memory through its BAR if [bar]. Once retired, no work after
+   [until] uses it, and [next] is the ring retired before it. */
+struct ring {
+  uint8_t *host;
+  uint64_t gpu, size;
+  int bar;
+  uint64_t until;
+  struct ring *next;
+};
+
 /* A channel. Counts grow without wrapping; a position is a count modulo
    the ring's size, a power of two. */
 struct channel {
@@ -149,6 +165,9 @@ struct channel {
   int bar;
   struct mark *marks; /* a queue of [entries] marks */
   uint64_t first, count;
+  /* the first values whose work the segment ring and the launch ring hold:
+     a mark of an earlier value counts in rings a growth replaced */
+  uint64_t segments_from, launches_from;
   uint64_t released; /* the last value this channel released into the word */
   int owes_setup;    /* whether its setup words were not yet placed */
   volatile const uint8_t *notifier; /* its error notification, RM's */
@@ -156,7 +175,8 @@ struct channel {
   uint64_t open, open_words;
 };
 
-/* A join tag holds a part's index in 16 bits. */
+/* A join tag, v << 16 | i + 1, holds a part's index in its low 16 bits:
+   the tag's layout bounds a submission's parts, not the GPU. */
 #define MAX_PARTS 65535
 
 /* Where a part of a submission runs: its channel; whether the driver's
@@ -288,6 +308,16 @@ struct device {
   _Atomic int invalidate;
   /* The driver's byte-copy kernel; owned until confirmed channel stop. */
   struct launch *copy_launch;
+  /* The rings a growth made, which the next room that needs them installs,
+     and the rings installed, NULL for those the device opened with: each
+     channel's segment ring, then COMPUTE's launch ring. A room retires the
+     rings it replaces, and those no larger than the installed ones, which
+     the OCaml side takes back. While the device runs, only the OCaml side
+     frees a ring's record, under the device's local lock, so a record these
+     name stays readable under it; its end frees the rest. */
+  _Atomic(struct ring *) grown[CHANNELS + 1];
+  _Atomic(struct ring *) current[CHANNELS + 1];
+  _Atomic(struct ring *) retired;
   struct flush flushes[FLUSHES];
   /* a notification's error fields */
   uint32_t info32_at, status_at;
@@ -309,6 +339,17 @@ struct device {
   uint64_t converted, unconverted, last_end;
   const char *failure;
 };
+
+/* What a growth on a thread makes: the bytes each ring of [d] must hold for
+   the submission whose rig_nv_room last answered RIG_GROW on the thread, 0
+   for those it holds, as each channel's segment ring, then COMPUTE's launch
+   ring. */
+struct asked {
+  const struct device *d;
+  uint64_t bytes[CHANNELS + 1];
+};
+
+extern _Thread_local struct asked rig_nv_asked;
 
 /* A device's edge, kept for the process: its word, and its run state,
    NULL once stopped. */

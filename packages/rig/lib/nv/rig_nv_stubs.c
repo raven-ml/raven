@@ -185,10 +185,23 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
   return Val_long((intnat)e);
 }
 
+/* Frees the records of [d]'s rings: those handed, installed and retired. */
+static void free_rings(struct device *d) {
+  for (int i = 0; i <= CHANNELS; i++) {
+    free(d->grown[i]);
+    free(d->current[i]);
+  }
+  for (struct ring *r = d->retired, *next; r != NULL; r = next) {
+    next = r->next;
+    free(r);
+  }
+}
+
 /* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_nv_destroy(value v_self) {
   struct device *d = Device_val(v_self);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
+  free_rings(d);
   free(d->copy_launch);
   free(d->timed);
   free(d);
@@ -240,6 +253,93 @@ value caml_rig_nv_launches(value v_self, value v_host, value v_gpu,
   c->launches_size = (uint64_t)Long_val(v_size);
   c->bar = Bool_val(v_bar);
   return Val_unit;
+}
+
+static uint64_t size_of(const struct ring *r) {
+  return r == NULL ? 0 : r->size;
+}
+
+/* The bytes each ring must hold for the submission whose rig_nv_room last
+   answered RIG_GROW on this thread, as rig_nv_asked numbers them, 0 for
+   those the installed ring or one handed holds; the record is consumed.
+   Under the device's local lock. */
+value caml_rig_nv_needed(value v_self) {
+  CAMLparam1(v_self);
+  CAMLlocal1(v);
+  struct device *d = Device_val(v_self);
+  v = caml_alloc_tuple(CHANNELS + 1);
+  int mine = rig_nv_asked.d == d;
+  rig_nv_asked.d = NULL;
+  for (int i = 0; i <= CHANNELS; i++) {
+    uint64_t w = mine ? rig_nv_asked.bytes[i] : 0;
+    if (w <= size_of(atomic_load(&d->grown[i])) ||
+        w <= size_of(atomic_load(&d->current[i])))
+      w = 0;
+    Store_field(v, i, Val_long((intnat)w));
+  }
+  CAMLreturn(v);
+}
+
+/* Hands the next room that needs it ring [v_i] (as [caml_rig_nv_needed]
+   numbers them) of [v_size] bytes, a power of two, at the host address
+   [v_host] and the GPU's [v_gpu], in the GPU's memory through its BAR if
+   [v_bar], unless a ring handed before and not installed is at least as
+   large. Answers the GPU address of the one of the two it does not keep,
+   which no work used, 0 if none, or -1 without host memory for the record,
+   when it keeps neither. Under the device's local lock. */
+value caml_rig_nv_hand(value v_self, value v_i, value v_host, value v_gpu,
+                       value v_size, value v_bar) {
+  struct device *d = Device_val(v_self);
+  _Atomic(struct ring *) *at = &d->grown[Int_val(v_i)];
+  struct ring *g = malloc(sizeof *g);
+  if (g == NULL) return Val_long(-1);
+  *g = (struct ring){Pointer_val(v_host), (uint64_t)Long_val(v_gpu),
+                     (uint64_t)Long_val(v_size), Bool_val(v_bar), 0, NULL};
+  struct ring *handed = atomic_load(at);
+  do {
+    if (handed != NULL && handed->size >= g->size) {
+      free(g);
+      return Val_long(Long_val(v_gpu));
+    }
+  } while (!atomic_compare_exchange_weak(at, &handed, g));
+  if (handed == NULL) return Val_long(0);
+  uint64_t gpu = handed->gpu;
+  free(handed);
+  return Val_long((intnat)gpu);
+}
+
+value caml_rig_nv_hand_bytecode(value *argv, int argn) {
+  (void)argn;
+  return caml_rig_nv_hand(argv[0], argv[1], argv[2], argv[3], argv[4],
+                          argv[5]);
+}
+
+/* Takes from the device's retired rings one that no work after [v_seen]
+   uses: its GPU address, or 0 if none. Under the device's local lock. */
+value caml_rig_nv_retired(value v_self, value v_seen) {
+  struct device *d = Device_val(v_self);
+  uint64_t seen = (uint64_t)Long_val(v_seen);
+  struct ring *r = atomic_exchange(&d->retired, NULL), *found = NULL;
+  while (r != NULL) {
+    struct ring *next = r->next;
+    if (found == NULL && r->until <= seen) found = r;
+    else {
+      r->next = atomic_load_explicit(&d->retired, memory_order_relaxed);
+      while (!atomic_compare_exchange_weak(&d->retired, &r->next, r)) {
+      }
+    }
+    r = next;
+  }
+  if (found == NULL) return Val_long(0);
+  uint64_t gpu = found->gpu;
+  free(found);
+  return Val_long((intnat)gpu);
+}
+
+/* Whether the device has retired rings. */
+value caml_rig_nv_retiring(value v_self) {
+  return Val_bool(atomic_load_explicit(&Device_val(v_self)->retired,
+                                       memory_order_relaxed) != NULL);
 }
 
 /* Sets the stamp ring to the [v_slots] slots, a power of two, at the host
@@ -532,6 +632,7 @@ value caml_rig_nv_end(value v_self, value v_stopped) {
   if (d == NULL) return Val_unit;
   if (Bool_val(v_stopped)) free(d->copy_launch);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
+  free_rings(d);
   free(d->timed);
   free(d);
   return Val_unit;

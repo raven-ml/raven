@@ -882,6 +882,150 @@ let test_room () =
   equal int 1 (P.queued p);
   equal int (base + 1) (Rig.signaled d)
 
+(* Growth *)
+
+let count call p = List.length (List.filter (( = ) call) (P.log p))
+
+(* A device whose queue holds 4 parts and grows. *)
+let growing name = P.open_ ~capacity:4 ~grows:max_int name
+
+(* [n] parts that each add 1 to the host word [arg] borrows on [d], and their
+   run. *)
+let bumps d arg n =
+  let s = Sub.make d (Array.make n bump) in
+  let run = Sub.Run.make () in
+  for i = 0 to n - 1 do
+    Sub.Run.int64 run (Sub.block s i) 0 0
+  done;
+  (s, run, [| on d arg |])
+
+(* A submission of more parts than the queue holds runs, as one value, once the
+   queue grew to hold it; one the queue holds needs no growth. *)
+let test_grows n =
+  let d, p = growing (Printf.sprintf "submit:grows-%d" n) in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, run, buffers = bumps d arg n in
+  let pt = submit ~run ~buffers s in
+  Rig.Point.wait pt;
+  equal ~msg:"its value" int (base + 1) (Rig.Point.value pt);
+  equal ~msg:"the parts that ran" int n (word arg);
+  equal ~msg:"growths" int (if n > 4 then 1 else 0) (count "grow" p)
+
+(* A growth the device has no memory for is asked again after each round of
+   reclamation, and raises Out_of_memory after the last, having assigned no
+   value; once memory returns, the submission runs. *)
+let test_grow_no_memory () =
+  let d, p = growing "submit:grow-no-memory" in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, run, buffers = bumps d arg 5 in
+  P.fail_at p 1 (`Refuse max_int);
+  raises_match
+    (function
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = 4096 | _ -> false)
+    (fun () -> submit ~run ~buffers s);
+  P.fail_at p 1 (`Refuse 0);
+  at_least ~msg:"times asked" int ~than:2 (count "grow" p);
+  equal ~msg:"values assigned" int base (Rig.submitted d);
+  Rig.Point.wait (submit ~run ~buffers s);
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
+(* A growth the device had no memory for at first is made once a round of
+   reclamation is done. *)
+let test_grow_reclaims () =
+  let d, p = growing "submit:grow-reclaims" in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, run, buffers = bumps d arg 5 in
+  P.before p "grow" (fun () -> P.fail_at p 1 (`Refuse 1));
+  Rig.Point.wait (submit ~run ~buffers s);
+  equal ~msg:"times asked" int 2 (count "grow" p);
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
+(* A growth past the memory the device has raises Out_of_memory and leaves no
+   want behind: a smaller growth after it is made at its first ask. *)
+let test_grow_past_memory () =
+  let d, p = P.open_ ~capacity:4 ~grows:8 "submit:grow-past-memory" in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let large, run, buffers = bumps d arg 9 in
+  raises_match
+    (function
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = 4096 | _ -> false)
+    (fun () -> submit ~run ~buffers large);
+  let asked = count "grow" p in
+  at_least ~msg:"times asked" int ~than:2 asked;
+  equal ~msg:"values assigned" int base (Rig.submitted d);
+  let small, run, buffers = bumps d arg 5 in
+  Rig.Point.wait (submit ~run ~buffers small);
+  equal ~msg:"times asked after" int (asked + 1) (count "grow" p);
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
+(* A growth short of memory for one submission fails no other: while domain
+   A's growth past the memory runs, domain B's smaller growth is made at its
+   first ask and B's submission runs; A raises Out_of_memory. *)
+let test_grow_short_other () =
+  let d, p = P.open_ ~capacity:4 ~grows:8 "submit:grow-short-other" in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let large, run, buffers = bumps d arg 9 in
+  let small, small_run, small_buffers = bumps d arg 5 in
+  let other = ref None and asked = ref 0 in
+  P.before p "grow" (fun () ->
+      let submits () =
+        Rig.Point.value (submit ~run:small_run ~buffers:small_buffers small)
+      in
+      other := Some (Domain.join (Domain.spawn submits));
+      asked := count "grow" p);
+  raises_match
+    (function
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = 4096 | _ -> false)
+    (fun () -> submit ~run ~buffers large);
+  equal ~msg:"the other domain's value" (option int) (Some (base + 1)) !other;
+  equal ~msg:"growths asked until B's ran" int 2 !asked;
+  B.wait arg Rig.Read;
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
+(* While a growth runs, holding no turn, a submission of another domain that
+   needs a growth too takes the device's next value; the first submission
+   takes the one after, and every part runs once. *)
+let test_grow_interleaved () =
+  let d, p = growing "submit:grow-interleaved" in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let first, run, buffers = bumps d arg 9 in
+  let second, other_run, other_buffers = bumps d arg 5 in
+  let other = ref None in
+  P.before p "grow" (fun () ->
+      let submits () =
+        Rig.Point.value (submit ~run:other_run ~buffers:other_buffers second)
+      in
+      other := Some (Domain.join (Domain.spawn submits)));
+  let v = Rig.Point.value (submit ~run ~buffers first) in
+  equal ~msg:"the other domain's value" (option int) (Some (base + 1)) !other;
+  equal ~msg:"its value" int (base + 2) v;
+  B.wait arg Rig.Read;
+  equal ~msg:"the parts that ran" int 14 (word arg);
+  equal ~msg:"growths" int 2 (count "grow" p)
+
+(* A growth that faults loses the device, and the submission assigns no
+   value. *)
+let test_grow_fault () =
+  let d, p = growing "submit:grow-fault" in
+  let base = Rig.submitted d in
+  let arg = B.create Rig.host page_bytes in
+  let s, run, buffers = bumps d arg 5 in
+  P.before p "grow" (fun () -> P.fail_at p 1 (`Fault "grow fault"));
+  raises_match lost (fun () -> submit ~run ~buffers s);
+  equal ~msg:"values assigned" int base (Rig.submitted d);
+  equal (option string) ~msg:"the loss" (Some "grow fault") (Rig.lost d)
+
 (* Runs *)
 
 (* While a submit of a submission waits on the host for a producer, a submit of
@@ -1807,6 +1951,23 @@ let tests =
         test "a submission of more than the most parts runs where room has it"
           test_most_parts;
         test "a full queue's submit waits for room" test_room;
+      ];
+    group ~timeout "growth"
+      [
+        cases ~name:(Printf.sprintf "%d parts on a queue of 4 that grows")
+          "a submission runs once its queue grew to hold it" [ 1; 4; 5; 9; 300 ]
+          test_grows;
+        test "a growth without memory raises Out_of_memory after reclamation"
+          test_grow_no_memory;
+        test "a growth short at first is made after a round of reclamation"
+          test_grow_reclaims;
+        test "a growth past the memory leaves no want behind"
+          test_grow_past_memory;
+        test "a submission of another domain runs while a growth runs"
+          test_grow_interleaved;
+        test "a growth short for one submission fails no other"
+          test_grow_short_other;
+        test "a growth that faults loses the device" test_grow_fault;
       ];
     group ~timeout "lifetime"
       [

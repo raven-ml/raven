@@ -227,6 +227,7 @@ struct polled_run {
   _Atomic uint64_t committed; /* the last value committed */
   uint64_t lag;               /* the uncommitted values that commit */
   int capacity;      /* parts the queue holds */
+  intnat grows; /* the most parts the queue grows to hold; 0 for none */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
   int fail_commit;   /* the next commit of uncommitted values fails */
@@ -433,6 +434,38 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   v = caml_alloc_custom(&polled_ops, sizeof p, 0, 1);
   Polled_val(v) = p;
   CAMLreturn(v);
+}
+
+/* Makes the device's [room] answer RIG_GROW for more parts than its queue
+   holds, and its queue grow to hold up to [v_most] parts. */
+value rig_test_polled_grows(value v_p, value v_most) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->run->grows = Long_val(v_most);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+/* The parts of the submission whose [room] last answered RIG_GROW on this
+   thread, and the device it was for. */
+static _Thread_local struct {
+  const struct polled *p;
+  int parts;
+} asked;
+
+/* Grows the device's queue to hold the parts of the submission whose [room]
+   answered RIG_GROW on this thread, unless [v_refused] or they are more than
+   it grows to: [false] then. */
+value rig_test_polled_grow(value v_p, value v_refused) {
+  struct polled *p = Polled_val(v_p);
+  int parts = asked.p == p ? asked.parts : 0;
+  asked.p = NULL;
+  lock(&p->mu);
+  struct polled_run *r = p->run;
+  int grew = r != NULL && !Bool_val(v_refused) && parts <= r->grows;
+  if (grew && parts > r->capacity) r->capacity = parts;
+  unlock(&p->mu);
+  return Val_bool(grew);
 }
 
 /* The address of the device's C state, its edge. */
@@ -896,7 +929,12 @@ static int polled_room(void *self, const struct rig_part *parts, int n,
                                  kind != RIG_WORDS)
       return RIG_NEVER;
   }
-  if (n > r->capacity) return RIG_NEVER;
+  if (n > r->capacity) {
+    if (r->grows == 0) return RIG_NEVER;
+    asked.p = p;
+    asked.parts = n;
+    return RIG_GROW;
+  }
   if (r->may_block) {
     lock(&p->mu);
     p->room_waiters++;

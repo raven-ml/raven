@@ -135,9 +135,24 @@ val capability : t -> Rig_nv_abi.Gpu.t
     the word holds at least [w] in circular order
     ({!Rig_nv_abi.Method.acquire}), whoever wrote it.
 
-    [rig_nv_room] returns [RIG_NEVER] for parts that would not fit in the
-    rings even when empty, for more than 65,535 parts, and for a part the
-    device does not run:
+    Each channel's ring holds 16,384 entries, a number this driver chooses
+    when {!make} allocates the channel. A [Words] part of [n] words takes
+    [1 + n/2] of them, and none if [n] is [0]; launches and copies take none
+    of their own. The driver's own words go into segments of the channel's
+    segment ring, and each launch's descriptor and constant bank 0 into the
+    compute channel's launch ring. [rig_nv_room] returns [RIG_GROW] for
+    parts that exceed the segment ring or the launch ring. The growth
+    ({!val-grow}) makes each such ring anew, of the least power of two of
+    bytes, at least a page, that holds twice what the parts take, and the
+    next submission that needs it starts on it. A ring a growth made goes
+    back, once a later growth replaced it, at the device's next growth or
+    allocation after the device has reached the work of the submissions
+    that used it. The 1 MiB rings the device opened with stay until it
+    stops.
+
+    [rig_nv_room] returns [RIG_NEVER] for parts whose entries a channel's
+    ring would not hold even when empty, for more than 65,535 parts, and
+    for a part the device does not run:
     - a part on neither queue, a launch on ["COPY:0"], or a copy of one byte
       or more on ["COMPUTE:0"];
     - ring entries of an odd number of words;
@@ -147,10 +162,13 @@ val capability : t -> Rig_nv_abi.Gpu.t
       {!Rig_nv_abi.Launch.max_threads}, or whose dynamic shared memory,
       rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared}.
 
-    The device's [most_parts] ({!Rig_edge.type-facts}) is the most parts
-    that the empty rings hold, each a launch, whose constant bank 0 {!entry}
-    bounds, or a copy of at most 2 GiB. A longer copy and words take the
-    room their sizes take.
+    The device's [most_parts] ({!Rig_edge.type-facts}) is 65,535, the most
+    parts [rig_nv_room] takes in one submission: the driver's tags for the
+    order between its two channels hold a part's index in 16 bits. Launches,
+    whose constant bank 0 {!entry} bounds, and copies of at most 2 GiB take
+    no ring entry of their own, and the segment and launch rings grow to
+    hold them. Words, and longer copies, take the entries their sizes
+    take.
 
     It reads the word first, so [RIG_LATER] means that a value the device
     was given is not yet reached. [rig_nv_submit] returns [RIG_COMMITTED],

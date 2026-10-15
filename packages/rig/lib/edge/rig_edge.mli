@@ -17,8 +17,8 @@
     instead.
 
     rig reads a device's {!type-facts} once, when the device opens. It then
-    calls the driver's OCaml functions to allocate and map memory and to load
-    code, and three C functions of the driver to run work
+    calls the driver's OCaml functions to allocate and map memory, to load
+    code and to grow its queues, and three C functions of the driver to run work
     ({!section-calls}). [room] returns whether a submission's parts fit the
     device's queues, [submit] places them on the queues as the work of the
     next value of the device's timeline, and [commit] lets that work run.
@@ -132,14 +132,14 @@ type 'region facts = {
   completion : completion;  (** How the word advances. *)
   waits : waits;  (** The producers its queues wait for. *)
   most_parts : int;
-      (** The most parts the idle device always runs in one submission,
-          [max_int] where the driver has no such bound: that many launches
-          and fills up to the argument size, and copies up to the length,
-          that the driver's [.mli] states. [room] must never answer
-          [RIG_NEVER] for such a submission of parts the device runs
-          ({!section-calls}). Words parts, and larger launches and copies,
-          take the room their sizes take, and [room] alone judges a
-          submission of more parts. *)
+      (** The most parts the idle device always runs in one submission, once
+          its queues have grown for them, [max_int] where the driver has no
+          such bound: that many launches and fills up to the argument size,
+          and copies up to the length, that the driver's [.mli] states.
+          [room] must never answer [RIG_NEVER] for such a submission of parts
+          the device runs ({!section-calls}), and may answer [RIG_GROW].
+          Words parts, and larger launches and copies, take the room their
+          sizes take, and [room] alone judges a submission of more parts. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its
@@ -195,10 +195,12 @@ type 'region facts = {
     {ul
     {- [room] returns [RIG_FITS] if the parts fit the device's queues now,
        and [RIG_LATER] if they fit once one of its values is reached. It
-       returns [RIG_NEVER] for parts that exceed the device's empty queues,
-       name work it does not run or have kind [0], and for a launch whose
-       grid or group is empty or exceeds the device's or the function's
-       limits, or whose shared memory exceeds the function's.}
+       returns [RIG_GROW] for parts that exceed the device's queues as they
+       are but fit once they grow ({!Driver.val-grow}), and [RIG_NEVER] for
+       parts that exceed the device's empty queues however they grow, name
+       work it does not run or have kind [0], and for a launch whose grid or
+       group is empty or exceeds the device's or the function's limits, or
+       whose shared memory exceeds the function's.}
     {- [submit] encodes the parts on the device's queues as the work of the
        value it is given, after the waits it is given and the device's earlier
        work. Its calls are given the values [b + 1], [b + 2], … in order,
@@ -335,6 +337,14 @@ type entry_answer =
           need, such as its scratch. rig reclaims memory and asks again
           ({!Driver.val-entry}). *)
 
+(** The type for a driver's answer when asked to grow a device's queues
+    ({!Driver.val-grow}). *)
+type grown =
+  | Grown  (** The growth is made; the next [room] puts it into the queues. *)
+  | Short of int
+      (** The device has no memory for the bytes the growth takes. rig
+          reclaims memory and asks again. *)
+
 (** {1:drivers Drivers} *)
 
 (** Drivers.
@@ -368,9 +378,10 @@ type entry_answer =
 
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
     {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-image}, the
-    function of a [Place], {!Driver.val-entry} or {!Driver.unload} on a
-    device that is not lost also loses it, with the exception's text, since
-    the call may have left the driver's state half changed. An
+    function of a [Place], {!Driver.val-entry}, {!Driver.val-grow} or
+    {!Driver.unload} on a device that is not lost also loses it, with the
+    exception's text, since the call may have left the driver's state half
+    changed. An
     [Invalid_argument] from [entry] loses nothing. Neither does any
     exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
     or one other than [Fault] from {!Driver.sleep} or
@@ -482,6 +493,29 @@ module type Driver = sig
   (** [unload d i] releases what {!val-image} and {!val-entry} made for [i].
       rig calls it once no work of [d] that runs [i] can run. The region of a
       [Place] is not [i]'s, and rig frees it after. Counted. *)
+
+  (** {1:driver_queues Queues} *)
+
+  val grow : t -> grown
+  (** [grow d] makes what [d]'s queues need to hold the parts of the
+      submission whose [room] last answered [RIG_GROW] on the calling thread
+      ({!section-calls}). It changes nothing the C functions read: a later
+      [room] puts what it made into the queues. Once it has answered
+      [Grown], [room] must not answer [RIG_GROW] for those parts again,
+      whatever other submissions' growths answer.
+
+      It is [Short n] if [d] has no memory for [n] bytes the growth takes.
+      What it made stays for a later [room]. rig then runs a round of the
+      reclamation an allocation runs, for [d]'s budget and the host's, and
+      asks [room] again, which answers [RIG_GROW] anew for parts that still
+      need a growth.
+
+      rig calls it on the thread whose [room] answered [RIG_GROW], after
+      that answer and before that thread calls [room] again, while the C
+      functions may run on other threads for other submissions. A
+      submission asks at most four times, as an allocation tries: after the
+      last, a [Short n] raises [Rig.Out_of_memory] with [n]. A driver whose
+      [room] never answers [RIG_GROW] is never asked. Counted. *)
 
   (** {1:timeline Timeline} *)
 

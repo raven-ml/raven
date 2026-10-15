@@ -172,6 +172,10 @@ let fault d =
 let sleep d ~seen ~still_ms = if sleep_c d.c seen still_ms then raise (fault d)
 let stop d ~fault:_ = stop_c d.c
 
+(* Its room never answers RIG_GROW: the device's own driver grows its
+   queues on its machine. *)
+let grow _ = Rig_edge.Grown
+
 module Driver = struct
   type nonrec t = t
   type nonrec region = region
@@ -194,6 +198,7 @@ module Driver = struct
   let signaled = signaled
   let sleep = sleep
   let stop = stop
+  let grow = grow
 end
 
 let device l (a : Wire.account) c : t Rig_edge.opener =
