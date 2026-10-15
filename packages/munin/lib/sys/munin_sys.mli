@@ -31,7 +31,8 @@ module Stat : module type of Sysstat
 (** {1:monitor Background monitoring}
 
     {!start} spawns a background thread that periodically samples CPU, memory,
-    and process statistics and logs them as scalar metrics via {!Munin.Session}.
+    process and disk I/O statistics and logs them as scalar metrics via
+    {!Munin.Session}.
 
     Logged metrics (all with [sys/] prefix):
 

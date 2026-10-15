@@ -1,7 +1,7 @@
 # System Monitoring
 
-The `munin.sys` library provides background system monitoring that logs CPU and
-memory metrics alongside your training metrics.
+The `munin.sys` library provides background system monitoring that logs CPU, memory
+and disk I/O metrics alongside your training metrics.
 
 ## Setup
 
@@ -69,14 +69,31 @@ final sampled value appears in run summaries.
 | `sys/proc_cpu_pct`  | Process CPU percentage            | 0+       |
 | `sys/proc_mem_mb`   | Process resident set size in MB   | 0+       |
 
+### Disk I/O
+
+| Metric key          | Description                       | Range    |
+|---------------------|-----------------------------------|----------|
+| `sys/disk_read_mbs` | Bytes read from disk, in MB/s     | 0+       |
+| `sys/disk_write_mbs`| Bytes written to disk, in MB/s    | 0+       |
+| `sys/disk_util_pct` | Share of the interval disks were busy with I/O, in percent | 0--100 |
+
+Disk metrics sum the physical disks and leave out partitions and virtual
+devices. MB is 2^20 bytes, as in `sys/proc_mem_mb`. Utilization divides the
+I/O time by the interval times the number of disks, and is capped at 100.
+
 ## Platform support
 
 `munin.sys` works on Linux and macOS. Platform-specific behavior:
 
 - **Linux**: CPU counters are read from `/proc/stat`; memory from
-  `/proc/meminfo`; process stats from `/proc/self/stat` and `Unix.times`.
+  `/proc/meminfo`; process stats from `/proc/self/stat` and `Unix.times`;
+  disk counters from `/proc/diskstats`, whose I/O time counts the time a
+  disk had any request in flight.
 - **macOS**: CPU and memory use Mach host statistics; process memory uses
-  `task_info`. Only user/nice/system/idle CPU fields are populated.
+  `task_info`; disk counters use IOKit's block-storage statistics. Only
+  user/nice/system/idle CPU fields are populated. Disk I/O time is the sum
+  of read and write request times, so overlapping requests count twice and
+  `sys/disk_util_pct` reaches 100 before the disk is saturated.
 
 ## TUI system panel
 

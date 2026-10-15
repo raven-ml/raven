@@ -44,7 +44,7 @@ munin compare a b c  # side-by-side params + summary
 |---------|-------------|
 | `munin` | Core tracking: Session, Run, Store, Artifact |
 | `munin.tui` | Terminal dashboard (`munin watch`) |
-| `munin.sys` | Background system monitoring (CPU, memory) |
+| `munin.sys` | Background system monitoring (CPU, memory, disk I/O) |
 
 ## Examples
 

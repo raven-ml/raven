@@ -249,8 +249,8 @@ let () =
 
 ## System Monitoring
 
-`Munin_sys.start` spawns a background thread that samples CPU and
-memory usage every 15 seconds (configurable via `~interval`):
+`Munin_sys.start` spawns a background thread that samples CPU, memory and
+disk I/O every 15 seconds (configurable via `~interval`):
 
 <!-- $MDX skip -->
 ```ocaml
@@ -260,7 +260,8 @@ Munin_sys.stop sysmon
 ```
 
 Logged metrics: `sys/cpu_user`, `sys/cpu_system`, `sys/mem_used_pct`,
-`sys/mem_used_gb`, `sys/proc_cpu_pct`, `sys/proc_mem_mb`.
+`sys/mem_used_gb`, `sys/proc_cpu_pct`, `sys/proc_mem_mb`,
+`sys/disk_read_mbs`, `sys/disk_write_mbs`, `sys/disk_util_pct`.
 
 ## Next Steps
 
