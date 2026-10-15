@@ -120,6 +120,64 @@ let first_in_first () =
       reached);
   greater ~msg:"devices refused" int ~than:0 !refusals
 
+(* A first devices of MEM from a callback in the first devices of MEM, which
+   closes the last device it gets, in a job of its own: both give the same
+   devices, the last closed, or the callback's raises Invalid_argument where it
+   opens a device that the interrupted call is opening. The host is not lost,
+   and the first device serves copies. *)
+let close_in_first () =
+  let refusals = ref 0 and closes = ref 0 in
+  walk (fun n ->
+      with_job @@ fun j agents ->
+      let h = List.hd (Rig_remote.hosts j) in
+      let at = at (List.hd agents) (Rig.name h) in
+      let outer = ref (Ok []) and inner = ref None in
+      let call () =
+        match Rig_remote.devices h "MEM" with
+        | Ok ds as r ->
+            Rig.close (List.nth ds (List.length ds - 1));
+            incr closes;
+            inner := Some r
+        | r -> inner := Some r
+        | exception Invalid_argument _ -> incr refusals
+      in
+      let reached =
+        Rig_support.interrupted ~landing:(Call call) n (fun () ->
+            outer := Rig_remote.devices h "MEM")
+      in
+      let msg what = strf "from allocation %d, %s" n what in
+      let ds =
+        match !outer with
+        | Ok ds -> ds
+        | Error why -> failf "%s: %s" (msg "MEM") why
+      in
+      equal ~msg:(msg "MEM") (list string)
+        [ "MEM:0@" ^ at; "MEM:1@" ^ at ]
+        (names ds);
+      (match !inner with
+      | None -> ()
+      | Some (Error why) -> failf "%s: %s" (msg "MEM in the callback") why
+      | Some (Ok ds') ->
+          equal
+            ~msg:(msg "MEM in the callback")
+            (list bool) [ true; true ]
+            (List.map2 Rig.equal ds ds');
+          equal ~msg:(msg "the losses")
+            (list (option string))
+            [ None; Some "closed" ] (List.map Rig.lost ds));
+      is_none ~msg:(msg "the host's loss") (Rig.lost h);
+      equal ~msg:(msg "MEM after") (list bool) [ true; true ]
+        (List.map2 Rig.equal ds (mem h));
+      let d = List.hd ds in
+      let s = "on " ^ Rig.name d in
+      equal
+        ~msg:(msg "a copy there and back")
+        string s
+        (read (far_of_string d s));
+      reached);
+  greater ~msg:"devices refused" int ~than:0 !refusals;
+  greater ~msg:"devices closed" int ~than:0 !closes
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -207,6 +265,9 @@ let () =
              test "a devices in a devices answers" devices_in_devices;
              test "a first devices in a first devices of its kind answers"
                first_in_first;
+             test
+               "a first devices in a first devices that closes a device answers"
+               close_in_first;
              test "a close in a close returns" close_in_close;
              test "an exit in a close reports the job's end" exit_in_close;
              test "an exception in a close reports the close at the exit"

@@ -16,6 +16,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
    lock, so a signal handler, finaliser or Gc.Memprof callback inside a call
    of this module waits for no lock of this module's. *)
 module Names = Map.Make (String)
+module Ids = Map.Make (Int)
 
 (* A machine of a job: its agent's link and the devices opened there. *)
 type machine = {
@@ -24,6 +25,7 @@ type machine = {
   link : Link.t;
   mutable host : Rig.t option;
   kinds : Rig.t list Names.t Atomic.t;  (** The devices of each kind opened. *)
+  proxies : Rig.t Ids.t Atomic.t;  (** The proxy of each account opened. *)
 }
 
 type t = {
@@ -156,11 +158,41 @@ let rec keep m kind ds =
       if Atomic.compare_and_set m.kinds kept (Names.add kind ds kept) then ds
       else keep m kind ds
 
+(* Keeps [d] as [m]'s proxy of account [id]: no other is made once it is. *)
+let rec keep_proxy m id d =
+  let kept = Atomic.get m.proxies in
+  if not (Atomic.compare_and_set m.proxies kept (Ids.add id d kept)) then
+    keep_proxy m id d
+
+(* [m]'s proxy of [a], opened unless a call opened one first, which may be
+   closed since. The link takes one proxy of an account for its life. The
+   lookup runs in the opener's [make], which rig runs while no other open of
+   the proxy's name does, so it is one step with the open: a call that a
+   callback interrupts before the open finds the proxy the callback opened
+   and closed. A proxy that rig gave and that is not kept is open, and rig
+   gives it again. *)
+let open_proxy m h (a : Wire.account) =
+  let o = Proxy.device m.link a (Rig_remote_abi.Device { id = a.id }) in
+  let found = ref None in
+  let make ~word =
+    match Ids.find_opt a.id (Atomic.get m.proxies) with
+    | Some d ->
+        found := Some d;
+        Error "opened"
+    | None -> o.make ~word
+  in
+  match (Rig.open_ ~machine:h { o with make }, !found) with
+  | Ok d, _ ->
+      keep_proxy m a.id d;
+      Ok d
+  | Error _, Some d -> Ok d
+  | (Error _ as e), None -> e
+
 (* The job's state comes first: a kind opened before the job ended answers as
    a new one does. Two calls that find no devices of [kind], from two domains
    or from a callback inside the other, both ask the agent, which answers an
-   open of a kind with the accounts it gave first, so both open the same
-   devices ({!Rig.open_}). *)
+   open of a kind with the accounts it gave first, so both give the same
+   proxies ({!open_proxy}). *)
 let devices h kind =
   match machine_of_host h with
   | None -> invalid_arg "Rig_remote.devices: the device is no host of a job"
@@ -176,14 +208,10 @@ let devices h kind =
           match request m (Wire.Open kind) with
           | Error why -> Error why
           | Ok accounts ->
-              let open_one (a : Wire.account) =
-                let record = Rig_remote_abi.Device { id = a.id } in
-                Rig.open_ ~machine:h (Proxy.device m.link a record)
-              in
               let rec all acc = function
                 | [] -> Ok (List.rev acc)
                 | a :: rest -> (
-                    match open_one a with
+                    match open_proxy m h a with
                     | Ok d -> all (d :: acc) rest
                     | Error why -> Error why)
               in
@@ -249,6 +277,7 @@ let rec dial ~key job acc i = function
                   link;
                   host = None;
                   kinds = Atomic.make Names.empty;
+                  proxies = Atomic.make Ids.empty;
                 }
               in
               dial ~key job (m :: acc) (i + 1) rest))

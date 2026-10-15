@@ -54,9 +54,6 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check; `launch` leaks its C launch when `grow_scratch` raises
-- rig.remote: a first `devices` interrupted by a callback that makes its
-  own call and closes a device raises "the link has a proxy of that device":
-  look up or open each account in one step
 - refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
   `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
   (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves
