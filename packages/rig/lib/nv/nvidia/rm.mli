@@ -59,7 +59,12 @@ val client : dev:string -> (t, string) result
     driver's release is none of {!Defs.releases}. *)
 
 val handle : unit -> int
-(** [handle ()] is a new handle for an object the process names itself. *)
+(** [handle ()] is a handle for an object the process names itself, one no
+    object of the client holds: one {!free_handle} gave back, else a new one. *)
+
+val free_handle : int -> unit
+(** [free_handle h] gives back [h], a handle {!handle} gave, once the RM freed
+    its object or never made one, so that a later {!handle} takes it again. *)
 
 (** {1:rm The RM} *)
 

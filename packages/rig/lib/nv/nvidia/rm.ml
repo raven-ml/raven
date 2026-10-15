@@ -308,6 +308,21 @@ let client ~dev =
       opened := Some c;
       Ok c
 
-(* The handles the process names objects by, past those the RM chooses. *)
-let next = Atomic.make 0x1000
-let handle () = Atomic.fetch_and_add next 1 + 1
+(* The handles the process names objects by. A freed one is taken again
+   before a new one, so the highest stays [first_handle] plus the most objects
+   named at once, far below 0xcaf00000, RS_UNIQUE_HANDLE_BASE, from which the
+   RM chooses handles (open-gpu-kernel-modules' g_rs_client_nvoc.h). No lock,
+   as [Va]'s ranges take none. *)
+let first_handle = 0x1000
+let next = Atomic.make first_handle
+let freed : int list Atomic.t = Atomic.make []
+
+let rec handle () =
+  match Atomic.get freed with
+  | [] -> Atomic.fetch_and_add next 1 + 1
+  | h :: rest as l ->
+      if Atomic.compare_and_set freed l rest then h else handle ()
+
+let rec free_handle h =
+  let l = Atomic.get freed in
+  if not (Atomic.compare_and_set freed l (h :: l)) then free_handle h

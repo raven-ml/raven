@@ -80,6 +80,10 @@ type gpu = {
 
 (* GPU memory *)
 
+(* Who chose an RM object's handle: the RM, or the process ({!Rm.handle}),
+   which takes it back once the object is freed. *)
+type naming = Rm_named | Self_named
+
 type mem = {
   va : int;
   handle : int;
@@ -98,6 +102,7 @@ and range = {
   gpu_addr : int; (* the GPUs' address of its first byte *)
   bytes : int;
   memory : int; (* the memory object mapped there *)
+  naming : naming; (* who chose [memory] *)
   parent : gpu; (* the GPU the object belongs to *)
   space : Va.t; (* where [gpu_addr] was taken *)
   mapped : int option; (* where the process maps the object, if it does *)
@@ -267,17 +272,26 @@ let describe g va size =
     lor bits D.nvos02_flags_coherency D.nvos02_flags_coherency_cached
     lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
   let what = "describing host memory to the GPU" in
-  let* described =
-    with_file g (fun fd -> Rm.escape fd D.nv_esc_rm_alloc_memory w what)
+  let described =
+    let* described =
+      with_file g (fun fd -> Rm.escape fd D.nv_esc_rm_alloc_memory w what)
+    in
+    let s = get w (at O.status) in
+    if described = None || List.mem s refusals then Ok None
+    else
+      let* () = Rm.check g.c what s in
+      Ok (Some h)
   in
-  let s = get w (at O.status) in
-  if described = None || List.mem s refusals then Ok None
-  else
-    let* () = Rm.check g.c what s in
-    Ok (Some h)
+  (match described with
+  | Ok (Some _) -> ()
+  | Ok None | Error _ -> Rm.free_handle h);
+  described
 
-let free_object g h =
-  ignore ((Rm.rm g.c).free ~parent:g.device h : (unit, string) result)
+(* Frees [g]'s object [h], whose handle [naming] chose. *)
+let free_object ~naming g h =
+  match (Rm.rm g.c).free ~parent:g.device h with
+  | Ok () -> if naming = Self_named then Rm.free_handle h
+  | Error _ -> ()
 
 (* The parameters of video memory in pages of [page_size]. *)
 let video_params g ~contiguous ~page_size size =
@@ -336,7 +350,7 @@ let alloc_host g size =
       match uvm_map g va size h with
       | Ok true -> Ok (Some (h, va))
       | (Ok false | Error _) as r ->
-          free_object g h;
+          free_object ~naming:Self_named g h;
           Rm.unmap va size;
           Result.map (fun _ -> None) r)
 
@@ -365,19 +379,20 @@ let alloc_video g ~cpu size =
     match placed with
     | Ok (Some va) -> Ok (Some (h, va, size, space))
     | (Ok None | Error _) as r ->
-        free_object g h;
+        free_object ~naming:Rm_named g h;
         Result.map (fun _ -> None) r
 
 let memory m =
   { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
 
 (* Memory [g] allocated, mapped for [g] alone. *)
-let allocated g ~video ~host ~space h va size =
+let allocated g ~video ~host ~space ~naming h va size =
   let range =
     {
       gpu_addr = va;
       bytes = size;
       memory = h;
+      naming;
       parent = g;
       space;
       mapped = host;
@@ -399,7 +414,8 @@ let alloc g (kind : Rig_edge.memory) n =
       Ok
         (Option.map
            (fun (h, va) ->
-             allocated g ~video:None ~host:(Some va) ~space:g.c.low h va size)
+             allocated g ~video:None ~host:(Some va) ~space:g.c.low
+               ~naming:Self_named h va size)
            x)
   | (Device | Mapped) as k ->
       let* v = alloc_video g ~cpu:(k = Mapped) n in
@@ -407,7 +423,8 @@ let alloc g (kind : Rig_edge.memory) n =
         (Option.map
            (fun (h, va, size, space) ->
              let host = if k = Mapped then Some va else None in
-             allocated g ~video:(Some g.index) ~host ~space h va size)
+             allocated g ~video:(Some g.index) ~host ~space ~naming:Rm_named
+               h va size)
            v)
 
 let ranges_lock = Rig_nv.Lock.create ()
@@ -435,7 +452,7 @@ let give g r =
       if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
       else begin
         fault (uvm_free g.c r.gpu_addr r.bytes);
-        free_object r.parent r.memory;
+        free_object ~naming:r.naming r.parent r.memory;
         Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
         Va.free r.space r.gpu_addr r.bytes
       end
@@ -463,6 +480,7 @@ let map_host g a n =
               gpu_addr;
               bytes = size;
               memory = h;
+              naming = Self_named;
               parent = g;
               space = g.c.low;
               mapped = None;
@@ -472,10 +490,10 @@ let map_host g a n =
           let va = gpu_addr + (a - a0) in
           Some (memory { va; handle = h; host = Some a; video = None; range })
       | Ok None ->
-          free_object g h;
+          free_object ~naming:Self_named g h;
           None
       | Error e ->
-          free_object g h;
+          free_object ~naming:Self_named g h;
           raise (Rig_nv.Fault e))
 
 (* Another GPU's video memory needs peer access, which may be refused; host
