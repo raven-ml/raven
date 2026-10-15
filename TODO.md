@@ -66,6 +66,8 @@ raven / llama.cpp (Vulkan; ROCm):
   path lock
 - refusals: a `Rig.open_` of a name from a callback inside that name's own
   open waits forever in `Dev.find`
+- rig.nv: test_interrupt's "stop in local" takes 28 s on fudge (a device
+  opened per attempt): make it fast at its cause
 - rig.metal: off macOS, `(Rig_metal.gpu 0).make` aborts the process:
   `open_` makes its guard, whose stub aborts there, before `open_device`
   answers "Metal exists on macOS only" (test_metal aborts on Linux)
