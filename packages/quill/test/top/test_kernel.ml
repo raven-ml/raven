@@ -160,7 +160,7 @@ let raised_mid_print () =
         [ Cell.Stdout "Epoch 1: "; svg "PGEvPg==" ]
         [ text; display ];
       starts_with ~affix:"a figure" rest;
-      contains ~sub:"Failure \"boom\"" rest
+      contains ~sub:"Exception: Failure: boom" rest
   | outs -> failf "%a" (Format.pp_print_list pp_output) outs
 
 let kernel_tests =
@@ -247,7 +247,30 @@ let printer_tests =
         @@ __POS_OF__ {| n has the wrong type for a printing function. |});
   ]
 
+(* Exceptions *)
+
+let message = "2 problems:\n  no column \"carier\"\n  no column \"x\""
+
+let exception_tests =
+  [
+    cases ~name:fst "a raised message shows as written"
+      [ ("Failure", "failwith"); ("Invalid_argument", "invalid_arg") ]
+      (fun (name, raise) ->
+        (* A recorded backtrace would follow the report. *)
+        let recording = Printexc.backtrace_status () in
+        Printexc.record_backtrace false;
+        Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+        @@ fun () ->
+        equal (list output)
+          [ Cell.Stdout (Printf.sprintf "Exception: %s: %s\n" name message) ]
+          (outputs [ Printf.sprintf "%s %S" raise message ]));
+  ]
+
 let () =
   exit
     (run "Kernel"
-       [ group "Display tags" kernel_tests; group "Printers" printer_tests ])
+       [
+         group "Display tags" kernel_tests;
+         group "Printers" printer_tests;
+         group "Exceptions" exception_tests;
+       ])

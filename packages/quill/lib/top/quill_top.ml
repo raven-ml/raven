@@ -113,6 +113,23 @@ let load_package pkg =
 
 (* ───── Initialization ───── *)
 
+(* [print_out_phrase default] prints like [default], except the message of an
+   uncaught [Failure] or [Invalid_argument], which [default] prints as an OCaml
+   string literal, escaping its newlines and quotes. The message prints as
+   written instead, as in [Exception: Invalid_argument: 2 problems:] followed by
+   its lines. A printer registered for the exception still takes precedence. *)
+let print_out_phrase default ppf = function
+  | Outcometree.Ophr_exception (((Failure msg | Invalid_argument msg) as exn), _)
+    when Option.is_none (Printexc.use_printers exn) ->
+      let name =
+        match exn with Failure _ -> "Failure" | _ -> "Invalid_argument"
+      in
+      let lines = String.split_on_char '\n' msg in
+      Format.fprintf ppf "Exception: %s: %a@." name
+        Format.(pp_print_list ~pp_sep:pp_force_newline pp_print_string)
+        lines
+  | phrase -> default ppf phrase
+
 let initialized = ref false
 let init_mutex = Mutex.create ()
 
@@ -126,6 +143,7 @@ let initialize_if_needed () =
         Topeval.init ();
         Toploop.initialize_toplevel_env ();
         Toploop.input_name := "//toplevel//";
+        Toploop.print_out_phrase := print_out_phrase !Toploop.print_out_phrase;
         (* Register #require directive for loading packages at runtime. *)
         Toploop.add_directive "require"
           (Directive_string (fun pkg -> load_package pkg))

@@ -7089,6 +7089,9 @@ thread.
 
 ### Quill
 
+- A cell that raises `Failure` or `Invalid_argument` shows its message as
+  written, as in `Exception: Failure: msg`, where the toplevel printed it as
+  a string literal with escaped newlines and quotes.
 - The server refuses a port another socket listens at on Windows, where a
   second server could bind it.
 - The server's 30 s bound on a connection's reads and writes holds on Windows,

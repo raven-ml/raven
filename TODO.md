@@ -328,8 +328,6 @@ raven / llama.cpp (Vulkan; ROCm):
   among runs started in the same second at random (a run id is a seconds
   stamp and a random suffix)
 - quill's TUI suite tests a copy of quill_tui.ml, bypassing its .mli
-- quill prints an `Invalid_argument` or `Failure` message raw in a cell's
-  output; multi-line messages (talon's plan problems) arrive escaped
 
 ## ymir, sowilo
 
