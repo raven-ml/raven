@@ -66,5 +66,6 @@ val start : ?interval:float -> Munin.Session.t -> t
     interval. The monitor thread is a daemon thread. *)
 
 val stop : t -> unit
-(** [stop t] signals the monitoring thread to exit and blocks until it
-    terminates. Safe to call multiple times. *)
+(** [stop t] wakes the monitoring thread and blocks until it terminates. It
+    waits for a sample in progress, never for the rest of the interval. Safe to
+    call multiple times. *)

@@ -87,6 +87,21 @@ let test_system_monitor_stop_idempotent () =
   Munin_sys.stop monitor;
   Session.finish session
 
+(* The monitor sleeps between samples; stop must not wait out the interval. The
+   delay lets the monitor thread reach its sleep: if it has not, stop returns at
+   once and the test passes without reaching its case, never failing falsely. *)
+let test_system_monitor_stop_prompt () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let monitor = Munin_sys.start ~interval:10.0 session in
+  Thread.delay 0.1;
+  let t0 = Unix.gettimeofday () in
+  Munin_sys.stop monitor;
+  less ~msg:"seconds stop blocked" float_exact ~than:1.0
+    (Unix.gettimeofday () -. t0);
+  Session.finish session
+
 (* A process's CPU percentage is its CPU time over the interval, whatever the
    interval and however many cores the time came from. *)
 let test_proc_cpu_mean =
@@ -114,6 +129,7 @@ let system_monitor_tests =
     test "logs metrics" test_system_monitor_logs_metrics;
     test "defines metrics" test_system_monitor_defines_metrics;
     test "stop idempotent" test_system_monitor_stop_idempotent;
+    test "stop does not wait out the interval" test_system_monitor_stop_prompt;
   ]
 
 let () =

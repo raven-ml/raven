@@ -1464,6 +1464,8 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Munin_sys.stop` wakes the monitor instead of waiting out the rest of the
+  sampling interval, up to 15 s by default, at the end of every run.
 - `Store.latest_run` and `Store.list_runs` order runs by `Run.started_at`.
   A run id stamps only the second, so runs started within one second came
   back in random order.

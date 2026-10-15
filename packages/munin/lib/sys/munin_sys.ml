@@ -6,7 +6,56 @@
 open Munin
 module Stat = Sysstat
 
-type t = { stop : bool Atomic.t; thread : Thread.t }
+type t = {
+  stop : bool Atomic.t;
+  wake : Unix.file_descr * Unix.file_descr;
+  thread : Thread.t;
+}
+
+(* The monitor waits for its next sample by selecting on one end of a socket
+   pair, with the time left as timeout; [stop] writes a byte to the other end
+   to wake it. A socket, because Windows selects on sockets only. *)
+let rec wait fd deadline =
+  let left = deadline -. Unix.gettimeofday () in
+  if left > 0. then
+    match Unix.select [ fd ] [] [] left with
+    | [], _, _ -> wait fd deadline
+    | _ -> ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait fd deadline
+
+(* Windows has no socketpair. OCaml's binds a socket at a name in the temporary
+   directory made of the process id and a count, and removes it once the pair
+   is connected: a process killed in between leaves it there, and a later
+   process of the same id fails to bind it with EADDRINUSE. A loopback
+   connection names no file. Its listener takes the connection from the other
+   end and closes any other, from another process of the machine. *)
+let tcp_pair () =
+  let socket () = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  let l = socket () in
+  Fun.protect ~finally:(fun () -> Unix.close l) @@ fun () ->
+  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen l 1;
+  let a = socket () in
+  let rec from me =
+    let b, peer = Unix.accept ~cloexec:true l in
+    if peer = me then b
+    else begin
+      Unix.close b;
+      from me
+    end
+  in
+  match
+    Unix.connect a (Unix.getsockname l);
+    from (Unix.getsockname a)
+  with
+  | b -> (a, b)
+  | exception e ->
+      Unix.close a;
+      raise e
+
+let socket_pair () =
+  if Sys.win32 then tcp_pair ()
+  else Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
 
 let start ?(interval = 15.0) session =
   let cpu_user = Session.metric session "sys/cpu_user" in
@@ -19,6 +68,7 @@ let start ?(interval = 15.0) session =
   let disk_write_mbs = Session.metric session "sys/disk_write_mbs" in
   let disk_util_pct = Session.metric session "sys/disk_util_pct" in
   let stop_flag = Atomic.make false in
+  let wake = socket_pair () in
   let prev_cpu = ref (Sysstat.Cpu.sample ()) in
   let prev_proc = ref (Sysstat.Proc.Self.sample ()) in
   let prev_disk = ref (Sysstat.Disk_io.sample ()) in
@@ -28,7 +78,7 @@ let start ?(interval = 15.0) session =
     Thread.create
       (fun () ->
         while not (Atomic.get stop_flag) do
-          Thread.delay interval;
+          wait (fst wake) (!prev_time +. interval);
           if not (Atomic.get stop_flag) then begin
             incr step;
             let now = Unix.gettimeofday () in
@@ -73,10 +123,15 @@ let start ?(interval = 15.0) session =
         done)
       ()
   in
-  { stop = stop_flag; thread }
+  { stop = stop_flag; wake; thread }
 
+(* Both ends close only after the join: had the monitor closed its end when an
+   exception ended it, the write would deliver SIGPIPE and end the process. *)
 let stop t =
-  if not (Atomic.get t.stop) then begin
-    Atomic.set t.stop true;
-    Thread.join t.thread
+  if Atomic.compare_and_set t.stop false true then begin
+    ignore (Unix.write_substring (snd t.wake) "x" 0 1);
+    Thread.join t.thread;
+    Unix.close (fst t.wake);
+    Unix.close (snd t.wake)
   end
+  else Thread.join t.thread
