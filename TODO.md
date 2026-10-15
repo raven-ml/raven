@@ -136,8 +136,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### tests and runs
 
-- rig's runtest takes 173 s on fudge, over the 2-minute budget: find the
-  slow suites there and make each fast at its cause
 - failure paths with no test (_plans/rig-release/failure-paths.md): three
   host and core rows, a Metal command-buffer fault, NV and AMD PCI faults,
   the AMD hang law, and the disk, program, CUDA and NV rows
