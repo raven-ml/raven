@@ -148,39 +148,48 @@ let test_entry_in_entry () =
   in
   (during, call, after)
 
-(* A stop from a callback in the first entry of a new device, which holds
-   the device's local memory lock as it grows that memory: the device
-   stops, after which an entry raises Fault, or the stop raises Refused and
-   leaves the device serving entries. *)
+(* The bytes of a thread's local memory in a growth: the least that grows a
+   new device's, which keeps the growth's GPU memory small. *)
+let local_bytes = 32
+
+(* A stop from a callback in the first growth of a new device's local
+   memory, which holds the device's local memory lock: the device stops,
+   after which a growth answers [Error], or the stop raises Refused and
+   leaves the device growing its local memory. The growth is the
+   capability's, the one an entry makes; an entry's other allocations hold
+   no local memory lock. *)
 let test_stop_in_local () =
   if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
-  let refusals = ref 0 in
+  let stops = ref 0 and refusals = ref 0 in
   walk_calls (fun n ->
       let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
-      let i, r, _ = Rig_nv_support.image g bin in
-      let stopped = ref false in
+      let local = (N.capability g).local in
+      let stopped = ref false and grown = ref (Ok ()) in
       let stop () =
         N.stop g ~fault:None;
-        stopped := true
+        stopped := true;
+        incr stops
       in
       let reached =
         Rig_support.interrupted ~landing:(Call (refusing refusals stop)) n
-          (fun () ->
-            try entries i [ last ] with N.Fault _ when !stopped -> ())
+          (fun () -> grown := local local_bytes)
       in
       if !stopped then
-        raises_match
-          ~msg:(strf "from allocation %d, an entry after the stop" n)
-          (function N.Fault _ -> true | _ -> false)
-          (fun () -> entries i functions)
+        is_error
+          ~msg:(strf "from allocation %d, a growth after the stop" n)
+          (local (2 * local_bytes))
       else begin
-        entries i functions;
+        equal (result unit string)
+          ~msg:(strf "from allocation %d, the growth" n)
+          (Ok ()) !grown;
+        equal (result unit string)
+          ~msg:(strf "from allocation %d, a growth after it" n)
+          (Ok ())
+          (local (2 * local_bytes));
         N.stop g ~fault:None
       end;
-      N.unload g i;
-      N.free g r;
       reached);
+  greater ~msg:"stops" int ~than:0 !stops;
   greater ~msg:"stops refused" int ~than:0 !refusals
 
 (* The bytes of each region the memory walks make. *)

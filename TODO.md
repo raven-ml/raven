@@ -66,8 +66,6 @@ raven / llama.cpp (Vulkan; ROCm):
   path lock
 - refusals: a `Rig.open_` of a name from a callback inside that name's own
   open waits forever in `Dev.find`
-- rig.nv: test_interrupt's "stop in local" takes 28 s on fudge (a device
-  opened per attempt): make it fast at its cause
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
