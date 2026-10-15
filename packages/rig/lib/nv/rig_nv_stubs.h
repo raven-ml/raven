@@ -18,6 +18,7 @@
 #ifndef RIG_NV_STUBS_H
 #define RIG_NV_STUBS_H
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -314,6 +315,9 @@ struct rig_nv_edge {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
   struct device *d;
+  /* Taken inside one stub, around [d]'s flushes and its free at the stop,
+     so no OCaml code runs while it is held. */
+  pthread_mutex_t flush_mu;
 };
 
 /* Makes the host's writes through the BARs that [d]'s work may read reach

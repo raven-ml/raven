@@ -13,22 +13,132 @@
 
 #define _GNU_SOURCE
 
+#include <errno.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/callback.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
+#include <caml/signals.h>
 
 #include "rig_nv_stubs.h"
 
 #define Edge_val(v) ((struct rig_nv_edge *)Long_val(v))
 #define Device_val(v) (Edge_val(v)->d)
 #define Pointer_val(v) ((void *)Long_val(v))
+
+/* Guards */
+
+/* A guard: a mutex of its own memory, which a custom block holds and
+   destroys once collected, and its rank. A thread takes guards in rising
+   rank, so no two threads wait for each other. [below] is the rank its
+   holder held before it took the guard. */
+struct guard {
+  pthread_mutex_t mutex;
+  int rank;
+  int below;
+};
+
+#define Guard_val(v) (*(struct guard **)Data_custom_val(v))
+
+/* The rank of the last guard this thread took, -1 for none. A take of a
+   guard of no higher rank raises: a signal handler, finaliser or
+   Gc.Memprof callback that runs while its thread holds a guard and takes
+   one would wait for good on its own, or take two in no fixed order. */
+static _Thread_local int held = -1;
+
+static void guard_finalize(value v) {
+  struct guard *g = Guard_val(v);
+  if (g == NULL) return;
+  pthread_mutex_destroy(&g->mutex);
+  free(g);
+}
+
+static struct custom_operations guard_ops = {
+    "rig.nv.guard",             guard_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_nv_guard(value v_rank) {
+  CAMLparam1(v_rank);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&guard_ops, sizeof(struct guard *), 0, 1);
+  Guard_val(v) = NULL;
+  struct guard *g = malloc(sizeof *g);
+  if (g == NULL) caml_raise_out_of_memory();
+  int err = pthread_mutex_init(&g->mutex, NULL);
+  if (err != 0) {
+    free(g);
+    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
+    char why[96];
+    snprintf(why, sizeof why, "Rig_nv: a guard: %s", strerror(err));
+    caml_failwith(why);
+  }
+  g->rank = Int_val(v_rank);
+  g->below = -1;
+  Guard_val(v) = g;
+  CAMLreturn(v);
+}
+
+static void taken(struct guard *g) {
+  g->below = held;
+  held = g->rank;
+}
+
+/* Takes the guard [v_g]: by try-lock, and otherwise after releasing the
+   runtime without running pending signal handlers, which run at the
+   caller's next poll point. Raises Rig_nv.Refused, which rig_nv.ml
+   registers, before it takes anything, if this thread holds a guard of the
+   same or a higher rank; no other exception can end the take, so a caller
+   that takes it as the last step before its handler gives it back on every
+   exit. */
+value caml_rig_nv_guard_take(value v_g) {
+  struct guard *g = Guard_val(v_g);
+  if (held >= g->rank)
+    caml_raise_with_string(*caml_named_value("Rig_nv.Refused"),
+                           "Rig_nv: called from a signal handler, "
+                           "finaliser or Gc.Memprof callback while this "
+                           "thread holds a lock the call takes, or one "
+                           "taken after it");
+  if (pthread_mutex_trylock(&g->mutex) != 0) {
+    caml_enter_blocking_section_no_pending();
+    int err = pthread_mutex_lock(&g->mutex);
+    caml_leave_blocking_section();
+    if (err != 0) {
+      fprintf(stderr, "Rig_nv: a guard: %s\n", strerror(err));
+      abort();
+    }
+  }
+  taken(g);
+  return Val_unit;
+}
+
+/* Takes the guard [v_g] if no thread holds it and this thread holds none of
+   the same or a higher rank: whether it took it. */
+value caml_rig_nv_guard_try(value v_g) {
+  struct guard *g = Guard_val(v_g);
+  if (held >= g->rank || pthread_mutex_trylock(&g->mutex) != 0)
+    return Val_false;
+  taken(g);
+  return Val_true;
+}
+
+value caml_rig_nv_guard_give(value v_g) {
+  struct guard *g = Guard_val(v_g);
+  held = g->below;
+  pthread_mutex_unlock(&g->mutex);
+  return Val_unit;
+}
 
 /* Making a device */
 
@@ -53,7 +163,7 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
                          value v_info32, value v_status) {
   struct rig_nv_edge *e = calloc(1, sizeof *e);
   struct device *d = calloc(1, sizeof *d);
-  if (e == NULL || d == NULL) {
+  if (e == NULL || d == NULL || pthread_mutex_init(&e->flush_mu, NULL) != 0) {
     free(e);
     free(d);
     return Val_long(0);
@@ -82,6 +192,7 @@ value caml_rig_nv_destroy(value v_self) {
   free(d->copy_launch);
   free(d->timed);
   free(d);
+  pthread_mutex_destroy(&Edge_val(v_self)->flush_mu);
   free(Edge_val(v_self));
   return Val_unit;
 }
@@ -313,29 +424,37 @@ value caml_rig_nv_bar(value v_self, value v_at) {
   return Val_unit;
 }
 
-/* Adds [v_delta] to the regions written through the BAR whose word is at
-   host address [v_word], taking a free entry for a new word: [false] if
-   none is free. The caller serialises calls for one device. */
-value caml_rig_nv_flush(value v_self, value v_word, value v_delta) {
-  struct device *d = Device_val(v_self);
-  volatile const uint32_t *word = Pointer_val(v_word);
+/* Adds [delta] to the regions written through the BAR whose word is at
+   [word], taking a free entry for a new word: [0] if none is free. The
+   caller holds [flush_mu]. */
+static int count_flush(struct device *d, volatile const uint32_t *word,
+                       intnat delta) {
   struct flush *free = NULL;
-  if (d == NULL) return Val_true;
   for (int i = 0; i < FLUSHES; i++) {
     struct flush *f = &d->flushes[i];
     if (atomic_load(&f->word) == word) {
-      atomic_fetch_add_explicit(&f->count, Long_val(v_delta),
-                                memory_order_acq_rel);
-      return Val_true;
+      atomic_fetch_add_explicit(&f->count, delta, memory_order_acq_rel);
+      return 1;
     }
     if (free == NULL && i > 0 &&
         (atomic_load(&f->word) == NULL || atomic_load(&f->count) == 0))
       free = f;
   }
-  if (free == NULL) return Val_false;
+  if (free == NULL) return 0;
   atomic_store_explicit(&free->word, word, memory_order_release);
-  atomic_store_explicit(&free->count, Long_val(v_delta), memory_order_release);
-  return Val_true;
+  atomic_store_explicit(&free->count, delta, memory_order_release);
+  return 1;
+}
+
+/* [count_flush] for [v_self], whose stop may run on another domain:
+   [true] once the device has stopped. */
+value caml_rig_nv_flush(value v_self, value v_word, value v_delta) {
+  struct rig_nv_edge *e = Edge_val(v_self);
+  pthread_mutex_lock(&e->flush_mu);
+  int counted = e->d == NULL ||
+                count_flush(e->d, Pointer_val(v_word), Long_val(v_delta));
+  pthread_mutex_unlock(&e->flush_mu);
+  return Val_bool(counted);
 }
 
 /* Zeroes the [v_n] bytes of host memory at [v_at]. */
@@ -406,13 +525,15 @@ value caml_rig_nv_raise(value v_self) {
    stopped ([v_stopped]). */
 value caml_rig_nv_end(value v_self, value v_stopped) {
   struct rig_nv_edge *e = Edge_val(v_self);
+  pthread_mutex_lock(&e->flush_mu);
   struct device *d = e->d;
+  e->d = NULL;
+  pthread_mutex_unlock(&e->flush_mu);
   if (d == NULL) return Val_unit;
   if (Bool_val(v_stopped)) free(d->copy_launch);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free(d->timed);
   free(d);
-  e->d = NULL;
   return Val_unit;
 }
 

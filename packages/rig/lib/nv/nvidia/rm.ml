@@ -230,7 +230,7 @@ let driver_version ctl root =
       | Some i -> String.sub b 0 i
       | None -> b)
 
-let client_lock = Mutex.create ()
+let client_lock = Rig_nv.Lock.create ()
 let opened = ref None
 
 let make_client ~dev =
@@ -300,7 +300,7 @@ let make_client ~dev =
   opened_client
 
 let client ~dev =
-  Mutex.protect client_lock @@ fun () ->
+  Rig_nv.Lock.protect client_lock @@ fun () ->
   match !opened with
   | Some c -> Ok c
   | None ->

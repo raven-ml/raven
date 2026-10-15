@@ -9,7 +9,14 @@
    every allocation from that one on raising until the call returns, as an
    asynchronous exception does. The image's one unload then frees every
    launch the image made, the interrupted call's included, so the C heap
-   holds no more than its allocator's rounding. *)
+   holds no more than its allocator's rounding.
+
+   A call is also made once for each allocation it makes with another call
+   from a Gc.Memprof callback at that allocation, on the calling thread. A
+   call that holds a lock there, an image's, the device's local memory lock
+   or the path's lock on its ranges, makes the callback's call raise
+   Rig_nv.Refused, having changed nothing, where it takes a lock of that
+   kind or of an earlier one. Through rig, such a call keeps the device. *)
 
 open Windtrap
 module N = Rig_nv
@@ -98,6 +105,164 @@ let test_unload () =
   N.free g r;
   (heap () - before, reached)
 
+(* [walk_calls attempt] runs [attempt n] from [n = 1] until an attempt no
+   longer reaches its [n]-th allocation. *)
+let walk_calls attempt =
+  let rec from n = if attempt n then from (n + 1) in
+  from 1
+
+(* [refusing n call] is [call], counting its refusals in [n]. *)
+let refusing n call () = try call () with N.Refused _ -> incr n
+
+(* [reentry attempt] walks [during ()] with [call ()] from a Gc.Memprof
+   callback at each of its allocations, on the calling thread, where
+   [attempt ()] is [(during, call, after)], and runs [after ()] once
+   [during] returned. [call] does its work, or raises [Rig_nv.Refused] where
+   [during] holds a lock the call takes, or one taken after it. Some call is
+   refused. *)
+let reentry attempt =
+  let refusals = ref 0 in
+  walk_calls (fun n ->
+      let during, call, after = attempt () in
+      let reached =
+        Rig_support.interrupted ~landing:(Call (refusing refusals call)) n
+          during
+      in
+      after ();
+      reached);
+  greater ~msg:"calls refused" int ~than:0 !refusals
+
+(* A function asked for from a callback while another function of its image
+   is, which holds the image's lock: it is made, or the entry raises Refused
+   and the function is made when asked for again. *)
+let test_entry_in_entry () =
+  opened @@ fun g bin ->
+  reentry @@ fun () ->
+  let i, r, _ = Rig_nv_support.image g bin in
+  let during () = entries i [ List.nth functions 0 ]
+  and call () = entries i [ List.nth functions 1 ]
+  and after () =
+    entries i functions;
+    N.unload g i;
+    N.free g r
+  in
+  (during, call, after)
+
+(* A stop from a callback in the first entry of a new device, which holds
+   the device's local memory lock as it grows that memory: the device
+   stops, after which an entry raises Fault, or the stop raises Refused and
+   leaves the device serving entries. *)
+let test_stop_in_local () =
+  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
+  let refusals = ref 0 in
+  walk_calls (fun n ->
+      let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
+      let i, r, _ = Rig_nv_support.image g bin in
+      let stopped = ref false in
+      let stop () =
+        N.stop g ~fault:None;
+        stopped := true
+      in
+      let reached =
+        Rig_support.interrupted ~landing:(Call (refusing refusals stop)) n
+          (fun () ->
+            try entries i [ last ] with N.Fault _ when !stopped -> ())
+      in
+      if !stopped then
+        raises_match
+          ~msg:(strf "from allocation %d, an entry after the stop" n)
+          (function N.Fault _ -> true | _ -> false)
+          (fun () -> entries i functions)
+      else begin
+        entries i functions;
+        N.stop g ~fault:None
+      end;
+      N.unload g i;
+      N.free g r;
+      reached);
+  greater ~msg:"stops refused" int ~than:0 !refusals
+
+(* The bytes of each region the memory walks make. *)
+let bytes = 4096
+
+let alloc g =
+  match N.alloc g Rig_edge.Device bytes with
+  | Some r -> r
+  | None -> fail "no GPU memory"
+
+(* A free from a callback in another free, which holds the path's lock on
+   the users of its memory: the region goes back, or the free raises Refused
+   and leaves it for a later free. *)
+let test_free_in_free () =
+  opened @@ fun g _ ->
+  reentry @@ fun () ->
+  let r = alloc g and r' = alloc g in
+  let freed = ref false in
+  let during () = N.free g r
+  and call () =
+    N.free g r';
+    freed := true
+  and after () = if not !freed then N.free g r' in
+  (during, call, after)
+
+(* An allocation from a callback in another allocation: the path takes
+   the GPU's addresses with no lock, so both are made, apart. *)
+let test_alloc_in_alloc () =
+  opened @@ fun g _ ->
+  walk_calls @@ fun n ->
+  let made = ref [] in
+  let keep () =
+    let r = alloc g in
+    made := r :: !made
+  in
+  let reached = Rig_support.interrupted ~landing:(Call keep) n keep in
+  equal ~msg:(strf "from allocation %d, the regions made" n) int
+    (if reached then 2 else 1)
+    (List.length !made);
+  (match List.map Rig_nv_support.address !made with
+  | [ a; b ] ->
+      at_least
+        ~msg:(strf "from allocation %d, the distance of %#x and %#x" n a b)
+        int ~than:bytes
+        (abs (a - b))
+  | _ -> ());
+  List.iter (N.free g) !made;
+  reached
+
+(* Through rig *)
+
+(* A function of an image asked for through rig from a callback while
+   another function of it is asked for: it is made, at once or when asked
+   for again, and the device is not lost. *)
+let test_entry_in_entry_rig () =
+  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  let t = Rig_nv_support.open_ () in
+  Fun.protect ~finally:(fun () -> Rig_nv_support.close t) @@ fun () ->
+  let d = t.d in
+  let refusals = ref 0 in
+  walk_calls (fun n ->
+      let i =
+        match
+          Rig.Image.load d (Rig_nv_support.fixture "locals_sm89.cubin")
+        with
+        | Ok i -> i
+        | Error why -> fail why
+      in
+      let call () =
+        try ignore (Rig.Image.mem i (List.nth functions 1))
+        with Invalid_argument _ -> incr refusals
+      in
+      let reached =
+        Rig_support.interrupted ~landing:(Call call) n (fun () ->
+            ignore (Rig.Image.mem i (List.nth functions 0)))
+      in
+      is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
+      equal ~msg:(strf "from allocation %d, the function" n) bool true
+        (Rig.Image.mem i (List.nth functions 1));
+      reached);
+  greater ~msg:"entries refused" int ~than:0 !refusals
+
 let () =
   exit
     (run "rig_nv interrupt"
@@ -109,4 +274,16 @@ let () =
                test_entries;
              test "of an image's unload leaves no launch held" test_unload;
            ];
+         group ~timeout "a call from a callback at any allocation"
+           [
+             test "an entry in an entry of its image answers, or raises Refused"
+               test_entry_in_entry;
+             test "a stop in a growth of local memory stops, or raises Refused"
+               test_stop_in_local;
+             test "a free in a free frees, or raises Refused" test_free_in_free;
+             test "an allocation in an allocation answers" test_alloc_in_alloc;
+           ];
+         group ~timeout
+           "a call to rig from a callback at any allocation keeps the device"
+           [ test "a function asked for while another is" test_entry_in_entry_rig ];
        ])

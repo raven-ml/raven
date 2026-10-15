@@ -6,7 +6,8 @@
 (* Any domain may call any function. A GPU's objects are made once, under
    [gpus_lock], and kept for the process, its registered channels and whether a
    device of it is open under the same lock; the users of every range are kept
-   under [ranges_lock].
+   under [ranges_lock]. Both, and the RM's client lock, are [Rig_nv.Lock]s,
+   none taken while another is held; the GPUs' addresses ([Va]) take none.
 
    References:
    - NVIDIA's open-gpu-kernel-modules, releases 570.144, 580, 610 and 615:
@@ -104,7 +105,7 @@ and range = {
 }
 
 let key : mem Type.Id.t = Type.Id.make ()
-let gpus_lock = Mutex.create ()
+let gpus_lock = Rig_nv.Lock.create ()
 
 (* [f] over a file of [g]'s the RM maps memory through: each mapping has its
    own, as the driver keeps one mapping context per file. [Ok None] if the
@@ -409,7 +410,7 @@ let alloc g (kind : Rig_edge.memory) n =
              allocated g ~video:(Some g.index) ~host ~space h va size)
            v)
 
-let ranges_lock = Mutex.create ()
+let ranges_lock = Rig_nv.Lock.create ()
 
 (* Counts a region of [g] over [r], mapping [r] for [g] first if [g] has none:
    whether [g] maps it. Under [ranges_lock]. *)
@@ -426,7 +427,7 @@ let take g r =
 (* Ends a region of [g] over [r]: [g]'s last unmaps [r] for [g], and the last
    of all frees [r] and its object. *)
 let give g r =
-  Mutex.protect ranges_lock @@ fun () ->
+  Rig_nv.Lock.protect ranges_lock @@ fun () ->
   match List.assq_opt g r.users with
   | Some k when k > 1 -> r.users <- (g, k - 1) :: List.remove_assq g r.users
   | Some _ | None ->
@@ -484,7 +485,7 @@ let map_peer g (m : mem Rig_nv.memory) =
   let refused = function Some u -> List.mem u g.refused | None -> false in
   if refused viewed.video then None
   else
-    Mutex.protect ranges_lock @@ fun () ->
+    Rig_nv.Lock.protect ranges_lock @@ fun () ->
     if take g viewed.range then Some (memory viewed) else None
 
 let free g (m : mem Rig_nv.memory) = give g m.data.range
@@ -514,7 +515,7 @@ let register g ch =
       Va.free g.c.low base channel_range;
       e
   | Ok () ->
-      Mutex.protect gpus_lock (fun () ->
+      Rig_nv.Lock.protect gpus_lock (fun () ->
           g.channels <- (ch, base) :: g.channels);
       Ok ()
 
@@ -530,7 +531,7 @@ let unregister g ch =
       "unregistering a GPU channel"
   in
   let gone =
-    Mutex.protect gpus_lock @@ fun () ->
+    Rig_nv.Lock.protect gpus_lock @@ fun () ->
     let gone, kept = List.partition (fun (c, _) -> c = ch) g.channels in
     g.channels <- kept;
     gone
@@ -844,7 +845,7 @@ let enable_peers g others =
     others
 
 let gpu c ~dev ~index bus =
-  Mutex.protect gpus_lock @@ fun () ->
+  Rig_nv.Lock.protect gpus_lock @@ fun () ->
   match List.assoc_opt bus !gpus with
   | Some g -> Ok g
   | None ->
@@ -879,7 +880,7 @@ let path g =
     clock = Rig_nv.Source g.clock;
     stop =
       (fun () ->
-        Mutex.protect gpus_lock (fun () -> g.opened <- false);
+        Rig_nv.Lock.protect gpus_lock (fun () -> g.opened <- false);
         `Unknown);
   }
 
@@ -908,7 +909,7 @@ let open_ ?(root = "/") ~word i =
       let* c = Rm.client ~dev in
       let* g = gpu c ~dev ~index:i bus in
       let claimed =
-        Mutex.protect gpus_lock @@ fun () ->
+        Rig_nv.Lock.protect gpus_lock @@ fun () ->
         let free = not g.opened in
         g.opened <- true;
         free
@@ -918,7 +919,7 @@ let open_ ?(root = "/") ~word i =
         match Rig_nv.make ~word (path g) with
         | Ok d -> Ok d
         | Error _ as e ->
-            Mutex.protect gpus_lock (fun () -> g.opened <- false);
+            Rig_nv.Lock.protect gpus_lock (fun () -> g.opened <- false);
             e)
 
 let gpu ?root i : Rig_nv.t Rig_edge.opener =

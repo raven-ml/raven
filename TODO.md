@@ -53,13 +53,22 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check; `launch` leaks its C launch when `grow_scratch` raises
-- refusals: rig.nv's `grow`, `count`, `stop`, `entry` and `unload` hold a
-  `Mutex`: refuse a re-entered call with `Rig_nv.Refused`
 - refusals: the remote proxy's `launches_lock`: refuse a re-entered call
   with `Rig_remote_proxy.Refused`
 - refusals: rig.disk's table lock, a `Mutex` that its io `free` takes and
   that `read`, `write` and `pages` take to reopen a file: refuse a
   re-entered call with its io library's `Refused`
+- refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
+  `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
+  (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves
+  GPU 2 held for good): atomic `held` and `spent`, release the function
+  outside `holds`, run `Gsp.sys`, `give_back` and `Machine.reserve` under a
+  path lock
+- refusals: a `Rig.open_` of a name from a callback inside that name's own
+  open waits forever in `Dev.find`
+- rig.metal: off macOS, `(Rig_metal.gpu 0).make` aborts the process:
+  `open_` makes its guard, whose stub aborts there, before `open_device`
+  answers "Metal exists on macOS only" (test_metal aborts on Linux)
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows

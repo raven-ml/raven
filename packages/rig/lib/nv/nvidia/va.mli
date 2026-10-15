@@ -6,8 +6,9 @@
 (** A range of addresses the process hands out.
 
     The GPU's addresses of the process's memory: first fit over the free ranges,
-    which a free merges with its neighbours. Any domain may call any function.
-*)
+    which a free merges with its neighbours. Any domain may call any function,
+    also from a signal handler, finaliser or [Gc.Memprof] callback that
+    interrupts another call on the same thread. *)
 
 type t
 (** The type for ranges of addresses. *)

@@ -49,6 +49,15 @@
     {!signaled}, {!val-free} and {!val-stop} never raise it, and {!make}
     returns it as [Error].
 
+    A call from a signal handler, finaliser or [Gc.Memprof] callback may
+    raise {!Refused}, having changed nothing, when the callback interrupts a
+    call of any NVIDIA device on the same thread inside one of its locks.
+    Locks are of three kinds, taken in this order: an image's, which
+    {!entry} and {!unload} hold; a device's local memory lock, which
+    {!entry} and {!val-stop} hold; and a path's ({!Lock}). A call is
+    refused where it would take a lock of the kind the interrupted call
+    holds or of an earlier kind.
+
     Compiled code finds the record its launch descriptors depend on under
     {!Rig_nv_abi.Gpu.key}:
     {[
@@ -429,10 +438,44 @@ type 'm path = {
 }
 (** The type for what a path gives a device. Each function must return the
     RM's refusal as its result and raise {!Fault} for any other failure, and
-    must allow any domain to call it at the same time as others. After the
-    device's {!val-stop}, the device calls only [free] and [reaches]. It keeps
-    [free] until it has given back all the memory the path gave, and
-    [reaches] for the life of the process. *)
+    must allow any domain to call it at the same time as others. It takes
+    its locks with {!Lock.protect}, never one inside another, and [alloc],
+    [map_host], [map_peer] and [free] take their first lock before they
+    change anything. A path's opener takes one of its locks before it
+    changes anything or calls {!make}; {!val-stop} takes its own before it
+    calls [unregister] and [stop]. A thread's locks do not change during a
+    call, so a call whose first take succeeded is refused no later one.
+    After the device's {!val-stop}, the device calls only [free] and
+    [reaches]. It keeps [free] until it has given back all the memory the
+    path gave, and [reaches] for the life of the process. *)
+
+(** {2:locks A path's locks}
+
+    For a path's implementation. A path that holds a lock across OCaml code
+    takes it with {!Lock.protect}, so that a signal handler, finaliser or
+    [Gc.Memprof] callback that interrupts that code and calls the driver is
+    refused ({!Refused}) and does not wait for good. *)
+
+module Lock : sig
+  type t
+  (** The type for a path's locks. *)
+
+  val create : unit -> t
+  (** [create ()] is a new lock. A thread may take it while it holds an
+      image's lock or a device's local memory lock. *)
+
+  val protect : t -> (unit -> 'a) -> 'a
+  (** [protect l f] is [f ()] run holding [l], which it gives back as [f]
+      returns or raises. A path holds one of its locks at a time.
+
+      Raises {!Refused}, having taken nothing, if the calling thread holds a
+      path's lock, as a callback that interrupts a section does. *)
+
+  val try_protect : t -> (unit -> unit) -> bool
+  (** [try_protect l f] is [true] once [f ()] ran as in {!protect}, or
+      [false], having run nothing, if another thread holds [l] or the
+      calling thread holds a path's lock. It never waits. *)
+end
 
 val make : word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is the device of the GPU [p] reaches, whose timeline word

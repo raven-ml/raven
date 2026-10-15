@@ -108,7 +108,7 @@ type gpu = {
   index : int;
   fn : Function.t;
   memory : Memory.t;
-  lock : Mutex.t; (* its memory, page tables and names *)
+  lock : Rig_nv.Lock.t; (* its memory, page tables and names *)
   fault : string option Atomic.t;
   mutable names : names option; (* [None] once stopped *)
 }
@@ -123,37 +123,39 @@ and names = { mutable regions : Memory.region Handles.t; mutable next : int }
    them, and each GPU's reach as its last open found it, by number. A GPU's
    reach is the same at every open ([Memory.reach]), so a device's [reaches]
    answers from its GPU's number alone, also once it is lost, and keeps nothing
-   of the device. *)
+   of the device. [reaches] takes no lock, as [Rig_nv.peer] must not block:
+   the reaches change by swaps of lists made from the one read. *)
 type known = {
   key : Memory.region Type.Id.t;
-  mutable reached : (int * Memory.reach) list;
+  reached : (int * Memory.reach) list Atomic.t;
 }
 
 let machines : (Machine.t * known) list ref = ref []
-let machines_lock = Mutex.create ()
+let machines_lock = Rig_nv.Lock.create ()
 
 let known m =
-  Mutex.protect machines_lock @@ fun () ->
+  Rig_nv.Lock.protect machines_lock @@ fun () ->
   match List.assq_opt m !machines with
   | Some on -> on
   | None ->
-      let on = { key = Type.Id.make (); reached = [] } in
+      let on = { key = Type.Id.make (); reached = Atomic.make [] } in
       machines := (m, on) :: !machines;
       on
 
-let learn on index reach =
-  Mutex.protect machines_lock @@ fun () ->
-  on.reached <- (index, reach) :: List.remove_assoc index on.reached
+let rec learn on index reach =
+  let l = Atomic.get on.reached in
+  let l' = (index, reach) :: List.remove_assoc index l in
+  if not (Atomic.compare_and_set on.reached l l') then learn on index reach
 
 let reaches on ~index j =
-  let reach () =
-    match (List.assoc_opt index on.reached, List.assoc_opt j on.reached) with
-    | Some r, Some o -> Memory.reaches r o
-    | _ -> false
-  in
-  j = index || Mutex.protect machines_lock reach
+  let l = Atomic.get on.reached in
+  j = index
+  ||
+  match (List.assoc_opt index l, List.assoc_opt j l) with
+  | Some r, Some o -> Memory.reaches r o
+  | _ -> false
 
-let protect g f = Mutex.protect g.lock f
+let protect g f = Rig_nv.Lock.protect g.lock f
 
 let host r =
   match Memory.host r with
@@ -265,7 +267,7 @@ let started hold (c : Chip.t) =
         (strf "%s still runs the GSP's firmware after its reset"
            (Function.bus c.fn))
 
-let device ~word g ~gsp ~hold ~tables (c : Chip.t) =
+let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
     match c.family with
     | Blackwell ->
@@ -276,7 +278,6 @@ let device ~word g ~gsp ~hold ~tables (c : Chip.t) =
   let* rm = Gsp.rm gsp ~locate:(locate g) in
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
-  let on = known (Function.machine g.fn) in
   (* The flush word's page lives with the GPU's memory until the stop. A GPU
      whose BAR has no room for it opens without Mapped memory. *)
   let* flush =
@@ -352,7 +353,7 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
 (* The GPU's registers and doorbell are written from the process and from C: a
    machine whose windows the process does not map is refused before the first
    write. *)
-let boot ~word ~firmware ~index h fn =
+let boot ~word ~on ~firmware ~index h fn =
   let machine = Function.machine fn in
   let* c = Chip.of_function fn in
   let* () =
@@ -390,19 +391,23 @@ let boot ~word ~firmware ~index h fn =
       index;
       fn;
       memory = Memory.create fn tables ~bar:memory_bar;
-      lock = Mutex.create ();
+      lock = Rig_nv.Lock.create ();
       fault;
       names = Some { regions = Handles.empty; next = 1 };
     }
   in
-  match device ~word g ~gsp ~hold:h ~tables c with
+  match device ~word ~on g ~gsp ~hold:h ~tables c with
   | Ok d ->
-      learn (known machine) index (Memory.reach g.memory);
+      learn on index (Memory.reach g.memory);
       Ok d
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
+(* [known] takes the path's first lock before the open changes anything, so
+   that an open refused for a lock its thread holds ({!Rig_nv.Lock.protect})
+   leaves the GPU untouched. *)
 let open_ ?(machine = Machine.this) ~word ~firmware i =
-  Gpus.open_ gpus machine i (boot ~word ~firmware ~index:i)
+  let on = known machine in
+  Gpus.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
 
 (* Changes to the machine *)
 

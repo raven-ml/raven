@@ -8,6 +8,19 @@
    time for each device; [local] holds the device's lock while it grows the
    local memory, and [stop] while it drops the device's live state.
 
+   Every lock of the driver's and of its paths is a guard of one of three
+   kinds, ranked in this order: an image's, a device's local memory lock, a
+   path's. A thread takes a guard inside another only if it is of a later
+   kind, so no path lock is taken inside another and no two threads wait
+   for each other; guards of one kind are taken one after another. A take
+   while the thread holds a guard of the same or a later kind, as a signal
+   handler, finaliser or Gc.Memprof callback inside a section would, raises
+   [Refused] before it takes anything. Each call takes its first guard
+   before it changes anything, and later ones of no earlier kind. The
+   guards its thread held as it began stay held until it returns, so a call
+   whose first take succeeded is refused no later one, and a refusal
+   changes nothing.
+
    References:
    - NVIDIA's open-gpu-kernel-modules, releases 570.144, 580, 610 and 615:
      the RM's classes and controls in src/common/sdk/nvidia/inc (cl0080.h,
@@ -30,6 +43,56 @@ let ( let* ) = Result.bind
 
 exception Fault of string
 exception Refused of string
+
+let () = Callback.register_exception "Rig_nv.Refused" (Refused "")
+
+(* Locks *)
+
+type lock
+
+external guard : int -> lock = "caml_rig_nv_guard"
+external take_guard : lock -> unit = "caml_rig_nv_guard_take"
+external try_guard : lock -> bool = "caml_rig_nv_guard_try" [@@noalloc]
+external give_guard : lock -> unit = "caml_rig_nv_guard_give" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* The ranks of locks, in the order a thread takes them. *)
+let image_rank = 0
+let local_rank = 1
+let path_rank = 2
+
+(* [l] is taken as the last step before the handler and given back as the
+   first step of both exits, where nothing allocates or polls, so an
+   exception anywhere in [f], an asynchronous one too, leaves it free. *)
+let protect l f =
+  take_guard l;
+  match f () with
+  | x ->
+      give_guard l;
+      x
+  | exception e ->
+      give_guard l;
+      reraise e
+
+let try_protect l f =
+  try_guard l
+  && begin
+    match f () with
+    | () ->
+        give_guard l;
+        true
+    | exception e ->
+        give_guard l;
+        reraise e
+  end
+
+module Lock = struct
+  type t = lock
+
+  let create () = guard path_rank
+  let protect = protect
+  let try_protect = try_protect
+end
 
 (* Paths *)
 
@@ -307,9 +370,8 @@ type 'm dev = {
   reaches : int -> bool; (* the path's *)
   capability : Abi.Gpu.t;
   flush : int option; (* the path's flush word *)
-  flush_lock : Mutex.t; (* serialises count_flush *)
   word : 'm reg; (* kept, with the C state, for the process *)
-  local_lock : Mutex.t; (* held by [grow], and by stop over [live] *)
+  local_lock : lock; (* held by [grow], and by stop over [live] *)
   mutable live : 'm live option; (* [None] once stop began *)
 }
 
@@ -461,7 +523,7 @@ type grown = Served | Stopped | Short of int
    [Short bytes] if the GPU has no memory for the [bytes] that takes. Raises
    [Fault] if the path does. *)
 let grow d n =
-  Mutex.protect d.local_lock @@ fun () ->
+  protect d.local_lock @@ fun () ->
   match d.live with
   | None -> Stopped
   | Some l -> (
@@ -853,8 +915,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
           };
         word = { dev = d; mem = word_mem; free = p.free; bytes = 8; flush = None };
         flush = p.flush;
-        flush_lock = Mutex.create ();
-        local_lock = Mutex.create ();
+        local_lock = guard local_rank;
         live =
           Some
             {
@@ -919,8 +980,7 @@ let region d (p : _ path) flush bytes m =
 
 (* Counts [delta] regions written through the BAR of the flush word [w] in
    [d]'s flushes: [false] if [d] has no free entry for [w]. *)
-let count d w delta =
-  Mutex.protect d.flush_lock (fun () -> count_flush d.self w delta)
+let count d w delta = count_flush d.self w delta
 
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
@@ -1001,7 +1061,7 @@ type image = {
   cubin : Cubin.t;
   gpu : Abi.Gpu.t;
   grow : int -> grown; (* its device's [grow] *)
-  lock : Mutex.t;
+  lock : lock;
   mutable entries : Rig_edge.entry Names.t;
   mutable launches : nativeint list; (* the entries' *)
 }
@@ -1018,7 +1078,7 @@ let lay d c r =
       cubin = c;
       gpu = d.capability;
       grow = grow d;
-      lock = Mutex.create ();
+      lock = guard image_rank;
       entries = Names.empty;
       launches = [];
     }
@@ -1068,7 +1128,7 @@ let set_up c name (k : Cubin.kernel) =
           Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ()))
 
 let entry c name =
-  Mutex.protect c.lock @@ fun () ->
+  protect c.lock @@ fun () ->
   match Names.find_opt name c.entries with
   | Some e -> Rig_edge.Entry e
   | None -> (
@@ -1077,16 +1137,17 @@ let entry c name =
       | Some k -> set_up c name k)
 
 (* An image holds of its device its code region, which rig frees, and its
-   functions' launches. rig unloads an image once, so the unload allocates
-   nothing and polls nowhere: an exception cannot end it with launches
-   held. *)
+   functions' launches. rig unloads an image once, a refused unload counting
+   as not made, so the unload allocates nothing and polls nowhere, the take
+   included: an exception cannot end it with launches held. The take's
+   [Refused] ends it before it changed anything. *)
 let unload (T _) c =
-  Mutex.lock c.lock;
+  take_guard c.lock;
   let launches = c.launches in
   c.entries <- Names.empty;
   c.launches <- [];
   free_launches launches;
-  Mutex.unlock c.lock
+  give_guard c.lock
 
 (* Timeline *)
 
@@ -1218,11 +1279,11 @@ let halt d l =
        release its own values. *)
   else if notification d.self 0 <> 0 && notification d.self 1 <> 0 then
     raise_word d.self;
-  Mutex.protect d.flush_lock (fun () -> end_state d.self stopped)
+  end_state d.self stopped
 
 let stop (T d) ~fault:_ =
   let l =
-    Mutex.protect d.local_lock @@ fun () ->
+    protect d.local_lock @@ fun () ->
     let l = d.live in
     d.live <- None;
     l

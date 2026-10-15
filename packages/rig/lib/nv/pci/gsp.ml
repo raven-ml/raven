@@ -57,7 +57,7 @@ module Channels = Map.Make (Int)
 type t = {
   p : placement;
   q : Msgq.t;
-  lock : Mutex.t;
+  lock : Rig_nv.Lock.t;
   libos : int; (* the libos arguments' bus address, for a resumption *)
   meta : int; (* the WPR metadata's bus address *)
   start : start;
@@ -284,26 +284,15 @@ let send g fn body =
     "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body)
 
 let call g fn body =
-  Mutex.protect g.lock (fun () ->
+  Rig_nv.Lock.protect g.lock (fun () ->
       let* () = send g fn body in
       wait_for g fn)
-
-external reraise : exn -> 'a = "%reraise"
 
 (* Every error of a drain is recorded as the GPU's fault inside it. *)
 let drained g = ignore (drain g ~want:None : (_, _) result)
 
-(* The lock is taken as the last step before the handler and given back as the
-   first step of both exits, so an exception in the drain, an asynchronous one
-   too, leaves it free for the next call and the stop's unload. *)
 let check g =
-  if Mutex.try_lock g.lock then begin
-    match drained g with
-    | () -> Mutex.unlock g.lock
-    | exception e ->
-        Mutex.unlock g.lock;
-        reraise e
-  end;
+  ignore (Rig_nv.Lock.try_protect g.lock (fun () -> drained g) : bool);
   g.fault
 
 let unload g =
@@ -852,7 +841,7 @@ let take p (fw : Images.t) fwsec ~taken =
     {
       p;
       q;
-      lock = Mutex.create ();
+      lock = Rig_nv.Lock.create ();
       libos = first libos;
       meta = first meta;
       start;
@@ -928,7 +917,7 @@ let boot g =
       (fun () -> Msgq.ready g.q)
   in
   let* _ =
-    Mutex.protect g.lock (fun () ->
+    Rig_nv.Lock.protect g.lock (fun () ->
         wait_for g Defs.nv_vgpu_msg_event_gsp_init_done)
   in
   Chip.set c Defs.nv_pbus_bar1_block 0;

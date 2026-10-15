@@ -96,4 +96,5 @@ val check : t -> string option
     one that interrupts a CPU sequence the GSP asked for counts as a fault,
     since a sequence runs once, front to back. It never waits for the GSP's
     lock: while a call holds it, the call's own reads handle the events, and
-    [check] returns what they found. *)
+    [check] returns what they found. It handles none while the calling
+    thread holds a path's lock ({!Rig_nv.Lock.try_protect}). *)
