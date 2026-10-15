@@ -126,7 +126,8 @@ let gate ag =
       done)
 
 (* The binary the host loads lists its functions, separated by commas; one that
-   starts with "bad" is refused. *)
+   starts with "bad" is refused. Its answer states no bound of threads for
+   each function. *)
 let functions = Hashtbl.create 8
 
 let answer : type a. agent -> a Wire.request -> (a, string) result =
@@ -150,8 +151,9 @@ let answer : type a. agent -> a Wire.request -> (a, string) result =
       if String.starts_with ~prefix:"bad" binary then
         Error "the agent refuses it"
       else begin
-        Hashtbl.replace functions id (String.split_on_char ',' binary);
-        Ok [||]
+        let fs = String.split_on_char ',' binary in
+        Hashtbl.replace functions id fs;
+        Ok (Array.of_list (List.map (fun _ -> None) fs))
       end
   | Wire.Entry { image; name } -> (
       match Hashtbl.find_opt functions image with

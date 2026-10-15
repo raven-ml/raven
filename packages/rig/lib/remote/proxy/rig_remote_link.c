@@ -47,10 +47,14 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/callback.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 #include <caml/threads.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -1813,4 +1817,76 @@ value caml_rig_remote_link_release_rail(value vl, value id) {
   caml_acquire_runtime_system();
   if (r != NULL) rail_free(r);
   CAMLreturn(Val_unit);
+}
+
+/* Stubs: guards */
+
+/* A guard: a mutex of its own memory, which a custom block holds and
+   destroys once collected. No section takes a second guard, so a thread
+   holds at most one: a signal handler, finaliser or Gc.Memprof callback
+   that runs while its thread holds a guard and takes one would wait for
+   good on its own, or take two in no fixed order. */
+#define Guard_val(v) (*(pthread_mutex_t **)Data_custom_val(v))
+
+/* Whether this thread holds a guard. */
+static _Thread_local int holding;
+
+static void guard_finalize(value v) {
+  pthread_mutex_t *m = Guard_val(v);
+  if (m == NULL) return;
+  pthread_mutex_destroy(m);
+  free(m);
+}
+
+static struct custom_operations guard_ops = {
+    "rig.remote.proxy.guard",   guard_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_remote_link_guard(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&guard_ops, sizeof(pthread_mutex_t *), 0, 1);
+  Guard_val(v) = NULL;
+  pthread_mutex_t *m = malloc(sizeof *m);
+  if (m == NULL) caml_raise_out_of_memory();
+  int err = pthread_mutex_init(m, NULL);
+  if (err != 0) {
+    free(m);
+    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
+    char why[96];
+    snprintf(why, sizeof why, "Rig_remote_proxy: a guard: %s", strerror(err));
+    caml_failwith(why);
+  }
+  Guard_val(v) = m;
+  CAMLreturn(v);
+}
+
+/* Takes the guard [v_g], and is true: by try-lock, and otherwise after
+   releasing the runtime without running pending signal handlers, which run
+   at the caller's next poll point. Is false, having taken nothing, if this
+   thread holds a guard. No exception can end the take, so a caller that
+   takes it as the last step before its handler gives it back on every
+   exit. */
+value caml_rig_remote_link_guard_take(value v_g) {
+  if (holding) return Val_false;
+  pthread_mutex_t *m = Guard_val(v_g);
+  if (pthread_mutex_trylock(m) != 0) {
+    caml_enter_blocking_section_no_pending();
+    int err = pthread_mutex_lock(m);
+    caml_leave_blocking_section();
+    if (err != 0) {
+      fprintf(stderr, "Rig_remote_proxy: a guard: %s\n", strerror(err));
+      abort();
+    }
+  }
+  holding = 1;
+  return Val_true;
+}
+
+value caml_rig_remote_link_guard_give(value v_g) {
+  holding = 0;
+  pthread_mutex_unlock(Guard_val(v_g));
+  return Val_unit;
 }

@@ -1,12 +1,19 @@
 (tests
  (names test_wire test_link test_link_fail test_proxy test_proxy_fail
-  test_rail_release)
- (modules :standard \ rig_link_probe)
+  test_rail_release test_interrupt)
+ (modules :standard \ rig_link_probe test_link_alone)
  (deps
   support/link_peer.exe
   (glob_files ../../fixtures/*.o))
  (libraries rig rig_edge rig_gpu_support rig_link_probe rig_remote_proxy
   rig_remote_abi rig_support unix rig_host_support threads.posix windtrap))
+
+; Links Rig_remote_proxy.Link without the driver's module.
+
+(test
+ (name test_link_alone)
+ (modules test_link_alone)
+ (libraries rig_remote_proxy rig_support threads.posix unix windtrap))
 
 (library
  (name rig_link_probe)

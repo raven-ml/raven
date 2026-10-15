@@ -74,6 +74,12 @@
     that waits, for the socket, an answer, a message or the job, releases the
     runtime while it waits.
 
+    {!next} and {!answer} each hold a lock of their link while they run.
+    Called from a signal handler, finaliser or [Gc.Memprof] callback that
+    interrupts a [next] or an [answer] of any link on the same thread,
+    either raises [Rig_remote_proxy.Refused] and changes nothing, since
+    waiting for a lock there could wait for good.
+
     A job and its links are never freed, because proxies' C state holds their
     addresses. A link that has ended keeps its name and reason. *)
 
@@ -176,7 +182,10 @@ val next : t -> (Wire.command, string) result
     any thread calls [next]. The link may then keep their memory, up to
     128 MiB of it, for later commands to land in until [next] gives the close,
     so a stream of large [Handover] commands lands in memory already
-    mapped. *)
+    mapped.
+
+    Raises [Rig_remote_proxy.Refused] from a callback inside a [next] or an
+    [answer] on the same thread ({!section-domains}). *)
 
 val answer : t -> 'a Wire.request -> ('a, string) result -> unit
 (** [answer l r a] sends [a] as the answer to [r]. [Error why] refuses [r] with
@@ -185,7 +194,9 @@ val answer : t -> 'a Wire.request -> ('a, string) result -> unit
     not the oldest unanswered raises, as below.
 
     Raises [Invalid_argument] if [r] is not, physically, the oldest request
-    {!next} gave and none answered. *)
+    {!next} gave and none answered. Raises [Rig_remote_proxy.Refused] from a
+    callback inside a [next] or an [answer] on the same thread
+    ({!section-domains}). *)
 
 val word : t -> device:int -> int -> unit
 (** [word l ~device v] sends that the work of [device] up to [v] is done. *)

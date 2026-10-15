@@ -53,8 +53,6 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check; `launch` leaks its C launch when `grow_scratch` raises
-- refusals: the remote proxy's `launches_lock`: refuse a re-entered call
-  with `Rig_remote_proxy.Refused`
 - refusals: rig.disk's table lock, a `Mutex` that its io `free` takes and
   that `read`, `write` and `pages` take to reopen a file: refuse a
   re-entered call with its io library's `Refused`
@@ -66,6 +64,8 @@ raven / llama.cpp (Vulkan; ROCm):
   path lock
 - refusals: a `Rig.open_` of a name from a callback inside that name's own
   open waits forever in `Dev.find`
+- refusals: rig.remote's agent.ml and rig_remote.ml still take `Mutex`es a
+  callback can re-enter: refuse with its own guards
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows

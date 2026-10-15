@@ -355,15 +355,49 @@ external ready_fn : unit -> nativeint = "caml_rig_remote_link_ready_fn"
 external release_rail_c : nativeint -> int -> unit
   = "caml_rig_remote_link_release_rail"
 
+(* Guards *)
+
+(* A guard, a mutex whose take runs no signal handler. A take while the
+   thread holds a guard, as a callback inside a section would, is false and
+   takes nothing. *)
+type guard
+
+external guard : unit -> guard = "caml_rig_remote_link_guard"
+external take_guard : guard -> bool = "caml_rig_remote_link_guard_take"
+
+external give_guard : guard -> unit = "caml_rig_remote_link_guard_give"
+[@@noalloc]
+
+external reraise : exn -> 'a = "%reraise"
+
+let refused =
+  "Rig_remote_proxy: called from a signal handler, finaliser or Gc.Memprof \
+   callback while this thread holds a lock of a link's"
+
+(* [protect g f] is [f ()] under the guard [g], taken as the last step
+   before the handler and given back as the first step of both exits, where
+   nothing allocates or polls, so an exception anywhere in [f], an
+   asynchronous one too, leaves it free. Raises [Refusal.Refused] if the
+   thread holds a guard. *)
+let protect g f =
+  if not (take_guard g) then raise (Refusal.Refused refused);
+  match f () with
+  | x ->
+      give_guard g;
+      x
+  | exception e ->
+      give_guard g;
+      reraise e
+
 (* The C state's address comes first: the proxies' C reads it there. *)
 type t = {
   c : nativeint;
   job : job;
   name : string;
-  lock : Mutex.t; (* [asked] *)
-  asked : any Queue.t; (* requests [next] gave, unanswered, oldest first *)
-  next_lock : Mutex.t; (* held across a [next] *)
-  answer_lock : Mutex.t; (* held across an [answer]'s check and send *)
+  asked : any list Atomic.t;
+      (* requests [next] gave, unanswered, newest first *)
+  next_lock : guard; (* held across a [next] *)
+  answer_lock : guard; (* held across an [answer]'s check and send *)
 }
 
 let make job fd ~name ~peer =
@@ -374,10 +408,9 @@ let make job fd ~name ~peer =
     c;
     job;
     name;
-    lock = Mutex.create ();
-    asked = Queue.create ();
-    next_lock = Mutex.create ();
-    answer_lock = Mutex.create ();
+    asked = Atomic.make [];
+    next_lock = guard ();
+    answer_lock = guard ();
   }
 
 let name l = l.name
@@ -437,17 +470,30 @@ let drop l id =
 
 (* Answers carry no request id: the peer pairs them with its requests by wire
    order. So a [next] dequeues and records its request in one step, and an
-   [answer] checks, pops and sends in one step, each under its own lock: a
-   [next] waiting for a frame holds up no answer. *)
+   [answer] checks, pops and sends in one step, each under its own guard: a
+   [next] waiting for a frame holds up no answer. The record of requests
+   changes by atomic swaps, so neither guard is taken inside the other. *)
+let rec push l r =
+  let a = Atomic.get l.asked in
+  if not (Atomic.compare_and_set l.asked a (r :: a)) then push l r
+
+(* Pops [q] if it is the oldest unanswered request: whether it did. *)
+let rec pop_oldest l q =
+  let a = Atomic.get l.asked in
+  match List.rev a with
+  | Any q' :: older when Obj.repr q' == Obj.repr q ->
+      Atomic.compare_and_set l.asked a (List.rev older) || pop_oldest l q
+  | _ -> false
+
 let next l =
-  Mutex.protect l.next_lock @@ fun () ->
+  protect l.next_lock @@ fun () ->
   let k, a, n = next_c l.c in
   let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
   match
     if k = 0 then Error (text a)
     else if k = k_request then begin
       let (Any q) = decode_request r in
-      Mutex.protect l.lock (fun () -> Queue.push (Any q) l.asked);
+      push l (Any q);
       Ok (Wire.Request q)
     end
     else if k = k_handover then Ok (decode_handover r)
@@ -469,16 +515,8 @@ let answer l q a =
             add_u8 b 1;
             add_string b (cut why))
   in
-  Mutex.protect l.answer_lock @@ fun () ->
-  let oldest =
-    Mutex.protect l.lock @@ fun () ->
-    match Queue.peek_opt l.asked with
-    | Some (Any q') when Obj.repr q' == Obj.repr q ->
-        ignore (Queue.pop l.asked);
-        true
-    | _ -> false
-  in
-  if not oldest then
+  protect l.answer_lock @@ fun () ->
+  if not (pop_oldest l q) then
     invalid_arg
       "Rig_remote_proxy.Link.answer: the request is not the oldest unanswered";
   post l.c k_answer payload

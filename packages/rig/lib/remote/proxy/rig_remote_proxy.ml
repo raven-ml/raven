@@ -9,7 +9,7 @@ module Link = Link
 let strf = Printf.sprintf
 
 exception Fault of string
-exception Refused of string
+exception Refused = Refusal.Refused
 
 (* A region is memory of the agent, named by its id, or a proxy's word: its
    agent's id and the shadow's host address. *)
@@ -127,13 +127,19 @@ let map_host _ _ _ = None
 (* Code *)
 
 (* What the agents stated of each program they loaded, by id, until its
-   unload: the most threads a group of each of its launches has. *)
-let launches = Hashtbl.create 16
-let launches_lock = Mutex.create ()
+   unload: the most threads a group of each of its launches has. It changes
+   by atomic swaps and takes no lock, so a signal handler, finaliser or
+   Gc.Memprof callback inside a load or an unload may load or unload too. *)
+module Ids = Map.Make (Int)
+
+let launches = Atomic.make Ids.empty
+
+let rec change f =
+  let m = Atomic.get launches in
+  if not (Atomic.compare_and_set launches m (f m)) then change f
 
 let threads id =
-  Mutex.protect launches_lock (fun () ->
-      Option.value ~default:[||] (Hashtbl.find_opt launches id))
+  Option.value ~default:[||] (Ids.find_opt id (Atomic.get launches))
 
 let image d binary =
   if d.account.id <> 0 then Error (strf "%s loads no code" d.account.name)
@@ -141,8 +147,7 @@ let image d binary =
     let id = Link.fresh () in
     match request d.link (Wire.Load { id; binary }) with
     | Ok limits ->
-        Mutex.protect launches_lock (fun () ->
-            Hashtbl.replace launches id limits);
+        change (Ids.add id limits);
         Ok (Rig_edge.Loaded { id; link = d.link })
     | Error why -> Error why
 
@@ -153,7 +158,7 @@ let entry (i : image) name =
   | Ok None | Error _ -> Absent
 
 let unload d (i : image) =
-  Mutex.protect launches_lock (fun () -> Hashtbl.remove launches i.id);
+  change (Ids.remove i.id);
   Link.drop d.link i.id
 
 (* Timeline *)
