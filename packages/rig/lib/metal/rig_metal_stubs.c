@@ -610,6 +610,14 @@ value caml_rig_metal_open(value v_word) {
   return Val_long(-not_macos);
 }
 
+/* A placeholder: open makes its device's guard before it asks for the
+   device, so that a failure to make one leaves nothing open, and off macOS
+   nothing takes it. */
+value caml_rig_metal_guard(value v_rank) {
+  (void)v_rank;
+  return Val_unit;
+}
+
 /* Unreachable: off macOS no device opens, so nothing reaches a stub that
    serves one. */
 CAMLnoret static void no_metal(void) { abort(); }
@@ -621,7 +629,6 @@ CAMLnoret static void no_metal(void) { abort(); }
 #define NO_METAL3(f) \
   value f(value a, value b, value c) { (void)a, (void)b, (void)c, no_metal(); }
 
-NO_METAL1(caml_rig_metal_guard)
 NO_METAL1(caml_rig_metal_guard_take)
 NO_METAL1(caml_rig_metal_guard_give)
 NO_METAL1(caml_rig_metal_facts)

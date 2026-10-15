@@ -68,9 +68,6 @@ raven / llama.cpp (Vulkan; ROCm):
   open waits forever in `Dev.find`
 - rig.nv: test_interrupt's "stop in local" takes 28 s on fudge (a device
   opened per attempt): make it fast at its cause
-- rig.metal: off macOS, `(Rig_metal.gpu 0).make` aborts the process:
-  `open_` makes its guard, whose stub aborts there, before `open_device`
-  answers "Metal exists on macOS only" (test_metal aborts on Linux)
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
