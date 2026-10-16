@@ -9,40 +9,37 @@ Every subcommand accepts `--root DIR` to override the default store location
 List tracked runs. Output is tab-separated: ID, experiment, status, parent,
 name, git commit.
 
-<!-- $MDX skip -->
 ```
 munin runs
 ```
 
 ```
-20260317T143201_abc  mnist-sweep  finished  -        lr-0.001  a1b2c3d
-20260317T141502_def  mnist-sweep  finished  -        lr-0.01   a1b2c3d
-20260317T140003_ghi  cifar10      running   -        baseline  e4f5a6b
+2026-03-17_14-32-01_a1f3  mnist-sweep  finished  -        lr-0.001  a1b2c3d
+2026-03-17_14-15-02_9c2e  mnist-sweep  finished  -        lr-0.01   a1b2c3d
+2026-03-17_14-00-03_5b07  cifar10      running   -        baseline  e4f5a6b
 ```
 
 Filter by experiment:
 
-<!-- $MDX skip -->
 ```
 munin runs --experiment mnist-sweep
 ```
 
 ```
-20260317T143201_abc  mnist-sweep  finished  -  lr-0.001  a1b2c3d
-20260317T141502_def  mnist-sweep  finished  -  lr-0.01   a1b2c3d
+2026-03-17_14-32-01_a1f3  mnist-sweep  finished  -  lr-0.001  a1b2c3d
+2026-03-17_14-15-02_9c2e  mnist-sweep  finished  -  lr-0.01   a1b2c3d
 ```
 
 ## munin show
 
 Display full details for a single run.
 
-<!-- $MDX skip -->
 ```
-munin show 20260317T143201_abc
+munin show 2026-03-17_14-32-01_a1f3
 ```
 
 ```
-id: 20260317T143201_abc
+id: 2026-03-17_14-32-01_a1f3
 experiment: mnist-sweep
 name: lr-0.001
 parent: -
@@ -78,7 +75,7 @@ children:
 output_artifacts:
   mnist-model v3 aliases=[latest] consumers=[]
 input_artifacts:
-  mnist-data v1 producer=20260310T090000_xyz
+  mnist-data v1 producer=2026-03-10_09-00-00_e81d
 ```
 
 ## munin compare
@@ -87,9 +84,8 @@ Compare two or more runs side by side. Prints a tab-separated table with
 parameters and summary values. When a metric has a declared goal (`Minimize` or
 `Maximize`), the best value is marked with `*`.
 
-<!-- $MDX skip -->
 ```
-munin compare 20260317T143201_abc 20260317T141502_def
+munin compare 2026-03-17_14-32-01_a1f3 2026-03-17_14-15-02_9c2e
 ```
 
 ```
@@ -103,7 +99,6 @@ loss          0.0312*    0.0587
 
 Works with any number of runs:
 
-<!-- $MDX skip -->
 ```
 munin compare abc def ghi
 ```
@@ -116,9 +111,8 @@ Two modes: listing mode (no `--key`) and history mode (with `--key`).
 
 Shows all metric keys with their latest value, latest step, and sample count.
 
-<!-- $MDX skip -->
 ```
-munin metrics 20260317T143201_abc
+munin metrics 2026-03-17_14-32-01_a1f3
 ```
 
 ```
@@ -135,9 +129,8 @@ sys/mem_used_gb  6.82          627          627
 Dump the full time series for a single key. Supports `--format tsv` (default),
 `csv`, and `json`.
 
-<!-- $MDX skip -->
 ```
-munin metrics 20260317T143201_abc --key loss
+munin metrics 2026-03-17_14-32-01_a1f3 --key loss
 ```
 
 ```
@@ -148,9 +141,8 @@ step	timestamp	value
 ...
 ```
 
-<!-- $MDX skip -->
 ```
-munin metrics 20260317T143201_abc --key loss --format csv
+munin metrics 2026-03-17_14-32-01_a1f3 --key loss --format csv
 ```
 
 ```
@@ -160,9 +152,8 @@ step,timestamp,value
 ...
 ```
 
-<!-- $MDX skip -->
 ```
-munin metrics 20260317T143201_abc --key loss --format json
+munin metrics 2026-03-17_14-32-01_a1f3 --key loss --format json
 ```
 
 ```json
@@ -176,21 +167,18 @@ full documentation.
 
 Auto-detect the latest run:
 
-<!-- $MDX skip -->
 ```
 munin watch
 ```
 
 Open a specific run:
 
-<!-- $MDX skip -->
 ```
-munin watch 20260317T143201_abc
+munin watch 2026-03-17_14-32-01_a1f3
 ```
 
 Filter by experiment (picks the latest run in that experiment):
 
-<!-- $MDX skip -->
 ```
 munin watch --experiment mnist-sweep
 ```
@@ -200,29 +188,27 @@ munin watch --experiment mnist-sweep
 List stored artifacts. Output is tab-separated: name, version, kind, payload
 type, size in bytes, producer run, consumer runs.
 
-<!-- $MDX skip -->
 ```
 munin artifacts
 ```
 
 ```
-mnist-data   v1  dataset  dir   48000000  20260310T090000_xyz  20260317T143201_abc,20260317T141502_def
-mnist-model  v1  model    file  4521984   20260317T141502_def  -
-mnist-model  v2  model    file  4521984   20260317T143201_abc  -
-mnist-model  v3  model    file  4521984   20260317T143201_abc  -
+mnist-data   v1  dataset  dir   48000000  2026-03-10_09-00-00_e81d  2026-03-17_14-32-01_a1f3,2026-03-17_14-15-02_9c2e
+mnist-model  v1  model    file  4521984   2026-03-17_14-15-02_9c2e  -
+mnist-model  v2  model    file  4521984   2026-03-17_14-32-01_a1f3  -
+mnist-model  v3  model    file  4521984   2026-03-17_14-32-01_a1f3  -
 ```
 
 Filter by name:
 
-<!-- $MDX skip -->
 ```
 munin artifacts --name mnist-model
 ```
 
 ```
-mnist-model  v1  model  file  4521984  20260317T141502_def  -
-mnist-model  v2  model  file  4521984  20260317T143201_abc  -
-mnist-model  v3  model  file  4521984  20260317T143201_abc  -
+mnist-model  v1  model  file  4521984  2026-03-17_14-15-02_9c2e  -
+mnist-model  v2  model  file  4521984  2026-03-17_14-32-01_a1f3  -
+mnist-model  v3  model  file  4521984  2026-03-17_14-32-01_a1f3  -
 ```
 
 ## munin delete
@@ -230,21 +216,19 @@ mnist-model  v3  model  file  4521984  20260317T143201_abc  -
 Delete a run and its event log from the store. Does not remove shared blobs
 (use `munin gc` for that). Removes the experiment directory if no runs remain.
 
-<!-- $MDX skip -->
 ```
-munin delete 20260317T141502_def
+munin delete 2026-03-17_14-15-02_9c2e
 ```
 
 ```
-Delete run 20260317T141502_def (mnist-sweep / lr-0.01)? [y/N] y
+Delete run 2026-03-17_14-15-02_9c2e (mnist-sweep / lr-0.01)? [y/N] y
 Deleted.
 ```
 
 Skip the confirmation prompt with `--yes`:
 
-<!-- $MDX skip -->
 ```
-munin delete 20260317T141502_def --yes
+munin delete 2026-03-17_14-15-02_9c2e --yes
 ```
 
 ## munin gc
@@ -252,7 +236,6 @@ munin delete 20260317T141502_def --yes
 Garbage-collect unreferenced blobs from the blob store. Blobs that are no
 longer referenced by any artifact are removed.
 
-<!-- $MDX skip -->
 ```
 munin gc
 ```

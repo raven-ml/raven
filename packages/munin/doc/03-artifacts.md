@@ -9,7 +9,6 @@ and any other outputs you want to version alongside your runs.
 `Session.log_artifact` copies a file or directory into the blob store,
 assigns a version, and records it as an output of the current run.
 
-<!-- $MDX skip -->
 ```ocaml
 open Munin
 
@@ -58,20 +57,19 @@ Each call to `log_artifact` with the same `~name` creates a new
 version: `v1`, `v2`, `v3`, and so on. Versions are immutable once
 created.
 
-<!-- $MDX skip -->
 ```ocaml
-(* First call creates v1. *)
-let v1 =
-  Session.log_artifact session ~name:"model" ~kind:`Model
-    ~path:"model_epoch1.safetensors" ()
-in
-(* Second call creates v2. *)
-let v2 =
-  Session.log_artifact session ~name:"model" ~kind:`Model
-    ~path:"model_epoch2.safetensors" ()
-in
-Printf.printf "%s %s\n" (Artifact.version v1) (Artifact.version v2)
-(* prints: v1 v2 *)
+# let session = Session.start ~experiment:"pipeline" ~name:"train" ();;
+val session : Session.t = <abstr>
+# let v1 =
+    Session.log_artifact session ~name:"model" ~kind:`Model
+      ~path:"model_epoch1.safetensors" ();;
+val v1 : Artifact.t = <abstr>
+# let v2 =
+    Session.log_artifact session ~name:"model" ~kind:`Model
+      ~path:"model_epoch2.safetensors" ~aliases:[ "latest" ] ();;
+val v2 : Artifact.t = <abstr>
+# (Artifact.version v1, Artifact.version v2);;
+- : string * string = ("v1", "v2")
 ```
 
 ## Aliases
@@ -86,14 +84,14 @@ the same alias, it moves from the old version to the new one.
 
 Resolve an alias through the store:
 
-<!-- $MDX skip -->
 ```ocaml
-let store = Store.open_ () in
-match Store.find_artifact store ~name:"model" ~version:"latest" with
-| Some artifact ->
-    Printf.printf "resolved to %s\n" (Artifact.version artifact)
-| None ->
-    Printf.printf "not found\n"
+# let store = Store.open_ ();;
+val store : Store.t = <abstr>
+# match Store.find_artifact store ~name:"model" ~version:"latest" with
+  | Some artifact -> Printf.printf "resolved to %s\n" (Artifact.version artifact)
+  | None -> Printf.printf "not found\n";;
+resolved to v2
+- : unit = ()
 ```
 
 `Store.find_artifact` accepts both explicit versions (`"v2"`) and
@@ -105,7 +103,6 @@ Artifact payloads are stored in a blob directory keyed by their
 BLAKE2b-256 digest. If two versions have identical content, only one copy
 is stored on disk.
 
-<!-- $MDX skip -->
 ```ocaml
 (* These share the same blob if the file content is identical. *)
 let a = Session.log_artifact session ~name:"config" ~kind:`File
@@ -125,13 +122,13 @@ version.
 When you call `Session.log_artifact`, the current run is automatically
 recorded as the producer:
 
-<!-- $MDX skip -->
 ```ocaml
-let artifact =
-  Session.log_artifact session ~name:"features" ~kind:`Dataset
-    ~path:"features.csv" ()
-in
-Artifact.producer_run_id artifact  (* Some "<run_id>" *)
+# let artifact =
+    Session.log_artifact session ~name:"features" ~kind:`Dataset
+      ~path:"features.csv" ~aliases:[ "latest" ] ();;
+val artifact : Artifact.t = <abstr>
+# Artifact.producer_run_id artifact = Some (Session.id session);;
+- : bool = true
 ```
 
 ### Consumer
@@ -139,28 +136,37 @@ Artifact.producer_run_id artifact  (* Some "<run_id>" *)
 `Session.use_artifact` records the current run as a consumer of an
 existing artifact:
 
-<!-- $MDX skip -->
 ```ocaml
-(* Run 2 consumes the artifact produced by Run 1. *)
-let store = Store.open_ () in
-match Store.find_artifact store ~name:"features" ~version:"latest" with
-| Some artifact ->
-    Session.use_artifact session artifact;
-    let path = Artifact.path artifact in
-    Printf.printf "loading from: %s\n" path
-| None ->
-    failwith "artifact not found"
+(* A second run consumes the artifact the first one produced. *)
+let evaluation = Session.start ~experiment:"pipeline" ~name:"evaluate" ()
+
+let () =
+  match Store.find_artifact store ~name:"features" ~version:"latest" with
+  | Some artifact ->
+      Session.use_artifact evaluation artifact;
+      let path = Artifact.path artifact in
+      Printf.printf "loading from: %s\n" path
+  | None -> failwith "artifact not found"
 ```
 
 After this, the lineage is recorded in both directions:
 
-<!-- $MDX skip -->
 ```ocaml
-Artifact.producer_run_id artifact   (* run that created it *)
-Artifact.consumer_run_ids artifact  (* runs that consumed it *)
-
-Run.output_artifacts run1  (* artifacts produced by run1 *)
-Run.input_artifacts run2   (* artifacts consumed by run2 *)
+# let artifact =
+    Option.get (Store.find_artifact store ~name:"features" ~version:"v1");;
+val artifact : Artifact.t = <abstr>
+# Artifact.producer_run_id artifact = Some (Session.id session);;
+- : bool = true
+# Artifact.consumer_run_ids artifact = [ Session.id evaluation ];;
+- : bool = true
+# List.map
+    (fun a -> (Artifact.name a, Artifact.version a))
+    (Run.output_artifacts (Session.run session));;
+- : (string * string) list =
+[("model", "v1"); ("model", "v2"); ("config", "v1"); ("config", "v2");
+ ("features", "v1")]
+# List.map Artifact.name (Run.input_artifacts (Session.run evaluation));;
+- : string list = ["features"]
 ```
 
 ## Loading Artifacts
@@ -169,10 +175,9 @@ Run.input_artifacts run2   (* artifacts consumed by run2 *)
 
 `Store.find_artifact` resolves by name and version (or alias):
 
-<!-- $MDX skip -->
 ```ocaml
 let store = Store.open_ () in
-match Store.find_artifact store ~name:"mnist-cnn" ~version:"best" with
+match Store.find_artifact store ~name:"model" ~version:"v2" with
 | Some artifact ->
     let path = Artifact.path artifact in
     Printf.printf "path: %s (%d bytes)\n" path (Artifact.size_bytes artifact)
@@ -185,7 +190,6 @@ match Store.find_artifact store ~name:"mnist-cnn" ~version:"best" with
 `Store.list_artifacts` supports filtering by name, kind, alias, and
 lineage:
 
-<!-- $MDX skip -->
 ```ocaml
 let store = Store.open_ () in
 
@@ -196,7 +200,9 @@ let all = Store.list_artifacts store () in
 let checkpoints = Store.list_artifacts store ~kind:`Checkpoint () in
 
 (* Only artifacts produced by a specific run. *)
-let from_run = Store.list_artifacts store ~producer_run:"<RUN_ID>" () in
+let from_run =
+  Store.list_artifacts store ~producer_run:(Session.id session) ()
+in
 
 Printf.printf "total: %d, checkpoints: %d, from run: %d\n"
   (List.length all) (List.length checkpoints) (List.length from_run)
@@ -218,7 +224,6 @@ munin artifacts --name mnist-cnn
 A data-preparation run produces a dataset. A training run consumes it
 and produces a model checkpoint.
 
-<!-- $MDX skip -->
 ```ocaml
 open Munin
 
@@ -232,10 +237,10 @@ let () =
   Session.with_run ~experiment:"pipeline" ~name:"prepare-data"
     ~tags:[ "data" ]
   @@ fun session ->
-  write_file "/tmp/data.csv" "x,y\n1.0,2.0\n3.0,4.0\n";
+  write_file "data.csv" "x,y\n1.0,2.0\n3.0,4.0\n";
   ignore
     (Session.log_artifact session ~name:"training-data" ~kind:`Dataset
-       ~path:"/tmp/data.csv"
+       ~path:"data.csv"
        ~metadata:[ ("rows", `Int 2) ]
        ~aliases:[ "latest" ] ())
 
@@ -255,10 +260,10 @@ let () =
 
   (* ... train model ... *)
 
-  write_file "/tmp/model.bin" "model weights";
+  write_file "model.bin" "model weights";
   ignore
     (Session.log_artifact session ~name:"my-model" ~kind:`Model
-       ~path:"/tmp/model.bin"
+       ~path:"model.bin"
        ~aliases:[ "latest" ] ())
 ```
 
@@ -266,7 +271,6 @@ let () =
 
 `Store.gc` removes blobs not referenced by any artifact version:
 
-<!-- $MDX skip -->
 ```ocaml
 let store = Store.open_ () in
 let removed = Store.gc store in

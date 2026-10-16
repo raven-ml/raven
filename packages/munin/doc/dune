@@ -1,5 +1,16 @@
+; mdx runs the OCaml and shell fences, except those marked skip: installation
+; commands, which need the network; `munin` command lines, which name run ids
+; generated per run and show output from the reader's store (04-cli.md and
+; 05-dashboard.md give them as plain fences); and the Kaun training loop, which
+; downloads MNIST.
+;
+; The guides sample the system through munin.sys, which supports Linux and
+; macOS only.
+
 (mdx
  (files *.md)
  (package munin)
- (libraries unix)
- (deps))
+ (enabled_if
+  (<> %{os_type} Win32))
+ (preludes prelude.ml)
+ (libraries munin munin.sys unix))

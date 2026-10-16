@@ -12,13 +12,12 @@ runs from the terminal.
 - **Media logging**: images, files, audio, and structured tables
 - **Versioned artifacts**: content-addressed deduplication, aliases, cross-run lineage
 - **Provenance**: git commit, command line, environment variables, captured automatically
-- **System monitoring**: background CPU and memory sampling via `Munin_sys`
+- **System monitoring**: background CPU, memory and disk I/O sampling via `Munin_sys`
 - **CLI**: `munin runs`, `munin show`, `munin compare`, `munin metrics`, `munin artifacts`
 - **Live TUI**: `munin watch` with real-time metric charts and system stats
 
 ## Quick Start
 
-<!-- $MDX skip -->
 ```ocaml
 let () =
   Munin.Session.with_run ~experiment:"demo"

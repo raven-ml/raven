@@ -63,7 +63,6 @@ type: `` [`Bool of bool | `Int of int | `Float of float | `String of string] ``.
 This example starts a session, logs hyperparameters and metrics,
 saves an artifact, then reads everything back.
 
-<!-- $MDX skip -->
 ```ocaml
 open Munin
 
@@ -110,7 +109,6 @@ munin metrics <RUN_ID> --key loss --format json
 
 Run the same experiment with different hyperparameters, then compare.
 
-<!-- $MDX skip -->
 ```ocaml
 open Munin
 
@@ -151,14 +149,14 @@ That is `Provenance.detect ()`, which `Session.start` calls when no
 `~provenance` is given. To also record specific environment
 variables, detect them yourself:
 
-<!-- $MDX skip -->
 ```ocaml
-Session.start ~experiment:"demo"
-  ~provenance:
-    (Provenance.detect
-       ~capture_env:[ "CUDA_VISIBLE_DEVICES"; "OMP_NUM_THREADS" ]
-       ())
-  ()
+let session =
+  Session.start ~experiment:"demo"
+    ~provenance:
+      (Provenance.detect
+         ~capture_env:[ "CUDA_VISIBLE_DEVICES"; "OMP_NUM_THREADS" ]
+         ())
+    ()
 ```
 
 `~provenance` takes a full record, so a run replayed elsewhere can
@@ -171,11 +169,9 @@ By default, runs are stored in `$XDG_DATA_HOME/raven/munin`. Override
 with the `RAVEN_TRACKING_DIR` environment variable, or open a store at
 an explicit path and pass it to every session:
 
-<!-- $MDX skip -->
 ```ocaml
-let store = Store.open_ ~root:"_munin" () in
-let session = Session.start ~store ~experiment:"demo" () in
-...
+let store = Store.open_ ~root:"_munin" ()
+let session = Session.start ~store ~experiment:"demo" ()
 ```
 
 ## Next Steps

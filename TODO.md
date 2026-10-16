@@ -323,10 +323,9 @@ raven / llama.cpp (Vulkan; ROCm):
   o200k and Tekken; Kimi's class intersection and `\p{Han}`; T5's
   Precompiled normalizer; the parity tests skip without downloaded
   tokenizers: commit trimmed ones with their generator
-- munin: GPU metrics (NVML by dlopen, IOKit, AMD sysfs); 64 MDX-skipped doc
-  fences; the metrics table omits `sys/disk_*`; `Store.latest_run` picks
-  among runs started in the same second at random (a run id is a seconds
-  stamp and a random suffix)
+- munin: GPU metrics (NVML by dlopen, IOKit, AMD sysfs); 7 doc fences
+  mdx skips (installs, `munin` command lines naming generated run ids, the
+  Kaun MNIST loop), and the guides skip Windows, which munin.sys lacks
 
 ## ymir, sowilo
 

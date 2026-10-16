@@ -12,14 +12,14 @@ cannot silently create a second channel. `Metric.log` records a single
 scalar at a given step; `Session.log_metrics` records several under
 one timestamp.
 
-<!-- $MDX skip -->
 ```ocaml
 open Munin
 
+let session = Session.start ~experiment:"tracking-demo" ()
+let loss = Session.metric session ~goal:`Minimize "loss"
+let accuracy = Session.metric session ~goal:`Maximize "accuracy"
+
 let () =
-  Session.with_run ~experiment:"tracking-demo" @@ fun session ->
-  let loss = Session.metric session ~goal:`Minimize "loss" in
-  let accuracy = Session.metric session ~goal:`Maximize "accuracy" in
   for step = 1 to 100 do
     let l = 1.0 /. Float.of_int step in
     Session.log_metrics session ~step [ (loss, l); (accuracy, 1.0 -. l) ]
@@ -34,12 +34,17 @@ Read metrics back through the `Run` module. Reading is keyed by
 string: keys come off disk, so there is nothing for a handle to
 check.
 
-<!-- $MDX skip -->
 ```ocaml
-let run = Session.run session in
-Run.metric_keys run        (* ["accuracy"; "loss"] *)
-Run.latest_metrics run     (* latest value per key *)
-Run.metric_history run "loss"  (* full chronological history *)
+# let run = Session.run session;;
+val run : Run.t = <abstr>
+# Run.metric_keys run;;
+- : string list = ["accuracy"; "loss"]
+# List.map (fun (key, (s : Metric.sample)) -> (key, s.step, s.value))
+    (Run.latest_metrics run);;
+- : (string * int * float) list =
+[("accuracy", 100, 0.99); ("loss", 100, 0.01)]
+# List.length (Run.metric_history run "loss");;
+- : int = 100
 ```
 
 ## Declaring Metrics
@@ -48,10 +53,9 @@ The optional arguments of `Session.metric` say how a metric should be
 summarized, compared, and plotted. Declaring the same key again
 replaces its definition; readers see the last one.
 
-<!-- $MDX skip -->
 ```ocaml
-let loss = Session.metric session ~goal:`Minimize "loss" in
-let accuracy = Session.metric session ~goal:`Maximize "accuracy" in
+let loss = Session.metric session ~goal:`Minimize "loss"
+let accuracy = Session.metric session ~goal:`Maximize "accuracy"
 ```
 
 ### Summary Modes
@@ -78,7 +82,6 @@ history. You do not need to compute it yourself.
 `Session.set_summary` writes explicit summary values that always take
 precedence over auto-computed ones:
 
-<!-- $MDX skip -->
 ```ocaml
 Session.set_summary session
   [ ("best_loss", `Float 0.023); ("note", `String "converged early") ]
@@ -101,12 +104,11 @@ higher (`` `Maximize ``) values are better. It is used by:
 The `~step_metric` parameter takes another metric to use as the
 x-axis, so the reference is checked by the compiler:
 
-<!-- $MDX skip -->
 ```ocaml
-let epoch = Session.metric session "epoch" in
+let epoch = Session.metric session "epoch"
+
 let accuracy =
   Session.metric session ~goal:`Maximize ~step_metric:epoch "val/accuracy"
-in
 ```
 
 This tells renderers to plot `val/accuracy` against the `epoch`
@@ -118,28 +120,28 @@ declared before the metrics that reference it.
 Epochs are not a special concept -- declare one as a regular metric
 and reference it with `~step_metric`:
 
-<!-- $MDX skip -->
 ```ocaml
-let epoch_metric = Session.metric session "epoch" in
+let epoch_metric = Session.metric session "epoch"
+
 let loss =
   Session.metric session ~goal:`Minimize ~step_metric:epoch_metric "train/loss"
-in
+
 let accuracy =
   Session.metric session ~goal:`Maximize ~step_metric:epoch_metric
     "val/accuracy"
-in
 
-for epoch = 1 to 10 do
+let () =
   let steps_per_epoch = 100 in
-  for batch = 1 to steps_per_epoch do
-    let step = ((epoch - 1) * steps_per_epoch) + batch in
-    Session.log_metrics session ~step
-      [ (loss, 1.0 /. Float.of_int step);
-        (epoch_metric, Float.of_int epoch) ]
-  done;
-  let step = epoch * steps_per_epoch in
-  Metric.log accuracy ~step (Float.of_int epoch *. 0.1)
-done
+  for epoch = 1 to 10 do
+    for batch = 1 to steps_per_epoch do
+      let step = ((epoch - 1) * steps_per_epoch) + batch in
+      Session.log_metrics session ~step
+        [ (loss, 1.0 /. Float.of_int step);
+          (epoch_metric, Float.of_int epoch) ]
+    done;
+    let step = epoch * steps_per_epoch in
+    Metric.log accuracy ~step (Float.of_int epoch *. 0.1)
+  done
 ```
 
 ## Media Logging
@@ -150,11 +152,10 @@ done
 and records it in the event log. The `~kind` is metadata for
 renderers.
 
-<!-- $MDX skip -->
 ```ocaml
 (* Log an image at a specific step. *)
 Session.log_media session ~step:100 ~key:"viz/confusion"
-  ~kind:`Image ~path:"/tmp/confusion_matrix.png";
+  ~kind:`Image ~path:"confusion_matrix.png";
 
 (* Log a text file. *)
 Session.log_media session ~step:1 ~key:"config"
@@ -166,11 +167,14 @@ The file is stored at `<run_dir>/media/<key_path>_<step>.<ext>`.
 
 Read media back:
 
-<!-- $MDX skip -->
 ```ocaml
-let run = Session.run session in
-Run.media_keys run                    (* ["config"; "viz/confusion"] *)
-Run.media_history run "viz/confusion" (* list of media_entry records *)
+# let run = Session.run session;;
+val run : Run.t = <abstr>
+# Run.media_keys run;;
+- : string list = ["config"; "viz/confusion"]
+# List.map (fun (m : Run.media_entry) -> (m.step, m.kind))
+    (Run.media_history run "viz/confusion");;
+- : (int * [ `Audio | `File | `Image | `Table ]) list = [(100, `Image)]
 ```
 
 ### Structured Tables
@@ -178,7 +182,6 @@ Run.media_history run "viz/confusion" (* list of media_entry records *)
 `Session.log_table` stores a table as a JSON file. Useful for
 confusion matrices, per-class metrics, or data samples.
 
-<!-- $MDX skip -->
 ```ocaml
 Session.log_table session ~step:1 ~key:"results/per_class"
   ~columns:[ "class"; "precision"; "recall"; "f1" ]
@@ -252,7 +255,6 @@ let () =
 `Munin_sys.start` spawns a background thread that samples CPU, memory and
 disk I/O every 15 seconds (configurable via `~interval`):
 
-<!-- $MDX skip -->
 ```ocaml
 let sysmon = Munin_sys.start session in
 (* ... training ... *)

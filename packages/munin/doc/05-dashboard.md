@@ -9,21 +9,18 @@ bars directly in the terminal.
 The dashboard is started with `munin watch`. With no arguments it auto-detects
 the most recently started run:
 
-<!-- $MDX skip -->
 ```
 munin watch
 ```
 
 To open a specific run, pass its ID:
 
-<!-- $MDX skip -->
 ```
-munin watch 20260317T143201_abc
+munin watch 2026-03-17_14-32-01_a1f3
 ```
 
 To pick the latest run in a given experiment:
 
-<!-- $MDX skip -->
 ```
 munin watch --experiment mnist-sweep
 ```

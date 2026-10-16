@@ -7,7 +7,6 @@ and disk I/O metrics alongside your training metrics.
 
 Add `munin.sys` to your dune `libraries`:
 
-<!-- $MDX skip -->
 ```lisp
 (executable
  (name main)
@@ -18,7 +17,6 @@ Add `munin.sys` to your dune `libraries`:
 
 Start a monitor after creating a session, and stop it before finishing:
 
-<!-- $MDX skip -->
 ```ocaml
 let () =
   let session =
@@ -39,9 +37,10 @@ statistics at a fixed interval and logs them as scalar metrics.
 
 The default sampling interval is 15 seconds. Override it with `~interval`:
 
-<!-- $MDX skip -->
 ```ocaml
+let session = Munin.Session.start ~experiment:"train" ()
 let monitor = Munin_sys.start ~interval:5.0 session
+let () = Munin_sys.stop monitor
 ```
 
 The first sample is taken after one interval elapses. Rates (`sys/cpu_*`,
@@ -112,7 +111,6 @@ background thread.
 
 ### Cpu
 
-<!-- $MDX skip -->
 ```ocaml
 let prev = Munin_sys.Stat.Cpu.sample () in
 (* ... wait ... *)
@@ -125,7 +123,6 @@ Printf.printf "User: %.1f%%  System: %.1f%%\n" stats.user stats.system
 
 ### Mem
 
-<!-- $MDX skip -->
 ```ocaml
 let mem = Munin_sys.Stat.Mem.sample () in
 let used_gb = Int64.to_float mem.used /. 1_073_741_824. in
@@ -135,7 +132,6 @@ Printf.printf "Memory: %.1f GB used / %.1f GB total\n"
 
 ### Net
 
-<!-- $MDX skip -->
 ```ocaml
 let prev = Munin_sys.Stat.Net.sample () in
 (* ... wait ... *)
@@ -147,7 +143,6 @@ Printf.printf "Rx: %.0f B/s  Tx: %.0f B/s\n"
 
 ### Disk_io
 
-<!-- $MDX skip -->
 ```ocaml
 let prev = Munin_sys.Stat.Disk_io.sample () in
 (* ... wait ... *)
@@ -160,7 +155,6 @@ Printf.printf "Read: %.0f B/s  Write: %.0f B/s  Util: %.1f%%\n"
 
 ### Fs
 
-<!-- $MDX skip -->
 ```ocaml
 let fs = Munin_sys.Stat.Fs.sample () in
 let used_pct =
@@ -177,7 +171,6 @@ List.iter (fun (p : Munin_sys.Stat.Fs.partition) ->
 
 Current process stats:
 
-<!-- $MDX skip -->
 ```ocaml
 let prev = Munin_sys.Stat.Proc.Self.sample () in
 (* ... wait ... *)
@@ -190,7 +183,6 @@ Printf.printf "CPU: %.1f%%  RSS: %Ld bytes\n" stats.cpu_percent stats.rss_bytes
 
 Process table (all visible processes):
 
-<!-- $MDX skip -->
 ```ocaml
 let prev = Munin_sys.Stat.Proc.Table.sample () in
 (* ... wait ... *)
@@ -199,12 +191,12 @@ let stats = Munin_sys.Stat.Proc.Table.compute ~prev ~next ~dt:1.0 in
 List.iter (fun (p : Munin_sys.Stat.Proc.Table.stats) ->
   Printf.printf "%d  %-15s  CPU: %.1f%%  Mem: %.1f%%\n"
     p.pid p.name p.cpu_percent p.mem_percent
-) (List.sort (fun a b -> compare b.cpu_percent a.cpu_percent) stats)
+) (List.sort (fun (a : Munin_sys.Stat.Proc.Table.stats) b ->
+     Float.compare b.cpu_percent a.cpu_percent) stats)
 ```
 
 ### System info
 
-<!-- $MDX skip -->
 ```ocaml
 let (l1, l5, l15) = Munin_sys.Stat.loadavg () in
 Printf.printf "Load: %.2f %.2f %.2f\n" l1 l5 l15;
