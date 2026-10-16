@@ -1464,6 +1464,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Session.start` never gives two runs one directory. Runs started within
+  one second drew ids that collided about once in 65,536 pairs, and the
+  second wrote into the first's run.
 - `Munin_sys.stop` wakes the monitor instead of waiting out the rest of the
   sampling interval, up to 15 s by default, at the end of every run.
 - `Store.latest_run` and `Store.list_runs` order runs by `Run.started_at`.

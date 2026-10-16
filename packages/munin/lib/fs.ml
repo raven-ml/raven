@@ -13,7 +13,9 @@ let ensure_dir path =
     else if Sys.file_exists current then ()
     else (
       loop (Filename.dirname current);
-      Unix.mkdir current 0o755)
+      (* Another process may create it between the check and the mkdir. *)
+      try Unix.mkdir current 0o755
+      with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
   in
   loop path
 

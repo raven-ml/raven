@@ -96,15 +96,23 @@ let start ?store ?name ?group ?parent ?(tags = []) ?(params = []) ?notes
     ?provenance ~experiment () =
   let store = match store with Some store -> store | None -> Store.open_ () in
   let root = Store.root store in
-  let id = generate_id () in
-  let dir =
+  let runs =
     Filename.concat
-      (Filename.concat
-         (Filename.concat (Filename.concat root "experiments") experiment)
-         "runs")
-      id
+      (Filename.concat (Filename.concat root "experiments") experiment)
+      "runs"
   in
-  Fs.ensure_dir dir;
+  Fs.ensure_dir runs;
+  (* Ids drawn within one second share their stamp and differ only by a 16-bit
+     suffix. The exclusive mkdir makes the run whose draw collides draw again
+     instead of writing into the other's directory. *)
+  let rec claim () =
+    let id = generate_id () in
+    let dir = Filename.concat runs id in
+    match Unix.mkdir dir 0o755 with
+    | () -> (id, dir)
+    | exception Unix.Unix_error (Unix.EEXIST, _, _) -> claim ()
+  in
+  let id, dir = claim () in
   let provenance =
     match provenance with Some p -> p | None -> Provenance.detect ()
   in
