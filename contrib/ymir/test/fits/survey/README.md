@@ -1,8 +1,10 @@
 # Real survey files
 
-Small cuts of public archive files, for the laws ymir.fits states over
-bytes it did not write. `gen/survey.py` downloads each original by range
-requests, checks the SHA-256 of the bytes it fetched, and cuts it. A cut
+Small cuts of public archive files, and one table STILTS wrote, for the
+laws ymir.fits states over bytes it did not write. `gen/survey.py`
+downloads each original by range requests, checks the SHA-256 of the
+bytes it fetched, and cuts it. `gen/stil.py` wrote `stil-fits-plus.fits`,
+whose bytes the generator checks the same way and keeps whole. A cut
 keeps every header record as the archive wrote it, except the rewritten
 ones listed below (astropy formats them, comments kept), and keeps the data
 bytes as stored. `values` holds astropy's reading of every image and
@@ -60,16 +62,16 @@ numeric binary-table column, as MD5 digests of float64.
   - HDU 2 (original HDU 2): as stored.
   - HDU 3 (original HDU 3): as stored.
 
-## gaia-dr1-source.fits
+## stil-fits-plus.fits
 
-- Source: <https://cdn.gea.esac.esa.int/Gaia/gdr1/gaia_source/fits/GaiaSource_000-000-000.fits>
-- Archive: ESA Gaia Archive (Gaia DR1 gaia_source, first file)
-- Terms: ESA/Gaia/DPAC, CC BY-SA 3.0 IGO; credit ESA/Gaia/DPAC.
-- SHA-256 of the fetched bytes: `a4209e82c1468408ef7e5e74fc533d5e3fb5ee310e8df8d6567f2cc0341c4618`
-- Covers: STIL's fits-plus layout: a primary byte array holding a VOTable, then a 57-column table with NaN-filled floats.
+- Source: `gen/stil.py`
+- Archive: none (synthetic columns written by STILTS 3.5-4 with STIL 4.3-4)
+- Terms: Synthetic data, ISC, as ymir.
+- SHA-256 of the read bytes: `51ecdc10b741d837ed44ab8412868450af076d557ab46bb0288066b684bbecef`
+- Covers: STIL's fits-plus layout: a primary byte array holding a VOTable, then a table of long, double, float, int, short, boolean and string columns, with NaN floats and blank integers.
 - Cut:
   - HDU 0 (original HDU 0): as stored.
-  - HDU 1 (original HDU 1): rows 0-47 of 218453 (0-based); rewritten: NAXIS2.
+  - HDU 1 (original HDU 1): as stored.
 
 ## ps1-stack-rice.fits
 

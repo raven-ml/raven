@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Files the archives wrote (survey/README.md) read as astropy reads them
-   (gen/survey.py): each file holds the HDUs astropy finds, each HDU whose
-   CHECKSUM astropy accepts verifies, and each image and numeric
+(* Files the archives and STILTS wrote (survey/README.md) read as astropy
+   reads them (gen/survey.py): each file holds the HDUs astropy finds, each
+   HDU whose CHECKSUM astropy accepts verifies, and each image and numeric
    binary-table column astropy decodes has its shape and float64 values.
    Values compare as digests: MD5 of little-endian float64, every NaN as
    one NaN. *)

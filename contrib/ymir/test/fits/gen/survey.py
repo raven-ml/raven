@@ -11,11 +11,14 @@ spans its cut keeps, whose SHA-256 must be the recorded one, so a file the
 archive reprocessed fails here. A cut keeps every header record as the
 archive wrote it except the ones it must change (sizes, the reference pixel,
 heap descriptors, checksums), which astropy formats, and keeps the data
-bytes as stored. The generator writes survey/<name>.fits, survey/README.md
+bytes as stored. One source, the table gen/stil.py wrote with STILTS, is
+already in survey/ and is read from there, its SHA-256 checked the same
+way. The generator writes survey/<name>.fits, survey/README.md
 with each file's provenance and changes, and survey/values with astropy's
 reading of each image and numeric column. With --check, everything is
 written to a temporary directory and compared with the committed files.
-It runs on x86-64 only.
+It runs on x86-64 only; on an arm64 Mac, Rosetta runs it through
+`uv run --python cpython-3.13-macos-x86_64-none`.
 """
 
 import filecmp
@@ -64,6 +67,23 @@ class Remote:
             b = f.read()
         if len(b) != n:
             sys.exit(f"{self.url}: asked {n} bytes at {a}, got {len(b)}")
+        self.sha.update(b)
+        return b
+
+
+class Local:
+    """A file in survey/, read as [Remote] reads."""
+
+    def __init__(self, path):
+        self.path = path
+        self.sha = hashlib.sha256()
+        self.size = path.stat().st_size
+
+    def read(self, a, n):
+        n = min(n, self.size - a)
+        with open(self.path, "rb") as f:
+            f.seek(a)
+            b = f.read(n)
         self.sha.update(b)
         return b
 
@@ -401,15 +421,16 @@ SOURCES = [
         lambda r, h: [whole(r, x) for x in h],
     ),
     Source(
-        "gaia-dr1-source",
-        "https://cdn.gea.esac.esa.int/Gaia/gdr1/gaia_source/fits/GaiaSource_000-000-000.fits",
-        "ESA Gaia Archive (Gaia DR1 gaia_source, first file)",
-        "ESA/Gaia/DPAC, CC BY-SA 3.0 IGO; credit ESA/Gaia/DPAC.",
+        "stil-fits-plus",
+        "gen/stil.py",
+        "none (synthetic columns written by STILTS 3.5-4 with STIL 4.3-4)",
+        "Synthetic data, ISC, as ymir.",
         "STIL's fits-plus layout: a primary byte array holding a VOTable, "
-        "then a 57-column table with NaN-filled floats",
-        "a4209e82c1468408ef7e5e74fc533d5e3fb5ee310e8df8d6567f2cc0341c4618",
+        "then a table of long, double, float, int, short, boolean and "
+        "string columns, with NaN floats and blank integers",
+        "51ecdc10b741d837ed44ab8412868450af076d557ab46bb0288066b684bbecef",
         2,
-        lambda r, h: [whole(r, h[0]), rows(r, h[1], 0, 48)],
+        lambda r, h: [whole(r, h[0]), whole(r, h[1])],
     ),
     Source(
         "ps1-stack-rice",
@@ -560,9 +581,11 @@ def values_lines(name, path):
 
 README_HEAD = """# Real survey files
 
-Small cuts of public archive files, for the laws ymir.fits states over
-bytes it did not write. `gen/survey.py` downloads each original by range
-requests, checks the SHA-256 of the bytes it fetched, and cuts it. A cut
+Small cuts of public archive files, and one table STILTS wrote, for the
+laws ymir.fits states over bytes it did not write. `gen/survey.py`
+downloads each original by range requests, checks the SHA-256 of the
+bytes it fetched, and cuts it. `gen/stil.py` wrote `stil-fits-plus.fits`,
+whose bytes the generator checks the same way and keeps whole. A cut
 keeps every header record as the archive wrote it, except the rewritten
 ones listed below (astropy formats them, comments kept), and keeps the data
 bytes as stored. `values` holds astropy's reading of every image and
@@ -574,10 +597,11 @@ def readme(made):
     out = [README_HEAD]
     for src, cuts in made:
         out.append(f"## {src.name}.fits\n")
-        out.append(f"- Source: <{src.url}>")
+        out.append(f"- Source: <{src.url}>" if fetched(src) else f"- Source: `{src.url}`")
         out.append(f"- Archive: {src.archive}")
         out.append(f"- Terms: {src.terms}")
-        out.append(f"- SHA-256 of the fetched bytes: `{src.sha256}`")
+        read = "fetched" if fetched(src) else "read"
+        out.append(f"- SHA-256 of the {read} bytes: `{src.sha256}`")
         out.append(f"- Covers: {src.why}.")
         out.append("- Cut:")
         for i, c in enumerate(cuts):
@@ -587,10 +611,14 @@ def readme(made):
     return "\n".join(out)
 
 
+def fetched(src):
+    return src.url.startswith("https://")
+
+
 def make(directory):
     made, lines = [], []
     for src in SOURCES:
-        remote = Remote(src.url)
+        remote = Remote(src.url) if fetched(src) else Local(SURVEY / f"{src.name}.fits")
         hdus = walk(remote, src.hdus)
         cuts = src.cut(remote, hdus)
         got = remote.sha.hexdigest()

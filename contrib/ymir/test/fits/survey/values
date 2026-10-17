@@ -352,59 +352,14 @@ sdss-spec-lite 3 column 16 29 4d5e161efe9723112170ec9fffe0a614
 sdss-spec-lite 3 column 17 29 f9da9fc58deb050142d03c41be6bcb68
 sdss-spec-lite 3 column 18 29 eb7d3d6c031e663baba3d43561527e51
 sdss-spec-lite 3 column 19 29 a67104b252252dbf041495f6f57f33cc
-gaia-dr1-source hdus 2
-gaia-dr1-source 0 image 36532 d6049773aa051b845118664d0a40044a
-gaia-dr1-source 1 column 4 48 a1ef129bda80c40fb70d12d1e549925d
-gaia-dr1-source 1 column 5 48 09cb94bedfcc604914ec5186e6bc2660
-gaia-dr1-source 1 column 6 48 4ab95fd4caa9e3439512413a443497d2
-gaia-dr1-source 1 column 7 48 52c8ab38ab8d1b2d064cedf5909060d3
-gaia-dr1-source 1 column 8 48 c2b075af1f062ab7d29c71bb3e7e3460
-gaia-dr1-source 1 column 9 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 10 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 11 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 12 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 13 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 14 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 15 48 8aa391d275c082985034029e4b77f1e9
-gaia-dr1-source 1 column 16 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 17 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 18 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 19 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 20 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 21 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 22 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 23 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 24 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 25 48 f1055c43536de6b12fc7b0b9305fe922
-gaia-dr1-source 1 column 26 48 8ced1bc57c52ca16748fb34b4fc84e2c
-gaia-dr1-source 1 column 27 48 3b4359f00f8c6cba463330689bc9a4e7
-gaia-dr1-source 1 column 28 48 5333d675591bf7c9d87ae2177a7290a9
-gaia-dr1-source 1 column 29 48 fdf0df41211d912ff652ff5444aad891
-gaia-dr1-source 1 column 30 48 11e52860d14e80d908de9671712c9358
-gaia-dr1-source 1 column 31 48 f94a647d870d9eccd2eef01512265ef6
-gaia-dr1-source 1 column 32 48 6aa3cafffae16cdba61176804acd0ff4
-gaia-dr1-source 1 column 33 48 d7deeb5dd00050ab97d19badaafd505a
-gaia-dr1-source 1 column 35 48 0bf7eaf86d96f4ac0e8d14c470160421
-gaia-dr1-source 1 column 36 48 0703fd500d4516f3e0b0fda6654a1e32
-gaia-dr1-source 1 column 37 48 6ef9a6926e37bdc7fda5b54190733248
-gaia-dr1-source 1 column 38 48 cf09be73c5a76ba50b01125fbcc9f7a9
-gaia-dr1-source 1 column 39 48 f26e08adb495bf7f58ce4a7b2ed5dfa6
-gaia-dr1-source 1 column 41 48 9e52c11ead2d792be3167f78a008bd88
-gaia-dr1-source 1 column 42 48 fae5acfef33dcde19d7a4ebd3c7e53f0
-gaia-dr1-source 1 column 43 48 033b4b97f730869809feab1cae930dff
-gaia-dr1-source 1 column 44 48 6de13e4e0c27968f7b5d0cf3c374922e
-gaia-dr1-source 1 column 45 48 5511aca16292ae0abdee7266b6af977a
-gaia-dr1-source 1 column 46 48 16e0da3a86a04547d1335a02b6a81a8c
-gaia-dr1-source 1 column 47 48 eaf1a404f213f4e6f356093581c612af
-gaia-dr1-source 1 column 48 48 313afe9684a073b779441b251e895291
-gaia-dr1-source 1 column 49 48 0f84b7193ab8137ee18ad85279aa45e7
-gaia-dr1-source 1 column 50 48 26f4e038a04339ab2d2f570e446e92cb
-gaia-dr1-source 1 column 51 48 96d0ff70726409d8ca1cfbdb07da8272
-gaia-dr1-source 1 column 52 48 35fc9cee0289781019d3fbc9c2316b24
-gaia-dr1-source 1 column 54 48 51ffbf9b565f6fb4821f19a084935aa5
-gaia-dr1-source 1 column 55 48 71f3e104e747a3b63954701f22179303
-gaia-dr1-source 1 column 56 48 546d4dd0aa2efa491f23bfe8495b2b8f
-gaia-dr1-source 1 column 57 48 9fb94b7fbc156ab0130d5fa9689b5331
+stil-fits-plus hdus 2
+stil-fits-plus 0 image 915 0b300b4546d00f02aa70fc588b8a1582
+stil-fits-plus 1 column 2 48 0af7366d0eb99ae2e01a3840878a9261
+stil-fits-plus 1 column 3 48 f46228927af392041da48a3257175ea2
+stil-fits-plus 1 column 4 48 35d7b55858ebe4b7f21676791ab50f50
+stil-fits-plus 1 column 5 48 ea7efec136744a6803a83da64e3ab035
+stil-fits-plus 1 column 6 48 50a75403a1358b675956f3f86e0aa0ec
+stil-fits-plus 1 column 7 48 adabc57510cb8f26cd881f5f8db20ea5
 ps1-stack-rice hdus 2
 ps1-stack-rice 1 image 8x6279 8d67b8b0cece508b85a13e0ca9598d1d
 ps1-mask-gzip hdus 2
