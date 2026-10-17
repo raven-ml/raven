@@ -72,7 +72,8 @@
     its {e tile}; its terms are numbered as {!Nx_kernel.section-orders}
     numbers the whole's, and it lays its windows out as
     [[batch; rows; terms]] and [[batch; terms; columns]], the terms in
-    their number's order.
+    their number's order. It reads [init] over its window of the result,
+    from wherever [init] lies.
 
     - In lane order, a node of the tree whose terms one tile holds is a
       {e unit} there, as is a block that window edges split, on the device

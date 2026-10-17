@@ -1384,6 +1384,10 @@ type ccut =
   | Pair_batch of int
   | Pairs
 
+(* Where [init] lies: at the result's placement, or whole on every device,
+   which differs where the result is cut. *)
+type iwhere = Init_as_result | Init_everywhere
+
 type ccase = {
   ck : ckind;
   nb : int option;  (* The batch's extent, if there is one. *)
@@ -1393,6 +1397,7 @@ type ccase = {
   ccut : ccut;
   order : Nx_kernel.order;
   init : bool;
+  iwhere : iwhere;
   cseed : int;
 }
 
@@ -1412,7 +1417,10 @@ let pp_ccase ppf c =
     (match c.nb with Some b -> Printf.sprintf "%d of " b | None -> "")
     c.rows c.cols pp_ints c.ks cut
     (match c.order with Lane -> "lane" | Chain -> "chain")
-    (if c.init then " from init" else "")
+    (match (c.init, c.iwhere) with
+    | false, _ -> ""
+    | true, Init_as_result -> " from init"
+    | true, Init_everywhere -> " from init on every device")
     c.cseed
 
 (* The axis of [a] and of [b] that the contracting pair [p] names: [a] is
@@ -1464,8 +1472,9 @@ let ccase =
      in
      let* order = of_list [ Nx_kernel.Lane; Chain ] in
      let* init = bool in
+     let* iwhere = of_list [ Init_as_result; Init_everywhere ] in
      let+ cseed = int in
-     { ck; nb; rows; cols; ks; ccut; order; init; cseed })
+     { ck; nb; rows; cols; ks; ccut; order; init; iwhere; cseed })
 
 (* The case's operands and its contraction's [batch] and [contracting]
    pairs. *)
@@ -1524,6 +1533,9 @@ let law_ccase c =
   cover "lane order" (c.order = Lane);
   cover "chain order" (c.order = Chain);
   cover "from init" c.init;
+  cover "from init on every device beside a cut result"
+    (c.init && c.iwhere = Init_everywhere
+    && match c.ccut with Pair_rows _ | Pair_batch _ -> true | _ -> false);
   cover "no product" (terms = 0);
   cover "an empty window along the cut pair" (kc > 0 && kc < tiles);
   cover "an uneven cut" (kc mod tiles <> 0);
@@ -1548,6 +1560,11 @@ let law_ccase c =
       (Nx.place pi init)
   in
   let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let result cuts =
+    match c.iwhere with
+    | Init_as_result -> mesh cuts
+    | Init_everywhere -> Set4.on
+  in
   let pa p = fst (pair_axes c p) and pb p = snd (pair_axes c p) in
   let actual =
     match c.ccut with
@@ -1561,12 +1578,12 @@ let law_ccase c =
         at
           (mesh [ (rows, [ "a" ]); (pa p, [ "b" ]) ])
           (mesh [ (pb p, [ "b" ]) ])
-          (mesh [ (rows, [ "a" ]) ])
+          (result [ (rows, [ "a" ]) ])
     | Pair_batch p ->
         at
           (mesh [ (0, [ "a" ]); (pa p, [ "b" ]) ])
           (mesh [ (0, [ "a" ]); (pb p, [ "b" ]) ])
-          (mesh [ (0, [ "a" ]) ])
+          (result [ (0, [ "a" ]) ])
     | Pairs ->
         at
           (mesh [ (pa 0, [ "a" ]); (pa 1, [ "b" ]) ])

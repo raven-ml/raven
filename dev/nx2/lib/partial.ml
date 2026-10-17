@@ -1677,13 +1677,18 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 
 (* Contractions over cut contracting axes *)
 
+(* The window [w] of [x]'s whole that device [k] holds, as a value on
+   [k]. *)
+let held_at (type v s d) ~by (set : d Devices.t) k w (x : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  Value.Array
+    { at = Devices.one set k; a = Place.view ~by x k w; dead = Value.Live }
+
 (* Device [k]'s window of [x] where it lies, as a value on [k]. *)
 let own (type v s d) ~by (set : d Devices.t) k (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
   let p = Prim.placement x in
-  let w = Devices.window ~by p (Prim.shape x) (position p k) in
-  Value.Array
-    { at = Devices.one set k; a = Place.view ~by x k w; dead = Value.Live }
+  held_at ~by set k (Devices.window ~by p (Prim.shape x) (position p k)) x
 
 (* [x] with each group of [groups]' axes, in order, made one axis. *)
 let grouped (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
@@ -1925,8 +1930,10 @@ let contract (type v s d a b c e) (apply : 'q. by:string -> 'q Value.prim -> 'q)
       in
       let ts = { holder; laid = Array.map laid holder; held } in
       let window = counts windows.(j) in
-      (* [init]'s window on [k], as [[batch; rows; columns]], in the
-         accumulator. *)
+      (* [init] over [k]'s window of the result, as [[batch; rows;
+         columns]], in the accumulator. The route reads [init] where it
+         lies, which holds that window but may be wider: whole on every
+         device beside a cut result. *)
       let init_on k =
         let nb = Array.length batch and nr = Array.length a_axes.(1) in
         let part lo len = numel (Array.sub window lo len) in
@@ -1935,7 +1942,8 @@ let contract (type v s d a b c e) (apply : 'q. by:string -> 'q Value.prim -> 'q)
         Option.map
           (fun i ->
             cast apply ~by acc
-              (reshape apply ~by flat (Value.Any (own ~by set k i))))
+              (reshape apply ~by flat
+                 (Value.Any (held_at ~by set k windows.(j) i))))
           init
       in
       let rounded v = reshape apply ~by window (cast apply ~by (D.Any out) v) in
