@@ -181,12 +181,32 @@ let forward_inside ts =
     None ts
   = Some Jvp
 
+(* [layered lo hi] is a stack of [lo] to [hi] layers, and [holding t lo hi] one
+   that holds [t] at any depth among the others. *)
+let layered lo hi =
+  let open Gen in
+  let* n = int_range lo hi in
+  list ~size:(constant n) (of_list layers)
+
+let holding t lo hi =
+  let open Gen in
+  let* ts = layered (lo - 1) (hi - 1) in
+  let+ i = int_range 0 (List.length ts) in
+  List.filteri (fun j _ -> j < i) ts @ (t :: List.filteri (fun j _ -> j >= i) ts)
+
+(* Any body under any stack, and on branches of their own the pairs law 1
+   covers, which a draw of both meets in one case of 13 to 27: a sixth of the
+   cases each. *)
 let stack =
   let open Gen in
-  let* n = int_range 1 3 in
-  let* ts = list ~size:(constant n) (of_list layers) in
-  let+ b = of_list bodies in
-  (ts, b)
+  let under t bodies = pair (holding t 1 3) (of_list bodies) in
+  frequency
+    [
+      (3, pair (layered 1 3) (of_list bodies));
+      (1, under Jit_layer [ Scan; Iterate ]);
+      (1, under Jvp [ Custom_jvp ]);
+      (1, under Vmap [ Root ]);
+    ]
 
 let valid (ts, b) = not (b = Custom_vjp && forward_inside ts)
 
@@ -999,8 +1019,8 @@ let around loop x =
 let law5 =
   let gen =
     let open Gen in
-    let* n = int_range 0 2 in
-    let* ts = list ~size:(constant n) (of_list layers) in
+    (* Vmap, which no example holds, on a third of the cases. *)
+    let* ts = frequency [ (2, layered 0 2); (1, holding Vmap 1 2) ] in
     let* kind =
       of_list
         [
