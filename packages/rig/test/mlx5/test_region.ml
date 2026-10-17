@@ -23,17 +23,17 @@ let carries_rdma name =
       Array.exists (fun e -> read (types ^ "/" ^ e) = Some "RoCE v2") entries
   | _ -> true
 
-(* The NIC the test drives: the first the mlx5 driver holds whose port 1
-   carries RDMA, as the kernel's files say before anything opens it. A port
-   carries RDMA on InfiniBand, or on Ethernet with a RoCE v2 global identifier.
-   A ConnectX function whose RoCE is off, as a cloud machine's virtual
-   function, lists an Ethernet port with none, which Rig_mlx5_uverbs.open_
-   refuses: the test skips there. A NIC that carries RDMA and fails to open
-   fails the test. *)
+(* The NIC the test drives: the first the mlx5 driver holds whose port 1 carries
+   RDMA, as the kernel's files say before anything opens it. A port carries RDMA
+   on InfiniBand, or on Ethernet with a RoCE v2 global identifier. A ConnectX
+   function whose RoCE is off, as a cloud machine's virtual function, lists an
+   Ethernet port with none, which Rig_mlx5.open_ refuses: the test skips there.
+   A NIC that carries RDMA and fails to open fails the test. *)
 let nic_name () =
-  match Rig_mlx5_uverbs.names () with
-  | [] -> skip ~reason:"no NIC the mlx5 driver holds" ()
-  | names -> (
+  match Rig_mlx5.names () with
+  | Error e -> failf "listing the NICs: %s" e
+  | Ok [] -> skip ~reason:"no NIC the mlx5 driver holds" ()
+  | Ok names -> (
       match List.find_opt carries_rdma names with
       | Some name -> name
       | None ->
@@ -46,7 +46,7 @@ let nic_name () =
 
 let open_path () =
   let name = nic_name () in
-  match Rig_mlx5_uverbs.path name with
+  match Rig_mlx5.path name with
   | Ok p -> p
   | Error e -> failf "opening %s: %s" name e
 
@@ -126,4 +126,4 @@ let reused_handle =
           equal bool ~msg:"the replacement is deregistered" true
             (Atomic.get second_freed)))
 
-let () = exit (run "rig_mlx5_uverbs.region" [ reused_handle ])
+let () = exit (run "rig_mlx5.region" [ reused_handle ])

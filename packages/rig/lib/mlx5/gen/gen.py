@@ -1,10 +1,10 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Generates defs.ml of rig.mlx5.abi, rig.mlx5 and rig.mlx5.uverbs: the layouts
-of ConnectX's work entries, completions and doorbell records and the rules of
-its access regions (abi/defs.ml), the driver data of the mlx5 driver's objects
-(defs.ml), and the requests of Linux's verbs ioctl (uverbs/defs.ml).
+"""Generates defs.ml of rig.mlx5.abi and rig.mlx5: the layouts of ConnectX's
+work entries, completions and doorbell records and the rules of its access
+regions (abi/defs.ml), and the driver data of the mlx5 driver's objects and the
+requests of Linux's verbs ioctl (defs.ml).
 
 Run from the worktree root:
 
@@ -62,7 +62,8 @@ SOURCES = {
 }
 
 # What each library reads: (header, C name) of constants, and (header, C name,
-# OCaml module) of structures.
+# OCaml module) of structures. rig.mlx5 reads the mlx5 driver's data and the
+# verbs requests.
 
 ABI_CONSTANTS = [
     ("mlx5dv.h", n) for n in [
@@ -142,8 +143,7 @@ NESTED = {
 
 OUTPUTS = {
     LIB / "abi" / "defs.ml": (ABI_CONSTANTS, ABI_STRUCTS),
-    LIB / "defs.ml": (MLX5_CONSTANTS, MLX5_STRUCTS),
-    LIB / "uverbs" / "defs.ml": (UVERBS_CONSTANTS, UVERBS_STRUCTS),
+    LIB / "defs.ml": (MLX5_CONSTANTS + UVERBS_CONSTANTS, MLX5_STRUCTS + UVERBS_STRUCTS),
 }
 
 # The BSD licence every header offers, which defs.ml carries with the headers'

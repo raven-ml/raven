@@ -1,10 +1,12 @@
-; ConnectX NICs, driven once open: regions, completion queues and queue pairs.
+; ConnectX NICs of this machine, opened through Linux's RDMA subsystem and
+; driven once open: regions, completion queues and queue pairs.
 
 (library
  (name rig_mlx5)
  (public_name rig.mlx5)
- (libraries rig_edge rig_mlx5_abi)
- (private_modules defs)
+ (libraries rig_edge rig_mlx5_abi unix)
+ (modules_without_implementation path)
+ (private_modules defs path uverbs)
  (foreign_stubs
   (language c)
-  (names rig_mlx5_stubs)))
+  (names rig_mlx5_stubs rig_mlx5_uverbs_stubs)))

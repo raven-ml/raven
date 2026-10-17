@@ -56,9 +56,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
   615's headers whole (licence checked first) and only `per_release`
   structs for older releases
-- rig.mlx5 folds rig.mlx5.uverbs in (`path` internal, `?root` hidden), each
-  part beyond tinygrad's RDMA justified; `?root` behind `(**/**)` on amdgpu
-  and nvidia
+- `?root` behind `(**/**)` on amdgpu and nvidia
 - the SQTT decoder's home (rig.amd.abi, or beside the tools that read
   traces) and whether the per-driver floor drivers stay in the benches,
   each derived from rig's identity and the rule that a row times what a

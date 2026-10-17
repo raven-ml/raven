@@ -83,7 +83,7 @@ goes to `Rig.open_`.
 | AMD Instinct virtual functions and XGMI | `Rig_amd_pci.gpu` | written, never run on hardware |
 | Two GPUs of one machine reaching each other's memory | the AMD, NVIDIA and CUDA openers | untested |
 | Other machines | `Rig_remote.connect`, `rig run`, `rig agent` | tested between the RTX 5000 Ada and R9700 machines |
-| ConnectX NICs | `Rig_mlx5_uverbs.open_` | run against Linux's Soft-RoCE only, never a real NIC |
+| ConnectX NICs | `Rig_mlx5.open_` | run against Linux's Soft-RoCE only, never a real NIC |
 | Broadcom NetXtreme NICs, with no kernel driver | `Rig_bnxt.open_` | written, never run on hardware |
 
 ## When should you not use rig?

@@ -37,23 +37,29 @@ external now : unit -> (int[@untagged])
 
 (* Types *)
 
-type memory =
+type memory = Path.memory =
   | Host of A.buffer
   | Dmabuf of { fd : int; offset : int; bytes : int }
 
-type access = Local | Remote_write | Remote
-type order = In_order | Any_order
-type address = Lid of int | Gid of string
-type endpoint = { qp : int; psn : int; address : address; mtu : int }
+type access = Path.access = Local | Remote_write | Remote
+type order = Path.order = In_order | Any_order
+type address = Path.address = Lid of int | Gid of string
 
-type kernel_event =
+type endpoint = Path.endpoint = {
+  qp : int;
+  psn : int;
+  address : address;
+  mtu : int;
+}
+
+type kernel_event = Path.kernel_event =
   | Completed of int
   | Cq_error of int
   | Qp_failed of int * string
   | Nic_failed
   | Port_changed of string
 
-type transition =
+type transition = Path.transition =
   | Init
   | Ready_to_receive of {
       peer : endpoint;
@@ -63,7 +69,7 @@ type transition =
     }
   | Ready_to_send of { psn : int; timeout : int; retries : int; reads : int }
 
-type context = {
+type context = Path.context = {
   answer : string;
   port : [ `Infiniband of int | `Ethernet of (int * string) list ];
   mtu : int;
@@ -71,9 +77,9 @@ type context = {
   served : int;
 }
 
-type registered = { handle : int; local : int; remote : int }
+type registered = Path.registered = { handle : int; local : int; remote : int }
 
-type path = {
+type path = Path.t = {
   name : string;
   bus : string;
   page : int;
@@ -389,6 +395,36 @@ let close nic =
     List.iter (fun (_, c) -> free_ring c.c_ring) cqs;
     with_lock nic (fun () -> nic.kept <- [])
   end
+
+(* Opening, through Linux's RDMA subsystem *)
+
+let mlx5_driver = "mlx5_core"
+let is_mlx5 root name = Uverbs.driver_name root name = Some mlx5_driver
+
+let names_under ~root () =
+  let* names = Uverbs.devices root in
+  Ok (List.filter (is_mlx5 root) names)
+
+let names () = names_under ~root:"/" ()
+
+let device root name =
+  if Uverbs.exists root name then Ok ()
+  else Error (strf "%s: no RDMA device of this name" name)
+
+let path ?(root = "/") name =
+  let* () = device root name in
+  Uverbs.open_ ~root name
+
+let open_under ~root name =
+  let* () = device root name in
+  let* () =
+    if is_mlx5 root name then Ok ()
+    else Error (strf "%s: the %s driver does not hold it" name mlx5_driver)
+  in
+  let* p = Uverbs.open_ ~root name in
+  make p
+
+let open_ name = open_under ~root:"/" name
 
 (* Regions *)
 

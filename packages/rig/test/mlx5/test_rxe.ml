@@ -6,7 +6,7 @@
 (* The uverbs path on a Soft-RoCE device (rdma_rxe), the kernel's RoCE v2 over
    an Ethernet interface: the path's own calls with no driver data in and room
    for rxe's answers, as a device of another driver than mlx5 takes them,
-   through Rig_mlx5_uverbs.path. A context and its port, regions of each access,
+   through Rig_mlx5.path. A context and its port, regions of each access,
    a completion queue, two queue pairs taken through their states to ready to
    send, connected to each other, their destruction, an owner killed with its
    queue pairs, which the kernel tears down, and Rig_mlx5.make's refusal of a
@@ -36,7 +36,7 @@ let device () =
 
 let open_path () =
   let name = device () in
-  match Rig_mlx5_uverbs.path name with
+  match Rig_mlx5.path name with
   | Ok p -> p
   | Error e -> failf "opening %s: %s" name e
 
@@ -232,5 +232,5 @@ let killed =
 
 let () =
   exit
-    (run "rig_mlx5_uverbs.rxe"
+    (run "rig_mlx5.rxe"
        [ context; regions; queue_pairs; refusals; events; killed; make ])

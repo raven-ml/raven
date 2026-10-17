@@ -9,7 +9,6 @@
    libibverbs/cmd_*.c, which makes the same calls. Each call lays out its
    request from the uapi structures of [Defs], and one stub runs the ioctl. *)
 
-module M = Rig_mlx5
 module D = Defs
 
 let strf = Printf.sprintf
@@ -101,7 +100,14 @@ let uevent root name key =
           | _ -> None)
         (String.split_on_char '\n' s)
 
-let devices root = entries (class_dir root)
+let devices root =
+  let dir = class_dir root in
+  match Sys.readdir dir with
+  | a ->
+      Array.sort compare a;
+      Ok (Array.to_list a)
+  | exception Sys_error why -> if Sys.file_exists dir then Error why else Ok []
+
 let exists root name = Sys.file_exists (class_dir root // name)
 let driver_name root name = uevent root name "DRIVER"
 
@@ -339,7 +345,7 @@ let context f d n =
   in
   Ok
     {
-      M.answer;
+      Path.answer;
       port;
       mtu;
       reads = field device Q.max_qp_init_rd_atom;
@@ -381,7 +387,7 @@ let reg_mr f ~flags b =
   ignore (Sys.opaque_identity b);
   Ok
     {
-      M.handle = field resp A.mr_handle;
+      Path.handle = field resp A.mr_handle;
       local = field resp A.lkey;
       remote = field resp A.rkey;
     }
@@ -405,13 +411,13 @@ let reg_dmabuf f ~flags ~fd off n =
   in
   Ok
     {
-      M.handle = field r.(0) (0, 8);
+      Path.handle = field r.(0) (0, 8);
       local = field r.(7) (0, 4);
       remote = field r.(8) (0, 4);
     }
 
 (* The access flags of an access and an order. *)
-let flags (a : M.Region.access) (o : M.Region.order) =
+let flags (a : Path.access) (o : Path.order) =
   let peers =
     match a with
     | Local -> 0
@@ -426,7 +432,7 @@ let flags (a : M.Region.access) (o : M.Region.order) =
   in
   D.ib_uverbs_access_local_write lor peers lor order
 
-let register f a o (m : M.Region.memory) =
+let register f a o (m : Path.memory) =
   match m with
   | Host b -> reg_mr f ~flags:(flags a o) b
   | Dmabuf { fd; offset; bytes } ->
@@ -490,7 +496,7 @@ let hop_limit = 64
 let rec mtu_code bytes =
   if bytes <= 256 then D.ibv_mtu_256 else 1 + mtu_code (bytes / 2)
 
-let modify f h (t : M.transition) =
+let modify f h (t : Path.transition) =
   let module Q = D.Uverbs_modify_qp in
   let mask bits = (Q.attr_mask, List.fold_left ( lor ) D.ibv_qp_state bits) in
   let what, fields =
@@ -510,7 +516,7 @@ let modify f h (t : M.transition) =
           match (address, gid) with
           | Lid lid, _ -> [ (Q.dest__dlid, lid) ]
           | Gid _, None ->
-              invalid_arg "Rig_mlx5_uverbs: a global address with no local one"
+              invalid_arg "Rig_mlx5: a global address with no local one"
           | Gid _, Some index ->
               [
                 (Q.dest__is_global, 1);
@@ -604,13 +610,13 @@ let destroy f kind h =
 
 let async_events =
   [
-    (D.ibv_event_cq_err, fun e -> M.Cq_error e);
-    (D.ibv_event_qp_fatal, fun e -> M.Qp_failed (e, "fatal error"));
-    (D.ibv_event_qp_req_err, fun e -> M.Qp_failed (e, "request error"));
-    (D.ibv_event_qp_access_err, fun e -> M.Qp_failed (e, "access error"));
-    (D.ibv_event_device_fatal, fun _ -> M.Nic_failed);
-    (D.ibv_event_port_active, fun _ -> M.Port_changed "active");
-    (D.ibv_event_port_err, fun _ -> M.Port_changed "down");
+    (D.ibv_event_cq_err, fun e -> Path.Cq_error e);
+    (D.ibv_event_qp_fatal, fun e -> Path.Qp_failed (e, "fatal error"));
+    (D.ibv_event_qp_req_err, fun e -> Path.Qp_failed (e, "request error"));
+    (D.ibv_event_qp_access_err, fun e -> Path.Qp_failed (e, "access error"));
+    (D.ibv_event_device_fatal, fun _ -> Path.Nic_failed);
+    (D.ibv_event_port_active, fun _ -> Path.Port_changed "active");
+    (D.ibv_event_port_err, fun _ -> Path.Port_changed "down");
   ]
 
 (* An asynchronous event of a kind the library reports, from its record at
@@ -680,11 +686,11 @@ let wait f ms =
   let completions =
     List.init (c.filled / comp_size) (fun i ->
         let tag = Bytes.get_int64_le c.taken (i * comp_size) in
-        M.Completed (Int64.to_int tag))
+        Path.Completed (Int64.to_int tag))
   in
   (* An event file hangs up once the device is gone, and stays readable:
      the NIC failed. *)
-  let gone = if ready land 4 = 0 then [] else [ M.Nic_failed ] in
+  let gone = if ready land 4 = 0 then [] else [ Path.Nic_failed ] in
   async @ completions @ gone
 
 let close f () =
@@ -728,7 +734,7 @@ let open_ ~root name =
   in
   Ok
     {
-      M.name;
+      Path.name;
       bus;
       page = page_size ();
       context = context f;

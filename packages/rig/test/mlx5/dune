@@ -1,6 +1,7 @@
-; test_nic runs on a ConnectX NIC of this machine and skips without one.
+; test_nic runs on a ConnectX NIC of this machine and skips without one;
+; test_rxe makes a Soft-RoCE device's objects, skipping without one;
+; test_region holds a real mlx5 path's deregistration at handle reuse.
 
-(test
- (name test_nic)
- (modules test_nic)
- (libraries rig_mlx5 rig_mlx5_abi rig_mlx5_uverbs rig_support unix windtrap))
+(tests
+ (names test_nic test_uverbs test_rxe test_region)
+ (libraries rig_mlx5 rig_mlx5_abi rig_support unix windtrap))

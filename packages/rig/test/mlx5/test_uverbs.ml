@@ -9,7 +9,7 @@
    /sys/class/infiniband lists them. *)
 
 open Windtrap
-module U = Rig_mlx5_uverbs
+module M = Rig_mlx5
 
 (* mlx5_0's verbs file under [root], its path joined as the system joins
    one. *)
@@ -69,25 +69,33 @@ let machine =
       verbs root 2 "rxe0";
       root)
 
+let names = result (list string) string
+
 let listing =
   group "listing"
     [
       test "the devices the mlx5 driver holds, in name order" (fun () ->
-          equal (list string) [ "mlx5_0"; "mlx5_1" ]
-            (U.names ~root:(machine ()) ()));
+          equal names (Ok [ "mlx5_0"; "mlx5_1" ])
+            (M.names_under ~root:(machine ()) ()));
       test "names sort as strings" (fun () ->
           let root = temp () in
           device root "mlx5_2" ~driver:"mlx5_core" ();
           device root "mlx5_10" ~driver:"mlx5_core" ~bus:"0000:2a:00.0" ();
-          equal (list string) [ "mlx5_10"; "mlx5_2" ] (U.names ~root ()));
+          equal names (Ok [ "mlx5_10"; "mlx5_2" ]) (M.names_under ~root ()));
       test "a machine with no RDMA devices lists none" (fun () ->
-          equal (list string) [] (U.names ~root:(temp ()) ()));
+          equal names (Ok []) (M.names_under ~root:(temp ()) ()));
+      test "a list of devices that cannot be read says why" (fun () ->
+          let root = temp () in
+          let dir = Filename.concat root "sys/class/infiniband" in
+          write dir "";
+          let why = require_error (M.names_under ~root ()) in
+          starts_with ~affix:(dir ^ ": ") why);
     ]
 
 let opening =
   let refused name sub =
     test name (fun () ->
-        match U.open_ ~root:(machine ()) sub.(0) with
+        match M.open_under ~root:(machine ()) sub.(0) with
         | Ok _ -> fail "opened"
         | Error e -> contains ~sub:sub.(1) e)
   in
@@ -101,7 +109,7 @@ let opening =
         [| "rxe0"; "the mlx5_core driver does not hold it" |];
       test "a verbs file that cannot be opened is named" (fun () ->
           let root = machine () in
-          match U.open_ ~root "mlx5_0" with
+          match M.open_under ~root "mlx5_0" with
           | Ok _ -> fail "opened"
           | Error e ->
               starts_with
@@ -112,7 +120,7 @@ let opening =
 let paths =
   let refused name dev sub =
     test name (fun () ->
-        match U.path ~root:(machine ()) dev with
+        match M.path ~root:(machine ()) dev with
         | Ok _ -> fail "a path"
         | Error e -> contains ~sub e)
   in
@@ -124,4 +132,4 @@ let paths =
         (verbs_file "");
     ]
 
-let () = exit (run "rig_mlx5_uverbs" [ listing; opening; paths ])
+let () = exit (run "rig_mlx5.uverbs" [ listing; opening; paths ])

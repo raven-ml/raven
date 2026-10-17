@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** ConnectX NICs, driven once open.
+(** ConnectX NICs of this machine, opened through Linux's RDMA subsystem.
 
-    Here a NIC is one open port of a ConnectX NIC (the [mlx5] family). Another
-    library opens it, which this one calls a {e path}. A path reaches the NIC
-    one way, as [Rig_mlx5_uverbs] does through Linux's RDMA subsystem, has the
-    kernel make the NIC's objects, and gives them to {!make}. The NIC then
-    moves bytes between this process's memory and a peer's by RDMA writes and
-    reads, on reliable-connected queue pairs.
+    Here a NIC is one open port of a ConnectX NIC (the [mlx5] family). The
+    kernel's [mlx5_ib] driver owns the NIC and shares it with other programs.
+    {!open_} opens the NIC through its user verbs file,
+    [/dev/infiniband/uverbsN], and has the kernel make the NIC's objects with
+    the verbs ioctls. The NIC then moves bytes between this process's memory
+    and a peer's by RDMA writes and reads, on reliable-connected queue pairs.
 
     This library is untested on real ConnectX NICs.
 
@@ -27,8 +27,8 @@
       order in a region registered [In_order] ({!Region.type-order}).
 
     A transfer between two processes goes like this:
-    + Each process opens its NIC through a path, makes a completion queue and
-      a queue pair on it, and registers the memory it shares
+    + Each process opens its NIC ({!open_}), makes a completion queue and a
+      queue pair on it, and registers the memory it shares
       ({!Region.register}).
     + The processes exchange their queue pairs' endpoints
       ({!Qp.val-endpoint}) and their regions' remote addresses
@@ -40,7 +40,7 @@
       or closes the NIC ({!val-close}).
 
     {[
-    let nic = Result.get_ok (Rig_mlx5_uverbs.open_ "mlx5_0") in
+    let nic = Result.get_ok (Rig_mlx5.open_ "mlx5_0") in
     let cq = Result.get_ok (Rig_mlx5.Cq.make nic 256) in
     let qp = Result.get_ok (Rig_mlx5.Qp.make cq 128) in
     (* send Qp.endpoint qp to the peer, receive its endpoint [peer] *)
@@ -100,13 +100,54 @@
       Volume 1: reliable-connected queue pairs, packet sequence numbers,
       acknowledgement timeouts and retries; Annex A17, RoCE v2.
     - rdma-core's [providers/mlx5/mlx5dv.h] and its [mlx5dv] manual pages:
-      the formats the process and the NIC share ({!Rig_mlx5_abi}). *)
+      the formats the process and the NIC share ({!Rig_mlx5_abi}).
+    - The Linux kernel's
+      {{:https://docs.kernel.org/infiniband/user_verbs.html}Userspace verbs
+       access} documentation: the verbs files and the pinning of registered
+      memory. *)
 
-(** {1:nics NICs} *)
+(** {1:nics NICs}
+
+    A NIC is named as the kernel names its RDMA device, such as ["mlx5_0"]. A
+    ConnectX function has one port, and this library opens port 1.
+
+    {b The machine's files.} {!names} and {!open_} read this machine's files:
+    the RDMA devices under [/sys/class/infiniband] and
+    [/sys/class/infiniband_verbs], and the verbs files under
+    [/dev/infiniband]. Off Linux this machine has none of these files, so
+    [names ()] is [Ok []] and {!open_} returns [Error].
+
+    {b Privileges.} Opening needs read and write access to the NIC's verbs
+    file and no other privilege. Registering memory locks its pages, so the
+    process's locked-memory limit ([RLIMIT_MEMLOCK]) bounds the bytes it
+    registers unless the process has [CAP_IPC_LOCK].
+
+    {b Kernels.} Registering dma-buf memory needs Linux 5.12 or later. *)
 
 type t
-(** The type for NIC ports a path opened. Each has one protection domain,
-    which its regions and queue pairs share. *)
+(** The type for open NIC ports. Each has one protection domain, which its
+    regions and queue pairs share. *)
+
+val names : unit -> (string list, string) result
+(** [names ()] is the names of this machine's RDMA devices whose PCI function
+    the [mlx5_core] driver holds, sorted as strings, so ["mlx5_10"] comes
+    before ["mlx5_2"]. It is [Ok []] where [/sys/class/infiniband] does not
+    exist, and [Error msg] if it cannot be read, [msg] naming it and the
+    reason. Listing them changes nothing on the machine. *)
+
+val open_ : string -> (t, string) result
+(** [open_ name] opens port 1 of the NIC [name] and maps its access regions,
+    the NIC's pages through which the process rings doorbells.
+
+    The result is [Error msg] if:
+    - no RDMA device [name] exists, or [mlx5_core] does not hold its PCI
+      function;
+    - it has no verbs file, or its verbs file cannot be opened, [msg] naming
+      the file and the reason;
+    - the kernel refuses a call, [msg] naming the call and the reason;
+    - port 1 is not active, or is an Ethernet port with no RoCE v2 global
+      identifier;
+    - the kernel gives fewer doorbell registers than one system page holds. *)
 
 val name : t -> string
 (** [name nic] is the kernel's name of [nic], such as ["mlx5_0"]. *)
@@ -335,13 +376,18 @@ val wait : t -> ms:int -> event list
 
     Raises [Invalid_argument] if [ms < 0]. *)
 
+(**/**)
+
 (** {1:paths Paths}
 
-    This section is for the libraries that open NICs. Each object the kernel
-    makes carries {e driver data}, bytes the kernel's [mlx5] driver reads when
-    it makes the object and bytes it writes back. This library writes and
-    reads the driver data, and a path passes it to and from the kernel
-    unchanged. *)
+    For tests. A {e path} reaches a NIC one way, as {!open_} does through
+    Linux's RDMA subsystem: it has the kernel make the NIC's objects and gives
+    them to {!make}. A test wraps a path, such as to make its [destroy] fail,
+    or opens a path of another driver, such as Soft-RoCE's. Each object the
+    kernel makes carries {e driver data}, bytes the kernel's [mlx5] driver
+    reads when it makes the object and bytes it writes back. This library
+    writes and reads the driver data, and a path passes it to and from the
+    kernel unchanged. *)
 
 (** The type for the kernel's events. *)
 type kernel_event =
@@ -473,3 +519,24 @@ val make : path -> (t, string) result
     port with no RoCE v2 global identifier, or if the kernel gives fewer
     doorbell registers than one system page holds. A [make] that fails or
     raises closes [p]. *)
+
+val path : ?root:string -> string -> (path, string) result
+(** [path ~root name] is a path through the verbs file of the RDMA device
+    [name] under the directory [root] (defaults to ["/"]), on port 1, whatever
+    driver holds the device. The path passes the driver data it is given to
+    the kernel unchanged, and names the driver the kernel lists for [name].
+    [open_under ~root name] is {!make} of this path for a NIC that
+    [mlx5_core] holds. The caller must close a path it does not make into a
+    NIC.
+
+    The result is [Error msg] if no RDMA device [name] exists, it has no verbs
+    file, its verbs file cannot be opened ([msg] names the file and the
+    reason), or the kernel lists no driver for [name]. *)
+
+val names_under : root:string -> unit -> (string list, string) result
+(** [names_under ~root ()] is {!names} of the machine whose files are under
+    the directory [root], such as a container's view of its host. *)
+
+val open_under : root:string -> string -> (t, string) result
+(** [open_under ~root name] is {!open_} of the machine whose files are under
+    the directory [root]. *)
