@@ -641,7 +641,9 @@ let donation_commands =
    finds its buffer dead, and the memory is consumed at most once. A with_
    beside another's may find the memory held exclusive or read, which no order
    of whole calls shows, so those refusals and reads are accepted in any
-   state. *)
+   state. So is a hand-over that finds claims handed: another domain's
+   hand-over puts them in the cell before its with_ returns, and a
+   consumption through them may follow. *)
 type handed = { x : B.t; cell : Claim.t option Atomic.t }
 type handing = { mutable handed : bool; mutable live : bool }
 
@@ -686,8 +688,7 @@ let judge_hand r = function
   | Ok "handed" ->
       equal ~msg:"handed before" bool false r.handed;
       r.handed <- true
-  | Ok "already" -> equal ~msg:"handed before" bool true r.handed
-  | Ok "refused" -> ()
+  | Ok ("already" | "refused") -> ()
   | Ok s -> failf "the hand-over answered %s" s
   | Error e -> raise e
 
