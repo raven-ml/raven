@@ -272,4 +272,61 @@ let clamps =
               Nx.clamp ~max:300 (Nx.zeros Nx.uint8 [| 1 |])));
     ]
 
-let () = exit (run "nx logic" [ truths; bits; classes; clamps ])
+(* Whole values *)
+
+(* Two values of one dtype: the second the first, the first with one element
+   drawn afresh, or one of another shape. *)
+let pair =
+  Gen.with_pp
+    (fun ppf (Two (_, a, b)) -> Format.fprintf ppf "%a, %a" pp_value a pp_value b)
+    (let open Gen in
+     let* (D.Any dt) = of_dtypes D.all in
+     let* s = shape in
+     let* a = drawn dt s in
+     let* how = int_range 0 2 in
+     match how with
+     | 0 -> constant (Two (dt, a, Nx.copy a))
+     | 1 ->
+         let+ c = drawn dt s and+ j = nat in
+         let n = Array.length (Nx.to_array a) in
+         if n = 0 then Two (dt, a, c)
+         else
+           let vs = Nx.to_array a in
+           vs.(j mod n) <- (Nx.to_array c).(j mod n);
+           Two (dt, a, Nx.create dt s vs)
+     | _ ->
+         let* s' = shape in
+         let+ b = drawn dt s' in
+         Two (dt, a, b))
+
+(* OCaml's [=] on elements is {!Nx.equal}'s: floats by value, a NaN unequal to
+   everything and [-0.] equal to [+0.], complex numbers part by part. *)
+let law_array_equal (Two (_, a, b)) =
+  let expected =
+    Nx.shape a = Nx.shape b
+    && Array.for_all2 ( = ) (Nx.to_array a) (Nx.to_array b)
+  in
+  cover "equal" expected;
+  cover "unequal at one shape" ((not expected) && Nx.shape a = Nx.shape b);
+  cover "two shapes" (Nx.shape a <> Nx.shape b);
+  cover "no element" (Array.length (Nx.to_array a) = 0);
+  let r = Nx.array_equal a b in
+  equal (array int) [||] (Nx.shape r);
+  equal bool expected (Nx.item [] r)
+
+let wholes =
+  group "array_equal"
+    [
+      prop "true iff one shape and equal at every index" pair law_array_equal;
+      test "a NaN is unequal to itself; -0. equals +0." (fun () ->
+          let x = Nx.create Nx.float32 [| 2 |] [| nan; 1. |] in
+          equal bool false (Nx.item [] (Nx.array_equal x x));
+          let z = Nx.create Nx.float64 [| 1 |] [| -0. |] in
+          equal bool true
+            (Nx.item [] (Nx.array_equal z (Nx.create Nx.float64 [| 1 |] [| 0. |]))));
+      test "shapes that broadcast are unequal" (fun () ->
+          let a = Nx.ones Nx.int8 [| 1; 3 |] and b = Nx.ones Nx.int8 [| 3 |] in
+          equal bool false (Nx.item [] (Nx.array_equal a b)));
+    ]
+
+let () = exit (run "nx logic" [ truths; bits; classes; clamps; wholes ])

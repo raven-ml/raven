@@ -273,4 +273,69 @@ let reads =
       test "an extent receives no read" test_read_under_extent;
     ]
 
-let () = exit (run "nx data" [ ocaml; bigarrays; reads ])
+(* Maps on the host *)
+
+(* [map_item f] is [create] of [f] over the elements: with [f] the identity, a
+   round trip, NaN payloads, signed zeros and every dtype included. *)
+let law_map_identity (Case (dt, s, vs)) =
+  let x = Nx.create dt s vs in
+  let y = Nx.map_item Fun.id x in
+  equal (array int) s (Nx.shape y);
+  equal_elements dt (Nx.to_array x) (Nx.to_array y)
+
+(* An element's image under [f], at each dtype a function of that dtype: [f]
+   is applied to the element, and the store rounds a float once. *)
+let test_map_values () =
+  let x = Nx.create f32 [| 2; 2 |] [| 1.; -0.; nan; 0.1 |] in
+  equal_elements Nx.float32
+    (Nx.to_array (Nx.create f32 [| 4 |] [| -1.; 0.; nan; -0.1 |]))
+    (Nx.to_array (Nx.map_item Float.neg x));
+  let i = Nx.create Nx.int8 [| 3 |] [| -128; 0; 127 |] in
+  equal (array int) [| 127; -1; -128 |]
+    (Nx.to_array (Nx.map_item (fun v -> -v - 1) i));
+  let b = Nx.create Nx.bool [| 2 |] [| true; false |] in
+  equal (array bool) [| false; true |] (Nx.to_array (Nx.map_item not b))
+
+let test_map_order () =
+  let seen = ref [] in
+  let x = Nx.transpose (Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |]) in
+  let _ = Nx.map_item (fun v -> seen := v :: !seen; v) x in
+  equal (list int32) [ 0l; 3l; 1l; 4l; 2l; 5l ] (List.rev !seen)
+
+let test_map_range () =
+  invalid ~by:"Nx.map_item" (fun () ->
+      Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 2 |]))
+
+let test_map_every_set () =
+  let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
+  equal (array float_exact) [| 4.; 4.; 4. |]
+    (Nx.to_array (Nx.map_item (fun v -> v *. 2.) x))
+
+let test_map_dead () =
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  let _ = Nx.add (Nx.donate x) (Nx.create f32 [| 2 |] [| 0.; 0. |]) in
+  invalid ~by:"Nx.map_item" (fun () -> Nx.map_item Fun.id x)
+
+let test_map_traced () =
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
+      raises_match
+        (Exn.invalid_arg
+           ~substring:"Nx.map_item: the value is traced by test.reads")
+        (fun () -> Nx.map_item Fun.id t))
+
+let maps =
+  group "map_item"
+    [
+      prop "the identity gives the value back" case law_map_identity;
+      test "each element is f of the element, stored in the dtype"
+        test_map_values;
+      test "f runs once per element in C order" test_map_order;
+      test "an int outside the dtype raises" test_map_range;
+      test "a value of every set is computed on the host" test_map_every_set;
+      test "a dead value raises" test_map_dead;
+      test "a traced value raises" test_map_traced;
+    ]
+
+let () = exit (run "nx data" [ ocaml; bigarrays; reads; maps ])

@@ -180,11 +180,10 @@ let full_like x v = beside ~by:"Nx.full_like" x (fill ~by:"Nx.full_like" (dtype 
 let zeros_like x = beside ~by:"Nx.zeros_like" x (fill ~by:"Nx.zeros_like" (dtype x) (shape x) (D.zero (dtype x)))
 let ones_like x = beside ~by:"Nx.ones_like" x (fill ~by:"Nx.ones_like" (dtype x) (shape x) (D.one (dtype x)))
 
-(* A 0-d value has no axis to cut: beside a cut [x] it is whole on each of
-   [x]'s devices. *)
-let scalar_like x v =
-  let by = "Nx.scalar_like" in
-  let c = fill ~by (dtype x) [||] v in
+(* The 0-d [v] of [dt] beside [x]. A 0-d value has no axis to cut: beside a
+   cut [x] it is whole on each of [x]'s devices. *)
+let scalar_beside ~by x dt v =
+  let c = fill ~by dt [||] v in
   match Prim.at x with
   | None -> c
   | Some p ->
@@ -194,6 +193,8 @@ let scalar_like x v =
       in
       let p = if whole == g then p else Devices.v ~by (Devices.set p) whole in
       Eval.eval ~by (Value.Place (p, c))
+
+let scalar_like x v = scalar_beside ~by:"Nx.scalar_like" x (dtype x) v
 
 (* Leaves *)
 
@@ -2745,6 +2746,18 @@ let histogram (type s d) ?weights
           (fill ~by dt [| cells |] 0.)
   in
   move ~by (Reshape bins) h
+
+(* Whole values and maps on the host *)
+
+let array_equal a b =
+  let by = "Nx.array_equal" in
+  if not (same_shape a b) then scalar_beside ~by a D.Bool false
+  else truth ~by Min (comparison ~by (Compare Equal) a b)
+
+let map_item f x =
+  let by = "Nx.map_item" in
+  let vs = Array.map f (Nx_array.to_array (read ~by x)) in
+  renamed ~by (fun () -> on_host (Nx_array.of_array (dtype x) (shape x) vs))
 
 (* Printing *)
 

@@ -1202,6 +1202,12 @@ val greater : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
 val greater_equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
 (** [greater_equal a b] is [less_equal b a]. *)
 
+val array_equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [array_equal a b] is the 0-d [true] iff [a] and [b] have one shape and
+    {!equal} holds at every index: [false] where an element is a NaN, and
+    [true] for two values without elements. Values of two shapes give [false]
+    and do not broadcast. *)
+
 val bitwise_and : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [bitwise_and a b] is the bitwise and of integers, the logical and of
     booleans. Integers and booleans. *)
@@ -1270,6 +1276,15 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [where c x y] is [x]'s element where [c] is [true] and [y]'s elsewhere.
 
     Raises [Invalid_argument] if the shapes do not broadcast. *)
+
+val map_item : ('v -> 'v) -> ('v, 's, host) t -> ('v, 's, host) t
+(** [map_item f x] is the host value of [x]'s shape whose element at each index
+    is [f] of [x]'s element there, a float stored as {!Dtype.of_float} says.
+    [f] is an OCaml function, so it runs on the host, once per element in C
+    order. [x] is read as {!to_array} reads it.
+
+    Raises [Invalid_argument] if [f] gives an [int] outside [x]'s dtype's
+    range, and as {!to_array} does. *)
 
 (** {2:reductions Reductions and scans}
 
