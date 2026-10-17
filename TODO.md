@@ -239,8 +239,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
-- the disk cache never evicts (96 GB on the Mac): bound it, state the bound
-  in helpers.mli, and test that its size holds past the bound
 - tolk.engine refuses a back edge whose flag moves with the run's words
   (tolk_engine.ml:775); no GPU test of a loop whose body mixes a GPU kernel
   and a host program

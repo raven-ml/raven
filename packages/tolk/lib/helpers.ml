@@ -430,6 +430,7 @@ module Diskcache = struct
   let is_entry name =
     starts_with_digest name && (String.length name = 32 || name.[32] = '.')
 
+  let is_whole_entry name = starts_with_digest name && String.length name = 32
   let entry_path table key = Filename.concat (table_dir table) (digest key)
   let enabled () = Setting.value Setting.cachelevel >= 1
 
@@ -460,16 +461,131 @@ module Diskcache = struct
     Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
         In_channel.input_all ic)
 
+  let sys_error path e = Sys_error (path ^ ": " ^ Unix.error_message e)
+
+  (* A read marks the entry used, for the order in which a trim removes entries.
+     The mark is a hint: an entry removed meanwhile, or one the process may only
+     read, keeps its time and is still a hit. *)
+  let mark path =
+    try Unix.utimes path 0. 0.
+    with Unix.Unix_error ((ENOENT | EACCES | EPERM | EROFS), _, _) -> ()
+
   let get ~table key =
     if not (enabled ()) then None
     else
       let path = entry_path table key in
       match read path with
-      | contents -> decode path key contents
+      | contents ->
+          let value = decode path key contents in
+          if Option.is_some value then mark path;
+          value
       | exception Unix.Unix_error (e, _, _) ->
-          if Sys.file_exists path then
-            raise (Sys_error (path ^ ": " ^ Unix.error_message e))
-          else None
+          if Sys.file_exists path then raise (sys_error path e) else None
+
+  let remove file =
+    try Sys.remove file with Sys_error _ when not (Sys.file_exists file) -> ()
+
+  (* The cache's size is the length of one file, named like a table by the
+     digest of [size], which each put grows by a byte per started KiB of its
+     entry: appends from any number of processes add up without a lock, and one
+     [fstat] reads their sum. A trim sets it to the size it measured. *)
+  let size_file = Filename.concat cachedb (digest "size" ^ "_size")
+  let kib bytes = (bytes + 1023) / 1024
+
+  (* The bytes that entries of [bytes] hold with their count. *)
+  let held bytes = bytes + kib bytes
+
+  (* On Windows, a descriptor opened for writing as well as appending writes
+     where the file ended when it was opened, so concurrent appends overwrite
+     each other; one opened only to append writes at the end. *)
+  let append_flags =
+    let access = if Sys.win32 then [] else [ Unix.O_WRONLY ] in
+    access @ [ Unix.O_APPEND; O_CREAT; O_CLOEXEC; O_SHARE_DELETE ]
+
+  (* [count bytes] adds an entry of [bytes] to the size and is the KiB
+     counted. *)
+  let count bytes =
+    match Unix.openfile size_file append_flags 0o644 with
+    | exception Unix.Unix_error (e, _, _) -> raise (sys_error size_file e)
+    | fd -> (
+        Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+        let n = kib bytes in
+        try
+          ignore (Unix.write_substring fd (String.make n '\000') 0 n);
+          (Unix.fstat fd).st_size
+        with Unix.Unix_error (e, _, _) -> raise (sys_error size_file e))
+
+  (* The files named like entries in every table and version, whole or being
+     written, each with its name, path, length and the time it was last used. *)
+  let files () =
+    let stat dir name =
+      let path = Filename.concat dir name in
+      match Unix.stat path with
+      | st -> Some (name, path, st.st_size, st.st_mtime)
+      | exception Unix.Unix_error _ -> None
+    in
+    let in_table name =
+      let dir = Filename.concat cachedb name in
+      match Sys.readdir dir with
+      | names ->
+          Array.to_list names |> List.filter is_entry
+          |> List.filter_map (stat dir)
+      | exception Sys_error _ -> []
+    in
+    match Sys.readdir cachedb with
+    | names ->
+        Array.to_list names |> List.filter is_table_dir
+        |> List.concat_map in_table
+    | exception Sys_error _ -> []
+
+  (* [discard path] removes [path] if it can; it is whether [path] is gone. *)
+  let discard path =
+    match Sys.remove path with
+    | () -> true
+    | exception Sys_error _ -> not (Sys.file_exists path)
+
+  (* A count that cannot be set stays above the bound, and the next put trims
+     again. *)
+  let set_count kib =
+    try
+      let fd =
+        Unix.openfile size_file
+          [ O_WRONLY; O_CREAT; O_SHARE_DELETE; O_CLOEXEC ]
+          0o644
+      in
+      Fun.protect
+        ~finally:(fun () -> Unix.close fd)
+        (fun () -> Unix.ftruncate fd kib)
+    with Unix.Unix_error _ -> ()
+
+  (* Entries are kept from the one used most recently, while they and their
+     count hold four fifths of [limit]; the rest are removed. A trim walks every
+     entry, so it leaves a fifth of the bound for the puts before the next.
+     Writes in progress last touched before the walk began are removed: a
+     process killed while writing leaves them, and nothing else would. A trim
+     never fails a put: what it cannot read or remove, as a table another
+     process clears or, on Windows, a file another process has open, it leaves
+     for the next trim. *)
+  let trim limit =
+    let start = Unix.gettimeofday () and target = limit - (limit / 5) in
+    let entries, writes =
+      List.partition (fun (name, _, _, _) -> is_whole_entry name) (files ())
+    in
+    List.iter
+      (fun (_, path, _, time) -> if time < start then ignore (discard path))
+      writes;
+    let unless_discarded kept (_, path, size, _) =
+      if discard path then kept else kept + size
+    in
+    let rec keep kept = function
+      | (_, _, size, _) :: older when held (kept + size) <= target ->
+          keep (kept + size) older
+      | rest -> List.fold_left unless_discarded kept rest
+    in
+    let newest_first =
+      List.sort (fun (_, _, _, a) (_, _, _, b) -> Float.compare b a) entries
+    in
+    set_count (kib (keep 0 newest_first))
 
   let rec mkdir_p dir =
     if not (Sys.file_exists dir) then begin
@@ -478,11 +594,17 @@ module Diskcache = struct
     end
 
   (* The entry is written aside and renamed into place, so readers never see it
-     half written. On Windows the rename can fail while a reader holds the
-     entry open; that entry is complete, so it stays. *)
+     half written. On Windows the rename can fail while a reader holds the entry
+     open; that entry is complete, so it stays. A write a trim removed is an
+     entry removed. A cache without a size, new or written before the cache
+     counted it, is measured. *)
   let put ~table key value =
+    let limit = Setting.value Setting.cachesize in
+    if limit < 0 then
+      invalid_arg
+        (Printf.sprintf "Diskcache.put: cachesize %d, expected 0 or more" limit);
     if enabled () then begin
-      let path = entry_path table key in
+      let path = entry_path table key and entry = encode key value in
       let dir = Filename.dirname path in
       mkdir_p dir;
       let tmp, oc =
@@ -491,26 +613,27 @@ module Diskcache = struct
           ".tmp"
       in
       match
-        output_string oc (encode key value);
+        output_string oc entry;
         close_out oc
       with
       | exception e ->
           close_out_noerr oc;
           (try Sys.remove tmp with Sys_error _ -> ());
           raise e
-      | () -> (
-          try Sys.rename tmp path
-          with Sys_error _ when Sys.file_exists path -> Sys.remove tmp)
+      | () ->
+          (try Sys.rename tmp path with
+          | Sys_error _ when Sys.file_exists path -> remove tmp
+          | Sys_error _ when not (Sys.file_exists tmp) -> ());
+          let measured = Sys.file_exists size_file in
+          let counted = count (String.length entry) in
+          let over = (not measured) || held (counted * 1024) > limit in
+          if limit > 0 && over then trim limit
     end
 
   (* Only files named like entries are removed, so a [CACHEDB] pointing at a
      directory holding other files keeps them. Entries and tables may vanish
      meanwhile, cleared by another process. *)
   let clear () =
-    let remove file =
-      try Sys.remove file
-      with Sys_error _ when not (Sys.file_exists file) -> ()
-    in
     let clear_table dir =
       Array.iter
         (fun f -> if is_entry f then remove (Filename.concat dir f))
@@ -524,7 +647,8 @@ module Diskcache = struct
         (fun name ->
           let dir = Filename.concat cachedb name in
           if is_table_dir name && Sys.is_directory dir then clear_table dir)
-        (Sys.readdir cachedb)
+        (Sys.readdir cachedb);
+    remove size_file
 end
 
 (* Programs *)

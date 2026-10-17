@@ -66,6 +66,12 @@ let play = function
       for _ = 1 to 20 do
         Diskcache.put ~table "k" payload
       done
+  | "fill" ->
+      for i = 1 to 4 do
+        Diskcache.put ~table:Sys.argv.(1)
+          (Sys.argv.(2) ^ string_of_int i)
+          (String.make 4096 'v')
+      done
   | role -> failwith ("unknown role " ^ role)
 
 type ended = { status : Unix.process_status; out : string; err : string }
@@ -583,31 +589,43 @@ let rec files dir =
       if Sys.is_directory path then files path else [ path ])
     (Array.to_list (Sys.readdir dir))
 
-(* Runs [damage] on every file of the cache when it holds one entry, then reads
-   the entry back. *)
+(* The entries of the cache: the files of its directories. *)
+let entries_on_disk () =
+  List.concat_map
+    (fun name ->
+      let dir = Filename.concat cachedb name in
+      if Sys.is_directory dir then files dir else [])
+    (Array.to_list (Sys.readdir cachedb))
+
+(* Runs [damage] on every entry of the cache when it holds one, then reads the
+   entry back. *)
 let damaged damage =
   Diskcache.clear ();
   let table = fresh_table () in
   Diskcache.put ~table "k" (String.make 4096 'v');
-  List.iter damage (files cachedb);
+  List.iter damage (entries_on_disk ());
   (match Diskcache.get ~table "k" with
   | exception Failure _ -> ()
   | None -> fail "get is None"
   | Some v -> failf "get is a value of %d bytes" (String.length v));
   Diskcache.clear ()
 
+(* [put_entry ~table key v] puts [v] at [key] in [table], a key not yet there,
+   and is the file of its entry. *)
+let put_entry ~table key v =
+  let before = entries_on_disk () in
+  Diskcache.put ~table key v;
+  List.find (fun f -> not (List.mem f before)) (entries_on_disk ())
+
 (* The directory of [table]'s entries, found as the one its first entry
    creates. *)
-let table_directory table =
-  let before = files cachedb in
-  Diskcache.put ~table "k" "v";
-  let entry = List.find (fun f -> not (List.mem f before)) (files cachedb) in
-  Filename.dirname entry
+let table_directory table = Filename.dirname (put_entry ~table "k" "v")
 
 (* Files the cache did not write, some named like its own: a table directory
    holding a file whose name is no digest, directories whose names are not a
-   digest and a version, and a plain file where a table directory would be. *)
-let clear_keeps_foreign_files () =
+   digest and a version, a plain file where a table directory would be, and a
+   file named [size]. *)
+let keeps_foreign_files () =
   let write path =
     Out_channel.with_open_bin path (fun oc -> output_string oc "foreign")
   in
@@ -624,6 +642,7 @@ let clear_keeps_foreign_files () =
   let foreign =
     [
       Filename.concat cachedb "foreign.txt";
+      Filename.concat cachedb "size";
       under "foreign" digest;
       under (digest ^ "_") digest;
       under (digest ^ "x1") digest;
@@ -634,11 +653,117 @@ let clear_keeps_foreign_files () =
     ]
   in
   List.iter write foreign;
+  Diskcache.put ~table:(fresh_table ()) "k" "v";
   Diskcache.clear ();
-  equal (list bool)
-    (List.map (fun _ -> true) foreign)
-    (List.map Sys.file_exists foreign);
+  let kept f =
+    Sys.file_exists f
+    && In_channel.with_open_bin f In_channel.input_all = "foreign"
+  in
+  equal (list bool) (List.map (fun _ -> true) foreign) (List.map kept foreign);
   List.iter Sys.remove foreign
+
+(* The bytes the files under [cachedb] hold. *)
+let cache_bytes () =
+  if not (Sys.file_exists cachedb) then 0
+  else List.fold_left (fun n f -> n + (Unix.stat f).st_size) 0 (files cachedb)
+
+let sized limit f = Setting.context [ B (Setting.cachesize, limit) ] f
+let limits = Gen.of_list ~pp:Format.pp_print_int [ 1; 100; 4096; 1 lsl 16 ]
+
+let lengths =
+  Gen.list ~size:(Gen.int_range 1 40)
+    (Gen.frequency [ (4, Gen.int_range 0 4096); (1, Gen.int_range 0 70_000) ])
+
+let holds_its_size (limit, lengths) =
+  Diskcache.clear ();
+  let table = fresh_table () in
+  cover "past the bound" (List.fold_left ( + ) 0 lengths > limit);
+  sized limit (fun () ->
+      List.iteri
+        (fun i n ->
+          Diskcache.put ~table (string_of_int i) (String.make n 'v');
+          at_most int ~than:limit (cache_bytes ()))
+        lengths);
+  Diskcache.clear ()
+
+(* [ago file s] sets [file]'s times [s] seconds back. *)
+let ago file s =
+  let t = Unix.gettimeofday () -. s in
+  Unix.utimes file t t
+
+(* Puts 4 KiB entries until one shrinks the cache, within 64 KiB. *)
+let fill_until_trimmed table =
+  let v = String.make 4096 'v' in
+  let rec fill i before =
+    Diskcache.put ~table (string_of_int i) v;
+    let after = cache_bytes () in
+    if after >= before && i < 100 then fill (i + 1) after
+  in
+  fill 0 (cache_bytes ())
+
+(* Use is ordered by file time: "read" is used an hour ago and read back now,
+   "unread" used half an hour ago. *)
+let keeps_recently_used () =
+  Diskcache.clear ();
+  let table = fresh_table () and v = String.make 4096 'v' in
+  sized (1 lsl 16) (fun () ->
+      ago (put_entry ~table "read" v) 3600.;
+      ago (put_entry ~table "unread" v) 1800.;
+      ignore (require_some (Diskcache.get ~table "read"));
+      fill_until_trimmed table;
+      let kept key = Option.is_some (Diskcache.get ~table key) in
+      equal (pair bool bool) (false, true) (kept "unread", kept "read"));
+  Diskcache.clear ()
+
+(* A write a killed process left: a file named like an entry being written, last
+   written a minute ago. *)
+let removes_stale_writes () =
+  Diskcache.clear ();
+  let table = fresh_table () and limit = 1 lsl 16 in
+  let stale =
+    Filename.concat (table_directory table) (String.make 32 'a' ^ ".1.tmp")
+  in
+  Out_channel.with_open_bin stale (fun oc ->
+      output_string oc (String.make (limit / 2) 'v'));
+  ago stale 60.;
+  sized limit (fun () -> fill_until_trimmed table);
+  at_most int ~than:limit (cache_bytes ());
+  Diskcache.clear ()
+
+let unbounded () =
+  Diskcache.clear ();
+  let table = fresh_table () and v = String.make 4096 'v' in
+  let keys = List.init 32 string_of_int in
+  sized 0 (fun () -> List.iter (fun k -> Diskcache.put ~table k v) keys);
+  equal
+    (list (option string))
+    (List.map (fun _ -> Some v) keys)
+    (List.map (Diskcache.get ~table) keys);
+  Diskcache.clear ()
+
+let refuses_negative_size () =
+  let ended =
+    child ~env:[ ("CACHESIZE", Some "-1") ] "put" [ fresh_table (); "k"; "v" ]
+  in
+  equal ~msg:ended.err status (Unix.WEXITED 2) ended.status;
+  contains ~sub:"CACHESIZE" ended.err;
+  refuses (fun () ->
+      sized (-1) (fun () -> Diskcache.put ~table:(fresh_table ()) "k" "v"))
+
+(* Each process puts less than the bound; together they put more. *)
+let processes_share_the_bound () =
+  Diskcache.clear ();
+  let table = fresh_table () and limit = 1 lsl 16 in
+  for i = 1 to 10 do
+    ignore
+      (succeeds
+         (child
+            ~env:[ ("CACHESIZE", Some (string_of_int limit)) ]
+            "fill"
+            [ table; string_of_int i ]));
+    at_most int ~than:limit (cache_bytes ())
+  done;
+  Diskcache.clear ()
 
 let truncate file = Unix.truncate file ((Unix.stat file).st_size / 2)
 
@@ -774,8 +899,8 @@ let diskcache =
                 (pair (option string) (option string))
                 (None, None)
                 (Diskcache.get ~table:a "k", Diskcache.get ~table:b "k"));
-          test "clear keeps the files that are not entries"
-            clear_keeps_foreign_files;
+          test "put and clear keep the files that are not entries"
+            keeps_foreign_files;
           cases ~name:(Printf.sprintf "cachelevel=%d")
             "a disabled cache neither reads nor writes" [ 0; -1 ] (fun level ->
               let table = fresh_table () in
@@ -801,6 +926,16 @@ let diskcache =
             writers_never_tear;
           test "writers in several processes never tear an entry"
             processes_never_tear;
+          prop ~count:30 "the files of the cache never hold more than cachesize"
+            (Gen.pair limits lengths) holds_its_size;
+          test "a put past cachesize removes entries used least recently first"
+            keeps_recently_used;
+          test "a put past cachesize removes the writes a killed process left"
+            removes_stale_writes;
+          test "a cachesize of 0 keeps every entry" unbounded;
+          test "a negative cachesize is refused" refuses_negative_size;
+          test "processes putting in turn keep the cache within cachesize"
+            processes_share_the_bound;
           test "get fails on a truncated entry" (fun () -> damaged truncate);
           test "get fails on an entry that is no entry" (fun () ->
               damaged overwrite);

@@ -197,6 +197,12 @@ val cachelevel : int t
 (** [cachelevel] enables the {!Helpers.Diskcache} when positive, from
     [CACHELEVEL]. Defaults to [2]. *)
 
+val cachesize : int t
+(** [cachesize] is the most bytes the files of the {!Helpers.Diskcache} hold,
+    from [CACHESIZE]; [0] sets no bound. Defaults to 5 GiB ([5368709120]), the
+    default of the compiler cache ccache. Raises [Invalid_argument] when the
+    module is initialised if [CACHESIZE] is negative. *)
+
 val ignore_beam_cache : bool t
 (** [ignore_beam_cache] makes the beam search ignore the results it cached, from
     [IGNORE_BEAM_CACHE]. Defaults to [false]. *)

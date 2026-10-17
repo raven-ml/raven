@@ -74,7 +74,8 @@ let rec files dir =
       let path = Filename.concat dir f in
       if Sys.is_directory path then files path else [ path ])
 
-(* A table's entries are in the directory named by the digest of its name. *)
+(* The entries are the files of the cache's directories, a table's in the one
+   named by the digest of its name. *)
 let entries ?table cachedb =
   let in_table path =
     match table with
@@ -84,7 +85,12 @@ let entries ?table cachedb =
           ~prefix:(Digest.to_hex (Digest.string t))
           (Filename.basename (Filename.dirname path))
   in
-  if Sys.file_exists cachedb then List.filter in_table (files cachedb) else []
+  if not (Sys.file_exists cachedb) then []
+  else
+    Array.to_list (Sys.readdir cachedb)
+    |> List.map (Filename.concat cachedb)
+    |> List.filter Sys.is_directory
+    |> List.concat_map files |> List.filter in_table
 
 let damage ?table cachedb f =
   List.iter

@@ -1186,16 +1186,16 @@ let cache_kinds =
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first (cached untimed))
 
-(* The entries of every table of the disk cache. *)
+(* The entries of every table of the disk cache: the files of its
+   directories. *)
 let entries () =
-  let rec count dir =
-    Array.fold_left
-      (fun n name ->
-        let path = Filename.concat dir name in
-        if Sys.is_directory path then n + count path else n + 1)
-      0 (Sys.readdir dir)
+  let count n name =
+    let dir = Filename.concat Helpers.cachedb name in
+    if Sys.is_directory dir then n + Array.length (Sys.readdir dir) else n
   in
-  if Sys.file_exists Helpers.cachedb then count Helpers.cachedb else 0
+  if Sys.file_exists Helpers.cachedb then
+    Array.fold_left count 0 (Sys.readdir Helpers.cachedb)
+  else 0
 
 let source prg =
   match Ops.arg (Ops.nth prg 2) with

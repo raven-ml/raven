@@ -242,6 +242,17 @@ let all2all = int ~reach:Output "ALL2ALL" 0
 let allreduce_cast = bool ~reach:Output "ALLREDUCE_CAST" true
 let allreduce_node_ndevs = int ~reach:Output "ALLREDUCE_NODE_NDEVS" 0
 let cachelevel = int ~reach:Process "CACHELEVEL" 2
+
+(* A size is a number of bytes, [0] standing for no bound. *)
+let cachesize =
+  let parse s =
+    match parse_int s with
+    | Ok n when n < 0 -> Error (Printf.sprintf "%S is negative" s)
+    | n -> n
+  in
+  v ~reach:Process ~show:string_of_int "CACHESIZE"
+    (read "CACHESIZE" parse (5 lsl 30))
+
 let ignore_beam_cache = bool ~reach:Process "IGNORE_BEAM_CACHE" false
 let disable_fast_idiv = bool ~reach:Output "DISABLE_FAST_IDIV" true
 let max_kernel_buffers = int ~reach:Output "MAX_KERNEL_BUFFERS" 0

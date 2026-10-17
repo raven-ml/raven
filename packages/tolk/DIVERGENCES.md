@@ -241,7 +241,7 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:393-504` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:406-652` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk's own version.
@@ -3917,3 +3917,31 @@ submission, and a range a loop of rig's program (D146).
   carry it; rune's `Rune.jit programs › computes eager's values within the
   stated rounding`, whose examples hold the program found, under Clang 18 on
   an x86 host with AVX-512.
+
+## D152. The disk cache holds at most CACHESIZE bytes
+
+- **tinygrad:** `helpers.py:416-447` (`diskcache_clear`, `diskcache_get`,
+  `diskcache_put`): a put inserts or replaces a row and nothing removes one
+  but `diskcache_clear`.
+- **tolk:** `lib/helpers.ml:469` (`mark`), `:492` (`size_file`), `:507`
+  (`count`), `:569` (`trim`) and `:601` (`put`); `lib/setting.ml:247`
+  (`cachesize`, 5 GiB by default, `0` for no bound).
+- **Differs:** a put that takes the cache's files past `CACHESIZE` bytes
+  removes entries of every table and version, the least recently used by
+  file time first, until they hold four fifths of it, and removes the writes
+  that killed processes left. A hit sets its entry's time. Processes count
+  each other's puts in the length of one file, to which each put appends a
+  byte per KiB.
+- **Reason:** (b). Programs, schedules and beam results are keyed by the
+  digest of tolk's sources (D63), so each change of the sources leaves the
+  previous build's entries unread, about 0.6 GB for the tests of tolk and
+  rune. Every raven process shares the cache under `~/Library/Caches/tolk` or
+  `~/.cache/tolk`, which reached 96 GB on one machine; a full disk fails the
+  put of a compiled binary (`Renderer.Compiler.compile_cached`) and so the
+  compile.
+- **Pinned by:** `Tolk.Helpers › Diskcache › the files of the cache never
+  hold more than cachesize`, `› a put past cachesize removes entries used
+  least recently first`, `› a put past cachesize removes the writes a killed
+  process left`, `› processes putting in turn keep the cache within
+  cachesize`, `› a cachesize of 0 keeps every entry` and `› a negative
+  cachesize is refused`.

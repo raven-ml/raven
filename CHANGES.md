@@ -1515,6 +1515,10 @@ thread.
 
 ### Tolk (new)
 
+- `Helpers.Diskcache` holds at most `Setting.cachesize` bytes (`CACHESIZE`,
+  5 GiB by default, `0` for no bound), removing the entries used least
+  recently. It grew without end: each change of tolk's sources leaves its
+  programs and schedules unread.
 - On x86, kernels with a float16 negation, absolute value or copysign of
   more than 16 lanes (`Nx.neg`, `Nx.abs`, a minimum) compile with Clang 18 for
   processors with AVX-512, where Clang crashed. The Clang renderer marks x86
