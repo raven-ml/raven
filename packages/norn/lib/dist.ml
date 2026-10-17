@@ -19,6 +19,9 @@ type ('x, 'f) kind =
   | Categories : (Nx.int64_t, 'f) kind
   | Booleans : (Nx.bool_t, 'f) kind
 
+(* A distribution is its family's operations as closures, with its domain checks
+   and whether they have run ([checked]). [descr] names it in [pp] and in
+   errors. *)
 type ('x, 'f) t = {
   family : string;
   descr : string;

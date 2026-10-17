@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* A bijector is its maps as closures, with the name [pp] prints. *)
 type 'f t = {
   name : string;
   image : Support.t -> int array -> Support.t;

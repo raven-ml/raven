@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* The mean [m], scale [S], directions [u_j] and variances [v_j] of the
+   covariance [S (I + Σ_j (v_j - 1) u_j u_jᵀ) S]. *)
 type ('u, 'f) t = {
   mean : 'u;
   scale : 'u;

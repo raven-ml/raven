@@ -19,6 +19,8 @@ type finding =
 
 and region = { path : Nx.Ptree.Path.t; index : int array; shift : float }
 
+(* A summary holds its columns as host arrays, one element per label; [columns]
+   makes them tensors. *)
 type t = {
   labels : string array;
   columns : (string * float array) list;

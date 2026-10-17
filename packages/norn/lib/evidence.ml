@@ -14,7 +14,7 @@ type ('u, 'f) t = {
       (* the sample's normalised log weights under each simulated shrinkage
          sequence, [[r; n]]; one row, the weights themselves, without one *)
   groups : Nx.int32_t;
-      (* each draw's group, from 0 to [group_count]: draws of one group may be
+      (* each draw's group, below [group_count]: draws of one group may be
          correlated, draws of two are independent *)
   group_count : int;
 }
