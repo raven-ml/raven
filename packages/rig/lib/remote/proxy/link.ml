@@ -343,6 +343,7 @@ external request_c : nativeint -> string -> int * area
   = "caml_rig_remote_link_request"
 
 external next_c : nativeint -> int * area * int = "caml_rig_remote_link_next"
+external wait_c : nativeint -> unit = "caml_rig_remote_link_wait"
 external area : int -> area * int = "caml_rig_remote_link_area"
 
 external rail_c :
@@ -355,38 +356,73 @@ external ready_fn : unit -> nativeint = "caml_rig_remote_link_ready_fn"
 external release_rail_c : nativeint -> int -> unit
   = "caml_rig_remote_link_release_rail"
 
-(* Guards *)
+(* Locks
 
-(* A guard, a mutex whose take runs no signal handler. A take while the
-   thread holds a guard, as a callback inside a section would, is false and
-   takes nothing. *)
-type guard
+   A link's two locks are never nested ([next] and [answer]). Each counts
+   among the locks its thread holds ([take]), so a call of rig's, or a [next]
+   or an [answer], from a signal handler, finaliser or Gc.Memprof callback
+   inside one raises [Invalid_argument] as it starts ([check]).
 
-external guard : unit -> guard = "caml_rig_remote_link_guard"
-external take_guard : guard -> bool = "caml_rig_remote_link_guard_take"
+   [answer_lock] is held across an answer's send, which may wait for the
+   socket, so that answers leave in the order of their requests. [next] waits
+   for a command before it takes [next_lock], and holds it only to dequeue
+   one. *)
 
-external give_guard : guard -> unit = "caml_rig_remote_link_guard_give"
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
 [@@noalloc]
 
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-let refused =
-  "Rig_remote_proxy: called from a signal handler, finaliser or Gc.Memprof \
-   callback while this thread holds a lock of a link's"
+(* A function a caller outside rig makes, [fn], starts with [check fn]. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_remote_proxy.Link." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
 
-(* [protect g f] is [f ()] under the guard [g], taken as the last step
-   before the handler and given back as the first step of both exits, where
-   nothing allocates or polls, so an exception anywhere in [f], an
-   asynchronous one too, leaves it free. Raises [Refusal.Refused] if the
-   thread holds a guard. *)
-let protect g f =
-  if not (take_guard g) then raise (Refusal.Refused refused);
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_remote_proxy: a lock taken again by the thread that holds \
+             it, from a signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
+
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [protect m f] is [f ()] holding [m], taken as the last step before the
+   handler and given back as the first step of both exits, where nothing
+   allocates or polls, so an exception anywhere in [f], an asynchronous one
+   too, leaves it free. *)
+let protect m f =
+  take m;
   match f () with
   | x ->
-      give_guard g;
+      give m;
       x
   | exception e ->
-      give_guard g;
+      give m;
       reraise e
 
 (* The C state's address comes first: the proxies' C reads it there. *)
@@ -396,8 +432,8 @@ type t = {
   name : string;
   asked : any list Atomic.t;
       (* requests [next] gave, unanswered, newest first *)
-  next_lock : guard; (* held across a [next] *)
-  answer_lock : guard; (* held across an [answer]'s check and send *)
+  next_lock : Mutex.t; (* held across a [next] *)
+  answer_lock : Mutex.t; (* held across an [answer]'s check and send *)
 }
 
 let make job fd ~name ~peer =
@@ -409,8 +445,8 @@ let make job fd ~name ~peer =
     job;
     name;
     asked = Atomic.make [];
-    next_lock = guard ();
-    answer_lock = guard ();
+    next_lock = Mutex.create ();
+    answer_lock = Mutex.create ();
   }
 
 let name l = l.name
@@ -470,9 +506,10 @@ let drop l id =
 
 (* Answers carry no request id: the peer pairs them with its requests by wire
    order. So a [next] dequeues and records its request in one step, and an
-   [answer] checks, pops and sends in one step, each under its own guard: a
-   [next] waiting for a frame holds up no answer. The record of requests
-   changes by atomic swaps, so neither guard is taken inside the other. *)
+   [answer] checks, pops and sends in one step, each under its own lock. A
+   [next] waits for a frame before it takes its lock, so it holds up no
+   answer. The record of requests changes by atomic swaps, so neither lock is
+   taken inside the other. *)
 let rec push l r =
   let a = Atomic.get l.asked in
   if not (Atomic.compare_and_set l.asked a (r :: a)) then push l r
@@ -485,28 +522,41 @@ let rec pop_oldest l q =
       Atomic.compare_and_set l.asked a (List.rev older) || pop_oldest l q
   | _ -> false
 
-let next l =
-  protect l.next_lock @@ fun () ->
+(* Takes the next command under [l]'s [next_lock], with no wait: [None] if
+   none came, as when another [next] took the one its wait saw. *)
+let take_next l () =
   let k, a, n = next_c l.c in
-  let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
-  match
-    if k = 0 then Error (text a)
-    else if k = k_request then begin
-      let (Any q) = decode_request r in
-      push l (Any q);
-      Ok (Wire.Request q)
-    end
-    else if k = k_handover then Ok (decode_handover r)
-    else if k = k_drop then Ok (Wire.Drop (finished r (u64 r)))
-    else if k = k_close then Ok Wire.Close
-    else raise Malformed
-  with
-  | v -> v
-  | exception Malformed ->
-      malformed l;
-      Error (Option.value (failed l.job) ~default:"")
+  if k < 0 then None
+  else
+    let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
+    match
+      if k = 0 then Error (text a)
+      else if k = k_request then begin
+        let (Any q) = decode_request r in
+        push l (Any q);
+        Ok (Wire.Request q)
+      end
+      else if k = k_handover then Ok (decode_handover r)
+      else if k = k_drop then Ok (Wire.Drop (finished r (u64 r)))
+      else if k = k_close then Ok Wire.Close
+      else raise Malformed
+    with
+    | v -> Some v
+    | exception Malformed ->
+        malformed l;
+        Some (Error (Option.value (failed l.job) ~default:""))
+
+(* The wait for a command holds no lock, so a callback that runs in it calls
+   rig as any code does. *)
+let rec next l =
+  check "next";
+  wait_c l.c;
+  match protect l.next_lock (take_next l) with
+  | Some v -> v
+  | None -> next l
 
 let answer l q a =
+  check "answer";
   let payload =
     match a with
     | Ok v -> "\000" ^ encode_answer q v

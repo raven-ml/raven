@@ -23,9 +23,7 @@
     Every value may be called from several domains in parallel, except the
     driver's [room] and [submit] for one proxy, which rig calls one at a time
     ({!Rig_edge}). A call that waits for the agent or the link releases the
-    runtime while it waits. The driver's functions never raise {!Refused}
-    ({!Rig_edge.section-drivers}). {!Link.next} and {!Link.answer} may
-    ({!Link.section-domains}). *)
+    runtime while it waits. *)
 
 module Wire = Wire
 (** The protocol between the processes of a job. *)

@@ -319,6 +319,36 @@ let stalled_idle () =
     [ (k_abort, str silent_cause) ]
     (frames s.p)
 
+(* A next's wait for a command holds no lock. A signal arrives while it
+   waits, and the next thread to return to OCaml is the waiting one, as the
+   job fails after the bound: its handler runs between the link's locks, and
+   a call of rig's from it runs. *)
+let handled_in_next () =
+  if not Rig_support.sees_waits then
+    skip ~reason:"needs the system's view of a thread's wait" ();
+  let d, p = connected () in
+  let job = Link.job () in
+  let l = Link.make job d ~name:"peer" ~peer:Wire.Controller in
+  let call = ref "no handler ran" in
+  let handle _ =
+    call :=
+      match Rig.Buffer.create Rig.host 8 with
+      | _ -> "ran"
+      | exception Invalid_argument why -> why
+  in
+  let previous = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  Fun.protect
+    ~finally:(fun () ->
+      Sys.set_signal Sys.sigint previous;
+      Unix.close p)
+  @@ fun () ->
+  let r, raised = Rig_support.interrupt_in_wait (fun () -> Link.next l) in
+  equal ~msg:"the signal raised in the wait" bool true raised;
+  (match r with
+  | Error why -> equal ~msg:"the next" string silent_cause why
+  | Ok _ -> fail "a command from a silent peer");
+  equal ~msg:"the handler's call of rig" string "ran" !call
+
 (* A link's thread may see the failure before the thread that began it
    reaches the link. That thread is held once it set the root cause, before
    it sends any abort: the well link's sending thread, which wakes for its
@@ -518,6 +548,10 @@ let () =
                stalled_idle;
              slow "a link's thread that sees the failure first sends its abort"
                seen_first;
+             slow
+               "a signal handler that runs as a next's wait ends calls rig \
+                outside every lock"
+               handled_in_next;
            ];
          group ~timeout:30. "mid-frame"
            [

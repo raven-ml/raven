@@ -9,7 +9,7 @@ module Link = Link
 let strf = Printf.sprintf
 
 exception Fault of string
-exception Refused = Refusal.Refused
+exception Refused of string
 
 (* A region is memory of the agent, named by its id, or a proxy's word: its
    agent's id and the shadow's host address. *)
