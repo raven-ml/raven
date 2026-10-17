@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.13"
 # ///
-"""Write survey/stil-fits-plus.fits with STILTS.
+"""Write support/survey/stil-fits-plus.fits with STILTS.
 
-    uv run contrib/ymir/test/fits/gen/stil.py
+    uv run contrib/ymir/test/gen/stil.py
 
 STIL, the table library behind TOPCAT and STILTS, writes fits-plus: a
 primary byte array holding a VOTable that describes the table, then the
@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 STILTS = "3.5-4"
-OUT = pathlib.Path(__file__).resolve().parent.parent / "survey" / "stil-fits-plus.fits"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "support" / "survey" / "stil-fits-plus.fits"
 
 # Column name, unit and STILTS expression of the row number i (0 to 47).
 COLUMNS = [

@@ -209,7 +209,7 @@ let posteriordb =
         (grad, c)
       in
       Thumper.bench_with_setup ~setup p.name (fun (grad, c) -> grad c))
-    (Posteriordb.all "../test/golden/posteriordb.golden")
+    (Posteriordb.all "../test/model/support/posteriordb.golden")
 
 let () =
   Thumper.run "norn"

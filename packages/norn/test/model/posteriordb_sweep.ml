@@ -113,7 +113,7 @@ let funnel_cell =
   }
 
 let cells =
-  let all = P.all "../golden/posteriordb.golden" in
+  let all = P.all "support/posteriordb.golden" in
   List.map nuts_cell all @ List.map hmc_cell all @ List.map ensemble_cell all
   @ List.map (R.replicated_cell (R.smc ~replicates:4 ~draws:1000)) all
   @ List.map (R.replicated_cell (R.nested ~replicates:4 ~draws:500)) all

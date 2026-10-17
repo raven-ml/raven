@@ -3,24 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Files the archives and STILTS wrote (survey/README.md) read as astropy
-   reads them (gen/survey.py): each file holds the HDUs astropy finds, each
-   HDU whose CHECKSUM astropy accepts verifies, and each image and numeric
-   binary-table column astropy decodes has its shape and float64 values.
-   Values compare as digests: MD5 of little-endian float64, every NaN as
-   one NaN. *)
+(* Files the archives and STILTS wrote (../support/survey/README.md) read as
+   astropy reads them (../gen/survey.py): each file holds the HDUs astropy
+   finds, each HDU whose CHECKSUM astropy accepts verifies, and each image
+   and numeric binary-table column astropy decodes has its shape and float64
+   values. Values compare as digests: MD5 of little-endian float64, every NaN
+   as one NaN. *)
 
 open Windtrap
 open Ymir_fits
 module I = Fits.Image
 module T = Fits.Table
 
+let survey = "../support/survey/"
+
 let expected =
-  In_channel.with_open_text "survey/values" In_channel.input_lines
+  In_channel.with_open_text (survey ^ "values") In_channel.input_lines
   |> List.map (String.split_on_char ' ')
 
 let ok = function Ok x -> x | Error e -> fail e
-let hdus file = ok (Fits.read ("survey/" ^ file ^ ".fits"))
+let hdus file = ok (Fits.read (survey ^ file ^ ".fits"))
 let nth file i = List.nth (hdus file) (int_of_string i)
 
 let digest t =

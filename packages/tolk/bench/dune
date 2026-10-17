@@ -13,23 +13,15 @@
  (modules embed)
  (libraries tolk_test))
 
-; The programs are the graphs prepare_rangeify receives, recorded for its
-; suite, built into the executable so that it runs from anywhere.
+; The programs are the graphs prepare_rangeify receives, recorded for the
+; benchmarks in test/support/programs, built into the executable so that it
+; runs from anywhere.
 
 (rule
  (target programs.ml)
  (deps
   (:goldens
-   ../test/schedule/prepare/attention.golden
-   ../test/schedule/prepare/conv.golden
-   ../test/schedule/prepare/cumsum.golden
-   ../test/schedule/prepare/embedding.golden
-   ../test/schedule/prepare/gpt_oss_decode.golden
-   ../test/schedule/prepare/gpt_oss_prefill.golden
-   ../test/schedule/prepare/matmul.golden
-   ../test/schedule/prepare/softmax.golden
-   ../test/schedule/prepare/sort.golden
-   ../test/schedule/prepare/split_sum.golden))
+   (glob_files ../test/support/programs/*.golden)))
  (action
   (with-stdout-to
    %{target}

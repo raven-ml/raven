@@ -3823,6 +3823,16 @@ schedule/schedule/variable_unused_schedule.golden
 setting/env.golden
 setting/settings.golden
 support/matmul.golden
+support/programs/attention.golden
+support/programs/conv.golden
+support/programs/cumsum.golden
+support/programs/embedding.golden
+support/programs/gpt_oss_decode.golden
+support/programs/gpt_oss_prefill.golden
+support/programs/matmul.golden
+support/programs/softmax.golden
+support/programs/sort.golden
+support/programs/split_sum.golden
 support/sum_of_cast.golden
 support/sum_of_cast_kernels.golden
 uop/divandmod/divide_a_common_divisor_out_of_a_division_by_a_variable.golden

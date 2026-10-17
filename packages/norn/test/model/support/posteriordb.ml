@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Six posteriordb posteriors as models, with their data and reference moments
-   from golden/posteriordb.golden. Each model's latent values are a list of
-   tensors, named in the order of the list by posteriordb's parameter names. *)
+   from posteriordb.golden, beside this file. Each model's latent values are a
+   list of tensors, named in the order of the list by posteriordb's parameter
+   names. *)
 
 module M = Norn_model
 module D = Norn.Dist

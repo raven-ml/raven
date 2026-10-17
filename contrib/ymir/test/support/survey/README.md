@@ -1,9 +1,9 @@
 # Real survey files
 
 Small cuts of public archive files, and one table STILTS wrote, for the
-laws ymir.fits states over bytes it did not write. `gen/survey.py`
+laws ymir.fits states over bytes it did not write. `test/gen/survey.py`
 downloads each original by range requests, checks the SHA-256 of the
-bytes it fetched, and cuts it. `gen/stil.py` wrote `stil-fits-plus.fits`,
+bytes it fetched, and cuts it. `test/gen/stil.py` wrote `stil-fits-plus.fits`,
 whose bytes the generator checks the same way and keeps whole. A cut
 keeps every header record as the archive wrote it, except the rewritten
 ones listed below (astropy formats them, comments kept), and keeps the data
@@ -64,7 +64,7 @@ numeric binary-table column, as MD5 digests of float64.
 
 ## stil-fits-plus.fits
 
-- Source: `gen/stil.py`
+- Source: `test/gen/stil.py`
 - Archive: none (synthetic columns written by STILTS 3.5-4 with STIL 4.3-4)
 - Terms: Synthetic data, ISC, as ymir.
 - SHA-256 of the read bytes: `51ecdc10b741d837ed44ab8412868450af076d557ab46bb0288066b684bbecef`

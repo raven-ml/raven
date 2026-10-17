@@ -1,8 +1,4 @@
-; The model's module is the example's.
-
-(copy_files ../llama.{ml,mli})
-
 (test
  (name test_llama)
  (package kaun)
- (libraries kaun kaun.hf jsont nx nx.io windtrap))
+ (libraries llama kaun kaun.hf jsont nx nx.io windtrap))

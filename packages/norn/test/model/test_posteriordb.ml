@@ -18,7 +18,7 @@
 module P = Posteriordb
 module R = Recovery
 
-let posteriors = P.all "../golden/posteriordb.golden"
+let posteriors = P.all "support/posteriordb.golden"
 let post name = List.find (fun (P.Posterior p) -> p.name = name) posteriors
 let dogs = post "dogs-dogs"
 let eight_schools = post "eight_schools-eight_schools_noncentered"

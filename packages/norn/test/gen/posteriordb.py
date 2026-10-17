@@ -6,10 +6,11 @@
 
     uv run packages/norn/test/gen/posteriordb.py [--check]
 
-Writes `packages/norn/test/golden/posteriordb.golden`: for six posteriors of
-posteriordb (https://github.com/stan-dev/posteriordb), their data and each
-element's mean and standard deviation over the reference draws, with their
-Monte Carlo standard errors as ArviZ computes them (arviz-stats). With --check
+Writes `packages/norn/test/model/support/posteriordb.golden`, which the
+model tests and the bench read: for six posteriors of posteriordb
+(https://github.com/stan-dev/posteriordb), their data and each element's mean
+and standard deviation over the reference draws, with their Monte Carlo
+standard errors as ArviZ computes them (arviz-stats). With --check
 nothing is written, and the run fails if the file would change.
 
 Each posterior is a block of lines: `posterior NAME`, then one line
@@ -63,7 +64,7 @@ import numpy as np
 from arviz_stats.base.diagnostics import _DiagnosticsBase
 
 HERE = Path(__file__).resolve().parent
-GOLDEN = HERE.parent / "golden" / "posteriordb.golden"
+GOLDEN = HERE.parent / "model" / "support" / "posteriordb.golden"
 
 COMMIT = "91027f9cdd13b7e76283fec3f2898f59d4b83ec4"
 ROOT = f"https://raw.githubusercontent.com/stan-dev/posteriordb/{COMMIT}/posterior_database"

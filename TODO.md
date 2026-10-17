@@ -450,9 +450,7 @@ raven / llama.cpp (Vulkan; ROCm):
   theirs)
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
   drop the git pins in dune-project and ci.yml
-- tests: CI runtest under a memory cap; suites read other suites' fixtures
-  (tolk, norn and ymir benches, kaun's load bench): shared data in a
-  declared `test/support/`
+- tests: CI runtest under a memory cap
 - benches: sowilo's and talon's 10 MB of committed seeded data generated at
   bench start
 - dune stale builds: a source rewritten within seconds is digested in one

@@ -13,7 +13,7 @@
  (locks %{workspace_root}/bench)
  (deps
   (glob_files *.thumper)
-  ../test/golden/posteriordb.golden)
+  ../test/model/support/posteriordb.golden)
  (action
   (run %{exe:bench_norn.exe})))
 

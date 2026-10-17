@@ -4,7 +4,7 @@
 # ///
 """Cut public archive files into the small files ymir.fits' tests read.
 
-    uv run contrib/ymir/test/fits/gen/survey.py [--check]
+    uv run contrib/ymir/test/gen/survey.py [--check]
 
 Each source is fetched by HTTP range requests: its headers, then the data
 spans its cut keeps, whose SHA-256 must be the recorded one, so a file the
@@ -12,10 +12,11 @@ archive reprocessed fails here. A cut keeps every header record as the
 archive wrote it except the ones it must change (sizes, the reference pixel,
 heap descriptors, checksums), which astropy formats, and keeps the data
 bytes as stored. One source, the table gen/stil.py wrote with STILTS, is
-already in survey/ and is read from there, its SHA-256 checked the same
-way. The generator writes survey/<name>.fits, survey/README.md
-with each file's provenance and changes, and survey/values with astropy's
-reading of each image and numeric column. With --check, everything is
+already in support/survey/ and is read from there, its SHA-256 checked the
+same way. The generator writes support/survey/<name>.fits, its README.md
+with each file's provenance and changes, and its values with astropy's
+reading of each image and numeric column; the fits tests and the bench
+read them. With --check, everything is
 written to a temporary directory and compared with the committed files.
 It runs on x86-64 only; on an arm64 Mac, Rosetta runs it through
 `uv run --python cpython-3.13-macos-x86_64-none`.
@@ -40,7 +41,7 @@ from astropy.io import fits
 if platform.machine().lower() not in ("x86_64", "amd64"):
     sys.exit(f"run on x86-64: astropy's {platform.machine()} build fuses multiply-adds")
 
-SURVEY = pathlib.Path(__file__).resolve().parent.parent / "survey"
+SURVEY = pathlib.Path(__file__).resolve().parent.parent / "support" / "survey"
 BLOCK = 2880
 MAST = "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:"
 
@@ -72,7 +73,7 @@ class Remote:
 
 
 class Local:
-    """A file in survey/, read as [Remote] reads."""
+    """A file in support/survey/, read as [Remote] reads."""
 
     def __init__(self, path):
         self.path = path
@@ -422,7 +423,7 @@ SOURCES = [
     ),
     Source(
         "stil-fits-plus",
-        "gen/stil.py",
+        "test/gen/stil.py",
         "none (synthetic columns written by STILTS 3.5-4 with STIL 4.3-4)",
         "Synthetic data, ISC, as ymir.",
         "STIL's fits-plus layout: a primary byte array holding a VOTable, "
@@ -582,9 +583,9 @@ def values_lines(name, path):
 README_HEAD = """# Real survey files
 
 Small cuts of public archive files, and one table STILTS wrote, for the
-laws ymir.fits states over bytes it did not write. `gen/survey.py`
+laws ymir.fits states over bytes it did not write. `test/gen/survey.py`
 downloads each original by range requests, checks the SHA-256 of the
-bytes it fetched, and cuts it. `gen/stil.py` wrote `stil-fits-plus.fits`,
+bytes it fetched, and cuts it. `test/gen/stil.py` wrote `stil-fits-plus.fits`,
 whose bytes the generator checks the same way and keeps whole. A cut
 keeps every header record as the archive wrote it, except the rewritten
 ones listed below (astropy formats them, comments kept), and keeps the data

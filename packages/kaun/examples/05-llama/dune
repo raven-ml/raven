@@ -1,7 +1,16 @@
+; The model is a library, which the example's test and kaun's load bench
+; link.
+
+(library
+ (name llama)
+ (modules llama)
+ (libraries kaun kaun.hf jsont nx nx.io))
+
 (executables
  (names main validate)
- (modules llama devices main validate)
+ (modules devices main validate)
  (libraries
+  llama
   kaun
   kaun.hf
   jsont

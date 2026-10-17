@@ -6,8 +6,8 @@
 (* Hostile bytes give values or an Error (the RFC's second law). The corpus
    is the files astropy wrote (gen/fixtures.py): images of every format,
    tiles of every codec and dither, and binary and ASCII tables with every
-   TFORM code; and cuts of files the archives wrote (survey/README.md):
-   pipeline headers with CONTINUE and HIERARCH records, cfitsio's Rice, gzip
+   TFORM code; and cuts of files the archives wrote
+   (../support/survey/README.md): pipeline headers with CONTINUE and HIERARCH records, cfitsio's Rice, gzip
    and HCOMPRESS tiles, IDL's and STIL's tables, heap arrays, an ASCII table
    and random groups. A byte changed in each region where a decoder path
    reads, and a file cut around each of its boundaries, are read by every
@@ -22,10 +22,10 @@ module T = Fits.Table
 
 let files =
   [ "golden/images.fits"; "golden/tiles.fits"; "golden/tables.fits" ]
-  @ (Sys.readdir "survey" |> Array.to_list
+  @ (Sys.readdir "../support/survey" |> Array.to_list
     |> List.filter (fun f -> Filename.check_suffix f ".fits")
     |> List.sort compare
-    |> List.map (Filename.concat "survey"))
+    |> List.map (Filename.concat "../support/survey"))
 
 let contents =
   List.map (fun p -> (p, In_channel.with_open_bin p In_channel.input_all)) files

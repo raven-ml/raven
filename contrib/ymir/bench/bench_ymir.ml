@@ -216,7 +216,7 @@ let fits_table () =
 (* The units of every column of an HST drizzle file's 293-column header
    table, from opening the file: what a table browser reads first. *)
 let fits_units () =
-  let path = "../test/fits/survey/hst-acs-drz.fits" in
+  let path = "../test/support/survey/hst-acs-drz.fits" in
   let units () =
     let hdu = List.nth (ok (Fits.read path)) 4 in
     List.map

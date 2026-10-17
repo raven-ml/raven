@@ -13,4 +13,4 @@
  (libraries ymir.fits ymir.units nx nx.dtype nx.ragged windtrap)
  (deps
   (glob_files golden/*)
-  (glob_files survey/*)))
+  (glob_files ../support/survey/*)))
