@@ -172,7 +172,8 @@ and _ prim =
       (** [prog] at every index of [layout]'s shape, reading load [i] as its
           operand [i]; result [k] is its output [k], laid out as [layout], which
           is C-contiguous. A one-result map is ['v * unit]. With no loads, a
-          creation. *)
+          creation. Its [Coord] nodes read axes of that shape: a program that
+          reads one past its rank is refused. *)
   | Reduce : {
       layout : Nx_array.Layout.t;
       axes : int array;
@@ -193,7 +194,8 @@ and _ prim =
     }
       -> 'r prim
       (** The reduction of [prog]'s output over the indices along [axis] up to
-          each index's, inclusive: [layout]'s shape, C-contiguous. *)
+          each index's, inclusive: [layout]'s shape, C-contiguous. [prog]
+          reads coordinates as a map's. *)
   | Gather : {
       axis : int;
       idx : 'd index;

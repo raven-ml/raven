@@ -2214,7 +2214,8 @@ module Prim : sig
         (** [prog] at every index of [layout]'s shape, reading load [i] as its
             operand [i]; result [k] is its output [k], laid out as [layout],
             which is C-contiguous. A one-result map is ['v * unit]. With no
-            loads, a creation. *)
+            loads, a creation. Its [Coord] nodes read axes of that shape: a
+            program that reads one past its rank is refused. *)
     | Reduce : {
         layout : Nx_array.Layout.t;
         axes : int array;
@@ -2239,7 +2240,7 @@ module Prim : sig
             each index's, inclusive, of [layout]'s shape, as
             {!Nx_kernel.S.scan} says: a running [Moments] is the running mean
             and variance. The scan of a prefix of the axis is the prefix of
-            the scan, bit for bit. *)
+            the scan, bit for bit. [prog] reads coordinates as a map's. *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;

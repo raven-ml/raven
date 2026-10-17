@@ -429,6 +429,15 @@ let rules =
                  outs = Value.[ D.Float32 ];
                  loads = [||];
                });
+          refused "a reduction"
+            (Value.Reduce
+               {
+                 layout;
+                 axes = [| 0 |];
+                 prog = coords 1;
+                 reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
+                 loads = [||];
+               });
           refused "a scan"
             (Value.Scan
                {

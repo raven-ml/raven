@@ -326,9 +326,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx2
 
-- a map program's `Coord` past its input rank is accepted until it runs:
-  refuse it at admission, with its documentation and a regression (partial
-  patch: `refs/audit/20261010-deep/worktrees/wt-16`)
 - sort-key packing overflows for axes longer than 2^31, and Bluestein's
   square modulo `2*n` overflows int64: reproduce both, then fix
   (`refs/audit/20261010-deep/worktrees/wt-14`)
