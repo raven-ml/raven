@@ -371,8 +371,11 @@ val wait_point : int -> bool -> int -> unit
     the access depends on. It never raises [Invalid_argument]. *)
 
 val is_done : int -> bool
-(** [is_done p] is [true] iff [p] is done. It may raise {!Lost} as {!word}
-    does. A point of a device that gave its slot to a later one is done. *)
+(** [is_done p] is [true] iff [p] is done. It never raises {!Lost}, since a
+    read of the word that finds [p]'s device lost answers from its line. It
+    raises [Invalid_argument] where the driver refuses the read, and another
+    exception of the driver's that is no fault, as {!word} does. A point of
+    a device that gave its slot to a later one is done. *)
 
 val reached_point : int -> bool
 (** [reached_point p] is {!Rig.Point.reached}: {!is_done}[ p], after a commit

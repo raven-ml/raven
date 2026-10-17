@@ -749,11 +749,17 @@ let test_mapped_window () =
     (last 2 (P.allocs p));
   ignore (Sys.opaque_identity b)
 
+(* Mapped memory that the device's budget cannot hold is pinned, and counts
+   where pinned memory counts: in the host's budget, for a device whose memory
+   the host does not address. *)
 let test_mapped_budget () =
   let d, p = P.open_ ~host_visible:false "memory:mapped-budget" in
   Rig.set_budget d (4 * kib);
-  ignore (B.create ~memory:Mapped d (8 * kib));
-  equal allocs [ (B.Pinned, 8 * kib, true) ] (P.allocs p)
+  let before = Rig.allocated d in
+  let b = B.create ~memory:Mapped d (8 * kib) in
+  equal allocs [ (B.Pinned, 8 * kib, true) ] (P.allocs p);
+  equal ~msg:"the device's allocated bytes" int before (Rig.allocated d);
+  ignore (Sys.opaque_identity b)
 
 let test_mapped () =
   let d, p = P.open_ "memory:mapped" in

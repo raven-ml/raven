@@ -118,19 +118,19 @@ val host : t
     device that opens takes a free slot, and its values go on past every
     value the slot's earlier devices were given, so the number of opens a
     process makes has no bound. Each open still costs what its driver keeps
-    for the process, as the driver's documentation states: the GPU drivers
+    for the process, as the driver's documentation states. The GPU drivers
     keep a few dozen bytes of C state per open. A device whose queue waits
     on another device's word through a mapping keeps one such mapping for
     each slot it waits on, of the slot's device it waited on last. One of an
-    earlier device of that slot goes back at the first of these after the
-    device's queue has passed the waits that read it: the device's next
-    submit whose queue waits on a later device of a slot it waited on, a
-    call that moves its collected memory ({!section-reclaim}), or its stop.
-    A timeline word of a device's own goes back at the first call that moves
-    collected memory after the device has left its slot and no other device
-    maps it. A device lost before it reached every value it was given
-    leaves its slot too, and keeps its record for the rest of the process,
-    which its dropped points raise {!Lost} with.
+    earlier device of that slot goes back at the first of three calls after
+    the device's queue has passed the waits that read it. These are the
+    device's next submit whose queue waits on a later device of a slot it
+    waited on, a call that moves its collected memory ({!section-reclaim}),
+    and its stop. A timeline word of a device's own goes back at the first
+    call that moves collected memory after the device has left its slot and
+    no other device maps it. A device lost before it reached every value it
+    was given leaves its slot too, and keeps its record for the rest of the
+    process, which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again, except a driver's
@@ -828,7 +828,9 @@ module Buffer : sig
             Work submitted after a host write sees it, and host reads are
             slow. Where the device has no such window, or the window or the
             device's budget has no room for the buffer, it is [Pinned]
-            memory, which keeps these promises. rig falls back to [Pinned]
+            memory. The host addresses it, and work submitted after a host
+            write sees it, but it counts in the budget that [Pinned] memory
+            counts in ({!Rig.section-reclaim}). rig falls back to [Pinned]
             without first freeing the device's cache. *)
 
   val create : ?memory:kind -> device -> int -> t
@@ -991,7 +993,9 @@ module Buffer : sig
   (** [read b k f] is [f a], where [a] is [b]'s bytes as elements of [k],
       once every device's last write of [b]'s memory is done. [a] is the
       memory itself, so the host must address it where [b] has bytes;
-      {!blit_to_bytes} copies out of any memory. *)
+      {!blit_to_bytes} copies out of any memory. [f] must not write through
+      [a], since work that reads the memory may still run, and must not keep
+      [a] after it returns, since nothing orders a later access through it. *)
 
   val write :
     t ->
@@ -1000,7 +1004,8 @@ module Buffer : sig
     'c
   (** [write b k f] is [f a], where [a] is [b]'s bytes as elements of [k],
       once every use of [b]'s memory is done. Work submitted after [write]
-      returns sees [f]'s writes.
+      returns sees [f]'s writes. [f] must not keep [a] after it returns,
+      since nothing orders a later access through it.
 
       Raises [Invalid_argument] also if [b]'s memory admits only [Read]
       ({!val-access}). *)
@@ -1016,7 +1021,10 @@ module Buffer : sig
       ({!Rig.section-loss_memory}).
 
       Raises [Invalid_argument] also if [b]'s memory is not {!host}'s, which
-      {!create} made on {!host}, or {!of_string} or {!of_bigarray} made. *)
+      {!create} made on {!host}, or {!of_string} or {!of_bigarray} made.
+      Another device's memory is refused even where the host addresses it,
+      since every use of a lost device's memory raises {!Lost}
+      ({!Rig.section-loss_memory}) and reads through an array cannot. *)
 
   (** {1:copying Copying}
 
@@ -1377,8 +1385,8 @@ end
     calls [__attribute__((ms_abi))]. Code for an ELF target probes no stack,
     and Windows commits a thread's stack one guard page at a time, so on
     Windows a thread's stack is committed, but for its last 64 KiB, before
-    the thread first runs linked code: a stack frame of any size within it
-    runs, as elsewhere. *)
+    the thread first runs linked code. A stack frame of any size within it
+    then runs, as elsewhere. *)
 
 (** {3:host_platforms Platform support}
 
@@ -1443,8 +1451,8 @@ end
     A submission keeps every buffer and image its parts name, its fixed
     memory and its [keep] reachable while it is reachable, so that memory is
     never freed between {!Submission.make} and a submit. A launch needs no
-    [keep] for its image: an image unloads only once the work submitted
-    before the image became unreachable is done ({!Image.load}).
+    [keep] for its image, since an image unloads only once the work
+    submitted before the image became unreachable is done ({!Image.load}).
     {!Rig.section-claims} says when it claims that memory. *)
 module Submission : sig
   type device := t
