@@ -1790,9 +1790,10 @@ let one_gpu () =
       t.g
 
 (* A view of another device's Mapped memory flushes that device's host writes
-   until its stop: the viewer submits after the stop as before, and a view of
-   the stopped device's Mapped memory is None, as nothing would flush the host's
-   writes before the viewer's work. *)
+   until its stop: the viewer's work reads the host's bytes through the view,
+   the viewer submits after the stop as before, and a view of the stopped
+   device's Mapped memory is None, as nothing would flush the host's writes
+   before the viewer's work. *)
 let stopped_mapped () =
   if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
   S.with_ @@ fun t ->
@@ -1809,10 +1810,18 @@ let stopped_mapped () =
       skip ~reason:"the GPU has no Mapped memory" ()
   | Some m ->
       let view = require_some ~msg:"a view" (A.map_peer g g' m) in
+      let r = device g in
+      let back = Option.get (A.alloc g Pinned n) in
+      let p = pattern n 13 in
+      H.write (host m) p;
+      go r [| E.copy ~dst:(address back) ~src:(address view) n |];
+      equal string ~msg:"the host's bytes, read through the view" p
+        (H.read (host back) n);
       A.stop g' ~fault:None;
-      Rig.Point.wait (S.submit t [||]);
+      go r [||];
       is_none ~msg:"a view of a stopped device's Mapped memory"
         (A.map_peer g g' m);
+      A.free g back;
       A.free g view;
       A.free g' m
 
