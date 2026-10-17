@@ -51,11 +51,28 @@ let reverse =
    running it, with the settings it keys on read as they are. *)
 let neg = Rune.jit' Nx.neg
 
+(* A loop that adds one to [x] until it reaches [limit]: one program, whose
+   trip count its arguments decide. *)
+let count_to =
+  Rune.jit
+    Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+    (fun x limit ->
+      Rune.iterate' ~max:100
+        ~until:(fun x -> Nx.all (Nx.less_equal limit x))
+        ~f:(fun x -> Nx.add_s x 1.)
+        x)
+
 let replay =
   group "jit replay"
     [
       test "neg of one element" (fun () ->
           equal int 643 (words (fun () -> neg x)));
+      test "a loop's run allocates the same whatever its trip count" (fun () ->
+          let limit v = Nx.create Nx.float32 [| 1 |] [| v |] in
+          let one = limit 1.5 and many = limit 64.5 in
+          equal int
+            (words (fun () -> count_to x one))
+            (words (fun () -> count_to x many)));
     ]
 
 (* Residuals

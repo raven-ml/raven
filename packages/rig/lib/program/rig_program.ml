@@ -1160,7 +1160,7 @@ type here = {
          may name on any device. *)
   mutable steps : lstep array;
   twos : B.t array array; (* Copy [k] of each memory of two copies. *)
-  flag : B.t; (* The byte a loop's flag is read into. *)
+  flag : bytes; (* The byte a loop's flag is read into. *)
   ran : bool array; (* By device: whether the run submitted there. *)
   mutable last : Rig.Point.t array;
       (* By device: the run's last point, where [ran]; empty before the first
@@ -1240,14 +1240,15 @@ let hole_sum h value =
   Iarray.fold_left (fun v (x, factor) -> v + (value x * factor)) h.add h.terms
 
 (* The word hole [h] makes of the sum [v] over [word], the word of its bytes
-   there: the sum's 64-bit word, shifted, its low bits ORed into it. *)
-let hole_word h v word =
+   there: the sum's 64-bit word, shifted, its low bits ORed into it. It and
+   [get_word] are inlined, so that a launch's words stay unboxed. *)
+let[@inline] hole_word h v word =
   let w = Int64.shift_right_logical (Int64.of_int v) h.shift in
   let w = match h.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w in
   if Int64.logand word w <> 0L then raise (Clobbers h.at);
   Int64.logor word w
 
-let get_word b h =
+let[@inline] get_word b h =
   match h.width with
   | W32 ->
       Int64.logand (Int64.of_int32 (String.get_int32_le b h.at)) 0xffff_ffffL
@@ -1579,7 +1580,7 @@ let load_here ~rails t devices =
           kept = (images, ends);
           steps = [||];
           twos = [| twos 0; twos 1 |];
-          flag = B.create Rig.host 1;
+          flag = Bytes.create 1;
           ran = Array.make (Array.length devices) false;
           last = [||];
           access = input_access t;
@@ -1766,36 +1767,36 @@ let submit_step p k waits (spec : submit) copies =
 (* Whether byte [at] of [slot]'s buffer is not [0], once the work that wrote
    it is done. *)
 let flag_holds p k (slot, at) =
-  let b, first =
+  let b =
     match slot with
-    | Memory v -> (p.mem.(v.memory).(copy_of p v.memory k), v.offset + at)
-    | Ints -> (ints_buffer p k, at)
-    | Input j -> (bound p j (Iarray.get p.t.inputs j).device, at)
+    | Memory v -> p.mem.(v.memory).(copy_of p v.memory k)
+    | Ints -> ints_buffer p k
+    | Input j -> bound p j (Iarray.get p.t.inputs j).device
   in
+  let first = match slot with Memory v -> v.offset + at | _ -> at in
   if first >= B.length b then
     invalid "a loop's flag at byte %d of an input of %d bytes" at
       (B.length b);
-  B.copy ~src:(B.view b ~first ~length:1) ~dst:p.flag;
-  let c = Bytes.create 1 in
-  B.blit_to_bytes p.flag 0 c 0 1;
-  Bytes.get c 0 <> '\000'
+  B.blit_to_bytes b first p.flag 0 1;
+  Bytes.get p.flag 0 <> '\000'
 
 let rec exec (p : here) k waits = function
   | Lmove { src; dst } ->
       B.copy ~src:(slot_buffer p k src) ~dst:(slot_buffer p k dst)
   | Lsubmit { spec; copies } -> submit_step p k waits spec copies
   | Lloop { trips; trip; flag; body } ->
+      (* A loop without closures: a run allocates only its answer. *)
       let n = run_value p k trips.(k) in
-      let rec go i =
-        if i < n && Option.fold ~none:true ~some:(flag_holds p k) flag then begin
-          Option.iter (fun w -> set_trip p k w i) trip;
-          for s = 0 to Array.length body - 1 do
-            exec p k waits body.(s)
-          done;
-          go (i + 1)
-        end
-      in
-      go 0
+      let i = ref 0 in
+      while
+        !i < n && match flag with None -> true | Some f -> flag_holds p k f
+      do
+        (match trip with None -> () | Some w -> set_trip p k w !i);
+        for s = 0 to Array.length body - 1 do
+          exec p k waits body.(s)
+        done;
+        incr i
+      done
 
 (* The run's last point on each device it submitted to, in the devices'
    order. *)
