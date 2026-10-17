@@ -340,32 +340,66 @@ let open_hosts job ms accounts =
       Link.fail job why;
       Error why
 
+(* The cause of a loss on the controller that fails [j], as {!Rig.Lost}
+   prints it: the first loss of one of [j]'s hosts or proxies other than by a
+   close, whose reason is ["closed"] (rig.mli's Errors and failure). A loss
+   of another device of the controller reaches nothing of [j], and [Rig.fail]
+   loses [j]'s devices too. *)
+let loss j =
+  let lost d =
+    match Rig.lost d with
+    | None | Some "closed" -> None
+    | Some why -> Some (strf "%s lost: %s" (Rig.name d) why)
+  in
+  let opened m =
+    Option.to_list m.host @ List.map snd (Ids.bindings (Atomic.get m.proxies))
+  in
+  List.find_map lost (List.concat_map opened j.machines)
+
+(* Fails [j] within a second of a loss on the controller that fails it, and
+   reports [j]'s failure on its report. The controller's process goes on: the
+   job's hosts and proxies fault with the root cause at their next use, and
+   its own devices are no job's. *)
+let watch j =
+  let rec loop () =
+    match Link.wait j.job ~ms:1000 with
+    | Link.Failed why -> Agent.ended j.report (`Failed why)
+    | Link.Closed -> ()
+    | Link.Open ->
+        Option.iter (Link.fail j.job) (loss j);
+        loop ()
+  in
+  ignore (Thread.create loop ())
+
 let check_agents agents =
   if agents = [] then invalid_arg "Rig_remote.connect: no agent";
   if List.length (List.sort_uniq compare agents) <> List.length agents then
     invalid_arg "Rig_remote.connect: an address is listed twice"
 
 (* Starts a job with the agents at [agents]' hosts and ports, each machine named
-   after its base, reporting on [report]. [fn] names the caller. *)
+   after its base, reporting on [report]. [fn] names the caller. A process that
+   has failed gets its failure from the first host's open. A loss that fails
+   the open job fails it here, before its watcher sees it. *)
 let start ~fn ~key ~report agents =
   (match Atomic.get current with
-  | Some j when Link.wait j.job ~ms:0 = Link.Open ->
-      invalid_argf "Rig_remote.%s: a job of the process is open" fn
+  | Some j when Link.wait j.job ~ms:0 = Link.Open -> (
+      Option.iter (Link.fail j.job) (loss j);
+      match Link.wait j.job ~ms:0 with
+      | Link.Open ->
+          invalid_argf "Rig_remote.%s: a job of the process is open" fn
+      | Link.Failed _ | Link.Closed -> ())
   | _ -> ());
-  match Rig.failure () with
-  | Some why -> Error why
-  | None -> (
-      let job = Link.job () in
-      match dial ~key job [] 1 agents with
+  let job = Link.job () in
+  match dial ~key job [] 1 agents with
+  | Error _ as e -> e
+  | Ok ms -> (
+      match Result.bind (join job agents ms) (open_hosts job ms) with
       | Error _ as e -> e
-      | Ok ms -> (
-          match Result.bind (join job agents ms) (open_hosts job ms) with
-          | Error _ as e -> e
-          | Ok () ->
-              let j = { job; machines = ms; report } in
-              Atomic.set current (Some j);
-              Agent.watch report job;
-              Ok j))
+      | Ok () ->
+          let j = { job; machines = ms; report } in
+          Atomic.set current (Some j);
+          watch j;
+          Ok j)
 
 let connect ~key agents =
   check_agents agents;

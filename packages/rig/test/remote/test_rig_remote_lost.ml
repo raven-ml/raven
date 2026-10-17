@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A device lost in one agent fails the job: a process of its own, since a
-   failed job fails the process for good. *)
+(* A device lost in one agent fails the job: a process of its own, since rig
+   keeps the first loss of the job's devices here for good (Rig.failure). *)
 
 open Windtrap
 open Remote_job
@@ -13,9 +13,8 @@ let root = "FAULTY:0 lost: the agent's device faulted"
 
 (* The FAULTY device's first allocation faults, in the first agent. The job
    fails with that loss as its root cause; devices answers it for a kind opened
-   before or not, every device here is lost with it, a rail is its Error, close
-   leaves it failed, both agents end with it, and the process starts no other
-   job. *)
+   before or not, every device of the job is lost with it, a rail is its Error,
+   close leaves it failed, and both agents end with it. *)
 let agent_device_lost () =
   with_agents ~n:2 @@ fun agents ->
   let j = connect agents in
@@ -52,7 +51,7 @@ let agent_device_lost () =
   Rig_remote.close j;
   equal ~msg:"after close" (option string) (Some root) (Rig_remote.failed j);
   (* The agent whose device faulted reports that loss, and the other ends with
-     the job (test_rig_remote_abort holds whether the cause reaches it). *)
+     the job. *)
   (match List.map finish agents with
   | [ first; (code, _) ] ->
       equal ~msg:"the faulted agent"
@@ -60,11 +59,7 @@ let agent_device_lost () =
         (2, [ "failed: " ^ root ])
         first;
       equal ~msg:"the other agent's exit" int 2 code
-  | _ -> fail "two agents");
-  let failed = require_some (Rig.failure ()) in
-  with_agents @@ fun fresh ->
-  equal (result pass string) (Error failed)
-    (Rig_remote.connect ~key:(as_key key) (List.map address fresh))
+  | _ -> fail "two agents")
 
 let () =
   Watchdog.start ();

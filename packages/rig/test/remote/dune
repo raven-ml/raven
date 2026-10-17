@@ -13,8 +13,8 @@
   test_rig_remote
   test_rig_remote_lost
   test_rig_remote_own
+  test_rig_remote_failed
   test_rig_remote_killed
-  test_rig_remote_abort
   test_rig_remote_join
   test_rig_remote_ids
   test_rig_remote_program

@@ -3,9 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Jobs whose agents are real processes on the loopback (Remote_job). A failed
-   job fails the process for good, so the failures run in executables of their
-   own; every job here closes. *)
+(* Jobs whose agents are real processes on the loopback (Remote_job). Jobs that
+   fail run in executables of their own; every job here closes. *)
 
 open Windtrap
 open Remote_job
@@ -973,8 +972,8 @@ let reader_gone () =
   equal report_w (0, [], [ "connected"; "CPU@m1" ]) e;
   equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
 
-(* The program kills itself once its process failed: the report was written
-   before. *)
+(* The program exits once its job failed: its report ends with the
+   failure. *)
 let agent_killed () =
   with_hex_agents ~n:2 @@ fun agents ->
   let p = launch (launch_vars agents) "watch" in
@@ -985,7 +984,7 @@ let agent_killed () =
       equal ~msg:"connected" string "connected" (said_line p);
       kill (List.hd agents);
       equal report_w
-        ( -Sys.sigkill,
+        ( 0,
           [ "started"; "failed m1: closed its connection" ],
           [ "CPU@m1"; "CPU@m2" ] )
         (ended p))
@@ -1156,8 +1155,7 @@ let launching =
         started_closed;
       test "a program that exits without close reports closed" exits_unclosed;
       test "a program whose report's reader is gone goes on" reader_gone;
-      test "an agent killed: failed, reported before the process fails"
-        agent_killed;
+      test "an agent killed: the job's failure is reported" agent_killed;
       cases ~name:fst "a start that fails reports failed" bad_starts
         (fun (_, c) -> failed_start c);
       test "a report descriptor past 32 bits is no descriptor" wide_descriptor;

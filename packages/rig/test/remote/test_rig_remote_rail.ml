@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A GPU queue that waits on a rail's arrived count when the job fails: the
-   failure raises the count to Int64.max_int (Rig_remote_abi), so the wait
-   ends, and the work's point raises Lost. The job fails by its agent's death,
-   or by its connection's end while the agent lives. Each case runs in a child
-   of its own, since a failed job fails the process for good. *)
+(* A GPU queue of the controller that waits on a rail's arrived count when the
+   job fails: the failure raises the count to Int64.max_int (Rig_remote_abi),
+   so the wait ends, the work completes, and the GPU, a device of the
+   controller's own, goes on. The job fails by its agent's death, or by its
+   connection's end while the agent lives. Each case runs in a child of its
+   own, which holds the GPU. *)
 
 open Windtrap
 open Remote_job
@@ -136,14 +137,11 @@ let case (module G : Gpu) held cut () =
     Printf.sprintf "arrived %Ld, done %b" (get64 e.counts 256) reached
   in
   fail_job ();
-  (* The failure raises the counts, then loses the process's devices: the
-     held work may run to its end before the loss or not, and the wait
-     returns or raises [Lost] as it did. Either way it answers. *)
-  until ~what:"the GPU's loss" (fun () -> Rig.lost d <> None);
+  until ~what:"the job's failure" (fun () -> Rig_remote.failed j <> None);
   let wait =
     match Rig.Point.wait p with
-    | () -> "answered"
-    | exception Rig.Lost _ -> "answered"
+    | () -> "returned"
+    | exception Rig.Lost (_, why) -> "lost: " ^ why
   in
   let after =
     List.map (fun at -> get64 e.counts at = Int64.max_int) [ 0; 128; 256 ]
@@ -152,6 +150,7 @@ let case (module G : Gpu) held cut () =
     before;
     "wait: " ^ wait;
     "terminal: " ^ String.concat " " (List.map string_of_bool after);
+    "GPU lost: " ^ string_of_bool (Rig.lost d <> None);
   ]
 
 let status = function
@@ -191,7 +190,10 @@ let tests =
         if not (G.present ()) then skip ~reason:("no " ^ G.class_ ^ " GPU") ();
         equal (list string)
           [
-            "arrived 0, done false"; "wait: answered"; "terminal: true true true";
+            "arrived 0, done false";
+            "wait: returned";
+            "terminal: true true true";
+            "GPU lost: false";
           ]
           (in_child (case (module G) held cut))
       in

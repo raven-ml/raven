@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* An agent's process killed fails the job: a process of its own, since a failed
-   job fails the process for good.
+(* An agent's process killed fails the job: a process of its own, since rig
+   keeps the first loss of the job's devices here for good (Rig.failure).
 
    The controller and the other agent both see the death. Each test stops one of
    them while the agent dies, so the other reports first: either way every
@@ -20,7 +20,7 @@ let stopped p f =
   Fun.protect ~finally:(fun () -> Unix.kill p.pid Sys.sigcont) f
 
 (* The other agent is stopped: this process, the controller, notices first.
-   Every device here is lost with the root cause. *)
+   Every host of the job is lost with the root cause. *)
 let controller_first () =
   with_agents ~n:2 @@ fun agents ->
   let j = connect agents in

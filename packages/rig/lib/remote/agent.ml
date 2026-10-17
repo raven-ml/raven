@@ -112,9 +112,9 @@ let ended report e =
 
 (* The job's fate *)
 
-(* Fails the process with [j]'s root cause once [j] fails, after it reports the
-   failure on [report]; and fails [j] once a device of the process is lost other
-   than by a close. *)
+(* Fails the agent's process with [j]'s root cause once [j] fails, after it
+   reports the failure on [report]; and fails [j] once a device of the process
+   is lost other than by a close. Every device an agent opens is its job's. *)
 let watch report j =
   let rec loop () =
     match Link.wait j ~ms:1000 with

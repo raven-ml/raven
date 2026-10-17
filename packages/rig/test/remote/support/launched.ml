@@ -10,8 +10,8 @@
    answers an error. Otherwise it prints "connected" and its hosts' names, then:
 
    - "close" closes the job and exits 0; - "exit" exits 0 without closing it; -
-   "watch" waits until the process failed, then kills itself with SIGKILL, so
-   that nothing written later can reach its launcher; - "fork" forks a child
+   "watch" waits until its job failed, then exits 0 without closing it; -
+   "fork" forks a child
    that exits 0, then prints "going on" if its job did not fail, and closes it;
    - "exec" runs [sh -c SCRIPT], SCRIPT its second argument, then closes the
    job; - "reenter" closes its hosts, then closes the job with another close
@@ -31,13 +31,13 @@
 
 let patience = 60.
 
-let rec failed t0 =
-  match Rig.failure () with
+let rec failed j t0 =
+  match Rig_remote.failed j with
   | Some _ -> ()
   | None when Unix.gettimeofday () -. t0 > patience -> exit 3
   | None ->
       Unix.sleepf 0.01;
-      failed t0
+      failed j t0
 
 (* Closes [j] once its hosts are closed, with [landing] at its [n]-th
    allocation, and prints whether it reached it. *)
@@ -62,9 +62,7 @@ let run mode j =
   match mode with
   | "close" -> Rig_remote.close j
   | "exit" -> ()
-  | "watch" ->
-      failed (Unix.gettimeofday ());
-      Unix.kill (Unix.getpid ()) Sys.sigkill
+  | "watch" -> failed j (Unix.gettimeofday ())
   | "fork" -> (
       match Unix.fork () with
       | 0 -> exit 0

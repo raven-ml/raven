@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** Agents ({!Rig_remote.listen}, {!Rig_remote.serve}), and what the
-    controller's side shares with them: the job's watcher, and connecting
+    controller's side shares with them: reports to a launcher, and connecting
     within a bound.
 
     An agent's listener accepts on a thread of its own and runs each handshake
@@ -56,13 +56,7 @@ val ended : report option -> [ `Closed | `Failed of string ] -> unit
     or [Gc.Memprof] callback on the thread that writes on [r] waits for
     nothing. *)
 
-(** {1:fate The job's fate} *)
-
-val watch : report option -> Rig_remote_proxy.Link.job -> unit
-(** [watch r j] starts a thread that, once [j] has failed, reports the failure
-    on [r] and then fails the process ({!Rig.fail}) with [j]'s root cause. The
-    thread also fails [j] with the process's failure ({!Rig.failure}) within a
-    second of a device's loss. It ends once [j] has failed or closed. *)
+(** {1:dialing Connecting} *)
 
 val dial_tcp : s:float -> string -> int -> (Unix.file_descr, string) result
 (** [dial_tcp ~s host port] is a TCP connection to [host] and [port], made

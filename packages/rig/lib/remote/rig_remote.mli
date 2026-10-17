@@ -139,11 +139,13 @@ val connect : key:key -> (string * int) list -> (t, string) result
     another version of the protocol or holds another key, or if two agents
     cannot connect to each other. [why] then starts with a machine's name and
     [": "], or names both machines that cannot connect, and the agents
-    reached are told the job has failed. [Error why], with {!Rig.failure}'s
-    text, if the process has failed.
+    reached are told the job has failed. [Error why], [why] starting with the
+    first machine's name and [": "], if the process has failed ({!Rig.fail}).
 
     Raises [Invalid_argument] if [agents] is empty or lists an address twice, or
-    if a job of the process is open. *)
+    if a job of the process is open. It first fails an open job that a loss on
+    this process fails ({!section-failure}), without the second the process
+    may take to notice the loss. *)
 
 val hosts : t -> Rig.t list
 (** [hosts j] is the host of each of [j]'s machines, in the order of their
@@ -184,8 +186,8 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
     most one ["started"] line and one end line, each in one write. Newlines
     in a reason are written as spaces.
     - ["started"], from the controller, once the job has started;
-    - ["failed WHY"] once the job has failed, [WHY] its root cause, before
-      the process fails ({!Rig.fail});
+    - ["failed WHY"] once the job has failed, [WHY] its root cause, and on an
+      agent before its process fails ({!Rig.fail});
     - ["closed"] once the process has ended the job in order, the controller
       by {!close} or at exit, an agent once {!serve} has dropped what the
       closed job held.
@@ -215,8 +217,8 @@ val launched : unit -> (t, string) result option
     open descriptor.
 
     Raises [Invalid_argument] if the process called [launched] before, or if
-    a job of the process is open, which it checks once the descriptor and the
-    variables are valid. *)
+    a job of the process is open, which it checks as {!connect} does, once
+    the descriptor and the variables are valid. *)
 
 (** {1:failure Failure}
 
@@ -233,17 +235,22 @@ val launched : unit -> (t, string) result option
     - a copy or a run that the agent's rig refuses or raises
       [Invalid_argument] or {!Rig.Out_of_memory} for
       ({!Rig_program.run_received});
-    - a device of any of its processes lost other than by a close
-      ({!Rig.failure}), which this process notices within a second;
+    - a device of an agent lost other than by a close ({!Rig.failure}),
+      which the agent notices within a second;
+    - on the controller, the loss of one of the job's hosts or proxies other
+      than by a close, as {!Rig.fail} loses them too, which the controller
+      notices within a second. A loss of another of the controller's
+      devices reaches nothing of the job, which goes on;
     - an exception an agent does not expect, such as one an opener of
       {!serve} raises, whose text ([Printexc.to_string]) is the root cause.
 
     Once the job has failed, each of its processes still running shuts down
-    every connection, raises every count of every rail so that no wait for
-    one blocks, and loses every device but {!Rig.host} with the root cause
-    ({!Rig.fail}), so that every later use of them raises {!Rig.Lost}. Agents
-    return from {!serve}. The process stays failed, and starts no other
-    job.
+    every connection and raises every count of every rail, so that no wait
+    for one blocks. An agent then fails its process with the root cause
+    ({!Rig.fail}) and returns from {!serve}. On the controller, each host and
+    proxy of the job faults with the root cause, so its next use loses it
+    and raises {!Rig.Lost}, as every use after does. The controller's own
+    devices go on, and it may start another job.
 
     A child of [fork] never uses its parent's connections. In the child the
     job is failed from the start, its rails' counts raised as on any

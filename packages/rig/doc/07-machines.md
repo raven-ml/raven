@@ -111,11 +111,13 @@ GPUs, those detached from their kernel driver included
 
 Say a GPU of `h100-b` faults. The job fails as a whole, with the fault as
 its root cause, and so would it for a connection that broke or fell silent
-([`Rig_remote`](../lib/remote/rig_remote.mli), "Failure"). Every process of
-the job that still runs then loses every device but its host, as `Rig.fail`
-does ([`Rig`](../lib/rig.mli), "Loss"), and the agent on `h100-b` returns from
-`Rig_remote.serve`. `rig run` names the cause and starts the job again with
-a fresh agent and a fresh key, until it gives up as `rig run --help` states.
+([`Rig_remote`](../lib/remote/rig_remote.mli), "Failure"). Each agent that
+still runs fails its process, as `Rig.fail` does ([`Rig`](../lib/rig.mli),
+"Loss"), and returns from `Rig_remote.serve`. The controller keeps its own
+devices. The hosts and devices of the job's other machines raise `Rig.Lost`
+with the root cause from their next use, and the controller may start
+another job. `rig run` names the cause and starts the job again with a fresh
+agent and a fresh key, until it gives up as `rig run --help` states.
 
 ## Trust
 
