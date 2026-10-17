@@ -3448,9 +3448,11 @@ let fused_shapes =
   let empty =
     of_list ~pp:pp_ints [ [| 0 |]; [| 0; 5 |]; [| 3; 0 |]; [| 2; 0; 4 |] ]
   in
+  (* Rank 0, no element and two reduced axes split by a kept one are each
+     drawn often enough that every run of 100 cases reaches them. *)
   frequency
-    [ (3, small); (3, rows); (2, columns); (1, long); (2, apart);
-      (1, constant ~pp:pp_ints [||]); (1, empty) ]
+    [ (3, small); (3, rows); (2, columns); (1, long); (5, apart);
+      (4, constant ~pp:pp_ints [||]); (4, empty) ]
 
 let fused_case =
   let open Gen in
@@ -3479,7 +3481,7 @@ let fused_case =
       Array.of_list (if axes = [] && r > 0 then [ r - 1 ] else axes)
     in
     if scan then map (fun a -> [| a |]) (int_range 0 (r - 1))
-    else if r = 4 then frequency [ (1, any); (2, constant [| 0; 2 |]) ]
+    else if r = 4 then frequency [ (1, any); (9, constant [| 0; 2 |]) ]
     else any
   in
   let ts = templates d r in
