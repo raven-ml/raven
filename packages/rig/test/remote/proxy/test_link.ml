@@ -288,7 +288,7 @@ type helper = { pid : int; out : Unix.file_descr }
 
 let status_text = function
   | Unix.WEXITED n -> Printf.sprintf "exited with %d" n
-  | Unix.WSIGNALED n | Unix.WSTOPPED n -> Printf.sprintf "ended by signal %d" n
+  | Unix.WSIGNALED n | Unix.WSTOPPED n -> "ended by " ^ Sys.signal_to_string n
 
 (* Waits until link_peer [pid] connects to [l], however long its start takes
    on a loaded machine: [None], or [Some status] once it has exited without
@@ -1923,11 +1923,13 @@ let silences =
 
 let fork_reason = "a child of fork does not use its parent's connections"
 
-(* The child requests and drops through its parent's link, and makes rails on
-   it: their ids are checked as in the parent, against the parent's rail 77 and
-   the child's own, and their counts read [Int64.max_int]. Its exit status is
-   whether every answer was the fork's refusal and every check held. *)
-let child j l =
+(* The checks of the child, which requests and drops through its parent's
+   link, and makes rails on it: their ids are checked as in the parent,
+   against the parent's rail 77 and the child's own, and their counts read
+   [Int64.max_int]. Rail 77's own ready writes first, as a store and from
+   [code]. *)
+let child_checks j l (e : Rig_remote_abi.end_) code ~out =
+  let counts = Rig.Buffer.of_bigarray e.counts in
   let rail id = Link.rail l ~id ~send:[| t5 |] ~receive:[||] in
   let raises id =
     match rail id with
@@ -1939,19 +1941,47 @@ let child j l =
       (fun at -> count e at = Int64.to_int Int64.max_int)
       [ ready; sent; arrived ]
   in
-  let ok =
-    Link.request l (Wire.Open "child") = Error (`Failed fork_reason)
-    && Link.failed j = Some fork_reason
-    && (Link.drop l 7;
-        Link.next l = Error fork_reason)
-    && raises 77
-    && failed (rail 78)
-    && raises 78
-    &&
-    (Link.release_rail l 78;
-     failed (rail 78))
+  [
+    ( "ready stores the child's count",
+      fun () ->
+        e.ready 3;
+        count e 0 = 3 );
+    ( "ready from code stores the child's count",
+      fun () ->
+        call_ready code ~out ~counts ~fn:e.ready_fn 42 7;
+        count e 0 = 7 );
+    ( "a request answers the fork's reason",
+      fun () ->
+        Link.request l (Wire.Open "child") = Error (`Failed fork_reason) );
+    ( "the job fails with the fork's reason",
+      fun () -> Link.failed j = Some fork_reason );
+    ( "next after a drop answers the fork's reason",
+      fun () ->
+        Link.drop l 7;
+        Link.next l = Error fork_reason );
+    ("rail 77 is the parent's", fun () -> raises 77);
+    ("a new rail reads as failed", fun () -> failed (rail 78));
+    ("the new rail's id is taken", fun () -> raises 78);
+    ( "a rail made again after a release reads as failed",
+      fun () ->
+        Link.release_rail l 78;
+        failed (rail 78) );
+  ]
+
+(* Runs [checks] and exits with the number of the first that fails, from 1,
+   or one past the last when a check raises: the parent names it. *)
+let run_child checks =
+  let rec first k = function
+    | [] -> 0
+    | (_, check) :: rest -> if check () then first (k + 1) rest else k
   in
-  Unix._exit (if ok then 0 else 1)
+  let code =
+    try first 1 checks
+    with e ->
+      Printf.eprintf "fork child: %s\n%!" (Printexc.to_string e);
+      List.length checks + 1
+  in
+  Unix._exit code
 
 let forked () =
   with_job @@ fun j ->
@@ -1962,21 +1992,19 @@ let forked () =
     (echo_open "before")
     (reason (Link.request l (Wire.Open "before")));
   let e = Link.rail l ~id:77 ~send:[| t5 |] ~receive:[||] in
-  let code = ready_image () in
-  let out = Rig.Buffer.create Rig.host 8
-  and counts = Rig.Buffer.of_bigarray e.counts in
+  let out = Rig.Buffer.create Rig.host 8 in
+  let checks = child_checks j l e (ready_image ()) ~out in
   Rig_support.needs_fork ();
   (match Unix.fork () with
-  | 0 ->
-      e.ready 3;
-      if count e 0 <> 3 then Unix._exit 2;
-      call_ready code ~out ~counts ~fn:e.ready_fn 42 7;
-      if count e 0 <> 7 then Unix._exit 3;
-      child j l
+  | 0 -> run_child checks
   | pid -> (
       match Unix.waitpid [] pid with
       | _, Unix.WEXITED 0 -> ()
-      | _ -> fail "the child's link did not refuse it"));
+      | _, Unix.WEXITED k when k <= List.length checks ->
+          failf "in the child, false: %s" (fst (List.nth checks (k - 1)))
+      | _, Unix.WEXITED k when k = List.length checks + 1 ->
+          fail "in the child, a check raised what it printed"
+      | _, status -> failf "the child %s" (status_text status)));
   equal ~msg:"child counts do not change the parent's" int 0 (count e 0);
   Link.release_rail l 77;
   equal (option string) None (Link.failed j);

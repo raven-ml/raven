@@ -174,12 +174,10 @@ raven / llama.cpp (Vulkan; ROCm):
   `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
   `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
   it cannot be forced
-- flakes, each failed once: test_link fork "a child's job is failed in the
-  child alone" (make the parent report the child's exit status); test_submit
-  "a part follows the earlier parts that may share memory"; test_model on
-  one domain, `Oom_at` on device 3 or 4 about 1 in 120 (loop it with logs
-  kept); test_image 1 in 3 on the Mac before its 2026-10-12 fix (rerun 30
-  times); rig_pci.space "two domains
+- flakes, each failed once: test_submit "a part follows the earlier parts
+  that may share memory"; test_model on one domain, `Oom_at` on device 3 or
+  4 about 1 in 120 (loop it with logs kept); test_image 1 in 3 on the Mac
+  before its 2026-10-12 fix (rerun 30 times); rig_pci.space "two domains
   allocate and free at once" timed out at its 10 s bound in case 10 twice
   at load ~56 (`s1:784492d14ef6cd47`, 2.1 s alone): make the case fast at
   its cause
