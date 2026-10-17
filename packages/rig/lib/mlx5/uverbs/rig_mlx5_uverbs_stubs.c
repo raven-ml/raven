@@ -90,6 +90,25 @@ value caml_rig_mlx5_uverbs_poll(value v_a, value v_b, value v_ms) {
                   ((fds[0].revents | fds[1].revents) & down ? 4 : 0));
 }
 
+/* Reads the records of [v_size] bytes the event file [v_fd] holds into
+   [v_buf] from byte [v_at], until the file holds no more or [v_buf] has no
+   room for another: the bytes filled after. The file does not block, so the
+   read holds the runtime, and no signal handler, finaliser or Gc.Memprof
+   callback runs between the kernel giving the records and the caller
+   storing their end. A failed read takes nothing. */
+value caml_rig_mlx5_uverbs_take(value v_fd, value v_buf, value v_at,
+                                value v_size) {
+  size_t at = Long_val(v_at), size = Long_val(v_size);
+  size_t room = (caml_string_length(v_buf) - at) / size * size;
+  int fd = Int_val(v_fd);
+  ssize_t r;
+  while (room > 0 && (r = read(fd, Bytes_val(v_buf) + at, room)) > 0) {
+    at += (size_t)r;
+    room -= (size_t)r;
+  }
+  return Val_long(at);
+}
+
 /* Runs the verbs ioctl on [v_fd] with the call laid out in [v_call],
    retrying an interrupted one. Releases the runtime, with [v_call] rooted:
    the kernel may take long, such as when it pins memory. */
@@ -235,5 +254,10 @@ NONE(page_size, "sysconf", value a UNUSED)
 NONE(map, "mmap", value a UNUSED, value b UNUSED, value c UNUSED)
 NONE(unmap, "munmap", value a UNUSED, value b UNUSED)
 NONE(poll, "poll", value a UNUSED, value b UNUSED, value c UNUSED)
+
+value caml_rig_mlx5_uverbs_take(value v_fd UNUSED, value v_buf UNUSED,
+                                value v_at, value v_size UNUSED) {
+  return v_at;
+}
 
 #endif

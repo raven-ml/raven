@@ -416,11 +416,18 @@ type path = {
       (** [register a o m] registers [m] for [a] and [o]. The NIC knows the
           first byte of [Host] memory by its host address, and of [Dmabuf]
           memory by its offset. *)
-  cq : entries:int -> tag:int -> string -> int -> (int * string, string) result;
+  cq :
+    entries:int ->
+    tag:int ->
+    string ->
+    int ->
+    (int * (unit -> int) * string, string) result;
       (** [cq ~entries ~tag d n] makes a completion queue of [entries]
           completions, a power of two, whose events carry [tag], giving the
-          driver [d]. It is the queue's handle and the driver's answer, of at
-          most [n] bytes. *)
+          driver [d]. It is the queue's handle, a function that is the number
+          of the queue's events [wait] took from the kernel, and the driver's
+          answer, of at most [n] bytes. The path's [wait] is the count's only
+          writer, and counts each event once. *)
   qp :
     cq:int ->
     entries:int ->
@@ -439,15 +446,23 @@ type path = {
       (** [destroy k h] destroys the object of kind [k] and handle [h]. *)
   wait : int -> kernel_event list;
       (** [wait ms] is the kernel's events once there is one, or [[]] after
-          [ms] milliseconds. *)
+          [ms] milliseconds. The events stay the path's until [reported]:
+          each [wait] returns them again, with those that came since. *)
+  reported : unit -> unit;
+      (** [reported ()] drops the events the last [wait] returned, which
+          their caller now holds. It allocates nothing and polls nowhere, so
+          a caller that calls it as its last step loses no event to an
+          exception, and an exception before it leaves them to the next
+          [wait]. *)
   close : unit -> unit;
       (** [close ()] unmaps what [map] mapped and closes the NIC's file, and
           the kernel then destroys every object. *)
 }
-(** The type for what a path gives a NIC. Each function but [wait] and
-    [close] returns the kernel's refusal as [Error msg], naming the call and
-    the reason. Any domain may call them concurrently, except [wait], which
-    one domain calls at a time, and [close], which runs last. *)
+(** The type for what a path gives a NIC. Each function but [wait],
+    [reported] and [close] returns the kernel's refusal as [Error msg],
+    naming the call and the reason. Any domain may call them concurrently,
+    except [wait] and [reported], which one domain calls at a time, and
+    [close], which runs last. *)
 
 val make : path -> (t, string) result
 (** [make p] is the NIC [p] reaches, with its context made and its access

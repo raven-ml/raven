@@ -292,4 +292,43 @@ let events =
         (Unix.gettimeofday () -. start);
       M.close nic)
 
-let () = exit (run "rig_mlx5" [ transfers; refusals; lifetime; kept; events ])
+(* A wait that takes a completion's event is walked: its [n]-th allocation and
+   every later one raise, as an asynchronous exception does. The event comes
+   once, from that wait or the next, and the queue's next arm still raises
+   one: the NIC ignores an arm whose count of events is short. *)
+let interrupted =
+  test "a wait interrupted at any allocation loses no event" (fun () ->
+      let nic = nic () in
+      let cq, qp = pair nic in
+      let d = register nic Remote_write Any_order (memory 64) in
+      let events got =
+        List.length
+          (List.filter (function M.Completion c -> c == cq | _ -> false) got)
+      in
+      let rec walk n =
+        M.Cq.arm cq;
+        M.Qp.post qp
+          {
+            op =
+              Write_inline
+                { data = String.make 8 'w'; dst = M.Region.remote d 0 };
+            signal = true;
+          };
+        M.Qp.ring qp;
+        equal status Done (completion cq).status;
+        let got = ref [] in
+        let reached =
+          Rig_support.interrupted n (fun () -> got := M.wait nic ~ms:5000)
+        in
+        let first = events !got in
+        let got = if first > 0 then first else events (M.wait nic ~ms:5000) in
+        equal ~msg:(Printf.sprintf "events, from allocation %d" n) int 1 got;
+        if reached then walk (n + 1)
+      in
+      walk 1;
+      M.close nic)
+
+let () =
+  exit
+    (run "rig_mlx5"
+       [ transfers; refusals; lifetime; kept; events; interrupted ])

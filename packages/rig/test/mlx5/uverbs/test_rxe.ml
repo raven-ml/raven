@@ -104,7 +104,7 @@ let connect (p : M.path) (c : M.context) =
     | `Ethernet (g :: _) -> g
     | _ -> fail "no RoCE v2 global identifier"
   in
-  let cq, _ =
+  let cq, _, _ =
     ok "making a completion queue" (p.cq ~entries:16 ~tag:1 "" cq_answer)
   in
   let qp tag =

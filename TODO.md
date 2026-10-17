@@ -52,8 +52,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- exceptions: the mlx5 wait loses an event's count to an exception after
-  the kernel delivered it (uverbs/path.ml:576-621)
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows

@@ -36,6 +36,12 @@ external page_size : unit -> int = "caml_rig_mlx5_uverbs_page_size"
 external poll : Unix.file_descr -> Unix.file_descr -> int -> int
   = "caml_rig_mlx5_uverbs_poll"
 
+external take : int -> Bytes.t -> int -> int -> int
+  = "caml_rig_mlx5_uverbs_take"
+[@@noalloc]
+
+external fetch_and_add : int Atomic.t -> int -> int = "%atomic_fetch_add"
+
 (* [guard what f] is [f ()], or [Error] saying that [what] failed and why. *)
 let guard what f =
   match f () with
@@ -152,7 +158,15 @@ type file = {
   mutable async : int; (* the descriptor of asynchronous events, or -1 *)
   mutable channel : int; (* the descriptor of completion events, or -1 *)
   maps : (int * int) list Atomic.t; (* pushed with no lock *)
+  counts : (int * (int * int Atomic.t)) list Atomic.t;
+      (* each queue's handle and count of completion events, by tag *)
+  completions : pending;
+  asyncs : pending;
 }
+
+(* Events taken from the kernel and not yet reported: the first [filled]
+   bytes of [taken], of which the first [counted] are counted. *)
+and pending = { taken : Bytes.t; mutable filled : int; mutable counted : int }
 
 (* The verbs ioctl
 
@@ -432,7 +446,15 @@ let cq f ~entries ~tag d n =
          ])
       D.Uverbs_create_cq_resp.sizeof ~uhw:d ~uhw_out:n ()
   in
-  Ok (field resp D.Uverbs_create_cq_resp.cq_handle, answer)
+  let handle = field resp D.Uverbs_create_cq_resp.cq_handle in
+  let count = Atomic.make 0 in
+  let rec add () =
+    let cs = Atomic.get f.counts in
+    if not (Atomic.compare_and_set f.counts cs ((tag, (handle, count)) :: cs))
+    then add ()
+  in
+  add ();
+  Ok (handle, (fun () -> Atomic.get count), answer)
 
 let qp f ~cq ~entries ~tag d n =
   let module C = D.Uverbs_create_qp in
@@ -570,22 +592,15 @@ let destroy f kind h =
           D.Uverbs_destroy_qp_resp.sizeof )
   in
   let* _ = invoke f what cmd req n () in
+  let rec forget () =
+    let cs = Atomic.get f.counts in
+    let rest = List.filter (fun (_, (c, _)) -> c <> h) cs in
+    if not (Atomic.compare_and_set f.counts cs rest) then forget ()
+  in
+  if kind = `Cq then forget ();
   Ok ()
 
 (* Events *)
-
-(* The records of [size] bytes an event file holds, read until it holds no
-   more. *)
-let records fd size =
-  let b = Bytes.create (64 * size) in
-  let rec go acc =
-    match Unix.read (descr fd) b 0 (Bytes.length b) with
-    | 0 | (exception Unix.Unix_error _) -> List.concat (List.rev acc)
-    | n ->
-        let record i = Bytes.sub_string b (i * size) size in
-        go (List.init (n / size) record :: acc)
-  in
-  go []
 
 let async_events =
   [
@@ -598,33 +613,79 @@ let async_events =
     (D.ibv_event_port_err, fun _ -> M.Port_changed "down");
   ]
 
-(* An asynchronous event of a kind the library reports. *)
-let async_event r =
+(* An asynchronous event of a kind the library reports, from its record at
+   [at] of [b]. *)
+let async_event b at =
   let module E = D.Uverbs_async_event_desc in
+  let r = Bytes.sub_string b at E.sizeof in
   List.assoc_opt (field r E.event_type) async_events
   |> Option.map (fun make -> make (field r E.element))
 
-let wait f ms =
-  match poll (descr f.async) (descr f.channel) ms with
-  | 0 | (exception Unix.Unix_error _) -> []
-  | ready ->
-      let read bit fd size =
-        if ready land bit = 0 then [] else records fd size
-      in
-      let async =
-        read 1 f.async D.Uverbs_async_event_desc.sizeof
-        |> List.filter_map async_event
-      in
-      let completions =
-        read 2 f.channel D.Uverbs_comp_event_desc.sizeof
-        |> List.map (fun r ->
-               M.Completed (field r D.Uverbs_comp_event_desc.cq_handle))
-      in
-      (* An event file hangs up once the device is gone, and stays readable:
-         the NIC failed. *)
-      let gone = if ready land 4 = 0 then [] else [ M.Nic_failed ] in
-      async @ completions @ gone
+(* Events
 
+   The kernel's records are taken into a [pending] buffer of each event
+   file, a completion counted at its queue's count, and the buffers emptied
+   once [reported] says the caller holds the events, each in a step nothing
+   can split. A queue's count is its arm's sequence: one the count misses
+   makes the NIC ignore each later arm. An exception that a signal handler,
+   finaliser or Gc.Memprof callback raises before [reported] leaves every
+   record pending, a completion counted once: the next [wait] returns it
+   again. *)
+
+let comp_size = D.Uverbs_comp_event_desc.sizeof
+let async_size = D.Uverbs_async_event_desc.sizeof
+
+let pending size =
+  { taken = Bytes.create (64 * size); filled = 0; counted = 0 }
+
+let[@poll error] fill p fd size = p.filled <- take fd p.taken p.filled size
+
+let[@poll error] count_one p c =
+  ignore (fetch_and_add c 1);
+  p.counted <- p.counted + comp_size
+
+let[@poll error] reported f =
+  f.completions.filled <- 0;
+  f.completions.counted <- 0;
+  f.asyncs.filled <- 0
+
+let rec count_pending f =
+  let p = f.completions in
+  if p.counted < p.filled then begin
+    let tag = Int64.to_int (Bytes.get_int64_le p.taken p.counted) in
+    (match List.assoc_opt tag (Atomic.get f.counts) with
+    | Some (_, c) -> count_one p c
+    | None -> p.counted <- p.counted + comp_size);
+    count_pending f
+  end
+
+let wait f ms =
+  let c = f.completions and a = f.asyncs in
+  let ms = if c.filled > 0 || a.filled > 0 then 0 else ms in
+  let ready =
+    match poll (descr f.async) (descr f.channel) ms with
+    | r -> r
+    | exception Unix.Unix_error _ -> 0
+  in
+  count_pending f;
+  if ready land 1 <> 0 then fill a f.async async_size;
+  if ready land 2 <> 0 then begin
+    fill c f.channel comp_size;
+    count_pending f
+  end;
+  let async =
+    List.init (a.filled / async_size) (fun i -> i * async_size)
+    |> List.filter_map (async_event a.taken)
+  in
+  let completions =
+    List.init (c.filled / comp_size) (fun i ->
+        let tag = Bytes.get_int64_le c.taken (i * comp_size) in
+        M.Completed (Int64.to_int tag))
+  in
+  (* An event file hangs up once the device is gone, and stays readable:
+     the NIC failed. *)
+  let gone = if ready land 4 = 0 then [] else [ M.Nic_failed ] in
+  async @ completions @ gone
 
 let close f () =
   List.iter (fun (at, n) -> unmap at n) (Atomic.get f.maps);
@@ -660,6 +721,9 @@ let open_ ~root name =
       async = -1;
       channel = -1;
       maps = Atomic.make [];
+      counts = Atomic.make [];
+      completions = pending comp_size;
+      asyncs = pending async_size;
     }
   in
   Ok
@@ -675,5 +739,6 @@ let open_ ~root name =
       modify = modify f;
       destroy = destroy f;
       wait = wait f;
+      reported = (fun () -> reported f);
       close = close f;
     }

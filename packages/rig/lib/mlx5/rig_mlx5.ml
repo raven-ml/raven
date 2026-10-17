@@ -80,7 +80,12 @@ type path = {
   context : string -> int -> (context, string) result;
   map : int -> int -> (int, string) result;
   register : access -> order -> memory -> (registered, string) result;
-  cq : entries:int -> tag:int -> string -> int -> (int * string, string) result;
+  cq :
+    entries:int ->
+    tag:int ->
+    string ->
+    int ->
+    (int * (unit -> int) * string, string) result;
   qp :
     cq:int ->
     entries:int ->
@@ -91,6 +96,7 @@ type path = {
   modify : int -> transition -> (unit, string) result;
   destroy : [ `Region | `Cq | `Qp ] -> int -> (unit, string) result;
   wait : int -> kernel_event list;
+  reported : unit -> unit;
   close : unit -> unit;
 }
 
@@ -141,7 +147,7 @@ and cq = {
   c_entries : int;
   c_ring : ring;
   mutable count : int; (* completions consumed *)
-  sequence : int Atomic.t; (* events raised *)
+  sequence : unit -> int; (* the events the path took from the kernel *)
   members : qp list Atomic.t;
   mutable held : int;
       (* entries of its queue pairs, those being made and those [destroy] could
@@ -508,7 +514,7 @@ module Cq = struct
     | Error e ->
         free_ring ring;
         Error e
-    | Ok (handle, resp) ->
+    | Ok (handle, sequence, resp) ->
         let cq =
           {
             c_nic = nic;
@@ -518,7 +524,7 @@ module Cq = struct
             c_entries = entries;
             c_ring = ring;
             count = 0;
-            sequence = Atomic.make 0;
+            sequence;
             members = Atomic.make [];
             held = 0;
             c_destroyed = None;
@@ -561,7 +567,7 @@ module Cq = struct
   let arm cq =
     live_cq "Cq.arm" cq;
     let word, number =
-      A.Doorbell.arm ~sequence:(Atomic.get cq.sequence) ~count:cq.count
+      A.Doorbell.arm ~sequence:(cq.sequence ()) ~count:cq.count
         ~cq:cq.c_number
     in
     arm_stub
@@ -795,9 +801,7 @@ let wait nic ~ms =
   let event = function
     | Completed tag -> (
         match find (fun () -> nic.cqs) tag with
-        | Some c ->
-            ignore (Atomic.fetch_and_add c.sequence 1);
-            Some (Completion c)
+        | Some c -> Some (Completion c)
         | None -> None)
     | Cq_error tag ->
         let what =
@@ -812,12 +816,18 @@ let wait nic ~ms =
     | Port_changed s -> Some (Port (strf "%s: port 1 %s" nic.path.name s))
   in
   (* The kernel may report only events of objects since destroyed: the wait goes
-     on until one of the NIC's, or the end of its time. *)
+     on until one of the NIC's, or the end of its time. The path keeps the
+     events until [reported], the last step before the return, so an
+     exception anywhere before leaves them to the next wait. *)
   let deadline = now () + (ms * 1_000_000) in
   let rec go () =
     let left = max 0 ((deadline - now () + 999_999) / 1_000_000) in
     match List.filter_map event (nic.path.wait left) with
-    | [] when left > 0 -> go ()
-    | events -> events
+    | [] when left > 0 ->
+        nic.path.reported ();
+        go ()
+    | events ->
+        nic.path.reported ();
+        events
   in
   go ()
