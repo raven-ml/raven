@@ -38,7 +38,7 @@ let units_per_wgp = 2
 
 (* Where a block's counter runs: (instances, engines, arrays, work-group
    processors). The SQ counts per engine on GFX9, and per work-group processor
-   of each array after. *)
+   of each array after, those that run no work included. *)
 let places (g : Gpu.t) = function
   | "GRBM" -> (1, 1, 1, 1)
   | "GL2C" -> (32, 1, 1, 1)
@@ -47,10 +47,8 @@ let places (g : Gpu.t) = function
       match g.target with
       | 9, _, _ -> (1, g.shader_engines, 1, 1)
       | _ ->
-          let per_array =
-            g.compute_units / (g.shader_engines * arrays_per_engine)
-          in
-          (1, g.shader_engines, arrays_per_engine, per_array / units_per_wgp))
+          let wgps = g.array_units / units_per_wgp in
+          (1, g.shader_engines, arrays_per_engine, wgps))
 
 (* Whether [block] has counter register [n]. A block's counter registers are
    numbered from 0, so the first it lacks is how many it has. *)

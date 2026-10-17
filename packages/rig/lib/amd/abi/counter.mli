@@ -27,7 +27,10 @@ type t = {
   instances : int;  (** The instances of its block in one die. *)
   engines : int;  (** The shader engines it is counted in. *)
   arrays : int;  (** The shader arrays of an engine it is counted in. *)
-  wgps : int;  (** The work-group processors of an array it is counted in. *)
+  wgps : int;
+      (** The work-group processors of an array it is counted in: every one
+          the array is built with ({!Gpu.t.array_units}), those that run no
+          work included. *)
   offset : int;  (** The byte offset of its values in a run's samples. *)
 }
 (** The type for a counter as a run counts it. Its values are

@@ -194,6 +194,7 @@ let node root bus =
           xccs;
           shader_engines = arrays / arrays_per_engine / xccs;
           compute_units = simds / simd_per_cu / xccs;
+          array_units = cu_per_array;
           scratch_slots;
         }
       in

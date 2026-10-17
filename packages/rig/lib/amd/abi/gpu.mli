@@ -28,7 +28,12 @@ type t = {
   sdma : version;  (** Its SDMA engines, which run copy queues. *)
   xccs : int;  (** Its dies, each a GC of its own; [1] on most GPUs. *)
   shader_engines : int;  (** The shader engines of one die. *)
-  compute_units : int;  (** The compute units of one die. *)
+  compute_units : int;
+      (** The compute units of one die that run work. Those disabled at
+          manufacture or by the firmware are not counted. *)
+  array_units : int;
+      (** The compute units each shader array is built with, those that run
+          no work included: two to a work-group processor from GC 10. *)
   scratch_slots : int;
       (** The waves a compute unit runs concurrently with scratch
           memory. *)

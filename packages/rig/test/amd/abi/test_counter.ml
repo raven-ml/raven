@@ -12,9 +12,13 @@ module S = Rig_amd_abi_support
 
 let timeout = S.timeout
 
-(* An R9700's GC: one die of 4 engines and 64 compute units. *)
+(* An R9700's GC: one die of 4 engines and 64 compute units, 8 to an array. *)
 let gfx12 =
-  S.gpu ~target:(12, 0, 1) ~shader_engines:4 ~compute_units:64 (12, 0, 1)
+  S.gpu ~target:(12, 0, 1) ~shader_engines:4 ~compute_units:64 ~array_units:8
+    (12, 0, 1)
+
+(* An RX 9070's: the same arrays, with 8 compute units that run no work. *)
+let rx9070 = { gfx12 with compute_units = 56 }
 
 let gfx11 = S.gpu ~shader_engines:6 ~compute_units:48 (11, 0, 0)
 
@@ -161,6 +165,16 @@ let cases =
                })
             (Counter.layout gfx12
                [ "GRBM_GUI_ACTIVE"; "SQ_WAVES"; "GL2C_HIT"; "SQ_BUSY_CYCLES" ]));
+      test
+        "an RX 9070 counts every work-group processor of its arrays, those \
+         that run no work included" (fun () ->
+          equal layout
+            (Ok
+               {
+                 counters = [ c "SQ_WAVES" "SQ" 4 0 (1, 4, 2, 4) 0 ];
+                 bytes = 256;
+               })
+            (Counter.layout rx9070 [ "SQ_WAVES" ]));
       test "a gfx942 counts its SQ per engine, on each of its dies" (fun () ->
           equal layout
             (Ok

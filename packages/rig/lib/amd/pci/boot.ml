@@ -566,10 +566,19 @@ let start ~gpus f first =
 
 (* Facts *)
 
-let gpu g = Regs.gpu (Regs.layout_of g.r)
 let gc g = (Regs.discovery (Regs.layout_of g.r)).gc
 let mec g = g.images.mec
 let wgps g = Rig_amd.Lock.protect g.hw (fun () -> Gfx.wgps g.gfx)
+
+(* A bit of [wgps] is a compute unit on GC 9, a work-group processor of two
+   after. *)
+let gpu g =
+  let gpu = Regs.gpu (Regs.layout_of g.r) in
+  let per_bit = if gpu.gc < (10, 0, 0) then 1 else 2 in
+  let rec bits n = if n = 0 then 0 else (n land 1) + bits (n lsr 1) in
+  let count n masks = Array.fold_left (fun n m -> n + bits m) n masks in
+  let on = Array.fold_left count 0 (wgps g) in
+  { gpu with compute_units = per_bit * on / gpu.xccs }
 let memory g = g.memory
 let hive g = Gmc.hive g.gmc
 let budget g = Page_table.main_pool g.tables

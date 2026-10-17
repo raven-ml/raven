@@ -97,6 +97,7 @@ let layout d =
       xccs = max 1 (List.length (Discovery.live d D.gc_hwid));
       shader_engines = g.engines;
       compute_units = g.engines * g.arrays * g.units;
+      array_units = g.units;
       scratch_slots = g.scratch_slots;
     }
   in

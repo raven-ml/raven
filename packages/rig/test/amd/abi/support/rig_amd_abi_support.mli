@@ -19,11 +19,13 @@ val gpu :
   ?xccs:int ->
   ?shader_engines:int ->
   ?compute_units:int ->
+  ?array_units:int ->
   ?scratch_slots:int ->
   Gpu.version ->
   Gpu.t
 (** [gpu gc] is a GPU of GC [gc]: target [gc], SDMA 6.0.0, one die of 4 shader
-    engines and 32 compute units of 32 scratch slots, unless said otherwise. *)
+    engines and 32 compute units of 32 scratch slots, in arrays of 4 compute
+    units, unless said otherwise. *)
 
 val harvest_none : Gpu.t -> int array array
 (** [harvest_none g] is [g]'s work-group processors as a capability gives them

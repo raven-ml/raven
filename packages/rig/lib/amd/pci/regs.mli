@@ -39,7 +39,9 @@ val layout : Discovery.t -> (layout, string) result
 val gpu : layout -> Rig_amd_abi.Gpu.t
 (** [gpu l] is the GPU as its formats depend on it: its compiler target (GC
     9.4.3 runs gfx942 code), its GC and SDMA versions, its live dies and its
-    GC's shape. *)
+    GC's shape. Its [compute_units] counts every compute unit the GC's
+    arrays are built with: only the booted GC's registers say which run work
+    ({!Boot.gpu}). *)
 
 val discovery : layout -> Discovery.t
 (** [discovery l] is the table [l] was placed from. *)

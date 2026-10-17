@@ -96,6 +96,7 @@ let gfx1201 : Gpu.t =
     xccs = 1;
     shader_engines = 4;
     compute_units = 32;
+    array_units = 4;
     scratch_slots = 32;
   }
 

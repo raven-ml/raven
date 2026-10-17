@@ -143,7 +143,8 @@ val reset : Rig_pci.Function.t -> (unit, string) result
        load. Only a power cycle recovers that GPU.}} *)
 
 val gpu : t -> Rig_amd_abi.Gpu.t
-(** [gpu g] is {!Regs.gpu} of [g]'s layout. *)
+(** [gpu g] is {!Regs.gpu} of [g]'s layout, counting the compute units that
+    run work, as {!wgps} reads them. *)
 
 val gc : t -> Discovery.gc
 (** [gc g] is the shape of [g]'s GC, from its discovery table. *)

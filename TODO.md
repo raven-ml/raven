@@ -52,10 +52,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- rig.amd: `Counter.places` (counter.ml:42-53) divides active CUs evenly
-  across arrays, which reserves 3 WGP slots where a harvested RX 9070 array
-  has 4: take the width from KFD's `cu_per_simd_array` (topology.ml:179),
-  and make `Gpu.compute_units` mean one thing on both paths
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
   terminal index outside [taken, posted] counts as none; poll and wait issue
   no firmware command; fix the leak when `Qp.make` refuses

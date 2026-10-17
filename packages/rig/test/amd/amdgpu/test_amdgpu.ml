@@ -184,9 +184,10 @@ let gpu =
     ~pp:(fun ppf (g : Gpu.t) ->
       let v ppf (a, b, c) = Format.fprintf ppf "%d.%d.%d" a b c in
       Format.fprintf ppf
-        "{target %a; gc %a; sdma %a; xccs %d; engines %d; units %d; slots %d}" v
-        g.target v g.gc v g.sdma g.xccs g.shader_engines g.compute_units
-        g.scratch_slots)
+        "{target %a; gc %a; sdma %a; xccs %d; engines %d; units %d; array \
+         units %d; slots %d}"
+        v g.target v g.gc v g.sdma g.xccs g.shader_engines g.compute_units
+        g.array_units g.scratch_slots)
     ~equal:( = )
 
 let result_gpu =
@@ -283,6 +284,7 @@ let facts =
               xccs = 1;
               shader_engines = 4;
               compute_units = 64;
+              array_units = 8;
               scratch_slots = 32;
             }
           in
@@ -297,6 +299,7 @@ let facts =
               xccs = 8;
               shader_engines = 4;
               compute_units = 38;
+              array_units = 10;
               scratch_slots = 32;
             }
           in
@@ -452,6 +455,7 @@ let mi300x_gpu =
     xccs = 8;
     shader_engines = 4;
     compute_units = 38;
+    array_units = 10;
     scratch_slots = 32;
   }
 
@@ -463,6 +467,7 @@ let r9700_gpu =
     xccs = 1;
     shader_engines = 4;
     compute_units = 64;
+    array_units = 8;
     scratch_slots = 32;
   }
 

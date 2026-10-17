@@ -14,6 +14,7 @@ type t = {
   xccs : int;
   shader_engines : int;
   compute_units : int;
+  array_units : int;
   scratch_slots : int;
 }
 

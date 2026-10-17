@@ -11,9 +11,18 @@ let timeout = 10.
 (* GPUs *)
 
 let gpu ?target ?(sdma = (6, 0, 0)) ?(xccs = 1) ?(shader_engines = 4)
-    ?(compute_units = 32) ?(scratch_slots = 32) gc =
+    ?(compute_units = 32) ?(array_units = 4) ?(scratch_slots = 32) gc =
   let target = Option.value ~default:gc target in
-  { Gpu.target; gc; sdma; xccs; shader_engines; compute_units; scratch_slots }
+  {
+    Gpu.target;
+    gc;
+    sdma;
+    xccs;
+    shader_engines;
+    compute_units;
+    array_units;
+    scratch_slots;
+  }
 
 let harvest_none (g : Gpu.t) = Array.make (g.shader_engines * g.xccs) [| 1 |]
 
