@@ -375,6 +375,12 @@ let draws =
             (vec (Array.init 8 float_of_int))
         in
         equal (Reference.exact ()) (Option.get !mask) g);
+    test "a truncated normal draw over [0, inf] does not move with its upper \
+          bound" (fun () ->
+        let lower = Nx.zeros f64 [| 8 |] in
+        let draw upper = Nx.Rng.truncated_normal (Nx.Rng.key 3) lower upper in
+        equal floats (Array.make 8 0.)
+          (gradient draw (Nx.full f64 [| 8 |] Float.infinity)));
   ]
 
 let lanes =
