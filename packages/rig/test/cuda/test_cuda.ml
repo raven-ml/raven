@@ -43,10 +43,88 @@ let gpu_once () =
   S.close t;
   C.stop (require_ok (Rig_gpu_support.opened (C.gpu 0))) ~fault:None
 
+(* The test's executable, run with [unloadable], prints what count and GPU
+   0's make answer. *)
+let unloadable = "--unloadable"
+
+let print_unloadable () =
+  Printf.printf "%d\n%!" (C.count ());
+  match Rig_gpu_support.opened (C.gpu 0) with
+  | Ok _ -> print_string "opened"
+  | Error why -> print_string why
+
+(* The platform's names of the CUDA library, and the variable that puts a
+   directory first on the library search path: an empty file of each name
+   there is found first and does not load. Linux's loader ends a search at a
+   file it finds that is no ELF object; macOS's goes on, and finds no other
+   CUDA library. *)
+let search () =
+  if Sys.win32 then None
+  else
+    let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+    let os = input_line ic in
+    ignore (Unix.close_process_in ic);
+    match os with
+    | "Linux" -> Some ([ "libcuda.so.1"; "libcuda.so" ], "LD_LIBRARY_PATH")
+    | "Darwin" -> Some ([ "libcuda.dylib" ], "DYLD_LIBRARY_PATH")
+    | _ -> None
+
+(* count and make in a process whose search path finds no CUDA library that
+   loads, whatever the machine installed: count is 0, and make is an error
+   naming the library. *)
+let test_unloadable () =
+  let names, var =
+    match search () with
+    | Some s -> s
+    | None ->
+        skip
+          ~reason:
+            "Windows searches its system directory, which holds nvcuda.dll, \
+             before PATH"
+          ()
+  in
+  let dir = Filename.temp_dir "rig-cuda" "" in
+  List.iter
+    (fun n -> Out_channel.with_open_bin (Filename.concat dir n) ignore)
+    names;
+  let path =
+    match Sys.getenv_opt var with Some p -> dir ^ ":" ^ p | None -> dir
+  in
+  let env =
+    Unix.environment ()
+    |> Array.to_list
+    |> List.filter (fun e -> not (String.starts_with ~prefix:(var ^ "=") e))
+    |> List.cons (var ^ "=" ^ path)
+    |> Array.of_list
+  in
+  let exe = Sys.executable_name in
+  let r, w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process_env exe [| exe; unloadable |] env Unix.stdin w
+      Unix.stderr
+  in
+  Unix.close w;
+  let out = In_channel.input_all (Unix.in_channel_of_descr r) in
+  Unix.close r;
+  let _, status = Unix.waitpid [] pid in
+  List.iter (fun n -> Sys.remove (Filename.concat dir n)) names;
+  Sys.rmdir dir;
+  let code = match status with WEXITED c -> c | _ -> -1 in
+  equal ~msg:"the child's exit code" int 0 code;
+  match String.split_on_char '\n' out with
+  | [ count; why ] ->
+      equal ~msg:"count" string "0" count;
+      contains ~msg:"make's error" ~sub:(List.hd names) why
+  | _ -> failf "the child printed %S" out
+
 let opening =
   group ~timeout:60. "opening"
     [
       test "count never raises" (fun () -> at_least int ~than:0 (C.count ()));
+      test
+        "with no CUDA library that loads, count is 0 and make is an error \
+         naming the library"
+        test_unloadable;
       test "names GPU 0 CUDA and GPU i CUDA:i" (fun () ->
           equal (list string)
             [ "CUDA"; "CUDA:1"; "CUDA:7" ]
@@ -1318,16 +1396,19 @@ let stateful =
     ]
 
 let () =
-  exit
-    (run "rig_cuda"
-       [
-         opening;
-         facts;
-         memory;
-         work;
-         images;
-         launches;
-         graphs;
-         timeline;
-         stateful;
-       ])
+  match Sys.argv with
+  | [| _; arg |] when arg = unloadable -> print_unloadable ()
+  | _ ->
+      exit
+        (run "rig_cuda"
+           [
+             opening;
+             facts;
+             memory;
+             work;
+             images;
+             launches;
+             graphs;
+             timeline;
+             stateful;
+           ])

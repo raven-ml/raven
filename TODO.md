@@ -98,11 +98,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### tests and runs
 
-- failure paths with no test (_plans/rig-release/failure-paths.md, whose
-  core-exception and disk rows test_interrupt and test_rig_disk now cover):
-  CUDA's library that cannot load; NV's `entry`
-  `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
-  it cannot be forced
 - flakes, each failed once: test_submit "a part follows the earlier parts
   that may share memory"
 - relock windtrap once its `workers-block` branch (a883e72, a start
@@ -113,7 +108,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
   dc72412596); root on an NVIDIA host (NV over PCI's open/close law and
   test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
-  (peers); mlx5 and bnxt NICs
+  (peers); mlx5 and bnxt NICs; test_cuda's open without a loadable
+  library on a host with the driver; NV's `entry` `No_memory`, which a
+  kernel whose local memory outgrows the GPU's forces
+  (_plans/rig-release/failure-paths.md)
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
   whose only Linux rows are kimchi's; on the M1, Metal
