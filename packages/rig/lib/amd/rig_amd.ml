@@ -149,7 +149,12 @@ external c_launch_aql :
   string -> string -> int array -> int array -> int array -> int
   = "caml_rig_amd_launch_aql"
 
-external free_launch : int -> unit = "caml_rig_amd_launch_free"
+external free_launch : int -> unit = "caml_rig_amd_launch_free" [@@noalloc]
+
+external free_launches : int list -> unit = "caml_rig_amd_launches_free"
+[@@noalloc]
+
+external reraise : exn -> 'a = "%reraise"
 
 external set_copy_launch : int -> int -> unit = "caml_rig_amd_copy_launch"
 [@@noalloc]
@@ -163,15 +168,22 @@ external write_code : int -> string -> unit = "caml_rig_amd_write_code"
    the [bytes] of scratch it needs. *)
 type grown = Served | Stopped | Short of int
 
+(* A replaced scratch buffer, freed once the word reaches [until], the value
+   that installed its successor. *)
+type retired = { buffer : mem; mutable until : int }
+
 (* The device's scratch, which every kernel the compute queue runs takes, one at
    a time: installed, published for the next submission to take, and replaced,
    each freed once the word reaches the value that installed its successor. An
-   AQL queue's descriptor names it; a launch's dispatch does on a PM4 queue. *)
+   AQL queue's descriptor names it; a launch's dispatch does on a PM4 queue.
+   Each change stores values made first, with nothing between its stores that
+   allocates or polls, so an exception leaves no buffer both installed and
+   retired, or held by neither. *)
 type scratch = {
   mutable installed : (mem * int) option;
       (* the buffer and its bytes per lane *)
   mutable pending : (mem * int) option;
-  mutable retired : (mem * int) list; (* freed once the word reaches the int *)
+  mutable retired : retired list;
 }
 
 (* What only a running device uses, under the device's guard. The handle
@@ -324,24 +336,43 @@ let scratch_writes (g : Abi.Gpu.t) ~desc m n bytes =
   @ List.init 4 (fun i ->
       (desc + scratch_resource_descriptor + (4 * i), word i))
 
-(* [p], placed by the submission of [v], replaces the installed scratch, which
-   is freed once the word reaches [v]. *)
-let install st p v =
-  Option.iter (fun (m, _) -> st.retired <- (m, v) :: st.retired) st.installed;
-  st.installed <- Some p;
+(* What installing the pending scratch stores, allocated ahead: the installed
+   scratch retired, its value to be set, and the retired list it heads. *)
+let retiring st =
+  match st.installed with
+  | Some (m, _) ->
+      let r = { buffer = m; until = 0 } in
+      (Some r, r :: st.retired)
+  | None -> (None, st.retired)
+
+(* Makes [p], the pending scratch the submission of [v] placed, installed: the
+   installed one is freed once the word reaches [v]. *)
+let install st (r, retired) p v =
+  (match r with Some r -> r.until <- v | None -> ());
+  st.retired <- retired;
+  st.installed <- p;
   st.pending <- None
+
+(* Frees the retired scratch the word passed, one at a time: each leaves the
+   list before its free, so an exception leaves the rest for the next call. *)
+let rec retire self st =
+  let word = signaled_word self in
+  match List.find_opt (fun r -> word >= r.until) st.retired with
+  | None -> ()
+  | Some r ->
+      st.retired <- List.filter (fun r' -> r' != r) st.retired;
+      free_mem r.buffer;
+      retire self st
 
 (* Installs a published scratch the queue took, and frees the retired ones the
    word passed. *)
 let settle_scratch self st =
-  let taken = scratch_taken self in
   (match st.pending with
-  | Some p when taken > 0 -> install st p taken
-  | _ -> ());
-  let word = signaled_word self in
-  let reached, kept = List.partition (fun (_, v) -> word >= v) st.retired in
-  List.iter (fun (m, _) -> free_mem m) reached;
-  st.retired <- kept
+  | Some _ as p ->
+      let taken = scratch_taken self in
+      if taken > 0 then install st (retiring st) p taken
+  | None -> ());
+  retire self st
 
 (* [grow_scratch] under the device's guard, on a device not stopped. *)
 let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
@@ -356,30 +387,41 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
     let bytes = Abi.Scratch.size g n in
     match ops.alloc Device bytes with
     | None -> Short bytes
-    | Some m ->
-        (* [m] is this call's until it is published: it is freed if making its
-           descriptor raises, as for more scratch per die than a descriptor
-           holds. *)
-        let ats, values =
-          match if aql then scratch_writes g ~desc m n bytes else [] with
-          | writes ->
-              let ats, values = List.split writes in
-              (Array.of_list ats, Array.of_list values)
-          | exception e ->
-              free_mem m;
-              raise e
-        in
-        let took = publish_scratch self (mem_address m) ats values in
-        (* The publication this one replaces: placed by the submission of [took]
-           since the settle above, or never placed and never in the queue's use,
-           which is freed once [m] is recorded. *)
-        (match st.pending with
-        | Some p when took > 0 -> install st p took
-        | Some _ | None -> ());
-        let old = st.pending in
-        st.pending <- Some (m, n);
-        Option.iter (fun (old, _) -> free_mem old) old;
-        Served
+    | Some m -> (
+        (* [m] is this call's until it is published: it is freed if what the
+           publication stores raises as it is made, as for more scratch per die
+           than a descriptor holds. The publication hands [m] to the
+           submissions, so everything the outcome stores is made before it. *)
+        match
+          let writes = if aql then scratch_writes g ~desc m n bytes else [] in
+          let ats, values = List.split writes in
+          ( mem_address m,
+            Array.of_list ats,
+            Array.of_list values,
+            Some (m, n),
+            retiring st )
+        with
+        | exception e ->
+            free_mem m;
+            reraise e
+        | base, ats, values, pending, ahead -> (
+            let current = st.pending in
+            let took = publish_scratch self base ats values in
+            (* The publication this one replaces: placed by the submission of
+               [took] since the settle above, or never placed and never in the
+               queue's use, which is freed once [m] is recorded. *)
+            match current with
+            | Some _ when took > 0 ->
+                install st ahead current took;
+                st.pending <- pending;
+                Served
+            | Some (old, _) ->
+                st.pending <- pending;
+                free_mem old;
+                Served
+            | None ->
+                st.pending <- pending;
+                Served))
 
 let grow_scratch g n =
   Mutex.protect g.guard @@ fun () ->
@@ -547,13 +589,19 @@ let map_host g a n =
 (* Images *)
 
 module Code_object = Abi.Code_object
+module Names = Map.Make (String)
 
+(* An image keeps the C launches its entries made, by function and as a list
+   for the unload, until it is unloaded. Both change by stores of values made
+   first, with nothing between the stores that allocates or polls, so an
+   exception leaves them whole and in step for the unload. *)
 type image = {
   co : Code_object.t;
   base : int; (* the address of the region it was laid over *)
   dev : t;
   lock : Mutex.t;
-  launches : (string, int) Hashtbl.t; (* by function: its C launch *)
+  mutable launches : int Names.t; (* by function: its C launch *)
+  mutable made : int list; (* the launches *)
 }
 
 let too_large g co =
@@ -579,8 +627,14 @@ let image g bin =
     | None ->
         let lay r =
           let base = mem_address r.mem in
-          let launches = Hashtbl.create 8 in
-          ( { co; base; dev = g; lock = Mutex.create (); launches },
+          ( {
+              co;
+              base;
+              dev = g;
+              lock = Mutex.create ();
+              launches = Names.empty;
+              made = [];
+            },
             Code_object.image co )
         in
         Ok (Rig_edge.Place (Code_object.size co, lay))
@@ -689,7 +743,9 @@ let c_launch_of g (k : Code_object.kernel) ~base ~lds f =
 (* [m]'s launch of its kernel [k], named [f], and the scratch of its private
    segment, which grows only for a kernel the launch takes: [Error bytes] if the
    GPU has no memory for the [bytes] of scratch, having made nothing. A PM4
-   dispatch hands a kernel no dispatch packet. *)
+   dispatch hands a kernel no dispatch packet. The launch is this call's from
+   [c_launch_of] on until [m] holds it: an exception before, such as an
+   asynchronous one where the growth allocates, frees it. *)
 let launch m f (k : Code_object.kernel) =
   let g = m.dev in
   if k.dispatch_ptr && not g.aql then
@@ -698,17 +754,28 @@ let launch m f (k : Code_object.kernel) =
        GPU of one die does not write"
       f;
   let l = c_launch_of g.gpu k ~base:m.base ~lds:g.lds f in
-  let grown =
-    if k.private_segment > 0 then grow_scratch g k.private_segment else Served
-  in
-  match grown with
-  | Served -> Ok l
-  | Short bytes ->
+  match
+    let grown =
+      if k.private_segment > 0 then grow_scratch g k.private_segment
+      else Served
+    in
+    match grown with
+    | Served ->
+        let made = Ok l in
+        let launches = Names.add f l m.launches and kept = l :: m.made in
+        m.launches <- launches;
+        m.made <- kept;
+        made
+    | Short bytes -> Error bytes
+    | Stopped -> raise (Fault "the device is stopped")
+  with
+  | Ok _ as made -> made
+  | Error _ as short ->
       free_launch l;
-      Error bytes
-  | Stopped ->
+      short
+  | exception e ->
       free_launch l;
-      raise (Fault "the device is stopped")
+      reraise e
 
 let entry m f =
   match Code_object.kernel m.co f with
@@ -716,12 +783,9 @@ let entry m f =
   | Some k -> (
       let made =
         Mutex.protect m.lock @@ fun () ->
-        match Hashtbl.find_opt m.launches f with
+        match Names.find_opt f m.launches with
         | Some l -> Ok l
-        | None ->
-            let made = launch m f k in
-            Result.iter (Hashtbl.add m.launches f) made;
-            made
+        | None -> launch m f k
       in
       match made with
       | Ok l ->
@@ -738,10 +802,15 @@ let entry m f =
 let grow _ = Rig_edge.Grown
 
 (* The image's code is in a region rig frees; the launches [entry] made go
-   here. *)
+   here. rig unloads an image once, so the unload allocates nothing and polls
+   nowhere: an exception cannot end it with launches held. *)
 let unload _ m =
-  Mutex.protect m.lock @@ fun () ->
-  Hashtbl.iter (fun _ l -> free_launch l) m.launches
+  Mutex.lock m.lock;
+  let made = m.made in
+  m.launches <- Names.empty;
+  m.made <- [];
+  free_launches made;
+  Mutex.unlock m.lock
 
 (* Opening *)
 
@@ -996,7 +1065,9 @@ let halt g l ~fault =
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in
       let traces = match l.traces with Some (_, ms) -> ms | None -> [] in
       List.iter give_back
-        (List.map fst (buffers @ st.retired) @ traces @ l.own)
+        (List.map fst buffers
+        @ List.map (fun r -> r.buffer) st.retired
+        @ traces @ l.own)
 
 (* The C state's run part goes whatever the path's stop answered: the queues
    read none of it. *)

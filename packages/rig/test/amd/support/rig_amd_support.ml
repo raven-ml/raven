@@ -22,6 +22,80 @@ let gpu () =
 
 let open_gpu ~word = (gpu ()).make ~word
 
+(* KFD's files *)
+
+let strf = Printf.sprintf
+let ( // ) = Filename.concat
+
+(* The names in [dir], or [Error e] if it cannot be read. *)
+let names dir =
+  match Sys.readdir dir with
+  | names -> Ok (Array.to_list names)
+  | exception Sys_error e -> Error e
+
+let lines f =
+  match In_channel.with_open_text f In_channel.input_lines with
+  | lines -> Some lines
+  | exception Sys_error _ -> None
+
+(* The value of the field [k] among the lines [k v] of [ls]. *)
+let field ls k =
+  List.find_map
+    (fun l ->
+      match String.split_on_char ' ' l with
+      | [ k'; v ] when k' = k -> int_of_string_opt v
+      | _ -> None)
+    ls
+
+let kfd = "/sys/class/kfd/kfd"
+
+(* A GPU node of KFD's topology: its GPU id, and its PCI function's domain
+   and location. *)
+type node = { id : int; domain : int; location : int }
+
+let node n =
+  let dir = kfd // "topology/nodes" // n in
+  match (lines (dir // "properties"), lines (dir // "gpu_id")) with
+  | Some p, Some [ id ] -> (
+      match (int_of_string_opt id, field p "domain", field p "location_id") with
+      | Some id, Some domain, Some location when id <> 0 ->
+          Some { id; domain; location }
+      | _ -> None)
+  | _ -> None
+
+(* The GPU nodes of KFD's topology, or [Error why]. *)
+let gpu_nodes () =
+  Result.map (List.filter_map node) (names (kfd // "topology/nodes"))
+
+(* The PCI address "DDDD:BB:DD.F" as its domain and its bus and device,
+   [bus << 5 | device]. *)
+let slot bus =
+  Scanf.sscanf_opt bus "%x:%x:%x.%x%!" (fun d b dev _ -> (d, (b lsl 5) lor dev))
+
+(* Whether [n] is a node of the GPU at [bus]. A node's location_id is the
+   function's [bus << 8 | device << 3 | function], with the partition's
+   number in the function's bits on a GPU of several partitions
+   (kfd_topology_add_device), so a node is matched by bus and device. *)
+let at bus n = slot bus = Some (n.domain, n.location lsr 3)
+
+let vram i =
+  match List.nth_opt (Rig_amd_amdgpu.buses ()) i with
+  | None -> None
+  | Some bus -> (
+      let pid = string_of_int (Unix.getpid ()) in
+      let bytes n = lines (kfd // "proc" // pid // strf "vram_%d" n.id) in
+      let count n =
+        match bytes n with
+        | Some [ v ] -> int_of_string_opt v
+        | Some _ | None -> None
+      in
+      match gpu_nodes () with
+      | Error _ -> None
+      | Ok ns ->
+          let counts = List.map count (List.filter (at bus) ns) in
+          if counts = [] || List.mem None counts then None
+          else Some (List.fold_left (fun s c -> s + Option.get c) 0 counts))
+
 module D = Rig_amd
 
 include Rig_gpu_support.Make (struct

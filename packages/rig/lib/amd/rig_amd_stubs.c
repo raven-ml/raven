@@ -294,6 +294,13 @@ value caml_rig_amd_launch_free(value v_l) {
   return Val_unit;
 }
 
+/* Frees each launch of the list [v_launches]. */
+value caml_rig_amd_launches_free(value v_launches) {
+  for (value l = v_launches; Is_block(l); l = Field(l, 1))
+    free((void *)Long_val(Field(l, 0)));
+  return Val_unit;
+}
+
 value caml_rig_amd_most_parts(value v_self) {
   return Val_long(rig_amd_most_parts(Device_val(v_self)));
 }

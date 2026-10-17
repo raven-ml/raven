@@ -52,16 +52,12 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
-  stdlib Hashtbls, which an exception while one grows loses: they must still
-  serve stop, free and unload after an exception, as NV's do
 - exceptions: the mlx5 wait loses an event's count to an exception after
   the kernel delivered it (uverbs/path.ml:576-621)
 - refusals: rig.amd's `entry`, `unload`, `stop` and `grow_scratch`, and
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
-  holder check; `launch` leaks its C launch when `grow_scratch` raises, and
-  before its `Hashtbl.add`
+  holder check
 - refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
   `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
   (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves

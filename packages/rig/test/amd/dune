@@ -20,3 +20,20 @@
   windtrap)
  (deps
   (glob_files fixtures/*)))
+
+; test_interrupt makes each call once per allocation it makes: a suite of
+; its own, which runs no other test.
+
+(test
+ (name test_interrupt)
+ (modules test_interrupt)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig_amd
+  rig_amd_amdgpu
+  rig_amd_support
+  rig_edge
+  rig_gpu_support
+  rig_support
+  windtrap)
+ (deps abi/fixtures/many_gfx1201.hsaco))

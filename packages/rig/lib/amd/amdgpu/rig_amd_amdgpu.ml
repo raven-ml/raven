@@ -88,9 +88,19 @@ let opening = Mutex.create ()
 (* The process that opened the file, and the file. *)
 let kfd : (int * int) option ref = ref None
 
+(* The process's tables are immutable maps, each changed by one store of a map
+   made first, so an exception leaves them whole. *)
+module Ids = Map.Make (Int)
+
+module Pairs = Map.Make (struct
+  type t = int * int
+
+  let compare = compare
+end)
+
 (* The GPUs whose address space the process acquired, by GPU id: the kernel
    driver lets a process acquire one once. *)
-let acquired : (int, gpu) Hashtbl.t = Hashtbl.create 4
+let acquired : gpu Ids.t ref = ref Ids.empty
 
 (* The process's event page: its handle, host address and GPU. *)
 let event_page : (int * int * int) option ref = ref None
@@ -99,7 +109,7 @@ let event_page : (int * int * int) option ref = ref None
    maps a memory once per GPU, so the first view maps it and the last view's
    free unmaps it. A count changes with its MAP or UNMAP, under [views_lock], so
    that a free never unmaps a mapping a new view counts on. *)
-let views : (int * int, int) Hashtbl.t = Hashtbl.create 16
+let views : int Pairs.t ref = ref Pairs.empty
 let views_lock = Mutex.create ()
 
 (* Host memory mapped for a GPU. A process has one address space per GPU, which
@@ -125,8 +135,8 @@ let kfd_fd ~dev =
   match !kfd with
   | Some (p, fd) when p = Unix.getpid () -> Ok fd
   | _ ->
-      Hashtbl.reset acquired;
-      Hashtbl.reset views;
+      acquired := Ids.empty;
+      views := Pairs.empty;
       registry := [];
       event_page := None;
       let path = Filename.concat dev "kfd" in
@@ -155,27 +165,36 @@ let map_gpu fd handle gpu map =
     raise (Unix.Unix_error (EIO, "ioctl", ""))
 
 (* Counts a view of [handle] for GPU [gpu], mapping it at the first: whether the
-   GPU maps it. *)
+   GPU maps it. The counted table is made before the MAP, so that nothing
+   allocates between the MAP and its count. *)
 let take_view fd handle gpu =
   let key = (handle, gpu) in
   Mutex.protect views_lock @@ fun () ->
-  let n = Option.value ~default:0 (Hashtbl.find_opt views key) in
+  let n = Option.value ~default:0 (Pairs.find_opt key !views) in
+  let counted = Pairs.add key (n + 1) !views in
   match if n = 0 then map_gpu fd handle gpu true with
   | () ->
-      Hashtbl.replace views key (n + 1);
+      views := counted;
       true
   | exception Unix.Unix_error _ -> false
 
 (* Ends a view of [handle] for GPU [gpu], unmapping it at the last. A failed
-   UNMAP raises and leaves no count, so that the next view maps again. *)
+   UNMAP raises and leaves no count, so that the next view maps again. The
+   count goes once the UNMAP was made, failed or not, so that an exception
+   before it, such as a signal handler's as the request releases the runtime,
+   leaves the count and the mapping in step. *)
 let give_view fd handle gpu =
   let key = (handle, gpu) in
   Mutex.protect views_lock @@ fun () ->
-  match Hashtbl.find views key - 1 with
-  | 0 ->
-      Hashtbl.remove views key;
-      map_gpu fd handle gpu false
-  | n -> Hashtbl.replace views key n
+  match Pairs.find key !views - 1 with
+  | 0 -> (
+      let removed = Pairs.remove key !views in
+      match map_gpu fd handle gpu false with
+      | () -> views := removed
+      | exception (Unix.Unix_error _ as e) ->
+          views := removed;
+          raise e)
+  | n -> views := Pairs.add key n !views
 
 (* Gives back the KFD memory [handle] and the [n] addresses at [at] reserved for
    it, then raises the failure of [step]. *)
@@ -276,9 +295,10 @@ let map_peer fd g (m : mem Amd.memory) =
   if o.node.gpu_id = g.node.gpu_id then
     Some { m with data = { m.data with kind = View } }
   else if not (linked g o.node) then None
-  else if take_view fd m.data.handle g.node.gpu_id then
-    Some { m with data = { m.data with kind = Peer } }
-  else None
+  else
+    (* Made before the view counts, so that nothing allocates after. *)
+    let view = Some { m with data = { m.data with kind = Peer } } in
+    if take_view fd m.data.handle g.node.gpu_id then view else None
 
 (* Opening a GPU *)
 
@@ -362,7 +382,7 @@ let topology root =
 
 (* [gpus] is the machine's topology, as [topology] gave it. *)
 let acquire fd ~root ~gpus (node : Topology.node) =
-  match Hashtbl.find_opt acquired node.gpu_id with
+  match Ids.find_opt node.gpu_id !acquired with
   | Some g -> Ok g
   | None ->
       let path = Filename.concat root (strf "dev/dri/renderD%d" node.render) in
@@ -410,8 +430,9 @@ let acquire fd ~root ~gpus (node : Topology.node) =
           live = [];
         }
       in
-      Hashtbl.replace acquired node.gpu_id g;
-      Ok g
+      let ok = Ok g and table = Ids.add node.gpu_id g !acquired in
+      acquired := table;
+      ok
 
 (* Events. On an interrupt from the GPU, the kernel driver sets a signal event
    only if the event's slot of the event page holds a value other than all ones,

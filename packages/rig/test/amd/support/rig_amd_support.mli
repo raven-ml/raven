@@ -25,6 +25,14 @@ val open_gpu : word:nativeint -> (Rig_amd.t, string) result
     ({!Rig_amd_pci.gpu}): the GPU detached ({!Rig_amd_pci.detach}) and the
     process privileged to take it. *)
 
+val vram : int -> int option
+(** [vram i] is the bytes of GPU memory KFD counts this process as holding
+    on AMD GPU [i], over each of the GPU's nodes ([vram_<gpu_id>] under
+    [/sys/class/kfd/kfd/proc/<pid>]), or [None] where KFD shows no count,
+    as before the process opened KFD or in a container whose process ids
+    are not the host's. KFD counts the GPU memory its allocations made and
+    its frees gave back. *)
+
 (** {1:gpu The GPU} *)
 
 include Rig_gpu_support.Conformance with module D = Rig_amd
