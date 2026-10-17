@@ -96,9 +96,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
   rig_program's `Move` step; done when placing on N GPUs costs one wait
-- from its callers: `Image.load` reuses an equal image once GPU module
-  globals are shown not shared (CUDA) or refused; `Profile.take` raises
-  `Lost`; `Rig_program.load` returns `Error` only for a device's refusal
+- from its callers: `Profile.take` raises `Lost`; `Rig_program.load`
+  returns `Error` only for a device's refusal
 - rig.gpus: one card appears through two paths, and `openers` drops each
   path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus`, which bnxt's
   NICs use too, becomes `Rig_pci.Driver`: a user-space PCI driver's match,
@@ -241,6 +240,9 @@ raven / llama.cpp (Vulkan; ROCm):
   10.7 -> 18.9 ms (loads stride across 16 threads)
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
+- a link reloads images an earlier link loaded: measure on fudge the load
+  cost a search pays, and if it matters, design how rig.program takes loaded
+  images (a description entry naming a Rig.Image.t)
 
 ## rune, kaun, vega
 

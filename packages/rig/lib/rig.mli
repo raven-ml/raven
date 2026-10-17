@@ -1195,11 +1195,12 @@ module Image : sig
   (** [load d binary] loads [binary] on [d], such as a code object for AMD, a
       cubin for NV, a CUDA module for CUDA, a metallib for Metal or a
       relocatable ELF object for {!host} ({!section-host_linking}). Each call
-      loads [binary] again. Where [d]'s memory holds the code, it counts in
-      [d]'s {!budget}, and [load] places it there after the work submitted on
-      [d] before it. The image stays loaded while it is reachable. A call on
-      [d] that finds it collected ({!Rig.section-reclaim}) unloads it once
-      the work submitted on [d] before that call is done.
+      loads [binary] again, so that each image's module variables are its
+      own. Where [d]'s memory holds the code, it counts in [d]'s {!budget},
+      and [load] places it there after the work submitted on [d] before it.
+      The image stays loaded while it is reachable. A call on [d] that finds
+      it collected ({!Rig.section-reclaim}) unloads it once the work
+      submitted on [d] before that call is done.
 
       It is [Error why] if [d]'s driver rejects [binary], where [why] is
       [d]'s {!val-name}, then the driver's reason. [d] stays usable.
