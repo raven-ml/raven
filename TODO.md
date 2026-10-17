@@ -448,8 +448,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - private modules: each gets an .mli per doc/dev/documentation.md, rig as
   the reference (143 lib/ modules have none; jera, norn and ymir dropped
   theirs)
-- licences: one copyright line: the LICENSE files say "2025, Thibaut
-  Mattio", the source headers "2026 The Raven authors"
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
   drop the git pins in dune-project and ci.yml
 - tests: CI runtest under a memory cap; suites read other suites' fixtures
