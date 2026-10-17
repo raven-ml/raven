@@ -4,4 +4,4 @@
 (test
  (name test_bnxt)
  (modules test_bnxt)
- (libraries rig_bnxt rig_pci windtrap))
+ (libraries rig_bnxt rig_pci rig_support windtrap))
