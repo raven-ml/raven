@@ -203,9 +203,7 @@ let test_empty_host_borrow () =
   let region = require_some (Pages.alloc t 0) in
   let m = B.of_io io Pages.region_key region ~access:Read_write 0 in
   let host = require_some (B.borrow Rig.host m) in
-  let ba = B.read host Bigarray.char Fun.id in
-  equal ~msg:"the empty host borrow keeps its host address" int
-    (Support.Reader.host (B.of_bigarray ba))
+  not_equal ~msg:"the empty host borrow keeps a host address" int 0
     (Support.Reader.host host);
   equal ~msg:"no bytes overlap" bool false (B.overlaps m host);
   equal ~msg:"an empty borrow maps no pages" int 0 (count "pages" t)

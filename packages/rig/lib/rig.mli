@@ -878,11 +878,14 @@ module Buffer : sig
   val borrow : device -> t -> t option
   (** [borrow d b] is a buffer on [d] over [b]'s bytes, without a copy, or
       [None] if [d] cannot map [b]'s memory ({!Rig.reaches}) or its driver
-      refuses the mapping. It is [Some b] for [b] on [d]. The borrow keeps [b]
-      reachable and shares its memory, so work through it is ordered as work
-      on [b]. A borrow of a borrow maps the memory the first one maps. Every
-      borrow on [d] of one allocation shares one mapping, which lasts until
-      the allocation returns or [d] has stopped.
+      refuses the mapping. It is [Some b] for [b] on [d]. Memory of no
+      bytes, which has none to map, borrows on every device of its machine
+      but an io device, whatever {!Rig.reaches} says, and an io device's on
+      every other device. The borrow keeps [b] reachable and shares its
+      memory, so work through it is ordered as work on [b]. A borrow of a
+      borrow maps the memory the first one maps. Every borrow on [d] of one
+      allocation shares one mapping, which lasts until the allocation
+      returns or [d] has stopped.
 
       Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is lost or its
       driver faults during the borrow; and [Sys_error] if asking an io device
@@ -945,9 +948,10 @@ module Buffer : sig
       their function on the bytes, then release the claim when it returns or
       raises. The bytes are an array of [length b / Bigarray.kind_size_in_bytes
       k] elements of kind [k], in the host's byte order, without a copy, and
-      are ordered only during the call. {!export} waits itself, and {!wait}
-      orders other host code. Host access takes no value and adds no point
-      to the stamps. The blits and {!fill} ({!section-copying}) copy bytes
+      are ordered only during the call. An empty buffer is an empty array,
+      whatever its memory. {!export} waits itself, and {!wait} orders other
+      host code. Host access takes no value and adds no point to the
+      stamps. The blits and {!fill} ({!section-copying}) copy bytes
       to and from any memory, the host's or not.
 
       A wait covers only the work submitted before it returns
@@ -955,10 +959,10 @@ module Buffer : sig
       synchronization.
 
       {!read}, {!write} and {!export} raise [Invalid_argument] if [b] is
-      dead, the host does not address its memory, its bytes are not a whole
-      number of elements of [k] starting at a multiple of their size (of one
-      component's size for complex kinds), or a {!Claim.with_} holds the
-      memory exclusive. *)
+      dead, its bytes are not a whole number of elements of [k], [b] has
+      bytes that the host does not address or that do not start at a
+      multiple of the elements' size (of one component's size for complex
+      kinds), or a {!Claim.with_} holds the memory exclusive. *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work that a host access [access] of
@@ -985,8 +989,8 @@ module Buffer : sig
     'c
   (** [read b k f] is [f a], where [a] is [b]'s bytes as elements of [k],
       once every device's last write of [b]'s memory is done. [a] is the
-      memory itself, so the host must address it; {!blit_to_bytes} copies
-      out of any memory. *)
+      memory itself, so the host must address it where [b] has bytes;
+      {!blit_to_bytes} copies out of any memory. *)
 
   val write :
     t ->

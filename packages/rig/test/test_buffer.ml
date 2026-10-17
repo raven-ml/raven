@@ -536,7 +536,9 @@ let test_maps_no_host () =
   equal ~msg:"reaches" bool false (Rig.reaches d Rig.host);
   equal ~msg:"shares" bool false (Rig.shares_host_memory d);
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
-  equal ~msg:"maps" (list int) [] (P.host_maps p)
+  equal ~msg:"maps" (list int) [] (P.host_maps p);
+  equal ~msg:"an empty borrow" bool true
+    (Option.is_some (B.borrow d (B.create Rig.host 0)))
 
 (* A device that maps no host memory copies host bytes into its own memory and
    back, its own [Pinned] memory standing in for the host's staging, and maps no
@@ -1329,6 +1331,31 @@ let test_host_unaddressed () =
       refused "a write of" (fun () -> B.write m Bigarray.char ignore))
     (unaddressed_memory "unaddressed")
 
+(* The host reads and writes an empty buffer as an empty array, whatever its
+   memory: there is nothing to address. It borrows an empty buffer of a device
+   whose memory it addresses. *)
+let test_host_empty () =
+  let d, _ = P.open_ "buffer:host-empty" in
+  let m = memory "buffer:host-empty-memory" in
+  let empty =
+    ("a memory device's", B.create m 0)
+    :: ("a driver's device's", B.create d 0)
+    :: List.map
+         (fun (whose, b) -> (whose, B.view b ~first:4 ~length:0))
+         (unaddressed_memory "host-empty-unaddressed")
+  in
+  List.iter
+    (fun (whose, b) ->
+      let dim a = Bigarray.Array1.dim a in
+      equal ~msg:("a read of " ^ whose) int 0 (B.read b Bigarray.float32 dim);
+      equal ~msg:("a write of " ^ whose) int 0 (B.write b Bigarray.float32 dim))
+    empty;
+  List.iter
+    (fun (whose, dev) ->
+      equal ~msg:("a borrow of " ^ whose) bool true
+        (Option.is_some (B.borrow Rig.host (B.create dev 0))))
+    [ ("a memory device's", m); ("a driver's device's", d) ]
+
 (* The blits and a fill reach memory the host does not address. An io device's
    is test_io's: this one reads and writes nothing. *)
 let test_blits_unaddressed () =
@@ -1611,6 +1638,8 @@ let tests =
           test_host_addressed;
         test "the host refuses in place access to memory it does not address"
           test_host_unaddressed;
+        test "the host accesses an empty buffer as an empty array"
+          test_host_empty;
         test "the blits and a fill reach memory the host does not address"
           test_blits_unaddressed;
       ];

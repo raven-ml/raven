@@ -1508,9 +1508,11 @@ let[@inline] reach d (a : alloc) host =
   if o == d then Itself
   else if Dev.is_io d || (Dev.is_io o && host < 0) then Cannot
   else if (not (Dev.same_machine o d)) && not (Dev.is_io o) then Cannot
+  else if size a = 0 then
+    (* Before the host's answer: memory of no bytes has no host address. *)
+    Empty
   else if Dev.is_host d then if host >= 0 then At_host else Cannot
   else if d.memory_device && host >= 0 then Addressed
-  else if size a = 0 then Empty
   else if host >= 0 && host mod page <> 0 && not (peer_memory d a) then
     (* [mapping] maps it as host memory, which a driver maps from a page
        ([map_host]). *)

@@ -168,9 +168,6 @@ external bigarray_view :
   int ->
   ('c, 'd, Bigarray.c_layout) Bigarray.Array1.t = "caml_rig_bigarray_view"
 
-external external_bytes : int -> int -> Memory.bytes_ba
-  = "caml_rig_external_bytes"
-
 external proxy_bytes : int -> int -> int -> Memory.bytes_ba
   = "caml_rig_proxy_bytes"
 
@@ -195,9 +192,8 @@ let kind_code (type a b) (k : (a, b) Bigarray.kind) =
 (* [b]'s bytes as an array of [k], over the memory without a copy. The array
    keeps the memory alive: the bytes of the allocation's heap, bigarray or
    proxy. With [export], the memory first leaves the claims for good. *)
-let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
+let view_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
     (a, b, Bigarray.c_layout) Bigarray.Array1.t =
-  check_live fn b;
   if not (host_addressed b) then refuse_unaddressed fn b;
   let size = Bigarray.kind_size_in_bytes k in
   let unit =
@@ -206,7 +202,8 @@ let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
     | _ -> size
   in
   let bytes = b.length in
-  if bytes mod size <> 0 || (b.mem.host + b.offset) mod unit <> 0 then
+  if bytes mod size <> 0 || (bytes > 0 && (b.mem.host + b.offset) mod unit <> 0)
+  then
     invalid_argf
       "Rig.%s: %d bytes at offset %d are no whole number of aligned %d-byte \
        elements"
@@ -224,12 +221,17 @@ let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
   match a.keep with
   | Heap ba -> bigarray_view ba code at n
   | Bigarray ba -> bigarray_view ba code at n
-  | Nothing when a.entry == Memory.no_entry ->
-      (* No bytes: nothing to keep. *)
-      bigarray_view (external_bytes b.mem.host (Memory.size a)) code b.offset n
   | Nothing ->
       let p = Memory.proxy a.entry in
       bigarray_view (proxy_bytes p b.mem.host (Memory.size a)) code b.offset n
+
+(* An empty buffer has no byte to address, so its array is a new empty one,
+   whatever its memory. An export of one still marks the host's memory. *)
+let array_of fn ~export k b =
+  check_live fn b;
+  if b.length = 0 && not export then
+    Bigarray.Array1.create k Bigarray.c_layout 0
+  else view_of fn ~export k b
 
 let array fn k b = array_of fn ~export:false k b
 
