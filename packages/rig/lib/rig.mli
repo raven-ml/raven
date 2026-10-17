@@ -1163,23 +1163,23 @@ end
 (** {1:submitting Running work}
 
     A device runs code from an {!Image} loaded on it. A {!Submission}
-    describes work for one device once, and {!submit} runs it with the
-    buffers of one run and returns the point of that run on the device's
-    timeline. A submission keeps alive what the work uses beyond memory.
+    describes work for one device once, and {!submit} runs it with one
+    submit's buffers and returns the point of that work on the device's
+    timeline.
 
     A library runs work like this:
     {ol
     {- It loads an image ({!Image.load}), resolves its functions
        ({!Image.resolve}), and makes a submission of parts that launch them
-       and name the buffers every run uses ({!Submission.make}).}
-    {- It makes a run of the submission ({!Submission.Run.make}), which the
-       calling thread holds, and stores each launch's grid and parameters
-       into it.}
-    {- It calls {!submit} with the run, this run's buffers and the points to
-       wait for. For each later run it takes the run again
-       ({!Submission.Run.take}), stores new parameters and submits again.}
-    {- Once the submission is unreachable, its memory returns after the work
-       of its last submit is done.}} *)
+       ({!Submission.make}).}
+    {- It makes a run of the submission ({!Submission.Run.make}), which
+       holds the launches' grids and parameters, and stores them.}
+    {- It calls {!submit} with the run and this submit's buffers. For each
+       later submit it takes the run ({!Submission.Run.take}), stores new
+       parameters and submits again.}
+    {- Once the submission is unreachable, its memory returns after the
+       work of its last submit is done.}}
+    {!section-host_objects} has an example. *)
 
 (** {2:images Images} *)
 
@@ -1596,9 +1596,8 @@ module Submission : sig
       rule 2 of {!Rig.section-order} orders them after every earlier part,
       and {!Rig.Submission}'s preamble says which queue runs them. Memory the
       words address is ordered against other work only if it is among the
-      submission's fixed memory. A driver may bound the words one submission
-      places, as its interface states; {!submit} raises [Invalid_argument]
-      past it.
+      submission's fixed memory. A driver may bound the words of one
+      submission ({!Rig.section-valid}).
 
       Raises [Invalid_argument] if [b] is dead, the host does not address its
       memory, or its length is no multiple of 4. *)
@@ -1626,21 +1625,8 @@ module Submission : sig
       {!Rig.Submission}'s preamble states how the parts are ordered and
       which queue runs each.
 
-      Raises [Invalid_argument] if:
-      {ul
-      {- [d] is an io device, no queue of [d] runs a part's kind, such as a
-         copy, a fill or words on {!host}, or [d] has no copy engine and a
-         copy follows no earlier part on a queue that runs copies;}
-      {- the image of a launch or of an entry ref is not loaded on [d];}
-      {- a slot below [n] is named by no ref or copy, or a slot is named by
-         both an {!unordered} ref and a {!read} or {!write} ref or a copy;}
-      {- a buffer of a part or of [fixed] is dead, a copy's buffer is not on
-         [d] where {!copy} does not admit it, or a buffer of [fixed] is not
-         on [d] or is written on [Read] memory;}
-      {- its launches and fills take more than a run holds: [2{^31} - 1]
-         bytes, each counting [16] bytes plus its parameters rounded up to a
-         multiple of 16.}}
-      Raises {!Lost} if [d] is lost. *)
+      Raises [Invalid_argument] if the submission would not be valid
+      ({!Rig.section-valid}), and {!Lost} if [d] is lost. *)
 
   type block
   (** The type for a launch's or a fill's block in a run of one submission
@@ -1781,6 +1767,27 @@ module Submission : sig
   end
 end
 
+(** {3:valid Valid submissions}
+
+    A submission is {e valid} when its device runs submitted work and has a
+    queue for each of its parts, as {!Rig.Submission} places them; its
+    images, its parts' buffers and its fixed memory are live and on the
+    device, but as {!Submission.copy} admits, and none of its fixed memory
+    written is [Read]; every slot below the highest is named, and none by
+    both an {!Submission.unordered} ref and an ordered use; and its launches
+    and fills fit a run: [2{^31} - 1] bytes, each counting 16 bytes plus its
+    parameters rounded up to a multiple of 16. {!Submission.make} raises for
+    each.
+
+    A submit is valid when it passes one buffer per slot; no buffer its work
+    uses is dead or held exclusive ({!Claim}); each buffer is on the device
+    ({!Buffer.borrow}), but as {!Submission.copy} admits; it writes no
+    [Read] memory ({!Buffer.val-access}); each copy's two buffers have one
+    length and share no byte; no ref names handle-only memory
+    ({!Buffer.section-low}); and its driver can run the work
+    ({!Rig_edge.section-calls}). A driver may bound the words one submission
+    places, as its interface states. {!submit} raises for each. *)
+
 (** {2:submits Submitting}
 
     A submit's work is ordered by the rules of {!section-order}. The
@@ -1817,33 +1824,20 @@ val submit :
     ({!Rig_edge.Driver.grow}), [submit] grows them first. It allocates
     nothing unless it waits, a profile is being taken or [d]'s queues grow,
     and, in a build without cross-module inlining, a [~waits] given as an
-    array allocates its option.
-    Once it has assigned [v], [d]'s driver receives [v]'s work or [d] is
-    lost, and the stamps of every allocation the work uses name [(d, v)]
-    either way. On {!host}, [v]'s work is done when [submit] returns, and
-    the stamps name no point of it.
+    array allocates its option. Once it has assigned [v], [d]'s driver
+    receives [v]'s work or [d] is lost, and the stamps of every allocation
+    the work uses name [(d, v)] either way. On {!host}, [v]'s work is done
+    when [submit] returns, and the stamps name no point of it.
 
-    Raises [Invalid_argument] if:
-    {ul
-    {- another thread has taken [r], or another submit of [r] is under way,
-       or [buffers] has another length than [s]'s slots;}
-    {- a buffer the work uses is dead or held exclusive ({!Claim});}
-    {- a buffer of [buffers] is not on [d] ({!Buffer.borrow} puts it there),
-       except where {!Submission.copy} admits it, or the work writes it and
-       its memory is [Read];}
-    {- a copy's two buffers differ in length or share a byte, or neither is
-       on [d];}
-    {- a ref names handle-only memory;}
-    {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}),
-       such as words past the bound its interface states
-       ({!Submission.words}).}}
-    Raises {!Out_of_memory} if [d]'s queues must grow for the work and [d]
-    has no memory for the growth after the rounds of reclamation
-    ({!section-reclaim}). Raises {!Lost} if [d] is lost before [submit]
-    returns, if its driver fails to take the work, or if a point of [waits]
-    is a lost device's and that device never reached it. A submit after
-    [d]'s value [2]{^ 47}[ - 1], the last a point holds, loses [d] with that
-    reason and assigns nothing. *)
+    Raises [Invalid_argument] if another thread has taken [r], another
+    submit of [r] is under way, or the submit would not be valid
+    ({!section-valid}). Raises {!Out_of_memory} if [d]'s queues must grow
+    for the work and [d] has no memory for the growth after the rounds of
+    reclamation ({!section-reclaim}). Raises {!Lost} if [d] is lost before
+    [submit] returns, if its driver fails to take the work, or if a point of
+    [waits] is a lost device's and that device never reached it. A submit
+    after [d]'s value [2]{^ 47}[ - 1], the last a point holds, loses [d]
+    with that reason and assigns nothing. *)
 
 (** {1:per_device Values per device}
 
