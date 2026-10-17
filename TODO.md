@@ -52,9 +52,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- rig.bnxt: take completions the NIC wrote before failing a queue pair; a
-  terminal index outside [taken, posted] counts as none; poll and wait issue
-  no firmware command; fix the leak when `Qp.make` refuses
 - rig.pci (ledger X3-X6): "alone on its device" only where the reset
   reaches siblings (`reset_method`); taken physically, `alloc_dma` and
   `pin` return `Ok None` above the function's DMA mask; one VFIO container

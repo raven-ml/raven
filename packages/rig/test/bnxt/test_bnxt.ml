@@ -158,6 +158,20 @@ let transfers =
           is_error ~msg:"the receive behind it" (completion b Receive);
           B.Qp.send a r ~at:0 1;
           is_error ~msg:"a send posted after" (completion a Send));
+      test "a receive completed before its queue pair failed keeps its result"
+        (fun () ->
+          with_nic @@ fun nic ->
+          let a, b = pair nic in
+          let r = region nic 4096 in
+          B.Qp.receive b r ~at:0 8;
+          B.Qp.send a r ~at:0 4;
+          equal int ~msg:"bytes sent" 4 (wait a Send);
+          B.Qp.receive a r ~at:0 8;
+          B.Qp.send b r ~at:0 16;
+          is_error ~msg:"the send longer than its receive" (completion b Send);
+          equal
+            (result int string)
+            ~msg:"the receive completed before" (Ok 4) (completion b Receive));
       test "a wait at its bound leaves the entry due" (fun () ->
           with_nic @@ fun nic ->
           let a, b = pair nic in

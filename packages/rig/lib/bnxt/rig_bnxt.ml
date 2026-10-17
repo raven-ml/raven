@@ -201,6 +201,14 @@ let free hw w =
   hw.allocs <- List.filter (fun a -> a != w) hw.allocs;
   Function.free_dma hw.fn w
 
+(* [f ()], with [w] given back if [f] is refused. *)
+let freeing hw w f =
+  match f () with
+  | v -> v
+  | exception (Refused _ as e) ->
+      free hw w;
+      raise e
+
 let wait hw ~us what ready =
   match Function.wait hw.fn ~us what ready with
   | Ok () -> ()
@@ -237,6 +245,7 @@ let page_list hw ?(queue = false) addrs =
       let bytes = ceildiv n 512 * page in
       let table, runs = sysmem hw bytes in
       Window.write table 0 (words (List.mapi entry addrs));
+      freeing hw table @@ fun () ->
       match pages ~bytes runs with
       | [ t ] -> (1, t, [ table ])
       | tables when List.length tables > 512 ->
@@ -327,7 +336,9 @@ let queue hw ?(stride = 16) ?(aux = false) ?(entries = page / 16) () =
   let size = entries * stride in
   let bytes = size + if aux then entries * 8 else 0 in
   let ring, runs = sysmem hw bytes in
-  let level, pbl, list = page_list hw ~queue:true (pages ~bytes runs) in
+  let level, pbl, list =
+    freeing hw ring (fun () -> page_list hw ~queue:true (pages ~bytes runs))
+  in
   { ring; stride; entries; level; pbl; memory = ring :: list }
 
 let slot q i = i mod q.entries * q.stride
@@ -907,9 +918,11 @@ module Qp = struct
 
   (* A ring of a queue pair, its completion queue, and how far each has gone.
      [cq_read] counts the completions read, which a terminal completion puts
-     ahead of the entries completed. Once the queue pair fails, the entries
-     before [ok_until] complete without error, and the others with the
-     failure. *)
+     ahead of the entries completed. Once the queue pair fails, the
+     completions written before [cq_until] are read, then the entries before
+     [ok_until] complete without error, and the others with the failure.
+     Only the ring's own side, its poll and wait, writes the mutable fields
+     but [posted], which its posts write. *)
   type ring = {
     entries : queue;
     cq : queue;
@@ -922,6 +935,8 @@ module Qp = struct
     mutable posted : int;
     mutable taken : int;
     mutable cq_read : int;
+    mutable noticed : bool; (* whether its side saw the failure *)
+    mutable cq_until : int;
     mutable ok_until : int;
   }
 
@@ -937,7 +952,9 @@ module Qp = struct
     first_psn : int;
     mutable psn : int; (* the first packet of the next send *)
     mutable state : state;
-    mutable failed : string option;
+    failed : string option Atomic.t;
+    terminal : int Atomic.t;
+        (* the send index of a terminal completion, or [no_index] *)
     mutable destroyed : (unit, string) result option;
   }
 
@@ -1030,78 +1047,116 @@ module Qp = struct
         (cq_res_rc_status_hw_flush_err, "the NIC flushed it");
       ]
 
+  let destroy_cq nic id =
+    ignore
+      (rcfw nic.hw nic.rc "destroy_cq" ~opcode:D.cmdq_base_opcode_destroy_cq
+         ~size:D.Cmdq_destroy_cq.sizeof (fun b ->
+           set b D.Cmdq_destroy_cq.cq_cid id))
+
+  let destroy_qp nic qpn =
+    ignore
+      (rcfw nic.hw nic.rc "destroy_qp" ~opcode:D.cmdq_base_opcode_destroy_qp
+         ~size:D.Cmdq_destroy_qp.sizeof (fun b ->
+           set b D.Cmdq_destroy_qp.qp_cid qpn))
+
+  (* A refused step gives back what the steps before took: the firmware's
+     objects, then, once each is gone, the rings' memory. Memory an object the
+     firmware kept may name stays until the NIC closes. *)
   let make nic =
     command nic "Qp.make" @@ fun () ->
     let hw = nic.hw in
-    let cq () = queue hw ~stride:D.Cq_base.sizeof ~entries:ring_entries () in
+    let made = ref [] and memory = ref [] in
+    let undo () =
+      let gone d = match d () with () -> true | exception Refused _ -> false in
+      if List.fold_left (fun all d -> gone d && all) true !made then
+        List.iter (free hw) !memory
+    in
+    let alloc_queue ?aux ~stride () =
+      let q = queue hw ?aux ~stride ~entries:ring_entries () in
+      memory := q.memory @ !memory;
+      q
+    in
     let create (q : queue) =
       let module C = D.Cmdq_create_cq in
-      xid
-        (rcfw hw nic.rc "create_cq" ~opcode:D.cmdq_base_opcode_create_cq
-           ~size:C.sizeof (fun b ->
-             set b C.cq_size q.entries;
-             set b C.pbl q.pbl;
-             set b C.pg_size_lvl q.level;
-             set b C.cq_fco_cnq_id nic.nq_id))
+      let id =
+        xid
+          (rcfw hw nic.rc "create_cq" ~opcode:D.cmdq_base_opcode_create_cq
+             ~size:C.sizeof (fun b ->
+               set b C.cq_size q.entries;
+               set b C.pbl q.pbl;
+               set b C.pg_size_lvl q.level;
+               set b C.cq_fco_cnq_id nic.nq_id))
+      in
+      made := (fun () -> destroy_cq nic id) :: !made;
+      id
     in
-    let scq = cq () and rcq = cq () in
-    let scq_id = create scq in
-    let rcq_id = create rcq in
-    let sq = queue hw ~stride:wqe_size ~aux:true ~entries:ring_entries () in
-    let rq = queue hw ~stride:wqe_size ~entries:ring_entries () in
-    let module Q = D.Cmdq_create_qp in
-    let qpn =
-      xid
-        (rcfw hw nic.rc "create_qp" ~opcode:D.cmdq_base_opcode_create_qp
-           ~size:Q.sizeof (fun b ->
-             set b Q.type_ D.cmdq_create_qp_type_rc;
-             set b Q.scq_cid scq_id;
-             set b Q.rcq_cid rcq_id;
-             set b Q.sq_size ring_entries;
-             set b Q.sq_fwo_sq_sge 6;
-             set b Q.sq_pbl sq.pbl;
-             set b Q.sq_pg_size_sq_lvl sq.level;
-             set b Q.rq_size ring_entries;
-             set b Q.rq_fwo_rq_sge 6;
-             set b Q.rq_pbl rq.pbl;
-             set b Q.rq_pg_size_rq_lvl rq.level))
-    in
-    modify nic qpn ~state:D.cmdq_modify_qp_new_state_init ~mask:init_mask
-      (fun b ->
-        set b D.Cmdq_modify_qp.access access;
-        set b D.Cmdq_modify_qp.pkey 0xffff);
-    let ring entries cq cq_id typ kind statuses what =
+    try
+      let scq = alloc_queue ~stride:D.Cq_base.sizeof () in
+      let rcq = alloc_queue ~stride:D.Cq_base.sizeof () in
+      let scq_id = create scq in
+      let rcq_id = create rcq in
+      let sq = alloc_queue ~stride:wqe_size ~aux:true () in
+      let rq = alloc_queue ~stride:wqe_size () in
+      let module Q = D.Cmdq_create_qp in
+      let qpn =
+        xid
+          (rcfw hw nic.rc "create_qp" ~opcode:D.cmdq_base_opcode_create_qp
+             ~size:Q.sizeof (fun b ->
+               set b Q.type_ D.cmdq_create_qp_type_rc;
+               set b Q.scq_cid scq_id;
+               set b Q.rcq_cid rcq_id;
+               set b Q.sq_size ring_entries;
+               set b Q.sq_fwo_sq_sge 6;
+               set b Q.sq_pbl sq.pbl;
+               set b Q.sq_pg_size_sq_lvl sq.level;
+               set b Q.rq_size ring_entries;
+               set b Q.rq_fwo_rq_sge 6;
+               set b Q.rq_pbl rq.pbl;
+               set b Q.rq_pg_size_rq_lvl rq.level))
+      in
+      made := (fun () -> destroy_qp nic qpn) :: !made;
+      modify nic qpn ~state:D.cmdq_modify_qp_new_state_init ~mask:init_mask
+        (fun b ->
+          set b D.Cmdq_modify_qp.access access;
+          set b D.Cmdq_modify_qp.pkey 0xffff);
+      let ring entries cq cq_id typ kind statuses what =
+        {
+          entries;
+          cq;
+          cq_id;
+          typ;
+          kind;
+          statuses;
+          lengths = Array.make ring_entries 0;
+          waiting = strf "%s: queue pair %d's %s" nic.name qpn what;
+          posted = 0;
+          taken = 0;
+          cq_read = 0;
+          noticed = false;
+          cq_until = 0;
+          ok_until = 0;
+        }
+      in
+      let first_psn = Random.State.bits nic.random land 0xffffff in
       {
-        entries;
-        cq;
-        cq_id;
-        typ;
-        kind;
-        statuses;
-        lengths = Array.make ring_entries 0;
-        waiting = strf "%s: queue pair %d's %s" nic.name qpn what;
-        posted = 0;
-        taken = 0;
-        cq_read = 0;
-        ok_until = 0;
+        nic;
+        qpn;
+        sends =
+          ring sq scq scq_id D.bnxt_re_que_type_sq D.cq_base_cqe_type_req
+            send_statuses "send";
+        receives =
+          ring rq rcq rcq_id D.bnxt_re_que_type_rq D.cq_base_cqe_type_res_rc
+            receive_statuses "receive";
+        first_psn;
+        psn = first_psn;
+        state = Initialized;
+        failed = Atomic.make None;
+        terminal = Atomic.make no_index;
+        destroyed = None;
       }
-    in
-    let first_psn = Random.State.bits nic.random land 0xffffff in
-    {
-      nic;
-      qpn;
-      sends =
-        ring sq scq scq_id D.bnxt_re_que_type_sq D.cq_base_cqe_type_req
-          send_statuses "send";
-      receives =
-        ring rq rcq rcq_id D.bnxt_re_que_type_rq D.cq_base_cqe_type_res_rc
-          receive_statuses "receive";
-      first_psn;
-      psn = first_psn;
-      state = Initialized;
-      failed = None;
-      destroyed = None;
-    }
+    with Refused _ as e ->
+      undo ();
+      raise e
 
   let usable qp what =
     live qp.nic what;
@@ -1189,7 +1244,7 @@ module Qp = struct
     let q = s.entries and i = s.posted in
     let slot = i mod ring_entries in
     s.lengths.(slot) <- n;
-    if Option.is_none qp.failed then begin
+    if Option.is_none (Atomic.get qp.failed) then begin
       let base = slot * q.stride in
       Window.fill q.ring base (D.Sq_send_hdr.sizeof + D.Sq_sge.sizeof) '\000';
       Window.set8 q.ring
@@ -1222,7 +1277,7 @@ module Qp = struct
     let q = s.entries and i = s.posted in
     let slot = i mod ring_entries in
     s.lengths.(slot) <- n;
-    if Option.is_none qp.failed then begin
+    if Option.is_none (Atomic.get qp.failed) then begin
       let base = slot * q.stride in
       Window.fill q.ring base (D.Rq_wqe_hdr.sizeof + D.Sq_sge.sizeof) '\000';
       Window.set8 q.ring
@@ -1234,19 +1289,37 @@ module Qp = struct
     end;
     s.posted <- i + 1
 
-  (* Fails [qp] for [why], once. A failure the library detects, which the NIC
-     may not know of, also moves the queue pair to the error state, so that the
-     NIC runs none of its entries. *)
-  let fail_qp qp ~detected why =
-    if Option.is_none qp.failed then begin
-      qp.failed <-
-        Some (strf "%s: queue pair %d failed: %s" qp.nic.name qp.qpn why);
-      if detected then
-        ignore
-          (command qp.nic "Qp" (fun () ->
-               modify qp.nic qp.qpn ~state:D.cmdq_modify_qp_new_state_err
-                 ~mask:D.cmdq_modify_qp_modify_mask_state ignore))
-    end
+  (* Whether [q]'s completion [n] is written: its toggle bit differs from the
+     parity of the pass over the queue that reads it. *)
+  let written (q : queue) n =
+    Window.get8 q.ring (slot q n + fst D.Cq_base.cqe_type_toggle)
+    land D.cq_base_toggle
+    <> n / q.entries land 1
+
+  let failure qp why = strf "%s: queue pair %d failed: %s" qp.nic.name qp.qpn why
+
+  (* Fails [qp] for [why], once, with no command to the firmware. *)
+  let fail_qp qp why =
+    let failed = Some (failure qp why) in
+    ignore (Atomic.compare_and_set qp.failed None failed : bool)
+
+  (* [r]'s side notes [qp]'s failure the first time it sees it: the
+     completions [r]'s queue holds by then are the NIC's, and are read before
+     its entries complete with the failure, a completion the NIC writes later
+     is not read, and on the send side a terminal completion's index says
+     which sends completed. Each side notes its own ring, so a ring that
+     another domain polls keeps what the NIC completed. *)
+  let notice qp r =
+    r.noticed <- true;
+    let n = ref r.cq_read in
+    while !n - r.cq_read < r.cq.entries && written r.cq !n do
+      incr n
+    done;
+    r.cq_until <- !n;
+    let index = Atomic.get qp.terminal in
+    let done_ = (index - r.taken) land (ring_entries - 1) in
+    if r == qp.sends && index <> no_index && done_ <= r.posted - r.taken then
+      r.ok_until <- r.taken + done_
 
   (* Completes the oldest due entry of [r] of the failed queue pair: one before
      [ok_until] moved its bytes. *)
@@ -1255,28 +1328,21 @@ module Qp = struct
     r.taken <- n + 1;
     if n < r.ok_until then Ok r.lengths.(n mod ring_entries) else Error why
 
-  (* Whether [q]'s completion [n] is written: its toggle bit differs from the
-     parity of the pass over the queue that reads it. *)
-  let written (q : queue) n =
-    Window.get8 q.ring (slot q n + fst D.Cq_base.cqe_type_toggle)
-    land D.cq_base_toggle
-    <> n / q.entries land 1
-
   (* A terminal completion reports the queue pair's failure, and the sends
-     before the one at its consumer index, which completed. *)
+     before the one at its consumer index, which completed: an index outside
+     the sends due completes none ([notice]). The index is kept before the
+     failure is, so the send side reads it once it sees the failure. *)
   let terminal qp (q : queue) at =
     let index = Window.get32 q.ring (at + fst D.Cq_terminal.sq_cons_idx) in
     let index = index land 0xffff in
-    if index <> no_index then begin
-      let s = qp.sends in
-      let done_ = (index - s.taken) land (ring_entries - 1) in
-      s.ok_until <- Int.min s.posted (s.taken + done_)
-    end;
-    fail_qp qp ~detected:false "the NIC reported its failure"
+    if index <> no_index then
+      ignore (Atomic.compare_and_set qp.terminal no_index index : bool);
+    fail_qp qp "the NIC reported its failure"
 
-  (* Reads [r]'s written completion and acknowledges it. The entry completed, or
-     it failed, which fails the queue pair; a terminal completion fails it and
-     completes no entry. *)
+  (* Reads [r]'s written completion and acknowledges it: the completion of the
+     oldest due entry, which fails the queue pair if the entry failed, or
+     [None] for a terminal completion, which fails it, and for one of a kind
+     the ring does not take, which the library fails it for. *)
   let take qp r =
     let q = r.cq and n = r.cq_read in
     Window.barrier ();
@@ -1287,39 +1353,49 @@ module Qp = struct
     in
     let status = Window.get8 q.ring (at + fst D.Cq_base.status) in
     let length = Window.get32 q.ring (at + fst D.Cq_res_rc.length) in
-    if kind = D.cq_base_cqe_type_terminal then terminal qp q at;
     r.cq_read <- n + 1;
     ring qp.nic.rc.db ~xid:r.cq_id ~typ:D.bnxt_re_que_type_cq (n + 1);
-    if kind = D.cq_base_cqe_type_terminal then ()
-    else if kind <> r.kind then
-      fail_qp qp ~detected:true (strf "a completion of type %d" (kind lsr 1))
-    else if status <> 0 then
-      fail_qp qp ~detected:false
-        (match List.assoc_opt status r.statuses with
-        | Some why -> why
-        | None -> strf "status %d" status)
+    if kind = D.cq_base_cqe_type_terminal then begin
+      terminal qp q at;
+      None
+    end
+    else if kind <> r.kind then begin
+      fail_qp qp (strf "a completion of type %d" (kind lsr 1));
+      None
+    end
     else begin
       let i = r.taken in
       r.taken <- i + 1;
-      if r == qp.receives then r.lengths.(i mod ring_entries) <- length
+      if status = 0 then
+        if r == qp.receives then Some (Ok length)
+        else Some (Ok r.lengths.(i mod ring_entries))
+      else
+        let why =
+          match List.assoc_opt status r.statuses with
+          | Some why -> why
+          | None -> strf "status %d" status
+        in
+        fail_qp qp why;
+        Some (Error (failure qp why))
     end
 
   (* The completion of [r]'s oldest due entry, if it has one, which a failed
-     queue pair or machine gives at once. *)
+     queue pair or machine gives at once, once the completions written before
+     the failure are read. *)
   let rec next qp r =
-    match qp.failed with
-    | Some why -> Some (flush r why)
-    | None when written r.cq r.cq_read ->
-        let i = r.taken in
-        take qp r;
-        if r.taken > i then Some (Ok r.lengths.(i mod ring_entries))
-        else next qp r
+    match Atomic.get qp.failed with
+    | Some why ->
+        if not r.noticed then notice qp r;
+        if r.cq_read < r.cq_until then taken qp r else Some (flush r why)
+    | None when written r.cq r.cq_read -> taken qp r
     | None -> (
         match Machine.failed (Function.machine qp.nic.hw.fn) with
         | None -> None
         | Some why ->
-            fail_qp qp ~detected:false why;
+            fail_qp qp why;
             next qp r)
+
+  and taken qp r = match take qp r with Some c -> Some c | None -> next qp r
 
   let due r = r.posted > r.taken
 
@@ -1335,11 +1411,12 @@ module Qp = struct
     usable qp "Qp.wait";
     let r = rings qp side in
     if not (due r) then invalid_arg "Rig_bnxt.Qp.wait: no entry is due";
-    let ended () = written r.cq r.cq_read || Option.is_some qp.failed in
+    let ended () =
+      written r.cq r.cq_read || Option.is_some (Atomic.get qp.failed)
+    in
     (match Function.wait qp.nic.hw.fn ~us r.waiting ended with
     | Ok () -> ()
-    | Error _ ->
-        Option.iter (fail_qp qp ~detected:false) (Function.failed qp.nic.hw.fn));
+    | Error _ -> Option.iter (fail_qp qp) (Function.failed qp.nic.hw.fn));
     next qp r
 
   let destroy qp =
@@ -1349,19 +1426,8 @@ module Qp = struct
         let result =
           command qp.nic "Qp.destroy" @@ fun () ->
           let nic = qp.nic in
-          ignore
-            (rcfw nic.hw nic.rc "destroy_qp"
-               ~opcode:D.cmdq_base_opcode_destroy_qp
-               ~size:D.Cmdq_destroy_qp.sizeof (fun b ->
-                 set b D.Cmdq_destroy_qp.qp_cid qp.qpn));
-          List.iter
-            (fun r ->
-              ignore
-                (rcfw nic.hw nic.rc "destroy_cq"
-                   ~opcode:D.cmdq_base_opcode_destroy_cq
-                   ~size:D.Cmdq_destroy_cq.sizeof (fun b ->
-                     set b D.Cmdq_destroy_cq.cq_cid r.cq_id)))
-            [ qp.sends; qp.receives ];
+          destroy_qp nic qp.qpn;
+          List.iter (fun r -> destroy_cq nic r.cq_id) [ qp.sends; qp.receives ];
           List.iter
             (fun r -> List.iter (free nic.hw) (r.entries.memory @ r.cq.memory))
             [ qp.sends; qp.receives ]

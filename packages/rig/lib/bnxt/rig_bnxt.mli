@@ -213,11 +213,15 @@ end
     entries.
 
     A queue pair {e fails} when one of its entries fails, when the NIC reports
-    its failure, or when the NIC's machine fails. The NIC then runs none of its
-    entries that have no completion, of either ring, nor those posted later, and
-    each completes with the failure's [Error], but for the sends the NIC reports
-    done. A failed entry may have moved some or all of its bytes. A failed queue
-    pair stays failed. *)
+    its failure, when its completions hold one of a kind its ring does not
+    take, or when the NIC's machine fails. The NIC then runs none of its
+    entries that have no completion, of either ring, nor those posted later;
+    after a completion of an unknown kind, it may run them until {!Qp.destroy}.
+    Completions keep the order of the entries: those the NIC completed before
+    the failure keep their result, the entry that failed carries its error, and
+    the rest complete with the failure's [Error]. A failed entry may have moved
+    some or all of its bytes. A failed queue pair stays failed. {!Qp.poll} and
+    {!Qp.wait} send the firmware no request, a failure's included. *)
 module Qp : sig
   type nic := t
 
@@ -245,7 +249,8 @@ module Qp : sig
       random packet sequence number.
 
       [Error msg] if the machine has no memory for its rings or the firmware
-      refuses it. *)
+      refuses it. A refused [make] gives back what it took, but for memory a
+      firmware that stopped answering may still name ({!section-errors}). *)
 
   val endpoint : t -> endpoint
   (** [endpoint qp] is what a peer's queue pair connects to [qp] with. *)
