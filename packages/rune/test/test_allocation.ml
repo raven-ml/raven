@@ -68,8 +68,16 @@ let replay =
 
 let device = Nx.Device.cpu 5
 
+(* While backtraces are recorded, the runtime keeps the last exception raised
+   reachable. nx and rune answer an operation that no interception handles by
+   catching [Effect.Unhandled], whose effect holds the operation's operands, so
+   those stay reachable until the next raise. A raise of [Exit] lets them go. *)
+let[@inline never] raise_exit () = raise Exit
+let forget_raised () = try raise_exit () with Exit -> ()
+
 let settled () =
   let m = Nx.Device.memory device in
+  forget_raised ();
   for _ = 1 to 4 do
     Gc.full_major ();
     (* An allocation on the device returns its collected memory. *)
@@ -125,22 +133,22 @@ let residuals =
       expect (output ())
       @@ __POS_OF__
            {|
-        erfc 495
-        ndtr 547
-        log_ndtr 671
-        erfinv 804
-        ndtri 1026
-        lgamma 730
-        digamma 590
-        lbeta 1267
-        i0e 579
-        i1e 564
-        gammainc 4921
-        gammainc in a 6963
-        gammaincinv 16361
-        gammaincinv in a 26355
-        log_betainc in x 11511
-        log_betainc in a 19848
+        erfc 487
+        ndtr 556
+        log_ndtr 680
+        erfinv 813
+        ndtri 1027
+        lgamma 731
+        digamma 599
+        lbeta 1276
+        i0e 580
+        i1e 573
+        gammainc 4922
+        gammainc in a 6964
+        gammaincinv 16362
+        gammaincinv in a 26356
+        log_betainc in x 11520
+        log_betainc in a 19849
         |})
 
 let () = exit (run "rune allocation" [ reverse; replay; residuals ])
