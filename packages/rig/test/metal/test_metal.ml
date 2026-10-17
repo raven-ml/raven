@@ -918,6 +918,23 @@ let write_commands =
     command "icb" (held ^-> returns bool) written_icb written_sys;
   ]
 
+(* An icb call inside a lock of its thread's, as from a callback inside one,
+   raises naming it, having made nothing; one after makes the icb. *)
+let icb_inside_lock () =
+  let t = dev () in
+  let args = alloc t args_bytes in
+  let made =
+    Rig_support.inside_lock @@ fun () ->
+    match icb t args [||] with
+    | _ -> "made"
+    | exception Invalid_argument why
+      when String.starts_with ~prefix:"Rig_metal_abi.icb: called from" why ->
+        "refused"
+  in
+  equal ~msg:"inside the lock" string "refused" made;
+  is_ok (icb t args [||]);
+  Rig_metal.free t.g args
+
 let icbs =
   group ~timeout:60. "indirect command buffers"
     [
@@ -926,6 +943,8 @@ let icbs =
         "chain" [ 0; 1; 2; 17; 64 ] chain;
       test "a command runs with the sizes set before its run" resized;
       test "refuses what it cannot record" icb_refusals;
+      test "an icb call inside a lock of its thread's raises naming it"
+        icb_inside_lock;
       test "refuses a pipeline no loaded image gave" foreign_pipelines;
       test "refuses a buffer that is no live region of the device"
         foreign_buffers;
@@ -1829,6 +1848,19 @@ let opening =
     [
       test "a device other than 0 is an error" (fun () ->
           is_error (Rig_gpu_support.opened (Rig_metal.gpu 1)));
+      test "an open inside a lock of its thread's raises naming it" (fun () ->
+          let opened () =
+            match Rig_gpu_support.opened (Rig_metal.gpu 1) with
+            | Ok _ -> "opened"
+            | Error _ -> "error"
+            | exception Invalid_argument why
+              when String.starts_with ~prefix:"Rig_metal.gpu: called from" why
+              ->
+                "refused"
+          in
+          equal ~msg:"inside the lock" string "refused"
+            (Rig_support.inside_lock opened);
+          equal ~msg:"outside" string "error" (opened ()));
       test "a negative device is misuse" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Rig_gpu_support.opened (Rig_metal.gpu (-1)));

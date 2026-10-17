@@ -30,6 +30,7 @@
   rig_amd_pci
   rig_pci
   rig_pci_support
+  rig_support
   unix
   windtrap)
  (deps

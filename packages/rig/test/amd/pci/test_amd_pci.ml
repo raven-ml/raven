@@ -259,6 +259,16 @@ let machine () =
       fn "0000:02:00.0" 0x1002 0x038000;
     ]
 
+(* What [call ()] answered, ["refused"] for the refusal of [fn] inside a
+   lock. *)
+let answer fn call =
+  let prefix = strf "Rig_amd_pci.%s: called from" fn in
+  match call () with
+  | Ok () -> "ok"
+  | Error _ -> "error"
+  | exception Invalid_argument why when String.starts_with ~prefix why ->
+      "refused"
+
 let numbering =
   group "numbering"
     [
@@ -299,6 +309,28 @@ let numbering =
           ("reset", fun () -> ignore (Rig_amd_pci.reset (-1)));
         ]
         (fun (_, f) -> raises_match Exn.invalid_arg f);
+      cases ~name:fst
+        "a call inside a lock of its thread's raises naming it, changing \
+         nothing"
+        (let on () = Rig_pci.Machine.at (machine ()) in
+         let past () = Rig_amd_pci.count () in
+         [
+           ( "gpu",
+             fun () ->
+               Rig_gpu_support.opened (Rig_amd_pci.gpu ~machine:(on ()) 3)
+               |> Result.map ignore );
+           ( "detach",
+             fun () -> Rig_amd_pci.detach (past ()) |> Result.map ignore );
+           ("attach", fun () -> Rig_amd_pci.attach (past ()));
+           ("reset", fun () -> Rig_amd_pci.reset ~machine:(on ()) 3);
+           ( "report",
+             fun () -> Rig_amd_pci.report ~firmware:[] "" |> Result.map ignore
+           );
+         ])
+        (fun (fn, call) ->
+          let inside = Rig_support.inside_lock (fun () -> answer fn call) in
+          equal ~msg:"inside the lock" string "refused" inside;
+          equal ~msg:"once it is given back" string "error" (answer fn call));
     ]
 
 (* Letting go: a fixture tree's unbound AMD GPU at 0000:05:00.0, and what of

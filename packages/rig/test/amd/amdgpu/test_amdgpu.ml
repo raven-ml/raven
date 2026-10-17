@@ -338,6 +338,47 @@ let held =
             (P.gpus_of m));
     ]
 
+(* A call inside a lock of its thread's, as from a callback inside one, raises
+   naming it, having changed nothing; outside every lock it answers. *)
+let inside_lock =
+  group ~timeout:10. "inside a lock"
+    [
+      cases
+        ~name:(fun (fn, _, _) -> fn)
+        "a call raises naming it, changing nothing"
+        [
+          ( "gpu",
+            "error",
+            fun () ->
+              let root = tree "inside-gpu" (functions r9700_functions) in
+              fun () ->
+                match Rig_gpu_support.opened (P.gpu ~root 1) with
+                | Ok _ -> "opened"
+                | Error _ -> "error" );
+          ( "gpus_of",
+            "listed",
+            fun () ->
+              let root = tree "inside-gpus" (functions r9700_functions) in
+              let m = require_ok (P.machine_at root) in
+              fun () ->
+                ignore (P.gpus_of m);
+                "listed" );
+        ]
+        (fun (fn, outside, prepare) ->
+          let call = prepare () in
+          let prefix = strf "Rig_amd_amdgpu.%s: called from" fn in
+          let answer () =
+            match call () with
+            | r -> r
+            | exception Invalid_argument why when String.starts_with ~prefix why
+              ->
+                "refused"
+          in
+          equal ~msg:"inside the lock" string "refused"
+            (Rig_support.inside_lock answer);
+          equal ~msg:"outside" string outside (answer ()));
+    ]
+
 (* The context save area KFD requires (kfd_queue.c): each die's [cwsr_size],
    then a debugger area of 32 bytes per wave rounded up to 64, the whole rounded
    up to a page. Its waves are 32 per compute unit of a die from GFX 10.1;
@@ -509,4 +550,13 @@ let opening =
 let () =
   exit
     (run "rig_amd_amdgpu"
-       [ numbering; facts; held; save_area; processors; names; opening ])
+       [
+         numbering;
+         facts;
+         held;
+         inside_lock;
+         save_area;
+         processors;
+         names;
+         opening;
+       ])

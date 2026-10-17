@@ -1,3 +1,4 @@
 (test
  (name test_amdgpu)
- (libraries rig_amd rig_amd_abi rig_amd_amdgpu rig_gpu_support unix windtrap))
+ (libraries rig_amd rig_amd_abi rig_amd_amdgpu rig_gpu_support rig_support unix
+  windtrap))

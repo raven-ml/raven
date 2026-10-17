@@ -60,6 +60,29 @@ let opening =
           let e = require_error (Rig_gpu_support.opened (C.gpu n)) in
           contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is closed" gpu_once;
+      cases ~name:fst
+        "a call inside a lock of its thread's raises naming it, changing \
+         nothing"
+        [
+          ("count", fun () () -> ignore (C.count () : int));
+          ( "gpu",
+            fun () ->
+              let o = C.gpu (C.count ()) in
+              fun () -> ignore (Rig_gpu_support.opened o : _ result) );
+        ]
+        (fun (fn, prepare) ->
+          let call = prepare () in
+          let prefix = strf "Rig_cuda.%s: called from" fn in
+          let inside =
+            Rig_support.inside_lock @@ fun () ->
+            match call () with
+            | () -> "ran"
+            | exception Invalid_argument why when String.starts_with ~prefix why
+              ->
+                "refused"
+          in
+          equal ~msg:"inside the lock" string "refused" inside;
+          call ());
     ]
 
 (* Facts *)
@@ -1021,6 +1044,21 @@ let beside_stop () =
     (Domain.join maker);
   equal (result pass string) ~msg:"after the stop" (Error stopped_graph) after
 
+(* A graph call inside a lock of its thread's, as from a callback inside one,
+   raises naming it, having made nothing; one after makes the graph. *)
+let graph_inside_lock () =
+  S.with_ @@ fun { g; _ } ->
+  let made =
+    Rig_support.inside_lock @@ fun () ->
+    match graph g [||] with
+    | _ -> "made"
+    | exception Invalid_argument why
+      when String.starts_with ~prefix:"Rig_cuda_abi.graph: called from" why ->
+        "refused"
+  in
+  equal ~msg:"inside the lock" string "refused" made;
+  ignore (require_ok (graph g [||]))
+
 let graphs =
   group ~timeout:60. "graphs"
     [
@@ -1042,6 +1080,8 @@ let graphs =
         collected_after_stop;
       test "a graph call after the stop answers the stop" after_stop;
       test "graph calls beside a stop answer as before or after it" beside_stop;
+      test "a graph call inside a lock of its thread's raises naming it"
+        graph_inside_lock;
     ]
 
 (* The shared device: the stateful tests' programs use one device, opened by the
