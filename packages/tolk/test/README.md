@@ -11,8 +11,8 @@
   law test is one line too. Its `.golden` files are fixtures of its own suite, not tinygrad
   output.
 - `gen/` generates the goldens from tinygrad.
-- `REGRESSIONS.md` maps each old tolk and tinygrad test to the test that
-  replaces it. `../DIVERGENCES.md` is the divergence ledger.
+- `REGRESSIONS.md` maps each tinygrad test to the test that keeps its
+  behaviour, or to why it is dropped. `../DIVERGENCES.md` is the divergence ledger.
 
 A suite's stanza:
 

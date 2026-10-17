@@ -1,15 +1,10 @@
 # Regressions
 
-Each module's section maps every behaviour its tests must keep to the test
-that keeps it, or to the reason it is dropped. The sources are:
-
-- every behaviour a test of the old tolk pins, the tolk this library replaced;
-- every relevant case of tinygrad's tests for the module's file.
-
-A row names its source as `old: <file>:<line> <test name>`, `old: <file> <function>` (anchored by name, which survives edits to the file) or
-`tinygrad: <file>::<class>::<test>`, and its outcome as the new test's path
-(`<suite> › <group> › <test>`) or as `dropped: <reason>`. A module's section
-starts when its test pass does.
+Each module's section maps every relevant case of tinygrad's tests for the
+module's file to the test that keeps its behaviour, or to the reason it is
+dropped. A row names its source as `tinygrad: <file>::<class>::<test>`, and its
+outcome as the test's path (`<suite> › <group> › <test>`) or as
+`dropped: <reason>`. A module's section starts when its test pass does.
 
 ## Helpers
 
@@ -70,43 +65,6 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
 | tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported (plan, L0 scope) |
-| old: unit/test_helpers.ml:19 time_to_str picks the unit above ten of the next | units and widths | Helpers › terminal text › time_to_str writes a duration as tinygrad does (`durations.golden` holds each input) |
-| old: unit/test_helpers.ml:26 size_to_str | bytes, KB, MB, GB | Helpers › terminal text › size_to_str writes a size as tinygrad does |
-| old: unit/test_helpers.ml:33 colored | foreground, bright, background | Helpers › terminal text › colored paints as tinygrad does; the `None` color is dropped: a color is a variant |
-| old: unit/test_helpers.ml:40 ansilen ignores escape sequences | `ansilen` of colored text and `ESC [K` | Helpers › terminal text › ansilen counts as tinygrad does; Helpers › terminal text › ansipad does not count escape sequences |
-| old: unit/test_helpers.ml:49 concurrent allocations preserve live byte counts | memory counters under concurrent domains | dropped: `GlobalCounters` are read where kernels run and buffers are allocated, which is `tolk.engine`'s (README Exclusions, D3) |
-| old: unit/test_helpers.ml:68 mem_used follows allocation and release | memory used rises and falls | dropped: `GlobalCounters` are read where kernels run and buffers are allocated, which is `tolk.engine`'s (README Exclusions, D3) |
-| old: unit/test_helpers.ml:78 reset leaves mem_used alone | reset keeps the memory used | dropped: `GlobalCounters` are read where kernels run and buffers are allocated, which is `tolk.engine`'s (README Exclusions, D3) |
-| old: unit/test_helpers.ml:189 nested duplicate overrides restore after an exception | duplicate bindings, raise, restore | Setting › context › gives a setting bound twice its later binding, and restores the first value; Setting › context › restores a setting when its function raises |
-| old: unit/test_helpers.ml:197 overlapping domains retain their own contexts | domain-local overrides | Setting › context › is not seen by the other domains; `… › binds for the domains spawned while it runs` |
-| old: unit/test_helpers.ml:199 overlapping systhreads retain their own contexts | thread-local overrides | dropped: the threads of a domain share its settings, as the threads of a tinygrad process share its `Context` |
-| old: unit/test_helpers.ml:201 snapshots are immutable and replace a worker's current context | context snapshots for workers | dropped: a domain starts with the values of the domain that spawns it, so workers need no snapshot; Setting › context › binds for the domains spawned while it runs |
-| old: unit/test_helpers.ml:202 exited scopes release their values | no leak of bound values | Setting › context › keeps no bound value once it returns |
-| old: unit/test_helpers.ml:206 unlimited and malformed quota retain available CPUs | cgroup quota parsing | dropped: the quota parser is private to `parallel`'s default and reads a Linux file; Setting › settings › parallel is between one and the domains the runtime recommends |
-| old: unit/test_helpers.ml:211 quota bounds workers by whole available CPUs | cgroup quota bound | dropped: as the row above |
-| old: unit/test_helpers.ml:222 target strings preserve architecture and interface spelling | case kept in arch and interface | Helpers › Target › of_string reads a target as tinygrad does (`input=remote:host:2+nv:cuda:sm_89`) |
-| old: unit/test_helpers.ml:230 target strings normalize empty fields without inventing defaults | empty fields print as nothing | Helpers › Target › of_string reads a target as tinygrad does (the six inputs of the test); Helpers › Target › of_string reads back what pp writes |
-| old: unit/test_helpers.ml:236 target strings reject excess separators | two `+`, three `:` | Helpers › Target › of_string reads a target as tinygrad does (`input=PCI+NV+CUDA`, `input=CPU:CLANG:arm64:extra`) |
-| old: unit/test_helpers.ml:240 per-backend targets and defaults do not leak between contexts | per-device targets, arch default, restore | Setting › context › restores a setting when its function raises. Per-device targets are dropped: a device's target follows from the device alone (D95) |
-| old: unit/test_helpers.ml:250 the first matching wildcard supplies the target | first wildcard wins | Helpers › Target › target picks a device's target as tinygrad does (`dev=PCI+;NV:CUDA device=NV`) |
-| old: unit/test_helpers.ml:253 DEV selects one interface without trying alternatives | interface selection | dropped: interface selection belongs to the device layer; `select_by_name` is pinned by `selection.golden` |
-| old: unit/test_helpers.ml:259 an unknown interface fails before initialization | unknown interface | dropped: as the row above |
-| old: unit/test_helpers.ml:263 mock interfaces require explicit selection | MOCK interfaces | dropped: raven has no mock drivers (README exclusions) |
-| old: unit/test_helpers.ml:267 legacy target settings point to DEV | `NV_IFACE`, `NV_CC` | dropped: the `{DEV}_CC` migration check is not ported (README exclusions) |
-| old: unit/test_helpers.ml:275 prefers the kernel driver without initializing PCI | first success stops | Helpers › selection › select_first_inited takes the first candidate and tries no other |
-| old: unit/test_helpers.ml:280 falls back after driver initialization fails | fallback | Helpers › selection › select_first_inited tries the next candidate after a failure |
-| old: unit/test_helpers.ml:286 preserves the error from an explicitly selected interface | a single candidate's error | Helpers › selection › select_first_inited reports the only candidate's error as it is |
-| old: unit/test_helpers.ml:289 reports failures from every attempted interface | every error, one per line | Helpers › selection › select_first_inited reports every candidate's error, one per line |
-| old: unit/test_helpers.ml:297 does not retry after the selected runtime fails | a later failure of the selected value | Helpers › selection › select_first_inited takes the first candidate and tries no other |
-| old: unit/test_helpers.ml:304 does not treat cancellation as an unavailable driver | exceptions escape | Helpers › selection › select_first_inited lets a candidate's exception escape, trying no other |
-| old: unit/test_diskcache.ml:319 compiler cache policy follows nested contexts and worker snapshots | the compiler cache under CCACHE and CACHELEVEL | dropped: `Compiler` belongs to `Device`'s suite; the CACHELEVEL half is Helpers › Diskcache › a disabled cache neither reads nor writes |
-| old: unit/test_diskcache.ml:322 assert compile permits hits and blocks every cache miss | ASSERT_COMPILE | dropped: `Compiler` belongs to `Device`'s suite |
-| old: unit/test_diskcache.ml:325 platform detection does not require shell tools | host detection without PATH | dropped: tolk reads the platform from the build configuration, not at run time |
-| old: unit/test_diskcache.ml:327 cache location follows the platform, not directory contents | cache directory per platform | Helpers › cache directory › puts the cache in the platform's cache directory without XDG_CACHE_HOME |
-| old: unit/test_diskcache.ml:329 round-trips a value across processes | cross-process persistence | Helpers › Diskcache › an entry put by another process reads back; Helpers › Diskcache › another process reads an entry put back |
-| old: unit/test_diskcache.ml:331 missing key is a miss | missing key | Helpers › Diskcache › get is None for a table never written; Helpers › Diskcache › behaves as a table of entries per table |
-| old: unit/test_diskcache.ml:332 corrupt or truncated entry is a miss | damaged entries | Helpers › Diskcache › get fails on a truncated entry; Helpers › Diskcache › get fails on an entry that is no entry. The contract changed: a malformed entry raises `Failure`, as tinygrad's unpickling raises |
-| old: unit/test_diskcache.ml:334 concurrent writers never tear an entry | atomic writes | Helpers › Diskcache › writers in several processes never tear an entry; Helpers › Diskcache › writers on several domains never tear an entry |
 
 ## Dtype
 
@@ -163,57 +121,11 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 | tinygrad: runtime/test_dtype_alu.py (every test) | device ALU results against numpy, rounded with `truncate` | dropped: execution on a device (L5-L7). The rounding reference it uses is `D › truncate › truncation.golden` |
 | tinygrad: runtime/test_dtype_spec.py::TestTypeSpec::test_dtype_str_arg | "nonexistdtype" and "" name no data type | `D › names › the error names what is not a data type`; `D › names › the empty string is not a data type` |
 | tinygrad: runtime/test_dtype_spec.py (every other test) | dtypes of Tensor creation and reductions | dropped: Tensor surface, rune's lowering |
-| old: unit/uop/test_dtype.ml predicates | priority, bitsize and predicates of the weak types | `D › data types › properties.golden` |
-| old: unit/uop/test_dtype.ml repr_surface | `dtypes.<alias>` printing | `D › data types › properties.golden` (column `dtype`) |
-| old: unit/uop/test_dtype.ml address_space | address spaces print as `global`, … | `D › address spaces › an address space prints as its enum member`: they now print as tinygrad's repr, `AddrSpace.GLOBAL`; `D › address spaces › addr_space_of_string reads the name pp prints after AddrSpace.` |
-| old: unit/uop/test_dtype.ml promotion_matrix, promotion_edges | the promotion table | `D › promotion › least_upper.golden` |
-| old: unit/uop/test_dtype.ml promotion_errors | empty list and void raise; a singleton bounds itself | `D › promotion › least_upper rejects the empty list`; `D › promotion › least_upper rejects void`; `D › promotion › a data type is its own least upper bound` |
-| old: unit/uop/test_dtype.ml least_upper_float_cases, strong_and_weak | `least_upper_float`, `strong`, `weak` | `D › defaults › projections.golden` |
-| old: unit/uop/test_dtype.ml lossless_matrix, lossless_to_weak | the lossless table, casts into weakint | `D › lossless casts › lossless_cast.golden` |
-| old: unit/uop/test_dtype.ml sum_acc | `sum_acc` per data type | `D › defaults › projections.golden` (column `sum_acc`) |
-| old: unit/uop/test_dtype.ml fp16_conversion | half rounding, the 2^-25 tie, overflow | `D › truncate › truncation.golden` (dtype=dtypes.half) |
-| old: unit/uop/test_dtype.ml bf16_conversion | 1234 to 1232, rounding above a tie, 1e39 to inf | `D › truncate › truncation.golden` (dtype=dtypes.bfloat16); `D › truncate › bfloat16 rounds once, to the nearest, ties to even` |
-| old: unit/uop/test_dtype.ml fp8_conversion | 8-bit encodes, saturation, NaN for infinities without one | `D › storage › truncation.golden`; `D › truncate › an infinity is NaN in an 8-bit float without infinities` |
-| old: unit/uop/test_dtype.ml storage_format_mapping | each data type maps to an Nx_dtype scalar | dropped: tolk is a compiler with no nx dependency, so its data types map to no storage format of nx's |
-| old: unit/uop/test_dtype.ml integer_truncation | integer wrapping; floats rejected | `D › truncate › truncation.golden` (rows `raises TypeError`); `D › truncate › an integer wraps modulo two to its width` |
-| old: unit/uop/test_dtype.ml storage_formats | `storage_fmt` | `D › defaults › projections.golden` (column `storage_fmt`) |
-| old: unit/uop/test_dtype.ml truncation_surface | bool of NaN is true, wrapping, saturation, bf16 | `D › truncate › truncation.golden` |
-| old: unit/uop/test_dtype.ml storage_roundtrips | storage words of bf16 and fp8, negative zero | `D › storage › truncation.golden`; `D › storage › decode.golden`; `D › storage › storage round-trips every value` |
-| old: unit/uop/test_dtype.ml bounds | bounds of every data type; void has none | `D › data types › properties.golden`. Void's bounds are now tinygrad's, `False` and `True` |
-| old: unit/uop/test_dtype.ml float_info | `finfo`, weakfloat and ints rejected | `D › data types › finfo.golden`; `D › data types › finfo rejects every data type but the floats of known width` |
-| old: unit/uop/test_dtype.ml defaults | defaults under an unset environment | `D › defaults › projections.golden` |
-| old: unit/uop/test_dtype.ml env_dtype_parsing | DEFAULT_FLOAT and SUM_DTYPE names, aliases rejected | `D › defaults` (DEFAULT_FLOAT through `Setting.context`, not a child process); the cram test `dtype/sum_dtype.t`, in a fresh process per SUM_DTYPE, which is read once |
-| old: unit/uop/test_dtype.ml const_float_identity | one NaN, two zeros | `D › constants › zero and negative zero are different constants`; the single NaN is dropped: a constant keeps a NaN's bits (D27), `D › constants › NaNs of different bits are different constants` |
-| old: unit/uop/test_dtype.ml const_uop_float_identity | hash-consing of constant UOps | dropped: UOps, in the Ops suite (L1) |
-| old: unit/uop/test_dtype.ml properties › "promotion commutative", properties › "promotion idempotent" | lattice laws | `D › promotion › least_upper is commutative`; `D › promotion › a data type is its own least upper bound` |
-| old: unit/uop/test_dtype.ml properties › "lossless reflexive" | a cast to itself is lossless | `D › lossless casts › lossless_cast.golden` (its diagonal) |
-| old: unit/uop/test_dtype.ml properties › "sum_acc idempotent" | the accumulator accumulates in itself | `D › defaults › projections.golden` covers every data type, so the law follows from the table |
-| old: unit/uop/test_dtype.ml properties › "fp16 idempotent", properties › "bf16 idempotent", properties › "fp8 idempotent", properties › "truncate_int idempotent" | truncation is idempotent | `D › truncate › truncation is idempotent` |
-| old: unit/uop/test_uop.ml const_scalar_payload_constructors | int payload coerced to float, NaN canonical, zeros distinct, Invalid kept | `D › const › const.golden`; `D › constants` |
-| old: unit/uop/test_uop.ml scalar_float_to_weak_integer | a weakint beyond 64 bits prints in full | `D › constants › const_repr.golden` (const=18446744073709551616, -2^799) |
-| old: unit/uop/test_weak.ml (every test) | weak commits in graphs | dropped: UOp graphs, in the Uop_weak suite (L3) |
 
 ## Op
 
-An old test's line is the line of the call its assertion checks.
-
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: `unit/uop/test_ops.ml:123` op order matches vendored tinygrad | the operations and their order are tinygrad's | `Tolk.Op › Op › declares tinygrad's operations in tinygrad's order`, `Tolk.Op › Set.to_list › of all is the declared operations`; the golden replaces running Python at test time |
-| old: `unit/uop/test_ops.ml:64` op order matches vendored tinygrad | BACKEDGE spliced in from a second checkout ahead of the pin move | dropped: tinygrad HEAD declares BACKEDGE itself, and the golden records it |
-| old: `unit/uop/test_ops.ml:146` GroupOp memberships match vendored tinygrad | each group's members are tinygrad's | `Tolk.Op › Named sets › hold tinygrad's members` (one case per tinygrad operation, checking every group column) |
-| old: `unit/uop/test_ops.ml:154` predicates match public groups | `is_unary` and the other predicates agree with the group lists | dropped: the interface has no per-group predicates; `Set.mem` is the membership test, pinned by the `Tolk.Op › Set.mem` group |
-| old: `unit/uop/test_uop.ml:98` Ops and dtype access | `Add` is an ALU operation | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.ADD` |
-| old: `unit/uop/test_uop.ml:184` Ops tinygrad order | the full hand-written order, with WAIT, REWRITE_ERROR and PYLITERAL | `Tolk.Op › Op › declares tinygrad's operations in tinygrad's order`; WAIT is gone from tinygrad HEAD; REWRITE_ERROR and PYLITERAL: `Tolk.Op › Op › has no counterpart for exactly REWRITE_ERROR and PYLITERAL` |
-| old: `unit/uop/test_uop.ml:192-193` Ops.Group algebra | `mem` finds `Add` in binary and rejects `Range` | `Tolk.Op › Set.mem › of of_list is membership of the list`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.ADD`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.RANGE` |
-| old: `unit/uop/test_uop.ml:194` Ops.Group algebra | `union` merges two lists without duplicates | `Tolk.Op › Set.mem › of union is membership of either`, `Tolk.Op › Set.to_list › of of_list is the listed operations in declaration order, once each`; the order changes from first occurrence to declaration order, since a group is a set |
-| old: `unit/uop/test_uop.ml:198` Ops.Group algebra | `without binary comparison` removes the comparisons | `Tolk.Op › Set.mem › of diff is membership of the first and not the second`, `Tolk.Op › Set.diff › removes Threefry from alu and keeps the rest` |
-| old: `unit/uop/test_uop.ml:219` Ops.Group algebra | reduce is Add, Mul and Max | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.ADD`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.MUL`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.MAX` |
-| old: `unit/uop/test_uop.ml:221` Ops.Group algebra | defines holds Buffer, Alloc and Param | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.BUFFER`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.ALLOC`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.PARAM` |
-| old: `unit/uop/test_uop.ml:223` Ops.Group algebra | irreducible holds Param and Getaddr | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.PARAM`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.GETADDR` |
-| old: `unit/uop/test_uop.ml:225` Ops.Group algebra | broadcastable leaves out Group | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.GROUP` |
-| old: `unit/uop/test_uop.ml:227,229` Ops.Group algebra | Cdiv, Cmod, Floordiv and Floormod are binary | `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.CDIV`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.CMOD`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.FLOORDIV`, `Tolk.Op › Named sets › hold tinygrad's members › ops.golden › op=Ops.FLOORMOD` |
-| old: `unit/uop/test_uop.ml:230` Ops.Group algebra | predicates agree with the group lists | dropped: no predicates, as for `test_ops.ml:154` |
 | tinygrad: `uop/__init__.py` (no test file targets it) | `str` and `repr` of an operation are `Ops.<NAME>` | `Tolk.Op › Op › pp is Ops. followed by the name` and the golden's `op` column |
 | tinygrad: `uop/__init__.py` (no test file targets it) | the enum's integer values order the toposort | `Tolk.Op › Op order › compare agrees with tinygrad's integer order` |
 | tinygrad: `uop/__init__.py` (no test file targets it) | `auto()` values are unique across every `FastEnum` subclass | dropped: OCaml variants of distinct types never compare equal; `X86Ops` belongs to the renderer's section |
@@ -417,135 +329,6 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_int_binop (the dtype lines) | shifts and bitwise operations of weak and committed integers keep the left operand's type, and floats are refused | `O › data types › dtypes_of.golden` (op=Ops.SHL, Ops.SHR, Ops.AND, Ops.OR, Ops.XOR) |
 | tinygrad: null/test_tensor_uop_representation.py (5 tests) | a realized `Tensor` is a BUFFER | the engine's section (L7): realization is `tolk.engine`'s |
 
-### old tolk: unit/uop/test_uop.ml, and the bounds of unit/codegen/test_simplify.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/uop/test_uop.ml full_width_scalar_bindings | int64 extremes bind, pass through `vals` and infer | `O › bounds › a constant at its type's edge has exact bounds`; `O › variables › bind binds a value within the range`; dropped for `vals` and `sym_infer`: variable values are OCaml ints, as the executor passes them |
-| old: unit/uop/test_uop.ml constants_preserve_operand_shape | `const_like` keeps shape and type | `O › constants › const_like expands to the node's shape, in its type`; `O › graphs › constants_like.golden` |
-| old: unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types, binary_argument_layout, incomplete_program_has_no_binary | `to_elf` and its argument layout | Device's section: `to_elf` becomes one of its functions (D4) |
-| old: unit/uop/test_uop.ml commutative_axes_use_lexical_argument_order | `simplify` orders ranges | Symbolic's section |
-| old: unit/uop/test_uop.ml ops_access, ops_tinygrad_order, group_algebra | operations and their groups | Op's section |
-| old: unit/uop/test_uop.ml hashcons_identity | equal constructions are one node | `O › identity › building a graph twice gives the same node` |
-| old: unit/uop/test_uop.ml hashcons_churn_compacts_dead_buckets, hashcons_resize_discards_retired_bucket_accounting | the old hash table's buckets | dropped: they test the old table's internals; the contract is `O › identity › a node nothing references is collected` |
-| old: unit/uop/test_uop.ml concurrent_buffer_slots | slots from several domains are distinct | `O › storage › unique_num never returns a number twice, from any domain`; `reserve_buffer_slots` is dropped (not in tinygrad) |
-| old: unit/uop/test_uop.ml add_has_two_srcs, infix_builds_mul | construction and operators | `O › graphs › subtraction.golden`; `O › elementwise › the operators are the named operations` |
-| old: unit/uop/test_uop.ml validity_accessors_accept_invalid_and_generic_values | `get_idx`/`get_valid` of Invalid and plain values | `O › graphs › validity.golden` |
-| old: unit/uop/test_uop.ml bool_folds_are_logical, mixed_folds_promote | `usum`/`uprod` on booleans, with promotion | `O › elementwise › usum and uprod fold booleans with or and and`; `O › elementwise › a weak constant takes the other operand's kind and stays weak`; `O › graphs › sums_and_products.golden` |
-| old: unit/uop/test_uop.ml param_arg_symbolic_constructor | a variable is a scalar parameter with bounds | `O › variables › a variable is a named scalar with a range`; `O › arguments › reprs.golden` (name=variable) |
-| old: unit/uop/test_uop.ml arithmetic_helpers_tinygrad_parity | the division operators, `const_factor`, `divides`, `divide_exact`, `gcd` | `O › graphs › division.golden`; `O › divisibility` (every test); `O › divisibility › a typed constant is a cast, whose divisors are not known` records tinygrad's answer for a typed constant, where the old suite divided it |
-| old: unit/uop/test_uop.ml bind_requires_concrete_value, bind_validates_range, unbind_splits_bound_variables | `bind`, `unbind` | `O › variables` (every test); the `as_bind` view is dropped: a bound variable is its argument's value |
-| old: unit/uop/test_uop.ml integer_bounds_parity | bounds of empty ranges, hardware indices, floor division and remainder, int64 and uint64 edges | `O › bounds › a hardware index counts from 0 to below its end`; `O › bounds › an empty range divides to 0`; `O › bounds › binary_bounds.golden`; `O › bounds › a constant at its type's edge has exact bounds` |
-| old: unit/uop/test_uop.ml wrapping_integer_bounds, unsigned_arithmetic_bounds_cover_emission | bounds widen to the type when arithmetic may wrap | `O › bounds › a committed integer that can leave its type has its bounds`; `O › bounds › an integer cast to a signed type it leaves wraps`; `O › bounds › bounds hold the value a committed integer wraps to`; the rows of `O › bounds › binary_bounds.golden` with dtype=dtypes.char, dtypes.uchar and dtypes.uint |
-| old: unit/uop/test_uop.ml cast_bounds | casts keep what fits | `O › bounds › cast_bounds.golden` |
-| old: unit/uop/test_uop.ml flat_storage_parameters | a parameter is flat storage viewed as its shape | `O › graphs › storage.golden`; `O › graphs › symbolic_storage.golden`; `O › shapes › max_shape takes a symbolic size's greatest value`; the image parameter is dropped (images are not ported) |
-| old: unit/uop/test_uop.ml backward_slice_tracks_shared_dependencies | `backward_slice` | `O › graphs › backward_slice is the reached nodes without the root` |
-| old: unit/uop/test_uop.ml allocations_preserve_shape_and_address_space | `alloc` keeps shape, type and address space | `O › graphs › storage.golden`; `O › graphs › storage_like.golden`; the rejection of a local `alloc` with a device is dropped: tinygrad checks it in `placeholder` only (`O › storage › placeholder rejects a device for local storage`) |
-| old: unit/uop/test_uop.ml placeholder_checks_shape_product, max_numel_checks_host_range, max_numel_handles_zero_after_large_dimensions | sizes past the largest int, and empty axes | `O › shapes › placeholder rejects a size past the largest int`; `O › shapes › max_numel is 0 when an axis is empty` |
-| old: unit/uop/test_uop.ml movement_dimensions_do_not_wrap | a shrink past the largest int is rejected | `O › shapes › a shrink past the largest int is rejected, not wrapped` |
-| old: unit/uop/test_uop.ml bitcast_dimensions_remain_exact_until_host_conversion | a byte count past the largest int | dropped: sizes are OCaml ints; see `O › shapes › placeholder rejects a size past the largest int` |
-| old: unit/uop/test_uop.ml exact_symbolic_bounds | bounds are exact at any size; NaN bounds; a fractional cast | `O › bounds › bounds are exact integers, whatever their size`; `O › bounds › a NaN constant has its type's bounds`; `O › bounds › a typed constant outside its type has the type's bounds`; `parse_valid` is Symbolic's section |
-| old: unit/uop/test_uop.ml stack_stage_slice_constructors, stack_promotes_all_operands, stack_prepends_leading_dim | stacks and stages | `O › graphs › stacks.golden`; `O › shapes › a stack prepends its length`; `O › shapes › a stage puts its ranges' sizes in front` |
-| old: unit/uop/test_uop.ml uop_constructor_parity_shortcuts | shortcuts that return the node, an index of a stack | `O › elementwise › a cast or bitcast to the node's own type is the node`; `O › kernel nodes › an index of a stack by a constant is the element`; `O › kernel nodes › an index of a stack by a negative constant counts from the end, as a Python tuple`; `O › kernel nodes › an end of no ranges, and an after of nothing, are the node`; `O › elementwise › contiguous stages a placed value, and is the node otherwise`; the rendered strings are Render's |
-| old: unit/uop/test_uop.ml const_scalar_payload_constructors | typed constants, NaN, -0.0, Invalid | `O › graphs › typed_constants.golden`; `O › identity › NaN constants of different bits are different nodes`; `O › identity › zero and negative zero are different nodes`; `O › constants › Invalid ignores the type` |
-| old: unit/uop/test_uop.ml call_constructor_parity | `call` and `call_with_outputs` | `O › calls › call rejects a body that computes a value`; `O › calls › call rejects a range leaking out of its body, but a device range`; `O › graphs › outputs.golden` |
-| old: unit/uop/test_uop.ml deviceless_partition_selection | an MSTACK of unplaced lanes | dropped: a placement names its devices (`device` has no absent lane), as tinygrad's `device` returns a tuple of strings |
-| old: unit/uop/test_uop.ml property_helpers_parity | sharding axis, shard shapes, bounds, movement arguments, stages, storage views, call output shapes | `O › several devices` (axis, sharding, shard shapes and bounds tests); `O › movement › marg reads each movement's argument and rejects other nodes`; `O › storage › a stage is its own base and storage, without buffer identity`; `O › storage › buf_uop is the storage a node accesses`; `O › graphs › symbolic_outputs.golden` (a call output's shape takes the call's argument); `O › graphs › constants_like.golden` |
-| old: unit/uop/test_uop.ml reduce_layouts | tensor and kernel reductions | `O › graphs › reductions.golden`; `O › graphs › kernel_nodes.golden` |
-| old: unit/uop/test_uop.ml binary_and_getaddr_dtypes | BINARY is bytes, GETADDR is uint64 | `O › shapes › binary code is a vector of its bytes`; `O › graphs › getaddrs.golden` |
-| old: unit/uop/test_uop.ml void_and_value_op_shapes | effects have no shape, typed instructions are scalars | `O › shapes › shape_opt is None for effects and program structure`; `O › shapes › a typed instruction is a scalar, and a custom node broadcasts its sources` |
-| old: unit/uop/test_uop.ml prepend_expand | an expand prepends | `O › shapes › an expand prepends its sizes` |
-| old: unit/uop/test_uop.ml bitcast_size_change | a bitcast rescales the last axis | `O › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
-| old: unit/uop/test_uop.ml child_ops_reports_child_op_set | the set of a node's source operations | dropped: it is the matcher's private early-reject memo; its behaviour is `O › Pattern_matcher › early_reject skips a rule unless the sources hold its operations` |
-| old: unit/uop/test_uop.ml property_caches_release_nodes | memoized properties do not keep nodes alive | `O › identity › a node nothing references is collected` |
-| old: unit/uop/test_uop.ml exec_alu_folds_and_absorbs_invalids, exec_alu_exact_scalars, scalar_width_boundaries, exec_alu_weak_intermediates, exec_alu_trunc_keeps_nonfinite | `exec_alu` | `O › exec_alu › exec_alu_values.golden`; `O › exec_alu › truncating is Dtype.truncate of the exact result`; `O › exec_alu › Invalid poisons every binary operation` |
-| old: unit/uop/test_uop.ml exec_alu_float_division | FDIV folds with IEEE values | dropped: tinygrad's `exec_alu` has no FDIV (`O › exec_alu › exec_alu_values.golden` row op=Ops.FDIV raises); division folds through RECIPROCAL, whose rows hold the IEEE values |
-| old: unit/uop/test_uop.ml scalar_float_to_weak_integer | a float becomes a weak integer exactly | Dtype's section (`Dtype.const`) |
-| old: unit/uop/test_uop.ml alu_unary_promotes_transcendentals | transcendentals widen to a float | `O › data types › dtypes_of.golden` (op=Ops.SQRT, Ops.EXP2, Ops.RECIPROCAL); the rejection of a binary operation is dropped: `alu` applies an operation as given |
-| old: unit/uop/test_uop.ml division_promotes_integer_operands | FDIV of integers is a float | `O › data types › dtypes_of.golden` (op=Ops.FDIV); its folding is Symbolic's |
-| old: unit/uop/test_uop.ml runtime_realization_state_parity | realized buffers | the engine's section (L7): realization is `tolk.engine`'s |
-| old: unit/uop/test_uop.ml semantic_tag_and_side_metadata | a tag is identity, not in the key; metadata aside | `O › identity › a tag is part of the node`; `O › key › ignores tags`; metadata is dropped (not ported) |
-| old: unit/uop/test_uop.ml info_function_names_follow_tinygrad | kernel function names | `O › arguments › function_name is the name as an identifier`; the program's name is Renderer's |
-| old: unit/uop/test_uop.ml cache_info_semantic_key_parity | the key tells beams apart and ignores aux | `O › key › tells arguments apart`; `O › key › tells apart an operation, a type, an argument and a source`; `O › key › ignores a call's auxiliary data`; serialization is dropped (not ported) |
-| old: unit/uop/test_uop.ml remove_all_tags_parity | `remove_all_tags` | `O › module matchers › remove_all_tags removes every tag, and leaves an untagged graph alone`; metadata is dropped (not ported) |
-| old: unit/uop/test_uop.ml program_constructor_prefix_layouts | PROGRAM source layouts | Spec's section: the interface builds programs with `v` |
-| old: unit/uop/test_uop.ml program_info_from_sink_parity, program_launch_dims_floor_divmod | `ProgramInfo.from_sink`, launch sizes | `O › programs` (every test) |
-| old: unit/uop/test_uop.ml sym_infer_host_scalars | `sym_infer` on casts, bound variables, huge values | `O › sym_infer` (every test); values past the largest int are dropped: `sym_infer` returns an OCaml int |
-| old: unit/uop/test_uop.ml debug_prints_toposort_like_tinygrad, debug_prints_ranges_and_supplied_list_sources, debug_prints_tinygrad_dtype_reprs, debug_prints_float_and_special_args_like_tinygrad, debug_prints_direct_string_args_like_tinygrad, debug_prints_ranges_in_tinygrad_arg_order, debug_prints_reduce_arg_tuple, debug_listing_omits_tags | the listing `print_uops` writes | Render's section; the argument texts are `O › arguments › reprs.golden` |
-| old: unit/uop/test_uop.ml debug_prints_rich_args_dataclass_style | argument reprs | `O › arguments › reprs.golden`; `O › arguments › each payload formats as its argument does`; the `Opt` repr is in the Opt section |
-| old: unit/uop/test_uop.ml debug_print_ignores_side_metadata | metadata is not printed | dropped: metadata is not ported |
-| old: unit/uop/test_uop.ml upat_matches_add, upat_captures_operands | a pattern matches and names | `O › Upat › matches an operation, and no other`; `O › Upat › match_ names the nodes of each way a pattern matches` |
-| old: unit/uop/test_uop.ml pattern_matcher_rewrites | identity rules | `O › fixed points` (the rule `x + 0`) |
-| old: unit/uop/test_uop.ml upat_operator_surface_matches_tinygrad | `/`, `//`, `%`, `cdiv`, `cmod` patterns | `O › elementwise patterns › floor division and remainder operators match their operations`; `O › elementwise patterns › a binary pattern matches the node its operation builds` |
-| old: unit/uop/test_uop.ml pattern_matcher_context_rewrites | a rule reads a context | `O › Pattern_matcher › rule_ctx reads the context`; `O › Pattern_matcher › with_ctx joins a matcher without context to one with` |
-| old: unit/uop/test_uop.ml upat_matches_node_tags | tags narrow a pattern | `O › Upat › a tag narrows the nodes a pattern matches` |
-| old: unit/uop/test_uop.ml upat_numeric_literals | arguments compare exactly as numbers | `O › Upat › matches integers and floats exactly`; `O › Upat › matches an argument as a number: 0, 0.0 and false are equal` |
-| old: unit/uop/test_uop.ml pattern_matcher_rejects_opless_rules, context_matcher_rejects_opless_rules | a rule needs an operation | `O › Pattern_matcher › v rejects a rule whose pattern has no operation` |
-| old: unit/uop/test_uop.ml custom_early_reject_skips_callback | `early_reject` | `O › Pattern_matcher › early_reject skips a rule unless the sources hold its operations` |
-| old: unit/uop/test_uop.ml upat_dtype_matches_scalar_of_vector | a scalar type matches a vector | dropped: tinygrad HEAD has no vector types; `O › Upat › matches a type among several` |
-| old: unit/uop/test_uop.ml upat_explicit_source_patterns | fixed, permuted, repeated and alternative sources | `O › Upat › src matches the sources in order, and exactly as many`; `O › Upat › perm matches the sources in any order`; `O › Upat › each matches every source`; `O › Upat › allow_any_len takes more sources, never fewer`; `O › Upat › any matches through any of its alternatives` |
-| old: unit/uop/test_uop.ml upat_matches_reduce_arg | a reduce pattern's operation | `O › Upat › a reduce pattern names its operation in the argument` |
-| old: unit/uop/test_uop.ml upat_rejects_reserved_ctx_capture | the name `ctx` | `O › Upat › v rejects two ways of matching sources` (the name `ctx` is allowed, as tinygrad's interpreter allows it) |
-| old: unit/uop/test_uop.ml upat_permutation_matches_are_deduplicated | one naming per distinct match | dropped: tinygrad lists a naming per permutation of distinct source patterns; `O › Upat › match_ names the nodes of each way a pattern matches` |
-| old: unit/uop/test_uop.ml pattern_matcher_ignores_self_replacement | a rule returning its node declines | `O › Pattern_matcher › the first rule that matches and does not decline wins` |
-| old: unit/uop/test_uop.ml graph_rewrite_walk_does_not_enter_replacements | walk | `O › walk › top-down, does not enter a replacement` |
-| old: unit/uop/test_uop.ml graph_rewrite_bpm_runs_before_post_order | `bpm` then `pm` | `O › graph_rewrite › bpm rewrites before the sources and the matcher after them` |
-| old: unit/uop/test_uop.ml graph_rewrite_walk_bpm_short_circuits_replacement | a walk's `bpm` match skips the subtree | `O › walk › both ways, a bpm match skips the node's sources and its matcher` |
-| old: unit/uop/test_uop.ml graph_rewrite_bottom_up_gate_skips_post_and_children | a gate | `O › graph_rewrite › a gate keeps a bottom-up node and leaves its sources unvisited` |
-| old: unit/uop/test_uop.ml graph_rewrite_walk_bottom_up_gate_skips_post_and_children | a gate in a walk | dropped: tinygrad's walk does not catch the gate (question sent to the implementer) |
-| old: unit/uop/test_uop.ml graph_rewrite_enters_native_callee | a callee's dependencies are rewritten with the caller | dropped: tinygrad leaves call bodies alone without `enter_calls` (`O › calls › a body is rewritten only under Enter, its arguments always`) |
-| old: unit/uop/test_uop.ml graph_rewrite_skips_call_body_by_default | the body is left, the arguments rewritten | `O › calls › a body is rewritten only under Enter, its arguments always` |
-| old: unit/uop/test_uop.ml graph_rewrite_pins_call_body_on_every_path | a body reached another way is left alone | dropped: tinygrad rewrites a node reached outside the call; `O › calls › a body shared with a sibling is left alone, the sibling rewritten` |
-| old: unit/uop/test_uop.ml graph_rewrite_detects_bottom_up_cycles, graph_rewrite_detects_top_down_cycles | cycles are rejected | `O › graph_rewrite › rejects rules that never settle, whatever the direction` |
-| old: unit/uop/test_uop.ml after_closes_ranges_from_dependencies | an after closes what its dependencies end | `O › ranges › an end closes its ranges, and an after ordered on it too` |
-| old: unit/uop/test_uop.ml shared_ending_dependencies_have_bounded_allocations | ranges of shared barriers allocate little | dropped: an allocation measure of the old range cache; ranges are computed over a gated toposort (`O › shapes › the shape of a deep graph needs no deep recursion` shows the shape) |
-| old: unit/uop/test_uop.ml nested_ending_dependencies_preserve_live_range_order, range_order_and_membership_share_scope | ranges through nested ends, in order | `O › ranges › an after of a barrier over an end closes the ended range`; the order and `ranges_subset` are dropped: the interface leaves the order open, and `ranges_subset` is not in tinygrad |
-| old: unit/uop/test_uop.ml linear_closes_ranges | LINEAR closes its ranges | `O › ranges › a linear program closes the ranges it lays out` |
-| old: unit/uop/test_uop.ml resolve_decides_comparisons_from_bounds | `resolve` | `O › resolve › resolve takes the default when the comparison is undecided`; `O › resolve › resolve rejects a node that is not boolean` |
-| old: unit/uop/test_uop.ml smax_smin_fold_when_bounds_decide | `smax`/`smin` | `O › resolve › smax and smin of integers are integers`; `O › resolve › smax and smin of a symbolic size bound it as max and min do`; folding to a node is Symbolic's |
-| old: unit/uop/test_uop.ml sprod_simplifies | `sprod` | `O › Sint › prod multiplies from 1`; folding is Symbolic's |
-| old: unit/uop/test_uop.ml inferred_broadcast_shapes_are_checked, broadcast_shape_symbolic_and_raising | broadcasting | `O › shapes › broadcast_shape aligns right and keeps the size that is not 1`; `O › shapes › broadcast_shape rejects two sizes other than 1`; `O › shapes › an elementwise operation rejects sources that do not broadcast` |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "const int", "const bool", "define_var", "vectorize bounds" | bounds of constants, variables and stacks | `O › bounds › a constant is its own bounds`; `O › bounds › a comparison of constants is decided`; `O › bounds › a variable offset or scaled moves its bounds`; `O › bounds › a stack's bounds span its values, Invalid left out` |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "range" | a range counts from 0 below its end | `O › bounds › a hardware index counts from 0 to below its end`; `O › bounds › an empty range divides to 0` |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "add", "sub", "neg", "mul with negative" | sums, differences and products of intervals; a negation that may leave its type | `O › bounds › a variable offset or scaled moves its bounds`; `O › bounds › binary_bounds.golden` (op=Ops.ADD, Ops.SUB, Ops.MUL); `O › bounds › a committed integer that can leave its type has its bounds`; `O › bounds › bounds hold the value a committed integer wraps to`. The old `neg` case gave `-r` for `r` in `[0, 3]` the whole int32 range; the negation fits, and its bounds are `[-3, 0]` |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "idiv positive", "mod constant", "cmplt known true", "cmplt unknown" | division, remainder and comparison | `O › bounds › binary_bounds.golden` (op=Ops.FLOORDIV, Ops.FLOORMOD, Ops.CMPLT) |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "max", "where int", "and mask", "shl constant", "shr constant" | maxima, selections, masks and shifts | `O › bounds › maximum then minimum clamps`; `O › bounds › a selection spans both branches`; `O › bounds › a mask bounds a variable by the mask`; `O › bounds › a shift by a constant shifts the bounds` |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax "float binary falls back to dtype" | a float operation has its type's bounds | `O › bounds › a product with an unbounded float is unbounded, never NaN` |
-
-### old tolk: unit/uop/test_spec.ml, unit/uop/test_serialize.ml, unit/frontend/test_frontend.ml, unit/test_contiguous_view.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/uop/test_spec.ml "Where non-bool cond rejected", "Cmplt returns bool", "Stack derives child dtype", "Empty Stack void accepted" | the types construction derives | `O › data types › dtypes_of.golden`; `O › shapes › a stack prepends its length` |
-| old: unit/uop/test_spec.ml "Param without Param_arg rejected", "Buffer without Param_arg rejected" | storage needs a ParamArg | `O › data types › an operation whose type is its argument's needs that argument` |
-| old: unit/uop/test_spec.ml "Reduce op arg required", "Reduce rejects old Op arg" | a reduction's argument | dropped: `arg`'s `Reduce` constructor makes both unrepresentable |
-| old: unit/uop/test_spec.ml "call outputs reject invalid positions" | `output_pos` | `O › calls › call_with_outputs rejects output positions that do not ascend within the arguments` |
-| old: unit/uop/test_spec.ml "bind accepts a variable and constant", "bind accepts a 64-bit variable", "variable supplies the bound literal dtype" | `bind` | `O › variables › bind binds a value within the range`; `O › bounds › a constant at its type's edge has exact bounds` |
-| old: unit/uop/test_spec.ml "bind rejects a nonconstant value", "bind rejects a call parameter" | `bind` refuses a node or a parameter | dropped for the node: `bind` takes a value; `O › variables › bind rejects a bound variable, a value out of range, and a value off its multiple` rejects a parameter |
-| old: unit/uop/test_spec.ml "Movement validates shape contracts" | movements check their shapes | `O › shapes › a movement checks its argument against its source's shape` |
-| old: unit/uop/test_spec.ml (every other test) | the specification's verdicts | Spec's section |
-| old: unit/uop/test_serialize.ml "node tags round-trip" | a tag reads back | `Graph › a graph reads back as itself ›` "a tuple tag", "a bytes tag", "a string tag" |
-| old: unit/uop/test_serialize.ml "split range identities and WMMA axes round-trip" | tensor core axes and split ranges read back | `Graph › a graph reads back as itself ›` "a tensor core product", "a range" |
-| old: unit/uop/test_serialize.ml "compiled target survives serialization and separates program keys", "compiled program round-trips physically", "semantic_key is preserved" | a program and its target read back as the same node, so with the same key | `Graph › a graph reads back as itself › a program` |
-| old: unit/uop/test_serialize.ml "import reuses live structurally-equal nodes" | reading gives the live node | `O › identity › building a graph twice gives the same node` (hash-consing) |
-| old: unit/uop/test_serialize.ml "import rejects malformed input" | malformed text is refused | `Graph › reading ›` (every test) |
-| old: unit/uop/test_serialize.ml "deep chains round-trip without stack overflow" | a deep graph reads back | `Graph › a graph reads back as itself › a chain of 100000 nodes` |
-| old: unit/uop/test_serialize.ml "export rejects gradient functions" | a gradient function is not written | dropped: rune owns differentiation, and the format writes no function (test/README.md) |
-| old: unit/uop/test_serialize.ml "imported internal buffer slots can collide" | slots of read buffers | dropped: slots are the caller's (D3) |
-| old: unit/uop/test_serialize.ml "cross-process export/import lands on this universe" | reading in another process | dropped: the graph format has no process universe |
-| old: unit/frontend/test_frontend.ml movement group (reshape, -1, same shape, size mismatch, expand, -1 axis, permute, negative axes, flip, pad, large padding, shrink, squeeze, flatten, unflatten) | movements on UOps | `O › graphs › movement.golden`; `O › graphs › expansion.golden`; `O › graphs › squeezes.golden`; `O › movement` (every test); unsqueeze, transpose, repeat, unfold and split are dropped (not kept, plan §3 L2) |
-| old: unit/frontend/test_frontend.ml broadcast group | `broadcast_shape`, broadcasting in arithmetic, a stretch is one expand permuted back | `O › shapes › broadcast_shape aligns right and keeps the size that is not 1`; `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › graphs › expansion.golden` |
-| old: unit/frontend/test_frontend.ml elementwise group (sub, div, neg, comparisons, eq, floordiv, mod, float div, int by float divisor, minimum, sqrt, where, promotion, const_like) | elementwise construction | `O › elementwise` (every test); `O › graphs › subtraction.golden`, `division.golden`, `constant_division.golden`, `comparisons.golden`, `extrema.golden`, `unary.golden`, `selection.golden`, `constants_like.golden`; relu is dropped (not kept) |
-| old: unit/frontend/test_frontend.ml dtype group (cast, same dtype, bitcast needs concrete types, element_size, weak contiguous) | casts and their checks | `O › elementwise › a cast or bitcast to the node's own type is the node`; `O › elementwise › a bitcast rejects a weak type on either side`; `O › elementwise › element_size is the type's size, and rejects a weak type`; `O › elementwise › contiguous stages a placed value, and is the node otherwise`; `is_floating_point` is dropped (not kept) |
-| old: unit/frontend/test_frontend.ml creation group ("a weak clone has a concrete dtype and fresh storage", "empty storage rejects weak dtypes", "numel checks concrete products...", "scalar const has empty shape") | clones, empty storage, numel | `O › storage › a clone of a weak value commits its type`; `O › storage › storage rejects a weak type`; `O › shapes › ndim, numel, max_shape and max_numel read the shape`; the rest of the group is dropped (Tensor registration, zeros, ones, full: not kept) |
-| old: unit/frontend/test_frontend.ml op group (cat, stack), pool group (shrink_to, pad_to), scan group (pad_constant) | kept methods | `O › graphs › concatenation.golden`; `O › graphs › stacks.golden`; `O › graphs › movement.golden`; `O › graphs › padding.golden`; the other tests of these groups are dropped (not kept) |
-| old: unit/frontend/test_frontend.ml elementwise2 group (pow, cdiv, fmod, lshift, rshift) | kept operations | `O › graphs › powers.golden`; `O › graphs › division.golden`; `O › graphs › bitwise.golden`; round, clamp, copysign, logaddexp, lerp, isnan and the other functions are dropped (not kept) |
-| old: unit/frontend/test_frontend.ml scalar operand dtype group ("narrow int keeps its width through an int-scalar op", "a literal does not widen the tensor it meets", "scalar constructors are weak") | weak literals | `O › graphs › weak_promotion.golden`; `O › elementwise › a weak constant takes the other operand's kind and stays weak`; the activation tests are dropped (not kept) |
-| old: unit/frontend/test_frontend.ml shape_memo group | a deep diamond's shape is cheap | `O › shapes › the shape of a deep graph needs no deep recursion` |
-| old: unit/frontend/test_frontend.ml reduce, index, logspace, creation2, pad_modes, scatter, select, sort, conv groups, and the rest of op, scan, pool | `Tensor` methods | dropped: not kept (plan §3, L2); rune's lowering |
-| old: unit/frontend/test_frontend.ml assignment sharding group | assigning to sharded tensors | dropped: the `Tensor` surface is rune's |
-| old: unit/test_contiguous_view.ml (17 tests) | contiguous views of storage | Prepare's section, test by test: `contiguous_view` is one of its functions (D4) |
-
 ## Spec
 
 The suite is `Tolk.Spec` (`uop/spec/`), written `S` below.
@@ -589,42 +372,6 @@ unproved access fails.
 | tinygrad: null/test_validate_oob.py::TestShiftBounds (7 tests) | `validate_index_with_z3` | dropped: z3 is excluded (README) |
 | tinygrad: runtime/test_tensor_variable.py::TestTensorVariable (`CHECK_OOB`) | a shrink by a variable past its dimension fails at realize | dropped: needs the schedule and the runtime (L6, L9) |
 | tinygrad: null/test_const_folding.py, null/test_graph_rewrite.py, null/test_simplify_valid_idx.py, runtime/test_arange.py, runtime/test_linalg.py, runtime/test_tensor_cores.py, runtime/test_wait_loop.py, runtime/test_uops.py | set `SPEC` or `CHECK_OOB` for their own tests | dropped: they test other modules under a setting |
-| old: `unit/uop/test_spec.ml` sink_void, empty_stack_void, stack_sources_match, const_matching_dtype | sinks, empty stacks, stacks, constants pass | `S › verdicts › verdicts.golden` (an empty sink, an empty stack, a stack of int32, an int32 constant) |
-| old: `unit/uop/test_spec.ml` param_with_param_arg, buffer_with_param_arg, param_rejects_empty_arg, buffer_rejects_empty_arg | storage takes a `ParamArg` | `S › verdicts › verdicts.golden` (a parameter, a variable, a local buffer); a storage node without one cannot be built (`Ops.dtype_of`) |
-| old: `unit/uop/test_spec.ml` shared_rejects_global_buffer, tensor_accepts_global_buffer, buffer_rejects_alu_addrspace, program_buffer_rules | global buffers are tensor-only; ALU buffers fail; local and register buffers pass programs | `S › verdicts › verdicts.golden` (a global buffer, an alu buffer, a local buffer, a register buffer) |
-| old: `unit/uop/test_spec.ml` stack_derives_child_dtype, stack_rejects_mixed_dtype, stack_rejects_mixed_child_counts | stack sources share the type, a weak source passes, sources share a shape | `S › verdicts › verdicts.golden` (a stack of int32 and float32, a stack of int32 and a weak integer, a stack of a scalar and a vector) |
-| old: `unit/uop/test_spec.ml` where_bool_cond, where_rejects_non_bool_cond | a where on a boolean passes; a non-boolean condition cannot be built | `S › verdicts › verdicts.golden` (a where over float32); construction is Ops' section |
-| old: `unit/uop/test_spec.ml` cmplt_is_bool, alu_operand_scalars_match, cdiv_rejects_float, shift_count_dtypes, bitwise_rejects_float_operands | comparisons, sums, float divisions, shift counts (uint32, same type, weak; not narrower), bitwise floats | `S › verdicts › verdicts.golden` (a cmplt of int32, a sum of int32, a cdiv of float32, a shl of int8 by uint32, a shl of int32 by int32, a shl of int8 by a weak integer, a shl of uint64 by uint16, an and of float32, …); float shifts cannot be built (Ops' section) |
-| old: `unit/uop/test_spec.ml` index_accepts_integer_offsets, index_rejects_gate_source | integer indexes pass; a boolean source declines | `S › verdicts › verdicts.golden` (an index by int32, an index by a boolean) |
-| old: `unit/uop/test_spec.ml` special_accepts_raw_name, special_dtype_by_stage | weak launch dimensions in tensor graphs, int32 in programs | `S › verdicts › verdicts.golden` (a special over a weak integer, a special over int32) |
-| old: `unit/uop/test_spec.ml` group_rejects_value_source, group_after_bad_layouts | a group of values declines | `S › verdicts › verdicts.golden` (a group of a value, a group of stores); an after without sources cannot be built (Ops' section) |
-| old: `unit/uop/test_spec.ml` after_rejects_value_first_source, program_rejects_loose_after_layout | an after on a value declines, and full accepts it | `S › verdicts › verdicts.golden` (a constant after a store, a load after a store) |
-| old: `unit/uop/test_spec.ml` end_rejects_non_range_tail, program_end_range_boundaries, end_requires_an_effect | an end closes ranges around an effect | `S › verdicts › verdicts.golden` (an end of a store over a constant, … over a loop header, an end of a value over a range, an end of a store over an int32 range) |
-| old: `unit/uop/test_spec.ml` range_rejects_bad_layouts | a range needs its axis | `S › verdicts › verdicts.golden` (a range, a range with a nested axis); a range without an argument crashes tinygrad's kernel_graph rule, so it has no golden row |
-| old: `unit/uop/test_spec.ml` barrier_boundaries | a barrier passes | `S › verdicts › verdicts.golden` (a barrier) |
-| old: `unit/uop/test_spec.ml` conditional_loop_contract | a backedge on a scalar boolean passes; not on the invalid constant | `S › verdicts › verdicts.golden` (a backedge on a boolean, … on the invalid constant, … on a vector of booleans, a backedge of a bounded range); shapes are Ops' section |
-| old: `unit/uop/test_spec.ml` copy_matching_dtype, copy_rejects_device_source_layout, copy_rejects_lowered_range_sources, copy_rejects_bad_device_or_dtype | copies to a device, not to a disk; a multi-device copy carries its device range | `S › verdicts › verdicts.golden` (a copy, a copy to two devices, … without its range, a copy to a disk); positional and empty device selectors do not exist in tolk's `device` |
-| old: `unit/uop/test_spec.ml` call_reject_bad_layouts, call_source_contracts | calls of opaque bodies pass; value bodies decline | `S › verdicts › verdicts.golden` (a call of a sink, a call of a store, a call of a custom function, a call of a constant, a call of a load, a call without call info) |
-| old: `unit/uop/test_spec.ml` call_outputs_reject_invalid_positions, bind_rejects_nonconstant_value, bind_rejects_parameter, bind_accepts_64_bit_variable, bind_variable_supplies_dtype, typed_host_call_contract | constructor preconditions of calls and binds | Ops' section; `S › verdicts › verdicts.golden` (a bound variable) |
-| old: `unit/uop/test_spec.ml` bind_accepts_variable_const | a bound variable passes the tensor spec | `S › verdicts › verdicts.golden` (a bound variable) |
-| old: `unit/uop/test_spec.ml` reduce_arg_required, tensor_reduce_accepts_lowered_integer_tail, reduce_rejects_old_op_arg | reduces by a reducing operation over integer ranges | `S › verdicts › verdicts.golden` (a reduce, a reduce over ranges, … over an int32 range, … over a uint32 range, a reduce by sine, a reduce without an argument) |
-| old: `unit/uop/test_spec.ml` allreduce_layouts, allreduce_rejects_bad_device_or_dtype | allreduces by a reducing operation | `S › verdicts › verdicts.golden` (an allreduce, an allreduce by sine, an allreduce without an argument) |
-| old: `unit/uop/test_spec.ml` multi_device_selection_layouts, multi_device_stack_layouts | a selection within the shards of a multi-device value; stacks of single-device values | `S › verdicts › verdicts.golden` (a selection of a shard, a selection past the shards, a selection on one device, a stack of shards, a stack of sharded values, a stack of one value without a device, a stack of values without a device) |
-| old: `unit/uop/test_spec.ml` multi_device_multi_layouts | an unshard's axes against its source's rank and placement | `S › verdicts › verdicts.golden` (an unshard, an unshard over a derived range, an unshard missing a range, an unshard over an int32 range); the axis-range and placement checks are dropped: tinygrad's rule checks the count and types of the sharding ranges only |
-| old: `unit/uop/test_spec.ml` stage_rejects_bad_layouts | stages pass with any ranges | `S › verdicts › verdicts.golden` (a staged value, a staged value over a range); the integer-range and placement checks are dropped: tinygrad's rule accepts any stage |
-| old: `unit/uop/test_spec.ml` movement_validates_shape_contracts | movements pass the tensor spec; a pad's ends have one shape | `S › verdicts › verdicts.golden` (a reshape, an expand, a pad, a pad by a shorter end, a shrink, a permute, a flip); element counts and bounds are shapes in Ops' section |
-| old: `unit/uop/test_spec.ml` tensor_rejects_if_endif, program_control_flow_boundaries, program_accepts_if_with_shrink_index, program_rejects_bad_if_layouts, program_rejects_if_dedup_source_matrix, program_rejects_bad_endif_layouts | ifs and endifs are program-only, over an index, a cast or a shrink | `S › verdicts › verdicts.golden` (an if on an index, … on a cast, … on a shrink, … on a load, … on an int32 gate, an endif, an endif of a store) |
-| old: `unit/uop/test_spec.ml` program_rejects_invalid_const, program_rejects_weakint, program_range_forms | programs state every width | `S › verdicts › verdicts.golden` (the invalid constant, a sum of weak integers, a sum under a constant, a range, a global int32 range) |
-| old: `unit/uop/test_spec.ml` program_rejects_tensor_only_ops | copies, allreduces, reduces, stacks and selections of shards are not program nodes | `S › verdicts › verdicts.golden` (their rows, column `program`) |
-| old: `unit/uop/test_spec.ml` program_accepts_plain_load, program_accepts_cast_index_load, program_accepts_load_gate_on_load, program_rejects_load_gate_on_index, program_accepts_plain_store, program_accepts_store_gate_on_store, program_rejects_store_gate_on_index, program_rejects_nested_casted_index_source | loads and stores through an index, a cast of one, with gates on the load or store | `S › verdicts › verdicts.golden` (a load of an index, a load of a cast index, a gated load, a store to an index, a gated store, a load of a twice cast index, a store to a load, …) |
-| old: `unit/uop/test_spec.ml` program_bitcast_index_same_dtype_is_plain_index, program_rejects_real_bitcast_index_load | a load through a bitcast index declines | `S › verdicts › verdicts.golden` (a load of a bitcast index); the same-type bitcast fold is Ops' section |
-| old: `unit/uop/test_spec.ml` program_oob_disabled_accepts_out_of_bounds_load, program_oob_enabled_rejects_out_of_bounds_load, program_oob_enabled_accepts_minmax_in_bounds_load, program_oob_uses_explicit_buffer_shape, program_oob_symbolic_store_remains_rejected, program_oob_rejects_unproved_indices | `CHECK_OOB` off passes all; on, vmin and vmax against max_numel | `S › bounds › bounds.golden`; `S › bounds › an access passes iff the bounds of its index lie within the storage`; `S › bounds › without CHECK_OOB, every access passes` |
-| old: `unit/uop/test_spec.ml` program_oob_image_pointer_bypasses_bounds | images skip the check | dropped: images are excluded (README) |
-| old: `unit/uop/test_spec.ml` program_oob_false_gate_accepts_out_of_bounds_load, program_oob_symbolic_false_gate_accepts_out_of_bounds_load, program_oob_masked_symbolic_bounds_are_accepted | a gate proves an access | dropped: z3 is excluded, and an unproved access fails whatever its gate (ruling); `S › bounds › a gate never changes whether an access passes` |
-| old: `unit/uop/test_spec.ml` program_oob_masked_symbolic_lower_bound_only_rejected, program_oob_loaded_component_bounds, program_oob_offset_component_bounds, program_oob_shift_component_bounds, program_oob_distributed_scan_bounds, program_oob_distributed_metal_bounds, program_oob_affine_proof_preserves_narrowing, program_oob_affine_proof_preserves_unsigned_overflow, program_oob_affine_proof_checks_committed_constants, program_oob_unsigned_add_can_wrap (uint32, uint64), program_oob_small_unsigned_add_wraps, program_oob_committed_guard_constants, program_oob_proof_variables_are_fresh, program_oob_component_bounds_preserve_casts | the old affine prover of masked accesses | dropped: the old tolk's prover stood in for z3, which is excluded; tolk proves with vmin and vmax only (ruling) |
-| old: `unit/uop/test_spec.ml` verify_list_validates_flat_program | the list form of verification | dropped: `type_verify` takes a graph; no tinygrad caller passes a list |
-| old: `unit/uop/test_spec.ml` full_spec_has_no_catch_all | full rejects a node no rule decides | `S › verdicts › verdicts.golden` (a cast of two sources, an index by a float, … column `full`) |
-| old: `unit/uop/test_spec.ml` full_spec_accepts_intermediate_forms | full accepts loose afters, loads and stores and ends over launch dimensions | `S › verdicts › verdicts.golden` (a constant after a store, a load of a parameter, a store to a constant, an end of a store over a launch dimension, an index of a stack) |
 
 ## Transcendental
 
@@ -662,15 +409,6 @@ in every float from Float16 up.
 | tinygrad: `transcendental.py` asserts `d.dtype in TRANSCENDENTAL_DTYPES`, dictionary lookups (no test) | a function of the wrong type fails | types › `<function>` refuses a node of another type, Float16 included for the functions; types › pow2if refuses an integer of another width; types › xpow takes the other floats |
 | tinygrad: `transcendental.py` `exponent_bias` (no test) | the bias of each float, fnuz one more | bits › `exponent_biases.golden` |
 | tinygrad: `transcendental.py` `shl`, `shr` (no test) | multiplication and floor division by `2^n` | bits › shl multiplies and shr floors a division by a power of two; bits › shl and shr refuse a negative count; graphs › `shifts.golden` |
-| old: `unit/codegen/test_decompositions.ml` "exponent arithmetic uses promoting operations" | exp2's residual and split use promoting operations | graphs › `xexp2_*.golden` (every operation and data type) |
-| old: `unit/codegen/test_decompositions.ml` "exponent masks remain weak until commitment" | log2's exponent mask is a weak constant | graphs › `xlog2_*.golden` |
-| old: `unit/codegen/test_decompositions.ml` "sqrt decomposition builds Where" | SQRT becomes `xpow`, a selection at its root | patterns › `patterns_none_*.golden` |
-| old: `unit/codegen/test_decompositions.ml` "xpow refuses a width without an integer" | `xpow` of a weak float fails | dropped: the old tolk's refusal; tinygrad's `xpow` has no type check. types › xpow takes the other floats |
-| old: `unit/codegen/test_decompositions.ml` "POW promotes weak exponents before parity arithmetic" | POW's lowering to `xpow` casts a weak exponent | dropped: POW to `xpow` is Symbolic's rule (`uop/symbolic.py:452`), its suite; `xpow`'s graph is graphs › `xpow_*.golden` |
-| old: `unit/codegen/test_decompositions.ml` "log2 denormal scale uses float power" | Float32 log2 scales subnormals by `2.0 ** 64` | graphs › `xlog2_float.golden`; special values › xlog2 of the least subnormal float is -149 |
-| old: `unit/codegen/test_decompositions.ml` "sin f16 Cody-Waite casts quadrant to f32" | Float16's Cody-Waite reduction runs in Float32 | graphs › `cody_waite_half.golden`; patterns › `patterns_none_half.golden` |
-| old: `unit/test_runtime_cpu.ml` "software sine handles large arguments and word boundaries" | compiled software sine of large arguments, across the 32-bit words of 2/π | values › `values.golden` (xsin to 1e20, 39800 and inputs drawn from every exponent); accuracy › sin of each type is within an ulp; the compiled run is the executor's (L7) |
-| old: `unit/test_cstyle.ml` "transcendentals" | AMD renders native sqrt and sin | dropped: the renderer's native functions, Renderer.Cstyle's suite (L5) |
 
 ## Tc
 
@@ -689,21 +427,6 @@ they read are these goldens.
 | tinygrad: `renderer/tc.py` `TensorCore.__post_init__` (no test) | the fragments a core refuses | v › `refused.golden` (17 cases, accepted and refused) |
 | tinygrad: `renderer/tc.py` `get_cuda`, `get_amd` (no test) | the cores of an architecture | targets › `cuda.golden`, `amd.golden` |
 | tinygrad: `renderer/tc.py` dataclass `repr` | a core prints as its fields | tensor cores › repr |
-| old: `unit/codegen/test_tc.ml` "`<target>` tables are constructed" (8 tests) | every target list builds | targets › a target lists tinygrad's cores, in order |
-| old: `unit/codegen/test_tc.ml` "rejects malformed coordinates" | a bit name without a dimension and index | dropped: a bit is a variant, so a malformed name cannot be built; a negative index is v › `refused.golden` › A names a negative bit |
-| old: `unit/codegen/test_tc.ml` "rejects unequal lane counts" | lane counts differ | v › `refused.golden` › A has a lane fewer than C; B has a lane more than C |
-| old: `unit/codegen/test_tc.ml` "rejects missing own coordinates" | a fragment lacks one of its bits | v › `refused.golden` › A lacks an element; A broadcasts an N bit that C lacks; B trades an N bit for an M bit |
-| old: `unit/codegen/test_tc.ml` "rejects duplicate coordinates" | a fragment names a bit twice | v › `refused.golden` › A holds a bit twice; A holds a bit twice besides every bit of its tile; A holds a bit as a lane and as an element |
-| old: `unit/codegen/test_tc.ml` "rejects foreign element bits" | an element of another dimension | v › `refused.golden` › A's element is an N bit; B's element is an M bit; C's element is a K bit; C's lane is a K bit |
-| old: `unit/codegen/test_tc.ml` "rejects different input contraction permutations" | A and B order K differently | v › `refused.golden` › A and B order K differently |
-| old: `unit/codegen/test_tc.ml` "to_string" (6 tests), "tinygrad table names" (6 tests) | `WMMA_<dims>_<in>_<out>` names | dropped: tinygrad's cores have no name; the WMMA function's name is the renderer's (`renderer/cstyle.py:114`), Renderer.Cstyle's suite. The dims and types it spelled are tensor cores › dims, dtype_in, dtype_out |
-| old: `unit/codegen/test_tc.ml` "CUDA tile bits and element slots match the reference", "Metal tile bits map to SIMD fragment slots", "CDNA K128 places the high contraction bit in an element slot" | `axis_coords`, `base_upcast_axes`, `relabel` of three cores | tensor cores › axis_coords, base_upcast_axes, relabel_a, relabel_b (every core, those three included) |
-| old: `unit/codegen/test_tc.ml` "table composition" (6 tests) | the length and composition of each list | targets › a target lists tinygrad's cores, in order; targets › cuda_sm80 holds every core of cuda_sm75; targets › cuda_sm89 is cuda_sm80 then two cores of 8-bit floats |
-| old: `unit/codegen/test_tc.ml` "apply_tc_opt validation", "apply_tc_opt triggering", "apply_tc_opt widened operands", "apply_tc_opt padding", "apply_tc_opt WMMA construction", "apply_tc_opt with other opts" (27 tests) | the TC optimisation | dropped: `Codegen.Opt.Postrange` (L4), its suite |
-| old: `unit/codegen/test_postrange.ml` "TC basic apply creates WMMA" and the five TC tests after it | the TC optimisation over `Tc.metal` | dropped: `Codegen.Opt.Postrange` (L4), its suite |
-| old: `unit/test_cstyle.ml` "metal tensor cores follow Apple GPU family" | Metal's cores by GPU family; sm90 takes sm89's | targets › `cuda.golden` › arch="sm_90"; the Metal family is the renderer's choice (`renderer/cstyle.py:349`), Renderer.Cstyle's suite (L5) |
-| old: `unit/test_runtime_metal.ml` "tensor cores retain warp lanes across four local dimensions" and the six tensor-core tests after it | Metal runs tensor-core kernels | dropped: the executor (L7), on Metal hardware |
-| old: `parity/tc_matmul_*` (9 cases), `parity/tc_symbolic_extent` | tensor-core kernels through the pipeline, per renderer | dropped: pipeline parity cases, retired into the end-to-end suite (plan §4, kind 4) |
 
 ## Opt
 
@@ -723,8 +446,6 @@ the top is `(amount, target)` in tinygrad whether or not it spells the
 | tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `dataclass(order=True)` and `OptOps.__lt__` | `P › order › compare agrees with tinygrad where tinygrad orders` (every row); `P › order › compare is a total order`; `P › order › compare is 0 exactly on equal optimisations`; `P › order › splits into different targets are different` |
 | tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `check` and `KernelOptError` | Postrange's section: a refusal is `Scheduler.apply_opt`'s `Error`, and `apply_opts` raises it as `Invalid_argument`, so `Opt` holds the types alone |
 | tinygrad: `runtime/test_kernel_opts.py`, `runtime/test_linearizer.py`, `null/test_linearizer.py`, `runtime/test_opt_gemm.py`, `runtime/test_tensor_cores.py`, `null/test_uops.py`, `null/test_uops_stats.py`, `null/test_gen_float4.py`, `null/test_linearizer_rewrite.py`, `runtime/test_custom_kernel.py`, `null/test_custom_kernel.py` | optimisations applied to kernels, and the `KernelOptError` of those that do not apply | Postrange's section: `apply_opt` makes the checks and returns a refusal as an `Error` |
-| old: `unit/uop/test_uop.ml` debug_prints_rich_args_dataclass_style | "Opt repr" of a split into an upcast | `P › printing › pp is tinygrad's repr › reprs.golden › opt=Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))` |
-| old: `unit/codegen/test_postrange.ml`, `unit/opt_fuzz/tolk_opt_fuzz.ml` | applying optimisations | Postrange's section |
 
 ## Uop_weak
 
@@ -751,28 +472,6 @@ pass.
 | tinygrad: null/test_uops.py::TestLowerIndexDtype::test_gated_shrink_lowers_to_selected_width | a gated shrink lowers to the width its bounds need, and no weak width is left but a literal's | `W › pm_lower_weak › lower_a_gated_shrink_to_the_width_its_bounds_need.golden`; `W › laws › pm_lower_weak leaves no weak width but a literal's` |
 | tinygrad: null/test_uops.py::TestLowerIndexDtype::test_reg_buffer_size_lowers | a register buffer's size lowers | `W › pm_lower_weak › lower_a_register_buffer_size.golden` |
 | tinygrad: null/test_simplify_valid_idx.py::TestImageSimplification::test_drop_gate_committed_in_the_index_pass | committing inside the index pass leaves the gate's copy of an expression shared | dropped: runs with `indexing_simplify` on image loads, Codegen's section (L4) |
-| old: unit/uop/test_weak.ml unconstrained_int_const_commits_at_int32 | an unconstrained integer lowers to int32 | `W › pm_lower_weak › lower_an_int_to_int32.golden` |
-| old: unit/uop/test_weak.ml unconstrained_overflowing_const_commits_at_int64 | an integer beyond int32 lowers to int64 | `W › pm_lower_weak › lower_an_int_beyond_int32_to_int64.golden` |
-| old: unit/uop/test_weak.ml unconstrained_float_const_commits_at_default_float | a weak float lowers to the default float | `W › pm_lower_weak › lower_a_float_to_the_default_float.golden` |
-| old: unit/uop/test_weak.ml uint64_width_and_unrepresentable_const | an integer beyond int64 lowers to uint64; one no 64-bit integer holds is refused | `W › pm_lower_weak › lower_an_int_beyond_int64_to_uint64.golden`; `W › pm_lower_weak › an int no 64-bit integer holds cannot be lowered` |
-| old: unit/uop/test_weak.ml peer_commits_weak_const_at_its_own_width | a derivable literal stays bare beside a committed peer | `W › pm_commit_weak › peer_keeps_a_derivable_literal_bare.golden` |
-| old: unit/uop/test_weak.ml peer_commits_weak_alu_by_cast | a weak expression commits at its peer's width | `W › pm_commit_weak › peer_commits_a_weak_expression.golden` |
-| old: unit/uop/test_weak.ml all_weak_sources_stay_weak | nothing commits without a committed peer | `W › pm_commit_weak › weak_sources_stay_weak_without_a_committed_peer.golden` |
-| old: unit/uop/test_weak.ml store_commits_value_at_destination_dtype | a store commits its value | `W › pm_commit_weak › store_commits_its_value_at_the_destination.golden` |
-| old: unit/uop/test_weak.ml consumer_cast_widens | a cast widens a weak expression | `W › pm_commit_weak › cast_widens_a_weak_expression.golden` |
-| old: unit/uop/test_weak.ml consumer_cast_never_narrows | a cast never narrows below the bounds | `W › pm_commit_weak › cast_never_narrows_below_the_bounds.golden` |
-| old: unit/uop/test_weak.ml cast_preserves_operand_widths | a cast commits a division's operands at their own bounds | `W › pm_commit_weak › cast_commits_operands_at_their_own_bounds.golden` |
-| old: unit/uop/test_weak.ml consecutive_weak_casts_preserve_integer_conversion | two stacked weak casts are two conversions | `W › pm_lower_weak › lower_stacked_weak_casts_as_two_conversions.golden`; `W › laws › pm_lower_weak keeps the values of what it lowers`; the folded value is `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type` |
-| old: unit/uop/test_weak.ml weak_integer_cast_is_a_value_conversion | a weak integer cast of a float converts its value | `W › pm_lower_weak › lower_a_weak_int_cast_of_a_float_as_a_conversion.golden`; `W › pm_lower_weak › lower_a_weak_int_cast_of_a_bool_as_a_conversion.golden` |
-| old: unit/uop/test_weak.ml range_arithmetic_lowers_to_concrete_int | range arithmetic lowers to int32 | `W › pm_lower_weak › lower_range_arithmetic.golden`; `W › laws › pm_lower_weak leaves no weak width but a literal's` |
-| old: unit/uop/test_weak.ml comparison_unifies_operand_widths | a comparison's operands lower to one width | `W › pm_lower_weak › lower_a_comparison.golden` |
-| old: unit/uop/test_weak.ml gated_long_index_narrows_for_small_buffers | a gated long index into a small buffer narrows | `W › pm_lower_weak › lower_a_gated_long_index_into_a_small_buffer_to_int32.golden` |
-| old: unit/uop/test_weak.ml gated_long_index_keeps_wide_storage | a gated long index into a huge buffer keeps int64 | `W › pm_lower_weak › lower_a_gated_long_index_into_a_huge_buffer_keeps_int64.golden` |
-| old: unit/uop/test_weak.ml uncast_preserves_operand_and_result_types | a committed literal loses its cast only where the node derives the same types | `W › pm_uncast_const › uncast_a_committed_literal.golden`; `W › pm_uncast_const › uncast_keeps_literals_with_no_committed_peer.golden`; `W › pm_uncast_const › uncast_keeps_a_shifted_literal.golden` |
-| old: unit/uop/test_weak.ml uncast_keeps_a_wrapping_cast | a cast that changes the literal's value stays | `Tolk.Symbolic › symbolic_simple › constants › a comparison reads a committed constant at its width` (uncast, the literal is read at its width: D13); `W › pm_uncast_const › uncast_drops_a_cast_that_fits.golden` |
-| old: unit/uop/test_weak.ml final_constants_state_width_on_each_edge | every constant gets its width at each consumer, booleans included, and the result is stable | `W › pm_cast_const › cast_consts_state_each_edge_width.golden`; `W › laws › pm_cast_const states the width of every constant`; `W › laws › pm_cast_const is idempotent` |
-| old: unit/uop/test_weak.ml late_simplification_preserves_committed_literals | `symbolic_simple` keeps an emulated operand's width, `symbolic` exposes literals | `S › tinygrad › tests.golden › TestWeakPromotion.test_committed_const_conversion_folds`; `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type` |
-| old: parity/weak_movement_width | a weak product beyond int32, reshaped and permuted, compiles for CPU and CUDA | dropped: an end-to-end parity case of the codegen stages, Codegen's section (L4) |
 
 ## Movement
 
@@ -784,15 +483,6 @@ test of offsets that are nodes simplifies them with Symbolic's rules.
 tinygrad tests `mop_cleanup` only through the passes that include it
 (`symbolic_simple`, `earliest_rewrites`, the codegen pipeline and the jit's
 input capture); those tests belong to their passes' sections.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/uop/test_symbolic.ml "adjacent SHRINKs compose every axis offset" | two shrinks merge, their starts summed on each axis | `M › shrinks › merge_two_shrinks.golden`; `M › shrinks › merge_three_shrinks.golden`; `M › laws › mop_cleanup keeps the elements a chain denotes` |
-| old: unit/uop/test_symbolic.ml "adjacent SHRINKs retain symbolic offsets and sizes" | shrinks with node starts and sizes merge | `M › shrinks › merge_shrinks_of_symbolic_starts.golden` |
-| old: unit/uop/test_symbolic.ml "adjacent SHRINKs promote mixed offset widths" | starts of two committed widths are summed at the wider | `M › shrinks › merge_shrinks_of_symbolic_starts.golden`; the sum of two starts is `Ops`' arithmetic, whose promotion `Ops`' section pins |
-| old: unit/uop/test_symbolic.ml "adjacent scalar SHRINKs return the scalar" | two shrinks of a scalar are the scalar | dropped: a shrink of a scalar has no bounds, and tinygrad builds none (`_mop` returns the scalar); a bare one fails in `marg` |
-| old: unit/uop/test_symbolic.ml "INDEX on INDEX chains scalar coordinates" | an index of an index by scalars is one index | `M › indexing › index_an_index_by_scalars.golden` |
-| old: unit/uop/test_symbolic.ml index_stack_const_folds | a stack indexed by a constant is its source | `M › indexing › index_a_stack_by_a_constant.golden` |
 
 ## Divandmod
 
@@ -816,34 +506,6 @@ division and remainder they build is rewritten by this matcher alone.
 | tinygrad: null/test_uop_symbolic.py (the tests that build no division or remainder) | the other symbolic rules | `S › tinygrad › tests.golden › <Class>.<test>` (Symbolic's section) |
 | tinygrad: null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying an expression keeps its value | `DM › tinygrad's tests › test_fuzz_failure<n>.golden` (test_fuzz_failure1 is test_uop_symbolic.py's too); `DM › values › each rewrite of the goldens' divisions keeps the division's value`; the claim on the whole rule set is `S › tinygrad › tests.golden › TestFuzzFailure.test_fuzz_failure<n>` |
 | tinygrad: null/test_simplify_valid_idx.py (44 tests) | valid and index simplification | `S › tinygrad › tests.golden › TestValidIdxSimplification.<test>` (Symbolic's section); the image tests and `indexing_simplify` are dropped there |
-| old: unit/codegen/test_divandmod.ml positive_floor_div_does_not_rewrite_without_structure | a plain division stays | `DM › constant divisors › keep_a_plain_division.golden`; `DM › constant divisors › keep_a_plain_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml nested_div_fires | `(x // c + a) // d` merges | `DM › nested divisions › merge_nested_divisions.golden` |
-| old: unit/codegen/test_divandmod.ml nested_div_accepts_negative_inner_divisor | it merges for a negative inner divisor | `DM › nested divisions › merge_nested_divisions_by_a_negative_inner_divisor.golden` |
-| old: unit/codegen/test_divandmod.ml add_const_div_fires_for_negative_constant | the constant split holds for a negative constant | `DM › constant terms › split_a_negative_constant_out_of_a_division.golden` |
-| old: unit/codegen/test_divandmod.ml add_const_mod_splits_the_constant | `(x + c) % d` splits its constant | `DM › constant terms › split_the_constant_out_of_a_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml add_const_div_fires_for_negative_divisor | the constant split holds for a negative divisor | `DM › constant terms › split_the_constant_out_of_a_division_by_a_negative_divisor.golden`; `DM › nested divisions › split_nested_divisions_by_a_negative_divisor.golden` |
-| old: unit/codegen/test_divandmod.ml remove_nested_floormod_fires | a nested remainder in a sum drops | `DM › constant divisors › drop_a_nested_remainder_from_a_sum.golden` |
-| old: unit/codegen/test_divandmod.ml crossing_denominator_does_not_fold_zero_singleton | 0 divided by a divisor that can be 0 stays | `DM › other divisors › divide_zero_by_a_divisor_that_can_be_zero.golden` |
-| old: unit/codegen/test_divandmod.ml zero_denominator_raises_before_sentinel_bailout | a division by 0 raises whatever the numerator's bounds | `DM › zero divisors › a division of any integer by 0 raises Division_by_zero` |
-| old: unit/codegen/test_divandmod.ml singleton_quotient_floordiv_folds, singleton_quotient_floormod_folds | one possible quotient folds | `DM › one quotient › fold_a_division_with_one_quotient.golden`; `DM › one quotient › fold_a_remainder_with_one_quotient.golden`; `DM › values` |
-| old: unit/codegen/test_divandmod.ml cancel_one_sided_bounded_divisor_div, cancel_one_sided_bounded_divisor_mod | one quotient by a variable folds | `DM › one quotient › fold_a_division_by_a_variable_with_one_quotient.golden`; `DM › one quotient › fold_a_remainder_by_a_variable_with_one_quotient.golden` |
-| old: unit/codegen/test_divandmod.ml nested_single_term_mod_folds | `(a % 12) % 3` drops the inner remainder | `DM › constant divisors › drop_a_nested_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml nested_single_term_div_folds | `(a % 12) // 3` is `(a // 3) % 4` | `DM › constant divisors › nest_the_division_of_a_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml symbolic_gcd_divides_variable_denominator_div, symbolic_gcd_divides_variable_denominator_mod | a common node factor divides out | `DM › tinygrad's tests › test_symbolic_gcd_div.golden`; `S › tinygrad › tests.golden › TestSymbolic.test_symbolic_gcd_div` |
-| old: unit/codegen/test_divandmod.ml symbolic_gcd_divides_mixed_constant_factor | a common constant factor of a node divisor divides out | `DM › other divisors › divide_a_common_divisor_out_of_a_division_by_a_variable.golden`; `DM › other divisors › divide_a_common_divisor_out_of_a_remainder_by_a_variable.golden` |
-| old: unit/codegen/test_divandmod.ml factor_remainder_rejects_negative_denominator_range_for_div, factor_remainder_rejects_negative_denominator_range_for_mod | a divisor that can be negative keeps its multiples | `DM › other divisors › keep_a_division_by_a_variable_that_can_be_negative.golden`; `DM › other divisors › keep_a_remainder_by_a_variable_that_can_be_negative.golden` |
-| old: unit/codegen/test_divandmod.ml factor_remainder_still_accepts_positive_denominator_range | the multiples of a positive divisor leave | `DM › other divisors › take_the_multiples_of_a_variable_divisor_out_of_a_division.golden`; `DM › other divisors › take_the_multiples_of_a_variable_divisor_out_of_a_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml factor_remainder_floormod_splits_constant_factor_without_exact_quotient, factor_remainder_preserves_remainder_order | a constant factor splits out of a remainder, its terms in order | `DM › constant divisors › split_a_constant_factor_out_of_a_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml factor_remainder_floormod_splits_multiple_constant_factors | several constant factors split out | `DM › constant divisors › split_constant_factors_out_of_a_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml large_constant_residue_double_does_not_overflow_rewrite | huge coefficients stay exact | `DM › constant divisors › keep_a_division_of_huge_coefficients_exact.golden` |
-| old: unit/codegen/test_divandmod.ml nest_by_factor_divides_the_common_factor | `(2a + 3) // 4` divides the common factor out | `DM › constant divisors › divide_a_common_factor_out_of_a_division.golden`; `DM › constant divisors › nest_a_division_by_a_factor_of_a_term.golden` |
-| old: unit/codegen/test_divandmod.ml property_folds_are_numerically_correct | every fold keeps the value | `DM › values › each rewrite of a random division keeps its value`; `DM › values › each rewrite of the goldens' divisions keeps the division's value` |
-| old: unit/codegen/test_divandmod.ml param_multiple_of_folds_mod_and_leaves_div | a declared multiple's remainder is 0 and its division stays | `DM › declared multiples` (4 goldens) |
-| old: unit/codegen/test_divandmod.ml param_without_multiple_of_does_not_fold | an undeclared multiple's remainder stays | `DM › constant divisors › keep_a_plain_remainder.golden` |
-| old: unit/codegen/test_divandmod.ml simplify_preserves_index_values, adjacent_bit_extracts_recombine, quotient_partner_recombines_through_a_merged_divisor, shifted_quotient_partner_recombines | the whole rule set keeps values and recombines quotients with remainders | `S › laws › sym keeps the value of an integer expression where nothing wraps`; `S › symbolic_simple › recombination` (every test) |
-| old: unit/uop/test_symbolic.ml divandmod_tests (2 tests) | `Cdiv` and `Cmod` of a range by its size | dropped: tinygrad HEAD's rules fold floor division only (Symbolic's section) |
-| old: unit/uop/test_symbolic.ml "nested division commits newly built weak arithmetic" | merging nested divisions of committed integers casts the new constants | `DM › nested divisions › merge_nested_divisions_of_committed_integers.golden` |
-| old: unit/codegen/test_decompositions.ml early_floordiv_by_zero_raises, early_floormod_by_zero_raises | a division or remainder by 0 raises in the early rewrites | `DM › zero divisors › a division by the constant 0 raises Division_by_zero`; `DM › zero divisors › a remainder by the constant 0 raises Division_by_zero`; the early rewrites are Codegen's (L4) |
 
 ## Render
 
@@ -864,22 +526,6 @@ A test that renders after simplifying does so with Symbolic's rules.
 | tinygrad: `uop/render.py` `print_uops` (no test file) | the listing's columns, the sources as positions, quoted constants or `--`, the argument as `str` prints it, colour, and columns that overflow | `Tolk.Render › pp_uops › program_listing.golden`, `program_listing_colored.golden`, `partial_listing.golden`, `wide_listing.golden`, `wide_listing_colored.golden`, `an empty list prints nothing`, `prints a line per node, numbered from 0, the last not ended` |
 | tinygrad: `uop/render.py` `pretty_print` | a node's repr | dropped here: `Ops.pp`, in `Ops`' suite |
 | tinygrad: `uop/render.py` `renderer_infer`, `pyrender` | Python source | dropped: excluded (README Exclusions) |
-| old: `test/unit/uop/test_uop.ml` "committed constants render their value" | a cast of a constant is its value | `Tolk.Render › render › expressions_rendered.golden › case=typed_int` and the other `typed_*` and `forced_cast_*` cases |
-| old: `test/unit/uop/test_uop.ml` "nonconstant casts retain their width" | `(int)(x)` | `Tolk.Render › render › expressions_rendered.golden › case=cast_to_int` and the other `cast_to_*` cases |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_toposort_like_tinygrad` | the listing of a toposort, with constants as quoted sources | `Tolk.Render › pp_uops › program_listing.golden` |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_ranges_and_supplied_list_sources` | a list that leaves sources out prints `--` | `Tolk.Render › pp_uops › partial_listing.golden` |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_tinygrad_dtype_reprs` | the type column prints `dtypes.weakint`, `dtypes.float`, `dtypes.long` | `Tolk.Render › pp_uops › program_listing.golden`, `partial_listing.golden` |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_float_and_special_args_like_tinygrad` | a float constant's argument keeps `.0`; a special's name is not quoted | `Tolk.Render › pp_uops › program_listing.golden` (`1.5`, `0.0`, `gidx0`), `wide_listing.golden` (`1e+16`, `-0.0`, `nan`) |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_direct_string_args_like_tinygrad` | source text and a copy's device print without quotes | `Tolk.Render › pp_uops › wide_listing.golden` |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_ranges_in_tinygrad_arg_order` | the ranges column sorts by argument | `Tolk.Render › pp_uops › wide_listing.golden` (`m1,0_1,10,11,12,13`) |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_rich_args_dataclass_style` | `ParamArg`, `KernelInfo`, `Opt`, `Estimates`, `ProgramInfo`, `BufferizeOpts`, `CallInfo` reprs in a listing | `Tolk.Render › pp_uops › program_listing.golden`, `wide_listing.golden` (`ParamArg`, `KernelInfo`); the reprs themselves are `Ops.pp_arg`'s, in `Ops`' suite |
-| old: `test/unit/uop/test_uop.ml` `debug_prints_reduce_arg_tuple` | a reduction's argument prints `(Ops.ADD, 0)` | `Tolk.Render › pp_uops › wide_listing.golden`; `(Ops.ADD, 1)` is `Ops.pp_arg`'s, in `Ops`' suite |
-| old: `test/unit/uop/test_uop.ml` `debug_print_ignores_side_metadata` | metadata is not printed | dropped: `Ops` has no metadata table |
-| old: `test/unit/uop/test_uop.ml` `debug_listing_omits_tags` | tags are not printed | `Tolk.Render › pp_uops › wide_listing.golden` (the constant tagged `hidden`); `Tolk.Render › render › tags are not written` |
-| old: `lib/uop/render.mli` `uops_to_string ?label` | a `=== label ===` header | dropped: not in tinygrad, and no reader |
-| old: `lib/uop/render.mli` `python_float_string`, `compare_uops` | CPython's float repr; the structural order | dropped here: `Dtype.pp_const` and `Ops.compare_structure`, in their modules' suites |
-| old: `test/parity/helpers.ml` (`uops_to_string` listings) | parity cases compared as listings | dropped: graph goldens use the graph format, which keeps what a listing drops (test/README.md) |
-| old: `test/unit/codegen/test_linearizer.ml` (`Render.pp_uops` as a failure printer) | none | dropped: no claim |
 
 ## Renderer
 
@@ -919,28 +565,6 @@ once; the default process runs with `ASSERT_COMPILE=0`.
 | tinygrad: `renderer/__init__.py` `Renderer` class attributes, `render`, `Compiler()` | the base renderer's defaults | `R › v › defaults describe a target that renders nothing`, `render raises by default`, `the default compiler returns its source and caches nothing`, `native holds for every data type by default`, `keeps the fields it is given` |
 | tinygrad: `device.py` `Compiler.compile_cached` `ASSERT_COMPILE` (no test) | a miss is refused under `ASSERT_COMPILE` | `R › ASSERT_COMPILE` (5 tests: refused naming the source, refused without a cachekey, a held binary returned, refused while the disk cache is disabled, `compile` unaffected); `R › Compiler › compile_cached compiles while ASSERT_COMPILE holds 0` |
 | tinygrad: `renderer/__init__.py` `Renderer.asm`, `__reduce__`; `device.py` `Compiler.server`, `compile_server` | assembly, pickling, a compile server | dropped: the ISA path is excluded, OCaml does not pickle, and compilation workers are domains (D5) |
-| old: `unit/test_program_spec.ml` "Estimates.of_program" › "counts basic ALU ops" | two ALU ops count two | `R › estimates of hand-written kernels › counts each arithmetic operation once` |
-| old: `unit/test_program_spec.ml` "mulacc counts as 2 FLOPs" | | `R › estimates of hand-written kernels › counts a multiply-add as a multiply and an add` |
-| old: `unit/test_program_spec.ml` "wmma counts 2*M*N*K per warp, divided across threads", "wmma thread count divides the FLOP factor" | | `R › estimates of hand-written kernels › counts a tensor core product as 2NMK shared among its threads` (32 and 64 threads) |
-| old: `unit/test_program_spec.ml` "wmma FLOPs scale with the loop multiplier", "loop multiplier stacks" | | `R › estimates of hand-written kernels › counts the operations of a range once per iteration`, `multiplies the trip counts of nested ranges` |
-| old: `unit/test_program_spec.ml` "an unbounded loop contributes no multiplier" | | `R › estimates of hand-written kernels › counts a loop without trip count as one iteration` |
-| old: `unit/test_program_spec.ml` "a loop bounded by a loaded value counts at its bound" | the count takes the bound of a loaded trip count | dropped: tinygrad keeps such a trip count symbolic (`mults *= u.src[0].ssimplify()`), and the old count was a divergence without an entry |
-| old: `unit/test_program_spec.ml` "special multiplier stacks" | | `R › estimates of hand-written kernels › multiplies everything after a hardware index by its size` |
-| old: `unit/test_program_spec.ml` "load/store tracks lds and memory bytes" | | `R › estimates of hand-written kernels › counts the loads and the stores of a buffer apart in mem`, `counts the bytes a store writes` |
-| old: `unit/test_program_spec.ml` "index arithmetic excluded from FLOPs" | | `R › estimates of hand-written kernels › ignore_indexing leaves out the operations of indices` (the old walk always ignored indexing; `from_uops` does so under `ignore_indexing`) |
-| old: `unit/test_program_spec.ml` "repeated reads cap memory at buffer size" | | `R › estimates of hand-written kernels › counts every read in lds and a buffer read again once in mem` |
-| old: `unit/test_program_spec.ml` "Symbolic estimates" › "every operation contributes its symbolic loop count" | | `R › estimates of symbolic kernels › a symbolic trip count counts at the value of its variable` |
-| old: `unit/test_program_spec.ml` "adding estimates preserves equal symbolic contributions" | | `R › add and zero › add sums symbolic counts` |
-| old: `unit/test_program_spec.ml` "final FLOPs simplify a cancelling symbolic loop bound" | | `R › estimates of symbolic kernels › a trip count that simplifies to an integer counts as one` |
-| old: `unit/test_program_spec.ml` "Exact estimates" › "concrete sums retain values beyond a host integer", "nested loop multiplicities retain their exact product", "memory footprints and loop traffic retain exact byte counts", "WMMA division follows the exact numerator product", "loaded trip bounds retain the full scalar width" | counts past `max_int` stay exact | dropped: counts are `Ops.sint`, whose arithmetic raises past `int` (Ops' suite); `R › add and zero › add past max_int raises rather than wrapping` pins that nothing wraps |
-| old: `unit/test_program_spec.ml` "symbolic traffic is capped at the buffer footprint" | | `R › estimates of symbolic kernels › reads are capped at the buffer for each value of a variable` |
-| old: `unit/test_program_spec.ml` "exact estimates can be forwarded", "symbolic estimates require caller handling" | `Program_spec.Estimates.of_uop` | dropped: `Program_spec` has no counterpart; estimates are `Ops.estimates` |
-| old: `unit/test_diskcache.ml` "compiler cache policy follows nested contexts and worker snapshots" | `CCACHE` read when a compiler is made, `CACHELEVEL=0` compiles without caching | `R › Compiler › ccache is read when compiling` (read when compiling, as every setting is, D113), `compile_cached compiles every time with ccache off`, `compile_cached compiles every time with the disk cache disabled`; worker snapshots are gone with Helpers' contexts (Helpers' section) |
-| old: `unit/test_diskcache.ml` "assert compile permits hits and blocks every cache miss" | | `R › ASSERT_COMPILE` (the whole group); the old refusal raised `Compile_error`, tinygrad asserts, and tolk raises `Invalid_argument` |
-| old: `unit/runtime/cpu/test_compiler.ml` (5 tests) | Clang's output and errors | dropped here: `Compiler_cpu`'s section (L5) |
-| old: `unit/test_cstyle.ml` (`Renderer.supports_dtype Cstyle.qcom`) | a target's data types | dropped here: `Renderer.Cstyle`'s section (L5); QCOM is excluded |
-| old: `unit/test_runtime_cpu.ml` `test_emulated_long_buffer_arithmetic`, `test_emulated_long_division`, `test_emulated_compact_float_storage` (`~supports_dtype`) | emulated types in generated code | dropped here: the decompositions' sections (L4) and CPU execution (L5) |
-| old: `lib/renderer.mli` `supported_ops`, `all_supported_ops`, `emulated_float_dtypes`, `image_pitch_alignment`, `with_target`, `with_compiler` | | dropped: not in tinygrad's `Renderer`; images are excluded |
 
 ## Decomp_op
 
@@ -977,30 +601,6 @@ laws check every quotient against `Bigint.div` in the interpreter.
 | tinygrad: `codegen/decomp/op.py` `get_simplifying_rewrite_patterns` (no test) | each rule with and without SHR, AND and THREEFRY | `DO › simplifying_patterns › simplifying_{floordiv,floormod,threefry}_{none,shr_and,shr_and_threefry}.golden`; `DO › simplifying_patterns › a target with Threefry keeps it` |
 | tinygrad: `codegen/decomp/op.py` `get_late_rewrite_patterns` (no test) | each rule with and without its operations | `DO › late_patterns › late_<family>_<ops>.golden` (max, logical, mul, cdiv, negation, comparison, extremes, mulacc, division); `DO › late_patterns › the late rules keep the values of integer expressions` |
 | tinygrad: `codegen/decomp/op.py` power-of-two rules, `fast_idiv` and the one-integer-between rule on `True`, a float or `Invalid` (no test) | CPython's `TypeError`s and `True == 1` (README, CPython rows) | `DO › constants other than integers are declined` (four tests) |
-| old: `unit/codegen/test_decompositions.ml` "magicgu is correct", "magicgu supports wide bounds" | `x // d = (x * m) >> s` up to `max_int` | `DO › fast_idiv › fast_idiv_grid.golden`, `fast_idiv is division on the grid's dividends` (bounds to 2^64 - 1); `magicgu` is private |
-| old: `unit/codegen/test_decompositions.ml` "threefry2x32 is uint64", "Threefry derives uint64" | the hash is a Uint64, and THREEFRY is rewritten when the target lacks it | `DO › threefry2x32 › the hash of constants is a Uint64`; `DO › simplifying_patterns › simplifying_threefry_*.golden` |
-| old: `unit/codegen/test_decompositions.ml` "Floordiv same sign lowers to Cdiv", "same-sign divisor bounds may include zero" | no sign correction when the signs agree, bounds touching 0 included | `DO › simplifying_patterns › simplifying_floordiv_*.golden`, `simplifying_floormod_*.golden` (`p // 3`, `n // q`, `a // b` in [0, 3], `c // e` in [-3, 0]) |
-| old: `unit/codegen/test_decompositions.ml` "Floordiv mixed sign lowers with correction" | a corrected CDIV | `DO › simplifying_patterns › simplifying_floordiv_none.golden` (`m // 3`, `m // d`); `DO › simplifying_patterns › floor divisions and remainders keep their values` |
-| old: `unit/codegen/test_decompositions.ml` "Floormod power of two lowers to And for negative input", "floor powers of two lower before truncation" | AND and SHR for any sign; unsigned 2^63 keeps 64 bits | `DO › simplifying_patterns › simplifying_floor{div,mod}_shr_and.golden` (`m // 8`, `m % 4`, `w // 2^63`, `w % 2^63`, and 2^64, which is no shift) |
-| old: `unit/codegen/test_decompositions.ml` "late Cmod power of two rejects negative signed input", "late Cmod power of two uses generic rule without And" | CMOD by 4 of a signed dividend stays CMOD | `DO › late_patterns › late_cdiv_shr_fast_idiv.golden` (`m` mod 4); `DO › late_patterns › truncating divisions and remainders keep their values` |
-| old: `unit/codegen/test_decompositions.ml` "fast idiv small range folds to zero", "fast idiv accepts wide divisor" | 0 for a small dividend; a divisor of `Int64.max_int` | `DO › fast_idiv › fast_idiv_folds_a_small_dividend.golden`; `DO › fast_idiv › fast_idiv divides by a divisor beyond every integer type`; `late_cdiv_shr_fast_idiv.golden` (`l` by 2^63 - 1) |
-| old: `unit/codegen/test_decompositions.ml` "fast idiv recursion uses shifts" | powers of two shifted out before widening | `DO › fast_idiv › fast_idiv_shifts_out_powers_of_two.golden` |
-| old: `unit/codegen/test_decompositions.ml` "fast idiv is enabled for Metal" | Metal's renderer lowers by fast_idiv | dropped here: which renderer disables it is `Renderer.Cstyle`'s (L5); the lowering is `late_cdiv_shr_fast_idiv.golden` |
-| old: `unit/codegen/test_decompositions.ml` "fast idiv promotion checks dtype support", "late Cmod preserves unoptimizable division" | no widening to an unsupported type; CMOD by a variable stays | `DO › late_patterns › late_cdiv_shr_fast_idiv_narrow.golden`; `DO › fast_idiv › fast_idiv_grid.golden` (`renderer=none` rows) |
-| old: `unit/codegen/test_decompositions.ml` "signed Cdiv pow2 uses constant condition" | a non-negative dividend needs no `x < 0` | `DO › late_patterns › late_cdiv_shr.golden` (`p` by 8) |
-| old: `unit/codegen/test_decompositions.ml` "late Mul by one is not shifted", "late Cdiv by one is not shifted" | no shift by 0 | `DO › late_patterns › late_mul_shl.golden` (`x * 1`); `late_cdiv_shr.golden` (`u` and `m` by 1) |
-| old: `unit/codegen/test_decompositions.ml` "Max bounds survive early lowering" | MAX is lowered only late | `DO › simplifying_patterns › simplifying_floordiv_*.golden` (the MAX is kept); `DO › late_patterns › late_max_cmplt.golden` |
-| old: `unit/codegen/test_decompositions.ml` "early Floordiv by zero raises before trunc lowering", "early Floormod by zero raises before trunc lowering" | a division by the constant 0 raises in the symbolic rules | dropped here: constant folding is Symbolic's, its suite |
-| old: `unit/codegen/test_decompositions.ml` "not (x < c) canonicalizes", "not (c < x) canonicalizes", "not-ne uses CMPNE true shape", "add-neg rewrite is commutative", "mul-recip rewrite is commutative", "-x < y*c canonicalizes", "-x < c canonicalizes", "bounded CMPLT collapses to equality" | the late comparison, negation and division rules | `DO › late_patterns › late_comparison_cmplt.golden`, `late_comparison_cmpeq.golden`, `late_negation_neg_sub.golden` (`x + -y`, `-y + x`), `late_division_fdiv.golden` (both orders) |
-| old: `unit/codegen/test_decompositions.ml` "bounded CMPLT preserves a midpoint above the lower bound's width", "... below the upper bound's width" | the midpoint of mixed-width bounds | `DO › late_patterns › late_comparison_cmplt.golden` (weak and int32 bounds); `the late rules keep the values of integer expressions` |
-| old: `unit/codegen/test_decompositions.ml` "late comparisons use exact integer proofs" | Int64's extremes, an empty interval and 2^80 | `DO › late_patterns › late_extremes_cmplt.golden` |
-| old: `unit/codegen/test_decompositions.ml` "comparison extrema simplify before late codegen" | the whole pipeline folds those comparisons | dropped here: the pipeline is `Codegen`'s (L4) |
-| old: `unit/codegen/test_decompositions.ml` "MAX promotes comparison and selection operands" | MAX of int16 and int32 compares and selects in int32 | `DO › late_patterns › late_max_cmplt.golden` (`max(s, y)`) |
-| old: `unit/codegen/test_decompositions.ml` "floor correction promotes its boolean before negation", "floor mask retains the generated weak integer", "floor shift retains the generated weak count" | the correction's cast, the mask's and the shift's weak constants | `DO › simplifying_patterns › simplifying_floor{div,mod}_*.golden` (every node's type) |
-| old: `unit/codegen/test_decompositions.ml` long, float and transcendental groups | 64-bit and narrow-float emulation, transcendental functions | dropped here: `Decomp_dtype`'s and `Transcendental`'s sections |
-| old: `unit/frontend/test_run.ml` `constant_integer_division` | compiled CDIV, CMOD, FLOORDIV and FLOORMOD of int32 and uint32 by 2 to 2^31 - 1 | `DO › late_patterns › lowered divisions compute truncating and floor quotients and remainders` (the same values, lowered by both matchers and evaluated); the compiled run is the executor's (L7) |
-| old: `unit/uop/test_symbolic.ml` "constant THREEFRY is not UOp-folded" (2 tests) | THREEFRY of constants is not folded | dropped here: Symbolic's section |
-| old: `unit/test_cstyle.ml` "renderer op capabilities match cstyle render surface" | no renderer claims MAX, MULACC or THREEFRY | dropped here: `Renderer.Cstyle`'s (L5) |
 
 ## Decomp_dtype
 
@@ -1038,21 +638,6 @@ slow tag.
 | tinygrad: `codegen/decomp/dtype.py` `do_dtype_decomps`, `pm_dtype_decomps` (no test) | the types found are emulated in promotion order; an unsigned 64-bit integer goes with the signed one | `DD › goldens › half_fp8e4m3_cast.golden`, `bfloat16_half_cast.golden`, `ulong_named_alone.golden`; `DD › pm_dtype_decomps › unsigned 64-bit integers are emulated when the signed ones are`, `a target with every data type keeps its kernels`, `a kernel without narrow floats or 64-bit integers is kept`, `a setting that names no data type is refused` |
 | tinygrad: `codegen/decomp/dtype.py` `f2f`, `f2f_clamp` (no test) | the conversions, and their only-narrow-float-and-float32 contract | `DD › f2f › *` (every 8-bit code, sampled 16-bit codes, exhaustive under slow), `DD › f2f_clamp › *`, `DD › NaNs › *`, `DD › f2f › f2f converts only between a narrow float and a float32` |
 | tinygrad: `codegen/decomp/dtype.py` `f2f`, `f2f_clamp` and the CAST rule, D9's facets | flushed subnormals, overflow above the greatest value, saturated infinities, two roundings from wide sources and from emulated 64-bit integers, negative zero in fnuz | `DD › D9 › *`, one test per facet |
-| old: `unit/codegen/test_decompositions.ml` "long storage doubles flat size", "unbounded param keeps unbounded size" | a 64-bit parameter holds twice as many 32-bit words, or no size | `DD › pm_dtype_decomps › 64-bit storage holds two 32-bit words per element`, `64-bit storage of no known size keeps none` |
-| old: `unit/codegen/test_decompositions.ml` "scalar variables fail instead of narrowing their binding" | a 64-bit variable is refused | `DD › pm_dtype_decomps › a 64-bit integer variable cannot be emulated` |
-| old: `unit/codegen/test_decompositions.ml` "MUL lowers", "IDIV lowers", "MOD lowers" | multiplication, division and remainder of words | `DD › goldens › long_mul.golden`, `long_div.golden`, `ulong_mod.golden`; `DD › emulated 64-bit integers › * mul`, `* truncating division`, `* truncating remainder` |
-| old: `unit/codegen/test_decompositions.ml` "long comparisons split before arithmetic" | comparisons read split words | `DD › goldens › {long,ulong}_{lt,eq}.golden`; `DD › emulated 64-bit integers › * cmplt`, `* cmpeq`, `* cmpne` |
-| old: `unit/codegen/test_decompositions.ml` "CAST float->long lowers", "CAST float->long high half uses reciprocal", "CAST long->int lowers", "BITCAST long->long lowers" | casts between floats, int32 and 64-bit integers, and between the 64-bit integers | `DD › goldens › {long,ulong}_{to_char,bitcast}.golden`; `DD › emulated 64-bit integers › * from float32, rounded towards zero` (with floats past 2^31 as examples), `an emulated cast of a float32 to a 64-bit integer converts no float to a word that cannot hold it`, `* to float32, the nearest`, `int from *`, `* bitcast to *`; the word arithmetic of a cast to a float32 is D9's `long_to_float` (`DD › D9 › an emulated 64-bit integer converts to a float32 once`) |
-| old: `unit/codegen/test_decompositions.ml` "CONST halves truncate to int32", "untagged CONST is low half" | a constant splits into its two words | `DD › goldens › {long,ulong}_add_const.golden` (2^40 + 5) |
-| old: `unit/codegen/test_decompositions.ml` "untagged INDEX is not rewritten", "tagged INDEX narrows storage before reindexing", "tagged INDEX preserves multi-index tail" | an index into 64-bit storage becomes an index of the word, keeping its gate | `DD › goldens › {long,ulong}_*.golden` (every index), `{long,ulong}_pad.golden` (a masked index); the tags that carry a word are the pass's own |
-| old: `unit/codegen/test_decompositions.ml` "variable SHL uses native narrow shift", "variable SHR uses native narrow shift" | a shift by a variable uses 32-bit shifts | `DD › goldens › {long,ulong}_shl_by.golden`; `DD › emulated 64-bit integers › * shl`, `* shr` |
-| old: `unit/codegen/test_decompositions.ml` "bf16 load promotes to f32", "f32 store demotes to bf16 bits", "bf16 vector load reindexes SHRINK", "compact-float accesses narrow storage before reconstruction" | loads widen, stores narrow, vector accesses split per lane, storage retyped first | `DD › goldens › bfloat16_{to_float,from_float,gather}.golden`, `<fp8 or half>_add.golden` (vector loads through SHRINK); `DD › emulated narrow floats › an emulated cast of a <type> to a float32 is exact`, `... of float32s to <type> rounds as Dtype folds` |
-| old: `unit/codegen/test_decompositions.ml` "compact-float arithmetic stores retain numeric conversion" | an arithmetic result is narrowed at its store | `DD › goldens › <type>_{add,mulsub}.golden`; `DD › emulated narrow floats › emulated <type> arithmetic computes in float32 and rounds once, at the store` |
-| old: `unit/codegen/test_decompositions.ml` "compact-float masked loads encode numeric fallbacks", "compact-float conditional loads encode weak numeric fallbacks" | a masked load's fill value is a number of the type | `DD › goldens › <type>_pad.golden` (a fill of 1.5), and its run against the native kernel |
-| old: `unit/codegen/test_decompositions.ml` "compact-float gathers preserve raw storage", "... conditional selection preserves raw storage", "... value indexing preserves raw storage", "... copies preserve raw storage", "... copies preserve vector windows", "... copies preserve gates and raw alternatives", "... copies preserve address validity masks" | a copy, gather or selection keeps the stored code | tinygrad converts through float32, and D9 makes that exact: `DD › emulated narrow floats › an emulated copy of <type>s keeps every code`, `an emulated selection of <type>s keeps their codes`, `DD › NaNs › an emulated copy keeps every NaN code, quieting a signalling one`, `an emulated selection keeps NaN codes, quieting a signalling one`; `DD › goldens › <type>_{flip,gather,pad,where}.golden` |
-| old: `unit/codegen/test_decompositions.ml` "compact-float bitcast stores preserve their gate", "compact-float bitcast stores retain destination effects", "gated f32 store is not decomposed" | a gated store, or one ordered after other effects | dropped: the old tolk's store gate and effect sources; a gate rides on the index (`DD › goldens › <type>_pad.golden`), and a bit reinterpretation stored is `<type>_bitcast_from_storage.golden` |
-| old: `unit/uop/test_weak.ml` "gated long index narrows", "gated long index keeps its width for huge buffers" | the width of an index into 64-bit storage | dropped here: `Uop_weak`'s section |
-| old: `unit/frontend/test_run.ml` "long cumprod of 8-bit floats" | a compiled scan of emulated 8-bit floats | dropped here: compiled runs are the executor's (L7) and rune's (L9); the kernels' emulation is `DD › goldens › fp8*_sum.golden` |
 
 ## Symbolic
 
@@ -1132,80 +717,20 @@ it check that each result is the machine's value instead, and name D13.
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_committed_const_conversion_folds, test_derivable_const_rounds_at_the_derived_width | a cast of a committed constant folds; `x * 1` and `x * -1` fold after a literal is rounded | `S › tinygrad › tests.golden › TestWeakPromotion.<test>` (`symbolic_simple` alone and with `pm_commit_weak`) |
 | tinygrad: `null/test_uop_symbolic.py` (the eight `.render()` asserts) | the rewritten expression renders as written | `S › tinygrad › tests.golden › <Class>.<test>` for the rewrite; the text is Render's |
 
-### old tolk: unit/uop/test_symbolic.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/uop/test_symbolic.ml "x + 0 -> x", "x * 1 -> x", identity_fold (9 tests) | identities | `S › symbolic_simple › identities › x + 0, x lxor 0 and x lor 0 are x`; `S › symbolic_simple › identities › x * 1 and x // 1 are x`; `S › symbolic_simple › zeros › x % x, x lxor x and x land 0 are 0`; `cdiv(x, 1)` is dropped, below |
-| old: unit/uop/test_symbolic.ml "int neutral chain -> x", "associative combine", associative_fold, combine_terms | `((x + 1) * 1) + -1`, `(x + 3) + 5`, `x + x` | `S › symbolic › constants › two associative operations on constants fold them`; `S › symbolic › terms › like terms combine` |
-| old: unit/uop/test_symbolic.ml "x // x -> 1", "x % x -> 0", "x < x -> false", self_fold "x floordiv x", "x ^ x", "x < x" | self folding | `S › symbolic_simple › identities › x // x is 1`; `S › symbolic_simple › zeros › x < x is false`; `S › symbolic_simple › zeros › x % x, x lxor x and x land 0 are 0` |
-| old: unit/uop/test_symbolic.ml self_fold "cdiv(x, x)", "cdiv(x, -1) -> -x", identity_fold "cdiv(x, 1)", bool_cast_fold "cmod(x, x)", divandmod_tests (2 tests), lt_fold "lt cdiv fold", divmod_reconstitute "cdiv/cmod recombine" (2 tests) | truncating division folds like floor division | dropped: tinygrad HEAD's rules fold floor division only; truncating division appears when floor division is decomposed (Codegen, L4) |
-| old: unit/uop/test_symbolic.ml "cast const -> const", "cast(const(3), float32)", "cast to same dtype" | casts of constants and to their own type | `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type`; `S › symbolic_simple › casts › a cast or bitcast to its operand's type is its operand` |
-| old: unit/uop/test_symbolic.ml "x \| !x -> true", "!!x -> x", "!c.where(t, f) -> c.where(f, t)" | boolean identities, either side of the negation | `S › symbolic › terms › x lor not x is true`; `S › symbolic_simple › identities › a double negation is x`; `S › symbolic › selections › a selection by a negation swaps its branches` |
-| old: unit/uop/test_symbolic.ml "an offset crosses a comparison only without wrapping" | `c0 + x < c1` over uint8 keeps a wrapping offset | `S › integers wrap › an offset crosses a comparison only where neither side wraps` (uint8 `u - 1 < 255`, weak and committed) |
-| old: unit/uop/test_symbolic.ml "a cast constant keeps its wrapped value" | `x < uint8 300` is `x < 44` | `S › symbolic_simple › constants › a comparison reads a committed constant at its width` |
-| old: unit/uop/test_symbolic.ml "a non-finite cast to an integer stays a cast" | a cast of an infinity or NaN to an integer stays | `S › symbolic_simple › constants › a cast of an infinity or a NaN to an integer stays a cast` |
-| old: unit/uop/test_symbolic.ml "constant cdiv/cmod use truncating semantics", const_fold (every test) | constants fold, truncating and floor division round as they say, a zero divisor gives 0 or the dividend, stacks fold lane by lane | `S › symbolic_simple › constants › a truncating division of constants rounds toward zero`; `S › symbolic_simple › constants › a division of constants by zero is 0, a remainder the dividend`; `S › symbolic_simple › constants › an operation on committed constants computes at their width`; `S › symbolic_simple › constants › an operation on stacks of constants folds lane by lane`; `S › symbolic_simple › constants › a where, a comparison and a negation of stacks fold lane by lane`; the values of floor division are `O › exec_alu` |
-| old: unit/uop/test_symbolic.ml "invalid gate survives zero multiply", "non-weak invalid comparison gates bool result", "direct invalid comparison keeps bool dtype", "invalid gate cast stays gated", invalid_where (2 tests) | operations move inside an invalid gate | `S › invalid values › a binary operation moves inside the gate of its first operand` (a product and a comparison); `S › invalid values › a cast moves inside the gate`; `S › invalid values › a comparison of invalid is left`; `S › invalid values › a selection by invalid is invalid`; `S › invalid values › a gate on a condition moves out of the selection`; `S › tinygrad › tests.golden › TestInvalidIndex.test_invalid_times_0` |
-| old: unit/uop/test_symbolic.ml "where closure folds a nested condition", "where closure keeps unrelated conditions", "where closure precedes gate merging", "a nonzero where becomes a guard", where_fold (every test but the last) | selection folding | `S › symbolic › selections` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_where_closure_folding_before_gate_merge` |
-| old: unit/uop/test_symbolic.ml where_fold "where eq one zero flips to ne zero one" | `CMPEQ` | dropped: tinygrad HEAD has no `CMPEQ`; equality is `logical_not` of `<>` |
-| old: unit/uop/test_symbolic.ml "constant guards stay out of index validity" | a constant clause stays in the selection | `S › conditions › pm_move_where_on_load › a constant clause stays` |
-| old: unit/uop/test_symbolic.ml "cast(bool) != const folds", bool_cast_fold's three `cast(bool -> int)` tests | a boolean cast to an integer compared to a constant | `S › symbolic_simple › identities › a boolean cast to an integer and compared to 0 is the boolean`; `... compared to 1 is its negation`; `... differs from any other integer` |
-| old: unit/uop/test_symbolic.ml "constant BITCAST folds", "double BITCAST collapses", "bitcast const float32 to int32 folds" | bitcasts of constants and chains | `S › symbolic_simple › casts › a bitcast of a constant has the same bits`; `S › symbolic_simple › casts › two bitcasts are one` |
-| old: unit/uop/test_symbolic.ml "STACK const bitcast folds", bool_cast_fold "cast STACK const folds lane-wise", "bitcast STACK const folds lane-wise" | a cast or bitcast of a stack of constants folds lane by lane | dropped here: tinygrad HEAD folds those lanes after devectorizing (Codegen, L4) |
-| old: unit/uop/test_symbolic.ml "constant THREEFRY is not UOp-folded", bool_cast_fold "constant Threefry is not folded" | threefry of constants stays | `S › symbolic_simple › constants › a threefry of constants stays` |
-| old: unit/uop/test_symbolic.ml "INDEX(STACK const) folds", index lane pushing (3 tests) | an index of a stack by a constant is its element | `M › indexing › index_a_stack_by_a_constant.golden` (Movement's section); the fold at construction is Ops' |
-| old: unit/uop/test_symbolic.ml spec "full_spec accepts value INDEX lane selection" | the specification | dropped here: Spec's section |
-| old: unit/uop/test_symbolic.ml "NaN cmpeq folds to false" | NaN is not equal to itself | `S › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` |
-| old: unit/uop/test_symbolic.ml divmod_reconstitute "floor div/mod recombine", "scaled nested floor div/mod recombine" | a remainder and a quotient recombine | `S › symbolic_simple › recombination` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_mod_recombine_with_outer_mul` |
-| old: unit/uop/test_symbolic.ml divmod_reconstitute "nested floor div/mod recombine with a positive symbolic radix", "symbolic range coordinates recover the flattened index" | recombination by a symbolic radix | dropped: tinygrad HEAD recombines constant radices only (`_quotient_base` needs a constant divisor) |
-| old: unit/uop/test_symbolic.ml range_fold (2 tests) | a range of one value is 0; a range of a symbolic end is not | `S › symbolic › bounds › a range of a constant end with one value is 0`; `S › symbolic › bounds › a range of a symbolic end is not folded` |
-| old: unit/uop/test_symbolic.ml bool_cast_fold "bool MUL → AND", "pow constant exponent rewrites by squaring", "nested where" | boolean products; powers of constants; nested selections | `S › symbolic_simple › booleans › a boolean product is a conjunction`; `S › symbolic_simple › powers › a power of constants is its value`; `S › symbolic › selections › nested selections sharing a false branch merge by conjunction` |
-| old: unit/uop/test_symbolic.ml lt_fold (every test but "lt cdiv fold") | comparisons fold; a float comparison keeps its rounding; `(x / y) / z` | `S › symbolic › comparisons` (every test, `c0 + x < c1 stays for floats, where moving c0 rounds` among them); `S › symbolic › terms › (x / y) / z stays` |
-| old: unit/uop/test_symbolic.ml where_fold "cast stays outside a conditional", "Boolean selection stays inside its integer cast" | a cast of a selection stays | `S › symbolic › selections › a cast of a selection stays outside it`; `S › tinygrad › tests.golden › TestSymbolic.test_where_cast` |
-| old: unit/uop/test_symbolic.ml reduce "mul-term hoist floats non-range factors out of a lowered reduce" | factors move out of a kernel reduction | `S › sym › factors independent of a sum's ranges move out of it`; `S › sym › only non-negative factors move out of a maximum` |
-| old: unit/uop/test_symbolic.ml reduce "add tensor reduce floats const and preserves axes" | a tensor-level reduction keeps the factors that vary along its axes | dropped: `sym` runs on kernels, whose reductions name their ranges; tinygrad HEAD's `reduce_mul_chain` reads a reduction's ranges and does not see a tensor-level one's axes |
-| old: unit/uop/test_symbolic.ml load_store (3 tests) | loads and stores of invalid and gated indices | `S › invalid values › a load from an invalid index is its alternative, or 0`; `S › sym › storing a selection of the loaded value stores where it differs` |
-| old: unit/uop/test_symbolic.ml sigmoid (3 tests) | `x * (1 / (1 + x))` stays at float | `S › sym › reciprocals of products stay`; `S › floats keep IEEE values › reciprocal and sigmoid forms stay` |
-| old: unit/uop/test_symbolic.ml simplify_valid (3 tests) | a bitwise and is no valid; a clause others read comes first; the rewrite fires on the raw predicate | `S › tinygrad › tests.golden › TestValidIdxSimplification.test_bitwise_and_is_not_a_valid`; `S › conditions › simplify_valid › a clause on an expression others read is applied first`; `S › conditions › pm_simplify_valid › a conjunction is simplified` |
-| old: unit/uop/test_symbolic.ml uop_given_valid "a load keeps its own gate" | `uop_given_valid` leaves a load's gate | dropped: tinygrad HEAD substitutes into the load's gate; `pm_simplify_valid` leaves a gated value that reads an index alone (`S › tinygrad › tests.golden › TestInvalidIndex.test_gated_load_keeps_index_valid`) |
-| old: unit/uop/test_symbolic.ml uop_given_valid "a clause on a loaded value still applies" | a clause bounds a loaded value | `S › conditions › uop_given_valid › a clause on a loaded value bounds it` |
-| old: unit/uop/test_symbolic.ml masked_div | `(x & -4) // 4` | `S › symbolic_simple › zeros › a mask of the bits a division by a power of two drops is removed` |
-| old: unit/uop/test_symbolic.ml unpack_u64 (3 tests) | a packed 64-bit integer unpacks, a wide high half does not | `S › symbolic_simple › powers › a 64-bit integer packed from two halves unpacks to the half read` |
-| old: unit/uop/test_symbolic.ml mop_cleanup (5 tests) | movement cleanups | Movement's section |
-| old: unit/uop/test_symbolic.ml remove_invalid (3 tests) | invalid gates and lanes become zeros of their type | `S › pm_remove_invalid` (every test) |
-| old: unit/uop/test_symbolic.ml "END preserves effects" | an end of folded ranges is its store; a live range stays; a constant backedge condition stays | `S › symbolic › ordering › an end of constant ranges only is its store`; `S › symbolic › ordering › an end drops the ranges that became constants`; `S › symbolic › ordering › a backedge keeps a constant condition` |
-| old: unit/uop/test_symbolic.ml "distributed negation keeps scaled terms shared" | a negated sum distributes and folds its coefficients; a float one stays | `S › sym › a negated sum with a scaled term folds each term's coefficient`; `S › sym › -(x + y) is -x + -y for integers, and stays for floats`; `S › floats keep IEEE values › signed zeros: a negated sum and complementary selections` |
-| old: unit/uop/test_symbolic.ml rule body promotion (4 tests) | a rule builds weak constants and promotes an integer exponent | `S › symbolic_simple › powers › c ** x computes in float for an integer exponent`; `S › symbolic › terms › a term's new coefficient is a weak constant`; the nested division is Divandmod's section |
-| old: unit/uop/test_symbolic.ml integer width folding (4 tests) | 64-bit arithmetic that fits computes in 32 bits; bounded cast chains collapse | `S › symbolic › casts › 64-bit arithmetic that can overflow 32 bits stays`; `S › symbolic › casts › a cast chain of a bounded integer is one cast, of an unbounded one two` |
-| old: unit/engine/test_symbolic.ml (every test) | symbolic sizes run on a device | dropped here: execution, Engine's section (L7) |
-| old: unit/codegen/test_simplify.ml (every group but node_vmin / node_vmax) | `codegen/simplify.py`'s matchers | dropped here: Simplify's section (L3) |
-| old: unit/codegen/test_simplify.ml node_vmin / node_vmax (19 tests) | bounds of nodes | dropped here: Ops' section, one row per group of tests |
-
-### Other sections' rows left to Symbolic's
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/uop/test_uop.ml commutative_axes_use_lexical_argument_order | `simplify` orders commutative operands | `S › commutative › two sums of the same weak integer terms are the same node`; `S › laws › commutative orders the operands of a weak integer sum` |
-| old: unit/uop/test_uop.ml division_promotes_integer_operands (its folding) | a float division of integers folds | `S › tinygrad › tests.golden › TestUOpResolve.test_rtruediv` |
-| old: unit/uop/test_uop.ml smax_smin_fold_when_bounds_decide, sprod_simplifies (their folding) | maxima and products fold | `S › symbolic › bounds › a maximum of operands whose bounds do not overlap is the greater`; `S › symbolic › constants › two associative operations on constants fold them` |
-| old: unit/uop/test_uop.ml exact_symbolic_bounds (`parse_valid`) | a clause reads as a bound | `S › conditions › uop_given_valid › a clause bounds an expression`; `S › conditions › uop_given_valid › a negated clause bounds an expression from below`; `S › conditions › uop_given_valid › a clause that is not a bound is ignored` |
-| old: unit/uop/test_weak.ml late_simplification_preserves_committed_literals, consecutive_weak_casts_preserve_integer_conversion (the folded value) | casts of committed constants fold | `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type`; `S › tinygrad › tests.golden › TestWeakPromotion.test_committed_const_conversion_folds` |
-| old: unit/codegen/test_decompositions.ml "POW promotes weak exponents before parity arithmetic" | a power is computed by `xpow` | `S › sym › a power is computed from exp2 and log2` |
-| old: unit/codegen/test_divandmod.ml simplify_preserves_index_values, adjacent_bit_extracts_recombine, quotient_partner_recombines_through_a_merged_divisor, shifted_quotient_partner_recombines | the whole rule set keeps values and recombines | `S › laws › sym keeps the value of an integer expression where nothing wraps`; `S › symbolic_simple › recombination` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_div_mod_recombine_merged_quotient`, `TestSymbolic.test_div_mod_recombine_shifted_quotient` |
-
 ## Gpudims
 
 The suite is `Tolk.Gpudims` (`codegen/gpudims/`), written `GD` below.
-`grouped_dims.golden` holds every case of tinygrad's test, the old tolk's
-three, and 392 sizes drawn from a fixed seed against the bounds of real
-targets: each row gives the hardware indices and their sizes, and each loop's
-index as an expression, or the exception tinygrad raises. tinygrad proves each
-case one-to-one with z3; here `GD › grouped_dims › grouped_dims numbers each
-iteration of the golden's cases once` enumerates every launch of each case up to
-2^12 iterations and checks that each iteration is numbered exactly once,
-and that each hardware index is within its bound, the first axis excepted
-when the last one's divisors move onto it.
+`grouped_dims.golden` holds every case of tinygrad's test, 392 sizes drawn
+from a fixed seed against the bounds of real targets, and three edge cases: two
+sizes merged to fill one bound exactly, sizes of 2^61 split across bounds of
+2^60 and 2^61, and two sizes of 2^32 that one bound of 2^31 - 1 cannot hold.
+Each row gives the hardware indices and their sizes, and each loop's index as
+an expression, or the exception tinygrad raises. tinygrad proves each case
+one-to-one with z3; here `GD › grouped_dims › grouped_dims numbers each
+iteration of the golden's cases once` enumerates every launch of each case up
+to 2^12 iterations and checks that each iteration is numbered exactly once, and
+that each hardware index is within its bound, the first axis excepted when the
+last one's divisors move onto it.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
@@ -1216,22 +741,6 @@ when the last one's divisors move onto it.
 | tinygrad: `null/test_gpudims.py::TestGroupedDims::test_global_prod_max` | `global_prod_max` bounds workgroups by threads | `GD › add_gpudims › add_gpudims_bounds_globals_by_threads.golden`, `add_gpudims_bounds_globals_by_merged_threads.golden`, `add_gpudims_bounds_globals_by_threads_alone.golden` |
 | tinygrad: `null/test_gpudims.py::TestGroupedDims::test_max_sizes_none` | no bounds | `GD › grouped_dims › grouped_dims.golden` (`None` rows) |
 | tinygrad: `codegen/gpudims.py` `add_gpudims`, `pm_device_to_var` (no test) | globals, locals, warps, masks, device ranges | `GD › add_gpudims › add_gpudims_*.golden` (17 kernels); `GD › add_gpudims › add_gpudims_declines.golden`, `add_gpudims_failures.golden` |
-| old: `unit/codegen/test_gpudims.ml` "single dim fits", "two dims fit", "reverse two dims", "three dims not reversed", the six "splitting same-length" cases, "(512,4,2) / (8192,2,2)", the five "expansion" cases, the four "contraction" cases | sizes and one-to-one numbering | `GD › grouped_dims › grouped_dims.golden` (the same rows as tinygrad's); `GD › grouped_dims › grouped_dims numbers each iteration of the golden's cases once` |
-| old: `unit/codegen/test_gpudims.ml` "reverse maps returned expressions to original axes" | reversed indices map back to their loops | `GD › grouped_dims › grouped_dims.golden` (`(2, 3)` reversed: `[gidx1, gidx0]`) |
-| old: `unit/codegen/test_gpudims.ml` "split redistribution retains exact intermediate products" | sizes near 2^61 do not overflow | `GD › grouped_dims › grouped_dims.golden` (the `2305843009213693952` row) |
-| old: `unit/codegen/test_gpudims.ml` "split decomposition uses integer floor division", "unmerged dims decompose through integer arithmetic" | `//` and `%`, never FDIV | `GD › grouped_dims › grouped_dims.golden` (`(7, 7)` under `(49, 1, 1)`, and every expression) |
-| old: `unit/codegen/test_gpudims.ml` "symbolic dimensions can cross a limit by grouping", "symbolic contraction keeps grouped SPECIAL size symbolic", "symbolic fitting dimensions keep their physical extent", "symbolic passthrough keeps SPECIAL size symbolic" | symbolic sizes merge into symbolic hardware sizes | `GD › grouped_dims › symbolic sizes › grouped_symbolic_*.golden` |
-| old: `unit/codegen/test_gpudims.ml` "symbolic dimensions cannot be split at their maximum" | a symbolic size cannot be split | `GD › grouped_dims › symbolic sizes › grouped_symbolic_failures.golden` |
-| old: `unit/codegen/test_gpudims.ml` "grouping feasibility does not overflow host integers" | 2^32 × 2^32 under one bound fails cleanly | `GD › grouped_dims › grouped_dims.golden` (the `4294967296` row) |
-| old: `unit/codegen/test_gpudims.ml` "prime dim 23 unfactorable", "unfactorable (128,3,4) / (16,2,2)", "too many dims (2,3,4,5,6)" | `cannot limit dim` | `GD › grouped_dims › grouped_dims.golden` (the `RuntimeError` rows) |
-| old: `unit/codegen/test_gpudims.ml` "coordinate promotion: grouping widens dimensions before multiplying" | int16 by int32 sizes merge in int32 | `GD › grouped_dims › symbolic sizes › grouped_symbolic_merges_committed_sizes.golden` |
-| old: `unit/codegen/test_gpudims.ml` "device axes become scalar parameters and leave END ranges" | DEVICE ranges become `_device_num` | `GD › add_gpudims › add_gpudims_device_range.golden`, `add_gpudims_device_range_without_kernel.golden`; `add_gpudims_keeps_an_end_of_a_variable.golden` |
-| old: `unit/codegen/test_gpudims.ml` "keeps the warp dimension separate while folding local axes" | a warp keeps its own thread axis | `GD › add_gpudims › add_gpudims_keeps_the_warp_apart.golden` |
-| old: `unit/codegen/test_gpudims.ml` "replaces global ranges with SPECIAL", "replaces global+local ranges" | ranges become hardware indices | `GD › add_gpudims › add_gpudims_globals.golden`, `add_gpudims_globals_by_axis_order.golden`, `add_gpudims_globals_and_locals.golden`, `add_gpudims_merges_four_globals.golden`, `add_gpudims_splits_a_global.golden`, `add_gpudims_keeps_a_reduce_range.golden` |
-| old: `unit/codegen/test_gpudims.ml` "no-op when no GPU ranges", "no-op when SPECIAL already present" | `None` | `GD › add_gpudims › add_gpudims_declines.golden` (and without kernel information) |
-| old: `unit/codegen/test_gpudims.ml` "global_prod_max caps global size by local hardware size" | workgroups bounded by threads | `GD › add_gpudims › add_gpudims_bounds_globals_by_threads.golden` |
-| old: `unit/codegen/test_gpudims.ml` "missing local range gets gated with Invalid", "two missing local ranges gate on a bool AND of equalities" | the store's index is valid only on thread 0 of each missing index | `GD › add_gpudims › add_gpudims_masks_a_store_by_its_missing_local.golden`, `..._missing_locals.golden`; a local store is not masked: `add_gpudims_leaves_a_local_store_unmasked.golden` |
-| old: `unit/codegen/test_gpudims.ml` "missing local range rejects multi-index global store" | a two-index store fails | `GD › add_gpudims › add_gpudims_failures.golden` |
 | tinygrad: `codegen/gpudims.py` `_split_dims` on a symbolic size or fewer than three bounds (`ValueError`, `AssertionError`, `IndexError`) | README, CPython rows: "cannot limit dim" | `GD › grouped_dims › grouped_dims.golden` (the `IndexError` rows); `GD › grouped_dims › symbolic sizes › grouped_symbolic_failures.golden` |
 | tinygrad: `codegen/gpudims.py` `add_gpudims` with a symbolic warp (`ValueError`) | README, CPython rows: the warp's bound is its size's upper bound | `GD › add_gpudims › add_gpudims_symbolic_warp.golden` |
 
@@ -1242,14 +751,6 @@ when the last one's divisors move onto it.
 | tinygrad: `codegen/late/gater.py` (no test file covers every rule) | the two-index rules, the first-index rules on `INDEX` and `SHRINK` for loads and stores, the alternative of a gated load, the four alternatives of the selection fold and its negated form, and the accesses no rule matches | `Tolk.Gater › pm_move_gates_from_index › moves.golden` (32 cases, `*_kept` for the accesses left alone) |
 | tinygrad: `codegen/__init__.py` `full_rewrite_to_sink` (the "move gates from index" pass) | the pass on compiled kernels: padded loads on the CPU and on CUDA, a padded convolution, a gated store into workgroup memory | `Tolk.Gater › pm_move_gates_from_index › pad_moved.golden`, `pad_value_moved.golden`, `conv_moved.golden`, `pad_cuda_moved.golden`, `sum_group_moved.golden` |
 | tinygrad: `null/test_uops.py::TestGatedStoreRewrite::test_tiny_gate_store`, `test_gate_some_stores`, `test_merge_ifs_alt` | a store through a gated index is gated, then becomes `IF`/`STORE`/`ENDIF` | the gate: `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=index_store`; the `IF` and `ENDIF`: dropped here, `codegen/__init__.py`'s `pm_linearize_cleanups`, in `Codegen`'s suite |
-| old: `test/unit/codegen/test_lower.ml` "gater leaves already-gated invalid-index load unchanged" | a load that already has a gate is left alone | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=gated_load_kept` |
-| old: `test/unit/codegen/test_lower.ml` "gater strips both image indexes with same invalid gate", "gater strips image load coordinates with same invalid gate" | two indices under one gate are stripped, the gate on the load | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=two_indices_load` |
-| old: `test/unit/codegen/test_lower.ml` "gater strips image store coordinates with same invalid gate" | the same for a store, its value kept | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=two_indices_store` |
-| old: `test/unit/codegen/test_lower.ml` "gater strips only the first variadic invalid index" | with three indices, only the first is stripped | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=three_indices`, `case=two_indices_two_gates` |
-| old: `test/unit/codegen/test_lower.ml` "gater zeroes every lane of a gated image load" | the alternative is as wide as the load | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=shrink_load` (a four-wide `SHRINK`; images are excluded) |
-| old: `test/unit/codegen/test_lower.ml` "gater folds a select into a load only when its value survives" | the fold applies only when the alternative survives the load's type | dropped: tinygrad HEAD folds without the guard (`gater.py:5-6`), and the lowerings checked never give the where the load's own gate, so no raven path rounds; a divergence waits for a failing rune test (reason b). `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=where_of_half`, `case=where_of_cast`, `case=where_of_cast_constant` pin the unguarded fold |
-| old: `test/unit/codegen/test_lower.ml` "invalid index gate moves onto store" | through the lowering pipeline, a gated index gates its store | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=index_store`; the pipeline itself belongs to `Codegen`'s suite |
-| old: `test/unit/codegen/test_lower.ml` "range comparison invalid value becomes gated store" | a stored `where g v invalid` gates the store | `Tolk.Gater › pm_move_gates_from_index › moves.golden › case=gated_value_kept` pins that the gater leaves it; the gating is `pm_remove_invalid`'s, in its module's suite |
 | law | no load or store through a first index gated by `Invalid` remains; the pass is idempotent | `Tolk.Gater › laws › no access through a first index gated by invalid remains`, `moving the gates is idempotent` |
 
 ## Linearizer
@@ -1282,28 +783,6 @@ lists them) and recorded at the pass each test applies: `<kernel>.golden` at
 | tinygrad: `runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop`, `test_nested_loop_in_range`, `test_two_sequential_loops`, `test_loop_in_loop`, `test_wait_loop_spec` | do-while loops (`BACKEDGE`), alone, in a range, in sequence and nested | `Tolk.Linearizer › linearize › wait_loop_linear.golden`, `nested_loop_linear.golden`, `two_loops_linear.golden`, `loop_in_loop_linear.golden`, and their `_chained` goldens under `pm_add_control_flow`; their execution belongs to the execution tests |
 | tinygrad: `runtime/test_wait_loop.py::TestWaitLoop::test_loop_carried_registers`, `test_register_pressure_loop`, `TestVolatileLoops::test_async_wait_ext` | register pressure and a volatile host signal | dropped here: register allocation (ISA, excluded) and execution |
 | law | `linearize` is a topological order of the sink's nodes, the sink last, with and without the tie-break; after `pm_split_ends` and `pm_add_control_flow`, loops nest and a range's body runs inside its loop; `pm_split_ends` leaves one range per end, closes the same ranges, and is idempotent | `Tolk.Linearizer › laws` (7 properties over generated loop trees, the kernel goldens as examples) |
-| old: `test/unit/codegen/test_linearizer.ml` `conditional_loop_nesting` | a do-while loop inside a range closes before the range | `Tolk.Linearizer › linearize › nested_loop_linear.golden`; `laws › after splitting and chaining, loops nest` |
-| old: `test/unit/codegen/test_linearizer.ml` "multi-range End lowers to nested End_range pairs" | an end of two ranges becomes two nested ends | `Tolk.Linearizer › pm_split_ends › splits.golden › case=ranges_in_order`; `laws › pm_split_ends leaves each end closing one range` |
-| old: `test/unit/codegen/test_linearizer.ml` "outer-range loads are scheduled before entering inner ranges", "nested range increases run_count" | fewer runs come first | `Tolk.Linearizer › linearize › orders.golden › case=run_count`, `case=hoisted_load` |
-| old: `test/unit/codegen/test_linearizer.ml` "After nodes stay in Program ownership after linearize", "effect-only After nodes preserve store ordering" | `AFTER` nodes are placed after what they wait on | `Tolk.Linearizer › linearize › orders.golden › case=after_value`, `case=after_store` |
-| old: `test/unit/codegen/test_linearizer.ml` "nested alt-index loads stay between the two ranges" | a gated load between two ranges | `Tolk.Linearizer › linearize › two_nested_range_alt_indexing_linear.golden` |
-| old: `test/unit/codegen/test_linearizer.ml` "gated stores become IF/STORE/ENDIF", "single casted gated stores become IF/STORE/ENDIF", "bitcasted gated stores are not linearize-cleanup matches", "nested-cast gated stores are not linearize-cleanup matches" | gated stores become `IF`/`STORE`/`ENDIF` | dropped here: `codegen/__init__.py`'s `pm_linearize_cleanups`, in `Codegen`'s suite |
-| old: `test/unit/codegen/test_linearizer.ml` "equal-priority nodes use structural tie-breaks" | `1+2` before `2-1` | `Tolk.Linearizer › linearize › orders.golden › case=structure_breaks_ties` |
-| old: `test/unit/codegen/test_linearizer.ml` "late bias loads are scheduled after reduce end" | a bias load after the reduction's end | `Tolk.Linearizer › linearize › late_bias_load_linear.golden` |
-| old: `test/unit/codegen/test_linearizer.ml` "outer ops are placed before loop phis" | a load used inside and after a loop is placed before it | `Tolk.Linearizer › linearize › range_outer_op_before_phi_linear.golden` |
-| old: `test/unit/codegen/test_linearizer.ml` "loop-carried reg stores stay inside the range" | accumulator stores inside the loop | `Tolk.Linearizer › linearize › simple_unroll_linear.golden`; `laws › after splitting and chaining, a range's body runs inside its loop` |
-| old: `test/unit/codegen/test_linearizer.ml` "gated loads without alts are rejected", "unlowered Reduce nodes are rejected", "graph IF nodes are rejected", "graph ENDIF nodes are rejected" | the old linearizer checked its input | dropped here: `linearize` orders any sink; the program specification (`Spec`) and `pm_linearize_cleanups` (`Codegen`) refuse these |
-| old: `test/unit/codegen/test_linearizer.ml` "sibling ends under sink are ordered", "three sibling ends are chain-ordered" | sibling loops run one after another | `Tolk.Linearizer › pm_add_control_flow › chains.golden › case=siblings`, `case=three_siblings` |
-| old: `test/unit/codegen/test_linearizer.ml` "three-range end exercises cfg nesting" | three ranges of one end nest | `Tolk.Linearizer › pm_split_ends › splits.golden › case=ranges_in_order`; `laws › after splitting and chaining, loops nest` |
-| old: `test/unit/codegen/test_linearizer.ml` "two independent reduces are sequenced" | two reductions under the sink run one after the other | `Tolk.Linearizer › pm_add_control_flow › two_sums_chained.golden`, `Tolk.Linearizer › linearize › two_sums_linear.golden` |
-| old: `test/unit/codegen/test_linearizer.ml` "cyclic control-flow edge is rejected" | a cycle is refused | `Tolk.Linearizer › pm_add_control_flow › a range that would run after a loop depending on it is rejected` |
-| old: `test/unit/codegen/test_linearizer.ml` "empty Group is a valid no-op effect" | an empty group is placed | `Tolk.Linearizer › linearize › orders.golden › case=empty_group` |
-| old: `test/unit/codegen/test_linearizer.ml` "load offsets follow lexical argument order" | constants tie-break by their text: 10, 100, 2 | `Tolk.Linearizer › linearize › orders.golden › case=constants_by_their_text` |
-| old: `test/unit/codegen/test_linearizer.ml` "params ordered by index", "define_var ordered by name" | parameters by slot, variables by name | `Tolk.Linearizer › linearize › orders.golden › case=params_by_slot`, `case=variables_by_name` |
-| old: `test/unit/codegen/test_linearizer.ml` "define_reg before define_local" | register storage before workgroup storage | `Tolk.Linearizer › linearize › orders.golden › case=buffers_before_local_buffers` |
-| old: `test/unit/codegen/test_linearizer.ml` "three ranges with mixed kinds are sorted", "same-axis ranges are split by full range argument" | ranges nest by argument, identities of several parts included | `Tolk.Linearizer › pm_split_ends › splits.golden › case=axis_types`, `case=identities_of_parts` |
-| old: `test/unit/codegen/test_linearizer.ml` "end with zero ranges passes through" | an end of no range is its value | `Tolk.Linearizer › pm_split_ends › splits.golden › case=no_range`, `case=source_without_ranges` |
-| old: `test/unit/codegen/test_linearizer.ml` "barrier emission", "special emission", "cast and bitcast emission", "vectorize emission", "value index emission", "custom and custom_inline emission", "after on ptr stays in program", "group forwards first source" | each node kind becomes a `Program` instruction | dropped: the old linearizer built a `Program`; `linearize` returns the nodes themselves, and `laws › linearize is a topological order of the sink's nodes, the sink last` covers that every node is placed |
 
 ## Simplify
 
@@ -1334,47 +813,6 @@ runs before it: a guard that holds everywhere would grow a range to it
 | tinygrad: null/test_arange.py::TestArange::test_cat_complexity, test_tri_complexity | an arange or a mask compiles to few operations | the collapse: `SI › tinygrad's kernels › arange_collapsed.golden`, `triu_collapsed.golden`; the estimates after `compile_linear` are Codegen's and Renderer's sections (L4) |
 | tinygrad: null/test_schedule.py::TestSchedule::test_arange_sum, test_arange_sum_alt, test_permute_arange, test_arange_transposed, test_arange_index | aranges fuse and collapse | the collapse: `SI › tinygrad's kernels › arange_sum_collapsed.golden`, `arange_transposed_collapsed.golden`, `arange_index_collapsed.golden`; the kernel counts are the scheduler's section (L6) |
 | tinygrad: null/test_linearizer_rewrite.py::TestLinearizerRewrite::test_arange | an arange kernel's code | dropped here: rendered code, Codegen's section (L4) |
-
-### old tolk: unit/codegen/test_simplify.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/codegen/test_simplify.ml "toposorts range children of End" | an end's ranges reordered so that a range comes after those its size reads | dropped: tinygrad's `flatten_range` keeps the order ranges are listed in; `SI › pm_flatten_range › ranges keep the order they are listed in`, `SI › tinygrad's rewrites › flatten_range.golden › case=end_of_a_dependent_range_first` |
-| old: unit/codegen/test_simplify.ml "noop when ranges already sorted" | an end of ranges is left | `SI › tinygrad's rewrites › flatten_range.golden › case=end_of_ranges` |
-| old: unit/codegen/test_simplify.ml "does not rewrite gated store gate as ranges" | a store's gate is left | `SI › pm_simplify_ranges › shrinking › a store's gate is no guard`; `SI › tinygrad's rewrites › simplify_ranges.golden › case=store_gate` |
-| old: unit/codegen/test_simplify.ml "split and simplify do not crash on Copy" | a graph without ranges is left | `SI › tinygrad's rewrites › split_ranges.golden › case=mod_3_of_7` and the other fixed points; a copy never reaches these passes in tinygrad (the copy kernels of `schedule/__init__.py` hold stores) |
-| old: unit/codegen/test_simplify.ml "nested sinks keep enclosing split binders consistent" | the end around a nested sink closes both parts | `SI › tinygrad's rewrites › split_ranges.golden › case=nested_sink` |
-| old: unit/codegen/test_simplify.ml "splits Range(8) used with mod 2", "split produces correct sizes", "splits Range(12) used with floormod 4" | a range splits into its quotient and remainder | `SI › pm_split_ranges › a range taken modulo a divisor of its size splits in two`; `… › the outer part is numbered 0 and the inner 1 under the range's identity`; `SI › tinygrad's rewrites › split_ranges.golden › case=mod_2_of_8`, `case=mod_4_of_12` |
-| old: unit/codegen/test_simplify.ml "no split when size does not divide constant" | | `SI › pm_split_ranges › a range taken modulo a number that does not divide its size stays`; `case=mod_3_of_7`, `case=mod_3_of_8`, `case=mod_16_of_8` |
-| old: unit/codegen/test_simplify.ml "does not split Range(12) used with cmod 4" | | `SI › pm_split_ranges › a truncating remainder is no modulo`; `case=cmod_4_of_12` |
-| old: unit/codegen/test_simplify.ml "merging three loops preserves their iteration count" | | `SI › pm_simplify_ranges › merging › ranges a kernel does not read merge`; `case=adjacent_three`, `case=adjacent_unused`; the writes law |
-| old: unit/codegen/test_simplify.ml "merges adjacent ranges in End with same kind" | | `SI › pm_simplify_ranges › merging › adjacent ranges indexed contiguously merge into their product`; `… › the merged range keeps the first range's identity` |
-| old: unit/codegen/test_simplify.ml "no merge when different kind" | | `SI › pm_simplify_ranges › merging › ranges of different axis types stay`; `case=adjacent_different_types`, `case=loop_and_reduce` |
-| old: unit/codegen/test_simplify.ml "does not merge when floor div would increase divmod count" | | `SI › pm_simplify_ranges › merging › ranges whose merge adds a division stay`; `case=adjacent_one_used`, `case=adjacent_transposed` |
-| old: unit/codegen/test_simplify.ml "nested sinks keep enclosing shrunk binders consistent" | | `SI › tinygrad's rewrites › simplify_ranges.golden › case=nested_sink`; the writes law |
-| old: unit/codegen/test_simplify.ml "shrinks range with single guard", "picks max guard across multiple loads", "no shrink when unguarded elsewhere", "no shrink for reduce ranges", "shrink to single iteration" | | `SI › pm_simplify_ranges › shrinking` (the matching tests); `SI › TestRangeShrink`; `case=single_guard`, `two_guards`, `guarded_and_unguarded`, `guard_of_a_reduce_range`, `guard_of_one` |
-| old: unit/codegen/test_simplify.ml "does not shrink stacked gated indexes", "does not shrink from later index coordinates" | | `SI › tinygrad's rewrites › simplify_ranges.golden › case=guards_in_a_stack`, `case=guard_on_a_later_index` |
-| old: unit/codegen/test_simplify.ml "no shrink when guard >= range size" | | `SI › TestRangeShrink › shrink_guard_ge_max_simplified.golden`; alone, the pass grows the range to the guard: `case=guard_beyond_size` |
-| old: unit/codegen/test_simplify.ml "shrink with store where invalid", "shrink with store where invalid flipped" | | `SI › TestRangeShrink › shrink_store_where_invalid_simplified.golden`, `shrink_store_where_invalid_flipped_simplified.golden`; alone, the pass leaves a selection of an invalid value (`case=store_where_invalid`), which the pipeline's symbolic pass moves onto the index first (`case=store_through_a_gated_index`) |
-| old: unit/codegen/test_simplify.ml "separate store gate is preserved" | | `SI › pm_simplify_ranges › shrinking › a store's gate is no guard` |
-| old: unit/codegen/test_simplify.ml "removes unparented range from ADD reduce", "removes unparented range from MUL reduce", "MAX reduce ignores unparented ranges", "noop when all ranges parented" | | `SI › pm_reduce_unparented` (the matching tests); `SI › tinygrad's rewrites › reduce_unparented.golden` |
-| old: unit/codegen/test_simplify.ml "distributes add over reduce" | | `SI › pm_reduce_collapse › a sum of a sum is the sum of the sums`; `reduce_collapse.golden › case=sum_of_a_sum` |
-| old: unit/codegen/test_simplify.ml "bound from above", "bound from below", "bound from two sides" | a masked sum is its count times its value | `SI › pm_reduce_collapse › a sum of a value below a bound is the bound times the value`, `… above a bound counts the rest`, `… between two bounds counts what lies between`; `reduce_simplify.golden › case=sum_below_a_bound`, `sum_above_a_bound`, `sum_between_bounds` |
-| old: unit/codegen/test_simplify.ml "unparented range removed from ADD reduce" | | `SI › pm_reduce_simplify › an unparented range is removed` |
-| old: unit/codegen/test_simplify.ml "mul casted bool becomes where" | | `SI › pm_reduce_collapse › an integer product by a comparison cast from a boolean is a selection`; `SI › pm_reduce_collapse › a float product by a comparison cast from a boolean stays`; `case=sum_of_a_product_by_a_cast_comparison` |
-| old: unit/codegen/test_simplify.ml "multi-range reduce collapse" | | `SI › pm_reduce_simplify › a sum over two ranges collapses each in turn` |
-| old: unit/codegen/test_simplify.ml "lift x*y out of reduce", "lift x+y out of reduce on lt" | | `SI › pm_reduce_collapse › a comparison of a product is solved by a rounded-up division`, `… of a sum is solved for its range`; `case=sum_below_a_scaled_range`, `sum_below_a_shifted_range` |
-| old: unit/codegen/test_simplify.ml "lt lift matches a bare sum, not a cast of one" | | `SI › tinygrad's rewrites › reduce_simplify.golden › case=sum_below_a_cast_shifted_range` |
-| old: unit/codegen/test_simplify.ml "reduce-fold counts clamp only at zero" | | `SI › pm_reduce_collapse › a count by variable bounds is clamped at zero`; `case=sum_below_a_variable`, `sum_above_a_variable`, `sum_between_variables` |
-| old: unit/codegen/test_simplify.ml "collapses a range-bounded conditional sum" | | `case=integer_sum_below_a_bound` |
-| old: unit/codegen/test_simplify.ml "AND on WHERE with define_var" | | `SI › pm_reduce_collapse › a parameter guarding a sum is lifted out of it`; `case=sum_gated_by_a_parameter` (a variable is a parameter) |
-| old: unit/codegen/test_simplify.ml "collapses an arange row gather with independent output ranges" | | `SI › tinygrad's kernels › gather_collapsed.golden`, `embedding_collapsed.golden`, `arange_index_collapsed.golden` |
-| old: unit/codegen/test_simplify.ml "collapses reduce over gated load", "reduce on gated load with casted range" | | `SI › pm_load_collapse › a sum of the value an index selects is the value at that index`, `… an index outside the range selects zero`; `load_collapse.golden › case=sum_selected_by_a_constant`, `sum_selected_by_a_cast_range` |
-| old: unit/codegen/test_simplify.ml "collapses one-hot equality multiply" | | `load_collapse.golden › case=sum_of_a_one_hot_product` |
-| old: unit/codegen/test_simplify.ml "lift x+y out of reduce on ne" | | `load_collapse.golden › case=sum_selected_by_a_shifted_range`, `sum_selected_by_a_shifted_cast_range`, `sum_selected_by_a_shifted_load` |
-| old: unit/codegen/test_simplify.ml "undo rule: no math on loaded index", "undo rule ignores concrete loaded index" | | `SI › pm_load_collapse › a comparison of a shifted index read from memory is solved for it`, `… of a committed type is left` |
-| old: unit/codegen/test_simplify.ml group "node_vmin / node_vmax" (19 tests) | bounds of nodes | dropped here: `vmin` and `vmax` are `uop/ops.py`'s, Ops' section |
-| old: unit/codegen/test_simplify.ml group "promoting rule bodies" (4 tests) | a weak operand meets a committed one only promoted | the dtype of every node of every output is the golden's, which reading a graph derives and checks: `reduce_collapse.golden › case=sum_between_variables`, `reduce_unparented.golden › case=sum_over_a_symbolic_range`, `product_over_a_symbolic_range`, `load_collapse.golden › case=comparison_of_a_shifted_load_by_variables` |
 
 ## Coalesce
 
@@ -1413,17 +851,6 @@ processes of their own with the variable set.
 | tinygrad: `null/test_simplify_valid_idx.py::TestDropTrueGate::test_const_gate_clause_is_not_moved_to_load`, `TestRangeShrink` (8 tests) | `pm_move_where_on_load`, range shrinking | dropped here: Symbolic's and Simplify's sections |
 | tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, lines 111-167 | the grouping key (op, buffer, base, gate, argument), the lengths per element type, `must_divide`, `DMC`, `ALLOW_HALF8` | `C › memory_coalescing › accesses` (54 cases, each against `accesses_coalesced`, `accesses_scalar` and, in its process, `accesses_allow_half8`); `C › memory_coalescing › lengths`; `C › ALLOW_HALF8`; `C › DMC` |
 | tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, the DSP lengths (`:138`) | 128 down to 4 elements, unaligned | `C › README › a DSP renderer merges as any other: aligned runs of four at most`, `C › README › a DSP renderer leaves 8-bit integers alone` (README: DSP excluded) |
-| old: `unit/codegen/test_images.ml` "adjacent float loads become coalesced load with lane indexes" | | `C › memory_coalescing › lengths › four consecutive loads from offset 0 are one load of four`; `lengths › a merged load's elements are read back by index` |
-| old: `unit/codegen/test_images.ml` "adjacent float stores become vector store with vector value" | | `C › memory_coalescing › lengths › four consecutive stores are one store of four`; `lengths › a merged store stores the stack of the former values` |
-| old: `unit/codegen/test_images.ml` "volatile accesses through bitcast views never coalesce" | loads and stores | `C › memory_coalescing › left alone › a volatile parameter viewed at another type`, `left alone › stores to a volatile parameter` |
-| old: `unit/codegen/test_images.ml` "access flags separate adjacent loads and stores" | `nontemporal` splits a run, and the merged access keeps it | `C › memory_coalescing › accesses › accesses_coalesced.golden › accesses.golden › case=nontemporal`, `case=half_nontemporal` |
-| old: `unit/codegen/test_images.ml` "CPU and CUDA agree on repeated stores" | a store stored twice is one store; two stores of one element are refused | `C › memory_coalescing › left alone › a store stored twice is one store`; `C › memory_coalescing › errors › two stores to one element` (only `supports_float4` of a renderer is read, so one renderer stands for both; the old message is tinygrad's assertion, and tolk raises `Invalid_argument`) |
-| old: `unit/codegen/test_images.ml` "gated memory ops are rejected" | | `C › memory_coalescing › errors › a gated load`, `errors › a gated store` |
-| old: `unit/codegen/test_images.ml` "non-index memory ops are rejected" | | `C › memory_coalescing › errors › a load of a parameter`, `errors › a load through a shrink` |
-| old: `unit/codegen/test_images.ml` groups "image valid dimensions", "coalesce image selection", "image stores", "load-store indexing strips coordinate casts" | | dropped: image paths are excluded (README) |
-| old: `unit/codegen/test_images.ml` "remove invalid zeroes a sentinel at its consumer's dtype", "lower index dtype concretizes index binary math", "move where on value index keeps loads late", "lower pipeline applies renderer extra matcher" | | dropped here: Symbolic's, Uop_weak's and the pipeline's sections |
-| old: `unit/test_cstyle.ml` vector pointer casts and `__builtin_nontemporal_load` | rendering vector accesses | dropped here: `Renderer.Cstyle`'s section (L5) |
-| old: `parity/*/stage7_*.expected` | vector accesses in whole compiled kernels | dropped here: end-to-end parity (plan §4, slow); the kernel goldens compare this pass alone |
 
 ## Postrange
 
@@ -1488,31 +915,6 @@ the same kernels.
 | tinygrad: `codegen/opt/postrange.py` `args_from_ast`, BEAM search | device buffers for a search | ported as `Tolk_engine.slots`, of a linked schedule: `EN › timing › run takes the slots of a linked schedule`, `› a program whose buffers skip a slot links and runs on its slots`, `› a time allocates and loads nothing`; `apply_opts` takes the search as `~beam`, `PR › apply_opts › searches with beam instead, when given` |
 | tinygrad: `codegen/opt/postrange.py:112` the DSP upcast cap | | dropped: DSP is excluded (README) |
 | tinygrad: `postrange.py:114` a shared-memory check whose symbolic size cannot be decided raises `ValueError` | | `group_maybe_beyond_symbolic_shared_memory`, refused with `Invalid_argument`; `group_within_symbolic_shared_memory` fits |
-| old: `unit/codegen/test_postrange.ml` "splits range evenly", "input_new_rng is used as provided node", "rejects non-divisible amount" | | `PR › shift_to › splits an axis into its quotient and a new axis of the amount`, `› makes the new axis of the range it is given`, `› raises Invalid_argument on an amount that does not divide the axis` |
-| old: `unit/codegen/test_postrange.ml` "top=true reverses expression order", "full amount creates size-1 replaced range", "replaced range drops old parents like tinygrad replace" | | `PR › shift_to › keeps the kernel's writes, once flattened` (from the top); `elementwise_full_upcast` (the size-1 axis leaves `axes.golden`); every split's graph golden |
-| old: `unit/codegen/test_postrange.ml` "SPLIT uses absolute reduction axis indices", "LOCAL accepts a contracted reduction axis", "GROUPTOP on reduce creates a local reduction range", "UNROLL after GROUPTOP", "combined LOCAL + GROUPTOP + UNROLL + UPCAST", "double GROUPTOP on reduce", "LOCAL splits global into local tile", "UPCAST on global range", "UPCAST with amount=0 uses full range size", "UPCAST with amount=0 uses vmax extent" | | `matmul_*`, `double_reduce_*`, `local_and_grouped_reduce_*` and their `axes.golden` rows |
-| old: `unit/codegen/test_postrange.ml` "SPLIT rejects reduction kinds without a REDUCE owner", "SPLIT validates amount and target before changing state", "UPCAST rejects amount > 16", "UNROLL rejects amount > 32", "UPCAST rejects reduce axis", "UNROLL rejects non-reduce axis", "LOCAL without renderer locals rejected", "shared memory budget exceeded" | | the boundary cases above; a split to a reduce, warp or global role cannot be written (`Opt.target`) |
-| old: `unit/codegen/test_postrange.ml` "shared memory products cannot overflow the host integer" | a 2^60 local axis | `group_beyond_host_integers` |
-| old: `unit/codegen/test_postrange.ml` "shared memory budgets prove symbolic local extents" | fits at 8, refused at 16 | `group_within_symbolic_shared_memory`; at 16 tinygrad cannot decide and raises (the row above) |
-| old: `unit/codegen/test_postrange.ml` "shift_to validates source kinds and preserves index dtype" | | `PR › shift_to › raises Invalid_argument on a target its axis's role cannot split to`; an int32 axis is refused by tinygrad, whose size is then a cast (`split_int32_axis`) |
-| old: `unit/codegen/test_postrange.ml` "local and warp reductions retain independent output threads" | | `local_sum_axes`, `warp_sum_axes` |
-| old: `unit/codegen/test_postrange.ml` "PADTO preserves extents beyond host integers" | | `padto_beyond_host_integers`; a whole-axis split of it, `local_whole_axis_beyond_host_integers` |
-| old: `unit/codegen/test_postrange.ml` "PADTO pads axis to next multiple", "PADTO keeps store target as Index", "PADTO keeps load sources as guarded Index nodes", "PADTO preserves existing index validity", "PADTO guards unsafe pad ops in reduce backward slice", "PADTO guards max reduce on reduce axis" | | `padto_matmul_*`, `padto_masked_*`, `padto_exp_sum*`, `padto_max_*` graph goldens |
-| old: `unit/codegen/test_postrange.ml` "PADTO rejects upcast axis", "PADTO rejects warp axes", "PADTO rejects a multiple of one" | | `padto_upcast_axis`, `padto_warp_axis`, `padto_arg_2` |
-| old: `unit/codegen/test_postrange.ml` "SWAP exchanges equal-sized axes without erasing unrelated tags", "SWAP exchanges two global axes", "SWAP exchanges full range identity arguments", "SWAP rejects non-global axes" | | `swap_keeps_tags`, `swap_globals`, `swap_then_split`, `swap_not_global` |
-| old: `unit/codegen/test_postrange.ml` "upcast products remain exact beyond host integers" | 2^64 | `upcasts_beyond_host_integers` (`upcast_size`) |
-| old: `unit/codegen/test_postrange.ml` "upcast products retain symbolic extents" | | `group_within_symbolic_shared_memory` (`full_shape` holds `n`); no Tensor program upcasts a symbolic axis, since `upcastable_dims` leaves it out |
-| old: `unit/codegen/test_postrange.ml` "rngs sorted by axis_to_pos then axis", "rngs filters out size-1 ranges", "upcastable_dims and unrollable_dims" | | every `axes.golden` row |
-| old: `unit/codegen/test_postrange.ml` "conditional loops are scopes rather than numeric optimization axes" | | `loop_counter_upcast` |
-| old: `unit/codegen/test_postrange.ml` "copy preserves independent optimization state" | | `PR › Scheduler › an optimisation applied to a copy leaves the original as it was`, `› ... to the original leaves its copy as it was` |
-| old: `unit/codegen/test_postrange.ml` "loop-to-global ignores ranges closed by nested END tails" | | `nested_end_globals` |
-| old: `unit/codegen/test_postrange.ml` "postrange flatten preserves closed range dependencies", "postrange flatten does not merge through extra floor div" | | `flatten_keeps_a_closed_extent`; every graph golden flattens |
-| old: `unit/codegen/test_postrange.ml` "filters symbolic params and sorts by slot" (`bufs_from_ast`) | | `args_from_ast` is `Tolk_engine.slots`: `EN › timing › a program whose buffers skip a slot links and runs on its slots` |
-| old: `unit/codegen/test_postrange.ml` "get_optimized_ast produces valid kernel_info", "get_optimized_ast name generation", "kernel identity does not depend on earlier compilations" | | `PR › Scheduler › get_optimized_ast names the kernel name_override`; `PR › apply_opts › names a kernel named test after its reduction and its axes`; every golden's name, all optimised in one process |
-| old: `unit/codegen/test_postrange.ml` "apply_opts respects opts_to_apply", "opts_to_apply applied in order", "beam_search closure is called", "hand_coded closure is called", "already-optimized kernel returns unchanged" | | every accepted case; `PR › apply_opts` |
-| old: `unit/codegen/test_postrange.ml` "LOOP ranges become GLOBAL on GPU", "LOOP ranges stay LOOP on CPU", "reduce ranges stay REDUCE after conversion" | | `PR › apply_opts › hand-optimises a kernel that asks for nothing, after making its weak outputs global`; `PR › Scheduler › convert_loop_to_global leaves a kernel for a renderer without locals` |
-| old: `unit/codegen/test_postrange.ml` "TC basic apply creates WMMA", "TC with padding (tc_opt=2)", "TC rejects non-reduce kernel", "TC rejects invalid tc_select", "TC must be first opt", "TC use_tc=2 skips WMMA construction" | | `tc_*_basic`, `tc_*_padded_2`, `tc_without_reduce`, `tc_select_*`, `tc_not_first`, `tc_*_tiled_use_tc_2` |
-| old: `unit/opt_fuzz/tolk_opt_fuzz.ml` | random optimisations against the unoptimised kernel, run on a device | `PR › each random optimisation is refused as a whole or keeps the kernel's writes` (slow), on the interpreter; running compiled kernels is the executor's (L5) |
 
 ## Heuristic
 
@@ -1534,16 +936,6 @@ Postrange's.
 | tinygrad: `MV`, `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`, `MV_ROWS_PER_THREAD` | the layout off, sizes of 1 skipped, all sizes 1 | their defaults, `vecmat_*`; read once from the environment, the others run in processes of their own (the suite's dune): `vecmat_<renderer>_mv_0`, `_mv_block_rows_1`, `_mv_sizes_1` |
 | tinygrad: the `IMAGE`, `QCOM` and `DSP` branches | | dropped: images, QCOM and DSP are excluded (README) |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_partial_sum_in_accumulator` | the heuristic's tiling after a tensor core | `matmul_half_*` (the tiling); where the partial sums accumulate is the expander's (L4, Codegen) |
-| old: `unit/codegen/test_heuristic.ml` "applies GROUPTOP when upcastable prod small", "early return after grouping", "skips grouping when upcastable prod large" | | `sum_rows_*`, `sum_rows_wide_*` |
-| old: `unit/codegen/test_heuristic.ml` "full unrolls small reduce", "split unrolls large reduce by 4", "double unrolls tiny reduces" | | `sum_17_*`, `sum_100_*`, `conv_*` (two unrolls of 3) |
-| old: `unit/codegen/test_heuristic.ml` "applies 4x upcast when nothing upcasted" | | `add_*`, `add_small_*` |
-| old: `unit/codegen/test_heuristic.ml` "broadcast upcast prefers lower stride axis", "upcast size bounded by 32" | | `add_broadcast_*`, `matmul_cpu`, `conv_*` |
-| old: `unit/codegen/test_heuristic.ml` "detects matvec and applies GROUP LOCAL UPCAST", "matvec early return prevents further opts", "rejects LOAD(INDEX) matvec shape", "matvec skipped on CPU" | | `vecmat_metal`, `_cuda`, `_amd`; `matvec_*` (no match: grouped); `vecmat_cpu` |
-| old: `unit/codegen/test_heuristic.ml` "upcasts small WHERE-guarded dim" | | `stack_*`, `pad_*` |
-| old: `unit/codegen/test_heuristic.ml` "applies locals on GPU", "at most 3 locals", "local budget respected", "expand axis gets larger LOCAL from budget", "deleted_shape adjusts axis indices" | | `add_*`, `conv_*`, `add_broadcast_*`, `transpose_*`, `outer_add_*` on Metal, CUDA and AMD |
-| old: `unit/codegen/test_heuristic.ml` "elementwise on GPU", "reduce on GPU with grouping", "reduce on GPU without grouping", "matmul on GPU", "elementwise on CPU", "large kernel on CPU" | | `add_*`, `sum_*`, `sum_cols_*`, `matmul_*`, `add_large_*` |
-| old: `unit/codegen/test_heuristic.ml` "tensor-core upcasts preserve requested global occupancy" | | `matmul_half_*_tc_min_globals` |
-| old: `unit/codegen/test_heuristic.ml` the `IMAGE` group, "IMAGE default occupancy floor skips small global grid", "IMAGE occupancy accounts for cumulative global upcasts", "QCOM uses a smaller grouping threshold" | | dropped: images and QCOM are excluded (README) |
 
 ## Search
 
@@ -1574,18 +966,6 @@ BEAM_PADTO=1 TC=2 ...`, the suite's dune).
 | tinygrad: `codegen/opt/search.py` `DEBUG>=2`, `BEAM_DEBUG`, `BEAM_LOG_SURPASS_MAX` | progress, the kernel, failures and the choice; kernels dropped for their lanes and instructions | `S › a search prints its progress under DEBUG=2`; `S › a search prints nothing by default`; `S › BEAM_PADTO=1 ... › a search prints the kernel, failures and its choice under BEAM_DEBUG`, `› kernels of too many lanes are reported ...`, the uops test (its output); the kernel prints as a graph, since `pyrender` is excluded (README) |
 | tinygrad: `codegen/opt/search.py` `get_worker_pool`, `imap_unordered` | candidates compiled in parallel | `S › a search measures and chooses alike on one domain and on several`: the order is the candidates', tinygrad's order without a pool (D5) |
 | tinygrad: `codegen/opt/search.py` the compute filter (1000 times the fewest operations) | a candidate whose estimated operations exceed a thousand times the fewest of its round so far is not timed | `S › BEAM_PADTO=1 ... › searches_environment.golden` (`transpose_33` on Metal: the copies have no arithmetic, and each pad adds a selection per element), `› a candidate of more than 1000 times the fewest operations is not measured` |
-| old: `unit/test_opt_correctness.ml` "beam actions preserve semantics (CPU)", `unit/test_opt_correctness_metal.ml` "... (Metal)", `unit/opt_fuzz/tolk_opt_fuzz.ml` (every sequence of two actions against the unoptimised kernel) | every kernel the search can choose computes what the kernel computes | `S › every kernel a search can choose writes what its kernel writes` (law over the four renderers, up to three actions, interpreted); `S › every kernel two actions make writes what its kernel writes` (slow, exhaustive, Clang and Metal); `SH` (compiled and run on the host). The interpreter evaluates no tensor core product: tensor cores' values are Postrange's and Codegen's (`tc_*` goldens) |
-| old: `unit/test_runtime_search.ml` "selected kernel compilation produces correct output", "completes on 1D elementwise kernel", "completes on 2D elementwise kernel", "optimized kernel produces correct output", "completes on variable-sized kernel" | | `SH` (`add_small`, `sum_rows`, `variable_rows`, `pad_7x7`, `symbolic`) |
-| old: `unit/test_runtime_search.ml` "accepts compact raw buffers for sparse parameter slots", "uses explicit max shape for beam buffers", "beam_search does not corrupt input buffers", "search timing on CPU" | buffers and timings on a device | the search takes no buffers; allocating, linking and timing are `Tolk_engine.slots`, `Tolk_engine.link_call` and `Tolk_engine.time`: `EN › timing` |
-| old: `unit/test_runtime_search.ml` "uses the supplied symbolic value during timing", "codegen rounds negative timing midpoints down without cache eviction" | each variable at the middle of its bounds, rounded down | `S › a search times with each variable at its bounds' middle` (`n` from 1 to 16 is 8) |
-| old: `unit/test_runtime_search.ml` "disable_cache bypasses cache" | | `S › a search kept in the cache links and times nothing, unless it is ignored` |
-| old: `unit/test_runtime_search.ml` "transient program lifetimes" (3 tests), "codegen retires retained timing buffers ..." (2 tests), "beam invokes the available cache hook for each timing sample" | programs and buffers released, caches cleared | dropped: loading and releasing are the engine's (`EN › timing › slots and a linked program, dropped, return their memory`); every time is cold (`Tolk_engine.time`) |
-| old: `unit/test_runtime_search.ml` "beam codegen requires an explicit runtime" | | `CG › beam search`: a kernel that asks for a search without one is refused |
-| old: `unit/test_runtime_search.ml` completed_compile_budget (2 tests) | | dropped: the compile timeout is excluded (README) |
-| old: `unit/test_runtime_search.ml` "parallel compilation joins workers before propagating failure", "... interruption", "sequential compilation propagates interruption" | | `Worker`'s section: `Worker.map` joins its domains and raises the first element's exception |
-| old: `unit/test_runtime_search.ml` "beam reconsiders compute-filtered candidates in later rounds" | | not pinned: no recorded search times in a later round a binary it filtered in an earlier one; the port marks a binary timed only past the filter, as tinygrad does |
-| old: `unit/test_runtime_search.ml` "beam rejects overflowing resource products" | lanes and threads multiplied past 64 bits | `candidates.golden` `huge_upcasts`, `huge_locals` (products in integers of any size) |
-| old: `unit/test_runtime_search.ml` "beam retains candidate PROGRAM metadata and scales only its launch", "beam scales symbolic launch products beyond host integer bounds" | | `S › measuring on fewer workgroups`; launch products are taken in integers of any size |
 
 ## Codegen
 
@@ -1602,33 +982,6 @@ one target, in turn; the slow run compiles every row.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: `golden/codegen` `elementwise_add`, `sum_reduce`, `max_reduce`, `dot_product`, `reduce_rows`, `gated_store`, `elementwise_where`, `elementwise_cast_f16`, `elementwise_sqrt`, `parallel_reduce`, `elementwise_int32`, `lorenz_fold`, `no_optimize` (`clang_`, `cuda_`, `metal_`, `amd_`: 52 goldens) | the source each target writes for hand-built kernels | `CG › stages › <case>`, the kernel rebuilt at tinygrad HEAD with the scheduler's `LOOP` ranges where the old one had `GLOBAL` ranges (and none on the CPU); `no_optimize` is tagged, so `to_program` does not optimise it; `multi_output` is `two_outputs` |
-| old: `golden/codegen` `matmul_small`, `elementwise_2d` (`cuda_`, `metal_`, `amd_`: 6 goldens) | the same, on GPUs only | `CG › stages › matmul_small`, `elementwise_2d` (Metal, CUDA, HIP) |
-| old: `golden/codegen` `llama_embedding`, `llama_rmsnorm`, `llama_ffn_gate`, `llama_vector_scale`, `llama_output_projection` (20 goldens) | the kernels of tinygrad's LLaMA | `CG › stages › llama_*`, found by the name tinygrad HEAD gives each once optimised for Clang |
-| old: `golden/codegen` `opencl_*` (26 goldens) | OpenCL sources | dropped: OpenCL is excluded (plan §3) |
-| old: `golden/codegen` `*.expected.diff` (float grouping, a leading `+0` of a reduction, `MAX` of NaN and ties) | the old tolk's IEEE differences from tinygrad's source | dropped: tolk writes tinygrad's source; its differences are D16 and D17, compared in `CG › stages › each program is rendered as tinygrad renders it` |
-| old: `unit/codegen/test_lower.ml` "bounded shared loop finishes reads before the next write" | a loop that reads the local memory it writes ends with a barrier | `CG › tinygrad's claims on lowered kernels › shared_loop_barrier: ...`; `CG › stages › shared_loop_barrier` |
-| old: `unit/codegen/test_lower.ml` "conditional shared loop finishes reads before the backedge" | the same for an unbounded loop, which keeps its condition | `CG › tinygrad's claims on lowered kernels › shared_backedge_barrier: ...` |
-| old: `unit/codegen/test_lower.ml` "conditional shared loop keeps independent buffers separate" | no barrier when another buffer is read | `CG › tinygrad's claims on lowered kernels › shared_backedge_two_buffers: ...` |
-| old: `unit/codegen/test_lower.ml` "conditional shared loop retains its existing barrier" | a barrier already there is not wrapped again | `CG › tinygrad's claims on lowered kernels › shared_backedge_barrier_kept: ...` |
-| old: `unit/codegen/test_lower.ml` "accumulators and staged locals share slots after explicit storage" | new buffers take the slots after the kernel's | `CG › tinygrad's claims on lowered kernels › explicit_local_slots: ...` (slots 17, 18, 19) |
-| old: `unit/codegen/test_lower.ml` "anonymous local storage survives lowering until linearization" | an `ALLOC` stays in the lowered sink and is a `BUFFER` of its slot in the program | `CG › tinygrad's claims on lowered kernels › anonymous_local: ...` |
-| old: `unit/codegen/test_lower.ml` "WMMA contracts complete split-axis identities" | the expander contracts a tensor core's upcast axes | `CG › stages › matmul_tc`, `matmul_half`, `matmul_tc_unroll` (the lowered tensor cores); a hand-built `WMMA` has no tinygrad counterpart |
-| old: `unit/codegen/test_lower.ml` "final rewrite concretizes leftover index dtypes" | no weak type is left but a constant's | `CG › tinygrad's claims on lowered kernels › weak_index_store: leaves a weak type only to constants`; the program specification is checked by every lowering (`SPEC=1`, the default) |
-| old: `unit/codegen/test_lower.ml` "memory operands feeding ALU become explicit loads" | arithmetic reads loads, a store's destination is no load | `CG › tinygrad's claims on lowered kernels › negated_index: computes on loads, never on addresses` |
-| old: `unit/codegen/test_lower.ml` "PARAM slot -1 is numbered from existing param count", "BUFFER variables become numbered scalar formals" | variables are numbered after the buffers | `CG › tinygrad's claims on lowered kernels › numbered_variables: numbers variables after the buffers, in order` |
-| old: `unit/codegen/test_lower.ml` "lowering flattens sink-like children" | a sink of a sink, a stack and a no-op | dropped: tinygrad HEAD's kernels are sinks of stores; a sink's cleanup is `Symbolic`'s `pm_clean_up_group_sink` |
-| old: `unit/codegen/test_lower.ml` "SPEC verifies final program spec" | a lowered graph that breaks the program specification raises | `CG › errors › a lowered graph that breaks the specification raises Invalid_argument` |
-| old: `unit/codegen/test_lower.ml` "invalid index gate moves onto store", the gater tests | | Gater's section; the pipeline: `CG › gated stores`, `CG › stages › gated_store`, `gated_loop` |
-| old: `unit/codegen/test_linearizer.ml` "gated stores become IF/STORE/ENDIF", "single casted gated stores become IF/STORE/ENDIF" | | `CG › pm_linearize_cleanups › a gated store becomes a store inside an if on its gate`, `so does a gated store through a cast of its index` |
-| old: `unit/codegen/test_linearizer.ml` "bitcasted gated stores are not linearize-cleanup matches", "nested-cast gated stores are not linearize-cleanup matches" | | `CG › pm_linearize_cleanups › leaves alone a store it does not match › through a bitcast of its index`, `through a cast of a cast of its index` |
-| old: `unit/codegen/test_linearizer.ml` "graph IF nodes are rejected", "graph ENDIF nodes are rejected" | | `CG › pm_linearize_cleanups › raises Invalid_argument on an if already in the list › if`, `endif` |
-| old: `unit/codegen/test_decompositions.ml` "comparison extrema simplify before late codegen" | comparisons of a long with its type's bounds fold | `CG › tinygrad's claims on lowered kernels › comparison_extrema: folds comparisons with the bounds of a long` |
-| old: `unit/test_program_spec.ml` "reads and writes are deduplicated", "buffer tracing passes through cast and after", "buffer args are treated as globals", "local and register storage are not runtime globals", "program_info mirrors extracted metadata" | a program's buffers, outputs and inputs | `CG › stages › to_program makes each program as tinygrad does` (each program's `ProgramInfo`); `CG › programs › the argument of a program is its program information for the target`; `program_info_of_sink` itself is Ops' (`O › programs`) |
-| old: `unit/test_program_spec.ml` "thread-group launch expressions are preserved", "global idx uses flat thread launch", "program_info preserves symbolic local dimensions" | launch sizes | `CG › stages › *_metal`, `*_cuda`, `*_hip` (`global_size`, `local_size`), `CG › stages › symbolic`, `symbolic_sum` |
-| old: `unit/test_program_spec.ml` "launch variables are resolved by name", "missing launch variables identify the program", "launch dimensions retain exact intermediate products", "launch dimensions preserve Python signed shifts", "launch casts convert values without storage narrowing", "launch bitcasts retain the source representation", "launch floor div and mod use Python semantics" | evaluating launch sizes | dropped here: `Call.launch_dims`, `Ops.vals` and `sym_infer` (`O › programs`, `O › sym_infer`) |
-| old: `unit/test_program_spec.ml` "core_id is an ordinary scalar", "duplicate launch axis is rejected", "mixed launch models are rejected" | the old program record's checks | dropped: `ProgramInfo` has no core index and no launch model; tinygrad checks neither |
-| old: `parity/weak_movement_width` | a weak product beyond int32, reshaped and permuted, compiles for CPU and CUDA | `CG › stages › weak_product_permuted` |
 | tinygrad: `null/test_linearizer.py::TestLinearizer::test_load_dedup` | an upcast loads each element once | `CG › tinygrad's claims on programs › load_dedup_upcast: loads each element at most once` |
 | tinygrad: `null/test_linearizer.py::TestLinearizer::test_upcast_cse` | | dropped: skipped in tinygrad ("handled at higher level now") |
 | tinygrad: `null/test_linearizer.py::TestLinearizer::test_reduce_upcast` | an upcast and unrolled convolution keeps no accumulator | `CG › tinygrad's claims on programs › reduce_upcast_unroll: keeps no accumulator and stores once` |
@@ -1664,7 +1017,7 @@ one target, in turn; the slow run compiles every row.
 | tinygrad: `null/test_graph_rewrite.py::TestEdgeCasesAndSpecialOperations::test_full_graph_rewrite_transcendental_edge_cases` | | `CG › full_rewrite_to_sink folds whole graphs › log2 of -1 is NaN and the reciprocal of 0 is infinity` |
 | tinygrad: `null/test_graph_rewrite.py::TestGEPAndVectorizeRewrite` (3 tests) | lanes of a vector of constants | `CG › full_rewrite_to_sink folds whole graphs › a lane of a vector is the lane's value`, `a vector of lanes is the vector of their values`, `a vector of every lane of a vector is the vector` |
 | tinygrad: `null/test_graph_rewrite.py::TestModuloAndDivisionFolding::test_graph_rewrite_div_folding_bug` | | `CG › full_rewrite_to_sink folds whole graphs › a comparison of lanes keeps the lanes apart` |
-| tinygrad: `null/test_const_folding.py::TestBitcastConstFolding::test_vec_bitcast`; old: `unit/uop/test_symbolic.ml` "STACK const bitcast folds", "cast STACK const folds lane-wise", "bitcast STACK const folds lane-wise" | | `CG › full_rewrite_to_sink folds whole graphs › a bitcast of constants folds lane by lane`, `a cast of constants folds lane by lane` |
+| tinygrad: `null/test_const_folding.py::TestBitcastConstFolding::test_vec_bitcast` | | `CG › full_rewrite_to_sink folds whole graphs › a bitcast of constants folds lane by lane`, `a cast of constants folds lane by lane` |
 | tinygrad: `null/test_uops.py::TestGatedStoreRewrite::test_tiny_gate_store`, `test_gate_some_stores` | a gated store is the one store inside an if | `CG › gated stores › a store gated by its index is the one store inside an if`, `an ungated store beside it stays out of the if` |
 | tinygrad: `null/test_uops.py::TestGatedStoreRewrite::test_merge_ifs_alt` | | dropped: skipped in tinygrad ("we don't merge ifs anymore") |
 | tinygrad: `null/test_uops.py::TestFastIdiv::test_division_power_of_two`, `test_floormod_power_of_two`, `test_max_keeps_bound_for_idiv`, `test_floordiv_power_of_two`, `test_unsigned_floordiv_is_cdiv`, `test_fast_idiv_and_mod`, `test_fast_idiv_nonpositive_divisor`, `test_fast_idiv_cmod_kept_when_idiv_declines`, `test_fast_idiv_bounded_numerator_zero`, `test_fast_idiv_remove_powers_of_two`, `test_disable_fast_idiv` | | `CG › divisions` (one test each, in order); `test_max_keeps_bound_for_idiv`'s renderer is Clang's operations without `MAX`, as `CStyleLanguage`'s lack it, and its dividend `max x 0 + 1` wraps at the greatest int (D24), so `a maximum proves its dividend positive before it is decomposed` divides `max x 0`, and `a dividend that can wrap keeps the correction of a floor division` pins the difference |
@@ -1740,57 +1093,6 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | D17: `renderer/cstyle.py:245-250` C promotion of narrow operands | char, short and `__fp16` operations compute in int or float, and only the stored value narrows; tolk casts each inlined one back | `CS › narrowing › cases.golden` (every kernel's written kernel is `with_d17_casts` of it; 21 sources are tinygrad's for the kernel with those casts); `CS › execution on the host › rounds each operation on halves to a half`, `wraps each operation on unsigned chars`; slow law `a kernel over a narrow type wraps and rounds as the interpreter` (8 kernels, inputs over each type's whole range) |
 | D18: `renderer/cstyle.py:368-372` Metal's `extra_matcher` computes `SQRT`, `EXP2`, `LOG2` and `SIN` of a bfloat16 in float32, not `TRUNC` | Metal truncates only floats, so a bfloat16 `TRUNC` is computed in float32 too | `CS › bfloat16 truncation on Metal › truncates a bfloat16 in float32`, `leaves it to CUDA, which truncates a bfloat16 with htrunc`; slow: `compiles a kernel that truncates a bfloat16` (skipped without MTLCompiler) |
 | D16: `renderer/cstyle.py:33,42` a float8 conversion saturates infinities on CUDA | an infinity stays one in e5m2 and becomes a NaN of its sign in e4m3; finite values saturate | `CS › float8 infinities on CUDA` (6 tests: the guard exactly where a value converts to a float8, the byte of each infinity, infinite constants as their bits); `CS › sources › cuda_dtype_float8_*`, `cuda_inf_nan_float8_*` through `tinygrad_of_d16`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` |
-| old: `unit/test_cstyle.ml` "Volatile parameters" › "buffer qualifiers survive rendering and serialization", "vector access casts retain the volatile qualifier" | `volatile` in the signature | `CS › sources › *_volatile`; `CS › execution on the host › accesses volatile buffers`; serialization is `Graph`'s (`ParamArg.volatile`) |
-| old: `unit/test_cstyle.ml` "Constants" (9 tests) | int, float, double, bool, NaN and infinity, `l`, `u`, `ul` suffixes, a ulong of -1 | `CS › sources › *_constants`, `*_inf_nan_*`; `CS › execution on the host › stores each constant as its type holds it` |
-| old: `unit/test_cstyle.ml` "ALU Operations" › "Binary", "Unary", "Ternary" › "where", "Backend-specific" (CUDA half intrinsics, Metal precise sin, Clang builtins) | each operation's spelling | `CS › code_for_op › written.golden`; law `CS › rendering › writes each native operation as code_for_op does` |
-| old: `unit/test_cstyle.ml` "raw Fdiv is Clang-only", "max", "Ternary" › "mulacc" | an operation the target lacks is refused | `CS › rendering › raises Invalid_argument on an operation the target lacks`; `declarations › code_for_op` |
-| old: `unit/test_cstyle.ml` "integer division", "comparison operators", "reciprocal" | | `CS › code_for_op › written.golden` (`CDIV`, `CMPLT`, `CMPNE`, `CMPEQ`, `RECIPROCAL`) |
-| old: `unit/test_cstyle.ml` "paren stripping" | | `CS › parentheses` |
-| old: `unit/test_cstyle.ml` "Control Flow" › "for loop", "nested loops", "conditional" | | `CS › sources › *_sum`, `clang_matmul`, `clang_interpolate_atari_1`, `*_gated_store_in_loop` |
-| old: `unit/test_cstyle.ml` "Memory" › "simple load/store", "gated load", "gated store", "vector load/store casts access pointer", "dtype-changing load casts access pointer", "shrink renders like index" | | `CS › sources › *_add`, `*_padded`, `*_gated_store_*`, `*_matmul_upcasted`, `*_packed_cast`, `*_vector_cast` |
-| old: `unit/test_cstyle.ml` "clang vector types are aligned unless asked otherwise" | | `CS › sources › with ALIGNED=0 › clang_add_unaligned`, `clang_dtype_bool_unaligned`; `by default › clang_add` |
-| old: `unit/test_cstyle.ml` "opencl image load/store", "non-opencl image rejected", "OpenCL image indexes keep separate coordinates", "OpenCL fp16 pragma", "Intel" › "kernel attribute" | | dropped: OpenCL, Intel and images are excluded |
-| old: `unit/test_cstyle.ml` "Cast and Bitcast" (3 tests), "GPU pointer bitcasts use backend bitcast syntax", "CUDA bitcast template" | | `CS › sources › *_bitcast`, `*_packed_bitcast`, `*_dtype_*` |
-| old: `unit/test_cstyle.ml` "Special Dimensions" › "Group_id", "Local_id" | | `CS › sources › *_matmul_locals`, `*_group_reduce`, `*_gated_store_on_threads` |
-| old: `unit/test_cstyle.ml` "Special Dimensions" › "Global_idx", "Clang fails" | a global index, a hardware index on Clang | dropped: HEAD's renderers have group and local indices only, and code generation gives Clang none (`declarations › has_local`) |
-| old: `unit/test_cstyle.ml` "Shared Memory and Barrier" (2 tests) | | `CS › sources › metal_group_reduce`, `cuda_group_reduce`, `hip_group_reduce`, `*_group_reduce_upcasted` |
-| old: `unit/test_cstyle.ml` "ordinary final indexes require one flat coordinate" | an index of two coordinates is refused | dropped: HEAD indexes by one coordinate or two (images, excluded); the renderer does not check |
-| old: `unit/test_cstyle.ml` "flat indexes preserve a symbolic stride", "vectorize", "index" | | `CS › sources › *_shrunk`, `*_matmul_upcasted`, `*_idiv` |
-| old: `unit/test_cstyle.ml` "Clang renders a dynamic value lane index" | | `CS › sources › *_dynamic_lane`; `CS › execution on the host › picks a lane of a vector by a variable` |
-| old: `unit/test_cstyle.ml` "vector cast uses the resulting shape", "size-changing bitcast uses the resulting shape" | | `CS › sources › *_vector_cast`, `clang_register_cast`; `CS › execution on the host › reads two uint registers as a ulong through a cast of their address` |
-| old: `unit/test_cstyle.ml` "Kernel Signature" › "function prefix", "kernel name", "parameter qualifiers", "scalar parameter", "64-bit scalar parameter" | | `CS › sources` (every golden); `*_scalar_params`; `CS › execution on the host › passes variables of 32 and 64 bits` |
-| old: `unit/test_cstyle.ml` "explicit names survive numbered buffer and scalar parameters" | | `CS › sources › *_named_params`; `CS › execution on the host › passes named parameters` |
-| old: `unit/test_cstyle.ml` "buffer parameter and body both use type_map" | | `CS › sources › metal_dtype_bf16`, `*_constants` |
-| old: `unit/test_cstyle.ml` "renderer op capabilities match cstyle render surface", "a dtype is supported natively or by emulation", "renderer dtype capabilities are backend-specific", "metal tensor cores follow Apple GPU family" | | `CS › declarations › code_for_op`, `supported`, `tensor_cores`; `CS › architectures › Metal has no tensor cores on a family that is not Apple's`; emulation is `Decomp_dtype`'s; QCOM and OpenCL are excluded |
-| old: `unit/test_cstyle.ml` "Preamble" › "CUDA fp16 include", "CUDA WMMA helper follows tinygrad asm preamble", "CUDA WMMA helper is emitted once per signature", "CUDA WMMA declares the accumulator width, not the operand width", "Metal stdlib", "Metal WMMA helper follows tinygrad simdgroup preamble" | | `CS › sources › cuda_dtype_half`, `cuda_tc_*` (8 cores), `metal_*`, `metal_tc_*` (5 cores) |
-| old: `unit/test_cstyle.ml` "Non-native Rewrites" (6 tests) | emulated floats through float, manual bfloat16 conversions not on CDNA4, fp8 tensor-core operands packed | `CS › extra_matcher › rewrites.golden` (`bf16_*`, `*_to_bf16`, `e4m3_product`, `e5m2fnuz_product`, `half_product` on each target) |
-| old: `unit/test_cstyle.ml` "Clang ABI" › "fixed ABI wrapper", "fixed ABI wraps inner kernel" | a C entry the host calls | dropped: tinygrad writes no entry (`ClangRenderer._render_entry` is empty); the test executor `Host` adds one, and rune's executor will (L9) |
-| old: `unit/test_cstyle.ml` "CUDA Launch Bounds", "CUDA Device Name", "uint spelling" (2 tests) | | `CS › sources › cuda_*`; `CS › rendering › writes the same CUDA source for the CUDA and NV devices`; `CS › declarations › cachekey` (`compile_nv_sm_89`) |
-| old: `unit/test_cstyle.ml` "Variable Naming" (2 tests) | | `CS › sources` (`Lidx0`, `Ridx0`, `gidx0`, `lidx0` throughout) |
-| old: `unit/test_cstyle.ml` "Unbounded loops" (3 tests) | `for (;;)`, the exit test at the bottom, indented inside the loop | `CS › sources › *_unbounded_loop`; `CS › execution on the host › loops until its bottom test fails` |
-| old: `unit/test_cstyle.ml` "Register loads" (2 tests) | a register load read once is inlined, one read more is named | `CS › sources › *_sum`, `*_matmul` |
-| old: `unit/test_cstyle.ml` "Custom" › "custom_inline" | | `CS › sources › *_custom`; `CS › rendering › formats custom code as str.format does`; `CS › execution on the host › runs custom code` |
-| old: `unit/test_cstyle.ml` "AMD/HIP" › "nontemporal loads keep their scalar or vector pointer type" | | `CS › sources › hip_nontemporal` (a scalar load; HEAD merges no nontemporal vectors) |
-| old: `unit/test_cstyle.ml` "AMD/HIP" › "special dims", "transcendentals", "barrier", "kernel attribute", "bf16 target paths" | | `CS › sources › hip_*`, `hip_transcendental_*`, `hip_group_reduce`, `hip_dtype_bf16`, `hip_cdna4_dtype_bf16` |
-| old: `unit/test_cstyle.ml` "AMD/HIP" › "CDNA FP8 formats follow the hardware encoding", "CDNA3 FNUZ conversion uses its exponent bias and range", "CDNA3 FNUZ MFMA uses packed operands", "cdna fp8 constants use f32_to_fp8 helper", "cdna fp8 casts use f32_to_fp8 helper", "cdna WMMA emits MFMA macro and extra call arguments" | | `CS › declarations › supported`; `CS › sources › hip_cdna3_*`, `hip_cdna4_*` (dtypes, constants, infinities, tensor cores); `CS › extra_matcher › rewrites.golden › case=hip_cdna3_e5m2fnuz_product` |
-| old: `unit/test_cstyle.ml` "AMD/HIP" › "rdna4 WMMA emits gfx12 builtin macro", "rdna3 int8 WMMA uses sanitized signed-char names", "rdna3 half output WMMA emits wrapper" | | `CS › sources › hip_rdna4_tc_*`, `hip_tc_signed_char_int_16_16_16`, `hip_tc_half_half_16_16_16` |
-| old: `unit/test_cstyle.ml` "Properties" › "rendering does not retain the expression graph", "deterministic" | | `CS › rendering › keeps no reference to the kernel it rendered`, `keeps no state from one kernel to the next` |
-| old: `unit/test_cstyle.ml` "Properties" › "non-empty output", "contains kernel name", "balanced braces" | | `CS › sources` pins every source whole |
-| old: `golden/cstyle/<lang>_<case>.expected` for Clang, Metal, CUDA and AMD (64 files) | `simple_add_f32`, `simple_mul_i32`, `bitcast_f32_to_i32`, `cast_f16_to_f32`, `conditional`, `const_inf_nan`, `gated_load`, `loop`, `nested_loops`, `multi_param`, `shared_memory`, `special_dims`, `unary_sqrt_f16`, `unary_sqrt_f32`, `vectorize_index`, `where_select` | `CS › sources › <renderer>_add`, `_dtype_int`, `_bitcast`, `_dtype_half`, `_gated_store_in_loop`, `_inf_nan_*`, `_padded`, `_sum`, `_matmul`, `_scalar_params`, `_group_reduce`, `_matmul_locals`, `_transcendental_half`, `_transcendental_float`, `_matmul_upcasted`, `_where_max` |
-| old: `golden/cstyle/opencl_*.expected` (16 files) | | dropped: OpenCL is excluded |
-| old: `runtime/cpu/test_compiler.ml`, `test_cuda_abi.ml` | | dropped here: `Compiler_cpu`'s and `Compiler_cuda`'s sections |
-
-### Rows other sections left to Cstyle's
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| Transcendental: old `unit/test_cstyle.ml` "transcendentals" | AMD writes native sqrt and sin | `CS › code_for_op › written.golden › renderer=HIP op=Ops.SQRT`, `Ops.SIN`; `sources › hip_transcendental_*` |
-| Tc: old `unit/codegen/test_tc.ml` "to_string", "tinygrad table names" | `WMMA_<dims>_<in>_<out>` names | `CS › sources › *_tc_*` (the helpers and calls named `__WMMA_8_16_16_half_float`, `__WMMA_16_16_16_signed_char_int`, ...) |
-| Tc: old `unit/test_cstyle.ml` "metal tensor cores follow Apple GPU family" | | `CS › declarations › tensor_cores › declarations.golden` (Apple5 to Apple9, Mac2) |
-| Renderer: old `unit/test_cstyle.ml` `Renderer.supports_dtype Cstyle.qcom` | | dropped: QCOM is excluded; the other targets' types are `CS › declarations › supported` |
-| Decomp_op: old `unit/codegen/test_decompositions.ml` "fast idiv is enabled for Metal" | | dropped: no renderer of `cstyle.py` turns fast division off at HEAD; `CS › sources › metal_idiv` pins Metal's division |
-| Decomp_op: old `unit/test_cstyle.ml` "renderer op capabilities match cstyle render surface" | | `CS › declarations › code_for_op` (no row lists `MAX`, `MULACC` or `THREEFRY`) |
-| Coalesce: old `unit/test_cstyle.ml` vector pointer casts and `__builtin_nontemporal_load` | | `CS › sources › *_matmul_upcasted`, `*_group_reduce_upcasted`, `hip_nontemporal` |
 
 ## C
 
@@ -1798,8 +1100,8 @@ The suite is `Tolk.C` (`runtime/support/c/`), written `C` below.
 `findlib_trees.golden` holds 41 searches of `DLL.findlib`, each a tree of
 files, an environment and the paths searched, with the file tinygrad finds:
 25 run as Linux searches and 16 as macOS's, whatever the platform that
-generated them, and each row runs on its own platform. No tinygrad test and no
-old tolk test covers `findlib`.
+generated them, and each row runs on its own platform. No tinygrad test covers
+`findlib`.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
@@ -1834,12 +1136,6 @@ an object the installed objdump cannot read, skips.
 | tinygrad: `runtime/support/compiler_cpu.py` the arch assertion and `unsupported arch` | a malformed arch or another machine is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named:` (3), `another machine is refused, named:` (3) |
 | tinygrad: `runtime/support/compiler_cpu.py` `Compiler.__init__` cache key | `compile_clang_obj_` and the arch's fields joined by `_` | `CPU › cache › objects are cached in the table of the architecture` (3), `the table is named with ccache off`; `CPU › without Clang › a cached object is served without running Clang` |
 | tinygrad: `runtime/support/compiler_cpu.py` `disassemble` | `objdump -d` of the object | `CPU › disassembly › prints what objdump prints of the object` |
-| old: `unit/runtime/cpu/test_compiler.ml` "outputs relocatable ELF for normalized host" | ELF magic, class, byte order, relocatable type, the host's machine | `CPU › objects › native is the host's processor` |
-| old: `unit/runtime/cpu/test_compiler.ml` "explicit architectures" | the ELF machine of `x86_64`, `arm64` and `riscv64` | `CPU › objects › compiles to a relocatable ELF object for › x86_64,x86-64`, `› arm64,generic`, `› riscv64,rv64g` |
-| old: `unit/runtime/cpu/test_compiler.ml` "architecture requires a CPU field" | `arm64` alone is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named: › "arm64"`; the old refusal was a `Compile_error` at compile, tinygrad's and tolk's is at construction |
-| old: `unit/runtime/cpu/test_compiler.ml` "output is parseable by ELF support" | the object has `.text` and the symbol | dropped: ELF parsing is rig's; `CPU › execution on the host › a compiled kernel adds two buffers` loads and runs the object |
-| old: `unit/runtime/cpu/test_compiler.ml` "invalid C raises Compile_error" | Clang's diagnostics in the error | `CPU › errors › a rejected source raises Compile_error with Clang's diagnostics`; `CPU › without Clang › a compile raises Compile_error naming the program CC names` |
-| old: `unit/test_elf.ml` external-call relocations of Clang objects | PLT32 relocations of an object | dropped: ELF relocation is rig's |
 | none | determinism | `CPU › objects › one source compiles to the same bytes` |
 
 ## Compiler_cuda
@@ -1858,10 +1154,6 @@ against NVRTC 12.8 on Linux arm64.
 | tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
 | D15 | making the compiler loads nothing; the first compile raises | `CUDA › without NVRTC on the machine › a compile raises Compile_error naming nvrtc and NVRTC_PATH`; `CUDA › a library that does not load` (4 tests) |
 | tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
-| old: `unit/test_cuda_abi.ml` "concurrent initialization publishes a complete driver table" | a load from several domains at once | `CUDA › a library that does not load › compiles from several domains at once raise it`; slow: `CUDA › NVRTC › compiles from several domains at once`. The driver table itself is the executor's (rig) |
-| old: `unit/test_cuda_abi.ml` "missing driver symbols stay failed across callers" | a failed load stays failed | `CUDA › a library that does not load › every compile raises the same Compile_error` |
-| old: `unit/test_cuda_abi.ml` the timestamp, submission, copy, host registration and shutdown tests (5) | the CUDA driver's queues and memory | dropped: the runtime is rig's and `tolk.engine`'s (plan §1a) |
-| old: `unit/test_runtime_nv.ml` "the recorded nvrtc kernel parses to its recorded fields" | a recorded kernel | dropped: the NV runtime is rig's |
 
 ## Compiler_amd
 
@@ -1880,9 +1172,6 @@ are slow and skip without it; no machine here has ROCm, so they have not run.
 | tinygrad: `external/external_test_hip_compile.py`, `external/external_benchmark_hip_compile.py` | compile time against a reference | dropped: benchmarks |
 | tinygrad: `amd/hw/*` (`HIPCompiler` through `amd/hw/helpers.py`) | instructions on AMD hardware | dropped: they run on the device, the executor's |
 | tinygrad: `device/amd/test_llvm.py` | `AMDLLVMCompiler` | dropped: the LLVM compilers are excluded (README) |
-| old: `unit/test_runtime_amd.ml` "missing comgr degrades to Failure" | a missing comgr fails at compile | `AMD › without comgr on the machine › a compile raises Compile_error naming comgr and COMGR_PATH`; tinygrad's and tolk's failure is a `Compile_error` |
-| old: `unit/test_runtime_amd.ml` "load failure is retried, not latched" | a failed load is tried again | dropped: tinygrad loads comgr once, at import; `AMD › a library that does not load › every compile raises the same Compile_error` pins the latch |
-| old: `unit/test_runtime_amd.ml` "compiles a trivial HIP kernel", "broken source raises Compile_error" | | slow: `AMD › comgr › compiles a kernel to a code object`, `a rejected source raises Compile_error with comgr's log` |
 
 ## Compiler_metal
 
@@ -1905,7 +1194,6 @@ of MTLCompiler itself skip elsewhere than on macOS.
 | tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (2 tests); `M › a library that does not load › a cached library is served without loading MTLCompiler` |
 | D15 | making the compiler loads nothing; the first compile raises | `M › without MTLCompiler on the machine › a compile raises Compile_error naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (4 tests) |
 | tinygrad: `external/external_metal_compile_fail.py` | a kernel that crashed Metal's compiler | dropped: a crash reproducer of a driver bug, outside tinygrad's suite |
-| old: `unit/test_runtime_metal.ml` "compile and run one kernel" | | dropped: running is the device's; compiling is `M › MTLCompiler › compiles a kernel to a Metal library` |
 
 ## Indexing
 
@@ -1945,43 +1233,6 @@ movements are removed afterwards.
 | tinygrad: external/external_test_schedule_scaling.py | scheduling time grows linearly | dropped: a timing benchmark |
 | tinygrad: external/external_uop_gc.py (`apply_movement_op.cache_clear`) | the cache of indices releases its graphs | dropped: tinygrad's `functools.cache`; the port memoizes nothing |
 
-### old tolk: unit/test_schedule_rangeify.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_schedule_rangeify.ml group "is_always_contiguous" (13 tests) | which nodes are storage | the set is private; storage sources of a gather across devices are not stored (`IX › run_rangeify › recorded graphs › shard_sum_rangeified.golden`), computed ones are (`IX › run_rangeify › rewrites › a source of a gather across devices is stored on its device`), and so are a custom kernel's (`custom_kernel_rangeified.golden`). `CONTIGUOUS` and `COPY` are no storage in tinygrad (a copy is a store before rangeify) |
-| old: unit/test_schedule_rangeify.ml "size 1 gives const 0", "symbolic size resolving to 1 gives const 0" | a unit axis gets no range | `IX › run_rangeify › new ranges › a stored node gets a range per axis, and a unit axis none`; a size that folds to 1 is `Int 1` before rangeify |
-| old: unit/test_schedule_rangeify.ml "size 0 gives Range (resolve(s!=1) is true)" | | `IX › run_rangeify › new ranges › an empty axis gets a range` |
-| old: unit/test_schedule_rangeify.ml "size > 1 gives Range", "axis increments", "kind propagates" | | `IX › run_rangeify › new ranges › the axes a reduction reduces get reduce ranges, numbered after` |
-| old: unit/test_schedule_rangeify.ml "range size returns existing range" | an axis whose size is a range reuses it, and takes no number | `IX › run_rangeify › rewrites › a stored axis whose size is a range is indexed by that range`; `expand_by_range_stored_rangeified.golden` (new ranges 0 to 2 around range 7) |
-| old: unit/test_schedule_rangeify.ml group "range helpers" (2 tests) | `get_idx` and `get_valid` | dropped here: Ops' section |
-| old: unit/test_schedule_rangeify.ml groups "apply_movement_op › shrink", "› flip" (4 tests) | | `IX › apply_movement_op › movement_shrink.golden`, `movement_flip.golden`; the shrink and flip laws |
-| old: unit/test_schedule_rangeify.ml "swap [1;0]" | | `movement_permute.golden`; the permute laws |
-| old: unit/test_schedule_rangeify.ml "identity elides at construction" | | dropped here: `Shape.mop`'s, Ops' section |
-| old: unit/test_schedule_rangeify.ml group "apply_movement_op › expand" (3 tests) | | `movement_expand.golden`, `movement_expand_symbolic.golden`; the expand laws |
-| old: unit/test_schedule_rangeify.ml group "apply_movement_op › pad" (4 tests) | an unpadded axis passes, a padded one is valid within its source, at either end, of symbolic size | `movement_pad.golden`, `movement_pad_end.golden`, `movement_pad_symbolic.golden`; the pad laws |
-| old: unit/test_schedule_rangeify.ml group "apply_movement_op › reshape" (4 tests) | | `movement_reshape_flatten.golden`, `movement_reshape_unflatten.golden`, `movement_reshape_symbolic.golden`; the reshape laws (a reshape to the same shape among them) |
-| old: unit/test_schedule_rangeify.ml "realized node creates Realized", "realized node has range_map entry", "2D realized node has all axes" | | the map is private: `IX › run_rangeify › new ranges › a stored node gets a range per axis, and a unit axis none`; `IX › run_rangeify › stores › a stored store is closed by an end over its ranges` |
-| old: unit/test_schedule_rangeify.ml "the apply pass adds no map entries" | nodes that differ only in movements keep their own ranks | `IX › run_rangeify › recorded graphs › scalar_and_wide_uses_rangeified.golden` (the same graph) |
-| old: unit/test_schedule_rangeify.ml "elementwise inherits consumer ranges" | | `IX › run_rangeify › new ranges › consumers that index a node alike share its ranges` |
-| old: unit/test_schedule_rangeify.ml "reduce creates reduce-kind ranges" | | `IX › run_rangeify › new ranges › the axes a reduction reduces get reduce ranges, numbered after` |
-| old: unit/test_schedule_rangeify.ml "movement op has different in and out ranges" | | `IX › run_rangeify › debug › *_debug.golden` (a movement prints its source's ranges, then its own) |
-| old: unit/test_schedule_rangeify.ml "symbolic param shape creates symbolic range size" | | `IX › run_rangeify › recorded graphs › variable_shrink_rangeified.golden`, `variable_offset_rangeified.golden` |
-| old: unit/test_schedule_rangeify.ml "reduce indexes direct source before lowering" | | `IX › run_rangeify › rewrites › a reduction of leading axes becomes a reduction over ranges`; `sum_rangeified.golden` |
-| old: unit/test_schedule_rangeify.ml "pad where uses indexed child" | | `IX › run_rangeify › rewrites › a pad becomes a selection of its source and of zero`; `pad_rangeified.golden` |
-| old: unit/test_schedule_rangeify.ml "staged elementwise indexes raw params" | a stage's source reads storage through its ranges | `IX › run_rangeify › recorded graphs › two_consumers_permuted_rangeified.golden`, `shared_view_rangeified.golden` |
-| old: unit/test_schedule_rangeify.ml "partial reshape index maps to source prefix" | `apply_movement_op` on a prefix of a shape | the reshape laws (the prefix is a shape of its own); the call is Prepare's section |
-| old: unit/test_schedule_rangeify.ml group "get_kernel_graph" (13 pipeline tests), group "reshape merge" | kernel counts of fusions | the programs are recorded here (see the tinygrad row of test_schedule.py; "reshape chain" is `reshape_chain_rangeified.golden`); the counts and "rejects distinct written states" are Rangeify's section |
-| old: unit/test_schedule_rangeify.ml group "stack selection" (5 tests) | a selection of 1, 8, 9, 17 and 1024 sources picks each and nests in logarithmic depth | `IX › run_rangeify › stacks › a stack of <n> constants writes each` (1, 8, 9, 17, 100); `IX › run_rangeify › stacks › a stack of <n> constants selects the last at a negative index, in logarithmic depth` (2, 8, 9, 17, 1024); `stack_eight_rangeified.golden`, `stack_twelve_rangeified.golden`. An index past the last source is dropped: the interface states only a negative one, and ranges never leave the stack |
-| old: unit/test_schedule_rangeify.ml groups "split_reduce", "symbolic variables", "stage capacity", "symbolic empty shapes", "moved materializations", "symbolic storage views", "packed argument buffer limits", "kernel splitting preserves independent symbolic ranges", "Shape queries release graphs" | | dropped here: Rangeify's, Prepare's and Ops' sections |
-
-### old tolk: golden/rangeify
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: golden/rangeify `binop_permute`, `binop_reshape`, `contiguous_add`, `diamond`, `elementwise_3way`, `elementwise_add`, `expand_permute`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_sum` (each on 5 renderers) | the kernels of each program | the ranges: `IX › run_rangeify › recorded graphs ›` `binop_permute`, `binop_reshape`, `contiguous_add`, `shared_sum`, `elementwise_three`, `add`, `children_dont_push`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_consumers`; the rendered sources are the renderers' and the end-to-end suites (L4, L5) |
-| old: golden/rangeify `llama_*` (5 cases), `test_llama.ml` | a small Llama's kernels | dropped here: the end-to-end suite; its operations are recorded here as `rmsnorm`, `attention`, `softmax`, `matmul`, `embedding` |
-
 ## Allreduce
 
 The suite is `Tolk.Allreduce` (`schedule/allreduce/`), written `AR`
@@ -2007,22 +1258,6 @@ only at step 0.
 | tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | `ALLREDUCE_CAST` keeps 16-bit copies | dropped here: the cast is `schedule/multi.py`'s, Multi's section |
 | tinygrad: null/test_multitensor.py::TestMultiRamUsage::test_multi_layer_allreduce, test_allreduce_cast_dtype_memory | memory of allreduces | dropped here: Memory's and Multi's sections |
 | tinygrad: null/test_multitensor.py (the other tests) | sharding, multi-device ALU, batch norm | dropped here: Multi's section |
-
-### old tolk: unit/engine/test_collectives.ml, unit/engine/test_multi.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_collectives.ml "replicas agree bit for bit" (each strategy, 2 to 8 devices) | every device holds the same sums | `AR › handle_allreduce › values › <case> reduces its shards`; `AR › handle_allreduce › laws › an expansion reduces its shards` (each device's elements equal the reduction's exactly) |
-| old: unit/engine/test_collectives.ml "replicas keep a sum's -0" | an allreduce of -0 is -0 | dropped: the reduction identity; RFC 0012's lowering decides. Every compiled sum starts from +0, so a sum of -0 is +0 on one device as on several |
-| old: unit/engine/test_collectives.ml "a realized allreduce holds no more than a consumed one" | memory | dropped here: Memory's section |
-| old: unit/engine/test_collectives.ml "a realized allreduce of a symbolic slice keeps its values", "blocks of a symbolic slice equal the allreduce's rows under boxes" | a symbolic allreduce | `AR › handle_allreduce › recorded › naive_symbolic_handled.golden`, `naive_symbolic_function.golden`; `AR › handle_allreduce › algorithms › a symbolic shape is kept, and a function stores its greatest` (a symbolic shape takes the naive algorithm, whatever the settings); the values need the executor |
-| old: unit/engine/test_collectives.ml groups "copies", "all-gather", "reduce-scatter", "an allreduce also used whole is reduced once", "an allreduce in a call body raises", "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST", the training harness | old tolk's collective calls and resharding | dropped here: tinygrad has no all-gather or reduce-scatter call; resharding and the cast are Multi's section, the harness the end-to-end suite |
-| old: unit/engine/test_multi.ml "forced ring handles aligned empty chunks on four devices", "hierarchical scalar handles empty chunks" | chunks of no element | `AR › handle_allreduce › laws › an expansion reduces its shards` (covers "a chunk is empty" and "devices form nodes") |
-| old: unit/engine/test_multi.ml "forced strategies reduce uneven chunks on four devices" | | `AR › handle_allreduce › recorded › ring_uneven_chunks_handled.golden`; `AR › handle_allreduce › values › ring_uneven_chunks reduces its shards`; the laws |
-| old: unit/engine/test_multi.ml "each forced strategy schedules its own collective" | | `AR › handle_allreduce › recorded` (`naive_two_devices`, `ring_two_devices`, `all2all`, `nodes_of_two` differ); `AR › handle_allreduce › algorithms › the algorithm is the first that applies` |
-| old: unit/engine/test_multi.ml "hierarchical maximum handles negative values" | | `AR › handle_allreduce › recorded › nodes_of_three_handled.golden` (a maximum); the laws draw negative elements and maxima |
-| old: unit/engine/test_multi.ml "symbolic allreduce retains logical sizes under forced ring" | | `AR › handle_allreduce › algorithms › a symbolic shape is kept, and a function stores its greatest` |
-| old: unit/engine/test_multi.ml groups "Ownership", "Resolution", "Execution", "Kernels over split storage", "Cuda", "partial multi-axis allreduce is rejected" | | dropped here: Multi's section, and the executor's |
 
 ## Support_memory
 
@@ -2053,14 +1288,6 @@ can take.
 | tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_custom_start_address, test_block_tracking | a base address, the block table | `SM › Tlsf_allocator › addresses start at the base`, `a block past the base is freed by its address`. Both upstream tests error at HEAD: they use `start_addr`, which `TLSFAllocator` no longer has, and the block table is private |
 | tinygrad: external/external_fuzz_tlsf.py | random allocations and frees never corrupt each other's bytes | `SM › Tlsf_allocator › laws › blocks fit, align and never overlap, and None means no room` (blocks that never overlap cannot corrupt each other); `traces.golden` |
 
-### old tolk: unit/runtime/support/test_memory.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/runtime/support/test_memory.ml group "shared virtual addresses" (2 tests) | domains allocate from one allocator under a lock | dropped: tinygrad's allocator has no concurrency contract, and tolk carries none it lacks |
-| old: unit/runtime/support/test_memory.ml groups "Map_range", "Unmap_range", "Page_tables", "Alloc_vaddr", "Palloc", "Valloc", "Vfree", "Identity_map", "Six_level_dual" | the memory manager and its page tables | dropped here: `Support_memory` ports the TLSF allocator; the memory manager of the same tinygrad file is the runtime's |
-| old: unit/test_amd_amdev.ml (TLSF as a virtual address allocator) | | dropped here: the AMD device's section |
-
 ## Memory
 
 The suite is `Tolk.Memory` (`schedule/memory/`), written `ME` below.
@@ -2085,13 +1312,6 @@ their own; and that held buffers stay.
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › recorded › copies_held_mixed_planned.golden`; the laws |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`; the laws (a copy's buffers live for as many calls again) |
 | tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › recorded › disk_planned.golden` and `ME › memory_plan_rewrite › rules › a schedule on a disk is itself` |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_engine_schedule.ml "concurrent memory plans keep arenas distinct" | plans on several domains take distinct arena slots | `ME › memory_plan_rewrite › rules › each plan's arenas take new slots`; that the counter is safe across domains is `Ops.unique_num`'s, Ops' section |
-| old: unit/engine/test_schedule.ml "memory plans internal buffers when not capturing" | the executor plans unless it captures | dropped here: when to plan is the executor's (`tolk.engine`) |
 
 ## Device
 
@@ -2127,29 +1347,13 @@ domains share a renderer cannot run under mutation testing, which forks.
 | tinygrad: device.py `TinyELF.iter_sig` (read by ops_cpu, ops_hip, hcq2) | values packed from an offset, each aligned to its size | `DV › Tiny_elf.iter_sig › packs a signature as tinygrad's iter_sig does › layouts.golden` (offsets 0, 3 and 8); `packs each value at the next offset aligned to its size` |
 | tinygrad: test/helpers.py:146, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is rig's (D3) |
 
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_device.ml "compilation canonicalizes interleaved kernel arguments" | buffers in slots 7 and 2 and a variable take signature slots 0, 1, 2 | `DV › Tiny_elf.of_program › numbers buffers by their place among the globals, then variables` (its first example is this kernel); `signatures.golden` (`program=sparse`). The rendered prototype is Cstyle's |
-| old: unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types | name, lib, target, profile key, slots, shapes, names and types of `to_elf` | `DV › Tiny_elf.of_program › compiles as tinygrad's to_elf does`, `takes the program's binary as its lib`, `keys the program's profile with its key`, `takes the target of the program, whatever rendered it`, `signatures.golden` (named buffers and variables) |
-| old: unit/uop/test_uop.ml binary_argument_layout | a packed layout of a signature, refused for void and weak types | `DV › Tiny_elf.iter_sig › packs each value at the next offset aligned to its size`; the refusal is dropped: tinygrad's `iter_sig` refuses no type |
-| old: unit/uop/test_uop.ml incomplete_program_has_no_binary | `to_elf` of a sink or an uncompiled program | `DV › Tiny_elf.of_program › refuses a node that is no program, and a program not compiled` |
-| old: unit/test_program_spec.ml "bounded scalar metadata retains the complete ABI", "named scalar formals preserve binding order and deduplication" | variables follow the buffers, in order | `DV › Tiny_elf.of_program › numbers buffers by their place among the globals, then variables` |
-| old: unit/test_program_spec.ml "incomplete scalar metadata is rejected before ABI construction", "conflicting scalar declarations are rejected before dispatch", "buffer and scalar declarations share collision checks" | the old program record refused variables without names or bounds, and names that render alike | dropped: `Program_spec` has no counterpart, and tinygrad's `to_elf` checks neither; a variable's name and bounds are `Ops.variable`'s |
-| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests) | buffer copies, and their failure before the engine links | the engine's section (L7): buffers are `tolk.engine`'s |
-| old: unit/test_device.ml "device bootstrap registration rolls back failed initialization", "concurrent device lookup runs one opener", "incomplete devices are private to the initializing thread", "failed device initialization wakes waiting callers", "failed openers cannot publish provisional devices" | the device registry | dropped: the engine has no registry of devices by name (README) |
-| old: unit/test_device.ml "independent views share root ownership across domains", "program storage belongs to the device across links", "failed buffer finalizers are reported without retrying teardown", "buffer finalizers wait for device operations", "buffer finalizers wait for overlapping systhreads", "suspended device operations reject unrelated fibers", "foreign retirement waits for the active native owner", "buffer finalizers preserve queued retirement error timing", the three "teardown shares device ownership" tests, "foreign access completion is captured, coalesced and retried", "same-name foreign completions retain separate owners" | buffer and device lifetimes across domains and threads | dropped: storage and its lifetime are `tolk.engine`'s and rig's (D3); tinygrad has none of these contracts |
-| old: unit/test_device.ml "host storage owns zeroed pages suitable for GPU registration", "per-device mappings share base ownership and release before storage", "opaque storage access requires a type identity", "BUFFER owns storage across execution contexts", the three "serialization" tests, "buffer byte ranges reject overflow", "empty storage never calls an allocator", "failed view allocation preserves ownership", "stale views refresh on every storage access", "external views refresh without freeing their owner" | allocators, views and storage | dropped: allocators are rig's and the lazy `Buffer` `tolk.engine`'s |
-
 ### Rows other sections left to Device's
 
 | Source | Behaviour | Outcome |
 |---|---|---|
 | Helpers: tinygrad null/test_device.py::TestDevVar::test_dev_arch_override, TestDevice::test_nonexistent_renderer | | this section's rows for the same tests |
-| Helpers: tinygrad null/test_device.py::TestCompiler (3 tests); old unit/test_diskcache.ml:319, :322 | the compiler cache | Renderer's section: `Compiler` is `Renderer.Compiler` |
+| Helpers: tinygrad null/test_device.py::TestCompiler (3 tests) | the compiler cache | Renderer's section: `Compiler` is `Renderer.Compiler` |
 | Ops: tinygrad null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device, test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: devices are named, never canonicalized (D6); rune names them |
-| Ops: old unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types, binary_argument_layout, incomplete_program_has_no_binary | | this section's old tolk rows |
 
 ## Worker
 
@@ -2177,18 +1381,6 @@ calls never return fail. One mutant survives, equivalent: `j < i` as `<=` in
 | tinygrad: engine/realize.py:245-255, codegen/opt/search.py:116-168 (`pool.imap_unordered` over indexed tasks) | results placed by task index | `WK › law › map f l is List.map f l`, `keeps the order of l when later elements finish first`, `applies f once to each element under`; `WK › compiling › compiles Clang kernels to the binaries of a serial compilation` |
 | tinygrad: a worker process's `Context` (helpers.py:169-186) | a worker's overrides stay in its process | `WK › settings › a setting bound in an application is seen by it alone`, `applications building nodes keep their own CHECK_OOB` |
 | tinygrad: null/test_schedule.py:2076, null/test_viz.py:46 (`PARALLEL=0`) | their suites compile in process | dropped: they pin nothing of the pool |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_runtime_search.ml parallel_failure_joins_workers (`Stack_overflow`) | started workers finish before the failure propagates; workers see the caller's settings | `WK › failure › raises only after the applications it started have ended`, `raises the exception of the lowest failing element`; `WK › settings › every application sees the caller's settings` |
-| old: unit/test_runtime_search.ml parallel_failure_joins_workers (`Sys.Break`), sequential_compile_interrupt | an interruption propagates, and stops compilation | `WK › failure › stops applying f once an element raised, under › PARALLEL=0`, `PARALLEL=4`; an interruption is an exception like any other |
-| old: unit/test_runtime_search.ml completed_compile_budget (2 tests) | over-budget compilations are discarded before timing | dropped here: the beam search's time budget is the search's, not the pool's |
-| old: unit/engine/test_realize.ml "positive scopes reuse shared admission and zero compiles inline" | the caller's settings reach workers; concurrent batches share the budget; `PARALLEL=0` compiles on the caller | `WK › settings › every application sees the caller's settings`, `concurrent callers each pass their own settings`; `WK › domains › shares PARALLEL - 1 domains between concurrent calls`, `applies every element on the calling domain under`. That the first batch fixes the limit for later ones is dropped: each call reads its caller's PARALLEL |
-| old: unit/engine/test_realize.ml "parallel lowering retains call order, deduplicates, and permits nested batches" | order kept; nested batches make progress | `WK › law › keeps the order of l when later elements finish first`; `WK › nesting › calls from f compute List.map and share the budget`. Deduplication is the lowering's |
-| old: unit/engine/test_realize.ml "beam lowering stays in the caller" | no pool under BEAM | dropped here: realize.py chooses not to use the pool, which is the lowering's |
-| old: lib/engine/worker.mli (no test) | "The first parallel batch fixes the shared admission limit from PARALLEL" | dropped: each call reads its caller's PARALLEL |
 
 ## Multi
 
@@ -2262,30 +1454,6 @@ and by the law's first example.
 | tinygrad: runtime/test_custom_kernel.py::TestUnshardStore::test_store_load_local_fragment | an expected failure at run time | dropped: what fails is the kernel's execution; its rewrite is `store_load`'s |
 | tinygrad: runtime/test_custom_kernel.py::test_simple_sharded, test_sharded_add_one; runtime/test_function.py multi-device custom kernels | a custom kernel on shards | `MU › … › custom_kernel_multi.golden`, `inline_function_multi.golden`; `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards` |
 
-### old tolk: unit/engine/test_multi.ml, unit/engine/test_collectives.ml
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_multi.ml "flat sharded params allocate only their local maximum", "axes sort with ranges and close their scope" | `max_shape`, `sharding` and `ranges` of an Unshard | dropped here: `Ops`' properties, Ops' section |
-| old: unit/engine/test_multi.ml "reshape divides each axis by its own range count" | | `MU › multi_pm › two sharded axes › a reshape divides each sharded axis by its own count` |
-| old: unit/engine/test_multi.ml "multi-axis ALU slices whole tiles locally" | | `MU › multi_pm › two sharded axes › an operation with a whole value takes its tile of it` |
-| old: unit/engine/test_multi.ml "an operand of lower rank keeps its axis where it broadcasts" | `axis` of a broadcast operation | dropped here: `Call.axis`, Ops' section |
-| old: unit/engine/test_multi.ml "permutation keeps the owning range with its axis" | | `MU › multi_pm › two sharded axes › a permute keeps each range with its axis` |
-| old: unit/engine/test_multi.ml "own-shard shrink resolves one axis at a time" | | `MU › multi_pm › two sharded axes › a shrink to one axis's own shard keeps the other's sharding`; `MU › multi_pm › fragments › a shrink to a thread's own shard removes its sharding` |
-| old: unit/engine/test_multi.ml "thread indices resolve only their owned shard" | | `MU › multi_pm › fragments` (3 tests) |
-| old: unit/engine/test_multi.ml "unsharded stores select each fragment's destination" | | `MU › multi_pm › stores and calls › a store of a sharded value into a whole one stores into its part`; `store_value_multi.golden` |
-| old: unit/engine/test_multi.ml "two-axis device gather preserves every tile" | | `MU › … › grid_to_one_multi.golden`, its value; the laws draw grids |
-| old: unit/engine/test_multi.ml "partial multi-axis allreduce is rejected" | | `MU › multi_pm › reductions › a reduction of some sharded axes but not all is refused` |
-| old: unit/engine/test_multi.ml group "Resolution" (2 tests) | resolving Mstack and Mselect to device buffers | dropped: rune's executor |
-| old: unit/engine/test_multi.ml group "Execution" (7 tests) | shard, gather, elementwise, broadcast and reductions on 2 and 4 devices | `MU › multi_pm › values` (`shard`, `gather`, `add`, `add_broadcast`, `sum_sharded_axis`, `max_sharded_axis`, `sum_other_axis`); `MU › multi_pm › laws` |
-| old: unit/engine/test_multi.ml group "Kernels over split storage" (7 tests) | old tolk's `scatter_indexed` and `block_matmul` on split storage | dropped: old tolk's frontend operations; an index that crosses shards is `MU › multi_pm › fragments › an index into rows another thread holds is refused` |
-| old: unit/engine/test_multi.ml group "Cuda" | | dropped: hardware and the executor |
-| old: unit/engine/test_collectives.ml group "copies" | copies of rows of a staged value | `MU › … › shrink_one_shard_multi.golden`, `select_first_multi.golden`; the bytes moved are Memory's and the executor's |
-| old: unit/engine/test_collectives.ml group "all-gather" | gathers of a sharded value, on one axis and on a grid | `MU › … › gather_multi.golden`, `gather_four_multi.golden`, `grid_to_one_multi.golden`, their values; that a gather is one call and the bytes each device holds are dropped: tinygrad has no all-gather call |
-| old: unit/engine/test_collectives.ml group "reduce-scatter", "an allreduce also used whole is reduced once" | resharding | `MU › … › add_resharded_multi.golden`, `matmul_resharded_multi.golden`, `reshard_devices_multi.golden`, their values; `MU › multi_pm › arithmetic › sources sharded differently are resharded on the result's axis`; tinygrad has no reduce-scatter call |
-| old: unit/engine/test_collectives.ml "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST" | | `MU › multi_pm › reductions › a value cast up from a half crosses the devices as a half` |
-| old: unit/engine/test_collectives.ml "an allreduce in a call body raises" | | dropped: tinygrad expands an allreduce in a call body; `MU › … › inline_function_multi.golden` rewrites a body |
-
 ## Prepare
 
 The suite is `Tolk.Prepare` (`schedule/prepare/`), written `PR` below.
@@ -2338,25 +1506,6 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
 | tinygrad: uop/ops.py:934 `contiguous_view` on flips that cancel across a reshape (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(2, 1, 16)` view flipped on axis 0, reshaped to `(2, 16)` and flipped on axis 0 again, which is the identity | `PR › contiguous_view › flips that cancel across a reshape are not found` |
 | tinygrad: uop/ops.py:934 `contiguous_view` on a read within one copy of an expanded value (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(1, 2, 4, 2)` view expanded to `(2, 2, 4, 2)`, reshaped to `(32,)` and shrunk to `(6, 9)`, elements 6 to 8 of the storage | `PR › contiguous_view › a read within one copy of an expanded value is not found` |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_contiguous_view.ml "cancelling movement chains prove a contiguous view" | | `PR › contiguous_view › two permutes that cancel are a view`; the law |
-| old: unit/test_contiguous_view.ml "prepend EXPAND respects contiguous storage" | | `PR › contiguous_view ›` "an expand of an axis of one element is a view", "an expand repeats" |
-| old: unit/test_contiguous_view.ml "view anchors retain pending effects" | | `PR › contiguous_view › a view of storage after its stores is a view of the ordered storage` |
-| old: unit/test_contiguous_view.ml "subword byte offsets retain typed anchors", "one-element bitcast views preserve byte extent" | | `PR › contiguous_view ›` "bytes within an element are a view of the bytes", "bytes on whole elements start at their element", "a bitcast of a view with an axis of one element is a view" |
-| old: unit/test_contiguous_view.ml "empty views preserve offsets and storage anchors" | an empty view | `PR › contiguous_view › an empty view is no view`, as tinygrad |
-| old: unit/test_contiguous_view.ml "symbolic leading views compose their flattened index" | a symbolic view at an offset | `PR › contiguous_view › a view of a symbolic size is no view`, as tinygrad |
-| old: unit/test_contiguous_view.ml "existing movement views preserve byte offsets", "view offsets use exact arithmetic before host narrowing", "caller tags are preserved without certifying strided views", "constant folding preserves tensor shape during view proofs" | | the laws `PR › contiguous_view › laws`; offsets count elements of the storage's type, as tinygrad's |
-| old: unit/test_contiguous_view.ml "unsupported backends reject typed views" | | dropped: CL and WebGPU are excluded (README) |
-| old: unit/test_contiguous_view.ml "storage windows retain allocation boundaries", "storage windows retain typed effects", "partition storage requires owned lanes", "partial reshape compares symbolic suffix dimensions", "partial reshape uses symbolic prefix dimensions" | old tolk's `Indexing.storage_window` and partial reshapes | the partial reshape is `PR › pm_mops › rules ›` "an index of a reshape's leading axes indexes its source when the trailing axes are kept", "an index of a reshape whose trailing axes change is left as it is"; storage windows were old tolk's, tinygrad has none |
-| old: unit/test_schedule_rangeify.ml group "early_movement_pass" | | `PR › pm_mops › rules` (7 tests), `PR › pm_mops › laws` |
-| old: unit/test_schedule_rangeify.ml group "split_reduce" | | the split rows above |
-| old: unit/test_schedule_rangeify.ml group "symbolic empty shapes" (3 tests) | an empty reduction keeps its identity | `sum_of_nothing_prepared.golden`, `max_of_nothing_prepared.golden`; symbolic empty shapes are dropped: tinygrad's rule reads a concrete zero |
-| old: unit/test_schedule_rangeify.ml group "moved materializations" (3 tests) | | dropped: openpilot's `pm_fold_moved_after`, excluded (README) |
-| old: unit/test_schedule_rangeify.ml group "symbolic storage views" (2 tests) | | `variable_shrink_prepared.golden`, `inline_symbolic_prepared.golden`; the removal of stages is Rangeify's section |
 
 ## Rangeify
 
@@ -2423,19 +1572,6 @@ observable in a kernel graph of any program or hand-built graph tried:
 | tinygrad: schedule/rangeify.py `check_buf_states` | a kernel reading one storage in two states | `RA › get_kernel_graph › rules › a kernel reading one storage in two states is refused` |
 | tinygrad: schedule/rangeify.py `bufferize_to_store`'s size assertion | a symbolic stage | `RA › get_kernel_graph › rules › a materialisation of a symbolic size takes its greatest size`: as in tinygrad, the stage's size is its greatest, and nothing raises |
 | tinygrad: schedule/rangeify.py `DEVICE_MAX_BUFS` | WebGPU's limit | dropped: excluded (README) |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/test_schedule_rangeify.ml group "get_kernel_graph" `pipeline_test`s (elementwise, mulacc, binop reshape and permute, diamond, double unary, reduce reshape and permute binop, explicit contiguous, push permute through reshape, multistage reduce, children dont push, reduce permute nofuse) | the number of kernels | `RA › kernel_counts.golden ›` `elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `shared_sum`, `reduce_unary`, `reduce_reshape_binop`, `reduce_permute_binop`, `contiguous_add`, `permute_through_reshape`, `multistage_reduce`, `children_dont_push`, `reduce_permute_nofuse`; their graphs and values |
-| old: unit/test_schedule_rangeify.ml "rejects distinct written states of one buffer in a kernel" | | `RA › get_kernel_graph › rules › a kernel reading one storage in two states is refused` |
-| old: unit/test_schedule_rangeify.ml group "stage capacity" (8 tests) | old tolk's stage forwarding | dropped: tinygrad has no such pass; the stages of recorded programs are the goldens' |
-| old: unit/test_schedule_rangeify.ml group "stack selection", "reshape merge" | | Indexing's section |
-| old: unit/test_schedule_rangeify.ml group "packed argument buffer limits" (4 tests) | a kernel's buffers on CPU and Metal | `many_inputs`, `many_inputs_limited` and the two rules above; Metal's limit is its renderer's |
-| old: unit/test_schedule_rangeify.ml "kernel splitting preserves independent symbolic ranges" | | `variable_offset`, `variable_staged`, `variable_read_twice`, `variable_reduce`, `variable_same`, `variable_two`, `symbolic_kept`, `symbolic_contiguous`: graphs and counts |
-| old: unit/test_schedule_scaling.ml group "get_kernel_graph scaling" | time over graph size | dropped: a timing, the benchmarks' |
-| old: golden/rangeify (138 cases: 17 programs on 5 renderers, and 5 Llama cases) | rendered kernels | the programs' kernel graphs are `RA › … recorded` (`elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `shared_sum`, `reduce_unary`, `reduce_reshape_binop`, `reduce_permute_binop`, `reduce_shrink`, `shrink_fuse`, `multistage_reduce`, `permute_through_reshape`, `reshape_chain`, `contiguous_add`, `children_dont_push`); the rendering is the renderers' and the end-to-end suite's (L4, L5); Llama is the end-to-end suite's |
 
 ### Rows other sections left to Rangeify's
 
@@ -2515,26 +1651,6 @@ survive:
 | tinygrad: schedule/__init__.py `SCACHE=2` | the disk cache | dropped: the README's row on the disk half of `SCACHE=2` |
 | tinygrad: schedule/__init__.py `SPEC` | | `SC › create_linear_with_vars › spec` |
 
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_schedule.ml "cache callbacks can lower another schedule" | lowering a body while another is lowered | `precompiled_function`, `chained_functions`, `precompiled_scalar`: nested bodies scheduled inside their callers' |
-| old: unit/engine/test_schedule.ml "partitions AFTER dependencies like tinygrad", "orders a reader before a superseding writer (WAR)", "rejects cycles instead of returning empty or partial schedules" | | `SC › create_schedule › rules` (9 tests) and `SC › create_schedule › values`, with `read_then_overwrite` and `assign_double_diamond` |
-| old: unit/engine/test_schedule.ml "nested scalar arguments shadow and inherit lexical bindings" | | shadowing: `precompiled_scalar`; inheriting is the `:228` survivor above |
-| old: unit/engine/test_schedule.ml "resolves allocations per invocation while preserving owners", "nested calls own separate anonymous allocations" | | `chained_functions_linear.golden`, `precompiled_function_linear.golden` |
-| old: unit/engine/test_schedule.ml "PARAM slots count BIND arguments" | | `SC › arguments.golden` through `SC › create_schedule › values` (`precompiled_scalar_kernels`, `variable_*_kernels`) |
-| old: unit/engine/test_schedule.ml "returns only binds used by scheduled kernels" | | `SC › var_vals.golden › program=variable_unused` |
-| old: unit/engine/test_schedule.ml "memory-plans internal buffers when not capturing", "hands the unplanned schedule to an active capturer" | | `SC › create_linear_with_vars › capturing` (46 tests); the capturer itself is the jit's (L7) |
-| old: unit/engine/test_schedule.ml group "call arguments" (5 tests) | views as call arguments | `SC › contiguous_mops_to_view` (11 tests), `copy_view`, `disk_view_to`, `assign_bitcast`; the refusal of a written view is old tolk's `copy_call`, which tinygrad has no counterpart of |
-| old: unit/test_engine_schedule.ml "disk views move after explicit bulk transfers", "ordinary slices keep the base call input", "explicit contiguous views are normalized before their bases" | | `disk_view_to`, `copy_view`, `SC › contiguous_mops_to_view` |
-| old: unit/test_engine_schedule.ml "volatile inputs survive scheduling" | | dropped: tinygrad's `param_like` makes a buffer's parameter without its volatile mark (`uop/ops.py:1247`), so a schedule keeps none |
-| old: unit/test_engine_schedule.ml "AFTER partition ignores STORE and keeps kernel order", "AFTER dependencies use all producer kernels", "CALL args are resolved through AFTER to buffer uops" | | `SC › create_schedule › rules ›` "a kernel runs after the one it reads and before its overwriter", "a kernel overwriting a state runs after the kernel that made it", "a kernel reading storage before and after a write runs after it" |
-| old: unit/test_engine_schedule.ml "schedule cache uses semantic key", "schedule cache key is identical across bind values" | | `SC › … › cache ›` "two bodies miss under two keys", "call-local storage in other slots is the same body", "a variable bound to another value is the same body" |
-| old: unit/test_engine_schedule.ml "schedule cache keys on the settings scheduling reads" | | dropped: tinygrad keys a body on its structure alone (`function.key`) |
-| old: unit/test_engine_schedule.ml "create_linear_with_vars keeps only used binds", "transform_to_call keeps variable identity on bound PARAM", "create_linear_with_vars extracts the binding from CALL args" | | `SC › var_vals.golden`, `SC › create_linear_with_vars › recorded` (`variable_*`) |
-| old: unit/test_engine_schedule.ml "fresh internal buffer slots keep buffers distinct", "concurrent internal slots keep imported buffers distinct", "concurrent memory plans keep arenas distinct" | | `SC › … › cache ›` "domains scheduling one body at once schedule it alike" (each domain makes buffers of its own), "domains scheduling bodies at once schedule each as alone" |
-
 ## Realize
 
 `R` is the `Realize` suite (`test/engine/realize`). Its goldens are schedules of
@@ -2562,27 +1678,6 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | tinygrad: runtime/test_after.py (12 tests) | ordering of assigns and their gradients | dropped here: Schedule's ordering (its section) and gradients (L8) |
 | tinygrad: runtime/test_wait_loop.py::TestWaitLoop (7 tests) | loops without bounds, rendered and run | dropped here: Codegen's and Cstyle's (`Ops.loop`, `backedge`) |
 | tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spinning on a word another thread writes | dropped: the device runtime's; D1 removed the host program's spin |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_realize.ml group "Renderer selection" (4 tests) | renderer selection and compile caches | dropped here: `Device.renderer` (Device's section) and `Codegen.to_program`'s cache; `R › lower_and_compile › raises Invalid_argument when no renderer serves a call's target` |
-| old: unit/engine/test_realize.ml group "Owner cache lifetime" (5 tests) | program owners, runtime graphs, cache retry | dropped: old tolk's owner caches, which tinygrad has no counterpart of (plan, the 100 divergences) |
-| old: unit/engine/test_realize.ml "positive scopes reuse shared admission and zero compiles inline" | | dropped: old tolk's worker admission; Worker's section (D5) |
-| old: unit/engine/test_realize.ml "parallel lowering retains call order, deduplicates, and permits nested batches" | | `R › lower_and_compile in parallel › compiles each kernel into the program it compiles into alone`, `R › lower_and_compile › compiles each kernel once` |
-| old: unit/engine/test_realize.ml "beam lowering stays in the caller" | | `R › lower_and_compile with a beam search › searches each kernel with the width it asks for, in order, one at a time` |
-| old: unit/engine/test_realize.ml group "PROGRAM completion" (6 tests) | a program partly compiled is completed, a complete one kept | `R › lower_and_compile ›` "leaves a compiled program alone"; a partial program is no longer completed (D129) |
-| old: unit/engine/test_realize.ml group "Scoped capture" (5 tests) | | dropped: the captured jit (L8) |
-| old: unit/engine/test_realize.ml "multi-owner templates retire…", "concurrent submissions retain their own address tables", "independent links serialize reservations…", "submission addresses are resolved after preparation", "submission scope permits reentry…", "failed preparation leaves the address table unchanged…", "retained queue replay rejects replaced device owners…" | submissions of a linked batch | `EN › runs › runs of one schedule from two domains each compute their own`, `EN › link and run › a schedule runs on the buffers each run binds to its parameters`; the owners and their failures are old tolk's contracts, dropped |
-| old: unit/engine/test_realize.ml "concurrent execution records every cost and timing", "execution counters retain exact large costs" | | dropped: `GlobalCounters` belong to the run half (`tolk.engine`) |
-| old: unit/engine/test_realize.ml "compilation resolves beam context once and respects explicit zero" | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
-| old: unit/engine/test_realize.ml "timing samples…", "failed timing dispatch…", "failed timing drain…" | | dropped: `time_call` is the engine's `time` |
-| old: unit/engine/test_realize.ml "compiled launch uses fixed workgroups", "passes every scalar from program metadata", "requires scalar variables" | `EN › link and run › a schedule runs with each binding of its variables`; launch sizes are `Call.launch_dims` (Ops' section) |
-| old: unit/engine/test_realize.ml group "Program cache" (5 tests) | cache keys of programs | dropped here: `Codegen.to_program`'s cache (its section, D5) |
-| old: unit/engine/test_realize.ml "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary" | | `R › lower_and_compile › makes each call of a kernel a call of its program`, `R › lower_and_compile of recorded schedules` |
-| old: unit/engine/test_realize.ml group "Buffer copy" (5 tests) | copies between devices and staging | `EN › link and run › copies run in the order of their schedule`, `EN › link and run › recorded ›` "copy …"; size checks are rig's `Buffer.copy` |
-| old: unit/engine/test_realize.ml group "Owned buffer resolution" (5 tests), group "Linear execution" (6 tests) | resolving arguments and running kernels | `EN › link and run` (the engine's link and run); the owners are old tolk's, dropped |
 
 ## Engine
 
@@ -2622,42 +1717,14 @@ device, whose kernels the host runs, and on Metal.
 | tinygrad: runtime/test_realize_is_realize.py (13 tests) | `Tensor.realize` of lists, ones, disk, multi-device and variables | dropped: the `Tensor` surface; the frontend is nx, and realization rune's (L9) |
 | tinygrad: runtime/test_after.py (12 tests) | ordered and disjoint stores, and the gradients through `after` | dropped: the `Tensor` surface and autodiff (rune, L9); the order of stores is Schedule's |
 
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CPU" | one compiled shrink and sum, run for several values of its variable | `EN › link and run › a schedule runs with each binding of its variables` (variable_reduce at 1, 10 and 5) |
-| old: unit/engine/test_symbolic.ml "symbolic launch dims run on CPU" | a variable sizes a kernel's loop | `EN › link and run › recorded › variable_offset writes what its tensors compute` and the slow `variable_*` programs |
-| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CUDA", "symbolic launch dims run on CUDA" | | `EN › GPUs › CUDA › recorded ›` "variable_shrink writes what its tensors compute" and "variable_reduce …" |
-| old: unit/engine/test_link.ml "executes linked host calls with rebound buffers and scalars" | a linked schedule runs on buffers and variables bound at each run | `EN › link and run › a schedule runs on the buffers each run binds to its parameters`, `a schedule runs with each binding of its variables` |
-| old: unit/engine/test_link.ml "does not cache link-time inputs" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
-| old: unit/engine/test_link.ml "concurrent first links publish one retained graph", "secondary owner replacement invalidates cached links without invalidating retained links", "obsolete owner storage retires even while the original graph remains live" | | dropped: the engine keeps no cache of links and no owners; a linked schedule holds its storage while reachable (`EN › runs › a linked schedule holds its storage while it is reachable`) |
-| old: unit/engine/test_realize.ml "passes every scalar from program metadata" | each variable of a program reaches its call, by name | `EN › kernels on the host › a kernel runs on its buffers, in the order of its globals`, `a variable left out of vars takes its bound value` |
-| old: unit/engine/test_realize.ml "requires scalar variables" | | `EN › kernels on the host › run refuses an unbound variable`; `EN › refusals › run refuses a variable it binds no value`; `EN › timing › a time refuses an unbound variable` |
-| old: unit/engine/test_realize.ml "copies bytes between host-backed devices", "copies bytes across backend prefixes" | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule` |
-| old: unit/engine/test_realize.ml "preserves overlapping views across staging chunks in both directions", "preserves overlapping external allocations while streaming", "rejects size or dtype mismatches before copy" | | dropped: copies are rig's (`Rig.Buffer.copy`) |
-| old: unit/engine/test_realize.ml "resolves the owner retained by each BUFFER node", "unplaced buffers require owned storage" | storage bound at link, allocated otherwise | `EN › link and run › recorded` (bound), `EN › runs › a linked schedule holds its storage while it is reachable` (allocated); `EN › refusals › link refuses a bound node that is no storage` |
-| old: unit/engine/test_realize.ml "resolves PARAM through input_uops", "resolves PARAM kernel args from input_uops", "runs a kernel call with resolved buffers" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
-| old: unit/engine/test_realize.ml "resolves byte view as an offset view", "resolves an offset byte view structurally" | an argument that is a view at an offset | `EN › link and run › a schedule runs on the buffers each run binds to its parameters › copy_view`, `recorded › copy_view writes what its tensors compute` (slow) |
-| old: unit/engine/test_realize.ml "rejects an unbound PARAM" | | `EN › refusals › run refuses a parameter it binds no buffers`, `run refuses slots that stop before the last parameter` |
-| old: unit/engine/test_realize.ml "replays keep one runtime under changed compile settings" | a replay loads nothing | `EN › runs › a run of kernels allocates and loads nothing` |
-| old: unit/engine/test_realize.ml "replays resolve storage views without building nodes" | | dropped: the nodes a run builds are not observable; that it allocates no device memory is `EN › runs › a run of kernels allocates and loads nothing` |
-| old: unit/engine/test_realize.ml "execution counters retain exact large costs" | | dropped: the engine keeps no counters; a call's cost is `Realize.estimate_uop` |
-| old: unit/engine/test_realize.ml "keys cached programs by exact device name", "same-named devices use their own runtime loader" | a program is loaded per device | loading per device of a call is `EN › link and run › recorded › shard_add writes what its tensors compute`; each link loads its programs (`Rig.Image.load`) |
-| old: unit/engine/test_realize.ml "concurrent submissions retain their own address tables", "independent links serialize reservations on their shared device timeline", "submission addresses are resolved after preparation" | runs of one batch rewrite its address table only once the previous run is done | `EN › runs › runs of one schedule from two domains each compute their own`, and on each GPU |
-| old: unit/engine/test_realize.ml "timing samples forward timeout and release transient runtimes", "failed timing dispatch drains before runtime release", "failed timing drain preserves its runtime" | timing a program on a device | `EN › timing › a time is positive, under a second`, `EN › timing`; the runtimes they release are old tolk's |
-| old: unit/engine/test_link.ml allocation_specs, in Hcq2's section | command buffers uncached, volatile placeholders in memory the host sees | dropped: link makes no command buffer or placeholder (D146) |
-
 ### Deferred to the engine by other sections
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: unit/engine/test_symbolic.ml (every test), in Symbolic's section | | rows above |
 | tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul, in Indexing's section | the numbers of two matmuls | `EN › link and run › recorded › double_matmul writes what its tensors compute` (slow) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots, in Cstyle's section | a compiled program's variables are not its call's slots | `EN › link and run › recorded › precompiled_scalar writes what its tensors compute` |
 | tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › recorded` (assign, setitem, read_then_overwrite; slow) |
-| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests), in Device's section | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule`; the copy itself is rig's |
-| tinygrad: null/test_tensor_uop_representation.py (5 tests), old: unit/uop/test_uop.ml runtime_realization_state_parity, in Ops' section | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |
+| tinygrad: null/test_tensor_uop_representation.py (5 tests) | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |
 
 ## Jit
 
@@ -2748,21 +1815,6 @@ and its replay in `J › replay › recorded › c`.
 | tinygrad: runtime/test_jit_footguns.py::TestJitFootguns::test_shape_change_after_capture_fails, test_python_constants_frozen, test_unrealized_const_input_error, test_conditional_branches_frozen, test_positional_kwargs_cannot_mix, test_class_method_shared_across_instances, test_side_effects_only_during_capture, test_item_creates_unrealized_return, test_item_bakes_in_values, test_tolist_bakes_in_values; TestJitCorrectBehavior::test_kwargs_order_doesnt_matter | tracing and argument semantics of `TinyJit` | dropped: `Tensor` surface; rune's compiled call traces and keys its calls (RFC 0012) |
 | tinygrad: runtime/test_jit_footguns.py::TestJitFootguns::test_masked_select_static_size_jittable, test_nonzero_static_size_jittable | data-dependent selections of static size | `masked_select`, `nonzero` |
 | tinygrad: runtime/test_symbolic_jit.py::TestSymbolicJit (22 tests but `test_jit_symbolic_shape_mismatch`) | captures over symbolic views, replayed over the variables' values | `plus1`, `inner_bound_var_view`, `plus1_pad_view`, `plus1_pad`, `symbolic_add`, `symbolic_matmul`, `mixed_with_no_symbol_kernel`, `symbolic_attention`, `cat_dim0`, `cat_dim1`, `cat_dim0_two_vars`, `cat_dim1_two_vars`, `two_vars_plus1_ij`, `two_vars_plus1_ji`, `symbolic_shrink`, `symbolic_slice`, `slice_var_shape`, `ones_sum`, `mean` (`mean`, `mean0`, `mean1`), `mean_2d` (three), `var` (three), `var_2d` (three); `i` over 1 to 4, `j` over 2 to 4 |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_jit.ml TinyJit › "create requires a function or a captured schedule", "reset requires a function-backed jit", "empty capture raises and clears the capture registry"; Capture and replay › "replay validates input size dtype and device" | the `TinyJit` surface | dropped: `Tensor` surface (RFC 0012) |
-| old: unit/engine/test_jit.ml Capture and replay › "warmup, capture, and replay run the kernel" | each replay runs the captured kernels | `J › replay › recorded` (every case) |
-| old: unit/engine/test_jit.ml Capture and replay › "replay passes per-call var_vals to the runtime" | each replay binds its call's variables | `J › replay › recorded › plus1` and the other symbolic cases, each run with its own values |
-| old: unit/engine/test_jit.ml Capture and replay › "capture and replay retain both signed int64 endpoints" | a variable bound to `Int64.min_int` and `max_int` | dropped here: `Tolk_engine.run` binds a variable to an `int`, and binding is `EN`'s |
-| old: unit/engine/test_jit_capture.ml Capture and replay (numeric) › "elementwise double: capture computes, replay recomputes" | a replay recomputes on new inputs | `explicit`; each replay's later runs take new inputs |
-| old: unit/engine/test_jit_capture.ml Capture and replay (numeric) › "running sum (cumsum) reduces a triangular window" | a cumulative sum replays | `masked_select`, whose selection is a cumulative sum; the kernel's values are Codegen's |
-| old: unit/engine/test_jit_capture.ml Capture and replay (numeric) › "sum to scalar hits the shape () output path" | a result of shape () | `sum`, `ones_sum`, `mean` |
-| old: unit/engine/test_jit_capture.ml Multi-kernel program › "two chained kernels: double then add-ten through a planned intermediate" | an intermediate planned into an arena | `two_kernels`, `chain_of_three`, `held_constant`; `J › jit_lower › drawn › replays what its capture leaves, run unplanned` (covers an arena holding several buffers) |
-| old: unit/frontend/test_jit.ml (414 lines) | the frontend's jit | dropped: frontend (plan L8); rune's compiled call |
-| old: unit/gpt2/test_gpt2.ml (233 lines) | GPT-2 end to end | dropped: frontend (plan L8); returns as a rune test in L9 |
 
 ### Measures
 

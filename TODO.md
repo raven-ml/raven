@@ -258,9 +258,6 @@ raven / llama.cpp (Vulkan; ROCm):
   shapes
 - search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
   counters and thread traces are not collected: encode both as words parts
-- 23 D-numbers cited from tolk and rune code (ops.ml:2607, shape.ml:2016,
-  test names, rune test_jit.ml:1973): state the fact. Keep, fold or delete
-  rune/DIVERGENCES.md and tolk/test/REGRESSIONS.md
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
