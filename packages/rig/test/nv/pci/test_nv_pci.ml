@@ -109,12 +109,17 @@ let opening =
           equal ~msg:"once it is given back" string "error" (answer fn call));
     ]
 
-(* The pinned firmware, from the directories the variable RIG_NV_PCI_FIRMWARE
-   lists, separated by [:]: an open reaches the GPU's boot only with them. *)
+(* The pinned firmware, where the NV suites find it ({!Rig_nv_support}): an
+   open reaches the GPU's boot only with it. *)
 let firmware () =
-  match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
-  | Some dirs -> String.split_on_char ':' dirs
-  | None -> skip ~reason:"needs NVIDIA's firmware (RIG_NV_PCI_FIRMWARE)" ()
+  match Rig_nv_support.firmware () with
+  | Some dirs -> dirs
+  | None ->
+      skip
+        ~reason:
+          "needs NVIDIA's firmware: in RIG_NV_PCI_FIRMWARE's directories, \
+           rig's firmware directory or /lib/firmware"
+        ()
 
 (* Boot reports *)
 

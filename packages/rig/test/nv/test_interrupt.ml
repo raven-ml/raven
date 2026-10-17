@@ -21,7 +21,6 @@
 
 open Windtrap
 module N = Rig_nv
-module P = Rig_nv_nvidia
 
 let strf = Printf.sprintf
 let timeout = 60.
@@ -61,9 +60,10 @@ let loaded g bin f =
 (* [opened f] is [f g bin] for a device [g] of the first GPU and the fixture
    [bin], once the local memory serves each of [bin]'s functions. *)
 let opened f =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
   let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
-  let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
+  let g = Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0)) in
   Fun.protect ~finally:(fun () -> N.stop g ~fault:None) @@ fun () ->
   loaded g bin (fun i -> entries i functions);
   f g bin
@@ -159,10 +159,13 @@ let local_bytes = 32
    answers [Error]. The growth is the capability's, the one an entry makes;
    an entry's other allocations hold no local memory lock. *)
 let test_stop_in_local () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
   let seen = Rig_support.seen () in
   walk_calls (fun n ->
-      let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
+      let g =
+        Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0))
+      in
       let local = (N.capability g).local in
       let stopped = ref false and grown = ref (Ok ()) in
       let stop () =
@@ -246,7 +249,8 @@ let test_alloc_in_alloc () =
    driver's, the call raises as it starts; outside every lock, it answers.
    The function is made when asked for again, and the device is not lost. *)
 let test_entry_in_entry_rig () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
   let t = Rig_nv_support.open_ () in
   Fun.protect ~finally:(fun () -> Rig_nv_support.close t) @@ fun () ->
   let d = t.d in
@@ -277,8 +281,9 @@ let test_entry_in_entry_rig () =
 (* The capability's growth of local memory, from inside a lock: it raises
    naming the call, and grows once the lock is given back. *)
 let test_local_inside () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  let g = Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0)) in
   Fun.protect ~finally:(fun () -> N.stop g ~fault:None) @@ fun () ->
   let local = (N.capability g).local in
   raises_match

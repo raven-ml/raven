@@ -10,6 +10,65 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module H = Rig_gpu_support.Host
 
+(* The path *)
+
+let ( // ) = Filename.concat
+
+(* The driver bound to the function at [bus], if any. *)
+let driver bus =
+  match Unix.readlink ("/sys/bus/pci/devices" // bus // "driver") with
+  | link -> Some (Filename.basename link)
+  | exception Unix.Unix_error _ -> None
+
+(* The GSP's firmware, the same for every family, and its pinned digest
+   ({!Rig_nv_pci}). An open over PCI looks in the directories it is given,
+   then in rig's firmware directory and the system's, for the file with that
+   digest. *)
+let gsp = "nvidia/ga102/gsp/gsp-570.144.bin"
+let gsp_digest =
+  "877edf9f772d262d1ea72b9a6ebe52643e60a37c1d312f6456ebbf7f03feb03f"
+
+let given () =
+  match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
+  | Some dirs -> String.split_on_char ':' dirs
+  | None -> []
+
+let firmware () =
+  let dirs =
+    given ()
+    @ Option.to_list (Rig_pci.Firmware.directory ())
+    @ [ "/lib/firmware" ]
+  in
+  match Rig_pci.Firmware.find dirs gsp ~digest:gsp_digest with
+  | Ok _ -> Some dirs
+  | Error _ -> None
+
+type path = Kernel | Pci
+
+(* The path that opens GPU [i], from the driver bound to it: NVIDIA's kernel
+   driver for one it holds, and PCI for one unbound or on vfio-pci with the
+   GSP's firmware there. Behind an IOMMU that translates, Function.take
+   refuses an unbound GPU, so its open fails, naming why. *)
+let path_of i =
+  match List.nth_opt (Rig_nv_pci.buses ()) i with
+  | None -> None
+  | Some bus -> (
+      match driver bus with
+      | Some "nvidia" -> Some Kernel
+      | None | Some "vfio-pci" ->
+          if Option.is_some (firmware ()) then Some Pci else None
+      | Some _ -> None)
+
+(* GPU 0's path, which every GPU the suites open shares. *)
+let path = lazy (path_of 0)
+let path () = Lazy.force path
+let usable i = Option.is_some (path ()) && path_of i = path ()
+
+let opener i =
+  match path () with
+  | Some Pci -> Rig_nv_pci.gpu ~firmware:(given ()) i
+  | Some Kernel | None -> Rig_nv_nvidia.gpu i
+
 (* The GPU *)
 
 module D = N
@@ -18,8 +77,8 @@ include Rig_gpu_support.Make (struct
   module D = N
 
   let class_ = "NV"
-  let present () = Rig_nv_nvidia.count () > 0
-  let open_ ~word = (Rig_nv_nvidia.gpu 0).make ~word
+  let present () = usable 0
+  let open_ ~word = (opener 0).make ~word
 end)
 
 (* The C entries *)
@@ -230,8 +289,7 @@ let binary () =
     [ "empty"; "double_index"; "copy_after"; "spin"; "stack"; "stack_held" ] )
 
 let second ~word =
-  if Rig_nv_nvidia.count () < 2 then None
-  else Some ((Rig_nv_nvidia.gpu 1).make ~word)
+  if usable 1 then Some ((opener 1).make ~word) else None
 
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 
@@ -248,8 +306,12 @@ let copy_words t ~dst ~src =
    line's rate error over the time since the latest measure, at most
    62.5 ms. That rate error is at most 10 us over the measures' distance,
    10 ppm, and the timer's own until they are a second apart." The timer's
-   own is taken within the same 10 ppm. *)
-let clock_error ~since:_ = 5_000 + 625
+   own is taken within the same 10 ppm. Over PCI the device reads the timer
+   at open only ({!Rig_nv.Registers}), and drifts at that rate since. *)
+let clock_error ~since =
+  match path () with
+  | Some Pci -> 5_000 + (since / 100_000)
+  | Some Kernel | None -> 5_000 + 625
 
 let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in

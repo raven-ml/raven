@@ -8,7 +8,29 @@
 (** {1:gpu The GPU} *)
 
 include Rig_gpu_support.Conformance with module D = Rig_nv
-(** GPU [0], opened through {!Rig_nv_nvidia}; the second device is GPU [1]. *)
+(** GPU [0], opened on its {!type-path}. The second device is GPU [1], where
+    it is on the same path. *)
+
+(** The type for the ways the suites open a GPU. *)
+type path =
+  | Kernel  (** Through {!Rig_nv_nvidia}, for a GPU NVIDIA's driver holds. *)
+  | Pci
+      (** Through {!Rig_nv_pci}, for a GPU unbound or on [vfio-pci] with the
+          GSP's firmware found ({!firmware}). Behind an IOMMU that
+          translates, an unbound GPU's open fails, naming why. *)
+
+val path : unit -> path option
+(** [path ()] is GPU [0]'s path, from the driver bound to it, or [None] if
+    neither opens it. *)
+
+val opener : int -> Rig_nv.t Rig_edge.opener
+(** [opener i] opens GPU [i] on GPU [0]'s path. *)
+
+val firmware : unit -> string list option
+(** [firmware ()] is the directories an open over PCI reads NVIDIA's firmware
+    from, the variable [RIG_NV_PCI_FIRMWARE]'s, separated by [:], then rig's
+    firmware directory and [/lib/firmware], if one of them holds the GSP's
+    firmware with its pinned digest. *)
 
 (** {1:work Work through rig} *)
 

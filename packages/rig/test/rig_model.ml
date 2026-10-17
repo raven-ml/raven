@@ -146,7 +146,7 @@ let opened_gpu g =
   match g with
   | Metal -> get (Rig.open_ (Rig_metal.gpu 0))
   | Cuda -> get (Rig.open_ (Rig_cuda.gpu 0))
-  | Nv -> get (Rig.open_ (Rig_nv_nvidia.gpu 0))
+  | Nv -> get (Rig.open_ (Rig_nv_support.opener 0))
   | Amd -> get (Rig.open_ (Rig_amd_support.gpu ()))
 
 (* A GPU opens once per process, on first use, and again once a program lost it:

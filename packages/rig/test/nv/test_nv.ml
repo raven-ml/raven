@@ -872,6 +872,12 @@ let mapped_after t sizes n =
    once to the same size maps. Submissions the rings hold make nothing
    more. *)
 let rings_given_back () =
+  if S.path () = Some S.Pci then
+    skip
+      ~reason:
+        "it counts mappings of NVIDIA's kernel driver's files; GPU 0 is over \
+         PCI"
+      ();
   let n = 16_384 and last = 8_192 in
   S.with_ (fun t -> ignore (mapped_after t [] 1 : int));
   let at_once = S.with_ (fun t -> mapped_after t [ last ] n) in

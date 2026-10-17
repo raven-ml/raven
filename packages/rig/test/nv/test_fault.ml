@@ -13,7 +13,6 @@
 
 open Windtrap
 module N = Rig_nv
-module P = Rig_nv_nvidia
 module S = Rig_nv_support
 
 let timeout = 60.
@@ -145,8 +144,17 @@ let fault () =
     maps = (maps, Rig_nv_nvidia_support.mappings ());
   }
 
+(* These laws are NVIDIA's kernel driver's: its RM stops a faulted channel,
+   and the files and mappings they count are its own. *)
 let need_gpu () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ()
+  match Rig_nv_support.path () with
+  | Some Kernel -> ()
+  | Some Pci ->
+      skip
+        ~reason:
+          "the faults' laws are NVIDIA's kernel driver's; GPU 0 is over PCI"
+        ()
+  | None -> skip ~reason:"the machine has no NVIDIA GPU" ()
 
 (* The lines of a report that start with [prefix]. *)
 let starting prefix why =

@@ -9,8 +9,9 @@
   process holds, which never do;
 - the order an open searches for firmware in: its caller's directories,
   rig's, then `/lib/firmware`;
-- with NVIDIA's firmware listed in `RIG_NV_PCI_FIRMWARE` (`rig firmware nv
-  DIR` fetches it):
+- with NVIDIA's firmware in a directory `RIG_NV_PCI_FIRMWARE` lists, rig's
+  firmware directory or `/lib/firmware` (`rig firmware nv DIR` fetches it),
+  where the NV suites look too:
   - the lookup of found files;
   - an open that fails before the boot takes memory, which resets nothing;
   - a boot on a fixture tree that fails at the falcons' first DMA, after

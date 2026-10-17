@@ -56,8 +56,8 @@ let nv _ ~arrived ~commands c =
 let near () =
   if Rig_amd_amdgpu.count () > 0 then
     (get (Rig.open_ (Rig_amd_amdgpu.gpu 0)), amd)
-  else if Rig_nv_nvidia.count () > 0 then
-    (get (Rig.open_ (Rig_nv_nvidia.gpu 0)), nv)
+  else if Rig_nv_support.present () then
+    (get (Rig.open_ (Rig_nv_support.opener 0)), nv)
   else failwith "no AMD or NV GPU on this machine"
 
 let view memory offset length = G.Memory { memory; offset; length }
