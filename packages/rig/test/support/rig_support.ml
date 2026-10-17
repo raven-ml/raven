@@ -118,6 +118,55 @@ let ready = ready ()
 module Driver = struct
   type kind = Rig_edge.memory
 
+  (* Locks
+
+     A device's lock counts among the locks its thread holds, as a driver's
+     must (Rig_edge's drivers section), so rig refuses a callback's call
+     inside it. No section takes a second lock. *)
+
+  external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+  external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+  external reraise : exn -> 'a = "%reraise"
+
+  (* [take m] takes [m], counted from before the take, so that a signal handler
+     that runs inside a contended take sees it held. An exception that ends the
+     take gives the count back first, having taken nothing: one a handler
+     raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+     thread that holds [m], which only a call that skipped its check makes and
+     which raises [Invalid_argument]. *)
+  let take m =
+    hold ();
+    match Mutex.lock m with
+    | () -> ()
+    | exception e -> (
+        unhold ();
+        match e with
+        | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+            invalid_arg
+              "Polled: a lock taken again by the thread that holds it, from a \
+               signal handler, finaliser or Gc.Memprof callback"
+        | e -> reraise e)
+
+  (* Gives [m] back, then its count, with nothing between that allocates or
+     polls. *)
+  let give m =
+    Mutex.unlock m;
+    unhold ()
+
+  let protect m f =
+    take m;
+    match f () with
+    | x ->
+        give m;
+        x
+    | exception e ->
+        give m;
+        reraise e
+
+  let rec push a x =
+    let l = Atomic.get a in
+    if not (Atomic.compare_and_set a l (x :: l)) then push a x
+
   type t = {
     c : polled;
     mutable word_at : int;  (** The word's host address. *)
@@ -141,15 +190,15 @@ module Driver = struct
     opened : Condition.t;
     mutable calls : string list;
     mutable sleeps : int;
-    mutable frees : (int * int) list;
+    frees : (int * int) list Atomic.t;
     mutable allocs : (kind * int * bool) list;
     mutable maps : int list;
     mutable held : (kind * int) list;
     mutable mapped : int list;
-    mutable failure : string;
+    failure : string Atomic.t;
     mutable fault : string option;
-    mutable word_fault : string option;
-    mutable word_break : bool;
+    word_fault : string option Atomic.t;
+    word_break : bool Atomic.t;
     mutable interrupt_next : bool;
     mutable stalls : int;
     mutable gated : bool;
@@ -159,7 +208,7 @@ module Driver = struct
     mutable locates_gated : bool;
     mutable locaters : int;
     mutable stop_fault : string option;  (** What its stop was given. *)
-    mutable before : (string * (unit -> unit)) list;
+    before : (string * (unit -> unit)) list Atomic.t;
         (** Functions to run at the next call of each name. *)
   }
 
@@ -181,21 +230,21 @@ module Driver = struct
   exception Fault of string
   exception Refused of string
 
-  let note d call = Mutex.protect d.lock (fun () -> d.calls <- call :: d.calls)
-  let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
-  let sleeps d = Mutex.protect d.lock (fun () -> d.sleeps)
+  let note d call = protect d.lock (fun () -> d.calls <- call :: d.calls)
+  let log d = protect d.lock (fun () -> List.rev d.calls)
+  let sleeps d = protect d.lock (fun () -> d.sleeps)
   let key : t Type.Id.t = Type.Id.make ()
 
   (* Counts a fallible call: the call [fail_at] fails raises, and the one it
      refuses answers [true]. [d]'s lock is not held. *)
   let countdown d =
     match polled_step d.c with
-    | 2 -> raise (Fault (Mutex.protect d.lock (fun () -> d.failure)))
+    | 2 -> raise (Fault (Atomic.get d.failure))
     | s -> s = 1
 
   (* A counted call or a fact: a faulted device's raises its fault. *)
   let step d =
-    match Mutex.protect d.lock (fun () -> d.fault) with
+    match protect d.lock (fun () -> d.fault) with
     | Some why -> raise (Fault why)
     | None -> countdown d
 
@@ -246,15 +295,15 @@ module Driver = struct
       edge = polled_edge d.c;
     }
 
-  (* Runs, outside the lock, the functions {!before} set for [call]. *)
-  let run_before d call =
-    let mine =
-      Mutex.protect d.lock (fun () ->
-          let mine, rest = List.partition (fun (c, _) -> c = call) d.before in
-          d.before <- rest;
-          mine)
-    in
-    List.iter (fun (_, f) -> f ()) mine
+  (* Runs the functions {!before} set for [call], taking no lock. *)
+  let rec run_before d call =
+    let all = Atomic.get d.before in
+    match List.partition (fun (c, _) -> c = call) all with
+    | [], _ -> ()
+    | mine, rest ->
+        if Atomic.compare_and_set d.before all rest then
+          List.iter (fun (_, f) -> f ()) mine
+        else run_before d call
 
   let counted d call =
     note d call;
@@ -267,7 +316,7 @@ module Driver = struct
   let alloc d kind n =
     let refused = counted d "alloc" in
     let fits =
-      Mutex.protect d.lock (fun () ->
+      protect d.lock (fun () ->
           let fits = (not refused) && holding d kind + n <= d.limits kind in
           d.allocs <- (kind, n, fits) :: d.allocs;
           if fits then d.held <- (kind, n) :: d.held;
@@ -311,14 +360,14 @@ module Driver = struct
   let free_word d r =
     note d "free";
     let w = polled_word d.c in
-    Mutex.protect d.lock (fun () -> d.frees <- (r.at, w) :: d.frees);
+    push d.frees (r.at, w);
     (match polled_free_word d.c with -1 -> () | what -> broke what);
     run_before d "free"
 
   (* A free waits at the free gate while it is shut. A mapping's is logged as
      ["unmap"]. *)
   let free_region d r =
-    Mutex.protect d.lock (fun () ->
+    protect d.lock (fun () ->
         if d.frees_gated then begin
           d.freers <- d.freers + 1;
           while d.frees_gated do
@@ -330,8 +379,8 @@ module Driver = struct
     note d call;
     run_before d call;
     let w = polled_word d.c in
-    Mutex.protect d.lock (fun () ->
-        d.frees <- (r.at, w) :: d.frees;
+    push d.frees (r.at, w);
+    protect d.lock (fun () ->
         match r.kind with
         | Some k -> d.held <- remove (k, r.bytes) d.held
         | None -> d.mapped <- remove r.bytes d.mapped);
@@ -341,7 +390,7 @@ module Driver = struct
   (* A faulted device's free gives the region back, then raises. *)
   let free d r =
     if is_word r then free_word d r else free_region d r;
-    match Mutex.protect d.lock (fun () -> d.fault) with
+    match protect d.lock (fun () -> d.fault) with
     | Some why -> raise (Fault why)
     | None -> ()
 
@@ -350,7 +399,7 @@ module Driver = struct
   let locate r =
     Option.iter
       (fun d ->
-        Mutex.protect d.lock (fun () ->
+        protect d.lock (fun () ->
             if d.locates_gated then begin
               d.locaters <- d.locaters + 1;
               while d.locates_gated do
@@ -368,7 +417,7 @@ module Driver = struct
   let peer d _ = d.peers
 
   let mapping d m =
-    Mutex.protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
+    protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
     polled_mapped d.c m.at m.bytes;
     Some m
 
@@ -379,7 +428,7 @@ module Driver = struct
   let map_host d p n =
     if counted d "map_host" then None
     else begin
-      Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
+      protect d.lock (fun () -> d.maps <- n :: d.maps);
       mapping d
         {
           at = p;
@@ -428,14 +477,14 @@ module Driver = struct
     | [] -> false
     | (x, _) :: l -> x = a || freed_at a l
 
-  (* Reads the fault and the frees under the lock without a closure, so that
-     a read of the word allocates nothing, as a driver's must not. *)
+  (* Reads the fault and the frees without a lock, as a driver's [signaled]
+     must, since rig calls it under a lock of its own, and with no closure, so
+     that a read of the word allocates nothing. *)
   let signaled d =
-    Mutex.lock d.lock;
-    let fault = d.word_fault and break = d.word_break in
-    let freed = freed_at d.word_at d.frees and hooked = d.before != [] in
-    d.word_break <- false;
-    Mutex.unlock d.lock;
+    let fault = Atomic.get d.word_fault in
+    let break = Atomic.exchange d.word_break false in
+    let freed = freed_at d.word_at (Atomic.get d.frees) in
+    let hooked = Atomic.get d.before != [] in
     if hooked then run_before d "signaled";
     if freed then broke read_freed;
     if break then raise Sys.Break;
@@ -460,7 +509,7 @@ module Driver = struct
     at_gate d;
     match d.fault with
     | Some why -> `Fault why
-    | None when polled_step d.c = 2 -> `Fault d.failure
+    | None when polled_step d.c = 2 -> `Fault (Atomic.get d.failure)
     | None when d.interrupt_next ->
         d.interrupt_next <- false;
         `Interrupt
@@ -475,18 +524,18 @@ module Driver = struct
      lock, as bench rows time rig's waits through it. *)
   let sleep d ~seen ~still_ms =
     let step =
-      Mutex.protect d.lock (fun () ->
+      protect d.lock (fun () ->
           d.sleeps <- d.sleeps + 1;
           (match d.calls with
           | "sleep" :: _ -> ()
           | calls -> d.calls <- "sleep" :: calls);
-          if d.before == [] then next d else `Hooked)
+          if Atomic.get d.before == [] then next d else `Hooked)
     in
     let step =
       match step with
       | `Hooked ->
           run_before d "sleep";
-          Mutex.protect d.lock (fun () -> next d)
+          protect d.lock (fun () -> next d)
       | (`Fault _ | `Interrupt | `Stall | `Run) as step -> step
     in
     match step with
@@ -501,8 +550,8 @@ module Driver = struct
     polled_stopping d.c;
     note d "stop";
     run_before d "stop";
-    Mutex.protect d.lock (fun () -> d.stop_fault <- fault);
-    Mutex.protect d.lock (fun () -> at_gate d);
+    protect d.lock (fun () -> d.stop_fault <- fault);
+    protect d.lock (fun () -> at_gate d);
     if d.answer = `Stopped then polled_stop d.c
 end
 
@@ -550,15 +599,15 @@ module Polled = struct
         opened = Condition.create ();
         calls = [];
         sleeps = 0;
-        frees = [];
+        frees = Atomic.make [];
         allocs = [];
         maps = [];
         held = [];
         mapped = [];
-        failure = "";
+        failure = Atomic.make "";
         fault = None;
-        word_fault = None;
-        word_break = false;
+        word_fault = Atomic.make None;
+        word_break = Atomic.make false;
         interrupt_next = false;
         stalls = 0;
         gated = false;
@@ -568,7 +617,7 @@ module Polled = struct
         locates_gated = false;
         locaters = 0;
         stop_fault = None;
-        before = [];
+        before = Atomic.make [];
       }
     in
     if runs = `Itself then polled_start d.c;
@@ -605,15 +654,14 @@ module Polled = struct
   let fail d = polled_fail d.c
   let fail_commit d = polled_fail_commit d.c
   let fail_settle d = polled_fail_settle d.c
-  let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
+  let fault d why = protect d.lock (fun () -> d.fault <- Some why)
 
-  let before d call f =
-    Mutex.protect d.lock (fun () -> d.before <- (call, f) :: d.before)
+  let before d call f = push d.before (call, f)
 
   let fail_at d n how =
     match how with
     | `Fault why ->
-        Mutex.protect d.lock (fun () -> d.failure <- why);
+        Atomic.set d.failure why;
         polled_fail_at d.c n (-1) why
     | `Refuse k ->
         if k < 0 then invalid_arg "Polled.fail_at: negative count";
@@ -622,15 +670,13 @@ module Polled = struct
   let steps d = polled_steps d.c
 
   let outstanding d =
-    Mutex.protect d.lock (fun () -> List.map snd d.held @ d.mapped)
+    protect d.lock (fun () -> List.map snd d.held @ d.mapped)
 
-  let fault_word d why =
-    Mutex.protect d.lock (fun () -> d.word_fault <- Some why)
-
-  let break_word d = Mutex.protect d.lock (fun () -> d.word_break <- true)
+  let fault_word d why = Atomic.set d.word_fault (Some why)
+  let break_word d = Atomic.set d.word_break true
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
-  let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
+  let stop_fault d = protect d.lock (fun () -> d.stop_fault)
   let stops d = polled_stops d.c
   let blocked d = polled_blocked d.c
 
@@ -686,33 +732,33 @@ module Polled = struct
     }
 
   let launches d = Array.to_list (Array.map launch (polled_launches d.c))
-  let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
+  let frees d = List.rev (Atomic.get d.frees)
 
   let word_frees d =
     List.length (List.filter (fun (a, _) -> a = d.word_at) (frees d))
-  let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
-  let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)
-  let allocated d kind = Mutex.protect d.lock (fun () -> holding d kind)
-  let interrupt d = Mutex.protect d.lock (fun () -> d.interrupt_next <- true)
-  let stall d n = Mutex.protect d.lock (fun () -> d.stalls <- n)
-  let gate d = Mutex.protect d.lock (fun () -> d.gated <- true)
-  let sleepers d = Mutex.protect d.lock (fun () -> d.sleepers)
+  let allocs d = protect d.lock (fun () -> List.rev d.allocs)
+  let host_maps d = protect d.lock (fun () -> List.rev d.maps)
+  let allocated d kind = protect d.lock (fun () -> holding d kind)
+  let interrupt d = protect d.lock (fun () -> d.interrupt_next <- true)
+  let stall d n = protect d.lock (fun () -> d.stalls <- n)
+  let gate d = protect d.lock (fun () -> d.gated <- true)
+  let sleepers d = protect d.lock (fun () -> d.sleepers)
 
   let open_gate d =
-    Mutex.protect d.lock (fun () ->
+    protect d.lock (fun () ->
         d.gated <- false;
         Condition.broadcast d.opened)
 
-  let gate_frees d = Mutex.protect d.lock (fun () -> d.frees_gated <- true)
-  let freers d = Mutex.protect d.lock (fun () -> d.freers)
+  let gate_frees d = protect d.lock (fun () -> d.frees_gated <- true)
+  let freers d = protect d.lock (fun () -> d.freers)
 
   let open_frees d =
-    Mutex.protect d.lock (fun () ->
+    protect d.lock (fun () ->
         d.frees_gated <- false;
         Condition.broadcast d.opened)
 
   let gate_locates d =
-    Mutex.protect d.lock (fun () -> d.locates_gated <- true)
+    protect d.lock (fun () -> d.locates_gated <- true)
 
   let gate_room d =
     if not d.may_block then
@@ -730,10 +776,10 @@ module Polled = struct
   let open_settle d = polled_gate_settle d.c false
   let settlers d = polled_settle_waiters d.c
 
-  let locaters d = Mutex.protect d.lock (fun () -> d.locaters)
+  let locaters d = protect d.lock (fun () -> d.locaters)
 
   let open_locates d =
-    Mutex.protect d.lock (fun () ->
+    protect d.lock (fun () ->
         d.locates_gated <- false;
         Condition.broadcast d.opened)
 end

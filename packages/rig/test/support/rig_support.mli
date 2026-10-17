@@ -9,7 +9,9 @@
     runs it: a wait that returns before it slept leaves work unrun. A sleep
     first runs the queues of the Polled devices whose words its first queued
     submission waits for and has not seen, as a device runs its own work while
-    the host sleeps on another. Every driver call is logged.
+    the host sleeps on another. Every driver call is logged. A device's lock
+    counts among the locks its thread holds, as a driver's does
+    ({!Rig_edge.section-drivers}).
 
     Polled checks that rig keeps the word promises of {!Rig_edge}: rig frees
     only a word outside its array, which is the driver's own, once, and then
