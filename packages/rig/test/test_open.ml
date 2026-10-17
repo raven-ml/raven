@@ -107,7 +107,6 @@ module Store = struct
     (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
@@ -568,7 +567,6 @@ module Stops = struct
   type region = unit
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget _ = max_int

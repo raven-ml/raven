@@ -59,9 +59,6 @@ external split : unit -> nativeint = "caml_rig_metal_split"
 
 let split = split ()
 
-(* Rig_edge.Driver declares it; the driver never raises it. *)
-exception Refused of string
-
 (* Locks *)
 
 (* Every lock is a [Mutex.t] that [locked], or a [take] and a [give], hold,
@@ -607,7 +604,6 @@ module Driver = struct
   type nonrec image = image
 
   exception Fault = Fault
-  exception Refused = Refused
 
   let key = key
   let facts = facts

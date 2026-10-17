@@ -433,10 +433,6 @@ module type Driver = sig
   (** [Fault why] reports that the device faulted. Any counted call may raise
       it. *)
 
-  exception Refused of string
-  (** [Refused why] is an exception of the driver's, which rig treats as any
-      other ({!section-drivers}). *)
-
   val key : t Type.Id.t
   (** [key] identifies the driver. rig asks {!val-map_peer} only of two
       devices with the same key. *)
@@ -595,8 +591,8 @@ end
     its calls, and must give back its locks as a driver does
     ({!section-drivers}).
 
-    The library counts its locks and checks its own functions as a driver
-    does ({!section-drivers}). *)
+    The library must count its locks and check its own functions as a
+    driver does ({!section-drivers}). *)
 module type Io = sig
   type t
   (** The type for open io devices. *)
@@ -607,10 +603,6 @@ module type Io = sig
   exception Fault of string
   (** [Fault why] reports that the device failed, such as a closed
       connection. *)
-
-  exception Refused of string
-  (** [Refused why] is an exception of the library's, which rig treats as
-      any other ({!module-type-Io}). *)
 
   val region_key : region Type.Id.t
   (** [region_key] identifies the io library and its regions.
@@ -700,8 +692,9 @@ type 'a opener = {
     [make] itself owns the handle and must stop it, and gives it 8 bytes of
     host memory, aligned to 8, that live as long as the handle. Each
     driver's opener states whether [make] opens another handle while an
-    earlier one is not stopped. [make] raises [Invalid_argument], having
-    opened nothing, while its thread holds a lock ({!section-drivers}). *)
+    earlier one is not stopped. A [make] that may take a lock must raise
+    [Invalid_argument], having opened nothing, while its thread holds one
+    ({!section-drivers}). *)
 
 type 'a io_opener = {
   name : string;  (** The device's name, without a machine suffix. *)

@@ -228,7 +228,6 @@ module Driver = struct
   type image = { code : region option; owner : t }
 
   exception Fault of string
-  exception Refused of string
 
   let note d call = protect d.lock (fun () -> d.calls <- call :: d.calls)
   let log d = protect d.lock (fun () -> List.rev d.calls)
@@ -905,7 +904,6 @@ module Empty = struct
   type region = unit
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int

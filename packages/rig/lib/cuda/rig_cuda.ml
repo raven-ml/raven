@@ -32,9 +32,6 @@ let ( let* ) = Result.bind
 
 exception Fault of string
 
-(* Rig_edge.Driver declares it; the driver never raises it. *)
-exception Refused of string
-
 (* Locks *)
 
 (* The locks the calling thread holds, and a count of one more and one fewer
@@ -849,7 +846,6 @@ module Driver = struct
   type nonrec image = image
 
   exception Fault = Fault
-  exception Refused = Refused
 
   let key = key
   let facts = facts

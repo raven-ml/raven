@@ -70,7 +70,6 @@ module Io = struct
   type region = bytes
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
@@ -123,7 +122,6 @@ module Driver = struct
   type image = unit
 
   exception Fault of string
-  exception Refused of string
 
   let key : t Type.Id.t = Type.Id.make ()
   let capability_key : unit Type.Id.t = Type.Id.make ()

@@ -36,7 +36,6 @@ module Pages = struct
   }
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let note t call = Mutex.protect t.lock (fun () -> t.calls <- call :: t.calls)

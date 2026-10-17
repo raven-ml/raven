@@ -629,7 +629,6 @@ module Store = struct
   type region = unit
 
   exception Fault of string
-  exception Refused of string
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget _ = max_int

@@ -20,7 +20,6 @@ module Pm4 = Abi.Pm4
 module Sdma = Abi.Sdma
 
 exception Fault of string
-exception Refused of string
 
 external reraise : exn -> 'a = "%reraise"
 

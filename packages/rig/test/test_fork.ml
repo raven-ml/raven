@@ -99,7 +99,6 @@ module Store = struct
   type region = B.t
 
   exception Fault of string
-  exception Refused of string
 
   let held = Atomic.make 0
   let region_key : region Type.Id.t = Type.Id.make ()
