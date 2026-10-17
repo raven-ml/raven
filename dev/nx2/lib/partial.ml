@@ -9,53 +9,6 @@ module M = Nx_array.Move
 module P = Nx_kernel.Prog
 module E = P.E
 
-let is_cut (type v s d) (x : (v, s, d) Value.t) =
-  match Prim.at x with Some p -> Grid.is_cut (Devices.grid p) | None -> false
-
-let applies (type r) (op : r Value.prim) =
-  match op with
-  | (Value.Reduce _ | Value.Scan _ | Value.Contract _)
-    when Prim.exists is_cut op ->
-      let rule = Prim.rule op and found = ref false in
-      Prim.iteri
-        (fun i x ->
-          match Prim.at x with
-          | None -> ()
-          | Some p ->
-              let axes =
-                Array.append
-                  (Route.reduced rule i (Prim.rank x))
-                  (Route.scanned rule i (Prim.rank x))
-              in
-              let cuts = Grid.cuts (Devices.grid p) in
-              if Array.exists (fun (a, _) -> Array.mem a axes) cuts then
-                found := true)
-        op;
-      !found
-  | _ -> false
-
-(* Reading whole *)
-
-(* [x], operand [i] of [rule], placed whole along the axes [rule] reduces and
-   where it lies along the others: where the route reads an operand that lies
-   uncut along them. *)
-let whole_along (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
-    ~by rule i (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let p = Prim.placement x in
-  let g =
-    Array.fold_left
-      (fun g axis -> Grid.uncut g ~axis)
-      (Devices.grid p)
-      (Route.reduced rule i (Prim.rank x))
-  in
-  if Grid.equal g (Devices.grid p) then x
-  else apply ~by (Value.Place (Devices.v ~by (Devices.set p) g, x))
-
-let gathered (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (op : r Value.prim) : r =
-  let rule = Prim.rule op in
-  apply ~by (Prim.mapi (fun i x -> whole_along apply ~by rule i x) op)
-
 (* Reductions as values *)
 
 type 'd one = One : ('d, 'a) Value.reduction -> 'd one
@@ -935,54 +888,53 @@ let lane_results (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ln
   Array.map Option.get results
 
 let reduce (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (op : r Value.prim) layout axes prog (rs : (d, r) Value.reductions)
+    (route : d Route.t) layout axes prog (rs : (d, r) Value.reductions)
     (loads : d Value.load array) : r =
   let shape = L.shape layout in
-  if Array.exists (fun a -> shape.(a) = 0) axes then gathered apply ~by op
-  else
-    let plans = List.map (fun (One r) -> plan prog r) (ones rs) in
-    let p = (Option.get (Prim.loads_route ~by op layout loads)).result in
-    let set = Devices.set p and rule = Prim.rule op in
-    let devices = devices ~by p rule shape axes loads in
-    let whole = Array.map (fun a -> shape.(a)) axes in
-    let out = Prim.reduced shape axes in
-    let exact = function
-      | Exact _ | Ranked _ -> true
-      | Lane _ | Expanded _ -> false
-    in
-    let finals =
-      if not (List.exists exact plans) then [||]
-      else
-        let (Packed (prs, read)) = partial_reductions plans in
-        let computed =
-          Array.map
-            (fun dv ->
-              if Array.exists (fun (r : M.range) -> r.count = 0) dv.tile then
-                None
-              else
-                Some
-                  (partials apply ~by set layout axes prog prs read plans whole
-                     loads dv))
-            devices
+  let op = Value.Reduce { layout; axes; prog; reductions = rs; loads } in
+  let plans = List.map (fun (One r) -> plan prog r) (ones rs) in
+  let p = route.result in
+  let set = Devices.set p and rule = Prim.rule op in
+  let devices = devices ~by p rule shape axes loads in
+  let whole = Array.map (fun a -> shape.(a)) axes in
+  let out = Prim.reduced shape axes in
+  let exact = function
+    | Exact _ | Ranked _ -> true
+    | Lane _ | Expanded _ -> false
+  in
+  let finals =
+    if not (List.exists exact plans) then [||]
+    else
+      let (Packed (prs, read)) = partial_reductions plans in
+      let computed =
+        Array.map
+          (fun dv ->
+            if Array.exists (fun (r : M.range) -> r.count = 0) dv.tile then
+              None
+            else
+              Some
+                (partials apply ~by set layout axes prog prs read plans whole
+                   loads dv))
+          devices
+      in
+      Array.init (Array.length devices)
+        (final apply ~by set plans devices computed)
+  in
+  let expanded = expanded_values apply ~by layout axes prog plans loads in
+  let rec assemble plans i e =
+    match plans with
+    | [] -> []
+    | Expanded _ :: rest -> List.nth expanded e :: assemble rest i (e + 1)
+    | Lane ln :: rest ->
+        let vs =
+          lane_results apply ~by ln set layout axes prog loads devices whole
         in
-        Array.init (Array.length devices)
-          (final apply ~by set plans devices computed)
-    in
-    let expanded = expanded_values apply ~by layout axes prog plans loads in
-    let rec assemble plans i e =
-      match plans with
-      | [] -> []
-      | Expanded _ :: rest -> List.nth expanded e :: assemble rest i (e + 1)
-      | Lane ln :: rest ->
-          let vs =
-            lane_results apply ~by ln set layout axes prog loads devices whole
-          in
-          at_placement p out (Array.map (fun v -> [ [ v ] ]) vs) 0
-          :: assemble rest i e
-      | (Exact _ | Ranked _) :: rest ->
-          at_placement p out finals i :: assemble rest (i + 1) e
-    in
-    results rs (assemble plans 0 0)
+        at_placement p out (Array.map (fun v -> [ [ v ] ]) vs) 0
+        :: assemble rest i e
+    | (Exact _ | Ranked _) :: rest ->
+        at_placement p out finals i :: assemble rest (i + 1) e
+  in
+  results rs (assemble plans 0 0)
 
 (* Scans over cut axes *)
 
@@ -1543,11 +1495,11 @@ let lane_tiles (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ln
     tiles
 
 let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (op : a Value.prim) layout axis (prog : P.t) (r : (d, a) Value.reduction)
+    (route : d Route.t) layout axis (prog : P.t) (r : (d, a) Value.reduction)
     (loads : d Value.load array) : a =
   let shape = L.shape layout in
   let n = shape.(axis) in
-  let p = (Option.get (Prim.loads_route ~by op layout loads)).result in
+  let p = route.result in
   let set = Devices.set p in
   let ks = Grid.devices (Devices.grid p) in
   let windows = Array.mapi (fun j _ -> Devices.window ~by p shape j) ks in
@@ -1855,132 +1807,107 @@ let chain_sum (type a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
   Option.get (Array.fold_left step None ts.held)
 
 let contract (type v s d a b c e) (apply : 'q. by:string -> 'q Value.prim -> 'q)
-    ~by (op : (v, s, d) Value.t Value.prim) ~order ~batch ~contracting ~acc
-    (out : (v, s) D.t) (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
+    ~by (route : d Route.t) ~order ~batch ~contracting ~acc (out : (v, s) D.t)
+    (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t =
   let whole = Array.map (fun (i, _) -> Prim.dim a i) contracting in
-  if Array.exists (( = ) 0) whole then gathered apply ~by op
-  else
-    let shape = Prim.contract_shape ~by ~batch ~contracting ~acc a b init in
-    let operands =
-      [ Value.Any a; Value.Any b ]
-      @ Option.to_list (Option.map (fun i -> Value.Any i) init)
+  let shape = Prim.contract_shape ~by ~batch ~contracting ~acc a b init in
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let free side rank =
+    let named pairs x = Array.exists (fun pr -> side pr = x) pairs in
+    Array.of_list
+      (List.filter
+         (fun x -> not (named batch x || named contracting x))
+         (List.init rank Fun.id))
+  in
+  let pairs side = (Array.map side batch, Array.map side contracting) in
+  let a_axes =
+    let batch, pairs = pairs fst in
+    [| batch; free fst (Prim.rank a); pairs |]
+  and b_axes =
+    let batch, pairs = pairs snd in
+    [| batch; pairs; free snd (Prim.rank b) |]
+  in
+  let tile k =
+    let pa = Prim.placement a in
+    let w = Devices.window ~by pa (Prim.shape a) (position pa k) in
+    Array.map (fun (i, _) -> w.(i)) contracting
+  in
+  let windows = Array.mapi (fun j _ -> Devices.window ~by p shape j) ks in
+  let results = Array.make (Array.length ks) None in
+  let group j =
+    let members =
+      List.filter
+        (fun i -> windows.(i) = windows.(j))
+        (List.init (Array.length ks) Fun.id)
     in
-    let p =
-      let at (Value.Any x : d Value.any) = Prim.at x in
-      let shape_of (Value.Any x : d Value.any) = Prim.shape x in
-      let route =
-        Route.route ~by (Prim.rule op)
-          (Array.of_list (List.map at operands))
-          (Array.of_list (List.map shape_of operands))
-      in
-      (Option.get route).result
+    let holders =
+      List.filter (fun i -> numel (counts (tile ks.(i))) > 0) members
     in
-    let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
-    let free side rank =
-      let named pairs x = Array.exists (fun pr -> side pr = x) pairs in
+    let tiles =
       Array.of_list
-        (List.filter
-           (fun x -> not (named batch x || named contracting x))
-           (List.init rank Fun.id))
+        (List.sort_uniq compare (List.map (fun i -> tile ks.(i)) holders))
     in
-    let pairs side = (Array.map side batch, Array.map side contracting) in
-    let a_axes =
-      let batch, pairs = pairs fst in
-      [| batch; free fst (Prim.rank a); pairs |]
-    and b_axes =
-      let batch, pairs = pairs snd in
-      [| batch; pairs; free snd (Prim.rank b) |]
+    let holder =
+      Array.map
+        (fun t -> ks.(List.find (fun i -> tile ks.(i) = t) holders))
+        tiles
     in
-    let tile k =
-      let pa = Prim.placement a in
-      let w = Devices.window ~by pa (Prim.shape a) (position pa k) in
-      Array.map (fun (i, _) -> w.(i)) contracting
+    let laid k =
+      lazy
+        {
+          la = grouped apply ~by a_axes (own ~by set k a);
+          lb = grouped apply ~by b_axes (own ~by set k b);
+        }
     in
-    let windows = Array.mapi (fun j _ -> Devices.window ~by p shape j) ks in
-    let results = Array.make (Array.length ks) None in
-    let group j =
-      let members =
-        List.filter
-          (fun i -> windows.(i) = windows.(j))
-          (List.init (Array.length ks) Fun.id)
-      in
-      let holders =
-        List.filter (fun i -> numel (counts (tile ks.(i))) > 0) members
-      in
-      let tiles =
-        Array.of_list
-          (List.sort_uniq compare (List.map (fun i -> tile ks.(i)) holders))
-      in
-      let holder =
-        Array.map
-          (fun t -> ks.(List.find (fun i -> tile ks.(i) = t) holders))
-          tiles
-      in
-      let laid k =
-        lazy
-          {
-            la = grouped apply ~by a_axes (own ~by set k a);
-            lb = grouped apply ~by b_axes (own ~by set k b);
-          }
-      in
-      let held =
-        Array.of_list
-          (List.sort
-             (fun r r' -> Int.compare r.g r'.g)
-             (List.concat (Array.to_list (Array.mapi (runs whole) tiles))))
-      in
-      let ts = { holder; laid = Array.map laid holder; held } in
-      let window = counts windows.(j) in
-      (* [init] over [k]'s window of the result, as [[batch; rows;
-         columns]], in the accumulator. The route reads [init] where it
-         lies, which holds that window but may be wider: whole on every
-         device beside a cut result. *)
-      let init_on k =
-        let nb = Array.length batch and nr = Array.length a_axes.(1) in
-        let part lo len = numel (Array.sub window lo len) in
-        let nc = Array.length window - nb - nr in
-        let flat = [| part 0 nb; part nb nr; part (nb + nr) nc |] in
-        Option.map
-          (fun i ->
-            cast apply ~by acc
-              (reshape apply ~by flat
-                 (Value.Any (held_at ~by set k windows.(j) i))))
-          init
-      in
-      let rounded v = reshape apply ~by window (cast apply ~by (D.Any out) v) in
-      match order with
-      | Nx_kernel.Lane ->
-          let sums =
-            lane_sums apply ~by set order acc (numel whole) ts
-              (List.map (fun i -> ks.(i)) members)
-          in
-          List.iter2
-            (fun i s ->
-              let s =
-                match init_on ks.(i) with
-                | None -> s
-                | Some x -> added apply ~by s x
-              in
-              results.(i) <- Some (rounded s))
-            members sums
-      | Chain ->
-          let sum = chain_sum apply ~by set order acc ts init_on in
-          let (Value.Any r) = rounded sum in
-          let on i = Value.Any (moved apply ~by (Devices.one set ks.(i)) r) in
-          List.iter (fun i -> results.(i) <- Some (on i)) members
+    let held =
+      Array.of_list
+        (List.sort
+           (fun r r' -> Int.compare r.g r'.g)
+           (List.concat (Array.to_list (Array.mapi (runs whole) tiles))))
     in
-    Array.iteri (fun j _ -> if Option.is_none results.(j) then group j) ks;
-    let finals = Array.map (fun v -> [ [ Option.get v ] ]) results in
-    Prim.expect out (List.hd (at_placement p shape finals 0))
+    let ts = { holder; laid = Array.map laid holder; held } in
+    let window = counts windows.(j) in
+    (* [init] over [k]'s window of the result, as [[batch; rows;
+       columns]], in the accumulator. The route reads [init] where it
+       lies, which holds that window but may be wider: whole on every
+       device beside a cut result. *)
+    let init_on k =
+      let nb = Array.length batch and nr = Array.length a_axes.(1) in
+      let part lo len = numel (Array.sub window lo len) in
+      let nc = Array.length window - nb - nr in
+      let flat = [| part 0 nb; part nb nr; part (nb + nr) nc |] in
+      Option.map
+        (fun i ->
+          cast apply ~by acc
+            (reshape apply ~by flat
+               (Value.Any (held_at ~by set k windows.(j) i))))
+        init
+    in
+    let rounded v = reshape apply ~by window (cast apply ~by (D.Any out) v) in
+    match order with
+    | Nx_kernel.Lane ->
+        let sums =
+          lane_sums apply ~by set order acc (numel whole) ts
+            (List.map (fun i -> ks.(i)) members)
+        in
+        List.iter2
+          (fun i s ->
+            let s =
+              match init_on ks.(i) with
+              | None -> s
+              | Some x -> added apply ~by s x
+            in
+            results.(i) <- Some (rounded s))
+          members sums
+    | Chain ->
+        let sum = chain_sum apply ~by set order acc ts init_on in
+        let (Value.Any r) = rounded sum in
+        let on i = Value.Any (moved apply ~by (Devices.one set ks.(i)) r) in
+        List.iter (fun i -> results.(i) <- Some (on i)) members
+  in
+  Array.iteri (fun j _ -> if Option.is_none results.(j) then group j) ks;
+  let finals = Array.map (fun v -> [ [ Option.get v ] ]) results in
+  Prim.expect out (List.hd (at_placement p shape finals 0))
 
-let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (op : r Value.prim) : r =
-  match op with
-  | Value.Reduce { layout; axes; prog; reductions; loads } ->
-      reduce apply ~by op layout axes prog reductions loads
-  | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
-      scan apply ~by op layout axis prog reduction loads
-  | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
-      contract apply ~by op ~order ~batch ~contracting ~acc out a b init
-  | _ -> gathered apply ~by op

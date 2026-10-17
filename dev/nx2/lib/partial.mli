@@ -3,9 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Operations whose route reads an operand cut along an axis they reduce
-    ({!Route.Reduced}) or scan ({!Route.Scanned}), as core operations applied
-    through [apply]: on one device each, or a [Place].
+(** Operations whose route computes by partials ({!Route.Partials}), as core
+    operations applied through [apply]: on one device each, or a [Place].
 
     A [Reduce] computes per group of its results' devices that hold one window
     of its results. A device's window along the reduced axes is its
@@ -48,9 +47,6 @@
       product with a NaN part and no NaN term is the quiet NaN in each part.
     - A [Logsumexp] and [Moments] compute by their expansion ({!Expand.run}),
       whose reductions compute as above.
-    - Every reduction where a reduced axis has no element reduces once over
-      the loads placed whole along the axes it reduces, as the route reads
-      loads that lie uncut there.
 
     For an exact or ranked reduction, each device moves one partial per output
     for each tile of its group it does not hold: of [t] tiles, [t - 1] rows of
@@ -88,9 +84,6 @@
       none, each other from the sum before it, moved to it. The last sum
       rounds once into the result's dtype and moves to every device of the
       group.
-
-    A contraction where a contracting axis has no element reads its
-    operands whole along the contracting axes, placed as above.
 
     In lane order, each device takes its window of the results in the
     accumulator for each unit it does not compute, and a block that window
@@ -142,13 +135,46 @@
     per slice into the carrier. Tiles sharing a chunk scan one after the
     other. *)
 
-val applies : 'r Value.prim -> bool
-(** [applies op] is whether [op], whose operands lie where its route reads
-    them, reads one cut along an axis it reduces or scans. It allocates
-    nothing where no operand of a [Reduce], a [Scan] or a [Contract] is
-    cut. *)
+val reduce :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  'd Route.t ->
+  Nx_array.Layout.t ->
+  int array ->
+  Nx_kernel.Prog.t ->
+  ('d, 'r) Value.reductions ->
+  'd Value.load array ->
+  'r
+(** [reduce apply ~by route layout axes prog rs loads] is the [Reduce] of
+    those fields, its loads lying where [route] reads them and [route]
+    computing by {!Route.Partials}, computed through [apply] as stated
+    above. *)
 
-val run :
-  ('q. by:string -> 'q Value.prim -> 'q) -> by:string -> 'r Value.prim -> 'r
-(** [run apply ~by op] is [op], for which {!applies} holds, computed through
-    [apply] as stated above. *)
+val scan :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  'd Route.t ->
+  Nx_array.Layout.t ->
+  int ->
+  Nx_kernel.Prog.t ->
+  ('d, 'r) Value.reduction ->
+  'd Value.load array ->
+  'r
+(** [scan apply ~by route layout axis prog r loads] is the [Scan] of those
+    fields and no carry, as {!reduce}. *)
+
+val contract :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  'd Route.t ->
+  order:Nx_kernel.order ->
+  batch:(int * int) array ->
+  contracting:(int * int) array ->
+  acc:Nx_array.Dtype.any ->
+  ('v, 's) Nx_array.Dtype.t ->
+  ('a, 'b, 'd) Value.t ->
+  ('c, 'e, 'd) Value.t ->
+  ('v, 's, 'd) Value.t option ->
+  ('v, 's, 'd) Value.t
+(** [contract apply ~by route ~order ~batch ~contracting ~acc out a b init]
+    is the [Contract] of those fields, as {!reduce}. *)

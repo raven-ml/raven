@@ -8,9 +8,12 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 type axis = Becomes of int | Whole | Reduced of int | Scanned of int
 type rule = Elementwise | Axes of axis array array | Into of axis array array
 
+type compute = Windows | Partials
+
 type 'd t = {
   operands : 'd Devices.placement array;
   result : 'd Devices.placement;
+  compute : compute;
 }
 
 (* The result axis that axis [a] of operand [i] becomes, if any. *)
@@ -267,6 +270,11 @@ let general ~by rule ps shapes =
         | Elementwise | Axes _ | Into _ -> target
       in
       let wants = Array.init n (fun i -> backward rule i (rank i) target) in
+      let folds i =
+        Array.append (reduced rule i (rank i)) (scanned rule i (rank i))
+      in
+      (* An axis the operation folds of no element: each reads it whole. *)
+      let empty i = Array.exists (fun a -> shapes.(i).(a) = 0) (folds i) in
       (* Where an operand lies cut along a reduced axis, the grid each operand
          with reduced axes is read at: where it lies, or the first such
          operand's grid where it reads its axes as that one does and lies
@@ -317,6 +325,7 @@ let general ~by rule ps shapes =
         in
         match List.find_opt cuts_reduced concrete with
         | None -> None
+        | Some _ when List.exists empty (List.init n Fun.id) -> None
         | Some c ->
             let reads = Array.init n (read c) in
             let all = List.init n Fun.id in
@@ -356,7 +365,21 @@ let general ~by rule ps shapes =
             p)
           ps
       in
-      Some { operands; result = Devices.v ~by set target }
+      (* The window law fails where an operand is read cut along an axis
+         the operation folds, each holding elements. *)
+      let cut i p =
+        Array.exists
+          (fun (a, _) -> Array.mem a (folds i))
+          (Grid.cuts (Devices.grid p))
+      in
+      let compute =
+        if
+          Array.exists Fun.id (Array.mapi cut operands)
+          && not (List.exists empty (List.init n Fun.id))
+        then Partials
+        else Windows
+      in
+      Some { operands; result = Devices.v ~by set target; compute }
 
 let route ~by rule ps shapes =
   let n = Array.length ps in
@@ -370,11 +393,11 @@ let route ~by rule ps shapes =
   match common ps with
   | Every_set -> None
   | One p when not (Grid.is_cut (Devices.grid p)) ->
-      Some { operands = Array.make n p; result = p }
+      Some { operands = Array.make n p; result = p; compute = Windows }
   | One p when rule = Elementwise -> (
       (* Operands of one shape: one that has [p]'s cut axes is all of them. *)
       match Grid.window (Devices.grid p) shapes.(0) 0 with
-      | Ok _ -> Some { operands = Array.make n p; result = p }
+      | Ok _ -> Some { operands = Array.make n p; result = p; compute = Windows }
       | Error e -> invalid_argf "%s: %s" by e)
   | One _ | Other -> general ~by rule ps shapes
 
@@ -394,4 +417,8 @@ let at ~by rule shapes p =
     | Error e -> invalid_argf "%s: %s" by e);
     Devices.v ~by set g
   in
-  { operands = Array.mapi operand shapes; result = Devices.v ~by set target }
+  {
+    operands = Array.mapi operand shapes;
+    result = Devices.v ~by set target;
+    compute = Windows;
+  }

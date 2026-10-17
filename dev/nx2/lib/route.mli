@@ -22,19 +22,22 @@
     whole operand on each device of the target; otherwise it is read at the
     target moved back to its axes, which the engine places it at.
 
-    Where an operand lies cut along an axis the operation reduces
-    ({!Reduced}), the first such operand gives the grid of the others. Each
-    operand with reduced axes is read where it lies, or at the first's
-    placement where it reads its axes as the first does and lies whole on
-    each of its devices, from each device's own array, or is of every set.
-    It must lie so that its reduced axes are cut as the first's that share
-    their factors, over the same grid axes; uncutting them gives what the
-    target wants of it; and its other axes, moved to the results' axes, lie
-    as the target's, one such operand's at the whole target. Operands with
-    no reduced axes are read as above. The devices that hold one window of
-    the results then hold all of its terms between them, and combine their
-    partial results ({!Partial}). Otherwise every operand is read as above,
-    whole along its reduced axes.
+    An operand may instead be read cut along the axes the operation reduces
+    ({!Reduced}), where the first operand lying so gives the grid of the
+    others. Each operand with reduced axes is then read where it lies, or at
+    the first's placement where it reads its axes as the first does and lies
+    whole on each of its devices, or is of every set. Each must:
+    - cut each reduced axis's factor as the first does, over the same grid
+      axes;
+    - give what the target wants of it with its reduced axes uncut;
+    - lie along its other axes, moved to the results' axes, as the target
+      does; one such operand lies at the whole target.
+
+    Operands with no reduced axes are read as above. The devices that hold
+    one window of the results then hold all of its terms between them. Where
+    an operand cannot be read so, or an axis the operation reduces or scans
+    has no element, every operand is read as above, whole along its reduced
+    axes.
 
     Operands placed where a route reads them route to it again: each then
     lies, moved to the results' axes, at the target or at the target with
@@ -139,10 +142,22 @@ val window :
     element reads whole, the dtypes, the attributes, the library and the
     device's architecture, never on the extents its window cuts. *)
 
+(** The type for how the devices of a route compute its results. *)
+type compute =
+  | Windows
+      (** Each device computes its window of the results over its operands'
+          windows ({!window}), under the window law. *)
+  | Partials
+      (** An operand is read cut along an axis the operation reduces or scans,
+          each such axis holding elements: the devices that hold one window of
+          the results compute it from partial results over the terms each
+          holds ({!Partial}). *)
+
 type 'd t = {
   operands : 'd Devices.placement array;
       (** Where each operand is read, in the operation's operand order. *)
   result : 'd Devices.placement;
+  compute : compute;
 }
 
 (** The type for where operands lie together. *)

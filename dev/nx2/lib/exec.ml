@@ -138,6 +138,9 @@ let is_handle (type v s d) (x : (v, s, d) Value.t) =
 
 let is_concrete x = not (Prim.is_constant x)
 
+let is_cut x =
+  match Prim.at x with Some p -> Grid.is_cut (Devices.grid p) | None -> false
+
 (* Whether the donor words [w] and [w'] are one donor's: an offered donor has
    one key. *)
 let one_donor (w : Value.death Atomic.Loc.t) w' =
@@ -860,12 +863,27 @@ and compute : type r.
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
-  | (Value.Reduce _ | Value.Scan _ | Value.Contract _) when Partial.applies op
-    -> (
-      (* An operand read cut along an axis the operation reduces or scans. *)
-      match at with
-      | None -> Partial.run run ~by op
-      | Some q -> Partial.run (fun ~by op -> apply_at q ~by op) ~by op)
+  | Value.Reduce { layout; axes; prog; reductions; loads }
+    when Prim.exists is_cut op -> (
+      match Prim.loads_route ~by op layout loads with
+      | Some ({ compute = Partials; _ } as r) ->
+          Partial.reduce (fun ~by op -> folded ~by ?at op) ~by r layout axes prog
+            reductions loads
+      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
+  | Value.Scan { layout; axis; prog; reduction; loads; carry = None }
+    when Prim.exists is_cut op -> (
+      match Prim.loads_route ~by op layout loads with
+      | Some ({ compute = Partials; _ } as r) ->
+          Partial.scan (fun ~by op -> folded ~by ?at op) ~by r layout axis prog
+            reduction loads
+      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
+  | Value.Contract { order; batch; contracting; acc; out; a; b; init }
+    when Prim.exists is_cut op -> (
+      match Prim.contract_route ~by op a b init with
+      | Some ({ compute = Partials; _ } as r) ->
+          Partial.contract (fun ~by op -> folded ~by ?at op) ~by r ~order ~batch
+            ~contracting ~acc out a b init
+      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
@@ -985,6 +1003,13 @@ and expand : type r.
   match at with
   | None -> Expand.run run ~by op
   | Some q -> Expand.run (fun ~by op -> apply_at q ~by op) ~by op
+
+(* An operation of a computation by partials ({!Partial}), applied where its
+   operands lie, or at [at] for a constant's evaluation. *)
+and folded : type r. by:string -> ?at:unit Devices.placement -> r Value.prim -> r
+    =
+ fun ~by ?at op ->
+  match at with None -> run ~by op | Some q -> apply_at q ~by op
 
 (* An operation of a constant's evaluation at [q]: one over a concrete operand
    computes where its route reads them; a creation, its other operands

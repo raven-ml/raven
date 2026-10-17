@@ -420,6 +420,58 @@ let fixpoint =
                 r'.operands.(i))
             r.operands)
 
+(* Where a route reads an operand cut along an axis the rule reduces or
+   scans, every axis it so folds holding elements, the window law does not
+   hold and the devices compute by partials: there alone. *)
+let computes =
+  prop ~count:500
+    "a route computes by partials where it reads an operand cut along an \
+     axis the rule folds"
+    case (fun c ->
+      match route c.rule c.ps c.shapes with
+      | exception Invalid_argument _ -> ()
+      | None -> ()
+      | Some r ->
+          let folded i a =
+            match c.rule with
+            | Route.Elementwise -> false
+            | Axes t | Into t -> (
+                match t.(i).(a) with
+                | Route.Reduced _ | Scanned _ -> true
+                | Becomes _ | Whole -> false)
+          in
+          let empty =
+            Array.exists Fun.id
+              (Array.mapi
+                 (fun i s ->
+                   Array.exists Fun.id
+                     (Array.mapi (fun a d -> folded i a && d = 0) s))
+                 c.shapes)
+          in
+          let cut =
+            Array.exists Fun.id
+              (Array.mapi
+                 (fun i p ->
+                   Array.exists
+                     (fun (a, _) -> folded i a)
+                     (Grid.cuts (Devices.grid p)))
+                 r.operands)
+          in
+          cover "by partials" (cut && not empty);
+          cover "a folded axis of no element" empty;
+          equal bool ~msg:"by partials" (cut && not empty)
+            (r.compute = Route.Partials);
+          (* A reduced axis of no element is read whole. *)
+          if empty then
+            Array.iteri
+              (fun i p ->
+                Array.iter
+                  (fun (a, _) ->
+                    equal bool ~msg:"a reduced axis read cut" false
+                      (is_reduced c i a))
+                  (Grid.cuts (Devices.grid p)))
+              r.operands)
+
 let keeps =
   prop "operands already at the result's placement stay there" case (fun c ->
       assume (c.ps.(0) <> None);
@@ -789,6 +841,7 @@ let () =
   exit
     (run "nx route"
        [
-         group "laws" [ law; exact; fixpoint; keeps; at_law; move_law ];
+         group "laws"
+           [ law; exact; fixpoint; computes; keeps; at_law; move_law ];
          cases_;
        ])

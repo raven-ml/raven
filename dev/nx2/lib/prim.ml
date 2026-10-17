@@ -996,7 +996,12 @@ let uncut p = not (Grid.is_cut (Devices.grid p))
    operation's rule nor its operands' shapes for it, nor where every operand is
    of every set. *)
 let at_one ps p =
-  Some { Route.operands = Array.make (Array.length ps) p; result = p }
+  Some
+    {
+      Route.operands = Array.make (Array.length ps) p;
+      result = p;
+      compute = Windows;
+    }
 
 (* [op]'s route over [xs]; [None] for no operand. *)
 let routed (type d r) ~by (op : r prim) (xs : d any array) : d Route.t option =

@@ -158,6 +158,17 @@ val loads_route :
     [layout]'s shape, over [loads], then a scan's [carry]: where it reads each
     and where its results lie; [None] where every operand is of every set. *)
 
+val contract_route :
+  by:string ->
+  'r prim ->
+  ('a, 'b, 'd) t ->
+  ('c, 'e, 'd) t ->
+  ('v, 's, 'd) t option ->
+  'd Route.t option
+(** [contract_route ~by op a b init] is the route of [op], a contraction of
+    [a] with [b] from [init]: where it reads each and where its result lies;
+    [None] where every operand is of every set. *)
+
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
