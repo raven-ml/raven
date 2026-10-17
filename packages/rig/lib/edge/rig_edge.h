@@ -300,7 +300,10 @@ uint64_t rig_now_ns(void);
    Invalid_argument, having changed nothing, if it is not 0 (Rig's domains
    section). OCaml reads the count through the noalloc external
    caml_rig_edge_holds, which answers an untagged int, and
-   caml_rig_edge_holds_byte. */
+   caml_rig_edge_holds_byte, and counts a lock of its own through the
+   noalloc externals caml_rig_edge_hold and caml_rig_edge_unhold, of type
+   unit -> unit, which call rig_hold and rig_unhold. A library that links
+   rig.edge declares each external it uses itself. */
 int rig_holds(void);
 int rig_hold(void);
 void rig_unhold(void);

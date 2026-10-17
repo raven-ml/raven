@@ -88,3 +88,15 @@ intnat caml_rig_edge_holds(value unit) {
 value caml_rig_edge_holds_byte(value unit) {
   return Val_long(caml_rig_edge_holds(unit));
 }
+
+value caml_rig_edge_hold(value unit) {
+  (void)unit;
+  rig_hold();
+  return Val_unit;
+}
+
+value caml_rig_edge_unhold(value unit) {
+  (void)unit;
+  rig_unhold();
+  return Val_unit;
+}

@@ -432,8 +432,33 @@ let test_cached () =
    done nothing; outside every lock it runs as any call does. A call that
    takes no lock runs either way ({!Rig.section-domains}). *)
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
 external holds : unit -> int = "caml_rig_edge_holds_byte"
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+(* A lock a library counts through the edge refuses rig's calls on its
+   thread until it is given back, and changes nothing meanwhile. *)
+let test_counted () =
+  let d = Rig.memory_device (fresh "counted") in
+  let before = holds () in
+  hold ();
+  equal ~msg:"the count while held" int (before + 1) (holds ());
+  let refused =
+    match Rig.Buffer.create d 8 with
+    | _ -> "done"
+    | exception Invalid_argument why
+      when String.starts_with ~prefix:"Rig.Buffer.create: " why ->
+        "refused"
+  in
+  let allocated = Rig.allocated d in
+  unhold ();
+  equal ~msg:"a create while held" string "refused" refused;
+  equal ~msg:"bytes held after the refusal" int 0 allocated;
+  equal ~msg:"the count once given back" int before (holds ());
+  equal ~msg:"a create once given back" int 8
+    (Rig.Buffer.length (Rig.Buffer.create d 8))
 
 (* A call of rig's that a callback makes, labelled [what], with the name rig
    gives it, and whether it may take a lock: rig.mli lists those that take
@@ -779,6 +804,7 @@ let () =
                test "a callback's calls inside a drain"
                  (test_reentry drain_cache);
                test "a callback's fail" test_fail_in;
+               test "a lock counted through the edge" test_counted;
                test "a callback that opens the name an open is opening"
                  test_reentry_own;
                test
