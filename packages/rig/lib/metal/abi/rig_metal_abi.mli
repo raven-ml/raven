@@ -139,11 +139,8 @@ type t = {
              a multiple of {!field-align};}
           {- one of a dispatch's sizes is less than [1].}}
 
-          A call from a signal handler, finaliser or [Gc.Memprof] callback
-          may raise [Rig_metal.Refused], having changed nothing, when the
-          callback interrupts an [icb], or [Rig_metal]'s [alloc], [map_host]
-          or first [entry] of a function, of any Metal device on the same
-          thread. *)
+          A call from a callback inside a lock ([Rig]'s domains section)
+          raises [Invalid_argument], having changed nothing. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which ends

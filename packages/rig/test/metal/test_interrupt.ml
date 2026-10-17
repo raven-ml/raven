@@ -12,9 +12,11 @@
    Every pipeline and region made before the call is still one an icb
    records, the call's pipeline or buffer is held only if the call kept it,
    and the device stops. A free from a callback at each allocation of a
-   call that holds the device's guard raises rather than waits. Through
-   rig, a call from a callback inside an icb or an entry keeps the device:
-   it works, or is refused and leaves its work to a later call. *)
+   call raises Invalid_argument, having changed nothing, inside the
+   device's guard, where it would take the guard again, and frees between
+   locks. Through rig, a call from a callback inside an icb or an entry
+   raises Invalid_argument inside a lock, having changed nothing, and works
+   between locks; the device is not lost. *)
 
 open Windtrap
 module S = Rig_metal_support
@@ -22,6 +24,57 @@ module M = Rig_metal
 
 let strf = Printf.sprintf
 let timeout = 60.
+
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+
+(* The text of the driver's refusal of a take by a lock's holder. *)
+let retaken = "Rig_metal: a lock taken again by the thread that holds it"
+
+(* The landings of a walk, inside a lock of the calling thread and between
+   locks. *)
+type seen = { mutable inside : int; mutable between : int }
+
+let seen () = { inside = 0; between = 0 }
+
+(* [landing seen refusal call] is a landing that runs [call ()] from the
+   callback, and a ref that then holds whether the thread held a lock there
+   and what [call] did: ["refused"] for an [Invalid_argument] whose text
+   starts with [refusal], ["returned"], or the exception. *)
+let landing seen refusal call =
+  let landed = ref None in
+  let call () =
+    let held = holds () <> 0 in
+    if held then seen.inside <- seen.inside + 1
+    else seen.between <- seen.between + 1;
+    let got =
+      match call () with
+      | () -> "returned"
+      | exception Invalid_argument why
+        when String.starts_with ~prefix:refusal why ->
+          "refused"
+      | exception e -> Printexc.to_string e
+    in
+    landed := Some (held, got)
+  in
+  (Rig_support.Call call, landed)
+
+(* [answered what landed] fails unless the landing's call was refused inside
+   a lock and returned between locks, and is [Some held], whether the thread
+   held one, or [None] if the call did not reach the landing. *)
+let answered what landed =
+  match !landed with
+  | None -> None
+  | Some (held, got) ->
+      let where = if held then "inside a lock" else "between locks" in
+      let expected = if held then "refused" else "returned" in
+      equal ~msg:(strf "%s, a call %s" what where) string expected got;
+      Some held
+
+(* Fails unless the walk landed both inside a lock and between locks. *)
+let covered seen =
+  greater ~msg:"landings inside a lock" int ~than:0 seen.inside;
+  greater ~msg:"landings between locks" int ~than:0 seen.between
 
 let found : Rig_edge.entry_answer -> Rig_edge.entry = function
   | Entry e -> e
@@ -129,34 +182,28 @@ let test_regions () =
 (* [reentry call] runs [call g args step], on a device [g] with the region
    [args] and the pipeline [step], with a free of another region of [g] at
    its [n]-th allocation, from a [Gc.Memprof] callback on the calling
-   thread. The free frees the region, or raises [Rig_metal.Refused] where
-   [call] holds the device's guard and leaves the region to a later free.
-   Some free raises. *)
+   thread. Inside the device's guard the free is refused and leaves the
+   region to a later free; between locks it frees the region. *)
 let reentry call () =
-  let refusals = ref 0 in
+  let seen = seen () in
   walk (fun g n ->
       let i = image g in
       let step = (found (M.entry i "step")).code in
       let args = alloc g args_bytes and other = alloc g args_bytes in
       let held = S.buffers () in
-      let freed = ref false in
-      let free () =
-        match M.free g other with
-        | () -> freed := true
-        | exception M.Refused _ -> incr refusals
-      in
+      let landing, landed = landing seen retaken (fun () -> M.free g other) in
       let reached =
-        Rig_support.interrupted ~landing:(Call free) n (fun () ->
-            call g args step)
+        Rig_support.interrupted ~landing n (fun () -> call g args step)
       in
-      let gone = if !freed then 1 else 0 in
-      equal ~msg:(strf "from allocation %d, buffers held" n) int (held - gone)
-        (S.buffers ());
-      if not !freed then M.free g other;
+      let what = strf "from allocation %d" n in
+      let freed = answered what landed = Some false in
+      let gone = if freed then 1 else 0 in
+      equal ~msg:(what ^ ", buffers held") int (held - gone) (S.buffers ());
+      if not freed then M.free g other;
       M.free g args;
       M.unload g i;
       reached);
-  greater ~msg:"frees refused" int ~than:0 !refusals
+  covered seen
 
 let icb g args step =
   match (M.capability g).icb (M.locate args).handle [| dispatch step |] with
@@ -181,30 +228,32 @@ let walk_rig attempt =
   in
   from 1
 
-(* [reentered ~ready ~during ~call ~after ()] walks [during d x] on a device
-   [d] that rig opened, [x] what [ready d] made, with [call d x] at its
-   [n]-th allocation from a [Gc.Memprof] callback on the calling thread.
-   [call] works, or the driver refuses it where [during] holds a guard of
-   the driver's: [call] is then [true], or raises [Invalid_argument]. Either
-   way the device is not lost, and [after d x n] finds [call]'s work done or
-   does it. Some call is refused. *)
-let reentered ~ready ~during ~call ~after () =
-  let refusals = ref 0 in
+(* [reentered ~ready ~during ~refusal ~call ~did ~after ()] walks
+   [during d x] on a device [d] that rig opened, [x] what [ready d] made,
+   with [call d x] at its [n]-th allocation from a [Gc.Memprof] callback on
+   the calling thread. Inside a lock of the thread's, [call] raises
+   [Invalid_argument] whose text starts with [refusal], and [did d x] is
+   then [false]; between locks it returns, and [did d x] is [true]. Either
+   way the device is not lost, and [after d x n] does [call]'s work if it
+   was refused and checks it. *)
+let reentered ~ready ~during ~refusal ~call ~did ~after () =
+  let seen = seen () in
   walk_rig (fun d n ->
       let x = ready d in
-      let call () =
-        match call d x with
-        | true -> incr refusals
-        | false -> ()
-        | exception Invalid_argument _ -> incr refusals
-      in
+      let landing, landed = landing seen refusal (fun () -> call d x) in
       let reached =
-        Rig_support.interrupted ~landing:(Call call) n (fun () -> during d x)
+        Rig_support.interrupted ~landing n (fun () -> during d x)
       in
-      is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
+      let what = strf "from allocation %d" n in
+      (match answered what landed with
+      | None -> ()
+      | Some held ->
+          equal ~msg:(what ^ ", the call's work done") bool (not held)
+            (did d x));
+      is_none ~msg:(what ^ ", the loss") (Rig.lost d);
       after d x n;
       reached);
-  greater ~msg:"calls refused" int ~than:0 !refusals
+  covered seen
 
 let loaded d =
   match Rig.Image.load d (fill ()) with Ok i -> i | Error why -> fail why
@@ -252,9 +301,9 @@ let ready_cached d =
 let free_in_icb =
   reentered ~ready:ready_cached
     ~during:(fun _ (x, _) -> rig_icb x)
-    ~call:(fun d (_, held) ->
-      Rig.free_cache d;
-      Rig.allocated d > held - cached_bytes)
+    ~refusal:"Rig.free_cache: "
+    ~call:(fun d _ -> Rig.free_cache d)
+    ~did:(fun d (_, held) -> Rig.allocated d = held - cached_bytes)
     ~after:(fun d (_, held) n ->
       Rig.free_cache d;
       equal ~msg:(strf "from allocation %d, bytes held" n) int
@@ -278,42 +327,56 @@ let ready_collected d =
 let unload_in_icb =
   reentered ~ready:ready_collected
     ~during:(fun _ (x, _) -> rig_icb x)
-    ~call:(fun d (_, w) ->
-      Rig.free_cache d;
-      S.alive w)
+    ~refusal:"Rig.free_cache: "
+    ~call:(fun d _ -> Rig.free_cache d)
+    ~did:(fun _ (_, w) -> not (S.alive w))
     ~after:(fun d (_, w) n ->
       Rig.free_cache d;
       equal ~msg:(strf "from allocation %d, the pipeline lives" n) bool false
         (S.alive w))
 
 (* A function of an image asked for from a callback while another function
-   of it is asked for: it is made, at once or when asked for again. *)
+   of it is asked for: it is made, at once or when asked for again. The
+   device's pipelines are [fill]'s and, once made, [step]'s. *)
 let entry_in_entry =
-  reentered ~ready:loaded
-    ~during:(fun _ i -> ignore (Rig.Image.mem i "fill"))
-    ~call:(fun _ i -> not (Rig.Image.mem i "step"))
-    ~after:(fun _ i n ->
+  reentered
+    ~ready:(fun d -> (loaded d, S.pipelines ()))
+    ~during:(fun _ (i, _) -> ignore (Rig.Image.mem i "fill"))
+    ~refusal:"Rig.Image.mem: "
+    ~call:(fun _ (i, _) ->
+      if not (Rig.Image.mem i "step") then fail "no function step")
+    ~did:(fun _ (_, before) -> S.pipelines () = before + 2)
+    ~after:(fun _ (i, _) n ->
       equal ~msg:(strf "from allocation %d, the function" n) bool true
         (Rig.Image.mem i "step"))
 
-(* A close from a callback in an icb: the device's stop runs, at once or at
-   a later close, after which an icb answers that the device was stopped. *)
+(* A close from a callback in an icb: inside a lock it is refused and an icb
+   still records; between locks it stops the device. After a close, an icb
+   answers that the device was stopped. *)
 let close_in_icb () =
-  let refusals = ref 0 in
+  let seen = seen () in
   walk_rig (fun d n ->
       let x = ready_icb d in
-      let call () = try Rig.close d with Invalid_argument _ -> incr refusals in
+      let landing, landed = landing seen "Rig.close: " (fun () -> Rig.close d) in
       let reached =
-        Rig_support.interrupted ~landing:(Call call) n (fun () -> rig_icb x)
+        Rig_support.interrupted ~landing n (fun () -> rig_icb x)
       in
+      let what = strf "from allocation %d" n in
+      let stopped = "the device was stopped" in
+      (match (answered what landed, x.cap.icb x.args [| dispatch x.step |]) with
+      | Some false, Error why ->
+          equal ~msg:(what ^ ", the icb's refusal") string stopped why
+      | Some false, Ok _ -> failf "%s, an icb recorded after the close" what
+      | (Some true | None), Ok _ -> ()
+      | (Some true | None), Error why -> failf "%s, an icb: %s" what why);
       Rig.close d;
       (match x.cap.icb x.args [| dispatch x.step |] with
       | Error why ->
-          equal ~msg:(strf "from allocation %d, the icb's refusal" n) string
-            "the device was stopped" why
-      | Ok _ -> failf "from allocation %d, an icb recorded after the close" n);
+          equal ~msg:(what ^ ", the icb's refusal after the close") string
+            stopped why
+      | Ok _ -> failf "%s, an icb recorded after the close" what);
       reached);
-  greater ~msg:"closes refused" int ~than:0 !refusals
+  covered seen
 
 let () =
   exit
@@ -332,8 +395,8 @@ let () =
            ];
          group ~timeout "a free from a callback at any allocation"
            [
-             test "of an icb frees, or raises Refused" (reentry icb);
-             test "of an allocation frees, or raises Refused"
+             test "of an icb, refused inside the device's guard" (reentry icb);
+             test "of an allocation, refused inside the device's guard"
                (reentry region);
            ];
          group ~timeout

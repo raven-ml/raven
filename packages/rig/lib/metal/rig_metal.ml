@@ -59,39 +59,81 @@ external split : unit -> nativeint = "caml_rig_metal_split"
 
 let split = split ()
 
-(* A guard, a mutex whose take runs no signal handler, of a rank. A thread
-   takes guards in rising rank, an image's before its device's: a take while
-   it holds one of the same or a higher rank, as a callback that runs inside
-   the holder's section would, raises [Refused] before it takes anything. *)
-type guard
-
+(* Rig_edge.Driver declares it; the driver never raises it. *)
 exception Refused of string
 
-let () = Callback.register_exception "Rig_metal.Refused" (Refused "")
+(* Locks *)
 
-external guard : int -> guard = "caml_rig_metal_guard"
-external take_guard : guard -> unit = "caml_rig_metal_guard_take"
-external give_guard : guard -> unit = "caml_rig_metal_guard_give" [@@noalloc]
+(* Every lock is a [Mutex.t] that [locked], or a [take] and a [give], hold,
+   counted among the locks its thread holds (rig_hold in rig_edge.h). Locks
+   nest in one order: an entry takes its image's, then its device's, and no
+   section takes any other. An [icb] and an opener's [make], which callers
+   outside rig make, start with [check].
+
+   An image's lock is held while Metal makes a function's pipeline, and a
+   device's while an icb records its dispatches, so that no unload, free or
+   stop releases what they hold; both run OCaml code and Metal's compiler. A
+   call of rig's from a callback during one raises. *)
+
+(* The locks the calling thread holds, and a count of one more and one fewer
+   (rig_holds, rig_hold and rig_unhold in rig_edge.h). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-(* The ranks of guards: a thread takes an image's before its device's. *)
-let image_rank = 0
-let device_rank = 1
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_metal: a lock taken again by the thread that holds it, from a \
+             signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
 
-(* [locked g f r] is [f r] under the guard [g]. The guard is taken as the
-   last step before the handler and given back as the first step of both
-   exits, where nothing allocates or polls, so an exception anywhere in [f],
-   an asynchronous one too, leaves it free for the next call and the stop.
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [locked m f r] is [f r] holding [m]. [m] is taken as the last step before
+   the handler and given back as the first step of both exits, where nothing
+   allocates or polls, so an exception anywhere in [f], an asynchronous one
+   too, leaves it free for the next call and the stop, and the count right.
    [f] is a toplevel function, so a call makes no closure. *)
-let locked g f r =
-  take_guard g;
+let locked m f r =
+  take m;
   match f r with
   | x ->
-      give_guard g;
+      give m;
       x
   | exception e ->
-      give_guard g;
+      give m;
       reraise e
+
+(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
+   call comes from a signal handler, finaliser or Gc.Memprof callback inside
+   that lock, and would wait for it or see its section half done. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      (fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
 
 exception Fault of string
 
@@ -138,9 +180,9 @@ and image = {
   library : nativeint;
   names : string array;
   entries : Rig_edge.entry array;
-  guard : guard;
+  guard : Mutex.t;
   tables : tables option ref;
-  device_guard : guard;
+  device_guard : Mutex.t;
   mutable unloaded : bool;
 }
 
@@ -150,7 +192,7 @@ type t = {
   self : int;
   facts : region Rig_edge.facts;
   cap : Rig_metal_abi.t;
-  guard : guard;
+  guard : Mutex.t;
       (* held over [tables] by an icb, an entry's [keep], an allocation's or
          mapping's [enter], a free, an unload and the stop *)
   tables : tables option ref; (* [None] once stop began *)
@@ -234,6 +276,7 @@ let recorded (self, tables, buffer, ds, pipelines, sizes) =
    own copy, and checks and records that copy: a dispatch read again could hold
    a pipeline the checks never saw. *)
 let icb self guard tables align buffer (ds : Rig_metal_abi.dispatch array) =
+  check "Rig_metal_abi.icb";
   let ds = Array.copy ds in
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
@@ -279,10 +322,11 @@ let no_memory = Array.length open_failures + 1
 
 (* The handlers write the word from the host: no work addresses it. *)
 let open_ ~word i =
+  check "Rig_metal.gpu";
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
   else
-    let guard = guard device_rank in
+    let guard = Mutex.create () in
     let self = open_device word in
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error open_failures.(-self - 1)
@@ -417,17 +461,18 @@ let cell d (r : region) =
       | exception Not_found -> no_region)
 
 (* Zeroes [r]'s cell under [d.guard], so that no icb addresses [r], then
-   frees [r]'s buffer; the next [enter] drops the cell. Nothing from [cell]
-   to the give of the guard allocates or polls, so an exception cannot end
-   the free with [r] live or its buffer held. The take's [Refused] ends it
+   frees [r]'s buffer; the next [enter] drops the cell. [cell] allocates
+   nothing, and nothing from the take of the guard to its give allocates or
+   polls, so no exception ends the free halfway: one that ends the take,
+   such as one a signal handler raised inside a contended take, ends it
    before it changed anything. *)
 let free d r =
   let c = cell d r in
-  take_guard d.guard;
+  take d.guard;
   c.bytes <- 0;
   (match !(d.tables) with Some t -> t.frees <- t.frees + 1 | None -> ());
   free_buffer d.self r.handle;
-  give_guard d.guard
+  give d.guard
 
 (* Images *)
 
@@ -435,7 +480,7 @@ let image d b =
   match load d.self b with
   | "", library, names ->
       let entries = Array.make (Array.length names) none in
-      let guard = guard image_rank in
+      let guard = Mutex.create () in
       let tables = d.tables and device_guard = d.guard in
       Ok
         (Rig_edge.Loaded
@@ -508,30 +553,29 @@ let entry_held (i : image) f =
     | exception Failure why ->
         invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
 
-(* Holds [i.guard], taken without a closure, in [locked]'s form. The take's
-   [Refused] ends it before it changed anything. *)
+(* Holds [i.guard], taken without a closure, in [locked]'s form. *)
 let entry (i : image) f =
-  take_guard i.guard;
+  take i.guard;
   match entry_held i f with
   | e ->
-      give_guard i.guard;
+      give i.guard;
       e
   | exception x ->
-      give_guard i.guard;
+      give i.guard;
       reraise x
 
 (* Takes [i]'s pipelines out of the ones an icb records, then releases them
-   and its library. rig unloads an image once, a refused unload counting as
-   not made, so the unload allocates nothing and polls nowhere, the take of
-   the guard included: an exception cannot end it with pipelines held, or
-   with one an icb still records. The take's [Refused] ends it before it
-   changed anything. The next entry drops them from the device's table. *)
+   and its library. rig unloads an image once, so from the take of the
+   guard to its give the unload allocates nothing and polls nowhere: an
+   exception cannot end it with pipelines held, or with one an icb still
+   records. One that ends the take ends it before it changed anything. The
+   next entry drops them from the device's table. *)
 let unload d (i : image) =
-  take_guard d.guard;
+  take d.guard;
   i.unloaded <- true;
   (match !(d.tables) with Some t -> t.unloads <- t.unloads + 1 | None -> ());
   release_image i.entries i.library;
-  give_guard d.guard
+  give d.guard
 
 (* Timeline and loss *)
 
@@ -540,8 +584,11 @@ let signaled d = signaled_word d.self
 let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
-(* Ends what the device runs, with no closure, so an exception cannot end
-   it before the guard was taken. *)
+(* Ends what the device runs, under [d.guard], taken without a closure. An
+   exception that ends a contended take, such as one a signal handler raised,
+   ends the stop before [halt]: the ring runs on, and rig gives the device's
+   memory back only as the word, which the ring's completions write, shows
+   the work done. *)
 let halt d =
   d.tables := None;
   stop_ring d.self
