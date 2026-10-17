@@ -46,9 +46,10 @@ let answer f =
 
 let ask () = Effect.perform Ask
 
-(* g x = Σ sin (a xᵢ), [a] asked of the handler, with an addition of Σ xᵢ: the
-   function every body computes. *)
-let terms x = Nx.sin (Nx.mul_s x (ask ()))
+(* g x = Σ exp (a xᵢ), [a] asked of the handler, with an addition of Σ xᵢ: the
+   function every body computes. Its derivatives of every order are nonzero,
+   and its kernels compile in a fraction of a sine's time. *)
+let terms x = Nx.exp (Nx.mul_s x (ask ()))
 
 let plain x =
   Rune.Total.add tot (Nx.sum x);
@@ -56,7 +57,7 @@ let plain x =
 
 (* [dplain a x] is [plain]'s derivative, [a] asked at the rule's call: a
    pullback runs after the call returns, outside the handler. *)
-let dplain a x = Nx.mul_s (Nx.cos (Nx.mul_s x a)) a
+let dplain a x = Nx.mul_s (Nx.exp (Nx.mul_s x a)) a
 
 (* Bodies *)
 
@@ -153,7 +154,7 @@ let compose ts f =
         let g = go rest in
         match t with
         | Grad -> fun x -> Rune.grad' (fun x -> Nx.sum (g x)) x
-        | Jvp -> fun x -> snd (Rune.jvp' g x (Nx.cos x))
+        | Jvp -> fun x -> snd (Rune.jvp' g x (Nx.sub_s x 1.))
         | Vmap -> Rune.vmap' g
         | Jit_layer -> Rune.jit' g
         | Collect ->
