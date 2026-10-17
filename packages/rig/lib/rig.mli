@@ -241,7 +241,8 @@ val most_parts : t -> int
     submission, given memory for its queues to grow ({!submit}), as [d]'s
     driver states it ({!Rig_edge.type-facts}): [max_int] where its driver
     has no such bound, and [0] for an io device. For a device of another
-    machine, it is that machine's device's.
+    machine, it is that machine's device's, but [max_int] for an io device
+    there, since its agent runs each part handed to it as a copy of its own.
 
     The count holds for launches and fills up to the argument size, and
     copies up to the length, that [d]'s driver's [.mli] states. Words parts,
