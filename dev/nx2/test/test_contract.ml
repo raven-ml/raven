@@ -1550,6 +1550,18 @@ module Conv = struct
     invalid (fun () -> Nx.conv_transpose x w);
     invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w)
 
+  (* A kernel of no tap along a spatial axis has no window to count. *)
+  let test_no_taps () =
+    let x = Nx.zeros Nx.float32 [| 1; 5; 4 |] and w = Nx.zeros Nx.float32 [| 2; 0; 4 |] in
+    let no_taps by f =
+      raises_match
+        (Exn.invalid_arg ~substring:(by ^ ": the kernel float32 [2; 0; 4] has a spatial axis of no element"))
+        f
+    in
+    no_taps "Nx.conv" (fun () -> Nx.conv x w);
+    no_taps "Nx.conv_transpose" (fun () ->
+        Nx.conv_transpose (Nx.zeros Nx.float32 [| 1; 5; 2 |]) w)
+
   (* A [[1; 0; 1]] input at stride 3 and padding (1, 1) has one window: the
      transpose of that count has an input to find. *)
   let test_transpose_short () =
@@ -1569,6 +1581,7 @@ module Conv = struct
         test "conv_transpose finds an input shorter than its formula's"
           test_transpose_short;
         test "each refusal names its function" test_refusals;
+        test "a kernel of no tap raises" test_no_taps;
       ]
 end
 

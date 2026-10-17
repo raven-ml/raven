@@ -4020,6 +4020,9 @@ let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
   let at_least_one name v = if v < 1 then invalid_argf "%s: %s %d" by name v in
   Array.iter (at_least_one "stride") stride;
   Array.iter (at_least_one "dilation") dilation;
+  if Array.exists (( = ) 0) (Array.sub (shape w) 1 k) then
+    invalid_argf "%s: the kernel %a has a spatial axis of no element" by
+      pp_value w;
   let o = dim 0 w in
   if groups < 1 || o mod groups <> 0 then
     invalid_argf "%s: %d groups for %d output channels" by groups o;

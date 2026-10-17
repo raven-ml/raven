@@ -1636,9 +1636,9 @@ val conv :
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
-    a stride or a dilation is below [1]; [groups] is below [1] or does not
-    divide [o]; [x]'s channels are not [groups] times [w]'s last extent; or
-    the dtype is a boolean. *)
+    a stride or a dilation is below [1]; a kernel extent is [0]; [groups] is
+    below [1] or does not divide [o]; [x]'s channels are not [groups] times
+    [w]'s last extent; or the dtype is a boolean. *)
 
 val conv_transpose :
   ?stride:int array ->
