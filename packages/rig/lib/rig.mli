@@ -226,6 +226,16 @@ val runs_on_host : t -> bool
     holds for {!host} and a {!memory_device}. The host computes on such a
     device's memory as on its own. *)
 
+val alignment : t -> int
+(** [alignment d] is the power of two that the first byte of every non-empty
+    buffer {!Buffer.create} makes on [d] starts on, whatever its kind and
+    size, as [d]'s driver states it from its allocator
+    ({!Rig_edge.type-facts}): [16] for {!host}, [64] for a {!memory_device},
+    and [1] for an io device. {!Buffer.create} starts a host buffer of 128
+    bytes or more on 128 bytes or a page, multiples of this alignment that
+    hold for those sizes only. For a device of another machine, it is that
+    machine's device's. *)
+
 val most_parts : t -> int
 (** [most_parts d] is the most parts that an idle [d] always runs in one
     submission, given memory for its queues to grow ({!submit}), as [d]'s
@@ -474,17 +484,16 @@ val signaled : t -> int
     count of its locks does not say which they are. A function that takes no
     lock may be called from a callback at any point, and never raises it:
     {!name}, {!equal}, {!pp}, {!arch}, {!computes}, {!runs_on_host},
-    {!most_parts}, {!capability}, {!host_of}, {!reaches}, {!submitted},
-    {!signaled}, {!lost}, {!failure},
-    {!budget}, {!allocated}, {!Point.device}, {!Point.value},
-    {!Point.reached}, {!Point.pp}, the properties and low-level values of
-    {!Buffer}, {!Buffer.view}, {!Buffer.of_bigarray}, {!Image.device},
-    {!Submission}'s refs and parts, {!Submission.block},
-    {!Submission.address}, {!Submission.Run}, {!Claim}, {!Profile} but
-    {!Profile.take}, {!Local.new_key}, and {!Local.get} of a value already
-    made for the device. Nor does {!fail}, which inside a lock leaves the
-    owed stops to later calls. Outside a lock, a call from a callback runs
-    as any call does.
+    {!alignment}, {!most_parts}, {!capability}, {!host_of}, {!reaches},
+    {!submitted}, {!signaled}, {!lost}, {!failure}, {!budget}, {!allocated},
+    {!Point.device}, {!Point.value}, {!Point.reached}, {!Point.pp}, the
+    properties and low-level values of {!Buffer}, {!Buffer.view},
+    {!Buffer.of_bigarray}, {!Image.device}, {!Submission}'s refs and parts,
+    {!Submission.block}, {!Submission.address}, {!Submission.Run}, {!Claim},
+    {!Profile} but {!Profile.take}, {!Local.new_key}, and {!Local.get} of a
+    value already made for the device. Nor does {!fail}, which inside a lock
+    leaves the owed stops to later calls. Outside a lock, a call from a
+    callback runs as any call does.
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
     either, in a wait of rig's or for another thread: other calls, and every
@@ -848,12 +857,13 @@ module Buffer : sig
   val create : ?memory:kind -> device -> int -> t
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
       [memory] (defaults to [Device]), with unspecified contents. An empty
-      buffer allocates nothing. A host buffer of at least 64 KiB and at
-      least four pages starts on a page, so devices can {!borrow} it; a
-      smaller one of at least 128 bytes starts on 128 bytes, so threads that
-      write it in pieces of whole 128-byte blocks share no cache line, on
-      Apple silicon's 128-byte lines or x86's 64-byte ones. On an io device
-      the memory is what {!Rig_edge.Io.alloc} makes, whatever [memory].
+      buffer allocates nothing. A non-empty one starts on [d]'s {!alignment}.
+      A host buffer of at least 64 KiB and at least four pages starts on a
+      page, so devices can {!borrow} it; a smaller one of at least 128 bytes
+      starts on 128 bytes, so threads that write it in pieces of whole
+      128-byte blocks share no cache line, on Apple silicon's 128-byte lines
+      or x86's 64-byte ones. On an io device the memory is what
+      {!Rig_edge.Io.alloc} makes, whatever [memory].
 
       Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
       device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is

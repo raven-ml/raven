@@ -581,6 +581,11 @@ let is_gpu ~vendor ~class_ =
 
 let key = Type.Id.make ()
 
+(* Both paths allocate whole pages of the GPU's 4 KiB, at addresses that start
+   on one: KFD's at host addresses mmap reserves, the PCI path's in its GPU
+   space ([Rig_pci.Memory.alloc]). *)
+let region_alignment = 4096
+
 let facts g =
   {
     Rig_edge.arch = Abi.Gpu.processor g.gpu;
@@ -600,6 +605,7 @@ let facts g =
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;
     host_addresses = false;
+    alignment = region_alignment;
     capability = Abi.Capability.declare g.capability;
     word = g.word;
     edge = Nativeint.of_int g.self;

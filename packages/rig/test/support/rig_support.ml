@@ -181,6 +181,7 @@ module Driver = struct
     transport : bool;
     peers : bool;
     maps_host : bool;
+    alignment : int;
     budget : int;
     limits : kind -> int;
     may_block : bool;
@@ -285,6 +286,7 @@ module Driver = struct
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
       host_addresses = d.host_visible && not d.transport;
+      alignment = d.alignment;
       capability = d.capability;
       word =
         {
@@ -563,10 +565,11 @@ module Polled = struct
 
   let make ?(capacity = 1024) ?grows ?most_parts ?(copies = true)
       ?(host_visible = true) ?(addresses = true) ?(transport = false)
-      ?(peers = true) ?(maps_host = true) ?(budget = 1 lsl 30)
-      ?(memory = max_int) ?(window = max_int) ?(may_block = false)
-      ?(completion = `Host) ?(waits_on = []) ?(max_waits = max_int)
-      ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
+      ?(peers = true) ?(maps_host = true) ?(alignment = 4096)
+      ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
+      ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
+      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept)
+      ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let most_parts = Option.value most_parts ~default:capacity in
@@ -589,6 +592,7 @@ module Polled = struct
         transport;
         peers;
         maps_host;
+        alignment;
         budget;
         limits;
         may_block;
@@ -640,12 +644,13 @@ module Polled = struct
     }
 
   let open_ ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
-      ?transport ?peers ?maps_host ?budget ?memory ?window ?may_block
+      ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window ?may_block
       ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
     let p =
       make ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
-        ?transport ?peers ?maps_host ?budget ?memory ?window ?may_block
-        ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms ()
+        ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window
+        ?may_block ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms
+        ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

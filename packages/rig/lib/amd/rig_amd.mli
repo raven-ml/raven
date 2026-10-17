@@ -230,6 +230,8 @@ val capability : t -> Rig_amd_abi.Capability.t
        {!type-path});}
     {- [host_addresses], [false], since the host does not address [Device]
        memory;}
+    {- [alignment], [4096], since both paths allocate whole 4 KiB pages of
+       the GPU, at addresses that start on one;}
     {- [capability], {!capability}, declared with
        {!Rig_amd_abi.Capability.declare};}
     {- [word], the device's timeline word, as {b Word.} below states.}}

@@ -465,6 +465,7 @@ let account s id d : Wire.account =
     arch = Rig.arch d;
     budget = Rig.budget d;
     most_parts = (if Rig.computes d then Rig.most_parts d else max_int);
+    alignment = Rig.alignment d;
     reaches = List.sort compare reaches;
     reached_by = List.sort compare reached_by;
   }

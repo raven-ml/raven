@@ -149,6 +149,7 @@ val capability : t -> Rig_cuda_abi.t
       | [hang_ms]        | [Some 30_000], or [None] under a watchdog        |
       | [maps_host]      | [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]    |
       | [host_addresses] | [false]                                          |
+      | [alignment]      | [256], as CUDA aligns every allocation           |
       | [capability]     | {!Rig_cuda_abi.t} ({!val-capability})            |
       | [word]           | The word [make] was given, registered            |
     }
@@ -158,6 +159,9 @@ val capability : t -> Rig_cuda_abi.t
     streams write the word, and the host does not address [Device] memory.
     The word holds an unsigned 64-bit integer in the host's byte order, and
     the device's values start after the value it holds when [make] returns.
+    [alignment] is 256 since the CUDA C++ Programming Guide (Device Memory
+    Accesses) states that every address an allocation routine of the driver
+    or runtime API returns "is always aligned to at least 256 bytes".
     On a GPU that registers no host memory, or when the word [make] was
     given lies outside rig's array, the word is eight bytes of the device's
     own page-locked memory, which starts at that value and has no host

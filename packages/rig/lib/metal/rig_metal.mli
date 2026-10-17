@@ -151,6 +151,7 @@ val capability : t -> Rig_metal_abi.t
       | [hang_ms]        | [None]                                         |
       | [maps_host]      | [true]                                         |
       | [host_addresses] | [true]                                         |
+      | [alignment]      | [256] ({!section-memory})                      |
       | [capability]     | {!Rig_metal_abi.t} ({!val-capability})         |
       | [word]           | The word [make] was given, which no work reads |
     }
@@ -270,13 +271,13 @@ val capability : t -> Rig_metal_abi.t
     {!alloc} makes the same shared memory ([MTLResourceStorageModeShared])
     for every {!Rig_edge.type-memory}. A region is resident for the work of
     every submission whose submit starts after {!alloc} or {!map_host} has
-    returned. Apple documents no alignment for a buffer's first byte, so
-    {!alloc} checks the addresses Metal gives. If the GPU or host address is
-    not a multiple of 256, it frees the buffer and raises {!exception-Fault}.
-    That fault loses the device, as a fault of any counted call does
-    ({!Rig_edge.Driver}), so {!Rig.Buffer.create} raises {!Rig.Lost}, and so
-    does every later use of the device and of its memory. {!alloc} and
-    {!map_host} raise [Invalid_argument] for fewer than one byte.
+    returned. Apple documents no alignment for a buffer's first byte. Metal
+    places a buffer below a page at a multiple of 256 bytes and a larger one
+    at a page, so the device's [alignment] ({!Rig_edge.type-facts}) is 256.
+    A buffer whose GPU or host address breaks it faults the device, so
+    {!Rig.Buffer.create} raises {!Rig.Lost}, and so does every later use of
+    the device and of its memory. {!alloc} and {!map_host} raise
+    [Invalid_argument] for fewer than one byte.
 
     {!locate} returns a region's GPU address ([gpuAddress]), which kernels
     read and write, its host address, and its [MTLBuffer]. {!free} takes the

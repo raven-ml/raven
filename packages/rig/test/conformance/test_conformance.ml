@@ -227,7 +227,25 @@ let facts (module G : Gpu) () =
   equal bool ~msg:"Rig.reaches host" f.host_addresses (Rig.reaches Rig.host t.d);
   if f.host_addresses then
     equal (option bool) ~msg:"Device memory's host address" (Some true)
-      (host Device)
+      (host Device);
+  equal int ~msg:"Rig.alignment" f.alignment (Rig.alignment t.d);
+  (* Every region of every kind and size starts on the stated alignment, at its
+     address and its host address. *)
+  let starts memory n =
+    match G.D.alloc t.g memory n with
+    | None -> ()
+    | Some r ->
+        let l = G.D.locate r in
+        G.D.free t.g r;
+        let on a = a land (f.alignment - 1) = 0 in
+        let msg = strf "a region of %d bytes" n in
+        equal bool ~msg true
+          (Option.fold ~none:true ~some:on l.address
+          && Option.fold ~none:true ~some:on l.host)
+  in
+  List.iter
+    (fun memory -> List.iter (starts memory) [ 1; 17; 255; 4097; 1 lsl 20 ])
+    Rig_edge.[ Device; Pinned; Mapped ]
 
 (* Each kind no queue of the device runs is refused by make, and no value is
    assigned. *)

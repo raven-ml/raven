@@ -147,8 +147,9 @@ module Strings = Tbl.Make (String)
 let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
-    ~completion ~waits ~hang_ms ~maps_host ~most_parts ~host_addresses ~word
-    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
+    ~completion ~waits ~hang_ms ~maps_host ~alignment ~most_parts
+    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability
+    ~budget ~opened =
   let live =
     {
       c;
@@ -186,6 +187,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     kind;
     arch;
     maps_host;
+    alignment;
     most_parts;
     host_addresses;
     key;
@@ -202,6 +204,10 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
 (* The host's fault, which nothing raises. *)
 exception No_fault
 
+(* The alignment of the C library's [malloc] on every 64-bit host, which a host
+   buffer starts on at least ([rig_heap.c]). *)
+let malloc_alignment = 16
+
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
    and waits on the host for other devices' points. *)
 let host =
@@ -210,7 +216,7 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
       ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~most_parts:max_int ~host_addresses:false
+      ~alignment:malloc_alignment ~most_parts:max_int ~host_addresses:false
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
@@ -1070,6 +1076,11 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     invalid_argf
       "Rig.open_: %s's submissions hold at most %d parts, expected at least 1"
       name f.most_parts;
+  if f.alignment < 1 || f.alignment land (f.alignment - 1) <> 0 then
+    invalid_argf
+      "Rig.open_: %s's regions start on multiples of %d, expected a power of \
+       two"
+      name f.alignment;
   let queues = Array.of_list f.queues in
   Option.iter
     (fun i ->
@@ -1091,8 +1102,9 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
       ~c ~arch:f.arch ~queues ~copy_engine:f.copy_engine
-      ~completion:(completion_of f.completion) ~waits:f.waits
-      ~hang_ms:f.hang_ms ~maps_host:f.maps_host ~most_parts:f.most_parts
+      ~completion:(completion_of f.completion)
+      ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
+      ~alignment:f.alignment ~most_parts:f.most_parts
       ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
@@ -1144,10 +1156,9 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
           make_device ~index ~name:full ~machine
             ~kind:(Io { m = (module I); h })
             ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Host_writes
-            ~waits:no_waits ~hang_ms:None ~maps_host:false ~most_parts:0
-            ~host_addresses:false
-            ~word:0 ~word_region:None ~key ~memory_device:false
-            ~fault:[%extension_constructor I.Fault]
+            ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
+            ~most_parts:0 ~host_addresses:false ~word:0 ~word_region:None ~key
+            ~memory_device:false ~fault:[%extension_constructor I.Fault]
             ~capability:None ~budget ~opened
         in
         register d;

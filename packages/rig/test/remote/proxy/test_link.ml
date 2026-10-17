@@ -243,8 +243,9 @@ let frame_w =
 
 let pp_account ppf (a : Wire.account) =
   Format.fprintf ppf
-    "{id %d; %S; %S; budget %d; most_parts %d; reaches [%s]; reached_by [%s]}"
-    a.id a.name a.arch a.budget a.most_parts
+    "{id %d; %S; %S; budget %d; most_parts %d; alignment %d; reaches [%s]; \
+     reached_by [%s]}"
+    a.id a.name a.arch a.budget a.most_parts a.alignment
     (String.concat "; " (List.map string_of_int a.reaches))
     (String.concat "; " (List.map string_of_int a.reached_by))
 
@@ -359,6 +360,7 @@ let echo_open kind =
         arch = "echo";
         budget = 0;
         most_parts = 1;
+        alignment = 16;
         reaches = [];
         reached_by = [];
       };
@@ -965,9 +967,19 @@ let account_g =
   and+ arch = text
   and+ budget = id
   and+ most_parts = int_range 1 max_int
+  and+ alignment = map (fun k -> 1 lsl k) (int_range 0 61)
   and+ reaches = peers
   and+ reached_by = peers in
-  { Wire.id = device_id; name; arch; budget; most_parts; reaches; reached_by }
+  {
+    Wire.id = device_id;
+    name;
+    arch;
+    budget;
+    most_parts;
+    alignment;
+    reaches;
+    reached_by;
+  }
 
 (* A request and an answer the agent gives it. *)
 let case_g =
@@ -2169,6 +2181,7 @@ let answers_in_order () =
       arch = "";
       budget = 0;
       most_parts = 1;
+      alignment = 16;
       reaches = [];
       reached_by = [];
     }
@@ -2188,7 +2201,7 @@ let answers_in_order () =
   Domain.join d1;
   Domain.join d2;
   let large_bytes =
-    1 + 4 + 8 + (4 + String.length name) + 4 + 8 + 8 + 4 + 4
+    1 + 4 + 8 + (4 + String.length name) + 4 + 8 + 8 + 8 + 4 + 4
   in
   equal
     (list (option (pair int int)))

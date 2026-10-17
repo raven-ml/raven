@@ -24,6 +24,10 @@ module D = struct
   let capability_key : unit Type.Id.t = Type.Id.make ()
   let all = Rig_edge.[ Fill; Copy ]
 
+  (* The alignment [caml_rig_memory_alloc] gives, a page from 64 KiB on
+     ([rig_memory.c]). *)
+  let alignment = 64
+
   (* Its hand-over runs the submission's work, which may take long. *)
   let facts d =
     {
@@ -39,6 +43,7 @@ module D = struct
       hang_ms = None;
       maps_host = true;
       host_addresses = true;
+      alignment;
       capability = Capability (capability_key, ());
       word = { at = d.word; base = 0 };
       edge = d.self;

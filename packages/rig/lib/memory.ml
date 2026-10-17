@@ -393,20 +393,51 @@ let unmap d r : Dev.given =
   | Given -> Given
   | Later -> waits d (Unmap (r, None)) Later
 
+(* The first address of [l] off a multiple of [align], if any. *)
+let misplaced align (l : Rig_edge.location) =
+  let off = function
+    | Some a when a land (align - 1) <> 0 -> Some a
+    | _ -> None
+  in
+  match off l.address with Some a -> Some a | None -> off l.host
+
+(* Why the [n]-byte region at [l] breaks the facts [d]'s driver states, if it
+   does. *)
+let breaks d n (l : Rig_edge.location) =
+  if d.host_addresses && l.host = None then
+    Some
+      "a region without a host address, where its driver states the host \
+       addresses its memory"
+  else
+    match misplaced d.alignment l with
+    | Some a ->
+        Some
+          (Printf.sprintf
+             "%d bytes placed at 0x%x, off the alignment of %d its driver \
+              states"
+             n a d.alignment)
+    | None -> None
+
 (* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
-   has not the room. An io device's memory has no kind. *)
+   has not the room. An io device's memory has no kind. A region that breaks the
+   facts its driver states is freed and faults the device, as a fault of its
+   driver's [alloc] does. *)
 let new_entry d (kind : memory_kind) n =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d Dev.Any (fun () -> D.alloc h kind n) with
+      let alloc () =
+        match D.alloc h kind n with
+        | Some r as some -> (
+            match breaks d n (D.locate r) with
+            | None -> some
+            | Some why ->
+                D.free h r;
+                raise (D.Fault why))
+        | None -> None
+      in
+      match Dev.counted d Dev.Any alloc with
       | None -> None
-      | Some r when d.host_addresses && (D.locate r).host = None ->
-          ignore (unmap d (Region { m; h; r; rid }) : Dev.given);
-          invalid_argf
-            "Rig: %s's driver states the host addresses its memory, and \
-             allocated a region without a host address"
-            d.name
       | Some r ->
           let region = Region { m; h; r; rid } in
           Some

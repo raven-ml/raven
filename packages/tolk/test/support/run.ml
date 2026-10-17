@@ -91,13 +91,11 @@ let values dt b =
 
 (* A buffer of [n] bytes of the host that starts on 64 bytes. The kernels these
    tests run, recorded from tinygrad, access vectors up to that width, wider
-   than the 16 bytes a host buffer is known to start on. *)
+   than the host's alignment ([Rig.alignment]), so it views the first [n] bytes
+   of a host buffer of at least 128, which starts on 128
+   ([Rig.Buffer.create]). *)
 let aligned_host n =
-  let b = Rig.Buffer.create Rig.host (n + 63) in
-  let rec first j =
-    if Rig.Buffer.aligned b ~at:j 64 then j else first (j + 1)
-  in
-  Rig.Buffer.view b ~first:(first 0) ~length:n
+  Rig.Buffer.view (Rig.Buffer.create Rig.host (max n 128)) ~first:0 ~length:n
 
 (* A buffer of the host holding [values] as the parameter [p]. *)
 let storage (p : Ops.param_arg) values =

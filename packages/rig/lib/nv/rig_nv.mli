@@ -91,6 +91,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [hang_ms] | The path's {!field-hang_ms}. |
       | [maps_host] | [true] iff the path maps host memory. |
       | [host_addresses] | [false]: the host does not address [Device] memory. |
+      | [alignment] | [4096]: each path allocates whole pages of 4 KiB. |
       | [capability] | {!val-capability} ({!Rig_nv_abi.Gpu.declare}). |
       | [word] | The word [make] was given, mapped through the path. |
     }

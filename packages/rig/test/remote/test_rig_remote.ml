@@ -460,14 +460,15 @@ let most_parts () =
   let d = List.hd (Result.get_ok (Rig_remote.devices h "TIGHT")) in
   equal ~msg:"the agent's device's count" int 3 (Rig.most_parts d)
 
-(* A device of another machine that runs no submission of its own, such as an
-   io device, holds any number of parts: its agent runs each part handed over
-   as a copy of its own. *)
+(* A device of another machine that runs no submission of its own, such as an io
+   device, holds any number of parts: its agent runs each part handed over as a
+   copy of its own. Its buffers start where the agent's device's do. *)
 let io_parts () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
   let d = List.hd (Result.get_ok (Rig_remote.devices h "DISK")) in
-  equal ~msg:"no limit" int max_int (Rig.most_parts d)
+  equal ~msg:"no limit" int max_int (Rig.most_parts d);
+  equal ~msg:"the io device's alignment" int 1 (Rig.alignment d)
 
 let reaches kinds =
   with_job @@ fun j _ ->

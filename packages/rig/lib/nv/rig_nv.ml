@@ -258,6 +258,11 @@ let path_alloc (p : _ path) kind n = placed (reach_of kind) n (p.alloc kind n)
 
 let page = 4096
 
+(* Both paths place each region on a page of at least 4 KiB: the RM path at
+   addresses aligned to its page ([Rig_nv_nvidia]), the PCI path in its GPU
+   space ([Rig_pci.Memory.alloc]). *)
+let region_alignment = page
+
 (* The device's own words: a timeline word, used where the path maps no host
    memory, then the channels' join words, as rig_nv_stubs.h's JOIN_GPU lays
    them out. *)
@@ -551,6 +556,7 @@ let facts (T d) =
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;
     host_addresses = false;
+    alignment = region_alignment;
     capability = Abi.Gpu.declare d.capability;
     word = R d.word;
     edge = Nativeint.of_int d.self;

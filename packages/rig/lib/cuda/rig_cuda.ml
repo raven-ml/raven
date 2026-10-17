@@ -251,6 +251,12 @@ let rec on_host = function
 
 (* Opening *)
 
+(* The CUDA C++ Programming Guide, Device Memory Accesses: "Any address of a
+   variable residing in global memory or returned by one of the memory
+   allocation routines from the driver or runtime API is always aligned to at
+   least 256 bytes." [cuMemAlloc] and [cuMemHostAlloc] are such routines. *)
+let allocation_alignment = 256
+
 (* An image's [entries] are those [entry] made, each once, under [lock]. *)
 type image = {
   owner : int; (* the C state of the device that loaded it *)
@@ -593,6 +599,7 @@ let open_ ~word i =
               hang_ms = (if watchdog = 0 then Some hang_ms else None);
               maps_host = registers <> 0;
               host_addresses = false;
+              alignment = allocation_alignment;
               capability = Rig_cuda_abi.declare cap;
               word;
               edge = Nativeint.of_int self;

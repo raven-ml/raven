@@ -237,13 +237,15 @@ let test_copy_engine_refused () =
   refuses "open:engine-negative" (engine (module P) (Some (-1)));
   refuses "open:engine-fills" (engine (module Copyless) (Some 1))
 
-(* A region without the host address the facts promise refuses the
-   allocation, and goes back to the driver. *)
+(* A region without the host address the facts promise goes back to the driver
+   and faults the device, as one off its alignment does. *)
 let test_overstated () =
   let p = P.make ~host_visible:false () in
   let d = open_as (module Overstated) "open:overstated" p in
-  raises_match (Exn.invalid_arg ~substring:"host address") (fun () ->
-      Rig.Buffer.create d 64);
+  raises_match ~msg:"the allocation"
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> Rig.Buffer.create d 64);
+  is_some ~msg:"the device lost" (Rig.lost d);
   equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
     (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
 
@@ -306,6 +308,55 @@ let open_store name =
 let open_host machine name =
   Rig.open_host ~machine
     (P.opener name (P.make ()))
+
+(* Every non-empty buffer starts on its device's alignment, of each kind and on
+   either side of the sizes the host aligns further. *)
+let test_alignment () =
+  let d = memory "open:alignment" in
+  let p, _ = P.open_ ~alignment:256 "open:alignment-polled" in
+  let io = open_store "open:alignment-io" in
+  equal ~msg:"the stated values" (list int) [ 16; 64; 256; 1 ]
+    (List.map Rig.alignment [ Rig.host; d; p; io ]);
+  List.iter
+    (fun (d, memory, n) ->
+      let b = Rig.Buffer.create ~memory d n in
+      equal
+        ~msg:(Printf.sprintf "%s, %d bytes" (Rig.name d) n)
+        bool true
+        (Rig.Buffer.aligned b ~at:0 (Rig.alignment d)))
+    (List.concat_map
+       (fun d ->
+         List.concat_map
+           (fun memory ->
+             List.map
+               (fun n -> (d, memory, n))
+               [ 1; 15; 16; 17; 127; 128; 129; 4096; 65535; 1 lsl 18 ])
+           Rig.Buffer.[ Device; Pinned; Mapped ])
+       [ Rig.host; d; p ])
+
+(* An alignment that is not a power of two refuses the open, and the driver's
+   device is stopped. *)
+let test_alignment_refused () =
+  List.iter
+    (fun n ->
+      let p = P.make ~alignment:n () in
+      let name = Printf.sprintf "open:alignment-%d" n in
+      raises_match ~msg:(Printf.sprintf "alignment %d" n)
+        (Exn.invalid_arg ~substring:"power of two") (fun () ->
+          Rig.open_ (P.opener name p));
+      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
+    [ 0; -16; 24; 48 ]
+
+(* A region off the device's alignment goes back to the driver and faults the
+   device: Polled's start on a page, never on 2^60. *)
+let test_misaligned () =
+  let d, p = P.open_ ~alignment:(1 lsl 60) "open:misaligned" in
+  raises_match ~msg:"the allocation"
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> Rig.Buffer.create d 64);
+  is_some ~msg:"the device lost" (Rig.lost d);
+  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
+    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
 
 let test_io () =
   let io = open_store "open:io" in
@@ -1402,9 +1453,14 @@ let tests =
       test "rig's copies go to the copy engine the facts name" test_copy_engine;
       test "a copy engine that names no copying queue refuses the open"
         test_copy_engine_refused;
-      test "a region against the host_addresses fact refuses the allocation"
+      test "a region against the host_addresses fact faults the device"
         test_overstated;
       test "a hang bound below 1 ms refuses the open" test_hang_refused;
+      test "a buffer starts on its device's alignment" test_alignment;
+      test "an alignment not a power of two refuses the open"
+        test_alignment_refused;
+      test "a region off its device's alignment faults the device"
+        test_misaligned;
       test "an edge that names no C state or driver refuses the open"
         test_edge_refused;
       test "the host states its facts" test_host;

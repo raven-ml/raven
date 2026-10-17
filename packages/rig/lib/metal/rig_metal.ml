@@ -302,6 +302,11 @@ let icb self guard tables align buffer (ds : Rig_metal_abi.dispatch array) =
 let apple_align = 4
 let mac_align = 256
 
+(* Apple documents no alignment for a shared buffer's first byte; Metal places
+   one below a page at a multiple of 256 bytes, larger ones at a page. The
+   driver states 256, which rig checks of each region. *)
+let region_align = 256
+
 (* The causes of open's failures, by the stubs' codes; the last is the host's
    lack of memory. *)
 let open_failures =
@@ -363,6 +368,7 @@ let open_ ~word i =
           hang_ms = None;
           maps_host = true;
           host_addresses = true;
+          alignment = region_align;
           capability = Rig_metal_abi.declare cap;
           word;
           edge = Nativeint.of_int self;
@@ -377,11 +383,6 @@ let facts d = d.facts
 let capability d = d.cap
 
 (* Memory *)
-
-(* Apple documents no alignment for a shared buffer's first byte; Metal places
-   one below a page at a multiple of 256 bytes, larger ones at a page. The
-   driver promises 256 and checks it. *)
-let region_align = 256
 
 (* The cells of [t] without those of freed regions, once a region was freed
    since they last went. *)
@@ -414,20 +415,8 @@ let alloc d _ n =
   match alloc_buffer d.self n with
   | None -> None
   | Some r as some ->
-      let address = Option.get r.address and host = Option.get r.host in
-      if address mod region_align = 0 && host mod region_align = 0 then begin
-        enter d r n;
-        some
-      end
-      else begin
-        free_buffer d.self r.handle;
-        raise
-          (Fault
-             (strf
-                "Metal placed %d bytes at GPU address 0x%x and host address \
-                 0x%x, expected multiples of %d"
-                n address host region_align))
-      end
+      enter d r n;
+      some
 
 let map_host d p n =
   if n < 1 then

@@ -76,6 +76,7 @@ let facts d =
     hang_ms = None;
     maps_host = false;
     host_addresses = false;
+    alignment = d.account.alignment;
     capability = Rig_remote_abi.declare d.capability;
     word = d.word;
     edge = d.c;

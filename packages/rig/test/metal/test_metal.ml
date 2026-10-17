@@ -1837,6 +1837,11 @@ let declared () =
   | None -> fail "no record under the key");
   is_none ~msg:"the host" (Rig.capability Rig.host Rig_metal_abi.key)
 
+(* Every buffer starts on a multiple of 256 bytes, as rig_metal.mli states. *)
+let alignment () =
+  let t = dev () in
+  equal int 256 (Rig.alignment t.d)
+
 let apple_align () =
   let t = dev () in
   if not (String.starts_with ~prefix:"Apple" (Rig_metal.facts t.g).arch) then
@@ -1872,6 +1877,7 @@ let opening =
       test "two opens are two devices, each with its own word" two_devices;
       test "an Apple GPU aligns arguments to 4 bytes" apple_align;
       test "rig finds its record" declared;
+      test "the device states an alignment of 256" alignment;
       test "off macOS no device opens" (fun () ->
           if S.macos then skip ~reason:"macOS" ();
           equal int 0 (Rig_metal.count ());

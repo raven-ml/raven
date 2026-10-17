@@ -112,6 +112,7 @@ type device = {
   kind : kind;  (** What it is, with the module and handle that run it. *)
   arch : string;  (** Its architecture, as its driver names it. *)
   maps_host : bool;  (** Whether it maps host memory. *)
+  alignment : int;  (** {!Rig.alignment}. *)
   most_parts : int;  (** {!Rig.most_parts}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
   key : int;

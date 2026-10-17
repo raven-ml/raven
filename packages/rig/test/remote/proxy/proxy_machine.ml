@@ -267,6 +267,7 @@ let account ?(reached_by = []) id ~reaches : Wire.account =
     arch = (if id = 0 then "arm64" else Printf.sprintf "mem%d" id);
     budget = (1 lsl 30) + id;
     most_parts = 100 + id;
+    alignment = 16 lsl id;
     reaches;
     reached_by;
   }

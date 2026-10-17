@@ -160,9 +160,11 @@ type 'region facts = {
       (** Whether the host addresses every region the device allocates, with
           a [host] address in each one's location ({!Driver.locate}). The
           host then reaches the device's memory and copies it, and the
-          device's [Pinned] memory is its own and counts in [budget]. rig
-          frees a region that breaks this, and the allocation raises
-          [Invalid_argument]. *)
+          device's [Pinned] memory is its own and counts in [budget]. *)
+  alignment : int;
+      (** The power of two that the address of every region {!Driver.alloc}
+          makes is a multiple of, for every memory kind: its [address] and
+          its [host] address ({!Driver.locate}). *)
   capability : capability;
       (** The ABI record, filled when the device opened. *)
   word : 'region;
@@ -185,8 +187,11 @@ type 'region facts = {
 (** The type for the facts of a device. A {!Driver.Fault} while rig reads
     them makes the open return [Error]. The open raises [Invalid_argument]
     if [copy_engine] names no queue of [queues] or one whose [runs] lacks
-    [Copy], [most_parts] or [hang_ms] is below [1], [edge] is [0n], or the
-    state's first member is [NULL]. rig checks nothing else of [edge]. *)
+    [Copy], [most_parts] or [hang_ms] is below [1], [alignment] is not a
+    power of two, [edge] is [0n], or the state's first member is [NULL]. rig
+    checks nothing else of [edge]. A region {!Driver.alloc} makes that breaks
+    [host_addresses] or [alignment] is a fault of the device: rig frees the
+    region and loses the device, and the allocation raises [Rig.Lost]. *)
 
 (** {1:calls The C functions}
 
