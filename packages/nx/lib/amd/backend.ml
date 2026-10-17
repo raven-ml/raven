@@ -52,7 +52,7 @@ let target gpu =
         match Code_object.of_string co with
         | Ok co -> (t, co)
         | Error e -> failwith (Printf.sprintf "nx.amd: %s: %s" t e))
-      (Lazy.force Archive.targets)
+      Archive.targets
   in
   match List.find_opt (fun (_, co) -> Code_object.runs_on co gpu) targets with
   | Some (t, _) -> Ok t
