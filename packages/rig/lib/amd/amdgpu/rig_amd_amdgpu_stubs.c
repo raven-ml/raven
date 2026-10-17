@@ -384,10 +384,14 @@ value caml_rig_amd_amdgpu_store64(value v_at, value v_v) {
    AMDKFD_IOC_GET_CLOCK_COUNTERS reads the GPU's clock counter, the counter
    of the queues' timestamps, which ROCr converts its dispatches' times by
    (amdgpu_amdkfd_get_gpu_clock_counter, GpuAgent::TranslateTime). KFD
-   reads CLOCK_MONOTONIC_RAW right after the counter, so the call's own
-   time, which KFD's locks may stretch, adds no error. The reader shifts
-   that time to rig's clock by the two clocks' difference, from a reading
-   of CLOCK_MONOTONIC_RAW between two of rig's clock right after the call;
+   samples CLOCK_MONOTONIC_RAW after the counter read returns
+   (kfd_ioctl_get_clock_counters, ktime_get_raw_ns). The gap between the
+   two is one-sided, the host sample later, usually one register read, and
+   unbounded: interrupts may run between them, and the task may be
+   preempted before the sample. The width below does not include that
+   gap. The reader shifts the sample to rig's
+   clock by the two clocks' difference, from a reading of
+   CLOCK_MONOTONIC_RAW between two of rig's clock right after the call;
    their interval is the read's width. */
 
 /* A GPU's reader: KFD's file and the GPU's id there. */

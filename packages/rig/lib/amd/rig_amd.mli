@@ -334,15 +334,19 @@ val capability : t -> Rig_amd_abi.Capability.t
     whose readings lie more than 10 µs apart is dropped, and the measure at
     open keeps the first of sixteen reads within 10 µs, or the narrowest,
     which the first re-measure within 10 µs replaces. A time is thus within
-    half its measure's interval, 5 µs once a measure within the bound is
-    taken, plus the line's rate error over the time since the latest
-    measure, at most 62.5 ms. That rate error is at most 10 µs over the
-    measures' distance, 10 ppm, and the clock's own until they are a second
-    apart. Through KFD, KFD reads its clock right after the GPU's, and
-    the device maps that clock to the host's with a pair of readings of
-    its own. With {!Round_trip} the device measures at open only, and its
-    times drift from the host's clock at the clock's rate error since
-    open.
+    its measure's deviation plus the line's rate error over the time since
+    the latest measure, at most 62.5 ms. A measure's deviation is half its
+    interval, 5 µs once a measure within the bound is taken. The rate error
+    is at most the two measures' deviations over their distance, 10 µs over
+    a second (10 ppm) for deviations of 5 µs, and the clock's own until
+    they lie a second apart. Through KFD, KFD samples its host clock after
+    it reads the GPU's counter, and the device maps that sample to the
+    host's clock with a pair of readings of its own. A measure's deviation
+    is then half its interval plus KFD's gap between the counter read and
+    its host sample. That gap is one-sided, usually one register read, and
+    unbounded under preemption. With {!Round_trip} the device measures at
+    open only, and its times drift from the host's clock at the clock's
+    rate error since open.
 
     {2:stop Stop}
 
