@@ -239,6 +239,20 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
+- `upcast_vectors` (heuristic.ml) has no term for a kernel's size: 8 nested
+  float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
+  in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
+  `trig/sin-nested-8` and the `compiled` suite's sine rows decides whether a
+  kernel's size bounds its lanes
+- a compile on 10 domains takes about twice the CPU of one domain. At load
+  25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
+  10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
+  y'' = -tanh y, 5.0, 3.4 and 3.8 s. Candidate cause: the domain count, 10
+  over the M1 Max's 8 P-cores and 2 E-cores (cap at the P-cores). Decided on
+  fudge, quiet: wall and CPU time at 1, 2, 4, 8 and 10 domains; `s` at the
+  default and at 4M, one domain included; minor collections and promoted
+  words (`OCAMLRUNPARAM=v=0x400`); a sample of the 10-domain run, the
+  stop-the-world barrier against `pthread_mutex_lock`
 - tolk.engine refuses a back edge whose flag moves with the run's words
   (tolk_engine.ml:775); no GPU test of a loop whose body mixes a GPU kernel
   and a host program
@@ -284,6 +298,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
+- baselines on fudge: the `compile` suite's four `trig/` rows, and a
+  re-record of the `compiled` suite's float64 sine rows
+  (`transcendental/sin*`, `special/sin*`), whose kernels now take vector lanes
 - a compiled `Nx.take` gradient costs the table times the tokens:
   `indexed/take-grad-1024-of-32768x64-host` takes 94 ms on the M1 (load 20)
   against ~2 ms eager. At 128256 rows a plain loop measured 17 ms and thumper

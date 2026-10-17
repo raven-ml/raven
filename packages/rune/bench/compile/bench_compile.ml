@@ -197,6 +197,42 @@ let search_cases =
     (fun (name, search, d) -> ("search/" ^ name, search_case search d))
     devices
 
+(* The sine, its derivative, [nested] sines of sines, and [pendulum_steps]
+   classical Runge-Kutta steps of a pendulum, q'' = -sin q, from a float64
+   scalar state. Each sine of an unbounded float64 reduces its angle by the bits
+   of 1/(2pi) at its exponent. The host computes a kernel of sines over an array
+   as vector lanes, whose compile grows with the lanes. The steps make one
+   kernel of scalars holding four sines a step, which takes no lanes, so its
+   compile grows with each sine's lowering. *)
+let nested = 8
+let pendulum_steps = 4
+let rec sines n x = if n = 0 then x else sines (n - 1) (Nx.sin x)
+
+let pendulum q0 =
+  let h = 0.1 in
+  let field (q, p) = (p, Nx.neg (Nx.sin q)) in
+  let axpy (q, p) a (dq, dp) =
+    (Nx.add q (Nx.mul_s dq a), Nx.add p (Nx.mul_s dp a))
+  in
+  let step y =
+    let k1 = field y in
+    let k2 = field (axpy y (h /. 2.) k1) in
+    let k3 = field (axpy y (h /. 2.) k2) in
+    let k4 = field (axpy y h k3) in
+    axpy y (h /. 6.) (axpy (axpy (axpy k1 2. k2) 2. k3) 1. k4)
+  in
+  let rec steps n y = if n = 0 then y else steps (n - 1) (step y) in
+  fst (steps pendulum_steps (q0, Nx.zeros_like q0))
+
+let trig =
+  [
+    ("trig/sin", fun () -> compile Nx.sin (input (-10.) 10.));
+    ("trig/sin-grad", fun () -> compile (grad Nx.sin) (input (-10.) 10.));
+    ( Printf.sprintf "trig/sin-nested-%d" nested,
+      fun () -> compile (sines nested) (input (-10.) 10.) );
+    ("trig/pendulum-rk4", fun () -> compile pendulum (Nx.scalar Nx.float64 0.9));
+  ]
+
 (* A dense solve of a float64 system of [m] equations: an LU factorization with
    partial pivoting and two triangular solves, each a loop of one step per
    row. *)
@@ -248,7 +284,7 @@ let cases =
   @ special "digamma" Nx.digamma (-10.) 20.
   @ special "i0e" Nx.i0e (-30.) 30.
   @ special "i1e" Nx.i1e (-30.) 30.
-  @ lbeta @ betainc
+  @ lbeta @ betainc @ trig
   @ [ ("wide/sum-1e6", wide_sum) ]
   @ List.map
       (fun m -> (Printf.sprintf "linalg/solve-%d" m, solve m))
