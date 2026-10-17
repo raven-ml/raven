@@ -13,6 +13,9 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 external memmove : int -> int -> int -> unit = "caml_rig_memmove"
 
+(* The calling thread's number, which no other thread of the process has. *)
+external c_thread : unit -> int = "caml_rig_thread" [@@noalloc]
+
 let fn = "Buffer.copy"
 let local m = Dev.same_machine m.dev Dev.host && m.host >= 0
 let host_address b = b.mem.host + b.offset
@@ -43,14 +46,14 @@ let half_bytes = 32 * 1024 * 1024
 type stage = {
   owner : device; (* the host, or the device whose Pinned memory it is *)
   halves : buffer option array array;
-  in_use : bool array;
+  holders : int array; (* each slot's thread ([c_thread]), 0 while free *)
 }
 
 let stage owner =
   {
     owner;
     halves = [| [| None; None |]; [| None; None |] |];
-    in_use = [| false; false |];
+    holders = [| 0; 0 |];
   }
 
 (* The host's stage, made at load: its halves wait for a copy, and a lazy
@@ -83,17 +86,23 @@ let find_stage d =
 
 let stage_of d = Lock.protect slots_lock find_stage d
 
-(* Under [slots_lock]: a free slot of [st], marked used, or [None] while
-   both are used. *)
+(* Under [slots_lock]: a free slot of [st], marked the calling thread's, or
+   [None] while both are held. A thread that holds both, as a callback inside
+   a copy inside a copy does, would wait for good, so it raises before the
+   copy moves a byte. *)
 let claim_slot st =
-  if not st.in_use.(0) then begin
-    st.in_use.(0) <- true;
+  let me = c_thread () in
+  if st.holders.(0) = 0 then begin
+    st.holders.(0) <- me;
     Some 0
   end
-  else if not st.in_use.(1) then begin
-    st.in_use.(1) <- true;
+  else if st.holders.(1) = 0 then begin
+    st.holders.(1) <- me;
     Some 1
   end
+  else if st.holders.(0) = me && st.holders.(1) = me then
+    invalid_argf "Rig.%s: both staging slots of %s are this thread's" fn
+      st.owner.name
   else None
 
 let take_slot st = Lock.await slots_lock claim_slot st
@@ -101,7 +110,7 @@ let take_slot st = Lock.await slots_lock claim_slot st
 (* Allocates nothing, so no asynchronous exception keeps the slot. *)
 let give_slot st i =
   Lock.hold slots_lock;
-  st.in_use.(i) <- false;
+  st.holders.(i) <- 0;
   Lock.broadcast slots_lock;
   Lock.release slots_lock
 

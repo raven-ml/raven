@@ -457,7 +457,7 @@ val signaled : t -> int
     {- A {!Buffer.copy} through staging memory holds one of that staging
        memory's two slots until its pieces are done. At most two copies run
        through one staging memory at a time, and a third waits until one is
-       done.}
+       done, or raises [Invalid_argument] on the thread that holds both.}
     {- While a driver's [room], [submit] or [commit] blocks, where its
        driver declares [may_block], other submits and commits on that device
        wait for it.}}
@@ -1080,10 +1080,12 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] or [dst] is dead, they differ in
       length or overlap ({!overlaps}), [dst]'s memory admits only [Read], one
       side is an io device's memory and the other a borrow of it, a side's
-      memory is held exclusive, or the copy has bytes and no device can copy
-      between the two sides. Raises {!Lost} if a device that runs the copy is
-      lost or the copy loses it, {!Out_of_memory} if staging memory cannot be
-      allocated or mapped, and what an io device's read or write raises. *)
+      memory is held exclusive, the copy has bytes and no device can copy
+      between the two sides, or it goes through staging memory whose two
+      slots the calling thread holds ({!section-domains}). Raises {!Lost} if
+      a device that runs the copy is lost or the copy loses it,
+      {!Out_of_memory} if staging memory cannot be allocated or mapped, and
+      what an io device's read or write raises. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
   (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into

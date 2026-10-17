@@ -995,6 +995,72 @@ let test_staging_gives_back () =
   Support.await "the third copy" (fun () -> Atomic.get copied);
   Domain.join third
 
+(* An io device whose memory's reads each run the next of the functions in
+   its [t], as a callback inside a read does. *)
+module Hooked = struct
+  type t = (unit -> unit) list Atomic.t
+  type region = unit
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget _ = max_int
+  let alloc _ _ = Some ()
+  let free _ () = ()
+
+  let rec read hooks () ~at ~dst ~len =
+    match Atomic.get hooks with
+    | [] -> ()
+    | f :: rest as all ->
+        if Atomic.compare_and_set hooks all rest then f ()
+        else read hooks () ~at ~dst ~len
+
+  let write _ () ~at:_ ~src:_ ~len:_ = ()
+  let pages _ () = None
+  let prefetch _ () ~at:_ ~len:_ = ()
+  let stop _ = ()
+end
+
+(* A third staged copy on the thread that holds both slots of the staging
+   memory, from a callback inside a copy inside a copy, raises
+   Invalid_argument before it moves a byte, where its wait for a slot would
+   wait for good. Both outer copies land. *)
+let test_staging_held () =
+  let d, _ = P.open_ ~host_visible:false "buffer:staging-held" in
+  let hooks = Atomic.make [] in
+  let io =
+    match
+      Rig.open_io
+        {
+          name = "buffer:staging-held-io";
+          io = (module Hooked);
+          make = (fun () -> Ok hooks);
+        }
+    with
+    | Ok io -> io
+    | Error e -> failwith e
+  in
+  let src = B.create io 64 in
+  let dst () = B.create d 64 in
+  let first = dst () and second = dst () and third = dst () in
+  let refused = ref "not called" and copied = ref [] in
+  let copy name dst () =
+    B.copy ~src ~dst;
+    copied := name :: !copied
+  in
+  let third () =
+    refused :=
+      match B.copy ~src ~dst:third with
+      | () -> "copied"
+      | exception Invalid_argument why -> why
+  in
+  Atomic.set hooks [ copy "second" second; third ];
+  copy "first" first ();
+  starts_with ~msg:"the third copy"
+    ~affix:"Rig.Buffer.copy: both staging slots of " !refused;
+  equal ~msg:"the copies that landed, in order" (list string)
+    [ "second"; "first" ] (List.rev !copied)
+
 (* A transfer through staging memory holds a read claim on its buffers until it
    returns, so a donation on another domain meanwhile gets a read claim only.
    [donate_during p b transfer donor] runs [transfer] on another domain until
@@ -1605,6 +1671,10 @@ let tests =
           test_staging_after_loss;
         test "a staged copy gives its slot back on every exit"
           test_staging_gives_back;
+        test
+          "a third staged copy on the thread that holds both slots raises \
+           Invalid_argument"
+          test_staging_held;
         test "a staged copy holds its source against a donation"
           test_staged_source_claimed;
         test "a staged copy holds its destination against a donation"
