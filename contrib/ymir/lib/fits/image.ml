@@ -140,6 +140,9 @@ let to_big_endian (type a b) (t : (a, b) Nx.t) : B.t =
 
 type storage = Plain | Tiled of Tiles.t
 
+(* An image's description, read from its header: the stored format
+   [bitpix], the element it reads as, the scaling, [BLANK], and where its
+   pixels are. *)
 type t = {
   place : Err.place;
   shape : int array;  (** C order *)

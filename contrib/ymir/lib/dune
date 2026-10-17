@@ -9,6 +9,7 @@
   direction
   solve
   projection
+  distortion
   transform
   overlap
   grid

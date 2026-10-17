@@ -10,6 +10,7 @@ let strf = Printf.sprintf
 
 type 'e q = (float, 'e) Nx.t Quantity.t
 
+(* [data] and [variance] are 0 wherever [valid] is false. *)
 type ('w, 'e) t = {
   grid : ('w, 'e) Grid.t;
   data : 'e q;

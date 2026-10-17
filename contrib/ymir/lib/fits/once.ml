@@ -7,6 +7,7 @@
    under a lock, and the others asking meanwhile wait for it. A computation
    that raises leaves the value to the next ask. *)
 
+(* [value] is [Some] once computed; [lock] serialises the computations. *)
 type 'a t = { lock : Mutex.t; value : 'a option Atomic.t; compute : unit -> 'a }
 
 let make compute = { lock = Mutex.create (); value = Atomic.make None; compute }

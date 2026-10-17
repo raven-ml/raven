@@ -770,9 +770,9 @@ let slab_bytes = 1 lsl 22
 (* [code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap] codes the image
    tile row by tile row: [slab a b f] calls [f] with the big-endian elements,
    in C order, of the image's indices [a] to [b - 1] on its slowest file axis,
-   which are valid during the call, and each
-   coded tile goes to [heap]. It is the table's rows and description. Memory
-   beyond the image is one tile row. *)
+   which are valid during the call, and each coded tile goes to [heap]. It is
+   the table's rows and description. Memory beyond the image is one slab of
+   whole tile rows, at most [slab_bytes] unless one tile row is larger. *)
 let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
   let w = abs bitpix / 8 in
   let rank = Array.length axes in

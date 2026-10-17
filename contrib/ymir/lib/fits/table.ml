@@ -47,6 +47,8 @@ type col = {
   place : Err.place;
 }
 
+(* A table's description: its rows, its columns' fields, and the data unit
+   they lie in. *)
 type t = {
   place : Err.place;
   rows : int;

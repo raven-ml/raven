@@ -48,7 +48,9 @@ let string s str =
   done;
   !acc
 
-(* A running sum of a data unit's words, over pieces of any length. *)
+(* A running sum of a data unit's words, over pieces of any length: [sum]
+   of the whole words fed, and the [npending] bytes of a partial word in
+   [pending]. *)
 type summer = { mutable sum : int; pending : Bytes.t; mutable npending : int }
 
 let summer () = { sum = 0; pending = Bytes.make 4 '\000'; npending = 0 }

@@ -11,6 +11,7 @@
 
 let strf = Printf.sprintf
 
+(* A structural keyword with its computed value. *)
 type entry = {
   key : string;
   records : string list;  (** printed fresh *)

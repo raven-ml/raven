@@ -206,10 +206,6 @@ let be_int64 (a : Checksum.bigbytes) off =
   done;
   !v
 
-(* [descriptor t c rows r] is the element count and heap offset of column
-   [c] in row [r] of the host rows [rows] starting at row 0 of [rows]. A
-   descriptor of no elements names no bytes; any other one's bytes lie in
-   the heap. *)
 let elt_name = function
   | L -> "logical"
   | X -> "bit"
