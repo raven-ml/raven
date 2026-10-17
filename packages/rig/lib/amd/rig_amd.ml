@@ -553,9 +553,12 @@ let alloc g (kind : Rig_edge.memory) n =
    act on. *)
 let give_back m = try free_mem m with Fault _ -> ()
 
+(* The region goes before its count: an exception from the free leaves the
+   count high, which costs flushes, where a count lowered first would let a
+   doorbell skip the flush of a region still written through the BAR. *)
 let free g r =
-  Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
-  give_back r.mem
+  give_back r.mem;
+  Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush
 
 (* The GPU names memory by address: the handle is the address. *)
 let locate r =
