@@ -96,8 +96,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
   rig_program's `Move` step; done when placing on N GPUs costs one wait
-- from its callers: `Profile.take` raises `Lost`; `Rig_program.load`
-  returns `Error` only for a device's refusal
+- from its callers: `Profile.take` raises `Lost`
 - rig.gpus: one card appears through two paths, and `openers` drops each
   path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus`, which bnxt's
   NICs use too, becomes `Rig_pci.Driver`: a user-space PCI driver's match,

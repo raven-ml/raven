@@ -970,15 +970,6 @@ let link_with ~separate ~devices ?(bound = []) linear =
   List.iter (entry b) (Ops.src linear);
   flush b;
   let rigs = Dynarray.to_list b.rigs in
-  (match rigs with
-  | d :: rest ->
-      let h = Rig.host_of d in
-      List.iter
-        (fun d' ->
-          if not (Rig.equal (Rig.host_of d') h) then
-            fail fn "%s and %s are of two machines" (Rig.name d) (Rig.name d'))
-        rest
-  | [] -> ());
   let inputs = Dynarray.to_list b.inputs in
   let words = Dynarray.to_array b.words in
   let desc =

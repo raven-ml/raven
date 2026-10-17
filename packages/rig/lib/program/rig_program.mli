@@ -153,8 +153,8 @@ type 'a hole = {
     {ul
     {- [shift] is [0] to [62], and no two holes of one bytes share a byte.}
     {- A value that meets a set bit of the bytes under it would overwrite a
-       constant. {!load} returns [Error] for it, and {!run} raises for a
-       parameter's value read per run.}
+       constant. {!load} raises for it, and {!run} for a parameter's value
+       read per run.}
     {- The sum is computed on OCaml [int]s, which wrap modulo [2{^63}]. The
        64-bit word is the sum's two's complement, and the shift brings in
        zeros at the top, so the high half of [-8] is [0xFFFFFFFF]. The value
@@ -345,17 +345,28 @@ val load :
     parameters and geometry that no run changes. On another machine, [load]
     checks [t] here and loads it through the agent ({!section-machines}).
 
-    [Error why] if [t] breaks a rule its types or {!section-order} state, or
-    if:
+    [Error why] only for what a device refuses:
+    {ul
+    {- a device refuses an image ({!Rig.Image.load}), or has no function a
+       [Launch] or an [Entry] names, or cannot run it ({!Rig.Image.resolve}),
+       [why] starting with the device's name;}
+    {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow}),
+       or an [Address] is of memory its driver names by handle only;}
+    {- {!Rig.Submission.make}, a part's constructor or a run
+       ({!Rig.Submission.Run}) refuses a step, [why] naming the step;}
+    {- on another machine, the agent's load is [Error why].}}
+
+    Raises [Invalid_argument] if [t] breaks a rule its types or
+    {!section-order} state, which [load] checks before it makes anything,
+    but for a hole's value, which it checks as it fills the hole. Among
+    them:
     {ul
     {- [devices] are not as many as [t]'s, or a device's {!Rig.arch} differs
        from [t]'s;}
     {- an index is outside its array, a size is negative, or an [init] or a
        view lies outside its memory;}
     {- a leaf in an image or in memory of one copy names memory of two
-       copies, an [Entry] names a later image, or an [Address] is of memory
-       its driver names by handle only;}
-    {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
+       copies, or an [Entry] names a later image;}
     {- an [Int] or a loop's [trip] is past the ints, or a loop's flag lies
        at a negative byte or past its slot where load knows the slot's
        length: a [Memory] view's [length] and [8 * ints] for the ints;}
@@ -369,17 +380,12 @@ val load :
     {- a copy's two ends share a byte of the ints or of one input, at offsets
        that read no [Int];}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
-    {- {!Rig.Submission.make} or a run ({!Rig.Submission.Run}) refuses a
-       step, [why] naming the step;}
-    {- a device refuses an image ({!Rig.Image.load}) or has no function an
-       [Entry] names, [why] starting with the device's name;}
-    {- on another machine, a device is not an agent's, or the agent's load
-       is [Error why].}}
-
-    Raises [Invalid_argument] if [devices] are of several machines, or are of
-    another machine and [rails] is given, or, having done nothing, from a
-    callback inside a lock ({!Rig.section-domains}); {!Rig.Out_of_memory} if
-    memory cannot be made; and {!Rig.Lost} if a device is lost. *)
+    {- on another machine, a device is not an agent's.}}
+    Raises [Invalid_argument] also if [devices] are of several machines, or
+    are of another machine and [rails] is given, or, having done nothing,
+    from a callback inside a lock ({!Rig.section-domains});
+    {!Rig.Out_of_memory} if memory cannot be made; and {!Rig.Lost} if a
+    device is lost. *)
 
 (** {1:running Running}
 
@@ -481,8 +487,9 @@ val load_received :
     [b], the binary another process's {!load} sent to this machine's host, on
     the devices that [device] gives for the ids [b] names.
 
-    [Error why] as {!load}, or if [b] is malformed or names an id that
-    [device] does not give. *)
+    [Error why] as {!load}, and where {!load} raises [Invalid_argument] for
+    a rule the description breaks, since another process made [b]; or if [b]
+    is malformed or names an id that [device] does not give. *)
 
 val run_received :
   ?waits:Rig.Point.t array ->

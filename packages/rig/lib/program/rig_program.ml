@@ -94,10 +94,18 @@ type t = {
   steps : step iarray;
 }
 
-(* A refusal of the description, which [load] answers as [Error]. *)
+(* What a device refuses as the description loads, which [load] answers as
+   [Error]. *)
 exception Refused of string
 
 let refuse fmt = Printf.ksprintf (fun why -> raise (Refused why)) fmt
+
+(* A rule of the description it breaks, which [load] raises as
+   [Invalid_argument] and [load_received], whose bytes another process sent,
+   answers as [Error]. *)
+exception Broken of string
+
+let broken fmt = Printf.ksprintf (fun why -> raise (Broken why)) fmt
 
 (* An offset's sum past an OCaml [int]. *)
 exception Overflow
@@ -119,11 +127,11 @@ let ints_view t =
 
 (* Checks *)
 
-(* What [load] refuses before it makes anything: every index, size and hole, and
-   where a leaf of [Two] memory may stand. *)
+(* The rules [load] checks before it makes anything: every index, size and
+   hole, and where a leaf of [Two] memory may stand. *)
 
 let index what n i =
-  if i < 0 || i >= n then refuse "%s %d: no such %s" what i what
+  if i < 0 || i >= n then broken "%s %d: no such %s" what i what
 
 let two t m =
   match Iarray.get t.memory m with
@@ -150,9 +158,9 @@ let check_holes what len check holes =
   Iarray.iter
     (fun h ->
       if h.at < 0 || h.at > len - width h then
-        refuse "%s: a hole at %d outside its %d bytes" what h.at len;
+        broken "%s: a hole at %d outside its %d bytes" what h.at len;
       if h.shift < 0 || h.shift > 62 then
-        refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
+        broken "%s: a hole's shift %d outside 0 to 62" what h.shift;
       Iarray.iter (fun (x, _) -> check x) h.terms)
     holes;
   let sorted =
@@ -163,7 +171,7 @@ let check_holes what len check holes =
        (fun prev h ->
          (match prev with
          | Some p when p.at + width p > h.at ->
-             refuse "%s: holes at %d and %d share a byte" what p.at h.at
+             broken "%s: holes at %d and %d share a byte" what p.at h.at
          | _ -> ());
          Some h)
        None sorted)
@@ -172,7 +180,7 @@ let check_view t sizes (v : view) =
   index "memory" (Iarray.length t.memory) v.memory;
   let n = Option.value sizes.(v.memory) ~default:max_int in
   if v.offset < 0 || v.length < 0 || v.offset > n - v.length then
-    refuse "memory %d: a view of %d bytes at %d outside its %d bytes" v.memory
+    broken "memory %d: a view of %d bytes at %d outside its %d bytes" v.memory
       v.length v.offset n
 
 let check_slot t sizes = function
@@ -194,12 +202,12 @@ let check_part t sizes = function
   | Fill { fill; params; _ } ->
       check_leaf t ~images:(Iarray.length t.images) fill;
       let n = String.length params.bytes in
-      if n mod 4 <> 0 then refuse "fill: invalid parameter length %d" n;
+      if n mod 4 <> 0 then broken "fill: invalid parameter length %d" n;
       check_holes "fill parameters" n (check_value t) params.holes
   | Copy { src_offset; dst_offset; length; _ } ->
-      if length < 0 then refuse "a copy of %d bytes" length;
+      if length < 0 then broken "a copy of %d bytes" length;
       let term = function
-        | Leaf _, _ -> refuse "a copy's offset names a leaf"
+        | Leaf _, _ -> broken "a copy's offset names a leaf"
         | x, _ -> check_value t x
       in
       Iarray.iter term src_offset;
@@ -209,7 +217,7 @@ let check_part t sizes = function
       index "image" (Iarray.length t.images) image;
       let n = String.length params.bytes in
       if n mod 4 <> 0 then
-        refuse
+        broken
           "image %d: %d bytes of parameters, not a whole number of 32-bit words"
           image n;
       check_holes
@@ -226,7 +234,7 @@ let fixed_offset terms =
         | Some s, Fixed n -> Some (add_exn s (mul_exn n factor))
         | _ -> None)
       (Some 0) terms
-  with Overflow -> refuse "a copy's offset past an int"
+  with Overflow -> broken "a copy's offset past an int"
 
 (* Refuses a copy whose end lies outside its slot, or whose two ends share a
    byte of one buffer, where load knows the offsets. A view's and the ints'
@@ -236,7 +244,7 @@ let check_copy t slots ~src ~src_offset ~dst ~dst_offset ~length =
     match fixed_offset offset with
     | None -> ()
     | Some o -> (
-        if o < 0 then refuse "a copy from byte %d of slot %d" o i;
+        if o < 0 then broken "a copy from byte %d of slot %d" o i;
         let n =
           match Iarray.get slots i with
           | Memory v -> Some v.length
@@ -245,7 +253,7 @@ let check_copy t slots ~src ~src_offset ~dst ~dst_offset ~length =
         in
         match n with
         | Some n when o > n - length ->
-            refuse "a copy of %d bytes from byte %d of slot %d's %d" length o i
+            broken "a copy of %d bytes from byte %d of slot %d's %d" length o i
               n
         | _ -> ())
   in
@@ -260,7 +268,7 @@ let check_copy t slots ~src ~src_offset ~dst ~dst_offset ~length =
   match (fixed_offset src_offset, fixed_offset dst_offset) with
   | Some a, Some b when one && length > 0 && a - b < length && b - a < length
     ->
-      refuse "a copy between overlapping bytes %d and %d of one buffer" a b
+      broken "a copy between overlapping bytes %d and %d of one buffer" a b
   | _ -> ()
 
 let rec check_step t sizes ndev = function
@@ -294,9 +302,9 @@ let rec check_step t sizes ndev = function
         s.parts;
       for i = 0 to n - 1 do
         match (unordered.(i), ordered.(i)) with
-        | false, false -> refuse "slot %d: no ref or copy names it" i
+        | false, false -> broken "slot %d: no ref or copy names it" i
         | true, true ->
-            refuse
+            broken
               "slot %d: named by an unordered ref and an ordered one or a copy"
               i
         | _ -> ()
@@ -318,9 +326,9 @@ let rec check_step t sizes ndev = function
             | Input _ -> None
           in
           match bytes with
-          | _ when at < 0 -> refuse "a loop's flag at byte %d" at
+          | _ when at < 0 -> broken "a loop's flag at byte %d" at
           | Some n when at >= n ->
-              refuse "a loop's flag at byte %d of a slot of %d bytes" at n
+              broken "a loop's flag at byte %d of a slot of %d bytes" at n
           | _ -> ())
         flag;
       Iarray.iter (check_step t sizes ndev) body
@@ -375,7 +383,7 @@ let check_memory t sizes =
             terms init.holes (function
               | Address { memory; _ } | Handle memory ->
                   if not (whole views memory) then
-                    refuse
+                    broken
                       "memory %d: its init names memory %d, which its step \
                        does not name whole"
                       v.memory memory
@@ -385,18 +393,18 @@ let check_memory t sizes =
   let value ~on ~fixed views = function
     | Leaf (Address { memory; on = device }) ->
         if on <> Some device || not (whole fixed memory) then
-          refuse
+          broken
             "memory %d: an Address needs its step to fix it whole on device %d"
             memory device
     | Leaf (Handle memory) ->
         if not (whole views memory) then
-          refuse "memory %d: a Handle needs its step to name it whole" memory
+          broken "memory %d: a Handle needs its step to name it whole" memory
     | Fixed _ | Int _ | Leaf (Entry _ | Ready _) -> ()
   in
   Iarray.iteri
     (fun i (image : image) ->
       terms image.binary.holes (function
-        | Address _ | Handle _ -> refuse "image %d: a hole names memory" i
+        | Address _ | Handle _ -> broken "image %d: a hole names memory" i
         | Entry _ | Ready _ -> ()))
     t.images;
   Iarray.iteri
@@ -405,7 +413,7 @@ let check_memory t sizes =
       | Alloc { init; _ } ->
           terms init.holes (function
             | Address { memory; on } when not (fixing memory on t.steps) ->
-                refuse
+                broken
                   "memory %d: its init takes memory %d's address on device %d, \
                    where no step fixes it whole"
                   m memory on
@@ -425,7 +433,7 @@ let check_memory t sizes =
             | Fill { fill; params; _ } ->
                 (match fill with
                 | Address _ | Handle _ ->
-                    refuse "fill: memory is not a callable function"
+                    broken "fill: memory is not a callable function"
                 | Entry _ | Ready _ -> ());
                 terms params.holes check
             | Launch
@@ -448,29 +456,29 @@ let check_memory t sizes =
    it checks the bounds and whole-memory claims again before loading. *)
 let check t sizes devices =
   if Array.length devices <> Iarray.length t.devices then
-    refuse "%d devices for a program of %d" (Array.length devices)
+    broken "%d devices for a program of %d" (Array.length devices)
       (Iarray.length t.devices);
   Iarray.iteri
     (fun i arch ->
       let a = Rig.arch devices.(i) in
       if a <> arch then
-        refuse "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
+        broken "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
     t.devices;
-  if t.ints < 0 || t.ints > max_int / 8 then refuse "%d ints" t.ints;
+  if t.ints < 0 || t.ints > max_int / 8 then broken "%d ints" t.ints;
   let ndev = Iarray.length t.devices in
   Iarray.iteri
     (fun i -> function
       | Alloc { device; bytes; init; copies; _ } ->
           index "device" ndev device;
-          if bytes < 0 then refuse "memory %d: %d bytes" i bytes;
+          if bytes < 0 then broken "memory %d: %d bytes" i bytes;
           let n = String.length init.bytes in
           if n > bytes then
-            refuse "memory %d: %d bytes of init in %d bytes" i n bytes;
+            broken "memory %d: %d bytes of init in %d bytes" i n bytes;
           check_holes (strf "memory %d" i) n
             (fun l ->
               check_leaf t ~images:(Iarray.length t.images) l;
               if copies = One && leaf_two t l then
-                refuse "memory %d: of one copy, a hole names memory of two" i)
+                broken "memory %d: of one copy, a hole names memory of two" i)
             init.holes
       | Rail _ -> ())
     t.memory;
@@ -481,13 +489,13 @@ let check t sizes devices =
         (String.length im.binary.bytes)
         (fun l ->
           check_leaf t ~images:i l;
-          if leaf_two t l then refuse "image %d: a hole names memory of two" i)
+          if leaf_two t l then broken "image %d: a hole names memory of two" i)
         im.binary.holes)
     t.images;
   Iarray.iteri
     (fun i (input : input) ->
       index "device" ndev input.device;
-      if input.bytes < 0 then refuse "input %d: %d bytes" i input.bytes)
+      if input.bytes < 0 then broken "input %d: %d bytes" i input.bytes)
     t.inputs;
   Iarray.iter (check_step t sizes ndev) t.steps;
   check_memory t sizes
@@ -1198,7 +1206,7 @@ type here = {
 let rail_end rails id =
   match rails id with
   | Some e -> e
-  | None -> refuse "no rail %d on this machine" id
+  | None -> broken "no rail %d on this machine" id
 
 let rail_area (e : Rig_remote_abi.end_) = function
   | Outbound -> e.outbound
@@ -1250,7 +1258,7 @@ let leaf_value p k = function
         Sub.address (Hashtbl.find p.fixes (memory, copy_of p memory k, d)) b
       with
       | Not_found ->
-          refuse "memory %d: no step fixes it whole on device %d" memory d
+          broken "memory %d: no step fixes it whole on device %d" memory d
       | Invalid_argument _ ->
           refuse "memory %d: named by its handle only, it has no address" memory
       )
@@ -1294,7 +1302,7 @@ let filled p k (d : leaf data) =
   in
   (try Iarray.iter fill d.holes
    with Clobbers at ->
-     refuse "a hole at byte %d: its value meets set bits of the bytes" at);
+     broken "a hole at byte %d: its value meets set bits of the bytes" at);
   Bytes.unsafe_to_string b
 
 (* Whether [s] names memory of [Two] copies, so that it is made once per
@@ -1501,7 +1509,7 @@ let prepare p i k s =
   try prepared p k s with
   | Invalid_argument why -> refuse "step %d: %s" i why
   | Clobbers at ->
-      refuse "step %d: a parameter hole at byte %d meets set bits of its bytes"
+      broken "step %d: a parameter hole at byte %d meets set bits of its bytes"
         i at
 
 (* Step [i]'s loaded form, which numbers its [Submit] steps from [!next]. *)
@@ -1595,65 +1603,63 @@ let load_here ~rails t devices =
     | Rail { rail; area } ->
         Some (Bigarray.Array1.dim (rail_area (rail_end rails rail) area))
   in
-  match check t (Iarray.to_array (Iarray.map size t.memory)) devices with
+  check t (Iarray.to_array (Iarray.map size t.memory)) devices;
+  let ints = Array.init 2 (fun _ -> make_ints t) in
+  let mem =
+    Array.append
+      (Iarray.to_array (Iarray.map (make_memory devices rails) t.memory))
+      [| ints |]
+  in
+  let twos k =
+    Array.to_list mem
+    |> List.filter (fun c -> Array.length c = 2)
+    |> List.map (fun c -> c.(k))
+    |> Array.of_list
+  in
+  let pairs = Iarray.length t.inputs * Array.length devices in
+  let funcs = Hashtbl.create 8 in
+  let p =
+    {
+      t;
+      devices;
+      mem;
+      ints = Array.map words ints;
+      given = Array.make t.ints 0;
+      ngiven = 0;
+      borrows = Hashtbl.create 8;
+      fixes = Hashtbl.create 8;
+      images = [||];
+      funcs;
+      rails;
+      kept = (funcs, ends);
+      steps = [||];
+      twos = [| twos 0; twos 1 |];
+      flag = Bytes.create 1;
+      ran = Array.make (Array.length devices) false;
+      last = [||];
+      step_points = [||];
+      received = fresh_points t;
+      access = input_access t;
+      binds = binds t;
+      bound = Array.make pairs unset;
+      lock = Mutex.create ();
+      runs = 0;
+    }
+  in
+  match
+    (* An image's holes name earlier images' entries: each loads once those
+       before it did. *)
+    Iarray.iter
+      (fun im -> p.images <- Array.append p.images [| load_image p im |])
+      t.images;
+    let next = ref 0 in
+    p.steps <- Array.mapi (lstep p next) (Iarray.to_array t.steps);
+    Iarray.iteri
+      (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
+      t.memory
+  with
+  | () -> Ok p
   | exception Refused why -> Error why
-  | () -> (
-      let ints = Array.init 2 (fun _ -> make_ints t) in
-      let mem =
-        Array.append
-          (Iarray.to_array (Iarray.map (make_memory devices rails) t.memory))
-          [| ints |]
-      in
-      let twos k =
-        Array.to_list mem
-        |> List.filter (fun c -> Array.length c = 2)
-        |> List.map (fun c -> c.(k))
-        |> Array.of_list
-      in
-      let pairs = Iarray.length t.inputs * Array.length devices in
-      let funcs = Hashtbl.create 8 in
-      let p =
-        {
-          t;
-          devices;
-          mem;
-          ints = Array.map words ints;
-          given = Array.make t.ints 0;
-          ngiven = 0;
-          borrows = Hashtbl.create 8;
-          fixes = Hashtbl.create 8;
-          images = [||];
-          funcs;
-          rails;
-          kept = (funcs, ends);
-          steps = [||];
-          twos = [| twos 0; twos 1 |];
-          flag = Bytes.create 1;
-          ran = Array.make (Array.length devices) false;
-          last = [||];
-          step_points = [||];
-          received = fresh_points t;
-          access = input_access t;
-          binds = binds t;
-          bound = Array.make pairs unset;
-          lock = Mutex.create ();
-          runs = 0;
-        }
-      in
-      match
-        (* An image's holes name earlier images' entries: each loads once those
-           before it did. *)
-        Iarray.iter
-          (fun im -> p.images <- Array.append p.images [| load_image p im |])
-          t.images;
-        let next = ref 0 in
-        p.steps <- Array.mapi (lstep p next) (Iarray.to_array t.steps);
-        Iarray.iteri
-          (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
-          t.memory
-      with
-      | () -> Ok p
-      | exception Refused why -> Error why)
 
 (* Running *)
 
@@ -1998,67 +2004,65 @@ let proxy_id d =
   match Rig.capability d Rig_remote_abi.key with
   | Some (Rig_remote_abi.Host _) -> 0
   | Some (Rig_remote_abi.Device d) -> d.Rig_remote_abi.id
-  | None -> refuse "%s is no device of an agent" (Rig.name d)
+  | None -> broken "%s is no device of an agent" (Rig.name d)
 
 let load_there t devices =
-  match
-    (* The areas of rails are the agent's to know: their views are checked
-       there. *)
-    let size = function Alloc { bytes; _ } -> Some bytes | Rail _ -> None in
-    check t (Iarray.to_array (Iarray.map size t.memory)) devices;
-    let inputs = Iarray.length t.inputs in
-    if
-      inputs > (max_int - 16) / 24
-      || t.ints > (max_int - 16 - (24 * inputs)) / 8
-    then
-      refuse "%d inputs and %d ints: more than a run's words hold" inputs t.ints;
-    let host = Rig.host_of devices.(0) in
+  (* The areas of rails are the agent's to know: their views are checked
+     there. *)
+  let size = function Alloc { bytes; _ } -> Some bytes | Rail _ -> None in
+  check t (Iarray.to_array (Iarray.map size t.memory)) devices;
+  let inputs = Iarray.length t.inputs in
+  if
+    inputs > (max_int - 16) / 24 || t.ints > (max_int - 16 - (24 * inputs)) / 8
+  then
+    broken "%d inputs and %d ints: more than a run's words hold" inputs t.ints;
+  let host = Rig.host_of devices.(0) in
+  let ids, threads =
     match Rig.capability host Rig_remote_abi.key with
     | Some (Rig_remote_abi.Host { threads; _ }) ->
         (Array.map proxy_id devices, threads)
     | Some (Rig_remote_abi.Device _) | None ->
-        refuse "%s is no host of an agent" (Rig.name host)
-  with
-  | exception Refused why -> Error why
-  | ids, threads -> (
-      let b = Buffer.create 4096 in
-      Buffer.add_string b share_magic;
-      W.array W.int b (Iarray.of_array ids);
-      write_description b t;
-      let host = Rig.host_of devices.(0) in
-      match Rig.Image.load host (Buffer.contents b) with
-      | Error why -> Error why
-      | Ok image -> (
-          match Rig.Image.resolve image "run" with
-          | None -> Error (strf "%s: the program has no run" (Rig.name host))
-          | Some run -> (
-              let entry = Rig.Image.entry run in
-              let limits = threads entry in
-              match watched t limits with
-              | exception Refused why -> Error why
-              | watch ->
-              let buffer = B.create Rig.host (words_bytes t) in
-              let part = Sub.words buffer in
-              (* The function stays until the runs' work is done. *)
-              let sub = Sub.make ~keep:run host [| part |] in
-              Ok
-                (There
-                   {
-                     t;
-                     devices;
-                     access = input_access t;
-                     binds = binds t;
-                     limits;
-                     watch;
-                     entry;
-                     srun = Sub.Run.make sub;
-                     words = B.export buffer Bigarray.char;
-                     lock = Mutex.create ();
-                   }))))
+        broken "%s is no host of an agent" (Rig.name host)
+  in
+  let b = Buffer.create 4096 in
+  Buffer.add_string b share_magic;
+  W.array W.int b (Iarray.of_array ids);
+  write_description b t;
+  match Rig.Image.load host (Buffer.contents b) with
+  | Error why -> Error why
+  | Ok image -> (
+      match Rig.Image.resolve image "run" with
+      | exception Invalid_argument why -> Error why
+      | None -> Error (strf "%s: the program has no run" (Rig.name host))
+      | Some run -> (
+          let entry = Rig.Image.entry run in
+          let limits = threads entry in
+          match watched t limits with
+          | exception Refused why -> Error why
+          | watch ->
+          let buffer = B.create Rig.host (words_bytes t) in
+          let part = Sub.words buffer in
+          (* The function stays until the runs' work is done. *)
+          let sub = Sub.make ~keep:run host [| part |] in
+          Ok
+            (There
+               {
+                 t;
+                 devices;
+                 access = input_access t;
+                 binds = binds t;
+                 limits;
+                 watch;
+                 entry;
+                 srun = Sub.Run.make sub;
+                 words = B.export buffer Bigarray.char;
+                 lock = Mutex.create ();
+               })))
 
 let no_rails _ = None
 
-let load ?rails t devices =
+(* [load], raising [Broken] for a rule of [t] it breaks. *)
+let load_checked ?rails t devices =
   check_held "load";
   let devices = Iarray.to_array devices in
   let here () =
@@ -2078,6 +2082,10 @@ let load ?rails t devices =
       invalid_arg "Rig_program.load: rails for another machine's devices"
     else load_there t devices
   end
+
+let load ?rails t devices =
+  try load_checked ?rails t devices
+  with Broken why -> invalid_arg ("Rig_program.load: " ^ why)
 
 (* Writes [v] at [at] as a little-endian int64, sign-extended as [R.int] reads
    it back: -1 is eight 0xff bytes. *)
@@ -2196,7 +2204,9 @@ let load_received ?rails b ~device =
                 ids
             with
             | exception Refused why -> Error why
-            | devices -> load ?rails t devices))
+            | devices -> (
+                try load_checked ?rails t devices
+                with Broken why -> Error why)))
   end
 
 let run_received ?waits w ~program ~region =

@@ -898,7 +898,9 @@ let copying ?(ints = 0) ?use ?src_offset ?dst_offset ?(length = 64) slots d =
       |];
   }
 
-let refusals =
+(* Descriptions that break a rule their types or the order section state:
+   load raises for each. *)
+let breaks =
   let one d = [ d ] in
   let head = G.Memory { memory = 0; offset = 0; length = 8 } in
   [
@@ -1107,6 +1109,12 @@ let refusals =
             |];
         }),
       one );
+  ]
+
+(* Descriptions a device refuses: load answers Error for each. *)
+let refusals =
+  let one d = [ d ] in
+  [
     ( "a grid a run refuses",
       (fun d ->
         {
@@ -1144,6 +1152,13 @@ let test_refusal (_, t, ds) =
     ~pp:(fun _ _ -> ())
     ~msg:"load answers Error"
     (G.load (t d) (Iarray.of_list (ds d)))
+
+let broken = Exn.invalid_arg ~substring:"Rig_program.load: "
+
+let test_break (_, t, ds) =
+  let d = fst (polled "broken") in
+  raises_match ~msg:"load raises" broken (fun () ->
+      G.load (t d) (Iarray.of_list (ds d)))
 
 let test_unborrowable () =
   let a, _ = polled ~peers:false "lone-a"
@@ -1489,7 +1504,8 @@ let memory_hole_refusals () =
   List.iter
     (fun (name, t) ->
       match G.load t [| d |] with
-      | Error why -> contains ~msg:name ~sub:"memory" why
+      | exception Invalid_argument why -> contains ~msg:name ~sub:"memory" why
+      | Error why -> failf "load answered Error for %s: %s" name why
       | Ok _ -> failf "load accepted %s" name)
     cases
 
@@ -1755,32 +1771,16 @@ let test_entry_leaf () =
        { inputs = [| counter |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"three calls of affine" int 3 (word_of counter)
 
-let host_refusals =
+let host_breaks =
   let two d = [ d; Rig.host ] in
   let with_steps ?(ints = 0) d steps =
     with_host d { (base d) with ints; steps }
   in
   [
-      ( "host code that does not link",
-        (fun d ->
-          {
-            (with_steps d [||]) with
-            images = [| { device = 1; binary = data "nonsense" } |];
-          }),
-        two );
       ( "a host value of a rail this machine has not",
         (fun d ->
           with_steps d
             [| step_affine (Input 0) ~a:(Leaf (Ready 9)) ~c:(Fixed 0) |]),
-        two );
-      ( "a host value of a function its image lacks",
-        (fun d ->
-          with_steps d
-            [|
-              step_affine (Input 0)
-                ~a:(Leaf (Entry { image = 0; name = "nope" }))
-                ~c:(Fixed 0);
-            |]),
         two );
       ( "a loop's trips of a rail this machine has not",
         (fun d ->
@@ -1858,6 +1858,28 @@ let host_refusals =
                   flag = Some (Ints, 8);
                   body = [||];
                 };
+            |]),
+        two );
+    ]
+
+let host_refusals =
+  let two d = [ d; Rig.host ] in
+  let with_steps d steps = with_host d { (base d) with steps } in
+  [
+      ( "host code that does not link",
+        (fun d ->
+          {
+            (with_steps d [||]) with
+            images = [| { device = 1; binary = data "nonsense" } |];
+          }),
+        two );
+      ( "a host value of a function its image lacks",
+        (fun d ->
+          with_steps d
+            [|
+              step_affine (Input 0)
+                ~a:(Leaf (Entry { image = 0; name = "nope" }))
+                ~c:(Fixed 0);
             |]),
         two );
     ]
@@ -2187,8 +2209,8 @@ let test_rail () =
     (word (read (B.of_bigarray e.counts)) 0)
 
 let test_no_rail () =
-  let why = require_error (G.load rail_program [| Rig.host |]) in
-  contains ~msg:"names the rail" ~sub:"rail 7" why
+  raises_match ~msg:"names the rail" (Exn.invalid_arg ~substring:"rail 7")
+    (fun () -> G.load rail_program [| Rig.host |])
 
 (* Constants beside holes *)
 
@@ -2283,8 +2305,8 @@ let beside_law b =
   cover "a value beside set bits" ((not clashes) && b.bytes <> 0L);
   cover "a value read per run" b.per_run;
   match (G.load t [| d |], clashes && not b.per_run) with
-  | Error _, true -> ()
-  | Ok _, true -> fail "load took a fixed value that meets set bits"
+  | exception Invalid_argument _ when clashes && not b.per_run -> ()
+  | (Ok _ | Error _), true -> fail "load took a fixed value that meets set bits"
   | Error why, false -> failf "load: %s" why
   | Ok p, false ->
       ignore (P.launches pd);
@@ -2337,7 +2359,7 @@ let extremes =
       (max_int / 16) + 1;
     ]
 
-(* Each answers [Error] at load: none loads, and none raises. *)
+(* load raises for each, a rule the description breaks. *)
 let extreme_law e =
   let d = fst (Lazy.force devices) in
   let t = base d in
@@ -2366,7 +2388,7 @@ let extreme_law e =
     | View_at n -> { t with steps = [| view n 8 |] }
     | View_length n -> { t with steps = [| view 8 n |] }
   in
-  is_error ~pp:(fun _ _ -> ()) ~msg:"load answers Error" (G.load t [| d |])
+  raises_match ~msg:"load raises" broken (fun () -> G.load t [| d |])
 
 (* The ints and the run's work *)
 
@@ -3090,8 +3112,9 @@ let test_far_rails () =
   let t = { (base far) with devices = [| Rig.arch far |] } in
   raises_match Exn.invalid_arg (fun () ->
       G.load ~rails:(fun _ -> None) t [| far |]);
-  is_error ~pp:(fun _ _ -> ()) ~msg:"without rails: no agent's device"
-    (G.load t [| far |])
+  raises_match ~msg:"without rails: no agent's device"
+    (Exn.invalid_arg ~substring:"of an agent") (fun () ->
+      G.load t [| far |])
 
 (* run checks its frame before its first step: with its last input too small, it
    raises having submitted nothing. *)
@@ -3389,7 +3412,7 @@ let tests =
       [
         test "host code fills a rail's area and calls its ready function"
           test_rail;
-        test "load answers Error for a rail this machine has not" test_no_rail;
+        test "load raises for a rail this machine has not" test_no_rail;
       ];
     group ~timeout "order"
       [
@@ -3419,8 +3442,11 @@ let tests =
           memory_hole_refusals;
         cases
           ~name:(Format.asprintf "%a" pp_extreme)
-          "load answers Error for integers whose sums would wrap" extremes
-          extreme_law;
+          "load raises for integers whose sums would wrap" extremes extreme_law;
+        cases
+          ~name:(fun (n, _, _) -> n)
+          "load raises for a description that breaks a rule"
+          (breaks @ host_breaks) test_break;
         cases
           ~name:(fun (n, _, _) -> n)
           "load answers Error for" (refusals @ host_refusals) test_refusal;
