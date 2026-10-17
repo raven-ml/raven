@@ -509,6 +509,48 @@ let lane_tests =
              (System.lanes
                 ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
                 ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
+    test "a lane whose zero has an unknown at 0 converges" (fun () ->
+        (* The seed's step reaches f's evaluation level, 4e-16. The next moves
+           the first unknown by 1.6 ulps and the one at 0 by 6e-20, whose ulps
+           are 1e-35, and no trial lowers the merit: within tol, the lane is at
+           its zero. *)
+        let a =
+          Nx.create f64 [| 1; 3; 3 |]
+            [|
+              5.; 0.; 0.; 0.43536040733974823; 5.; 6.500960975843154e-10; 0.;
+              0.; 5.;
+            |]
+        in
+        let z =
+          Nx.create f64 [| 1; 3 |]
+            [| 0.21418297743675652; -1.564054759905721; 0. |]
+        in
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        equal near z
+          (Solution.get
+             (System.lanes
+                ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
+                ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
+    test "a lane far from its zero whose line search fails stalls" (fun () ->
+        (* f x = x from 2, with the slope 2 above 1.5, 1000 down to 0.9995 and
+           -999 below. The steps from 2 and 1 contract, by 0.001 over the
+           second. The one from 0.999 is +0.001, uphill, and no trial lowers the
+           merit; the map moves over it by its own length, q = 1, far above its
+           rounding. The held 0.001 would give it the bound 0.001 / 0.999,
+           within the loose tol 999 times closer than the zero. *)
+        let jacobian x =
+          Nx.reshape [| 1; 1; 1 |]
+            (Nx.where (Nx.greater_s x 1.5) (Nx.full_like x 2.)
+               (Nx.where (Nx.greater_s x 0.9995) (Nx.full_like x 1000.)
+                  (Nx.full_like x (-999.))))
+        in
+        let s =
+          System.lanes ~tol:(Tol.v ~rel:0. ~abs:1e-2) ~budget:20 ~jacobian
+            Fun.id
+            (Nx.create f64 [| 1; 1 |] [| 2. |])
+        in
+        equal (array bool) [| false |] (Nx.to_array (Solution.ok s)));
     test "compiled lanes equal eager" (fun () ->
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]

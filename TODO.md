@@ -341,8 +341,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## norn, jera
 
-- jera: "lanes › seeded lanes reaching rounding in two steps converge" and
-  "solve derivatives › compiled equals eager" each failed once
+- jera: "solve derivatives › compiled equals eager" failed once
 - eager NUTS: ~3.3 ms per transition, ~475 µs per leapfrog against HMC's
   ~110 µs on the same density. Profile its bookkeeping; add a row
 - jera eager `Sde.march`: 2,000 lanes at Brownian depth 12 take ~6 ms a step

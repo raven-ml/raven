@@ -444,12 +444,18 @@ module System : sig
       zero. A step that cannot move the estimate, one within a unit in the last
       place of every component, or one whose line search finds no decrease while
       the full step changes [|f|² / 2] by less than its rounding, marks the
-      arithmetic's limit: a lane whose last step contracted, [q < 1] over that
-      one step, has reached its zero to the floats' precision and converges with
-      [e = |δ|], the step it could not take; any other ends [Stalled], as do a
-      line search that finds no decrease above the rounding and a failed linear
-      solve. A non-finite [f] at the guess or at an estimate ends it
-      [Not_finite]; [budget] iterations end it [Budget_spent].
+      arithmetic's limit. A lane whose last settled contraction is below 1, [q]
+      over the last step whose rounding does not leave open whether the map
+      contracts, has reached its zero to the floats' precision and converges
+      with [e = |δ| / (1 − q)], the step it could not take and the ones after
+      it; any other ends [Stalled]. A line search that finds no decrease above
+      the rounding converges the same way when that [e] meets [tol] over a step
+      at the floats' limit, one over which [N] moves by no more than the
+      rounding of its two values: there a step moves an unknown at 0 by more
+      than its ulps, and the merit it reaches can rise. Any other ends
+      [Stalled], as does a failed linear solve. A non-finite [f] at the guess or
+      at an estimate ends it [Not_finite]; [budget] iterations end it
+      [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through

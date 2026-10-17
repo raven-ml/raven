@@ -389,6 +389,14 @@ let still x step =
        (Nx.equal (Nx.add x step) x)
        (Nx.less_equal (Nx.abs step) ulp))
 
+let contracting s =
+  Nx.logical_and (Nx.isfinite s.q)
+    (Nx.logical_and (Nx.greater_equal_s s.q 0.) (Nx.less_s s.q 1.))
+
+let remaining s delta =
+  let gap = Nx.rsub_s 1. s.q in
+  Nx.div (Nx.abs delta) (Nx.reshape (Array.append (Nx.shape gap) [| 1 |]) gap)
+
 (* A running lane whose step cannot move its estimate has reached the floats'
    resolution. If the last step that settled its contraction contracted, [q <
    1], its estimate is its zero to the arithmetic's precision: it converges. Its
@@ -398,17 +406,23 @@ let still x step =
    it stalls. *)
 let resolved s ~delta ~stuck =
   let stuck = Nx.logical_and (searching s.st) stuck in
-  let contracting =
-    Nx.logical_and (Nx.isfinite s.q)
-      (Nx.logical_and (Nx.greater_equal_s s.q 0.) (Nx.less_s s.q 1.))
-  in
-  let root = Nx.logical_and stuck contracting in
+  let root = Nx.logical_and stuck (contracting s) in
   let st = settle s.st root Converged in
-  let gap = Nx.rsub_s 1. s.q in
-  let e =
-    Nx.div (Nx.abs delta) (Nx.reshape (Array.append (Nx.shape gap) [| 1 |]) gap)
-  in
-  { s with st = settle st stuck Stalled; e = hold root e s.e }
+  { s with st = settle st stuck Stalled; e = hold root (remaining s delta) s.e }
+
+(* A step over which the undamped map moves by no more than the rounding of its
+   two values, [q ≤ 2 r]: the contraction it measures, [q − r], is within that
+   rounding, as at the floats' limit. A step over which the map moves by the
+   step's own length, [q] near 1 with [r] small, is not one, whatever
+   contraction the state holds from earlier steps. *)
+let at_limit s delta =
+  let q, r = measure s (Nx.add s.x delta) in
+  Nx.less_equal q (Nx.mul_s r 2.)
+
+(* A step the search cannot take leaves the estimate [|δ| / (1 − q)] from its
+   zero, as [resolved] counts. *)
+let bounded tol s delta =
+  Nx.logical_and (contracting s) (accepted tol ~e:(remaining s delta) ~y:s.x)
 
 let judge tol s ~map ~q ~r delta =
   let run = searching s.st in

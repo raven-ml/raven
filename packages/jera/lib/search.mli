@@ -152,6 +152,18 @@ val resolved :
     the last step that settled it contracted, [0 ≤ s.q < 1], at its zero to the
     arithmetic's precision; [Stalled] otherwise. *)
 
+val at_limit : 'd state -> (float, 'd) Nx.t -> (bool, Nx.bool_elt) Nx.t
+(** [at_limit s delta] is, per lane, whether the undamped map moves over the
+    step [delta] from [s.x] by no more than the rounding of its two values,
+    [q ≤ 2 r] with [q] and [r] as {!secant} measures them: the step is at the
+    floats' limit. It reads the state before {!test} takes the step. *)
+
+val bounded :
+  Tol.t -> 'd state -> (float, 'd) Nx.t -> (bool, Nx.bool_elt) Nx.t
+(** [bounded tol s delta] is, per lane, whether the error {!resolved} gives a
+    lane that cannot take its step [delta], [|delta| / (1 − s.q)] with
+    [0 ≤ s.q < 1], meets [tol] at [s.x]. *)
+
 val decide :
   Tol.t ->
   'd state ->

@@ -1337,6 +1337,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `System.lanes` and `System.solve` with `newton` converge a lane whose line
+  search finds no decrease over a step at the floats' limit when the error
+  bound of that step meets `tol`. A zero with an unknown at 0 ended `Stalled`:
+  at `f`'s evaluation level a step moves that unknown by more than its ulps.
 - `Minimize.solve` takes `?within:(lo, hi)`, a box: gradient methods take
   Bertsekas's projected steps, `levenberg_marquardt` projects its steps and
   `nelder_mead` clips its vertices; a coordinate held at a bound has the
