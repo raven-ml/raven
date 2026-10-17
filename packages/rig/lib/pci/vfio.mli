@@ -59,14 +59,15 @@ val open_ : Sysfs.t -> Unix.file_descr list ref -> string -> t * Unix.file_descr
 val device : t -> Unix.file_descr
 (** [device t] is the descriptor of [t]'s function. *)
 
-val map_dma : string -> string -> t -> int -> int -> int option
-(** [map_dma fn bus t a n] is the device address at which [t]'s container maps
-    the [n] bytes at [a]. Maps are counted, and each map of the same [(a, n)],
-    for [t] or another function of the container, adds a count. It is [None]
-    if the process reached its locked-memory limit, or the container holds as
-    many mappings as [dma_entry_limit] allows or has no device addresses left.
-    [fn] is the public function that asks, named in the [Invalid_argument]
-    for a released function. *)
+val map_dma : string -> string -> t -> below:int -> int -> int -> int option
+(** [map_dma fn bus t ~below a n] is the device address at which [t]'s
+    container maps the [n] bytes at [a], ending at or below [below]. Maps are
+    counted, and each map of the same [(a, n)], for [t] or another function of
+    the container, adds a count. It is [None] if the process reached its
+    locked-memory limit, or the container holds as many mappings as
+    [dma_entry_limit] allows, has no device addresses left below [below], or
+    maps [(a, n)] already past [below]. [fn] is the public function that asks,
+    named in the [Invalid_argument] for a released function. *)
 
 val unmap_dma : string -> t -> int -> int -> unit
 (** [unmap_dma bus t a n] drops a count of [(a, n)], unmapping it with the

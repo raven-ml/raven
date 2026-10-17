@@ -786,9 +786,9 @@ let test_map_host_transport () =
       interrupt = (fun _ -> unused ());
       reset = unused;
       forget = unused;
-      alloc_dma = (fun ~contiguous:_ ~va:_ _ -> unused ());
+      alloc_dma = (fun ~contiguous:_ ~va:_ ~below:_ _ -> unused ());
       free_dma = (fun _ -> unused ());
-      pin = (fun a n -> Ok (Some [ (a, n) ]));
+      pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
       release = (fun () -> ());
     }
@@ -834,9 +834,9 @@ let far_gpu ?(reserved = true) () =
       interrupt = (fun _ -> unused ());
       reset = unused;
       forget = unused;
-      alloc_dma = (fun ~contiguous:_ ~va:_ _ -> Ok None);
+      alloc_dma = (fun ~contiguous:_ ~va:_ ~below:_ _ -> Ok None);
       free_dma = (fun _ -> unused ());
-      pin = (fun a n -> Ok (Some [ (a, n) ]));
+      pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
       release = (fun () -> ());
     }
@@ -1047,18 +1047,26 @@ let no_bytes =
     [ 0; -1 ]
 
 (* Entries of 32 bits of address hold none of the tree's frames, which lie from
-   8 GiB on, nor the peer's BAR at 0x7c_0000_0000. *)
+   8 GiB on, nor the peer's BAR at 0x7c_0000_0000. The GPU's function reaches
+   no system memory past them (Memory.create), so a request for system memory
+   finds none, and a peer's BAR is refused, naming the bits. *)
 let pa_bits_requests =
   [
-    ("alloc Host", fun x _ _ _ -> Memory.alloc x.t_memory Host (64 * kib));
+    ( "alloc Host",
+      `None,
+      fun x _ _ _ -> Memory.alloc x.t_memory Host (64 * kib) );
     ( "map_host",
+      `None,
       fun x lent _ _ -> Memory.map_host x.t_memory (Window.address lent) page );
-    ("map_peer of GPU memory", fun x _ gpu _ -> Memory.map_peer x.t_memory gpu);
+    ( "map_peer of GPU memory",
+      `Refused,
+      fun x _ gpu _ -> Memory.map_peer x.t_memory gpu );
     ( "map_peer of system memory",
+      `None,
       fun x _ _ host -> Memory.map_peer x.t_memory host );
   ]
 
-let test_pa_bits (_, request) =
+let test_pa_bits (_, answer, request) =
   let root, m, buses = tree_machine 2 in
   let space = Space.create ~base:space_base space_length in
   let x = take_gpu ~pa_bits:32 ~space m (List.nth buses 0) in
@@ -1071,8 +1079,11 @@ let test_pa_bits (_, request) =
   let gpu = given (Memory.alloc o.t_memory Gpu page) in
   let host = given (Memory.alloc o.t_memory Host page) in
   let before = tree_capacity x and bytes = held_bytes root in
-  let why = require_error (request x lent gpu host) in
-  contains ~msg:"names the bits" ~sub:"32 bits" why;
+  (match answer with
+  | `Refused ->
+      contains ~msg:"names the bits" ~sub:"32 bits"
+        (require_error (request x lent gpu host))
+  | `None -> is_none ~msg:"no memory" (require_ok (request x lent gpu host)));
   equal ~msg:"nothing taken" (pair int int) before (tree_capacity x);
   equal ~msg:"no system memory taken" int bytes (held_bytes root);
   unpinned ~msg:"no pin" x (Window.address lent, page);
@@ -1451,8 +1462,11 @@ let on_files =
       cases "no bytes, or fewer, are refused"
         ~name:(fun (what, n, _) -> strf "%s %d" what n)
         no_bytes test_no_bytes;
-      cases "requests past the entries' address bits are refused, naming them"
-        ~name:fst pa_bits_requests test_pa_bits;
+      cases
+        "system memory past the entries' address bits is None, and a peer's \
+         BAR past them is refused, naming them"
+        ~name:(fun (n, _, _) -> n)
+        pa_bits_requests test_pa_bits;
       cases "a peer's window is its origin's"
         ~name:(Format.asprintf "%a" pp_kind)
         [ Memory.Gpu; Bar; Host ] test_peer_host;

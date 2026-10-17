@@ -197,13 +197,15 @@ let reset t =
       Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
   | Physical_take _ -> Sysfs.reset t.files t.bus
 
-let alloc_dma t ~contiguous ~va n =
+(* Physical addresses are the kernel's to choose: Function refuses those past
+   [below]. *)
+let alloc_dma t ~contiguous ~va ~below n =
   match t.way with
   | Physical_take s -> Sysmem.alloc ~contiguous ?va s n
   | Iommu_take c -> (
       let w = Sysmem.map ?va n in
       let n = Window.length w in
-      match Vfio.map_dma "alloc_dma" t.bus c (Window.address w) n with
+      match Vfio.map_dma "alloc_dma" t.bus c ~below (Window.address w) n with
       | Some iova -> Some (w, [ (iova, n) ])
       | None ->
           Sysmem.unmap w;
@@ -221,7 +223,7 @@ let free_dma t w =
 
 (* Taken physically, a function reaches only memory that outlives the process:
    what alloc_dma gave on its machine. *)
-let pin t a n =
+let pin t ~below a n =
   match t.way with
   | Physical_take s -> (
       match Sysmem.reach ~root:(Sysmem.root s) ~bus:t.bus a (round_page n) with
@@ -235,7 +237,9 @@ let pin t a n =
             t.bus)
   | Iommu_take c ->
       let n = round_page n in
-      Option.map (fun iova -> [ (iova, n) ]) (Vfio.map_dma "pin" t.bus c a n)
+      Option.map
+        (fun iova -> [ (iova, n) ])
+        (Vfio.map_dma "pin" t.bus c ~below a n)
 
 let unpin t a n =
   match t.way with
@@ -273,10 +277,10 @@ let fn t =
     reset = (fun () -> Fail.result (fun () -> reset t));
     forget = (fun () -> Fail.result (fun () -> forget t));
     alloc_dma =
-      (fun ~contiguous ~va n ->
-        Fail.result (fun () -> alloc_dma t ~contiguous ~va n));
+      (fun ~contiguous ~va ~below n ->
+        Fail.result (fun () -> alloc_dma t ~contiguous ~va ~below n));
     free_dma = free_dma t;
-    pin = (fun a n -> Fail.result (fun () -> pin t a n));
+    pin = (fun ~below a n -> Fail.result (fun () -> pin t ~below a n));
     unpin = unpin t;
     release = (fun () -> release t);
   }

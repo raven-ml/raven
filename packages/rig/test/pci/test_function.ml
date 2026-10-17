@@ -213,6 +213,21 @@ let test_vfio_shared () =
       skip
         ~reason:"fewer than two GPUs this process may take behind an IOMMU" ()
 
+(* Behind an IOMMU, the process places a function's device addresses below
+   its bound, which starts above the 4 GiB they start from. *)
+let test_vfio_bits () =
+  let _, f = vfio_function () in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  Function.set_dma_bits f 34;
+  let w, runs = alloc_dma f (2 * mib) in
+  List.iter
+    (fun (a, n) -> less ~msg:"a run's end" int ~than:(1 + (1 lsl 34)) (a + n))
+    runs;
+  Function.free_dma f w;
+  Function.set_dma_bits f 32;
+  is_none ~msg:"below 4 GiB"
+    (require_ok (Function.alloc_dma f (2 * mib)))
+
 (* The GPUs this machine has behind an IOMMU, by bus. *)
 let vfio_buses () =
   if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
@@ -880,6 +895,36 @@ let test_pin_dma () =
   Function.unpin g va n;
   equal ~msg:"given back once unpinned" int 0 (Tree.stored file)
 
+(* A function reaches system memory below its bound alone: alloc_dma and pin
+   are [Ok None] for memory past [2^n], and memory below it comes as before. *)
+let test_dma_bits () =
+  with_fixtures 2 @@ fun root fns ->
+  let f = List.nth fns 0 and g = List.nth fns 1 in
+  reserved f;
+  let page = Machine.page Machine.this in
+  let va = free_base + (2 * mib) in
+  let top = List.fold_left max 0 (frames root va (64 * kib)) + page in
+  let rec bits n = if 1 lsl n >= top then n else bits (n + 1) in
+  let fits = bits 1 in
+  Function.set_dma_bits f (fits - 1);
+  is_none ~msg:"alloc_dma past the bound"
+    (require_ok (Function.alloc_dma ~va f (64 * kib)));
+  Function.set_dma_bits f fits;
+  let w, runs = given (Function.alloc_dma ~va f (64 * kib)) in
+  let n = Window.length w in
+  Function.set_dma_bits g (fits - 1);
+  is_none ~msg:"pin past the bound" (require_ok (Function.pin g va n));
+  Function.set_dma_bits g fits;
+  equal ~msg:"pin within the bound"
+    (list (pair hex int))
+    runs (pin g va n);
+  Function.unpin g va n;
+  Function.free_dma f w;
+  raises_match ~msg:"no bits" Exn.invalid_arg (fun () ->
+      Function.set_dma_bits f 0);
+  raises_match ~msg:"past 64 bits" Exn.invalid_arg (fun () ->
+      Function.set_dma_bits f 65)
+
 (* Memory another machine's function allocated is not this machine's. *)
 let test_pin_other_machine () =
   with_fixture @@ fun root f ->
@@ -1329,6 +1374,9 @@ let system_memory =
         "a function taken physically pins memory alloc_dma gave, its own or \
          another function's, until unpinned"
         test_pin_dma;
+      test
+        "alloc_dma and pin give a function only memory below its DMA bound"
+        test_dma_bits;
       test
         "a function taken physically is refused memory another machine's \
          function allocated"
@@ -1994,6 +2042,8 @@ let this_machine =
         test_vfio_shared;
       test "a child of fork maps its GPU's memory apart from its parent's"
         test_vfio_fork;
+      test "a GPU behind an IOMMU gets device addresses below its DMA bound"
+        test_vfio_bits;
     ]
 
 let () =

@@ -296,10 +296,29 @@ val reset : t -> (unit, string) result
       pin is {!unpin}ned or the pinning function's GPU is reset ({!Gpus.reset})
       or renewed ({!Gpus.renew}).
 
+    Either way, a function reaches only the addresses its engines hold,
+    which its driver states with {!set_dma_bits}, as Linux's drivers do with
+    [dma_set_mask].
+
     Without an IOMMU, the kernel can still move a page a function writes: to
     allocate a contiguous area (CMA), for virtio-mem, and to take memory
     offline or a failing page out of service. A kernel booted by kexec, without
     the platform's reset, inherits a GPU still writing. *)
+
+val set_dma_bits : t -> int -> unit
+(** [set_dma_bits f n] states that [f] reaches system memory at addresses below
+    [2{^n}]. From then on {!alloc_dma} and {!pin} give [f] memory only where
+    its runs lie below [2{^n}]. Until the first call [f] reaches 64 bits.
+    Memory given before a call is kept.
+    - Behind an IOMMU, the process places the runs below [2{^n}], and below
+      [2{^44}] whatever [n], from 4 GiB up, so with [n <= 32] nothing fits.
+      Memory that another function of the container maps already past
+      [2{^n}] is [Ok None] until that function lets go of it.
+    - Taken physically, the runs are where the kernel placed its huge pages,
+      which no process chooses. Memory past [2{^n}] is [Ok None], and stays
+      so while the kernel gives only pages that high.
+
+    Raises [Invalid_argument] if [n < 1], [n > 64] or [f] was released. *)
 
 val alloc_dma :
   ?contiguous:bool ->
@@ -316,7 +335,9 @@ val alloc_dma :
     memory is larger than a page.
 
     [Ok None] if the machine has no free memory for it now, within the limits
-    {{!dma}system memory} names. Freeing memory makes room.
+    {{!dma}system memory} names, or if the memory it gave lies past [f]'s
+    addresses ({!set_dma_bits}). Freeing memory makes room, but for memory
+    past [f]'s addresses taken physically.
 
     [Error why], naming what is missing, if the machine refuses: a privilege or
     a file system named above, or, taken physically, a 2 MiB block of [va] that
@@ -348,7 +369,9 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
     then outlives the process ({{!dma}system memory}).
 
     [Ok None] if the machine has no room to pin them now, within the limits
-    {{!dma}system memory} names. Unpinning or freeing memory makes room.
+    {{!dma}system memory} names, or if they lie past [f]'s addresses
+    ({!set_dma_bits}). Unpinning or freeing memory makes room, but for pages
+    past [f]'s addresses taken physically.
 
     [Error why] if the system refuses to lock the pages or to read their
     addresses, or if [f] is taken physically and the pages are not memory

@@ -259,8 +259,7 @@ let iova bus fd =
   let page_sizes, ranges =
     Fail.step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
   in
-  let base, n = window bus page_sizes ranges in
-  Space.create ~base n
+  window bus page_sizes ranges
 
 (* VFIO's container is an IOMMU's address space, which several groups may
    share: one container per machine holds every function the process takes
@@ -272,7 +271,8 @@ let iova bus fd =
    memory and a pin may be the same pair, for one function or several. *)
 type container = {
   fd : fd;
-  iova : Space.t;
+  window : int * int; (* its device addresses: (base, n) *)
+  iova : Tlsf.t; (* under [mutex] *)
   maps : (int * int) Tables.Range.t; (* to (device address, count) *)
   mutex : Lock.t;
   pid : int; (* the process that opened it *)
@@ -291,11 +291,12 @@ let containers_lock = Lock.create ()
 
 let container files bus fd =
   match iova bus fd with
-  | iova ->
+  | (base, n) as window ->
       let c =
         {
           fd;
-          iova;
+          window;
+          iova = Tlsf.create ~base n;
           maps = Tables.Range.create 64;
           mutex = Lock.create ();
           pid = Unix.getpid ();
@@ -316,7 +317,7 @@ let keeps bus c =
   match iommu c.fd with
   | page_sizes, ranges ->
       let base, n = window bus page_sizes ranges in
-      let b = Space.base c.iova and m = Space.length c.iova in
+      let b, m = c.window in
       base <= b && b + m <= base + n
   | exception (Unix.Unix_error _ | Fail.Failed _) -> false
 
@@ -382,18 +383,30 @@ let open_ files fds bus =
       leave c;
       raise e
 
+let give_back c iova =
+  if not (Tlsf.free c.iova iova) then
+    invalid_arg (strf "Vfio: no device addresses at 0x%x" iova)
+
+(* A mapping is aligned to the largest power of two not above its size, from
+   a page, so that the IOMMU maps large ranges with large pages. *)
+let alignment n =
+  let rec go b = if b > n / 2 then b else go (b * 2) in
+  Int.max page (go 1)
+
 (* The device address at which [t]'s container maps the [n] bytes at [a],
-   mapping them for the first count. *)
-let map_dma fn bus t a n =
+   ending at or below [below], mapping them for the first count. A mapping
+   another function made past [below] serves none. *)
+let map_dma fn bus t ~below a n =
   let c = t.c in
   Lock.protect c.mutex @@ fun () ->
   if t.released then Fail.err_released fn bus;
   match Tables.Range.find_opt c.maps (a, n) with
+  | Some (iova, _) when iova > below - n -> None
   | Some (iova, k) ->
       Tables.Range.replace c.maps (a, n) (iova, k + 1);
       Some iova
   | None -> (
-      match Space.alloc c.iova n with
+      match Tlsf.alloc ~align:(alignment n) ~below c.iova n with
       | None -> None
       | Some iova -> (
           match map c.fd a iova n with
@@ -404,10 +417,10 @@ let map_dma fn bus t a n =
              against the process's locked-memory limit (ENOMEM) and the
              mapping against the container's dma_entry_limit (ENOSPC). *)
           | exception Unix.Unix_error ((ENOMEM | ENOSPC), _, _) ->
-              Space.free c.iova iova;
+              give_back c iova;
               None
           | exception Unix.Unix_error (e, _, _) ->
-              Space.free c.iova iova;
+              give_back c iova;
               Fail.fail "mapping %d bytes for %s: %s" n bus
                 (Unix.error_message e)))
 
@@ -423,7 +436,7 @@ let unmap_dma bus t a n =
         Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
       Tables.Range.remove c.maps (a, n);
-      Space.free c.iova iova
+      give_back c iova
 
 let device t = t.device
 

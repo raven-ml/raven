@@ -54,7 +54,9 @@ val create : ?link:link -> Function.t -> Page_table.t -> bar:int -> t
     are [tables] and whose memory BAR is [bar]. [link], if given, joins it to a
     fabric. System memory goes at addresses of [tables]' space
     ({!Page_table.space}), which the driver must first reserve on [f]'s machine
-    ({!Machine.val-reserve}).
+    ({!Machine.val-reserve}). [create] bounds [f]'s system memory to the
+    addresses [tables]' entries hold ({!Function.set_dma_bits} with
+    {!Page_table.val-pa_bits}).
 
     Raises [Invalid_argument] if [f] has no BAR [bar]. *)
 
@@ -134,8 +136,9 @@ val host : region -> Window.t option
     memory, its space or a page table has no room, and freeing memory makes
     room. Each returns [Error why] if the machine refuses, naming what is
     missing as {!Function.alloc_dma} does, or if the GPU's entries cannot hold
-    the memory's addresses ({!Page_table.val-pa_bits}). Each gives back what it
-    took before it returns [None] or [Error]. *)
+    a peer's addresses ({!Page_table.val-pa_bits}). System memory lies within
+    them ({!create}). Each gives back what it took before it returns [None] or
+    [Error]. *)
 
 val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]. System memory is rounded up to

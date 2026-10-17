@@ -236,6 +236,9 @@ let far_bus = "0000:03:00.0"
 
 type recorder = { m : Machine.t; tr : int; calls : string list ref }
 
+(* A call's bound on its runs, where the function states one. *)
+let bound below = if below = max_int then "" else strf " below 0x%x" below
+
 let recorder () =
   let tr = far 0 far_page in
   let calls = ref [] in
@@ -272,8 +275,8 @@ let recorder () =
           log "forget";
           Ok ());
       alloc_dma =
-        (fun ~contiguous:_ ~va:_ n ->
-          log "alloc_dma %d" n;
+        (fun ~contiguous:_ ~va:_ ~below n ->
+          log "alloc_dma %d%s" n (bound below);
           if n > mib then Ok None
           else begin
             incr next;
@@ -284,8 +287,8 @@ let recorder () =
           end);
       free_dma = (fun w -> log "free_dma 0x%x" (Window.address w));
       pin =
-        (fun a n ->
-          log "pin 0x%x %d" a n;
+        (fun ~below a n ->
+          log "pin 0x%x %d%s" a n (bound below);
           Ok (Some [ (a, n) ]));
       unpin = (fun a n -> log "unpin 0x%x %d" a n);
       release = (fun () -> log "release");
@@ -356,6 +359,9 @@ let test_far_function () =
   Function.unpin f base far_page;
   Function.unpin f base far_page;
   misuse "an unpin past the pins" (fun () -> Function.unpin f base far_page);
+  Function.set_dma_bits f 60;
+  ignore (require_some (require_ok (Function.pin f base far_page)));
+  Function.unpin f base far_page;
   Function.free_dma f w;
   misuse "a free_dma twice" (fun () -> Function.free_dma f w);
   equal (list string)
@@ -365,6 +371,8 @@ let test_far_function () =
       strf "pin 0x%x %d" base far_page;
       strf "pin 0x%x %d" base far_page;
       strf "unpin 0x%x %d" base far_page;
+      strf "unpin 0x%x %d" base far_page;
+      strf "pin 0x%x %d below 0x%x" base far_page (1 lsl 60);
       strf "unpin 0x%x %d" base far_page;
       strf "free_dma 0x%x" (Window.address w);
     ]

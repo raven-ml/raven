@@ -26,10 +26,11 @@ type fn = {
   alloc_dma :
     contiguous:bool ->
     va:int option ->
+    below:int ->
     int ->
     ((Window.t * (int * int) list) option, string) result;
   free_dma : Window.t -> unit;
-  pin : int -> int -> ((int * int) list option, string) result;
+  pin : below:int -> int -> int -> ((int * int) list option, string) result;
   unpin : int -> int -> unit;
   release : unit -> unit;
 }

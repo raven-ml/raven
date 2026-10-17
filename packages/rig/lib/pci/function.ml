@@ -18,12 +18,18 @@ type t = {
   fn : Machine.fn;
   inherited : bool Atomic.t; (* until [forget] *)
   released : bool Atomic.t;
+  dma_end : int Atomic.t;
+      (* the end of the addresses it reaches, [2^n] of [set_dma_bits], read
+         from any domain *)
   users : int Atomic.t;
   lock : Lock.t;
   maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
   dmas : unit Tables.Window.t;
   pins : unit Tables.Range.t; (* (address, bytes) *)
 }
+
+(* A function reaches 64 bits of address until its driver says otherwise. *)
+let full_bits = 64
 
 let make machine bus taken =
   Result.map
@@ -34,6 +40,7 @@ let make machine bus taken =
         fn;
         inherited = Atomic.make fn.inherited;
         released = Atomic.make false;
+        dma_end = Atomic.make max_int;
         users = Atomic.make 0;
         lock = Lock.create ();
         maps = Tables.Window.create 16;
@@ -277,6 +284,18 @@ let reset f =
 (* Contiguous memory is at most a huge page. *)
 let huge = Sysmem.huge
 
+(* Past 61 bits, the end of the addresses is past every address an OCaml int
+   holds. *)
+let set_dma_bits f n =
+  live f "set_dma_bits";
+  if n < 1 || n > full_bits then
+    invalid_argf "Function.set_dma_bits: %d bits, expected 1 to %d" n
+      full_bits;
+  Atomic.set f.dma_end (if n < Sys.int_size - 1 then 1 lsl n else max_int)
+
+(* Whether a run of [runs] ends past [e]. *)
+let beyond e runs = List.exists (fun (a, n) -> a > e - n) runs
+
 let on_page f fn a =
   if a mod Machine.page f.machine <> 0 then
     invalid_argf "Function.%s: 0x%x is not on a %d-byte page" fn a
@@ -316,7 +335,14 @@ let alloc_dma_entered ~contiguous ?va f n =
           n va
           (if physical then ", whole with the 2 MiB blocks that hold them"
            else ""));
-  let dma = f.fn.alloc_dma ~contiguous ~va n in
+  let dma =
+    let below = Atomic.get f.dma_end in
+    match f.fn.alloc_dma ~contiguous ~va ~below n with
+    | Ok (Some (w, runs)) when beyond below runs ->
+        f.fn.free_dma w;
+        Ok None
+    | dma -> dma
+  in
   (* The allocation is in the table before its use ends, so a release, which
      waits for its uses, finds it. *)
   (match dma with
@@ -342,7 +368,14 @@ let free_dma f w =
 let pin_entered f a n =
   on_page f "pin" a;
   if n <= 0 then invalid_argf "Function.pin: %d bytes, expected more than 0" n;
-  let runs = f.fn.pin a n in
+  let runs =
+    let below = Atomic.get f.dma_end in
+    match f.fn.pin ~below a n with
+    | Ok (Some runs) when beyond below runs ->
+        f.fn.unpin a n;
+        Ok None
+    | runs -> runs
+  in
   (* As [alloc_dma_entered]'s. *)
   (match runs with
   | Ok (Some _) ->

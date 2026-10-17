@@ -146,12 +146,15 @@ type fn = Ops.fn = {
   alloc_dma :
     contiguous:bool ->
     va:int option ->
+    below:int ->
     int ->
     ((Window.t * (int * int) list) option, string) result;
-      (** {!Function.alloc_dma}. *)
+      (** {!Function.alloc_dma}, whose runs end at or below [below] where the
+          machine chooses their addresses, as behind an IOMMU
+          ({!Function.set_dma_bits}). *)
   free_dma : Window.t -> unit;  (** {!Function.free_dma}. *)
-  pin : int -> int -> ((int * int) list option, string) result;
-      (** {!Function.pin}. *)
+  pin : below:int -> int -> int -> ((int * int) list option, string) result;
+      (** {!Function.pin}, as [alloc_dma] places its runs. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
   release : unit -> unit;
       (** {!Function.release}, which turns the function's bus mastering off. *)

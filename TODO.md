@@ -47,10 +47,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- rig.pci (ledger X4, X6): taken physically, `alloc_dma` and `pin`
-  return `Ok None` above the function's DMA mask; `reaches` true only where
-  Linux's p2pdma allows (a common upstream switch port, or a host bridge
-  its whitelist names)
+- rig.pci (ledger X6): `reaches` true only where Linux's p2pdma allows (a
+  common upstream switch port, or a host bridge its whitelist names)
 - rig.pci on a machine whose IOMMU translates (fudge): `Gpus.detach`
   refuses a GPU that is not already on vfio-pci, and nothing binds it, so
   detach binds the function and its siblings to vfio-pci itself; `attach`

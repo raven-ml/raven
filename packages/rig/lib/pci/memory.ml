@@ -80,6 +80,7 @@ let create ?link fn tables ~bar =
     | None ->
         invalid_argf "Memory.create: %s has no BAR %d" (Function.bus fn) bar
   in
+  Function.set_dma_bits fn (Page_table.pa_bits tables);
   {
     reach =
       {
@@ -164,7 +165,7 @@ let beyond m tables runs =
   | Some (pa, _) ->
       Some
         (strf
-           "the machine gave memory at 0x%x, past the %d bits of address %s's \
+           "the peer's memory lies at 0x%x, past the %d bits of address %s's \
             page tables hold"
            pa bits m.reach.bus)
 
@@ -201,20 +202,15 @@ let system m h tables n =
             give_back None;
             Ok None
         | Ok (Some (view, runs)) -> (
-            match beyond m tables runs with
-            | Some why ->
+            match
+              Page_table.map ~snooped:true ~uncached:true tables ~va System
+                runs
+            with
+            | Some mapping ->
+                Ok (Some { (allocated m mapping) with host = Some view })
+            | None ->
                 give_back (Some view);
-                Error why
-            | None -> (
-                match
-                  Page_table.map ~snooped:true ~uncached:true tables ~va
-                    System runs
-                with
-                | Some mapping ->
-                    Ok (Some { (allocated m mapping) with host = Some view })
-                | None ->
-                    give_back (Some view);
-                    Ok None)))
+                Ok None))
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
    placed under the BAR's end before anything is written, or [None] if no block
@@ -270,29 +266,23 @@ let map_pinned m h tables ~va ~source ~host a n =
   match Function.pin h.fn a n with
   | (Error _ | Ok None) as r -> r
   | Ok (Some runs) -> (
-      let unpin () = Function.unpin h.fn a n in
-      match beyond m tables runs with
-      | Some why ->
-          unpin ();
-          Error why
-      | None -> (
-          match
-            Page_table.map ~snooped:true ~uncached:true tables ~va System runs
-          with
-          | None ->
-              unpin ();
-              Ok None
-          | Some mapping ->
-              Ok
-                (Some
-                   {
-                     owner = m;
-                     mapping;
-                     off = 0;
-                     host;
-                     source;
-                     pinned = Some (a, n);
-                   })))
+      match
+        Page_table.map ~snooped:true ~uncached:true tables ~va System runs
+      with
+      | None ->
+          Function.unpin h.fn a n;
+          Ok None
+      | Some mapping ->
+          Ok
+            (Some
+               {
+                 owner = m;
+                 mapping;
+                 off = 0;
+                 host;
+                 source;
+                 pinned = Some (a, n);
+               }))
 
 (* Borrowed memory goes at addresses of the GPU's space, wherever it lies for
    the process: a process's heap and stacks lie far above the addresses a GPU's
