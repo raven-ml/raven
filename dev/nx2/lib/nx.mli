@@ -1652,6 +1652,248 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] if [v] has neither one nor two axes. *)
 
+(** {1:linalg Linear algebra}
+
+    Factorisations, solves and norms of the matrices of a batch, laid out as
+    {!section-matrices} says, [m] rows, [n] columns and [k = min m n]. They
+    compute [float32], [float64], [complex64] and [complex128]: another dtype
+    raises [Invalid_argument]. [aᴴ] is the conjugate transpose, the transpose
+    of a real [a].
+
+    Every result has its operand's dtype. A real result of a complex operand
+    (a singular value, an eigenvalue of {!eigh}, {!slogdet}'s logarithm, a
+    norm) is complex with an imaginary part of [+0], and {!real} extracts it.
+
+    Each matrix of a batch is computed on its own, and data never raises: a
+    matrix whose factorisation fails, as each function states, is NaN in its
+    own results alone. For a finite [a],
+    [all ~axes:[ -2; -1 ] (isfinite (cholesky a))] tests which matrices of a
+    batch are positive definite.
+
+    Each kernel library states its error bounds. A factorisation leaves some
+    choices open: the order of {!eig}'s eigenvalues; {!qr}'s factors, unique
+    up to a unit factor per column of [q] and row of [r] where [r]'s diagonal
+    has no zero; the vectors of {!svd}, {!eigh} and {!eig}, unique up to a
+    unit factor where their value is simple and up to a unitary basis of its
+    space where it repeats; and the columns [Complete] factors add. *)
+
+(** The type for a square matrix's triangles, each with its diagonal: the
+    elements on and below it, or on and above it. *)
+type triangle = Lower | Upper
+
+(** The type for how much of a matrix's unitary factors a factorisation gives:
+    [k] columns of the left one and [k] rows of the right one, or the whole
+    squares, of [m] and of [n]. *)
+type factors = Reduced | Complete
+
+val cholesky : ?triangle:triangle -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cholesky a] is the factor of the Hermitian positive definite matrix that
+    [a]'s [triangle] (default [Lower]) and the real parts of its diagonal name,
+    which alone are read: [L], lower triangular with a real and positive
+    diagonal and [a = L Lᴴ], or under [~triangle:Upper] [U = Lᴴ], upper
+    triangular with [a = Uᴴ U]. The other triangle is [+0]. A matrix whose
+    factorisation meets a pivot that is not positive, or NaN, is NaN.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
+    or for its dtype. *)
+
+val qr : ?factors:factors -> ('v, 's, 'd) t -> ('v, 's, 'd) t * ('v, 's, 'd) t
+(** [qr a] is [(q, r)] with [a = q r], [q]'s columns orthonormal and [r] upper
+    triangular: [q] is [[…; m; k]] and [r] [[…; k; n]], or under
+    [~factors:Complete] [[…; m; m]] and [[…; m; n]].
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, or for its
+    dtype. *)
+
+val lu : ('v, 's, 'd) t -> 'd int64_t * ('v, 's, 'd) t * ('v, 's, 'd) t
+(** [lu a] is [(perm, l, u)] where row [i] of [matmul l u] is row [perm.{i}] of
+    [a], [l] is [[…; m; k]], lower triangular with ones on its diagonal, and [u]
+    is [[…; k; n]], upper triangular; [perm] is [[…; m]].
+
+    The factorisation pivots partially: at each column it moves up the row at
+    or below the diagonal whose magnitude ([|re| + |im|] for a complex) is
+    greatest, the first such row on a tie, so each element of a real [l] has a
+    magnitude of at most [1]. A NaN is never greater, and nothing is greater
+    than a NaN. A singular [a] factors as any other, its zero pivots on [u]'s
+    diagonal.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, or for its
+    dtype. *)
+
+val svd :
+  ?vectors:bool ->
+  ?factors:factors ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t
+(** [svd a] is [(u, s, vh)] with [a = matmul (mul u (unsqueeze ~axes:[ -2 ] s))
+    vh], [s] the [[…; k]] singular values, descending and not negative, a zero
+    one [+0]; [u] and [vh] have orthonormal columns and rows: [[…; m; k]] and
+    [[…; k; n]], or under [~factors:Complete] [[…; m; m]] and [[…; n; n]].
+    Under [~vectors:false] (default [true]) neither [u] nor [vh] is computed:
+    they are [[…; m; 0]] and [[…; 0; n]]. A matrix that holds NaN or an
+    infinity, or on which the iteration does not converge, is NaN in all three.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, or for its
+    dtype. *)
+
+val eig :
+  ?vectors:bool ->
+  (Complex.t, 's, 'd) t ->
+  (Complex.t, 's, 'd) t * (Complex.t, 's, 'd) t
+(** [eig a] is [(w, v)], the [[…; n]] eigenvalues of [a] and columns of unit
+    norm [v] with [matmul a v = mul v (unsqueeze ~axes:[ -2 ] w)]. A real
+    matrix is cast first: [eig (cast complex128 a)]. Under [~vectors:false]
+    (default [true]) [v] is not computed and is [[…; n; 0]]. NaN as for
+    {!svd}.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not
+    square. *)
+
+val eigh :
+  ?vectors:bool ->
+  ?triangle:triangle ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t * ('v, 's, 'd) t
+(** [eigh a] is [(w, v)], the [[…; n]] eigenvalues of the Hermitian [a],
+    ascending, and orthonormal columns [v] with
+    [matmul a v = mul v (unsqueeze ~axes:[ -2 ] w)]. [a] is the Hermitian
+    matrix its [triangle] (default [Lower]) and the real parts of its diagonal
+    name, which alone are read. Under [~vectors:false] (default [true]) [v] is
+    not computed and is [[…; n; 0]]. A matrix whose read part holds NaN or an
+    infinity, or on which the iteration does not converge, is NaN in both.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
+    or for its dtype. *)
+
+val det : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [det a] is the determinant of each matrix of [a], the product of the
+    diagonal of {!lu}'s [u] negated once per row interchange. A zero
+    determinant is [+0], and a matrix with no row has determinant [1]. The
+    product is taken in the dtype and overflows or underflows where a partial
+    product does. {!slogdet} holds determinants beyond the dtype's range.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
+    or for its dtype. *)
+
+val slogdet : ('v, 's, 'd) t -> ('v, 's, 'd) t * ('v, 's, 'd) t
+(** [slogdet a] is [(sign, logabs)] with [det a = sign · exp logabs], from
+    {!lu}'s pivots: [logabs] is the sum of their magnitudes' logarithms, and
+    [sign] is [1.] or [-1.] for a real [a] and a complex number of magnitude
+    [1.] for a complex one. A singular matrix, one with a zero pivot, has
+    [sign] [+0] and [logabs] [neg_infinity] whatever its other pivots.
+
+    Raises [Invalid_argument] as {!det}. *)
+
+(** The type for the matrix a solve applies: [aᵀ], or [aᴴ]. For a real [a]
+    they are one. *)
+type transpose = Transpose | Adjoint
+
+val solve_triangular :
+  ?triangle:triangle ->
+  ?transpose:transpose ->
+  ?unit_diag:bool ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [solve_triangular a b] is [x] with [matmul a x = b], or under [transpose]
+    with [matmul aᵀ x = b] or [matmul aᴴ x = b], reading [a]'s [triangle]
+    (default [Lower]) alone, without its diagonal under [~unit_diag:true]
+    (default [false]), whose ones it takes instead. A [b]
+    with one axis fewer than [a] is a vector, [[…; n]], and [x] has its shape;
+    otherwise [b] is [[…; n; r]], [r] right-hand sides. [a]'s and [b]'s
+    leading axes broadcast. A zero on a diagonal it reads makes that matrix's
+    [x] NaN.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
+    for its dtype, if [b] has neither [a]'s rank nor one axis fewer, if [b]'s
+    rows are not [n], or if the leading axes do not broadcast. *)
+
+val solve : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [solve a b] is [x] with [matmul a x = b], for a square [a], from {!lu}'s
+    factors and two triangular solves; [b] is as {!solve_triangular} takes
+    it. A matrix with a pivot of exactly zero makes its [x] NaN. A matrix
+    singular in exact arithmetic whose pivot rounds to a tiny nonzero value
+    gives large, infinite or NaN elements instead.
+
+    Raises [Invalid_argument] as {!solve_triangular}. *)
+
+val inv : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [inv a] is [solve a] of the identity: NaN for a matrix {!solve} finds
+    singular.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
+    or for its dtype. *)
+
+val lstsq :
+  ?rtol:float ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t * ('v, 's, 'd) t * 'd int64_t * ('v, 's, 'd) t
+(** [lstsq a b] is [(x, residuals, rank, s)]: [x] the least-squares solution
+    of [matmul a x ≈ b] of least norm, whatever [a]'s shape and rank, from
+    [s], {!svd}'s singular values of [a]. A singular value at or below [rtol]
+    times [max m n] times its matrix's greatest counts as zero; [rtol]
+    defaults to the dtype's machine epsilon. [rank] is the number of the
+    others, [-1] for a matrix on which {!svd} fails, whose [x] is NaN.
+    [residuals] is the squared norm of each column of [b - matmul a x]: [b]'s
+    shape without its rows. [b] is as {!solve_triangular} takes it, with [m]
+    rows.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
+    if [b] has neither [a]'s rank nor one axis fewer, if [b]'s rows are not
+    [m], if the leading axes do not broadcast, or if [rtol] is negative or
+    NaN. *)
+
+val pinv : ?rtol:float -> ?hermitian:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [pinv a] is the [[…; n; m]] Moore-Penrose pseudoinverse of [a], from
+    {!svd}, or from {!eigh} of the Hermitian [a] its lower triangle names under
+    [~hermitian:true] (default [false]). A singular value, or an eigenvalue's
+    magnitude, at or below [rtol] times [max m n] times its matrix's greatest
+    counts as zero; [rtol] defaults to the dtype's machine epsilon. A matrix on
+    which that factorisation fails is NaN.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, is not square
+    under [~hermitian:true], for its dtype, or if [rtol] is negative or NaN. *)
+
+val vector_norm :
+  ?ord:float ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [vector_norm x] is the norm of order [ord] (default [2.]) of the vector of
+    the elements of [x] along [axes] (default all of them), dropping those
+    axes unless [keepdims]. Of the magnitudes [|x|], it is
+    [(Σ |x|^ord)^(1/ord)] for a nonzero [ord], the count of nonzero elements
+    for [0.], and the greatest or least magnitude for [infinity] or
+    [neg_infinity]. A negative [ord] over no element is [infinity].
+
+    The sums of powers are scaled by the greatest magnitude, or the least for
+    a negative [ord], so that a norm the dtype holds never overflows or
+    underflows on the way: the norm of [[1e200; 1e200]] is [1.414e200]. A
+    NaN element makes its norm NaN.
+
+    Raises [Invalid_argument] for [x]'s dtype, if an axis is outside [x]'s
+    rank or repeats, if [ord] is NaN, or if [ord] is [infinity] or
+    [neg_infinity] and [axes] hold no element. *)
+
+val matrix_norm :
+  ?ord:[ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf ] ->
+  ?keepdims:bool ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [matrix_norm x] is the norm of order [ord] (default [`Fro]) of each matrix
+    of [x], dropping its last two axes unless [keepdims]. Of a matrix:
+    - [`Fro] is [sqrt (Σ |x|²)], scaled as {!vector_norm}'s, and [`Nuc] the
+      sum of its singular values.
+    - [`Two] is its greatest singular value and [`NegTwo] its least.
+    - [`One] is the greatest sum of a column's magnitudes and [`NegOne] the
+      least; [`Inf] and [`NegInf] are the same of its rows.
+
+    Raises [Invalid_argument] if [x] has fewer than two axes, for its dtype,
+    or if [ord] takes a greatest or least singular value, column or row of a
+    matrix that has none. *)
+
 (** {1:order Order and counted lengths}
 
     Sorting, selection, searching and grouping order elements by one order, the

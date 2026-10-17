@@ -2323,6 +2323,428 @@ let vdot a b =
   Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
     (conjugate (flat a)) (flat b)
 
+(* Linear algebra *)
+
+type triangle = Lower | Upper
+type factors = Reduced | Complete
+
+let kernel_triangle : triangle -> Nx_kernel.triangle = function
+  | Lower -> Lower
+  | Upper -> Upper
+
+let kernel_factors : factors -> Nx_kernel.factors = function
+  | Reduced -> Reduced
+  | Complete -> Complete
+
+let routine ~by l = Eval.eval ~by (Value.Linalg l)
+
+(* Refuses a dtype the routines do not take. *)
+let routine_dtype ~by x =
+  if not (Nx_kernel.full_precision (dtype x)) then
+    invalid_argf "%s: %a is not float32, float64, complex64 or complex128" by
+      pp_value x
+
+(* Refuses what is not a batch of matrices of a dtype the routines take. *)
+let matrices ~by x =
+  matrix ~by x;
+  routine_dtype ~by x
+
+let square_matrices ~by x =
+  matrices ~by x;
+  if dim (-1) x <> dim (-2) x then
+    invalid_argf "%s: %a is not square" by pp_value x
+
+(* The machine epsilon of the four dtypes the routines take. *)
+let epsilon (type v s) (dt : (v, s) D.t) =
+  match dt with D.Float32 | D.Complex64 -> 0x1p-23 | _ -> epsilon_float
+
+(* [x]'s batch: its axes before its last two. *)
+let batch x = Array.sub (shape x) 0 (ndim x - 2)
+
+(* An empty value of [x]'s dtype where [x] lies: the vectors a routine did not
+   compute. *)
+let uncomputed ~by x s = beside ~by x (fill ~by (dtype x) s (D.zero (dtype x)))
+
+(* The first [rows] rows and [cols] columns of [x]'s matrices. *)
+let block ~by rows cols x =
+  let s = shape x in
+  let r = Array.length s in
+  let ranges =
+    Array.mapi
+      (fun i d ->
+        if i = r - 2 then { (whole d) with count = rows }
+        else if i = r - 1 then { (whole d) with count = cols }
+        else whole d)
+      s
+  in
+  move ~by (Slice ranges) x
+
+(* [x]'s strictly lower triangle, ones on its diagonal, zero above. *)
+let unit_lower ~by x =
+  let dt = dtype x and r = ndim x in
+  let column = E.coord (r - 1) and row = E.coord (r - 2) in
+  let lit v = E.const dt v in
+  elementwise ~by dt [ Any x ]
+    E.(
+      where (column < row) (operand 0 x)
+        (where (column = row) (lit (D.one dt)) (lit (D.zero dt))))
+
+(* [f] of [x]'s magnitudes, a float of [x]'s precision, its result back in
+   [x]'s dtype: complex with imaginary parts [+0] for a complex [x]. *)
+let magnitudes (type v s d) ~by (x : (v, s, d) t)
+    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t) : (v, s, d) t =
+  match dtype x with
+  | D.Float32 -> f (abs x)
+  | D.Float64 -> f (abs x)
+  | D.Complex64 -> cast_by ~by D.Complex64 (f (magnitude D.Float32 x))
+  | D.Complex128 -> cast_by ~by D.Complex128 (f (magnitude D.Float64 x))
+  | dt -> invalid_argf "%s: %s has no magnitudes" by (D.name dt)
+
+(* [a] and [b] with their leading axes broadcast, [b] as columns of [rows]
+   rows, and the function that gives a result over those columns [b]'s form:
+   a [b] of one axis fewer than [a] is one column, whose axis goes. *)
+let columns ~by ~rows a b =
+  let ra = ndim a and rb = ndim b in
+  let vector = rb = ra - 1 in
+  if not (vector || rb = ra) then
+    invalid_argf "%s: %a is neither a vector nor a matrix against %a" by
+      pp_value b pp_value a;
+  let b =
+    if vector then move ~by (Reshape (Array.append (shape b) [| 1 |])) b else b
+  in
+  if dim (-2) b <> rows then
+    invalid_argf "%s: %a has %d rows, not %d" by pp_value b (dim (-2) b) rows;
+  let lead = broadcast_all ~by [ batch a; batch b ] in
+  let along x =
+    broadcast ~by (Array.append lead (Array.sub (shape x) (ndim x - 2) 2)) x
+  in
+  let back x =
+    if vector then move ~by (Reshape (Array.sub (shape x) 0 (ndim x - 1))) x
+    else x
+  in
+  (along a, along b, back)
+
+let adjoint x = conjugate (matrix_transpose x)
+
+(* The routines read the lower triangle. The Hermitian matrix an upper one
+   names is the one the lower triangle of [aᴴ] names. *)
+let lower_of triangle a = match triangle with Lower -> a | Upper -> adjoint a
+
+let cholesky ?(triangle = Lower) a =
+  let by = "Nx.cholesky" in
+  square_matrices ~by a;
+  let a = lower_of triangle a in
+  routine ~by (Cholesky { triangle = kernel_triangle triangle; a })
+
+let qr ?(factors = Reduced) a =
+  let by = "Nx.qr" in
+  matrices ~by a;
+  routine ~by (Qr { factors = kernel_factors factors; a })
+
+let lu a =
+  let by = "Nx.lu" in
+  matrices ~by a;
+  let f, _, perm = routine ~by (Lu a) in
+  let m = dim (-2) a and n = dim (-1) a in
+  let k = Stdlib.min m n in
+  let l = unit_lower ~by (block ~by m k f) in
+  let u = triangle ~by `Above 0 (block ~by k n f) in
+  (perm, l, u)
+
+let svd ?(vectors = true) ?(factors = Reduced) a =
+  let by = "Nx.svd" in
+  matrices ~by a;
+  if vectors then
+    let s, (u, vh) =
+      routine ~by (Svd { vectors = Vectors (kernel_factors factors); a })
+    in
+    (u, s, vh)
+  else
+    let s, () = routine ~by (Svd { vectors = No_vectors; a }) in
+    let lead = batch a in
+    let u = uncomputed ~by a (Array.append lead [| dim (-2) a; 0 |]) in
+    let vh = uncomputed ~by a (Array.append lead [| 0; dim (-1) a |]) in
+    (u, s, vh)
+
+(* The [[…; n; 0]] vectors an eigenvalue routine did not compute. *)
+let no_vectors ~by a =
+  uncomputed ~by a (Array.append (batch a) [| dim (-1) a; 0 |])
+
+let eig ?(vectors = true) a =
+  let by = "Nx.eig" in
+  square_matrices ~by a;
+  let dtype = dtype a in
+  if vectors then routine ~by (Eig { vectors = Vectors (); dtype; a })
+  else
+    let w, () = routine ~by (Eig { vectors = No_vectors; dtype; a }) in
+    (w, no_vectors ~by a)
+
+let eigh ?(vectors = true) ?(triangle = Lower) a =
+  let by = "Nx.eigh" in
+  square_matrices ~by a;
+  let a' = lower_of triangle a in
+  if vectors then routine ~by (Eigh { vectors = Vectors (); a = a' })
+  else
+    let w, () = routine ~by (Eigh { vectors = No_vectors; a = a' }) in
+    (w, no_vectors ~by a)
+
+(* The diagonal of [lu]'s factors, and the function that negates [x] where
+   each matrix's rows were interchanged an odd number of times and makes a
+   zero [+0]. *)
+let pivots ~by a =
+  let f, steps, _ = routine ~by (Lu a) in
+  let k = dim (-1) steps in
+  let moved = not_equal steps (arange D.Int64 0 k 1) in
+  let odd = equal_s (mod_s (count ~axes:[ -1 ] moved) 2L) 1L in
+  let signed x =
+    let zero = zeros_like x in
+    where (equal x zero) zero (where odd (neg x) x)
+  in
+  (diagonal_by ~by f, signed)
+
+let det a =
+  let by = "Nx.det" in
+  renamed ~by (fun () ->
+      square_matrices ~by a;
+      let d, signed = pivots ~by a in
+      signed (reduction ~by Prod ~axes:[ -1 ] d))
+
+(* [z / |z|], zero where [z] is: a real's sign, a complex number's phase. *)
+let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype z) with
+  | D.Complex ->
+      let m = magnitudes ~by z Fun.id in
+      let zero = zeros_like z in
+      where (equal m zero) zero (div z m)
+  | D.Float | D.Signed | D.Unsigned | D.Boolean -> sign z
+
+let slogdet a =
+  let by = "Nx.slogdet" in
+  renamed ~by (fun () ->
+      square_matrices ~by a;
+      let d, signed = pivots ~by a in
+      let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
+      (* A zero pivot beside an infinite one would sum to NaN. *)
+      let singular = equal sign (zeros_like sign) in
+      let logabs =
+        magnitudes ~by d (fun m ->
+            let l = reduction ~by Sum ~axes:[ -1 ] (log m) in
+            where singular (full_like l Float.neg_infinity) l)
+      in
+      (sign, logabs))
+
+type transpose = Transpose | Adjoint
+
+let is_complex (type v s d) (x : (v, s, d) t) =
+  match D.kind (dtype x) with
+  | D.Complex -> true
+  | D.Float | D.Signed | D.Unsigned | D.Boolean -> false
+
+let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
+  let by = "Nx.solve_triangular" in
+  square_matrices ~by a;
+  let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
+  let solved adjoint b =
+    routine ~by
+      (Solve_triangular
+         {
+           triangle = kernel_triangle triangle;
+           adjoint;
+           unit_diagonal = unit_diag;
+           a;
+           b;
+         })
+  in
+  back
+    (match transpose with
+    | None -> solved false b
+    | Some Transpose when is_complex a ->
+        (* [aᵀ x = b] is [aᴴ x̄ = b̄], and the kernel solves with [aᴴ]. *)
+        conjugate (solved true (conjugate b))
+    | Some (Transpose | Adjoint) -> solved true b)
+
+(* [a]'s rows interchanged by {!lu}, then [L] and [U] solved in turn: the
+   factors' two triangles, read from the one matrix. *)
+let solve_by ~by a b =
+  square_matrices ~by a;
+  let f, _, perm = routine ~by (Lu a) in
+  let perm = move ~by (Reshape (Array.append (shape perm) [| 1 |])) perm in
+  let f, b, back = columns ~by ~rows:(dim (-1) a) f b in
+  let b = take_along ~by (-2) perm b in
+  let solved triangle unit_diagonal b =
+    routine ~by
+      (Solve_triangular { triangle; adjoint = false; unit_diagonal; a = f; b })
+  in
+  back (solved Upper false (solved Lower true b))
+
+let solve a b = solve_by ~by:"Nx.solve" a b
+
+let inv a =
+  let by = "Nx.inv" in
+  square_matrices ~by a;
+  let n = dim (-1) a in
+  solve_by ~by a (broadcast ~by (shape a) (eye (dtype a) n))
+
+(* Each singular value's reciprocal where it is above [tol] times its
+   matrix's greatest, zero at or below, NaN where it is. *)
+let reciprocals ~by ~tol s =
+  magnitudes ~by s (fun s ->
+      let top = reduction ~by Max ~axes:[ -1 ] ~keepdims:true s in
+      let above = greater s (mul_s top tol) in
+      where (isnan s) s (where above (recip s) (zeros_like s)))
+
+(* The cutoff of a singular value relative to its matrix's greatest, [rtol]
+   (default the dtype's machine epsilon) times [max m n]. *)
+let cutoff ~by rtol a =
+  let rtol = Option.value rtol ~default:(epsilon (dtype a)) in
+  if not (rtol >= 0.) then
+    invalid_argf "%s: rtol %g is negative or NaN" by rtol;
+  rtol *. Float.of_int (Stdlib.max (dim (-2) a) (dim (-1) a))
+
+(* [vh]ᴴ [diag d] [u]ᴴ: the matrices whose singular values are [d]. *)
+let resynthesise u d vh =
+  matmul (mul (adjoint vh) (unsqueeze ~axes:[ -2 ] d)) (adjoint u)
+
+let lstsq ?rtol a b =
+  let by = "Nx.lstsq" in
+  renamed ~by (fun () ->
+      matrices ~by a;
+      let m = dim (-2) a and n = dim (-1) a in
+      let tol = cutoff ~by rtol a in
+      let a', b', back = columns ~by ~rows:m a b in
+      let x, s, rank =
+        if Stdlib.min m n = 0 then
+          let lead = batch b' in
+          let zero dt s = beside ~by b' (fill ~by dt s (D.zero dt)) in
+          ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
+            zero (dtype a) (Array.append (batch a) [| 0 |]),
+            zero D.Int64 (batch a) )
+        else
+          let u, s, vh = svd a in
+          let d = reciprocals ~by ~tol s in
+          let kept = count ~axes:[ -1 ] (not_equal d (zeros_like d)) in
+          let failed = any ~axes:[ -1 ] (isnan s) in
+          let rank = where failed (full_like kept (-1L)) kept in
+          (* [V (Σ⁺ (Uᴴ b))] rounds less than [b] by the pseudoinverse. *)
+          let c = mul (unsqueeze ~axes:[ -1 ] d) (matmul (adjoint u) b') in
+          (matmul (adjoint vh) c, s, rank)
+      in
+      let r = sub b' (matmul a' x) in
+      let residuals =
+        magnitudes ~by r (fun r -> reduction ~by Sum ~axes:[ -2 ] (square r))
+      in
+      (back x, back residuals, rank, s))
+
+let pinv ?rtol ?(hermitian = false) a =
+  let by = "Nx.pinv" in
+  renamed ~by (fun () ->
+      if hermitian then square_matrices ~by a else matrices ~by a;
+      let m = dim (-2) a and n = dim (-1) a in
+      let tol = cutoff ~by rtol a in
+      if Stdlib.min m n = 0 then
+        let dt = dtype a in
+        beside ~by a
+          (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
+      else if hermitian then begin
+        let w, v = eigh a in
+        (* An eigenvalue's reciprocal keeps its sign: its magnitude decides. *)
+        let kept = reciprocals ~by ~tol w in
+        let w' = where (equal kept (zeros_like kept)) kept (recip w) in
+        matmul (mul v (unsqueeze ~axes:[ -2 ] w')) (adjoint v)
+      end
+      else
+        let u, s, vh = svd a in
+        resynthesise u (reciprocals ~by ~tol s) vh)
+
+(* Norms *)
+
+(* The greatest or least of [m] along [axes], kept as axes of one, or raises
+   where there is no element to choose from. *)
+let extreme ~by k axes m =
+  if List.exists (fun a -> dim a m = 0) axes then
+    invalid_argf "%s: no greatest or least element along an empty axis of %a"
+      by pp_value m;
+  reduction ~by k ~axes ~keepdims:true m
+
+(* [c · (Σ (m / c)^p)^(1/p)] along [axes], [c] the greatest of the magnitudes
+   [m] for a positive [p] and the least for a negative one, so that nothing
+   overflows or underflows on the way; [c] itself where it is zero or
+   infinite. Of no term the sum is 0, and its power [1/p] is 0 for a positive
+   [p] and infinity for a negative one. *)
+let power_norm ~by p axes m =
+  let sum x = reduction ~by Sum ~axes ~keepdims:true x in
+  if List.exists (fun a -> dim a m = 0) axes then
+    if p > 0. then sum m else full_like (sum m) Float.infinity
+  else
+    let c = extreme ~by (if p > 0. then Max else Min) axes m in
+    let q = div m c in
+    let r =
+      if p = 2. then sqrt (sum (square q))
+      else pow_s (sum (pow_s q p)) (1. /. p)
+    in
+    where (logical_or (equal_s c 0.) (isinf c)) c (mul c r)
+
+(* The norm [p] of the vectors of the magnitudes [m] along [axes], kept as
+   axes of one. *)
+let vector ~by p axes m =
+  if Float.is_nan p then invalid_argf "%s: an order of nan" by;
+  let sum x = reduction ~by Sum ~axes ~keepdims:true x in
+  if p = Float.infinity then extreme ~by Max axes m
+  else if p = Float.neg_infinity then extreme ~by Min axes m
+  else if p = 0. then
+    let nonzero = cast_by ~by (dtype m) (not_equal m (zeros_like m)) in
+    sum (where (isnan m) m nonzero)
+  else if p = 1. then sum m
+  else power_norm ~by p axes m
+
+let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
+  let by = "Nx.vector_norm" in
+  renamed ~by (fun () ->
+      routine_dtype ~by x;
+      let along =
+        match l with
+        | None -> List.init (ndim x) Fun.id
+        | Some l -> axes ~by x l
+      in
+      let y = magnitudes ~by x (fun m -> vector ~by ord along m) in
+      if keepdims then y
+      else
+        let along = Array.of_list (List.sort compare along) in
+        move ~by (Reshape (Prim.reduced (shape x) along)) y)
+
+let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
+  let by = "Nx.matrix_norm" in
+  renamed ~by (fun () ->
+      matrices ~by x;
+      let r = ndim x - 2 and c = ndim x - 1 in
+      (* The greatest or least sum of a line's magnitudes, [summed] along
+         it. *)
+      let lines k summed chosen m =
+        extreme ~by k [ chosen ]
+          (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
+      in
+      (* The singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
+      let singular k =
+        let _, s, _ = svd ~vectors:false x in
+        let s = unsqueeze ~axes:[ -1 ] s in
+        match k with
+        | `Sum -> reduction ~by Sum ~axes:[ r ] ~keepdims:true s
+        | `Max -> extreme ~by Max [ r ] s
+        | `Min -> extreme ~by Min [ r ] s
+      in
+      let y =
+        match ord with
+        | `Fro -> magnitudes ~by x (fun m -> power_norm ~by 2. [ r; c ] m)
+        | `One -> magnitudes ~by x (fun m -> lines Max r c m)
+        | `NegOne -> magnitudes ~by x (fun m -> lines Min r c m)
+        | `Inf -> magnitudes ~by x (fun m -> lines Max c r m)
+        | `NegInf -> magnitudes ~by x (fun m -> lines Min c r m)
+        | `Nuc -> singular `Sum
+        | `Two -> singular `Max
+        | `NegTwo -> singular `Min
+      in
+      if keepdims then y else move ~by (Reshape (batch x)) y)
+
 (* Order *)
 
 (* [x] along [axis] in the sort order, reversed where [descending], its first
