@@ -1296,7 +1296,8 @@ module Qp = struct
     land D.cq_base_toggle
     <> n / q.entries land 1
 
-  let failure qp why = strf "%s: queue pair %d failed: %s" qp.nic.name qp.qpn why
+  let failure qp why =
+    strf "%s: queue pair %d failed: %s" qp.nic.name qp.qpn why
 
   (* Fails [qp] for [why], once, with no command to the firmware. *)
   let fail_qp qp why =
@@ -1309,6 +1310,13 @@ module Qp = struct
      is not read, and on the send side a terminal completion's index says
      which sends completed. Each side notes its own ring, so a ring that
      another domain polls keeps what the NIC completed. *)
+  (* The sends of [r] before the terminal completion's send [index] completed:
+     an index outside the sends due completes none. *)
+  let sends_done r index =
+    let done_ = (index - r.taken) land (ring_entries - 1) in
+    if index <> no_index && done_ <= r.posted - r.taken then
+      r.ok_until <- r.taken + done_
+
   let notice qp r =
     r.noticed <- true;
     let n = ref r.cq_read in
@@ -1316,10 +1324,7 @@ module Qp = struct
       incr n
     done;
     r.cq_until <- !n;
-    let index = Atomic.get qp.terminal in
-    let done_ = (index - r.taken) land (ring_entries - 1) in
-    if r == qp.sends && index <> no_index && done_ <= r.posted - r.taken then
-      r.ok_until <- r.taken + done_
+    if r == qp.sends then sends_done r (Atomic.get qp.terminal)
 
   (* Completes the oldest due entry of [r] of the failed queue pair: one before
      [ok_until] moved its bytes. *)
@@ -1328,15 +1333,17 @@ module Qp = struct
     r.taken <- n + 1;
     if n < r.ok_until then Ok r.lengths.(n mod ring_entries) else Error why
 
-  (* A terminal completion reports the queue pair's failure, and the sends
-     before the one at its consumer index, which completed: an index outside
-     the sends due completes none ([notice]). The index is kept before the
-     failure is, so the send side reads it once it sees the failure. *)
-  let terminal qp (q : queue) at =
-    let index = Window.get32 q.ring (at + fst D.Cq_terminal.sq_cons_idx) in
+  (* A terminal completion, read from [r]'s queue, reports the queue pair's
+     failure, and the sends before the one at its consumer index, which
+     completed ([sends_done]). The index is kept before the failure is, so
+     the send side reads it once it sees the failure; a send side that saw a
+     failure raised elsewhere first applies the index as it reads it. *)
+  let terminal qp r at =
+    let index = Window.get32 r.cq.ring (at + fst D.Cq_terminal.sq_cons_idx) in
     let index = index land 0xffff in
     if index <> no_index then
       ignore (Atomic.compare_and_set qp.terminal no_index index : bool);
+    if r == qp.sends && r.noticed then sends_done r index;
     fail_qp qp "the NIC reported its failure"
 
   (* Reads [r]'s written completion and acknowledges it: the completion of the
@@ -1356,7 +1363,7 @@ module Qp = struct
     r.cq_read <- n + 1;
     ring qp.nic.rc.db ~xid:r.cq_id ~typ:D.bnxt_re_que_type_cq (n + 1);
     if kind = D.cq_base_cqe_type_terminal then begin
-      terminal qp q at;
+      terminal qp r at;
       None
     end
     else if kind <> r.kind then begin

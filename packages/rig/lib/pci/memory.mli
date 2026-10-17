@@ -168,11 +168,12 @@ val map_host : t -> int -> int -> (region option, string) result
 
 val map_peer : t -> region -> (region option, string) result
 (** [map_peer m r] maps [r], a region of a GPU, [m]'s own included, for the
-    GPU of [m], at the address [r] has there. GPU memory is mapped through its owner's memory
-    BAR or their fabric's link. System memory, allocated or borrowed, is mapped
-    at its pages, which {!Function.pin} keeps for [m]'s GPU. If [r] is itself a
-    {!Peer} region, [map_peer] maps the region it maps. The result's source is
-    [Peer r'], where [r'] is the region its owner gave.
+    GPU of [m], at the address [r] has there. GPU memory is mapped through its
+    owner's memory BAR or their fabric's link. System memory, allocated or
+    borrowed, is mapped at its pages, which {!Function.pin} keeps for [m]'s
+    GPU. If [r] is itself a {!Peer} region, [map_peer] maps the region it
+    maps. The result's source is [Peer r'], where [r'] is the region its
+    owner gave.
 
     Where the GPU of [m] maps that memory already, as its own or through
     another region [map_peer] gave, the result is a new region over the same
