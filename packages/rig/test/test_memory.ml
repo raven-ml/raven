@@ -564,6 +564,23 @@ let test_staging_refused () =
       done);
   B.copy ~src ~dst
 
+(* A device that maps no host memory stages through halves of its own [Pinned]
+   memory, each made at the first piece that needs it: a blit of one byte makes
+   one half, and one of two pieces the other. *)
+let test_staging_halves () =
+  let d, p =
+    P.open_ ~host_visible:false ~maps_host:false "memory:staging-halves"
+  in
+  let half = 32 * kib * kib in
+  let pinned () = List.filter (fun (k, _, _) -> k = B.Pinned) (P.allocs p) in
+  B.blit_from_string "x" 0 (B.create d 1) 0 1;
+  equal ~msg:"one piece" allocs [ (B.Pinned, half, true) ] (pinned ());
+  let n = half + 1 in
+  B.blit_from_string (String.make n 'y') 0 (B.create d n) 0 n;
+  equal ~msg:"two pieces" allocs
+    [ (B.Pinned, half, true); (B.Pinned, half, true) ]
+    (pinned ())
+
 let test_host_budget () = equal int max_int (Rig.budget Rig.host)
 
 (* Kinds *)
@@ -1030,6 +1047,8 @@ let tests =
           test_over_budget;
         test "a copy whose staging memory the host refuses gives its slot back"
           test_staging_refused;
+        test "staging memory makes a half at the first piece that needs it"
+          test_staging_halves;
         stateful ~count:16 ~steps:1 ~domains:2
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"

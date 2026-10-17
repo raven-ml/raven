@@ -1030,10 +1030,11 @@ module Buffer : sig
       a device of that machine copies.
 
       A copy that no device can run directly passes through {e staging
-      memory}, host memory that rig makes at the first copy that needs it and
-      keeps for the life of the process. A device that maps no host memory
-      ([maps_host] in {!Rig_edge.type-facts}) stages through [Pinned] memory
-      of its own, which it keeps until it is lost.
+      memory}, host memory that rig makes in allocations of 32 MiB, each at
+      the first copy whose bytes need it, and keeps for the life of the
+      process. A device that maps no host memory ([maps_host] in
+      {!Rig_edge.type-facts}) stages through [Pinned] memory of its own,
+      which it keeps until it is lost.
 
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the

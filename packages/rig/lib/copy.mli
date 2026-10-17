@@ -19,7 +19,9 @@
     Where no route runs in one transfer, the copy goes through staging memory,
     in pieces of 32 MiB. Staging memory is two slots of two halves, and a copy
     holds one slot while the other serves another copy. Each half is an
-    allocation of its own, since stamps order the uses of a whole allocation.
+    allocation of its own, since stamps order the uses of a whole allocation,
+    and is made at the first piece that needs it, so a copy of one piece
+    makes one.
     The host's slots serve every device that maps host memory. A device of
     this machine that maps none stages through slots of its own [Pinned]
     memory, which go with it once it is lost; two such devices share no

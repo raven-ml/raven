@@ -587,7 +587,9 @@ let made_bytes d =
 (* Staging memory *)
 
 (* A copy that no device runs in one transfer goes through staging memory: two
-   slots of two halves of 32 MiB, each half an allocation (copy.mli). *)
+   slots of two halves of 32 MiB, each half an allocation made at the first
+   piece that needs it (copy.mli). The model's sizes are under a piece, so
+   a copy needs the first half of its slot alone. *)
 let half_bytes = 32 * 1024 * 1024
 
 (* The device whose own staging memory a copy between [b] and host memory goes
@@ -617,18 +619,19 @@ let known_halves r =
   else r.halves
 
 (* A copy through [r]'s own staging memory, whose legs may run on [users]: the
-   budget may refuse a half of the slot it takes while one is not made. *)
+   budget may refuse the first half of the slot it takes while it is not
+   made. *)
 let stages w v r users =
   r.stagers <- List.fold_left (fun l d -> add d l) r.stagers users;
-  let missing = 2 - known_halves r in
+  let missing = 1 - known_halves r in
   if
     missing > 0 && v.oom = `No
     && may_refuse w r (made_bytes r) (missing * half_bytes)
   then v.oom <- `May
 
 (* A copy through [r]'s own staging memory returned: on one domain it took the
-   first slot, whose two halves are then made. On two, either slot. *)
-let staged w r = if not w.two then r.halves <- 2
+   first slot, whose first half is then made. On two, either slot. *)
+let staged w r = if not w.two then r.halves <- 1
 
 (* The system *)
 

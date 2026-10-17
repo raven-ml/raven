@@ -35,9 +35,9 @@ let record src dst bytes start =
            stop = Profile.now ();
          })
 
-(* Staging memory, as copy.mli states it, made at the first copy that needs
-   it. Halves of one allocation would order every leg after the other half's
-   last one, so each half is an allocation of its own. *)
+(* Staging memory, as copy.mli states it, each half made at the first piece
+   that needs it. Halves of one allocation would order every leg after the
+   other half's last one, so each half is an allocation of its own. *)
 let half_bytes = 32 * 1024 * 1024
 
 type stage = {
@@ -303,7 +303,9 @@ let through st n ~sides ~ahead ~into ~out_of =
   let pieces = (n + half_bytes - 1) / half_bytes in
   let len k = Int.min half_bytes (n - (k * half_bytes)) in
   let run i =
-    let h0 = half st i 0 and h1 = half st i 1 in
+    let h0 = half st i 0 in
+    (* One piece goes through the first half alone. *)
+    let h1 = if pieces > 1 then half st i 1 else h0 in
     let half k =
       Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0 ~length:(len k)
     in
