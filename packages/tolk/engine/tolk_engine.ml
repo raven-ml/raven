@@ -94,6 +94,32 @@ let is_slot u =
 
 let bytes u = Shape.max_numel u * Dtype.itemsize (Ops.dtype u)
 
+(* The alignment and phase of storage ({!Ops.type-param_arg}). *)
+let start u =
+  match Ops.arg u with Ops.Param p -> (p.align, p.phase) | _ -> (1, 0)
+
+(* The bytes by which [buf]'s first byte lies past a multiple of [align]. *)
+let phase buf align =
+  let rec find j =
+    if Rig.Buffer.aligned buf ~at:(-j) align then j else find (j + 1)
+  in
+  find 0
+
+(* Whether [buf] starts where storage of alignment [align] and phase [p]
+   does. *)
+let starts_at buf (align, p) =
+  align = 1 || Rig.Buffer.aligned buf ~at:(-p) align
+
+(* [n] bytes of [d] that start where storage of alignment [align] and phase [p]
+   does: a buffer of its own where [d] starts one there ([Rig.alignment]), and
+   else a view into [align - 1] more bytes. *)
+let create_at d n (align, p) =
+  if p = 0 && Rig.alignment d >= align then Rig.Buffer.create d n
+  else
+    let buf = Rig.Buffer.create d (n + align - 1) in
+    let first = (p - phase buf align + align) mod align in
+    Rig.Buffer.view buf ~first ~length:n
+
 let sint u =
   match Ops.arg u with
   | Ops.Const (`Int z) -> Ops.Int (Bigint.to_int z)
@@ -170,10 +196,19 @@ type input =
   | Whole of source
   | Part of { source : source; first : int array -> int; length : int }
 
-(* Where a view lies: in memory made at link, of its bytes, or in an input, at
-   an offset. *)
-type place = Memory of { memory : int; bytes : int } | Input of int
-type located = { place : place; offset : affine; device : Rig.t }
+(* Where a view lies: in memory made at link, of its bytes from its byte
+   [first], or in an input, at an offset; and the alignment and phase its
+   storage starts at. *)
+type place =
+  | Memory of { memory : int; first : int; bytes : int }
+  | Input of int
+
+type located = {
+  place : place;
+  offset : affine;
+  device : Rig.t;
+  start : int * int;
+}
 
 (* Linking *)
 
@@ -207,6 +242,7 @@ type builder = {
   lane_inputs : (int * int, int) Hashtbl.t;
   mutable bound_inputs : (Rig.Buffer.t * int) list;
   mutable params : (int * Rig.t list * int) list;
+  starts : (int * int, int * int) Hashtbl.t;
   words : word_kind Dynarray.t;
   var_words : (string, int) Hashtbl.t;
   computed : (int * int) list Ops.Tbl.t;
@@ -309,7 +345,9 @@ let value b lane (s : Ops.sint) : Rig_program.value =
 
 (* Storage *)
 
-let memory b base lane d =
+(* The memory of lane [lane] of storage [base] made at link on [d], whose first
+   [first] bytes lie before the storage's. *)
+let memory b base lane d ~first =
   let lanes =
     match Ops.Tbl.find_opt b.memories base with
     | Some l -> l
@@ -326,7 +364,7 @@ let memory b base lane d =
           {
             device = device_index b d;
             kind = Device;
-            bytes = max 1 (bytes base);
+            bytes = first + max 1 (bytes base);
             init = { bytes = ""; holes = [||] };
             copies = One;
           }
@@ -367,6 +405,18 @@ let note_param b slot ds n =
   if not (List.exists (fun (s, _, _) -> s = slot) b.params) then
     b.params <- (slot, ds, n) :: b.params
 
+(* The bytes before storage made at link on [d] in its memory, which starts on
+   [d]'s alignment ([Rig.alignment]): the storage's phase. An io device's
+   storage has none. *)
+let first_byte b base d =
+  let align, p = start base in
+  if not (Rig.computes d) then 0
+  else if Rig.alignment d < align then
+    fail b.fn "%s starts memory on %d bytes, not the %d of %s" (Rig.name d)
+      (Rig.alignment d) align
+      (Format.asprintf "%a" Ops.pp base)
+  else p
+
 (* Where the view [u] of lane [lane] lies: a lane of a parameter, which a run
    gives; of bound storage; of storage made at link; or of a stack of one view
    per device. A storage of one device serves every lane. *)
@@ -390,6 +440,7 @@ let rec locate b u lane =
         place = Input (lane_input b ~slot:p.slot ~lane:j d n);
         offset;
         device = d;
+        start = start base;
       }
   | Op.Buffer, _ -> (
       let ns = names base in
@@ -401,14 +452,17 @@ let rec locate b u lane =
             place = Input (bound_input b buf);
             offset;
             device = Rig.Buffer.device buf;
+            start = start base;
           }
       | None ->
           let d = b.named (List.nth ns j) in
-          let memory = memory b base j d in
+          let first = first_byte b base d in
+          let memory = memory b base j d ~first in
           {
-            place = Memory { memory; bytes = max 1 (bytes base) };
+            place = Memory { memory; first; bytes = max 1 (bytes base) };
             offset;
             device = d;
+            start = start base;
           })
   | Op.Mstack, _ ->
       let k = match shard with Some k -> k | None -> lane in
@@ -506,7 +560,8 @@ let place b bytes holes at width a =
 
 let whole (l : located) : Rig_program.slot =
   match l.place with
-  | Memory { memory; bytes } -> Memory { memory; offset = 0; length = bytes }
+  | Memory { memory; first; bytes } ->
+      Memory { memory; offset = first; length = bytes }
   | Input i -> Input i
 
 let program_info prg =
@@ -581,6 +636,33 @@ let split_grid b lane extent (k : Ops.kernel_info) : grid * grid =
       ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
         (Int (new_word b (Computed t)), Fixed 1, Fixed 1) )
 
+(* A kernel's vector accesses lie on their width only where each buffer it
+   accesses starts at its storage's alignment and phase ({!Tolk.Codegen}).
+   Linking checks a bound buffer here, and each run the lanes of parameters. A
+   copy moves bytes wherever they start. *)
+let note_start b (l : located) =
+  match l.place with
+  | Memory _ -> ()
+  | Input i -> (
+      match fst (Dynarray.get b.inputs i) with
+      | Whole (Lane { slot; lane }) -> (
+          match Hashtbl.find_opt b.starts (slot, lane) with
+          | None -> Hashtbl.replace b.starts (slot, lane) l.start
+          | Some s when s = l.start -> ()
+          | Some (align, p) ->
+              let align', p' = l.start in
+              fail b.fn
+                "slot %d is accessed %d bytes past a multiple of %d and %d \
+                 past %d"
+                slot p align p' align')
+      | Whole (Bound buf) when not (starts_at buf l.start) ->
+          let align, p = l.start in
+          fail b.fn
+            "a bound buffer of %s starts %d bytes past a multiple of %d, not %d"
+            (Rig.name (Rig.Buffer.device buf))
+            (phase buf align) align p
+      | Whole (Bound _) | Part _ -> ())
+
 (* The launch of the compiled program [prg] that [call] makes on its lane
    [lane], whose device is [d]. A host program runs on its device's host. *)
 let launch b call prg lane d =
@@ -636,6 +718,7 @@ let launch b call prg lane d =
     List.map2
       (fun g (at, _) ->
         let l = locate b (List.nth args g) lane in
+        note_start b l;
         place b params holes at 8 l.offset;
         let use : Rig_program.use =
           if List.mem g info.outs then Write else Read
@@ -691,7 +774,8 @@ let copy_end (l : located) :
     Rig_program.slot * (Rig_program.value * int) iarray =
   let slot : Rig_program.slot =
     match l.place with
-    | Memory { memory; bytes } -> Memory { memory; offset = 0; length = bytes }
+    | Memory { memory; first; bytes } ->
+      Memory { memory; offset = first; length = bytes }
     | Input i -> Input i
   in
   let words = List.map (fun (w, f) -> (Rig_program.Int w, f)) l.offset.terms in
@@ -705,9 +789,9 @@ let copy_end (l : located) :
    computes. A move copies its ends whole ([Rig.Buffer.copy]). *)
 let move_end b (l : located) n : Rig_program.slot =
   match l.place with
-  | Memory { memory; _ } -> (
+  | Memory { memory; first; _ } -> (
       match l.offset.terms with
-      | [] -> Memory { memory; offset = l.offset.add; length = n }
+      | [] -> Memory { memory; offset = first + l.offset.add; length = n }
       | _ -> fail b.fn "a move's offset into storage made at link moves")
   | Input i ->
       let input, desc = Dynarray.get b.inputs i in
@@ -825,6 +909,9 @@ type t = {
   loaded : Rig_program.loaded;
   params : (int * Rig.t list * int) list;
       (* the parameters the runs bind: slot, devices and bytes *)
+  starts : ((int * int) * (int * int)) list;
+      (* the lanes of parameters kernels read, by slot and lane, and the
+         alignment and phase their buffers start at *)
   cells : (string, int) Hashtbl.t; (* the variables' cells, by name *)
   env : env; (* the variables of the run being made *)
   words : word_kind array;
@@ -870,6 +957,7 @@ let link_with ~separate ~devices ?(bound = []) linear =
       lane_inputs = Hashtbl.create 16;
       bound_inputs = [];
       params = [];
+      starts = Hashtbl.create 16;
       words = Dynarray.create ();
       var_words = Hashtbl.create 16;
       computed = Ops.Tbl.create 16;
@@ -914,6 +1002,7 @@ let link_with ~separate ~devices ?(bound = []) linear =
     lock = Mutex.create ();
     loaded;
     params = List.rev b.params;
+    starts = Hashtbl.fold (fun k v l -> (k, v) :: l) b.starts [];
     cells = b.cells;
     env = { values = Array.make n 0; set = Array.make n false };
     words;
@@ -930,6 +1019,22 @@ let link_with ~separate ~devices ?(bound = []) linear =
 
 let link ~devices ?bound linear =
   link_with ~separate:(Setting.value Setting.debug >= 2) ~devices ?bound linear
+
+(* Checks, without allocating, that each lane a kernel accesses starts at its
+   parameter's phase. *)
+let rec check_starts fn slots = function
+  | [] -> ()
+  | ((slot, lane), start) :: rest ->
+      let buf = List.nth slots.(slot) lane in
+      if not (starts_at buf start) then begin
+        let align, p = start in
+        fail fn
+          "slot %d's buffer of %s starts %d bytes past a multiple of %d, not %d"
+          slot
+          (Rig.name (Rig.Buffer.device buf))
+          (phase buf align) align p
+      end;
+      check_starts fn slots rest
 
 let check_slots t slots =
   let fn = "Tolk_engine.run" in
@@ -949,7 +1054,8 @@ let check_slots t slots =
             fail fn "slot %d takes %d bytes, not %d" slot n
               (Rig.Buffer.length buf))
         ds bs)
-    t.params
+    t.params;
+  check_starts fn slots t.starts
 
 let buffer slots = function
   | Bound buf -> buf
@@ -1067,7 +1173,12 @@ let slots t =
   let slots = Array.make n [] in
   List.iter
     (fun (slot, ds, bytes) ->
-      slots.(slot) <- List.map (fun d -> Rig.Buffer.create d (max 1 bytes)) ds)
+      let create lane d =
+        match List.assoc_opt (slot, lane) t.starts with
+        | Some start -> create_at d (max 1 bytes) start
+        | None -> Rig.Buffer.create d (max 1 bytes)
+      in
+      slots.(slot) <- List.mapi create ds)
     t.params;
   slots
 

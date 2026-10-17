@@ -1525,6 +1525,11 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.run`, `time` and `link` raise `Invalid_argument` for a buffer
+  a kernel accesses that does not start at its parameter's phase, such as
+  `Rig.Buffer.view b ~first:4` for a phase-0 parameter, whose vector accesses
+  faulted on x86. `Tolk_engine.slots`, storage made at link and
+  `Memory.memory_plan_rewrite` start buffers at their phase.
 - `Tolk_engine.time` sums only the work of the run it times, which it finds
   by the points the run's steps report: a kernel of the same name that
   another domain ran meanwhile added to the time, so a search under load

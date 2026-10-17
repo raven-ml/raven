@@ -139,6 +139,84 @@ let buffers () =
 let axpy_on_host prg =
   Engine.link_call ~devices (call_on "CPU" ~size:4 ~slots:3 prg)
 
+(* [n] bytes of a buffer of [d] whose first byte lies [phase] bytes past a
+   16-byte boundary, holding [bytes] where given. *)
+let at_phase ?bytes d phase n =
+  let b = Buffer.create d (n + 15) in
+  let rec first j =
+    if Buffer.aligned b ~at:(j - phase) 16 then j else first (j + 1)
+  in
+  let v = Buffer.view b ~first:(first 0) ~length:n in
+  Option.iter (fun src -> Buffer.copy ~src ~dst:v) bytes;
+  v
+
+(* A copy of [b] 4 bytes past a 16-byte boundary. *)
+let off_phase b = at_phase ~bytes:b (Buffer.device b) 4 (Buffer.length b)
+
+(* axpy whose parameter 1 lies 4 bytes past a 16-byte boundary, called on the
+   host. *)
+let phased_kernel () =
+  let open Ops.O in
+  let buffer slot =
+    if slot = 1 then Call.param ~shape:[ Ops.Int 4 ] ~phase:4 slot Float32
+    else Call.placeholder ~slot [ 4 ] Float32
+  in
+  let n =
+    Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
+      (Dtype.Value.of_int 100)
+  in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let at b = Ops.index (buffer b) [ i ] in
+  let sink =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"phased_axpy" ())
+      [ Ops.end_ (Ops.store (at 0) ((at 1 * Ops.cast n Float32) + at 2)) [ i ] ]
+  in
+  Codegen.to_program sink (Lazy.force clang)
+
+let phased_prg = lazy (phased_kernel ())
+
+let phased_call () =
+  Ops.call (Lazy.force phased_prg)
+    (List.init 3 (fun slot ->
+         let phase = if slot = 1 then 4 else 0 in
+         Call.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") ~phase slot
+           Float32))
+
+let phased_axpy () = Engine.link_call ~devices (phased_call ())
+
+(* What a refusal of a buffer off its phase says. *)
+let off_its_phase = Exn.invalid_arg ~substring:"bytes past a multiple of 16"
+
+(* A buffer the schedule makes 4 bytes past a 16-byte boundary: a copy of slot
+   1 into it, then phased_axpy over it into slot 0. *)
+let runs_on_made_storage () =
+  let param slot =
+    Call.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") slot Float32
+  in
+  let made = Ops.new_buffer ~phase:4 (Single "CPU") 4 Float32 in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Call.store_call made (param 1);
+          Ops.call (Lazy.force phased_prg) [ param 0; made; param 2 ];
+        ]
+  in
+  let s = Engine.link ~devices (compile linear) and bufs = buffers () in
+  Engine.run ~vars:[ ("n", 3) ] s bufs;
+  equal values
+    (floats [| 13.; 26.; 39.; 52. |])
+    (Run.values Float32 (List.hd bufs.(0)))
+
+let runs_at_its_phase () =
+  let s = phased_axpy () and bufs = buffers () in
+  bufs.(1) <- [ off_phase (List.hd bufs.(1)) ];
+  Engine.run ~vars:[ ("n", 3) ] s bufs;
+  equal values
+    (floats [| 13.; 26.; 39.; 52. |])
+    (Run.values Float32 (List.hd bufs.(0)))
+
 let runs_a_kernel () =
   let s = axpy_on_host (Lazy.force axpy) and bufs = buffers () in
   Engine.run ~vars:[ ("n", 3) ] s bufs;
@@ -206,6 +284,39 @@ let on_the_host =
           bufs.(0) <- [ Run.buffer host Float32 (floats [| 0.; 0.; 0. |]) ];
           raises_match Exn.invalid_arg (fun () ->
               Engine.run ~vars:[ ("n", 1) ] s bufs));
+      test "run refuses a buffer that starts off its parameter's phase"
+        (fun () ->
+          let s = axpy_on_host (Lazy.force axpy) in
+          let bufs = buffers () in
+          bufs.(1) <- [ off_phase (List.hd bufs.(1)) ];
+          raises_match
+            (Exn.invalid_arg ~substring:"slot 1's buffer of CPU starts 4 bytes")
+            (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs);
+          equal values
+            (floats [| 0.; 0.; 0.; 0. |])
+            (Run.values Float32 (List.hd bufs.(0))));
+      test "a parameter of phase 4 runs on a buffer 4 bytes past 16"
+        runs_at_its_phase;
+      test "storage made at link of phase 4 is made 4 bytes past 16"
+        runs_on_made_storage;
+      test "run refuses a phase-4 parameter's buffer on a 16-byte boundary"
+        (fun () ->
+          let s = phased_axpy () in
+          let bufs = buffers () in
+          bufs.(1) <- [ at_phase ~bytes:(List.hd bufs.(1)) host 0 16 ];
+          raises_match
+            (Exn.invalid_arg ~substring:"slot 1's buffer of CPU starts 0 bytes")
+            (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs));
+      test "link refuses a parameter that two calls access at two phases"
+        (fun () ->
+          let axpy = call_on "CPU" ~size:4 ~slots:3 (Lazy.force axpy) in
+          raises_match (Exn.invalid_arg ~substring:"slot 1 is accessed")
+            (fun () ->
+              Engine.link ~devices
+                (compile (Ops.v Op.Linear ~src:[ axpy; phased_call () ]))));
+      test "run takes the slots of a phase-4 parameter" (fun () ->
+          let s = phased_axpy () in
+          Engine.run ~vars:[ ("n", 1) ] s (Engine.slots s));
       test "run refuses an unbound variable" (fun () ->
           let s = axpy_on_host (Lazy.force axpy) in
           raises_match Exn.invalid_arg (fun () -> Engine.run s (buffers ())));
@@ -605,6 +716,21 @@ let runs_on_its_slots ?(devices = devices) name () =
       Engine.run ~vars s (slots storage);
       equal slot_values (expected ~vars big storage) (by_slot storage contents))
     [ storage_of ~devices big; storage_of ~devices ~seed:5 big ]
+
+(* A copy reads bytes wherever they start: copy runs with the buffer of slot 1,
+   which only its copy reads, 4 bytes past a 16-byte boundary, the parameter's
+   phase 0. *)
+let copies_off_phase () =
+  let s, vars, big = parameterized "copy" in
+  let storage =
+    List.map
+      (fun s ->
+        if s.arg.slot <> 1 then s
+        else { s with buffers = List.map off_phase s.buffers })
+      (storage_of big)
+  in
+  Engine.run ~vars s (slots storage);
+  equal slot_values (expected ~vars big storage) (by_slot storage contents)
 
 (* A range of three trips around a call of a kernel that adds one to four
    floats, each trip on the next four of twelve. *)
@@ -1408,6 +1534,8 @@ let schedules =
       slow "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
+      test "a copy runs on a buffer off its parameter's phase"
+        copies_off_phase;
       cases ~name:Fun.id
         "a pad of integer divisions writes what its tensors compute"
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
@@ -1455,12 +1583,12 @@ let link_refuses what f =
   test ("link refuses " ^ what) (fun () -> raises_match Exn.invalid_arg f)
 
 (* A refusal names the slot. *)
-let run_refuses ?(devices = devices) what name slots_of =
+let run_refuses ?(devices = devices) ?(says = Exn.invalid_arg ~substring:"slot")
+    what name slots_of =
   test ("run refuses " ^ what) (fun () ->
       let s, vars, big = parameterized ~devices name in
       let storage = storage_of ~devices big in
-      raises_match (Exn.invalid_arg ~substring:"slot") (fun () ->
-          Engine.run ~vars s (slots_of storage)))
+      raises_match says (fun () -> Engine.run ~vars s (slots_of storage)))
 
 (* [rebound storage k f] is the slots of [storage] with slot [k]'s buffers [f
    buffers]. *)
@@ -1501,6 +1629,9 @@ let refusals =
         (with_bound 4 (fun _ -> [ floats_on "CPU" 15 ]));
       link_refuses "storage bound to a buffer for each of two devices"
         (with_bound 4 (fun bs -> bs @ bs));
+      test "link refuses storage a kernel reads bound off its phase" (fun () ->
+          raises_match off_its_phase
+            (with_bound 2 (fun _ -> [ at_phase host 4 64 ])));
       link_refuses "a bound node that is no storage" (fun () ->
           let storage = storage_of (program "add") in
           let bound =
@@ -1531,6 +1662,18 @@ let refusals =
             (List.find (fun s -> List.length s.buffers = 2) storage).arg.slot
           in
           rebound k (fun bs -> [ List.hd bs ]) storage);
+      run_refuses "a sharded parameter whose second lane is off its phase"
+        "shard_add"
+        ~says:(fun e ->
+          off_its_phase e
+          && Exn.invalid_arg ~substring:"buffer of CPU:1 starts 4" e)
+        (fun storage ->
+          let k =
+            (List.find (fun s -> List.length s.buffers = 2) storage).arg.slot
+          in
+          rebound k
+            (function [ a; b ] -> [ a; off_phase b ] | bs -> bs)
+            storage);
       test "run refuses a variable it binds no value" (fun () ->
           let s, _, big = parameterized "variable_shrink" in
           let storage = storage_of big in
@@ -2206,6 +2349,9 @@ let on_a_gpu (kind, _) =
         loop_bounds (fun bounds -> loops_around_calls ~devices "CPU:1" bounds);
       reads_trips_on ~devices "CPU:1";
       reads_trips_under_a_back_edge ~devices "CPU:1";
+      run_refuses ~devices ~says:off_its_phase
+        "a buffer its kernel writes off its phase" "copy"
+        (rebound 2 (List.map off_phase));
       slow "at DEBUG=2, a run prints a line per kernel"
         (reports_each_kernel ~devices "CPU:1");
     ]

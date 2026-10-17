@@ -106,7 +106,8 @@ let printouts =
 
 (* collect_bufs *)
 
-let buf ?(device = cpu) ?(dt = Dtype.Int8) size = Ops.new_buffer device size dt
+let buf ?(device = cpu) ?(dt = Dtype.Int8) ?phase size =
+  Ops.new_buffer ?phase device size dt
 
 let collected =
   let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
@@ -158,13 +159,14 @@ let rules =
 
    Over generated schedules of calls of buffers, some calls copies between two,
    some buffers held: a planned buffer is the bytes of an arena at its place,
-   viewed as its type; two buffers whose lifetimes meet never share a byte;
+   viewed as its type and at its phase; two buffers whose lifetimes meet never
+   share a byte;
    copies and the other calls use arenas of their own; held buffers stay. A
    buffer lives from the first call that takes it to the last, and a copy's
    buffers for as many calls again after. *)
 
 type drawn = {
-  sizes : (int * Dtype.t) list;
+  sizes : (int * Dtype.t * int) list;
   calls : (int list * bool) list;
   held : int list;
 }
@@ -177,7 +179,9 @@ let pp_drawn ppf d =
   in
   Format.fprintf ppf "sizes [%s], %a, held [%s]"
     (String.concat "; "
-       (List.map (fun (n, dt) -> Format.asprintf "%d %a" n Dtype.pp dt) d.sizes))
+       (List.map
+          (fun (n, dt, p) -> Format.asprintf "%d %a at %d" n Dtype.pp dt p)
+          d.sizes))
     (Format.pp_print_list
        ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
        pp_call)
@@ -190,9 +194,10 @@ let drawn =
   let buffer = int_range 0 (n - 1) in
   let+ sizes =
     list ~size:(constant n)
-      (pair
+      (triple
          (of_list [ 1; 16; 255; 256; 257; 1000; 4096; 70_000 ])
-         (of_list [ Dtype.Int8; Float32; Float16 ]))
+         (of_list [ Dtype.Int8; Float32; Float16 ])
+         (of_list [ 0; 0; 4; 12 ]))
   and+ calls =
     list ~size:(int_range 1 12)
       (let* bs = list ~size:(int_range 1 4) buffer in
@@ -204,7 +209,9 @@ let drawn =
 let drawn = Gen.with_pp pp_drawn drawn
 
 let build d =
-  let buffers = Array.of_list (List.map (fun (n, dt) -> buf ~dt n) d.sizes) in
+  let buffers =
+    Array.of_list (List.map (fun (n, dt, phase) -> buf ~dt ~phase n) d.sizes)
+  in
   let calls =
     List.map
       (fun (bs, copy) ->
@@ -286,8 +293,12 @@ let plans d =
     (fun (b, p) ->
       match view p with
       | Some (_, off, len) ->
+          let _, phase = Call.storage_phase b in
           equal ~msg:"a view of the buffer's bytes" int (Shape.nbytes b) len;
-          equal ~msg:"a place on a block" int 0 (off mod 256);
+          equal ~msg:"a place its phase past a block" int 0
+            ((off - phase) mod 256);
+          equal ~msg:"a view at the buffer's phase" (pair int int)
+            (Call.storage_phase b) (Call.storage_phase p);
           equal ~msg:"a view of the buffer's type" Dtypes.dtype (Ops.dtype b)
             (Ops.dtype p)
       | None -> ())
@@ -314,7 +325,11 @@ let plans d =
           end)
         views)
     views;
-  cover "buffers share an arena" (List.length views > 1)
+  cover "buffers share an arena" (List.length views > 1);
+  cover "a buffer off 16 bytes is planned"
+    (List.exists
+       (fun (b, _) -> snd (Call.storage_phase buffers.(b)) <> 0)
+       views)
 
 let laws =
   group "memory_plan_rewrite › laws"

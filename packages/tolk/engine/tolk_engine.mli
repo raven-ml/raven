@@ -59,7 +59,8 @@ val link :
     loaded on [devices], which maps each device name of [linear] to its device.
     - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffers in [bound]
       (default [[]]), one per device of its placement, and is made at link
-      otherwise, in its device's memory, which the runs share.
+      otherwise, in its device's memory, starting at its phase ({!run}), which
+      the runs share.
     - A kernel's lanes are the devices of its first argument: it is launched on
       each, with the lane's shard of each argument and ["_device_num"] bound to
       the lane's index. A host program is launched on its device's host, which
@@ -87,12 +88,16 @@ val link :
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     its devices are of several machines, if a kernel's lane is a device of
     another kind than its program's target, if [bound] gives a storage node
-    buffers of other devices, sizes or number than its placement, if a value
-    under a range moves with its trips in another way than above, if a back
-    edge's flag moves with the run's words, or if [linear] is not a compiled
-    schedule; {!Rig.Out_of_memory} if a device cannot allocate its storage; and
-    [Failure] with the reason if the program does not load, such as a device
-    that refuses a program's binary. *)
+    buffers of other devices, sizes or number than its placement, or a buffer
+    a kernel accesses that does not start at the node's phase ({!run}), if
+    a device starts its memory on fewer bytes ({!Rig.alignment}) than the
+    alignment of a storage node made there, if kernels access a parameter at
+    two alignments or phases, if a value under a range moves with its trips in
+    another way than above, if a back edge's flag moves with the run's words,
+    or if [linear] is not a compiled schedule;
+    {!Rig.Out_of_memory} if a device cannot allocate its storage; and [Failure]
+    with the reason if the program does not load, such as a device that
+    refuses a program's binary. *)
 
 val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
 (** [run ~vars s slots] runs [s] with [slots.(i)] bound to its parameter [i] (an
@@ -101,6 +106,14 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
     (default [[]]), or else to the value it is bound to. It runs the calls of
     [s] in order, with each range's trips, and each back edge's while its flag
     holds ({!Rig_program.run}).
+
+    A kernel's vector accesses are aligned to their width only where each
+    buffer it accesses starts at its parameter's phase: its first byte lies the
+    parameter's [phase] bytes past a multiple of its [align]
+    ({!Tolk.Ops.type-param_arg}), as {!Rig.Buffer.aligned} tells. [run] checks
+    this of each buffer a kernel of [s] accesses, before any work runs. A copy
+    moves bytes wherever they start, so a buffer that only copies access may
+    start anywhere.
 
     [run] returns once every call is submitted: a read of a result waits for the
     work that wrote it ({!Rig.Buffer.read}). Runs of [s] are serialized: a run
@@ -115,13 +128,14 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     buffers of its placement's devices, each holding its parameter's bytes, if a
+    buffer a kernel accesses does not start at its parameter's phase, if a
     variable is unbound, and as {!Rig_program.run} does. *)
 
 val slots : t -> Rig.Buffer.t list array
 (** [slots s] is, for each slot that a parameter of [s] takes, a buffer on each
-    device of the parameter's placement holding the parameter's bytes, and no
-    buffer for a slot no parameter takes: slots {!run} and {!time} accept. Their
-    contents are unspecified.
+    device of the parameter's placement holding the parameter's bytes, starting
+    at its phase, and no buffer for a slot no parameter takes: slots {!run} and
+    {!time} accept. Their contents are unspecified.
 
     Raises {!Rig.Out_of_memory} if a device cannot allocate a buffer. *)
 

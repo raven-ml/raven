@@ -93,7 +93,10 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
         else 0
       in
       let block_size = 256 in
-      let size b = max_numel b * element_size b in
+      (* A buffer whose first byte lies [phase] bytes past a 16-byte boundary,
+         which its kernels read it at, lies as far past its place. *)
+      let phase b = match arg b with Param p -> p.phase | _ -> 0 in
+      let size b = phase b + (max_numel b * element_size b) in
       let rounded b = Helpers.round_up (size b) block_size in
       let events =
         List.stable_sort
@@ -144,7 +147,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
         List.map
           (fun b ->
             let arena = List.assq (lane (key b)) arenas in
-            let off = Tbl.find offsets b in
+            let off = Tbl.find offsets b + phase b in
             ( b,
               bitcast
                 (shrink arena [ Some (Int off, Int (off + nbytes b)) ])

@@ -7,10 +7,11 @@
 
 let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
   let param i u =
+    let align, phase = Call.storage_phase u in
     ( u,
       Call.param
         ~shape:[ Int (Shape.max_numel u) ]
-        ?device:(Ops.device u) i (Ops.dtype u) )
+        ?device:(Ops.device u) ~phase ~align i (Ops.dtype u) )
   in
   let linear =
     Ops.substitute ~calls:Skip ~pass:Once linear (List.mapi param inputs)

@@ -587,6 +587,22 @@ let shares first other =
 
 (* [checked g f a] is [g a], checked against eager's [f a]. *)
 let checked g f a () = equal close (f a) (g a)
+
+(* [n] floats over memory that starts 4 bytes past a 16-byte boundary, as a
+   tensor mapped from a file may. *)
+let past_boundary n =
+  let ba = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout (n + 4) in
+  let b = Rig.Buffer.of_bigarray ba in
+  let k =
+    List.find
+      (fun k -> Rig.Buffer.aligned b ~at:((4 * k) - 4) 16)
+      [ 0; 1; 2; 3 ]
+  in
+  let sub = Bigarray.Array1.sub ba k n in
+  for i = 0 to n - 1 do
+    sub.{i} <- float_of_int i
+  done;
+  Nx.of_bigarray (Bigarray.genarray_of_array1 sub)
 let arange n = Nx.arange_f Nx.float32 0. (float_of_int n) 1.
 let grid r c = Nx.reshape [| r; c |] (arange (r * c))
 
@@ -628,6 +644,8 @@ let keys =
           retraces
             (checked g poly (Nx.slice [ R (0, 4) ] a))
             (checked g poly (Nx.slice [ R (1, 5) ] a)));
+      test "a call over memory 4 bytes past a 16-byte boundary equals eager"
+        (checked (Rune.jit' poly) poly (past_boundary 12));
       test "an argument starting 16 bytes further shares the program" (fun () ->
           let g = g () in
           let a = arange 12 in

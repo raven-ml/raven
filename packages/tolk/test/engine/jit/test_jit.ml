@@ -34,11 +34,13 @@ let parameters u =
          Ops.op n = Param && Ops.tag n = None && (param_arg n).slot >= 0)
        (Ops.toposort ~calls:Skip u))
 
-(* The parameter the [i]th input [u] becomes: of its type, device and size. *)
+(* The parameter the [i]th input [u] becomes: of its type, device, size and
+   phase. *)
 let parameter i u =
+  let align, phase = Call.storage_phase u in
   Call.param
     ~shape:[ Int (Shape.max_numel u) ]
-    ?device:(Ops.device u) i (Ops.dtype u)
+    ?device:(Ops.device u) ~phase ~align i (Ops.dtype u)
 
 (* The unbound variables the calls of a schedule read, with their bounds. *)
 let variables linear =
@@ -556,6 +558,68 @@ let capture_of d =
     held,
     List.init d.n_inputs (Array.get nodes) )
 
+(* An input 4 bytes past a 16-byte boundary: the kernel that adds one to it
+   reads it at that phase, and so does its parameter, which a run binds to a
+   buffer that starts there. *)
+
+let inc_phased =
+  lazy
+    (let i = Ops.range (Int 4) [ 0 ] in
+     let out = Call.placeholder ~slot:0 [ 4 ] Float32
+     and src = Call.param ~shape:[ Ops.Int 4 ] ~phase:4 1 Float32 in
+     let at b = Ops.index b [ i ] in
+     Codegen.to_program
+       (Ops.sink
+          ~kernel:(Ops.kernel_info ~name:"inc_phased" ())
+          [
+            Ops.end_
+              (Ops.store (at out)
+                 (Ops.add (at src) (Ops.float ~dtype:Float32 1.)))
+              [ i ];
+          ])
+       (Lazy.force clang))
+
+(* [values] in a buffer of the host whose first byte lies 4 bytes past a 16-byte
+   boundary. *)
+let past_boundary values =
+  let n = 4 * Array.length values in
+  let b = Rig.Buffer.create Rig.host (n + 15) in
+  let first =
+    List.find
+      (fun j -> Rig.Buffer.aligned b ~at:(j - 4) 16)
+      (List.init 16 Fun.id)
+  in
+  let v = Rig.Buffer.view b ~first ~length:n in
+  Rig.Buffer.copy ~src:(Run.buffer Rig.host Float32 values) ~dst:v;
+  v
+
+let runs_a_phased_input () =
+  let out = Ops.new_buffer (Single "CPU") 4 Float32
+  and input = Ops.new_buffer ~phase:4 (Single "CPU") 4 Float32 in
+  let linear =
+    Ops.v Op.Linear ~src:[ Ops.call (Lazy.force inc_phased) [ out; input ] ]
+  in
+  let lowered =
+    Jit.jit_lower
+      ~targets:(fun n -> Engine.target (devices n))
+      ~held_bufs:[ out ] ~inputs:[ input ] linear
+  in
+  binds_inputs ~inputs:[ input ] linear lowered;
+  let dst = Run.buffer Rig.host Float32 (Array.make 4 (`Float 0.)) in
+  let s = Engine.link ~devices ~bound:[ (out, [ dst ]) ] lowered in
+  let floats xs = Array.map (fun x -> `Float x) xs in
+  Engine.run s [| [ past_boundary (floats [| 1.; 2.; 3.; 4. |]) ] |];
+  equal (array Dtypes.value)
+    (floats [| 2.; 3.; 4.; 5. |])
+    (Run.values Float32 dst)
+
+let phased =
+  group "jit_lower › phase"
+    [
+      test "an input 4 bytes past 16 bytes runs as a parameter of its phase"
+        runs_a_phased_input;
+    ]
+
 let lower_drawn (linear, held, inputs) =
   Jit.jit_lower
     ~targets:(fun n -> Engine.target (devices n))
@@ -593,4 +657,4 @@ let drawn_laws =
           lowers_the_same (fun () -> lower_drawn c));
     ]
 
-let () = exit (run "Jit" [ captures; recorded; replays; drawn_laws ])
+let () = exit (run "Jit" [ captures; recorded; replays; phased; drawn_laws ])

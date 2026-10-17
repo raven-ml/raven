@@ -33,12 +33,13 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     overwritten while it may still run.
 
     Each device and kind of buffer has one arena, an {!Op.Buffer} of
-    {!Dtype.Int8} as large as its buffers need at once. A buffer's size is
-    rounded up to 256 bytes, and its place is found by a
-    {!Support_memory.Tlsf_allocator}, the buffers ending at a call freed before
-    those starting there are placed. Each planned buffer is replaced wherever
-    [linear] reaches it outside call bodies by the bytes of its arena at its
-    place ({!Shape.shrink}) viewed as its type ({!Ops.bitcast}). New arenas take
+    {!Dtype.Int8} as large as its buffers need at once. A buffer's size and
+    phase ({!Ops.type-param_arg}) together are rounded up to 256 bytes, and its
+    place is found by a {!Support_memory.Tlsf_allocator}, the buffers ending at
+    a call freed before those starting there are placed. Each planned buffer is
+    replaced wherever [linear] reaches it outside call bodies by the bytes of
+    its arena from its phase past its place ({!Shape.shrink}), viewed as its
+    type ({!Ops.bitcast}), so that it keeps its phase. New arenas take
     the next slots ({!Ops.unique_num}).
 
     [linear] is itself if {!Setting.no_memory_planner} is set or no buffer is
