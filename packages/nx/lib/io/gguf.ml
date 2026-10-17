@@ -54,6 +54,8 @@ type dtype =
 
 type tensor_info = { dtype : dtype; shape : int array }
 
+(* A file's contents: its version, its key-values in file order, its tensors,
+   and their descriptions by name. *)
 type t = {
   version : int;
   metadata : (string * value) list;

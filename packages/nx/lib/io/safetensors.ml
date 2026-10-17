@@ -16,12 +16,6 @@ let ( let* ) x f = match x with Ok v -> f v | Error _ as e -> e
   ---------------------------------------------------------------------------*)
 
 module Json = struct
-  type t =
-    [ `Assoc of (string * t) list
-    | `String of string
-    | `Int of int
-    | `List of t list ]
-
   exception Parse_error of string
 
   (* Serialization *)
@@ -260,7 +254,6 @@ end
 type error =
   | Invalid_header of string
   | Invalid_header_deserialization of string
-  | Tensor_not_found of string
   | Tensor_invalid_info
   | Invalid_offset of string
   | Duplicate_tensor of string
@@ -271,7 +264,6 @@ type error =
 let string_of_error = function
   | Invalid_header e -> "invalid UTF-8 in header: " ^ e
   | Invalid_header_deserialization e -> "invalid JSON in header: " ^ e
-  | Tensor_not_found n -> strf "tensor '%s' not found" n
   | Tensor_invalid_info -> "invalid shape, dtype, or offset for tensor"
   | Invalid_offset n -> strf "invalid offset for tensor '%s'" n
   | Duplicate_tensor n -> strf "tensor '%s' appears twice in the header" n

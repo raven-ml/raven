@@ -11,7 +11,6 @@ open Bigarray
 module Crc32 = Compress_deflate.Crc32
 module Encoder = Compress_deflate.Encoder
 
-type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 type method_ = Store | Deflate
 
 type entry = {
@@ -24,10 +23,14 @@ type entry = {
   local_offset : int;
 }
 
-(* [file] is the archive's bytes, the host's borrow of its pages. *)
+(* An archive read: [file] is the archive's bytes, the host's borrow of its
+   pages, and [entries] its central directory, validated. *)
 type in_file = { file : Rig.Buffer.t; entries : entry list }
 type written_entry = { entry : entry; zip64_sizes : bool }
 
+(* An archive being written: the next byte's offset in [fd], the entries
+   written, newest first, their file names, and whether {!close_out} has written
+   the central directory. *)
 type out_file = {
   fd : Unix.file_descr;
   mutable offset : int;
@@ -418,8 +421,6 @@ let open_in path =
   let entries = parse_entries data ~count ~central_size ~central_offset in
   validate_entries data ~central_offset entries;
   { file; entries }
-
-let entries (archive : in_file) = archive.entries
 
 let find_entry (archive : in_file) name =
   match

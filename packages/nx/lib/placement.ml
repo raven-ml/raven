@@ -5,8 +5,8 @@
 
 open Nx_array
 
-(* Placements: devices over a grid. *)
-
+(* A placement is a grid of devices. [replicated] and [sharded] check that it
+   names each memory once. *)
 type t = Device.t Grid.t
 
 let host = Grid.device Device.host

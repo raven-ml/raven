@@ -54,14 +54,6 @@ type uint4_t = (int, Nx_dtype.uint4_elt) t
 type float8_e4m3_t = (float, Nx_dtype.float8_e4m3_elt) t
 type float8_e5m2_t = (float, Nx_dtype.float8_e5m2_elt) t
 
-(* Re-export extended dtype value constructors *)
-let bfloat16 = Nx_dtype.bfloat16
-let bool = Nx_dtype.bool
-let int4 = Nx_dtype.int4
-let uint4 = Nx_dtype.uint4
-let float8_e4m3 = Nx_dtype.float8_e4m3
-let float8_e5m2 = Nx_dtype.float8_e5m2
-
 (* ───── Overriding Functions With Default Context ───── *)
 
 let create dtype shape arr = Frontend.create context dtype shape arr

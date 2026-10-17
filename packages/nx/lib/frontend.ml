@@ -327,24 +327,6 @@ let power_of_two : type a b. (a, b) Nx_dtype.t -> int -> a =
       err "power_of_two" "dtype %s, not an integer type"
         (Nx_dtype.to_string dtype)
 
-let ensure_float_dtype fname x =
-  if not (Nx_dtype.is Float (dtype x)) then
-    err fname "dtype %s, expected float type (Float16, Float32, or Float64)"
-      (Nx_dtype.to_string (dtype x))
-
-let ensure_int_dtype fname x =
-  match Nx_dtype.kind (dtype x) with
-  | Signed | Unsigned -> ()
-  | _ -> invalid_arg (fname ^ ": dtype must be an integer type")
-
-let resolve_axis ?ndim_opt x (axis_opt : int option) =
-  let ndim = match ndim_opt with Some n -> n | None -> ndim x in
-  match axis_opt with
-  | None -> Array.init ndim Fun.id
-  | Some a ->
-      let resolved_a = if a < 0 then a + ndim else a in
-      [| resolved_a |]
-
 let resolve_single_axis ?ndim_opt x axis : int =
   let ndim = match ndim_opt with Some n -> n | None -> ndim x in
   if axis < 0 then axis + ndim else axis
@@ -589,13 +571,10 @@ let ones ctx dtype shape_arr = full ctx dtype shape_arr (Nx_dtype.one dtype)
 let create_like x_ref fill_fn =
   fill_fn (Value.context x_ref) (Value.dtype x_ref) (shape x_ref)
 
-let empty_like x_ref = create_like x_ref empty
-
 let full_like x_ref fill_value =
   create_like x_ref (fun ctx dt sh -> full ctx dt sh fill_value)
 
 let zeros_like x = full_like x (Nx_dtype.zero (Value.dtype x))
-let fill value x = full_like x value
 let ones_like x = full_like x (Nx_dtype.one (Value.dtype x))
 
 let to_bigarray x =
@@ -853,8 +832,6 @@ let lshift x n =
 let clamp ?min ?max x =
   let x = match min with None -> x | Some min_v -> maximum_s x min_v in
   match max with None -> x | Some max_v -> minimum_s x max_v
-
-let clip = clamp
 
 (* ───── Ternary Operations ───── *)
 
@@ -1648,15 +1625,6 @@ let stack ?axis ts =
             a
       in
       concatenate ~axis (List.map (fun x -> unsqueeze ~axes:[ axis ] x) ts)
-
-let ensure_ndim n x =
-  let s = shape x in
-  let nd = Array.length s in
-  if nd >= n then x
-  else
-    let new_shape = Array.make n 1 in
-    Array.blit s 0 new_shape 0 nd;
-    reshape new_shape x
 
 let broadcast_arrays ts =
   match ts with
@@ -4125,7 +4093,7 @@ module Einsum = struct
     in
     process tensor tokens
 
-  type tensor_info = { id : int; shape : int array; axis_labels : char list }
+  type tensor_info = { shape : int array; axis_labels : char list }
 
   type contraction_path =
     | Leaf of int
@@ -4180,7 +4148,7 @@ module Einsum = struct
         else t2.shape.(find_index c t2.axis_labels)
       in
       let new_shape = Array.of_list (List.map get_dim new_labels) in
-      let info = { id = -1; shape = new_shape; axis_labels = new_labels } in
+      let info = { shape = new_shape; axis_labels = new_labels } in
       let cost, size =
         estimate_cost t1 t2
           (List.filter (fun c -> not (List.mem c new_labels)) common)
@@ -4364,7 +4332,7 @@ module Einsum = struct
               let chars =
                 List.map (function Axis c -> c | _ -> assert false) final
               in
-              ({ id = i; shape = shape op_diag; axis_labels = chars }, op_diag))
+              ({ shape = shape op_diag; axis_labels = chars }, op_diag))
             input_tokens
         in
         let ops_info = Array.map fst normalized_inputs in
@@ -4471,7 +4439,6 @@ module Einsum = struct
                 ops_tensors.(i) <- sum ~axes:(List.rev axes) ops_tensors.(i);
                 ops_info.(i) <-
                   {
-                    info with
                     shape = shape ops_tensors.(i);
                     axis_labels = List.rev !new_labels;
                   })

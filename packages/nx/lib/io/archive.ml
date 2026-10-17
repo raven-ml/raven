@@ -5,6 +5,7 @@
 
 module Names = Map.Make (String)
 
+(* An archive's entries by name. *)
 type t = Nx.packed Names.t
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
