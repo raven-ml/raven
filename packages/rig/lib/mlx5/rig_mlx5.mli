@@ -73,6 +73,12 @@
     A queue pair may be posted while another domain polls its completion
     queue.
 
+    {!val-close}, {!Region.register}, {!Region.deregister}, {!Cq.make},
+    {!Cq.destroy}, {!Qp.make}, {!Qp.destroy} and {!val-wait}, called from a
+    callback inside a lock ([Rig]'s domains section), raise
+    [Invalid_argument], having changed nothing
+    ({!Rig_edge.section-drivers}).
+
     {1:errors Errors}
 
     A request the kernel refuses returns [Error msg], with [msg] naming the call

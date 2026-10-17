@@ -201,6 +201,23 @@ let refusals =
           raises_match (Exn.invalid_arg ~substring:"Region") (fun () ->
               M.Region.local r 1 max_int);
           M.close nic);
+      test
+        "a call inside a lock of its thread's raises naming it, and one \
+         outside runs" (fun () ->
+          let nic = nic () in
+          let refused fn f =
+            match Rig_support.inside_lock f with
+            | () -> failf "%s ran inside a lock" fn
+            | exception Invalid_argument why ->
+                starts_with ~msg:fn
+                  ~affix:("Rig_mlx5." ^ fn ^ ": called from")
+                  why
+          in
+          refused "Cq.make" (fun () -> ignore (M.Cq.make nic 4));
+          refused "wait" (fun () -> ignore (M.wait nic ~ms:0));
+          refused "close" (fun () -> M.close nic);
+          ignore (Result.get_ok (M.Cq.make nic 4) : M.Cq.t);
+          M.close nic);
       test "calls after close raise, and a second close does nothing" (fun () ->
           let nic = nic () in
           let cq = Result.get_ok (M.Cq.make nic 4) in

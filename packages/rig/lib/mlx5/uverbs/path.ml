@@ -148,11 +148,10 @@ type file = {
   driver : int; (* the kernel's id of the device's driver *)
   root : string;
   name : string;
-  lock : Mutex.t; (* guards [maps] *)
   mutable pd : int;
   mutable async : int; (* the descriptor of asynchronous events, or -1 *)
   mutable channel : int; (* the descriptor of completion events, or -1 *)
-  mutable maps : (int * int) list;
+  maps : (int * int) list Atomic.t; (* pushed with no lock *)
 }
 
 (* The verbs ioctl
@@ -333,12 +332,16 @@ let context f d n =
       served = field device Q.max_qp_rd_atom;
     }
 
+let rec push a x =
+  let l = Atomic.get a in
+  if not (Atomic.compare_and_set a l (x :: l)) then push a x
+
 let map f off n =
   let* at =
     guard (strf "mapping %d bytes at offset 0x%x" n off) (fun () ->
         map_raw f.fd off n)
   in
-  Mutex.protect f.lock (fun () -> f.maps <- (at, n) :: f.maps);
+  push f.maps (at, n);
   Ok at
 
 (* Objects *)
@@ -624,7 +627,7 @@ let wait f ms =
 
 
 let close f () =
-  List.iter (fun (at, n) -> unmap at n) f.maps;
+  List.iter (fun (at, n) -> unmap at n) (Atomic.get f.maps);
   List.iter
     (fun fd -> if fd >= 0 then Unix.close (descr fd))
     [ f.channel; f.async ];
@@ -653,11 +656,10 @@ let open_ ~root name =
       driver;
       root;
       name;
-      lock = Mutex.create ();
       pd = 0;
       async = -1;
       channel = -1;
-      maps = [];
+      maps = Atomic.make [];
     }
   in
   Ok

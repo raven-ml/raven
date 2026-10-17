@@ -166,9 +166,71 @@ and qp = {
   mutable q_destroyed : (unit, string) result option; (* its destroy's answer *)
 }
 
+(* Locks
+
+   A NIC's lock counts among the locks its thread holds (rig_hold in
+   rig_edge.h), from before its take to after its give, so that a call from a
+   signal handler, finaliser or Gc.Memprof callback inside it, of rig's or of
+   this library's, is refused as it starts and never waits for the lock its own
+   thread holds. Its sections only read and change the NIC's lists. *)
+
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_mlx5: a lock taken again by the thread that holds it, from a \
+             signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
+
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [with_lock nic f] is [f ()] holding [nic]'s lock, taken as the last step
+   before the handler and given back as the first step of both exits, where
+   nothing allocates or polls, so an exception anywhere in [f], an
+   asynchronous one too, leaves the lock free and the count right. *)
 let with_lock nic f =
-  Mutex.lock nic.lock;
-  Fun.protect ~finally:(fun () -> Mutex.unlock nic.lock) f
+  take nic.lock;
+  match f () with
+  | x ->
+      give nic.lock;
+      x
+  | exception e ->
+      give nic.lock;
+      reraise e
+
+(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
+   call comes from a signal handler, finaliser or Gc.Memprof callback inside
+   that lock, and would wait for it or see its section half done. A public
+   call that may take a lock starts with it. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_mlx5." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
 
 let alive fn nic =
   if Atomic.get nic.closed then
@@ -313,6 +375,7 @@ let make p =
       raise e
 
 let close nic =
+  check "close";
   if not (Atomic.exchange nic.closed true) then begin
     nic.path.close ();
     let cqs, qps = with_lock nic (fun () -> (nic.cqs, nic.qps)) in
@@ -334,6 +397,7 @@ module Region = struct
   type t = region
 
   let register nic access order m =
+    check "Region.register";
     alive "Region.register" nic;
     let address, bytes =
       match m with
@@ -368,6 +432,7 @@ module Region = struct
      write its pages. A later call answers as the first did, so that it never
      says the NIC is done with memory it may still write. *)
   let deregister r =
+    check "Region.deregister";
     alive "Region.deregister" r.nic;
     match r.gone with
     | Some answer -> answer
@@ -421,6 +486,7 @@ module Cq = struct
   let max_entries = 1 lsl 22
 
   let make nic n =
+    check "Cq.make";
     alive "Cq.make" nic;
     if n < 1 || n > max_entries then
       invalid_arg (strf "Rig_mlx5.Cq.make: %d entries" n);
@@ -507,6 +573,7 @@ module Cq = struct
      so the NIC's writes never reach memory the process reuses. A later call
      answers as the first did. *)
   let destroy cq =
+    check "Cq.destroy";
     let nic = cq.c_nic in
     alive "Cq.destroy" nic;
     match cq.c_destroyed with
@@ -543,6 +610,7 @@ module Qp = struct
   let timeout = function `Infiniband _ -> 18 | `Ethernet _ -> 14
 
   let make cq n =
+    check "Qp.make";
     let nic = cq.c_nic in
     live_cq "Qp.make" cq;
     if n < 1 || n > max_entries then
@@ -693,6 +761,7 @@ module Qp = struct
      queue pair the kernel keeps may still complete its entries, so they keep
      their room in its queue. *)
   let destroy q =
+    check "Qp.destroy";
     let nic = q.q_nic in
     alive "Qp.destroy" nic;
     match q.q_destroyed with
@@ -714,6 +783,7 @@ end
 type event = Completion of Cq.t | Failure of string | Port of string
 
 let wait nic ~ms =
+  check "wait";
   alive "wait" nic;
   if ms < 0 then invalid_arg (strf "Rig_mlx5.wait: %d ms" ms);
   let find tags tag = with_lock nic (fun () -> List.assoc_opt tag (tags ())) in

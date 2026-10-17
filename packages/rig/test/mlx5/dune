@@ -3,4 +3,4 @@
 (test
  (name test_nic)
  (modules test_nic)
- (libraries rig_mlx5 rig_mlx5_abi rig_mlx5_uverbs unix windtrap))
+ (libraries rig_mlx5 rig_mlx5_abi rig_mlx5_uverbs rig_support unix windtrap))
