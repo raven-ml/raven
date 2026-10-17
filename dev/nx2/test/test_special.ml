@@ -162,12 +162,15 @@ let pp_args ppf args =
 
 (* [check ~bound name f] holds [f] to [bound args] at every row of [name]'s
    golden that [keep] keeps, at float32 and float64, and fails listing the
-   rows that miss it, worst first. *)
+   rows that miss it, worst first, or where it keeps none. *)
 let check ?(keep = fun _ -> true) ~bound name f =
   List.map
     (fun (short, f32) ->
       test short (fun () ->
           let rows = List.filter keep (rows name short) in
+          (* A golden without rows at this dtype holds nothing: [eval] would
+             not know the function's arity. *)
+          if rows = [] then failf "%s.golden has no %s row to hold" name short;
           let got =
             if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows
           in
@@ -663,9 +666,15 @@ let bits_equal (type s) (dt : (float, s) Nx.dtype) a b =
       equal (array int32) (values (Nx.bitcast Nx.int32 a))
         (values (Nx.bitcast Nx.int32 b))
 
-let increasing f x y =
+(* The absolute error [k] ulps allow at float64 at [v]: an ulp is at most
+   [eps |v|], and the least subnormal below the normal range. *)
+let in_ulps k v = k *. ((eps *. Float.abs v) +. 0x1p-1074)
+
+(* [f x <= f y] where [x <= y], for an increasing function: within the errors
+   [error] bounds at each, its results may cross by their sum. *)
+let increasing ~error f x y =
   Array.iter2
-    (fun a b -> at_most float_exact ~than:b a)
+    (fun a b -> at_most float_exact ~than:(b +. error a +. error b) a)
     (values (f x)) (values (f y))
 
 let laws =
@@ -713,8 +722,8 @@ let laws =
           within (add_s tol (8. *. eps)) x (ndtri p));
       prop "ndtr and log_ndtr increase" (batch (-50.) 50.) (fun x ->
           let y = add_s x 1e-3 in
-          increasing ndtr x y;
-          increasing log_ndtr x y);
+          increasing ~error:(in_ulps 16.) ndtr x y;
+          increasing ~error:(in_ulps 32.) log_ndtr x y);
       prop "lgamma (x + 1) is lgamma x + log x" (batch 1e-3 50.) (fun x ->
           let x = grid x in
           let l = lgamma x and lx = log x in
@@ -741,7 +750,10 @@ let laws =
           within (mul_s (add_s size 1.) (32. *. eps)) r (sub d1 d0));
       prop "lbeta is symmetric"
         (Gen.pair (batch 1e-3 1e3) (batch 1e-3 1e3))
-        (fun (a, b) -> within (zeros_like a) (lbeta a b) (lbeta b a));
+        (fun (a, b) ->
+          (* Each within 256 ulps, or 512 eps where below 1. *)
+          let l = lbeta a b in
+          within (mul_s (add_s (abs l) 2.) (512. *. eps)) l (lbeta b a));
       prop "lbeta a 1 is -log a" (batch 1e-3 1e6) (fun a ->
           let r = neg (log a) in
           let tol = mul_s (add_s (abs r) 1.) (512. *. eps) in
@@ -756,7 +768,7 @@ let laws =
           bits_equal Nx.float32 (neg (i1e x)) (i1e (neg x)));
       prop "i0e decreases and 0 < i1e < i0e on (0, inf)" (log_batch 1e-3 1e3)
         (fun x ->
-          increasing i0e (add_s x 1e-3) x;
+          increasing ~error:(in_ulps 8.) i0e (add_s x 1e-3) x;
           Array.iter2
             (fun i1 i0 ->
               Windtrap.greater float_exact ~than:0. i1;
@@ -816,7 +828,16 @@ let gamma_laws =
                   (Float.abs (lq -. Stdlib.log1p (-.p))))
             (log_gammaincc a x) (gammainc a x) x);
       prop "gammainc is exp log_gammainc" pairs (fun (a, x) ->
-          bits_equal Nx.float64 (exp (log_gammainc a x)) (gammainc a x));
+          (* [log P] within 16 ulps, or 16 eps where below 1, moves [exp] by
+             that much relatively; [exp] rounds once. *)
+          let lp = log_gammainc a x in
+          elementwise
+            (fun i p lp e ->
+              let moved = ((16. *. Float.max 1. (Float.abs lp)) +. 1.) *. 1.01 in
+              close i
+                ~than:(in_ulps (log_ulps 16 p) p +. in_ulps moved e)
+                (Float.abs (p -. e)))
+            (gammainc a x) lp (exp lp));
       prop "gammaincinv inverts gammainc" pairs (fun (a, x) ->
           let p = gammainc a x in
           let back = gammaincinv a p in
@@ -842,15 +863,17 @@ let gamma_laws =
       prop "gammainc increases in x and decreases in a"
         (Gen.pair pairs (log_batch 1e-6 1.))
         (fun ((a, x), d) ->
+          (* Within their bounds, two results may cross by their sum. *)
+          let error v = in_ulps (log_ulps 16 v) v in
           let up = mul x (add_s d 1.) and more = mul a (add_s d 1.) in
           elementwise
             (fun i p q r ->
               at_most
                 ~msg:(Printf.sprintf "P(a, x) at element %d" i)
-                float_exact ~than:q p;
+                float_exact ~than:(q +. error p +. error q) p;
               at_most
                 ~msg:(Printf.sprintf "P(a', x) at element %d" i)
-                float_exact ~than:p r)
+                float_exact ~than:(p +. error p +. error r) r)
             (gammainc a x) (gammainc a up) (gammainc more x));
       prop "gammaincc 1 x is exp (-x)" (log_batch 1e-300 700.) (fun x ->
           elementwise
@@ -896,7 +919,9 @@ let beta_laws =
           within (add (tol p) (tol q)) (ones_like p) (add p q));
       prop "betainc increases in x"
         (Gen.triple shapes shapes (batch 0. 0.999))
-        (fun (a, b, x) -> increasing (betainc a b) x (add_s x 1e-3));
+        (fun (a, b, x) ->
+          let error v = in_ulps (log_ulps 32 v) v in
+          increasing ~error (betainc a b) x (add_s x 1e-3));
       prop "betainc a 1 x is x^a and betainc 1 b x is 1 - (1 - x)^b"
         (Gen.pair (log_batch 1e-2 1e2) (batch 1e-3 0.999))
         (fun (a, x) ->
@@ -911,7 +936,17 @@ let beta_laws =
           within (tol q) q (betainc one a x));
       prop "exp log_betainc is betainc" (Gen.triple shapes shapes (batch 0. 1.))
         (fun (a, b, x) ->
-          bits_equal Nx.float64 (exp (log_betainc a b x)) (betainc a b x));
+          (* [log I] within 32 ulps, or 32 eps where below 1, moves [exp] by
+             that much relatively; [exp] rounds once. *)
+          let l = log_betainc a b x in
+          let i = values (betainc a b x) and e = values (exp l) in
+          Array.iteri
+            (fun k l ->
+              let moved = ((32. *. Float.max 1. (Float.abs l)) +. 1.) *. 1.01 in
+              close k
+                ~than:(in_ulps (log_ulps 32 i.(k)) i.(k) +. in_ulps moved e.(k))
+                (Float.abs (i.(k) -. e.(k))))
+            (values l));
     ]
 (* Edges
 
