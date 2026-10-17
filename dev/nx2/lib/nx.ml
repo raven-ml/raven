@@ -3983,6 +3983,171 @@ let map_segments ~segments ids f x =
       (Reshape (Array.append s out))
       (ternary ~by Where named y (fill ~by (dtype y) [||] (D.zero (dtype y))))
 
+(* Convolution *)
+
+(* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
+   as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels):
+   one reduction over the loop [[n; t…; g; oc; ic; k…]] that reads [x], its
+   channels split into groups and broadcast over [oc], through a padded load
+   whose windows append the taps, and sums the taps and [ic]. [interior]
+   zeros go between [x]'s elements. *)
+let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
+  let dt = dtype x in
+  let r = ndim x and kw = shape w in
+  let k = r - 2 in
+  let g = kw.(0) and oc = kw.(1) and ic = kw.(2) in
+  let s = shape x in
+  let n = s.(0) and spatial = Array.sub s 1 k in
+  let taps = Array.sub kw 3 k in
+  let extent i =
+    let d = spatial.(i) in
+    let e = if d = 0 then 0 else d + (interior.(i) * (d - 1)) in
+    windows_along e (lo.(i), hi.(i)) taps.(i) stride.(i) dilation.(i)
+  in
+  let counts = Array.init k extent in
+  let out = Array.concat [ [| n |]; counts; [| g * oc |] ] in
+  if Array.exists (( = ) 0) counts || n = 0 || g * oc = 0 then
+    beside ~by x (fill ~by dt out (D.zero dt))
+  else
+    let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
+    let x' = move ~by (Reshape grouped) x in
+    let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
+    let x' = broadcast ~by wide x' in
+    (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
+    let spatially a =
+      Array.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
+    in
+    let windows =
+      Array.init k (fun i : Nx_array.Move.window ->
+          {
+            axis = 1 + i;
+            size = taps.(i);
+            step = stride.(i);
+            dilation = dilation.(i);
+          })
+    in
+    let pad : Nx_kernel.pad =
+      {
+        lo = spatially lo;
+        hi = spatially hi;
+        interior = spatially interior;
+        windows;
+      }
+    in
+    let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
+    let (D.Any acc) = summed dt in
+    let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
+    let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
+    let prog = P.of_exprs ~ins [| E.any term |] in
+    let y, () =
+      Eval.eval ~by
+        (Value.Reduce
+           {
+             layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
+             axes = Array.init (k + 1) (fun i -> k + 3 + i);
+             prog;
+             reductions = Value.[ Monoid (Sum, 0, dt) ];
+             loads =
+               [|
+                 Padded { x = x'; fill = D.zero dt; pad };
+                 Plain (broadcast ~by loop w);
+               |];
+           })
+    in
+    move ~by (Reshape out) y
+
+(* The arguments of a convolution of [x] by [w], [[o; k…; c / groups]],
+   checked: strides, paddings, dilations and groups, all but [x]'s channels. *)
+let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
+  let r = ndim x in
+  if r < 3 then invalid_argf "%s: %a has fewer than three axes" by pp_value x;
+  if ndim w <> r then
+    invalid_argf "%s: the kernel %a has not the rank of %a" by pp_value w
+      pp_value x;
+  if D.is D.Boolean (dtype x) then
+    invalid_argf "%s: %s has no products" by (D.name (dtype x));
+  let k = r - 2 in
+  let entries name default = function
+    | None -> Array.make k default
+    | Some a when Array.length a <> k ->
+        invalid_argf "%s: %d %s for %d spatial axes" by (Array.length a) name k
+    | Some a -> a
+  in
+  let stride = entries "strides" 1 stride in
+  let dilation = entries "dilations" 1 dilation in
+  let padding = entries "paddings" (0, 0) padding in
+  let at_least_one name v = if v < 1 then invalid_argf "%s: %s %d" by name v in
+  Array.iter (at_least_one "stride") stride;
+  Array.iter (at_least_one "dilation") dilation;
+  let o = dim 0 w in
+  if groups < 1 || o mod groups <> 0 then
+    invalid_argf "%s: %d groups for %d output channels" by groups o;
+  (stride, padding, dilation, groups)
+
+(* [w], [[o; k…; c / groups]], as [[groups; o / groups; k…; c / groups]]. *)
+let by_groups ~by groups w =
+  let s = shape w in
+  let k = Array.length s - 2 in
+  let lead = [| groups; s.(0) / groups |] in
+  move ~by (Reshape (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ])) w
+
+let conv ?stride ?padding ?dilation ?groups x w =
+  let by = "Nx.conv" in
+  let stride, padding, dilation, groups =
+    conv_arguments ~by ?stride ?padding ?dilation ?groups x w
+  in
+  let c = dim (-1) x and cg = dim (-1) w in
+  if c <> groups * cg then
+    invalid_argf "%s: %a has %d channels, not %d groups of %d" by pp_value x c
+      groups cg;
+  let k = ndim x - 2 in
+  (* [[g; og; k…; cg]] to [[g; og; cg; k…]]. *)
+  let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
+  windows_of ~by ~stride ~lo:(Array.map fst padding)
+    ~hi:(Array.map snd padding) ~interior:(Array.make k 0) ~dilation x
+    (permute ~by p (by_groups ~by groups w))
+
+(* The transpose is the convolution at stride one of [x] with [stride - 1]
+   zeros between its elements, padded by [dilation (k - 1) - lo] and
+   [dilation (k - 1) - hi], by [w] reversed along its taps and with its
+   channels exchanged. *)
+let conv_transpose ?stride ?padding ?dilation ?groups x w =
+  let by = "Nx.conv_transpose" in
+  let stride, padding, dilation, groups =
+    conv_arguments ~by ?stride ?padding ?dilation ?groups x w
+  in
+  let o = dim 0 w in
+  if dim (-1) x <> o then
+    invalid_argf "%s: %a has not the %d channels of the kernel %a" by pp_value
+      x o pp_value w;
+  let k = ndim x - 2 in
+  let s = shape x and taps = Array.sub (shape w) 1 k in
+  let span i = dilation.(i) * (taps.(i) - 1) in
+  let least i =
+    let t = s.(1 + i) and lo, hi = padding.(i) in
+    let d =
+      if t = 0 then 0 else ((t - 1) * stride.(i)) + span i + 1 - lo - hi
+    in
+    if d < 0 || (t = 0 && lo + hi > span i) then
+      invalid_argf "%s: no input has a convolution of %a" by pp_value x;
+    d
+  in
+  let target = Array.init k least in
+  let c = groups * dim (-1) w in
+  if Array.exists (( = ) 0) (Array.sub s 1 k) then
+    let out = Array.concat [ [| s.(0) |]; target; [| c |] ] in
+    beside ~by x (fill ~by (dtype x) out (D.zero (dtype x)))
+  else
+    (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
+    let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
+    let w = permute ~by p (by_groups ~by groups w) in
+    let w = flip ~axes:(List.init k (fun i -> 3 + i)) w in
+    windows_of ~by ~stride:(Array.make k 1)
+      ~lo:(Array.init k (fun i -> span i - fst padding.(i)))
+      ~hi:(Array.init k (fun i -> span i - snd padding.(i)))
+      ~interior:(Array.map (fun st -> st - 1) stride)
+      ~dilation x w
+
 (* Fourier transforms *)
 
 type fft_norm = Backward | Forward | Ortho

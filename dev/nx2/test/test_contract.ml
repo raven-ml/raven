@@ -1374,6 +1374,174 @@ let init =
             (fun () -> Nx.copy c));
     ]
 
+(* Convolution: Nx.conv against its sum over the taps computed in OCaml, on
+   small integers whose sums every dtype holds exactly, and conv_transpose as
+   its adjoint. *)
+module Conv = struct
+  type case = {
+    n : int;
+    spatial : int array;
+    groups : int;
+    cg : int;
+    og : int;
+    taps : int array;
+    stride : int array;
+    dilation : int array;
+    padding : (int * int) array;
+    xs : float array;
+    ws : float array;
+  }
+
+  let pp_case ppf c =
+    let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
+    Format.fprintf ppf
+      "n %d spatial [%s] groups %d cg %d og %d taps [%s] stride [%s] dilation [%s] padding [%s]"
+      c.n (ints c.spatial) c.groups c.cg c.og (ints c.taps) (ints c.stride)
+      (ints c.dilation)
+      (String.concat "; " (Array.to_list (Array.map (fun (a, b) -> Printf.sprintf "(%d, %d)" a b) c.padding)))
+
+  let numel = Array.fold_left ( * ) 1
+  let x_shape c = Array.concat [ [| c.n |]; c.spatial; [| c.groups * c.cg |] ]
+  let w_shape c = Array.concat [ [| c.groups * c.og |]; c.taps; [| c.cg |] ]
+
+  let windows c i =
+    let lo, hi = c.padding.(i) in
+    let span = (c.dilation.(i) * (c.taps.(i) - 1)) + 1 in
+    let e = c.spatial.(i) + lo + hi in
+    if e < span then 0 else ((e - span) / c.stride.(i)) + 1
+
+  let case =
+    Gen.with_pp pp_case
+      (let open Gen in
+       let* k = int_range 1 2 in
+       let ints n lo hi = array ~size:(constant n) (int_range lo hi) in
+       let* n = int_range 0 2 in
+       let* spatial = ints k 0 6 in
+       let* groups = int_range 1 2 in
+       let* cg = int_range 0 2 in
+       let* og = int_range 1 2 in
+       let* taps = ints k 1 3 in
+       let* stride = ints k 1 3 in
+       let* dilation = ints k 1 2 in
+       let* los = ints k (-1) 2 in
+       let* his = ints k (-1) 2 in
+       let c0 =
+         { n; spatial; groups; cg; og; taps; stride; dilation;
+           padding = Array.map2 (fun a b -> (a, b)) los his; xs = [||]; ws = [||] }
+       in
+       let small m = array ~size:(constant m) (map Float.of_int (int_range (-3) 3)) in
+       let+ xs = small (numel (x_shape c0)) and+ ws = small (numel (w_shape c0)) in
+       { c0 with xs; ws })
+
+  let unravel s j =
+    let i = Array.make (Array.length s) 0 and j = ref j in
+    for a = Array.length s - 1 downto 0 do
+      i.(a) <- !j mod s.(a);
+      j := !j / s.(a)
+    done;
+    i
+
+  let ravel s i =
+    let j = ref 0 in
+    Array.iteri (fun a e -> j := (!j * s.(a)) + e) i;
+    !j
+
+  (* The sum over the taps and the group's channels, at each output index. *)
+  let reference c =
+    let k = Array.length c.spatial in
+    let t = Array.init k (windows c) in
+    let o = c.groups * c.og in
+    let out = Array.concat [ [| c.n |]; t; [| o |] ] in
+    let xs_shape = x_shape c and ws_shape = w_shape c in
+    Array.init (numel out) (fun flat ->
+        let idx = unravel out flat in
+        let b = idx.(0) and j = idx.(k + 1) in
+        let g = j / c.og in
+        let sum = ref 0. in
+        for tap = 0 to numel c.taps - 1 do
+          let q = unravel c.taps tap in
+          let pos = Array.init k (fun i -> (idx.(1 + i) * c.stride.(i)) + (q.(i) * c.dilation.(i)) - fst c.padding.(i)) in
+          if Array.for_all2 (fun p d -> p >= 0 && p < d) pos c.spatial then
+            for i = 0 to c.cg - 1 do
+              let xv = c.xs.(ravel xs_shape (Array.concat [ [| b |]; pos; [| (g * c.cg) + i |] ])) in
+              let wv = c.ws.(ravel ws_shape (Array.concat [ [| j |]; q; [| i |] ])) in
+              sum := !sum +. (xv *. wv)
+            done
+        done;
+        !sum)
+
+  let run (type v s) (dt : (v, s) D.t) c =
+    let x = Nx.cast dt (Nx.create Nx.float64 (x_shape c) c.xs) in
+    let w = Nx.cast dt (Nx.create Nx.float64 (w_shape c) c.ws) in
+    let y = Nx.conv ~stride:c.stride ~padding:c.padding ~dilation:c.dilation ~groups:c.groups x w in
+    Nx.to_array (Nx.cast Nx.float64 y)
+
+  let law_conv =
+    prop "conv is its sum over the taps, at every dtype" case (fun c ->
+        let want = reference c in
+        cover "an output" (Array.length want > 0);
+        cover "two groups" (c.groups = 2);
+        equal ~msg:"float64" (array float_exact) want (run D.Float64 c);
+        equal ~msg:"float32" (array float_exact) want (run D.Float32 c);
+        equal ~msg:"float16, summed at float32" (array float_exact) want (run D.Float16 c);
+        equal ~msg:"int32" (array float_exact) want (run D.Int32 c))
+
+  (* [conv_transpose]'s least input extent of each spatial axis, or [None]
+     where no input has a convolution of that shape. *)
+  let least c =
+    let k = Array.length c.spatial in
+    let t = Array.init k (windows c) in
+    let ok = ref true in
+    let d =
+      Array.init k (fun i ->
+          let lo, hi = c.padding.(i) in
+          let span = c.dilation.(i) * (c.taps.(i) - 1) in
+          let d = if t.(i) = 0 then 0 else ((t.(i) - 1) * c.stride.(i)) + span + 1 - lo - hi in
+          if d < 0 || (t.(i) = 0 && lo + hi > span) then ok := false;
+          d)
+    in
+    if !ok then Some (t, d) else None
+
+  let law_transpose =
+    prop "conv_transpose is conv's adjoint" case (fun c ->
+        match least c with
+        | None -> reject ()
+        | Some (t, d) ->
+            let o = c.groups * c.og in
+            let gs = Array.concat [ [| c.n |]; t; [| o |] ] in
+            let g = Nx.init Nx.float64 gs (fun i -> Float.of_int ((Array.fold_left ( + ) 0 i mod 5) - 2)) in
+            let z_shape = Array.concat [ [| c.n |]; d; [| c.groups * c.cg |] ] in
+            let z = Nx.init Nx.float64 z_shape (fun i -> Float.of_int ((Array.fold_left ( * ) 1 (Array.map succ i) mod 7) - 3)) in
+            let w = Nx.create Nx.float64 (w_shape c) c.ws in
+            let stride = c.stride and padding = c.padding and dilation = c.dilation in
+            let groups = c.groups in
+            let y = Nx.conv_transpose ~stride ~padding ~dilation ~groups g w in
+            equal ~msg:"shape" (array int) z_shape (Nx.shape y);
+            let conv = Nx.conv ~stride ~padding ~dilation ~groups z w in
+            let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
+            let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
+            equal ~msg:"adjoint" float_exact lhs rhs)
+
+  let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.conv") f
+
+  let test_refusals () =
+    let x = Nx.zeros Nx.float32 [| 1; 5; 4 |] and w = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
+    invalid (fun () -> Nx.conv (Nx.zeros Nx.float32 [| 5; 4 |]) w);
+    invalid (fun () -> Nx.conv x (Nx.zeros Nx.float32 [| 2; 4 |]));
+    invalid (fun () -> Nx.conv ~stride:[| 1; 1 |] x w);
+    invalid (fun () -> Nx.conv ~stride:[| 0 |] x w);
+    invalid (fun () -> Nx.conv ~dilation:[| 0 |] x w);
+    invalid (fun () -> Nx.conv ~groups:3 x w);
+    invalid (fun () -> Nx.conv ~groups:2 x w);
+    invalid (fun () -> Nx.conv (Nx.zeros Nx.bool [| 1; 5; 4 |]) (Nx.zeros Nx.bool [| 2; 3; 4 |]));
+    invalid (fun () -> Nx.conv_transpose x w);
+    invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w)
+
+  let group =
+    group "convolution"
+      [ law_conv; law_transpose; test "each refusal names its function" test_refusals ]
+end
+
 let () =
   exit
     (run "nx contractions"
@@ -1395,4 +1563,5 @@ let () =
          dot_is_einsum;
          placements;
          errors;
+         Conv.group;
        ])
