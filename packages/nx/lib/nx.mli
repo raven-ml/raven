@@ -915,19 +915,15 @@ module Rng : sig
       cost does not grow as the interval narrows, and the draw is differentiable
       in both bounds.
 
-      The inversion loses accuracy away from the mean: a draw [x] is within
-      about [3 ε e^{x²/2}] of the exact quantile of its uniform, with [ε = 2⁻⁵³]
-      at float64 and [2⁻²⁴] at narrower dtypes, which compute in float32 and
-      round once. At float32 that is [2·10⁻⁷] within one standard deviation,
-      [10⁻⁵] at three and [1.5·10⁻²] at five; at float64, [4·10⁻¹⁶], [2·10⁻¹⁴]
-      and [2.5·10⁻¹¹]. float16, bfloat16 and the float8 dtypes then round to
-      their own precision, which dominates that error from about [10⁻³] out to
-      four standard deviations; at five, float16 draws are off by up to 4 ulps.
+      Within 1.44 standard deviations of the mean a draw [x] is within about
+      [3 ε e^{x²/2}] of the exact quantile of its uniform, at most [9 ε], with
+      [ε = 2⁻⁵³] at float64 and [2⁻²⁴] at narrower dtypes, which compute in
+      float32 and round once. Further out it is within about 3 units in the
+      last place of [x], however far out the bounds lie: the tails are inverted
+      through the logarithm of their mass, which does not underflow. float16,
+      bfloat16 and the float8 dtypes then round to their own precision.
 
-      The bounds enter through {!erf}, which reaches [±1] at about 8.3 standard
-      deviations at float64 and 5.4 at narrower dtypes: an interval beyond that
-      collapses onto its bound nearer zero. An infinite bound leaves that side
-      untruncated.
+      An infinite bound leaves that side untruncated.
 
       Raises [Invalid_argument] if an element of [lower] or [upper] is NaN. *)
 

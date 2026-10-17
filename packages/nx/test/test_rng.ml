@@ -593,21 +593,6 @@ let supports =
             Array.iter
               (fun v -> equal int32 0l (Int32.logand v 1l))
               (Nx.to_array (Rng.randint k0 ~high:(1 lsl 25) [| 1000 |])));
-        cases
-          ~name:(fun (F d, a, b, v) ->
-            Format.asprintf
-              "truncated_normal at %a over [%g, %g], past erf's reach, is %g"
-              Nx_dtype.pp d a b v)
-          "collapse"
-          [
-            (F Nx.float32, 6., 7., 6.);
-            (F Nx.float16, -7., -6., -6.);
-            (F Nx.float64, 9., 10., 9.);
-          ]
-          (fun (F d, a, b, v) ->
-            let bound x = Nx.full d [| 5 |] x in
-            Array.iter (equal float_exact v)
-              (floats (Rng.truncated_normal k0 (bound a) (bound b))));
         (* Each component is rounded once to the dtype. A layout can leave a
            single component, which is refused. *)
         prop "every row of a dirichlet draw is non-negative and sums to one"
@@ -1471,6 +1456,119 @@ let distribution_tests =
       let xs = draw (Rng.key (Hashtbl.hash name)) in
       at_most float_exact ~than:(tolerance (Array.length xs)) (gap law xs))
 
+(* Tails. An interval 5 to 1e6 standard deviations out, on either side, from a
+   width of 1e-3 to unbounded, holds its draws to the conditioned law as the
+   table's rows do, at fewer draws per case. A correct sampler fails a case with
+   probability below 1e-9 (Dvoretzky-Kiefer-Wolfowitz). Rounding a draw to its
+   dtype, and the inversion's error, move it by at most [tail_ulps] units in the
+   last place of the farthest finite draw, which moves the cdf by at most that
+   much times the law's largest density, at the bound nearer zero: the tolerance
+   adds it. *)
+let tail_draws = 10_000
+let tail_ulps = 4.
+
+(* Mills' ratio [Q x / pdf x] for [x >= 5], from Laplace's continued fraction [1
+   / (x + 1 / (x + 2 / (x + 3 / ...)))], which has converged to the float64
+   roundoff by 30 terms there. *)
+let mills x =
+  let t = ref x in
+  for k = 30 downto 1 do
+    t := x +. (float_of_int k /. !t)
+  done;
+  1. /. !t
+
+(* [Q x / Q a] for [a <= x], which holds its digits where [Q] underflows. *)
+let tail_ratio a x =
+  if x = infinity then 0.
+  else Float.exp (-0.5 *. (x -. a) *. (x +. a)) *. mills x /. mills a
+
+(* The standard normal conditioned on [a, b], [5 <= a < b], through its upper
+   tail. *)
+let far_tail a b =
+  let mass = 1. -. tail_ratio a b in
+  Cdf (fun x -> if x <= a then 0. else clamp ((1. -. tail_ratio a x) /. mass))
+
+let tail_tolerance (type b) (d : (float, b) Nx.dtype) near far =
+  let dkw = Float.sqrt (Float.log 2e9 /. (2. *. float_of_int tail_draws)) in
+  let density = 1. /. (mills near *. (1. -. tail_ratio near far)) in
+  (* A draw past an unbounded side stays within [near + 40 / near]. *)
+  let reach = if Float.is_finite far then far else near +. (40. /. near) in
+  let ulp = Float.ldexp 1. (snd (Float.frexp reach) - significand d) in
+  dkw +. (density *. tail_ulps *. ulp)
+
+(* An interval [near] to [near + width] standard deviations out, on the left
+   side or the right, its bounds given in either order. *)
+type tail = {
+  dtype : floating;
+  near : float;
+  width : float;
+  left : bool;
+  swapped : bool;
+}
+
+let pp_tail ppf t =
+  Format.fprintf ppf "%a, %s side, %g to %g%s" pp_floating t.dtype
+    (if t.left then "left" else "right")
+    t.near (t.near +. t.width)
+    (if t.swapped then ", swapped" else "")
+
+let tail =
+  let open Gen in
+  let width =
+    frequency
+      [
+        (1, constant infinity);
+        (3, map (fun e -> 10. ** e) (float_range (-3.) 0.5));
+      ]
+  in
+  let near =
+    frequency
+      [
+        (2, float_range 5. 30.);
+        (1, map (fun e -> 10. ** e) (float_range 1.5 6.));
+      ]
+  in
+  with_pp pp_tail
+    (let+ dtype = of_list [ F Nx.float32; F Nx.float64 ]
+     and+ near
+     and+ width
+     and+ left = bool
+     and+ swapped = bool in
+     { dtype; near; width; left; swapped })
+
+let tails =
+  prop
+    "truncated_normal 5 to 1e6 standard deviations out lands in its interval \
+     and follows the conditioned law"
+    (Gen.pair key tail) (fun (k, { dtype = F d; near; width; left; swapped }) ->
+      let a, b = (near, near +. width) in
+      let a, b = if left then (-.b, -.a) else (a, b) in
+      let lower, upper = if swapped then (b, a) else (a, b) in
+      let bound v = Nx.full d [| tail_draws |] v in
+      let lower = bound lower and upper = bound upper in
+      (* The law of the bounds as the dtype holds them. *)
+      let a = (floats lower).(0) and b = (floats upper).(0) in
+      let lo = Float.min a b and hi = Float.max a b in
+      let near = Float.min (Float.abs a) (Float.abs b)
+      and far = Float.max (Float.abs a) (Float.abs b) in
+      let p = significand d in
+      cover "float32 past 13 standard deviations" (p = 24 && near > 13.);
+      cover "float64 past 8.3 standard deviations" (p = 53 && near > 8.3);
+      cover "float64 past 1e4 standard deviations" (p = 53 && near > 1e4);
+      cover "an unbounded side" (far = infinity);
+      cover "a width below 0.01" (far -. near < 0.01);
+      let xs = floats (Rng.truncated_normal k lower upper) in
+      Array.iter
+        (fun x ->
+          at_least float_exact ~than:lo x;
+          at_most float_exact ~than:hi x)
+        xs;
+      (* The left side's law is the right side's, reflected. *)
+      let xs = if left then Array.map Float.neg xs else xs in
+      at_most float_exact
+        ~than:(tail_tolerance d near far)
+        (gap (far_tail near far) xs))
+
 let () =
   exit
     (run "nx random"
@@ -1484,4 +1582,5 @@ let () =
          refusals;
          scopes;
          distribution_tests;
+         tails;
        ])

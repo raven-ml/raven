@@ -176,14 +176,19 @@ let ndtr_at x =
   let r = ndtr_of th tl (erfc_parts th) in
   where finite r (where (cmpgt x (zeros_like x)) (ones_like x) (zeros_like x))
 
-(* [log (ndtr x)] below the table's threshold: [-x^2/2 - log (-x) - log (2 pi)/2
-   + log1p (sum_k (-1)^k (2k - 1)!! / x^(2k))]. *)
-let log_ndtr_far x =
+(* [ndtr x]'s asymptotic series below the table's threshold, [ndtr x = pdf x /
+   (-x) (1 + s)] for [s = sum_k (-1)^k (2k - 1)!! / x^(2k)]. *)
+let ndtr_series x =
   let t = tables x in
   let v = recip (mul x x) in
+  mul v (horner t.log_ndtr_series v)
+
+(* [log (ndtr x)] below the table's threshold: [-x^2/2 - log (-x) - log (2 pi)/2
+   + log1p s]. *)
+let log_ndtr_far x =
   add
     (sub_s (neg (add (mul (mul_s x 0.5) x) (log (neg x)))) log_sqrt_2pi)
-    (log1p (mul v (horner t.log_ndtr_series v)))
+    (log1p (ndtr_series x))
 
 (* [log (ndtr x)]: above 0 [log1p (-(ndtr (-x)))]; down to the table's
    threshold, where [ndtr] is still normal, its logarithm; below,
@@ -202,6 +207,77 @@ let log_ndtr_at x =
   let far = log_ndtr_far (clamp below x (2. *. t.log_ndtr_below)) in
   let far = where (is x Float.neg_infinity) x far in
   where below far near
+
+(* AS 241's guess on the lower tail, [x < 0] with [ndtr x = q] for [q] below
+   [ndtri_tail_below], from its two rationals in [sqrt (-log q)], one evaluated
+   with each coefficient selected. *)
+let ndtri_tail_below = 0.5 -. T.ndtri_central_below
+
+let ndtri_tail_guess log_q =
+  let t = tables log_q in
+  let s = sqrt (neg log_q) in
+  let near = cmple s (lit s T.ndtri_near_below) in
+  let u =
+    where near
+      (sub_s (clamp near s 3.) T.ndtri_near_shift)
+      (sub_s (clamp (logical_not near) s 6.) T.ndtri_far_shift)
+  in
+  let selected near_cs far_cs =
+    let acc = ref (where near (lit u near_cs.(0)) (lit u far_cs.(0))) in
+    for i = 1 to Array.length near_cs - 1 do
+      acc :=
+        add (mul !acc u) (where near (lit u near_cs.(i)) (lit u far_cs.(i)))
+    done;
+    !acc
+  in
+  neg
+    (div
+       (selected t.ndtri_near_p t.ndtri_far_p)
+       (selected t.ndtri_near_q t.ndtri_far_q))
+
+(* AS 241 fits its rationals for [sqrt (-log q)] up to [ndtri_fit_r], [x =
+   -38]. *)
+let ndtri_fit_r = 27.
+
+(* [x] with [log_ndtr x = log_q], for [log_q] below [log ndtri_tail_below] and
+   finite: a guess, then a Newton step on [log_ndtr], which multiplies the
+   residual by [ndtr x / pdf x].
+
+   Where AS 241 is fitted its guess is within 1e-7 at float32 and 3e-17 at
+   float64. Past it the rationals' relative error grows, to 1e-4 at [x =
+   -1.4e4], and their powers overflow float32 from [x = -4e5]; there the guess
+   is the asymptote [log (ndtr x) = -h - log (2h) / 2 - 1 / (2h) - log (2 pi) /
+   2 + O (1 / h^2)] for [h = x^2/2], solved for [h] by two fixed-point steps
+   from [h = -log q - log (2 pi) / 2], which leave a relative error of 4e-10 at
+   [x = -38] and less further out. The step squares the guess's error, to below
+   the roundoff of [x].
+
+   Down to the table's threshold the step's ratio is [exp (log_ndtr x + x^2/2 +
+   log (2 pi)/2)]; below, [(1 + s) / (-x)] from [ndtr]'s series, where the sum
+   in the exponent would cancel to a few units of the roundoff of [x^2] and
+   float32 would be off by [e^8] at [x = -1e4]. *)
+let ndtri_log_tail log_q =
+  let t = tables log_q in
+  let fit_log_q = -.(ndtri_fit_r *. ndtri_fit_r) in
+  let fit = ge log_q fit_log_q in
+  let rational = ndtri_tail_guess (clamp fit log_q fit_log_q) in
+  let v = rsub_s (-.log_sqrt_2pi) (clamp (logical_not fit) log_q fit_log_q) in
+  let fixed h =
+    sub (sub v (mul_s (log (mul_s h 2.)) 0.5)) (recip (mul_s h 2.))
+  in
+  let asymptote = mul_s (sqrt (fixed (fixed v))) (-.Float.sqrt 2.) in
+  let x = where fit rational asymptote in
+  let far = lt x t.log_ndtr_below in
+  let xn = clamp (logical_not far) x t.log_ndtr_below in
+  let xf = clamp far x (2. *. t.log_ndtr_below) in
+  let ln = log (ndtr_at xn) in
+  let lf = where far (log_ndtr_far xf) ln in
+  let ratio =
+    where far
+      (div (add_s (ndtr_series xf) 1.) (neg xf))
+      (exp (add_s (add ln (mul (mul_s xn 0.5) xn)) log_sqrt_2pi))
+  in
+  sub x (mul (sub lf log_q) ratio)
 
 (* AS 241's guess on the nearer tail [q], then one Newton step: on [erf (x/sqrt
    2)/2 = p - 1/2] where [|p - 1/2| <= 0.425], whose residual is relative to
@@ -222,29 +298,7 @@ let ndtri_at p =
   let tail = logical_and (logical_not central) (cmpgt q (zeros_like q)) in
   let q = clamp tail q 0.01 in
   let log_q = log q in
-  let s = sqrt (neg log_q) in
-  (* AS 241's two tail rationals, one evaluated with each coefficient
-     selected. *)
-  let near = cmple s (lit s T.ndtri_near_below) in
-  let u =
-    where near
-      (sub_s (clamp near s 3.) T.ndtri_near_shift)
-      (sub_s (clamp (logical_not near) s 6.) T.ndtri_far_shift)
-  in
-  let selected near_cs far_cs =
-    let acc = ref (where near (lit u near_cs.(0)) (lit u far_cs.(0))) in
-    for i = 1 to Array.length near_cs - 1 do
-      acc :=
-        add (mul !acc u) (where near (lit u near_cs.(i)) (lit u far_cs.(i)))
-    done;
-    !acc
-  in
-  let guess =
-    div
-      (selected t.ndtri_near_p t.ndtri_far_p)
-      (selected t.ndtri_near_q t.ndtri_far_q)
-  in
-  let xt = neg guess in
+  let xt = ndtri_tail_guess log_q in
   let th, tl = split_sqrt1_2 xt in
   let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
   let far = lt xt t.log_ndtr_below in

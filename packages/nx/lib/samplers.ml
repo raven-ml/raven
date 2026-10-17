@@ -972,10 +972,24 @@ module Rng = struct
     | Nx_dtype.Float64 -> draw Nx_dtype.float64
     | _ -> draw Nx_dtype.float32
 
-  (* Inverse-CDF truncation: a standard normal restricted to [lo, hi] is [sqrt 2
-     * erfinv u] for [u] uniform over the images of the bounds under [erf]. One
-     draw per sample, no acceptance test, so it compiles and its cost does not
-     depend on how much mass the interval holds. *)
+  (* Inverse-CDF truncation: one uniform [u] per draw and no acceptance test, so
+     the draw compiles and its cost does not depend on how much mass the
+     interval holds. The quantile of [u] is reached by one of two routes, chosen
+     by where it lands.
+
+     Within [ndtri]'s central region it is [sqrt 2 * erfinv] of [u] carried
+     between the images of the bounds under [erf], whose error, [3 eps
+     e^{x^2/2}], is at most [9 eps] there. Further out that error grows, and
+     past [erf]'s reach the images round to [+/-1], so the tails invert the tail
+     probability instead, in logarithms so that no bound is too far out: on the
+     right, [x] has [Q x = (1 - u) Q lower + u Q upper] for [Q x = ndtr (-x)], a
+     sum of positive terms whose relative error stays at the rounding of its
+     parts. The left tail is its reflection through zero. This follows SciPy's
+     [truncnorm], which chooses the side from the bounds where this chooses it
+     per draw, so that both tails of an interval about zero keep their digits.
+
+     [u] is floored at [2^-p], the least positive uniform, so that an unbounded
+     lower side gives a finite draw where [u] is zero. *)
   let truncated_normal (type b) k (lower : (float, b) t) (upper : (float, b) t)
       : (float, b) t =
     require "truncated_normal" "lower" not_nan lower;
@@ -986,24 +1000,42 @@ module Rng = struct
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let lit v = scalar ctx compute v in
       let lower = at compute lower and upper = at compute upper in
-      (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
-         the interval off to the last value before +/-1 so unbounded truncation
-         is the untruncated normal rather than an infinity. A wider margin cuts
-         the support short of where [erf] resolves it: a margin of [1e-7] stops
-         float64 draws at 5.3 standard deviations. *)
-      let limit = 1.0 -. Float.ldexp 1.0 (-significand_bits compute) in
+      let smallest = Float.ldexp 1.0 (-significand_bits compute) in
+      let u = maximum (uniform k compute (shape lower)) (lit smallest) in
+      (* [erfinv] is infinite at +/-1, so the images stop at the last value
+         before it; a draw that would go further takes the tail route. *)
+      let limit = 1.0 -. smallest in
       let edge x =
         maximum (lit (-.limit))
           (minimum (lit limit)
              (B.unary Erf (mul x (lit (1.0 /. Float.sqrt 2.0)))))
       in
       let lo = edge lower and hi = edge upper in
-      let u = uniform k compute (shape lower) in
-      let x =
-        mul (lit (Float.sqrt 2.0)) (Special.erfinv (add lo (mul u (sub hi lo))))
+      let s = add lo (mul u (sub hi lo)) in
+      let central = mul (lit (Float.sqrt 2.0)) (Special.erfinv s) in
+      (* The tail route on the side [s] lands, mirrored onto the right by
+         [sign]. [log_q] is [-infinity] only where both bounds are infinite on
+         that side, where the central draw clamps onto them. *)
+      let sign = where (cmpgt s (zeros_like s)) (lit 1.0) (lit (-1.0)) in
+      let log_tail x = Special.log_ndtr (neg (mul sign x)) in
+      let a = add (log (sub (lit 1.0) u)) (log_tail lower) in
+      let b = add (log u) (log_tail upper) in
+      let m = maximum a b in
+      let finite_m = where (isfinite m) m (zeros_like m) in
+      let log_q = add m (log1p (exp (sub (minimum a b) finite_m))) in
+      let tail =
+        logical_and
+          (cmplt log_q (lit (Float.log Special.ndtri_tail_below)))
+          (isfinite log_q)
       in
-      (* The inversion's error, which grows as e^{x²/2}, can put a draw next to
-         a bound past it; the clamp makes the support exact. *)
+      let tail_x =
+        neg
+          (mul sign
+             (Special.ndtri_log_tail (where tail log_q (lit (Float.log 0.01)))))
+      in
+      let x = where tail tail_x central in
+      (* A draw within its error of a bound can round past it; the clamp makes
+         the support exact. *)
       minimum (maximum x (minimum lower upper)) (maximum lower upper)
     in
     match target with
