@@ -959,7 +959,8 @@ let ones =
 let gamma_edges =
   let row a x p = ([| a; x |], p) in
   let table =
-    [ row 1. 0. 0.; row 0.5 0. 0.; row 1. inf 1.; row 0. inf 1.; row inf 0. 0.;
+    [ row 1. 0. 0.; row 0.5 0. 0.; row 1. (-0.) 0.; row 0.5 (-0.) 0.;
+      row 1. inf 1.; row 0. inf 1.; row inf 0. 0.;
       row inf inf nan; row 0. 0. nan; row (-1.) 1. nan; row 1. (-1.) nan;
       row nan 1. nan; row 1. nan nan; row nan 0. nan ]
   in

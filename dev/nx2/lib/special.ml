@@ -984,7 +984,8 @@ let gammainc_at a x upper =
   let at_zero =
     logical_and (is x 0.) (logical_and (cmpgt a (zeros_like a)) (isfinite a))
   in
-  let p = where (is a 1.) x (zeros_like x) in
+  (* [x + 0] is [+0] at [x = -0], with [x]'s slope. *)
+  let p = where (is a 1.) (add_s x 0.) (zeros_like x) in
   where at_zero (where upper (rsub_s 1. p) p) r
 
 (* [log Γ(1 + a)] for [a >= 1], as precise as a guess needs. *)
