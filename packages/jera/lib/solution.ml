@@ -7,6 +7,9 @@ type status = Converged | Budget_spent | Not_bracketed | Not_finite | Stalled
 type fact = Fact : string * (float, 'b) Nx.t -> fact
 type spent = { used : (int32, Nx.int32_elt) Nx.t; unit : string; budget : int }
 
+(* An answer is its value and error with each lane's status, evaluations and
+   budget used, and what its report needs: the entry point [fn], the solve's
+   [settings], [fix], the budget's unit and size, and the lanes' facts. *)
 type 'a t = {
   fn : string;
   settings : string;
@@ -38,7 +41,6 @@ let v ~fn ~settings ?spent ~fix ~value ~error ~status ~evaluations ~facts () =
   in
   { fn; settings; fix; spent; value; error; status; evaluations; used; facts }
 
-let map ~fn f t = { t with fn; value = f t.value; error = f t.error }
 let best t = t.value
 let error t = t.error
 let evaluations t = t.evaluations

@@ -142,6 +142,7 @@ module Brownian = struct
     (dw, Nx.where zero (Nx.zeros_like area) area)
 end
 
+(* A method is its name; [march] holds each one's step. *)
 type t = Euler_maruyama | Milstein | Sra1 | Reversible_heun
 
 let euler_maruyama = Euler_maruyama

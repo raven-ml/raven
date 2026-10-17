@@ -184,6 +184,9 @@ end
 (* Ranges *)
 
 module Range = struct
+  (* A range is [[a, b]] with its ends broadcast to one shape, the half-line
+     from [a], or the whole line around [c]. Its tensor gives the lanes' shape
+     and dtype. *)
   type 'b t =
     | Finite of (float, 'b) Nx.t * (float, 'b) Nx.t
     | From of (float, 'b) Nx.t
@@ -201,6 +204,7 @@ module Range = struct
 end
 
 module Box = struct
+  (* A box is its corners broadcast to one shape [lanes @ [d]]. *)
   type 'b t = { lo : (float, 'b) Nx.t; hi : (float, 'b) Nx.t }
 
   let v lo hi =

@@ -5,6 +5,8 @@
 
 open Elementwise
 
+(* A method is its variant: Newton's with the Jacobian's product, Broyden's, or
+   Anderson's with its memory. *)
 type 'x t = Newton of ('x -> 'x -> 'x) | Broyden | Anderson of int
 
 let newton ~derivative = Newton derivative

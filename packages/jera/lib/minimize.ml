@@ -223,6 +223,9 @@ let bracket ~tol f ~lo ~hi =
 
 type gradient = Bfgs | Lbfgs of int | Newton
 
+(* A method is a gradient method with its linear solver, Levenberg and
+   Marquardt's with the structure of the residual and its linear solver, or
+   Nelder and Mead's. *)
 type ('x, 'f) t =
   | Gradient : gradient * 'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
   | Levenberg_marquardt : 'r Nx.Ptree.t * 'x Linear.t -> ('x, 'x -> 'r) t

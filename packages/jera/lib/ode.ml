@@ -34,6 +34,9 @@ type ('y, 't) implicit = {
 }
 
 type ('y, 't) meth = { tableau : tableau; implicit : ('y, 't) implicit option }
+
+(* A method is a [meth]; ['k] names the entry points that take it, [`Formula]
+   for a march and [`Embedded] for a solve that controls its steps. *)
 type (-'k, 'y, 't) t = ('y, 't) meth
 
 let first_same_as_last a b c =

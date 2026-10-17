@@ -5,6 +5,8 @@
 
 open Elementwise
 
+(* A solver is its method and settings; [precondition] acts on values of the
+   system's structure. *)
 type 'x t =
   | Dense
   | Banded of int
@@ -134,10 +136,9 @@ let checked fn what x a u =
 
 (* Solvers
 
-   A solver's run on vectors: the solution, its residual [a u − r] from one more
-   application of [a], the bound the residual must meet, the conditions that end
-   a lane before the check, in order, the budget spent, the applications of [a]
-   and the report's facts. *)
+   A solver's run on vectors: the solution, its residual [a u − r], the bound
+   the residual must meet, the conditions that end a lane before the check, in
+   order, the budget spent, the applications of [a] and the report's facts. *)
 
 type 'd run = {
   u : (float, 'd) Nx.t;

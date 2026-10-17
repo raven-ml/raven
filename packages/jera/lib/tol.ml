@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* A tolerance is the scale [abs + rel * |y|] ([Scaled]), or [k] units in the
+   last place of [y]'s dtype ([Ulps k]). *)
 type t = Scaled of { rel : float; abs : float } | Ulps of float
 
 let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt

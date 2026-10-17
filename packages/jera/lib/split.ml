@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* A step of [h] kicks by [kick.(0) h], then drifts by [drift.(i) h] and kicks
+   by [kick.(i + 1) h] for each [i], so [kick] has one more element. *)
 type t = { kick : float array; drift : float array }
 
 let palindromic a =
