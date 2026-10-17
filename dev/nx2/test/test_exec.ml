@@ -743,13 +743,290 @@ let law_placed (Case (k, s, data, w, op)) =
   in
   equal (array string) expected actual
 
+(* Reductions over cut axes *)
+
+(* A dtype, the elements drawn for it, how their bits print, which are NaNs,
+   and whether it sums. *)
+type ('v, 's) reduced = {
+  rdtype : ('v, 's) D.t;
+  rvalues : 'v list;
+  rshow : 'v -> string;
+  is_nan : 'v -> bool;
+  sums : bool;
+}
+
+type any_reduced = Reduced : ('v, 's) reduced -> any_reduced
+
+let complexes =
+  List.map2 (fun re im -> { Complex.re; im }) floats (List.rev floats)
+
+let reduced_kinds =
+  let never _ = false in
+  let float dt =
+    Reduced
+      {
+        rdtype = dt;
+        rvalues = floats;
+        rshow = float_bits;
+        is_nan = Float.is_nan;
+        sums = true;
+      }
+  in
+  let small dt values =
+    Reduced
+      {
+        rdtype = dt;
+        rvalues = values;
+        rshow = string_of_int;
+        is_nan = never;
+        sums = true;
+      }
+  in
+  let truth dt =
+    Reduced
+      {
+        rdtype = dt;
+        rvalues = [ true; false ];
+        rshow = string_of_bool;
+        is_nan = never;
+        sums = false;
+      }
+  in
+  [
+    float D.Float32; float D.Float64; float D.Float16; float D.Bfloat16;
+    Reduced
+      {
+        rdtype = D.Complex64;
+        rvalues = complexes;
+        rshow = (fun c -> float_bits c.Complex.re ^ "," ^ float_bits c.im);
+        is_nan = (fun c -> Float.is_nan c.Complex.re || Float.is_nan c.im);
+        sums = true;
+      };
+    Reduced
+      {
+        rdtype = D.Int32;
+        rvalues = [ 0l; 1l; -1l; 7l; Int32.max_int; Int32.min_int ];
+        rshow = Int32.to_string;
+        is_nan = never;
+        sums = true;
+      };
+    small D.Int8 [ 0; 1; -1; 5; 127; -128 ];
+    small D.Uint8 [ 0; 1; 3; 200; 255 ];
+    small D.Int4 [ 0; 1; -1; 3; 7; -8 ];
+    small D.Uint4 [ 0; 1; 5; 15 ];
+    truth D.Bool; truth D.Bit;
+  ]
+
+type reduction =
+  | Sum
+  | Prod
+  | Max
+  | Min
+  | Argmax
+  | Argmin
+  | All
+  | Any
+  | Count
+
+let reduction_name = function
+  | Sum -> "sum"
+  | Prod -> "prod"
+  | Max -> "max"
+  | Min -> "min"
+  | Argmax -> "argmax"
+  | Argmin -> "argmin"
+  | All -> "all"
+  | Any -> "any"
+  | Count -> "count"
+
+type reduced_case =
+  | Reduced_case :
+      ('v, 's) reduced
+      * int array
+      * 'v array
+      * where
+      * int list option
+      * reduction
+      -> reduced_case
+
+let pp_reduced_case ppf (Reduced_case (k, s, data, w, axes, r)) =
+  Format.fprintf ppf "%s along %s of %s %a [%s] at %a" (reduction_name r)
+    (match axes with
+    | None -> "every axis"
+    | Some l -> String.concat "," (List.map string_of_int l))
+    (D.name k.rdtype) pp_ints s
+    (String.concat "; " (Array.to_list (Array.map k.rshow data)))
+    pp_where w
+
+(* Each result's bits as strings, or the message of the refusal. *)
+let reduce (type v s d) (k : (v, s) reduced) r axes (x : (v, s, d) Nx.t) =
+  let show y = Array.map k.rshow (elements y) in
+  let int64s y = Array.map Int64.to_string (elements y) in
+  let bools y = Array.map string_of_bool (elements y) in
+  let axis = Option.map List.hd axes in
+  match
+    match r with
+    | Sum -> show (Nx.sum ?axes x)
+    | Prod -> show (Nx.prod ?axes x)
+    | Max -> show (Nx.max ?axes x)
+    | Min -> show (Nx.min ?axes x)
+    | Argmax -> int64s (Nx.argmax ?axis x)
+    | Argmin -> int64s (Nx.argmin ?axis x)
+    | All -> bools (Nx.all ?axes x)
+    | Any -> bools (Nx.any ?axes x)
+    | Count -> int64s (Nx.count ?axes (Nx.cast D.Bool x))
+  with
+  | v -> Ok v
+  | exception Invalid_argument m -> Error m
+
+let reduced_case =
+  let open Gen in
+  with_pp pp_reduced_case
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let* (Reduced k) = of_list reduced_kinds in
+     let* r =
+       of_list
+         ((if k.sums then [ Sum; Prod ] else [])
+         @ [ Max; Min; Argmax; Argmin; All; Any; Count ])
+     in
+     (* Axes along the cut ones most often; one for a position. *)
+     let cut = List.map fst (tiles w) in
+     let* axes =
+       match r with
+       | Argmax | Argmin ->
+           frequency
+             [
+               (3, map (fun a -> Some [ a ]) (of_list cut));
+               (1, map (fun a -> Some [ a ]) (int_range 0 (rank - 1)));
+               (1, constant None);
+             ]
+       | _ ->
+           frequency
+             [
+               ( 4,
+                 map
+                   (fun keep ->
+                     let l =
+                       List.filter (fun a -> keep.(a)) (List.init rank Fun.id)
+                     in
+                     Some (if l = [] then cut else l))
+                   (array ~size:(constant rank) bool) );
+               (1, constant None);
+             ]
+     in
+     let n = Array.fold_left ( * ) 1 s in
+     let+ data = array ~size:(constant n) (of_list k.rvalues) in
+     Reduced_case (k, s, data, w, axes, r))
+
+let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
+  let ts = tiles w and rank = Array.length s in
+  let along = match axes with None -> List.init rank Fun.id | Some l -> l in
+  let cut_along = List.filter (fun (a, _) -> List.mem a along) ts in
+  let over = cut_along <> [] in
+  cover "a reduction over a cut axis" over;
+  cover ("a reduction over a cut axis: " ^ reduction_name r) over;
+  cover "a cut over a reduced axis after the first reduced one"
+    (List.exists (fun (a, _) -> a > List.hd along) cut_along);
+  cover "an uneven cut over a reduced axis"
+    (List.exists (fun (a, t) -> s.(a) mod t <> 0) cut_along);
+  cover "an empty window over a reduced axis"
+    (List.exists (fun (a, t) -> s.(a) > 0 && s.(a) < t) cut_along);
+  cover "a cut reduced axis of no element"
+    (List.exists (fun (a, _) -> s.(a) = 0) cut_along);
+  cover "a reduced axis cut over two mesh axes"
+    (over && match w with Cuts (x, y) -> x = y | _ -> false);
+  cover "a reduced axis cut beside a kept one"
+    (over && List.length cut_along < List.length ts);
+  cover "a reduced axis cut, the other mesh axis holding copies"
+    (over && match w with Minor _ -> true | _ -> false);
+  cover "a position over a cut axis"
+    (over && (r = Argmax || r = Argmin));
+  cover "a NaN term over a cut axis" (over && Array.exists k.is_nan data);
+  cover "a sub-byte dtype over a cut axis" (over && D.bits k.rdtype < 8);
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.rdtype s data) in
+  let shown = function
+    | Ok v -> String.concat " " (Array.to_list v)
+    | Error m -> "raises " ^ m
+  in
+  let at =
+    match w with
+    | Split3 a -> reduce k r axes (Nx.place (Set3.split ~axis:a) x)
+    | Split4 a -> reduce k r axes (Nx.place (Set4.split ~axis:a) x)
+    | Cuts (a, b) ->
+        let cuts =
+          if a = b then [ (a, [ "a"; "b" ]) ]
+          else [ (a, [ "a" ]); (b, [ "b" ]) ]
+        in
+        reduce k r axes (Nx.place (Nx.Placement.mesh mesh4 cuts) x)
+    | Minor a ->
+        reduce k r axes (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
+  in
+  equal string (shown (reduce k r axes x)) (shown at)
+
+(* nx.cpu, counting its loop positions, over three memory devices. *)
+module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
+
+(* The loop positions [f] computes over [x] split along [axis] over three
+   devices, after [x] is placed. *)
+let positions axis f x =
+  let x = Nx.place (Count3.split ~axis) (Nx.Repr.of_array Nx.Host.v x) in
+  C.reset ();
+  let y = f x in
+  let n = C.positions () in
+  ignore (elements y);
+  n
+
+let test_partials_move () =
+  (* 240 terms over three devices, 4 outputs: each device reduces its window
+     of the terms, then combines three partials per output. Reading the
+     operand whole, each would reduce all 240 terms. *)
+  let ints s = A.of_array D.Int32 s (Array.init 240 Int32.of_int) in
+  let floats s = A.of_array D.Float32 s (Array.init 240 Float.of_int) in
+  let fewer what got = less int ~msg:what ~than:(2 * 240) got in
+  let rows = [| 60; 4 |] and columns = [| 4; 60 |] in
+  fewer "an integer sum"
+    (positions 0 (fun x -> Nx.sum ~axes:[ 0 ] x) (ints rows));
+  fewer "a maximum" (positions 0 (fun x -> Nx.max ~axes:[ 0 ] x) (floats rows));
+  fewer "positions"
+    (positions 1 (fun x -> Nx.argmax ~axis:1 x) (floats columns));
+  fewer "a reduction of every axis"
+    (positions 1 (fun x -> Nx.min x) (ints columns))
+
+(* Two vectors split over three devices, their contracting axis. *)
+let split_vectors =
+  let open Gen in
+  let* n = int_range 0 9 in
+  let+ xs = array ~size:(constant n) (of_list floats)
+  and+ ys = array ~size:(constant n) (of_list floats) in
+  (xs, ys)
+
+let law_split_dot (xs, ys) =
+  let n = Array.length xs in
+  cover "an empty window" (n > 0 && n < 3);
+  cover "an uneven cut" (n mod 3 <> 0);
+  let host v = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] v) in
+  let x = host xs and y = host ys in
+  let split v = Nx.place (Set3.split ~axis:0) v in
+  let bits v = Array.map float_bits (elements v) in
+  equal (array string) (bits (Nx.dot x y)) (bits (Nx.dot (split x) (split y)))
+
 let placements =
   group "placements"
     [
+      prop "a contraction of operands cut along its contracting axis gives \
+            its bits on one device"
+        split_vectors law_split_dot;
       prop ~count:1000
         "an operation over a value at any placement gives its bits on one \
          device"
         placed_case law_placed;
+      prop ~count:2000
+        "a reduction over cut axes gives its bits on one device" reduced_case
+        law_reduced;
+      test "a reduction over a cut axis moves partials, not the operand"
+        test_partials_move;
     ]
 
 let () =

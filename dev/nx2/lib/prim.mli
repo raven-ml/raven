@@ -138,6 +138,25 @@ val local : 'r prim -> Nx_array.Move.range array -> 'r prim
     Raises [Invalid_argument] for a window of an assembly that is not the whole:
     its rule computes it whole. *)
 
+val within : 'r prim -> Nx_array.Move.range array -> 'r prim
+(** [within op l] is the loop [op], a map, a reduction or a scan, over the
+    window [l] of its loop's shape, over loads the caller gives at their
+    windows: a loop of [l]'s extents, its programs' coordinates offset by [l]'s
+    start. A reduction folds the terms [l] holds alone. {!local} of a loop is
+    [within] the loop's window that its result's window reads.
+
+    Raises [Invalid_argument] for an operation that is not a loop. *)
+
+val loads_route :
+  by:string ->
+  'r prim ->
+  Nx_array.Layout.t ->
+  'd load array ->
+  'd Route.t option
+(** [loads_route ~by op layout loads] is the route of [op], a loop of
+    [layout]'s shape, over [loads]: where it reads each and where its results
+    lie; [None] where every load is of every set. *)
+
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->

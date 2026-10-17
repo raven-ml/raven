@@ -38,7 +38,8 @@ let pp_axis ppf : Route.axis -> unit = function
 
 let pp_axes ppf a =
   Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map (Format.asprintf "%a" pp_axis) a)))
+    (String.concat "; "
+       (Array.to_list (Array.map (Format.asprintf "%a" pp_axis) a)))
 
 let pp_table ppf t =
   Format.fprintf ppf "[%s]"
@@ -182,6 +183,38 @@ let contains (outer : R.range array) (inner : R.range array) =
 
 let position p k = Array.find_index (( = ) k) (Grid.devices (Devices.grid p))
 
+(* Whether operand [i]'s axis [a] is one the rule reduces. *)
+let is_reduced c i a =
+  match c.rule with
+  | Route.Elementwise -> false
+  | Axes t | Into t -> t.(i).(a) = Route.Reduced
+
+(* [box] along the axes [keep] holds, whole along the others. *)
+let along keep (box : R.range array) (whole : R.range array) =
+  Array.mapi (fun a r -> if keep a then r else whole.(a)) box
+
+(* Whether the windows [ws] together hold every index of [box]. *)
+let together (ws : R.range array list) (box : R.range array) =
+  let r = Array.length box in
+  let idx = Array.make r 0 in
+  let rec walk a =
+    if a = r then
+      List.exists
+        (fun (w : R.range array) ->
+          Array.for_all2
+            (fun (h : R.range) i -> i >= h.start && i < h.start + h.count)
+            w idx)
+        ws
+    else
+      let ok = ref true in
+      for i = box.(a).start to box.(a).start + box.(a).count - 1 do
+        idx.(a) <- i;
+        if !ok && not (walk (a + 1)) then ok := false
+      done;
+      !ok
+  in
+  walk 0
+
 let law =
   prop ~count:500 "each result window reads operands on its own device" case
     (fun c ->
@@ -218,23 +251,51 @@ let law =
             in
             cover "a split result beside an axis read whole"
               (read_whole && Grid.cuts target <> [||]);
+            let windows = Grid.devices target in
             Array.iteri
               (fun j k ->
                 let w = Devices.window ~by:"t" r.result rs j in
+                (* The devices that hold [w]: together they hold the axes the
+                   rule reduces. *)
+                let group =
+                  List.filter
+                    (fun j' -> Devices.window ~by:"t" r.result rs j' = w)
+                    (List.init (Array.length windows) Fun.id)
+                in
                 Array.iteri
                   (fun i p ->
-                    let pos =
-                      require_some ~msg:"the operand is on the result's device"
-                        (position p k)
+                    let window k =
+                      Devices.window ~by:"t" p c.shapes.(i)
+                        (require_some
+                           ~msg:"the operand is on the result's device"
+                           (position p k))
                     in
-                    let have = Devices.window ~by:"t" p c.shapes.(i) pos in
-                    equal bool ~msg:"the window holds what the result reads"
+                    let have = window k and need = depends c i w in
+                    let reduced = is_reduced c i in
+                    let cut_reduced =
+                      Array.exists (fun (a, _) -> reduced a)
+                        (Grid.cuts (Devices.grid p))
+                    in
+                    cover "an operand read cut along an axis the rule reduces"
+                      cut_reduced;
+                    equal bool
+                      ~msg:"the window holds what the result reads, but along \
+                            the axes the rule reduces"
                       true
-                      (contains have (depends c i w));
+                      (contains
+                         (along (fun a -> not (reduced a)) have need)
+                         need);
+                    equal bool
+                      ~msg:"the devices of the result's window hold the axes \
+                            the rule reduces"
+                      true
+                      (together
+                         (List.map (fun j' -> window windows.(j')) group)
+                         need);
                     equal ranges ~msg:"the rule's window" (depends c i w)
                       (Route.window c.rule ~operand:i c.shapes.(i) w))
                   r.operands)
-              (Grid.devices target)
+              windows
           end)
 
 (* The devices of [p], in increasing order. *)
@@ -333,12 +394,31 @@ let cases_ =
           in
           equal placement x r.result;
           equal placement x r.operands.(1));
-      test "a reduction of a split axis is whole on each device" (fun () ->
+      test "a reduction of a split axis reads it where it lies" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =
             placed (Axes [| [| Becomes 0; Reduced |] |]) [| x |] [| [| 4; 8 |] |]
           in
           equal placement (Devices.on s4) r.result;
+          equal bool true (r.operands.(0) == x));
+      test "a reduction over operands at two grids reads them whole" (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let rule =
+            Route.Axes
+              [| [| Becomes 0; Reduced |]; [| Becomes 0; Reduced |] |]
+          in
+          let r =
+            placed rule [| x; Devices.on s4 |] [| [| 4; 8 |]; [| 4; 8 |] |]
+          in
+          equal placement (Devices.on s4) r.result;
+          equal placement (Devices.on s4) r.operands.(0);
+          equal placement (Devices.on s4) r.operands.(1));
+      test "an operand read whole along an axis it acts along is moved"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let r =
+            placed (Axes [| [| Becomes 0; Whole |] |]) [| x |] [| [| 4; 8 |] |]
+          in
           equal placement (Devices.on s4) r.operands.(0));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in

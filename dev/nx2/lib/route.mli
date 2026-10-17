@@ -19,7 +19,13 @@
     every device of the target the part of the operand the device's window of
     the result depends on, and lies on no other device: the same window, or the
     whole operand on each device of the target; otherwise it is read at the
-    target moved back to its axes, which the engine places it at.
+    target moved back to its axes, which the engine places it at. Where every
+    operand lies at one placement that cuts an axis the operation reduces
+    ({!Reduced}), uncutting those axes would give each operand what it is read
+    at, and each operand there, moved to the results' axes, lies at the
+    target, each is read where it lies, and an operand of every set there
+    too: the devices that hold one window of the results hold all of its
+    terms between them, and combine their partial results ({!Partial}).
 
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,
@@ -42,7 +48,7 @@ type axis =
       (** Gone from the results: a reduction's axes and a contraction's
           contracting pairs, but one a padded load of the reduction pads,
           crops or windows, which is [Whole] for every load. Read whole on
-          each device. *)
+          each device, or cut where the operand lies so ({!route}). *)
 
 (** The type for how an operation's results depend on its operands: for each
     axis of each operand, what the operation makes of it. A window of the
@@ -52,8 +58,9 @@ type axis =
 
     This is the sharding rule of Shardy
     ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}) with one
-    factor per axis: its reduction factors are [Reduced] axes and its
-    need-replication factors [Whole] ones, both read whole. *)
+    factor per axis: its reduction factors are [Reduced] axes, which an
+    operand may be read cut along, and its need-replication factors [Whole]
+    ones. *)
 type rule =
   | Elementwise
       (** Operands and results of one shape, each axis becoming itself. *)
@@ -74,6 +81,10 @@ val moved : Nx_array.Move.t -> int array -> int -> int option
     product of the extents before it, a slice that keeps all of it. [None] for
     any other. *)
 
+val reduced : rule -> int -> int -> int array
+(** [reduced r i rank] is the axes of operand [i], of rank [rank], that [r]
+    reduces ({!Reduced}), in increasing order. *)
+
 val window :
   rule ->
   operand:int ->
@@ -88,11 +99,12 @@ val window :
     The engine computes an operation one window at a time, each device over its
     operands' windows, under the {e window law}: for every window [w] of the
     results, the operation over each operand's [window r ~operand:i s w] equals
-    the window [w] of the operation over the whole operands, bitwise. A kernel
-    library meets it where an element's association, its algorithm and whether
-    the library declines depend on the extents the element reads whole, the
-    dtypes, the attributes, the library and the device's architecture, never on
-    the extents its window cuts. *)
+    the window [w] of the operation over the whole operands, bitwise. It
+    computes every route that reads no operand cut along a [Reduced] axis. A
+    kernel library meets it where an element's association, its algorithm and
+    whether the library declines depend on the extents the element reads
+    whole, the dtypes, the attributes, the library and the device's
+    architecture, never on the extents its window cuts. *)
 
 type 'd t = {
   operands : 'd Devices.placement array;

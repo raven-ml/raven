@@ -1071,10 +1071,22 @@ let with_offsets (prog : P.t) (first : int array) =
     P.v ~ins:prog.ins nodes ~outs:(Iarray.map at prog.outs)
   end
 
+let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w
+let extents w = Array.map (fun (r : Nx_array.Move.range) -> r.count) w
+
+let within : type r. r prim -> Nx_array.Move.range array -> r prim =
+ fun op l ->
+  let layout = L.contiguous (extents l) in
+  match op with
+  | Map m -> Map { m with layout; prog = with_offsets m.prog (starts l) }
+  | Reduce m -> Reduce { m with layout; prog = with_offsets m.prog (starts l) }
+  | Scan m -> Scan { m with layout; prog = with_offsets m.prog (starts l) }
+  | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
+  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+      invalid_arg "Prim.within: not a loop"
+
 let local : type r. r prim -> Nx_array.Move.range array -> r prim =
  fun op w ->
-  let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w in
-  let extents w = Array.map (fun (r : Nx_array.Move.range) -> r.count) w in
   (* A loop's window: the window of a load of its shape. *)
   let loop layout =
     match op with
@@ -1084,30 +1096,9 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
         Route.window r ~operand:0 (L.shape layout) w
   in
   match op with
-  | Map m ->
-      let l = loop m.layout in
-      Map
-        {
-          m with
-          layout = L.contiguous (extents l);
-          prog = with_offsets m.prog (starts l);
-        }
-  | Reduce m ->
-      let l = loop m.layout in
-      Reduce
-        {
-          m with
-          layout = L.contiguous (extents l);
-          prog = with_offsets m.prog (starts l);
-        }
-  | Scan m ->
-      let l = loop m.layout in
-      Scan
-        {
-          m with
-          layout = L.contiguous (extents l);
-          prog = with_offsets m.prog (starts l);
-        }
+  | Map m -> within op (loop m.layout)
+  | Reduce m -> within op (loop m.layout)
+  | Scan m -> within op (loop m.layout)
   | Fold f -> Fold { f with shape = extents w }
   | Assemble a ->
       if extents w <> a.shape then

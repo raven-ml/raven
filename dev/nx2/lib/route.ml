@@ -113,6 +113,14 @@ let backward rule i rank target =
   in
   Grid.map_axes (fun a' -> Option.get (source a')) (uncut_all orphans target)
 
+(* The axes of operand [i], of rank [rank], that [rule] reduces. *)
+let reduced rule i rank =
+  match rule with
+  | Elementwise -> [||]
+  | Axes t | Into t ->
+      Array.of_list
+        (List.filter (fun a -> t.(i).(a) = Reduced) (List.init rank Fun.id))
+
 (* Whether an operand at [g] gives every device of [want] the part [want] gives
    it, and lies on no other device: the same windows, or the whole on each of
    exactly those devices. An operand whole on more devices is read at [want],
@@ -197,14 +205,44 @@ let general ~by rule ps shapes =
                       (Rig.name (Devices.rig set k'))
                 | [] -> List.hd fwd))
       in
+      let wants = Array.init n (fun i -> backward rule i (rank i) target) in
+      (* The grid every operand is read at where they all lie at one grid that
+         cuts an axis the rule reduces, uncutting those giving what the target
+         wants of each, and each gives the target forward: each device then
+         holds part of each output's terms, and the devices that hold one
+         window of the results hold them all. An operand of every set is read
+         there too. *)
+      let partial =
+        let g = Devices.grid (placed first) in
+        let fits i =
+          let axes = reduced rule i (rank i) in
+          let lies =
+            match ps.(i) with
+            | Some p -> Grid.equal (Devices.grid p) g
+            | None -> Result.is_ok (Grid.window g shapes.(i) 0)
+          in
+          lies
+          && covers (uncut_all axes g) wants.(i)
+          && Grid.equal (forward rule i (rank i) g) target
+        in
+        let cuts_reduced i =
+          let axes = reduced rule i (rank i) in
+          Array.exists (fun (a, _) -> Array.mem a axes) (Grid.cuts g)
+        in
+        if cuts_reduced first && List.for_all fits (List.init n Fun.id) then
+          Some (Devices.v ~by set g)
+        else None
+      in
       let operands =
         Array.mapi
           (fun i p ->
-            let want = backward rule i (rank i) target in
+            let want = wants.(i) in
             let p =
-              match p with
-              | Some p when covers (Devices.grid p) want -> p
-              | Some _ | None -> Devices.v ~by set want
+              match (partial, p) with
+              | Some q, None -> q
+              | Some _, Some p -> p
+              | None, Some p when covers (Devices.grid p) want -> p
+              | None, (Some _ | None) -> Devices.v ~by set want
             in
             (match Grid.window (Devices.grid p) shapes.(i) 0 with
             | Ok _ -> ()

@@ -81,7 +81,7 @@
   (glob_files ../../../packages/nx/test/golden/special/*.golden)))
 
 (copy_files
- (files ../lib/{grid,devices,route,prim,place,pairwise,expand,exec,repr}.{ml,mli}))
+ (files ../lib/{grid,devices,route,prim,place,pairwise,expand,partial,exec,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -103,6 +103,7 @@
   place
   pairwise
   expand
+  partial
   exec
   repr)
  (modules_without_implementation value)

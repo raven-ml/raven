@@ -899,6 +899,138 @@ let test_contract_nans () =
   in
   agrees (Op op, [| range 3 4; range 1 5 |])
 
+(* Reductions over cut axes *)
+
+let quad : b Devices.t = Devices.mint ~by:"t" [ m 0; m 1; m 2; m 3 ]
+let mesh = Devices.mesh_v ~by:"t" quad [ ("a", 2); ("b", 2) ]
+
+(* Where loads lie: split over the four devices, cut over both mesh axes, two
+   axes cut over one each, or one cut over the minor mesh axis, the major
+   holding copies. *)
+type where = Split of int | Both of int | Two of int * int | Minor of int
+
+let placement_of = function
+  | Split a -> Devices.split ~by:"t" ~axis:a quad
+  | Both a -> Devices.mesh ~by:"t" mesh [ (a, [ "a"; "b" ]) ]
+  | Two (a, a') -> Devices.mesh ~by:"t" mesh [ (a, [ "a" ]); (a', [ "b" ]) ]
+  | Minor a -> Devices.mesh ~by:"t" mesh [ (a, [ "b" ]) ]
+
+let cut_axes = function
+  | Split a | Both a | Minor a -> [ a ]
+  | Two (a, a') -> [ a; a' ]
+
+(* Floats and int8s of few values, so that extremes tie across windows, with
+   NaNs of three bit patterns, signed zeros and infinities. *)
+let tied_floats =
+  [
+    1.; 1.; 2.; 0.; -0.; Float.nan; -.Float.nan;
+    Int32.float_of_bits 0x7fc00123l; Float.infinity; Float.neg_infinity;
+  ]
+
+let tied_ints = [ 0; 1; 1; -1; 127; -128 ]
+
+type cut_case = {
+  shape : int array;
+  axes : int array;
+  where : where;
+  xs : float array;
+  ys : int array;
+}
+
+let pp_cut_case ppf c =
+  let ints a = String.concat ";" (Array.to_list (Array.map string_of_int a)) in
+  Format.fprintf ppf "[%s] along [%s], cut %s: [%s] [%s]" (ints c.shape)
+    (ints c.axes)
+    (String.concat "," (List.map string_of_int (cut_axes c.where)))
+    (String.concat ";"
+       (Array.to_list (Array.map (fun x -> Printf.sprintf "%h" x) c.xs)))
+    (ints c.ys)
+
+let cut_case =
+  let open Gen in
+  with_pp pp_cut_case
+  @@ let* rank = int_range 2 3 in
+     let* shape = array ~size:(constant rank) (int_range 1 5) in
+     let axis = int_range 0 (rank - 1) in
+     let* where =
+       one_of
+         [
+           map (fun a -> Split a) axis;
+           map (fun a -> Both a) axis;
+           map
+             (fun (a, a') -> if a = a' then Both a else Two (a, a'))
+             (pair axis axis);
+           map (fun a -> Minor a) axis;
+         ]
+     in
+     (* The first cut axis reduced, and any other axis or not. *)
+     let* extra = array ~size:(constant rank) bool in
+     let axes =
+       Array.of_list
+         (List.filter
+            (fun a -> a = List.hd (cut_axes where) || extra.(a))
+            (List.init rank Fun.id))
+     in
+     let n = numel shape in
+     let* xs = array ~size:(constant n) (of_list tied_floats) in
+     let+ ys = array ~size:(constant n) (of_list tied_ints) in
+     { shape; axes; where; xs; ys }
+
+(* A reduction of every kind over a float32 and an int8 load: the floats'
+   first maximum and its position, minimum, sum and moments; the int8s' sum
+   into int32, rounding from int8, and first minimum and its position. *)
+let mixed (x : (float, D.float32_elt, b) Value.t)
+    (y : (int, D.int8_signed_elt, b) Value.t)
+    shape axes =
+  Value.Reduce
+    {
+      layout = L.contiguous shape;
+      axes;
+      prog =
+        P.v ~ins:[| D.Any D.Float32; D.Any D.Int8 |] [| In 0; In 1 |]
+          ~outs:[| 0; 1 |];
+      reductions =
+        Value.
+          [
+            Arg (Max, 0, D.Float32);
+            Monoid (Min, 0, D.Float32);
+            Monoid (Sum, 1, D.Int32);
+            Arg (Min, 1, D.Int8);
+            Monoid (Sum, 0, D.Float32);
+            Moments (0, D.Float32);
+          ];
+      loads = [| Plain x; Plain y |];
+    }
+
+let cut_law c =
+  let along a = Array.mem a c.axes in
+  let cut = cut_axes c.where in
+  let reduced = List.filter along cut in
+  cover "a cut reduced axis after the first reduced one"
+    (List.exists (fun a -> a > c.axes.(0)) reduced);
+  cover "a cut axis kept beside a cut reduced one"
+    (List.exists (fun a -> not (along a)) cut);
+  cover "an empty window along a reduced axis"
+    (List.exists
+       (fun a ->
+         let t = match c.where with Two _ | Minor _ -> 2 | _ -> 4 in
+         c.shape.(a) < t)
+       reduced);
+  cover "a reduced axis cut, the other mesh axis holding copies"
+    (match c.where with Minor _ -> true | _ -> false);
+  let x = value D.Float32 c.shape c.xs and y = value D.Int8 c.shape c.ys in
+  let one = mixed x y c.shape c.axes in
+  let whole _ s = Array.map full s in
+  let expected = bytes whole one (Exec.run ~by:"t" one) in
+  let p = Devices.rebrand (placement_of c.where) in
+  let place v = Exec.run ~by:"t" (Value.Place (p, v)) in
+  let cut = mixed (place x) (place y) c.shape c.axes in
+  let actual = bytes whole cut (Exec.run ~by:"t" cut) in
+  Array.iteri
+    (fun i e ->
+      equal (array int) ~msg:(Printf.sprintf "result %d" i) e actual.(i))
+    expected
+
 let () =
   exit
     (run "nx windows"
@@ -921,5 +1053,9 @@ let () =
                test_fft_nans;
              test "a contraction's window over NaNs of both signs"
                test_contract_nans;
+             prop ~count:1000
+               "a reduction of each kind over loads cut along its axes gives \
+                its bits on one device"
+               cut_case cut_law;
            ];
        ])

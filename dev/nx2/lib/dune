@@ -13,6 +13,7 @@
   place
   pairwise
   expand
+  partial
   exec
   eval
   repr
@@ -32,6 +33,7 @@
   place
   pairwise
   expand
+  partial
   exec
   eval
   repr

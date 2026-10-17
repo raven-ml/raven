@@ -857,6 +857,11 @@ and compute : type r.
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
+  | (Value.Reduce _ | Value.Contract _) when Partial.applies op -> (
+      (* An operand read cut along an axis the operation reduces. *)
+      match at with
+      | None -> Partial.run run ~by op
+      | Some q -> Partial.run (fun ~by op -> apply_at q ~by op) ~by op)
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
