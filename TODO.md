@@ -28,63 +28,79 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required
-  `~waits` against its callers (none in nx, rune or tolk pass waits), and
-  count exact-zero tests with `Gc.allocated_bytes`; `Buffer.free`; both
-  staging slots of a staged route in one C call, in device order; the
-  remote controller survives a failed job; the single root cause narrowed
+- ledger rows (_plans/rig-semantics-refs/LEDGER.md): `~waits` required
+  (no caller in nx, rune or tolk passes it, so each call site adds
+  `~waits:[||]`; API review), and the exact-zero tests count
+  `Gc.allocated_bytes` per call with no division; `Buffer.free` (M5); a
+  staged route between two mapless devices takes both slots in one C call,
+  in device-index order (G6, copy.ml:258-264); the controller keeps its
+  local devices after a failed job (Q2, agent.ml:118-123); each process
+  records its own cause, marked remote or local, and aborts without the
+  10 s drain (R3, link.mli:47-58)
 - more ledger rows: a forked child loses io devices too and runs none of
-  the parent's owed stops (F8); host and memory work runs after giving the
-  turn up (K2); `R_AMDGPU_RELATIVE64` relocations (A1); the doc sentences of
-  F3, F5, O5, Q1, R4 and C4
-- a heap law for the stamp words of lost points
+  the parent's owed stops (F8, rig_device.c:388-410); host and memory work
+  runs after giving the turn up (K2); the doc sentences of F3, F5, O5, Q1,
+  R4 and C4 (F3's "Other devices go on", rig.mli:502, is false on CUDA)
 
 ### drivers
 
-- a peer view of a stopped driver-less NV GPU can crash: the stop unmaps
-  the BAR windows another GPU's flush entry or view still reads
+- NV-PCI: a GPU's stop unmaps its BAR windows (function.ml:91-104) while a
+  peer's flush entry for its flush word still counts (rig_nv.ml:1097-1110),
+  so the peer's next submit reads an unmapped page (rig_nv_stubs.h:369-383):
+  drop peers' entries at the stop, or keep the flush page until the last
+  peer region goes
 - NV: each open and close of a device on fudge grows glibc's C heap by
-  about 19.6 KB: find whether rig or the RM leaks it
+  about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
+  leaks it (mallinfo2, heaptrack)
 - exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
   stdlib Hashtbls, which an exception while one grows loses: they must still
   serve stop, free and unload after an exception, as NV's do
 - exceptions: the mlx5 wait loses an event's count to an exception after
-  the kernel delivered it
+  the kernel delivered it (uverbs/path.ml:576-621)
 - refusals: rig.amd's `entry`, `unload`, `stop` and `grow_scratch`, and
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
-  holder check; `launch` leaks its C launch when `grow_scratch` raises
+  holder check; `launch` leaks its C launch when `grow_scratch` raises, and
+  before its `Hashtbl.add`
 - refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
   `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
   (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves
-  GPU 2 held for good): atomic `held` and `spent`, release the function
-  outside `holds`, run `Gsp.sys`, `give_back` and `Machine.reserve` under a
-  path lock
+  GPU 2 held for good): derive the fix from NV's ranked guards
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
-- rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
-  under KFD (RX 9070: 3 for 4)
+- rig.amd: `Counter.places` (counter.ml:42-53) divides active CUs evenly
+  across arrays, which reserves 3 WGP slots where a harvested RX 9070 array
+  has 4: take the width from KFD's `cu_per_simd_array` (topology.ml:179),
+  and make `Gpu.compute_units` mean one thing on both paths
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
   terminal index outside [taken, posted] counts as none; poll and wait issue
   no firmware command; fix the leak when `Qp.make` refuses
-- rig.pci (ledger X3-X6): "alone on its device" only where the reset reaches
-  siblings (`reset_method`); `Function.take` gets the device's address bits;
-  one VFIO container per machine; `reaches` true only under one root port
-- rig remote and host pool: check for the bugs dropped with nx's runtime
-  (_plans/rig-release/dropped-patches/); the remote join dials serially
-  within a 10 s budget
-- rig profile: a Copy event names a side by where its bytes are (Pinned
-  staging and image loads record `d→d`); a span names its submission, so a
-  search under a second domain times only its own kernels
+- rig.pci (ledger X3-X6): "alone on its device" only where the reset
+  reaches siblings (`reset_method`); taken physically, `alloc_dma` and
+  `pin` return `Ok None` above the function's DMA mask; one VFIO container
+  per machine, with a fallback, so system memory maps once for every GPU;
+  `reaches` true only where Linux's p2pdma allows (a common upstream switch
+  port, or a host bridge its whitelist names)
+- rig remote and host pool: of _plans/rig-release/dropped-patches/, check
+  ci-fix-remote/0001 (exit-hook order on Windows), ci-tests/0001
+  (rig_model's staging refusal), sanitizers/0001 and the two .wip patches;
+  the remote join dials each later agent serially in one 10 s budget
+  (agent.ml:475-500): state the job size it bounds, or dial in parallel
+- rig profile: a Copy event records its allocations' owners
+  (copy.ml:26-36), so a device's Pinned staging and image loads record
+  `d→d`, against rig.mli's "{!host} as one side": name each side by where
+  its bytes are; a span names its submission, so a profile on one domain
+  keeps only its own submissions' spans (both API review)
 - rig.amd to its spec (_plans/gemini-review-2/REPORT.md,
   _plans/rig-size-audit/): unused encoders and options removed, the rest
   behind `(**/**)`; `report`, `block`, `image` hidden; holes as NV's fixed
   record; `Bus_address` into `Machine`; request.ml inlined; firmware parsing
-  total over the pinned set; one trace window per engine; KFD's clock gap
-  stated in rig_amd.mli
+  total over the pinned set; rig_amd.mli's 5 µs clock bound excludes KFD,
+  whose GPU-to-CPU gap is one-sided and unbounded under preemption: state it
 - one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
-  615's headers whole and only `per_release` structs for older releases
+  615's headers whole (licence checked first) and only `per_release`
+  structs for older releases
 - rig.mlx5 folds rig.mlx5.uverbs in (`path` internal, `?root` hidden), each
   part beyond tinygrad's RDMA justified; `?root` behind `(**/**)` on amdgpu
   and nvidia
@@ -96,21 +112,32 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - limits no hardware or spec imposes, one commit each
   (_plans/rig-device-reuse/70-, 71-): AMD's 512 parts per submission;
-  AMD's rings that grow as NV's do (`Rig.most_parts` goes); NV's GPFIFO
-  entry count, rig's choice, sized from need; NV's 65,535 parts, from its
-  join-tag layout (with `Rig.most_parts`); parameter bytes per compiled
-  function, a per-device fact (Metal's 4 KiB `setBytes`; CUDA 32,764 since
-  12.1; NV and AMD read them from memory);
+  AMD's segment grows as NV's segment and launch rings do, and its compute
+  and copy rings resize only at idle (`AMDKFD_IOC_UPDATE_QUEUE` or the PCI
+  MQD; check KFD keeps rptr/wptr), then `Rig.most_parts` goes; NV's GPFIFO
+  keeps 16,384 entries and refuses Words past them: size it from the RAMFC
+  field, remake the channel at idle, or state the bound on
+  `Rig.Submission.words`; NV's 65,535 parts (the 16-bit index of
+  `v << 16 | i + 1`): a per-channel join counter has no bound; parameter
+  bytes per compiled function, a per-device fact (Metal's 4 KiB `setBytes`;
+  CUDA 32,764 since 12.1; NV and AMD read them from memory);
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
-  it; mlx5's CQ from `max_cqe`
+  it; mlx5's CQ from `max_cqe` (ceiling 2^24) and its QP from
+  `max_send_wqebb` under 2^15 (`context` changes: API review)
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
-  80 borrows of one 1 GiB shm file on fudge stop at 39 GiB,
-  where the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA`
-- size cuts: 13 open in _plans/rig-size-audit/SUMMARY.md §A (core, PCI,
-  rig.program, NV), each to its design without losing a capability
-- test cuts: rows 2, 5, 7, 11-14 and 18-26 of
-  _plans/rig-simplify-audit/tests.md, each shown covered before it goes
-- docs: each restated contract folded to one place; rig_disk_stubs.c's six
+  find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
+  past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md):
+  map in larger pages if that is the cause, else state it in
+  rig_nv_nvidia.mli
+- size cuts in _plans/rig-size-audit/SUMMARY.md §A (core, PCI, NV, small):
+  the unused `Object` completion, the CUDA page-lock registry, NV's five
+  field accessors, the debugfs scan; classify each unused value
+  (speculative, superseded, unpropagated, missed) before it goes
+- test cuts in _plans/rig-simplify-audit/tests.md, each shown covered
+  before it goes: rows 2, 5, 7 (once rig_pool.h stops stating its
+  internals), 11-14, 18 (format models only), 19-26; decide 10, 15-17
+- docs: an inventory (file:line pairs) of contracts restated across rig's
+  .mli files, then each folded to one place; rig_disk_stubs.c's six
   platform branches into its Windows and POSIX sections; rig_device.c's
   Windows locks against rig_pool.c's pthreads: say why or agree
 
@@ -118,73 +145,98 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - claims and runs, one design pass: a claim held past a scope (rune's
   `Pins` and tolk's `link ~bound` go), a take over a buffer list,
-  claim-all in rig.h, a submit that takes its run once
+  claim-all in rig.h, a submit that takes its run once, and how a library
+  owns a run
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
-  a `Rig.Buffer.copy` step; done when placing on N GPUs costs one wait
-- from its callers: `Image.load` reuses an equal image; `Profile.take`
-  raises `Lost`; `Run.string`; `Rig_program.load` returns `Error` only for a
-  device's refusal; state `equal`, run ownership and `create`'s alignment
+  rig_program's `Move` step; done when placing on N GPUs costs one wait
+- from its callers: `Image.load` reuses an equal image once GPU module
+  globals are shown not shared (CUDA) or refused; `Profile.take` raises
+  `Lost`; `Run.string`, checked against nx2; `Rig_program.load` returns
+  `Error` only for a device's refusal; state `equal`, and `create`'s
+  alignment derived per driver
 - rig.gpus: one card appears through two paths, and `openers` drops each
-  path's refusal reason; `Rig_pci.Gpus` also holds NICs
+  path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus` also
+  holds NICs (a rename: maintainer)
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
-  GPU drivers give a buffer's bus ranges for a NIC to register, and a copy
-  between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not TCP
+  GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
+  dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'
+  GPUs runs through rig.mlx5 or rig.bnxt, not TCP; whether and when:
+  maintainer
 
 ### tests and runs
 
-- failure paths with no test (_plans/rig-release/failure-paths.md): three
-  host and core rows, a Metal command-buffer fault, NV and AMD PCI faults,
-  the AMD hang law, and the disk, program, CUDA and NV rows
-- covers some seeds miss: test_amd "values across 2^32"
-  (`s1:0ffeb6927a1ba911`), test_model "a submission's copy whose buffers
-  overlap" (`s1:5dadbcc3524ab0ac`)
+- failure paths with no test (_plans/rig-release/failure-paths.md, whose
+  core-exception and disk rows test_interrupt and test_rig_disk now cover):
+  the host relocation that does not fit its field; rig.program's
+  `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
+  `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
+  it cannot be forced; the AMD hang law, which may reset the GPU
+- covers some seeds miss: test_amd "values across 2^32" reaches "ends on
+  COMPUTE:0" with p ≈ 0.17 a case, so about 2.3% of 20-case runs miss it:
+  draw the shape at the carry from its own generator; test_model "a
+  submission's copy whose buffers overlap" (`s1:5dadbcc3524ab0ac`, drawn
+  before 576cd6873f): rerun the seed, then raise the overlap's draw rate
 - flakes, each failed once: test_link fork "a child's job is failed in the
-  child alone"; test_submit "a part follows the earlier parts that may share
-  memory"; test_model (one domain) ~1 in 120, `Out_of_memory` on device 3 or
-  4 where the reference fits; Metal "expected at most 32768, actual 40944";
-  interrupt.t "Terminated: 15" under load; test_image (rerun on the Mac).
-  Metal conformance must name a failing law
-- hardware runs: AMD over PCI since the exception and own-word changes;
-  NV over PCI's open/close law and test_nv; the PCI clocks' stamp check;
-  VFIO behind an IOMMU; multi-GPU peers, mlx5, bnxt. Every AMD run waits
-  for an AMD host (nonnormal is off limits)
-- baselines: one quiet window per machine (Mac, fudge) records
-  every row in _plans/device-dev/owed-rows.md, then deletes it; the vendor
-  comparison (bench/compare/run.py) on each machine, the Mac first
+  child alone" (make the parent report the child's exit status); test_submit
+  "a part follows the earlier parts that may share memory"; test_model on
+  one domain, `Oom_at` on device 3 or 4 about 1 in 120 (loop it with logs
+  kept); interrupt.t's "Terminated: 15" under load (wait for the killed job
+  in a subshell whose stderr is redirected); test_image 1 in 3 on the Mac
+  before its 2026-10-12 fix (rerun 30 times)
+- hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
+  dc72412596); root on an NVIDIA host (NV over PCI's open/close law and
+  test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
+  (peers); mlx5 and bnxt NICs
+- baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
+  rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
+  whose only Linux rows are kimchi's; on the M1, Metal
+  `launch/pipelined-100`, `buffer/read-64M`, and re-blesses of rig_program's
+  `polled/*` and rig_remote's `request/alloc` and `rail/4K`, recorded under
+  load; the vendor comparison (packages/rig/bench/compare/run.py) on the
+  Mac, then fudge
 
 ### perf
 
 - a host buffer's creation: every fresh nx result mallocs through
-  `caml_rig_heap_bytes` and allocates a custom block, 50-75 ns an op on the
-  M1 (26 ns of `dispatch/add-1`'s 220). Keep small host buffers off malloc
-- a collected buffer's release allocates in the call that drains it; done
-  when a drain allocates nothing and kaun's GPU decode rows measure
-  allocation again (bench_decode.ml's gpu_metrics)
+  `caml_rig_heap_bytes` and allocates a custom block (`buffer/host-create-16`
+  54 ns, 31 words on the M1; nx's `dispatch/add-1` 214 ns): profile malloc
+  against the custom block and `host_memory`, then A/B a per-domain free
+  list of small host buffers
+- a collected buffer's release allocates in the call that drains it
+  (memory.ml:628-632, ~4 words a buffer); done when `drain/dropped-1000`
+  allocates only its creates and kaun's GPU decode rows measure allocation
+  again (bench_decode.ml's gpu_metrics)
 - a host buffer reused from rig's cache still paces the major GC as new
-  memory: rig_heap.c heap_bigarray (~line 636) allocates every buffer of
-  64 KiB or more with `caml_alloc_custom`'s full size even when
-  `heap_take` reused it, so a loop of 8 MiB results advances the major GC
-  8 MiB a call. On fudge, nx's c2c-1M on 6 P-cores in bench_nx (~300 MB
-  heap) runs 1.48-1.59 ms ±20%, and 0.76-0.80 ms with OCAMLRUNPARAM=M=1000,
-  with no page fault a call. Pace a cache hit as no new memory, keeping
-  the full pacing for fresh allocations
+  memory: rig_heap.c `heap_bigarray` (607-611), called from
+  `caml_rig_heap_bytes` (644-659), which knows the hit, paces every buffer
+  of 64 KiB or more by its full size, so a loop of 8 MiB results advances
+  the major GC 8 MiB a call (nx2's c2c-1M on fudge: 1.48-1.59 ms, 0.76-0.80
+  with OCAMLRUNPARAM=M=1000). Pace a cache hit as no new memory, state the
+  footprint bound, and keep `heap/reuse-8M-x8` as its row
 - a pool job's start and join on fudge's 6 P-cores: an empty job costs
   0.45 µs, and units run 20-40% slower than on one core (5% of it the
-  frequency drop). That is most of nx's f32 64³ gap to MKL on 6 cores
-  (1.66 against 1.39 µs)
-- AMD 4 KiB prepared copies are 17-26% slower since the compute copy route
+  frequency drop), against nx's f32 64³ gap to MKL on 6 cores (1.66 against
+  1.39 µs): time MKL's or OpenMP's empty parallel region on the same cores,
+  record fudge's rig_pool section, and attribute the gap by an A/B
+- AMD 4 KiB prepared copies are 17-26% slower since 70cca2ae5's wait change
+  (the compute route itself starts at 2 MiB): name the row, explain it or
+  revert the wait change for small copies
 - CUDA and NV file loads take 46-49 ms for 256 MiB against native CUDA's
-  27 ms
+  27 ms (kimchi, 593e7735a; the warm read alone is 28.7 ms, PCIe 10.7):
+  rerun the compare on fudge, then profile whether rig reads the file
+  before uploading instead of overlapping them
 - NV: signal through the last launch's QMD release when a submission ends
   in a chained launch (a WFI release costs ~0.67 µs); first a hardware test
   that a release implies the earlier launches completed
 - read a memory's atomic entry once per path (the dropped patch no longer
-  applies); `Submission.order`'s cheaper design against
-  `submit/polled/make-4096` on fudge
-- measure, then keep or cut: CUDA's second stream (a 256 MiB upload beside
-  a compute-bound launch); the remote link's inline send against one sender
-  thread
+  applies), A/B on the M1's `submit/polled/*` and `copy/*`;
+  `Submission.order`'s cheaper design against `submit/polled/make-4096` on
+  fudge
+- measure, then keep or cut, each with its keep threshold stated before the
+  run: CUDA's second stream (a 256 MiB upload beside a compute-bound
+  launch); the remote link's inline send against one sender thread
+  (rig_remote's `request/*` and `rail/*` rows)
 
 ## tolk
 
