@@ -127,25 +127,23 @@ let on_copy t =
 let encode p = Packet.encode Int64.of_int p
 
 (* A template's holes as the C reads them: each word's index, its width, the
-   argument [arg v] of its value, then the operations on it in the order they
-   apply, each with its constant's 64 bits. *)
+   argument [arg v] of its value, then its add, shift and set. *)
 let holes arg hs =
   let hole (at, w) =
-    let rec flatten ops : _ Packet.term -> _ = function
-      | Value v -> (arg v, ops)
-      | Add (t, k) -> flatten ((0L, k) :: ops) t
-      | Shift (t, n) -> flatten ((1L, Int64.of_int n) :: ops) t
-      | Or (t, k) -> flatten ((2L, k) :: ops) t
-    in
-    let wide, t =
+    let wide, (t : _ Packet.term) =
       match (w : _ Packet.word) with
       | W32 t -> (1, t)
       | W64 t -> (2, t)
       | Dword _ -> assert false
     in
-    let a, ops = flatten [] t in
-    List.map Int64.of_int [ at; wide; a; List.length ops ]
-    @ List.concat_map (fun (op, k) -> [ op; k ]) ops
+    [
+      Int64.of_int at;
+      Int64.of_int wide;
+      Int64.of_int (arg t.value);
+      t.add;
+      Int64.of_int t.shift;
+      t.set;
+    ]
   in
   Array.of_list (List.concat_map hole hs)
 

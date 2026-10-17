@@ -61,7 +61,7 @@ let set_reg reg ws =
   packet op (Dword (reg - start) :: ws)
 
 let at = function
-  | Memory a -> [ W64 (Value a) ]
+  | Memory a -> [ W64 (value a) ]
   | Register r -> [ Dword r; Dword 0 ]
 
 let write_data loc v =
@@ -75,7 +75,7 @@ let write_data loc v =
         Defs.wr_confirm
         lor Defs.packet3_write_data__dst_sel__memory lsl Defs.write_data_dst_sel
   in
-  packet Defs.packet3_write_data ((Dword control :: at loc) @ [ W32 (Value v) ])
+  packet Defs.packet3_write_data ((Dword control :: at loc) @ [ W32 (value v) ])
 
 type write = Posted | Confirmed
 type source = Counter of int | Clock
@@ -102,7 +102,7 @@ let copy_data write source addr =
     lor (confirm lsl Defs.packet3_copy_data__wr_confirm)
   in
   packet Defs.packet3_copy_data
-    [ Dword control; Dword reg; Dword 0; W64 (Value addr) ]
+    [ Dword control; Dword reg; Dword 0; W64 (value addr) ]
 
 (* Waits, caches and signals *)
 
@@ -144,7 +144,7 @@ let wait g loc cmp v ?(mask = 0xffff_ffff) ?(interval = default_interval) () =
   in
   packet Defs.packet3_wait_reg_mem
     ((Dword (wait_control space cmp) :: at loc)
-    @ [ W32 (Value v); Dword mask; Dword interval ])
+    @ [ W32 (value v); Dword mask; Dword interval ])
 
 let wait_64 g addr cmp v ?(interval = default_interval) () =
   if major g = 9 then
@@ -153,8 +153,8 @@ let wait_64 g addr cmp v ?(interval = default_interval) () =
   packet Defs.packet3_wait_reg_mem64
     [
       Dword (wait_control memory_space cmp);
-      W64 (Value addr);
-      W64 (Value v);
+      W64 (value addr);
+      W64 (value v);
       Dword 0xffff_ffff;
       Dword 0xffff_ffff;
       Dword interval;
@@ -240,8 +240,8 @@ let release_mem g scope ?interrupt addr d =
     [
       Dword (event lor release_caches g scope);
       Dword ((sel lsl Defs.data_sel) lor (int_sel lsl Defs.int_sel));
-      W64 (Value addr);
-      W64 (Value v);
+      W64 (value addr);
+      W64 (value v);
       Dword ctxid;
     ]
 
@@ -281,8 +281,8 @@ let pred_exec ~xcc_mask p =
 let indirect_buffer addr ~dwords =
   packet Defs.packet3_indirect_buffer
     [
-      W64 (Value addr);
-      W32 (Or (Value dwords, Int64.of_int Defs.indirect_buffer_valid));
+      W64 (value addr);
+      W32 { (value dwords) with set = Int64.of_int Defs.indirect_buffer_valid };
     ]
 
 (* Runs *)
@@ -351,26 +351,27 @@ let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
   let user =
     (if k.private_segment_buffer then
        [
-         W64 (Or (Value scratch, swizzle_enable));
+         W64 { (value scratch) with set = swizzle_enable };
          Dword num_records;
          Dword scratch_format;
        ]
      else [])
-    @ (if k.dispatch_ptr then [ W64 (Value dispatch_packet) ] else [])
-    @ [ W64 (Value args) ]
+    @ (if k.dispatch_ptr then [ W64 (value dispatch_packet) ] else [])
+    @ [ W64 (value args) ]
   in
   let zeros n = List.init n (fun _ -> Dword 0) in
-  set_reg d.pgm_lo [ W64 (Shift (Value program, address_shift)) ]
+  set_reg d.pgm_lo [ W64 { (value program) with shift = address_shift } ]
   @ set_reg d.pgm_rsrc1 [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
   @ set_reg d.pgm_rsrc3 [ Dword k.rsrc3 ]
   @ set_reg d.tmpring_size [ Dword (Scratch.tmpring g k.private_segment) ]
-  @ set_reg d.scratch_base_lo [ W64 (Shift (Value scratch, address_shift)) ]
+  @ set_reg d.scratch_base_lo
+      [ W64 { (value scratch) with shift = address_shift } ]
   @ set_reg d.restart_x (zeros 3)
   @ set_reg d.user_data_0 user
   @ set_reg d.resource_limits [ Dword limits ]
   @ set_reg d.start_x
-      (zeros 3 @ [ W32 (Value tx); W32 (Value ty); W32 (Value tz) ] @ zeros 2)
+      (zeros 3 @ [ W32 (value tx); W32 (value ty); W32 (value tz) ] @ zeros 2)
   @ packet Defs.packet3_dispatch_direct
-      [ W32 (Value gx); W32 (Value gy); W32 (Value gz); Dword initiator ]
+      [ W32 (value gx); W32 (value gy); W32 (value gz); Dword initiator ]
 
 let run g p = acquire_mem g Agent @ p @ event_write Cs_partial_flush

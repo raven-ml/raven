@@ -64,11 +64,11 @@ let dispatch (k : Code_object.kernel) ~descriptor ~args ~threads:(tx, ty, tz)
   set b P.group_segment_size k.group_segment;
   words b
     [
-      (fst P.grid_size_x, W32 (Value gx));
-      (fst P.grid_size_y, W32 (Value gy));
-      (fst P.grid_size_z, W32 (Value gz));
-      (fst P.kernel_object, W64 (Value descriptor));
-      (fst P.kernarg_address, W64 (Value args));
+      (fst P.grid_size_x, W32 (value gx));
+      (fst P.grid_size_y, W32 (value gy));
+      (fst P.grid_size_z, W32 (value gz));
+      (fst P.kernel_object, W64 (value descriptor));
+      (fst P.kernarg_address, W64 (value args));
     ]
 
 type field = Workgroup_size of Code_object.axis | Group_segment_size

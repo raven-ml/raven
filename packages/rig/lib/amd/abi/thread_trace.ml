@@ -167,7 +167,7 @@ let excluded e =
         ]
 
 let start_gfx11 g ~wgps ~size buffer =
-  let base e shift = Shift (Value (buffer e), shift) in
+  let base e shift = { (value (buffer e)) with shift } in
   let gfx12 = major g >= 12 in
   (* BUF0_SIZE before the base: "order seems important". *)
   let buffer_words e =
@@ -179,7 +179,8 @@ let start_gfx11 g ~wgps ~size buffer =
     else
       let r = register g "SQ_THREAD_TRACE_BUF0_SIZE" in
       let size = Int64.of_int (Register.encode r [ ("size", size / page) ]) in
-      write g "SQ_THREAD_TRACE_BUF0_SIZE" [ W32 (Or (base e high_shift, size)) ]
+      write g "SQ_THREAD_TRACE_BUF0_SIZE"
+        [ W32 { (base e high_shift) with set = size } ]
       @ write g "SQ_THREAD_TRACE_BUF0_BASE" [ W32 (base e page_shift) ]
   in
   engines g ~wgps (fun e se ->
@@ -229,7 +230,7 @@ let gfx9_mode ~on =
   ]
 
 let start_gfx9 g ~wgps ~size buffer =
-  let base e shift = W32 (Shift (Value (buffer e), shift)) in
+  let base e shift = W32 { (value (buffer e)) with shift } in
   engines g ~wgps (fun e se ->
       let tokens =
         if itraced e then gfx9_tokens

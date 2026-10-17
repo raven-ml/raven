@@ -5,7 +5,7 @@
 
 (** Packets, the 32-bit words a GPU's queue reads.
 
-    An encoder ({!Pm4}, {!Aql}, {!Sdma}, {!Thread_trace}) describes a packet
+    An encoder ({!Pm4}, {!Aql}, {!Sdma}) describes a packet
     whose values are of any type ['v], such as integers for a driver that
     writes its ring now, or values a compiler computes later. A word the
     layout fixes is a constant. A word that holds a value, or a computation
@@ -18,21 +18,22 @@
 
 (** {1:words Terms and words} *)
 
-(** The type for computations on a value, as 64-bit unsigned integers.
+type 'v term = {
+  value : 'v;  (** The value. *)
+  add : int64;  (** Added to the value, modulo [2{^64}], read as unsigned. *)
+  shift : int;
+      (** The sum shifted right by it, with zeros shifted in, for
+          [0 <= shift < 64]. *)
+  set : int64;  (** The bits set in the shifted sum. *)
+}
+(** The type for computations on a value, as 64-bit unsigned integers: a
+    term is [((value + add) lsr shift) lor set]. Every word a layout derives
+    from a value takes this form: the address of a piece of a copy adds to
+    it, an address a register holds from its bit 8 shifts it, and a flag
+    beside a count sets bits in it. *)
 
-    A term lists each operation a layout applies, in the order it applies
-    them. The address of a piece of a copy is an [Add] node, an address a
-    register holds from its bit 8 is a [Shift] node, and a shift by [0] is a
-    node too. An interpreter applies each node as it stands and omits or
-    merges none, so what it builds of a term mirrors the term. *)
-type 'v term =
-  | Value of 'v  (** The value. *)
-  | Add of 'v term * int64
-      (** [Add (t, n)] is [t + n], modulo [2{^64}], [n] read as unsigned. *)
-  | Shift of 'v term * int
-      (** [Shift (t, n)] is [t] shifted right by [n], with zeros shifted in,
-          for [0 <= n < 64]. *)
-  | Or of 'v term * int64  (** [Or (t, n)] is the bitwise or of [t] and [n]. *)
+val value : 'v -> 'v term
+(** [value v] is [v] itself: [{ value = v; add = 0L; shift = 0; set = 0L }]. *)
 
 (** The type for the words of a packet. *)
 type 'v word =

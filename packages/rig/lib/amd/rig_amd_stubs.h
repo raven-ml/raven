@@ -72,17 +72,12 @@ enum {
 #define RIG_AMD_TEMPLATE_WORDS 16
 #define RIG_AMD_TEMPLATE_HOLES 4
 #define RIG_AMD_TEMPLATE_ARGS 3
-#define RIG_AMD_HOLE_OPS 3
 
-/* A word of a template that holds a computation on an argument: the
-   argument, then each operation in turn (add, shift right, or), written as
-   one word or as two, low first. */
-enum { OP_ADD, OP_SHIFT, OP_OR };
-
+/* A word of a template that holds a computation on an argument [v],
+   ((v + add) >> shift) | set, written as one word or as two, low first. */
 struct rig_amd_hole {
-  uint8_t at, wide, arg, nops;
-  uint8_t op[RIG_AMD_HOLE_OPS];
-  uint64_t k[RIG_AMD_HOLE_OPS];
+  uint8_t at, wide, arg, shift;
+  uint64_t add, set;
 };
 
 struct rig_amd_template {
@@ -95,12 +90,7 @@ struct rig_amd_template {
 static inline void rig_amd_holes(const struct rig_amd_hole *h, int n,
                                  const uint64_t *args, uint32_t *w) {
   for (; n > 0; n--, h++) {
-    uint64_t v = args[h->arg];
-    for (int j = 0; j < h->nops; j++) switch (h->op[j]) {
-        case OP_ADD: v += h->k[j]; break;
-        case OP_SHIFT: v >>= h->k[j]; break;
-        default: v |= h->k[j]; break;
-      }
+    uint64_t v = ((args[h->arg] + h->add) >> h->shift) | h->set;
     w[h->at] = (uint32_t)v;
     if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
   }

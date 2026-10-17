@@ -34,7 +34,8 @@ let runs_of_regs =
     frequency
       [
         (2, map (fun n -> Packet.Dword n) (int_range 0 0xffff_ffff));
-        (1, map (fun n -> Packet.W64 (Value n)) (int_range 0 0xffff_ffff));
+        ( 1,
+          map (fun n -> Packet.W64 (Packet.value n)) (int_range 0 0xffff_ffff) );
       ]
   in
   let words = list ~size:(int_range 0 4) word in
@@ -65,11 +66,11 @@ let memory =
       test "an SH register is set from SH's start" (fun () ->
           equal (list int)
             [ packet3 0x76 1; 0x20c; 7 ]
-            (words (Pm4.set_reg 0x2e0c [ W32 (Value 7) ])));
+            (words (Pm4.set_reg 0x2e0c [ W32 (Packet.value 7) ])));
       test "a UCONFIG register is set from UCONFIG's start" (fun () ->
           equal (list int)
             [ packet3 0x79 1; 0x200; 7 ]
-            (words (Pm4.set_reg 0xc200 [ W32 (Value 7) ])));
+            (words (Pm4.set_reg 0xc200 [ W32 (Packet.value 7) ])));
       prop "a run of registers is set iff it lies in one range" runs_of_regs
         (fun (a, ws) ->
           let fits (start, stop) =
@@ -324,8 +325,8 @@ let packets =
        (frequency
           [
             (2, map (fun n -> Packet.Dword n) (int_range 0 0xffff_ffff));
-            (1, map (fun a -> Packet.W32 (Value a)) addr);
-            (1, map (fun a -> Packet.W64 (Value a)) addr);
+            (1, map (fun a -> Packet.W32 (Packet.value a)) addr);
+            (1, map (fun a -> Packet.W64 (Packet.value a)) addr);
           ]))
 
 let control =

@@ -19,21 +19,6 @@ let max_words = function Packet -> 16 | Launch -> 64
 let max_holes = function Packet -> 4 | Launch -> 12
 let max_args = function Packet -> 3 | Launch -> 11
 
-(* A hole's most operations. *)
-let hole_ops = 3
-
-(* rig_amd_stubs.h's operations. *)
-let op_add = 0L
-let op_shift = 1L
-let op_or = 2L
-
-(* The value [t] reads and its operations, innermost first. *)
-let rec ops acc : 'v Packet.term -> 'v * (int64 * int64) list = function
-  | Value v -> (v, acc)
-  | Add (t, n) -> ops ((op_add, n) :: acc) t
-  | Or (t, n) -> ops ((op_or, n) :: acc) t
-  | Shift (t, n) -> ops ((op_shift, Int64.of_int n) :: acc) t
-
 let hole form nwords arg b (at, (w : _ Packet.word)) =
   let t, n =
     match w with
@@ -41,24 +26,21 @@ let hole form nwords arg b (at, (w : _ Packet.word)) =
     | W64 t -> (t, 2)
     | Dword _ -> assert false (* a hole holds a term *)
   in
-  let v, ops = ops [] t in
-  let arg = arg v in
   let refuse why = invalid_argf "%s's hole %s" (name form) why in
+  let arg = arg t.Packet.value in
   if arg < 0 || arg >= max_args form then refuse "reads an unknown argument";
   if at < 0 || at + n > nwords then refuse "lies outside its words";
-  if List.length ops > hole_ops then refuse "takes too many operations";
-  if List.exists (fun (op, k) -> op = op_shift && (k < 0L || k > 63L)) ops
-  then refuse "shifts outside 0 to 63";
-  let add v = Buffer.add_int64_le b v in
-  add (Int64.of_int at);
-  add (Int64.of_int arg);
-  add (Int64.of_int n);
-  add (Int64.of_int (List.length ops));
-  List.iter
-    (fun (op, k) ->
-      add op;
-      add k)
-    ops
+  if t.shift < 0 || t.shift > 63 then refuse "shifts outside 0 to 63";
+  let put v = Buffer.add_int64_le b v in
+  List.iter put
+    [
+      Int64.of_int at;
+      Int64.of_int n;
+      Int64.of_int arg;
+      t.add;
+      Int64.of_int t.shift;
+      t.set;
+    ]
 
 let flatten form known arg p =
   let words, holes = Packet.template known p in

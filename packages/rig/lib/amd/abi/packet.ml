@@ -5,11 +5,9 @@
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-type 'v term =
-  | Value of 'v
-  | Add of 'v term * int64
-  | Shift of 'v term * int
-  | Or of 'v term * int64
+type 'v term = { value : 'v; add : int64; shift : int; set : int64 }
+
+let value v = { value = v; add = 0L; shift = 0; set = 0L }
 
 type 'v word = Dword of int | W32 of 'v term | W64 of 'v term
 type 'v t = 'v word list
@@ -21,15 +19,11 @@ let size p = List.fold_left (fun n w -> n + words w) 0 p
 
 (* Evaluation *)
 
-let rec eval fn value = function
-  | Value v -> value v
-  | Add (t, n) -> Int64.add (eval fn value t) n
-  | Or (t, n) -> Int64.logor (eval fn value t) n
-  | Shift (t, n) ->
-      let v = eval fn value t in
-      if n < 0 || n > 63 then
-        invalid_argf "%s: shift by %d, expected 0 to 63" fn n;
-      Int64.shift_right_logical v n
+let eval fn value t =
+  let v = Int64.add (value t.value) t.add in
+  if t.shift < 0 || t.shift > 63 then
+    invalid_argf "%s: shift by %d, expected 0 to 63" fn t.shift;
+  Int64.logor (Int64.shift_right_logical v t.shift) t.set
 
 (* Writes [w] at byte [at] of [b], little-endian, and is the byte after it. *)
 let put fn value b at = function

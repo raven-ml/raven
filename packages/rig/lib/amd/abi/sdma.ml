@@ -25,10 +25,10 @@ let copy_header =
 let copy_linear ~dst ~src ~bytes =
   [
     Dword copy_header;
-    W32 (Add (Value bytes, -1L));
+    W32 { (value bytes) with add = -1L };
     Dword 0;
-    W64 (Value src);
-    W64 (Value dst);
+    W64 (value src);
+    W64 (value dst);
   ]
 
 (* The interval and retries of a poll, as the kernel driver sets them. *)
@@ -47,8 +47,8 @@ let poll addr cmp v ?(mask = 0xffff_ffff) () =
       (Defs.sdma_op_poll_regmem
       lor field Defs.sdma_pkt_poll_regmem_header_func (function_of cmp)
       lor field Defs.sdma_pkt_poll_regmem_header_mem_poll 1);
-    W64 (Value addr);
-    W32 (Value v);
+    W64 (value addr);
+    W32 (value v);
     Dword mask;
     Dword
       (field Defs.sdma_pkt_poll_regmem_dw5_interval interval
@@ -64,7 +64,7 @@ let fence (g : Gpu.t) addr v =
       field Defs.sdma_pkt_fence_header_mtype mtype_uc
     else 0
   in
-  [ Dword (Defs.sdma_op_fence lor mtype); W64 (Value addr); W32 (Value v) ]
+  [ Dword (Defs.sdma_op_fence lor mtype); W64 (value addr); W32 (value v) ]
 
 let trap = Defs.sdma_trap
 
@@ -74,5 +74,5 @@ let timestamp addr =
       (Defs.sdma_op_timestamp
       lor field Defs.sdma_pkt_timestamp_get_global_header_sub_op
             Defs.sdma_subop_timestamp_get_global);
-    W64 (Value addr);
+    W64 (value addr);
   ]

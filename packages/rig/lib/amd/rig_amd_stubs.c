@@ -193,43 +193,37 @@ value caml_rig_amd_ring_byte(value *argv, int argn) {
                               argv[5], argv[6]);
 }
 
-/* A hole's record, as Template lays it out: 64-bit words, the index of its
-   first word, its argument, its words (1 or 2), its operations' count, then
-   each operation and its constant. Template refuses a record outside the
-   bounds; C checks only what keeps its reads and the ring's writes in their
-   arrays, with a fixed message. */
+/* A hole's record, as Template lays it out: six 64-bit words, the index of
+   its first word, its words (1 or 2), its argument, then its add, shift and
+   set. Template refuses a record outside the bounds; C checks only what
+   keeps its reads and the ring's writes in their arrays, with a fixed
+   message. */
 
 #define OUT_OF_BOUNDS "Rig_amd: a template or launch is out of bounds"
 #define LAUNCH "Rig_amd.entry: a launch's "
+#define HOLE_WORDS 6
 
 /* Reads the hole records [v_holes], for words [n] long, into [h], at most
    [max] of them, each reading an argument below [nargs]: their count. */
 static int holes(value v_holes, struct rig_amd_hole *h, int max, int nargs,
                  int n) {
-  size_t len = caml_string_length(v_holes) / 8;
-  uint64_t f[4 + 2 * RIG_AMD_HOLE_OPS];
-  int count = 0;
-  for (size_t i = 0; i < len; i += 4 + 2 * (size_t)f[3]) {
-    if (count == max || len - i < 4) caml_invalid_argument(OUT_OF_BOUNDS);
-    memcpy(f, String_val(v_holes) + 8 * i, 4 * 8);
-    if (f[3] > RIG_AMD_HOLE_OPS || len - i - 4 < 2 * f[3] ||
-        f[1] >= (uint64_t)nargs || f[2] < 1 || f[2] > 2 ||
-        f[0] + f[2] > (uint64_t)n)
+  size_t len = caml_string_length(v_holes) / (8 * HOLE_WORDS);
+  if (len > (size_t)max || caml_string_length(v_holes) % (8 * HOLE_WORDS))
+    caml_invalid_argument(OUT_OF_BOUNDS);
+  for (size_t i = 0; i < len; i++) {
+    uint64_t f[HOLE_WORDS];
+    memcpy(f, String_val(v_holes) + 8 * HOLE_WORDS * i, sizeof f);
+    if (f[1] < 1 || f[1] > 2 || f[0] > (uint64_t)n ||
+        f[0] + f[1] > (uint64_t)n || f[2] >= (uint64_t)nargs || f[4] > 63)
       caml_invalid_argument(OUT_OF_BOUNDS);
-    memcpy(f + 4, String_val(v_holes) + 8 * (i + 4), 2 * 8 * f[3]);
-    struct rig_amd_hole *o = &h[count++];
-    o->at = (uint8_t)f[0];
-    o->arg = (uint8_t)f[1];
-    o->wide = (uint8_t)f[2];
-    o->nops = (uint8_t)f[3];
-    for (int j = 0; j < o->nops; j++) {
-      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
-      if (op == OP_SHIFT && k > 63) caml_invalid_argument(OUT_OF_BOUNDS);
-      o->op[j] = (uint8_t)op;
-      o->k[j] = k;
-    }
+    h[i] = (struct rig_amd_hole){.at = (uint8_t)f[0],
+                                 .wide = (uint8_t)f[1],
+                                 .arg = (uint8_t)f[2],
+                                 .add = f[3],
+                                 .shift = (uint8_t)f[4],
+                                 .set = f[5]};
   }
-  return count;
+  return (int)len;
 }
 
 /* Template [t]: its words as little-endian bytes, and its holes, records as

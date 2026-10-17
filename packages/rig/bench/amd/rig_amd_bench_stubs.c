@@ -90,19 +90,15 @@ value rig_amd_bench_set64(value v_p, value v_v) {
 #include <linux/kfd_ioctl.h>
 
 /* Templates: packet words and the words that hold a computation on an
-   argument, the word's index, one or two words, the argument, then each
-   operation (add, shift right, or) and its constant, all as int64s. */
+   argument [v], ((v + add) >> shift) | set: the word's index, one or two
+   words, the argument, then add, shift and set, all as int64s. */
 
 #define WORDS 256
 #define HOLES 4
-#define OPS 3
-
-enum { OP_ADD, OP_SHIFT, OP_OR };
 
 struct hole {
-  int at, wide, arg, nops;
-  int op[OPS];
-  uint64_t k[OPS];
+  int at, wide, arg, shift;
+  uint64_t add, set;
 };
 
 struct template {
@@ -133,12 +129,9 @@ static void read_template(struct template *t, value v_words, value v_holes) {
     h->at = (int)NEXT;
     h->wide = (int)NEXT;
     h->arg = (int)NEXT;
-    h->nops = (int)NEXT;
-    if (h->nops > OPS) caml_failwith("template: too many operations");
-    for (int j = 0; j < h->nops; j++) {
-      h->op[j] = (int)NEXT;
-      h->k[j] = (uint64_t)NEXT;
-    }
+    h->add = (uint64_t)NEXT;
+    h->shift = (int)NEXT;
+    h->set = (uint64_t)NEXT;
 #undef NEXT
   }
 }
@@ -149,12 +142,7 @@ static void patch(const struct template *t, const uint64_t *args,
   memcpy(w, t->words, (size_t)t->n * 4);
   for (int i = 0; i < t->nholes; i++) {
     const struct hole *h = &t->holes[i];
-    uint64_t v = args[h->arg];
-    for (int j = 0; j < h->nops; j++) switch (h->op[j]) {
-        case OP_ADD: v += h->k[j]; break;
-        case OP_SHIFT: v >>= h->k[j]; break;
-        default: v |= h->k[j]; break;
-      }
+    uint64_t v = ((args[h->arg] + h->add) >> h->shift) | h->set;
     w[h->at] = (uint32_t)v;
     if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
   }
