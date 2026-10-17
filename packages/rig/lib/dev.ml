@@ -854,6 +854,20 @@ let is_done p =
     let w = live_word d in
     if is_lost d then c_done p else w >= Point.value p
 
+(* [wait_point]'s reads and commit without its wait: a done point answers
+   before any commit, and a point not done raises [Lost] once its device is
+   lost. *)
+let reached_point p =
+  if is_done p then true
+  else
+    let d = of_index (Point.index p) in
+    if owns d p && committed d < Point.value p && not (is_lost d) then
+      ignore (commit_once d : bool);
+    if is_done p then true
+    else (
+      check p;
+      false)
+
 let settled p =
   let d = of_index (Point.index p) in
   if not (owns d p) then true

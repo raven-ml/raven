@@ -55,9 +55,7 @@ module Point = struct
 
   let wait p = Dev.wait_point 0 true p
 
-  let reached p =
-    let d = Dev.of_index (Point.index p) in
-    (not (Dev.owns d p)) || Dev.word d >= value p
+  let reached = Dev.reached_point
 
   let pp ppf p =
     match device p with

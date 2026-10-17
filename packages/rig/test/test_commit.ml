@@ -198,11 +198,20 @@ let test_signaled_reads () =
   let last = List.nth points (lag - 2) in
   for _ = 1 to 10 do
     Unix.sleepf 0.001;
-    equal ~msg:"signaled" int base (Rig.signaled d);
-    equal ~msg:"reached" bool false (Rig.Point.reached last)
+    equal ~msg:"signaled" int base (Rig.signaled d)
   done;
   Rig.Point.wait last;
   equal ~msg:"after the wait" int (base + lag - 1) (Rig.signaled d)
+
+(* [reached] commits as a wait does, so a loop on it ends on values the
+   driver holds. *)
+let test_reached_commits () =
+  let d, _ = P.open_ ~lag ~runs:`Itself (fresh "reached") in
+  let base = Rig.submitted d in
+  let points = List.init (lag - 1) (fun _ -> submit (empty d)) in
+  let last = List.nth points (lag - 2) in
+  Support.await "the last point reached" (fun () -> Rig.Point.reached last);
+  equal ~msg:"signaled" int (base + lag - 1) (Rig.signaled d)
 
 (* Loss *)
 
@@ -217,6 +226,7 @@ let test_lost_uncommitted () =
   raises_match (lost d) (fun () -> B.create d 4096);
   raises_match (lost d) (fun () -> Rig.Point.wait second);
   raises_match (lost d) (fun () -> Rig.Point.wait first);
+  raises_match ~msg:"reached" (lost d) (fun () -> Rig.Point.reached second);
   equal ~msg:"the word after the stop" int (base + 2) (Rig.signaled d)
 
 (* A submit that blocks in its driver holds the turn: a wait for an earlier
@@ -264,6 +274,7 @@ let tests =
       [
         test "a driver commits within its bound" test_lag_bounded;
         test "signaled commits nothing" test_signaled_reads;
+        test "a poll of reached commits" test_reached_commits;
       ];
     group ~timeout "loss"
       [

@@ -73,6 +73,9 @@ let rec record w p =
 let waited q =
   match Rig.Point.wait q with () -> true | exception Rig.Lost _ -> false
 
+let polled q =
+  match Rig.Point.reached q with r -> r | exception Rig.Lost _ -> false
+
 (* The model: whether [b]'s last write was lost, after which every ordered
    use of [b] raises [Lost] for good; whether a lost use or write of [b]
    makes every write of it raise for good, or a use whose device was lost
@@ -261,12 +264,13 @@ let use_model r = function
       r.maybe_lost_use <- false
   | Ok `Lost_self -> r.maybe_lost_use <- true
 
-(* Each recorded point still answers its first wait: a later device on its
-   slot changes no answer. With whether a point a loss dropped names no device
-   any more: its slot passed on. *)
+(* Each recorded point still answers its first wait, and [reached] answers
+   as the wait does: a later device on its slot changes no answer. With
+   whether a point a loss dropped names no device any more: its slot passed
+   on. *)
 let points_system w =
   let points = Atomic.get w.points in
-  ( List.for_all (fun (q, ok) -> waited q = ok && Rig.Point.reached q) points,
+  ( List.for_all (fun (q, ok) -> waited q = ok && polled q = ok) points,
     List.exists (fun (q, ok) -> (not ok) && Rig.Point.device q = None) points
   )
 

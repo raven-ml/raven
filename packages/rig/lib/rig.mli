@@ -322,8 +322,8 @@ val shares_host_memory : t -> bool
     interface states, such as 256 for Metal ({!Rig_edge.section-calls}). rig
     does not read [k]. A device so reports each value at most [k] values
     late while work is submitted, and a program never commits by hand.
-    {!signaled} and {!Point.reached} commit nothing, so the last values
-    submitted may stay unreached until a wait commits them. *)
+    {!signaled} commits nothing, so the last values submitted may stay
+    unreported until a wait or {!Point.reached} commits them. *)
 
 (** Points on timelines.
 
@@ -356,14 +356,14 @@ module Point : sig
       or is lost during the wait before it does. *)
 
   val reached : t -> bool
-  (** [reached p] is [true] iff [p]'s device's word, as {!signaled} reads
-      it, is at least [value p]: always, once a later device took its slot.
-      It commits nothing and waits for no work. While the device is live, a
-      [true] means the device has reached [p]'s value. On a lost device it
-      may also be [true] for a dropped value, whose work may not have run
-      ({!section-loss}).
+  (** [reached p] is [true] iff [p]'s device has reached [p]'s value, as
+      {!wait} would find it, also once a later device took [p]'s slot.
+      Otherwise it commits the device's work as {!wait} does, so a loop on
+      it ends once that work runs. The commit waits for no work. It waits up
+      to 200 ms for another submit or commit on the device, and blocks while
+      a driver that declares [may_block] commits.
 
-      Raises as {!signaled} does. *)
+      Raises {!Lost} if the device was lost before it reached [p]'s value. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a point as [NAME:v], or [ended:v] once {!val-device} is
@@ -405,7 +405,8 @@ val signaled : t -> int
        write of it. Work that writes it follows every use of it, by any
        device.}
     {- {e Waits.} The work of {!submit} follows the points of its [waits].}
-    {- {e Host access.} Host code after {!Point.wait}[ p] follows [p]'s work.
+    {- {e Host access.} Host code after {!Point.wait}[ p], or after
+       {!Point.reached}[ p] answers [true], follows [p]'s work.
        {!Buffer.read}'s function follows every device's last write of the
        buffer's memory, and {!Buffer.write}'s every use of it, as host code
        after {!Buffer.wait}[ b Read] or [b Read_write] does. {!Buffer.copy},

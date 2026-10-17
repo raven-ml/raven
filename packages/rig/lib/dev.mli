@@ -374,6 +374,11 @@ val is_done : int -> bool
 (** [is_done p] is [true] iff [p] is done. It may raise {!Lost} as {!word}
     does. A point of a device that gave its slot to a later one is done. *)
 
+val reached_point : int -> bool
+(** [reached_point p] is {!Rig.Point.reached}: {!is_done}[ p], after a commit
+    of [p]'s value as {!wait_point} commits it, which waits for no work. It
+    raises {!Lost} if [p] is not done and its device is lost. *)
+
 val settled : int -> bool
 (** [settled p] is [true] iff [p] is settled. A point whose device the read
     of its word loses has not settled. A point of a device that gave its slot
