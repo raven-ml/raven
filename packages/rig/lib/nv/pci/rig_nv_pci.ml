@@ -26,6 +26,25 @@ let strf = Printf.sprintf
 let ( let* ) = Result.bind
 let gib = 1 lsl 30
 
+(* Locks *)
+
+(* The locks the calling thread holds ([rig_holds] of rig_edge.h). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+(* A public function that takes a lock, the path's or rig.pci's, starts
+   with [check_held fn], before it changes anything. Locks nest in this
+   order: rig.pci's locks of its GPUs, which an open, a detach, an attach, a
+   reset and a stop hold; the path's own, one at a time ([machines_lock], a
+   GPU's [lock], its GSP's); rig.pci's others, of memory and firmware. *)
+let check_held fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_nv_pci." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
+
 (* GPUs *)
 
 (* The memory BAR, BAR 1. *)
@@ -88,6 +107,7 @@ let survey ~firmware boot42 rom =
       | None -> assert false (* three files, not all found *))
 
 let report ~firmware ~chip ~vbios =
+  check_held "report";
   Result.map fst (survey ~firmware chip (fun () -> vbios))
 
 (* Memory *)
@@ -403,18 +423,24 @@ let boot ~word ~on ~firmware ~index h fn =
       Ok d
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
-(* [known] takes the path's first lock before the open changes anything, so
-   that an open refused for a lock its thread holds ({!Rig_nv.Lock.protect})
-   leaves the GPU untouched. *)
 let open_ ?(machine = Machine.this) ~word ~firmware i =
+  check_held "gpu";
   let on = known machine in
   Gpus.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
 
 (* Changes to the machine *)
 
-let detach i = Gpus.detach gpus Machine.this i
-let attach i = Gpus.attach gpus Machine.this i
-let reset ?(machine = Machine.this) i = Gpus.reset gpus machine i
+let detach i =
+  check_held "detach";
+  Gpus.detach gpus Machine.this i
+
+let attach i =
+  check_held "attach";
+  Gpus.attach gpus Machine.this i
+
+let reset ?(machine = Machine.this) i =
+  check_held "reset";
+  Gpus.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)
 let system_firmware = "/lib/firmware"

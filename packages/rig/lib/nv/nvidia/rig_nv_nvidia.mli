@@ -89,4 +89,5 @@ val gpu : ?root:string -> int -> Rig_nv.t Rig_edge.opener
     - a device of GPU [i] is open and not stopped;
     - the kernel driver refuses an object or memory, with its refusal.
 
-    Raises [Invalid_argument] if [i < 0]. *)
+    Raises [Invalid_argument] if [i < 0]. [make] raises it, having opened
+    nothing, from a callback inside a lock ([Rig]'s domains section). *)

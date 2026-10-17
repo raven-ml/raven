@@ -7,28 +7,22 @@
    path gave, and read by the wait loop.
 
    A device is named by the address of its state, an OCaml int. Every stub
-   holds the runtime, except those whose comment says they release it,
-   which do so without running pending signal handlers, so no OCaml code
-   runs between the call's answer and its caller. */
+   holds the runtime, so no OCaml code runs between the call's answer and
+   its caller. */
 
 #define _GNU_SOURCE
 
-#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
-#include <caml/callback.h>
-#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
-#include <caml/signals.h>
 
 #include "rig_nv_stubs.h"
 
@@ -36,116 +30,28 @@
 #define Device_val(v) (Edge_val(v)->d)
 #define Pointer_val(v) ((void *)Long_val(v))
 
-/* Guards */
+/* Lock ranks */
 
-/* A guard: a mutex of its own memory, which a custom block holds and
-   destroys once collected, and its rank. A thread takes guards in rising
-   rank, so no two threads wait for each other. [below] is the rank its
-   holder held before it took the guard. A guard counts among the locks its
-   thread holds (rig_hold in rig_edge.h) from before its take to after its
-   give. */
-struct guard {
-  pthread_mutex_t mutex;
-  int rank;
-  int below;
-};
+/* The rank of the last lock of the driver's this thread took, -1 for none
+   (rig_nv.ml's Locks). */
+static _Thread_local intnat held_rank = -1;
 
-#define Guard_val(v) (*(struct guard **)Data_custom_val(v))
-
-/* The rank of the last guard this thread took, -1 for none. A take of a
-   guard of no higher rank raises: a signal handler, finaliser or
-   Gc.Memprof callback that runs while its thread holds a guard and takes
-   one would wait for good on its own, or take two in no fixed order. */
-static _Thread_local int held = -1;
-
-static void guard_finalize(value v) {
-  struct guard *g = Guard_val(v);
-  if (g == NULL) return;
-  pthread_mutex_destroy(&g->mutex);
-  free(g);
+intnat caml_rig_nv_rank(value unit) {
+  (void)unit;
+  return held_rank;
 }
 
-static struct custom_operations guard_ops = {
-    "rig.nv.guard",             guard_finalize,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default};
-
-value caml_rig_nv_guard(value v_rank) {
-  CAMLparam1(v_rank);
-  CAMLlocal1(v);
-  v = caml_alloc_custom(&guard_ops, sizeof(struct guard *), 0, 1);
-  Guard_val(v) = NULL;
-  struct guard *g = malloc(sizeof *g);
-  if (g == NULL) caml_raise_out_of_memory();
-  int err = pthread_mutex_init(&g->mutex, NULL);
-  if (err != 0) {
-    free(g);
-    if (err == ENOMEM || err == EAGAIN) caml_raise_out_of_memory();
-    char why[96];
-    snprintf(why, sizeof why, "Rig_nv: a guard: %s", strerror(err));
-    caml_failwith(why);
-  }
-  g->rank = Int_val(v_rank);
-  g->below = -1;
-  Guard_val(v) = g;
-  CAMLreturn(v);
+value caml_rig_nv_rank_byte(value unit) {
+  return Val_long(caml_rig_nv_rank(unit));
 }
 
-static void taken(struct guard *g) {
-  g->below = held;
-  held = g->rank;
-}
-
-/* Takes the guard [v_g]: by try-lock, and otherwise after releasing the
-   runtime without running pending signal handlers, which run at the
-   caller's next poll point. Raises Rig_nv.Refused, which rig_nv.ml
-   registers, before it takes anything, if this thread holds a guard of the
-   same or a higher rank; no other exception can end the take, so a caller
-   that takes it as the last step before its handler gives it back on every
-   exit. */
-value caml_rig_nv_guard_take(value v_g) {
-  struct guard *g = Guard_val(v_g);
-  if (held >= g->rank)
-    caml_raise_with_string(*caml_named_value("Rig_nv.Refused"),
-                           "Rig_nv: called from a signal handler, "
-                           "finaliser or Gc.Memprof callback while this "
-                           "thread holds a lock the call takes, or one "
-                           "taken after it");
-  rig_hold();
-  if (pthread_mutex_trylock(&g->mutex) != 0) {
-    caml_enter_blocking_section_no_pending();
-    int err = pthread_mutex_lock(&g->mutex);
-    caml_leave_blocking_section();
-    if (err != 0) {
-      fprintf(stderr, "Rig_nv: a guard: %s\n", strerror(err));
-      abort();
-    }
-  }
-  taken(g);
+value caml_rig_nv_set_rank(intnat rank) {
+  held_rank = rank;
   return Val_unit;
 }
 
-/* Takes the guard [v_g] if no thread holds it and this thread holds none of
-   the same or a higher rank: whether it took it. */
-value caml_rig_nv_guard_try(value v_g) {
-  struct guard *g = Guard_val(v_g);
-  if (held >= g->rank) return Val_false;
-  rig_hold();
-  if (pthread_mutex_trylock(&g->mutex) != 0) {
-    rig_unhold();
-    return Val_false;
-  }
-  taken(g);
-  return Val_true;
-}
-
-value caml_rig_nv_guard_give(value v_g) {
-  struct guard *g = Guard_val(v_g);
-  held = g->below;
-  pthread_mutex_unlock(&g->mutex);
-  rig_unhold();
-  return Val_unit;
+value caml_rig_nv_set_rank_byte(value v_rank) {
+  return caml_rig_nv_set_rank(Long_val(v_rank));
 }
 
 /* Making a device */

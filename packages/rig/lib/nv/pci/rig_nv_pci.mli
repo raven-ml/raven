@@ -177,7 +177,10 @@ val report :
     from the host's clock at the timer's rate error since open.
 
     Any domain may call any function. Opens and changes of NVIDIA GPUs run
-    one at a time, so a boot delays the others. *)
+    one at a time, so a boot delays the others. {!val-report}, {!gpu}'s
+    [make], {!detach}, {!attach} and {!reset}, called from a callback
+    inside a lock ([Rig]'s domains section), raise [Invalid_argument],
+    having changed nothing ({!Rig_edge.section-drivers}). *)
 
 val gpu :
   ?machine:Rig_pci.Machine.t ->

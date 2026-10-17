@@ -68,6 +68,80 @@ let gpus =
                ]));
     ]
 
+(* A path's locks *)
+
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+
+(* What a take of [l] answers: ["refused"] for the [Invalid_argument] of a
+   take inside a path's lock, ["taken"] once it returns. *)
+let take l =
+  match N.Lock.protect l ignore with
+  | () -> "taken"
+  | exception Invalid_argument why
+    when String.starts_with
+           ~prefix:"Rig_nv: a lock taken inside one of its rank or a later one"
+           why ->
+      "refused"
+
+(* A lock counts among its thread's locks while it is held. Its holder's
+   take of it or of another path's lock raises having taken nothing, and its
+   holder's try of either answers [false]; it is given back as its function
+   returns or raises. *)
+let test_lock () =
+  let l = N.Lock.create () and other = N.Lock.create () in
+  let before = holds () in
+  let held, again, nested, tried, tried_other =
+    N.Lock.protect l (fun () ->
+        let held = holds () - before in
+        let again = take l and nested = take other in
+        let tried = N.Lock.try_protect l (fun () -> fail "ran") in
+        let tried_other = N.Lock.try_protect other (fun () -> fail "ran") in
+        (held, again, nested, tried, tried_other))
+  in
+  equal ~msg:"locks held inside" int 1 held;
+  equal ~msg:"the holder's take" string "refused" again;
+  equal ~msg:"the holder's take of another path's lock" string "refused"
+    nested;
+  equal ~msg:"the holder's try" bool false tried;
+  equal ~msg:"the holder's try of another path's lock" bool false tried_other;
+  equal ~msg:"the other lock outside" string "taken" (take other);
+  equal ~msg:"locks held after" int 0 (holds () - before);
+  raises Exit (fun () -> N.Lock.protect l (fun () -> raise Exit));
+  equal ~msg:"locks held after a raise" int 0 (holds () - before);
+  equal ~msg:"a take after" string "taken" (take l);
+  equal ~msg:"a try after" bool true (N.Lock.try_protect l ignore)
+
+(* A try answers [false], having run nothing, while another thread holds the
+   lock. *)
+let test_try_held () =
+  let l = N.Lock.create () in
+  let taken = Atomic.make false and release = Atomic.make false in
+  let holder =
+    Domain.spawn (fun () ->
+        N.Lock.protect l (fun () ->
+            Atomic.set taken true;
+            while not (Atomic.get release) do
+              Domain.cpu_relax ()
+            done))
+  in
+  while not (Atomic.get taken) do
+    Domain.cpu_relax ()
+  done;
+  let tried = N.Lock.try_protect l (fun () -> fail "ran") in
+  Atomic.set release true;
+  Domain.join holder;
+  equal ~msg:"a try while another thread holds it" bool false tried;
+  equal ~msg:"a try after" bool true (N.Lock.try_protect l ignore)
+
+let locks =
+  group ~timeout:10. "a path's locks"
+    [
+      test "count while held, refuse their holder's take, and go back"
+        test_lock;
+      test "answer a try while another thread holds them" test_try_held;
+    ]
+
 (* Facts *)
 
 let digits s = String.for_all (function '0' .. '9' -> true | _ -> false) s
@@ -1549,6 +1623,7 @@ let () =
     (run "rig_nv"
        [
          gpus;
+         locks;
          facts;
          memory;
          work;

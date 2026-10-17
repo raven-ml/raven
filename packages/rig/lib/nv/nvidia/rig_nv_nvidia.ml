@@ -8,6 +8,8 @@
    device of it is open under the same lock; the users of every range are kept
    under [ranges_lock]. Both, and the RM's client lock, are [Rig_nv.Lock]s,
    none taken while another is held; the GPUs' addresses ([Va]) take none.
+   An open checks the locks its thread holds as it starts, before it takes
+   any.
 
    References:
    - NVIDIA's open-gpu-kernel-modules, releases 570.144, 580, 610 and 615:
@@ -32,6 +34,11 @@ let page = 0x1000
 let huge_page = 2 lsl 20
 
 external clock : int -> int -> int -> int -> int = "caml_rig_nv_nvidia_clock"
+
+(* The locks the calling thread holds ([rig_holds] of rig_edge.h). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
 
 (* Video memory of this size or more takes 2 MiB pages. *)
 let huge_from = 8 lsl 20
@@ -935,6 +942,10 @@ let device_name i =
   if i = 0 then "NV" else strf "NV:%d" i
 
 let open_ ?(root = "/") ~word i =
+  if holds () <> 0 then
+    invalid_arg
+      "Rig_nv_nvidia.gpu: called from a signal handler, finaliser or \
+       Gc.Memprof callback inside a lock of the calling thread's";
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   let* buses =
     Result.map_error

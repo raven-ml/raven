@@ -14,6 +14,22 @@ module Tree = Rig_pci_support.Tree
 
 let mib = Rig_pci_support.mib
 
+(* One more lock the calling thread holds, and one fewer ([rig_hold] and
+   [rig_unhold] in [rig_edge.h]). *)
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+(* What [call ()], a call of [Rig_nv_pci]'s [fn], answers: ["error"] for
+   [Error], ["refused"] for the [Invalid_argument] of a call inside a lock
+   that names [fn]. *)
+let answer fn call =
+  let prefix = strf "Rig_nv_pci.%s: called from" fn in
+  match call () with
+  | Ok () -> "ok"
+  | Error _ -> "error"
+  | exception Invalid_argument why when String.starts_with ~prefix why ->
+      "refused"
+
 (* A machine whose NVIDIA GPUs are a display controller and a 3D controller,
    beside an NVIDIA audio function and another vendor's GPU, listed out of bus
    order. *)
@@ -73,6 +89,30 @@ let opening =
           ("reset", fun () -> ignore (Rig_nv_pci.reset (-1)));
         ]
         (fun (_, f) -> raises_match Exn.invalid_arg f);
+      cases ~name:fst
+        "a call inside a lock of its thread's raises naming it, changing \
+         nothing"
+        (let on () = Rig_pci.Machine.at (machine ()) in
+         let past () = Rig_nv_pci.count () in
+         [
+           ( "gpu",
+             fun () ->
+               Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine:(on ()) 2)
+               |> Result.map ignore );
+           ( "detach",
+             fun () -> Rig_nv_pci.detach (past ()) |> Result.map ignore );
+           ("attach", fun () -> Rig_nv_pci.attach (past ()));
+           ("reset", fun () -> Rig_nv_pci.reset ~machine:(on ()) 2);
+           ( "report",
+             fun () ->
+               Rig_nv_pci.report ~firmware:[] ~chip:0 ~vbios:""
+               |> Result.map ignore );
+         ])
+        (fun (fn, call) ->
+          hold ();
+          let inside = Fun.protect ~finally:unhold (fun () -> answer fn call) in
+          equal ~msg:"inside the lock" string "refused" inside;
+          equal ~msg:"once it is given back" string "error" (answer fn call));
     ]
 
 (* The pinned firmware, from the directories the variable RIG_NV_PCI_FIRMWARE

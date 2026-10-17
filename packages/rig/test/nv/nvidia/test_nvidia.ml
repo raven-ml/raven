@@ -217,6 +217,32 @@ let reclose () =
       Gc.full_major ();
       Rig.free_cache d)
 
+(* The locks the calling thread holds, one more and one fewer ([rig_hold]
+   and [rig_unhold] in [rig_edge.h]). *)
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+(* An open inside a lock of its thread's, as from a callback inside one,
+   raises naming the opener, having opened nothing: GPU 0 then opens. *)
+let inside_lock () =
+  hold ();
+  let refused =
+    Fun.protect ~finally:unhold (fun () ->
+        match Rig_gpu_support.opened (N.gpu 0) with
+        | Ok g ->
+            Rig_nv.stop g ~fault:None;
+            "opened"
+        | Error why -> why
+        | exception Invalid_argument why
+          when String.starts_with ~prefix:"Rig_nv_nvidia.gpu: called from" why
+          ->
+            "refused")
+  in
+  equal ~msg:"the open inside the lock" string "refused" refused;
+  if N.count () > 0 then
+    let opened = Rig_gpu_support.opened (N.gpu 0) in
+    Rig_nv.stop (require_ok ~pp:Format.pp_print_string opened) ~fault:None
+
 let () =
   exit
   @@ run "rig_nv_nvidia"
@@ -252,6 +278,7 @@ let () =
                  let n = N.count () in
                  let e = require_error (Rig_gpu_support.opened (N.gpu n)) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
+             test "an open inside a lock of its thread's raises" inside_lock;
              test "a GPU has one device until it is stopped" once;
              test "a GPU has one device whatever the root" other_root;
              test "a GPU without a display bounds hangs at 30 s" hang_bound;

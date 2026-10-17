@@ -49,14 +49,13 @@
     {!signaled}, {!val-free} and {!val-stop} never raise it, and {!make}
     returns it as [Error].
 
-    A call from a signal handler, finaliser or [Gc.Memprof] callback may
-    raise {!Refused}, having changed nothing, when the callback interrupts a
-    call of any NVIDIA device on the same thread inside one of its locks.
-    Locks are of three kinds, taken in this order: an image's, which
-    {!entry} and {!unload} hold; a device's local memory lock, which
-    {!entry} and {!val-stop} hold; and a path's ({!Lock}). A call is
-    refused where it would take a lock of the kind the interrupted call
-    holds or of an earlier kind.
+    The capability's [local] and the paths' openers, called from a callback
+    inside a lock ([Rig]'s domains section), raise [Invalid_argument],
+    having changed nothing ({!Rig_edge.section-drivers}). Locks nest in
+    this order, and a take out of it raises [Invalid_argument], having
+    taken nothing: an image's, which {!entry} and {!unload} hold; a device's
+    local memory lock, which {!entry} and {!val-stop} hold; and a path's
+    ({!Lock}).
 
     Compiled code finds the record its launch descriptors depend on under
     {!Rig_nv_abi.Gpu.key}:
@@ -464,22 +463,20 @@ type 'm path = {
 (** The type for what a path gives a device. Each function must return the
     RM's refusal as its result and raise {!Fault} for any other failure, and
     must allow any domain to call it at the same time as others. It takes
-    its locks with {!Lock.protect}, never one inside another, and [alloc],
-    [map_host], [map_peer] and [free] take their first lock before they
-    change anything. A path's opener takes one of its locks before it
-    changes anything or calls {!make}; {!val-stop} takes its own before it
-    calls [unregister] and [stop]. A thread's locks do not change during a
-    call, so a call whose first take succeeded is refused no later one.
-    After the device's {!val-stop}, the device calls only [free] and
-    [reaches]. It keeps [free] until it has given back all the memory the
-    path gave, and [reaches] for the life of the process. *)
+    its locks with {!Lock.protect}, never one inside another. A path's
+    opener must check the locks its thread holds before it changes anything
+    ({!Rig_edge.section-drivers}). After the device's {!val-stop}, the
+    device calls only [free] and [reaches]. It keeps [free] until it has
+    given back all the memory the path gave, and [reaches] for the life of
+    the process. *)
 
 (** {2:locks A path's locks}
 
-    For a path's implementation. A path that holds a lock across OCaml code
-    takes it with {!Lock.protect}, so that a signal handler, finaliser or
-    [Gc.Memprof] callback that interrupts that code and calls the driver is
-    refused ({!Refused}) and does not wait for good. *)
+    For a path's implementation. A path takes each lock it holds across
+    OCaml code with {!Lock.protect}, which counts it among the locks its
+    thread holds, so that a call from a signal handler, finaliser or
+    [Gc.Memprof] callback that runs inside it is refused as it starts
+    ({!Rig_edge.section-drivers}). *)
 
 module Lock : sig
   type t
@@ -493,8 +490,8 @@ module Lock : sig
   (** [protect l f] is [f ()] run holding [l], which it gives back as [f]
       returns or raises. A path holds one of its locks at a time.
 
-      Raises {!Refused}, having taken nothing, if the calling thread holds a
-      path's lock, as a callback that interrupts a section does. *)
+      Raises [Invalid_argument], having taken nothing, if the calling thread
+      holds a path's lock, [l] included. *)
 
   val try_protect : t -> (unit -> unit) -> bool
   (** [try_protect l f] is [true] once [f ()] ran as in {!protect}, or

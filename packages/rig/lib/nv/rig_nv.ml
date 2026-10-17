@@ -8,18 +8,23 @@
    time for each device; [local] holds the device's lock while it grows the
    local memory, and [stop] while it drops the device's live state.
 
-   Every lock of the driver's and of its paths is a guard of one of three
-   kinds, ranked in this order: an image's, a device's local memory lock, a
-   path's. A thread takes a guard inside another only if it is of a later
-   kind, so no path lock is taken inside another and no two threads wait
-   for each other; guards of one kind are taken one after another. A take
-   while the thread holds a guard of the same or a later kind, as a signal
-   handler, finaliser or Gc.Memprof callback inside a section would, raises
-   [Refused] before it takes anything. Each call takes its first guard
-   before it changes anything, and later ones of no earlier kind. The
-   guards its thread held as it began stay held until it returns, so a call
-   whose first take succeeded is refused no later one, and a refusal
-   changes nothing.
+   Every lock of the driver's and of its paths is a [Mutex] taken through
+   [take_lock], which counts it among the locks its thread holds (rig_hold in
+   rig_edge.h). Locks have ranks, in the order they nest: an image's, a
+   device's local memory lock, a path's. A take of a lock whose rank is no
+   higher than one its thread holds raises [Invalid_argument], having taken
+   nothing, so no path lock is taken inside another, and no two threads
+   wait for each other. Over PCI, an open holds rig.pci's lock of its GPUs
+   around the path's locks, and the path holds a path lock around rig.pci's
+   locks of memory. The capability's [local] and the paths' openers check
+   the count as they start, as rig's calls do, so a call of theirs from a
+   signal handler, finaliser or Gc.Memprof callback inside one of these
+   locks raises before it changes anything.
+
+   A path holds its lock across waits of the hardware's: the GSP's RPCs,
+   the RM's opens of clients and GPUs, its range counts. A call of rig's from
+   a callback during one raises, since those waits must see their state
+   whole and cannot end early.
 
    References:
    - NVIDIA's open-gpu-kernel-modules, releases 570.144, 580, 610 and 615:
@@ -42,54 +47,120 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
 exception Fault of string
+(* Rig_edge.Driver's, which the driver raises nowhere. *)
 exception Refused of string
-
-let () = Callback.register_exception "Rig_nv.Refused" (Refused "")
 
 (* Locks *)
 
-type lock
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
 
-external guard : int -> lock = "caml_rig_nv_guard"
-external take_guard : lock -> unit = "caml_rig_nv_guard_take"
-external try_guard : lock -> bool = "caml_rig_nv_guard_try" [@@noalloc]
-external give_guard : lock -> unit = "caml_rig_nv_guard_give" [@@noalloc]
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-(* The ranks of locks, in the order a thread takes them. *)
+(* The rank of the last lock of the driver's the calling thread took, [-1]
+   for none, and its change. *)
+external held_rank : unit -> (int[@untagged])
+  = "caml_rig_nv_rank_byte" "caml_rig_nv_rank"
+[@@noalloc]
+
+external set_rank : (int[@untagged]) -> unit
+  = "caml_rig_nv_set_rank_byte" "caml_rig_nv_set_rank"
+[@@noalloc]
+
+(* A lock, its rank, and the rank its holder held before it took it. *)
+type lock = { mutex : Mutex.t; rank : int; mutable below : int }
+
 let image_rank = 0
 let local_rank = 1
 let path_rank = 2
+let ranked rank = { mutex = Mutex.create (); rank; below = -1 }
+
+let refused () =
+  invalid_arg
+    "Rig_nv: a lock taken inside one of its rank or a later one: a call \
+     from a signal handler, finaliser or Gc.Memprof callback skipped its \
+     check, or a path took a lock inside one of its own"
+
+(* [take_lock l] takes [l], counted from before the take, so that a signal
+   handler that runs inside a contended take sees it held. A thread that
+   holds a lock of [l]'s rank or a later one, [l] included, raises having
+   taken nothing. An exception that ends the take, such as one a handler
+   raised, gives the count back first. *)
+let take_lock l =
+  if held_rank () >= l.rank then refused ();
+  hold ();
+  match Mutex.lock l.mutex with
+  | () ->
+      l.below <- held_rank ();
+      set_rank l.rank
+  | exception e ->
+      unhold ();
+      reraise e
+
+(* Gives [l] back, then its count, with nothing between that allocates or
+   polls. *)
+let give_lock l =
+  set_rank l.below;
+  Mutex.unlock l.mutex;
+  unhold ()
 
 (* [l] is taken as the last step before the handler and given back as the
    first step of both exits, where nothing allocates or polls, so an
-   exception anywhere in [f], an asynchronous one too, leaves it free. *)
+   exception anywhere in [f], an asynchronous one too, leaves it free and
+   the count right. *)
 let protect l f =
-  take_guard l;
+  take_lock l;
   match f () with
   | x ->
-      give_guard l;
+      give_lock l;
       x
   | exception e ->
-      give_guard l;
+      give_lock l;
       reraise e
 
+(* [try_protect l f] takes [l] as [take_lock] does, but answers [false],
+   having taken nothing, where the take would wait or raise. *)
 let try_protect l f =
-  try_guard l
-  && begin
-    match f () with
-    | () ->
-        give_guard l;
-        true
+  if held_rank () >= l.rank then false
+  else begin
+    hold ();
+    match Mutex.try_lock l.mutex with
+    | false ->
+        unhold ();
+        false
     | exception e ->
-        give_guard l;
+        unhold ();
         reraise e
+    | true -> (
+        l.below <- held_rank ();
+        set_rank l.rank;
+        match f () with
+        | () ->
+            give_lock l;
+            true
+        | exception e ->
+            give_lock l;
+            reraise e)
   end
+
+(* A function a caller outside rig makes, and that may take a lock, starts
+   with [check_held fn]. *)
+let check_held fn =
+  if holds () <> 0 then
+    invalid_arg
+      (fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
 
 module Lock = struct
   type t = lock
 
-  let create () = guard path_rank
+  let create () = ranked path_rank
   let protect = protect
   let try_protect = try_protect
 end
@@ -601,6 +672,7 @@ let rec retire_rings d l =
       retire_rings d l
 
 let local d n =
+  check_held "Rig_nv_abi.Gpu.local";
   match grow_local d n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
@@ -994,7 +1066,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
           };
         word = { dev = d; mem = word_mem; free = p.free; bytes = 8; flush = None };
         flush = p.flush;
-        local_lock = guard local_rank;
+        local_lock = ranked local_rank;
         live =
           Some
             {
@@ -1221,7 +1293,7 @@ let lay d c r =
       cubin = c;
       gpu = d.capability;
       grow_local = grow_local d;
-      lock = guard image_rank;
+      lock = ranked image_rank;
       entries = Names.empty;
       launches = [];
     }
@@ -1280,17 +1352,17 @@ let entry c name =
       | Some k -> set_up c name k)
 
 (* An image holds of its device its code region, which rig frees, and its
-   functions' launches. rig unloads an image once, a refused unload counting
-   as not made, so the unload allocates nothing and polls nowhere, the take
-   included: an exception cannot end it with launches held. The take's
-   [Refused] ends it before it changed anything. *)
+   functions' launches. rig unloads an image once, so past its take the
+   unload allocates nothing and polls nowhere: an exception cannot end it
+   with launches held. One that ends the take ends it before it changed
+   anything. *)
 let unload (T _) c =
-  take_guard c.lock;
+  take_lock c.lock;
   let launches = c.launches in
   c.entries <- Names.empty;
   c.launches <- [];
   free_launches launches;
-  give_guard c.lock
+  give_lock c.lock
 
 (* Timeline *)
 
