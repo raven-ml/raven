@@ -206,7 +206,8 @@ val name : t -> string
     ["@MACHINE"] appended for a device of another machine. *)
 
 val equal : t -> t -> bool
-(** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
+(** [equal d d'] is [d == d']: each device is one value for the life of the
+    process. A reopened name is another device ({!section-loss}). *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a device's {!val-name}. *)

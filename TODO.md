@@ -112,8 +112,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - from its callers: `Image.load` reuses an equal image once GPU module
   globals are shown not shared (CUDA) or refused; `Profile.take` raises
   `Lost`; `Run.string`, checked against nx2; `Rig_program.load` returns
-  `Error` only for a device's refusal; state `equal`, and `create`'s
-  alignment derived per driver
+  `Error` only for a device's refusal; `create`'s alignment derived per
+  driver
 - rig.gpus: one card appears through two paths, and `openers` drops each
   path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus`, which bnxt's
   NICs use too, becomes `Rig_pci.Driver`: a user-space PCI driver's match,
