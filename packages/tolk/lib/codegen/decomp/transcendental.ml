@@ -196,15 +196,28 @@ let turn_fraction d =
   let table =
     Array.sub one_over_two_pi 0 (((max_exp - w + 128) / 32) - 3 + l + 1)
   in
-  let word offset =
-    let ret = ref (int ~dtype:Uint64 0) in
-    for count = Array.length table - offset - 1 downto max 0 (-offset) do
-      ret :=
-        where O.(i <> int count) !ret (int_like !ret table.(count + offset))
-    done;
-    !ret
+  (* [a.(j)] is the word [i + j - 3] of the table, 0 outside it. The window of
+     [l + 1] words at 0 moves to [i] by each bit of [i] from the highest, as a
+     barrel shifter does: a word takes one selection per bit of [i]. [i] has the
+     bits of its greatest value, at a frexp exponent of [max_exp + 1], an
+     infinity's. *)
+  let rec width n = if n = 0 then 0 else 1 + width (n lsr 1) in
+  let bits = width ((max_exp + 1 + shift) / 32) in
+  let at m =
+    let m = m - 3 in
+    int ~dtype:Uint64
+      (if m < 0 || m >= Array.length table then 0 else table.(m))
   in
-  let a = Array.init (l + 1) (fun j -> word (j - 3)) in
+  let window = ref (Array.init (l + (1 lsl bits)) at) in
+  for b = bits - 1 downto 0 do
+    let step = 1 lsl b and prev = !window in
+    let set = O.(i land int step <> int 0) in
+    window :=
+      Array.init (l + step) (fun m ->
+          let stay = prev.(m) and moved = prev.(m + step) in
+          if moved == stay then stay else where set moved stay)
+  done;
+  let a = !window in
   let b =
     List.init l (fun j ->
         let next = a.(j + 1) in

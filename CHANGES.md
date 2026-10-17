@@ -1520,6 +1520,11 @@ thread.
 
 ### Tolk (new)
 
+- `Transcendental.payne_hanek_reduction` takes the words of `1/(2pi)` by the
+  bits of their index, in 111 selections from 345 in float64: a scalar float64
+  sine or cosine compiles in 0.05 s, from 0.08 s. A host kernel of float64
+  sines over an array now takes 8 lanes: it runs 4.5 times as fast and
+  compiles longer, 2.2 s from 1.4 s for 8 nested sines over 1024 values.
 - `Helpers.Diskcache` holds at most `Setting.cachesize` bytes (`CACHESIZE`,
   5 GiB by default, `0` for no bound), removing the entries used least
   recently. It grew without end: each change of tolk's sources leaves its

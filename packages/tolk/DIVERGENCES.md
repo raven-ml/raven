@@ -747,7 +747,7 @@ stamps nothing (D146).
     the lowering adds `+0.` to every float sum's result, which the `x + 0` fold
     now keeps.
   - **Transcendental polynomials.** tinygrad: `helpers.py:153` (`polyN`, from
-    `0.0`). tolk: `lib/codegen/decomp/transcendental.ml:375` (`poly_n`). A
+    `0.0`). tolk: `lib/codegen/decomp/transcendental.ml:388` (`poly_n`). A
     polynomial starts from its first coefficient, so the decompositions no
     longer rely on the float folds of `0. * x` and `x + 0` to be what tinygrad
     renders.
@@ -1013,7 +1013,7 @@ per trip of each submission under it (D146).
 - **tinygrad:** `codegen/decomp/transcendental.py:66-113`
   (`payne_hanek_reduction`) and `:164-166` (`sin_poly_large`).
 - **tolk:** `lib/codegen/decomp/transcendental.ml:124`
-  (`one_over_two_pi`), `:173` (`turn_fraction`), `:272` (`radians`) and `:313`
+  (`one_over_two_pi`), `:173` (`turn_fraction`), `:285` (`radians`) and `:326`
   (`payne_hanek`); `test/gen/tinygrad.patch`, which gives tinygrad the same
   reduction before the goldens are generated.
 - **Differs:** tinygrad rounds the quotient on `f < 0.5`, where `f` is
@@ -1027,15 +1027,21 @@ per trip of each submission under it (D146).
   the whole mantissa, 24 bits or 53 in two words, is multiplied by the bits of
   `1/(2pi)` at its exponent, from a table of 1312 bits that covers a
   float64's greatest exponent, to 128 bits of the fraction, carried word by
-  word; and the remainder is the signed fraction, summed exactly in two floats
-  from parts that convert exactly and multiplied by `2pi/2^64` in two floats
-  (D126). The remainder is within an ulp of the exact one in float32 and
-  float64, `6381956970095103 * 2^797`, the float64 nearest a multiple of
-  `pi/2`, included.
+  word, its words moved into place by one selection per bit of their index,
+  as a barrel shifter does, where tinygrad compares the index with each
+  position of the table (`_take`); and the remainder is the signed fraction,
+  summed exactly in two floats from parts that convert exactly and
+  multiplied by `2pi/2^64` in two floats (D126). The remainder is within an
+  ulp of the exact one in float32 and float64, `6381956970095103 * 2^797`,
+  the float64 nearest a multiple of `pi/2`, included.
 - **Reason:** (b): rune's `sin` and `cos` reduce by `pi/2` with this
   reduction beyond `2^12` in float32 and `2^22` in float64, where their exact
   Cody-Waite parts stop (RFC 0012), and tolk's own `xsin` uses it beyond its
-  switch-over; both must give nx's sine there.
+  switch-over; both must give nx's sine there. Every compiled sine or cosine
+  of an unbounded angle builds the reduction, and a kernel's compile time
+  grows with its nodes: selected as tinygrad's `_take` does, over this
+  40-word table, the float64 words would take 345 selections and 43
+  comparisons of 728 nodes; by bits they take 111 and 6 of 428.
 - **Pinned by:** `Tolk.Transcendental › reductions ›
   payne_hanek_near_multiples.golden`, remainders and quadrants of float32 and
   float64 angles near multiples of `pi/2`, from pi to 1400 bits, which the
@@ -1349,7 +1355,7 @@ driver sizes local memory as it loads a function (D146).
 - **tinygrad:** `codegen/decomp/transcendental.py:250-255` (`xlog2` selects
   NaN where `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`,
   which it means for `-0.0`).
-- **tolk:** `lib/codegen/decomp/transcendental.ml:556-564` (`xlog2`),
+- **tolk:** `lib/codegen/decomp/transcendental.ml:569-577` (`xlog2`),
   and `test/gen/tinygrad.patch`, which reorders tinygrad's selects the same
   way.
 - **Differs:** the reciprocal of a negative number of magnitude below
@@ -1780,7 +1786,7 @@ its launch descriptors (D146).
 - **tolk:** `lib/uop/ops.ml:1485` (`unbounded`), `:1519`
   (`compute_min_max`), `:1536` (`Where`), `:1568` (`Trunc`), `:1572` (`Neg`),
   `:1585` (`selected`), `:1600` (`float_bounds`) and `:1644` (`cast_bounds`);
-  `lib/codegen/decomp/transcendental.ml:431` (`xsin`); `test/gen/tinygrad.patch`,
+  `lib/codegen/decomp/transcendental.ml:444` (`xsin`); `test/gen/tinygrad.patch`,
   which gives tinygrad the same bounds and the same `xsin` before the goldens
   are generated.
 - **Differs:** a float sum, difference or product of operands with finite

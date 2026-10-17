@@ -319,428 +319,361 @@
 317 Ops.CONST dtypes.weakint [] 5
 318 Ops.CAST dtypes.int [317] dtypes.int
 319 Ops.SHR dtypes.int [316, 318]
-320 Ops.CMPNE dtypes.bool [319, 17]
-321 Ops.CMPNE dtypes.bool [319, 4]
-322 Ops.CMPNE dtypes.bool [319, 318]
-323 Ops.CONST dtypes.weakint [] 6
-324 Ops.CAST dtypes.int [323] dtypes.int
-325 Ops.CMPNE dtypes.bool [319, 324]
-326 Ops.CONST dtypes.weakint [] 7
-327 Ops.CAST dtypes.int [326] dtypes.int
-328 Ops.CMPNE dtypes.bool [319, 327]
-329 Ops.CMPNE dtypes.bool [319, 26]
-330 Ops.CONST dtypes.weakint [] 9
-331 Ops.CAST dtypes.int [330] dtypes.int
-332 Ops.CMPNE dtypes.bool [319, 331]
-333 Ops.CONST dtypes.weakint [] 10
-334 Ops.CAST dtypes.int [333] dtypes.int
-335 Ops.CMPNE dtypes.bool [319, 334]
-336 Ops.CONST dtypes.weakint [] 11
-337 Ops.CAST dtypes.int [336] dtypes.int
-338 Ops.CMPNE dtypes.bool [319, 337]
-339 Ops.CMPNE dtypes.bool [319, 34]
-340 Ops.CONST dtypes.weakint [] 13
-341 Ops.CAST dtypes.int [340] dtypes.int
-342 Ops.CMPNE dtypes.bool [319, 341]
-343 Ops.CONST dtypes.weakint [] 14
-344 Ops.CAST dtypes.int [343] dtypes.int
-345 Ops.CMPNE dtypes.bool [319, 344]
-346 Ops.CAST dtypes.ulong [1] dtypes.ulong
-347 Ops.CONST dtypes.weakint [] 26364858
+320 Ops.AND dtypes.int [319, 11]
+321 Ops.CMPNE dtypes.bool [320, 2]
+322 Ops.AND dtypes.int [319, 14]
+323 Ops.CMPNE dtypes.bool [322, 2]
+324 Ops.AND dtypes.int [319, 4]
+325 Ops.CMPNE dtypes.bool [324, 2]
+326 Ops.CONST dtypes.weakint [] 2102212464
+327 Ops.CAST dtypes.ulong [326] dtypes.ulong
+328 Ops.CAST dtypes.ulong [1] dtypes.ulong
+329 Ops.WHERE dtypes.ulong [325, 327, 328]
+330 Ops.CONST dtypes.weakint [] 2475754826
+331 Ops.CAST dtypes.ulong [330] dtypes.ulong
+332 Ops.WHERE dtypes.ulong [325, 331, 328]
+333 Ops.WHERE dtypes.ulong [323, 329, 332]
+334 Ops.CONST dtypes.weakint [] 2131351028
+335 Ops.CAST dtypes.ulong [334] dtypes.ulong
+336 Ops.WHERE dtypes.ulong [325, 335, 328]
+337 Ops.CONST dtypes.weakint [] 683565275
+338 Ops.CAST dtypes.ulong [337] dtypes.ulong
+339 Ops.WHERE dtypes.ulong [325, 338, 328]
+340 Ops.WHERE dtypes.ulong [323, 336, 339]
+341 Ops.WHERE dtypes.ulong [321, 333, 340]
+342 Ops.CONST dtypes.weakint [] 31
+343 Ops.CAST dtypes.int [342] dtypes.int
+344 Ops.AND dtypes.int [316, 343]
+345 Ops.CAST dtypes.ulong [344] dtypes.ulong
+346 Ops.SHL dtypes.ulong [341, 345]
+347 Ops.CONST dtypes.weakint [] 920167782
 348 Ops.CAST dtypes.ulong [347] dtypes.ulong
-349 Ops.WHERE dtypes.ulong [345, 346, 348]
-350 Ops.CONST dtypes.weakint [] 2425582776
-351 Ops.CAST dtypes.ulong [350] dtypes.ulong
-352 Ops.WHERE dtypes.ulong [342, 349, 351]
-353 Ops.CONST dtypes.weakint [] 1841896334
-354 Ops.CAST dtypes.ulong [353] dtypes.ulong
-355 Ops.WHERE dtypes.ulong [339, 352, 354]
-356 Ops.CONST dtypes.weakint [] 4155437400
-357 Ops.CAST dtypes.ulong [356] dtypes.ulong
-358 Ops.WHERE dtypes.ulong [338, 355, 357]
-359 Ops.CONST dtypes.weakint [] 2140428522
-360 Ops.CAST dtypes.ulong [359] dtypes.ulong
-361 Ops.WHERE dtypes.ulong [335, 358, 360]
-362 Ops.CONST dtypes.weakint [] 1326507024
-363 Ops.CAST dtypes.ulong [362] dtypes.ulong
-364 Ops.WHERE dtypes.ulong [332, 361, 363]
-365 Ops.CONST dtypes.weakint [] 920167782
-366 Ops.CAST dtypes.ulong [365] dtypes.ulong
-367 Ops.WHERE dtypes.ulong [329, 364, 366]
-368 Ops.CONST dtypes.weakint [] 2102212464
-369 Ops.CAST dtypes.ulong [368] dtypes.ulong
-370 Ops.WHERE dtypes.ulong [328, 367, 369]
-371 Ops.CONST dtypes.weakint [] 2131351028
-372 Ops.CAST dtypes.ulong [371] dtypes.ulong
-373 Ops.WHERE dtypes.ulong [325, 370, 372]
-374 Ops.CONST dtypes.weakint [] 2475754826
+349 Ops.WHERE dtypes.ulong [325, 348, 338]
+350 Ops.WHERE dtypes.ulong [323, 349, 336]
+351 Ops.WHERE dtypes.ulong [321, 350, 333]
+352 Ops.CONST dtypes.weakint [] 32
+353 Ops.CAST dtypes.ulong [352] dtypes.ulong
+354 Ops.SUB dtypes.ulong [353, 345]
+355 Ops.SHR dtypes.ulong [351, 354]
+356 Ops.OR dtypes.ulong [346, 355]
+357 Ops.AND dtypes.ulong [356, 301]
+358 Ops.MUL dtypes.ulong [302, 357]
+359 Ops.AND dtypes.ulong [358, 301]
+360 Ops.SHL dtypes.ulong [351, 345]
+361 Ops.CONST dtypes.weakint [] 1326507024
+362 Ops.CAST dtypes.ulong [361] dtypes.ulong
+363 Ops.WHERE dtypes.ulong [325, 362, 331]
+364 Ops.WHERE dtypes.ulong [323, 363, 329]
+365 Ops.WHERE dtypes.ulong [321, 364, 350]
+366 Ops.SHR dtypes.ulong [365, 354]
+367 Ops.OR dtypes.ulong [360, 366]
+368 Ops.AND dtypes.ulong [367, 301]
+369 Ops.MUL dtypes.ulong [302, 368]
+370 Ops.SHR dtypes.ulong [369, 353]
+371 Ops.ADD dtypes.ulong [359, 370]
+372 Ops.AND dtypes.ulong [369, 301]
+373 Ops.SHL dtypes.ulong [365, 345]
+374 Ops.CONST dtypes.weakint [] 2140428522
 375 Ops.CAST dtypes.ulong [374] dtypes.ulong
-376 Ops.WHERE dtypes.ulong [322, 373, 375]
-377 Ops.CONST dtypes.weakint [] 683565275
-378 Ops.CAST dtypes.ulong [377] dtypes.ulong
-379 Ops.WHERE dtypes.ulong [321, 376, 378]
-380 Ops.WHERE dtypes.ulong [320, 379, 346]
-381 Ops.CONST dtypes.weakint [] 31
-382 Ops.CAST dtypes.int [381] dtypes.int
-383 Ops.AND dtypes.int [316, 382]
-384 Ops.CAST dtypes.ulong [383] dtypes.ulong
-385 Ops.SHL dtypes.ulong [380, 384]
-386 Ops.CMPNE dtypes.bool [319, 14]
-387 Ops.WHERE dtypes.ulong [342, 346, 348]
-388 Ops.WHERE dtypes.ulong [339, 387, 351]
-389 Ops.WHERE dtypes.ulong [338, 388, 354]
-390 Ops.WHERE dtypes.ulong [335, 389, 357]
-391 Ops.WHERE dtypes.ulong [332, 390, 360]
-392 Ops.WHERE dtypes.ulong [329, 391, 363]
-393 Ops.WHERE dtypes.ulong [328, 392, 366]
-394 Ops.WHERE dtypes.ulong [325, 393, 369]
-395 Ops.WHERE dtypes.ulong [322, 394, 372]
-396 Ops.WHERE dtypes.ulong [321, 395, 375]
-397 Ops.WHERE dtypes.ulong [320, 396, 378]
-398 Ops.WHERE dtypes.ulong [386, 397, 346]
-399 Ops.CONST dtypes.weakint [] 32
-400 Ops.CAST dtypes.ulong [399] dtypes.ulong
-401 Ops.SUB dtypes.ulong [400, 384]
-402 Ops.SHR dtypes.ulong [398, 401]
-403 Ops.OR dtypes.ulong [385, 402]
-404 Ops.AND dtypes.ulong [403, 301]
-405 Ops.MUL dtypes.ulong [302, 404]
-406 Ops.AND dtypes.ulong [405, 301]
-407 Ops.SHL dtypes.ulong [398, 384]
-408 Ops.CMPNE dtypes.bool [319, 11]
-409 Ops.WHERE dtypes.ulong [339, 346, 348]
-410 Ops.WHERE dtypes.ulong [338, 409, 351]
-411 Ops.WHERE dtypes.ulong [335, 410, 354]
-412 Ops.WHERE dtypes.ulong [332, 411, 357]
-413 Ops.WHERE dtypes.ulong [329, 412, 360]
-414 Ops.WHERE dtypes.ulong [328, 413, 363]
-415 Ops.WHERE dtypes.ulong [325, 414, 366]
-416 Ops.WHERE dtypes.ulong [322, 415, 369]
-417 Ops.WHERE dtypes.ulong [321, 416, 372]
-418 Ops.WHERE dtypes.ulong [320, 417, 375]
-419 Ops.WHERE dtypes.ulong [386, 418, 378]
-420 Ops.WHERE dtypes.ulong [408, 419, 346]
-421 Ops.SHR dtypes.ulong [420, 401]
-422 Ops.OR dtypes.ulong [407, 421]
-423 Ops.AND dtypes.ulong [422, 301]
-424 Ops.MUL dtypes.ulong [302, 423]
-425 Ops.SHR dtypes.ulong [424, 400]
-426 Ops.ADD dtypes.ulong [406, 425]
-427 Ops.AND dtypes.ulong [424, 301]
-428 Ops.SHL dtypes.ulong [420, 384]
-429 Ops.CMPNE dtypes.bool [319, 2]
-430 Ops.WHERE dtypes.ulong [338, 346, 348]
-431 Ops.WHERE dtypes.ulong [335, 430, 351]
-432 Ops.WHERE dtypes.ulong [332, 431, 354]
-433 Ops.WHERE dtypes.ulong [329, 432, 357]
-434 Ops.WHERE dtypes.ulong [328, 433, 360]
-435 Ops.WHERE dtypes.ulong [325, 434, 363]
-436 Ops.WHERE dtypes.ulong [322, 435, 366]
-437 Ops.WHERE dtypes.ulong [321, 436, 369]
-438 Ops.WHERE dtypes.ulong [320, 437, 372]
-439 Ops.WHERE dtypes.ulong [386, 438, 375]
-440 Ops.WHERE dtypes.ulong [408, 439, 378]
-441 Ops.WHERE dtypes.ulong [429, 440, 346]
-442 Ops.SHR dtypes.ulong [441, 401]
-443 Ops.OR dtypes.ulong [428, 442]
-444 Ops.AND dtypes.ulong [443, 301]
-445 Ops.MUL dtypes.ulong [302, 444]
-446 Ops.SHR dtypes.ulong [445, 400]
-447 Ops.ADD dtypes.ulong [427, 446]
-448 Ops.AND dtypes.ulong [445, 301]
-449 Ops.SHL dtypes.ulong [441, 384]
-450 Ops.WHERE dtypes.ulong [335, 346, 348]
-451 Ops.WHERE dtypes.ulong [332, 450, 351]
-452 Ops.WHERE dtypes.ulong [329, 451, 354]
-453 Ops.WHERE dtypes.ulong [328, 452, 357]
-454 Ops.WHERE dtypes.ulong [325, 453, 360]
-455 Ops.WHERE dtypes.ulong [322, 454, 363]
-456 Ops.WHERE dtypes.ulong [321, 455, 366]
-457 Ops.WHERE dtypes.ulong [320, 456, 369]
-458 Ops.WHERE dtypes.ulong [386, 457, 372]
-459 Ops.WHERE dtypes.ulong [408, 458, 375]
-460 Ops.WHERE dtypes.ulong [429, 459, 378]
-461 Ops.SHR dtypes.ulong [460, 401]
-462 Ops.OR dtypes.ulong [449, 461]
-463 Ops.AND dtypes.ulong [462, 301]
-464 Ops.MUL dtypes.ulong [302, 463]
-465 Ops.SHR dtypes.ulong [464, 400]
-466 Ops.ADD dtypes.ulong [448, 465]
-467 Ops.AND dtypes.ulong [464, 301]
-468 Ops.SHL dtypes.ulong [460, 384]
-469 Ops.WHERE dtypes.ulong [332, 346, 348]
-470 Ops.WHERE dtypes.ulong [329, 469, 351]
-471 Ops.WHERE dtypes.ulong [328, 470, 354]
-472 Ops.WHERE dtypes.ulong [325, 471, 357]
-473 Ops.WHERE dtypes.ulong [322, 472, 360]
-474 Ops.WHERE dtypes.ulong [321, 473, 363]
-475 Ops.WHERE dtypes.ulong [320, 474, 366]
-476 Ops.WHERE dtypes.ulong [386, 475, 369]
-477 Ops.WHERE dtypes.ulong [408, 476, 372]
-478 Ops.WHERE dtypes.ulong [429, 477, 375]
-479 Ops.SHR dtypes.ulong [478, 401]
-480 Ops.OR dtypes.ulong [468, 479]
-481 Ops.AND dtypes.ulong [480, 301]
-482 Ops.MUL dtypes.ulong [302, 481]
-483 Ops.SHR dtypes.ulong [482, 400]
-484 Ops.ADD dtypes.ulong [467, 483]
-485 Ops.AND dtypes.ulong [482, 301]
-486 Ops.SHL dtypes.ulong [478, 384]
-487 Ops.WHERE dtypes.ulong [329, 346, 348]
-488 Ops.WHERE dtypes.ulong [328, 487, 351]
-489 Ops.WHERE dtypes.ulong [325, 488, 354]
-490 Ops.WHERE dtypes.ulong [322, 489, 357]
-491 Ops.WHERE dtypes.ulong [321, 490, 360]
-492 Ops.WHERE dtypes.ulong [320, 491, 363]
-493 Ops.WHERE dtypes.ulong [386, 492, 366]
-494 Ops.WHERE dtypes.ulong [408, 493, 369]
-495 Ops.WHERE dtypes.ulong [429, 494, 372]
-496 Ops.SHR dtypes.ulong [495, 401]
-497 Ops.OR dtypes.ulong [486, 496]
-498 Ops.AND dtypes.ulong [497, 301]
-499 Ops.MUL dtypes.ulong [302, 498]
-500 Ops.SHR dtypes.ulong [499, 400]
-501 Ops.ADD dtypes.ulong [485, 500]
-502 Ops.AND dtypes.ulong [499, 301]
-503 Ops.SHL dtypes.ulong [495, 384]
-504 Ops.WHERE dtypes.ulong [328, 346, 348]
-505 Ops.WHERE dtypes.ulong [325, 504, 351]
-506 Ops.WHERE dtypes.ulong [322, 505, 354]
-507 Ops.WHERE dtypes.ulong [321, 506, 357]
-508 Ops.WHERE dtypes.ulong [320, 507, 360]
-509 Ops.WHERE dtypes.ulong [386, 508, 363]
-510 Ops.WHERE dtypes.ulong [408, 509, 366]
-511 Ops.WHERE dtypes.ulong [429, 510, 369]
-512 Ops.SHR dtypes.ulong [511, 401]
-513 Ops.OR dtypes.ulong [503, 512]
-514 Ops.AND dtypes.ulong [513, 301]
-515 Ops.MUL dtypes.ulong [302, 514]
-516 Ops.SHR dtypes.ulong [515, 400]
-517 Ops.ADD dtypes.ulong [502, 516]
-518 Ops.AND dtypes.ulong [515, 301]
-519 Ops.SHR dtypes.ulong [518, 400]
-520 Ops.ADD dtypes.ulong [517, 519]
-521 Ops.SHR dtypes.ulong [520, 400]
-522 Ops.ADD dtypes.ulong [501, 521]
-523 Ops.SHR dtypes.ulong [522, 400]
-524 Ops.ADD dtypes.ulong [484, 523]
-525 Ops.SHR dtypes.ulong [524, 400]
-526 Ops.ADD dtypes.ulong [466, 525]
-527 Ops.SHR dtypes.ulong [526, 400]
-528 Ops.ADD dtypes.ulong [447, 527]
-529 Ops.SHR dtypes.ulong [528, 400]
-530 Ops.ADD dtypes.ulong [426, 529]
-531 Ops.AND dtypes.ulong [530, 301]
-532 Ops.SHL dtypes.ulong [531, 400]
-533 Ops.AND dtypes.ulong [528, 301]
-534 Ops.OR dtypes.ulong [532, 533]
-535 Ops.CONST dtypes.weakint [] 62
-536 Ops.CAST dtypes.ulong [535] dtypes.ulong
-537 Ops.SHR dtypes.ulong [534, 536]
-538 Ops.CONST dtypes.weakint [] 61
-539 Ops.CAST dtypes.ulong [538] dtypes.ulong
-540 Ops.SHR dtypes.ulong [534, 539]
-541 Ops.CAST dtypes.ulong [10] dtypes.ulong
-542 Ops.AND dtypes.ulong [540, 541]
-543 Ops.ADD dtypes.ulong [537, 542]
-544 Ops.CAST dtypes.int [543] dtypes.int
-545 Ops.WHERE dtypes.int [280, 287, 544]
-546 Ops.AND dtypes.int [545, 14]
-547 Ops.CMPNE dtypes.bool [546, 2]
-548 Ops.AND dtypes.int [545, 11]
-549 Ops.CMPNE dtypes.bool [548, 2]
-550 Ops.CAST dtypes.float [287] dtypes.float
-551 Ops.CONST dtypes.weakfloat [] -0.00048351287841796875
+376 Ops.WHERE dtypes.ulong [325, 375, 335]
+377 Ops.WHERE dtypes.ulong [323, 376, 349]
+378 Ops.WHERE dtypes.ulong [321, 377, 364]
+379 Ops.SHR dtypes.ulong [378, 354]
+380 Ops.OR dtypes.ulong [373, 379]
+381 Ops.AND dtypes.ulong [380, 301]
+382 Ops.MUL dtypes.ulong [302, 381]
+383 Ops.SHR dtypes.ulong [382, 353]
+384 Ops.ADD dtypes.ulong [372, 383]
+385 Ops.AND dtypes.ulong [382, 301]
+386 Ops.SHL dtypes.ulong [378, 345]
+387 Ops.CONST dtypes.weakint [] 4155437400
+388 Ops.CAST dtypes.ulong [387] dtypes.ulong
+389 Ops.WHERE dtypes.ulong [325, 388, 327]
+390 Ops.WHERE dtypes.ulong [323, 389, 363]
+391 Ops.WHERE dtypes.ulong [321, 390, 377]
+392 Ops.SHR dtypes.ulong [391, 354]
+393 Ops.OR dtypes.ulong [386, 392]
+394 Ops.AND dtypes.ulong [393, 301]
+395 Ops.MUL dtypes.ulong [302, 394]
+396 Ops.SHR dtypes.ulong [395, 353]
+397 Ops.ADD dtypes.ulong [385, 396]
+398 Ops.AND dtypes.ulong [395, 301]
+399 Ops.SHL dtypes.ulong [391, 345]
+400 Ops.CONST dtypes.weakint [] 1841896334
+401 Ops.CAST dtypes.ulong [400] dtypes.ulong
+402 Ops.WHERE dtypes.ulong [325, 401, 348]
+403 Ops.WHERE dtypes.ulong [323, 402, 376]
+404 Ops.WHERE dtypes.ulong [321, 403, 390]
+405 Ops.SHR dtypes.ulong [404, 354]
+406 Ops.OR dtypes.ulong [399, 405]
+407 Ops.AND dtypes.ulong [406, 301]
+408 Ops.MUL dtypes.ulong [302, 407]
+409 Ops.SHR dtypes.ulong [408, 353]
+410 Ops.ADD dtypes.ulong [398, 409]
+411 Ops.AND dtypes.ulong [408, 301]
+412 Ops.SHL dtypes.ulong [404, 345]
+413 Ops.CONST dtypes.weakint [] 2425582776
+414 Ops.CAST dtypes.ulong [413] dtypes.ulong
+415 Ops.WHERE dtypes.ulong [325, 414, 362]
+416 Ops.WHERE dtypes.ulong [323, 415, 389]
+417 Ops.WHERE dtypes.ulong [321, 416, 403]
+418 Ops.SHR dtypes.ulong [417, 354]
+419 Ops.OR dtypes.ulong [412, 418]
+420 Ops.AND dtypes.ulong [419, 301]
+421 Ops.MUL dtypes.ulong [302, 420]
+422 Ops.SHR dtypes.ulong [421, 353]
+423 Ops.ADD dtypes.ulong [411, 422]
+424 Ops.AND dtypes.ulong [421, 301]
+425 Ops.SHL dtypes.ulong [417, 345]
+426 Ops.CONST dtypes.weakint [] 26364858
+427 Ops.CAST dtypes.ulong [426] dtypes.ulong
+428 Ops.WHERE dtypes.ulong [325, 427, 375]
+429 Ops.WHERE dtypes.ulong [323, 428, 402]
+430 Ops.WHERE dtypes.ulong [321, 429, 416]
+431 Ops.SHR dtypes.ulong [430, 354]
+432 Ops.OR dtypes.ulong [425, 431]
+433 Ops.AND dtypes.ulong [432, 301]
+434 Ops.MUL dtypes.ulong [302, 433]
+435 Ops.SHR dtypes.ulong [434, 353]
+436 Ops.ADD dtypes.ulong [424, 435]
+437 Ops.AND dtypes.ulong [434, 301]
+438 Ops.SHR dtypes.ulong [437, 353]
+439 Ops.ADD dtypes.ulong [436, 438]
+440 Ops.SHR dtypes.ulong [439, 353]
+441 Ops.ADD dtypes.ulong [423, 440]
+442 Ops.SHR dtypes.ulong [441, 353]
+443 Ops.ADD dtypes.ulong [410, 442]
+444 Ops.SHR dtypes.ulong [443, 353]
+445 Ops.ADD dtypes.ulong [397, 444]
+446 Ops.SHR dtypes.ulong [445, 353]
+447 Ops.ADD dtypes.ulong [384, 446]
+448 Ops.SHR dtypes.ulong [447, 353]
+449 Ops.ADD dtypes.ulong [371, 448]
+450 Ops.AND dtypes.ulong [449, 301]
+451 Ops.SHL dtypes.ulong [450, 353]
+452 Ops.AND dtypes.ulong [447, 301]
+453 Ops.OR dtypes.ulong [451, 452]
+454 Ops.CONST dtypes.weakint [] 62
+455 Ops.CAST dtypes.ulong [454] dtypes.ulong
+456 Ops.SHR dtypes.ulong [453, 455]
+457 Ops.CONST dtypes.weakint [] 61
+458 Ops.CAST dtypes.ulong [457] dtypes.ulong
+459 Ops.SHR dtypes.ulong [453, 458]
+460 Ops.CAST dtypes.ulong [10] dtypes.ulong
+461 Ops.AND dtypes.ulong [459, 460]
+462 Ops.ADD dtypes.ulong [456, 461]
+463 Ops.CAST dtypes.int [462] dtypes.int
+464 Ops.WHERE dtypes.int [280, 287, 463]
+465 Ops.AND dtypes.int [464, 14]
+466 Ops.CMPNE dtypes.bool [465, 2]
+467 Ops.AND dtypes.int [464, 11]
+468 Ops.CMPNE dtypes.bool [467, 2]
+469 Ops.CAST dtypes.float [287] dtypes.float
+470 Ops.CONST dtypes.weakfloat [] -0.00048351287841796875
+471 Ops.CAST dtypes.float [470] dtypes.float
+472 Ops.MUL dtypes.float [469, 471]
+473 Ops.CONST dtypes.weakfloat [] -1.5703125
+474 Ops.CAST dtypes.float [473] dtypes.float
+475 Ops.MUL dtypes.float [469, 474]
+476 Ops.ADD dtypes.float [475, 277]
+477 Ops.ADD dtypes.float [472, 476]
+478 Ops.CONST dtypes.weakfloat [] -3.1385570764541626e-07
+479 Ops.CAST dtypes.float [478] dtypes.float
+480 Ops.MUL dtypes.float [469, 479]
+481 Ops.ADD dtypes.float [477, 480]
+482 Ops.SUB dtypes.float [481, 477]
+483 Ops.SUB dtypes.float [480, 482]
+484 Ops.CONST dtypes.weakfloat [] -6.07710062827671e-11
+485 Ops.CAST dtypes.float [484] dtypes.float
+486 Ops.MUL dtypes.float [469, 485]
+487 Ops.ADD dtypes.float [483, 486]
+488 Ops.ADD dtypes.float [481, 487]
+489 Ops.CONST dtypes.weakint [] 4611686018427387903
+490 Ops.CAST dtypes.ulong [489] dtypes.ulong
+491 Ops.AND dtypes.ulong [453, 490]
+492 Ops.CAST dtypes.long [491] dtypes.long
+493 Ops.CAST dtypes.long [461] dtypes.long
+494 Ops.CAST dtypes.long [454] dtypes.long
+495 Ops.SHL dtypes.long [493, 494]
+496 Ops.SUB dtypes.long [492, 495]
+497 Ops.CONST dtypes.weakint [] 42
+498 Ops.CAST dtypes.long [497] dtypes.long
+499 Ops.SHR dtypes.long [496, 498]
+500 Ops.CAST dtypes.float [499] dtypes.float
+501 Ops.CONST dtypes.weakfloat [] 4398046511104.0
+502 Ops.CAST dtypes.float [501] dtypes.float
+503 Ops.MUL dtypes.float [500, 502]
+504 Ops.CONST dtypes.weakint [] 21
+505 Ops.CAST dtypes.long [504] dtypes.long
+506 Ops.SHR dtypes.long [496, 505]
+507 Ops.CONST dtypes.weakint [] 2097151
+508 Ops.CAST dtypes.long [507] dtypes.long
+509 Ops.AND dtypes.long [506, 508]
+510 Ops.CAST dtypes.float [509] dtypes.float
+511 Ops.CONST dtypes.weakfloat [] 2097152.0
+512 Ops.CAST dtypes.float [511] dtypes.float
+513 Ops.MUL dtypes.float [510, 512]
+514 Ops.ADD dtypes.float [503, 513]
+515 Ops.AND dtypes.long [496, 508]
+516 Ops.CAST dtypes.float [515] dtypes.float
+517 Ops.ADD dtypes.float [514, 516]
+518 Ops.AND dtypes.ulong [445, 301]
+519 Ops.SHL dtypes.ulong [518, 353]
+520 Ops.AND dtypes.ulong [443, 301]
+521 Ops.OR dtypes.ulong [519, 520]
+522 Ops.CONST dtypes.weakint [] 43
+523 Ops.CAST dtypes.ulong [522] dtypes.ulong
+524 Ops.SHR dtypes.ulong [521, 523]
+525 Ops.CAST dtypes.float [524] dtypes.float
+526 Ops.CONST dtypes.weakfloat [] 1.1368683772161603e-13
+527 Ops.CAST dtypes.float [526] dtypes.float
+528 Ops.MUL dtypes.float [525, 527]
+529 Ops.ADD dtypes.float [517, 528]
+530 Ops.CONST dtypes.weakfloat [] 3.4061216748705226e-19
+531 Ops.CAST dtypes.float [530] dtypes.float
+532 Ops.MUL dtypes.float [529, 531]
+533 Ops.CONST dtypes.weakfloat [] 4097.0
+534 Ops.CAST dtypes.float [533] dtypes.float
+535 Ops.MUL dtypes.float [529, 534]
+536 Ops.SUB dtypes.float [535, 529]
+537 Ops.SUB dtypes.float [535, 536]
+538 Ops.CONST dtypes.weakfloat [] 3.406131239146355e-19
+539 Ops.CAST dtypes.float [538] dtypes.float
+540 Ops.MUL dtypes.float [537, 539]
+541 Ops.SUB dtypes.float [540, 532]
+542 Ops.CONST dtypes.weakfloat [] -9.564275832644382e-25
+543 Ops.CAST dtypes.float [542] dtypes.float
+544 Ops.MUL dtypes.float [537, 543]
+545 Ops.ADD dtypes.float [541, 544]
+546 Ops.SUB dtypes.float [529, 537]
+547 Ops.MUL dtypes.float [546, 539]
+548 Ops.ADD dtypes.float [545, 547]
+549 Ops.MUL dtypes.float [546, 543]
+550 Ops.ADD dtypes.float [548, 549]
+551 Ops.CONST dtypes.weakfloat [] -9.478396428567739e-27
 552 Ops.CAST dtypes.float [551] dtypes.float
-553 Ops.MUL dtypes.float [550, 552]
-554 Ops.CONST dtypes.weakfloat [] -1.5703125
-555 Ops.CAST dtypes.float [554] dtypes.float
-556 Ops.MUL dtypes.float [550, 555]
-557 Ops.ADD dtypes.float [556, 277]
-558 Ops.ADD dtypes.float [553, 557]
-559 Ops.CONST dtypes.weakfloat [] -3.1385570764541626e-07
-560 Ops.CAST dtypes.float [559] dtypes.float
-561 Ops.MUL dtypes.float [550, 560]
-562 Ops.ADD dtypes.float [558, 561]
-563 Ops.SUB dtypes.float [562, 558]
-564 Ops.SUB dtypes.float [561, 563]
-565 Ops.CONST dtypes.weakfloat [] -6.07710062827671e-11
-566 Ops.CAST dtypes.float [565] dtypes.float
-567 Ops.MUL dtypes.float [550, 566]
-568 Ops.ADD dtypes.float [564, 567]
-569 Ops.ADD dtypes.float [562, 568]
-570 Ops.CONST dtypes.weakint [] 4611686018427387903
-571 Ops.CAST dtypes.ulong [570] dtypes.ulong
-572 Ops.AND dtypes.ulong [534, 571]
-573 Ops.CAST dtypes.long [572] dtypes.long
-574 Ops.CAST dtypes.long [542] dtypes.long
-575 Ops.CAST dtypes.long [535] dtypes.long
-576 Ops.SHL dtypes.long [574, 575]
-577 Ops.SUB dtypes.long [573, 576]
-578 Ops.CONST dtypes.weakint [] 42
-579 Ops.CAST dtypes.long [578] dtypes.long
-580 Ops.SHR dtypes.long [577, 579]
-581 Ops.CAST dtypes.float [580] dtypes.float
-582 Ops.CONST dtypes.weakfloat [] 4398046511104.0
-583 Ops.CAST dtypes.float [582] dtypes.float
-584 Ops.MUL dtypes.float [581, 583]
-585 Ops.CONST dtypes.weakint [] 21
-586 Ops.CAST dtypes.long [585] dtypes.long
-587 Ops.SHR dtypes.long [577, 586]
-588 Ops.CONST dtypes.weakint [] 2097151
-589 Ops.CAST dtypes.long [588] dtypes.long
-590 Ops.AND dtypes.long [587, 589]
-591 Ops.CAST dtypes.float [590] dtypes.float
-592 Ops.CONST dtypes.weakfloat [] 2097152.0
-593 Ops.CAST dtypes.float [592] dtypes.float
-594 Ops.MUL dtypes.float [591, 593]
-595 Ops.ADD dtypes.float [584, 594]
-596 Ops.AND dtypes.long [577, 589]
-597 Ops.CAST dtypes.float [596] dtypes.float
-598 Ops.ADD dtypes.float [595, 597]
-599 Ops.AND dtypes.ulong [526, 301]
-600 Ops.SHL dtypes.ulong [599, 400]
-601 Ops.AND dtypes.ulong [524, 301]
-602 Ops.OR dtypes.ulong [600, 601]
-603 Ops.CONST dtypes.weakint [] 43
-604 Ops.CAST dtypes.ulong [603] dtypes.ulong
-605 Ops.SHR dtypes.ulong [602, 604]
-606 Ops.CAST dtypes.float [605] dtypes.float
-607 Ops.CONST dtypes.weakfloat [] 1.1368683772161603e-13
+553 Ops.MUL dtypes.float [529, 552]
+554 Ops.ADD dtypes.float [550, 553]
+555 Ops.SUB dtypes.float [514, 503]
+556 Ops.SUB dtypes.float [513, 555]
+557 Ops.ADD dtypes.float [52, 556]
+558 Ops.SUB dtypes.float [517, 514]
+559 Ops.SUB dtypes.float [516, 558]
+560 Ops.ADD dtypes.float [557, 559]
+561 Ops.SUB dtypes.float [529, 517]
+562 Ops.SUB dtypes.float [528, 561]
+563 Ops.ADD dtypes.float [560, 562]
+564 Ops.MUL dtypes.float [563, 531]
+565 Ops.ADD dtypes.float [554, 564]
+566 Ops.ADD dtypes.float [532, 565]
+567 Ops.WHERE dtypes.float [280, 488, 566]
+568 Ops.MUL dtypes.float [567, 567]
+569 Ops.MUL dtypes.float [74, 568]
+570 Ops.SUB dtypes.float [102, 569]
+571 Ops.SUB dtypes.float [102, 570]
+572 Ops.SUB dtypes.float [571, 569]
+573 Ops.MUL dtypes.float [568, 568]
+574 Ops.CONST dtypes.weakfloat [] -2.7557314297155244e-07
+575 Ops.CAST dtypes.float [574] dtypes.float
+576 Ops.MUL dtypes.float [575, 568]
+577 Ops.CONST dtypes.weakfloat [] 2.4801587642286904e-05
+578 Ops.CAST dtypes.float [577] dtypes.float
+579 Ops.ADD dtypes.float [576, 578]
+580 Ops.MUL dtypes.float [579, 568]
+581 Ops.CONST dtypes.weakfloat [] -0.0013888889225199819
+582 Ops.CAST dtypes.float [581] dtypes.float
+583 Ops.ADD dtypes.float [580, 582]
+584 Ops.MUL dtypes.float [583, 568]
+585 Ops.CONST dtypes.weakfloat [] 0.0416666679084301
+586 Ops.CAST dtypes.float [585] dtypes.float
+587 Ops.ADD dtypes.float [584, 586]
+588 Ops.MUL dtypes.float [573, 587]
+589 Ops.SUB dtypes.float [488, 481]
+590 Ops.SUB dtypes.float [487, 589]
+591 Ops.SUB dtypes.float [566, 532]
+592 Ops.SUB dtypes.float [565, 591]
+593 Ops.WHERE dtypes.float [280, 590, 592]
+594 Ops.MUL dtypes.float [567, 593]
+595 Ops.SUB dtypes.float [588, 594]
+596 Ops.ADD dtypes.float [572, 595]
+597 Ops.ADD dtypes.float [570, 596]
+598 Ops.MUL dtypes.float [74, 593]
+599 Ops.MUL dtypes.float [568, 567]
+600 Ops.CONST dtypes.weakfloat [] 2.7557314297155244e-06
+601 Ops.CAST dtypes.float [600] dtypes.float
+602 Ops.MUL dtypes.float [601, 568]
+603 Ops.CONST dtypes.weakfloat [] -0.00019841270113829523
+604 Ops.CAST dtypes.float [603] dtypes.float
+605 Ops.ADD dtypes.float [602, 604]
+606 Ops.MUL dtypes.float [605, 568]
+607 Ops.CONST dtypes.weakfloat [] 0.008333333767950535
 608 Ops.CAST dtypes.float [607] dtypes.float
-609 Ops.MUL dtypes.float [606, 608]
-610 Ops.ADD dtypes.float [598, 609]
-611 Ops.CONST dtypes.weakfloat [] 3.4061216748705226e-19
-612 Ops.CAST dtypes.float [611] dtypes.float
-613 Ops.MUL dtypes.float [610, 612]
-614 Ops.CONST dtypes.weakfloat [] 4097.0
+609 Ops.ADD dtypes.float [606, 608]
+610 Ops.MUL dtypes.float [599, 609]
+611 Ops.SUB dtypes.float [598, 610]
+612 Ops.MUL dtypes.float [568, 611]
+613 Ops.SUB dtypes.float [612, 593]
+614 Ops.CONST dtypes.weakfloat [] -0.1666666716337204
 615 Ops.CAST dtypes.float [614] dtypes.float
-616 Ops.MUL dtypes.float [610, 615]
-617 Ops.SUB dtypes.float [616, 610]
-618 Ops.SUB dtypes.float [616, 617]
-619 Ops.CONST dtypes.weakfloat [] 3.406131239146355e-19
-620 Ops.CAST dtypes.float [619] dtypes.float
-621 Ops.MUL dtypes.float [618, 620]
-622 Ops.SUB dtypes.float [621, 613]
-623 Ops.CONST dtypes.weakfloat [] -9.564275832644382e-25
-624 Ops.CAST dtypes.float [623] dtypes.float
-625 Ops.MUL dtypes.float [618, 624]
-626 Ops.ADD dtypes.float [622, 625]
-627 Ops.SUB dtypes.float [610, 618]
-628 Ops.MUL dtypes.float [627, 620]
-629 Ops.ADD dtypes.float [626, 628]
-630 Ops.MUL dtypes.float [627, 624]
-631 Ops.ADD dtypes.float [629, 630]
-632 Ops.CONST dtypes.weakfloat [] -9.478396428567739e-27
-633 Ops.CAST dtypes.float [632] dtypes.float
-634 Ops.MUL dtypes.float [610, 633]
-635 Ops.ADD dtypes.float [631, 634]
-636 Ops.SUB dtypes.float [595, 584]
-637 Ops.SUB dtypes.float [594, 636]
-638 Ops.ADD dtypes.float [52, 637]
-639 Ops.SUB dtypes.float [598, 595]
-640 Ops.SUB dtypes.float [597, 639]
-641 Ops.ADD dtypes.float [638, 640]
-642 Ops.SUB dtypes.float [610, 598]
-643 Ops.SUB dtypes.float [609, 642]
-644 Ops.ADD dtypes.float [641, 643]
-645 Ops.MUL dtypes.float [644, 612]
-646 Ops.ADD dtypes.float [635, 645]
-647 Ops.ADD dtypes.float [613, 646]
-648 Ops.WHERE dtypes.float [280, 569, 647]
-649 Ops.MUL dtypes.float [648, 648]
-650 Ops.MUL dtypes.float [74, 649]
-651 Ops.SUB dtypes.float [102, 650]
-652 Ops.SUB dtypes.float [102, 651]
-653 Ops.SUB dtypes.float [652, 650]
-654 Ops.MUL dtypes.float [649, 649]
-655 Ops.CONST dtypes.weakfloat [] -2.7557314297155244e-07
-656 Ops.CAST dtypes.float [655] dtypes.float
-657 Ops.MUL dtypes.float [656, 649]
-658 Ops.CONST dtypes.weakfloat [] 2.4801587642286904e-05
-659 Ops.CAST dtypes.float [658] dtypes.float
-660 Ops.ADD dtypes.float [657, 659]
-661 Ops.MUL dtypes.float [660, 649]
-662 Ops.CONST dtypes.weakfloat [] -0.0013888889225199819
-663 Ops.CAST dtypes.float [662] dtypes.float
-664 Ops.ADD dtypes.float [661, 663]
-665 Ops.MUL dtypes.float [664, 649]
-666 Ops.CONST dtypes.weakfloat [] 0.0416666679084301
-667 Ops.CAST dtypes.float [666] dtypes.float
-668 Ops.ADD dtypes.float [665, 667]
-669 Ops.MUL dtypes.float [654, 668]
-670 Ops.SUB dtypes.float [569, 562]
-671 Ops.SUB dtypes.float [568, 670]
-672 Ops.SUB dtypes.float [647, 613]
-673 Ops.SUB dtypes.float [646, 672]
-674 Ops.WHERE dtypes.float [280, 671, 673]
-675 Ops.MUL dtypes.float [648, 674]
-676 Ops.SUB dtypes.float [669, 675]
-677 Ops.ADD dtypes.float [653, 676]
-678 Ops.ADD dtypes.float [651, 677]
-679 Ops.MUL dtypes.float [74, 674]
-680 Ops.MUL dtypes.float [649, 648]
-681 Ops.CONST dtypes.weakfloat [] 2.7557314297155244e-06
-682 Ops.CAST dtypes.float [681] dtypes.float
-683 Ops.MUL dtypes.float [682, 649]
-684 Ops.CONST dtypes.weakfloat [] -0.00019841270113829523
-685 Ops.CAST dtypes.float [684] dtypes.float
-686 Ops.ADD dtypes.float [683, 685]
-687 Ops.MUL dtypes.float [686, 649]
-688 Ops.CONST dtypes.weakfloat [] 0.008333333767950535
-689 Ops.CAST dtypes.float [688] dtypes.float
-690 Ops.ADD dtypes.float [687, 689]
-691 Ops.MUL dtypes.float [680, 690]
-692 Ops.SUB dtypes.float [679, 691]
-693 Ops.MUL dtypes.float [649, 692]
-694 Ops.SUB dtypes.float [693, 674]
-695 Ops.CONST dtypes.weakfloat [] -0.1666666716337204
-696 Ops.CAST dtypes.float [695] dtypes.float
-697 Ops.MUL dtypes.float [680, 696]
-698 Ops.SUB dtypes.float [694, 697]
-699 Ops.SUB dtypes.float [648, 698]
-700 Ops.WHERE dtypes.float [549, 678, 699]
-701 Ops.MUL dtypes.float [700, 276]
-702 Ops.NEG dtypes.float [701]
-703 Ops.WHERE dtypes.float [547, 702, 701]
-704 Ops.WHERE dtypes.float [274, 703, 273]
-705 Ops.WHERE dtypes.float [270, 704, 47]
-706 Ops.WHERE dtypes.float [269, 47, 705]
-707 Ops.WHERE dtypes.float [268, 706, 47]
-708 Ops.ADD dtypes.float [241, 707]
-709 Ops.INDEX dtypes.float [708, 2]
-710 Ops.INDEX dtypes.float [708, 11]
-711 Ops.INDEX dtypes.float [708, 14]
-712 Ops.INDEX dtypes.float [708, 17]
-713 Ops.STACK dtypes.float [709, 710, 711, 712]
-714 Ops.STORE dtypes.void [5, 713]
-715 Ops.SHRINK dtypes.float [0, 4, 4]
-716 Ops.INDEX dtypes.float [708, 4]
-717 Ops.INDEX dtypes.float [708, 318]
-718 Ops.INDEX dtypes.float [708, 324]
-719 Ops.INDEX dtypes.float [708, 327]
-720 Ops.STACK dtypes.float [716, 717, 718, 719]
-721 Ops.STORE dtypes.void [715, 720]
-722 Ops.SHRINK dtypes.float [0, 26, 4]
-723 Ops.INDEX dtypes.float [708, 26]
-724 Ops.INDEX dtypes.float [708, 331]
-725 Ops.INDEX dtypes.float [708, 334]
-726 Ops.INDEX dtypes.float [708, 337]
-727 Ops.STACK dtypes.float [723, 724, 725, 726]
-728 Ops.STORE dtypes.void [722, 727]
-729 Ops.SHRINK dtypes.float [0, 34, 4]
-730 Ops.INDEX dtypes.float [708, 34]
-731 Ops.INDEX dtypes.float [708, 341]
-732 Ops.INDEX dtypes.float [708, 344]
-733 Ops.CONST dtypes.weakint [] 15
-734 Ops.CAST dtypes.int [733] dtypes.int
-735 Ops.INDEX dtypes.float [708, 734]
-736 Ops.STACK dtypes.float [730, 731, 732, 735]
-737 Ops.STORE dtypes.void [729, 736]
-738 Ops.SINK dtypes.void [714, 714, 714, 714, 721, 721, 721, 721, 728, 728, 728, 728, 737, 737, 737, 737] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),))
-739 Ops.SINK dtypes.void [714, 714, 714, 714, 721, 721, 721, 721, 728, 728, 728, 728, 737, 737, 737, 737] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(ops=6448, lds=256, mem=256))
-740 Ops.LINEAR dtypes.void [0, 6, 121, 242, 1, 2, 3, 4, 7, 8, 33, 34, 35, 36, 19, 20, 25, 26, 27, 28, 122, 123, 140, 141, 128, 129, 134, 135, 243, 244, 261, 262, 249, 250, 255, 256, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 37, 38, 39, 40, 21, 22, 23, 24, 29, 30, 31, 32, 41, 124, 125, 126, 127, 142, 143, 144, 145, 130, 131, 132, 133, 136, 137, 138, 139, 146, 245, 246, 247, 248, 263, 264, 265, 266, 251, 252, 253, 254, 257, 258, 259, 260, 267, 56, 57, 71, 72, 180, 181, 64, 65, 51, 52, 73, 74, 281, 282, 101, 102, 59, 60, 269, 270, 268, 271, 272, 273, 275, 276, 277, 283, 284, 285, 286, 287, 550, 42, 43, 44, 66, 63, 45, 67, 68, 69, 70, 75, 76, 77, 78, 155, 156, 163, 164, 158, 159, 171, 172, 108, 109, 168, 169, 160, 157, 161, 165, 166, 167, 170, 173, 174, 296, 297, 307, 309, 303, 305, 288, 304, 306, 308, 310, 311, 333, 334, 312, 313, 336, 337, 340, 341, 343, 344, 381, 382, 317, 318, 323, 324, 326, 327, 330, 331, 292, 293, 289, 290, 291, 294, 295, 298, 299, 314, 315, 316, 383, 384, 346, 541, 362, 363, 353, 354, 368, 369, 371, 372, 359, 360, 350, 351, 374, 375, 347, 348, 399, 400, 356, 357, 300, 301, 538, 539, 377, 378, 365, 366, 319, 429, 408, 386, 320, 321, 322, 325, 328, 329, 487, 488, 489, 490, 491, 492, 493, 494, 495, 503, 401, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513, 302, 514, 515, 332, 469, 470, 471, 472, 473, 474, 475, 476, 477, 478, 486, 496, 497, 498, 499, 516, 502, 517, 518, 519, 520, 335, 450, 451, 452, 453, 454, 455, 456, 457, 458, 459, 460, 468, 479, 480, 481, 482, 500, 485, 501, 521, 522, 338, 430, 431, 432, 433, 434, 435, 436, 437, 438, 439, 440, 441, 449, 461, 462, 463, 464, 483, 467, 484, 523, 524, 339, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419, 420, 428, 442, 443, 444, 445, 465, 448, 466, 525, 526, 342, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 407, 421, 422, 423, 424, 446, 427, 447, 527, 528, 345, 349, 352, 355, 358, 361, 364, 367, 370, 373, 376, 379, 380, 385, 402, 403, 404, 405, 425, 406, 426, 529, 530, 531, 532, 533, 534, 540, 542, 574, 570, 571, 572, 573, 578, 579, 535, 575, 576, 577, 580, 581, 603, 604, 599, 600, 601, 602, 605, 606, 588, 589, 585, 586, 587, 590, 591, 596, 597, 148, 149, 218, 219, 684, 685, 551, 552, 662, 663, 695, 696, 554, 555, 48, 49, 655, 656, 559, 560, 565, 566, 225, 226, 632, 633, 623, 624, 61, 62, 81, 82, 688, 689, 85, 86, 666, 667, 89, 90, 93, 94, 199, 200, 202, 203, 206, 207, 210, 211, 97, 98, 607, 608, 221, 222, 53, 54, 193, 194, 658, 659, 681, 682, 592, 593, 611, 612, 619, 620, 278, 279, 614, 615, 582, 583, 46, 47, 175, 176, 536, 537, 543, 544, 105, 106, 187, 188, 162, 177, 178, 179, 104, 107, 110, 111, 113, 114, 115, 116, 182, 183, 184, 185, 186, 189, 190, 584, 594, 595, 636, 637, 638, 598, 639, 640, 641, 609, 610, 642, 643, 644, 613, 616, 617, 618, 625, 621, 622, 626, 627, 628, 629, 630, 631, 634, 635, 645, 646, 556, 557, 553, 558, 561, 562, 567, 563, 564, 568, 569, 647, 280, 648, 649, 657, 660, 683, 686, 661, 664, 687, 690, 665, 668, 650, 654, 669, 672, 673, 670, 671, 674, 675, 651, 652, 676, 653, 677, 678, 679, 680, 697, 691, 692, 693, 545, 548, 549, 694, 698, 699, 700, 701, 702, 227, 195, 196, 197, 198, 201, 204, 205, 208, 209, 212, 213, 214, 215, 191, 192, 216, 217, 220, 223, 224, 229, 228, 230, 231, 232, 233, 234, 79, 80, 83, 84, 87, 88, 91, 92, 95, 96, 99, 100, 103, 112, 117, 150, 147, 153, 154, 151, 152, 235, 236, 237, 238, 239, 240, 50, 55, 58, 118, 119, 120, 241, 546, 547, 274, 703, 704, 705, 706, 707, 708, 709, 710, 711, 712, 713, 730, 731, 732, 733, 734, 735, 736, 716, 717, 718, 719, 720, 725, 726, 723, 724, 727, 5, 729, 715, 722, 714, 737, 721, 728, 738]
-741 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef int int16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef unsigned int unsigned_int16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef unsigned long unsigned_long16 __attribute__((aligned(128),ext_vector_type(16)));\ntypedef long long16 __attribute__((aligned(128),ext_vector_type(16)));\n__attribute__((min_vector_width(512))) void E_16(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, float* restrict data3_16) {\n  float4 val0 = (*((float4*)((data1_16+0))));\n  float4 val1 = (*((float4*)((data1_16+12))));\n  float4 val2 = (*((float4*)((data1_16+4))));\n  float4 val3 = (*((float4*)((data1_16+8))));\n  float4 val4 = (*((float4*)((data2_16+0))));\n  float4 val5 = (*((float4*)((data2_16+12))));\n  float4 val6 = (*((float4*)((data2_16+4))));\n  float4 val7 = (*((float4*)((data2_16+8))));\n  float4 val8 = (*((float4*)((data3_16+0))));\n  float4 val9 = (*((float4*)((data3_16+12))));\n  float4 val10 = (*((float4*)((data3_16+4))));\n  float4 val11 = (*((float4*)((data3_16+8))));\n  float16 cast0 = (float16){val4[0],val4[1],val4[2],val4[3],val6[0],val6[1],val6[2],val6[3],val7[0],val7[1],val7[2],val7[3],val5[0],val5[1],val5[2],val5[3]};\n  float16 cast1 = (float16){val8[0],val8[1],val8[2],val8[3],val10[0],val10[1],val10[2],val10[3],val11[0],val11[1],val11[2],val11[3],val9[0],val9[1],val9[2],val9[3]};\n  int16 alu0 = (cast1!=cast1);\n  int16 alu1 = (cast1!=((float)(-__builtin_inff())));\n  int16 alu2 = (cast1!=((float)(__builtin_inff())));\n  float16 alu3 = (alu1?cast1:0.0f);\n  float16 alu4 = (alu0?0.0f:alu3);\n  float16 alu5 = (alu2?alu4:0.0f);\n  float16 alu6 = ((alu5<0.0f)?((float16)(-1.0f)):1.0f);\n  float16 alu7 = (alu5*alu6);\n  float16 alu8 = (alu7*0.6366197466850281f);\n  float16 alu9 = ((alu8<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast2 = __builtin_convertvector((alu8+alu9), int16);\n  float16 cast3 = __builtin_convertvector(cast2, float16);\n  float16 alu10 = ((float16){val0[0],val0[1],val0[2],val0[3],val2[0],val2[1],val2[2],val2[3],val3[0],val3[1],val3[2],val3[3],val1[0],val1[1],val1[2],val1[3]}*1.4426950216293335f);\n  int16 alu11 = (alu10!=alu10);\n  float16 alu12 = ((alu10!=((float)(-__builtin_inff())))?alu10:0.0f);\n  float16 alu13 = (alu11?0.0f:alu12);\n  float16 alu14 = ((alu10!=((float)(__builtin_inff())))?alu13:0.0f);\n  float16 alu15 = ((alu14<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast4 = __builtin_convertvector((alu14+alu15), int16);\n  float16 cast5 = __builtin_convertvector(cast4, float16);\n  int16 alu16 = (cast0<1.1754943508222875e-38f);\n  float16 alu17 = (alu16?(cast0*1.8446744073709552e+19f):cast0);\n  float16 cast6 = __builtin_convertvector((((__builtin_bit_cast(int16, (float16)((alu17*1.4142135381698608f)))>>23)&255)+-127), float16);\n  unsigned_int16 cast7 = __builtin_bit_cast(unsigned_int16, (float16)(alu7));\n  int16 cast8 = __builtin_convertvector((((cast7>>23u)&255u)+4294967169u+1u), int16);\n  unsigned_long16 cast9 = __builtin_convertvector((__builtin_bit_cast(float16, (unsigned_int16)(((cast7&2155872255u)|1056964608u)))*16777216.0f), unsigned_long16);\n  int16 alu18 = (cast8+104);\n  int16 alu19 = ((alu18<0)?0:alu18);\n  unsigned_long16 cast10 = __builtin_convertvector((alu19&31), unsigned_long16);\n  int16 alu20 = (alu19>>5);\n  int16 alu21 = (alu20!=0);\n  int16 alu22 = (alu20!=1);\n  int16 alu23 = (alu20!=2);\n  int16 alu24 = (alu20!=3);\n  int16 alu25 = (alu20!=4);\n  int16 alu26 = (alu20!=5);\n  int16 alu27 = (alu20!=6);\n  int16 alu28 = (alu20!=7);\n  int16 alu29 = (alu20!=8);\n  unsigned_long16 alu30 = (__builtin_convertvector(alu29, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu31 = (__builtin_convertvector(alu28, long16)?alu30:2425582776ul);\n  unsigned_long16 alu32 = (__builtin_convertvector(alu27, long16)?alu31:1841896334ul);\n  unsigned_long16 alu33 = (__builtin_convertvector(alu26, long16)?alu32:4155437400ul);\n  unsigned_long16 alu34 = (__builtin_convertvector(alu25, long16)?alu33:2140428522ul);\n  unsigned_long16 alu35 = (__builtin_convertvector(alu24, long16)?alu34:1326507024ul);\n  unsigned_long16 alu36 = (__builtin_convertvector(alu23, long16)?alu35:920167782ul);\n  unsigned_long16 alu37 = (__builtin_convertvector(alu22, long16)?alu36:2102212464ul);\n  unsigned_long16 alu38 = (__builtin_convertvector(alu21, long16)?alu37:2131351028ul);\n  unsigned_long16 alu39 = (32ul-cast10);\n  unsigned_long16 alu40 = (__builtin_convertvector(alu28, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu41 = (__builtin_convertvector(alu27, long16)?alu40:2425582776ul);\n  unsigned_long16 alu42 = (__builtin_convertvector(alu26, long16)?alu41:1841896334ul);\n  unsigned_long16 alu43 = (__builtin_convertvector(alu25, long16)?alu42:4155437400ul);\n  unsigned_long16 alu44 = (__builtin_convertvector(alu24, long16)?alu43:2140428522ul);\n  unsigned_long16 alu45 = (__builtin_convertvector(alu23, long16)?alu44:1326507024ul);\n  unsigned_long16 alu46 = (__builtin_convertvector(alu22, long16)?alu45:920167782ul);\n  unsigned_long16 alu47 = (__builtin_convertvector(alu21, long16)?alu46:2102212464ul);\n  unsigned_long16 alu48 = (cast9&4294967295ul);\n  unsigned_long16 alu49 = (alu48*(((alu38<<cast10)|(alu47>>alu39))&4294967295ul));\n  int16 alu50 = (alu20!=9);\n  unsigned_long16 alu51 = (__builtin_convertvector(alu50, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu52 = (__builtin_convertvector(alu29, long16)?alu51:2425582776ul);\n  unsigned_long16 alu53 = (__builtin_convertvector(alu28, long16)?alu52:1841896334ul);\n  unsigned_long16 alu54 = (__builtin_convertvector(alu27, long16)?alu53:4155437400ul);\n  unsigned_long16 alu55 = (__builtin_convertvector(alu26, long16)?alu54:2140428522ul);\n  unsigned_long16 alu56 = (__builtin_convertvector(alu25, long16)?alu55:1326507024ul);\n  unsigned_long16 alu57 = (__builtin_convertvector(alu24, long16)?alu56:920167782ul);\n  unsigned_long16 alu58 = (__builtin_convertvector(alu23, long16)?alu57:2102212464ul);\n  unsigned_long16 alu59 = (__builtin_convertvector(alu22, long16)?alu58:2131351028ul);\n  unsigned_long16 alu60 = (__builtin_convertvector(alu21, long16)?alu59:2475754826ul);\n  unsigned_long16 alu61 = (alu48*(((alu60<<cast10)|(alu38>>alu39))&4294967295ul));\n  int16 alu62 = (alu20!=10);\n  unsigned_long16 alu63 = (__builtin_convertvector(alu62, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu64 = (__builtin_convertvector(alu50, long16)?alu63:2425582776ul);\n  unsigned_long16 alu65 = (__builtin_convertvector(alu29, long16)?alu64:1841896334ul);\n  unsigned_long16 alu66 = (__builtin_convertvector(alu28, long16)?alu65:4155437400ul);\n  unsigned_long16 alu67 = (__builtin_convertvector(alu27, long16)?alu66:2140428522ul);\n  unsigned_long16 alu68 = (__builtin_convertvector(alu26, long16)?alu67:1326507024ul);\n  unsigned_long16 alu69 = (__builtin_convertvector(alu25, long16)?alu68:920167782ul);\n  unsigned_long16 alu70 = (__builtin_convertvector(alu24, long16)?alu69:2102212464ul);\n  unsigned_long16 alu71 = (__builtin_convertvector(alu23, long16)?alu70:2131351028ul);\n  unsigned_long16 alu72 = (__builtin_convertvector(alu22, long16)?alu71:2475754826ul);\n  unsigned_long16 alu73 = (__builtin_convertvector(alu21, long16)?alu72:683565275ul);\n  unsigned_long16 alu74 = (alu48*(((alu73<<cast10)|(alu60>>alu39))&4294967295ul));\n  int16 alu75 = (alu20!=11);\n  unsigned_long16 alu76 = (__builtin_convertvector(alu75, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu77 = (__builtin_convertvector(alu62, long16)?alu76:2425582776ul);\n  unsigned_long16 alu78 = (__builtin_convertvector(alu50, long16)?alu77:1841896334ul);\n  unsigned_long16 alu79 = (__builtin_convertvector(alu29, long16)?alu78:4155437400ul);\n  unsigned_long16 alu80 = (__builtin_convertvector(alu28, long16)?alu79:2140428522ul);\n  unsigned_long16 alu81 = (__builtin_convertvector(alu27, long16)?alu80:1326507024ul);\n  unsigned_long16 alu82 = (__builtin_convertvector(alu26, long16)?alu81:920167782ul);\n  unsigned_long16 alu83 = (__builtin_convertvector(alu25, long16)?alu82:2102212464ul);\n  unsigned_long16 alu84 = (__builtin_convertvector(alu24, long16)?alu83:2131351028ul);\n  unsigned_long16 alu85 = (__builtin_convertvector(alu23, long16)?alu84:2475754826ul);\n  unsigned_long16 alu86 = (__builtin_convertvector(alu22, long16)?alu85:683565275ul);\n  unsigned_long16 alu87 = (__builtin_convertvector(alu21, long16)?alu86:0ul);\n  unsigned_long16 alu88 = (alu48*(((alu87<<cast10)|(alu73>>alu39))&4294967295ul));\n  unsigned_long16 alu89 = ((alu88&4294967295ul)+(alu74>>32ul)+(((alu74&4294967295ul)+(alu61>>32ul)+(((alu61&4294967295ul)+(alu49>>32ul)+((alu49&4294967295ul)>>32ul))>>32ul))>>32ul));\n  int16 alu90 = (alu20!=12);\n  unsigned_long16 alu91 = (__builtin_convertvector(alu90, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu92 = (__builtin_convertvector(alu75, long16)?alu91:2425582776ul);\n  unsigned_long16 alu93 = (__builtin_convertvector(alu62, long16)?alu92:1841896334ul);\n  unsigned_long16 alu94 = (__builtin_convertvector(alu50, long16)?alu93:4155437400ul);\n  unsigned_long16 alu95 = (__builtin_convertvector(alu29, long16)?alu94:2140428522ul);\n  unsigned_long16 alu96 = (__builtin_convertvector(alu28, long16)?alu95:1326507024ul);\n  unsigned_long16 alu97 = (__builtin_convertvector(alu27, long16)?alu96:920167782ul);\n  unsigned_long16 alu98 = (__builtin_convertvector(alu26, long16)?alu97:2102212464ul);\n  unsigned_long16 alu99 = (__builtin_convertvector(alu25, long16)?alu98:2131351028ul);\n  unsigned_long16 alu100 = (__builtin_convertvector(alu24, long16)?alu99:2475754826ul);\n  unsigned_long16 alu101 = (__builtin_convertvector(alu23, long16)?alu100:683565275ul);\n  unsigned_long16 alu102 = (__builtin_convertvector(alu22, long16)?alu101:0ul);\n  unsigned_long16 alu103 = (alu48*(((alu102<<cast10)|(alu87>>alu39))&4294967295ul));\n  unsigned_long16 alu104 = ((alu103&4294967295ul)+(alu88>>32ul)+(alu89>>32ul));\n  int16 alu105 = (alu20!=13);\n  unsigned_long16 alu106 = (__builtin_convertvector(alu105, long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu107 = (__builtin_convertvector(alu90, long16)?alu106:2425582776ul);\n  unsigned_long16 alu108 = (__builtin_convertvector(alu75, long16)?alu107:1841896334ul);\n  unsigned_long16 alu109 = (__builtin_convertvector(alu62, long16)?alu108:4155437400ul);\n  unsigned_long16 alu110 = (__builtin_convertvector(alu50, long16)?alu109:2140428522ul);\n  unsigned_long16 alu111 = (__builtin_convertvector(alu29, long16)?alu110:1326507024ul);\n  unsigned_long16 alu112 = (__builtin_convertvector(alu28, long16)?alu111:920167782ul);\n  unsigned_long16 alu113 = (__builtin_convertvector(alu27, long16)?alu112:2102212464ul);\n  unsigned_long16 alu114 = (__builtin_convertvector(alu26, long16)?alu113:2131351028ul);\n  unsigned_long16 alu115 = (__builtin_convertvector(alu25, long16)?alu114:2475754826ul);\n  unsigned_long16 alu116 = (__builtin_convertvector(alu24, long16)?alu115:683565275ul);\n  unsigned_long16 alu117 = (__builtin_convertvector(alu23, long16)?alu116:0ul);\n  unsigned_long16 alu118 = (alu48*(((alu117<<cast10)|(alu102>>alu39))&4294967295ul));\n  unsigned_long16 alu119 = ((alu118&4294967295ul)+(alu103>>32ul)+(alu104>>32ul));\n  unsigned_long16 alu120 = (__builtin_convertvector((alu20!=14), long16)?((unsigned_long16)(0ul)):26364858ul);\n  unsigned_long16 alu121 = (__builtin_convertvector(alu105, long16)?alu120:2425582776ul);\n  unsigned_long16 alu122 = (__builtin_convertvector(alu90, long16)?alu121:1841896334ul);\n  unsigned_long16 alu123 = (__builtin_convertvector(alu75, long16)?alu122:4155437400ul);\n  unsigned_long16 alu124 = (__builtin_convertvector(alu62, long16)?alu123:2140428522ul);\n  unsigned_long16 alu125 = (__builtin_convertvector(alu50, long16)?alu124:1326507024ul);\n  unsigned_long16 alu126 = (__builtin_convertvector(alu29, long16)?alu125:920167782ul);\n  unsigned_long16 alu127 = (__builtin_convertvector(alu28, long16)?alu126:2102212464ul);\n  unsigned_long16 alu128 = (__builtin_convertvector(alu27, long16)?alu127:2131351028ul);\n  unsigned_long16 alu129 = (__builtin_convertvector(alu26, long16)?alu128:2475754826ul);\n  unsigned_long16 alu130 = (__builtin_convertvector(alu25, long16)?alu129:683565275ul);\n  unsigned_long16 alu131 = (__builtin_convertvector(alu24, long16)?alu130:0ul);\n  unsigned_long16 alu132 = ((((((alu48*(((alu131<<cast10)|(alu117>>alu39))&4294967295ul))&4294967295ul)+(alu118>>32ul)+(alu119>>32ul))&4294967295ul)<<32ul)|(alu119&4294967295ul));\n  unsigned_long16 alu133 = ((alu132>>61ul)&1ul);\n  long16 cast11 = __builtin_convertvector(alu133, long16);\n  long16 cast12 = __builtin_convertvector((alu132&4611686018427387903ul), long16);\n  long16 alu134 = (cast12-(cast11<<62l));\n  float16 cast13 = __builtin_convertvector((alu134>>42l), float16);\n  float16 cast14 = __builtin_convertvector(((((alu104&4294967295ul)<<32ul)|(alu89&4294967295ul))>>43ul), float16);\n  float16 cast15 = __builtin_convertvector(((alu134>>21l)&2097151l), float16);\n  float16 cast16 = __builtin_convertvector((alu134&2097151l), float16);\n  int16 cast17 = __builtin_convertvector(-cast6, int16);\n  int16 cast18 = __builtin_convertvector(((alu132>>62ul)+alu133), int16);\n  int16 alu135 = (cast4>>1);\n  float16 alu136 = (__builtin_bit_cast(float16, (int16)((__builtin_bit_cast(int16, (float16)(alu17))+(cast17<<23))))+-1.0f);\n  float16 alu137 = (0.5f*alu136*alu136);\n  float16 cast19 = __builtin_bit_cast(float16, (unsigned_int16)((__builtin_bit_cast(unsigned_int16, (float16)((alu136-alu137)))&4294963200u)));\n  float16 alu138 = (cast13*4398046511104.0f);\n  float16 alu139 = (cast15*2097152.0f);\n  float16 alu140 = (alu138+alu139);\n  float16 alu141 = (alu140+cast16);\n  float16 alu142 = (cast14*1.1368683772161603e-13f);\n  float16 alu143 = (alu141+alu142);\n  float16 alu144 = (alu143*3.4061216748705226e-19f);\n  float16 alu145 = (alu143*4097.0f);\n  float16 alu146 = (alu145-(alu145-alu143));\n  float16 alu147 = (alu143-alu146);\n  float16 alu148 = (((alu146*3.406131239146355e-19f)-alu144)+(alu146*-9.564275832644382e-25f)+(alu147*3.406131239146355e-19f)+(alu147*-9.564275832644382e-25f)+(alu143*-9.478396428567739e-27f)+((0.0f+(alu139-(alu140-alu138))+(cast16-(alu141-alu140))+(alu142-(alu143-alu141)))*3.4061216748705226e-19f));\n  float16 alu149 = ((cast3*-0.00048351287841796875f)+((cast3*-1.5703125f)+alu7));\n  float16 alu150 = (cast3*-3.1385570764541626e-07f);\n  float16 alu151 = (alu149+alu150);\n  float16 alu152 = ((alu150-(alu151-alu149))+(cast3*-6.07710062827671e-11f));\n  float16 alu153 = (alu151+alu152);\n  float16 alu154 = (alu144+alu148);\n  int16 alu155 = (alu7<30.0f);\n  float16 alu156 = (alu155?alu153:alu154);\n  float16 alu157 = (alu156*alu156);\n  float16 alu158 = (0.5f*alu157);\n  float16 alu159 = (alu155?(alu152-(alu153-alu151)):(alu148-(alu154-alu144)));\n  float16 alu160 = (1.0f-alu158);\n  float16 alu161 = (alu157*alu156);\n  int16 alu162 = (alu155?cast2:cast18);\n  float16 alu163 = (((alu162&1)!=0)?(alu160+(((1.0f-alu160)-alu158)+((alu157*alu157*((((((-2.7557314297155244e-07f*alu157)+2.4801587642286904e-05f)*alu157)+-0.0013888889225199819f)*alu157)+0.0416666679084301f))-(alu156*alu159)))):(alu156-(((alu157*((0.5f*alu159)-(alu161*((((2.7557314297155244e-06f*alu157)+-0.00019841270113829523f)*alu157)+0.008333333767950535f))))-alu159)-(alu161*-0.1666666716337204f))));\n  float16 alu164 = (alu163*alu6);\n  float16 alu165 = (alu136*(1.0f/(2.0f+alu136)));\n  float16 alu166 = (alu165*alu165);\n  float16 alu167 = (((alu136-cast19)-alu137)+(alu165*(alu137+(alu166*((((((0.24279078841209412f*alu166)+0.2849878668785095f)*alu166)+0.40000972151756287f)*alu166)+0.6666666269302368f)))));\n  float16 alu168 = (cast19*1.44287109375f);\n  float16 alu169 = (alu16?(cast6+-64.0f):cast6);\n  float16 alu170 = (alu169+alu168);\n  float16 alu171 = (alu14-cast5);\n  float16 alu172 = ((cast0!=((float)(__builtin_inff())))?(((alu167+cast19)*-0.00017605285393074155f)+(alu167*1.44287109375f)+((alu169-alu170)+alu168)+alu170):((float)(__builtin_inff())));\n  float16 alu173 = ((cast0!=0.0f)?alu172:((float)(-__builtin_inff())));\n  float16 alu174 = (((1.0f/cast0)!=((float)(-__builtin_inff())))?alu173:((float)(-__builtin_inff())));\n  float16 alu175 = ((cast0<-0.0f)?((float)(__builtin_nanf(\"\"))):alu174);\n  float16 alu176 = ((cast0!=cast0)?((float)(__builtin_nanf(\"\"))):alu175);\n  float16 alu177 = (((alu10<128.0f)^-1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu171)+0.0013392627006396651f)*alu171)+0.009618384763598442f)*alu171)+0.055503472685813904f)*alu171)+0.24022644758224487f)*alu171)+0.6931471824645996f)*alu171)+1.0f)*__builtin_bit_cast(float16, (int16)(((alu135+127)<<23)))*__builtin_bit_cast(float16, (int16)((((cast4-alu135)+127)<<23)))));\n  float16 alu178 = ((alu10<-150.0f)?0.0f:alu177);\n  float16 alu179 = (alu11?((float)(__builtin_nanf(\"\"))):alu178);\n  float16 alu180 = (((alu162&2)!=0)?-alu164:alu164);\n  float16 alu181 = ((alu5!=0.0f)?alu180:alu5);\n  float16 alu182 = (alu1?alu181:((float)(__builtin_nanf(\"\"))));\n  float16 alu183 = (alu0?((float)(__builtin_nanf(\"\"))):alu182);\n  float16 alu184 = (alu2?alu183:((float)(__builtin_nanf(\"\"))));\n  float16 alu185 = (alu179+(alu176*0.6931471824645996f)+alu184);\n  *((float4*)((data0_16+0))) = (float4){alu185[0],alu185[1],alu185[2],alu185[3]};\n  *((float4*)((data0_16+12))) = (float4){alu185[12],alu185[13],alu185[14],alu185[15]};\n  *((float4*)((data0_16+4))) = (float4){alu185[4],alu185[5],alu185[6],alu185[7]};\n  *((float4*)((data0_16+8))) = (float4){alu185[8],alu185[9],alu185[10],alu185[11]};\n}\n"
-742 Ops.PROGRAM dtypes.void [739, 740, 741] ProgramInfo(globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-743 Ops.SINK dtypes.void [738, 742]
+616 Ops.MUL dtypes.float [599, 615]
+617 Ops.SUB dtypes.float [613, 616]
+618 Ops.SUB dtypes.float [567, 617]
+619 Ops.WHERE dtypes.float [468, 597, 618]
+620 Ops.MUL dtypes.float [619, 276]
+621 Ops.NEG dtypes.float [620]
+622 Ops.WHERE dtypes.float [466, 621, 620]
+623 Ops.WHERE dtypes.float [274, 622, 273]
+624 Ops.WHERE dtypes.float [270, 623, 47]
+625 Ops.WHERE dtypes.float [269, 47, 624]
+626 Ops.WHERE dtypes.float [268, 625, 47]
+627 Ops.ADD dtypes.float [241, 626]
+628 Ops.INDEX dtypes.float [627, 2]
+629 Ops.INDEX dtypes.float [627, 11]
+630 Ops.INDEX dtypes.float [627, 14]
+631 Ops.INDEX dtypes.float [627, 17]
+632 Ops.STACK dtypes.float [628, 629, 630, 631]
+633 Ops.STORE dtypes.void [5, 632]
+634 Ops.SHRINK dtypes.float [0, 4, 4]
+635 Ops.INDEX dtypes.float [627, 4]
+636 Ops.INDEX dtypes.float [627, 318]
+637 Ops.CONST dtypes.weakint [] 6
+638 Ops.CAST dtypes.int [637] dtypes.int
+639 Ops.INDEX dtypes.float [627, 638]
+640 Ops.CONST dtypes.weakint [] 7
+641 Ops.CAST dtypes.int [640] dtypes.int
+642 Ops.INDEX dtypes.float [627, 641]
+643 Ops.STACK dtypes.float [635, 636, 639, 642]
+644 Ops.STORE dtypes.void [634, 643]
+645 Ops.SHRINK dtypes.float [0, 26, 4]
+646 Ops.INDEX dtypes.float [627, 26]
+647 Ops.CONST dtypes.weakint [] 9
+648 Ops.CAST dtypes.int [647] dtypes.int
+649 Ops.INDEX dtypes.float [627, 648]
+650 Ops.CONST dtypes.weakint [] 10
+651 Ops.CAST dtypes.int [650] dtypes.int
+652 Ops.INDEX dtypes.float [627, 651]
+653 Ops.CONST dtypes.weakint [] 11
+654 Ops.CAST dtypes.int [653] dtypes.int
+655 Ops.INDEX dtypes.float [627, 654]
+656 Ops.STACK dtypes.float [646, 649, 652, 655]
+657 Ops.STORE dtypes.void [645, 656]
+658 Ops.SHRINK dtypes.float [0, 34, 4]
+659 Ops.INDEX dtypes.float [627, 34]
+660 Ops.CONST dtypes.weakint [] 13
+661 Ops.CAST dtypes.int [660] dtypes.int
+662 Ops.INDEX dtypes.float [627, 661]
+663 Ops.CONST dtypes.weakint [] 14
+664 Ops.CAST dtypes.int [663] dtypes.int
+665 Ops.INDEX dtypes.float [627, 664]
+666 Ops.CONST dtypes.weakint [] 15
+667 Ops.CAST dtypes.int [666] dtypes.int
+668 Ops.INDEX dtypes.float [627, 667]
+669 Ops.STACK dtypes.float [659, 662, 665, 668]
+670 Ops.STORE dtypes.void [658, 669]
+671 Ops.SINK dtypes.void [633, 633, 633, 633, 644, 644, 644, 644, 657, 657, 657, 657, 670, 670, 670, 670] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),))
+672 Ops.SINK dtypes.void [633, 633, 633, 633, 644, 644, 644, 644, 657, 657, 657, 657, 670, 670, 670, 670] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(ops=5376, lds=256, mem=256))
+673 Ops.LINEAR dtypes.void [0, 6, 121, 242, 1, 2, 3, 4, 7, 8, 33, 34, 35, 36, 19, 20, 25, 26, 27, 28, 122, 123, 140, 141, 128, 129, 134, 135, 243, 244, 261, 262, 249, 250, 255, 256, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 37, 38, 39, 40, 21, 22, 23, 24, 29, 30, 31, 32, 41, 124, 125, 126, 127, 142, 143, 144, 145, 130, 131, 132, 133, 136, 137, 138, 139, 146, 245, 246, 247, 248, 263, 264, 265, 266, 251, 252, 253, 254, 257, 258, 259, 260, 267, 56, 57, 71, 72, 180, 181, 64, 65, 51, 52, 73, 74, 281, 282, 101, 102, 59, 60, 269, 270, 268, 271, 272, 273, 275, 276, 277, 283, 284, 285, 286, 287, 469, 42, 43, 44, 66, 63, 45, 67, 68, 69, 70, 75, 76, 77, 78, 155, 156, 163, 164, 158, 159, 171, 172, 108, 109, 168, 169, 160, 157, 161, 165, 166, 167, 170, 173, 174, 296, 297, 307, 309, 303, 305, 288, 304, 306, 308, 310, 311, 312, 313, 342, 343, 317, 318, 292, 293, 289, 290, 291, 294, 295, 298, 299, 314, 315, 316, 344, 345, 328, 460, 361, 362, 400, 401, 326, 327, 334, 335, 374, 375, 413, 414, 330, 331, 426, 427, 352, 353, 387, 388, 300, 301, 457, 458, 337, 338, 347, 348, 319, 320, 321, 322, 323, 324, 325, 402, 376, 403, 363, 389, 390, 404, 412, 354, 415, 416, 417, 418, 419, 302, 420, 421, 425, 428, 429, 430, 431, 432, 433, 434, 435, 424, 436, 437, 438, 439, 349, 377, 391, 399, 405, 406, 407, 408, 422, 411, 423, 440, 441, 329, 364, 378, 386, 392, 393, 394, 395, 409, 398, 410, 442, 443, 336, 350, 365, 373, 379, 380, 381, 382, 396, 385, 397, 444, 445, 332, 333, 351, 360, 366, 367, 368, 369, 383, 372, 384, 446, 447, 339, 340, 341, 346, 355, 356, 357, 358, 370, 359, 371, 448, 449, 450, 451, 452, 453, 459, 461, 493, 489, 490, 491, 492, 497, 498, 454, 494, 495, 496, 499, 500, 522, 523, 518, 519, 520, 521, 524, 525, 507, 508, 504, 505, 506, 509, 510, 515, 516, 148, 149, 218, 219, 603, 604, 470, 471, 581, 582, 614, 615, 473, 474, 48, 49, 574, 575, 478, 479, 484, 485, 225, 226, 551, 552, 542, 543, 61, 62, 81, 82, 607, 608, 85, 86, 585, 586, 89, 90, 93, 94, 199, 200, 202, 203, 206, 207, 210, 211, 97, 98, 526, 527, 221, 222, 53, 54, 193, 194, 577, 578, 600, 601, 511, 512, 530, 531, 538, 539, 278, 279, 533, 534, 501, 502, 46, 47, 175, 176, 455, 456, 462, 463, 105, 106, 187, 188, 162, 177, 178, 179, 104, 107, 110, 111, 113, 114, 115, 116, 182, 183, 184, 185, 186, 189, 190, 503, 513, 514, 555, 556, 557, 517, 558, 559, 560, 528, 529, 561, 562, 563, 532, 535, 536, 537, 544, 540, 541, 545, 546, 547, 548, 549, 550, 553, 554, 564, 565, 475, 476, 472, 477, 480, 481, 486, 482, 483, 487, 488, 566, 280, 567, 568, 576, 579, 602, 605, 580, 583, 606, 609, 584, 587, 569, 573, 588, 591, 592, 589, 590, 593, 594, 570, 571, 595, 572, 596, 597, 598, 599, 616, 610, 611, 612, 464, 467, 468, 613, 617, 618, 619, 620, 621, 227, 195, 196, 197, 198, 201, 204, 205, 208, 209, 212, 213, 214, 215, 191, 192, 216, 217, 220, 223, 224, 229, 228, 230, 231, 232, 233, 234, 79, 80, 83, 84, 87, 88, 91, 92, 95, 96, 99, 100, 103, 112, 117, 150, 147, 153, 154, 151, 152, 235, 236, 237, 238, 239, 240, 50, 55, 58, 118, 119, 120, 241, 465, 466, 274, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669, 635, 636, 637, 638, 639, 640, 641, 642, 643, 650, 651, 652, 653, 654, 655, 646, 647, 648, 649, 656, 5, 658, 634, 645, 633, 670, 644, 657, 671]
+674 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef int int16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef unsigned int unsigned_int16 __attribute__((aligned(64),ext_vector_type(16)));\ntypedef unsigned long unsigned_long16 __attribute__((aligned(128),ext_vector_type(16)));\ntypedef long long16 __attribute__((aligned(128),ext_vector_type(16)));\n__attribute__((min_vector_width(512))) void E_16(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, float* restrict data3_16) {\n  float4 val0 = (*((float4*)((data1_16+0))));\n  float4 val1 = (*((float4*)((data1_16+12))));\n  float4 val2 = (*((float4*)((data1_16+4))));\n  float4 val3 = (*((float4*)((data1_16+8))));\n  float4 val4 = (*((float4*)((data2_16+0))));\n  float4 val5 = (*((float4*)((data2_16+12))));\n  float4 val6 = (*((float4*)((data2_16+4))));\n  float4 val7 = (*((float4*)((data2_16+8))));\n  float4 val8 = (*((float4*)((data3_16+0))));\n  float4 val9 = (*((float4*)((data3_16+12))));\n  float4 val10 = (*((float4*)((data3_16+4))));\n  float4 val11 = (*((float4*)((data3_16+8))));\n  float16 cast0 = (float16){val4[0],val4[1],val4[2],val4[3],val6[0],val6[1],val6[2],val6[3],val7[0],val7[1],val7[2],val7[3],val5[0],val5[1],val5[2],val5[3]};\n  float16 cast1 = (float16){val8[0],val8[1],val8[2],val8[3],val10[0],val10[1],val10[2],val10[3],val11[0],val11[1],val11[2],val11[3],val9[0],val9[1],val9[2],val9[3]};\n  int16 alu0 = (cast1!=cast1);\n  int16 alu1 = (cast1!=((float)(-__builtin_inff())));\n  int16 alu2 = (cast1!=((float)(__builtin_inff())));\n  float16 alu3 = (alu1?cast1:0.0f);\n  float16 alu4 = (alu0?0.0f:alu3);\n  float16 alu5 = (alu2?alu4:0.0f);\n  float16 alu6 = ((alu5<0.0f)?((float16)(-1.0f)):1.0f);\n  float16 alu7 = (alu5*alu6);\n  float16 alu8 = (alu7*0.6366197466850281f);\n  float16 alu9 = ((alu8<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast2 = __builtin_convertvector((alu8+alu9), int16);\n  float16 cast3 = __builtin_convertvector(cast2, float16);\n  float16 alu10 = ((float16){val0[0],val0[1],val0[2],val0[3],val2[0],val2[1],val2[2],val2[3],val3[0],val3[1],val3[2],val3[3],val1[0],val1[1],val1[2],val1[3]}*1.4426950216293335f);\n  int16 alu11 = (alu10!=alu10);\n  float16 alu12 = ((alu10!=((float)(-__builtin_inff())))?alu10:0.0f);\n  float16 alu13 = (alu11?0.0f:alu12);\n  float16 alu14 = ((alu10!=((float)(__builtin_inff())))?alu13:0.0f);\n  float16 alu15 = ((alu14<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast4 = __builtin_convertvector((alu14+alu15), int16);\n  float16 cast5 = __builtin_convertvector(cast4, float16);\n  int16 alu16 = (cast0<1.1754943508222875e-38f);\n  float16 alu17 = (alu16?(cast0*1.8446744073709552e+19f):cast0);\n  float16 cast6 = __builtin_convertvector((((__builtin_bit_cast(int16, (float16)((alu17*1.4142135381698608f)))>>23)&255)+-127), float16);\n  unsigned_int16 cast7 = __builtin_bit_cast(unsigned_int16, (float16)(alu7));\n  int16 cast8 = __builtin_convertvector((((cast7>>23u)&255u)+4294967169u+1u), int16);\n  unsigned_long16 cast9 = __builtin_convertvector((__builtin_bit_cast(float16, (unsigned_int16)(((cast7&2155872255u)|1056964608u)))*16777216.0f), unsigned_long16);\n  int16 alu18 = (cast8+104);\n  int16 alu19 = ((alu18<0)?0:alu18);\n  unsigned_long16 cast10 = __builtin_convertvector((alu19&31), unsigned_long16);\n  int16 alu20 = (alu19>>5);\n  int16 alu21 = ((alu20&1)!=0);\n  int16 alu22 = ((alu20&2)!=0);\n  int16 alu23 = ((alu20&4)!=0);\n  unsigned_long16 alu24 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(1841896334ul)):920167782ul);\n  unsigned_long16 alu25 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(2140428522ul)):2131351028ul);\n  unsigned_long16 alu26 = (__builtin_convertvector(alu22, long16)?alu24:alu25);\n  unsigned_long16 alu27 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(1326507024ul)):2475754826ul);\n  unsigned_long16 alu28 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(4155437400ul)):2102212464ul);\n  unsigned_long16 alu29 = (__builtin_convertvector(alu22, long16)?alu28:alu27);\n  unsigned_long16 alu30 = (__builtin_convertvector(alu21, long16)?alu26:alu29);\n  unsigned_long16 alu31 = (32ul-cast10);\n  unsigned_long16 alu32 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(2425582776ul)):1326507024ul);\n  unsigned_long16 alu33 = (__builtin_convertvector(alu22, long16)?alu32:alu28);\n  unsigned_long16 alu34 = (__builtin_convertvector(alu21, long16)?alu33:alu26);\n  unsigned_long16 alu35 = (cast9&4294967295ul);\n  unsigned_long16 alu36 = (alu35*(((alu30<<cast10)|(alu34>>alu31))&4294967295ul));\n  unsigned_long16 alu37 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(26364858ul)):2140428522ul);\n  unsigned_long16 alu38 = (__builtin_convertvector(alu22, long16)?alu37:alu24);\n  unsigned_long16 alu39 = (__builtin_convertvector(alu21, long16)?alu38:alu33);\n  unsigned_long16 alu40 = (alu35*(((alu34<<cast10)|(alu39>>alu31))&4294967295ul));\n  unsigned_long16 alu41 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(920167782ul)):683565275ul);\n  unsigned_long16 alu42 = (__builtin_convertvector(alu22, long16)?alu25:alu41);\n  unsigned_long16 alu43 = (__builtin_convertvector(alu21, long16)?alu29:alu42);\n  unsigned_long16 alu44 = (alu35*(((alu43<<cast10)|(alu30>>alu31))&4294967295ul));\n  unsigned_long16 alu45 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(2102212464ul)):0ul);\n  unsigned_long16 alu46 = (__builtin_convertvector(alu22, long16)?alu27:alu45);\n  unsigned_long16 alu47 = (__builtin_convertvector(alu21, long16)?alu42:alu46);\n  unsigned_long16 alu48 = (alu35*(((alu47<<cast10)|(alu43>>alu31))&4294967295ul));\n  unsigned_long16 alu49 = ((alu48&4294967295ul)+(alu44>>32ul)+(((alu44&4294967295ul)+(alu36>>32ul)+(((alu36&4294967295ul)+(alu40>>32ul)+((alu40&4294967295ul)>>32ul))>>32ul))>>32ul));\n  unsigned_long16 alu50 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(2131351028ul)):0ul);\n  unsigned_long16 alu51 = (__builtin_convertvector(alu22, long16)?alu41:alu50);\n  unsigned_long16 alu52 = (__builtin_convertvector(alu21, long16)?alu46:alu51);\n  unsigned_long16 alu53 = (alu35*(((alu52<<cast10)|(alu47>>alu31))&4294967295ul));\n  unsigned_long16 alu54 = ((alu53&4294967295ul)+(alu48>>32ul)+(alu49>>32ul));\n  unsigned_long16 alu55 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(2475754826ul)):0ul);\n  unsigned_long16 alu56 = (__builtin_convertvector(alu22, long16)?alu45:alu55);\n  unsigned_long16 alu57 = (__builtin_convertvector(alu21, long16)?alu51:alu56);\n  unsigned_long16 alu58 = (alu35*(((alu57<<cast10)|(alu52>>alu31))&4294967295ul));\n  unsigned_long16 alu59 = ((alu58&4294967295ul)+(alu53>>32ul)+(alu54>>32ul));\n  unsigned_long16 alu60 = (__builtin_convertvector(alu23, long16)?((unsigned_long16)(683565275ul)):0ul);\n  unsigned_long16 alu61 = (__builtin_convertvector(alu22, long16)?alu50:alu60);\n  unsigned_long16 alu62 = (__builtin_convertvector(alu21, long16)?alu56:alu61);\n  unsigned_long16 alu63 = ((((((alu35*(((alu62<<cast10)|(alu57>>alu31))&4294967295ul))&4294967295ul)+(alu58>>32ul)+(alu59>>32ul))&4294967295ul)<<32ul)|(alu59&4294967295ul));\n  unsigned_long16 alu64 = ((alu63>>61ul)&1ul);\n  long16 cast11 = __builtin_convertvector(alu64, long16);\n  long16 cast12 = __builtin_convertvector((alu63&4611686018427387903ul), long16);\n  long16 alu65 = (cast12-(cast11<<62l));\n  float16 cast13 = __builtin_convertvector((alu65>>42l), float16);\n  float16 cast14 = __builtin_convertvector(((((alu54&4294967295ul)<<32ul)|(alu49&4294967295ul))>>43ul), float16);\n  float16 cast15 = __builtin_convertvector(((alu65>>21l)&2097151l), float16);\n  float16 cast16 = __builtin_convertvector((alu65&2097151l), float16);\n  int16 cast17 = __builtin_convertvector(-cast6, int16);\n  int16 cast18 = __builtin_convertvector(((alu63>>62ul)+alu64), int16);\n  int16 alu66 = (cast4>>1);\n  float16 alu67 = (__builtin_bit_cast(float16, (int16)((__builtin_bit_cast(int16, (float16)(alu17))+(cast17<<23))))+-1.0f);\n  float16 alu68 = (0.5f*alu67*alu67);\n  float16 cast19 = __builtin_bit_cast(float16, (unsigned_int16)((__builtin_bit_cast(unsigned_int16, (float16)((alu67-alu68)))&4294963200u)));\n  float16 alu69 = (cast13*4398046511104.0f);\n  float16 alu70 = (cast15*2097152.0f);\n  float16 alu71 = (alu69+alu70);\n  float16 alu72 = (alu71+cast16);\n  float16 alu73 = (cast14*1.1368683772161603e-13f);\n  float16 alu74 = (alu72+alu73);\n  float16 alu75 = (alu74*3.4061216748705226e-19f);\n  float16 alu76 = (alu74*4097.0f);\n  float16 alu77 = (alu76-(alu76-alu74));\n  float16 alu78 = (alu74-alu77);\n  float16 alu79 = (((alu77*3.406131239146355e-19f)-alu75)+(alu77*-9.564275832644382e-25f)+(alu78*3.406131239146355e-19f)+(alu78*-9.564275832644382e-25f)+(alu74*-9.478396428567739e-27f)+((0.0f+(alu70-(alu71-alu69))+(cast16-(alu72-alu71))+(alu73-(alu74-alu72)))*3.4061216748705226e-19f));\n  float16 alu80 = ((cast3*-0.00048351287841796875f)+((cast3*-1.5703125f)+alu7));\n  float16 alu81 = (cast3*-3.1385570764541626e-07f);\n  float16 alu82 = (alu80+alu81);\n  float16 alu83 = ((alu81-(alu82-alu80))+(cast3*-6.07710062827671e-11f));\n  float16 alu84 = (alu82+alu83);\n  float16 alu85 = (alu75+alu79);\n  int16 alu86 = (alu7<30.0f);\n  float16 alu87 = (alu86?alu84:alu85);\n  float16 alu88 = (alu87*alu87);\n  float16 alu89 = (0.5f*alu88);\n  float16 alu90 = (alu86?(alu83-(alu84-alu82)):(alu79-(alu85-alu75)));\n  float16 alu91 = (1.0f-alu89);\n  float16 alu92 = (alu88*alu87);\n  int16 alu93 = (alu86?cast2:cast18);\n  float16 alu94 = (((alu93&1)!=0)?(alu91+(((1.0f-alu91)-alu89)+((alu88*alu88*((((((-2.7557314297155244e-07f*alu88)+2.4801587642286904e-05f)*alu88)+-0.0013888889225199819f)*alu88)+0.0416666679084301f))-(alu87*alu90)))):(alu87-(((alu88*((0.5f*alu90)-(alu92*((((2.7557314297155244e-06f*alu88)+-0.00019841270113829523f)*alu88)+0.008333333767950535f))))-alu90)-(alu92*-0.1666666716337204f))));\n  float16 alu95 = (alu94*alu6);\n  float16 alu96 = (alu67*(1.0f/(2.0f+alu67)));\n  float16 alu97 = (alu96*alu96);\n  float16 alu98 = (((alu67-cast19)-alu68)+(alu96*(alu68+(alu97*((((((0.24279078841209412f*alu97)+0.2849878668785095f)*alu97)+0.40000972151756287f)*alu97)+0.6666666269302368f)))));\n  float16 alu99 = (cast19*1.44287109375f);\n  float16 alu100 = (alu16?(cast6+-64.0f):cast6);\n  float16 alu101 = (alu100+alu99);\n  float16 alu102 = (alu14-cast5);\n  float16 alu103 = ((cast0!=((float)(__builtin_inff())))?(((alu98+cast19)*-0.00017605285393074155f)+(alu98*1.44287109375f)+((alu100-alu101)+alu99)+alu101):((float)(__builtin_inff())));\n  float16 alu104 = ((cast0!=0.0f)?alu103:((float)(-__builtin_inff())));\n  float16 alu105 = (((1.0f/cast0)!=((float)(-__builtin_inff())))?alu104:((float)(-__builtin_inff())));\n  float16 alu106 = ((cast0<-0.0f)?((float)(__builtin_nanf(\"\"))):alu105);\n  float16 alu107 = ((cast0!=cast0)?((float)(__builtin_nanf(\"\"))):alu106);\n  float16 alu108 = (((alu10<128.0f)^-1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu102)+0.0013392627006396651f)*alu102)+0.009618384763598442f)*alu102)+0.055503472685813904f)*alu102)+0.24022644758224487f)*alu102)+0.6931471824645996f)*alu102)+1.0f)*__builtin_bit_cast(float16, (int16)(((alu66+127)<<23)))*__builtin_bit_cast(float16, (int16)((((cast4-alu66)+127)<<23)))));\n  float16 alu109 = ((alu10<-150.0f)?0.0f:alu108);\n  float16 alu110 = (alu11?((float)(__builtin_nanf(\"\"))):alu109);\n  float16 alu111 = (((alu93&2)!=0)?-alu95:alu95);\n  float16 alu112 = ((alu5!=0.0f)?alu111:alu5);\n  float16 alu113 = (alu1?alu112:((float)(__builtin_nanf(\"\"))));\n  float16 alu114 = (alu0?((float)(__builtin_nanf(\"\"))):alu113);\n  float16 alu115 = (alu2?alu114:((float)(__builtin_nanf(\"\"))));\n  float16 alu116 = (alu110+(alu107*0.6931471824645996f)+alu115);\n  *((float4*)((data0_16+0))) = (float4){alu116[0],alu116[1],alu116[2],alu116[3]};\n  *((float4*)((data0_16+12))) = (float4){alu116[12],alu116[13],alu116[14],alu116[15]};\n  *((float4*)((data0_16+4))) = (float4){alu116[4],alu116[5],alu116[6],alu116[7]};\n  *((float4*)((data0_16+8))) = (float4){alu116[8],alu116[9],alu116[10],alu116[11]};\n}\n"
+675 Ops.PROGRAM dtypes.void [672, 673, 674] ProgramInfo(globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+676 Ops.SINK dtypes.void [671, 675]
 

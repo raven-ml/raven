@@ -490,7 +490,7 @@ index 36907bf..0c05ebb 100644
 -    pat += [(UPat.var("a") * UPat(Ops.FDIV, dtypes.floats, src=(UPat.const(1), UPat.var("b"))), lambda a,b: a.alu(Ops.FDIV, b))]
    return PatternMatcher(pat)
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
-index 62c3191..d0be7d4 100644
+index 62c3191..5ea673f 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
 +++ b/tinygrad/codegen/decomp/transcendental.py
 @@ -1,10 +1,12 @@
@@ -540,7 +540,7 @@ index 62c3191..d0be7d4 100644
    # m1 = masks for mantissa, m2 = masks to normalize the mantissa.
    m1 = {dtypes.float64: 0x000FFFFFFFFFFFFF, dtypes.float32: 0x807FFFFF, dtypes.float16: 0x83FF}[v.dtype]
    m2 = {dtypes.float64: 0x3FE0000000000000, dtypes.float32: 0x3F000000, dtypes.float16: 0x3800}[v.dtype]
-@@ -63,54 +65,120 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
+@@ -63,54 +65,122 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
    return mantissa, exp
  
  # *** reduction algorithms for sine ***
@@ -593,13 +593,15 @@ index 62c3191..d0be7d4 100644
 +  E = (e.cast(dtypes.int32) + (128 - W)).maximum(0)
 +  i, s = E // 32, (E & 31).cast(dtypes.uint64)
 +  table = ONE_OVER_TWO_PI[:(max_exp - W + 128) // 32 - 3 + L + 1]
-+  def word(offset:int) -> UOp:
-+    """table[i+offset], 0 outside the table"""
-+    ret = UOp.const(0, dtypes.uint64)
-+    for count in reversed(range(max(0, -offset), len(table) - offset)):
-+      ret = i.ne(count).where(ret, ret.const_like(table[count + offset]))
-+    return ret
-+  a = [word(j - 3) for j in range(L + 1)]
++  # a[j] is the word i+j-3 of the table, 0 outside it: the window of L+1 words at 0 moves to i by each bit of i from the
++  # highest, as a barrel shifter does: a word takes one selection per bit of i. i has the bits of its greatest value, at a
++  # frexp exponent of max_exp+1, an infinity's
++  bits = ((max_exp + 1 + 128 - W) // 32).bit_length()
++  window = [UOp.const(table[m - 3] if 0 <= m - 3 < len(table) else 0, dtypes.uint64) for m in range(L + (1 << bits))]
++  for b in reversed(range(bits)):
++    step, bit = 1 << b, (i & (1 << b)).ne(0)
++    window = [stay if (moved := window[m + step]) is (stay := window[m]) else bit.where(moved, stay) for m in range(L + step)]
++  a = window
 +  b = [((a[j] << s) | (a[j + 1] >> (32 - s))) & 0xffffffff for j in range(L)]
 +  # columns of 32 bits, from G+1 words below the binary point to the top word
 +  terms: dict[int, list[UOp]] = {c: [] for c in range(-G - 1, 4)}
@@ -699,7 +701,7 @@ index 62c3191..d0be7d4 100644
  
  def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
    """
-@@ -118,52 +186,27 @@ def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
+@@ -118,52 +188,27 @@ def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
        0 <= abs(d) <= 39800.0
    Returns a tuple of `(r, q)`, where the output format is the same as that of `payne_hanek_reduction`.
    """
@@ -773,7 +775,7 @@ index 62c3191..d0be7d4 100644
  
  # *** toplevel functions for xsin/xlog2/xexp2 ***
  
-@@ -174,19 +217,25 @@ def xsin(d:UOp, fast:bool=False, switch_over:float=30.0) -> UOp:
+@@ -174,19 +219,25 @@ def xsin(d:UOp, fast:bool=False, switch_over:float=30.0) -> UOp:
    - switch_over is the threshold for switching to payne_hanek_reduction.
    """
    assert d.dtype in TRANSCENDENTAL_DTYPES
@@ -809,7 +811,7 @@ index 62c3191..d0be7d4 100644
    # sin(Inf) = NaN, sin(-Inf) = NaN, sin(NaN) = NaN
    return _lazy_map_numbers(d, d.const_like(math.nan), d.const_like(math.nan), d.const_like(math.nan), result)
  
-@@ -208,7 +257,7 @@ def xexp2(d:UOp) -> UOp:
+@@ -208,7 +259,7 @@ def xexp2(d:UOp) -> UOp:
                    0.6931471805599452862e+0, 0.1000000000000000000e+1])
    else: u = polyN(s, [0.1535920892e-3, 0.1339262701e-2, 0.9618384764e-2, 0.5550347269e-1, 0.2402264476e+0, 0.6931471825e+0, 1.0])
    u = ldexp2k(u, q) # u*2^q
@@ -818,7 +820,7 @@ index 62c3191..d0be7d4 100644
    # Replace x >= upper with +inf
    u = (d >= upper).where(d.const_like(math.inf), u)
    # Replace x < lower with zero.
-@@ -222,37 +271,41 @@ def xlog2(d:UOp) -> UOp:
+@@ -222,37 +273,41 @@ def xlog2(d:UOp) -> UOp:
    Paper: https://arxiv.org/pdf/2001.09258 5.5
    """
    assert d.dtype in TRANSCENDENTAL_DTYPES

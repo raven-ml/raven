@@ -218,6 +218,8 @@ def payne_hanek_near_multiples():
     integers = [355.0, 103993.0, 104348.0, 208341.0, 312689.0, 833719.0, 1146408.0, 4272943.0]
     for name, dt in (("float", dtypes.float), ("double", dtypes.double)):
         near = [k * math.pi / 2 for k in (10**6, 10**9 + 7, 10**15 + 3, 2.0**60, 2.0**100)] + [1e20, 1e30]
+        # float32's largest exponents take the last words of its table
+        if dt == dtypes.float: near += [2.0**126 * math.pi / 2, 1e38, 3.4e38]
         if dt == dtypes.double: near += [6381956970095103 * 2.0**797, 1e22, 1e300, 1.7e308]
         for v in integers + near:
             v = truncate[dt](v)
