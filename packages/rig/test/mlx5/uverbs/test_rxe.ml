@@ -184,8 +184,8 @@ let make =
 let status =
   let pp ppf = function
     | Unix.WEXITED n -> Format.fprintf ppf "exited %d" n
-    | WSIGNALED n -> Format.fprintf ppf "killed by signal %d" n
-    | WSTOPPED n -> Format.fprintf ppf "stopped by signal %d" n
+    | WSIGNALED n -> Format.fprintf ppf "killed by %s" (Sys.signal_to_string n)
+    | WSTOPPED n -> Format.fprintf ppf "stopped by %s" (Sys.signal_to_string n)
   in
   Testable.make ~pp ~equal:( = )
 

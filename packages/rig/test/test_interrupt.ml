@@ -132,7 +132,7 @@ let in_child what (f : unit -> 'a) : 'a =
       match (answer, status) with
       | "", WEXITED n -> failf "the child exited %d%s" n what
       | "", (WSIGNALED n | WSTOPPED n) ->
-          failf "the child got signal %d%s" n what
+          failf "the child got %s%s" (Sys.signal_to_string n) what
       | answer, _ -> (
           match (Marshal.from_string answer 0 : ('a, string) result) with
           | Ok v -> v

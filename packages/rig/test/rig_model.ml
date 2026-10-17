@@ -2090,9 +2090,10 @@ let fork_sys w =
         | exception End_of_file -> (
             match Unix.waitpid [] pid with
             | _, Unix.WSIGNALED n ->
-                Error (strf "the child died of signal %d" n)
+                Error (strf "the child died of %s" (Sys.signal_to_string n))
             | _, Unix.WEXITED n -> Error (strf "the child exited %d" n)
-            | _, Unix.WSTOPPED n -> Error (strf "the child stopped on %d" n))
+            | _, Unix.WSTOPPED n ->
+                Error (strf "the child stopped on %s" (Sys.signal_to_string n)))
       in
       close_in ic;
       (try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ());

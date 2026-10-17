@@ -21,8 +21,8 @@ let raises_lost f = match f () with _ -> false | exception Rig.Lost _ -> true
 
 let status = function
   | Unix.WEXITED n -> Printf.sprintf "exited %d" n
-  | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
-  | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
+  | Unix.WSIGNALED n -> "killed by " ^ Sys.signal_to_string n
+  | Unix.WSTOPPED n -> "stopped by " ^ Sys.signal_to_string n
 
 (* Runs [child] in a forked child and is what it returned: the child writes its
    answer to a pipe and leaves without running this process's exit. *)
