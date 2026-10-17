@@ -102,11 +102,11 @@ let slice s rs =
       x.count)
     rs
 
-(* The number of windows of [w] along an axis of extent [d], or [-1] if [w] does
-   not fit in it. *)
+(* The number of windows of [w] along an axis of extent [d]: none where the
+   dilated window, [dilation·(size - 1) + 1] elements, is longer than the axis.
+   The reach is compared through a division, so no product overflows. *)
 let windows d (w : window) =
-  if w.size < 1 || w.step < 1 || w.dilation < 1 || d < 1 then -1
-  else if w.size - 1 > (d - 1) / w.dilation then -1
+  if d < 1 || w.size - 1 > (d - 1) / w.dilation then 0
   else ((d - 1 - (w.dilation * (w.size - 1))) / w.step) + 1
 
 let window s ws =
@@ -122,13 +122,12 @@ let window s ws =
           "Move.Window: axes are not strictly increasing: window %d's axis %d \
            is not after window %d's axis %d"
           j w.axis (j - 1) ws.(j - 1).axis;
-      let n = windows s.(w.axis) w in
-      if n < 0 then
+      if w.size < 1 || w.step < 1 || w.dilation < 1 then
         invalid_argf
-          "Move.Window: a window of size %d, step %d and dilation %d does not \
-           fit in axis %d of extent %d"
-          w.size w.step w.dilation w.axis s.(w.axis);
-      s'.(w.axis) <- n;
+          "Move.Window: window %d has size %d, step %d and dilation %d; give \
+           at least 1"
+          j w.size w.step w.dilation;
+      s'.(w.axis) <- windows s.(w.axis) w;
       s'.(r + j) <- w.size)
     ws;
   ignore (Shape.numel "Move.Window" s');

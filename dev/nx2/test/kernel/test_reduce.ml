@@ -1820,6 +1820,12 @@ let law_padded (b : Support.backend) p =
   | Reads c ->
       let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
       cover "computed" true;
+      (* It gives no window along that axis. *)
+      let e = extents s pad in
+      cover "a window wider than its axis"
+        (Array.exists
+           (fun (w : M.window) -> e.(w.axis) < (w.dilation * (w.size - 1)) + 1)
+           pad.windows);
       let p = identity (dtype_of p.x) in
       (match compute b.kernels ~scan:c.scan p c.monoid c.axes dst loads with
       | A.Done -> equal (list string) [] (differ (expected c) dst)
@@ -1829,12 +1835,6 @@ let law_padded (b : Support.backend) p =
       let e = if same then extents s pad else s in
       cover "a padding of another rank" (not same);
       cover "an axis cropped below zero" (Array.exists (fun d -> d < 0) e);
-      cover "a window wider than its axis"
-        (same
-        && Array.for_all (fun d -> d >= 0) e
-        && Array.exists
-             (fun (w : M.window) -> e.(w.axis) < (w.dilation * (w.size - 1)) + 1)
-             pad.windows);
       let extreme = r.monoid = Max || r.monoid = Min in
       let terms = Array.fold_left (fun n a -> n * r.read.(a)) 1 r.axes in
       cover "an extreme of no term" (same && (not r.scan) && extreme && terms = 0);

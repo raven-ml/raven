@@ -39,14 +39,13 @@ let valid_range d (r : M.range) =
   r.step <> 0 && r.count >= 0
   && (r.count = 0 || (in_axis d r.start && ends_in d r))
 
-(* Whether [w]'s windows fit an axis of extent [d]: [dilation·(size - 1) <= d -
-   1]. *)
-let fits d (w : M.window) =
-  w.size >= 1 && w.step >= 1 && w.dilation >= 1 && d >= 1
-  && (w.size = 1 || w.dilation <= (d - 1) / (w.size - 1))
+let valid_window (w : M.window) = w.size >= 1 && w.step >= 1 && w.dilation >= 1
 
+(* The windows of [w] on an axis of extent [d]: none where
+   [dilation·(size - 1) + 1] exceeds [d], compared without forming it. *)
 let windows d (w : M.window) =
-  ((d - 1 - (w.dilation * (w.size - 1))) / w.step) + 1
+  if d < 1 || (w.size > 1 && w.dilation > (d - 1) / (w.size - 1)) then 0
+  else ((d - 1 - (w.dilation * (w.size - 1))) / w.step) + 1
 
 let rec increasing = function
   | (a : M.window) :: (b :: _ as rest) -> a.axis < b.axis && increasing rest
@@ -92,7 +91,7 @@ let expected m s =
           guard
             (increasing ws
             && List.for_all
-                 (fun (w : M.window) -> in_axis r w.axis && fits s.(w.axis) w)
+                 (fun (w : M.window) -> in_axis r w.axis && valid_window w)
                  ws)
         in
         let s' = Array.copy s in
@@ -116,6 +115,13 @@ let constructors = [ "reshape"; "broadcast"; "permute"; "slice"; "window" ]
 
 let law_shape (s, m) =
   let e = expected m s in
+  cover "a window longer than its axis"
+    (match m with
+    | M.Window ws when e <> None ->
+        Array.exists
+          (fun (w : M.window) -> s.(w.axis) > 0 && windows s.(w.axis) w = 0)
+          ws
+    | _ -> false);
   List.iter
     (fun c ->
       let here = c = constructor m in
@@ -143,16 +149,19 @@ let bounds =
     ok "a window whose reach is its axis is one window"
       (M.Window [| w 0 3 1 2 |])
       [| 5 |] [| 1; 3 |];
-    refused "a window whose reach passes its axis"
+    ok "a window whose reach passes its axis is no window"
       (M.Window [| w 0 3 1 2 |])
-      [| 4 |];
+      [| 4 |] [| 0; 3 |];
     ok "a window of the greatest step is one window"
       (M.Window [| w 0 1 max_int 1 |])
       [| 3 |] [| 1; 1 |];
-    refused "a dilation whose reach overflows"
+    ok "a dilation whose reach overflows is no window"
       (M.Window [| w 0 3 1 max_int |])
-      [| 3 |];
-    refused "a window on an empty axis" (M.Window [| w 0 1 1 1 |]) [| 0 |];
+      [| 3 |] [| 0; 3 |];
+    ok "a window on an empty axis is no window"
+      (M.Window [| w 0 1 2 2 |])
+      [| 0 |] [| 0; 1 |];
+    refused "a window of size 0" (M.Window [| w 0 0 1 1 |]) [| 3 |];
     ok "windows on the most axes"
       (M.Window [| w 0 1 1 1 |])
       (Array.make 31 1) (Array.make 32 1);

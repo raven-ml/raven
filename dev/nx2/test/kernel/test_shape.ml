@@ -411,7 +411,7 @@ let test_loaded_refuses () =
     (Shape.padded { z with windows = window 0 0 } [| 2 |]);
   fits ~msg:"a window of the padded axis" [ 1; 2 ]
     (Shape.padded { z with windows = window 0 2 } [| 2 |]);
-  refuses ~msg:"a window past the padded axis"
+  fits ~msg:"a window past the padded axis is no window" [ 0; 3 ]
     (Shape.padded { z with windows = window 0 3 } [| 2 |])
 
 (* Reductions and scans *)

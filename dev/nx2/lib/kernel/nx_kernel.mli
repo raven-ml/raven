@@ -222,8 +222,9 @@ module Shape : sig
       [x] has. It is an [Error] unless [p]'s [lo], [hi] and [interior] have
       [x]'s rank, [interior] is not negative, each padded extent is not
       negative, and [windows] are on strictly increasing axes of the padded
-      shape, with [size], [step] and [dilation] at least [1], each window
-      fitting its axis. *)
+      shape, with [size], [step] and [dilation] at least [1]. A window longer
+      than its axis gives it no window, as {!Nx_array.Move.Window} counts
+      them. *)
 
   val loaded : load array -> t result
   (** [loaded ls] is the one shape the loads [ls] have once loaded.

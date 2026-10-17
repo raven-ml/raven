@@ -736,7 +736,7 @@ int nx_cpu_pad_of(value v, nx_cpu_pad *p);
    computes it; nx_cpu.ml checks a load's shape by Shape.padded before a
    kernel copies it. Answers NX_OK, or NX_SHAPE for a pad it cannot
    apply: [r] other than [p]'s rank, an extent below zero or past int64,
-   or a window that does not fit its padded axis. */
+   or a window whose size, step or dilation is below one. */
 int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
                         int64_t *y);
 

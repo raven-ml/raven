@@ -39,8 +39,9 @@ type t =
       (** [Window ws] has, for each window of [ws], on strictly increasing axes,
           its axis replaced by the number of windows,
           [(d - 1 - dilation·(size - 1)) / step + 1] of an axis of extent [d],
-          and a trailing axis of extent [size] appended, in axis order. The
-          result's element at [(…, w, …, j)] is the argument's element at
+          or [0] where [dilation·(size - 1) + 1] exceeds [d], and a trailing
+          axis of extent [size] appended, in axis order. The result's element
+          at [(…, w, …, j)] is the argument's element at
           [(…, w·step + j·dilation, …)]. *)
 
 val shape : t -> int array -> int array
@@ -58,5 +59,4 @@ val shape : t -> int array -> int array
       [count >= 0]; if [count > 0], [start] and [start + (count - 1)·step] lie
       in [\[0, d)] for an axis of extent [d].
     - [Window ws]: each window's axis is an axis of [s], after the previous
-      window's; [size], [step] and [dilation] are at least [1] and
-      [dilation·(size - 1) <= d - 1] for an axis of extent [d]. *)
+      window's; [size], [step] and [dilation] are at least [1]. *)

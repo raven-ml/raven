@@ -278,17 +278,18 @@ let laws =
           let* o = operand ~min_rank:1 () in
           let* a = axis_of o in
           let d = o.s.(a) in
-          let* window = int_range 1 (max 1 d) in
+          let* window = int_range 1 (d + 2) in
           let* step = int_range 1 3 in
           let+ neg = bool in
           (o, a, window, step, neg))
         (fun (o, a, window, step, neg) ->
-          assume (window <= o.s.(a));
           covers o;
+          let d = o.s.(a) in
+          cover "a window longer than its axis" (window > d);
           let y = Nx.sliding_window ~axis:(spell o neg a) ~window ~step o.x in
           let r = Array.length o.s in
           let s' = Array.append o.s [| window |] in
-          s'.(a) <- ((o.s.(a) - window) / step) + 1;
+          s'.(a) <- (if window > d then 0 else ((d - window) / step) + 1);
           is s'
             (fun i ->
               let j = Array.sub i 0 r in
@@ -655,7 +656,6 @@ let refusals =
           r "moveaxis, not an axis" (fun () -> Nx.moveaxis 0 2 x);
           r "swapaxes, not an axis" (fun () -> Nx.swapaxes (-3) 0 x);
           r "flip, a repeated axis" (fun () -> Nx.flip ~axes:[ 1; -1 ] x);
-          r "sliding_window, too wide" (fun () -> Nx.sliding_window ~window:4 x);
           r "sliding_window, step 0" (fun () ->
               Nx.sliding_window ~window:1 ~step:0 x);
           r "tile, too few reps" (fun () -> Nx.tile [| 2 |] x);

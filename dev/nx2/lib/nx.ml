@@ -742,12 +742,9 @@ let flip ?axes:l x =
 let sliding_window ?axis:(a = -1) ~window ?(step = 1) x =
   let by = "Nx.sliding_window" in
   let axis = axis ~by x a in
-  let d = Prim.dim x axis in
   if window < 1 || step < 1 then
     invalid_argf "%s: window %d and step %d over %a; give at least 1" by window
       step pp_value x;
-  if window > d then
-    invalid_argf "%s: window %d exceeds axis %d of %a" by window a pp_value x;
   move ~by (Window [| { axis; size = window; step; dilation = 1 } |]) x
 
 let split ~axis:a n x =
@@ -3213,10 +3210,6 @@ let windows_along n (lo, hi) k step dilation =
   let span = (dilation * (k - 1)) + 1 and e = n + lo + hi in
   if e < span then 0 else ((e - span) / step) + 1
 
-(* The extra zeros after an axis that make one window fit where none does. *)
-let fitting n (lo, hi) k dilation =
-  Stdlib.max 0 ((dilation * (k - 1)) + 1 - (n + lo + hi))
-
 (* Refuses a window geometry other than [K > 0] kernel axes, each with a
    positive size, stride and dilation and a padding of no negative width. *)
 let geometry ~by ~kernel_size ~stride ~dilation ~padding =
@@ -3245,25 +3238,17 @@ let spatial ~by k x =
 
 (* The windows of [x]'s last [K] axes as a view of shape
    [[lead…; counts…; kernel_size…]], after padding [x] with zeros, a copy
-   where a padding is not zero. An axis that holds no window gets enough zeros
-   after it for one, which a slice then drops. *)
+   where a padding is not zero. *)
 let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size and s = shape x in
   let lead = Array.length s - k in
-  let along i f = f s.(lead + i) padding.(i) kernel_size.(i) in
   let counts =
     Array.init k (fun i ->
-        along i (fun n p k -> windows_along n p k stride.(i) dilation.(i)))
+        windows_along s.(lead + i) padding.(i) kernel_size.(i) stride.(i)
+          dilation.(i))
   in
   let widths =
-    Array.mapi
-      (fun a _ ->
-        if a < lead then (0, 0)
-        else
-          let i = a - lead in
-          let lo, hi = padding.(i) in
-          (lo, hi + along i (fun n p k -> fitting n p k dilation.(i))))
-      s
+    Array.mapi (fun a _ -> if a < lead then (0, 0) else padding.(a - lead)) s
   in
   let padded =
     if Array.for_all (( = ) (0, 0)) widths then x
@@ -3286,14 +3271,7 @@ let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
           dilation = dilation.(i);
         })
   in
-  let y = move ~by (Window ws) padded in
-  if Array.for_all (fun c -> c > 0) counts then (y, counts)
-  else
-    let ys = shape y in
-    let keep a d =
-      if a >= lead && a < lead + k then whole counts.(a - lead) else whole d
-    in
-    (move ~by (Slice (Array.mapi keep ys)) y, counts)
+  (move ~by (Window ws) padded, counts)
 
 let product = Array.fold_left ( * ) 1
 
@@ -3339,12 +3317,7 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
       pp_value p (product kernel_size) (product counts);
   let lead = Array.sub s 0 (r - 2) in
   let nl = r - 2 in
-  (* [p] as the Padded load's shape, [[lead…; counts…; kernel_size…]], one
-     window along an axis that holds none, of zeros. *)
-  let fit =
-    Array.init k (fun i ->
-        fitting output_size.(i) padding.(i) kernel_size.(i) dilation.(i))
-  in
+  (* [p] as the Padded load's shape, [[lead…; counts…; kernel_size…]]. *)
   let y =
     move ~by
       (Reshape (Array.concat [ lead; kernel_size; counts ]))
@@ -3356,14 +3329,6 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
            if a < nl then a else if a < nl + k then a + k else a - k))
       y
   in
-  let y =
-    if Array.for_all (( = ) 0) fit then y
-    else
-      let ys = shape y in
-      let one a d = if a >= nl && a < nl + k && d = 0 then 1 else d in
-      let ones = Array.mapi one ys in
-      assemble ~by dt ones (D.zero dt) []
-  in
   let pad : Nx_kernel.pad =
     {
       lo =
@@ -3371,7 +3336,7 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
             if a < nl then 0 else fst padding.(a - nl));
       hi =
         Array.init (nl + k) (fun a ->
-            if a < nl then 0 else snd padding.(a - nl) + fit.(a - nl));
+            if a < nl then 0 else snd padding.(a - nl));
       interior = Array.make (nl + k) 0;
       windows =
         Array.init k (fun i : Nx_array.Move.window ->
@@ -3400,8 +3365,7 @@ let run_of padding n k =
 (* One Reduce over [x] read padded, so that each window is read where it
    lies: value [i] of a kept run from [start] reads [x] from
    [start + i - (k - 1)], which a padding of [k - 1 - start] zeros before [x]
-   puts at window [i]. A run of no value, [`Full] over an empty axis and a
-   kernel of one, computes one and drops it. *)
+   puts at window [i]. *)
 let correlate ?(padding = `Valid) x kernel =
   let by = "Nx.correlate" in
   let dt = dtype x and kr = ndim kernel and r = ndim x in
@@ -3416,7 +3380,7 @@ let correlate ?(padding = `Valid) x kernel =
       kernel;
   let lead = r - kr in
   let runs = Array.init kr (fun i -> run_of padding s.(lead + i) ks.(i)) in
-  let counts = Array.map (fun (_, c) -> Stdlib.max c 1) runs in
+  let counts = Array.map snd runs in
   let lo = Array.make r 0 and hi = Array.make r 0 in
   Array.iteri
     (fun i (start, _) ->
@@ -3449,10 +3413,7 @@ let correlate ?(padding = `Valid) x kernel =
              |];
          })
   in
-  if Array.for_all (fun (_, c) -> c > 0) runs then y
-  else
-    let keep a d = if a >= lead then whole (snd runs.(a - lead)) else whole d in
-    move ~by (Slice (Array.mapi keep (shape y))) y
+  y
 
 (* The windows of a filter, unpadded and of dilation 1, and the axes of their
    taps, the last [K]. *)
@@ -3990,7 +3951,8 @@ let map_segments ~segments ids f x =
    one reduction over the loop [[n; t…; g; oc; ic; k…]] that reads [x], its
    channels split into groups and broadcast over [oc], through a padded load
    whose windows append the taps, and sums the taps and [ic]. [interior]
-   zeros go between [x]'s elements. *)
+   zeros go between [x]'s elements. A padding that cuts more than an axis
+   holds leaves it empty, with no window. *)
 let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
@@ -4001,60 +3963,61 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
   let taps = Array.sub kw 3 k in
   let extent i =
     let d = spatial.(i) in
-    let e = if d = 0 then 0 else d + (interior.(i) * (d - 1)) in
-    windows_along e (lo.(i), hi.(i)) taps.(i) stride.(i) dilation.(i)
+    if d = 0 then 0 else d + (interior.(i) * (d - 1))
   in
-  let counts = Array.init k extent in
+  let hi = Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i)))) in
+  let counts =
+    Array.init k (fun i ->
+        windows_along (extent i) (lo.(i), hi.(i)) taps.(i) stride.(i)
+          dilation.(i))
+  in
   let out = Array.concat [ [| n |]; counts; [| g * oc |] ] in
-  if Array.exists (( = ) 0) counts || n = 0 || g * oc = 0 then
-    beside ~by x (fill ~by dt out (D.zero dt))
-  else
-    let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
-    let x' = move ~by (Reshape grouped) x in
-    let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
-    let x' = broadcast ~by wide x' in
-    (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
-    let spatially a =
-      Array.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
-    in
-    let windows =
-      Array.init k (fun i : Nx_array.Move.window ->
-          {
-            axis = 1 + i;
-            size = taps.(i);
-            step = stride.(i);
-            dilation = dilation.(i);
-          })
-    in
-    let pad : Nx_kernel.pad =
-      {
-        lo = spatially lo;
-        hi = spatially hi;
-        interior = spatially interior;
-        windows;
-      }
-    in
-    let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
-    let (D.Any acc) = summed dt in
-    let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
-    let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
-    let prog = P.of_exprs ~ins [| E.any term |] in
-    let y, () =
-      Eval.eval ~by
-        (Value.Reduce
-           {
-             layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
-             axes = Array.init (k + 1) (fun i -> k + 3 + i);
-             prog;
-             reductions = Value.[ Monoid (Sum, 0, dt) ];
-             loads =
-               [|
-                 Padded { x = x'; fill = D.zero dt; pad };
-                 Plain (broadcast ~by loop w);
-               |];
-           })
-    in
-    move ~by (Reshape out) y
+  let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
+  let x' = move ~by (Reshape grouped) x in
+  let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
+  let x' = broadcast ~by wide x' in
+  (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
+  let spatially a =
+    Array.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
+  in
+  let windows =
+    Array.init k (fun i : Nx_array.Move.window ->
+        {
+          axis = 1 + i;
+          size = taps.(i);
+          step = stride.(i);
+          dilation = dilation.(i);
+        })
+  in
+  let pad : Nx_kernel.pad =
+    {
+      lo = spatially lo;
+      hi = spatially hi;
+      interior = spatially interior;
+      windows;
+    }
+  in
+  let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
+  let (D.Any acc) = summed dt in
+  let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
+  let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
+  let prog = P.of_exprs ~ins [| E.any term |] in
+  let y, () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
+           axes = Array.init (k + 1) (fun i -> k + 3 + i);
+           prog;
+           reductions = Value.[ Monoid (Sum, 0, dt) ];
+           loads =
+             [|
+               Padded { x = x'; fill = D.zero dt; pad };
+               Plain (broadcast ~by loop w);
+             |];
+         })
+  in
+  move ~by (Reshape out) y
 
 (* The arguments of a convolution of [x] by [w], [[o; k…; c / groups]],
    checked: strides, paddings, dilations and groups, all but [x]'s channels. *)

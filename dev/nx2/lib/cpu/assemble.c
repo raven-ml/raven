@@ -390,6 +390,15 @@ int nx_cpu_pad_of(value v, nx_cpu_pad *p) {
   return NX_OK;
 }
 
+/* The number of windows of [w] (axis, size, step, dilation) along an axis
+   of extent [e], as Move.Window counts them: none where the dilated window
+   is longer than the axis. The reach is compared through a division, so no
+   product overflows. */
+static int64_t nx_cpu_windows(int64_t e, const int64_t *w) {
+  if (e < 1 || w[1] - 1 > (e - 1) / w[3]) return 0;
+  return (e - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
+}
+
 int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
                         int64_t *y) {
   if (p->rank != r) return NX_SHAPE;
@@ -409,9 +418,7 @@ int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
     if (w[0] < 0 || w[0] >= r || (k > 0 && w[0] <= p->window[k - 1][0]))
       return NX_SHAPE;
     if (w[1] < 1 || w[2] < 1 || w[3] < 1) return NX_SHAPE;
-    int64_t e = y[w[0]];
-    if (e < 1 || w[1] - 1 > (e - 1) / w[3]) return NX_SHAPE;
-    y[w[0]] = (e - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
+    y[w[0]] = nx_cpu_windows(y[w[0]], w);
     y[r + k] = w[1];
   }
   return NX_OK;
@@ -482,7 +489,7 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
   for (int k = 0; k < nw; k++) {
     const int64_t *w = p->window[k]; /* axis, size, step, dilation */
     int64_t ax = w[0];
-    out->dim[ax] = (shape[ax] - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
+    out->dim[ax] = nx_cpu_windows(shape[ax], w);
     out->dim[r + nw + ax] = w[2] * stride[ax];
     out->dim[r + k] = w[1];
     out->dim[r + nw + r + k] = w[3] * stride[ax];

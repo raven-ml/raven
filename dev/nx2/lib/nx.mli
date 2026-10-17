@@ -410,12 +410,13 @@ val sliding_window :
 (** [sliding_window ~axis ~window ~step x] is [x]'s windows of [window]
     consecutive elements along [axis] (default [-1]), one every [step] (default
     [1]). Axis [axis] becomes the number of windows, [(d - window) / step + 1]
-    for an extent [d], and an axis of extent [window] is appended: window [w]'s
-    element [j] is [x]'s element [w * step + j] along [axis]. A view, whose
-    windows share elements where [step < window].
+    for an extent [d], or [0] where [window] exceeds [d], and an axis of extent
+    [window] is appended: window [w]'s element [j] is [x]'s element
+    [w * step + j] along [axis]. A view, whose windows share elements where
+    [step < window].
 
-    Raises [Invalid_argument] if [axis] is not [x]'s, [window] or [step] is
-    below [1], or [window] exceeds [d]. *)
+    Raises [Invalid_argument] if [axis] is not [x]'s, or [window] or [step] is
+    below [1]. *)
 
 val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
 (** [split ~axis n x] is [x] cut along [axis] into [n] runs of consecutive
