@@ -125,7 +125,8 @@
     - [Logsumexp]: the terms' maximum [m], and [c], [m] where finite, else
       [0]; then [c + log s], [s] the sum of [exp (x - c)]. An [exp] of less
       than [-87] ([float32]) or [-708] ([float64]), the least integers
-      whose [exp] is normal, is taken as [0].
+      whose [exp] is normal, is taken as [0]: the bits of Nx's own expansion
+      of [Logsumexp].
     - [Moments]: the mean [c], the terms' sum over their count, then the
       variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
       negative, or [Σ d²] where that is [+∞]: the bits of Nx's own

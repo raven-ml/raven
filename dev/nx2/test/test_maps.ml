@@ -787,9 +787,139 @@ let law_sort_keys (Keyed (dt, n, xs, bits, descending)) =
   in
   equal ~msg:"positions" (array int64) (elements want) (elements got)
 
+(* A Logsumexp's terms: shifts from the maximum about the least integers whose
+   exp is a normal float32 (-87) and float64 (-708), infinities, signed zeros
+   and NaNs with payloads. *)
+type lse =
+  | Lse :
+      (float, 's) D.t * int array * int array * float array * int list
+      -> lse
+
+let pp_lse ppf (Lse (dt, shape, axes, xs, _)) =
+  Format.fprintf ppf "%s %a along %a: %a" (D.name dt)
+    Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
+    (Array.to_list shape)
+    Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
+    (Array.to_list axes)
+    Format.(pp_print_list ~pp_sep:pp_print_space pp_print_float)
+    (Array.to_list xs)
+
+let lse_terms =
+  [
+    0.; -0.; 1.; 50.; -37.; -86.5; -87.; -87.25; -88.; -100.; -660.; -707.5;
+    -708.; -708.25; -750.; Float.infinity; Float.neg_infinity; Float.nan;
+    Int64.float_of_bits 0x7ff8_0000_2000_0000L;
+    Int64.float_of_bits 0xfff8_0000_0000_0001L;
+  ]
+
+let lse =
+  let open Gen in
+  with_pp pp_lse
+  @@ let* rank = int_range 1 2 in
+     let* shape = array ~size:(constant rank) (int_range 0 9) in
+     let* axes =
+       such_that
+         (fun a -> a <> [||])
+         (map
+            (fun keep ->
+              Array.of_list
+                (List.filteri (fun a _ -> keep.(a)) (List.init rank Fun.id)))
+            (array ~size:(constant rank) bool))
+     in
+     let n = Array.fold_left ( * ) 1 shape in
+     let* xs = array ~size:(constant n) (of_list lse_terms) in
+     let* signalling =
+       array ~size:(constant n)
+         (frequency [ (11, constant false); (1, constant true) ])
+     in
+     let sn = List.filter (fun i -> signalling.(i)) (List.init n Fun.id) in
+     let+ dt = int_range 0 3 in
+     match dt with
+     | 0 -> Lse (D.Float32, shape, axes, xs, sn)
+     | 1 -> Lse (D.Float64, shape, axes, xs, sn)
+     | 2 -> Lse (D.Float16, shape, axes, xs, sn)
+     | _ -> Lse (D.Bfloat16, shape, axes, xs, sn)
+
+(* [xs] of [shape] at [dt], a signalling NaN with a payload at each flat
+   position of [sn]. *)
+let signalling (type s) (dt : (float, s) D.t) shape xs sn :
+    (float, s, b) Value.t =
+  let a = A.of_array dt shape xs in
+  let index i =
+    let idx = Array.make (Array.length shape) 0 and r = ref i in
+    for k = Array.length shape - 1 downto 0 do
+      idx.(k) <- !r mod shape.(k);
+      r := !r / shape.(k)
+    done;
+    idx
+  in
+  let put (type u r) (u : (u, r) D.t) (code : u) =
+    let raw = Option.get (A.bitcast u a) in
+    List.iter (fun i -> A.set raw (index i) code) sn
+  in
+  (match dt with
+  | D.Float16 -> put D.Uint16 0x7d01
+  | D.Bfloat16 -> put D.Uint16 0x7f81
+  | D.Float32 -> put D.Uint32 0x7f800101l
+  | D.Float64 -> put D.Uint64 0x7ff0_0000_0000_0101L
+  | _ -> ());
+  Value.Array { at = at1; a = A.to_device (m 0) a; dead = Value.Live }
+
+let bytes (type v s) (x : (v, s, b) Value.t) =
+  let host = Devices.rebrand (Devices.one Devices.host 0) in
+  let a = Iarray.get (Prim.arrays (Place.value ~by:"t" host x)) 0 in
+  A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a)))
+
+(* nx.cpu's Logsumexp has its expansion's bits ({!Nx_cpu}), NaN payloads
+   included: a narrow float's first NaN term as it holds it. *)
+let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
+  let cut = match dt with D.Float64 -> -708. | _ -> -87. in
+  let x = signalling dt shape xs sn in
+  cover "no term" (Array.exists (fun a -> shape.(a) = 0) axes);
+  cover "a NaN term" (Array.exists Float.is_nan xs);
+  cover "a signalling NaN term" (sn <> []);
+  cover "a signalling NaN of a narrow float" (sn <> [] && D.bits dt = 16);
+  (* Each output's terms, as [x] holds them, keyed by the output's index. *)
+  let outputs = Hashtbl.create 8 in
+  Array.iteri
+    (fun i t ->
+      let key = ref [] and r = ref i in
+      for a = Array.length shape - 1 downto 0 do
+        if not (Array.mem a axes) then key := (!r mod shape.(a)) :: !key;
+        r := !r / shape.(a)
+      done;
+      Hashtbl.add outputs !key t)
+    (elements x);
+  let below =
+    Hashtbl.fold
+      (fun key _ found ->
+        let row = Hashtbl.find_all outputs key in
+        let m = List.fold_left Float.max Float.neg_infinity row in
+        found
+        || Float.is_finite m
+           && List.exists (fun t -> t -. m < cut && t -. m > -1000.) row)
+      outputs false
+  in
+  cover "a term past the cutoff below a finite maximum" below;
+  let op =
+    Value.Reduce
+      {
+        layout = A.Layout.contiguous shape;
+        axes;
+        prog = P.of_node ~ins:[| D.Any dt |] (In 0);
+        reductions = Value.[ Monoid (Logsumexp, 0, dt) ];
+        loads = [| Plain x |];
+      }
+  in
+  let want = first (Exec.run ~by:"t" op) in
+  let got = first (Option.get (Expand.run Exec.run ~by:"t" op)) in
+  equal (array int) (bytes want) (bytes got)
+
 let arithmetic =
   group "expansions' arithmetic"
     [
+      prop ~count:500 "a Logsumexp's expansion has nx.cpu's bits" lse
+        law_logsumexp;
 
       prop "a chirp's square modulo 2n is exact" squares law_square_mod;
       prop "a sort orders as nx.cpu's at any key width the axis allows" keyed

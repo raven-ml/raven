@@ -249,10 +249,16 @@ let reduce_plain (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 (* [x] where it is a NaN, else [y]: [Where (x ≠ x) x y]. *)
 let nan_or x y = E.(where (x <> x) x y)
 
+(* The least integer whose [exp] is a normal float of [dt], float32 or float64:
+   nx.cpu takes an [exp] below it as [0], so that no lane makes a subnormal. *)
+let exp_cutoff (type s) (dt : (float, s) D.t) =
+  match dt with D.Float64 -> -708. | _ -> -87.
+
 (* Logsumexp: [m' + log Σ exp (x - m')] along [axes], [m'] the terms' maximum
-   where finite and [0] elsewhere, so that no term is shifted by an infinity;
-   where the maximum is a NaN, the maximum itself, the first NaN term. No term:
-   [log 0], [-∞]. *)
+   where finite and [0] elsewhere, so that no term is shifted by an infinity,
+   and an [exp] below {!exp_cutoff} taken as [0]; where the maximum is a NaN,
+   the maximum itself, the first NaN term. No term: [log 0], [-∞]. These are
+   nx.cpu's two passes, so the two give the same bits. *)
 let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     shape axes (x : (float, s, d) Value.t) : (float, s, d) Value.t =
   let dt = Prim.dtype x in
@@ -267,8 +273,9 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     in
     let ins = Iarray.init (Array.length loads) (fun _ -> D.Any dt) in
     let t = E.input 0 dt in
-    let shifted = match shift with None -> t | Some _ -> E.(t - input 1 dt) in
-    reduce1 apply ~by shape axes Sum (P.of_exprs ~ins [| E.any (E.exp shifted) |]) dt loads
+    let y = match shift with None -> t | Some _ -> E.(t - input 1 dt) in
+    let e = E.(where (y < f (exp_cutoff dt)) (f 0.) (exp y)) in
+    reduce1 apply ~by shape axes Sum (P.of_exprs ~ins [| E.any e |]) dt loads
   in
   if Array.exists (fun a -> shape.(a) = 0) axes then
     map1 apply ~by out
@@ -292,6 +299,50 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (P.of_exprs ~ins [| E.any (nan_or m' r) |])
       dt
       [| Value.Plain m; Value.Plain s |]
+
+(* The unsigned integer of a narrow float's width, 4, 8 or 16 bits. *)
+type narrow = Narrow : (int, 'r) D.t -> narrow
+
+(* [r], [x] reduced along [axes] of [shape] into [x]'s dtype, a float narrower
+   than its accumulator, with each NaN result the first NaN term as [x] holds
+   it, as the kernels give it: of the NaN terms, the least
+   [position · 2^w + bits], [w] the dtype's width and [position] the term's in
+   C order of the reduced indices. The accumulator's NaN would be quiet. *)
+let held_nan (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    shape axes (x : (v, s, d) Value.t) (r : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let dt = Prim.dtype x in
+  let (Narrow u) =
+    match D.bits dt with
+    | 4 -> Narrow D.Uint4
+    | 8 -> Narrow D.Uint8
+    | _ -> Narrow D.Uint16
+  in
+  let int64 n = E.const D.Int64 (Int64.of_int n) in
+  let codes = 1 lsl D.bits dt and none = E.const D.Int64 Int64.max_int in
+  let position, _ =
+    Array.fold_right
+      (fun a (pos, stride) ->
+        (E.(pos + (coord a * int64 stride)), stride * shape.(a)))
+      axes
+      (int64 0, 1)
+  in
+  let t = E.input 0 dt in
+  let packed = E.((position * int64 codes) + cast D.Int64 (bitcast u t)) in
+  let pick = E.(where (t <> t) packed none) in
+  let first =
+    reduce1 apply ~by shape axes Min
+      (P.of_exprs ~ins:[| D.Any dt |] [| E.any pick |])
+      D.Int64 [| Value.Plain x |]
+  in
+  let q = E.input 1 D.Int64 in
+  let held = E.(bitcast dt (cast u (q mod int64 codes))) in
+  map1 apply ~by (Prim.reduced shape axes)
+    (P.of_exprs
+       ~ins:[| D.Any dt; D.Any D.Int64 |]
+       [| E.any E.(where (q < none) held (input 0 dt)) |])
+    dt
+    [| Value.Plain r; Value.Plain first |]
 
 (* Moments in two passes: the mean, [Σ x / n], then the variance by the
    corrected two-pass algorithm (Chan, Golub and LeVeque 1983; Higham,
@@ -648,11 +699,17 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
   let shape = L.shape layout in
   let one : type a. (d, a) Value.reduction -> a option = function
     | Monoid (Logsumexp, k, dt) ->
+        let out = output prog k in
         let (Floats x) =
-          floats ~by
-            (body apply ~by layout prog k loads (accumulator (output prog k)))
+          floats ~by (body apply ~by layout prog k loads (accumulator out))
         in
-        Some (cast_to apply ~by dt (logsumexp apply ~by shape axes x))
+        let r = cast_to apply ~by dt (logsumexp apply ~by shape axes x) in
+        let narrow = (not (same (accumulator out) out)) && same out (D.Any dt) in
+        if (not narrow) || Array.exists (fun a -> shape.(a) = 0) axes then
+          Some r
+        else
+          let y = Prim.expect dt (body apply ~by layout prog k loads out) in
+          Some (held_nan apply ~by shape axes y r)
     | Moments (k, dt) ->
         let (Floats x) =
           floats ~by
