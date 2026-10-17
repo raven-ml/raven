@@ -180,7 +180,9 @@ let ops (type m) (p : m path) =
 type region = {
   bytes : int;
   mem : mem;
-  flush : int option; (* the HDP register this region keeps flushed *)
+  flush : int option;
+      (* the device whose HDP register this region keeps flushed, by its
+         [self] *)
 }
 
 let region ?flush n m = { bytes = n; mem = m; flush }
@@ -210,6 +212,10 @@ external set_stamps : int -> int -> int -> int -> int -> unit
 
 external set_clock : int -> int -> bool = "caml_rig_amd_clock"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
+[@@noalloc]
+
+external set_hdp : int -> int -> unit = "caml_rig_amd_set_hdp" [@@noalloc]
+external drop_hdp : int -> unit = "caml_rig_amd_drop" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
 
@@ -287,7 +293,6 @@ type t = {
   aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
   hdp : int option;
-  hdps : Lock.t; (* the HDP registers' counts *)
   budget : int;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
@@ -610,10 +615,10 @@ let live g =
 
 (* Memory *)
 
-(* Counts a region that needs [reg] flushed before a doorbell: [false] if the
-   device keeps no more registers. *)
-let count_hdp g reg delta =
-  Lock.protect g.hdps (fun () -> hdp_count g.self reg delta)
+(* Counts a region that needs the device [src]'s HDP register flushed before a
+   doorbell: [false] if the device keeps no more registers, or [src] has
+   stopped. *)
+let count_hdp g src delta = hdp_count g.self src delta
 
 let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
@@ -623,12 +628,12 @@ let alloc g (kind : Rig_edge.memory) n =
   | Mapped -> (
       match g.hdp with
       | None -> None
-      | Some reg -> (
+      | Some _ -> (
           match ops.alloc Mapped n with
           | None -> None
           | Some m ->
-              ignore (count_hdp g reg 1);
-              Some (region ~flush:reg n m)))
+              ignore (count_hdp g g.self 1);
+              Some (region ~flush:g.self n m)))
 
 (* Gives back [m]: a free the path refuses loses the memory, which no caller can
    act on. *)
@@ -639,7 +644,7 @@ let give_back m = try free_mem m with Fault _ -> ()
    doorbell skip the flush of a region still written through the BAR. *)
 let free g r =
   give_back r.mem;
-  Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush
+  Option.iter (fun src -> ignore (count_hdp g src (-1))) r.flush
 
 (* The GPU names memory by address: the handle is the address. *)
 let locate r =
@@ -658,7 +663,7 @@ let map_peer g _ r =
   | Some m -> (
       let view flush = Some (region ?flush r.bytes m) in
       match r.flush with
-      | Some reg when count_hdp g reg 1 -> view (Some reg)
+      | Some src when count_hdp g src 1 -> view (Some src)
       | Some _ ->
           free_mem m;
           None
@@ -1046,7 +1051,7 @@ let make (type m) ~word (p : m path) =
     (* The GPU's own register takes the first of the empty table's slots, with
        no region counted, so that its own [`Mapped] memory always finds one and
        views of other GPUs' take at most the rest. *)
-    Option.iter (fun reg -> ignore (hdp_count self reg 0)) p.hdp;
+    Option.iter (set_hdp self) p.hdp;
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     set_copy_launch self !copy_launch;
     let ring q kind host bell =
@@ -1078,7 +1083,6 @@ let make (type m) ~word (p : m path) =
         aql;
         lds = p.lds;
         hdp = p.hdp;
-        hdps = Lock.create ();
         budget = p.budget;
         hang_ms = p.hang_ms;
         waits64;
@@ -1143,6 +1147,10 @@ let sleep g ~seen ~still_ms =
 (* A queue the path could not destroy may still run, so its memory stays and its
    own releases raise the word. *)
 let halt g l ~fault =
+  (* No work on another device uses this GPU's memory once it is lost
+     ([Rig]'s loss section), so their submissions stop storing to its HDP
+     register before the path may unmap it. *)
+  drop_hdp g.self;
   match l.ops.stop ~fault with
   | exception Fault _ -> ()
   | `Unknown -> ()
@@ -1167,7 +1175,7 @@ let stop g ~fault =
     l
   in
   Option.iter (fun l -> halt g l ~fault) l;
-  Lock.protect g.hdps (fun () -> end_state g.self)
+  end_state g.self
 
 (* Tests *)
 

@@ -154,7 +154,10 @@
     address iff paths of one [key] opened both devices and this device's
     path reaches the other GPU's memory ([reaches] of {!type-path}). A
     device flushes the host writes of at most 7 other GPUs, so
-    {!val-map_peer} returns [None] for [Mapped] memory of an eighth. Peer
+    {!val-map_peer} returns [None] for [Mapped] memory of an eighth. A view
+    of [Mapped] memory flushes the other GPU's host writes before this
+    device's later work until the other device stops, and {!val-map_peer} of
+    a stopped device's [Mapped] memory is [None]. Peer
     access between two GPUs, with the flushes of each other's host writes,
     is untested, and so is a path whose [hdp] is [None].
 
@@ -453,7 +456,11 @@ type 'm path = {
   hdp : int option;
       (** The host address of the 32-bit register whose store flushes the
           GPU's host data path, after which host writes through the memory BAR
-          are in the GPU's memory; [None] if the host does not reach it. *)
+          are in the GPU's memory; [None] if the host does not reach it. The
+          register must stay mapped until [stop] is called. Devices that view
+          the GPU's [Mapped] memory ([map_peer]) store to it too, until
+          {!val-stop}, which waits for their stores before it calls
+          [stop]. *)
   interrupt : int;
       (** The nonzero context that the interrupt of a value's release
           carries, which wakes [sleep]. *)

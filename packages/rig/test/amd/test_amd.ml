@@ -1789,6 +1789,33 @@ let one_gpu () =
       ~second:(fun () -> S.open_gpu ~word:(Rig_gpu_support.Host.word ()))
       t.g
 
+(* A view of another device's Mapped memory flushes that device's host writes
+   until its stop: the viewer submits after the stop as before, and a view of
+   the stopped device's Mapped memory is None, as nothing would flush the host's
+   writes before the viewer's work. *)
+let stopped_mapped () =
+  if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
+  S.with_ @@ fun t ->
+  let g = t.g in
+  let g' =
+    match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
+    | Ok g' -> g'
+    | Error why -> fail why
+  in
+  let n = 4096 in
+  match A.alloc g' Mapped n with
+  | None ->
+      A.stop g' ~fault:None;
+      skip ~reason:"the GPU has no Mapped memory" ()
+  | Some m ->
+      let view = require_some ~msg:"a view" (A.map_peer g g' m) in
+      A.stop g' ~fault:None;
+      Rig.Point.wait (S.submit t [||]);
+      is_none ~msg:"a view of a stopped device's Mapped memory"
+        (A.map_peer g g' m);
+      A.free g view;
+      A.free g' m
+
 (* Every root shows this machine: a root that links to [/] reaches the same GPU,
    whose address space the process holds once, so devices opened through either
    root share its memory, whichever opens first. The link lives in the suite's
@@ -1945,6 +1972,10 @@ let two =
         "two devices of one GPU share its memory, mapping each page once, \
          where the path allows a second device"
         one_gpu;
+      test
+        "a view of Mapped memory lasts until its owner's stop, after which \
+         map_peer of it is None"
+        stopped_mapped;
       test "devices of one GPU opened through two roots share its memory"
         two_roots;
       test
