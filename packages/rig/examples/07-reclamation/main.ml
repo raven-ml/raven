@@ -26,7 +26,7 @@ let try_alloc f =
         (allocated d / kib)
 
 let () =
-  let d = memory_device "M" in
+  let d = Result.get_ok (memory_device "M") in
   Printf.printf "budget of %s: %s\n" (name d)
     (if budget d = max_int then "unbounded" else string_of_int (budget d));
   set_budget d mib;

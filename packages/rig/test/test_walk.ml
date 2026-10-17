@@ -199,7 +199,7 @@ let fills = 3
 
 let memory_attempt n =
   let name = fresh "memory" in
-  let d = Rig.memory_device name in
+  let d = Result.get_ok (Rig.memory_device name) in
   let counter = B.create d 8 in
   S.store (S.Reader.host counter) 0;
   let fill =
@@ -225,7 +225,7 @@ let memory_attempt n =
   let heap', fds' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
   s := None;
-  let d = Rig.memory_device name in
+  let d = Result.get_ok (Rig.memory_device name) in
   equal ~msg:("open again" ^ at) (option string) None (Rig.lost d);
   match (heap, heap') with Some h, Some h' -> h' - h | _ -> 0
 
@@ -240,7 +240,7 @@ let test_memory_fill () =
 (* A memory device whose allocation the host refuses raises Out_of_memory, and
    allocates the next buffer that fits. *)
 let test_memory_refused () =
-  let d = Rig.memory_device (fresh "memory") in
+  let d = Result.get_ok (Rig.memory_device (fresh "memory")) in
   ignore (B.create d 64);
   settle d;
   let heap, fds = census () in

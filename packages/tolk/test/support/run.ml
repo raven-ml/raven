@@ -177,7 +177,7 @@ let opened =
   lazy
     (("CPU", Rig.host)
     :: List.map
-         (fun n -> (n, Rig.memory_device n))
+         (fun n -> (n, Result.get_ok (Rig.memory_device n)))
          [ "CPU:1"; "CPU:2"; "CPU:3" ])
 
 let devices () = Lazy.force opened

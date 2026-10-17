@@ -16,8 +16,7 @@ module D = Nx_array.Dtype
 
 (* A memory device, opened in the measuring worker: a device opened before the
    fork is lost in it. *)
-let memory k =
-  Rig.memory_device (Printf.sprintf "bench-m%d" k)
+let memory k = Result.get_ok (Rig.memory_device (Printf.sprintf "bench-m%d" k))
 
 let filled dt s v =
   Nx.Repr.of_array Nx.Host.v

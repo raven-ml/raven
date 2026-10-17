@@ -2379,7 +2379,7 @@ let test_input_ref () =
 
 (* Fill parameters share launch parameters' frame and ref semantics. *)
 let test_fill_params () =
-  let d = Rig.memory_device "program-fill-params" in
+  let d = Result.get_ok (Rig.memory_device "program-fill-params") in
   let t =
     {
       devices = [| Rig.arch d; Rig.arch Rig.host |];
@@ -2415,7 +2415,7 @@ let test_fill_params () =
     [ 42; 99 ]
 
 let test_fill_empty () =
-  let d = Rig.memory_device "program-fill-empty" in
+  let d = Result.get_ok (Rig.memory_device "program-fill-empty") in
   let t =
     {
       devices = [| Rig.arch d; Rig.arch Rig.host |];
@@ -2439,7 +2439,7 @@ let test_fill_empty () =
 (* Every run reaches its own copy through the address initialized after the
    fixing submission was made. The init points through another container. *)
 let test_init_address () =
-  let d = Rig.memory_device "program-init-address" in
+  let d = Result.get_ok (Rig.memory_device "program-init-address") in
   let v memory = { memory; offset = 0; length = 8 } in
   let t =
     {

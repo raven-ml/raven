@@ -205,7 +205,7 @@ let test_io_closed () =
    passed from one to the next. *)
 let test_slot_of_io () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let m = Rig.memory_device "fork:before-io" in
+  let m = Result.get_ok (Rig.memory_device "fork:before-io") in
   let p = submit (empty m) in
   Rig.Point.wait p;
   Rig.close m;

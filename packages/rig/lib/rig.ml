@@ -109,5 +109,4 @@ let open_host ~machine (o : 'a Rig_edge.opener) =
 let open_io ?machine (o : 'a Rig_edge.io_opener) =
   Dev.open_io o.io ~machine:(Dev.machine_of machine) ~name:o.name o.make
 
-let memory_device name =
-  match Memory_device.open_ name with Ok d -> d | Error why -> failwith why
+let memory_device = Memory_device.open_

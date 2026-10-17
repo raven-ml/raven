@@ -152,7 +152,10 @@ let placed_benchmarks () =
   let row = Nx.rand Nx.Float32 [| 4096 |] in
   let row' = Nx.rand Nx.Float32 [| 4096 |] in
   let mask = Nx.less row row' in
-  let on () = Nx.Placement.on (Nx.Device.make (Rig.memory_device "BENCH:1")) in
+  let on () =
+    let m = Result.get_ok (Rig.memory_device "BENCH:1") in
+    Nx.Placement.on (Nx.Device.make m)
+  in
   let wait y =
     List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
   in

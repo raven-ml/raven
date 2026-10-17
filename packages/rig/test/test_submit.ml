@@ -10,7 +10,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let timeout = Rig_support.time 60.
-let memory name = Rig.memory_device name
+let memory name = Result.get_ok (Rig.memory_device name)
 
 (* [b] borrowed on [d], as a run on [d] takes it. *)
 let on d b = require_some (B.borrow d b)

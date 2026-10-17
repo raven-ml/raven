@@ -50,8 +50,8 @@ let submit_parts d parts =
 
 ```ocaml
 # let () =
-    let a = memory_device "A" in
-    let b = memory_device "B" in
+    let a = Result.get_ok (memory_device "A") in
+    let b = Result.get_ok (memory_device "B") in
     let src = Buffer.of_string "hello, world" in
     let x = Buffer.create a 12 and y = Buffer.create b 12 in
     ignore (submit_parts a [| copy (Option.get (Buffer.borrow a src)) x |]);

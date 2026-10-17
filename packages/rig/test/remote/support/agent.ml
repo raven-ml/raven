@@ -88,7 +88,7 @@ let crowding () =
 let opened = ref []
 
 let mem () =
-  let open_ i = Rig.memory_device (Printf.sprintf "MEM:%d" i) in
+  let open_ i = Result.get_ok (Rig.memory_device (Printf.sprintf "MEM:%d" i)) in
   match (open_ 0, open_ 1) with
   | a, b ->
       opened := a :: b :: !opened;

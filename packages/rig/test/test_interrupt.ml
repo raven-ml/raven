@@ -435,7 +435,7 @@ let test_cached () =
 (* A lock a library counts through the edge refuses rig's calls on its
    thread until it is given back, and changes nothing meanwhile. *)
 let test_counted () =
-  let d = Rig.memory_device (fresh "counted") in
+  let d = Result.get_ok (Rig.memory_device (fresh "counted")) in
   let before = S.holds () in
   let held, refused, allocated =
     S.inside_lock @@ fun () ->
@@ -473,8 +473,8 @@ let answer p =
 (* The probes, over devices and values made before the walk lands, and the
    state a refused call must leave as it was. *)
 let probes () =
-  let d = Rig.memory_device (fresh "reenter:probe") in
-  let victim = Rig.memory_device (fresh "reenter:victim") in
+  let d = Result.get_ok (Rig.memory_device (fresh "reenter:probe")) in
+  let victim = Result.get_ok (Rig.memory_device (fresh "reenter:victim")) in
   let polled_name = fresh "reenter:polled" in
   let polled, pp = P.open_ polled_name in
   let image = Result.get_ok (Rig.Image.load polled "functions") in
@@ -590,7 +590,7 @@ let open_named () = ignore (Rig.memory_device (fresh "reenter"))
 (* A drain that routes collected buffers into a device's cache, in sections
    of the device's lock that allocate. *)
 let drain_cache () =
-  let d = Rig.memory_device "reenter:cache" in
+  let d = Result.get_ok (Rig.memory_device "reenter:cache") in
   let[@inline never] drop () =
     for k = 1 to 8 do
       ignore (Sys.opaque_identity (B.create d (k * 64)))
@@ -628,9 +628,7 @@ let fail_in n =
         Rig.fail "failed in a callback";
         stops := P.stops p
       in
-      let open_ () =
-        try ignore (Rig.memory_device (fresh "fail-in")) with Failure _ -> ()
-      in
+      let open_ () = ignore (Rig.memory_device (fresh "fail-in")) in
       let reached = S.interrupted ~landing:(Call call) n open_ in
       if reached then begin
         equal ~msg:"the failure" (option string) (Some "failed in a callback")
@@ -673,14 +671,14 @@ let reenter_own n =
       let refused = ref false and inner = ref None and outer = ref None in
       let call () =
         match Rig.memory_device name with
-        | d -> inner := Some d
+        | r -> inner := Some (Result.get_ok r)
         | exception Invalid_argument why when opening_here why ->
             refused := true
         | exception Invalid_argument _ -> ()
       in
-      let open_ () = outer := Some (Rig.memory_device name) in
+      let open_ () = outer := Some (Result.get_ok (Rig.memory_device name)) in
       let reached = S.interrupted ~landing:(Call call) n open_ in
-      let d = Rig.memory_device name in
+      let d = Result.get_ok (Rig.memory_device name) in
       List.iter
         (fun (what, opened) ->
           Option.iter

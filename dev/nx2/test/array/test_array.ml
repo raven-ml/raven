@@ -1080,8 +1080,7 @@ let law_to_device (Case (a, m)) =
   | None -> check a
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
-let memory =
-  lazy (Rig.memory_device "nx2-test-memory")
+let memory = lazy (Result.get_ok (Rig.memory_device "nx2-test-memory"))
 
 (* A borrow shares its source's memory, dtype and layout, on any device that
    maps it, and back. *)
@@ -1117,8 +1116,7 @@ let test_borrow_cases () =
   kill (A.buffer dead);
   raises_match ~msg:"dead" (Exn.invalid_arg ~substring:"dead") (fun () ->
       A.borrow (Lazy.force memory) dead);
-  let closed = Rig.memory_device "nx2-test-borrow-closed"
-  in
+  let closed = Result.get_ok (Rig.memory_device "nx2-test-borrow-closed") in
   let on_closed = A.to_device closed a in
   Rig.close closed;
   raises_match ~msg:"lost"
@@ -1622,7 +1620,7 @@ let test_wait_lost () =
    raises its loss, though the written operand, a host wrapper of the same
    bytes, has none. *)
 let test_identical_owners () =
-  let d = Rig.memory_device "array:identical-owners" in
+  let d = Result.get_ok (Rig.memory_device "array:identical-owners") in
   let h = Option.get (B.borrow Rig.host (B.create d 12)) in
   let w = B.of_bigarray (B.read h Bigarray.char Fun.id) in
   Rig.close d;

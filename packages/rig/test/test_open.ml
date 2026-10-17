@@ -12,7 +12,7 @@ let submit ?(buffers = [||]) ?waits s =
 
 let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
-let memory name = Rig.memory_device name
+let memory name = Result.get_ok (Rig.memory_device name)
 
 let test_same_name () =
   let d = memory "open:same" in

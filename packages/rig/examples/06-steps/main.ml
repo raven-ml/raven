@@ -67,7 +67,7 @@ let runs d =
   show "z" z
 
 let () =
-  let d = memory_device "M" in
+  let d = Result.get_ok (memory_device "M") in
   runs d;
 
   (* The step is unreachable. Once the collector has collected it, the next

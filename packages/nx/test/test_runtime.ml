@@ -9,8 +9,8 @@
 open Windtrap
 open Nx_test
 
-let r1 = Rig.memory_device "R1"
-let r2 = Rig.memory_device "R2"
+let r1 = Result.get_ok (Rig.memory_device "R1")
+let r2 = Result.get_ok (Rig.memory_device "R2")
 
 let devices =
   group "devices"

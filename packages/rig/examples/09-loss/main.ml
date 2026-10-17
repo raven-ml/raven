@@ -24,8 +24,8 @@ let lost f =
   | exception (Lost _ as e) -> print_endline (Printexc.to_string e)
 
 let () =
-  let a = memory_device "A" in
-  let b = memory_device "B" in
+  let a = Result.get_ok (memory_device "A") in
+  let b = Result.get_ok (memory_device "B") in
 
   (* A writes [x], so [x]'s stamps name A. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
@@ -54,7 +54,7 @@ let () =
   Format.printf "B goes on: %a@." Point.pp p;
 
   (* The name opens again as a new device, with a timeline of its own. *)
-  let a' = memory_device "A" in
+  let a' = Result.get_ok (memory_device "A") in
   Printf.printf "%s again: the same device: %b, submitted %d, lost: %b\n"
     (name a') (equal a a') (submitted a')
     (Option.is_some (Rig.lost a'))

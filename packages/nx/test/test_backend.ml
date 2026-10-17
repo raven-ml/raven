@@ -331,7 +331,7 @@ let movement =
 
 (* A memory of its own, and a backend that computes on it and owns it, as a
    vendor's library's backend owns its memories. *)
-let own_memory = Rig.memory_device
+let own_memory name = Result.get_ok (Rig.memory_device name)
 
 let owning m =
   Nx_backend.v

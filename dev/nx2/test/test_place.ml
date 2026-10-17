@@ -293,8 +293,7 @@ let refusals =
           invalid ~by:"Nx.place" (fun () -> Nx.place (S4.split ~axis:0) x));
       test "a lost device raises when placed from, and its facts answer"
         (fun () ->
-          let d = Rig.memory_device "nx-place-lost"
-          in
+          let d = Result.get_ok (Rig.memory_device "nx-place-lost") in
           let module L = (val Nx.devices [ d ]) in
           let x = Nx.Repr.of_array L.v (A.create d A.Dtype.Float32 [| 4 |]) in
           Rig.close d;

@@ -652,8 +652,7 @@ let fresh kind =
   | Host -> device Rig.host
   | Disk -> device Rig_disk.device
   | Gpu g -> device (gpu_device g)
-  | Memory -> (
-      device (Rig.memory_device (name ())))
+  | Memory -> device (Result.get_ok (Rig.memory_device (name ())))
   | Polled c ->
       let d, p =
         P.open_ ~capacity:c.capacity ~copies:c.copies ~host_visible:c.visible

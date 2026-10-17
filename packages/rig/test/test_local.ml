@@ -44,12 +44,12 @@ let key = L.new_key (fun _ -> made ())
 
 let open_named () =
   let name = fresh "model" in
-  { name; d = Rig.memory_device name }
+  { name; d = Result.get_ok (Rig.memory_device name) }
 
 (* Closes the name's device if open, then opens the name anew. *)
 let reopen s =
   Rig.close s.d;
-  { s with d = Rig.memory_device s.name }
+  { s with d = Result.get_ok (Rig.memory_device s.name) }
 
 let get_judged m outcome =
   match (outcome, m.closed) with
@@ -89,7 +89,7 @@ let model_commands =
 (* Every device a domain's get draws from, opened once for every case: a
    program makes keys, which cost no device. *)
 let racing_devices =
-  Array.init 2 (fun _ -> Rig.memory_device (fresh "racing"))
+  Array.init 2 (fun _ -> Result.get_ok (Rig.memory_device (fresh "racing")))
 
 (* The model of a key: the value its gets answer on each device, once one
    answered. *)
@@ -120,7 +120,7 @@ let racing_commands =
 (* An init that gets its own key on its device runs a nested init, whose value
    both answer. *)
 let test_nested () =
-  let d = Rig.memory_device (fresh "nested") in
+  let d = Result.get_ok (Rig.memory_device (fresh "nested")) in
   let depth = ref 0 in
   let rec k =
     lazy
@@ -137,7 +137,7 @@ let test_nested () =
 
 (* An init that raises stores nothing: the next get runs init again. *)
 let test_init_raises () =
-  let d = Rig.memory_device (fresh "raises") in
+  let d = Result.get_ok (Rig.memory_device (fresh "raises")) in
   let inits = ref 0 in
   let k =
     L.new_key (fun _ ->
@@ -152,8 +152,8 @@ let test_init_raises () =
 
 (* Keys are independent, and a device's value is its own. *)
 let test_keys () =
-  let d = Rig.memory_device (fresh "keys")
-  and e = Rig.memory_device (fresh "keys") in
+  let d = Result.get_ok (Rig.memory_device (fresh "keys"))
+  and e = Result.get_ok (Rig.memory_device (fresh "keys")) in
   let k = L.new_key (fun d -> Rig.name d) and k' = L.new_key (fun _ -> made ()) in
   equal string (Rig.name d) (L.get k d);
   equal string (Rig.name e) (L.get k e);
@@ -164,7 +164,7 @@ let test_keys () =
 
 (* A get that finds its value allocates nothing. *)
 let test_hit_words () =
-  let d = Rig.memory_device (fresh "words") in
+  let d = Result.get_ok (Rig.memory_device (fresh "words")) in
   let k = L.new_key (fun _ -> made ()) in
   ignore (L.get k d);
   let before = Gc.minor_words () in
@@ -180,7 +180,7 @@ let[@inline never] get_weak k d w = Weak.set w 0 (Some (L.get k d))
 
 (* A closed device's value is collected: close drops it. *)
 let test_closed_collected () =
-  let d = Rig.memory_device (fresh "collected") in
+  let d = Result.get_ok (Rig.memory_device (fresh "collected")) in
   let k = L.new_key (fun _ -> made ()) in
   let w = Weak.create 1 in
   get_weak k d w;
@@ -194,7 +194,7 @@ let test_closed_collected () =
 (* A value whose init raced the stop is dropped too, and the get raises Lost:
    here the init closes its device. *)
 let test_init_races_stop () =
-  let d = Rig.memory_device (fresh "races") in
+  let d = Result.get_ok (Rig.memory_device (fresh "races")) in
   let w = Weak.create 1 in
   let k =
     L.new_key (fun d ->
@@ -210,7 +210,7 @@ let test_init_races_stop () =
 (* An init that closes its device and opens another in its slot leaves the
    get raising Lost: the other device's value is its own. *)
 let test_init_reopens () =
-  let d = Rig.memory_device (fresh "first") in
+  let d = Result.get_ok (Rig.memory_device (fresh "first")) in
   ignore
     (Rig.submit
        (Rig.Submission.make d [||])
@@ -220,7 +220,7 @@ let test_init_reopens () =
     L.new_key (fun dev ->
         if Rig.equal dev d then (
           Rig.close d;
-          let e = Rig.memory_device (fresh "second") in
+          let e = Result.get_ok (Rig.memory_device (fresh "second")) in
           equal ~msg:"e continues d's slot" int (Rig.submitted d)
             (Rig.submitted e);
           ignore (L.get (Option.get !key) e);
@@ -233,7 +233,7 @@ let test_init_reopens () =
 
 (* A lost device's get raises, whether it had a value or not. *)
 let test_lost () =
-  let d = Rig.memory_device (fresh "lost") in
+  let d = Result.get_ok (Rig.memory_device (fresh "lost")) in
   let k = L.new_key (fun _ -> made ()) and k' = L.new_key (fun _ -> made ()) in
   ignore (L.get k d);
   Rig.close d;

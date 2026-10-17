@@ -30,8 +30,8 @@ let show name b =
         (ints a))
 
 let () =
-  let a = memory_device "A" in
-  let b = memory_device "B" in
+  let a = Result.get_ok (memory_device "A") in
+  let b = Result.get_ok (memory_device "B") in
   Printf.printf "A's work reaches B's memory once borrowed: %b\n" (reaches a b);
 
   (* The host writes [src] on A once every use of [src] is done, so that no

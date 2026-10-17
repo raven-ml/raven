@@ -5,7 +5,7 @@
 
 let devices =
   Array.init 4 (fun k ->
-      Rig.memory_device (Printf.sprintf "m%d" k))
+      Result.get_ok (Rig.memory_device (Printf.sprintf "m%d" k)))
 
 let memory k = devices.(k)
 

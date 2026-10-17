@@ -326,7 +326,7 @@ let copy_64M = [ Thumper.Budget.no_slower_than 0.15 ]
 
 let memory () =
   incr opened;
-  Rig.memory_device (strf "memory:%d" !opened)
+  Result.get_ok (Rig.memory_device (strf "memory:%d" !opened))
 
 let host n = B.create Rig.host n
 let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
@@ -565,7 +565,7 @@ let device_rows =
   Thumper.group "device"
     [
       Thumper.bench "open-close-memory" (fun () ->
-          let d = Rig.memory_device "bench:open-close" in
+          let d = Result.get_ok (Rig.memory_device "bench:open-close") in
           ignore (Rig.submit (Sub.make d [||]) ~run ~buffers:[||]);
           Rig.close d);
     ]

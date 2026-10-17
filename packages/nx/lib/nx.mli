@@ -348,7 +348,8 @@ module Device : sig
       other [k], so a program runs multi-device work on one machine. Once that
       memory is lost ({!Rig.Lost}), [cpu k] is a fresh one.
 
-      Raises [Invalid_argument] if [k < 1]. *)
+      Raises [Invalid_argument] if [k < 1], and [Failure] if rig cannot open
+      the memory ({!Rig.memory_device}). *)
 
   val with_backend : Nx_backend.t -> t -> t
   (** [with_backend b d] is [d]'s memory computed eagerly by [b]. Values on it

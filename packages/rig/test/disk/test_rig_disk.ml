@@ -120,7 +120,7 @@ let read b =
 let write b s = B.copy ~src:(host_of_string s) ~dst:b
 
 (* A device whose memory is the host's, which maps any host memory. *)
-let memory_device = lazy (Rig.memory_device "DISK-TEST")
+let memory_device = lazy (Result.get_ok (Rig.memory_device "DISK-TEST"))
 
 (* [borrowed d b] is the bytes of [d]'s borrow of [b], if [d] maps it. *)
 let borrowed d b =
@@ -1334,7 +1334,7 @@ let barriers =
           let path = new_path () in
           removing [ path ] @@ fun () ->
           let file = create path 0 in
-          let d = Rig.memory_device "DISK-TEST-CLOSED" in
+          let d = Result.get_ok (Rig.memory_device "DISK-TEST-CLOSED") in
           let on_device = require_some (B.borrow d file) in
           Rig.close d;
           Rig_disk.barrier on_device);

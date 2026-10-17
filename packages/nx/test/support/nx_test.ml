@@ -1099,7 +1099,7 @@ let traffic ms f =
 
 (* Test devices: nx.cpu over rig's memory devices. *)
 module Devices = struct
-  let memory = Rig.memory_device
+  let memory name = Result.get_ok (Rig.memory_device name)
 
   let memories = List.map memory [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
   let runtimes = List.map Nx.Device.make memories
@@ -1483,7 +1483,9 @@ end
    memory until it is lost, and a fresh one after, as rig reopens a lost
    GPU. *)
 module Faulty = struct
-  let device k = Nx.Device.make (Rig.memory_device (Printf.sprintf "FAULTY:%d" k))
+  let device k =
+    let m = Rig.memory_device (Printf.sprintf "FAULTY:%d" k) in
+    Nx.Device.make (Result.get_ok m)
 
   (* [lose d] loses [d]'s memory. *)
   let lose d = Rig.close (Nx.Device.memory d)

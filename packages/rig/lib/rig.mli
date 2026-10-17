@@ -153,16 +153,16 @@ val open_ : ?machine:t -> 'a Rig_edge.opener -> (t, string) result
 val open_io : ?machine:t -> 'a Rig_edge.io_opener -> (t, string) result
 (** [open_io ~machine o] is {!open_} for an io device ({!Rig_edge.Io}). *)
 
-val memory_device : string -> t
-(** [memory_device name] is the {e memory device} named [name] on this
-    machine, opened as {!open_} opens a device. A memory device's memory is
-    its own, in host memory that this process addresses. Its work is this
-    process's, and it has a timeline of its own. It runs fills and copies,
-    which run before {!submit} returns, loads no code and times no work.
-    Tests use it to stand for a GPU in code that orders work across devices.
+val memory_device : string -> (t, string) result
+(** [memory_device name] is {!open_} of the {e memory device} named [name] on
+    this machine. A memory device's memory is its own, in host memory that
+    this process addresses. Its work is this process's, and it has a
+    timeline of its own. It runs fills and copies, which run before
+    {!submit} returns, loads no code and times no work. Tests use it to
+    stand for a GPU in code that orders work across devices. It is
+    [Error why] where {!open_} is.
 
-    Raises [Failure why] where {!open_} is [Error why], and as {!open_}
-    does. *)
+    Raises as {!open_} does. *)
 
 val close : t -> unit
 (** [close d] waits for the work submitted on [d] before the call, then loses

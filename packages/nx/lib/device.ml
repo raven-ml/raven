@@ -58,4 +58,6 @@ let pp ppf d = Format.pp_print_string ppf (name d)
 
 let cpu k =
   if k < 1 then invalid_arg (Printf.sprintf "Nx.Device.cpu: %d < 1" k);
-  make (Rig.memory_device (Printf.sprintf "CPU:%d" k))
+  match Rig.memory_device (Printf.sprintf "CPU:%d" k) with
+  | Ok m -> make m
+  | Error why -> failwith ("Nx.Device.cpu: " ^ why)

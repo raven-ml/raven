@@ -37,8 +37,8 @@ again makes a new device:
 ```ocaml
 # open Rig;;
 # let () =
-    let a = memory_device "A" in
-    let b = memory_device "B" in
+    let a = Result.get_ok (memory_device "A") in
+    let b = Result.get_ok (memory_device "B") in
     let x = Buffer.create a 4 in
     close a;
     (match Buffer.copy ~src:x ~dst:(Buffer.create b 4) with
@@ -47,7 +47,7 @@ again makes a new device:
     Printf.printf "lost: %s, failure: %b\n"
       (Option.value (lost a) ~default:"no")
       (Option.is_some (failure ()));
-    let a' = memory_device "A" in
+    let a' = Result.get_ok (memory_device "A") in
     Printf.printf "A again: same device %b, submitted %d\n"
       (equal a a') (submitted a');;
 A lost: closed

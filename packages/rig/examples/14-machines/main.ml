@@ -33,7 +33,8 @@ let int32s l = Bigarray.(Array1.of_array int32 c_layout (Array.of_list l))
 let agent () =
   let a = Result.get_ok (Rig_remote.listen ~key "127.0.0.1" 0) in
   Printf.printf "%d\n%!" (Rig_remote.port a);
-  match Rig_remote.serve a [ ("M", fun () -> Ok [ memory_device "M" ]) ] with
+  let open_ () = Result.map (fun d -> [ d ]) (memory_device "M") in
+  match Rig_remote.serve a [ ("M", open_) ] with
   | Ok () -> ()
   | Error why ->
       prerr_endline why;

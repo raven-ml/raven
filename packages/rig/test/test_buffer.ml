@@ -13,7 +13,7 @@ let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
 
 let timeout = 60.
-let memory name = Rig.memory_device name
+let memory name = Result.get_ok (Rig.memory_device name)
 let lost = function Rig.Lost _ -> true | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 

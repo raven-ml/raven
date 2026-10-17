@@ -35,7 +35,7 @@ let timeline d =
     (signaled d)
 
 let () =
-  let d = memory_device "M" in
+  let d = Result.get_ok (memory_device "M") in
   timeline d;
 
   (* Three buffers of the device. The host fills the first by a copy. *)

@@ -295,7 +295,8 @@ let devices =
             [ 0; -1; min_int ]);
       test "a test device is rig's memory device of its name" (fun () ->
           equal bool true
-            (Rig.equal (Rig.memory_device "CPU:5")
+            (Rig.equal
+               (Result.get_ok (Rig.memory_device "CPU:5"))
                (Nx.Device.memory (Nx.Device.cpu 5))));
       cases
         ~name:(fun (d, _) -> Format.asprintf "%a" pp_description d)

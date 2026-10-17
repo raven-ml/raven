@@ -601,8 +601,7 @@ module Byte_gathers = struct
 end
 
 let test_gather_on_one_device () =
-  let closing = Rig.memory_device "nx-gather-closing"
-  in
+  let closing = Result.get_ok (Rig.memory_device "nx-gather-closing") in
   let module S =
     (val Nx.devices ~kernels:(module Byte_gathers)
            [ Nx_support.memory 3; closing ])

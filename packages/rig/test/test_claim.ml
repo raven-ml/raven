@@ -296,8 +296,7 @@ let test_exclusive_writes () =
 
 (* A borrow and the memory it maps share one count. *)
 let test_borrow_counts () =
-  let d = Rig.memory_device "claim:borrow"
-  in
+  let d = Result.get_ok (Rig.memory_device "claim:borrow") in
   let b = B.create Rig.host (1 lsl 16) in
   let borrowed = require_some (B.borrow d b) in
   claim_read borrowed;
@@ -321,8 +320,7 @@ let donated_exclusive b =
    a borrow, the buffer itself. Sharing it again changes nothing, and readers
    claim and release it as before. *)
 let test_share_covers () =
-  let d = Rig.memory_device "claim:share"
-  in
+  let d = Result.get_ok (Rig.memory_device "claim:share") in
   let fresh () =
     let b = B.create Rig.host (1 lsl 16) in
     (b, B.view b ~first:0 ~length:8, require_some (B.borrow d b))
@@ -350,8 +348,7 @@ let test_share_covers () =
 (* Each buffer of a donation is held exclusive on its own: a value of several
    buffers is donated when each of them is. *)
 let test_shards () =
-  let d = Rig.memory_device "claim:shards"
-  in
+  let d = Result.get_ok (Rig.memory_device "claim:shards") in
   let a = B.create Rig.host 8 and b = B.create d 8 in
   Claim.with_ ~read:[]
     ~donate:[ a; b ]

@@ -54,7 +54,7 @@ let words_in_child () =
   match Unix.fork () with
   | 0 ->
       ignore (Unix.alarm 5);
-      let m = Rig.memory_device "graph_fork:child-memory" in
+      let m = Result.get_ok (Rig.memory_device "graph_fork:child-memory") in
       let run = Rig.Submission.Run.make () in
       let p = Rig.submit (Rig.Submission.make m [||]) ~run ~buffers:[||] in
       Rig.Point.wait p;

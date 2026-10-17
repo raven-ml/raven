@@ -194,8 +194,7 @@ end
 (* A fail loses every device but the host, each stopped once; a device already
    lost keeps its reason; the host's memory goes on; an open afterwards answers
    the reason without calling its opener, also of a name that was open, an io
-   open too, and a memory device raises it; and a second fail changes
-   nothing. *)
+   open too, and a memory device's; and a second fail changes nothing. *)
 let test_fail =
   child_case
     [
@@ -207,7 +206,7 @@ let test_fail =
       "Error the world failed";
       "Error the world failed";
       "Error the world failed";
-      "Failure the world failed";
+      "Error the world failed";
       "opener calls: 0";
       "fail:lost-before lost: the submission failed";
     ]
@@ -244,8 +243,8 @@ let test_fail =
   in
   let memory_device name =
     match Rig.memory_device name with
-    | _ -> "Ok"
-    | exception Failure why -> "Failure " ^ why
+    | Ok _ -> "Ok"
+    | Error why -> "Error " ^ why
   in
   [
     Option.value ~default:"not lost" (Rig.lost d);

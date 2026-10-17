@@ -57,7 +57,7 @@ let lose run name =
   (d, p)
 
 let close_one run =
-  let d = Rig.memory_device "limit:cycle" in
+  let d = Result.get_ok (Rig.memory_device "limit:cycle") in
   let p = Rig.submit (Sub.make d [||]) ~run ~buffers:[||] in
   Rig.close d;
   (d, p)

@@ -44,7 +44,7 @@ runs on any machine.
 ```ocaml
 # open Rig;;
 # let () =
-    let device = memory_device "example" in
+    let device = Result.get_ok (memory_device "example") in
     let src = Buffer.create device 4 in
     let dst = Buffer.create device 4 in
     Buffer.write src Bigarray.int32 (fun a -> a.{0} <- 42l);

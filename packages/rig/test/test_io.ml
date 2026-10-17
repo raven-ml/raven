@@ -448,7 +448,7 @@ let test_of_io () =
    which the io device's slot keeps and the Polled device after it starts
    from, shows that the slot passed from one to the next. *)
 let test_of_io_closed () =
-  let m = Rig.memory_device "io:before-closed" in
+  let m = Result.get_ok (Rig.memory_device "io:before-closed") in
   let p =
     Rig.submit (Rig.Submission.make m [||]) ~run:(Rig.Submission.Run.make ())
       ~buffers:[||]
