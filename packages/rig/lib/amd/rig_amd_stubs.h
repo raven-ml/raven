@@ -163,12 +163,12 @@ enum {
 
 /* The bytes of implicit arguments code object v5 places after a kernel's
    explicit ones, which start on 8 bytes. */
-#define RIG_AMD_HIDDEN 256
+#define RIG_AMD_HIDDEN_BYTES 256
 
 /* The bytes of a launch's arguments that a device's most parts assumes:
    4096 bytes of parameters and the implicit arguments. A launch may take
    more. */
-#define RIG_AMD_KERNARG (4096 + RIG_AMD_HIDDEN)
+#define RIG_AMD_KERNARG (4096 + RIG_AMD_HIDDEN_BYTES)
 
 struct rig_amd_launch {
   uint32_t words[RIG_AMD_LAUNCH_WORDS];
