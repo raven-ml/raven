@@ -371,8 +371,12 @@ static char no_memory_why[] = "out of memory";
    the reason "forked" unless it was lost: freeing would call a driver, and
    a word may be a page the child shares with its parent, or does not map.
    An io device's state is its io library's, which decides what a fork does
-   to it: rig leaves it as it was, and runs a stop that a thread of the
-   parent claimed or owed. A device the child opens is its own. */
+   to it: rig leaves a live one as it was, as POSIX leaves a child its
+   parent's open files. One whose stop has not returned is orphaned, since
+   that stop, owed or under way, is the parent's: the child would end state
+   that the parent's thread is still using. One whose stop returned stays
+   as it is, and the child frees its memory as any process does. A device
+   the child opens is its own. */
 #ifndef _WIN32
 static void forking(void) {
   mutex_lock(&table_mu);
@@ -399,7 +403,10 @@ static void forked_child(void) {
     mu_init(d);
     d->turn = d->inside = 0;
     if (d->io) {
-      if (stopping(d)) atomic_store(&l->state, RIG_OWED);
+      if (stopping(d)) {
+        atomic_store(&l->state, RIG_ORPHANED);
+        set_running(i, 0);
+      }
     } else if (i > 0) {
       char *none = NULL;
       atomic_compare_exchange_strong(&d->lost, &none, forked_why);

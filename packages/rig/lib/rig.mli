@@ -610,8 +610,12 @@ val signaled : t -> int
     waiting for its work. A value kept by a submission on {!host} returns as
     in any process, so one kept after work a thread of the parent was
     submitting on {!host} at the fork stays until the child's next submit
-    on {!host}. rig leaves an io device as it was, and its library decides
-    what a fork does to it. A device the child opens is its own. *)
+    on {!host}. rig leaves a live io device as it was, and its library
+    decides what a fork does to it, as a child of [fork] keeps the open
+    files of its parent. An io device whose stop has not returned at the
+    fork, owed or under way, stays lost in the child, which runs no stop of
+    it and frees none of its memory, since that stop is the parent's. A
+    device the child opens is its own. *)
 
 (** {2:errors Errors and failure}
 

@@ -91,8 +91,10 @@ let test_child () =
 let page_bytes = 1 lsl 16
 
 (* An io device whose memory is host bytes on a page, whose state its library
-   holds, and which counts the regions it holds. *)
-module Store = struct
+   holds, and which counts the regions it holds and its stops. Its reads fault
+   while [faulty] is set, and wait while [parked] is. Each application is a
+   library of its own, with counts of its own. *)
+module Make () = struct
   type t = unit
 
   (* A host buffer of at least a page, which starts on one. *)
@@ -101,6 +103,10 @@ module Store = struct
   exception Fault of string
 
   let held = Atomic.make 0
+  let stops = Atomic.make 0
+  let faulty = Atomic.make false
+  let parked = Atomic.make false
+  let inside = Atomic.make 0
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
 
@@ -109,12 +115,22 @@ module Store = struct
     Some (B.create Rig.host (Int.max n page_bytes))
 
   let free () _ = Atomic.decr held
-  let read () _ ~at:_ ~dst:_ ~len:_ = ()
+
+  let read () _ ~at:_ ~dst:_ ~len:_ =
+    if Atomic.get faulty then raise (Fault "a read fault");
+    Atomic.incr inside;
+    while Atomic.get parked do
+      Thread.yield ()
+    done;
+    Atomic.decr inside
+
   let write () _ ~at:_ ~src:_ ~len:_ = ()
   let pages () r = Some (B.export r Bigarray.char)
   let prefetch () _ ~at:_ ~len:_ = ()
-  let stop () = ()
+  let stop () = Atomic.incr stops
 end
+
+module Store = Make ()
 
 let open_store name =
   require_ok ~pp:Format.pp_print_string
@@ -198,6 +214,50 @@ let test_io_closed () =
   equal string "exited 0" (status ended);
   equal (list string) [ "freed: 1" ] lines;
   ignore (Sys.opaque_identity !m)
+
+(* An io device lost while a thread of the parent is inside a call of it, so
+   that its stop is owed at the fork: the child runs no stop of it, in a close
+   or a fail, and frees none of its memory, since the stop is the parent's,
+   which the thread runs once its call returns. *)
+let test_io_owed () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let module Store = Make () in
+  let io =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_io
+         { name = "fork:io-owed"; io = (module Store); make = (fun () -> Ok ()) })
+  in
+  let m = B.create io 8 and other = ref (Some (B.create io 8)) in
+  let stops = Atomic.get Store.stops in
+  let read b () = B.copy ~src:b ~dst:(B.create Rig.host 8) in
+  Atomic.set Store.parked true;
+  let reader = Thread.create (fun () -> ignore (raises_lost (read m))) () in
+  Support.await "a read inside the device" (fun () ->
+      Atomic.get Store.inside = 1);
+  Atomic.set Store.faulty true;
+  let copy = raises_lost (read (Option.get !other)) in
+  Atomic.set Store.faulty false;
+  let before = Atomic.get Store.stops - stops in
+  let held = Atomic.get Store.held in
+  let lines, ended =
+    in_child (fun () ->
+        other := None;
+        Gc.full_major ();
+        Rig.close io;
+        Rig.fail "the child fails";
+        [
+          Printf.sprintf "stops: %d" (Atomic.get Store.stops - stops);
+          Printf.sprintf "freed: %d" (held - Atomic.get Store.held);
+        ])
+  in
+  Atomic.set Store.parked false;
+  Thread.join reader;
+  equal ~msg:"the faulting copy raised Lost" bool true copy;
+  equal ~msg:"the stops before the fork" int 0 before;
+  equal string "exited 0" (status ended);
+  equal (list string) [ "stops: 0"; "freed: 0" ] lines;
+  Rig.close io;
+  equal ~msg:"the parent's stop" int 1 (Atomic.get Store.stops - stops)
 
 (* A device that takes the slot a closed io device left is a driver's device:
    a forked child sees it lost. A memory device's last value, which the io
@@ -447,6 +507,7 @@ let tests =
           test_io_used;
         test "a forked child frees the memory of an io device closed before"
           test_io_closed;
+        test "a forked child runs no stop its parent owed" test_io_owed;
         test "a device a forked child opens drains as in any process"
           test_own_device;
         test "a forked child uses rig while a parent's thread held a turn"

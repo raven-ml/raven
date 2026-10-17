@@ -29,10 +29,9 @@ raven / llama.cpp (Vulkan; ROCm):
 ### semantics
 
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5)
-- more ledger rows: a forked child loses io devices too and runs none of
-  the parent's owed stops (F8, rig_device.c:388-410); host and memory work
-  runs after giving the turn up (K2); the doc sentences of F3, F5, O5, Q1,
-  R4 and C4 (F3's "Other devices go on", rig.mli:502, is false on CUDA)
+- more ledger rows: host and memory work runs after giving the turn up
+  (K2); the doc sentences of F3, F5, O5, Q1, R4 and C4 (F3's "Other
+  devices go on", rig.mli:502, is false on CUDA)
 
 ### drivers
 
