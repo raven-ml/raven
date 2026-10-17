@@ -57,6 +57,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.support` of `Dist.transform (Bij.interval ~low ~high)` with
+  per-element bounds holds every element's values. It mapped the base's
+  support through the lowest `low` and the highest `high`.
 - `Norn.Nuts`, `Norn.Hmc`, tempering's moves and nested sampling's slice
   moves work on one row per chain instead of per tensor of the position: a NUTS
   leapfrog step compiles to 210 kernels instead of 760 on eight schools, and

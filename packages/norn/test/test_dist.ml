@@ -359,6 +359,23 @@ let bijectors =
             (pp
                (D.transform Norn.Bij.simplex
                   (D.iid [| 2 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.))))));
+      test "a per-element interval's image holds every element's" (fun () ->
+          (* Element i maps (0, 1) onto (low_i + w_i sigmoid 0, low_i + w_i
+             sigmoid 1), w_i = high_i - low_i; the support is their hull. *)
+          let low = [| 0.; 0. |] and high = [| 1.; 10. |] in
+          let sigmoid x = 1. /. (1. +. Float.exp (-.x)) in
+          let at x i = low.(i) +. ((high.(i) -. low.(i)) *. sigmoid x) in
+          let b = Norn.Bij.interval ~low:(vec low) ~high:(vec high) in
+          let base =
+            D.uniform ~low:(vec [| 0.; 0. |]) ~high:(vec [| 1.; 1. |])
+          in
+          let interval = function
+            | Norn.Support.Interval (a, b) -> Some (a, b)
+            | _ -> None
+          in
+          equal (pair close close)
+            (Float.min (at 0. 0) (at 0. 1), Float.max (at 1. 0) (at 1. 1))
+            (require_match interval (D.support (D.transform b base))));
       test "supports print as sets" (fun () ->
           equal string "(0, inf)"
             (Format.asprintf "%a" Norn.Support.pp

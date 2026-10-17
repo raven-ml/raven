@@ -148,13 +148,18 @@ let interval ~low ~high =
     (x, saturate (Nx.logical_and above below) ld)
   in
   let inverse x = Nx.sub (Nx.log (Nx.sub x low)) (Nx.log (Nx.sub high x)) in
+  (* Each element's map is increasing, so the hull of the elements' images of
+     (a, b) runs from the least image of [a] to the greatest image of [b]. *)
   let image s _ =
-    let lo = lowest low and hi = highest high in
-    let at x = lo +. ((hi -. lo) /. (1. +. Float.exp (-.x))) in
+    let low = Nx.cast Nx.float64 low and high = Nx.cast Nx.float64 high in
+    let at x =
+      let sigmoid = Nx.scalar Nx.float64 (1. /. (1. +. Float.exp (-.x))) in
+      Nx.add low (Nx.mul (Nx.sub high low) sigmoid)
+    in
     match s with
-    | Support.Greater a -> Support.Interval (at a, hi)
-    | Support.Interval (a, b) -> Support.Interval (at a, at b)
-    | _ -> Support.Interval (lo, hi)
+    | Support.Greater a -> Support.Interval (lowest (at a), highest high)
+    | Support.Interval (a, b) -> Support.Interval (lowest (at a), highest (at b))
+    | _ -> Support.Interval (lowest low, highest high)
   in
   let bounds =
     monotone (fun x -> Nx.add low (Nx.mul (Nx.sub high low) (Nx.sigmoid x)))
