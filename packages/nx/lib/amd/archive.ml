@@ -14,18 +14,31 @@ external sub : int -> int -> string = "caml_nx_amd_kernels_sub"
 
 let u64 s at = Int64.to_int (String.get_int64_le s at)
 
-(* The members by key, as their offset and length. *)
+let malformed () = failwith "nx.amd: a malformed kernel archive"
+
+(* Whether the [len] bytes from [off] lie in the archive. Offsets and lengths
+   past [max_int] read as negative, so both are checked. *)
+let inside off len = 0 <= off && 0 <= len && len <= length () - off
+
+let slice off len = if inside off len then sub off len else malformed ()
+
+(* The members by key, as their offset and length, each checked to lie in the
+   archive so that [sub] copies only its bytes. *)
 let index =
-  let n = u64 (sub 0 8) 0 in
+  let n = u64 (slice 0 8) 0 in
+  (* Each entry of the index takes at least 24 bytes. *)
+  if n < 0 || n > (length () - 8) / 24 then malformed ();
   let t = Hashtbl.create n in
   let at = ref 8 in
   for _ = 1 to n do
-    let k = u64 (sub !at 8) 0 in
-    let entry = sub (!at + 8) (k + 16) in
-    Hashtbl.replace t (String.sub entry 0 k) (u64 entry k, u64 entry (k + 8));
+    let k = u64 (slice !at 8) 0 in
+    if k < 0 then malformed ();
+    let entry = slice (!at + 8) (k + 16) in
+    let off = u64 entry k and len = u64 entry (k + 8) in
+    if not (inside off len) then malformed ();
+    Hashtbl.replace t (String.sub entry 0 k) (off, len);
     at := !at + 24 + k
   done;
-  if length () < !at then failwith "nx.amd: a truncated kernel archive";
   t
 
 (* The code object of [key], ["gfx12-generic/cast.float32"], if the library
