@@ -236,6 +236,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.Total.collect` returns its total at `zero`'s placement, as documented.
+  An addition on a device moved a host total there, and one on a device other
+  than the total's raised `Invalid_argument`.
 - `Rune.Total.collect` around a compiled function collects on a device
   without eager kernels, such as a GPU without a backend. It raised
   `Invalid_argument "Nx.add: … has no eager kernels"` adding the call's sum.

@@ -58,9 +58,12 @@ and collect : type a b r.
  fun t ~zero f ->
   let total = ref zero and depth = !(Domain.DLS.get discarded) in
   let counts () = !(Domain.DLS.get discarded) = depth in
+  (* nx computes a sum where its placed operands lie, so each addition moves to
+     [zero]'s placement first and the sum lies there. Inside a compiled call the
+     move is part of the program. *)
   let receive v =
     if Nx.shape v <> Nx.shape zero then shape_mismatch v zero;
-    if counts () then total := Nx.add !total v
+    if counts () then total := Nx.add !total (Nx.place (Nx.placement zero) v)
   in
   let rec within : type c. (unit -> c) -> c =
    fun f -> Construct.install { op = None; call = answer } f

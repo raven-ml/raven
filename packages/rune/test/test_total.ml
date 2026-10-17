@@ -15,6 +15,7 @@ let vec a = Nx.create f64 [| Array.length a |] a
 let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()
+let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 let series seed shape =
   let n = Array.fold_left ( * ) 1 shape in
@@ -106,6 +107,33 @@ let scope_tests =
         let f = Rune.jit' (rollout t (w0 ()) (h0 ())) in
         let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> f xs) in
         equal (close ()) (expected_total xs) total);
+    test "the total lies at its zero's placement, wherever the additions lie"
+      (fun () ->
+        let t = Rune.Total.make () in
+        let d = Nx.Placement.on (Nx.Device.cpu 1)
+        and d' = Nx.Placement.on (Nx.Device.cpu 2) in
+        let add v =
+          Rune.Total.add t (Nx.sum v);
+          v
+        in
+        let check ~msg zero f =
+          let _, total = Rune.Total.collect t ~zero f in
+          equal ~msg:(msg ^ ": placement") placement (Nx.placement zero)
+            (Nx.placement total);
+          equal ~msg:(msg ^ ": value") (close ())
+            (Nx.add (Nx.place Nx.Placement.host zero) (Nx.sum (h0 ())))
+            (Nx.place Nx.Placement.host total)
+        in
+        let on_d () = Nx.place d (h0 ()) in
+        check ~msg:"a device addition" (zero ()) (fun () -> add (on_d ()));
+        check ~msg:"a host addition"
+          (Nx.place d (scalar 1.))
+          (fun () -> add (h0 ()));
+        check ~msg:"an addition on another device"
+          (Nx.place d (scalar 1.))
+          (fun () -> add (Nx.place d' (h0 ())));
+        check ~msg:"a compiled device addition" (scalar 2.) (fun () ->
+            Rune.jit' add (on_d ())));
   ]
 
 (* Scans and remats *)

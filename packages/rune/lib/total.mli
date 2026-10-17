@@ -26,7 +26,7 @@ val collect :
     addition [f] made to [t]. A compiled function called inside the scope adds
     to the total within its program, so the scope computes nothing outside it
     and collects on a device without eager kernels. An addition made outside a
-    compiled function adds eagerly, where the total and the value lie.
+    compiled function adds eagerly at [zero]'s placement, where the total stays.
 
     Raises [Invalid_argument] at an addition whose shape is not [zero]'s. *)
 
