@@ -360,6 +360,35 @@ let narrow2 ?(keep = fun _ -> true) ~bound ?scale ~firsts ~seconds f =
           hold dt p emin ~bound ?scale f [| column fst; column snd |] n))
     narrows
 
+(* [narrow3 ~bound ~settings f] holds [f] of three arguments as [narrow]
+   holds one: at every float of each narrow dtype as the argument a setting
+   names, the others the setting's, rounded to the dtype; at the triples
+   whose parameters are at most [2^20], where the bound holds. *)
+let narrow3 ~bound ~settings f =
+  List.map
+    (fun (Narrow (dt, p, emin)) ->
+      test (D.name dt) (fun () ->
+          let all = values (Nx.cast Nx.float64 (every dt)) in
+          let at slot others v =
+            let t = Array.copy others in
+            t.(slot) <- v;
+            t
+          in
+          let triples =
+            List.concat_map
+              (fun (slot, others) -> Array.to_list (Array.map (at slot others) all))
+              settings
+            |> List.filter (fun t -> t.(0) <= 0x1p20 && t.(1) <= 0x1p20)
+          in
+          let n = List.length triples in
+          let column i =
+            Nx.cast dt
+              (Nx.create Nx.float64 [| n |]
+                 (Array.of_list (List.map (fun t -> t.(i)) triples)))
+          in
+          hold dt p emin ~bound f [| column 0; column 1; column 2 |] n))
+    narrows
+
 (* Suites against the goldens *)
 
 type u = { u : 's. 's v -> 's v }
@@ -530,9 +559,20 @@ let incomplete_gamma =
         ~firsts:[ 2.5 ] ~seconds:[ 0.1; 0.9 ] { b = Nx.gammainccinv };
     ]
 
+(* Every float as [x] beside [a = 2.5, b = 10.], as [a] beside [b = 0.5,
+   x = 0.3], and as [b] beside [a = 10., x = 0.7]. *)
+let beta_settings =
+  [ (2, [| 2.5; 10.; 0. |]); (0, [| 0.; 0.5; 0.3 |]); (1, [| 10.; 0.; 0.7 |]) ]
+
 let incomplete_beta =
   let ternary name ~bound f =
-    group name (check ~bound:(everywhere bound) name f)
+    let bound = everywhere bound in
+    group name
+      [
+        group "against the goldens" (check ~bound name f);
+        group "at every narrow float"
+          (narrow3 ~bound ~settings:beta_settings f);
+      ]
   in
   group "incomplete beta"
     [
