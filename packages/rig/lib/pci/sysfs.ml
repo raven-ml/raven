@@ -745,31 +745,44 @@ let rec numbers dir =
           Fail.fail "reading %s: %s" file (Unix.error_message e))
     (entries dir)
 
-(* A file the process may not read. Reading another process's [/proc] files,
-   and the targets of any process's [map_files], needs CAP_SYS_ADMIN. *)
-let unreadable file (e : Unix.error) =
+(* What reading a file needs where Linux refuses it. A process's [fd] and
+   [map_files] directories are its owner's alone, which CAP_DAC_READ_SEARCH
+   passes, and following their links needs ptrace's read access, which
+   CAP_SYS_PTRACE gives over another user's process. Following a [map_files]
+   link needs CAP_SYS_ADMIN or CAP_CHECKPOINT_RESTORE, for the process's own
+   too. Other files need root. *)
+type need = Root | Other_process | Mapped_file
+
+let unreadable need file (e : Unix.error) =
   let why = strf "reading %s: %s" file (Unix.error_message e) in
-  match e with
-  | EACCES | EPERM ->
+  match (e, need) with
+  | (EACCES | EPERM), Root -> Fail.fail "%s; run as root" why
+  | (EACCES | EPERM), Other_process ->
       Fail.fail
-        "%s; reading the files processes hold needs CAP_SYS_ADMIN: run as root"
+        "%s; reading another process's files needs CAP_DAC_READ_SEARCH and \
+         CAP_SYS_PTRACE: run as root"
+        why
+  | (EACCES | EPERM), Mapped_file ->
+      Fail.fail
+        "%s; following a mapped file's link needs CAP_SYS_ADMIN or \
+         CAP_CHECKPOINT_RESTORE: run as root"
         why
   | _ -> Fail.fail "%s" why
 
 (* The number of the character device at [file], if there is one. *)
-let device file =
+let device need file =
   match Unix.stat file with
   | { st_kind = S_CHR; st_rdev; _ } -> Some st_rdev
   | _ -> None
   | exception Unix.Unix_error (ENOENT, _, _) -> None
-  | exception Unix.Unix_error (e, _, _) -> unreadable file e
+  | exception Unix.Unix_error (e, _, _) -> unreadable need file e
 
 (* The names in [dir], or [None] if it is gone, as the directory of a process
    gone since the listing is. *)
-let listing dir =
+let listing need dir =
   match Unix.opendir dir with
   | exception Unix.Unix_error ((ENOENT | ESRCH), _, _) -> None
-  | exception Unix.Unix_error (e, _, _) -> unreadable dir e
+  | exception Unix.Unix_error (e, _, _) -> unreadable need dir e
   | d ->
       Fun.protect ~finally:(fun () -> Unix.closedir d) @@ fun () ->
       let rec go acc =
@@ -786,9 +799,10 @@ let listing dir =
    descriptors, under [fd], and its mapped files, under [map_files], which
    outlive a closed descriptor. A directory or an entry gone since the listing
    is left out. *)
-let opened proc =
+let opened ~own proc =
+  let others = if own then Root else Other_process in
   List.concat_map
-    (fun dir ->
+    (fun (dir, link_need) ->
       let dir = Filename.concat proc dir in
       List.filter_map
         (fun name ->
@@ -799,14 +813,14 @@ let opened proc =
                 match Unix.readlink link with
                 | f -> f
                 | exception Unix.Unix_error _ -> link ))
-            (device link))
-        (Option.value (listing dir) ~default:[]))
-    [ "fd"; "map_files" ]
+            (device link_need link))
+        (Option.value (listing others dir) ~default:[]))
+    [ ("fd", others); ("map_files", Mapped_file) ]
 
 (* The numbers of the GPU at [bus]'s character devices. *)
 let gpu_devices m bus nodes =
   numbers (Filename.concat m.devices bus)
-  @ List.filter_map (fun f -> device (Filename.concat m.root f)) nodes
+  @ List.filter_map (fun f -> device Root (Filename.concat m.root f)) nodes
 
 let find_held gpu opened =
   List.find_map
@@ -815,9 +829,9 @@ let find_held gpu opened =
 
 let held m bus nodes =
   let self = Filename.concat m.root "proc/self" in
-  if listing (Filename.concat self "fd") = None then
+  if listing Root (Filename.concat self "fd") = None then
     Fail.fail "reading %s: no such directory" (Filename.concat self "fd");
-  find_held (gpu_devices m bus nodes) (opened self)
+  find_held (gpu_devices m bus nodes) (opened ~own:true self)
 
 let held_elsewhere m bus nodes =
   let gpu = gpu_devices m bus nodes and me = string_of_int (Unix.getpid ()) in
@@ -828,8 +842,8 @@ let held_elsewhere m bus nodes =
       else
         Option.map
           (fun file -> (int_of_string pid, file))
-          (find_held gpu (opened (Filename.concat proc pid))))
-    (Option.value (listing proc) ~default:[])
+          (find_held gpu (opened ~own:false (Filename.concat proc pid))))
+    (Option.value (listing Root proc) ~default:[])
 
 (* A process's command, as [proc/PID/comm] gives it. *)
 let command m pid =
