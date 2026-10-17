@@ -723,14 +723,15 @@ let no_allocation () =
     Sys.opaque_identity (submitted run ~buffers)
   in
   Rig.Point.wait (once 0);
-  let before = Gc.minor_words () in
   let last = ref (once 1) in
-  for i = 2 to 100 do
-    last := once i
-  done;
-  let words = int_of_float (Gc.minor_words () -. before) / 100 in
+  let bytes =
+    Rig_support.allocated_bytes (fun () ->
+        for i = 2 to 100 do
+          last := once i
+        done)
+  in
   Rig.Point.wait !last;
-  equal int ~msg:"words per launch" 0 words
+  equal int ~msg:"bytes of 99 launches" 0 bytes
 
 (* Public launches and a private copy kernel share the compute channel. The
    edges their memory derives still put the copy between the launches. *)

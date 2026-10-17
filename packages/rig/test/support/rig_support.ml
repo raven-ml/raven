@@ -944,6 +944,15 @@ let await what f =
     Thread.yield ()
   done
 
+(* Each count of the heap allocates its own result, the same bytes each time:
+   the second count measures the first, and the third is less by it. *)
+let allocated_bytes f =
+  let b0 = Gc.allocated_bytes () in
+  let b1 = Gc.allocated_bytes () in
+  f ();
+  let b2 = Gc.allocated_bytes () in
+  int_of_float (b2 -. b1 -. (b1 -. b0))
+
 (* Io devices and machines *)
 
 module Empty = struct

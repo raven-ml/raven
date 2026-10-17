@@ -1698,18 +1698,17 @@ let lifetime =
 
 let test_allocation () =
   let d = memory "submit:words" in
-  let words_per_submit s buffers =
+  let bytes_of_submits s buffers =
     let run = Sub.Run.make s in
     ignore (Rig.submit run ~buffers);
-    let before = Gc.minor_words () in
-    for _ = 1 to 100 do
-      ignore (Sys.opaque_identity (Rig.submit run ~buffers))
-    done;
-    int_of_float (Gc.minor_words () -. before) / 100
+    Support.allocated_bytes (fun () ->
+        for _ = 1 to 100 do
+          ignore (Sys.opaque_identity (Rig.submit run ~buffers))
+        done)
   in
   let fixed = B.create d 8 in
   List.iter
-    (fun (msg, s, buffers) -> equal ~msg int 0 (words_per_submit s buffers))
+    (fun (msg, s, buffers) -> equal ~msg int 0 (bytes_of_submits s buffers))
     [
       ( "a fill's slot",
         empty ~uses:[| Sub.read |] d,

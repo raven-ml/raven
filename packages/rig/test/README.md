@@ -18,7 +18,7 @@ contract for every verb below.
 | State across calls | stamps, rings, windows, page tables | `stateful` against a model |
 | Calls from several domains | free, unmap and unload end a value once | `stateful ~domains:2` |
 | A known interleaving | a worker parking as a job is published | a held schedule: the pool's hook points, Polled's gate |
-| A bounded cost | a submit that does not wait allocates nothing | words counted with `Gc.minor_words` |
+| A bounded cost | a submit that does not wait allocates nothing | bytes counted with `Gc.allocated_bytes` over many calls, never divided |
 
 - Expected values come from the spec. A value learned from the code is a
   baseline, written as `expect`.

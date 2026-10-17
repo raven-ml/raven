@@ -741,11 +741,11 @@ let test_untaken_copy_parts () =
 let test_untaken () =
   let f = Sys.opaque_identity ignore in
   Prof.span "warm" f;
-  let before = Gc.minor_words () in
-  for _ = 1 to 100 do
-    Prof.span "idle" f
-  done;
-  equal int 0 (int_of_float (Gc.minor_words () -. before))
+  equal int 0
+    (Support.allocated_bytes (fun () ->
+         for _ = 1 to 100 do
+           Prof.span "idle" f
+         done))
 
 (* Recording *)
 

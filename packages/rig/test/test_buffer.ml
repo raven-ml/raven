@@ -370,11 +370,11 @@ let test_wait_words () =
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
   ignore (submit s ~buffers:[| b |]);
   B.wait b Rig.Read_write;
-  let before = Gc.minor_words () in
-  for _ = 1 to 100 do
-    B.wait b Rig.Read_write
-  done;
-  equal int 0 (int_of_float (Gc.minor_words () -. before) / 100)
+  equal int 0
+    (Support.allocated_bytes (fun () ->
+         for _ = 1 to 100 do
+           B.wait b Rig.Read_write
+         done))
 
 (* Behind a transport, where the host reads a device's word through its
    driver, a wait for reached work allocates nothing: a buffer's wait, and a
@@ -393,35 +393,33 @@ let test_wait_words_transport () =
   let submit () =
     ignore (Rig.submit ?waits run ~buffers:[||] : Rig.Point.t)
   in
-  let per_call f =
+  let calls f =
     f ();
-    let before = Gc.minor_words () in
-    for _ = 1 to 100 do
-      f ()
-    done;
-    int_of_float (Gc.minor_words () -. before) / 100
+    Support.allocated_bytes (fun () ->
+        for _ = 1 to 100 do
+          f ()
+        done)
   in
-  equal ~msg:"a buffer's wait" int 0 (per_call wait);
-  equal ~msg:"a submit's wait" int 0 (per_call submit)
+  equal ~msg:"a buffer's wait" int 0 (calls wait);
+  equal ~msg:"a submit's wait" int 0 (calls submit)
 
 (* A drain that judges collected memory whose work is still queued allocates
    no more than one with nothing to judge: [B.create d 0] drains [d]. *)
 let test_due_words () =
   let d, _ = P.open_ "buffer:due-words" in
-  let per_call () =
+  let drains () =
     ignore (B.create d 0);
-    let before = Gc.minor_words () in
-    for _ = 1 to 100 do
-      ignore (B.create d 0)
-    done;
-    int_of_float (Gc.minor_words () -. before) / 100
+    Support.allocated_bytes (fun () ->
+        for _ = 1 to 100 do
+          ignore (B.create d 0)
+        done)
   in
-  let idle = per_call () in
+  let idle = drains () in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
   let[@inline never] queued () = ignore (submit s ~buffers:[| B.create d 64 |]) in
   queued ();
   Gc.full_major ();
-  equal ~msg:"words with collected memory queued" int idle (per_call ())
+  equal ~msg:"bytes with collected memory queued" int idle (drains ())
 
 let test_create_words () =
   at_most_words (41, 0) (fun () -> B.create Rig.host 64)

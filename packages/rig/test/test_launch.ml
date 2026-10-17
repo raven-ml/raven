@@ -844,11 +844,6 @@ let test_grow_refused () =
 
 (* Cost *)
 
-let words f =
-  let before = Gc.minor_words () in
-  f ();
-  int_of_float (Gc.minor_words () -. before)
-
 let test_allocation () =
   let d, _ = polled "words" in
   let image = functions d in
@@ -863,12 +858,12 @@ let test_allocation () =
   let first = submit ~buffers run in
   let n = 100 in
   equal int ~msg:"a submit of a launch" 0
-    (words (fun () ->
+    (Rig_support.allocated_bytes (fun () ->
          for _ = 1 to n do
            ignore (Sys.opaque_identity (Rig.submit run ~buffers))
          done));
   equal int ~msg:"a take and a release" 0
-    (words (fun () ->
+    (Rig_support.allocated_bytes (fun () ->
          for _ = 1 to n do
            ignore (Sys.opaque_identity (Run.take run));
            Run.release run
@@ -876,7 +871,7 @@ let test_allocation () =
   take run;
   let setter name f =
     equal int ~msg:name 0
-      (words (fun () ->
+      (Rig_support.allocated_bytes (fun () ->
            for i = 1 to n do
              f i
            done))

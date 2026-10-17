@@ -609,6 +609,11 @@ val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
 
+val allocated_bytes : (unit -> unit) -> int
+(** [allocated_bytes f] is the bytes [f ()] adds to the OCaml heap, minor and
+    major ({!Gc.allocated_bytes}). A function that allocates nothing has [0]
+    for every number of calls in [f]. *)
+
 val io : string -> Rig.t
 (** [io name] is the io device named [name], whose memory holds nothing, opened
     unless it is open. *)

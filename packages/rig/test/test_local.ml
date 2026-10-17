@@ -167,11 +167,11 @@ let test_hit_words () =
   let d = Result.get_ok (Rig.memory_device (fresh "words")) in
   let k = L.new_key (fun _ -> made ()) in
   ignore (L.get k d);
-  let before = Gc.minor_words () in
-  for _ = 1 to 10_000 do
-    ignore (Sys.opaque_identity (L.get k d))
-  done;
-  equal int 0 (int_of_float (Gc.minor_words () -. before) / 10_000);
+  equal int 0
+    (Rig_support.allocated_bytes (fun () ->
+         for _ = 1 to 10_000 do
+           ignore (Sys.opaque_identity (L.get k d))
+         done));
   Rig.close d
 
 (* Lifetime *)

@@ -28,8 +28,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- ledger rows (_plans/rig-semantics-refs/LEDGER.md): the exact-zero tests
-  count `Gc.allocated_bytes` per call with no division; `Buffer.free` (M5); a
+- ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5); a
   staged route between two mapless devices takes both slots in one C call,
   in device-index order (G6, copy.ml:258-264); the controller keeps its
   local devices after a failed job (Q2, agent.ml:118-123); each process

@@ -1376,13 +1376,14 @@ let no_allocation () =
   in
   go ();
   B.wait out Read;
-  let before = Gc.minor_words () in
-  for _ = 1 to 100 do
-    go ()
-  done;
-  let words = int_of_float (Gc.minor_words () -. before) in
+  let bytes =
+    Rig_support.allocated_bytes (fun () ->
+        for _ = 1 to 100 do
+          go ()
+        done)
+  in
   B.wait out Read;
-  equal int 0 words
+  equal int 0 bytes
 
 let launches =
   group ~timeout:60. "launches"
