@@ -28,22 +28,11 @@ let gib = 1 lsl 30
 
 (* Locks *)
 
-(* The locks the calling thread holds ([rig_holds] of rig_edge.h). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
 (* A public function that takes a lock, the path's or rig.pci's, starts
-   with [check_held fn], before it changes anything. Locks nest in this
+   with [Rig_nv.Lock.check], before it changes anything. Locks nest in this
    order: rig.pci's locks of its GPUs, which an open, a detach, an attach, a
    reset and a stop hold; the path's own, one at a time ([machines_lock], a
    GPU's [lock], its GSP's); rig.pci's others, of memory and firmware. *)
-let check_held fn =
-  if holds () <> 0 then
-    invalid_arg
-      ("Rig_nv_pci." ^ fn
-     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
 
 (* GPUs *)
 
@@ -107,7 +96,7 @@ let survey ~firmware boot42 rom =
       | None -> assert false (* three files, not all found *))
 
 let report ~firmware ~chip ~vbios =
-  check_held "report";
+  Rig_nv.Lock.check "Rig_nv_pci.report";
   Result.map fst (survey ~firmware chip (fun () -> vbios))
 
 (* Memory *)
@@ -424,22 +413,22 @@ let boot ~word ~on ~firmware ~index h fn =
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
 let open_ ?(machine = Machine.this) ~word ~firmware i =
-  check_held "gpu";
+  Rig_nv.Lock.check "Rig_nv_pci.gpu";
   let on = known machine in
   Gpus.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
 
 (* Changes to the machine *)
 
 let detach i =
-  check_held "detach";
+  Rig_nv.Lock.check "Rig_nv_pci.detach";
   Gpus.detach gpus Machine.this i
 
 let attach i =
-  check_held "attach";
+  Rig_nv.Lock.check "Rig_nv_pci.attach";
   Gpus.attach gpus Machine.this i
 
 let reset ?(machine = Machine.this) i =
-  check_held "reset";
+  Rig_nv.Lock.check "Rig_nv_pci.reset";
   Gpus.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)

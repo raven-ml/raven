@@ -161,6 +161,7 @@ module Lock = struct
   let create () = ranked path_rank
   let protect = protect
   let try_protect = try_protect
+  let check = check_held
 end
 
 (* Paths *)

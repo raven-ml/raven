@@ -472,11 +472,17 @@ type 'm path = {
 
 (** {2:locks A path's locks}
 
-    For a path's implementation. A path takes each lock it holds across
+    For a path's implementation. A path must take each lock it holds across
     OCaml code with {!Lock.protect}, which counts it among the locks its
-    thread holds, so that a call from a signal handler, finaliser or
-    [Gc.Memprof] callback that runs inside it is refused as it starts
-    ({!Rig_edge.section-drivers}). *)
+    thread holds, so that a call from a callback inside it is refused as it
+    starts ({!Rig_edge.section-drivers}). A take of an image's, a device's
+    or a path's lock inside a path's lock raises [Invalid_argument], having
+    taken nothing.
+
+    {b Warning.} A path's entries must call {!Lock.check} themselves, before
+    they change anything; one that does not may raise [Invalid_argument]
+    from a lock it takes later, with what it changed before left
+    changed. *)
 
 module Lock : sig
   type t
@@ -497,6 +503,12 @@ module Lock : sig
   (** [try_protect l f] is [true] once [f ()] ran as in {!protect}, or
       [false], having run nothing, if another thread holds [l] or the
       calling thread holds a path's lock. It never waits. *)
+
+  val check : string -> unit
+  (** [check fn] raises [Invalid_argument], naming [fn], if the calling
+      thread holds a lock of rig's or of a driver's. A path's opener's
+      [make] and its public functions that may take a lock call it as they
+      start, before they change anything ({!Rig_edge.section-drivers}). *)
 end
 
 val make : word:nativeint -> 'm path -> (t, string) result
