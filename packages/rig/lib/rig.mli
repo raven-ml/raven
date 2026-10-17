@@ -1596,7 +1596,9 @@ module Submission : sig
       rule 2 of {!Rig.section-order} orders them after every earlier part,
       and {!Rig.Submission}'s preamble says which queue runs them. Memory the
       words address is ordered against other work only if it is among the
-      submission's fixed memory.
+      submission's fixed memory. A driver may bound the words one submission
+      places, as its interface states; {!submit} raises [Invalid_argument]
+      past it.
 
       Raises [Invalid_argument] if [b] is dead, the host does not address its
       memory, or its length is no multiple of 4. *)
@@ -1832,7 +1834,9 @@ val submit :
     {- a copy's two buffers differ in length or share a byte, or neither is
        on [d];}
     {- a ref names handle-only memory;}
-    {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}).}}
+    {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}),
+       such as words past the bound its interface states
+       ({!Submission.words}).}}
     Raises {!Out_of_memory} if [d]'s queues must grow for the work and [d]
     has no memory for the growth after the rounds of reclamation
     ({!section-reclaim}). Raises {!Lost} if [d] is lost before [submit]
