@@ -29,8 +29,9 @@ let forced t (q, p) =
 let forced_host t (q, p) =
   (p, -.Float.sin q +. (0.3 *. Float.cos (2. *. t) *. q))
 
-(* The state at [t] from (1, 0), by 2¹⁴ classical steps in OCaml floats. *)
-let reference t =
+(* The state at [t] of [field] from [y0], by 2¹⁴ classical steps in OCaml
+   floats. *)
+let integrate field y0 t =
   let n = 1 lsl 14 in
   let h = t /. Float.of_int n in
   let ( +^ ) (a, b) (c, d) = (a +. c, b +. d)
@@ -39,13 +40,16 @@ let reference t =
     if i = n then y
     else
       let t = Float.of_int i *. h in
-      let k1 = forced_host t y in
-      let k2 = forced_host (t +. (h /. 2.)) (y +^ (h /. 2. *^ k1)) in
-      let k3 = forced_host (t +. (h /. 2.)) (y +^ (h /. 2. *^ k2)) in
-      let k4 = forced_host (t +. h) (y +^ (h *^ k3)) in
+      let k1 = field t y in
+      let k2 = field (t +. (h /. 2.)) (y +^ (h /. 2. *^ k1)) in
+      let k3 = field (t +. (h /. 2.)) (y +^ (h /. 2. *^ k2)) in
+      let k4 = field (t +. h) (y +^ (h *^ k3)) in
       go (i + 1) (y +^ (h /. 6. *^ (k1 +^ (2. *^ k2) +^ (2. *^ k3) +^ k4)))
   in
-  go 0 (1., 0.)
+  go 0 y0
+
+(* The forced pendulum's state at [t] from (1, 0). *)
+let reference t = integrate forced_host (1., 0.) t
 
 let error m n =
   let q, p =
@@ -520,19 +524,35 @@ let solve_derivative_tests =
           (Oracle.structure ~rel:1e-13 pair)
           (f q0)
           (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f q0));
-    test "compiled equals eager within the tolerance for a transcendental field"
+    test "a compiled solve of a transcendental field is within its error"
       (fun () ->
+        (* Compiled tanh is within ulps of eager's, which changes the steps:
+           from 0.5 on the host, eager takes 230 evaluations and compiled 236.
+           The answers then differ by up to their global errors, which tol
+           does not bound. The steps' errors grow by at most e^(L T) to T
+           (Hairer, Nørsett and Wanner, I, §II.3), with L = 1 bounding the
+           field's Jacobian in the maximum norm, as sech² q ≤ 1, and each
+           step's error is below its estimate, which measures the order-4
+           solution the step does not take. Rounding, a few ulps in each of
+           about 40 steps, adds under 1e-12, a ten-thousandth of the bound. *)
+        let soft _ (q, p) = (p, Nx.neg (Nx.tanh q)) in
         let f y0 =
-          Solution.get
-            (Ode.solve pair Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:1000 forced
-               ~t0:(scalar 0.) ~t1:(scalar 2.)
-               (y0, Nx.zeros_like y0))
+          Ode.solve pair Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:1000 soft
+            ~t0:(scalar 0.) ~t1:(scalar 2.)
+            (y0, Nx.zeros_like y0)
         in
-        let q0 = scalar 0.9 in
-        equal
-          (Oracle.structure ~rel:1e-8 pair)
-          (f q0)
-          (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f q0));
+        let s =
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (Solution.ptree (pair tensor tensor)))
+            f (scalar 0.5)
+        in
+        let q, p = Solution.get s and eq, ep = Solution.error s in
+        let rq, rp =
+          integrate (fun _ (q, p) -> (p, -.Float.tanh q)) (0.5, 0.) 2.
+        in
+        let bound = Float.exp 2. *. (Nx.item [] eq +. Nx.item [] ep) in
+        less float_exact ~than:bound (Float.abs (Nx.item [] q -. rq));
+        less float_exact ~than:bound (Float.abs (Nx.item [] p -. rp)));
     test "vmap gives each lane its own steps" (fun () ->
         let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
         let ks = vec [| 0.1; 5.; 0.8 |] in
