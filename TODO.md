@@ -104,9 +104,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.mlx5 folds rig.mlx5.uverbs in (`path` internal, `?root` hidden), each
   part beyond tinygrad's RDMA justified; `?root` behind `(**/**)` on amdgpu
   and nvidia
-- decide: whether the SQTT decoder stays in rig.amd.abi; whether the
-  per-driver floor drivers stay in the benches; whether generators commit
-  excerpts
+- the SQTT decoder's home (rig.amd.abi, or beside the tools that read
+  traces) and whether the per-driver floor drivers stay in the benches,
+  each derived from rig's identity and the rule that a row times what a
+  user calls
 
 ### limits and size
 
@@ -156,13 +157,12 @@ raven / llama.cpp (Vulkan; ROCm):
   `Error` only for a device's refusal; state `equal`, and `create`'s
   alignment derived per driver
 - rig.gpus: one card appears through two paths, and `openers` drops each
-  path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus` also
-  holds NICs (a rename: maintainer)
+  path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus` becomes
+  `Rig_pci.Vendor`, since it holds a vendor's NICs too
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
   GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
   dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'
-  GPUs runs through rig.mlx5 or rig.bnxt, not TCP; whether and when:
-  maintainer
+  GPUs runs through rig.mlx5 or rig.bnxt, not TCP
 
 ### tests and runs
 
@@ -171,7 +171,9 @@ raven / llama.cpp (Vulkan; ROCm):
   the host relocation that does not fit its field; rig.program's
   `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
   `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
-  it cannot be forced; the AMD hang law, which may reset the GPU
+  it cannot be forced; the AMD hang law, which runs where no other process
+  holds the GPU (/sys/class/kfd/kfd/proc) and skips with that reason
+  elsewhere, since a failed preemption makes amdgpu reset it
 - covers some seeds miss: test_amd "values across 2^32" reaches "ends on
   COMPUTE:0" with p ≈ 0.17 a case, so about 2.3% of 20-case runs miss it:
   draw the shape at the carry from its own generator; test_model "a
