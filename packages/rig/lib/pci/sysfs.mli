@@ -102,26 +102,43 @@ val group_holders : t -> string -> (string * string) list
 val keep_off : 's lock -> remove:bool -> unit
 (** [keep_off l ~remove] keeps kernel drivers off the function [l] locks,
     unless it is bound to [vfio-pci], by setting its [driver_override] to no
-    driver. Raises {!Fail.Failed}, having written nothing, if the function
-    would not be takeable once unbound and enabled, alone if [remove], or if
-    the file cannot be written. Without [remove] it raises for a function
-    whose device has other functions and that Linux resets through its bus,
-    naming each with its driver. *)
+    driver. Behind an IOMMU that translates its addresses, it sets the
+    function's [driver_override] to [vfio-pci] instead, if it is not on
+    [vfio-pci]. Raises {!Fail.Failed}, having written nothing, if the
+    function would not be takeable once unbound and enabled, alone if
+    [remove], or once on [vfio-pci] behind such an IOMMU, or if a file cannot
+    be written. Without [remove] it raises for a function whose device has
+    other functions and that Linux resets through its bus, naming each with
+    its driver. *)
 
 val detach : 's lock -> remove:bool -> unit
 (** [detach l ~remove] makes the function [l] locks takeable, after
     {!keep_off} with the same [remove]. It unbinds its driver, unless that is
     [vfio-pci], removes the other functions of its device if [remove] and,
-    once unbound, enables it and turns its bus mastering off. Raises
-    {!Fail.Failed} if the function is still not takeable, or a file cannot be
+    once unbound, enables it and turns its bus mastering off. Behind an IOMMU
+    that translates, it sets the [driver_override] of the other functions of
+    the device to [vfio-pci] if [remove] and unbinds their drivers, then the
+    function's, which {!bind} then binds. Raises {!Fail.Failed} if the
+    function is still not takeable, or a file cannot be written. *)
+
+val bind : 's lock -> remove:bool -> unit
+(** [bind l ~remove] binds to [vfio-pci], behind an IOMMU that translates, the
+    function [l] locks and, if [remove], the other functions of its device,
+    each not on [vfio-pci] yet: it sets each one's [driver_override] to
+    [vfio-pci] and has Linux probe it. Elsewhere it does nothing. Raises
+    {!Fail.Failed} if [vfio-pci] does not take one, or a file cannot be
     written. *)
 
-val attach : 's lock -> unit
-(** [attach l] gives the function [l] locks back to its kernel driver. It
-    unbinds [vfio-pci], disables the function, rescans the bus, clears its
-    [driver_override] and probes drivers. A function bound to another driver
-    stays bound, and the bus is rescanned and its [driver_override] cleared if
-    that is set. Raises {!Fail.Failed} if no driver takes it. *)
+val attach : 's lock -> siblings:bool -> unit
+(** [attach l ~siblings] gives the function [l] locks back to its kernel
+    driver. It unbinds [vfio-pci], disables the function, rescans the bus,
+    clears its [driver_override] and probes drivers. A function bound to
+    another driver stays bound, and the bus is rescanned and its
+    [driver_override] cleared if that is set. With [siblings], each other
+    function of its device that [vfio-pci] holds, or whose [driver_override]
+    names it, is unbound from it, has its [driver_override] cleared and its
+    drivers probed. Raises {!Fail.Failed} if no driver takes the function or
+    such another one. *)
 
 val reset : t -> string -> unit
 (** [reset m bus] resets [bus] with the reset Linux has for it. *)
@@ -185,7 +202,12 @@ val held_elsewhere : t -> string -> string list -> (int * string) option
     the listing is left out. Raises {!Fail.Failed} as {!held}, or if a process's
     [fd] or [map_files] cannot be read for another reason, naming it. *)
 
-val refusal : 's lock -> string option
-(** [refusal l] is why a process could not take the function [l] locks once
-    detached from its kernel driver, if it could not, such as an IOMMU that
-    translates its addresses without [vfio-pci]. *)
+val command : t -> int -> string option
+(** [command m pid] is the command of process [pid] of [m], from its
+    [proc/PID/comm], or [None] if that cannot be read. *)
+
+val refusal : 's lock -> remove:bool -> string option
+(** [refusal l ~remove] is why a process could not take the function [l] locks
+    once detached from its kernel driver with [remove], if it could not, such
+    as an IOMMU group that holds other devices' functions bound to other
+    drivers, or [vfio-pci] not loaded behind an IOMMU that translates. *)

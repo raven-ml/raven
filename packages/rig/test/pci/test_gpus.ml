@@ -823,6 +823,10 @@ let memory_space = 0x2
 let bus_master = 0x4
 let intx_disable = 0x400
 
+(* A function of another device on vfio-pci, which makes the tree's
+   vfio-pci driver. *)
+let vfio_elsewhere = Tree.gpu ~driver:"vfio-pci" ~group:"13" "0000:43:00.0"
+
 let changes =
   let gpu = Tree.gpu gpu_bus in
   [
@@ -862,19 +866,62 @@ let changes =
         ("drivers/vfio-pci/unbind", "");
         (devices gpu_bus "driver_override", "(null)");
       ] );
-    ( "detach refuses a GPU whose addresses an IOMMU translates, writing nothing",
+    ( "detach refuses a GPU whose addresses an IOMMU translates without \
+       vfio-pci, writing nothing",
       [ Tree.gpu ~group:"12" gpu_bus ],
       `Detach,
-      `Refused "the IOMMU translates the addresses 0000:03:00.0 reaches",
+      `Refused "through vfio-pci, which is not loaded",
       [ (devices gpu_bus "driver_override", "(null)") ] );
     ( "detach refuses a GPU bound to its kernel driver behind a translating \
-       IOMMU, writing nothing",
+       IOMMU without vfio-pci, writing nothing",
       [ Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus ],
       `Detach,
-      `Refused "the IOMMU translates the addresses 0000:03:00.0 reaches",
+      `Refused "through vfio-pci, which is not loaded",
       [
         ("drivers/amdgpu/unbind", "");
         (devices gpu_bus "driver_override", "(null)");
+      ] );
+    ( "detach refuses a GPU whose IOMMU group holds another device's function \
+       on another driver, writing nothing",
+      [
+        Tree.gpu ~group:"12" gpu_bus;
+        Tree.gpu ~driver:"amdgpu" ~group:"12" "0000:04:00.0";
+        vfio_elsewhere;
+      ],
+      `Detach,
+      `Refused
+        "IOMMU group 12 of 0000:03:00.0 also holds 0000:04:00.0 (amdgpu)",
+      [ (devices gpu_bus "driver_override", "(null)") ] );
+    ( "detach keeps the GPU and its other functions for vfio-pci behind a \
+       translating IOMMU, and unbinds their drivers, the other functions' \
+       first, refused while one stays bound",
+      [
+        Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus;
+        { (audio "0000:03:00.1") with group = Some "12" };
+        vfio_elsewhere;
+      ],
+      `Detach,
+      `Part_way "the driver snd_hda_intel stays bound to 0000:03:00.1",
+      [
+        ("drivers/snd_hda_intel/unbind", "0000:03:00.1");
+        ("drivers/amdgpu/unbind", "");
+        (devices gpu_bus "driver_override", "vfio-pci");
+        (devices "0000:03:00.1" "driver_override", "vfio-pci");
+        (devices "0000:03:00.1" "remove", "");
+      ] );
+    ( "detach binds an unbound GPU and its other functions to vfio-pci behind \
+       a translating IOMMU, refused while vfio-pci does not take them",
+      [
+        Tree.gpu ~group:"12" gpu_bus;
+        { (Tree.gpu ~group:"12" "0000:03:00.1") with class_ = 0x040300 };
+        vfio_elsewhere;
+      ],
+      `Detach,
+      `Part_way "vfio-pci did not take 0000:03:00.0 at its probe",
+      [
+        (devices gpu_bus "driver_override", "vfio-pci");
+        (devices "0000:03:00.1" "driver_override", "vfio-pci");
+        ("drivers_probe", gpu_bus);
       ] );
     ( "detach refuses a GPU under a locked-down kernel, writing nothing",
       [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
@@ -902,6 +949,19 @@ let changes =
         ("rescan", "");
         ("drivers_probe", "");
         (devices gpu_bus "driver_override", "(null)");
+      ] );
+    ( "attach gives the other functions of the GPU's device on vfio-pci back \
+       to their drivers",
+      [
+        Tree.gpu ~driver:"amdgpu" gpu_bus;
+        { (audio "0000:03:00.1") with driver = Some "vfio-pci" };
+      ],
+      `Attach,
+      `Done,
+      [
+        ("drivers/vfio-pci/unbind", "0000:03:00.1");
+        (devices "0000:03:00.1" "driver_override", "");
+        ("drivers_probe", "0000:03:00.1");
       ] );
     ( "attach leaves a GPU on vfio-pci whose function cannot be taken as it was",
       [ Tree.gpu ~driver:"vfio-pci" gpu_bus ],
@@ -1214,6 +1274,18 @@ let test_held_elsewhere () =
       ("a mapping", "proc/4242/map_files/7f00-7f01");
     ]
 
+(* A daemon that holds a GPU's device, as nvidia-persistenced holds
+   /dev/nvidiaN, is named by its command, to be stopped first. *)
+let test_held_by_daemon () =
+  needs_flock ();
+  let root = held_tree () in
+  Tree.link root "proc/4242/fd/7" "/dev/null";
+  Tree.add root "proc/4242/comm" "nvidia-persistenced\n";
+  let g = gpus ~teardown_ms:60_000 () in
+  let why = require_error (Gpus.detach g (Machine.at root) 0) in
+  contains ~sub:"process 4242 (nvidia-persistenced) holds /dev/null" why;
+  contains ~sub:"stop it first" why
+
 (* Detach waits until the kernel lets go of the last file of the GPU's DRM
    device, as a compute runtime's deferred release does, then detaches. *)
 let test_let_go_drm () =
@@ -1379,6 +1451,50 @@ let test_vfio_unwaited () =
    function through its bus, naming each with its driver, and write nothing;
    one alone on its device detaches, and so does one with a reset of its
    own, its other functions left as they were. *)
+(* Behind a translating IOMMU, attach gives back what a detach that stopped
+   part-way left: a GPU still bound to its driver, whose override and its
+   other function's are cleared; and an unbound GPU, which it binds to
+   vfio-pci for the reset first. *)
+let test_attach_vfio_part_way () =
+  needs_flock ();
+  let g = gpus () in
+  let sibling = "0000:03:00.1" in
+  let bound =
+    Tree.make
+      [
+        Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus;
+        { (audio sibling) with group = Some "12" };
+        vfio_elsewhere;
+      ]
+  in
+  contains ~sub:"snd_hda_intel stays bound"
+    (part_way (Gpus.detach g (Machine.at bound) 0));
+  require_ok ~msg:"attach of a GPU still bound"
+    (Gpus.attach g (Machine.at bound) 0);
+  equal ~msg:"the GPU's override" string ""
+    (pci_file bound (devices gpu_bus "driver_override"));
+  equal ~msg:"the other function's override" string ""
+    (pci_file bound (devices sibling "driver_override"));
+  let unbound =
+    Tree.make
+      [
+        Tree.gpu ~group:"12" gpu_bus;
+        { (Tree.gpu ~group:"12" sibling) with class_ = 0x040300 };
+        vfio_elsewhere;
+      ]
+  in
+  contains ~sub:"vfio-pci did not take"
+    (part_way (Gpus.detach g (Machine.at unbound) 0));
+  Tree.add unbound
+    (Filename.concat "sys/bus/pci" (devices gpu_bus "driver_override"))
+    "";
+  contains ~msg:"attach binds the GPU to vfio-pci first"
+    ~sub:"vfio-pci did not take 0000:03:00.0"
+    (require_error (Gpus.attach g (Machine.at unbound) 0));
+  equal ~msg:"its override" string "vfio-pci"
+    (pci_file unbound (devices gpu_bus "driver_override"));
+  equal ~msg:"its probe" string gpu_bus (pci_file unbound "drivers_probe")
+
 let test_keep_siblings () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu gpu_bus; audio "0000:03:00.1" ] in
@@ -1412,6 +1528,10 @@ let tree_changes =
       test "a GPU the process holds is refused" test_change_held;
       test "detach keeps a device's other functions when the vendor says so"
         test_keep_siblings;
+      test
+        "attach gives back a GPU that a detach behind a translating IOMMU left \
+         part-way"
+        test_attach_vfio_part_way;
       test "detach leaves the GPU's bus mastering off"
         test_detach_stops_mastering;
       test "attach clears what a detach that stopped part-way left"
@@ -1433,6 +1553,8 @@ let tree_changes =
         "detach refuses at once a GPU another process holds open or mapped, \
          changing nothing"
         test_held_elsewhere;
+      test "detach names the command of a daemon that holds the GPU's device"
+        test_held_by_daemon;
       test "detach waits for the last file of the GPU's DRM device to go"
         test_let_go_drm;
       test

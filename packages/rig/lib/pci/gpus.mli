@@ -40,7 +40,9 @@ type t
 type siblings =
   | Remove
       (** {!detach} removes them from the machine until {!attach} or a
-          reboot. *)
+          reboot. Behind an IOMMU that translates, it binds them to
+          [vfio-pci] with the GPU instead, and {!attach} gives them back to
+          their drivers. *)
   | Keep
       (** {!detach} leaves them, and refuses a GPU that is not bound to
           [vfio-pci] while its device has any and Linux resets it through its
@@ -191,10 +193,15 @@ val hang_ms : int
       [unbind], the [remove] file of each other function of its device if it
       removes them ({!type-siblings}), and
       the function's [enable], [config] (its command register) and
-      [resourceN_resize] for its memory BAR, if it has one;
+      [resourceN_resize] for its memory BAR, if it has one. Behind an IOMMU
+      that translates, it writes the [driver_override] and the driver's
+      [unbind] of each other function of the device in place of [remove],
+      and [/sys/bus/pci/drivers_probe];
     - {!attach} writes [vfio-pci]'s [unbind], the function's [enable] and
       [driver_override], [/sys/bus/pci/rescan] and
-      [/sys/bus/pci/drivers_probe].
+      [/sys/bus/pci/drivers_probe], and, with [Remove], [vfio-pci]'s
+      [unbind] and the [driver_override] of each other function of the
+      device that it gives back.
 
     Each of them returns [Error why], changing nothing, if [m] has no GPU [i] or
     a process holds it. {!detach} and {!attach} also return [Error why] on a
@@ -253,8 +260,17 @@ val detach : t -> Machine.t -> int -> (progress, string) result
     which keeps every kernel driver off the GPU through probes, rescans and
     module loads until {!attach} or a reboot, and unbinds the driver. It
     removes or keeps the other functions of the GPU's device, as [siblings]
-    of {!make} says. Once unbound, the function is left:
-    - enabled;
+    of {!make} says.
+
+    Behind an IOMMU that translates the GPU's addresses, a process takes it
+    through VFIO, which takes its IOMMU group whole. [detach] then sets the
+    [driver_override] of the function and, with [Remove], of the device's
+    other functions to [vfio-pci], unbinds their drivers, resizes the memory
+    BAR while they are unbound, and has Linux probe them, which binds them
+    to [vfio-pci]. The [vfio-pci] module must be loaded.
+
+    Either way the function is left:
+    - enabled, if unbound;
     - with its bus mastering off, which a kernel driver's unbind may leave on;
     - with its memory BAR, if it has one, at the largest size the BAR and its
       bridge take.
@@ -266,38 +282,49 @@ val detach : t -> Machine.t -> int -> (progress, string) result
     that write [Ok p], where [p] is how far it got ({!type-progress}).
 
     [Error why], changing nothing, if:
-    - no process could take its function once detached, such as when an
-      IOMMU translates its addresses and it is not bound to [vfio-pci], or
-      when its device keeps other functions ([Keep]) and Linux resets it
-      through its bus;
+    - no process could take its function once detached, such as when its
+      IOMMU group holds functions that detach leaves bound to other drivers
+      (other devices' or, with [Keep], its own device's), when [vfio-pci] is
+      not loaded behind an IOMMU that translates, or when its device keeps
+      other functions ([Keep]) and Linux resets it through its bus;
     - a process, this one included, holds a file of one of its devices,
-      naming it, or the kernel still holds one after [teardown_ms];
+      naming the file and the process with its command, such as a vendor's
+      daemon to stop first (nvidia-persistenced), or the kernel still holds
+      one after [teardown_ms];
     - [/proc] cannot be read, or, for a GPU with a DRM device, its list of
       files in debugfs;
     - the process may not write [driver_override];
     - the GPU is already unbound and its kernel driver has still not let go
       of it after [teardown_ms].
 
-    [Ok Detached] leaves the memory BAR small on [vfio-pci], or where the
-    kernel refuses every larger size. *)
+    [Ok Detached] leaves the memory BAR small on a GPU that was on
+    [vfio-pci] already, or where the kernel refuses every larger size. *)
 
 val attach : t -> Machine.t -> int -> (unit, string) result
 (** [attach g m i] gives GPU [i] of [m] back to its kernel driver. A GPU bound
     to no kernel driver, or to [vfio-pci], is first reset as {!reset} does,
     since its kernel driver expects it as its vendor's reset leaves it,
-    whatever ran on it. [attach] then unbinds [vfio-pci], disables the
+    whatever ran on it. Behind an IOMMU that translates, an unbound GPU, as
+    a {!detach} that stopped part-way leaves it, is bound to [vfio-pci] for
+    that reset once its kernel driver has let go. [attach] then unbinds
+    [vfio-pci], disables the
     function, has Linux rescan the bus, which brings back the functions
     {!detach} removed, clears the function's [driver_override] and has Linux
     probe drivers, which binds the GPU's driver. A GPU bound to its kernel
     driver stays bound. If the function's PCI driver override
     ([driver_override]) is set, whether a {!detach} that stopped part-way
     left it or an administrator set it, [attach] has Linux rescan the bus
-    and clears the override.
+    and clears the override. With [Remove] ({!type-siblings}), each other
+    function of the device on [vfio-pci], or whose [driver_override] names
+    it, as {!detach} behind a translating IOMMU leaves them, goes back to its
+    driver the same way.
 
-    [Error why] if no driver takes the GPU, such as when the driver's module is
-    not loaded. [Error why], with the GPU left as it was, if its reset fails,
-    and [why] says how to proceed. An exception raised by the vendor's reset
-    passes through, with the GPU left as it was. *)
+    [Error why] if no driver takes the GPU or such another function, such as
+    when the driver's module is not loaded. [Error why], with the GPU left as
+    it was but bound to [vfio-pci] where it was bound for the reset, if
+    [vfio-pci] or the reset fails, and [why] says how to proceed. An
+    exception raised by the vendor's reset passes through, with the GPU left
+    the same way. *)
 
 val reset : t -> Machine.t -> int -> (unit, string) result
 (** [reset g m i] takes the function of GPU [i] of [m], turns its bus mastering

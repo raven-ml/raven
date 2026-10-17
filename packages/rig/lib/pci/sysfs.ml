@@ -351,9 +351,52 @@ let stop_mastering m bus =
    functions: one it could not take then could not be reset to go back to its
    driver. A detach that keeps them refuses a function that has any and that
    Linux resets through its bus, naming each with its driver. *)
+(* Behind an IOMMU that translates, a process takes a function through VFIO,
+   which takes its IOMMU group whole. Detach binds the function to vfio-pci
+   itself, and with [remove] the other functions of its device, which a GPU's
+   group holds with it: the functions it moves are those not on vfio-pci. *)
+let to_move m bus ~remove =
+  List.filter
+    (fun f -> driver_of m f <> Some vfio_pci)
+    (bus :: (if remove then siblings m bus else []))
+
+(* The functions of [bus]'s group that VFIO refuses and that detach leaves, with
+   their drivers. *)
+let left_in_group m bus ~remove =
+  let moved = bus :: (if remove then siblings m bus else []) in
+  match group m bus with
+  | None -> []
+  | Some g ->
+      List.filter (fun (f, _) -> not (List.mem f moved)) (group_holders m g)
+
+let vfio_refusal m bus ~remove =
+  if not (Sys.file_exists (Filename.concat m.bus_files "drivers/vfio-pci")) then
+    Some
+      (strf
+         "the IOMMU translates the addresses %s reaches, so it is taken \
+          through vfio-pci, which is not loaded; load it: sudo modprobe \
+          vfio-pci"
+         bus)
+  else
+    match left_in_group m bus ~remove with
+    | [] -> None
+    | held ->
+        Some
+          (strf
+             "IOMMU group %s of %s also holds %s, bound to other drivers; VFIO \
+              takes a group whole: bind each to vfio-pci"
+             (Option.get (group m bus))
+             bus
+             (String.concat ", "
+                (List.map (fun (f, d) -> strf "%s (%s)" f d) held)))
+
 let keep_off { files = m; bus; _ } ~remove =
   let s = state m bus in
-  if s.driver <> Some vfio_pci then begin
+  if s.iommu = Translating then begin
+    Option.iter (Fail.fail "%s") (vfio_refusal m bus ~remove);
+    if s.driver <> Some vfio_pci then write (override m bus) vfio_pci
+  end
+  else if s.driver <> Some vfio_pci then begin
     if (not remove) && s.siblings <> [] && s.bus_reset then begin
       let named f =
         match driver_of m f with
@@ -372,19 +415,32 @@ let keep_off { files = m; bus; _ } ~remove =
     write (override m bus) no_driver
   end
 
+let unbind m f =
+  match driver_of m f with
+  | Some d when d <> vfio_pci ->
+      write (path m f "driver/unbind") f;
+      if driver_of m f <> None then
+        Fail.fail "the driver %s stays bound to %s" d f
+  | _ -> ()
+
 (* A function detach leaves on no driver masters the bus no more: without an
-   IOMMU it could write any host memory. *)
+   IOMMU it could write any host memory. Behind one that translates, the
+   functions it moves stay unbound until {!bind}. The other functions go
+   first, so that one whose driver stays bound leaves the GPU bound too,
+   which {!attach} gives back as it is. *)
 let detach { files = m; bus; _ } ~remove =
   let s = state m bus in
-  (match addressing m bus s with
+  (if s.iommu = Translating then begin
+     let others = List.filter (( <> ) bus) (to_move m bus ~remove) in
+     List.iter (fun f -> write (override m f) vfio_pci) others;
+     List.iter (unbind m) others;
+     unbind m bus
+   end
+   else
+     match addressing m bus s with
   | Ok _ -> ()
   | Error _ -> (
-      (match driver_of m bus with
-      | Some d when d <> vfio_pci ->
-          write (path m bus "driver/unbind") bus;
-          if driver_of m bus <> None then
-            Fail.fail "the driver %s stays bound to %s" d bus
-      | _ -> ());
+      unbind m bus;
       if remove then
         List.iter (fun s -> write (path m s "remove") "1") (siblings m bus);
       if driver_of m bus = None && not (enabled m bus) then
@@ -400,14 +456,35 @@ let detach { files = m; bus; _ } ~remove =
       | Error why, _ -> Fail.fail "%s" why));
   if driver_of m bus = None then stop_mastering m bus
 
+(* Linux binds each function whose [driver_override] names vfio-pci to it at a
+   probe. *)
+let bind { files = m; bus; _ } ~remove =
+  let probe f =
+    write (override m f) vfio_pci;
+    write (Filename.concat m.bus_files "drivers_probe") f;
+    if driver_of m f <> Some vfio_pci then
+      Fail.fail "vfio-pci did not take %s at its probe" f
+  in
+  if iommu_of m bus = Translating then List.iter probe (to_move m bus ~remove)
+
 let reset m bus = write (path m bus "reset") "1"
 
 (* A rescan brings back the functions [detach] removed. The function itself is
    on the bus already, so its driver is probed for it. A detach that stopped
    part-way may leave the function bound with its override set, which would keep
-   its driver off it at the next probe. *)
-let attach { files = m; bus; _ } =
-  match driver_of m bus with
+   its driver off it at the next probe. With [siblings], each other function of
+   the device that vfio-pci holds or that its override keeps for vfio-pci, as a
+   detach behind a translating IOMMU leaves it, goes back to its driver the
+   same way. *)
+let give_back m f =
+  if driver_of m f = Some vfio_pci then write (path m f "driver/unbind") f;
+  write (override m f) "\n";
+  write (Filename.concat m.bus_files "drivers_probe") f;
+  if driver_of m f = None then
+    Fail.fail "no kernel driver took %s; load its module first" f
+
+let attach { files = m; bus; _ } ~siblings:others =
+  (match driver_of m bus with
   | Some d when d <> vfio_pci ->
       if not (List.mem (read (override m bus)) [ ""; "(null)" ]) then begin
         write (Filename.concat m.bus_files "rescan") "1";
@@ -420,7 +497,13 @@ let attach { files = m; bus; _ } =
       write (override m bus) "\n";
       write (Filename.concat m.bus_files "drivers_probe") bus;
       if driver_of m bus = None then
-        Fail.fail "no kernel driver took %s; load its module first" bus
+        Fail.fail "no kernel driver took %s; load its module first" bus);
+  if others then
+    List.iter
+      (fun f ->
+        if driver_of m f = Some vfio_pci || read (override m f) = vfio_pci then
+          give_back m f)
+      (siblings m bus)
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size
@@ -748,13 +831,22 @@ let held_elsewhere m bus nodes =
           (find_held gpu (opened (Filename.concat proc pid))))
     (Option.value (listing proc) ~default:[])
 
-let refusal { files = m; bus; _ } =
+(* A process's command, as [proc/PID/comm] gives it. *)
+let command m pid =
+  let file = Filename.concat m.root (strf "proc/%d/comm" pid) in
+  match In_channel.with_open_text file In_channel.input_all with
+  | s -> Some (String.trim s)
+  | exception Sys_error _ -> None
+
+let refusal { files = m; bus; _ } ~remove =
   let s = state m bus in
-  match
-    addressing m bus { s with driver = None; siblings = []; enabled = true }
-  with
-  | Ok _ -> None
-  | Error why -> Some why
+  if s.iommu = Translating then vfio_refusal m bus ~remove
+  else
+    match
+      addressing m bus { s with driver = None; siblings = []; enabled = true }
+    with
+    | Ok _ -> None
+    | Error why -> Some why
 
 (* DRM's debugfs lists each file of a device, by the device's PCI name: one line
    a file after a header, its fields the opener's command, which may hold

@@ -339,11 +339,18 @@ let own files bus nodes =
       else None
 
 (* A file of the GPU at [bus] another process holds open or mapped: no bound
-   holds its wait, so it is refused at once. *)
+   holds its wait, so it is refused at once, naming the process's command, as
+   for a daemon of the vendor's such as nvidia-persistenced, which must be
+   stopped first. *)
 let refuse_held files bus nodes =
   Option.iter
     (fun (pid, file) ->
-      Fail.fail "process %d holds %s open, a file of %s" pid file bus)
+      let who =
+        match Sysfs.command files pid with
+        | Some c -> strf "process %d (%s)" pid c
+        | None -> strf "process %d" pid
+      in
+      Fail.fail "%s holds %s open, a file of %s; stop it first" who file bus)
     (Sysfs.held_elsewhere files bus nodes)
 
 (* Why the kernel driver has not let go of the GPU at [bus], once no process
@@ -402,17 +409,19 @@ let detach g m i =
       Option.iter
         (Fail.fail "%s is open in this process, through %s" bus)
         (own files bus nodes);
+      let remove = g.siblings = Remove in
       let bound =
         match Sysfs.driver l with
         | Some d when d = Sysfs.vfio_pci -> false
         | driver ->
-            Option.iter (Fail.fail "%s") (Sysfs.refusal l);
+            Option.iter (Fail.fail "%s") (Sysfs.refusal l ~remove);
             let bound = Option.is_some driver in
             let_go g files bus nodes ~bound;
             bound
       in
-      let remove = g.siblings = Remove in
       Sysfs.keep_off l ~remove;
+      (* Behind a translating IOMMU, the memory BAR is resized while every
+         function of the device is unbound, before vfio-pci takes them. *)
       let finish () =
         Sysfs.detach l ~remove;
         match
@@ -421,6 +430,7 @@ let detach g m i =
         | Some why -> Unreleased why
         | None ->
             Option.iter (Sysfs.resize l) g.memory_bar;
+            Sysfs.bind l ~remove;
             Detached
       in
       match Fail.result finish with Ok d -> d | Error why -> Part_way why)
@@ -451,9 +461,15 @@ let reset g m i =
    the unbind left KFD locked. *)
 let attach g m i =
   change g "attach" m i (fun l ->
+      let siblings = g.siblings = Remove in
       match Sysfs.driver l with
-      | Some d when d <> Sysfs.vfio_pci -> Sysfs.attach l
+      | Some d when d <> Sysfs.vfio_pci -> Sysfs.attach l ~siblings
       | _ ->
+          (* Behind a translating IOMMU an unbound GPU, as a detach that
+             stopped part-way leaves it, is taken through vfio-pci, once its
+             kernel driver has let go. *)
+          Result.iter_error (Fail.fail "%s") (released g l);
+          Sysfs.bind l ~remove:false;
           Result.iter_error (Fail.fail "%s")
             (reset_taken g m (take_locked g m l));
-          Sysfs.attach l)
+          Sysfs.attach l ~siblings)
