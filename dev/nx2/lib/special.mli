@@ -6,10 +6,9 @@
 (** Special functions as expressions.
 
     Each value is the expression of the function {!Nx} names alike, over
-    expressions of one dtype, which must be float32 or float64: another
-    dtype's expression computes with float32's tables at its own precision.
-    Its contract, the domain, edges and bound, is {!Nx}'s. Its arguments are
-    in {!Nx}'s order, parameters first and the variable last. *)
+    expressions of one dtype, which must be float32 or float64. Its contract,
+    the domain, edges and bound, is {!Nx}'s. Its arguments are in {!Nx}'s
+    order, parameters first and the variable last. *)
 
 type 'w e := (float, 'w) Nx_kernel.Prog.E.t
 

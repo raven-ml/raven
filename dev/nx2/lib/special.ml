@@ -58,6 +58,8 @@ let logical_not b = E.logxor b yes
 let isnan x = E.not_equal x x
 let isfinite x = cmplt (abs x) (lit x Float.infinity)
 let lt x v = cmplt x (lit x v)
+let le x v = cmple x (lit x v)
+let gt x v = cmpgt x (lit x v)
 let ge x v = cmpge x (lit x v)
 let is x v = cmpeq x (lit x v)
 
@@ -1262,9 +1264,6 @@ let gammaincinv_at a p upper =
    method's series runs on every element over its inputs clamped into its
    region. [x] is the only exact input: [log x], [log (1 - x)] and [a - (a + b)
    x] come from it to the dtype's precision. *)
-
-let le x v = cmple x (lit x v)
-let gt x v = cmpgt x (lit x v)
 
 (* [(e - log1p e) / e^2] for [|e| <= rlog1_series], from [log1p e = 2 atanh r],
    [r = e / (e + 2)]: [1/(e + 2) - 2 e P(r^2) / (e + 2)^3], [P] the series of
