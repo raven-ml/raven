@@ -460,9 +460,11 @@ val signaled : t -> int
     {- {!open_} holds its name's lock while the opener runs, so opens of one
        name run one at a time while opens of other names go on.}
     {- A {!Buffer.copy} through staging memory holds one of that staging
-       memory's two slots until its pieces are done. At most two copies run
-       through one staging memory at a time, and a third waits until one is
-       done, or raises [Invalid_argument] on the thread that holds both.}
+       memory's two slots until its pieces are done, and a copy between two
+       devices that stage through memory of their own holds one slot of
+       each, taken together. At most two copies run through one staging
+       memory at a time, and a third waits until one is done, or raises
+       [Invalid_argument] on the thread that holds both.}
     {- While a driver's [room], [submit] or [commit] blocks, where its
        driver declares [may_block], other submits and commits on that device
        wait for it.}}
@@ -1067,7 +1069,8 @@ module Buffer : sig
       the first copy whose bytes need it, and keeps for the life of the
       process. A device that maps no host memory ([maps_host] in
       {!Rig_edge.type-facts}) stages through [Pinned] memory of its own,
-      which it keeps until it is lost.
+      which it keeps until it is lost. Between two such devices, the host
+      copies from one device's staging memory into the other's.
 
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the

@@ -905,6 +905,90 @@ let test_copy_staged_large () =
   in
   equal ~msg:"bytes that differ" int 0 wrong
 
+(* Two devices that map no host memory and no peer's, and whose memory the host
+   does not address, stage through their own memory each: a copy between them of three pieces lands byte for byte, and
+   neither device maps host memory for it. *)
+let test_mapless_pair () =
+  let open_ name =
+    P.open_ ~maps_host:false ~peers:false ~host_visible:false name
+  in
+  let d, pd = open_ "buffer:mapless-pair-src" in
+  let e, pe = open_ "buffer:mapless-pair-dst" in
+  let n = (2 * (32 lsl 20)) + 4096 in
+  let byte i = Char.unsafe_chr ((i + (i lsr 25) * 7) land 255) in
+  let h = B.create Rig.host n in
+  B.write h Bigarray.char (fun ba ->
+      for i = 0 to n - 1 do
+        Bigarray.Array1.unsafe_set ba i (byte i)
+      done);
+  let src = B.create d n and dst = B.create e n in
+  B.copy ~src:h ~dst:src;
+  B.copy ~src ~dst;
+  let back = B.create Rig.host n in
+  B.copy ~src:dst ~dst:back;
+  let wrong =
+    B.read back Bigarray.char (fun got ->
+        let wrong = ref 0 in
+        for i = 0 to n - 1 do
+          if Bigarray.Array1.unsafe_get got i <> byte i then incr wrong
+        done;
+        !wrong)
+  in
+  equal ~msg:"bytes that differ" int 0 wrong;
+  equal ~msg:"host maps" (list int) [] (P.host_maps pd @ P.host_maps pe)
+
+(* Copies between two such devices both ways hold their slots of both devices'
+   staging memory together. Two copies each way, with both devices' sleeps
+   held: two copies take a slot of each staging memory and wait at a gate,
+   and two wait for slots holding none. Copies that took their source's slot
+   and ran their first leg before taking the other's would all four wait at
+   the gates holding every slot, and wait for good for each other's once
+   the gates open. Every copy lands. *)
+let test_mapless_pair_slots () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let open_ name =
+    P.open_ ~maps_host:false ~peers:false ~host_visible:false name
+  in
+  let d, pd = open_ "buffer:mapless-slots-a" in
+  let e, pe = open_ "buffer:mapless-slots-b" in
+  let copies =
+    List.init 4 (fun k ->
+        let from, into = if k < 2 then (d, e) else (e, d) in
+        let src = B.create from 64 and dst = B.create into 64 in
+        B.copy ~src:(filled 64 (Char.chr (Char.code 'a' + k))) ~dst:src;
+        (src, dst))
+  in
+  P.gate pd;
+  P.gate pe;
+  let copier (src, dst) =
+    let me = Atomic.make None in
+    let t =
+      Thread.create
+        (fun () ->
+          Atomic.set me (Some (Support.self ()));
+          B.copy ~src ~dst)
+        ()
+    in
+    (me, t)
+  in
+  let copiers = List.map copier copies in
+  let blocked (me, _) =
+    match Atomic.get me with
+    | Some t -> Support.waits_in_condition t
+    | None -> false
+  in
+  Support.await "two copies at the gates and two waiting for slots"
+    (fun () ->
+      P.sleepers pd + P.sleepers pe = 2 && List.for_all blocked copiers);
+  equal ~msg:"copies at the gates" int 2 (P.sleepers pd + P.sleepers pe);
+  P.open_gate pd;
+  P.open_gate pe;
+  List.iter (fun (_, t) -> Thread.join t) copiers;
+  equal (list string)
+    (List.init 4 (fun k -> String.make 64 (Char.chr (Char.code 'a' + k))))
+    (List.map (fun (_, dst) -> contents dst) copies)
+
 (* Copies through the staging memory take it in turn: copies waiting on a device
    hold it, and every copy lands once the device runs. *)
 let test_staging_turns () =
@@ -1680,6 +1764,14 @@ let tests =
           test_copy_borrowed_host;
         test "a copy larger than the staging memory lands every byte"
           test_copy_staged_large;
+        test
+          "a copy between two devices that map no host memory goes through \
+           both their staging memory"
+          test_mapless_pair;
+        test
+          "copies between two devices that map no host memory take a slot of \
+           each together"
+          test_mapless_pair_slots;
         test "copies take the staging memory in turn" test_staging_turns;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;

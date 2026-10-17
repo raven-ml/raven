@@ -24,9 +24,11 @@
     makes one.
     The host's slots serve every device that maps host memory. A device of
     this machine that maps none stages through slots of its own [Pinned]
-    memory, which go with it once it is lost; two such devices share no
-    staging memory, and a copy between them raises [Invalid_argument]. The
-    legs into and out of a half alternate, so one half fills while the other
+    memory, which go with it once it is lost. Between two such devices, the
+    host copies from one device's staging memory into the other's, and the
+    copy takes a slot of each in one step, so that copies the other way
+    round never hold the slot it waits for. The legs into and out of a half
+    alternate, so one half fills while the other
     empties. A leg on a device's queue runs without the host waiting for it,
     and the next leg on its half follows it by the half's stamps. A half whose
     stamps name unfinished work of a lost device is replaced, so a loss

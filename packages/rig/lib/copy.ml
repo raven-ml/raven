@@ -108,6 +108,32 @@ let claim_slot st =
 
 let take_slot st = Lock.await slots_lock claim_slot st
 
+let free_slot st =
+  if st.holders.(0) = 0 then 0 else if st.holders.(1) = 0 then 1 else -1
+
+(* Under [slots_lock]: a free slot [i] of [a] and [j] of [b], both marked the
+   calling thread's, as [2 * i + j], or [None] while either has none free. A
+   copy that took one stage's slot and waited for the other's could wait for
+   good on copies the other way round, each holding the slot the other
+   needs; taking both in one hold of the lock waits holding none. The answer
+   is made before the slots are marked, so no asynchronous exception keeps
+   them. *)
+let claim_slots (a, b) =
+  let me = c_thread () in
+  let mine st = st.holders.(0) = me && st.holders.(1) = me in
+  if mine a || mine b then
+    invalid_argf "Rig.%s: both staging slots of %s are this thread's" fn
+      (if mine a then a else b).owner.name;
+  let i = free_slot a and j = free_slot b in
+  if i < 0 || j < 0 then None
+  else
+    let r = Some ((2 * i) + j) in
+    a.holders.(i) <- me;
+    b.holders.(j) <- me;
+    r
+
+let take_slots a b = Lock.await slots_lock claim_slots (a, b)
+
 (* Allocates nothing, so no asynchronous exception keeps the slot. *)
 let give_slot st i =
   Lock.hold slots_lock;
@@ -271,13 +297,14 @@ let needs_own b =
 let stage_with b =
   if needs_own b then stage_of (runner b) else host_stage
 
-(* The stage a copy between [src] and [dst] goes through. Two devices that need
-   their own share no staging memory. *)
-let stage_for src dst =
-  if needs_own src && needs_own dst && runner src != runner dst then
-    invalid_argf "Rig.%s: no device copies between %s and %s" fn
-      src.mem.dev.name dst.mem.dev.name;
-  if needs_own src then stage_with src else stage_with dst
+(* The stage a copy between [src] and [dst] goes through, where one stage
+   serves both. *)
+let stage_for src dst = if needs_own src then stage_with src else stage_with dst
+
+(* Whether a staged copy between [src] and [dst] goes through two stages: two
+   devices that need their own share no staging memory. *)
+let two_stages src dst =
+  needs_own src && needs_own dst && runner src != runner dst
 
 let rec wait_halves st i h =
   if h < 2 then begin
@@ -298,6 +325,24 @@ let settle st i =
       give_slot st i;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
+(* Waits for the legs through slot [i] of [a] and slot [j] of [b], then gives
+   both back, as [settle] does. *)
+let settle_two a i b j =
+  match
+    wait_halves a i 0;
+    wait_halves b j 0
+  with
+  | () ->
+      give_slot a i;
+      give_slot b j
+  | exception e ->
+      give_slot a i;
+      give_slot b j;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+let pieces n = (n + half_bytes - 1) / half_bytes
+let piece_bytes n k = Int.min half_bytes (n - (k * half_bytes))
+
 (* Moves [n] bytes through a slot of [st], whose two halves take the pieces in
    turn, so one half fills while the other drains: [into h at] fills the half
    [h] with the bytes from byte [at], and [out_of h at] drains it. The halves
@@ -308,8 +353,8 @@ let settle st i =
    fills and the host drains; otherwise the host's leg into the slot fills one
    half while a device drains the other. *)
 let through st n ~sides ~ahead ~into ~out_of =
-  let pieces = (n + half_bytes - 1) / half_bytes in
-  let len k = Int.min half_bytes (n - (k * half_bytes)) in
+  let pieces = pieces n in
+  let len k = piece_bytes n k in
   let run i =
     let h0 = half st i 0 in
     (* One piece goes through the first half alone. *)
@@ -339,6 +384,9 @@ let through st n ~sides ~ahead ~into ~out_of =
       | exception x ->
           give_slot st i;
           raise x)
+
+(* The bytes of [b] from [at] that go through the half [h]. *)
+let piece b at h = Buffer.view b ~first:at ~length:(Buffer.length h)
 
 let rec copy ~src ~dst =
   Dev.check_held fn;
@@ -382,11 +430,57 @@ and route ~wait src dst n =
 (* Through staging memory. Where a device runs the legs out of [src], each runs
    one piece ahead. *)
 and staged src dst n =
-  let piece b at h = Buffer.view b ~first:at ~length:(Buffer.length h) in
-  through (stage_for src dst) n ~sides:[ src; dst ] ~ahead:(runs src)
-    ~into:(fun h at -> leg ~src:(piece src at h) ~dst:h)
-    ~out_of:(fun h at -> leg ~src:h ~dst:(piece dst at h));
+  if two_stages src dst then between src dst n
+  else
+    through (stage_for src dst) n ~sides:[ src; dst ] ~ahead:(runs src)
+      ~into:(fun h at -> leg ~src:(piece src at h) ~dst:h)
+      ~out_of:(fun h at -> leg ~src:h ~dst:(piece dst at h));
   Buffer.wait dst Buffer.Read_write
+
+(* Between two devices that each stage through their own memory: [src]'s
+   device fills a half of a slot of its stage, the host moves the half's bytes
+   into a half of a slot of [dst]'s device's stage, and that device drains it.
+   The leg into the next half runs while the host moves the last. *)
+and between src dst n =
+  let a = stage_of (runner src) and b = stage_of (runner dst) in
+  let pieces = pieces n in
+  let run i j =
+    let a0 = half a i 0 and b0 = half b j 0 in
+    let a1 = if pieces > 1 then half a i 1 else a0 in
+    let b1 = if pieces > 1 then half b j 1 else b0 in
+    map_halves a src ~pieces a0 a1;
+    map_halves b dst ~pieces b0 b1;
+    let half h0 h1 k =
+      Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0
+        ~length:(piece_bytes n k)
+    in
+    let into k =
+      let h = half a0 a1 k in
+      leg ~src:(piece src (k * half_bytes) h) ~dst:h
+    in
+    into 0;
+    for k = 0 to pieces - 1 do
+      if k + 1 < pieces then into (k + 1);
+      let ha = half a0 a1 k and hb = half b0 b1 k in
+      leg ~src:ha ~dst:hb;
+      leg ~src:hb ~dst:(piece dst (k * half_bytes) hb)
+    done
+  in
+  (* Nothing allocates between taking the slots and the handlers that give
+     them back. *)
+  let k = take_slots a b in
+  let i = k lsr 1 and j = k land 1 in
+  match run i j with
+  | () -> settle_two a i b j
+  | exception e -> (
+      match Printexc.get_raw_backtrace () with
+      | bt ->
+          settle_two a i b j;
+          Printexc.raise_with_backtrace e bt
+      | exception x ->
+          give_slot a i;
+          give_slot b j;
+          raise x)
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. *)
