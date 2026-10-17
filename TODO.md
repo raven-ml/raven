@@ -174,11 +174,9 @@ raven / llama.cpp (Vulkan; ROCm):
   `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
   `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
   it cannot be forced
-- covers some seeds miss: test_amd "values across 2^32" reaches "ends on
-  COMPUTE:0" with p ≈ 0.17 a case, so about 2.3% of 20-case runs miss it:
-  draw the shape at the carry from its own generator; test_model "a
-  submission's copy whose buffers overlap" (`s1:5dadbcc3524ab0ac`, drawn
-  before 576cd6873f): rerun the seed, then raise the overlap's draw rate
+- covers some seeds miss: test_model "a submission's copy whose buffers
+  overlap" (`s1:5dadbcc3524ab0ac`, drawn before 576cd6873f): rerun the
+  seed, then raise the overlap's draw rate
 - flakes, each failed once: test_link fork "a child's job is failed in the
   child alone" (make the parent report the child's exit status); test_submit
   "a part follows the earlier parts that may share memory"; test_model on

@@ -1551,11 +1551,20 @@ module Wrap = struct
 
   (* Values from 2^32 - [k], where a value's release goes on the queue of its
      submission's last part and slot words compare 32 bits: the edge's own
-     numbering, which rig's values reach only after 2^32 submits. *)
+     numbering, which rig's values reach only after 2^32 submits. The value at
+     2^32 is the shape at [k], drawn on its own so that it ends on each queue
+     in half the cases. *)
   let carried =
     let open Gen in
     let shape =
       of_list ~pp:pp_shape [ Nops 0; Zeros 0; Both (0, 0); Both (13, 3) ]
+    in
+    let at_carry =
+      frequency
+        [
+          (1, of_list ~pp:pp_shape [ Nops 0 ]);
+          (1, of_list ~pp:pp_shape [ Zeros 0; Both (0, 0); Both (13, 3) ]);
+        ]
     in
     with_pp
       (fun ppf (k, shapes) ->
@@ -1564,7 +1573,11 @@ module Wrap = struct
              ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
              pp_shape)
           shapes)
-      (pair (int_range 1 4) (list ~size:(int_range 1 8) shape))
+      (let* k = int_range 1 4 in
+       let+ before = list ~size:(int_range k k) shape
+       and+ at = at_carry
+       and+ after = list ~size:(int_range 0 (7 - k)) shape in
+       (k, before @ (at :: after)))
 
   let across_carry (k, shapes) =
     let at_carry = List.filteri (fun i _ -> i = k) shapes in
