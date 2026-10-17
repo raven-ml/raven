@@ -25,7 +25,7 @@ dune exec ./main.exe
 | ----------------------------- | ------------------------------------ |
 | `Image.load host obj`         | The image of `obj`, or why not       |
 | `Submission.launch`, `submit` | Run one of its functions over a grid |
-| `Image.mem image f`           | Whether it has the function `f`      |
+| `Image.resolve image f`       | Its function `f`, if it has one      |
 
 ## The objects
 

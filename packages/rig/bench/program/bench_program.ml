@@ -95,15 +95,19 @@ let described steps () =
    once. *)
 let by_hand steps () =
   let ds, ps, _ = fills steps in
-  let images =
-    Array.map (fun d -> Result.get_ok (Rig.Image.load d "functions")) ds
+  let fills =
+    Array.map
+      (fun d ->
+        let image = Result.get_ok (Rig.Image.load d "functions") in
+        Option.get (Rig.Image.resolve image "fill"))
+      ds
   in
   let xs = Array.map (fun d -> [| B.create d 8 |]) ds in
   let sub i =
     let d = i land 1 in
     let s =
       Sub.make ds.(d)
-        [| Sub.launch ~refs:[| Sub.write 0 ~at:0 |] images.(d) "fill" ~params:16 |]
+        [| Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fills.(d) ~params:16 |]
     in
     let run = Sub.Run.make () and b = Sub.block s 0 in
     Sub.Run.groups run b 1 1 1;
@@ -258,7 +262,8 @@ let host_step () =
 let host_submit () =
   let image = Result.get_ok (Rig.Image.load Rig.host (empty_object ())) in
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
-  let s = Sub.make Rig.host [| Sub.launch ~refs image "empty" ~params:16 |] in
+  let fn = Option.get (Rig.Image.resolve image "empty") in
+  let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:16 |] in
   let run = Sub.Run.make () and k = Sub.block s 0 in
   Sub.Run.groups run k 1 1 1;
   Sub.Run.threads run k 1 1 1;

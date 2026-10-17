@@ -589,8 +589,9 @@ let work =
 let images () =
   with_machine ~reaches:[ [] ] @@ fun m ->
   let i = require_ok (Rig.Image.load m.host "run,step") in
-  equal (option int) (Some 1) (Rig.Image.entry i "step");
-  equal (option int) None (Rig.Image.entry i "walk");
+  equal (option int) (Some 1)
+    (Option.map Rig.Image.entry (Rig.Image.resolve i "step"));
+  is_none (Rig.Image.resolve i "walk");
   let why = require_error (Rig.Image.load m.host "bad code") in
   starts_with ~msg:"the reason starts with the host's name"
     ~affix:(Rig.name m.host) why;

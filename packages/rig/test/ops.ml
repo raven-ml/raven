@@ -152,7 +152,7 @@ let load =
   op "load" (fun d failure ->
       match Rig.Image.load d "code:64" with
       | Ok p -> (
-          match Rig.Image.entry p "main" with
+          match Rig.Image.resolve p "main" with
           | Some _ -> ()
           | None -> fail "main is absent")
       | Error _ -> equal ~msg:"load refused" bool true (refusing failure))

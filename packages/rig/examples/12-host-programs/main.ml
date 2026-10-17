@@ -23,9 +23,9 @@ let object_file () =
 
 (* out[i] = a * inp[i] + c for i below n, over [groups] groups of [threads]
    threads. *)
-let affine image ~groups:g ~threads:t ~n ~a ~c out inp =
+let affine fn ~groups:g ~threads:t ~n ~a ~c out inp =
   let refs = Submission.[| write 0 ~at:0; read 1 ~at:8 |] in
-  let s = Submission.(make host [| launch ~refs image "affine" ~params:40 |]) in
+  let s = Submission.(make host [| launch ~refs fn ~params:40 |]) in
   let run = Submission.Run.make () and k = Submission.block s 0 in
   Submission.Run.(
     groups run k g 1 1;
@@ -46,11 +46,12 @@ let iota n =
 let () =
   let obj = In_channel.with_open_bin (object_file ()) In_channel.input_all in
   let image = Result.get_ok (Image.load host obj) in
+  let fn = Option.get (Image.resolve image "affine") in
 
   (* One group of 8 threads: out[i] = 3 * in[i] + 1. *)
   let n = 8 in
   let inp = iota n and out = Buffer.create host (8 * n) in
-  affine image ~groups:1 ~threads:n ~n ~a:3 ~c:1 out inp;
+  affine fn ~groups:1 ~threads:n ~n ~a:3 ~c:1 out inp;
   Buffer.read out Bigarray.int64 (fun ys ->
       Printf.printf "out = [%s]\n"
         (String.concat "; " (List.init n (fun i -> Int64.to_string ys.{i}))));
@@ -59,7 +60,7 @@ let () =
      parallel. *)
   let n = 1_000_000 in
   let inp = iota n and out = Buffer.create host (8 * n) in
-  affine image ~groups:64 ~threads:((n + 63) / 64) ~n ~a:2 ~c:(-1) out inp;
+  affine fn ~groups:64 ~threads:((n + 63) / 64) ~n ~a:2 ~c:(-1) out inp;
   let wrong =
     Buffer.read out Bigarray.int64 (fun ys ->
         let wrong = ref 0 in
@@ -72,5 +73,5 @@ let () =
 
   (* An image's functions are the named symbols of its object's executable
      sections. *)
-  if not (Image.mem image "missing") then
+  if Option.is_none (Image.resolve image "missing") then
     print_endline "no function \"missing\""

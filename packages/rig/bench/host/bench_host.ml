@@ -61,7 +61,8 @@ let load_rows =
    [threads] threads, its run, with [params] bytes that [set] stores. *)
 let launch ?(refs = [||]) ?(params = 0) ?(set = fun _ _ -> ()) image f
     ~groups ~threads =
-  let s = Sub.make Rig.host [| Sub.launch ~refs image f ~params |] in
+  let fn = Option.get (Rig.Image.resolve image f) in
+  let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
   let run = Sub.Run.make () and k = Sub.block s 0 in
   Sub.Run.groups run k groups 1 1;
   Sub.Run.threads run k threads 1 1;

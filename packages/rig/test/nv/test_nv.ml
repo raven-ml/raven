@@ -489,7 +489,8 @@ let grid_image =
 let refer ?(use = Sub.write) at slot = use slot ~at
 
 (* [kernel] of [image], with [params] bytes of parameters. *)
-let launch_part image kernel ~params refs = Sub.launch ~refs image kernel ~params
+let launch_part image kernel ~params refs =
+  Sub.launch ~refs (require_some (Rig.Image.resolve image kernel)) ~params
 let copy_part ~dst src = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 (* The [n] 32-bit words of [b] from byte [at], copied to the host. *)

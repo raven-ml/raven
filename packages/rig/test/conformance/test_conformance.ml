@@ -260,7 +260,10 @@ let refusals (module G : Gpu) () =
     | Fill -> (failing_fill t.d).part 0
     | Copy ->
         Sub.(copy ~src:(Buffer (B.create t.d 8)) ~dst:(Buffer (B.create t.d 8)))
-    | Launch -> Sub.launch image (List.hd kernels) ~params:0
+    | Launch ->
+        Sub.launch
+          (require_some (Rig.Image.resolve image (List.hd kernels)))
+          ~params:0
   in
   let qs = (G.D.facts t.g).queues in
   List.iter
@@ -1064,15 +1067,16 @@ let entry_facts (module G : Gpu) =
   fun () ->
     G.with_ @@ fun t ->
     let l = launches_on launcher t in
+    let fn = require_some (Rig.Image.resolve l "ids") in
     equal (option int) ~msg:"the parameters of ids" (Some 24)
-      (Rig.Image.params l "ids");
+      (Rig.Image.params fn);
     let most =
-      match Rig.Image.threads l "ids" with
+      match Rig.Image.threads fn with
       | Some n -> n
       | None -> failf "%s states no threads of ids" G.class_
     in
     let before = Rig.submitted t.d in
-    let make ~params refs = Sub.make t.d [| Sub.launch ~refs l "ids" ~params |] in
+    let make ~params refs = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
     raises ~msg:"20 bytes of parameters"
       (Invalid_argument
          "Rig.Submission.make: ids takes 24 bytes of parameters; part 0 gives 20")
@@ -1192,8 +1196,8 @@ let images (module G : Gpu) () =
   G.with_ @@ fun t ->
   let bin, kernels = G.binary () in
   let i = require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d bin) in
-  List.iter (fun k -> equal ~msg:k bool true (Rig.Image.mem i k)) kernels;
-  equal ~msg:"a function the image lacks" bool false (Rig.Image.mem i "absent");
+  List.iter (fun k -> is_some ~msg:k (Rig.Image.resolve i k)) kernels;
+  is_none ~msg:"a function the image lacks" (Rig.Image.resolve i "absent");
   is_error ~msg:"bytes that are no binary" (Rig.Image.load t.d "no binary")
 
 (* Timeline *)

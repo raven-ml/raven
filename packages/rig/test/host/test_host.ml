@@ -35,7 +35,8 @@ let one = { groups = (1, 1, 1); threads = (1, 1, 1) }
    [params] bytes of parameters that [set] stores. *)
 let launch ?(refs = [||]) ?(params = 0) ?(shared = 0) ?(set = fun _ _ -> ())
     ?(grid = one) image f buffers =
-  let s = Sub.make Rig.host [| Sub.launch ~refs image f ~params |] in
+  let fn = require_some (Rig.Image.resolve image f) in
+  let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
   let run = Run.make () and k = Sub.block s 0 in
   let gx, gy, gz = grid.groups and tx, ty, tz = grid.threads in
   Run.groups run k gx gy gz;
@@ -103,7 +104,9 @@ let test_follows () =
   let d, pd = P.open_ "host:follows" in
   let shared = B.create Rig.host 65536 in
   let functions = require_ok (Rig.Image.load d "functions") in
-  let s = Sub.make d [| Sub.launch ~refs:Sub.[| write 0 ~at:0 |] functions "main" ~params:8 |] in
+  let main = require_some (Rig.Image.resolve functions "main") in
+  let refs = Sub.[| write 0 ~at:0 |] in
+  let s = Sub.make d [| Sub.launch ~refs main ~params:8 |] in
   let run = Run.make () and k = Sub.block s 0 in
   Run.groups run k 1 1 1;
   Run.threads run k 1 1 1;
@@ -173,9 +176,8 @@ let test_wide () =
    launch counts 16 bytes plus its parameters rounded up to 16 against
    2^31 - 1, so 2^31 - 32 bytes are made and 2^31 - 31 refused. *)
 let test_run_bound () =
-  let make n =
-    Sub.make Rig.host [| Sub.launch (load "wide") "wide" ~params:n |]
-  in
+  let wide = require_some (Rig.Image.resolve (load "wide") "wide") in
+  let make n = Sub.make Rig.host [| Sub.launch wide ~params:n |] in
   ignore (make ((1 lsl 31) - 32));
   raises_match
     (Exn.invalid_arg ~substring:"take more than a run holds")
@@ -461,7 +463,9 @@ let collect () =
 
 let test_unmapped () =
   let address =
-    (fun () -> require_some (Rig.Image.entry (load "empty") "empty")) ()
+    (fun () ->
+      Rig.Image.entry (require_some (Rig.Image.resolve (load "empty") "empty")))
+      ()
   in
   collect ();
   equal ~msg:"unmapped once unreachable" bool false (S.executable address)
@@ -482,7 +486,8 @@ let test_survives () =
        (words [| out; inb |]));
   equal int64 16L out.{0};
   equal ~msg:"mapped" bool true
-    (S.executable (require_some (Rig.Image.entry image "affine")))
+    (S.executable
+       (Rig.Image.entry (require_some (Rig.Image.resolve image "affine"))))
 
 (* waiting.c, which nothing holds but its running submit, while another
    domain collects. *)
@@ -492,10 +497,11 @@ let test_running () =
   let d =
     Domain.spawn (fun () ->
         let image = load "waiting" in
-        Atomic.set address (require_some (Rig.Image.entry image "waiting"));
+        let waiting = require_some (Rig.Image.resolve image "waiting") in
+        Atomic.set address (Rig.Image.entry waiting);
         let s =
           Sub.make Rig.host
-            [| Sub.launch ~refs:Sub.[| write 0 ~at:0 |] image "waiting" ~params:16 |]
+            [| Sub.launch ~refs:Sub.[| write 0 ~at:0 |] waiting ~params:16 |]
         in
         let run = Run.make () and k = Sub.block s 0 in
         Run.groups run k 1 1 1;
@@ -514,10 +520,11 @@ let test_running () =
    entry ref, with the function's address in [address]. Only the submission
    keeps waiting.c's image. *)
 let calls_waiting address =
-  let callee = load "waiting" in
-  address := require_some (Rig.Image.entry callee "waiting");
-  let refs = Sub.[| entry callee "waiting" ~at:0; write 0 ~at:8 |] in
-  Sub.make Rig.host [| Sub.launch ~refs (load "calling") "calling" ~params:24 |]
+  let callee = require_some (Rig.Image.resolve (load "waiting") "waiting") in
+  address := Rig.Image.entry callee;
+  let refs = Sub.[| entry callee ~at:0; write 0 ~at:8 |] in
+  let calling = require_some (Rig.Image.resolve (load "calling") "calling") in
+  Sub.make Rig.host [| Sub.launch ~refs calling ~params:24 |]
 
 (* The callee lives from make to submit and while the launch that calls it
    runs and another domain collects. Once the submission is unreachable and
@@ -567,7 +574,8 @@ let test_never_writable () =
   if not (Sys.file_exists "/proc/self/maps") then
     skip ~reason:"needs /proc/self/maps (Linux)" ();
   let image = load "affine" in
-  let perms = permissions (require_some (Rig.Image.entry image "affine")) in
+  let affine = require_some (Rig.Image.resolve image "affine") in
+  let perms = permissions (Rig.Image.entry affine) in
   ignore (Sys.opaque_identity image);
   equal (option string) (Some "r-xp") perms
 
@@ -588,16 +596,9 @@ let memory_tests =
 
 let test_functions () =
   let image = load "data_entry" in
-  equal ~msg:"a function" bool true (Rig.Image.mem image "code");
-  equal ~msg:"a data symbol" bool false (Rig.Image.mem image "data_entry");
-  equal ~msg:"a missing name" bool false (Rig.Image.mem image "nowhere");
-  raises_match ~msg:"a launch of a data symbol"
-    (Exn.invalid_arg ~substring:"has no function \"data_entry\"") (fun () ->
-      Sub.make Rig.host [| Sub.launch image "data_entry" ~params:0 |]);
-  raises_match ~msg:"an entry ref to a data symbol"
-    (Exn.invalid_arg ~substring:"has no function \"data_entry\"") (fun () ->
-      let refs = [| Sub.entry image "data_entry" ~at:0 |] in
-      Sub.make Rig.host [| Sub.launch ~refs image "code" ~params:8 |])
+  is_some ~msg:"a function" (Rig.Image.resolve image "code");
+  is_none ~msg:"a data symbol" (Rig.Image.resolve image "data_entry");
+  is_none ~msg:"a missing name" (Rig.Image.resolve image "nowhere")
 
 let other = if S.machine = "x86_64" then "aarch64" else "x86_64"
 let host_name = if S.machine = "x86_64" then "x86_64" else "arm64"

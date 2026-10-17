@@ -86,9 +86,10 @@ let width_name = function
 
 (* Kernels and launches *)
 
-(* A kernel: its code object's image on a device, its name there, and the key
-   of its code object, which names it in a submission's layout. *)
-type kernel = { image : Rig.Image.t; kernel : string; co : string }
+(* A kernel: its function in its code object's image on a device, its name
+   there, and the key of its code object, which names it in a submission's
+   layout. *)
+type kernel = { fn : Rig.Image.func; kernel : string; co : string }
 
 (* An address parameter: byte [off] of [buffer], or the null address. *)
 type addr = Null | At of Rig.Buffer.t * int
@@ -165,7 +166,10 @@ let program d s target m form =
         let p =
           match Archive.member co with
           | Some { kernels; _ } when List.mem kernel kernels ->
-              Option.map (fun image -> { image; kernel; co }) (image d s co)
+              Option.bind (image d s co) (fun image ->
+                  Option.map
+                    (fun fn -> { fn; kernel; co })
+                    (Rig.Image.resolve image kernel))
           | Some _ | None -> None
         in
         remember s s.programs (m, form) p;
@@ -199,10 +203,9 @@ let submission d s layout ds =
         let params =
           Option.fold ~none:params
             ~some:(fun n -> Int.max n params)
-            (Rig.Image.params program.image program.kernel)
+            (Rig.Image.params program.fn)
         in
-        Sub.launch ~refs:(Array.of_list refs) program.image program.kernel
-          ~params
+        Sub.launch ~refs:(Array.of_list refs) program.fn ~params
       in
       let sub = Sub.make d (Array.of_list (List.map2 part layout ds)) in
       remember s s.subs layout sub;

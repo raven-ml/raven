@@ -38,8 +38,9 @@
     this doubles [x] in place:
     {[
     let image = Rig.Image.load g bin |> Result.get_ok in
+    let twice = Rig.Image.resolve image "twice" |> Option.get in
     let twice =
-      Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] image "twice" ~params:8)
+      Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
     in
     let s = Rig.Submission.make g [| twice |] in
     let run = Rig.Submission.Run.make () in

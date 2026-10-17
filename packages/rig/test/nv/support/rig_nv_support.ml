@@ -264,8 +264,8 @@ let launch_kernel l cubin name entry ~blocks args =
 
 let launch l k f ~blocks args =
   let entry =
-    match Rig.Image.entry k.image f with
-    | Some e -> e
+    match Rig.Image.resolve k.image f with
+    | Some fn -> Rig.Image.entry fn
     | None -> failf "no kernel %s" f
   in
   launch_kernel l k.cubin f entry ~blocks args

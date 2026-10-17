@@ -450,7 +450,7 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     {!load} on another machine's devices sends that machine's host the
     description, with each device's id on that machine, as the binary of an
     image ({!Rig.Image.load}), and asks for the image's function ["run"]
-    ({!Rig.Image.entry}). Each {!run} is then one submission on that host,
+    ({!Rig.Image.resolve}). Each {!run} is then one submission on that host,
     whose one part is a {!Rig.Submission.words}: the function's value, the
     frame's inputs, each as its memory's id on the machine, its offset and its
     length, and the frame's ints. The submission names only the memory of

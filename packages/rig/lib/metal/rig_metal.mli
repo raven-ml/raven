@@ -12,13 +12,12 @@
 
     A kernel reaches the GPU in a metallib, the binary Apple's Metal compiler
     makes. {!Rig.Image.load} loads the metallib as a Metal library. The first
-    call that needs one of its functions, a {!Rig.Submission.make} that
-    launches it or a {!Rig.Image.mem} or {!Rig.Image.entry} for it, compiles
-    the function for the GPU into a pipeline, which later launches reuse. A
-    Metal command buffer holds encoded work, and Metal runs it only once it
-    is committed. The device keeps at most one {e open command buffer},
-    which collects the work of consecutive values until the device commits
-    it. Each {!Rig.submit} encodes its launches into the open command buffer
+    {!Rig.Image.resolve} of one of its functions compiles the function for
+    the GPU into a pipeline, which later launches reuse. A Metal command
+    buffer holds encoded work, and Metal runs it only once it is committed.
+    The device keeps at most one {e open command buffer}, which collects the
+    work of consecutive values until the device commits it. Each
+    {!Rig.submit} encodes its launches into the open command buffer
     and returns without waiting for them. The device commits the open
     command buffer when a wait asks for one of its values, and on its own
     often enough to keep the GPU busy ({!section-work}). As each command
@@ -49,10 +48,10 @@
       Rig.Buffer.write x Bigarray.float32 (fun a ->
           for i = 0 to n - 1 do a.{i} <- Float.of_int i done);
       Rig.Buffer.write y Bigarray.float32 (fun a -> Bigarray.Array1.fill a 1.);
+      let add = Option.get (Rig.Image.resolve image "add") in
       let add =
         Rig.Submission.(
-          launch ~refs:[| read 0 ~at:0; write 1 ~at:8 |] image "add"
-            ~params:16)
+          launch ~refs:[| read 0 ~at:0; write 1 ~at:8 |] add ~params:16)
       in
       let s = Rig.Submission.make d [| add |] in
       let run = Rig.Submission.Run.make () in

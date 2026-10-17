@@ -327,6 +327,10 @@ type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that
     unloads it once collected. *)
 
+type func = { fimage : image; fname : string; fentry : Rig_edge.entry }
+(** {!Rig.Image.func}: its image, which it keeps loaded, its name, and the
+    driver's entry for it, whose [launch] lives while the image is loaded. *)
+
 (** {!Rig.Profile.event}. *)
 type event =
   | Work of {

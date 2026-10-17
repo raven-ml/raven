@@ -94,6 +94,11 @@ let prepare ?(fixed = []) d ws =
    parameters [store] stores. *)
 let launching image kernel ~params ?(groups = 1) ?(threads = 1) uses store =
   let module Sub = Rig.Submission in
+  let fn =
+    match Rig.Image.resolve image kernel with
+    | Some fn -> fn
+    | None -> failf "no function %s" kernel
+  in
   let part base =
     let refs =
       Array.mapi
@@ -103,7 +108,7 @@ let launching image kernel ~params ?(groups = 1) ?(threads = 1) uses store =
           | Read_write -> Sub.write (base + i) ~at)
         uses
     in
-    Sub.launch ~refs image kernel ~params
+    Sub.launch ~refs fn ~params
   in
   let init s run i =
     let b = Sub.block s i in

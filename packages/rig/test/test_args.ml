@@ -65,7 +65,8 @@ let test_mixed () =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
   in
   let launch =
-    Sub.launch ~refs:[| Sub.write 0 ~at:0 |] image "fill" ~params:16
+    let fill = require_some (Rig.Image.resolve image "fill") in
+    Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fill ~params:16
   in
   let s =
     Sub.make d

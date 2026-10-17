@@ -1028,7 +1028,7 @@ let test_run_beside_wait () =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
   in
   let part =
-    Sub.launch image "main" ~params:8
+    Sub.launch (require_some (Rig.Image.resolve image "main")) ~params:8
   in
   let s = Sub.make d [| part |] and point = submit (empty producer) in
   let block = Sub.block s 0 in
@@ -1154,7 +1154,8 @@ let test_runs () =
   raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
       Sub.make e [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]);
   let image = Result.get_ok (Rig.Image.load e "code:64") in
-  ignore (Sub.make e [| Sub.launch image "main" ~params:0 |])
+  let main = require_some (Rig.Image.resolve image "main") in
+  ignore (Sub.make e [| Sub.launch main ~params:0 |])
 
 (* Words, whose effect rig cannot see, follow every earlier part; a later part
    follows them by running on their queue or by sharing memory with them.

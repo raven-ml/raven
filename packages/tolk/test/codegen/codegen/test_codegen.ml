@@ -1034,13 +1034,14 @@ let ten_scalars () =
      integer. *)
   (match Rig.Image.load Rig.host elf.lib with
   | Ok image ->
+      let fn = require_some (Rig.Image.resolve image elf.name) in
       let s =
         Rig.Submission.(
           make Rig.host
             [|
               launch
                 ~refs:[| write 0 ~at:0 |]
-                image elf.name
+                fn
                 ~params:(8 + (4 * List.length info.vars));
             |])
       in

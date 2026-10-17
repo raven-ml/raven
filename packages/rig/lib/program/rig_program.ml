@@ -1167,11 +1167,15 @@ type here = {
   fixes : (int * int * int, Sub.t) Hashtbl.t;
       (* A submission fixing each whole memory, copy and device. *)
   mutable images : Rig.Image.t array; (* Those loaded so far, while loading. *)
+  funcs : (int * string, Rig.Image.func) Hashtbl.t;
+      (* By image and name: the functions resolved so far. *)
   rails : int -> Rig_remote_abi.end_ option;
-  kept : Rig.Image.t array Stdlib.ref * Rig_remote_abi.end_ list Stdlib.ref;
-      (* What every submission keeps until its work is done: the images, and
-         the rail ends [rails] gave, whose functions and addresses its work
-         may name on any device. *)
+  kept :
+    (int * string, Rig.Image.func) Hashtbl.t
+    * Rig_remote_abi.end_ list Stdlib.ref;
+      (* What every submission keeps until its work is done: the functions,
+         and the rail ends [rails] gave, whose functions and addresses its
+         work may name on any device. *)
   mutable steps : lstep array;
   twos : B.t array array; (* Copy [k] of each memory of two copies. *)
   flag : bytes; (* The byte a loop's flag is read into. *)
@@ -1223,6 +1227,22 @@ let view p k d (v : view) =
     (on p v.memory (copy_of p v.memory k) d)
     ~first:v.offset ~length:v.length
 
+(* Image [image]'s function [name], resolved at its first need. *)
+let func p image name =
+  match Hashtbl.find_opt p.funcs (image, name) with
+  | Some fn -> fn
+  | None -> (
+      let i = p.images.(image) in
+      match Rig.Image.resolve i name with
+      | Some fn ->
+          Hashtbl.replace p.funcs (image, name) fn;
+          fn
+      | None ->
+          refuse "%s: image %d has no function %S"
+            (Rig.name (Rig.Image.device i))
+            image name
+      | exception Invalid_argument why -> refuse "%s" why)
+
 (* The value of [l] for copy [k]. *)
 let leaf_value p k = function
   | Address { memory; on = d } -> (
@@ -1236,15 +1256,7 @@ let leaf_value p k = function
           refuse "memory %d: named by its handle only, it has no address" memory
       )
   | Handle m -> Nativeint.to_int (B.handle p.mem.(m).(copy_of p m k))
-  | Entry { image; name } -> (
-      let i = p.images.(image) in
-      match Rig.Image.entry i name with
-      | Some e -> e
-      | None ->
-          refuse "%s: image %d has no function %S"
-            (Rig.name (Rig.Image.device i))
-            image name
-      | exception Invalid_argument why -> refuse "%s" why)
+  | Entry { image; name } -> Rig.Image.entry (func p image name)
   | Ready r -> Nativeint.to_int (rail_end p.rails r).ready_fn
 
 (* A hole whose value meets set bits of its bytes, at its byte: the value
@@ -1400,7 +1412,7 @@ let prepared p k (s : submit) =
         let src = side src src_offset in
         Sub.copy ~src ~dst:(side dst dst_offset)
     | Launch { image; name; params; refs = rs; _ } ->
-        Sub.launch ~refs:(refs rs) p.images.(image) name
+        Sub.launch ~refs:(refs rs) (func p image name)
           ~params:(String.length params.bytes)
   in
   let parts = Iarray.to_array (Iarray.map part s.parts) in
@@ -1598,7 +1610,7 @@ let load_here ~rails t devices =
         |> Array.of_list
       in
       let pairs = Iarray.length t.inputs * Array.length devices in
-      let images = ref [||] in
+      let funcs = Hashtbl.create 8 in
       let p =
         {
           t;
@@ -1610,8 +1622,9 @@ let load_here ~rails t devices =
           borrows = Hashtbl.create 8;
           fixes = Hashtbl.create 8;
           images = [||];
+          funcs;
           rails;
-          kept = (images, ends);
+          kept = (funcs, ends);
           steps = [||];
           twos = [| twos 0; twos 1 |];
           flag = Bytes.create 1;
@@ -1632,7 +1645,6 @@ let load_here ~rails t devices =
         Iarray.iter
           (fun im -> p.images <- Array.append p.images [| load_image p im |])
           t.images;
-        images := p.images;
         let next = ref 0 in
         p.steps <- Array.mapi (lstep p next) (Iarray.to_array t.steps);
         Iarray.iteri
@@ -1991,17 +2003,18 @@ let load_there t devices =
       match Rig.Image.load host (Buffer.contents b) with
       | Error why -> Error why
       | Ok image -> (
-          match Rig.Image.entry image "run" with
+          match Rig.Image.resolve image "run" with
           | None -> Error (strf "%s: the program has no run" (Rig.name host))
-          | Some entry -> (
+          | Some run -> (
+              let entry = Rig.Image.entry run in
               let limits = threads entry in
               match watched t limits with
               | exception Refused why -> Error why
               | watch ->
               let buffer = B.create Rig.host (words_bytes t) in
               let part = Sub.words buffer in
-              (* The image stays loaded until the runs' work is done. *)
-              let sub = Sub.make ~keep:image host [| part |] in
+              (* The function stays until the runs' work is done. *)
+              let sub = Sub.make ~keep:run host [| part |] in
               Ok
                 (There
                    {
@@ -2052,7 +2065,8 @@ let set_word words at v =
 let threads = function
   | Here p ->
       Array.map
-        (fun (image, kernel, _) -> Rig.Image.threads p.images.(image) kernel)
+        (fun (image, kernel, _) ->
+          Rig.Image.threads (Hashtbl.find p.funcs (image, kernel)))
         (launches p.t)
   | There p -> p.limits
 

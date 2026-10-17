@@ -187,7 +187,8 @@ let launching () =
     Array.init refs (fun k ->
         if k < refs / 2 then Sub.read k ~at:(8 * k) else Sub.write k ~at:(8 * k))
   in
-  let s = Sub.make t.d [| Sub.launch ~refs:rs image "main" ~params:(8 * refs) |] in
+  let fn = Option.get (Rig.Image.resolve image "main") in
+  let s = Sub.make t.d [| Sub.launch ~refs:rs fn ~params:(8 * refs) |] in
   let run = Sub.Run.make () and b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;

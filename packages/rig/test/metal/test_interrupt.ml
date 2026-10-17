@@ -226,7 +226,7 @@ type icb = {
 
 let ready_icb d =
   let image = loaded d in
-  let step = Option.get (Rig.Image.entry image "step") in
+  let step = Rig.Image.entry (Option.get (Rig.Image.resolve image "step")) in
   let buffer = Rig.Buffer.create d args_bytes in
   let cap = Option.get (Rig.capability d Rig_metal_abi.key) in
   { cap; args = Rig.Buffer.handle buffer; buffer; step; image }
@@ -269,7 +269,8 @@ let free_in_icb =
    which lives while the image is loaded. *)
 let[@inline never] dropped_pipeline d =
   let i = loaded d in
-  S.weak (Nativeint.of_int (Option.get (Rig.Image.entry i "fill")))
+  let fill = Option.get (Rig.Image.resolve i "fill") in
+  S.weak (Nativeint.of_int (Rig.Image.entry fill))
 
 (* An image collected, and an icb's arguments. *)
 let ready_collected d =
@@ -297,14 +298,15 @@ let unload_in_icb =
 let entry_in_entry =
   reentered
     ~ready:(fun d -> (loaded d, S.pipelines ()))
-    ~during:(fun _ (i, _) -> ignore (Rig.Image.mem i "fill"))
-    ~refusal:"Rig.Image.mem: "
+    ~during:(fun _ (i, _) -> ignore (Rig.Image.resolve i "fill"))
+    ~refusal:"Rig.Image.resolve: "
     ~call:(fun _ (i, _) ->
-      if not (Rig.Image.mem i "step") then fail "no function step")
+      if Option.is_none (Rig.Image.resolve i "step") then
+        fail "no function step")
     ~did:(fun _ (_, before) -> S.pipelines () = before + 2)
     ~after:(fun _ (i, _) n ->
       equal ~msg:(strf "from allocation %d, the function" n) bool true
-        (Rig.Image.mem i "step"))
+        (Option.is_some (Rig.Image.resolve i "step")))
 
 (* A close from a callback in an icb: inside a lock it is refused and an icb
    still records; between locks it stops the device. After a close, an icb

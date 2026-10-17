@@ -166,7 +166,7 @@ let escapes =
     ( "entry",
       fun d ->
         let i = Result.get_ok (Rig.Image.load d "functions") in
-        fun () -> ignore (Rig.Image.mem i "fill") );
+        fun () -> ignore (Rig.Image.resolve i "fill") );
     ( "unload",
       fun d ->
         dropped (fun d -> Result.get_ok (Rig.Image.load d "functions")) d;

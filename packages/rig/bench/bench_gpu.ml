@@ -511,7 +511,7 @@ let metal_kernel g d =
   in
   let e = found (Rig_metal.entry own "bump") in
   let launch =
-    Sub.launch image "bump" ~params:16
+    Sub.launch (Option.get (Rig.Image.resolve image "bump")) ~params:16
   in
   work
     ~floor:(fun f -> floor_launch f e.code e.launch 16)
@@ -529,7 +529,7 @@ let cuda_kernel g d =
   let m, _ = S.kernels ~dir:(fixtures "cuda") g in
   let e = found (Rig_cuda.entry m "empty") in
   let launch =
-    Sub.launch image "empty" ~params:16
+    Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
   in
   work
     ~floor:(fun f -> floor_launch f e.code e.launch 16)
@@ -593,7 +593,7 @@ let amd_kernel g d =
   in
   let e = found (Rig_amd.entry m "empty") in
   let launch =
-    Sub.launch image "empty" ~params:0
+    Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:0
   in
   work
     ~floor:(fun f -> floor_launch f e.code e.launch 0)

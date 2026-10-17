@@ -15,8 +15,10 @@ let strf = Printf.sprintf
 let functions d =
   require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
 
+let fn image f = require_some (Rig.Image.resolve image f)
+
 let launch ?(params = 0) ?(refs = [||]) image kernel =
-  Sub.launch ~refs image kernel ~params
+  Sub.launch ~refs (fn image kernel) ~params
 
 let one run b =
   Run.groups run b 1 1 1;
@@ -334,16 +336,15 @@ let test_parts_changed () =
   B.copy ~src:out ~dst:host;
   equal string (le64 7) (host_bytes host 8)
 
-(* make reads a part's arrays once: refs changed inside make's call of the
-   driver, after make checked them and before it compiled them, change
-   nothing. *)
+(* A launch reads its refs once: a change to their array once it returned
+   changes nothing. *)
 let test_parts_read_once () =
   let d, p = polled "read-once" in
   let image = functions d in
   let refs = [| Sub.write 0 ~at:0 |] in
-  P.before p "entry" (fun () -> refs.(0) <- Sub.write 0 ~at:8);
-  let s = Sub.make d [| launch image "main" ~params:16 ~refs |]
-  in
+  let part = launch image "main" ~params:16 ~refs in
+  refs.(0) <- Sub.write 0 ~at:8;
+  let s = Sub.make d [| part |] in
   let out = B.create d 8 in
   let run = Run.make () and b = Sub.block s 0 in
   one run b;
@@ -352,7 +353,7 @@ let test_parts_read_once () =
   ignore (P.launches p);
   ignore (submit ~buffers:[| out |] s run);
   ignore (P.run p);
-  equal ~msg:"the ref make checked" (list string)
+  equal ~msg:"the ref the launch was given" (list string)
     [ le64 (Rig_support.at out) ^ le64 7 ]
     (List.map (fun (l : P.launch) -> l.params) (P.launches p))
 
@@ -369,7 +370,7 @@ let test_make_refusals () =
   let at at slot = Sub.write slot ~at in
   refused ~msg:"an image of another device" (fun () ->
       make ~image:(functions other) [||]);
-  refused ~msg:"no such function" (fun () -> make ~kernel:"absent" [||]);
+  is_none ~msg:"no such function" (Rig.Image.resolve image "absent");
   refused ~msg:"negative parameter bytes" (fun () -> make ~params:(-1) [||]);
   refused ~msg:"a ref at 4" (fun () -> make [| at 4 0 |]);
   refused ~msg:"a ref ending past the parameters" (fun () -> make [| at 16 0 |]);
@@ -473,57 +474,51 @@ let test_setter_refusals () =
 let test_entry_facts () =
   let d, _ = polled "facts" in
   let image = functions d in
-  let params = Rig.Image.params image and threads = Rig.Image.threads image in
+  let params f = Rig.Image.params (fn image f)
+  and threads f = Rig.Image.threads (fn image f) in
   equal (option int) ~msg:"fill's parameters" (Some 16) (params "fill");
   equal (option int) ~msg:"copy's parameters" (Some 24) (params "copy");
   equal (option int) ~msg:"main's parameters" None (params "main");
   equal (option int) ~msg:"main's threads" (Some 1024) (threads "main");
-  refused ~msg:"the parameters of no function" (fun () -> params "absent");
-  refused ~msg:"the threads of no function" (fun () -> threads "absent")
+  let main = fn image "main" in
+  equal string ~msg:"its name" "main" (Rig.Image.name main);
+  is_true ~msg:"its image" (Rig.Image.image main == image)
 
-(* Asking the driver for a function a part names can fail at make, for a
-   launch and for an entry ref alike: with no memory for what its launches need
-   after the rounds of reclamation, make raises Out_of_memory; where the driver
-   finds the function needs more than the device offers, Invalid_argument with
-   its reason, the device live; and where the asking faults, the device's
-   loss. *)
-let test_make_entry_failures () =
+(* Resolving a function asks the driver for it, which can fail: with no
+   memory for what its launches need after the rounds of reclamation, resolve
+   raises Out_of_memory; where the driver finds the function needs more than
+   the device offers, Invalid_argument with its reason, the device live; and
+   where the asking faults, the device's loss. A part of a resolved function
+   asks nothing more. *)
+let test_resolve_failures () =
   let d, p = polled "entry-failures" in
-  let parts =
-    [
-      ("a launch", fun image -> launch image "main" ~params:8);
-      ( "an entry ref",
-        fun image ->
-          Sub.fill ~refs:[| Sub.entry image "main" ~at:0 |] Rig_support.noop
-            ~params:8 );
-    ]
-  in
-  let make part = Sub.make d [| part (functions d) |] in
-  List.iter
-    (fun (what, part) ->
-      let image = functions d in
-      P.fail_at p 1 (`Refuse max_int);
-      raises_match ~msg:what
-        (function
-          | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
-          | _ -> false)
-        (fun () -> Sub.make d [| part image |]);
-      P.fail_at p 1 (`Refuse 0);
-      let image = functions d in
-      P.before p "entry" (fun () -> invalid_arg "main needs more than 1 TiB");
-      raises_match ~msg:what
-        (Exn.invalid_arg ~substring:"main needs more than 1 TiB")
-        (fun () -> Sub.make d [| part image |]);
-      equal ~msg:what (option string) None (Rig.lost d);
-      ignore (make part))
-    parts;
   let image = functions d in
+  P.fail_at p 1 (`Refuse max_int);
+  raises_match
+    (function
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
+      | _ -> false)
+    (fun () -> Rig.Image.resolve image "main");
+  P.fail_at p 1 (`Refuse 0);
+  let image = functions d in
+  P.before p "entry" (fun () -> invalid_arg "main needs more than 1 TiB");
+  raises_match
+    (Exn.invalid_arg ~substring:"main needs more than 1 TiB")
+    (fun () -> Rig.Image.resolve image "main");
+  equal (option string) None (Rig.lost d);
+  let main = fn (functions d) "main" and image = functions d in
   P.fail_at p 1 (`Fault "the engine hung");
+  ignore
+    (Sub.make d
+       [|
+         Sub.launch main ~params:8;
+         Sub.fill ~refs:[| Sub.entry main ~at:0 |] Rig_support.noop ~params:8;
+       |]);
   raises_match
     (function
       | Rig.Lost (d', why) -> Rig.equal d d' && why = "the engine hung"
       | _ -> false)
-    (fun () -> Sub.make d [| launch image "main" ~params:8 |])
+    (fun () -> Rig.Image.resolve image "main")
 
 (* A setter called from a signal handler while a submit holds the run, waiting
    for a producer, raises; the submit then completes with what was stored
@@ -850,15 +845,14 @@ let tests =
       [
         test "a submission keeps its launches' images after their array changed"
           test_parts_changed;
-        test
-          "make reads its parts' arrays once, whatever changes them during it"
+        test "a launch reads its refs once, whatever changes them after"
           test_parts_read_once;
       ];
     group ~timeout "refusals"
       [
         test "make refuses each launch its interface states" test_make_refusals;
-        test "make raises what asking for a part's function raises"
-          test_make_entry_failures;
+        test "resolve raises what asking for a function raises"
+          test_resolve_failures;
         test "submit refuses a run or a block the device cannot launch"
           test_submit_refusals;
         test "a setter refuses bytes outside its block" test_setter_refusals;

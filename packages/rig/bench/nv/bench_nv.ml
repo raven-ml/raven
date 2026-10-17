@@ -83,7 +83,7 @@ let launches t count how =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
   let p = get (Rig.Image.load t.d (Lazy.force cubin)) in
-  let entry = Option.get (Rig.Image.entry p "empty") in
+  let entry = Rig.Image.entry (Option.get (Rig.Image.resolve p "empty")) in
   let cap = N.capability t.g in
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));
@@ -195,7 +195,8 @@ let wait_rows =
    one submission on [t], each block stored. *)
 let launching t count =
   let image = get (Rig.Image.load t.d (Lazy.force cubin)) in
-  let work = Sub.launch image "empty" ~params:0 in
+  let fn = Option.get (Rig.Image.resolve image "empty") in
+  let work = Sub.launch fn ~params:0 in
   let s = submission t (Array.make count work) in
   for i = 0 to count - 1 do
     let b = Sub.block s.s i in

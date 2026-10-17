@@ -45,7 +45,8 @@ let copy ~dst src = Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 let dispatch g co p name =
   let gpu = (A.capability g).gpu in
   let k = Option.get (Abi.Code_object.kernel co name) in
-  let base = Option.get (Rig.Image.entry p name) - k.descriptor in
+  let fn = Option.get (Rig.Image.resolve p name) in
+  let base = Rig.Image.entry fn - k.descriptor in
   S.words_part
     (words
        (Pm4.run gpu

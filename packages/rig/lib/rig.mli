@@ -484,17 +484,19 @@ val signaled : t -> int
     where it needs none of the locks its thread holds, since the thread's
     count of its locks does not say which they are. A function that takes no
     lock may be called from a callback at any point, and never raises it:
-    {!name}, {!equal}, {!pp}, {!arch}, {!computes}, {!runs_on_host},
-    {!alignment}, {!most_parts}, {!capability}, {!host_of}, {!reaches},
-    {!submitted}, {!signaled}, {!lost}, {!failure}, {!budget}, {!allocated},
-    {!Point.device}, {!Point.value}, {!Point.reached}, {!Point.pp}, the
-    properties and low-level values of {!Buffer}, {!Buffer.view},
-    {!Buffer.of_bigarray}, {!Image.device}, {!Submission}'s refs and parts,
-    {!Submission.block}, {!Submission.address}, {!Submission.Run}, {!Claim},
-    {!Profile} but {!Profile.take}, {!Local.new_key}, and {!Local.get} of a
-    value already made for the device. Nor does {!fail}, which inside a lock
-    leaves the owed stops to later calls. Outside a lock, a call from a
-    callback runs as any call does.
+    {!name}, {!equal}, {!pp}, {!arch},
+    {!computes}, {!runs_on_host}, {!alignment}, {!most_parts}, {!capability},
+    {!host_of}, {!reaches}, {!submitted}, {!signaled}, {!lost}, {!failure},
+    {!budget}, {!allocated}, {!Point.device}, {!Point.value},
+    {!Point.reached}, {!Point.pp}, the properties and low-level values of
+    {!Buffer}, {!Buffer.view}, {!Buffer.of_bigarray}, {!Image.device},
+    {!Image.name}, {!Image.image}, {!Image.params}, {!Image.threads},
+    {!Image.entry}, {!Submission}'s refs and parts, {!Submission.block},
+    {!Submission.address}, {!Submission.Run}, {!Claim}, {!Profile} but
+    {!Profile.take}, {!Local.new_key}, and {!Local.get} of a value already
+    made for the device. Nor does {!fail}, which inside a lock leaves the
+    owed stops to later calls. Outside a lock, a call from a callback runs as
+    any call does.
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
     either, in a wait of rig's or for another thread: other calls, and every
@@ -631,7 +633,7 @@ val signaled : t -> int
     during such a change may leave it half done. rig then loses the device,
     with the exception's text as the reason ({!Lost}), and raises the
     exception again. Calls that allocate, borrow, load or ask for a
-    function ({!Image.mem}) make such changes, and so do reclamation
+    function ({!Image.resolve}) make such changes, and so do reclamation
     ({!section-reclaim}), on whichever device's memory returns, and a
     submit that gives back its device's mappings of other devices' words
     ({!section-opening}). An
@@ -639,7 +641,7 @@ val signaled : t -> int
     device. Every other exception leaves the device serving later calls,
     such as one that interrupts a wait ({!section-domains}), one from an io
     device's call, the [Invalid_argument] of a function the device cannot
-    run ({!Image.mem}), and that of a call made inside a lock
+    run ({!Image.resolve}), and that of a call made inside a lock
     ({!section-domains}). *)
 
 exception Lost of t * string
@@ -1167,9 +1169,9 @@ end
 
     A library runs work like this:
     {ol
-    {- It loads an image ({!Image.load}) and makes a submission of parts
-       that name the image's functions and the buffers every run uses
-       ({!Submission.make}).}
+    {- It loads an image ({!Image.load}), resolves its functions
+       ({!Image.resolve}), and makes a submission of parts that launch them
+       and name the buffers every run uses ({!Submission.make}).}
     {- It makes a run ({!Submission.Run.make}) and stores each launch's
        grid and parameters into it.}
     {- It calls {!submit} with the run, this run's buffers and the points to
@@ -1210,34 +1212,39 @@ module Image : sig
   val device : t -> device
   (** [device i] is the device [i] is loaded on. *)
 
-  val mem : t -> string -> bool
-  (** [mem i f] is [true] iff [i] has a function [f]. The first call for [f]
-      makes what [f]'s launches need, such as its scratch.
+  type func
+  (** The type for a function of a loaded image. A function keeps its image
+      reachable. *)
+
+  val resolve : t -> string -> func option
+  (** [resolve i f] is [i]'s function [f], made ready to launch, or [None] if
+      [i] has none. The first resolve of [f] makes what its launches need,
+      such as its scratch.
 
       Raises [Invalid_argument] if [i]'s device cannot run [f]
       ({!Rig_edge.Driver.entry}), {!Out_of_memory} if the device has no
       memory for what [f]'s launches need after the rounds of reclamation
       ({!section-reclaim}), and {!Lost} if [i]'s device is lost. *)
 
-  val params : t -> string -> int option
-  (** [params i f] is the number of parameter bytes, from byte [0], that
-      [i]'s function [f] reads, or [None] if [i]'s driver does not know it. A
-      launch of [f] must give at least that many ({!Submission.launch}).
+  val name : func -> string
+  (** [name fn] is [fn]'s name in its image. *)
 
-      Raises as {!mem} does, and [Invalid_argument] if [i] has no function
-      [f]. *)
+  val image : func -> t
+  (** [image fn] is the image [fn] belongs to. *)
 
-  val threads : t -> string -> int option
-  (** [threads i f] is the most threads a group of [i]'s function [f] may
-      have, or [None] if [i]'s driver does not know it.
-      {!Submission.Run.threads} refuses more.
+  val params : func -> int option
+  (** [params fn] is the number of parameter bytes, from byte [0], that [fn]
+      reads, or [None] if its driver does not know it. A launch of [fn] must
+      give at least that many ({!Submission.launch}). *)
 
-      Raises as {!mem} does, and [Invalid_argument] if [i] has no function
-      [f]. *)
+  val threads : func -> int option
+  (** [threads fn] is the most threads a group of [fn] may have, or [None]
+      if its driver does not know it. {!Submission.Run.threads} refuses
+      more. *)
 
   (** {1:raw Raw function values}
 
-      These values serve code that refers to a function outside a launch's
+      This value serves code that refers to a function outside a launch's
       parameters, such as an indirect command buffer, a CUDA graph over a
       module's functions, or host code that calls another image's function.
       rig cannot see where such code keeps a value, so it cannot keep the
@@ -1245,17 +1252,15 @@ module Image : sig
       function's value by an entry ref ({!Submission.entry}), which keeps
       the image. *)
 
-  val entry : t -> string -> int option
-  (** [entry i f] is the value by which compiled code refers to [i]'s
-      function [f] (the [code] of {!Rig_edge.Driver.entry}), such as a kernel
-      descriptor's address, a [CUfunction], an [MTLComputePipelineState] or
-      the address of a host function, or [None] if [i] has no function [f].
+  val entry : func -> int
+  (** [entry fn] is the value by which compiled code refers to [fn] (the
+      [code] of {!Rig_edge.Driver.entry}), such as a kernel descriptor's
+      address, a [CUfunction], an [MTLComputePipelineState] or the address
+      of a host function.
 
-      {b Warning.} The value is valid only while [i] is reachable. Work that
-      uses it must keep [i] reachable until the work is done, for example
-      with the [keep] of its submission ({!Submission.make}).
-
-      Raises as {!mem} does. *)
+      {b Warning.} The value is valid only while [fn] is reachable. Work that
+      uses it must keep [fn] reachable until the work is done, for example
+      with the [keep] of its submission ({!Submission.make}). *)
 end
 
 (** {2:host_code Host code}
@@ -1319,9 +1324,10 @@ end
     v}
     Loaded once, it runs over [n] floats in 64 groups:
     {[
-    let add = Result.get_ok (Rig.Image.load Rig.host obj) in
+    let image = Result.get_ok (Rig.Image.load Rig.host obj) in
+    let add = Option.get (Rig.Image.resolve image "add") in
     let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
-    let s = Submission.(make host [| launch ~refs add "add" ~params:32 |]) in
+    let s = Submission.(make host [| launch ~refs add ~params:32 |]) in
     let run = Submission.Run.make () and k = Submission.block s 0 in
     Submission.Run.groups run k 64 1 1;
     Submission.Run.threads run k ((n + 63) / 64) 1 1;
@@ -1516,13 +1522,12 @@ module Submission : sig
       exception to rule 3 of {!Rig.section-order}. The buffer's memory must
       admit writes. *)
 
-  val entry : Image.t -> string -> at:int -> ref
-  (** [entry image f ~at] is a ref whose 8 bytes hold, when the work runs,
-      the value by which the device's work refers to [image]'s function [f]
-      ({!Image.entry}). rig writes it over the run's bytes there. The
-      submission keeps [image] reachable, so the work may call [f] through
-      it. [image] must be loaded on the device and have a function [f]
-      ({!Image.mem}). *)
+  val entry : Image.func -> at:int -> ref
+  (** [entry fn ~at] is a ref whose 8 bytes hold, when the work runs, the
+      value by which the device's work refers to [fn] ({!Image.entry}). rig
+      writes it over the run's bytes there. The submission keeps [fn]
+      reachable, so the work may call [fn] through it. [fn]'s image must be
+      loaded on the device. *)
 
   (** {1:parts Parts} *)
 
@@ -1545,13 +1550,13 @@ module Submission : sig
       copies alone name the slot. {!make} checks the ends that are buffers,
       and each {!submit} checks the ends that are slots, with its buffers. *)
 
-  val launch : ?refs:ref array -> Image.t -> string -> params:int -> part
-  (** [launch ~refs image f ~params] runs [image]'s function [f] once, over
-      the grid of groups of threads that its block in the run sets
-      ({!val-block}), with the [params] bytes of parameters of that block and
-      each of [refs] (defaults to [[||]]) placed ({!type-ref}). [image] must be
-      loaded on the device and have a function [f] ({!Image.mem}). [params]
-      must not be negative and, where [f]'s driver knows the bytes [f] reads
+  val launch : ?refs:ref array -> Image.func -> params:int -> part
+  (** [launch ~refs fn ~params] runs [fn] once, over the grid of groups of
+      threads that its block in the run sets ({!val-block}), with the
+      [params] bytes of parameters of that block and each of [refs]
+      (defaults to [[||]]) placed ({!type-ref}), which [launch] reads once.
+      [fn]'s image must be loaded on the device. [params] must not be
+      negative and, where [fn]'s driver knows the bytes [fn] reads
       ({!Image.params}), at least that many, with each ref's 8 bytes among
       them. *)
 
@@ -1615,10 +1620,7 @@ module Submission : sig
       {- its launches and fills take more than a run holds: [2{^31} - 1]
          bytes, each counting [16] bytes plus its parameters rounded up to a
          multiple of 16.}}
-      Raises {!Out_of_memory} if [d] has no memory for what the function of
-      a launch or an entry ref needs, such as its scratch, after the rounds
-      of reclamation ({!Rig.section-reclaim}), and {!Lost} if [d] is lost or
-      its driver faults while asked for such a function. *)
+      Raises {!Lost} if [d] is lost. *)
 
   type block
   (** The type for a launch's or a fill's block in a run of one submission

@@ -45,7 +45,8 @@ let twice_params = le64 0 ^ le64 0 ^ le32 1 ^ le32 0
 
 let by_hand d image x y =
   let launch kernel params refs =
-    Sub.launch ~refs image kernel ~params:(String.length params)
+    let fn = require_some (Rig.Image.resolve image kernel) in
+    Sub.launch ~refs fn ~params:(String.length params)
   in
   let s =
     Sub.make d

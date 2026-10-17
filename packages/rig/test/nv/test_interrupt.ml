@@ -263,16 +263,18 @@ let test_entry_in_entry_rig () =
         | Ok i -> i
         | Error why -> fail why
       in
-      let call () = ignore (Rig.Image.mem i (List.nth functions 1)) in
-      let landing, landed = Rig_support.landing seen "Rig.Image.mem: " call in
+      let call () = ignore (Rig.Image.resolve i (List.nth functions 1)) in
+      let landing, landed =
+        Rig_support.landing seen "Rig.Image.resolve: " call
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
-            ignore (Rig.Image.mem i (List.nth functions 0)))
+            ignore (Rig.Image.resolve i (List.nth functions 0)))
       in
       ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
       equal ~msg:(strf "from allocation %d, the function" n) bool true
-        (Rig.Image.mem i (List.nth functions 1));
+        (Option.is_some (Rig.Image.resolve i (List.nth functions 1)));
       reached);
   Rig_support.covered seen
 

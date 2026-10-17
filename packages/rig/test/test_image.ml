@@ -38,8 +38,8 @@ let test_load (copies, host_visible) =
       (Rig.signaled d);
     equal ~msg:"no work left queued" int 0 (P.queued pd);
     equal bool true (Rig.equal d (Image.device p));
-    equal bool false (Image.mem p "other");
-    let main = require_some (Image.entry p "main") in
+    is_none (Image.resolve p "other");
+    let main = Image.entry (require_some (Image.resolve p "main")) in
     equal ~msg:"the code placed" int 0x6363636363636363 (Support.load main)
   end
   else begin
@@ -72,7 +72,7 @@ let test_unload () =
     (fun () ->
       let p = load d "code:64" in
       ignore (submit (Sub.make d [||]));
-      require_some (Image.entry p "main"))
+      Image.entry (require_some (Image.resolve p "main")))
       ()
   in
   let drain () =
@@ -100,7 +100,7 @@ let test_entry_keeps () =
       Gc.full_major ();
       ignore (B.create ~memory:Pinned d 8);
       unloads := count "unload" pd);
-  ignore (Image.mem (load d "code:64") "main");
+  ignore (Image.resolve (load d "code:64") "main");
   equal ~msg:"unloads during the entry" int 0 !unloads
 
 let test_entry_lost () =
@@ -108,7 +108,7 @@ let test_entry_lost () =
   let i = load d "code:64" in
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make d [||]));
-  raises_match (lost d) (fun () -> Image.mem i "main")
+  raises_match (lost d) (fun () -> Image.resolve i "main")
 
 (* A function the device has no memory for is asked for again after each round
    of reclamation, and raises Out_of_memory for the bytes its launches need
@@ -121,7 +121,7 @@ let test_entry_no_memory () =
     (function
       | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
       | _ -> false)
-    (fun () -> Image.mem i "main");
+    (fun () -> Image.resolve i "main");
   P.fail_at pd 1 (`Refuse 0);
   at_least ~msg:"times asked" int ~than:2 (count "entry" pd)
 
@@ -131,7 +131,7 @@ let test_entry_reclaims () =
   let d, pd = P.open_ "image:entry-reclaims" in
   let i = load d "code:64" in
   P.before pd "entry" (fun () -> P.fail_at pd 1 (`Refuse 1));
-  equal bool true (Image.mem i "main");
+  is_some (Image.resolve i "main");
   equal ~msg:"times asked" int 2 (count "entry" pd)
 
 let test_budget () =
@@ -177,11 +177,13 @@ let rec after_stop = function
 let test_unload_after_stop () =
   let d, p = P.open_ "image:unload-after-stop" in
   let i = ref (Some (load d "code:64")) in
-  let code = require_some (Image.entry (Option.get !i) "main") in
+  let code =
+    Image.entry (require_some (Image.resolve (Option.get !i) "main"))
+  in
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make d [||]));
   equal ~msg:"by the stop" int 0 (count "unload" p);
-  raises_match (lost d) (fun () -> Image.mem (Option.get !i) "main");
+  raises_match (lost d) (fun () -> Image.resolve (Option.get !i) "main");
   i := None;
   collect d;
   equal ~msg:"after the stop" (list string) [ "unload" ]

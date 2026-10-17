@@ -86,7 +86,8 @@ let test_never () =
   let image =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
   in
-  let never = Sub.make d [| Sub.launch image "main" ~params:0 |] in
+  let fn = require_some (Rig.Image.resolve image "main") in
+  let never = Sub.make d [| Sub.launch fn ~params:0 |] in
   let run = Sub.Run.make () in
   Sub.Run.groups run (Sub.block never 0) 0 0 0;
   raises_match Exn.invalid_arg (fun () ->

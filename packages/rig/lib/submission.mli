@@ -80,15 +80,14 @@ val write : int -> at:int -> ref
 val unordered : int -> at:int -> ref
 (** [unordered slot ~at] is {!Rig.Submission.unordered}[ slot ~at]. *)
 
-val entry : image -> string -> at:int -> ref
-(** [entry image f ~at] is {!Rig.Submission.entry}[ image f ~at]. *)
+val entry : func -> at:int -> ref
+(** [entry f ~at] is {!Rig.Submission.entry}[ f ~at]. *)
 
 val copy : src:side -> dst:side -> part
 (** [copy ~src ~dst] is {!Rig.Submission.copy}[ ~src ~dst]. *)
 
-val launch : ?refs:ref array -> image -> string -> params:int -> part
-(** [launch ~refs image f ~params] is {!Rig.Submission.launch}[ ~refs image f
-    ~params]. *)
+val launch : ?refs:ref array -> func -> params:int -> part
+(** [launch ~refs f ~params] is {!Rig.Submission.launch}[ ~refs f ~params]. *)
 
 val fill : ?refs:ref array -> nativeint -> params:int -> part
 (** [fill ~refs f ~params] is {!Rig.Submission.fill}[ ~refs f ~params]. *)

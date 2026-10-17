@@ -47,12 +47,13 @@ let check out expected =
    [add], 64 threads in one group. Metal runs a dispatch recorded in an
    indirect command buffer; the other drivers launch the kernel. *)
 let adder device driver image a b out =
+  let add = Option.get (Image.resolve image "add") in
   let run = Submission.Run.make () in
   let submission, buffers =
     if driver = "metal" then begin
       let cap = Option.get (capability device Rig_metal_abi.key) in
       let args = Buffer.create device 32 in
-      let pipeline = Option.get (Image.entry image "add") in
+      let pipeline = Image.entry add in
       let dispatch =
         Rig_metal_abi.{ pipeline; offset = Buffer.offset args;
                         groups = (1, 1, 1); threads = (count, 1, 1) }
@@ -60,7 +61,7 @@ let adder device driver image a b out =
       let icb = get (cap.icb (Buffer.handle args) [| dispatch |]) in
       let part = Submission.(fill (metal_fill ()) ~params:16) in
       let submission =
-        Submission.make ~keep:(icb, image)
+        Submission.make ~keep:(icb, add)
           ~fixed:[ (args, Read); (a, Read); (b, Read); (out, Read_write) ]
           device [| part |]
       in
@@ -77,7 +78,7 @@ let adder device driver image a b out =
     else begin
       (* add takes the three addresses, then the count. *)
       let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
-      let part = Submission.(launch ~refs image "add" ~params:32) in
+      let part = Submission.(launch ~refs add ~params:32) in
       let submission = Submission.make device [| part |] in
       let block = Submission.block submission 0 in
       Submission.Run.groups run block 1 1 1;

@@ -102,7 +102,7 @@ let launches t n =
   let bin = S.fixture ~dir:fixtures "kernels.ptx" in
   let image = get (Rig.Image.load t.d bin) in
   let launch =
-    Sub.launch image "empty" ~params:16
+    Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
   in
   let s, run =
     prepare t

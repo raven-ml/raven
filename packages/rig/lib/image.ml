@@ -9,6 +9,7 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = image
+type func = Def.func
 
 (* Places [code] at the start of [d]'s code memory [e], whose region is
    [region]: by a copy on [d]'s copy engine from pinned memory, or by the host
@@ -95,23 +96,14 @@ let load d binary =
 
 let device image = image.idev
 
-let mem image f =
-  Dev.check_held "Image.mem";
-  Option.is_some (Memory.kernel_entry image f)
+let resolve image f =
+  Dev.check_held "Image.resolve";
+  Option.map
+    (fun e -> { fimage = image; fname = f; fentry = e })
+    (Memory.kernel_entry image f)
 
-let entry image f =
-  Dev.check_held "Image.entry";
-  Option.map (fun (e : Rig_edge.entry) -> e.code) (Memory.kernel_entry image f)
-
-let found fn image f =
-  match Memory.kernel_entry image f with
-  | Some e -> e
-  | None -> Printf.ksprintf invalid_arg "Rig.Image.%s: no function %S" fn f
-
-let params image f =
-  Dev.check_held "Image.params";
-  (found "params" image f).params
-
-let threads image f =
-  Dev.check_held "Image.threads";
-  (found "threads" image f).threads
+let name fn = fn.fname
+let image fn = fn.fimage
+let params fn = fn.fentry.params
+let threads fn = fn.fentry.threads
+let entry fn = fn.fentry.code

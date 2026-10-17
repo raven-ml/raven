@@ -1594,9 +1594,8 @@ let make_launch_sys ((s : sdev), w) sc =
     | Ok i -> i
     | Error why -> failwith why
   in
-  let part =
-    Sub.launch ~refs:launch_refs image "copy" ~params:launch_params
-  in
+  let copy = require_some (Rig.Image.resolve image "copy") in
+  let part = Sub.launch ~refs:launch_refs copy ~params:launch_params in
   let sub = Sub.make s.d [| part |] in
   Atomic.set sc.ss (Some { s = sub; sd = s.d; work = Launch; slotted = true })
 

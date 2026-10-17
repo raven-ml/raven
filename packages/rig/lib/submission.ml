@@ -16,12 +16,12 @@ type slot_ref = { at : int; slot : int; use : use }
 
 type ref =
   | Slot_ref of slot_ref
-  | Entry of { at : int; image : image; f : string }
+  | Entry of { at : int; fn : func }
 
 let read slot ~at = Slot_ref { at; slot; use = Use_read }
 let write slot ~at = Slot_ref { at; slot; use = Use_write }
 let unordered slot ~at = Slot_ref { at; slot; use = Use_unordered }
-let entry image f ~at = Entry { at; image; f }
+let entry fn ~at = Entry { at; fn }
 let ref_at = function Slot_ref { at; _ } | Entry { at; _ } -> at
 
 type side = Slot of int | Buffer of buffer
@@ -30,7 +30,7 @@ type part =
   | Words of buffer
   | Fill of { fill : nativeint; params : int; refs : ref array }
   | Copy of { src : side; dst : side }
-  | Launch of { image : image; kernel : string; params : int; refs : ref array }
+  | Launch of { fn : func; params : int; refs : ref array }
 
 let copy ~src ~dst = Copy { src; dst }
 let words b = Words b
@@ -38,8 +38,8 @@ let words b = Words b
 (* The caller's array is copied: a part is fixed once made. *)
 let fill ?(refs = [||]) fill ~params = Fill { fill; params; refs = Array.copy refs }
 
-let launch ?(refs = [||]) image kernel ~params =
-  Launch { image; kernel; params; refs = Array.copy refs }
+let launch ?(refs = [||]) fn ~params =
+  Launch { fn; params; refs = Array.copy refs }
 
 let use_of : Def.access -> use = function
   | Read -> Use_read
@@ -320,21 +320,19 @@ let check_args fn i params refs =
       invalid_argf "Rig.%s: part %d has two refs at %d" fn i ats.(k)
   done
 
-(* Refuses part [i]'s launch on [d] unless its image is [d]'s and has its
-   function, and its parameters hold the bytes the function reads and each ref
-   lies among them, where the driver states them: the entry. *)
-let launch_entry fn d i image kernel params refs =
-  if image.idev != d then
+(* Refuses part [i]'s launch of [f] on [d] unless [f]'s image is [d]'s, and
+   its parameters hold the bytes [f] reads and each ref lies among them, where
+   the driver states them. *)
+let check_launch fn d i (f : func) params refs =
+  if f.fimage.idev != d then
     invalid_argf "Rig.%s: part %d's image is not loaded on %s" fn i d.name;
-  match Memory.kernel_entry image kernel with
-  | None ->
-      invalid_argf "Rig.%s: part %d's image has no function %S" fn i kernel
-  | Some ({ params = None; _ } as e) -> e
-  | Some ({ params = Some takes; _ } as e) ->
+  match f.fentry.params with
+  | None -> ()
+  | Some takes ->
       if params < takes then
         invalid_argf
-          "Rig.%s: %s takes %d bytes of parameters; part %d gives %d" fn kernel
-          takes i params;
+          "Rig.%s: %s takes %d bytes of parameters; part %d gives %d" fn
+          f.fname takes i params;
       Array.iter
         (fun r ->
           let at = ref_at r in
@@ -342,9 +340,8 @@ let launch_entry fn d i image kernel params refs =
             invalid_argf
               "Rig.%s: part %d's ref at %d lies past the %d bytes of \
                parameters %s takes"
-              fn i at takes kernel)
-        refs;
-      e
+              fn i at takes f.fname)
+        refs
 
 (* Refuses fixed memory that is dead, not [d]'s or, written, admits only
    reads. *)
@@ -356,16 +353,12 @@ let check_memory fn d (b, (access : Def.access)) =
   if access = Read_write && Buffer.access b = Def.Read then
     invalid_argf "Rig.%s: a fixed buffer written admits only reads" fn
 
-(* The value of part [i]'s entry ref to [image]'s [f] on [d]. *)
-let entry_code fn d i image f =
-  if image.idev != d then
+(* The value of part [i]'s entry ref to [f] on [d]. *)
+let entry_code fn d i (f : func) =
+  if f.fimage.idev != d then
     invalid_argf "Rig.%s: part %d's entry ref names an image not loaded on %s"
       fn i d.name;
-  match Memory.kernel_entry image f with
-  | Some e -> e.code
-  | None ->
-      invalid_argf "Rig.%s: part %d's entry ref: its image has no function %S"
-        fn i f
+  f.fentry.code
 
 let refs_of = function
   | Fill { refs; _ } | Launch { refs; _ } -> refs
@@ -694,7 +687,6 @@ let build keep ~fixed d parts =
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
   let ncopies = ref 0 in
-  let entries = Array.make (Array.length parts) None in
   let slots = Array.map (fun p -> slot_refs (refs_of p)) parts in
   (* Each part's entry refs: where they lie in its parameters, their value
      and their image. *)
@@ -704,7 +696,7 @@ let build keep ~fixed d parts =
         Array.to_list (refs_of p)
         |> List.filter_map (function
           | Slot_ref _ -> None
-          | Entry { at; image; f } -> Some (at, entry_code fn d i image f, image)))
+          | Entry { at; fn = f } -> Some (at, entry_code fn d i f, f.fimage)))
       parts
   in
   Array.iteri
@@ -729,8 +721,7 @@ let build keep ~fixed d parts =
           incr ncopies
       | Launch l ->
           check_args fn i l.params l.refs;
-          entries.(i) <-
-            Some (launch_entry fn d i l.image l.kernel l.params l.refs);
+          check_launch fn d i l.fn l.params l.refs;
           nrefs := !nrefs + Array.length slots.(i);
           ncodes := !ncodes + List.length codes.(i))
     parts;
@@ -790,19 +781,19 @@ let build keep ~fixed d parts =
           side ~dst:true Use_write dst;
           incr m
       | Launch l ->
-          let e = Option.get entries.(i) in
+          let e = l.fn.fentry in
           let place = sub_launch c i e.code e.launch l.params slots.(i) !r in
           place_codes i place;
           let most = Option.value e.threads ~default:0 in
-          blocks.(i) <- (sub_id c, place, l.params, most, l.kernel);
+          blocks.(i) <- (sub_id c, place, l.params, most, l.fn.fname);
           r := !r + Array.length slots.(i);
-          images := l.image :: !images)
+          images := l.fn.fimage :: !images)
     parts;
   Array.iter (fun (b, a) -> fix_next b (use_of a)) memory;
   sub_seal c;
   let kernels =
     Array.to_list parts
-    |> List.filter_map (function Launch l -> Some l.kernel | _ -> None)
+    |> List.filter_map (function Launch l -> Some l.fn.fname | _ -> None)
   in
   let span =
     if Array.length parts = 0 then None

@@ -85,7 +85,8 @@ let run_add d binary ~n a b =
   let a = on a and b = on b and out = Rig.Buffer.create d (4 * n) in
   let module Sub = Rig.Submission in
   let refs = Sub.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
-  let s = Sub.make d [| Sub.launch ~refs image "add" ~params:32 |] in
+  let fn = require_some (Rig.Image.resolve image "add") in
+  let s = Sub.make d [| Sub.launch ~refs fn ~params:32 |] in
   let run = Sub.Run.make () and blk = Sub.block s 0 in
   Sub.Run.groups run blk ((n + 63) / 64) 1 1;
   Sub.Run.threads run blk 64 1 1;

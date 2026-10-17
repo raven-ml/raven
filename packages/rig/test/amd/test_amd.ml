@@ -702,7 +702,7 @@ let encoded_words ~units ~fixed encode =
 
 let kernel ?of_ t p name ~groups ~fixed args =
   let a = buffer ~memory:Pinned t 4096 in
-  let entry f = Option.get (Rig.Image.entry p f) in
+  let entry f = Rig.Image.entry (Option.get (Rig.Image.resolve p f)) in
   let dispatch args =
     dispatch ?of_ (A.capability t.g).gpu entry name ~args ~groups
   in
@@ -738,7 +738,8 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
     | Read_write -> Sub.write slot ~at
   in
   let refs = Array.of_list (List.map ref_ refs) in
-  let s = Sub.make t.d [| Sub.launch ~refs p name ~params |] in
+  let fn = Option.get (Rig.Image.resolve p name) in
+  let s = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
   let run = Sub.Run.make () and b = Sub.block s 0 in
   Sub.Run.groups run b gx gy gz;
   Sub.Run.threads run b tx ty tz;
@@ -820,9 +821,10 @@ let launch_segments_hw () =
   let out = buffer ~memory:Pinned t (4 * count * rounds * lanes) in
   put out (String.make (Rig.Buffer.length out) '\255');
   let sizes = [| 4096; 4096; 4096; 8; 63; 64; 65 |] in
+  let fn = require_some (Rig.Image.resolve p "double_index") in
   let ps =
     Array.init count (fun i ->
-        Sub.launch ~refs:[| Sub.write 0 ~at:0 |] p "double_index"
+        Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn
           ~params:sizes.(i mod Array.length sizes))
   in
   let s = Sub.make t.d ps in
@@ -1055,7 +1057,8 @@ let stale_code () =
           ~fixed:[ (out, Rig.Read_write) ]
           (fun addr -> le64 (addr out));
       |];
-    let at = Option.get (Rig.Image.entry p "double_index") in
+    let fn = Option.get (Rig.Image.resolve p "double_index") in
+    let at = Rig.Image.entry fn in
     (at, get out)
   in
   let first, doubled_out = load kernels in

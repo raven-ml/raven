@@ -478,6 +478,7 @@ let probes () =
   let polled_name = fresh "reenter:polled" in
   let polled, pp = P.open_ polled_name in
   let image = Result.get_ok (Rig.Image.load polled "functions") in
+  let fill = Option.get (Rig.Image.resolve image "fill") in
   let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
   let s = Sub.make d [||] and run = Sub.Run.make () in
   let pt = Rig.submit s ~run ~buffers:[||] in
@@ -521,11 +522,7 @@ let probes () =
           B.blit_to_bytes b 0 (Bytes.create 1) 0 1);
       locks "Buffer.fill" (fun () -> B.fill b 'x');
       locks "Image.load" (fun () -> ignore (Rig.Image.load d "code"));
-      locks "Image.mem" (fun () -> ignore (Rig.Image.mem image "fill"));
-      locks "Image.params" (fun () -> ignore (Rig.Image.params image "fill"));
-      locks "Image.threads" (fun () ->
-          ignore (Rig.Image.threads image "fill"));
-      locks "Image.entry" (fun () -> ignore (Rig.Image.entry image "fill"));
+      locks "Image.resolve" (fun () -> ignore (Rig.Image.resolve image "fill"));
       locks "Submission.make" (fun () -> ignore (Sub.make d [||]));
       locks "submit" (fun () -> ignore (Rig.submit s ~run ~buffers:[||]));
       locks ~what:"Local.get of an unset value" "Local.get" (fun () ->
@@ -544,6 +541,11 @@ let probes () =
       free "Buffer.of_bigarray" (fun () -> ignore (B.of_bigarray ba));
       free "Claim.with_" (fun () ->
           Rig.Claim.with_ ~read:[ b ] ~donate:[] ignore);
+      free "Image.name" (fun () -> ignore (Rig.Image.name fill));
+      free "Image.image" (fun () -> ignore (Rig.Image.image fill));
+      free "Image.params" (fun () -> ignore (Rig.Image.params fill));
+      free "Image.threads" (fun () -> ignore (Rig.Image.threads fill));
+      free "Image.entry" (fun () -> ignore (Rig.Image.entry fill));
       free "Submission.read" (fun () -> ignore (Sub.read 0 ~at:0));
       free "Submission.Run.make" (fun () -> ignore (Sub.Run.make ()));
       free "Profile.enabled" (fun () -> ignore (Rig.Profile.enabled ()));

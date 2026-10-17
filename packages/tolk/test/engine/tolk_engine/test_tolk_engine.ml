@@ -387,13 +387,14 @@ let sums_in ~blocks m k =
   let prg = Codegen.to_program (sums m k) (Lazy.force clang) in
   let elf = Device.Tiny_elf.of_program prg in
   let image = Result.get_ok (Rig.Image.load host elf.lib) in
+  let fn = require_some (Rig.Image.resolve image elf.name) in
   let s =
     Rig.Submission.(
       make host
         [|
           launch
             ~refs:[| write 0 ~at:0; read 1 ~at:8; read 2 ~at:16 |]
-            image elf.name ~params:32;
+            fn ~params:32;
         |])
   in
   let run = Rig.Submission.Run.make () in

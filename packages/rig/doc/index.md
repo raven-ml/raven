@@ -91,8 +91,9 @@ Each call, in order:
 ## On a GPU
 
 On a GPU, the work is usually a *launch*, which runs a function of an *image*,
-a binary compiled for the device, over a grid of threads. The calls are the
-same on every GPU, and the work may complete after `submit` returns.
+a binary compiled for the device, over a grid of threads. `Image.resolve`
+finds the function and makes it ready to launch. The calls are the same on
+every GPU, and the work may complete after `submit` returns.
 
 This function doubles the `n` floats of the device buffer `x`, `n` a multiple
 of 256, with the function `twice` of `binary`:
@@ -101,8 +102,9 @@ of 256, with the function `twice` of `binary`:
 ```ocaml
 let double d binary x n =
   let image = Rig.Image.load d binary |> Result.get_ok in
+  let twice = Rig.Image.resolve image "twice" |> Option.get in
   let twice =
-    Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] image "twice" ~params:8)
+    Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
   in
   let s = Rig.Submission.make d [| twice |] in
   let run = Rig.Submission.Run.make () in

@@ -32,18 +32,25 @@ val load : Def.device -> string -> (t, string) result
 val device : t -> Def.device
 (** [device i] is the device [i] is loaded on. *)
 
-val mem : t -> string -> bool
-(** [mem i f] is {!Rig.Image.mem}: whether the driver has an entry for [f]
-    ({!Memory.kernel_entry}). *)
+type func = Def.func
+(** {!Rig.Image.func}. *)
 
-val entry : t -> string -> int option
-(** [entry i f] is {!Rig.Image.entry}: the [code] of the driver's entry for
-    [f]. *)
+val resolve : t -> string -> func option
+(** [resolve i f] is {!Rig.Image.resolve}: the driver's entry for [f]
+    ({!Memory.kernel_entry}), kept with [i] and [f]. *)
 
-val params : t -> string -> int option
-(** [params i f] is {!Rig.Image.params}: the [params] of the driver's entry
-    for [f]. *)
+val name : func -> string
+(** [name fn] is {!Rig.Image.name}. *)
 
-val threads : t -> string -> int option
-(** [threads i f] is {!Rig.Image.threads}: the [threads] of the driver's entry
-    for [f]. *)
+val image : func -> t
+(** [image fn] is {!Rig.Image.image}. *)
+
+val params : func -> int option
+(** [params fn] is {!Rig.Image.params}: the [params] of the driver's entry. *)
+
+val threads : func -> int option
+(** [threads fn] is {!Rig.Image.threads}: the [threads] of the driver's
+    entry. *)
+
+val entry : func -> int
+(** [entry fn] is {!Rig.Image.entry}: the [code] of the driver's entry. *)

@@ -309,7 +309,8 @@ let launch_image = Rig_gpu_support.loader (fun () -> S.fixture "launch.ptx")
 let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
     ~threads:(tx, ty, tz) ~shared =
   let refs = [| Sub.write 0 ~at:0 |] in
-  let s = Sub.make d [| Sub.launch ~refs (launch_image d) kernel ~params |] in
+  let fn = require_some (Rig.Image.resolve (launch_image d) kernel) in
+  let s = Sub.make d [| Sub.launch ~refs fn ~params |] in
   let run = Run.make () in
   let b = Sub.block s 0 in
   Run.groups run b gx gy gz;
@@ -843,7 +844,8 @@ let collected_image () =
   let[@inline never] make () =
     let image = require_ok (Rig.Image.load t.d (S.fixture "kernels.ptx")) in
     Weak.set weak 0 (Some image);
-    let step = require_some (Rig.Image.entry image "step") in
+    let fn = require_some (Rig.Image.resolve image "step") in
+    let step = Rig.Image.entry fn in
     require_ok (graph g [| S.kernel step (address out) 0 |])
   in
   let gr = make () in
@@ -863,7 +865,8 @@ let collected_together () =
   let images = Weak.create 1 and graphs = Weak.create 1 in
   let[@inline never] make () =
     let image = require_ok (Rig.Image.load t.d (S.fixture "kernels.ptx")) in
-    let empty = require_some (Rig.Image.entry image "empty") in
+    let fn = require_some (Rig.Image.resolve image "empty") in
+    let empty = Rig.Image.entry fn in
     let gr = require_ok (graph g [| S.kernel empty 0 0 |]) in
     Weak.set images 0 (Some image);
     Weak.set graphs 0 (Some gr)

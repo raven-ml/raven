@@ -136,7 +136,8 @@ let test_overlapping () =
 let functions d =
   require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
 
-let launch ?refs ?(params = 0) image kernel = Sub.launch ?refs image kernel ~params
+let launch ?refs ?(params = 0) image kernel =
+  Sub.launch ?refs (require_some (Rig.Image.resolve image kernel)) ~params
 let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
 
 (* Submits [parts] on [d] with zeroed parameters and one group of one thread per

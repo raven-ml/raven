@@ -191,17 +191,20 @@ let entry_in_entry_rig () =
   walk_rig (fun d n ->
       let i = loaded d in
       let mem () =
-        if not (Rig.Image.mem i "step") then fail "no function step"
+        if Option.is_none (Rig.Image.resolve i "step") then
+          fail "no function step"
       in
-      let landing, landed = Rig_support.landing seen "Rig.Image.mem: " mem in
+      let landing, landed =
+        Rig_support.landing seen "Rig.Image.resolve: " mem
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
-            ignore (Rig.Image.mem i "empty"))
+            ignore (Rig.Image.resolve i "empty"))
       in
       ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
       equal ~msg:(strf "from allocation %d, the function" n) bool true
-        (Rig.Image.mem i "step");
+        (Option.is_some (Rig.Image.resolve i "step"));
       reached);
   Rig_support.covered seen
 
@@ -213,7 +216,7 @@ let open_in_graph_rig () =
   let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let i = loaded d in
-      let empty = Option.get (Rig.Image.entry i "empty") in
+      let empty = Rig.Image.entry (Option.get (Rig.Image.resolve i "empty")) in
       let cap = Option.get (Rig.capability d Rig_cuda_abi.key) in
       let k = S.kernel empty 0 0 in
       let opened = ref 0 in
@@ -244,7 +247,7 @@ let close_in_graph () =
   let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let i = loaded d in
-      let empty = Option.get (Rig.Image.entry i "empty") in
+      let empty = Rig.Image.entry (Option.get (Rig.Image.resolve i "empty")) in
       let cap = Option.get (Rig.capability d Rig_cuda_abi.key) in
       let k = S.kernel empty 0 0 in
       let landing, landed =

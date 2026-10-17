@@ -1011,7 +1011,8 @@ let launch_image =
   Rig_gpu_support.loader (fun () -> S.fixture ~dir:"fixtures" "launch")
 
 let launch image kernel ~params refs =
-  Sub.launch ~refs:(Array.of_list refs) image kernel ~params
+  let fn = require_some (Rig.Image.resolve image kernel) in
+  Sub.launch ~refs:(Array.of_list refs) fn ~params
 
 (* The unsigned 32-bit words of [b]. *)
 let words b =
@@ -1708,7 +1709,7 @@ let unloaded_releases () =
 let entry_params () =
   let t = dev () in
   let l = launch_image t.d in
-  let params f = Rig.Image.params l f in
+  let params f = Rig.Image.params (require_some (Rig.Image.resolve l f)) in
   equal (option int) ~msg:"twice: two pointers and a word" (Some 24)
     (params "twice");
   equal (option int) ~msg:"neighbours: a pointer and a word" (Some 16)

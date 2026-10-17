@@ -172,7 +172,8 @@ let dispatch gpu (k : Abi.Code_object.kernel) ~base ~args ~threads =
 (* The code object loaded on [t], and the address of its image. *)
 let load t =
   let p = get (Rig.Image.load t.d (Lazy.force binary)) in
-  (p, Option.get (Rig.Image.entry p "empty") - (kernel "empty").descriptor)
+  let empty = Option.get (Rig.Image.resolve p "empty") in
+  (p, Rig.Image.entry empty - (kernel "empty").descriptor)
 
 (* The floors *)
 
@@ -362,7 +363,8 @@ let launch_rows =
   let launching n () =
     let t = dev () in
     let p, _ = load t in
-    let empty = Rig.Submission.launch p "empty" ~params:0 in
+    let fn = Option.get (Rig.Image.resolve p "empty") in
+    let empty = Rig.Submission.launch fn ~params:0 in
     let s = prepare t (Array.make n empty) in
     for i = 0 to n - 1 do
       let b = Rig.Submission.block s i in
@@ -399,7 +401,12 @@ let launch_rows =
     let out = B.create t.d 256 in
     let s =
       Rig.Submission.(
-        make t.d [| launch ~refs:[| write 0 ~at:0 |] p "double_index" ~params:8 |])
+        make t.d
+          [|
+            launch ~refs:[| write 0 ~at:0 |]
+              (Option.get (Rig.Image.resolve p "double_index"))
+              ~params:8;
+          |])
     in
     let b = Rig.Submission.block s 0 in
     Rig.Submission.Run.groups t.run b 1 1 1;
