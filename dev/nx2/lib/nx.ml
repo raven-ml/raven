@@ -4049,9 +4049,11 @@ let conv ?stride ?padding ?dilation ?groups x w =
     (permute ~by p (by_groups ~by groups w))
 
 (* The transpose is the convolution at stride one of [x] with [stride - 1]
-   zeros between its elements, padded by [dilation (k - 1) - lo] and
-   [dilation (k - 1) - hi], by [w] reversed along its taps and with its
-   channels exchanged. *)
+   zeros between its elements, padded by [dilation (k - 1) - lo] before, by
+   [w] reversed along its taps and with its channels exchanged. The padding
+   after, [dilation (k - 1) - hi] where the least input is the formula's,
+   is the one that gives the least input's extent [d]: the padded axis is
+   then [d + dilation (k - 1)] long, which holds [d] windows. *)
 let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv_transpose" in
   let stride, padding, dilation, groups =
@@ -4064,30 +4066,31 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let k = ndim x - 2 in
   let s = shape x and taps = Array.sub (shape w) 1 k in
   let span i = dilation.(i) * (taps.(i) - 1) in
+  (* [x]'s extent along spatial axis [i] once [stride - 1] zeros go between
+     its elements. *)
+  let spread i =
+    let t = s.(1 + i) in
+    if t = 0 then 0 else ((t - 1) * stride.(i)) + 1
+  in
   let least i =
     let t = s.(1 + i) and lo, hi = padding.(i) in
     let d =
-      if t = 0 then 0 else ((t - 1) * stride.(i)) + span i + 1 - lo - hi
+      if t = 0 then 0 else Stdlib.max 0 (spread i + span i - lo - hi)
     in
-    if d < 0 || (t = 0 && lo + hi > span i) then
+    if windows_along d (lo, hi) taps.(i) stride.(i) dilation.(i) <> t then
       invalid_argf "%s: no input has a convolution of %a" by pp_value x;
     d
   in
   let target = Array.init k least in
-  let c = groups * dim (-1) w in
-  if Array.exists (( = ) 0) (Array.sub s 1 k) then
-    let out = Array.concat [ [| s.(0) |]; target; [| c |] ] in
-    beside ~by x (fill ~by (dtype x) out (D.zero (dtype x)))
-  else
-    (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
-    let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
-    let w = permute ~by p (by_groups ~by groups w) in
-    let w = flip ~axes:(List.init k (fun i -> 3 + i)) w in
-    windows_of ~by ~stride:(Array.make k 1)
-      ~lo:(Array.init k (fun i -> span i - fst padding.(i)))
-      ~hi:(Array.init k (fun i -> span i - snd padding.(i)))
-      ~interior:(Array.map (fun st -> st - 1) stride)
-      ~dilation x w
+  let lo = Array.init k (fun i -> span i - fst padding.(i)) in
+  let hi = Array.init k (fun i -> target.(i) + span i - spread i - lo.(i)) in
+  (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
+  let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
+  let w = permute ~by p (by_groups ~by groups w) in
+  let w = flip ~axes:(List.init k (fun i -> 3 + i)) w in
+  windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
+    ~interior:(Array.map (fun st -> st - 1) stride)
+    ~dilation x w
 
 (* Fourier transforms *)
 

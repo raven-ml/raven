@@ -1404,11 +1404,14 @@ module Conv = struct
   let x_shape c = Array.concat [ [| c.n |]; c.spatial; [| c.groups * c.cg |] ]
   let w_shape c = Array.concat [ [| c.groups * c.og |]; c.taps; [| c.cg |] ]
 
-  let windows c i =
+  (* The windows along axis [i] of an input of extent [d]. *)
+  let count c i d =
     let lo, hi = c.padding.(i) in
     let span = (c.dilation.(i) * (c.taps.(i) - 1)) + 1 in
-    let e = c.spatial.(i) + lo + hi in
+    let e = d + lo + hi in
     if e < span then 0 else ((e - span) / c.stride.(i)) + 1
+
+  let windows c i = count c i c.spatial.(i)
 
   let case =
     Gen.with_pp pp_case
@@ -1486,41 +1489,51 @@ module Conv = struct
         equal ~msg:"float16, summed at float32" (array float_exact) want (run D.Float16 c);
         equal ~msg:"int32" (array float_exact) want (run D.Int32 c))
 
-  (* [conv_transpose]'s least input extent of each spatial axis, or [None]
-     where no input has a convolution of that shape. *)
-  let least c =
-    let k = Array.length c.spatial in
-    let t = Array.init k (windows c) in
-    let ok = ref true in
-    let d =
-      Array.init k (fun i ->
-          let lo, hi = c.padding.(i) in
-          let span = c.dilation.(i) * (c.taps.(i) - 1) in
-          let d = if t.(i) = 0 then 0 else ((t.(i) - 1) * c.stride.(i)) + span + 1 - lo - hi in
-          if d < 0 || (t.(i) = 0 && lo + hi > span) then ok := false;
-          d)
+  (* The least input extent along axis [i] whose convolution has [t]
+     windows, searched from the count, or [None] where no extent has. The
+     count grows by at most one per element, so the search stops past
+     [t]. *)
+  let least c i t =
+    let rec from d =
+      let n = count c i d in
+      if n = t then Some d else if n > t then None else from (d + 1)
     in
-    if !ok then Some (t, d) else None
+    from 0
 
+  (* [x]'s spatial extents are [c.spatial], each a count [t]. *)
   let law_transpose =
     prop "conv_transpose is conv's adjoint" case (fun c ->
-        match least c with
-        | None -> reject ()
-        | Some (t, d) ->
-            let o = c.groups * c.og in
-            let gs = Array.concat [ [| c.n |]; t; [| o |] ] in
-            let g = Nx.init Nx.float64 gs (fun i -> Float.of_int ((Array.fold_left ( + ) 0 i mod 5) - 2)) in
-            let z_shape = Array.concat [ [| c.n |]; d; [| c.groups * c.cg |] ] in
-            let z = Nx.init Nx.float64 z_shape (fun i -> Float.of_int ((Array.fold_left ( * ) 1 (Array.map succ i) mod 7) - 3)) in
-            let w = Nx.create Nx.float64 (w_shape c) c.ws in
-            let stride = c.stride and padding = c.padding and dilation = c.dilation in
-            let groups = c.groups in
-            let y = Nx.conv_transpose ~stride ~padding ~dilation ~groups g w in
-            equal ~msg:"shape" (array int) z_shape (Nx.shape y);
-            let conv = Nx.conv ~stride ~padding ~dilation ~groups z w in
-            let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
-            let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
-            equal ~msg:"adjoint" float_exact lhs rhs)
+        let t = c.spatial in
+        let least = Array.mapi (least c) t in
+        cover "no input has the count" (Array.exists Option.is_none least);
+        cover "an input below the formula's extent"
+          (Array.exists Fun.id
+             (Array.mapi
+                (fun i d ->
+                  let lo, hi = c.padding.(i) in
+                  let span = c.dilation.(i) * (c.taps.(i) - 1) in
+                  t.(i) > 0 && d = Some 0
+                  && ((t.(i) - 1) * c.stride.(i)) + span + 1 - lo - hi < 0)
+                least));
+        let o = c.groups * c.og in
+        let gs = Array.concat [ [| c.n |]; t; [| o |] ] in
+        let g = Nx.init Nx.float64 gs (fun i -> Float.of_int ((Array.fold_left ( + ) 0 i mod 5) - 2)) in
+        let w = Nx.create Nx.float64 (w_shape c) c.ws in
+        let stride = c.stride and padding = c.padding and dilation = c.dilation in
+        let groups = c.groups in
+        if Array.exists Option.is_none least then
+          raises_match (Exn.invalid_arg ~substring:"Nx.conv_transpose: ") (fun () ->
+              Nx.conv_transpose ~stride ~padding ~dilation ~groups g w)
+        else
+          let d = Array.map Option.get least in
+          let z_shape = Array.concat [ [| c.n |]; d; [| c.groups * c.cg |] ] in
+          let z = Nx.init Nx.float64 z_shape (fun i -> Float.of_int ((Array.fold_left ( * ) 1 (Array.map succ i) mod 7) - 3)) in
+          let y = Nx.conv_transpose ~stride ~padding ~dilation ~groups g w in
+          equal ~msg:"shape" (array int) z_shape (Nx.shape y);
+          let conv = Nx.conv ~stride ~padding ~dilation ~groups z w in
+          let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
+          let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
+          equal ~msg:"adjoint" float_exact lhs rhs)
 
   let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.conv") f
 
@@ -1537,9 +1550,26 @@ module Conv = struct
     invalid (fun () -> Nx.conv_transpose x w);
     invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w)
 
+  (* A [[1; 0; 1]] input at stride 3 and padding (1, 1) has one window: the
+     transpose of that count has an input to find. *)
+  let test_transpose_short () =
+    let ones s = Nx.ones Nx.float64 s in
+    let x = Nx.create Nx.float64 [| 1; 3; 1 |] [| 1.; 0.; 1. |] in
+    let stride = [| 3 |] and padding = [| (1, 1) |] in
+    let y = Nx.conv ~stride ~padding x (ones [| 1; 3; 1 |]) in
+    equal (array int) [| 1; 1; 1 |] (Nx.shape y);
+    let z = Nx.conv_transpose ~stride ~padding (ones [| 1; 1; 1 |]) (ones [| 1; 1; 1 |]) in
+    equal (array int) [| 1; 0; 1 |] (Nx.shape z)
+
   let group =
     group "convolution"
-      [ law_conv; law_transpose; test "each refusal names its function" test_refusals ]
+      [
+        law_conv;
+        law_transpose;
+        test "conv_transpose finds an input shorter than its formula's"
+          test_transpose_short;
+        test "each refusal names its function" test_refusals;
+      ]
 end
 
 let () =

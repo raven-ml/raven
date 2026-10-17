@@ -1653,9 +1653,9 @@ val conv_transpose :
     arguments, has [x]'s shape [[n; t…; o]], it is the [[n; s…; c]] value
     with [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for
     every such [z]: [s = (t - 1) stride + dilation (k - 1) + 1 - lo - hi], or
-    [0] for [t = 0]. It
-    is one reduction over [x] with [stride - 1] zeros between its elements,
-    windowed by [w] reversed along its spatial axes, never stored.
+    [0] where that is negative or [t = 0]. It is one reduction over [x] with
+    [stride - 1] zeros between its elements, windowed by [w] reversed along
+    its spatial axes, never stored.
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
