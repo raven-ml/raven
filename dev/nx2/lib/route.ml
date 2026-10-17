@@ -35,9 +35,14 @@ let product s lo hi =
 (* CR: Match reshape cuts using their tile count. Reshaping [8] split over
    two devices to [2;4] currently gathers a full [8] on each device;
    each existing [4] shard can instead reshape to [1;4]. For positive
-   shapes, match axes by equal prefix products and extents divisible by
-   that count. Walk actual cuts and use this one correspondence in
-   forward, backward and localize; extent equality needlessly loses it. *)
+   shapes, match a cut axis to the first new axis of equal prefix
+   product where every window holds whole rows of the axes after it:
+   the tile count divides that axis's extent, or the axes after it hold
+   one element; an uneven cut has the second alone. Otherwise windows
+   straddle rows and it still gathers: [12] over 4 to [2;6] has windows
+   of 3 across rows of 6. Walk actual cuts and use this one
+   correspondence in forward, backward and localize; extent equality
+   needlessly loses it. *)
 let moved (m : Nx_array.Move.t) s a =
   match m with
   | Permute p -> Array.find_index (( = ) a) p
