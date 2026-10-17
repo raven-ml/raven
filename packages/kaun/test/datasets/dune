@@ -1,0 +1,4 @@
+(test
+ (name test_datasets)
+ (package kaun)
+ (libraries kaun.datasets windtrap))

@@ -6339,6 +6339,9 @@ thread.
 
 ### Kaun
 
+- `Kaun_datasets.cifar10` raises `Failure` naming the file when a batch does
+  not hold 10,000 entries. A longer batch wrote past its arrays, and a shorter
+  one returned uninitialised bytes.
 - `Kaun_hf.download_file` writes a download through the descriptor that created
   its temporary file. curl reopened it by name, so a link put there meanwhile
   redirected the write, and a umask without the owner's write bit failed it.

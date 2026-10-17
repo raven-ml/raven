@@ -66,6 +66,10 @@ let read_batch_file ~extracted_dir filename =
              "CIFAR-10 batch %s has unexpected size %d (expected multiple of \
               %d)"
              filename (String.length s) Config.entry_size);
+      if num_entries <> Config.entries_per_batch then
+        failwith
+          (Printf.sprintf "CIFAR-10 batch %s has %d entries (expected %d)"
+             filename num_entries Config.entries_per_batch);
       (s, num_entries))
 
 let load () =
