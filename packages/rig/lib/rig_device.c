@@ -51,7 +51,7 @@ enum {
   SUBMIT_LOST_AFTER,
   SUBMIT_PRODUCER_LOST,
   SUBMIT_FAILED,
-  SUBMIT_NEED_RECORD,
+  SUBMIT_NO_MEMORY,
   SUBMIT_GROW
 };
 
@@ -1196,35 +1196,6 @@ value caml_rig_waits_in_queue(value v_d) {
   CAMLreturn(Val_bool(waits));
 }
 
-/* Grows [d]'s record so that [v_n] more entries fit. The array is made
-   with no mutex held, which a mutex section never waits for. */
-value caml_rig_ensure_record(value v_d, value v_n) {
-  CAMLparam1(v_d);
-  struct rig_device *d = Device_val(v_d);
-  int n = Int_val(v_n);
-  int released = take(d);
-  int want = d->nrecord + n, have = d->crecord;
-  give(d, released);
-  if (want <= have) CAMLreturn(Val_unit);
-  int c = 2 * want < 8 ? 8 : 2 * want;
-  struct rig_entry *grown = malloc((size_t)c * sizeof *grown);
-  if (grown == NULL) caml_raise_out_of_memory();
-  released = take(d);
-  struct rig_entry *old = NULL;
-  if (d->crecord < c) {
-    if (d->nrecord > 0)
-      memcpy(grown, d->record, (size_t)d->nrecord * sizeof *grown);
-    old = d->record;
-    d->record = grown;
-    d->crecord = c;
-    grown = NULL;
-  }
-  give(d, released);
-  free(old);
-  free(grown);
-  CAMLreturn(Val_unit);
-}
-
 /* The turn
 
    A driver that never blocks is called under [d]'s mutex, which is then
@@ -1309,7 +1280,8 @@ static int give_turn(struct rig_device *d, int released, int r) {
    through mappings [d] may give back drops a wait for a point already done,
    so the driver never reads its word: that word, or [d]'s mapping of it,
    may be given back once [d] passed its next value
-   ([caml_rig_next_value]). The mutex is held. */
+   ([caml_rig_next_value]). The record grows here: SUBMIT_NO_MEMORY if the
+   host has no memory for it. The mutex is held. */
 static int record_waits(struct rig_device *d, struct rig_run *r) {
   /* Nothing to drop or record reads no word: the device writes its line,
      so a read is a cache miss on every submit. */
@@ -1332,7 +1304,13 @@ static int record_waits(struct rig_device *d, struct rig_run *r) {
   }
   r->nwaits = n;
   if (n == 0) return SUBMIT_OK;
-  if (k + n > d->crecord) return SUBMIT_NEED_RECORD;
+  if (k + n > d->crecord) {
+    int c = 2 * (k + n) < 8 ? 8 : 2 * (k + n);
+    struct rig_entry *grown = realloc(d->record, (size_t)c * sizeof *grown);
+    if (grown == NULL) return SUBMIT_NO_MEMORY;
+    d->record = grown;
+    d->crecord = c;
+  }
   uint64_t u = atomic_load(&d->line->submitted) + 1;
   for (int j = 0; j < n; j++)
     d->record[k + j] =

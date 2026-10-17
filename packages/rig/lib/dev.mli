@@ -325,8 +325,9 @@ module Answer : sig
   (** The driver's [submit] or [commit] failed, and this call lost the
       device. *)
 
-  val need_record : int
-  (** The device's record of waits in its queues must grow first. *)
+  val no_memory : int
+  (** The host has no memory to record the work's waits in the device's
+      queues. *)
 
   val grow : int
   (** The driver's room answered that the parts fit once its queues grow

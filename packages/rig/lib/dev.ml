@@ -686,7 +686,7 @@ module Answer = struct
   let never = 3
   let producer_lost = 6
   let failed = 7
-  let need_record = 8
+  let no_memory = 8
   let grow = 9
 end
 
