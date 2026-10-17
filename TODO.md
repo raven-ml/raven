@@ -305,7 +305,6 @@ raven / llama.cpp (Vulkan; ROCm):
   kernels raises `has no eager kernels` (total.ml:62,86)
 - jit compiles no complex tensor (lower.ml:36); ymir's `test_quantity`
   holds an `xfail`
-- covers some seeds miss: test_iterate "max = 0"
 - vega keeps optimizer state at the leaf dtype: a bfloat16 moment never
   decays by less than half its spacing (vega.mli:98). Design pass
 - compiled Cholesky stays unrolled (lower_linalg.ml:613): compile grows with

@@ -1378,9 +1378,12 @@ let compiled_loop_law =
           cover "raises" true;
           raises (Invalid_argument (failure max)) got)
 
+(* From [0.06; 0.01], lane 1 stops at once and lane 0 after one step: an
+   example for each bound the law covers, which 25 drawn cases of six bounds
+   miss once in 100 runs. *)
 let compiled_bound_law =
   prop ~count:25
-    ~examples:[ (vec [| 0.06; 0.01 |], 1) ]
+    ~examples:[ (vec [| 0.06; 0.01 |], 1); (vec [| 0.06; 0.01 |], 0) ]
     "compiled, under vmap each lane ends within max, or the first running is \
      named"
     Gen.(pair starts (int_range 0 5))
