@@ -29,6 +29,11 @@
 #else
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <stdio.h>
+#endif
 
 #include "rig_pool.h"
 #include "rig_stubs.h"
@@ -263,14 +268,30 @@ static _Atomic uintnat cycles_seen;
 /* Pacing the collector
 
    The runtime paces major cycles by the memory custom blocks hold outside
-   the heap: a cycle is due once that much has reached the major heap,
-   allocated since the last one, as [caml_custom_get_max_major] gives. That
-   is a share of the major heap, so a program whose memory is mostly buffers
-   would collect once per buffer as large as that share of its small heap,
-   and mark the whole heap each time. The share is taken here of the
-   program's whole memory instead: the major heap and the bytes buffers hold
-   live, so the garbage floating outside the heap stays the same share of
-   what the program holds.
+   the heap: a block of [mem] bytes against a bound [max] adds [mem / max]
+   of a cycle's work, at most a whole cycle, and that work is marking and
+   sweeping the major heap (OCaml's runtime/memory.c, caml_adjust_gc_speed,
+   and runtime/major_gc.c). Its own bound, [caml_custom_get_max_major], is
+   [custom_major_ratio] / 150 of the heap's bytes, 29% by default, so that
+   floating garbage stays a share of what the heap holds. A program whose
+   memory is mostly buffers would then collect once per buffer as large as
+   that share of its small heap, and mark the whole heap each time. The
+   share is taken here of the program's whole memory instead: the major heap
+   and the bytes buffers hold live, so the garbage floating outside the heap
+   stays the same share of what the program holds. The live term matters
+   where a program keeps its weights live and churns results: an Adam step
+   of a 2048-wide MLP on the M1 Max ran 22 cycles over kaun's
+   pointer-dense heap without it, against 8, and 7% slower.
+
+   A program whose heap and live buffers are both small still has a share
+   far below one result, and would run a cycle per result. A cycle is due
+   instead after at least half the last-level cache ([heap_cycle_floor]):
+   the results dropped over two cycles, which the cache below hands out
+   again in turn, then fit in the last level. On fudge (Core Ultra 5 235),
+   a dropped 4 MiB result took 97 us at a heap of 188k words and 46 with
+   the floor; on the M1 Max, 255 and 181. Results larger than about a
+   quarter of the last level still rotate past it: four 8 MiB results
+   rotate through fudge's 24 MiB L3 where three did before.
 
    The bytes held live are those held at the end of a major cycle that the
    next cycle did not collect. A cycle frees the garbage the previous cycle
@@ -323,16 +344,71 @@ static void slice_end(void) {
   if (previous_slice_end != NULL) previous_slice_end();
 }
 
+/* Half the host's last-level cache, which [caml_rig_heap_init] reads once. */
+static size_t heap_cycle_floor;
+
+/* The bytes of the last-level cache the host reports, at least
+   HEAP_LLC_LEAST. On Linux, the largest of CPU 0's caches
+   (sysfs-devices-system-cpu, cache/indexN/size). On macOS, the L3
+   (hw.l3cachesize) where there is one, as on Intel Macs, else the
+   performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1
+   Max, whose 48 MB system cache macOS does not report. 8 MiB is below the
+   last level of every host rig is tested on, and stands for the hosts that
+   report none, Windows included, and for those that report less than they
+   have, as Apple's and Arm servers' system caches go unreported: a floor
+   below the caches errs toward warm results. */
+#define HEAP_LLC_LEAST ((size_t)8 << 20)
+
+#if defined(__APPLE__)
+/* The value of the sysctl [name], of 4 or 8 bytes, or 0. */
+static size_t sysctl_bytes(const char *name) {
+  union {
+    int32_t i32;
+    int64_t i64;
+  } v = {0};
+  size_t size = sizeof v;
+  if (sysctlbyname(name, &v, &size, NULL, 0) != 0) return 0;
+  if (size == sizeof v.i32) return v.i32 > 0 ? (size_t)v.i32 : 0;
+  if (size == sizeof v.i64) return v.i64 > 0 ? (size_t)v.i64 : 0;
+  return 0;
+}
+#endif
+
+static size_t heap_llc_bytes(void) {
+  size_t most = 0;
+#if defined(__APPLE__)
+  most = sysctl_bytes("hw.l3cachesize");
+  if (most == 0) most = sysctl_bytes("hw.perflevel0.l2cachesize");
+#elif defined(__linux__)
+  for (int i = 0;; i++) {
+    char name[64];
+    snprintf(name, sizeof name,
+             "/sys/devices/system/cpu/cpu0/cache/index%d/size", i);
+    FILE *f = fopen(name, "r");
+    if (f == NULL) break;
+    unsigned long n = 0;
+    char unit = 'K';
+    int read = fscanf(f, "%lu%c", &n, &unit);
+    fclose(f);
+    if (read < 1) continue;
+    size_t bytes = (size_t)n << (unit == 'M' ? 20 : unit == 'K' ? 10 : 0);
+    if (bytes > most) most = bytes;
+  }
+#endif
+  return most > HEAP_LLC_LEAST ? most : HEAP_LLC_LEAST;
+}
+
 /* The memory a major cycle is due after: [caml_custom_get_max_major], the
    major heap's bytes over 150 times the ratio, plus the same share of the
-   bytes buffers hold live. */
+   bytes buffers hold live, and at least [heap_cycle_floor]. */
 static mlsize_t heap_cycle_bytes(void) {
   mlsize_t live =
       (mlsize_t)atomic_load_explicit(&heap_live, memory_order_relaxed);
-  return caml_custom_get_max_major() +
-         live / 150 *
-             atomic_load_explicit(&caml_custom_major_ratio,
-                                  memory_order_relaxed);
+  mlsize_t share =
+      caml_custom_get_max_major() +
+      live / 150 *
+          atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
+  return share > heap_cycle_floor ? share : heap_cycle_floor;
 }
 
 /* Reusing freed buffers
@@ -614,6 +690,7 @@ static void heap_finalize(value v) {
 value caml_rig_heap_init(value v_kept_from) {
   heap_kept_from = (size_t)Long_val(v_kept_from);
   heap_page = rig_page_bytes();
+  heap_cycle_floor = heap_llc_bytes() / 2;
   heap_ops = caml_ba_ops;
   heap_ops.finalize = heap_finalize;
   previous_slice_end = atomic_exchange_explicit(

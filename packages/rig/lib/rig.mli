@@ -714,6 +714,13 @@ val failure : unit -> string option
     keeps every buffer reachable runs out of memory however large its
     budget.
     {ul
+    {- A dropped host buffer of 64 KiB or more holds its memory until a
+       major cycle of the collector frees it. A cycle comes once the bytes
+       of such buffers that reached the major heap since the last one reach
+       [custom_major_ratio] / 150 ({!Gc.control}) of the program's memory,
+       the allocating domain's major heap and the host buffers live at the
+       last cycle, or half the host's last-level cache if that is more, and
+       at least 4 MiB.}
     {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
        up to 32 MiB of them, and beyond that only while the bytes of its kept
        and live buffers together stay within the peak of its live buffers

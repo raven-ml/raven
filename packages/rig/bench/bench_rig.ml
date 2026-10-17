@@ -612,6 +612,11 @@ let round () =
       done)
     bs
 
+(* A 4 MiB host buffer written whole and dropped, as a result is: what the
+   collector's pace decides, a major cycle per result or one per several,
+   and its memory found in the caches or not. *)
+let result () = B.fill (host (4 * mib)) '\001'
+
 let heap_rows =
   Thumper.group "heap"
     [
@@ -621,6 +626,7 @@ let heap_rows =
       Thumper.bench "take-64K" take;
       row "take-64K-cached-100" caching take;
       Thumper.bench "reuse-8M-x8" round;
+      Thumper.bench "fill-4M-dropped" result;
     ]
 
 let memory_floor_rows =

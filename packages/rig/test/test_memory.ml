@@ -802,6 +802,55 @@ let test_paced () =
   done;
   equal int 0 (forced () - before)
 
+(* Major cycles per dropped host buffer of a MiB, over [k] of them. *)
+let cycles_per_mib k =
+  Gc.full_major ();
+  let before = (Gc.quick_stat ()).major_collections in
+  for _ = 1 to k do
+    ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+  done;
+  Float.of_int ((Gc.quick_stat ()).major_collections - before) /. Float.of_int k
+
+(* The margin a cycle-per-bound assertion allows: a count over 256 buffers
+   includes the cycles already under way at either end. *)
+let margin = 1.5
+
+(* At a small heap, dropped host buffers bring a major cycle at most once per
+   4 MiB, the least that half the last-level cache is. *)
+let test_paced_host () =
+  let rate = cycles_per_mib 256 in
+  at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
+
+(* Live host buffers raise the bound as heap bytes do: beside 256 MiB of
+   them, dropped buffers bring a cycle at most once per [custom_major_ratio]
+   / 150 of the heap's and their bytes, about 75 MiB. Without the live term,
+   cycles would come once per half the last-level cache, more often on any
+   host whose last level is under about 100 MiB. *)
+let test_paced_host_live () =
+  let held = 256 * kib * kib in
+  let live = B.create Rig.host held in
+  let rate = cycles_per_mib 256 in
+  let words = (Gc.quick_stat ()).heap_words in
+  let bytes = Float.of_int ((words * (Sys.word_size / 8)) + held) in
+  let share = bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150. in
+  ignore (Sys.opaque_identity live);
+  at_most ~msg:"cycles per MiB" float_exact
+    ~than:(margin *. Float.of_int (kib * kib) /. share)
+    rate
+
+(* At a large heap, cycles come at most once per the collector's share of
+   the heap, [custom_major_ratio] / 150 of its bytes. *)
+let test_paced_host_heap () =
+  let heap = Array.make (16 * kib * kib) 0. in
+  let rate = cycles_per_mib 256 in
+  let words = (Gc.quick_stat ()).heap_words in
+  let bytes = Float.of_int (words * (Sys.word_size / 8)) in
+  let share = bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150. in
+  ignore (Sys.opaque_identity heap);
+  at_most ~msg:"cycles per MiB" float_exact
+    ~than:(margin *. Float.of_int (kib * kib) /. share)
+    rate
+
 (* Memory another device used enters its owner's cache once that use is
    reached. *)
 let test_foreign_use () =
@@ -1131,6 +1180,14 @@ let tests =
           test_blocked_domain;
         test "dropped buffers of many budgets never force a collection"
           test_paced;
+        test
+          "at a small heap, dropped host buffers bring a cycle per 4 MiB at \
+           most"
+          test_paced_host;
+        test "live host buffers raise the bound as heap bytes do"
+          test_paced_host_live;
+        test "a large heap's cycles come once per its share at most"
+          test_paced_host_heap;
         test "memory another device used is cached once that use is reached"
           test_foreign_use;
         test "the host keeps a collected buffer's memory for its size"

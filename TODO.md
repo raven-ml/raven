@@ -214,13 +214,13 @@ raven / llama.cpp (Vulkan; ROCm):
   (memory.ml:628-632, ~4 words a buffer); done when `drain/dropped-1000`
   allocates only its creates and kaun's GPU decode rows measure allocation
   again (bench_decode.ml's gpu_metrics)
-- a host buffer reused from rig's cache still paces the major GC as new
-  memory: rig_heap.c `heap_bigarray` (607-611), called from
-  `caml_rig_heap_bytes` (644-659), which knows the hit, paces every buffer
-  of 64 KiB or more by its full size, so a loop of 8 MiB results advances
-  the major GC 8 MiB a call (nx2's c2c-1M on fudge: 1.48-1.59 ms, 0.76-0.80
-  with OCAMLRUNPARAM=M=1000). Pace a cache hit as no new memory, state the
-  footprint bound, and keep `heap/reuse-8M-x8` as its row
+- results between about a quarter of the last-level cache and half of it
+  rotate past it under rig's due point (rig_heap.c, heap_cycle_bytes): at
+  a small heap, set-row-8M's 8 MiB results rotate through four buffers,
+  32 MiB against fudge's 24 MiB L3, where three rotated before, and the
+  row went 83 -> 92 us on fudge (counted on the M1 with fudge's floor;
+  fudge's re-time pending). `heap/reuse-8M-x8` is unmeasured under the
+  new due point
 - a pool job's start and join on fudge's 6 P-cores: an empty job costs
   0.45 µs, and units run 20-40% slower than on one core (5% of it the
   frequency drop), against nx's f32 64³ gap to MKL on 6 cores (1.66 against
