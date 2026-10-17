@@ -37,6 +37,7 @@ let largest_gap lo hi live =
 
 let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
+let flocks = not Sys.win32
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 
@@ -408,12 +409,21 @@ module Tree = struct
       write (d / "config") (String.make (config_bytes privileged) '\000')
     end
 
-  let make ?(lockdown = "[none] integrity confidentiality") ?(groups = [])
-      ?(noiommu = []) ?(privileged = false) fns =
-    if Sys.win32 then skip ~reason:"Windows names no file with a colon" ();
-    let root =
-      Lazy.force trees / string_of_int (Atomic.fetch_and_add count 1)
+  (* The link at [link] to [target], relative, so that a clone of the tree
+     links within itself. *)
+  let relative link target =
+    let parts p = List.filter (( <> ) "") (String.split_on_char '/' p) in
+    let rec drop a b =
+      match (a, b) with
+      | x :: a', y :: b' when x = y -> drop a' b'
+      | _ -> (a, b)
     in
+    let from, rest = drop (parts (Filename.dirname link)) (parts target) in
+    Unix.symlink
+      (String.concat "/" (List.map (fun _ -> "..") from @ rest))
+      link
+
+  let build ~lockdown ~groups ~noiommu ~privileged root fns =
     let sys = root / "sys" in
     let devices = sys / "bus/pci/devices" in
     write (sys / "kernel/security/lockdown") (lockdown ^ "\n");
@@ -435,7 +445,7 @@ module Tree = struct
         let d = above / fn.bus in
         mkdir_p d;
         mkdir_p devices;
-        Unix.symlink d (devices / fn.bus);
+        relative (devices / fn.bus) d;
         write (d / "vendor") (strf "0x%04x\n" fn.vendor);
         write (d / "device") (strf "0x%04x\n" fn.device);
         write (d / "class") (strf "0x%06x\n" fn.class_);
@@ -474,11 +484,11 @@ module Tree = struct
           (fun drv ->
             write (sys / "bus/pci/drivers" / drv / "bind") "";
             write (sys / "bus/pci/drivers" / drv / "unbind") "";
-            Unix.symlink (sys / "bus/pci/drivers" / drv) (d / "driver"))
+            relative (d / "driver") (sys / "bus/pci/drivers" / drv))
           fn.driver;
         Option.iter
           (fun g ->
-            Unix.symlink (sys / "kernel/iommu_groups" / g) (d / "iommu_group");
+            relative (d / "iommu_group") (sys / "kernel/iommu_groups" / g);
             let gd = sys / "kernel/iommu_groups" / g in
             write (gd / "devices" / fn.bus) "";
             write (gd / "type")
@@ -489,7 +499,48 @@ module Tree = struct
     mkdir_p (root / "proc/self/fd");
     mkdir_p (root / "dev/hugepages");
     write (root / "proc/self/mounts")
-      "none /dev/hugepages hugetlbfs rw,relatime,pagesize=2M 0 0\n";
+      "none /dev/hugepages hugetlbfs rw,relatime,pagesize=2M 0 0\n"
+
+  (* Trees are built once per description and cloned where the file system
+     clones a directory in one call, as APFS does: a disk without /dev/shm
+     made each tree ten times as slowly. *)
+  external clone : string -> string -> bool = "rig_pci_test_clone"
+
+  let templates = Hashtbl.create 16
+  let templates_lock = Mutex.create ()
+
+  (* Whether the trees' file system clones a directory. *)
+  let clones =
+    lazy
+      (let probe = Lazy.force trees / "probe" in
+       mkdir_p probe;
+       clone probe (probe ^ "-clone"))
+
+  let make ?(lockdown = "[none] integrity confidentiality") ?(groups = [])
+      ?(noiommu = []) ?(privileged = false) fns =
+    if Sys.win32 then skip ~reason:"Windows names no file with a colon" ();
+    let root =
+      Lazy.force trees / string_of_int (Atomic.fetch_and_add count 1)
+    in
+    let build = build ~lockdown ~groups ~noiommu ~privileged in
+    if not (Lazy.force clones) then build root fns
+    else begin
+      let described = (lockdown, groups, noiommu, privileged, fns) in
+      let key =
+        Digest.to_hex (Digest.string (Marshal.to_string described []))
+      in
+      let template =
+        Mutex.protect templates_lock @@ fun () ->
+        match Hashtbl.find_opt templates key with
+        | Some t -> t
+        | None ->
+            let t = Lazy.force trees / ("template-" ^ key) in
+            build t fns;
+            Hashtbl.add templates key t;
+            t
+      in
+      if not (clone template root) then build root fns
+    end;
     root
 
   let device_number = device_number

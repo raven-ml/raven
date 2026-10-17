@@ -66,9 +66,9 @@ let part_way r =
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 let gpu_bus = "0000:03:00.0"
 
-(* Takes lock a function's file, which needs Linux. *)
+(* Takes lock a function's file, which needs flock. *)
 let needs_flock () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
+  if not flocks then skip ~reason:"locking a function's file needs flock" ()
 
 let audio bus =
   { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x040300; bars = [] }
@@ -765,12 +765,12 @@ let commands index =
       (fun s -> Atomic.get s.stops);
   ]
 
-(* [on_linux_only t] is [t] where takes lock a function's file. *)
-let on_linux_only name t =
-  if on_linux then t
+(* [flocking name t] is [t] where takes lock a function's file. *)
+let flocking name t =
+  if flocks then t
   else
     test name (fun () ->
-        skip ~reason:"flock on a function's file needs Linux" ())
+        skip ~reason:"locking a function's file needs flock" ())
 
 let model_name = "opens, stops and resets behave as the model"
 
@@ -781,13 +781,20 @@ let two_domains_name =
 let serialized =
   group ~timeout:patience "opens and changes"
     [
-      on_linux_only model_name
+      flocking model_name
         (stateful model_name ~count:300 ~steps:30
            (commands (indices [ 0; 1; 2; -1 ])));
       (* 60 programs of 50 runs each, each run a new tree, with a limit of three
          patiences: a run hands off between domains, which waits for a time
-         slice when the processors are busy. *)
-      on_linux_only two_domains_name
+         slice when the processors are busy. On the Mac the hand-offs, in
+         windtrap's workers, take most of the run and pass the limit, so it
+         runs on Linux. *)
+      (if on_linux then Fun.id
+       else fun _ ->
+         test two_domains_name (fun () ->
+             skip ~reason:"windtrap's hand-offs between domains pass its bound"
+               ()))
+      @@ flocking two_domains_name
       @@ stateful two_domains_name ~timeout:(3. *. patience) ~domains:2
            ~count:60
            (commands (indices [ 0 ]));

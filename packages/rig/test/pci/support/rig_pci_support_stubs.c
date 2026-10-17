@@ -320,3 +320,20 @@ value rig_pci_test_flocked(value v_path) {
   CAMLreturn(Val_bool(r != 0));
 #endif
 }
+
+/* Clones the directory tree [v_src] at [v_dst] in one call where the file
+   system copies on write (APFS's clonefile): [true] if it did, [false] where
+   the system cannot, which makes nothing. */
+#ifdef __APPLE__
+#include <sys/clonefile.h>
+#endif
+
+value rig_pci_test_clone(value v_src, value v_dst) {
+#ifdef __APPLE__
+  return Val_bool(clonefile(String_val(v_src), String_val(v_dst), 0) == 0);
+#else
+  (void)v_src;
+  (void)v_dst;
+  return Val_false;
+#endif
+}

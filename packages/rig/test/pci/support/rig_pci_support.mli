@@ -42,6 +42,11 @@ val fits : gap:int -> int -> int -> bool
 val on_linux : bool
 (** [on_linux] is [true] iff this machine has [/sys/bus/pci]. *)
 
+val flocks : bool
+(** [flocks] is [true] iff the system locks a function's file with flock and
+    maps its BARs, as every system but Windows does. System memory for a
+    function needs Linux ({!on_linux}). *)
+
 val patience : float
 (** [patience] is 10 s, how long a test waits for what must happen: the
     [~timeout] of each suite's top groups, and {!poll}'s bound. It is

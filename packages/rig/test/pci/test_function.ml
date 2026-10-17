@@ -358,10 +358,10 @@ let refusals =
       [ "reading "; "iommu_groups/12/type: " ] );
   ]
 
-(* A take reads a function the machine has under its lock, which needs Linux. *)
+(* A take reads a function the machine has under its lock, which needs flock. *)
 let test_refusal (_, fns, bus, opts, subs) =
-  if List.exists (fun (fn : Tree.fn) -> fn.bus = bus) fns && not on_linux then
-    skip ~reason:"flock on a function's file needs Linux" ();
+  if List.exists (fun (fn : Tree.fn) -> fn.bus = bus) fns && not flocks then
+    skip ~reason:"locking a function's file needs flock" ();
   let lockdown =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
     else None
@@ -402,7 +402,7 @@ let shared_resets =
   ]
 
 let test_shared_reset (_, reset, taken) =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let bus = "0000:03:00.0" in
   let methods =
     match reset with `Methods m -> Some m | `None | `Old_kernel -> None
@@ -420,7 +420,7 @@ let test_shared_reset (_, reset, taken) =
    mode: a function under either is taken physically. On Linux the take locks
    its configuration file; elsewhere flock is refused. *)
 let test_physical () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   List.iter
     (fun (msg, groups, noiommu, group) ->
       let fn = Tree.gpu ?group "0000:03:00.0" in
@@ -464,7 +464,7 @@ let test_physical () =
    vfio-pci meanwhile, as an attach would, is refused as taken. Another function
    bound to vfio-pci in group 12 gives the tree the driver and the group. *)
 let test_take_locked () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root =
     Tree.make [ fn; Tree.gpu ~driver:"vfio-pci" ~group:"12" "0000:43:00.0" ]
@@ -484,7 +484,7 @@ let test_take_locked () =
    BAR would end the process with SIGBUS at the first access past its end, so
    the map refuses it, naming the file. *)
 let test_map_files () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   Tree.add root "sys/bus/pci/devices/0000:03:00.0/resource5"
@@ -518,7 +518,7 @@ let through_vfio =
   ]
 
 let test_through_vfio (_, groups, noiommu, beside, enabled) =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu ~driver:"vfio-pci" ~group:"12" ~enabled "0000:03:00.0" in
   let fns = if beside then [ fn; audio "0000:03:00.1" ] else [ fn ] in
   contains ~sub:"dev/vfio/vfio does not exist"
@@ -544,7 +544,7 @@ let take_mastering m bus =
   f
 
 let test_release_stops_dma () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let m = Machine.at (Tree.make [ fn ]) in
   Function.release (take_mastering m fn.bus);
@@ -578,8 +578,8 @@ let test_set_bus_master =
     ~count:50
     (Gen.pair (Gen.with_pp pp_hex (Gen.int_range 0 0xffff)) Gen.bool)
     (fun (found, on) ->
-      if not on_linux then
-        skip ~reason:"flock on a function's file needs Linux" ();
+      if not flocks then
+        skip ~reason:"locking a function's file needs flock" ();
       let fn = Tree.gpu "0000:03:00.0" in
       let root = Tree.make [ fn ] in
       set_command root fn.bus found;
@@ -597,7 +597,7 @@ let test_set_bus_master =
    legacy interrupt while taken: nothing handles it, and bus mastering does not
    gate it. Release gives its INTx back as it found it. *)
 let test_intx (_, before) =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   let m = Machine.at root in
@@ -625,7 +625,7 @@ let exit_mastering root bus =
   exit (if Function.config16 f command land bus_master <> 0 then 0 else 1)
 
 let test_exit (_, before) =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   set_command root fn.bus (memory_space lor before);
@@ -657,7 +657,7 @@ let test_exit (_, before) =
 (* Linux offers a prefetchable BAR combining through [resourceN_wc]: BAR 0 of
    the fixture's GPU is prefetchable, BAR 5 is not. *)
 let test_combining () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let f = require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus) in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
@@ -736,7 +736,7 @@ let tree_files =
 (* [with_fixtures n f] is [f root fns], [fns] the [n] functions of a fixture
    machine at [root], taken. *)
 let with_fixtures n f =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
   let root = Tree.make (List.map Tree.gpu buses) in
   let m = Machine.at root in
@@ -1078,7 +1078,7 @@ let stop h = ignore (Gpus.stop h : [ `Stopped | `Unknown ])
 (* What a process that died left stays through another take and release, which
    does not reset the GPU, and goes once its GPU is reset. *)
 let test_death () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
@@ -1101,7 +1101,7 @@ let test_death () =
 (* A reset of a GPU another process holds is refused, its memory untouched; the
    holder's exit gives the memory back. *)
 let test_reset_held () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
@@ -1146,7 +1146,7 @@ let test_released_block () =
 (* A reset deletes the file of a process that died after it released its
    function, and keeps that of a process that lives. *)
 let test_released_holder how () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
@@ -1190,7 +1190,7 @@ let test_released_holder how () =
    death that runs no exit function leaves it, and the next take of any function
    of the machine deletes it. *)
 let test_released_death () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" and other = "0000:04:00.0" in
   let root = Tree.make [ fn; Tree.gpu other ] in
   let m = Machine.at root and va = free_base + (6 * mib) in
@@ -1220,7 +1220,7 @@ let test_released_death () =
    whose file is gone goes too. One that lists a function stays until that
    function's GPU is reset. *)
 let test_left_files () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
   let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
   let add name s = Tree.add root ("dev/hugepages/" ^ name) s in
@@ -1243,7 +1243,7 @@ let test_left_files () =
    process's own stays listed, so that its death leaves the GPU to be reset by
    the next open. *)
 let test_renew () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let root = left_by_death () in
   let m = Machine.at root and resets = Atomic.make 0 in
   let renewing g =
@@ -1731,7 +1731,7 @@ let dma_domains =
            ~steps:dma_steps dma_commands
        else
          test dma_law (fun () ->
-             skip ~reason:"flock on a function's file needs Linux" ()));
+             skip ~reason:"system memory for a function needs Linux" ()));
     ]
 
 let uses =
@@ -1802,8 +1802,8 @@ let waited = result unit string
    and released at the end of the run. *)
 let waiter =
   fixture ~teardown:Function.release (fun () ->
-      if not on_linux then
-        skip ~reason:"flock on a function's file needs Linux" ();
+      if not flocks then
+        skip ~reason:"locking a function's file needs flock" ();
       let fn = Tree.gpu "0000:03:00.0" in
       require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus))
 
@@ -1912,7 +1912,7 @@ let waits =
 (* A function of a fixture of one GPU, taken physically, which the test
    releases. *)
 let fixture () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let bus = "0000:03:00.0" in
   let root = Tree.make [ Tree.gpu bus ] in
   (root, require_ok (Function.take (Machine.at root) bus))

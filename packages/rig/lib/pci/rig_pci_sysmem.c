@@ -8,8 +8,9 @@
 
    A failing system call raises Unix.Unix_error with its errno and its name;
    the OCaml caller says what it was doing. Descriptors are Unix.file_descr,
-   an int on Linux. Linux only: elsewhere every call but the page size raises
-   Unix_error ENOSYS. */
+   an int off Windows. The files' locks and mappings are POSIX's; memory for
+   GPUs is Linux's. Where a call's system lacks it, it raises Unix_error
+   ENOSYS. */
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -35,6 +36,75 @@ value caml_rig_pci_page_size(value unit) {
   return Val_long(sysconf(_SC_PAGESIZE));
 #endif
 }
+
+/* Ends a call its system lacks. */
+#define FAILS1(f, call)                     \
+  value f(value a) {                        \
+    (void)a;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
+
+#define FAILS2(f, call)                     \
+  value f(value a, value b) {               \
+    (void)a;                                \
+    (void)b;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/mman.h>
+#ifdef __APPLE__
+#include <mach/vm_inherit.h>
+#endif
+
+/* Files */
+
+/* Takes flock's exclusive lock on [fd] without waiting, so it holds the
+   runtime; raises Unix_error EWOULDBLOCK if another open file holds it.
+   flock locks the file itself, so two descriptors of one process exclude
+   each other as two processes do. */
+value caml_rig_pci_flock(value fd) {
+  if (flock(Int_val(fd), LOCK_EX | LOCK_NB) != 0) caml_uerror("flock", Nothing);
+  return Val_unit;
+}
+
+/* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
+   children. Nothing is populated, so it holds the runtime. madvise is
+   advice: the mapping serves without it. */
+value caml_rig_pci_map(value fd, value off, value n) {
+  void *p = mmap(NULL, Long_val(n), PROT_READ | PROT_WRITE, MAP_SHARED,
+                 Int_val(fd), Long_val(off));
+  if (p == MAP_FAILED) caml_uerror("mmap", Nothing);
+#if defined(MADV_DONTFORK)
+  madvise(p, Long_val(n), MADV_DONTFORK);
+#elif defined(__APPLE__)
+  minherit(p, Long_val(n), VM_INHERIT_NONE);
+#endif
+  return Val_long((intnat)p);
+}
+
+/* Unmaps what caml_rig_pci_map mapped, holding the runtime: no memory
+   of the process goes back with it. */
+value caml_rig_pci_unmap(value a, value n) {
+  if (munmap((void *)Long_val(a), Long_val(n)) != 0)
+    caml_uerror("munmap", Nothing);
+  return Val_unit;
+}
+
+#else
+
+FAILS1(caml_rig_pci_flock, "flock")
+FAILS2(caml_rig_pci_unmap, "munmap")
+
+value caml_rig_pci_map(value fd, value off, value n) {
+  (void)fd;
+  (void)off;
+  (void)n;
+  caml_unix_error(ENOSYS, "mmap", Nothing);
+}
+#endif
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -71,17 +141,6 @@ static int unmap_released(void *at, size_t len) {
   return r;
 }
 
-/* Files */
-
-/* Takes flock's exclusive lock on [fd] without waiting, so it holds the
-   runtime; raises Unix_error EWOULDBLOCK if another open file holds it.
-   flock locks the file itself, so two descriptors of one process exclude
-   each other as two processes do. */
-value caml_rig_pci_flock(value fd) {
-  if (flock(Int_val(fd), LOCK_EX | LOCK_NB) != 0) caml_uerror("flock", Nothing);
-  return Val_unit;
-}
-
 /* Makes the file [path] in the directory [dir], and is its descriptor,
    which holds flock's shared lock from before the file has a name: the file
    is made nameless (O_TMPFILE), locked, then linked at [path] through the
@@ -106,24 +165,6 @@ value caml_rig_pci_sysmem_create(value dir, value path) {
     caml_unix_error(e, "linkat", path);
   }
   return Val_int(fd);
-}
-
-/* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
-   children. Nothing is populated, so it holds the runtime. madvise is
-   advice: the mapping serves without it. */
-value caml_rig_pci_map(value fd, value off, value n) {
-  void *p = mmap(NULL, Long_val(n), PROT_READ | PROT_WRITE, MAP_SHARED,
-                 Int_val(fd), Long_val(off));
-  if (p == MAP_FAILED) caml_uerror("mmap", Nothing);
-  madvise(p, Long_val(n), MADV_DONTFORK);
-  return Val_long((intnat)p);
-}
-
-/* Unmaps what caml_rig_pci_map mapped, holding the runtime: no memory
-   of the process goes back with it. */
-value caml_rig_pci_unmap(value a, value n) {
-  if (munmap(PTR(a), Long_val(n)) != 0) caml_uerror("munmap", Nothing);
-  return Val_unit;
 }
 
 /* Memory */
@@ -239,36 +280,12 @@ value caml_rig_pci_sysmem_release(value va, value n) {
 
 #else
 
-/* Without Linux every call raises Unix_error ENOSYS. */
-
-#define FAILS1(f, call)                   \
-  value f(value a) {                      \
-    (void)a;                              \
-    caml_unix_error(ENOSYS, call, Nothing); \
-  }
-
-#define FAILS2(f, call)                   \
-  value f(value a, value b) {             \
-    (void)a;                              \
-    (void)b;                              \
-    caml_unix_error(ENOSYS, call, Nothing); \
-  }
-
-FAILS1(caml_rig_pci_flock, "flock")
 FAILS2(caml_rig_pci_sysmem_create, "open")
-FAILS2(caml_rig_pci_unmap, "munmap")
 FAILS2(caml_rig_pci_reserve, "mmap")
 FAILS2(caml_rig_pci_sysmem_unmap, "munmap")
 FAILS2(caml_rig_pci_sysmem_release, "mmap")
 FAILS1(caml_rig_pci_sysmem_region, "mmap")
 FAILS2(caml_rig_pci_sysmem_zero, "memset")
-
-value caml_rig_pci_map(value fd, value off, value n) {
-  (void)fd;
-  (void)off;
-  (void)n;
-  caml_unix_error(ENOSYS, "mmap", Nothing);
-}
 
 FAILS2(caml_rig_pci_sysmem_map, "mmap")
 
