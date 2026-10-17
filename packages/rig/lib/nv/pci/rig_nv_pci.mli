@@ -56,7 +56,7 @@
     GA106 and GA107 (Ampere), AD102, AD103, AD104, AD106 and AD107 (Ada),
     and GB202, GB203, GB205, GB206 and GB207 (Blackwell), as the GPU's
     [NV_PMC_BOOT_42] register names them. An open needs the firmware files
-    {!section-reports} lists.
+    {!section-firmware} lists.
 
     [Mapped] memory ({!Rig_nv.section-regions}) is the GPU's, through its
     memory BAR (BAR 1), the range of the GPU's memory that the host
@@ -102,7 +102,7 @@ val buses : ?machine:Rig_pci.Machine.t -> unit -> string list
 val count : ?machine:Rig_pci.Machine.t -> unit -> int
 (** [count ~machine ()] is the number of {!buses}. *)
 
-(** {1:reports Boot reports}
+(** {1:firmware Firmware}
 
     A boot loads three files of linux-firmware's [nvidia/] directory at
     commit [0a6871b1], each pinned by its BLAKE2b-256 digest: the GSP's
@@ -121,48 +121,7 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
     {v rig firmware nv v}
     Keep a directory of the caller's apart from [/lib/firmware]
     ({!Rig_pci.section-needs}). On Ampere and Ada the boot also runs the
-    FWSEC ucode of the GPU's VBIOS, which it reads from the GPU.
-
-    A report says what an open loads to boot a GPU, and whether the open
-    refuses the GPU for its chip, its VBIOS or its firmware, from what the
-    open reads before the boot writes. Making one needs no GPU and writes
-    nothing. If {!val-report} returns [Error why], an open of that GPU
-    returns [Error] with [why] after the GPU's name; if an image is not
-    [found], the open returns [Error] naming it. Otherwise none of the
-    open's refusals is about the chip, the VBIOS or the firmware. *)
-
-type image = {
-  file : string;
-      (** The file's path under a firmware directory, such as
-          ["nvidia/ad102/gsp/booter_load-570.144.bin"]. *)
-  found : string option;
-      (** The path of the file with its pinned digest, in the first directory
-          that holds one, if any does. *)
-}
-(** The type for a firmware file a boot loads. *)
-
-type report = {
-  chip : string;  (** The chip's name, such as ["AD102"]. *)
-  images : image list;
-      (** The GSP's firmware, its bootloader, then the booter or the FMC. *)
-}
-(** The type for boot reports. *)
-
-val report :
-  firmware:string list -> chip:int -> vbios:string -> (report, string) result
-(** [report ~firmware ~chip ~vbios] is what an open loads to boot a GPU
-    whose [NV_PMC_BOOT_42] register holds [chip] and whose VBIOS is [vbios]:
-    its chip and its firmware files, each looked up in the directories
-    [firmware] as {!gpu} looks one up in its own. It reads files and nothing
-    else.
-    [vbios] is the first MiB of the GPU's ROM read through [NV_PROM_DATA]
-    (BAR 0 from [0x300000]), as an open reads it. On Blackwell, [report]
-    ignores [vbios].
-
-    [Error why] if [chip] is none of the chips this library boots, naming
-    it; on Ampere and Ada, if [vbios] lacks a FWSEC this library runs,
-    naming what it lacks; or if a file found with its pinned digest is not
-    laid out as its format says. *)
+    FWSEC ucode of the GPU's VBIOS, which it reads from the GPU. *)
 
 (** {1:opening Opening}
 
@@ -185,10 +144,10 @@ val report :
     from the host's clock at the timer's rate error since open.
 
     Any domain may call any function. Opens and changes of NVIDIA GPUs run
-    one at a time, so a boot delays the others. {!val-report}, {!gpu}'s
-    [make], {!detach}, {!attach} and {!reset}, called from a callback
-    inside a lock ([Rig]'s domains section), raise [Invalid_argument],
-    having changed nothing ({!Rig_edge.section-drivers}). *)
+    one at a time, so a boot delays the others. {!gpu}'s [make], {!detach},
+    {!attach} and {!reset}, called from a callback inside a lock ([Rig]'s
+    domains section), raise [Invalid_argument], having changed nothing
+    ({!Rig_edge.section-drivers}). *)
 
 val gpu :
   ?machine:Rig_pci.Machine.t ->
@@ -210,8 +169,12 @@ val gpu :
     - its function cannot be taken, with {!Rig_pci.Function.take}'s reason;
     - [machine]'s windows are not mapped into the process, as through a
       transport;
-    - {!val-report} of it returns [Error], or finds an image missing, naming
-      the directories and the files found with another digest;
+    - its chip is outside the chips {!section-requirements} lists, naming
+      it;
+    - on Ampere and Ada, its VBIOS lacks a FWSEC this library runs, naming
+      what it lacks;
+    - an image is missing, naming the directories and the files found with
+      another digest, or one found is not laid out as its format says;
     - its GSP still runs after its reset;
     - the machine refuses the addresses or the GSP's memory.
 
@@ -269,6 +232,47 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     Raises [Invalid_argument] if [i < 0]. *)
 
 (**/**)
+
+(* Boot reports, for the suites that check, without a GPU, what an open
+   loads to boot a GPU and whether it refuses the GPU for its chip, its VBIOS
+   or its firmware, from what the open reads before the boot writes. Making
+   one needs no GPU and writes nothing. If [report] returns [Error why], an
+   open of that GPU returns [Error] with [why] after the GPU's name; if an
+   image is not [found], the open returns [Error] naming it. Otherwise none
+   of the open's refusals is about the chip, the VBIOS or the firmware. *)
+
+type image = {
+  file : string;
+      (** The file's path under a firmware directory, such as
+          ["nvidia/ad102/gsp/booter_load-570.144.bin"]. *)
+  found : string option;
+      (** The path of the file with its pinned digest, in the first directory
+          that holds one, if any does. *)
+}
+(** The type for a firmware file a boot loads. *)
+
+type report = {
+  chip : string;  (** The chip's name, such as ["AD102"]. *)
+  images : image list;
+      (** The GSP's firmware, its bootloader, then the booter or the FMC. *)
+}
+(** The type for boot reports. *)
+
+val report :
+  firmware:string list -> chip:int -> vbios:string -> (report, string) result
+(** [report ~firmware ~chip ~vbios] is what an open loads to boot a GPU
+    whose [NV_PMC_BOOT_42] register holds [chip] and whose VBIOS is [vbios]:
+    its chip and its firmware files, each looked up in the directories
+    [firmware] as {!gpu} looks one up in its own. It reads files and nothing
+    else.
+    [vbios] is the first MiB of the GPU's ROM read through [NV_PROM_DATA]
+    (BAR 0 from [0x300000]), as an open reads it. On Blackwell, [report]
+    ignores [vbios].
+
+    [Error why] if [chip] is none of the chips this library boots, naming
+    it; on Ampere and Ada, if [vbios] lacks a FWSEC this library runs,
+    naming what it lacks; or if a file found with its pinned digest is not
+    laid out as its format says. *)
 
 (* The GSP's firmware, the same for every family: its path under a firmware
    directory and its pinned digest, for the suites that look for it as an

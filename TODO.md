@@ -32,10 +32,10 @@ raven / llama.cpp (Vulkan; ROCm):
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
 - rig.amd to its spec (_plans/gemini-review-2/REPORT.md,
-  _plans/rig-size-audit/): `report`, `block`, `image` hidden; holes as
-  NV's fixed record; `Bus_address` into `Machine`; request.ml inlined; firmware parsing
-  total over the pinned set; rig_amd.mli's 5 µs clock bound excludes KFD,
-  whose GPU-to-CPU gap is one-sided and unbounded under preemption: state it
+  _plans/rig-size-audit/): holes as NV's fixed record; `Bus_address` into
+  `Machine`; request.ml inlined; firmware parsing total over the pinned
+  set; rig_amd.mli's 5 µs clock bound excludes KFD, whose GPU-to-CPU gap
+  is one-sided and unbounded under preemption: state it
 - one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
   615's headers whole (licence checked first) and only `per_release`
   structs for older releases

@@ -59,8 +59,7 @@
     MI300 and MI350 series, physical and virtual functions), 11.0.0 and
     11.0.2, and 12.0.0 and 12.0.1. It reads the GPU's discovery table
     without changing the GPU's state, and refuses a GPU with a block of
-    another version before the boot writes. {!val-report} tells, from a GPU's
-    discovery table, whether the library boots it.
+    another version before the boot writes.
 
     {b Firmware.} The images are files of linux-firmware's [amdgpu/]
     directory at commit [0a6871b1], each pinned by its BLAKE2b-256 digest.
@@ -153,9 +152,9 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
     others. Each holds a lock for its whole run, a boot included, so a call
     of rig's from a callback on its thread meanwhile is made inside a lock
     and raises [Invalid_argument] ([Rig]'s domains section). An opener's
-    [make], {!report}, {!detach}, {!attach} and {!reset}, called from a
-    callback inside a lock, raise [Invalid_argument], having changed
-    nothing ({!Rig_edge.section-drivers}). *)
+    [make], {!detach}, {!attach} and {!reset}, called from a callback
+    inside a lock, raise [Invalid_argument], having changed nothing
+    ({!Rig_edge.section-drivers}). *)
 
 val gpu :
   ?machine:Rig_pci.Machine.t ->
@@ -177,8 +176,14 @@ val gpu :
     {- a GPU this process holds, or one [amdgpu] has not let go of;}
     {- a function the process cannot take, with
        {!Rig_pci.Function.take}'s reason;}
-    {- a GPU whose {!val-report} is [Error] or lacks an image, with the report's
-       reason;}
+    {- a GPU whose discovery table is malformed, or lacks a block the boot
+       programs, naming the block;}
+    {- a GPU one of whose blocks has a version this library does not boot
+       or has no pinned image for, naming the block and its version;}
+    {- a GPU one of whose images is in none of the directories with its
+       pinned digest, naming the image, the directories searched and the
+       files of another digest;}
+    {- a GPU one of whose images is not laid out as its format says;}
     {- a GPU in a fabric left running, or one whose memory its memory
        controller cannot place whole;}
     {- a machine whose windows ({!Rig_pci.Window}) are not mapped into the
@@ -189,57 +194,6 @@ val gpu :
     lost.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-(** {1:reports Boot reports}
-
-    A report says what an open loads to boot a GPU, and whether it refuses
-    the GPU for its blocks or its firmware, from the GPU's discovery table.
-    A report needs no GPU and writes nothing. *)
-
-type block = {
-  name : string;  (** As the kernel names it, such as ["GC"]. *)
-  version : int * int * int;
-      (** (major, minor, revision), as the table and the firmware files' names
-          give them, such as [(13, 0, 3)]. *)
-  instances : int list;
-      (** The instances the boot drives, in order; harvested ones are absent. *)
-}
-(** The type for a block a boot programs. *)
-
-type image = {
-  file : string;
-      (** The file's path under a firmware directory, such as
-          ["amdgpu/psp_14_0_3_sos.bin"]. *)
-  found : string option;
-      (** The path of the file with its pinned digest, in the first directory
-          that holds one, if any does. *)
-}
-(** The type for a firmware file a boot loads. *)
-
-type report = {
-  blocks : block list;
-      (** The blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB, OSSSYS, NBIF
-          and HDP, in that order. *)
-  images : image list;  (** In the order the boot loads them. *)
-}
-(** The type for boot reports. *)
-
-val report : firmware:string list -> string -> (report, string) result
-(** [report ~firmware table] is what an open loads to boot a GPU whose IP
-    discovery table is [table]: its blocks, their versions and the instances
-    harvesting left, and its firmware files, each looked up in the
-    directories [firmware] as an open looks one up in its own. An open
-    computes the same report before the boot writes, and again after any
-    reset.
-
-    [table] is the 10 KiB the GPU's firmware leaves 64 KiB below the end of
-    its memory. While [amdgpu] is bound to the GPU, root reads it in the
-    debugfs file [/sys/kernel/debug/dri/<bus address>/amdgpu_discovery].
-
-    The result is [Error why] if [table] is not a discovery table, if a
-    block a boot programs is missing or has a version this library does not
-    boot or no pinned image for, naming the block and its version, or if a
-    file found with its pinned digest is not laid out as its format says. *)
 
 (** {1:changes Changes to the machine}
 
@@ -305,6 +259,55 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
        Register": ASPM.}} *)
 
 (**/**)
+
+(* Boot reports, for the suites and the bench that check, without a GPU,
+   what an open loads to boot a GPU and whether it refuses the GPU for its
+   blocks or its firmware. A report needs no GPU and writes nothing. *)
+
+type block = {
+  name : string;  (** As the kernel names it, such as ["GC"]. *)
+  version : int * int * int;
+      (** (major, minor, revision), as the table and the firmware files' names
+          give them, such as [(13, 0, 3)]. *)
+  instances : int list;
+      (** The instances the boot drives, in order; harvested ones are absent. *)
+}
+(** The type for a block a boot programs. *)
+
+type image = {
+  file : string;
+      (** The file's path under a firmware directory, such as
+          ["amdgpu/psp_14_0_3_sos.bin"]. *)
+  found : string option;
+      (** The path of the file with its pinned digest, in the first directory
+          that holds one, if any does. *)
+}
+(** The type for a firmware file a boot loads. *)
+
+type report = {
+  blocks : block list;
+      (** The blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB, OSSSYS, NBIF
+          and HDP, in that order. *)
+  images : image list;  (** In the order the boot loads them. *)
+}
+(** The type for boot reports. *)
+
+val report : firmware:string list -> string -> (report, string) result
+(** [report ~firmware table] is what an open loads to boot a GPU whose IP
+    discovery table is [table]: its blocks, their versions and the instances
+    harvesting left, and its firmware files, each looked up in the
+    directories [firmware] as an open looks one up in its own. An open
+    computes the same report before the boot writes, and again after any
+    reset.
+
+    [table] is the 10 KiB the GPU's firmware leaves 64 KiB below the end of
+    its memory. While [amdgpu] is bound to the GPU, root reads it in the
+    debugfs file [/sys/kernel/debug/dri/<bus address>/amdgpu_discovery].
+
+    The result is [Error why] if [table] is not a discovery table, if a
+    block a boot programs is missing or has a version this library does not
+    boot or no pinned image for, naming the block and its version, or if a
+    file found with its pinned digest is not laid out as its format says. *)
 
 (* What a driver that boots the GPU itself reads from the GPU and its
    firmware, and writes for the GPU's blocks. Tests check them without a
