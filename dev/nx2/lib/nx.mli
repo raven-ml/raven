@@ -2375,13 +2375,14 @@ val correlate :
     [kernel] over the last [K = ndim kernel] axes of [x], each sum of products
     taken without flipping [kernel]. [padding] defaults to [`Valid].
 
-    Along each spatial axis, of [n] elements in [x] and [k] in [kernel], the
-    full correlation has [n + k - 1] values: value [i] correlates [kernel] with
-    the elements of [x] from [i - k + 1], those outside [x] being zero.
-    [padding] keeps some of them. With [m = min n k]:
-    - [`Full] keeps them all;
+    Along each spatial axis, of [n] elements in [x] and [k] in [kernel],
+    value [i] correlates [kernel] with the elements of [x] from [i - k + 1],
+    those outside [x] being zero. [padding] keeps a run of consecutive values.
+    With [m = min n k]:
+    - [`Full] keeps the [n + k - 1] from value [0];
     - [`Valid] keeps the [max n k - m + 1] where the shorter of [x] and
-      [kernel] lies within the longer, from value [m - 1];
+      [kernel] lies within the longer, from value [m - 1]. An empty [x] lies
+      within [kernel] at [k + 1] positions, so it gives [k + 1] zeros;
     - [`Same] keeps [max n k], from value [(m - 1) / 2] if [k <= n] and from
       value [m / 2] if [k > n]. With [k <= n], value [i] correlates [kernel]
       with the elements of [x] from [i - k / 2] to [i + (k - 1) / 2]: an odd

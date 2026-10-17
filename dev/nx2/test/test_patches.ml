@@ -400,6 +400,10 @@ let correlations =
           equal (array float_exact)
             [| 2100.; 3210.; 4321.; 5432.; 6543.; 7654.; 765. |]
             (Nx.to_array (Nx.correlate ~padding:`Same x k)));
+      test "an empty x lies within a kernel of k at k + 1 positions" (fun () ->
+          let k = f64 [| 3 |] [| 1.; 2.; 3. |] in
+          equal (array float_exact) [| 0.; 0.; 0.; 0. |]
+            (Nx.to_array (Nx.correlate ~padding:`Valid (f64 [| 0 |] [||]) k)));
       test "narrow floats multiply and sum at float32" (fun () ->
           let x = Nx.create Nx.float16 [| 3 |] [| 2048.; 1.; 1. |] in
           let k = Nx.create Nx.float16 [| 3 |] [| 1.; 1.; 1. |] in
