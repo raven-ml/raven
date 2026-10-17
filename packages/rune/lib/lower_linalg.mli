@@ -57,11 +57,14 @@ val svd :
     one-sided Jacobi rotations after a QR factorization: the [float64] singular
     values [s] in descending order, a zero one [+0.], and [u] and [vt] with
     orthonormal columns and rows, square under [full_matrices] and of [min m n]
-    columns and rows otherwise. It rotates for a number of sweeps that grows as
-    the logarithm of [min m n], and has [qr]'s range of accuracy. The signs of
-    the vectors are unspecified. A matrix holding NaN or an infinity, or whose
-    rotated columns' inner products off the diagonal are not within [16 k] units
-    of roundoff of their norm, [k = min m n], fails. *)
+    columns and rows otherwise. For [k = min m n] it rotates for [⌈p ⌈log2 k⌉ /
+    10⌉] sweeps of the pairs of columns of the factorization's [R], [p] the
+    precision in bits at which it computes, and a pair whose inner product is
+    within one unit of roundoff of the product of their norms takes no
+    rotation. It has [qr]'s range of accuracy. The signs of the vectors are
+    unspecified. A matrix holding NaN or an infinity, or whose rotated columns'
+    inner products off the diagonal are not within [16 k] units of roundoff of
+    their norm, fails. *)
 
 val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
 (** [eigh ~device ~vectors a] is [(w, v)] with [a v = v diag(w)], reading only

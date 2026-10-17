@@ -379,19 +379,33 @@ let rotate u axis rotations = advance (turn u axis rotations) axis
    The columns of [u], [r]'s leading square, are made orthogonal by rotating
    pairs of them, each by the angle that zeroes their inner product; [v]
    accumulates the rotations. [u] and [v] are square and are kept stacked, [u]
-   above [v], so that a round rotates the columns of both at once. *)
+   above [v], so that a round rotates the columns of both at once.
 
-(* The sweeps that bring a matrix of [n] rows or columns to diagonal or to
-   orthogonality, for a precision of [p] bits. Jacobi rotations converge
-   quadratically on distinct values, but only linearly on repeated ones, a
-   constant number of bits a sweep, fewer as [n] grows, and slowly at first on
-   graded ones. Over repeated, clustered, graded and ill-conditioned spectra,
-   reaching an off-diagonal norm of [4 n u] by two-sided rotations took at most
-   [0.83] of [⌈p ⌈log2 n⌉ / 10⌉] sweeps, [u] the unit roundoff, up to [n = 64];
-   reaching columns orthogonal within [16 n u] by one-sided rotations, as [svd]
-   checks, took at most [0.8] of them up to [n = 128], over the same spectra and
-   spectra of half zeros, of two values each repeated, and graded down to a
-   thousand roundoffs, in [float32] and [float64]. *)
+   A pair whose inner product is within the unit roundoff of the product of its
+   columns' norms takes no rotation: that is the product's rounding error, as a
+   rotated column's error is relative to its own norm. Between two columns of
+   one repeated singular value such a product is rounding error, as the
+   difference of their norms is, so the angle they set is arbitrary, and the
+   turn mixes the pair's products with other columns: those the round's other
+   rotations zeroed with those they had not. A [float64] 16 x 16 matrix of singular values [1]
+   and [0.9], each repeated, took 13 sweeps to bring its values within [16 n u]
+   of an eager [svd]'s without it, and 11 with it. A floor relative to the norm
+   of [rᵀ r], as [eigh]'s is to its matrix's, would leave a small singular
+   value [s] off by that roundoff over [s]. *)
+
+(* The sweeps that bring a matrix of [n] rows to diagonal, or [n] columns to
+   orthogonality, for a precision of [p] bits: [⌈p ⌈log2 n⌉ / 10⌉]. Serial
+   orderings of the pairs converge quadratically near the end, with repeated
+   values too (Hari, as Drmač and Veselić's LAPACK Working Note 169 recounts in
+   its §1). This ordering gains only a roughly constant factor a sweep on
+   repeated and graded spectra, 2 to 8 in a [float64] model of [svd]'s rounds
+   up to [n = 128]. Over repeated, clustered, graded and random spectra up to [n
+   = 64] in [float32] and [float64], [0.83] of the count brought two-sided
+   rotations to an off-diagonal norm of [0.43 n u], [u] the unit roundoff,
+   against the [16 n u] a matrix fails beyond. One-sided rotations brought
+   singular values within [16 n u] of an eager [svd]'s in at most [0.75] of it
+   up to [n = 128], over graded and random spectra, spectra of half zeros, and
+   spectra of two or three values each repeated. *)
 let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
 
 let svd ~device ~full_matrices a =
@@ -413,13 +427,19 @@ let svd ~device ~full_matrices a =
         let first x = part x (rank - 1) 0 (num / 2) in
         let a = first u and b = first (Shape.flip u [ rank - 1 ]) in
         let sums x = Shape.rop x Op.Add [ rank - 2 ] in
+        let alpha = sums (Ops.mul a a) and beta = sums (Ops.mul b b) in
+        let gamma = sums (Ops.mul a b) in
+        let floor =
+          Ops.mul
+            (Ops.mul (Ops.sqrt alpha) (Ops.sqrt beta))
+            (float alpha (roundoff wdt))
+        in
+        let above = Ops.gt (Lower_arith.unary Abs gamma) floor in
         let cosines, sines =
           rotations num
             (Ops.contiguous
-               (tangents
-                  ~alpha:(sums (Ops.mul a a))
-                  ~beta:(sums (Ops.mul b b))
-                  ~gamma:(sums (Ops.mul a b))))
+               (tangents ~alpha ~beta
+                  ~gamma:(Ops.where above gamma (zero gamma))))
         in
         [ rotate y (rank - 1) (columns cosines, columns sines) ]
     | _ -> invalid_arg "Lower_linalg.svd"
