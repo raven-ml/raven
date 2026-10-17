@@ -306,11 +306,7 @@ let apply_planar mode fn p sense (x : plane) : plane * Nx.bool_t option =
    The projection maps plane points to native unit vectors, and the rotation
    [M] takes native vectors to the frame's: [v = M · u]. [M] is [Rz(α_p) ·
    Ry(90° - δ_p) · Rz(180° - φ_p)] for the celestial pole (α_p, δ_p) of the
-   native sphere and LONPOLE φ_p. Its pole solves FITS WCS Paper II's
-   equations from CRVAL, the native reference point (φ₀, θ₀), LONPOLE and
-   LATPOLE, as WCSLIB's [celset] does: with θ₀ = 90° it is CRVAL; otherwise
-   two latitudes solve and LATPOLE picks between them. Every branch is a
-   [where], so the rotation is differentiable in the header's numbers. *)
+   native sphere and LONPOLE φ_p. *)
 
 let degree_per_radian = 180. /. Float.pi
 let radian_per_degree = Float.pi /. 180.
@@ -328,96 +324,140 @@ let sincosd d =
 
 let atan2d y x = Nx.mul_s (Nx.atan2 y x) degree_per_radian
 
-(* WCSLIB's tolerance on degrees and on products of cosines. *)
-let pole_tol = 1e-10
+(* The tolerance on degrees and on cosines in the pole's special cases:
+   far above float64's rounding of them, about 1e-14, and far below any
+   angle a header states. *)
+let slack = 1e-10
 
 let degrees_of q = Quantity.value Unit.degree q
 
-(* [wrap180 a] maps degrees in [(-540, 540)] into [[-180, 180]]. *)
-let wrap180 a =
+(* [wrap a] maps degrees in [(-540, 540)] into [[-180, 180]]. *)
+let wrap a =
   Nx.where (Nx.greater_s a 180.) (Nx.sub_s a 360.)
     (Nx.where (Nx.less_s a (-180.)) (Nx.add_s a 360.) a)
 
 type pole = {
-  lngp : vectors;  (** α_p, degrees. *)
-  latp : vectors;  (** δ_p, degrees. *)
-  phip : vectors;  (** φ_p, degrees. *)
+  alpha_p : vectors;  (** α_p, degrees. *)
+  delta_p : vectors;  (** δ_p, degrees. *)
+  phi_p : vectors;  (** φ_p, degrees. *)
   exists : Nx.bool_t;
 }
 
+(* [pole c] solves for the celestial pole (FITS WCS Paper II, §2.4). The
+   native reference point (φ₀, θ₀) has the celestial coordinates CRVAL
+   (α₀, δ₀), and with LONPOLE φ_p, d = φ_p - φ₀, Paper II's eqs. (8) to
+   (10) give
+
+     δ_p = arg(cos θ₀ cos d, sin θ₀) ± acos(sin δ₀ / r),
+     r = √(1 - cos² θ₀ sin² d),
+     α_p = α₀ - arg(sin θ₀ - sin δ_p sin δ₀, sin d cos θ₀ cos δ_p),
+
+   the last with eqs. (9) and (10) multiplied by cos δ_p cos δ₀, which is
+   not negative. Paper II's conventions settle the rest:
+
+   - of the two latitudes, the ones in [[-90°, 90°]] are valid, and LATPOLE
+     picks the nearer when both are; none valid, or an acos argument past 1,
+     means no pole;
+   - with r = 0 (θ₀ = 0, δ₀ = 0 and d = ±90°), δ_p is LATPOLE;
+   - with δ₀ = ±90°, α_p is α₀; with δ_p = ±90°, it is α₀ + d - 180° or
+     α₀ - d (eqs. 3 and 4);
+   - a zenithal projection's reference point is the native pole: θ₀ = 90°
+     gives (α_p, δ_p) = (α₀, δ₀).
+
+   Paper II leaves open a LATPOLE as near both latitudes; the minus sign of
+   eq. (8) is taken there, as WCSLIB, the reference of ymir's tests, takes
+   it.
+
+   With d a multiple of 180°, as LONPOLE's defaults make it, the arg is θ₀
+   or 180° - θ₀ and the acos 90° - δ₀, which the formulas would round. Every
+   branch is a [where] and every singular operation a [Guard], so the
+   rotation is differentiable in the header's numbers. *)
 let pole c =
   let crval = degrees_of c.crval and native = degrees_of c.native in
-  let lng0 = component crval 0 and lat0 = component crval 1 in
+  let alpha0 = component crval 0 and delta0 = component crval 1 in
   let phi0 = component native 0 and theta0 = component native 1 in
-  let phip = degrees_of c.lonpole and latpole = degrees_of c.latpole in
-  let zenith = Nx.equal_s theta0 90. in
-  let slat0, clat0 = sincosd lat0 and sthe0, cthe0 = sincosd theta0 in
-  let same = Nx.equal phip phi0 in
-  let sphip, cphip = sincosd (Nx.sub phip phi0) in
-  let x = Nx.mul cthe0 cphip and y = sthe0 in
-  let z2 = Nx.add (Nx.square x) (Nx.square y) in
-  let flat = Nx.equal_s z2 0. in
-  let z = Guard.sqrt flat (Nx.zeros_like z2) z2 in
-  let slz = Nx.div slat0 (Nx.where flat (Nx.ones_like z) z) in
-  let over = Nx.greater_s (Nx.abs slz) 1. in
-  let slz =
-    Nx.where (Nx.logical_and over (Nx.less_s (Nx.sub_s (Nx.abs slz) 1.) pole_tol))
-      (Nx.sign slz) slz
+  let phi_p = degrees_of c.lonpole and latpole = degrees_of c.latpole in
+  let d = Nx.sub phi_p phi0 in
+  let sin_d0, cos_d0 = sincosd delta0 and sin_t0, cos_t0 = sincosd theta0 in
+  let sin_d, cos_d = sincosd d in
+  (* δ_p = β ± γ. *)
+  let bx = Nx.mul cos_t0 cos_d in
+  let by = Nx.broadcast_to (Nx.shape bx) sin_t0 in
+  let r2 = Nx.add (Nx.square bx) (Nx.square by) in
+  let flat = Nx.equal_s r2 0. in
+  let r = Guard.sqrt flat (Nx.zeros_like r2) r2 in
+  let along = Nx.equal_s sin_d 0. in
+  let beta =
+    Nx.where along
+      (Nx.where (Nx.greater_s cos_d 0.) theta0 (Nx.rsub_s 180. theta0))
+      (Nx.mul_s (Guard.atan2 flat (Nx.zeros_like bx) by bx) degree_per_radian)
+  in
+  let a = Nx.div sin_d0 (Nx.where flat (Nx.ones_like r) r) in
+  let a =
+    Nx.where
+      (Nx.less_s (Nx.sub_s (Nx.abs a) 1.) slack)
+      (Nx.clamp ~min:(-1.) ~max:1. a)
+      a
   in
   let solvable =
-    Nx.where flat (Nx.equal_s slat0 0.) (Nx.less_equal_s (Nx.abs slz) 1.)
+    Nx.where flat (Nx.equal_s sin_d0 0.) (Nx.less_equal_s (Nx.abs a) 1.)
   in
-  (* [acos s] as [atan2 (√(1 - s²)) s], whose derivative stays finite at ±1
+  (* acos a as atan2 (√(1 - a²)) a, whose derivative stays finite at ±1
      through the guard. *)
-  let c2 = Nx.rsub_s 1. (Nx.square slz) in
-  let edge = Nx.less_equal_s c2 0. in
-  let v = atan2d (Guard.sqrt edge (Nx.zeros_like c2) c2) slz in
-  let u = atan2d (Nx.broadcast_to (Nx.shape x) y) (Nx.where flat (Nx.ones_like x) x) in
-  let u = Nx.where same theta0 u and v = Nx.where same (Nx.rsub_s 90. lat0) v in
-  let latp1 = wrap180 (Nx.add u v) and latp2 = wrap180 (Nx.sub u v) in
-  let valid l = Nx.less_s (Nx.abs l) (90. +. pole_tol) in
-  let first =
-    Nx.where
-      (Nx.less (Nx.abs (Nx.sub latpole latp1)) (Nx.abs (Nx.sub latpole latp2)))
-      (valid latp1)
-      (Nx.logical_not (valid latp2))
+  let a2 = Nx.rsub_s 1. (Nx.square a) in
+  let edge = Nx.less_equal_s a2 0. in
+  let gamma = atan2d (Guard.sqrt edge (Nx.zeros_like a2) a2) a in
+  let gamma = Nx.where along (Nx.rsub_s 90. delta0) gamma in
+  let plus = wrap (Nx.add beta gamma) and minus = wrap (Nx.sub beta gamma) in
+  let valid l = Nx.less_equal_s (Nx.abs l) (90. +. slack) in
+  let to_plus = Nx.abs (Nx.sub latpole plus)
+  and to_minus = Nx.abs (Nx.sub latpole minus) in
+  let nearer = Nx.less to_plus to_minus in
+  let take_plus =
+    Nx.logical_and (valid plus)
+      (Nx.logical_or nearer (Nx.logical_not (valid minus)))
   in
-  let latp = Nx.where first latp1 latp2 in
-  let latp = Nx.where (Nx.logical_and flat (Nx.logical_not same))
-      (Nx.clamp ~min:(-90.) ~max:90. (Nx.broadcast_to (Nx.shape latp) latpole))
-      latp in
-  let exists = Nx.logical_and solvable (valid latp) in
-  let latp = Nx.clamp ~min:(-90.) ~max:90. latp in
-  let slatp, clatp = sincosd latp in
-  let zz = Nx.mul clatp clat0 in
-  let polar = Nx.less_s (Nx.abs zz) pole_tol in
-  let at_pole = Nx.less_s (Nx.abs clat0) pole_tol in
-  let lngp_polar =
-    Nx.where at_pole lng0
-      (Nx.where (Nx.greater_s latp 0.)
-         (Nx.sub_s (Nx.sub (Nx.add lng0 phip) phi0) 180.)
-         (Nx.add (Nx.sub lng0 phip) phi0))
+  let delta_p = Nx.where take_plus plus minus in
+  let delta_p =
+    Nx.where flat (Nx.broadcast_to (Nx.shape delta_p) latpole) delta_p
   in
-  let xx = Nx.div (Nx.sub sthe0 (Nx.mul slatp slat0)) (Nx.where polar (Nx.ones_like zz) zz) in
-  let yy = Nx.div (Nx.mul sphip cthe0) (Nx.where at_pole (Nx.ones_like clat0) clat0) in
-  let still = Nx.logical_or polar (Nx.logical_and (Nx.equal_s xx 0.) (Nx.equal_s yy 0.)) in
-  let lngp_general =
-    Nx.sub lng0
-      (Nx.mul_s (Guard.atan2 still (Nx.zeros_like xx) yy xx) degree_per_radian)
+  let exists =
+    Nx.logical_and solvable (Nx.logical_or flat (valid delta_p))
   in
-  let lngp = Nx.where polar lngp_polar lngp_general in
+  let delta_p = Nx.clamp ~min:(-90.) ~max:90. delta_p in
+  let sin_dp, cos_dp = sincosd delta_p in
+  let at_pole = Nx.less_s (Nx.abs cos_d0) slack in
+  let native_pole = Nx.less_s (Nx.abs cos_dp) slack in
+  let x = Nx.sub sin_t0 (Nx.mul sin_dp sin_d0) in
+  let y = Nx.mul (Nx.mul sin_d cos_t0) cos_dp in
+  let singular =
+    Nx.logical_or (Nx.logical_or at_pole native_pole)
+      (Nx.logical_and (Nx.equal_s x 0.) (Nx.equal_s y 0.))
+  in
+  let turn =
+    Nx.mul_s (Guard.atan2 singular (Nx.zeros_like y) y x) degree_per_radian
+  in
+  let alpha_p =
+    Nx.where at_pole alpha0
+      (Nx.where native_pole
+         (Nx.where (Nx.greater_s delta_p 0.)
+            (Nx.sub_s (Nx.add alpha0 d) 180.)
+            (Nx.sub alpha0 d))
+         (Nx.sub alpha0 turn))
+  in
+  let zenith = Nx.equal_s theta0 90. in
   {
-    lngp = Nx.where zenith lng0 lngp;
-    latp = Nx.where zenith lat0 latp;
-    phip;
+    alpha_p = Nx.where zenith alpha0 alpha_p;
+    delta_p = Nx.where zenith delta0 delta_p;
+    phi_p;
     exists = Nx.logical_or zenith exists;
   }
 
 (* [rotation p] is [M]'s nine entries, row-major, each of the pole's batch
    shape. *)
 let rotation p =
-  let sa, ca = sincosd p.lngp and sd, cd = sincosd p.latp in
-  let sp, cp = sincosd p.phip in
+  let sa, ca = sincosd p.alpha_p and sd, cd = sincosd p.delta_p in
+  let sp, cp = sincosd p.phi_p in
   let open Nx in
   [|
     sub (neg (mul (mul ca sd) cp)) (mul sa sp);
@@ -478,7 +518,7 @@ let setup mode fn c =
         Nx.check
           Nx.Ptree.(pair (pair tensor tensor) (pair tensor tensor))
           p.exists
-          ((p.phip, lon), (lat, component native 1))
+          ((p.phi_p, lon), (lat, component native 1))
           (fun i ((phip, lon), (lat, theta0)) ->
             Invalid_argument
               (strf

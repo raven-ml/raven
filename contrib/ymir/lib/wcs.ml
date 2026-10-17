@@ -487,7 +487,7 @@ let pc_of_crota kw axes (d1, d2) =
   let c = Float.cos r and s = Float.sin r in
   Ok [ c; -.s *. d2 /. d1; s *. d1 /. d2; c ]
 
-(* LONPOLE's default (Paper II §2.4): 180° when the reference point is below
+(* LONPOLE's default (FITS 4.0 §8.3): 180° when the reference point is below
    the native reference's latitude, else 0°, plus φ₀. *)
 let default_lonpole ~delta0 ~theta0 ~phi0 =
   (if delta0 < theta0 then 180. else 0.) +. phi0

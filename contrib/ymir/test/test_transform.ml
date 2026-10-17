@@ -494,6 +494,23 @@ let constructors =
             (Nx.to_array (Nx.reshape [| 1 |] (Transform.covers t p)));
           raises_match (Exn.invalid_arg ~substring:"place no celestial pole")
             (fun () -> Transform.apply t p));
+      test "a LATPOLE as near both poles takes eq. (8)'s minus sign"
+        (fun () ->
+          (* θ₀ = 30° and δ₀ = 60° solve δ_p = 30° ± 30°, both 30° from
+             LATPOLE; WCSLIB, through astropy, takes 0°. The native pole, the
+             plane's (0°, 90°), is the celestial pole. *)
+          let t =
+            Transform.celestial Transform.Car Frame.icrs ~pv:no_pv
+              ~native:(deg (tensor [| 2 |] [| 0.; 30. |]))
+              ~crval:(deg (tensor [| 2 |] [| 0.; 60. |]))
+              ~lonpole:(deg (scalar 0.))
+              ~latpole:(deg (scalar 30.))
+          in
+          let p = Quantity.v Unit.degree (tensor [| 1; 2 |] [| 0.; 90. |]) in
+          let off =
+            separation (Transform.apply t p) (lonlat_deg [| 0.; 0. |])
+          in
+          less float_exact ~than:1e-12 (Array.fold_left max 0. off));
       test "parameters that define no projection raise when applied"
         (fun () ->
           let t =
