@@ -46,7 +46,10 @@ val threshold : float -> Nx.float32_t -> Nx.float32_t
 val to_grayscale : Nx.float32_t -> Nx.float32_t
 (** [to_grayscale img] converts RGB to single-channel grayscale using ITU-R
     BT.601 weights: [0.299 * R + 0.587 * G + 0.114 * B]. Input must have
-    [C >= 3]. Output has [C = 1]. *)
+    [C >= 3]; channels after the third, such as alpha, are ignored. Output has
+    [C = 1].
+
+    Raises [Invalid_argument] if [img]'s rank is less than 3 or [C < 3]. *)
 
 val rgb_to_hsv : Nx.float32_t -> Nx.float32_t
 (** [rgb_to_hsv img] converts RGB \[0, 1\] to HSV. H is in \[0, 1\] (normalized

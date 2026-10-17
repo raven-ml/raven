@@ -3,19 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Weighs R, G and B only: an alpha channel, or any channel after the third,
+   does not change the gray value. *)
 let to_grayscale img =
   let shape = Nx.shape img in
   let rank = Array.length shape in
-  let c_axis = rank - 1 in
-  (* Flatten spatial dims, matmul with [3;1] weights, reshape back *)
-  let spatial = Array.sub shape 0 (rank - 1) in
-  let n_pixels = Array.fold_left ( * ) 1 spatial in
-  let flat = Nx.reshape [| n_pixels; shape.(c_axis) |] img in
-  let weights = Nx.create Nx.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |] in
-  let result = Nx.matmul flat weights in
-  let out_shape = Array.copy shape in
-  out_shape.(c_axis) <- 1;
-  Nx.reshape out_shape result
+  if rank < 3 then
+    invalid_arg
+      (Printf.sprintf
+         "to_grayscale: expected an image of rank 3 or more, got %d" rank);
+  let c = shape.(rank - 1) in
+  if c < 3 then
+    invalid_arg
+      (Printf.sprintf "to_grayscale: expected 3 or more channels, got %d" c);
+  let channel i =
+    let last ax = if ax = rank - 1 then Nx.R (i, i + 1) else Nx.A in
+    Nx.slice (List.init rank last) img
+  in
+  Nx.add
+    (Nx.add (Nx.mul_s (channel 0) 0.299) (Nx.mul_s (channel 1) 0.587))
+    (Nx.mul_s (channel 2) 0.114)
 
 (* RGB to HSV conversion using piecewise hue computation *)
 

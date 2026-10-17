@@ -176,6 +176,35 @@ let test_to_grayscale () =
   check_pixel_f "blue to gray" 0.114 gray [ 1; 0; 0 ];
   check_pixel_f "white to gray" 1.0 gray [ 1; 1; 0 ]
 
+(* Channels past the third, such as alpha, do not change the gray value. *)
+let grayscale_extra_channels c =
+  let pixels = [| [| 1.0; 0.0; 0.0 |]; [| 0.2; 0.4; 0.6 |] |] in
+  let data =
+    Array.concat
+      (Array.to_list
+         (Array.map
+            (fun rgb -> Array.init c (fun i -> if i < 3 then rgb.(i) else 0.5))
+            pixels))
+  in
+  let gray = to_grayscale (Nx.create Nx.float32 [| 1; 2; c |] data) in
+  check_shape "one channel" [| 1; 2; 1 |] gray;
+  let luma rgb =
+    (0.299 *. rgb.(0)) +. (0.587 *. rgb.(1)) +. (0.114 *. rgb.(2))
+  in
+  equal (array (float 1e-6)) (Array.map luma pixels) (Nx.to_array gray)
+
+(* Fewer than 3 channels, an image already gray among them, has no R, G and B
+   to weigh. *)
+let grayscale_few_channels c =
+  let img = Nx.zeros Nx.float32 [| 2; 2; c |] in
+  raises_match (Exn.invalid_arg ~substring:"channels") (fun () ->
+      to_grayscale img)
+
+(* A rank-2 array has no channel axis, whatever its last dimension. *)
+let test_grayscale_rank_2 () =
+  let img = Nx.zeros Nx.float32 [| 2; 3 |] in
+  raises_match (Exn.invalid_arg ~substring:"rank") (fun () -> to_grayscale img)
+
 (* ───── Data Type Conversion Tests ───── *)
 
 let test_float_conversions () =
@@ -426,7 +455,17 @@ let () =
           test "resize_batch" test_resize_batch;
           test "resize_color_bilinear" test_resize_color_bilinear;
         ];
-      group "color" [ test "to_grayscale" test_to_grayscale ];
+      group "color"
+        [
+          test "to_grayscale" test_to_grayscale;
+          cases "to_grayscale_channels"
+            ~name:(Printf.sprintf "C = %d")
+            [ 3; 4; 5 ] grayscale_extra_channels;
+          cases "to_grayscale_few_channels"
+            ~name:(Printf.sprintf "C = %d")
+            [ 1; 2 ] grayscale_few_channels;
+          test "to_grayscale_rank_2" test_grayscale_rank_2;
+        ];
       group "type_conversion"
         [ test "float_conversions" test_float_conversions ];
       group "filtering"

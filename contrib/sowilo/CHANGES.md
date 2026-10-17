@@ -5,6 +5,9 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `to_grayscale` takes any image of 3 or more channels and ignores the
+  channels after the third, such as alpha. It raised for 4 or more. It raises
+  `Invalid_argument` for fewer channels or a rank below 3.
 - `gaussian_blur`'s default `ksize` is `2 * ceil(3 * sigma) + 1`, as
   documented; it rounded. A `ksize` of 0 or less raises `Invalid_argument`,
   as documented; it took the default. A `sigma` whose default `ksize` exceeds
