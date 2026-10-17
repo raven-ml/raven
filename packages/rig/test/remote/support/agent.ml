@@ -21,7 +21,11 @@
    lines on stdin: "fill" opens descriptors until the system refuses one, then
    prints "full"; "free" closes them, then prints "freed". In mode "high" it
    holds [past] descriptors before it listens, its limit raised to [high], so
-   that every socket it makes has a number past [past].
+   that every socket it makes has a number past [past]. In mode "held" it is
+   reached through a relay, whose port it prints, that passes the first
+   connection, the controller's, at once, and holds each later one, an
+   agent's dial, until a line comes on stdin: it prints "dialled" as it takes
+   each, so the dials in flight at once can be counted.
 
    It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
@@ -161,6 +165,55 @@ let listen key port =
       Printf.printf "%d\n%!" (Rig_remote.port a);
       a
 
+(* Copies [src]'s bytes to [dst] until [src] ends, then ends [dst]'s. *)
+let relay src dst =
+  let b = Bytes.create 65536 in
+  let rec put n at = if at < n then put n (at + Unix.write dst b at (n - at)) in
+  let rec go () =
+    match Unix.read src b 0 (Bytes.length b) with
+    | 0 | (exception Unix.Unix_error _) -> (
+        try Unix.shutdown dst Unix.SHUTDOWN_SEND with Unix.Unix_error _ -> ())
+    | n -> ( match put n 0 with () -> go () | exception Unix.Unix_error _ -> ())
+  in
+  go ()
+
+let relayed port =
+  let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen l 8;
+  (match Unix.getsockname l with
+  | Unix.ADDR_INET (_, p) -> Printf.printf "%d\n%!" p
+  | Unix.ADDR_UNIX _ -> fail "no port");
+  let lock = Mutex.create () and opened = Condition.create () in
+  let go = ref false in
+  ignore
+    (Thread.create
+       (fun () ->
+         ignore (In_channel.input_line stdin);
+         Mutex.protect lock (fun () ->
+             go := true;
+             Condition.broadcast opened))
+       ());
+  let pass first fd =
+    if not first then begin
+      print_endline "dialled";
+      Mutex.protect lock (fun () ->
+          while not !go do
+            Condition.wait opened lock
+          done)
+    end;
+    let up = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+    Unix.connect up (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
+    ignore (Thread.create (fun () -> relay fd up) ());
+    relay up fd
+  in
+  let rec loop first =
+    let fd, _ = Unix.accept ~cloexec:true l in
+    ignore (Thread.create (pass first) fd);
+    loop false
+  in
+  ignore (Thread.create loop true)
+
 let deaf key =
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
@@ -205,7 +258,15 @@ let () =
       if e <> 0 then fail (Printf.sprintf "limiting descriptors: %d" e)
     end;
     let held = if mode = "high" then hold_high () else [] in
-    let a = listen key 0 in
+    let a =
+      if mode <> "held" then listen key 0
+      else
+        match Rig_remote.listen ~key "127.0.0.1" 0 with
+        | Error why -> fail why
+        | Ok a ->
+            relayed (Rig_remote.port a);
+            a
+    in
     if mode = "crowded" then ignore (Thread.create crowding ());
     let helper =
       if mode <> "helper" then None

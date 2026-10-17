@@ -65,11 +65,6 @@ raven / llama.cpp (Vulkan; ROCm):
   driver_override set, so attach gives each sibling back to its driver; a
   kernel daemon holding the GPU's files (nvidia-persistenced) is named in
   detach's refusal
-- rig remote and host pool: of _plans/rig-release/dropped-patches/, check
-  ci-fix-remote/0001 (exit-hook order on Windows), ci-tests/0001
-  (rig_model's staging refusal), sanitizers/0001 and the two .wip patches;
-  the remote join dials each later agent serially in one 10 s budget
-  (agent.ml:475-500): state the job size it bounds, or dial in parallel
 - rig profile: a Copy event records its allocations' owners
   (copy.ml:26-36), so a device's Pinned staging and image loads record
   `d→d`, against rig.mli's "{!host} as one side": name each side by where

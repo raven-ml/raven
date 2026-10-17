@@ -469,35 +469,71 @@ let account s id d : Wire.account =
     reached_by = List.sort compare reached_by;
   }
 
-(* Connects to the job's agents after this one, then makes links of the
-   connections of those before it, all within [join_s]. Each link is named after
-   its agent's machine, as the controller names it in [agents]. *)
+(* Connects to the job's agents after this one, each on a thread of its own,
+   then makes links of the connections of those before it, all within
+   [join_s]: a join takes as long as its slowest connection, whatever the
+   job's size. Each link is named after its agent's machine, as the
+   controller names it in [agents]. *)
 let join s agents =
   let a = s.agent in
   if s.self > List.length agents then
     raise (Refused (strf "the job has no agent %d" s.self));
   let until = Unix.gettimeofday () +. join_s in
-  let late name = Refused (strf "%s: no answer within %.0f s" name join_s) in
+  let late name = strf "%s: no answer within %.0f s" name join_s in
   let dial j ({ name; host; port } : Wire.agent) =
     let left = until -. Unix.gettimeofday () in
-    if left <= 0. then raise (late name);
-    match dial_tcp ~s:left host port with
-    | Error why -> raise (Refused (strf "%s: %s" name why))
-    | Ok fd -> (
-        match
-          Wire.dial fd ~key:a.key ~self:(Wire.Agent s.self) ~peer:(Wire.Agent j)
-        with
-        | Error why ->
-            Unix.close fd;
-            raise (Refused (strf "%s: %s" name why))
-        | Ok () when Unix.gettimeofday () > until ->
-            Unix.close fd;
-            raise (late name)
-        | Ok () ->
-            let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
-            Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l))
+    if left <= 0. then Error (late name)
+    else
+      match dial_tcp ~s:left host port with
+      | Error why -> Error (strf "%s: %s" name why)
+      | Ok fd -> (
+          match
+            Wire.dial fd ~key:a.key ~self:(Wire.Agent s.self)
+              ~peer:(Wire.Agent j)
+          with
+          | Error why ->
+              Unix.close fd;
+              Error (strf "%s: %s" name why)
+          | Ok () when Unix.gettimeofday () > until ->
+              Unix.close fd;
+              Error (late name)
+          | Ok () -> Ok (j, name, fd))
   in
-  List.iteri (fun i m -> if i + 1 > s.self then dial (i + 1) m) agents;
+  (* Each dial runs on a thread of its own, its exception raised again on this
+     thread. Every thread ends before the join reads a result or leaves, an
+     exception's way included, and a connection no link took is closed: a
+     failed join leaves no dial running and no connection open. *)
+  let started = ref [] and linked = ref [] in
+  let start (j, m) =
+    let r = ref (Ok (Error (late m.Wire.name))) in
+    let run () = r := match dial j m with v -> Ok v | exception e -> Error e in
+    started := (r, Thread.create run ()) :: !started
+  in
+  let close_unlinked () =
+    List.iter
+      (fun (r, t) ->
+        Thread.join t;
+        match !r with
+        | Ok (Ok (_, _, fd)) when not (List.memq fd !linked) -> (
+            try Unix.close fd with Unix.Unix_error _ -> ())
+        | Ok _ | Error _ -> ())
+      !started
+  in
+  let result (r, _) = match !r with Ok v -> v | Error e -> raise e in
+  let link (j, name, fd) =
+    let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
+    linked := fd :: !linked;
+    Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l)
+  in
+  let refusal = function Error why -> Some why | Ok _ -> None in
+  ( Fun.protect ~finally:close_unlinked @@ fun () ->
+    List.filteri (fun i _ -> i + 1 > s.self) agents
+    |> List.iteri (fun k m -> start (s.self + 1 + k, m));
+    List.iter (fun (_, t) -> Thread.join t) !started;
+    let dialled = List.rev_map result !started in
+    match List.find_map refusal dialled with
+    | Some why -> raise (Refused why)
+    | None -> List.iter (function Ok d -> link d | Error _ -> ()) dialled );
   (* The agents before this one dial it; their handshakes run on the acceptor's
      threads. *)
   let before = List.filteri (fun i _ -> i + 1 < s.self) agents in
