@@ -74,6 +74,7 @@ let loaded d binary =
   | Io _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
 
 let load d binary =
+  Dev.check_held "Image.load";
   if Dev.is_lost d then Dev.raise_lost d;
   match loaded d binary with
   | Error _ as e -> e
@@ -94,9 +95,12 @@ let load d binary =
 
 let device image = image.idev
 
-let mem image f = Option.is_some (Memory.kernel_entry image f)
+let mem image f =
+  Dev.check_held "Image.mem";
+  Option.is_some (Memory.kernel_entry image f)
 
 let entry image f =
+  Dev.check_held "Image.entry";
   Option.map (fun (e : Rig_edge.entry) -> e.code) (Memory.kernel_entry image f)
 
 let found fn image f =
@@ -104,5 +108,10 @@ let found fn image f =
   | Some e -> e
   | None -> Printf.ksprintf invalid_arg "Rig.Image.%s: no function %S" fn f
 
-let params image f = (found "params" image f).params
-let threads image f = (found "threads" image f).threads
+let params image f =
+  Dev.check_held "Image.params";
+  (found "params" image f).params
+
+let threads image f =
+  Dev.check_held "Image.threads";
+  (found "threads" image f).threads

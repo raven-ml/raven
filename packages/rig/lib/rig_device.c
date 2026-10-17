@@ -342,9 +342,8 @@ struct rig_lock {
 
 static struct rig_lock *locks;
 
-/* The lock this thread holds, if any (lock.mli). C mutexes nest in the
-   order [table_mu], a device's [mu], its [times.mu], [locks_mu]. */
-static _Thread_local struct rig_lock *held;
+/* C mutexes nest in the order [table_mu], a device's [mu], its [times.mu],
+   [locks_mu]. */
 
 #ifdef _WIN32
 static rig_mutex locks_mu = SRWLOCK_INIT;
@@ -388,7 +387,6 @@ static void forked_parent(void) {
 static void forked_child(void) {
   mutex_unlock(&locks_mu);
   mutex_unlock(&table_mu);
-  held = NULL;
   for (struct rig_lock *l = locks; l != NULL; l = l->next) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
@@ -459,45 +457,55 @@ value caml_rig_lock_new(value unit) {
   return v;
 }
 
-/* Takes the lock [v_l] if it is free and this thread holds none: whether
+/* rig takes a lock only on a thread that holds none (lock.mli): one that
+   holds a lock is in a callback whose call skipped its check, and the take
+   would wait for good, or take two locks in no fixed order. A try answers
+   that it took nothing, and the take that follows it raises. */
+
+/* Takes the lock [v_l] if it is free and the thread holds no lock: whether
    it took it. */
 value caml_rig_lock_try(value v_l) {
-  struct rig_lock *l = Lock_val(v_l);
-  if (held != NULL || !mutex_try(&l->mu)) return Val_false;
-  held = l;
-  return Val_true;
+  if (rig_hold() != 0) {
+    rig_unhold();
+    return Val_false;
+  }
+  if (mutex_try(&Lock_val(v_l)->mu)) return Val_true;
+  rig_unhold();
+  return Val_false;
 }
 
 /* Takes the lock [v_l], which a try did not take: waits for it without the
    domain lock, which may collect anything but [v_l]. Raises
-   Invalid_argument if this thread holds a lock. */
+   Invalid_argument, having taken nothing, if the thread holds a lock. */
 value caml_rig_lock_take(value v_l) {
   CAMLparam1(v_l);
-  if (held != NULL)
+  if (rig_hold() != 0) {
+    rig_unhold();
     caml_invalid_argument("Rig: called from a signal handler, finaliser or "
-                          "Gc.Memprof callback while this thread holds one "
-                          "of rig's locks");
+                          "Gc.Memprof callback while this thread holds a "
+                          "lock");
+  }
   if (take_mutex(&Lock_val(v_l)->mu)) caml_leave_blocking_section();
-  held = Lock_val(v_l);
   CAMLreturn(Val_unit);
 }
 
 value caml_rig_lock_give(value v_l) {
-  held = NULL;
   mutex_unlock(&Lock_val(v_l)->mu);
+  rig_unhold();
   return Val_unit;
 }
 
 /* Gives up the lock [v_l], which the caller holds, until a broadcast on
-   it, a spurious wake-up or the still interval, then takes it back; without
-   the domain lock meanwhile. Callers wait in a loop on their condition, so a
-   wait returns to OCaml at least every still interval, where a pending
-   signal's handler runs. */
+   it, a spurious wake-up or the still interval, then gives it back with its
+   count, without the domain lock meanwhile. It returns to OCaml holding no
+   lock, so a pending signal's handler that runs there holds none either. */
 value caml_rig_lock_wait(value v_l) {
   CAMLparam1(v_l);
   struct rig_lock *l = Lock_val(v_l);
   caml_enter_blocking_section_no_pending();
   cond_wait_ms(&l->cv, &l->mu, STILL_MS);
+  mutex_unlock(&l->mu);
+  rig_unhold();
   caml_leave_blocking_section();
   CAMLreturn(Val_unit);
 }

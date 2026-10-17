@@ -244,7 +244,9 @@ value caml_rig_cuda_load(value unit) {
    destroys once collected. No section of the driver's takes a second guard,
    so a thread holds at most one: a signal handler, finaliser or Gc.Memprof
    callback that runs while its thread holds a guard and takes one would
-   wait for good on its own, or take two in no fixed order. */
+   wait for good on its own, or take two in no fixed order. A guard counts
+   among the locks its thread holds (rig_hold in rig_edge.h) from before its
+   take to after its give. */
 #define Guard_val(v) (*(pthread_mutex_t **)Data_custom_val(v))
 
 /* Whether this thread holds a guard. */
@@ -294,6 +296,7 @@ value caml_rig_cuda_guard_take(value v_g) {
                            "Rig_cuda: called from a signal handler, "
                            "finaliser or Gc.Memprof callback while this "
                            "thread holds a lock of the driver's");
+  rig_hold();
   pthread_mutex_t *m = Guard_val(v_g);
   if (pthread_mutex_trylock(m) != 0) {
     caml_enter_blocking_section_no_pending();
@@ -311,6 +314,7 @@ value caml_rig_cuda_guard_take(value v_g) {
 value caml_rig_cuda_guard_give(value v_g) {
   holding = 0;
   pthread_mutex_unlock(Guard_val(v_g));
+  rig_unhold();
   return Val_unit;
 }
 

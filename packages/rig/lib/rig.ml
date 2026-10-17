@@ -53,7 +53,9 @@ module Point = struct
     let d = Dev.of_index (Point.index p) in
     if Dev.owns d p then Some d else None
 
-  let wait p = Dev.wait_point 0 true p
+  let wait p =
+    Dev.check_held "Point.wait";
+    Dev.wait_point 0 true p
 
   let reached = Dev.reached_point
 

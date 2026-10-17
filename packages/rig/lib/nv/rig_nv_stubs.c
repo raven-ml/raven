@@ -41,7 +41,9 @@
 /* A guard: a mutex of its own memory, which a custom block holds and
    destroys once collected, and its rank. A thread takes guards in rising
    rank, so no two threads wait for each other. [below] is the rank its
-   holder held before it took the guard. */
+   holder held before it took the guard. A guard counts among the locks its
+   thread holds (rig_hold in rig_edge.h) from before its take to after its
+   give. */
 struct guard {
   pthread_mutex_t mutex;
   int rank;
@@ -110,6 +112,7 @@ value caml_rig_nv_guard_take(value v_g) {
                            "finaliser or Gc.Memprof callback while this "
                            "thread holds a lock the call takes, or one "
                            "taken after it");
+  rig_hold();
   if (pthread_mutex_trylock(&g->mutex) != 0) {
     caml_enter_blocking_section_no_pending();
     int err = pthread_mutex_lock(&g->mutex);
@@ -127,8 +130,12 @@ value caml_rig_nv_guard_take(value v_g) {
    the same or a higher rank: whether it took it. */
 value caml_rig_nv_guard_try(value v_g) {
   struct guard *g = Guard_val(v_g);
-  if (held >= g->rank || pthread_mutex_trylock(&g->mutex) != 0)
+  if (held >= g->rank) return Val_false;
+  rig_hold();
+  if (pthread_mutex_trylock(&g->mutex) != 0) {
+    rig_unhold();
     return Val_false;
+  }
   taken(g);
   return Val_true;
 }
@@ -137,6 +144,7 @@ value caml_rig_nv_guard_give(value v_g) {
   struct guard *g = Guard_val(v_g);
   held = g->below;
   pthread_mutex_unlock(&g->mutex);
+  rig_unhold();
   return Val_unit;
 }
 

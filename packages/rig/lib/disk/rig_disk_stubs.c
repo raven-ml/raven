@@ -45,6 +45,8 @@
 #include <sys/mount.h>
 #endif
 
+#include <rig_edge.h>
+
 #if defined(__linux__) && defined(__has_include)
 #if __has_include(<linux/io_uring.h>)
 #include <linux/io_uring.h>
@@ -602,7 +604,9 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
    A guard: a mutex of its own memory, which a custom block holds and
    destroys once collected, and its rank. A thread takes guards in rising
    rank, so no two threads wait for each other. [below] is the rank its
-   holder held before it took the guard. */
+   holder held before it took the guard. A guard counts among the locks its
+   thread holds (rig_hold in rig_edge.h) from before its take to after its
+   give. */
 
 #ifdef _WIN32
 typedef SRWLOCK guard_mutex;
@@ -686,6 +690,7 @@ value caml_rig_disk_guard_take(value v_g) {
                            "finaliser or Gc.Memprof callback while this "
                            "thread holds a lock the call takes, or one "
                            "taken after it");
+  rig_hold();
   if (!guard_try(&g->mutex)) {
     caml_enter_blocking_section_no_pending();
     guard_lock(&g->mutex);
@@ -705,6 +710,7 @@ value caml_rig_disk_guard_give(value v_g) {
   struct guard *g = Guard_val(v_g);
   held = g->below;
   guard_unlock(&g->mutex);
+  rig_unhold();
   return Val_unit;
 }
 

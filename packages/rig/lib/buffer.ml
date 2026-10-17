@@ -26,6 +26,7 @@ let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.alloc }
 
 let create ?(memory = Device) d n =
+  Dev.check_held "Buffer.create";
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
   if Dev.is_lost d then begin
     (* A lost device's own calls return its collected memory. *)
@@ -45,6 +46,7 @@ let create ?(memory = Device) d n =
   of_memory mem n
 
 let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
+  Dev.check_held "Buffer.of_io";
   if n < 0 then invalid_argf "Rig.Buffer.of_io: %d bytes is negative" n;
   match d.kind with
   | Io { m; h } -> (
@@ -117,6 +119,7 @@ let places b =
     if a = 0 then [ place ] else [ place; (0, a) ]
 
 let borrow d b =
+  Dev.check_held "Buffer.borrow";
   check_live "Buffer.borrow" b;
   if Dev.is_lost d then begin
     (* A lost device's own calls return its collected memory. *)
@@ -136,6 +139,7 @@ let wait_points b access =
   if access = Read then Memory.wait_write b.mem else Memory.wait_points b.mem
 
 let wait b access =
+  Dev.check_held "Buffer.wait";
   check_live "Buffer.wait" b;
   Memory.check_owner b.mem;
   wait_points b access
@@ -237,6 +241,7 @@ let array fn k b = array_of fn ~export:false k b
 
 let export b k =
   let fn = "Buffer.export" in
+  Dev.check_held fn;
   check_live fn b;
   if b.mem.alloc.owner != Dev.host then
     invalid_argf "Rig.%s: the buffer is %s's memory, not the host's" fn
@@ -265,6 +270,7 @@ let check_range fn what size at n =
       what size
 
 let of_string s =
+  Dev.check_held "Buffer.of_string";
   let n = String.length s in
   let b = create Dev.host n in
   blit_string s 0 b 0 n;

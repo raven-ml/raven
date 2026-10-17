@@ -83,22 +83,20 @@ let find_stage d =
 
 let stage_of d = Lock.protect slots_lock find_stage d
 
-(* Waits for a free slot of [st] and marks it used. *)
-let rec claim_slot st =
+(* Under [slots_lock]: a free slot of [st], marked used, or [None] while
+   both are used. *)
+let claim_slot st =
   if not st.in_use.(0) then begin
     st.in_use.(0) <- true;
-    0
+    Some 0
   end
   else if not st.in_use.(1) then begin
     st.in_use.(1) <- true;
-    1
+    Some 1
   end
-  else begin
-    Lock.wait slots_lock;
-    claim_slot st
-  end
+  else None
 
-let take_slot st = Lock.protect slots_lock claim_slot st
+let take_slot st = Lock.await slots_lock claim_slot st
 
 (* Allocates nothing, so no asynchronous exception keeps the slot. *)
 let give_slot st i =
@@ -333,6 +331,7 @@ let through st n ~sides ~ahead ~into ~out_of =
           raise x)
 
 let rec copy ~src ~dst =
+  Dev.check_held fn;
   let n = Buffer.length src in
   if n <> Buffer.length dst then
     invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
@@ -427,6 +426,7 @@ let download fn src take =
    the claim. *)
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
+  Dev.check_held fn;
   Buffer.check_range fn "string" (String.length s) i n;
   Buffer.check_range fn "buffer" (Buffer.length b) j n;
   writable fn b;
@@ -446,6 +446,7 @@ let blit_from_string s i b j n =
 
 let blit_to_bytes b i s j n =
   let fn = "Buffer.blit_to_bytes" in
+  Dev.check_held fn;
   Buffer.check_range fn "buffer" (Buffer.length b) i n;
   Buffer.check_range fn "bytes" (Bytes.length s) j n;
   if Buffer.host_addressed b then begin
@@ -462,6 +463,7 @@ let blit_to_bytes b i s j n =
 
 let fill b c =
   let fn = "Buffer.fill" in
+  Dev.check_held fn;
   writable fn b;
   if Buffer.host_addressed b then begin
     Claim.wait fn Buffer.Read_write b;

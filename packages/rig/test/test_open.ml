@@ -743,6 +743,55 @@ let test_break_waiting_close () =
     (gpu "open:break-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word)));
   Rig.close far
 
+(* An open of a name that another thread is opening waits for it holding no
+   lock: a signal handler that runs in the wait, where it returns to OCaml,
+   calls rig as any code does. The opener is parked outside OCaml, so the
+   waiting thread is the one that runs the handler. *)
+let test_handled_in_open_wait () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let name = "open:handled-in-wait" in
+  let parked ~word =
+    Support.park ();
+    Ok (P.bind (P.make ()) ~word)
+  in
+  let first = ref None in
+  let opener =
+    Thread.create
+      (fun () ->
+        first := Some (Rig.open_ { name; driver = (module P); make = parked }))
+      ()
+  in
+  Support.await "the opener" Support.parked;
+  let call = ref "no handler ran" in
+  let handle _ =
+    (call :=
+       match Rig.Buffer.create Rig.host 8 with
+       | _ -> "ran"
+       | exception Invalid_argument why -> why);
+    Support.unpark ()
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let opened, raised =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () ->
+        Support.interrupt_in_wait (fun () ->
+            Rig.open_
+              {
+                name;
+                driver = (module P);
+                make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
+              }))
+  in
+  Thread.join opener;
+  equal ~msg:"the open waited" bool true raised;
+  equal ~msg:"the handler's call of rig" string "ran" !call;
+  let d = require_ok ~pp:Format.pp_print_string opened in
+  equal ~msg:"the device the opener made" bool true
+    (Rig.equal d (require_ok ~pp:Format.pp_print_string (Option.get !first)));
+  Rig.close d
+
 (* Two closes of one host wait for an open on its machine. A Ctrl-C ends the
    second close's wait, and the first close still holds the machine: an open
    on it is an [Error] until the first close ends it. *)
@@ -1397,6 +1446,8 @@ let tests =
       test "an opener that opens its own name raises" test_opener_opens_itself;
       test "an open waiting for its name's open takes Sys.Break"
         test_break_waiting_open;
+      test "a signal handler in an open's wait for its name calls rig"
+        test_handled_in_open_wait;
       test "a Ctrl-C in a close's wait for an open leaves the machine open"
         test_break_waiting_close;
       test "a Ctrl-C in a second close leaves the first close's mark"

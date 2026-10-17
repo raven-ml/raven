@@ -62,6 +62,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <rig_edge.h>
+
 #include "rig_remote_proxy_stubs.h"
 
 #ifdef _WIN32
@@ -1825,7 +1827,9 @@ value caml_rig_remote_link_release_rail(value vl, value id) {
    destroys once collected. No section takes a second guard, so a thread
    holds at most one: a signal handler, finaliser or Gc.Memprof callback
    that runs while its thread holds a guard and takes one would wait for
-   good on its own, or take two in no fixed order. */
+   good on its own, or take two in no fixed order. A guard counts among the
+   locks its thread holds (rig_hold in rig_edge.h) from before its take to
+   after its give. */
 #define Guard_val(v) (*(pthread_mutex_t **)Data_custom_val(v))
 
 /* Whether this thread holds a guard. */
@@ -1871,6 +1875,7 @@ value caml_rig_remote_link_guard(value unit) {
    exit. */
 value caml_rig_remote_link_guard_take(value v_g) {
   if (holding) return Val_false;
+  rig_hold();
   pthread_mutex_t *m = Guard_val(v_g);
   if (pthread_mutex_trylock(m) != 0) {
     caml_enter_blocking_section_no_pending();
@@ -1888,5 +1893,6 @@ value caml_rig_remote_link_guard_take(value v_g) {
 value caml_rig_remote_link_guard_give(value v_g) {
   holding = 0;
   pthread_mutex_unlock(Guard_val(v_g));
+  rig_unhold();
   return Val_unit;
 }

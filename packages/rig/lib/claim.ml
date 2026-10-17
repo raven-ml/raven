@@ -82,10 +82,13 @@ let scope fn access b k f =
           Memory.claim_drop b;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
-let read_bytes b k f = scope "Buffer.read" Read b k f
+let read_bytes b k f =
+  Dev.check_held "Buffer.read";
+  scope "Buffer.read" Read b k f
 
 let write_bytes b k f =
   let fn = "Buffer.write" in
+  Dev.check_held fn;
   Buffer.check_live fn b;
   if Buffer.access b = Read then
     invalid_argf "Rig.%s: the buffer's memory admits only reads" fn;

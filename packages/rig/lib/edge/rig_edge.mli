@@ -362,19 +362,29 @@ type grown =
     A {!Driver.Fault} from a counted call, and a failed [submit] or [commit]
     of the driver, lose the device.
 
-    A driver's function may refuse a call that would wait for good: one from
-    a signal handler, finaliser or [Gc.Memprof] callback that interrupts the
-    driver's code on the same thread, including code that compiled code
-    calls through the device's {!type-capability}, while that thread holds a
-    lock the call needs or a lock that must be taken after it. A refusal
-    raises the driver's {!Driver.Refused} and changes nothing.
-    {!Driver.locate}, {!Driver.peer} and {!Driver.val-signaled}, which must
-    not block, refuse no call. rig counts a refused call as not made: it
-    keeps the device, raises [Invalid_argument] to a caller that needs the
-    call, and makes a refused {!Driver.val-free}, {!Driver.unload} or
-    {!Driver.val-stop} again at a later call. The stop of a handle whose open
-    failed is the exception: nothing holds the handle to stop it later, so
-    the open raises [Invalid_argument].
+    rig calls a driver's functions but {!Driver.locate}, {!Driver.peer} and
+    {!Driver.val-signaled} on a thread that holds no lock of rig's, of a
+    driver's or of an io library's. A call of rig's made inside a lock
+    raises [Invalid_argument] as it starts ([Rig]'s domains section). A
+    driver must count each lock it holds while OCaml code runs, or while a
+    stub runs pending signal handlers, among the locks its thread holds,
+    from before the take to after the give ([rig_hold] in [rig_edge.h]).
+    Its functions that may take a lock and that rig calls without its own
+    check, those of its {!type-capability}, its opener's [make] and its own
+    public functions, must start the same way: each must raise
+    [Invalid_argument], having changed nothing, while [rig_holds ()] is not
+    [0]. {!Driver.locate}, {!Driver.peer} and {!Driver.val-signaled} check
+    nothing and must take no lock. rig calls [locate] and [peer] at any
+    time, and [signaled] while it holds a lock of its own. A function that
+    takes no lock may be called from a callback at any point.
+
+    {b Warning.} Another caller must call the functions of this signature
+    only as rig does, holding no lock. Nothing checks it before the call
+    takes a lock. A take of a lock by a thread that holds that lock, or of
+    one of rig's by a thread that holds any, raises [Invalid_argument],
+    having taken nothing, but what the call did before stays done, and a
+    take of another driver lock out of the driver's order can make two
+    threads wait for each other for good.
 
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
     {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-image}, the
@@ -398,13 +408,13 @@ type grown =
     rig guarantees these properties, so that a driver checks none of them:
     {ul
     {- it frees each region at most once, on its device, and never again
-       after a [free] of it raised anything but {!Driver.Refused};}
+       after a [free] of it raised;}
     {- it frees a region only after every {!Driver.val-map_peer} region over
        it;}
     {- it calls {!Driver.peer} and {!Driver.val-map_peer} with two distinct
        devices of the driver;}
-    {- it unloads each image once, a refused unload counting as not made,
-       and calls {!Driver.val-entry} only on a loaded image;}
+    {- it unloads each image once, and calls {!Driver.val-entry} only on a
+       loaded image;}
     {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
        [None];}
     {- it bounds hangs itself ([hang_ms]), so {!Driver.sleep} never times out
@@ -424,8 +434,8 @@ module type Driver = sig
       it. *)
 
   exception Refused of string
-  (** [Refused why] reports that the driver refused a call that would wait
-      for good, having changed nothing ({!section-drivers}). *)
+  (** [Refused why] is an exception of the driver's, which rig treats as any
+      other ({!section-drivers}). *)
 
   val key : t Type.Id.t
   (** [key] identifies the driver. rig asks {!val-map_peer} only of two
@@ -567,7 +577,9 @@ module type Driver = sig
          returned, no write of [d] or of its work to the word may land,
          since the word then passes to a later device.}}
       After [stop], rig calls {!val-free} and {!unload} only once the word
-      reads that last value. It calls them uncounted and drops their faults.
+      reads that last value, also after a [stop] that raised, such as one an
+      asynchronous exception ended before it ended the device's work. It
+      calls them uncounted and drops their faults.
       They may come after an open of the same hardware has made a new device
       of this driver, and must touch nothing of the new device. *)
 end
@@ -583,8 +595,8 @@ end
     its calls, and must give back its locks as a driver does
     ({!section-drivers}).
 
-    The library may refuse a call as a driver does ({!section-drivers}), with
-    its {!Io.Refused}. *)
+    The library counts its locks and checks its own functions as a driver
+    does ({!section-drivers}). *)
 module type Io = sig
   type t
   (** The type for open io devices. *)
@@ -597,8 +609,8 @@ module type Io = sig
       connection. *)
 
   exception Refused of string
-  (** [Refused why] reports that the library refused a call that would wait
-      for good, having changed nothing ({!module-type-Io}). *)
+  (** [Refused why] is an exception of the library's, which rig treats as
+      any other ({!module-type-Io}). *)
 
   val region_key : region Type.Id.t
   (** [region_key] identifies the io library and its regions.
@@ -688,10 +700,8 @@ type 'a opener = {
     [make] itself owns the handle and must stop it, and gives it 8 bytes of
     host memory, aligned to 8, that live as long as the handle. Each
     driver's opener states whether [make] opens another handle while an
-    earlier one is not stopped. [make] may refuse a call as a driver's
-    function does ({!section-drivers}): it raises the driver's
-    {!Driver.Refused}, having opened nothing, and [Rig.open_] raises
-    [Invalid_argument]. *)
+    earlier one is not stopped. [make] raises [Invalid_argument], having
+    opened nothing, while its thread holds a lock ({!section-drivers}). *)
 
 type 'a io_opener = {
   name : string;  (** The device's name, without a machine suffix. *)

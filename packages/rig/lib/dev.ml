@@ -148,8 +148,7 @@ let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most =
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~most_parts ~host_addresses ~word
-    ~word_region ~key ~memory_device ~fault ~refusal ~capability ~budget
-    ~opened =
+    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
   let live =
     {
       c;
@@ -163,7 +162,6 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       word_region;
       word_unmaps = 1;
       fault;
-      refusal;
       release = c_release c;
       lock = Lock.create ();
       used = 0;
@@ -199,12 +197,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     opened;
   }
 
-(* The host's fault and refusal, which nothing raises. *)
+(* The host's fault, which nothing raises. *)
 exception No_fault
-
-module No_refusal = struct
-  exception Refused of string
-end
 
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
    and waits on the host for other devices' points. *)
@@ -219,7 +213,6 @@ let host =
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:[%extension_constructor No_fault]
-      ~refusal:(module No_refusal : Refusal)
       ~capability:None ~budget:max_int ~opened:0
   in
   d
@@ -290,6 +283,19 @@ let next_value d = c_next_value d.live.c
 
 let protect d f x = Lock.protect d.live.lock f x
 
+(* The locks the calling thread holds, [rig_holds] of [rig_edge.h]. *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+let refuse_held fn =
+  invalid_arg
+    ("Rig." ^ fn
+   ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+      inside a lock of the calling thread's")
+
+let[@inline] check_held fn = if holds () <> 0 then refuse_held fn
+
 (* The host of each other machine named so far: a machine has one for its
    life. *)
 let machines : device Strings.t = Strings.create 4
@@ -355,7 +361,9 @@ let store k d v =
    allocating. *)
 let rec value_in : type a. a key -> device -> local list -> a =
  fun k d -> function
-  | [] -> store k d (k.init d)
+  | [] ->
+      check_held "Local.get";
+      store k d (k.init d)
   | Local (id, v) :: l -> (
       match Type.Id.provably_equal k.id id with
       | Some Equal -> v
@@ -496,11 +504,12 @@ let returned d =
 (* Runs the stop of [d], which the caller claimed just before. It ends in no
    tail call, so the compiler puts no poll at its start, and nothing polls
    between the claim and its handlers. An exception before the driver's stop
-   is called, or a driver's stop that refused, owes the stop again; from the
-   driver's stop on, the state moves on whatever else it did: the device must
-   count as stopped or not. *)
+   is called owes the stop again; from the driver's stop on, the state moves
+   on whatever else it did: the device must count as stopped or not. A stop
+   that raised may have left the device's work running, which asks nothing
+   more of rig: its memory returns once it is Stopped, as its word shows its
+   last value, which a driver writes only once no work of the device runs. *)
 let run_stop d =
-  let module R = (val d.live.refusal) in
   (match if c_faulted d.live.c then Some (why d) else None with
   | exception e ->
       c_unclaim d.live.c;
@@ -508,9 +517,6 @@ let run_stop d =
   | fault -> (
       match stop_handle d fault with
       | () -> returned d
-      | exception (R.Refused _ as e) ->
-          c_unclaim d.live.c;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
       | exception e ->
           returned d;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
@@ -518,7 +524,7 @@ let run_stop d =
   ()
 
 (* Runs [d]'s stop if it is owed and no counted call runs on [d]: whether
-   this call ran it. Raises the driver's refusal of the stop. *)
+   this call ran it. *)
 let own_stop d =
   state d = owed_state
   && c_claim_own d.live.c
@@ -527,22 +533,7 @@ let own_stop d =
     true
   end
 
-(* A refused stop stays owed, for a later call that acts for [d]: the call
-   that runs it here has done its own work. *)
-let run_own d =
-  if state d = owed_state then
-    let module R = (val d.live.refusal) in
-    try ignore (own_stop d : bool) with R.Refused _ -> ()
-
-(* [own_stop d] for a close of [d] or an open of its name, which raises
-   [Invalid_argument] where the driver refuses the stop: a close or an open
-   cannot do its work without it. *)
-let stop_now d =
-  let module R = (val d.live.refusal) in
-  try own_stop d
-  with R.Refused why ->
-    Printexc.raise_with_backtrace (Invalid_argument why)
-      (Printexc.get_raw_backtrace ())
+let run_own d = if state d = owed_state then ignore (own_stop d : bool)
 
 (* A wait's hang loss runs no stop: a wait does no device's work. *)
 let lose d why =
@@ -564,43 +555,29 @@ let raised d scope e =
   run_own d;
   if not fault then Printexc.raise_with_backtrace e bt
 
-(* A wait's refusal raises [Invalid_argument] and keeps [d], as a counted
-   call's does. *)
+(* A wait's fault loses [d], and another exception passes through. *)
 let wait_raised d e =
   let fault = c_raised d.live.c e d.live.fault Faults in
   let bt = Printexc.get_raw_backtrace () in
-  let module R = (val d.live.refusal) in
-  match e with
-  | _ when fault -> raise_lost d
-  | R.Refused why -> Printexc.raise_with_backtrace (Invalid_argument why) bt
-  | e -> Printexc.raise_with_backtrace e bt
+  if fault then raise_lost d else Printexc.raise_with_backtrace e bt
 
 let refused d =
   run_own d;
   raise_lost d
 
-(* A driver's refusal changed nothing: the call ends as one that returned,
-   its count first, as [leave] ends it, and its caller gets
-   [Invalid_argument]. *)
 let counted d scope f =
-  let module R = (val d.live.refusal) in
   match c_enter d.live.c with
   | 0 -> (
       match f () with
       | r ->
           leave d;
           r
-      | exception R.Refused why ->
-          c_exit d.live.c;
-          let bt = Printexc.get_raw_backtrace () in
-          run_own d;
-          Printexc.raise_with_backtrace (Invalid_argument why) bt
       | exception e ->
           raised d scope e;
           raise_lost d)
   | _ -> refused d
 
-type given = Given | Later | Refused
+type given = Given | Later
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
    back nothing more. On a live one a fault loses the device, which its caller
@@ -610,12 +587,10 @@ type given = Given | Later | Refused
    give back what waits behind it first, such as an image's code memory
    behind its unload. *)
 let give d scope f =
-  let module R = (val d.live.refusal) in
   if orphaned d then Given
   else if stopped d then
     match f () with
     | () -> Given
-    | exception R.Refused _ -> Refused
     | exception Sys_error _ -> Given
     | exception e when Obj.Extension_constructor.of_val e == d.live.fault ->
         Given
@@ -625,14 +600,13 @@ let give d scope f =
     | () ->
         leave d;
         Given
-    | exception R.Refused _ ->
-        c_exit d.live.c;
-        Refused
     | exception e ->
         raised d scope e;
         Given
 
-let fail why = if c_fail why then iter run_own
+(* A [fail] from a callback inside a lock fails the process and leaves the
+   owed stops, which take locks, to later calls. *)
+let fail why = if c_fail why && holds () = 0 then iter run_own
 
 let failure () =
   match c_first () with
@@ -879,7 +853,7 @@ let settled p =
 (* Runs the stop if it is owed and claimable, and waits for it, returning to
    OCaml every still interval. *)
 let rec await_stop d =
-  ignore (stop_now d : bool);
+  ignore (own_stop d : bool);
   if not (c_await_stop d.live.c still_ms) then await_stop d
 
 let close_one d =
@@ -952,8 +926,9 @@ let host_down machine =
 
 (* A failed process opens nothing, not calling [make]. A lost device whose
    stop has not returned is [`Stop], for the open to run the stop. An open
-   of a name that [r]'s own thread is opening, from its opener or a
-   callback inside that open, would wait for good: it raises. *)
+   of a name another thread is opening is [`Wait]; one of a name that [r]'s
+   own thread is opening, from its opener or a callback inside that open,
+   would wait for good: it raises. *)
 let rec find r =
   match (c_failed (), host_down r.machine, Names.find_opt table r.k) with
   | Some why, _, _ | None, Some why, _ -> `Error why
@@ -962,9 +937,7 @@ let rec find r =
       find r
   | None, None, Some (Opening o) when o.thread = r.thread ->
       invalid_argf "Rig.%s: %s is opening on the calling thread" r.fn r.full
-  | None, None, Some (Opening _) ->
-      Lock.wait table_lock;
-      find r
+  | None, None, Some (Opening _) -> `Wait
   | None, None, Some (Open d) when not (is_lost d) ->
       if d.key <> r.key then
         invalid_argf "Rig.%s: %s is open as another driver's device" r.fn
@@ -974,25 +947,26 @@ let rec find r =
   | None, None, None -> `Make
 
 (* Under the table's lock: the device open under [r]'s name, or the slot
-   claimed for [r]. *)
+   claimed for [r], or [None] while another thread opens the name. *)
 let claim r =
   end_interrupted ();
   check_host r;
   match find r with
+  | `Wait -> None
   | `Make ->
       r.opening <- true;
       Names.replace table r.k (Opening r);
       if r.host then
         Option.iter (fun m -> Strings.replace hosting m r.full) (fst r.k);
-      `Make
-  | found -> found
+      Some `Make
+  | (`Open _ | `Stop _ | `Error _) as found -> Some found
 
 (* [claim] of [r], after running the owed stop of a lost device that holds
    its name. A stop takes the table's lock as it returns, so it runs holding
    none. *)
 let rec claimed r =
-  match Lock.protect table_lock claim r with
-  | `Stop d when stop_now d -> claimed r
+  match Lock.await table_lock claim r with
+  | `Stop d when own_stop d -> claimed r
   | `Stop _ -> `Error (strf "%s is lost and its stop has not answered" r.full)
   | (`Open _ | `Error _ | `Make) as found -> found
 
@@ -1003,6 +977,7 @@ let rec claimed r =
    open under the name, and otherwise the name is free. [make] ends what it
    made and did not publish. *)
 let open_named ~fn ~machine ~name ~key make =
+  check_held fn;
   let m = machine_name machine in
   let full = match m with None -> name | Some m -> name ^ "@" ^ m in
   let host = match machine with Hosts _ -> true | Here | On _ -> false in
@@ -1120,7 +1095,6 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
-      ~refusal:(module D : Refusal)
       ~capability:(Some f.capability) ~budget:f.budget ~opened
   in
   register d;
@@ -1131,19 +1105,12 @@ let open_driver (type a) ?(memory_device = false)
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~slot ~opened ~name:full ->
-  (* A refused [make] opened nothing; the open cannot do its work without
-     it. *)
   match make ~word:(c_slot_word index) with
-  | exception D.Refused why ->
-      Printexc.raise_with_backtrace (Invalid_argument why)
-        (Printexc.get_raw_backtrace ())
   | Error e -> Error e
   | Ok h -> (
       (* Until the device is published, a failure stops the handle: a fault is
          a loss, and any other exception, such as facts that break the
-         contract, is raised again, a refusal as [Invalid_argument]. Nothing
-         holds the handle to stop it later, so a refused stop raises
-         [Invalid_argument] in place of the open's failure. *)
+         contract, is raised again. *)
       match
         driver_device (module D) h ~index ~opened ~name:full ~machine
           ~memory_device
@@ -1152,16 +1119,11 @@ let open_driver (type a) ?(memory_device = false)
           publish d slot;
           Ok d
       | exception D.Fault why ->
-          (try D.stop h ~fault:(Some why) with
-          | D.Fault _ -> ()
-          | D.Refused why -> invalid_arg why);
+          (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
           Error (strf "%s: %s" full why)
       | exception e ->
           let bt = Printexc.get_raw_backtrace () in
-          (try D.stop h ~fault:None with
-          | D.Fault _ -> ()
-          | D.Refused why -> invalid_arg why);
-          let e = match e with D.Refused why -> Invalid_argument why | e -> e in
+          (try D.stop h ~fault:None with D.Fault _ -> ());
           Printexc.raise_with_backtrace e bt)
 
 let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
@@ -1184,7 +1146,6 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~host_addresses:false
             ~word:0 ~word_region:None ~key ~memory_device:false
             ~fault:[%extension_constructor I.Fault]
-            ~refusal:(module I : Refusal)
             ~capability:None ~budget ~opened
         in
         register d;
@@ -1194,16 +1155,11 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
           publish d slot;
           Ok d
       | exception I.Fault why ->
-          (try I.stop h with
-          | I.Fault _ -> ()
-          | I.Refused why -> invalid_arg why);
+          (try I.stop h with I.Fault _ -> ());
           Error (strf "%s: %s" full why)
       | exception e ->
           let bt = Printexc.get_raw_backtrace () in
-          (try I.stop h with
-          | I.Fault _ -> ()
-          | I.Refused why -> invalid_arg why);
-          let e = match e with I.Refused why -> Invalid_argument why | e -> e in
+          (try I.stop h with I.Fault _ -> ());
           Printexc.raise_with_backtrace e bt)
 
 (* Closing *)
@@ -1231,22 +1187,21 @@ let opening_on m =
       | Opening _ | Open _ -> acc)
     table false
 
-(* Under the table's lock: marks the host [d] of machine [m] closing, waits
-   for the opens in flight on [m], ending those an exception ended, and is
-   [m]'s other devices. An exception before it returns, such as [Sys.Break]
-   in a wait, takes the close back by its handler's first step, an atomic
-   one: a call there could take a second exception first. Another close of
-   [d] under way keeps its own. *)
-let start_close ((d : device), m) =
+(* Under the table's lock: [m]'s devices other than its host [d] once no
+   open is in flight on [m], ending those an exception ended, or [None]. *)
+let opens_ended ((d : device), m) =
+  end_interrupted ();
+  if opening_on m then None else Some (devices_of m d)
+
+(* Marks the host [d] of machine [m] closing, waits for the opens in flight
+   on [m], and is [m]'s other devices. An exception before it returns, such
+   as [Sys.Break] in a wait, takes the close back by its handler's first
+   step, an atomic one: a call there could take a second exception first.
+   Another close of [d] under way keeps its own. *)
+let start_close (d : device) m =
   match
     ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] 1);
-    while
-      end_interrupted ();
-      opening_on m
-    do
-      Lock.wait table_lock
-    done;
-    devices_of m d
+    Lock.await table_lock opens_ended (d, m)
   with
   | devices -> devices
   | exception e ->
@@ -1257,11 +1212,12 @@ let start_close ((d : device), m) =
    never closed: the machine stops taking opens, the opens in flight finish,
    then its devices close. *)
 let close d =
+  check_held "close";
   if is_host d then invalid_arg "Rig.close: the host is never closed";
   match d.machine with
   | Here | On _ -> close_one d
   | Hosts m -> (
-      let devices = Lock.protect table_lock start_close (d, m) in
+      let devices = start_close d m in
       match
         List.iter close_one devices;
         close_one d

@@ -188,6 +188,7 @@ let rec read_all p =
   end
 
 let take f =
+  Dev.check_held "Profile.take";
   let p = start () in
   match
     let r = f () in

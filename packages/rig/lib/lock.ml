@@ -22,3 +22,16 @@ let protect l f x =
   | exception e ->
       release l;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+let rec await l f x =
+  hold l;
+  match f x with
+  | Some v ->
+      release l;
+      v
+  | None ->
+      wait l;
+      await l f x
+  | exception e ->
+      release l;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())

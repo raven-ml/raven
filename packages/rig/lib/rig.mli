@@ -64,8 +64,8 @@
     {- a call that allocates raises {!Out_of_memory} if its device cannot
        provide the bytes ({!section-reclaim});}
     {- a call may be made from any domain, concurrently with any other,
-       and may raise [Invalid_argument] when a signal handler, finaliser
-       or [Gc.Memprof] callback makes it ({!section-domains}).}}
+       and one that may take a lock raises [Invalid_argument], having done
+       nothing, when it is made inside a lock ({!section-domains}).}}
 
     This copies five bytes to a device and back. The blit back reads [dev],
     so it follows the blit that wrote it.
@@ -133,14 +133,10 @@ val host : t
     process, which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
-    asynchronously ({!section-errors}), is raised again, except a driver's
-    refusal of [make] ({!section-domains}), which raises [Invalid_argument].
-    The name is then
+    asynchronously ({!section-errors}), is raised again. The name is then
     unopened, or open with the device the open made, which the next open
     returns. A handle that [make] returned and that no device holds is
-    stopped once ({!Rig_edge.Driver.val-stop}). If its driver refuses that
-    stop ({!section-domains}), the open raises [Invalid_argument], and rig
-    never stops that handle. *)
+    stopped once ({!Rig_edge.Driver.val-stop}). *)
 
 val open_ : ?machine:t -> 'a Rig_edge.opener -> (t, string) result
 (** [open_ ~machine o] is the open device named [o.name] on [machine]'s
@@ -193,8 +189,7 @@ val close : t -> unit
     Raises [Invalid_argument], leaving [d] as it was, if [d] is {!host}, or
     if [d] is a machine's host and the call runs on the thread of an open on
     that machine, from its opener's [make] or a callback inside it
-    ({!section-domains}). Raises [Invalid_argument] with [d] lost if its
-    driver's stop refuses the call ({!section-stops}). *)
+    ({!section-domains}). *)
 
 (** {2:properties Properties}
 
@@ -472,21 +467,37 @@ val signaled : t -> int
     interrupted wait loses no device and assigns no value.
 
     rig also holds locks of its own, briefly, inside most calls, and a driver
-    holds its own inside its calls and inside the functions of its record that
-    compiled code calls ({!capability}). A signal handler, finaliser or
-    [Gc.Memprof] callback runs where the code it interrupts allocates or polls,
-    which may be inside such a call on the same thread. A call to rig from the
-    callback may then raise [Invalid_argument], since waiting for the lock
-    would wait for good. A driver's refusal loses no device. Memory or an image
-    the call would have given back goes back at a later call, and
-    {!section-stops} states what follows a refused stop. If the callback lets
-    the exception escape, it ends the interrupted call as an asynchronous
-    exception ({!section-errors}). The callback must not block either, in a
-    wait of rig's or for another thread: other calls, and every round of
-    reclamation, wait meanwhile for the lock its thread holds. A program that
-    calls rig from such a callback handles that exception, or has the callback
-    record the work for the program's own code to do, such as in an
-    [Atomic.t]. *)
+    or an io library holds its own inside its calls and inside the functions
+    of its record that compiled code calls ({!capability}). A signal handler,
+    finaliser or [Gc.Memprof] callback runs where the code it interrupts
+    allocates or polls, which may be inside such a lock on the same thread.
+    A call is made {e inside a lock} when such a callback makes it while its
+    thread holds a lock of rig's, of a driver's or of an io library's.
+
+    A call to rig that may take a lock, made inside a lock, raises
+    [Invalid_argument] as it starts, having done nothing. It raises even
+    where it needs none of the locks its thread holds, since the thread's
+    count of its locks does not say which they are. A function that takes no
+    lock may be called from a callback at any point, and never raises it:
+    {!name}, {!equal}, {!pp}, {!arch}, {!computes}, {!runs_on_host},
+    {!most_parts}, {!capability}, {!host_of}, {!reaches},
+    {!shares_host_memory}, {!submitted}, {!signaled}, {!lost}, {!failure},
+    {!budget}, {!allocated}, {!Point.device}, {!Point.value},
+    {!Point.reached}, {!Point.pp}, the properties and low-level values of
+    {!Buffer}, {!Buffer.view}, {!Buffer.of_bigarray}, {!Image.device},
+    {!Submission}'s refs and parts, {!Submission.block},
+    {!Submission.address}, {!Submission.Run}, {!Claim}, {!Profile} but
+    {!Profile.take}, {!Local.new_key}, and {!Local.get} of a value already
+    made for the device. Nor does {!fail}, which inside a lock leaves the
+    owed stops to later calls. Outside a lock, a call from a callback runs
+    as any call does.
+    If the callback lets the exception escape, it ends the interrupted call as
+    an asynchronous exception ({!section-errors}). The callback must not block
+    either, in a wait of rig's or for another thread: other calls, and every
+    round of reclamation, wait meanwhile for the lock its thread holds. A
+    program that calls rig from such a callback handles that exception, or
+    has the callback record the work for the program's own code to do, such
+    as in an [Atomic.t]. *)
 
 (** {1:loss Loss}
 
@@ -576,13 +587,10 @@ val signaled : t -> int
     reaches keeps its stop owed, and with it its memory, its slot and the
     values its submissions keep. So a program that has no more use for a
     lost device closes it, and the device's memory returns once it has
-    stopped. A driver's stop may refuse a call from a signal handler,
-    finaliser or [Gc.Memprof] callback ({!section-domains}). It then stays
-    owed for a later call, and an open of the device's name raises
-    [Invalid_argument].
+    stopped.
 
     A call that runs a stop takes the time of the driver's stop, and raises
-    again any exception other than a fault or a refusal that escapes it. An
+    again any exception other than a fault that escapes it. An
     interrupt during a wait leaves no stop half run, since no call runs one
     while it waits.
 
@@ -627,7 +635,8 @@ val signaled : t -> int
     device. Every other exception leaves the device serving later calls,
     such as one that interrupts a wait ({!section-domains}), one from an io
     device's call, the [Invalid_argument] of a function the device cannot
-    run ({!Image.mem}), and a driver's refusal ({!section-domains}). *)
+    run ({!Image.mem}), and that of a call made inside a lock
+    ({!section-domains}). *)
 
 exception Lost of t * string
 (** [Lost (d, why)] is raised by a use that the loss of [d] makes invalid
@@ -658,7 +667,9 @@ val fail : string -> unit
     returns [Error why] without calling its opener, and one that races
     [fail] makes a lost device. [fail] runs each owed stop it can
     ({!section-stops}), and returns without waiting for any device to have
-    stopped. Only the first call acts. *)
+    stopped. Only the first call acts. Called inside a lock
+    ({!section-domains}), it fails the process and leaves the owed stops to
+    later calls. *)
 
 val failure : unit -> string option
 (** [failure ()] is the process's first failure, if any: the first loss of a

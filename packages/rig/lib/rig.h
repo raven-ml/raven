@@ -85,13 +85,14 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access);
 
 /* Waits for the work that an access of [b] for [access] must follow, as
    Rig.Buffer.wait does, for a caller that holds a claim rig_buffer_claim
-   answered RIG_WAIT or RIG_LOST. After RIG_LOST it answers Rig.Lost at
-   once, waiting for nothing. The wait runs OCaml code: driver calls,
-   signal handlers, the collector, other threads. So it is never called
-   from a [@@noalloc] external, and every value its caller uses after it,
-   [b] included, is a registered root. It answers unit, or the exception
-   the wait raised, Rig.Lost or Sys.Break among others; the claim stays
-   held either way. */
+   answered RIG_WAIT or RIG_LOST. After RIG_LOST it waits for nothing and
+   answers Rig.Lost. Either way, a call made inside a lock answers
+   Invalid_argument (Rig's domains section). The wait runs OCaml code: driver
+   calls, signal handlers, the collector, other threads. So it is never
+   called from a [@@noalloc] external, and every value its caller uses
+   after it, [b] included, is a registered root. It answers unit, or the
+   exception the wait raised, Rig.Lost, Sys.Break or that Invalid_argument
+   among others; the claim stays held either way. */
 caml_result rig_buffer_wait(value b, enum rig_access access);
 
 /* Ends a claim that rig_buffer_claim made; [b] may be dead. Ending a

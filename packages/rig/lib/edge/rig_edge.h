@@ -286,6 +286,25 @@ _Atomic uint64_t *rig_words(void);
    untagged int, and caml_rig_edge_now_byte. */
 uint64_t rig_now_ns(void);
 
+/* Locks
+
+   rig_holds () is the number of locks the calling thread holds: rig's, a
+   driver's and an io library's, each that OCaml code runs inside or that a
+   stub holds while it runs pending signal handlers. rig_hold () counts one,
+   from before its take, and answers the count before it; rig_unhold ()
+   counts its give, after it. A signal handler, finaliser or Gc.Memprof
+   callback runs where the code it interrupts allocates or polls, so it may
+   run inside such a lock, and a call it makes that takes the lock again
+   would wait for good. So a function that a caller outside rig makes, and
+   that may take a lock, must check rig_holds () as it starts and raise
+   Invalid_argument, having changed nothing, if it is not 0 (Rig's domains
+   section). OCaml reads the count through the noalloc external
+   caml_rig_edge_holds, which answers an untagged int, and
+   caml_rig_edge_holds_byte. */
+int rig_holds(void);
+int rig_hold(void);
+void rig_unhold(void);
+
 /* rig_code_sync () makes the calling thread run the code that rig linked on
    the host before the call ([Rig.Image.load] on [Rig.host]): on arm64 it
    synchronizes the thread's instruction stream with that code, once per

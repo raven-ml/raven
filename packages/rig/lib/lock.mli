@@ -16,14 +16,17 @@
     no OCaml function, and every other section runs in {!protect}.
 
     Any domain may call any function. A call that blocks, waiting for a lock
-    or in {!wait}, releases the domain's runtime lock meanwhile and runs no
-    signal handler. A thread holds at most one lock, and a take while it
-    holds one raises [Invalid_argument]. Such a take comes from a signal
-    handler, finaliser or [Gc.Memprof] callback that runs inside a section
-    and calls rig, which would otherwise wait for good on the lock it
-    interrupted, or take two in no fixed order. C mutexes are taken only
-    inside one stub, after any lock. A lock is freed once it is collected,
-    so a caller holds it, or what holds it, for as long as it uses it.
+    or for a broadcast in {!await}, releases the domain's runtime lock and
+    runs no signal handler while it blocks. Each lock counts among the locks
+    its thread holds ([rig_hold] in [rig_edge.h]) from before its take to
+    after its give. A thread takes one only while it holds no lock. A call
+    made inside a lock ({!Rig.section-domains}) is refused as it starts
+    ({!Dev.check_held}). A take while the count is not [0], which only a
+    call that skipped that check makes, raises [Invalid_argument], having
+    taken nothing, since it would wait for good on the lock it interrupted,
+    or take two in no fixed order. C mutexes are taken only inside one
+    stub, after any lock. A lock is freed once it is collected, so a caller
+    holds it, or what holds it, for as long as it uses it.
 
     A forked child makes every lock anew, so a lock that a thread of the
     parent held at the fork is free in the child. *)
@@ -49,14 +52,16 @@ val protect : t -> ('a -> 'b) -> 'a -> 'b
     back [l] before it allocates. Callers pass a closed function, defined at
     the top level, and its argument, so the call allocates no closure. *)
 
-val wait : t -> unit
-(** [wait l], holding [l], gives it up until a {!broadcast} on [l], a spurious
-    wake-up or 200 ms, which no step of the wall clock lengthens, then takes
-    it back. A caller must wait in a loop on its condition, so that it
-    returns to OCaml at least every 200 ms, where a pending signal's handler
-    runs ({!Rig.section-domains}). *)
+val await : t -> ('a -> 'b option) -> 'a -> 'b
+(** [await l f x] is the [v] of the first [Some v] that [f x], run holding
+    [l], answers. After each [None] it gives up [l] until a {!broadcast} on
+    [l], a spurious wake-up or 200 ms, which no step of the wall clock
+    lengthens, and returns to OCaml holding no lock before it takes [l]
+    again, so a pending signal's handler runs there outside every lock
+    ({!Rig.section-domains}). If [f] raises, [await] gives back [l] before it
+    allocates. *)
 
 external broadcast : t -> unit = "caml_rig_lock_broadcast"
 [@@noalloc]
-(** [broadcast l] wakes every {!wait} on [l]. It is a call to C, as
+(** [broadcast l] wakes every {!await} that waits on [l]. It is a call to C, as
     {!release} is. *)

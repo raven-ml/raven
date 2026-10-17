@@ -427,42 +427,213 @@ let test_cached () =
   let rec from n = if interrupt_cached n then from (n + 1) in
   from 1
 
-(* Re-enters rig from a [Gc.Memprof] callback at the [n]-th allocation of an
-   open: where the open holds one of rig's locks, the callback's call raises
-   [Invalid_argument], which ends the open, and nothing waits for good. rig
-   stays consistent: the call works once no lock is held, and the name
-   opens. Is whether the allocation was reached, and whether the call
-   raised. *)
-let reenter n =
+(* Re-entry: a call that may take a lock, made from a [Gc.Memprof] callback
+   inside a lock of its thread's, raises [Invalid_argument] naming it, having
+   done nothing; outside every lock it runs as any call does. A call that
+   takes no lock runs either way ({!Rig.section-domains}). *)
+
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+
+(* A call of rig's that a callback makes, labelled [what], with the name rig
+   gives it, and whether it may take a lock: rig.mli lists those that take
+   none. *)
+type probe = { what : string; fn : string; locks : bool; call : unit -> unit }
+
+(* What a probe's call answers: ["refused"] for an [Invalid_argument] that
+   names the call. *)
+let answer p =
+  match p.call () with
+  | () -> "done"
+  | exception Invalid_argument why
+    when String.starts_with ~prefix:("Rig." ^ p.fn ^ ": ") why ->
+      "refused"
+  | exception e -> Printexc.to_string e
+
+(* The probes, over devices and values made before the walk lands, and the
+   state a refused call must leave as it was. *)
+let probes () =
+  let d = Rig.memory_device (fresh "reenter:probe") in
+  let victim = Rig.memory_device (fresh "reenter:victim") in
+  let polled_name = fresh "reenter:polled" in
+  let polled, pp = P.open_ polled_name in
+  let image = Result.get_ok (Rig.Image.load polled "functions") in
+  let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
+  let s = Sub.make d [||] and run = Sub.Run.make () in
+  let pt = Rig.submit s ~run ~buffers:[||] in
+  let set = Rig.Local.new_key (fun _ -> 0) in
+  let unset = Rig.Local.new_key (fun _ -> 0) in
+  ignore (Rig.Local.get set d : int);
+  let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8 in
+  let locks ?(what = "") fn call =
+    { what = (if what = "" then fn else what); fn; locks = true; call }
+  in
+  let free ?(what = "") fn call =
+    { what = (if what = "" then fn else what); fn; locks = false; call }
+  in
+  let state () =
+    ( Rig.allocated d,
+      Rig.submitted d,
+      Rig.lost victim,
+      Rig.failure (),
+      Rig.Local.get set d )
+  in
+  let probes =
+    [
+      locks "memory_device" (fun () ->
+          ignore (Rig.memory_device (Rig.name d)));
+      locks "open_" (fun () -> ignore (Rig.open_ (P.opener polled_name pp)));
+      locks "close" (fun () -> Rig.close victim);
+      locks "set_budget" (fun () -> Rig.set_budget d (Rig.budget d));
+      locks "free_cache" (fun () -> Rig.free_cache d);
+      locks "Point.wait" (fun () -> Rig.Point.wait pt);
+      locks "Buffer.create" (fun () -> ignore (B.create d 8));
+      locks "Buffer.of_string" (fun () -> ignore (B.of_string "x"));
+      locks "Buffer.borrow" (fun () -> ignore (B.borrow d h));
+      locks "Buffer.wait" (fun () -> B.wait b Rig.Read);
+      locks "Buffer.read" (fun () -> B.read b Bigarray.char ignore);
+      locks "Buffer.write" (fun () -> B.write b Bigarray.char ignore);
+      locks "Buffer.export" (fun () -> ignore (B.export h Bigarray.char));
+      locks "Buffer.copy" (fun () -> B.copy ~src:b ~dst:b');
+      locks "Buffer.blit_from_string" (fun () ->
+          B.blit_from_string "x" 0 b 0 1);
+      locks "Buffer.blit_to_bytes" (fun () ->
+          B.blit_to_bytes b 0 (Bytes.create 1) 0 1);
+      locks "Buffer.fill" (fun () -> B.fill b 'x');
+      locks "Image.load" (fun () -> ignore (Rig.Image.load d "code"));
+      locks "Image.mem" (fun () -> ignore (Rig.Image.mem image "fill"));
+      locks "Image.params" (fun () -> ignore (Rig.Image.params image "fill"));
+      locks "Image.threads" (fun () ->
+          ignore (Rig.Image.threads image "fill"));
+      locks "Image.entry" (fun () -> ignore (Rig.Image.entry image "fill"));
+      locks "Submission.make" (fun () -> ignore (Sub.make d [||]));
+      locks "submit" (fun () -> ignore (Rig.submit s ~run ~buffers:[||]));
+      locks ~what:"Local.get of an unset value" "Local.get" (fun () ->
+          ignore (Rig.Local.get unset d : int));
+      locks "Profile.take" (fun () -> ignore (Rig.Profile.take ignore));
+      free "name" (fun () -> ignore (Rig.name d));
+      free "reaches" (fun () -> ignore (Rig.reaches d Rig.host));
+      free "budget" (fun () -> ignore (Rig.budget d));
+      free "allocated" (fun () -> ignore (Rig.allocated d));
+      free "submitted" (fun () -> ignore (Rig.submitted d));
+      free "signaled" (fun () -> ignore (Rig.signaled d));
+      free "lost" (fun () -> ignore (Rig.lost victim));
+      free "failure" (fun () -> ignore (Rig.failure ()));
+      free "Point.reached" (fun () -> ignore (Rig.Point.reached pt));
+      free "Buffer.view" (fun () -> ignore (B.view b ~first:0 ~length:1));
+      free "Buffer.of_bigarray" (fun () -> ignore (B.of_bigarray ba));
+      free "Claim.with_" (fun () ->
+          Rig.Claim.with_ ~read:[ b ] ~donate:[] ignore);
+      free "Submission.read" (fun () -> ignore (Sub.read 0 ~at:0));
+      free "Submission.Run.make" (fun () -> ignore (Sub.Run.make ()));
+      free "Profile.enabled" (fun () -> ignore (Rig.Profile.enabled ()));
+      free "Local.new_key" (fun () -> ignore (Rig.Local.new_key ignore));
+      free ~what:"Local.get of a set value" "Local.get" (fun () ->
+          ignore (Rig.Local.get set d : int));
+    ]
+  in
+  (probes, state)
+
+(* Makes every probe's call from a [Gc.Memprof] callback at the [n]-th
+   allocation of [f]: each call that may take a lock raises exactly when the
+   callback runs inside a lock, and then changes nothing; every other call
+   runs. rig stays consistent: [f] runs again once no callback lands. Is
+   whether the allocation was reached, and whether the callback ran inside a
+   lock. *)
+let reenter f n =
   let at = Printf.sprintf ", re-entered at allocation %d" n in
   in_child at (fun () ->
-      let probe = "reenter:probe" and name = fresh "reenter" in
-      ignore (Rig.memory_device probe);
-      let raised = ref false in
+      let probes, state = probes () in
+      let held = ref false and answers = ref [] and changed = ref None in
       let call () =
-        try ignore (Rig.memory_device probe)
-        with Invalid_argument _ as e ->
-          raised := true;
-          raise e
+        held := holds () > 0;
+        let before = state () in
+        answers := List.map (fun p -> (p.what, answer p)) probes;
+        if !held && state () <> before then changed := Some ()
       in
-      let open_ () =
-        try ignore (Rig.memory_device name)
-        with Invalid_argument _ when !raised -> ()
-      in
-      let reached = S.interrupted ~landing:(Call call) n open_ in
-      ignore (Rig.memory_device probe);
-      ignore (Rig.memory_device name);
-      (reached, !raised))
+      let reached = S.interrupted ~landing:(Call call) n f in
+      if reached then begin
+        let expected p =
+          (p.what, if p.locks && !held then "refused" else "done")
+        in
+        equal ~msg:"the calls' answers"
+          (list (pair string string))
+          (List.map expected probes) !answers;
+        is_none ~msg:"a change by refused calls" !changed
+      end;
+      f ();
+      (reached, !held))
 
-let test_reentry () =
+(* An open, whose sections of rig's table of names allocate. *)
+let open_named () = ignore (Rig.memory_device (fresh "reenter"))
+
+(* A drain that routes collected buffers into a device's cache, in sections
+   of the device's lock that allocate. *)
+let drain_cache () =
+  let d = Rig.memory_device "reenter:cache" in
+  let[@inline never] drop () =
+    for k = 1 to 8 do
+      ignore (Sys.opaque_identity (B.create d (k * 64)))
+    done
+  in
+  drop ();
+  Gc.full_major ();
+  ignore (B.create d 0)
+
+let test_reentry f () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   S.needs_fork ();
-  let rec from n raised =
-    match reenter n with
-    | true, r -> from (n + 1) (if r then raised + 1 else raised)
-    | false, _ -> raised
+  let rec from n inside outside =
+    match reenter f n with
+    | true, true -> from (n + 1) (inside + 1) outside
+    | true, false -> from (n + 1) inside (outside + 1)
+    | false, _ -> (inside, outside)
   in
-  greater ~msg:"calls that raised" int ~than:0 (from 1 0)
+  let inside, outside = from 1 0 0 in
+  greater ~msg:"landings inside a lock" int ~than:0 inside;
+  greater ~msg:"landings outside every lock" int ~than:0 outside
+
+(* Fails the process from a [Gc.Memprof] callback at the [n]-th allocation of
+   an open. [fail] never raises: inside a lock it fails the process and leaves
+   the owed stops to later calls, and outside every lock it runs them. Is
+   whether the allocation was reached, and whether the callback ran inside a
+   lock. *)
+let fail_in n =
+  let at = Printf.sprintf ", failed at allocation %d" n in
+  in_child at (fun () ->
+      let d, p = P.open_ (fresh "fail-in:polled") in
+      let held = ref false and stops = ref (-1) in
+      let call () =
+        held := holds () > 0;
+        Rig.fail "failed in a callback";
+        stops := P.stops p
+      in
+      let open_ () =
+        try ignore (Rig.memory_device (fresh "fail-in")) with Failure _ -> ()
+      in
+      let reached = S.interrupted ~landing:(Call call) n open_ in
+      if reached then begin
+        equal ~msg:"the failure" (option string) (Some "failed in a callback")
+          (Rig.failure ());
+        equal ~msg:"stops as the fail returned" int
+          (if !held then 0 else 1)
+          !stops;
+        raises_match
+          (function Rig.Lost _ -> true | _ -> false)
+          (fun () -> B.create d 8);
+        equal ~msg:"stops after a later call" int 1 (P.stops p)
+      end;
+      (reached, !held))
+
+let test_fail_in () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n inside =
+    match fail_in n with
+    | true, held -> from (n + 1) (if held then inside + 1 else inside)
+    | false, _ -> inside
+  in
+  greater ~msg:"fails inside a lock" int ~than:0 (from 1 0)
 
 (* Whether [why] refuses an open because its thread is opening the name. *)
 let opening_here why =
@@ -603,7 +774,11 @@ let () =
                test "close of a machine's host" test_close;
                test "a drain that lets go of kept values" test_kept;
                test "a drain that routes memory into the cache" test_cached;
-               test "a callback that calls rig inside a lock" test_reentry;
+               test "a callback's calls inside an open"
+                 (test_reentry open_named);
+               test "a callback's calls inside a drain"
+                 (test_reentry drain_cache);
+               test "a callback's fail" test_fail_in;
                test "a callback that opens the name an open is opening"
                  test_reentry_own;
                test

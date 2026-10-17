@@ -829,7 +829,9 @@ let build keep ~fixed d parts =
     copies;
   }
 
-let make ?keep ?(fixed = []) d parts = build keep ~fixed d parts
+let make ?keep ?(fixed = []) d parts =
+  Dev.check_held "Submission.make";
+  build keep ~fixed d parts
 
 let block s i =
   if i < 0 || i >= Array.length s.blocks || s.blocks.(i) == no_block then
@@ -1007,7 +1009,7 @@ let pair d (p : device) =
         first
     | Decided cell -> cell
     | Replaced cell ->
-        ignore (Memory.give_retired d : Dev.given);
+        Memory.give_retired d;
         cell
 
 (* The way the run [run] of [d] waits for [p]'s values in its queue. A way
@@ -1364,6 +1366,7 @@ let submit_run s run buffers waits =
       raise e
 
 let submit ?(waits = [||]) s ~run ~buffers =
+  Dev.check_held "submit";
   if Dev.is_lost s.dev then Dev.raise_lost s.dev;
   check_count s buffers;
   submit_run s run buffers waits

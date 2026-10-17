@@ -60,7 +60,9 @@ _Atomic intptr_t rig_metal_pipelines, rig_metal_buffers;
 /* A guard: a mutex of its own memory, which a custom block holds and
    destroys once collected, and its rank. A thread takes guards in rising
    rank, an image's before its device's, so no two threads wait for each
-   other. [below] is the rank its holder held before it took the guard. */
+   other. [below] is the rank its holder held before it took the guard. A
+   guard counts among the locks its thread holds (rig_hold in rig_edge.h)
+   from before its take to after its give. */
 struct guard {
   pthread_mutex_t mutex;
   int rank;
@@ -124,6 +126,7 @@ value caml_rig_metal_guard_take(value v_g) {
                            "finaliser or Gc.Memprof callback while this "
                            "thread holds a guard the call takes, or one "
                            "taken after it");
+  rig_hold();
   if (pthread_mutex_trylock(&g->mutex) != 0) {
     caml_enter_blocking_section_no_pending();
     int err = pthread_mutex_lock(&g->mutex);
@@ -142,6 +145,7 @@ value caml_rig_metal_guard_give(value v_g) {
   struct guard *g = Guard_val(v_g);
   held = g->below;
   pthread_mutex_unlock(&g->mutex);
+  rig_unhold();
   return Val_unit;
 }
 

@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The host's clock and the timeline words, which rig, its drivers and their
-   C share. */
+/* The host's clock, the timeline words and the count of the locks a thread
+   holds, which rig, its drivers and their C share. */
 
 #define _GNU_SOURCE
 
@@ -68,4 +68,23 @@ value caml_rig_edge_words(value unit) {
   Store_field(v, 0, Val_long((intnat)rig_words()));
   Store_field(v, 1, Val_long((intnat)RIG_WORDS_BYTES));
   CAMLreturn(v);
+}
+
+/* Locks */
+
+static _Thread_local int holds;
+
+int rig_holds(void) { return holds; }
+
+int rig_hold(void) { return holds++; }
+
+void rig_unhold(void) { holds--; }
+
+intnat caml_rig_edge_holds(value unit) {
+  (void)unit;
+  return holds;
+}
+
+value caml_rig_edge_holds_byte(value unit) {
+  return Val_long(caml_rig_edge_holds(unit));
 }
