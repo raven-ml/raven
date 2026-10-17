@@ -75,6 +75,7 @@ type context = Path.context = {
   mtu : int;
   reads : int;
   served : int;
+  cqes : int;
 }
 
 type registered = Path.registered = { handle : int; local : int; remote : int }
@@ -123,6 +124,7 @@ type t = {
   uar : int array; (* the host address of each system page of registers *)
   per_page : int; (* access regions per system page *)
   register_size : int;
+  sends : int; (* the most entries a queue pair's ring holds *)
   gid : int option; (* the index of the RoCE v2 identifier queue pairs use *)
   address : address; (* the port's, as peers name it *)
   random : Random.State.t;
@@ -256,6 +258,15 @@ let tag nic =
 let round_up n m = (n + m - 1) / m * m
 let rec pow2_at_least n k = if k >= n then k else pow2_at_least n (2 * k)
 
+(* [entries ~least n most] is [n] rounded up to a power of two no smaller than
+   [least], if that is at most [most]. [n] is checked before it is rounded, so
+   that a huge [n] never doubles past [max_int]. *)
+let entries ~least n most =
+  if n > most then None
+  else
+    let e = pow2_at_least (max n least) 1 in
+    if e > most then None else Some e
+
 let ring_of nic bytes =
   let page = nic.path.page in
   let size = round_up bytes page + page in
@@ -366,6 +377,7 @@ let make p =
           uar;
           per_page;
           register_size = read resp R.bf_reg_size;
+          sends = read resp R.max_send_wqebb;
           gid;
           address;
           random = Random.State.make_self_init ();
@@ -525,14 +537,23 @@ let live_qp fn q =
 module Cq = struct
   type t = cq
 
-  let max_entries = 1 lsl 22
+  (* The consumer count a queue's doorbell record holds is 24 bits wide, and
+     rdma-core's providers/mlx5/verbs.c refuses a queue past 2^24 completions,
+     whatever the NIC holds. *)
+  let counted = 1 lsl 24
 
   let make nic n =
     check "Cq.make";
     alive "Cq.make" nic;
-    if n < 1 || n > max_entries then
-      invalid_arg (strf "Rig_mlx5.Cq.make: %d entries" n);
-    let entries = pow2_at_least (max n 2) 1 in
+    if n < 1 then invalid_arg (strf "Rig_mlx5.Cq.make: %d entries" n);
+    let most = min nic.facts.cqes counted in
+    let* entries =
+      Option.to_result
+        ~none:
+          (strf "%s: a completion queue holds at most %d completions"
+             nic.path.name most)
+        (entries ~least:2 n most)
+    in
     let* ring = ring_of nic (entries * A.Completion.size) in
     for i = 0 to entries - 1 do
       A.Completion.invalidate ring.buf (i * A.Completion.size)
@@ -643,7 +664,14 @@ module Qp = struct
     mtu : int;
   }
 
-  let max_entries = 1 lsl 15
+  (* A queue pair's context gives its send ring's size as a 4-bit log
+     ([log_sq_size] of the [qpc] layout in Linux's
+     include/linux/mlx5/mlx5_ifc.h), so a ring holds at most 2^15 entries,
+     whatever the NIC holds. [room] is the ring's size, which a ring of at
+     most 2^15 keeps below 2^16, where the 16-bit producer count of the
+     doorbell record and the 16-bit [wqe_counter] of a completion (mlx5dv.h)
+     would wrap. *)
+  let counted = 1 lsl 15
 
   (* A peer's request is retried 7 times, each after 4.096 us * 2^timeout: 1.07
      s on InfiniBand, 67 ms on RoCE, where a lost packet is likelier and a
@@ -655,9 +683,14 @@ module Qp = struct
     check "Qp.make";
     let nic = cq.c_nic in
     live_cq "Qp.make" cq;
-    if n < 1 || n > max_entries then
-      invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
-    let entries = pow2_at_least n 1 in
+    if n < 1 then invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
+    let most = min nic.sends counted in
+    let* entries =
+      Option.to_result
+        ~none:
+          (strf "%s: a queue pair holds at most %d entries" nic.path.name most)
+        (entries ~least:1 n most)
+    in
     (* The queue's room is taken before the kernel makes the pair, so that makes
        at once never hold more than the queue. *)
     with_lock nic (fun () ->

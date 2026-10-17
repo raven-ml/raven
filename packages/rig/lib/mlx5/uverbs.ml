@@ -350,6 +350,7 @@ let context f d n =
       mtu;
       reads = field device Q.max_qp_init_rd_atom;
       served = field device Q.max_qp_rd_atom;
+      cqes = field device Q.max_cqe + 1;
     }
 
 let rec push a x =

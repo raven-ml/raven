@@ -74,8 +74,7 @@ raven / llama.cpp (Vulkan; ROCm):
   `Rig.Submission.words`; NV's 65,535 parts (the 16-bit index of
   `v << 16 | i + 1`): a per-channel join counter has no bound;
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
-  it; mlx5's CQ from `max_cqe` (ceiling 2^24) and its QP from
-  `max_send_wqebb` under 2^15 (`context` changes: API review)
+  it
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
   find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
   past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;

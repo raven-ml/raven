@@ -82,9 +82,11 @@
     {1:errors Errors}
 
     A request the kernel refuses returns [Error msg], with [msg] naming the call
-    and the kernel's reason. A queue pair or completion queue that fails while
-    it runs is reported by {!val-wait}, and an entry that fails by its
-    completion ({!Rig_mlx5_abi.Completion.type-status}).
+    and the kernel's reason. A completion queue or queue pair larger than the
+    NIC holds is also [Error msg], with [msg] naming the bound. A queue pair or
+    completion queue that fails while it runs is reported by {!val-wait}, and
+    an entry that fails by its completion
+    ({!Rig_mlx5_abi.Completion.type-status}).
 
     Misuse raises [Invalid_argument]: a call on a destroyed completion queue
     or queue pair, on a deregistered region, or on any object of a closed NIC.
@@ -251,10 +253,14 @@ module Cq : sig
   (** [make nic n] is a completion queue of [nic] with room for [n]
       completions, [n] rounded up to a power of two no smaller than [2]. Its
       queue pairs hold at most that many entries together ({!Qp.make}), so it
-      never overflows. It is [Error msg] if the kernel refuses or the process
-      cannot allocate the ring.
+      never overflows.
 
-      Raises [Invalid_argument] if [n] is not in \[[1];[2{^22}]\]. *)
+      It is [Error msg] if the rounded [n] is more than a completion queue of
+      [nic] holds, as its kernel driver reports, or more than 2{^24}; [msg]
+      then names the bound. It is also [Error msg] if the kernel refuses or
+      the process cannot allocate the ring.
+
+      Raises [Invalid_argument] if [n < 1]. *)
 
   val poll : t -> Rig_mlx5_abi.Completion.t option
   (** [poll cq] is the next completion of [cq], which it consumes, or [None]
@@ -304,12 +310,13 @@ module Qp : sig
       peers read and write this process's regions through it and send it no
       messages.
 
-      It is [Error msg] if the kernel refuses or the process cannot allocate
-      the ring.
+      It is [Error msg] if the rounded [n] is more than a queue pair of
+      [cq]'s NIC holds, as its kernel driver reports, or more than 2{^15};
+      [msg] then names the bound. It is also [Error msg] if the kernel refuses
+      or the process cannot allocate the ring.
 
-      Raises [Invalid_argument] if [n] is not in \[[1];[2{^15}]\], or the
-      queue pairs of [cq], each counted at its rounded size, would hold more
-      entries than [cq]. *)
+      Raises [Invalid_argument] if [n < 1], or the queue pairs of [cq], each
+      counted at its rounded size, would hold more entries than [cq]. *)
 
   val number : t -> int
   (** [number qp] is [qp]'s number, which completions name. *)
@@ -430,6 +437,7 @@ type context = {
   served : int;
       (** The most of the peer's reads in flight a queue pair serves
           concurrently. *)
+  cqes : int;  (** The most completions a completion queue holds. *)
 }
 (** The type for what a path reads of a NIC once it has made the process's
     {e context} of it, the kernel object that holds the process's other

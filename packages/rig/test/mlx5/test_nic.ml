@@ -227,6 +227,94 @@ let refusals =
               M.Cq.poll cq));
     ]
 
+(* Where the mlx5 driver's answer to the context holds the most entries a
+   queue pair's send ring holds: mlx5_ib_alloc_ucontext_resp's
+   max_send_wqebb, a u32, in Linux's include/uapi/rdma/mlx5-abi.h. *)
+let max_send_wqebb_at = 20
+
+(* The rings' own bounds: a queue's consumer count is 24 bits, and a queue
+   pair's context gives its ring's size as a 4-bit log. *)
+let most_completions = 1 lsl 24
+let most_entries = 1 lsl 15
+let u32 s at = Int32.to_int (String.get_int32_le s at) land 0xffff_ffff
+
+let with_u32 s at v =
+  let b = Bytes.of_string s in
+  Bytes.set_int32_le b at (Int32.of_int v);
+  Bytes.to_string b
+
+(* The NIC through its path, whose context [with_context] may change: the
+   bounds a queue is checked against are those the context reads. *)
+let through ?(with_context = Fun.id) () =
+  let name = nic_name () in
+  let p =
+    match Rig_mlx5.path name with
+    | Ok p -> p
+    | Error e -> failf "opening %s: %s" name e
+  in
+  let context d n = Result.map with_context (p.context d n) in
+  require_ok (M.make { p with context })
+
+let bounds =
+  group "bounds"
+    [
+      test "a queue past the NIC's most completions is refused" (fun () ->
+          let cqes = ref 0 in
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) ->
+                cqes := c.cqes;
+                c)
+              ()
+          in
+          let most = min !cqes most_completions in
+          let why = require_error (M.Cq.make nic (most + 1)) in
+          contains ~sub:(Printf.sprintf "at most %d" most) why;
+          raises_match (Exn.invalid_arg ~substring:"Cq.make") (fun () ->
+              M.Cq.make nic 0);
+          M.close nic);
+      test "a queue's bound is the one the NIC's context reads" (fun () ->
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) -> { c with cqes = 64 })
+              ()
+          in
+          is_error ~msg:"128 completions" (M.Cq.make nic 128);
+          is_error ~msg:"65 completions" (M.Cq.make nic 65);
+          ignore (require_ok (M.Cq.make nic 64) : M.Cq.t);
+          M.close nic);
+      test "a queue pair holds the NIC's most entries, and no more" (fun () ->
+          let sends = ref 0 in
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) ->
+                sends := u32 c.answer max_send_wqebb_at;
+                c)
+              ()
+          in
+          let most = min !sends most_entries in
+          let cq = require_ok (M.Cq.make nic most) in
+          ignore (require_ok (M.Qp.make cq most) : M.Qp.t);
+          let why = require_error (M.Qp.make cq (most + 1)) in
+          contains ~sub:(Printf.sprintf "at most %d" most) why;
+          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+              M.Qp.make cq 0);
+          M.close nic);
+      test "a queue pair's bound is the one the driver's answer states"
+        (fun () ->
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) ->
+                { c with answer = with_u32 c.answer max_send_wqebb_at 64 })
+              ()
+          in
+          let cq = require_ok (M.Cq.make nic 256) in
+          is_error ~msg:"128 entries" (M.Qp.make cq 128);
+          is_error ~msg:"65 entries" (M.Qp.make cq 65);
+          ignore (require_ok (M.Qp.make cq 64) : M.Qp.t);
+          M.close nic);
+    ]
+
 (* The NIC writes a host region until it is deregistered, so it keeps the
    bigarray: here only the NIC reaches it. *)
 let lifetime =
@@ -331,4 +419,4 @@ let interrupted =
 let () =
   exit
     (run "rig_mlx5"
-       [ transfers; refusals; lifetime; kept; events; interrupted ])
+       [ transfers; refusals; bounds; lifetime; kept; events; interrupted ])

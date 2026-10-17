@@ -41,6 +41,7 @@ type context = {
   mtu : int;
   reads : int;
   served : int;
+  cqes : int;
 }
 
 type registered = { handle : int; local : int; remote : int }
