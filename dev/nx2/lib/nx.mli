@@ -1312,9 +1312,12 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!cummin}, one row moves per device and one more pass combines it with
     the device's results. {!ewma} reads its axis whole on each device.
 
-    A float result that a NaN reaches is the first NaN in C order. A
-    complex number with a NaN part is a NaN to {!prod}, {!max}, {!min}, their
-    positions and scans; {!sum} and {!cumsum} add the parts apart. The float
+    A float result that a NaN reaches is a quiet NaN with the first NaN's
+    sign and payload, the first in C order: a signalling NaN comes out with
+    its quiet bit, the top bit of its fraction, set. A complex number with a
+    NaN part is a NaN to {!prod}, {!max}, {!min}, their positions and scans,
+    which give the first such element, each NaN part quieted; {!sum} and
+    {!cumsum} add the parts apart. The float
     formats narrower than 32 bits accumulate at [float32] and round once.
 
     Each raises [Invalid_argument] naming itself for an axis outside [x]'s rank

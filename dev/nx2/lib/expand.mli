@@ -21,11 +21,10 @@
     [Logsumexp] is a [Max] [m], [m'] its finite elements and [0] elsewhere, a
     [Sum] of [exp (x - m')], an [exp] of less than [-87] (float32) or [-708]
     (float64) taken as [0], then [m' + log s], or [m] where it is a NaN; with
-    no term, [log 0]: nx.cpu's two passes ({!Nx_cpu}), and their bits. Into
-    the output's own dtype, a float narrower than its accumulator, a NaN
-    result is the first NaN term with its bits: of the NaN terms, the least
-    [position · 2^w + bits], [w] the dtype's width, by a second pass over the
-    terms. [Moments] are the mean [Σ x / n], then two sums of
+    no term, [log 0]: nx.cpu's two passes ({!Nx_cpu}), and their bits. A
+    float narrower than its accumulator rounds into its own dtype by a cast,
+    which keeps a NaN's sign and payload. [Moments] are the mean [Σ x / n],
+    then two sums of
     [d = x - mean] and the variance [(Σ d² - Σ d (Σ d / n)) / n], [+0] where
     that is negative or [Σ d²] where that is [+∞], each the mean where it is
     a NaN. An [Arg] is
@@ -49,7 +48,9 @@
     overflow, for [i + 1] exact in the accumulator. [Moments] scans as
     {!Nx_kernel.reduction} states, in the accumulator. [Arg] combines pairs
     of an extreme and its position, keeping the earlier pair unless the
-    later extreme is past it in [Max]'s or [Min]'s order: exact.
+    later extreme is past it in [Max]'s or [Min]'s order: exact. A NaN
+    result of these scans, carried through the combinations with its bits,
+    is then quieted, as the kernels give it.
 
     A one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their

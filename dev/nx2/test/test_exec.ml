@@ -108,6 +108,20 @@ let case =
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 let on_host l dt s data = Nx.Repr.of_array Nx.Host.v (lay l dt s data)
 
+(* [data] of shape [s] on the host, each NaN made signalling where it stays
+   a NaN ({!Nx_support.signalled}): an OCaml float holds a NaN quiet. *)
+let signalling (type v s) (dt : (v, s) D.t) s (data : v array) =
+  Nx.Repr.of_array Nx.Host.v (Nx_support.signalled (A.of_array dt s data))
+
+(* Whether [data] of [dt] holds a NaN {!signalling} makes signalling. *)
+let signals (type v s) (dt : (v, s) D.t) (data : v array) =
+  match D.kind dt with
+  | D.Float | D.Complex when D.bits dt >= 8 ->
+      let bytes a = A.to_array (Option.get (A.bitcast D.Uint8 a)) in
+      let a = Nx_support.signalled (A.of_array dt [| Array.length data |] data) in
+      bytes a <> bytes (Nx_support.quieted a)
+  | _ -> false
+
 let bits =
   Testable.make ~pp:Format.pp_print_float ~equal:(fun a b ->
       Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
@@ -725,7 +739,8 @@ let law_placed (Case (k, s, data, w, op)) =
       cover "a constant computed whole along an axis, beside another cut"
         (List.mem a cut && List.length cut > 1)
   | Combine -> ());
-  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.dtype s data) in
+  cover "a signalling NaN" (signals k.dtype data);
+  let x = signalling k.dtype s data in
   let expected = shown k (apply k op x) in
   let actual =
     match w with
@@ -1000,8 +1015,9 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
   cover "a position over a cut axis"
     (over && (r = Argmax || r = Argmin));
   cover "a NaN term over a cut axis" (over && Array.exists k.is_nan data);
+  cover "a signalling NaN term over a cut axis" (over && signals k.rdtype data);
   cover "a sub-byte dtype over a cut axis" (over && D.bits k.rdtype < 8);
-  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.rdtype s data) in
+  let x = signalling k.rdtype s data in
   equal string
     (printed (reduce k.rshow r axes x))
     (printed (reduce_at w k.rshow r axes x))
@@ -1276,7 +1292,8 @@ let law_lanes c =
     (both && nan_at <> []
     && first nan_at < Float.min (first (fst infs)) (first (snd infs)));
   cover "infinities of both signs and no NaN term" (both && nan_at = []);
-  let x = Nx.Repr.of_array Nx.Host.v (A.of_array dt c.lshape data) in
+  cover "a signalling NaN term" (signals dt data);
+  let x = signalling dt c.lshape data in
   equal string
     (printed (reduce show c.lr c.laxes x))
     (printed (reduce_at c.lwhere show c.lr c.laxes x))
@@ -1914,7 +1931,9 @@ let law_scans c =
   cover "a NaN term along a cut axis" (along && floats && nans);
   cover "infinities of both signs along a cut axis" (along && floats && infs);
   let data = scan_data k c in
-  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.rdtype c.sshape data) in
+  cover "a signalling NaN term along a cut axis"
+    (along && signals k.rdtype data);
+  let x = signalling k.rdtype c.sshape data in
   equal string
     (printed (scan_bits k.rshow c.sr c.saxis x))
     (printed (scan_at c.swhere k.rshow c.sr c.saxis x))

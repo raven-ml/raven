@@ -300,50 +300,6 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       dt
       [| Value.Plain m; Value.Plain s |]
 
-(* The unsigned integer of a narrow float's width, 4, 8 or 16 bits. *)
-type narrow = Narrow : (int, 'r) D.t -> narrow
-
-(* [r], [x] reduced along [axes] of [shape] into [x]'s dtype, a float narrower
-   than its accumulator, with each NaN result the first NaN term as [x] holds
-   it, as the kernels give it: of the NaN terms, the least
-   [position · 2^w + bits], [w] the dtype's width and [position] the term's in
-   C order of the reduced indices. The accumulator's NaN would be quiet. *)
-let held_nan (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    shape axes (x : (v, s, d) Value.t) (r : (v, s, d) Value.t) :
-    (v, s, d) Value.t =
-  let dt = Prim.dtype x in
-  let (Narrow u) =
-    match D.bits dt with
-    | 4 -> Narrow D.Uint4
-    | 8 -> Narrow D.Uint8
-    | _ -> Narrow D.Uint16
-  in
-  let int64 n = E.const D.Int64 (Int64.of_int n) in
-  let codes = 1 lsl D.bits dt and none = E.const D.Int64 Int64.max_int in
-  let position, _ =
-    Array.fold_right
-      (fun a (pos, stride) ->
-        (E.(pos + (coord a * int64 stride)), stride * shape.(a)))
-      axes
-      (int64 0, 1)
-  in
-  let t = E.input 0 dt in
-  let packed = E.((position * int64 codes) + cast D.Int64 (bitcast u t)) in
-  let pick = E.(where (t <> t) packed none) in
-  let first =
-    reduce1 apply ~by shape axes Min
-      (P.of_exprs ~ins:[| D.Any dt |] [| E.any pick |])
-      D.Int64 [| Value.Plain x |]
-  in
-  let q = E.input 1 D.Int64 in
-  let held = E.(bitcast dt (cast u (q mod int64 codes))) in
-  map1 apply ~by (Prim.reduced shape axes)
-    (P.of_exprs
-       ~ins:[| D.Any dt; D.Any D.Int64 |]
-       [| E.any E.(where (q < none) held (input 0 dt)) |])
-    dt
-    [| Value.Plain r; Value.Plain first |]
-
 (* Moments in two passes: the mean, [Σ x / n], then the variance by the
    corrected two-pass algorithm (Chan, Golub and LeVeque 1983; Higham,
    Accuracy and Stability, §1.9): [(Σ d² - Σ d (Σ d / n)) / n], [d = x -
@@ -481,6 +437,40 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
 
 (* Running reductions *)
 
+(* [t], of the float [dt], quieted where it is a NaN: its quiet bit, the top
+   of its fraction, set, its sign and the rest of its payload kept, as the
+   kernels return a NaN term. float8_e4m3fn's one NaN of each sign is quiet,
+   and float4_e2m1fn has none. *)
+let quiet (type v s) (dt : (v, s) D.t) (t : (v, s) E.t) : (v, s) E.t =
+  let set (type w r) (u : (w, r) D.t) (bit : w) =
+    E.(where (t <> t) (bitcast dt (bitcast u t lor const u bit)) t)
+  in
+  match dt with
+  | D.Float64 -> set D.Uint64 (Int64.shift_left 1L 51)
+  | D.Float32 -> set D.Uint32 (Int32.shift_left 1l 22)
+  | D.Float16 -> set D.Uint16 0x200
+  | D.Bfloat16 -> set D.Uint16 0x40
+  | D.Float8_e5m2 -> set D.Uint8 0x2
+  | _ -> t
+
+(* [x], of floats or complex numbers, with each NaN part quieted. *)
+let quieted (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let floats (type w r) (y : (w, r, d) Value.t) : (w, r, d) Value.t =
+    let yt = Prim.dtype y in
+    let prog =
+      P.of_exprs ~ins:[| D.Any yt |] [| E.any (quiet yt (E.input 0 yt)) |]
+    in
+    map1 apply ~by (Prim.shape y) prog yt [| Value.Plain y |]
+  in
+  let dt = Prim.dtype x in
+  match parts (D.Any dt) with
+  | Some (Part pt) ->
+      let pairs = apply ~by (Value.Bitcast (pt, x)) in
+      apply ~by (Value.Bitcast (dt, floats pairs))
+  | None -> (
+      match D.kind dt with D.Float -> floats x | _ -> x)
+
 (* The outputs of a map whose dtypes are known at run time, and how to read its
    results as values. *)
 type 'd outputs =
@@ -507,9 +497,10 @@ let finite v =
 (* Logsumexp by {!Pairwise.scan}: results [a] and [b] combine as
    [M + log1p (exp (m - M))], [M] their [Maximum] and [m] their [Minimum], or
    as [M] where [M] is not finite: [-∞] for terms all [-∞], [+∞] past a [+∞],
-   the first NaN with its bits. Index [0] is its term [x] as [x + 0], so that
-   a lone [-0] gives [+0], as the reduction does. Each combination shifts by
-   its own maximum, so no prefix is lost below a later one. *)
+   the first NaN with its bits, quieted once at the end. Index [0] is its
+   term [x] as [x + 0], so that a lone [-0] gives [+0], as the reduction
+   does. Each combination shifts by its own maximum, so no prefix is lost
+   below a later one. *)
 let running_logsumexp (type s d)
     (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape axis
     (x : (float, s, d) Value.t) : (float, s, d) Value.t =
@@ -521,7 +512,7 @@ let running_logsumexp (type s d)
   in
   let first = [| E.(any (input 0 dt + const dt (D.of_float dt 0.))) |] in
   let y = Pairwise.scan apply ~by shape axis ~first combine [| Value.Any x |] in
-  Prim.expect dt y.(0)
+  quieted apply ~by (Prim.expect dt y.(0))
 
 (* {!Nx_kernel.reduction}'s Moments scan by {!Pairwise.scan}, over Chan, Golub
    and LeVeque's combination, their (1.5b), of states [(μ, S, n, z)], [z]
@@ -608,7 +599,7 @@ let running_moments (type s d)
     let n = E.(cast dt (coord axis) + f 1.) in
     let var = E.(where (finite m) (fdiv s n) (m - m)) in
     two
-      (P.of_exprs ~ins [| E.(any (c + m)); E.any var |])
+      (P.of_exprs ~ins [| E.any (quiet dt E.(c + m)); E.any (quiet dt var) |])
       [|
         Value.Plain (Prim.expect dt state.(0));
         Value.Plain (Prim.expect dt state.(1));
@@ -621,7 +612,7 @@ let running_moments (type s d)
    The order reads the extreme's keys, itself or a complex number's parts,
    carried beside it: a NaN key is past every number, then the keys compare
    in turn, by [Less], and a float's equal keys by their reciprocals, so that
-   [-0] is below [+0]. Exact. *)
+   [-0] is below [+0]. Exact; a NaN extreme is then quieted. *)
 let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     ~by shape axis (e : Nx_kernel.extreme) (x : (v, s, d) Value.t) :
     (v, s, d) Value.t * (int64, D.int64_elt, d) Value.t =
@@ -678,7 +669,8 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     Pairwise.scan apply ~by shape axis combine
       (Array.append [| Value.Any x; Value.Any position |] carried)
   in
-  (Prim.expect dt state.(0), Prim.expect D.Int64 state.(1))
+  ( quieted apply ~by (Prim.expect dt state.(0)),
+    Prim.expect D.Int64 state.(1) )
 
 let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
     axes prog (rs : (d, q) Value.reductions) (loads : d Value.load array) :
@@ -699,17 +691,11 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
   let shape = L.shape layout in
   let one : type a. (d, a) Value.reduction -> a option = function
     | Monoid (Logsumexp, k, dt) ->
-        let out = output prog k in
         let (Floats x) =
-          floats ~by (body apply ~by layout prog k loads (accumulator out))
+          floats ~by
+            (body apply ~by layout prog k loads (accumulator (output prog k)))
         in
-        let r = cast_to apply ~by dt (logsumexp apply ~by shape axes x) in
-        let narrow = (not (same (accumulator out) out)) && same out (D.Any dt) in
-        if (not narrow) || Array.exists (fun a -> shape.(a) = 0) axes then
-          Some r
-        else
-          let y = Prim.expect dt (body apply ~by layout prog k loads out) in
-          Some (held_nan apply ~by shape axes y r)
+        Some (cast_to apply ~by dt (logsumexp apply ~by shape axes x))
     | Moments (k, dt) ->
         let (Floats x) =
           floats ~by

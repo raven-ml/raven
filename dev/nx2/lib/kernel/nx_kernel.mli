@@ -75,15 +75,18 @@ type extreme = Max | Min
       term. With an infinite term and no NaN term, the mean is the sum of the
       infinities, a NaN where both signs occur, and the variance a NaN.
     - [Arg e] is the extreme [e] of the terms, as [Monoid Max] or [Monoid Min]
-      finds it, then its position: the first term with its bits, as an
-      [int64].
+      finds it, then its position: the first term with its bits, or the
+      first NaN term where it is a NaN, as an [int64].
 
-    A NaN result, where a term it reduces is a NaN, is the first such term, its
-    bits unchanged; with no NaN term it is the quiet NaN of a clear sign bit,
-    the NaN {!Prog}'s kinds make from numbers on every target. To every
-    reduction but [Sum], a complex number with a NaN part is a NaN, and the
-    NaN made from numbers is that quiet NaN in each part; a complex [Sum]
-    adds each part as a float sum.
+    A NaN result, where a term it reduces is a NaN, is the first such term
+    quieted, as IEEE 754 returns a NaN operand: its quiet bit, the top bit
+    of its fraction, set, its sign and the rest of its payload kept;
+    [float8_e4m3fn]'s NaNs are quiet already. With no NaN term it is the
+    quiet NaN of a clear sign bit, the NaN {!Prog}'s kinds make from numbers
+    on every target. To every reduction but [Sum], a complex number with a
+    NaN part is a NaN, quieted part by part, and the NaN made from numbers
+    is that quiet NaN in each part; a complex [Sum] adds each part as a
+    float sum.
 
     In every library, a float [Sum] or [Prod] reduction adds or multiplies
     each output's terms in lane order ({!section-orders}), a float narrower
@@ -129,7 +132,7 @@ type extreme = Max | Min
     a term of [a] is a NaN, else [μb] where one of [b] is, else [μa + μb].
     Result [i] is the mean [c + μ] and the variance [S / (i + 1)], or
     [μ - μ] where [μ] is not finite. So the first NaN term makes both
-    results its bits from there on, and with no NaN an infinity makes the
+    results its bits, quieted, from there on, and with no NaN an infinity makes the
     mean the sum of the infinities so far and the variance a NaN. Result
     [i] passes through at most [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)]
     combinations. Barring overflow, for [i + 1] exact in the dtype, [R] the
@@ -501,7 +504,7 @@ module type S = sig
       running result in the carrier before them, has the bits of the scan of
       the whole there. A NaN carry counts as made from numbers: results
       before the slice's first NaN term are the made NaN, and from it on
-      that term. It answers [Bad_arity] for a carry of any other reduction,
+      that term quieted. It answers [Bad_arity] for a carry of any other reduction,
       [Shape_mismatch] for a carry of another shape and [Wrong_dtype] for
       one of another dtype. *)
 

@@ -6,8 +6,10 @@
 (* Nx's reductions and scans on the host. On int32 each is the fold of its
    elements, an order-free reference; on every dtype each computes the dtypes
    its doc states, as the host's kernel over the same axes (the narrower floats
-   at float32, rounded once, a NaN result the first NaN element), and raises
-   naming itself elsewhere. *)
+   at float32, rounded once, a NaN result the first NaN element quieted), and
+   raises naming itself elsewhere. A NaN result is the first NaN quieted on
+   every path: the host, a set whose kernels decline what nx expands, and
+   values cut along the reduced axis. *)
 
 open Windtrap
 module A = Nx_array
@@ -296,14 +298,14 @@ let reductions =
     ("min", Min, fun ?axes x -> Nx.min ?axes x);
   ]
 
-(* [want], the bytes of [a]'s reduction along [axes] at float32 rounded
-   into [a]'s narrow float, with each result that a NaN element reaches made
-   the first one's bytes, as [a] holds them: float32 holds a NaN quieted. *)
+(* [want], the bytes of [a]'s reduction along [axes], with each result that
+   a NaN element reaches made the first one's bytes, quieted: its quiet bit
+   set, its sign and the rest of its payload kept. *)
 let first_nans (type v s) (a : (v, s) A.t) axes want =
-  match A.dtype a with
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 ->
+  match D.kind (A.dtype a) with
+  | D.Float when D.bits (A.dtype a) >= 8 ->
       let w = D.bits (A.dtype a) / 8 in
-      let bytes = bits_of a in
+      let bytes = bits_of (Nx_support.quieted a) in
       let nan = Array.map Float.is_nan (A.to_array (cast D.Float32 a)) in
       let first p i =
         match p with None when nan.(i) -> Some i | _ -> p
@@ -1900,6 +1902,480 @@ let test_optional_rules () =
   raises (Invalid_argument "t: Arg Max of no term") (fun () ->
       reduce1 (Arg (Max, 0, Nx.int32)) [| 0 |] (vector D.Int32 [||]))
 
+(* NaN results on every path *)
+
+(* nx.cpu, declining every reduction and scan but one Sum, Prod, Max or Min
+   of operands of no float narrower than float32, as a library that computes
+   the base dtypes alone may: nx expands a narrow float's monoids too. *)
+module Wide_only = struct
+  include Nx_cpu
+
+  let name = "nx.wide"
+
+  let base (type v s) (dt : (v, s) D.t) =
+    match D.kind dt with D.Float -> D.bits dt >= 32 | _ -> true
+
+  let wide (loads : Nx_kernel.load array) =
+    Array.for_all
+      (function
+        | Nx_kernel.Plain x -> base (A.dtype x)
+        | Nx_kernel.Padded { x; _ } -> base (A.dtype x))
+      loads
+
+  let core : Nx_kernel.reduction -> bool = function
+    | Monoid (Sum | Prod | Max | Min) -> true
+    | _ -> false
+
+  let reduce p ~shape ~axes rs ~dsts loads =
+    match rs with
+    | [| (r, _) |] when core r && wide loads ->
+        Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
+    | _ -> A.Declined
+
+  let scan ?carry p ~axis ((r, _) as rk) ~dsts loads =
+    if core r && wide loads then Nx_cpu.scan ?carry p ~axis rk ~dsts loads
+    else A.Declined
+end
+
+let mem = Nx_support.memory
+
+module Wide1 = (val Nx.devices ~kernels:(module Wide_only) [ mem 2 ])
+
+module Wide3 =
+  (val Nx.devices ~kernels:(module Wide_only) [ mem 0; mem 1; mem 2 ])
+
+module Cpu3 = (val Nx.devices [ mem 0; mem 1; mem 3 ])
+
+(* Rows of terms of a float or complex dtype, as their bytes. *)
+type nan_case =
+  | Nan_case : {
+      dt : ('v, 's) D.t;
+      rows : int;
+      n : int;
+      bytes : string;
+    }
+      -> nan_case
+
+let string_of_bytes b = String.init (Array.length b) (fun i -> Char.chr b.(i))
+
+let part_bytes w c =
+  String.init w (fun j ->
+      Char.chr (Int64.to_int (Int64.shift_right_logical c (8 * j)) land 0xFF))
+
+(* The bytes of each of [xs] stored in [dt]. *)
+let encoded (type s) (dt : (float, s) D.t) xs =
+  let a = A.of_array dt [| List.length xs |] (Array.of_list xs) in
+  Array.to_list (Array.map string_of_bytes (element_bits a))
+
+let numbers = [ 0.; -0.; 1.; -1.; 2.; 0.5; 3.; infinity; neg_infinity ]
+
+(* A float's or a complex part's bytes: numbers, and NaNs signalling and
+   quiet, of both signs and with payloads, from their bits. *)
+let pools (type v s) (dt : (v, s) D.t) =
+  let nans w l = List.map (part_bytes w) l in
+  match dt with
+  | D.Float64 | D.Complex128 ->
+      ( encoded D.Float64 numbers,
+        nans 8
+          [
+            0x7FF0000000000001L; 0xFFF4000000000005L; 0x7FF8000000000123L;
+            0xFFF8000000000000L;
+          ] )
+  | D.Float32 | D.Complex64 ->
+      ( encoded D.Float32 numbers,
+        nans 4 [ 0x7F800001L; 0xFFA00005L; 0x7FC00123L; 0xFFC00000L ] )
+  | D.Float16 ->
+      (encoded D.Float16 numbers, nans 2 [ 0x7C01L; 0xFD05L; 0x7E23L; 0xFE00L ])
+  | D.Bfloat16 ->
+      ( encoded D.Bfloat16 numbers,
+        nans 2 [ 0x7F81L; 0xFFA5L; 0x7FC3L; 0xFFC0L ] )
+  | D.Float8_e5m2 ->
+      (encoded D.Float8_e5m2 numbers, nans 1 [ 0x7DL; 0xFDL; 0x7EL; 0xFFL ])
+  | D.Float8_e4m3fn ->
+      ( encoded D.Float8_e4m3fn [ 0.; -0.; 1.; -1.; 2.; 0.5; 3.; 448.; -448. ],
+        nans 1 [ 0x7FL; 0xFFL ] )
+  | _ -> invalid_arg "pools: not a float or complex dtype"
+
+let nan_dtypes =
+  D.
+    [
+      Any Float16; Any Bfloat16; Any Float8_e5m2; Any Float8_e4m3fn;
+      Any Float32; Any Float64; Any Complex64; Any Complex128;
+    ]
+
+let parts_of (type v s) (dt : (v, s) D.t) =
+  match D.kind dt with D.Complex -> 2 | _ -> 1
+
+let nan_array (type v s) (dt : (v, s) D.t) rows n bytes : (v, s) A.t =
+  A.v dt
+    (L.contiguous [| rows; n |])
+    (Rig.Buffer.of_string (if bytes = "" then "\000" else bytes))
+
+let pp_nan_case ppf (Nan_case { dt; rows; n; bytes }) =
+  Format.fprintf ppf "%a [%d; %d] %s" D.pp dt rows n
+    (String.concat " "
+       (List.init (String.length bytes) (fun i ->
+            Printf.sprintf "%02x" (Char.code bytes.[i]))))
+
+(* Rows of one to nine terms, a third of their floats or parts NaNs. *)
+let nan_case =
+  let open Gen in
+  with_pp pp_nan_case
+    (let* (D.Any dt) = of_list nan_dtypes in
+     let numbers, nans = pools dt in
+     let* rows = int_range 1 3 in
+     let* n = int_range 1 9 in
+     let part = frequency [ (2, of_list numbers); (1, of_list nans) ] in
+     let+ ps = list ~size:(constant (rows * n * parts_of dt)) part in
+     Nan_case { dt; rows; n; bytes = String.concat "" ps })
+
+(* [y]'s elements' bytes, read on the host. *)
+let read_bytes (type v s d) (y : (v, s, d) Nx.t) =
+  Array.map string_of_bytes (element_bits (host_array y))
+
+(* What a result is: one per row, of the row's terms; running along the
+   row, of the terms up to it; or a position along the row. *)
+type result = Folded | Running | Position
+
+(* An operation along a row's axis, its results' bytes; [floats] whether it
+   takes floats alone and [apart] whether a complex number's parts fold
+   apart, as floats. *)
+type nan_op = {
+  oname : string;
+  result : result;
+  floats : bool;
+  apart : bool;
+  run : 'v 's 'd. ('v, 's, 'd) Nx.t -> string array;
+}
+
+(* [g] of [x], of a float dtype, read. *)
+let on_floats (type v s d)
+    (g : 's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t)
+    (x : (v, s, d) Nx.t) : string array =
+  match Nx.dtype x with
+  | D.Float64 -> read_bytes (g x)
+  | D.Float32 -> read_bytes (g x)
+  | D.Float16 -> read_bytes (g x)
+  | D.Bfloat16 -> read_bytes (g x)
+  | D.Float8_e4m3fn -> read_bytes (g x)
+  | D.Float8_e5m2 -> read_bytes (g x)
+  | _ -> invalid_arg "on_floats: not a float dtype"
+
+(* [r] of [x] along its rows' axis, through Nx.Prim. *)
+let along_rows (type v s d a) (x : (v, s, d) Nx.t) (r : (d, a) Nx.Prim.reduction)
+    : a =
+  let y, () =
+    Nx.Prim.eval ~by:"t"
+      (Reduce
+         {
+           layout = L.contiguous (Nx.shape x);
+           axes = [| 1 |];
+           prog = identity (Nx.dtype x);
+           reductions = [ r ];
+           loads = [| Plain x |];
+         })
+  in
+  y
+
+(* [r] of [x] running along its rows' axis, through Nx.Prim. *)
+let running_rows (type v s d a) (x : (v, s, d) Nx.t)
+    (r : (d, a) Nx.Prim.reduction) : a =
+  Nx.Prim.eval ~by:"t"
+    (Scan
+       {
+         layout = L.contiguous (Nx.shape x);
+         axis = 1;
+         prog = identity (Nx.dtype x);
+         reduction = r;
+         loads = [| Plain x |];
+         carry = None;
+       })
+
+let row_axes = [ 1 ]
+let row_axis = 1
+
+(* The operations nx.mli's reductions section promises the first NaN
+   quieted of: the monoids and their scans, the positions of the extremes
+   and the extremes Arg returns, the mean, the variance, the standard
+   deviation, logsumexp and the running moments. *)
+let nan_ops =
+  [
+    {
+      oname = "sum";
+      result = Folded;
+      floats = false;
+      apart = true;
+      run = (fun x -> read_bytes (Nx.sum ~axes:row_axes x));
+    };
+    {
+      oname = "prod";
+      result = Folded;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.prod ~axes:row_axes x));
+    };
+    {
+      oname = "max";
+      result = Folded;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.max ~axes:row_axes x));
+    };
+    {
+      oname = "min";
+      result = Folded;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.min ~axes:row_axes x));
+    };
+    {
+      oname = "cumsum";
+      result = Running;
+      floats = false;
+      apart = true;
+      run = (fun x -> read_bytes (Nx.cumsum ~axis:row_axis x));
+    };
+    {
+      oname = "cumprod";
+      result = Running;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.cumprod ~axis:row_axis x));
+    };
+    {
+      oname = "cummax";
+      result = Running;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.cummax ~axis:row_axis x));
+    };
+    {
+      oname = "cummin";
+      result = Running;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.cummin ~axis:row_axis x));
+    };
+    {
+      oname = "argmax";
+      result = Position;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.argmax ~axis:row_axis x));
+    };
+    {
+      oname = "argmin";
+      result = Position;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (Nx.argmin ~axis:row_axis x));
+    };
+    {
+      oname = "Arg Max's extreme";
+      result = Folded;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (fst (along_rows x (Arg (Max, 0, Nx.dtype x)))));
+    };
+    {
+      oname = "Arg Min's extreme";
+      result = Folded;
+      floats = false;
+      apart = false;
+      run = (fun x -> read_bytes (fst (along_rows x (Arg (Min, 0, Nx.dtype x)))));
+    };
+    {
+      oname = "running Arg Max's extreme";
+      result = Running;
+      floats = false;
+      apart = false;
+      run =
+        (fun x -> read_bytes (fst (running_rows x (Arg (Max, 0, Nx.dtype x)))));
+    };
+    {
+      oname = "running Arg Min's extreme";
+      result = Running;
+      floats = false;
+      apart = false;
+      run =
+        (fun x -> read_bytes (fst (running_rows x (Arg (Min, 0, Nx.dtype x)))));
+    };
+    {
+      oname = "mean";
+      result = Folded;
+      floats = true;
+      apart = false;
+      run = (fun x -> on_floats (fun x -> Nx.mean ~axes:row_axes x) x);
+    };
+    {
+      oname = "var";
+      result = Folded;
+      floats = true;
+      apart = false;
+      run = (fun x -> on_floats (fun x -> Nx.var ~axes:row_axes x) x);
+    };
+    {
+      oname = "std";
+      result = Folded;
+      floats = true;
+      apart = false;
+      run = (fun x -> on_floats (fun x -> Nx.std ~axes:row_axes x) x);
+    };
+    {
+      oname = "logsumexp";
+      result = Folded;
+      floats = true;
+      apart = false;
+      run = (fun x -> on_floats (fun x -> Nx.logsumexp ~axes:row_axes x) x);
+    };
+    {
+      oname = "running mean";
+      result = Running;
+      floats = true;
+      apart = false;
+      run =
+        (fun x ->
+          on_floats (fun x -> fst (running_rows x (Moments (0, Nx.dtype x)))) x);
+    };
+    {
+      oname = "running variance";
+      result = Running;
+      floats = true;
+      apart = false;
+      run =
+        (fun x ->
+          on_floats (fun x -> snd (running_rows x (Moments (0, Nx.dtype x)))) x);
+    };
+  ]
+
+(* Where a value lies: the host's nx.cpu, one device whose kernels decline
+   what nx expands, and three of each, split along the rows' axis. *)
+type placing = {
+  pname : string;
+  go : 'v 's. nan_op -> ('v, 's) A.t -> string array;
+}
+
+let placings =
+  [
+    { pname = "nx.cpu"; go = (fun o a -> o.run (value a)) };
+    {
+      pname = "an expansion";
+      go = (fun o a -> o.run (Nx.place Wide1.on (value a)));
+    };
+    {
+      pname = "nx.cpu over three devices";
+      go = (fun o a -> o.run (Nx.place (Cpu3.split ~axis:row_axis) (value a)));
+    };
+    {
+      pname = "an expansion over three devices";
+      go = (fun o a -> o.run (Nx.place (Wide3.split ~axis:row_axis) (value a)));
+    };
+  ]
+
+(* The NaN-ness of each part of each element of [a], a float or complex
+   array. *)
+let nan_parts (type v s) (a : (v, s) A.t) : bool array array =
+  match D.kind (A.dtype a) with
+  | D.Complex ->
+      let a = A.expect D.Complex128 (A.Any (cast D.Complex128 a)) in
+      Array.map
+        (fun (c : Complex.t) -> [| Float.is_nan c.re; Float.is_nan c.im |])
+        (A.to_array a)
+  | _ ->
+      Array.map (fun x -> [| Float.is_nan x |]) (A.to_array (cast D.Float64 a))
+
+(* [want], the bytes of each result the host gives, with each part that a
+   NaN term reaches replaced: by the first NaN term's, quieted, where a
+   complex number with a NaN part is a NaN, by its part's first NaN part,
+   quieted, where the parts fold apart, and a position by the first NaN
+   term's. *)
+let nan_want o rows n (nan : bool array array) (quiet : string array)
+    (want : string array) =
+  let parts = Array.length nan.(0) in
+  let pw = if n = 0 then 0 else String.length quiet.(0) / parts in
+  let want = Array.copy want in
+  let first r upto test =
+    let rec go j = if j > upto then None else if test (r * n + j) then Some j else go (j + 1) in
+    go 0
+  in
+  let any i = Array.exists Fun.id nan.(i) in
+  let set_part k p src =
+    let b = Bytes.of_string want.(k) in
+    Bytes.blit_string src (p * pw) b (p * pw) pw;
+    want.(k) <- Bytes.to_string b
+  in
+  let settle k r upto =
+    match o.result with
+    | Position -> (
+        match first r upto any with
+        | Some j -> want.(k) <- part_bytes 8 (Int64.of_int j)
+        | None -> ())
+    | Folded | Running ->
+        if o.apart && parts = 2 then
+          List.iter
+            (fun p ->
+              match first r upto (fun i -> nan.(i).(p)) with
+              | Some j -> set_part k p quiet.((r * n) + j)
+              | None -> ())
+            [ 0; 1 ]
+        else (
+          match first r upto any with
+          | Some j -> want.(k) <- quiet.((r * n) + j)
+          | None -> ())
+  in
+  for r = 0 to rows - 1 do
+    match o.result with
+    | Folded | Position -> settle r r (n - 1)
+    | Running ->
+        for j = 0 to n - 1 do
+          settle ((r * n) + j) r j
+        done
+  done;
+  want
+
+let law_nans (Nan_case { dt; rows; n; bytes }) =
+  let a = nan_array dt rows n bytes in
+  let raw = Array.map string_of_bytes (element_bits a) in
+  let quiet = Array.map string_of_bytes (element_bits (Nx_support.quieted a)) in
+  let nan = nan_parts a in
+  let any i = Array.exists Fun.id nan.(i) in
+  let firsts =
+    List.filter_map
+      (fun r -> List.find_opt any (List.init n (fun j -> (r * n) + j)))
+      (List.init rows Fun.id)
+  in
+  let sign i =
+    let e = raw.(i) in
+    Char.code e.[String.length e - 1] land 0x80 <> 0
+  in
+  cover "a signalling NaN first in a row"
+    (List.exists (fun i -> raw.(i) <> quiet.(i)) firsts);
+  cover "a quiet NaN first in a row"
+    (List.exists (fun i -> raw.(i) = quiet.(i)) firsts);
+  cover "a NaN of the sign bit set first in a row" (List.exists sign firsts);
+  cover "a row of no NaN" (List.length firsts < rows);
+  cover "a NaN first past the first device's window"
+    (List.exists (fun i -> i mod n >= (n + 2) / 3) firsts);
+  cover "an uneven cut" (n mod 3 <> 0);
+  cover "an empty window" (n < 3);
+  cover "a narrow float" (D.bits dt < 32);
+  cover "a complex number" (parts_of dt = 2);
+  cover "a complex number of one NaN part"
+    (parts_of dt = 2
+    && Array.exists (fun p -> p.(0) <> p.(1)) nan);
+  List.iter
+    (fun o ->
+      if (not o.floats) || parts_of dt = 1 then begin
+        let host = (List.hd placings).go o a in
+        let want = nan_want o rows n nan quiet host in
+        List.iter
+          (fun p ->
+            equal ~msg:(o.oname ^ ", " ^ p.pname) (array string) want
+              (p.go o a))
+          placings
+      end)
+    nan_ops
+
 let optional_group =
   group "optional reductions"
     [
@@ -1951,6 +2427,10 @@ let reductions_group =
       test "mean divides the sum by the count" test_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_expansions;
+      prop
+        "a NaN result is the first NaN quieted on the host, through an \
+         expansion and cut along the reduced axis"
+        nan_case law_nans;
     ]
 
 let () =

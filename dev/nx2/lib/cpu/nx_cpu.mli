@@ -71,14 +71,14 @@
     reduce in [float32], of [int4] and [uint4] in [int8] and [uint8], and
     of [bit] in [bool], their carrier, each block of them converted into it
     as a cast does; others in their own dtype. Each result rounds once
-    into its destination's dtype, as a cast does; into the operand's own
-    dtype, a NaN result where a term is NaN is the first such term as the
-    operand holds it, signalling or with a payload [float32] drops. They
-    also compute one [Arg] so, its positions into [int64] and its extreme
-    into the operand's own dtype the term itself, and one [Logsumexp] so at
-    every float dtype; [reduce] one [Moments] so, and [scan] one [Moments]
-    so, its operand converted whole into its carrier first where that is
-    not its dtype, or a program's tile by tile. Both take any program [map]
+    into its destination's dtype, as a cast does, which keeps a NaN's sign
+    and payload: into the operand's own dtype, a NaN result where a term is
+    NaN is the first such term quieted. They also compute one [Arg] so, its
+    positions into [int64] and its extreme into the operand's own dtype the
+    term itself, quieted where a NaN, and one [Logsumexp] so at every
+    float dtype; [reduce] one [Moments] so, and [scan] one [Moments] so, its
+    operand converted whole into its carrier first where that is not its
+    dtype, or a program's tile by tile. Both take any program [map]
     computes, over its loads or, with none, over the loop's shape alone, a
     reduction's [shape] or a scan's destinations': its terms are the
     program's output there as [map] computes it, so a reduction or a scan

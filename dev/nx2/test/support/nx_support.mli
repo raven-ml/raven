@@ -31,3 +31,18 @@ end
 
 module Declining : Nx_kernel.S
 (** nx.cpu, declining [Add] and [Fill], named ["nx.test"]. *)
+
+(** {1:nans NaN bits}
+
+    An OCaml float holds a NaN quiet, so suites make a signalling NaN
+    through its bits. A complex number's parts are each a float. *)
+
+val signalled : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
+(** [signalled a] is a C-contiguous copy of [a] with each NaN made
+    signalling where it stays a NaN: its quiet bit, the top bit of its
+    fraction, cleared where the rest of its fraction is not zero. *)
+
+val quieted : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
+(** [quieted a] is a C-contiguous copy of [a] with each NaN quieted, as an
+    operation returns it: its quiet bit set, its sign and the rest of its
+    payload kept. float8_e4m3fn's NaNs are quiet already. *)

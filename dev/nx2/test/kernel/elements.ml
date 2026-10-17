@@ -62,6 +62,45 @@ let of_elements (D.Any dt) s es =
 (* The element of zero bits. *)
 let zero (D.Any dt) = String.make (max 1 (D.bits dt / 8)) '\000'
 
+(* The exponent and fraction widths of [dt]'s floats, or of its parts, where
+   a NaN of them can lack the quiet bit: float8_e4m3fn's one NaN of each sign
+   has every fraction bit set, and float4_e2m1fn has none. *)
+let quiet_fields (D.Any dt) =
+  match dt with
+  | D.Float64 | D.Complex128 -> Some (11, 52)
+  | D.Float32 | D.Complex64 -> Some (8, 23)
+  | D.Float16 -> Some (5, 10)
+  | D.Bfloat16 -> Some (8, 7)
+  | D.Float8_e5m2 -> Some (5, 2)
+  | _ -> None
+
+(* [e], an element of [d], with each NaN part quieted, as an operation
+   returns it: its quiet bit, the top of its fraction, set, its sign and the
+   rest of its payload kept. *)
+let quiet d e =
+  match quiet_fields d with
+  | None -> e
+  | Some (exp, frac) ->
+      let w = (1 + exp + frac) / 8 in
+      let b = Bytes.of_string e in
+      for p = 0 to (String.length e / w) - 1 do
+        let v = ref 0L in
+        for j = w - 1 downto 0 do
+          v := Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
+        done;
+        let ones = Int64.(sub (shift_left 1L exp) 1L) in
+        let field = Int64.(logand (shift_right_logical !v frac) ones) in
+        let fraction = Int64.(logand !v (sub (shift_left 1L frac) 1L)) in
+        if field = ones && fraction <> 0L then begin
+          let q = Int64.(logor !v (shift_left 1L (frac - 1))) in
+          for j = 0 to w - 1 do
+            Bytes.set b ((p * w) + j)
+              (Char.chr (Int64.to_int (Int64.shift_right_logical q (8 * j)) land 0xFF))
+          done
+        end
+      done;
+      Bytes.to_string b
+
 (* Values *)
 
 let f32 x =

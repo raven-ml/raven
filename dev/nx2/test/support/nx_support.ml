@@ -102,3 +102,60 @@ module Declining = struct
     | Binary Add -> Nx_array.Declined
     | _ -> Nx_cpu.apply2 k ~dst x y
 end
+
+(* NaN bits *)
+
+(* The bytes of [dt]'s floats, or of its parts, and their exponent and
+   fraction widths, where a NaN has a quiet bit to set or clear:
+   float8_e4m3fn's one NaN of each sign has every fraction bit set, and
+   float4_e2m1fn has none. *)
+let fields (type v s) (dt : (v, s) Nx_array.Dtype.t) =
+  match dt with
+  | Float64 | Complex128 -> Some (8, 11, 52)
+  | Float32 | Complex64 -> Some (4, 8, 23)
+  | Float16 -> Some (2, 5, 10)
+  | Bfloat16 -> Some (2, 8, 7)
+  | Float8_e5m2 -> Some (1, 5, 2)
+  | _ -> None
+
+(* [a], C-contiguous, with [f frac v] for the bits [v] of each float or part
+   that is a NaN, [frac] its fraction's width. *)
+let map_nans f (type v s) (a : (v, s) Nx_array.t) : (v, s) Nx_array.t =
+  let a = Nx_array.copy a in
+  let dt = Nx_array.dtype a in
+  match fields dt with
+  | None -> a
+  | Some (w, exp, frac) ->
+      let b = Nx_array.to_array (Option.get (Nx_array.bitcast Uint8 a)) in
+      let ones = Int64.(sub (shift_left 1L exp) 1L) in
+      for p = 0 to (Array.length b / w) - 1 do
+        let v = ref 0L in
+        for j = w - 1 downto 0 do
+          v := Int64.(logor (shift_left !v 8) (of_int b.((p * w) + j)))
+        done;
+        let field = Int64.(logand (shift_right_logical !v frac) ones) in
+        let fraction = Int64.(logand !v (sub (shift_left 1L frac) 1L)) in
+        if field = ones && fraction <> 0L then begin
+          let v = f frac !v in
+          for j = 0 to w - 1 do
+            b.((p * w) + j) <-
+              Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF
+          done
+        end
+      done;
+      let bytes = String.init (Array.length b) (fun i -> Char.chr b.(i)) in
+      Nx_array.v dt
+        (Nx_array.Layout.contiguous (Nx_array.Layout.shape (Nx_array.layout a)))
+        (Rig.Buffer.of_string (if bytes = "" then "\000" else bytes))
+
+let quiet_bit frac = Int64.shift_left 1L (frac - 1)
+
+let signalled a =
+  map_nans
+    (fun frac v ->
+      let q = quiet_bit frac in
+      if Int64.(logand v (sub q 1L)) = 0L then v
+      else Int64.(logand v (lognot q)))
+    a
+
+let quieted a = map_nans (fun frac v -> Int64.logor v (quiet_bit frac)) a

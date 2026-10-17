@@ -30,8 +30,8 @@
       position of two NaNs, else the extreme in {!Nx_kernel.Prog}'s order,
       [-0] below [+0] and complex numbers by their parts, and the smaller
       position of two of one bits. So the result is the whole's first
-      extreme with its bits, whatever the tiles' order. [Max] and [Min] drop
-      the positions.
+      extreme with its bits, a NaN quieted, whatever the tiles' order. [Max]
+      and [Min] drop the positions.
     - A float or complex [Sum] or [Prod] reduces by lane order's tree
       ({!Nx_kernel.section-orders}), a function of the term count alone, over
       the group's terms numbered in C order of the whole's reduced indices. A
@@ -44,7 +44,7 @@
       [outputs; terms] where they are not all of its device's window. Each
       device combines the units up the tree by [Add] or [Mul] and rounds once.
       Where a unit has a NaN term, the result is the first such unit's
-      reduction into the result's dtype, the first NaN term's bits; a complex
+      reduction into the result's dtype, the first NaN term quieted; a complex
       product with a NaN part and no NaN term is the quiet NaN in each part.
     - A [Logsumexp] and [Moments] compute by their expansion ({!Expand.run}),
       whose reductions compute as above.

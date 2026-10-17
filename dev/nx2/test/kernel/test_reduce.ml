@@ -631,12 +631,24 @@ let bits_of = function F (_, b) -> b | I v -> v
 let made (D.Any dt) =
   if D.bits dt = 32 then 0x7FC00000L else 0x7FF8_0000_0000_0000L
 
-(* A float result's NaN holds its first NaN term, else it is [made]'s. *)
+(* The bits of [t], a NaN of [made]'s dtype, quieted: its quiet bit, the
+   top of its fraction, set, its sign and the rest of its payload kept. *)
+let quieted made t =
+  Int64.logor (bits_of t)
+    (if made = 0x7FC00000L then 0x40_0000L else 0x8_0000_0000_0000L)
+
+(* [t]'s bits, quieted where a NaN, [u] its dtype's roundoff. *)
+let quiet_u u t =
+  if not (is_nan t) then bits_of t
+  else quieted (if u > 0x1p-30 then 0x7FC00000L else 0x7FF8000000000000L) t
+
+(* A float result's NaN holds its first NaN term, quieted, else it is
+   [made]'s. *)
 let settle made ts r =
   if not (is_nan r) then Bits (bits_of r)
   else
     match Array.find_opt is_nan ts with
-    | Some t -> Bits (bits_of t)
+    | Some t -> Bits (quieted made t)
     | None -> Bits made
 
 (* The terms of each output of [c], in C order of outputs, each in C order
@@ -669,7 +681,7 @@ let outputs c ts =
    result the carry combined with the chunk's terms up to it, left to right,
    the carry into a chunk the carry into the one before combined with that
    chunk's total in [ordered]'s order. From the first NaN term on, a float
-   result is that term; a NaN result before it is [made]'s. *)
+   result is that term, quieted; a NaN result before it is [made]'s. *)
 let scanned made ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
@@ -687,7 +699,7 @@ let scanned made ((f, id) as m) ts =
   Array.mapi
     (fun i v ->
       match first with
-      | Some k when i >= k -> Bits (bits_of ts.(k))
+      | Some k when i >= k -> Bits (quieted made ts.(k))
       | _ -> if is_nan v then Bits made else Bits (bits_of v))
     out
 
@@ -857,12 +869,20 @@ let zmade narrow =
   let q = Int64.float_of_bits 0x7FF8_0000_0000_0000L in
   (zof narrow q q).bits
 
-(* A NaN result's bits are its first NaN term's, else [zmade]'s. *)
+(* [t]'s bits with each NaN part quieted, of complex64's parts where
+   [narrow]. *)
+let zquieted narrow t =
+  let q = if narrow then 0x40_0000L else 0x8_0000_0000_0000L in
+  let part x b = if Float.is_nan x then Int64.logor b q else b in
+  (part t.re (fst t.bits), part t.im (snd t.bits))
+
+(* A NaN result's bits are its first NaN term's, quieted, else
+   [zmade]'s. *)
 let zsettle narrow ts r =
   if not (znan r) then r.bits
   else
     match Array.find_opt znan ts with
-    | Some t -> t.bits
+    | Some t -> zquieted narrow t
     | None -> zmade narrow
 
 (* [ts] scanned as [scanned] does, in bits, but from the first term where
@@ -885,7 +905,7 @@ let zscanned narrow ~first ((f, id) as m) ts =
   Array.mapi
     (fun i v ->
       match first with
-      | Some k when i >= k -> ts.(k).bits
+      | Some k when i >= k -> zquieted narrow ts.(k)
       | _ -> if znan v then zmade narrow else v.bits)
     out
 
@@ -1241,10 +1261,10 @@ let into_case =
      in
      (c, d))
 
-(* For each result of [c] in C order, its first NaN term's bits, a scan's
-   up to it, if one is a NaN. *)
+(* For each result of [c] in C order, its first NaN term's bits, quieted, a
+   scan's up to it, if one is a NaN. *)
 let first_nans c =
-  let raw = Elements.elements c.x in
+  let raw = Array.map (Elements.quiet (dtype_of c.x)) (Elements.elements c.x) in
   let nan = Array.map is_nan (terms (cast_into f32 c.x)) in
   let first o = Option.map (Array.get raw) (Array.find_opt (Array.get nan) o) in
   let scan o =
@@ -1283,8 +1303,8 @@ let into_examples =
 (* A narrow operand's terms reduce in its carrier, and each result rounds
    once into its destination: the bits of the carrier's reduction of the
    operand cast into it, cast into the destination. A NaN result into the
-   operand's own dtype is its first NaN term, its bits unchanged, as
-   nx_kernel.mli states: the carrier holds that term quieted. *)
+   operand's own dtype is its first NaN term quieted, as nx_kernel.mli
+   states. *)
 let law_into (b : Support.backend) (c, d) =
   let x = dtype_of c.x in
   cover "narrow" (staged x);
@@ -1312,11 +1332,10 @@ let law_into (b : Support.backend) (c, d) =
   equal (array string) want (Elements.elements got)
 
 (* A NaN result of a narrow float into its own dtype is its first NaN
-   term, signalling or with a payload that float32 does not keep: the
-   reduction of zeros with two NaNs, a few terms and past a block and a
-   scan's chunk, by each monoid, Logsumexp and Moments, the running
-   results from the first NaN on, and Arg's extreme, with that NaN's
-   position, reduced and scanned. *)
+   term quieted, whether signalling or quiet: the reduction of zeros with
+   two NaNs, a few terms and past a block and a scan's chunk, by each
+   monoid, Logsumexp and Moments, the running results from the first NaN
+   on, and Arg's extreme, with that NaN's position, reduced and scanned. *)
 let test_nan_bits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let code w c =
@@ -1329,8 +1348,9 @@ let test_nan_bits (b : Support.backend) () =
           code w (if k = i then first else if k = j then other else 0))
     in
     let x = Elements.of_elements d [| n |] es in
+    let nan = Elements.quiet d es.(i) in
     (* Zeros' running results, then the first NaN's. *)
-    let running = Array.init n (fun k -> if k < i then es.(0) else es.(i)) in
+    let running = Array.init n (fun k -> if k < i then es.(0) else nan) in
     let run scan m =
       let c = { scan; monoid = m; axes = [| 0 |]; x; views = [] } in
       Elements.elements (run_into b.kernels d c x)
@@ -1341,7 +1361,7 @@ let test_nan_bits (b : Support.backend) () =
     List.iter
       (fun m ->
         let msg = msg (monoid_name m) in
-        equal ~msg (array string) [| es.(i) |] (run false m);
+        equal ~msg (array string) [| nan |] (run false m);
         equal ~msg:(msg ^ ", scanned") (array string) running (run true m))
       monoids;
     let stat ~scan r k =
@@ -1357,10 +1377,10 @@ let test_nan_bits (b : Support.backend) () =
       equal ~msg:"its answer" bool true (answer = A.Done);
       Array.map Elements.elements dsts
     in
-    equal ~msg:(msg "Logsumexp") (array (array string)) [| [| es.(i) |] |]
+    equal ~msg:(msg "Logsumexp") (array (array string)) [| [| nan |] |]
       (stat ~scan:false (Monoid Logsumexp) 1);
     equal ~msg:(msg "Moments") (array (array string))
-      [| [| es.(i) |]; [| es.(i) |] |]
+      [| [| nan |]; [| nan |] |]
       (stat ~scan:false Moments 2);
     equal ~msg:(msg "Moments, scanned") (array (array string))
       [| running; running |]
@@ -1381,7 +1401,7 @@ let test_nan_bits (b : Support.backend) () =
         equal
           ~msg:(msg (if e = Max then "Arg Max" else "Arg Min"))
           (pair (array string) int64)
-          ([| es.(i) |], Int64.of_int i)
+          ([| nan |], Int64.of_int i)
           (Elements.elements (A.Any v), (A.to_array at).(0));
         let v = A.create Rig.host dt [| n |]
         and at = A.create Rig.host D.Int64 [| n |] in
@@ -1408,6 +1428,7 @@ let test_nan_bits (b : Support.backend) () =
         (Any Float8_e5m2, 0x7D, 0x7F);
         (Any Float8_e5m2, 0x7E, 0x7F);
         (Any Float8_e5m2, 0xFD, 0x7E);
+        (Any Float8_e4m3fn, 0xFF, 0x7F);
       ]
 
 (* A sum of one axis is a contraction of it with ones, in lane order: the
@@ -1957,7 +1978,7 @@ let depth i =
   Float.of_int (max 0 ((2 * log2 (i + 1) 1) - 1))
 
 (* The expected mean and variance at each index of [c], in C order: past a
-   NaN term, its bits; past an infinity, the infinities' sum and the NaN
+   NaN term, its bits quieted; past an infinity, the infinities' sum and the NaN
    the kinds make, the mean that NaN too past infinities of both signs;
    else the running mean and variance by float64 sums of the terms less the
    first and of their squares, within nx.cpu's bound at [x]'s unit roundoff
@@ -1988,7 +2009,8 @@ let expected_moments (c : moments) =
         let at = position s idx in
         let v = match ts.(at) with F (v, _) -> v | I _ -> assert false in
         if Float.is_nan v then begin
-          if !nan = None then nan := Some (bits_of ts.(at))
+          if !nan = None then
+            nan := Some (quiet_u u ts.(at))
         end
         else if v = Float.infinity then pos := true
         else if v = Float.neg_infinity then neg := true
@@ -2336,6 +2358,9 @@ let run_stat k c =
 (* The quiet NaN of a clear sign bit, made from numbers. *)
 let made_nan u = Is (Bits (if u > 0x1p-30 then 0x7FC00000L else 0x7FF8000000000000L))
 
+(* [t]'s bits, quieted where a NaN of [d]. *)
+let quiet_term d t = if is_nan t then quieted (made d) t else bits_of t
+
 (* A float's value. *)
 let value = function F (x, _) -> x | I _ -> invalid_arg "value: an integer"
 
@@ -2366,13 +2391,13 @@ let arg_expect d (e : Nx_kernel.extreme) ts =
   let best = Array.fold_left f ts.(0) ts in
   let same t = if is_nan best then is_nan t else bits_of t = bits_of best in
   let i = Option.get (Array.find_index same ts) in
-  [| Is (Bits (bits_of ts.(i))); Is (Bits (Int64.of_int i)) |]
+  [| Is (Bits (quiet_term d ts.(i))); Is (Bits (Int64.of_int i)) |]
 
 (* Logsumexp of [ts] within nx_cpu.mli's bound at the unit roundoff [u],
    from a float64 reference within ε (ln n + 4 + |r|). *)
 let lse_expect u ts =
   match Array.find_opt is_nan ts with
-  | Some t -> [| Is (Bits (bits_of t)) |]
+  | Some t -> [| Is (Bits (quiet_u u t)) |]
   | None ->
       let xs = Array.map value ts in
       let n = Array.length xs in
@@ -2390,7 +2415,7 @@ let lse_expect u ts =
 let moments_expect u ts =
   let nan = made_nan u in
   match Array.find_opt is_nan ts with
-  | Some t -> [| Is (Bits (bits_of t)); Is (Bits (bits_of t)) |]
+  | Some t -> [| Is (Bits (quiet_u u t)); Is (Bits (quiet_u u t)) |]
   | None when ts = [||] -> [| nan; nan |]
   | None -> (
       let xs = Array.map value ts in
@@ -2547,7 +2572,7 @@ let arg_scan d (e : Nx_kernel.extreme) ts =
         best := t;
         at := i
       end;
-      [| Is (Bits (bits_of !best)); Is (Bits (Int64.of_int !at)) |])
+      [| Is (Bits (quiet_term d !best)); Is (Bits (Int64.of_int !at)) |])
     ts
 
 (* nx_cpu.mli's bound of a Logsumexp scan's result [r] after [n] terms in
@@ -2579,7 +2604,7 @@ let lse_scan u ts =
       if i mod 4096 = 0 then top := Float.neg_infinity;
       (match !nan with
       | Some _ -> ()
-      | None when is_nan t -> nan := Some (bits_of t)
+      | None when is_nan t -> nan := Some (quiet_u u t)
       | None ->
           let x = value t in
           if x > !top then begin
@@ -2611,7 +2636,7 @@ let lse_scan u ts =
    where n is m and 0 for exp (x - n) where n is -∞, the result n + log s or
    n where n is not finite. exp and log are nx_kinds.h's, exp is 0 below the
    reduction's cut, and each operation rounds to the dtype. From the first
-   NaN term on, the result is its bits. *)
+   NaN term on, the result is its bits, quieted. *)
 let lse_replay ~f32 ts =
   let rnd x = if f32 then round32 x else x in
   (* A kind over a vector, in one call. *)
@@ -2688,7 +2713,8 @@ let lse_replay ~f32 ts =
   Array.mapi
     (fun i m ->
       match first with
-      | Some j when j <= i -> Is (Bits (bits_of ts.(j)))
+      | Some j when j <= i ->
+          Is (Bits (quiet_u (if f32 then 0x1p-24 else 0x1p-53) ts.(j)))
       | _ ->
           let r = if Float.is_finite m then rnd (m +. logs.(i)) else m in
           Is (Bits (if f32 then Int64.of_int32 (Int32.bits_of_float r) else Int64.bits_of_float r)))
@@ -2934,8 +2960,8 @@ let stat_examples =
    it reads: a Moments scan whose terms take its exact pass, its mean or its
    variance in place; running sums, Logsumexps and Arg's extremes of slices
    past a chunk, more units than a job splits into chunks; and a float16
-   sum along no axis of signalling NaNs, whose bits come from the operand
-   after the rounding. *)
+   sum along no axis of signalling NaNs, whose bits come from the operand,
+   quieted. *)
 let test_in_place (b : Support.backend) () =
   let module K = (val b.kernels) in
   let copy (A.Any x) = A.Any (A.copy x) in
@@ -2979,7 +3005,8 @@ let test_in_place (b : Support.backend) () =
       [| (Monoid Sum, 0) |] ~dsts:[| x' |] [| plain_of x' |]
   in
   equal ~msg:"its answer" bool true (answer = A.Done);
-  equal ~msg:"a float16 sum along no axis in place" (array string) codes
+  equal ~msg:"a float16 sum along no axis in place" (array string)
+    (Array.map (Elements.quiet (D.Any D.Float16)) codes)
     (Elements.elements x')
 
 (* A scan by Arg, Logsumexp or Moments along the rows of [k; n] terms: a
@@ -3099,7 +3126,11 @@ let test_complex_arg_scan (b : Support.backend) () =
     equal ~msg:"its answer" bool true (answer = A.Done);
     (Elements.elements (A.Any v), A.to_array at)
   in
-  let pick ks = Array.map (fun k -> (Elements.elements (A.Any x)).(k)) ks in
+  let pick ks =
+    Array.map
+      (fun k -> Elements.quiet (D.Any D.Complex64) (Elements.elements (A.Any x)).(k))
+      ks
+  in
   equal ~msg:"Arg Max" (pair (array string) (array int64))
     (pick [| 0; 1; 1; 3; 3 |], [| 0L; 1L; 1L; 3L; 3L |])
     (scan Max);
@@ -3681,8 +3712,8 @@ let law_fused (b : Support.backend) c =
 
 (* A program computed into its own load gives the bits of one computed
    into fresh destinations, as nx_cpu.mli states: a float16 negation of
-   signalling NaNs summed along no axis, whose bits come from the load
-   after the rounding; scanned, its NaN results settled from the load;
+   signalling NaNs summed along no axis, whose bits come from the load,
+   quieted; scanned, its NaN results settled from the load;
    summed beside its maximum, each written after the other reads; and its
    Arg, reduced along no axis and scanned over numbers, each extreme
    computed from the load at its position after earlier results are
@@ -4333,7 +4364,7 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
   let want = stat_run b.kernels ~scan c wide (cast_into wide c.x) in
   (* Into the operand's own dtype, a staged Arg's extreme is the term at
      its position, and a NaN result the first NaN term, a scan's up to it,
-     each as the operand holds it. *)
+     each as the operand holds it, quieted. *)
   let own = staged x && same into x in
   let case = { (as_case c) with scan } in
   (* Each result's terms, a scan's its slice's. *)
@@ -4349,7 +4380,9 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
         | Arg _, 1 -> Elements.elements w
         | Arg _, _ when own ->
             let at = A.to_array (A.expect D.Int64 want.(1)) in
-            Array.mapi (fun o ts -> ts.(Int64.to_int at.(o))) (terms ())
+            Array.mapi
+              (fun o ts -> Elements.quiet x ts.(Int64.to_int at.(o)))
+              (terms ())
         | _ when own ->
             Array.map2
               (fun w f -> Option.value f ~default:w)
@@ -4550,7 +4583,7 @@ let cpu (b : Support.backend) =
       prop ~examples:into_examples
         "narrow terms reduce in their carrier, rounded once" into_case
         (run (law_into b));
-      test "a narrow NaN result keeps its first NaN term's bits" (fun () ->
+      test "a narrow NaN result is its first NaN term quieted" (fun () ->
           b.around (test_nan_bits b));
       prop ~examples:stat_into_examples
         "narrow Arg, Logsumexp and Moments reduce in their carrier"

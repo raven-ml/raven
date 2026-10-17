@@ -35,13 +35,16 @@
    counter.
 
    NaN. A float result that is NaN, or a complex one with a NaN part, is
-   replaced by its first such term in index order, found by a second walk
-   taken only then, or by nx_kinds.h's NaN, in each part of a complex,
-   where no term is NaN. A complex sum's parts are float sums, each
-   replaced so apart. A scan's results stay NaN once they are, since
-   adding, multiplying and the extremes keep a NaN: where a slice's last
-   result is NaN, every result from its first NaN term on is that term, and
-   every NaN result before it nx_kinds.h's.
+   replaced by its first such term in index order, quieted, found by a
+   second walk taken only then, or by nx_kinds.h's NaN, in each part of a
+   complex, where no term is NaN. Quieting sets each NaN part's quiet bit,
+   the top of its fraction, and keeps its sign and the rest of its payload,
+   as IEEE 754 quiets a signalling NaN an operation returns. A complex
+   sum's parts are float sums, each replaced so apart. A scan's results
+   stay NaN once they are, since adding, multiplying and the extremes keep
+   a NaN: where a slice's last result is NaN, every result from its first
+   NaN term on is that term, quieted, and every NaN result before it
+   nx_kinds.h's.
 
    Paths. The operand and the destination, read at the operand's shape with
    step 0 along the reduced axes, coalesce: reduced and kept axes never
@@ -60,19 +63,18 @@
    whole first. Arg, Logsumexp and Moments reduce in the carrier too.
    Results go into the destination where it is of the carrier, else into a
    carrier copy of it, rounded into it once at the end, as a cast does. A
-   NaN does not survive that round trip: the carrier holds a NaN term
-   quieted (nx_dtype.h). So in a
-   destination of the operand's dtype, NaN results are replaced again
-   after the rounding, from the operand's own terms.
+   NaN keeps its sign and payload through the carrier, quieted
+   (nx_dtype.h), so a NaN result rounded into the operand's dtype is its
+   first NaN term quieted, as the rule above gives it.
 
    States. Logsumexp, Arg and Moments reduce by the same blocks, tree and
    paths, an output's value a state of its terms in place of a monoid's
    element: a kernel makes a block's state from its terms, contiguous in
    the operand or copied so, and merges two states as the tree combines
    values. A float result that is NaN is replaced as a monoid's is, but
-   Arg's, whose state holds its first NaN term. Arg reads a staged operand
-   in the carrier too; its extreme into the operand's dtype is the term at
-   its position, copied.
+   Arg's, whose state holds its first NaN term, quieted as it is stored.
+   Arg reads a staged operand in the carrier too; its extreme into the
+   operand's dtype is the term at its position, copied and quieted.
 
    Stateful scans. Arg's and Logsumexp's scans cut the same chunks and
    carry a state per slice: a chunk's total is its terms' state from none,
@@ -106,7 +108,8 @@
 
    Moments. A Moments scan computes nx_kernel.mli's network on each slice,
    op by op with the kinds' arithmetic, as Nx's expansion does, so that the
-   two give the same bits. It holds O(log n) states per slice.
+   two give the same bits; a slice whose results a NaN term reaches has
+   them quieted after. It holds O(log n) states per slice.
 
    The kernels come first, compiled once per target: as reduce.c for base
    and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
@@ -1953,6 +1956,37 @@ static int any_nan(const plan *q, const uint8_t *v, int64_t n) {
 
 static int is_nan(const plan *q, const uint8_t *p) { return any_nan(q, p, 1); }
 
+/* The quiet bit of the float dtype [p]'s NaNs, the top bit of its
+   fraction; 0 for a dtype whose NaNs all have it, float8_e4m3fn's one NaN
+   of each sign, or that has none. */
+static uint64_t quiet_bit(int p) {
+  switch (p) {
+    case NX_FLOAT64: return (uint64_t)1 << 51;
+    case NX_FLOAT32: return (uint64_t)1 << 22;
+    case NX_FLOAT16: return 0x200;
+    case NX_BFLOAT16: return 0x40;
+    case NX_FLOAT8_E5M2: return 0x2;
+    default: return 0;
+  }
+}
+
+/* Quiets each NaN part of the element of [dt] at [d]: sets its quiet bit,
+   keeping its sign and the rest of its payload, as IEEE 754 quiets a
+   signalling NaN an operation returns. */
+static void quiet(int dt, uint8_t *d) {
+  int p = part_of(dt), w = nx_cpu_width(p), n = p == dt ? 1 : 2;
+  uint64_t bit = quiet_bit(p);
+  if (bit == 0) return;
+  for (int i = 0; i < n; i++) {
+    uint8_t *e = d + i * w;
+    if (!floats_nan(p, e, 1)) continue;
+    uint64_t c = 0;
+    memcpy(&c, e, w); /* little-endian hosts: the low bytes */
+    c |= bit;
+    memcpy(e, &c, w);
+  }
+}
+
 /* A value's slots are NaN or not as a whole: the value, or each part of a
    complex sum, whose parts are float sums. Whether the slot at [s] is. */
 static int slot_nan(const plan *q, const uint8_t *s) {
@@ -2159,8 +2193,8 @@ static void stage_terms(const plan *q, work *wk, int64_t p, int64_t s,
 }
 
 /* The index of the first term of the output at [p] whose slot [k] is
-   NaN, the term copied into [e]; or q->terms where none is. A staged
-   operand's or a program's terms come a buffer at a time. */
+   NaN, the term copied into [e], quieted; or q->terms where none is. A
+   staged operand's or a program's terms come a buffer at a time. */
 static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
                         uint8_t *e) {
   int64_t sw = q->w / q->slots;
@@ -2169,6 +2203,7 @@ static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
       const uint8_t *x = at(q, term(q, p, t));
       if (!slot_nan(q, x + k * sw)) continue;
       memcpy(e, x, q->w);
+      quiet(q->carrier, e);
       return t;
     }
     return q->terms;
@@ -2181,6 +2216,7 @@ static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
     for (int64_t i = 0; i < m; i++) {
       if (!slot_nan(q, buf + i * q->w + k * sw)) continue;
       memcpy(e, buf + i * q->w, q->w);
+      quiet(q->carrier, e);
       return t + i;
     }
   }
@@ -2188,7 +2224,8 @@ static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
 }
 
 /* Replaces each NaN slot of the result at [e] of the output at [p] by its
-   first term's slot that is NaN, or by nx_kinds.h's NaN where none is. */
+   first term's slot that is NaN, quieted, or by nx_kinds.h's NaN where
+   none is. */
 static void first_nan(const plan *q, work *wk, int64_t p, uint8_t *e) {
   int64_t sw = q->w / q->slots;
   _Alignas(16) uint8_t first[WIDEST];
@@ -2451,19 +2488,17 @@ static void copy_element(const nx_array *b, int64_t d, const nx_array *a,
 
 /* Arg's extreme of the operand's dtype into element [d] of the
    destination: the operand's term at [pos], or a program's computed
-   there. */
+   there, quieted. */
 static void own_term(const plan *q, int64_t d, int64_t pos) {
-  if (q->fused == NULL) {
-    copy_element(q->dst, d, q->src, pos);
-    return;
-  }
   int64_t w = nx_cpu_width(q->dst->dtype);
-  eval(q->fused, pos, 0, 1, 0, 1, q->dst->base + d * w);
+  if (q->fused == NULL) copy_element(q->dst, d, q->src, pos);
+  else eval(q->fused, pos, 0, 1, 0, 1, q->dst->base + d * w);
+  quiet(q->dst->dtype, q->dst->base + d * w);
 }
 
 /* Stores the results of the unit's states [v], of centers [c], each NaN
-   replaced as store's are, Arg's extreme of the operand's dtype copied
-   from its term; or, where the pass finds them, the centers. */
+   replaced as store's are, Arg's extreme quieted, of the operand's dtype
+   copied from its term; or, where the pass finds them, the centers. */
 static void store_states(const plan *q, work *wk, const unit *x, double *c,
                          const nx_cpu_state *v) {
   int w1 = nx_cpu_width(q->dst1->dtype);
@@ -2482,6 +2517,7 @@ static void store_states(const plan *q, work *wk, const unit *x, double *c,
       continue;
     }
     q->r->finish(&v[j], c != NULL ? c[j] : 0, d0, d1);
+    if (q->arg) quiet(q->dst->dtype, d0);
     if (!q->nan) continue;
     if (is_nan(q, d0)) first_nan(q, wk, p, d0);
     if (q->dst1 != q->dst && is_nan(q, d1)) first_nan(q, wk, p, d1);
@@ -2779,6 +2815,16 @@ static void stage_lanes(const plan *q, work *wk, const unit *x, int64_t W,
   nx_cpu_stage_as(q->src, x->p + t * rs, s, rs, W, m, q->carrier, buf, W);
 }
 
+/* Quiets the NaNs among Arg's [m] by [W] extremes at [y], a scan's
+   results, [q->rd] and [dl] elements apart. */
+static void quiet_rows(const plan *q, uint8_t *y, int64_t m, int64_t W,
+                       int64_t dl) {
+  if (quiet_bit(q->part) == 0) return;
+  for (int64_t i = 0; i < m; i++)
+    for (int64_t l = 0; l < W; l++)
+      quiet(q->dst->dtype, y + (i * q->rd + l * dl) * q->w);
+}
+
 /* Terms [t0, t0 + n) of a stateful scan's [W] sequences into their states
    [a], and where [store], each result into the destinations. Sequence l is
    the unit's slice l, or, where [lt] is not 0, the unit's slice from term
@@ -2809,7 +2855,10 @@ static void run_states(const plan *q, work *wk, const unit *x, nx_cpu_state *a,
     int64_t *p = (int64_t *)q->dst1->base + x->d1 + t * q->rd1;
     q->z->rows(a, src, xs, xli, m, W, y, q->own ? W : q->rd, q->own ? 1 : dl,
                p, q->rd1, d1l);
-    if (!q->own) continue;
+    if (!q->own) {
+      if (q->arg) quiet_rows(q, y, m, W, dl);
+      continue;
+    }
     for (int64_t i = 0; i < m; i++)
       for (int64_t l = 0; l < W; l++)
         own_term(q, x->d + (t + i) * q->rd + l * dl,
@@ -3371,45 +3420,6 @@ static __attribute__((noinline)) void cast(const nx_array *b,
   nx_cpu_cast_loop(b, a, &l);
 }
 
-/* Own NaNs */
-
-/* Each NaN result of the unit's outputs replaced by its first NaN term. */
-static void own_outputs(const plan *q, work *wk, int64_t lo, int64_t hi) {
-  for (int64_t u = lo; u < hi; u++) {
-    unit x = unit_of(q, u * q->groups);
-    for (int64_t h = 0; h < x.H; h++)
-      for (int64_t j = 0; j < x.W; j++) {
-        uint8_t *d = q->dst->base + (x.d + h * x.sd2 + j * x.sd) * q->w;
-        if (is_nan(q, d)) first_nan(q, wk, x.p + h * x.s2 + j * x.s, d);
-      }
-  }
-}
-
-/* Replaces each NaN result of [op] of [x] along [axes] in [y], of [x]'s
-   dtype and rounded from its carrier, as reduce_in replaces a carrier's,
-   by a plan at [x]'s dtype that reads its terms as they are. A narrow
-   float of whole bytes alone has NaNs that rounding changes. */
-static int own_nans(task op, const int *axes, int naxes, const nx_array *y,
-                    const nx_array *x, const fused *z, int threads) {
-  int dt = x->dtype, w = nx_cpu_width(dt);
-  int nans = nx_dtype_row_of(dt).kind == NX_KIND_FLOAT &&
-             nx_dtype_row_of(dt).bits >= 8;
-  int64_t terms, outputs;
-  fits(op, x->dim, x->rank, y->dim, y->rank, axes, naxes, &terms, &outputs);
-  if (!nans || outputs == 0 || terms == 0) return 0;
-  _Atomic int failed = 0;
-  plan q = {.w = w, .nan = 1, .part = dt, .parts = 1, .slots = 1,
-            .carrier = dt, .size = w, .dst = y, .dst1 = y, .src = x, .fused = z,
-            .terms = terms, .failed = &failed};
-  lay_out(&q, op, axes, naxes, y, y, x);
-  int64_t units = q.outer * q.bands * q.chunks, bytes = outputs * w;
-  double cost = bytes;
-  if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes;
-  units_job(units, bytes, cost, threads,
-            op == SCAN ? settle_units : own_outputs, &q);
-  return failed ? -1 : 0;
-}
-
 /* As reduce_in, of [x] of any dtype in its carrier, into destinations of
    any dtype but Arg's int64 positions: where theirs is not the carrier,
    into carrier_copy's arrays, then rounded once into them, but Arg's
@@ -3440,12 +3450,7 @@ static int reduce_into(task op, int r, const int *axes, int naxes,
     e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z, threads);
   for (int k = 0; k < 2; k++) {
     if (!copied[k]) continue;
-    if (e == NX_OK) {
-      cast(y2[k], &t[k]);
-      if (y2[k]->dtype == x->dtype &&
-          own_nans(op, axes, naxes, y2[k], x, z, threads))
-        e = -1;
-    }
+    if (e == NX_OK) cast(y2[k], &t[k]);
     nx_cpu_give(t[k].base);
   }
   return e;
@@ -3486,6 +3491,24 @@ static void fill_slices(const void *ctx, int64_t t0, int64_t tn,
           out, c->held);
 }
 
+/* Quiets the NaN results of the [w] slices whose means and variances
+   start at the positions [at]. A slice that a NaN term reaches ends in a
+   NaN mean, and its results from that term on carry its bits through the
+   kinds' arithmetic: such a slice alone is walked again. */
+static void quiet_slices(const moments *q, const int64_t *at, int64_t w) {
+  const nx_loop *l = &q->outer;
+  int last = l->rank - 1, dt = q->a[0]->dtype, w8 = nx_cpu_width(dt);
+  for (int64_t j = 0; j < w; j++) {
+    uint8_t *m = q->a[0]->base + (at[0] + j * l->step[0][last]) * w8;
+    uint8_t *v = q->a[1]->base + (at[1] + j * l->step[1][last]) * w8;
+    if (!floats_nan(dt, m + (q->len - 1) * q->along[0] * w8, 1)) continue;
+    for (int64_t i = 0; i < q->len; i++) {
+      quiet(dt, m + i * q->along[0] * w8);
+      quiet(dt, v + i * q->along[1] * w8);
+    }
+  }
+}
+
 static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   moments *q = ctx;
@@ -3524,6 +3547,7 @@ static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
         q->a[0]->base + at[0] * w8, q->along[0], l->step[0][last],
         q->a[1]->base + at[1] * w8, q->along[1], l->step[1][last], q->len, w,
         scratch, q->fused != NULL ? &src : NULL);
+    quiet_slices(q, at, w);
   }
   nx_cpu_give(scratch);
 }
@@ -3572,9 +3596,8 @@ static __attribute__((noinline)) int moments_in(
    destinations of any dtype: a narrow [x] cast whole into carrier_copy's
    array first, or a program's terms converted tile by tile, and
    destinations not of the carrier computed into such arrays, then rounded
-   once into them, their NaNs replaced again from [x] where they are of its
-   dtype. NX_OK, NX_SHAPE for shapes that do not fit, or -1 if host memory
-   runs out. */
+   once into them. NX_OK, NX_SHAPE for shapes that do not fit, or -1 if host
+   memory runs out. */
 static int moments_into(int axis, const nx_array *m, const nx_array *v,
                         const nx_array *x, const fused *z, int threads) {
   int64_t terms, outputs;
@@ -3609,12 +3632,7 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
     e = moments_in(axis, terms, outputs, d[0], d[1], d[2], z, threads);
   for (int k = 0; k < 3; k++) {
     if (!copied[k]) continue;
-    if (e == NX_OK && k < 2) {
-      cast(a[k], &t[k]);
-      if (a[k]->dtype == x->dtype &&
-          own_nans(SCAN, &axis, 1, a[k], x, z, threads))
-        e = -1;
-    }
+    if (e == NX_OK && k < 2) cast(a[k], &t[k]);
     nx_cpu_give(t[k].base);
   }
   return e;
