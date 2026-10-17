@@ -326,11 +326,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx2
 
-- engine review findings: donation through `Eval.received`, the shared
-  `Interp.running` state across fibers, `Nx_array.to_device` copying a
-  strided view's enclosing span; probes in
-  `refs/audit/20261010-deep/worktrees/wt-18`, each confirmed one a public
-  regression first
+- `Interp`'s `running` field is shared by fibers on one domain;
+  `Nx_array.to_device` copies a strided view's whole span (probes:
+  `refs/audit/20261010-deep/worktrees/wt-18`)
 - order and counting operations: check their contracts, public laws and
   bench baselines
 - a split axis that its device count does not divide (a [4; 3] value split

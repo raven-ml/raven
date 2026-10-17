@@ -260,6 +260,12 @@ let claim ~by hs =
     (fun (_, Handle (i, x)) -> claim_handle ~by i x)
     (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
 
+let consume ~by op =
+  let (Prim.Operands xs) = Prim.operands op in
+  let hs = if Prim.exists is_handle op then handles ~by xs else [] in
+  Prim.iteri (fun i x -> Prim.alive ~by i x) op;
+  claim ~by hs
+
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
 let take ~by b = Rig.Claim.take ~why:("donated to " ^ by) b

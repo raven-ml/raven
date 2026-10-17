@@ -2403,7 +2403,12 @@ module Prim : sig
     'a
   (** [interpret ~name reach rule f] is [f i], [i] a new interpretation that
       gives the operations it reaches the meaning [rule i ~by op], live until
-      [f] returns or raises. [name] names it in messages, as ["Rune.grad"]. *)
+      [f] returns or raises. [name] names it in messages, as ["Rune.grad"].
+
+      An operation [rule] receives is the final consumer of the donated
+      handles among its operands ({!Nx.donate}), a movement too, since its
+      results hold no handle to pass on: their donors die when it is
+      received, and [rule] reads the handles' arrays. *)
 
   val traced :
     interpretation ->

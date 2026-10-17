@@ -8,9 +8,11 @@
     An operation goes to the interpretation {!Interp.receiver} gives. An
     [Extent] receiver first receives the operations of each formula operand its
     rule did not return, rebuilt at the operand's brand, in dependency order,
-    each node once per operand; the operation reads its results. Other operands
-    reach the rule as they are. An operation no interpretation reaches is
-    {!Exec.run}'s. *)
+    each node once per operand; the operation reads its results. The operation
+    is the final consumer of its donated handles, a movement too: it kills
+    their donors ({!Exec.consume}), and each handle reaches the rule as its
+    arrays. Other operands reach the rule as they are. An operation no
+    interpretation reaches is {!Exec.run}'s. *)
 
 open Value
 

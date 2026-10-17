@@ -103,6 +103,51 @@ let test_left_alone () =
   equal ~msg:"and still usable" (array float_exact) [| 0.; 0. |]
     (elements (Nx.add c c))
 
+(* An operation an interpretation receives consumes its handles as one
+   computed now does: an observer whose rule computes each operation, and a
+   tracer whose rule computes none, both kill the donor, naming the
+   consumer. *)
+type ('v, 's, 'd) Nx.Prim.payload += Tag : ('v, 's, 'd) Nx.Prim.payload
+
+let test_dies_when_received () =
+  let x = fresh [| 1.; 2. |] in
+  let y =
+    Nx.Prim.interpret ~name:"test.observer" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> Nx.mul (Nx.donate x) (fresh [| 3.; 4. |]))
+  in
+  equal ~msg:"the observer's result" (array float_exact) [| 3.; 8. |]
+    (elements y);
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.mul" (fun () -> Nx.add x x);
+  let x = fresh [| 1.; 2. |] and t = fresh [| 3.; 4. |] in
+  Nx.Prim.interpret ~name:"test.tracer" Values
+    (fun i ~by op ->
+      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
+    (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form t) Tag in
+      ignore (Nx.mul (Nx.donate x) t));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.mul" (fun () -> Nx.add x x);
+  (* A consumer that broadcasts its handle gives the rule a movement, which
+     is then the final consumer: under the observer, and under an Extent
+     rule that keeps its operands and computes nothing. *)
+  let wide = Nx.reshape [| 3; 2 |] (fresh (Array.make 6 10.)) in
+  let x = fresh [| 1.; 2. |] in
+  let y =
+    Nx.Prim.interpret ~name:"test.observer" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> Nx.add (Nx.donate x) wide)
+  in
+  equal ~msg:"the broadcast sum" (array float_exact)
+    [| 11.; 12.; 11.; 12.; 11.; 12. |]
+    (elements (Nx.reshape [| 6 |] y));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.add" (fun () -> Nx.add x x);
+  let x = fresh [| 1.; 2. |] in
+  Nx.Prim.interpret ~name:"test.keeper" Extent
+    (fun i ~by op ->
+      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
+    (fun _ -> ignore (Nx.add (Nx.donate x) wide));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.add" (fun () -> Nx.add x x)
+
 (* On two domains: reading a value and consuming it in an addition. Each run is
    explained by some order: a read before the consumer gives the elements, after
    it raises; one consumer of a value wins and any other raises. *)
@@ -334,6 +379,8 @@ let () =
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;
              test "a value of every set is not donated" test_left_alone;
+             test "a donor dies at a consumer an interpretation receives"
+               test_dies_when_received;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;

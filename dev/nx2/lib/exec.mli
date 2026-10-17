@@ -98,7 +98,14 @@ val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 
 val live : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [live x] is a handle's arrays as a live value, for an interpretation that
-    reads it without consuming it; any other value as it is. *)
+    reads them; any other value as it is. *)
+
+val consume : by:string -> 'r Value.prim -> unit
+(** [consume ~by op] checks [op]'s operands and kills the donor of each handle
+    among them, naming [by], as {!run} does before it reads them, a movement's
+    too, and leaves their memory readable through {!live}. Raises
+    [Invalid_argument] naming [Nx.donate] for two handles of one donor, then
+    naming [by] for an operand that died. *)
 
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 (** [on_host ~by x] is an array on the host holding [x]'s elements: a constant

@@ -215,8 +215,9 @@ let eval ~by op =
   match Interp.receiver ~by op with
   | None -> Exec.run ~by op
   | Some i ->
-      let (Prim.Operands xs) = Prim.operands op in
-      List.iteri (fun k (Any x) -> Prim.alive ~by k x) xs;
+      (* An operation the rule receives consumes its handles, a movement
+         too: the rule's results hold none to pass on. *)
+      Exec.consume ~by op;
       let op =
         if Prim.exists (fun x -> changes i x) op then
           Prim.map (fun x -> received i x) op
