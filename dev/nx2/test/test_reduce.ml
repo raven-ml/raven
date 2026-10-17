@@ -298,8 +298,7 @@ let reductions =
 
 (* [want], the bytes of [a]'s reduction along [axes] at float32 rounded
    into [a]'s narrow float, with each result that a NaN element reaches made
-   the first one's bytes, as [a] holds them: float32 holds a NaN quieted,
-   an e5m2 one without its payload. *)
+   the first one's bytes, as [a] holds them: float32 holds a NaN quieted. *)
 let first_nans (type v s) (a : (v, s) A.t) axes want =
   match A.dtype a with
   | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 ->

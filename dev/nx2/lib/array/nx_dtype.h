@@ -271,16 +271,21 @@ NX_INLINE float nx_e4m3fn_to_float(uint8_t c) {
 }
 
 /* e5m2: IEEE-like, with infinities; largest finite 57344. A code past the
-   largest finite one is the infinity's, S.11111.00, as in float16. */
+   largest finite one is the infinity's, S.11111.00, as in float16. A NaN
+   keeps its sign and the top bit of its payload and is quieted, as
+   float16's does: S.11111.1p, p binary32's fraction bit 21. */
 
 NX_INLINE uint8_t nx_float_to_e5m2(float f) {
+  uint32_t u = nx_float_bits(f) & 0x7FFFFFFFu;
   uint32_t q = nx_mini_saturate(f, 2, 15, 0x7C);
-  return (uint8_t)((nx_float_sign(f) << 7) | (nx_float_nan(f) ? 0x7F : q));
+  uint32_t nan = 0x7Eu | ((u >> 21) & 1u);
+  return (uint8_t)((nx_float_sign(f) << 7) | (u > 0x7F800000u ? nan : q));
 }
 
 NX_INLINE float nx_e5m2_to_float(uint8_t c) {
   uint32_t q = c & 0x7F;
-  float v = q > 0x7C ? NAN : q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15);
+  float nan = nx_bits_float(0x7FC00000u | ((q & 1u) << 21));
+  float v = q > 0x7C ? nan : q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15);
   return nx_with_sign(v, c >> 7);
 }
 

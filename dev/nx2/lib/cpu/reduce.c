@@ -61,7 +61,7 @@
    Results go into the destination where it is of the carrier, else into a
    carrier copy of it, rounded into it once at the end, as a cast does. A
    NaN does not survive that round trip: the carrier holds a NaN term
-   quieted, an e5m2 one without its payload (nx_dtype.h). So in a
+   quieted (nx_dtype.h). So in a
    destination of the operand's dtype, NaN results are replaced again
    after the rounding, from the operand's own terms.
 

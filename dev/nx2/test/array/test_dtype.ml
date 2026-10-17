@@ -478,31 +478,52 @@ let test_nan_sign (F (dt, _)) =
       equal ~msg bool (Float.sign_bit x) (Float.sign_bit (A.get a [| 0 |])))
     [ nan; -.nan ]
 
-(* A float16 store of a NaN sets its quiet bit and keeps its sign and the top
-   ten bits of its payload, as a run, one element at a time, and into an array:
-   the bits of each double and of its float16. *)
+(* A float16 or float8_e5m2 store of a NaN sets its quiet bit and keeps its
+   sign and the top bits of its payload, ten or one, as a run, one element at
+   a time, and into an array: the bits of each double and of its code. *)
+type payloads = Payloads : (float, 's) D.t * (int64 * int) list -> payloads
+
 let nan_payloads =
   [
-    (0x7FF0040000000000L, 0x7E01);
-    (0xFFF0040000000000L, 0xFE01);
-    (0x7FF8080000000000L, 0x7E02);
-    (0x7FF3FF0000000000L, 0x7EFF);
-    (0x7FF0000000000001L, 0x7E00);
+    Payloads
+      ( D.Float16,
+        [
+          (0x7FF0040000000000L, 0x7E01);
+          (0xFFF0040000000000L, 0xFE01);
+          (0x7FF8080000000000L, 0x7E02);
+          (0x7FF3FF0000000000L, 0x7EFF);
+          (0x7FF0000000000001L, 0x7E00);
+        ] );
+    Payloads
+      ( D.Float8_e5m2,
+        [
+          (0x7FF4000000000000L, 0x7F);
+          (0xFFF4000000000000L, 0xFF);
+          (0x7FF8000000000000L, 0x7E);
+          (0xFFFC000000000000L, 0xFF);
+          (0x7FF0000000000001L, 0x7E);
+        ] );
   ]
 
-let test_nan_payloads () =
-  let xs = List.map (fun (x, _) -> Int64.float_of_bits x) nan_payloads in
-  let want = List.map snd nan_payloads in
-  let bits a = A.to_array (Option.get (A.bitcast D.Uint16 a)) in
-  let n = List.length xs in
-  let run = A.of_array D.Float16 [| n |] (Array.of_list xs) in
-  equal ~msg:"of_array" (array int) (Array.of_list want) (bits run);
-  let one = A.create Rig.host D.Float16 [| n |] in
-  List.iteri (fun i x -> A.set one [| i |] x) xs;
-  equal ~msg:"set" (array int) (Array.of_list want) (bits one)
+let payloads_name (Payloads (dt, _)) = D.name dt
 
-(* A decoder in C gives a NaN code a quiet binary32 NaN of its sign; float16 and
-   bfloat16 keep the code's payload in binary32's top fraction bits. OCaml
+let test_nan_payloads (Payloads (dt, payloads)) =
+  let xs = List.map (fun (x, _) -> Int64.float_of_bits x) payloads in
+  let want = Array.of_list (List.map snd payloads) in
+  let bits a =
+    if D.bits dt = 8 then A.to_array (Option.get (A.bitcast D.Uint8 a))
+    else A.to_array (Option.get (A.bitcast D.Uint16 a))
+  in
+  let n = List.length xs in
+  let run = A.of_array dt [| n |] (Array.of_list xs) in
+  equal ~msg:"of_array" (array int) want (bits run);
+  let one = A.create Rig.host dt [| n |] in
+  List.iteri (fun i x -> A.set one [| i |] x) xs;
+  equal ~msg:"set" (array int) want (bits one)
+
+(* A decoder in C gives a NaN code a quiet binary32 NaN of its sign; float16,
+   bfloat16 and float8_e5m2 keep the code's payload in binary32's top fraction
+   bits, and float8_e4m3fn's one NaN of each sign has none. OCaml
    cannot see a signalling NaN, which a widening to double quiets, so the bits
    come from the C decoder. *)
 let test_decoded_nans (F (dt, f)) =
@@ -516,7 +537,8 @@ let test_decoded_nans (F (dt, f)) =
   let want c =
     let sign = ((c lsr (w - 1)) land 1) lsl 31 in
     let payload =
-      if w = 16 then (c land ((1 lsl f.frac) - 1)) lsl (23 - f.frac) else 0
+      if f.top = Ieee then (c land ((1 lsl f.frac) - 1)) lsl (23 - f.frac)
+      else 0
     in
     sign lor quiet lor payload
   in
@@ -1162,13 +1184,12 @@ let tests =
         cases ~name:format_name "a NaN keeps its sign"
           (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
           test_nan_sign;
-        test
-          "a float16 NaN is quieted, keeping its sign and the top of its \
-           payload"
-          test_nan_payloads;
+        cases ~name:payloads_name
+          "a NaN is quieted, keeping its sign and the top of its payload"
+          nan_payloads test_nan_payloads;
         cases ~name:format_name
-          "a decoder quiets a NaN and keeps its sign, and float16's and \
-           bfloat16's payload"
+          "a decoder quiets a NaN and keeps its sign, and the payload of the \
+           formats with infinities"
           (List.filter (fun (F (_, f)) -> f.top <> Finite) narrow)
           test_decoded_nans;
         cases ~name:format_name "every code reads as its definition's value"

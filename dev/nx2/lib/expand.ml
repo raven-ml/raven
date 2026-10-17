@@ -805,9 +805,8 @@ let widened_bits (D.Any from) b (D.Any into) =
       | D.Bit, D.Bool -> P.bits D.Bool (read D.Bit)
       | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
 
-(* float32 would not do for the floats of 8 or 16 bits: a store from it merges
-   float8_e5m2's NaNs into one code and quiets the 16-bit floats' signaling
-   NaNs. *)
+(* float32 would not do for the floats of 8 or 16 bits: a store from it quiets
+   their signalling NaNs. *)
 let kept (D.Any dt as d) =
   if base d then d
   else
