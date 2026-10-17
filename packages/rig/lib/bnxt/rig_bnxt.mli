@@ -70,7 +70,16 @@
       objects has returned.
 
     The NIC's requests to its firmware, which the other calls make, run one at a
-    time.
+    time. {!open_}, {!detach} and {!attach} hold a lock of rig.pci's for their
+    whole run ({!Rig_pci.Gpus}), a reset of the NIC included, so a call of
+    rig's from a callback on their thread meanwhile is made inside a lock
+    and raises [Invalid_argument] ([Rig]'s domains section).
+
+    {!open_}, {!val-close}, {!detach}, {!attach}, {!Region.host},
+    {!Region.device}, {!Region.deregister}, {!Qp.make}, {!Qp.connect},
+    {!Qp.poll}, {!Qp.wait} and {!Qp.destroy}, called from a callback inside a
+    lock ([Rig]'s domains section), raise [Invalid_argument], having changed
+    nothing ({!Rig_pci.section-errors}).
 
     {1:errors Errors}
 

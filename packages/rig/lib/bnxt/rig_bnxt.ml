@@ -90,6 +90,75 @@ let get s (off, n) =
   | 8 -> Int64.to_int (String.get_int64_le s off)
   | n -> invalid_argf "Rig_bnxt: a field of %d bytes" n
 
+(* Locks
+
+   A NIC's lock counts among the locks its thread holds (rig_hold in
+   rig_edge.h), from before its take to after its give, so that a call from a
+   signal handler, finaliser or Gc.Memprof callback inside it, of rig's or of
+   this library's, is refused as it starts and never waits for the lock its own
+   thread holds. It nests inside rig.pci's vendor and hold locks ([Gpus]), whose
+   stop takes it, and holds rig.pci's function and memory locks. It is held
+   across a request to the firmware, which waits for its answer: the
+   firmware's channel takes one request at a time. *)
+
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
+
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_bnxt: a lock taken again by the thread that holds it, from a \
+             signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
+
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [protect m f] is [f ()] holding [m], taken as the last step before the
+   handler and given back as the first step of both exits, where nothing
+   allocates or polls, so an exception anywhere in [f], an asynchronous one
+   too, leaves [m] free and the count right. *)
+let protect m f =
+  take m;
+  match f () with
+  | x ->
+      give m;
+      x
+  | exception e ->
+      give m;
+      reraise e
+
+(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
+   call comes from a signal handler, finaliser or Gc.Memprof callback inside
+   that lock, and would wait for it or see its section half done. A public
+   call that may take a lock starts with it. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_bnxt." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
+
 (* The firmware's channel *)
 
 (* [lock] serializes the requests and commands and guards [allocs]. Every
@@ -576,8 +645,9 @@ let live nic what =
 (* [f ()] with the NIC's channel to its firmware held, a refusal as an
    [Error]. *)
 let command nic what f =
+  check what;
   live nic what;
-  Mutex.protect nic.hw.lock (fun () -> guard f)
+  protect nic.hw.lock (fun () -> guard f)
 
 let is_bnxt (id : Machine.id) =
   id.vendor = 0x14e4 && id.class_ lsr 16 = 0x02 && id.device = 0x1760
@@ -621,7 +691,7 @@ let channel fn =
    freed. A NIC stopped otherwise is reset at its next open, as every open
    does. *)
 let stop hw () =
-  Mutex.protect hw.lock @@ fun () ->
+  protect hw.lock @@ fun () ->
   let clean =
     hw.registered
     && Function.failed hw.fn = None
@@ -694,6 +764,7 @@ let index what i =
   if i < 0 then invalid_argf "Rig_bnxt.%s: NIC %d is negative" what i
 
 let open_ ?(machine = Machine.this) i =
+  check "open_";
   index "open_" i;
   let name = Gpus.name nics i in
   Gpus.open_ nics machine i (fun h fn ->
@@ -703,16 +774,19 @@ let open_ ?(machine = Machine.this) i =
       boot ~name h hw)
 
 let close nic =
+  check "close";
   if not nic.closed then begin
     nic.closed <- true;
     ignore (Gpus.stop nic.hold)
   end
 
 let detach i =
+  check "detach";
   index "detach" i;
   Gpus.detach nics Machine.this i
 
 let attach i =
+  check "attach";
   index "attach" i;
   Gpus.attach nics Machine.this i
 
@@ -1091,7 +1165,7 @@ module Qp = struct
     Window.set32 q.ring (sge + fst D.Sq_sge.l_key) r.key;
     Window.set32 q.ring (sge + fst D.Sq_sge.size) n
 
-  let check qp what side (r : Region.t) at n =
+  let check_post qp what side (r : Region.t) at n =
     usable qp what;
     if r.nic != qp.nic then
       invalid_argf "Rig_bnxt.%s: a region of another NIC" what;
@@ -1110,7 +1184,7 @@ module Qp = struct
   (* A post on a failed queue pair writes nothing: its completion is the queue
      pair's failure. *)
   let send qp r ~at n =
-    check qp "Qp.send" Send r at n;
+    check_post qp "Qp.send" Send r at n;
     let s = qp.sends in
     let q = s.entries and i = s.posted in
     let slot = i mod ring_entries in
@@ -1143,7 +1217,7 @@ module Qp = struct
     s.posted <- i + 1
 
   let receive qp r ~at n =
-    check qp "Qp.receive" Receive r at n;
+    check_post qp "Qp.receive" Receive r at n;
     let s = qp.receives in
     let q = s.entries and i = s.posted in
     let slot = i mod ring_entries in
@@ -1250,11 +1324,13 @@ module Qp = struct
   let due r = r.posted > r.taken
 
   let poll qp side =
+    check "Qp.poll";
     usable qp "Qp.poll";
     let r = rings qp side in
     if due r then next qp r else None
 
   let wait qp side ~us =
+    check "Qp.wait";
     if us < 0 then invalid_argf "Rig_bnxt.Qp.wait: %d us" us;
     usable qp "Qp.wait";
     let r = rings qp side in

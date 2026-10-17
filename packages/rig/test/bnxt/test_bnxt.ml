@@ -56,9 +56,48 @@ let region nic n = ok "a region" (B.Region.host nic n)
 let pattern n =
   String.init n (fun i -> Char.chr (((i * 31) + (i lsr 8)) land 0xff))
 
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+(* [inside_lock f] is [f ()] while the calling thread holds one more lock, as a
+   callback inside one does: the message of the [Invalid_argument] it raises. *)
+let inside_lock f =
+  hold ();
+  let r =
+    Fun.protect ~finally:unhold (fun () ->
+        match f () with
+        | () -> None
+        | exception Invalid_argument why -> Some why)
+  in
+  match r with None -> fail "the call ran inside a lock" | Some why -> why
+
+let test_inside_lock () =
+  let before = holds () in
+  List.iter
+    (fun (what, f) ->
+      starts_with ~msg:what
+        ~affix:(Printf.sprintf "Rig_bnxt.%s: called from" what)
+        (inside_lock f))
+    [
+      ("open_", fun () -> ignore (B.open_ (B.count ())));
+      ("detach", fun () -> ignore (B.detach 0));
+      ("attach", fun () -> ignore (B.attach 0));
+    ];
+  equal ~msg:"locks held" int before (holds ());
+  match B.open_ (B.count ()) with
+  | Ok _ -> fail "opened a NIC past the last"
+  | Error e -> contains ~msg:"an open outside a lock" ~sub:"no such NIC" e
+
 let refusals =
   group "refusals"
     [
+      test
+        "an open, a detach and an attach from inside a lock raise \
+         Invalid_argument as they start, and an open after runs"
+        test_inside_lock;
       test "a NIC past the last is an error naming it" (fun () ->
           let i = B.count () in
           let name = if i = 0 then "BNXT" else Printf.sprintf "BNXT:%d" i in
