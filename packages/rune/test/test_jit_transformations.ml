@@ -501,20 +501,20 @@ let collective a x =
 let collectives =
   let a = Rune.axis () in
   let g = Rune.jit' (collective a) in
-  prop ~count:8 "vmap (grad (jit f)) is vmap (grad f) at two lane counts"
-    Gen.(pair (of_list ~pp:Nx.pp_shape [ [| 3 |]; [| 0 |] ]) (int_range 0 1000))
-    (fun (row, seed) ->
-      cover "no element" (Array.fold_left ( * ) 1 row = 0);
+  (* Each case runs both rows, so every run reaches the row of no element. *)
+  prop ~count:4 "vmap (grad (jit f)) is vmap (grad f) at two lane counts"
+    Gen.(int_range 0 1000)
+    (fun seed ->
       List.iter
-        (fun n ->
+        (fun (row, n) ->
           let x = values Nx.float32 (Array.append [| n |] row) seed in
           let map f = Rune.vmap' ~axis:a (Rune.grad' f) x in
           equal
-            ~msg:(Printf.sprintf "%d lanes" n)
+            ~msg:(Format.asprintf "%d lanes of %a" n Nx.pp_shape row)
             (close Nx.float32)
             (map (collective a))
             (map g))
-        [ 4; 7 ])
+        [ ([| 3 |], 4); ([| 3 |], 7); ([| 0 |], 4); ([| 0 |], 7) ])
 
 (* Refusals *)
 
