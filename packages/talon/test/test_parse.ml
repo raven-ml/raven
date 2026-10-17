@@ -758,6 +758,70 @@ let fewer ty lo hi =
   Array.fold_left ( + ) 0
     (Array.map2 (fun e g -> Bool.to_int (e <> g)) expected got)
 
+(* [shortest_nearest ty xs] is the text of each of the finite, positive [xs],
+   values of [ty], that the printer's contract states: of the fewest
+   significant digits that read back as it, the nearest to it, ties to an
+   even last digit. The candidates of [p] digits are the two [p]-digit
+   decimals around the value; every value still without a text has both
+   read back at once. *)
+let shortest_nearest ty xs =
+  let n = Array.length xs in
+  let out = Array.make n None in
+  let decimals = Array.map decimal xs in
+  for p = 1 to 17 do
+    let open_ = List.filter (fun i -> out.(i) = None) (List.init n Fun.id) in
+    (* Each candidate: its value, whether its last digit is even, its text. *)
+    let around i =
+      let d, e = decimals.(i) in
+      let len = String.length d in
+      if len <= p then [ ((d, e), true, format_e (p - 1) false (d, e)) ]
+      else
+        let lo = String.sub d 0 p and up = increment (String.sub d 0 p) in
+        let e' = e + len - p in
+        let up' = String.sub up (String.length up - p) p in
+        let even s = (Char.code s.[String.length s - 1] - 48) land 1 = 0 in
+        [
+          (normalize lo e', even lo, format_e (p - 1) false (normalize lo e'));
+          (normalize up e', even up', format_e (p - 1) false (normalize up e'));
+        ]
+    in
+    let candidates = List.map (fun i -> (i, around i)) open_ in
+    let texts =
+      List.concat_map (fun (_, cs) -> List.map (fun (_, _, t) -> Some t) cs)
+        candidates
+    in
+    let back = ref (Array.to_list (rows ty texts)) in
+    List.iter
+      (fun (i, cs) ->
+        let fits =
+          List.filter
+            (fun _ ->
+              match !back with
+              | y :: rest ->
+                  back := rest;
+                  Option.get y = xs.(i)
+              | [] -> assert false)
+            cs
+        in
+        let nearer (d0, even0, _) (d1, _, _) =
+          let c =
+            compare_decimal
+              (distance d0 decimals.(i))
+              (distance d1 decimals.(i))
+          in
+          c < 0 || (c = 0 && even0)
+        in
+        match fits with
+        | [] -> ()
+        | [ (_, _, t) ] -> out.(i) <- Some (positional t)
+        | [ a; b ] ->
+            let _, _, t = if nearer a b then a else b in
+            out.(i) <- Some (positional t)
+        | _ -> assert false)
+      candidates
+  done;
+  Array.map Option.get out
+
 (* [floats ~p ~emin of_bits] draws the floats of [p] significant bits and least
    normal exponent [emin], of the bits [of_bits] reads: any bits, subnormals,
    powers of two and ties, [o / 4] for an odd [o] of [p] bits, which lies
@@ -857,6 +921,18 @@ let printing =
               fewer Type.float32 (-149) 127;
               fewer Type.float64 (-1074) 1023;
             ]);
+      test
+        "every float32 and float64 power of two is the nearest of its fewest \
+         digits"
+        (fun () ->
+          let powers lo hi =
+            Array.init (hi - lo + 1) (fun k -> Float.ldexp 1. (lo + k))
+          in
+          let f32 = powers (-149) 127 and f64 = powers (-1074) 1023 in
+          equal (array string) (shortest_nearest Type.float32 f32)
+            (printer Type.float32 f32);
+          equal (array string) (shortest_nearest Type.float64 f64)
+            (printer Type.float64 f64));
       test "every float16 is the reference text, except 2^-6" (fun () ->
           let n = 0x7c00 in
           let xs =

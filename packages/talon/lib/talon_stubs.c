@@ -645,8 +645,9 @@ static const uint64_t G[][2] = {
   { 0x7fbbd8fe5f5e6e27, 0x497a3a2704eec3df }, /* 292 */
 };
 
-/* floor(q log10 2), floor(log10(3/4 2^q)) and floor(e log2 10), exact for |q|
-   and |e| below 1100. */
+/* Logarithms of powers by multiplication (Giulietti, Results 13 to 15):
+   floor(q log10 2), floor(log10(3/4 2^q)) and floor(e log2 10), exact for
+   |q| up to 2 500 000 and |e| up to 1 800 000. */
 static inline int flog10_pow2(int q)
 {
   return (int)(((int64_t)q * 661971961083) >> 41);
@@ -662,68 +663,95 @@ static inline int flog2_pow10(int e)
   return (int)(((int64_t)e * 913124641741) >> 38);
 }
 
-static inline uint64_t mul_high(uint64_t a, uint64_t b)
+/* A 192-bit natural, hi 2^64 + lo. */
+typedef struct {
+  u128 hi;
+  uint64_t lo;
+} u192;
+
+/* [mul_g(w, g1, g0)] is w g for g = g1 2^63 + g0 and w below 2^61. */
+static u192 mul_g(uint64_t w, uint64_t g1, uint64_t g0)
 {
-  return (uint64_t)(((u128)a * b) >> 64);
+  u128 x = (u128)w * g0;
+  u128 y = (u128)w * g1;
+  u128 low = ((u128)(uint64_t)(y & 1) << 63) + (uint64_t)x;
+  u192 r = { (y >> 1) + (x >> 64) + (low >> 64), (uint64_t)low };
+  return r;
 }
 
-/* [round_to_odd(g1, g0, cp)] is floor(g cp / 2^127) for g = g1 2^63 + g0, its
-   last bit set when the remainder is not zero. The low 64 bits of g0 cp are
-   left out of the remainder: g's excess over 10^-k 2^-r stays in them, so an
-   exact product reads as exact. */
-static inline uint64_t round_to_odd(uint64_t g1, uint64_t g0, uint64_t cp)
+/* Shortest digits
+
+   A float v = c 2^q reads back from every real of its rounding interval R,
+   the reals nearer to v than to its neighbours, the ends included when c is
+   even. Let k = floor(log10 |R|). R holds at least one multiple of 10^k and
+   at most one of 10^(k+1), so the decimal of R with the fewest digits is
+   that multiple of 10^(k+1) when there is one, and otherwise s 10^k or
+   (s + 1) 10^k, s = floor(v 10^-k), whichever is in R, the nearer to v when
+   both are.
+
+   The tests compare the ends and v, scaled by 4 10^-k, with integers. 10^-k
+   is replaced by its overestimate g 2^r from G, and each scaled value x by
+   ro(x): floor(x) when the fraction of x / 2 is below 2^-64, floor(x) with
+   its last bit set otherwise. Nadezhin's bound, proved for every float64
+   and float32 (float16's are few enough to test), keeps 2 v 10^-k and the
+   ends at least 2^-64 from an integer unless they are one. g's excess is
+   far smaller, so ro(x) is the exact x rounded to odd, or x itself when it
+   is an even integer, and comparing ro(x) with an even integer answers as
+   the exact x would. */
+
+/* [ro(x, g1, g0, h)] is ro of x 2^h g 2^-127, x 2^h below 2^60: the shift h
+   puts the fraction of x 2^h g / 2^128 in its 128 low bits. */
+static inline uint64_t ro(uint64_t x, uint64_t g1, uint64_t g0, int h)
 {
-  uint64_t x1 = mul_high(g0, cp);
-  uint64_t y0 = g1 * cp;
-  uint64_t y1 = mul_high(g1, cp);
-  uint64_t z = (y0 >> 1) + x1;
-  uint64_t vbp = y1 + (z >> 63);
-  uint64_t mask = ((uint64_t)1 << 63) - 1;
-  return vbp | (((z & mask) + mask) >> 63);
+  u192 b = mul_g(x << h, g1, g0);
+  uint64_t floor4 = (uint64_t)(b.hi >> 63);
+  uint64_t frac = (uint64_t)b.hi & (((uint64_t)1 << 63) - 1);
+  return floor4 | (frac != 0);
 }
 
 /* [shortest(c, q, closer, s, k)] sets [*s 10^*k] to the decimal of the fewest
-   digits in the rounding interval of c 2^q, c > 0, the nearest to it, ties to
-   even. The interval's ends are in it when c is even. [closer] is true when
-   the float below c 2^q lies at half the distance of the one above. */
+   digits in the rounding interval of c 2^q, c from 1 to 2^53, the nearest to
+   it, ties to even. The interval's ends are in it when c is even. [closer]
+   is true when the float below c 2^q lies at half the distance of the one
+   above. */
 static void shortest(uint64_t c, int q, int closer, uint64_t *s, int *k)
 {
+  /* The ends and v in units of 2^(q - 2). Below a power of two whose
+     predecessor is closer, the low end is a quarter step down. */
+  uint64_t lo = 4 * c - (closer ? 1 : 2), mid = 4 * c, hi = 4 * c + 2;
+  int e = closer ? flog10_three_quarters_pow2(q) : flog10_pow2(q);
+  const uint64_t *g = G[e - K_MIN];
+  int h = q + flog2_pow10(-e) + 2;
+  uint64_t vl = ro(lo, g[0], g[1], h);
+  uint64_t v = ro(mid, g[0], g[1], h);
+  uint64_t vr = ro(hi, g[0], g[1], h);
+  /* An end out of the interval needs a strict comparison: i < j is
+     i + 1 <= j. */
   uint64_t out = c & 1;
-  uint64_t cb = c << 2, cbr = cb + 2, cbl;
-  int kk;
-  if (closer) {
-    cbl = cb - 1;
-    kk = flog10_three_quarters_pow2(q);
-  }
-  else {
-    cbl = cb - 2;
-    kk = flog10_pow2(q);
-  }
-  int h = q + flog2_pow10(-kk) + 2;
-  uint64_t g1 = G[kk - K_MIN][0], g0 = G[kk - K_MIN][1];
-  uint64_t vb = round_to_odd(g1, g0, cb << h);
-  uint64_t vbl = round_to_odd(g1, g0, cbl << h);
-  uint64_t vbr = round_to_odd(g1, g0, cbr << h);
-  uint64_t lo = vbl + out, hi = vbr - out;
-  uint64_t si = vb >> 2;
-  /* At most one multiple of 10^(kk + 1) lies in the interval. */
-  if (si >= 10) {
-    uint64_t sp = si / 10 * 10, tp = sp + 10;
-    int u = lo <= sp << 2, w = tp << 2 <= hi;
-    if (u != w) {
-      *s = u ? sp : tp;
-      *k = kk;
+  uint64_t d = v >> 2;
+  *k = e;
+  /* One digit fewer: the multiples of 10^(k+1) around v. With d below 10,
+     d 10^k already has one digit. */
+  if (d >= 10) {
+    uint64_t below = d - d % 10, above = below + 10;
+    if (vl + out <= 4 * below) {
+      *s = below;
+      return;
+    }
+    if (4 * above + out <= vr) {
+      *s = above;
       return;
     }
   }
-  uint64_t t = si + 1;
-  int u = lo <= si << 2, w = t << 2 <= hi;
-  if (u != w) *s = u ? si : t;
-  else {
-    uint64_t mid = (si + t) << 1;
-    *s = vb < mid || (vb == mid && (si & 1) == 0) ? si : t;
+  int d_in = vl + out <= 4 * d;
+  int up_in = 4 * (d + 1) + out <= vr;
+  if (d_in != up_in) {
+    *s = d_in ? d : d + 1;
+    return;
   }
-  *k = kk;
+  /* Both in: the nearer, compared at 4 v with 2 (d + d + 1). */
+  uint64_t twice = 2 * (2 * d + 1);
+  *s = v < twice || (v == twice && d % 2 == 0) ? d : d + 1;
 }
 
 /* [put_digits(p, s, n)] writes the [n] digits of [s] at [p]. */
@@ -841,22 +869,6 @@ value talon_float_text_byte(value x, value p, value emin, value b)
    powers or outside the normal floats, the reader is NaN and its caller reads
    the text exactly. This is Eisel and Lemire's test (D. Lemire, "Number
    Parsing at a Gigabyte per Second", 2021) with Schubfach's table. */
-
-/* A 192-bit natural, hi 2^64 + lo. */
-typedef struct {
-  u128 hi;
-  uint64_t lo;
-} u192;
-
-/* [mul_g(w, g1, g0)] is w g for g = g1 2^63 + g0 and w below 2^61. */
-static u192 mul_g(uint64_t w, uint64_t g1, uint64_t g0)
-{
-  u128 x = (u128)w * g0;
-  u128 y = (u128)w * g1;
-  u128 low = ((u128)(uint64_t)(y & 1) << 63) + (uint64_t)x;
-  u192 r = { (y >> 1) + (x >> 64) + (low >> 64), (uint64_t)low };
-  return r;
-}
 
 static int bits_u128(u128 x)
 {

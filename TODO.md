@@ -448,8 +448,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - private modules: each gets an .mli per doc/dev/documentation.md, rig as
   the reference (143 lib/ modules have none; jera, norn and ymir dropped
   theirs)
-- licences: rewrite talon's Schubfach (OpenJDK, GPL) and ymir's WCS pole
-  (WCSLIB, LGPL) from their papers; one copyright line: the LICENSE files
+- licences: rewrite ymir's WCS pole (WCSLIB, LGPL) from its papers; one copyright line: the LICENSE files
   say "2025, Thibaut Mattio", the source headers "2026 The Raven authors"
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
   drop the git pins in dune-project and ci.yml
