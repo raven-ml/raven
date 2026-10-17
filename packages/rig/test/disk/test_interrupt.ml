@@ -98,10 +98,10 @@ let in_child what f =
 
 (* Opens and reads every file, which leaves the first one's descriptor closed
    for the others, then reads the first file interrupted from its [n]-th
-   allocation: the read reopens its descriptor and closes the least recently
-   used other one, and leaves no lock held. Is whether the allocation was
-   reached. *)
-let interrupt n =
+   allocation, where [landing] lands: the read reopens its descriptor and
+   closes the least recently used other one, and leaves no lock held. Is
+   whether the allocation was reached. *)
+let interrupt ?landing n =
   let at = strf ", interrupted from allocation %d" n in
   in_child at (fun () ->
       let base = descriptors () in
@@ -113,7 +113,7 @@ let interrupt n =
       let first = List.hd files in
       let h = B.create Rig.host (B.length first) in
       let reached =
-        Rig_support.interrupted n (fun () -> B.copy ~src:first ~dst:h)
+        Rig_support.interrupted ?landing n (fun () -> B.copy ~src:first ~dst:h)
       in
       equal ~msg:"locks held after" int 0 (Rig_support.holds ());
       List.iteri
@@ -125,11 +125,11 @@ let interrupt n =
       equal ~msg:"descriptors once collected" int base (descriptors ());
       reached)
 
-let test_interrupt () =
+let test_interrupt landing () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Rig_support.needs_fork ();
   ignore (Lazy.force paths);
-  let rec from n = if interrupt n then from (n + 1) in
+  let rec from n = if interrupt ~landing n then from (n + 1) in
   from 1
 
 (* Writes a file, reads another, then syncs the first interrupted from the
@@ -283,7 +283,11 @@ let () =
             test
               "a read that reopens a descriptor and closes another keeps the \
                bound and leaks no descriptor"
-              test_interrupt;
+              (test_interrupt Raise);
+            test
+              "a read interrupted by a signal at any allocation leaks no \
+               descriptor"
+              (test_interrupt Signal);
             test
               "a barrier under its file's lock and the table's leaves no lock \
                held"

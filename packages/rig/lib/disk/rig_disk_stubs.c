@@ -9,7 +9,12 @@
 
    A descriptor crosses to OCaml as an int: a file descriptor on POSIX, a
    HANDLE on Windows. A system call's failure raises [Unix.Unix_error],
-   which the OCaml side reports naming the file. */
+   which the OCaml side reports naming the file.
+
+   Opening and closing release the runtime running no signal handler
+   first: a handler that raised there would end the call holding what it
+   took, the path's copy before an open or the descriptor a close marked
+   closed, which nothing gives back then. */
 
 #define _GNU_SOURCE
 
@@ -18,6 +23,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/osdeps.h>
+#include <caml/signals.h>
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 #include <errno.h>
@@ -86,7 +92,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
                      int64_t *file_size, unsigned char *id, size_t *len) {
   int create = mode == MODE_CREATE;
   wchar_t *wpath = caml_stat_strdup_to_utf16(path);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   HANDLE h = CreateFileW(
       wpath, mode == MODE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
@@ -127,7 +133,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   if (code != 0 && h != INVALID_HANDLE_VALUE) CloseHandle(h);
   /* The file this call created and could not size goes. */
   if (unsized) DeleteFileW(wpath);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   caml_stat_free(wpath);
   *handle = (intnat)h;
   return code;
@@ -207,7 +213,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
                      int64_t *file_size, unsigned char *id, size_t *len) {
   int create = mode == MODE_CREATE;
   char *p = caml_stat_strdup(path);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   /* Non-blocking, so that a FIFO is refused rather than waited on. It changes
      nothing for a regular file. */
   int flags = O_CLOEXEC | O_NONBLOCK |
@@ -236,7 +242,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   if (code != 0 && fd >= 0) close(fd);
   /* The file this call created and could not size goes. */
   if (unsized) unlink(p);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   caml_stat_free(p);
   *handle = fd;
   return code;
@@ -326,9 +332,9 @@ value caml_rig_disk_open(value v_path, value v_mode, value v_size) {
 /* [close h] closes the descriptor [h]. Releases the runtime. */
 value caml_rig_disk_close(value v_handle) {
   intnat h = Long_val(v_handle);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   close_file(h);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_unit;
 }
 
