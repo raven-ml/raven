@@ -2366,7 +2366,7 @@ let batch x = Array.sub (shape x) 0 (ndim x - 2)
 let uncomputed ~by x s = beside ~by x (fill ~by (dtype x) s (D.zero (dtype x)))
 
 (* The first [rows] rows and [cols] columns of [x]'s matrices. *)
-let block ~by rows cols x =
+let corner ~by rows cols x =
   let s = shape x in
   let r = Array.length s in
   let ranges =
@@ -2447,8 +2447,8 @@ let lu a =
   let f, _, perm = routine ~by (Lu a) in
   let m = dim (-2) a and n = dim (-1) a in
   let k = Stdlib.min m n in
-  let l = unit_lower ~by (block ~by m k f) in
-  let u = triangle ~by `Above 0 (block ~by k n f) in
+  let l = unit_lower ~by (corner ~by m k f) in
+  let u = triangle ~by `Above 0 (corner ~by k n f) in
   (perm, l, u)
 
 let svd ?(vectors = true) ?(factors = Reduced) a =
@@ -3982,6 +3982,391 @@ let map_segments ~segments ids f x =
     move ~by
       (Reshape (Array.append s out))
       (ternary ~by Where named y (fill ~by (dtype y) [||] (D.zero (dtype y))))
+
+(* Fourier transforms *)
+
+type fft_norm = Backward | Forward | Ortho
+
+let transform ~by f = Eval.eval ~by (Value.Fft f)
+
+(* The axes [l] of [x] (its last by default), distinct, and the points along
+   each: [s]'s, or [points last d] of each extent [d], [last] for the last
+   axis. *)
+let transform_axes ~by ?(points = fun _ d -> d) x l s =
+  if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
+  let axes = match l with None -> [ ndim x - 1 ] | Some l -> axes ~by x l in
+  if axes = [] then invalid_argf "%s: no axis to transform" by;
+  let n = List.length axes in
+  let s =
+    match s with
+    | None -> List.mapi (fun i a -> points (i = n - 1) (dim a x)) axes
+    | Some s when List.length s <> n ->
+        invalid_argf "%s: %d lengths for %d axes" by (List.length s) n
+    | Some s ->
+        List.iter (fun d -> if d < 0 then invalid_argf "%s: length %d" by d) s;
+        s
+  in
+  (axes, s)
+
+(* [x] cut to [d] elements along each axis [a] of [axes], or extended with
+   zeros. *)
+let resized ~by x axes sizes =
+  let s = shape x in
+  if List.for_all2 (fun a d -> s.(a) = d) axes sizes then x
+  else
+    let target = Array.copy s in
+    List.iter2 (fun a d -> target.(a) <- d) axes sizes;
+    let kept = Array.mapi (fun i d -> whole (Stdlib.min d target.(i))) s in
+    let piece = move ~by (Slice kept) x in
+    assemble ~by (dtype x) target (D.zero (dtype x)) [ (kept, piece) ]
+
+(* The factor of a transform of [n] points in all, forward or not, under
+   [norm]. *)
+let factor norm ~forward n =
+  if n = 0 then 1.
+  else
+    match (norm, forward) with
+    | Backward, true | Forward, false -> 1.
+    | Backward, false | Forward, true -> 1. /. Float.of_int n
+    | Ortho, _ -> 1. /. Float.sqrt (Float.of_int n)
+
+let scaled ~by c x =
+  if c = 1. then x else binary ~by (Binary Mul) x (fill ~by (dtype x) [||] c)
+
+(* [z] times the real [c] part by part: a complex product by [c + 0i] makes a
+   NaN part of an infinite one. *)
+let scaled_parts (type s d) ~by c (z : (Complex.t, s, d) t) :
+    (Complex.t, s, d) t =
+  let parts (type f) (f : (float, f) D.t) =
+    let p = Eval.eval ~by (Value.Bitcast (f, z)) in
+    Eval.eval ~by (Value.Bitcast (dtype z, scaled ~by c p))
+  in
+  if c = 1. then z
+  else
+    match dtype z with
+    | D.Complex64 -> parts D.Float32
+    | D.Complex128 -> parts D.Float64
+
+(* A real transform's compute formats: a float format and the complex one of
+   its precision. *)
+type pair = Pair : (float, 'r) D.t * (Complex.t, 'c) D.t -> pair
+
+(* The pair of the wider of a float [dt]'s precision and a complex [c]'s, at
+   least float32's. *)
+let pair dt c =
+  if D.bits dt > 32 || D.bits c > 64 then Pair (D.Float64, D.Complex128)
+  else Pair (D.Float32, D.Complex64)
+
+(* The other axes, ascending, the real one, the last of [axes], and whether it
+   is past the others: the kernels' real transforms run along the last of
+   ascending axes. *)
+let real_axes axes =
+  match List.rev axes with
+  | [] -> invalid_arg "real_axes"
+  | real :: others ->
+      let others = List.sort compare others in
+      (Array.of_list others, real, List.for_all (fun a -> a < real) others)
+
+let complex_by ~by direction ?axes ?s ?(norm = Backward) x =
+  let axes, sizes = transform_axes ~by x axes s in
+  let x = resized ~by x axes sizes in
+  let n = List.fold_left ( * ) 1 sizes in
+  let axes = Array.of_list (List.sort compare axes) in
+  let y = transform ~by (C2c { direction; axes; x }) in
+  let forward = direction = Nx_kernel.Forward in
+  scaled_parts ~by (factor norm ~forward n) y
+
+let fft ?axes ?s ?norm x =
+  complex_by ~by:"Nx.fft" Nx_kernel.Forward ?axes ?s ?norm x
+
+let ifft ?axes ?s ?norm x =
+  complex_by ~by:"Nx.ifft" Nx_kernel.Inverse ?axes ?s ?norm x
+
+let rfft dt ?axes ?s ?(norm = Backward) x =
+  let by = "Nx.rfft" in
+  let axes, sizes = transform_axes ~by x axes s in
+  let x = resized ~by x axes sizes in
+  let n = List.fold_left ( * ) 1 sizes in
+  let (Pair (r, c)) = pair (dtype x) dt in
+  let x = cast_by ~by r x in
+  let others, real, last = real_axes axes in
+  let y =
+    if last then
+      transform ~by
+        (R2c { dtype = c; axes = Array.append others [| real |]; x })
+    else
+      let y = transform ~by (R2c { dtype = c; axes = [| real |]; x }) in
+      if others = [||] then y
+      else
+        transform ~by
+          (C2c { direction = Nx_kernel.Forward; axes = others; x = y })
+  in
+  cast_by ~by dt (scaled_parts ~by (factor norm ~forward:true n) y)
+
+let irfft dt ?axes ?s ?(norm = Backward) z =
+  let by = "Nx.irfft" in
+  let default last d =
+    if not last then d
+    else if d = 0 then invalid_argf "%s: %a has no bin to invert" by pp_value z
+    else 2 * (d - 1)
+  in
+  let axes, sizes = transform_axes ~by ~points:default z axes s in
+  let n = List.fold_left ( * ) 1 sizes in
+  let others, real, last = real_axes axes in
+  let last_axis = List.length sizes - 1 in
+  let points = List.nth sizes last_axis in
+  let bins =
+    List.mapi (fun i d -> if i = last_axis then (d / 2) + 1 else d) sizes
+  in
+  let z = resized ~by z axes bins in
+  let (Pair (r, c)) = pair dt (dtype z) in
+  let z = cast_by ~by c z in
+  let y =
+    if last then
+      let axes = Array.append others [| real |] in
+      transform ~by (C2r { dtype = r; n = points; axes; x = z })
+    else
+      let z =
+        if others = [||] then z
+        else
+          transform ~by
+            (C2c { direction = Nx_kernel.Inverse; axes = others; x = z })
+      in
+      transform ~by (C2r { dtype = r; n = points; axes = [| real |]; x = z })
+  in
+  cast_by ~by dt (scaled ~by (factor norm ~forward:false n) y)
+
+(* Cosine and sine transforms, each from one complex transform along the last
+   axis. *)
+
+type trig_type = Type_1 | Type_2 | Type_3 | Type_4
+
+let along_last x range =
+  slice (List.init (ndim x - 1) (fun _ -> A) @ [ range ]) x
+
+let flipped x = flip ~axes:[ -1 ] x
+
+(* [x]'s last axis extended with [n] zeros. *)
+let extended_by ~by x n =
+  let s = Array.copy (shape x) in
+  s.(Array.length s - 1) <- n;
+  concatenate ~axis:(-1) [ x; fill ~by (dtype x) s (D.zero (dtype x)) ]
+
+let odd_bins x n = take ~axis:(-1) (arange D.Int64 1 (2 * n) 2) x
+
+(* The [n] elements of [dt] along one axis, [f k] at [k], computed at
+   float64. *)
+let along_axis ~by dt n f =
+  leaf ~by dt [| n |] (at dt (f E.(cast D.Float64 (coord 0))))
+
+(* [x]'s last axis's first element, or its last, times [c]. *)
+let scale_end ~by ~first c x =
+  let n = dim (-1) x in
+  let k = Float.of_int (if first then 0 else n - 1) in
+  let lit = E.const D.Float64 in
+  let factors i = E.(where (i = lit k) (lit c) (lit 1.)) in
+  mul x (along_axis ~by (dtype x) n factors)
+
+let rec cosine : type r c d.
+    by:string ->
+    trig_type ->
+    (float, r) D.t ->
+    (Complex.t, c) D.t ->
+    (float, r, d) t ->
+    (float, r, d) t =
+ fun ~by kind f c x ->
+  let n = dim (-1) x in
+  let spectrum y = fft (cast c y) in
+  match kind with
+  | Type_1 ->
+      let interior = flipped (along_last x (R (1, n - 1))) in
+      let mirrored = concatenate ~axis:(-1) [ x; interior ] in
+      real f (along_last (spectrum mirrored) (R (0, n)))
+  | Type_2 ->
+      (* [2 Re (X[k] e^(-iπk/2n))] of the even elements, then the odd ones
+         reversed. *)
+      let even = along_last x (Rs (0, n, 2)) in
+      let odd = flipped (along_last x (Rs (1, n, 2))) in
+      let z = spectrum (concatenate ~axis:(-1) [ even; odd ]) in
+      let step = Float.pi /. (2. *. Float.of_int n) in
+      let theta =
+        along_axis ~by f n (fun k -> E.(k * const D.Float64 step))
+      in
+      let re = mul (real f z) (cos theta) and im = mul (imag f z) (sin theta) in
+      mul_s (add re im) 2.
+  | Type_3 ->
+      let tail = flipped (along_last x (R (1, n))) in
+      let mirrored =
+        concatenate ~axis:(-1) [ extended_by ~by x ((2 * n) + 1); tail ]
+      in
+      real f (odd_bins (spectrum mirrored) n)
+  | Type_4 -> odd_bins (cosine ~by Type_2 f c (extended_by ~by x n)) n
+
+let sine (type r c d) ~by kind (f : (float, r) D.t) (c : (Complex.t, c) D.t)
+    (x : (float, r, d) t) : (float, r, d) t =
+  let n = dim (-1) x in
+  let lit = E.const D.Float64 in
+  let signs =
+    along_axis ~by f n (fun k ->
+        E.(where (rem k (lit 2.) = lit 0.) (lit 1.) (lit (-1.))))
+  in
+  match kind with
+  | Type_1 ->
+      let s = Array.copy (shape x) in
+      s.(Array.length s - 1) <- 1;
+      let zero = fill ~by f s 0. in
+      let odd = concatenate ~axis:(-1) [ zero; x; zero; neg (flipped x) ] in
+      neg (imag f (along_last (fft (cast c odd)) (R (1, n + 1))))
+  | Type_2 -> flipped (cosine ~by Type_2 f c (mul x signs))
+  | Type_3 -> mul signs (cosine ~by Type_3 f c (flipped x))
+  | Type_4 -> flipped (cosine ~by Type_4 f c (mul x signs))
+
+type family = Cosine | Sine
+
+(* The orthonormal transform's end weights: [√2] on the way in and [1/√2] on
+   the way out, where the plain transform weighs an end point apart. *)
+let ortho_ends ~by family kind ~input x =
+  let w = if input then Float.sqrt 2. else 1. /. Float.sqrt 2. in
+  match (family, kind, input) with
+  | Cosine, Type_1, _ ->
+      scale_end ~by ~first:false w (scale_end ~by ~first:true w x)
+  | Cosine, Type_3, true | Cosine, Type_2, false ->
+      scale_end ~by ~first:true w x
+  | Sine, Type_3, true | Sine, Type_2, false -> scale_end ~by ~first:false w x
+  | _ -> x
+
+let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
+    ?(norm = Backward) (x : (float, s, d) t) : (float, s, d) t =
+  renamed ~by (fun () ->
+      let axes, _ = transform_axes ~by x axes None in
+      if family = Cosine && type_ = Type_1 then
+        List.iter
+          (fun a ->
+            if dim a x = 1 then
+              invalid_argf "%s: type 1 along axis %d of one element" by a)
+          axes;
+      let kind =
+        match (inverse, type_) with
+        | true, Type_2 -> Type_3
+        | true, Type_3 -> Type_2
+        | _, k -> k
+      in
+      let length n =
+        match (family, type_) with
+        | Cosine, Type_1 -> 2 * (n - 1)
+        | Sine, Type_1 -> 2 * (n + 1)
+        | _ -> 2 * n
+      in
+      let ends ~input y =
+        match norm with
+        | Ortho -> ortho_ends ~by family kind ~input y
+        | Backward | Forward -> y
+      in
+      (* The transform at [f], through complex transforms at [c]. *)
+      let run : type r c.
+          (float, r) D.t -> (Complex.t, c) D.t -> (float, r, d) t ->
+          (float, r, d) t =
+       fun f c x ->
+        let along x a =
+          let y = ends ~input:true (moveaxis a (-1) x) in
+          let y =
+            match family with
+            | Cosine -> cosine ~by kind f c y
+            | Sine -> sine ~by kind f c y
+          in
+          let scale = factor norm ~forward:(not inverse) (length (dim a x)) in
+          moveaxis (-1) a (scaled ~by scale (ends ~input:false y))
+        in
+        List.fold_left along x axes
+      in
+      if Array.exists (( = ) 0) (shape x) then copy x
+      else
+        match dtype x with
+        | D.Float32 -> run D.Float32 D.Complex64 x
+        | D.Float64 -> run D.Float64 D.Complex128 x
+        | dt ->
+            (* A narrow format computes at float32 and rounds once. *)
+            cast_by ~by dt (run D.Float32 D.Complex64 (cast_by ~by D.Float32 x)))
+
+let dct ?type_ ?axes ?norm x =
+  trigonometric ~by:"Nx.dct" Cosine ~inverse:false ?type_ ?axes ?norm x
+
+let idct ?type_ ?axes ?norm x =
+  trigonometric ~by:"Nx.idct" Cosine ~inverse:true ?type_ ?axes ?norm x
+
+let dst ?type_ ?axes ?norm x =
+  trigonometric ~by:"Nx.dst" Sine ~inverse:false ?type_ ?axes ?norm x
+
+let idst ?type_ ?axes ?norm x =
+  trigonometric ~by:"Nx.idst" Sine ~inverse:true ?type_ ?axes ?norm x
+
+(* Short-time transforms *)
+
+let hann_by ~by dt n =
+  if n < 0 then invalid_argf "%s: %d points" by n;
+  let step = 2. *. Float.pi /. Float.of_int n in
+  let lit = E.const D.Float64 in
+  leaf ~by dt [| n |]
+    (at dt E.(lit 0.5 - (lit 0.5 * cos (cast D.Float64 (coord 0) * lit step))))
+
+let hann dt n = hann_by ~by:"Nx.hann" dt n
+
+let frame_step ~window = function
+  | Some s -> s
+  | None -> Stdlib.max 1 (window / 4)
+
+(* [win], or the Hann window, of [window] points. *)
+let taper ~by dt ~window = function
+  | None -> hann_by ~by dt window
+  | Some w ->
+      if not (Prim.has_shape w [| window |]) then
+        invalid_argf "%s: win %a is not [%d]" by pp_value w window;
+      w
+
+let stft dt ~window ?step ?win x =
+  let by = "Nx.stft" in
+  renamed ~by (fun () ->
+      let step = frame_step ~window step in
+      if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
+      if window < 1 || step < 1 then
+        invalid_argf "%s: window %d, step %d" by window step;
+      if window > dim (-1) x then
+        invalid_argf "%s: window %d exceeds the last axis of %a" by window
+          pp_value x;
+      let w = taper ~by (dtype x) ~window win in
+      rfft dt (mul (sliding_window ~window ~step x) w))
+
+let istft dt ~window ?step ?win ?length z =
+  let by = "Nx.istft" in
+  renamed ~by (fun () ->
+      let step = frame_step ~window step in
+      let r = ndim z in
+      if r < 2 then invalid_argf "%s: %a has fewer than two axes" by pp_value z;
+      if window < 1 then invalid_argf "%s: window %d" by window;
+      if step < 1 || step > window then
+        invalid_argf "%s: step %d is outside [1, %d]" by step window;
+      let bins = (window / 2) + 1 in
+      if dim (-1) z <> bins then
+        invalid_argf "%s: %a has not %d bins" by pp_value z bins;
+      (match length with
+      | Some l when l < 1 -> invalid_argf "%s: length %d" by l
+      | _ -> ());
+      let frames = dim (-2) z in
+      let points = ((frames - 1) * step) + window in
+      let w = taper ~by dt ~window win in
+      (* Overlap-add is the adjoint of taking the frames. *)
+      let added t =
+        combine_patches ~output_size:[| points |] ~kernel_size:[| window |]
+          ~stride:[| step |] ~dilation:[| 1 |] ~padding:[| (0, 0) |]
+          (matrix_transpose t)
+      in
+      let signal = added (mul (irfft dt ~s:[ window ] z) w) in
+      let envelope = added (broadcast ~by [| frames; window |] (square w)) in
+      (* Where every frame's taper is zero both are, and the sample is [0.]. *)
+      let zero = zeros_like envelope in
+      let safe = where (equal envelope zero) (ones_like envelope) envelope in
+      let y = div signal safe in
+      match length with None -> y | Some l -> resized ~by y [ r - 2 ] [ l ])
 
 (* Printing *)
 

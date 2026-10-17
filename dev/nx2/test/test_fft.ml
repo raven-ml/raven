@@ -568,6 +568,348 @@ let test_accuracy () =
       at_most ~msg float_exact ~than:(sqrt !e) (sqrt !k))
     accuracy_cases
 
+(* The functions, through Nx: each against its sum computed in OCaml, at
+   float64, and the identities between them, over lengths with no point, one,
+   and odd and even ones. *)
+module Laws = struct
+  let pi = Float.pi
+
+  (* The sum [Σ_j x[j] e^(sign 2πi jk/n)] for each [k]. *)
+  let dft ~sign (x : Complex.t array) =
+    let n = Array.length x in
+    Array.init n (fun k ->
+        let acc = ref Complex.zero in
+        Array.iteri
+          (fun j v ->
+            let t = sign *. 2. *. pi *. Float.of_int (j * k mod n) /. Float.of_int n in
+            acc := Complex.add !acc (Complex.mul v { re = cos t; im = sin t }))
+          x;
+        !acc)
+
+  let pp_complex ppf (z : Complex.t) = Format.fprintf ppf "%g%+gi" z.re z.im
+
+  let close tol =
+    Testable.make ~pp:pp_complex ~equal:(fun (a : Complex.t) (b : Complex.t) ->
+        Complex.norm (Complex.sub a b) <= tol *. Float.max 1. (Complex.norm b))
+
+  let close_floats tol =
+    Testable.make ~pp:Format.pp_print_float ~equal:(fun a b ->
+        Float.abs (a -. b) <= tol *. Float.max 1. (Float.abs b))
+
+  let signal =
+    let open Gen in
+    let* n = int_range 0 9 in
+    let+ re = array ~size:(constant n) (float_range (-1.) 1.)
+    and+ im = array ~size:(constant n) (float_range (-1.) 1.) in
+    Array.map2 (fun re im -> { Complex.re; im }) re im
+
+  let complex_of a = Nx.create Nx.complex128 [| Array.length a |] a
+
+  (* Demands that a law meet each length the generator draws. *)
+  let cover_lengths n =
+    cover "no point" (n = 0);
+    cover "one point" (n = 1);
+    cover "an odd length" (n > 1 && n mod 2 = 1);
+    cover "an even length" (n > 0 && n mod 2 = 0)
+
+  (* The factor of a transform of [n] points, forward or not, under [norm]. *)
+  let factor norm ~forward n =
+    let f = Float.of_int (Stdlib.max 1 n) in
+    match (norm, forward) with
+    | Nx.Backward, true | Nx.Forward, false -> 1.
+    | Nx.Backward, false | Nx.Forward, true -> 1. /. f
+    | Nx.Ortho, _ -> 1. /. Float.sqrt f
+
+  let norms = [ Nx.Backward; Nx.Forward; Nx.Ortho ]
+
+  let law_fft =
+    prop "fft and ifft are the sums, ifft (fft x) is x under each norm" signal
+      (fun x ->
+        let n = Array.length x in
+        cover_lengths n;
+        let t = complex_of x in
+        equal ~msg:"fft" (array (close 1e-12)) (dft ~sign:(-1.) x) (Nx.to_array (Nx.fft t));
+        equal ~msg:"ifft" (array (close 1e-12))
+          (Array.map (fun z -> Complex.div z { re = Float.of_int (Stdlib.max 1 n); im = 0. }) (dft ~sign:1. x))
+          (Nx.to_array (Nx.ifft t));
+        List.iter
+          (fun norm ->
+            equal ~msg:"round trip" (array (close 1e-12)) x
+              (Nx.to_array (Nx.ifft ~norm (Nx.fft ~norm t))))
+          [ Nx.Backward; Nx.Forward; Nx.Ortho ];
+        let energy a = Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a in
+        equal ~msg:"Parseval" (close_floats 1e-12) (energy x)
+          (energy (Nx.to_array (Nx.fft ~norm:Ortho t))))
+
+  let scale c a = Array.map (fun z -> Complex.mul { Complex.re = c; im = 0. } z) a
+
+  let law_real =
+    prop "rfft is fft's first bins, irfft (rfft x) is x, under each norm" signal
+      (fun x ->
+        let n = Array.length x in
+        cover_lengths n;
+        let re = Array.map (fun (z : Complex.t) -> z.re) x in
+        let t = Nx.create Nx.float64 [| n |] re in
+        let full = dft ~sign:(-1.) (Array.map (fun re -> { Complex.re; im = 0. }) re) in
+        List.iter
+          (fun norm ->
+            let bins = Nx.to_array (Nx.rfft Nx.complex128 ~norm t) in
+            equal ~msg:"bins" int ((n / 2) + 1) (Array.length bins);
+            if n > 0 then begin
+              let want = scale (factor norm ~forward:true n) (Array.sub full 0 ((n / 2) + 1)) in
+              equal ~msg:"rfft" (array (close 1e-12)) want bins;
+              equal ~msg:"irfft" (array (close_floats 1e-12)) re
+                (Nx.to_array (Nx.irfft Nx.float64 ~norm ~s:[ n ] (Nx.rfft Nx.complex128 ~norm t)))
+            end)
+          norms;
+        let narrow = Nx.rfft Nx.complex64 (Nx.cast Nx.float16 t) in
+        equal ~msg:"float16 in" int ((n / 2) + 1) (Nx.numel narrow))
+
+  (* irfft's linear map, as nx.mli states it: the bins cut or extended to
+     [n/2 + 1], bin [k] above [n/2] the conjugate of bin [n - k], the
+     imaginary parts of bin 0 and, for an even [n], bin [n/2] unread. *)
+  let irfft_map (z : Complex.t array) n =
+    let h = (n / 2) + 1 in
+    let bin k =
+      let b = if k < Array.length z then z.(k) else Complex.zero in
+      if k = 0 || 2 * k = n then { b with im = 0. } else b
+    in
+    let full = Array.init n (fun k -> if k < h then bin k else Complex.conj (bin (n - k))) in
+    Array.map (fun (c : Complex.t) -> c.re) (dft ~sign:1. full)
+
+  let law_irfft =
+    prop "irfft is its linear map, Hermitian operand or not"
+      Gen.(pair (int_range 1 7) (int_range 1 10))
+      (fun (m, n) ->
+        cover "bins cut" (m > (n / 2) + 1);
+        cover "bins extended" (m < (n / 2) + 1);
+        cover "an even n" (n mod 2 = 0);
+        cover "an odd n" (n mod 2 = 1);
+        let z = Array.init m (fun k -> { Complex.re = cos (Float.of_int (3 * k + 1)); im = sin (Float.of_int (5 * k + 2)) }) in
+        let t = complex_of z in
+        List.iter
+          (fun norm ->
+            let want = Array.map (fun v -> v *. factor norm ~forward:false n) (irfft_map z n) in
+            equal ~msg:"irfft" (array (close_floats 1e-12)) want
+              (Nx.to_array (Nx.irfft Nx.float64 ~norm ~s:[ n ] t)))
+          norms;
+        let n' = 2 * (m - 1) in
+        if n' > 0 then
+          equal ~msg:"2 (m - 1) points" (array (close_floats 1e-12)) (Array.map (fun v -> v /. Float.of_int n') (irfft_map z n'))
+            (Nx.to_array (Nx.irfft Nx.float64 t)))
+
+  (* Lengths past the generator's, powers of two and others, Bluestein's
+     among them: complex128 within 1e-13 and complex64 within 1e-5 of the
+     sums, in the 2-norm relative to the sums'. *)
+  let test_long () =
+    let norm2 a = Float.sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a) in
+    let within ~msg tol want got =
+      let err = norm2 (Array.map2 Complex.sub got want) in
+      less ~msg float_exact ~than:(tol *. norm2 want) err
+    in
+    List.iter
+      (fun n ->
+        let x = Array.init n (fun j -> { Complex.re = sin (Float.of_int (7 * j)); im = cos (Float.of_int (3 * j)) }) in
+        let msg = Printf.sprintf "%d points" n in
+        let t = complex_of x in
+        let back = Array.map (fun z -> Complex.div z { re = Float.of_int n; im = 0. }) (dft ~sign:1. x) in
+        within ~msg:(msg ^ ", fft") 1e-13 (dft ~sign:(-1.) x) (Nx.to_array (Nx.fft t));
+        within ~msg:(msg ^ ", ifft") 1e-13 back (Nx.to_array (Nx.ifft t));
+        let t64 = Nx.cast Nx.complex64 t in
+        let x64 = Nx.to_array t64 in
+        within ~msg:(msg ^ ", complex64 fft") 1e-5 (dft ~sign:(-1.) x64) (Nx.to_array (Nx.fft t64));
+        within ~msg:(msg ^ ", complex64 ifft") 1e-5
+          (Array.map (fun z -> Complex.div z { re = Float.of_int n; im = 0. }) (dft ~sign:1. x64))
+          (Nx.to_array (Nx.ifft t64)))
+      [ 10; 16; 17; 100; 128; 257; 514; 1031 ]
+
+  (* [x] of shape [[m; n]], transformed along both axes in either order. *)
+  let law_axes =
+    prop "a transform along two axes is one along each in turn"
+      Gen.(pair (int_range 1 4) (int_range 1 5))
+      (fun (m, n) ->
+        let x = Nx.init Nx.float64 [| m; n |] (fun i -> sin (Float.of_int ((i.(0) * 7) + i.(1)))) in
+        let z = Nx.cast Nx.complex128 x in
+        let both = Nx.fft ~axes:[ 0; 1 ] z in
+        let turns = Nx.fft ~axes:[ 0 ] (Nx.fft ~axes:[ 1 ] z) in
+        equal ~msg:"fft" (array (close 1e-12)) (Nx.to_array turns) (Nx.to_array both);
+        equal ~msg:"axes in any order" (array (close 1e-12)) (Nx.to_array both)
+          (Nx.to_array (Nx.fft ~axes:[ 1; 0 ] z));
+        let first = Nx.rfft Nx.complex128 ~axes:[ 1; 0 ] x in
+        let want = Nx.slice [ Nx.R (0, (m / 2) + 1); Nx.A ] both in
+        equal ~msg:"rfft, real axis first" (array (close 1e-12)) (Nx.to_array want) (Nx.to_array first);
+        equal ~msg:"irfft, real axis first" (array (close_floats 1e-12)) (Nx.to_array x)
+          (Nx.to_array (Nx.irfft Nx.float64 ~axes:[ 1; 0 ] ~s:[ n; m ] first)))
+
+  let test_sizes () =
+    let x = Nx.create Nx.complex128 [| 3 |] [| { re = 1.; im = 0. }; { re = 2.; im = 0. }; { re = 3.; im = 0. } |] in
+    let padded = Nx.create Nx.complex128 [| 5 |] [| { re = 1.; im = 0. }; { re = 2.; im = 0. }; { re = 3.; im = 0. }; Complex.zero; Complex.zero |] in
+    equal ~msg:"extended" (array (close 1e-12)) (Nx.to_array (Nx.fft padded)) (Nx.to_array (Nx.fft ~s:[ 5 ] x));
+    equal ~msg:"cut" (array (close 1e-12)) (Nx.to_array (Nx.fft (Nx.slice [ Nx.R (0, 2) ] x)))
+      (Nx.to_array (Nx.fft ~s:[ 2 ] x));
+    equal ~msg:"no point" int 0 (Nx.numel (Nx.fft ~s:[ 0 ] x));
+    (* A part scaled alone: (inf + 0i) / 2 keeps its zero. *)
+    let inf = Nx.create Nx.complex128 [| 2 |] [| { re = Float.infinity; im = 0. }; Complex.zero |] in
+    let y = Nx.to_array (Nx.fft ~norm:Forward inf) in
+    let parts = Array.concat (Array.to_list (Array.map (fun (z : Complex.t) -> [| z.re; z.im |]) y)) in
+    equal ~msg:"infinite part" (array float_exact)
+      [| Float.infinity; 0.; Float.infinity; 0. |] parts
+
+  (* The cosine and sine transforms' sums, at float64, as nx.mli states them. *)
+  let reference family kind (x : float array) =
+    let n = Array.length x in
+    let f = Float.of_int n in
+    let sum lo hi g = let s = ref 0. in for j = lo to hi do s := !s +. g j done; !s in
+    let sign k = if k mod 2 = 0 then 1. else -1. in
+    Array.init n (fun k ->
+        let k' = Float.of_int k in
+        match (family, kind) with
+        | `C, 1 -> x.(0) +. (sign k *. x.(n - 1)) +. (2. *. sum 1 (n - 2) (fun j -> x.(j) *. cos (pi *. Float.of_int j *. k' /. (f -. 1.))))
+        | `C, 2 -> 2. *. sum 0 (n - 1) (fun j -> x.(j) *. cos (pi *. k' *. ((2. *. Float.of_int j) +. 1.) /. (2. *. f)))
+        | `C, 3 -> x.(0) +. (2. *. sum 1 (n - 1) (fun j -> x.(j) *. cos (pi *. Float.of_int j *. ((2. *. k') +. 1.) /. (2. *. f))))
+        | `C, _ -> 2. *. sum 0 (n - 1) (fun j -> x.(j) *. cos (pi *. ((2. *. Float.of_int j) +. 1.) *. ((2. *. k') +. 1.) /. (4. *. f)))
+        | `S, 1 -> 2. *. sum 0 (n - 1) (fun j -> x.(j) *. sin (pi *. (Float.of_int j +. 1.) *. (k' +. 1.) /. (f +. 1.)))
+        | `S, 2 -> 2. *. sum 0 (n - 1) (fun j -> x.(j) *. sin (pi *. (k' +. 1.) *. ((2. *. Float.of_int j) +. 1.) /. (2. *. f)))
+        | `S, 3 -> (sign k *. x.(n - 1)) +. (2. *. sum 0 (n - 2) (fun j -> x.(j) *. sin (pi *. (Float.of_int j +. 1.) *. ((2. *. k') +. 1.) /. (2. *. f))))
+        | `S, _ -> 2. *. sum 0 (n - 1) (fun j -> x.(j) *. sin (pi *. ((2. *. Float.of_int j) +. 1.) *. ((2. *. k') +. 1.) /. (4. *. f))))
+
+  let real_signal =
+    let open Gen in
+    let* n = int_range 0 9 in
+    array ~size:(constant n) (float_range (-1.) 1.)
+
+  let types = [ (Nx.Type_1, 1); (Nx.Type_2, 2); (Nx.Type_3, 3); (Nx.Type_4, 4) ]
+
+  let law_trigonometric =
+    prop "dct and dst are their sums, and invert under each norm" real_signal (fun x ->
+        let n = Array.length x in
+        cover_lengths n;
+        let t = Nx.create Nx.float64 [| n |] x in
+        let t32 = Nx.cast Nx.float32 t in
+        List.iter
+          (fun family ->
+            List.iter
+              (fun (type_, kind) ->
+                if not (family = `C && kind = 1 && n = 1) then begin
+                  let forward, inverse = match family with `C -> (Nx.dct, Nx.idct) | `S -> (Nx.dst, Nx.idst) in
+                  let want = reference family kind x in
+                  equal ~msg:"sum" (array (close_floats 1e-12)) want
+                    (Nx.to_array (forward ~type_ t));
+                  List.iter
+                    (fun norm ->
+                      equal ~msg:"round trip" (array (close_floats 1e-12)) x
+                        (Nx.to_array (inverse ~type_ ~norm (forward ~type_ ~norm t))))
+                    norms;
+                  let energy a = Array.fold_left (fun s v -> s +. (v *. v)) 0. a in
+                  equal ~msg:"orthonormal" (close_floats 1e-12) (energy x)
+                    (energy (Nx.to_array (forward ~type_ ~norm:Ortho t)));
+                  equal ~msg:"float32" (array (close_floats 1e-5)) want
+                    (Nx.to_array (Nx.cast Nx.float64 (forward ~type_ t32)));
+                  (* A narrow format computes at float32 and rounds once. *)
+                  let narrow (type s) (dt : (float, s) Nx.dtype) =
+                    let h = Nx.cast dt t in
+                    equal ~msg:("at float32, " ^ Nx.Dtype.name dt) (array float_exact)
+                      (Nx.to_array (Nx.cast dt (forward ~type_ (Nx.cast Nx.float32 h))))
+                      (Nx.to_array (forward ~type_ h))
+                  in
+                  narrow Nx.float16;
+                  narrow Nx.bfloat16
+                end)
+              types)
+          [ `C; `S ])
+
+  let test_trigonometric_empty () =
+    List.iter
+      (fun (msg, f) ->
+        List.iter
+          (fun (type_, _) ->
+            List.iter
+              (fun (s, axes) ->
+                let y = f ~type_ ~axes (Nx.zeros Nx.float32 s) in
+                equal ~msg (array int) s (Nx.shape y);
+                equal ~msg:(msg ^ ", its dtype") string "float32" (Nx.Dtype.name (Nx.dtype y)))
+              [ ([| 0 |], [ 0 ]); ([| 0; 3 |], [ 0; 1 ]); ([| 3; 0 |], [ 1 ]); ([| 2; 0 |], [ 0 ]) ])
+          types)
+      [ ("dct", fun ~type_ ~axes x -> Nx.dct ~type_ ~axes x);
+        ("idct", fun ~type_ ~axes x -> Nx.idct ~type_ ~axes x);
+        ("dst", fun ~type_ ~axes x -> Nx.dst ~type_ ~axes x);
+        ("idst", fun ~type_ ~axes x -> Nx.idst ~type_ ~axes x) ]
+
+  let test_hann () =
+    equal ~msg:"hann 4" (array (close_floats 1e-15)) [| 0.; 0.5; 1.; 0.5 |]
+      (Nx.to_array (Nx.hann Nx.float64 4));
+    equal ~msg:"hann 1" (array (close_floats 0.)) [| 0. |] (Nx.to_array (Nx.hann Nx.float32 1));
+    equal ~msg:"hann 0" (array int) [| 0 |] (Nx.shape (Nx.hann Nx.float32 0))
+
+  let law_stft =
+    prop "istft (stft x) is x where a taper holds it"
+      Gen.(triple (int_range 1 9) (int_range 1 9) (int_range 9 40))
+      (fun (window, step, n) ->
+        let step = Stdlib.min step window in
+        assume (window <= n);
+        let x = Nx.init Nx.float64 [| 2; n |] (fun i -> cos (Float.of_int ((i.(0) * 13) + (i.(1) * 3)))) in
+        let z = Nx.stft Nx.complex128 ~window ~step x in
+        let frames = ((n - window) / step) + 1 in
+        equal ~msg:"shape" (array int) [| 2; frames; (window / 2) + 1 |] (Nx.shape z);
+        let covered = ((frames - 1) * step) + window in
+        let ones = Nx.ones Nx.float64 [| window |] in
+        let flat = Nx.istft Nx.float64 ~window ~step ~win:ones ~length:n
+            (Nx.stft Nx.complex128 ~window ~step ~win:ones x) in
+        let want = Nx.pad [| (0, 0); (0, n - covered) |] 0. (Nx.slice [ Nx.A; Nx.R (0, covered) ] x) in
+        equal ~msg:"untapered" (array (close_floats 1e-12)) (Nx.to_array want) (Nx.to_array flat);
+        let y = Nx.istft Nx.float64 ~window ~step z in
+        let k = (covered / 2) + 1 in
+        cover "length cuts" (k < covered);
+        equal ~msg:"length cuts" (array (close_floats 0.))
+          (Nx.to_array (Nx.slice [ Nx.A; Nx.R (0, k) ] y))
+          (Nx.to_array (Nx.istft Nx.float64 ~window ~step ~length:k z));
+        let w = Nx.to_array (Nx.hann Nx.float64 window) in
+        let xs = Nx.to_array x and ys = Nx.to_array y in
+        for row = 0 to 1 do
+          for i = 0 to covered - 1 do
+            (* A sample is held where a frame's taper there is not zero. *)
+            let held = ref false in
+            for f = 0 to frames - 1 do
+              let j = i - (f * step) in
+              if j >= 0 && j < window && w.(j) <> 0. then held := true
+            done;
+            let want = if !held then xs.((row * n) + i) else 0. in
+            equal ~msg:"tapered" (close_floats 1e-12) want ys.((row * covered) + i)
+          done
+        done)
+
+  let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+
+  let test_refusals () =
+    let z = Nx.zeros Nx.complex64 [| 4 |] and x = Nx.zeros Nx.float32 [| 4 |] in
+    invalid ~by:"Nx.fft" (fun () -> Nx.fft (Nx.zeros Nx.complex64 [||]));
+    invalid ~by:"Nx.fft" (fun () -> Nx.fft ~axes:[] z);
+    invalid ~by:"Nx.fft" (fun () -> Nx.fft ~axes:[ 1 ] z);
+    invalid ~by:"Nx.ifft" (fun () -> Nx.ifft ~axes:[ 0; 0 ] (Nx.zeros Nx.complex64 [| 2; 2 |]));
+    invalid ~by:"Nx.fft" (fun () -> Nx.fft ~s:[ 1; 2 ] z);
+    invalid ~by:"Nx.rfft" (fun () -> Nx.rfft Nx.complex64 ~s:[ -1 ] x);
+    invalid ~by:"Nx.irfft" (fun () -> Nx.irfft Nx.float32 (Nx.zeros Nx.complex64 [| 0 |]));
+    invalid ~by:"Nx.dct" (fun () -> Nx.dct ~type_:Type_1 (Nx.zeros Nx.float32 [| 1 |]));
+    invalid ~by:"Nx.idct" (fun () -> Nx.idct ~type_:Type_1 (Nx.zeros Nx.float32 [| 0; 1 |]));
+    invalid ~by:"Nx.dst" (fun () -> Nx.dst ~axes:[ 1 ] x);
+    invalid ~by:"Nx.idst" (fun () -> Nx.idst ~axes:[ 0; 0 ] x);
+    invalid ~by:"Nx.hann" (fun () -> Nx.hann Nx.float32 (-1));
+    invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:5 x);
+    invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:2 ~win:x x);
+    invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 ~step:5 (Nx.zeros Nx.complex64 [| 2; 3 |]));
+    invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 (Nx.zeros Nx.complex64 [| 2; 4 |]))
+
+  (* A composite's refusal from a function it calls names the composite: a
+     taper on another device than the signal. *)
+  let test_composites_named () =
+    let on k x = Nx.place (Nx.Placement.device Two.v (m k)) x in
+    let x = on 0 (Nx.zeros Nx.float32 [| 8 |]) in
+    let win = on 1 (Nx.ones Nx.float32 [| 4 |]) in
+    invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:4 ~win x);
+    let z = on 0 (Nx.zeros Nx.complex64 [| 2; 3 |]) in
+    invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 ~win z)
+end
+
 let () =
   exit
     (run "nx fft"
@@ -586,5 +928,20 @@ let () =
              prop "a declined transform is within its bound" case law_declined;
              test "nx.cpu is as accurate as the expansion on each route"
                test_accuracy;
+           ];
+         group "functions"
+           [
+             Laws.law_fft;
+             Laws.law_real;
+             Laws.law_irfft;
+             Laws.law_axes;
+             test "long lengths at complex128 and complex64" Laws.test_long;
+             test "s cuts and extends, a part scales alone" Laws.test_sizes;
+             Laws.law_trigonometric;
+             test "an axis of no element" Laws.test_trigonometric_empty;
+             test "hann" Laws.test_hann;
+             Laws.law_stft;
+             test "each refusal names its function" Laws.test_refusals;
+             test "a composite names its function" Laws.test_composites_named;
            ];
        ])

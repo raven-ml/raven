@@ -1894,6 +1894,178 @@ val matrix_norm :
     or if [ord] takes a greatest or least singular value, column or row of a
     matrix that has none. *)
 
+(** {1:fft Fourier transforms}
+
+    Along an axis of [n] points, the forward transform is
+    [y[k] = Σ_j x[j] e^(-2πi jk/n)] and the inverse the same sum with
+    [e^(+2πi jk/n)]. A transform along several axes is the transform along
+    each in turn. A transform of no point is the empty sum, zero.
+
+    [axes] defaults to the last axis. [s] gives the number of points along each
+    of [axes], in order: the operand is cut to it, or extended with zeros. A
+    transform of [N] points in all is scaled by [norm]: under [Backward]
+    (default) the inverse divides by [N], under [Forward] the forward one does,
+    and under [Ortho] each divides by [√N].
+
+    Each raises [Invalid_argument] if the operand is 0-d, if [axes] is empty,
+    if an axis is outside the operand's rank or repeats, if [s] does not give
+    one length per axis, or if a length is negative. *)
+
+(** The type for the scaling of a transform and its inverse. *)
+type fft_norm = Backward | Forward | Ortho
+
+val fft :
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (Complex.t, 's, 'd) t ->
+  (Complex.t, 's, 'd) t
+(** [fft x] is the forward transform of [x] along [axes]. *)
+
+val ifft :
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (Complex.t, 's, 'd) t ->
+  (Complex.t, 's, 'd) t
+(** [ifft x] is the inverse transform of [x] along [axes]: under one [norm],
+    [ifft (fft x)] is [x] to rounding. *)
+
+val rfft :
+  (Complex.t, 'c) dtype ->
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (Complex.t, 'c, 'd) t
+(** [rfft dt x] is the forward transform of the real [x] along [axes], the
+    last of them keeping bins [0] to [n/2] of its [n] points, the others
+    being redundant: one bin for [n = 0]. It computes at the wider of [x]'s
+    precision and [dt]'s, the formats narrower than 32 bits at [float32], and
+    rounds the scaled result once to [dt]. *)
+
+val irfft :
+  (float, 'r) dtype ->
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (Complex.t, 's, 'd) t ->
+  (float, 'r, 'd) t
+(** [irfft dt x] is the real inverse of {!rfft} along [axes], of [n] points
+    along the last of them from its first [n/2 + 1] bins, which are cut or
+    extended with zeros to that many. [s] gives the points of the result;
+    without it, the other axes keep their extents and [n] is [2 (m - 1)] for
+    [m] bins. Along the last axis, bin [k] above [n/2] reads as the conjugate
+    of bin [n - k], and the imaginary parts of bin [0] and, for an even [n],
+    of bin [n/2] are not read: it is this linear map for every operand,
+    Hermitian or not. It computes and rounds as {!rfft}.
+
+    Raises [Invalid_argument] also if the last axis has no bin and [s] does
+    not give its points. *)
+
+(** The type for the four discrete cosine and sine transforms, I to IV. *)
+type trig_type = Type_1 | Type_2 | Type_3 | Type_4
+
+val dct :
+  ?type_:trig_type ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [dct x] is the discrete cosine transform of type [type_] (default
+    [Type_2]) of [x] along each of [axes]: of [n] points [x[j]], type II is
+    [y[k] = 2 Σ_j x[j] cos (πk(2j + 1) / 2n)], type I
+    [y[k] = x[0] + (-1)^k x[n-1] + 2 Σ_(0<j<n-1) x[j] cos (πjk / (n-1))],
+    type III [y[k] = x[0] + 2 Σ_(j>0) x[j] cos (πj(2k + 1) / 2n)] and type IV
+    [y[k] = 2 Σ_j x[j] cos (π(2j + 1)(2k + 1) / 4n)]. Under [Forward] it
+    divides by the transform's logical length, [2 (n - 1)] for type I and
+    [2n] otherwise, and under [Ortho] it is the orthonormal transform. A
+    copy of [x]'s shape and dtype. It computes the formats narrower than 32
+    bits at [float32] and rounds the result once.
+
+    Raises [Invalid_argument] also if type I is asked of an axis of one
+    element. *)
+
+val idct :
+  ?type_:trig_type ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [idct x] is the inverse of {!dct} under the same [type_] and [norm]: types
+    I and IV are their own inverses up to scale, II and III each other's.
+
+    Raises [Invalid_argument] as {!dct}. *)
+
+val dst :
+  ?type_:trig_type ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [dst x] is the discrete sine transform of type [type_] (default [Type_2])
+    along each of [axes]: type II is
+    [y[k] = 2 Σ_j x[j] sin (π(k + 1)(2j + 1) / 2n)], type I
+    [y[k] = 2 Σ_j x[j] sin (π(j + 1)(k + 1) / (n + 1))], type III
+    [y[k] = (-1)^k x[n-1] + 2 Σ_(j<n-1) x[j] sin (π(j + 1)(2k + 1) / 2n)] and
+    type IV [y[k] = 2 Σ_j x[j] sin (π(2j + 1)(2k + 1) / 4n)]. Its logical
+    length is [2 (n + 1)] for type I and [2n] otherwise, and [norm] scales and
+    narrow formats compute as {!dct}'s. *)
+
+val idst :
+  ?type_:trig_type ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [idst x] is the inverse of {!dst} under the same [type_] and [norm]. *)
+
+val hann : (float, 's) dtype -> int -> (float, 's, 'd) t
+(** [hann dt n] is the periodic Hann window of [n] points,
+    [0.5 - 0.5 cos (2πi / n)], computed at float64 and rounded once: the point
+    that would open the next period is dropped, so shifted copies sum to a
+    constant. A value of every set.
+
+    Raises [Invalid_argument] if [n] is negative. *)
+
+val stft :
+  (Complex.t, 'c) dtype ->
+  window:int ->
+  ?step:int ->
+  ?win:(float, 's, 'd) t ->
+  (float, 's, 'd) t ->
+  (Complex.t, 'c, 'd) t
+(** [stft dt ~window x] is the short-time transform of [x] along its last
+    axis: frames of [window] samples, one every [step] (default [window / 4],
+    at least [1]), each multiplied by [win] and transformed by {!rfft}.
+    [[…; n]] gives [[…; frames; window / 2 + 1]], time first, with
+    [frames = (n - window) / step + 1]; samples past the last whole frame are
+    dropped. [win] defaults to [hann (dtype x) window], and
+    [ones (dtype x) [| window |]] frames without a taper.
+
+    Raises [Invalid_argument] if [x] is 0-d, [window] or [step] is below [1],
+    [window] exceeds the last axis, or [win] is not [[window]]. *)
+
+val istft :
+  (float, 'r) dtype ->
+  window:int ->
+  ?step:int ->
+  ?win:(float, 'r, 'd) t ->
+  ?length:int ->
+  (Complex.t, 'c, 'd) t ->
+  (float, 'r, 'd) t
+(** [istft dt ~window z] is the signal whose {!stft} under the same [window],
+    [step] and [win] is [z]: each frame inverted by {!irfft}, multiplied by
+    [win], summed back where it was taken, and divided by the sum of [win]'s
+    squares landing there. [[…; frames; window / 2 + 1]] gives
+    [[…; (frames - 1) step + window]], or [length] samples, cut or extended
+    with zeros. A sample every frame's [win] holds at zero carries nothing and
+    is [0.]: under the default taper, sample [0].
+
+    Raises [Invalid_argument] if [z] has fewer than two axes, [window] is below
+    [1], [step] is outside [[1, window]], the last axis is not
+    [window / 2 + 1], [win] is not [[window]], or [length < 1]. *)
+
 (** {1:order Order and counted lengths}
 
     Sorting, selection, searching and grouping order elements by one order, the
