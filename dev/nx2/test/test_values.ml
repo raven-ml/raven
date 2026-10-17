@@ -58,7 +58,66 @@ let values =
               (Iarray.of_list [ on (m 0) [| 3; 2 |]; on (m 1) [| 3; 2 |] ])
           in
           equal (array int) [| 3; 4 |] (Nx.shape x));
+      test "a sharded value's cut extent is the sum of its windows'" (fun () ->
+          let shape a b =
+            Nx.shape
+              (Nx.Repr.of_shards (S2.split ~axis:1)
+                 (Iarray.of_list [ on (m 0) [| 3; a |]; on (m 1) [| 3; b |] ]))
+          in
+          equal (array int) [| 3; 3 |] (shape 2 1);
+          equal (array int) [| 3; 1 |] (shape 1 0);
+          equal (array int) [| 3; 0 |] (shape 0 0));
     ]
+
+module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
+
+let mesh4 = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ]
+
+(* Placements over four memory devices of a value of rank [rank]: a split, a
+   mesh cutting one or two axes, and a cut over the minor mesh axis, whose
+   major axis holds copies. *)
+let placement_of rank =
+  let axis = Gen.int_range 0 (rank - 1) in
+  let open Gen in
+  one_of
+    [
+      map (fun a -> (Printf.sprintf "split %d" a, S4.split ~axis:a)) axis;
+      map
+        (fun (x, y) ->
+          if x = y then
+            ( Printf.sprintf "cut %d/a,b" x,
+              Nx.Placement.mesh mesh4 [ (x, [ "a"; "b" ]) ] )
+          else
+            ( Printf.sprintf "cuts %d/a %d/b" x y,
+              Nx.Placement.mesh mesh4 [ (x, [ "a" ]); (y, [ "b" ]) ] ))
+        (pair axis axis);
+      map
+        (fun x ->
+          ( Printf.sprintf "cut %d/b" x,
+            Nx.Placement.mesh mesh4 [ (x, [ "b" ]) ] ))
+        axis;
+    ]
+
+let shards_case =
+  let open Gen in
+  with_pp
+    (fun ppf (s, (name, _)) ->
+      Format.fprintf ppf "[%s] at %s"
+        (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+        name)
+    (let* rank = int_range 1 3 in
+     pair (array ~size:(constant rank) (int_range 0 6)) (placement_of rank))
+
+(* A host value placed at [p], its shards made a value again at [p]: the same
+   shape and elements. *)
+let law_shards (s, (_, p)) =
+  cover "an odd extent" (Array.exists (fun n -> n mod 2 = 1) s);
+  cover "an empty window" (Array.exists (fun n -> n > 0 && n < 4) s);
+  let x = Nx.Repr.of_array Nx.Host.v (on Rig.host s) in
+  let y = Nx.Repr.of_shards p (require_some (Nx.Repr.shards (Nx.place p x))) in
+  equal (array int) ~msg:"shape" s (Nx.shape y);
+  equal (array float_exact) ~msg:"elements" (floats s)
+    (A.to_array (require_some (Nx.Repr.array (Nx.place Nx.Host.on y))))
 
 let repr =
   group "repr"
@@ -110,8 +169,37 @@ let repr =
             fun () ->
               Nx.Repr.of_shards (S2.split ~axis:1)
                 (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ]) );
+          ( "windows of no one shape along the cut axis",
+            fun () ->
+              Nx.Repr.of_shards (S2.split ~axis:0)
+                (Iarray.of_list [ on (m 0) [| 1 |]; on (m 1) [| 2 |] ]) );
+          ( "an empty window before a full one",
+            fun () ->
+              Nx.Repr.of_shards (S2.split ~axis:0)
+                (Iarray.of_list [ on (m 0) [| 0 |]; on (m 1) [| 1 |] ]) );
+          ( "windows of two extents along an axis no cut names",
+            fun () ->
+              Nx.Repr.of_shards (S2.split ~axis:0)
+                (Iarray.of_list [ on (m 0) [| 2; 3 |]; on (m 1) [| 2; 4 |] ])
+          );
+          ( "arrays of two ranks",
+            fun () ->
+              Nx.Repr.of_shards (S2.split ~axis:0)
+                (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2; 1 |] ]) );
         ]
         (fun (_, f) -> invalid ~by:"Nx.Repr.of_shards" f);
+      test "of_shards refuses copies of two extents" (fun () ->
+          invalid ~by:"Nx.Repr.of_shards" (fun () ->
+              Nx.Repr.of_shards
+                (Nx.Placement.mesh mesh4 [ (0, [ "b" ]) ])
+                (Iarray.of_list
+                   [
+                     on (m 0) [| 2 |];
+                     on (m 1) [| 1 |];
+                     on (m 2) [| 1 |];
+                     on (m 3) [| 1 |];
+                   ])));
+      prop "shards made a value again give it back" shards_case law_shards;
       test "placement of a value from shards is the placement given" (fun () ->
           let x =
             Nx.Repr.of_shards (S2.split ~axis:0)
@@ -133,7 +221,7 @@ let errors =
       ( "Nx.place",
         fun () ->
           ignore
-            (Nx.place (S2.split ~axis:0)
+            (Nx.place (S2.split ~axis:1)
                (Nx.Repr.of_array Nx.Host.v (on Rig.host [| 3 |]))) );
       ( "Nx.Repr.of_array",
         fun () -> ignore (Nx.Repr.of_array Other.v (on (m 0) [| 2 |])) );
@@ -185,7 +273,6 @@ let placements =
     ]
 
 let law_placed ((_, p), shape) =
-  let shape = Array.map (fun n -> 2 * n) shape in
   assume (Array.length shape > 0);
   let x = Nx.place p (Nx.zeros f32 shape) in
   let q = Option.get (Nx.placement x) in

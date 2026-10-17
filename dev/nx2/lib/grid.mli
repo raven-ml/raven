@@ -47,9 +47,13 @@ val is_cut : t -> bool
 
 val window : t -> int array -> int -> (Nx_array.Move.range array, string) result
 (** [window g shape i] is the window of a value of [shape] that the [i]th device
-    of [devices g] holds: the whole shape on an axis no cut names. It is [Error]
-    if a cut axis is not an axis of [shape] or its tiles do not divide it
-    evenly.
+    of [devices g] holds: the whole shape on an axis no cut names. Along a cut
+    axis of extent [n] in [t] tiles, numbered major first over the cut's grid
+    axes, tile [j] holds the [n / t] elements after those of the tiles before
+    it, one more where [j < n mod t]. The windows of one cut are disjoint,
+    cover the axis in tile order and differ by one element at most; one is
+    empty only where [n < t]. It is [Error] if a cut axis is not an axis of
+    [shape].
 
     Raises [Invalid_argument] if [i] is not a position of [devices g]. *)
 

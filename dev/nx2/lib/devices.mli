@@ -79,14 +79,15 @@ val on : 'd t -> 'd placement
     [one s 0] for a set of one device. *)
 
 val split : by:string -> axis:int -> 'd t -> 'd placement
-(** [split ~by ~axis s] cuts [axis] into equal windows, one per device of [s],
-    in order: [one s 0] for a set of one device. Raises [Invalid_argument]
-    naming [by] if [axis] is negative or not below {!Nx_array.Layout.max_rank}.
-*)
+(** [split ~by ~axis s] cuts [axis] into one window per device of [s], in
+    order, as {!Grid.window} balances them: [one s 0] for a set of one device.
+    Raises [Invalid_argument] naming [by] if [axis] is negative or not below
+    {!Nx_array.Layout.max_rank}. *)
 
 val mesh : by:string -> 'd mesh -> (int * string list) list -> 'd placement
 (** [mesh ~by m cuts] cuts each axis [a] of [(a, names)] over the mesh axes
-    [names], major first; a mesh axis no cut names holds copies. Raises
+    [names], major first, into windows as {!Grid.window} balances them; a mesh
+    axis no cut names holds copies. Raises
     [Invalid_argument] naming [by] for a name [m] lacks, an axis or a name in
     two cuts, or an axis that is negative or not below
     {!Nx_array.Layout.max_rank}. *)
@@ -110,7 +111,7 @@ val window :
   by:string -> 'd placement -> int array -> int -> Nx_array.Move.range array
 (** [window ~by p shape i] is the window of a value of [shape] that the [i]th
     device of [p] holds, in [Grid.devices (grid p)]'s order. Raises
-    [Invalid_argument] naming [by] as {!Grid.window} answers [Error], and if [i]
+    [Invalid_argument] naming [by] if [p] cuts an axis [shape] lacks, and if [i]
     is not a position of [p]'s devices. *)
 
 val with_leading_axis : 'd placement -> 'd placement

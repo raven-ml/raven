@@ -185,7 +185,8 @@ let gather d dt w sources =
 
 let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     (v, s, e) Value.t =
-  let make arrays = Prim.of_arrays p arrays in
+  let shape = Prim.shape x in
+  let make arrays = Prim.of_arrays p ~shape arrays in
   let at = Prim.placement x in
   let arrays =
     match x with
@@ -200,7 +201,7 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   in
   if Devices.equal at p then make arrays
   else begin
-    let shape = Prim.shape x and dt = Prim.dtype x in
+    let dt = Prim.dtype x in
     let sources =
       Array.init (Iarray.length arrays) (fun i ->
           (Devices.window ~by at shape i, Iarray.get arrays i))

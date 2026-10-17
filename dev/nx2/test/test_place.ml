@@ -50,9 +50,12 @@ let place w (V x) =
 
 let windows w shape =
   let whole = Array.map (fun n -> (0, n)) shape in
+  (* Tile [j] of [tiles]: [n / tiles] elements, one more where
+     [j < n mod tiles], after those of the tiles before it. *)
   let cut axis tiles j (b : (int * int) array) =
-    let size = shape.(axis) / tiles in
-    b.(axis) <- (j * size, size);
+    let n = shape.(axis) in
+    let q = n / tiles and r = n mod tiles in
+    b.(axis) <- ((j * q) + Int.min j r, q + if j < r then 1 else 0);
     b
   in
   match w with
@@ -168,7 +171,7 @@ let allocates_its_window shape x w y =
     (windows w shape)
 
 let shape_of rank =
-  Gen.array ~size:(Gen.constant rank) (Gen.of_list [ 0; 4; 8 ])
+  Gen.array ~size:(Gen.constant rank) (Gen.of_list [ 0; 1; 3; 4; 5; 8 ])
 
 let case =
   Gen.with_pp
@@ -207,6 +210,16 @@ let laws =
       prop "each device holds its window of a host value placed" case
         (fun (s, l, w, _) ->
           cover "split" (split w);
+          let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
+          let axes = List.init (Array.length s) Fun.id in
+          cover "windows of two extents along an axis"
+            (List.exists
+               (fun a -> List.length (List.sort_uniq compare (counts a)) > 1)
+               axes);
+          cover "an empty window of a non-empty axis"
+            (List.exists
+               (fun a -> s.(a) > 0 && List.mem 0 (counts a))
+               axes);
           let a = source l s in
           cover "a window gathered into memory the host does not address"
             (gathered a s w);
@@ -288,9 +301,9 @@ let sharing =
 let refusals =
   group "refusals"
     [
-      test "a split that does not divide the shape raises" (fun () ->
+      test "a split of an axis the value lacks raises" (fun () ->
           let (V x) = host [| 6 |] in
-          invalid ~by:"Nx.place" (fun () -> Nx.place (S4.split ~axis:0) x));
+          invalid ~by:"Nx.place" (fun () -> Nx.place (S4.split ~axis:1) x));
       test "a lost device raises when placed from, and its facts answer"
         (fun () ->
           let d = Result.get_ok (Rig.memory_device "nx-place-lost") in

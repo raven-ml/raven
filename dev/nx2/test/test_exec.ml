@@ -520,6 +520,239 @@ let allocation =
           at_most (float 0.5) ~than:51. per);
     ]
 
+(* Placements *)
+
+module Set3 = (val Nx.devices [ m 0; m 1; m 2 ])
+module Set4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
+
+let mesh4 = Nx.Mesh.v Set4.v [ ("a", 2); ("b", 2) ]
+
+(* Where a value lies: split over three or four devices; a 2 x 2 mesh cutting
+   one axis over both its axes or two axes over one each; or one axis over its
+   minor axis, the major holding copies. *)
+type where = Split3 of int | Split4 of int | Cuts of int * int | Minor of int
+
+let pp_where ppf = function
+  | Split3 a -> Format.fprintf ppf "split %d over 3" a
+  | Split4 a -> Format.fprintf ppf "split %d over 4" a
+  | Cuts (x, y) when x = y -> Format.fprintf ppf "cut %d over 2x2" x
+  | Cuts (x, y) -> Format.fprintf ppf "cuts %d/a %d/b" x y
+  | Minor x -> Format.fprintf ppf "cut %d/b" x
+
+(* The axes [w] cuts, with their tiles. *)
+let tiles = function
+  | Split3 a -> [ (a, 3) ]
+  | Split4 a -> [ (a, 4) ]
+  | Cuts (x, y) when x = y -> [ (x, 4) ]
+  | Cuts (x, y) -> [ (x, 2); (y, 2) ]
+  | Minor x -> [ (x, 2) ]
+
+let where_of rank =
+  let axis = Gen.int_range 0 (rank - 1) in
+  Gen.one_of
+    [
+      Gen.map (fun a -> Split3 a) axis;
+      Gen.map (fun a -> Split4 a) axis;
+      Gen.map (fun (x, y) -> Cuts (x, y)) (Gen.pair axis axis);
+      Gen.map (fun x -> Minor x) axis;
+    ]
+
+(* A dtype, the elements drawn for it, how its elements' bits print, and a
+   map and a fold it takes. *)
+type ('v, 's) kind = {
+  dtype : ('v, 's) D.t;
+  values : 'v list;
+  show : 'v -> string;
+  combine : 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
+  fold : 'd. int -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
+}
+
+type any_kind = Kind : ('v, 's) kind -> any_kind
+
+let float_bits v = Printf.sprintf "%Lx" (Int64.bits_of_float v)
+
+(* Floats whose sums depend on their association, signed zeros, infinities and
+   NaNs of both signs and two payloads. *)
+let floats =
+  [
+    1e7; -1e7; 1.; 0.1; 3.3; 0.; -0.; infinity; neg_infinity; nan; -.nan;
+    Int32.float_of_bits 0x7fc00123l; Int32.float_of_bits 0xffa00001l;
+  ]
+
+let float_kind dtype =
+  Kind
+    {
+      dtype;
+      values = floats;
+      show = float_bits;
+      combine = Nx.add;
+      fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+    }
+
+let kinds =
+  [
+    float_kind D.Float32;
+    float_kind D.Float16;
+    float_kind D.Bfloat16;
+    Kind
+      {
+        dtype = D.Complex64;
+        values =
+          List.map2
+            (fun re im -> { Complex.re; im })
+            floats (List.rev floats);
+        show = (fun c -> float_bits c.Complex.re ^ "," ^ float_bits c.im);
+        combine = Nx.add;
+        fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+      };
+    Kind
+      {
+        dtype = D.Int32;
+        values = [ 0l; 1l; -1l; 7l; Int32.max_int; Int32.min_int ];
+        show = Int32.to_string;
+        combine = Nx.add;
+        fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+      };
+    Kind
+      {
+        dtype = D.Int8;
+        values = [ 0; 1; -1; 5; 127; -128 ];
+        show = string_of_int;
+        combine = Nx.add;
+        fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+      };
+    Kind
+      {
+        dtype = D.Bool;
+        values = [ true; false ];
+        show = string_of_bool;
+        combine = Nx.logical_xor;
+        fold = (fun a x -> Nx.any ~axes:[ a ] x);
+      };
+  ]
+
+(* A movement that keeps every axis of a value in order. *)
+type movement = Unit_axis | Reversed | Leading | Sliced
+
+(* An operation over [x]: [combine x x]; a fold along an axis; a movement,
+   then the moved value combined with itself; and [x] combined with a constant
+   of its shape: an arange's cumulative sum along an axis, cast. *)
+type op = Combine | Fold of int | Moved of movement | Beside of int
+
+let pp_op ppf = function
+  | Combine -> Format.pp_print_string ppf "combined"
+  | Fold a -> Format.fprintf ppf "folded along %d" a
+  | Moved Unit_axis -> Format.pp_print_string ppf "given a unit axis"
+  | Moved Reversed -> Format.pp_print_string ppf "transposed"
+  | Moved Leading -> Format.pp_print_string ppf "broadcast along a new axis"
+  | Moved Sliced -> Format.pp_print_string ppf "sliced along its last axis"
+  | Beside a -> Format.fprintf ppf "beside a constant scanned along %d" a
+
+let apply (type v s d) (k : (v, s) kind) op (x : (v, s, d) Nx.t) :
+    (v, s, d) Nx.t =
+  let s = Nx.shape x in
+  let r = Array.length s in
+  match op with
+  | Combine -> k.combine x x
+  | Fold a -> k.fold a x
+  | Moved mv ->
+      let y =
+        match mv with
+        | Unit_axis -> Nx.reshape (Array.append s [| 1 |]) x
+        | Reversed -> Nx.transpose x
+        | Leading -> Nx.broadcast_to (Array.append [| 2 |] s) x
+        | Sliced ->
+            let last i = if i = r - 1 then Nx.R (1, s.(i)) else Nx.A in
+            Nx.slice (List.init r last) x
+      in
+      k.combine y y
+  | Beside a ->
+      let n = Array.fold_left ( * ) 1 s in
+      let c = Nx.cumsum ~axis:a (Nx.reshape s (Nx.arange D.Int32 0 n 1)) in
+      k.combine x (Nx.cast k.dtype c)
+
+type case =
+  | Case : ('v, 's) kind * int array * 'v array * where * op -> case
+
+let pp_case ppf (Case (k, s, data, w, op)) =
+  Format.fprintf ppf "%s %a [%s] at %a, %a" (D.name k.dtype) pp_ints s
+    (String.concat "; " (Array.to_list (Array.map k.show data)))
+    pp_where w pp_op op
+
+let placed_case =
+  let open Gen in
+  with_pp pp_case
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let axis = int_range 0 (rank - 1) in
+     let* op =
+       one_of
+         [
+           constant Combine;
+           map (fun a -> Fold a) axis;
+           map (fun mv -> Moved mv)
+             (of_list [ Unit_axis; Reversed; Leading; Sliced ]);
+           map (fun a -> Beside a) axis;
+         ]
+     in
+     let* (Kind k) = of_list kinds in
+     let n = Array.fold_left ( * ) 1 s in
+     let+ data = array ~size:(constant n) (of_list k.values) in
+     Case (k, s, data, w, op))
+
+(* [y]'s elements' bits, read on the host. *)
+let shown (type v s d) (k : (v, s) kind) (y : (v, s, d) Nx.t) =
+  Array.map k.show (elements y)
+
+let law_placed (Case (k, s, data, w, op)) =
+  let ts = tiles w in
+  let cut = List.map fst ts in
+  let extent a = s.(a) in
+  cover "an uneven cut" (List.exists (fun (a, t) -> extent a mod t <> 0) ts);
+  cover "an empty window"
+    (List.exists (fun (a, t) -> extent a > 0 && extent a < t) ts);
+  cover "a cut of an empty axis" (List.exists (fun a -> extent a = 0) cut);
+  cover "a cut over several mesh axes"
+    (match w with Cuts (x, y) -> x = y | _ -> false);
+  (match op with
+  | Fold a -> cover "a fold along an axis no cut names" (not (List.mem a cut))
+  | Moved Sliced ->
+      cover "a slice that keeps a cut axis"
+        (not (List.mem (Array.length s - 1) cut))
+  | Moved _ -> cover "a movement of a cut value" true
+  | Beside a ->
+      cover "a constant computed whole along an axis, beside another cut"
+        (List.mem a cut && List.length cut > 1)
+  | Combine -> ());
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.dtype s data) in
+  let expected = shown k (apply k op x) in
+  let actual =
+    match w with
+    | Split3 a -> shown k (apply k op (Nx.place (Set3.split ~axis:a) x))
+    | Split4 a -> shown k (apply k op (Nx.place (Set4.split ~axis:a) x))
+    | Cuts (a, b) ->
+        let cuts =
+          if a = b then [ (a, [ "a"; "b" ]) ]
+          else [ (a, [ "a" ]); (b, [ "b" ]) ]
+        in
+        shown k (apply k op (Nx.place (Nx.Placement.mesh mesh4 cuts) x))
+    | Minor a ->
+        shown k
+          (apply k op (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x))
+  in
+  equal (array string) expected actual
+
+let placements =
+  group "placements"
+    [
+      prop ~count:1000
+        "an operation over a value at any placement gives its bits on one \
+         device"
+        placed_case law_placed;
+    ]
+
 let () =
   exit
-    (run "nx exec" [ laws; broadcasting; kernels; constants; sets; allocation ])
+    (run "nx exec"
+       [ laws; broadcasting; kernels; constants; sets; allocation; placements ])

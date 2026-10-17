@@ -310,10 +310,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `refs/audit/20261010-deep/worktrees/wt-18`)
 - order and counting operations: check their contracts, public laws and
   bench baselines
-- a split axis that its device count does not divide (a [4; 3] value split
-  over 2 along its last axis) raises `Invalid_argument` from `Grid.window`,
-  a limit no hardware imposes: windows of unequal extent through `Grid`,
-  `Devices.window` and `Route`
 - a sum over split axes gathers the whole input: reduce to partials and
   combine them (`[8192; 4096]` over eight devices moves 112 KiB per device
   instead of 112 MiB)

@@ -109,20 +109,23 @@ let offer (w : Value.death Atomic.Loc.t) =
 
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   Prim.alive ~by 0 x;
-  let handle at arrays donor =
+  let handle at shape arrays donor =
     offer donor;
-    Value.Donated { at; arrays; donor; spent = Value.Live }
+    Value.Donated { at; shape; arrays; donor; spent = Value.Live }
   in
   match x with
   | Value.Array r ->
-      handle r.at ([| r.a |] : _ iarray) [%atomic.loc r.dead]
-  | Value.Shards r -> handle r.at r.arrays [%atomic.loc r.dead]
+      handle r.at
+        (L.shape (A.layout r.a))
+        ([| r.a |] : _ iarray)
+        [%atomic.loc r.dead]
+  | Value.Shards r -> handle r.at r.shape r.arrays [%atomic.loc r.dead]
   | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> x
 
 (* A handle's arrays as a live value, which the operation reads. *)
 let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
-  | Value.Donated { at; arrays; _ } -> Prim.of_arrays at arrays
+  | Value.Donated { at; shape; arrays; _ } -> Prim.of_arrays at ~shape arrays
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
 
 (* A donated operand and its index among the operation's operands. *)
@@ -364,7 +367,9 @@ let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
   match into with
   | Some a when k = 0 ->
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
-  | Some _ | None -> make p (fresh ~by p f.dtype (L.shape f.layout))
+  | Some _ | None ->
+      let shape = L.shape f.layout in
+      make p ~shape (fresh ~by p f.dtype shape)
 
 (* Programs on one device *)
 
@@ -459,16 +464,15 @@ let cast ~by set dt a =
 
 (* [mv] on one shard of a value of [shape] cut as [cuts], the shard of shape
    [local]: a cut axis is one the movement keeps in order ({!Route.moved}), so
-   its extents are divided where the movement names them. *)
+   where the movement names its extent, the shard's own extent along it
+   replaces it. *)
 let localize (mv : M.t) shape cuts local : M.t =
-  let tiles a =
-    Array.fold_left (fun n (c, t) -> if c = a then t else n) 1 cuts
-  in
+  let cut a = Array.exists (fun (c, _) -> c = a) cuts in
   let target s' =
     let s' = Array.copy s' in
     Array.iter
-      (fun (a, t) ->
-        Option.iter (fun a' -> s'.(a') <- s'.(a') / t) (Route.moved mv shape a))
+      (fun (a, _) ->
+        Option.iter (fun a' -> s'.(a') <- local.(a)) (Route.moved mv shape a))
       cuts;
     s'
   in
@@ -480,8 +484,7 @@ let localize (mv : M.t) shape cuts local : M.t =
       Slice
         (Array.mapi
            (fun a (r : M.range) ->
-             if tiles a > 1 then { M.start = 0; count = local.(a); step = 1 }
-             else r)
+             if cut a then { M.start = 0; count = local.(a); step = 1 } else r)
            rs)
 
 let unravel i shape =
@@ -736,19 +739,19 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
          it is refused. *)
       let moved () =
         let r = run ~by (Value.Move (mv, live x)) in
-        (Prim.placement r, Prim.arrays r)
+        (Prim.placement r, Prim.shape r, Prim.arrays r)
       in
-      let at, arrays =
+      let at, shape, arrays =
         if Iarray.length d.arrays <> 1 then moved ()
         else begin
           ignore (Prim.prepare ~by (fun _ y -> y) op);
           match A.move mv (Iarray.get d.arrays 0) with
-          | Some v -> (d.at, [| v |])
+          | Some v -> (d.at, L.shape (A.layout v), [| v |])
           | None -> moved ()
         end
       in
       spend ~by 0 x;
-      Value.Donated { at; arrays; donor = d.donor; spent = Value.Live }
+      Value.Donated { at; shape; arrays; donor = d.donor; spent = Value.Live }
   | Value.Map ({ loads; _ } as m) -> (
       claim ~by hs;
       match reuse ~by m.layout m.outs loads with
@@ -1000,7 +1003,7 @@ and shard_views : type v s d.
       (* Its operand lies at [xp], so it has a placement. *)
       let p = Option.get f.placement in
       let devices = Grid.devices (Devices.grid p) in
-      make p
+      make p ~shape:(L.shape f.layout)
         (Iarray.init (Array.length devices) (fun i ->
              let j = Option.get (Array.find_index (( = ) devices.(i)) xdev) in
              A.expect f.dtype (A.Any (Iarray.get vs j)))))
@@ -1123,14 +1126,14 @@ and through_views : type v s d.
             (y : (w, r, e) Value.t) : (w, r, e) Value.t =
           match y with
           | Value.Deferred { form; k; _ } ->
-              make q (typed form.dtype arrays.(k))
+              make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
           | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
               y
         in
         compute_node ~resolve:operand view key
       in
       let arrays = List.fold_left replay base !views in
-      make p (typed form.dtype arrays.(k))
+      make p ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
 
 (* [root]'s results at [p], fresh: the constants it reads are taken from their
    memos where an operation read them at the placement it reads them, and
@@ -1150,7 +1153,7 @@ and memoised : type v s d.
   match x with
   | Value.Deferred { form; node = Value.Node n; k } ->
       let arrays = Option.get (find n.memo (Devices.rebrand q)) in
-      make q (typed form.dtype arrays.(k))
+      make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
 
 (* [evaluate] where some constant [root] reads is in no memo. *)
@@ -1171,7 +1174,7 @@ and evaluate_all root p =
     match x with
     | Value.Deferred { form; node; k } ->
         let arrays = Option.get (lookup node (Devices.rebrand q)) in
-        make q (typed form.dtype arrays.(k))
+        make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
     | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   in
   let missing node q =
@@ -1224,20 +1227,19 @@ and compute_node :
           (fun i y -> resolve (Devices.rebrand (read_at route p i)) y)
           op
       in
-      let arrays = Prim.result_arrays op' (compute ~by ~at:q op') in
+      let r = compute ~by ~at:q op' in
+      let arrays = Prim.result_arrays op' r in
       if Devices.equal q p then arrays
       else
         (* Each device of [p] keeps its window, cut from its window at [q], in
            memory of its own, so that no memo holds more. *)
-        let gq = Devices.grid q in
-        let qs = Grid.devices gq and ps = Grid.devices (Devices.grid p) in
-        Array.map
-          (fun per ->
-            let (A.Any a0) = per.(0) in
-            let shape = Array.copy (L.shape (A.layout a0)) in
-            Array.iter
-              (fun (a, t) -> shape.(a) <- shape.(a) * t)
-              (Grid.cuts gq);
+        let shapes = ref [] in
+        Prim.iter_results (fun y -> shapes := Prim.shape y :: !shapes) op' r;
+        let shapes = Array.of_list (List.rev !shapes) in
+        let qs = Grid.devices (Devices.grid q)
+        and ps = Grid.devices (Devices.grid p) in
+        Array.map2
+          (fun per shape ->
             Array.mapi
               (fun j k ->
                 let jq = Option.get (Array.find_index (( = ) k) qs) in
@@ -1252,7 +1254,7 @@ and compute_node :
                 let (A.Any a) = per.(jq) in
                 A.Any (A.copy (Option.get (A.move (Slice w) a))))
               ps)
-          arrays
+          arrays shapes
 
 (* The fast path *)
 

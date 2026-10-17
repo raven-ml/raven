@@ -58,18 +58,11 @@ let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 
-let of_arrays (type v s d) (p : d Devices.placement)
+let of_arrays (type v s d) (p : d Devices.placement) ~shape
     (arrays : (v, s) Nx_array.t iarray) : (v, s, d) t =
   if Iarray.length arrays = 1 then
     Array { at = p; a = Iarray.get arrays 0; dead = Live }
-  else Shards { at = p; arrays; dead = Live }
-
-(* The tiles along [axis] of a value at [p]: 1 where it is not cut. *)
-let tiles p axis =
-  Array.fold_left
-    (fun n (a, t) -> if a = axis then t else n)
-    1
-    (Grid.cuts (Devices.grid p))
+  else Shards { at = p; shape; arrays; dead = Live }
 
 let dim (type v s d) (x : (v, s, d) t) i =
   let l = own_layout x in
@@ -78,12 +71,12 @@ let dim (type v s d) (x : (v, s, d) t) i =
       (Printf.sprintf "Prim.dim: axis %d of a value of rank %d" i (L.rank l));
   match x with
   | Array _ | Deferred _ | Traced _ -> L.dim l i
-  | Shards { at; _ } | Donated { at; _ } -> L.dim l i * tiles at i
+  | Shards { shape; _ } | Donated { shape; _ } -> shape.(i)
 
 let shape (type v s d) (x : (v, s, d) t) =
   match x with
   | Array _ | Deferred _ | Traced _ -> L.shape (own_layout x)
-  | Shards _ | Donated _ -> Array.init (rank x) (fun i -> dim x i)
+  | Shards { shape; _ } | Donated { shape; _ } -> Array.copy shape
 
 let has_shape x s =
   let rec go i = i = Array.length s || (dim x i = s.(i) && go (i + 1)) in

@@ -113,8 +113,8 @@ val route :
     set is read at the target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
-    devices alone, if a placement an operand is read at does not divide its
-    shape ({!Grid.window}), and as an internal fault if [ps] and [shapes] differ
+    devices alone, if a placement an operand is read at cuts an axis its shape
+    lacks ({!Grid.window}), and as an internal fault if [ps] and [shapes] differ
     in length, [ps] is empty, or [r] does not name each axis of each operand. *)
 
 val keeps : rule -> int -> bool
@@ -128,4 +128,4 @@ val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
     read at that target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if a placement an operand is read at
-    does not divide its shape. *)
+    cuts an axis its shape lacks. *)

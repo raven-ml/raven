@@ -68,6 +68,7 @@ let split_x () : (float, D.float32_elt, b) Value.t =
   Value.Shards
     {
       at = Devices.split ~by:"t" ~axis:0 s2;
+      shape = [| 4 |];
       arrays =
         Iarray.of_list
           [
@@ -466,8 +467,8 @@ let others =
           let _, l, p = one_form (Op (Place (split, f32 [| 4; 2 |]))) in
           equal bool true (Devices.equal (Option.get p) split);
           equal layout (L.contiguous [| 4; 2 |]) l);
-      test "a place whose split does not divide the shape raises" (fun () ->
-          refuses (Op (Place (Devices.split ~by:"t" ~axis:0 s2, f32 [| 3 |]))));
+      test "a place that splits an axis the value lacks raises" (fun () ->
+          refuses (Op (Place (Devices.split ~by:"t" ~axis:1 s2, f32 [| 3 |]))));
       test "a check makes no result" (fun () ->
           let ok : (bool, D.bool_elt, b) Value.t =
             value 0 (A.of_array D.Bool [| 2 |] [| true; true |])

@@ -218,7 +218,7 @@ let route ~by rule ps shapes =
   | One p when not (Grid.is_cut (Devices.grid p)) ->
       Some { operands = Array.make n p; result = p }
   | One p when rule = Elementwise -> (
-      (* Operands of one shape: one that [p] divides is all of them. *)
+      (* Operands of one shape: one that has [p]'s cut axes is all of them. *)
       match Grid.window (Devices.grid p) shapes.(0) 0 with
       | Ok _ -> Some { operands = Array.make n p; result = p }
       | Error e -> invalid_argf "%s: %s" by e)

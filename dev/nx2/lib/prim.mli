@@ -11,8 +11,8 @@
     must have, and the form of each result, its placement from {!Route}. The
     eager engine allocates destinations through it, and interpretations make
     traced results through it, so the two agree in dtype, layout and placement.
-    A sharded value's shape is the whole's: each shard's, times the number of
-    tiles along each cut axis. *)
+    A sharded value's shape is the whole's, which it holds; each shard is its
+    device's window of it. *)
 
 open Value
 
@@ -30,9 +30,13 @@ val placement : ('v, 's, 'd) t -> 'd Devices.placement
     [Invalid_argument] for a value of every set. *)
 
 val of_arrays :
-  'd Devices.placement -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
-(** [of_arrays p arrays] is the live value over [arrays], one per device of [p]:
-    [Array] for one, [Shards] otherwise. *)
+  'd Devices.placement ->
+  shape:int array ->
+  ('v, 's) Nx_array.t iarray ->
+  ('v, 's, 'd) t
+(** [of_arrays p ~shape arrays] is the live value of [shape] over [arrays], one
+    per device of [p], each its window of [shape]: [Array] for one, [Shards]
+    otherwise. Nothing checks the windows. *)
 
 val death : ('v, 's, 'd) t -> death
 (** [death x] is whether [x] lives: for a handle, its donor's death where the

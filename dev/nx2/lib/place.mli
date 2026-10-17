@@ -35,9 +35,9 @@ val value :
 (** [value ~by p x] is [x]'s elements at [p]: over [x]'s own arrays when [x]'s
     placement equals [p].
 
-    Raises [Invalid_argument] naming [by] if [p]'s cuts do not divide [x]'s
-    shape, and if [x] is a constant (the engine computes those), {!Rig.Lost} for
-    a lost device, and what {!Rig.Buffer.copy} raises. *)
+    Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks, and if
+    [x] is a constant (the engine computes those), {!Rig.Lost} for a lost
+    device, and what {!Rig.Buffer.copy} raises. *)
 
 val view :
   by:string ->

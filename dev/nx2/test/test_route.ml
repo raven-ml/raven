@@ -80,7 +80,7 @@ let placement_of rank =
             (Gen.pair axis axis);
         ])
 
-let extent = Gen.of_list [ 4; 8 ]
+let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
    the results, of its extent, or none, of any extent. *)
@@ -358,10 +358,10 @@ let cases_ =
               placed Elementwise
                 [| Devices.one s4 0; Devices.one s4 1 |]
                 [| [| 4 |]; [| 4 |] |]));
-      test "a split that does not divide its axis raises" (fun () ->
+      test "a split of an axis the operand lacks raises" (fun () ->
           invalid (fun () ->
               placed Elementwise
-                [| Devices.split ~by:"t" ~axis:0 s4 |]
+                [| Devices.split ~by:"t" ~axis:1 s4 |]
                 [| [| 6 |] |]));
       test "a rule that does not name each axis raises" (fun () ->
           invalid (fun () ->

@@ -2577,15 +2577,21 @@ module Placement : sig
       is a device of [s] ({!Rig.equal}). *)
 
   val split : axis:int -> 'd devices -> 'd t
-  (** [split ~axis s] cuts [axis] into equal windows, one per device of [s], in
-      order.
+  (** [split ~axis s] cuts [axis] into one window per device of [s], in
+      order, as evenly as its extent allows: of [n] elements over [k] devices,
+      the first [n mod k] windows hold [n / k + 1] and the others [n / k]. A
+      window is empty only where [n < k].
 
       Raises [Invalid_argument] if [axis] is negative or not below
       {!Nx_array.Layout.max_rank}. *)
 
   val mesh : 'd Mesh.t -> (int * string list) list -> 'd t
   (** [mesh m cuts] cuts each axis [a] of [(a, names)] over the mesh axes
-      [names], major first; a mesh axis no cut names holds copies.
+      [names], major first; a mesh axis no cut names holds copies. An axis cut
+      over several mesh axes is cut as {!split} cuts it over as many devices
+      as their extents multiply to, numbered major first: over extents [e1]
+      and [e2], the device at [i1] along the first and [i2] along the second
+      holds window [i1 × e2 + i2].
       [split ~axis s] is [mesh (Mesh.v s [ ("x", n) ]) [ (axis, [ "x" ]) ]].
 
       Raises [Invalid_argument] for a name [m] lacks, an axis or a name in two
@@ -2640,7 +2646,7 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     bytes. A value of every set is computed at [p]. Across sets it changes the
     brand; within one, the arrangement.
 
-    Raises [Invalid_argument] if [p]'s cuts do not divide [x]'s shape, and
+    Raises [Invalid_argument] if [p] cuts an axis [x] does not have, and
     {!Rig.Lost} for a lost device. *)
 
 val placement : ('v, 's, 'd) t -> 'd Placement.t option
@@ -2902,7 +2908,7 @@ val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
     Every misuse raises [Invalid_argument] whose message is the function the
     user called, a colon, the reason and, where they matter, the operands as
     [dtype shape on set], as in
-    [Nx.place: axis 0 of extent 6 does not split evenly over 4]. A lost device
+    [Nx.add: shapes [2; 3] and [4] do not broadcast]. A lost device
     raises {!Rig.Lost}, and a device's memory that runs out
     {!Rig.Out_of_memory}. Host memory that runs out raises OCaml's
     [Out_of_memory]. *)
@@ -2933,11 +2939,14 @@ module Repr : sig
   val of_shards :
     'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
   (** [of_shards p arrays] is the value whose bytes are [arrays], one per
-      device of [p] in order, each that device's window.
+      device of [p] in order, each that device's window of one shape: along an
+      axis [p] cuts, the sum of its windows' extents, and along any other,
+      each array's.
 
-      Raises [Invalid_argument] naming [Nx.Repr.of_shards] unless there
-      is one array per device of [p], each on its device, all of one
-      shape, of a rank that has every axis [p] cuts. *)
+      Raises [Invalid_argument] naming [Nx.Repr.of_shards] unless there is
+      one array per device of [p], each on its device, all of one rank that
+      has every axis [p] cuts, and each array is its device's window of that
+      shape. *)
 
   val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray option
   (** [shards x] is [Some arrays], one per device of [x]'s placement, in

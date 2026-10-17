@@ -5,8 +5,13 @@
 
 module A = Nx_array
 module L = Nx_array.Layout
+module M = Nx_array.Move
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
+let pp_shape ppf s =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let of_array ~by s a =
   match Devices.position s (A.device a) with
@@ -33,20 +38,40 @@ let of_shards ~by p arrays =
           (Rig.name (A.device a))
           (Rig.name d))
     devices;
-  let shape = L.shape (A.layout (Iarray.get arrays 0)) in
-  Iarray.iteri
-    (fun j a ->
-      if L.shape (A.layout a) <> shape then
-        invalid_argf "%s: array %d's shape differs from array 0's" by j)
-    arrays;
+  let shapes =
+    Array.init n (fun j -> L.shape (A.layout (Iarray.get arrays j)))
+  in
+  let rank = Array.length shapes.(0) in
+  Array.iteri
+    (fun j s ->
+      if Array.length s <> rank then
+        invalid_argf "%s: array %d's rank differs from array 0's" by j)
+    shapes;
+  let cuts = Grid.cuts (Devices.grid p) in
   Array.iter
     (fun (axis, _) ->
-      if axis >= Array.length shape then
+      if axis >= rank then
         invalid_argf "%s: the placement cuts axis %d of arrays of rank %d" by
-          axis (Array.length shape))
-    (Grid.cuts (Devices.grid p));
+          axis rank)
+    cuts;
+  (* Each of a cut's [t] tiles lies on [n / t] devices, so the whole's extent
+     along it is the sum of every array's extent along it, times [t / n]. The
+     windows of that shape then check each array. *)
+  let shape = Array.copy shapes.(0) in
+  Array.iter
+    (fun (axis, t) ->
+      let sum = Array.fold_left (fun sum s -> sum + s.(axis)) 0 shapes in
+      shape.(axis) <- sum * t / n)
+    cuts;
+  Array.iteri
+    (fun j s ->
+      let w = Devices.window ~by p shape j in
+      if Array.exists2 (fun (r : M.range) e -> r.count <> e) w s then
+        invalid_argf "%s: array %d of shape %a is not its window of %a" by j
+          pp_shape s pp_shape shape)
+    shapes;
   Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
-  Prim.of_arrays p arrays
+  Prim.of_arrays p ~shape arrays
 
 (* [x]'s arrays, handed to a caller: their memory leaves the claims for good, so
    that no donation writes what the caller reads. A traced value has no bytes to

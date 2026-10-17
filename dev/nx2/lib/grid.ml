@@ -130,6 +130,17 @@ let check_position g i =
     invalid_arg
       (Printf.sprintf "Grid: position %d of a grid of %d devices" i (count g))
 
+(* Tile [j] of [t] along an axis of extent [n]: the [n / t] elements after
+   those of the tiles before it, one more where [j < n mod t]. Of 5 over 3,
+   tiles hold 2, 2 and 1; of 2 over 3, 1, 1 and none. *)
+let tile n t j =
+  let q = n / t and r = n mod t in
+  {
+    Nx_array.Move.start = (j * q) + Int.min j r;
+    count = (q + if j < r then 1 else 0);
+    step = 1;
+  }
+
 let window g shape i =
   check_position g i;
   let rank = Array.length shape in
@@ -138,18 +149,14 @@ let window g shape i =
   in
   let rec cut = function
     | [] -> Ok w
-    | (axis, n, j) :: rest ->
+    | (axis, t, j) :: rest ->
         if axis >= rank then
           Error
             (Printf.sprintf "axis %d is cut and the shape has rank %d" axis rank)
-        else if shape.(axis) mod n <> 0 then
-          Error
-            (Printf.sprintf "axis %d of extent %d does not split evenly over %d"
-               axis shape.(axis) n)
-        else
-          let size = shape.(axis) / n in
-          w.(axis) <- { Nx_array.Move.start = j * size; count = size; step = 1 };
+        else begin
+          w.(axis) <- tile shape.(axis) t j;
           cut rest
+        end
   in
   cut (tile_index g i)
 

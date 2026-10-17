@@ -39,22 +39,25 @@ type ('v, 's, 'd) t =
           to [f] ({!Exec.donate}). *)
   | Shards of {
       at : 'd Devices.placement;
+      shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
       mutable dead : death; [@atomic]
     }
       (** On [at]'s devices, two or more: per device, in
-          [Grid.devices (Devices.grid at)]'s order, its window of the value. *)
+          [Grid.devices (Devices.grid at)]'s order, its window of the value
+          ({!Grid.window}). *)
   | Donated of {
       at : 'd Devices.placement;
+      shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
       donor : death Atomic.Loc.t;  (** The donor's [dead]. *)
       mutable spent : death; [@atomic]
     }
       (** A handle one operation reads: [arrays] over its donor's memory, one
-          per device of [at], or a copy of it a movement made. [spent] is
-          [Live] until an operation reads it: the one that consumed it, killing
-          the donor, or a movement that passed a new handle of the donor on.
-      *)
+          per device of [at], each its window, or a copy of it a movement made.
+          [spent] is [Live] until an operation reads it: the one that consumed
+          it, killing the donor, or a movement that passed a new handle of the
+          donor on. *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
   | Traced of {

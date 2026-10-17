@@ -52,7 +52,7 @@ let gridded =
       Format.fprintf ppf "%a over %a" (Grid.pp Format.pp_print_int) g pp_shape s)
     (Gen.bind (Gen.int_range 1 3) (fun rank ->
          Gen.pair (grid_of rank)
-           (Gen.array ~size:(Gen.constant rank) (Gen.of_list [ 4; 8 ]))))
+           (Gen.array ~size:(Gen.constant rank) (Gen.int_range 0 9))))
 
 let rec indices = function
   | [] -> [ [] ]
@@ -68,9 +68,146 @@ let inside (w : M.range array) idx =
 
 let window g s i = ok (Grid.window g s i)
 
+(* A grid as [Grid.v] takes it, before its normal form: devices in any order,
+   extents of 1 to 3, each grid axis cutting some value axis or none, a cut's
+   grid axes in any order; and a shape of rank 1 to 3 with every cut axis. *)
+type raw = {
+  devices : int array;
+  extents : int array;
+  cuts : (int * int array) array;
+  shape : int array;
+}
+
+let pp_raw ppf r =
+  let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
+  Format.fprintf ppf "devices [%s] extents [%s] cuts [%s] shape [%s]"
+    (ints r.devices) (ints r.extents)
+    (String.concat "; "
+       (Array.to_list
+          (Array.map
+             (fun (a, o) -> Printf.sprintf "%d/[%s]" a (ints o))
+             r.cuts)))
+    (ints r.shape)
+
+let raw =
+  let open Gen in
+  let* g = int_range 1 3 in
+  let* extents = array ~size:(constant g) (int_range 1 3) in
+  let n = Array.fold_left ( * ) 1 extents in
+  let* devices = permutation (List.init n Fun.id) in
+  let* rank = int_range 1 3 in
+  let* order = permutation (List.init g Fun.id) in
+  let* owner = array ~size:(constant g) (int_range (-1) (rank - 1)) in
+  let+ shape = array ~size:(constant rank) (int_range 0 9) in
+  let cuts =
+    List.filter_map
+      (fun a ->
+        match List.filter (fun h -> owner.(h) = a) order with
+        | [] -> None
+        | over -> Some (a, Array.of_list over))
+      (List.init rank Fun.id)
+  in
+  { devices = Array.of_list devices; extents; cuts = Array.of_list cuts; shape }
+
+let raw = Gen.with_pp pp_raw raw
+
+(* The window the balanced rule gives tile [j] of [t] along an axis of extent
+   [n]: it starts at [j * (n / t) + min j (n mod t)] and holds [n / t]
+   elements, one more where [j < n mod t]. *)
+let tile n t j =
+  let q = n / t and r = n mod t in
+  {
+    M.start = (j * q) + Int.min j r;
+    count = (q + if j < r then 1 else 0);
+    step = 1;
+  }
+
+(* The window of the device at position [i] of [r]: along a cut, its tile
+   numbered major first over the cut's grid axes, of their extents' product. *)
+let model r i =
+  let g = Array.length r.extents in
+  let coord = Array.make g 0 and k = ref i in
+  for h = g - 1 downto 0 do
+    coord.(h) <- !k mod r.extents.(h);
+    k := !k / r.extents.(h)
+  done;
+  let w = Array.map (fun n -> { M.start = 0; count = n; step = 1 }) r.shape in
+  Array.iter
+    (fun (a, over) ->
+      let t = Array.fold_left (fun t h -> t * r.extents.(h)) 1 over in
+      let j =
+        Array.fold_left (fun j h -> (j * r.extents.(h)) + coord.(h)) 0 over
+      in
+      w.(a) <- tile r.shape.(a) t j)
+    r.cuts;
+  w
+
+let of_raw r = v r.devices r.extents r.cuts
+
+(* The position in [g] of a device of [g]. *)
+let position g k = Option.get (Array.find_index (( = ) k) (Grid.devices g))
+
 let laws =
   group "laws"
     [
+      prop
+        "each device holds its tile by the balanced rule, numbered major \
+         first"
+        raw (fun r ->
+          let g = of_raw r in
+          let multi = Array.exists (fun (_, o) -> Array.length o > 1) r.cuts in
+          cover "a cut over several grid axes" multi;
+          cover "a cut over several grid axes minor first"
+            (Array.exists
+               (fun (_, o) -> Array.length o > 1 && o.(0) > o.(1))
+               r.cuts);
+          cover "an uneven cut"
+            (Array.exists (fun (a, _) -> r.shape.(a) mod 2 = 1) r.cuts);
+          for i = 0 to Grid.count g - 1 do
+            equal (array range) ~msg:(Printf.sprintf "device %d" i) (model r i)
+              (window g r.shape i)
+          done);
+      prop
+        "the windows of a cut lie in tile order, cover its axis and differ by \
+         one at most"
+        raw (fun r ->
+          let g = of_raw r in
+          Array.iter
+            (fun (axis, t) ->
+              let n = r.shape.(axis) in
+              cover "an uneven cut" (n mod t <> 0);
+              cover "an empty window" (n > 0 && n < t);
+              cover "a cut of an empty axis" (n = 0);
+              let ws =
+                Array.init t (fun j ->
+                    let held = Grid.devices (Grid.select g ~axis j) in
+                    let w k = (window g r.shape (position g k)).(axis) in
+                    Array.iter
+                      (fun k ->
+                        equal range ~msg:"every device of a tile" (w held.(0))
+                          (w k))
+                      held;
+                    w held.(0))
+              in
+              equal int ~msg:"the first starts the axis" 0 ws.(0).start;
+              for j = 1 to t - 1 do
+                equal int ~msg:"each starts where the one before ends"
+                  (ws.(j - 1).start + ws.(j - 1).count)
+                  ws.(j).start;
+                at_most int ~msg:"no window holds more than the one before"
+                  ~than:ws.(j - 1).count ws.(j).count
+              done;
+              equal int ~msg:"the last ends the axis" n
+                (ws.(t - 1).start + ws.(t - 1).count);
+              at_most int ~msg:"the first holds one more at most"
+                ~than:(ws.(t - 1).count + 1) ws.(0).count;
+              Array.iteri
+                (fun j (w : M.range) ->
+                  equal bool ~msg:(Printf.sprintf "window %d is empty" j)
+                    (j >= n) (w.count = 0))
+                ws)
+            (Grid.cuts g));
+
       prop "every index lies in exactly one distinct window" gridded
         (fun (g, s) ->
           cover "a cut" (Grid.cuts g <> [||]);
@@ -150,11 +287,11 @@ let operations =
               { start = 4; count = 2; step = 1 };
             |]
             (window (split 1) [| 3; 8 |] 2));
-      test "a split that does not divide its axis is an error" (fun () ->
+      test "a split of an axis the shape lacks is an error" (fun () ->
           ignore
             (require_error
                ~pp:(fun ppf _ -> Format.pp_print_string ppf "a window")
-               (Grid.window (split 0) [| 6 |] 0)));
+               (Grid.window (split 1) [| 6 |] 0)));
       test "selecting a tile keeps the devices that hold it" (fun () ->
           equal (option int) (Some 2)
             (Grid.one (Grid.select (split 0) ~axis:0 2));
