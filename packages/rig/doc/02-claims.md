@@ -10,12 +10,11 @@ memory and consumption, and says who may donate and how a donor writes.
 An array operation whose input dies with the call can save an allocation by
 writing its result over that input's memory. That is safe only if nothing
 else reads the memory, and claims record what does. A function takes its
-inputs with `Claim.with_`, or its one input with `Claim.take`. A buffer it
-donates is exclusive when it spans its memory, the memory is inside the
-claims and admits writes, and no other claim holds it. The function then
-consumes it, so every buffer made over the memory before is dead. A caller
-that still needs the buffer holds a read claim across the call, and the
-function writes elsewhere.
+inputs with `Claim.with_`. A buffer it donates is exclusive when it spans
+its memory, the memory is inside the claims and admits writes, and no other
+claim holds it. The function then consumes it, so every buffer made over the
+memory before is dead. A caller that still needs the buffer holds a read
+claim across the call, and the function writes elsewhere.
 
 Three things in the Claims section are easy to miss. Work already submitted
 on the memory holds no claim, since the stamps order a write in place after

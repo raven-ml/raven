@@ -271,7 +271,11 @@ let consume ~by op =
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
-let take ~by b = Rig.Claim.take ~why:("donated to " ^ by) b
+let take ~by b =
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      if Rig.Claim.exclusive c b then
+        Some (Rig.Claim.consume c ~why:("donated to " ^ by) b)
+      else None)
 
 (* Ends the claimed handles [hs] once [by] read them: memory no other value
    reads, and that [by] did not write its result into ([reused]), is
@@ -331,7 +335,7 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
               Option.map
                 (fun b' ->
                   (i, b, A.Any (A.v (A.dtype a) (A.layout a) b')))
-                (Rig.Claim.take ~why:("donated to " ^ by) b)
+                (take ~by b)
           | Value.Plain _ | Value.Padded _ -> None))
 
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared

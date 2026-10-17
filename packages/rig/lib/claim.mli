@@ -111,6 +111,3 @@ val exclusive : t -> Def.buffer -> bool
 
 val consume : t -> why:string -> Def.buffer -> Def.buffer
 (** [consume c ~why b] is {!Rig.Claim.consume}[ c ~why b]. *)
-
-val take : why:string -> Def.buffer -> Def.buffer option
-(** [take ~why b] is {!Rig.Claim.take}[ ~why b]. *)

@@ -292,7 +292,3 @@ let consume c ~why b =
   | -1 -> refuse_ended ()
   | -2 -> Buffer.refuse_dead "Claim.consume" b
   | g -> { b with generation = g }
-
-let take ~why b =
-  with_ ~read:[] ~donate:[ b ] (fun c ->
-      if exclusive c b then Some (consume c ~why b) else None)

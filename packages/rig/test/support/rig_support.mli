@@ -625,6 +625,11 @@ val allocated_bytes : (unit -> unit) -> int
     major ({!Gc.allocated_bytes}). A function that allocates nothing has [0]
     for every number of calls in [f]. *)
 
+val donated : Rig.Buffer.t -> Rig.Buffer.t option
+(** [donated b] donates [b] alone with the reason ["donated"]: the buffer
+    {!Rig.Claim.consume} returns where the donation held [b]'s memory
+    exclusive, and [None], changing nothing, otherwise. *)
+
 val io : string -> Rig.t
 (** [io name] is the io device named [name], whose memory holds nothing, opened
     unless it is open. *)

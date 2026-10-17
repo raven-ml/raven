@@ -20,8 +20,8 @@ dune exec packages/rig/examples/08-claims/main.exe
   write in place goes through the buffer `consume` returns.
 - Buffers that are never exclusive: views of part of an allocation, buffers
   over a bigarray, and memory that `Buffer.export` exported
-- Why `add` uses `Claim.with_`: it claims `x`, which `add` reads, as well as
-  `y`. `Claim.take` is for a function of one input.
+- Why `add` claims `x` as well as `y`: it reads `x`, and no donation may
+  write `x` while it does.
 
 ## Key Functions
 

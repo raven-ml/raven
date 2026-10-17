@@ -609,7 +609,7 @@ let judge_c_claim r = function
 let export b = ignore (B.export b Bigarray.char)
 
 let donate b =
-  match Claim.take ~why:"donated" b with
+  match Rig_support.donated b with
   | None -> false
   | Some b' ->
       B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'd');
@@ -1153,7 +1153,7 @@ let donate_while_waiting p b access donor =
   in
   Rig_support.await "the host access waiting at the gate" (fun () ->
       P.sleepers p = 1);
-  let donated = Claim.take ~why:"donated" b in
+  let donated = Rig_support.donated b in
   Option.iter donor donated;
   P.open_gate p;
   (donated, Domain.join ended)
@@ -1353,7 +1353,7 @@ let copy_commands =
       (copied ^-> judges (option string))
       judge_donor
       (fun b ->
-        Claim.take ~why:"donated" b
+        Rig_support.donated b
         |> Option.map (fun b' ->
                B.fill b' 'X';
                text b'));

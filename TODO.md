@@ -80,7 +80,7 @@ raven / llama.cpp (Vulkan; ROCm):
 ### API
 
 - claims, one design pass: a claim held past a scope (rune's `Pins` and
-  tolk's `link ~bound` go), a take over a buffer list, claim-all in rig.h
+  tolk's `link ~bound` go), claim-all in rig.h
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
   rig_program's `Move` step; done when placing on N GPUs costs one wait

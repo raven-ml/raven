@@ -957,6 +957,12 @@ let allocated_bytes f =
   let b2 = Gc.allocated_bytes () in
   int_of_float (b2 -. b1 -. (b1 -. b0))
 
+let donated b =
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      if Rig.Claim.exclusive c b then
+        Some (Rig.Claim.consume c ~why:"donated" b)
+      else None)
+
 (* Io devices and machines *)
 
 module Empty = struct

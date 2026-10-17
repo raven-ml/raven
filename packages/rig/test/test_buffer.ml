@@ -254,7 +254,7 @@ let test_export () =
   let a = B.export h Bigarray.char in
   equal ~msg:"the work ran" int 0 (P.queued p);
   equal ~msg:"its bytes" char 'x' a.{n - 1};
-  is_none ~msg:"never donated" (Rig.Claim.take ~why:"donated" h);
+  is_none ~msg:"never donated" (Support.donated h);
   raises_match (Exn.invalid_arg ~substring:"not the host's") (fun () ->
       ignore (B.export src Bigarray.char));
   raises_match (Exn.invalid_arg ~substring:"not the host's") (fun () ->
@@ -1082,7 +1082,7 @@ let test_staging_gives_back () =
       (breaks (fun () -> copy 1 dst));
     is_some
       ~msg:(Printf.sprintf "copy %d's destination donated after it" i)
-      (Rig.Claim.take ~why:"donated" dst)
+      (Support.donated dst)
   done;
   let copied = Atomic.make false in
   let third =
@@ -1175,7 +1175,7 @@ let donate_during p b transfer donor =
         | exception e -> Printexc.to_string e)
   in
   Support.await "the transfer waiting for a leg" (fun () -> P.sleepers p > 0);
-  let donated = Rig.Claim.take ~why:"donated" b in
+  let donated = Support.donated b in
   Option.iter donor donated;
   P.open_gate p;
   (donated, Domain.join ended)

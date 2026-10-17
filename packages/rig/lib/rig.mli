@@ -1961,9 +1961,17 @@ end
     function runs, the donor uses the buffer that {!Claim.consume} returns as
     a buffer it made. It may write it from the host, copy into it, submit
     work on it, export it or share it. Every buffer made over the memory
-    before the consumption is dead. A donor of one input may take it with
-    {!Claim.take}, which returns the consumed buffer where it held the
-    memory exclusive. *)
+    before the consumption is dead. A donor of one input, or of an input
+    whose buffers lie on several devices, consumes it only where it holds
+    every buffer exclusive:
+    {[
+      Claim.with_ ~read:[] ~donate:bs (fun c ->
+          if List.for_all (Claim.exclusive c) bs then
+            Some (List.map (Claim.consume c ~why) bs)
+          else None)
+    ]}
+    The buffers {!Claim.consume} returns may be written in place after
+    {!Claim.with_} returns. *)
 module Claim : sig
   val share : Buffer.t -> unit
   (** [share b] puts [b]'s memory outside the claims for good, through every
@@ -2013,16 +2021,6 @@ module Claim : sig
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
       does not claim [b]'s memory, or [b] is dead or does not
       {!Buffer.spans} its memory. *)
-
-  val take : why:string -> Buffer.t -> Buffer.t option
-  (** [take ~why b] donates [b] alone. It is [Some b'] if a {!with_} that
-      donates [b] holds its memory exclusive, where [b'] is
-      {!consume}[ c ~why b] under that claim, and [None] otherwise, which
-      leaves [b] unchanged. The caller writes [b'] in place, and [b] is then
-      dead. A function with several inputs takes them with {!with_}, which
-      claims every input it reads.
-
-      Raises as {!with_} does. *)
 end
 
 (** {1:profiles Profiles} *)
