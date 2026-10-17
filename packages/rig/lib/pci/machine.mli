@@ -182,7 +182,8 @@ val window : t -> int -> int -> Window.t
     transport. It neither maps nor keeps the memory; the caller keeps it valid.
     Raises [Invalid_argument] if [n < 0]. *)
 
-(* [take m bus] is [m]'s take: {!Function.take} builds on it. *)
+(* [take m bus] is [m]'s take of the function at [bus], or [Error] if [bus]
+   is not a bus address: {!Function.take} builds on it. *)
 val take : t -> string -> (fn, string) result
 
 (* [take_locked m l] is [m]'s take of the function [l] locks, under [l]:

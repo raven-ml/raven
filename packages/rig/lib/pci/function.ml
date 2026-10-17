@@ -49,14 +49,11 @@ let make machine bus taken =
       })
     taken
 
-(* A bus is parsed before it names a file of the machine's. *)
 let take machine bus =
   make machine bus
   @@
   match Machine.failed machine with
   | Some why -> Error why
-  | None when Option.is_none (Bus_address.numbers bus) ->
-      Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
   | None -> Machine.take machine bus
 
 let take_locked machine l =

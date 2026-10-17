@@ -92,7 +92,11 @@ let rec within a n = function
   | (base, len) :: l -> (a >= base && a <= base + len - n) || within a n l
 
 let reserved m a n = within a n (Atomic.get m.reserved)
-let take m bus = m.ops.take bus
+(* A bus is parsed before it names a file of the machine's. *)
+let take m bus =
+  if Option.is_none (Bus_address.numbers bus) then
+    Error (Printf.sprintf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
+  else m.ops.take bus
 
 let take_locked m l =
   match m.files with
