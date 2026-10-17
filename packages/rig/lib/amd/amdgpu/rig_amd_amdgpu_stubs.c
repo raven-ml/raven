@@ -118,7 +118,7 @@ value caml_rig_amd_amdgpu_runtime_enable(value v_kfd) {
   return Val_unit;
 }
 
-/* The flags of Request.memory's constructors, in order: GPU memory, GPU
+/* The flags of the memory type's constructors, in order: GPU memory, GPU
    memory the host maps through the BAR, system memory the kernel driver
    owns, the process's own memory, and the page of registers the driver
    remaps. */
@@ -134,7 +134,7 @@ static const uint32_t memories[] = {
 #define USERPTR 3
 #define MMIO 4
 
-/* Allocates [v_bytes] bytes of the Request.memory [v_m] for GPU [v_gpu] at
+/* Allocates [v_bytes] bytes of the memory kind [v_m] for GPU [v_gpu] at
    the address [v_va]: [(handle, mmap_offset)]. All but the registers are
    executable. */
 value caml_rig_amd_amdgpu_alloc(value v_kfd, value v_gpu, value v_va,
@@ -175,7 +175,7 @@ value caml_rig_amd_amdgpu_map_gpu(value v_kfd, value v_handle, value v_gpu,
   return Val_int((int)a.n_success);
 }
 
-/* The event types of Request.event's constructors, in order. */
+/* The event types of the event type's constructors, in order. */
 static const uint32_t events[] = {KFD_IOC_EVENT_SIGNAL, KFD_IOC_EVENT_MEMORY,
                                   KFD_IOC_EVENT_HW_EXCEPTION};
 
@@ -201,12 +201,7 @@ static int reset_event(int kfd, uint32_t id) {
   return call(kfd, AMDKFD_IOC_RESET_EVENT, &a);
 }
 
-value caml_rig_amd_amdgpu_reset_event(value v_kfd, value v_id) {
-  check(reset_event(Int_val(v_kfd), Int_val(v_id)));
-  return Val_unit;
-}
-
-/* The queue types of Request.queue's constructors, in order. */
+/* The queue types of the queue type's constructors, in order. */
 static const uint32_t queues[] = {KFD_IOC_QUEUE_TYPE_COMPUTE,
                                   KFD_IOC_QUEUE_TYPE_COMPUTE_AQL,
                                   KFD_IOC_QUEUE_TYPE_SDMA};
@@ -261,7 +256,7 @@ value caml_rig_amd_amdgpu_destroy_queue(value v_kfd, value v_id) {
 /* Waits at most [v_ms] for any of the events [v_ids], a signal, then a
    memory and a hardware exception event, or the two exception events
    alone. Is [Some f] for a fault of GPU [v_me] an exception event reports,
-   [f] a Request.fault, else [None], allocating nothing.
+   [f] a fault, else [None], allocating nothing.
 
    An exception event another GPU's fault set does not reset itself, and
    would end every later wait at once: the wait resets it. */
@@ -272,7 +267,7 @@ value caml_rig_amd_amdgpu_wait(value v_kfd, value v_ids, value v_ms,
   int kfd = Int_val(v_kfd), n = Wosize_val(v_ids);
   uint32_t me = Int_val(v_me);
   if (n < 2 || n > MOST_EVENTS)
-    caml_invalid_argument("Request.wait: 2 or 3 events");
+    caml_invalid_argument("kfd_wait: 2 or 3 events");
   struct kfd_event_data ev[MOST_EVENTS];
   memset(ev, 0, sizeof ev);
   for (int i = 0; i < n; i++) ev[i].event_id = Int_val(Field(v_ids, i));
@@ -453,7 +448,6 @@ NONE(free, value a UNUSED, value b UNUSED)
 NONE(map_gpu, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
 NONE(event, value a UNUSED, value b UNUSED, value c UNUSED)
 NONE(destroy_event, value a UNUSED, value b UNUSED)
-NONE(reset_event, value a UNUSED, value b UNUSED)
 NONE(queue_byte, value *a UNUSED, int b UNUSED)
 NONE(queue, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED, value f UNUSED, value g UNUSED, value h UNUSED,

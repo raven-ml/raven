@@ -4,7 +4,7 @@
  (name rig_amd_amdgpu)
  (public_name rig.amd.amdgpu)
  (libraries rig_edge rig_amd rig_amd_abi unix)
- (private_modules request topology)
+ (private_modules topology)
  (foreign_stubs
   (language c)
   (extra_deps
