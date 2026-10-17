@@ -3703,9 +3703,17 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
      writes their results: for its chunks' totals, and in a Moments scan's
      exact pass. */
   int copy = padded || x->alias;
-  int64_t ys[NX_MAX_RANK];
+  int64_t ys[NX_MAX_RANK], terms, outputs;
   if (padded) nx_cpu_padded_shape(&pad, x->rank, x->dim, ys);
   int r = padded ? pad.rank + pad.nwindows : x->rank;
+  /* The destinations fit the operand, padded, before it is copied. */
+  nx_array loop = {.rank = r};
+  memcpy(loop.dim, padded ? ys : x->dim, sizeof(int64_t) * (size_t)r);
+  if ((e = checked(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1], &loop,
+                   &terms, &outputs))) {
+    nx_done(nd + 1, a);
+    CAMLreturn(Val_int(e));
+  }
   double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
   int released = nx_cpu_release(
       call_cost(c, x, padded ? ys : x->dim, r, copy, extra, a, nd));
@@ -3893,6 +3901,21 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     release(owner);
     CAMLreturn(Val_int(e));
   }
+  /* Every reduction's destinations fit the loop, before any load is
+     copied; nx_cpu.ml checked that the loads have its shape. */
+  nx_array loop = {.rank = rank};
+  memcpy(loop.dim, shape, sizeof(int64_t) * (size_t)rank);
+  for (int i = 0; !e && i < nr; i++) {
+    int64_t terms, outputs;
+    const nx_array *y = &a[first[i]];
+    e = checked(c->op, rs[i], c->axes, c->naxes, y,
+                two(c->op, rs[i]) ? y + 1 : y, &loop, &terms, &outputs);
+  }
+  if (e) {
+    nx_done(nd + nl, a);
+    release(owner);
+    CAMLreturn(Val_int(e));
+  }
   /* The call's price (cpu.h, Calls): each reduction's, as run prices one over
      the loop's C-contiguous virtual operand (call_cost), each term also
      running the program's kinds (nx_cpu_prog_cost), and the copies of
@@ -3928,15 +3951,10 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
       oom = nx_cpu_unpad(l, &pad[copied], fill[copied], &loads[copied]);
     else if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
   }
-  /* Every load has the loop's shape, over which the virtual operand is
-     C-contiguous; a loop of no load runs over its shape alone. */
+  /* The virtual operand is C-contiguous over the loop's shape, the
+     loads'. */
   int index = 0;
-  for (int i = 0; !oom && !e && i < nl; i++) {
-    if (loads[i].rank != rank) e = NX_SHAPE;
-    for (int d = 0; !e && d < rank; d++)
-      if (loads[i].dim[d] != shape[d]) e = NX_SHAPE;
-  }
-  if (!oom && !e) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
+  if (!oom) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
   nx_array x = {.rank = rank};
   if (!oom) *z = (fused){.prog = g, .nloads = nl, .index = index};
   if (!oom && !e) {
@@ -3947,13 +3965,6 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
       past *= x.dim[d];
     }
     fuse(z, &x, loads);
-  }
-  /* Every reduction's destinations fit before any is written. */
-  for (int i = 0; !oom && !e && c->op == REDUCE && i < nr; i++) {
-    int64_t terms, outputs;
-    const nx_array *y = &a[first[i]];
-    e = checked(REDUCE, rs[i], c->axes, c->naxes, y,
-                two(REDUCE, rs[i]) ? y + 1 : y, &x, &terms, &outputs);
   }
   for (int i = 0; !oom && !e && i < nr; i++) {
     int dt = nx_cpu_prog_held(g, ks[i]);

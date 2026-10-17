@@ -1390,6 +1390,38 @@ let test_coord_past_rank () =
     (Nx_cpu.map p ~dsts:[| A.Any y |] [||]);
   equal ~msg:"untouched" (array float_exact) [| 9.; 9.; 9. |] (A.to_array y)
 
+(* A map whose padded load has more elements than a layout admits, or
+   another shape than its destinations, answers [Shape_mismatch] before it
+   copies the load: padded to 2^50 elements, more than any host's memory,
+   and writes nothing. *)
+let test_padded_misfits () =
+  let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
+  let padded lo : Nx_kernel.load =
+    Padded
+      {
+        x;
+        fill = 0.;
+        pad = { lo = [| lo |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] };
+      }
+  in
+  let f32 = D.Any D.Float32 in
+  List.iter
+    (fun (name, p) ->
+      List.iter
+        (fun (what, lo) ->
+          let y = A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |] in
+          let msg = name ^ ", " ^ what in
+          equal ~msg answer A.Shape_mismatch
+            (Nx_cpu.map p ~dsts:[| A.Any y |] [| padded lo |]);
+          equal ~msg:(msg ^ ": untouched") (array float_exact) [| 9.; 9.; 9. |]
+            (A.to_array y))
+        [ ("past max_numel", L.max_numel - 1); ("another shape", 1 lsl 50) ])
+    [
+      ("identity", P.v ~ins:[| f32 |] [| P.In 0 |] ~outs:[| 0 |]);
+      ( "a program",
+        P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] );
+    ]
+
 (* A map that holds many complex128 values gets blocks of few elements; over
    a transposed float32 operand the walk tiles rows, as many as fit the
    block. Each output is [k] times [2x], cast back to float32. *)
@@ -2604,6 +2636,8 @@ let cpu =
       test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
       test "a map's coordinate past its rank is refused" test_coord_past_rank;
+      test "a map refuses a padded load that does not fit before copying it"
+        test_padded_misfits;
       test "a map of short blocks over a transposed operand tiles them"
         test_tiled_short_blocks;
       prop ~count:20 "erf at float64 is nx_kinds.h's over pieces of both ranges"

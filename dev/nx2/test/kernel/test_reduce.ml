@@ -1552,6 +1552,56 @@ let test_refusals (b : Support.backend) () =
        ~dsts:[| on (A.create Rig.host D.Bool [| 2 |]) |]
        [| plain_of bools |])
 
+(* A padded load of more elements than a layout admits, or whose loop does
+   not fit its destinations, is refused before the kernel copies it: padded
+   to 2^50 elements, more than any host's memory, it answers Shape_mismatch
+   and writes nothing. *)
+let test_padded_refusals (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let on x = on b (A.Any x) in
+  let x = A.expect D.Float32 (on (A.of_array D.Float32 [| 2 |] [| 1.; 2. |])) in
+  let padded lo : Nx_kernel.load =
+    Padded
+      {
+        x;
+        fill = 0.;
+        pad = { lo = [| lo |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] };
+      }
+  in
+  let big = 1 lsl 50 in
+  let huge = padded big and past = padded (L.max_numel - 1) in
+  let f32 = D.Any D.Float32 in
+  let id = identity f32 in
+  let twice = P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] in
+  let dst s = on (A.of_array D.Float32 s (Array.make (total s) 9.)) in
+  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
+  let refused msg call dsts =
+    let before = Array.map (fun d -> A.to_array (A.expect D.Float32 (host d))) dsts in
+    equal ~msg answer A.Shape_mismatch (call dsts);
+    Array.iteri
+      (fun i d ->
+        equal ~msg:(msg ^ ": untouched") (array float_exact) before.(i)
+          (A.to_array (A.expect D.Float32 (host d))))
+      dsts
+  in
+  let sum = [| (Nx_kernel.Monoid Sum, 0) |] in
+  let reduce p load dsts =
+    K.reduce p ~shape:[| big + 2 |] ~axes:[| 0 |] sum ~dsts [| load |]
+  in
+  let scan p r load dsts = K.scan p ~axis:0 (r, 0) ~dsts [| load |] in
+  List.iter
+    (fun (name, p) ->
+      refused (name ^ ": a reduction into another shape") (reduce p huge)
+        [| dst [| 2 |] |];
+      refused (name ^ ": a scan into another shape") (scan p (Monoid Sum) huge)
+        [| dst [| 3 |] |];
+      refused (name ^ ": a scan past max_numel") (scan p (Monoid Sum) past)
+        [| dst [| 3 |] |];
+      refused (name ^ ": a Moments scan into another shape")
+        (scan p Moments huge)
+        [| dst [| 3 |]; dst [| 3 |] |])
+    [ ("identity", id); ("a program", twice) ]
+
 (* Padded loads *)
 
 (* What a padded load reads: the case of the array, built here, where
@@ -4021,6 +4071,10 @@ let order (b : Support.backend) =
          extreme of nothing, answers Wrong_dtype for dtypes a reduction does \
          not take"
         (fun () -> b.around (test_refusals b));
+      test
+        "refuses a padded load past max_numel or one that does not fit its \
+         destinations before copying it"
+        (fun () -> b.around (test_padded_refusals b));
     ]
 
 (* A reduction and a scan of a program of as many loads as it holds, the sum

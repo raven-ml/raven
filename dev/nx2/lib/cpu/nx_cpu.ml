@@ -122,6 +122,34 @@ let padding : Nx_kernel.load -> _ = function
   | Padded { x; fill; pad } ->
       Some (pad, Nx_kernel.Prog.bits (Nx_array.dtype x) fill)
 
+(* Loads' shapes, checked by Nx_kernel.Shape's rule before an external
+   copies a padded load. *)
+
+(* Whether the layout [l] has extents [shape] from axis [i] on, read without
+   allocating. *)
+let rec extents l shape i =
+  i = Array.length shape
+  || (Nx_array.Layout.dim l i = shape.(i) && extents l shape (i + 1))
+
+(* Whether load [i] on of [loads] have the loop's [shape] once loaded: a
+   plain load its array's, read without allocating on the reductions' hot
+   path, a padded one {!Nx_kernel.Shape.padded}'s. No load has none to
+   differ. *)
+let rec fits shape (loads : Nx_kernel.load array) i =
+  i = Array.length loads
+  || (match loads.(i) with
+     | Plain x ->
+         let l = Nx_array.layout x in
+         Nx_array.Layout.rank l = Array.length shape && extents l shape 0
+     | Padded { x; pad; _ } ->
+         let s = Nx_array.Layout.shape (Nx_array.layout x) in
+         Nx_kernel.Shape.padded pad s = Ok shape)
+     && fits shape loads (i + 1)
+
+(* The shape of the destination [d], whose shape a map's or a scan's loop
+   has. *)
+let loop_of (Nx_array.Any d) = Nx_array.Layout.shape (Nx_array.layout d)
+
 (* Maps (map.c): each load passes its padding, or none passes any where
    no load is padded, so that a plain map allocates nothing. *)
 
@@ -138,9 +166,10 @@ let padded : Nx_kernel.load -> bool = function
 
 let map p ~dsts loads =
   let answer =
-    if Array.exists padded loads then
-      map_c p dsts loads (Array.map padding loads)
-    else map_c p dsts loads [||]
+    if not (Array.exists padded loads) then map_c p dsts loads [||]
+    else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0)
+    then Nx_array.Shape_mismatch
+    else map_c p dsts loads (Array.map padding loads)
   in
   match answer with
   | Nx_array.Declined ->
@@ -260,27 +289,6 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
 let rec all_accepted p rs i =
   i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
 
-(* Whether the layout [l] has extents [shape] from axis [i] on, read without
-   allocating. *)
-let rec extents l shape i =
-  i = Array.length shape
-  || (Nx_array.Layout.dim l i = shape.(i) && extents l shape (i + 1))
-
-(* Whether load [i] on of [loads] have the loop's [shape] once loaded: a
-   plain load its array's, read without allocating on the reductions' hot
-   path, a padded one {!Nx_kernel.Shape.padded}'s. No load has none to
-   differ. *)
-let rec fits shape (loads : Nx_kernel.load array) i =
-  i = Array.length loads
-  || (match loads.(i) with
-     | Plain x ->
-         let l = Nx_array.layout x in
-         Nx_array.Layout.rank l = Array.length shape && extents l shape 0
-     | Padded { x; pad; _ } ->
-         let s = Nx_array.Layout.shape (Nx_array.layout x) in
-         Nx_kernel.Shape.padded pad s = Ok shape)
-     && fits shape loads (i + 1)
-
 (* The loads' paddings, or none where no load is padded. *)
 let pads loads =
   if Array.exists padded loads then Array.map padding loads else [||]
@@ -365,6 +373,8 @@ let fused_scan ~threads p ~axis (r, k) ~dsts loads =
 
 let scan_answer ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
   if not (accepted p rk) then Nx_array.Wrong_dtype
+  else if Array.length dsts = 0 then Nx_array.Bad_arity
+  else if not (fits (loop_of dsts.(0)) loads 0) then Nx_array.Shape_mismatch
   else if not (Nx_kernel.Prog.is_identity p) then
     fused_scan ~threads p ~axis rk ~dsts loads
   else

@@ -326,9 +326,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx2
 
-- direct kernel entries write or allocate scratch before refusing malformed
-  contraction extents and padded shapes beyond `max_numel`: one rule per
-  shape invariant, regressions from `refs/audit/20261010-deep/worktrees/wt-26`
 - engine review findings: donation through `Eval.received`, the shared
   `Interp.running` state across fibers, `Nx_array.to_device` copying a
   strided view's enclosing span; probes in
