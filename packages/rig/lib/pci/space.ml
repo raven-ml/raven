@@ -12,7 +12,7 @@ type t = {
   base : int;
   length : int;
   mutable tlsf : Tlsf.t option;
-  lock : Mutex.t;
+  lock : Lock.t;
 }
 
 let create ~base n =
@@ -21,7 +21,7 @@ let create ~base n =
       "Space.create: %d addresses at 0x%x, expected both 0 or more and an end \
        at most max_int"
       n base;
-  { base; length = n; tlsf = None; lock = Mutex.create () }
+  { base; length = n; tlsf = None; lock = Lock.create () }
 
 let base s = s.base
 let length s = s.length
@@ -44,15 +44,15 @@ let top_bit n =
 
 (* Tlsf raises nothing on the arguments Space checks, but it allocates, so an
    asynchronous exception may land inside it: [alloc] and [free] hold the lock
-   through [Mutex.protect], which gives it back on any exit. *)
+   through [Lock.protect], which gives it back on any exit. *)
 let alloc ?(align = 0x1000) s n =
   if n <= 0 then
     invalid_argf "Space.alloc: %d addresses, expected more than 0" n;
   if not (is_pow2 align) then
     invalid_argf "Space.alloc: align %d is not a positive power of two" align;
   let align = Int.max (top_bit n) align in
-  Mutex.protect s.lock (fun () -> Tlsf.alloc ~align (tlsf s) n)
+  Lock.protect s.lock (fun () -> Tlsf.alloc ~align (tlsf s) n)
 
 let free s a =
-  let freed = Mutex.protect s.lock (fun () -> Tlsf.free (tlsf s) a) in
+  let freed = Lock.protect s.lock (fun () -> Tlsf.free (tlsf s) a) in
   if not freed then invalid_argf "Space.free: no range at 0x%x" a

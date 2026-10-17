@@ -19,7 +19,7 @@ type t = {
   inherited : bool Atomic.t; (* until [forget] *)
   released : bool Atomic.t;
   users : int Atomic.t;
-  lock : Mutex.t;
+  lock : Lock.t;
   maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
   dmas : unit Tables.Window.t;
   pins : unit Tables.Range.t; (* (address, bytes) *)
@@ -35,7 +35,7 @@ let make machine bus taken =
         inherited = Atomic.make fn.inherited;
         released = Atomic.make false;
         users = Atomic.make 0;
-        lock = Mutex.create ();
+        lock = Lock.create ();
         maps = Tables.Window.create 16;
         dmas = Tables.Window.create 16;
         pins = Tables.Range.create 16;
@@ -94,7 +94,7 @@ let release f =
       Unix.sleepf nap_s
     done;
     let maps =
-      Mutex.protect f.lock (fun () ->
+      Lock.protect f.lock (fun () ->
           let ws = List.of_seq (Tables.Window.to_seq_keys f.maps) in
           Tables.Window.reset f.maps;
           ws)
@@ -186,12 +186,12 @@ let map ?combine ?(off = 0) ?length f i =
     | None, None -> false
   in
   let* w = f.fn.map ~combine i off length in
-  Mutex.protect f.lock (fun () -> Tables.Window.add f.maps w (i, combine));
+  Lock.protect f.lock (fun () -> Tables.Window.add f.maps w (i, combine));
   Ok w
 
 (* Removes one binding of the live window [w] from [table], or refuses [w]. *)
 let unlist f table fn w =
-  Mutex.protect f.lock @@ fun () ->
+  Lock.protect f.lock @@ fun () ->
   if not (Tables.Window.mem table w) then
     invalid_argf "Function.%s: no such window of %s" fn f.bus;
   Tables.Window.remove table w
@@ -321,7 +321,7 @@ let alloc_dma_entered ~contiguous ?va f n =
      waits for its uses, finds it. *)
   (match dma with
   | Ok (Some (w, _)) ->
-      Mutex.protect f.lock (fun () -> Tables.Window.add f.dmas w ())
+      Lock.protect f.lock (fun () -> Tables.Window.add f.dmas w ())
   | Ok None | Error _ -> ());
   dma
 
@@ -346,7 +346,7 @@ let pin_entered f a n =
   (* As [alloc_dma_entered]'s. *)
   (match runs with
   | Ok (Some _) ->
-      Mutex.protect f.lock (fun () -> Tables.Range.add f.pins (a, n) ())
+      Lock.protect f.lock (fun () -> Tables.Range.add f.pins (a, n) ())
   | Ok None | Error _ -> ());
   runs
 
@@ -361,7 +361,7 @@ let pin f a n =
       reraise e
 
 let unpin f a n =
-  Mutex.protect f.lock (fun () ->
+  Lock.protect f.lock (fun () ->
       if not (Tables.Range.mem f.pins (a, n)) then
         invalid_argf "Function.unpin: 0x%x is not pinned for %s" a f.bus;
       Tables.Range.remove f.pins (a, n));

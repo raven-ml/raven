@@ -42,10 +42,14 @@
     holds when it exits loses its bus mastering then, after the exit functions
     of the libraries above this one, such as its driver's, have run. A child of
     [fork] exiting changes nothing. A process killed by a signal runs no exit
-    function. Behind an IOMMU, Linux then stops the function's DMA as it closes
-    the process's files. Taken physically, the function keeps writing, into
-    memory that stays until its GPU is reset ({{!dma}system memory}), and its
-    legacy interrupts stay off until a kernel driver enables the function.
+    function. A process that exits from a callback inside a lock of this
+    library's leaves the function whose release takes that lock as a killed
+    process leaves it, prints why on standard error, and releases the
+    others. Behind an IOMMU, Linux stops the DMA of a function so left as
+    it closes the process's files. Taken physically, the
+    function keeps writing, into memory that stays until its GPU is reset
+    ({{!dma}system memory}), and its legacy interrupts stay off until a kernel
+    driver enables the function.
 
     A take changes the function's legacy interrupts until its release, and a
     release turns bus mastering off. A function taken physically also gets

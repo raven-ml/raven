@@ -26,27 +26,31 @@ type t = {
   teardown_ms : int;
   reset : Function.t -> (unit, string) result;
   is_gpu : Machine.id -> bool;
-  mutex : Mutex.t;
+  mutex : Lock.t;
   mutable exits : bool;
-  holds : Mutex.t;
+  holds : Lock.t;
   mutable held : hold list;
   mutable spent : (Machine.t * string) list;
 }
 
 (* [pid] is the process that opened it: a child of fork inherits the hold, and
-   it stays the parent's. [lock] makes the first [stop] the only one: [stopped]
-   is its answer. A renewal that failed leaves the GPU lost whatever stops
-   it. *)
+   it stays the parent's. [lock] makes the first [stop] the only one to call
+   the vendor's: [stopped] is its answer, and [lost] whether it loses the GPU.
+   [returned] is whether a stop released the function, which the next stop
+   does if the first's release raised. A renewal that failed leaves the GPU
+   lost whatever stops it. *)
 and hold = {
   gpus : t;
   machine : Machine.t;
   bus : string;
   fn : Function.t;
   pid : int;
-  lock : Mutex.t;
+  lock : Lock.t;
   mutable vendor_stop : (unit -> [ `Clean | `Lost | `Unknown ]) option;
   mutable unrenewed : bool;
   mutable stopped : [ `Stopped | `Unknown ] option;
+  mutable lost : bool;
+  mutable returned : bool;
 }
 
 let make ~name ~noun ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms
@@ -61,9 +65,9 @@ let make ~name ~noun ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms
     teardown_ms;
     reset;
     is_gpu;
-    mutex = Mutex.create ();
+    mutex = Lock.create ();
     exits = false;
-    holds = Mutex.create ();
+    holds = Lock.create ();
     held = [];
     spent = [];
   }
@@ -94,7 +98,7 @@ let gpu g m i =
   | None ->
       Error (strf "no such %s; the machine has %d" g.noun (List.length all))
   | Some bus
-    when Mutex.protect g.holds (fun () ->
+    when Lock.protect g.holds (fun () ->
              List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
       Error (bus ^ " is open in this process")
   | Some bus -> Ok bus
@@ -102,7 +106,7 @@ let gpu g m i =
 (* Renewals *)
 
 let lost g m bus =
-  Mutex.protect g.holds (fun () ->
+  Lock.protect g.holds (fun () ->
       List.exists (fun (m', b) -> m' == m && b = bus) g.spent)
 
 (* Records whether the GPU at [bus] of [m] is lost, under [holds]. *)
@@ -121,11 +125,11 @@ let renew_taken g m bus fn =
   in
   match reset () with
   | r ->
-      Mutex.protect g.holds (fun () -> mark g m bus ~lost:(Result.is_error r));
+      Lock.protect g.holds (fun () -> mark g m bus ~lost:(Result.is_error r));
       r
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      Mutex.protect g.holds (fun () -> mark g m bus ~lost:true);
+      Lock.protect g.holds (fun () -> mark g m bus ~lost:true);
       Printexc.raise_with_backtrace e bt
 
 let renew h =
@@ -145,18 +149,31 @@ let renew h =
    with its function still taken, or lost before it is marked. *)
 let give_back h ~lost =
   let g = h.gpus in
-  Mutex.protect g.holds @@ fun () ->
+  Lock.protect g.holds @@ fun () ->
   g.held <- List.filter (fun h' -> h' != h) g.held;
   if lost then mark g h.machine h.bus ~lost:true;
   Function.release h.fn
 
+(* Releases [h]'s function once its stop recorded its answer. A release that
+   raised, as one from a callback inside [holds] on the same thread does, is
+   made by the next stop. *)
+let give_once h =
+  if not h.returned then begin
+    give_back h ~lost:h.lost;
+    h.returned <- true
+  end
+
 (* The first call stops the GPU. A failed open's bracket releases a GPU no write
    reached as it found it, and loses one its vendor started, whatever the
-   vendor's stop answers. A vendor's stop that raises leaves the GPU lost. *)
+   vendor's stop answers. A vendor's stop that raises leaves the GPU lost. The
+   answer is recorded with no allocation between the vendor's stop and its
+   store, so no asynchronous exception has a later stop call it again. *)
 let finish h ~failed =
-  Mutex.protect h.lock @@ fun () ->
+  Lock.protect h.lock @@ fun () ->
   match h.stopped with
-  | Some s -> s
+  | Some s ->
+      give_once h;
+      s
   | None ->
       let ended =
         match h.vendor_stop with
@@ -165,23 +182,26 @@ let finish h ~failed =
             match stop () with
             | s -> s
             | exception e ->
-                let bt = Printexc.get_raw_backtrace () in
+                h.lost <- true;
                 h.stopped <- Some `Unknown;
-                give_back h ~lost:true;
+                let bt = Printexc.get_raw_backtrace () in
+                give_once h;
                 Printexc.raise_with_backtrace e bt)
       in
       let started = Option.is_some h.vendor_stop in
-      give_back h ~lost:(h.unrenewed || ended <> `Clean || (failed && started));
+      h.lost <- h.unrenewed || ended <> `Clean || (failed && started);
       let s =
         match ended with `Unknown -> `Unknown | `Clean | `Lost -> `Stopped
       in
-      h.stopped <- Some s;
+      (h.stopped <-
+         match s with `Unknown -> Some `Unknown | `Stopped -> Some `Stopped);
+      give_once h;
       s
 
 let stop h = finish h ~failed:false
 
 let set_stop h stop =
-  Mutex.protect h.lock @@ fun () ->
+  Lock.protect h.lock @@ fun () ->
   if Option.is_some h.stopped then
     invalid_argf "Gpus.set_stop: %s was stopped" h.bus;
   if Option.is_some h.vendor_stop then
@@ -193,7 +213,9 @@ let set_stop h stop =
    registers when the library loads: hooks run newest first, so a GPU stops
    while its function still reaches memory. The holds are read without their
    lock, which a child of fork may find held by a thread it does not have; a
-   stop that gives its GPU back takes it. *)
+   stop that gives its GPU back takes it. An exit from a callback inside a lock
+   may hold a lock a stop takes: that take raises, and is printed as any
+   stop's exception, and the other GPUs stop. *)
 let stop_held g =
   let pid = Unix.getpid () in
   let stop h =
@@ -244,7 +266,7 @@ let take g m bus =
    renewed before the driver starts; one whose renewal fails is lost. *)
 let open_ g m i f =
   index g "open_" i;
-  named g i @@ Mutex.protect g.mutex
+  named g i @@ Lock.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
   let* fn = take g m bus in
@@ -255,13 +277,15 @@ let open_ g m i f =
       bus;
       fn;
       pid = Unix.getpid ();
-      lock = Mutex.create ();
+      lock = Lock.create ();
       vendor_stop = None;
       unrenewed = false;
       stopped = None;
+      lost = false;
+      returned = false;
     }
   in
-  Mutex.protect g.holds (fun () -> g.held <- h :: g.held);
+  Lock.protect g.holds (fun () -> g.held <- h :: g.held);
   (* A vendor's stop that raises here replaces [f]'s answer: the GPU is lost
      either way. *)
   let failed () = ignore (finish h ~failed:true) in
@@ -291,7 +315,7 @@ let open_ g m i f =
    lock a take holds. *)
 let change g fn m i (f : 's. 's Sysfs.lock -> 'a) =
   index g fn i;
-  named g i @@ Mutex.protect g.mutex
+  named g i @@ Lock.protect g.mutex
   @@ fun () ->
   match Machine.files m with
   | None ->
@@ -412,7 +436,7 @@ let reset_taken g m taken =
 
 let reset g m i =
   index g "reset" i;
-  named g i @@ Mutex.protect g.mutex
+  named g i @@ Lock.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
   reset_taken g m (take g m bus)

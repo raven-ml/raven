@@ -39,12 +39,12 @@ let round_page n = (n + page - 1) / page * page
 let huge = 2 lsl 20
 
 (* The ranges [reserve] reserved, which [lock] guards. *)
-let lock = Mutex.create ()
+let lock = Lock.create ()
 let reserved : unit Tables.Range.t = Tables.Range.create 4
 let range a n = strf "[0x%x, 0x%x)" a (a + n)
 
 let reserve ~base n =
-  Mutex.protect lock @@ fun () ->
+  Lock.protect lock @@ fun () ->
   if not (Tables.Range.mem reserved (base, n)) then begin
     (match reserve_at base n with
     | () -> ()
@@ -122,7 +122,7 @@ let map_bytes ?va n =
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap_range a n =
   Fail.bug "freeing system memory" (fun () ->
-      if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
+      if Lock.protect lock (fun () -> reserved_at a n) then release_at a n
       else unmap_at a n)
 
 let map ?va n =
@@ -187,7 +187,7 @@ type store = {
 }
 
 (* [state] guards every value below and every store, file and block. *)
-let state = Mutex.create ()
+let state = Lock.create ()
 let files : file list ref = ref [] (* the process's live file of each root *)
 let blocks : block Tables.Address.t = Tables.Address.create 16
 
@@ -253,7 +253,7 @@ let has_blocks f =
 let exit () =
   let pid = Unix.getpid () in
   if List.exists (fun f -> f.pid = pid) !files then
-    Mutex.protect state @@ fun () ->
+    Lock.protect state @@ fun () ->
     List.iter (fun f -> if f.reachers = [] then delete f.path) !files
 
 (* A file that lists no function and holds no block goes. *)
@@ -437,7 +437,7 @@ let own_addresses ~align n =
             Fail.fail "reserving addresses for system memory: %s"
               (Unix.error_message e)
         in
-        Mutex.protect lock (fun () ->
+        Lock.protect lock (fun () ->
             Tables.Range.add reserved (base, own_length) ());
         let t = Tlsf.create ~base own_length in
         own := Some t;
@@ -492,7 +492,7 @@ let hold s a n =
 
 let alloc ?(contiguous = false) ?va s n =
   let n = round_page n in
-  Mutex.protect state @@ fun () ->
+  Lock.protect state @@ fun () ->
   match
     match va with
     | Some a ->
@@ -516,7 +516,7 @@ let alloc ?(contiguous = false) ?va s n =
 
 let free s w =
   let a = Window.address w and n = Window.length w in
-  Mutex.protect state @@ fun () ->
+  Lock.protect state @@ fun () ->
   if Tables.Address.mem s.placed a then begin
     Tables.Address.remove s.placed a;
     List.iter
@@ -538,12 +538,12 @@ let leave ~root bus =
       end)
     !files
 
-let close s = Mutex.protect state @@ fun () -> leave ~root:s.root s.bus
+let close s = Lock.protect state @@ fun () -> leave ~root:s.root s.bus
 
 (* Every block of the [n] bytes at [a] must be [root]'s: memory of the process's
    own, or of another machine, would not outlive the process. *)
 let reach ~root ~bus a n =
-  Mutex.protect state @@ fun () ->
+  Lock.protect state @@ fun () ->
   let held (at, _, _) =
     match Tables.Address.find_opt blocks at with
     | Some b -> b.file.root = root
@@ -563,7 +563,7 @@ let reach ~root ~bus a n =
   end
 
 let unreach ~a ~n =
-  Mutex.protect state @@ fun () ->
+  Lock.protect state @@ fun () ->
   List.iter
     (fun (at, _, len) ->
       Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
@@ -634,16 +634,15 @@ let sweep ~root ~reset =
               | _ -> ())))
     files
 
-let collect_dead ~root =
-  Mutex.protect state @@ fun () -> sweep ~root ~reset:None
+let collect_dead ~root = Lock.protect state @@ fun () -> sweep ~root ~reset:None
 
 let forget ~root ~bus =
-  Mutex.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
+  Lock.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
 
 (* A file that cannot be opened for another reason than its end might hold the
    GPU's memory: it is no answer. *)
 let left ~root ~bus =
-  Mutex.protect state @@ fun () ->
+  Lock.protect state @@ fun () ->
   let listed = ref false in
   List.iter
     (fun path ->

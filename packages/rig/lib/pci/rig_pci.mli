@@ -120,6 +120,14 @@
       and notices a function that has left the bus only at its bound.
     - {e Misuse} raises [Invalid_argument], such as an index below zero, bytes
       outside a window, or memory given back twice.
+    - The library's locks count among the locks a thread holds ([rig_hold] in
+      [rig_edge.h]), so a call of rig's or of a driver's from a callback
+      inside one raises [Invalid_argument] as it starts ([Rig]'s domains
+      section). A call of this library's from such a callback raises
+      [Invalid_argument] where it would take a lock its thread holds,
+      without taking it. What it did before stays done, as after any
+      exception there, and a {!Gpus.stop} that raised so gives its GPU back
+      at the next stop.
 
     A message names what failed and, where something grants what is missing, the
     command, privilege or setting that grants it.

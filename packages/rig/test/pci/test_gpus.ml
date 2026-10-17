@@ -1544,6 +1544,44 @@ let test_stop_once answer =
   equal ~msg:"calls of the vendor's stop" int 1 (Atomic.get calls);
   equal ~msg:"the function released" bool true (Function.released fn)
 
+(* A stop of a second GPU from a callback at any allocation of the first's
+   stop. Inside the lock of the GPUs' holds, which the first's give-back
+   holds, the second's give-back is refused, and its next stop gives the GPU
+   back without running its vendor's stop again; outside every lock it stops
+   the GPU. Each vendor's stop runs once, and both functions are released. *)
+let test_stop_in_stop () =
+  let rec from n =
+    let t = tree ~gpus_on:(Array.to_list two_buses) () in
+    let stops = [| 0; 0 |] in
+    let open_ i =
+      require_ok
+        (Gpus.open_ t.g t.m i (fun h fn ->
+             Gpus.set_stop h (fun () ->
+                 stops.(i) <- stops.(i) + 1;
+                 `Clean);
+             Ok (h, fn)))
+    in
+    let h0, f0 = open_ 0 in
+    let h1, f1 = open_ 1 in
+    let call () =
+      match Gpus.stop h1 with
+      | _ -> ()
+      | exception Invalid_argument why
+        when String.starts_with ~prefix:"Rig_pci: a lock taken again" why ->
+          ()
+    in
+    let reached =
+      Rig_support.interrupted ~landing:(Call call) n (fun () -> stop h0)
+    in
+    stop h1;
+    let at what = strf "%s, called at %d" what n in
+    equal ~msg:(at "the vendor's stops") (array int) [| 1; 1 |] stops;
+    equal ~msg:(at "the functions released") (pair bool bool) (true, true)
+      (Function.released f0, Function.released f1);
+    if reached then from (n + 1)
+  in
+  from 1
+
 type failure = Answers_error | Raises_exit
 
 let failures = [ ("answers Error", Answers_error); ("raises", Raises_exit) ]
@@ -1738,6 +1776,10 @@ let tree_holds =
       cases "stop calls the vendor's stop once and answers the same twice"
         ~name:(Format.asprintf "%a" pp_answer)
         answers test_stop_once;
+      test
+        "a stop from a callback inside another's give-back gives its GPU \
+         back at its next stop, stopping it once"
+        test_stop_in_stop;
       cases
         "an open whose start fails before set_stop releases the GPU, unrenewed"
         ~name:fst failures test_fails_before;
@@ -1800,14 +1842,32 @@ let exit_holding_gpus root =
   | child -> ignore (Unix.waitpid [] child));
   exit 0
 
-(* The lines [exit_holding_gpus root] printed on standard output, and what it
-   printed on standard error. *)
-let exiting root =
+(* Opens GPU 1 of the tree [root] with a stop that prints, as
+   [exit_holding_gpus] does, then exits from the start of GPU 2's open, which
+   holds the vendor's lock and no lock a stop takes. *)
+let exit_inside = "--exit-inside"
+
+let exit_inside_lock root =
+  let g = gpus () and m = Machine.at root in
+  let prints fn () =
+    print_endline ("stopped " ^ Function.bus fn);
+    `Clean
+  in
+  let start h fn =
+    Gpus.set_stop h (prints fn);
+    Ok h
+  in
+  ignore (Result.get_ok (Gpus.open_ g m 1 start));
+  ignore (Gpus.open_ g m 2 (fun _ _ -> exit 0))
+
+(* The lines the suite's executable run with [mode] on the tree [root] printed
+   on standard output, and what it printed on standard error. *)
+let exiting ?(mode = exit_holding) root =
   let exe = Sys.executable_name in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
   let err_r, err_w = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process exe [| exe; exit_holding; root |] Unix.stdin out_w err_w
+    Unix.create_process exe [| exe; mode; root |] Unix.stdin out_w err_w
   in
   Unix.close out_w;
   Unix.close err_w;
@@ -1832,6 +1892,22 @@ let test_exit () =
   contains ~msg:"the stop that raised"
     ~sub:"stopping 0000:03:00.0 at exit: Failure(\"a driver bug\")" err
 
+(* An exit inside a lock that no stop takes stops every GPU. *)
+let test_exit_inside () =
+  needs_flock ();
+  let root = Tree.make (List.map Tree.gpu gpu_buses) in
+  let out, err = exiting ~mode:exit_inside root in
+  equal ~msg:"stopped" (list string) [ "stopped 0000:43:00.0" ] out;
+  let at_exit l =
+    let k = String.length " at exit: " and n = String.length l in
+    let rec go i =
+      i + k <= n && (String.sub l i k = " at exit: " || go (i + 1))
+    in
+    go 0
+  in
+  equal ~msg:"stops that raised at exit" (list string) []
+    (List.filter at_exit (String.split_on_char '\n' err))
+
 let exits =
   group ~timeout:patience "exit"
     [
@@ -1840,11 +1916,16 @@ let exits =
          mastering is turned off, past a stop that raises, and its forked \
          child stops none"
         test_exit;
+      test
+        "a process that exits inside a lock that no stop takes stops every \
+         GPU"
+        test_exit_inside;
     ]
 
 let () =
   match Sys.argv with
   | [| _; arg; root |] when arg = exit_holding -> exit_holding_gpus root
+  | [| _; arg; root |] when arg = exit_inside -> exit_inside_lock root
   | _ ->
       exit
       @@ run "rig_pci.gpus"

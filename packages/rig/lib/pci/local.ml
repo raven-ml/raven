@@ -31,7 +31,7 @@ type taken = {
   bus : string;
   config : Unix.file_descr * int; (* where configuration space starts in it *)
   bars : (int * int) option array; (* read once: a held function keeps them *)
-  seek : Mutex.t; (* a seek and its read or write, one at a time *)
+  seek : Lock.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   way : way;
@@ -43,7 +43,7 @@ type taken = {
    moved, none if the system refused. *)
 let config_io t io off b n =
   let fd, at = t.config in
-  Mutex.protect t.seek @@ fun () ->
+  Lock.protect t.seek @@ fun () ->
   match
     ignore (Unix.lseek fd (at + off) SEEK_SET);
     io fd b 0 n
@@ -111,7 +111,9 @@ let give_back t s =
    on none of it. The exit handler is registered when the library loads, before
    a driver above it registers its own, so it runs after theirs: a driver stops
    its GPU while it still reaches memory. It is a list in an atomic, so that a
-   child of fork meets no held lock. *)
+   child of fork meets no held lock. An exit from a callback inside a lock may
+   hold a lock the handler takes: that take raises, the handler prints it, and
+   goes on with the other functions. *)
 let physical = Atomic.make []
 let hold t = update physical (List.cons (Unix.getpid (), t))
 let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
@@ -119,14 +121,21 @@ let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
 let () =
   at_exit (fun () ->
       let pid = Unix.getpid () in
-      List.iter
-        (fun (owner, t) ->
-          if owner = pid then
+      let release (owner, t) =
+        if owner = pid then
+          try
             match t.way with
             | Physical_take s -> give_back t s
-            | Iommu_take _ -> stop_dma t)
-        (Atomic.get physical);
-      Sysmem.exit ())
+            | Iommu_take _ -> stop_dma t
+          with e ->
+            prerr_endline
+              (strf "releasing %s at exit: %s" t.bus (Printexc.to_string e))
+      in
+      List.iter release (Atomic.get physical);
+      try Sysmem.exit ()
+      with e ->
+        prerr_endline
+          (strf "releasing system memory at exit: %s" (Printexc.to_string e)))
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
    bytes at [off]. *)
@@ -279,7 +288,7 @@ let take_iommu files fds bus bars =
     bus;
     config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
     bars;
-    seek = Mutex.create ();
+    seek = Lock.create ();
     interrupts = Some efd;
     intx = None;
     way = Iommu_take c;
@@ -325,7 +334,7 @@ let take_physical l fds bars =
       bus;
       config = (config, 0);
       bars;
-      seek = Mutex.create ();
+      seek = Lock.create ();
       interrupts;
       intx = None;
       way = Physical_take (Sysmem.store ~root ~bus);

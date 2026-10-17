@@ -236,7 +236,7 @@ type t = {
   device : fd; (* the function's *)
   iova : Space.t;
   maps : (int * int) Tables.Range.t; (* to (device address, count) *)
-  mutex : Mutex.t;
+  mutex : Lock.t;
   mutable closed : bool;
 }
 
@@ -246,12 +246,12 @@ let open_ files fds bus =
   let fd, device, efd = open_function files fds bus Type1v2 in
   let iova = iova bus fd in
   let maps = Tables.Range.create 64 in
-  ({ fd; device; iova; maps; mutex = Mutex.create (); closed = false }, efd)
+  ({ fd; device; iova; maps; mutex = Lock.create (); closed = false }, efd)
 
 (* The device address at which [c] maps the [n] bytes at [a], mapping them for
    the first count. *)
 let map_dma fn bus c a n =
-  Mutex.protect c.mutex @@ fun () ->
+  Lock.protect c.mutex @@ fun () ->
   if c.closed then Fail.err_released fn bus;
   match Tables.Range.find_opt c.maps (a, n) with
   | Some (iova, k) ->
@@ -279,7 +279,7 @@ let map_dma fn bus c a n =
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
    released function's container has unmapped them already. *)
 let unmap_dma bus c a n =
-  Mutex.protect c.mutex @@ fun () ->
+  Lock.protect c.mutex @@ fun () ->
   match Tables.Range.find c.maps (a, n) with
   | iova, k when k > 1 -> Tables.Range.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
@@ -290,4 +290,4 @@ let unmap_dma bus c a n =
       Space.free c.iova iova
 
 let device c = c.device
-let close c = Mutex.protect c.mutex (fun () -> c.closed <- true)
+let close c = Lock.protect c.mutex (fun () -> c.closed <- true)

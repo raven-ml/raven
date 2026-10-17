@@ -22,7 +22,10 @@
     A process makes one {!t} per vendor, and the holds and lost GPUs above are
     that value's. The opens, resets and changes of one vendor's GPUs run one at
     a time, the driver's [f] and {!detach}'s wait included, so each delays the
-    vendor's other opens and changes. {!stop} waits for none of them. Every
+    vendor's other opens and changes. Each holds a lock for its whole run, so
+    a call of rig's or of a driver's from a callback on its thread meanwhile
+    is made inside a lock and raises [Invalid_argument] ([Rig]'s domains
+    section). {!stop} waits for none of them. Every
     [Error] about GPU [i] starts with its name ({!val-name}). Each value that
     takes a GPU number [i] raises [Invalid_argument] if [i < 0]. *)
 
@@ -105,7 +108,10 @@ val buses : t -> Machine.t -> string list
     before its functions' bus mastering is turned off and their files closed. A
     child of [fork] stops none of its parent's GPUs, which are still the
     parent's. An exception raised by a vendor's stop at exit is printed on
-    standard error, and the other GPUs are stopped. *)
+    standard error, and the other GPUs are stopped. An exit from a callback
+    inside a lock may hold a lock a GPU's stop takes. That stop raises
+    [Invalid_argument], printed as above, and leaves its GPU as a killed
+    process does, for its next open to renew. *)
 
 type hold
 (** The type for the process's hold on one GPU. *)
@@ -147,10 +153,12 @@ val stop : hold -> [ `Stopped | `Unknown ]
     function. The GPU may then be opened again, and its next open renews it if
     the vendor's stop returned [`Lost] or [`Unknown]. [stop h] is [`Unknown]
     iff the vendor's stop returned [`Unknown], and [`Stopped] otherwise. Later
-    calls return what the first returned and call nothing, and a call while
-    another runs waits for it and returns the same. An exception raised by the
-    vendor's stop passes through, and the GPU is lost. A device calls [stop]
-    once its work is done or lost. *)
+    calls return what the first returned and call no vendor's stop, and a
+    call while another runs waits for it and returns the same. Where the
+    first raised as it released the function, as one from a callback inside
+    a lock of this library's on the same thread does, the next call releases
+    it. An exception raised by the vendor's stop passes through, and the GPU
+    is lost. A device calls [stop] once its work is done or lost. *)
 
 val renew : hold -> (unit, string) result
 (** [renew h] resets the GPU [h] holds as its vendor does ([reset] of {!make}),

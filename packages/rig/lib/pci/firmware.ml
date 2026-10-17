@@ -21,7 +21,7 @@ let same a b =
    when it was read: while the file keeps it, a find gives the image again
    unread. *)
 let found : (string * string, identity * string) Hashtbl.t = Hashtbl.create 16
-let found_lock = Mutex.create ()
+let found_lock = Lock.create ()
 
 (* What [file] holds for the image of digest [pinned]: [`Absent] if it does not
    exist, [`Unreadable why] if it cannot be read, [why] the system's "FILE:
@@ -34,7 +34,7 @@ let look file ~pinned =
   | st -> (
       let id = identity st in
       let known =
-        Mutex.protect found_lock (fun () ->
+        Lock.protect found_lock (fun () ->
             Hashtbl.find_opt found (file, pinned))
       in
       match known with
@@ -43,7 +43,7 @@ let look file ~pinned =
           match In_channel.with_open_bin file In_channel.input_all with
           | exception Sys_error why -> `Unreadable why
           | s when digest s = pinned ->
-              Mutex.protect found_lock (fun () ->
+              Lock.protect found_lock (fun () ->
                   Hashtbl.replace found (file, pinned) (id, s));
               `Image s
           | _ -> `Other))

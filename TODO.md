@@ -58,10 +58,6 @@ raven / llama.cpp (Vulkan; ROCm):
   its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
   callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
   holder check
-- refusals: rig.pci's `Gpus.holds`, `Space.lock`, `Sysmem.lock` and
-  `g.mutex` are `Mutex`es a callback re-enters with two or more NV-PCI GPUs
-  (closing GPU 2 from a signal handler inside GPU 1's `give_back` leaves
-  GPU 2 held for good): derive the fix from NV's ranked guards
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
