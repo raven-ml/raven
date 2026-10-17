@@ -1246,62 +1246,37 @@ let give_pair c h v pair =
    nothing: no span, and the copies run from [t.asked] to when the host saw
    [p] reached, now if the device ran the work in its submit, and otherwise
    at the read. A settle that failed or found the device lost records
-   nothing.
-
-   In native code an exception anywhere in the call loses no pair: the entry
-   counts one hold of the pair per profile, and the trap drops the holds no
-   profile took, or owes the pair itself before the count is made. Nothing
-   allocates or polls between a profile taking the entry and the count of
-   the holds left to drop. *)
+   nothing. An asynchronous exception in the call may leave the pair held
+   by profiles that never took the entry: the pair is then never given back,
+   and never reused, as rig.mli allows of the memory of an interrupted
+   call. *)
 let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev in
   let c = device.live.c and value = Point.value p in
-  let held = ref None and owed = ref 0 and todo = ref ps in
-  match
-    let seen = if Dev.is_done p then Profile.now () else -1 in
-    let n = List.length ps in
-    let h = { left = n; settled = false } in
-    held := Some h;
-    owed := n;
-    let drop () =
-      if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then
-        give_pair c h value pair
+  let seen = if Dev.is_done p then Profile.now () else -1 in
+  let h = { left = List.length ps; settled = false } in
+  let drop () =
+    if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then
+      give_pair c h value pair
+  in
+  let read prof =
+    let copies start stop =
+      Array.iter
+        (fun (src, dst, bytes) ->
+          Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
+        moves
     in
-    let read prof =
-      let copies start stop =
-        Array.iter
-          (fun (src, dst, bytes) ->
-            Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
-          moves
-      in
-      if pair < 0 || Dev.settle device value then begin
-        h.settled <- true;
-        match if pair < 0 then (0, 0) else times_read c pair with
-        | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
-        | start, stop ->
-            Profile.add [ prof ] (Span { device; lane; name; start; stop });
-            copies start stop
-      end
-    in
-    let e = { Profile.device; value; read; drop } in
-    while !todo != [] do
-      match !todo with
-      | prof :: rest ->
-          Profile.pend prof e;
-          todo := rest;
-          owed := !owed - 1
-      | [] -> ()
-    done
-  with
-  | () -> ()
-  | exception x ->
-      let k = !owed in
-      (match !held with
-      | None -> if pair >= 0 then times_owe c pair value
-      | Some h ->
-          if k > 0 && Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-k) = k
-          then give_pair c h value pair);
-      raise x
+    if pair < 0 || Dev.settle device value then begin
+      h.settled <- true;
+      match if pair < 0 then (0, 0) else times_read c pair with
+      | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
+      | start, stop ->
+          Profile.add [ prof ] (Span { device; lane; name; start; stop });
+          copies start stop
+    end
+  in
+  let e = { Profile.device; value; read; drop } in
+  List.iter (fun prof -> Profile.pend prof e) ps
 
 (* The taking of a submit of [s] with [buffers], which first gives back
    the device's owed pairs it can. The last profile may stop between the two
