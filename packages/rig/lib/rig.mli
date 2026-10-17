@@ -282,10 +282,11 @@ val reaches : t -> t -> bool
     {- {!host} reaches the memory of a {!memory_device}, and of a driver's
        device whose driver declares [host_addresses]
        ({!Rig_edge.type-facts}).}
-    {- Every other device, a memory device included, reaches every memory
-       device's memory, {!host}'s memory where its driver declares
-       [maps_host], as a memory device's does, and the memory of another
-       device of its own driver that it maps ({!Rig_edge.Driver.peer}).}
+    {- Every other device whose driver declares [maps_host], as a memory
+       device's does, reaches {!host}'s memory and every memory device's
+       memory.}
+    {- Every other device reaches the memory of another device of its own
+       driver that it maps ({!Rig_edge.Driver.peer}).}
     {- Devices of different machines never reach each other. An io device
        and any other device never reach each other.}}
     Another machine's host is a driver's device of that machine, and these

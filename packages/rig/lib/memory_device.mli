@@ -14,9 +14,10 @@
 
     Its two queues, [COMPUTE:0] and [COPY:0], each run fills and copies, and
     [COPY:0] is its copy engine. Its budget is [max_int]. It maps every host
-    address, and the host and every driver's device on this machine reach
-    its memory ({!Dev.reaches}). Its device record is marked as a memory device
-    ({!Def.device}), so {!Rig.runs_on_host} is [true] of it.
+    address, and the host and every driver's device on this machine that
+    maps host memory reach its memory ({!Dev.reaches}). Its device record is
+    marked as a memory device ({!Def.device}), so {!Rig.runs_on_host} is
+    [true] of it.
 
     Its state is its driver's table and its word, on a line of its own in
     pages that hold such states alone, which other devices may map. It lives

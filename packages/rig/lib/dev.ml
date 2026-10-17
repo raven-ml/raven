@@ -1292,4 +1292,4 @@ let reaches d d' =
      | Host, Host -> false
      | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host
-     | Driver _, Driver _ -> d'.memory_device || peer d d'
+     | Driver _, Driver _ -> (d'.memory_device && d.maps_host) || peer d d'

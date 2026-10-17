@@ -540,6 +540,16 @@ let test_maps_no_host () =
   equal ~msg:"an empty borrow" bool true
     (Option.is_some (B.borrow d (B.create Rig.host 0)))
 
+(* A device that maps no host memory reaches no memory device's memory, which a
+   borrow maps as host memory: [reaches] answers as the borrow does. *)
+let test_mapless_memory_device () =
+  let d, _ = P.open_ ~maps_host:false "buffer:mapless-memory" in
+  let m = memory "buffer:mapless-memory-cpu" in
+  let b = B.create m (64 * 1024) in
+  equal ~msg:"reaches as borrows" bool
+    (Option.is_some (B.borrow d b))
+    (Rig.reaches d m)
+
 (* A device that maps no host memory copies host bytes into its own memory and
    back, its own [Pinned] memory standing in for the host's staging, and maps no
    host memory for it. *)
@@ -1547,6 +1557,8 @@ let tests =
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
         test "a device that maps no host memory borrows none" test_maps_no_host;
+        test "a device that maps no host memory reaches no memory device"
+          test_mapless_memory_device;
         test "a driver maps host memory only from the start of a page"
           test_map_host_paged;
         test
