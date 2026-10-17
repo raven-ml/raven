@@ -44,77 +44,79 @@ let decode ~width ~block (src : Checksum.bigbytes) off len
     incr pos;
     b
   in
-  let last = ref 0 in
-  for _ = 1 to width do
-    last := (!last lsl 8) lor byte ()
-  done;
-  let b = ref (byte ()) and nbits = ref 8 in
-  let i = ref 0 in
-  let undo diff =
-    let d = if diff land 1 = 0 then diff lsr 1 else lnot (diff lsr 1) in
-    let v = (d + !last) land mask in
-    last := v;
-    v
-  in
-  while !i < n do
-    nbits := !nbits - fsbits;
-    while !nbits < 0 do
-      b := (!b lsl 8) lor byte ();
-      nbits := !nbits + 8
+  if n > 0 then begin
+    let last = ref 0 in
+    for _ = 1 to width do
+      last := (!last lsl 8) lor byte ()
     done;
-    let fs = (!b lsr !nbits) - 1 in
-    b := !b land ((1 lsl !nbits) - 1);
-    let imax = Int.min n (!i + block) in
-    if fs < 0 then begin
-      while !i < imax do
-        Bigarray.Array1.unsafe_set out !i (signed width !last);
-        incr i
-      done
-    end
-    else if fs = fsmax then begin
-      while !i < imax do
-        (* bbits bits written as they are *)
-        let k = ref (bbits - !nbits) in
-        let diff = ref ((!b lsl !k) land mask) in
-        k := !k - 8;
-        while !k >= 0 do
-          b := byte ();
-          diff := !diff lor (!b lsl !k);
-          k := !k - 8
-        done;
-        if !nbits > 0 then begin
-          b := byte ();
-          diff := !diff lor (!b lsr - !k);
-          b := !b land ((1 lsl !nbits) - 1)
-        end
-        else b := 0;
-        Bigarray.Array1.unsafe_set out !i
-          (signed width (undo (!diff land mask)));
-        incr i
-      done
-    end
-    else if fs > fsmax then
-      fail "a block's split %d is past the width's %d" fs fsmax
-    else
-      while !i < imax do
-        while !b = 0 do
-          nbits := !nbits + 8;
-          b := byte ()
-        done;
-        let nzero = !nbits - nonzero_count.(!b) in
-        nbits := !nbits - (nzero + 1);
-        b := !b lxor (1 lsl !nbits);
-        nbits := !nbits - fs;
-        while !nbits < 0 do
-          b := (!b lsl 8) lor byte ();
-          nbits := !nbits + 8
-        done;
-        let diff = (nzero lsl fs) lor (!b lsr !nbits) in
-        b := !b land ((1 lsl !nbits) - 1);
-        Bigarray.Array1.unsafe_set out !i (signed width (undo diff));
-        incr i
-      done
-  done
+    let b = ref (byte ()) and nbits = ref 8 in
+    let i = ref 0 in
+    let undo diff =
+      let d = if diff land 1 = 0 then diff lsr 1 else lnot (diff lsr 1) in
+      let v = (d + !last) land mask in
+      last := v;
+      v
+    in
+    while !i < n do
+      nbits := !nbits - fsbits;
+      while !nbits < 0 do
+        b := (!b lsl 8) lor byte ();
+        nbits := !nbits + 8
+      done;
+      let fs = (!b lsr !nbits) - 1 in
+      b := !b land ((1 lsl !nbits) - 1);
+      let imax = Int.min n (!i + block) in
+      if fs < 0 then begin
+        while !i < imax do
+          Bigarray.Array1.unsafe_set out !i (signed width !last);
+          incr i
+        done
+      end
+      else if fs = fsmax then begin
+        while !i < imax do
+          (* bbits bits written as they are *)
+          let k = ref (bbits - !nbits) in
+          let diff = ref ((!b lsl !k) land mask) in
+          k := !k - 8;
+          while !k >= 0 do
+            b := byte ();
+            diff := !diff lor (!b lsl !k);
+            k := !k - 8
+          done;
+          if !nbits > 0 then begin
+            b := byte ();
+            diff := !diff lor (!b lsr - !k);
+            b := !b land ((1 lsl !nbits) - 1)
+          end
+          else b := 0;
+          Bigarray.Array1.unsafe_set out !i
+            (signed width (undo (!diff land mask)));
+          incr i
+        done
+      end
+      else if fs > fsmax then
+        fail "a block's split %d is past the width's %d" fs fsmax
+      else
+        while !i < imax do
+          while !b = 0 do
+            nbits := !nbits + 8;
+            b := byte ()
+          done;
+          let nzero = !nbits - nonzero_count.(!b) in
+          nbits := !nbits - (nzero + 1);
+          b := !b lxor (1 lsl !nbits);
+          nbits := !nbits - fs;
+          while !nbits < 0 do
+            b := (!b lsl 8) lor byte ();
+            nbits := !nbits + 8
+          done;
+          let diff = (nzero lsl fs) lor (!b lsr !nbits) in
+          b := !b land ((1 lsl !nbits) - 1);
+          Bigarray.Array1.unsafe_set out !i (signed width (undo diff));
+          incr i
+        done
+    done
+  end
 
 (* Encoding *)
 
