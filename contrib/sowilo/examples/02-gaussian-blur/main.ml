@@ -5,7 +5,7 @@
 
 open Hugin
 
-let image_path = "sowilo/examples/lena.png"
+let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
 let () =
@@ -16,4 +16,4 @@ let () =
     [
       [ panel "Grayscale" gray; panel "Gaussian Blur (5x5, sigma=1.5)" blurred ];
     ]
-  |> save ~size:(Size.panels 240. 240.) "gaussian_blur.png"
+  |> save ~size:(Size.panels 240. 190.) "gaussian_blur.png"

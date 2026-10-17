@@ -5,7 +5,7 @@
 
 open Hugin
 
-let image_path = "sowilo/examples/lena.png"
+let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
 let () =
@@ -13,4 +13,4 @@ let () =
   let img = Sowilo.to_float img_u8 in
   let gray = Sowilo.to_grayscale img in
   grid [ [ panel "Original" img_u8; panel "Grayscale" gray ] ]
-  |> save ~size:(Size.panels 240. 240.) "grayscale.png"
+  |> save ~size:(Size.panels 240. 190.) "grayscale.png"

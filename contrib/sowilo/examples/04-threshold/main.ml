@@ -5,7 +5,7 @@
 
 open Hugin
 
-let image_path = "sowilo/examples/lena.png"
+let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
 let () =
@@ -13,4 +13,4 @@ let () =
   let gray = Sowilo.to_grayscale img in
   let thresh = Sowilo.threshold 0.5 gray in
   grid [ [ panel "Grayscale" gray; panel "Binary Threshold (128)" thresh ] ]
-  |> save ~size:(Size.panels 240. 240.) "threshold.png"
+  |> save ~size:(Size.panels 240. 190.) "threshold.png"

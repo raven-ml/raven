@@ -5,7 +5,7 @@
 
 open Hugin
 
-let image_path = "sowilo/examples/lena.png"
+let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
 let normalize_gradient img =
@@ -31,4 +31,4 @@ let () =
         panel "Sobel Y" (normalize_gradient gy);
       ];
     ]
-  |> save ~size:(Size.panels 240. 240.) "sobel.png"
+  |> save ~size:(Size.panels 240. 190.) "sobel.png"

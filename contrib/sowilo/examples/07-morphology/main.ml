@@ -5,7 +5,7 @@
 
 open Hugin
 
-let image_path = "sowilo/examples/lena.png"
+let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
 let () =
@@ -23,4 +23,4 @@ let () =
         panel "Dilated (5x5)" dilated;
       ];
     ]
-  |> save ~size:(Size.panels 240. 240.) "morphology.png"
+  |> save ~size:(Size.panels 240. 190.) "morphology.png"
