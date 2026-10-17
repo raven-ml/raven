@@ -1278,6 +1278,23 @@ let test_unreadable_proc () =
   Unix.chmod fd 0o755;
   contains ~sub:"proc/4242/fd" (require_error r)
 
+(* A mapped file whose target the process may not read, as without
+   CAP_SYS_ADMIN, is an Error naming the entry and the privilege detach
+   needs. *)
+let test_unreadable_mapping () =
+  needs_flock ();
+  if Unix.geteuid () = 0 then
+    skip ~reason:"root reads a directory whatever its mode" ();
+  let root = held_tree () in
+  Tree.link root "proc/4242/map_files/7f00-7f01" "/dev/zero";
+  let dir = Filename.concat root "proc/4242/map_files" in
+  Unix.chmod dir 0o444;
+  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  Unix.chmod dir 0o755;
+  let why = require_error r in
+  contains ~sub:"proc/4242/map_files/7f00-7f01" why;
+  contains ~sub:"CAP_SYS_ADMIN" why
+
 (* The vendor's [unreleased] is asked of an unbound GPU: detach waits until it
    lets go, and refuses past the bound, changing nothing. *)
 let test_unreleased () =
@@ -1417,6 +1434,8 @@ let tree_changes =
         test_no_debugfs;
       test "a process's /proc entry that cannot be read is an Error"
         test_unreadable_proc;
+      test "a mapping whose target cannot be read names CAP_SYS_ADMIN"
+        test_unreadable_mapping;
       test "detach waits for the vendor's driver to let go of an unbound GPU"
         test_unreleased;
       test "detach waits for nothing on a GPU bound to vfio-pci"

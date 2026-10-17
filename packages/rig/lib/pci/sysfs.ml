@@ -454,22 +454,31 @@ let rec numbers dir =
           Fail.fail "reading %s: %s" file (Unix.error_message e))
     (entries dir)
 
+(* A file the process may not read. Reading another process's [/proc] files,
+   and the targets of any process's [map_files], needs CAP_SYS_ADMIN. *)
+let unreadable file (e : Unix.error) =
+  let why = strf "reading %s: %s" file (Unix.error_message e) in
+  match e with
+  | EACCES | EPERM ->
+      Fail.fail
+        "%s; reading the files processes hold needs CAP_SYS_ADMIN: run as root"
+        why
+  | _ -> Fail.fail "%s" why
+
 (* The number of the character device at [file], if there is one. *)
 let device file =
   match Unix.stat file with
   | { st_kind = S_CHR; st_rdev; _ } -> Some st_rdev
   | _ -> None
   | exception Unix.Unix_error (ENOENT, _, _) -> None
-  | exception Unix.Unix_error (e, _, _) ->
-      Fail.fail "reading %s: %s" file (Unix.error_message e)
+  | exception Unix.Unix_error (e, _, _) -> unreadable file e
 
 (* The names in [dir], or [None] if it is gone, as the directory of a process
    gone since the listing is. *)
 let listing dir =
   match Unix.opendir dir with
   | exception Unix.Unix_error ((ENOENT | ESRCH), _, _) -> None
-  | exception Unix.Unix_error (e, _, _) ->
-      Fail.fail "reading %s: %s" dir (Unix.error_message e)
+  | exception Unix.Unix_error (e, _, _) -> unreadable dir e
   | d ->
       Fun.protect ~finally:(fun () -> Unix.closedir d) @@ fun () ->
       let rec go acc =
