@@ -30,8 +30,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5)
 - more ledger rows: host and memory work runs after giving the turn up
-  (K2); the doc sentences of F3, F5, O5, Q1, R4 and C4 (F3's "Other
-  devices go on", rig.mli:502, is false on CUDA)
+  (K2)
 
 ### drivers
 

@@ -351,7 +351,9 @@ val capability : t -> Rig_cuda_abi.t
     illegal address or a kernel that a display's watchdog ended, at a later
     call. A fault leaves the process in an inconsistent state: every later
     CUDA call returns the fault's error, and to use CUDA again the process
-    must be terminated and relaunched. So the GPU cannot be opened again.
+    must be terminated and relaunched. So the GPU cannot be opened again,
+    and every other CUDA device of the process is lost at its first call
+    that CUDA answers with the fault's error ({!Rig.section-loss}).
 
     On a GPU whose kernels no display's watchdog bounds, rig also loses the
     device once its work has kept the word still for 30 s, even work that

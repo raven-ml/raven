@@ -174,7 +174,10 @@ val close : t -> unit
     at the stop if [d] has stopped by then, and otherwise at
     {!free_cache}[ d], a {!Buffer.create} or {!Buffer.borrow} on [d], or
     through reclamation ({!section-reclaim}). Work that another domain
-    submits on [d] during the close may be lost with [d].
+    submits on [d] during the close may be lost with [d]. Every caller that
+    opens [d]'s name shares [d] ({!open_}), so [close] ends it for all of
+    them. The code that owns the process's use of [d], such as a program's
+    main function, closes it. A library must leave open a device it shares.
     {ul
     {- On another machine's host ({!host_of}), lost or not, [close] first
        closes every device of that machine, including those still opening,
@@ -521,8 +524,11 @@ val signaled : t -> int
     {- in a child of [fork], it is a driver's device the child inherited
        ({!section-stops}).}}
     A loss is final. Opening the device's name again makes a new device,
-    unequal to the lost one, with a timeline of its own. Other devices go
-    on, and a lost device's properties keep their values.
+    unequal to the lost one, with a timeline of its own, and a lost device's
+    properties keep their values. A loss spreads to no other device except
+    along queue waits, as below. A fault of something that several devices
+    share, such as CUDA, whose fault fails every later CUDA call of the
+    process, loses each device it reaches through that device's own driver.
 
     rig treats as completed the values a device had reached when its loss
     was recorded. The work of later values may have run in full, in part or
@@ -561,7 +567,11 @@ val signaled : t -> int
     the lost device only read raises it only for the uses that depend on
     every point. An array {!Buffer.export} made over such memory before the
     loss reads and writes it with no check of loss, and its bytes may be the
-    old ones, the lost work's, or a mix. *)
+    old ones, the lost work's, or a mix.
+
+    These rules hold for work that writes only the memory its submission
+    names. A kernel that writes outside it may have changed any memory its
+    device addresses, before or after a loss. *)
 
 (** {2:hangs Hangs}
 
@@ -989,8 +999,9 @@ module Buffer : sig
       to and from any memory, the host's or not.
 
       A wait covers only the work submitted before it returns
-      ({!Rig.section-order}). Host access from several domains needs its own
-      synchronization.
+      ({!Rig.section-order}), and work submitted while the function of
+      {!read} or {!write} runs is not ordered after its accesses. Host
+      access from several domains needs its own synchronization.
 
       {!read}, {!write} and {!export} raise [Invalid_argument] if [b] is
       dead, its bytes are not a whole number of elements of [k], [b] has

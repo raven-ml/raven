@@ -20,6 +20,9 @@
     executable, keep the distances between their addresses, and those of a
     relocatable object follow each other at their alignments ({!reading}).
     Other sections, such as debugging information, stay out of the image.
+    The image is made of sections alone. {!of_string} reads no program
+    header, so the segments that an executable's headers describe play no
+    part in it.
 
     Reading copies no section's bytes, and every position it gives is an
     image offset, so a loader that writes the image at address [base] finds

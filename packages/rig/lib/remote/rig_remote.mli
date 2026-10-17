@@ -48,7 +48,9 @@
     network reads the bytes of copies and runs, and whoever writes it can
     change them. An agent runs the code the controller sends it, host code
     included. Listen only on a network that only the job's machines reach,
-    such as a cluster's own.
+    such as a cluster's own. TCP's checksum is the only check on the bytes
+    of copies, runs and rails, so a program that must know its data arrived
+    intact checks it end to end.
 
     The dialing end proves the key first, so a process that replies in a
     listener's place gets a proof against which it can test guesses of the
