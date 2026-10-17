@@ -422,5 +422,27 @@ let correlations =
               Nx.correlate (Nx.zeros Nx.bool [| 3 |]) (Nx.zeros Nx.bool [| 2 |])));
     ]
 
+(* A donated operand that another operation consumed is dead: each function
+   names itself, the one the user called, whatever it computes through. *)
+let test_dead_names () =
+  let dead s =
+    let x = Nx.create Nx.float32 s (Array.make (numel s) 1.) in
+    let _ = Nx.neg (Nx.donate x) in
+    x
+  in
+  let one = [| 1 |] and none = [| (0, 0) |] in
+  invalid ~by:"Nx.extract_patches" (fun () ->
+      Nx.extract_patches ~kernel_size:[| 2 |] ~stride:one ~dilation:one
+        ~padding:[| (1, 0) |] (dead [| 3 |]));
+  invalid ~by:"Nx.combine_patches" (fun () ->
+      Nx.combine_patches ~output_size:[| 3 |] ~kernel_size:[| 2 |] ~stride:one
+        ~dilation:one ~padding:none (dead [| 2; 2 |]));
+  invalid ~by:"Nx.correlate" (fun () ->
+      Nx.correlate (dead [| 3 |]) (Nx.ones Nx.float32 [| 2 |]));
+  invalid ~by:"Nx.correlate" (fun () ->
+      Nx.correlate (Nx.zeros Nx.float32 [| 3 |]) (dead [| 2 |]))
+
+let names = group "errors" [ test "a dead operand names the function called" test_dead_names ]
+
 let () =
-  exit (run "nx windows" [ one_hots; patches; correlations ])
+  exit (run "nx windows" [ one_hots; patches; correlations; names ])

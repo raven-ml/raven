@@ -1592,6 +1592,25 @@ module Conv = struct
       (Nx.to_array
          (Nx.conv_transpose (i8 [| 1; 1; 2 |] [| 100; 100 |]) (i8 [| 2; 1; 1 |] [| 1; 1 |])))
 
+  (* A donated operand that another operation consumed is dead: each
+     function names itself, whatever it computes through. *)
+  let test_dead_names () =
+    let dead s =
+      let x = Nx.create Nx.float32 s (Array.make (numel s) 1.) in
+      let _ = Nx.neg (Nx.donate x) in
+      x
+    in
+    let live s = Nx.ones Nx.float32 s in
+    let names by f =
+      raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+    in
+    names "Nx.conv" (fun () -> Nx.conv (dead [| 1; 4; 2 |]) (live [| 2; 2; 2 |]));
+    names "Nx.conv" (fun () -> Nx.conv (live [| 1; 4; 2 |]) (dead [| 2; 2; 2 |]));
+    names "Nx.conv_transpose" (fun () ->
+        Nx.conv_transpose (dead [| 1; 3; 2 |]) (live [| 2; 2; 2 |]));
+    names "Nx.conv_transpose" (fun () ->
+        Nx.conv_transpose (live [| 1; 3; 2 |]) (dead [| 2; 2; 2 |]))
+
   (* A kernel of no tap along a spatial axis has no window to count. *)
   let test_no_taps () =
     let x = Nx.zeros Nx.float32 [| 1; 5; 4 |] and w = Nx.zeros Nx.float32 [| 2; 0; 4 |] in
@@ -1626,6 +1645,7 @@ module Conv = struct
           test_transpose_short;
         test "each refusal names its function" test_refusals;
         test "a kernel of no tap raises" test_no_taps;
+        test "a dead operand names the function called" test_dead_names;
       ]
 end
 

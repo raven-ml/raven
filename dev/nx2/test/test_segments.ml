@@ -430,4 +430,25 @@ let maps =
       test "misuse raises" test_map_errors;
     ]
 
-let () = exit (run "nx segments" [ segments; ranges; maps ])
+(* A donated operand that another operation consumed is dead: each function
+   names itself, the one the user called, whatever it computes through. *)
+let dead () =
+  let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let _ = Nx.neg (Nx.donate x) in
+  x
+
+let test_dead_names () =
+  let ids = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
+  invalid ~by:"Nx.reduce_segments" (fun () ->
+      Nx.reduce_segments Max ~segments:2 ids (dead ()));
+  List.iter
+    (fun c ->
+      invalid ~by:"Nx.reduce_ranges" (fun () ->
+          Nx.reduce_ranges c ~lo:ids ~hi:ids (dead ())))
+    [ Nx.Add; Max; Set ];
+  invalid ~by:"Nx.map_segments" (fun () ->
+      Nx.map_segments ~segments:2 ids (fun _ r -> r) (dead ()))
+
+let names = group "errors" [ test "a dead operand names the function called" test_dead_names ]
+
+let () = exit (run "nx segments" [ segments; ranges; maps; names ])

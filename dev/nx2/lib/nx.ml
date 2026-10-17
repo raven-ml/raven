@@ -4063,7 +4063,8 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
   let w = permute ~by p (by_groups ~by groups w) in
-  let w = flip ~axes:(List.init k (fun i -> 3 + i)) w in
+  let taps_axes = List.init k (fun i -> 3 + i) in
+  let w = renamed ~by (fun () -> flip ~axes:taps_axes w) in
   windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
