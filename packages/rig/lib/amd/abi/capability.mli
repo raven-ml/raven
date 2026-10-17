@@ -5,10 +5,12 @@
 
 (** What compiled code needs from an AMD device.
 
-    Code compiled for an AMD device encodes its work with this library's
-    encoders for the device's GPU, and gives its kernels scratch memory
-    ({!Scratch}). The device's driver declares these as a {!t} when it opens
-    the device ({!declare}), and compiled code finds them under {!key}.
+    Code compiled for an AMD device reads here what it needs of the device:
+    the GPU its code objects must run on ({!Code_object.runs_on}), the clock
+    of the times the GPU writes, what its compute queue reads, and what its
+    thread traces take ({!Thread_trace}). The device's driver declares these
+    as a {!t} when it opens the device ({!declare}), and compiled code finds
+    them under {!key}.
 
     {b Times.} The GPU writes times ({!Pm4.copy_data} of {!Pm4.Clock},
     {!Sdma.timestamp}, the markers of a {!Thread_trace}) as counts of its
@@ -46,11 +48,14 @@ type trace = {
     every program that traces writes ({!Thread_trace}). The buffers hold
     [slots] runs, and each run traces each shader engine into a window of
     its own. Shader engine [e] of the run in slot [s] writes the [window]
-    bytes at [buffers + ((e * slots) + s) * window], and its end at the
-    32-bit word at [ends + 4 * ((s * engines) + e)]
-    ({!Thread_trace.val-stop}). The programs that trace share the slots: a
-    run whose trace has not been read holds its slot, and the reader must
-    read a slot's trace before a later run takes it. *)
+    bytes at [buffers + ((s * engines) + e) * window], and its end at the
+    32-bit word at [ends + 4 * ((s * engines) + e)]. So the run in slot [s]
+    takes {!Thread_trace.val-start}[ g ~wgps ~size:window
+    ~address:(buffers + (s * engines * window))] and
+    {!Thread_trace.val-stop}[ g ~wgps ~address:(ends + (4 * s * engines))].
+    The programs that trace share the slots: a run whose trace has not been
+    read holds its slot, and the reader must read a slot's trace before a
+    later run takes it. *)
 
 type t = {
   gpu : Gpu.t;  (** The device's GPU, as the encoders take it. *)

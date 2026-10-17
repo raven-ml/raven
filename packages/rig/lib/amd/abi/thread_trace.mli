@@ -12,11 +12,14 @@
     from time to time. Its times count the engine's cycles from the start of
     the trace.
 
-    A compute queue starts tracing with {!val-start} and stops with
-    {!val-stop}. The host then reads each engine's buffer up to its
-    {!length} and decodes it with {!waves} and {!clock}. Engines are
+    A compute queue starts tracing with the PM4 packets of {!val-start} and
+    stops with those of {!val-stop}, which a submission places on the queue
+    ([Rig.Submission.words]). The host then reads each engine's buffer up
+    to its {!length} and decodes it with {!waves} and {!clock}. Engines are
     numbered across dies: engine [e] is engine [e mod g.shader_engines] of
     die [e / g.shader_engines], for [0 <= e < g.shader_engines * g.xccs].
+    Addresses are as the device's work addresses memory
+    ([Rig.Submission.address]).
 
     The programs take the GPU's work-group processors that run work as
     {!Capability.t}'s [wgps] gives them: [wgps.(e).(a)] for shader array [a]
@@ -26,33 +29,34 @@
 (** {1:recording Recording} *)
 
 val start :
-  Gpu.t -> wgps:int array array -> size:int -> (int -> 'v) -> 'v Packet.t
-(** [start g ~wgps ~size buffer] starts tracing on every shader engine of
-    [g] whose arrays run work ([wgps]), engine [e] writing at most [size]
-    bytes into its buffer at address [buffer e]. It makes the caches
-    coherent before and after.
+  Gpu.t -> wgps:int array array -> size:int -> address:int -> string
+(** [start g ~wgps ~size ~address] is the packets, as little-endian 32-bit
+    words, that start tracing on every shader engine of [g] whose arrays run
+    work ([wgps]), engine [e] writing at most [size] bytes into its buffer
+    at [address + (e * size)]. They make the caches coherent before and
+    after.
     {ul
     {- Each engine traces the compute waves of one unit of its first shader
        array: every SIMD of its first compute unit on GFX9, and the first
        SIMD of its first work-group processor from GFX11 on.}
     {- Engines [0] and [1] alone trace the instructions the waves issue.}}
-    [size] and every [buffer e] are multiples of 4096.
 
     Raises [Invalid_argument] if [size] is not a multiple of 4096 from 4096
     to [2{^22} - 1] pages of 4096 bytes, the most an engine's 22-bit size
-    field holds, if [wgps] does not hold [g.shader_engines * g.xccs]
-    engines, or if [g]'s GC lacks a register the program writes. *)
+    field holds, if [address] is not a non-negative multiple of 4096, if
+    [wgps] does not hold [g.shader_engines * g.xccs] engines, or if [g]'s
+    GC lacks a register the program writes. *)
 
-val stop : Gpu.t -> wgps:int array array -> (int -> 'v) -> 'v Packet.t
-(** [stop g ~wgps ends] stops tracing on every shader engine of [g] whose
-    arrays run work ([wgps]), and waits until each has written its trace
-    out. It then stores where engine [e]'s trace ends, a 32-bit word, to
-    address [ends e], confirmed before the next packet starts. {!length}
-    reads that word.
+val stop : Gpu.t -> wgps:int array array -> address:int -> string
+(** [stop g ~wgps ~address] is the packets, as little-endian 32-bit words,
+    that stop tracing on every shader engine of [g] whose arrays run work
+    ([wgps]) and wait until each has written its trace out. They then store
+    where engine [e]'s trace ends, a 32-bit word, at [address + (4 * e)],
+    confirmed before the next packet starts. {!length} reads that word.
 
-    Raises [Invalid_argument] if [wgps] does not hold
-    [g.shader_engines * g.xccs] engines, or if [g]'s GC lacks a register the
-    program reads or writes. *)
+    Raises [Invalid_argument] if [address] is not a non-negative multiple
+    of 4, if [wgps] does not hold [g.shader_engines * g.xccs] engines, or if
+    [g]'s GC lacks a register the program reads or writes. *)
 
 val length : Gpu.t -> buffer:int -> int -> int
 (** [length g ~buffer w] is the bytes a shader engine of [g] wrote into its

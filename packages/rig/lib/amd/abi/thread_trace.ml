@@ -89,14 +89,6 @@ let engines (g : Gpu.t) ~wgps f =
              (1 lsl (e / g.shader_engines))
              (f e (e mod g.shader_engines))))
 
-(* A packet of known values, as constant words of any packet. *)
-let known (p : int Packet.t) =
-  let s = Packet.encode Int64.of_int p in
-  List.init
-    (String.length s / 4)
-    (fun i ->
-      Dword (Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff))
-
 let bits l = List.fold_left (fun m b -> m lor (1 lsl b)) 0 l
 
 (* The SQ's thread trace events, on or off (ac_emit_cp_spi_config_cntl):
@@ -286,13 +278,21 @@ let check_wgps fn (g : Gpu.t) wgps =
     invalid_argf "Thread_trace.%s: wgps covers %d engines, expected %d" fn
       (Array.length wgps) n
 
-let start (g : Gpu.t) ~wgps ~size buffer =
+let words p = Packet.encode Int64.of_int p
+
+let start (g : Gpu.t) ~wgps ~size ~address =
   check_wgps "start" g wgps;
   if size <= 0 || size mod page <> 0 || size > max_size then
     invalid_argf
       "Thread_trace.start: size %d, expected a multiple of 4096 from 4096 to %d"
       size max_size;
-  try start_program g ~wgps ~size buffer
+  if address < 0 || address mod page <> 0 then
+    invalid_argf
+      "Thread_trace.start: address 0x%x, expected a non-negative multiple of \
+       4096"
+      address;
+  let buffer e = address + (e * size) in
+  try words (start_program g ~wgps ~size buffer)
   with Missing r ->
     invalid_argf "Thread_trace.start: %s has no reg%s" (gc_name g) r
 
@@ -302,10 +302,7 @@ let stop_program g ~wgps ends =
   (* Until the status's [field] compares to [v] as [cmp] says. *)
   let await field cmp v =
     let mask = Register.encode status [ (field, -1) ] in
-    known
-      (Pm4.wait g
-         (Register (Register.address g status))
-         cmp v ~mask ~interval ())
+    Pm4.wait g (Register (Register.address g status)) cmp v ~mask ~interval ()
   in
   let finished =
     if major g = 9 then
@@ -323,9 +320,14 @@ let stop_program g ~wgps ends =
       @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
   @ grbm g () @ sqg_events g ~on:false @ Pm4.acquire_mem g System
 
-let stop g ~wgps ends =
+let stop g ~wgps ~address =
   check_wgps "stop" g wgps;
-  try stop_program g ~wgps ends
+  if address < 0 || address mod 4 <> 0 then
+    invalid_argf
+      "Thread_trace.stop: address 0x%x, expected a non-negative multiple of 4"
+      address;
+  let ends e = address + (4 * e) in
+  try words (stop_program g ~wgps ends)
   with Missing r ->
     invalid_argf "Thread_trace.stop: %s has no reg%s" (gc_name g) r
 

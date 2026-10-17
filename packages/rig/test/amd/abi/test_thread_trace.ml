@@ -26,66 +26,76 @@ let pp_use ppf u =
   Format.fprintf ppf "{ engine %d; dies %s; selected %s }" u.engine (opt u.dies)
     (opt u.selected)
 
-(* The words of [p] that make [n] 32-bit words, and the words after them. *)
-let rec split n (p : int Packet.t) =
-  if n <= 0 then ([], p)
-  else
-    match p with
-    | [] -> ([], [])
-    | w :: rest ->
-        let body, rest = split (n - Packet.size [ w ]) rest in
-        (w :: body, rest)
+(* The programs' addresses: engine [e]'s buffer of [size] bytes lies at
+   [buffers + e * size], and its end is the word at [ends + 4 * e]. *)
+let buffers = 0x10_0000
+let ends = 0x20_0000
+let page = 4096
 
-(* Walks [p], the words of a program over engine numbers, and gives each use of
-   an engine's number. Each packet starts with a constant header. *)
-let uses g (p : int Packet.t) =
+(* PACKET3_COPY_DATA's opcode, whose body is its control, its source's two words
+   and its destination's (soc15d.h, nvd.h). *)
+let copy_data = 0x40
+
+(* The register a start writes each engine's page to: the buffer's address
+   from bit 12, its low 32 bits. *)
+let page_register (g : Gpu.t) =
+  let name =
+    match g.gc with
+    | 9, _, _ -> "regSQ_THREAD_TRACE_BASE"
+    | 11, _, _ -> "regSQ_THREAD_TRACE_BUF0_BASE"
+    | _ -> "regSQ_THREAD_TRACE_BUF0_BASE_LO"
+  in
+  Register.address g (require_some (Register.find g name))
+
+(* Walks [p], the words of a program, and gives each use of an engine's
+   address: each write of its buffer's page, and each copy to its end. *)
+let uses g ~size p =
   let grbm = require_some (Register.find g "regGRBM_GFX_INDEX") in
-  let grbm_at = Register.address g grbm in
+  let grbm_at = Register.address g grbm and page_at = page_register g in
   let field w f =
     let lo, hi = List.assoc f grbm.fields in
     (w lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
   in
   let selected = ref None and dies = ref None and predicated = ref 0 in
   let out = ref [] in
-  let rec engines : int Packet.term -> int list = function
-    | Value e -> [ e ]
-    | Add (t, _) | Shift (t, _) | Or (t, _) -> engines t
+  let on (op, body) =
+    let dies_now = if !predicated > 0 then !dies else None in
+    if !predicated > 0 then
+      predicated := !predicated - (List.length body + 1);
+    let use engine =
+      out := { engine; dies = dies_now; selected = !selected } :: !out
+    in
+    let write at v =
+      if at = grbm_at then
+        selected :=
+          if field v "se_broadcast_writes" = 1 then None
+          else Some (field v "se_index")
+      else if at = page_at then
+        let off = (v * page) - buffers in
+        if off < 0 || off mod size <> 0 then
+          failf "page 0x%x starts no engine's buffer" v
+        else use (off / size)
+    in
+    match body with
+    | [ w ] when op = S.pred_exec ->
+        dies := Some (w lsr 24);
+        predicated := w land 0x3fff
+    | off :: vs when op = S.set_uconfig_reg ->
+        List.iteri (fun i v -> write (S.uconfig_start + off + i) v) vs
+    | off :: vs when op = S.set_sh_reg ->
+        List.iteri (fun i v -> write (S.sh_start + off + i) v) vs
+    | [ _; _; _; lo; hi ] when op = copy_data ->
+        use (((lo lor (hi lsl 32)) - ends) / 4)
+    | _ -> ()
   in
-  let use dies t =
-    List.iter
-      (fun engine -> out := { engine; dies; selected = !selected } :: !out)
-      (engines t)
-  in
-  let rec go = function
-    | [] -> ()
-    | Packet.Dword h :: rest ->
-        let op = (h lsr 8) land 0xff and n = ((h lsr 16) land 0x3fff) + 1 in
-        let body, rest = split n rest in
-        let dies_now = if !predicated > 0 then !dies else None in
-        if !predicated > 0 then
-          predicated := !predicated - (Packet.size body + 1);
-        (match (op, body) with
-        | op, [ Dword w ] when op = S.pred_exec ->
-            dies := Some (w lsr 24);
-            predicated := w land 0x3fff
-        | op, Dword off :: [ Dword w ]
-          when op = S.set_uconfig_reg && S.uconfig_start + off = grbm_at ->
-            selected :=
-              if field w "se_broadcast_writes" = 1 then None
-              else Some (field w "se_index")
-        | _ -> ());
-        List.iter
-          (function Packet.W32 t | W64 t -> use dies_now t | Dword _ -> ())
-          body;
-        go rest
-    | (W32 _ | W64 _) :: _ -> fail "a packet starts with a term"
-  in
-  go p;
+  List.iter on (S.packets (S.words p));
   List.rev !out
 
 let engines (g : Gpu.t) = List.init (g.shader_engines * g.xccs) Fun.id
-let start g = Thread_trace.start g ~wgps:(S.harvest_none g)
-let stop g = Thread_trace.stop g ~wgps:(S.harvest_none g)
+let start g ~size =
+  Thread_trace.start g ~wgps:(S.harvest_none g) ~size ~address:buffers
+
+let stop g = Thread_trace.stop g ~wgps:(S.harvest_none g) ~address:ends
 
 (* The uses an engine's number must have: its die's predication on a GPU of
    several dies, and its engine selected. *)
@@ -115,9 +125,20 @@ let traced =
      and+ shader_engines = int_range 1 8 in
      gpu ~xccs ~shader_engines gc)
 
+(* Buffer sizes that tell an engine's offset [e * size] from [e * 4096]. *)
+let sizes = [ page; 3 * page; 1 lsl 20 ]
+
 let engine_law name program =
-  prop ~timeout name traced (fun g ->
-      let us = uses g (program g) in
+  let gen =
+    Gen.with_pp
+      (fun ppf ((g : Gpu.t), size) ->
+        Format.fprintf ppf "GC %s, %d dies of %d engines, %d bytes each"
+          (S.version g.gc) g.xccs g.shader_engines size)
+      (Gen.pair traced (Gen.of_list sizes))
+  in
+  prop ~timeout name gen (fun (g, size) ->
+      cover "a buffer of more than a page" (size > page);
+      let us = uses g ~size (program g ~size) in
       List.iter
         (fun e ->
           let mine = List.filter (fun u -> u.engine = e) us in
@@ -152,7 +173,7 @@ let harvested name program =
             if List.mem e off then [| 0; 0 |] else [| 0; 1 |])
       in
       cover "every engine off" (List.length off = g.shader_engines * g.xccs);
-      let us = uses g (program g wgps) in
+      let us = uses g ~size:page (program g wgps) in
       List.iter
         (fun e ->
           let mine = List.filter (fun u -> u.engine = e) us in
@@ -180,7 +201,7 @@ let size_field (g : Gpu.t) size =
   in
   let r = Option.get (Register.find g name) in
   let lo, hi = List.assoc "size" r.fields in
-  let ws = S.encode (start g ~size (fun _ -> 0)) in
+  let ws = S.words (start g ~size) in
   let v = List.assoc (Register.address g r) (S.writes ws) in
   (v lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
 
@@ -201,7 +222,7 @@ let selection () =
       | _ :: rest -> engines e rest
       | [] -> []
     in
-    engines 0 (S.writes (S.encode (start g ~size:4096 (fun _ -> 0))))
+    engines 0 (S.writes (S.words (start g ~size:4096)))
   in
   String.concat "\n" (List.concat_map lines trace_families)
 
@@ -220,54 +241,62 @@ let recording =
           GFX 12.0.0 engine 1: MASK 0x15400 TOKEN_MASK 0x83f6000
           GFX 12.0.0 engine 2: MASK 0x15400 TOKEN_MASK 0x83f6127
           |});
-      engine_law "a start programs each engine's buffer on that engine"
-        (fun g -> start g ~size:4096 Fun.id);
-      engine_law "a stop stores each engine's end from that engine" (fun g ->
-          stop g Fun.id);
+      engine_law "a start programs each engine's buffer on that engine" start;
+      engine_law "a stop stores each engine's end from that engine"
+        (fun g ~size:_ -> stop g);
       harvested "a start programs no engine whose arrays run no work"
-        (fun g wgps -> Thread_trace.start g ~wgps ~size:4096 Fun.id);
+        (fun g wgps ->
+          Thread_trace.start g ~wgps ~size:page ~address:buffers);
       harvested "a stop awaits no engine whose arrays run no work"
-        (fun g wgps -> Thread_trace.stop g ~wgps Fun.id);
+        (fun g wgps -> Thread_trace.stop g ~wgps ~address:ends);
       prop "a start and a stop acquire every cache before and after" traced
         (fun g ->
           let acquire = S.encode (Pm4.acquire_mem g System) in
           let n = List.length acquire in
           List.iter
             (fun p ->
-              let ws = S.encode (p g) in
+              let ws = S.words (p g) in
               let k = List.length ws in
               equal
                 (pair (list int) (list int))
                 (acquire, acquire)
                 ( List.filteri (fun i _ -> i < n) ws,
                   List.filteri (fun i _ -> i >= k - n) ws ))
-            [
-              (fun g -> start g ~size:4096 (fun _ -> 0));
-              (fun g -> stop g (fun _ -> 0));
-            ]);
+            [ start ~size:page; stop ]);
       cases ~name:string_of_int "a size of no whole pages is refused"
         [ min_int; -4096; 0; 1; 4095; 4097 ] (fun size ->
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start (gpu (11, 0, 0)) ~size (fun _ -> 0)));
+            (fun () -> start (gpu (11, 0, 0)) ~size));
+      cases ~name:string_of_int "a buffer address of no whole pages is refused"
+        [ min_int; -4096; -1; 1; 4095; 4097 ] (fun address ->
+          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
+            (fun () ->
+              let g = gpu (11, 0, 0) in
+              Thread_trace.start g ~wgps:(S.harvest_none g) ~size:page ~address));
+      cases ~name:string_of_int "an end address of no whole words is refused"
+        [ min_int; -4; -1; 1; 2; 3; 4097 ] (fun address ->
+          raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
+            (fun () ->
+              let g = gpu (11, 0, 0) in
+              Thread_trace.stop g ~wgps:(S.harvest_none g) ~address));
       cases ~name:string_of_int
         "a harvest of another number of engines than the GPU's is refused"
         [ 3; 5 ] (fun n ->
           let g = gpu (11, 0, 0) and wgps = Array.make n [| 1 |] in
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> Thread_trace.start g ~wgps ~size:4096 (fun _ -> 0));
+            (fun () -> Thread_trace.start g ~wgps ~size:page ~address:buffers);
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
-            (fun () -> Thread_trace.stop g ~wgps (fun _ -> 0)));
+            (fun () -> Thread_trace.stop g ~wgps ~address:ends));
       test "a GC without the programs' registers is refused" (fun () ->
           let g = gpu (10, 3, 0) in
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start g ~size:4096 (fun _ -> 0));
+            (fun () -> start g ~size:page);
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
-            (fun () -> stop g (fun _ -> 0)));
+            (fun () -> stop g));
       cases ~name:string_of_int "a size of whole pages is taken"
         [ 4096; 1 lsl 30 ]
         (fun size ->
-          let p = start (gpu (11, 0, 0)) ~size (fun _ -> 0) in
-          greater int ~than:0 (Packet.size p));
+          greater int ~than:0 (String.length (start (gpu (11, 0, 0)) ~size)));
       cases
         ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         "a size past 2^22 - 1 pages is refused"
@@ -276,7 +305,7 @@ let recording =
            trace_families)
         (fun (g, size) ->
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start g ~size (fun _ -> 0)));
+            (fun () -> start g ~size));
       cases
         ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         "a size up to 2^22 - 1 pages is the size field's pages"
