@@ -87,15 +87,9 @@ let not_viable files bus g =
 
 (* Opening *)
 
-(* Opens [bus]'s group in a container of its own with the IOMMU model [m], then
-   the function, whose first MSI vector goes to an eventfd. Each descriptor goes
-   on [fds] once open. Is the container, the function's descriptor and the
-   eventfd. *)
-let open_function files fds bus m =
-  let opened fd =
-    fds := fd :: !fds;
-    fd
-  in
+(* [bus]'s group file for the model [m], and the group's descriptor once
+   viable. *)
+let open_group files bus m =
   let g =
     match Sysfs.group files bus with
     | Some g -> g
@@ -106,43 +100,73 @@ let open_function files fds bus m =
     | Type1v2 -> Sysfs.vfio_file files g
     | No_iommu -> Sysfs.noiommu_file files g
   in
-  let container = opened (open_file bus (Sysfs.vfio_file files "vfio")) in
-  let v =
-    Fail.step "checking VFIO's API version" (fun () -> version container)
+  (* VFIO's own file first: without it no group of the machine opens. *)
+  let vfio = Sysfs.vfio_file files "vfio" in
+  if not (Sys.file_exists vfio) then
+    Fail.fail "%s does not exist; bind %s to vfio-pci" vfio bus;
+  let group = open_file bus file in
+  let status = "reading the status of " ^ file in
+  match Fail.step status (fun () -> viable group) with
+  | true -> (file, group)
+  | false ->
+      Unix.close group;
+      Fail.fail "%s" (not_viable files bus g)
+  | exception e ->
+      Unix.close group;
+      raise e
+
+(* A new container with the model [m] that holds [group], open at [file]. *)
+let new_container files bus file group m =
+  let container = open_file bus (Sysfs.vfio_file files "vfio") in
+  match
+    let v =
+      Fail.step "checking VFIO's API version" (fun () -> version container)
+    in
+    if v <> api_version () then
+      Fail.fail "VFIO speaks API version %d, expected %d" v (api_version ());
+    if
+      not
+        (Fail.step "checking VFIO's IOMMU models" (fun () ->
+             supports container m))
+    then
+      Fail.fail "%s"
+        (match m with
+        | No_iommu ->
+            "VFIO is not in its no-IOMMU mode; turn it on: echo 1 | sudo tee \
+             /sys/module/vfio/parameters/enable_unsafe_noiommu_mode"
+        | Type1v2 ->
+            "VFIO has no type 1 IOMMU; load it: sudo modprobe \
+             vfio_iommu_type1");
+    Fail.step
+      ("attaching " ^ file ^ " to a VFIO container")
+      (fun () -> set_container group container);
+    (* Linux attaches a group to an IOMMU only where the IOMMU also remaps the
+       function's interrupts, so that it cannot raise another's. *)
+    match set_iommu container m with
+    | () -> ()
+    | exception Unix.Unix_error (EPERM, _, _) when m = Type1v2 ->
+        Fail.fail
+          "the IOMMU of %s does not remap interrupts, so Linux refuses it to \
+           VFIO; enable interrupt remapping in the firmware settings, or \
+           accept the risk: echo 1 | sudo tee \
+           /sys/module/vfio_iommu_type1/parameters/allow_unsafe_interrupts"
+          bus
+    | exception Unix.Unix_error (e, _, _) ->
+        Fail.fail "attaching %s to a VFIO container: %s" file
+          (Unix.error_message e)
+  with
+  | () -> container
+  | exception e ->
+      Unix.close container;
+      raise e
+
+(* The function [bus] of [group], whose first MSI vector goes to a new eventfd:
+   their descriptors, each on [fds] once open. *)
+let open_device fds bus group =
+  let opened fd =
+    fds := fd :: !fds;
+    fd
   in
-  if v <> api_version () then
-    Fail.fail "VFIO speaks API version %d, expected %d" v (api_version ());
-  if
-    not
-      (Fail.step "checking VFIO's IOMMU models" (fun () -> supports container m))
-  then
-    Fail.fail "%s"
-      (match m with
-      | No_iommu ->
-          "VFIO is not in its no-IOMMU mode; turn it on: echo 1 | sudo tee \
-           /sys/module/vfio/parameters/enable_unsafe_noiommu_mode"
-      | Type1v2 ->
-          "VFIO has no type 1 IOMMU; load it: sudo modprobe vfio_iommu_type1");
-  let group = opened (open_file bus file) in
-  if not (Fail.step ("reading the status of " ^ file) (fun () -> viable group))
-  then Fail.fail "%s" (not_viable files bus g);
-  Fail.step
-    ("attaching " ^ file ^ " to a VFIO container")
-    (fun () -> set_container group container);
-  (* Linux attaches a group to an IOMMU only where the IOMMU also remaps the
-     function's interrupts, so that it cannot raise another's. *)
-  (match set_iommu container m with
-  | () -> ()
-  | exception Unix.Unix_error (EPERM, _, _) when m = Type1v2 ->
-      Fail.fail
-        "the IOMMU of %s does not remap interrupts, so Linux refuses it to \
-         VFIO; enable interrupt remapping in the firmware settings, or accept \
-         the risk: echo 1 | sudo tee \
-         /sys/module/vfio_iommu_type1/parameters/allow_unsafe_interrupts"
-        bus
-  | exception Unix.Unix_error (e, _, _) ->
-      Fail.fail "attaching %s to a VFIO container: %s" file
-        (Unix.error_message e));
   let device =
     opened
       (Fail.step
@@ -151,6 +175,18 @@ let open_function files fds bus m =
   in
   let efd = opened (Fail.step "creating an eventfd" eventfd) in
   Fail.step ("routing the interrupt of " ^ bus) (fun () -> msi device efd);
+  (device, efd)
+
+(* Opens [bus]'s group in a container of its own with the IOMMU model [m], then
+   the function, whose first MSI vector goes to an eventfd. Each descriptor goes
+   on [fds] once open. Is the container, the function's descriptor and the
+   eventfd. *)
+let open_function files fds bus m =
+  let file, group = open_group files bus m in
+  fds := group :: !fds;
+  let container = new_container files bus file group m in
+  fds := container :: !fds;
+  let device, efd = open_device fds bus group in
   (container, device, efd)
 
 (* The offset of BAR [i] in [device]'s file, if VFIO maps its [n] bytes from
@@ -226,33 +262,132 @@ let iova bus fd =
   let base, n = window bus page_sizes ranges in
   Space.create ~base n
 
-(* The container of a function behind an IOMMU, which maps system memory for it
-   at device addresses the process allocates. Mappings are counted by their
-   (address, bytes), as Function counts pins, because DMA memory and a pin may
-   be the same pair. Once the function is released, closing the container has
-   removed them all. *)
-type t = {
+(* VFIO's container is an IOMMU's address space, which several groups may
+   share: one container per machine holds every function the process takes
+   behind an IOMMU there, so that system memory several of them reach maps,
+   pins and counts once. A group that a container refuses, such as one behind
+   another IOMMU, or whose IOMMU leaves out part of the container's window,
+   joins the next container that takes it, or one of its own. Mappings are
+   counted by their (address, bytes), as Function counts pins, because DMA
+   memory and a pin may be the same pair, for one function or several. *)
+type container = {
   fd : fd;
-  device : fd; (* the function's *)
   iova : Space.t;
   maps : (int * int) Tables.Range.t; (* to (device address, count) *)
   mutex : Lock.t;
-  mutable closed : bool;
+  pid : int; (* the process that opened it *)
+  mutable users : int; (* the functions it holds, under [containers_lock] *)
+  mutable closed : bool; (* once its last function is released *)
 }
 
-(* Opens [bus] in a container, its descriptors on [fds]: the container and the
-   eventfd its interrupts signal. *)
-let open_ files fds bus =
-  let fd, device, efd = open_function files fds bus Type1v2 in
-  let iova = iova bus fd in
-  let maps = Tables.Range.create 64 in
-  ({ fd; device; iova; maps; mutex = Lock.create (); closed = false }, efd)
+(* A function behind an IOMMU, in its container. *)
+type t = { c : container; device : fd; mutable released : bool }
 
-(* The device address at which [c] maps the [n] bytes at [a], mapping them for
-   the first count. *)
-let map_dma fn bus c a n =
+(* The containers, with the root of their machine's files. A child of fork
+   inherits the list and the parent's descriptors, which share their IOMMU
+   address space with the parent's: it joins only containers it opened. *)
+let containers : (string * container) list ref = ref []
+let containers_lock = Lock.create ()
+
+let container files bus fd =
+  match iova bus fd with
+  | iova ->
+      let c =
+        {
+          fd;
+          iova;
+          maps = Tables.Range.create 64;
+          mutex = Lock.create ();
+          pid = Unix.getpid ();
+          users = 0;
+          closed = false;
+        }
+      in
+      containers := (Sysfs.root files, c) :: !containers;
+      c
+  | exception e ->
+      Unix.close fd;
+      raise e
+
+(* Whether [c]'s IOMMU still maps the whole of [c]'s window: a group joining
+   it leaves out the device addresses its own IOMMU does not map, and Linux
+   refuses the join only where they hold a mapping already. *)
+let keeps bus c =
+  match iommu c.fd with
+  | page_sizes, ranges ->
+      let base, n = window bus page_sizes ranges in
+      let b = Space.base c.iova and m = Space.length c.iova in
+      base <= b && b + m <= base + n
+  | exception (Unix.Unix_error _ | Fail.Failed _) -> false
+
+(* The container of [bus]'s group, open at [file], with a count for the
+   function: the first of the machine's that this process opened, takes the
+   group and keeps its window, or a new one. [group] holds the group's
+   descriptor while one is open: a group taken out again by closing its file
+   opens anew. *)
+let join files bus file group =
+  let root = Sysfs.root files and pid = Unix.getpid () in
+  let reopen () =
+    Unix.close (Option.get !group);
+    group := None;
+    group := Some (open_file bus file)
+  in
+  let rec next = function
+    | [] ->
+        let g = Option.get !group in
+        container files bus (new_container files bus file g Type1v2)
+    | c :: rest -> (
+        match set_container (Option.get !group) c.fd with
+        | exception Unix.Unix_error _ -> next rest
+        | () when keeps bus c -> c
+        | () ->
+            reopen ();
+            next rest)
+  in
+  let mine (r, c) = if r = root && c.pid = pid then Some c else None in
+  let c = next (List.filter_map mine !containers) in
+  c.users <- c.users + 1;
+  c
+
+(* Drops a count of [c]'s functions, closing it with the last, which removes
+   every mapping it holds. *)
+let leave c =
+  Lock.protect containers_lock @@ fun () ->
+  c.users <- c.users - 1;
+  if c.users = 0 then begin
+    Lock.protect c.mutex (fun () -> c.closed <- true);
+    containers := List.filter (fun (_, c') -> c' != c) !containers;
+    Unix.close c.fd
+  end
+
+(* Opens [bus] behind its IOMMU, its descriptors but its container's on [fds]:
+   the function and the eventfd its interrupts signal. *)
+let open_ files fds bus =
+  let file, group = open_group files bus Type1v2 in
+  let group = ref (Some group) in
+  let c =
+    match
+      Lock.protect containers_lock (fun () -> join files bus file group)
+    with
+    | c -> c
+    | exception e ->
+        Option.iter Unix.close !group;
+        raise e
+  in
+  let group = Option.get !group in
+  fds := group :: !fds;
+  match open_device fds bus group with
+  | device, efd -> ({ c; device; released = false }, efd)
+  | exception e ->
+      leave c;
+      raise e
+
+(* The device address at which [t]'s container maps the [n] bytes at [a],
+   mapping them for the first count. *)
+let map_dma fn bus t a n =
+  let c = t.c in
   Lock.protect c.mutex @@ fun () ->
-  if c.closed then Fail.err_released fn bus;
+  if t.released then Fail.err_released fn bus;
   match Tables.Range.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Tables.Range.replace c.maps (a, n) (iova, k + 1);
@@ -277,8 +412,9 @@ let map_dma fn bus c a n =
                 (Unix.error_message e)))
 
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
-   released function's container has unmapped them already. *)
-let unmap_dma bus c a n =
+   closed container has unmapped them already. *)
+let unmap_dma bus t a n =
+  let c = t.c in
   Lock.protect c.mutex @@ fun () ->
   match Tables.Range.find c.maps (a, n) with
   | iova, k when k > 1 -> Tables.Range.replace c.maps (a, n) (iova, k - 1)
@@ -289,5 +425,8 @@ let unmap_dma bus c a n =
       Tables.Range.remove c.maps (a, n);
       Space.free c.iova iova
 
-let device c = c.device
-let close c = Lock.protect c.mutex (fun () -> c.closed <- true)
+let device t = t.device
+
+let close t =
+  Lock.protect t.c.mutex (fun () -> t.released <- true);
+  leave t.c

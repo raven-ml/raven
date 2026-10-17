@@ -15,7 +15,8 @@
     Locks nest in this order. A vendor's lock ({!Gpus}) is held over an open, a
     reset or a change, and a hold's lock over its stop. Under either come the
     GPUs' holds ({!Gpus}) and the vendor's driver's own locks. Under those come
-    a container's lock ({!Vfio}), then a space's ({!Space}); and system memory's
+    VFIO's list of containers, then a container's lock ({!Vfio}), then a
+    space's ({!Space}); and system memory's
     state ({!Sysmem}), then its reservations' lock. A function's lock
     ({!Function}), a seek ({!Local}) and the firmware found ({!Firmware}) hold
     no other.

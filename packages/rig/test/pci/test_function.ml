@@ -184,6 +184,88 @@ let test_vfio_limit () =
       Function.unpin f own page;
       failf "a pin beyond the limit"
 
+(* The functions behind one machine's IOMMU share its container: pages pinned
+   for two of them map once, at one device address. *)
+let test_vfio_shared () =
+  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
+  let fns =
+    this_gpus ()
+    |> List.filter_map (fun (d : Machine.id) ->
+        match Function.take Machine.this d.bus with
+        | Ok f when Function.addressing f = Iommu -> Some f
+        | Ok f ->
+            Function.release f;
+            None
+        | Error _ -> None)
+  in
+  Fun.protect ~finally:(fun () -> List.iter Function.release fns) @@ fun () ->
+  match fns with
+  | f :: g :: _ ->
+      let page = Machine.page Machine.this in
+      let a = round_up (memory (2 * page)) page in
+      let runs = pin f a page in
+      equal ~msg:"pinned for another function, at the same device address"
+        (list (pair hex int))
+        runs (pin g a page);
+      Function.unpin f a page;
+      Function.unpin g a page
+  | _ ->
+      skip
+        ~reason:"fewer than two GPUs this process may take behind an IOMMU" ()
+
+(* The GPUs this machine has behind an IOMMU, by bus. *)
+let vfio_buses () =
+  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
+  this_gpus ()
+  |> List.filter_map (fun (d : Machine.id) ->
+      match Function.take Machine.this d.bus with
+      | Ok f ->
+          let iommu = Function.addressing f = Iommu in
+          Function.release f;
+          if iommu then Some d.bus else None
+      | Error _ -> None)
+
+(* A child of fork that takes another GPU behind the IOMMU maps its memory in
+   a container of its own: the parent's next allocation, at the device
+   address the child's would take in a shared one, still maps. *)
+let test_vfio_fork () =
+  match vfio_buses () with
+  | b :: b' :: _ ->
+      let f = require_ok (Function.take Machine.this b) in
+      Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+      let w, _ = alloc_dma f mib in
+      let ready_r, ready_w = Unix.pipe () and done_r, done_w = Unix.pipe () in
+      let child =
+        match Unix.fork () with
+        | 0 ->
+            let ok =
+              match Function.take Machine.this b' with
+              | Ok g -> (
+                  match Function.alloc_dma g mib with
+                  | Ok (Some _) -> true
+                  | Ok None | Error _ -> false)
+              | Error _ -> false
+            in
+            ignore (Unix.write_substring ready_w (if ok then "y" else "n") 0 1);
+            ignore (Unix.read done_r (Bytes.create 1) 0 1);
+            Unix._exit 0
+        | pid -> pid
+      in
+      let answer = Bytes.create 1 in
+      ignore (Unix.read ready_r answer 0 1);
+      let parent = Function.alloc_dma f mib in
+      ignore (Unix.write_substring done_w "x" 0 1);
+      ignore (Unix.waitpid [] child);
+      List.iter Unix.close [ ready_r; ready_w; done_r; done_w ];
+      equal ~msg:"the child's allocation" string "y" (Bytes.to_string answer);
+      (match require_ok ~msg:"the parent's allocation" parent with
+      | Some (w', _) -> Function.free_dma f w'
+      | None -> fail "the parent's allocation found no memory");
+      Function.free_dma f w
+  | _ ->
+      skip
+        ~reason:"fewer than two GPUs this process may take behind an IOMMU" ()
+
 (* A machine's files *)
 
 (* [take_on fns bus] takes [bus] on a machine whose functions are [fns]. *)
@@ -1908,6 +1990,10 @@ let this_machine =
       test "a GPU behind an IOMMU reaches its memory at one run apart" test_vfio;
       test "a GPU behind an IOMMU out of mappings or locked memory gets none"
         test_vfio_limit;
+      test "GPUs behind one IOMMU map the pages pinned for both once"
+        test_vfio_shared;
+      test "a child of fork maps its GPU's memory apart from its parent's"
+        test_vfio_fork;
     ]
 
 let () =

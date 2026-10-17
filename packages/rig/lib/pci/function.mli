@@ -258,13 +258,17 @@ val reset : t -> (unit, string) result
     becomes of the memory when the process dies, depend on how it was taken.
 
     Behind an IOMMU, the runs are device addresses that the process maps for
-    the function alone, as one run, from 4 GiB up to [2{^44}]. Every function
+    the function, as one run, from 4 GiB up to [2{^44}]. Every function
     that rig drives reaches this range, and an address truncated to 32 bits
-    falls outside it. The memory counts against the process's locked-memory
-    limit ([memlock]), and the function's VFIO container holds at most
+    falls outside it. The functions the process takes behind one machine's
+    IOMMU share one VFIO container where Linux lets them, so memory that
+    several of them reach maps and counts once, and each of them reaches the
+    memory given to the others. The memory counts against the process's
+    locked-memory limit ([memlock]), and a container holds at most
     [dma_entry_limit] mappings (a parameter of [vfio_iommu_type1], 65,535 by
-    default). The memory belongs to the process. VFIO ends the function's
-    access when the process's files close, at its death too.
+    default) for all its functions. The memory belongs to the process. VFIO
+    ends the function's access when the process's files close, at its death
+    too.
 
     Taken physically, the runs are physical addresses, and reading them needs
     [CAP_SYS_ADMIN] for [/proc/self/pagemap]. The function keeps writing its
