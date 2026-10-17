@@ -315,7 +315,7 @@ let pointers_bytes = 4096
 let stamps_bytes = (4096 * 32) + 8
 
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
-let max_waits = 255
+external max_waits : unit -> int = "caml_rig_amd_max_waits" [@@noalloc]
 
 (* The queues, as rig_amd_ring.c's [runs] accepts their parts. *)
 let device_queues =
@@ -588,7 +588,7 @@ let facts g =
         stores = g.waits64;
         hosts = g.waits64;
         objects = false;
-        most = max_waits;
+        most = max_waits ();
       };
     most_parts = most_parts g.self;
     may_block = false;

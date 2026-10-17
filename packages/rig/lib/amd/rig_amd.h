@@ -43,11 +43,9 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
 
 /* Places [parts], which rig_amd_room answered RIG_FITS for, as the work
    of [v], the value after the last one it received, and rings the queues'
-   doorbells: RIG_COMMITTED, or RIG_FAILED with [*failure] set when the
-   waits are more than the device holds or ones it cannot
-   make. The queues then run none of [parts], and the timeline word still
-   reaches [v]. After a failure every call answers RIG_FAILED with the first
-   failure's message, which lives as long as the process. With [times], the
+   doorbells: RIG_COMMITTED. rig gives it at most RIG_AMD_WAITS
+   (rig_amd_stubs.h) [waits], and none on a GPU whose compute queue cannot
+   wait on a 64-bit word, as the device's facts state. With [times], the
    queues stamp [v]'s work with the GPU's clock, which rig_amd_settle
    converts to the host's clock. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,

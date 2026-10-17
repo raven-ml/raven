@@ -43,6 +43,12 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
 static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
                                          rig_amd_commit, rig_amd_settle};
 
+/* RIG_AMD_WAITS, the most waits a submission takes. */
+value caml_rig_amd_max_waits(value unit) {
+  (void)unit;
+  return Val_int(RIG_AMD_WAITS);
+}
+
 value caml_rig_amd_create(value unit) {
   (void)unit;
   struct rig_amd_edge *e = calloc(1, sizeof *e);

@@ -334,8 +334,6 @@ struct rig_amd {
   _Atomic int scratch_lock;     /* held while the writes change or are read */
   _Atomic uint64_t scratch_taken;   /* the value that placed them */
   _Atomic uint64_t last;
-  const char *failure;
-  char failure_text[96];
   /* the stamp ring, as the host reads it and at the GPU's address, and its
      host side; the clock: the path's source, or NULL, the record a stamp
      of the measure at open writes, the clock's rate, the first and the

@@ -1271,67 +1271,6 @@ let go r ps =
   equal answer ~msg:"submit" `Ok (submit r.g ~v:r.v ps);
   S.reached r.g r.v
 
-let entry m f = (found (A.entry m f)).code
-
-(* [m]'s image laid over new memory [code], and the part that copies it there
-   from staging memory the host wrote. *)
-let laid ?(of_ = kernels) r =
-  let m, code, bytes = load r.g (Lazy.force of_).binary in
-  let n = String.length bytes in
-  let staging = Option.get (A.alloc r.g Pinned n) in
-  H.write (host staging) bytes;
-  (m, code, E.copy ~dst:(address code) ~src:(address staging) n)
-
-let arguments r values =
-  let args = Option.get (A.alloc r.g Pinned 4096) in
-  H.write (host args) (String.concat "" (List.map le64 values));
-  args
-
-(* A refused wait fails before work, releases the value and stays failed. *)
-let failures_hw =
-  group ~timeout:60. "C failures"
-    [
-      test "a failed submission runs none of its parts" (fun () ->
-          S.with_ @@ fun { g; _ } ->
-          let v = A.signaled g + 1 in
-          let n = 4096 in
-          let src = Option.get (A.alloc g Pinned n) in
-          let dst = Option.get (A.alloc g Pinned n) in
-          H.write (host src) (pattern n 1);
-          H.write (host dst) (String.make n '\000');
-          equal answer ~msg:"submit"
-            (`Failed "256 waits; the device holds at most 255")
-            (E.submit g ~v
-               ~waits:(Array.make 256 (0, 0))
-               [| E.copy ~dst:(address dst) ~src:(address src) n |]);
-          S.reached g v;
-          equal string ~msg:"dst" (String.make n '\000') (H.read (host dst) n));
-      test "a value failed behind running work is reached once it ends"
-        (fun () ->
-          S.with_ @@ fun ({ g; _ } as t) ->
-          let r = device g in
-          let m, _, upload = laid r in
-          go r [| upload |];
-          let flag = Option.get (A.alloc g Pinned 8) in
-          H.write (host flag) (le64 0);
-          let args = arguments r [ address flag; 150_000 ] in
-          let spin =
-            E.words ~queue:"COMPUTE:0"
-              (dispatch (A.capability g).gpu (entry m) "spin"
-                 ~args:(address args) ~groups:1)
-          in
-          let v = r.v + 1 in
-          equal answer ~msg:"the work" `Ok (submit g ~v [| spin |]);
-          equal answer ~msg:"the failure"
-            (`Failed "256 waits; the device holds at most 255")
-            (E.submit g ~v:(v + 1) ~waits:(Array.make 256 (0, 0)) [||]);
-          S.reached g (v + 1);
-          equal string ~msg:"the work's flag" (le32s [ 1 ])
-            (H.read (host flag) 4);
-          S.close t;
-          equal int ~msg:"the word" (v + 1) (A.signaled g));
-    ]
-
 (* Rings wrap
 
    Drawn submissions wrap each ring several times, landing a submission exactly
@@ -1656,22 +1595,18 @@ let held (w0, t) =
     (H.read (host dst) 64);
   List.iter (A.free g) [ word; src; dst ]
 
-(* A submission waits on at most 255 words. *)
+(* A submission waits on as many words as its facts state. *)
 let wait_bound () =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
+  let most = (A.facts g).waits.most in
+  equal int ~msg:"the most waits" 255 most;
   let v = A.signaled g + 1 in
   let word = Option.get (A.alloc g Pinned 8) in
   H.write (host word) (le64 1);
-  let waits n = Array.make n (address word, 1) in
-  equal answer ~msg:"255 waits" `Ok (E.submit g ~v ~waits:(waits 255) [||]);
-  S.reached g v;
-  match E.submit g ~v:(v + 1) ~waits:(waits 256) [||] with
-  | `Ok -> fail "256 waits handed over"
-  | `Failed why ->
-      S.reached g (v + 1);
-      equal answer ~msg:"the next submit" (`Failed why)
-        (submit g ~v:(v + 2) [||])
+  let waits = Array.make most (address word, 1) in
+  equal answer ~msg:"255 waits" `Ok (E.submit g ~v ~waits [||]);
+  S.reached g v
 
 let waits =
   group ~timeout:120. "waits"
@@ -1679,7 +1614,7 @@ let waits =
       prop ~count:12
         "a wait holds the work until the word reaches it, across 2^32 (sampled)"
         crossing held;
-      test "a submission waits on 255 words, and fails on 256" wait_bound;
+      test "a submission waits on 255 words" wait_bound;
     ]
 
 (* Slots aged past 2^31
@@ -2073,7 +2008,6 @@ let () =
          work;
          code;
          launching;
-         failures_hw;
          waits;
          two;
          traces;

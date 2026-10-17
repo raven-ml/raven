@@ -305,11 +305,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     before all of them are placed, since [submit] moves the write position
     and rings the doorbell last. An AQL queue may read a packet as soon as
     its header is placed, and [submit] places each header after the rest of
-    its packet. [submit] returns [RIG_FAILED] if the submission carries more
-    than 255 waits, or any wait where the compute queue cannot wait. The
-    queues then run none of its parts, the word still reaches its value once
-    the earlier values have completed, and every later [submit] returns
-    [RIG_FAILED] too and places nothing.
+    its packet. rig gives [submit] at most 255 waits, and none where the
+    compute queue cannot wait, as the device's facts state
+    ({!Rig_edge.type-facts}).
 
     {b Times.} While a profile is taken, each queue a value's work enters
     writes the GPU's clock after the value's waits, and the queue that

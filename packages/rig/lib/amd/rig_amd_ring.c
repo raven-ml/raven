@@ -27,7 +27,6 @@
 #define _GNU_SOURCE
 
 #include <stdatomic.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "rig_amd_stubs.h"
@@ -758,31 +757,14 @@ static void refresh_slot(struct rig_amd *d, uint64_t v) {
   d->slot_last[i] = v - 1;
 }
 
-/* Refused waits fail before any part is placed. Release the failed value
-   after earlier work, then preserve the failure for every later call. */
-static int fail(struct submission *s, const char **failure) {
-  struct rig_amd *d = s->d;
-  enter(s, RIG_AMD_COMPUTE, NULL, 0, 0);
-  release(s, RIG_AMD_COMPUTE);
-  mark(&d->segment.marks, s->v, d->segment.put);
-  hand_over(s);
-  atomic_store_explicit(&d->last, s->v, memory_order_release);
-  d->failure = d->failure_text;
-  *failure = d->failure;
-  return RIG_FAILED;
-}
-
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    int nwaits, const struct rig_part *parts, int nparts,
                    void *routes, uint8_t *args,
                    const uint64_t *slots, int nslots, uint64_t *times,
                    const char **failure) {
   (void)nslots;
+  (void)failure;
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
-  if (d->failure) {
-    *failure = d->failure;
-    return RIG_FAILED;
-  }
   struct submission s = {.d = d, .routes = routes, .v = v, .last = {-1, -1}};
   route(d, routes, parts, nparts);
   int copy_parts = 0;
@@ -794,25 +776,10 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (r == RIG_AMD_COPY && LOW32(v) == 0) r = RIG_AMD_COMPUTE;
   refresh_slot(d, v);
 
-  /* The submission's segment bytes lie in one run, which never wraps; a
-     refused submission's prefix and release lie there too. */
+  /* The submission's segment bytes lie in one run, which never wraps. */
   uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
   struct rig_amd_segment *g = &d->segment;
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
-
-  /* Room budgets RIG_AMD_WAITS waits, and a GPU without 64-bit waits has
-     an empty wait template: either would hand over work that does not
-     wait. */
-  if (nwaits > RIG_AMD_WAITS) {
-    snprintf(d->failure_text, sizeof d->failure_text,
-             "%d waits; the device holds at most %d", nwaits, RIG_AMD_WAITS);
-    return fail(&s, failure);
-  }
-  if (nwaits > 0 && d->templates[T_WAIT64].n == 0) {
-    snprintf(d->failure_text, sizeof d->failure_text,
-             "a wait on a word; the device's compute queue cannot wait");
-    return fail(&s, failure);
-  }
 
   struct rig_amd_ring *compute = &d->rings[RIG_AMD_COMPUTE];
   s.timed = take_slot(d, v, nparts > 0 ? times : NULL);
