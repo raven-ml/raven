@@ -1159,7 +1159,7 @@ let lane_case =
      in
      let* seed = int in
      (* Infinities of both signs, whose sum is a NaN made from numbers, early or
-        late, and a NaN term the other side. *)
+        late, and a NaN term the other side or none. *)
      let early = float_range 0. 0.3 and late = float_range 0.6 1. in
      let made a b = [ (a, Inf); (b, Neg_inf) ] in
      let nan_term = map (fun x -> Nan x) (of_list [ nan; -.nan ]) in
@@ -1176,6 +1176,9 @@ let lane_case =
            ( 1,
              let+ a = late and+ b = late and+ c = early and+ x = nan_term in
              (c, x) :: made a b );
+           ( 1,
+             let+ a = float_range 0. 1. and+ b = float_range 0. 1. in
+             made a b );
          ]
      in
      { lkind; lshape; laxes; lwhere; lr; seed; marks })

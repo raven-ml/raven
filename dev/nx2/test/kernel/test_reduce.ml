@@ -3920,26 +3920,38 @@ let pp_carry_case ppf c =
 let carry_case =
   let open Gen in
   with_pp pp_carry_case
-    (let* (Carried (dt, _) as kind) = of_list carried_kinds in
+    (* One case in five carries a NaN made from numbers and holds a NaN
+       term after it: few draws of independent choices meet all of them. *)
+    (let* both = frequency [ (4, constant false); (1, constant true) ] in
+     let* (Carried (dt, vs) as kind) =
+       of_list
+         (List.filter
+            (fun (Carried (_, vs)) -> (not both) || vs.made Sum <> None)
+            carried_kinds)
+     in
      let* cm =
        of_list
-         (List.filter (fun m -> accepts m (D.Any dt)) [ Sum; Prod; Max; Min ])
+         (List.filter
+            (fun m -> accepts m (D.Any dt) && ((not both) || vs.made m <> None))
+            [ Sum; Prod; Max; Min ])
      in
      let* outer = of_list [ 1; 2 ] in
      let* inner = of_list [ 1; 3 ] in
      let* aligned = bool in
+     (* Such a case needs two terms before the carry and one after it. *)
+     let least k l = if both then List.filter (fun n -> n >= k) l else l in
      let* p, m =
        if aligned then
          let* k = of_list [ 1; 2 ] in
-         let+ m = of_list [ 0; 1; 5; 4095; 4096; 4097; 9000 ] in
+         let+ m = of_list (least 1 [ 0; 1; 5; 4095; 4096; 4097; 9000 ]) in
          (4096 * k, m)
        else
-         let* p = of_list [ 1; 2; 17; 1024; 2049; 4095 ] in
-         let+ m = of_list [ 0; 1; 4096 - p; (4096 - p) / 2 ] in
+         let* p = of_list (least 2 [ 1; 2; 17; 1024; 2049; 4095 ]) in
+         let+ m = of_list (least 1 [ 0; 1; 4096 - p; (4096 - p) / 2 ]) in
          (p, m)
      in
-     let* made = bool in
-     let* nan_after = bool in
+     let* made = if both then constant true else bool in
+     let* nan_after = if both then constant true else bool in
      let* through = bool in
      let+ cseed = int in
      { kind; cm; through; outer; inner; p; m; made; nan_after; cseed })
