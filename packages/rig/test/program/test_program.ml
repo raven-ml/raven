@@ -725,9 +725,6 @@ let test_after () =
 
 (* Re-entry *)
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
 let reentered = "Rig_program.run: called on the thread that runs it"
 
 let inside_lock fn =
@@ -750,7 +747,7 @@ let reenter n =
   let held = ref false and ran = ref "" and loaded = ref "" in
   let allocated = ref 0 in
   let call () =
-    held := holds () > 0;
+    held := Rig_support.holds () > 0;
     let before = Rig.allocated d in
     (loaded :=
        match G.load t (Iarray.of_list [ d ]) with
@@ -804,7 +801,9 @@ let interrupt_run n =
     Rig_support.interrupted n (fun () ->
         Array.iter Rig.Point.wait (G.run p empty))
   in
-  equal ~msg:(strf "from allocation %d, locks held after" n) int 0 (holds ());
+  equal
+    ~msg:(strf "from allocation %d, locks held after" n)
+    int 0 (Rig_support.holds ());
   (match G.run p empty with
   | points -> Array.iter Rig.Point.wait points
   | exception Rig.Lost _ when Option.is_some (Rig.lost d) -> ());

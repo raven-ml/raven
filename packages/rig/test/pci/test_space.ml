@@ -239,23 +239,19 @@ let test_whole () =
 
 (* Interrupts *)
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]), among which
-   the space's lock counts while it is held. *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
 (* An exception at any allocation of an alloc or a free, the first making the
    allocator, leaves the space's lock free: the next alloc and free run, and the
    thread holds what it held before. The interrupted call may leave its ranges
    taken. *)
 let test_interrupted () =
-  let before = holds () in
+  let before = Rig_support.holds () in
   let rec from n =
     let s = Space.create ~base:(1 lsl 40) (1 lsl 30) in
     let calls () = Option.iter (Space.free s) (Space.alloc s 0x3000) in
     let raised = Rig_support.interrupted n calls in
     equal
       ~msg:(Printf.sprintf "locks held, interrupted at %d" n)
-      int before (holds ());
+      int before (Rig_support.holds ());
     calls ();
     if raised then from (n + 1)
   in
@@ -315,42 +311,33 @@ let test_lost () =
   from 1
 
 (* A callback at any allocation of an alloc calls alloc on the same space.
-   Inside the space's lock, where the thread holds one more lock, the callback's
-   alloc takes the lock its thread holds and raises [Invalid_argument], having
-   taken nothing; outside it, it runs. Once both calls' ranges are freed the
-   space is whole, and the thread holds what it held before. *)
+   Inside the space's lock, where the thread holds one more lock, the
+   callback's alloc takes the lock its thread holds and raises
+   [Invalid_argument], having taken nothing; outside it, it runs. Once both
+   calls' ranges are freed the space is whole. *)
 let test_reentered () =
-  let before = holds () in
-  let inside = ref 0 and outside = ref 0 in
+  let seen = Rig_support.seen () in
   let rec from n =
     let s, taken = fragmented () in
     let got = ref None and again = ref None in
-    let call () =
-      let held = holds () > before in
-      match Space.alloc s 4096 with
-      | r ->
-          if held then fail "an alloc inside the space's lock ran";
-          incr outside;
-          again := r
-      | exception Invalid_argument why when held ->
-          starts_with ~msg:"the refusal" ~affix:"Rig_pci: a lock taken again"
-            why;
-          incr inside
+    let landing, landed =
+      Rig_support.landing seen "Rig_pci: a lock taken again" (fun () ->
+          again := Space.alloc s 4096)
     in
     let reached =
-      Rig_support.interrupted ~landing:(Call call) n (fun () ->
+      Rig_support.interrupted ~landing n (fun () ->
           got := Space.alloc s 0x2000)
     in
     let at what = Printf.sprintf "%s, called at %d" what n in
-    equal ~msg:(at "locks held") int before (holds ());
+    ignore (Rig_support.answered (at "the callback's alloc") landed
+      : bool option);
     List.iter (Space.free s) taken;
     List.iter (Option.iter (Space.free s)) [ !got; !again ];
     is_some ~msg:(at "whole") (whole s);
     if reached then from (n + 1)
   in
   from 1;
-  greater ~msg:"calls inside the lock" int ~than:0 !inside;
-  greater ~msg:"calls outside it" int ~than:0 !outside
+  Rig_support.covered seen
 
 let () =
   exit

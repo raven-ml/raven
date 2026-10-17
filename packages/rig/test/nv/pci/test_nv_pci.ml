@@ -14,11 +14,6 @@ module Tree = Rig_pci_support.Tree
 
 let mib = Rig_pci_support.mib
 
-(* One more lock the calling thread holds, and one fewer ([rig_hold] and
-   [rig_unhold] in [rig_edge.h]). *)
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
 (* What [call ()], a call of [Rig_nv_pci]'s [fn], answers: ["error"] for
    [Error], ["refused"] for the [Invalid_argument] of a call inside a lock
    that names [fn]. *)
@@ -109,8 +104,7 @@ let opening =
                |> Result.map ignore );
          ])
         (fun (fn, call) ->
-          hold ();
-          let inside = Fun.protect ~finally:unhold (fun () -> answer fn call) in
+          let inside = Rig_support.inside_lock (fun () -> answer fn call) in
           equal ~msg:"inside the lock" string "refused" inside;
           equal ~msg:"once it is given back" string "error" (answer fn call));
     ]

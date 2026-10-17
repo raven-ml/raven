@@ -115,6 +115,12 @@ let carry = carry ()
 let countdown = countdown ()
 let ready = ready ()
 
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
 module Driver = struct
   type kind = Rig_edge.memory
 
@@ -124,8 +130,6 @@ module Driver = struct
      must (Rig_edge's drivers section), so rig refuses a callback's call
      inside it. No section takes a second lock. *)
 
-  external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-  external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
   external reraise : exn -> 'a = "%reraise"
 
   (* [take m] takes [m], counted from before the take, so that a signal handler
@@ -878,6 +882,57 @@ let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
   | exception e ->
       ended profile;
       raise e
+
+(* Calls inside a lock *)
+
+let inside_lock f =
+  hold ();
+  Fun.protect ~finally:unhold f
+
+type seen = { mutable inside : int; mutable between : int }
+
+let seen () = { inside = 0; between = 0 }
+
+(* Whether the thread held a lock as the callback ran, what the call
+   answered, and the change in the locks it holds across the call. *)
+type landed = (bool * string * int) option ref
+
+let landing seen prefix call =
+  let landed = ref None in
+  let call () =
+    let before = holds () in
+    if before > 0 then seen.inside <- seen.inside + 1
+    else seen.between <- seen.between + 1;
+    let got =
+      match call () with
+      | () -> "returned"
+      | exception Invalid_argument why when String.starts_with ~prefix why ->
+          "refused"
+      | exception e -> Printexc.to_string e
+    in
+    landed := Some (before > 0, got, holds () - before)
+  in
+  (Call call, landed)
+
+let answered what (landed : landed) =
+  match !landed with
+  | None -> None
+  | Some (held, got, drift) ->
+      let where = if held then "inside a lock" else "between locks" in
+      let expected = if held then "refused" else "returned" in
+      Windtrap.equal
+        ~msg:(Printf.sprintf "%s, a call %s" what where)
+        Windtrap.string expected got;
+      Windtrap.equal
+        ~msg:(Printf.sprintf "%s, the locks held across the call" what)
+        Windtrap.int 0 drift;
+      Some held
+
+let covered seen =
+  Windtrap.greater ~msg:"landings inside a lock" Windtrap.int ~than:0
+    seen.inside;
+  Windtrap.greater ~msg:"landings between locks" Windtrap.int ~than:0
+    seen.between
 
 let time_scale =
   match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with

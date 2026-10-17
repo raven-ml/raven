@@ -432,31 +432,26 @@ let test_cached () =
    done nothing; outside every lock it runs as any call does. A call that
    takes no lock runs either way ({!Rig.section-domains}). *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
 (* A lock a library counts through the edge refuses rig's calls on its
    thread until it is given back, and changes nothing meanwhile. *)
 let test_counted () =
   let d = Rig.memory_device (fresh "counted") in
-  let before = holds () in
-  hold ();
-  equal ~msg:"the count while held" int (before + 1) (holds ());
-  let refused =
-    match Rig.Buffer.create d 8 with
-    | _ -> "done"
-    | exception Invalid_argument why
-      when String.starts_with ~prefix:"Rig.Buffer.create: " why ->
-        "refused"
+  let before = S.holds () in
+  let held, refused, allocated =
+    S.inside_lock @@ fun () ->
+    let refused =
+      match Rig.Buffer.create d 8 with
+      | _ -> "done"
+      | exception Invalid_argument why
+        when String.starts_with ~prefix:"Rig.Buffer.create: " why ->
+          "refused"
+    in
+    (S.holds (), refused, Rig.allocated d)
   in
-  let allocated = Rig.allocated d in
-  unhold ();
+  equal ~msg:"the count while held" int (before + 1) held;
   equal ~msg:"a create while held" string "refused" refused;
   equal ~msg:"bytes held after the refusal" int 0 allocated;
-  equal ~msg:"the count once given back" int before (holds ());
+  equal ~msg:"the count once given back" int before (S.holds ());
   equal ~msg:"a create once given back" int 8
     (Rig.Buffer.length (Rig.Buffer.create d 8))
 
@@ -571,7 +566,7 @@ let reenter f n =
       let probes, state = probes () in
       let held = ref false and answers = ref [] and changed = ref None in
       let call () =
-        held := holds () > 0;
+        held := S.holds () > 0;
         let before = state () in
         answers := List.map (fun p -> (p.what, answer p)) probes;
         if !held && state () <> before then changed := Some ()
@@ -629,7 +624,7 @@ let fail_in n =
       let d, p = P.open_ (fresh "fail-in:polled") in
       let held = ref false and stops = ref (-1) in
       let call () =
-        held := holds () > 0;
+        held := S.holds () > 0;
         Rig.fail "failed in a callback";
         stops := P.stops p
       in

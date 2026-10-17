@@ -217,17 +217,11 @@ let reclose () =
       Gc.full_major ();
       Rig.free_cache d)
 
-(* The locks the calling thread holds, one more and one fewer ([rig_hold]
-   and [rig_unhold] in [rig_edge.h]). *)
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
 (* An open inside a lock of its thread's, as from a callback inside one,
    raises naming the opener, having opened nothing: GPU 0 then opens. *)
 let inside_lock () =
-  hold ();
   let refused =
-    Fun.protect ~finally:unhold (fun () ->
+    Rig_support.inside_lock (fun () ->
         match Rig_gpu_support.opened (N.gpu 0) with
         | Ok g ->
             Rig_nv.stop g ~fault:None;

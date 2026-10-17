@@ -224,57 +224,37 @@ let test_view_free () =
 
 (* Locks *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
-(* A callback at any allocation of a section under a path's lock takes the lock
-   and checks the thread's locks: inside the section both raise
-   [Invalid_argument], having taken nothing; outside it both run. *)
+(* A callback at any allocation of a section under a path's lock takes the
+   lock, in one walk, and checks the thread's locks, in another: inside the
+   section each raises [Invalid_argument], having taken nothing; outside it
+   each runs. *)
 let test_lock_reentered () =
-  let before = holds () in
   let l = A.Lock.create () in
-  let inside = ref 0 and outside = ref 0 in
-  let rec from n =
-    let call () =
-      let held = holds () > before in
-      let took =
-        match A.Lock.protect l (fun () -> ()) with
-        | () -> true
-        | exception Invalid_argument why when held ->
-            starts_with ~msg:"the refusal" ~affix:"Rig_amd: a lock taken again"
-              why;
-            false
-      in
-      let checked =
-        match A.Lock.check "the call" with
-        | () -> true
-        | exception Invalid_argument why when held ->
-            starts_with ~msg:"the check" ~affix:"the call: " why;
-            false
-      in
-      equal ~msg:"the take and the check agree" bool took checked;
-      if took then incr outside else incr inside
-    in
-    let section () =
-      let xs = List.init 4 (fun i -> ref i) in
-      A.Lock.protect l (fun () ->
-          ignore (Sys.opaque_identity (List.map (fun r -> ref !r) xs)))
-    in
-    let reached = Rig_support.interrupted ~landing:(Call call) n section in
-    equal ~msg:(strf "locks held, called at %d" n) int before (holds ());
-    if reached then from (n + 1)
+  let section () =
+    let xs = List.init 4 (fun i -> ref i) in
+    A.Lock.protect l (fun () ->
+        ignore (Sys.opaque_identity (List.map (fun r -> ref !r) xs)))
   in
-  from 1;
-  greater ~msg:"calls inside the lock" int ~than:0 !inside;
-  greater ~msg:"calls outside it" int ~than:0 !outside
+  let walk prefix call =
+    let seen = Rig_support.seen () in
+    let rec from n =
+      let landing, landed = Rig_support.landing seen prefix call in
+      let reached = Rig_support.interrupted ~landing n section in
+      ignore
+        (Rig_support.answered (strf "%s, called at %d" prefix n) landed
+          : bool option);
+      if reached then from (n + 1)
+    in
+    from 1;
+    Rig_support.covered seen
+  in
+  walk "Rig_amd: a lock taken again" (fun () -> A.Lock.protect l ignore);
+  walk "Rig_amd.lock: called from" (fun () -> A.Lock.check "Rig_amd.lock")
 
 (* An exception at any allocation of a section under a path's lock gives the
    lock back: the thread holds what it held before, and takes the lock again. *)
 let test_lock_interrupted () =
-  let before = holds () in
+  let before = Rig_support.holds () in
   let l = A.Lock.create () in
   let rec from n =
     let section () =
@@ -283,7 +263,9 @@ let test_lock_interrupted () =
           ignore (Sys.opaque_identity (List.map (fun r -> ref !r) xs)))
     in
     let reached = Rig_support.interrupted n section in
-    equal ~msg:(strf "locks held, interrupted at %d" n) int before (holds ());
+    equal
+      ~msg:(strf "locks held, interrupted at %d" n)
+      int before (Rig_support.holds ());
     A.Lock.protect l ignore;
     if reached then from (n + 1)
   in
@@ -296,12 +278,9 @@ let test_capability_held () =
   opened @@ fun g ->
   let c = A.capability g in
   let refused what f =
-    hold ();
     let r =
-      Fun.protect ~finally:unhold (fun () ->
-          match f () with
-          | () -> None
-          | exception Invalid_argument why -> Some why)
+      Rig_support.inside_lock @@ fun () ->
+      match f () with () -> None | exception Invalid_argument why -> Some why
     in
     match r with
     | None -> failf "%s ran inside a lock" what

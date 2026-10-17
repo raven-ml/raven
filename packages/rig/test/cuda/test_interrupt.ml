@@ -23,56 +23,8 @@ let strf = Printf.sprintf
 let timeout = 120.
 let stopped_graph = "making the graph: the device was stopped"
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
 (* The text of the driver's refusal of a take by a lock's holder. *)
 let retaken = "Rig_cuda: a lock taken again by the thread that holds it"
-
-(* The landings of a walk, inside a lock of the calling thread and between
-   locks. *)
-type seen = { mutable inside : int; mutable between : int }
-
-let seen () = { inside = 0; between = 0 }
-
-(* [landing seen refusal call] is a landing that runs [call ()] from the
-   callback, and a ref that then holds whether the thread held a lock there
-   and what [call] did: ["refused"] for an [Invalid_argument] whose text
-   starts with [refusal], ["returned"], or the exception. *)
-let landing seen refusal call =
-  let landed = ref None in
-  let call () =
-    let held = holds () <> 0 in
-    if held then seen.inside <- seen.inside + 1
-    else seen.between <- seen.between + 1;
-    let got =
-      match call () with
-      | () -> "returned"
-      | exception Invalid_argument why
-        when String.starts_with ~prefix:refusal why ->
-          "refused"
-      | exception e -> Printexc.to_string e
-    in
-    landed := Some (held, got)
-  in
-  (Rig_support.Call call, landed)
-
-(* [answered what landed] fails unless the landing's call was refused inside
-   a lock and returned between locks, and is [Some held], whether the thread
-   held one, or [None] if the call did not reach the landing. *)
-let answered what landed =
-  match !landed with
-  | None -> None
-  | Some (held, got) ->
-      let where = if held then "inside a lock" else "between locks" in
-      let expected = if held then "refused" else "returned" in
-      equal ~msg:(strf "%s, a call %s" what where) string expected got;
-      Some held
-
-(* Fails unless the walk landed both inside a lock and between locks. *)
-let covered seen =
-  greater ~msg:"landings inside a lock" int ~than:0 seen.inside;
-  greater ~msg:"landings between locks" int ~than:0 seen.between
 
 let found : Rig_edge.entry_answer -> Rig_edge.entry = function
   | Entry e -> e
@@ -98,19 +50,19 @@ let walk attempt =
    and the device works on; between locks it stops the device, and the
    graph call answers so. *)
 let stop_in_graph () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk (fun g n ->
       let m = image g in
       let k = S.kernel (found (C.entry m "empty")).code 0 0 in
       let landing, landed =
-        landing seen retaken (fun () -> S.stop_driver g)
+        Rig_support.landing seen retaken (fun () -> S.stop_driver g)
       in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore ((C.capability g).graph [| k |]))
       in
       let what = strf "from allocation %d" n in
-      let stopped = answered what landed = Some false in
+      let stopped = Rig_support.answered what landed = Some false in
       let after = what ^ ", a graph after the call" in
       (match (C.capability g).graph [| k |] with
       | Error why when stopped -> equal ~msg:after string stopped_graph why
@@ -120,14 +72,14 @@ let stop_in_graph () =
       if not stopped then S.stop_driver g;
       C.unload g m;
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* An open of the GPU from a callback in a graph call of its device: inside
    the guard it is refused; between locks it answers that the GPU has a
    device open. Neither claims the GPU, which opens once the device
    stopped. *)
 let make_in_graph () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk (fun g n ->
       let m = image g in
       let k = S.kernel (found (C.entry m "empty")).code 0 0 in
@@ -139,12 +91,12 @@ let make_in_graph () =
             C.stop h ~fault:None
         | Error _ -> ()
       in
-      let landing, landed = landing seen "Rig_cuda.gpu: " make in
+      let landing, landed = Rig_support.landing seen "Rig_cuda.gpu: " make in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore ((C.capability g).graph [| k |]))
       in
-      ignore (answered (strf "from allocation %d" n) landed : bool option);
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       equal ~msg:(strf "from allocation %d, the opens in the call" n) int 0
         !opened;
       C.unload g m;
@@ -154,49 +106,51 @@ let make_in_graph () =
       | Error why ->
           failf "from allocation %d, the open after the stop: %s" n why);
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* A function asked for from a callback while another function of its image
    is: inside the image's lock the entry is refused, and between locks it
    makes the function. Either way the function is made when asked for
    again. *)
 let entry_in_entry () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk (fun g n ->
       let m = image g in
       let landing, landed =
-        landing seen retaken (fun () -> ignore (C.entry m "step"))
+        Rig_support.landing seen retaken (fun () -> ignore (C.entry m "step"))
       in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore (C.entry m "empty"))
       in
-      ignore (answered (strf "from allocation %d" n) landed : bool option);
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       let step = found (C.entry m "step") and empty = found (C.entry m "empty") in
       not_equal ~msg:(strf "from allocation %d, the functions" n) int empty.code
         step.code;
       C.unload g m;
       S.stop_driver g;
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* A free of page-locked memory from a callback in a mapping of other host
    memory: inside the registry's lock it is refused and leaves the memory
    locked for a later free; between locks it unlocks the memory. *)
 let free_in_map_host () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk (fun g n ->
       S.bind g;
       let p = H.pages H.page and q = H.pages H.page in
       let r = require_some (C.map_host g p 64) in
-      let landing, landed = landing seen retaken (fun () -> C.free g r) in
+      let landing, landed =
+        Rig_support.landing seen retaken (fun () -> C.free g r)
+      in
       let mapped = ref None in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             mapped := C.map_host g q 64)
       in
       let what = strf "from allocation %d" n in
-      let freed = answered what landed = Some false in
+      let freed = Rig_support.answered what landed = Some false in
       equal ~msg:(what ^ ", the first memory locked") bool (not freed)
         (S.locked p);
       if not freed then C.free g r;
@@ -207,7 +161,7 @@ let free_in_map_host () =
       H.free_pages p H.page;
       H.free_pages q H.page;
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* Through rig *)
 
@@ -233,30 +187,30 @@ let loaded d =
    it answers. The device is not lost, and the function is made when asked
    for again. *)
 let entry_in_entry_rig () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let i = loaded d in
       let mem () =
         if not (Rig.Image.mem i "step") then fail "no function step"
       in
-      let landing, landed = landing seen "Rig.Image.mem: " mem in
+      let landing, landed = Rig_support.landing seen "Rig.Image.mem: " mem in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore (Rig.Image.mem i "empty"))
       in
-      ignore (answered (strf "from allocation %d" n) landed : bool option);
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
       equal ~msg:(strf "from allocation %d, the function" n) bool true
         (Rig.Image.mem i "step");
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* An open of the device's GPU under another name from a callback in a
    graph call: inside the guard it is refused, and between locks it answers
    that the GPU has a device open. Neither opens a device, and the device
    is not lost. *)
 let open_in_graph_rig () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let i = loaded d in
       let empty = Option.get (Rig.Image.entry i "empty") in
@@ -270,35 +224,37 @@ let open_in_graph_rig () =
             Rig.close d'
         | Error _ -> ()
       in
-      let landing, landed = landing seen "Rig.open_: " call in
+      let landing, landed = Rig_support.landing seen "Rig.open_: " call in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore (cap.graph [| k |]))
       in
-      ignore (answered (strf "from allocation %d" n) landed : bool option);
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       equal ~msg:(strf "from allocation %d, the opens in the call" n) int 0
         !opened;
       is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
       ignore (Sys.opaque_identity i);
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* A close from a callback in a graph call: inside the guard it is refused,
    and between locks it stops the device. After a close, a graph call
    answers that the device was stopped. *)
 let close_in_graph () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let i = loaded d in
       let empty = Option.get (Rig.Image.entry i "empty") in
       let cap = Option.get (Rig.capability d Rig_cuda_abi.key) in
       let k = S.kernel empty 0 0 in
-      let landing, landed = landing seen "Rig.close: " (fun () -> Rig.close d) in
+      let landing, landed =
+        Rig_support.landing seen "Rig.close: " (fun () -> Rig.close d)
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             ignore (cap.graph [| k |]))
       in
-      ignore (answered (strf "from allocation %d" n) landed : bool option);
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       Rig.close d;
       (match cap.graph [| k |] with
       | Error why ->
@@ -307,7 +263,7 @@ let close_in_graph () =
       | Ok _ -> failf "from allocation %d, a graph made after the close" n);
       ignore (Sys.opaque_identity i);
       reached);
-  covered seen
+  Rig_support.covered seen
 
 (* The stops run last: a driver that cannot stop the device from a graph
    call leaves it open for the rest of the process. *)

@@ -25,56 +25,8 @@ module M = Rig_metal
 let strf = Printf.sprintf
 let timeout = 60.
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
 (* The text of the driver's refusal of a take by a lock's holder. *)
 let retaken = "Rig_metal: a lock taken again by the thread that holds it"
-
-(* The landings of a walk, inside a lock of the calling thread and between
-   locks. *)
-type seen = { mutable inside : int; mutable between : int }
-
-let seen () = { inside = 0; between = 0 }
-
-(* [landing seen refusal call] is a landing that runs [call ()] from the
-   callback, and a ref that then holds whether the thread held a lock there
-   and what [call] did: ["refused"] for an [Invalid_argument] whose text
-   starts with [refusal], ["returned"], or the exception. *)
-let landing seen refusal call =
-  let landed = ref None in
-  let call () =
-    let held = holds () <> 0 in
-    if held then seen.inside <- seen.inside + 1
-    else seen.between <- seen.between + 1;
-    let got =
-      match call () with
-      | () -> "returned"
-      | exception Invalid_argument why
-        when String.starts_with ~prefix:refusal why ->
-          "refused"
-      | exception e -> Printexc.to_string e
-    in
-    landed := Some (held, got)
-  in
-  (Rig_support.Call call, landed)
-
-(* [answered what landed] fails unless the landing's call was refused inside
-   a lock and returned between locks, and is [Some held], whether the thread
-   held one, or [None] if the call did not reach the landing. *)
-let answered what landed =
-  match !landed with
-  | None -> None
-  | Some (held, got) ->
-      let where = if held then "inside a lock" else "between locks" in
-      let expected = if held then "refused" else "returned" in
-      equal ~msg:(strf "%s, a call %s" what where) string expected got;
-      Some held
-
-(* Fails unless the walk landed both inside a lock and between locks. *)
-let covered seen =
-  greater ~msg:"landings inside a lock" int ~than:0 seen.inside;
-  greater ~msg:"landings between locks" int ~than:0 seen.between
 
 let found : Rig_edge.entry_answer -> Rig_edge.entry = function
   | Entry e -> e
@@ -185,25 +137,27 @@ let test_regions () =
    thread. Inside the device's guard the free is refused and leaves the
    region to a later free; between locks it frees the region. *)
 let reentry call () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk (fun g n ->
       let i = image g in
       let step = (found (M.entry i "step")).code in
       let args = alloc g args_bytes and other = alloc g args_bytes in
       let held = S.buffers () in
-      let landing, landed = landing seen retaken (fun () -> M.free g other) in
+      let landing, landed =
+        Rig_support.landing seen retaken (fun () -> M.free g other)
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () -> call g args step)
       in
       let what = strf "from allocation %d" n in
-      let freed = answered what landed = Some false in
+      let freed = Rig_support.answered what landed = Some false in
       let gone = if freed then 1 else 0 in
       equal ~msg:(what ^ ", buffers held") int (held - gone) (S.buffers ());
       if not freed then M.free g other;
       M.free g args;
       M.unload g i;
       reached);
-  covered seen
+  Rig_support.covered seen
 
 let icb g args step =
   match (M.capability g).icb (M.locate args).handle [| dispatch step |] with
@@ -237,15 +191,17 @@ let walk_rig attempt =
    way the device is not lost, and [after d x n] does [call]'s work if it
    was refused and checks it. *)
 let reentered ~ready ~during ~refusal ~call ~did ~after () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let x = ready d in
-      let landing, landed = landing seen refusal (fun () -> call d x) in
+      let landing, landed =
+        Rig_support.landing seen refusal (fun () -> call d x)
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () -> during d x)
       in
       let what = strf "from allocation %d" n in
-      (match answered what landed with
+      (match Rig_support.answered what landed with
       | None -> ()
       | Some held ->
           equal ~msg:(what ^ ", the call's work done") bool (not held)
@@ -253,7 +209,7 @@ let reentered ~ready ~during ~refusal ~call ~did ~after () =
       is_none ~msg:(what ^ ", the loss") (Rig.lost d);
       after d x n;
       reached);
-  covered seen
+  Rig_support.covered seen
 
 let loaded d =
   match Rig.Image.load d (fill ()) with Ok i -> i | Error why -> fail why
@@ -354,16 +310,19 @@ let entry_in_entry =
    still records; between locks it stops the device. After a close, an icb
    answers that the device was stopped. *)
 let close_in_icb () =
-  let seen = seen () in
+  let seen = Rig_support.seen () in
   walk_rig (fun d n ->
       let x = ready_icb d in
-      let landing, landed = landing seen "Rig.close: " (fun () -> Rig.close d) in
+      let landing, landed =
+        Rig_support.landing seen "Rig.close: " (fun () -> Rig.close d)
+      in
       let reached =
         Rig_support.interrupted ~landing n (fun () -> rig_icb x)
       in
       let what = strf "from allocation %d" n in
       let stopped = "the device was stopped" in
-      (match (answered what landed, x.cap.icb x.args [| dispatch x.step |]) with
+      let answered = Rig_support.answered what landed in
+      (match (answered, x.cap.icb x.args [| dispatch x.step |]) with
       | Some false, Error why ->
           equal ~msg:(what ^ ", the icb's refusal") string stopped why
       | Some false, Ok _ -> failf "%s, an icb recorded after the close" what
@@ -376,7 +335,7 @@ let close_in_icb () =
             stopped why
       | Ok _ -> failf "%s, an icb recorded after the close" what);
       reached);
-  covered seen
+  Rig_support.covered seen
 
 let () =
   exit

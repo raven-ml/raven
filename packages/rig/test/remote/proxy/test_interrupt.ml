@@ -26,27 +26,8 @@ let walk attempt =
   let rec from n = if attempt n then from (n + 1) in
   from 1
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
-(* [walk_held attempt] is [walk attempt] where [attempt n] is whether it
-   reached its [n]-th allocation and whether its callback ran inside a lock.
-   It fails unless some callbacks ran inside a lock and some outside. *)
-let walk_held attempt =
-  let rec from n inside outside =
-    match attempt n with
-    | true, true -> from (n + 1) (inside + 1) outside
-    | true, false -> from (n + 1) inside (outside + 1)
-    | false, _ -> (inside, outside)
-  in
-  let inside, outside = from 1 0 0 in
-  greater ~msg:"landings inside a lock" int ~than:0 inside;
-  greater ~msg:"landings outside every lock" int ~than:0 outside
-
-(* Whether [why] is the refusal of the link's [fn] inside a lock. *)
-let refused fn why =
-  String.starts_with ~prefix:("Rig_remote_proxy.Link." ^ fn ^ ": called from")
-    why
+(* The start of the refusal of the link's [fn] inside a lock. *)
+let refused fn = "Rig_remote_proxy.Link." ^ fn ^ ": called from"
 
 (* The id the agent loaded the program of the one function [name] as. *)
 let program name =
@@ -138,31 +119,29 @@ let dropped = function
    Invalid_argument and takes nothing; outside it takes one of the two
    commands sent. No command is lost. *)
 let next_in_next () =
-  walk_held (fun n ->
+  let seen = Rig_support.seen () in
+  walk (fun n ->
       with_pair @@ fun c a ->
       Link.drop c 3;
       Link.drop c 4;
-      let outer = ref None and inner = ref None and held = ref false in
-      let call () =
-        held := holds () > 0;
-        match Link.next a with
-        | r -> inner := Some (dropped r)
-        | exception Invalid_argument why when refused "next" why -> ()
+      let outer = ref None and inner = ref None in
+      let landing, landed =
+        Rig_support.landing seen (refused "next") (fun () ->
+            inner := Some (dropped (Link.next a)))
       in
       let reached =
-        Rig_support.interrupted ~landing:(Call call) n (fun () ->
+        Rig_support.interrupted ~landing n (fun () ->
             outer := Some (dropped (Link.next a)))
       in
-      if reached then
-        equal ~msg:(strf "from allocation %d, the callback's next" n) bool
-          (not !held) (Option.is_some !inner);
+      let what = strf "from allocation %d" n in
+      ignore (Rig_support.answered what landed : bool option);
       let inner =
         match !inner with Some id -> id | None -> dropped (Link.next a)
       in
-      equal ~msg:(strf "from allocation %d, the commands taken" n) (list int)
-        [ 3; 4 ]
+      equal ~msg:(what ^ ", the commands taken") (list int) [ 3; 4 ]
         (List.sort compare [ Option.get !outer; inner ]);
-      (reached, !held))
+      reached);
+  Rig_support.covered seen
 
 let opened = function
   | Ok (Wire.Request (Wire.Open _ as r)) -> r
@@ -172,36 +151,35 @@ let opened = function
 (* An answer from a callback in an answer, of a request that is not the
    oldest: inside the outer answer's lock it raises Invalid_argument as it
    starts; outside it raises Invalid_argument since the request is not the
-   oldest. Both requests are answered once the outer answer returns. *)
+   oldest, which the callback expects. Both requests are answered once the
+   outer answer returns. *)
 let answer_in_answer () =
-  walk_held (fun n ->
+  let seen = Rig_support.seen () in
+  let not_oldest =
+    "Rig_remote_proxy.Link.answer: the request is not the oldest unanswered"
+  in
+  walk (fun n ->
       with_pair @@ fun c a ->
       let ask () = Link.request c (Wire.Open "MEM") in
       let _, first = spawn ask in
       let r1 = opened (Link.next a) in
       let _, second = spawn ask in
       let r2 = opened (Link.next a) in
-      let held = ref false and inner = ref "" in
-      let call () =
-        held := holds () > 0;
-        inner :=
-          match Link.answer a r2 (Ok []) with
-          | () -> "answered"
-          | exception Invalid_argument why when refused "answer" why ->
-              "refused"
-          | exception Invalid_argument why -> why
+      let landing, landed =
+        Rig_support.landing seen (refused "answer") (fun () ->
+            match Link.answer a r2 (Ok []) with
+            | () -> fail "an answer to a request that is not the oldest"
+            | exception Invalid_argument why when String.equal why not_oldest
+              ->
+                ())
       in
       let reached =
-        Rig_support.interrupted ~landing:(Call call) n (fun () ->
+        Rig_support.interrupted ~landing n (fun () ->
             Link.answer a r1 (Ok []))
       in
-      if reached then
-        equal ~msg:(strf "from allocation %d, the callback's answer" n) string
-          (if !held then "refused"
-           else
-             "Rig_remote_proxy.Link.answer: the request is not the oldest \
-              unanswered")
-          !inner;
+      ignore
+        (Rig_support.answered (strf "from allocation %d" n) landed
+          : bool option);
       Link.answer a r2 (Ok []);
       let answered = function
         | Ok [] -> ()
@@ -210,7 +188,8 @@ let answer_in_answer () =
       in
       answered (first ());
       answered (second ());
-      (reached, !held))
+      reached);
+  Rig_support.covered seen
 
 (* A next, then an answer, each interrupted from its [n]-th allocation by an
    exception at every allocation from that one on: neither leaves a lock held.
@@ -226,7 +205,7 @@ let next_and_answer_raise () =
         Rig_support.interrupted n (fun () -> ignore (Link.next a))
       in
       equal ~msg:(strf "from allocation %d, locks held after a next" n) int 0
-        (holds ());
+        (Rig_support.holds ());
       Link.drop c 6;
       (* 5 if the interrupted next did not take it. *)
       let later = dropped (Link.next a) in
@@ -241,7 +220,7 @@ let next_and_answer_raise () =
             answered := true)
       in
       equal ~msg:(strf "from allocation %d, locks held after an answer" n) int
-        0 (holds ());
+        0 (Rig_support.holds ());
       if not !answered then Link.answer a r (Ok []);
       (match asked () with
       | Ok [] -> ()

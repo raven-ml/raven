@@ -112,51 +112,9 @@ let walk_calls attempt =
   let rec from n = if attempt n then from (n + 1) in
   from 1
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
 (* The start of the message of a take of a driver's lock inside one of its
    rank or a later one, such as by its holder. *)
 let retaken = "Rig_nv: a lock taken inside one of its rank or a later one"
-
-(* What a callback's call answered, with [inside] whether its thread held a
-   lock as the callback ran, and [drift] the change in the locks it holds
-   across the call. *)
-type landed = { inside : bool; answer : string; drift : int }
-
-(* [landing prefix call landed] is a callback that runs [call ()] and records
-   in [landed] what it answered: ["refused"] for an [Invalid_argument] whose
-   message starts with [prefix], ["done"] once it returns. *)
-let landing prefix call landed () =
-  let before = holds () in
-  let answer =
-    match call () with
-    | () -> "done"
-    | exception Invalid_argument why when String.starts_with ~prefix why ->
-        "refused"
-  in
-  landed := Some { inside = before > 0; answer; drift = holds () - before }
-
-(* Checks what the callback at allocation [n] answered: refused exactly
-   inside a lock, with the locks its thread holds unchanged. Counts the
-   landing in [inside] or [outside]. *)
-let landed_right n (inside, outside) l =
-  let at = strf "from allocation %d" n in
-  equal
-    ~msg:(strf "%s, the callback's call" at)
-    string
-    (if l.inside then "refused" else "done")
-    l.answer;
-  equal ~msg:(strf "%s, the locks held across it" at) int 0 l.drift;
-  if l.inside then incr inside else incr outside
-
-(* Checks that the walk landed both inside and outside a lock. *)
-let landed_both (inside, outside) =
-  greater ~msg:"landings inside a lock" int ~than:0 !inside;
-  greater ~msg:"landings outside every lock" int ~than:0 !outside
 
 (* [reentry attempt] walks [during ()] with [call ()] from a Gc.Memprof
    callback at each of its allocations, on the calling thread, where
@@ -165,19 +123,15 @@ let landed_both (inside, outside) =
    lock it would take again, having changed nothing, and does its work
    outside every lock. *)
 let reentry attempt =
-  let counts = (ref 0, ref 0) in
+  let seen = Rig_support.seen () in
   walk_calls (fun n ->
       let during, call, after = attempt () in
-      let landed = ref None in
-      let reached =
-        Rig_support.interrupted
-          ~landing:(Call (landing retaken call landed))
-          n during
-      in
-      Option.iter (landed_right n counts) !landed;
+      let landing, landed = Rig_support.landing seen retaken call in
+      let reached = Rig_support.interrupted ~landing n during in
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       after ();
       reached);
-  landed_both counts
+  Rig_support.covered seen
 
 (* A function asked for from a callback while another function of its image
    is: inside the image's lock the entry raises, and the function is made
@@ -206,22 +160,21 @@ let local_bytes = 32
    an entry's other allocations hold no local memory lock. *)
 let test_stop_in_local () =
   if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let counts = (ref 0, ref 0) in
+  let seen = Rig_support.seen () in
   walk_calls (fun n ->
       let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
       let local = (N.capability g).local in
-      let stopped = ref false and grown = ref (Ok ()) and landed = ref None in
+      let stopped = ref false and grown = ref (Ok ()) in
       let stop () =
         N.stop g ~fault:None;
         stopped := true
       in
+      let landing, landed = Rig_support.landing seen retaken stop in
       let reached =
-        Rig_support.interrupted
-          ~landing:(Call (landing retaken stop landed))
-          n
-          (fun () -> grown := local local_bytes)
+        Rig_support.interrupted ~landing n (fun () ->
+            grown := local local_bytes)
       in
-      Option.iter (landed_right n counts) !landed;
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       if !stopped then
         is_error
           ~msg:(strf "from allocation %d, a growth after the stop" n)
@@ -237,7 +190,7 @@ let test_stop_in_local () =
         N.stop g ~fault:None
       end;
       reached);
-  landed_both counts
+  Rig_support.covered seen
 
 (* The bytes of each region the memory walks make. *)
 let bytes = 4096
@@ -297,7 +250,7 @@ let test_entry_in_entry_rig () =
   let t = Rig_nv_support.open_ () in
   Fun.protect ~finally:(fun () -> Rig_nv_support.close t) @@ fun () ->
   let d = t.d in
-  let counts = (ref 0, ref 0) in
+  let seen = Rig_support.seen () in
   walk_calls (fun n ->
       let i =
         match
@@ -306,28 +259,20 @@ let test_entry_in_entry_rig () =
         | Ok i -> i
         | Error why -> fail why
       in
-      let landed = ref None in
       let call () = ignore (Rig.Image.mem i (List.nth functions 1)) in
+      let landing, landed = Rig_support.landing seen "Rig.Image.mem: " call in
       let reached =
-        Rig_support.interrupted
-          ~landing:(Call (landing "Rig.Image.mem: " call landed))
-          n
-          (fun () -> ignore (Rig.Image.mem i (List.nth functions 0)))
+        Rig_support.interrupted ~landing n (fun () ->
+            ignore (Rig.Image.mem i (List.nth functions 0)))
       in
-      Option.iter (landed_right n counts) !landed;
+      ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       is_none ~msg:(strf "from allocation %d, the loss" n) (Rig.lost d);
       equal ~msg:(strf "from allocation %d, the function" n) bool true
         (Rig.Image.mem i (List.nth functions 1));
       reached);
-  landed_both counts
+  Rig_support.covered seen
 
 (* Inside a lock *)
-
-(* [inside_lock f] is [f ()] run while its thread holds one more lock, as a
-   callback inside a lock of a library's does. *)
-let inside_lock f =
-  hold ();
-  Fun.protect ~finally:unhold f
 
 (* The capability's growth of local memory, from inside a lock: it raises
    naming the call, and grows once the lock is given back. *)
@@ -338,7 +283,7 @@ let test_local_inside () =
   let local = (N.capability g).local in
   raises_match
     (Exn.invalid_arg ~substring:"Rig_nv_abi.Gpu.local: called from")
-    (fun () -> inside_lock (fun () -> ignore (local local_bytes)));
+    (fun () -> Rig_support.inside_lock (fun () -> ignore (local local_bytes)));
   equal (result unit string) ~msg:"the growth after" (Ok ())
     (local local_bytes)
 

@@ -563,6 +563,40 @@ val interrupted :
     Walking [n] from [1] until it is [false] lands at every
     allocation [f] makes. *)
 
+val holds : unit -> int
+(** [holds ()] is the number of locks the calling thread holds, rig's and the
+    drivers' ([rig_holds] in [rig_edge.h]). *)
+
+val inside_lock : (unit -> 'a) -> 'a
+(** [inside_lock f] is [f ()] run while the calling thread counts one more
+    lock, as a callback that runs inside a lock does. *)
+
+type seen
+(** The type for the landings of a walk, counted inside a lock and between
+    locks. *)
+
+val seen : unit -> seen
+(** [seen ()] has counted no landing. *)
+
+type landed
+(** The type for what a call from a callback answered. *)
+
+val landing : seen -> string -> (unit -> unit) -> landing * landed
+(** [landing seen prefix call] is a {!Call} landing that runs [call ()],
+    counts in [seen] whether the thread held a lock there, and records what
+    [call] did: refused, for an [Invalid_argument] whose text starts with
+    [prefix], returned, or another exception. *)
+
+val answered : string -> landed -> bool option
+(** [answered what l] fails, naming [what], unless the call was refused inside
+    a lock and returned between locks, leaving its thread's locks as they
+    were. It is [Some held], whether the thread held a lock, or [None] if the
+    call did not run. *)
+
+val covered : seen -> unit
+(** [covered seen] fails unless [seen] counted landings both inside a lock and
+    between locks. *)
+
 val set_address_space : int -> int
 (** [set_address_space n] sets the process's soft limit of its address space
     to [n] bytes: [0], the errno of a refusal, or [-1] off Linux, where the

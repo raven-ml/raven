@@ -20,9 +20,6 @@ let timeout = 60.
    them. *)
 let max_descriptors = 64
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-
 (* Files *)
 
 (* This executable's directory, under _build, holds the files, which the
@@ -118,7 +115,7 @@ let interrupt n =
       let reached =
         Rig_support.interrupted n (fun () -> B.copy ~src:first ~dst:h)
       in
-      equal ~msg:"locks held after" int 0 (holds ());
+      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
       List.iteri
         (fun i b -> equal ~msg:(strf "file %d" i) string (bytes i) (read b))
         files;
@@ -152,7 +149,7 @@ let interrupt_barrier n =
       B.copy ~src:(B.of_string "barriers") ~dst:b;
       ignore (read other);
       let reached = Rig_support.interrupted n (fun () -> Rig_disk.barrier b) in
-      equal ~msg:"locks held after" int 0 (holds ());
+      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
       Rig_disk.barrier b;
       equal ~msg:"the file's bytes" string "barriers"
         (In_channel.with_open_bin name In_channel.input_all);
@@ -220,7 +217,7 @@ let called n =
         ]
       in
       let call () =
-        held := holds () > 0;
+        held := Rig_support.holds () > 0;
         answers := List.map answer calls
       in
       let opened = ref None in
@@ -264,6 +261,8 @@ let test_called () =
     (fun name ->
       Out_channel.with_open_bin (path name) (fun oc -> output_string oc name))
     [ "dropped"; "opened" ];
+  (* Each attempt runs in a child of fork, so the landings are counted here,
+     from what the child answers, and not by [Rig_support.seen]. *)
   let rec from n inside outside =
     match called n with
     | true, true -> from (n + 1) (inside + 1) outside
