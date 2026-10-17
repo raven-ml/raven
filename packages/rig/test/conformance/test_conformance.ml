@@ -1332,12 +1332,17 @@ let hang_cap_ms = 2_000
    with the reason rig states. The GPU opens through its driver wrapped to
    declare a bound of 2 s at most, where its facts bound hangs, and the work
    would end 2 s past it: the word reaches its value once the driver's stop
-   ended the work or it ended, and the GPU opens again. AMD skips: a stop whose
-   preemption of the hung work fails makes amdgpu reset the GPU, which other
-   processes share. *)
+   ended the work or it ended, and the GPU opens again. AMD skips through
+   amdgpu, whose reset of a GPU after a failed preemption of the hung work
+   reaches every process on it; without a kernel driver rig holds the GPU's
+   function alone, so a reset reaches this process only. *)
 let hung (module G : Gpu) () =
-  if G.class_ = "AMD" then
-    skip ~reason:"a failed preemption of hung work resets the GPU" ();
+  if G.class_ = "AMD" && not (Rig_amd_support.driverless ()) then
+    skip
+      ~reason:
+        "a failed preemption makes amdgpu reset the GPU for every process on \
+         it"
+      ();
   let module Capped = struct
     include G.D
 
