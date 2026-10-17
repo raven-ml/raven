@@ -1482,8 +1482,15 @@ module Conv = struct
   let law_conv =
     prop "conv is its sum over the taps, at every dtype" case (fun c ->
         let want = reference c in
+        let axes f = Array.exists Fun.id (Array.init (Array.length c.spatial) f) in
         cover "an output" (Array.length want > 0);
         cover "two groups" (c.groups = 2);
+        cover "no input channel" (c.cg = 0);
+        cover "a negative padding" (axes (fun i -> fst c.padding.(i) < 0 || snd c.padding.(i) < 0));
+        cover "a padding that cuts past the axis"
+          (axes (fun i -> c.spatial.(i) + fst c.padding.(i) + snd c.padding.(i) < 0));
+        cover "a stride and a dilation above 1"
+          (axes (fun i -> c.stride.(i) > 1 && c.dilation.(i) > 1));
         equal ~msg:"float64" (array float_exact) want (run D.Float64 c);
         equal ~msg:"float32" (array float_exact) want (run D.Float32 c);
         equal ~msg:"float16, summed at float32" (array float_exact) want (run D.Float16 c);
@@ -1506,6 +1513,11 @@ module Conv = struct
         let t = c.spatial in
         let least = Array.mapi (least c) t in
         cover "no input has the count" (Array.exists Option.is_none least);
+        cover "a padding past the span, cut in the transpose"
+          (Array.exists Fun.id
+             (Array.mapi
+                (fun i (lo, _) -> lo > c.dilation.(i) * (c.taps.(i) - 1))
+                c.padding));
         cover "an input below the formula's extent"
           (Array.exists Fun.id
              (Array.mapi
@@ -1530,6 +1542,17 @@ module Conv = struct
           let z = Nx.init Nx.float64 z_shape (fun i -> Float.of_int ((Array.fold_left ( * ) 1 (Array.map succ i) mod 7) - 3)) in
           let y = Nx.conv_transpose ~stride ~padding ~dilation ~groups g w in
           equal ~msg:"shape" (array int) z_shape (Nx.shape y);
+          (* Small integers: each dtype's sums are exact. *)
+          let at (type v s) (dt : (v, s) D.t) =
+            Nx.to_array
+              (Nx.cast Nx.float64
+                 (Nx.conv_transpose ~stride ~padding ~dilation ~groups (Nx.cast dt g)
+                    (Nx.cast dt w)))
+          in
+          let want = Nx.to_array y in
+          equal ~msg:"float32" (array float_exact) want (at D.Float32);
+          equal ~msg:"float16" (array float_exact) want (at D.Float16);
+          equal ~msg:"int32" (array float_exact) want (at D.Int32);
           let conv = Nx.conv ~stride ~padding ~dilation ~groups z w in
           let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
           let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
@@ -1549,6 +1572,25 @@ module Conv = struct
     invalid (fun () -> Nx.conv (Nx.zeros Nx.bool [| 1; 5; 4 |]) (Nx.zeros Nx.bool [| 2; 3; 4 |]));
     invalid (fun () -> Nx.conv_transpose x w);
     invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w)
+
+  (* Three products reach one output: 2048 then 1 and 1 sum to 2048 at
+     float16, but to 2050 at float32, which float16 holds. *)
+  let test_narrow () =
+    let f16 s vs = Nx.create Nx.float16 s vs in
+    let three = f16 [| 1; 3; 1 |] [| 2048.; 1.; 1. |] in
+    equal (array float_exact) [| 2050. |]
+      (Nx.to_array (Nx.conv three (f16 [| 1; 3; 1 |] [| 1.; 1.; 1. |])));
+    let channels = f16 [| 1; 1; 3 |] [| 2048.; 1.; 1. |] in
+    equal (array float_exact) [| 2050. |]
+      (Nx.to_array (Nx.conv_transpose channels (f16 [| 3; 1; 1 |] [| 1.; 1.; 1. |])))
+
+  let test_wrap () =
+    let i8 s vs = Nx.create Nx.int8 s vs in
+    equal (array int) [| -56 |]
+      (Nx.to_array (Nx.conv (i8 [| 1; 2; 1 |] [| 100; 100 |]) (i8 [| 1; 2; 1 |] [| 1; 1 |])));
+    equal (array int) [| -56 |]
+      (Nx.to_array
+         (Nx.conv_transpose (i8 [| 1; 1; 2 |] [| 100; 100 |]) (i8 [| 2; 1; 1 |] [| 1; 1 |])))
 
   (* A kernel of no tap along a spatial axis has no window to count. *)
   let test_no_taps () =
@@ -1578,6 +1620,8 @@ module Conv = struct
       [
         law_conv;
         law_transpose;
+        test "float16 sums at float32" test_narrow;
+        test "integers wrap" test_wrap;
         test "conv_transpose finds an input shorter than its formula's"
           test_transpose_short;
         test "each refusal names its function" test_refusals;
