@@ -72,7 +72,7 @@ let sparkline history ~width =
       values;
     Buffer.contents buf
 
-(* Bar drawing — reused from previous implementation *)
+(* Bar drawing *)
 
 let draw_bar c ~y ~width ~label ~value_text ~percent ~spark =
   let label_len = String.length label in
