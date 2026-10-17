@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Compute both gradients in a single pass via correlate2d *)
-
 let gradient_pair ~kernel_x ~kernel_y img =
   Helpers.with_batch_pair
     (fun img ->
@@ -13,11 +11,47 @@ let gradient_pair ~kernel_x ~kernel_y img =
       (gx, gy))
     img
 
-let sobel_kx =
-  Nx.create Nx.float32 [| 3; 3 |] [| -1.; 0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |]
+(* Sobel kernels *)
 
-let sobel_ky =
-  Nx.create Nx.float32 [| 3; 3 |] [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |]
+let check_sobel_ksize ksize =
+  match ksize with
+  | 1 | 3 | 5 | 7 -> ()
+  | _ ->
+      invalid_arg
+        (Printf.sprintf "sobel: ksize must be 1, 3, 5 or 7, got %d" ksize)
+
+let check_laplacian_ksize ksize =
+  if ksize <= 0 || ksize mod 2 = 0 then
+    invalid_arg
+      (Printf.sprintf "laplacian: ksize must be a positive odd integer, got %d"
+         ksize)
+
+(* The 1D Sobel kernel of derivative [order] for aperture [ksize]: Pascal's
+   rule smooths [ksize - order - 1] times, then [order] differences follow, so
+   order 0 of aperture 5 is [1 4 6 4 1] and order 1 is [-1 -2 0 2 1]. Aperture
+   1 does not smooth: order 0 is [1], a derivative takes 3 taps. *)
+let deriv ~order ksize =
+  let size = if ksize = 1 && order > 0 then 3 else ksize in
+  let k = Array.make size 0.0 in
+  k.(0) <- 1.0;
+  for _ = 1 to size - order - 1 do
+    for j = size - 1 downto 1 do
+      k.(j) <- k.(j) +. k.(j - 1)
+    done
+  done;
+  for _ = 1 to order do
+    for j = size - 1 downto 1 do
+      k.(j) <- k.(j - 1) -. k.(j)
+    done;
+    k.(0) <- -.k.(0)
+  done;
+  k
+
+(* The 2D kernel whose rows follow [ky] and columns follow [kx]. *)
+let outer ky kx =
+  let h = Array.length ky and w = Array.length kx in
+  Nx.create Nx.float32 [| h; w |]
+    (Array.init (h * w) (fun i -> ky.(i / w) *. kx.(i mod w)))
 
 let scharr_kx =
   Nx.create Nx.float32 [| 3; 3 |] [| -3.; 0.; 3.; -10.; 0.; 10.; -3.; 0.; 3. |]
@@ -26,19 +60,21 @@ let scharr_ky =
   Nx.create Nx.float32 [| 3; 3 |] [| -3.; -10.; -3.; 0.; 0.; 0.; 3.; 10.; 3. |]
 
 let sobel ?(ksize = 3) img =
-  ignore ksize;
-  gradient_pair ~kernel_x:sobel_kx ~kernel_y:sobel_ky img
+  check_sobel_ksize ksize;
+  let d = deriv ~order:1 ksize and s = deriv ~order:0 ksize in
+  gradient_pair ~kernel_x:(outer s d) ~kernel_y:(outer d s) img
 
 let scharr img = gradient_pair ~kernel_x:scharr_kx ~kernel_y:scharr_ky img
 
-let laplacian ?(ksize = 3) img =
-  ignore ksize;
-  (* Laplacian kernel: [0 1 0; 1 -4 1; 0 1 0] *)
-  let kernel =
-    Nx.create Nx.float32 [| 3; 3 |]
-      [| 0.0; 1.0; 0.0; 1.0; -4.0; 1.0; 0.0; 1.0; 0.0 |]
+(* The sum of the second x and y Sobel derivatives. For aperture 1 the two
+   3-tap kernels [1 -2 1] add up to the aperture [0 1 0; 1 -4 1; 0 1 0]. *)
+let laplacian ?(ksize = 1) img =
+  check_laplacian_ksize ksize;
+  let d = deriv ~order:2 ksize and s = deriv ~order:0 ksize in
+  let dxx, dyy =
+    gradient_pair ~kernel_x:(outer s d) ~kernel_y:(outer d s) img
   in
-  Helpers.with_batch (fun img -> Helpers.convolve_per_channel kernel img) img
+  Nx.add dxx dyy
 
 let canny ~low ~high ?(sigma = 1.4) img =
   Helpers.with_batch
@@ -46,9 +82,7 @@ let canny ~low ~high ?(sigma = 1.4) img =
       (* 1. Gaussian blur *)
       let blurred = Filter.gaussian_blur ~sigma img in
       (* 2. Gradient computation *)
-      let gx, gy =
-        gradient_pair ~kernel_x:sobel_kx ~kernel_y:sobel_ky blurred
-      in
+      let gx, gy = sobel blurred in
       let mag = Nx.sqrt (Nx.add (Nx.square gx) (Nx.square gy)) in
       let angle = Nx.atan2 gy gx in
       let shape = Nx.shape mag in

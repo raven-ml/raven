@@ -406,6 +406,93 @@ let test_sobel () =
   if edge_response_y < 0.1 then
     failf "Sobel Y edge response too weak: %.3f" edge_response_y
 
+(* Correlating an impulse gives the kernel reversed along both axes: for a
+   3x3 kernel, its row-major array reversed. *)
+let impulse_response f =
+  let n = 7 and c = 3 in
+  let img =
+    Nx.create Nx.float32 [| n; n; 1 |]
+      (Array.init (n * n) (fun i -> if i = n * n / 2 then 1.0 else 0.0))
+  in
+  let around = [ Nx.R (c - 1, c + 2); Nx.R (c - 1, c + 2); Nx.I 0 ] in
+  let r = Nx.to_array (Nx.slice around (f img)) in
+  Array.init 9 (fun i -> r.(8 - i))
+
+(* Kernels stated by OpenCV's Sobel and Laplacian documentation, which define
+   ksize: the 3x3 Sobel kernels, ksize 1's unsmoothed [-1 0 1], and
+   Laplacian ksize 1's aperture. *)
+let edge_kernels =
+  let gx k img = fst (sobel ~ksize:k img) in
+  let gy k img = snd (sobel ~ksize:k img) in
+  [
+    ("sobel 3 gx", gx 3, [| -1.; 0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |]);
+    ("sobel 3 gy", gy 3, [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |]);
+    ("sobel 1 gx", gx 1, [| 0.; 0.; 0.; -1.; 0.; 1.; 0.; 0.; 0. |]);
+    ("sobel 1 gy", gy 1, [| 0.; -1.; 0.; 0.; 0.; 0.; 0.; 1.; 0. |]);
+    ( "laplacian 1",
+      laplacian ~ksize:1,
+      [| 0.; 1.; 0.; 1.; -4.; 1.; 0.; 1.; 0. |] );
+    ( "laplacian 3",
+      laplacian ~ksize:3,
+      [| 2.; 0.; 2.; 0.; -8.; 0.; 2.; 0.; 2. |] );
+    ( "laplacian default",
+      (fun img -> laplacian img),
+      [| 0.; 1.; 0.; 1.; -4.; 1.; 0.; 1.; 0. |] );
+  ]
+
+let edge_kernel (_, f, kernel) =
+  equal (array (float 1e-6)) kernel (impulse_response f)
+
+(* A Sobel kernel of aperture [k >= 3] for derivative orders [dx], [dy] sums
+   to the derivative times [2 ^ (2k - dx - dy - 2)], the denominator OpenCV's
+   getDerivKernels states. Aperture 1 only differentiates: [-1 0 1] gives
+   twice a first derivative and [1 -2 1] a second one. So on [a x + b y],
+   interior gradients are [a] and [b] times [ramp_gain k], and on
+   [x^2 + y^2] the interior Laplacian is [4 * square_gain k]. *)
+let ramp_gain k = if k = 1 then 2.0 else Float.ldexp 1.0 ((2 * k) - 3)
+let square_gain k = if k = 1 then 1.0 else Float.ldexp 1.0 ((2 * k) - 4)
+
+(* The pixels of an [n x n] image far enough from the border that zero
+   padding does not reach the window of aperture [k], which spans 3 pixels
+   for [k = 1]. *)
+let interior n k a =
+  let r = max 1 (k / 2) in
+  let a = Nx.reshape [| n; n |] a in
+  Nx.to_array (Nx.slice [ Nx.R (r, n - r); Nx.R (r, n - r) ] a)
+
+let constant a v = Array.make (Array.length a) v
+
+let polynomial n f =
+  let c = n / 2 in
+  Nx.create Nx.float32 [| n; n; 1 |]
+    (Array.init (n * n) (fun i ->
+         f (Float.of_int ((i mod n) - c)) (Float.of_int ((i / n) - c))))
+
+let sobel_ramp k =
+  let n = 15 and a = 0.5 and b = -0.25 in
+  let ramp = polynomial n (fun x y -> (a *. x) +. (b *. y)) in
+  let gx, gy = sobel ~ksize:k ramp in
+  let gx = interior n k gx and gy = interior n k gy in
+  let g = ramp_gain k in
+  equal ~msg:"gx" (array (float 1e-3)) (constant gx (a *. g)) gx;
+  equal ~msg:"gy" (array (float 1e-3)) (constant gy (b *. g)) gy
+
+let laplacian_square k =
+  let n = 15 in
+  let square = polynomial n (fun x y -> (x *. x) +. (y *. y)) in
+  let lap = interior n k (laplacian ~ksize:k square) in
+  let v = 4.0 *. square_gain k in
+  equal (array (float (1e-4 *. v))) (constant lap v) lap
+
+let sobel_bad_ksize ksize =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () -> sobel ~ksize img)
+
+let laplacian_bad_ksize ksize =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () ->
+      laplacian ~ksize img)
+
 let test_canny () =
   let img = create_centered_square 20 20 10 in
   let edges = canny ~low:0.2 ~high:0.6 img in
@@ -497,6 +584,18 @@ let () =
           test "dilation_kernel_shape" test_dilation_kernel_shape;
         ];
       group "edge_detection"
-        [ test "sobel" test_sobel; slow "canny" test_canny ];
+        [
+          test "sobel" test_sobel;
+          cases "kernels" ~name:(fun (n, _, _) -> n) edge_kernels edge_kernel;
+          cases "sobel_ramp" ~name:(Printf.sprintf "ksize %d") [ 1; 3; 5; 7 ]
+            sobel_ramp;
+          cases "laplacian_square" ~name:(Printf.sprintf "ksize %d")
+            [ 1; 3; 5; 7; 9; 11 ] laplacian_square;
+          cases "sobel_bad_ksize" ~name:string_of_int [ -1; 0; 2; 9 ]
+            sobel_bad_ksize;
+          cases "laplacian_bad_ksize" ~name:string_of_int [ -1; 0; 2; 10 ]
+            laplacian_bad_ksize;
+          slow "canny" test_canny;
+        ];
       group "integration" [ test "pipeline" test_pipeline ];
     ])

@@ -5,6 +5,11 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `sobel` and `laplacian` use their `?ksize`, 1, 3, 5 or 7 for `sobel` and
+  any positive odd size for `laplacian`, and raise `Invalid_argument` for any
+  other. Both ignored it. `laplacian`'s default is `ksize` 1, the
+  4-neighbour aperture it always used; `~ksize:3` gives the 3x3 aperture
+  `[2 0 2; 0 -8 0; 2 0 2]`.
 - `to_grayscale` takes any image of 3 or more channels and ignores the
   channels after the third, such as alpha. It raised for 4 or more. It raises
   `Invalid_argument` for fewer channels or a rank below 3.
