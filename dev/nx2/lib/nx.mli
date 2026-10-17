@@ -1831,6 +1831,131 @@ val histogram :
     1-d of two or more edges, if the coordinates' shapes differ, or if [weights]
     has another shape. *)
 
+(** {1:windows Windows and segments}
+
+    A function here reads its operand in groups of elements: classes, windows
+    along its last axes, or rows grouped by positions held in data. Each
+    computes where its operands lie.
+
+    The {e spatial} axes are an operand's last [K] axes, and the axes before
+    them are batch axes, each computed alone. Along a spatial axis of [n]
+    elements, padded with [lo] zeros before and [hi] after, a window of [k]
+    elements with stride [s] and dilation [d] holds the padded axis' elements
+    [w s + j d], [j < k], for window [w]. There are
+    [(n + lo + hi - d (k - 1) - 1) / s + 1] windows, and none where
+    [d (k - 1) + 1] exceeds [n + lo + hi]. Windows across several spatial axes
+    are every combination of one window per axis, in C order, and so are
+    their taps [j]. Except for {!extract_patches}, whose result they are,
+    these functions read the windows where they lie and store none. *)
+
+val one_hot : num_classes:int -> ('v, 's, 'd) t -> 'd uint8_t
+(** [one_hot ~num_classes i] is [i]'s shape with an axis of [num_classes]
+    appended, holding [1] at the class each element of [i] names and [0] at the
+    others: an element outside [\[0, num_classes)] gives a row of zeros.
+    Integers only.
+
+    Raises [Invalid_argument] if [i] is not of an integer dtype or
+    [num_classes] is negative. *)
+
+val extract_patches :
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [extract_patches ~kernel_size ~stride ~dilation ~padding x] is the windows
+    of [x] over its last [K = Array.length kernel_size] axes, padded with zeros
+    by [padding]'s [(lo, hi)] pairs. A value of shape [[lead…; spatial…]]
+    gives [[lead…; P; L]], [P] the product of [kernel_size] and [L] the number
+    of windows: its element at [(…, p, l)] is window [l]'s tap [p]. A copy.
+
+    Raises [Invalid_argument] if [kernel_size] is empty; [stride], [dilation]
+    and [padding] do not have one entry per kernel axis; a size, stride or
+    dilation is below [1] or a padding negative; or [x] has fewer axes than
+    [kernel_size]. *)
+
+val combine_patches :
+  output_size:int array ->
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p]
+    is the adjoint of {!extract_patches} from spatial axes [output_size]: [p],
+    of shape [[lead…; P; L]], is summed into [[lead…; output_size…]], each of
+    its elements added at the position that {!extract_patches} reads it from,
+    and one that lands in the padding dropped. An element no window covers is
+    [+0]. With one geometry, the sum of [extract_patches x * y] is the sum of
+    [x * combine_patches y].
+
+    The sums add in C order of the taps, from [+0], and the float formats
+    narrower than 32 bits sum at [float32] and round once. Integers wrap.
+    Every dtype but booleans.
+
+    Raises [Invalid_argument] as {!extract_patches} does on the geometry, if
+    [output_size] does not have one entry per kernel axis or has a negative
+    one, if [p] has fewer than two axes or its last two are not [P] and [L],
+    or if [p] is boolean. *)
+
+val correlate :
+  ?padding:[ `Full | `Same | `Valid ] ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [correlate ~padding x kernel] is the cross-correlation of [x] with
+    [kernel] over the last [K = ndim kernel] axes of [x], each sum of products
+    taken without flipping [kernel]. [padding] defaults to [`Valid].
+
+    Along each spatial axis, of [n] elements in [x] and [k] in [kernel], the
+    full correlation has [n + k - 1] values: value [i] correlates [kernel] with
+    the elements of [x] from [i - k + 1], those outside [x] being zero.
+    [padding] keeps some of them. With [m = min n k]:
+    - [`Full] keeps them all;
+    - [`Valid] keeps the [max n k - m + 1] where the shorter of [x] and
+      [kernel] lies within the longer, from value [m - 1];
+    - [`Same] keeps [max n k], from value [(m - 1) / 2] if [k <= n] and from
+      value [m / 2] if [k > n]. With [k <= n], value [i] correlates [kernel]
+      with the elements of [x] from [i - k / 2] to [i + (k - 1) / 2]: an odd
+      kernel is centred on element [i].
+
+    For [x = [|1.; 2.; 3.; 4.; 5.; 6.; 7.|]] and
+    [kernel = [|1.; 10.; 100.; 1000.|]], [`Same] gives
+    [[|2100.; 3210.; 4321.; 5432.; 6543.; 7654.; 765.|]].
+
+    Each value sums one product per element of [kernel], from [+0], in an
+    order fixed by the shapes, as {!sum} adds. The float formats narrower
+    than 32 bits multiply and sum at [float32] and round once. Integers wrap.
+    Every dtype but booleans.
+
+    Raises [Invalid_argument] if [x] has fewer axes than [kernel], [kernel] has
+    an axis of no element, or the dtype is boolean. *)
+
+val maximum_filter :
+  kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [maximum_filter ~kernel_size ~stride x] is the greatest element of each
+    window of [x] over its last [K = Array.length kernel_size] axes, unpadded,
+    of dilation [1] and stride [stride] (default [kernel_size]), as {!max}
+    finds it: the first NaN where there is one. Each spatial axis becomes its
+    number of windows. Every dtype.
+
+    Raises [Invalid_argument] if [kernel_size] is empty, [stride] does not have
+    one entry per kernel axis, a size or a stride is below [1], or [x] has
+    fewer axes than [kernel_size]. *)
+
+val uniform_filter :
+  kernel_size:int array ->
+  ?stride:int array ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [uniform_filter ~kernel_size ~stride x] is the mean of each window of [x],
+    as {!maximum_filter} takes them: the {!sum} of the window divided by its
+    number of elements, rounded once. Floats.
+
+    Raises [Invalid_argument] as {!maximum_filter} does. *)
+
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]

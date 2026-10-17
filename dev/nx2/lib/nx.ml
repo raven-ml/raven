@@ -2759,6 +2759,303 @@ let map_item f x =
   let vs = Array.map f (Nx_array.to_array (read ~by x)) in
   renamed ~by (fun () -> on_host (Nx_array.of_array (dtype x) (shape x) vs))
 
+(* Windows and segments *)
+
+let one_hot ~num_classes x =
+  let by = "Nx.one_hot" in
+  integer ~by (dtype x);
+  if num_classes < 0 then invalid_argf "%s: %d classes" by num_classes;
+  let s = shape x in
+  let r = Array.length s in
+  let column = move ~by (Reshape (Array.append s [| 1 |])) x in
+  let x = broadcast ~by (Array.append s [| num_classes |]) column in
+  elementwise ~by D.Uint8 [ Any x ]
+    (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
+
+(* The format a window's sum adds in: float32 for the floats narrower than 32
+   bits, the dtype itself otherwise. *)
+let summed (type v s) (dt : (v, s) D.t) =
+  match D.kind dt with
+  | D.Float when D.bits dt < 32 -> D.Any D.Float32
+  | D.Float | D.Complex | D.Signed | D.Unsigned | D.Boolean -> D.Any dt
+
+let no_sum (type v s) ~by (dt : (v, s) D.t) =
+  if D.is D.Boolean dt then invalid_argf "%s: %s has no sum" by (D.name dt)
+
+(* The windows along an axis of [n] elements padded by [lo] and [hi]: none
+   where the dilated window is longer. *)
+let windows_along n (lo, hi) k step dilation =
+  let span = (dilation * (k - 1)) + 1 and e = n + lo + hi in
+  if e < span then 0 else ((e - span) / step) + 1
+
+(* The extra zeros after an axis that make one window fit where none does. *)
+let fitting n (lo, hi) k dilation =
+  Stdlib.max 0 ((dilation * (k - 1)) + 1 - (n + lo + hi))
+
+(* Refuses a window geometry other than [K > 0] kernel axes, each with a
+   positive size, stride and dilation and a padding of no negative width. *)
+let geometry ~by ~kernel_size ~stride ~dilation ~padding =
+  let k = Array.length kernel_size in
+  if k = 0 then invalid_argf "%s: kernel_size has no axis" by;
+  let entries name n =
+    if n <> k then
+      invalid_argf "%s: %d %s for %d kernel axes" by n name k
+  in
+  entries "strides" (Array.length stride);
+  entries "dilations" (Array.length dilation);
+  entries "paddings" (Array.length padding);
+  let positive name =
+    Array.iter (fun n -> if n < 1 then invalid_argf "%s: %s %d" by name n)
+  in
+  positive "kernel size" kernel_size;
+  positive "stride" stride;
+  positive "dilation" dilation;
+  Array.iter
+    (fun (lo, hi) ->
+      if lo < 0 || hi < 0 then invalid_argf "%s: padding (%d, %d)" by lo hi)
+    padding
+
+let spatial ~by k x =
+  if ndim x < k then invalid_argf "%s: %d kernel axes for %a" by k pp_value x
+
+(* The windows of [x]'s last [K] axes as a view of shape
+   [[lead…; counts…; kernel_size…]], after padding [x] with zeros, a copy
+   where a padding is not zero. An axis that holds no window gets enough zeros
+   after it for one, which a slice then drops. *)
+let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
+  let k = Array.length kernel_size and s = shape x in
+  let lead = Array.length s - k in
+  let along i f = f s.(lead + i) padding.(i) kernel_size.(i) in
+  let counts =
+    Array.init k (fun i ->
+        along i (fun n p k -> windows_along n p k stride.(i) dilation.(i)))
+  in
+  let widths =
+    Array.mapi
+      (fun a _ ->
+        if a < lead then (0, 0)
+        else
+          let i = a - lead in
+          let lo, hi = padding.(i) in
+          (lo, hi + along i (fun n p k -> fitting n p k dilation.(i))))
+      s
+  in
+  let padded =
+    if Array.for_all (( = ) (0, 0)) widths then x
+    else
+      let s' = Array.mapi (fun a d -> fst widths.(a) + d + snd widths.(a)) s in
+      let rs =
+        Array.mapi
+          (fun a d : Nx_array.Move.range ->
+            { start = fst widths.(a); count = d; step = 1 })
+          s
+      in
+      assemble ~by (dtype x) s' (D.zero (dtype x)) [ (rs, x) ]
+  in
+  let ws =
+    Array.init k (fun i : Nx_array.Move.window ->
+        {
+          axis = lead + i;
+          size = kernel_size.(i);
+          step = stride.(i);
+          dilation = dilation.(i);
+        })
+  in
+  let y = move ~by (Window ws) padded in
+  if Array.for_all (fun c -> c > 0) counts then (y, counts)
+  else
+    let ys = shape y in
+    let keep a d =
+      if a >= lead && a < lead + k then whole counts.(a - lead) else whole d
+    in
+    (move ~by (Slice (Array.mapi keep ys)) y, counts)
+
+let product = Array.fold_left ( * ) 1
+
+let extract_patches ~kernel_size ~stride ~dilation ~padding x =
+  let by = "Nx.extract_patches" in
+  geometry ~by ~kernel_size ~stride ~dilation ~padding;
+  let k = Array.length kernel_size in
+  spatial ~by k x;
+  let y, counts = windowed ~by ~kernel_size ~stride ~dilation ~padding x in
+  let lead = ndim x - k in
+  let taps_first =
+    Array.init (lead + (2 * k)) (fun a ->
+        if a < lead then a else if a < lead + k then a + k else a - k)
+  in
+  let s' =
+    Array.append (Array.sub (shape x) 0 lead)
+      [| product kernel_size; product counts |]
+  in
+  move ~by (Reshape s') (permute ~by taps_first y)
+
+let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
+  let by = "Nx.combine_patches" in
+  geometry ~by ~kernel_size ~stride ~dilation ~padding;
+  let k = Array.length kernel_size in
+  if Array.length output_size <> k then
+    invalid_argf "%s: %d output extents for %d kernel axes" by
+      (Array.length output_size) k;
+  Array.iter
+    (fun n -> if n < 0 then invalid_argf "%s: output extent %d" by n)
+    output_size;
+  let dt = dtype p in
+  no_sum ~by dt;
+  let r = ndim p in
+  if r < 2 then invalid_argf "%s: %a holds no patches" by pp_value p;
+  let counts =
+    Array.init k (fun i ->
+        windows_along output_size.(i) padding.(i) kernel_size.(i) stride.(i)
+          dilation.(i))
+  in
+  let s = shape p in
+  if s.(r - 2) <> product kernel_size || s.(r - 1) <> product counts then
+    invalid_argf "%s: %a, where the geometry gives patches [%d; %d]" by
+      pp_value p (product kernel_size) (product counts);
+  let lead = Array.sub s 0 (r - 2) in
+  let nl = r - 2 in
+  (* [p] as the Padded load's shape, [[lead…; counts…; kernel_size…]], one
+     window along an axis that holds none, of zeros. *)
+  let fit =
+    Array.init k (fun i ->
+        fitting output_size.(i) padding.(i) kernel_size.(i) dilation.(i))
+  in
+  let y =
+    move ~by
+      (Reshape (Array.concat [ lead; kernel_size; counts ]))
+      p
+  in
+  let y =
+    permute ~by
+      (Array.init (nl + (2 * k)) (fun a ->
+           if a < nl then a else if a < nl + k then a + k else a - k))
+      y
+  in
+  let y =
+    if Array.for_all (( = ) 0) fit then y
+    else
+      let ys = shape y in
+      let one a d = if a >= nl && a < nl + k && d = 0 then 1 else d in
+      let ones = Array.mapi one ys in
+      assemble ~by dt ones (D.zero dt) []
+  in
+  let pad : Nx_kernel.pad =
+    {
+      lo =
+        Array.init (nl + k) (fun a ->
+            if a < nl then 0 else fst padding.(a - nl));
+      hi =
+        Array.init (nl + k) (fun a ->
+            if a < nl then 0 else snd padding.(a - nl) + fit.(a - nl));
+      interior = Array.make (nl + k) 0;
+      windows =
+        Array.init k (fun i : Nx_array.Move.window ->
+            {
+              axis = nl + i;
+              size = kernel_size.(i);
+              step = stride.(i);
+              dilation = dilation.(i);
+            });
+    }
+  in
+  let shape = Array.append lead output_size in
+  let (D.Any w) = summed dt in
+  let y = cast_by ~by w y in
+  cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
+
+(* For each spatial axis, the run of the full correlation that [padding]
+   keeps: its first value and its count, as the interface states them. *)
+let run_of padding n k =
+  let m = Stdlib.min n k and longest = Stdlib.max n k in
+  match padding with
+  | `Full -> (0, n + k - 1)
+  | `Valid -> (m - 1, longest - m + 1)
+  | `Same -> ((if k <= n then (m - 1) / 2 else m / 2), longest)
+
+(* One Reduce over [x] read padded, so that each window is read where it
+   lies: value [i] of a kept run from [start] reads [x] from
+   [start + i - (k - 1)], which a padding of [k - 1 - start] zeros before [x]
+   puts at window [i]. A run of no value, [`Full] over an empty axis and a
+   kernel of one, computes one and drops it. *)
+let correlate ?(padding = `Valid) x kernel =
+  let by = "Nx.correlate" in
+  let dt = dtype x and kr = ndim kernel and r = ndim x in
+  if r < kr then
+    invalid_argf "%s: %a has fewer axes than the kernel %a" by pp_value x
+      pp_value kernel;
+  if D.is D.Boolean dt then
+    invalid_argf "%s: %s has no products" by (D.name dt);
+  let ks = shape kernel and s = shape x in
+  if Array.exists (( = ) 0) ks then
+    invalid_argf "%s: the kernel %a has an axis of no element" by pp_value
+      kernel;
+  let lead = r - kr in
+  let runs = Array.init kr (fun i -> run_of padding s.(lead + i) ks.(i)) in
+  let counts = Array.map (fun (_, c) -> Stdlib.max c 1) runs in
+  let lo = Array.make r 0 and hi = Array.make r 0 in
+  Array.iteri
+    (fun i (start, _) ->
+      let n = s.(lead + i) and k = ks.(i) in
+      lo.(lead + i) <- k - 1 - start;
+      hi.(lead + i) <- counts.(i) + k - 1 - n - lo.(lead + i))
+    runs;
+  let windows =
+    Array.init kr (fun i : Nx_array.Move.window ->
+        { axis = lead + i; size = ks.(i); step = 1; dilation = 1 })
+  in
+  let pad : Nx_kernel.pad = { lo; hi; interior = Array.make r 0; windows } in
+  let loop = Array.concat [ Array.sub s 0 lead; counts; ks ] in
+  let (D.Any w) = summed dt in
+  let term = E.(at w (E.input 0 dt) * at w (E.input 1 dt)) in
+  let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
+  let prog = P.of_exprs ~ins [| E.any term |] in
+  let y, () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
+           axes = Array.init kr (fun i -> r + i);
+           prog;
+           reductions = Value.[ Monoid (Sum, 0, dt) ];
+           loads =
+             [|
+               Padded { x; fill = D.zero dt; pad };
+               Plain (broadcast ~by loop kernel);
+             |];
+         })
+  in
+  if Array.for_all (fun (_, c) -> c > 0) runs then y
+  else
+    let keep a d = if a >= lead then whole (snd runs.(a - lead)) else whole d in
+    move ~by (Slice (Array.mapi keep (shape y))) y
+
+(* The windows of a filter, unpadded and of dilation 1, and the axes of their
+   taps, the last [K]. *)
+let filtered ~by ~kernel_size ?stride x =
+  let k = Array.length kernel_size in
+  let stride = Option.value stride ~default:kernel_size in
+  if Array.length stride <> k then
+    invalid_argf "%s: %d strides for %d kernel axes" by (Array.length stride) k;
+  let dilation = Array.make k 1 and padding = Array.make k (0, 0) in
+  geometry ~by ~kernel_size ~stride ~dilation ~padding;
+  spatial ~by k x;
+  let y, _ = windowed ~by ~kernel_size ~stride ~dilation ~padding x in
+  (y, Array.init k (fun i -> ndim x + i))
+
+let maximum_filter ~kernel_size ?stride x =
+  let by = "Nx.maximum_filter" in
+  let y, taps = filtered ~by ~kernel_size ?stride x in
+  reduce ~by Max (dtype x) taps y
+
+let uniform_filter ~kernel_size ?stride x =
+  let by = "Nx.uniform_filter" in
+  let y, taps = filtered ~by ~kernel_size ?stride x in
+  let dt = dtype x in
+  let (Wide w) = wide dt in
+  let total = reduce ~by Sum w taps y in
+  let n = fill ~by w [||] (Float.of_int (product kernel_size)) in
+  cast_by ~by dt (binary ~by (Binary Fdiv) total n)
+
 (* Printing *)
 
 let pp_dtype = D.pp
