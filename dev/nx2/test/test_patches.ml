@@ -354,6 +354,8 @@ let law_correlate (c, x, kernel) =
   let runs = Array.mapi (fun i n -> kept_run c.mode n c.ks.(i)) c.xs in
   let out = Array.map snd runs in
   cover "a kernel longer than x" (Array.exists2 (fun n k -> k > n) c.xs c.ks);
+  cover "an empty axis of x" (Array.exists (( = ) 0) c.xs);
+  cover "batch axes" (c.x_lead <> [||]);
   cover "an even kernel, Same" (c.mode = `Same && Array.exists (fun k -> k mod 2 = 0) c.ks);
   let s = Array.append c.x_lead c.xs and xv = Nx.to_array x in
   let kv = Nx.to_array kernel in
