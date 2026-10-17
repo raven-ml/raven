@@ -1643,6 +1643,48 @@ let fresh (b : Support.backend) () =
       List.iter (fun mn -> at o mn false; at o mn true) [ (8, 8); (200, 200) ])
     Nx_kernel.[ Chain; Lane ]
 
+(* A contraction answers Shape_mismatch where Shape.contract answers
+   Error for its operands, or where dst's shape is not the result's, and
+   writes nothing: misfits in the pairs' extents, the operands' ranks and
+   dst, a result past max_numel, and one behind a group that does not
+   merge. *)
+let test_misfits (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let arr s =
+    A.expect D.Float32
+      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+  in
+  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
+  let refused ~msg ?(batch = [||]) contracting dst a b' =
+    let before = A.to_array (to64 (host (A.Any dst))) in
+    equal ~msg answer A.Shape_mismatch
+      (K.contract ~order:Chain ~batch ~contracting ~acc:(D.Any D.Float32) ~dst
+         ~init:None a b');
+    equal ~msg:(msg ^ ": untouched") (array float_exact) before
+      (A.to_array (to64 (host (A.Any dst))))
+  in
+  let mm = [| (1, 0) |] in
+  refused ~msg:"contracted extents" mm (arr [| 2; 3 |]) (arr [| 2; 4 |])
+    (arr [| 5; 3 |]);
+  refused ~msg:"dst's shape" mm (arr [| 3; 2 |]) (arr [| 2; 4 |])
+    (arr [| 4; 3 |]);
+  refused ~msg:"dst's rank" mm (arr [| 6 |]) (arr [| 2; 4 |]) (arr [| 4; 3 |]);
+  refused ~msg:"a's rank" mm (arr [| 2; 3 |]) (arr [| 4 |]) (arr [| 4; 3 |]);
+  let k = 1 lsl 27 in
+  refused ~msg:"a result past max_numel" mm (arr [| 1; 1 |]) (arr [| k; 0 |])
+    (arr [| 0; k |]);
+  (* [a]'s batch axes transposed, its contracted extent 4 against [b]'s 5. *)
+  let a =
+    let x = arr [| 3; 2; 2; 4 |] in
+    Option.get (A.move (Nx_array.Move.Permute [| 1; 0; 2; 3 |]) x)
+  in
+  refused ~msg:"behind an unmerged group"
+    ~batch:[| (0, 0); (1, 1) |]
+    [| (3, 2) |]
+    (arr [| 2; 3; 2; 2 |])
+    a
+    (arr [| 2; 3; 5; 2 |])
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -1659,6 +1701,8 @@ let laws (b : Support.backend) =
         (run (law_declined b));
       prop ~examples
         "a destination identical to init gives a fresh one's bits" computed (run (law_in_place b));
+      test "refuses operands and destinations whose shapes do not fit"
+        (fun () -> b.around (test_misfits b));
     ]
 
 (* Guard pages *)
