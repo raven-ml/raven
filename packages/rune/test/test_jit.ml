@@ -603,6 +603,7 @@ let past_boundary n =
     sub.{i} <- float_of_int i
   done;
   Nx.of_bigarray (Bigarray.genarray_of_array1 sub)
+
 let arange n = Nx.arange_f Nx.float32 0. (float_of_int n) 1.
 let grid r c = Nx.reshape [| r; c |] (arange (r * c))
 

@@ -775,7 +775,7 @@ let copy_end (l : located) :
   let slot : Rig_program.slot =
     match l.place with
     | Memory { memory; first; bytes } ->
-      Memory { memory; offset = first; length = bytes }
+        Memory { memory; offset = first; length = bytes }
     | Input i -> Input i
   in
   let words = List.map (fun (w, f) -> (Rig_program.Int w, f)) l.offset.terms in

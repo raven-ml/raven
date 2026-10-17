@@ -188,22 +188,53 @@ let phased_axpy () = Engine.link_call ~devices (phased_call ())
 (* What a refusal of a buffer off its phase says. *)
 let off_its_phase = Exn.invalid_arg ~substring:"bytes past a multiple of 16"
 
-(* A buffer the schedule makes 4 bytes past a 16-byte boundary: a copy of slot
-   1 into it, then phased_axpy over it into slot 0. *)
+(* out[i] = a[i + 3] * n + b[i] for four elements, a eight floats 4 bytes past a
+   16-byte boundary: a[3] to a[6] lie on 16 bytes, which the kernel reads as one
+   float4. *)
+let shifted_axpy =
+  lazy
+    (let open Ops.O in
+     let a = Call.param ~shape:[ Ops.Int 8 ] ~phase:4 1 Float32 in
+     let buffer slot = Call.placeholder ~slot [ 4 ] Float32 in
+     let n =
+       Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
+         (Dtype.Value.of_int 100)
+     in
+     let i = Ops.range (Int 4) [ 0 ] in
+     let at b = Ops.index b [ i ] in
+     let a_i = Ops.index a [ i + Ops.int 3 ] in
+     let sink =
+       Ops.sink
+         ~kernel:(Ops.kernel_info ~name:"shifted_axpy" ())
+         [
+           Ops.end_
+             (Ops.store
+                (at (buffer 0))
+                ((a_i * Ops.cast n Float32) + at (buffer 2)))
+             [ i ];
+         ]
+     in
+     Codegen.to_program sink (Lazy.force clang))
+
+(* A buffer the schedule makes 4 bytes past a 16-byte boundary: a copy of slot 1
+   into it, then shifted_axpy over it into slot 0. Storage made off its phase
+   would put the float4 12 bytes past 16, where x86 faults. *)
 let runs_on_made_storage () =
-  let param slot =
-    Call.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") slot Float32
+  let param slot n =
+    Call.param ~shape:[ Ops.Int n ] ~device:(Single "CPU") slot Float32
   in
-  let made = Ops.new_buffer ~phase:4 (Single "CPU") 4 Float32 in
+  let made = Ops.new_buffer ~phase:4 (Single "CPU") 8 Float32 in
   let linear =
     Ops.v Op.Linear
       ~src:
         [
-          Call.store_call made (param 1);
-          Ops.call (Lazy.force phased_prg) [ param 0; made; param 2 ];
+          Call.store_call made (param 1 8);
+          Ops.call (Lazy.force shifted_axpy) [ param 0 4; made; param 2 4 ];
         ]
   in
   let s = Engine.link ~devices (compile linear) and bufs = buffers () in
+  bufs.(1) <-
+    [ Run.buffer host Float32 (floats [| 0.; 0.; 0.; 1.; 2.; 3.; 4.; 0. |]) ];
   Engine.run ~vars:[ ("n", 3) ] s bufs;
   equal values
     (floats [| 13.; 26.; 39.; 52. |])
@@ -1534,8 +1565,7 @@ let schedules =
       slow "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
-      test "a copy runs on a buffer off its parameter's phase"
-        copies_off_phase;
+      test "a copy runs on a buffer off its parameter's phase" copies_off_phase;
       cases ~name:Fun.id
         "a pad of integer divisions writes what its tensors compute"
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
