@@ -1457,13 +1457,15 @@ let distribution_tests =
       at_most float_exact ~than:(tolerance (Array.length xs)) (gap law xs))
 
 (* Tails. An interval 5 standard deviations out to the dtype's largest float,
-   on either side, from a width of 1e-3 to unbounded, holds its draws to the
-   conditioned law as the table's rows do, at fewer draws per case. A correct
-   sampler fails a case with probability below 1e-9 (Dvoretzky-Kiefer-Wolfowitz).
-   Rounding a draw to its dtype, and the inversion's error, move it by at most
-   [tail_ulps] units in the last place of the farthest finite draw, which moves
-   the cdf by at most that much times the law's largest density, at the bound
-   nearer zero: the tolerance adds it. *)
+   on either side, from a few hundred units in the last place of its nearer
+   bound wide to unbounded, holds its draws to the conditioned law as the
+   table's rows do, at fewer draws per case. A correct sampler fails a case with
+   probability below 1e-9 (Dvoretzky-Kiefer-Wolfowitz). Rounding a draw to its
+   dtype, and the inversion's error, move it by at most [tail_ulps] units in the
+   last place of the farthest finite draw, which moves the cdf by at most that
+   much times the law's largest density, at the bound nearer zero: the tolerance
+   adds it. Over an interval a few hundred units wide the density is about the
+   inverse of the width, so the cdf resolves an error of some ten units. *)
 let tail_draws = 10_000
 let tail_ulps = 4.
 
@@ -1507,84 +1509,134 @@ let largest (type b) (d : (float, b) Nx.dtype) =
   | _ -> invalid_arg "largest"
 
 (* An interval [near] to [near + width] standard deviations out, on the left
-   side or the right, its bounds given in either order. *)
+   side or the right, its bounds given in either order, as full tensors or the
+   upper one as a scalar. *)
 type tail = {
   dtype : floating;
   near : float;
   width : float;
   left : bool;
   swapped : bool;
+  scalar : bool;
 }
 
 let pp_tail ppf t =
-  Format.fprintf ppf "%a, %s side, %g to %g%s" pp_floating t.dtype
+  Format.fprintf ppf "%a, %s side, %g to %g%s%s" pp_floating t.dtype
     (if t.left then "left" else "right")
     t.near (t.near +. t.width)
     (if t.swapped then ", swapped" else "")
+    (if t.scalar then ", scalar upper" else "")
+
+(* A tail of a dtype, its nearer bound and its width drawn from [near] and
+   [width], which read the dtype's precision and largest float. *)
+let tail_of near width =
+  let open Gen in
+  with_pp pp_tail
+  @@ let* dtype = of_list [ F Nx.float32; F Nx.float64 ] in
+  let p, top = match dtype with F d -> (significand d, largest d) in
+  let* near = near top in
+  let+ width = width p near
+  and+ left = bool
+  and+ swapped = bool
+  and+ scalar = bool in
+  { dtype; near; width; left; swapped; scalar }
 
 let log_uniform lo hi =
   Gen.map (fun e -> 10. ** e) (Gen.float_range (Float.log10 lo) (Float.log10 hi))
 
-(* Nearer bounds from 5 standard deviations to the largest float, with its
-   neighbourhoods drawn on their own: past the square root of the largest float
-   [x^2] overflows while the tail's log mass is still finite, up to the square
-   root of twice it. *)
+(* Nearer bounds from 5 standard deviations to the largest float: through AS
+   241's fit, to 38, past it, and with its neighbourhoods drawn on their own.
+   Past the square root of the largest float [x^2] overflows while the tail's
+   log mass is still finite, up to the square root of twice it. *)
 let tail =
-  let open Gen in
-  with_pp pp_tail
-  @@ let* dtype = of_list [ F Nx.float32; F Nx.float64 ] in
-  let top = match dtype with F d -> largest d in
-  let* near =
-    frequency
+  let near top =
+    Gen.frequency
       [
-        (2, float_range 5. 30.);
-        (2, map (Float.min top) (log_uniform 31.6 top));
-        (1, map (fun e -> Float.sqrt top *. (2. ** e)) (float_range 0. 0.5));
+        (1, Gen.float_range 5. 38.);
+        (1, log_uniform 38. 1e4);
+        (1, Gen.map (Float.min top) (log_uniform 1e4 top));
+        (1, Gen.map (fun e -> Float.sqrt top *. (2. ** e)) (Gen.float_range 0. 0.5));
         (1, log_uniform (top /. 10.) top);
       ]
   in
-  let+ width =
-    frequency
-      [ (1, constant infinity); (3, log_uniform 1e-3 3.) ]
-  and+ left = bool
-  and+ swapped = bool in
-  { dtype; near; width; left; swapped }
+  let width _ _ =
+    Gen.frequency
+      [ (1, Gen.constant infinity); (3, log_uniform 1e-3 3.) ]
+  in
+  tail_of near width
+
+(* Intervals a few hundred units in the last place of the nearer bound wide,
+   which resolve the inversion's error, out to 1e3 standard deviations: through
+   AS 241's fit, and past it, where the asymptote's guess is off by up to 2e6
+   units at float64 until the Newton step. Further out the law is narrower than
+   a unit. *)
+let narrow_tail =
+  let near _ = log_uniform 5. 1e3 in
+  let width p near =
+    Gen.map (fun k -> k *. Float.ldexp near (8 - p)) (Gen.float_range 1. 2.)
+  in
+  tail_of near width
+
+(* The dtype's interval of a tail: its bounds in order given, and its nearer
+   and farther bounds in magnitude, as the dtype holds them. *)
+let check_tail k { dtype = F d; near; width; left; swapped; scalar } =
+  let a, b = (near, near +. width) in
+  let a, b = if left then (-.b, -.a) else (a, b) in
+  let lower, upper = if swapped then (b, a) else (a, b) in
+  let lower = Nx.full d [| tail_draws |] lower in
+  let upper =
+    if scalar then Nx.scalar d upper else Nx.full d [| tail_draws |] upper
+  in
+  let a = (floats lower).(0) and b = (floats upper).(0) in
+  let lo = Float.min a b and hi = Float.max a b in
+  let near = Float.min (Float.abs a) (Float.abs b)
+  and far = Float.max (Float.abs a) (Float.abs b) in
+  let xs = floats (Rng.truncated_normal k lower upper) in
+  Array.iter
+    (fun x ->
+      at_least float_exact ~than:lo x;
+      at_most float_exact ~than:hi x)
+    xs;
+  (* The left side's law is the right side's, reflected. *)
+  let xs = if left then Array.map Float.neg xs else xs in
+  at_most float_exact
+    ~than:(tail_tolerance d near far)
+    (gap (far_tail near far) xs)
+
+(* A tail's dtype's precision and largest float, and its nearer bound as the
+   dtype holds it. *)
+let held { dtype = F d; near; _ } =
+  (significand d, largest d, (Nx.to_array (Nx.scalar d near)).(0))
 
 let tails =
-  prop
-    "truncated_normal 5 standard deviations out to the largest float lands in \
-     its interval and follows the conditioned law"
-    (Gen.pair key tail) (fun (k, { dtype = F d; near; width; left; swapped }) ->
-      let a, b = (near, near +. width) in
-      let a, b = if left then (-.b, -.a) else (a, b) in
-      let lower, upper = if swapped then (b, a) else (a, b) in
-      let bound v = Nx.full d [| tail_draws |] v in
-      let lower = bound lower and upper = bound upper in
-      (* The law of the bounds as the dtype holds them. *)
-      let a = (floats lower).(0) and b = (floats upper).(0) in
-      let lo = Float.min a b and hi = Float.max a b in
-      let near = Float.min (Float.abs a) (Float.abs b)
-      and far = Float.max (Float.abs a) (Float.abs b) in
-      let p = significand d and top = largest d in
-      cover "float32 past 13 standard deviations" (p = 24 && near > 13.);
-      cover "float64 past 8.3 standard deviations" (p = 53 && near > 8.3);
-      cover "float64 past 1e4 standard deviations" (p = 53 && near > 1e4);
-      cover "between the square roots of the largest float and of twice it"
-        (near > Float.sqrt top && near < Float.sqrt (2. *. top));
-      cover "in the last decade of the dtype's range" (near > top /. 10.);
-      cover "an unbounded side" (far = infinity);
-      cover "a width below 0.01" (far -. near < 0.01);
-      let xs = floats (Rng.truncated_normal k lower upper) in
-      Array.iter
-        (fun x ->
-          at_least float_exact ~than:lo x;
-          at_most float_exact ~than:hi x)
-        xs;
-      (* The left side's law is the right side's, reflected. *)
-      let xs = if left then Array.map Float.neg xs else xs in
-      at_most float_exact
-        ~than:(tail_tolerance d near far)
-        (gap (far_tail near far) xs))
+  [
+    prop
+      "truncated_normal 5 standard deviations out to the largest float lands \
+       in its interval and follows the conditioned law"
+      (Gen.pair key tail) (fun (k, t) ->
+        let p, top, near = held t in
+        let far = t.near +. t.width in
+        cover "float32 past 13 standard deviations" (p = 24 && near > 13.);
+        cover "float64 past 8.3 standard deviations" (p = 53 && near > 8.3);
+        cover "float64 past 1e4 standard deviations" (p = 53 && near > 1e4);
+        cover "between the square roots of the largest float and of twice it"
+          (near > Float.sqrt top && near < Float.sqrt (2. *. top));
+        cover "in the last decade of the dtype's range" (near > top /. 10.);
+        cover "an unbounded side" (far = infinity);
+        cover "a width below 0.01" (t.width < 0.01);
+        cover "a scalar upper bound" t.scalar;
+        check_tail k t);
+    prop
+      "truncated_normal over a few hundred units in the last place follows the \
+       conditioned law"
+      (Gen.pair key narrow_tail) (fun (k, t) ->
+        let p, _, _ = held t in
+        cover "float32 past 13 standard deviations" (p = 24 && t.near > 13.);
+        cover "float64 within AS 241's fit" (p = 53 && t.near < 38.);
+        cover "float64 from 38 to 300 standard deviations"
+          (p = 53 && t.near > 38. && t.near < 300.);
+        check_tail k t);
+  ]
 
 let () =
   exit
@@ -1599,5 +1651,5 @@ let () =
          refusals;
          scopes;
          distribution_tests;
-         tails;
+         group "tails" tails;
        ])
