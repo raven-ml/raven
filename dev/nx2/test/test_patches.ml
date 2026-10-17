@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Classes and windows: one_hot, patches, correlation and filters, each
+(* Classes and windows: one_hot, patches and correlation, each
    against a loop over the host elements that follows its doc, index by
    index. Sums are of small integers held in float64, exact in any order, so
    the loops compare bit for bit. *)
@@ -422,104 +422,5 @@ let correlations =
               Nx.correlate (Nx.zeros Nx.bool [| 3 |]) (Nx.zeros Nx.bool [| 2 |])));
     ]
 
-(* Filters *)
-
-type filter = Filter : ('v, 's) D.t * geometry * ('v, 's, Nx.host) Nx.t -> filter
-
-(* Unpadded windows of dilation 1, the stride left out half the time. *)
-let filter dts =
-  Gen.with_pp
-    (fun ppf (Filter (dt, g, _)) -> Format.fprintf ppf "%a, %a" D.pp dt pp_geometry g)
-    (let open Gen in
-     let* g = geometry in
-     let k = Array.length g.kernel in
-     let g = { g with dilation = Array.make k 1; padding = Array.make k (0, 0) } in
-     let* (D.Any dt) = of_dtypes dts in
-     let+ x = drawn dt (Array.append g.lead g.spatial) in
-     Filter (dt, g, x))
-
-(* [a] above [b] as {!Nx.max} orders them: a NaN above everything, [-0.]
-   below [+0.]. *)
-let above (type v s) (dt : (v, s) D.t) (a : v) (b : v) =
-  match D.kind dt with
-  | D.Float ->
-      Float.is_nan a && not (Float.is_nan b)
-      || ((not (Float.is_nan b)) && (a > b || (a = b && Float.sign_bit b && not (Float.sign_bit a))))
-  | D.Signed | D.Boolean -> a > b
-  | D.Unsigned -> a > b
-  | D.Complex -> assert false
-
-(* Each window's taps in the windows' C order, from [taps]. *)
-let windows g xs =
-  let cs = counts g in
-  let p = numel g.kernel and l = numel cs in
-  let per = Array.make (numel g.lead * l) [] in
-  List.iter
-    (fun (e, o) ->
-      let w = (e / (p * l) * l) + (e mod l) in
-      per.(w) <- xs.(Option.get o) :: per.(w))
-    (taps g);
-  Array.map List.rev per
-
-let law_maximum (Filter (dt, g, x)) =
-  cover "no window" (Array.exists (( = ) 0) (counts g));
-  let first v vs = List.fold_left (fun m v -> if above dt v m then v else m) v vs in
-  let expected =
-    Array.map (function v :: vs -> first v vs | [] -> assert false)
-      (windows g (Nx.to_array x))
-  in
-  let y = Nx.maximum_filter ~kernel_size:g.kernel ~stride:g.stride x in
-  equal (array int) (Array.append g.lead (counts g)) (Nx.shape y);
-  equal_elements dt expected (Nx.to_array y)
-
-let law_uniform (g, x) =
-  let k = Array.length g.kernel in
-  let g = { g with dilation = Array.make k 1; padding = Array.make k (0, 0) } in
-  let n = Float.of_int (numel g.kernel) in
-  let expected =
-    Array.map
-      (fun vs -> List.fold_left ( +. ) 0. vs /. n)
-      (windows g (Nx.to_array x))
-  in
-  equal (array float_exact) expected
-    (Nx.to_array (Nx.uniform_filter ~kernel_size:g.kernel ~stride:g.stride x))
-
-let uniform =
-  Gen.with_pp
-    (fun ppf (g, _) -> pp_geometry ppf g)
-    (let open Gen in
-     let* g = geometry in
-     let+ x = small (Array.append g.lead g.spatial) in
-     (g, x))
-
-let filters =
-  group "filters"
-    [
-      prop "maximum_filter is each window's first greatest element"
-        (filter [ D.Any D.Float32; D.Any D.Float16; D.Any D.Int16; D.Any D.Uint8; D.Any D.Bool ])
-        law_maximum;
-      prop "uniform_filter is each window's sum over its count" uniform
-        law_uniform;
-      test "the stride defaults to the kernel" (fun () ->
-          let x = f64 [| 6 |] [| 1.; 5.; 2.; 2.; 9.; 0. |] in
-          equal (array float_exact) [| 5.; 2.; 9. |]
-            (Nx.to_array (Nx.maximum_filter ~kernel_size:[| 2 |] x)));
-      test "narrow floats sum at float32" (fun () ->
-          let x = Nx.create Nx.float16 [| 3 |] [| 2048.; 1.; 1. |] in
-          let mean = Nx.cast Nx.float16 (Nx.create Nx.float32 [| 1 |] [| 2050. /. 3. |]) in
-          equal (array float_exact) (Nx.to_array mean)
-            (Nx.to_array (Nx.uniform_filter ~kernel_size:[| 3 |] x)));
-      test "misuse raises" (fun () ->
-          let x = Nx.zeros Nx.float32 [| 4 |] in
-          let by = "Nx.maximum_filter" in
-          invalid ~by (fun () -> Nx.maximum_filter ~kernel_size:[||] x);
-          invalid ~by (fun () -> Nx.maximum_filter ~kernel_size:[| 2 |] ~stride:[| 1; 1 |] x);
-          invalid ~by (fun () -> Nx.maximum_filter ~kernel_size:[| 0 |] x);
-          invalid ~by (fun () -> Nx.maximum_filter ~kernel_size:[| 2 |] ~stride:[| 0 |] x);
-          invalid ~by (fun () -> Nx.maximum_filter ~kernel_size:[| 1; 1 |] x);
-          invalid ~by:"Nx.uniform_filter" (fun () ->
-              Nx.uniform_filter ~kernel_size:[| 1; 1 |] x));
-    ]
-
 let () =
-  exit (run "nx windows" [ one_hots; patches; correlations; filters ])
+  exit (run "nx windows" [ one_hots; patches; correlations ])

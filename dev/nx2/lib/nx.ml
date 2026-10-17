@@ -3466,33 +3466,6 @@ let correlate ?(padding = `Valid) x kernel =
   in
   move ~by (Reshape (Array.append lead (Array.map snd runs))) y
 
-(* The windows of a filter, unpadded and of dilation 1, and the axes of their
-   taps, the last [K]. *)
-let filtered ~by ~kernel_size ?stride x =
-  let k = Array.length kernel_size in
-  let stride = Option.value stride ~default:kernel_size in
-  if Array.length stride <> k then
-    invalid_argf "%s: %d strides for %d kernel axes" by (Array.length stride) k;
-  let dilation = Array.make k 1 and padding = Array.make k (0, 0) in
-  geometry ~by ~kernel_size ~stride ~dilation ~padding;
-  spatial ~by k x;
-  let y, _ = windowed ~by ~kernel_size ~stride ~dilation ~padding x in
-  (y, Array.init k (fun i -> ndim x + i))
-
-let maximum_filter ~kernel_size ?stride x =
-  let by = "Nx.maximum_filter" in
-  let y, taps = filtered ~by ~kernel_size ?stride x in
-  reduce ~by Max (dtype x) taps y
-
-let uniform_filter ~kernel_size ?stride x =
-  let by = "Nx.uniform_filter" in
-  let y, taps = filtered ~by ~kernel_size ?stride x in
-  let dt = dtype x in
-  let (Wide w) = wide dt in
-  let total = reduce ~by Sum w taps y in
-  let n = fill ~by w [||] (Float.of_int (product kernel_size)) in
-  cast_by ~by dt (binary ~by (Binary Fdiv) total n)
-
 (* Segments and ranges *)
 
 (* What a segment or a range of no row holds: [+0] for [Add], zero for

@@ -2400,29 +2400,6 @@ val correlate :
     Raises [Invalid_argument] if [x] has fewer axes than [kernel], [kernel] has
     an axis of no element, or the dtype is boolean. *)
 
-val maximum_filter :
-  kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [maximum_filter ~kernel_size ~stride x] is the greatest element of each
-    window of [x] over its last [K = Array.length kernel_size] axes, unpadded,
-    of dilation [1] and stride [stride] (default [kernel_size]), as {!max}
-    finds it: the first NaN where there is one. Each spatial axis becomes its
-    number of windows. Every dtype.
-
-    Raises [Invalid_argument] if [kernel_size] is empty, [stride] does not have
-    one entry per kernel axis, a size or a stride is below [1], or [x] has
-    fewer axes than [kernel_size]. *)
-
-val uniform_filter :
-  kernel_size:int array ->
-  ?stride:int array ->
-  (float, 's, 'd) t ->
-  (float, 's, 'd) t
-(** [uniform_filter ~kernel_size ~stride x] is the mean of each window of [x],
-    as {!maximum_filter} takes them: the {!sum} of the window divided by its
-    number of elements, rounded once. Floats.
-
-    Raises [Invalid_argument] as {!maximum_filter} does. *)
-
 (** {2:segments Segments and ranges}
 
     A {e row} of [x] is its value at one position of its first axis. A
