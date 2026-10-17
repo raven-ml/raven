@@ -645,6 +645,17 @@ let refusals =
       obj "undefined",
       "symbol \"rig_host_test_nowhere\" is defined by no library of the process"
     );
+    (* far's jump is R_X86_64_PLT32 at 0x9 or R_AARCH64_JUMP26 at 0x4, to
+       S + A: 2^61 - 4 on x86_64, whose addend counts from the field's end,
+       and 2^61 on arm64. *)
+    ( "a jump out of its field's reach",
+      obj "far",
+      if S.machine = "x86_64" then
+        "relocation at 0x9 reaches 0x1ffffffffffffffc, which does not fit its \
+         32-bit field"
+      else
+        "relocation at 0x4 reaches 0x2000000000000000, which does not fit its \
+         28-bit field" );
   ]
 
 let load_error o =

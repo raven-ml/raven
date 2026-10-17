@@ -100,8 +100,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - failure paths with no test (_plans/rig-release/failure-paths.md, whose
   core-exception and disk rows test_interrupt and test_rig_disk now cover):
-  the host relocation that does not fit its field; rig.program's
-  `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
+  rig.program's `Out_of_memory` and `Lost`; CUDA's library that cannot load; NV's `entry`
   `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
   it cannot be forced
 - flakes, each failed once: test_submit "a part follows the earlier parts

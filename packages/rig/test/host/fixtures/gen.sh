@@ -42,7 +42,8 @@ fixture() {
   aligned_x86_64.o aligned_aarch64.o \
   blocks_x86_64.o blocks_aarch64.o deep_x86_64.o deep_aarch64.o \
   data_entry_x86_64.o data_entry_aarch64.o \
-  empty_x86_64.o empty_aarch64.o got_x86_64.o got_aarch64.o \
+  empty_x86_64.o empty_aarch64.o far_x86_64.o far_aarch64.o \
+  got_x86_64.o got_aarch64.o \
   linked_x86_64.o linked_aarch64.o linked_x86_64_windows.o \
   many_x86_64.o many_aarch64.o \
   scale_x86_64.o scale_aarch64.o undefined_x86_64.o undefined_aarch64.o \
