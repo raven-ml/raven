@@ -1,11 +1,13 @@
-"""Generate synthetic image fixtures for Sowilo benchmarks."""
+"""The synthetic frames of Sowilo's benchmarks.
+
+bench_sowilo.py draws them with numpy when it starts; bench_sowilo.ml draws
+the same palettes with Nx, whose noise has the same distribution and other
+values.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
-from PIL import Image
 
 
 def _make_image(width: int, height: int, seed: int, *, palette: str) -> np.ndarray:
@@ -21,14 +23,10 @@ def _make_image(width: int, height: int, seed: int, *, palette: str) -> np.ndarr
         base_r = 0.6 + 0.4 * np.cos(angle)
         base_g = 0.4 + 0.35 * np.sin(radial * np.pi)
         base_b = 0.2 + 0.6 * np.exp(-radial * 1.5)
-    elif palette == "forest":
+    else:  # "forest"
         base_r = 0.2 + 0.3 * np.exp(-radial * 2.0)
         base_g = 0.4 + 0.5 * np.cos(angle * 2.0)
         base_b = 0.3 + 0.4 * np.sin(radial * np.pi)
-    else:  # "nebula"
-        base_r = 0.45 + 0.5 * np.sin(3.0 * angle)
-        base_g = 0.35 + 0.45 * np.cos(5.0 * radial)
-        base_b = 0.55 + 0.35 * np.sin(4.0 * angle + radial)
 
     noise = rng.normal(loc=0.0, scale=0.05, size=(height, width)).astype(np.float32)
     channels = [base_r, base_g, base_b]
@@ -41,26 +39,13 @@ def _make_image(width: int, height: int, seed: int, *, palette: str) -> np.ndarr
     return np.stack(stacked, axis=-1)
 
 
-def _write_image(path: Path, array: np.ndarray) -> None:
-    Image.fromarray(array, mode="RGB").save(path, format="PNG", optimize=True)
+# The frames the benchmarks run on: width, height, numpy seed and palette.
+SPECS = {
+    "1080p": (1920, 1080, 7, "sunset"),
+    "720p": (1280, 720, 19, "forest"),
+}
 
 
-def main() -> None:
-    data_dir = Path(__file__).resolve().parents[1] / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    specs = [
-        (1920, 1080, 7, "img_1920x1080.png", "sunset"),
-        (1280, 720, 19, "img_1280x720.png", "forest"),
-        (512, 512, 29, "img_512x512.png", "nebula"),
-    ]
-
-    for width, height, seed, filename, palette in specs:
-        img = _make_image(width, height, seed, palette=palette)
-        _write_image(data_dir / filename, img)
-
-    print(f"Generated Sowilo fixtures in {data_dir}")
-
-
-if __name__ == "__main__":
-    main()
+def images() -> dict[str, np.ndarray]:
+    """Each frame of SPECS, by name, as RGB uint8 of shape (height, width, 3)."""
+    return {name: _make_image(w, h, seed, palette=p) for name, (w, h, seed, p) in SPECS.items()}

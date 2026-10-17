@@ -15,13 +15,16 @@ open Talon
    exe path is the one stable anchor in both. *)
 let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
-(* [load name columns categories] reads the fixture [name] as [columns], its
-   text columns [categories] as categoricals, as pandas reads them. *)
-let load name columns categories =
+let customers_csv, transactions_csv = Fixtures.generate ()
+
+(* [load text columns categories] reads the CSV [text] as [columns], its text
+   columns [categories] as categoricals, as pandas reads them. *)
+let load text columns categories =
   let format = Talon_csv.format columns in
-  let path = Filename.concat data_dir name in
-  let source = Error.get_ok (Talon_csv.file ~format path) in
-  let q = Error.get_ok (Kit.categorize categories (Query.of_source source)) in
+  let table =
+    Error.get_ok (Talon_csv.decode format (Bytesrw.Bytes.Reader.of_string text))
+  in
+  let q = Error.get_ok (Kit.categorize categories (Query.of_table table)) in
   Error.get_ok (Query.run q)
 
 let string = Type.Any Type.string
@@ -29,7 +32,7 @@ let int32 = Type.Any Type.int32
 let float64 = Type.Any Type.float64
 
 let transactions =
-  load "transactions.csv"
+  load transactions_csv
     [
       ("transaction_id", int32);
       ("customer_id", int32);
@@ -45,7 +48,7 @@ let transactions =
     [ "region"; "category"; "channel"; "promo" ]
 
 let customers =
-  load "customers.csv"
+  load customers_csv
     [
       ("customer_id", int32);
       ("segment", string);
@@ -103,10 +106,10 @@ let check name ~rows:expected_rows ~amount:expected q value =
 
 (* The rows and amounts that bench_talon.py's pandas computes. *)
 let () =
-  check "filter" ~rows:511 ~amount:80012.63 (filtered ()) (total (filtered ()));
-  check "group" ~rows:24 ~amount:2587546.84 (grouped ()) (total (grouped ()));
-  check "join" ~rows:40000 ~amount:2587546.84 (joined ()) (total (joined ()));
-  check "sort" ~rows:40000 ~amount:450.51 (sorted ()) (first_amount (sorted ()))
+  check "filter" ~rows:599 ~amount:92888.46 (filtered ()) (total (filtered ()));
+  check "group" ~rows:24 ~amount:2607651.61 (grouped ()) (total (grouped ()));
+  check "join" ~rows:40000 ~amount:2607651.61 (joined ()) (total (joined ()));
+  check "sort" ~rows:40000 ~amount:464.41 (sorted ()) (first_amount (sorted ()))
 
 (* Nulls *)
 

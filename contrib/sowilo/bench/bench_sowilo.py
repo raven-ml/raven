@@ -17,22 +17,14 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import ubench  # type: ignore
 
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
+
+import generate_fixtures  # noqa: E402
 
 
 def _load_images() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    color_images: dict[str, np.ndarray] = {}
-    gray_images: dict[str, np.ndarray] = {}
-
-    for name in ["img_1920x1080.png", "img_1280x720.png", "img_512x512.png"]:
-        path = DATA_DIR / name
-        img_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if img_bgr is None:
-            raise RuntimeError(f"Failed to read {path}")
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        color_images[name] = img_rgb
-        gray_images[name] = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-
+    color_images = generate_fixtures.images()
+    gray_images = {name: cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) for name, img in color_images.items()}
     return color_images, gray_images
 
 
@@ -42,9 +34,9 @@ COLOR_IMAGES, GRAY_IMAGES = _load_images()
 def build_benchmarks() -> List[Any]:
     benches: List[Any] = []
 
-    color_1080 = COLOR_IMAGES["img_1920x1080.png"]
-    gray_1080 = GRAY_IMAGES["img_1920x1080.png"]
-    gray_720 = GRAY_IMAGES["img_1280x720.png"]
+    color_1080 = COLOR_IMAGES["1080p"]
+    gray_1080 = GRAY_IMAGES["1080p"]
+    gray_720 = GRAY_IMAGES["720p"]
 
     def bench_grayscale() -> None:
         gray = cv2.cvtColor(color_1080, cv2.COLOR_RGB2GRAY)

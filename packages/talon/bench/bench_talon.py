@@ -1,3 +1,8 @@
+"""The pandas side of talon's bench, over the fixtures write_fixtures.exe writes.
+
+usage: uv run --with pandas bench_talon.py DIR
+"""
+
 from __future__ import annotations
 
 import sys
@@ -16,12 +21,12 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import ubench  # type: ignore
 
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-
-
 def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__)
+    data = Path(sys.argv[1])
     transactions = pd.read_csv(
-        DATA_DIR / "transactions.csv",
+        data / "transactions.csv",
         dtype={
             "transaction_id": "int32",
             "customer_id": "int32",
@@ -36,7 +41,7 @@ def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         },
     )
     customers = pd.read_csv(
-        DATA_DIR / "customers.csv",
+        data / "customers.csv",
         dtype={
             "customer_id": "int32",
             "segment": "category",

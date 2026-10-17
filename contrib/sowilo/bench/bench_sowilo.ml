@@ -3,21 +3,45 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Sowilo image processing benchmarks using synthetic PNG fixtures. *)
+(* Sowilo image processing benchmarks over synthetic images. *)
 
 module Fixtures = struct
-  (* Resolve fixtures next to the executable, not the working directory: the
-     bench rule runs with the bench dir as cwd, dune exec with the project root
-     — the exe path is the one stable anchor in both. *)
-  let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
+  (* [image ~width ~height ~seed palette] is the RGB frame
+     scripts/generate_fixtures.py draws, a palette of the radius and angle
+     over [[-1, 1]²] plus Gaussian noise of deviation 0.05, clipped to [[0, 1]]
+     and truncated to uint8. Its noise comes from Nx's generator seeded with
+     [seed], numpy's in the script: the same distribution, other values. *)
+  let image ~width ~height ~seed palette =
+    let open Nx in
+    let x = linspace float32 (-1.) 1. width
+    and y = linspace float32 (-1.) 1. height in
+    let xv, yv = meshgrid x y in
+    let radial = sqrt (add (square xv) (square yv)) and angle = atan2 yv xv in
+    let r, g, b =
+      match palette with
+      | `Sunset ->
+          ( add_s (mul_s (cos angle) 0.4) 0.6,
+            add_s (mul_s (sin (mul_s radial Float.pi)) 0.35) 0.4,
+            add_s (mul_s (exp (mul_s radial (-1.5))) 0.6) 0.2 )
+      | `Forest ->
+          ( add_s (mul_s (exp (mul_s radial (-2.))) 0.3) 0.2,
+            add_s (mul_s (cos (mul_s angle 2.)) 0.5) 0.4,
+            add_s (mul_s (sin (mul_s radial Float.pi)) 0.4) 0.3 )
+    in
+    let noise =
+      mul_s (Rng.normal (Rng.key seed) float32 [| height; width |]) 0.05
+    in
+    let channel c =
+      cast uint8 (mul_s (clamp ~min:0. ~max:1. (add c noise)) 255.)
+    in
+    stack ~axis:(-1) [ channel r; channel g; channel b ]
 
-  let load_image name =
-    let path = Filename.concat data_dir name in
-    let nx_img = Nx_io.load_image path in
-    Sowilo.to_float nx_img
+  let img_1080 =
+    lazy (Sowilo.to_float (image ~width:1920 ~height:1080 ~seed:7 `Sunset))
 
-  let img_1080 = lazy (load_image "img_1920x1080.png")
-  let img_720 = lazy (load_image "img_1280x720.png")
+  let img_720 =
+    lazy (Sowilo.to_float (image ~width:1280 ~height:720 ~seed:19 `Forest))
+
   let gray_1080 = lazy (Sowilo.to_grayscale (Lazy.force img_1080))
   let gray_720 = lazy (Sowilo.to_grayscale (Lazy.force img_720))
   let img_1080 () = Lazy.force img_1080

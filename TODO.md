@@ -451,8 +451,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
   drop the git pins in dune-project and ci.yml
 - tests: CI runtest under a memory cap
-- benches: sowilo's and talon's 10 MB of committed seeded data generated at
-  bench start
+- talon bench: re-record Talon/{Filter,Group,Join,Sort} in talon.thumper on
+  the Mac and on fudge (kimchi's section is stale): their fixture is now
+  drawn from Nx.Rng
 - dune stale builds: a source rewritten within seconds is digested in one
   version and copied in another; a passive server stops seeing changes yet
   answers `rpc ping`; under load it loops on "Event queue overflow".

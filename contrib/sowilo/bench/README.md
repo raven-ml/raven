@@ -6,17 +6,15 @@ regressions across releases.
 
 ## Fixtures
 
-PNG assets are stored in `./data/`:
+Both benches draw their frames when they start:
 
-- `img_1920x1080.png` — 1920×1080 RGB frame with a “sunset” gradient.
-- `img_1280x720.png` — 1280×720 RGB frame with “forest” tones.
-- `img_512x512.png` — 512×512 RGB frame with a “nebula” palette.
+- 1080p: a 1920×1080 RGB frame with a “sunset” gradient, seed 7.
+- 720p: a 1280×720 RGB frame with “forest” tones, seed 19.
 
-Regenerate the fixtures by running 
-
-```bash
-uv run python sowilo/bench/scripts/generate_fixtures.py
-```
+Each is a palette of the radius and angle plus Gaussian noise of deviation
+0.05. `scripts/generate_fixtures.py` draws them with numpy for the OpenCV
+bench; `bench_sowilo.ml` draws the same palettes with Nx, whose noise has the
+same distribution and other values.
 
 ## Running the benchmarks
 

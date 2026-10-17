@@ -1,6 +1,7 @@
-(executable
- (name bench_talon)
- (libraries talon talon.csv talon.parquet nx thumper))
+(executables
+ (names bench_talon write_fixtures)
+ (modules bench_talon write_fixtures fixtures)
+ (libraries talon talon.csv talon.parquet bytesrw nx thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
 ; (or run the built exe directly; `list` prints case ids).
