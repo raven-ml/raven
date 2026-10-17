@@ -826,6 +826,23 @@ let prefixes_sys a b =
     let n = min (B.length a) (B.length b) in
     (B.view a ~first:0 ~length:n, B.view b ~first:0 ~length:n)
 
+(* As [prefixes], except that of one buffer they are its bytes from the start
+   and those [at] eighths in, up to its end: they overlap where the second
+   starts before the middle. *)
+let within at a b =
+  if a != b then prefixes a b
+  else
+    let f = a.length * at / 8 in
+    let n = a.length - f in
+    ({ a with length = n }, { a with first = a.first + f; length = n })
+
+let within_sys at a b =
+  if a != b then prefixes_sys a b
+  else
+    let f = B.length a * at / 8 in
+    let n = B.length a - f in
+    (B.view a ~first:0 ~length:n, B.view a ~first:f ~length:n)
+
 (* Generators *)
 
 (* Sizes at the edges rig.mli names: none, a page, a host buffer that starts on
@@ -1476,7 +1493,7 @@ let named (s : sdev) part = function
       | _ -> [| part; S.touching [| Sub.read; Sub.write |] |])
   | Fill | Launch -> [| part |]
 
-let make_sys ?keep ((s : sdev), w) pair sc =
+let make_sys ?keep ?at ((s : sdev), w) pair sc =
   guard w @@ fun () ->
   let keep =
     Option.map
@@ -1486,7 +1503,11 @@ let make_sys ?keep ((s : sdev), w) pair sc =
   let part, work =
     match pair with
     | Some (src, dst) ->
-        let src, dst = prefixes_sys (get src).b (get dst).b in
+        let src, dst =
+          match at with
+          | None -> prefixes_sys (get src).b (get dst).b
+          | Some at -> within_sys at (get src).b (get dst).b
+        in
         ( (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))),
           Copy )
     | None ->
@@ -2334,14 +2355,14 @@ let commands ~two ~fork =
   in
   let make_copy =
     command "make copy"
-      (device ^-> cell ^-> cell ^-> subs ^-> judges unit)
-      (fun v a b sc o ->
+      (device ^-> eighth @-> cell ^-> cell ^-> subs ^-> judges unit)
+      (fun v at a b sc o ->
         one_world [ dw v; a.w; b.w; sc.subw ] o @@ fun () ->
         with_buf a o @@ fun x ->
-        with_buf b o @@ fun y -> make_ref v (Some (prefixes x y)) sc o)
-      (fun v a b sc ->
+        with_buf b o @@ fun y -> make_ref v (Some (within at x y)) sc o)
+      (fun v at a b sc ->
         cells ~ws:[ snd v; a.sw; b.sw; sc.ssw ] [ a.cl; b.cl; sc.scl ]
-        @@ fun () -> make_sys v (Some (a, b)) sc)
+        @@ fun () -> make_sys ~at v (Some (a, b)) sc)
   in
   let make_own =
     command "make own copy"
