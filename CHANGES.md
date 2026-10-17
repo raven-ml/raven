@@ -1505,6 +1505,8 @@ All notable changes to this project will be documented in this file.
   `index.json` holds a file lock and replaces the file whole. Where the file
   system refuses locks, a change removes `index.json`, and runs are read
   from their manifests.
+- A change to a damaged or missing `index.json` rebuilds it from the runs on
+  disk. It replaced the index with one holding only the changed run.
 - `Store.list_runs` and `Store.find_run` take a store's runs from its run
   directories, and `index.json` only caches their headers. A run the index
   lacked, as a killed process or an index of another shape leaves, was
@@ -3971,6 +3973,10 @@ thread.
   a bool element whose byte is other than 0 or 1, raising `Failure` naming the
   file and the entry, as `load_gguf` does. Such a byte gave bool operations an
   unspecified result. `load_safetensors` now reads its `BOOL` entries' bytes.
+- `Repr.Placed.v` no longer promises to raise on a `bool` storage holding a
+  byte other than 0 or 1, which it never checked. Its bytes must be 0 or 1, as
+  for `of_buffer` and `of_shards`; an operation that reads another byte gives
+  an unspecified result.
 - An operation no `Nx.Op.intercept` claims keeps none of its operands once it
   returns, in an interpreter's `run` and while another domain or thread
   intercepts. With backtraces recorded, the `Effect.Unhandled` its fallback

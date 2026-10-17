@@ -1635,7 +1635,9 @@ val of_buffer : ('a, 'b) dtype -> int array -> Rig.Buffer.t -> ('a, 'b) t
     value raises: {!place} it onto a device over the same memory with a
     backend, such as [Device.make ~backend:Nx_amd.backend m], a view, to
     compute on it. [b] is shared with its
-    other holders, which must not write it while the value lives.
+    other holders, which must not write it while the value lives. If [dtype]
+    is [bool], each byte of [b] must be 0 or 1. An operation that reads
+    another byte gives an unspecified result.
 
     Raises [Invalid_argument] if [b]'s bytes are not those of [shape]'s
     elements of [dtype], the last byte whole, or if [b] is dead
@@ -4886,7 +4888,9 @@ val of_shards :
 (** [of_shards p dtype view buffers] is the value at [p] whose elements, on each
     device, are those [view] reaches in that device's buffer of [buffers], in
     {!Placement.devices} order: [of_shards p dtype view (fst (shards x))] is [x]
-    for [x] at [p] of view [view]. Nothing is copied.
+    for [x] at [p] of view [view]. Nothing is copied. If [dtype] is [bool],
+    each byte [view] reaches must be 0 or 1. An operation that reads another
+    byte gives an unspecified result.
 
     Raises [Invalid_argument] unless there is one buffer per device of [p], each
     live ({!Rig.Buffer.dead}), in the memory of its device and of one length,
@@ -5209,11 +5213,13 @@ module Repr : sig
         each device, are those [view] reaches in its storage [s], whose bytes
         it reads as [dtype]'s: values of several dtypes view one storage.
 
+        If [dtype] is [bool], each byte [view] reaches must be 0 or 1. An
+        operation that reads another byte gives an unspecified result.
+
         Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
         an element outside [s], if a buffer of [s] does not start on a byte
-        aligned to one of [dtype]'s elements, if [dtype] is [bool] and [s]'s
-        buffers are not of [bool]'s format, whose only bytes are 0 and 1, if
-        [s]'s devices do not hold [p]'s, or if [s] was consumed. *)
+        aligned to one of [dtype]'s elements, if [s]'s devices do not hold
+        [p]'s, or if [s] was consumed. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity, for hashing: every placed value has its own.
