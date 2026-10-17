@@ -275,8 +275,7 @@ while its agent listens, and a second agent, waiting, then listens.
   $ exec 4>in14
   $ echo $key >&4
   $ ./support/await out14 waiting
-  $ kill -KILL $half
-  $ wait $half 2>/dev/null
+  $ { kill -KILL $half; wait $half; } 2>/dev/null
   [137]
   $ ./support/await out14 listening
   $ exec 3>&- 4>&-

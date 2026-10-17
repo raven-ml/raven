@@ -183,9 +183,8 @@ raven / llama.cpp (Vulkan; ROCm):
   child alone" (make the parent report the child's exit status); test_submit
   "a part follows the earlier parts that may share memory"; test_model on
   one domain, `Oom_at` on device 3 or 4 about 1 in 120 (loop it with logs
-  kept); interrupt.t's "Terminated: 15" under load (wait for the killed job
-  in a subshell whose stderr is redirected); test_image 1 in 3 on the Mac
-  before its 2026-10-12 fix (rerun 30 times); rig_pci.space "two domains
+  kept); test_image 1 in 3 on the Mac before its 2026-10-12 fix (rerun 30
+  times); rig_pci.space "two domains
   allocate and free at once" timed out at its 10 s bound in case 10 twice
   at load ~56 (`s1:784492d14ef6cd47`, 2.1 s alone): make the case fast at
   its cause

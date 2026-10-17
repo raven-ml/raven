@@ -3,6 +3,8 @@ that a shell sees it stopped. rig run keeps a signal that was ignored when
 it started ignored, as a background job's SIGINT, so these tests start it
 through support/sig.exe, with the three signals at their defaults, as
 from a terminal. Each sends the signal once the program joined its job.
+A kill and its wait share one redirect: the shell reports a job that dies
+between them on its standard error.
 
   $ . support/env.sh
   $ host a 127.0.0.1
@@ -14,8 +16,7 @@ from a terminal. Each sends the signal once the program joined its job.
   >   ./support/sig.exe default INT,TERM,HUP rig run --on a,b -- ./support/ctl.exe wait >out 2>err &
   >   run=$!
   >   ./support/await out joined
-  >   kill -$1 $run
-  >   wait $run 2>/dev/null
+  >   { kill -$1 $run; wait $run; } 2>/dev/null
   > }
 
 Control-C sends SIGINT.
@@ -53,8 +54,7 @@ agents, and its job fails.
   $ run=$!
   $ ./support/await out joined
   $ machines="$(cat machines/b/pid) $(agent_of b) $(cat machines/c/pid) $(agent_of c)"
-  $ kill -KILL $run
-  $ wait $run 2>/dev/null
+  $ { kill -KILL $run; wait $run; } 2>/dev/null
   [137]
   $ ./support/await status "the program"
   $ cat status
@@ -70,8 +70,7 @@ time to save its work.
   $ rig run --on a,b -- ./support/ctl.exe save >out 2>err &
   $ run=$!
   $ ./support/await out joined
-  $ kill -TERM $run
-  $ wait $run 2>/dev/null
+  $ { kill -TERM $run; wait $run; } 2>/dev/null
   [143]
   $ cat out
   attempt 1
