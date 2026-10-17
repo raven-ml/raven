@@ -244,6 +244,30 @@ let test_unsharp_mask_kernel_larger_than_image () =
   check_shape "unsharp_mask keeps the shape" (Nx.shape img)
     (unsharp_mask ~sigma:3.0 img)
 
+(* A blurred impulse is nonzero exactly on the kernel's [ksize * ksize]
+   footprint, so its support shows the default [2 * ceil(3 * sigma) + 1]. *)
+let gaussian_default_ksize (sigma, ksize) =
+  let n = 21 in
+  let img =
+    Nx.create Nx.float32 [| n; n; 1 |]
+      (Array.init (n * n) (fun i -> if i = n * n / 2 then 1.0 else 0.0))
+  in
+  let blurred = Nx.to_array (gaussian_blur ~sigma img) in
+  let support = Array.fold_left (fun c v -> if v <> 0.0 then c + 1 else c) 0 in
+  equal ~msg:"nonzero pixels" int (ksize * ksize) (support blurred)
+
+let gaussian_bad_ksize ksize =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () ->
+      gaussian_blur ~sigma:1.0 ~ksize img)
+
+(* A sigma whose default ksize [2 * ceil(3 * sigma) + 1] exceeds [max_int]
+   has no kernel to blur with. *)
+let gaussian_huge_sigma sigma =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+      gaussian_blur ~sigma img)
+
 let test_median_blur () =
   let img = create_gray_f 5 5 0.5 in
   let filtered = median_blur ~ksize:3 img in
@@ -413,6 +437,15 @@ let () =
           test "box_blur_larger_than_image" test_box_blur_larger_than_image;
           test "unsharp_mask_larger_kernel"
             test_unsharp_mask_kernel_larger_than_image;
+          cases "gaussian_blur_default_ksize"
+            ~name:(fun (sigma, k) -> Printf.sprintf "sigma %g: %d taps" sigma k)
+            [ (0.4, 5); (1.0, 7); (1.1, 9); (2.0, 13) ]
+            gaussian_default_ksize;
+          cases "gaussian_blur_bad_ksize" ~name:string_of_int [ 0; -3; 2; 4 ]
+            gaussian_bad_ksize;
+          cases "gaussian_blur_huge_sigma" ~name:string_of_float
+            [ infinity; 1e300; Float.of_int max_int ]
+            gaussian_huge_sigma;
           test "median_blur" test_median_blur;
           test "median_blur_median" test_median_blur_preserves_median;
         ];

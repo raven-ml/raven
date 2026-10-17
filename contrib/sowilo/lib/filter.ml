@@ -12,13 +12,24 @@ let generate_gaussian_kernel size sigma =
   let sum = Nx.sum kernel in
   Nx.div kernel (Nx.reshape [||] sum)
 
-let gaussian_blur ~sigma ?(ksize = 0) img =
+(* [2 * half + 1] fits an int while [half] is below [max_int / 2]; an
+   infinite [sigma] fails the test too. *)
+let default_ksize sigma =
+  let half = Float.ceil (3.0 *. sigma) in
+  if not (half < Float.of_int (max_int / 2)) then
+    invalid_arg
+      (Printf.sprintf "gaussian_blur: sigma %g is too large for a default ksize"
+         sigma);
+  (2 * int_of_float half) + 1
+
+let gaussian_blur ~sigma ?ksize img =
   let ksize =
-    if ksize > 0 then ksize
-    else (2 * int_of_float (Float.round (3.0 *. sigma))) + 1
+    match ksize with Some ksize -> ksize | None -> default_ksize sigma
   in
   if ksize <= 0 || ksize mod 2 = 0 then
-    invalid_arg "gaussian_blur: ksize must be a positive odd integer";
+    invalid_arg
+      (Printf.sprintf
+         "gaussian_blur: ksize must be a positive odd integer, got %d" ksize);
   let kernel_1d = generate_gaussian_kernel ksize sigma in
   let kernel_h = Nx.reshape [| 1; ksize |] kernel_1d in
   let kernel_v = Nx.reshape [| ksize; 1 |] kernel_1d in

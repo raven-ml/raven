@@ -131,7 +131,9 @@ val gaussian_blur : sigma:float -> ?ksize:int -> Nx.float32_t -> Nx.float32_t
     convolution. [ksize] defaults to [2 * ceil(3 * sigma) + 1], capturing 99.7%
     of the distribution.
 
-    Raises [Invalid_argument] if [ksize] is even or not positive. *)
+    Raises [Invalid_argument] if [ksize] is even or not positive, or if
+    [ksize] is not given and [sigma] is so large that
+    [2 * ceil(3 * sigma) + 1] exceeds [max_int]. *)
 
 val box_blur : ksize:int -> Nx.float32_t -> Nx.float32_t
 (** [box_blur ~ksize img] applies a [ksize * ksize] averaging filter. Each
