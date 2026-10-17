@@ -1295,23 +1295,22 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     so its bits do not depend on where [x] lies. Over axes cut across
     devices, each device reduces the part of that order its window holds,
     and only partial results move instead of [x]'s elements: a few per
-    output, or one per block of the order where windows interleave;
-    {!argmax} and {!argmin} do so along an axis. Where a window's edge falls
-    inside one of the order's blocks ({!Nx_kernel.section-orders}), that
-    block's terms move to one device first. {!var}, {!std}, {!logsumexp}
-    and {!logmeanexp} take two such rounds: the maximum or the mean, then
-    sums.
+    output, or one per block of the order where windows interleave; for
+    {!argmax} and {!argmin}, each device's extreme and its position. Where
+    a window's edge falls inside one of the order's blocks
+    ({!Nx_kernel.section-orders}), that block's terms move to one device
+    first. {!var}, {!std}, {!logsumexp} and {!logmeanexp} take two such
+    rounds: the maximum or the mean, then sums.
 
     A scan's bits do not depend on where [x] lies either. Along an axis cut
     across devices, each device scans its own window from the state of the
     terms before it. {!cumsum} and {!cumprod} of floats and complex numbers
     continue the scan's chunks ({!Nx_kernel.type-reduction}): the totals of
     the chunks before a window move to it as rows of partial results, and
-    devices whose windows share one chunk scan it one after the other, at
-    most a chunk of 4096 terms per slice. Over integers and booleans, and
-    for {!cummax} and {!cummin}, one row moves per device and one more pass
-    combines it with the device's results. {!ewma} reads its axis whole on
-    each device.
+    a window whose edge falls inside a chunk adds at most one chunk's work,
+    4096 terms per slice. Over integers and booleans, and for {!cummax} and
+    {!cummin}, one row moves per device and one more pass combines it with
+    the device's results. {!ewma} reads its axis whole on each device.
 
     A float result that a NaN reaches is the first NaN in C order. A
     complex number with a NaN part is a NaN to {!prod}, {!max}, {!min}, their
@@ -1533,8 +1532,8 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     the result combine those sums. In chain order, the devices holding the
     summed axes run one after another, each continuing the sum from the one
     before. On devices that compute apart, as GPUs, that serialises them for
-    the contraction; nx already calls memory devices one after another.
-    Summed axes cut otherwise are read whole on each device. *)
+    the contraction. Summed axes cut otherwise are read whole on each
+    device. *)
 
 val contract :
   ?sizes:(string * int) list ->
