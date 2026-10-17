@@ -51,7 +51,13 @@
        holds the device.}}
 
     Each function's doc says what it does, and a driver's implementation
-    must do that. Further obligations say "must". *)
+    must do that. Further obligations say "must".
+
+    While rig is 1.x, a minor release may add values to {!Driver} and {!Io},
+    fields to the records they take and return, such as {!type-facts},
+    {!type-waits}, {!type-queue} and {!type-opener}, and members to
+    [rig_edge.h]'s structures, as GPU memory shared between machines needs.
+    A driver outside rig must pin the exact rig version it builds against. *)
 
 (** {1:facts Facts}
 
