@@ -41,7 +41,12 @@
    after the link's name, in memory never freed.
 
    A child of fork sees its parent's job failed, in its own copy: every
-   entry compares the process id with the job's before it takes a lock. */
+   entry compares the process id with the job's before it takes a lock.
+
+   An entry that made a frame, a request or a reason, or that records a
+   link's loss, releases the runtime running no signal handler first: a
+   handler that raised there would end the call with its work undone and
+   its memory lost. */
 
 #define _GNU_SOURCE
 
@@ -50,6 +55,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 #include <caml/threads.h>
 #include <errno.h>
 #include <pthread.h>
@@ -1266,12 +1272,12 @@ value caml_rig_remote_link_job_fail(value vj, value why) {
   struct rig_remote_job *j = Job_val(vj);
   if (rig_remote_forked(j)) return Val_unit;
   struct rig_remote_why *w = why_of(String_val(why), caml_string_length(why));
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   fail_job(j, w);
   pthread_mutex_lock(&j->mu);
   while (atomic_load(&j->state) == OPEN) pthread_cond_wait(&j->cv, &j->mu);
   pthread_mutex_unlock(&j->mu);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_unit;
 }
 
@@ -1389,9 +1395,9 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   pthread_attr_destroy(&attr);
   pthread_mutex_unlock(&j->mu);
   if (e != 0) {
-    caml_release_runtime_system();
+    caml_enter_blocking_section_no_pending();
     link_lost(l, e);
-    caml_acquire_runtime_system();
+    caml_leave_blocking_section();
   }
   return caml_copy_nativeint((intnat)l);
 }
@@ -1406,9 +1412,9 @@ value caml_rig_remote_link_post(value vl, value vkind, value head) {
   struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), n, 0);
   if (f == NULL) caml_raise_out_of_memory();
   memcpy(f->buf + HEADER, String_val(head), n);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   rig_remote_send(l, f, NULL);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   CAMLreturn(Val_unit);
 }
 
@@ -1426,9 +1432,9 @@ value caml_rig_remote_link_post_area(value vl, value vkind, value head,
   memcpy(f->buf + HEADER, String_val(head), n);
   f->spans[0].p = Caml_ba_data_val(area);
   f->spans[0].n = caml_ba_byte_size(Caml_ba_array_val(area));
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   rig_remote_send(l, f, NULL);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   CAMLreturn(Val_unit);
 }
 
@@ -1464,7 +1470,7 @@ value caml_rig_remote_link_request(value vl, value head) {
       caml_raise_out_of_memory();
     }
     memcpy(f->buf + HEADER, String_val(head), n);
-    caml_release_runtime_system();
+    caml_enter_blocking_section_no_pending();
     int k = rig_remote_send(l, f, q);
     if (k == 0) {
       pthread_mutex_lock(&l->mu);
@@ -1473,7 +1479,7 @@ value caml_rig_remote_link_request(value vl, value head) {
       if (q->done && !atomic_load(&l->failed)) code = q->refused;
       pthread_mutex_unlock(&l->mu);
     }
-    caml_acquire_runtime_system();
+    caml_leave_blocking_section();
     /* A request the queue took stays pending until answered: once the job
        failed unanswered, the receiving thread may still hold it. */
     if (k != 0) free(q);
