@@ -83,14 +83,27 @@ type extreme = Max | Min
     the NaN {!Prog}'s kinds make from numbers on every target. To every
     reduction but [Sum], a complex number with a NaN part is a NaN, and the
     NaN made from numbers is that quiet NaN in each part; a complex [Sum]
-    adds each part as a float sum. A float [Sum]
-    or [Prod] associates in an order that is a function of the shapes alone
-    ({!section-orders}), and each kernel library states its order, the
-    bounds of [Logsumexp], reduced and scanned, and those of [Moments]
-    reduced. A float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact
-    sum, a product within a relative [γ(n - 1)] barring overflow and
-    underflow, where [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit
-    roundoff.
+    adds each part as a float sum.
+
+    In every library, a float [Sum] or [Prod] reduction adds or multiplies
+    each output's terms in lane order ({!section-orders}), a float narrower
+    than [float32] in [float32], and a complex [Prod] multiplies them so by
+    {!Prog.Mul}. [Logsumexp] and [Moments] reduce in two passes, each
+    summing so:
+    - [Logsumexp]: the terms' maximum [m], then [c + log s], [c] being [m]
+      where finite and [0] elsewhere and [s] the sum of [exp (x - c)], an
+      [exp] of less than [-87] ([float32]) or [-708] ([float64]), the least
+      integers whose [exp] is normal, taken as [0]; [m] where it is a NaN.
+    - [Moments]: the mean [c], the terms' sum over their count, then the
+      variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
+      negative or [Σ d²] where that is [+∞]; both are [c] where it is a NaN.
+
+    A float scan associates in an order that is a function of the shapes
+    alone, which each kernel library states with the bounds of [Logsumexp],
+    reduced and scanned, and those of [Moments] reduced. A float sum of [n]
+    terms is within [γ(n - 1) Σ|x|] of the exact sum, a product within a
+    relative [γ(n - 1)] barring overflow and underflow, where
+    [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
 
     A [Moments] scan gives the same bits in every library that computes
     one. On each slice, a term [t] is the state [(t - c, +0, 1)] of a mean
@@ -122,7 +135,8 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
 
 (** {2:orders Orders of summation}
 
-    Two orders of a float sum, which a kernel library states it follows, so
+    Two orders of a float sum. A reduction adds in lane order in every
+    library; a contraction in the one its library states it follows, so
     that libraries that state the same order give the same bits. A
     contraction's terms are each output's products, a reduction's its terms,
     numbered from [0] by the contracting pairs' or the reduced axes' indices,
@@ -430,12 +444,12 @@ module type S = sig
     answer
   (** [reduce p ~shape ~axes rs ~dsts loads] reduces, for each [(r, k)] of
       [rs], output [k] of [p] over the loop of shape [shape] along [axes] by
-      [r], in that output's dtype, rounded once to its destination's.
-      Destinations follow [rs]: one for a [Monoid], the mean then the
-      variance for [Moments], the extreme then its [int64] position for
-      [Arg]. Each has the shape {!Shape.reduce} gives of [shape]. It answers
-      [Wrong_dtype] where {!accepts} is [false] of a reduction and its
-      output's dtype. *)
+      [r], in that output's dtype, [float32] for a float narrower than it,
+      rounded once to its destination's. Destinations follow [rs]: one for a
+      [Monoid], the mean then the variance for [Moments], the extreme then
+      its [int64] position for [Arg]. Each has the shape {!Shape.reduce}
+      gives of [shape]. It answers [Wrong_dtype] where {!accepts} is [false]
+      of a reduction and its output's dtype. *)
 
   val scan :
     Prog.t -> axis:int -> reduction * int -> dsts:any array -> load array -> answer

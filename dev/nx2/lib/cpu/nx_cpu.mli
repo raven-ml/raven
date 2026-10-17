@@ -120,17 +120,9 @@
     result is [n + log s], or [n] where [n] is not finite, an [exp] taken
     as [0] as the reduction takes it.
 
-    [Logsumexp] and [Moments] reduce an output's terms in two passes, each
-    summing in lane order.
-    - [Logsumexp]: the terms' maximum [m], and [c], [m] where finite, else
-      [0]; then [c + log s], [s] the sum of [exp (x - c)]. An [exp] of less
-      than [-87] ([float32]) or [-708] ([float64]), the least integers
-      whose [exp] is normal, is taken as [0]: the bits of Nx's own expansion
-      of [Logsumexp].
-    - [Moments]: the mean [c], the terms' sum over their count, then the
-      variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
-      negative, or [Σ d²] where that is [+∞]: the bits of Nx's own
-      expansion of [Moments].
+    [Logsumexp] and [Moments] reduce an output's terms in the two passes
+    {!Nx_kernel.reduction} states, each summing in lane order: the bits of
+    Nx's own expansion of each.
 
     For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
     of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the

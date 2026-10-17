@@ -310,9 +310,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `refs/audit/20261010-deep/worktrees/wt-18`)
 - order and counting operations: check their contracts, public laws and
   bench baselines
-- a sum over split axes gathers the whole input: reduce to partials and
-  combine them (`[8192; 4096]` over eight devices moves 112 KiB per device
-  instead of 112 MiB)
 - nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and
   gpt-oss comparisons
 - nx.cpu's jobs size their threads by older cost estimates, many below the

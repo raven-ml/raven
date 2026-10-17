@@ -207,31 +207,40 @@ let general ~by rule ps shapes =
       in
       let wants = Array.init n (fun i -> backward rule i (rank i) target) in
       (* The grid every operand is read at where they all lie at one grid that
-         cuts an axis the rule reduces, uncutting those giving what the target
-         wants of each, and each gives the target forward: each device then
-         holds part of each output's terms, and the devices that hold one
-         window of the results hold them all. An operand of every set is read
-         there too. *)
+         cuts an axis the rule reduces, or whole on each of its devices,
+         uncutting those giving what the target wants of each, and each gives
+         the target forward: each device then holds part of each output's
+         terms, and the devices that hold one window of the results hold them
+         all. An operand of every set is read there too, and one whole on each
+         device is read from each device's own array. *)
       let partial =
-        let g = Devices.grid (placed first) in
-        let fits i =
+        let cuts_reduced i =
+          let axes = reduced rule i (rank i) in
+          Array.exists
+            (fun (a, _) -> Array.mem a axes)
+            (Grid.cuts (Devices.grid (placed i)))
+        in
+        let fits g i =
           let axes = reduced rule i (rank i) in
           let lies =
             match ps.(i) with
-            | Some p -> Grid.equal (Devices.grid p) g
+            | Some p ->
+                let h = Devices.grid p in
+                Grid.equal h g
+                || (covers h g && Result.is_ok (Grid.window g shapes.(i) 0))
             | None -> Result.is_ok (Grid.window g shapes.(i) 0)
           in
           lies
           && covers (uncut_all axes g) wants.(i)
           && Grid.equal (forward rule i (rank i) g) target
         in
-        let cuts_reduced i =
-          let axes = reduced rule i (rank i) in
-          Array.exists (fun (a, _) -> Array.mem a axes) (Grid.cuts g)
-        in
-        if cuts_reduced first && List.for_all fits (List.init n Fun.id) then
-          Some (Devices.v ~by set g)
-        else None
+        match List.find_opt cuts_reduced concrete with
+        | Some c ->
+            let g = Devices.grid (placed c) in
+            if List.for_all (fits g) (List.init n Fun.id) then
+              Some (Devices.v ~by set g)
+            else None
+        | None -> None
       in
       let operands =
         Array.mapi
@@ -240,7 +249,8 @@ let general ~by rule ps shapes =
             let p =
               match (partial, p) with
               | Some q, None -> q
-              | Some _, Some p -> p
+              | Some q, Some p ->
+                  if Grid.equal (Devices.grid p) (Devices.grid q) then p else q
               | None, Some p when covers (Devices.grid p) want -> p
               | None, (Some _ | None) -> Devices.v ~by set want
             in

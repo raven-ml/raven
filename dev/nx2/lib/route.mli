@@ -21,11 +21,13 @@
     whole operand on each device of the target; otherwise it is read at the
     target moved back to its axes, which the engine places it at. Where every
     operand lies at one placement that cuts an axis the operation reduces
-    ({!Reduced}), uncutting those axes would give each operand what it is read
-    at, and each operand there, moved to the results' axes, lies at the
-    target, each is read where it lies, and an operand of every set there
-    too: the devices that hold one window of the results hold all of its
-    terms between them, and combine their partial results ({!Partial}).
+    ({!Reduced}), or whole on each of its devices, uncutting those axes would
+    give each operand what it is read at, and each operand there, moved to
+    the results' axes, lies at the target, each is read at that placement,
+    one whole on each device from that device's own array, and an operand of
+    every set there too: the devices that hold one window of the results hold
+    all of its terms between them, and combine their partial results
+    ({!Partial}).
 
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,

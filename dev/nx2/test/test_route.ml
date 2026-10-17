@@ -401,18 +401,33 @@ let cases_ =
           in
           equal placement (Devices.on s4) r.result;
           equal bool true (r.operands.(0) == x));
-      test "a reduction over operands at two grids reads them whole" (fun () ->
+      test
+        "a reduction reads an operand whole on each device at another's cut \
+         of a reduced axis"
+        (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let rule =
             Route.Axes
               [| [| Becomes 0; Reduced |]; [| Becomes 0; Reduced |] |]
           in
           let r =
-            placed rule [| x; Devices.on s4 |] [| [| 4; 8 |]; [| 4; 8 |] |]
+            placed rule [| Devices.on s4; x |] [| [| 4; 8 |]; [| 4; 8 |] |]
           in
           equal placement (Devices.on s4) r.result;
-          equal placement (Devices.on s4) r.operands.(0);
-          equal placement (Devices.on s4) r.operands.(1));
+          equal placement x r.operands.(0);
+          equal bool true (r.operands.(1) == x));
+      test "a reduction over operands cut at two grids reads them whole"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let y = Devices.split ~by:"t" ~axis:0 s4 in
+          let rule =
+            Route.Axes
+              [| [| Becomes 0; Reduced |]; [| Becomes 0; Reduced |] |]
+          in
+          let r = placed rule [| x; y |] [| [| 4; 8 |]; [| 4; 8 |] |] in
+          equal placement y r.result;
+          equal placement y r.operands.(0);
+          equal placement y r.operands.(1));
       test "an operand read whole along an axis it acts along is moved"
         (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in

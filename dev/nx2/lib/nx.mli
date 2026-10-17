@@ -1292,15 +1292,18 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A reduction folds [x]'s elements along [axes], every axis by default, a
     negative one counted from the end, and drops them, or keeps each with extent
     [1] where [keepdims]. Its order of association depends on the shape alone,
-    so its bits do not depend on where [x] lies. Along axes cut across
-    devices, {!max}, {!min}, {!all}, {!any}, {!count}, {!argmax} and
-    {!argmin} along an axis, and {!sum} and {!prod} of integers, move each
-    device's partial results, one per output, instead of [x]'s elements; the
-    others read the cut axes whole on each device. A float result that a NaN
-    reaches is the first NaN in C order. A complex number with a NaN part is a
-    NaN to {!prod}, {!max}, {!min}, their positions and scans; {!sum} and
-    {!cumsum} add the parts apart. The float formats narrower than 32 bits
-    accumulate at [float32] and round once.
+    so its bits do not depend on where [x] lies. Over axes cut across
+    devices, each device reduces the part of that order its window holds,
+    and only partial results move instead of [x]'s elements: a few per
+    output, or one per block of the order where windows interleave;
+    {!argmax} and {!argmin} do so along an axis. Where a window's edge falls
+    inside one of the order's blocks ({!Nx_kernel.section-orders}), that
+    block's terms move to one device first. {!var}, {!std}, {!logsumexp}
+    and {!logmeanexp} take two such rounds: the maximum or the mean, then
+    sums. A float result that a NaN reaches is the first NaN in C order. A
+    complex number with a NaN part is a NaN to {!prod}, {!max}, {!min}, their
+    positions and scans; {!sum} and {!cumsum} add the parts apart. The float
+    formats narrower than 32 bits accumulate at [float32] and round once.
 
     Each raises [Invalid_argument] naming itself for an axis outside [x]'s rank
     or repeated, or a dtype it does not take. The host computes every dtype
