@@ -387,7 +387,13 @@ module type S = sig
     answer
 
   val scan :
-    Prog.t -> axis:int -> reduction * int -> dsts:any array -> load array -> answer
+    ?carry:any ->
+    Prog.t ->
+    axis:int ->
+    reduction * int ->
+    dsts:any array ->
+    load array ->
+    answer
 
   val gather : axis:int -> dst:('v, 's) a -> index -> ('v, 's) a -> answer
 

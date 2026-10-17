@@ -206,7 +206,7 @@ external reduce_c :
   Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
 
 (* A program's reductions, scan or Moments scan, [0], [1] or [2], by pairs
-   of a reduction, read as an int, and an output. *)
+   of a reduction, read as an int, and an output; a scan's carry. *)
 external reduce_prog_c :
   int ->
   Nx_kernel.Prog.t ->
@@ -216,6 +216,7 @@ external reduce_prog_c :
   Nx_array.any array ->
   Nx_kernel.load array ->
   (Nx_kernel.pad * string) option array ->
+  Nx_array.any option ->
   int ->
   Nx_array.answer = "nx_cpu_reduce_prog_byte" "nx_cpu_reduce_prog"
 
@@ -225,6 +226,7 @@ external scan_c :
   Nx_array.any array ->
   ('v, 's) Nx_array.t ->
   (Nx_kernel.pad * string) option ->
+  Nx_array.any option ->
   int ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
 
@@ -336,7 +338,7 @@ let fused_reduce ~threads p ~shape ~axes rs ~dsts loads =
   let codes = Array.make (2 * Array.length rs) 0 in
   match fill_codes p rs dsts codes 0 0 with
   | Nx_array.Done ->
-      reduce_prog_c 0 p codes shape axes dsts loads (pads loads) threads
+      reduce_prog_c 0 p codes shape axes dsts loads (pads loads) None threads
   | refused -> refused
 
 (* nx.cpu reads the terms of a program that is its one operand's identity
@@ -358,36 +360,69 @@ let reduce_answer ~threads p ~shape ~axes rs ~dsts
 
 (* A scan of a program other than its one operand's identity, through it,
    over its destinations' shape. *)
-let fused_scan ~threads p ~axis (r, k) ~dsts loads =
+let fused_scan ~threads ?carry p ~axis (r, k) ~dsts loads =
   let (D.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   let shape (Nx_array.Any d) = Nx_array.Layout.shape (Nx_array.layout d) in
   match (r, dsts) with
   | Nx_kernel.Moments, [| mean; _ |] when floats dt ->
       reduce_prog_c 2 p [| code Moments; k |] (shape mean) [| axis |] dsts
-        loads (pads loads) threads
+        loads (pads loads) None threads
   | _ when Array.length dsts = width r && computes r dt dsts 0 ->
       reduce_prog_c 1 p
         [| code (reduction r); k |]
-        (shape dsts.(0)) [| axis |] dsts loads (pads loads) threads
+        (shape dsts.(0)) [| axis |] dsts loads (pads loads) carry threads
   | _ -> refusal r dsts
 
-let scan_answer ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
+(* The dtype terms of [dt] reduce in (reduce.c's Stage). *)
+let carrier (D.Any dt as d) =
+  match dt with
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
+      D.Any D.Float32
+  | Int4 -> D.Any D.Int8
+  | Uint4 -> D.Any D.Uint8
+  | Bit -> D.Any D.Bool
+  | Float32 | Float64 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64
+  | Uint64 | Complex64 | Complex128 | Bool ->
+      d
+
+(* Whether [c] can carry a scan of [r] of [p]'s output [k] along [axis] into
+   [dst]: [Done], or the refusal. *)
+let carries p ~axis (r, k) dst (Nx_array.Any c) =
+  match (r : Nx_kernel.reduction) with
+  | Monoid (Sum | Prod | Max | Min) ->
+      let want = Array.copy (loop_of dst) in
+      if axis >= 0 && axis < Array.length want then want.(axis) <- 1;
+      let (D.Any ct) = carrier (Nx_kernel.Prog.dtype p (Iarray.get p.outs k)) in
+      if Nx_array.Layout.shape (Nx_array.layout c) <> want then
+        Nx_array.Shape_mismatch
+      else if not (D.equal (Nx_array.dtype c) ct) then Nx_array.Wrong_dtype
+      else Nx_array.Done
+  | Monoid Logsumexp | Moments | Arg _ -> Nx_array.Bad_arity
+
+let scan_answer ~threads ?carry p ~axis rk ~dsts (loads : Nx_kernel.load array)
+    =
   if not (accepted p rk) then Nx_array.Wrong_dtype
   else if Array.length dsts = 0 then Nx_array.Bad_arity
   else if not (fits (loop_of dsts.(0)) loads 0) then Nx_array.Shape_mismatch
-  else if not (Nx_kernel.Prog.is_identity p) then
-    fused_scan ~threads p ~axis rk ~dsts loads
   else
-    match (rk, dsts, loads) with
-    | (Moments, 0), [| mean; var |], [| l |] ->
-        let (Any x) = operand l in
-        moments_c axis mean var x (padding l) threads
-    | (r, 0), _, [| l |] ->
-        let (Any x) = operand l in
-        if Array.length dsts = width r && computes r (Nx_array.dtype x) dsts 0
-        then scan_c (reduction r) axis dsts x (padding l) threads
-        else refusal r dsts
-    | _ -> Nx_array.Bad_arity
+    match Option.map (carries p ~axis rk dsts.(0)) carry with
+    | None | Some Nx_array.Done -> (
+        if not (Nx_kernel.Prog.is_identity p) then
+          fused_scan ~threads ?carry p ~axis rk ~dsts loads
+        else
+          match (rk, dsts, loads) with
+          | (Moments, 0), [| mean; var |], [| l |] ->
+              let (Any x) = operand l in
+              moments_c axis mean var x (padding l) threads
+          | (r, 0), _, [| l |] ->
+              let (Any x) = operand l in
+              if
+                Array.length dsts = width r
+                && computes r (Nx_array.dtype x) dsts 0
+              then scan_c (reduction r) axis dsts x (padding l) carry threads
+              else refusal r dsts
+          | _ -> Nx_array.Bad_arity)
+    | Some refused -> refused
 
 (* The operands of a reduction or scan, to name a decline. *)
 let loop_operands dsts loads =
@@ -398,15 +433,16 @@ let reduce_on ~threads p ~shape ~axes rs ~dsts loads =
   | Nx_array.Declined -> declined "reduce" (loop_operands dsts loads)
   | answer -> answer
 
-let scan_on ~threads p ~axis rk ~dsts loads =
-  match scan_answer ~threads p ~axis rk ~dsts loads with
+let scan_on ~threads ?carry p ~axis rk ~dsts loads =
+  match scan_answer ~threads ?carry p ~axis rk ~dsts loads with
   | Nx_array.Declined -> declined "scan" (loop_operands dsts loads)
   | answer -> answer
 
 let reduce p ~shape ~axes rs ~dsts loads =
   reduce_on ~threads:0 p ~shape ~axes rs ~dsts loads
 
-let scan p ~axis rk ~dsts loads = scan_on ~threads:0 p ~axis rk ~dsts loads
+let scan ?carry p ~axis rk ~dsts loads =
+  scan_on ~threads:0 ?carry p ~axis rk ~dsts loads
 
 (* Gathers and scatters (index.c) *)
 

@@ -98,9 +98,19 @@ type extreme = Max | Min
       variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
       negative or [Σ d²] where that is [+∞]; both are [c] where it is a NaN.
 
-    A float scan associates in an order that is a function of the shapes
-    alone, which each kernel library states with the bounds of [Logsumexp],
-    reduced and scanned, and those of [Moments] reduced. A float sum of [n]
+    In every library, a float or complex [Sum] or [Prod] scan cuts each
+    slice along its axis into {e chunks} of 4096 terms from its start. A
+    chunk's total is its terms reduced in lane order, as a reduction of
+    exactly them. The carry into chunk 0 is the identity, but a product's
+    chunk 0 has none: its first result is its first term. The carry into
+    chunk [c + 1] is the carry into chunk [c] combined with [c]'s total,
+    and each result of a chunk is its carry combined with the chunk's terms
+    up to it, left to right. Combining is {!Prog.Add} or {!Prog.Mul} in the
+    carrier, [float32] for a float narrower than it, and each result rounds
+    once into its destination. Any other float scan associates in an order
+    that is a function of the shapes alone, which each kernel library states
+    with the bounds of [Logsumexp], reduced and scanned, and those of
+    [Moments] reduced. A float sum of [n]
     terms is within [γ(n - 1) Σ|x|] of the exact sum, a product within a
     relative [γ(n - 1)] barring overflow and underflow, where
     [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
@@ -452,17 +462,40 @@ module type S = sig
       of a reduction and its output's dtype. *)
 
   val scan :
-    Prog.t -> axis:int -> reduction * int -> dsts:any array -> load array -> answer
-  (** [scan p ~axis (r, k) ~dsts loads] stores at each index the reduction [r]
-      of output [k] of [p] over the indices along [axis] up to that index's,
-      inclusive, in that output's dtype, rounded once to its destination's: a
-      running sum for [Monoid Sum], the running population mean and variance
-      for [Moments]. The result at an index is a function of the terms up to
-      it alone: the scan of a prefix of the axis is the prefix of the scan,
-      bit for bit. A scan's last result need not equal the reduction of the
-      same terms. Destinations are as {!reduce}'s, each of the loop's shape
-      ({!Shape.scan}). It answers [Wrong_dtype] where {!accepts} is
-      [false] of [r] and output [k]'s dtype. *)
+    ?carry:any ->
+    Prog.t ->
+    axis:int ->
+    reduction * int ->
+    dsts:any array ->
+    load array ->
+    answer
+  (** [scan ?carry p ~axis (r, k) ~dsts loads] stores at each index the
+      reduction [r] of output [k] of [p] over the indices along [axis] up to
+      that index's, inclusive, in that output's dtype, rounded once to its
+      destination's: a running sum for [Monoid Sum], the running population
+      mean and variance for [Moments]. The result at an index is a function
+      of the terms up to it alone: the scan of a prefix of the axis is the
+      prefix of the scan, bit for bit. A scan's last result need not equal
+      the reduction of the same terms. Destinations are as {!reduce}'s, each
+      of the loop's shape ({!Shape.scan}). It answers [Wrong_dtype] where
+      {!accepts} is [false] of [r] and output [k]'s dtype.
+
+      With [carry], of a [Monoid Sum], [Prod], [Max] or [Min], the scan of
+      each slice continues from its element of [carry], an array of the
+      destinations' shape with extent [1] along [axis], of the output's
+      carrier: [float32] for a float narrower than it, [int8] and [uint8]
+      for [int4] and [uint4], [bool] for [bit], else the output's dtype.
+      Chunk 0 of each slice ({!type-reduction}) starts from that element in
+      place of the identity, and a product's chunk 0 then has one. So the
+      scan of the terms of a slice from a chunk's start, with the carry
+      into that chunk, has the bits of the scan of the whole slice from that
+      chunk on; and the scan of terms within one chunk, carried from the
+      running result in the carrier before them, has the bits of the scan of
+      the whole there. A NaN carry counts as made from numbers: results
+      before the slice's first NaN term are the made NaN, and from it on
+      that term. It answers [Bad_arity] for a carry of any other reduction,
+      [Shape_mismatch] for a carry of another shape and [Wrong_dtype] for
+      one of another dtype. *)
 
   (** {1:index Gathers and scatters} *)
 

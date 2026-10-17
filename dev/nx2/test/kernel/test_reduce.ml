@@ -3805,6 +3805,305 @@ let test_several_refuse (b : Support.backend) () =
   equal ~msg:"the first destination" (array float_exact) [| 7.; 7. |]
     (A.to_array y1)
 
+(* Carries *)
+
+(* A dtype a carried scan draws: its finite elements, near one for a
+   product, its NaNs, its other specials, and two elements whose sum, or
+   product, is a NaN made from numbers. *)
+type 'v drawn = {
+  finite : monoid -> Random.State.t -> 'v;
+  nans : 'v list;
+  others : 'v list;
+  made : monoid -> ('v * 'v) option;
+}
+
+type carried = Carried : ('v, 's) D.t * 'v drawn -> carried
+
+let carried_kinds =
+  let float_values =
+    {
+      finite =
+        (fun m r ->
+          match m with
+          | Prod ->
+              (if Random.State.bool r then 1. else -1.)
+              *. (0.999 +. Random.State.float r 0.002)
+          | _ ->
+              Float.ldexp
+                (Random.State.float r 2. -. 1.)
+                (Random.State.int r 9 - 4));
+      nans =
+        [
+          nan; -.nan; Int64.float_of_bits 0x7FF4_0000_0000_0000L;
+          Int64.float_of_bits 0xFFF9_2340_0000_0000L;
+        ];
+      others = [ -0.; 0.; infinity; neg_infinity ];
+      made =
+        (function
+        | Sum -> Some (infinity, neg_infinity)
+        | Prod -> Some (0., infinity)
+        | Max | Min | Logsumexp -> None);
+    }
+  in
+  let float dt = Carried (dt, float_values) in
+  let complex dt =
+    let c re im = { Complex.re; im } in
+    Carried
+      ( dt,
+        {
+          finite =
+            (fun m r ->
+              c (float_values.finite m r) (0.01 *. float_values.finite Sum r));
+          nans = [ c nan 1.; c 1. (-.nan); c (-.nan) nan ];
+          others = [ c (-0.) (-0.); c infinity 0.; c 0. neg_infinity ];
+          made =
+            (function
+            | Sum -> Some (c infinity 0., c neg_infinity 1.)
+            | Prod -> Some (c 0. 0., c infinity 0.)
+            | Max | Min | Logsumexp -> None);
+        } )
+  in
+  let ints dt ~small ~edges =
+    Carried
+      ( dt,
+        {
+          finite = (fun _ r -> small (Random.State.int r 16 - 8));
+          nans = [];
+          others = edges;
+          made = (fun _ -> None);
+        } )
+  in
+  [
+    float D.Float32; float D.Float64; float D.Float16; float D.Bfloat16;
+    complex D.Complex64; complex D.Complex128;
+    ints D.Int32 ~small:Int32.of_int ~edges:[ Int32.max_int; Int32.min_int ];
+    ints D.Int8 ~small:Fun.id ~edges:[ 127; -128 ];
+    ints D.Int4 ~small:Fun.id ~edges:[ 7; -8 ];
+    Carried
+      ( D.Bool,
+        {
+          finite = (fun _ r -> Random.State.bool r);
+          nans = [];
+          others = [ true; false ];
+          made = (fun _ -> None);
+        } );
+  ]
+
+(* A scan along axis 1 of [[outer; p + m; inner]] whose last [m] terms of
+   each slice are scanned from the carry of its first [p]: [p] whole chunks,
+   or [p + m] terms within one. The first [p] hold no NaN, but a NaN made
+   from numbers where [made]; the last hold a NaN where [nan_after]. The
+   terms are a program's copy of the operand where [through]. *)
+type carry_case = {
+  kind : carried;
+  cm : monoid;
+  through : bool;
+  outer : int;
+  inner : int;
+  p : int;
+  m : int;
+  made : bool;
+  nan_after : bool;
+  cseed : int;
+}
+
+let pp_carry_case ppf c =
+  let (Carried (dt, _)) = c.kind in
+  Format.fprintf ppf
+    "scan %s of %s%a [%d; %d + %d; %d]%s%s, seed %d" (monoid_name c.cm)
+    (if c.through then "a copy of " else "")
+    D.pp dt c.outer c.p c.m c.inner
+    (if c.made then ", a made NaN before" else "")
+    (if c.nan_after then ", a NaN after" else "")
+    c.cseed
+
+let carry_case =
+  let open Gen in
+  with_pp pp_carry_case
+    (let* (Carried (dt, _) as kind) = of_list carried_kinds in
+     let* cm =
+       of_list
+         (List.filter (fun m -> accepts m (D.Any dt)) [ Sum; Prod; Max; Min ])
+     in
+     let* outer = of_list [ 1; 2 ] in
+     let* inner = of_list [ 1; 3 ] in
+     let* aligned = bool in
+     let* p, m =
+       if aligned then
+         let* k = of_list [ 1; 2 ] in
+         let+ m = of_list [ 0; 1; 5; 4095; 4096; 4097; 9000 ] in
+         (4096 * k, m)
+       else
+         let* p = of_list [ 1; 2; 17; 1024; 2049; 4095 ] in
+         let+ m = of_list [ 0; 1; 4096 - p; (4096 - p) / 2 ] in
+         (p, m)
+     in
+     let* made = bool in
+     let* nan_after = bool in
+     let* through = bool in
+     let+ cseed = int in
+     { kind; cm; through; outer; inner; p; m; made; nan_after; cseed })
+
+(* The case's terms in C order of [[outer; p + m; inner]]. *)
+let carry_terms (type v) (vs : v drawn) c : v array =
+  let r = Random.State.make [| c.cseed |] in
+  let n = c.p + c.m in
+  let pick l = List.nth l (Random.State.int r (List.length l)) in
+  let term t =
+    let special = Random.State.int r 64 = 0 in
+    if special && t >= c.p && c.nan_after && vs.nans <> [] then pick vs.nans
+    else if special then pick vs.others
+    else vs.finite c.cm r
+  in
+  let a =
+    Array.init (c.outer * n * c.inner) (fun i -> term (i / c.inner mod n))
+  in
+  let set t v =
+    for o = 0 to c.outer - 1 do
+      for i = 0 to c.inner - 1 do
+        a.((((o * n) + t) * c.inner) + i) <- v
+      done
+    done
+  in
+  (match vs.made c.cm with
+  | Some (u, v) when c.made && c.p > 1 ->
+      set (Random.State.int r (c.p - 1)) u;
+      set (c.p - 1) v
+  | _ -> ());
+  (if c.nan_after && c.m > 0 && vs.nans <> [] then
+     let t = c.p + Random.State.int r c.m in
+     set t (pick vs.nans));
+  a
+
+(* Elements [lo, lo + count) along axis 1 of [x]. *)
+let along1 (A.Any x) lo count =
+  let s = L.shape (A.layout x) in
+  let r =
+    Array.mapi
+      (fun a e ->
+        if a = 1 then { M.start = lo; count; step = 1 }
+        else { M.start = 0; count = e; step = 1 })
+      s
+  in
+  A.Any (Option.get (A.move (M.Slice r) x))
+
+let law_carry (b : Support.backend) c =
+  let (Carried (dt, vs)) = c.kind in
+  let (module K : Nx_kernel.S) = b.kernels in
+  let n = c.p + c.m in
+  let aligned = c.p mod 4096 = 0 in
+  cover "a carry into a chunk's start" aligned;
+  cover "a carry within a chunk" (not aligned);
+  cover "several chunks after a carry" (aligned && c.m > 4096);
+  cover "no term after a carry" (c.m = 0);
+  cover "several slices" (c.outer * c.inner > 1);
+  let floating = D.is D.Float dt || D.is D.Complex dt in
+  let made = c.made && c.p > 1 && vs.made c.cm <> None in
+  cover "a NaN carry made from numbers" made;
+  cover "a NaN carry and a NaN term after it" (made && c.nan_after && c.m > 0);
+  cover "a NaN term after a carry" (floating && c.nan_after && c.m > 0);
+  cover "a narrow float's carry" (D.bits dt = 16 && D.is D.Float dt);
+  cover "a program's terms" c.through;
+  let z =
+    on b
+      (A.Any (A.of_array dt [| c.outer; n; c.inner |] (carry_terms vs c)))
+  in
+  let (D.Any ct) = carrier (D.Any dt) in
+  let ok what = function
+    | A.Done -> ()
+    | r -> failf "%s: the kernels answered %a" what Nx_array_support.pp_answer r
+  in
+  let p0 =
+    if c.through then
+      P.v ~ins:[| D.Any dt |]
+        [| P.In 0; P.Op1 (Copy, D.Any dt, 0) |]
+        ~outs:[| 1 |]
+    else identity (D.Any dt)
+  in
+  (* The scan of [x] into a fresh destination of [into]. *)
+  let scan (type v s) ?carry (into : (v, s) D.t) (A.Any x) =
+    let y = A.Any (A.create b.device into (L.shape (A.layout x))) in
+    ok "scan"
+      (K.scan ?carry p0 ~axis:1 (Monoid c.cm, 0) ~dsts:[| y |] [| Plain x |]);
+    y
+  in
+  let carry =
+    if aligned then begin
+      (* The carry chain over the chunks' totals, each a reduction in the
+         carrier, combined by the monoid's Prog kind from the first. *)
+      let total k =
+        let (A.Any x) = along1 z (4096 * k) 4096 in
+        let y = A.Any (A.create b.device ct [| c.outer; c.inner |]) in
+        ok "reduce"
+          (K.reduce p0 ~shape:(L.shape (A.layout x))
+             ~axes:[| 1 |] [| (Monoid c.cm, 0) |] ~dsts:[| y |] [| Plain x |]);
+        y
+      in
+      let kind : P.binary =
+        match c.cm with
+        | Sum -> Add
+        | Prod -> Mul
+        | Max -> Maximum
+        | Min | Logsumexp -> Minimum
+      in
+      let combine =
+        P.v
+          ~ins:[| D.Any ct; D.Any ct |]
+          [| P.In 0; P.In 1; P.Op2 (Binary kind, 0, 1) |]
+          ~outs:[| 2 |]
+      in
+      let rec chain acc k =
+        if 4096 * k >= c.p then acc
+        else
+          let (A.Any a) = acc in
+          let (A.Any t) = total k in
+          let y = A.Any (A.create b.device ct [| c.outer; c.inner |]) in
+          ok "map" (K.map combine ~dsts:[| y |] [| Plain a; Plain t |]);
+          chain y (k + 1)
+      in
+      let (A.Any v) = chain (total 0) 1 in
+      A.Any (Option.get (A.move (M.Reshape [| c.outer; 1; c.inner |]) v))
+    end
+    else along1 (scan ct (along1 z 0 c.p)) (c.p - 1) 1
+  in
+  let got = scan ~carry dt (along1 z c.p c.m) in
+  let want = along1 (scan dt z) c.p c.m in
+  equal (array string)
+    (Elements.elements (host want))
+    (Elements.elements (host got))
+
+(* A carry of a reduction that takes none, or of another shape or dtype than
+   the carrier's, is refused. *)
+let test_carry_refusals (b : Support.backend) () =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let make dt s = A.Any (A.create b.device dt s) in
+  let scan (type v s) (dt : (v, s) D.t) ?carry r dsts =
+    let (A.Any x) = make dt [| 2; 3 |] in
+    K.scan ?carry (identity (D.Any dt)) ~axis:1 (r, 0) ~dsts [| Plain x |]
+  in
+  let f32 s = make D.Float32 s in
+  let refuses msg want got = equal ~msg Elements.answer want got in
+  let carry = f32 [| 2; 1 |] in
+  refuses "a Logsumexp's carry" A.Bad_arity
+    (scan D.Float32 ~carry (Monoid Logsumexp) [| f32 [| 2; 3 |] |]);
+  refuses "a Moments' carry" A.Bad_arity
+    (scan D.Float32 ~carry Moments [| f32 [| 2; 3 |]; f32 [| 2; 3 |] |]);
+  refuses "an Arg's carry" A.Bad_arity
+    (scan D.Float32 ~carry (Arg Max)
+       [| f32 [| 2; 3 |]; make D.Int64 [| 2; 3 |] |]);
+  refuses "a carry of the destination's shape" A.Shape_mismatch
+    (scan D.Float32 ~carry:(f32 [| 2; 3 |]) (Monoid Sum) [| f32 [| 2; 3 |] |]);
+  refuses "a carry of one element" A.Shape_mismatch
+    (scan D.Float32 ~carry:(f32 [| 1; 1 |]) (Monoid Sum) [| f32 [| 2; 3 |] |]);
+  refuses "a carry of another dtype" A.Wrong_dtype
+    (scan D.Float32 ~carry:(make D.Float64 [| 2; 1 |]) (Monoid Max)
+       [| f32 [| 2; 3 |] |]);
+  refuses "a float16 carry of float16 terms" A.Wrong_dtype
+    (scan D.Float16 ~carry:(make D.Float16 [| 2; 1 |]) (Monoid Sum)
+       [| make D.Float16 [| 2; 3 |] |]);
+  refuses "a float32 carry of float16 terms" A.Done
+    (scan D.Float16 ~carry (Monoid Sum) [| make D.Float16 [| 2; 3 |] |])
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -3819,6 +4118,10 @@ let laws (b : Support.backend) =
         scans (run (law_prefix b));
       prop ~examples:any_examples "a declined case writes nothing" any_case
         (run (law_declined b));
+      prop "a scan from a carry continues the scan whose terms it carries"
+        carry_case (run (law_carry b));
+      test "a carry the scan cannot take is refused" (fun () ->
+          b.around (test_carry_refusals b));
     ]
 
 (* A plain sum and scan whose program is Prog.of_node's [In 0], which keeps

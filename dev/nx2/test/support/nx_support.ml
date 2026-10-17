@@ -53,10 +53,10 @@ module Counting = struct
     ignore (Atomic.fetch_and_add computed (size shape));
     Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
 
-  let scan p ~axis r ~dsts loads =
+  let scan ?carry p ~axis r ~dsts loads =
     Atomic.incr count;
     ignore (Atomic.fetch_and_add computed (loop dsts.(0)));
-    Nx_cpu.scan p ~axis r ~dsts loads
+    Nx_cpu.scan ?carry p ~axis r ~dsts loads
 
   let gather ~axis ~dst idx x =
     Atomic.incr count;

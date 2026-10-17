@@ -698,8 +698,8 @@ module Expanding = struct
     if core rs && plain loads then Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
     else decline ()
 
-  let scan p ~axis r ~dsts loads =
-    if core [| r |] && plain loads then Nx_cpu.scan p ~axis r ~dsts loads
+  let scan ?carry p ~axis r ~dsts loads =
+    if core [| r |] && plain loads then Nx_cpu.scan ?carry p ~axis r ~dsts loads
     else decline ()
 
   let scatter combine ~unique ~axis ~dst ~into idx updates =

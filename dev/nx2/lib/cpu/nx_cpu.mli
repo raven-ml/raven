@@ -103,14 +103,10 @@
     {!Nx_kernel.Prog.Mul}. Each complex multiplication errs by at most
     twice the parts' unit roundoff [u], so a product of [n] terms is within
     a normwise relative [γ(2n - 2)] of the exact one, barring overflow and
-    underflow. A scan cuts each slice along its axis into chunks of 4096
-    from its start. A chunk's total is its terms reduced in that order. The
-    carry into the first chunk is [+0] for a sum, and a product's first
-    chunk has none: its results start from the slice's first term. The
-    carry into the next chunk is the carry into this one combined with this
-    one's total; each result of a chunk is its carry combined with the
-    chunk's terms up to it, left to right. A scan by [Arg] or [Logsumexp]
-    cuts the same chunks and carries a state: a chunk's total is the state
+    underflow. Every monoid's scan cuts its chunks and carries as
+    {!Nx_kernel.type-reduction} states a float sum's, from a carry where
+    one is given. A scan by [Arg] or [Logsumexp] cuts the same chunks of
+    4096 and carries a state: a chunk's total is the state
     of its terms taken left to right from none, the carry into the next
     chunk the carry merged with it, and each result its carry's state taken
     on through the chunk's terms up to it. [Logsumexp]'s state is the
@@ -249,6 +245,7 @@ val reduce_on :
 
 val scan_on :
   threads:int ->
+  ?carry:Nx_array.any ->
   Nx_kernel.Prog.t ->
   axis:int ->
   Nx_kernel.reduction * int ->

@@ -21,8 +21,9 @@
 
    A scan cuts each slice along its axis into chunks of SCAN_CHUNK terms from
    its start. A chunk's total is its terms reduced in the order above. The
-   carry into chunk 0 is the identity, but a complex product's chunk 0 has
-   none and starts from its first term; the carry into chunk c + 1 is the
+   carry into chunk 0 is the slice's given carry, else the identity, but a
+   complex product's chunk 0 given none has none and starts from its first
+   term; the carry into chunk c + 1 is the
    carry into c combined with c's total, and result i of chunk c is the
    carry combined with the chunk's terms up to i, left to right.
 
@@ -1791,6 +1792,9 @@ typedef struct {
      [z]. */
   const nx_array *dst, *dst1, *src;
   const fused *fused;
+  /* A scan's carries, of the carrier, or NULL: the destination's shape but
+     one along its axis. */
+  const nx_array *cy;
   /* The reduced axes in C order: extents and the operand's steps. */
   int nr;
   int64_t re[NX_MAX_RANK], rs[NX_MAX_RANK];
@@ -1798,7 +1802,8 @@ typedef struct {
      destinations' steps. */
   int nk;
   int64_t ke[NX_MAX_RANK], ks[NX_MAX_RANK], kd[NX_MAX_RANK], kd1[NX_MAX_RANK];
-  int64_t x0, d0, d1;
+  int64_t kc[NX_MAX_RANK]; /* the carries' steps */
+  int64_t x0, d0, d1, c0;
   int64_t rd, rd1; /* a scan's destinations' steps along its axis */
   int slices; /* a unit's outputs are slices scanned side by side */
   int64_t terms, blocks;
@@ -2385,15 +2390,16 @@ static void blocks(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
 /* Units */
 
 /* Unit [u]'s outputs: [H] rows of [W], the first one's positions in the
-   operand and the destinations, and the operand's and destinations' steps
-   from one output to the next in a row, and from one row to the next. Units
-   run outer index, then band, then chunk, then group. */
+   operand, the destinations and a scan's carries, and the operand's,
+   destinations' and carries' steps from one output to the next in a row,
+   and from one row to the next. Units run outer index, then band, then
+   chunk, then group. */
 typedef struct {
-  int64_t p, d, d1, W, s, sd, sd1, H, s2, sd2, g;
+  int64_t p, d, d1, c, W, s, sd, sd1, sc, H, s2, sd2, g;
 } unit;
 
 static unit unit_of(const plan *q, int64_t u) {
-  unit x = {.p = q->x0, .d = q->d0, .d1 = q->d1, .W = 1, .H = 1,
+  unit x = {.p = q->x0, .d = q->d0, .d1 = q->d1, .c = q->c0, .W = 1, .H = 1,
             .g = u % q->groups};
   u /= q->groups;
   int last = q->nk - 1;
@@ -2403,10 +2409,12 @@ static unit unit_of(const plan *q, int64_t u) {
     x.s = q->ks[last];
     x.sd = q->kd[last];
     x.sd1 = q->kd1[last];
+    x.sc = q->kc[last];
     x.W = q->ke[last] - c * q->row < q->row ? q->ke[last] - c * q->row : q->row;
     x.p += c * q->row * x.s;
     x.d += c * q->row * x.sd;
     x.d1 += c * q->row * x.sd1;
+    x.c += c * q->row * x.sc;
     last--;
   }
   if (q->band > 1) {
@@ -2419,12 +2427,14 @@ static unit unit_of(const plan *q, int64_t u) {
     x.p += c * q->band * x.s2;
     x.d += c * q->band * x.sd2;
     x.d1 += c * q->band * q->kd1[last];
+    x.c += c * q->band * q->kc[last];
     last--;
   }
   for (int i = last; i >= 0; i--) {
     x.p += u % q->ke[i] * q->ks[i];
     x.d += u % q->ke[i] * q->kd[i];
     x.d1 += u % q->ke[i] * q->kd1[i];
+    x.c += u % q->ke[i] * q->kc[i];
     u /= q->ke[i];
   }
   return x;
@@ -2609,12 +2619,15 @@ static void units_job(int64_t total, int64_t bytes, double cost, int threads,
 }
 
 /* Adds the axis of extent [e] and steps [s] (operand), [d] and [d1]
-   (destinations) to the kept axes, if it has more than one element. */
-static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1) {
+   (destinations) and [c] (carries) to the kept axes, if it has more than
+   one element. */
+static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1,
+                 int64_t c) {
   if (e <= 1) return;
   q->ke[q->nk] = e;
   q->ks[q->nk] = s;
   q->kd[q->nk] = d;
+  q->kc[q->nk] = c;
   q->kd1[q->nk++] = d1;
 }
 
@@ -2653,17 +2666,19 @@ static void choose(plan *q, task op) {
   int rows = least >= 0 && (kept < red || q->terms < FEW);
   if (least < 0 || (!rows && op != SCAN)) return;
   int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least],
-          d1 = q->kd1[least];
+          d1 = q->kd1[least], c = q->kc[least];
   for (int i = least; i < q->nk - 1; i++) {
     q->ke[i] = q->ke[i + 1];
     q->ks[i] = q->ks[i + 1];
     q->kd[i] = q->kd[i + 1];
     q->kd1[i] = q->kd1[i + 1];
+    q->kc[i] = q->kc[i + 1];
   }
   q->ke[q->nk - 1] = e;
   q->ks[q->nk - 1] = s;
   q->kd[q->nk - 1] = d;
   q->kd1[q->nk - 1] = d1;
+  q->kc[q->nk - 1] = c;
   q->slices = !rows;
   int64_t most = q->slices ? side(q) : ROW / q->size;
   /* A monoid scan on one thread sweeps long rows; on several, its units
@@ -2691,7 +2706,7 @@ static void plan_reduce(plan *q, const nx_loop *l) {
   q->nr = q->nk = 0;
   for (int i = 0; i < l->rank; i++)
     if (l->step[0][i] != 0)
-      keep(q, l->extent[i], l->step[2][i], l->step[0][i], l->step[1][i]);
+      keep(q, l->extent[i], l->step[2][i], l->step[0][i], l->step[1][i], 0);
     else if (l->extent[i] > 1) {
       q->re[q->nr] = l->extent[i];
       q->rs[q->nr++] = l->step[2][i];
@@ -2860,6 +2875,23 @@ static void scan_run(const plan *q, const unit *x, uint8_t *a,
   }
 }
 
+/* Whether a scan's chunk 0 has no carry and starts from its first terms:
+   a complex product's, given none. */
+static int bare(const plan *q) { return q->first && q->cy == NULL; }
+
+/* The carries of the unit's slices into chunk 0, at [a]: the given ones,
+   else values of no term. Each slice's carry is read before any of its
+   results is written, so a carry its destination aliases reads its own
+   bits. */
+static void start(const plan *q, const unit *x, uint8_t *a) {
+  if (q->cy == NULL) {
+    fill(q, a, x->W);
+    return;
+  }
+  for (int64_t j = 0; j < x->W; j++)
+    memcpy(a + j * q->w, q->cy->base + (x->c + j * x->sc) * q->w, q->w);
+}
+
 /* Chunk [c]'s results of the unit's slices, from the carry [a], which it
    leaves holding the chunk's last results. A chunk 0 that has no carry
    starts from its first terms. A staged operand's or a program's terms
@@ -2872,7 +2904,7 @@ static void rescan(const plan *q, work *wk, const unit *x, int64_t c,
     run_states(q, wk, x, (nx_cpu_state *)a, x->W, 0, t0, n, 1);
     return;
   }
-  if (c == 0 && q->first) {
+  if (c == 0 && bare(q)) {
     uint8_t *y = q->dst->base + x->d * q->w;
     _Alignas(16) uint8_t tmp[WIDEST];
     for (int64_t j = 0; j < x->W; j++) {
@@ -2936,7 +2968,7 @@ static void settle_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
    stateful scan's has none. */
 static void carry_on(const plan *q, uint8_t *a, const uint8_t *v, int64_t c,
                      int64_t W) {
-  if (c == 0 && (q->first || q->z != NULL)) memcpy(a, v, W * q->size);
+  if (c == 0 && (bare(q) || q->z != NULL)) memcpy(a, v, W * q->size);
   else if (q->z == NULL) q->f->combine(a, v, 1, W);
   else
     for (int64_t j = 0; j < W; j++)
@@ -2949,7 +2981,7 @@ static void scan_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
   uint8_t *carry = wk->carry, *a = wk->a, *v = wk->v;
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
-    fill(q, carry, x.W);
+    start(q, &x, carry);
     for (int64_t c = 0; c * SCAN_CHUNK < q->terms; c++) {
       memcpy(a, carry, x.W * q->size);
       rescan(q, wk, &x, c, a);
@@ -3038,7 +3070,7 @@ static void rescan_quads(const plan *q, work *wk, int64_t lo, int64_t hi) {
     int64_t u = span(q, v, q->groups, &c, &k);
     unit x = unit_of(q, u * q->groups);
     uint8_t *a = q->scratch + (u * q->groups + c) * q->size;
-    if (c == 0 && q->first) {
+    if (c == 0 && bare(q)) {
       rescan(q, wk, &x, 0, a);
       c = 1;
       a += q->size;
@@ -3056,7 +3088,7 @@ static void carries(const plan *q, work *wk, int64_t lo, int64_t hi) {
   uint8_t *carry = wk->carry, *v = wk->v;
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u * q->groups);
-    fill(q, carry, x.W);
+    start(q, &x, carry);
     for (int64_t c = 0; c < q->groups; c++) {
       uint8_t *s = q->scratch + (u * q->groups + c) * row;
       memcpy(v, s, row);
@@ -3082,10 +3114,13 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *d1,
   q->x0 = x->offset;
   q->d0 = d->offset;
   q->d1 = d1->offset;
+  q->c0 = q->cy != NULL ? q->cy->offset : 0;
   q->nk = 0;
+  /* The carries, where given, coalesce with the rest, after the loads. */
+  int nc = q->cy != NULL;
   int parts[2][2] = {{0, axis}, {axis + 1, r}};
   for (int k = 0; k < 2; k++) {
-    int64_t extent[NX_MAX_RANK], step[NX_MAX_OPERANDS][NX_MAX_RANK];
+    int64_t extent[NX_MAX_RANK], step[NX_MAX_OPERANDS + 1][NX_MAX_RANK];
     int n = parts[k][1] - parts[k][0];
     for (int i = 0; i < n; i++) {
       int a = parts[k][0] + i;
@@ -3095,10 +3130,12 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *d1,
       step[2][i] = x->dim[r + a];
       for (int o = 0; o < nl; o++)
         step[3 + o][i] = q->fused->loads[o].dim[r + a];
+      if (nc) step[3 + nl][i] = q->cy->dim[r + a];
     }
-    n = nx_coalesce_dims(3 + nl, n, extent, step);
+    n = nx_coalesce_dims(3 + nl + nc, n, extent, step);
     for (int i = 0; i < n; i++)
-      keep(q, extent[i], step[2][i], step[0][i], step[1][i]);
+      keep(q, extent[i], step[2][i], step[0][i], step[1][i],
+           nc ? step[3 + nl][i] : 0);
   }
   choose(q, SCAN);
   int64_t chunks = (q->terms + SCAN_CHUNK - 1) / SCAN_CHUNK;
@@ -3188,12 +3225,14 @@ static int checked(task op, int r, const int *axes, int naxes,
    and its int64 position [y1]; or reduced, Moments into the mean [y] and
    the variance [y1]. The destinations are of [dt],
    but Arg's positions, and its extreme where that is of [x]'s dtype, its
-   term copied. NX_OK, NX_SHAPE for shapes that do not fit, an extreme of
-   no term included, or -1 if host memory runs out. Apart, so that the
-   casts reduce_into runs around it take none of its plan's frame. */
+   term copied. A monoid's scan starts from the carries [cy] where they are
+   not NULL. NX_OK, NX_SHAPE for shapes that do not fit, an extreme of no
+   term included, or -1 if host memory runs out. Apart, so that the casts
+   reduce_into runs around it take none of its plan's frame. */
 static __attribute__((noinline)) int reduce_in(
     task op, int r, int dt, const int *axes, int naxes, const nx_array *y,
-    const nx_array *y1, const nx_array *x, const fused *z, int threads) {
+    const nx_array *y1, const nx_array *x, const nx_array *cy, const fused *z,
+    int threads) {
   int64_t terms, outputs;
   int e = checked(op, r, axes, naxes, y, y1, x, &terms, &outputs);
   if (e) return e;
@@ -3220,6 +3259,7 @@ static __attribute__((noinline)) int reduce_in(
             .dst1 = y1,
             .src = x,
             .fused = z,
+            .cy = cy,
             .terms = terms,
             .failed = &failed};
   if (outputs > 0 && terms == 0 && op == REDUCE) {
@@ -3373,10 +3413,13 @@ static int own_nans(task op, const int *axes, int naxes, const nx_array *y,
 /* As reduce_in, of [x] of any dtype in its carrier, into destinations of
    any dtype but Arg's int64 positions: where theirs is not the carrier,
    into carrier_copy's arrays, then rounded once into them, but Arg's
-   extreme of [x]'s dtype, which reduce_in copies from [x]. */
+   extreme of [x]'s dtype, which reduce_in copies from [x]. A monoid's scan
+   starts from the carries [cy], of the carrier, where they are not
+   NULL. */
 static int reduce_into(task op, int r, const int *axes, int naxes,
                        const nx_array *y, const nx_array *y1,
-                       const nx_array *x, const fused *z, int threads) {
+                       const nx_array *x, const nx_array *cy, const fused *z,
+                       int threads) {
   int c = nx_cpu_carrier(x->dtype);
   int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
   const nx_array *y2[2] = {y, y1}, *d[2] = {y, y1};
@@ -3394,7 +3437,7 @@ static int reduce_into(task op, int r, const int *axes, int naxes,
     }
   }
   if (e == NX_OK)
-    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, z, threads);
+    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z, threads);
   for (int k = 0; k < 2; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK) {
@@ -3681,8 +3724,21 @@ static double call_cost(const call *c, const nx_array *x, const int64_t *s,
   return numel * (term + pad);
 }
 
-static value run(const call *c, value d0, value d1, value vx, value vpad) {
-  CAMLparam4(d0, d1, vx, vpad);
+/* Whether the carries [cy], where not NULL, fit [c], a monoid's scan into
+   [y]: NX_OK; NX_ARITY for another call's; NX_SHAPE unless they have [y]'s
+   shape but one along the scan's axis. */
+static int carried(const call *c, const nx_array *cy, const nx_array *y) {
+  if (cy == NULL) return NX_OK;
+  if (c->op != SCAN || c->r > NX_MONOID_MIN) return NX_ARITY;
+  if (cy->rank != y->rank) return NX_SHAPE;
+  for (int i = 0; i < y->rank; i++)
+    if (cy->dim[i] != (i == c->axes[0] ? 1 : y->dim[i])) return NX_SHAPE;
+  return NX_OK;
+}
+
+static value run(const call *c, value d0, value d1, value vx, value vpad,
+                 value vcarry) {
+  CAMLparam5(d0, d1, vx, vpad, vcarry);
   int dt = nx_array_dtype(vx), nd = d1 == Val_unit ? 1 : 2;
   int arg =
       c->op != MOMENTS && (c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN);
@@ -3693,11 +3749,14 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
   if (padded && nx_cpu_padding_of(Field(vpad, 0), vx, &pad, bits))
     CAMLreturn(Val_int(NX_SHAPE));
   int dt1 = nd == 1 ? dt : arg ? NX_INT64 : nx_array_dtype(d1);
-  nx_operand in[3] = {{d0, nx_array_dtype(d0), 1}, {d1, dt1, 1}};
+  int nc = Is_block(vcarry), n = nd + 1 + nc;
+  nx_operand in[4] = {{d0, nx_array_dtype(d0), 1}, {d1, dt1, 1}};
   in[nd] = (nx_operand){vx, dt, 0};
-  nx_array a[3], loaded, *x = &a[nd];
-  int e = nx_read(nd + 1, in, a);
+  if (nc) in[nd + 1] = (nx_operand){Field(vcarry, 0), nx_cpu_carrier(dt), 0};
+  nx_array a[4], loaded, *x = &a[nd];
+  int e = nx_read(n, in, a);
   if (e) CAMLreturn(Val_int(e));
+  const nx_array *cy = nc ? &a[nd + 1] : NULL;
   /* A padded operand is read from its padded copy; one a destination
      aliases, from a copy too, since a scan reads its terms again after it
      writes their results: for its chunks' totals, and in a Moments scan's
@@ -3710,8 +3769,9 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
   nx_array loop = {.rank = r};
   memcpy(loop.dim, padded ? ys : x->dim, sizeof(int64_t) * (size_t)r);
   if ((e = checked(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1], &loop,
-                   &terms, &outputs))) {
-    nx_done(nd + 1, a);
+                   &terms, &outputs)) ||
+      (e = carried(c, cy, &a[0]))) {
+    nx_done(n, a);
     CAMLreturn(Val_int(e));
   }
   double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
@@ -3722,7 +3782,7 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
                           : 0;
   if (failed) {
     nx_cpu_reacquire(released);
-    nx_done(nd + 1, a);
+    nx_done(n, a);
     caml_raise_out_of_memory();
   }
   if (copy) x = &loaded;
@@ -3730,11 +3790,11 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
   e = c->op == MOMENTS
           ? moments_into(c->axes[0], &a[0], &a[1], x, NULL, threads)
           : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
-                        x, NULL, threads);
+                        x, cy, NULL, threads);
   if (padded) free(loaded.base);
   else if (copy) nx_cpu_give(loaded.base);
   nx_cpu_reacquire(released);
-  nx_done(nd + 1, a);
+  nx_done(n, a);
   if (e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }
@@ -3760,7 +3820,8 @@ value nx_cpu_reduce(value r, value axes, value dsts, value x, value pad,
   if (c.naxes > NX_MAX_RANK) return Val_int(NX_SHAPE);
   for (int i = 0; i < c.naxes; i++)
     if (axis_of(Field(axes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad);
+  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad,
+             Val_none);
 }
 
 value nx_cpu_reduce_byte(value *argv, int argn) {
@@ -3816,8 +3877,9 @@ static struct custom_operations fused_ops = {
    copy. */
 static value run_fused(const call *c, value vp, value vrs, int rank,
                        const int64_t *shape, value vdsts, value vloads,
-                       value vpads) {
+                       value vpads, value vcarry) {
   CAMLparam5(vp, vrs, vdsts, vloads, vpads);
+  CAMLxparam1(vcarry);
   CAMLlocal1(owner);
   owner = caml_alloc_custom(&fused_ops, sizeof(fused_held), 0, 1);
   *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
@@ -3825,12 +3887,13 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   if (g == NULL) caml_raise_out_of_memory();
   ((fused_held *)Data_custom_val(owner))->g = g;
   int nl = nx_cpu_prog_ins(g), nd = (int)Wosize_val(vdsts), e = NX_OK;
+  int nc = Is_block(vcarry);
   int nr = (int)Wosize_val(vrs) / 2, want = 0;
   /* The tables, on the stack up to NX_MAX_OPERANDS entries, else in one
      block of the heap: the door's descriptors and operands, then each
      reduction's code, output and first destination. */
   int nt = nr > NX_MAX_OPERANDS ? nr : NX_MAX_OPERANDS;
-  int no = nd + nl > NX_MAX_OPERANDS ? nd + nl : NX_MAX_OPERANDS;
+  int no = nd + nl + nc > NX_MAX_OPERANDS ? nd + nl + nc : NX_MAX_OPERANDS;
   nx_array a_stack[NX_MAX_OPERANDS], *a = a_stack;
   nx_operand in_stack[NX_MAX_OPERANDS], *in = in_stack;
   int tables[3 * NX_MAX_OPERANDS], *rs = tables;
@@ -3897,10 +3960,14 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   for (int i = 0; i < nl; i++)
     in[nd + i] =
         (nx_operand){Field(Field(vloads, i), 0), nx_cpu_prog_in(g, i), 0};
-  if ((e = nx_read(nd + nl, in, a))) {
+  if (nc)
+    in[nd + nl] = (nx_operand){
+        Field(vcarry, 0), nx_cpu_carrier(nx_cpu_prog_held(g, ks[0])), 0};
+  if ((e = nx_read(nd + nl + nc, in, a))) {
     release(owner);
     CAMLreturn(Val_int(e));
   }
+  const nx_array *cy = nc ? &a[nd + nl] : NULL;
   /* Every reduction's destinations fit the loop, before any load is
      copied; nx_cpu.ml checked that the loads have its shape. */
   nx_array loop = {.rank = rank};
@@ -3911,8 +3978,13 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     e = checked(c->op, rs[i], c->axes, c->naxes, y,
                 two(c->op, rs[i]) ? y + 1 : y, &loop, &terms, &outputs);
   }
+  if (!e && nc) {
+    call ci = *c;
+    ci.r = rs[0];
+    e = carried(&ci, cy, &a[first[0]]);
+  }
   if (e) {
-    nx_done(nd + nl, a);
+    nx_done(nd + nl + nc, a);
     release(owner);
     CAMLreturn(Val_int(e));
   }
@@ -3974,7 +4046,7 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     z->k = ks[i];
     e = c->op == MOMENTS
             ? moments_into(c->axes[0], y, y1, &x, z, c->threads)
-            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, z,
+            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, cy, z,
                           c->threads);
   }
   /* A program that could not have its arenas computed nothing. */
@@ -3984,7 +4056,7 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     if (padded[i] || a[nd + i].alias) free(loads[i].base);
   nx_cpu_give(held);
   nx_cpu_reacquire(released);
-  nx_done(nd + nl, a);
+  nx_done(nd + nl + nc, a);
   release(owner);
   if (oom || e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
@@ -3994,10 +4066,10 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
    1 and 2), of the program [p] over the loop of shape [vshape], [loads]
    and their paddings [pads], by the reductions [rs], pairs of a
    reduction, or a monoid, and an output, in turn: a scan's one, [axes]
-   its one axis. */
+   its one axis, from the carries [carry] where it is Some. */
 value nx_cpu_reduce_prog(value op, value p, value rs, value vshape,
                          value axes, value dsts, value loads, value pads,
-                         value threads) {
+                         value carry, value threads) {
   call c = {.op = Int_val(op) == 0   ? REDUCE
                   : Int_val(op) == 1 ? SCAN
                                      : MOMENTS,
@@ -4012,18 +4084,19 @@ value nx_cpu_reduce_prog(value op, value p, value rs, value vshape,
     if ((shape[d] = Long_val(Field(vshape, d))) < 0) return Val_int(NX_SHAPE);
   for (int i = 0; i < c.naxes; i++)
     if (axis_of(Field(axes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  return run_fused(&c, p, rs, rank, shape, dsts, loads, pads);
+  return run_fused(&c, p, rs, rank, shape, dsts, loads, pads, carry);
 }
 
 value nx_cpu_reduce_prog_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_reduce_prog(argv[0], argv[1], argv[2], argv[3], argv[4],
-                            argv[5], argv[6], argv[7], argv[8]);
+                            argv[5], argv[6], argv[7], argv[8], argv[9]);
 }
 
-/* [dsts] holds Arg's two destinations, a monoid's or Logsumexp's one. */
+/* [dsts] holds Arg's two destinations, a monoid's or Logsumexp's one; a
+   monoid's scan starts from the carries [carry] where it is Some. */
 value nx_cpu_scan(value r, value axis, value dsts, value x, value pad,
-                  value threads) {
+                  value carry, value threads) {
   call c = {.op = SCAN,
             .r = Int_val(r),
             .naxes = 1,
@@ -4032,19 +4105,21 @@ value nx_cpu_scan(value r, value axis, value dsts, value x, value pad,
   if (c.r == NX_CPU_MOMENTS || Wosize_val(dsts) != (mlsize_t)(1 + two))
     return Val_int(NX_ARITY);
   if (axis_of(axis, &c.axes[0])) return Val_int(NX_SHAPE);
-  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad);
+  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad,
+             carry);
 }
 
 value nx_cpu_scan_byte(value *argv, int argn) {
   (void)argn;
-  return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+  return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                     argv[6]);
 }
 
 value nx_cpu_moments_scan(value axis, value mean, value var, value x,
                           value pad, value threads) {
   call c = {.op = MOMENTS, .naxes = 1, .threads = Int_val(threads)};
   if (axis_of(axis, &c.axes[0])) return Val_int(NX_SHAPE);
-  return run(&c, mean, var, x, pad);
+  return run(&c, mean, var, x, pad, Val_none);
 }
 
 value nx_cpu_moments_scan_byte(value *argv, int argn) {

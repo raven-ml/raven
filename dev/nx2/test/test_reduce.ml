@@ -420,8 +420,8 @@ module Core_only = struct
     | [| (r, _) |] when core r -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
     | _ -> A.Declined
 
-  let scan p ~axis ((r, _) as rk) ~dsts loads =
-    if core r then Nx_cpu.scan p ~axis rk ~dsts loads else A.Declined
+  let scan ?carry p ~axis ((r, _) as rk) ~dsts loads =
+    if core r then Nx_cpu.scan ?carry p ~axis rk ~dsts loads else A.Declined
 end
 
 module Core =
