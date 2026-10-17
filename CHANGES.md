@@ -236,6 +236,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.eigh` or `Nx.eigvalsh` of a `float32` matrix of repeated
+  eigenvalues no longer returns NaN for some matrices: rotations within one
+  eigenvalue, by angles of rounding errors, slowed convergence to a bit a
+  sweep. An element within the roundoff of the matrix's norm takes none.
 - A compiled function of reductions over one shape whose operands are read
   apart, such as `Nx.all` and `Nx.any` of `bit` views at different bit
   offsets, compiles. It raised `Invalid_argument "range 0_0 would run after a

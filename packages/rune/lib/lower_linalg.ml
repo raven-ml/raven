@@ -128,6 +128,23 @@ let diagonal_within tol x =
 (* The unit roundoff of the float dtype [dt]. *)
 let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
 
+(* [norm_roundoff l] is the unit roundoff times the Frobenius norm of each
+   symmetric matrix whose lower triangle [l] holds, zeros above it: an element
+   below the diagonal counts twice. [l] is divided by its largest magnitude
+   first, so that no square overflows. *)
+let norm_roundoff l =
+  let _, m, n = matrix l in
+  let largest = over_matrix Op.Max (Lower_arith.unary Abs l) in
+  let scale =
+    Ops.where (Ops.gt largest (zero largest)) largest (float largest 1.)
+  in
+  let l = fdiv l scale in
+  let twice =
+    Ops.where (Ops.eq (row_index m) (column_index n)) (float l 1.) (float l 2.)
+  in
+  let squares = over_matrix Op.Add (Ops.mul twice (Ops.mul l l)) in
+  Ops.mul (Ops.mul (Ops.sqrt squares) scale) (float scale (roundoff (dtype l)))
+
 (* Products
 
    [dot a b] multiplies the matrices of [a] and [b] as the reference's [dot]
@@ -457,15 +474,23 @@ let svd ~device ~full_matrices a =
 
    A round rotates pairs of rows and the same columns of the symmetric [x], each
    by the angle that zeroes the pair's off-diagonal element, and the same
-   columns of [v], which accumulates the rotations. *)
+   columns of [v], which accumulates the rotations.
+
+   An element within the unit roundoff of [x]'s norm takes no rotation. Between
+   two diagonal elements of one repeated eigenvalue such an element is rounding
+   error, as their difference is, so the angle they set is arbitrary, and the
+   turn mixes the pair's couplings to other eigenvalues: those the round's other
+   rotations zeroed with those they had not. Convergence then falls to a bit a
+   sweep: a [float32] 5 x 5 matrix of eigenvalues -1, 1 and 2 took 13 sweeps
+   to reach [4 n u], against its 8. The element left is within the roundoff
+   the sweeps reach. *)
 
 (* The sweeps that bring a matrix of [n] rows to diagonal, for a precision of
-   [p] bits. Two-sided Jacobi converges quadratically on distinct eigenvalues,
-   but only linearly on repeated ones, a constant number of bits a sweep, fewer
-   as [n] grows: over repeated, clustered, graded and ill-conditioned spectra,
-   reaching an off-diagonal norm of [4 n u] took at most [0.83] of [⌈p ⌈log2 n⌉
-   / 10⌉] sweeps, [u] the unit roundoff, up to [n = 64] in [float32] and
-   [float64]. *)
+   [p] bits, [⌈p ⌈log2 n⌉ / 10⌉]: the slowest spectra are of repeated
+   eigenvalues. Over repeated, clustered, graded and random spectra up to [n =
+   64] in [float32] and [float64], [0.83] of them reached an off-diagonal norm
+   of [0.43 n u], [u] the unit roundoff, against the [16 n u] a matrix fails
+   beyond. *)
 let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
 
 let eigh ~device ~vectors a =
@@ -474,16 +499,25 @@ let eigh ~device ~vectors a =
   let batch, n, _ = matrix x in
   let r = Shape.ndim x in
   (* The lower triangle, mirrored: the upper one is never read. *)
-  let x = Ops.where (Ops.ge (row_index n) (column_index n)) x (transpose x) in
+  let lower = Ops.ge (row_index n) (column_index n) in
+  let floor =
+    Shape.squeeze ~axis:(-1) (norm_roundoff (Ops.where lower x (zero x)))
+  in
+  let x = Ops.where lower x (transpose x) in
   let rows u = Shape.unsqueeze u (-1) and columns u = Shape.unsqueeze u (-2) in
   let round _ = function
     | x :: v ->
         let d = diagonal x and first u = part u (r - 2) 0 (n / 2) in
+        let gamma = first (diagonal (Shape.flip x [ r - 1 ])) in
+        let above =
+          Ops.gt (Lower_arith.unary Abs gamma)
+            (Shape.expand floor (Shape.shape gamma))
+        in
         let cosines, sines =
           rotations n
             (tangents ~alpha:(first d)
                ~beta:(first (Shape.flip d [ r - 2 ]))
-               ~gamma:(first (diagonal (Shape.flip x [ r - 1 ]))))
+               ~gamma:(Ops.where above gamma (zero gamma)))
         in
         let along axis per u = rotate u axis (per cosines, per sines) in
         along (r - 1) columns (along (r - 2) rows x)

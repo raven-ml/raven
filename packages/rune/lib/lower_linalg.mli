@@ -70,10 +70,14 @@ val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
     two-sided Jacobi rotations. For [n] rows it rotates for [⌈p ⌈log2 n⌉ / 10⌉]
     sweeps of the pairs of rows, [p] the precision in bits at which it computes,
     enough for the slowest spectra, of repeated eigenvalues, to reach [n] units
-    of roundoff of [a]'s norm. Every element of [v diag(w) vᵀ] and [vᵀ v] is
-    then within some ten [n] units of roundoff of [a]'s and the identity's. The
-    signs of the vectors, and the basis of the space of a repeated eigenvalue,
-    are unspecified. A matrix whose lower triangle holds NaN or an infinity, or
+    of roundoff of [a]'s norm. A pair whose element off the diagonal is within
+    one unit of roundoff of that norm takes no rotation. Every element of
+    [v diag(w) vᵀ − a] is then within some ten [n] units of roundoff of [a]'s
+    norm, and every element of [vᵀ v − I] within some ten [n] units of roundoff.
+    The bound is normwise: an eigenvalue of a graded matrix that is small
+    against its norm can lose all its relative accuracy. The signs of the
+    vectors, and the basis of the space of a repeated eigenvalue, are
+    unspecified. A matrix whose lower triangle holds NaN or an infinity, or
     whose rotated elements off the diagonal are not within [16 n] units of
     roundoff of its norm, fails. *)
 

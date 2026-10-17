@@ -877,6 +877,24 @@ let eigh =
                     eigh_values_agree ~bound:(eigh_bound u a) a);
               ]);
         };
+      test
+        "a float32 matrix of eigenvalues -1, 1 and 2, each repeated pair 4e-6 \
+         apart, reaches its roundoff" (fun () ->
+          (* Between the diagonal elements of one pair the elements are
+             rounding errors, and so is the pair's difference. *)
+          let nan = Float.nan in
+          let a =
+            Nx.create Nx.float32 [| 5; 5 |]
+              [|
+                0x1.2bd578p-2; nan; nan; nan; nan;
+                -0x1.24d0d6p-1; -0x1.0c8b84p-9; nan; nan; nan;
+                0x1.e436p-3; 0x1.a187b2p-1; 0x1.bae59p-3; nan; nan;
+                0x1.087a0cp-2; -0x1.031dd2p-3; 0x1.1e64d2p-2; 0x1.730eb4p-1; nan;
+                -0x1.d7e666p-1; -0x1.8375d2p-4; -0x1.3dcf88p-1; 0x1.ebfc6p-1;
+                0x1.8959b8p-1;
+              |]
+          in
+          eigh_values_agree ~bound:(eigh_bound 0x1p-24 a) a);
       slow "a 32 x 32 matrix of two repeated eigenvalues reaches its roundoff"
         (fun () ->
           List.iter
