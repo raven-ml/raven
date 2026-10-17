@@ -1628,6 +1628,8 @@ let submit_ref last rc wc sc outcome =
       end;
       (match sub.copy with
       | Some (a, b) ->
+          owned vd a;
+          owned vd b;
           reads vd a.mem;
           waits_all vd b.mem
       | None -> ());
