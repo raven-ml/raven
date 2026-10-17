@@ -29,14 +29,14 @@ type t = {
   mutable held : held option;
 }
 
-(* The function, and every region it holds by GPU address, so that a free or a
+(* The function, and every mapping it holds by GPU address, so that a free or a
    map of memory it does not hold is refused. A region of system memory whose
    unmap the GPU did not confirm waits in [unconfirmed] until a free after the
    function's release. [release] empties [tables], which only a live GPU's
    requests use: a free after it writes no table. *)
 and held = {
   fn : Function.t;
-  regions : region Tables.Address.t;
+  regions : shared Tables.Address.t;
   mutable unconfirmed : region list;
   mutable tables : Page_table.t option; (* [None] once released *)
 }
@@ -54,6 +54,11 @@ and region = {
 }
 
 and source = Allocated | Borrowed of int | Peer of region
+
+(* A mapping and the regions out over it: [holder] made it and holds what it
+   took, and each [map_peer] of memory the GPU maps already adds a region to
+   [out]. The last free gives back [holder]'s. *)
+and shared = { holder : region; mutable out : region list }
 
 (* The GPU's page is 4 KiB, the page every format's leaf level maps
    (Page_table.format). Its large page is 2 MiB, what the level above maps: a
@@ -243,7 +248,8 @@ let live fn m =
       (h, tables)
   | Some _ | None -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
 
-let keep h r = Tables.Address.replace h.regions r.mapping.va r
+let keep h r =
+  Tables.Address.replace h.regions r.mapping.va { holder = r; out = [ r ] }
 
 let alloc ?(uncached = false) m kind n =
   let h, tables = live "alloc" m in
@@ -321,7 +327,7 @@ let rec origin r = match r.source with Peer o -> origin o | _ -> r
 
 let holds h r =
   match Tables.Address.find_opt h.regions r.mapping.va with
-  | Some r' -> r' == r
+  | Some e -> List.memq r e.out
   | None -> false
 
 (* What [m] holds, of which [r] is a region. *)
@@ -333,21 +339,10 @@ let mine fn m r =
         "Memory.%s: the memory at 0x%x is not %s's, or was given back" fn
         r.mapping.va m.reach.bus
 
-(* Misuse is refused before anything is pinned or written: a region freed, its
-   origin freed, or addresses the GPU maps already. *)
-let map_peer m r =
-  let h, tables = live "map_peer" m in
-  ignore (mine "map_peer" r.owner r : held);
-  let r = origin r in
+(* A new mapping, for [m]'s GPU, of [r], another GPU's memory, at its owner's
+   address. *)
+let map_new m h tables r =
   let o = r.owner in
-  ignore (live "map_peer" o : held * Page_table.t);
-  ignore (mine "map_peer" o r : held);
-  if o == m then
-    invalid_argf "Memory.map_peer: the memory at 0x%x is %s's own" r.mapping.va
-      m.reach.bus;
-  if Tables.Address.mem h.regions r.mapping.va then
-    invalid_argf "Memory.map_peer: %s maps the memory at 0x%x already"
-      m.reach.bus r.mapping.va;
   let map = r.mapping in
   let mapped = function
     | Ok (Some p) ->
@@ -409,6 +404,34 @@ let map_peer m r =
                           pinned = None;
                         }))))
 
+(* Misuse is refused before anything is pinned or written: a region freed, or
+   its origin freed. Memory the GPU maps already, its own or a peer's it
+   mapped, lies at its owner's address, so a new region there shares that
+   mapping. *)
+let map_peer m r =
+  let h, tables = live "map_peer" m in
+  ignore (mine "map_peer" r.owner r : held);
+  let r = origin r in
+  ignore (live "map_peer" r.owner : held * Page_table.t);
+  ignore (mine "map_peer" r.owner r : held);
+  match Tables.Address.find_opt h.regions r.mapping.va with
+  | None -> map_new m h tables r
+  | Some e when origin e.holder != r ->
+      invalid_argf "Memory.map_peer: %s maps other memory at 0x%x" m.reach.bus
+        r.mapping.va
+  | Some e ->
+      let p =
+        {
+          e.holder with
+          off = r.off;
+          host = None;
+          source = Peer r;
+          pinned = None;
+        }
+      in
+      e.out <- p :: e.out;
+      Ok (Some p)
+
 (* Freeing *)
 
 (* Gives back what [r] holds but its entries, with the GPU's [tables] while it
@@ -431,18 +454,24 @@ let give_back m h tables r =
   | Allocated | Borrowed _ -> Space.free m.reach.space map.va
   | Peer _ -> ()
 
+(* The last region out over a mapping unmaps it and gives back its holder's. *)
 let free m r =
   let h = mine "free" m r in
-  Tables.Address.remove h.regions r.mapping.va;
+  let e = Tables.Address.find h.regions r.mapping.va in
+  e.out <- List.filter (fun r' -> r' != r) e.out;
   let tables = if Function.released h.fn then None else h.tables in
-  let confirmed =
-    match tables with
-    | None -> true
-    | Some tables -> Page_table.unmap tables ~va:r.mapping.va r.mapping.size
-  in
-  (* Memory the GPU may still reach stays until the GPU is released. *)
-  if confirmed then give_back m h tables r
-  else h.unconfirmed <- r :: h.unconfirmed;
+  if e.out = [] then begin
+    Tables.Address.remove h.regions r.mapping.va;
+    let r = e.holder in
+    let confirmed =
+      match tables with
+      | None -> true
+      | Some tables -> Page_table.unmap tables ~va:r.mapping.va r.mapping.size
+    in
+    (* Memory the GPU may still reach stays until the GPU is released. *)
+    if confirmed then give_back m h tables r
+    else h.unconfirmed <- r :: h.unconfirmed
+  end;
   if Option.is_none tables && h.unconfirmed <> [] then begin
     List.iter (give_back m h None) h.unconfirmed;
     h.unconfirmed <- []

@@ -167,25 +167,32 @@ val map_host : t -> int -> int -> (region option, string) result
     Raises [Invalid_argument] if [n <= 0]. *)
 
 val map_peer : t -> region -> (region option, string) result
-(** [map_peer m r] maps [r], a region of another GPU, for the GPU of [m], at
-    the address [r] has there. GPU memory is mapped through its owner's memory
+(** [map_peer m r] maps [r], a region of a GPU, [m]'s own included, for the
+    GPU of [m], at the address [r] has there. GPU memory is mapped through its owner's memory
     BAR or their fabric's link. System memory, allocated or borrowed, is mapped
     at its pages, which {!Function.pin} keeps for [m]'s GPU. If [r] is itself a
     {!Peer} region, [map_peer] maps the region it maps. The result's source is
     [Peer r'], where [r'] is the region its owner gave.
+
+    Where the GPU of [m] maps that memory already, as its own or through
+    another region [map_peer] gave, the result is a new region over the same
+    mapping, and it writes no table and pins nothing. The mapping stays until
+    every region over it is freed.
 
     [Error why] if the GPUs are on different machines, if their page tables
     take addresses from different spaces, naming both, if [r] is GPU memory
     that [m]'s GPU does not reach ({!reaches}), or if the system memory cannot
     be pinned, with {!Function.pin}'s reason.
 
-    Raises [Invalid_argument] if [r], or the region it maps, was freed, if it is
-    [m]'s GPU's own memory, or if the GPU of [m] maps its addresses already. *)
+    Raises [Invalid_argument] if [r], or the region it maps, was freed, or if
+    [m]'s GPU maps other memory at [r]'s addresses, as a free out of the
+    order {b Peers} states leaves. *)
 
 val free : t -> region -> unit
 (** [free m r] gives back what {!val-alloc}, {!map_host} or {!map_peer} gave.
-    It unmaps [r], then frees its memory or unpins it, and returns its
-    addresses. A {!Peer} region's memory stays its owner's. After the
-    function's release it writes no table.
+    Once no other region of [m] over [r]'s mapping is out, it unmaps [r], then
+    frees its memory or unpins it, and returns its addresses. A {!Peer}
+    region's memory stays its owner's. After the function's release it writes
+    no table.
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)

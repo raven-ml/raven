@@ -52,9 +52,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
-  memory and memory it maps already, which `Rig_edge.Driver.map_peer`
-  allows
 - rig.amd: `Counter.places` (counter.ml:42-53) divides active CUs evenly
   across arrays, which reserves 3 WGP slots where a harvested RX 9070 array
   has 4: take the width from KFD's `cu_per_simd_array` (topology.ml:179),

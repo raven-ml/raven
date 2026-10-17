@@ -1123,20 +1123,43 @@ let test_no_room () =
   Memory.free o.t_memory r;
   Function.free_dma o.t_fn lent
 
-(* A peer's region that was freed is refused, though the region it maps
-   lives. *)
-(* A refused map_peer of system memory the GPU maps already holds no pin. *)
-let test_mapped_again () =
+(* Memory a GPU maps already, a peer's it mapped or its own through a peer's
+   region, maps again as a region over the same mapping: same address and
+   pages, no pin and no table written, and the mapping stays until the last
+   region over it is freed. *)
+let test_mapped_again (kind, own) =
   with_gpus 2 @@ fun root _ gpus ->
   let o = List.nth gpus 0 and x = List.nth gpus 1 in
-  let r = given (Memory.alloc o.t_memory Host page) in
+  let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
   let p = mapped (Memory.map_peer x.t_memory r) in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.map_peer x.t_memory r);
-  Memory.free x.t_memory p;
-  Memory.free o.t_memory r;
-  equal ~msg:"system memory held" int 0 (held_bytes root)
+  let y, first = if own then (o, r) else (x, p) in
+  let bytes = held_bytes root and touches = y.t_g.touches in
+  let q = mapped (Memory.map_peer y.t_memory (if own then p else r)) in
+  equal ~msg:"its source" source (Peer r) (Memory.source q);
+  equal ~msg:"its address" hex (Memory.address first) (Memory.address q);
+  equal ~msg:"its pages" ranges
+    (merge (snd (Memory.pages first)))
+    (merge (snd (Memory.pages q)));
+  equal ~msg:"system memory held" int bytes (held_bytes root);
+  equal ~msg:"entries, zeroes and flushes" int touches y.t_g.touches;
+  Memory.free y.t_memory (if own then q else first);
+  equal ~msg:"the first free writes no table" int touches y.t_g.touches;
+  if own then Memory.free x.t_memory p;
+  Memory.free y.t_memory (if own then first else q);
+  at_least ~msg:"the last free unmaps" int ~than:(touches + 1) y.t_g.touches;
+  if not own then Memory.free o.t_memory r;
+  equal ~msg:"system memory held at the end" int 0 (held_bytes root)
 
+let mapped_again =
+  [
+    (Memory.Gpu, false);
+    (Memory.Host, false);
+    (Memory.Gpu, true);
+    (Memory.Host, true);
+  ]
+
+(* A peer's region that was freed is refused, though the region it maps
+   lives. *)
 let test_freed_peer () =
   with_gpus 3 @@ fun _ _ gpus ->
   let o = List.nth gpus 0 and x = List.nth gpus 1 and y = List.nth gpus 2 in
@@ -1161,7 +1184,9 @@ type m_region = {
   origin : m_region option;  (** For a peer's region, the region it maps. *)
   label : string;
   gpus_released : bool array;  (** Its pair's GPUs released. *)
-  mutable peers : int;  (** The live regions of other GPUs that map it. *)
+  mutable peers : int;  (** The live peers' regions over it. *)
+  mapping : m_region list ref;
+      (** The live regions over its mapping, which the last free unmaps. *)
   mutable freed : bool;
 }
 
@@ -1253,17 +1278,22 @@ let add m r =
 
 let live_gpu m i what = if m.released.(i) then invalid_arg (what ^ ": released")
 
-let new_region m ?origin ~system ~owning ~label i =
-  {
-    owner = i;
-    system;
-    owning;
-    origin;
-    label;
-    gpus_released = m.released;
-    peers = 0;
-    freed = false;
-  }
+let new_region m ?origin ?(mapping = ref []) ~system ~owning ~label i =
+  let r =
+    {
+      owner = i;
+      system;
+      owning;
+      origin;
+      label;
+      gpus_released = m.released;
+      peers = 0;
+      mapping;
+      freed = false;
+    }
+  in
+  mapping := r :: !mapping;
+  r
 
 let alloc_ref m i kind =
   live_gpu m i "alloc";
@@ -1283,16 +1313,11 @@ let map_host_sys s i slot =
 
 let origin r = Option.value r.origin ~default:r
 
-(* Withheld, each for a bug with a test of its own: a freed peer's region whose
-   origin lives, and system memory the GPU maps already. *)
-let peer_pre m i r =
+(* Withheld, for a bug with a test of its own: a freed peer's region whose
+   origin lives. *)
+let peer_pre _ _ r =
   let o = origin r in
-  let maps p =
-    p.owner = i && match p.origin with Some o' -> o' == o | None -> false
-  in
-  let pinned = o.label = "Host" || o.label = "Borrowed" in
-  (not (r.freed && Option.is_some r.origin && not o.freed))
-  && not (pinned && List.exists maps (live_regions m))
+  not (r.freed && Option.is_some r.origin && not o.freed)
 
 (* A region of another pair's GPU is of another machine. *)
 exception Other_machine
@@ -1305,15 +1330,15 @@ let map_peer_ref m i r =
   let same = o.gpus_released == m.released in
   cover "a region of another machine" (not same);
   if not same then raise Other_machine;
-  if o.owner = i then invalid_arg "map_peer: its own";
-  let maps p =
-    p.owner = i && match p.origin with Some o' -> o' == o | None -> false
+  (* The GPU maps the memory already: its own, or a peer's it mapped. *)
+  let over p = p.owner = i && origin p == o in
+  let mapping =
+    Option.map (fun p -> p.mapping) (List.find_opt over (live_regions m))
   in
-  if List.exists maps (live_regions m) then
-    invalid_arg "map_peer: mapped already";
+  cover "memory the GPU maps already" (Option.is_some mapping);
   o.peers <- o.peers + 1;
   add m
-    (new_region m ~origin:o ~system:o.system ~owning:false
+    (new_region m ~origin:o ?mapping ~system:o.system ~owning:false
        ~label:("Peer of " ^ o.label) i)
 
 let map_peer_sys s i (_, _, r) =
@@ -1328,10 +1353,11 @@ let free_ref r =
   if r.freed then invalid_arg "free: freed";
   r.freed <- true;
   Option.iter (fun o -> o.peers <- o.peers - 1) r.origin;
+  r.mapping := List.filter (fun p -> p != r) !(r.mapping);
   let released = r.gpus_released.(r.owner) in
   cover "a free after the release" released;
   cover "a free before the release" (not released);
-  not released
+  not released && !(r.mapping) = []
 
 let free_sys (s, i, r) =
   let x = s.gpus.(i) in
@@ -1433,10 +1459,12 @@ let on_files =
       test "map_host and map_peer without room for a table are Ok None"
         test_no_room;
       test "map_peer refuses a peer's region that was freed" test_freed_peer;
-      test
-        "a map_peer of system memory the GPU maps already is refused, holding \
-         no pin"
-        test_mapped_again;
+      cases
+        "a map_peer of memory the GPU maps already shares its mapping until \
+         the last free"
+        ~name:(fun (k, own) ->
+          Format.asprintf "%a%s" pp_kind k (if own then ", its own" else ""))
+        mapped_again test_mapped_again;
       test_after_release;
     ]
 
