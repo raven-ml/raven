@@ -1,0 +1,373 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* arm64's contraction kernels, in the base table: NEON is in every arm64
+   host.
+
+   float32 adds 8 × 12 outputs per step of k: 24 accumulators of four lanes,
+   three vectors of b and a broadcast of a, 28 of the 32 vector registers;
+   float64 8 × 6, 24 of two lanes. Each output adds b[j] · a[i] by FMLA, one
+   rounding, in increasing k. The M1's P-core issues four FMLA a cycle with
+   a latency of four, so 24 independent accumulators keep its pipes full;
+   its three load ports take a step's eight broadcasts (LD1R) and three
+   vectors of b in four of the six cycles its 24 FMLA take.
+
+   a's elements are broadcast one at a time, so that its rows are read in
+   place wherever they lie. A tile of fewer rows points its missing rows at
+   its last and stores only its own. A tile reads b's n columns and no
+   more (NX_CPU_B_COLUMNS), so that b is read in place at any width: its
+   vectors start every L columns, the last at n - L where L does not
+   divide n, as BLIS's armv8a small-matrix kernels (bli_gemmsup, BSD-3)
+   take a sliver's edge with narrower tiles. The last vector's lanes
+   overlap the one before: they compute the same chains and store the
+   same bits. Fewer than L columns move through a vector on the
+   stack. */
+
+#include <math.h>
+#include <string.h>
+
+#include "cpu.h"
+
+#if defined(__aarch64__)
+
+/* The kernels' speed (cpu.h): 99.8 GFLOP/s of float32 and 50.2 of float64
+   on a performance core of the M1 Max, against the 100-160 GB/s its
+   memcpy moves. */
+#define SPEED32 1.0
+#define SPEED64 0.5
+
+#define MR 8
+#define NV 3
+
+/* Unrolls a loop over a tile's rows or vectors under gcc, which then holds
+   the accumulators in registers: at -O2 it keeps them in memory and loads
+   and stores one around each multiply-add. clang unrolls the loops
+   itself. */
+#define PRAGMA(x) _Pragma(#x)
+#if defined(__clang__)
+#define UNROLL(n)
+#else
+#define UNROLL(n) PRAGMA(GCC unroll n)
+#endif
+
+/* A kernel of MR rows by at most NV vectors of [L] lanes of [T]. A tile
+   of [nv] vectors, a constant where it is inlined, reads b's columns from
+   at[v] for vector v; one of fewer than L columns reads them through [t],
+   L elements on the stack. */
+#define KERNEL(name, T, V, L, LOAD, STORE, DUP, FMA, ZERO)                   \
+  static inline __attribute__((always_inline)) void name##_tile(            \
+      int nv, int64_t rows, int64_t n, int64_t k, const T *const *ar,       \
+      int64_t a_k, const T *b, int64_t b_k, T *y, int64_t ldc,              \
+      nx_cpu_from from) {                                                   \
+    int narrow = nv == 1 && n < L;                                          \
+    int64_t at[NV];                                                         \
+    T t[L] = {0};                                                           \
+    V c[MR][NV];                                                            \
+    UNROLL(8) for (int v = 0; v < nv; v++)                                  \
+      at[v] = v + 1 < nv || n % L == 0 ? L * v : n - L;                     \
+    UNROLL(8) for (int i = 0; i < MR; i++)                                  \
+      UNROLL(8) for (int v = 0; v < nv; v++) {                              \
+        if (from == NX_CPU_FROM_ZERO || i >= rows) c[i][v] = ZERO;          \
+        else if (narrow) {                                                  \
+          for (int64_t j = 0; j < n; j++) t[j] = y[i * ldc + j];            \
+          c[i][v] = LOAD(t);                                                \
+        } else c[i][v] = LOAD(y + i * ldc + at[v]);                         \
+      }                                                                     \
+    for (int64_t p = 0, q = 0; p < k; p++, q += a_k, b += b_k) {            \
+      V bv[NV];                                                             \
+      UNROLL(8) for (int v = 0; v < nv; v++) {                              \
+        if (narrow) {                                                       \
+          for (int64_t j = 0; j < n; j++) t[j] = b[j];                      \
+          bv[v] = LOAD(t);                                                  \
+        } else bv[v] = LOAD(b + at[v]);                                     \
+      }                                                                     \
+      UNROLL(8) for (int i = 0; i < MR; i++) {                              \
+        V x = DUP(ar[i] + q);                                               \
+        UNROLL(8) for (int v = 0; v < nv; v++)                              \
+          c[i][v] = FMA(c[i][v], bv[v], x);                                 \
+      }                                                                     \
+    }                                                                       \
+    UNROLL(8) for (int i = 0; i < rows; i++)                                \
+      UNROLL(8) for (int v = 0; v < nv; v++) {                              \
+        if (!narrow) {                                                      \
+          STORE(y + i * ldc + at[v], c[i][v]);                              \
+          continue;                                                         \
+        }                                                                   \
+        STORE(t, c[i][v]);                                                  \
+        for (int64_t j = 0; j < n; j++) y[i * ldc + j] = t[j];              \
+      }                                                                     \
+  }                                                                         \
+  static void name(int64_t m, int64_t n, int64_t k, const void *va,         \
+                   int64_t a_row, int64_t a_k, const void *vb, int64_t b_k, \
+                   void *vc, int64_t ldc, nx_cpu_from from) {               \
+    for (int64_t i0 = 0; i0 < m; i0 += MR) {                                \
+      int64_t rows = m - i0 < MR ? m - i0 : MR;                             \
+      const T *a = (const T *)va + i0 * a_row, *b = vb, *ar[MR];            \
+      T *y = (T *)vc + i0 * ldc;                                            \
+      for (int i = 0; i < MR; i++)                                          \
+        ar[i] = a + (i < rows ? i : rows - 1) * a_row;                      \
+      if (n > 2 * L)                                                        \
+        name##_tile(3, rows, n, k, ar, a_k, b, b_k, y, ldc, from);          \
+      else if (n > L)                                                       \
+        name##_tile(2, rows, n, k, ar, a_k, b, b_k, y, ldc, from);          \
+      else name##_tile(1, rows, n, k, ar, a_k, b, b_k, y, ldc, from);       \
+    }                                                                       \
+  }
+
+KERNEL(kernel_f32, float, float32x4_t, 4, vld1q_f32, vst1q_f32,
+       vld1q_dup_f32, vfmaq_f32, vdupq_n_f32(0))
+KERNEL(kernel_f64, double, float64x2_t, 2, vld1q_f64, vst1q_f64,
+       vld1q_dup_f64, vfmaq_f64, vdupq_n_f64(0))
+
+/* The integers of 8 to 32 bits by MLA, modulo their width, as unsigned
+   numbers, which gives a signed accumulator's bits too; 64-bit ones have
+   no vector multiply and keep the portable kernel. */
+KERNEL(kernel_u8, uint8_t, uint8x16_t, 16, vld1q_u8, vst1q_u8, vld1q_dup_u8,
+       vmlaq_u8, vdupq_n_u8(0))
+KERNEL(kernel_u16, uint16_t, uint16x8_t, 8, vld1q_u16, vst1q_u16,
+       vld1q_dup_u16, vmlaq_u16, vdupq_n_u16(0))
+KERNEL(kernel_u32, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, vmlaq_u32, vdupq_n_u32(0))
+
+/* Quads of int8 or uint8 by SDOT or UDOT, where the host has them: each
+   lane adds the four products of a word of b and the broadcast word of a,
+   16 products an instruction where MLA makes 4. */
+#if defined(__ARM_FEATURE_DOTPROD)
+#define SDOT(c, b, x)                                                     \
+  vreinterpretq_u32_s32(vdotq_s32(vreinterpretq_s32_u32(c),              \
+                                  vreinterpretq_s8_u32(b),               \
+                                  vreinterpretq_s8_u32(x)))
+#define UDOT(c, b, x) \
+  vdotq_u32(c, vreinterpretq_u8_u32(b), vreinterpretq_u8_u32(x))
+KERNEL(kernel_sdot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, SDOT, vdupq_n_u32(0))
+KERNEL(kernel_udot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, UDOT, vdupq_n_u32(0))
+
+/* Quads' dots: the SDOT dot product of ggml's ggml_vec_dot_q8_0_q8_0,
+   here over whole rows with no blocks or scales, in a tile of two rows of
+   a by four columns of b: a vector of each row's words against one of
+   each column's, eight accumulators, whose lanes add at the end. Eight
+   chains in flight cover SDOT's latency. A tail of fewer than four words
+   goes through words zeroed on the stack. */
+#define QDOT_ROW(DOT, i, x, b0, b1, b2, b3) \
+  c##i##0 = DOT(c##i##0, b0, x);            \
+  c##i##1 = DOT(c##i##1, b1, x);            \
+  c##i##2 = DOT(c##i##2, b2, x);            \
+  c##i##3 = DOT(c##i##3, b3, x);
+#define QDOT_STEP(DOT, x0, x1, b0, b1, b2, b3) \
+  {                                            \
+    uint32x4_t v0 = b0, v1 = b1, v2 = b2, v3 = b3; \
+    QDOT_ROW(DOT, 0, x0, v0, v1, v2, v3)       \
+    QDOT_ROW(DOT, 1, x1, v0, v1, v2, v3)       \
+  }
+#define QDOT_SUMS(i)                                              \
+  vpaddq_u32(vpaddq_u32(c##i##0, c##i##1), vpaddq_u32(c##i##2, c##i##3))
+#define QDOT(name, DOT)                                                    \
+  static void name(const uint32_t *a, int64_t lda, const uint32_t *b,     \
+                   int64_t ldb, int64_t n, uint32_t *y, int64_t ldy) {    \
+    uint32x4_t c00 = vdupq_n_u32(0), c01 = c00, c02 = c00, c03 = c00;     \
+    uint32x4_t c10 = c00, c11 = c00, c12 = c00, c13 = c00;                \
+    const uint32_t *r[6] = {a, a + lda, b, b + ldb, b + 2 * ldb,          \
+                            b + 3 * ldb};                                 \
+    int64_t q = 0;                                                        \
+    for (; q + 4 <= n; q += 4)                                            \
+      QDOT_STEP(DOT, vld1q_u32(r[0] + q), vld1q_u32(r[1] + q),            \
+                vld1q_u32(r[2] + q), vld1q_u32(r[3] + q),                 \
+                vld1q_u32(r[4] + q), vld1q_u32(r[5] + q))                 \
+    if (q < n) {                                                          \
+      uint32_t t[6][4] = {{0}};                                           \
+      for (int i = 0; i < 6; i++)                                         \
+        memcpy(t[i], r[i] + q, (size_t)(n - q) * 4);                      \
+      QDOT_STEP(DOT, vld1q_u32(t[0]), vld1q_u32(t[1]), vld1q_u32(t[2]),   \
+                vld1q_u32(t[3]), vld1q_u32(t[4]), vld1q_u32(t[5]))        \
+    }                                                                     \
+    vst1q_u32(y, QDOT_SUMS(0));                                           \
+    vst1q_u32(y + ldy, QDOT_SUMS(1));                                     \
+  }
+QDOT(quads_dot_s8, SDOT)
+QDOT(quads_dot_u8, UDOT)
+
+/* Quads' axpys: four rows of b, read in place, zipped in registers into
+   words of four elements along k per column, each column's word against
+   the broadcast word of a's four by SDOT (UDOT for uint8): 64 columns at
+   a time in 16 accumulators of 4 lanes, half the vector registers, then
+   16 in 4, then one at a time. Rows past k repeat the last, which a's elements
+   there, zeros, cancel. They leave [next] to the hardware's prefetchers. */
+#define QZIP(DOT, c0, c1, c2, c3, x, r0, r1, r2, r3, at)          \
+  {                                                               \
+    uint8x16_t v0 = vld1q_u8(r0 + at), v1 = vld1q_u8(r1 + at);    \
+    uint8x16_t v2 = vld1q_u8(r2 + at), v3 = vld1q_u8(r3 + at);    \
+    uint16x8_t l01 = vreinterpretq_u16_u8(vzip1q_u8(v0, v1));     \
+    uint16x8_t h01 = vreinterpretq_u16_u8(vzip2q_u8(v0, v1));     \
+    uint16x8_t l23 = vreinterpretq_u16_u8(vzip1q_u8(v2, v3));     \
+    uint16x8_t h23 = vreinterpretq_u16_u8(vzip2q_u8(v2, v3));     \
+    c0 = DOT(c0, vreinterpretq_u32_u16(vzip1q_u16(l01, l23)), x); \
+    c1 = DOT(c1, vreinterpretq_u32_u16(vzip2q_u16(l01, l23)), x); \
+    c2 = DOT(c2, vreinterpretq_u32_u16(vzip1q_u16(h01, h23)), x); \
+    c3 = DOT(c3, vreinterpretq_u32_u16(vzip2q_u16(h01, h23)), x); \
+  }
+/* Rows t to t + 3 of b from [j], and a's word at t. */
+#define QZIP_ROWS                                                 \
+  const uint8_t *r0 = b + t * ldb + j;                            \
+  const uint8_t *r1 = t + 1 < k ? r0 + ldb : r0;                  \
+  const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;                  \
+  const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;                  \
+  uint32x4_t x = vld1q_dup_u32((const uint32_t *)(a + t));
+#define QAXPY_1(name, DOT, T)                                             \
+  static void name(const uint8_t *a, const uint8_t *b, int64_t ldb,       \
+                   int64_t k, int64_t n, uint32_t *y) {                   \
+    int64_t j = 0;                                                        \
+    for (; j + 64 <= n; j += 64) {                                        \
+      uint32x4_t c[16];                                                   \
+      for (int v = 0; v < 16; v++) c[v] = vld1q_u32(y + j + 4 * v);       \
+      for (int64_t t = 0; t < k; t += 4) {                                \
+        QZIP_ROWS                                                         \
+        QZIP(DOT, c[0], c[1], c[2], c[3], x, r0, r1, r2, r3, 0)           \
+        QZIP(DOT, c[4], c[5], c[6], c[7], x, r0, r1, r2, r3, 16)          \
+        QZIP(DOT, c[8], c[9], c[10], c[11], x, r0, r1, r2, r3, 32)        \
+        QZIP(DOT, c[12], c[13], c[14], c[15], x, r0, r1, r2, r3, 48)      \
+      }                                                                   \
+      for (int v = 0; v < 16; v++) vst1q_u32(y + j + 4 * v, c[v]);        \
+    }                                                                     \
+    for (; j + 16 <= n; j += 16) {                                        \
+      uint32x4_t c[4];                                                    \
+      for (int v = 0; v < 4; v++) c[v] = vld1q_u32(y + j + 4 * v);        \
+      for (int64_t t = 0; t < k; t += 4) {                                \
+        QZIP_ROWS                                                         \
+        QZIP(DOT, c[0], c[1], c[2], c[3], x, r0, r1, r2, r3, 0)           \
+      }                                                                   \
+      for (int v = 0; v < 4; v++) vst1q_u32(y + j + 4 * v, c[v]);         \
+    }                                                                     \
+    for (; j < n; j++)                                                    \
+      for (int64_t t = 0; t < k; t++)                                     \
+        y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);                  \
+  }
+/* The rows one at a time. */
+#define QAXPY(name, DOT, T)                                               \
+  QAXPY_1(name##_1, DOT, T)                                               \
+  static void name(const uint8_t *a, int64_t lda, int64_t rows,           \
+                   const uint8_t *b, int64_t ldb, int64_t k, int64_t n,   \
+                   uint32_t *y, int64_t ldy, const uint8_t *next) {       \
+    (void)next;                                                           \
+    for (int64_t i = 0; i < rows; i++)                                    \
+      name##_1(a + i * lda, b, ldb, k, n, y + i * ldy);                   \
+  }
+QAXPY(quads_axpy_s8, SDOT, int8_t)
+QAXPY(quads_axpy_u8, UDOT, uint8_t)
+#endif
+
+/* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
+   float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
+   vectors. */
+#define VT float32x4_t
+#define LOAD vld1q_f32
+#define STORE vst1q_f32
+#define BCAST vdupq_n_f32
+#define ADD vaddq_f32
+#define FMA vfmaq_f32
+#include "gemm_lanes.h"
+DOT(dot1_f32, float, 4, 4, 1, fmaf)
+DOT(dot2_f32, float, 4, 4, 2, fmaf)
+DOT(dot4_f32, float, 4, 4, 4, fmaf)
+DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
+AXPY(axpy_f32, float, 4, fmaf)
+TILE(tile_f32, float, 4, fmaf)
+GEMV(gemv_f32, float, 4, fmaf)
+#undef VT
+#undef LOAD
+#undef STORE
+#undef BCAST
+#undef ADD
+#undef FMA
+#define VT float64x2_t
+#define LOAD vld1q_f64
+#define STORE vst1q_f64
+#define BCAST vdupq_n_f64
+#define ADD vaddq_f64
+#define FMA vfmaq_f64
+DOT(dot1_f64, double, 2, 8, 1, fma)
+DOT(dot2_f64, double, 2, 8, 2, fma)
+DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
+AXPY(axpy_f64, double, 2, fma)
+TILE(tile_f64, double, 2, fma)
+GEMV(gemv_f64, double, 2, fma)
+
+/* The rows of a block of a, and those up to which a product streams b
+   past all of a (cpu.h's mc and few). */
+#define MC 128
+
+/* The integers' kernels of [lanes] lanes: a sliver of b is as many bytes
+   along k as float32's. */
+static nx_cpu_gemm integers(nx_cpu_kernel f, int lanes) {
+  return (nx_cpu_gemm){.kernel = {.f = f,
+                                  .mr = MR,
+                                  .nr = NV * lanes,
+                                  .a = NX_CPU_A_ELEMENTS,
+                                  .b = NX_CPU_B_COLUMNS,
+                                  .flops_per_byte = SPEED32 * lanes / 4,
+                                  .shared = 1},
+                       .mc = MC,
+                       .kc = 512,
+                       .nc = 3072,
+                       .few = MC};
+}
+
+void nx_cpu_set_neon(nx_cpu_target *t) {
+  t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
+      .kernel = {.f = kernel_f32,
+                 .mr = MR,
+                 .nr = 12,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_COLUMNS,
+                 .flops_per_byte = SPEED32,
+                 .shared = 1},
+      .mc = MC,
+      .kc = 512,
+      .nc = 3072,
+      .few = MC};
+  t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
+      .kernel = {.f = kernel_f64,
+                 .mr = MR,
+                 .nr = 6,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_COLUMNS,
+                 .flops_per_byte = SPEED64,
+                 .shared = 1},
+      .mc = MC,
+      .kc = 256,
+      .nc = 3072,
+      .few = MC};
+  t->dot[NX_FLOAT32] = dot_f32;
+  t->dot[NX_FLOAT64] = dot_f64;
+  t->axpy[NX_FLOAT32] = axpy_f32;
+  t->axpy[NX_FLOAT64] = axpy_f64;
+  t->tile[NX_FLOAT32] = tile_f32;
+  t->tile[NX_FLOAT64] = tile_f64;
+  t->gemv[NX_FLOAT32] = gemv_f32;
+  t->gemv[NX_FLOAT64] = gemv_f64;
+  t->gemm[NX_INT8] = t->gemm[NX_UINT8] = integers(kernel_u8, 16);
+  t->gemm[NX_INT16] = t->gemm[NX_UINT16] = integers(kernel_u16, 8);
+  t->gemm[NX_INT32] = t->gemm[NX_UINT32] = integers(kernel_u32, 4);
+#if defined(__ARM_FEATURE_DOTPROD)
+  t->quads[NX_INT8] = integers(kernel_sdot, 4);
+  t->quads[NX_UINT8] = integers(kernel_udot, 4);
+  t->quads_dot[NX_INT8] = quads_dot_s8;
+  t->quads_dot[NX_UINT8] = quads_dot_u8;
+  t->quads_axpy[NX_INT8] = quads_axpy_s8;
+  t->quads_axpy[NX_UINT8] = quads_axpy_u8;
+  /* On the M1 Max by a 4096 × 4096 weight stored [k × n], zipping for
+     fewer than MR rows took 1 row 1.7 times as long, and the axpy for MR
+     or more 1.3 to 1.9 times as long. */
+  t->quads_zip_rows = MR;
+#endif
+}
+
+#else
+
+/* ISO C forbids an empty unit. */
+typedef int nx_cpu_no_neon;
+
+#endif

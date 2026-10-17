@@ -1,0 +1,354 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Every layout is in canonical form: an axis of extent 1 has stride 0, and a
+   layout with no element has offset 0 and every stride 0. [finish] puts any
+   layout in it; [contiguous] builds C order in it directly. A layout's arrays
+   are its own: no caller's array is kept or returned, and nothing writes them
+   once it is built.
+
+   C reads the fields in this order (nx_layout.h): the two change together. *)
+
+type t = {
+  shape : int array;
+  strides : int array;
+  offset : int;
+  flags : int;
+  lo : int;
+  hi : int;
+}
+
+let max_rank = Shape.max_rank
+let max_numel = Shape.max_numel
+let contiguous_flag = 1
+let distinct_flag = 2
+let empty_flag = 4
+let rank l = Array.length l.shape
+let flags l = l.flags
+let offset l = l.offset
+let span l = (l.lo, l.hi)
+let unsafe_dim l i = Array.unsafe_get l.shape i
+let unsafe_stride l i = Array.unsafe_get l.strides i
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
+let dim l i =
+  if i < 0 || i >= rank l then
+    invalid_argf "Layout.dim: axis %d of %d" i (rank l);
+  unsafe_dim l i
+
+let stride l i =
+  if i < 0 || i >= rank l then
+    invalid_argf "Layout.stride: axis %d of %d" i (rank l);
+  unsafe_stride l i
+
+let numel l =
+  if flags l land empty_flag <> 0 then 0
+  else
+    let n = ref 1 in
+    for i = 0 to rank l - 1 do
+      n := !n * unsafe_dim l i
+    done;
+    !n
+
+let shape l = Shape.copy l.shape
+let strides l = Shape.copy l.strides
+let is_contiguous l = flags l land contiguous_flag <> 0
+let is_distinct l = flags l land distinct_flag <> 0
+
+let ints_equal (a : int array) (b : int array) =
+  let n = Array.length a in
+  n = Array.length b
+  &&
+  let i = ref 0 in
+  while !i < n && Array.unsafe_get a !i = Array.unsafe_get b !i do
+    incr i
+  done;
+  !i = n
+
+let equal l l' =
+  l == l'
+  || l.offset = l'.offset
+     && ints_equal l.shape l'.shape
+     && ints_equal l.strides l'.strides
+
+(* The fields [equal] compares, mixed into one int: no tuple to hash. *)
+let hash l =
+  let h = ref l.offset in
+  for i = 0 to rank l - 1 do
+    h := (!h * 31) + unsafe_dim l i;
+    h := (!h * 31) + unsafe_stride l i
+  done;
+  Hashtbl.hash !h
+
+(* Building *)
+
+let negative fn = invalid_argf "%s: the layout reaches a negative position" fn
+
+let past fn =
+  invalid_argf "%s: the layout's span ends past max_numel (%d)" fn max_numel
+
+(* The layout of [shape], [strides] and [offset] in canonical form, with its
+   flags and span. It takes [shape] and [strides] as its own and writes
+   [strides]. Extents are non-negative and their product is admitted
+   (Shape.numel); a stride of an axis of extent above 1 times the extent fits
+   in an int. The span is checked against [max_numel]. *)
+let finish fn shape strides offset =
+  let r = Array.length shape in
+  let empty = ref false in
+  for i = 0 to r - 1 do
+    let d = shape.(i) in
+    if d = 0 then empty := true else if d = 1 then strides.(i) <- 0
+  done;
+  if !empty then begin
+    Array.fill strides 0 r 0;
+    {
+      shape;
+      strides;
+      offset = 0;
+      flags = contiguous_flag lor distinct_flag lor empty_flag;
+      lo = 0;
+      hi = 0;
+    }
+  end
+  else begin
+    (* The span, from the offset and each axis's reach; C order, where stride i
+       is the product of the later extents, or 0 for an axis of extent 1. The
+       offset and every reach lie within the span, so each is bounded first:
+       then their sum, of at most 33 terms below 2^53, fits. *)
+    if offset < 0 then negative fn;
+    if offset >= max_numel then past fn;
+    let lo = ref offset and hi = ref offset in
+    let contiguous = ref true and run = ref 1 in
+    for i = r - 1 downto 0 do
+      let d = shape.(i) and st = strides.(i) in
+      let reach = (d - 1) * st in
+      if reach <= -max_numel then negative fn;
+      if reach >= max_numel then past fn;
+      if reach < 0 then lo := !lo + reach else hi := !hi + reach;
+      if st <> if d = 1 then 0 else !run then contiguous := false;
+      run := !run * d
+    done;
+    (* A position counts elements from a buffer's first byte: a negative one
+       lies outside every buffer. With [0 <= lo] and [hi < max_numel], every
+       reach below sums to at most [hi - 1 - lo]. *)
+    if !lo < 0 then negative fn;
+    if !hi >= max_numel then past fn;
+    (* Distinct: each axis of extent above 1 has a stride above the reach of the
+       axes of smaller stride, ties broken by axis. *)
+    let distinct = ref true in
+    for j = 0 to r - 1 do
+      let dj = shape.(j) in
+      if dj > 1 then begin
+        let sj = abs strides.(j) and below = ref 0 in
+        for k = 0 to r - 1 do
+          let dk = shape.(k) and sk = abs strides.(k) in
+          if dk > 1 && (sk < sj || (sk = sj && k < j)) then
+            below := !below + ((dk - 1) * sk)
+        done;
+        if sj <= !below then distinct := false
+      end
+    done;
+    let flags =
+      (if !contiguous then contiguous_flag else 0)
+      lor if !distinct then distinct_flag else 0
+    in
+    { shape; strides; offset; flags; lo = !lo; hi = !hi + 1 }
+  end
+
+(* Constructors *)
+
+(* A C-order layout is canonical, contiguous and distinct, with span [[0, n)]:
+   [contiguous] builds it without [finish]'s general checks.
+
+   A caller's array is read once: another domain may write it while a
+   constructor runs, so each one copies it on entry and checks and uses the
+   copy. *)
+let contiguous s =
+  let shape = Shape.copy s in
+  let r = Array.length shape in
+  Shape.check_rank "Layout.contiguous" r;
+  let n = Shape.numel "Layout.contiguous" shape in
+  let strides = Shape.zeros r in
+  let run = ref 1 in
+  for i = r - 1 downto 0 do
+    let d = Array.unsafe_get shape i in
+    if n > 0 && d > 1 then Array.unsafe_set strides i !run;
+    run := !run * d
+  done;
+  let flags = contiguous_flag lor distinct_flag in
+  if n = 0 then
+    { shape; strides; offset = 0; flags = flags lor empty_flag; lo = 0; hi = 0 }
+  else { shape; strides; offset = 0; flags; lo = 0; hi = n }
+
+let v ?(offset = 0) ~strides s =
+  (* A caller's array is read once. *)
+  let s = Shape.copy s and strides = Shape.copy strides in
+  let r = Array.length s in
+  Shape.check_rank "Layout.v" r;
+  if Array.length strides <> r then
+    invalid_argf "Layout.v: %d strides for %d axes" (Array.length strides) r;
+  ignore (Shape.numel "Layout.v" s);
+  for i = 0 to r - 1 do
+    let d = s.(i) and st = strides.(i) in
+    (* As in Shape.numel, the division runs only for factors past 2^31. *)
+    if
+      d > 1
+      && (st = min_int
+         || (abs st lor (d - 1) >= 1 lsl 31 && abs st > max_int / (d - 1)))
+    then
+      invalid_argf
+        "Layout.v: axis %d has extent %d and stride %d: its reach overflows" i d
+        st
+  done;
+  finish "Layout.v" s strides offset
+
+(* Movements. Each writes the strides of the result, of shape [s'], from [l]'s;
+   [finish] makes it canonical. A stride is formed only for an axis of extent
+   above 1, where the result's span, inside [l]'s, bounds it. *)
+
+let moved = finish "Layout.move"
+
+(* The first axis of [s] from [i] whose extent is not 1, or [s]'s rank. *)
+let past_ones s i =
+  let i = ref i in
+  while !i < Array.length s && Array.unsafe_get s !i = 1 do
+    incr i
+  done;
+  !i
+
+(* Strides for [s'] over the same elements in the same C order as [l], if
+   strides express it. Axes of extent 1 are left out on both sides; the others
+   are matched in groups of equal product, and a group of [l]'s axes must lay
+   out one run. *)
+let reshape l s' =
+  let r = rank l in
+  let strides = Shape.zeros (Array.length s') in
+  (* [i] and [j] walk [l]'s axes and [s']'s, skipping extents of 1. *)
+  let i = ref (past_ones l.shape 0) and j = ref (past_ones s' 0) in
+  let runs = ref true in
+  while !runs && !i < r do
+    (* Grow a group of each side's axes until their products are equal.
+       Move.shape checked that the shapes have one number of elements, so
+       neither side runs out first. *)
+    let i0 = !i and j0 = !j and po = ref 1 and pn = ref 1 and last = ref !i in
+    while not (!po = !pn && !i > i0) do
+      if !po <= !pn then begin
+        let a = !i in
+        if a > i0 && unsafe_stride l !last <> unsafe_stride l a * unsafe_dim l a
+        then runs := false;
+        po := !po * unsafe_dim l a;
+        last := a;
+        i := past_ones l.shape (a + 1)
+      end
+      else begin
+        pn := !pn * Array.unsafe_get s' !j;
+        j := past_ones s' (!j + 1)
+      end
+    done;
+    (* The group of [l] lays out one run: the new axes split it in C order. *)
+    let st = ref (unsafe_stride l !last) in
+    for k = !j - 1 downto j0 do
+      let d = Array.unsafe_get s' k in
+      if d > 1 then begin
+        Array.unsafe_set strides k !st;
+        st := !st * d
+      end
+    done
+  done;
+  if !runs then Some (moved s' strides (offset l)) else None
+
+(* A movement's arrays are its caller's, read once: [move] copies those it reads
+   after [Move.shape] checks them. Of a [Reshape] or a [Broadcast] it reads only
+   the shape [Move.shape] returns, a copy. *)
+let own : Move.t -> Move.t = function
+  | (Reshape _ | Broadcast _) as m -> m
+  | Permute p -> Permute (Shape.copy p)
+  | Slice rs -> Slice (Array.copy rs)
+  | Window ws -> Window (Array.copy ws)
+
+(* [Move.shape] neither keeps nor writes the shape it is given. *)
+let move m l =
+  let m = own m in
+  let s' = Move.shape m l.shape in
+  let r = rank l and r' = Array.length s' in
+  (* CR: Pass st into reshape: move already owns a zeroed stride array,
+     but reshape allocates another and leaves this one unused. Reusing it
+     preserves unit-axis zeros, result ownership and None. Re-record
+     layout/reshape-4 and array/move-reshape-broadcast. *)
+  let st = Shape.zeros r' in
+  if numel l = 0 || Array.mem 0 s' then Some (moved s' st 0)
+  else
+    match m with
+    | Move.Reshape _ -> reshape l s'
+    | Broadcast _ ->
+        for i = 0 to r' - 1 do
+          let j = i - r' + r in
+          st.(i) <- (if j < 0 then 0 else unsafe_stride l j)
+        done;
+        Some (moved s' st (offset l))
+    | Permute p ->
+        for i = 0 to r' - 1 do
+          st.(i) <- unsafe_stride l (Array.unsafe_get p i)
+        done;
+        Some (moved s' st (offset l))
+    | Slice rs ->
+        let offset = ref (offset l) in
+        for i = 0 to r - 1 do
+          let x = rs.(i) and s = unsafe_stride l i in
+          offset := !offset + (x.start * s);
+          st.(i) <- (if x.count > 1 then s * x.step else 0)
+        done;
+        Some (moved s' st !offset)
+    | Window ws ->
+        (* Axis [w.axis] steps from window to window; the appended axis [r + j]
+           steps within window [j]. *)
+        for i = 0 to r - 1 do
+          st.(i) <- unsafe_stride l i
+        done;
+        Array.iteri
+          (fun j (w : Move.window) ->
+            let s = unsafe_stride l w.axis in
+            st.(w.axis) <- (if s'.(w.axis) > 1 then s * w.step else 0);
+            st.(r + j) <- (if w.size > 1 then s * w.dilation else 0))
+          ws;
+        Some (moved s' st (offset l))
+
+(* Coalescing *)
+
+external coalesce_into : t array -> int array -> int = "nx_array_coalesce"
+[@@noalloc]
+
+let same_shape l l' =
+  let r = Array.length l.shape in
+  r = Array.length l'.shape
+  &&
+  let i = ref 0 in
+  while !i < r && Array.unsafe_get l.shape !i = Array.unsafe_get l'.shape !i do
+    incr i
+  done;
+  !i = r
+
+(* The coalescer refuses what is checked here first, so it answers [NX_OK]. *)
+let coalesce ls =
+  let n = Array.length ls in
+  if n < 1 || n > 16 then
+    invalid_argf "Layout.coalesce: %d layouts, not 1 to 16" n;
+  if not (Array.for_all (same_shape ls.(0)) ls) then
+    invalid_arg "Layout.coalesce: layouts of different shapes";
+  let out = Array.make (1 + max_rank + (n * (1 + max_rank))) 0 in
+  let e = coalesce_into ls out in
+  if e <> 0 then invalid_argf "Layout.coalesce: the coalescer answered %d" e;
+  (* The coalescer built each layout from checked ones: [finish] computes its
+     span and flags, over arrays of its own. *)
+  let r = out.(0) in
+  Array.init n (fun k ->
+      let at = 1 + r + (k * (1 + r)) in
+      finish "Layout.coalesce" (Array.sub out 1 r)
+        (Array.sub out (at + 1) r)
+        out.(at))
+
+let pp ppf l =
+  Format.fprintf ppf "{shape = %a; strides = %a; offset = %d}" Shape.pp
+    (shape l) Shape.pp (strides l) (offset l)

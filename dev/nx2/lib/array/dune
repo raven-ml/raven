@@ -1,0 +1,12 @@
+; Dtypes, layouts and arrays over rig's buffers.
+
+(library
+ (name nx_array)
+ (libraries rig)
+ (private_modules shape)
+ (install_c_headers nx_array nx_dtype)
+ (foreign_stubs
+  (language c)
+  (include_dirs
+   (lib rig))
+  (names nx_dtype_stubs nx_array_stubs)))

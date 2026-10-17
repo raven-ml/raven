@@ -1,0 +1,1394 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__x86_64__)
+#include <emmintrin.h>
+#endif
+
+#include <caml/alloc.h>
+#include <caml/bigarray.h>
+#include <caml/fail.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
+
+#include "nx_array.h"
+#include "nx_layout.h"
+#include "rig.h"
+
+#ifndef FLAT_FLOAT_ARRAY
+#error "nx_array writes float arrays as flat arrays of doubles"
+#endif
+
+/* An array is the record { dtype; layout; buffer }, in this order: the
+   dtype an immediate whose value is its code, the layout a record
+   (nx_layout.h). This file is the only C that reads it. */
+enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
+
+/* Layouts */
+
+/* Copies the layout [v] into [a]'s rank, flags, offset and dims: the record
+   lives in the OCaml heap, which moves. Layout's constructors make every
+   layout well formed (strides of its shape's length, at most
+   NX_MAX_RANK), so nothing here checks it again. */
+static void read_layout(value v, nx_array *a) {
+  value shape = Field(v, NX_LAYOUT_SHAPE);
+  value strides = Field(v, NX_LAYOUT_STRIDES);
+  int r = (int)Wosize_val(shape);
+  a->rank = r;
+  a->offset = Long_val(Field(v, NX_LAYOUT_OFFSET));
+  a->flags = (int)Long_val(Field(v, NX_LAYOUT_FLAGS));
+  for (int i = 0; i < r; i++) {
+    a->dim[i] = Long_val(Field(shape, i));
+    a->dim[r + i] = Long_val(Field(strides, i));
+  }
+}
+
+/* The door */
+
+int nx_array_dtype(value v) { return (int)Long_val(Field(v, ARRAY_DTYPE)); }
+
+int nx_array_layout(value v, int64_t *dim, int64_t *offset) {
+  value l = Field(v, ARRAY_LAYOUT);
+  value shape = Field(l, NX_LAYOUT_SHAPE);
+  value strides = Field(l, NX_LAYOUT_STRIDES);
+  int r = (int)Wosize_val(shape);
+  for (int i = 0; i < r; i++) {
+    dim[i] = Long_val(Field(shape, i));
+    dim[r + i] = Long_val(Field(strides, i));
+  }
+  *offset = Long_val(Field(l, NX_LAYOUT_OFFSET));
+  return r;
+}
+
+static int claim_code(enum rig_claim c) {
+  switch (c) {
+    case RIG_CLAIMED:
+    case RIG_WAIT:
+    case RIG_LOST: return NX_OK;
+    case RIG_DEAD: return NX_DEAD;
+    case RIG_EXCLUSIVE: return NX_EXCLUSIVE;
+    case RIG_READ_ONLY: return NX_READ_ONLY;
+  }
+  caml_fatal_error("nx_read: rig_buffer_claim answered %d", (int)c);
+}
+
+/* Whether the descriptors [a] and [b], both with elements, are identical:
+   one width, and every index at one byte: equal extents and strides, and
+   one first bit. */
+static int identical(const nx_array *a, const nx_array *b) {
+  if (a->bits != b->bits || a->rank != b->rank) return 0;
+  for (int i = 0; i < 2 * a->rank; i++)
+    if (a->dim[i] != b->dim[i]) return 0;
+  return (int64_t)(intptr_t)a->base * 8 + a->offset * a->bits ==
+         (int64_t)(intptr_t)b->base * 8 + b->offset * b->bits;
+}
+
+/* Releases the claims of the first [n] operands [a] made, and answers [e]: a
+   refusal after some claims. */
+static int refuse_claimed(int n, const nx_array *a, int e) {
+  for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
+  return e;
+}
+
+/* nx_read's checks, which claim every operand or none: [span] holds 2n
+   words for the operands' bytes. */
+static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
+  for (int k = 0; k < n; k++) {
+    value v = in[k].array;
+    nx_array *a = &out[k];
+    a->dtype = nx_array_dtype(v);
+    if (a->dtype != in[k].dtype) return NX_DTYPE;
+    a->bits = nx_dtype_row_of(a->dtype).bits;
+    read_layout(Field(v, ARRAY_LAYOUT), a);
+    a->buffer = Field(v, ARRAY_BUFFER);
+    a->alias = 0;
+  }
+  /* Every operand is claimed before anything else is checked: the claim
+     checks under it that the buffer lives, so a dead operand is refused as
+     dead whatever else is wrong with it, and before any wait, so a wait
+     runs under every claim and no donation on another domain consumes an
+     operand while the call waits. */
+  for (int k = 0; k < n; k++) {
+    enum rig_claim c = rig_buffer_claim(
+        out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
+    int e = claim_code(c);
+    if (e) return refuse_claimed(k, out, e);
+    /* A loss's wait raises it. */
+    out[k].wait = c == RIG_WAIT || c == RIG_LOST;
+  }
+  /* Each operand's bytes, as host addresses, read once with its layout's
+     span: [first, last) at span[2k], span[2k + 1]. */
+  for (int k = 0; k < n; k++) {
+    nx_array *a = &out[k];
+    int64_t *first = &span[2 * k], *last = &span[2 * k + 1];
+    if (in[k].written && !(a->flags & NX_DISTINCT))
+      return refuse_claimed(n, out, NX_NOT_DISTINCT);
+    if (a->flags & NX_EMPTY) {
+      a->base = NULL;
+      *first = *last = 0;
+      continue;
+    }
+    if ((a->base = rig_buffer_host(a->buffer)) == NULL)
+      return refuse_claimed(n, out, NX_NOT_HOST);
+    value l = Field(in[k].array, ARRAY_LAYOUT);
+    int64_t base = (int64_t)(intptr_t)a->base;
+    *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+    *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+  }
+  /* A written operand shares bytes with no other but a read operand
+     identical to it, which is marked its alias. Identity is of bytes, and
+     two memories can hold the same bytes, such as a host borrow of a
+     device's memory and a host buffer over the borrow's bigarray: each
+     operand keeps its own claim and wait, for its own memory's work and
+     loss. Read operands may share bytes, so only pairs with a written
+     operand are compared. */
+  for (int k = 0; k < n; k++) {
+    int64_t fk = span[2 * k], lk = span[2 * k + 1];
+    if (!in[k].written || fk == lk) continue;
+    for (int j = 0; j < n; j++) {
+      if (j == k || out[j].alias) continue;
+      if (!(span[2 * j] < lk && fk < span[2 * j + 1])) continue;
+      if (in[j].written || !identical(&out[k], &out[j]))
+        return refuse_claimed(n, out, NX_OVERLAP);
+      out[j].alias = 1;
+    }
+  }
+  return NX_OK;
+}
+
+int nx_read(int n, const nx_operand *in, nx_array *out) {
+  if (n <= 0) return NX_OK;
+  /* The spans live on the stack up to NX_MAX_OPERANDS operands, beyond on
+     the heap, allocated before any claim. */
+  int64_t local[2 * NX_MAX_OPERANDS], *span = local;
+  if (n > NX_MAX_OPERANDS) {
+    span = malloc(2 * (size_t)n * sizeof *span);
+    if (span == NULL) caml_raise_out_of_memory();
+  }
+  int e = admit(n, in, out, span);
+  if (span != local) free(span);
+  if (e) return e;
+  int waits = 0;
+  for (int k = 0; k < n; k++) waits |= out[k].wait;
+  /* Each buffer becomes a local root, so that a kernel that allocates or
+     releases the domain lock keeps it reachable and finds it again in
+     nx_done. They are chained here and linked at once: where the runtime
+     has no thread-local variables to share (macOS), each access to the
+     domain's state is a function call. */
+  struct caml__roots_block **roots = &CAML_LOCAL_ROOTS, *top = *roots;
+  /* nx_done unlinks through the same pointer: one lookup a call. */
+  out[0].local = roots;
+  for (int k = 0; k < n; k++) {
+    out[k].roots.next = top;
+    out[k].roots.ntables = 1;
+    out[k].roots.nitems = 1;
+    out[k].roots.tables[0] = &out[k].buffer;
+    top = &out[k].roots;
+  }
+  *roots = top;
+  if (!waits) return NX_OK;
+  /* The wait runs OCaml code, which may move each buffer: it is read from
+     its root. */
+  for (int k = 0; k < n; k++) {
+    if (!out[k].wait) continue;
+    caml_result r = rig_buffer_wait(
+        out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
+    if (caml_result_is_exception(r)) {
+      nx_done(n, out);
+      (void)caml_get_value_or_raise(r);
+    }
+  }
+  return NX_OK;
+}
+
+void nx_done(int n, nx_array *a) {
+  if (n <= 0) return;
+  for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
+  /* Unlink the roots nx_read pushed, under any pushed since. */
+  struct caml__roots_block **p = a[0].local;
+  while (*p != &a[n - 1].roots) {
+    if (*p == NULL)
+      caml_fatal_error("nx_done: the descriptors' roots were popped before "
+                       "nx_done");
+    p = &(*p)->next;
+  }
+  *p = a[0].roots.next;
+}
+
+/* The OCaml door (Nx_array.door) claims through these, in C, so that no
+   OCaml code, and so no asynchronous exception, runs between two claims.
+   [written] and [read] are OCaml arrays of Nx_array.any, which is unboxed:
+   an any is its array's block. */
+
+static value any_buffer(value anys, mlsize_t k) {
+  return Field(Field(anys, k), ARRAY_BUFFER);
+}
+
+/* The buffer of the [k]th array of [written], then [read]. */
+static value nth_buffer(value written, value read, mlsize_t k) {
+  mlsize_t nw = Wosize_val(written);
+  return k < nw ? any_buffer(written, k) : any_buffer(read, k - nw);
+}
+
+static void release_first(value written, value read, mlsize_t n) {
+  for (mlsize_t k = 0; k < n; k++)
+    rig_buffer_release(nth_buffer(written, read, k));
+}
+
+/* The array index from which claim_all's mask has one bit for the rest. */
+#define LOST_LAST 53
+
+/* Claims every array of [written] for writing and of [read] for reading, or
+   none, and waits for nothing. Answers the refusal's code, with nothing
+   claimed; or NX_OK, every array claimed, plus 256 times a mask of the
+   arrays whose claim answered RIG_LOST: a lost device is behind them, which
+   the door probes for its exception. Bit k is the [k]th array of
+   [written], then [read]; bit LOST_LAST stands for every array from it
+   on. A read array identical to a written one is claimed too: claims are
+   counted, so two of one memory do not conflict. */
+intnat nx_array_claim_all(value written, value read) {
+  mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
+  intnat lost = 0;
+  for (mlsize_t k = 0; k < n; k++) {
+    enum rig_claim c = rig_buffer_claim(nth_buffer(written, read, k),
+                                        k < nw ? RIG_READ_WRITE : RIG_READ);
+    int e = claim_code(c);
+    if (e) {
+      release_first(written, read, k);
+      return e;
+    }
+    if (c == RIG_LOST) lost |= (intnat)1 << (k < LOST_LAST ? k : LOST_LAST);
+  }
+  return NX_OK + 256 * lost;
+}
+
+value nx_array_claim_all_byte(value written, value read) {
+  return Val_long(nx_array_claim_all(written, read));
+}
+
+value nx_array_release_all(value written, value read) {
+  release_first(written, read, Wosize_val(written) + Wosize_val(read));
+  return Val_unit;
+}
+
+/* Claims [b]'s memory for [access], RIG_READ or RIG_READ_WRITE as the
+   constructors of Rig.access, and waits for nothing: NX_OK with the claim
+   held, which nx_array_end_claim ends, plus 256 if the access must wait first
+   (RIG_WAIT or RIG_LOST); or a refusal's code with none. */
+intnat nx_array_claim(value b, value v_access) {
+  enum rig_claim c = rig_buffer_claim(b, (enum rig_access)Int_val(v_access));
+  int e = claim_code(c);
+  if (e) return e;
+  return c == RIG_CLAIMED ? NX_OK : NX_OK + 256;
+}
+
+value nx_array_claim_byte(value b, value v_access) {
+  return Val_long(nx_array_claim(b, v_access));
+}
+
+/* Ends a claim nx_array_claim took on [b]. */
+value nx_array_end_claim(value b) {
+  rig_buffer_release(b);
+  return Val_unit;
+}
+
+/* Whether the arrays [a] and [b] reach a common byte. Their buffers' first
+   bytes lie at their host addresses where the host addresses both, and
+   otherwise at [pa] and [pb] of one memory. */
+value nx_array_shares(value a, value b, intnat pa, intnat pb) {
+  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
+  if ((Long_val(Field(la, NX_LAYOUT_FLAGS)) |
+       Long_val(Field(lb, NX_LAYOUT_FLAGS))) &
+      NX_EMPTY)
+    return Val_false;
+  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
+  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
+  if (ha != NULL && hb != NULL) {
+    pa = (intnat)(intptr_t)ha;
+    pb = (intnat)(intptr_t)hb;
+  }
+  /* A span's end is at most NX_MAX_NUMEL: times 128 bits, it fits. */
+  int64_t bits_a = nx_dtype_row_of(nx_array_dtype(a)).bits;
+  int64_t bits_b = nx_dtype_row_of(nx_array_dtype(b)).bits;
+  int64_t first_a = pa + Long_val(Field(la, NX_LAYOUT_LO)) * bits_a / 8;
+  int64_t last_a = pa + (Long_val(Field(la, NX_LAYOUT_HI)) * bits_a + 7) / 8;
+  int64_t first_b = pb + Long_val(Field(lb, NX_LAYOUT_LO)) * bits_b / 8;
+  int64_t last_b = pb + (Long_val(Field(lb, NX_LAYOUT_HI)) * bits_b + 7) / 8;
+  return Val_bool(first_a < last_b && first_b < last_a);
+}
+
+value nx_array_shares_byte(value a, value b, value pa, value pb) {
+  return nx_array_shares(a, b, Long_val(pa), Long_val(pb));
+}
+
+/* Whether the arrays [a] and [b], which share a byte, are identical: one
+   width, equal extents and strides, and one first bit, their buffers placed
+   as nx_array_shares places them. */
+value nx_array_identical(value a, value b, intnat pa, intnat pb) {
+  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
+  int64_t bits = nx_dtype_row_of(nx_array_dtype(a)).bits;
+  if (bits != nx_dtype_row_of(nx_array_dtype(b)).bits) return Val_false;
+  value sa = Field(la, NX_LAYOUT_SHAPE), sb = Field(lb, NX_LAYOUT_SHAPE);
+  value ta = Field(la, NX_LAYOUT_STRIDES), tb = Field(lb, NX_LAYOUT_STRIDES);
+  mlsize_t r = Wosize_val(sa);
+  if (Wosize_val(sb) != r) return Val_false;
+  for (mlsize_t i = 0; i < r; i++)
+    if (Field(sa, i) != Field(sb, i) || Field(ta, i) != Field(tb, i))
+      return Val_false;
+  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
+  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
+  if (ha != NULL && hb != NULL) {
+    pa = (intnat)(intptr_t)ha;
+    pb = (intnat)(intptr_t)hb;
+  }
+  return Val_bool(pa * 8 + Long_val(Field(la, NX_LAYOUT_OFFSET)) * bits ==
+                  pb * 8 + Long_val(Field(lb, NX_LAYOUT_OFFSET)) * bits);
+}
+
+value nx_array_identical_byte(value a, value b, value pa, value pb) {
+  return nx_array_identical(a, b, Long_val(pa), Long_val(pb));
+}
+
+/* Coalescing */
+
+/* The coalescer, written once: it reads axis i's extent at [ein][i] and
+   operand k's step at [sin][k][i], and writes the merged loop into
+   [extent] and [step], which may be [ein] and [sin] themselves. Axis i
+   lands at [out] or merges into out - 1, both at most i: the loop
+   rewrites only what it has read. Inlined at both callers: through a call,
+   nx_coalesce read the descriptors into its loop first, and a door's loop
+   over strided operands cost about 7 ns more on the M1 Max. A merged
+   extent is a product of one layout's extents: at most NX_MAX_NUMEL. */
+static inline __attribute__((always_inline)) int coalesce(
+    int n, int rank, const int64_t *ein, const int64_t *const *sin,
+    int64_t *extent, int64_t (*step)[NX_MAX_RANK]) {
+  int out = 0;
+  for (int i = 0; i < rank; i++) {
+    const int64_t d = ein[i];
+    if (d == 0) {
+      extent[0] = 0;
+      for (int k = 0; k < n; k++) step[k][0] = 0;
+      return 1;
+    }
+    if (d == 1) continue;
+    /* The axis joins the previous one if every operand's previous stride
+       is this stride times this extent: the two axes are one run. */
+    int joins = out > 0;
+    for (int k = 0; k < n && joins; k++)
+      joins = step[k][out - 1] == sin[k][i] * d;
+    if (joins) {
+      extent[out - 1] *= d;
+      for (int k = 0; k < n; k++) step[k][out - 1] = sin[k][i];
+    } else {
+      extent[out] = d;
+      for (int k = 0; k < n; k++) step[k][out] = sin[k][i];
+      out++;
+    }
+  }
+  if (out == 0) {
+    extent[0] = 1;
+    for (int k = 0; k < n; k++) step[k][0] = 0;
+    out = 1;
+  }
+  return out;
+}
+
+int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
+  if (n < 1 || n > NX_MAX_OPERANDS) return NX_ARITY;
+  int r = a[0].rank;
+  for (int k = 1; k < n; k++) {
+    if (a[k].rank != r) return NX_SHAPE;
+    for (int i = 0; i < r; i++)
+      if (a[k].dim[i] != a[0].dim[i]) return NX_SHAPE;
+  }
+  for (int k = 0; k < n; k++) l->first[k] = a[k].offset;
+  /* Operands all in C order merge into one run: the loop is their number
+     of elements, in steps of one. */
+  int contiguous = 1;
+  for (int k = 0; k < n; k++) contiguous &= (a[k].flags & NX_CONTIGUOUS) != 0;
+  if (contiguous) {
+    int64_t e = 1;
+    for (int i = 0; i < r; i++) e *= a[0].dim[i];
+    l->rank = 1;
+    l->extent[0] = e;
+    for (int k = 0; k < n; k++) l->step[k][0] = e > 1;
+    return NX_OK;
+  }
+  const int64_t *steps[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) steps[k] = a[k].dim + r;
+  l->rank = coalesce(n, r, a[0].dim, steps, l->extent, l->step);
+  return NX_OK;
+}
+
+int nx_coalesce_dims(int n, int rank, int64_t *extent,
+                     int64_t (*step)[NX_MAX_RANK]) {
+  const int64_t *steps[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) steps[k] = step[k];
+  return coalesce(n, rank, extent, steps, extent, step);
+}
+
+/* Calls [run] on each run of the loop [l] over [n] operands: the positions
+   [at] of each operand's first element, and the run's length; the run's
+   steps are the loop's innermost. It is inlined at each call, where [run]
+   is known, so that [run] is inlined into the odometer: clang at -O3
+   otherwise calls it through the pointer, once per run. */
+static inline __attribute__((always_inline)) void walk(
+    int n, const nx_loop *l, void *ctx,
+    void (*run)(void *ctx, const int64_t *at, int64_t len)) {
+  int r = l->rank;
+  int64_t len = l->extent[r - 1];
+  if (len == 0) return;
+  int64_t idx[NX_MAX_RANK] = {0};
+  int64_t at[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) at[k] = l->first[k];
+  for (;;) {
+    run(ctx, at, len);
+    /* The odometer over the outer axes. */
+    int i = r - 2;
+    for (; i >= 0; i--) {
+      for (int k = 0; k < n; k++) at[k] += l->step[k][i];
+      if (++idx[i] < l->extent[i]) break;
+      for (int k = 0; k < n; k++) at[k] -= l->step[k][i] * l->extent[i];
+      idx[i] = 0;
+    }
+    if (i < 0) return;
+  }
+}
+
+/* Layout.coalesce: coalesces the layouts [ls] into [out], an int array of
+   1 + rank + n·(1 + rank) words: the rank, the extents, then per operand
+   its first position and steps. Answers a code. */
+value nx_array_coalesce(value ls, value out) {
+  int n = (int)Wosize_val(ls);
+  nx_array a[NX_MAX_OPERANDS];
+  nx_loop l;
+  if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_ARITY);
+  for (int k = 0; k < n; k++) read_layout(Field(ls, k), &a[k]);
+  int e = nx_coalesce(n, a, &l);
+  if (e) return Val_int(e);
+  int r = l.rank;
+  /* [out] is an int array: immediates need no write barrier. */
+  Field(out, 0) = Val_long(r);
+  for (int i = 0; i < r; i++) Field(out, 1 + i) = Val_long(l.extent[i]);
+  for (int k = 0; k < n; k++) {
+    mlsize_t at = 1 + r + k * (1 + r);
+    Field(out, at) = Val_long(l.first[k]);
+    for (int i = 0; i < r; i++)
+      Field(out, at + 1 + i) = Val_long(l.step[k][i]);
+  }
+  return Val_int(NX_OK);
+}
+
+/* Elements
+
+   Loads and stores of one element at position [p] from [base]. A float
+   dtype's element is a double; an integer's, a boolean's or a narrow
+   float's bits are an int64_t, sign-extended for signed integers. A complex
+   element is two components, [part] 0 the real one. */
+
+static double load_float(const uint8_t *base, int dt, int64_t p, int part) {
+  switch (dt) {
+    case NX_FLOAT64: {
+      double x;
+      memcpy(&x, base + 8 * p, 8);
+      return x;
+    }
+    case NX_FLOAT32: {
+      float x;
+      memcpy(&x, base + 4 * p, 4);
+      return x;
+    }
+    case NX_FLOAT16:
+    case NX_BFLOAT16: {
+      uint16_t c;
+      memcpy(&c, base + 2 * p, 2);
+      return nx_bits_to_float(dt, c);
+    }
+    case NX_FLOAT8_E4M3FN:
+    case NX_FLOAT8_E5M2: return nx_bits_to_float(dt, base[p]);
+    case NX_FLOAT4_E2M1FN: return nx_bits_to_float(dt, nx_sub_load(base, 4, p));
+    case NX_COMPLEX128: return load_float(base, NX_FLOAT64, 2 * p + part, 0);
+    default: return load_float(base, NX_FLOAT32, 2 * p + part, 0);
+  }
+}
+
+static int64_t load_int(const uint8_t *base, int dt, int64_t p) {
+  switch (dt) {
+    case NX_INT64:
+    case NX_UINT64: {
+      int64_t x;
+      memcpy(&x, base + 8 * p, 8);
+      return x;
+    }
+    case NX_INT32: {
+      int32_t x;
+      memcpy(&x, base + 4 * p, 4);
+      return x;
+    }
+    case NX_UINT32: {
+      uint32_t x;
+      memcpy(&x, base + 4 * p, 4);
+      return x;
+    }
+    case NX_INT16: {
+      int16_t x;
+      memcpy(&x, base + 2 * p, 2);
+      return x;
+    }
+    case NX_UINT16: {
+      uint16_t x;
+      memcpy(&x, base + 2 * p, 2);
+      return x;
+    }
+    case NX_INT8: return (int8_t)base[p];
+    case NX_UINT8: return base[p];
+    case NX_INT4: return ((int32_t)(nx_sub_load(base, 4, p) << 28)) >> 28;
+    case NX_UINT4: return nx_sub_load(base, 4, p);
+    case NX_BOOL: return base[p] != 0;
+    default: return nx_sub_load(base, 1, p); /* bit */
+  }
+}
+
+static void store_float(uint8_t *base, int dt, int64_t p, int part,
+                        double x) {
+  switch (dt) {
+    case NX_FLOAT64: memcpy(base + 8 * p, &x, 8); return;
+    case NX_FLOAT32: {
+      float f = (float)x;
+      memcpy(base + 4 * p, &f, 4);
+      return;
+    }
+    case NX_FLOAT16:
+    case NX_BFLOAT16: {
+      uint16_t c = (uint16_t)nx_double_to_bits(dt, x);
+      memcpy(base + 2 * p, &c, 2);
+      return;
+    }
+    case NX_FLOAT8_E4M3FN:
+    case NX_FLOAT8_E5M2: base[p] = (uint8_t)nx_double_to_bits(dt, x); return;
+    case NX_FLOAT4_E2M1FN:
+      nx_sub_store(base, 4, p, (uint32_t)nx_double_to_bits(dt, x));
+      return;
+    case NX_COMPLEX128:
+      store_float(base, NX_FLOAT64, 2 * p + part, 0, x);
+      return;
+    default: store_float(base, NX_FLOAT32, 2 * p + part, 0, x); return;
+  }
+}
+
+static void store_int(uint8_t *base, int dt, int64_t p, int64_t x) {
+  switch (dt) {
+    case NX_INT64:
+    case NX_UINT64: memcpy(base + 8 * p, &x, 8); return;
+    case NX_INT32:
+    case NX_UINT32: {
+      uint32_t c = (uint32_t)x;
+      memcpy(base + 4 * p, &c, 4);
+      return;
+    }
+    case NX_INT16:
+    case NX_UINT16: {
+      uint16_t c = (uint16_t)x;
+      memcpy(base + 2 * p, &c, 2);
+      return;
+    }
+    case NX_INT8:
+    case NX_UINT8:
+    case NX_BOOL: base[p] = (uint8_t)x; return;
+    case NX_INT4:
+    case NX_UINT4: nx_sub_store(base, 4, p, (uint32_t)x); return;
+    default: nx_sub_store(base, 1, p, (uint32_t)x); return; /* bit */
+  }
+}
+
+/* Element access from OCaml, on a buffer the caller claimed and waited
+   for, at a position its layout reaches. */
+
+intnat nx_array_host(value b) {
+  void *p = rig_buffer_host(b);
+  return p == NULL ? -1 : (intnat)(intptr_t)p;
+}
+
+double nx_array_get_float(value b, intnat dt, intnat p, intnat part) {
+  return load_float(rig_buffer_host(b), (int)dt, p, (int)part);
+}
+
+int64_t nx_array_get_int(value b, intnat dt, intnat p) {
+  return load_int(rig_buffer_host(b), (int)dt, p);
+}
+
+value nx_array_set_float(value b, intnat dt, intnat p, intnat part,
+                         double x) {
+  store_float(rig_buffer_host(b), (int)dt, p, (int)part, x);
+  return Val_unit;
+}
+
+value nx_array_set_int(value b, intnat dt, intnat p, int64_t x) {
+  store_int(rig_buffer_host(b), (int)dt, p, x);
+  return Val_unit;
+}
+
+value nx_array_host_byte(value b) { return Val_long(nx_array_host(b)); }
+
+/* The byte [i] of the host buffer [b], loaded atomically: other threads may
+   store elements of a sub-byte array in it. */
+intnat nx_array_load_byte(value b, intnat i) {
+  const uint8_t *p = rig_buffer_host(b);
+  return __atomic_load_n(p + i, __ATOMIC_RELAXED);
+}
+
+value nx_array_load_byte_byte(value b, value i) {
+  return Val_long(nx_array_load_byte(b, Long_val(i)));
+}
+
+value nx_array_get_float_byte(value b, value dt, value p, value part) {
+  return caml_copy_double(
+      nx_array_get_float(b, Long_val(dt), Long_val(p), Long_val(part)));
+}
+
+value nx_array_get_int_byte(value b, value dt, value p) {
+  return caml_copy_int64(nx_array_get_int(b, Long_val(dt), Long_val(p)));
+}
+
+value nx_array_set_float_byte(value b, value dt, value p, value part,
+                              value x) {
+  return nx_array_set_float(b, Long_val(dt), Long_val(p), Long_val(part),
+                            Double_val(x));
+}
+
+value nx_array_set_int_byte(value b, value dt, value p, value x) {
+  return nx_array_set_int(b, Long_val(dt), Long_val(p), Int64_val(x));
+}
+
+/* Bulk access */
+
+enum { TO_FLAT, TO_IMMEDIATE, TO_BOXED };
+
+/* How a dtype's values lie in an OCaml array: flat doubles, immediates, or
+   boxes. */
+static int representation(int dt) {
+  switch (nx_dtype_row_of(dt).kind) {
+    case NX_KIND_FLOAT: return TO_FLAT;
+    case NX_KIND_COMPLEX: return TO_BOXED;
+    default:
+      return nx_dtype_row_of(dt).bits >= 32 ? TO_BOXED : TO_IMMEDIATE;
+  }
+}
+
+typedef struct {
+  const nx_array *a;
+  const nx_loop *l;
+  value out;
+  int64_t k; /* the next element of [out] */
+} to_ctx;
+
+/* Writes a run of flat or immediate elements: no allocation. */
+static void to_run(void *ctx, const int64_t *at, int64_t len) {
+  to_ctx *c = ctx;
+  const nx_array *a = c->a;
+  int dt = a->dtype;
+  int64_t step = c->l->step[0][c->l->rank - 1];
+  int64_t p = at[0];
+  if (representation(dt) == TO_IMMEDIATE) {
+    /* Immediates need no write barrier. */
+    for (int64_t j = 0; j < len; j++, p += step)
+      Field(c->out, c->k++) = Val_long(load_int(a->base, dt, p));
+    return;
+  }
+  double *dst = (double *)Op_val(c->out) + c->k;
+  c->k += len;
+  /* A loop per format, the format's decoder inlined in it. */
+#define DECODE(T, decode)                                                 \
+  do {                                                                    \
+    const T *src = (const T *)a->base + p;                                \
+    for (int64_t j = 0; j < len; j++) dst[j] = decode(src[j * step]);     \
+  } while (0)
+  switch (dt) {
+    case NX_FLOAT64: DECODE(double, (double)); return;
+    case NX_FLOAT32: DECODE(float, (double)); return;
+    case NX_FLOAT16:
+      if (step == 1)
+        nx_f16_to_double_run((const uint16_t *)a->base + p, dst, (size_t)len);
+      else DECODE(uint16_t, nx_f16_to_float);
+      return;
+    case NX_BFLOAT16: DECODE(uint16_t, nx_bf16_to_float); return;
+    case NX_FLOAT8_E4M3FN: DECODE(uint8_t, nx_e4m3fn_to_float); return;
+    case NX_FLOAT8_E5M2: DECODE(uint8_t, nx_e5m2_to_float); return;
+    default: /* float4: elements share bytes */
+      for (int64_t j = 0; j < len; j++, p += step)
+        dst[j] = load_float(a->base, dt, p, 0);
+      return;
+  }
+#undef DECODE
+}
+
+/* to_array: reads [v]'s elements, in C order of indices, into [out], an
+   OCaml array of their number, flat floats or immediates. It allocates
+   nothing past the door's wait; elements that box go through
+   nx_array_to_bigarray. */
+value nx_array_to_array(value v, value out) {
+  CAMLparam1(out);
+  nx_operand in = {v, nx_array_dtype(v), 0};
+  nx_array a;
+  nx_loop l;
+  if (representation(in.dtype) == TO_BOXED) CAMLreturn(Val_int(NX_DTYPE));
+  int e = nx_read(1, &in, &a);
+  if (e) CAMLreturn(Val_int(e));
+  if (!(e = nx_coalesce(1, &a, &l))) {
+    to_ctx c = {&a, &l, out, 0};
+    walk(1, &l, &c, to_run);
+  }
+  nx_done(1, &a);
+  CAMLreturn(Val_int(e));
+}
+
+typedef struct {
+  const nx_array *a;
+  const nx_loop *l;
+  value values;
+  int64_t k;
+} of_ctx;
+
+static void of_run(void *ctx, const int64_t *at, int64_t len) {
+  of_ctx *c = ctx;
+  const nx_array *a = c->a;
+  int dt = a->dtype;
+  int64_t step = c->l->step[0][c->l->rank - 1];
+  int64_t p = at[0], k = c->k;
+  c->k += len;
+  switch (representation(dt)) {
+    case TO_FLAT: {
+      const double *src = (const double *)Op_val(c->values) + k;
+      /* A loop per format, the format's encoder inlined in it. */
+#define ENCODE(T, encode)                                                 \
+  do {                                                                    \
+    T *dst = (T *)a->base + p;                                            \
+    for (int64_t j = 0; j < len; j++) dst[j * step] = encode(src[j]);     \
+  } while (0)
+      switch (dt) {
+        case NX_FLOAT64: ENCODE(double, (double)); return;
+        case NX_FLOAT32: ENCODE(float, (float)); return;
+        case NX_FLOAT16:
+          if (step == 1)
+            nx_double_to_f16_run(src, (uint16_t *)a->base + p, (size_t)len);
+          else ENCODE(uint16_t, nx_double_to_f16);
+          return;
+        case NX_BFLOAT16: ENCODE(uint16_t, nx_double_to_bf16); return;
+        case NX_FLOAT8_E4M3FN: ENCODE(uint8_t, nx_double_to_e4m3fn); return;
+        case NX_FLOAT8_E5M2: ENCODE(uint8_t, nx_double_to_e5m2); return;
+        default: /* float4: elements share bytes */
+          for (int64_t j = 0; j < len; j++, p += step)
+            store_float(a->base, dt, p, 0, src[j]);
+          return;
+      }
+#undef ENCODE
+    }
+    case TO_IMMEDIATE:
+      for (int64_t j = 0; j < len; j++, p += step)
+        store_int(a->base, dt, p, Long_val(Field(c->values, k + j)));
+      return;
+    default:
+      for (int64_t j = 0; j < len; j++, p += step) {
+        value x = Field(c->values, k + j);
+        if (dt == NX_INT32 || dt == NX_UINT32)
+          store_int(a->base, dt, p, Int32_val(x));
+        else if (dt == NX_INT64 || dt == NX_UINT64)
+          store_int(a->base, dt, p, Int64_val(x));
+        else {
+          store_float(a->base, dt, p, 0, Double_flat_field(x, 0));
+          store_float(a->base, dt, p, 1, Double_flat_field(x, 1));
+        }
+      }
+      return;
+  }
+}
+
+/* of_array: writes [values], an OCaml array of [v]'s number of elements, in
+   C order of indices. It allocates nothing past the door's wait. */
+value nx_array_of_array(value v, value values) {
+  CAMLparam1(values);
+  nx_operand in = {v, nx_array_dtype(v), 1};
+  nx_array a;
+  nx_loop l;
+  int e = nx_read(1, &in, &a);
+  if (e) CAMLreturn(Val_int(e));
+  if (!(e = nx_coalesce(1, &a, &l))) {
+    of_ctx c = {&a, &l, values, 0};
+    walk(1, &l, &c, of_run);
+  }
+  nx_done(1, &a);
+  CAMLreturn(Val_int(e));
+}
+
+/* copy: gathers [src]'s elements into [dst], a fresh contiguous array of
+   its dtype and shape, bits for bits: one walk over coalesced runs, each
+   run through a plane of nx_copy_box. The host's strided copy, tiled and
+   threaded, is nx.cpu's. */
+
+typedef struct {
+  const nx_array *a; /* dst, src */
+  const nx_loop *l;
+} copy_ctx;
+
+/* Rows of a copy are read ahead: a row that starts apart from the one before,
+   as a box's rows do in a wider array, is a stream the hardware prefetcher has
+   not seen, and its copy would wait on memory. On the M1, 4 MiB in rows of
+   1 KiB, 4 KiB apart, gather in 470 us without it and in 104 us reading two
+   rows ahead, where one memcpy of the 4 MiB takes 90. Only a row's first 4 KiB
+   are asked for: the prefetcher follows a longer row once it has started. A
+   read ahead is a hint: past the buffer's end it loads nothing and faults
+   nothing. */
+#define READ_AHEAD_ROWS 2
+#define READ_AHEAD_BYTES 4096
+#define CACHE_LINE 64
+
+/* Asks for the first bytes, at most [READ_AHEAD_BYTES], of the [n] at
+   [base + off] in cache. The address is formed as an integer, since it may
+   lie past the buffer. */
+static inline __attribute__((always_inline)) void read_ahead(
+    const uint8_t *base, int64_t off, int64_t n) {
+  if (n > READ_AHEAD_BYTES) n = READ_AHEAD_BYTES;
+  for (int64_t b = 0; b < n; b += CACHE_LINE)
+    __builtin_prefetch((const void *)((uintptr_t)base + (uintptr_t)(off + b)));
+}
+
+/* Copies [n] elements of [w] bytes, the [k]th from [s + k·bs] to
+   [d + k·bd]. Called with a constant [w], the copies are loads and stores. */
+static inline __attribute__((always_inline)) void strided(
+    uint8_t *d, int64_t bd, const uint8_t *s, int64_t bs, int64_t n,
+    size_t w) {
+  for (int64_t k = 0; k < n; k++, d += bd, s += bs) memcpy(d, s, w);
+}
+
+/* Copies the 4x4 block whose column q is the [4·w] bytes at [s + q·sc]
+   into the rows at [d + p·dr], [4·w] bytes each: a transpose. */
+static inline __attribute__((always_inline)) void block(
+    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sc, size_t w) {
+  uint8_t x[4][4 * 16];
+  for (int q = 0; q < 4; q++) memcpy(x[q], s + q * sc, 4 * w);
+  for (int p = 0; p < 4; p++)
+    for (int q = 0; q < 4; q++) memcpy(d + p * dr + q * w, x[q] + p * w, w);
+}
+
+/* The 8x8 block of 4-byte elements whose column q is the 32 bytes at
+   [s + q·sc] into the rows at [d + p·dr], in registers: each column read
+   and each row written as two 16-byte vectors, four 4x4 transposes
+   between. 32 bytes of each line at a time beat the 16 of 4x4 blocks: a
+   transposed 512x512 float32 copy on one thread takes 36.4 us against
+   59.2 in 4x4 blocks on the M1, where Accelerate's vDSP_mtrans takes 35.4,
+   and 35.5 against 61.7 on kimchi, where OpenBLAS takes 41.2. */
+#if defined(__aarch64__)
+static inline __attribute__((always_inline)) void transpose4(
+    uint32x4_t a, uint32x4_t b, uint32x4_t c, uint32x4_t e, uint32x4_t *o) {
+  uint64x2_t t0 = vreinterpretq_u64_u32(vtrn1q_u32(a, b));
+  uint64x2_t t1 = vreinterpretq_u64_u32(vtrn2q_u32(a, b));
+  uint64x2_t t2 = vreinterpretq_u64_u32(vtrn1q_u32(c, e));
+  uint64x2_t t3 = vreinterpretq_u64_u32(vtrn2q_u32(c, e));
+  o[0] = vreinterpretq_u32_u64(vtrn1q_u64(t0, t2));
+  o[1] = vreinterpretq_u32_u64(vtrn1q_u64(t1, t3));
+  o[2] = vreinterpretq_u32_u64(vtrn2q_u64(t0, t2));
+  o[3] = vreinterpretq_u32_u64(vtrn2q_u64(t1, t3));
+}
+
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  uint32x4_t x[8][2], o[4];
+  for (int q = 0; q < 8; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u32((const uint32_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      transpose4(x[4 * v][h], x[4 * v + 1][h], x[4 * v + 2][h],
+                 x[4 * v + 3][h], o);
+      for (int p = 0; p < 4; p++)
+        vst1q_u32((uint32_t *)(d + (4 * h + p) * dr + 16 * v), o[p]);
+    }
+}
+#elif defined(__x86_64__)
+/* x86-64 writes each row's 32 bytes with two adjacent stores: a transposed
+   512x512 float32 copy on one kimchi thread takes 35.5 us against 43.8
+   with the halves of four rows interleaved. arm64 gains nothing from it. */
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  for (int h = 0; h < 2; h++) {
+    __m128 t[2][4];
+    for (int v = 0; v < 2; v++) {
+      const uint8_t *b = s + 4 * v * sc + 16 * h;
+      __m128 x0 = _mm_loadu_ps((const float *)b);
+      __m128 x1 = _mm_loadu_ps((const float *)(b + sc));
+      __m128 x2 = _mm_loadu_ps((const float *)(b + 2 * sc));
+      __m128 x3 = _mm_loadu_ps((const float *)(b + 3 * sc));
+      _MM_TRANSPOSE4_PS(x0, x1, x2, x3);
+      t[v][0] = x0, t[v][1] = x1, t[v][2] = x2, t[v][3] = x3;
+    }
+    for (int p = 0; p < 4; p++) {
+      uint8_t *o = d + (4 * h + p) * dr;
+      _mm_storeu_ps((float *)o, t[0][p]);
+      _mm_storeu_ps((float *)(o + 16), t[1][p]);
+    }
+  }
+}
+#else
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++)
+      block(d + 4 * h * dr + 16 * v, dr, s + 4 * v * sc + 16 * h, sc, 4);
+}
+#endif
+
+/* The 4x4 block of 8-byte elements whose column q is the 32 bytes at
+   [s + q·sc] into the rows at [d + p·dr], in registers: each column read
+   and each row written as two 16-byte vectors, the pairs of columns
+   interleaved. block's round trip through memory made a transposed
+   float64 pack of 96 rows by 256 7.5% slower than moving its elements one
+   by one on six kimchi cores. */
+#if defined(__aarch64__)
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  uint64x2_t x[4][2];
+  for (int q = 0; q < 4; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u64((const uint64_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      uint64x2_t a = x[2 * v][h], b = x[2 * v + 1][h];
+      vst1q_u64((uint64_t *)(d + 2 * h * dr + 16 * v), vtrn1q_u64(a, b));
+      vst1q_u64((uint64_t *)(d + (2 * h + 1) * dr + 16 * v),
+                vtrn2q_u64(a, b));
+    }
+}
+#elif defined(__x86_64__)
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      __m128d a = _mm_loadu_pd((const double *)(s + 2 * v * sc + 16 * h));
+      __m128d b = _mm_loadu_pd((const double *)(s + (2 * v + 1) * sc + 16 * h));
+      _mm_storeu_pd((double *)(d + 2 * h * dr + 16 * v), _mm_unpacklo_pd(a, b));
+      _mm_storeu_pd((double *)(d + (2 * h + 1) * dr + 16 * v),
+                    _mm_unpackhi_pd(a, b));
+    }
+}
+#else
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  block(d, dr, s, sc, 8);
+}
+#endif
+
+/* The square blocks past the caches: block8's and block4x8's rows, each
+   row's 32 bytes in one nx_stream32. They are functions of their own: one
+   stream takes a row's two halves together, and the plain blocks rewritten
+   so, their stores reordered, made a transposed 512x512 float32 copy 18%
+   slower on one fudge core under gcc. A target without such stores stores
+   plainly. */
+#if defined(__aarch64__)
+static inline __attribute__((always_inline)) void block8_nt(uint8_t *d,
+                                                            int64_t dr,
+                                                            const uint8_t *s,
+                                                            int64_t sc) {
+  uint32x4_t x[8][2], r[4][2];
+  for (int q = 0; q < 8; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u32((const uint32_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++) {
+    uint32x4_t lo[4], hi[4];
+    transpose4(x[0][h], x[1][h], x[2][h], x[3][h], lo);
+    transpose4(x[4][h], x[5][h], x[6][h], x[7][h], hi);
+    for (int p = 0; p < 4; p++) {
+      r[p][0] = lo[p];
+      r[p][1] = hi[p];
+      nx_stream32(d + (4 * h + p) * dr, r[p]);
+    }
+  }
+}
+
+static inline __attribute__((always_inline)) void block4x8_nt(
+    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sc) {
+  uint64x2_t x[4][2];
+  for (int q = 0; q < 4; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u64((const uint64_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++) {
+    uint64x2_t r[2][2] = {
+        {vtrn1q_u64(x[0][h], x[1][h]), vtrn1q_u64(x[2][h], x[3][h])},
+        {vtrn2q_u64(x[0][h], x[1][h]), vtrn2q_u64(x[2][h], x[3][h])}};
+    nx_stream32(d + 2 * h * dr, r[0]);
+    nx_stream32(d + (2 * h + 1) * dr, r[1]);
+  }
+}
+#elif defined(__x86_64__)
+static inline __attribute__((always_inline)) void block8_nt(uint8_t *d,
+                                                            int64_t dr,
+                                                            const uint8_t *s,
+                                                            int64_t sc) {
+  for (int h = 0; h < 2; h++) {
+    __m128 t[4][2];
+    for (int v = 0; v < 2; v++) {
+      const uint8_t *b = s + 4 * v * sc + 16 * h;
+      __m128 x0 = _mm_loadu_ps((const float *)b);
+      __m128 x1 = _mm_loadu_ps((const float *)(b + sc));
+      __m128 x2 = _mm_loadu_ps((const float *)(b + 2 * sc));
+      __m128 x3 = _mm_loadu_ps((const float *)(b + 3 * sc));
+      _MM_TRANSPOSE4_PS(x0, x1, x2, x3);
+      t[0][v] = x0, t[1][v] = x1, t[2][v] = x2, t[3][v] = x3;
+    }
+    for (int p = 0; p < 4; p++) nx_stream32(d + (4 * h + p) * dr, t[p]);
+  }
+}
+
+static inline __attribute__((always_inline)) void block4x8_nt(
+    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sc) {
+  for (int h = 0; h < 2; h++) {
+    __m128d x[4];
+    for (int q = 0; q < 4; q++)
+      x[q] = _mm_loadu_pd((const double *)(s + q * sc + 16 * h));
+    __m128d r[2][2] = {
+        {_mm_unpacklo_pd(x[0], x[1]), _mm_unpacklo_pd(x[2], x[3])},
+        {_mm_unpackhi_pd(x[0], x[1]), _mm_unpackhi_pd(x[2], x[3])}};
+    nx_stream32(d + 2 * h * dr, r[0]);
+    nx_stream32(d + (2 * h + 1) * dr, r[1]);
+  }
+}
+#else
+#define block8_nt block8
+#define block4x8_nt block4x8
+#endif
+
+/* Interleaves the [n] elements of [w] bytes at [a] and at [b] into [d]:
+   a's i-th element at d's 2i-th, b's at the 2i+1-th, as a window two
+   elements wide reads its rows. 4- and 8-byte elements zip in registers,
+   four or two pairs at a time. */
+static inline __attribute__((always_inline)) void zip2(uint8_t *d,
+                                                       const uint8_t *a,
+                                                       const uint8_t *b,
+                                                       int64_t n, size_t w) {
+  int64_t i = 0;
+#if defined(__aarch64__)
+  if (w == 4)
+    for (; i + 4 <= n; i += 4) {
+      uint32x4x2_t x = {{vld1q_u32((const uint32_t *)(a + 4 * i)),
+                         vld1q_u32((const uint32_t *)(b + 4 * i))}};
+      vst2q_u32((uint32_t *)(d + 8 * i), x);
+    }
+  if (w == 8)
+    for (; i + 2 <= n; i += 2) {
+      uint64x2x2_t x = {{vld1q_u64((const uint64_t *)(a + 8 * i)),
+                         vld1q_u64((const uint64_t *)(b + 8 * i))}};
+      vst2q_u64((uint64_t *)(d + 16 * i), x);
+    }
+#elif defined(__x86_64__)
+  if (w == 4)
+    for (; i + 4 <= n; i += 4) {
+      __m128 x = _mm_loadu_ps((const float *)(a + 4 * i));
+      __m128 y = _mm_loadu_ps((const float *)(b + 4 * i));
+      _mm_storeu_ps((float *)(d + 8 * i), _mm_unpacklo_ps(x, y));
+      _mm_storeu_ps((float *)(d + 8 * i + 16), _mm_unpackhi_ps(x, y));
+    }
+  if (w == 8)
+    for (; i + 2 <= n; i += 2) {
+      __m128d x = _mm_loadu_pd((const double *)(a + 8 * i));
+      __m128d y = _mm_loadu_pd((const double *)(b + 8 * i));
+      _mm_storeu_pd((double *)(d + 16 * i), _mm_unpacklo_pd(x, y));
+      _mm_storeu_pd((double *)(d + 16 * i + 16), _mm_unpackhi_pd(x, y));
+    }
+#endif
+  for (; i < n; i++) {
+    memcpy(d + 2 * i * w, a + i * w, w);
+    memcpy(d + (2 * i + 1) * w, b + i * w, w);
+  }
+}
+
+/* Sub-byte runs
+
+   A run of sub-byte elements written one after another covers whole bytes,
+   except at most one partial byte at each end, which it shares with
+   elements outside it. The whole bytes are plain stores: no other write
+   reaches them. The partial ones are one compare-and-swap each, which keeps
+   the other elements' bits against stores from other threads. */
+
+/* The [k] elements of [bits] bits from position [p] of [s], [step] apart,
+   packed LSB first. */
+static inline uint8_t pack(const uint8_t *s, int bits, int64_t p, int64_t step,
+                           int k) {
+  uint8_t x = 0;
+  for (int j = 0; j < k; j++, p += step)
+    x |= (uint8_t)(nx_sub_load(s, bits, p) << (j * bits));
+  return x;
+}
+
+/* Copies [len] elements of [bits] bits from positions [ps], [ps + ss], …
+   of [s] to positions [pd], [pd + 1], … of [d]. The whole bytes of [d] come
+   from [memcpy] when both runs start at the same bit of a byte, from two
+   bytes of [s] shifted when they start at different bits, and packed from
+   loads otherwise. Out of line, the gather's runs, inlined into its walk,
+   stay small. */
+static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
+                                              const uint8_t *s, int64_t ps,
+                                              int64_t ss, int64_t len,
+                                              int bits) {
+  int per = 8 / bits;
+  int head = (int)((per - pd % per) % per);
+  if (head > len) head = (int)len;
+  if (head > 0) {
+    int at = (int)(pd % per) * bits;
+    uint8_t mask = (uint8_t)(((1u << (head * bits)) - 1) << at);
+    nx_sub_put(d + pd / per, mask,
+               (uint8_t)(pack(s, bits, ps, ss, head) << at));
+    pd += head;
+    ps += head * ss;
+    len -= head;
+  }
+  int64_t whole = len / per;
+  uint8_t *db = d + pd / per;
+  if (whole > 0 && ss == 1) {
+    int64_t bit = ps * bits;
+    int sh = (int)(bit & 7);
+    const uint8_t *sb = s + (bit >> 3);
+    if (sh == 0)
+      memcpy(db, sb, (size_t)whole);
+    else {
+      /* Byte i takes the top of sb[i] and the bottom of sb[i + 1]. sb[0]
+         and sb[whole] hold elements outside the run, which other threads
+         may store: they are loaded atomically. */
+      uint8_t first = __atomic_load_n(sb, __ATOMIC_RELAXED);
+      uint8_t last = __atomic_load_n(sb + whole, __ATOMIC_RELAXED);
+      if (whole == 1)
+        db[0] = (uint8_t)((first >> sh) | (last << (8 - sh)));
+      else {
+        db[0] = (uint8_t)((first >> sh) | (sb[1] << (8 - sh)));
+        int64_t i = 1;
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        /* Eight bytes at a time: the word at sb + i, shifted, and the
+           bottom of the word after it. */
+        if (i + 17 < whole) {
+          uint64_t lo, hi;
+          memcpy(&lo, sb + i, 8);
+          for (; i + 17 < whole; i += 8, lo = hi) {
+            memcpy(&hi, sb + i + 8, 8);
+            uint64_t w = (lo >> sh) | (hi << (64 - sh));
+            memcpy(db + i, &w, 8);
+          }
+        }
+#endif
+        for (; i < whole - 1; i++)
+          db[i] = (uint8_t)((sb[i] >> sh) | (sb[i + 1] << (8 - sh)));
+        db[whole - 1] = (uint8_t)((sb[whole - 1] >> sh) | (last << (8 - sh)));
+      }
+    }
+  } else
+    for (int64_t i = 0; i < whole; i++)
+      db[i] = pack(s, bits, ps + i * per * ss, ss, per);
+  pd += whole * per;
+  ps += whole * per * ss;
+  len -= whole * per;
+  if (len > 0)
+    nx_sub_put(d + pd / per, (uint8_t)((1u << (len * bits)) - 1),
+             pack(s, bits, ps, ss, (int)len));
+}
+
+/* A block of elements of [w] bytes, steps in bytes: rows of adjacent
+   elements are memcpy, a source that steps one element across rows into
+   adjacent elements moves in square blocks, 8x8 of 4-byte elements and 4x4
+   of the others, two adjacent runs of the source into adjacent elements
+   zip, other steps element by element. The square blocks of 4- and 8-byte
+   elements store past the caches where [nt]. */
+static inline __attribute__((always_inline)) void bytes(
+    uint8_t *d, int64_t dr, int64_t dc, const uint8_t *s, int64_t sr,
+    int64_t sc, int64_t rows, int64_t cols, size_t w, int nt) {
+  int64_t i = 0, sw = (int64_t)w, side = w == 4 ? 8 : 4;
+  if (rows == 2 && dr == sw && dc == 2 * sw && sc == sw) {
+    zip2(d, s, s + sr, cols, w);
+    return;
+  }
+  if (cols == 2 && dc == sw && dr == 2 * sw && sr == sw) {
+    zip2(d, s, s + sc, rows, w);
+    return;
+  }
+  if (dc == sw && sr == sw)
+    for (; i + side <= rows; i += side) {
+      int64_t j = 0;
+      for (; j + side <= cols; j += side)
+        if (w == 4 && nt)
+          block8_nt(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else if (w == 4)
+          block8(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else if (w == 8 && nt)
+          block4x8_nt(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else if (w == 8)
+          block4x8(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else
+          block(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc, w);
+      for (int p = 0; p < side; p++)
+        strided(d + (i + p) * dr + j * sw, sw, s + (i + p) * sr + j * sc, sc,
+                cols - j, w);
+    }
+  for (; i < rows; i++)
+    if (dc == sw && sc == sw) {
+      if (sr != cols * sw && i + READ_AHEAD_ROWS < rows)
+        read_ahead(s, (i + READ_AHEAD_ROWS) * sr, cols * sw);
+      memcpy(d + i * dr, s + i * sr, (size_t)(cols * sw));
+    } else
+      strided(d + i * dr, dc, s + i * sr, sc, cols, w);
+}
+
+/* A plane of nx_copy_box, inlined into its planes loop and into the
+   gather's runs, where [rows] is 1; of nx_stream_box where [nt]. */
+static inline __attribute__((always_inline)) void copy_block(
+    uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
+    const uint8_t *src, int64_t ps, int64_t src_row, int64_t src_col,
+    int64_t rows, int64_t cols, int bits, int nt) {
+  if (bits < 8) {
+    for (int64_t i = 0; i < rows; i++) {
+      int64_t d = pd + i * dst_row, s = ps + i * src_row;
+      if (dst_col == 1) {
+        sub_run(dst, d, src, s, src_col, cols, bits);
+        continue;
+      }
+      for (int64_t j = 0; j < cols; j++, d += dst_col, s += src_col)
+        nx_sub_store(dst, bits, d, nx_sub_load(src, bits, s));
+    }
+    return;
+  }
+  int64_t w = bits / 8;
+  uint8_t *d = dst + pd * w;
+  const uint8_t *s = src + ps * w;
+  if (dst_col == 1 && src_col == 1 && dst_row == cols && src_row == cols) {
+    memcpy(d, s, (size_t)(rows * cols * w));
+    return;
+  }
+  int64_t dr = dst_row * w, dc = dst_col * w;
+  int64_t sr = src_row * w, sc = src_col * w;
+  /* A plane streams where its pieces of rows are whole lines. */
+  nt = nt && ((uintptr_t)d | (uint64_t)dr | (uint64_t)(cols * w)) % 64 == 0;
+  switch (w) {
+    case 1: bytes(d, dr, dc, s, sr, sc, rows, cols, 1, 0); return;
+    case 2: bytes(d, dr, dc, s, sr, sc, rows, cols, 2, 0); return;
+    case 4: bytes(d, dr, dc, s, sr, sc, rows, cols, 4, nt); return;
+    case 8: bytes(d, dr, dc, s, sr, sc, rows, cols, 8, nt); return;
+    default: bytes(d, dr, dc, s, sr, sc, rows, cols, 16, 0); return;
+  }
+}
+
+/* The planes loop below copy_block's dispatch, inlined into it, so a box of
+   small planes chooses its case once. A destination that steps one element
+   across rows, its source one along them, swaps the two axes on both sides:
+   the same copy, as a transposed source, which the square blocks take. */
+static inline __attribute__((always_inline)) void copy_box(
+    uint8_t *dst, const uint8_t *src, const nx_box *b, int bits, int nt) {
+  int64_t pd = b->first[0], ps = b->first[1];
+  int64_t dp = b->step[0][0], dr = b->step[0][1], dc = b->step[0][2];
+  int64_t sp = b->step[1][0], sr = b->step[1][1], sc = b->step[1][2];
+  int64_t rows = b->extent[1], cols = b->extent[2];
+  if (dr == 1 && sc == 1 && !(dc == 1 && sr == 1)) {
+    int64_t x = dr;
+    dr = dc;
+    dc = x;
+    x = sr;
+    sr = sc;
+    sc = x;
+    x = rows;
+    rows = cols;
+    cols = x;
+  }
+  /* One plane, the walk's common block, takes no loop. */
+  if (b->extent[0] == 1) {
+    copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits, nt);
+    return;
+  }
+  for (int64_t p = 0; p < b->extent[0]; p++, pd += dp, ps += sp)
+    copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits, nt);
+}
+
+void nx_copy_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
+                 int bits) {
+  copy_box(dst, src, b, bits, 0);
+}
+
+void nx_stream_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
+                   int bits) {
+  copy_box(dst, src, b, bits, NX_STREAMS);
+  nx_stream_drain();
+}
+
+/* A run of the gather, the source's run [READ_AHEAD_ROWS] steps along the
+   next axis out read ahead where its elements are adjacent and the runs lie
+   apart: the walk's next runs are most often those. */
+static void copy_run(void *ctx, const int64_t *at, int64_t len) {
+  copy_ctx *c = ctx;
+  int r = c->l->rank;
+  const nx_array *s = &c->a[1];
+  if (r > 1 && c->l->step[1][r - 1] == 1 && c->l->step[1][r - 2] != len) {
+    int64_t ahead = at[1] + READ_AHEAD_ROWS * c->l->step[1][r - 2];
+    read_ahead(s->base, ahead * s->bits / 8, (len * s->bits + 7) / 8);
+  }
+  copy_block(c->a[0].base, at[0], 0, c->l->step[0][r - 1], c->a[1].base,
+             at[1], 0, c->l->step[1][r - 1], 1, len, c->a[0].bits, 0);
+}
+
+/* The gather: copies the elements of a[1] into a[0], operands of one dtype
+   read through the door. Answers NX_SHAPE if their shapes differ. */
+static int gather(nx_array a[2]) {
+  nx_loop l;
+  int e = nx_coalesce(2, a, &l);
+  if (e) return e;
+  copy_ctx c = {a, &l};
+  walk(2, &l, &c, copy_run);
+  return NX_OK;
+}
+
+value nx_array_copy(value dst, value src) {
+  int dt = nx_array_dtype(src);
+  nx_operand in[2] = {{dst, dt, 1}, {src, dt, 0}};
+  nx_array a[2];
+  int e = nx_read(2, in, a);
+  if (e) return Val_int(e);
+  e = gather(a);
+  nx_done(2, a);
+  return Val_int(e);
+}
+
+/* to_bigarray: gathers [v]'s elements, in C order of indices, into [out], a
+   bigarray of their number and width, bit for bit. to_array boxes elements
+   from there once the claim is released, so that an allocation that raises
+   holds no claim. */
+value nx_array_to_bigarray(value v, value out) {
+  CAMLparam1(out);
+  nx_operand in = {v, nx_array_dtype(v), 0};
+  nx_array a[2];
+  int e = nx_read(1, &in, &a[1]);
+  if (e) CAMLreturn(Val_int(e));
+  /* [out] as a C-contiguous array of [v]'s dtype and shape. */
+  nx_array *d = &a[0];
+  int r = a[1].rank;
+  d->base = Caml_ba_data_val(out);
+  d->dtype = a[1].dtype;
+  d->bits = a[1].bits;
+  d->rank = r;
+  d->flags = NX_CONTIGUOUS | NX_DISTINCT;
+  d->offset = 0;
+  int64_t stride = 1;
+  for (int i = r - 1; i >= 0; i--) {
+    d->dim[i] = a[1].dim[i];
+    d->dim[r + i] = stride;
+    stride *= a[1].dim[i];
+  }
+  e = gather(a);
+  nx_done(1, &a[1]);
+  CAMLreturn(Val_int(e));
+}

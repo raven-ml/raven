@@ -339,6 +339,73 @@ raven / llama.cpp (Vulkan; ROCm):
 - `betaincinv`, once tolk compiles long programs (~20-25k ops)
 - GC stress for nx's C stubs: run them once under the stressed collector
 
+## nx2
+
+- a map program's `Coord` past its input rank is accepted until it runs:
+  refuse it at admission, with its documentation and a regression (partial
+  patch: `refs/audit/20261010-deep/worktrees/wt-16`)
+- sort-key packing overflows for axes longer than 2^31, and Bluestein's
+  square modulo `2*n` overflows int64: reproduce both, then fix
+  (`refs/audit/20261010-deep/worktrees/wt-14`)
+- direct kernel entries write or allocate scratch before refusing malformed
+  contraction extents and padded shapes beyond `max_numel`: one rule per
+  shape invariant, regressions from `refs/audit/20261010-deep/worktrees/wt-26`
+- engine review findings: donation through `Eval.received`, the shared
+  `Interp.running` state across fibers, `Nx_array.to_device` copying a
+  strided view's enclosing span; probes in
+  `refs/audit/20261010-deep/worktrees/wt-18`, each confirmed one a public
+  regression first
+- order and counting operations: check their contracts, public laws and
+  bench baselines
+- a split axis that its device count does not divide (a [4; 3] value split
+  over 2 along its last axis) raises `Invalid_argument` from `Grid.window`,
+  a limit no hardware imposes: windows of unequal extent through `Grid`,
+  `Devices.window` and `Route`
+- a sum over split axes gathers the whole input: reduce to partials and
+  combine them (`[8192; 4096]` over eight devices moves 112 KiB per device
+  instead of 112 MiB)
+- nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and
+  gpt-oss comparisons
+- nx.cpu's jobs size their threads by older cost estimates, many below the
+  call prices' measured kind and term costs, so costly kinds get too few
+  threads (a float64 pow over 16 K elements runs on 3): derive the job
+  costs from the prices' tables and measure them on thread-count rows
+- complex products and extremes over few terms (reduce.c's few_, e.g. 2x2
+  windows) run 1.2-1.7x slower under gcc since their lanes became vectors:
+  gcc vectorises IN_ARRAY's 16-lane start step only inside few_'s own loop
+  nest, not as start_'s (M1, gcc 15: prod few complex64 1.17 -> 1.78 ns an
+  element); inlining it for every monoid costs the float extremes 15%:
+  find a form that vectorises both. gcc's complex64 one-block product
+  (prod block1) runs 1.3x slower too, untraced
+- the FFT's four steps on fudge: c2c-64K-c64 and c2c-32x64K-c64 read 1.02
+  and 1.03-1.04 against the commit before the column and row steps (6
+  P-cores), measured with the grid-in-result code in the column step:
+  re-time without it and remove what remains
+- the four steps' grid in the result past the largest cache, where malloc
+  maps blocks per call (Linux): the columns write it in the result's
+  layout, both steps streaming, the rows transform it in place; 2^22
+  points took 0.685 the time on six Arrow Lake cores (528 faults a call
+  fewer) and 1.03-1.07 on the M1, which keeps scratch. Land it with
+  test_fft passing on fudge
+- linalg's v3 build loses 1.5-4% at order 64 on fudge (eigh-f64-64x32
+  1.040, svd-f64-64 1.026, svd-f64-64x32 1.015); gcc's 128-bit vectors in
+  linalg_v3.c recover it but cost lu-f64-1024-pivoting 7%: find the loops
+- svd at order 64: the panel reduction's serial path (labrd) costs 2% on
+  fudge (svd-f64-64 1.023, svd-f64-64x32 1.019): find what the in-order
+  chunks pay over one pass
+- 28 of the Mac's nx rows run 1.5-3.7x their records with the library
+  unchanged since each row builds its inputs in its own setup
+  (dispatch/zeros_like-1M 52 -> 132 us; the 1M frontend maps,
+  index/concatenate, move/copy-1M, the small attention einsums); rig's
+  pacing explains part (zeros_like 119 -> 89 us under a proposed due
+  point): find the rest, then re-record
+- MR-aligned GEMM row subdivision
+  (`refs/audit/20261010-deep/branches/few-units`): public matmul A/Bs and
+  baselines on the Mac and fudge
+- engine dispatch costs: staged patches and the missing `dispatch/real-1`
+  and `dispatch/sum-1` rows in `refs/audit/20261010-deep/worktrees/wt-13`;
+  per-stage A/Bs and baselines, compiler internals private
+
 ## norn, jera
 
 - jera: "solve derivatives › compiled equals eager" failed once

@@ -1,0 +1,250 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+module D = Nx_array.Dtype
+
+type work =
+  | Copy of int
+  | Cast of D.any * D.any * int
+  | Fma of D.any * int
+  | Read of int
+  | Stream of { ins : int; inb : int; outb : int; n : int }
+  | Select of { inb : int; n : int }
+
+type bytes =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+external floor_move : int -> int -> int -> bytes -> bytes -> int -> unit
+  = "nx_cpu_bench_floor_move_byte" "nx_cpu_bench_floor_move"
+
+(* Conversions whose own operations can cost more than their bytes' move: those
+   no instruction does, and float32 to float16 and int8, whose instructions cost
+   more than an integer narrowing on the M1. *)
+type codec =
+  | F32_bf16
+  | F32_e4m3
+  | E4m3_f32
+  | I64_f32
+  | U64_f32
+  | F64_f16
+  | F32_f16
+  | F32_i8
+
+external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
+  = "nx_cpu_bench_floor_codec"
+
+external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
+
+external floor_stream :
+  int -> int -> int -> int -> bytes -> bytes -> bytes -> bytes -> int -> unit
+  = "nx_cpu_bench_floor_stream_byte" "nx_cpu_bench_floor_stream"
+
+external floor_fma : int -> bool -> int -> unit = "nx_cpu_bench_floor_fma"
+external floor_read : int -> bytes -> unit = "nx_cpu_bench_floor_read"
+external floor_amx : int -> bool -> int -> unit = "nx_cpu_bench_floor_amx"
+
+external amx_units : unit -> int = "nx_cpu_bench_amx_units" [@@noalloc]
+
+external block_transposed : bytes -> bytes -> int -> int -> unit
+  = "nx_cpu_bench_block_transposed"
+[@@noalloc]
+
+external cores : unit -> int = "nx_cpu_bench_cores" [@@noalloc]
+
+external performance_cores : unit -> int = "nx_cpu_bench_performance_cores"
+[@@noalloc]
+
+let strf = Printf.sprintf
+let row name setup f = Thumper.bench_with_setup ~setup name f
+let kib = 1024
+let mib = 1024 * kib
+
+let count n =
+  if n mod mib = 0 then strf "%dM" (n / mib)
+  else if n mod kib = 0 then strf "%dK" (n / kib)
+  else string_of_int n
+
+let short (type v s) (dt : (v, s) D.t) =
+  match dt with
+  | D.Float64 -> "f64"
+  | D.Float32 -> "f32"
+  | D.Float16 -> "f16"
+  | D.Bfloat16 -> "bf16"
+  | D.Float8_e4m3fn -> "e4m3"
+  | D.Float8_e5m2 -> "e5m2"
+  | D.Float4_e2m1fn -> "e2m1"
+  | D.Int64 -> "i64"
+  | D.Uint64 -> "u64"
+  | D.Int32 -> "i32"
+  | D.Uint32 -> "u32"
+  | D.Int16 -> "i16"
+  | D.Uint16 -> "u16"
+  | D.Int8 -> "i8"
+  | D.Uint8 -> "u8"
+  | D.Int4 -> "i4"
+  | D.Uint4 -> "u4"
+  | D.Complex128 -> "c128"
+  | D.Complex64 -> "c64"
+  | D.Bool -> "bool"
+  | D.Bit -> "bit"
+
+(* Floors: memcpy of [n] bytes, [n] elements of [inb] bytes moved into [outb],
+   [n] elements through a codec, [n] flops of fused multiply-adds, float64
+   ones if [f64], on the cores or the matrix unit, or a read of [n] bytes. *)
+type floor =
+  | Memcpy of int
+  | Move of { inb : int; outb : int; n : int }
+  | Codec of codec * int
+  | Peak of { f64 : bool; n : int }
+  | Amx of { f64 : bool; n : int }
+  | Bytes_read of int
+  | Streamed of { ins : int; inb : int; outb : int; n : int }
+  | Selected of { inb : int; n : int }
+
+(* A codec's source and destination, and their bytes per element. *)
+let codec_pair = function
+  | F32_bf16 -> ("f32", 4, "bf16", 2)
+  | F32_e4m3 -> ("f32", 4, "e4m3", 1)
+  | E4m3_f32 -> ("e4m3", 1, "f32", 4)
+  | I64_f32 -> ("i64", 8, "f32", 4)
+  | U64_f32 -> ("u64", 8, "f32", 4)
+  | F64_f16 -> ("f64", 8, "f16", 2)
+  | F32_f16 -> ("f32", 4, "f16", 2)
+  | F32_i8 -> ("f32", 4, "i8", 1)
+
+let codecs =
+  [ F32_bf16; F32_e4m3; E4m3_f32; I64_f32; U64_f32; F64_f16; F32_f16; F32_i8 ]
+
+let floor_name = function
+  | Memcpy n -> strf "copy-%s" (count n)
+  | Move f -> strf "move-%d-%d-%s" f.inb f.outb (count f.n)
+  | Codec (c, n) ->
+      let s, _, d, _ = codec_pair c in
+      strf "codec-%s-%s-%s" s d (count n)
+  | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
+  | Amx { f64; n } -> strf "amx-%s-%s" (if f64 then "f64" else "f32") (count n)
+  | Bytes_read n -> strf "read-%s" (count n)
+  | Streamed s -> strf "stream-%dx%d-%d-%s" s.ins s.inb s.outb (count s.n)
+  | Selected s -> strf "select-%d-%s" s.inb (count s.n)
+
+(* The flops of a peak's row: a rate, the same for every contraction, about
+   10 ms on one core. A row's floor is its flops at that rate. *)
+let peak_flops = 1024 * mib
+
+(* A copy's floor is its memcpy. A cast's moves its elements' bytes, a sub-byte
+   side's pairs of elements as bytes, and a codec's loop where one converts its
+   pair. *)
+let floors = function
+  | Copy n -> [ Memcpy n ]
+  | Cast (D.Any s, D.Any d, n) ->
+      let w dt = D.bits dt / 8 in
+      let move =
+        if D.bits s < 8 then Move { inb = 1; outb = 2 * w d; n = n / 2 }
+        else if D.bits d < 8 then Move { inb = 2 * w s; outb = 1; n = n / 2 }
+        else Move { inb = w s; outb = w d; n }
+      in
+      let codec c =
+        let cs, _, cd, _ = codec_pair c in
+        if (cs, cd) = (short s, short d) then Some (Codec (c, n)) else None
+      in
+      move :: List.filter_map codec codecs
+  | Fma (dt, _) ->
+      let f64 = dt = D.Any D.Float64 in
+      Peak { f64; n = peak_flops }
+      :: (if amx_units () > 0 then [ Amx { f64; n = peak_flops } ] else [])
+  | Read n -> [ Bytes_read n ]
+  | Stream { ins; inb; outb; n } -> [ Streamed { ins; inb; outb; n } ]
+  | Select { inb; n } -> [ Selected { inb; n } ]
+
+(* The floors of [ws], each once, in the order the work asks for them. *)
+let needed ws =
+  List.fold_left
+    (fun acc f -> if List.mem f acc then acc else acc @ [ f ])
+    []
+    (List.concat_map floors ws)
+
+(* A buffer of [n] bytes the setup wrote. *)
+let buffer n =
+  let b =
+    Rig.Buffer.export
+      (Rig.Buffer.create Rig.host (max 1 n))
+      Bigarray.int8_unsigned
+  in
+  Bigarray.Array1.fill b 1;
+  b
+
+let floor_rows ws =
+  let threads =
+    [ ("1t", 1); ("performance", performance_cores ()); ("all", cores ()) ]
+  in
+  let run name f threads =
+    let pair setup body = row name setup body in
+    match f with
+    | Memcpy n ->
+        pair
+          (fun () -> (buffer n, buffer n))
+          (fun (d, s) -> floor_move threads 0 0 d s n)
+    | Move { inb; outb; n } ->
+        pair
+          (fun () -> (buffer (outb * n), buffer (inb * n)))
+          (fun (d, s) -> floor_move threads inb outb d s n)
+    | Codec (c, n) ->
+        let _, inb, _, outb = codec_pair c in
+        pair
+          (fun () -> (buffer (outb * n), buffer (inb * n)))
+          (fun (d, s) -> floor_codec threads c d s n)
+    | Peak { f64; n } -> pair (fun () -> ()) (fun () -> floor_fma threads f64 n)
+    | Amx { f64; n } -> pair (fun () -> ()) (fun () -> floor_amx threads f64 n)
+    | Bytes_read n -> pair (fun () -> buffer n) (fun s -> floor_read threads s)
+    | Streamed { ins; inb; outb; n } ->
+        let src k = buffer (if k < ins then inb * n else 1) in
+        pair
+          (fun () -> (buffer (outb * n), src 0, src 1, src 2))
+          (fun (d, a, b, c) -> floor_stream threads ins inb outb d a b c n)
+    | Selected { inb; n } ->
+        pair
+          (fun () -> (buffer (inb * n), buffer n, buffer (inb * n), buffer (inb * n)))
+          (fun (d, c, a, b) -> floor_stream threads (-1) inb inb d c a b n)
+  in
+  let floors =
+    List.filter
+      (function
+        | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
+        | Memcpy _ | Move _ | Streamed _ | Selected _ | Amx _ -> true)
+      (needed ws)
+  in
+  (* The matrix unit's floors run on one thread and on one per unit. *)
+  let threads_of = function
+    | Amx _ -> [ ("1t", 1); ("units", amx_units ()) ]
+    | _ -> threads
+  in
+  List.concat_map
+    (fun f ->
+      List.map
+        (fun (t, threads) ->
+          run (strf "floor-%s-%s" (floor_name f) t) f threads)
+        (threads_of f))
+    floors
+
+(* The transposing block copy of 512x512 elements of [bits] bits. *)
+let block_transposed_row name bits =
+  row name
+    (fun () ->
+      let b () =
+        let b = buffer (bits / 8 * 512 * 512) in
+        for i = 0 to Bigarray.Array1.dim b - 1 do
+          Bigarray.Array1.unsafe_set b i (i land 255)
+        done;
+        b
+      in
+      (b (), b ()))
+    (fun (d, s) -> block_transposed d s 512 bits)
+
+let rows ws =
+  floor_rows ws
+  @ [
+      block_transposed_row "block-transposed-512x512-1t" 32;
+      block_transposed_row "block-transposed-f64-512x512-1t" 64;
+    ]

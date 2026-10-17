@@ -1,0 +1,133 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** The eager engine: operations on values, computed now by their set's kernels,
+    or held as constants.
+
+    {!run} applies an operation's rule ({!Prim.results}) before it allocates or
+    calls anything. An operation whose every operand is a constant, a creation
+    included, gives constants; [Place] and [Check] compute. Otherwise it
+    computes each constant operand where the route reads it, places operands the
+    route moves, and allocates each result at the route's placement. Each device
+    of that placement then computes its window of the results by the set's
+    kernels, over each operand's window there ({!Route.window}); a program that
+    reads coordinates adds the window's first index to them. [Done] is the
+    result; a refusal raises through {!Nx_array.refused} naming [by]. A device
+    whose kernels decline computes its window by the expansion ({!Expand.run})
+    over its own operands there, copied into its window where the results lie on
+    several devices. A decline nx has no expansion for raises naming the
+    kernels, the kind, the dtypes, the device and the move the program makes,
+    [Nx.place] onto a set whose kernels compute it: no data moves between
+    devices on its own. The decline of a routine also says that its expansion is
+    not available yet. A result shares an operand's memory only as its view, or
+    where the operand was donated. Movements and bitcasts are views where a
+    layout expresses them, and a copy, then a view, otherwise. [Check] reduces
+    its flags where they lie and reads only scalars on the host: whether all
+    hold, then the first failing index, from which it raises its exception.
+
+    Over devices of one architecture, a result's bits are those of the same
+    operation on one device, by the window law ({!Route.window}), wherever the
+    operands lie. *)
+
+val run : by:string -> 'r Value.prim -> 'r
+(** [run ~by op] is [op]'s meaning where no interpretation reaches it.
+
+    Raises [Invalid_argument] naming [by] for a traced operand: its
+    interpretation receives the operation first ({!Eval.eval}). *)
+
+val apply1 :
+  by:string ->
+  Nx_kernel.Prog.op1 ->
+  ('w, 'r) Value.dtype ->
+  ('v, 's, 'd) Value.t ->
+  ('w, 'r, 'd) Value.t
+
+val apply2 :
+  by:string ->
+  Nx_kernel.Prog.op2 ->
+  ('w, 'r) Value.dtype ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t ->
+  ('w, 'r, 'd) Value.t
+
+val apply3 :
+  by:string ->
+  Nx_kernel.Prog.op3 ->
+  ('a, 'b, 'd) Value.t ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t
+(** [applyN ~by k dt x …] is the one-node map [k] over [x …], of one shape,
+    with result dtype [dt] (the second operand's for [apply3]), where no
+    interpretation reaches it. For operands on one device at physically one
+    placement, and constants beside them, read there once [k] takes the
+    operands' dtypes and shapes, it builds no operation: it allocates the
+    result, sharing the first operand's layout when that is C-contiguous at
+    offset 0 and of the result's dtype, and calls the set's kernel, which checks
+    the dtypes and shapes. Otherwise, and where the kernel declines or refuses
+    them, it is {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose
+    rule raises on operands it does not take; a traced operand raises as in
+    {!run}. *)
+
+val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [at p c] is the constant [c] computed at [p] for an operation that reads it:
+    each device computes its window, whole along each axis [c]'s operation keeps
+    whole ({!Route.keeps}), and keeps its window in memory of its own. [c] keeps its results at [p]: it computes once per
+    placement within a domain; across domains, at most once per domain whose
+    first use races, every result equal bit for bit and the first one stored
+    kept. It takes no lock. A movement or a bitcast of a constant keeps nothing:
+    it is its operand read at [p], viewed. The constants [c] is computed from
+    are taken from their own results where an operation read them at the
+    placement [c] reads them, and are otherwise computed for this alone, once
+    each, and dropped. A kernel's refusal or decline raises here, naming the
+    function that made the constant. A value that is not a constant is returned
+    as it is. *)
+
+val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [donate ~by x] is a handle over [x]'s memory that one operation reads
+    ({!Value.Donated}): [x] lives until that operation is called, then dies with
+    the handle, naming the operation. An elementwise operation writes its result
+    into the memory, where rig holds it exclusive (no other value reads it) and
+    it has the result's dtype and C-contiguous layout; the memory is consumed
+    either way where no other value reads it. A movement passes a new handle
+    on instead. A constant or a traced [x] is [x].
+
+    Raises [Invalid_argument] naming [by] if [x] is dead. *)
+
+val live : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [live x] is a handle's arrays as a live value, for an interpretation that
+    reads it without consuming it; any other value as it is. *)
+
+val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
+(** [on_host ~by x] is an array on the host holding [x]'s elements: a constant
+    computed there, a concrete value placed there ({!Place.value}), over [x]'s
+    own array where it is the host's. No interpretation receives it.
+
+    Raises [Invalid_argument] naming [by] for a traced [x], and what
+    {!Place.value} raises. *)
+
+val contract :
+  by:string ->
+  order:Nx_kernel.order ->
+  shape:int array ->
+  batch:(int * int) array ->
+  contracting:(int * int) array ->
+  acc:Nx_array.Dtype.any ->
+  ('v, 's) Value.dtype ->
+  ('a, 'b, 'd) Value.t ->
+  ('c, 'e, 'd) Value.t ->
+  ('v, 's, 'd) Value.t option ->
+  ('v, 's, 'd) Value.t option
+(** [contract ~by ~order ~shape ~batch ~contracting ~acc dt a b init] is
+    [Some] the contraction [Value.Contract] of [a] and [b] from [init] into
+    [dt], in [order], where no interpretation reaches it, its operands are live
+    arrays on one device at physically one placement whose set has kernels, and
+    the kernels compute it: it builds no operation and allocates the
+    C-contiguous result of [shape]. [None] otherwise, for the operation to
+    decide. [shape] is the one the contraction's rule gives
+    ({!Prim.contract_shape}), for operands and an [acc] its caller has checked
+    against the rule: its one caller is {!Eval.contract}, whose one caller,
+    Contraction's run, plans and checks them, and the kernels refuse a misfit
+    besides. *)

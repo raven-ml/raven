@@ -1,0 +1,15 @@
+; Kernel libraries' rows through Nx_kernel.S, each backend beside the floors
+; of its own support (cpu/).
+
+(executable
+ (name bench_kernels)
+ (modules bench_kernels)
+ (libraries nx_array nx_kernel nx_cpu nx_cpu_floors rig thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_kernels.exe})))

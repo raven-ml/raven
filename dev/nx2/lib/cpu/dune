@@ -1,0 +1,112 @@
+; Kernels for host memory.
+;
+; convert.c, gemm_generic.c, rows.c, reduce.c, fft.c and linalg.c are
+; compiled once per target: as themselves for base, and as their copies
+; convert_v3.c, gemm_generic_v3.c, rows_v3.c, reduce_v3.c, fft_v3.c and
+; linalg_v3.c for v3, with v3's instructions on x86-64 and as empty units
+; elsewhere.
+; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
+; v3's instructions, x86-64's; gemm_vnni.c, with AVX-VNNI-INT8's too where
+; the C compiler has them (probe/vnni.ml asks it), its quads kernels;
+; gemm_amx.c the M1 matrix unit's, empty off
+; Apple's arm64. target.c picks the table at run time.
+;
+; gcc vectorises at -O2 only the loops that need no remainder and no check
+; of their pointers' overlap, so loops of a run-time count stay scalar
+; there: its dynamic cost model vectorises them as clang does at -O2.
+; gcc also keeps a loop scalar where its selects join more than four
+; values in one place, as the special values of log, log2, log1p and pow
+; do: a bound of 16 vectorises every kind. probe/gcc.ml gives these
+; settings to gcc under any name, a cross compiler's such as
+; x86_64-w64-mingw32-gcc included, and none to clang.
+
+(library
+ (name nx_cpu)
+ (libraries nx_array nx_kernel rig rig.pool)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array ../kernel)
+  (flags :standard (:include vector_flags.sexp))
+  (names target job walk stage copy apply map iota rows reduce index sort assemble convert gemm gemm_generic gemm_neon gemm_amx linalg fft))
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array ../kernel)
+  (flags
+   :standard
+   -DNX_CPU_V3
+   (:include vector_flags.sexp)
+   (:include v3_flags.sexp))
+  (names
+   convert_v3
+   gemm_generic_v3
+   rows_v3
+   reduce_v3
+   fft_v3
+   linalg_v3
+   gemm_avx2))
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array ../kernel)
+  (flags :standard (:include v3_flags.sexp) (:include vnni_flags.sexp))
+  (names gemm_vnni)))
+
+(rule
+ (copy convert.c convert_v3.c))
+
+(rule
+ (copy gemm_generic.c gemm_generic_v3.c))
+
+(rule
+ (copy rows.c rows_v3.c))
+
+(rule
+ (copy reduce.c reduce_v3.c))
+
+(rule
+ (copy fft.c fft_v3.c))
+
+(rule
+ (copy linalg.c linalg_v3.c))
+
+(rule
+ (target v3_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(-mavx2 -mfma -mf16c -mbmi2)"))))
+
+(rule
+ (target v3_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target vnni_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/vnni.ml} %{cc}))))
+
+(rule
+ (target vnni_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target vector_flags.sexp)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/gcc.ml} %{cc}))))

@@ -1,0 +1,118 @@
+; nx's suites, through its interface. What only the engine's operations
+; reach, and the grid and route laws, hold on private modules no interface
+; reaches yet: their suites compile copies of the sources.
+
+(tests
+ (names
+  test_devices
+  test_values
+  test_place
+  test_exec
+  test_elementwise
+  test_reduce
+  test_statistics
+  test_activations
+  test_order
+  test_sort
+  test_fft
+  test_linalg
+  test_padded
+  test_interp
+  test_donate
+  test_shapes
+  test_patterns
+  test_contract
+  test_rng
+  test_indexing
+  test_data
+  test_creation
+  test_logic
+  test_math
+  test_operators
+  test_complex
+  test_matrices
+  test_print)
+ (modules
+  test_devices
+  test_values
+  test_place
+  test_exec
+  test_elementwise
+  test_reduce
+  test_statistics
+  test_activations
+  test_order
+  test_sort
+  test_fft
+  test_linalg
+  test_padded
+  test_interp
+  test_donate
+  test_shapes
+  test_patterns
+  test_contract
+  test_rng
+  test_indexing
+  test_data
+  test_creation
+  test_logic
+  test_math
+  test_operators
+  test_complex
+  test_matrices
+  test_print)
+ (libraries
+  nx
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_cpu
+  nx_support
+  rig
+  windtrap))
+
+(copy_files
+ (files ../lib/{grid,devices,route,prim,place,pairwise,expand,exec,repr}.{ml,mli}))
+
+(copy_files
+ (files ../lib/value.mli))
+
+(tests
+ (names test_grid test_route test_windows test_prim test_maps test_index_ops)
+ (modules
+  test_grid
+  test_route
+  test_windows
+  test_prim
+  test_maps
+  test_index_ops
+  grid
+  devices
+  route
+  value
+  prim
+  place
+  pairwise
+  expand
+  exec
+  repr)
+ (modules_without_implementation value)
+ (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap)
+ ; A stack of 2 MiB: a walk that recurses once per node overflows on a long
+ ; chain of constants.
+ (action
+  (setenv
+   OCAMLRUNPARAM
+   l=256k
+   (run %{test}))))
+
+; An interpreter's match over Nx.Prim is exhaustive, compiled against nx's
+; interfaces.
+
+(cram
+ (applies_to exhaustive)
+ (deps
+  (glob_files ../lib/.nx.objs/byte/*.cmi)
+  (glob_files ../lib/array/.nx_array.objs/byte/*.cmi)
+  (glob_files ../lib/kernel/.nx_kernel.objs/byte/*.cmi)
+  (glob_files ../../../packages/rig/lib/.rig.objs/byte/*.cmi)))
