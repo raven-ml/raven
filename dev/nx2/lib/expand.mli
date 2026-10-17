@@ -67,11 +67,12 @@
     expands into a map of each pair of elements multiplied in the accumulator,
     a sum over the contracted axes, and the [init] added.
     A sort of another dtype sorts positions by its order
-    keys, int64 values below [2^32], one for an integer or a float of at most 32
-    bits, two for one of 64 and per part for a complex number, the least
-    significant first: each pass a bitonic network over the key packed above its
-    position, along the axis padded to a power of two [N], then the elements
-    gathered once: O(K N log² N) for K keys. A map with a padded load reads it
+    keys, int64 values of [b = 63 - ⌈log₂ n⌉] bits along an axis of [n]
+    elements, [⌈w / b⌉] for an integer or a float of [w] bits and per part for
+    a complex number, the least significant first: each pass a bitonic network
+    over the key packed above its position in an int64, along the axis padded
+    to a power of two [N], then the elements gathered once: O(K N log² N) for
+    K keys. A map with a padded load reads it
     as an assembly of its operand padded, each element it keeps at its padded
     position and the fill elsewhere, viewed through its windows: O(padded
     elements) per load; a reduction or a scan with a padded load expands into
@@ -109,6 +110,31 @@ val single : Nx_kernel.Prog.t -> Nx_kernel.Prog.node option
     [n], every node before it is [In i] at index [i], and [n] is a [Const], a
     [Coord], or a kind of [m] operands reading nodes [0] to [m - 1] in order,
     [m] nodes before it. [None] otherwise: a map of [p] expands. *)
+
+val sort :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  bits:int ->
+  int ->
+  bool ->
+  int option ->
+  ('v, 's, 'd) Value.t ->
+  (('v, 's, 'd) Value.t * 'd Value.index) option
+(** [sort apply ~by ~bits axis descending k x] is the expansion of
+    [Sort { axis; descending; k; x }] by order keys of [bits] bits, for [bits]
+    in \[[1], [63 - ⌈log₂ n⌉]\] along an axis of [n] elements, so that a key
+    packed above its position fits an int64. {!run} sorts at the width [b]
+    stated above. *)
+
+val square_mod :
+  int ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_kernel.Prog.E.t ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_kernel.Prog.E.t
+(** [square_mod m t] is [t² mod m] at the int64 [t], exact for [t] in
+    \[[0], [2{^63}]) and [m] in \[[1], [2{^54}]\]: the moduli [2n] of
+    Bluestein's chirp along an axis of [n] elements. For [m] up to [2{^31}] it
+    is [(t mod m)² mod m]; past it, a product by Horner's rule over digits of
+    [t mod m] small enough that no step leaves int64. *)
 
 val run :
   ('q. by:string -> 'q Value.prim -> 'q) ->

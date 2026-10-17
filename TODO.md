@@ -326,9 +326,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx2
 
-- sort-key packing overflows for axes longer than 2^31, and Bluestein's
-  square modulo `2*n` overflows int64: reproduce both, then fix
-  (`refs/audit/20261010-deep/worktrees/wt-14`)
 - direct kernel entries write or allocate scratch before refusing malformed
   contraction extents and padded shapes beyond `max_numel`: one rule per
   shape invariant, regressions from `refs/audit/20261010-deep/worktrees/wt-26`

@@ -401,8 +401,8 @@ let forced =
             (shards columns));
     ]
 
-(* A movement or bitcast its rule refuses raises naming its function before any
-   kernel runs, even where its arrays could only be moved after a copy. *)
+(* An operation its rule refuses raises naming its function before any kernel
+   runs, even where its arrays could only be moved after a copy. *)
 let refused name op =
   C.reset ();
   raises_match (Exn.invalid_arg ~substring:"t: ") (fun () ->
@@ -661,7 +661,144 @@ let expansions =
           equal (array bits) [| 1.; 2. |] (elements y));
     ]
 
+(* Expansions' arithmetic at axes of up to Layout.max_numel elements, which
+   no test allocates. *)
+
+let max_numel = A.Layout.max_numel
+
+(* [t² mod m] by doubling, each intermediate below [2m]. *)
+let square_mod t m =
+  let a = Int64.rem t m and r = ref 0L in
+  for bit = 62 downto 0 do
+    r := Int64.rem (Int64.mul !r 2L) m;
+    if Int64.logand (Int64.shift_right_logical a bit) 1L = 1L then
+      r := Int64.rem (Int64.add !r a) m
+  done;
+  !r
+
+let value (type v s) (dt : (v, s) D.t) shape (xs : v array) :
+    (v, s, b) Value.t =
+  let a = A.to_device (m 0) (A.of_array dt shape xs) in
+  Value.Array { at = at1; a; dead = Value.Live }
+
+(* A chirp's square: moduli up to Bluestein's largest, [2 max_numel], and
+   operands anywhere in [0, 2^63). *)
+let squares =
+  let open Gen in
+  let* m =
+    frequency
+      [
+        (1, int_range 1 (1 lsl 31));
+        (2, int_range ((1 lsl 31) + 1) (2 * max_numel));
+        (1, constant (2 * max_numel));
+      ]
+  in
+  let+ ts = array ~size:(constant 8) (map (Int64.logand Int64.max_int) int64) in
+  (m, Array.append ts [| 0L; Int64.of_int (m - 1); Int64.max_int |])
+
+let law_square_mod (m, ts) =
+  cover "one digit" (m <= 1 lsl 31);
+  cover "several digits" (m > 1 lsl 31);
+  cover "the largest modulus" (m = 2 * max_numel);
+  let i = P.E.input 0 D.Int64 in
+  let y =
+    first
+      (Exec.run ~by:"t"
+         (Value.Map
+            {
+              layout = A.Layout.contiguous [| Array.length ts |];
+              prog =
+                P.of_exprs ~ins:[| D.Any D.Int64 |]
+                  [| P.E.any (Expand.square_mod m i) |];
+              outs = Value.[ D.Int64 ];
+              loads = [| Plain (value D.Int64 [| Array.length ts |] ts) |];
+            }))
+  in
+  equal (array int64)
+    (Array.map (fun t -> square_mod t (Int64.of_int m)) ts)
+    (elements y)
+
+(* A sort's keys at any width an axis allows: two rows of [n] elements of a
+   dtype that splits into several keys, drawn from few values so that ties,
+   NaNs, signed zeros and extremes meet. *)
+type keyed =
+  | Keyed : ('v, 's) D.t * int * 'v array * int * bool -> keyed
+
+let pp_keyed ppf (Keyed (dt, n, _, bits, descending)) =
+  Format.fprintf ppf "%s [2; %d] at %d bits%s" (D.name dt) n bits
+    (if descending then " descending" else "")
+
+type pool = Pool : ('v, 's) D.t * 'v list -> pool
+
+let floats =
+  [ Float.nan; -.Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity; 1.;
+    -1.; Float.max_float; -.Float.min_float ]
+
+let complexes =
+  List.concat_map
+    (fun re -> List.map (fun im -> { Complex.re; im }) [ 0.; Float.nan; -1. ])
+    [ -0.; 1.; Float.infinity; Float.nan ]
+
+let int32s = [ Int32.min_int; Int32.max_int; -1l; 0l; 1l; 0x10000l ]
+
+let int64s =
+  [ Int64.min_int; Int64.max_int; -1L; 0L; 1L; 0x1_0000_0000L; 0xffff_ffffL;
+    0x7ff0_0000_0000_0000L ]
+
+let pools =
+  [
+    Pool (D.Float32, floats); Pool (D.Float64, floats);
+    Pool (D.Int32, int32s); Pool (D.Uint32, int32s);
+    Pool (D.Int64, int64s); Pool (D.Uint64, int64s);
+    Pool (D.Complex64, complexes); Pool (D.Complex128, complexes);
+  ]
+
+let bit_length n =
+  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
+  go n 0
+
+let keyed =
+  let open Gen in
+  with_pp pp_keyed
+  @@ let* (Pool (dt, pool)) = of_list pools in
+     let* n = int_range 2 40 in
+     let widest = 63 - bit_length (n - 1) in
+     let* bits =
+       frequency
+         [ (1, constant 10); (3, int_range 10 widest); (1, constant widest) ]
+     in
+     let* descending = bool in
+     let+ xs = array ~size:(constant (2 * n)) (of_list pool) in
+     Keyed (dt, n, xs, bits, descending)
+
+(* The expansion's positions at [bits] are nx.cpu's: the stable order. *)
+let law_sort_keys (Keyed (dt, n, xs, bits, descending)) =
+  let part = match D.kind dt with D.Complex -> D.bits dt / 2 | _ -> D.bits dt in
+  let keys = (part + bits - 1) / bits in
+  cover "a 32-bit part in two keys or more" (part = 32 && keys >= 2);
+  cover "a 64-bit part in seven keys" (part = 64 && keys = 7);
+  cover "the axis's widest keys" (bits = 63 - bit_length (n - 1));
+  let x = value dt [| 2; n |] xs in
+  let _, want =
+    Exec.run ~by:"t" (Value.Sort { axis = 1; descending; k = None; x })
+  in
+  let _, got =
+    Option.get (Expand.sort Exec.run ~by:"t" ~bits 1 descending None x)
+  in
+  equal ~msg:"positions" (array int64) (elements want) (elements got)
+
+let arithmetic =
+  group "expansions' arithmetic"
+    [
+
+      prop "a chirp's square modulo 2n is exact" squares law_square_mod;
+      prop "a sort orders as nx.cpu's at any key width the axis allows" keyed
+        law_sort_keys;
+    ]
+
 let () =
   exit
     (run "nx maps"
-       [ maps; checks; constants; forced; rules; donation; expansions ])
+       [
+         maps; checks; constants; forced; rules; donation; expansions; arithmetic;
+       ])

@@ -1161,11 +1161,39 @@ let stockham (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   in
   move (Reshape [| 2; batch; n |]) (level pairs n 1)
 
+let bit_length n =
+  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
+  go n 0
+
+(* [a = t mod m] times itself by Horner's rule over [a]'s digits of
+   [c = 62 - ⌈log₂ m⌉] bits, the most significant first: [r] below [m] times
+   [2^c], plus [a] times a digit, stays below [2^63]. For [m] up to [2^31],
+   one digit: [a · a mod m]. *)
+let square_mod m t =
+  let i64 v = E.const D.Int64 (Int64.of_int v) in
+  let l = bit_length (m - 1) in
+  let c = 62 - l in
+  let digits = max 1 ((l + c - 1) / c) in
+  let a = E.(t mod i64 m) and base = i64 (1 lsl c) in
+  let mask = i64 ((1 lsl c) - 1) in
+  let digit i =
+    let d = if i = 0 then a else E.idiv a (i64 (1 lsl (c * i))) in
+    if i = digits - 1 then d else E.(d land mask)
+  in
+  let top = digit (digits - 1) in
+  let r = ref E.(a * top mod i64 m) in
+  for i = digits - 2 downto 0 do
+    let d = digit i in
+    r := E.(((!r * base) + (a * d)) mod i64 m)
+  done;
+  !r
+
 (* The transform of exponent sign [sign] of [pairs], of shape [2; b; n], along
    its last axis, by Bluestein's chirp: [jk = (j² + k² - (k - j)²) / 2] makes it
    [c_k Σ_j (x_j c_j) conj c_(k-j)], [c_j = e^(sign·iπ j²/n)], a convolution,
    computed by {!stockham} at the power of two [M ≥ 2n - 1]. [j²] is taken
-   modulo [2n], exact in int64, so the chirp's angle stays below [2π]. *)
+   modulo [2n] by {!square_mod}, exact in int64, so the chirp's angle stays
+   below [2π]. *)
 let bluestein (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     sign (pairs : (float, r, d) Value.t) : (float, r, d) Value.t =
   let dt = Prim.dtype pairs and s0 = Prim.shape pairs in
@@ -1178,8 +1206,7 @@ let bluestein (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let f v = E.const dt (D.of_float dt v) in
   (* [e^(sg·iπ (t² mod 2n)/n)] at the int64 [t]. *)
   let chirp sg t =
-    let period = i64 (2 * n) in
-    let q = E.cast dt E.(t * t mod period) in
+    let q = E.cast dt (square_mod (2 * n) t) in
     unit_at E.(q * f (sg *. Float.pi /. Float.of_int n))
   in
   let padded =
@@ -1613,34 +1640,51 @@ let unsigned w =
 
 let ones w = if w = 64 then -1L else Int64.(sub (shift_left 1L w) 1L)
 
-(* The key [k], of an unsigned dtype, as int64s below [2^32], the high half
-   first. *)
-let halves (type v s) (k : (v, s) E.t) =
-  let wide n = E.cast D.Int64 n in
-  match E.dtype k with
-  | D.Uint64 ->
-      let c = E.const D.Uint64 in
-      [ wide E.(idiv k (c 0x1_0000_0000L)); wide E.(k land c 0xffff_ffffL) ]
-  | _ -> [ wide k ]
+(* The element of the unsigned dtype [dt] of an int64's low bits. *)
+let unsigned_of (type v s) (dt : (v, s) D.t) : int64 -> v =
+  match dt with
+  | D.Uint8 -> Int64.to_int
+  | D.Uint16 -> Int64.to_int
+  | D.Uint32 -> Int64.to_int32
+  | D.Uint64 -> Fun.id
+  | _ -> invalid_arg "Expand.unsigned_of: not an unsigned dtype"
 
-(* The {!halves} of the order key of [x], a float of [w] bits, a NaN where
-   [nan] is: its bits with the sign set where it is clear, all flipped where
-   it is set, so that [-0] keys just below [+0]; all ones for every NaN. *)
-let float_key w x nan =
+(* The key [k], of an unsigned dtype of [w] bits, as int64s of at most [c]
+   bits, the most significant first: each chunk taken in [k]'s dtype, whose
+   division and mask are unsigned, then cast. *)
+let chunks (type v s) c (k : (v, s) E.t) =
+  let dt = E.dtype k in
+  let w = D.bits dt and of_int64 = unsigned_of dt in
+  let count = (w + c - 1) / c in
+  let word v = E.const dt (of_int64 v) in
+  List.init count (fun i ->
+      let shift = (count - 1 - i) * c in
+      let high =
+        if shift = 0 then k else E.idiv k (word (Int64.shift_left 1L shift))
+      in
+      E.cast D.Int64 (if i = 0 then high else E.(high land word (ones c))))
+
+(* The {!chunks} of [c] bits of the order key of [x], a float of [w] bits, a
+   NaN where [nan] is: its bits with the sign set where it is clear, all
+   flipped where it is set, so that [-0] keys just below [+0]; all ones for
+   every NaN. *)
+let float_key c w x nan =
   let (U (ut, of_int64)) = unsigned w in
   let u = E.bitcast ut x in
   let top = E.const ut (of_int64 (Int64.shift_left 1L (w - 1))) in
   let all = E.const ut (of_int64 (ones w)) in
-  halves E.(where nan all (where (top <= u) (u lxor all) (u lor top)))
+  chunks c E.(where nan all (where (top <= u) (u lxor all) (u lor top)))
 
-(* [x]'s order keys, most significant first: int64 values below [2^32] whose
-   lexicographic order is {!Nx_kernel.S.sort}'s order of [x]'s elements,
-   every NaN, and every complex number with a NaN part, one key above [+∞]. A
-   signed integer keys as its bits with the sign flipped, a float as
-   {!float_key} gives, a complex number as its real part's key, then its
-   imaginary part's. *)
+let key_bits n = 63 - bit_length (n - 1)
+
+(* [x]'s order keys, most significant first: int64 values of [c] bits,
+   whose lexicographic order is
+   {!Nx_kernel.S.sort}'s order of [x]'s elements, every NaN, and every
+   complex number with a NaN part, one key above [+∞]. A signed integer keys
+   as its bits with the sign flipped, a float as {!float_key} gives, a
+   complex number as its real part's key, then its imaginary part's. *)
 let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (x : (v, s, d) Value.t) : (int64, D.int64_elt, d) Value.t list =
+    c (x : (v, s, d) Value.t) : (int64, D.int64_elt, d) Value.t list =
   let dt = Prim.dtype x and shape = Prim.shape x in
   let w = D.bits dt in
   (* The keys [ks] over [loads], one map each. *)
@@ -1654,12 +1698,12 @@ let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let v = E.input 0 dt in
   match D.kind dt with
   | D.Boolean -> keys [| Value.Any x |] [ E.cast D.Int64 v ]
-  | D.Unsigned -> keys [| Value.Any x |] (halves v)
+  | D.Unsigned -> keys [| Value.Any x |] (chunks c v)
   | D.Signed ->
       let (U (ut, of_int64)) = unsigned w in
       let top = E.const ut (of_int64 (Int64.shift_left 1L (w - 1))) in
-      keys [| Value.Any x |] (halves E.(bitcast ut v lxor top))
-  | D.Float -> keys [| Value.Any x |] (float_key w v E.(v <> v))
+      keys [| Value.Any x |] (chunks c E.(bitcast ut v lxor top))
+  | D.Float -> keys [| Value.Any x |] (float_key c w v E.(v <> v))
   | D.Complex ->
       let w = w / 2 in
       let (Part pt) = Option.get (parts (D.Any dt)) in
@@ -1667,20 +1711,17 @@ let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       let part j = Value.Any (half apply ~by shape pairs j) in
       let re = E.input 0 pt and im = E.input 1 pt in
       let nan = E.(re <> re || im <> im) in
-      keys [| part 0; part 1 |] (float_key w re nan @ float_key w im nan)
+      keys [| part 0; part 1 |] (float_key c w re nan @ float_key c w im nan)
 
-let bit_length n =
-  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
-  go n 0
-
-(* The positions along [axis] that sort the keys [k], below [2^32], stably: a
-   bitonic network over each key packed above its position, which makes the
-   packed integers distinct, so the network's order is the stable one. The axis
-   is padded to a power of two [N] with integers that sort last. Each of the
-   network's [log N (log N + 1) / 2] steps is a gather of each element's
-   partner, the element whose position differs in one bit, and a map keeping the
-   lesser or the greater of the two: O(N log² N). A descending sort complements
-   the positions, so that equal keys keep increasing positions. *)
+(* The positions along [axis] that sort the keys [k], of {!key_bits} bits or
+   fewer, stably: a bitonic network over each key packed above its position,
+   which makes the packed integers distinct, so the network's order is the
+   stable one. The axis is padded to a power of two [N] with integers that sort last.
+   Each of the network's [log N (log N + 1) / 2] steps is a gather of each
+   element's partner, the element whose position differs in one bit, and a
+   map keeping the lesser or the greater of the two: O(N log² N). A
+   descending sort complements the positions, so that equal keys keep
+   increasing positions. *)
 let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
     descending (k : (int64, D.int64_elt, d) Value.t) :
     (int64, D.int64_elt, d) Value.t =
@@ -1754,13 +1795,14 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
     (P.of_exprs ~ins:one [| E.any (tie E.(s land int64 mask)) |])
     D.Int64 [| Value.Plain sorted |]
 
-(* A sort as positions from its keys, the least significant first, each pass a
-   stable {!bitonic} sort of one key in the order of the passes before it, then
-   a gather of the elements: O(K N log² N) for K keys, K 1 to 4. A sub-byte sort
+(* A sort as positions from its keys of [bits] bits, the least significant
+   first, each pass a stable {!bitonic} sort of one key in the order of the
+   passes before it, then
+   a gather of the elements: O(K N log² N) for K keys. A sub-byte sort
    runs at its accumulator, which holds each code and orders them alike, its
    values cast back once; no sub-byte dtype has a NaN code. *)
-let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
-    descending k (x : (v, s, d) Value.t) :
+let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
+    axis descending k (x : (v, s, d) Value.t) :
     ((v, s, d) Value.t * (int64, D.int64_elt, d) Value.t) option =
   match sub_byte x with
   | Some (D.Any w) ->
@@ -1784,7 +1826,7 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
               let p = bitonic apply ~by axis descending key in
               Some (Option.fold ~none:p ~some:(fun o -> gather p o) order))
             None
-            (List.rev (sort_keys apply ~by x))
+            (List.rev (sort_keys apply ~by bits x))
           |> Option.get
       in
       (* CR: Select the first k positions, make them contiguous, then gather
@@ -1851,7 +1893,9 @@ let run : type r.
   | Value.Gather { axis; idx; x } -> gather apply ~by axis idx x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
       scatter apply ~by combine ~unique axis idx updates into
-  | Value.Sort { axis; descending; k; x } -> sort apply ~by axis descending k x
+  | Value.Sort { axis; descending; k; x } ->
+      let bits = key_bits (Prim.dim x axis) in
+      sort apply ~by ~bits axis descending k x
   | Value.Fold { shape; pad; x } -> Some (fold apply ~by shape pad x)
   | Value.Fft f -> Some (fft apply ~by f)
   | Value.Copy x ->
