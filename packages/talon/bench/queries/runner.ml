@@ -5,7 +5,7 @@
 
 (* Talon's answers to the benchmark suite: writes one answer, or checks every
    answer at the CI size against the committed ones. bench_h2o.exe and
-   bench_tpch.exe time them. *)
+   bench_decision.exe time them. *)
 
 open Talon
 
@@ -14,12 +14,12 @@ let usage =
        runner check ANSWERS DATA
        runner questions WORKLOAD/SIZE
 
-ID is a question's id, such as groupby/1e7/q03 or tpch/sf1/q21, read from
+ID is a question's id, such as groupby/1e7/q03 or decision/sf1/q21, read from
 the data generated under DATA.
 
 answer    writes the question's canonical answer to the CSV file FILE.
 check     runs every question at the CI size (groupby/1e6, join/1e6,
-          tpch/sf0.1) and compares its answer with the committed one under
+          decision/sf0.1) and compares its answer with the committed one under
           ANSWERS, as answers.py does.
 questions prints the ids of a workload's questions, one per line.|}
 
@@ -39,7 +39,7 @@ let families =
   [
     ("groupby", { ci = "1e6"; workload = H2o.groupby });
     ("join", { ci = "1e6"; workload = H2o.join });
-    ("tpch", { ci = "sf0.1"; workload = Tpch.workload });
+    ("decision", { ci = "sf0.1"; workload = Decision.workload });
   ]
 
 let family name =

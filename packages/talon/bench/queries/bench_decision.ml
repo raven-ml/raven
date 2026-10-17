@@ -3,8 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Times talon's answers to the TPC-H queries into tpch.thumper. *)
+(* Times talon's answers to the decision-support queries into
+   decision.thumper. *)
 
 let () =
-  Cases.run "tpch" ~sizes:[ "sf0.1"; "sf1"; "sf10" ] [ ("tpch", Tpch.workload) ]
+  Cases.run "decision"
+    ~sizes:[ "sf0.1"; "sf1"; "sf10" ]
+    [ ("decision", Decision.workload) ]
   |> exit

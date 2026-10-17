@@ -625,13 +625,14 @@ let workload ~data size =
     | [ "s"; sf ] when List.mem sf scales -> sf
     | _ ->
         invalid_arg
-          (Printf.sprintf "unknown TPC-H size %S; expected one of %s" size
+          (Printf.sprintf "unknown decision-support size %S; expected one of %s"
+             size
              (String.concat ", " (List.map (( ^ ) "sf") scales)))
   in
-  let root = Filename.concat data ("tpch-sf" ^ sf) in
+  let root = Filename.concat data ("decision-sf" ^ sf) in
   let scale = float_of_string sf in
   {
-    Workload.id = "tpch/" ^ size;
+    Workload.id = "decision/" ^ size;
     tables =
       List.map
         (fun name ->

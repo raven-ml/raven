@@ -9,15 +9,15 @@
 usage: uv run baseline.py WORKLOAD SIZE DATA [--runs N] [--output FILE]
                           [--allow-load]
 
-WORKLOAD is h2o (its group-by and join questions, SIZE 1e7 or 1e8) or tpch
+WORKLOAD is h2o (its group-by and join questions, SIZE 1e7 or 1e8) or decision
 (SIZE is the scale factor, 1 or 10), read from the data generated under DATA.
 The CI sizes, 1e6 and 0.1, also run, as a smoke test of the harness.
 Every question runs once to warm up, then N times (default 5); each timed run
 is one sample of the case WORKLOAD-ID/QUESTION/ENGINE, e.g.
-groupby/1e7/q01/duckdb or tpch/sf1/q07/polars.
+groupby/1e7/q01/duckdb or decision/sf1/q07/polars.
 
 The rows go into this machine's section of FILE (default
-h2o-baselines.thumper or tpch-baselines.thumper next to this script),
+h2o-baselines.thumper or decision-baselines.thumper next to this script),
 replacing the rows of the same cases and keeping the others. A section pins
 the engines' versions, Polars' engine, the thread count, the memory, the
 Python version and the data's generator, and a run whose pins differ from the
@@ -47,7 +47,7 @@ import numpy as np
 import h2o
 import h2o_data
 import thumper
-import tpch
+import decision
 from workload import ENGINES, check_engines, check_tables, timed, versions
 
 HERE = Path(__file__).resolve().parent
@@ -131,7 +131,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("workload", choices=["h2o", "tpch"])
+    parser.add_argument("workload", choices=["h2o", "decision"])
     parser.add_argument("size")
     parser.add_argument("data", type=Path)
     parser.add_argument("--runs", type=int, default=5)
@@ -151,7 +151,7 @@ def main() -> None:
         workloads = h2o.workloads(args.data, args.size)
         data = f"numpy {np.__version__} · seed {h2o_data.SEED}"
     else:
-        workloads = [tpch.workload(args.data, args.size)]
+        workloads = [decision.workload(args.data, args.size)]
         data = f"dbgen of duckdb {duckdb.__version__}"
     for workload in workloads:
         check_tables(workload)

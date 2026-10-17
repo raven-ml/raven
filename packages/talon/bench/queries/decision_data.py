@@ -4,15 +4,15 @@
 # [tool.uv]
 # exclude-newer = "2026-10-01T00:00:00Z"
 # ///
-"""Generate the TPC-H tables as snappy Parquet, with money as float64.
+"""Generate the decision-support tables as snappy Parquet, money as float64.
 
-usage: uv run tpch_data.py SF DATA
+usage: uv run decision_data.py SF DATA
 
 SF is the scale factor, 0.1, 1 or 10. The eight tables land in
-DATA/tpch-sfSF/TABLE.parquet. They come from DuckDB's tpch extension, which
-runs the reference dbgen, so they are the same on every machine. Every
-DECIMAL(15,2) column (prices, costs, balances, quantities, discounts, taxes)
-is written as DOUBLE; the other columns keep dbgen's types.
+DATA/decision-sfSF/TABLE.parquet. They come from DuckDB's tpch extension,
+which runs TPC-H's reference dbgen, so they are the same on every machine.
+Every DECIMAL(15,2) column (prices, costs, balances, quantities, discounts,
+taxes) is written as DOUBLE; the other columns keep dbgen's types.
 """
 
 import sys
@@ -20,14 +20,14 @@ from pathlib import Path
 
 import duckdb
 
-import tpch
+import decision
 
 
 def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
-    sf, data = tpch.scale(sys.argv[1]), Path(sys.argv[2])
-    root = tpch.directory(data, sf)
+    sf, data = decision.scale(sys.argv[1]), Path(sys.argv[2])
+    root = decision.directory(data, sf)
     root.mkdir(parents=True, exist_ok=True)
     # On disk, so that scale factor 10 does not have to fit in memory twice.
     scratch = root / "dbgen.duckdb"
@@ -36,7 +36,7 @@ def main() -> None:
     con.execute("INSTALL tpch")
     con.execute("LOAD tpch")
     con.execute(f"CALL dbgen(sf = {sf})")
-    for table in tpch.TABLES:
+    for table in decision.TABLES:
         columns = ", ".join(
             f"CAST({name} AS DOUBLE) AS {name}" if kind.startswith("DECIMAL") else name
             for name, kind in con.execute(

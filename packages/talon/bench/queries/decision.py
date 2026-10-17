@@ -1,8 +1,9 @@
-"""The 22 TPC-H queries, with the specification's validation parameters.
+"""The 22 decision-support queries, with their validation parameters.
 
-The SQL is the text of DuckDB's tpch extension, except query 11, whose
-fraction is the specification's 0.0001 / SF instead of the scale-factor-1
-constant. Every engine scans the same Parquet files inside the timed region.
+The queries and their parameters are derived from the TPC-H specification;
+results from them are not comparable to published TPC-H results. The SQL is
+the text of DuckDB's tpch extension, except query 11, whose fraction is the
+specification's 0.0001 / SF instead of the scale-factor-1 constant. Every engine scans the same Parquet files inside the timed region.
 """
 
 from datetime import date
@@ -29,12 +30,12 @@ TABLES = [
 
 def scale(sf: str) -> str:
     if sf not in SCALES:
-        raise SystemExit(f"unknown TPC-H scale factor {sf!r}; expected one of {SCALES}")
+        raise SystemExit(f"unknown decision-support scale factor {sf!r}; expected one of {SCALES}")
     return sf
 
 
 def directory(data: Path, sf: str) -> Path:
-    return data / f"tpch-sf{sf}"
+    return data / f"decision-sf{sf}"
 
 
 c = pl.col
@@ -1231,7 +1232,7 @@ def workload(data: Path, sf: str) -> Workload:
     root = directory(data, scale(sf))
     queries = zip(SQL, POLARS)
     return Workload(
-        id=f"tpch/sf{sf}",
+        id=f"decision/sf{sf}",
         tables={name: Table(root / f"{name}.parquet", None) for name in TABLES},
         questions=[
             Question(

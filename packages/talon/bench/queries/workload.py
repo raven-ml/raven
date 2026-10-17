@@ -5,7 +5,8 @@ is written twice, once as DuckDB SQL and once as a Polars lazy query, and both
 spellings produce the same columns under the same names.
 
 A table either loads before timing (H2O's CSV files, read into memory with a
-declared schema) or is scanned inside the timed region (TPC-H's Parquet files).
+declared schema) or is scanned inside the timed region (the decision-support queries' Parquet
+files).
 """
 
 import gc
@@ -38,7 +39,7 @@ class Question:
 @dataclass(frozen=True)
 class Workload:
     id: str
-    """The case id prefix, e.g. [groupby/1e7] or [tpch/sf1]."""
+    """The case id prefix, e.g. [groupby/1e7] or [decision/sf1]."""
     tables: dict[str, Table]
     questions: list[Question]
     ordered: bool

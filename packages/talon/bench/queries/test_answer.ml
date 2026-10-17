@@ -145,8 +145,8 @@ let files =
             ("a" / "groupby-1e6" / "q01.csv")
             (Answer.path "a" "groupby/1e6/q01");
           equal string
-            ("a" / "tpch-sf0.1" / "q22.csv")
-            (Answer.path "a" "tpch/sf0.1/q22"));
+            ("a" / "decision-sf0.1" / "q22.csv")
+            (Answer.path "a" "decision/sf0.1/q22"));
       test "read reads back what write writes" (fun () ->
           let t =
             v

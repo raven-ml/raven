@@ -7,7 +7,8 @@
 
     This is [workload.py]'s contract on talon's side. A table either loads
     before timing (H2O's CSV files, read into memory with a declared schema) or
-    is scanned inside the timed region (TPC-H's Parquet files). *)
+    is scanned inside the timed region (the decision-support
+    queries' Parquet files). *)
 
 (** The type for tables. *)
 type table =
@@ -26,7 +27,7 @@ type question = {
 (** The type for questions. *)
 
 type t = {
-  id : string;  (** The case id prefix, as [groupby/1e7] or [tpch/sf1]. *)
+  id : string;  (** The case id prefix, as [groupby/1e7] or [decision/sf1]. *)
   tables : (string * table) list;  (** The tables, by name. *)
   questions : question list;  (** The questions, in order. *)
   ordered : bool;

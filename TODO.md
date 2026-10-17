@@ -404,11 +404,12 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## talon, hugin, brot, munin, quill
 
-- talon vs the faster of DuckDB/Polars: TPC-H SF1 13.2x, H2O group-by and
-  join 2.8x; pandas 1.36x on filter and 2.05x on join. `Nx_ragged.take`
-  moves ~40 bytes per byte of text and dominates joins; test_run 1.2 s
+- talon vs the faster of DuckDB/Polars: decision support SF1 13.2x, H2O
+  group-by and join 2.8x; pandas 1.36x on filter and 2.05x on join.
+  `Nx_ragged.take` moves ~40 bytes per byte of text and dominates joins;
+  test_run 1.2 s
 - talon benches: commit the query suite's DuckDB/Polars baselines (H2O
-  1e7/1e8, TPC-H SF1/SF10) and a CSV read row; GC stress for its C stubs
+  1e7/1e8, decision support SF1/SF10) and a CSV read row; GC stress for its C stubs
 - talon 1.0 plan (_plans/talon/product/plan.md): windows and ewm, as-of and
   interval joins, interval sets and folds, zoned time, `cut` and temporal
   casts, hash/sample/shuffle, Pivot and nesting, dense round trips,
@@ -447,7 +448,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - private modules: each gets an .mli per doc/dev/documentation.md, rig as
   the reference (143 lib/ modules have none; jera, norn and ymir dropped
   theirs)
-- licences: stop calling talon's bench TPC-H; rewrite talon's Schubfach (OpenJDK, GPL) and ymir's WCS pole
+- licences: rewrite talon's Schubfach (OpenJDK, GPL) and ymir's WCS pole
   (WCSLIB, LGPL) from their papers; one copyright line: the LICENSE files
   say "2025, Thibaut Mattio", the source headers "2026 The Raven authors"
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and

@@ -8,8 +8,8 @@
 
 usage: uv run answers.py DATA [--record]
 
-Runs every question once at the CI size (H2O at 1e6 rows, TPC-H at scale
-factor 0.1, generated under DATA) on DuckDB and Polars, and compares each
+Runs every question once at the CI size (H2O at 1e6 rows, the decision-support
+queries at scale factor 0.1, generated under DATA) on DuckDB and Polars, and compares each
 engine's answer with the committed one in answers/: its row count, and the
 rows the committed file keeps (see answer.py). A committed answer that no
 question produces any more fails the check. With --record, it checks that
@@ -26,14 +26,14 @@ import polars as pl
 
 import answer
 import h2o
-import tpch
+import decision
 from workload import ENGINES, check_engines, check_tables
 
 ANSWERS = Path(__file__).resolve().parent / "answers"
 
 
 def ci_workloads(data: Path):
-    return h2o.workloads(data, "1e6") + [tpch.workload(data, "0.1")]
+    return h2o.workloads(data, "1e6") + [decision.workload(data, "0.1")]
 
 
 def check(expected: pl.DataFrame, rows: int, stride: int, got: pl.DataFrame):
