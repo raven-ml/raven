@@ -143,6 +143,24 @@ let reads_back =
   in
   group "each printed float reads back to itself" floats
 
+(* [print]'s output on the standard formatter, read back through its out
+   functions. *)
+let test_print () =
+  let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.5; -0.; Float.nan |] in
+  let buffer = Buffer.create 64 in
+  let saved = Format.pp_get_formatter_out_functions Format.std_formatter () in
+  Format.pp_set_formatter_out_functions Format.std_formatter
+    {
+      saved with
+      out_string = (fun s pos len -> Buffer.add_substring buffer s pos len);
+      out_flush = ignore;
+    };
+  Fun.protect
+    ~finally:(fun () ->
+      Format.pp_set_formatter_out_functions Format.std_formatter saved)
+    (fun () -> Nx.print x);
+  equal ~msg:"print" string (Nx.to_string x ^ "\n") (Buffer.contents buffer)
+
 let () =
   exit
     (run "nx print"
@@ -154,6 +172,7 @@ let () =
              test "a value of every set prints as a formula" test_every_set;
              test "a dead value names its consumer" test_dead;
              test "a traced value names its interpretation" test_traced;
+             test "print is to_string and a newline on stdout" test_print;
            ];
          reads_back;
        ])
