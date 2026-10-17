@@ -18,8 +18,8 @@ differs, its reason, and the test that pins it. An entry whose test does not
 exist yet names the layer that brings it; the entry is rejected at that
 layer's review if the test is still missing. An entry goes when its reason
 goes. Entries are in the order of their numbers, and a number is never
-reused, since tests cite them. Keeping only part of a file is scope, recorded
-under Exclusions in `README.md`, not a divergence.
+reused, since entries and documents cite them. Keeping only part of a file is
+scope, recorded under Exclusions in `README.md`, not a divergence.
 
 ## D1. Withdrawn
 
@@ -140,7 +140,7 @@ the Exclusions of `README.md`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
 - **Pinned by:** for `Codegen`:
-  `Tolk.Codegen › beam search (D4) › a kernel that asks for a beam of
+  `Tolk.Codegen › beam search › a kernel that asks for a beam of
   width w is optimised by beam w` and `› raises Invalid_argument when a kernel
   asks for a beam and none is given`; for `Ops`: `Tolk.Ops › resolve ›
   simplify leaves a constant, and a sink of constants and stacks of
@@ -208,7 +208,7 @@ the Exclusions of `README.md`.
   domains` and `Tolk.Setting › context › binds for the domains spawned
   while it runs`; `Tolk.Worker` (every test); `Tolk.Codegen ›
   programs are kept › calls from several domains at once make one program,
-  compiled once (D5)`; `Tolk.Compiler_metal › MTLCompiler › compiles
+  compiled once`; `Tolk.Compiler_metal › MTLCompiler › compiles
   from several domains at once`; `Tolk.Compiler_amd › a compile in a process
   of its own` (every test) and `› a process that cannot start`.
 
@@ -223,7 +223,7 @@ the Exclusions of `README.md`.
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
 - **Pinned by:** for targets, `Tolk.Device › renderer takes a device's
-  name as it is (D6)` (a name with an index, in lower case, or a disk's, is no
+  name as it is` (a name with an index, in lower case, or a disk's, is no
   device, and a name gives no renderer or architecture) and `Tolk.Device ›
   renderer › picks a device's renderer as tinygrad does` (the architecture
   comes from the target); for the disk, `Tolk.Ops › several
@@ -399,15 +399,15 @@ stamps nothing (D146).
   committed constant, a uint8 remainder), `Tolk.Symbolic ›
   symbolic_simple › constants › a comparison reads a committed constant at its
   width` (the uncast), `Tolk.Symbolic › committed constants hold their
-  type's value (D13)` (each case above, evaluated before and after), the law
+  type's value` (each case above, evaluated before and after), the law
   `Tolk.Symbolic › laws › sym keeps the value of an integer expression at
   a committed width, wrapping included`, and `Tolk.Symbolic › tinygrad ›
   tests.golden › TestModularWraparound.<test>` and
   `› TestThreefryConstFolding.test_threefry`, whose goldens, generated with
   the same change in `test/gen/tinygrad.patch`, hold the machine values;
   `Tolk.Ops › bounds › a typed integer constant outside its type is
-  bounded by its wrapped value, a non-finite one by the type (D13)`; the
-  offset's interaction with D24: `Tolk.Symbolic › integers wrap (D24) ›
+  bounded by its wrapped value, a non-finite one by the type`; the
+  offset's interaction with D24: `Tolk.Symbolic › integers wrap ›
   an offset crosses a comparison only where neither side wraps` (the
   committed case).
 
@@ -474,7 +474,7 @@ stamps nothing (D146).
   bf8 and makes it NaN in fp8, which is unverified on hardware.
 - **Reason:** (b). nx's float8 encoder keeps infinities special, and a
   jitted kernel must store what eager nx stores for the same cast.
-- **Pinned by:** `Tolk.Cstyle › float8 infinities on CUDA (D16)`, which
+- **Pinned by:** `Tolk.Cstyle › float8 infinities on CUDA`, which
   checks where the guard is declared, the byte each infinity writes and the
   bits of infinite e5m2 constants; `Tolk.Cstyle › sources › by default ›`
   `cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`, `cuda_inf_nan_float8_e4m3`
@@ -506,14 +506,14 @@ stamps nothing (D146).
 - **Reason:** (b). Eager nx and compiled code agree: nx computes each
   operation in its own type, as the folder (`Ops.exec_alu`) and tinygrad's
   interpreter do.
-- **Pinned by:** `Tolk.Cstyle › narrowing (D17)`, which checks for every
+- **Pinned by:** `Tolk.Cstyle › narrowing`, which checks for every
   kernel that the kernel whose tinygrad source is its source is the kernel
   with those casts, and `Tolk.Cstyle › sources`, which compares the 21
   sources it changes with tinygrad's for that kernel; `Tolk.Cstyle ›
-  execution on the host › wraps each operation on unsigned chars (D17)` and
-  `› rounds each operation on halves to a half (D17)`; and the slow
+  execution on the host › wraps each operation on unsigned chars` and
+  `› rounds each operation on halves to a half`; and the slow
   `Tolk.Cstyle › execution on the host › a kernel over a narrow type wraps
-  and rounds as the interpreter (D17)`, over each type's whole range.
+  and rounds as the interpreter`, over each type's whole range.
 
 ## D18. Metal computes a bfloat trunc in float
 
@@ -528,7 +528,7 @@ stamps nothing (D146).
   `TRUNC`.
 - **Reason:** (b). rune runs bfloat16 models on Metal (gpt-oss), where
   `Nx.trunc`, `floor`, `ceil` and `round` of a bfloat16 lower to `TRUNC`.
-- **Pinned by:** `Tolk.Cstyle › bfloat16 truncation on Metal (D18) ›
+- **Pinned by:** `Tolk.Cstyle › bfloat16 truncation on Metal ›
   truncates a bfloat16 in float32` and `› leaves it to CUDA, which truncates a
   bfloat16 with htrunc`, and the slow `› compiles a kernel that truncates a
   bfloat16`; `Tolk.Cstyle › every GPU kernel compiles with its target's
@@ -555,10 +555,10 @@ stamps nothing (D146).
   otherwise compute a value on every device and store it into storage on
   one.
 - **Pinned by:** `Tolk.Allreduce › handle_allreduce › recorded ›
-  nodes_to_one_device_handled.golden, landed on its device (D19)`, which
+  nodes_to_one_device_handled.golden, landed on its device`, which
   states tinygrad's golden in code with each gather of a chunk replaced by its
   copy to the target, and `Tolk.Allreduce › rules › a hierarchical
-  allreduce to one device lands there (D19)`, which evaluates the value and
+  allreduce to one device lands there`, which evaluates the value and
   the function on two devices and finds the reduction on the target alone.
 
 ## D20. Storage keeps an e5m2 NaN's payload
@@ -598,8 +598,8 @@ stamps nothing (D146).
 - **Reason:** (b): rune's multi-axis placement (RFC 0005's meshes, data by
   tensor parallelism), where a mesh's two axes have different shard counts.
 - **Pinned by:** `Tolk.Multi › multi_pm › two sharded axes › a reshape
-  divides each sharded axis by its own count (D21)` and `› a reshape of a mesh
-  of 2 by 4 devices keeps each tile (D21)`, and the law `Tolk.Multi ›
+  divides each sharded axis by its own count` and `› a reshape of a mesh
+  of 2 by 4 devices keeps each tile`, and the law `Tolk.Multi ›
   multi_pm › laws › a rewritten value holds the value computed whole` on grids
   of 2 by 2 and 2 by 4 devices.
 
@@ -639,7 +639,7 @@ stamps nothing (D146).
   value computed from a sharded and a replicated one.
 - **Pinned by:** `Tolk.Multi › multi_pm › shard selections › a
   selection of a movement by the device range takes the selected device's
-  position (D23)`, and the law `Tolk.Multi › multi_pm › laws › a
+  position`, and the law `Tolk.Multi › multi_pm › laws › a
   rewritten value holds the value computed whole`.
 
 ## D24. Rewrites keep IEEE and modular values
@@ -775,32 +775,32 @@ stamps nothing (D146).
   reference interpreter before and after the rewrite at bindings where the
   restricted rewrite changes the value:
   - integer bounds: `Tolk.Ops › bounds › a committed integer that can
-    leave its type has its bounds (D24)`, `› an integer cast to a signed type
-    it leaves wraps (D24)`, `› a constant table holding a NaN has its type's
-    bounds (D24)` and the law `› bounds hold the value a committed integer
-    wraps to (D24)`;
-  - wrapping rules: `Tolk.Symbolic › integers wrap (D24)` (every test);
+    leave its type has its bounds`, `› an integer cast to a signed type
+    it leaves wraps`, `› a constant table holding a NaN has its type's
+    bounds` and the law `› bounds hold the value a committed integer
+    wraps to`;
+  - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
     `Tolk.Divandmod › nested divisions › a committed division stays
-    where x + a * c wraps (D24)`; `Tolk.Simplify › keeping values (D24)`,
+    where x + a * c wraps`; `Tolk.Simplify › keeping values`,
     its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
-    forms, pow: `Tolk.Symbolic › floats keep IEEE values (D24)`, one test
+    forms, pow: `Tolk.Symbolic › floats keep IEEE values`, one test
     per facet, with `› a Dekker split and product keep their low parts` and
     `› a float selection that computes a maximum stays`, the structural tests
     marked D24 in `symbolic_simple`, `symbolic` and `sym`, and the law
     `Tolk.Symbolic › laws › sym keeps a float expression's value bit for
     bit at special values`;
-  - Simplify's reductions: `Tolk.Simplify › keeping values (D24) › a
+  - Simplify's reductions: `Tolk.Simplify › keeping values › a
     float sum over an empty part of a range is +0., whatever the value` and
     `› a float product by a boolean mask keeps its value`, and
     `Tolk.Simplify › pm_reduce_collapse › a float product by a comparison
-    cast from a boolean stays (D24)`;
+    cast from a boolean stays`;
   - transcendental polynomials: the `Tolk.Transcendental` goldens,
     generated from the patched tinygrad, whose value tables are unchanged;
   - tensor-core accumulators: the sources of every tensor core,
     `Tolk.Cstyle › sources › by default › metal_tc_*`, `hip_tc_*` and
     `metal_matmul`, whose loops add nothing to the accumulator, as tinygrad's;
-    `Tolk.Codegen › tensor-core accumulators (D24) › the running sum
+    `Tolk.Codegen › tensor-core accumulators › the running sum
     replaces a zero accumulator` and `› the lowering keeps a tensor core's value, apart from a
     zero's sign`, which draws accumulators at `-0.`;
   - the goldens, generated from the patched tinygrad.
@@ -870,11 +870,11 @@ stamps nothing (D146).
 - **Pinned by:** `Tolk.Compiler_cpu › execution on the host › a product
   and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
   where a fused multiply-add gives `2^-24`); `Tolk.Compiler_metal ›
-  MTLCompiler › a product and a sum compile under the no-contraction pragma
-  (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
+  MTLCompiler › a product and a sum compile under the no-contraction pragma`. On
+  an Apple GPU, the same kernel compiled by MTLCompiler gives
   `2^-24` without the pragma and 0 with it, and still `2^-24` with
   `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.
-  `Tolk.Codegen › multiply-adds (D25) › a sum of products adds each into
+  `Tolk.Codegen › multiply-adds › a sum of products adds each into
   its running sum rounded once, of 2` and `› of 64` (the sum of `-(1 +
   2^-11)` and `(1 + 2^-12)^2` is `2^-24`, with a multiply-add in the source)
   and `› a sum of products unrolled beside upcast lanes adds each into its
@@ -882,11 +882,11 @@ stamps nothing (D146).
   multiply-adds each, and the same `2^-24`) and `› a product and a sum outside a reduction are not
   fused`; the Codegen and C-style goldens, from tinygrad with D25 applied by
   its generator.
-  `Tolk.Ops › exec_alu › a float multiply-add folds rounded once (D25)` (its
+  `Tolk.Ops › exec_alu › a float multiply-add folds rounded once` (its
   float32 case past a double's rounding ties to the wrong float32 when the sum
   is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
-  moves inside the gate of each operand (D25)` and `› a multiply-add of
-  invalid is invalid (D25)`. In rune, `Test_lower_arith › multiply-adds › a
+  moves inside the gate of each operand` and `› a multiply-add of
+  invalid is invalid`. In rune, `Test_lower_arith › multiply-adds › a
   product that the sum cancels is kept whole` and `Test_compiled_rules ›
   compositions › a compiled ewma is its eager value, bit for bit, and so is
   its gradient`.
@@ -936,7 +936,7 @@ stamps nothing (D146).
   do, and a rewrite must keep a graph's value.
 - **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
   are different nodes`; `Tolk.Ops › exec_alu › an invalid operation's
-  NaN is the canonical positive quiet NaN, whatever the host gives (D27)`,
+  NaN is the canonical positive quiet NaN, whatever the host gives`,
   which compares bits and fails on an x86 host without the canonical NaN; `Tolk.Symbolic › symbolic_simple › casts › a
   bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
   with the reference interpreter before and after `simplify`;
@@ -1156,8 +1156,8 @@ encodes no queue (D146).
   another trip's window.
 - **Pinned by:** the Uop_weak suite (`test/uop/uop_weak`): `pm_commit_weak ›
   a 64-bit unsigned cast of a weak expression keeps its value past a float's
-  precision (D44)` and `laws › pm_commit_weak computes an integer cast in
-  integers (D44)`.
+  precision` and `laws › pm_commit_weak computes an integer cast in
+  integers`.
 
 ## D45. Withdrawn
 
@@ -1198,10 +1198,10 @@ its dispatch packets (D146).
 - **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
   default › <target>_fdiv_<type>`, tinygrad's source once its renderer lists
   `FDIV` as Clang does, for Clang, Metal, CUDA and HIP in each float type
-  they have; `division (D50) › the operands tell a quotient from a product by
+  they have; `division › the operands tell a quotient from a product by
   the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
   The `decomp_op` golden `late_division_fdiv`, whose products by a reciprocal
-  stay products; rune's `Rune.jit › division (D50)`, where a compiled product
+  stay products; rune's `Rune.jit › division`, where a compiled product
   by a reciprocal and a compiled quotient each equal nx's eager bits at the
   value above, and its generated programs, whose products take reciprocals
   as factors (`test_jit_programs`).
@@ -1225,8 +1225,7 @@ driver sizes local memory as it loads a function (D146).
 - **Reason:** (b). nx's `pad` fills with the value given, `-0.` included
   (rune's lowering ledger, I1), and rune's compiled pad must compute eager
   nx's bits.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros
-  (D52) › a pad with -0. fill renders and computes -0.` and `› a pad and a
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros › a pad with -0. fill renders and computes -0.` and `› a pad and a
   selection of signed zeros keep the interpreter's bits`.
 
 ## D54. Storage says what it knows of where it starts within 16 bytes
@@ -1290,22 +1289,21 @@ driver sizes local memory as it loads a function (D146).
   norn's NUTS step on a posterior whose data the model reads from its sixth
   double failed verification, its body compiled for storage on a boundary
   and passed the data 8 bytes past one.
-- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
-  (D54) › one float past a boundary, eight loads are of one, two, four and
+- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
   `› stores start where loads would`, `› two halves past a boundary, a load of
   four starts at element 2`, `› floats known to start on 4 bytes alone are
   not merged`, `› floats known to start on 8 bytes merge in twos` and `›
   halves three past 8 bytes merge no wider than 8 bytes, from element 1`, and
   the laws `every vector access is aligned to its width and within the
-  alignment, for every phase and alignment (D54)` and `coalescing preserves
-  the kernel's writes, for every phase and alignment (D54)`; the `Ops` suite: `param_arg takes a
-  phase that is a multiple of the element size below 16 (D54)`, `param_arg
-  takes an alignment that is a power of two up to 16, and a phase below it
-  (D54)`, `pp_param_arg writes a phase that is not 0 and an alignment that is
-  not 16 (D54)`, `equal_arg tells apart parameters that differ in phase
-  (D54)` and `param_like keeps its storage's phase, moved by a shrink, and
-  knows it modulo what a symbolic start moves by (D54)`;  the graph format's round trip of `a buffer past
+  alignment, for every phase and alignment` and `coalescing preserves
+  the kernel's writes, for every phase and alignment`; the `Ops` suite: `param_arg takes a
+  phase that is a multiple of the element size below 16`, `param_arg
+  takes an alignment that is a power of two up to 16, and a phase below it`,
+  `pp_param_arg writes a phase that is not 0 and an alignment that is
+  not 16`, `equal_arg tells apart parameters that differ in phase` and
+  `param_like keeps its storage's phase, moved by a shrink, and
+  knows it modulo what a symbolic start moves by`;  the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
   a view 8 bytes into a disk file whose parameter has no phase. In rune,
   the `Lower` suite's `a parameter of storage 4 bytes past a 16-byte boundary
@@ -1315,10 +1313,10 @@ driver sizes local memory as it loads a function (D146).
   buffer starts 2 bytes into its memory is read where it is`, on the
   host and on Metal, whose sweeps draw buffers that start at any byte;  the `Schedule`
   suite's `contiguous_mops_to_view › a stage of doubles one past a boundary is
-  known to start on 8 bytes (D54)`, `› a stage of rows padded apart, starting
-  one double past a boundary, is storage of its own on one (D54)` and `› a
-  stage's alignment and phase hold of the storage it gets, a view or its own
-  (D54)`; rune's `Scan` suite's `compiled › a scan under jit reads a copy of a
+  known to start on 8 bytes`, `› a stage of rows padded apart, starting
+  one double past a boundary, is storage of its own on one` and `› a
+  stage's alignment and phase hold of the storage it gets, a view or its own`;
+  rune's `Scan` suite's `compiled › a scan under jit reads a copy of a
   slice that starts off a 16-byte boundary`, `› a scan under jit reads the
   bits of a slice that starts off a 16-byte boundary` and `› a scan under jit
   reads rows of a slice that starts off a 16-byte boundary`; jera's `Split`,
@@ -1365,8 +1363,8 @@ driver sizes local memory as it loads a function (D146).
   every negative number, subnormals included.
 - **Pinned by:** the `Transcendental` suite
   (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
-  negative number whose reciprocal overflows is NaN, and of -0. is -inf
-  (D56)`, and the negative float16 rows of `values.golden` of magnitude below
+  negative number whose reciprocal overflows is NaN, and of -0. is -inf`, and
+  the negative float16 rows of `values.golden` of magnitude below
   `2^-16`, from the patched tinygrad.
 
 ## D58. A program applies no elementwise operation to a vector
@@ -1388,8 +1386,7 @@ driver sizes local memory as it loads a function (D146).
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
   its kernels for both.
-- **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs
-  (D58) › a program has no elementwise operation on a vector` (add, cast and
+- **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs › a program has no elementwise operation on a vector` (add, cast and
   where on two lanes, and the same on one); the `Codegen` suite's `vectors in
   programs › a weak constant stored into four lanes of half is refused` and,
   on every case but the host's, `› no program applies an elementwise
@@ -1430,20 +1427,19 @@ driver sizes local memory as it loads a function (D146).
   once per trip, in place over its carry and over rows of its inputs and
   outputs, as such a loop.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
-  `get_kernel_graph › loops of calls (D60) › a loop of a precompiled call is
+  `get_kernel_graph › loops of calls › a loop of a precompiled call is
   no kernel` and `› a loop's call reads views that move with its range`; the
   `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules ›
-  an end of a call over a loop schedules the call in its loop (D60)`, `› an
+  an end of a call over a loop schedules the call in its loop`, `› an
   end of a call over device ranges schedules the call`, `› a loop runs
-  after the call that writes what it reads (D60)`, `› a loop runs before
-  the call that overwrites what it reads (D60)`, and
-  `create_linear_with_vars › loops of calls (D60) › a loop of a precompiled
+  after the call that writes what it reads`, `› a loop runs before
+  the call that overwrites what it reads`, and
+  `create_linear_with_vars › loops of calls › a loop of a precompiled
   call is a loop of its body's calls` and `› a loop inside a loop's body
   keeps its own end`; and the `Tolk_engine` suite
   (`test/engine/tolk_engine`): `link and run › a scan runs its body
-  once per trip, carrying in place (D60)`, against the unrolled loop on the
-  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls
-  (D60) › accepts a loop of a call over a loop range`, `› refuses a loop of
+  once per trip, carrying in place`, against the unrolled loop on the
+  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls › accepts a loop of a call over a loop range`, `› refuses a loop of
   a call over a range of any other kind`, `› accepts an open device range`
   and `› refuses a weak sum of a weak integer variable`; its
   `verdicts.golden` records the patched spec on ends and shrinks.
@@ -1492,13 +1488,13 @@ driver sizes local memory as it loads a function (D146).
   computes what it computes eagerly only if the emulated moves keep the bits
   too.
 - **Pinned by:** rune's `Compiled` suite: `host › 8-bit floats › a copy
-  of every 8-bit float code keeps its bits (D62)` and `› a selection of
-  every 8-bit float code keeps its bits (D62)`, and the same under `metal ›`
+  of every 8-bit float code keeps its bits` and `› a selection of
+  every 8-bit float code keeps its bits`, and the same under `metal ›`
   (slow), against eager on all 256 codes of e4m3 and e5m2; the
   `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
-  emulated copy keeps every NaN code, a signalling one's included (D62)`
+  emulated copy keeps every NaN code, a signalling one's included`
   and `› an emulated selection keeps every NaN code, a signalling one's
-  included (D62)`, on every emulated float, and the goldens of the
+  included`, on every emulated float, and the goldens of the
   `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
 
 
@@ -1599,7 +1595,7 @@ driver sizes local memory as it loads a function (D146).
   casts to bfloat16 for the host: an int64 arange of bfloat16 from 2^40
   computes a cast of each integer.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
-  bfloat16 (D64) › an integer or a double rounds once on the host`, for
+  bfloat16 › an integer or a double rounds once on the host`, for
   int64, int32, uint32, uint64 and float64 sources; rune's `Jit` suite:
   `values › a bfloat16 arange from 2^40 inside a compiled call equals
   eager's`.
@@ -1627,7 +1623,7 @@ driver sizes local memory as it loads a function (D146).
   kernel on the host and on Metal, which emulate them: `(y + y) * y` of an
   e5m2 `y` computed eagerly differs from the kernel that rounds only once.
 - **Pinned by:** the `Decomp_dtype` suite
-  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel (D65) › a
+  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel › a
   cast to an emulated float and back is the value rounded once` and `› an
   operation on an emulated float rounds its result to it`, on every emulated
   float, and the goldens of every kernel that casts to or computes in an
@@ -1694,9 +1690,8 @@ its launch descriptors (D146).
   `whole`), and a result can be a constant or any computed value. kaun's
   decoder test `gradients › a fully padded row, compiled` has a constant
   result, and did not compile.
-- **Pinned by:** the `Prepare` suite: `contiguous_view › a constant is no view
-  (D72)`, `› a constant of one element is no view (D72)` and `› a computed
-  value is no view (D72)`.
+- **Pinned by:** the `Prepare` suite: `contiguous_view › a constant is no view`, `› a constant of one element is no view` and `› a computed
+  value is no view`.
 
 ## D73. A gather is an INDEX of a tensor by a value with axes
 
@@ -1829,17 +1824,17 @@ its launch descriptors (D146).
   and 1200 ms, and takes 22.7 ms and 79 ms, its first call 180 ms and 510 ms,
   with `within_quarter_turn`; the cosine likewise.
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
-  value a float operation rounds to (D74)`, sums, differences, products and
-  selections, `› a float operation of bounded operands is bounded (D74)`,
+  value a float operation rounds to`, sums, differences, products and
+  selections, `› a float operation of bounded operands is bounded`,
   `› a float operation of an operand within the subnormals bounds a flushed
   operand too`, `› a float operation of an unbounded operand, or that can
-  overflow, has its type's bounds (D74)`, `› a float selection by a
-  comparison narrows what it selects (D74)`, `› a float truncation and
-  negation map their operand's bounds (D74)`, `› a value of a float type
+  overflow, has its type's bounds`, `› a float selection by a
+  comparison narrows what it selects`, `› a float truncation and
+  negation map their operand's bounds`, `› a value of a float type
   without infinities, which may be NaN, has no finite bounds` and the float
   rows of `binary_bounds.golden`, from the
   equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
-  angle bounded below the switch-over is its fast form (D74)`; and
+  angle bounded below the switch-over is its fast form`; and
   rune's Compiled suite: `› 8-bit floats › the sine, cosine and tangent of
   an 8-bit float NaN are NaN`, on the host and on Metal (slow); and rune's
   `lower_arith` suite: `long reductions › a normal draw takes
@@ -2155,7 +2150,7 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   members, so NVRTC rejects `(v)[i]` ("no operator [] matches these
   operands"); rune compiles its kernels for CUDA.
 - **Pinned by:** the Spec suite (`test/uop/spec`): `vectors in programs ›
-  a program reads a lane of a vector at a constant (D86)`; the Cstyle suite's
+  a program reads a lane of a vector at a constant`; the Cstyle suite's
   `every GPU kernel compiles with its target's toolchain › cuda_dynamic_lane`,
   tinygrad's source, which NVRTC rejects (slow, an expected failure).
 
@@ -3306,8 +3301,7 @@ launch descriptors (D146).
   `divide_by_gcd`, and, past it, on a reshape of a gather's index of four
   axes.
 - **Pinned by:** the `Prepare` suite: `contiguous_view › a view of storage
-  after effects is a view of that storage, whatever the effects compute
-  (D132)`.
+  after effects is a view of that storage, whatever the effects compute`.
 
 ## D133. A greatest common divisor's coefficient is a scalar
 
@@ -3326,7 +3320,7 @@ launch descriptors (D146).
   D132, on a weak-integer tensor of rune's gather positions, and raised there.
   The rule applies to any vector of index arithmetic.
 - **Pinned by:** the `Divandmod` suite: `values › each rewrite of a random
-  division of vectors keeps each lane's value (D133)`.
+  division of vectors keeps each lane's value`.
 
 ## D134. A widening cast of an unsigned mask or shift widens its operands
 
@@ -3356,7 +3350,7 @@ launch descriptors (D146).
   with the rule on six x86 cores and 2-6% longer on one, where the M1 still
   runs it faster. kaun's decode bench times random codes.
 - **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `symbolic › casts ›
-  a widening cast of an unsigned mask masks the widened operand (D134)` and
+  a widening cast of an unsigned mask masks the widened operand` and
   the four tests after it; rune's lower_index suite: `quantised products › a
   product unpacks its codes at the width it decodes them in`.
 
@@ -3445,7 +3439,7 @@ driver signals its own (D146).
   construction needs a hook that a later module installs when it is
   initialised, which holds only while every module of the library is linked.
 - **Pinned by:** the `Spec` suite: `construction › builds a node that breaks
-  the full specification, whatever SPEC (D139)`.
+  the full specification, whatever SPEC`.
 
 ## D140. A call of a loop takes its trip as a scalar argument
 
@@ -3606,7 +3600,7 @@ driver signals its own (D146).
   programs › a host program computes on vectors of its lanes` (every host
   case), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test); the Spec suite's `vectors
-  in programs › a program of a renderer that computes on vectors … (D141)`;
+  in programs › a program of a renderer that computes on vectors …`;
   rune's Rune.jit suite: `lanes` (every test); rune's Rune.quant suite:
   `decoding` (every law); rune's lower_index suite: `quantised products › a
   product decodes a checkpoint's codes 16 at once on the host` (with D143)

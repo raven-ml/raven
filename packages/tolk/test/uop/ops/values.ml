@@ -110,7 +110,7 @@ let exec_alu =
                   ])
             Dtype.[ Float32; Float64 ];
           equal string "7ff8000000000000" (bits (f Dtype.nan)));
-      test "a float multiply-add folds rounded once (D25)" (fun () ->
+      test "a float multiply-add folds rounded once" (fun () ->
           let e = Float.ldexp 1. in
           equal ~msg:"float32" const
             (f (e (-24)))

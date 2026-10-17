@@ -1100,17 +1100,16 @@ let views =
           let prefix = Shape.shrink grid [ Some (Int 0, Sym v); None ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 prefix) prefix));
-      test
-        "a stage of doubles one past a boundary is known to start on 8 bytes \
-         (D54)" (fun () ->
+      test "a stage of doubles one past a boundary is known to start on 8 bytes"
+        (fun () ->
           let doubles = Ops.new_buffer ~slot:1 cpu 8 Float64 in
           let stage =
             Ops.contiguous (Shape.shrink doubles [ Some (Int 1, Int 8) ])
           in
           equal (pair int int) (8, 0) (Call.storage_phase stage));
       test
-        "a stage of rows padded apart, starting one double past a boundary, \
-         is storage of its own on one (D54)" (fun () ->
+        "a stage of rows padded apart, starting one double past a boundary, is \
+         storage of its own on one" (fun () ->
           let doubles = Ops.new_buffer ~slot:1 cpu 3 Float64 in
           let rows =
             Shape.reshape
@@ -1122,7 +1121,7 @@ let views =
           equal (pair int int) (16, 0) (Call.storage_phase stage));
       prop
         "a stage's alignment and phase hold of the storage it gets, a view or \
-         its own (D54)"
+         its own"
         gen_view stage_phase_holds;
       test "any other operation is the view itself" (fun () ->
           let view =

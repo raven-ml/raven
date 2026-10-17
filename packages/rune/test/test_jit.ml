@@ -1970,7 +1970,7 @@ let rounded_as_eager f =
     (bits_of (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f x y))
 
 let division =
-  group "division (D50)"
+  group "division"
     [
       test "a product by a reciprocal compiled rounds twice, as eagerly"
         (fun () -> rounded_as_eager (fun x y -> Nx.mul x (Nx.recip y)));

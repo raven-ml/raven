@@ -344,10 +344,9 @@ let gen_division var =
       else Ops.O.(build var num // build var den))
     (triple (expr 3) divisor bool)
 
-(* Vectors of index arithmetic (D133): variable [k] is a vector of two
-   variables, each constant a scalar. Lane [l] of its value is the value of the
-   graph with each vector replaced by its lane [l], and each broadcast scalar by
-   the scalar. *)
+(* Vectors of index arithmetic: variable [k] is a vector of two variables, each
+   constant a scalar. Lane [l] of its value is the value of the graph with each
+   vector replaced by its lane [l], and each broadcast scalar by the scalar. *)
 let vector k = Shape.stack [ variables.(k); variables.((k + 1) mod 3) ]
 
 let lane l u =
@@ -390,8 +389,7 @@ let values =
         (gen_case (gen_division (Array.get variables)))
         (fun (d, env) -> keeps_value d env);
       prop ~count:2000
-        "each rewrite of a random division of vectors keeps each lane's value \
-         (D133)"
+        "each rewrite of a random division of vectors keeps each lane's value"
         (gen_case (gen_division vector))
         (fun (d, env) -> keeps_lanes d env);
     ]

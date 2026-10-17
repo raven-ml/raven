@@ -2604,11 +2604,11 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
       | _ -> invalid_arg "MULACC takes three operands")
   | op -> invalid_argf "%s is not computed on constants" (Op.name op)
 
-(* A multiply-add of floats rounds once (D25). Truncated to a dtype below
-   float64, its operands have at most 24 bits, so their product is exact in a
-   double, and the sum is rounded to odd there, which the truncation then rounds
-   as the exact value. Otherwise, and for a weak float, a double, it is the
-   double nearest the exact value. *)
+(* A multiply-add of floats rounds once. Truncated to a dtype below float64, its
+   operands have at most 24 bits, so their product is exact in a double, and the
+   sum is rounded to odd there, which the truncation then rounds as the exact
+   value. Otherwise, and for a weak float, a double, it is the double nearest
+   the exact value. *)
 let mulacc ~truncated dt a b c =
   if
     (not truncated)

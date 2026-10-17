@@ -60,14 +60,15 @@ let invalid_values =
       test "a binary operation moves inside the gate of its second operand"
         (fun () ->
           folds_to Ops.O.(int 10 * gated) (Shape.valid Ops.O.(int 10 * a) cond));
-      test "a multiply-add moves inside the gate of each operand (D25)"
-        (fun () ->
+      test "a multiply-add moves inside the gate of each operand" (fun () ->
           let mulacc x y z = Ops.alu x Mulacc [ y; z ] in
-          folds_to (mulacc (Shape.valid f cond) g g)
+          folds_to
+            (mulacc (Shape.valid f cond) g g)
             (Shape.valid (mulacc f g g) cond);
-          folds_to (mulacc f g (Shape.valid g cond))
+          folds_to
+            (mulacc f g (Shape.valid g cond))
             (Shape.valid (mulacc f g g) cond));
-      test "a multiply-add of invalid is invalid (D25)" (fun () ->
+      test "a multiply-add of invalid is invalid" (fun () ->
           folds_to (raw Mulacc [ f; Ops.invalid; g ]) Ops.invalid);
       test "a cast moves inside the gate" (fun () ->
           let gated = Shape.valid x Ops.O.(x < int32 4) in
@@ -1104,24 +1105,24 @@ let symbolic_casts =
             Ops.O.(Ops.cast a Int32 + int 3));
       (* An unpacked nibble, as a uint4 load reads its byte: (u lsr k) land 15,
          then widened. *)
-      test "a widening cast of an unsigned mask masks the widened operand (D134)"
+      test "a widening cast of an unsigned mask masks the widened operand"
         (fun () ->
           by_symbolic
             (Ops.cast Ops.O.(byte land int 15) Uint32)
             Ops.O.(Ops.cast byte Uint32 land int 15));
       test
         "a widening cast of an unsigned shift by less than its width shifts \
-         the widened operand (D134)" (fun () ->
+         the widened operand" (fun () ->
           by_symbolic
             (Ops.cast Ops.O.(byte lsr shift) Uint32)
             Ops.O.(Ops.cast byte Uint32 lsr Ops.cast shift Uint32));
-      test "a widened nibble is unpacked at the wide type (D134)" (fun () ->
+      test "a widened nibble is unpacked at the wide type" (fun () ->
           by_symbolic
             (Ops.cast Ops.O.(byte lsr int 4 land int 15) Uint32)
             Ops.O.(Ops.cast byte Uint32 lsr int 4 land int 15));
       test
         "a cast stays of a shift that may reach the width, of a signed \
-         operand, or to a narrower type (D134)" (fun () ->
+         operand, or to a narrower type" (fun () ->
           let k = var ~dtype:Uint8 "k" 0 8 in
           let c = Ops.cast Ops.O.(byte lsr k) Uint32 in
           by_symbolic c c;
@@ -1131,7 +1132,7 @@ let symbolic_casts =
           let w = var ~dtype:Uint32 "w" 0 65535 in
           let c = Ops.cast Ops.O.(w land int 15) Uint8 in
           by_symbolic c c);
-      test "a widened mask or shift keeps every value (D134)" (fun () ->
+      test "a widened mask or shift keeps every value" (fun () ->
           let points =
             List.concat_map
               (fun b -> List.map (fun k -> [ ("b", i b); ("s", i k) ]) [ 0; 3; 4; 7 ])

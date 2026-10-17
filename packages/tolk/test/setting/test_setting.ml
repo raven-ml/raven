@@ -473,7 +473,7 @@ let not_ported =
   @ [ "CAPTURING"; "MAX_BUFFER_SIZE"; "VALIDATE_WITH_CPU" ]
   (* tolk cannot open a device. *)
   @ [ "ALLOW_DEVICE_USAGE" ]
-  (* A device's target follows from the device alone (D95). *)
+  (* A device's target follows from the device alone. *)
   @ [ "DEV" ]
   (* Their other readers are not ported. *)
   @ [

@@ -565,7 +565,7 @@ let contiguous_views =
        in
        case
          "a view of storage after effects is a view of that storage, whatever \
-          the effects compute (D132)"
+          the effects compute"
          (Some (ordered, 2))
          (Shape.shrink ordered [ Some (Int 2, Int 5) ]));
       (let rows =

@@ -280,7 +280,7 @@ let vectors =
           is_false (judge Spec.program scalar = Some false));
       cases
         "a program of a renderer that computes on vectors takes an operation \
-         on one axis of lanes (D141)"
+         on one axis of lanes"
         ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
         [ `Add; `Cast; `Where ]
         (fun op ->
@@ -288,13 +288,13 @@ let vectors =
           is_false (judge Spec.vector_program vector = Some false));
       test
         "a program of a renderer that computes on vectors takes a scalar every \
-         lane reads (D141)" (fun () ->
+         lane reads" (fun () ->
           let pair = Shape.stack [ fvar "a"; fvar "b" ] in
           is_false
             (judge Spec.vector_program (Ops.add pair (fvar "c")) = Some false));
       test
         "a program of a renderer that computes on vectors has no operation on \
-         two axes (D141)" (fun () ->
+         two axes" (fun () ->
           let quad =
             Shape.stack
               [
@@ -304,7 +304,7 @@ let vectors =
           in
           equal verdict (Some false)
             (judge Spec.vector_program (Ops.add quad quad)));
-      test "a program reads a lane of a vector at a constant (D86)" (fun () ->
+      test "a program reads a lane of a vector at a constant" (fun () ->
           let vector = Shape.stack [ fvar "a"; fvar "b" ] in
           let lane i = fresh_v ~src:[ vector; i ] Op.Index in
           let i =
@@ -320,8 +320,7 @@ let vectors =
 let construction =
   group "construction"
     [
-      test
-        "builds a node that breaks the full specification, whatever SPEC (D139)"
+      test "builds a node that breaks the full specification, whatever SPEC"
         (fun () ->
           let ill_typed () = fresh_v ~src:[ fvar "a"; fvar "b" ] Op.And in
           List.iter

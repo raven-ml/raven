@@ -13,8 +13,8 @@ axes converted, and `max_up` if set.
 
 `searches` lists what `beam_search` chooses, of width `amt`, with the
 measurement `time` below in place of running programs: its optimisations, and
-how many times it measured. The search is tinygrad's as tolk departs from it
-(D117): it times the kernel itself before its first round and starts the beam
+how many times it measured. The search is tinygrad's as tolk departs from it:
+it times the kernel itself before its first round and starts the beam
 from it, and a round progresses only when every sample of its fastest
 candidate is faster than every sample of the beam's first kernel by
 `BEAM_MIN_PROGRESS`, else the search answers the beam's first kernel. No program is compiled: the binary of a program is
@@ -219,7 +219,7 @@ class Measured:
 
 
 def beam_search(s, rawbufs, var_vals, amt, allow_test_size=True):
-    """tinygrad's `beam_search` with tolk's D117, uncached and on one
+    """tinygrad's `beam_search` as tolk departs from it, uncached and on one
     process."""
     min_progress = getenv("BEAM_MIN_PROGRESS", 0.01) / 1e6
     dev = search.Device[s.ren.target.device]

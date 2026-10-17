@@ -2013,8 +2013,8 @@ let pm_data_invalid =
            ~op:(Op.Set.diff Op.Set.binary Op.Set.comparison)
            ~perm:[ invalid_pat; Upat.wild ] ())
         (fun m -> Some (m "i"));
-      (* a multiply-add (D25) moves inside the gate of each operand in turn,
-         and an Invalid operand makes it Invalid, as binary ops do *)
+      (* a multiply-add moves inside the gate of each operand in turn, and an
+         Invalid operand makes it Invalid, as binary ops do *)
       rule (Upat.v ~op:(ops [ Op.Mulacc ]) ~name:"alu" ()) (fun m ->
           let a = m "alu" in
           let gated s = op s = Op.Where && is_invalid (nth s 2) in
