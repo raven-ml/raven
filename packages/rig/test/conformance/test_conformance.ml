@@ -1059,7 +1059,7 @@ let extra_params (module G : Gpu) =
     equal (array int) [| 41; 43 |] (words (get out) ~at:0 2)
 
 (* What the image states of [ids], whose parameters end at byte 24, holds: a
-   launch that gives fewer bytes is refused at make, and so is a ref past them.
+   launch that gives fewer bytes is refused, and so is a ref past them.
    A group of the most threads the image states runs, and one more is refused
    by the setter. No value is assigned to a refusal. *)
 let entry_facts (module G : Gpu) =
@@ -1079,11 +1079,12 @@ let entry_facts (module G : Gpu) =
     let make ~params refs = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
     raises ~msg:"20 bytes of parameters"
       (Invalid_argument
-         "Rig.Submission.make: ids takes 24 bytes of parameters; part 0 gives 20")
+         "Rig.Submission.launch: ids takes 24 bytes of parameters; the launch \
+          gives 20")
       (fun () -> make ~params:20 [||]);
     raises ~msg:"a ref at 24"
       (Invalid_argument
-         "Rig.Submission.make: part 0's ref at 24 lies past the 24 bytes of \
+         "Rig.Submission.launch: a ref at 24 lies past the 24 bytes of \
           parameters ids takes")
       (fun () -> make ~params:32 [| Sub.write 0 ~at:24 |]);
     let s = make ~params:24 [| Sub.write 0 ~at:0 |] in

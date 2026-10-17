@@ -364,33 +364,15 @@ let refused ~msg f = raises_match ~msg Exn.invalid_arg f
 let test_make_refusals () =
   let d, _ = polled "make" and other, _ = polled "make-other" in
   let image = functions d in
-  let make ?(image = image) ?(kernel = "main") ?(params = 16) refs =
-    Sub.make d [| launch image kernel ~params ~refs |]
+  let make ?(image = image) refs =
+    Sub.make d [| launch image "main" ~params:16 ~refs |]
   in
   let at at slot = Sub.write slot ~at in
   refused ~msg:"an image of another device" (fun () ->
       make ~image:(functions other) [||]);
   is_none ~msg:"no such function" (Rig.Image.resolve image "absent");
-  refused ~msg:"negative parameter bytes" (fun () -> make ~params:(-1) [||]);
-  refused ~msg:"a ref at 4" (fun () -> make [| at 4 0 |]);
-  refused ~msg:"a ref ending past the parameters" (fun () -> make [| at 16 0 |]);
-  refused ~msg:"a ref at -8" (fun () -> make [| at (-8) 0 |]);
-  refused ~msg:"a ref whose end overflows" (fun () ->
-      make [| at (max_int - 7) 0 |]);
   refused ~msg:"a ref to slot 2 alone" (fun () -> make [| at 0 2 |]);
-  refused ~msg:"a ref to slot -1" (fun () -> make [| at 0 (-1) |]);
-  refused ~msg:"two refs at 8" (fun () -> make [| at 8 0; at 8 1 |]);
-  ignore (make ~params:4096 [| at 0 0; at 4088 1 |]);
-  raises ~msg:"fewer bytes than the function reads"
-    (Invalid_argument
-       "Rig.Submission.make: fill takes 16 bytes of parameters; part 0 gives 8")
-    (fun () -> make ~kernel:"fill" ~params:8 [||]);
-  raises ~msg:"a ref past the bytes the function reads"
-    (Invalid_argument
-       "Rig.Submission.make: part 0's ref at 16 lies past the 16 bytes of \
-        parameters fill takes")
-    (fun () -> make ~kernel:"fill" ~params:24 [| at 16 0 |]);
-  ignore (make ~kernel:"fill" ~params:24 [| at 8 0 |]);
+  ignore (make [| at 0 0; at 8 1 |]);
   let s = make [||] in
   equal int ~msg:"no value assigned" 0 (Rig.submitted d);
   refused ~msg:"the block of part 1 of 1" (fun () -> Sub.block s 1);
@@ -400,6 +382,61 @@ let test_make_refusals () =
   in
   let s = Sub.make d [| copy |] in
   refused ~msg:"the block of a copy" (fun () -> Sub.block s 0)
+
+(* Each constructor of a ref or a part refuses what its arguments show,
+   naming itself, before a submission is made of it. Polled's fill reads 16
+   bytes of parameters, and a launch counts 16 bytes plus its parameters
+   rounded up to 16 against the 2^31 - 1 bytes a run holds. *)
+let test_constructor_refusals () =
+  let d, _ = P.open_ ~host_visible:false (strf "launch:constructors") in
+  let image = functions d in
+  let main = fn image "main" and fill = fn image "fill" in
+  let refused name f =
+    raises_match ~msg:name
+      (Exn.invalid_arg ~substring:("Rig.Submission." ^ name ^ ": "))
+      f
+  in
+  let w at = Sub.write 0 ~at and r at = Sub.read 1 ~at in
+  refused "read" (fun () -> Sub.read (-1) ~at:0);
+  refused "write" (fun () -> Sub.write 0 ~at:(-8));
+  refused "unordered" (fun () -> Sub.unordered 0 ~at:4);
+  refused "entry" (fun () -> Sub.entry main ~at:12);
+  refused "launch" (fun () -> Sub.launch main ~params:(-1));
+  refused "launch" (fun () -> Sub.launch main ~params:((1 lsl 31) - 31));
+  ignore (Sub.launch main ~params:((1 lsl 31) - 32));
+  raises ~msg:"fewer bytes than the function reads"
+    (Invalid_argument
+       "Rig.Submission.launch: fill takes 16 bytes of parameters; the launch \
+        gives 8")
+    (fun () -> Sub.launch fill ~params:8);
+  raises ~msg:"a ref past the bytes the function reads"
+    (Invalid_argument
+       "Rig.Submission.launch: a ref at 16 lies past the 16 bytes of \
+        parameters fill takes")
+    (fun () -> Sub.launch ~refs:[| w 16 |] fill ~params:24);
+  ignore (Sub.launch ~refs:[| w 8 |] fill ~params:24);
+  refused "launch" (fun () -> Sub.launch ~refs:[| w 8; r 8 |] main ~params:16);
+  refused "launch" (fun () -> Sub.launch ~refs:[| w 16 |] main ~params:16);
+  refused "launch" (fun () ->
+      Sub.launch ~refs:[| w (max_int - 7) |] main ~params:16);
+  ignore (Sub.launch ~refs:[| w 0; r 4088 |] main ~params:4096);
+  let noop = Rig_support.noop in
+  refused "fill" (fun () -> Sub.fill noop ~params:(-1));
+  refused "fill" (fun () -> Sub.fill noop ~params:max_int);
+  refused "fill" (fun () -> Sub.fill ~refs:[| w 0; r 0 |] noop ~params:8);
+  refused "fill" (fun () -> Sub.fill ~refs:[| w 8 |] noop ~params:8);
+  let b = B.create d 16 in
+  let view first length = Sub.Buffer (B.view b ~first ~length) in
+  let dead = B.create d 8 in
+  Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"donated" dead));
+  refused "copy" (fun () -> Sub.copy ~src:(Slot 0) ~dst:(Slot 0));
+  refused "copy" (fun () -> Sub.copy ~src:(view 0 8) ~dst:(view 8 4));
+  refused "copy" (fun () -> Sub.copy ~src:(view 0 8) ~dst:(view 4 8));
+  refused "copy" (fun () -> Sub.copy ~src:(Buffer dead) ~dst:(Slot 0));
+  refused "words" (fun () -> Sub.words dead);
+  refused "words" (fun () -> Sub.words (B.create Rig.host 6));
+  refused "words" (fun () -> Sub.words (B.create d 8))
 
 (* A refused submit assigns no value and loses nothing. *)
 let refused_submit ~msg d f =
@@ -850,6 +887,8 @@ let tests =
       ];
     group ~timeout "refusals"
       [
+        test "each constructor refuses what its arguments show"
+          test_constructor_refusals;
         test "make refuses each launch its interface states" test_make_refusals;
         test "resolve raises what asking for a function raises"
           test_resolve_failures;

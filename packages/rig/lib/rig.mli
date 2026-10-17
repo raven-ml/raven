@@ -1506,7 +1506,11 @@ module Submission : sig
       byte, as the device's work addresses it. Through a buffer ref the work
       may address only that buffer's bytes, and write them only through a
       {!write} or an {!unordered} ref. rig orders the work by its buffer refs
-      and checks neither rule. *)
+      and checks neither rule.
+
+      {!read}, {!write} and {!unordered} raise [Invalid_argument] if [slot]
+      or [at] is negative or [at] is no multiple of 8, and {!entry} if [at]
+      is. *)
 
   val read : int -> at:int -> ref
   (** [read slot ~at] is a ref through which the work reads the buffer
@@ -1542,23 +1546,31 @@ module Submission : sig
   val copy : src:side -> dst:side -> part
   (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
       have one length and share no byte ({!Buffer.overlaps}), and [dst]'s
-      memory must admit writes. [src] and [dst] must not be one slot. Each
-      buffer must be on the device ({!Buffer.borrow} puts another device's
-      memory there). On a driver's device of another machine, one of the two
-      may instead be memory this process's host addresses, whose bytes the
-      device's driver carries. A slot's buffer may be such memory only if
-      copies alone name the slot. {!make} checks the ends that are buffers,
-      and each {!submit} checks the ends that are slots, with its buffers. *)
+      memory must admit writes. Each buffer must be on the device
+      ({!Buffer.borrow} puts another device's memory there). On a driver's
+      device of another machine, one of the two may instead be memory this
+      process's host addresses, whose bytes the device's driver carries. A
+      slot's buffer may be such memory only if copies alone name the slot.
+      {!make} checks where the ends that are buffers are, and each {!submit}
+      checks the ends that are slots, with its buffers.
+
+      Raises [Invalid_argument] if [src] and [dst] are one slot or a slot is
+      negative, a buffer end is dead, [dst] is a buffer whose memory admits
+      only reads, or both ends are buffers and they differ in length or
+      share a byte. *)
 
   val launch : ?refs:ref array -> Image.func -> params:int -> part
   (** [launch ~refs fn ~params] runs [fn] once, over the grid of groups of
       threads that its block in the run sets ({!val-block}), with the
       [params] bytes of parameters of that block and each of [refs]
       (defaults to [[||]]) placed ({!type-ref}), which [launch] reads once.
-      [fn]'s image must be loaded on the device. [params] must not be
-      negative and, where [fn]'s driver knows the bytes [fn] reads
-      ({!Image.params}), at least that many, with each ref's 8 bytes among
-      them. *)
+      [fn]'s image must be loaded on the device.
+
+      Raises [Invalid_argument] if [params] is negative or above
+      [2{^31} - 32], the most one block of a run holds ({!make}), or is
+      fewer than the bytes [fn] reads where its driver knows them
+      ({!Image.params}); or if two refs share an [at], or a ref's 8 bytes
+      lie past [params] or past the bytes [fn] reads. *)
 
   val fill : ?refs:ref array -> nativeint -> params:int -> part
   (** [fill ~refs f ~params] calls the C function at [f] from the driver's
@@ -1566,20 +1578,26 @@ module Submission : sig
       address of its argument and the work's value. The argument is a copy of
       the [params] bytes of parameters of the fill's block in the run
       ({!val-block}), with each of [refs] (defaults to [[||]]) placed
-      ({!type-ref}), and is valid only during the call. [params] must not be
-      negative. The function must call no function of the OCaml runtime,
-      since the driver's [submit] may call it with the runtime released. It
-      returns [0], or another value for a failure, which loses the device. *)
+      ({!type-ref}), and is valid only during the call. The function must
+      call no function of the OCaml runtime, since the driver's [submit] may
+      call it with the runtime released. It returns [0], or another value for
+      a failure, which loses the device.
+
+      Raises [Invalid_argument] if [params] is negative or above
+      [2{^31} - 32], or if two refs share an [at] or a ref's 8 bytes lie past
+      [params]. *)
 
   val words : Buffer.t -> part
   (** [words b] places the 32-bit words of [b] on the device's queue, such as
-      indirect-buffer or GPFIFO entries. The host must address [b]'s memory,
-      and [b]'s length must be a multiple of 4. Words may do what rig cannot
-      see, such as start a thread trace or invalidate caches before a
-      launch, so rule 2 of {!Rig.section-order} orders them after every
-      earlier part, and {!Rig.Submission}'s preamble says which queue runs
-      them. Memory the words address is ordered against other work only if
-      it is among the submission's fixed memory. *)
+      indirect-buffer or GPFIFO entries. Words may do what rig cannot see,
+      such as start a thread trace or invalidate caches before a launch, so
+      rule 2 of {!Rig.section-order} orders them after every earlier part,
+      and {!Rig.Submission}'s preamble says which queue runs them. Memory the
+      words address is ordered against other work only if it is among the
+      submission's fixed memory.
+
+      Raises [Invalid_argument] if [b] is dead, the host does not address its
+      memory, or its length is no multiple of 4. *)
 
   (** {1:making Making} *)
 
@@ -1609,14 +1627,12 @@ module Submission : sig
       {- [d] is an io device, no queue of [d] runs a part's kind, such as a
          copy, a fill or words on {!host}, or [d] has no copy engine and a
          copy follows no earlier part on a queue that runs copies;}
-      {- a part breaks a rule of its constructor or of its refs
-         ({!type-ref});}
-      {- a ref's or a copy's slot is negative, a copy's [src] and [dst] are
-         one slot, a slot below [n] is named by no ref or copy, or a slot is
-         named by both an {!unordered} ref and a {!read} or {!write} ref or a
-         copy;}
-      {- a buffer of a part or of [fixed] is dead, or a buffer of [fixed] is
-         not on [d] or is written on [Read] memory;}
+      {- the image of a launch or of an entry ref is not loaded on [d];}
+      {- a slot below [n] is named by no ref or copy, or a slot is named by
+         both an {!unordered} ref and a {!read} or {!write} ref or a copy;}
+      {- a buffer of a part or of [fixed] is dead, a copy's buffer is not on
+         [d] where {!copy} does not admit it, or a buffer of [fixed] is not
+         on [d] or is written on [Read] memory;}
       {- its launches and fills take more than a run holds: [2{^31} - 1]
          bytes, each counting [16] bytes plus its parameters rounded up to a
          multiple of 16.}}

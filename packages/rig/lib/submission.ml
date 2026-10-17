@@ -18,10 +18,28 @@ type ref =
   | Slot_ref of slot_ref
   | Entry of { at : int; fn : func }
 
-let read slot ~at = Slot_ref { at; slot; use = Use_read }
-let write slot ~at = Slot_ref { at; slot; use = Use_write }
-let unordered slot ~at = Slot_ref { at; slot; use = Use_unordered }
-let entry fn ~at = Entry { at; fn }
+(* Each constructor refuses what its arguments show, naming itself; [make]
+   refuses what needs the device or several parts. *)
+
+(* Refuses a ref's [at] that is negative or no multiple of 8. *)
+let check_at fn at =
+  if at < 0 || at mod 8 <> 0 then
+    invalid_argf "Rig.Submission.%s: a ref at %d, not a multiple of 8 from 0"
+      fn at
+
+let slot_ref fn use slot ~at =
+  if slot < 0 then invalid_argf "Rig.Submission.%s: slot %d" fn slot;
+  check_at fn at;
+  Slot_ref { at; slot; use }
+
+let read slot ~at = slot_ref "read" Use_read slot ~at
+let write slot ~at = slot_ref "write" Use_write slot ~at
+let unordered slot ~at = slot_ref "unordered" Use_unordered slot ~at
+
+let entry f ~at =
+  check_at "entry" at;
+  Entry { at; fn = f }
+
 let ref_at = function Slot_ref { at; _ } | Entry { at; _ } -> at
 
 type side = Slot of int | Buffer of buffer
@@ -32,14 +50,102 @@ type part =
   | Copy of { src : side; dst : side }
   | Launch of { fn : func; params : int; refs : ref array }
 
-let copy ~src ~dst = Copy { src; dst }
-let words b = Words b
+(* The most parameter bytes of a launch or a fill: a block counts 16 bytes
+   plus its parameters rounded up to 16 against the [2^31 - 1] bytes a run
+   holds. *)
+let most_params = (1 lsl 31) - 32
+
+(* Refuses a part's parameters outside 0 to [most_params], and refs that share
+   an [at] or whose 8 bytes end past the parameters. A ref's end is checked as
+   [at > params - 8], since [at + 8] wraps for an [at] near [max_int]. *)
+let check_args fn params refs =
+  if params < 0 || params > most_params then
+    invalid_argf "Rig.Submission.%s: %d parameter bytes, outside 0 to %d" fn
+      params most_params;
+  Array.iter
+    (fun r ->
+      let at = ref_at r in
+      if at > params - 8 then
+        invalid_argf
+          "Rig.Submission.%s: a ref at %d past its %d parameter bytes" fn at
+          params)
+    refs;
+  let ats = Array.map ref_at refs in
+  Array.sort Int.compare ats;
+  for k = 1 to Array.length ats - 1 do
+    if ats.(k) = ats.(k - 1) then
+      invalid_argf "Rig.Submission.%s: two refs at %d" fn ats.(k)
+  done
 
 (* The caller's array is copied: a part is fixed once made. *)
-let fill ?(refs = [||]) fill ~params = Fill { fill; params; refs = Array.copy refs }
+let fill ?(refs = [||]) fill ~params =
+  let refs = Array.copy refs in
+  check_args "fill" params refs;
+  Fill { fill; params; refs }
 
-let launch ?(refs = [||]) fn ~params =
-  Launch { fn; params; refs = Array.copy refs }
+(* Refuses fewer parameters than [f] reads, or a ref past them, where the
+   driver states them. *)
+let check_reads (f : func) params refs =
+  match f.fentry.params with
+  | None -> ()
+  | Some takes ->
+      if params < takes then
+        invalid_argf
+          "Rig.Submission.launch: %s takes %d bytes of parameters; the launch \
+           gives %d"
+          f.fname takes params;
+      Array.iter
+        (fun r ->
+          let at = ref_at r in
+          if at > takes - 8 then
+            invalid_argf
+              "Rig.Submission.launch: a ref at %d lies past the %d bytes of \
+               parameters %s takes"
+              at takes f.fname)
+        refs
+
+let launch ?(refs = [||]) f ~params =
+  let refs = Array.copy refs in
+  check_args "launch" params refs;
+  check_reads f params refs;
+  Launch { fn = f; params; refs }
+
+(* Refuses a copy whose ends are one slot or a negative one, whose buffer
+   end is dead or whose [dst] buffer admits only reads, or whose two buffer
+   ends differ in length or share a byte. *)
+let copy ~src ~dst =
+  let fn = "Submission.copy" in
+  let check = function
+    | Slot k when k < 0 -> invalid_argf "Rig.%s: slot %d" fn k
+    | Slot _ -> ()
+    | Buffer b -> Buffer.check_live fn b
+  in
+  check src;
+  check dst;
+  (match (src, dst) with
+  | Slot k, Slot k' when k = k' ->
+      invalid_argf "Rig.%s: slot %d into itself" fn k
+  | Buffer a, Buffer b ->
+      if Buffer.length a <> Buffer.length b then
+        invalid_argf "Rig.%s: buffers of %d and %d bytes" fn (Buffer.length a)
+          (Buffer.length b);
+      if Buffer.overlaps a b then invalid_argf "Rig.%s: the buffers overlap" fn
+  | _ -> ());
+  (match dst with
+  | Buffer b when Buffer.access b = Def.Read ->
+      invalid_argf "Rig.%s: into memory that admits only reads" fn
+  | Slot _ | Buffer _ -> ());
+  Copy { src; dst }
+
+let words b =
+  let fn = "Submission.words" in
+  Buffer.check_live fn b;
+  if b.mem.host < 0 then
+    invalid_argf "Rig.%s: the buffer is not host memory" fn;
+  if Buffer.length b mod 4 <> 0 then
+    invalid_argf "Rig.%s: words of %d bytes, not a multiple of 4" fn
+      (Buffer.length b);
+  Words b
 
 let use_of : Def.access -> use = function
   | Read -> Use_read
@@ -261,10 +367,9 @@ let owns_device_memory d b =
 (* Hands the C form [c] its [k]th fixed buffer's stamps and access. *)
 let fix c k b use = sub_fixed c k (entry_of b).stamps use
 
-(* Refuses part [i]'s copy on [d] unless each buffer end is live and [d]'s, or
-   carried, the [dst] buffer admits writes, and two buffer ends have one
-   length, share no byte and are not both carried. A slot end's buffer only a
-   run gives, which the submit checks. *)
+(* Refuses part [i]'s copy on [d] unless each buffer end is live and [d]'s,
+   or carried, and two buffer ends are not both carried. A slot end's buffer
+   only a run gives, which the submit checks. *)
 let check_ends fn d i src dst =
   let check = function
     | Slot _ -> ()
@@ -277,20 +382,10 @@ let check_ends fn d i src dst =
   in
   check src;
   check dst;
-  (match dst with
-  | Buffer b when Buffer.access b = Def.Read ->
-      invalid_argf "Rig.%s: part %d copies into memory that admits only reads"
-        fn i
-  | Slot _ | Buffer _ -> ());
   match (src, dst) with
-  | Buffer a, Buffer b ->
-      if Buffer.length a <> Buffer.length b then
-        invalid_argf "Rig.%s: part %d's buffers differ in size" fn i;
-      if Buffer.overlaps a b then
-        invalid_argf "Rig.%s: part %d's buffers overlap" fn i;
-      if carried d a && carried d b then
-        invalid_argf "Rig.%s: neither of part %d's buffers is %s's memory" fn i
-          d.name
+  | Buffer a, Buffer b when carried d a && carried d b ->
+      invalid_argf "Rig.%s: neither of part %d's buffers is %s's memory" fn i
+        d.name
   | _ -> ()
 
 (* Refuses a device that runs no submitted work. *)
@@ -299,49 +394,10 @@ let check_device fn d =
   if Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name
 
-(* Refuses part [i]'s parameters unless they are not negative and its refs lie
-   among them and share no [at]. A ref's end is checked as [at > params - 8],
-   since [at + 8] wraps for an [at] near [max_int]. *)
-let check_args fn i params refs =
-  if params < 0 then
-    invalid_argf "Rig.%s: part %d has %d parameter bytes" fn i params;
-  Array.iter
-    (fun r ->
-      let at = ref_at r in
-      if at < 0 || at mod 8 <> 0 || at > params - 8 then
-        invalid_argf
-          "Rig.%s: part %d's ref at %d is not 8 aligned bytes of its %d" fn i at
-          params)
-    refs;
-  let ats = Array.map ref_at refs in
-  Array.sort Int.compare ats;
-  for k = 1 to Array.length ats - 1 do
-    if ats.(k) = ats.(k - 1) then
-      invalid_argf "Rig.%s: part %d has two refs at %d" fn i ats.(k)
-  done
-
-(* Refuses part [i]'s launch of [f] on [d] unless [f]'s image is [d]'s, and
-   its parameters hold the bytes [f] reads and each ref lies among them, where
-   the driver states them. *)
-let check_launch fn d i (f : func) params refs =
+(* Refuses part [i]'s launch of [f] on [d] unless [f]'s image is [d]'s. *)
+let check_launch fn d i (f : func) =
   if f.fimage.idev != d then
-    invalid_argf "Rig.%s: part %d's image is not loaded on %s" fn i d.name;
-  match f.fentry.params with
-  | None -> ()
-  | Some takes ->
-      if params < takes then
-        invalid_argf
-          "Rig.%s: %s takes %d bytes of parameters; part %d gives %d" fn
-          f.fname takes i params;
-      Array.iter
-        (fun r ->
-          let at = ref_at r in
-          if at > takes - 8 then
-            invalid_argf
-              "Rig.%s: part %d's ref at %d lies past the %d bytes of \
-               parameters %s takes"
-              fn i at takes f.fname)
-        refs
+    invalid_argf "Rig.%s: part %d's image is not loaded on %s" fn i d.name
 
 (* Refuses fixed memory that is dead, not [d]'s or, written, admits only
    reads. *)
@@ -374,9 +430,7 @@ let slot_refs refs =
 
 (* The slots part [i] names, how its work uses each, and by what: a copy reads
    its [src] and writes its [dst]. *)
-let slots_of fn i = function
-  | Copy { src = Slot k; dst = Slot k' } when k = k' ->
-      invalid_argf "Rig.%s: part %d copies slot %d into itself" fn i k
+let slots_of = function
   | Copy { src; dst } ->
       let named use = function
         | Slot k -> [ (k, use, Copies) ]
@@ -392,12 +446,10 @@ let slots_of fn i = function
    each named, and none used both unordered and ordered: a gap or a mix is a
    mistaken index. *)
 let slot_uses fn parts =
-  let named = Array.mapi (slots_of fn) parts in
+  let named = Array.map slots_of parts in
   let n =
     Array.fold_left
-      (List.fold_left (fun n (k, _, _) ->
-           if k < 0 then invalid_argf "Rig.%s: a part names slot %d" fn k;
-           max n (k + 1)))
+      (List.fold_left (fun n (k, _, _) -> max n (k + 1)))
       0 named
   in
   let uses = Array.make n None and naming = Array.make n None in
@@ -704,14 +756,8 @@ let build keep ~fixed d parts =
       match p with
       | Words w ->
           check_buffer w;
-          ignore (host_address fn w);
-          if Buffer.length w mod 4 <> 0 then
-            invalid_argf
-              "Rig.%s: part %d's words are of %d bytes, not a multiple of 4" fn
-              i (Buffer.length w);
           incr nfixed
-      | Fill f ->
-          check_args fn i f.params f.refs;
+      | Fill _ ->
           nrefs := !nrefs + Array.length slots.(i);
           ncodes := !ncodes + List.length codes.(i)
       | Copy { src; dst } ->
@@ -720,8 +766,7 @@ let build keep ~fixed d parts =
           nfixed := !nfixed + buffer src + buffer dst;
           incr ncopies
       | Launch l ->
-          check_args fn i l.params l.refs;
-          check_launch fn d i l.fn l.params l.refs;
+          check_launch fn d i l.fn;
           nrefs := !nrefs + Array.length slots.(i);
           ncodes := !ncodes + List.length codes.(i))
     parts;

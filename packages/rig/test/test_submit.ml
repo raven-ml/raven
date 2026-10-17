@@ -1189,16 +1189,15 @@ let test_words_order () =
     [ (1, []); (0, [ 0 ]); (0, []); (1, []); (1, [ 1 ]) ]
     (P.layout p)
 
-(* Words whose buffer holds a part of a word are refused by length, before
-   any device has to run them. *)
+(* Words whose buffer holds a part of a word are refused by length, when the
+   part is made. *)
 let test_part_word () =
-  let d = memory "submit:part-word" in
   List.iter
     (fun n ->
       raises_match
         ~msg:(Printf.sprintf "%d bytes" n)
         (Exn.invalid_arg ~substring:(Printf.sprintf "of %d bytes" n))
-        (fun () -> Sub.make d [| Sub.words (B.create Rig.host n) |]))
+        (fun () -> Sub.words (B.create Rig.host n)))
     [ 1; 6; 7 ]
 
 (* Fills of 4,096 bytes of parameters: as many as a run holds, each counting
@@ -1900,7 +1899,7 @@ let tests =
           test_runs;
         test "words follow every earlier part, and later parts of their queue"
           test_words_order;
-        test "words of a length no multiple of 4 are refused at make"
+        test "words of a length no multiple of 4 are refused"
           test_part_word;
         test "launches and fills past what a run holds are refused at make"
           test_blocks_bound;
