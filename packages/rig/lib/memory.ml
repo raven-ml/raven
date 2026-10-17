@@ -384,7 +384,8 @@ let push_pending (d, p) =
 (* [waits d p given] is [given], [d]'s release [p] having gone back. One that
    did not waits among [d]'s pending releases: after the others until [d]
    stopped, or, refused by its driver, first, for the next drain. [d]'s owed
-   stop runs once it waits there ([Dev.give]). *)
+   stop runs once it waits there ([Dev.give]). A caller that makes [p] makes
+   it only for a release that did not go back, so a free allocates none. *)
 let waits d p (given : Dev.given) =
   (match given with
   | Given -> ()
@@ -397,7 +398,10 @@ let waits d p (given : Dev.given) =
   given
 
 (* Gives back [d]'s mapping [r] now, or later ([waits]). *)
-let unmap d r = waits d (Unmap (r, None)) (free_region d r)
+let unmap d r : Dev.given =
+  match free_region d r with
+  | Given -> Given
+  | (Later | Refused) as given -> waits d (Unmap (r, None)) given
 
 (* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
    has not the room. An io device's memory has no kind. *)
@@ -517,14 +521,14 @@ let give_back (e : entry) : Dev.given =
     | Io_memory { region; _ } -> free_io d region
     | Kept _ -> Dev.Given
   in
-  match waits d (Give e) given with
+  match given with
   | Given ->
       drop_stamps e;
       let budget = entry_budget e in
       give_room d budget e.bytes;
       if budget = Device_budget then note d;
       Given
-  | (Later | Refused) as given -> given
+  | Later | Refused -> waits d (Give e) given
 
 (* Releases the mapping [mp] now if its mapper ran all the work submitted so
    far, which is then all that could use it, and is [Later] if not. An
@@ -547,9 +551,9 @@ let entry_unmapped (e : entry) : Dev.given =
    mapper's driver may still name its pages, and a driver that maps host
    memory by its address would hand them to new memory at that address. *)
 let give d r e : Dev.given =
-  match waits d (Unmap (r, Some e)) (free_region d r) with
+  match free_region d r with
   | Given -> entry_unmapped e
-  | (Later | Refused) as given -> given
+  | (Later | Refused) as given -> waits d (Unmap (r, Some e)) given
 
 (* Takes the note [id] out of [d]'s table, which, emptied, keeps no buckets
    for the most [d] ever mapped. *)
@@ -567,9 +571,10 @@ let forget_note (d, id) =
 let rec release_maps (e : entry) = function
   | [] -> ()
   | mp :: maps ->
-      (match waits mp.on (Unmap (mp.map, Some e)) (unmap_now mp) with
+      (match unmap_now mp with
       | Given -> ignore (entry_unmapped e : Dev.given)
-      | Later | Refused -> ());
+      | (Later | Refused) as given ->
+          ignore (waits mp.on (Unmap (mp.map, Some e)) given : Dev.given));
       Dev.protect mp.on forget_note (mp.on, e.id);
       release_maps e maps
 
