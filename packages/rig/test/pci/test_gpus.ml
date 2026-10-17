@@ -1493,9 +1493,11 @@ let test_attach_vfio_part_way () =
   Tree.add unbound
     (Filename.concat "sys/bus/pci" (devices gpu_bus "driver_override"))
     "";
+  let why = require_error (Gpus.attach g (Machine.at unbound) 0) in
   contains ~msg:"attach binds the GPU to vfio-pci first"
-    ~sub:"vfio-pci did not take 0000:03:00.0"
-    (require_error (Gpus.attach g (Machine.at unbound) 0));
+    ~sub:"vfio-pci did not take 0000:03:00.0" why;
+  contains ~msg:"where to find why" ~sub:"the kernel's log (dmesg)" why;
+  contains ~msg:"how to proceed" ~sub:"reboot" why;
   equal ~msg:"its override" string "vfio-pci"
     (pci_file unbound (devices gpu_bus "driver_override"));
   equal ~msg:"its probe" string gpu_bus (pci_file unbound "drivers_probe")

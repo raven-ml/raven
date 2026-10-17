@@ -463,7 +463,11 @@ let bind { files = m; bus; _ } ~remove =
     write (override m f) vfio_pci;
     write (Filename.concat m.bus_files "drivers_probe") f;
     if driver_of m f <> Some vfio_pci then
-      Fail.fail "vfio-pci did not take %s at its probe" f
+      Fail.fail
+        "vfio-pci did not take %s at its probe, for the reason the kernel's \
+         log (dmesg) gives: once that is fixed, call again; until then, \
+         reboot to give the GPU back to its driver"
+        f
   in
   if iommu_of m bus = Translating then List.iter probe (to_move m bus ~remove)
 

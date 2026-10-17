@@ -126,8 +126,8 @@ val bind : 's lock -> remove:bool -> unit
     function [l] locks and, if [remove], the other functions of its device,
     each not on [vfio-pci] yet: it sets each one's [driver_override] to
     [vfio-pci] and has Linux probe it. Elsewhere it does nothing. Raises
-    {!Fail.Failed} if [vfio-pci] does not take one, or a file cannot be
-    written. *)
+    {!Fail.Failed} if [vfio-pci] does not take one, saying where its reason
+    is and how to proceed, or if a file cannot be written. *)
 
 val attach : 's lock -> siblings:bool -> unit
 (** [attach l ~siblings] gives the function [l] locks back to its kernel
