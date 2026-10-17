@@ -470,15 +470,26 @@ module Driver = struct
     | None -> `Run
 
   (* Consecutive sleeps are one entry of the log: two domains' waits sleep
-     without bound, and a device the program keeps would hold every one. *)
+     without bound, and a device the program keeps would hold every one.
+     With no function set by {!before}, a sleep counts and steps under one
+     lock, as bench rows time rig's waits through it. *)
   let sleep d ~seen ~still_ms =
-    Mutex.protect d.lock (fun () ->
-        d.sleeps <- d.sleeps + 1;
-        match d.calls with
-        | "sleep" :: _ -> ()
-        | calls -> d.calls <- "sleep" :: calls);
-    run_before d "sleep";
-    match Mutex.protect d.lock (fun () -> next d) with
+    let step =
+      Mutex.protect d.lock (fun () ->
+          d.sleeps <- d.sleeps + 1;
+          (match d.calls with
+          | "sleep" :: _ -> ()
+          | calls -> d.calls <- "sleep" :: calls);
+          if d.before == [] then next d else `Hooked)
+    in
+    let step =
+      match step with
+      | `Hooked ->
+          run_before d "sleep";
+          Mutex.protect d.lock (fun () -> next d)
+      | (`Fault _ | `Interrupt | `Stall | `Run) as step -> step
+    in
+    match step with
     | `Fault why -> raise (Fault why)
     | `Interrupt -> interrupt ()
     | `Stall -> Thread.delay (float still_ms /. 1000.)
