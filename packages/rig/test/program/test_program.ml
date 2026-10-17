@@ -836,6 +836,78 @@ let test_interrupt_run () =
   let rec from n = if interrupt_run n then from (n + 1) else n - 1 in
   greater ~msg:"allocations interrupted" int ~than:0 (from 1)
 
+(* Failures of the devices *)
+
+let fresh name = strf "program:%s-%d" name (Atomic.fetch_and_add opened 1)
+let mib = 1 lsl 20
+let empty_frame p =
+  { G.inputs = [||]; ints = [||]; step_points = G.step_points p }
+
+let out_of_memory d n = function
+  | Rig.Out_of_memory (d', n') -> Rig.equal d d' && n = n'
+  | _ -> false
+
+let lost d why = function
+  | Rig.Lost (d', why') -> Rig.equal d d' && why = why'
+  | _ -> false
+
+(* [one_device_fill d] with memory of [bytes] bytes. *)
+let sized bytes d = { (one_device_fill d) with memory = [| alloc 0 bytes |] }
+
+(* A device whose budget is 64 KiB, or whose driver refuses every
+   allocation, which rig answers after its rounds of reclamation. *)
+let refusers =
+  [
+    ("its budget", fun () -> fst (P.open_ ~budget:65536 (fresh "budget")));
+    ( "its driver",
+      fun () ->
+        let d, pd = P.open_ (fresh "refused") in
+        P.fail_at pd 1 (`Refuse max_int);
+        d );
+  ]
+
+(* A load whose memory the device refuses raises Out_of_memory for the
+   memory's bytes on the device, which is not lost. *)
+let test_load_refused (_, device) =
+  let d = device () in
+  raises_match (out_of_memory d mib) (fun () ->
+      G.load (sized mib d) (Iarray.of_list [ d ]));
+  equal ~msg:"the device after" (option string) None (Rig.lost d)
+
+(* A load on a device that faults raises Lost with the fault, as does a load
+   on the device it lost. *)
+let test_load_lost () =
+  let d, pd = polled "load-lost" in
+  P.fault pd "the engine hung";
+  let load () = G.load (one_device_fill d) (Iarray.of_list [ d ]) in
+  raises_match ~msg:"the load that finds the fault" (lost d "the engine hung")
+    load;
+  raises_match ~msg:"a load on the lost device" (lost d "the engine hung") load
+
+(* A run whose submission's hand-over fails raises Lost, and the program's
+   later runs raise Lost too: the run that raised left the program to them. *)
+let test_run_lost () =
+  let d, pd = polled "run-lost" in
+  let p = load_ok (one_device_fill d) [ d ] in
+  let f = empty_frame p in
+  Array.iter Rig.Point.wait (G.run p f);
+  P.fail pd;
+  let why = "the submission failed" in
+  raises_match ~msg:"the run that hands over" (lost d why) (fun () ->
+      G.run p f);
+  raises_match ~msg:"the next run" (lost d why) (fun () -> G.run p f)
+
+(* Run 2 of memory of two copies waits for run 0's work on its copy: a fault
+   that wait finds loses the device, and the run raises Lost. *)
+let test_wait_lost () =
+  let d, pd = polled "wait-lost" in
+  let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
+  let f = empty_frame p in
+  ignore (G.run p f);
+  ignore (G.run p f);
+  P.fault pd "the engine hung";
+  raises_match (lost d "the engine hung") (fun () -> G.run p f)
+
 (* Refusals *)
 
 let base d =
@@ -3478,6 +3550,16 @@ let tests =
           test_reentry;
         test "a run ended by an exception at any allocation leaves no lock held"
           test_interrupt_run;
+      ];
+    group ~timeout "failures"
+      [
+        cases ~name:fst "load raises Out_of_memory for memory refused by"
+          refusers test_load_refused;
+        test "load raises Lost for a device that faults" test_load_lost;
+        test "run raises Lost for a hand-over that fails, and every run after"
+          test_run_lost;
+        test "run raises Lost for a fault its wait for run n - 2 finds"
+          test_wait_lost;
       ];
     group ~timeout "frame"
       [
