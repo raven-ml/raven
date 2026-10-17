@@ -176,6 +176,12 @@ and live = {
       (** Collected entries that wait for their points or their bigarrays:
           its first [nretiring], in no order. Grown by replacement. *)
   mutable nretiring : int; [@atomic]
+  mutable judged : int;
+      (** The retiring entry a drain's pass judges next, from [0] at each
+          pass. *)
+  mutable freeing : bool;
+      (** Whether a drain found it lost and Stopped, from when its retiring
+          memory is freed as its uses are reached. Never cleared. *)
   mutable pending : (int * pending) list * (int * pending) list; [@atomic]
       (** Releases by nondecreasing value of it, replaced whole: the front in
           order, the back reversed, and the front empty only when both are. *)

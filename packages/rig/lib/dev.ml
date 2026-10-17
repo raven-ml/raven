@@ -169,6 +169,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       cache = Cache.create 16;
       retiring = [||];
       nretiring = 0;
+      judged = 0;
+      freeing = false;
       pending = ([], []);
       pairs = [||];
       retired = [];

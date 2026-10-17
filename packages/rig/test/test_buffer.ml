@@ -405,6 +405,25 @@ let test_wait_words_transport () =
   equal ~msg:"a buffer's wait" int 0 (per_call wait);
   equal ~msg:"a submit's wait" int 0 (per_call submit)
 
+(* A drain that judges collected memory whose work is still queued allocates
+   no more than one with nothing to judge: [B.create d 0] drains [d]. *)
+let test_due_words () =
+  let d, _ = P.open_ "buffer:due-words" in
+  let per_call () =
+    ignore (B.create d 0);
+    let before = Gc.minor_words () in
+    for _ = 1 to 100 do
+      ignore (B.create d 0)
+    done;
+    int_of_float (Gc.minor_words () -. before) / 100
+  in
+  let idle = per_call () in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  let[@inline never] queued () = ignore (submit s ~buffers:[| B.create d 64 |]) in
+  queued ();
+  Gc.full_major ();
+  equal ~msg:"words with collected memory queued" int idle (per_call ())
+
 let test_create_words () =
   at_most_words (41, 0) (fun () -> B.create Rig.host 64)
 
@@ -1753,6 +1772,8 @@ let words =
     [
       test "a host buffer of 64 bytes costs at most 41 words" test_create_words;
       test "a wait whose points are reached allocates nothing" test_wait_words;
+      test "a drain that judges queued memory allocates nothing more"
+        test_due_words;
       test "behind a transport a wait for reached work allocates nothing"
         test_wait_words_transport;
       test "a host buffer of 1 MiB costs at most 32 and 9 major words"

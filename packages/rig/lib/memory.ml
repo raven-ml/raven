@@ -691,37 +691,46 @@ let fate d ~lost ~free_lost (e : entry) =
   else if reached e.stamps then Cached
   else Stays
 
-(* A drain's pass over the retiring memory of [dev]: how [fate] judges, and
-   the entry it judges next. *)
-type pass = { dev : device; lost : bool; free_lost : bool; mutable at : int }
-
-(* Under [p.dev]'s lock: from the retiring entry [p.at] on, caches each whose
+(* Under [d]'s lock: from the retiring entry [judged] on, caches each whose
    uses are reached and takes out the first to free, moving the last entry
-   into its place: it, or [no_entry]. *)
-let rec take_freed (p : pass) =
-  let l = p.dev.live and i = p.at in
+   into its place: it, or [no_entry]. Its judgement reads [d]'s loss and
+   [freeing] at each entry, which only ever become true: a drain of another
+   domain that restarts the pass meanwhile makes it judge entries again,
+   never wrongly. *)
+let rec take_freed d =
+  let l = d.live in
+  let i = l.judged in
   if i >= l.nretiring then no_entry
   else
     let e = l.retiring.(i) in
-    match fate p.dev ~lost:p.lost ~free_lost:p.free_lost e with
+    match fate d ~lost:(Dev.is_lost d) ~free_lost:l.freeing e with
     | Stays ->
-        p.at <- i + 1;
-        take_freed p
+        l.judged <- i + 1;
+        take_freed d
     | (Cached | Freed) as f ->
         if f = Cached then cache e;
         let last = l.nretiring - 1 in
         l.retiring.(i) <- l.retiring.(last);
         l.retiring.(last) <- no_entry;
         l.nretiring <- last;
-        if f = Freed then e else take_freed p
+        if f = Freed then e else take_freed d
 
-(* Frees [p.dev]'s retiring memory that is due, one entry at a time: an
-   entry leaves as its free starts, so an exception leaks that one at most. *)
-let rec judge p =
-  let e = Dev.protect p.dev take_freed p in
+(* Under [l]'s lock: a pass starts at the first retiring entry, the second
+   on a device found lost and Stopped. *)
+let start_pass l = l.judged <- 0
+
+let start_freeing l =
+  l.freeing <- true;
+  l.judged <- 0
+
+(* Frees [d]'s retiring memory that is due, one entry at a time: an entry
+   leaves as its free starts, so an exception leaks that one at most. A
+   pass's state is [d]'s, so the pass allocates nothing. *)
+let rec judge d =
+  let e = Dev.protect d take_freed d in
   if e != no_entry then begin
     ignore (free_entry e : Dev.given);
-    judge p
+    judge d
   end
 
 (* Releasing the cache *)
@@ -885,10 +894,12 @@ let give_maps d =
    are reached enters the cache, or is freed if [d] is lost and counts as
    stopped, with its mappings and its cache. *)
 let due d =
-  let lost = Dev.is_lost d in
-  let free_lost = lost && Dev.stopped d in
+  let free_lost = Dev.is_lost d && Dev.stopped d in
   let l = d.live in
-  if l.nretiring > 0 then judge { dev = d; lost; free_lost; at = 0 };
+  if l.nretiring > 0 then begin
+    Dev.protect d (if free_lost then start_freeing else start_pass) l;
+    judge d
+  end;
   if free_lost then begin
     give_maps d;
     release_picked d every (Dev.submitted d)
