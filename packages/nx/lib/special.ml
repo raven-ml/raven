@@ -38,6 +38,9 @@ let tables (type b) (x : (float, b) t) =
 
 let log_sqrt_2pi = 0.5 *. Stdlib.log (2. *. Float.pi)
 
+let max_float_of (type b) (x : (float, b) t) =
+  match dtype x with Float64 -> max_float | _ -> 0x1.fffffep127
+
 (* Error function *)
 
 (* fdlibm's erfc: [1 - erf] from erf's P/Q below 0.84375, a P/Q about 1 to 1.25,
@@ -183,30 +186,39 @@ let ndtr_series x =
   let v = recip (mul x x) in
   mul v (horner t.log_ndtr_series v)
 
-(* [log (ndtr x)] below the table's threshold: [-x^2/2 - log (-x) - log (2 pi)/2
-   + log1p s]. *)
-let log_ndtr_far x =
+(* [log (ndtr x)] below the table's threshold, from [s = ndtr_series x]: [-x^2/2
+   - log (-x) - log (2 pi)/2 + log1p s]. *)
+let log_ndtr_far x s =
   add
     (sub_s (neg (add (mul (mul_s x 0.5) x) (log (neg x)))) log_sqrt_2pi)
-    (log1p (ndtr_series x))
+    (log1p s)
 
-(* [log (ndtr x)]: above 0 [log1p (-(ndtr (-x)))]; down to the table's
-   threshold, where [ndtr] is still normal, its logarithm; below,
-   [log_ndtr_far]. One [ndtr] runs, at [-|x|]. *)
-let log_ndtr_at x =
+(* Whether [x] is positive, [ndtr (-|x|)], its logarithm, and [log (ndtr
+   |x|)], from one [ndtr] at [-|x|]: the logarithm down to the table's
+   threshold, [log_ndtr_far] below, and [log1p] of the negation. Beyond [-sqrt
+   (2 max_float)], [x^2/2] overflows and the logarithm is [-infinity]; the far
+   branch runs at a finite point there, so that its partial derivatives stay
+   finite, an infinite [x]'s too. *)
+let ndtr_halves x =
   let t = tables x in
   let positive = cmpgt x (zeros_like x) in
-  let below = lt x t.log_ndtr_below in
-  let y =
-    clamp (logical_not below) (where positive (neg x) x) t.log_ndtr_below
-  in
+  let y = where positive (neg x) x in
+  let below = lt y t.log_ndtr_below in
   let n = ndtr_at y in
-  let near =
-    where positive (log1p (neg n)) (log (where positive (ones_like n) n))
+  let reach = -.(Float.sqrt 2. *. Float.sqrt (max_float_of x)) in
+  let yf =
+    clamp
+      (logical_and below (cmpge y (lit y reach)))
+      y (2. *. t.log_ndtr_below)
   in
-  let far = log_ndtr_far (clamp below x (2. *. t.log_ndtr_below)) in
-  let far = where (is x Float.neg_infinity) x far in
-  where below far near
+  let far = log_ndtr_far yf (ndtr_series yf) in
+  let near = log (where below (ones_like n) n) in
+  let far = where (lt y reach) (lit y Float.neg_infinity) far in
+  (positive, n, where below far near, log1p (neg n))
+
+let log_ndtr_at x =
+  let positive, _, lower, upper = ndtr_halves x in
+  where positive upper lower
 
 (* AS 241's guess on the lower tail, [x < 0] with [ndtr x = q] for [q] below
    [ndtri_tail_below], from its two rationals in [sqrt (-log q)], one evaluated
@@ -235,52 +247,12 @@ let ndtri_tail_guess log_q =
        (selected t.ndtri_near_p t.ndtri_far_p)
        (selected t.ndtri_near_q t.ndtri_far_q))
 
-(* AS 241 fits its rationals for [sqrt (-log q)] up to [ndtri_fit_r], [x =
-   -38]. *)
-let ndtri_fit_r = 27.
-
-(* [x] with [log_ndtr x = log_q], for [log_q] below [log ndtri_tail_below] and
-   finite: a guess, then a Newton step on [log_ndtr], which multiplies the
-   residual by [ndtr x / pdf x].
-
-   Where AS 241 is fitted its guess is within 1e-7 at float32 and 3e-17 at
-   float64. Past it the rationals' relative error grows, to 1e-4 at [x =
-   -1.4e4], and their powers overflow float32 from [x = -4e5]; there the guess
-   is the asymptote [log (ndtr x) = -h - log (2h) / 2 - 1 / (2h) - log (2 pi) /
-   2 + O (1 / h^2)] for [h = x^2/2], solved for [h] by two fixed-point steps
-   from [h = -log q - log (2 pi) / 2], which leave a relative error of 4e-10 at
-   [x = -38] and less further out. [log (2h)] is taken as [log h + log 2] and
-   [1 / (2h)] as [0.5 / h], so that neither overflows for a finite [h]. The
-   step squares the guess's error, to below the roundoff of [x].
-
-   Down to the table's threshold the step's ratio is [exp (log_ndtr x + x^2/2 +
-   log (2 pi)/2)]; below, [(1 + s) / (-x)] from [ndtr]'s series, where the sum
-   in the exponent would cancel to a few units of the roundoff of [x^2] and
-   float32 would be off by [e^8] at [x = -1e4]. *)
-let ndtri_log_tail log_q =
-  let t = tables log_q in
-  let fit_log_q = -.(ndtri_fit_r *. ndtri_fit_r) in
-  let fit = ge log_q fit_log_q in
-  let rational = ndtri_tail_guess (clamp fit log_q fit_log_q) in
-  let v = rsub_s (-.log_sqrt_2pi) (clamp (logical_not fit) log_q fit_log_q) in
-  let fixed h =
-    sub
-      (sub v (mul_s (add_s (log h) (Float.log 2.)) 0.5))
-      (mul_s (recip h) 0.5)
-  in
-  let asymptote = mul_s (sqrt (fixed (fixed v))) (-.Float.sqrt 2.) in
-  let x = where fit rational asymptote in
-  let far = lt x t.log_ndtr_below in
-  let xn = clamp (logical_not far) x t.log_ndtr_below in
-  let xf = clamp far x (2. *. t.log_ndtr_below) in
-  let ln = log (ndtr_at xn) in
-  let lf = where far (log_ndtr_far xf) ln in
-  let ratio =
-    where far
-      (div (add_s (ndtr_series xf) 1.) (neg xf))
-      (exp (add_s (add ln (mul (mul_s xn 0.5) xn)) log_sqrt_2pi))
-  in
-  sub x (mul (sub lf log_q) ratio)
+(* AS 241's central guess, [x] with [ndtr x = 1/2 + dc] for [|dc|] at most
+   [ndtri_central_below]. *)
+let ndtri_central dc =
+  let t = tables dc in
+  let r = rsub_s T.ndtri_central_r (mul dc dc) in
+  mul dc (div (horner t.ndtri_central_p r) (horner t.ndtri_central_q r))
 
 (* AS 241's guess on the nearer tail [q], then one Newton step: on [erf (x/sqrt
    2)/2 = p - 1/2] where [|p - 1/2| <= 0.425], whose residual is relative to
@@ -292,10 +264,7 @@ let ndtri_at p =
   let d = sub_s p 0.5 in
   let central = cmple (abs d) (lit p T.ndtri_central_below) in
   let dc = clamp central d 0. in
-  let r = rsub_s T.ndtri_central_r (mul dc dc) in
-  let xc =
-    mul dc (div (horner t.ndtri_central_p r) (horner t.ndtri_central_q r))
-  in
+  let xc = ndtri_central dc in
   let lower = lt p 0.5 in
   let q = where lower p (rsub_s 1. p) in
   let tail = logical_and (logical_not central) (cmpgt q (zeros_like q)) in
@@ -306,9 +275,10 @@ let ndtri_at p =
   let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
   let far = lt xt t.log_ndtr_below in
   let n = ndtr_of th tl parts in
+  let xf = clamp far xt (2. *. t.log_ndtr_below) in
   let lf =
     where far
-      (log_ndtr_far (clamp far xt (2. *. t.log_ndtr_below)))
+      (log_ndtr_far xf (ndtr_series xf))
       (log (where far (ones_like n) n))
   in
   (* Each step divides by the density, [exp (x^2/2) sqrt (2 pi)] centrally and
@@ -326,6 +296,72 @@ let ndtri_at p =
   in
   let xt = sub xt (mul (sub lf log_q) e) in
   where central central_x (where lower xt (neg xt))
+
+(* AS 241 fits its rationals for [sqrt (-log q)] up to [ndtri_fit_r], [x =
+   -38]. *)
+let ndtri_fit_r = 27.
+
+(* [x <= 0] with [ndtr x = q] for a mass [q] at most [1/2], given as [dc = q -
+   1/2] and as a finite [log_q = log q], whatever the magnitude of [x]: where
+   [q] is at least [ndtri_tail_below], [ndtri_at]'s central guess and Newton
+   step on [dc], which holds [q] to its rounding where [exp log_q] would
+   multiply that by [|log q|]; below, a guess and a Newton step on [log_ndtr],
+   which multiplies the residual by [ndtr x / pdf x]. One [erfc_parts] serves
+   both steps.
+
+   Where AS 241 is fitted its tail guess is within 1e-7 at float32 and 3e-17
+   at float64. Past it the rationals' relative error grows, to 1e-4 at [x =
+   -1.4e4], and their powers overflow float32 from [x = -4e5]; there the guess
+   is the asymptote [log (ndtr x) = -h - log (2h) / 2 - 1 / (2h) - log (2 pi) /
+   2 + O (1 / h^2)] for [h = x^2/2], solved for [h] by two fixed-point steps
+   from [h = -log q - log (2 pi) / 2], which leave a relative error of 4e-10 at
+   [x = -38], 2e-12 at [-100] and below the roundoff from [-500]. [log (2h)] is
+   taken as [log h + log 2] and [1 / (2h)] as [0.5 / h], so that neither
+   overflows where [h] is finite. The step squares the guess's error, to below
+   the roundoff of [x].
+
+   Down to the table's threshold the tail step's ratio is [exp (log_ndtr x +
+   x^2/2 + log (2 pi)/2)]; below, [(1 + s) / (-x)] from [ndtr]'s series, where
+   the sum in the exponent would cancel to a few units of the roundoff of [x^2]
+   and float32 would be off by [e^8] at [x = -1e4]. *)
+let ndtri_mass dc log_q =
+  let t = tables log_q in
+  let central = ge log_q (Float.log ndtri_tail_below) in
+  let dc = clamp central dc 0. in
+  let xc = ndtri_central dc in
+  let log_q = clamp (logical_not central) log_q (Float.log 0.01) in
+  let fit_log_q = -.(ndtri_fit_r *. ndtri_fit_r) in
+  let fit = ge log_q fit_log_q in
+  let rational = ndtri_tail_guess (clamp fit log_q fit_log_q) in
+  let v = rsub_s (-.log_sqrt_2pi) (clamp (logical_not fit) log_q fit_log_q) in
+  let fixed h =
+    sub
+      (sub v (mul_s (add_s (log h) (Float.log 2.)) 0.5))
+      (mul_s (recip h) 0.5)
+  in
+  let asymptote = mul_s (sqrt (fixed (fixed v))) (-.Float.sqrt 2.) in
+  let xt = where fit rational asymptote in
+  let far = lt xt t.log_ndtr_below in
+  let xn = clamp (logical_not far) xt t.log_ndtr_below in
+  let xf = clamp far xt (2. *. t.log_ndtr_below) in
+  let th, tl = split_sqrt1_2 xn in
+  let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
+  let ln = log (ndtr_of th tl parts) in
+  let s = ndtr_series xf in
+  let lf = where far (log_ndtr_far xf s) ln in
+  let half_square x = mul (mul_s x 0.5) x in
+  let e =
+    exp
+      (where central (half_square xc)
+         (add_s (add ln (half_square xn)) log_sqrt_2pi))
+  in
+  let residual = sub (mul_s parts.erf 0.5) dc in
+  let central_x =
+    sub xc (mul (mul_s residual (Float.sqrt (2. *. Float.pi))) e)
+  in
+  let ratio = where far (div (add_s s 1.) (neg xf)) e in
+  let tail_x = sub xt (mul (sub lf log_q) ratio) in
+  where central central_x tail_x
 
 (* Gamma *)
 
@@ -420,9 +456,6 @@ let epsilon (type b) (x : (float, b) t) =
 
 let min_normal (type b) (x : (float, b) t) =
   match dtype x with Float64 -> 0x1p-1022 | _ -> 0x1p-126
-
-let max_float_of (type b) (x : (float, b) t) =
-  match dtype x with Float64 -> max_float | _ -> 0x1.fffffep127
 
 let euler_gamma = 0.57721566490153286061
 

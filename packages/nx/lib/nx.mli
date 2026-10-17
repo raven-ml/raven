@@ -916,12 +916,15 @@ module Rng : sig
       in both bounds.
 
       Within 1.44 standard deviations of the mean a draw [x] is within about
-      [3 ε e^{x²/2}] of the exact quantile of its uniform, at most [9 ε], with
-      [ε = 2⁻⁵³] at float64 and [2⁻²⁴] at narrower dtypes, which compute in
-      float32 and round once. Further out it is within about 3 units in the
-      last place of [x], however far out the bounds lie: the tails are inverted
-      through the logarithm of their mass, which does not underflow. float16,
-      bfloat16 and the float8 dtypes then round to their own precision.
+      [7 ε] of the exact quantile of its uniform, with [ε = 2⁻⁵³] at float64
+      and [2⁻²⁴] at narrower dtypes, which compute in float32 and round once.
+      Further out it is within about 2 units in the last place of [x], however
+      far out the bounds lie: the tails are inverted through the logarithm of
+      their mass, which does not underflow. float16, bfloat16 and the float8
+      dtypes then round to their own precision.
+
+      Each element of a bound, as given, costs about two thirds as much as a
+      draw: a scalar bound costs one.
 
       An infinite bound leaves that side untruncated.
 

@@ -974,19 +974,20 @@ module Rng = struct
 
   (* Inverse-CDF truncation: one uniform [u] per draw and no acceptance test, so
      the draw compiles and its cost does not depend on how much mass the
-     interval holds. The quantile of [u] is reached by one of two routes, chosen
-     by where it lands.
+     interval holds. The draw [x] has [Q x = (1 - u) Q lower + u Q upper] for
+     the mass [Q x = ndtr (-x)] above it, and equally [ndtr x = (1 - u) ndtr
+     lower + u ndtr upper] for the mass below. Each is a sum of positive terms
+     whose relative error stays at the rounding of its parts, held as a mass
+     for the central route and in logarithms for the tails, so that no bound
+     is too far out. The smaller of the two, at
+     most [1/2], is inverted: on the right of zero through [Q], on the left
+     through [ndtr], so that both tails of an interval about zero keep their
+     digits. This follows SciPy's [truncnorm], which chooses the side from the
+     bounds where this chooses it per draw.
 
-     Within [ndtri]'s central region it is [sqrt 2 * erfinv] of [u] carried
-     between the images of the bounds under [erf], whose error, [3 eps
-     e^{x^2/2}], is at most [9 eps] there. Further out that error grows, and
-     past [erf]'s reach the images round to [+/-1], so the tails invert the tail
-     probability instead, in logarithms so that no bound is too far out: on the
-     right, [x] has [Q x = (1 - u) Q lower + u Q upper] for [Q x = ndtr (-x)], a
-     sum of positive terms whose relative error stays at the rounding of its
-     parts. The left tail is its reflection through zero. This follows SciPy's
-     [truncnorm], which chooses the side from the bounds where this chooses it
-     per draw, so that both tails of an interval about zero keep their digits.
+     The bounds' masses come from one [ndtr] per element of each bound as
+     given, before the bounds broadcast against each other: a scalar bound
+     costs one.
 
      [u] is floored at [2^-p], the least positive uniform, so that an unbounded
      lower side gives a finite draw where [u] is zero. *)
@@ -994,48 +995,60 @@ module Rng = struct
       : (float, b) t =
     require "truncated_normal" "lower" not_nan lower;
     require "truncated_normal" "upper" not_nan upper;
-    let lower, upper = pair lower upper in
     let ctx = Value.context k in
     let target = dtype lower in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let lit v = scalar ctx compute v in
-      let lower = at compute lower and upper = at compute upper in
+      (* A bound's masses below and above it, [ndtr b] and [Q b], and their
+         logarithms, at the bound's own shape. *)
+      let masses b =
+        let b = at compute b in
+        let positive, n, log_n, log_m = Special.ndtr_halves b in
+        let m = sub (lit 1.0) n in
+        let side x y = where positive x y in
+        (side m n, side n m, side log_m log_n, side log_n log_m)
+      in
+      let drawn = Shape.broadcast (shape lower) (shape upper) in
+      let whole (below, above, log_below, log_above) =
+        let whole x = broadcast_to drawn x in
+        (whole below, whole above, whole log_below, whole log_above)
+      in
+      let below_lo, above_lo, log_below_lo, log_above_lo = whole (masses lower)
+      and below_hi, above_hi, log_below_hi, log_above_hi =
+        whole (masses upper)
+      in
+      let lower, upper = pair lower upper in
       let smallest = Float.ldexp 1.0 (-significand_bits compute) in
       let u = maximum (uniform k compute (shape lower)) (lit smallest) in
-      (* [erfinv] is infinite at +/-1, so the images stop at the last value
-         before it; a draw that would go further takes the tail route. *)
-      let limit = 1.0 -. smallest in
-      let edge x =
-        maximum (lit (-.limit))
-          (minimum (lit limit)
-             (B.unary Erf (mul x (lit (1.0 /. Float.sqrt 2.0)))))
+      let v = sub (lit 1.0) u in
+      let log_u = log u and log_v = log v in
+      let log_sum a b =
+        let m = maximum a b in
+        let finite_m = where (isfinite m) m (zeros_like m) in
+        add m (log1p (exp (sub (minimum a b) finite_m)))
       in
-      let lo = edge lower and hi = edge upper in
-      let s = add lo (mul u (sub hi lo)) in
-      let central = mul (lit (Float.sqrt 2.0)) (Special.erfinv s) in
-      (* The tail route on the side [s] lands, mirrored onto the right by
-         [sign]. [log_q] is [-infinity] only where both bounds are infinite on
-         that side, where the central draw clamps onto them. *)
-      let sign = where (cmpgt s (zeros_like s)) (lit 1.0) (lit (-1.0)) in
-      let log_tail x = Special.log_ndtr (neg (mul sign x)) in
-      let a = add (log (sub (lit 1.0) u)) (log_tail lower) in
-      let b = add (log u) (log_tail upper) in
-      let m = maximum a b in
-      let finite_m = where (isfinite m) m (zeros_like m) in
-      let log_q = add m (log1p (exp (sub (minimum a b) finite_m))) in
-      let tail =
-        logical_and
-          (cmplt log_q (lit (Float.log Special.ndtri_tail_below)))
-          (isfinite log_q)
+      let mix lo hi = add (mul v lo) (mul u hi) in
+      let right = mix above_lo above_hi and left = mix below_lo below_hi in
+      let on_right = cmplt right left in
+      let side x y = where on_right x y in
+      let q = side right left in
+      let log_q =
+        log_sum
+          (add log_v (side log_above_lo log_below_lo))
+          (add log_u (side log_above_hi log_below_hi))
       in
-      let tail_x =
-        neg
-          (mul sign
-             (Special.ndtri_log_tail (where tail log_q (lit (Float.log 0.01)))))
+      (* [log_q] is [-infinity] only where both masses on its side underflow,
+         both bounds far out on it: the draw is then the nearer one, the bound
+         a draw of [0] clamps onto. *)
+      let finite = isfinite log_q in
+      let y =
+        Special.ndtri_mass (sub_s q 0.5)
+          (where finite log_q (lit (Float.log 0.5)))
       in
-      let x = where tail tail_x central in
+      let x = where finite (where on_right (neg y) y) (zeros_like y) in
       (* A draw within its error of a bound can round past it; the clamp makes
          the support exact. *)
+      let lower = at compute lower and upper = at compute upper in
       minimum (maximum x (minimum lower upper)) (maximum lower upper)
     in
     match target with

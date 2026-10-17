@@ -3920,12 +3920,12 @@ thread.
 
 ### Nx
 
-- `Nx.Rng.truncated_normal` keeps its accuracy in the tails: past 1.44
-  standard deviations it inverts the tail mass in logarithms, so a draw is
-  within about 3 ulps however far out the bounds lie. It was off by
+- `Nx.Rng.truncated_normal` keeps its accuracy in the tails: it inverts the
+  mass beyond the draw, in logarithms past 1.44 standard deviations, so a
+  draw is within about 2 ulps however far out the bounds lie. It was off by
   `1.5e-2` at five standard deviations at `float32`, and an interval past
-  `erf`'s reach collapsed onto its bound. A draw costs about four times as
-  much.
+  `erf`'s reach collapsed onto its bound. A draw with full-array bounds does
+  about three times the work; a scalar bound costs one evaluation.
 - Every `Nx_io` save survives a crash whole: `save_npy`, `save_npz`,
   `save_image`, `save_txt` and `gunzip` sync the new file before renaming it
   over the old one, as `save_safetensors` did, and every save syncs the
