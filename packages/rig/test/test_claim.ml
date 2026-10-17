@@ -29,7 +29,7 @@ let claim_wait b a =
       raise e
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Rig.Submission.Run.make ()) ~buffers
+  Rig.submit ?waits (Rig.Submission.Run.make s) ~buffers
 
 let timeout = 60.
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
@@ -418,7 +418,7 @@ let test_dead_claims () =
 let test_closed_slot_claim () =
   let d, _ = P.open_ "claim:closed" in
   let p =
-    Rig.submit (Rig.Submission.make d [||]) ~run:(Rig.Submission.Run.make ())
+    Rig.submit (Rig.Submission.Run.make (Rig.Submission.make d [||]))
       ~buffers:[||]
   in
   Rig.Point.wait p;
@@ -887,12 +887,12 @@ let test_submit_donation (name, kind) () =
   let src = B.create d 8 and dst = B.create d 8 in
   Rig_support.store (R.host src) 42;
   Rig_support.store (R.host dst) 0;
-  let run = Sub.Run.make () in
   let part work = work in
-  let s =
+  let run =
     match kind with
     | `Copy ->
-        Sub.make d [| part Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]
+        Sub.Run.make
+          (Sub.make d [| part Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |])
     | `Fixed ->
         let fill =
           Sub.fill Rig_support.carry ~params:24
@@ -903,18 +903,20 @@ let test_submit_donation (name, kind) () =
             d
             [| part fill |]
         in
-        let block = Sub.block s 0 in
+        let run = Sub.Run.make s and block = Sub.block s 0 in
         Sub.Run.int64 run block 0 (Sub.address s dst);
         Sub.Run.int64 run block 8 (Sub.address s src);
         Sub.Run.int64 run block 16 8;
-        s
+        (* The submit runs on another domain. *)
+        Sub.Run.release run;
+        run
   in
   equal ~msg:"preparing the submission leaves the source exclusive" bool true
     (donated_exclusive src);
   let point = submit (Sub.make producer [||]) in
   P.gate pp;
   let waiting =
-    Domain.spawn (fun () -> Rig.submit s ~run ~waits:[| point |] ~buffers:[||])
+    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers:[||])
   in
   let exclusive = ref false in
   Fun.protect
@@ -985,7 +987,7 @@ let test_fixed_wait_raises () =
   let s =
     Sub.make ~fixed:[ (a, Rig.Read); (b, Rig.Read); (a, Rig.Read) ] d [||]
   in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   let point = submit (Sub.make producer [||]) in
   P.interrupt pp;
   let before =
@@ -995,11 +997,11 @@ let test_fixed_wait_raises () =
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () ->
       raises Exit (fun () ->
-          Rig.submit s ~run ~waits:[| point |] ~buffers:[||]));
+          Rig.submit run ~waits:[| point |] ~buffers:[||]));
   equal ~msg:"both claims released" (pair bool bool) (true, true)
     (donated_exclusive a, donated_exclusive b);
   ignore (P.run pp);
-  ignore (Rig.submit s ~run ~waits:[| point |] ~buffers:[||]);
+  ignore (Rig.submit run ~waits:[| point |] ~buffers:[||]);
   ignore (P.run p)
 
 (* A read whose wait raises leaves no claim: a signal handler's exception
@@ -1227,10 +1229,10 @@ let test_donor_submits () =
           Sub.make ~fixed:[ (b', Rig.Read_write) ] d
             [| Sub.fill Rig_support.poke ~params:16 |]
         in
-        let run = Sub.Run.make () in
+        let run = Sub.Run.make s in
         Sub.Run.int64 run (Sub.block s 0) 0 (Sub.address s b');
         Sub.Run.int64 run (Sub.block s 0) 8 42;
-        Rig.Point.wait (Rig.submit s ~run ~buffers:[||]);
+        Rig.Point.wait (Rig.submit run ~buffers:[||]);
         b')
   in
   equal ~msg:"the word the work stored" int 42

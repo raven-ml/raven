@@ -44,12 +44,8 @@ val page : int
 val collect : unit -> unit
 (** [collect ()] runs two full collections, so chains of finalisers run. *)
 
-val once :
-  ?buffers:Rig.Buffer.t array ->
-  run:Rig.Submission.Run.t ->
-  Rig.Submission.t ->
-  Rig.Point.t
-(** [once ~buffers ~run s] submits [s]. *)
+val once : ?buffers:Rig.Buffer.t array -> Rig.Submission.Run.t -> Rig.Point.t
+(** [once ~buffers r] submits [r]. *)
 
 val ops : op list
 (** [ops] are the operations on a device that walks fail. *)

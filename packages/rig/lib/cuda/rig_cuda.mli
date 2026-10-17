@@ -43,11 +43,11 @@
       Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
     in
     let s = Rig.Submission.make g [| twice |] in
-    let run = Rig.Submission.Run.make () in
+    let run = Rig.Submission.Run.make s in
     let b = Rig.Submission.block s 0 in
     Rig.Submission.Run.groups run b (n / 256) 1 1;
     Rig.Submission.Run.threads run b 256 1 1;
-    Rig.Point.wait (Rig.submit s ~run ~buffers:[| x |])
+    Rig.Point.wait (Rig.submit run ~buffers:[| x |])
     ]}
     The kernel's parameters are its one pointer, and the ref puts the address
     of [x]'s first byte in those 8 bytes.

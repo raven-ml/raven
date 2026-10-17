@@ -740,12 +740,12 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
   let refs = Array.of_list (List.map ref_ refs) in
   let fn = Option.get (Rig.Image.resolve p name) in
   let s = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.Run.make () and b = Sub.block s 0 in
+  let run = Sub.Run.make s and b = Sub.block s 0 in
   Sub.Run.groups run b gx gy gz;
   Sub.Run.threads run b tx ty tz;
   Sub.Run.shared run b shared;
   set run b;
-  Rig.Point.wait (Rig.submit s ~run ~buffers)
+  Rig.Point.wait (Rig.submit run ~buffers)
 
 let scratch_launch () =
   S.with_ @@ fun t ->
@@ -828,19 +828,21 @@ let launch_segments_hw () =
           ~params:sizes.(i mod Array.length sizes))
   in
   let s = Sub.make t.d ps in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   let blocks = Array.init count (Sub.block s) in
   Array.iter
     (fun b ->
       Sub.Run.groups run b 1 1 1;
       Sub.Run.threads run b lanes 1 1)
     blocks;
+  Sub.Run.release run;
   let last = ref None in
   for round = 0 to rounds - 1 do
+    if not (Sub.Run.take run) then fail "the run is taken";
     Array.iteri
       (fun i b -> Sub.Run.int64 run b 0 (4 * lanes * ((round * count) + i)))
       blocks;
-    last := Some (Rig.submit s ~run ~buffers:[| out |])
+    last := Some (Rig.submit run ~buffers:[| out |])
   done;
   Rig.Point.wait (Option.get !last);
   equal string ~msg:"every launch's output"
@@ -1947,13 +1949,13 @@ let two_in_array () =
     (in_array t.g, in_array t'.g);
   let gate, gp = Rig_support.Polled.open_ "amd:gate" in
   let gated d ws =
-    let s, run, buffers = Rig_gpu_support.prepare d ws in
+    let run, buffers = Rig_gpu_support.prepare d ws in
     let q =
       Rig.submit
-        (Rig.Submission.make gate [||])
-        ~run:(Rig.Submission.Run.make ()) ~buffers:[||]
+        (Rig.Submission.Run.make (Rig.Submission.make gate [||]))
+        ~buffers:[||]
     in
-    (q, Rig.submit ~waits:[| q |] s ~run ~buffers)
+    (q, Rig.submit ~waits:[| q |] run ~buffers)
   in
   let n = 1 lsl 20 in
   let p = pattern n 29 in

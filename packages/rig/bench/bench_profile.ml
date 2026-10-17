@@ -19,13 +19,14 @@ let submits n =
     lazy
       (let d = Result.get_ok (Rig.memory_device "bench:profile") in
        let src = Rig.Buffer.create d 64 and dst = Rig.Buffer.create d 64 in
-       Rig.Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
-  and run = Rig.Submission.Run.make () in
+       Rig.Submission.(
+         Run.make (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])))
+  in
   fun () ->
-    let s = Lazy.force copy in
+    let run = Lazy.force copy in
     P.take (fun () ->
         for _ = 1 to n do
-          ignore (Rig.submit s ~run ~buffers:[||])
+          ignore (Rig.submit run ~buffers:[||])
         done)
 
 let events n =

@@ -109,9 +109,11 @@ val prepare :
   ?fixed:(Rig.Buffer.t * Rig.access) list ->
   Rig.t ->
   work list ->
-  Rig.Submission.t * Rig.Submission.Run.t * Rig.Buffer.t array
-(** [prepare d ws] assembles [ws], their slots one after the other, and
-    initializes their blocks and fixed memory. [fixed] adds fixed memory. *)
+  Rig.Submission.Run.t * Rig.Buffer.t array
+(** [prepare d ws] is a run of the submission that assembles [ws], their
+    slots one after the other, with its buffers. It initializes their blocks
+    and fixed memory, and the run stays taken by the calling thread. [fixed]
+    adds fixed memory. *)
 
 val launching :
   Rig.Image.t ->

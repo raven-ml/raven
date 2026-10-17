@@ -16,7 +16,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 120.
 
@@ -73,7 +73,7 @@ let open_system () =
   let base =
     Array.map
       (fun (d, _) ->
-        let p = Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||] in
+        let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
         Rig.Point.wait p;
         Rig.Point.value p)
       devices
@@ -262,8 +262,7 @@ let test_racing_claim () =
 type replay = {
   d : Rig.t;
   p : P.t;
-  runs_storage : Sub.Run.t array;
-  subs : Sub.t array;
+  runs_storage : Sub.Run.t array;  (* A run of each copy's submission. *)
   outs : (int, B.t) Hashtbl.t;
   points : (int, int) Hashtbl.t;
   mutable runs : int;
@@ -279,15 +278,14 @@ let open_replay () =
     Printf.sprintf "stamps:replay-%d" (Atomic.fetch_and_add replays 1)
   in
   let d, p = P.open_ name in
-  let runs_storage = Array.init 2 (fun _ -> Sub.Run.make ()) in
-  let subs =
-    Array.init 2 (fun _ -> Sub.make d [| poke |])
+  let runs_storage =
+    Array.init 2 (fun _ -> Sub.Run.make (Sub.make d [| poke |]))
   in
+  Array.iter Sub.Run.release runs_storage;
   {
     d;
     p;
     runs_storage;
-    subs;
     outs = Hashtbl.create 8;
     points = Hashtbl.create 8;
     runs = 0;
@@ -295,16 +293,17 @@ let open_replay () =
 
 let run_replay t =
   let n = t.runs in
-  let run = t.runs_storage.(n mod 2) and s = t.subs.(n mod 2) in
+  let run = t.runs_storage.(n mod 2) in
   cover "a copy reused before its last run ran"
     (n >= 2 && Rig.signaled t.d < Hashtbl.find t.points (n - 2));
   let out = B.create t.d 8 in
   B.wait out Rig.Read_write;
   Support.store (Support.Reader.host out) (-1);
-  let block = Sub.block s 0 in
+  let block = Sub.block (Sub.Run.submission run) 0 in
+  if not (Sub.Run.take run) then fail "the run is taken";
   Sub.Run.int64 run block 0 0;
   Sub.Run.int64 run block 8 n;
-  let v = Rig.Point.value (Rig.submit s ~run ~buffers:[| out |]) in
+  let v = Rig.Point.value (Rig.submit run ~buffers:[| out |]) in
   Hashtbl.replace t.outs n out;
   Hashtbl.replace t.points n v;
   t.runs <- n + 1

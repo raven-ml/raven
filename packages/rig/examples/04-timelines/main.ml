@@ -44,12 +44,12 @@ let () =
   Buffer.copy ~src:(Buffer.of_bigarray (int32s [ 1l; 2l; 3l; 4l ])) ~dst:src;
 
   (* A submission is made once and submitted many times, each submit with a
-     run, the caller's storage for one submit at a time. A submit returns the
-     point of the value it assigns. *)
+     run of it, which holds its launches' parameters; a copy has none. A
+     submit returns the point of the value it assigns. *)
   let s = Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer mid) |]) in
-  let run = Submission.Run.make () in
-  Format.printf "first submit: %a@." Point.pp (submit s ~run ~buffers:[||]);
-  Format.printf "again:        %a@." Point.pp (submit s ~run ~buffers:[||]);
+  let run = Submission.Run.make s in
+  Format.printf "first submit: %a@." Point.pp (submit run ~buffers:[||]);
+  Format.printf "again:        %a@." Point.pp (submit run ~buffers:[||]);
   timeline d;
 
   (* The parts of one submission run in the order their memory requires. The
@@ -62,12 +62,12 @@ let () =
           copy ~src:(Buffer mid) ~dst:(Buffer dst);
         |])
   in
-  let p = submit chain ~run ~buffers:[||] in
+  let p = submit (Submission.Run.make chain) ~buffers:[||] in
   Format.printf "chain:        %a, reached: %b@." Point.pp p (Point.reached p);
   show "dst" dst;
 
   (* An empty submission takes a value too, which is reached once all earlier
      work has completed. *)
-  let empty = Submission.make d [||] in
-  Format.printf "empty:        %a@." Point.pp (submit empty ~run ~buffers:[||]);
+  let empty = Submission.(Run.make (make d [||])) in
+  Format.printf "empty:        %a@." Point.pp (submit empty ~buffers:[||]);
   timeline d

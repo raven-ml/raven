@@ -626,14 +626,18 @@ static void put(struct rig_device *d) {
    has, given at its first call. An open records its thread's, so that a
    call on that thread that would wait for the open, from its opener or a
    callback inside it, raises instead. */
-static _Atomic intnat threads_numbered;
-static _Thread_local intnat thread_number;
+static _Atomic intptr_t threads_numbered;
+static _Thread_local intptr_t thread_number;
+
+intptr_t rig_thread_number(void) {
+  if (thread_number == 0)
+    thread_number = atomic_fetch_add(&threads_numbered, 1) + 1;
+  return thread_number;
+}
 
 value caml_rig_thread(value unit) {
   (void)unit;
-  if (thread_number == 0)
-    thread_number = atomic_fetch_add(&threads_numbered, 1) + 1;
-  return Val_long(thread_number);
+  return Val_long(rig_thread_number());
 }
 
 /* Slots */
@@ -1273,16 +1277,16 @@ static int give_turn(struct rig_device *d, int released, int r) {
 
 /* Submitting */
 
-/* Records the run [r]'s in-queue waits in [d]'s record, for spread, after
+/* Records the call [r]'s in-queue waits in [d]'s record, for spread, after
    dropping the entries [d]'s word shows reached, and refuses a wait for a
    point a lost device did not reach, of the slot's device or an earlier
-   one: [r]'s [producer] is then that point. A run whose waits read words
+   one: [r]'s [producer] is then that point. A call whose waits read words
    through mappings [d] may give back drops a wait for a point already done,
    so the driver never reads its word: that word, or [d]'s mapping of it,
    may be given back once [d] passed its next value
    ([caml_rig_next_value]). The record grows here: SUBMIT_NO_MEMORY if the
    host has no memory for it. The mutex is held. */
-static int record_waits(struct rig_device *d, struct rig_run *r) {
+static int record_waits(struct rig_device *d, struct rig_call *r) {
   /* Nothing to drop or record reads no word: the device writes its line,
      so a read is a cache miss on every submit. */
   if (d->nrecord == 0 && r->nwaits == 0) return SUBMIT_OK;
@@ -1438,14 +1442,15 @@ value caml_rig_times_give(value v_d, value v_v) {
 }
 
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
-   value, stores it as submitted, hands the work over with the run [r]'s
-   waits, and raises the stamps, but for the host. Called under [d]'s turn. */
+   value, stores it as submitted, hands the work over with the call [r]'s
+   waits and the blocks [args], and raises the stamps, but for the host.
+   Called under [d]'s turn. */
 static int admit(struct rig_device *d, const struct rig_sub *s,
-                 struct rig_run *r) {
-  /* A submission with copies of slots hands over the run's parts
+                 struct rig_call *r, uint8_t *args) {
+  /* A submission with copies of slots hands over the call's parts
      ([set_copies]). */
   const struct rig_part *parts = s->nslotted > 0 ? r->parts : s->parts;
-  int room = d->driver.room(d->self, parts, s->nparts, s->scratch, r->args);
+  int room = d->driver.room(d->self, parts, s->nparts, s->scratch, args);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_GROW) return SUBMIT_GROW;
   if (room == RIG_LATER) {
@@ -1464,7 +1469,7 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   r->pair = r->timed ? take_pair(&d->times) : -1;
   uint64_t *times = r->pair < 0 ? NULL : pair_at(&d->times, r->pair);
   int a = d->driver.submit(d->self, v, r->waits, r->nwaits, parts,
-                           s->nparts, s->scratch, r->args, r->addresses,
+                           s->nparts, s->scratch, args, r->addresses,
                            r->nslots, times, &why);
   /* The host reserves no word ([add_memory]). */
   if (d->index != 0) rig_sub_raise(s, r, RIG_POINT(d->index, v));
@@ -1476,24 +1481,27 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   return SUBMIT_FAILED;
 }
 
-/* Submits [s] on its device with the run [r]: the turn, room, the value,
-   the hand-over and the stamps, in one call that runs no OCaml. [s] and
-   [r] are read with the runtime released: [Submission.submit] uses both
-   after the call, which keeps their custom blocks reachable until then. */
-value caml_rig_submit(value v_s, value v_r) {
+/* Submits [s] on its device with the call [v_c] and the run [v_r]'s
+   blocks: the turn, room, the value, the hand-over and the stamps, in one
+   call that runs no OCaml. [s] and the run are read with the runtime
+   released: [Submission.submit] uses both after the call, which keeps their
+   custom blocks reachable until then. A run is an OCaml record whose field
+   0 holds its custom block. */
+value caml_rig_submit(value v_s, value v_c, value v_r) {
   const struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
-  struct rig_run *run = *(struct rig_run **)Data_custom_val(v_r);
+  struct rig_call *c = (struct rig_call *)Long_val(v_c);
+  uint8_t *args = (*(struct rig_run **)Data_custom_val(Field(v_r, 0)))->args;
   struct rig_device *d = s->dev;
   int released;
   if (!lock_turn(d, &released)) return Val_int(SUBMIT_BUSY);
-  int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, run);
+  int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, c);
   if (r != SUBMIT_OK) return Val_int(give_turn(d, released, r));
   begin_turn(d);
-  r = admit(d, s, run);
+  r = admit(d, s, c, args);
   end_turn(d);
   if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER || r == SUBMIT_GROW)
-    d->nrecord -= run->nwaits;
-  if (r == SUBMIT_FAILED) r = fail_locked(d, run->why);
+    d->nrecord -= c->nwaits;
+  if (r == SUBMIT_FAILED) r = fail_locked(d, c->why);
   else if (r == SUBMIT_OK && is_lost(d)) r = SUBMIT_LOST_AFTER;
   return Val_int(give_turn(d, released, r));
 }

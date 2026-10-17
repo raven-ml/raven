@@ -14,7 +14,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
@@ -26,14 +26,15 @@ let idle () =
   (Sub.fill Support.noop ~params:0)
 
 let one_part d =
-  let s = Sub.make d [| idle () |] and run = Sub.Run.make () in
+  let s = Sub.make d [| idle () |] in
+  let run = Sub.Run.make s in
   Sub.Run.groups run (Sub.block s 0) 0 0 0;
-  (s, run)
+  run
 
-let point (s, run) = Rig.submit s ~run ~buffers:[||]
+let point run = Rig.submit run ~buffers:[||]
 let value x = Rig.Point.value (point x)
 
-let empty_run d = (empty d, Sub.Run.make ())
+let empty_run d = Sub.Run.make (empty d)
 
 (* A thread running [f], whose outcome [join] gives. *)
 let spawn f =
@@ -88,10 +89,10 @@ let test_never () =
   in
   let fn = require_some (Rig.Image.resolve image "main") in
   let never = Sub.make d [| Sub.launch fn ~params:0 |] in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make never in
   Sub.Run.groups run (Sub.block never 0) 0 0 0;
   raises_match Exn.invalid_arg (fun () ->
-      Rig.submit never ~run ~buffers:[||]);
+      Rig.submit run ~buffers:[||]);
   equal int base (Rig.submitted d);
   equal int (base + 1) (value (one_part d))
 

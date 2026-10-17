@@ -10,7 +10,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let memory name = Result.get_ok (Rig.memory_device name)
@@ -385,14 +385,13 @@ let test_wait_words_transport () =
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
   let p = submit s ~buffers:[| b |] in
   B.wait b Rig.Read_write;
-  let waiter = Sub.make (memory "buffer:wait-words-waiter") [||] in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make (Sub.make (memory "buffer:wait-words-waiter") [||]) in
   (* Passed as an option made once: a supplied optional argument may allocate
      its [Some] at each call. *)
   let waits = Some [| p |] in
   let wait () = B.wait b Rig.Read_write in
   let submit () =
-    ignore (Rig.submit waiter ?waits ~run ~buffers:[||] : Rig.Point.t)
+    ignore (Rig.submit ?waits run ~buffers:[||] : Rig.Point.t)
   in
   let per_call f =
     f ();

@@ -26,14 +26,14 @@ let object_file () =
 let affine fn ~groups:g ~threads:t ~n ~a ~c out inp =
   let refs = Submission.[| write 0 ~at:0; read 1 ~at:8 |] in
   let s = Submission.(make host [| launch ~refs fn ~params:40 |]) in
-  let run = Submission.Run.make () and k = Submission.block s 0 in
+  let run = Submission.Run.make s and k = Submission.block s 0 in
   Submission.Run.(
     groups run k g 1 1;
     threads run k t 1 1;
     int64 run k 16 n;
     int64 run k 24 a;
     int64 run k 32 c);
-  ignore (submit s ~run ~buffers:[| out; inp |])
+  ignore (submit run ~buffers:[| out; inp |])
 
 let iota n =
   let b = Buffer.create host (8 * n) in

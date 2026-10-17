@@ -157,11 +157,10 @@ let host_rows =
       row "load-cold-256M" file (load ~cold:true);
     ]
 
-(* A copy of the step: its submission and the run it submits with, its argument,
-   and the buffers each of its runs uses: the parameters and the argument, read,
-   then its output, written. *)
+(* A copy of the step: the run of its submission it submits with, its
+   argument, and the buffers each of its runs uses: the parameters and the
+   argument, read, then its output, written. *)
 type gpu_copy = {
-  gs : Sub.t;
   grun : Sub.Run.t;
   gargs : B.t;
   gbuffers : B.t array;
@@ -222,12 +221,12 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
   let get = function Ok x -> x | Error why -> failwith why in
   let rig () =
     let g, _ = opened () in
-    (g, Sub.make g [||], Sub.Run.make (), ref 0)
+    (g, Sub.Run.make (Sub.make g [||]), ref 0)
   in
   (* A device whose last value is reached. *)
   let reached () =
-    let _, s, run, _ = rig () in
-    let p = Rig.submit s ~run ~buffers:[||] in
+    let _, run, _ = rig () in
+    let p = Rig.submit run ~buffers:[||] in
     Rig.Point.wait p;
     p
   in
@@ -238,8 +237,8 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
     let k = kernel d g in
     let access = [| Rig.Read; Rig.Read; Rig.Read_write |] in
     let uses = Array.to_list (Array.map (fun a -> (B.create g 8, a)) access) in
-    let s, run, buffers = Rig_gpu_support.prepare ~fixed:uses g [ k.work ] in
-    (g, s, run, buffers, k.keep, ref 0)
+    let run, buffers = Rig_gpu_support.prepare ~fixed:uses g [ k.work ] in
+    (g, run, buffers, k.keep, ref 0)
   in
   let replay g parts keep =
     let gparams = Array.init slots (fun _ -> B.create g 8) in
@@ -250,8 +249,8 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
       let gargs = B.create g 8 in
       let gbuffers = Array.concat [ gparams; [| gargs; B.create g 8 |] ] in
       let uses = Array.to_list (Array.combine gbuffers access) in
-      let gs, grun, gbuffers = Rig_gpu_support.prepare ~fixed:uses g parts in
-      { gs; grun; gargs; gbuffers }
+      let grun, gbuffers = Rig_gpu_support.prepare ~fixed:uses g parts in
+      { grun; gargs; gbuffers }
     in
     ({ gcopies = Array.init depth (fun _ -> copy ()); keep }, ref 0)
   in
@@ -265,7 +264,7 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
     let c = r.gcopies.(!n mod depth) in
     incr n;
     B.wait c.gargs Rig.Read_write;
-    Rig.submit c.gs ~run:c.grun ~buffers:c.gbuffers
+    Rig.submit c.grun ~buffers:c.gbuffers
   in
   let pipelined ((r, _) as x) =
     for _ = 1 to runs - 1 do
@@ -432,14 +431,14 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
       [ row "reached" reached Rig.Point.wait ];
     Thumper.group (strf "submit/%s" v)
       [
-        row "empty" rig (fun (_, s, run, _) ->
-            Rig.Point.wait (Rig.submit s ~run ~buffers:[||]));
-        row "cost" rig (fun (_, s, run, n) ->
-            let p = Rig.submit s ~run ~buffers:[||] in
+        row "empty" rig (fun (_, run, _) ->
+            Rig.Point.wait (Rig.submit run ~buffers:[||]));
+        row "cost" rig (fun (_, run, n) ->
+            let p = Rig.submit run ~buffers:[||] in
             incr n;
             if !n mod drain = 0 then Rig.Point.wait p);
-        row "kernel" kernel_rig (fun (_, s, run, buffers, keep, n) ->
-            let p = Rig.submit s ~run ~buffers in
+        row "kernel" kernel_rig (fun (_, run, buffers, keep, n) ->
+            let p = Rig.submit run ~buffers in
             incr n;
             if !n mod drain = 0 then begin
               Rig.Point.wait p;

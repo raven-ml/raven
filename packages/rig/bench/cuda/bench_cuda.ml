@@ -50,7 +50,7 @@ let host r = Option.get (C.locate r).host
 (* The point of an empty submission on [d]: the last point a row waits for
    until it submits. *)
 let first_point d =
-  Rig.submit (Rig.Submission.make d [||]) ~run:(Rig.Submission.Run.make ())
+  Rig.submit (Rig.Submission.Run.make (Rig.Submission.make d [||]))
     ~buffers:[||]
 
 (* GPU 0, opened through rig. *)
@@ -58,16 +58,16 @@ let dev () =
   let { S.d; g } = S.open_ () in
   { d; g; v = 0; last = first_point d }
 
-(* The prepared submission of [parts] on [t]. *)
-let prepare t parts = (Rig.Submission.make t.d parts, Rig.Submission.Run.make ())
+(* A run of the prepared submission of [parts] on [t]. *)
+let prepare t parts = Rig.Submission.(Run.make (make t.d parts))
 
 let prepare_fill t f =
-  let s, run, buffers = Rig_gpu_support.prepare t.d [ S.part t.d f ] in
+  let run, buffers = Rig_gpu_support.prepare t.d [ S.part t.d f ] in
   assert (Array.length buffers = 0);
-  (s, run)
+  run
 
-let submit t (s, run) =
-  let p = Rig.submit s ~run ~buffers:[||] in
+let submit t run =
+  let p = Rig.submit run ~buffers:[||] in
   t.last <- p;
   t.v <- Rig.Point.value p
 
@@ -104,16 +104,13 @@ let launches t n =
   let launch =
     Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
   in
-  let s, run =
-    prepare t
-      (Array.make n launch)
-  in
+  let run = prepare t (Array.make n launch) in
   for i = 0 to n - 1 do
-    let b = Sub.block s i in
+    let b = Sub.block (Sub.Run.submission run) i in
     Sub.Run.groups run b 1 1 1;
     Sub.Run.threads run b 1 1 1
   done;
-  (s, run)
+  run
 
 let release_rows =
   let empty () =

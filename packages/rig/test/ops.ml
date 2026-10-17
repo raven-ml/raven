@@ -101,17 +101,17 @@ let borrow_peer =
 let bump =
   Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.bump ~params:8
 
-let once ?(buffers = [||]) ~run s = Rig.submit s ~run ~buffers
+let once ?(buffers = [||]) run = Rig.submit run ~buffers
 
 let submit =
   op "submit" (fun d ->
       let arg = B.create d 8 in
       B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
       let s = Sub.make d [| bump |] in
-      let run = Sub.Run.make () and buffers = [| arg |] in
+      let run = Sub.Run.make s and buffers = [| arg |] in
       Sub.Run.int64 run (Sub.block s 0) 0 0;
       fun _ ->
-        Rig.Point.wait (once ~buffers ~run s);
+        Rig.Point.wait (once ~buffers run);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A device whose memory the host does not address, which copied through the
@@ -159,15 +159,13 @@ let load =
 
 let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->
-      let s = Sub.make d [||] in
-      let run = Sub.Run.make () in
-      fun _ -> Rig.Point.wait (once ~run s))
+      let run = Sub.Run.make (Sub.make d [||]) in
+      fun _ -> Rig.Point.wait (once run))
 
 (* Submits on [d] once a submission that keeps a value, leaving the
    submission unreachable. *)
 let[@inline never] submit_kept d =
-  let run = Sub.Run.make () in
-  Rig.Point.wait (once ~run (Sub.make ~keep:(ref ()) d [||]))
+  Rig.Point.wait (once (Sub.Run.make (Sub.make ~keep:(ref ()) d [||])))
 
 let keep =
   op "keep" (fun d _ ->
@@ -181,11 +179,11 @@ let profile =
   op "profile" (fun d ->
       let arg = B.create d 8 in
       let s = Sub.make d [| bump |] in
-      let run = Sub.Run.make () and buffers = [| arg |] in
+      let run = Sub.Run.make s and buffers = [| arg |] in
       Sub.Run.int64 run (Sub.block s 0) 0 0;
       fun _ ->
         ignore
-          (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers ~run s))))
+          (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers run))))
 
 let ops =
   [

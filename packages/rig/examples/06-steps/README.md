@@ -32,7 +32,8 @@ recorded commands, which every run replays as they are.
 | `Submission.fill ~refs f ~params`      | Work that is a C function                              |
 | `Submission.make ~keep ~fixed d parts` | A step's submission, its fixed memory and a kept value |
 | `Submission.address s b`               | The address of fixed memory `b`                        |
-| `submit s ~run ~buffers`               | Run it once with these buffers                         |
+| `Submission.Run.make s`                | Storage of the step's parameters                       |
+| `submit r ~buffers`                    | Run it once with these buffers                         |
 
 ## Next Steps
 

@@ -25,13 +25,13 @@ same calls, as in [01-add](../01-add/).
 
 ## Key Functions
 
-| Function                        | Purpose                                    |
-| ------------------------------- | ------------------------------------------ |
-| `memory_device name`            | A device with a timeline, in host memory   |
-| `Submission.make d parts`       | Work for `d`, made once                    |
-| `Submission.Run.make ()`        | Storage for one submit at a time           |
-| `submit s ~run ~buffers`        | Run `s` once and return the point it takes |
-| `Point.reached p`               | Whether `p`'s device has reached it        |
+| Function                  | Purpose                                         |
+| ------------------------- | ----------------------------------------------- |
+| `memory_device name`      | A device with a timeline, in host memory        |
+| `Submission.make d parts` | Work for `d`, made once                         |
+| `Submission.Run.make s`   | Storage of `s`'s parameters, a submit at a time |
+| `submit r ~buffers`       | Run `r`'s submission once and return its point  |
+| `Point.reached p`         | Whether `p`'s device has reached it             |
 
 ## Next Steps
 

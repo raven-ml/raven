@@ -29,13 +29,12 @@ let () =
 
   (* A writes [x], so [x]'s stamps name A. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
-  let run = Submission.Run.make () in
   let s = Submission.(make a [| copy ~src:(Buffer src) ~dst:(Buffer x) |]) in
-  ignore (submit s ~run ~buffers:[||]);
+  ignore (submit (Submission.Run.make s) ~buffers:[||]);
 
   (* A's next work fails, and A is lost. *)
   let s = Submission.make a [| Submission.fill (fail ()) ~params:0 |] in
-  lost (fun () -> ignore (submit s ~run ~buffers:[||]));
+  lost (fun () -> ignore (submit (Submission.Run.make s) ~buffers:[||]));
 
   (* Its properties and timeline still answer, and [lost] gives the reason.
      Value 2, the failed fill's, is never reached. *)
@@ -50,7 +49,7 @@ let () =
   (* B goes on. *)
   let y = Buffer.create b 16 and z = Buffer.create b 16 in
   let s = Submission.(make b [| copy ~src:(Buffer y) ~dst:(Buffer z) |]) in
-  let p = submit s ~run ~buffers:[||] in
+  let p = submit (Submission.Run.make s) ~buffers:[||] in
   Format.printf "B goes on: %a@." Point.pp p;
 
   (* The name opens again as a new device, with a timeline of its own. *)

@@ -24,9 +24,13 @@
 
 #define Stamps_val(v) ((struct rig_stamps *)Long_val(v))
 /* A prepared submission and a run are each held by a custom block whose
-   finaliser frees it, with no OCaml, once it is collected. */
+   finaliser frees it, with no OCaml, once it is collected. A run is an
+   OCaml record whose field 0 holds its custom block. A call is a pointer
+   that OCaml holds as an int. */
 #define Sub_val(v) (*(struct rig_sub **)Data_custom_val(v))
-#define Run_val(v) (*(struct rig_run **)Data_custom_val(v))
+#define Run_block(v) (*(struct rig_run **)Data_custom_val(v))
+#define Run_val(v) Run_block(Field(v, 0))
+#define Call_val(v) ((struct rig_call *)Long_val(v))
 
 /* A run buffer's address where its memory has none: the -1 OCaml passes. */
 #define UNADDRESSED UINT64_MAX
@@ -269,7 +273,8 @@ static struct custom_operations sub_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* The ids of submissions, which identify their blocks and fitted runs. */
+/* The ids of submissions, which identify their blocks, runs and fitted
+   calls. */
 static _Atomic uint64_t next_id = 1;
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
@@ -491,20 +496,11 @@ value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_use) {
 
 /* Runs */
 
-static void run_free(struct rig_run *r) {
-  free(r->fixed);
-  free(r->slots);
-  free(r->addresses);
-  free(r->sides);
-  free(r->parts);
+static void run_finalize(value v) {
+  struct rig_run *r = Run_block(v);
   free(r->args);
-  free(r->points);
-  free(r->waits);
-  free(r->producers);
   free(r);
 }
-
-static void run_finalize(value v) { run_free(Run_val(v)); }
 
 static struct custom_operations run_ops = {
     "rig.run",                  run_finalize,
@@ -512,13 +508,58 @@ static struct custom_operations run_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-value caml_rig_run_new(value unit) {
-  (void)unit;
+/* A run of the submission [v_s], each byte 0, taken by the calling thread
+   unless it holds no bytes. */
+value caml_rig_run_new(value v_s) {
+  const struct rig_sub *s = Sub_val(v_s);
   struct rig_run *r = calloc(1, sizeof *r);
   if (r == NULL) caml_raise_out_of_memory();
+  if (s->args > 0 && (r->args = calloc(s->args, 1)) == NULL) {
+    free(r);
+    caml_raise_out_of_memory();
+  }
+  r->sub = s->id;
+  r->nargs = s->args;
+  atomic_init(&r->state, s->args > 0 ? rig_thread_number() : RUN_FREE);
   value v = caml_alloc_custom(&run_ops, sizeof(struct rig_run *), 0, 1);
-  Run_val(v) = r;
+  Run_block(v) = r;
   return v;
+}
+
+/* Takes the run [v_r] for the calling thread: whether it was free. A run
+   that holds no bytes needs no taking, and answers true. */
+value caml_rig_run_take(value v_r) {
+  struct rig_run *r = Run_val(v_r);
+  if (r->nargs == 0) return Val_true;
+  intptr_t seen = RUN_FREE;
+  return Val_bool(
+      atomic_compare_exchange_strong(&r->state, &seen, rig_thread_number()));
+}
+
+/* Frees the run [v_r] if the calling thread took it. */
+value caml_rig_run_release(value v_r) {
+  intptr_t me = rig_thread_number();
+  atomic_compare_exchange_strong(&Run_val(v_r)->state, &me, RUN_FREE);
+  return Val_unit;
+}
+
+/* Calls */
+
+/* Every call made, the newest first. A call is never freed, so the list only
+   grows at its head, and its links are fixed once published: a walk needs
+   no lock. Its length is the most submits that ever ran at once. */
+static struct rig_call *_Atomic calls;
+
+static void call_free(struct rig_call *c) {
+  free(c->fixed);
+  free(c->slots);
+  free(c->addresses);
+  free(c->sides);
+  free(c->parts);
+  free(c->points);
+  free(c->waits);
+  free(c->producers);
+  free(c);
 }
 
 /* Grows the array [*a] of [*c] elements of [size] bytes to hold [want],
@@ -533,108 +574,119 @@ static int fit(void **a, int *c, int want, size_t size) {
   return 1;
 }
 
-/* Fits the run [r] to the submission [s]: its uses, slots, addresses and
-   sides, the parts of a submission with copies, and its blocks, which [s]
-   then owns, its new bytes 0. Whether memory sufficed. A run that served
-   [s] last fits its slots: its arrays only grow. */
-static int run_fit(struct rig_run *r, const struct rig_sub *s) {
-  if (s->args > 0 && r->nargs < s->args) {
-    if (s->args > r->cargs) {
-      uint8_t *args = realloc(r->args, s->args);
-      if (args == NULL) return 0;
-      memset(args + r->cargs, 0, s->args - r->cargs);
-      r->args = args;
-      r->cargs = s->args;
-    }
-    r->owner = s->id;
-    r->nargs = s->args;
-  }
-  if (s->id == r->sub) return 1;
+/* Fits the call [c] to the submission [s]: its fixed buffers, slots,
+   addresses and sides, and the parts of a submission with copies. Whether
+   memory sufficed. A call that served [s] last fits it already: its arrays
+   only grow. */
+static int call_fit(struct rig_call *c, const struct rig_sub *s) {
+  if (s->id == c->sub) return 1;
   int nslots = s->nslots;
   /* The addresses and sides grow with the slots, which [fit] counts. */
-  int caddresses = r->cslots, csides = r->cslots;
-  if (!fit((void **)&r->fixed, &r->cfixed, s->nfixed, sizeof *r->fixed) ||
-      !fit((void **)&r->addresses, &caddresses, nslots,
-           sizeof *r->addresses) ||
-      !fit((void **)&r->sides, &csides, nslots, sizeof *r->sides) ||
-      !fit((void **)&r->slots, &r->cslots, nslots, sizeof *r->slots))
+  int caddresses = c->cslots, csides = c->cslots;
+  if (!fit((void **)&c->fixed, &c->cfixed, s->nfixed, sizeof *c->fixed) ||
+      !fit((void **)&c->addresses, &caddresses, nslots,
+           sizeof *c->addresses) ||
+      !fit((void **)&c->sides, &csides, nslots, sizeof *c->sides) ||
+      !fit((void **)&c->slots, &c->cslots, nslots, sizeof *c->slots))
     return 0;
   if (s->nslotted > 0 &&
-      !fit((void **)&r->parts, &r->cparts, s->nparts, sizeof *r->parts))
+      !fit((void **)&c->parts, &c->cparts, s->nparts, sizeof *c->parts))
     return 0;
-  r->sub = s->id;
-  r->nslots = nslots;
+  c->sub = s->id;
+  c->nslots = nslots;
   return 1;
 }
 
-/* Takes the run [v_r] for a submit of [v_s]: 0 if another submit holds it,
-   4 if a store does, 1 if it fits [v_s], 2 if [caml_rig_run_fit] must fit
-   it first, its slots or its blocks, and 3, leaving it, if it holds another
-   submission's blocks. */
-value caml_rig_run_take(value v_r, value v_s) {
-  struct rig_run *r = Run_val(v_r);
-  const struct rig_sub *s = Sub_val(v_s);
-  int idle = RUN_IDLE;
-  if (!atomic_compare_exchange_strong(&r->busy, &idle, RUN_SUBMIT))
-    return Val_int(idle == RUN_SUBMIT ? 0 : 4);
-  if (s->args > 0 && r->owner != s->id && r->nargs > 0) {
-    atomic_store(&r->busy, RUN_IDLE);
-    return Val_int(3);
+/* A free call, taken and fitted to [s], made if none is free; NULL if the
+   host has no memory for it. */
+static struct rig_call *call_take(const struct rig_sub *s) {
+  struct rig_call *c = atomic_load_explicit(&calls, memory_order_acquire);
+  for (; c != NULL; c = c->next) {
+    int seen = 0;
+    if (atomic_load_explicit(&c->taken, memory_order_relaxed) == 0 &&
+        atomic_compare_exchange_strong(&c->taken, &seen, 1))
+      break;
   }
-  int grow = s->args > 0 && r->nargs < s->args;
-  return Val_int(s->id == r->sub && !grow ? 1 : 2);
+  if (c == NULL) {
+    if ((c = calloc(1, sizeof *c)) == NULL) return NULL;
+    atomic_init(&c->taken, 1);
+    if (!call_fit(c, s)) {
+      call_free(c);
+      return NULL;
+    }
+    c->next = atomic_load(&calls);
+    while (!atomic_compare_exchange_weak(&calls, &c->next, c)) {
+    }
+    return c;
+  }
+  if (call_fit(c, s)) return c;
+  atomic_store_explicit(&c->taken, 0, memory_order_release);
+  return NULL;
 }
 
-/* Fits the taken run [v_r] to [v_s], giving it back if memory ran out. */
-value caml_rig_run_fit(value v_r, value v_s) {
+/* Begins a submit of [v_s] with its run [v_r]: moves the run from the
+   calling thread's taking, or from free, to submitting, and takes a free
+   call fitted to [v_s]. Answers the call, or -1 if another thread took the
+   run and -2 if another submit is using it, changing nothing. A run that
+   holds no bytes stays free, for any number of submits at once. Raises
+   Out_of_memory, the run freed, if the host has no memory for the call. */
+value caml_rig_submit_begin(value v_r, value v_s) {
   struct rig_run *r = Run_val(v_r);
-  if (!run_fit(r, Sub_val(v_s))) {
-    atomic_store(&r->busy, RUN_IDLE);
+  if (r->nargs > 0) {
+    intptr_t seen = rig_thread_number();
+    if (!atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING)) {
+      if (seen != RUN_FREE) return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
+      if (!atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING))
+        return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
+    }
+  }
+  struct rig_call *c = call_take(Sub_val(v_s));
+  if (c == NULL) {
+    if (r->nargs > 0) atomic_store(&r->state, RUN_FREE);
     caml_raise_out_of_memory();
   }
-  return Val_unit;
+  return Val_long((intnat)c);
 }
 
-/* Whether a submit or a store holds the run [v_r]. */
-value caml_rig_run_busy(value v_r) {
-  return Val_bool(atomic_load(&Run_val(v_r)->busy) != RUN_IDLE);
-}
-
-/* Forgets the run's buffers and its waits, and gives it back. */
-value caml_rig_run_give(value v_r) {
+/* Ends the submit that [caml_rig_submit_begin] began: forgets the call
+   [v_c]'s buffers and waits, gives it back, and frees the run [v_r]. */
+value caml_rig_submit_end(value v_r, value v_c) {
+  struct rig_call *c = Call_val(v_c);
+  for (int k = 0; k < c->nslots; k++) c->slots[k].stamps = NULL;
+  c->npoints = c->nwaits = c->checks = 0;
+  atomic_store_explicit(&c->taken, 0, memory_order_release);
   struct rig_run *r = Run_val(v_r);
-  for (int k = 0; k < r->nslots; k++) r->slots[k].stamps = NULL;
-  r->npoints = r->nwaits = r->checks = 0;
-  atomic_store(&r->busy, RUN_IDLE);
+  if (r->nargs > 0)
+    atomic_store_explicit(&r->state, RUN_FREE, memory_order_release);
   return Val_unit;
 }
 
-/* Names the run's [v_k]th buffer, at [v_address] as the device's work
+/* Names the call's [v_k]th buffer, at [v_address] as the device's work
    addresses it, -1 for memory with no address. */
-value caml_rig_run_slot(value v_r, value v_k, value v_stamps, value v_address) {
-  struct rig_run *r = Run_val(v_r);
+value caml_rig_call_slot(value v_c, value v_k, value v_stamps,
+                         value v_address) {
+  struct rig_call *c = Call_val(v_c);
   int k = Int_val(v_k);
-  struct rig_slot *slot = &r->slots[k];
-  r->addresses[k] = (uint64_t)Long_val(v_address);
-  slot->stamps = Stamps_val(v_stamps);
+  c->addresses[k] = (uint64_t)Long_val(v_address);
+  c->slots[k].stamps = Stamps_val(v_stamps);
   return Val_unit;
 }
 
-/* Sets the run's [v_k]th side, for copies, from its buffer [v_b], which a
+/* Sets the call's [v_k]th side, for copies, from its buffer [v_b], which a
    copy passes as this process's memory iff [v_local], and whose
    copy.device_memory fact is [v_device_memory]. */
-value caml_rig_run_side(value v_r, value v_k, value v_b, value v_local,
-                        value v_device_memory) {
-  struct rig_side *side = &Run_val(v_r)->sides[Int_val(v_k)];
+value caml_rig_call_side(value v_c, value v_k, value v_b, value v_local,
+                         value v_device_memory) {
+  struct rig_side *side = &Call_val(v_c)->sides[Int_val(v_k)];
   rig_buffer_side(v_b, Bool_val(v_local), side);
   side->device_memory = Bool_val(v_device_memory);
   return Val_unit;
 }
 
-/* Sets the run's parts from [s]'s, the fields of each copy with a slot end
+/* Sets the call's parts from [s]'s, the fields of each copy with a slot end
    from the sides of its ends, or refuses a copy whose buffers differ in
    size, overlap, or are both this process's memory. */
-static void set_copies(const struct rig_sub *s, struct rig_run *r) {
+static void set_copies(const struct rig_sub *s, struct rig_call *r) {
   memcpy(r->parts, s->parts, (size_t)s->nparts * sizeof *r->parts);
   for (int k = 0; k < s->ncopies; k++) {
     const struct rig_copy *c = &s->copies[k];
@@ -672,7 +724,7 @@ static void grow(void **a, int *c, int want, size_t size) {
    which only waits for more. Inlined into each walk of a submit's
    buffers. */
 static inline __attribute__((always_inline)) void
-add_point(struct rig_run *r, int own, uint64_t own_base, uint64_t p) {
+add_point(struct rig_call *r, int own, uint64_t own_base, uint64_t p) {
   if (p == 0) return;
   if (RIG_INDEX(p) == own && RIG_VALUE(p) > own_base) return;
   uint64_t base = 0;
@@ -708,8 +760,9 @@ add_point(struct rig_run *r, int own, uint64_t own_base, uint64_t p) {
    when its submit returns, before a raise could store its point, so a
    point of it orders nothing. Its reservation would be (0, 0), the empty
    word, which another device's reservation takes. */
-static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
-                                    struct rig_stamps *st, enum rig_use u) {
+static _Atomic uint64_t *add_memory(struct rig_call *r, int own,
+                                    uint64_t base, struct rig_stamps *st,
+                                    enum rig_use u) {
   int host = own == 0;
   if (u == RIG_USE_UNORDERED)
     return host ? NULL : reserve_any(st, own, base, 1);
@@ -745,14 +798,15 @@ static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
   return mine != NULL ? mine : reserve_any(st, own, base, 0);
 }
 
-/* Writes each entry ref's value into the run [v_r]'s blocks, which the
-   taken run holds whole, and sets the run's parts for its copies. Collects
-   in [v_r] the points [v_s]'s work follows,
-   the greatest per other device, with the points of [v_waits], and reserves
-   the use words its raise stores to. Answers the number of points. */
-value caml_rig_run_collect(value v_s, value v_r, value v_waits) {
+/* Writes each entry ref's value into the run [v_r]'s blocks, and sets the
+   call [v_c]'s parts for its copies. Collects in [v_c] the points [v_s]'s
+   work follows, the greatest per other device, with the points of
+   [v_waits], and reserves the use words its raise stores to. Answers the
+   number of points. */
+value caml_rig_call_collect(value v_s, value v_c, value v_r, value v_waits) {
   const struct rig_sub *s = Sub_val(v_s);
-  struct rig_run *r = Run_val(v_r);
+  struct rig_call *r = Call_val(v_c);
+  uint8_t *args = Run_val(v_r)->args;
   int own = s->dev->index, nslots = s->nslots;
   uint64_t base = s->dev->base;
   for (int k = 0; k < s->nrefs; k++)
@@ -762,7 +816,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits) {
           "address");
   if (s->nslotted > 0) set_copies(s, r);
   for (int k = 0; k < s->ncodes; k++)
-    memcpy(r->args + s->codes[k].at, &s->codes[k].code, sizeof(uint64_t));
+    memcpy(args + s->codes[k].at, &s->codes[k].code, sizeof(uint64_t));
   r->npoints = r->nwaits = r->checks = 0;
   for (int k = 0; k < s->nfixed; k++)
     r->fixed[k] =
@@ -775,26 +829,26 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits) {
   return Val_int(r->npoints);
 }
 
-/* Makes the run's next submit time its value, iff [v_timed]. */
-value caml_rig_run_timed(value v_r, value v_timed) {
-  struct rig_run *r = Run_val(v_r);
-  r->timed = Bool_val(v_timed);
-  r->pair = -1;
+/* Makes the call's submit time its value, iff [v_timed]. */
+value caml_rig_call_timed(value v_c, value v_timed) {
+  struct rig_call *c = Call_val(v_c);
+  c->timed = Bool_val(v_timed);
+  c->pair = -1;
   return Val_unit;
 }
 
-/* The time pair the run's last submit took, -1 for none. */
-value caml_rig_run_pair(value v_r) { return Val_int(Run_val(v_r)->pair); }
+/* The time pair the call's submit took, -1 for none. */
+value caml_rig_call_pair(value v_c) { return Val_int(Call_val(v_c)->pair); }
 
-value caml_rig_run_point(value v_r, value v_i) {
-  return Val_long((intnat)Run_val(v_r)->points[Int_val(v_i)]);
+value caml_rig_call_point(value v_c, value v_i) {
+  return Val_long((intnat)Call_val(v_c)->points[Int_val(v_i)]);
 }
 
 /* Adds an in-queue wait on the producer [v_producer]'s value [v_value], whose
    word is at [v_at]. */
-value caml_rig_run_wait(value v_r, value v_producer, value v_at,
-                        value v_value) {
-  struct rig_run *r = Run_val(v_r);
+value caml_rig_call_wait(value v_c, value v_producer, value v_at,
+                         value v_value) {
+  struct rig_call *r = Call_val(v_c);
   if (r->nwaits == r->cwaits) {
     int c = r->cwaits == 0 ? 8 : 2 * r->cwaits;
     struct rig_wait *waits = realloc(r->waits, (size_t)c * sizeof *waits);
@@ -812,15 +866,15 @@ value caml_rig_run_wait(value v_r, value v_producer, value v_at,
   return Val_unit;
 }
 
-/* Notes that a wait of the run reads a word through a mapping its device
+/* Notes that a wait of the call reads a word through a mapping its device
    may give back, which its submit then checks ([record_waits]). */
-value caml_rig_run_check(value v_r) {
-  Run_val(v_r)->checks = 1;
+value caml_rig_call_check(value v_c) {
+  Call_val(v_c)->checks = 1;
   return Val_unit;
 }
 
 /* Raises the stamps [s]'s work names in [r] to [p]. */
-void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
+void rig_sub_raise(const struct rig_sub *s, struct rig_call *r, uint64_t p) {
   for (int k = 0; k < s->nfixed; k++) {
     if (s->fixed[k].use == RIG_USE_WRITE) raise_own(write_word(r->fixed[k]), p);
     raise_own(r->fixed[k], p);
@@ -831,16 +885,16 @@ void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
   }
 }
 
-value caml_rig_run_value(value v_r) {
-  return Val_long((intnat)Run_val(v_r)->v);
+value caml_rig_call_value(value v_c) {
+  return Val_long((intnat)Call_val(v_c)->v);
 }
 
-value caml_rig_run_no_room_at(value v_r) {
-  return Val_long((intnat)Run_val(v_r)->no_room_at);
+value caml_rig_call_no_room_at(value v_c) {
+  return Val_long((intnat)Call_val(v_c)->no_room_at);
 }
 
-value caml_rig_run_producer(value v_r) {
-  return Val_long((intnat)Run_val(v_r)->producer);
+value caml_rig_call_producer(value v_c) {
+  return Val_long((intnat)Call_val(v_c)->producer);
 }
 
 /* Blocks */
@@ -855,46 +909,29 @@ value caml_rig_run_producer(value v_r) {
 #define BLOCK_FN(v) String_val(Field(v, 4))
 
 /* Stores the [size] bytes at [src] at byte [at] of the run [v_r]'s block
-   [v_b], growing the run to hold the whole block. It takes the run as a
-   submit does, so that no submit reads the blocks and no other store grows
-   them meanwhile. A run holds one submission's blocks: a store into
-   another's first zeroes every byte the run holds. Raises, storing nothing,
-   if a submit or another store is using the run, or if [at] is negative or
-   the bytes end past the block, its header's bytes and then its
-   parameters. */
+   [v_b]. The calling thread must have taken the run, which only it can
+   then change, so a store reads the run's state once and takes no lock.
+   Raises, storing nothing, if [at] is negative or the bytes end past the
+   block, its header's bytes and then its parameters, if the block is
+   another submission's, or if the calling thread has not taken the run,
+   such as while a submit of it is under way. */
 static void block_store(value v_r, value v_b, intnat at, const void *src,
                         intnat size) {
   struct rig_run *r = Run_val(v_r);
-  uint64_t sub = BLOCK_SUB(v_b);
   size_t params = BLOCK_PARAMS(v_b);
   if (at < 0 || (size_t)(at + size) > sizeof(struct rig_block) + params)
     caml_invalid_argument(
         "Rig.Submission.Run: the bytes lie outside the block's parameters");
-  int idle = RUN_IDLE;
-  if (!atomic_compare_exchange_strong(&r->busy, &idle, RUN_STORE))
-    caml_invalid_argument(idle == RUN_SUBMIT
-                              ? "Rig.Submission.Run: a submit is using the run"
-                              : "Rig.Submission.Run: a store is using the run");
-  if (r->owner != sub) {
-    if (r->nargs > 0) memset(r->args, 0, r->nargs);
-    r->nargs = 0;
-    r->owner = sub;
-  }
-  size_t start = BLOCK_AT(v_b), end = start + rig_block_bytes(params);
-  if (end > r->cargs) {
-    size_t c = 2 * r->cargs > end ? 2 * r->cargs : end;
-    uint8_t *args = realloc(r->args, c);
-    if (args == NULL) {
-      atomic_store(&r->busy, RUN_IDLE);
-      caml_raise_out_of_memory();
-    }
-    memset(args + r->cargs, 0, c - r->cargs);
-    r->args = args;
-    r->cargs = c;
-  }
-  if (end > r->nargs) r->nargs = end;
-  memcpy(r->args + start + at, src, (size_t)size);
-  atomic_store(&r->busy, RUN_IDLE);
+  if (BLOCK_SUB(v_b) != r->sub)
+    caml_invalid_argument(
+        "Rig.Submission.Run: the block is another submission's");
+  intptr_t state = atomic_load_explicit(&r->state, memory_order_relaxed);
+  if (state != rig_thread_number())
+    caml_invalid_argument(
+        state == RUN_SUBMITTING
+            ? "Rig.Submission.Run: a submit is using the run"
+            : "Rig.Submission.Run: the calling thread has not taken the run");
+  memcpy(r->args + BLOCK_AT(v_b) + at, src, (size_t)size);
 }
 
 /* The parameters' byte [i], as [block_store] counts. */

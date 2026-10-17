@@ -407,7 +407,7 @@ let copy_submission d ~src ~dst =
   Sub.make d
     [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]
 
-let submit ?waits s = Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers:[||]
+let submit ?waits s = Rig.submit ?waits (Sub.Run.make s) ~buffers:[||]
 
 let lost_w =
   Testable.structural ~pp:(fun ppf -> function

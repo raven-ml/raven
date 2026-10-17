@@ -181,10 +181,10 @@ let second () =
 let pipeline t f = (found (Rig_metal.entry t.fill f)).code
 
 let submit t fills =
-  let s, run, buffers =
+  let run, buffers =
     Rig_gpu_support.prepare t.d (Array.to_list (Array.map S.part fills))
   in
-  Rig.submit s ~run ~buffers
+  Rig.submit run ~buffers
 
 let wait _ p = Rig.Point.wait p
 let alloc_on g n = require_some (Rig_metal.alloc g Rig_edge.Device n)
@@ -695,7 +695,7 @@ let prepared_icb () =
     weak := S.weak b.handle;
     Rig_gpu_support.prepare t.d [ S.part (S.execute b) ]
   in
-  let s, run, buffers = made () in
+  let run, buffers = made () in
   (* A kept value's release and the ICB's finalizer each need a collection. *)
   for round = 1 to 4 do
     Gc.full_major ();
@@ -704,7 +704,7 @@ let prepared_icb () =
       ~msg:(strf "the submission keeps its ICB after collection %d" round)
       true (S.alive !weak)
   done;
-  Rig.Point.wait (Rig.submit s ~run ~buffers);
+  Rig.Point.wait (Rig.submit run ~buffers);
   equal int ~msg:"both commands ran" 2 (H.get32 (host out));
   List.iter (Rig_metal.free t.g) [ out; args ]
 
@@ -1021,9 +1021,9 @@ let words b =
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
-(* Submits [s] with [run] over [buffers], and waits for its writes. *)
-let run_wait s run buffers =
-  ignore (Rig.submit s ~run ~buffers);
+(* Submits [run] over [buffers], and waits for its writes. *)
+let run_wait run buffers =
+  ignore (Rig.submit run ~buffers);
   Array.iter (fun b -> B.wait b Read) buffers
 
 let zeroed d n =
@@ -1084,13 +1084,13 @@ let shared_law grid =
     Sub.make t.d
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Run.make () in
+  let run = Run.make s in
   let k = Sub.block s 0 in
   set_grid run k grid;
   Run.shared run k (4 * per);
   Run.int64 run k 0 0;
   Run.int32 run k 8 7;
-  run_wait s run [| out |];
+  run_wait run [| out |];
   equal (array int)
     (Array.init n (fun i -> 7 + (((i mod per) + 1) mod per)))
     (words out)
@@ -1133,13 +1133,13 @@ let chained parts =
     | `Direct -> direct
     | `Icb -> icb_part
   in
-  let s, run, buffers =
+  let run, buffers =
     Rig_gpu_support.prepare
       ~fixed:[ (out, Rig.Read_write) ]
       t.d (List.map part parts)
   in
-  set_args args ~at:0 ~out:(Sub.address s out) ~c:0;
-  run_wait s run buffers;
+  set_args args ~at:0 ~out:(Sub.address (Sub.Run.submission run) out) ~c:0;
+  run_wait run buffers;
   equal int (List.length parts) (words out).(0);
   Rig_metal.free t.g args
 
@@ -1148,9 +1148,9 @@ let no_params () =
   let t = dev () in
   let image = launch_image t.d in
   let s = Sub.make t.d [| launch image "empty" ~params:0 [] |] in
-  let run = Run.make () in
+  let run = Run.make s in
   set_grid run (Sub.block s 0) one;
-  let p = Rig.submit s ~run ~buffers:[||] in
+  let p = Rig.submit run ~buffers:[||] in
   wait t p;
   equal int (Rig.Point.value p) (Rig_metal.signaled t.g)
 
@@ -1164,14 +1164,14 @@ let widest () =
     Sub.make t.d
       [| launch image "last" ~params:4096 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Run.make () in
+  let run = Run.make s in
   let k = Sub.block s 0 in
   set_grid run k one;
   for w = 0 to 1021 do
     Run.int32 run k (4 * w) (w + 1)
   done;
   Run.int64 run k 4088 0;
-  run_wait s run [| out |];
+  run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
 (* 4,097 bytes of parameters, one past what setBytes takes, so the first
@@ -1184,14 +1184,14 @@ let past_set_bytes () =
     Sub.make t.d
       [| launch image "last" ~params:4097 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Run.make () in
+  let run = Run.make s in
   let k = Sub.block s 0 in
   set_grid run k one;
   for w = 0 to 1021 do
     Run.int32 run k (4 * w) (w + 1)
   done;
   Run.int64 run k 4088 0;
-  run_wait s run [| out |];
+  run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
 (* Launches of [wide] with 8 KiB of parameters, past what setBytes takes:
@@ -1213,17 +1213,19 @@ let arena () =
   in
   let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
   let s = Sub.make t.d [| wide |] in
-  let run = Run.make () in
+  let run = Run.make s in
+  Run.release run;
   for i = 0 to values - 1 do
+    if not (Run.take run) then fail "the run is taken";
     set run (Sub.block s 0) i;
-    ignore (Rig.submit s ~run ~buffers:[| out |])
+    ignore (Rig.submit run ~buffers:[| out |])
   done;
   let s = Sub.make t.d (Array.make together wide) in
-  let run = Run.make () in
+  let run = Run.make s in
   for j = 0 to together - 1 do
     set run (Sub.block s j) (values + j)
   done;
-  run_wait s run [| out |];
+  run_wait run [| out |];
   equal (array int)
     (Array.init (2 * n) (fun w -> if w mod 2 = 0 then w / 2 else 1000 + (w / 2)))
     (words out)
@@ -1285,13 +1287,13 @@ let refused_geometry () =
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
   let refused ?(shared = 4) groups threads =
-    let run = Run.make () in
+    let run = Run.make s in
     let k = Sub.block s 0 in
     raises_match Exn.invalid_arg (fun () ->
         set_grid run k { groups; threads };
         Run.shared run k shared;
         Run.int64 run k 0 0;
-        Rig.submit s ~run ~buffers:[| out |]);
+        Rig.submit run ~buffers:[| out |]);
     equal (option string) None (Rig.lost t.d)
   in
   refused (0, 1, 1) (1, 1, 1);
@@ -1318,7 +1320,7 @@ let spans_in_order n =
         launch image "step" ~params:8 [ Sub.write 0 ~at:0 ];
       |]
   in
-  let run = Run.make () in
+  let run = Run.make s in
   for i = 0 to 1 do
     let k = Sub.block s i in
     set_grid run k one;
@@ -1328,7 +1330,7 @@ let spans_in_order n =
   let (), events =
     Rig.Profile.take (fun () ->
         for _ = 1 to n do
-          ignore (Rig.submit s ~run ~buffers:[| out |])
+          ignore (Rig.submit run ~buffers:[| out |])
         done;
         B.wait out Read)
   in
@@ -1363,12 +1365,14 @@ let no_allocation () =
     Sub.make t.d
       [| launch image "step" ~params:8 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Run.make () and buffers = [| out |] in
+  let run = Run.make s and buffers = [| out |] in
+  Run.release run;
   let k = Sub.block s 0 in
   let go () =
+    if not (Run.take run) then fail "the run is taken";
     set_grid run k one;
     Run.int64 run k 0 0;
-    ignore (Rig.submit s ~run ~buffers)
+    ignore (Rig.submit run ~buffers)
   in
   go ();
   B.wait out Read;
@@ -1509,11 +1513,11 @@ let bump t b =
       ~groups:((n + 255) / 256)
       ~threads:256
   in
-  let s, run, buffers =
+  let run, buffers =
     Rig_gpu_support.prepare ~fixed:[ (b, Read_write) ] t.d [ S.part f ]
   in
-  set_args args ~at:0 ~out:(Sub.address s b) ~c:n;
-  ignore (Rig.submit s ~run ~buffers);
+  set_args args ~at:0 ~out:(Sub.address (Sub.Run.submission run) b) ~c:n;
+  ignore (Rig.submit run ~buffers);
   B.wait b Read;
   Rig_metal.free t.g args
 

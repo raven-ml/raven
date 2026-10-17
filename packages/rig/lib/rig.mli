@@ -480,11 +480,11 @@ val signaled : t -> int
     thread holds a lock of rig's, of a driver's or of an io library's.
 
     A call to rig that may take a lock, made inside a lock, raises
-    [Invalid_argument] as it starts, having done nothing. It raises even
-    where it needs none of the locks its thread holds, since the thread's
-    count of its locks does not say which they are. A function that takes no
-    lock may be called from a callback at any point, and never raises it:
-    {!name}, {!equal}, {!pp}, {!arch},
+    [Invalid_argument] as it starts, having done nothing, but for {!submit},
+    which frees its run. It raises even where it needs none of the locks its
+    thread holds, since the thread's count of its locks does not say which
+    they are. A function that takes no lock may be called from a callback at
+    any point, and never raises it: {!name}, {!equal}, {!pp}, {!arch},
     {!computes}, {!runs_on_host}, {!alignment}, {!most_parts}, {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!signaled}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
@@ -1172,11 +1172,12 @@ end
     {- It loads an image ({!Image.load}), resolves its functions
        ({!Image.resolve}), and makes a submission of parts that launch them
        and name the buffers every run uses ({!Submission.make}).}
-    {- It makes a run ({!Submission.Run.make}) and stores each launch's
-       grid and parameters into it.}
+    {- It makes a run of the submission ({!Submission.Run.make}), which the
+       calling thread holds, and stores each launch's grid and parameters
+       into it.}
     {- It calls {!submit} with the run, this run's buffers and the points to
-       wait for, and for each later run stores new parameters and submits
-       again.}
+       wait for. For each later run it takes the run again
+       ({!Submission.Run.take}), stores new parameters and submits again.}
     {- Once the submission is unreachable, its memory returns after the work
        of its last submit is done.}} *)
 
@@ -1328,11 +1329,11 @@ end
     let add = Option.get (Rig.Image.resolve image "add") in
     let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
     let s = Submission.(make host [| launch ~refs add ~params:32 |]) in
-    let run = Submission.Run.make () and k = Submission.block s 0 in
+    let run = Submission.Run.make s and k = Submission.block s 0 in
     Submission.Run.groups run k 64 1 1;
     Submission.Run.threads run k ((n + 63) / 64) 1 1;
     Submission.Run.int64 run k 24 n;
-    ignore (submit s ~run ~buffers:[| x; y; z |])
+    ignore (submit run ~buffers:[| x; y; z |])
     ]} *)
 
 (** {3:host_linking Linking}
@@ -1666,37 +1667,54 @@ module Submission : sig
 
   (** Runs. *)
   module Run : sig
-    type t
-    (** The type for runs: the storage of one submit at a time. It holds the
-        blocks of a submission's launches and fills, and what rig records
-        while the submit runs, such as the points the work follows. *)
+    type submission := t
 
-    val make : unit -> t
-    (** [make ()] is a run with no blocks. It grows to hold the largest
-        submission it serves, outside the OCaml heap, and never shrinks. *)
+    type t
+    (** The type for runs: the storage of one submission's launch and fill
+        blocks, for one submit at a time. A library that submits from
+        several domains keeps a few runs beside each submission it caches: a
+        call takes the first run whose {!take} is [true], and otherwise makes
+        one and adds it, and releases the run ({!release}) if the call
+        raises before its submit. *)
+
+    val make : submission -> t
+    (** [make s] is a run of [s] holding every block of [s], outside the
+        OCaml heap, taken by the calling thread ({!take}). Its bytes read [0]
+        until stored, and keep their last store across submits.
+
+        Raises [Stdlib.Out_of_memory] if the host has no memory for it. *)
+
+    val submission : t -> submission
+    (** [submission r] is the submission whose blocks [r] holds. *)
+
+    val take : t -> bool
+    (** [take r] reserves [r] for the calling thread's stores and its next
+        submit of [r], and is [true]; or is [false], reserving nothing, if
+        [r] is reserved or a submit of it is under way. It is one atomic step
+        and allocates nothing. A run of a submission with no launch or fill
+        holds no bytes: [take] is [true] and reserves nothing, and any number
+        of submits of it run concurrently.
+
+        A run stays taken until the thread that took it releases or submits
+        it. A run taken by a thread that ends without doing either stays
+        taken, as does, in a child of [fork], one that another thread of the
+        parent had taken. *)
+
+    val release : t -> unit
+    (** [release r] ends the calling thread's reservation of [r], keeping
+        its bytes. It does nothing if the thread does not hold [r]. *)
 
     (** {1:blocks Blocks}
 
         A launch's block holds its grid (its count of groups), the threads
         of each group, its shared memory and its parameters. A fill's holds
-        its parameters. A run holds the blocks of one submission at a time,
-        the one whose block a setter last stored into. A store into a block
-        of another submission first sets every byte of the run to [0].
-        {ul
-        {- A run keeps each byte's last store across submits of that
-           submission. Bytes never stored read [0].}
-        {- A store into a block the run does not hold grows the run to hold
-           it, and so does a {!submit} of the run's submission, or of any
-           submission while the run holds no blocks.}
-        {- {!submit} uses the run until it returns. It raises
-           [Invalid_argument] for a run that holds another submission's
-           blocks, or that another submit or store is using.}
-        {- No setter allocates.}}
-
-        A setter raises [Invalid_argument] and stores nothing if a submit or
-        another store is using the run, such as a store on another domain or a
-        signal handler's store during a submit's wait. It raises
-        [Stdlib.Out_of_memory] if the host has no memory to grow the run. *)
+        its parameters. A run never grows. A setter stores only into a run
+        the calling thread has taken, and raises [Invalid_argument], storing
+        nothing, otherwise. It raises in particular while a submit of the
+        run is under way, such as a signal handler's store during the
+        submit's wait. A store reads the run's state once and takes no lock,
+        and no setter allocates. A setter raises [Invalid_argument] for a
+        block of another submission. *)
 
     external groups :
       t ->
@@ -1774,18 +1792,21 @@ end
     ({!section-domains}). *)
 
 val submit :
-  ?waits:Point.t array ->
-  Submission.t ->
-  run:Submission.Run.t ->
-  buffers:Buffer.t array ->
-  Point.t
-(** [submit ~waits s ~run ~buffers] runs [s]'s work once and returns its
-    point [(d, v)], where [d] is [s]'s device and [v] is one more than
-    {!submitted}[ d]. The work uses [buffers.(i)] as its slot [i]
-    ({!Submission.make}), takes its blocks from [run], and follows the points
-    of [waits] (defaults to [[||]]) besides those its memory orders.
-    [submit] reads each element of [buffers] once, and a store into [run]
-    after it returns changes nothing of [v]'s work.
+  ?waits:Point.t array -> Submission.Run.t -> buffers:Buffer.t array -> Point.t
+(** [submit ~waits r ~buffers] runs the work of [r]'s submission [s]
+    ({!Submission.Run.val-submission}) once and returns its point [(d, v)],
+    where [d] is [s]'s device and [v] is one more than {!submitted}[ d]. The
+    work uses [buffers.(i)] as its slot [i] ({!Submission.make}), takes its
+    blocks from [r], and follows the points of [waits] (defaults to [[||]])
+    besides those its memory orders. [submit] reads each element of
+    [buffers] once, and a store into [r] after it returns changes nothing of
+    [v]'s work.
+
+    [submit] uses [r] until it returns or raises, and frees it then, a
+    submit made inside a lock ({!section-domains}) included: a run the
+    calling thread has taken ({!Submission.Run.take}), or a free one, which
+    [submit] takes itself. A run that holds no bytes it uses without taking
+    it.
 
     [submit] blocks while [d]'s queues have no room for the work, while it
     waits for a point on the host, and where its driver's interface says it
@@ -1800,8 +1821,8 @@ val submit :
 
     Raises [Invalid_argument] if:
     {ul
-    {- [run] breaks a rule of {!Submission.Run}, or [buffers] has another
-       length than [s]'s slots;}
+    {- another thread has taken [r], or another submit of [r] is under way,
+       or [buffers] has another length than [s]'s slots;}
     {- a buffer the work uses is dead or held exclusive ({!Claim});}
     {- a buffer of [buffers] is not on [d] ({!Buffer.borrow} puts it there),
        except where {!Submission.copy} admits it, or the work writes it and

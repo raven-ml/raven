@@ -42,10 +42,8 @@ open Rig
 
 let copy src dst = Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
-let run = Submission.Run.make ()
-
 let submit_parts d parts =
-  submit (Submission.make d parts) ~run ~buffers:[||]
+  submit (Submission.Run.make (Submission.make d parts)) ~buffers:[||]
 ```
 
 ```ocaml

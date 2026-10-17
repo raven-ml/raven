@@ -21,13 +21,13 @@ let call_ready image ~out ~counts ~fn v c =
   let refs = Sub.[| write 0 ~at:0; write 1 ~at:8 |] in
   let ready = require_some (Rig.Image.resolve image "ready") in
   let s = Sub.make Rig.host [| Sub.launch ~refs ready ~params:40 |] in
-  let run = Sub.Run.make () and k = Sub.block s 0 in
+  let run = Sub.Run.make s and k = Sub.block s 0 in
   Sub.Run.groups run k 1 1 1;
   Sub.Run.threads run k 1 1 1;
   Sub.Run.int64 run k 16 (Nativeint.to_int fn);
   Sub.Run.int64 run k 24 v;
   Sub.Run.int64 run k 32 c;
-  ignore (Rig.submit s ~run ~buffers:[| out; counts |])
+  ignore (Rig.submit run ~buffers:[| out; counts |])
 
 let read fd n =
   let b = Bytes.create n in

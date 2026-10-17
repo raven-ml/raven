@@ -41,9 +41,9 @@ let () =
       List.iteri (fun i v -> w.{i} <- v) [ 5l; 6l; 7l; 8l ]);
 
   (* A's work writes [x], so [x]'s last write is A's point. *)
-  let run = Submission.Run.make () in
   let s = Submission.(make a [| copy ~src:(Buffer src) ~dst:(Buffer x) |]) in
-  Format.printf "A wrote x at %a@." Point.pp (submit s ~run ~buffers:[||]);
+  let run = Submission.Run.make s in
+  Format.printf "A wrote x at %a@." Point.pp (submit run ~buffers:[||]);
 
   (* B's work addresses its own memory. [x] is A's, so a part of B that names
      it is refused. A borrow of [x] on B shares [x]'s stamps. *)
@@ -55,7 +55,8 @@ let () =
 
   (* B's copy reads [x], so it follows A's write by [x]'s stamps alone. *)
   let s = Submission.(make b [| copy ~src:(Buffer x_on_b) ~dst:(Buffer y) |]) in
-  Format.printf "B read x at %a@." Point.pp (submit s ~run ~buffers:[||]);
+  let run = Submission.Run.make s in
+  Format.printf "B read x at %a@." Point.pp (submit run ~buffers:[||]);
   show "y" y;
 
   (* A host copy is ordered the same way. It follows [y]'s last write and

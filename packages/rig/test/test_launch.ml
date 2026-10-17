@@ -24,7 +24,10 @@ let one run b =
   Run.groups run b 1 1 1;
   Run.threads run b 1 1 1
 
-let submit ?(buffers = [||]) ?waits s run = Rig.submit ?waits s ~run ~buffers
+let submit ?(buffers = [||]) ?waits run = Rig.submit ?waits run ~buffers
+
+(* Takes [run] for the stores that follow, as no other call holds it. *)
+let take run = if not (Run.take run) then fail "the run is taken"
 
 (* Fresh Polled devices: a name opens once. *)
 let opened = Atomic.make 0
@@ -194,11 +197,12 @@ let patch_law c =
   (* Every slot is a ref's: a fill after the launches names each. *)
   let named = Rig_support.touching (Array.of_list (List.mapi (fun i _ -> use i) c.slots)) in
   let s = Sub.make d (Array.of_list (launches @ [ named ])) in
-  let run = Run.make () in
+  let run = Run.make s in
   List.iteri (fun i l -> store run (Sub.block s i) l) c.launches;
   ignore (P.launches p);
-  let pt = submit ~buffers s run in
+  let pt = submit ~buffers run in
   (* Stores after the submit returned change nothing it handed over. *)
+  take run;
   List.iteri
     (fun i l ->
       let b = Sub.block s i in
@@ -247,12 +251,12 @@ let test_write_seen () =
   let s =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   Run.groups run b 2 2 1;
   Run.threads run b 1 1 1;
   Run.int64 run b 0 0;
   Run.int64 run b 8 100;
-  ignore (submit ~buffers:[| out |] s run);
+  ignore (submit ~buffers:[| out |] run);
   B.wait out Read;
   let host = B.create Rig.host 32 in
   B.copy ~src:out ~dst:host;
@@ -281,11 +285,11 @@ let test_device_order () =
           ~refs:[| Sub.read 0 ~at:0; Sub.write 1 ~at:8 |];
       |]
   in
-  let run = Run.make () and blk = Sub.block copying 0 in
+  let run = Run.make copying and blk = Sub.block copying 0 in
   one run blk;
   Run.int64 run blk 16 64;
-  ignore (submit copy_into_b (Run.make ()));
-  ignore (submit ~buffers:[| b; c |] copying run);
+  ignore (submit (Run.make copy_into_b));
+  ignore (submit ~buffers:[| b; c |] run);
   let out = B.create Rig.host 64 in
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the launch read the copy" data (host_bytes out 64);
@@ -293,14 +297,14 @@ let test_device_order () =
   let filling =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let run = Run.make () and blk = Sub.block filling 0 in
+  let run = Run.make filling and blk = Sub.block filling 0 in
   Run.groups run blk 8 1 1;
   Run.threads run blk 1 1 1;
   Run.int64 run blk 0 0;
   Run.int64 run blk 8 7;
-  ignore (submit ~buffers:[| b |] filling run);
+  ignore (submit ~buffers:[| b |] run);
   let copy_b = Sub.make d [| copy_part ~dst:c b |] in
-  ignore (submit copy_b (Run.make ()));
+  ignore (submit (Run.make copy_b));
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the copy read the launch"
     (String.concat "" (List.init 8 (fun i -> le64 (7 + i))))
@@ -327,11 +331,11 @@ let test_parts_changed () =
   Gc.full_major ();
   equal ~msg:"the part's image collected" bool false !collected;
   let out = B.create d 8 in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   one run b;
   Run.int64 run b 0 0;
   Run.int64 run b 8 7;
-  ignore (submit ~buffers:[| out |] s run);
+  ignore (submit ~buffers:[| out |] run);
   let host = B.create Rig.host 8 in
   B.copy ~src:out ~dst:host;
   equal string (le64 7) (host_bytes host 8)
@@ -346,12 +350,12 @@ let test_parts_read_once () =
   refs.(0) <- Sub.write 0 ~at:8;
   let s = Sub.make d [| part |] in
   let out = B.create d 8 in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   one run b;
   Run.int64 run b 0 0;
   Run.int64 run b 8 7;
   ignore (P.launches p);
-  ignore (submit ~buffers:[| out |] s run);
+  ignore (submit ~buffers:[| out |] run);
   ignore (P.run p);
   equal ~msg:"the ref the launch was given" (list string)
     [ le64 (Rig_support.at out) ^ le64 7 ]
@@ -454,9 +458,9 @@ let test_submit_refusals () =
   let b = Sub.block s 0 in
   let buffers = [| B.create ~memory:Pinned d 8 |] in
   refused_submit ~msg:"a run no setter stored into" d (fun () ->
-      submit ~buffers s (Run.make ()));
+      submit ~buffers (Run.make s));
   let geometry ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0) () =
-    let run = Run.make () in
+    let run = Run.make s in
     let x, y, z = groups and tx, ty, tz = threads in
     Run.groups run b x y z;
     Run.threads run b tx ty tz;
@@ -464,23 +468,23 @@ let test_submit_refusals () =
     run
   in
   refused_submit ~msg:"a ref to memory with no address" d (fun () ->
-      submit ~buffers:[| B.create d 8 |] s (geometry ()));
+      submit ~buffers:[| B.create d 8 |] (geometry ()));
   refused_submit ~msg:"no groups along y" d (fun () ->
-      submit ~buffers s (geometry ~groups:(1, 0, 1) ()));
+      submit ~buffers (geometry ~groups:(1, 0, 1) ()));
   refused_submit ~msg:"no threads along x" d (fun () ->
-      submit ~buffers s (geometry ~threads:(0, 1, 1) ()));
+      submit ~buffers (geometry ~threads:(0, 1, 1) ()));
   refused_submit ~msg:"65536 groups along z" d (fun () ->
-      submit ~buffers s (geometry ~groups:(1, 1, 65536) ()));
+      submit ~buffers (geometry ~groups:(1, 1, 65536) ()));
   refused_submit ~msg:"shared memory past 48 KiB" d (fun () ->
-      submit ~buffers s (geometry ~shared:49153 ()));
-  let v = submit ~buffers s (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
+      submit ~buffers (geometry ~shared:49153 ()));
+  let v = submit ~buffers (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
   Rig.Point.wait v
 
 let test_setter_refusals () =
   let d, _ = polled "setters" in
   let image = functions d in
   let s = Sub.make d [| launch image "main" ~params:12 |] in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   refused ~msg:"int32 at -1" (fun () -> Run.int32 run b (-1) 0);
   refused ~msg:"int32 at 9 of 12" (fun () -> Run.int32 run b 9 0);
   refused ~msg:"int64 at 8 of 12" (fun () -> Run.int64 run b 8 0);
@@ -519,7 +523,7 @@ let test_entry_facts () =
   equal (option int) ~msg:"main's threads" (Some 1024) (threads "main");
   let main = fn image "main" in
   equal string ~msg:"its name" "main" (Rig.Image.name main);
-  is_true ~msg:"its image" (Rig.Image.image main == image)
+  equal bool ~msg:"its image" true (Rig.Image.image main == image)
 
 (* Resolving a function asks the driver for it, which can fail: with no
    memory for what its launches need after the rounds of reclamation, resolve
@@ -565,10 +569,10 @@ let test_setter_in_use () =
   let d, p = polled "in-use" in
   let image = functions d in
   let s = Sub.make d [| launch image "main" ~params:8 |] in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   one run b;
   Run.int64 run b 0 41;
-  let point = submit (Sub.make producer [||]) (Run.make ()) in
+  let point = submit (Run.make (Sub.make producer [||])) in
   let refused = ref None in
   let handle _ =
     refused :=
@@ -582,7 +586,7 @@ let test_setter_in_use () =
   let v =
     Fun.protect
       ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-      (fun () -> submit ~waits:[| point |] s run)
+      (fun () -> submit ~waits:[| point |] run)
   in
   is_some ~msg:"the handler stored" !refused;
   contains ~msg:"its refusal" ~sub:"a submit is using the run"
@@ -593,9 +597,9 @@ let test_setter_in_use () =
     [ le64 41 ]
     (List.map (fun (l : P.launch) -> l.params) (P.launches p))
 
-(* A run holds one submission's blocks: a store into another's zeroes the run,
-   and a submit of a submission whose blocks the run does not hold is refused.
-   Two fills whose blocks lie at the same bytes. *)
+(* A run holds the blocks of its own submission: a store into another
+   submission's block raises, storing nothing, and the run's bytes keep their
+   last store across submits. A fresh run's bytes read 0. *)
 let test_block_owner () =
   let d, _ = polled "owner" in
   let image = functions d in
@@ -603,50 +607,98 @@ let test_block_owner () =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
   let s1 = filling () and s2 = filling () in
-  let b1 = Sub.block s1 0 and b2 = Sub.block s2 0 and run = Run.make () in
-  let fill s =
+  let b1 = Sub.block s1 0 and b2 = Sub.block s2 0 and run = Run.make s1 in
+  let fill run =
     let out = B.create d 8 in
-    Rig.Point.wait (submit ~buffers:[| out |] s run);
+    Rig.Point.wait (submit ~buffers:[| out |] run);
     Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
   in
+  equal bool ~msg:"its submission" true (Run.submission run == s1);
   one run b1;
   Run.int64 run b1 8 41;
-  equal ~msg:"its own stores" int 41 (fill s1);
-  Run.int64 run b2 8 42;
-  raises_match ~msg:"another's blocks"
-    (Exn.invalid_arg ~substring:"another submission's blocks") (fun () ->
-      submit ~buffers:[| B.create d 8 |] s1 run);
-  one run b1;
-  equal ~msg:"bytes not stored since read 0" int 0 (fill s1)
+  equal ~msg:"its own stores" int 41 (fill run);
+  take run;
+  raises_match ~msg:"another's block"
+    (Exn.invalid_arg ~substring:"another submission's") (fun () ->
+      Run.int64 run b2 8 42);
+  Run.release run;
+  equal ~msg:"its last store, kept across submits" int 41 (fill run);
+  let fresh = Run.make s1 in
+  one fresh b1;
+  equal ~msg:"a fresh run's bytes" int 0 (fill fresh)
 
-(* Two domains share a run. Each store and submit takes the run whole, or
-   refuses it and changes nothing while a call on the other domain holds it, so
-   every outcome is one of an order of the calls with some refusals. A submit
-   fills a buffer of its own with the parameter it read. A grow stores into the
-   last block of a submission of [grown] launches of 4096 parameter bytes, so a
-   run's first grow moves its blocks, and two runs' grows of different
-   submissions each move them again; it also takes the run for that submission,
-   which zeroes the fill's bytes. *)
-let grown = 256
+(* A run is taken by one thread at a time: [make] takes it, [take] is false
+   while it is held, [release] frees it for any thread, and a release by a
+   thread that does not hold it does nothing. A store or a submit from another
+   thread while one holds it raises, changing nothing, and a submit of a free
+   run takes it itself. *)
+let test_take () =
+  let d, p = polled "take" in
+  let image = functions d in
+  let s = Sub.make d [| launch image "main" ~params:8 |] in
+  let run = Run.make s and b = Sub.block s 0 in
+  one run b;
+  Run.int64 run b 0 41;
+  equal ~msg:"a run make took" bool false (Run.take run);
+  let other f = Domain.join (Domain.spawn f) in
+  let outcome f =
+    match f () with
+    | _ -> "done"
+    | exception Invalid_argument why -> why
+  in
+  equal ~msg:"another thread's take" bool false
+    (other (fun () -> Run.take run));
+  other (fun () -> Run.release run);
+  contains ~msg:"another thread's store" ~sub:"has not taken the run"
+    (other (fun () -> outcome (fun () -> Run.int64 run b 0 42)));
+  contains ~msg:"another thread's submit" ~sub:"another thread took the run"
+    (other (fun () -> outcome (fun () -> submit run)));
+  equal ~msg:"values assigned" int 0 (Rig.submitted d);
+  Run.release run;
+  equal ~msg:"another thread's take of a free run" bool true
+    (other (fun () ->
+         let took = Run.take run in
+         Run.release run;
+         took));
+  ignore (P.launches p);
+  Rig.Point.wait (other (fun () -> submit run));
+  equal (list string) ~msg:"the parameters a free run's submit ran"
+    [ le64 41 ]
+    (List.map (fun (l : P.launch) -> l.params) (P.launches p));
+  equal ~msg:"a take once the submit freed it" bool true (Run.take run)
 
-(* The model: whether the run holds [filling]'s blocks, the geometry fields
-   stored since, and the parameter it holds. *)
-type shared = {
-  mutable own : bool;
-  mutable groups : bool;
-  mutable threads : bool;
-  mutable stored : int;
-}
+(* A submit that raises frees the run it was given, however early it raises:
+   one on a lost device, then another thread takes the run. *)
+let test_submit_frees () =
+  let d, p = polled "frees" in
+  let image = functions d in
+  let s = Sub.make d [| launch image "main" ~params:8 |] in
+  let run = Run.make s and b = Sub.block s 0 in
+  one run b;
+  P.fail p;
+  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
+  raises_match ~msg:"a submit that loses the device" lost (fun () ->
+      submit run);
+  take run;
+  Run.int64 run b 0 41;
+  raises_match ~msg:"a submit on the lost device" lost (fun () -> submit run);
+  equal ~msg:"another thread's take" bool true
+    (Domain.join (Domain.spawn (fun () -> Run.take run)))
+
+(* Two domains use one run, each as a library does: it takes the run, stores
+   its parameter and submits, reading the parameter back; or finds the run
+   held and does nothing. A store without a take is refused, and a submit
+   without one takes the run if it is free, and reads the last parameter a
+   use stored. Every outcome is one of an order of the calls with some
+   refusals. *)
+
+(* The model: the parameter the last use stored. *)
+type shared = { mutable stored : int }
 
 let shared_t =
-  abstract
-    ~pp:(fun ppf r ->
-      Format.fprintf ppf "own %b, groups %b, threads %b, stores %d" r.own
-        r.groups r.threads r.stored)
-    "r"
+  abstract ~pp:(fun ppf r -> Format.fprintf ppf "stored %d" r.stored) "r"
 
-(* The device, [filling], and the last blocks of two submissions to grow runs
-   with, made once for every case. *)
+(* The device and [filling], made once for every case. *)
 let shared =
   lazy
     (let d, _ = polled "shared" in
@@ -654,116 +706,88 @@ let shared =
      let filling =
        Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
      in
-     let last n =
-       let main = launch image "main" ~params:4096 in
-       Sub.block (Sub.make d (Array.make n main)) (n - 1)
-     in
-     (d, filling, [| last grown; last (2 * grown) |]))
+     (d, filling))
 
 (* Whether [e] is a refusal of a run another call holds. *)
 let busy = function
   | Invalid_argument why ->
-      let sub = "is using the run" in
-      let n = String.length sub and m = String.length why in
-      m >= n && String.sub why (m - n) n = sub
+      let ends sub =
+        let n = String.length sub and m = String.length why in
+        m >= n && String.sub why (m - n) n = sub
+      in
+      List.exists ends
+        [
+          "another thread took the run";
+          "another submit is using the run";
+          "has not taken the run";
+          "a submit is using the run";
+        ]
   | _ -> false
 
-(* The run takes [filling]'s blocks back: every byte reads 0. *)
-let take_back r =
-  if not r.own then begin
-    r.own <- true;
-    r.groups <- false;
-    r.threads <- false;
-    r.stored <- 0
-  end
-
-let groups run =
-  let _, filling, _ = Lazy.force shared in
-  Run.groups run (Sub.block filling 0) 1 1 1
-
-let threads run =
-  let _, filling, _ = Lazy.force shared in
-  Run.threads run (Sub.block filling 0) 1 1 1
-
-let store run v =
-  let _, filling, _ = Lazy.force shared in
-  Run.int64 run (Sub.block filling 0) 8 v
-
-let grow run k =
-  let _, _, lasts = Lazy.force shared in
-  Run.int64 run lasts.(k) 4088 k
-
 let fill run =
-  let d, filling, _ = Lazy.force shared in
+  let d, _ = Lazy.force shared in
   let out = B.create d 8 in
-  Rig.Point.wait (submit ~buffers:[| out |] filling run);
+  Rig.Point.wait (submit ~buffers:[| out |] run);
   Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
 
-(* A call's outcome: [ok] on a result, nothing on a refusal of a held run. *)
-let judged ok = function
-  | Ok v -> ok v
-  | Error e when busy e -> ()
-  | Error e -> raise e
+let block () =
+  let _, filling = Lazy.force shared in
+  Sub.block filling 0
+
+(* A use: [Ok v] for the parameter it read back, or [Error Exit] where the
+   run was held. *)
+let use run v =
+  if not (Run.take run) then raise Exit;
+  match Run.int64 run (block ()) 8 v with
+  | () -> fill run
+  | exception e ->
+      Run.release run;
+      raise e
 
 let shared_commands =
   [
     command "make"
       (Gen.unit @-> makes shared_t)
-      (fun () -> { own = false; groups = false; threads = false; stored = 0 })
+      (fun () -> { stored = 0 })
       (fun () ->
         (* Makes run in the sequential prefix, before either domain uses it. *)
-        ignore (Lazy.force shared);
-        Run.make ());
-    command "groups"
-      (shared_t ^-> judges unit)
-      (fun r ->
-        judged (fun () ->
-            take_back r;
-            r.groups <- true))
-      groups;
-    command "threads"
-      (shared_t ^-> judges unit)
-      (fun r ->
-        judged (fun () ->
-            take_back r;
-            r.threads <- true))
-      threads;
+        let _, filling = Lazy.force shared in
+        let run = Run.make filling in
+        one run (block ());
+        Run.release run;
+        run);
+    command "use"
+      (shared_t ^-> Gen.int_range 1 1000 @-> judges int)
+      (fun r v -> function
+        | Ok got ->
+            equal int ~msg:"the parameter it stored" v got;
+            r.stored <- v
+        | Error Exit -> ()
+        | Error e -> raise e)
+      use;
     command "store"
-      (shared_t ^-> Gen.int_range 0 1000 @-> judges unit)
-      (fun r v ->
-        judged (fun () ->
-            take_back r;
-            r.stored <- v))
-      store;
-    command "grow"
-      (shared_t ^-> Gen.int_range 0 1 @-> judges unit)
-      (fun r _ -> judged (fun () -> r.own <- false))
-      grow;
-    command "fill"
-      (shared_t ^-> judges int)
-      (fun r outcome ->
-        match outcome with
-        | Ok v ->
-            equal (triple bool bool bool)
-              ~msg:"the run holds the fill's block and both geometry fields"
-              (true, true, true)
-              (r.own, r.groups, r.threads);
-            equal int ~msg:"the stored parameter" r.stored v
+      (shared_t ^-> Gen.int_range 1 1000 @-> judges unit)
+      (fun _ _ -> function
+        | Ok () -> fail "a store into a run the thread has not taken"
         | Error e when busy e -> ()
-        | Error (Invalid_argument _) when not (r.own && r.groups && r.threads)
-          ->
-            ()
+        | Error e -> raise e)
+      (fun run v -> Run.int64 run (block ()) 8 v);
+    command "submit"
+      (shared_t ^-> judges int)
+      (fun r -> function
+        | Ok got -> equal int ~msg:"the last stored parameter" r.stored got
+        | Error e when busy e -> ()
         | Error e -> raise e)
       fill;
   ]
 
-(* Growth the host refuses *)
+(* A run the host refuses *)
 
 (* A child process limits its address space to [room] bytes above what it
-   maps, and stores into the last block of a submission whose blocks span 256
-   MiB: the store raises Out_of_memory. With the limit lifted, the run takes
-   another submission's stores and serves its submit. On Linux only: the limit
-   bounds no allocation elsewhere. *)
+   maps, and makes a run of a submission whose blocks span more than 256 MiB:
+   the make raises Out_of_memory. With the limit lifted, a run of another
+   submission serves its submit. On Linux only: the limit bounds no
+   allocation elsewhere. *)
 let room = 64 lsl 20
 let spanning = 1 lsl 16
 
@@ -794,18 +818,17 @@ let grow_child () =
   let small =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let run = Run.make () in
   limit (mapped () + room);
   let refused =
-    match Run.int64 run (Sub.block big (spanning - 1)) 0 1 with
-    | () -> "stored"
+    match Run.make big with
+    | _ -> "made"
     | exception Stdlib.Out_of_memory -> "Out_of_memory"
   in
   limit max_int;
-  let b = Sub.block small 0 and out = B.create d 8 in
+  let run = Run.make small and b = Sub.block small 0 and out = B.create d 8 in
   one run b;
   Run.int64 run b 8 41;
-  Rig.Point.wait (submit ~buffers:[| out |] small run);
+  Rig.Point.wait (submit ~buffers:[| out |] run);
   Printf.printf "%s\n%Ld\n" refused (String.get_int64_le (host_bytes out 8) 0)
 
 let test_grow_refused () =
@@ -835,15 +858,22 @@ let test_allocation () =
   in
   let s = Sub.make d [| launch image "main" ~params:64 ~refs |] in
   let buffers = Array.init 8 (fun _ -> B.create d 8) in
-  let run = Run.make () and b = Sub.block s 0 in
+  let run = Run.make s and b = Sub.block s 0 in
   one run b;
-  let first = submit ~buffers s run in
+  let first = submit ~buffers run in
   let n = 100 in
   equal int ~msg:"a submit of a launch" 0
     (words (fun () ->
          for _ = 1 to n do
-           ignore (Sys.opaque_identity (Rig.submit s ~run ~buffers))
+           ignore (Sys.opaque_identity (Rig.submit run ~buffers))
          done));
+  equal int ~msg:"a take and a release" 0
+    (words (fun () ->
+         for _ = 1 to n do
+           ignore (Sys.opaque_identity (Run.take run));
+           Run.release run
+         done));
+  take run;
   let setter name f =
     equal int ~msg:name 0
       (words (fun () ->
@@ -858,7 +888,7 @@ let test_allocation () =
   setter "int64" (fun i -> Run.int64 run b 8 i);
   setter "float32" (fun i -> Run.float32 run b 16 (float_of_int i *. 0.5));
   setter "float64" (fun i -> Run.float64 run b 24 (float_of_int i *. 0.5));
-  let last = submit ~buffers s run in
+  let last = submit ~buffers run in
   Rig.Point.wait first;
   Rig.Point.wait last
 
@@ -898,15 +928,16 @@ let tests =
         test "an image states the facts its driver knows of a function"
           test_entry_facts;
         test "a setter refuses a run a submit holds" test_setter_in_use;
-        test "a run holds the blocks of the submission last stored into"
-          test_block_owner;
-        test "a store whose growth the host refuses raises, the run usable"
+        test "a run holds the blocks of its own submission" test_block_owner;
+        test "a run is taken by one thread at a time" test_take;
+        test "a submit that raises frees its run" test_submit_frees;
+        test "a run the host has no memory for raises at make"
           test_grow_refused;
       ];
     group ~timeout "domains"
       [
         stateful ~domains:2
-          "stores and submits on two domains take a shared run or refuse it"
+          "uses, stores and submits on two domains take one run or refuse it"
           shared_commands;
       ];
     group ~timeout "cost"

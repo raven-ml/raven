@@ -13,7 +13,7 @@ let timeout = Rig_support.time 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make d [||]
-let submit s = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||]
+let submit s = Rig.submit (Sub.Run.make s) ~buffers:[||]
 
 (* A drain on [d]: what {!Buffer.create} does first, also on a lost [d],
    where it then raises. *)

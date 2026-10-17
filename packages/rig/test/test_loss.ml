@@ -13,7 +13,7 @@ let timeout = 60.
 let empty d = Sub.make d [||]
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))

@@ -260,14 +260,14 @@ struct rig_code {
   uint64_t code;
 };
 
-/* A buffer of a run: its memory's stamps, NULL while unset, and its use
+/* A buffer of a submit: its memory's stamps, NULL while unset, and its use
    word, its keep word for an unordered use. */
 struct rig_slot {
   struct rig_stamps *stamps;
   _Atomic uint64_t *use;
 };
 
-/* What a run's buffer that a copy names passes the driver, and where its
+/* What a submit's buffer that a copy names passes the driver, and where its
    bytes lie. [handle] and [offset] are the copy's fields for it, which for
    [local] memory of this process are its memory's host address and the
    offset into it (RIG_LOCAL_SRC, RIG_LOCAL_DST). [device_memory] is the
@@ -320,16 +320,39 @@ struct rig_sub {
   size_t args;            /* where its last block ends in a run */
 };
 
-/* Who holds a run: one submit or one store at a time takes it by a
-   compare-and-set from RUN_IDLE. */
-enum { RUN_IDLE, RUN_SUBMIT, RUN_STORE };
+/* A run's state: free, submitting, or else the number of the thread that
+   took it (rig_thread_number). */
+enum { RUN_FREE = 0, RUN_SUBMITTING = -1 };
 
-/* The state of one submit: what it collects and what it answers, in the
-   caller's run, which one submit uses at a time. Its arrays grow to the
-   largest submission it served. */
+/* A run: the blocks of one submission's launches and fills, made zeroed and
+   never grown, and its state. A run of a submission with no launch or fill
+   holds no bytes and stays free. */
 struct rig_run {
-  _Atomic int busy; /* RUN_IDLE, or who took it */
-  uint64_t owner; /* the submission whose blocks [args] holds, 0 for none */
+  _Atomic intptr_t state;
+  uint64_t sub;  /* the id of its submission, which its blocks carry */
+  size_t nargs;  /* the submission's [args] */
+  uint8_t *args; /* NULL for none */
+};
+
+/* The calling thread's number, which no other thread of the process has,
+   given at its first call: at least 1. */
+intptr_t rig_thread_number(void);
+
+/* The most bytes of a cache line among rig's hosts: Apple's arm64 cores'. */
+#define RIG_APART 128
+
+/* The state of one submit: what it collects and what it answers. A submit
+   takes a free one, which no other submit uses until it gives it back. Its
+   arrays grow to the largest submission it served. */
+struct rig_call {
+  /* [taken] and [next], which every submit's walk reads, lie RIG_APART
+     bytes from the fields the call's own submit writes and from the memory
+     before the call, so that the submits of two domains share no cache line
+     through them. */
+  char before[RIG_APART];
+  _Atomic int taken;
+  struct rig_call *next; /* the next of every call made, fixed once made */
+  char after[RIG_APART];
   int cfixed, cslots;
   int nslots; /* the slots of the submission it served last */
   /* The use words of the submission's fixed buffers, keep words for those
@@ -351,10 +374,6 @@ struct rig_run {
   uint64_t no_room_at, v;
   const char *why;
   uint64_t producer;
-  /* The blocks the setters store into: [nargs] bytes reach the
-     end of the last block stored into, of [cargs] allocated. */
-  uint8_t *args;
-  size_t nargs, cargs;
   uint64_t *addresses; /* each slot's address, for launches' and fills' refs */
   struct rig_side *sides; /* each slot's side, for copies */
   /* The parts a submission with copies of slots hands its driver: its own,
@@ -385,7 +404,7 @@ size_t rig_page_bytes(void);
 /* The host's driver state. Its word is slot 0's. */
 void *rig_host_state(void);
 
-/* Raises the stamps [s]'s work names in the run [r] to [p]. */
-void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p);
+/* Raises the stamps [s]'s work names in the call [c] to [p]. */
+void rig_sub_raise(const struct rig_sub *s, struct rig_call *c, uint64_t p);
 
 #endif

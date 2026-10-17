@@ -90,19 +90,20 @@ let kfd_row name setup f = if pci then [] else [ row name setup f ]
 
 (* The driver *)
 
-(* A device and the run its row submits with. *)
-type dev = { d : Rig.t; g : A.t; run : Rig.Submission.Run.t; mutable v : int }
+(* A device and the value its row last submitted. *)
+type dev = { d : Rig.t; g : A.t; mutable v : int }
 
 (* A device opened through rig. *)
 let dev () =
   let { Rig_amd_support.d; g } = Rig_amd_support.open_ () in
-  { d; g; run = Rig.Submission.Run.make (); v = 0 }
+  { d; g; v = 0 }
 
-(* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make t.d parts
+(* A run of the prepared submission of [parts] on [t]. *)
+let prepare ?keep ?fixed t parts =
+  Rig.Submission.(Run.make (make ?keep ?fixed t.d parts))
 
-let submit t s =
-  let p = Rig.submit s ~run:t.run ~buffers:[||] in
+let submit t r =
+  let p = Rig.submit r ~buffers:[||] in
   t.v <- Rig.Point.value p
 
 let wait t =
@@ -365,13 +366,13 @@ let launch_rows =
     let p, _ = load t in
     let fn = Option.get (Rig.Image.resolve p "empty") in
     let empty = Rig.Submission.launch fn ~params:0 in
-    let s = prepare t (Array.make n empty) in
+    let r = prepare t (Array.make n empty) in
     for i = 0 to n - 1 do
-      let b = Rig.Submission.block s i in
-      Rig.Submission.Run.groups t.run b 1 1 1;
-      Rig.Submission.Run.threads t.run b 1 1 1
+      let b = Rig.Submission.(block (Run.submission r) i) in
+      Rig.Submission.Run.groups r b 1 1 1;
+      Rig.Submission.Run.threads r b 1 1 1
     done;
-    (t, p, s)
+    (t, p, r)
   in
   (* Fixed dispatch packets, one words part per launch. *)
   let parts n () =
@@ -382,11 +383,8 @@ let launch_rows =
       B.of_string
         (encode (dispatch gpu (kernel "empty") ~base ~args:0 ~threads:1))
     in
-    let s =
-      Rig.Submission.make ~keep:p t.d
-        (Array.make n ((Rig.Submission.words one)))
-    in
-    (t, p, s)
+    let r = prepare ~keep:p t (Array.make n (Rig.Submission.words one)) in
+    (t, p, r)
   in
   let floor_launching () =
     let gpu = floor () in
@@ -399,20 +397,14 @@ let launch_rows =
     let t = dev () in
     let p, _ = load t in
     let out = B.create t.d 256 in
-    let s =
-      Rig.Submission.(
-        make t.d
-          [|
-            launch ~refs:[| write 0 ~at:0 |]
-              (Option.get (Rig.Image.resolve p "double_index"))
-              ~params:8;
-          |])
-    in
-    let b = Rig.Submission.block s 0 in
-    Rig.Submission.Run.groups t.run b 1 1 1;
-    Rig.Submission.Run.threads t.run b 64 1 1;
-    Rig.Submission.Run.int64 t.run b 0 0;
-    (t, p, s, [| out |])
+    let fn = Option.get (Rig.Image.resolve p "double_index") in
+    let refs = Rig.Submission.[| write 0 ~at:0 |] in
+    let r = prepare t [| Rig.Submission.launch ~refs fn ~params:8 |] in
+    let b = Rig.Submission.(block (Run.submission r) 0) in
+    Rig.Submission.Run.groups r b 1 1 1;
+    Rig.Submission.Run.threads r b 64 1 1;
+    Rig.Submission.Run.int64 r b 0 0;
+    (t, p, r, [| out |])
   in
   let bar () =
     let t = dev () in
@@ -428,12 +420,12 @@ let launch_rows =
     in
     let ws = B.create Rig.host (String.length (encode 0)) in
     let s =
-      Rig.Submission.make ~keep:p
+      prepare ~keep:p
         ~fixed:[ (args, Read); (out, Read_write) ]
-        t.d
-        [| (Rig.Submission.words ws) |]
+        t
+        [| Rig.Submission.words ws |]
     in
-    let address = Rig.Submission.address s in
+    let address = Rig.Submission.(address (Run.submission s)) in
     let bytes = encode (address args) in
     B.blit_from_string bytes 0 ws 0 (String.length bytes);
     (* The rows rewrite the arguments in place, as compiled code would. *)
@@ -461,8 +453,8 @@ let launch_rows =
          kfd_row "floor-submits-64-unreleased" floor_launching (fun w ->
              floor_submits w 64 false);
          [
-           row "1-params" params (fun (t, _, s, buffers) ->
-               let p = Rig.submit s ~run:t.run ~buffers in
+           row "1-params" params (fun (t, _, r, buffers) ->
+               let p = Rig.submit r ~buffers in
                t.v <- Rig.Point.value p;
                wait t);
            row "1-bar-args" bar (fun (t, _, args, out, s) ->

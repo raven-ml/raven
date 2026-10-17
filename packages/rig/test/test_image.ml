@@ -15,7 +15,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))

@@ -42,11 +42,9 @@ type dev = S.t = { d : Rig.t; g : N.t }
 let dev = S.open_
 let alloc t kind n = Option.get (N.alloc t.g kind n)
 
-(* A submission of parts on [t] and the run it submits with. *)
-type submission = { s : Sub.t; run : Sub.Run.t }
-
-let submission t ps = { s = Sub.make t.d ps; run = Sub.Run.make () }
-let submit { s; run } = Rig.submit s ~run ~buffers:[||]
+(* A run of a submission of parts on [t], which its row submits. *)
+let submission t ps = Sub.Run.make (Sub.make t.d ps)
+let submit run = Rig.submit run ~buffers:[||]
 let run s = Rig.Point.wait (submit s)
 
 (* The floor of [t]: its later values are given from C. *)
@@ -199,9 +197,9 @@ let launching t count =
   let work = Sub.launch fn ~params:0 in
   let s = submission t (Array.make count work) in
   for i = 0 to count - 1 do
-    let b = Sub.block s.s i in
-    Sub.Run.groups s.run b 1 1 1;
-    Sub.Run.threads s.run b 1 1 1
+    let b = Sub.block (Sub.Run.submission s) i in
+    Sub.Run.groups s b 1 1 1;
+    Sub.Run.threads s b 1 1 1
   done;
   s
 

@@ -62,12 +62,13 @@ let words d n = Array.init n (fun _ -> B.create d 8)
 let costing_sub ?(uses = [||]) d =
   Sub.make d [| Support.touching uses |]
 
-let costing_run _ = Sub.Run.make ()
-
 (* A submit of a run that reads nothing, writes nothing and waits for
    nothing. *)
-let submit ~run s = Rig.submit s ~run ~buffers:[||]
-let submit_read ~run s bs = ignore (Rig.submit s ~run ~buffers:bs)
+let submit run = Rig.submit run ~buffers:[||]
+let submit_read run bs = ignore (Rig.submit run ~buffers:bs)
+
+(* Takes [run] for the row's stores, which no other call holds. *)
+let take run = if not (Sub.Run.take run) then failwith "the run is taken"
 
 (* Submits *)
 
@@ -75,28 +76,27 @@ let submit_read ~run s bs = ignore (Rig.submit s ~run ~buffers:bs)
 
 let empty () =
   let t = dev () in
-  (t, Sub.make t.d [||], Sub.Run.make ())
+  (t, Sub.Run.make (Sub.make t.d [||]))
 
 let costing () =
   let t = dev () in
-  let s = costing_sub t.d in
-  (t, s, costing_run s)
+  (t, Sub.Run.make (costing_sub t.d))
 
 let reading () =
   let t = dev () in
   let s = costing_sub ~uses:(Array.make slots Sub.read) t.d in
-  (t, s, costing_run s, words t.d slots)
+  (t, Sub.Run.make s, words t.d slots)
 
 (* Buffers of another device, its last write reached, borrowed on [t]'s. *)
 let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
   let w = costing_sub ~uses:(Array.make slots Sub.write) o.d in
-  let p = Rig.submit w ~run:(Sub.Run.make ()) ~buffers:bs in
+  let p = Rig.submit (Sub.Run.make w) ~buffers:bs in
   ignore (P.run o.p);
   Rig.Point.wait p;
   let s = costing_sub ~uses:(Array.make slots Sub.read) t.d in
-  (t, s, costing_run s, Array.map (fun b -> Option.get (B.borrow t.d b)) bs)
+  (t, Sub.Run.make s, Array.map (fun b -> Option.get (B.borrow t.d b)) bs)
 
 (* A submission whose queue waits for a pending point of each of [waiters]
    other devices: each submit checks every wait under the device's mutex and
@@ -108,16 +108,15 @@ let waiters = 8
 
 type waiting = {
   t : dev;
-  producers : (dev * Sub.t * Sub.Run.t) array;
-  s : Sub.t;
+  producers : (dev * Sub.Run.t) array;
   run : Sub.Run.t;
   points : Rig.Point.t array;
 }
 
 let next_points w =
   for i = 0 to waiters - 1 do
-    let _, s, run = w.producers.(i) in
-    w.points.(i) <- Rig.submit s ~run ~buffers:[||]
+    let _, run = w.producers.(i) in
+    w.points.(i) <- submit run
   done
 
 let waiting ~transport () =
@@ -125,24 +124,21 @@ let waiting ~transport () =
   let d, p = P.open_ ~waits_on:[ `Host ] (strf "bench:%d" !opened) in
   let producer _ =
     let o = dev ~transport () in
-    (o, Sub.make o.d [||], Sub.Run.make ())
+    (o, Sub.Run.make (Sub.make o.d [||]))
   in
-  let s = costing_sub d in
   let producers = Array.init waiters producer in
-  let point (_, s, run) = Rig.submit s ~run ~buffers:[||] in
   {
     t = { d; p; n = 0 };
     producers;
-    s;
-    run = costing_run s;
-    points = Array.map point producers;
+    run = Sub.Run.make (costing_sub d);
+    points = Array.map (fun (_, run) -> submit run) producers;
   }
 
 let waited w =
   w.t.n <- w.t.n + 1;
   if w.t.n mod drain = 0 then begin
     for i = 0 to waiters - 1 do
-      let o, _, _ = w.producers.(i) in
+      let o, _ = w.producers.(i) in
       ignore (P.run o.p)
     done;
     ignore (P.run w.t.p);
@@ -152,18 +148,18 @@ let waited w =
 (* Another domain submitting to the same device until the row ends, with its own
    run. *)
 let contended () =
-  let t, s, run = costing () in
+  let t, run = costing () in
   let stop = Atomic.make false in
   let other = { t with n = 0 } and s' = costing_sub t.d in
   let rival =
     Domain.spawn (fun () ->
-        let run' = costing_run s' in
+        let run' = Sub.Run.make s' in
         while not (Atomic.get stop) do
-          ignore (submit ~run:run' s');
+          ignore (submit run');
           drained other
         done)
   in
-  (t, s, run, stop, rival)
+  (t, run, stop, rival)
 
 (* A submission of no part whose 200 fixed buffers it reads: each submit stamps
    each, as a compiled step does its constants. *)
@@ -174,7 +170,7 @@ let fixing () =
   let fixed =
     List.map (fun b -> (b, Rig.Read)) (Array.to_list (words t.d fixed))
   in
-  (t, Sub.make ~fixed t.d [||], Sub.Run.make ())
+  (t, Sub.Run.make (Sub.make ~fixed t.d [||]))
 
 (* A launch whose 8 refs name a run of 4 reads and 4 writes: each submit stores
    the refs' offsets, as a caller does for each call. *)
@@ -189,10 +185,87 @@ let launching () =
   in
   let fn = Option.get (Rig.Image.resolve image "main") in
   let s = Sub.make t.d [| Sub.launch ~refs:rs fn ~params:(8 * refs) |] in
-  let run = Sub.Run.make () and b = Sub.block s 0 in
+  let run = Sub.Run.make s and b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;
-  (t, s, run, b, words t.d refs)
+  Sub.Run.release run;
+  (t, run, b, words t.d refs)
+
+(* A launch of 30 words of parameters that each call stores anew, as a caller
+   of a compiled step does: a take, 30 stores and a submit. *)
+let stores = 30
+
+let storing () =
+  let t = dev () in
+  let image = Result.get_ok (Rig.Image.load t.d "functions") in
+  let fn = Option.get (Rig.Image.resolve image "main") in
+  let s = Sub.make t.d [| Sub.launch fn ~params:(4 * stores) |] in
+  let run = Sub.Run.make s and b = Sub.block s 0 in
+  Sub.Run.groups run b 1 1 1;
+  Sub.Run.threads run b 1 1 1;
+  Sub.Run.release run;
+  (t, run, b)
+
+(* A library's runs of one submission of two launches, as Rig.Submission.Run
+   says to keep them: a call takes the first run whose take is true, and
+   otherwise makes one and adds it. Once warm, a call allocates nothing. *)
+type pool = { sub : Sub.t; runs : Sub.Run.t list Atomic.t }
+
+let rec add_run p r =
+  let l = Atomic.get p.runs in
+  if not (Atomic.compare_and_set p.runs l (r :: l)) then add_run p r
+
+let rec first_run p = function
+  | r :: rest -> if Sub.Run.take r then r else first_run p rest
+  | [] ->
+      let r = Sub.Run.make p.sub in
+      add_run p r;
+      r
+
+(* A call: its two launches' parameters stored, then a submit, the run
+   released if a store raises. *)
+let pooled p blocks buffers =
+  let run = first_run p (Atomic.get p.runs) in
+  match
+    Sub.Run.int64 run (Array.unsafe_get blocks 0) 0 0;
+    Sub.Run.int64 run (Array.unsafe_get blocks 1) 0 0
+  with
+  | () -> Rig.submit run ~buffers
+  | exception e ->
+      Sub.Run.release run;
+      raise e
+
+(* Another domain calling through the same pool until the row ends: the two
+   domains run one submission at once, each through its own run. *)
+let pool_contended () =
+  let t = dev () in
+  let image = Result.get_ok (Rig.Image.load t.d "functions") in
+  let fn = Option.get (Rig.Image.resolve image "main") in
+  let main = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:8 in
+  let p = { sub = Sub.make t.d [| main; main |]; runs = Atomic.make [] } in
+  let blocks = [| Sub.block p.sub 0; Sub.block p.sub 1 |] in
+  let geometry r =
+    Array.iter
+      (fun b ->
+        Sub.Run.groups r b 1 1 1;
+        Sub.Run.threads r b 1 1 1)
+      blocks;
+    Sub.Run.release r
+  in
+  (* Two runs, so that neither domain's warm call makes one. *)
+  let runs = [ Sub.Run.make p.sub; Sub.Run.make p.sub ] in
+  List.iter geometry runs;
+  List.iter (add_run p) runs;
+  let stop = Atomic.make false and other = { t with n = 0 } in
+  let rival =
+    Domain.spawn (fun () ->
+        let buffers = [| B.create t.d 8 |] in
+        while not (Atomic.get stop) do
+          ignore (pooled p blocks buffers);
+          drained other
+        done)
+  in
+  (t, p, blocks, [| B.create t.d 8 |], stop, rival)
 
 (* A submission of 4096 parts on two queues: copies between views of 16
    allocations and fills that read one slot and write another, every part
@@ -220,54 +293,65 @@ let submit_rows =
   let row name setup f = Thumper.bench_with_setup ~setup name f in
   Thumper.group "submit/polled"
     [
-      row "empty" empty (fun (t, s, run) ->
-          let p = submit ~run s in
+      row "empty" empty (fun (t, run) ->
+          let p = submit run in
           ignore (P.run t.p);
           Rig.Point.wait p);
-      row "cost" costing (fun (t, s, run) ->
-          ignore (submit ~run s);
+      row "cost" costing (fun (t, run) ->
+          ignore (submit run);
           drained t);
-      row "slots-24" reading (fun (t, s, run, bs) ->
-          submit_read ~run s bs;
+      row "slots-24" reading (fun (t, run, bs) ->
+          submit_read run bs;
           drained t);
-      row "foreign-24" foreign (fun (t, s, run, bs) ->
-          submit_read ~run s bs;
+      row "foreign-24" foreign (fun (t, run, bs) ->
+          submit_read run bs;
           drained t);
-      row "fixed-200" fixing (fun (t, s, run) ->
-          ignore (submit ~run s);
+      row "fixed-200" fixing (fun (t, run) ->
+          ignore (submit run);
           drained t);
       row "waits-8" (waiting ~transport:false) (fun w ->
-          ignore (Rig.submit ~waits:w.points w.s ~run:w.run ~buffers:[||]);
+          ignore (Rig.submit ~waits:w.points w.run ~buffers:[||]);
           waited w);
       row "waits-8-mapped" (waiting ~transport:true) (fun w ->
-          ignore (Rig.submit ~waits:w.points w.s ~run:w.run ~buffers:[||]);
+          ignore (Rig.submit ~waits:w.points w.run ~buffers:[||]);
           waited w);
       row "make-4096" making (fun (t, parts, fixed) ->
           ignore (Sub.make ~fixed t.d parts));
-      row "launch-refs-8" launching (fun (t, s, run, b, buffers) ->
+      row "launch-refs-8" launching (fun (t, run, b, buffers) ->
+          take run;
           for k = 0 to refs - 1 do
             Sub.Run.int64 run b (8 * k) 0
           done;
-          ignore (Rig.submit s ~run ~buffers);
+          ignore (Rig.submit run ~buffers);
+          drained t);
+      row "stores-30" storing (fun (t, run, b) ->
+          take run;
+          for k = 0 to stores - 1 do
+            Sub.Run.int32 run b (4 * k) k
+          done;
+          ignore (submit run);
           drained t);
       Thumper.bench_with_setup ~setup:contended
-        ~teardown:(fun (_, _, _, stop, rival) ->
+        ~teardown:(fun (_, _, stop, rival) ->
           Atomic.set stop true;
           Domain.join rival)
         "two-domains"
-        (fun (t, s, run, _, _) ->
-          ignore (submit ~run s);
+        (fun (t, run, _, _) ->
+          ignore (submit run);
+          drained t);
+      Thumper.bench_with_setup ~setup:pool_contended
+        ~teardown:(fun (_, _, _, _, stop, rival) ->
+          Atomic.set stop true;
+          Domain.join rival)
+        "pool-two-domains"
+        (fun (t, p, blocks, buffers, _, _) ->
+          ignore (pooled p blocks buffers);
           drained t);
     ]
 
 (* Replays *)
 
-type copy = {
-  s : Sub.t;
-  run : Sub.Run.t;
-  block : Sub.block;
-  buffers : B.t array;
-}
+type copy = { run : Sub.Run.t; block : Sub.block; buffers : B.t array }
 
 type replay = { t : dev; copies : copy array }
 
@@ -286,9 +370,10 @@ let replaying () =
     in
     let part = Sub.fill ~refs Support.poke ~params:(16 + (8 * slots)) in
     let s = Sub.make t.d [| part |] in
-    let run = Sub.Run.make () in
+    let run = Sub.Run.make s in
+    Sub.Run.release run;
     let buffers = Array.append params [| B.create t.d 8 |] in
-    { s; run; block = Sub.block s 0; buffers }
+    { run; block = Sub.block s 0; buffers }
   in
   { t; copies = [| copy (); copy () |] }
 
@@ -296,9 +381,10 @@ let run r =
   let c = r.copies.(r.t.n land 1) in
   r.t.n <- r.t.n + 1;
   ignore (P.run r.t.p);
+  take c.run;
   Sub.Run.int64 c.run c.block 0 0;
   Sub.Run.int64 c.run c.block 8 r.t.n;
-  Rig.submit c.s ~run:c.run ~buffers:c.buffers
+  Rig.submit c.run ~buffers:c.buffers
 
 let replay_rows =
   Thumper.group "replay/polled"
@@ -336,7 +422,7 @@ let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
   let w = costing_sub ~uses:(Array.make n Sub.write) d in
-  let p = Rig.submit w ~run:(Sub.Run.make ()) ~buffers:bs in
+  let p = Rig.submit (Sub.Run.make w) ~buffers:bs in
   Rig.Point.wait p;
   bs
 
@@ -347,7 +433,7 @@ let written_twice () =
   let write d =
     let w = costing_sub ~uses:[| Sub.write |] d in
     let bd = Option.get (B.borrow d b) in
-    Rig.Point.wait (Rig.submit w ~run:(Sub.Run.make ()) ~buffers:[| bd |])
+    Rig.Point.wait (Rig.submit (Sub.Run.make w) ~buffers:[| bd |])
   in
   write (memory ());
   write (memory ());
@@ -451,6 +537,26 @@ let copy_rows =
         (fun () ->
           (B.create Rig.host (64 * kib), B.create (unaddressed ()) (64 * kib)))
         copy;
+      (* Another domain copying on the same device until the row ends: both
+         submit the device's one copier run at once. *)
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let d = unaddressed () in
+          let stop = Atomic.make false in
+          let rival =
+            Domain.spawn (fun () ->
+                let src = B.create Rig.host (64 * kib)
+                and dst = B.create d (64 * kib) in
+                while not (Atomic.get stop) do
+                  B.copy ~src ~dst
+                done)
+          in
+          ((B.create Rig.host (64 * kib), B.create d (64 * kib)), stop, rival))
+        ~teardown:(fun (_, stop, rival) ->
+          Atomic.set stop true;
+          Domain.join rival)
+        "queue-64K-two-domains"
+        (fun (ends, _, _) -> copy ends);
       row "staged-4K" (staged ~closed:0 (4 * kib)) copy;
       row "staged-4K/after-1024-closed" (staged ~closed:1024 (4 * kib)) copy;
     ]
@@ -470,21 +576,19 @@ let[@inline never] warm_allocations d =
 
 let[@inline never] pending_buffers d n =
   let buffers = Array.init n (fun _ -> B.create d 64) in
-  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  let run = Sub.Run.make () in
-  Array.iter (fun b -> submit_read ~run s [| b |]) buffers
+  let run = Sub.Run.make (Sub.make d [| Support.touching [| Sub.write |] |]) in
+  Array.iter (fun b -> submit_read run [| b |]) buffers
 
 let[@inline never] pending_kept d n =
-  let run = Sub.Run.make () in
   for _ = 1 to n do
-    ignore (submit ~run (Sub.make ~keep:(Bytes.create 64) d [||]))
+    ignore (submit (Sub.Run.make (Sub.make ~keep:(Bytes.create 64) d [||])))
   done
 
 let[@inline never] pending_images d n =
   let images =
     Array.init n (fun _ -> Result.get_ok (Rig.Image.load d "functions"))
   in
-  ignore (submit ~run:(Sub.Run.make ()) (Sub.make d [||]));
+  ignore (submit (Sub.Run.make (Sub.make d [||])));
   ignore (Sys.opaque_identity images)
 
 (* Every measured create faces the same pending population. Setup warms reusable
@@ -562,12 +666,11 @@ let drain_rows =
    slot goes to the next open, so a run makes as many opens as it likes at
    one cost. *)
 let device_rows =
-  let run = Sub.Run.make () in
   Thumper.group "device"
     [
       Thumper.bench "open-close-memory" (fun () ->
           let d = Result.get_ok (Rig.memory_device "bench:open-close") in
-          ignore (Rig.submit (Sub.make d [||]) ~run ~buffers:[||]);
+          ignore (submit (Sub.Run.make (Sub.make d [||])));
           Rig.close d);
     ]
 
@@ -576,9 +679,7 @@ let wait_rows =
     [
       row "reached"
         (fun () ->
-          let d = memory () and run = Sub.Run.make () in
-          let s = Sub.make d [||] in
-          submit ~run s)
+          submit (Sub.Run.make (Sub.make (memory ()) [||])))
         Rig.Point.wait;
     ]
 

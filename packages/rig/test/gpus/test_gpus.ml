@@ -87,11 +87,11 @@ let run_add d binary ~n a b =
   let refs = Sub.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
   let fn = require_some (Rig.Image.resolve image "add") in
   let s = Sub.make d [| Sub.launch ~refs fn ~params:32 |] in
-  let run = Sub.Run.make () and blk = Sub.block s 0 in
+  let run = Sub.Run.make s and blk = Sub.block s 0 in
   Sub.Run.groups run blk ((n + 63) / 64) 1 1;
   Sub.Run.threads run blk 64 1 1;
   Sub.Run.int64 run blk 24 n;
-  ignore (Rig.submit s ~run ~buffers:[| a; b; out |]);
+  ignore (Rig.submit run ~buffers:[| a; b; out |]);
   let bytes = Bytes.create (4 * n) in
   Rig.Buffer.blit_to_bytes out 0 bytes 0 (4 * n);
   Bytes.to_string bytes

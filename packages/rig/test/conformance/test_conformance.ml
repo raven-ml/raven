@@ -78,11 +78,11 @@ let watched d n =
 (* Submits [ws] on [d], with each buffer of [uses] fixed with its access: its
    point. The parts follow each other by that memory. *)
 let submit ?waits d ws ~uses =
-  let s, run, buffers = Rig_gpu_support.prepare ~fixed:uses d ws in
-  Rig.submit ?waits s ~run ~buffers
+  let run, buffers = Rig_gpu_support.prepare ~fixed:uses d ws in
+  Rig.submit ?waits run ~buffers
 
 let empty_point d =
-  Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||]
+  Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||]
 
 let copy_part ~dst src =
   Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -737,11 +737,11 @@ let spans_after_idle (module G : Gpu) () =
   let src = filled ~memory:Pinned t.d (pattern n 6) in
   let dst = filled ~memory:Pinned t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
-  let s, run, buffers =
+  let run, buffers =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
   let within = within t.d ~opened G.clock_error in
-  let within what = within what (fun () -> Rig.submit s ~run ~buffers) in
+  let within what = within what (fun () -> Rig.submit run ~buffers) in
   within "at open";
   Unix.sleepf idle_s;
   within "after idling";
@@ -758,11 +758,11 @@ let spans_after_stop (module G : Gpu) () =
   let src = filled ~memory:Pinned t.d (pattern n 5) in
   let dst = filled ~memory:Pinned t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
-  let s, run, buffers =
+  let run, buffers =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
   let within = within t.d ~opened G.clock_error in
-  let within what = within what (fun () -> Rig.submit s ~run ~buffers) in
+  let within what = within what (fun () -> Rig.submit run ~buffers) in
   let spun = ref None in
   raises Exit (fun () ->
       Rig.Profile.take (fun () ->
@@ -830,8 +830,8 @@ let spans_across (module G : Gpu) () =
     else [| prepare [ work () ] |]
   in
   let submit i =
-    let s, run, buffers = subs.(i mod Array.length subs) in
-    Rig.submit s ~run ~buffers
+    let run, buffers = subs.(i mod Array.length subs) in
+    Rig.submit run ~buffers
   in
   let total = crossing + many in
   let (), events =
@@ -1094,7 +1094,8 @@ let entry_facts (module G : Gpu) =
             "Rig.Submission.Run.threads: ids runs at most %d threads per \
              group; the block sets %dx1x1"
             most (most + 1)))
-      (fun () -> Sub.Run.threads (Sub.Run.make ()) (Sub.block s 0) (most + 1) 1 1);
+      (fun () ->
+        Sub.Run.threads (Sub.Run.make s) (Sub.block s 0) (most + 1) 1 1);
     equal int ~msg:"values assigned" before (Rig.submitted t.d);
     let out = filled t.d (String.make (4 * most) '\000') in
     Rig.Point.wait

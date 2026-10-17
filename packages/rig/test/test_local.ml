@@ -211,10 +211,7 @@ let test_init_races_stop () =
    get raising Lost: the other device's value is its own. *)
 let test_init_reopens () =
   let d = Result.get_ok (Rig.memory_device (fresh "first")) in
-  ignore
-    (Rig.submit
-       (Rig.Submission.make d [||])
-       ~run:(Rig.Submission.Run.make ()) ~buffers:[||]);
+  ignore (Rig.submit Rig.Submission.(Run.make (make d [||])) ~buffers:[||]);
   let key = ref None and other = ref None in
   let k =
     L.new_key (fun dev ->

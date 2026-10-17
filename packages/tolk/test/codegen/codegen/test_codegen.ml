@@ -1045,7 +1045,7 @@ let ten_scalars () =
                 ~params:(8 + (4 * List.length info.vars));
             |])
       in
-      let run = Rig.Submission.Run.make () in
+      let run = Rig.Submission.Run.make s in
       let b = Rig.Submission.block s 0 in
       Rig.Submission.Run.groups run b 1 1 1;
       Rig.Submission.Run.threads run b 1 1 1;
@@ -1053,7 +1053,7 @@ let ten_scalars () =
         (fun i v -> Rig.Submission.Run.int32 run b (8 + (4 * i)) (value v))
         info.vars;
       ignore
-        (Rig.submit s ~run ~buffers:[| Rig.Buffer.of_bigarray result |]
+        (Rig.submit run ~buffers:[| Rig.Buffer.of_bigarray result |]
           : Rig.Point.t)
   | Error why -> fail why);
   equal ~msg:"1 + 2 + ... + 10" int32 55l result.{0}

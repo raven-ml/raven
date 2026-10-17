@@ -46,9 +46,9 @@ let heaps () =
   in
   (c, (Gc.stat ()).live_words * (Sys.word_size / 8))
 
-let lose run name =
+let lose name =
   let d, h = P.open_ name in
-  let p = Rig.submit (Sub.make d [||]) ~run ~buffers:[||] in
+  let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
   P.fault h "lost";
   (match Rig.Buffer.create d 8 with
   | _ -> fail "an allocation of a faulted device returned"
@@ -56,32 +56,31 @@ let lose run name =
   Rig.close d;
   (d, p)
 
-let close_one run =
+let close_one () =
   let d = Result.get_ok (Rig.memory_device "limit:cycle") in
-  let p = Rig.submit (Sub.make d [||]) ~run ~buffers:[||] in
+  let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
   Rig.close d;
   (d, p)
 
 let test_open_close () =
-  let run = Sub.Run.make () in
   (* The first loss is the process's failure, which keeps its slot. *)
-  ignore (lose run "limit:first");
-  let first = close_one run in
+  ignore (lose "limit:first");
+  let first = close_one () in
   for _ = 2 to warm do
-    ignore (close_one run)
+    ignore (close_one ())
   done;
   let c0, ml0 = heaps () in
   for _ = 1 to clean do
-    ignore (close_one run)
+    ignore (close_one ())
   done;
   let c1, ml1 = heaps () in
   at_most int ~msg:"the C heap's growth over the clean cycles" ~than:slack
     (c1 - c0);
   at_most int ~msg:"the OCaml heap's growth over the clean cycles"
     ~than:slack (ml1 - ml0);
-  let lost = lose run "limit:lost" in
+  let lost = lose "limit:lost" in
   for _ = 2 to losses do
-    ignore (lose run "limit:lost")
+    ignore (lose "limit:lost")
   done;
   let c2, ml2 = heaps () in
   at_most int ~msg:"the C heap's growth over the losses"

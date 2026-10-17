@@ -259,21 +259,29 @@ let waiting =
     (fun d _ ->
       let producer, pp = P.open_ (fresh "producer") in
       producers := (producer, pp) :: !producers;
-      let v = once ~run:(Sub.Run.make ()) (Sub.make producer [||]) in
+      let v = once (Sub.Run.make (Sub.make producer [||])) in
       let s = Sub.make d [||] in
-      let run = Sub.Run.make () in
-      Rig.Point.wait (Rig.submit s ~run ~buffers:[||] ~waits:[| v |]))
+      let run = Sub.Run.make s in
+      Rig.Point.wait (Rig.submit run ~buffers:[||] ~waits:[| v |]))
 
-(* The run every [kept_run] submits with. *)
-let kept = Sub.Run.make ()
+(* Each device's run that [kept_run] submits with: of a copy, and of a fill
+   whose block makes a submit take the run. *)
+let kept =
+  Rig.Local.new_key (fun d ->
+      let fill = Sub.fill Rig_support.noop ~params:0 in
+      let copy = Sub.copy ~src:(Slot 0) ~dst:(Slot 1) in
+      let run = Sub.Run.make (Sub.make d [| copy; fill |]) in
+      Sub.Run.release run;
+      run)
 
-(* Submits a copy under a profile with [kept], which serves each call in turn:
-   an exception in one submit leaves the run to the next. *)
+(* Submits a copy under a profile with its device's [kept] run, which serves
+   each call in turn: an exception in one submit leaves the run free for the
+   next. *)
 let kept_run =
   op "profiled submit with a kept run" (fun d _ ->
-      let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+      let run = Rig.Local.get kept d in
       let buffers = [| B.create d 8; B.create d 8 |] in
-      let submit () = Rig.Point.wait (once ~buffers ~run:kept s) in
+      let submit () = Rig.Point.wait (once ~buffers run) in
       ignore (Rig.Profile.take submit))
 
 (* Interrupts a profiled submit from its [n]-th allocation, then checks that
@@ -286,8 +294,8 @@ let interrupt_timed n =
       let d, _ = P.open_ (fresh "timed") in
       let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
       let buffers = [| B.create d 8; B.create d 8 |] in
-      let run = Sub.Run.make () in
-      let wait () = Rig.Point.wait (once ~buffers ~run s) in
+      let run = Sub.Run.make s in
+      let wait () = Rig.Point.wait (once ~buffers run) in
       let submit () = ignore (Rig.Profile.take wait) in
       submit ();
       let seen = List.length (P.violations ()) in
@@ -295,7 +303,7 @@ let interrupt_timed n =
       let got = outcome (fun () -> interrupting (Nth n) (ref None) submit) in
       mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
       equal ~msg:"lost" (option string) None (Rig.lost d);
-      Rig.Point.wait (once ~run:(Sub.Run.make ()) (Sub.make d [||]));
+      Rig.Point.wait (once (Sub.Run.make (Sub.make d [||])));
       submit ();
       equal ~msg:"breaches" (list string) [] (List.drop seen (P.violations ()));
       got = "raised Injected")
@@ -370,7 +378,7 @@ let[@inline never] submit_kept d runs =
   for _ = 1 to kept_values do
     let v = ref () in
     Gc.finalise (fun _ -> Atomic.incr runs) v;
-    ignore (once ~run:(Sub.Run.make ()) (Sub.make ~keep:v d [||]))
+    ignore (once (Sub.Run.make (Sub.make ~keep:v d [||])))
   done
 
 (* Interrupts a drain that finds collected submissions keeping values, from
@@ -480,8 +488,8 @@ let probes () =
   let image = Result.get_ok (Rig.Image.load polled "functions") in
   let fill = Option.get (Rig.Image.resolve image "fill") in
   let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
-  let s = Sub.make d [||] and run = Sub.Run.make () in
-  let pt = Rig.submit s ~run ~buffers:[||] in
+  let run = Sub.Run.make (Sub.make d [||]) in
+  let pt = Rig.submit run ~buffers:[||] in
   let set = Rig.Local.new_key (fun _ -> 0) in
   let unset = Rig.Local.new_key (fun _ -> 0) in
   ignore (Rig.Local.get set d : int);
@@ -524,7 +532,7 @@ let probes () =
       locks "Image.load" (fun () -> ignore (Rig.Image.load d "code"));
       locks "Image.resolve" (fun () -> ignore (Rig.Image.resolve image "fill"));
       locks "Submission.make" (fun () -> ignore (Sub.make d [||]));
-      locks "submit" (fun () -> ignore (Rig.submit s ~run ~buffers:[||]));
+      locks "submit" (fun () -> ignore (Rig.submit run ~buffers:[||]));
       locks ~what:"Local.get of an unset value" "Local.get" (fun () ->
           ignore (Rig.Local.get unset d : int));
       locks "Profile.take" (fun () -> ignore (Rig.Profile.take ignore));
@@ -547,7 +555,10 @@ let probes () =
       free "Image.threads" (fun () -> ignore (Rig.Image.threads fill));
       free "Image.entry" (fun () -> ignore (Rig.Image.entry fill));
       free "Submission.read" (fun () -> ignore (Sub.read 0 ~at:0));
-      free "Submission.Run.make" (fun () -> ignore (Sub.Run.make ()));
+      free "Submission.Run.make" (fun () ->
+          ignore (Sub.Run.make (Sub.Run.submission run)));
+      free "Submission.Run.take" (fun () ->
+          if Sub.Run.take run then Sub.Run.release run);
       free "Profile.enabled" (fun () -> ignore (Rig.Profile.enabled ()));
       free "Local.new_key" (fun () -> ignore (Rig.Local.new_key ignore));
       free ~what:"Local.get of a set value" "Local.get" (fun () ->

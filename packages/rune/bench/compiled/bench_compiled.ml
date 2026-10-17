@@ -926,8 +926,8 @@ type gpu = {
 (* Returns once the work submitted on [d] before it is done: an empty
    submission follows that work in device order. *)
 let finished d =
-  let s = Rig.Submission.make d [||] and run = Rig.Submission.Run.make () in
-  fun () -> Rig.Point.wait (Rig.submit s ~run ~buffers:[||])
+  let run = Rig.Submission.(Run.make (make d [||])) in
+  fun () -> Rig.Point.wait (Rig.submit run ~buffers:[||])
 
 let on_gpu open_device =
   let device = lazy (open_device ()) in

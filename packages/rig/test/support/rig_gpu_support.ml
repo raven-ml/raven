@@ -85,9 +85,9 @@ let prepare ?(fixed = []) d ws =
   let buffers = Array.concat (List.map (fun w -> w.buffers) ws) in
   let fixed = fixed @ List.concat_map (fun w -> w.fixed) ws in
   let s = Sub.make ~keep:ws ~fixed d parts in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   List.iteri (fun i w -> w.init s run i) ws;
-  (s, run, buffers)
+  (run, buffers)
 
 (* [kernel] of [image] over [groups] of [threads], each of [uses] a buffer
    referenced at a parameter byte with an access, and [params] bytes of
@@ -272,12 +272,12 @@ module Make (G : Gpu) = struct
 
   let submit t ps =
     let s = Rig.Submission.make t.d ps in
-    let run = Rig.Submission.Run.make () in
-    Rig.submit s ~run ~buffers:[||]
+    let run = Rig.Submission.Run.make s in
+    Rig.submit run ~buffers:[||]
 
   let submit_work t ws =
-    let s, run, buffers = prepare t.d ws in
-    Rig.submit s ~run ~buffers
+    let run, buffers = prepare t.d ws in
+    Rig.submit run ~buffers
 end
 
 (* Watching a driver's word *)

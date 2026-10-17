@@ -55,14 +55,14 @@ let affine image ~n ~a ~c =
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let fn = require_some (Rig.Image.resolve image "affine") in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:40 |] in
-  let run = Run.make () and k = Sub.block s 0 in
+  let run = Run.make s and k = Sub.block s 0 in
   Run.groups run k ((n + 63) / 64) 1 1;
   Run.threads run k 64 1 1;
   Run.int64 run k 16 n;
   Run.int64 run k 24 a;
   Run.int64 run k 32 c;
   ignore
-    (Rig.submit s ~run ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]);
+    (Rig.submit run ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]);
   let right = ref true in
   for i = 0 to n - 1 do
     if out.{i} <> Int64.of_int ((a * i) + c) then right := false

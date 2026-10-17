@@ -14,7 +14,7 @@ module P = Rig_support.Polled
 let timeout = 60.
 let empty d = Sub.make d [||]
 
-let submit ?waits s = Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers:[||]
+let submit ?waits s = Rig.submit ?waits (Sub.Run.make s) ~buffers:[||]
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 

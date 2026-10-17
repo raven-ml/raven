@@ -48,8 +48,7 @@ let check out expected =
    indirect command buffer; the other drivers launch the kernel. *)
 let adder device driver image a b out =
   let add = Option.get (Image.resolve image "add") in
-  let run = Submission.Run.make () in
-  let submission, buffers =
+  let run, buffers =
     if driver = "metal" then begin
       let cap = Option.get (capability device Rig_metal_abi.key) in
       let args = Buffer.create device 32 in
@@ -70,24 +69,26 @@ let adder device driver image a b out =
               params.{i} <- Int64.of_int (Submission.address submission buffer))
             [ a; b; out ];
           params.{3} <- Int64.of_int count);
+      let run = Submission.Run.make submission in
       let block = Submission.block submission 0 in
       Submission.Run.int64 run block 0 (Nativeint.to_int icb.handle);
       Submission.Run.int64 run block 8 1;
-      (submission, [||])
+      (run, [||])
     end
     else begin
       (* add takes the three addresses, then the count. *)
       let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
       let part = Submission.(launch ~refs add ~params:32) in
       let submission = Submission.make device [| part |] in
+      let run = Submission.Run.make submission in
       let block = Submission.block submission 0 in
       Submission.Run.groups run block 1 1 1;
       Submission.Run.threads run block count 1 1;
       Submission.Run.int64 run block 24 count;
-      (submission, [| a; b; out |])
+      (run, [| a; b; out |])
     end
   in
-  fun () -> submit submission ~run ~buffers
+  fun () -> submit run ~buffers
 
 let load_image device path =
   get (Image.load device (In_channel.with_open_bin path In_channel.input_all))

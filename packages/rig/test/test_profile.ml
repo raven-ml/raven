@@ -11,7 +11,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let memory name = Result.get_ok (Rig.memory_device name)
@@ -145,7 +145,7 @@ let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
 let submit_parts ?(buffers = [||]) d parts =
   let buffers = Array.map (fun b -> require_some (B.borrow d b)) buffers in
   let s = Sub.make d parts in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   (* Parameters a fresh run holds read 0; a fill's grid is never read. *)
   Array.iteri
     (fun i _ ->
@@ -155,7 +155,7 @@ let submit_parts ?(buffers = [||]) d parts =
           Sub.Run.threads run b 1 1 1
       | exception Invalid_argument _ -> ())
     parts;
-  Rig.submit s ~run ~buffers
+  Rig.submit run ~buffers
 
 (* The work of [d] in [events], as [(lane, name, start, stop)]. *)
 let device_spans d events =

@@ -19,21 +19,27 @@
     value and place in a run's blocks. A copy between two buffers is set
     once, at make.
 
-    A submit goes like this:
-    + It takes the caller's run by compare-and-set, and fits the run to the
-      submission unless the run served it last.
+    A submit's state, what it collects and answers, is a {e call}
+    ([struct rig_call] in [rig_stubs.h]): C memory that one submit at a time
+    takes from every call made, and that is never freed, so their number is
+    the most submits that ever ran at once, and a warm submit allocates no
+    call. A submit goes like this:
+    + In one C call, it moves the caller's run to submitting, from the
+      calling thread's taking or from free, unless the run holds no bytes,
+      and takes a free call, fitted to the submission unless it served it
+      last.
     + It takes a read claim on each fixed buffer and each of the run's
-      buffers, checks it live, and names it in the run's slot. For a slot
+      buffers, checks it live, and names it in the call's slot. For a slot
       that a copy names, it also records the buffer's side of the copy
       ([struct rig_side] in [rig_stubs.h]): the handle, offset and length
       the copy passes the driver, the span and alias its overlap check
       compares, and whether the side is this process's memory and the
       device's own memory.
     + It collects, per other device, the greatest point the work follows
-      ([caml_rig_run_collect]), with the caller's waits, and writes each
+      ([caml_rig_call_collect]), with the caller's waits, and writes each
       entry ref's value into the run's blocks. A submission with a copy that
-      has a slot end hands its driver the run's duplicate of its parts. The
-      run sets each such copy's fields from its buffers once it has checked
+      has a slot end hands its driver the call's duplicate of its parts. The
+      call sets each such copy's fields from its buffers once it has checked
       their lengths and overlap.
     + For each point not done, it waits on the host, or commits the
       producer's work and adds a wait in the device's queue. The device waits
@@ -43,13 +49,14 @@
       submitting or committing on the device, calls the driver's [room],
       assigns the next value, calls the driver's [submit] and raises the
       stamps.
-    + It releases the claims and gives the run back.
+    + It releases the claims, gives the call back and frees the run.
 
     What that C call returns ({!Dev.Answer}) makes the submit retry while
     another call holds the device, wait for the device's next value while its
     queues have no room, grow the device's record of waits in its queue, or
-    raise. What one submit collects and returns is in its run, so any number
-    of submits of one submission run concurrently, each with its own run.
+    raise. What one submit collects and returns is in its call, so any number
+    of submits of one submission run concurrently, each with its own run, or
+    with one run that holds no bytes.
 
     While a profile is being taken, a submit asks its driver for the times of
     its value and reads, from its buffers, the devices and bytes of each copy
@@ -112,15 +119,28 @@ val block : t -> int -> block
 val address : t -> buffer -> int
 (** [address s b] is {!Rig.Submission.address}[ s b]. *)
 
-(** Runs: C memory that a custom block owns, which one submit or one store
-    holds at a time. Each setter is an external that takes untagged ints and
-    unboxed floats, so no argument is boxed at a call, inlined or not. *)
+(** Runs: the blocks of one submission, C memory that a custom block owns,
+    sized when made, and a state word that says who holds them: free,
+    submitting, or the thread that took them. Each setter is an external
+    that takes untagged ints and unboxed floats, so no argument is boxed at a
+    call, inlined or not. *)
 module Run : sig
+  type submission := t
+
   type t
   (** {!Rig.Submission.Run.t}. *)
 
-  val make : unit -> t
-  (** [make ()] is {!Rig.Submission.Run.make}[ ()]. *)
+  val make : submission -> t
+  (** [make s] is {!Rig.Submission.Run.make}[ s]. *)
+
+  val submission : t -> submission
+  (** [submission r] is {!Rig.Submission.Run.submission}[ r]. *)
+
+  external take : t -> bool = "caml_rig_run_take" [@@noalloc]
+  (** {!Rig.Submission.Run.take}. *)
+
+  external release : t -> unit = "caml_rig_run_release" [@@noalloc]
+  (** {!Rig.Submission.Run.release}. *)
 
   external groups :
     t ->
@@ -161,15 +181,14 @@ module Run : sig
   (** {!Rig.Submission.Run.float64}. *)
 end
 
-val submit : ?waits:int array -> t -> run:Run.t -> buffers:buffer array -> int
-(** [submit ~waits s ~run ~buffers] is {!Rig.submit}[ ~waits s ~run
-    ~buffers]. *)
+val submit : ?waits:int array -> Run.t -> buffers:buffer array -> int
+(** [submit ~waits r ~buffers] is {!Rig.submit}[ ~waits r ~buffers]. *)
 
 val run_copy : device -> src:buffer -> dst:buffer -> int
 (** [run_copy d ~src ~dst] submits a copy of [src] into [dst] on [d]'s copy
     engine, and is its point. It submits [d]'s submission of the one part
-    [copy ~src:(Slot 0) ~dst:(Slot 1)], made once per device, with the
-    calling domain's copy run, or a fresh run if another thread of the domain
-    holds that one. [d] must reach both buffers. They are [d]'s, or, for a
-    device of another machine, one of them may be this process's memory. It
-    raises as {!Rig.Submission.make} and {!Rig.submit} do. *)
+    [copy ~src:(Slot 0) ~dst:(Slot 1)], made once per device with its run,
+    which holds no bytes, so any number of copies submit it at once. [d]
+    must reach both buffers. They are [d]'s, or, for a device of another
+    machine, one of them may be this process's memory. It raises as
+    {!Rig.Submission.make} and {!Rig.submit} do. *)

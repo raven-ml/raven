@@ -681,7 +681,7 @@ let take_device kind =
 let drain d =
   if not (Rig.equal d Rig.host || Rig.equal d Rig_disk.device) then
     Rig.Point.wait
-      (Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||])
+      (Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||])
 
 let give_device s =
   match s.skind with
@@ -1689,7 +1689,7 @@ let submit_sys last rc wc sc =
     if Rig.equal (B.device b) sub.sd then b
     else Option.value (B.borrow sub.sd b) ~default:b
   in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make sub.s in
   (match sub.work with
   | Copy -> ()
   | Fill | Launch ->
@@ -1702,7 +1702,7 @@ let submit_sys last rc wc sc =
       Sub.Run.int64 run b 8 0;
       Sub.Run.int64 run b 16 (min (B.length r.b) (B.length wb.b)));
   let buffers = if sub.slotted then [| onto r.b; onto wb.b |] else [||] in
-  Rig.Point.value (Rig.submit sub.s ~run ~buffers)
+  Rig.Point.value (Rig.submit run ~buffers)
 
 (* Kept values *)
 

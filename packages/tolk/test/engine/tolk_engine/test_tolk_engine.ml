@@ -397,14 +397,14 @@ let sums_in ~blocks m k =
             fn ~params:32;
         |])
   in
-  let run = Rig.Submission.Run.make () in
+  let run = Rig.Submission.Run.make s in
   let block = Rig.Submission.block s 0 in
   Rig.Submission.Run.groups run block blocks 1 1;
   Rig.Submission.Run.threads run block ((m + blocks - 1) / blocks) 1 1;
   Rig.Submission.Run.int64 run block 24 m;
   let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
   ignore
-    (Rig.submit s ~run
+    (Rig.submit run
        ~buffers:
          [|
            out;

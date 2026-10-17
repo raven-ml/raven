@@ -93,10 +93,8 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### API
 
-- claims and runs, one design pass: a claim held past a scope (rune's
-  `Pins` and tolk's `link ~bound` go), a take over a buffer list,
-  claim-all in rig.h, a submit that takes its run once, and how a library
-  owns a run
+- claims, one design pass: a claim held past a scope (rune's `Pins` and
+  tolk's `link ~bound` go), a take over a buffer list, claim-all in rig.h
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
   rig_program's `Move` step; done when placing on N GPUs costs one wait
@@ -140,7 +138,11 @@ raven / llama.cpp (Vulkan; ROCm):
   `launch/pipelined-100`, `buffer/read-64M`, and re-blesses of rig_program's
   `polled/*` and rig_remote's `request/alloc` and `rail/4K`, recorded under
   load; the vendor comparison (packages/rig/bench/compare/run.py) on the
-  Mac, then fudge
+  Mac, then fudge; rig's `submit/polled/pool-two-domains` (0 words warm),
+  `submit/polled/stores-30` and `copy/queue-64K-two-domains` (the words of
+  `copy/queue-64K`) on every machine, and every rig row a run of one
+  submission changed (`submit/polled/*`, `replay/polled/*`, `device/*`,
+  `drain/*`)
 
 ### perf
 

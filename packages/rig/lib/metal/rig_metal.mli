@@ -54,11 +54,11 @@
           launch ~refs:[| read 0 ~at:0; write 1 ~at:8 |] add ~params:16)
       in
       let s = Rig.Submission.make d [| add |] in
-      let run = Rig.Submission.Run.make () in
+      let run = Rig.Submission.Run.make s in
       let b = Rig.Submission.block s 0 in
       Rig.Submission.Run.groups run b (n / 256) 1 1;
       Rig.Submission.Run.threads run b 256 1 1;
-      ignore (Rig.submit s ~run ~buffers:[| x; y |] : Rig.Point.t);
+      ignore (Rig.submit run ~buffers:[| x; y |] : Rig.Point.t);
       Rig.Buffer.read y Bigarray.float32 (fun a ->
           Printf.printf "y[10] = %g\n" a.{10});
       Rig.close d

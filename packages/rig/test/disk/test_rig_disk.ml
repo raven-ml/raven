@@ -1120,7 +1120,7 @@ let test_barrier_lost () =
   let s =
     Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
   in
-  ignore (Rig.submit s ~run:(Rig.Submission.Run.make ()) ~buffers:[| on_d |]);
+  ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[| on_d |]);
   Rig_support.Polled.fault p "the device fell off the bus";
   let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
   raises_match ~msg:"an allocation" lost (fun () -> B.create d 8);

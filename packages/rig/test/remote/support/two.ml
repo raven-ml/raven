@@ -241,7 +241,7 @@ let () =
     let staged = B.create Rig.host bytes in
     write staged (le32s (fun i -> i + (1000 * c)));
     B.copy ~src:staged ~dst:x;
-    let p = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] in
+    let p = Rig.submit (Sub.Run.make s) ~buffers:[||] in
     Array.iter Rig.Point.wait
       (G.run senders.(k)
          {

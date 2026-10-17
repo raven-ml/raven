@@ -304,21 +304,21 @@ let launch_image = Rig_gpu_support.loader (fun () -> S.fixture "launch.ptx")
 
 (* A launch of [kernel] of fixtures/launch.ptx on [d], of [params] bytes of
    parameters whose first 8 point into the run's one buffer, a write, over
-   [groups] of [threads] with [shared] bytes of dynamic shared memory: its
-   submission and a run holding its block. *)
+   [groups] of [threads] with [shared] bytes of dynamic shared memory: a run
+   of its submission holding its block. *)
 let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
     ~threads:(tx, ty, tz) ~shared =
   let refs = [| Sub.write 0 ~at:0 |] in
   let fn = require_some (Rig.Image.resolve (launch_image d) kernel) in
   let s = Sub.make d [| Sub.launch ~refs fn ~params |] in
-  let run = Run.make () in
+  let run = Run.make s in
   let b = Sub.block s 0 in
   Run.groups run b gx gy gz;
   Run.threads run b tx ty tz;
   Run.shared run b shared;
-  (s, run)
+  run
 
-let submitted s run buffers = Rig.submit s ~run ~buffers
+let submitted run buffers = Rig.submit run ~buffers
 
 (* The 32-bit words [b] holds. *)
 let words b n =
@@ -336,9 +336,9 @@ let refused_launches () =
   let out = B.create ~memory:Pinned d 4096 in
   let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
       ?(shared = 0) () =
-    let s, run = launching ?kernel ?params d ~groups ~threads ~shared in
+    let run = launching ?kernel ?params d ~groups ~threads ~shared in
     raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
-        submitted s run [| out |])
+        submitted run [| out |])
   in
   (* More threads than the function has, which the setter refuses. *)
   List.iter
@@ -356,11 +356,11 @@ let refused_launches () =
   equal int ~msg:"values assigned" 0 (Rig.submitted d);
   equal (option string) ~msg:"the device's loss" None (Rig.lost d);
   let n = 65535 * 1024 in
-  let s, run =
+  let run =
     launching d ~groups:(1, 1, 65535) ~threads:(1024, 1, 1) ~shared:0
   in
   let big = B.create d (4 * n) in
-  Rig.Point.wait (submitted s run [| big |])
+  Rig.Point.wait (submitted run [| big |])
 
 (* A launch takes as much dynamic shared memory as the GPU gives a group, beyond
    the 48 KiB CUDA allows by default. [rotate] stores into each word the value
@@ -368,13 +368,13 @@ let refused_launches () =
 let largest_shared_memory () =
   S.with_ @@ fun { d; _ } ->
   let shared = S.attribute largest_shared in
-  let s, run =
+  let run =
     launching ~kernel:"rotate" ~params:12 d ~groups:(1, 1, 1)
       ~threads:(256, 1, 1) ~shared
   in
-  Run.int32 run (Sub.block s 0) 8 5;
+  Run.int32 run (Sub.block (Run.submission run) 0) 8 5;
   let out = B.create ~memory:Pinned d (4 * 256) in
-  Rig.Point.wait (submitted s run [| out |]);
+  Rig.Point.wait (submitted run [| out |]);
   equal (array int) ~msg:"the words"
     (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
     (words out 256)
@@ -383,11 +383,13 @@ let largest_shared_memory () =
    through every setter, allocates nothing. *)
 let no_allocation () =
   S.with_ @@ fun { d; _ } ->
-  let s, run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
+  let run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
+  Run.release run;
   let buffers = [| B.create d 4096 |] in
-  let b = Sub.block s 0 in
+  let b = Sub.block (Run.submission run) 0 in
   (* [float64] stores first, where [int64] then stores [a]. *)
   let once i =
+    if not (Run.take run) then fail "the run is taken";
     Run.groups run b 1 1 1;
     Run.threads run b 32 1 1;
     Run.shared run b 0;
@@ -396,7 +398,7 @@ let no_allocation () =
     Run.int64 run b 8 i;
     Run.int32 run b 16 3;
     Run.float32 run b 20 1.5;
-    Sys.opaque_identity (submitted s run buffers)
+    Sys.opaque_identity (submitted run buffers)
   in
   Rig.Point.wait (once 0);
   let before = Gc.minor_words () in
@@ -823,7 +825,7 @@ let prepared_graph () =
     Rig_gpu_support.prepare t.d
       [ S.part t.d (S.graph_launch gr [||]) ]
   in
-  let s, run, buffers = made () in
+  let run, buffers = made () in
   (* Collection and draining also release an unreachable fill's hold. *)
   for round = 1 to 4 do
     Gc.full_major ();
@@ -832,7 +834,7 @@ let prepared_graph () =
       ~msg:(strf "the submission keeps its graph after collection %d" round)
       true (Weak.check weak 0)
   done;
-  Rig.Point.wait (Rig.submit s ~run ~buffers);
+  Rig.Point.wait (Rig.submit run ~buffers);
   equal int ~msg:"both kernels ran" 2 (H.get64 (host out));
   C.unload g m;
   C.free g out

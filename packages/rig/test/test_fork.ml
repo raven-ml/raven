@@ -13,7 +13,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let empty d = Sub.make d [||]
@@ -258,9 +258,9 @@ let one_part d =
   s
 
 let submit_part s =
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   Sub.Run.groups run (Sub.block s 0) 0 0 0;
-  Rig.submit s ~run ~buffers:[||]
+  Rig.submit run ~buffers:[||]
 
 (* A thread of the parent blocked in a hand-over at the fork, holding its
    device's turn and its submission, with a profile being taken, leaves the

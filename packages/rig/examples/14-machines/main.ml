@@ -57,8 +57,7 @@ let controller () =
   let x = Buffer.create m 16 and y = Buffer.create m 16 in
   Buffer.copy ~src:(Buffer.of_bigarray (int32s [ 1l; 2l; 3l; 4l ])) ~dst:x;
   let s = Submission.(make m [| copy ~src:(Buffer x) ~dst:(Buffer y) |]) in
-  let run = Submission.Run.make () in
-  ignore (submit s ~run ~buffers:[||]);
+  ignore (submit (Submission.Run.make s) ~buffers:[||]);
 
   (* The copy back reads [y], so it follows M's copy, which writes it. *)
   let z = int32s [ 0l; 0l; 0l; 0l ] in

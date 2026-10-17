@@ -636,7 +636,7 @@ let copies_law (init, ops) =
         if i < 2 then B.of_string init.(i)
         else far_of_string devices.(if i < 4 then 0 else 1) init.(i))
   in
-  let last = Array.make 2 None and run = Sub.Run.make () in
+  let last = Array.make 2 None in
   List.iteri
     (fun k o ->
       let d =
@@ -667,7 +667,7 @@ let copies_law (init, ops) =
                 ~dst:(Buffer (view o.dst o.at_dst)));
           |]
       in
-      last.(d) <- Some (Rig.submit s ~run ~buffers:[||]);
+      last.(d) <- Some (Rig.submit (Sub.Run.make s) ~buffers:[||]);
       Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
     ops;
   Array.iter (Option.iter Rig.Point.wait) last;
@@ -725,13 +725,8 @@ let close_waits () =
   let s = String.init n (fun i -> Char.chr (i * 13 land 0xff)) in
   let far = far_of_string h s in
   let here = B.create Rig.host n in
-  ignore
-    (Rig.submit
-       (Sub.make h
-          [|
-            Sub.(copy ~src:(Buffer far) ~dst:(Buffer here));
-          |])
-       ~run:(Sub.Run.make ()) ~buffers:[||]);
+  let copy = Sub.make h [| Sub.(copy ~src:(Buffer far) ~dst:(Buffer here)) |] in
+  ignore (Rig.submit (Sub.Run.make copy) ~buffers:[||]);
   Rig_remote.close j;
   equal ~msg:"the copy's bytes" bool true (read_host here = s);
   equal exit_w (0, [ "closed" ]) (finish (List.hd agents))

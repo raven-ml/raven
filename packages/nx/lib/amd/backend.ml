@@ -232,7 +232,7 @@ let launch d ~writes ds =
       ds
   in
   let sub = submission d s layout ds in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make sub in
   List.iteri
     (fun i { groups = gx, gy, gz; args; _ } ->
       let b = Sub.block sub i in
@@ -246,7 +246,7 @@ let launch d ~writes ds =
           (Int64.to_int (Int64.shift_right_logical v 32))
       done)
     ds;
-  ignore (Rig.submit sub ~run ~buffers:(Array.of_list !slots))
+  ignore (Rig.submit run ~buffers:(Array.of_list !slots))
 
 (* The name of a dtype the kernels serve, as the archive spells it. *)
 let served (type a b) (dt : (a, b) Nx_dtype.t) =

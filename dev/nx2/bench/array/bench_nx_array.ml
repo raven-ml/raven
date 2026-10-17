@@ -347,7 +347,7 @@ let door_rows =
           let s =
             Rig.Submission.make ~fixed:[ (A.buffer z, Rig.Read_write) ] d [||]
           in
-          ignore (Rig.submit s ~run:(Rig.Submission.Run.make ()) ~buffers:[||]);
+          ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[||]);
           ([| A.Any z |], [| A.Any x; A.Any y |]))
         "ocaml-3-pending"
         (fun (written, read) ->
@@ -489,9 +489,9 @@ let kernel_rows =
     let y = A.create d f32 [| 1 |] in
     (* A submission that writes [z], left pending at each submit. *)
     let s = Rig.Submission.make ~fixed:[ (A.buffer z, Rig.Read_write) ] d [||] in
-    ((s, Rig.Submission.Run.make ()), z, x, y)
+    (Rig.Submission.Run.make s, z, x, y)
   in
-  let writes (s, run) = ignore (Rig.submit s ~run ~buffers:[||]) in
+  let writes run = ignore (Rig.submit run ~buffers:[||]) in
   let pending () =
     let ((w, z, x, y) as env) = late () in
     writes w;

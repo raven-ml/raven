@@ -55,7 +55,7 @@ let by_hand d image x y =
         launch "twice" twice_params [| Sub.write 1 ~at:0; Sub.read 0 ~at:8 |];
       |]
   in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   let store i params ~groups ~threads =
     let b = Sub.block s i in
     Sub.Run.groups run b groups 1 1;
@@ -68,7 +68,7 @@ let by_hand d image x y =
   in
   store 0 ids_params ~groups:4 ~threads:64;
   store 1 twice_params ~groups:words ~threads:1;
-  ignore (Rig.submit s ~run ~buffers:[| x; y |])
+  ignore (Rig.submit run ~buffers:[| x; y |])
 
 let described d binary =
   let launch name params refs ~groups ~threads =

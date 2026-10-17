@@ -129,7 +129,7 @@ let case (module G : Gpu) held cut () =
   in
   write words ring;
   write cmds methods;
-  let p = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] in
+  let p = Rig.submit (Sub.Run.make s) ~buffers:[||] in
   until ~what:"the queue at its wait" (fun () -> get64 mark_bytes 0 = 1L);
   let reached = Rig.signaled d >= Rig.Point.value p in
   let before =

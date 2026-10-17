@@ -25,7 +25,7 @@ let fresh what =
   Printf.sprintf "commit:%s-%d" what (Atomic.fetch_and_add names 1)
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 (* The last value [p]'s word holds, read without a call of rig. *)
 let word p = Support.load (P.word_at p)
@@ -72,14 +72,10 @@ let open_world () =
 
 let use ?(scratch = []) ?waits x =
   let s = if scratch = [] then x.run else x.scratched in
-  let run = Sub.Run.make () in
+  let run = Sub.Run.make s in
   Sub.Run.groups run (Sub.block s 0) 0 0 0;
   let pt =
-    match scratch with
-    | [] -> Rig.submit ?waits x.run ~run ~buffers:[| x.buffer |]
-    | s ->
-        Rig.submit ?waits x.scratched ~run
-          ~buffers:(Array.of_list (x.buffer :: s))
+    Rig.submit ?waits run ~buffers:(Array.of_list (x.buffer :: scratch))
   in
   Atomic.set x.last (Some pt)
 
@@ -235,9 +231,9 @@ let test_wait_beside_blocked_submit () =
   let d, p = P.open_ ~lag ~capacity:1 ~may_block:true (fresh "blocked") in
   let one = Sub.make d [| idle () |] in
   let submit_one () =
-    let run = Sub.Run.make () in
+    let run = Sub.Run.make one in
     Sub.Run.groups run (Sub.block one 0) 0 0 0;
-    Rig.submit one ~run ~buffers:[||]
+    Rig.submit run ~buffers:[||]
   in
   let first = submit_one () in
   let second = ref None in

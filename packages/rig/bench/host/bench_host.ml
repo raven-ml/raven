@@ -57,20 +57,20 @@ let load_rows =
       Thumper.bench "floor-lookup" lookup;
     ]
 
-(* A submission of one launch of [image]'s [f] over [groups] groups of
-   [threads] threads, its run, with [params] bytes that [set] stores. *)
+(* A run of a submission of one launch of [image]'s [f] over [groups] groups
+   of [threads] threads, with [params] bytes that [set] stores. *)
 let launch ?(refs = [||]) ?(params = 0) ?(set = fun _ _ -> ()) image f
     ~groups ~threads =
   let fn = Option.get (Rig.Image.resolve image f) in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.Run.make () and k = Sub.block s 0 in
+  let run = Sub.Run.make s and k = Sub.block s 0 in
   Sub.Run.groups run k groups 1 1;
   Sub.Run.threads run k threads 1 1;
   set run k;
-  (s, run)
+  run
 
-let submit (s, run) buffers () =
-  ignore (Rig.submit s ~run ~buffers : Rig.Point.t)
+let submit run buffers () =
+  ignore (Rig.submit run ~buffers : Rig.Point.t)
 
 let launch_rows =
   let empty = load (obj "empty") () in

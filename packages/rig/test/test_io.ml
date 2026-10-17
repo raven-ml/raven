@@ -13,7 +13,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
+  Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
 let page_bytes = 1 lsl 16
@@ -450,7 +450,7 @@ let test_of_io () =
 let test_of_io_closed () =
   let m = Result.get_ok (Rig.memory_device "io:before-closed") in
   let p =
-    Rig.submit (Rig.Submission.make m [||]) ~run:(Rig.Submission.Run.make ())
+    Rig.submit (Rig.Submission.Run.make (Rig.Submission.make m [||]))
       ~buffers:[||]
   in
   Rig.Point.wait p;

@@ -50,11 +50,11 @@ let step d =
   let refs = Submission.[| write 1 ~at:0; read 0 ~at:8 |] in
   let part = Submission.fill (scale ()) ~params:32 ~refs in
   let s = Submission.make ~keep:held ~fixed:[ (k, Read) ] d [| part |] in
-  let run = Submission.Run.make () in
+  let run = Submission.Run.make s in
   let block = Submission.block s 0 in
   Submission.Run.int64 run block 16 (Submission.address s k);
   Submission.Run.int64 run block 24 n;
-  fun ~src ~dst -> submit s ~run ~buffers:[| src; dst |]
+  fun ~src ~dst -> submit run ~buffers:[| src; dst |]
 
 (* Two runs of one step, each on buffers of its own. *)
 let runs d =

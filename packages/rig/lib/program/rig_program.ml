@@ -983,14 +983,13 @@ type moving = {
   count : int;
 }
 
-(* A step's submission for one copy, its run, and the buffers it is passed:
+(* A step's run of its submission for one copy, and the buffers it is passed:
    memory set at load, inputs and moving copy ends at each run. *)
 type prepared = {
-  sub : Sub.t;
   srun : Sub.Run.t;
   buffers : B.t array;
   input_slots : (int * int) array;
-      (* Each slot of [sub] that holds an input, with the input. *)
+      (* Each slot of the submission that holds an input, with the input. *)
   moving : moving array;
   blocks : block_run array;
 }
@@ -1437,7 +1436,7 @@ let prepared p k (s : submit) =
         | Memory v -> buffers.(j) <- view p k d v
         | Ints -> buffers.(j) <- view p k d (ints_view p.t))
     s.slots;
-  let srun = Sub.Run.make () in
+  let srun = Sub.Run.make sub in
   let value = function Known n -> n | Word _ -> 0 in
   let block i = function
     | Words _ | Copy _ -> None
@@ -1483,15 +1482,18 @@ let prepared p k (s : submit) =
             geometry;
           }
   in
+  let blocks =
+    Array.of_list
+      (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)))
+  in
+  (* Each step takes the run again to store its holes. *)
+  Sub.Run.release srun;
   {
-    sub;
     srun;
     buffers;
     input_slots = Array.of_list !inputs;
     moving = Array.of_list (List.rev !moving);
-    blocks =
-      Array.of_list
-        (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)));
+    blocks;
   }
 
 (* A submission [Rig.Submission.make] or a setter refuses is a defect of the
@@ -1573,7 +1575,7 @@ let reached () =
   | Some p -> p
   | None ->
       let p =
-        Rig.submit (Sub.make Rig.host [||]) ~run:(Sub.Run.make ()) ~buffers:[||]
+        Rig.submit (Sub.Run.make (Sub.make Rig.host [||])) ~buffers:[||]
       in
       ignore (Atomic.compare_and_set first_reached None (Some p));
       Option.get (Atomic.get first_reached)
@@ -1764,9 +1766,9 @@ let slot_buffer p k = function
   | Memory v -> mem_buffer p k v
   | Ints -> mem_buffer p k (ints_view p.t)
 
-let submit_step p k waits (spec : submit) copies index =
-  let q = copies.(if Array.length copies = 2 then k else 0) in
-  let d = spec.device in
+(* Stores [q]'s holes and geometry for copy [k] into its run, which the
+   caller took, and passes the run's buffers. *)
+let prepare_step p k (q : prepared) d =
   (try
      for i = 0 to Array.length q.blocks - 1 do
        let l = q.blocks.(i) in
@@ -1809,9 +1811,24 @@ let submit_step p k waits (spec : submit) copies index =
     q.buffers.(e.index) <-
       (if o = 0 && e.count = n then held
        else B.view held ~first:o ~length:e.count)
-  done;
+  done
+
+(* The program's lock admits one run at a time, so the step's run is free:
+   a submit frees it as it returns or raises, and a run that raises frees
+   every step's run ([release_runs]). *)
+let submit_step p k waits (spec : submit) copies index =
+  let q = copies.(if Array.length copies = 2 then k else 0) in
+  let d = spec.device in
+  (match
+     if not (Sub.Run.take q.srun) then assert false;
+     prepare_step p k q d
+   with
+  | () -> ()
+  | exception e ->
+      Sub.Run.release q.srun;
+      raise e);
   let waits = if p.ran.(d) then None else waits in
-  match Rig.submit ?waits q.sub ~run:q.srun ~buffers:q.buffers with
+  match Rig.submit ?waits q.srun ~buffers:q.buffers with
   | point ->
       unpass q;
       if Array.length p.last = 0 then
@@ -1821,7 +1838,17 @@ let submit_step p k waits (spec : submit) copies index =
       p.step_points.(index) <- point
   | exception e ->
       unpass q;
+      Sub.Run.release q.srun;
       raise e
+
+(* Frees each step's run that the calling thread holds, after a run that
+   raised, such as from an asynchronous exception between a step's take and
+   its submit. *)
+let rec release_runs = function
+  | Lsubmit { copies; _ } ->
+      Array.iter (fun (q : prepared) -> Sub.Run.release q.srun) copies
+  | Lmove _ -> ()
+  | Lloop { body; _ } -> Array.iter release_runs body
 
 (* Whether byte [at] of [slot]'s buffer is not [0], once the work that wrote
    it is done. *)
@@ -1935,6 +1962,7 @@ let run_here ~waits (p : here) (f : frame) =
       points
   | exception e ->
       unbind p;
+      Array.iter release_runs p.steps;
       Mutex.unlock p.lock;
       raise e
 
@@ -1956,7 +1984,6 @@ type there = {
   limits : int option array; (* What the agent stated at load ([threads]). *)
   watch : watched array;
   entry : int;
-  sub : Sub.t;
   srun : Sub.Run.t;
   words :
     (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
@@ -2025,8 +2052,7 @@ let load_there t devices =
                      limits;
                      watch;
                      entry;
-                     sub;
-                     srun = Sub.Run.make ();
+                     srun = Sub.Run.make sub;
                      words = B.export buffer Bigarray.char;
                      lock = Mutex.create ();
                    }))))
@@ -2128,7 +2154,7 @@ let run_words ~waits p (f : frame) =
   for i = 0 to Array.length f.ints - 1 do
     set_word p.words (at + 8 + (8 * i)) f.ints.(i)
   done;
-  let point = Rig.submit ?waits p.sub ~run:p.srun ~buffers:[||] in
+  let point = Rig.submit ?waits p.srun ~buffers:[||] in
   Array.fill f.step_points 0 (Array.length f.step_points) point;
   [| point |]
 

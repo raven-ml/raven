@@ -691,6 +691,18 @@ let one_device_fill ?(copies = G.One) d =
       |];
   }
 
+(* Runs on a lost device each raise Lost: a run that raised leaves the
+   program's runs free for the next. *)
+let test_lost_runs () =
+  let d, pd = polled "lost-runs" in
+  let p = load_ok (one_device_fill d) [ d ] in
+  let empty = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
+  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
+  P.fail pd;
+  for i = 1 to 3 do
+    raises_match ~msg:(strf "run %d" i) lost (fun () -> G.run p empty)
+  done
+
 let test_two_waits () =
   let d, pd = polled "two" in
   let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
@@ -3383,6 +3395,7 @@ let tests =
       [
         test "run n of memory of two copies follows run n - 2 on its copy"
           test_two_waits;
+        test "runs on a lost device each raise Lost" test_lost_runs;
         test "memory of one copy waits for nothing on the host"
           test_one_waits_not;
         test "a run's first submission follows its after points" test_after;
