@@ -85,9 +85,9 @@ raven / llama.cpp (Vulkan; ROCm):
   `max_send_wqebb` under 2^15 (`context` changes: API review)
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
   find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
-  past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md):
-  map in larger pages if that is the cause, else state it in
-  rig_nv_nvidia.mli
+  past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;
+  rig_nv_nvidia.mli states the bound): map in larger pages if that is the
+  cause
 - size cuts in _plans/rig-size-audit/SUMMARY.md §A (core, PCI, NV, small):
   the unused `Object` completion, the CUDA page-lock registry, NV's five
   field accessors, the debugfs scan; classify each unused value

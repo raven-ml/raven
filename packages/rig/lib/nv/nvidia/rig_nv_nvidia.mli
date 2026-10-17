@@ -52,7 +52,10 @@
     Linux 6.5 on, Linux refuses such a pin of a shared mapping of a file
     whose file system tracks its dirty pages, such as ext4's but not
     tmpfs's, so there {!Rig_nv.val-map_host} returns [None] for those pages,
-    as for unmapped ones.
+    as for unmapped ones. The RM also bounds the host memory mapped for a GPU
+    at once, which this path maps in 4 KiB pages: past the bound it refuses
+    every further mapping ([NV_ERR_NO_MEMORY]), however the memory is split,
+    and {!Rig_nv.val-map_host} returns [None] until mappings are freed.
 
     {!buses}, {!count} and an opener's [make] read the machine's files under
     the directory [root] (defaults to ["/"]): its PCI functions under
