@@ -628,13 +628,30 @@ let failed_boot =
 
 (* A GPU of this machine *)
 
+(* The driver bound to the function at [bus] of this machine, if any. *)
+let driver bus =
+  match
+    Unix.readlink (Filename.concat "/sys/bus/pci/devices" bus ^ "/driver")
+  with
+  | link -> Some (Filename.basename link)
+  | exception Unix.Unix_error _ -> None
+
 (* GPU 0 of this machine, opened by its driver alone, for [f], then stopped. It
-   skips without the firmware or a GPU free of NVIDIA's kernel driver. *)
+   skips without the firmware or a GPU 0 free of its kernel driver: an open
+   refuses a GPU a kernel driver holds. *)
 let with_gpu f =
   let firmware = firmware () in
-  if Rig_nv_pci.count () = 0 then
-    skip ~reason:"this machine has no NVIDIA GPU free of its kernel driver" ();
-  let g = require_ok (Rig_gpu_support.opened (Rig_nv_pci.gpu ~firmware 0)) in
+  (match Rig_nv_pci.buses () with
+  | [] -> skip ~reason:"this machine has no NVIDIA GPU" ()
+  | bus :: _ -> (
+      match driver bus with
+      | Some d when d <> "vfio-pci" ->
+          skip ~reason:(strf "GPU 0 (%s) is bound to %s" bus d) ()
+      | _ -> ()));
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (Rig_gpu_support.opened (Rig_nv_pci.gpu ~firmware 0))
+  in
   Fun.protect ~finally:(fun () -> Rig_nv.stop g ~fault:None) (fun () -> f g)
 
 (* An exception at any allocation of a sleep, which handles the GSP's events,
