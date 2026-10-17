@@ -193,6 +193,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     capability;
     budget;
     closing = 0;
+    locals = [];
     live;
     base = c_base c;
     opened;
@@ -316,48 +317,55 @@ let rec machine_name = function
 
 (* Values per device *)
 
-(* A key's values by device index, set under [locals_lock], so a get that
-   finds its value reads it without the lock. Once a device's stop returned,
-   its values leave every key. A store keeps nothing on a lost device, so a
-   store that raced the stop keeps nothing after the drop, which comes after
-   the loss. A slot passes to a later device only after its stop returned,
-   so the later device finds no value of an earlier one. *)
-type 'a key = { init : device -> 'a; values : 'a option Table.t }
-type any_key = Key : 'a key -> any_key
+(* A key's value on a device lies in the device's [locals], under the key's
+   id, so a later device of its slot starts with none and an init that runs
+   past its device's stop finds no other device's value. [locals] is replaced
+   whole under [locals_lock], so a get that finds its value reads it without
+   the lock. A store on a lost device keeps nothing and raises, and the stop
+   empties [locals] after the loss, so no value outlives the stop. *)
+type 'a key = { init : device -> 'a; id : 'a Type.Id.t }
 
-let keys : any_key list ref = ref []
 let locals_lock = Lock.create ()
+let new_key init = { init; id = Type.Id.make () }
 
-let add_key k = keys := k :: !keys
+let rec find : type a. a key -> local list -> a option =
+ fun k -> function
+  | [] -> None
+  | Local (id, v) :: l -> (
+      match Type.Id.provably_equal k.id id with
+      | Some Equal -> Some v
+      | None -> find k l)
 
-let new_key init =
-  let k = { init; values = Table.make None } in
-  Lock.protect locals_lock add_key (Key k);
-  k
-
+(* [k]'s value on [d], storing [v] unless a value came first: [None] if [d]
+   is lost. *)
 let store_locked (k, d, v) =
-  match Table.get k.values d.index with
-  | Some v' -> v'
+  match find k d.locals with
+  | Some _ as kept -> kept
+  | None when is_lost d -> None
   | None ->
-      if not (is_lost d) then Table.set k.values d.index (Some v);
-      v
+      d.locals <- Local (k.id, v) :: d.locals;
+      Some v
 
-(* Keeps [v] as [k]'s value on [d] unless a value came first or [d] is lost:
-   the value kept, or [v]. *)
-let store k d v = Lock.protect locals_lock store_locked (k, d, v)
+let store k d v =
+  match Lock.protect locals_lock store_locked (k, d, v) with
+  | Some v -> v
+  | None -> raise_lost d
+
+(* [k]'s value among [l], made if absent. It finds a value without
+   allocating. *)
+let rec value_in : type a. a key -> device -> local list -> a =
+ fun k d -> function
+  | [] -> store k d (k.init d)
+  | Local (id, v) :: l -> (
+      match Type.Id.provably_equal k.id id with
+      | Some Equal -> v
+      | None -> value_in k d l)
 
 let local k d =
   if is_lost d then raise_lost d;
-  match Table.get k.values d.index with
-  | Some v -> v
-  | None -> store k d (k.init d)
+  value_in k d d.locals
 
-let clear d (Key k) =
-  if Option.is_some (Table.get k.values d.index) then
-    Table.set k.values d.index None
-
-let drop_locked d = List.iter (clear d) !keys
-
+let drop_locked d = d.locals <- []
 let drop_values d = Lock.protect locals_lock drop_locked d
 
 (* The table of names *)

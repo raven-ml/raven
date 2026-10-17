@@ -102,6 +102,10 @@ type c
     ([struct rig_device] in [rig_stubs.h]), which goes with the block once
     the device's slot is freed. *)
 
+(** The type for a device's value of a {!Rig.Local} key, under the key's
+    id. *)
+type local = Local : 'a Type.Id.t * 'a -> local
+
 (** The type for devices: {!Rig.t}. A device is its facts, fixed at open,
     and its {!live} state. The table of devices holds it at its index until
     a later device takes its slot. *)
@@ -126,6 +130,9 @@ type device = {
   mutable closing : int; [@atomic]
       (** The closes of this machine's host under way: each adds one under
           the table's lock and takes it back with one atomic step. *)
+  mutable locals : local list; [@atomic]
+      (** Its values of {!Rig.Local} keys, replaced whole under {!Dev}'s
+          lock of values and read without it. *)
   live : live;  (** Its state. *)
   base : int;
       (** The value its timeline started after, which its slot's word held

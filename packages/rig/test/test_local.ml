@@ -191,19 +191,45 @@ let test_closed_collected () =
   equal ~msg:"once closed" bool false (Weak.check w 0);
   raises_match (lost d) (fun () -> L.get k d)
 
-(* A value whose init raced the stop is dropped too: here the init closes its
-   device. *)
+(* A value whose init raced the stop is dropped too, and the get raises Lost:
+   here the init closes its device. *)
 let test_init_races_stop () =
   let d = Rig.memory_device (fresh "races") in
+  let w = Weak.create 1 in
   let k =
     L.new_key (fun d ->
         Rig.close d;
-        made ())
+        let v = made () in
+        Weak.set w 0 (Some v);
+        v)
   in
-  let w = Weak.create 1 in
-  get_weak k d w;
+  raises_match (lost d) (fun () -> L.get k d);
   Gc.full_major ();
   equal bool false (Weak.check w 0)
+
+(* An init that closes its device and opens another in its slot leaves the
+   get raising Lost: the other device's value is its own. *)
+let test_init_reopens () =
+  let d = Rig.memory_device (fresh "first") in
+  ignore
+    (Rig.submit
+       (Rig.Submission.make d [||])
+       ~run:(Rig.Submission.Run.make ()) ~buffers:[||]);
+  let key = ref None and other = ref None in
+  let k =
+    L.new_key (fun dev ->
+        if Rig.equal dev d then (
+          Rig.close d;
+          let e = Rig.memory_device (fresh "second") in
+          equal ~msg:"e continues d's slot" int (Rig.submitted d)
+            (Rig.submitted e);
+          ignore (L.get (Option.get !key) e);
+          other := Some e);
+        made ())
+  in
+  key := Some k;
+  raises_match (lost d) (fun () -> L.get k d);
+  Option.iter Rig.close !other
 
 (* A lost device's get raises, whether it had a value or not. *)
 let test_lost () =
@@ -234,6 +260,8 @@ let tests =
         test "a closed device's value is collected" test_closed_collected;
         test "a value whose init raced the stop is collected"
           test_init_races_stop;
+        test "an init that reopens the slot leaves the get lost"
+          test_init_reopens;
       ];
   ]
 

@@ -124,8 +124,8 @@ val local : 'a key -> device -> 'a
 (** [local k d] is {!Rig.Local.get}. *)
 
 val drop_values : device -> unit
-(** [drop_values d] drops every key's value on [d], and every value stored
-    for [d] from then on. The call that runs [d]'s stop calls it once the
+(** [drop_values d] drops every key's value on [d]. A get on [d] from then
+    on stores nothing. The call that runs [d]'s stop calls it once the
     driver's stop returned. *)
 
 (** {1:loss Loss and stops}
