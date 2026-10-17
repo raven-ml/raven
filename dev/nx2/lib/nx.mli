@@ -267,6 +267,15 @@ val init : ('v, 's) dtype -> int array -> (int array -> 'v) -> ('v, 's, host) t
 
     Raises [Invalid_argument] as {!create} does. *)
 
+val map_item : ('v -> 'v) -> ('v, 's, 'd) t -> ('v, 's, host) t
+(** [map_item f x] is the host value of [x]'s shape whose element at each index
+    is [f] of [x]'s element there, a float stored as {!Dtype.of_float} says.
+    [f] is an OCaml function, so it runs on the host, once per element in C
+    order. [x], at any brand, is read as {!to_array} reads it.
+
+    Raises [Invalid_argument] if [f] gives an [int] outside [x]'s dtype's
+    range, and as {!to_array} does. *)
+
 val of_bigarray :
   ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> ('v, 's, host) t
 (** [of_bigarray b] is a host value holding a copy of [b]'s elements, of [b]'s
@@ -1277,15 +1286,6 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [where c x y] is [x]'s element where [c] is [true] and [y]'s elsewhere.
 
     Raises [Invalid_argument] if the shapes do not broadcast. *)
-
-val map_item : ('v -> 'v) -> ('v, 's, host) t -> ('v, 's, host) t
-(** [map_item f x] is the host value of [x]'s shape whose element at each index
-    is [f] of [x]'s element there, a float stored as {!Dtype.of_float} says.
-    [f] is an OCaml function, so it runs on the host, once per element in C
-    order. [x] is read as {!to_array} reads it.
-
-    Raises [Invalid_argument] if [f] gives an [int] outside [x]'s dtype's
-    range, and as {!to_array} does. *)
 
 (** {2:reductions Reductions and scans}
 

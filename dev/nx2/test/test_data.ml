@@ -311,6 +311,15 @@ let test_map_every_set () =
   equal (array float_exact) [| 4.; 4.; 4. |]
     (Nx.to_array (Nx.map_item (fun v -> v *. 2.) x))
 
+(* A value on a device set is read as [to_array] reads it, and the result
+   lies on the host. *)
+let test_map_device () =
+  let s = [| 4; 3 |] in
+  let x = Nx.place (S2.split ~axis:0) (Nx.create f32 s (floats s)) in
+  let y : Nx.host Nx.float32_t = Nx.map_item Float.neg x in
+  equal (array float_exact) (Array.map Float.neg (floats s)) (Nx.to_array y);
+  equal (array float_exact) (floats s) (Nx.to_array x)
+
 let test_map_dead () =
   let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
   let _ = Nx.add (Nx.donate x) (Nx.create f32 [| 2 |] [| 0.; 0. |]) in
@@ -334,6 +343,7 @@ let maps =
       test "f runs once per element in C order" test_map_order;
       test "an int outside the dtype raises" test_map_range;
       test "a value of every set is computed on the host" test_map_every_set;
+      test "a value on a device set gives a host value" test_map_device;
       test "a dead value raises" test_map_dead;
       test "a traced value raises" test_map_traced;
     ]
