@@ -1155,6 +1155,8 @@ let images_group =
           ("no extension", "x", [| 2; 2; 3 |]);
           ("a vector", "x.png", [| 4 |]);
           ("two channels", "x.png", [| 2; 2; 2 |]);
+          ("no channels", "x.png", [| 2; 2; 0 |]);
+          ("no channels in JPEG", "x.jpg", [| 2; 2; 0 |]);
           ("no rows", "x.png", [| 0; 3; 3 |]);
           ("four channels in JPEG", "x.jpg", [| 2; 2; 4 |]);
           ("no columns in JPEG", "x.jpg", [| 3; 0 |]);

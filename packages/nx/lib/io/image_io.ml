@@ -114,7 +114,8 @@ let map_file fd size =
     |> Bigarray.array1_of_genarray
 
 let checked_pixels width height channels =
-  if width <= 0 || height <= 0 then failwith "image dimensions must be positive";
+  if width <= 0 || height <= 0 || channels <= 0 then
+    failwith "image dimensions must be positive";
   if width > max_int / height || width * height > max_int / channels then
     failwith "image dimensions are too large";
   width * height * channels
@@ -164,8 +165,8 @@ let encode_png data ~width ~height ~channels ~ppm ~srgb =
   Buffer.contents b
 
 let save_jpeg ~overwrite path data ~width ~height ~channels =
-  ignore (checked_pixels width height channels);
   if channels <> 1 && channels <> 3 then
     invalid_arg "JPEG output requires one or three channels";
+  ignore (checked_pixels width height channels);
   Temp_file.write ~overwrite path (fun fd ->
       jpeg_encode fd data width height channels)
