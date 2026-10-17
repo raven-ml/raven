@@ -33,7 +33,14 @@ type event = Def.event =
       data : string;
     }
   | Overwritten of { device : device; time : int; runs : int }
-  | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
+  | Copy of {
+      src : device;
+      dst : device;
+      bytes : int;
+      point : int option;
+      start : int;
+      stop : int;
+    }
 
 (* Taking *)
 

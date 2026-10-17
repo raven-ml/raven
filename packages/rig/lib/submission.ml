@@ -1195,14 +1195,14 @@ let rec go s run buffers waits k =
         raise e
 
 (* What each copy part of [s] moves, read at the submit from the run's
-   [buffers]: the devices of the allocations its bytes leave and reach, and
+   [buffers]: the devices the memory its bytes leave and reach counts in, and
    their count. *)
 let moves_of s buffers =
   let buffer = function Slot k -> buffers.(k) | Buffer b -> b in
   Array.map
     (fun (src, dst) ->
       let src = buffer src and dst = buffer dst in
-      (src.mem.alloc.owner, dst.mem.alloc.owner, src.length))
+      (Memory.account src.mem.alloc, Memory.account dst.mem.alloc, src.length))
     s.copies
 
 (* What a submit reads for the profiles taken before it hands its work over: the
@@ -1263,7 +1263,8 @@ let record s (lane, name) { ps; moves; asked } p pair =
     let copies start stop =
       Array.iter
         (fun (src, dst, bytes) ->
-          Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
+          Profile.add [ prof ]
+            (Copy { src; dst; bytes; point = Some p; start; stop }))
         moves
     in
     if pair < 0 || Dev.settle device value then begin

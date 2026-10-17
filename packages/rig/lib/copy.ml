@@ -24,16 +24,17 @@ let host_address b = b.mem.host + b.offset
 let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
 
 (* Records the host's transfer of [bytes] from [src] to [dst] asked at [start],
-   which it sees done now, between the devices of their allocations, as a submit
-   records a copy part. *)
+   which it sees done now, between the devices their memory counts in, as a
+   submit records a copy part. *)
 let record src dst bytes start =
   if Profile.enabled () then
     Profile.record
       (Copy
          {
-           src = src.mem.alloc.owner;
-           dst = dst.mem.alloc.owner;
+           src = Memory.account src.mem.alloc;
+           dst = Memory.account dst.mem.alloc;
            bytes;
+           point = None;
            start;
            stop = Profile.now ();
          })

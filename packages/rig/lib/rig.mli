@@ -2035,15 +2035,22 @@ module Profile : sig
         src : device;
         dst : device;
         bytes : int;
+        point : Point.t option;
+            (** [Some p] for a copy a device runs, [p] its submission's
+                point, and [None] for a copy the host or an io device
+                runs. *)
         start : int;
         stop : int;
       }
         (** A transfer of [bytes] from [src]'s memory to [dst]'s: a copy part
             of a submission ({!Submission.copy}), rig's own and those of a
             {!Buffer.copy} among them, or a copy the host or an io device
-            runs. [src] and [dst] are the devices of the allocations the
-            bytes leave and reach, so a {!Buffer.borrow} names the device
-            whose memory it borrows.
+            runs. [src] and [dst] are the devices in whose {!allocated} count
+            the memory the bytes leave and reach lies ({!section-reclaim}),
+            or the device whose memory it is where it counts in none. So a
+            {!Buffer.borrow} names the device whose memory it borrows, and
+            [Pinned] memory is the host's except on a device whose memory
+            the host addresses.
 
             Each copy part of a submission records an event with the times
             of the submission's span where its device times the work.

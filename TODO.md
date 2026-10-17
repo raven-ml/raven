@@ -47,11 +47,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
-- rig profile: a Copy event records its allocations' owners
-  (copy.ml:26-36), so a device's Pinned staging and image loads record
-  `d→d`, against rig.mli's "{!host} as one side": name each side by where
-  its bytes are; a span names its submission, so a profile on one domain
-  keeps only its own submissions' spans (both API review)
+- rig profile: a span names its submission, so a profile on one domain
+  keeps only its own submissions' spans (API review)
 - rig.amd to its spec (_plans/gemini-review-2/REPORT.md,
   _plans/rig-size-audit/): unused encoders and options removed, the rest
   behind `(**/**)`; `report`, `block`, `image` hidden; holes as NV's fixed

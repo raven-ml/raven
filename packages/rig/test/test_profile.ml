@@ -562,6 +562,12 @@ let copies events =
       | _ -> None)
     events
 
+(* The points of [events]' copies. *)
+let copy_points events =
+  List.filter_map (function Prof.Copy c -> Some c.point | _ -> None) events
+
+let point = Testable.make ~pp:Rig.Point.pp ~equal:( = )
+
 let test_copy () =
   let d = memory "profile:copy" in
   let src = B.create Rig.host 100 and dst = B.create d 100 in
@@ -569,7 +575,10 @@ let test_copy () =
   equal
     (list (triple string string int))
     [ ("CPU", "profile:copy", 100) ]
-    (copies events)
+    (copies events);
+  equal ~msg:"the host ran it"
+    (list (option point))
+    [ None ] (copy_points events)
 
 (* A copy through the staging memory, between devices that map none of each
    other's memory, records its copies into and out of it and no event of its
@@ -582,6 +591,20 @@ let test_staged_copy () =
   equal
     (slist (triple string string int) compare)
     [ ("CPU", "profile:staged-dst", 64); ("profile:staged-src", "CPU", 64) ]
+    (copies events)
+
+(* A copy through a device's own staging, on a device that maps no host memory,
+   names the host as the staging's side: its Pinned memory counts in the host's
+   budget where the host does not address the device's memory. *)
+let test_device_staged_copy () =
+  let d, _ =
+    P.open_ ~host_visible:false ~maps_host:false "profile:device-staged"
+  in
+  let src = B.create Rig.host 64 and dst = B.create d 64 in
+  let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
+  equal
+    (slist (triple string string int) compare)
+    [ ("CPU", "CPU", 64); ("CPU", "profile:device-staged", 64) ]
     (copies events)
 
 (* A staged copy's leg on a device's queue spans its transfer: the event of a
@@ -624,22 +647,27 @@ let copy_times events =
     (function Prof.Copy c -> Some (c.start, c.stop) | _ -> None)
     events
 
-(* Each copy part records a copy between the devices of the allocations its
-   bytes leave and reach, a borrow's naming the host, with their count. On a
-   device that times no work, it runs from the submit to the wait that saw it
-   done. *)
+(* Each copy part records a copy between the devices its bytes' memory counts
+   in, a borrow's naming the host, with their count and its submission's point.
+   On a device that times no work, it runs from the submit to the wait that saw
+   it done. *)
 let test_copy_parts () =
   let m = memory "profile:copy-parts" in
   let buffers =
     [| borrowed m 64; B.create m 64; B.create m 32; B.create m 32 |]
   in
   let before = Prof.now () in
-  let stop = ref 0 in
+  let stop = ref 0 and submitted = ref None in
   let (), events =
     Prof.take (fun () ->
-        Rig.Point.wait (submit ~buffers (Sub.make m copy_parts));
+        let p = submit ~buffers (Sub.make m copy_parts) in
+        submitted := Some p;
+        Rig.Point.wait p;
         stop := Prof.now ())
   in
+  equal ~msg:"the submission's point"
+    (list (option point))
+    [ !submitted; !submitted ] (copy_points events);
   equal
     (list (triple string string int))
     [
@@ -801,7 +829,14 @@ let test_chrome () =
         };
       Prof.Allocation { device = d; time = 2_500; allocated = 4096 };
       Prof.Copy
-        { src = Rig.host; dst = d; bytes = 64; start = 3_000; stop = 3_200 };
+        {
+          src = Rig.host;
+          dst = d;
+          bytes = 64;
+          point = None;
+          start = 3_000;
+          stop = 3_200;
+        };
     ]
   in
   let file = "chrome.json" in
@@ -884,6 +919,8 @@ let tests =
         test "a copy records the bytes it moved" test_copy;
         test "a staged copy records only its copies into and out of staging"
           test_staged_copy;
+        test "a copy through a device's staging names the host as its side"
+          test_device_staged_copy;
         test "a staged copy's queued leg spans its transfer" test_staged_span;
         test "a submission records each copy part, with its bytes"
           test_copy_parts;

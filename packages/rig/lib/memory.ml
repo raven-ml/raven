@@ -334,6 +334,11 @@ let entry_budget (e : entry) =
 
 let owns (e : entry) = entry_budget e = Device_budget
 
+let account (a : alloc) =
+  match entry_budget a.entry with
+  | Host_budget -> Dev.host
+  | Device_budget | No_budget -> a.owner
+
 let take_device_room (d, n) =
   let l = d.live in
   l.used + n <= d.budget

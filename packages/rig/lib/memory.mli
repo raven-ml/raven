@@ -153,6 +153,11 @@ val locate : region -> Rig_edge.location
 val allocated : device -> int
 (** [allocated d] is {!Rig.allocated}[ d]. *)
 
+val account : alloc -> device
+(** [account a] is the device in whose {!allocated} count [a]'s memory lies,
+    or [a]'s owner for memory that counts in none, as a profile's copy names
+    it ({!Rig.Profile.event}). *)
+
 val note : device -> unit
 (** [note d] records [d]'s allocated bytes in the profiles being taken. *)
 
