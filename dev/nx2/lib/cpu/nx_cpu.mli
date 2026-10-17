@@ -45,7 +45,8 @@
     than [acc] takes the sum in [acc] rounded once, as [Cast] rounds it.
 
     A float or complex contraction adds in the order it is given
-    ({!Nx_kernel.section-orders}), at any shape.
+    ({!Nx_kernel.section-orders}), at any shape, so its parts compose across
+    windows of the contracting axes as both orders state there.
     [contract_order ~rows ~columns] is [Chain] where [rows] and [columns]
     are both above 4 and multiply to at least 64, and [Lane] otherwise.
     With no products, an output is [init] as [acc] holds it, rounded into

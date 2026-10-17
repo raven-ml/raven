@@ -19,15 +19,21 @@
     every device of the target the part of the operand the device's window of
     the result depends on, and lies on no other device: the same window, or the
     whole operand on each device of the target; otherwise it is read at the
-    target moved back to its axes, which the engine places it at. Where every
-    operand lies at one placement that cuts an axis the operation reduces
-    ({!Reduced}), or whole on each of its devices, uncutting those axes would
-    give each operand what it is read at, and each operand there, moved to
-    the results' axes, lies at the target, each is read at that placement,
-    one whole on each device from that device's own array, and an operand of
-    every set there too: the devices that hold one window of the results hold
-    all of its terms between them, and combine their partial results
-    ({!Partial}).
+    target moved back to its axes, which the engine places it at.
+
+    Where an operand lies cut along an axis the operation reduces
+    ({!Reduced}), the first such operand gives the grid of the others. Each
+    operand with reduced axes is read where it lies, or at the first's
+    placement where it reads its axes as the first does and lies whole on
+    each of its devices, from each device's own array, or is of every set.
+    It must lie so that its reduced axes are cut as the first's that share
+    their factors, over the same grid axes; uncutting them gives what the
+    target wants of it; and its other axes, moved to the results' axes, lie
+    as the target's, one such operand's at the whole target. Operands with
+    no reduced axes are read as above. The devices that hold one window of
+    the results then hold all of its terms between them, and combine their
+    partial results ({!Partial}). Otherwise every operand is read as above,
+    whole along its reduced axes.
 
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,
@@ -47,11 +53,15 @@ type axis =
           [Moments] or [Logsumexp] scan's, a sort's, a transform's or a
           gather's source axis, and one a padded load pads, crops or
           windows. *)
-  | Reduced
+  | Reduced of int
       (** Gone from the results: a reduction's axes and a contraction's
           contracting pairs, but one a padded load of the reduction pads,
-          crops or windows, which is [Whole] for every load. Read whole on
-          each device, or cut where the operand lies so ({!route}). *)
+          crops or windows, which is [Whole] for every load. The axes of
+          [Reduced f] for one factor [f] range over one index: a reduction's
+          axis [a] is [Reduced a] in each load, and a contraction's pair [p]
+          is [Reduced p] in both operands. Read whole on each device, or cut
+          where the operand lies so, each factor alike in every operand
+          ({!route}). *)
   | Scanned of int
       (** The results' axis [a] of [Scanned a], along which a scan of a
           [Sum], [Prod], [Max], [Min] or [Arg] without a carry runs, every
@@ -66,10 +76,10 @@ type axis =
     becomes is kept whole: every window the engine computes holds all of it.
 
     This is the sharding rule of Shardy
-    ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}) with one
-    factor per axis: its reduction factors are [Reduced] axes, which an
-    operand may be read cut along, and its need-replication factors [Whole]
-    ones. *)
+    ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}): a
+    result axis is a factor that the axes becoming it share, its reduction
+    factors are the [Reduced] axes, which an operand may be read cut along,
+    and its need-replication factors [Whole] ones, one per axis. *)
 type rule =
   | Elementwise
       (** Operands and results of one shape, each axis becoming itself. *)

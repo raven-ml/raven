@@ -16,11 +16,14 @@ module Counting = struct
   let count = Atomic.make 0
   let computed = Atomic.make 0
   let calls () = Atomic.get count
+  let multiplied = Atomic.make 0
   let positions () = Atomic.get computed
+  let products () = Atomic.get multiplied
 
   let reset () =
     Atomic.set count 0;
-    Atomic.set computed 0
+    Atomic.set computed 0;
+    Atomic.set multiplied 0
 
   let size shape = Array.fold_left ( * ) 1 shape
 
@@ -80,6 +83,9 @@ module Counting = struct
 
   let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
     Atomic.incr count;
+    let s = Nx_array.Layout.shape (Nx_array.layout a) in
+    let k = Array.fold_left (fun k (i, _) -> k * s.(i)) 1 contracting in
+    ignore (Atomic.fetch_and_add multiplied (loop (Nx_array.Any dst) * k));
     Nx_cpu.contract ~order ~batch ~contracting ~acc ~dst ~init a b
 end
 

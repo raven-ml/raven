@@ -876,7 +876,7 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
   let rows ?scanned axes whole =
     let becomes a : Route.axis =
       if Array.mem a whole then Whole
-      else if Array.mem a axes then Reduced
+      else if Array.mem a axes then Reduced a
       else if scanned = Some a then Scanned a
       else
         Becomes
@@ -916,17 +916,20 @@ let linalg_rule l =
   Route.Axes (Array.of_list (List.map (reading [| r - 2; r - 1 |]) ranks))
 
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
-   [b]'s; [init] has its shape. *)
+   [b]'s; [init] has its shape. A contracting pair's two axes share its index as
+   their factor. *)
 let contract_rule batch contracting ra rb init =
   let operand side r first =
     let next = ref first in
     Array.init r (fun a ->
         match Array.find_index (fun p -> side p = a) batch with
         | Some j -> Route.Becomes j
-        | None when Array.exists (fun p -> side p = a) contracting -> Reduced
-        | None ->
-            incr next;
-            Becomes (!next - 1))
+        | None -> (
+            match Array.find_index (fun p -> side p = a) contracting with
+            | Some p -> Reduced p
+            | None ->
+                incr next;
+                Becomes (!next - 1)))
   in
   let nb = Array.length batch and nc = Array.length contracting in
   let a = operand fst ra nb and b = operand snd rb (ra - nc) in

@@ -167,7 +167,15 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     1, a lane holding no term taking no part. The blocks are combined
     by a binary tree whose left part holds the largest power of two of blocks
     below their count, each part combined the same way; then [init] is added.
-    *)
+
+    Both orders compose across windows of a contraction's contracting axes,
+    so that a contraction computed in parts has the bits of one call. In lane
+    order, a node of the blocks' tree has the value of a contraction of
+    exactly its terms from no [init], two nodes combine by {!Prog.Add} in the
+    accumulator, and [init], as the accumulator holds it, is added after the
+    tree. In chain order, a contraction of consecutive terms from an [init]
+    in the accumulator equal to the chain's value before them continues the
+    chain. *)
 
 type order =
   | Chain  (** {e Chain order}. *)
@@ -607,8 +615,12 @@ module type S = sig
       window of [dst] computed alone has the whole's bits. The kernels of one
       order never compute a call given the other. A library that states it
       follows {!section-orders} adds each output's products in [order].
-      Another states the association it computes for each order. A NaN
-      result's sign and payload are unspecified. *)
+      Another states the association it computes for each order, one that
+      composes across windows of the contracting axes as those orders do:
+      partial sums over aligned blocks of the contracted extent, combined in
+      an order that extent alone fixes, so that the number of devices a
+      contraction is cut over never enters its bits. A NaN result's sign and
+      payload are unspecified. *)
 
   (** {1:fft Fourier transforms}
 

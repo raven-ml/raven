@@ -1314,23 +1314,385 @@ let test_float_partials_move () =
     [ 8192; 6000 ];
   under "a variance" 8192 (4 * 8192) (counted (floats D.Float32 8192) Nx.var)
 
-(* Two vectors split over three devices, their contracting axis. *)
-let split_vectors =
-  let open Gen in
-  let* n = int_range 0 9 in
-  let+ xs = array ~size:(constant n) (of_list floats)
-  and+ ys = array ~size:(constant n) (of_list floats) in
-  (xs, ys)
+(* Contractions over cut contracting axes *)
 
-let law_split_dot (xs, ys) =
-  let n = Array.length xs in
-  cover "an empty window" (n > 0 && n < 3);
-  cover "an uneven cut" (n mod 3 <> 0);
-  let host v = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] v) in
-  let x = host xs and y = host ys in
-  let split v = Nx.place (Set3.split ~axis:0) v in
-  let bits v = Array.map float_bits (elements v) in
-  equal (array string) (bits (Nx.dot x y)) (bits (Nx.dot (split x) (split y)))
+(* An operand dtype, the accumulator a contraction of it takes, how its
+   elements' bits print and a draw of one. *)
+type ckind =
+  | Ckind : {
+      cdtype : ('v, 's) D.t;
+      acc : D.any;
+      cshow : 'v -> string;
+      draw : Random.State.t -> 'v;
+    }
+      -> ckind
+
+(* A finite float spread over 2^±20, so that sums depend on their
+   association, or [-0.]. *)
+let spread st =
+  if Random.State.int st 16 = 0 then -0.
+  else
+    Float.ldexp (Random.State.float st 2. -. 1.) (Random.State.int st 41 - 20)
+
+let ckinds =
+  let float dt acc =
+    Ckind { cdtype = dt; acc = D.Any acc; cshow = float_bits; draw = spread }
+  in
+  let complex dt =
+    Ckind
+      {
+        cdtype = dt;
+        acc = D.Any dt;
+        cshow = complex_bits;
+        draw = (fun st -> { Complex.re = spread st; im = spread st });
+      }
+  in
+  let int32s = [| 0l; 1l; -1l; 7l; Int32.max_int; Int32.min_int |] in
+  [
+    float D.Float32 D.Float32;
+    float D.Float64 D.Float64;
+    float D.Float16 D.Float32;
+    float D.Bfloat16 D.Float32;
+    complex D.Complex64;
+    complex D.Complex128;
+    Ckind
+      {
+        cdtype = D.Int32;
+        acc = D.Any D.Int32;
+        cshow = Int32.to_string;
+        draw = (fun st -> int32s.(Random.State.int st (Array.length int32s)));
+      };
+    Ckind
+      {
+        cdtype = D.Int8;
+        acc = D.Any D.Int32;
+        cshow = string_of_int;
+        draw = (fun st -> Random.State.int st 256 - 128);
+      };
+  ]
+
+(* Where the operands lie, the contracting pair [p] cut alike in both: over
+   three or four devices; over both mesh axes; over the minor one, beside
+   [a]'s rows over the major one; over the minor one, beside the batch over
+   the major one in both; or pair 0 over the major axis and pair 1 over the
+   minor one. *)
+type ccut =
+  | Pair3 of int
+  | Pair4 of int
+  | Pair_mesh of int
+  | Pair_rows of int
+  | Pair_batch of int
+  | Pairs
+
+type ccase = {
+  ck : ckind;
+  nb : int option;  (* The batch's extent, if there is one. *)
+  rows : int;
+  cols : int;
+  ks : int array;  (* The contracting pairs' extents. *)
+  ccut : ccut;
+  order : Nx_kernel.order;
+  init : bool;
+  cseed : int;
+}
+
+let pp_ccase ppf c =
+  let (Ckind k) = c.ck in
+  let cut =
+    match c.ccut with
+    | Pair3 p -> Printf.sprintf "pair %d over 3" p
+    | Pair4 p -> Printf.sprintf "pair %d over 4" p
+    | Pair_mesh p -> Printf.sprintf "pair %d over 2x2" p
+    | Pair_rows p -> Printf.sprintf "pair %d/b rows/a" p
+    | Pair_batch p -> Printf.sprintf "pair %d/b batch/a" p
+    | Pairs -> "pair 0/a pair 1/b"
+  in
+  Format.fprintf ppf "%s %s%d x %d by %a, %s, %s order%s, seed %d"
+    (D.name k.cdtype)
+    (match c.nb with Some b -> Printf.sprintf "%d of " b | None -> "")
+    c.rows c.cols pp_ints c.ks cut
+    (match c.order with Lane -> "lane" | Chain -> "chain")
+    (if c.init then " from init" else "")
+    c.cseed
+
+(* The axis of [a] and of [b] that the contracting pair [p] names: [a] is
+   [[batch; rows; pairs]], [b] [[batch; pairs; columns]]. *)
+let pair_axes c p =
+  let ob = if Option.is_some c.nb then 1 else 0 in
+  (ob + 1 + p, ob + p)
+
+(* The first index of each of [t] tiles of [extent], then [extent]: the first
+   [extent mod t] tiles hold one more. *)
+let tile_starts extent t =
+  List.init (t + 1) (fun j -> (j * (extent / t)) + Stdlib.min j (extent mod t))
+
+let ccase =
+  let open Gen in
+  with_pp pp_ccase
+    (let* ck = of_list ckinds in
+     let* two = frequency [ (3, constant false); (1, constant true) ] in
+     let* ccut =
+       if two then
+         of_list
+           [ Pair3 1; Pair4 1; Pair_mesh 1; Pair_rows 1; Pair_mesh 0; Pairs ]
+       else
+         of_list [ Pair3 0; Pair4 0; Pair_mesh 0; Pair_rows 0; Pair_batch 0 ]
+     in
+     let* nb =
+       match ccut with
+       | Pair_batch _ -> map Option.some (of_list [ 1; 2; 3 ])
+       | _ -> frequency [ (3, constant None); (1, constant (Some 2)) ]
+     in
+     let* rows = int_range 1 3 in
+     let* cols = int_range 1 3 in
+     (* Extents either side of lane order's blocks: of 1024 terms, 512
+        complex products. *)
+     let* ks =
+       if two then
+         let+ k0 = of_list [ 1; 2; 3; 5 ]
+         and+ k1 = of_list [ 0; 1; 3; 300; 511; 700 ] in
+         [| k0; k1 |]
+       else
+         let+ k =
+           of_list
+             [
+               0; 1; 2; 3; 5; 511; 512; 513; 1023; 1024; 1025; 1500; 2048; 2049;
+               4096;
+             ]
+         in
+         [| k |]
+     in
+     let* order = of_list [ Nx_kernel.Lane; Chain ] in
+     let* init = bool in
+     let+ cseed = int in
+     { ck; nb; rows; cols; ks; ccut; order; init; cseed })
+
+(* The case's operands and its contraction's [batch] and [contracting]
+   pairs. *)
+let ccase_values (type v s) (dt : (v, s) D.t) (draw : Random.State.t -> v) c =
+  let st = Random.State.make [| c.cseed |] in
+  let lead = match c.nb with Some b -> [| b |] | None -> [||] in
+  let sa = Array.concat [ lead; [| c.rows |]; c.ks ] in
+  let sb = Array.concat [ lead; c.ks; [| c.cols |] ] in
+  let so = Array.concat [ lead; [| c.rows; c.cols |] ] in
+  let host s =
+    let n = Array.fold_left ( * ) 1 s in
+    let data = Array.init n (fun _ -> draw st) in
+    Nx.Repr.of_array Nx.Host.v (A.of_array dt s data)
+  in
+  let a = host sa and b = host sb and i = host so in
+  let batch = match c.nb with Some _ -> [| (0, 0) |] | None -> [||] in
+  let contracting = Array.init (Array.length c.ks) (pair_axes c) in
+  (a, b, i, batch, contracting)
+
+(* The contraction of the case over [a], [b] and [init], its bits. *)
+let ccontract (type v s d) (cshow : v -> string) c acc batch contracting
+    (a : (v, s, d) Nx.t) (b : (v, s, d) Nx.t) (init : (v, s, d) Nx.t) =
+  let y =
+    Nx.Prim.eval ~by:"test"
+      (Contract
+         {
+           order = c.order;
+           batch;
+           contracting;
+           acc;
+           out = Nx.dtype a;
+           a;
+           b;
+           init = (if c.init then Some init else None);
+         })
+  in
+  Array.map cshow (elements y)
+
+let law_ccase c =
+  let (Ckind k) = c.ck in
+  let a, b, init, batch, contracting = ccase_values k.cdtype k.draw c in
+  let cut_pair, tiles =
+    match c.ccut with
+    | Pair3 p -> (p, 3)
+    | Pair4 p | Pair_mesh p -> (p, 4)
+    | Pair_rows p | Pair_batch p -> (p, 2)
+    | Pairs -> (1, 2)
+  in
+  let kc = c.ks.(cut_pair) in
+  let terms = Array.fold_left ( * ) 1 c.ks in
+  let one_pair = Array.length c.ks = 1 in
+  (* Products per block of lane order, and where windows of one pair end. *)
+  let block = if D.is D.Complex k.cdtype then 512 else 1024 in
+  let edges = List.filter (fun s -> s > 0 && s < kc) (tile_starts kc tiles) in
+  cover ("a contraction of " ^ D.name k.cdtype) true;
+  cover "lane order" (c.order = Lane);
+  cover "chain order" (c.order = Chain);
+  cover "from init" c.init;
+  cover "no product" (terms = 0);
+  cover "an empty window along the cut pair" (kc > 0 && kc < tiles);
+  cover "an uneven cut" (kc mod tiles <> 0);
+  cover "a cut on a pair after the first" (cut_pair > 0);
+  cover "two pairs cut" (c.ccut = Pairs);
+  cover "a pair cut over both mesh axes"
+    (match c.ccut with Pair_mesh _ -> true | _ -> false);
+  cover "a pair cut beside rows"
+    (match c.ccut with Pair_rows _ -> true | _ -> false);
+  cover "a pair cut beside the batch"
+    (match c.ccut with Pair_batch _ -> true | _ -> false);
+  cover "a lane block that window edges split"
+    (c.order = Lane && one_pair && terms > block
+    && List.exists (fun e -> e mod block <> 0) edges);
+  cover "several lane blocks, each in one window"
+    (c.order = Lane && one_pair && terms > block
+    && List.for_all (fun e -> e mod block = 0) edges);
+  let expected = ccontract k.cshow c k.acc batch contracting a b init in
+  let at (type d) (pa : d Nx.Placement.t) (pb : d Nx.Placement.t)
+      (pi : d Nx.Placement.t) =
+    ccontract k.cshow c k.acc batch contracting (Nx.place pa a) (Nx.place pb b)
+      (Nx.place pi init)
+  in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let pa p = fst (pair_axes c p) and pb p = snd (pair_axes c p) in
+  let actual =
+    match c.ccut with
+    | Pair3 p -> at (Set3.split ~axis:(pa p)) (Set3.split ~axis:(pb p)) Set3.on
+    | Pair4 p -> at (Set4.split ~axis:(pa p)) (Set4.split ~axis:(pb p)) Set4.on
+    | Pair_mesh p ->
+        let both axis = mesh [ (axis, [ "a"; "b" ]) ] in
+        at (both (pa p)) (both (pb p)) Set4.on
+    | Pair_rows p ->
+        let rows = if Option.is_some c.nb then 1 else 0 in
+        at
+          (mesh [ (rows, [ "a" ]); (pa p, [ "b" ]) ])
+          (mesh [ (pb p, [ "b" ]) ])
+          (mesh [ (rows, [ "a" ]) ])
+    | Pair_batch p ->
+        at
+          (mesh [ (0, [ "a" ]); (pa p, [ "b" ]) ])
+          (mesh [ (0, [ "a" ]); (pb p, [ "b" ]) ])
+          (mesh [ (0, [ "a" ]) ])
+    | Pairs ->
+        at
+          (mesh [ (pa 0, [ "a" ]); (pa 1, [ "b" ]) ])
+          (mesh [ (pb 0, [ "a" ]); (pb 1, [ "b" ]) ])
+          Set4.on
+  in
+  equal (array string) expected actual
+
+(* A matrix product through Nx over operands cut along its contracting axis:
+   [matmul], [dot] of a matrix and a vector, and [einsum]. *)
+type nx_product = Matmul | Dot_vector | Einsum
+
+type nx_case = {
+  nk : ckind;
+  product : nx_product;
+  nrows : int;
+  ncols : int;
+  k : int;
+  nwhere : ccut;
+  nseed : int;
+}
+
+let pp_nx_case ppf c =
+  let (Ckind k) = c.nk in
+  Format.fprintf ppf "%s %s %d x %d by %d, %s, seed %d"
+    (match c.product with
+    | Matmul -> "matmul"
+    | Dot_vector -> "dot"
+    | Einsum -> "einsum")
+    (D.name k.cdtype) c.nrows c.ncols c.k
+    (match c.nwhere with
+    | Pair3 _ -> "over 3"
+    | Pair4 _ -> "over 4"
+    | Pair_mesh _ -> "over 2x2"
+    | _ -> "beside rows")
+    c.nseed
+
+let nx_case =
+  let open Gen in
+  with_pp pp_nx_case
+    (let* nk = of_list ckinds in
+     let* product = of_list [ Matmul; Dot_vector; Einsum ] in
+     (* Few rows or columns sum in lane order, more in chain order. *)
+     let* nrows = of_list [ 1; 2; 5; 9 ] in
+     let* ncols = of_list [ 1; 2; 5; 9 ] in
+     let* k = of_list [ 0; 1; 2; 3; 7; 1025; 1500; 2049 ] in
+     let* nwhere = of_list [ Pair3 0; Pair4 0; Pair_mesh 0; Pair_rows 0 ] in
+     let+ nseed = int in
+     { nk; product; nrows; ncols; k; nwhere; nseed })
+
+let law_nx_case c =
+  let (Ckind k) = c.nk in
+  let st = Random.State.make [| c.nseed |] in
+  let host s =
+    let n = Array.fold_left ( * ) 1 s in
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array k.cdtype s (Array.init n (fun _ -> k.draw st)))
+  in
+  let a = host [| c.nrows; c.k |] in
+  let b =
+    match c.product with
+    | Dot_vector -> host [| c.k |]
+    | Matmul | Einsum -> host [| c.k; c.ncols |]
+  in
+  let columns = match c.product with Dot_vector -> 1 | _ -> c.ncols in
+  cover "lane order" (c.nrows <= 4 || columns <= 4 || c.nrows * columns < 64);
+  cover "chain order" (c.nrows > 4 && columns > 4 && c.nrows * columns >= 64);
+  cover "an empty window" (c.k > 0 && c.k < 3);
+  let product (type d) (a : (_, _, d) Nx.t) (b : (_, _, d) Nx.t) =
+    let y =
+      match c.product with
+      | Matmul -> Nx.matmul a b
+      | Dot_vector -> Nx.dot a b
+      | Einsum -> Nx.einsum (Nx.Pattern.v "i j, j k -> i k | j") [ a; b ]
+    in
+    Array.map k.cshow (elements y)
+  in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let actual =
+    match c.nwhere with
+    | Pair3 _ ->
+        product
+          (Nx.place (Set3.split ~axis:1) a)
+          (Nx.place (Set3.split ~axis:0) b)
+    | Pair4 _ ->
+        product
+          (Nx.place (Set4.split ~axis:1) a)
+          (Nx.place (Set4.split ~axis:0) b)
+    | Pair_mesh _ ->
+        product
+          (Nx.place (mesh [ (1, [ "a"; "b" ]) ]) a)
+          (Nx.place (mesh [ (0, [ "a"; "b" ]) ]) b)
+    | Pair_rows _ | Pair_batch _ | Pairs ->
+        product
+          (Nx.place (mesh [ (0, [ "a" ]); (1, [ "b" ]) ]) a)
+          (Nx.place (mesh [ (0, [ "b" ]) ]) b)
+  in
+  equal (array string) (product a b) actual
+
+let test_contractions_move () =
+  (* Read whole, each of four devices would contract all of the [k] terms of
+     each output: [4 m n k] products. Cut, each contracts its window: 8 x 8
+     sums in chain order, 2 x 2 in lane order; windows of 1500 leave lane
+     blocks straddling two devices. *)
+  let counted m n k =
+    let floats s =
+      A.of_array D.Float32 s
+        (Array.init (Array.fold_left ( * ) 1 s) (fun i ->
+             Float.of_int (i mod 7) /. 7.))
+    in
+    let place axis x =
+      Nx.place (Count4.split ~axis) (Nx.Repr.of_array Nx.Host.v x)
+    in
+    let a = place 1 (floats [| m; k |]) and b = place 0 (floats [| k; n |]) in
+    C.reset ();
+    let y = Nx.matmul a b in
+    let got = C.products () in
+    ignore (elements y);
+    less int
+      ~msg:(Printf.sprintf "%d x %d by %d" m n k)
+      ~than:(2 * m * n * k) got
+  in
+  counted 8 8 4096;
+  counted 2 2 4096;
+  counted 2 2 6000;
+  counted 8 8 6000
 
 (* Scans along cut axes *)
 
@@ -1593,9 +1955,6 @@ let test_scans_move () =
 let placements =
   group "placements"
     [
-      prop "a contraction of operands cut along its contracting axis gives \
-            its bits on one device"
-        split_vectors law_split_dot;
       prop ~count:1000
         "an operation over a value at any placement gives its bits on one \
          device"
@@ -1611,6 +1970,16 @@ let placements =
         lane_case law_lanes;
       test "a float reduction over a cut axis moves partials, not the operand"
         test_float_partials_move;
+      prop ~count:400
+        "a contraction over cut contracting axes gives its bits on one device"
+        ccase law_ccase;
+      prop ~count:200
+        "a matrix product over a cut contracting axis gives its bits on one \
+         device"
+        nx_case law_nx_case;
+      test "a contraction over a cut axis contracts each window, not the \
+            operands"
+        test_contractions_move;
       prop ~count:500 "a scan along cut axes gives its bits on one device"
         scan_case law_scans;
       prop ~count:100 "a scan of a cut value's prefix is its scan's prefix"

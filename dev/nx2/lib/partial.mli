@@ -64,9 +64,39 @@
     unit of each block: per block, a [Place] per other tile, an assembly, a
     reduction and a combination on each device, some 8000 of each for
     [[8192; 1000]] cut along axis 1. Laying a window's terms out is one pass,
-    after a map where the program is not its operand. Any other operation, a
-    [Contract], reads its operands whole along the axes it reduces, placed
-    as above.
+    after a map where the program is not its operand.
+
+    A [Contract] computes per group of its result's devices that hold one
+    window of it, in its order of summation, the whole contraction's. A
+    device's windows of [a] and [b] along the contracting pairs, alike, are
+    its {e tile}; its terms are numbered as {!Nx_kernel.section-orders}
+    numbers the whole's, and it lays its windows out as
+    [[batch; rows; terms]] and [[batch; terms; columns]], the terms in
+    their number's order.
+
+    - In lane order, a node of the tree whose terms one tile holds is a
+      {e unit} there, as is a block that window edges split, on the device
+      that holds most of its terms, the others' parts of [a] and [b] moved
+      there first. Each unit is one contraction of exactly its terms into
+      the accumulator from no [init]. Each device of the group takes every
+      unit, combines them up the tree by [Add], adds [init] as the
+      accumulator holds it, and rounds once into the result's dtype.
+    - In chain order, the runs of the group's terms, in increasing number,
+      each on the first device holding it, contract in turn into the
+      accumulator: the first from [init] as the accumulator holds it, or
+      none, each other from the sum before it, moved to it. The last sum
+      rounds once into the result's dtype and moves to every device of the
+      group.
+
+    A contraction where a contracting axis has no element reads its
+    operands whole along the contracting axes, placed as above.
+
+    In lane order, each device takes its window of the results in the
+    accumulator for each unit it does not compute, and a block that window
+    edges split moves the parts of [a] and [b] its device lacks, once. In
+    chain order, each run after the first takes the sum before it, and the
+    devices holding the runs compute one after the other. Laying a window
+    out is one copy where its axes are not in that order already.
 
     A [Scan] computes per group of its results' devices that hold one window
     of the axes off its axis; a device's window along its axis is its

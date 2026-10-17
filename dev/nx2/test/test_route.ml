@@ -23,6 +23,11 @@ let route r ps shapes = Route.route ~by:"Nx.f" r ps shapes
 (* The route of operands that all have a placement. *)
 let placed r ps shapes = Option.get (route r (Array.map Option.some ps) shapes)
 
+(* A matrix product's rule: [a]'s columns and [b]'s rows are its contracting
+   pair. *)
+let matrix_product =
+  Route.Axes [| [| Becomes 0; Reduced 0 |]; [| Reduced 0; Becomes 1 |] |]
+
 let pp_at ppf = function
   | Some p -> Devices.pp_placement ppf p
   | None -> Format.pp_print_string ppf "every set"
@@ -34,7 +39,7 @@ let pp_ints ppf a =
 let pp_axis ppf : Route.axis -> unit = function
   | Becomes a -> Format.pp_print_int ppf a
   | Whole -> Format.pp_print_string ppf "whole"
-  | Reduced -> Format.pp_print_string ppf "reduced"
+  | Reduced f -> Format.fprintf ppf "reduced %d" f
   | Scanned a -> Format.fprintf ppf "scanned %d" a
 
 let pp_axes ppf a =
@@ -94,9 +99,10 @@ let placement_of rank =
 let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
-   the results, of its extent, plainly or scanned, or none, whole or reduced,
-   of any extent. *)
-let operand_of out =
+   the results, of its extent, plainly or scanned, or none, whole of any extent
+   or reduced. Its reduced axes, in order, have the factors 0, 1 and 2, of
+   [factors]' extents. *)
+let operand_of factors out =
   let open Gen in
   let rank = Array.length out in
   let* r = int_range 1 3 in
@@ -105,13 +111,24 @@ let operand_of out =
   and+ reduced = array ~size:(constant r) bool
   and+ scanned = array ~size:(constant r) bool in
   let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
+  let factor a =
+    let f = ref 0 in
+    for a' = 0 to a - 1 do
+      if axes.(a') < 0 && reduced.(a') then incr f
+    done;
+    !f
+  in
   let axis a t : Route.axis =
     if t >= 0 then if scanned.(a) then Scanned t else Becomes t
-    else if reduced.(a) then Reduced
+    else if reduced.(a) then Reduced (factor a)
     else Whole
   in
-  ( Array.mapi axis axes,
-    Array.mapi (fun a t -> if t < 0 then along.(a) else out.(t)) axes )
+  let extent a t =
+    if t >= 0 then out.(t)
+    else if reduced.(a) then factors.(factor a)
+    else along.(a)
+  in
+  (Array.mapi axis axes, Array.mapi extent axes)
 
 (* The operand a scatter writes into: the results' shape, each axis becoming
    itself or read whole. *)
@@ -130,12 +147,13 @@ let case =
   let* out = array ~size:(constant rank) extent in
   let* n = int_range 1 3 in
   let* kind = int_range 0 2 in
+  let* factors = array ~size:(constant 3) extent in
   let* operands =
     match kind with
     | 0 -> constant (Array.make n ([||], out))
-    | 1 -> array ~size:(constant n) (operand_of out)
+    | 1 -> array ~size:(constant n) (operand_of factors out)
     | _ ->
-        let+ others = array ~size:(constant (n - 1)) (operand_of out)
+        let+ others = array ~size:(constant (n - 1)) (operand_of factors out)
         and+ into = into_of out in
         Array.append others [| into |]
   in
@@ -146,10 +164,23 @@ let case =
     | _ -> Into (Array.map fst operands)
   in
   let shapes = Array.map snd operands in
+  (* Often each operand's axis of factor 0 split over the four devices: the
+     operands' terms pair up there. *)
+  let* paired = bool in
+  let factor0 i =
+    match rule with
+    | Route.Elementwise -> None
+    | Axes t | Into t -> Array.find_index (( = ) (Route.Reduced 0)) t.(i)
+  in
   let rec placements i =
     if i = n then constant []
     else
-      let* p = placement_of (Array.length shapes.(i)) in
+      let* p =
+        match factor0 i with
+        | Some axis when paired ->
+            constant (Some (Devices.split ~by:"t" ~axis s4))
+        | Some _ | None -> placement_of (Array.length shapes.(i))
+      in
       let+ rest = placements (i + 1) in
       p :: rest
   in
@@ -167,7 +198,7 @@ let depends c i (w : R.range array) =
         (fun a d ->
           match t.(i).(a) with
           | Route.Becomes a' | Scanned a' -> w.(a')
-          | Whole | Reduced -> { R.start = 0; count = d; step = 1 })
+          | Whole | Reduced _ -> { R.start = 0; count = d; step = 1 })
         c.shapes.(i)
 
 let pp_ranges ppf (w : R.range array) =
@@ -188,11 +219,16 @@ let contains (outer : R.range array) (inner : R.range array) =
 
 let position p k = Array.find_index (( = ) k) (Grid.devices (Devices.grid p))
 
-(* Whether operand [i]'s axis [a] is one the rule reduces. *)
-let is_reduced c i a =
+(* The factor of operand [i]'s axis [a], if the rule reduces it. *)
+let factor_of c i a =
   match c.rule with
-  | Route.Elementwise -> false
-  | Axes t | Into t -> t.(i).(a) = Route.Reduced
+  | Route.Elementwise -> None
+  | Axes t | Into t -> (
+      match t.(i).(a) with
+      | Route.Reduced f -> Some f
+      | Becomes _ | Whole | Scanned _ -> None)
+
+let is_reduced c i a = factor_of c i a <> None
 
 (* [box] along the axes [keep] holds, whole along the others. *)
 let along keep (box : R.range array) (whole : R.range array) =
@@ -251,7 +287,7 @@ let law =
                   Array.exists
                     (Array.exists (function
                       | Route.Becomes _ | Scanned _ -> false
-                      | Whole | Reduced -> true))
+                      | Whole | Reduced _ -> true))
                     t
             in
             cover "a split result beside an axis read whole"
@@ -299,7 +335,38 @@ let law =
                          need);
                     equal ranges ~msg:"the rule's window" (depends c i w)
                       (Route.window c.rule ~operand:i c.shapes.(i) w))
-                  r.operands)
+                  r.operands;
+                (* Axes of one factor hold one range on each device, so
+                   each device's terms pair up across operands. *)
+                let held = Hashtbl.create 3 in
+                Array.iteri
+                  (fun i p ->
+                    let pos = Option.get (position p k) in
+                    let wk = Devices.window ~by:"t" p c.shapes.(i) pos in
+                    Array.iteri
+                      (fun a (rg : R.range) ->
+                        match factor_of c i a with
+                        | Some f ->
+                            let cut = rg.count < c.shapes.(i).(a) in
+                            Hashtbl.add held f (i, rg, cut)
+                        | None -> ())
+                      wk)
+                  r.operands;
+                List.iter
+                  (fun f ->
+                    match Hashtbl.find_all held f with
+                    | [] -> ()
+                    | (i0, first, _) :: rest ->
+                        cover "operands of one factor read cut alike"
+                          (List.exists
+                             (fun (i, _, cut) -> i <> i0 && cut)
+                             rest);
+                        List.iter
+                          (fun (_, rg, _) ->
+                            equal ranges ~msg:"one factor's range" [| first |]
+                              [| rg |])
+                          rest)
+                  [ 0; 1; 2 ])
               windows
           end)
 
@@ -402,7 +469,10 @@ let cases_ =
       test "a reduction of a split axis reads it where it lies" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =
-            placed (Axes [| [| Becomes 0; Reduced |] |]) [| x |] [| [| 4; 8 |] |]
+            placed
+              (Axes [| [| Becomes 0; Reduced 1 |] |])
+              [| x |]
+              [| [| 4; 8 |] |]
           in
           equal placement (Devices.on s4) r.result;
           equal bool true (r.operands.(0) == x));
@@ -413,7 +483,7 @@ let cases_ =
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let rule =
             Route.Axes
-              [| [| Becomes 0; Reduced |]; [| Becomes 0; Reduced |] |]
+              [| [| Becomes 0; Reduced 1 |]; [| Becomes 0; Reduced 1 |] |]
           in
           let r =
             placed rule [| Devices.on s4; x |] [| [| 4; 8 |]; [| 4; 8 |] |]
@@ -427,7 +497,7 @@ let cases_ =
           let y = Devices.split ~by:"t" ~axis:0 s4 in
           let rule =
             Route.Axes
-              [| [| Becomes 0; Reduced |]; [| Becomes 0; Reduced |] |]
+              [| [| Becomes 0; Reduced 1 |]; [| Becomes 0; Reduced 1 |] |]
           in
           let r = placed rule [| x; y |] [| [| 4; 8 |]; [| 4; 8 |] |] in
           equal placement y r.result;
@@ -454,7 +524,10 @@ let cases_ =
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =
-            placed (Axes [| [| Reduced; Becomes 0 |] |]) [| x |] [| [| 4; 8 |] |]
+            placed
+              (Axes [| [| Reduced 0; Becomes 0 |] |])
+              [| x |]
+              [| [| 4; 8 |] |]
           in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
@@ -481,14 +554,38 @@ let cases_ =
                 [| [| 4 |]; [| 4 |] |]));
       test "a contraction keeps its batch and free cuts" (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
-          let rule =
-            Route.Axes [| [| Becomes 0; Reduced |]; [| Reduced; Becomes 1 |] |]
-          in
           let r =
-            placed rule [| x; Devices.on s4 |] [| [| 8; 4 |]; [| 4; 4 |] |]
+            placed matrix_product
+              [| x; Devices.on s4 |]
+              [| [| 8; 4 |]; [| 4; 4 |] |]
           in
           equal placement x r.result;
           equal bool true (r.operands.(0) == x);
+          equal placement (Devices.on s4) r.operands.(1));
+      test "a contraction reads operands cut alike along a pair where they lie"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let y = Devices.split ~by:"t" ~axis:0 s4 in
+          let shapes = [| [| 8; 5 |]; [| 5; 6 |] |] in
+          let r = placed matrix_product [| x; y |] shapes in
+          equal placement (Devices.on s4) r.result;
+          equal bool true (r.operands.(0) == x);
+          equal bool true (r.operands.(1) == y));
+      test "a contraction keeps a free cut beside a pair cut alike" (fun () ->
+          let x = Devices.mesh ~by:"t" mesh [ (0, [ "a" ]); (1, [ "b" ]) ] in
+          let y = Devices.mesh ~by:"t" mesh [ (0, [ "b" ]) ] in
+          let shapes = [| [| 8; 5 |]; [| 5; 6 |] |] in
+          let r = placed matrix_product [| x; y |] shapes in
+          equal placement (Devices.mesh ~by:"t" mesh [ (0, [ "a" ]) ]) r.result;
+          equal bool true (r.operands.(0) == x);
+          equal bool true (r.operands.(1) == y));
+      test "a contraction reads a pair cut unlike whole" (fun () ->
+          let x = Devices.mesh ~by:"t" mesh [ (1, [ "a" ]) ] in
+          let y = Devices.mesh ~by:"t" mesh [ (0, [ "b" ]) ] in
+          let shapes = [| [| 8; 5 |]; [| 5; 6 |] |] in
+          let r = placed matrix_product [| x; y |] shapes in
+          equal placement (Devices.on s4) r.result;
+          equal placement (Devices.on s4) r.operands.(0);
           equal placement (Devices.on s4) r.operands.(1));
       test "operands on two sets raise" (fun () ->
           invalid (fun () ->

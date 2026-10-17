@@ -1522,7 +1522,19 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 (** {1:contraction Contraction}
 
     A contraction multiplies two operands along their paired axes and sums the
-    products over the summed ones. *)
+    products over the summed ones. Its order of association depends on the
+    shapes alone, so its bits do not depend on where its operands lie.
+
+    Where both operands' paired summed axes are cut alike across devices,
+    each device reads its own windows, and partial sums move instead of the
+    operands. In lane order ({!Nx_kernel.section-orders}), each device sums
+    the part of the order its windows hold, a block that a window's edge
+    cuts moving to one device first, and the devices that hold one window of
+    the result combine those sums. In chain order, the devices holding the
+    summed axes run one after another, each continuing the sum from the one
+    before. On devices that compute apart, as GPUs, that serialises them for
+    the contraction; nx already calls memory devices one after another.
+    Summed axes cut otherwise are read whole on each device. *)
 
 val contract :
   ?sizes:(string * int) list ->
