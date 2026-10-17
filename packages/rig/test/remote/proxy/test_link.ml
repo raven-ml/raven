@@ -513,15 +513,18 @@ let no_object (_, f) =
   | Link.Failed _ -> ()
   | s -> failf "the job is %a" (Testable.pp state) s
 
-(* A root cause crosses to the peer's process and fails its job there,
-   unchanged. *)
-let reaches_process ?cut why =
+(* A root cause crosses to the peer's process unchanged, cut to 4096 bytes, and
+   fails its job there, marked as its peer's: after the name of its link to
+   this process and " aborted: ", the whole cut to 4096 bytes. *)
+let reaches_process why =
   with_job @@ fun j ->
   let h, _ = start j "idle" ~name:"agent" in
   guard h @@ fun () ->
   Link.fail j why;
-  let why = match cut with Some n -> String.sub why 0 n | None -> why in
-  equal (list string) [ "failed: " ^ why ] (finish h)
+  let cut s = if String.length s > 4096 then String.sub s 0 4096 else s in
+  equal (list string)
+    [ "failed: " ^ cut ("controller aborted: " ^ cut why) ]
+    (finish h)
 
 (* Ids are non-negative: a request that names a negative one raises before it
    sends a byte. *)
@@ -539,7 +542,7 @@ let reasons = [ "the agent lost its GPU"; ""; "\xe2\x9c\x93 \xff" ]
 let why_layout () =
   with_raw (fun j _ p ->
       write p (frame k_abort (str "lost"));
-      equal ~msg:"an abort read" state (Link.Failed "lost")
+      equal ~msg:"an abort read" state (Link.Failed "peer aborted: lost")
         (Link.wait j ~ms:2000));
   with_raw (fun j _ p ->
       Link.fail j "gone";
@@ -597,7 +600,7 @@ let causes =
       test "a root cause with a NUL reaches the peer's process whole" (fun () ->
           reaches_process "nul\000byte");
       test "a root cause of 70000 bytes reaches the peer's process cut to 4096"
-        (fun () -> reaches_process ~cut:4096 (String.make 70_000 'w'));
+        (fun () -> reaches_process (String.make 70_000 'w'));
       test "a frame's why is a string, as wire.mli lays strings out" why_layout;
       test "a request naming a negative id raises and sends nothing" negative_id;
     ]
@@ -611,68 +614,11 @@ let abort_reaches_peer () =
   Link.fail j "the test fails it";
   equal (list int) [ k_abort ] (kinds p)
 
-(* The abort leaves before the process learns of the failure. *)
 let malformed_reaches_peer () =
   with_raw @@ fun j _ p ->
   write p (frame 0 "");
   equal (list int) [ k_abort ] (kinds p);
   equal state (Link.Failed "peer: a malformed frame") (Link.wait j ~ms:2000)
-
-(* The frames of the bytes [s], other than beats and rails, up to the last whole
-   one. *)
-let frames_of s =
-  let rec go off acc =
-    if off + 9 > String.length s then List.rev acc
-    else
-      let n = Int64.to_int (String.get_int64_le s off) in
-      let k = Char.code s.[off + 8] in
-      if off + 9 + n > String.length s then List.rev acc
-      else if k = k_beat || k = k_rail then go (off + 9 + n) acc
-      else go (off + 9 + n) ((k, String.sub s (off + 9) n) :: acc)
-  in
-  go 0 []
-
-(* A busy rail fills the connection; once the job fails, the peer keeps the
-   connection nearly full for a while and beats, so beats arrive after the
-   failed side ended its stream. Its stream still ends with the abort. [fail]
-   returns once the abort left, after the transfer being sent: it runs on a
-   thread of its own while this one reads. *)
-let abort_behind_rail () =
-  with_raw @@ fun j l p ->
-  let t = { Rig_remote_abi.src = 0; dst = 0; length = 1 lsl 16 } in
-  let e = Link.rail l ~id:1 ~send:[| t |] ~receive:[||] in
-  e.ready 1_000_000_000;
-  if not (readable p patience) then fail "the rail sent nothing";
-  Thread.delay 0.1 (* the rail fills the connection *);
-  let failed = spawn (fun () -> Link.fail j "the test fails it") in
-  let beating = Atomic.make true in
-  let beats =
-    Thread.create
-      (fun () ->
-        while Atomic.get beating do
-          (try write p (frame k_beat "") with Unix.Unix_error _ -> ());
-          Thread.delay 0.02
-        done)
-      ()
-  in
-  let got = Buffer.create (1 lsl 20) in
-  let slow_until = Unix.gettimeofday () +. 1.5 in
-  let rec slowly () =
-    let s = read_n p 16384 in
-    Buffer.add_string got s;
-    if String.length s = 16384 && Unix.gettimeofday () < slow_until then begin
-      Thread.delay 0.05;
-      slowly ()
-    end
-  in
-  slowly ();
-  Buffer.add_string got (read_all p);
-  Atomic.set beating false;
-  Thread.join beats;
-  failed ();
-  equal (list frame_w)
-    [ (k_abort, str "the test fails it") ]
-    (frames_of (Buffer.contents got))
 
 (* The job fails on one link; the other link's peer receives an abort. *)
 let every_link_aborts () =
@@ -690,20 +636,6 @@ let every_link_aborts () =
       equal (list int) [ k_abort ] (kinds p2);
       equal state (Link.Failed "one: closed its connection")
         (Link.wait j ~ms:2000))
-
-(* link_peer in mode held fails its job on a receiving thread while its main
-   thread waits, and holds its aborts a while. It reports the failure only once
-   its abort to this process left: this end fails with the peer's root cause,
-   where a peer that ended first would leave its connection's end as the
-   cause. *)
-let abort_before_report () =
-  with_job @@ fun j ->
-  let h, _ = start j "held" ~name:"peer" in
-  guard h @@ fun () ->
-  let cause = "other: closed its connection" in
-  equal ~msg:"this end" state (Link.Failed cause)
-    (Link.wait j ~ms:(int_of_float (patience *. 1000.)));
-  equal ~msg:"the peer" (list string) [ "failed: " ^ cause ] (finish h)
 
 let after_failure () =
   with_raw @@ fun j l p ->
@@ -725,6 +657,7 @@ let during_close () =
     (Option.map fst (next_frame p));
   let r = Link.request l (Wire.Open "MEM") in
   Link.fail j "the test ends";
+  Unix.shutdown p Unix.SHUTDOWN_SEND;
   ignore (closed ());
   equal (result pass refused) (Error (`Failed "the job is closed")) r
 
@@ -783,20 +716,71 @@ let fail_releases () =
   equal bool ~msg:"this thread ran while fail was held" true ran;
   equal (list int) [ k_abort ] (kinds p)
 
+(* The job reads failed while its abort is held at its start, before it
+   leaves: the process learns of its failure without waiting for its
+   aborts. *)
+let failed_before_abort () =
+  with_raw @@ fun j _ p ->
+  Rig_link_probe.arm Aborting;
+  let failed = spawn (fun () -> Link.fail j "the test fails it") in
+  let held = Rig_link_probe.held () in
+  let s = Link.wait j ~ms:0 in
+  Rig_link_probe.resume ();
+  failed ();
+  equal bool ~msg:"the abort is held" true held;
+  equal ~msg:"the job while its abort is held" state
+    (Link.Failed "the test fails it") s;
+  equal (list int) [ k_abort ] (kinds p)
+
+(* A failed link reads and discards what its peer sends until the peer ends
+   its stream: every write of the peer's goes through, where one after the
+   link closed its socket would be refused, and the link's stream ends after
+   its abort. *)
+let drains_peer () =
+  with_raw @@ fun j _ p ->
+  Link.fail j "the test fails it";
+  for _ = 1 to 20 do
+    write p (frame k_beat "");
+    Thread.delay 0.05
+  done;
+  Unix.shutdown p Unix.SHUTDOWN_SEND;
+  equal (list frame_w) [ (k_abort, str "the test fails it") ] (frames p)
+
+(* The abort follows the message being sent when the job fails: a rail's
+   transfer, held on the sending thread with part of it sent, leaves whole,
+   then the abort. *)
+let abort_after_busy_send () =
+  with_raw @@ fun j l p ->
+  let n = 1 lsl 20 in
+  let t = { Rig_remote_abi.src = 0; dst = 0; length = n } in
+  let e = Link.rail l ~id:1 ~send:[| t |] ~receive:[||] in
+  Rig_link_probe.arm Sending;
+  e.ready 1;
+  let held = Rig_link_probe.held () in
+  Link.fail j "the test fails it";
+  Rig_link_probe.resume ();
+  let sent = List.map (fun (k, b) -> (k, String.length b)) (frames p) in
+  equal bool ~msg:"the transfer is held" true held;
+  equal
+    (list (pair int int))
+    [ (k_rail, 16 + n); (k_abort, 4 + String.length "the test fails it") ]
+    sent
+
 let failures =
   group "failure"
     [
       test "fail releases the runtime while it sends an abort"
         fail_releases;
+      test "a job is failed before its aborts leave" failed_before_abort;
+      test "a failed link reads its peer's bytes until its stream ends"
+        drains_peer;
+      test "a failed job's abort follows the transfer being sent"
+        abort_after_busy_send;
       test "a failed job sends each peer an abort, then ends its stream"
         abort_reaches_peer;
       test "a malformed frame's sender receives the abort"
         malformed_reaches_peer;
-      test "a failed job's abort reaches a peer still reading a busy rail"
-        abort_behind_rail;
       test "a job that fails on one link aborts every other" every_link_aborts;
-      test "a process learns of its failure only once its aborts left"
-        abort_before_report;
       test "a failed job's requests and next answer its root cause"
         after_failure;
       test "a request during the close answers that the job is closed"
@@ -1875,7 +1859,9 @@ let stopped_peer () =
   equal state (Link.Failed "stopped: silent for 10 s") s;
   at_least float_exact ~than:(silence -. 1.) took;
   less float_exact ~than:(silence +. 1.5) took;
-  equal (list string) [ "failed: stopped: silent for 10 s" ] (finish idle)
+  equal (list string)
+    [ "failed: controller aborted: stopped: silent for 10 s" ]
+    (finish idle)
 
 (* A peer that beats but reads nothing: a rail whose ready count runs far ahead
    fills the socket, and once a send has made no progress for 10 s the job fails
@@ -1901,32 +1887,9 @@ let deaf_peer () =
   equal state (Link.Failed "peer: read nothing for 10 s") s;
   at_least float_exact ~than:(silence -. 1.) took
 
-(* A failed link reads what its peer still sends until 10 s pass without a
-   byte. A peer that beats each half second keeps the connection: each write
-   succeeds, where one after the link closed its socket would fail. *)
-let drain_while_sent () =
-  with_raw @@ fun j _ p ->
-  Link.fail j "the test fails it";
-  let t0 = Unix.gettimeofday () in
-  let rec beat () =
-    let t = Unix.gettimeofday () -. t0 in
-    if t > silence +. 2. then None
-    else
-      match write p (frame k_beat "") with
-      | () ->
-          Thread.delay 0.5;
-          beat ()
-      | exception Unix.Unix_error _ -> Some t
-  in
-  equal ~msg:"a write failed after" (option float_exact) None (beat ());
-  Unix.shutdown p Unix.SHUTDOWN_SEND;
-  equal (list int) [ k_abort ] (kinds p)
-
 let silences =
   group "silence"
     [
-      slow "a failed link reads its peer's bytes while they come"
-        drain_while_sent;
       slow "a stopped peer fails the job after 10 s, and every peer learns it"
         stopped_peer;
       slow "a peer that reads nothing for 10 s fails the job, named" deaf_peer;
@@ -2027,7 +1990,7 @@ let forked () =
     (reason (Link.request l (Wire.Open "after")));
   Link.fail j "the test ends";
   equal ~msg:"what the agent received" (list string)
-    [ "failed: the test ends" ]
+    [ "failed: controller aborted: the test ends" ]
     (finish h)
 
 let forks =

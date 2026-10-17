@@ -30,9 +30,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5); a
   staged route between two mapless devices takes both slots in one C call,
-  in device-index order (G6, copy.ml:258-264); each process records its own
-  cause, marked remote or local, and aborts without the 10 s drain (R3,
-  link.mli:47-58)
+  in device-index order (G6, copy.ml:258-264)
 - more ledger rows: a forked child loses io devices too and runs none of
   the parent's owed stops (F8, rig_device.c:388-410); host and memory work
   runs after giving the turn up (K2); the doc sentences of F3, F5, O5, Q1,

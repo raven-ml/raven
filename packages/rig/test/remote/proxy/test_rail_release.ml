@@ -149,9 +149,9 @@ let failed_counts (e : Rig_remote_abi.end_) =
 let transfer = { Rig_remote_abi.src = 0; dst = 0; length = 5 }
 
 (* Failure lands between completed I/O and its count publication. [fail]
-   returns once the held sender settled its link's abort, so it runs on a
-   thread of its own; the job's other link aborts once the failure began.
-   Releasing joins that held use before the assertions read the counts. *)
+   leaves the link's abort to the held sender, and the job's other link
+   aborts once the job failed. Releasing joins that held use before the
+   assertions read the counts. *)
 let sent_after_failure () =
   with_rail ~send:[| transfer |] ~receive:[||] @@ fun job link _ e ->
   let fd, peer = connected () in

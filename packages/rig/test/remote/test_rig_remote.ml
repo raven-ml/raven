@@ -972,8 +972,8 @@ let reader_gone () =
   equal report_w (0, [], [ "connected"; "CPU@m1" ]) e;
   equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
 
-(* The program exits once its job failed: its report ends with the
-   failure. *)
+(* The program exits once its job failed: its report ends with the failure,
+   which it saw itself or which m2 relayed. *)
 let agent_killed () =
   with_hex_agents ~n:2 @@ fun agents ->
   let p = launch (launch_vars agents) "watch" in
@@ -983,11 +983,14 @@ let agent_killed () =
     (fun () ->
       equal ~msg:"connected" string "connected" (said_line p);
       kill (List.hd agents);
-      equal report_w
-        ( 0,
-          [ "started"; "failed m1: closed its connection" ],
-          [ "CPU@m1"; "CPU@m2" ] )
-        (ended p))
+      let seen why =
+        (0, [ "started"; "failed " ^ why ], [ "CPU@m1"; "CPU@m2" ])
+      in
+      let own = seen "m1: closed its connection" in
+      let relayed = seen "m2 aborted: m1: closed its connection" in
+      match ended p with
+      | e when e = relayed -> ()
+      | e -> equal report_w own e)
 
 (* A port nothing listens at. *)
 let dead_port () =

@@ -137,8 +137,7 @@ struct rig_remote_job {
   pthread_mutex_t mu;
   pthread_cond_t cv; /* the state changed, or a link ended */
   _Atomic int state;
-  _Atomic(struct rig_remote_why *) why; /* set as the failure begins */
-  int owed; /* the aborts a failure under way waits for, and its share */
+  _Atomic(struct rig_remote_why *) why; /* set as the job fails */
   long pid;
   struct rig_remote_link *links;
 };
@@ -267,9 +266,9 @@ int rig_remote_add_dev(struct rig_remote_dev *d);
    called: a suite holds a transfer or an abort there to make an
    interleaving happen. RIG_REMOTE_LINK_CUT is a sender whose send failed,
    once it released the send claim; RIG_REMOTE_LINK_FAILING is the thread
-   that begins a job's failure, before it sends the aborts. [waiting] says,
-   at RIG_REMOTE_LINK_RELEASING, whether the release waits for an active
-   transfer. Production leaves the hook NULL. */
+   that fails a job, once it marked it failed and before it sends the
+   aborts. [waiting] says, at RIG_REMOTE_LINK_RELEASING, whether the release
+   waits for an active transfer. Production leaves the hook NULL. */
 enum rig_remote_link_point {
   RIG_REMOTE_LINK_SENDING,
   RIG_REMOTE_LINK_SENT,
@@ -284,10 +283,10 @@ typedef void rig_remote_link_hook_fn(enum rig_remote_link_point at,
                                      int waiting);
 extern rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
 
-/* The seconds a link bears a silent peer, a send its peer takes no byte of,
-   and a failing link's drain: link.mli's 10. A suite shortens it, for every
-   link from then on, so that its faults come sooner. Production leaves
-   it. */
+/* The seconds a link bears a silent peer, a send its peer takes no byte
+   of, and a failed link's reading of its peer: link.mli's 10. A suite
+   shortens it, for every link from then on, so that its faults come sooner.
+   Production leaves it. */
 extern _Atomic int rig_remote_link_bound_s;
 
 #endif

@@ -27,8 +27,8 @@
     {1:failure Jobs and failure}
 
     The links of a process belong to its {e job} ({!type-job}), which fails or
-    closes as a whole. The job {e fails} once, with the first of these as its
-    {e root cause}:
+    closes as a whole. The job {e fails} once, with the first of these that
+    this process learns of as its {e root cause}:
     - a link's stream breaks or ends without a close:
       ["NAME: closed its connection"], or the system's error after ["NAME: "];
     - no byte comes on a link for 10 seconds: ["NAME: silent for 10 s"];
@@ -38,27 +38,34 @@
       ({!Wire}): ["NAME: a malformed frame"];
     - a message is larger than this process can hold:
       ["NAME: a frame larger than this process can hold"];
-    - a peer aborts: its reason, unchanged;
+    - a peer aborts: ["NAME aborted: WHY"], where [WHY] is the peer's root
+      cause, unchanged;
     - {!fail}.
 
     [NAME] is the link's {!name}. A reason is any bytes, at most 4096 of them.
     A longer one is cut there, here and in an agent's refusal ({!answer}).
+    Each process records its own root cause. A cause that starts
+    ["NAME aborted: "] is the peer's, and every other is this process's own.
 
-    Once the job fails, every link of the job that has sent no close sends
-    its peer an abort with the root cause, after the message it is sending
-    if any, and ends its stream; a link whose send failed sends none, its
-    stream cut. It reads and discards what the peer still sends until the
-    peer ends its stream, aborts or closes, or 10 seconds after the last
-    byte it received before the failure, so the abort reaches a peer still
-    reading earlier messages. It sends no message it is given.
-
-    The process learns of the failure only once every abort left, so a
-    process that ends on its failure ends after its peers were sent the root
-    cause. Then {!request} and {!next} return [Error], the proxies' sleeps
-    return, and every count of every rail of the job reads [Int64.max_int],
-    except the rails {!release_rail} is releasing. Nothing raises from a C
-    thread, and nothing calls OCaml. The process learns of the failure from
-    {!failed}, {!wait} or a function's [Error].
+    Once the job fails, {!request} and {!next} return [Error], the proxies'
+    sleeps return, and every count of every rail of the job reads
+    [Int64.max_int], except the rails {!release_rail} is releasing. Every
+    link of the job that has sent no close then sends its peer an abort with
+    the root cause, after the message it is sending if any, and ends its
+    stream; a link whose send failed sends none, its stream cut. It sends no
+    message it is given, handles no message it receives, and reads and
+    discards its peer's bytes until the peer ends its stream, since a socket
+    closed over unread bytes makes the system reset the connection, which
+    may drop the abort before the peer reads it. The peer ends its stream
+    once it has read the abort. A link gives up the abort's send when it
+    makes no progress for 10 seconds, and the reading 10 seconds after it
+    starts. A peer misses the abort when the network fails, when it reads
+    nothing for 10 seconds, so that the send or the reading gives up, or
+    when this process ends before {!close} has returned. The peer then
+    records its own cause, such as
+    ["NAME: closed its connection"]. Nothing raises from a C thread, and
+    nothing calls OCaml. The process learns of the failure from {!failed},
+    {!wait} or a function's [Error].
 
     A child of [fork] never uses its parent's links, whose streams it would
     interleave with the parent's. Every function compares the process id with
@@ -110,18 +117,21 @@ val failed : job -> string option
 
 val fail : job -> string -> unit
 (** [fail j why] fails [j] with the root cause [why], unless it has failed or
-    closed, and returns once [j]'s failure is known ({!failed}), whatever
-    began it. Each link's abort follows the message the link is sending and
-    waits up to 10 seconds for a peer that reads nothing. [fail] releases the
-    runtime while it waits. *)
+    closed. It then sends the abort of each link that is sending no message,
+    unless the link's own thread saw the failure first and sends it. The
+    send of an abort waits up to 10 seconds for a peer that reads nothing,
+    and [fail] releases the runtime while it sends. *)
 
 val close : job -> unit
-(** [close j] ends [j] in order. Each of its links sends a close after the
-    messages sent before, and [close] returns once every peer's close has come
-    and the links' threads have ended, or once [j] has failed. A link's peer
-    sends its close when it ends the job itself, so [close] waits for every
-    peer to end it. Once a link has taken its close, it sends no message it is
-    given. On a job that has failed or closed, [close] returns immediately. *)
+(** [close j] ends [j]. On an open job, each of its links sends a close after
+    the messages sent before, and [close] returns once every peer's close has
+    come and the links' threads have ended. A link's peer sends its close when
+    it ends the job itself, so [close] waits for every peer to end it. Once a
+    link has taken its close, it sends no message it is given. On a job that
+    has failed, before or meanwhile, [close] returns once each link has sent
+    its abort and read its peer's stream to the end, or given up
+    ({!section-failure}), so a process that ends after [close] leaves each
+    peer its abort. On a closed job it returns immediately. *)
 
 (** {1:links Links} *)
 

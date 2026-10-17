@@ -17,28 +17,28 @@
    rail transfers, answers requests, and queues an agent's commands; it
    measures silence on its own.
 
-   A job fails once, in two steps. Whoever finds the failure, a thread or
-   a caller, makes each link owe its peer an abort, then sets the root
-   cause, under the job's lock; from then on no link starts a frame. A
-   link sends its abort at once if no frame is being sent, else the
-   frame's sender sends it after, then ends its stream; a link whose send
-   failed sends none, its stream cut mid-frame. A sender whose send failed
-   begins the failure before it releases the send claim, so no frame
-   follows the cut. Once the last abort left, the job is marked failed:
-   each link is marked failed, its rails' counts raised, and every waiter
-   woken. Nothing in the process learns of the failure before, so a
-   process that ends on its failure ends after every peer was sent the
-   root cause.
+   A job fails once. Whoever finds the failure, a thread or a caller, makes
+   each link owe its peer an abort, sets the root cause and marks the job
+   and its links failed, under the job's lock, which raises the links'
+   rails' counts and wakes every waiter. So the process learns of the
+   failure before any abort leaves. From then on no link starts a frame. A
+   link sends its abort at once if no frame is being sent, else the frame's
+   sender sends it after, then ends its stream; a link whose send failed
+   sends none, its stream cut mid-frame. A sender whose send failed fails
+   the job before it releases the send claim, so no frame follows the cut.
 
-   The receiving thread of a failing link discards frames until the peer
-   ends its stream, so that no unread byte makes the system reset the
-   connection and drop the abort before the peer reads it; a peer silent
-   for the bound ends it too. A link's socket closes once both its threads
-   ended and no abort is being sent.
+   The receiving thread of a failed link stops handling frames, and then
+   reads and discards the peer's bytes until the peer ends its stream, since
+   a socket closed over unread bytes makes the system reset the connection,
+   which may drop the abort before the peer reads it. The peer ends its
+   stream once it has read the abort, failed and sent its own. A peer that
+   does not end it within [bound_s] seconds is left. A link's socket closes
+   once both its threads ended and no abort is being sent.
 
    Reasons are formatted here, because the threads that find a failure hold
-   no runtime: a fixed phrase, the system's error, or a peer's abort, each
-   after the link's name, in memory never freed.
+   no runtime: a fixed phrase or the system's error after the link's name,
+   or a peer's abort after the link's name and " aborted: ", in memory never
+   freed.
 
    A child of fork sees its parent's job failed, in its own copy: every
    entry compares the process id with the job's before it takes a lock.
@@ -99,6 +99,10 @@ typedef struct pollfd rig_remote_pollfd;
    this size comes in one call with its header. */
 #define READ_AHEAD 16384
 
+/* The longest a receive waits for its socket before it looks whether the
+   job failed. */
+#define LOOK_MS 1000
+
 /* The most bytes of a command's memory a link keeps for later commands. */
 #define KEPT_BYTES ((size_t)128 << 20)
 
@@ -128,6 +132,7 @@ enum {
   MALFORMED = -3,
   TOO_LARGE = -4,
   STALLED = -5,
+  FAILING = -6, /* the job failed: nothing more is read */
 };
 
 /* Structures */
@@ -390,6 +395,18 @@ static void error_text(int e, char *buf, size_t n) {
 #endif
 }
 
+/* The root cause of [l]'s peer's abort, whose reason is the [n] bytes at
+   [p]: the link's name, " aborted: " and those bytes, cut to [MAX_WHY]. */
+static struct rig_remote_why *aborted(struct rig_remote_link *l,
+                                      const unsigned char *p, size_t n) {
+  char buf[MAX_WHY];
+  int k = snprintf(buf, sizeof buf, "%s aborted: ", l->name);
+  size_t at = k < 0 ? 0 : (size_t)k < sizeof buf ? (size_t)k : sizeof buf - 1;
+  if (n > sizeof buf - at) n = sizeof buf - at;
+  memcpy(buf + at, p, n);
+  return why_of(buf, at + n);
+}
+
 /* The root cause of a link's failure [code]: a socket error, or one of the
    receive answers. */
 static struct rig_remote_why *link_reason(struct rig_remote_link *l,
@@ -452,12 +469,10 @@ static void send_abort(struct rig_remote_link *l,
 
 /* Settles the abort a failure owes [l]: sends it, unless the link sent its
    close or a send of it failed, then ends its stream; nothing while a frame
-   or an abort is being sent, whose sender calls it after. Whether it
-   settled one, which its caller counts out with [abort_left] once it
-   released [l]'s lock. Holds [l]'s lock, which it releases while it
-   sends. */
-static int abort_link(struct rig_remote_link *l) {
-  if (l->sending) return 0;
+   or an abort is being sent, whose sender calls it after. Holds [l]'s lock,
+   which it releases while it sends. */
+static void abort_link(struct rig_remote_link *l) {
+  if (l->sending) return;
   int owed = l->abort_owed;
   l->abort_owed = 0;
   if (owed && !l->fd_closed && !l->sent_close && !l->broken) {
@@ -473,12 +488,12 @@ static int abort_link(struct rig_remote_link *l) {
     shutdown(l->fd, SHUT_SEND);
     close_if_idle(l);
   }
-  return owed;
 }
 
 /* Marks [j] and its links failed, raises their rails' counts and wakes
-   every waiter. Holds [j]'s lock. The job reads failed first, so that one
-   who learns of the failure from a link finds the job failed. */
+   every waiter but the sending threads, which [fail_job] wakes. Holds [j]'s
+   lock. The job reads failed first, so that one who learns of the failure
+   from a link finds the job failed. */
 static void mark_failed(struct rig_remote_job *j) {
   atomic_store(&j->state, FAILED);
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
@@ -488,54 +503,44 @@ static void mark_failed(struct rig_remote_job *j) {
       if (!r->releasing)
         for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     pthread_cond_broadcast(&l->cv);
-    pthread_cond_signal(&l->wake);
     pthread_mutex_unlock(&l->mu);
   }
   pthread_cond_broadcast(&j->cv);
 }
 
-/* Counts out one abort [j]'s failure owes; the last marks it failed. */
-static void abort_left(struct rig_remote_job *j) {
-  pthread_mutex_lock(&j->mu);
-  if (--j->owed == 0) mark_failed(j);
-  pthread_mutex_unlock(&j->mu);
-}
-
-/* Fails [j] with [why], which it takes, unless its failure began or it
-   closed. */
+/* Fails [j] with [why], which it takes, unless it failed or closed. */
 static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   pthread_mutex_lock(&j->mu);
-  if (atomic_load(&j->state) != OPEN || failing(j)) {
+  if (atomic_load(&j->state) != OPEN) {
     pthread_mutex_unlock(&j->mu);
     why_free(why);
     return;
   }
-  /* This call's share keeps the count above 0 until every link owes. */
-  j->owed = 1;
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     l->abort_owed = !l->fd_closed;
-    j->owed += l->abort_owed;
     pthread_mutex_unlock(&l->mu);
   }
   /* Set once every link owes: a link's thread that sees the cause settles
      its abort, and one that found none owed would end the stream without
      it. */
   atomic_store(&j->why, why != NULL ? why : &failed_why);
+  mark_failed(j);
   struct rig_remote_link *links = j->links;
   pthread_mutex_unlock(&j->mu);
   hook(RIG_REMOTE_LINK_FAILING, 0);
-  /* An idle link sends its abort here; a link mid-frame sends it after
-     that frame, from the thread that sends it. Links are only ever
-     prepended, so the list read under the job's lock stays whole. */
+  /* An idle link sends its abort here, unless its sending thread saw the
+     failure first; a link mid-frame sends it after that frame, from the
+     thread that sends it. The sending thread, woken under the lock this
+     settles the abort under, then finds it settled or being sent. Links are
+     only ever prepended, so the list read under the job's lock stays
+     whole. */
   for (struct rig_remote_link *l = links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     pthread_cond_signal(&l->wake);
-    int settled = abort_link(l);
+    abort_link(l);
     pthread_mutex_unlock(&l->mu);
-    if (settled) abort_left(j);
   }
-  abort_left(j);
 }
 
 /* Fails [l]'s job with the reason of [code], unless its failure began. */
@@ -679,10 +684,10 @@ static void rail_unused(struct rig_remote_link *l, struct rail *r) {
 
 /* The sending thread */
 
-/* Ends the sending thread's send that failed with [err]: begins the job's
-   failure, then releases the send claim, so that no frame follows the cut
-   one. Holds [l]'s lock and the claim, and releases the lock while the
-   failure begins, which may wait for other links' aborts. */
+/* Ends the sending thread's send that failed with [err]: fails the job,
+   then releases the send claim, so that no frame follows the cut one. Holds
+   [l]'s lock and the claim, and releases the lock while the job fails,
+   which takes the job's lock and each link's. */
 static void cut(struct rig_remote_link *l, int err) {
   pthread_mutex_unlock(&l->mu);
   link_lost(l, err);
@@ -784,9 +789,8 @@ static void *sender(void *arg) {
       rig_remote_wait_ns(&l->wake, &l->mu,
                          claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
   }
-  int settled = failing(l->job) ? abort_link(l) : 0;
+  if (failing(l->job)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
-  if (settled) abort_left(l->job);
   thread_ends(l);
   return NULL;
 }
@@ -795,20 +799,23 @@ static void *sender(void *arg) {
 
 /* The receiving thread's reader: when the link's last byte came, and bytes
    received ahead of the frames that hold them. Silence counts from the last
-   byte, before a failure and during its drain alike. */
+   byte. */
 struct reader {
   int64_t last;
   size_t at, end; /* [b]'s bytes from [at] to [end] are unread */
   unsigned char b[READ_AHEAD];
 };
 
-/* Receives [n] bytes into [p]: 0, a socket error, [ENDED] or [SILENT]. It
-   asks the socket for [READ_AHEAD] bytes at least, so that a small frame's
-   header and payload come in one call, and receives larger payloads in
-   place. It polls only once the socket holds nothing. */
+/* Receives [n] bytes into [p]: 0, a socket error, [ENDED], [SILENT], or
+   [FAILING] once the job failed. It asks the socket for [READ_AHEAD] bytes
+   at least, so that a small frame's header and payload come in one call,
+   and receives larger payloads in place. It polls only once the socket
+   holds nothing, and looks whether the job failed at least every
+   [LOOK_MS]. */
 static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
                     struct reader *rd) {
   for (;;) {
+    if (failing(l->job)) return FAILING;
     size_t have = rd->end - rd->at;
     if (have > n) have = (size_t)n;
     memcpy(p, rd->b + rd->at, have);
@@ -838,8 +845,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
     pf.events = POLLIN;
-    int k = poll(&pf, 1, (int)left);
-    if (k == 0) return SILENT;
+    int k = poll(&pf, 1, left < LOOK_MS ? (int)left : LOOK_MS);
     if (k < 0 && !again(e = rig_remote_sock_error())) return e;
   }
 }
@@ -1094,7 +1100,7 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct re
       free(p);
       return MALFORMED;
     }
-    fail_job(l->job, why_of((const char *)p + 4, (size_t)len));
+    fail_job(l->job, aborted(l, p + 4, (size_t)len));
     free(p);
     return 1;
   }
@@ -1113,12 +1119,26 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct re
   }
 }
 
-/* Handles one frame of a failing link: its peer's abort or close ends the
-   stream, and anything else is discarded. */
-static int drain_frame(struct rig_remote_link *l, int kind, uint64_t n,
-                       struct reader *rd) {
-  if (kind == K_ABORT || kind == K_CLOSE) return 1;
-  return skip(l, n, rd);
+/* Reads and discards the peer's bytes until its stream ends, a receive
+   fails, or [bound_s] seconds pass, so that no byte left unread makes the
+   system reset the connection before the peer has read this end's abort.
+   The peer ends its stream once it has read the abort and sent its own. */
+static void drain(struct rig_remote_link *l) {
+  unsigned char b[READ_AHEAD];
+  int64_t until = now_ns() + bound_s() * 1000000000LL;
+  for (;;) {
+    long m = (long)recv(l->fd, (char *)b, sizeof b, 0);
+    if (m == 0) return;
+    if (m > 0) continue;
+    int e = rig_remote_sock_error();
+    if (!again(e)) return;
+    int64_t left = (until - now_ns()) / 1000000;
+    if (left <= 0) return;
+    rig_remote_pollfd pf = {0};
+    pf.fd = l->fd;
+    pf.events = POLLIN;
+    (void)poll(&pf, 1, left < LOOK_MS ? (int)left : LOOK_MS);
+  }
 }
 
 static void *receiver(void *arg) {
@@ -1126,14 +1146,11 @@ static void *receiver(void *arg) {
   struct reader rd;
   rd.last = now_ns();
   rd.at = rd.end = 0;
+  int r;
   for (;;) {
     unsigned char h[HEADER];
-    int r = recv_all(l, h, HEADER, &rd);
-    if (r == 0) {
-      uint64_t n = rig_remote_get_u64(h);
-      r = failing(l->job) ? drain_frame(l, h[8], n, &rd)
-                          : recv_frame(l, h[8], n, &rd);
-    }
+    r = recv_all(l, h, HEADER, &rd);
+    if (r == 0) r = recv_frame(l, h[8], rig_remote_get_u64(h), &rd);
     if (r == 1) break;
     if (r != 0) {
       link_lost(l, r);
@@ -1146,6 +1163,9 @@ static void *receiver(void *arg) {
   for (size_t i = 0; i < l->ndevs; i++)
     if (l->devs[i] != NULL) rig_remote_settle(l->devs[i]);
   pthread_mutex_unlock(&l->mu);
+  /* A stream that ended, broke or fell silent holds nothing to drain. */
+  int open = r == 1 || r == FAILING || r == MALFORMED || r == TOO_LARGE;
+  if (open && failing(l->job)) drain(l);
   thread_ends(l);
   return NULL;
 }
@@ -1175,7 +1195,7 @@ int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
   put_header(f->buf, np, f->kind);
   pthread_mutex_lock(&l->mu);
   l->writers++;
-  /* Once the job began to fail, it waits until the failure is known. */
+  /* Once the job began to fail, it waits until its link is marked failed. */
   while (!atomic_load(&l->failed) && !l->closing &&
          (l->sending || failing(l->job)))
     pthread_cond_wait(&l->cv, &l->mu);
@@ -1203,10 +1223,9 @@ int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
   release_claim(l, err);
   /* A failure meanwhile, or this send's, left the link's abort to this
      sender. */
-  int settled = failing(l->job) ? abort_link(l) : 0;
+  if (failing(l->job)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
   if (err != 0) hook(RIG_REMOTE_LINK_CUT, 0);
-  if (settled) abort_left(l->job);
   free(f);
   return 0;
 }
@@ -1265,23 +1284,21 @@ value caml_rig_remote_link_job_wait(value vj, value vms) {
   CAMLreturn(r);
 }
 
-/* Fails the job, and returns once its failure is known, whoever began it.
-   Releases the runtime: an abort waits up to [bound_s] seconds for a peer
-   that reads nothing. */
+/* Fails the job, unless it failed or closed. Releases the runtime while
+   it sends the aborts. */
 value caml_rig_remote_link_job_fail(value vj, value why) {
   struct rig_remote_job *j = Job_val(vj);
   if (rig_remote_forked(j)) return Val_unit;
   struct rig_remote_why *w = why_of(String_val(why), caml_string_length(why));
   caml_enter_blocking_section_no_pending();
   fail_job(j, w);
-  pthread_mutex_lock(&j->mu);
-  while (atomic_load(&j->state) == OPEN) pthread_cond_wait(&j->cv, &j->mu);
-  pthread_mutex_unlock(&j->mu);
   caml_leave_blocking_section();
   return Val_unit;
 }
 
-/* Ends the job in order. Releases the runtime. */
+/* Ends the job: in order if it is open, then waits for its links' threads.
+   On a failed job these end once each link has settled its abort and read
+   its peer's stream to the end, or given up. Releases the runtime. */
 value caml_rig_remote_link_job_close(value vj) {
   CAMLparam1(vj);
   struct rig_remote_job *j = Job_val(vj);
@@ -1295,21 +1312,22 @@ value caml_rig_remote_link_job_close(value vj) {
       if (f != NULL) rig_remote_send(l, f, NULL);
       pthread_mutex_lock(&j->mu);
     }
-    for (;;) {
-      if (atomic_load(&j->state) != OPEN) break;
-      int ended = 1;
-      for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
-        pthread_mutex_lock(&l->mu);
-        if (l->threads > 0) ended = 0;
-        pthread_mutex_unlock(&l->mu);
-      }
-      if (ended) {
+  }
+  while (atomic_load(&j->state) != CLOSED) {
+    int ended = 1;
+    for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
+      pthread_mutex_lock(&l->mu);
+      if (l->threads > 0) ended = 0;
+      pthread_mutex_unlock(&l->mu);
+    }
+    if (ended) {
+      if (atomic_load(&j->state) == OPEN) {
         atomic_store(&j->state, CLOSED);
         pthread_cond_broadcast(&j->cv);
-        break;
       }
-      pthread_cond_wait(&j->cv, &j->mu);
+      break;
     }
+    pthread_cond_wait(&j->cv, &j->mu);
   }
   pthread_mutex_unlock(&j->mu);
   caml_acquire_runtime_system();

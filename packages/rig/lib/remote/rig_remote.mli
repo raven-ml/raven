@@ -222,8 +222,9 @@ val launched : unit -> (t, string) result option
 
 (** {1:failure Failure}
 
-    A job {e fails} once, as a whole. Its first failure is the
-    {e root cause} ({!failed}), which is one of:
+    A job {e fails} once, as a whole. Each of its processes records the
+    first failure it learns of as its {e root cause} ({!failed}), which is
+    one of:
     - a connection between two of its processes that ends without a close;
     - no byte on a connection for 10 seconds, though each end sends at least
       once a second whatever its process runs, so host code that never
@@ -242,23 +243,45 @@ val launched : unit -> (t, string) result option
       notices within a second. A loss of another of the controller's
       devices reaches nothing of the job, which goes on;
     - an exception an agent does not expect, such as one an opener of
-      {!serve} raises, whose text ([Printexc.to_string]) is the root cause.
+      {!serve} raises, whose text ([Printexc.to_string]) is the root cause;
+    - an abort from another process of the job, which carries that
+      process's root cause [WHY], recorded as ["NAME aborted: WHY"].
 
-    Once the job has failed, each of its processes still running shuts down
-    every connection and raises every count of every rail, so that no wait
-    for one blocks. An agent then fails its process with the root cause
-    ({!Rig.fail}) and returns from {!serve}. On the controller, each host and
-    proxy of the job faults with the root cause, so its next use loses it
-    and raises {!Rig.Lost}, as every use after does. The controller's own
-    devices go on, and it may start another job.
+    In a root cause, [NAME] is the process at the other end of a connection:
+    its machine's name, or ["controller"] for the controller. A connection's
+    end names it too, as in ["NAME: closed its connection"]. So a root cause
+    that starts ["NAME aborted: "] came from another process, and every other
+    is the process's own.
+
+    Once the job has failed, each of its processes still running raises
+    every count of every rail, so that no wait for one blocks. It sends the
+    other processes an abort with its root cause, after the message each
+    connection is sending, and ends its side of each connection. It then
+    reads and discards what arrives on each connection until the other end
+    has ended its side too, for 10 seconds at most, and closes the
+    connection only then, since a connection closed over unread bytes is
+    reset, which may lose the abort. {!serve} returns, and {!connect} and
+    {!launched} return their [Error], once every connection of the job is
+    closed, and the controller's process waits for its last job's
+    connections at exit. A process misses an abort only when the network
+    fails, when it reads nothing of the connection for 10 seconds, or when
+    the aborting process ends otherwise, such as by a signal. It then
+    records its own cause, such as the end of the connection.
+
+    An agent fails its process with the root cause ({!Rig.fail}) before it
+    returns from {!serve}. On the controller, each host and proxy of the job
+    faults with the root cause, so its next use loses it and raises
+    {!Rig.Lost}, as every use after does. The controller's own devices go
+    on, and it may start another job.
 
     A child of [fork] never uses its parent's connections. In the child the
     job is failed from the start, its rails' counts raised as on any
     failure, and the parent's job goes on. *)
 
 val failed : t -> string option
-(** [failed j] is [Some why] if [j] has failed, [why] its root cause, and
-    [None] otherwise. It raises nothing and waits for nothing. *)
+(** [failed j] is [Some why] if [j] has failed, [why] the root cause this
+    process recorded, and [None] otherwise. It raises nothing and waits for
+    nothing. *)
 
 val close : t -> unit
 (** [close j] ends [j] in order. It closes each machine's host ({!Rig.close}),
@@ -269,7 +292,11 @@ val close : t -> unit
     then stops listening and returns from {!serve}. [close] returns once
     every agent has stopped listening, or immediately if [j] has failed or
     closed. After a close, {!failed} of [j] is [None], and the process may
-    start another job.
+    start another job. A job that fails during [close] ends as a failed job
+    does ({!section-failure}): [close] returns once every connection has
+    closed, up to about 11 seconds after the failure, and does not return
+    to OCaml meanwhile, so a [Sys.Break] from Ctrl-C raises only then. The
+    process's exit waits the same way for its last job.
 
     Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
     inside a call of rig's on the same thread. *)

@@ -230,7 +230,8 @@ let raise_in_close () =
 
 (* An exit from the callback, whose close at exit runs inside the close: the
    program exits 0, and the job closed, or failed with the reason rig
-   refused that close for, at the agent too. Both are reached. *)
+   refused that close for, which the agent records as the controller's. Both
+   are reached. *)
 let exit_in_close () =
   let failures = ref 0 and closes = ref 0 in
   close_walk "exit-in-close" (fun msg code report words agent ->
@@ -244,7 +245,7 @@ let exit_in_close () =
           equal
             ~msg:(msg "its exit and the agent's end")
             (pair int exit_w)
-            (0, (2, [ "failed: " ^ why ]))
+            (0, (2, [ "failed: controller aborted: " ^ why ]))
             (code, agent)
       | _ ->
           failf "%s: [%s]" (msg "its report") (String.concat "; " report));

@@ -81,9 +81,10 @@
 
     A process sends a [beat] after a second in which it sent nothing on a
     connection, and fails the job when no byte has come on one for 10
-    seconds. An [abort] fails the job with its reason, which has at most 4096
-    bytes. A connection ends in order once each end has sent a [close] and
-    received the other's, and one that ends otherwise fails the job.
+    seconds. An [abort] carries its sender's root cause, at most 4096 bytes,
+    and fails the receiver's job. A connection ends in order once each end
+    has sent a [close] and received the other's, and one that ends otherwise
+    fails the job.
 
     {1:references References}
 

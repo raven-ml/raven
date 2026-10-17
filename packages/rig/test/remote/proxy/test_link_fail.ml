@@ -478,9 +478,8 @@ let stalled_rail () =
   failed_counts ~msg:"the transfer's rail" e
 
 (* A release of the cut rail waits for its transfer alone. The thread whose
-   send was cut is held as it begins the job's failure, which waits for the
-   other links' aborts: two releases of the rail then find no transfer to
-   wait for. *)
+   send was cut is held as it fails the job, before it sends the other links'
+   aborts: two releases of the rail then find no transfer to wait for. *)
 let stalled_release () =
   with_scene @@ fun s ->
   let stop = beating s.p in
@@ -534,8 +533,40 @@ let stalled_abort () =
     (stray '\000' (read_all s.p));
   woke why
 
+(* After the abort the link reads and discards what its peer sends until the
+   peer ends its stream or the bound passes. A peer that has read the abort
+   and writes on keeps the connection until the bound, and its writes are
+   refused after. *)
+let drained_until_bound () =
+  with_scene @@ fun s ->
+  let t0 = Unix.gettimeofday () in
+  Link.fail s.job why;
+  equal ~msg:"what the peer received" (list frame)
+    [ (k_abort, str why) ]
+    (frames s.p);
+  let rec writes () =
+    let t = Unix.gettimeofday () -. t0 in
+    if t > Float.of_int bound +. patience then None
+    else
+      match write s.p beat with
+      | () ->
+          Thread.delay 0.05;
+          writes ()
+      | exception Unix.Unix_error _ -> Some t
+  in
+  match writes () with
+  | None -> fail "the link took every write"
+  | Some t ->
+      at_least ~msg:"the seconds until a write was refused" float_exact
+        ~than:(Float.of_int bound -. skew)
+        t
+
 let () =
   Watchdog.start ();
+  (* A failed link closes its socket once its peer has ended its stream or
+     the bound has passed, and a peer's write after that fails with EPIPE.
+     Windows has no SIGPIPE. *)
+  if not Sys.win32 then Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   Probe.bound bound;
   exit
     (run "rig_remote_proxy.link_fail"
@@ -574,5 +605,7 @@ let () =
                severed_abort;
              slow "a peer that reads nothing keeps the cause; fail returns"
                stalled_abort;
+             slow "a link reads its peer's bytes until the bound, then closes"
+               drained_until_bound;
            ];
        ])

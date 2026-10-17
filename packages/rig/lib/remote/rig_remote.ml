@@ -234,18 +234,20 @@ let close j =
 (* The process closes its last job at exit. A close that rig refuses, from a
    callback inside a call of rig's on the exiting thread, fails the job with
    the refusal instead: its exception would end the process with a fatal
-   error, and leave the job's report without its end. *)
+   error, and leave the job's report without its end. The process exits once
+   the links of a failed job have ended, so each agent reads its abort. *)
 let () =
   at_exit @@ fun () ->
   match Atomic.get current with
   | None -> ()
-  | Some j -> (
-      match close j with
+  | Some j ->
+      (match close j with
       | () -> ()
       | exception Invalid_argument why ->
           Link.fail j.job why;
           let why = Option.value ~default:why (Link.failed j.job) in
-          Agent.ended j.report (`Failed why))
+          Agent.ended j.report (`Failed why));
+      Link.close j.job
 
 (* Fails [j] with [why] and is [why] after the machine's name. *)
 let abandon job name why =
@@ -390,16 +392,24 @@ let start ~fn ~key ~report agents =
       | Link.Failed _ | Link.Closed -> ())
   | _ -> ());
   let job = Link.job () in
-  match dial ~key job [] 1 agents with
-  | Error _ as e -> e
-  | Ok ms -> (
-      match Result.bind (join job agents ms) (open_hosts job ms) with
-      | Error _ as e -> e
-      | Ok () ->
-          let j = { job; machines = ms; report } in
-          Atomic.set current (Some j);
-          watch j;
-          Ok j)
+  let started =
+    match dial ~key job [] 1 agents with
+    | Error _ as e -> e
+    | Ok ms ->
+        Result.map
+          (fun () -> ms)
+          (Result.bind (join job agents ms) (open_hosts job ms))
+  in
+  match started with
+  | Error _ as e ->
+      (* The agents reached read the abort before the caller may exit. *)
+      Link.close job;
+      e
+  | Ok ms ->
+      let j = { job; machines = ms; report } in
+      Atomic.set current (Some j);
+      watch j;
+      Ok j
 
 let connect ~key agents =
   check_agents agents;

@@ -7,11 +7,21 @@
    keeps the first loss of the job's devices here for good (Rig.failure).
 
    The controller and the other agent both see the death. Each test stops one of
-   them while the agent dies, so the other reports first: either way every
-   process ends with one root cause, which names the killed agent's machine. *)
+   them while the agent dies, so the other reports first. Each process records
+   the death as its own cause, which names the killed agent's machine, or as
+   the cause another process relayed in its abort. *)
+
 
 open Windtrap
 open Remote_job
+
+(* The process's report of [cause], its own or relayed. *)
+let reports ~msg cause = function
+  | 2, [ line ] ->
+      starts_with ~msg ~affix:"failed: " line;
+      ends_with ~msg ~affix:cause line
+  | code, lines ->
+      failf "%s exited %d, printing [%s]" msg code (String.concat "; " lines)
 
 let stopped p f =
   if Sys.win32 then
@@ -37,7 +47,7 @@ let controller_first () =
         (fun e -> lost_why e = Some root)
         (fun () -> Rig.Buffer.create h 16))
     (Rig_remote.hosts j);
-  equal ~msg:"the other agent" exit_w (2, [ "failed: " ^ root ]) (finish other)
+  reports ~msg:"the other agent" root (finish other)
 
 (* The controller, support/controller.exe, is stopped: the other agent notices
    first. *)
@@ -62,7 +72,8 @@ let agent_first () =
       starts_with ~msg:"names the killed agent's machine"
         ~affix:("failed: " ^ machine victim)
         why;
-      equal ~msg:"the controller" exit_w (2, [ why ]) (finish c))
+      let cause = String.sub why 8 (String.length why - 8) in
+      reports ~msg:"the controller" cause (finish c))
 
 let () =
   Watchdog.start ();

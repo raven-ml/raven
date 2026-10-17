@@ -386,12 +386,30 @@ let started a = Option.fold ~none:false ~some:(fun p -> p.started) a.program
    program had started the job. *)
 type failure = { cause : string; down : machine list; started : bool }
 
-(* The cause is the first death no process reported, then the first report, then
-   the first machine that does not answer. *)
+(* [why] without the marks of the aborts that carried it, ["NAME aborted: "]
+   where NAME is a machine of [a] or "controller" (Rig_remote, Failure): the
+   reason of the process that found the failure, whichever process reported
+   it, so that a cause does not depend on which process learned of it
+   first. *)
+let origin a why =
+  let names = "controller" :: List.map (fun s -> s.m.name) a.sessions in
+  let mark n = n ^ " aborted: " in
+  let marked why n = String.starts_with ~prefix:(mark n) why in
+  let rec go why =
+    match List.find_opt (marked why) names with
+    | None -> why
+    | Some n ->
+        let k = String.length (mark n) in
+        go (String.sub why k (String.length why - k))
+  in
+  go why
+
+(* The cause is the first death no process reported, then the first report, its
+   origin, then the first machine that does not answer. *)
 let rank a =
   let ends = ends a in
   let death = function Death c -> Some c | _ -> None
-  and report = function Report c -> Some c | _ -> None
+  and report = function Report c -> Some (origin a c) | _ -> None
   and silence = function Silent m -> Some (silent m) | _ -> None in
   let cause =
     List.find_map (fun f -> List.find_map f ends) [ death; report; silence ]

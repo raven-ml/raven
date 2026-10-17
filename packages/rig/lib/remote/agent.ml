@@ -342,7 +342,7 @@ let passes (e : Unix.error) =
 
 (* Ends [a]'s accepting after an error that recurs, [why]: fails the job it
    serves, and wakes a serve that waits for a controller. The failure, which
-   waits for its aborts to leave, runs outside [a]'s lock. *)
+   may wait for an abort to leave, runs outside [a]'s lock. *)
 let break a why =
   let serving =
     Mutex.protect a.lock @@ fun () ->
@@ -815,7 +815,9 @@ let serve_job a kinds report ~close job self link =
   | Ok () -> ended report `Closed
   | Error why ->
       ended report (`Failed why);
-      Rig.fail why);
+      Rig.fail why;
+      (* Each peer reads this process's abort before serve's caller exits. *)
+      Link.close job);
   r
 
 (* Serves one job, reporting its end on [report]. *)
