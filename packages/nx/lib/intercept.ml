@@ -18,14 +18,21 @@ let intercepting () = Atomic.get intercepts > 0
    gate is raised for the extent of [f], however it ends. *)
 
 type interpreter = { run : 'r. 'r Op.t -> 'r; claims : 'r. 'r Op.t -> bool }
-type _ Effect.t += E_op : 'r Op.t -> 'r Effect.t | E_intercepted : bool Effect.t
+
+(* An operation's effect holds it in a cell that the fallback empties: the
+   runtime keeps the last exception raised reachable while backtraces are
+   recorded, and [Effect.Unhandled] holds the effect. *)
+type _ Effect.t +=
+  | E_op : { mutable op : 'r Op.t option } -> 'r Effect.t
+  | E_intercepted : bool Effect.t
 
 let intercept i f =
   Atomic.incr intercepts;
   Fun.protect ~finally:(fun () -> Atomic.decr intercepts) @@ fun () ->
   let effc : type c a.
       c Effect.t -> ((c, a) Effect.Deep.continuation -> a) option = function
-    | E_op op -> (
+    | E_op { op = None } -> None
+    | E_op { op = Some op } -> (
         match i.claims op with
         | false -> None
         | true ->
@@ -55,13 +62,14 @@ let intercepted () =
 
 (* [perform op] delivers [op] to the interception around the caller, and answers
    it directly when there is none: only an unhandled perform of this very effect
-   falls back. *)
+   falls back, after emptying the effect. *)
 let perform : type r. r Op.t -> r =
  fun op ->
-  let e = E_op op in
+  let e = E_op { op = Some op } in
   match Effect.perform e with
   | v -> v
   | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
+      (match e with E_op cell -> cell.op <- None | _ -> ());
       Dispatch.direct op
 
 (* [eval op] is [op] in the current interpretation. *)

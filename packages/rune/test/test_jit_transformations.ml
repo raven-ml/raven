@@ -406,16 +406,8 @@ let one_forward =
 let device = Nx.Device.cpu 3
 let on_device x = Nx.place (Nx.Placement.on device) x
 
-(* While backtraces are recorded, the runtime keeps the last exception raised
-   reachable. nx and rune answer an operation that no interception handles by
-   catching [Effect.Unhandled], whose effect holds the operation's operands, so
-   those stay reachable until the next raise. A raise of [Exit] lets them go. *)
-let[@inline never] raise_exit () = raise Exit
-let forget_raised () = try raise_exit () with Exit -> ()
-
 let settled () =
   let m = Nx.Device.memory device in
-  forget_raised ();
   for _ = 1 to 4 do
     Gc.full_major ();
     (* An allocation on the device returns its collected memory. *)

@@ -199,7 +199,14 @@ let claims : type r. owner -> r Nx.Op.t -> bool =
 
 (* An installation's identity. *)
 type installation = unit ref
-type 'r performed = { construct : 'r t; mutable past : installation option }
+
+(* A performed construct. Its fallback empties [construct]: the runtime keeps
+   the last exception raised reachable while backtraces are recorded, and
+   [Effect.Unhandled] holds the effect. *)
+type 'r performed = {
+  mutable construct : 'r t option;
+  mutable past : installation option;
+}
 
 (* An answer the performer receives: a value, or a function it runs at the call,
    as the answer of an installation. *)
@@ -248,11 +255,14 @@ let answered x f =
 let perform c =
   if Atomic.get installed = 0 then default c
   else
-    let e = Construct { construct = c; past = None } in
+    let p = { construct = Some c; past = None } in
+    let e = Construct p in
     match Effect.perform e with
     | Answer r -> r
     | Run (x, f) -> answered x f
-    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
+    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
+        p.construct <- None;
+        default c
 
 let loop r =
   match perform (Loop r) with
@@ -376,7 +386,8 @@ and install : 'a. interpreter -> (unit -> 'a) -> 'a =
     | Construct ({ past = Some y; _ } as p) ->
         if y == x then p.past <- None;
         None
-    | Construct { construct; past = None } -> (
+    | Construct { construct = None; past = None } -> None
+    | Construct { construct = Some construct; past = None } -> (
         match
           match i.call construct with None -> pass i construct | a -> a
         with

@@ -236,6 +236,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A construct no transformation answers, such as a `Rune.detach` beside
+  another domain's `Rune.grad`, keeps none of its arguments once it returns.
+  With backtraces recorded, the `Effect.Unhandled` its fallback catches stayed
+  reachable until the next raise and held them.
 - A compiled `Nx.svd` converges on graded, rank-deficient and repeated
   spectra. It stopped its rotations short there: a 16 x 16 `float64` matrix
   graded to `1e-13` had singular values off by `1e-9`, and most such
@@ -3921,6 +3925,10 @@ thread.
 
 ### Nx
 
+- An operation no `Nx.Op.intercept` claims keeps none of its operands once it
+  returns, in an interpreter's `run` and while another domain or thread
+  intercepts. With backtraces recorded, the `Effect.Unhandled` its fallback
+  catches stayed reachable until the next raise and held them.
 - `Nx.Rng.truncated_normal` keeps its accuracy in the tails: it inverts the
   mass beyond the draw, in logarithms past 1.44 standard deviations, so a
   draw is within about 2 ulps however far out the bounds lie. It was off by

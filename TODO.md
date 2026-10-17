@@ -328,6 +328,10 @@ raven / llama.cpp (Vulkan; ROCm):
   time `compile/wide/sum-1e6` at 2-5 levels
 - `betaincinv`, once tolk compiles long programs (~20-25k ops)
 - GC stress for nx's C stubs: run them once under the stressed collector
+- an A/B on fudge of the base-handler design (branch `effect-base`,
+  bfe681ebd) against main on the eager rows decides whether it lands, and
+  with it the public `Nx.Op.request`/`Nx.Op.handle`: no perform beside
+  another domain's extent, no `Effect.Unhandled` raised
 
 ## nx2
 

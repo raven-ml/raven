@@ -37,13 +37,13 @@ let reverse =
   group "reverse mode"
     [
       test "grad of a product" (fun () ->
-          equal int 1241
+          equal int 1257
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x)));
       test "grad of a selection" (fun () ->
-          equal int 1585
+          equal int 1607
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (relu x)) x)));
       test "grad of a matrix product" (fun () ->
-          equal int 1155
+          equal int 1167
             (words (fun () -> Rune.grad' (fun w -> Nx.sum (Nx.matmul row w)) w)));
     ]
 
@@ -68,16 +68,8 @@ let replay =
 
 let device = Nx.Device.cpu 5
 
-(* While backtraces are recorded, the runtime keeps the last exception raised
-   reachable. nx and rune answer an operation that no interception handles by
-   catching [Effect.Unhandled], whose effect holds the operation's operands, so
-   those stay reachable until the next raise. A raise of [Exit] lets them go. *)
-let[@inline never] raise_exit () = raise Exit
-let forget_raised () = try raise_exit () with Exit -> ()
-
 let settled () =
   let m = Nx.Device.memory device in
-  forget_raised ();
   for _ = 1 to 4 do
     Gc.full_major ();
     (* An allocation on the device returns its collected memory. *)
@@ -151,4 +143,53 @@ let residuals =
         log_betainc in a 19849
         |})
 
-let () = exit (run "rune allocation" [ reverse; replay; residuals ])
+(* Fallbacks
+
+   While backtraces are recorded, the runtime keeps the last exception raised
+   reachable. A construct no transformation answers, such as one beside another
+   domain's [grad], keeps none of its arguments' bytes once it returns. *)
+
+(* [beside f] is [f ()] while another domain is inside a [grad]. *)
+let beside f =
+  let inside = Atomic.make false and stop = Atomic.make false in
+  let differentiated x =
+    Atomic.set inside true;
+    while not (Atomic.get stop) do
+      Domain.cpu_relax ()
+    done;
+    Nx.sum x
+  in
+  let other = Domain.spawn (fun () -> ignore (Rune.grad' differentiated x)) in
+  while not (Atomic.get inside) do
+    Domain.cpu_relax ()
+  done;
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set stop true;
+      Domain.join other)
+    f
+
+(* [detached ()] detaches a fresh value on [device] and drops it. *)
+let[@inline never] detached () =
+  let x =
+    Nx.place (Nx.Placement.on device) (Nx.zeros Nx.float64 [| elements |])
+  in
+  ignore (Sys.opaque_identity (Rune.detach x))
+
+(* [held_after f] is the bytes [device] holds once [f ()] returns, beyond those
+   it held before, after one uncounted run, with backtraces recorded. *)
+let held_after f =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+  @@ fun () ->
+  f ();
+  let before = settled () in
+  f ();
+  settled () - before
+
+let fallbacks =
+  test "a construct beside another domain's grad keeps no argument's bytes"
+    (fun () -> equal int 0 (beside (fun () -> held_after detached)))
+
+let () = exit (run "rune allocation" [ reverse; replay; residuals; fallbacks ])

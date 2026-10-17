@@ -467,7 +467,8 @@ let generated =
     let* strided = bool in
     let r = Array.length s in
     let rev s = Array.init r (fun i -> s.(r - 1 - i)) in
-    (* A copy of zeros, whose broadcast strides would merge under any reshape. *)
+    (* A copy of zeros, whose broadcast strides would merge under any
+       reshape. *)
     let x =
       if strided then Nx.transpose (Nx.copy (zeros (rev s))) else zeros s
     in
@@ -653,6 +654,81 @@ let reads =
           equal names [] !seen);
     ]
 
+(* Memory
+
+   While backtraces are recorded, the runtime keeps the last exception raised
+   reachable. An operation keeps none of its operands' bytes once it returns,
+   wherever it was answered. *)
+
+let device = Nx.Device.cpu 1
+
+(* The bytes [device] holds after four rounds of collection, each of which
+   returns to the device what it collected. *)
+let settled () =
+  let m = Nx.Device.memory device in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create m 0);
+    Rig.free_cache m
+  done;
+  Rig.allocated m
+
+(* [moved within ()] reshapes a fresh value on [device] [within] a context and
+   drops both. A movement makes a view, which allocates nothing. *)
+let[@inline never] moved within () =
+  let x = Nx.place (Nx.Placement.on device) (Nx.zeros Nx.float32 [| 1024 |]) in
+  within (fun () -> ignore (Sys.opaque_identity (Nx.reshape [| 32; 32 |] x)))
+
+(* [held_after f] is the bytes [device] holds once [f ()] returns, beyond those
+   it held before, after one uncounted run, with backtraces recorded. *)
+let held_after f =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+  @@ fun () ->
+  f ();
+  let before = settled () in
+  f ();
+  settled () - before
+
+let everything = { E.run = E.eval; claims = (fun _ -> true) }
+let nothing = { E.run = E.eval; claims = (fun _ -> false) }
+
+(* [beside f] is [f ()] while another domain is inside an interception. *)
+let beside f =
+  let inside = Atomic.make false and stop = Atomic.make false in
+  let other =
+    Domain.spawn (fun () ->
+        E.intercept everything (fun () ->
+            Atomic.set inside true;
+            while not (Atomic.get stop) do
+              Domain.cpu_relax ()
+            done))
+  in
+  while not (Atomic.get inside) do
+    Domain.cpu_relax ()
+  done;
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set stop true;
+      Domain.join other)
+    f
+
+let memory =
+  group "memory"
+    [
+      test "an operation outside every extent keeps no operand's bytes"
+        (fun () -> equal int 0 (held_after (moved (fun g -> g ()))));
+      test "an operation the interpreter issues keeps no operand's bytes"
+        (fun () -> equal int 0 (held_after (moved (E.intercept everything))));
+      test "an operation no interpreter claims keeps no operand's bytes"
+        (fun () -> equal int 0 (held_after (moved (E.intercept nothing))));
+      test
+        "an operation beside another domain's extent keeps no operand's bytes"
+        (fun () ->
+          equal int 0 (beside (fun () -> held_after (moved (fun g -> g ())))));
+    ]
+
 let () =
   exit
     (run "nx interception"
@@ -665,4 +741,5 @@ let () =
          describing;
          mapping;
          reads;
+         memory;
        ])
