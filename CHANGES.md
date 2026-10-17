@@ -3892,6 +3892,12 @@ thread.
 
 ### Nx
 
+- Every `Nx_io` save survives a crash whole: `save_npy`, `save_npz`,
+  `save_image`, `save_txt` and `gunzip` sync the new file before renaming it
+  over the old one, as `save_safetensors` did, and every save syncs the
+  directory. `save_txt` wrote in place, which a failed write or a crash left
+  partial, and `~overwrite:false` wrote at the path, which a crash left
+  partial.
 - `Nx.Op.shape` of a reshape that its operand's strides cannot express, such
   as a flattened transpose, is the target shape. It raised, though `Nx.Op.eval`
   answers the reshape with a copy.

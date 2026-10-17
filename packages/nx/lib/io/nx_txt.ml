@@ -69,7 +69,7 @@ module type SPEC = sig
   type kind
 
   val kind : (elt, kind) Nx_dtype.t
-  val print : out_channel -> elt -> unit
+  val print : Buffer.t -> elt -> unit
   val parse : string -> (elt, error) result
 end
 
@@ -170,13 +170,13 @@ let format_e ~precision x =
       (if exponent < 0 then '-' else '+')
       (abs exponent)
 
-let print_float oc v = output_string oc (format_e ~precision:18 v)
-let print_int oc v = output_string oc (string_of_int v)
-let print_int32 oc v = output_string oc (Int32.to_string v)
-let print_int64 oc v = output_string oc (Int64.to_string v)
-let print_uint32 oc v = Printf.fprintf oc "%lu" v
-let print_uint64 oc v = Printf.fprintf oc "%Lu" v
-let print_bool oc v = output_string oc (if v then "1" else "0")
+let print_float b v = Buffer.add_string b (format_e ~precision:18 v)
+let print_int b v = Buffer.add_string b (string_of_int v)
+let print_int32 b v = Buffer.add_string b (Int32.to_string v)
+let print_int64 b v = Buffer.add_string b (Int64.to_string v)
+let print_uint32 b v = Printf.bprintf b "%lu" v
+let print_uint64 b v = Printf.bprintf b "%Lu" v
+let print_bool b v = Buffer.add_string b (if v then "1" else "0")
 
 let parse_i32 name token =
   match int32_of_string_opt token with
@@ -386,15 +386,27 @@ let split_fields sep line =
   Save
   ---------------------------------------------------------------------------*)
 
-let write_comment_lines oc comments newline = function
+let write_comment_lines b comments newline = function
   | None -> ()
   | Some text ->
       List.iter
         (fun line ->
-          if comments <> "" then output_string oc comments;
-          output_string oc line;
-          output_string oc newline)
+          Buffer.add_string b comments;
+          Buffer.add_string b line;
+          Buffer.add_string b newline)
         (String.split_on_char '\n' text)
+
+(* The text is written to the file in chunks of about [chunk] bytes. *)
+let chunk = 65536
+
+let drain fd b =
+  ignore (Unix.write_substring fd (Buffer.contents b) 0 (Buffer.length b));
+  Buffer.clear b
+
+let appending path f =
+  let flags = [ Unix.O_WRONLY; O_CREAT; O_APPEND; O_CLOEXEC ] in
+  let fd = Unix.openfile path flags 0o666 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> f fd)
 
 let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
     ?(comments = "# ") ~out (type a b) (arr : (a, b) Nx.t) =
@@ -405,42 +417,45 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
     match spec_of_dtype (Nx.dtype arr) with
     | None -> Error Unsupported_dtype
     | Some (module S : SPEC with type elt = a and type kind = b) -> (
-        let perm = 0o666 in
-        let flags =
-          if append then [ Open_wronly; Open_creat; Open_append; Open_binary ]
-          else [ Open_wronly; Open_creat; Open_trunc; Open_binary ]
+        let write fd =
+          let b = Buffer.create chunk in
+          let print x =
+            S.print b x;
+            if Buffer.length b >= chunk then drain fd b
+          in
+          write_comment_lines b comments newline header;
+          ( Storage.reading ~by:"Nx_io.save_txt" arr @@ fun elements ->
+            Nx_array.Elements.read S.kind elements @@ fun get ->
+            match ndim with
+            | 0 ->
+                print (get 0);
+                Buffer.add_string b newline
+            | 1 ->
+                for j = 0 to shape.(0) - 1 do
+                  if j > 0 then Buffer.add_string b sep;
+                  print (get j)
+                done;
+                Buffer.add_string b newline
+            | _ ->
+                let rows = shape.(0) and cols = shape.(1) in
+                for i = 0 to rows - 1 do
+                  for j = 0 to cols - 1 do
+                    if j > 0 then Buffer.add_string b sep;
+                    print (get ((i * cols) + j))
+                  done;
+                  Buffer.add_string b newline
+                done );
+          write_comment_lines b comments newline footer;
+          drain fd b
         in
         try
-          let oc = open_out_gen flags perm out in
-          Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
-          write_comment_lines oc comments newline header;
-          ( Storage.reading ~by:"Nx_io.save_txt" arr @@ fun b ->
-            Nx_array.Elements.read S.kind b @@ fun get ->
-            match ndim with
-          | 0 ->
-              S.print oc (get 0);
-              output_string oc newline
-          | 1 ->
-              let n = shape.(0) in
-              for j = 0 to n - 1 do
-                if j > 0 then output_string oc sep;
-                S.print oc (get j)
-              done;
-              output_string oc newline
-          | _ ->
-              let rows = shape.(0) and cols = shape.(1) in
-              for i = 0 to rows - 1 do
-                for j = 0 to cols - 1 do
-                  if j > 0 then output_string oc sep;
-                  S.print oc (get ((i * cols) + j))
-                done;
-                output_string oc newline
-              done );
-          write_comment_lines oc comments newline footer;
+          if append then appending out write
+          else Temp_file.write ~overwrite:true out write;
           Ok ()
         with
         | Sys_error msg -> Error (Io_error msg)
-        | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e)))
+        | Unix.Unix_error (e, _, _) ->
+            Error (Io_error (out ^ ": " ^ Unix.error_message e)))
 
 (*---------------------------------------------------------------------------
   Load

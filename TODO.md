@@ -270,8 +270,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- saves fsync unevenly: npy, npz, images and gunzip go through
-  `Temp_file.write`, which never orders bytes before the rename
 - compiled `Nx.svd` is inaccurate on graded float64 spectra: relative
   errors 6e-7 at n=16, 9e-9 at n=32
 - `truncated_normal` loses accuracy in the tails (float64 2.5e-11, float32

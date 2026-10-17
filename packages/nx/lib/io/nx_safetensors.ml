@@ -141,20 +141,6 @@ let tensor_data (type a b) name (t : (a, b) Nx.t) =
     | _ | (exception Invalid_argument _) ->
         (dtype, Nx.Op.eval (Read { by = "Nx_io.save_safetensors"; x = t }))
 
-let replace_or_keep temp path =
-  let failed e =
-    fail_msg "cannot replace %s (%s): the tensors were written to %s" path
-      (Unix.error_message e) temp
-  in
-  try Unix.rename temp path with
-  | Unix.Unix_error _ when Sys.win32 -> (
-      (* Windows refuses to replace a file while a view of its pages is mapped:
-         a value loaded from [path] and borrowed may hold one until it is
-         collected. *)
-      Gc.full_major ();
-      try Unix.rename temp path with Unix.Unix_error (e, _, _) -> failed e)
-  | Unix.Unix_error (e, _, _) -> failed e
-
 (* A new file of [n] bytes beside [path], and its name. *)
 let sibling path n =
   let held name =
@@ -219,9 +205,13 @@ let save_safetensors ?(overwrite = true) path archive =
     let temp, file = sibling path (size header parts) in
     match
       Storage.claiming (List.map snd parts) (fun () -> write file header parts);
-      Rig_disk.barrier file
+      Rig_disk.barrier file;
+      Temp_file.place ~overwrite temp path
     with
-    | () -> replace_or_keep temp path
+    | () -> ()
+    | exception Unix.Unix_error (e, "rename", _) ->
+        fail_msg "cannot replace %s (%s): the tensors were written to %s" path
+          (Unix.error_message e) temp
     | exception e ->
         Temp_file.remove_if_exists temp;
         raise e

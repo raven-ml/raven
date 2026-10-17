@@ -10,6 +10,15 @@
     of named tensors is read and written as an {!Archive.t}, and every format's
     functions are named after it.
 
+    A save writes a new file beside its path, orders the file's bytes before
+    every later change to the file system, then renames it over the path and
+    syncs the directory. After a crash, the path holds what it held before or
+    the whole new file, and a save that fails leaves it as it was and nothing
+    beside it. Without [~overwrite], the new file is linked to the path, which
+    fails if the path exists; on a file system without hard links, such as
+    FAT, the path is checked then the file renamed, so a file another process
+    creates at the path between the two is replaced.
+
     See doc/04-io.md for saving and loading structured values. *)
 
 (** {1:archives Archives} *)
@@ -282,12 +291,11 @@ val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_safetensors ?overwrite path a] writes [a]'s tensors to a SafeTensors
     file.
 
-    The tensors are written to a temporary file in [path]'s directory, whose
-    bytes are ordered before the rename to [path] ([Rig_disk.barrier]): a
-    reader sees the previous file or the new one, never a partial one, and a
-    failed save leaves the previous file as it was. Each tensor's bytes are copied into the file from where they
-    are: a device writes its memory to the file, and a tensor loaded by
-    {!load_safetensors} is copied from its file. If the rename is refused, a
+    The tensors are written as every save writes its file, their bytes
+    ordered by [Rig_disk.barrier]: a reader sees the previous file or the new
+    one, never a partial one. Each tensor's bytes are copied into the file
+    from where they are: a device writes its memory to the file, and a tensor
+    loaded by {!load_safetensors} is copied from its file. If the rename is refused, a
     major collection runs, which closes the files of the tensors no longer
     reachable, and the rename is retried once.
 
@@ -473,7 +481,9 @@ val save_txt :
     bit, the integer dtypes but int4 and uint4, and the float dtypes but float8.
 
     [sep] defaults to [" "]. [append] defaults to [false]. [newline] defaults to
-    ["\n"]. [comments] defaults to ["# "].
+    ["\n"]. [comments] defaults to ["# "]. With [append], the text is added to
+    the end of [path] in place, so a save that fails, or a crash, may leave
+    part of it.
 
     Raises [Failure] if [t]'s dtype or shape is unsupported or [path] cannot be
     written. *)

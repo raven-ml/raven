@@ -1305,6 +1305,23 @@ let bits =
           equal string (saved (Nx.cast Nx.bool m)) (saved m));
     ]
 
+(* A run of operations whose reads of a tensor's elements fail. *)
+let refuse_reads : type r. r Nx.Op.t -> r = function
+  | Read { by; _ } -> invalid_arg by
+  | op -> Nx.Op.eval op
+
+(* The saves of a tensor, named by the extension of the file they write. *)
+let unreadable_saves =
+  [
+    (".npy", fun path t -> Nx_io.save_npy path t);
+    ( ".npz",
+      fun path t -> Nx_io.save_npz path (Nx_io.Archive.of_list [ ("t", Nx.P t) ])
+    );
+    (".txt", fun path t -> Nx_io.save_txt path t);
+    (".png", fun path t -> Nx_io.save_image path t);
+    (".jpg", fun path t -> Nx_io.save_image path t);
+  ]
+
 let every_format =
   let name f = f.name in
   let with_overwrite = List.filter (fun f -> f.overwrite) formats in
@@ -1337,14 +1354,34 @@ let every_format =
           end);
       cases ~name
         "~overwrite:false writes a new file and refuses an existing one, \
-         leaving it as it was"
+         leaving it as it was and nothing beside it"
         with_overwrite (fun f ->
-          let path = missing ("x" ^ f.suffix) in
+          let dir = temp_dir () in
+          let path = Filename.concat dir ("x" ^ f.suffix) in
           f.save ~overwrite:false path;
           f.load path;
-          let old = file f.suffix "old" in
+          let old = Filename.concat dir ("old" ^ f.suffix) in
+          write old "old";
           f.refused EEXIST (fun () -> f.save ~overwrite:false old);
-          equal string "old" (read old));
+          equal string "old" (read old);
+          equal ~msg:"the directory" (slist string compare)
+            [ "old" ^ f.suffix; "x" ^ f.suffix ]
+            (Array.to_list (Sys.readdir dir)));
+      cases ~name:fst
+        "a save that cannot read its tensor fails, leaving the file it was to \
+         replace as it was and nothing beside it"
+        unreadable_saves (fun (name, save) ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir ("old" ^ name) in
+          write path "old";
+          let refusing = { Nx.Op.run = refuse_reads; claims = (fun _ -> true) } in
+          let t = Nx.zeros Nx.uint8 [| 2; 2 |] in
+          raises_match
+            (fun e -> Exn.failure e || Exn.invalid_arg e)
+            (fun () -> Nx.Op.intercept refusing (fun () -> save path t));
+          equal ~msg:"the file" string "old" (read path);
+          equal ~msg:"the directory" (array string)
+            [| "old" ^ name |] (Sys.readdir dir));
       cases ~name "an empty file, a text file or a file cut short fails to load"
         formats (fun f ->
           let s = f.sample () in
