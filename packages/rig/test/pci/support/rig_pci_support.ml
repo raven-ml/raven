@@ -289,10 +289,11 @@ module Tree = struct
     driver : string option;
     group : string option;
     enabled : bool;
+    reset : string option;
     bars : bar list;
   }
 
-  let gpu ?driver ?group ?(enabled = true) bus =
+  let gpu ?driver ?group ?(enabled = true) ?(reset = Some "bus") bus =
     {
       bus;
       vendor = 0x1002;
@@ -301,6 +302,7 @@ module Tree = struct
       driver;
       group;
       enabled;
+      reset;
       bars =
         [
           Mem64 (0x7c_0000_0000, 256 * mib);
@@ -431,6 +433,11 @@ module Tree = struct
              fn.bars);
         write (d / "remove") "";
         write (d / "driver_override") "(null)\n";
+        Option.iter
+          (fun methods ->
+            write (d / "reset") "";
+            write (d / "reset_method") (methods ^ "\n"))
+          fn.reset;
         Option.iter
           (fun drv ->
             write (sys / "bus/pci/drivers" / drv / "bind") "";

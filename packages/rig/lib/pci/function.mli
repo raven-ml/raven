@@ -18,9 +18,11 @@
       the memory the process maps for it, at device addresses the process
       chooses.
     - {e Physically}, through [/sys/bus/pci], with write access to the
-      function's files there. The function must be enabled, alone on its
-      device, and bound to no driver or to [vfio-pci], and the IOMMU, if any,
-      must not translate its addresses. It reaches system memory at physical
+      function's files there. The function must be enabled and bound to no
+      driver or to [vfio-pci], and the IOMMU, if any, must not translate its
+      addresses. A function that Linux resets through its bus must also be
+      alone on its device, since Linux refuses that reset while another
+      function shares the bus. It reaches system memory at physical
       addresses, and nothing confines its DMA. An address that its work or page
       tables get wrong reads or writes whatever memory of the machine lies
       there, the kernel's included.
@@ -82,8 +84,10 @@ val take : Machine.t -> string -> (t, string) result
     process, this one included, holds it, or if neither way is open:
     - it is bound to a driver other than [vfio-pci] ({!Gpus.detach});
     - the IOMMU translates its addresses and it is not bound to [vfio-pci];
-    - not behind an IOMMU, it shares its device with another function, or it is
-      disabled ({!Gpus.detach});
+    - not behind an IOMMU, it is disabled, or it shares its device with
+      another function and Linux resets it through its bus: the first method
+      of its [reset_method] is [bus] or [cxl_bus], or the kernel lists none
+      and the function has a [reset] ({!Gpus.detach});
     - it is not behind an IOMMU and the kernel is locked down
       ([/sys/kernel/security/lockdown], which Secure Boot turns on in several
       distributions), which refuses every mapping of a BAR;

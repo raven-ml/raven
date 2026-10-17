@@ -214,6 +214,7 @@ type state = {
   driver : string option;
   iommu : iommu;
   siblings : string list;
+  bus_reset : bool;
   enabled : bool;
   locked_down : bool;
 }
@@ -240,11 +241,26 @@ let locked_down m =
   | s -> not (String.starts_with ~prefix:"[none]" s)
   | exception Fail.Failed _ -> false
 
+(* Linux resets a function with the first method of its [reset_method] that
+   applies. Only [bus] and [cxl_bus] reset more than the function, and Linux
+   refuses them while another function shares the bus, so a function whose
+   reset is one of them must be alone on its device for {!reset} to work. A
+   kernel older than the file (5.15) lists no methods: a function with a
+   [reset] file then counts as reset through its bus. *)
+let bus_methods = [ "bus"; "cxl_bus" ]
+
+let bus_reset m bus =
+  let methods = path m bus "reset_method" in
+  if Sys.file_exists methods then
+    List.mem (List.hd (String.split_on_char ' ' (read methods))) bus_methods
+  else Sys.file_exists (path m bus "reset")
+
 let state m bus =
   {
     driver = driver_of m bus;
     iommu = iommu_of m bus;
     siblings = siblings m bus;
+    bus_reset = bus_reset m bus;
     enabled = enabled m bus;
     locked_down = locked_down m;
   }
@@ -279,8 +295,12 @@ let addressing m bus s =
            "the IOMMU translates the addresses %s reaches, so it cannot reach \
             physical memory; bind it to vfio-pci, or boot Linux with iommu=pt"
            bus)
-  | { siblings = s :: _; _ } ->
-      Error (strf "%s shares its device with %s; detach it first" bus s)
+  | { siblings = s :: _; bus_reset = true; _ } ->
+      Error
+        (strf
+           "%s shares its device with %s, and Linux resets it through its bus, \
+            which needs it alone; detach it first"
+           bus s)
   | { driver = None; enabled = false; _ } ->
       Error (strf "%s is disabled; detach it first" bus)
   | { locked_down = true; _ } ->
@@ -329,20 +349,20 @@ let stop_mastering m bus =
 (* Detach decides before it writes anything whether the function will be
    takeable once unbound and enabled, alone if it removes the device's other
    functions: one it could not take then could not be reset to go back to its
-   driver. A detach that keeps them refuses a function that has any, naming
-   each with its driver. *)
+   driver. A detach that keeps them refuses a function that has any and that
+   Linux resets through its bus, naming each with its driver. *)
 let keep_off { files = m; bus; _ } ~remove =
   let s = state m bus in
   if s.driver <> Some vfio_pci then begin
-    if (not remove) && s.siblings <> [] then begin
+    if (not remove) && s.siblings <> [] && s.bus_reset then begin
       let named f =
         match driver_of m f with
         | Some d -> strf "%s (bound to %s)" f d
         | None -> strf "%s (unbound)" f
       in
       Fail.fail
-        "%s shares its device with %s, which detach leaves; remove or detach \
-         them first"
+        "%s shares its device with %s, which detach leaves, and Linux resets \
+         it through its bus, which needs it alone; remove or detach them first"
         bus
         (String.concat ", " (List.map named s.siblings))
     end;
@@ -372,7 +392,7 @@ let detach { files = m; bus; _ } ~remove =
       let s = state m bus in
       match (addressing m bus s, s) with
       | Ok _, _ -> ()
-      | Error _, { siblings = sibling :: _; _ } ->
+      | Error _, { siblings = sibling :: _; bus_reset = true; _ } ->
           Fail.fail "%s still shares its device with %s after removing it" bus
             sibling
       | Error _, { driver = None; enabled = false; _ } ->

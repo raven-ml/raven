@@ -1375,22 +1375,33 @@ let test_vfio_unwaited () =
           (Machine.at root) 0))
 
 (* A vendor that keeps a device's other functions, such as a NIC's other
-   ports, has detach refuse a device that has any, naming each with its
-   driver, and write nothing; one alone on its device detaches. *)
+   ports, has detach refuse a device that has any where Linux resets the
+   function through its bus, naming each with its driver, and write nothing;
+   one alone on its device detaches, and so does one with a reset of its
+   own, its other functions left as they were. *)
 let test_keep_siblings () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu gpu_bus; audio "0000:03:00.1" ] in
   let g = gpus ~siblings:Gpus.Keep () in
   let why = require_error (Gpus.detach g (Machine.at root) 0) in
   contains ~sub:"0000:03:00.1 (bound to snd_hda_intel)" why;
-  contains ~sub:"which detach leaves; remove or detach them first" why;
+  contains ~sub:"which detach leaves" why;
+  contains ~sub:"remove or detach them first" why;
   equal ~msg:"the override" string "(null)"
     (pci_file root (devices gpu_bus "driver_override"));
   equal ~msg:"the other function" string ""
     (pci_file root (devices "0000:03:00.1" "remove"));
   let alone = Tree.make [ Tree.gpu gpu_bus ] in
   equal progress Detached
-    (require_ok (Gpus.detach g (Machine.at alone) 0))
+    (require_ok (Gpus.detach g (Machine.at alone) 0));
+  let own =
+    Tree.make
+      [ Tree.gpu ~reset:(Some "flr bus") gpu_bus; audio "0000:03:00.1" ]
+  in
+  equal progress Detached
+    (require_ok ~msg:"a reset of its own" (Gpus.detach g (Machine.at own) 0));
+  equal ~msg:"the other function, kept" string ""
+    (pci_file own (devices "0000:03:00.1" "remove"))
 
 let tree_changes =
   group ~timeout:patience "changes on a machine's files"

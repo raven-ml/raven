@@ -289,6 +289,36 @@ let test_refusal (_, fns, bus, opts, subs) =
   let why = require_error (Function.take (Machine.at root) bus) in
   List.iter (fun sub -> contains ~sub why) subs
 
+(* Linux resets a function with the first method its [reset_method] lists,
+   and refuses [bus] and [cxl_bus] while another function shares the bus: a
+   function sharing its device is taken physically unless they reset it. A
+   kernel older than [reset_method] lists no order, so its function with a
+   [reset] counts as reset through its bus. *)
+let shared_resets =
+  [
+    ("a reset of its own first", `Methods "flr bus", true);
+    ("power management alone", `Methods "pm", true);
+    ("no reset", `None, true);
+    ("the bus's", `Methods "bus", false);
+    ("a CXL bus's", `Methods "cxl_bus", false);
+    ("a reset without reset_method", `Old_kernel, false);
+  ]
+
+let test_shared_reset (_, reset, taken) =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let bus = "0000:03:00.0" in
+  let methods =
+    match reset with `Methods m -> Some m | `None | `Old_kernel -> None
+  in
+  let root = Tree.make [ Tree.gpu ~reset:methods bus; audio "0000:03:00.1" ] in
+  if reset = `Old_kernel then
+    Tree.add root ("sys/bus/pci/devices/" ^ bus ^ "/reset") "";
+  let take = Function.take (Machine.at root) bus in
+  if taken then Function.release (require_ok take)
+  else
+    contains ~sub:"0000:03:00.0 shares its device with 0000:03:00.1"
+      (require_error take)
+
 (* An identity IOMMU passes physical addresses through, as does VFIO's no-IOMMU
    mode: a function under either is taken physically. On Linux the take locks
    its configuration file; elsewhere flock is refused. *)
@@ -562,6 +592,11 @@ let tree_files =
          physically by one take at a time, its BARs as its registers and \
          resource file say, all ones past 64 bytes, without interrupts"
         test_physical;
+      cases
+        "a function sharing its device is taken physically unless Linux \
+         resets it through its bus"
+        ~name:(fun (n, _, _) -> n)
+        shared_resets test_shared_reset;
       test
         "a function the lock's holder binds to vfio-pci is refused as taken"
         test_take_locked;
@@ -1388,8 +1423,11 @@ let test_reset_silent () =
 
 (* Linux has no reset for a function without a reset file. *)
 let test_reset_no_file () =
-  with_fixture @@ fun _ f ->
-  contains ~sub:(Function.bus f ^ "/reset") (require_error (Function.reset f))
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let fn = Tree.gpu ~reset:None "0000:03:00.0" in
+  let f = require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus) in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  contains ~sub:(fn.bus ^ "/reset") (require_error (Function.reset f))
 
 let resets =
   group ~timeout:patience "resets"

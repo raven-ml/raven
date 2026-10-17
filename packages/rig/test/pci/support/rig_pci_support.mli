@@ -205,13 +205,23 @@ module Tree : sig
     driver : string option;
     group : string option;  (** Its IOMMU group. *)
     enabled : bool;
+    reset : string option;
+        (** Its [reset_method], the methods Linux resets it with, in order, or
+            [None] for a function without a reset. *)
     bars : bar list;
   }
   (** The type for a function of a machine. *)
 
-  val gpu : ?driver:string -> ?group:string -> ?enabled:bool -> string -> fn
+  val gpu :
+    ?driver:string ->
+    ?group:string ->
+    ?enabled:bool ->
+    ?reset:string option ->
+    string ->
+    fn
   (** [gpu bus] is an AMD display controller at [bus], enabled and bound to no
-      driver, with a 64-bit BAR 0 of 256 MiB at [0x7c_0000_0000], a 64-bit BAR 2
+      driver, reset through its bus ([reset] defaults to [Some "bus"]), with a
+      64-bit BAR 0 of 256 MiB at [0x7c_0000_0000], a 64-bit BAR 2
       of 2 MiB at [0xfc00_0000], an I/O BAR 4 of 256 bytes at [0xe000] and a
       32-bit BAR 5 of 1 MiB at [0xfcc0_0000]. *)
 

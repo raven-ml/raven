@@ -83,8 +83,10 @@ val access : 's lock -> (Ops.addressing, string) result
     - It is [Iommu] for a function bound to [vfio-pci] behind an IOMMU, with
       the other functions of its group.
     - It is [Physical] for a function bound to [vfio-pci] without an IOMMU, or
-      unbound and enabled under no IOMMU or an identity one, alone on its
-      device, with the kernel not locked down.
+      unbound and enabled under no IOMMU or an identity one, with the kernel
+      not locked down. Either way it must be alone on its device if Linux
+      resets it through its bus: the first method of its [reset_method] is
+      [bus] or [cxl_bus], or the kernel lists none and it has a [reset].
     - It is [Error why] otherwise, naming the binding to [vfio-pci] where that
       would do, or {!detach} where it would. *)
 
@@ -103,7 +105,8 @@ val keep_off : 's lock -> remove:bool -> unit
     driver. Raises {!Fail.Failed}, having written nothing, if the function
     would not be takeable once unbound and enabled, alone if [remove], or if
     the file cannot be written. Without [remove] it raises for a function
-    whose device has other functions, naming each with its driver. *)
+    whose device has other functions and that Linux resets through its bus,
+    naming each with its driver. *)
 
 val detach : 's lock -> remove:bool -> unit
 (** [detach l ~remove] makes the function [l] locks takeable, after

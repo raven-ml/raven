@@ -34,15 +34,18 @@ type t
 
 (** The type for what {!detach} does with the other functions of a GPU's
     device, such as its audio function or, for a NIC, its other ports. A
-    function taken physically must be alone on its device. *)
+    function taken physically that Linux resets through its bus must be alone
+    on its device ({!Function.take}). A vendor whose reset reaches the whole
+    device removes them. *)
 type siblings =
   | Remove
       (** {!detach} removes them from the machine until {!attach} or a
           reboot. *)
   | Keep
       (** {!detach} leaves them, and refuses a GPU that is not bound to
-          [vfio-pci] while its device has any, naming them and their drivers.
-          The caller then frees them as it decides. *)
+          [vfio-pci] while its device has any and Linux resets it through its
+          bus, naming them and their drivers. The caller then frees them as it
+          decides. *)
 
 val make :
   name:string ->
@@ -265,7 +268,8 @@ val detach : t -> Machine.t -> int -> (progress, string) result
     [Error why], changing nothing, if:
     - no process could take its function once detached, such as when an
       IOMMU translates its addresses and it is not bound to [vfio-pci], or
-      when its device keeps other functions ([Keep]);
+      when its device keeps other functions ([Keep]) and Linux resets it
+      through its bus;
     - a process, this one included, holds a file of one of its devices,
       naming it, or the kernel still holds one after [teardown_ms];
     - [/proc] cannot be read, or, for a GPU with a DRM device, its list of
