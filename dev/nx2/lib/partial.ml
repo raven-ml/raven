@@ -683,11 +683,12 @@ let along (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   r.(1) <- { M.start; count; step = 1 };
   Value.Any (apply ~by (Value.Move (Slice r, x)))
 
-(* [x] on [here]. *)
+(* [x] on [here]; a value of no load lies on no set until placed. *)
 let moved (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (here : d Devices.placement) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  if Devices.equal (Prim.placement x) here then x
-  else apply ~by (Value.Place (here, x))
+  match Prim.at x with
+  | Some p when Devices.equal p here -> x
+  | Some _ | None -> apply ~by (Value.Place (here, x))
 
 (* Output [o] of [prog] over device [dv]'s windows of [loads], laid out as
    [outputs; terms], the window's axes off [axes] then those along them, each in
@@ -1642,33 +1643,34 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (fun i ->
         let here = Devices.one set ks.(i) in
         let w = windows.(i) in
-        results.(i) <-
-          Some
-            (if w.(axis).count = 0 then
-               let viewed =
-                 Array.map (fun l -> view_load ~by ks.(i) here l w) loads
-               in
-               values r
-                 (apply ~by
-                    (Prim.within
-                       (Value.Scan
-                          {
-                            layout;
-                            axis;
-                            prog;
-                            reduction = r;
-                            loads = viewed;
-                            carry = None;
-                          })
-                       w))
-             else
-               let t =
-                 Option.get
-                   (Array.find_index (fun ti -> ti.s = w.(axis).start) ts)
-               in
-               List.map
-                 (fun (Value.Any y) -> Value.Any (moved apply ~by here y))
-                 computed.(t)))
+        let vs =
+          if w.(axis).count = 0 then
+            let viewed =
+              Array.map (fun l -> view_load ~by ks.(i) here l w) loads
+            in
+            values r
+              (apply ~by
+                 (Prim.within
+                    (Value.Scan
+                       {
+                         layout;
+                         axis;
+                         prog;
+                         reduction = r;
+                         loads = viewed;
+                         carry = None;
+                       })
+                    w))
+          else
+            let t =
+              Option.get (Array.find_index (fun ti -> ti.s = w.(axis).start) ts)
+            in
+            computed.(t)
+        in
+        (* Each result on its device: a scan of an empty window, or of one
+           term, gives values of no load, which lie on no set. *)
+        let on_here (Value.Any y) = Value.Any (moved apply ~by here y) in
+        results.(i) <- Some (List.map on_here vs))
       members
   in
   Array.iteri (fun j _ -> if Option.is_none results.(j) then group j) ks;

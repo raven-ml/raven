@@ -1391,6 +1391,27 @@ let test_arg_scan_cases () =
         (want [| z 1. 0.; z 2. a; z 2. a |] [| 0L; 1L; 1L |])
         (parts (arg Max D.Complex128 [| 3 |] [| z 1. 0.; z 2. a; z 5. 0. |])))
 
+module Core3 =
+  (val Nx.devices ~kernels:(module Core_only)
+         [ Nx_support.memory 0; Nx_support.memory 1; Nx_support.memory 2 ])
+
+(* An Arg scan along an axis cut over three devices whose kernels decline
+   it, each device's window one term or none, has the host's results. *)
+let test_arg_scan_cut () =
+  let found = pair (array float_exact) (array int64) in
+  let scan x =
+    let v, q = scan1 (Arg (Max, 0, D.Float32)) 1 x in
+    (read v, read q)
+  in
+  List.iter
+    (fun (s, xs) ->
+      let a = A.of_array D.Float32 s xs in
+      equal
+        ~msg:(Format.asprintf "%a" pp_ints s)
+        found (scan (value a))
+        (scan (Nx.place (Core3.split ~axis:1) (value a))))
+    [ ([| 2; 1 |], [| 3.; -1. |]); ([| 1; 2 |], [| -1.; 3. |]) ]
+
 (* Complex products, extremes and their first positions, reduced and scanned
    through Nx on the host, against folds of their terms. A number with a NaN
    part is a NaN. A product's terms are Gaussian integers whose parts are 0 or
@@ -1904,6 +1925,8 @@ let optional_group =
       prop "arg scans are each prefix's extreme and its first position"
         arg_scan_case law_arg_scan;
       test "arg scans' cases" test_arg_scan_cases;
+      test "an arg scan cut to a term or none a device has the host's results"
+        test_arg_scan_cut;
       prop ~examples:prefix_examples
         "a scan's prefix is the prefix of its scan, bit for bit" prefix_case
         law_scan_prefix;
