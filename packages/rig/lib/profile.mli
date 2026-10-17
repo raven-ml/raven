@@ -36,6 +36,14 @@ open Def
 
 (** {!Rig.Profile.event}. *)
 type event = Def.event =
+  | Work of {
+      point : int;
+      device : device;
+      lane : string;
+      name : string;
+      start : int;
+      stop : int;
+    }
   | Span of {
       device : device;
       lane : string;
@@ -75,7 +83,7 @@ type t
 
 (** The type for the events of [device]'s work up to [value] that [read]
     adds to a profile once the device reached it, such as a submission's
-    span. Each profile that timed the work holds an entry of its own; [drop]
+    [Work]. Each profile that timed the work holds an entry of its own; [drop]
     ends the entry, read or not, and the last [drop] of the work's entries
     lets go of what they read. *)
 and pending = {
@@ -96,7 +104,7 @@ val pend : t -> pending -> unit
 val add : t list -> event -> unit
 (** [add ps e] records [e] under one number in each profile of [ps] still
     open. A recorder that read {!active} earlier, as a submit does for the
-    span it records once its value is reached, adds to those profiles
+    [Work] it records once its value is reached, adds to those profiles
     alone. *)
 
 val take : (unit -> 'a) -> 'a * event list

@@ -337,7 +337,9 @@ let model_law c =
   let expect = model c in
   for n = 0 to 2 do
     let xs = Array.map2 (fun d s -> of_bytes ds.(d) s) c.in_dev c.inputs in
-    let points = G.run p { inputs = xs; ints = copy_ints c } in
+    let points =
+      G.run p { inputs = xs; ints = copy_ints c; step_points = G.step_points p }
+    in
     let ran =
       List.filter
         (fun d ->
@@ -492,7 +494,9 @@ let hole_law h =
   in
   let p = load_ok t [ d ] in
   let x = B.create d 16 and y = B.create d 16 in
-  ignore (G.run p { inputs = [| x; y |]; ints = [||] });
+  ignore
+    (G.run p
+       { inputs = [| x; y |]; ints = [||]; step_points = G.step_points p });
   let x = read x and y = read y in
   let a = word x 0 in
   let w = (a + h.add) lsr h.shift in
@@ -639,7 +643,12 @@ let affine_law c =
     (fun (i0, i1) ->
       let x = B.create d 16 and y = B.create d 8 in
       Array.iter Rig.Point.wait
-        (G.run p { inputs = [| x; y |]; ints = [| i0; i1 |] });
+        (G.run p
+           {
+             inputs = [| x; y |];
+             ints = [| i0; i1 |];
+             step_points = G.step_points p;
+           });
       let x = read x and y = read y in
       let a = word x 0 in
       let value = function
@@ -686,7 +695,7 @@ let test_two_waits () =
   let d, pd = polled "two" in
   let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
   ignore (P.launches pd);
-  let empty = { G.inputs = [||]; ints = [||] } in
+  let empty = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
   ignore (G.run p empty);
   ignore (G.run p empty);
   equal ~msg:"runs 0 and 1 handed over, neither run" int 0
@@ -700,7 +709,7 @@ let test_one_waits_not () =
   let d, pd = polled "one" in
   let p = load_ok (one_device_fill d) [ d ] in
   ignore (P.launches pd);
-  let empty = { G.inputs = [||]; ints = [||] } in
+  let empty = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
   let last = List.init 3 (fun _ -> G.run p empty) in
   equal ~msg:"memory of one copy: runs wait only by its stamps, in the queue"
     int 0
@@ -713,11 +722,13 @@ let test_after () =
   let a, _ = polled "after-a" and b, _ = polled "after-b" in
   let pa = load_ok (one_device_fill a) [ a ] in
   let pb = load_ok (one_device_fill b) [ b ] in
-  let empty = { G.inputs = [||]; ints = [||] } in
-  let pt = (G.run pa empty).(0) in
+  let empty p =
+    { G.inputs = [||]; ints = [||]; step_points = G.step_points p }
+  in
+  let pt = (G.run pa (empty pa)).(0) in
   equal ~msg:"a's run not reached" bool true
     (Rig.signaled a < Rig.Point.value pt);
-  let last = G.run ~waits:[| pt |] pb empty in
+  let last = G.run ~waits:[| pt |] pb (empty pb) in
   greater ~msg:"b's run followed it" int
     ~than:(Rig.Point.value pt - 1)
     (Rig.signaled a);
@@ -743,7 +754,7 @@ let reenter n =
   let d, _ = polled "reenter" in
   let t = one_device_fill d in
   let p = load_ok t [ d ] in
-  let empty = { G.inputs = [||]; ints = [||] } in
+  let empty = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
   let held = ref false and ran = ref "" and loaded = ref "" in
   let allocated = ref 0 in
   let call () =
@@ -796,7 +807,7 @@ let test_reentry () =
 let interrupt_run n =
   let d, _ = polled "interrupt" in
   let p = load_ok (one_device_fill d) [ d ] in
-  let empty = { G.inputs = [||]; ints = [||] } in
+  let empty = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
   let reached =
     Rig_support.interrupted n (fun () ->
         Array.iter Rig.Point.wait (G.run p empty))
@@ -1176,16 +1187,81 @@ let test_machines () =
 let test_frame_refusals () =
   let d = fst (polled "frame") and e = fst (polled "frame-other") in
   let p = load_ok (base d) [ d ] in
+  let before = Rig.submitted d in
   let refused msg inputs =
     raises_match ~msg Exn.invalid_arg (fun () ->
-        G.run p { inputs; ints = [||] })
+        G.run p { inputs; ints = [||]; step_points = G.step_points p })
   in
   refused "no input" [||];
   refused "two inputs" [| B.create d 64; B.create d 64 |];
   refused "an input of another device" [| B.create e 64 |];
   refused "an input of fewer bytes" [| B.create d 63 |];
+  let points_refused msg step_points =
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        G.run p { inputs = [| B.create d 64 |]; ints = [||]; step_points })
+  in
+  points_refused "no points" [||];
+  points_refused "two points for one step"
+    (Array.append (G.step_points p) (G.step_points p));
+  equal ~msg:"no step ran" int 0 (Rig.submitted d - before);
+  let step_points = G.step_points p in
   Array.iter Rig.Point.wait
-    (G.run p { inputs = [| B.create d 65 |]; ints = [||] })
+    (G.run p { inputs = [| B.create d 65 |]; ints = [||]; step_points })
+
+let point = Testable.make ~pp:Rig.Point.pp ~equal:( = )
+
+(* The points of [d]'s work in [events]. *)
+let work_points d events =
+  List.filter_map
+    (function
+      | Rig.Profile.Work w when Rig.equal w.device d -> Some w.point | _ -> None)
+    events
+
+(* A frame's step points start at a reached point of the host. Each run stores
+   each [Submit] step's last point, in step order, which the work a profile
+   records of the step carries, and the reached point for a step it does not
+   submit, such as a loop's body after a run that submitted it. *)
+let test_frame_points () =
+  let d, _ = polled "points" in
+  let step v =
+    submit 0
+      ~buffers:[| (all 0, Rig.Read_write) |]
+      [| fill ~image:0 ~groups:1 v |]
+  in
+  let loop =
+    G.Loop { trips = Int 0; trip = None; flag = None; body = [| step 2 |] }
+  in
+  let t =
+    { (one_device_fill d) with ints = 1; steps = [| step 1; loop; step 3 |] }
+  in
+  let p = load_ok t [ d ] in
+  let step_points = G.step_points p in
+  let reached = step_points.(0) in
+  equal ~msg:"one per Submit step" int 3 (Array.length step_points);
+  let on_host q = Option.equal Rig.equal (Rig.Point.device q) (Some Rig.host) in
+  Array.iter
+    (fun q ->
+      equal ~msg:"a reached point of the host" (pair bool bool) (true, true)
+        (Rig.Point.reached q, on_host q))
+    step_points;
+  let run trips =
+    Rig.Profile.take (fun () ->
+        let ends = G.run p { inputs = [||]; ints = [| trips |]; step_points } in
+        Array.iter Rig.Point.wait ends;
+        Rig.Point.value ends.(0))
+  in
+  let last, events = run 2 in
+  equal ~msg:"each step's last point" (list int)
+    [ last - 3; last - 1; last ]
+    (Array.to_list (Array.map Rig.Point.value step_points));
+  equal ~msg:"its work's points" (list bool) [ true; true; true ]
+    (Array.to_list
+       (Array.map (fun q -> List.mem q (work_points d events)) step_points));
+  let last, _ = run 0 in
+  equal ~msg:"the steps' values, the loop run no trip" (list int)
+    [ last - 1; last ]
+    [ Rig.Point.value step_points.(0); Rig.Point.value step_points.(2) ];
+  equal ~msg:"the loop's step, not submitted" point reached step_points.(1)
 
 (* Host code and loops *)
 
@@ -1449,7 +1525,9 @@ let ints_law i =
   in
   let p = load_ok t [ d; Rig.host ] in
   let x = of_bytes d (String.make 256 '\000') in
-  ignore (G.run p { inputs = [| x |]; ints = [| i.n |] });
+  ignore
+    (G.run p
+       { inputs = [| x |]; ints = [| i.n |]; step_points = G.step_points p });
   let m = (i.a * i.n) + i.c in
   equal ~msg:"a launch over the computed groups" string
     (String.concat "" (List.init m (fun j -> le64 (100 + j)))
@@ -1491,7 +1569,13 @@ let loop_law k =
   in
   let p = load_ok t [ d; Rig.host ] in
   let counter = one_word d and last = one_word d in
-  ignore (G.run p { inputs = [| counter; last |]; ints = [| k |] });
+  ignore
+    (G.run p
+       {
+         inputs = [| counter; last |];
+         ints = [| k |];
+         step_points = G.step_points p;
+       });
   equal ~msg:"trips" int (max 0 k) (word_of counter);
   equal ~msg:"the last trip's index" int (max 0 (k - 1)) (word_of last)
 
@@ -1555,7 +1639,11 @@ let test_flag () =
     let p = load_ok t [ d; Rig.host ] in
     let counter = one_word d in
     let frame =
-      { G.inputs = [| counter; of_bytes d (le64 1) |]; ints = [| 1; 1; 1 |] }
+      {
+        G.inputs = [| counter; of_bytes d (le64 1) |];
+        ints = [| 1; 1; 1 |];
+        step_points = G.step_points p;
+      }
     in
     ignore (G.run p frame);
     word_of counter
@@ -1586,9 +1674,16 @@ let test_flag_outside () =
   in
   let p = load_ok t [ d ] in
   let ones = of_bytes d (String.make 64 '\001') in
-  ignore (G.run p { inputs = [| ones |]; ints = [||] });
+  ignore
+    (G.run p
+       { inputs = [| ones |]; ints = [||]; step_points = G.step_points p });
   raises_match ~msg:"byte 8 of 8" Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| of_bytes d (le64 1) |]; ints = [||] })
+      G.run p
+        {
+          inputs = [| of_bytes d (le64 1) |];
+          ints = [||];
+          step_points = G.step_points p;
+        })
 
 (* [calling], image 1, calls [affine], image 0, through its address, an
    [Entry] leaf in its parameters: three trips of a loop add 3. *)
@@ -1643,7 +1738,9 @@ let test_entry_leaf () =
   in
   let p = load_ok t [ Rig.host ] in
   let counter = one_word Rig.host in
-  ignore (G.run p { inputs = [| counter |]; ints = [||] });
+  ignore
+    (G.run p
+       { inputs = [| counter |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"three calls of affine" int 3 (word_of counter)
 
 let host_refusals =
@@ -1789,7 +1886,7 @@ let test_read_only_input () =
   in
   let p = load_ok t [ Rig.host ] in
   raises_match ~msg:"a read-only input" Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| x |]; ints = [||] });
+      G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"the file's bytes" string (le64 5)
     (In_channel.with_open_bin path In_channel.input_all)
 
@@ -1823,7 +1920,7 @@ let test_read_only_copy () =
   in
   let p = load_ok t [ d ] in
   raises_match ~msg:"a read-only input" Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| x |]; ints = [||] });
+      G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"the file's bytes" string (le64 5)
     (In_channel.with_open_bin path In_channel.input_all)
 
@@ -1831,7 +1928,12 @@ let test_ints_refusal () =
   let d = fst (polled "ints") in
   let p = load_ok { (base d) with ints = 1 } [ d ] in
   raises_match ~msg:"two ints for one" Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| B.create d 64 |]; ints = [| 1; 2 |] })
+      G.run p
+        {
+          inputs = [| B.create d 64 |];
+          ints = [| 1; 2 |];
+          step_points = G.step_points p;
+        })
 
 (* Bytes *)
 
@@ -2065,7 +2167,8 @@ let test_rail () =
     require_ok ~pp:Format.pp_print_string
       (G.load ~rails rail_program [| Rig.host |])
   in
-  ignore (G.run p { inputs = [||]; ints = [| 42 |] });
+  ignore
+    (G.run p { inputs = [||]; ints = [| 42 |]; step_points = G.step_points p });
   let outbound = String.init 8 (Bigarray.Array1.get e.outbound) in
   equal ~msg:"the outbound area" int 42 (word outbound 0);
   equal ~msg:"the ready function's count" int 1
@@ -2173,7 +2276,9 @@ let beside_law b =
   | Error why, false -> failf "load: %s" why
   | Ok p, false ->
       ignore (P.launches pd);
-      let frame = { G.inputs = [||]; ints = [| b.value |] } in
+      let frame =
+        { G.inputs = [||]; ints = [| b.value |]; step_points = G.step_points p }
+      in
       if clashes then
         raises_match ~msg:"run refuses it" Exn.invalid_arg (fun () ->
             G.run p frame)
@@ -2311,7 +2416,8 @@ let test_trip_follows_work () =
         Rig_support.await "a sleep at the gate" (fun () -> P.sleepers pd > 0);
         P.open_gate pd)
   in
-  ignore (G.run p { inputs = [| out |]; ints = [||] });
+  ignore
+    (G.run p { inputs = [| out |]; ints = [||]; step_points = G.step_points p });
   let bytes = read out in
   Domain.join opener;
   equal ~msg:"each trip's work read its own trip" string "\000\001"
@@ -2341,7 +2447,9 @@ let test_int_follows_writer () =
   in
   let p = load_ok t [ d ] in
   let out = one_word d in
-  ignore (G.run p { inputs = [| out |]; ints = [| 0 |] });
+  ignore
+    (G.run p
+       { inputs = [| out |]; ints = [| 0 |]; step_points = G.step_points p });
   equal ~msg:"the word the first launch wrote" int 42 (word_of out)
 
 (* A launch's refs bind the input's address anew for every run. *)
@@ -2373,7 +2481,9 @@ let test_input_ref () =
     (fun x ->
       let keeper = Sub.make ~fixed:[ (x, Rig.Read) ] d [||] in
       let expected = Sub.address keeper x in
-      ignore (G.run p { inputs = [| x |]; ints = [||] });
+      ignore
+        (G.run p
+           { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
       equal ~msg:"the stored address" int expected (word_of x))
     [ B.create d 64; B.create d 64 ]
 
@@ -2410,7 +2520,9 @@ let test_fill_params () =
   List.iter
     (fun n ->
       let out = B.create d 8 in
-      Array.iter Rig.Point.wait (G.run p { inputs = [| out |]; ints = [| n |] });
+      Array.iter Rig.Point.wait
+        (G.run p
+           { inputs = [| out |]; ints = [| n |]; step_points = G.step_points p });
       equal ~msg:"the run's parameter at its ref" int n (word_of out))
     [ 42; 99 ]
 
@@ -2432,7 +2544,10 @@ let test_fill_empty () =
         |];
     }
   in
-  let points = G.run (load_ok t [ d; Rig.host ]) { inputs = [||]; ints = [||] } in
+  let p = load_ok t [ d; Rig.host ] in
+  let points =
+    G.run p { inputs = [||]; ints = [||]; step_points = G.step_points p }
+  in
   equal ~msg:"one submission" int 1 (Array.length points);
   Array.iter Rig.Point.wait points
 
@@ -2476,7 +2591,9 @@ let test_init_address () =
   let out = B.create d 8 in
   List.iter
     (fun n ->
-      ignore (G.run p { inputs = [| out |]; ints = [| n |] });
+      ignore
+        (G.run p
+           { inputs = [| out |]; ints = [| n |]; step_points = G.step_points p });
       equal ~msg:"the initialized address reaches this run's copy" int n
         (word_of out))
     [ 42; 99; 123 ]
@@ -2520,7 +2637,8 @@ let test_init_code_kept () =
           |];
       }
     in
-    G.run (load_ok t [ d; Rig.host ]) { inputs = [| out |]; ints = [||] }
+    let p = load_ok t [ d; Rig.host ] in
+    G.run p { inputs = [| out |]; ints = [||]; step_points = G.step_points p }
   in
   let points = submit () in
   equal ~msg:"work is held before collection" int 1 (P.queued pd);
@@ -2559,7 +2677,11 @@ let test_frame_read_once () =
   in
   let p = load_ok t [ d ] in
   let frame =
-    { G.inputs = [| one_word d; one_word d; one_word d |]; ints = [||] }
+    {
+      G.inputs = [| one_word d; one_word d; one_word d |];
+      ints = [||];
+      step_points = G.step_points p;
+    }
   in
   let z = frame.inputs.(2) in
   P.gate pd;
@@ -2618,7 +2740,9 @@ let test_copy_part () =
   let p = load_ok t [ d ] in
   for run = 1 to 2 do
     let a = one_word d and b = one_word d and c = one_word d in
-    Array.iter Rig.Point.wait (G.run p { inputs = [| a; b; c |]; ints = [||] });
+    Array.iter Rig.Point.wait
+      (G.run p
+         { inputs = [| a; b; c |]; ints = [||]; step_points = G.step_points p });
     List.iteri
       (fun i x ->
         equal ~msg:(Printf.sprintf "run %d's input %d" run i) int 7 (word_of x))
@@ -2668,7 +2792,8 @@ let test_copy_loop () =
   in
   let p = load_ok t [ d ] in
   let x = of_bytes d (String.make 32 '\000') in
-  ignore (G.run p { inputs = [| x |]; ints = [||] });
+  ignore
+    (G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"the rows reversed" string
     (String.concat "" (List.map le64 (List.rev rows)))
     (read x)
@@ -2692,7 +2817,10 @@ let test_copy_outside () =
       [ d ]
   in
   let input = of_bytes d (String.make 64 '\000') in
-  let run p v = G.run p { inputs = [| input |]; ints = [| v |] } in
+  let run p v =
+    G.run p
+      { inputs = [| input |]; ints = [| v |]; step_points = G.step_points p }
+  in
   let src = load (pcopy ~src_offset:[| (Int 0, 1) |] 8)
   and dst = load (pcopy ~dst_offset:[| (Int 0, 1) |] 8)
   and twice = load (pcopy ~src_offset:[| (Int 0, 2) |] 8) in
@@ -2732,7 +2860,8 @@ let test_past_most_parts () =
   in
   let p = load_ok t [ d ] in
   let x = of_bytes d (String.make 64 '\000') in
-  Array.iter Rig.Point.wait (G.run p { inputs = [| x |]; ints = [||] });
+  Array.iter Rig.Point.wait
+    (G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"the last fill's word" int 3 (word_of x)
 
 (* A copy within the ints, both ends at offsets the run reads from them: word
@@ -2762,10 +2891,14 @@ let test_copy_ints () =
   in
   let p = load_ok t [ d ] in
   let x = of_bytes d (String.make 32 '\000') in
-  ignore (G.run p { inputs = [| x |]; ints = [| 8; 24; 42 |] });
-  equal ~msg:"the ints" string
-    (le64 8 ^ le64 24 ^ le64 42 ^ le64 24)
-    (read x)
+  ignore
+    (G.run p
+       {
+         inputs = [| x |];
+         ints = [| 8; 24; 42 |];
+         step_points = G.step_points p;
+       });
+  equal ~msg:"the ints" string (le64 8 ^ le64 24 ^ le64 42 ^ le64 24) (read x)
 
 (* A memory slot that only copies name takes no slot of the step's
    submission, and the slots after it are numbered without it: memory 0, named
@@ -2796,7 +2929,8 @@ let test_renumbered () =
   in
   let p = load_ok t [ d ] in
   let x = B.create d 64 in
-  Array.iter Rig.Point.wait (G.run p { inputs = [| x |]; ints = [||] });
+  Array.iter Rig.Point.wait
+    (G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
   equal ~msg:"input 0" string bytes (read x)
 
 (* Run 2 waits for run 0's work on its copy before it writes its ints: the
@@ -2823,9 +2957,21 @@ let test_frame_ints_read_once () =
   in
   let p = load_ok t [ d ] in
   for _ = 1 to 2 do
-    ignore (G.run p { inputs = [| one_word d |]; ints = [| 1 |] })
+    ignore
+      (G.run p
+         {
+           inputs = [| one_word d |];
+           ints = [| 1 |];
+           step_points = G.step_points p;
+         })
   done;
-  let frame = { G.inputs = [| one_word d |]; ints = [| 5 |] } in
+  let frame =
+    {
+      G.inputs = [| one_word d |];
+      ints = [| 5 |];
+      step_points = G.step_points p;
+    }
+  in
   P.gate pd;
   let changer =
     Domain.spawn (fun () ->
@@ -2855,7 +3001,8 @@ let test_collected () =
   let before = P.allocated pd Device in
   let[@inline never] run_dropped () =
     let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
-    ignore (G.run p { inputs = [||]; ints = [||] })
+    ignore
+      (G.run p { inputs = [||]; ints = [||]; step_points = G.step_points p })
   in
   run_dropped ();
   drain ();
@@ -2912,7 +3059,12 @@ let swap_commands =
       (fun p v ->
         let out = one_word (Lazy.force swap_device) in
         Array.iter Rig.Point.wait
-          (G.run p { inputs = [| out |]; ints = [| v |] });
+          (G.run p
+             {
+               inputs = [| out |];
+               ints = [| v |];
+               step_points = G.step_points p;
+             });
         word_of out);
   ]
 
@@ -2952,7 +3104,7 @@ let test_frame_checked_first () =
   let inputs = [| one_word d; B.create d 7 |] in
   let submitted = Rig.submitted d in
   raises_match ~msg:"input 1 of 7 bytes" Exn.invalid_arg (fun () ->
-      G.run p { inputs; ints = [||] });
+      G.run p { inputs; ints = [||]; step_points = G.step_points p });
   equal ~msg:"submissions" int submitted (Rig.submitted d)
 
 (* test/fixtures' [waiting], image 0 on the host (device 1): it sets word 1 of
@@ -2989,10 +3141,11 @@ let host_program ?groups d slots rounds =
     steps = [| waiting_step ?groups slots rounds |];
   }
 
-let host_frame d =
+let host_frame p d =
   {
     G.inputs = Array.init 3 (fun _ -> of_bytes d (String.make 16 '\000'));
     ints = [| 0 |];
+    step_points = G.step_points p;
   }
 
 let check_donation expected b =
@@ -3005,7 +3158,8 @@ let check_donation expected b =
 let test_host_claim_call () =
   let d, _ = polled "host-claims-call" in
   let t = host_program d [| Input 0; Input 0 |] (Fixed 20_000_000_000) in
-  let p = load_ok t [ d; Rig.host ] and frame = host_frame d in
+  let p = load_ok t [ d; Rig.host ] in
+  let frame = host_frame p d in
   let x = frame.inputs.(0) in
   let at = Rig_support.at x in
   let runner = Domain.spawn (fun () -> ignore (G.run p frame)) in
@@ -3037,7 +3191,8 @@ let test_host_claim_wait () =
           t.steps;
     }
   in
-  let p = load_ok t [ d; Rig.host ] and frame = host_frame d in
+  let p = load_ok t [ d; Rig.host ] in
+  let frame = host_frame p d in
   P.gate pd;
   let runner = Domain.spawn (fun () -> ignore (G.run p frame)) in
   Fun.protect
@@ -3053,7 +3208,8 @@ let test_host_claim_wait () =
 let test_host_claim_refusal index =
   let d, _ = polled "host-claims-refusal" in
   let t = host_program d (Iarray.init 3 (fun i -> G.Input i)) (Fixed 0) in
-  let p = load_ok t [ d; Rig.host ] and frame = host_frame d in
+  let p = load_ok t [ d; Rig.host ] in
+  let frame = host_frame p d in
   Rig.Claim.with_ ~read:[]
     ~donate:[ frame.inputs.(index) ]
     (fun claims ->
@@ -3067,7 +3223,8 @@ let test_host_claim_refusal index =
 let test_host_claim_grid_refusal () =
   let d, _ = polled "host-claims-grid" in
   let t = host_program ~groups:(Int 0) d [| Input 0 |] (Fixed 0) in
-  let p = load_ok t [ d; Rig.host ] and frame = host_frame d in
+  let p = load_ok t [ d; Rig.host ] in
+  let frame = host_frame p d in
   frame.ints.(0) <- 0;
   raises_match Exn.invalid_arg (fun () -> G.run p frame);
   check_donation true frame.inputs.(0);
@@ -3094,7 +3251,7 @@ let test_host_input_kept () =
       let at = Rig_support.at x in
       Rig_support.store at 0;
       Rig_support.store (at + 8) 0;
-      (at, { G.inputs = [| x |]; ints = [||] }))
+      (at, { G.inputs = [| x |]; ints = [||]; step_points = G.step_points p }))
       ()
   in
   let runner = Domain.spawn (fun () -> ignore (G.run p frame)) in
@@ -3154,7 +3311,9 @@ let test_entry_leaf_kept () =
   let runner =
     Domain.spawn (fun () ->
         ignore
-          (G.run (load_ok t [ d; Rig.host ]) { inputs = [| x |]; ints = [||] }))
+          (let p = load_ok t [ d; Rig.host ] in
+           G.run p
+             { inputs = [| x |]; ints = [||]; step_points = G.step_points p }))
   in
   Rig_support.await "the callee running" (fun () ->
       Rig_support.load (at + 8) = 1);
@@ -3264,6 +3423,8 @@ let tests =
         test "load raises for rails given with another machine's devices"
           test_far_rails;
         test "run raises for a frame that does not fit" test_frame_refusals;
+        test "a frame's step points are each step's last, every run"
+          test_frame_points;
         test "run raises for more ints than the program's" test_ints_refusal;
         test "run raises for a read-only input a step writes"
           test_read_only_input;

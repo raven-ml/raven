@@ -5,12 +5,12 @@
 
 (* Profiles.
 
-   A profile holds what every device did while a function ran. Its events
-   are spans of work on each device's lanes, copies, allocations, loads of
-   images, and the counters and traces of GPU work. Every time is on the
-   host clock. This example prints the events without their times, which
-   differ from run to run, and writes them in Chrome's trace format, which
-   Perfetto opens. *)
+   A profile holds what every device did while a function ran. Its events are
+   the work of submissions on each device's lanes, spans of host code, copies,
+   allocations, loads of images, and the counters and traces of GPU work. Every
+   time is on the host clock. This example prints the events without their
+   times, which differ from run to run, and writes them in Chrome's trace
+   format, which Perfetto opens. *)
 
 open Rig
 
@@ -19,6 +19,8 @@ let mib = 1024 * 1024
 let show = function
   | Profile.Span { device; lane; name; _ } ->
       Printf.printf "span        %s %s: %s\n" (Rig.name device) lane name
+  | Work { device; lane; name; _ } ->
+      Printf.printf "work        %s %s: %s\n" (Rig.name device) lane name
   | Copy { src; dst; bytes; _ } ->
       Printf.printf "copy        %s -> %s: %d MiB\n" (Rig.name src)
         (Rig.name dst) (bytes / mib)

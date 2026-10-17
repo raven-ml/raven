@@ -130,7 +130,7 @@ let test_profiled () =
   equal (list string) [ "affine" ]
     (List.filter_map
        (function
-         | Rig.Profile.Span s when Rig.equal s.device Rig.host -> Some s.name
+         | Rig.Profile.Work s when Rig.equal s.device Rig.host -> Some s.name
          | _ -> None)
        events)
 

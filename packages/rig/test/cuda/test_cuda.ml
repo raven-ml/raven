@@ -676,7 +676,7 @@ let spans_after_idle () =
     match
       List.filter_map
         (function
-          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+          | Rig.Profile.Work { device; start; stop; _ } when device == t.d ->
               Some (start, stop)
           | _ -> None)
         events

@@ -73,8 +73,8 @@ val link :
     - Consecutive kernels and copies of one device are one submission
       ({!Rig.Submission}) of at most the parts the device always runs
       ({!Rig.most_parts}), and each of them is a submission of its own while
-      {!Tolk.Setting.debug} is [2] or more, so that a profile's span is one
-      kernel's.
+      {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
+      profile ({!Rig.Profile.Work}) is one kernel's.
     - A range around calls is a loop of the program, and so is a back edge,
       which reads its flag before each trip.
 
@@ -111,7 +111,7 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
     its number of calls. When it is [2] or more, [run] prints a line for each
     kernel on standard output: its device, how many kernels ran before it, its
     name, its number of arguments, and its time and throughput, where its device
-    records the span of its submission ({!Rig.Profile.Span}).
+    records its submission's work ({!Rig.Profile.Work}).
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     buffers of its placement's devices, each holding its parameter's bytes, if a
@@ -142,16 +142,19 @@ val link_call : devices:(string -> Rig.t) -> Ops.t -> t
 
 val clock : t -> Tolk.Search.clock
 (** [clock s] is the clock {!time} times [s] on: {!Tolk.Search.Device} if every
-    kernel of [s] runs on a GPU, which stamps its submissions' spans, and
+    kernel of [s] runs on a GPU, which times its submissions' work, and
     {!Tolk.Search.Host} otherwise. *)
 
 val time : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> float
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
     with [vars] ({!run}), reporting nothing on standard output whatever
-    {!Tolk.Setting.debug} holds. The time is the sum of the spans of [s]'s
-    kernels in a profile of the run ({!Rig.Profile.take}). The profile is the time's own, whatever profiles are taken around it,
-    which record the run's events too. A time allocates no device memory and
-    loads nothing.
+    {!Tolk.Setting.debug} holds. The time is the sum, over the run's
+    submissions that run a kernel of [s], of their work in a profile of the
+    run ({!Rig.Profile.Work}). A submission of several kernels counts once,
+    and one of copies alone counts nothing. The run's submissions are found
+    by the points its steps report ({!Rig_program.type-frame}), so work of
+    other domains and of profiles taken around it adds nothing. A time
+    allocates no device memory and loads nothing.
 
     Raises as {!run} does, and {!Rig.Lost} if a device that runs a kernel of [s]
     is lost during the run. *)

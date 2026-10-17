@@ -1239,17 +1239,16 @@ type holds = { mutable left : int; [@atomic] mutable settled : bool [@atomic] }
 let give_pair c h v pair =
   if pair >= 0 then if h.settled then times_free c pair else times_owe c pair v
 
-(* Leaves to each profile of [t.ps] an entry that reads into it the span of
+(* Leaves to each profile of [t.ps] an entry that reads into it the work of
    [s]'s value [p] and a copy per move of [t.moves] once [p] is reached, from
-   the time pair [pair] its driver wrote, which the last entry to end gives
-   back ([give_pair]). A driver that left the pair 0, or no pair, timed
-   nothing: no span, and the copies run from [t.asked] to when the host saw
-   [p] reached, now if the device ran the work in its submit, and otherwise
-   at the read. A settle that failed or found the device lost records
-   nothing. An asynchronous exception in the call may leave the pair held
-   by profiles that never took the entry: the pair is then never given back,
-   and never reused, as rig.mli allows of the memory of an interrupted
-   call. *)
+   the time pair [pair] its driver wrote, which the last entry to end gives back
+   ([give_pair]). A driver that left the pair 0, or no pair, timed nothing: no
+   work, and the copies run from [t.asked] to when the host saw [p] reached, now
+   if the device ran the work in its submit, and otherwise at the read. A settle
+   that failed or found the device lost records nothing. An asynchronous
+   exception in the call may leave the pair held by profiles that never took the
+   entry: the pair is then never given back, and never reused, as rig.mli allows
+   of the memory of an interrupted call. *)
 let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev in
   let c = device.live.c and value = Point.value p in
@@ -1272,7 +1271,8 @@ let record s (lane, name) { ps; moves; asked } p pair =
       match if pair < 0 then (0, 0) else times_read c pair with
       | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
       | start, stop ->
-          Profile.add [ prof ] (Span { device; lane; name; start; stop });
+          Profile.add [ prof ]
+            (Work { point = p; device; lane; name; start; stop });
           copies start stop
     end
   in

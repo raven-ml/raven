@@ -17,7 +17,8 @@ over time.
 
 - Taking a profile: `Profile.take f`, which is `f ()` and its events
 - Naming the host's own work: `Profile.span`
-- The events rig records: spans, copies, allocations and loads
+- The events rig records: submissions' work, host spans, copies, allocations
+  and loads
 - Whether a profile is being taken: `Profile.enabled`
 - Writing events in Chrome's trace format: `Profile.output_chrome_trace`
 

@@ -1130,8 +1130,7 @@ let kernels f =
   ( y,
     List.filter_map
       (function
-        | Rig.Profile.Span { name; _ } when kernel name -> Some name
-        | _ -> None)
+        | Rig.Profile.Work { name; _ } when kernel name -> Some name | _ -> None)
       events )
 
 (* The elements a kernel ranges over, read from its name: [E_2_4], 8. *)

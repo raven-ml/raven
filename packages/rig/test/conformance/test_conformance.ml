@@ -365,7 +365,7 @@ let profiled_copies (module G : Gpu) () =
   let span =
     List.find_map
       (function
-        | Rig.Profile.Span s when Rig.equal s.device t.d ->
+        | Rig.Profile.Work s when Rig.equal s.device t.d ->
             Some (s.start, s.stop)
         | _ -> None)
       events
@@ -677,7 +677,7 @@ let spans (module G : Gpu) () =
     let spans =
       List.filter_map
         (function
-          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+          | Rig.Profile.Work { device; start; stop; _ } when device == t.d ->
               Some (start, stop)
           | _ -> None)
         events
@@ -710,7 +710,7 @@ let within d ~opened clock_error what submit =
   match
     List.filter_map
       (function
-        | Rig.Profile.Span { device; start; stop; _ } when device == d ->
+        | Rig.Profile.Work { device; start; stop; _ } when device == d ->
             Some (start, stop)
         | _ -> None)
       events
@@ -777,7 +777,7 @@ let spans_nested (module G : Gpu) () =
   let on_device events =
     List.filter_map
       (function
-        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+        | Rig.Profile.Work { device; start; stop; _ } when device == t.d ->
             Some (start, stop)
         | _ -> None)
       events
@@ -845,7 +845,7 @@ let spans_across (module G : Gpu) () =
   let spans =
     List.filter_map
       (function
-        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+        | Rig.Profile.Work { device; start; stop; _ } when device == t.d ->
             Some (start, stop)
         | _ -> None)
       events

@@ -333,6 +333,14 @@ type image = { idev : device; loaded : loaded; itoken : token }
 
 (** {!Rig.Profile.event}. *)
 type event =
+  | Work of {
+      point : int;
+      device : device;
+      lane : string;
+      name : string;
+      start : int;
+      stop : int;
+    }
   | Span of {
       device : device;
       lane : string;

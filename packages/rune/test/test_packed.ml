@@ -595,7 +595,7 @@ let stated =
 let kernels f =
   ignore (f ());
   List.filter_map
-    (function Rig.Profile.Span s -> Some s.name | _ -> None)
+    (function Rig.Profile.Work w -> Some w.name | _ -> None)
     (snd (Rig.Profile.take (fun () -> ignore (f ()))))
 
 (* The elements a kernel's name says it spans: the product of its sizes. *)

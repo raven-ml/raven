@@ -213,7 +213,7 @@ let test_copy_engine () =
   let lanes =
     List.filter_map
       (function
-        | Rig.Profile.Span s when Rig.equal s.device d -> Some s.lane
+        | Rig.Profile.Work s when Rig.equal s.device d -> Some s.lane
         | _ -> None)
       events
   in

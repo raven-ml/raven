@@ -1335,7 +1335,7 @@ let spans_in_order n =
   let spans =
     List.filter_map
       (function
-        | Rig.Profile.Span s when Rig.equal s.device t.d ->
+        | Rig.Profile.Work s when Rig.equal s.device t.d ->
             Some (s.lane, s.name, s.start, s.stop)
         | _ -> None)
       events

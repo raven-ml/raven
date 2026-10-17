@@ -83,7 +83,11 @@ let described steps () =
   let ds, ps, t = fills steps in
   let p = Result.get_ok (G.load t (Iarray.of_array ds)) in
   let frame =
-    { G.inputs = Array.map (fun d -> B.create d 8) ds; ints = [||] }
+    {
+      G.inputs = Array.map (fun d -> B.create d 8) ds;
+      ints = [||];
+      step_points = G.step_points p;
+    }
   in
   { ps; go = (fun () -> ignore (G.run p frame)); n = 0 }
 
@@ -164,7 +168,13 @@ let copying ~moving () =
     }
   in
   let p' = Result.get_ok (G.load t [| d |]) in
-  let frame = { G.inputs = [| B.create d 8 |]; ints = [| 1 |] } in
+  let frame =
+    {
+      G.inputs = [| B.create d 8 |];
+      ints = [| 1 |];
+      step_points = G.step_points p';
+    }
+  in
   { ps = [| p |]; go = (fun () -> ignore (G.run p' frame)); n = 0 }
 
 (* The same copy made by hand. *)
@@ -241,8 +251,8 @@ let host_step () =
         |];
     }
   in
-  ( Result.get_ok (G.load t [| Rig.host |]),
-    { G.inputs = host_buffers (); ints = [||] } )
+  let p = Result.get_ok (G.load t [| Rig.host |]) in
+  (p, { G.inputs = host_buffers (); ints = [||]; step_points = G.step_points p })
 
 (* The same launch, submitted by hand. *)
 let host_submit () =
@@ -354,7 +364,12 @@ let stepping () =
         pid;
         input;
         share;
-        frame = { G.inputs = [||]; ints = Array.make ints 1 };
+        frame =
+          {
+            G.inputs = [||];
+            ints = Array.make ints 1;
+            step_points = G.step_points share;
+          };
         subs = Array.init local (fun _ -> sub ());
         lock = Mutex.create ();
         last = [];
@@ -526,15 +541,14 @@ let spun s =
   Rig_remote.close s.sjob;
   ignore (Unix.waitpid [] s.spid)
 
-let no_frame = { G.inputs = [||]; ints = [||] }
-
 (* [spins] runs handed over at once, until the controller sees the last one's
    value: each run's fill, plus what the agent does between them that its device
    does not overlap. *)
 let spins_of p =
-  let pt = ref (G.run p no_frame).(0) in
+  let frame = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
+  let pt = ref (G.run p frame).(0) in
   for _ = 2 to spins do
-    pt := (G.run p no_frame).(0)
+    pt := (G.run p frame).(0)
   done;
   Rig.Point.wait !pt
 

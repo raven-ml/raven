@@ -1979,11 +1979,34 @@ module Profile : sig
   type device := t
 
   (** The type for profile events. Times are nanoseconds of the host clock.
-      rig records spans, allocations, loads and copies. A library whose
-      compiled code measures its work, such as with a device's counters or
-      thread traces, records [Counters], [Trace] and [Overwritten] events
-      ({!record}). *)
+      rig records a submission's work, spans, allocations, loads and copies.
+      A library whose compiled code measures its work, such as with a
+      device's counters or thread traces, records [Counters], [Trace] and
+      [Overwritten] events ({!record}). *)
   type event =
+    | Work of {
+        point : Point.t;  (** The submit's point ({!submit}). *)
+        device : device;
+        lane : string;  (** Its track within the device. *)
+        name : string;
+        start : int;
+        stop : int;
+      }
+        (** A submission's work on a lane of its device, from when the
+            device started it to when the device ended all its parts' work,
+            on the lane of the queue its first part ran on, such as
+            ["COMPUTE:0"] ({!Rig_edge.type-queue}). Each submission with
+            parts records it. It is named after the functions its launches
+            run, in the order of its parts, joined by [", "], or, with no
+            launch, after its first part's kind, ["copies"], ["fills"] or
+            ["words"]. A device whose driver cannot time a submission's work
+            records none of it.
+
+            Its times are as exact as its driver's correlation of the
+            device's clock with the host's, which the driver's interface
+            states: within microseconds where the driver reads the device's
+            clock directly, and off by the device clock's rate error since
+            open where the driver measures it at open only. *)
     | Span of {
         device : device;
         lane : string;  (** Its track within the device. *)
@@ -1991,23 +2014,8 @@ module Profile : sig
         start : int;
         stop : int;
       }
-        (** Work that ran on a lane of a device. The host's lanes are its
-            domains, ["domain 0"], ["domain 1"], ….
-
-            Each submission with parts records a span of its work, from when
-            the device started it to when the device ended all its parts'
-            work, on the lane of the queue its first part ran on, such as
-            ["COMPUTE:0"] ({!Rig_edge.type-queue}). The span is named after
-            the functions its launches run, in the order of its parts,
-            joined by [", "], or, with no launch, after its first part's
-            kind, ["copies"], ["fills"] or ["words"]. A device whose driver
-            cannot time a submission's work records no span of it.
-
-            A device's span is as exact as its driver's correlation of the
-            device's clock with the host's, which the driver's interface
-            states: within microseconds where the driver reads the device's
-            clock directly, and off by the device clock's rate error since
-            open where the driver measures it at open only. *)
+        (** Host code that {!span} timed, on the calling domain's lane of
+            {!host}: ["domain 0"], ["domain 1"], …. *)
     | Allocation of { device : device; time : int; allocated : int }
         (** The bytes of memory [device] allocated from [time] on. *)
     | Load of { image : Image.t; binary : string; time : int }
@@ -2053,7 +2061,7 @@ module Profile : sig
             the host addresses.
 
             Each copy part of a submission records an event with the times
-            of the submission's span where its device times the work.
+            of the submission's [Work] where its device times the work.
             Otherwise the event starts when the copy was asked, at the
             submit. It ends when the copy ended where the submit runs it, as
             for a copy the host, an io device or a {!memory_device} runs,
@@ -2093,9 +2101,9 @@ module Profile : sig
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's
       trace event format, JSON, which Perfetto and [chrome://tracing] load.
       It writes a process per device, a thread per lane, a complete event per
-      span, per copy (on its [src]'s process) and per run's counters (each
-      summed over its units), a counter [memory] per allocation change, and
-      instant events for loads, traces and overwritten runs. Times are
+      work and span, per copy (on its [src]'s process) and per run's counters
+      (each summed over its units), a counter [memory] per allocation change,
+      and instant events for loads, traces and overwritten runs. Times are
       microseconds from the earliest event. [oc] is neither flushed nor
       closed. *)
 end

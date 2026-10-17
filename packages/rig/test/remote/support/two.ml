@@ -243,7 +243,12 @@ let () =
     B.copy ~src:staged ~dst:x;
     let p = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] in
     Array.iter Rig.Point.wait
-      (G.run senders.(k) { inputs = [| x; y |]; ints = [| c |] });
+      (G.run senders.(k)
+         {
+           inputs = [| x; y |];
+           ints = [| c |];
+           step_points = G.step_points senders.(k);
+         });
     Rig.Point.wait p;
     if read out <> le32s (fun i -> (2 * (i + (1000 * c))) + 1) then
       failwith (Printf.sprintf "frame %d differs" c);

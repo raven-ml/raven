@@ -29,13 +29,14 @@
       makes its memory, loads its images and prepares a {!Rig.Submission} for
       each [Submit] step, one per copy where the step names memory of two
       copies.
-    + {!run} runs the steps once, in order, over a frame, and returns the
-      points its work ends at. A loaded program runs any number of times.
+    + {!run} runs the steps once, in order, over a frame, and returns its
+      ends, the points its work ends at. A loaded program runs any number of
+      times.
     + Once the loaded program is unreachable, its memory and images return
       after the work of its last run.
 
     {v
-      t ──load devices──> loaded ──run frame──> points
+      t ──load devices──> loaded ──run frame──> ends
       │                     │
       memory, images,       Rig.Buffer, Rig.Image,
       steps                 a Rig.Submission per Submit step and copy
@@ -386,16 +387,33 @@ val load :
     [Write] or an [Unordered] ref or a copy's [dst] names, or a [Move] has it
     as its destination. *)
 
-type frame = { inputs : Rig.Buffer.t array; ints : int array }
-(** The type for a run's frame: its inputs, by index, and the first words of
-    its ints. *)
+type frame = {
+  inputs : Rig.Buffer.t array;
+  ints : int array;
+  step_points : Rig.Point.t array;
+}
+(** The type for a run's frame: its inputs, by index, the first words of its
+    ints, and where the run reports each step's point. [step_points] has one
+    element per [Submit] step of the program, in step order, a loop's body
+    counted once. {!run} stores into each element the point of its step's
+    last submit in the run. A step the run does not reach, such as the body
+    of a loop of zero trips, holds after that run the shared reached point
+    of {!Rig.host} that {!step_points} starts each element at, so no element
+    ever holds an earlier run's point. *)
+
+val step_points : loaded -> Rig.Point.t array
+(** [step_points p] is a fresh array for the [step_points] of [p]'s frames,
+    each element the same point of {!Rig.host}, which is reached. A caller
+    makes it once, with the frame, and passes it to every run: a run
+    allocates nothing for it. *)
 
 val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
 (** [run ~waits p f] runs [p]'s steps once, in order, over the frame [f]
-    ({!section-order}). It is the points the run's work ends at: for each
-    device that ran a submission, in the order of [p]'s devices, the point of
-    its last one. Each device's first submission follows the points of
-    [waits] (defaults to none) and the device's earlier work.
+    ({!section-order}). It is the run's {e ends}, the points its work ends
+    at: for each device that ran a submission, in the order of [p]'s
+    devices, the point of its last one. Each device's first submission
+    follows the points of [waits] (defaults to none) and the device's
+    earlier work.
     {ul
     {- It first waits for the work of run [n - 2] on the copies this run
        uses, the run's ints included, then writes [f]'s ints.}
@@ -404,20 +422,22 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     {- An [Int] value is read once the run's earlier work that writes the
        ints is done, and a loop stores its trip once the run's earlier work
        that uses the ints is done.}
-    {- It reads [f] once, before its first step, so a change to [f] during
-       the run changes nothing. It keeps [f]'s inputs, and their borrows on
-       the other devices that name them, until it returns.}}
+    {- It reads [f]'s inputs and ints once, before its first step, so a
+       change to them during the run changes nothing. It keeps [f]'s inputs,
+       and their borrows on the other devices that name them, until it
+       returns.}}
     On another machine, the raises at a step fail the job there instead
     ({!section-machines}).
 
     Raises [Invalid_argument]:
     {ul
-    {- before any step runs, if [f] has another number of inputs than [p]
-       or more ints, or if an input is not on its device, holds fewer bytes,
-       is read-only memory ({!Rig.Buffer.val-access}) that the run writes,
-       or cannot be borrowed by a device that names it, if it is called on
-       the thread that runs [p], as from a callback inside that run, or from
-       a callback inside a lock ({!Rig.section-domains});}
+    {- before any step runs, if [f] has another number of inputs than [p],
+       more ints, or [step_points] another number of elements than its
+       [Submit] steps, or if an input is not on its device, holds fewer bytes,
+       is read-only memory ({!Rig.Buffer.val-access}) that the run writes, or
+       cannot be borrowed by a device that names it, if it is called on the
+       thread that runs [p], as from a callback inside that run, or from a
+       callback inside a lock ({!Rig.section-domains});}
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
        ({!Rig.Submission.Run}), if a copy's offset is past an [int] or puts
@@ -435,7 +455,8 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     frame's inputs, each as its memory's id on the machine, its offset and its
     length, and the frame's ints. The submission names only the memory of
     this process that holds these words, and its point is reached once the
-    run's work on that machine is done. The machine's agent runs it after the
+    run's work on that machine is done. {!run} stores that point in every
+    element of the frame's [step_points]. The machine's agent runs it after the
     work submitted to the machine before it, and runs the work submitted
     after it once the run is done ([Rig_remote]'s order section).
 

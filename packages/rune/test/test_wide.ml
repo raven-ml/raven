@@ -170,8 +170,7 @@ let kernels f =
   in
   List.filter_map
     (function
-      | Rig.Profile.Span { name; _ } when kernel name -> Some name
-      | _ -> None)
+      | Rig.Profile.Work { name; _ } when kernel name -> Some name | _ -> None)
     events
 
 (* A double word's two parts are the ends of one computation: compiled, an

@@ -1525,6 +1525,11 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` sums only the work of the run it times, which it finds
+  by the points the run's steps report: a kernel of the same name that
+  another domain ran meanwhile added to the time, so a search under load
+  could pick a slower kernel. A submission of several kernels now counts,
+  where it counted nothing, and one of copies alone still counts nothing.
 - `Transcendental.payne_hanek_reduction` takes the words of `1/(2pi)` by the
   bits of their index, in 111 selections from 345 in float64: a scalar float64
   sine or cosine compiles in 0.05 s, from 0.08 s. A host kernel of float64

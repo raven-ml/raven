@@ -54,8 +54,8 @@
     While a profile is being taken, a submit asks its driver for the times of
     its value and reads, from its buffers, the devices and bytes of each copy
     part. It leaves each profile an entry ({!Profile.pending}) that the
-    profile's {!Profile.take} reads once the value is reached: the span and
-    a copy per copy part, with the driver's times, or, where the driver
+    profile's {!Profile.take} reads once the value is reached: its [Work]
+    and a copy per copy part, with the driver's times, or, where the driver
     wrote none, from the submit to that read. *)
 
 open Def

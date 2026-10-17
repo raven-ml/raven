@@ -23,8 +23,14 @@ let spans events =
     (function Prof.Span s -> Some (s.lane, s.name) | _ -> None)
     events
 
+(* The names of [events]' spans and works. *)
 let named events =
-  List.filter_map (function Prof.Span s -> Some s.name | _ -> None) events
+  List.filter_map
+    (function
+      | Prof.Span s -> Some s.name | Prof.Work w -> Some w.name | _ -> None)
+    events
+
+let point = Testable.make ~pp:Rig.Point.pp ~equal:( = )
 
 (* Taking *)
 
@@ -150,32 +156,45 @@ let submit_parts ?(buffers = [||]) d parts =
     parts;
   Rig.submit s ~run ~buffers
 
-(* The spans of [d] in [events], as [(lane, name, start, stop)]. *)
+(* The work of [d] in [events], as [(lane, name, start, stop)]. *)
 let device_spans d events =
   List.filter_map
     (function
-      | Prof.Span s when Rig.equal s.device d ->
-          Some (s.lane, s.name, s.start, s.stop)
+      | Prof.Work w when Rig.equal w.device d ->
+          Some (w.lane, w.name, w.start, w.stop)
       | _ -> None)
     events
 
-(* A submission's span holds its device's times of all its parts' work, read by
+(* The points of [d]'s work in [events]. *)
+let work_points d events =
+  List.filter_map
+    (function
+      | Prof.Work w when Rig.equal w.device d -> Some w.point | _ -> None)
+    events
+
+(* A submission's work holds its device's times of all its parts' work, read by
    the wait that reaches it, on its first part's queue, named after its
-   launches' functions in the order of its parts. *)
+   launches' functions in the order of its parts, with its submit's point. *)
 let test_device_span () =
   let d, _ = P.open_ "profile:device" in
   let image = functions d and arg = B.create Rig.host (1 lsl 16) in
   let copy =
     launch ~refs:[| Sub.write 0 ~at:0; Sub.read 0 ~at:8 |] image "copy" ~params:24
   in
-  let before = Prof.now () in
+  let before = Prof.now () and submitted = ref None in
   let (), events =
     Prof.take (fun () ->
-        Rig.Point.wait
-          (submit_parts ~buffers:[| arg |] d
-             [| launch image "main"; bump; copy |]))
+        let p =
+          submit_parts ~buffers:[| arg |] d
+            [| launch image "main"; bump; copy |]
+        in
+        submitted := Some p;
+        Rig.Point.wait p)
   in
   let after = Prof.now () in
+  equal ~msg:"the submit's point" (list point)
+    [ require_some !submitted ]
+    (work_points d events);
   match device_spans d events with
   | [ (lane, name, start, stop) ] ->
       equal (pair string string) ("COMPUTE:0", "main, copy") (lane, name);
@@ -566,8 +585,6 @@ let copies events =
 let copy_points events =
   List.filter_map (function Prof.Copy c -> Some c.point | _ -> None) events
 
-let point = Testable.make ~pp:Rig.Point.pp ~equal:( = )
-
 let test_copy () =
   let d = memory "profile:copy" in
   let src = B.create Rig.host 100 and dst = B.create d 100 in
@@ -819,8 +836,9 @@ let test_chrome () =
           start = 1_000;
           stop = 4_000;
         };
-      Prof.Span
+      Prof.Work
         {
+          point = submit (empty d);
           device = d;
           lane = "COMPUTE:0";
           name = "kernel";

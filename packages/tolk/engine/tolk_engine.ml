@@ -922,6 +922,7 @@ let link_with ~separate ~devices ?(bound = []) linear =
       {
         inputs = Array.make (Array.length inputs) (Rig.Buffer.of_string "");
         ints = Array.make (Array.length words) 0;
+        step_points = Rig_program.step_points loaded;
       };
     calls = List.length (Ops.src linear);
     kernels = List.rev b.kernels;
@@ -1005,16 +1006,6 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
   Printf.printf "*** %-7s %4d %s arg %2d%s\n%!" device count
     (Helpers.ansipad name 46) args timing
 
-(* The nanoseconds of each span of the kernel [k] in [events]. *)
-let spans events k =
-  List.filter_map
-    (function
-      | Rig.Profile.Span sp
-        when Rig.equal sp.device k.device && sp.name = k.name ->
-          Some (sp.stop - sp.start)
-      | _ -> None)
-    events
-
 (* The variables the run binds, by name, for the reports. *)
 let bindings t =
   Hashtbl.fold
@@ -1022,8 +1013,8 @@ let bindings t =
       if t.env.set.(i) then (name, t.env.values.(i)) :: vars else vars)
     t.cells []
 
-(* A line for each kernel of each span of [events], timed where the span is one
-   kernel's. *)
+(* A line for each kernel of each submission's work in [events], timed where the
+   work is one kernel's. *)
 let print_reports t events =
   let vars = bindings t in
   let line k time =
@@ -1039,17 +1030,17 @@ let print_reports t events =
   in
   List.iter
     (function
-      | Rig.Profile.Span sp -> (
-          match String.split_on_char ',' sp.name |> List.map String.trim with
+      | Rig.Profile.Work w -> (
+          match String.split_on_char ',' w.name |> List.map String.trim with
           | [ name ] ->
               Option.iter
                 (fun k ->
-                  line k (Some (Float.of_int (sp.stop - sp.start) *. 1e-9)))
-                (kernel sp.device name)
+                  line k (Some (Float.of_int (w.stop - w.start) *. 1e-9)))
+                (kernel w.device name)
           | names ->
               List.iter
                 (fun name ->
-                  Option.iter (fun k -> line k None) (kernel sp.device name))
+                  Option.iter (fun k -> line k None) (kernel w.device name))
                 names)
       | _ -> ())
     events
@@ -1094,18 +1085,49 @@ let clock t =
     Search.Device
   else Search.Host
 
+(* Whether the work [w] runs a kernel of [t]: its name lists the kernels of its
+   submission, joined by [", "]. A submission of copies alone names none. *)
+let runs_kernel t (w : Rig.Profile.event) =
+  match w with
+  | Work { device; name; _ } ->
+      let names = List.map String.trim (String.split_on_char ',' name) in
+      List.exists
+        (fun k -> Rig.equal k.device device && List.mem k.name names)
+        t.kernels
+  | _ -> false
+
+(* The run's work in a profile is the [Work] whose point a step of the run
+   reported in the frame, which the lock keeps the run's until it is copied:
+   another domain's work of the same kernels has other points. *)
 let time ?(vars = []) t slots =
-  let wait points = Array.iter Rig.Point.wait points in
-  let (), events = Rig.Profile.take (fun () -> wait (submit t ~vars slots)) in
-  let ns =
-    List.fold_left
-      (fun ns k ->
-        match spans events k with
-        | [] -> (
-            match Rig.lost k.device with
-            | Some why -> raise (Rig.Lost (k.device, why))
-            | None -> ns)
-        | s -> List.fold_left ( + ) ns s)
-      0 t.kernels
+  check_slots t slots;
+  let steps = ref [||] in
+  let run () =
+    let ends =
+      Mutex.protect t.lock (fun () ->
+          frame t ~vars slots;
+          let ends = Rig_program.run t.loaded t.frame in
+          steps := Array.copy t.frame.step_points;
+          ends)
+    in
+    Array.iter Rig.Point.wait ends
   in
-  Float.of_int ns *. 1e-9
+  let (), events = Rig.Profile.take run in
+  let ns = ref 0 and timed = ref [] in
+  List.iter
+    (function
+      | Rig.Profile.Work w as e when Array.mem w.point !steps && runs_kernel t e
+        ->
+          ns := !ns + (w.stop - w.start);
+          timed := w.device :: !timed
+      | _ -> ())
+    events;
+  (* A kernel's device that recorded none of the run's work may be lost. *)
+  List.iter
+    (fun k ->
+      if not (List.exists (Rig.equal k.device) !timed) then
+        Option.iter
+          (fun why -> raise (Rig.Lost (k.device, why)))
+          (Rig.lost k.device))
+    t.kernels;
+  Float.of_int !ns *. 1e-9

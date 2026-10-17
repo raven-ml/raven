@@ -1636,13 +1636,13 @@ let kernel_names compiled =
         | _ -> [])
     (Ops.toposort ~calls:Enter compiled)
 
-(* The names of the kernels in the spans of [events] on the host: a span names
-   the functions of its submission's launches, joined by [", "]. *)
+(* The names of the kernels in the work of [events] on the host: a submission's
+   work names the functions of its launches, joined by [", "]. *)
 let host_kernels events =
   List.concat_map
     (function
-      | Rig.Profile.Span sp when Rig.equal sp.device host ->
-          String.split_on_char ',' sp.name |> List.map String.trim
+      | Rig.Profile.Work w when Rig.equal w.device host ->
+          String.split_on_char ',' w.name |> List.map String.trim
       | _ -> [])
     events
 
@@ -1822,7 +1822,7 @@ let span_count name events =
   List.length
     (List.filter
        (function
-         | Rig.Profile.Span sp -> String.starts_with ~prefix:name sp.name
+         | Rig.Profile.Work w -> String.starts_with ~prefix:name w.name
          | _ -> false)
        events)
 
@@ -1862,12 +1862,45 @@ let time_under_profile name =
   let ns =
     List.fold_left
       (fun ns -> function
-        | Rig.Profile.Span sp
-          when String.starts_with ~prefix:"long_axpy" sp.name ->
-            ns + (sp.stop - sp.start)
+        | Rig.Profile.Work w when String.starts_with ~prefix:"long_axpy" w.name
+          ->
+            ns + (w.stop - w.start)
         | _ -> ns)
       0 events
   in
+  equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
+
+(* A schedule's consecutive kernels on one device are one submission, whose
+   work names them all. The law: a time is the sum of the durations of the
+   run's work that runs a kernel, read from a profile of the same run, and the
+   submission of several kernels is among that work. The run's work is the
+   host's, between the values the host had submitted before and after the
+   time. *)
+let counts_grouped_kernels () =
+  let big = program "contiguous" in
+  let compiled, vars = schedule big in
+  let s = Engine.link ~devices ~bound:(bound (storage_of big)) compiled in
+  let kernels = kernel_names compiled in
+  let before = Rig.submitted host in
+  let t, _, events = profiled (fun () -> Engine.time ~vars s [||]) in
+  let after = Rig.submitted host in
+  let works =
+    List.filter_map
+      (function
+        | Rig.Profile.Work w
+          when Rig.equal w.device host
+               && Rig.Point.value w.point > before
+               && Rig.Point.value w.point <= after ->
+            let names = List.map String.trim (String.split_on_char ',' w.name) in
+            if List.exists (fun n -> List.mem n kernels) names then
+              Some (names, w.stop - w.start)
+            else None
+        | _ -> None)
+      events
+  in
+  equal ~msg:"a submission of several kernels" bool true
+    (List.exists (fun (names, _) -> List.length names > 1) works);
+  let ns = List.fold_left (fun ns (_, d) -> ns + d) 0 works in
   equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
 let positive name =
@@ -1991,6 +2024,8 @@ let timing =
         "a profile taken around a time changes neither its clock nor its value"
         [ on time_under_profile ];
       group "a time is positive, under a second" [ on positive ];
+      test "a time counts a submission of several kernels"
+        counts_grouped_kernels;
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];
       group "each time runs its program once" [ on runs_once ];

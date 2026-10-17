@@ -8,6 +8,14 @@ open Def
 let strf = Printf.sprintf
 
 type event = Def.event =
+  | Work of {
+      point : int;
+      device : device;
+      lane : string;
+      name : string;
+      start : int;
+      stop : int;
+    }
   | Span of {
       device : device;
       lane : string;
@@ -150,6 +158,7 @@ let record e = match active () with [] -> () | ps -> add ps e
 (* Events *)
 
 let time = function
+  | Work w -> w.start
   | Span s -> s.start
   | Allocation a -> a.time
   | Load l -> l.time
@@ -159,6 +168,7 @@ let time = function
   | Copy c -> c.start
 
 let duration = function
+  | Work w -> w.stop - w.start
   | Span s -> s.stop - s.start
   | Counters c -> c.stop - c.start
   | Trace t -> t.stop - t.start
@@ -256,6 +266,7 @@ let micros oc ns =
   Printf.fprintf oc "%d.%03d" (abs ns / 1000) (abs ns mod 1000)
 
 let device_of = function
+  | Work w -> w.device
   | Span s -> s.device
   | Allocation a -> a.device
   | Load l -> l.image.idev
@@ -303,6 +314,7 @@ let output_chrome_trace oc events =
       let pid = pid d in
       let tid =
         match e with
+        | Work w -> tid d pid w.lane
         | Span s -> tid d pid s.lane
         | Counters _ -> tid d pid "counters"
         | Copy _ -> tid d pid "copy"
@@ -311,7 +323,7 @@ let output_chrome_trace oc events =
       next ();
       let ph =
         match e with
-        | Span _ | Counters _ | Copy _ -> "X"
+        | Work _ | Span _ | Counters _ | Copy _ -> "X"
         | Allocation _ -> "C"
         | Load _ | Trace _ | Overwritten _ -> "i"
       in
@@ -319,11 +331,11 @@ let output_chrome_trace oc events =
         tid;
       micros oc (time e - origin);
       (match e with
-      | Span s ->
+      | Work { start; stop; name; _ } | Span { start; stop; name; _ } ->
           output_string oc ",\"dur\":";
-          micros oc (s.stop - s.start);
+          micros oc (stop - start);
           output_string oc ",\"name\":";
-          string oc s.name
+          string oc name
       | Counters c ->
           output_string oc ",\"dur\":";
           micros oc (c.stop - c.start);
