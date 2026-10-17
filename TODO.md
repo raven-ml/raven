@@ -178,11 +178,11 @@ raven / llama.cpp (Vulkan; ROCm):
   that may share memory"; test_model on one domain, `Oom_at` on device 3 or
   4 about 1 in 120 (loop it with logs kept); test_image 1 in 3 on the Mac
   before its 2026-10-12 fix (rerun 30 times)
-- relock windtrap once its `workers-block` branch (9d86f18, a start
-  barrier that sleeps after a short spin) lands: rig_pci.space "two
-  domains allocate and free at once" times out at its 10 s bound at load
-  ~56 (30 of 32 copies at once) with windtrap's spinning barrier, and
-  passes in 2-3 s with it
+- relock windtrap once its `workers-block` branch (a883e72, a start
+  barrier that sleeps once workers stop arriving) lands: rig_pci.space
+  "two domains allocate and free at once" times out at its 10 s bound in
+  60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
+  barrier, and in none of 96 with it
 - hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
   dc72412596); root on an NVIDIA host (NV over PCI's open/close law and
   test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
