@@ -167,6 +167,44 @@ static char *align_up(char *p, size_t align) {
   return (char *)(((uintptr_t)p + align - 1) & ~(uintptr_t)(align - 1));
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/* On arm64 macOS the system lifts this thread's write protection around
+   write_code alone. Under the jit-write-allowlist entitlement it runs only
+   the callbacks an image listed when the process started, and ends the
+   process for any other. The system reads an image's list up to its first
+   NULL, so this is the one list of the image that links this file. */
+typedef struct {
+  char *to;
+  const char *from;
+  size_t n;
+} code_write;
+
+static int write_code(void *ctx) {
+  code_write *w = ctx;
+  memcpy(w->to, w->from, w->n);
+  return 0;
+}
+
+PTHREAD_JIT_WRITE_ALLOW_CALLBACKS_NP(write_code);
+
+/* A child of fork that its parent made shortly after writing code can
+   start with its thread's write protection lifted, and its first call of
+   that code then faults: one such fork in a few hundred under load. The
+   child sets the protection again before it runs anything, by a write of
+   nothing. [watching] is the error of registering that. */
+static void protect_child(void) {
+  static char none;
+  code_write w = {&none, &none, 0};
+  pthread_jit_write_with_callback_np(write_code, &w);
+}
+
+static pthread_once_t watch_once = PTHREAD_ONCE_INIT;
+static int watching;
+static void watch_forks(void) {
+  watching = pthread_atfork(NULL, NULL, protect_child);
+}
+#endif
+
 /* A mapping of [size] bytes at a multiple of [align], a power of two,
    writable until installed. Both fit an OCaml int, so their sum fits a
    size_t. The block comes first, so that the mapping is never left without
@@ -204,6 +242,11 @@ value caml_rig_host_map(value v_size, value v_align) {
 #if defined(__APPLE__) && defined(__aarch64__)
   prot |= PROT_EXEC;
   flags |= MAP_JIT;
+  pthread_once(&watch_once, watch_forks);
+  if (watching != 0) {
+    m->error = -watching;
+    CAMLreturn(v);
+  }
 #endif
   char *start = mmap(NULL, span + slop, prot, flags, -1, 0);
   if (start == MAP_FAILED) {
@@ -223,27 +266,6 @@ value caml_rig_host_base(value v_mapping) {
   mapping *m = Mapping_val(v_mapping);
   return Val_long(m->base ? (intnat)m->base : m->error);
 }
-
-#if defined(__APPLE__) && defined(__aarch64__)
-/* On arm64 macOS the system lifts this thread's write protection around
-   write_code alone. Under the jit-write-allowlist entitlement it runs only
-   the callbacks an image listed when the process started, and ends the
-   process for any other. The system reads an image's list up to its first
-   NULL, so this is the one list of the image that links this file. */
-typedef struct {
-  char *to;
-  const char *from;
-  size_t n;
-} code_write;
-
-static int write_code(void *ctx) {
-  code_write *w = ctx;
-  memcpy(w->to, w->from, w->n);
-  return 0;
-}
-
-PTHREAD_JIT_WRITE_ALLOW_CALLBACKS_NP(write_code);
-#endif
 
 /* Writes [bytes] at the start of [mapping], makes it executable and
    synchronizes the instruction caches with it: 0, or the error. It is the

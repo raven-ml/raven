@@ -586,6 +586,36 @@ the M1 Max with an executable signed with the hardened runtime, `allow-jit`
 and `jit-write-allowlist`: killed with SIGKILL at the first link while the
 loader called `pthread_jit_write_protect_np`, passing with the callback.
 
+### arm64 macOS can start a child of fork with its JIT writes allowed
+
+On arm64 macOS, a child of `fork` can start with its thread's `MAP_JIT` write
+protection lifted, although the forking thread had set it again. The child's
+first call of code in the mapping then dies of SIGBUS, an instruction abort on
+the writable mapping. Apple's pages for `pthread_jit_write_protect_np(3)` and
+`fork(2)` define the protection per thread and say nothing of fork. Checked by
+hand on the M1 Max at load ~68, with a C program that repeats a step: map
+16 KiB of `MAP_JIT` memory, write `mov x0, #42; ret` between
+`pthread_jit_write_protect_np(0)` and `pthread_jit_write_protect_np(1)`,
+invalidate the instruction cache, fork, and call the code in the child. It
+counts the children that end by a signal:
+
+| Before the child's call | Children ended by a signal |
+|---|---|
+| Nothing | 3 of 3,000 |
+| The parent called the code just before the fork | 4 of 6,000 |
+| The child slept 1 ms | 13 of 6,000 |
+| The child called `pthread_jit_write_with_callback_np` with a callback that writes nothing | 0 of 6,000 |
+
+The second row shows that the child does not take the state its parent's
+thread ran with, and the third that the state stays wrong across a context
+switch. A second run with the last row's reset had no failure in 16,000
+forks. The failures need a loaded machine; in rig's suite they killed the
+forked child of `test/remote/proxy/test_link.ml` twice in about 500 runs. The
+first code mapping of `lib/rig_host_code.c` registers a `pthread_atfork` child
+handler that makes that reset through the loader's listed callback, before the
+child runs anything: `pthread_jit_write_protect_np` would end a process that
+holds `jit-write-allowlist`.
+
 ### arm64 cores need an isb to run code another core wrote
 
 Cache maintenance after writing code (`__builtin___clear_cache`) reaches every
