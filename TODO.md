@@ -301,8 +301,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `indexed/take-grad-1024-of-32768x64-host` takes 94 ms on the M1 (load 20)
   against ~2 ms eager. At 128256 rows a plain loop measured 17 ms and thumper
   0.67-1.05 s, unexplained. The row has no baselines yet (Mac, fudge)
-- `Total.collect` around a compiled function on a device without eager
-  kernels raises `has no eager kernels` (total.ml:62,86)
 - jit compiles no complex tensor (lower.ml:36); ymir's `test_quantity`
   holds an `xfail`
 - vega keeps optimizer state at the leaf dtype: a bfloat16 moment never

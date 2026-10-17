@@ -236,6 +236,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.Total.collect` around a compiled function collects on a device
+  without eager kernels, such as a GPU without a backend. It raised
+  `Invalid_argument "Nx.add: … has no eager kernels"` adding the call's sum.
 - A compiled `Nx.eigh` or `Nx.eigvalsh` of a `float32` matrix of repeated
   eigenvalues no longer returns NaN for some matrices: rotations within one
   eigenvalue, by angles of rounding errors, slowed convergence to a bit a

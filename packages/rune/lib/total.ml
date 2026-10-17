@@ -57,9 +57,10 @@ and collect : type a b r.
     =
  fun t ~zero f ->
   let total = ref zero and depth = !(Domain.DLS.get discarded) in
+  let counts () = !(Domain.DLS.get discarded) = depth in
   let receive v =
     if Nx.shape v <> Nx.shape zero then shape_mismatch v zero;
-    if !(Domain.DLS.get discarded) = depth then total := Nx.add !total v
+    if counts () then total := Nx.add !total v
   in
   let rec within : type c. (unit -> c) -> c =
    fun f -> Construct.install { op = None; call = answer } f
@@ -77,17 +78,20 @@ and collect : type a b r.
                receive s;
                result))
     | Compiled { p; q; f; args; compiler } ->
+        (* The call starts from the total so far and returns it with its
+           additions, so the scope computes nothing outside the program: the
+           device may have no eager kernels. *)
         let f (args, zero) = collect t ~zero (fun () -> f args) in
         let p = Nx.Ptree.pair p Nx.Ptree.tensor
         and q = Nx.Ptree.pair q Nx.Ptree.tensor in
         let compiler = compiler.derive (Totals t) in
         Some
           (Construct.here (fun () ->
-               let args = (args, Nx.zeros_like zero) in
                let y, s =
-                 Construct.perform (Compiled { p; q; f; args; compiler })
+                 Construct.perform
+                   (Compiled { p; q; f; args = (args, !total); compiler })
                in
-               receive s;
+               if counts () then total := s;
                y))
     | Root r ->
         (* [solve] runs inside the scope; only derivatives run the other

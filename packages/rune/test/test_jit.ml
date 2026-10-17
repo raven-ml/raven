@@ -2511,6 +2511,48 @@ let transformations =
           equal floats y' y;
           equal floats total' total);
       test
+        "a compiled function called in a scope traces for its zero's layout \
+         and for the total's, then for neither" (fun () ->
+          let t = Rune.Total.make () in
+          let g =
+            Rune.jit' (fun a ->
+                Rune.Total.add t a;
+                poly a)
+          in
+          let scope () =
+            let a = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |] in
+            let calls () =
+              for _ = 1 to 3 do
+                ignore (g a)
+              done
+            in
+            let zero = Nx.zeros Nx.float32 [| 3 |] in
+            ignore (Rune.Total.collect t ~zero calls)
+          in
+          equal ~msg:"the first scope" int 2 (traces scope);
+          equal ~msg:"the second scope" int 0 (traces scope));
+      test
+        "a total collects the additions of compiled calls on a device where \
+         only compiled functions compute" (fun () ->
+          let t = Rune.Total.make () in
+          let f a =
+            Rune.Total.add t (Nx.sum a);
+            poly a
+          in
+          let g = Rune.jit' f
+          and on_gpu = Nx.place (Nx.Placement.on (gpu ())) in
+          let twice f a () =
+            ignore (f a);
+            f a
+          in
+          let zero = Nx.scalar Nx.float32 1. in
+          let y, total =
+            Rune.Total.collect t ~zero:(on_gpu zero) (twice g (on_gpu (x ())))
+          in
+          let y', total' = Rune.Total.collect t ~zero (twice f (x ())) in
+          equal close y' (host y);
+          equal close total' (host total));
+      test
         "a compiled function over a paired device compiles for its memory, its \
          results on that device" (fun () ->
           let adds = Atomic.make 0 in
@@ -2880,13 +2922,6 @@ let to_count s ~max ~f n c =
 
 let rec repeat k f x = if k = 0 then x else repeat (k - 1) f (f x)
 
-(* Whether the devices of [at] compute eagerly: an addition there runs. *)
-let eager at =
-  let one = Nx.place at (Nx.ones Nx.float32 [| 1 |]) in
-  match Nx.add one one with
-  | _ -> true
-  | exception Invalid_argument _ -> false
-
 (* [counted_loops at] checks loops compiled with their arguments at [at] whose
    trips a count argument fixes: the carries the program keeps from trip to
    trip, a program run again at other counts, nesting at each level's shortest
@@ -3153,40 +3188,31 @@ let counted_loops at =
           in
           equal ~msg:"carry" floats c (host c');
           equal ~msg:"outputs" floats ys (host ys'));
-      (* A total collected around a compiled function adds its result eagerly,
-         which a device without eager kernels refuses, loop or none. *)
-      (if eager at then Fun.id
-       else
-         xfail
-           ~reason:
-             "Rune.Total.collect adds a compiled function's total eagerly on \
-              its device")
-      @@ test "a scope around a compiled loop counts each call's trips"
-           (fun () ->
-             let total : (float, Nx.float32_elt) Rune.Total.t =
-               Rune.Total.make ()
-             in
-             let g =
-               Rune.jit n_and (fun x n ->
-                   to_count Nx.Ptree.tensor ~max:5
-                     ~f:(fun x ->
-                       Rune.Total.add total (Nx.scalar Nx.float32 1.);
-                       halve x)
-                     n x)
-             in
-             let x = Nx.place at (Nx.ones Nx.float32 [| 2 |]) in
-             List.iter
-               (fun n ->
-                 let _, t =
-                   Rune.Total.collect total ~zero:(Nx.scalar Nx.float32 0.)
-                     (fun () -> g x (count_of n))
-                 in
-                 equal
-                   ~msg:(Printf.sprintf "%d trips" n)
-                   (exact ())
-                   (Nx.scalar Nx.float32 (Float.of_int n))
-                   (host t))
-               [ 3; 0; 5; 1 ]);
+      test "a scope around a compiled loop counts each call's trips" (fun () ->
+          let total : (float, Nx.float32_elt) Rune.Total.t =
+            Rune.Total.make ()
+          in
+          let g =
+            Rune.jit n_and (fun x n ->
+                to_count Nx.Ptree.tensor ~max:5
+                  ~f:(fun x ->
+                    Rune.Total.add total (Nx.scalar Nx.float32 1.);
+                    halve x)
+                  n x)
+          in
+          let x = Nx.place at (Nx.ones Nx.float32 [| 2 |]) in
+          List.iter
+            (fun n ->
+              let _, t =
+                Rune.Total.collect total ~zero:(Nx.scalar Nx.float32 0.)
+                  (fun () -> g x (count_of n))
+              in
+              equal
+                ~msg:(Printf.sprintf "%d trips" n)
+                (exact ())
+                (Nx.scalar Nx.float32 (Float.of_int n))
+                (host t))
+            [ 3; 0; 5; 1 ]);
       test "a scope inside a compiled function counts its loop's trips"
         (fun () ->
           let total : (float, Nx.float32_elt) Rune.Total.t =

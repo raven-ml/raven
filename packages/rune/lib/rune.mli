@@ -609,8 +609,10 @@ module Total : sig
       placement.
 
       A {!scan} inside [f] that no compiled function stages folds inside the
-      scope. A {!val-jit} inside [f] compiles the function that also returns the
-      sum of its additions.
+      scope. A {!val-jit} inside [f] compiles the function that also takes the
+      total so far and returns it with its additions, so the scope computes
+      nothing outside the program and collects on a device where only compiled
+      functions compute.
 
       The scope checks each addition's shape against [zero]'s when it receives
       it, where every map inside the scope has summed its lanes.

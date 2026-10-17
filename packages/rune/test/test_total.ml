@@ -101,7 +101,7 @@ let scope_tests =
               Rune.Total.add t (scalar 4.))
         in
         equal (exact ()) (scalar 7.) total);
-    test "a jit inside a scope runs eagerly and its additions count" (fun () ->
+    test "a compiled function inside a scope counts its additions" (fun () ->
         let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
         let f = Rune.jit' (rollout t (w0 ()) (h0 ())) in
         let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> f xs) in
