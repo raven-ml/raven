@@ -20,6 +20,9 @@ let timeout = 60.
    them. *)
 let max_descriptors = 64
 
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+
 (* Files *)
 
 (* This executable's directory, under _build, holds the files, which the
@@ -34,6 +37,8 @@ let clear () =
   if Sys.file_exists dir then
     Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir)
   else Sys.mkdir dir 0o755
+
+let path name = Filename.concat dir name
 
 (* One file more than the disk keeps open, each holding its index. *)
 let count = max_descriptors + 1
@@ -97,7 +102,8 @@ let in_child what f =
 (* Opens and reads every file, which leaves the first one's descriptor closed
    for the others, then reads the first file interrupted from its [n]-th
    allocation: the read reopens its descriptor and closes the least recently
-   used other one. Is whether the allocation was reached. *)
+   used other one, and leaves no lock held. Is whether the allocation was
+   reached. *)
 let interrupt n =
   let at = strf ", interrupted from allocation %d" n in
   in_child at (fun () ->
@@ -112,6 +118,7 @@ let interrupt n =
       let reached =
         Rig_support.interrupted n (fun () -> B.copy ~src:first ~dst:h)
       in
+      equal ~msg:"locks held after" int 0 (holds ());
       List.iteri
         (fun i b -> equal ~msg:(strf "file %d" i) string (bytes i) (read b))
         files;
@@ -128,19 +135,58 @@ let test_interrupt () =
   let rec from n = if interrupt n then from (n + 1) in
   from 1
 
+(* Writes a file, reads another, then syncs the first interrupted from the
+   barrier's [n]-th allocation: the barrier holds the file's sync lock and,
+   to make the file the most recently used again, the table's lock inside it.
+   No lock stays held, a later barrier returns, and the file holds the bytes
+   written. Is whether the allocation was reached. *)
+let interrupt_barrier n =
+  let at = strf ", barrier interrupted from allocation %d" n in
+  in_child at (fun () ->
+      let name = path "barrier" in
+      if Sys.file_exists name then Sys.remove name;
+      let b = Result.get_ok (Rig_disk.create_file name 8) in
+      let other =
+        Result.get_ok (Rig_disk.of_file (List.hd (Lazy.force paths)))
+      in
+      B.copy ~src:(B.of_string "barriers") ~dst:b;
+      ignore (read other);
+      let reached = Rig_support.interrupted n (fun () -> Rig_disk.barrier b) in
+      equal ~msg:"locks held after" int 0 (holds ());
+      Rig_disk.barrier b;
+      equal ~msg:"the file's bytes" string "barriers"
+        (In_channel.with_open_bin name In_channel.input_all);
+      reached)
+
+let test_interrupt_barrier () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Rig_support.needs_fork ();
+  ignore (Lazy.force paths);
+  let rec from n = if interrupt_barrier n then from (n + 1) else n - 1 in
+  greater ~msg:"allocations interrupted" int ~than:0 (from 1)
+
 (* Calls from a callback *)
 
-let path name = Filename.concat dir name
+(* What a call answers: ["refused"] for an [Invalid_argument] that names the
+   call's caller, rig or the disk. *)
+let answer (what, f) =
+  match f () with
+  | () -> (what, "done")
+  | exception Invalid_argument why
+    when String.starts_with ~prefix:"Rig." why
+         || String.starts_with ~prefix:"Rig_disk." why ->
+      (what, "refused")
+  | exception e -> (what, Printexc.to_string e)
 
 (* [called n] opens a file beyond the disk's bound of descriptors, which
    holds the disk's lock while it opens the descriptor and closes the least
    recently used other one, with calls of the disk from a Gc.Memprof
    callback at the open's [n]-th allocation: a read of the third file, open
-   until the open closes it, a write and a barrier of an open file, and a
-   drain that frees a collected file whose descriptor is open. Each answers,
-   or raises Invalid_argument having changed nothing where the open holds
-   the lock: the callback's free goes back for a later drain. Is whether the
-   allocation was reached, and the calls refused. *)
+   until the open closes it, a write, a barrier and an open of an open file,
+   and a drain that frees a collected file whose descriptor is open. Inside a
+   lock of the thread's each raises [Invalid_argument], having changed
+   nothing; outside every lock each answers. Is whether the allocation was
+   reached, and whether the callback ran inside a lock. *)
 let called n =
   let at = strf ", called from allocation %d" n in
   in_child at (fun () ->
@@ -153,19 +199,29 @@ let called n =
       B.copy ~src:(B.of_string "written!") ~dst:written;
       let dropped = ref (Rig_disk.of_file (path "dropped")) in
       let third = List.nth files 2 in
-      let refused = ref 0 in
-      let refusing f = try f () with Invalid_argument _ -> incr refused in
-      let rewritten = ref false in
+      let rewritten = ref false and held = ref false and answers = ref [] in
+      let calls =
+        [
+          ( "a read",
+            fun () -> equal ~msg:"the third file" string (bytes 2) (read third)
+          );
+          ( "a write",
+            fun () ->
+              B.copy ~src:(B.of_string "callback") ~dst:written;
+              rewritten := true );
+          ("a barrier", fun () -> Rig_disk.barrier written);
+          ( "an open",
+            fun () -> ignore (Result.get_ok (Rig_disk.of_file (path "dropped")))
+          );
+          ( "a drain",
+            fun () ->
+              Gc.full_major ();
+              ignore (B.create Rig_disk.device 0) );
+        ]
+      in
       let call () =
-        refusing (fun () ->
-            equal ~msg:"the third file" string (bytes 2) (read third));
-        refusing (fun () ->
-            B.copy ~src:(B.of_string "callback") ~dst:written;
-            rewritten := true);
-        refusing (fun () -> Rig_disk.barrier written);
-        refusing (fun () ->
-            Gc.full_major ();
-            ignore (B.create Rig_disk.device 0))
+        held := holds () > 0;
+        answers := List.map answer calls
       in
       let opened = ref None in
       let run () =
@@ -173,6 +229,15 @@ let called n =
       in
       dropped := Error "collected";
       let reached = Rig_support.interrupted ~landing:(Call call) n run in
+      if reached then begin
+        let expected (what, _) =
+          (what, if !held then "refused" else "done")
+        in
+        equal ~msg:"the calls' answers"
+          (list (pair string string))
+          (List.map expected calls) !answers;
+        equal ~msg:"the callback's write" bool (not !held) !rewritten
+      end;
       at_most ~msg:"descriptors after" int ~than:(base + max_descriptors)
         (descriptors ());
       List.iteri
@@ -189,7 +254,7 @@ let called n =
       opened := None;
       collect ();
       equal ~msg:"descriptors once collected" int base (descriptors ());
-      (reached, !refused))
+      (reached, !held))
 
 let test_called () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
@@ -199,12 +264,15 @@ let test_called () =
     (fun name ->
       Out_channel.with_open_bin (path name) (fun oc -> output_string oc name))
     [ "dropped"; "opened" ];
-  let rec from n refused =
+  let rec from n inside outside =
     match called n with
-    | true, k -> from (n + 1) (refused + k)
-    | false, k -> refused + k
+    | true, true -> from (n + 1) (inside + 1) outside
+    | true, false -> from (n + 1) inside (outside + 1)
+    | false, _ -> (inside, outside)
   in
-  greater ~msg:"calls refused" int ~than:0 (from 1 0)
+  let inside, outside = from 1 0 0 in
+  greater ~msg:"landings inside a lock" int ~than:0 inside;
+  greater ~msg:"landings outside every lock" int ~than:0 outside
 
 let () =
   clear ();
@@ -217,12 +285,16 @@ let () =
               "a read that reopens a descriptor and closes another keeps the \
                bound and leaks no descriptor"
               test_interrupt;
+            test
+              "a barrier under its file's lock and the table's leaves no lock \
+               held"
+              test_interrupt_barrier;
           ];
         group ~timeout "a call from a callback at any allocation"
           [
             test
-              "a read, a write, a barrier and a free in an open answer, or \
-               raise Invalid_argument"
+              "a read, a write, a barrier, an open and a free in an open \
+               raise Invalid_argument inside a lock and answer outside"
               test_called;
           ];
       ]

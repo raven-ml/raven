@@ -9,13 +9,18 @@
    several domains run at once and a pinned descriptor is never closed under a
    transfer.
 
-   Every lock is a guard of one of two ranks, taken in this order: a file's
-   sync lock, the table's lock. A take while the thread holds a guard of the
-   same or a later rank, as a signal handler, finaliser or Gc.Memprof
-   callback inside a section would, raises [Refused] before it takes
-   anything. A call takes its first guard before it changes anything, and
-   later ones of a later rank, so a call whose first take succeeded is
-   refused no later one. *)
+   Locks nest in one order: a file's sync lock, then the table's lock. Each
+   counts among the locks its thread holds ([take]), so a call of rig's or of
+   the disk's from a signal handler, finaliser or Gc.Memprof callback inside
+   one raises [Invalid_argument] as it starts: rig checks the calls that reach
+   [Io], and [of_file], [create_file] and [barrier] check themselves
+   ([check]).
+
+   The table's lock is held across the system's open and close of a
+   descriptor, and a file's sync lock across its sync, which waits for the
+   disk: a descriptor half opened, or a sync that two barriers ran at once,
+   would lose a failure the file must keep. A call of rig's from a callback
+   during one raises. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -54,23 +59,63 @@ external msync : pages -> unit = "caml_rig_disk_msync"
 external watch_forks : unit -> unit = "caml_rig_disk_watch_forks" [@@noalloc]
 external forks : unit -> int = "caml_rig_disk_forks" [@@noalloc]
 
-(* Guards *)
+(* Locks *)
 
-exception Refused of string
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
 
-let () = Callback.register_exception "Rig_disk.Refused" (Refused "")
-
-type guard
-
-external guard : int -> guard = "caml_rig_disk_guard"
-external take : guard -> unit = "caml_rig_disk_guard_take"
-external give : guard -> unit = "caml_rig_disk_guard_give" [@@noalloc]
-external refuses : guard -> bool = "caml_rig_disk_guard_refuses" [@@noalloc]
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-(* The ranks of guards, in the order a thread takes them. *)
-let sync_rank = 0
-let table_rank = 1
+(* A function a caller outside rig makes, [fn], starts with [check fn]. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_disk." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
+
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_disk: a lock taken again by the thread that holds it, from a \
+             signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
+
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [protect m g x] is [g x] holding [m], taken as the last step before the
+   handler and given back as the first step of both exits. [g] is a toplevel
+   function, so a call makes no closure. *)
+let protect m g x =
+  take m;
+  match g x with
+  | r ->
+      give m;
+      r
+  | exception e ->
+      give m;
+      reraise e
 
 (* [open_path]'s modes, and the descriptor it answers for a path that names
    no regular file. *)
@@ -106,13 +151,13 @@ type file = {
   mutable unsynced : bool; [@atomic] (* written since its last sync *)
   mutable failure : exn; [@atomic]
       (* its first sync's [Unix_error], [No_failure] before one *)
-  mutable syncing : int * guard; [@atomic]
+  mutable syncing : int * Mutex.t; [@atomic]
       (* its sync lock and the forks it was made after, [no_lock] before *)
 }
 
 exception No_failure
 
-let no_lock = (-1, guard sync_rank)
+let no_lock = (-1, Mutex.create ())
 
 (* The ring's ends: a file of no path, never open. *)
 let rec ring =
@@ -173,7 +218,7 @@ let rec sync_lock f =
   else begin
     ignore
       (Atomic.Loc.compare_and_set [%atomic.loc f.syncing] l
-         (n, guard sync_rank)
+         (n, Mutex.create ())
         : bool);
     sync_lock f
   end
@@ -194,29 +239,18 @@ let in_table = Atomic.make 0
    lock anew at its first use: a thread of its parent may have held it. *)
 let lock =
   watch_forks ();
-  Atomic.make (forks (), guard table_rank)
+  Atomic.make (forks (), Mutex.create ())
 
 let rec table_lock () =
   let ((made, m) as l) = Atomic.get lock and n = forks () in
   if made = n then m
   else begin
-    ignore (Atomic.compare_and_set lock l (n, guard table_rank));
+    ignore (Atomic.compare_and_set lock l (n, Mutex.create ()));
     table_lock ()
   end
 
-(* [locked g x] is [g x] under the table's lock, taken as the last step before
-   the handler and given back as the first step of both exits. [g] is a
-   toplevel function, so a call makes no closure. *)
-let locked g x =
-  let m = table_lock () in
-  take m;
-  match g x with
-  | r ->
-      give m;
-      r
-  | exception e ->
-      give m;
-      reraise e
+(* [locked g x] is [g x] under the table's lock. *)
+let locked g x = protect (table_lock ()) g x
 
 (* Whether the table holds [f]'s descriptor while it is open. *)
 let listed f = f.identity <> ""
@@ -356,16 +390,11 @@ let rec pin f =
       locked pinned f
     end
 
-(* An unpin on a thread inside the table's lock, as in a callback that
-   interrupts a section, leaves its file where it is. The table is then beyond
-   its bound only while another descriptor is pinned, whose unpin trims, or
-   before the section's own trim. *)
 let unpin f =
   if
     Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1) = 1
     && listed f
     && (ring.newer != f || Atomic.get in_table > max_open)
-    && not (refuses (table_lock ()))
   then locked unpinned f
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
@@ -401,7 +430,7 @@ module Io = struct
   type region = file
 
   exception Fault of string
-  exception Refused = Refused
+  exception Refused of string
 
   let region_key : file Type.Id.t = Type.Id.make ()
   let budget () = max_int
@@ -507,7 +536,6 @@ let open_file path mode n =
           Error (strf "%s: %s" path (Unix.error_message e))
     in
     match locked opened () with
-    | exception Refused why -> invalid_arg why
     | Error _ as e -> e
     | Ok f -> (
         let access = if writable then Rig.Read_write else Read in
@@ -522,9 +550,12 @@ let open_file path mode n =
                try Sys.remove path with Sys_error _ -> ());
             Printexc.raise_with_backtrace e bt)
 
-let of_file path = open_file path read_mode 0
+let of_file path =
+  check "of_file";
+  open_file path read_mode 0
 
 let create_file path n =
+  check "create_file";
   if n < 0 then invalid_argf "Rig_disk.create_file: %d bytes is negative" n;
   open_file path create_mode n
 
@@ -552,16 +583,11 @@ let synced f =
    barrier's sync would return while another's, or an eviction's, has yet to
    keep the failure: it waits for that one to end. A file with a mapping always
    syncs, since nothing marks writes through it. *)
-let sync_file f =
-  let m = sync_lock f in
-  take m;
-  match if f.unsynced || Option.is_some f.pages then synced f with
-  | () -> give m
-  | exception e ->
-      give m;
-      reraise e
+let sync_due f = if f.unsynced || Option.is_some f.pages then synced f
+let sync_file f = protect (sync_lock f) sync_due f
 
 let barrier b =
+  check "barrier";
   (* The message is formatted only on failure: a partial application of a format
      builds its closure at every call. *)
   (match Rig.Buffer.dead b with
@@ -579,7 +605,7 @@ let barrier b =
       (* A device's work writing through a borrow writes the file once done: the
          barrier orders after it, as a copy reading [b] would. *)
       Rig.Buffer.wait b Read;
-      (try sync_file f with Refused why -> invalid_arg why);
+      sync_file f;
       (* Until the descriptor is unpinned: collecting [b] would close it. *)
       ignore (Sys.opaque_identity b);
       match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()
