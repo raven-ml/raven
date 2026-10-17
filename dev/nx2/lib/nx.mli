@@ -941,6 +941,184 @@ val atanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 val erf : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]. *)
 
+(** {2:special Special functions}
+
+    The laws of the distributions {!Rng} samples. Arguments broadcast,
+    parameters first and the variable last: [gammainc a] is the distribution
+    function of the gamma distribution of shape [a]. Outside a function's
+    domain, and at a NaN argument, the value is NaN; at a pole it is the
+    function's limit there.
+
+    Each function states a bound at float32 and float64 on its {e error}, the
+    number of floats of the dtype between its result and the exact value
+    rounded to the dtype. A bound of [k] ulps {e absolute near zeros} also
+    holds where the exact value is below [1.] in magnitude and the result
+    within [kε] of it, [ε] being the distance from [1.] to the next float of
+    the dtype. An inverse's bound adds [κ] times its forward function's bound,
+    where [κ = |p / (x F'(x))|] at its result [x], for [F] the forward
+    function, is its condition number. A subnormal result is held to its
+    bound in units of the least subnormal, plus half of one.
+
+    The formats narrower than 32 bits compute at [float32] and round once.
+    Where a bound is in ulps, their result is within one ulp of the exact
+    value rounded to their dtype; where it is absolute, within that bound at
+    [float32] plus half an ulp of their dtype.
+
+    A device that flushes subnormal numbers to zero reads a subnormal operand
+    as zero and writes a subnormal result as zero; there each bound holds
+    where the operands and the result are normal. *)
+
+val erfc : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [erfc x] is [1 - erf x], to its own relative precision where [erf x]
+    rounds to [1.]: [erfc 10.] is [2.088e-45] at float64. It is [2.] at
+    [-inf] and [0.] at [inf]. Within 8 ulps. *)
+
+val erfinv : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [erfinv p] is the [x] with [erf x = p], on \[[-1.], [1.]\]: [-inf] at
+    [-1.] and [inf] at [1.]. Within [4 + 8κ] ulps, where
+    [κ = |p √π e{^x²} / (2x)|] is [1] at [0.] and grows as [p] nears [±1.]. *)
+
+val ndtr : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [ndtr x] is the standard normal distribution function
+    [Φ(x) = erfc (-x/√2) / 2]. Its lower tail keeps its relative precision
+    down to the least subnormal, at [x] about [-38.5] at float64 and [-14.]
+    at float32. It is [0.] at [-inf] and [1.] at [inf]. Within 16 ulps. *)
+
+val log_ndtr : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [log_ndtr x] is [log (ndtr x)], finite where [ndtr x] underflows while
+    [x²/2] is finite: down to [x] about [-1.9e154] at float64 and [-2.6e19]
+    at float32, and [-inf] below. It is [-inf] at [-inf] and [-0.] at [inf].
+    Within 32 ulps. *)
+
+val ndtri : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [ndtri p] is the [x] with [ndtr x = p], on \[[0.], [1.]\]: [-inf] at [0.]
+    and [inf] at [1.]. A [p] above [1/2] is read as one minus the upper tail,
+    so the result keeps the precision of [p] near either end:
+    [ndtri 1e-300] is [-37.047]. Within [4 + 16κ] ulps, where
+    [κ = |p / (x Φ'(x))|]. *)
+
+val lgamma : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [lgamma x] is [log |Γ(x)|], on every float: [inf] at [0.], the negative
+    integers and [inf], NaN at [-inf]. For [x > 0] within 16 ulps, absolute
+    near its zeros at [1.] and [2.]; below [0.], within 16 ulps or
+    [16ε (1 + lgamma (1 - x))] absolutely, the precision its reflection
+    [log π - log |sin πx| - lgamma (1 - x)] keeps. *)
+
+val digamma : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [digamma x] is [ψ(x) = Γ'(x) / Γ(x)], the mean of [log X] for [X] a
+    gamma draw of shape [x], on every float: [-inf] at [+0.], [inf] at [-0.]
+    and [inf], NaN at the negative integers and [-inf]. For [x > 0] within
+    16 ulps, absolute near its root at [1.4616]; below [0.], within 16 ulps
+    or [16ε (1 + |π cot πx|)] absolutely. *)
+
+val lbeta : (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [lbeta a b] is [log B(a, b) = lgamma a + lgamma b - lgamma (a + b)] for
+    [a, b ≥ 0], computed without that sum's cancellation: [lbeta 1e10 1.] is
+    [-log 1e10]. It is [inf] where either is [0.] and the other finite,
+    [-inf] where either is [inf] and the other positive, and NaN where one is
+    [0.] and the other [inf]. Within 256 ulps, or [512ε] absolutely where it
+    is below [1.] in magnitude. *)
+
+val gammainc : (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [gammainc a x] is the regularised lower incomplete gamma function
+    [P(a, x) = (1/Γ(a)) ∫₀ˣ t{^a-1} e{^-t} dt], the distribution function at
+    [x] of the gamma distribution of shape [a] and unit rate, for [a, x ≥ 0].
+    It is [0.] at [x = 0.] and where [a] is [inf] for finite [x], [1.] at
+    [x = inf] and, its limit, at [a = 0.] for [x > 0]; NaN at [a = x = 0.]
+    and [a = x = inf], where the limits disagree. For [0 < a ≤ 2{^20}]
+    within [32 (1 + |log P|) + 4] ulps; above, its error grows with [a]. *)
+
+val gammaincc : (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [gammaincc a x] is [Q(a, x) = 1 - P(a, x)] ({!gammainc}), the upper
+    tail, to its own relative precision where [P] rounds to [1.]:
+    [gammaincc 1. 40.] is [e{^-40}]. Its edges are the complements of
+    {!gammainc}'s. Within [32 (1 + |log Q|) + 4] ulps for
+    [0 < a ≤ 2{^20}]. *)
+
+val log_gammainc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [log_gammainc a x] is [log P(a, x)] ({!gammainc}), finite for [a, x > 0]
+    where [P] underflows: [log_gammainc 1000. 1.] is [-5913.13]. It is [-inf]
+    at [x = 0.] and where [a] is [inf], [0.] at [x = inf], and [-0.] at
+    [a = 0.] for [x > 0], where [P] reaches [1.] from below. For
+    [0 < a ≤ 2{^20}] within 16 ulps, absolute near zeros. *)
+
+val log_gammaincc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [log_gammaincc a x] is [log Q(a, x)] ({!gammaincc}), finite for [a > 0]
+    wherever [x] is. It is [0.] at [x = 0.], [-0.] where [a] is [inf] for
+    [x > 0], where [Q] reaches [1.] from below, and [-inf] at [x = inf] and
+    at [a = 0.]. Within the bound of {!log_gammainc}. *)
+
+val gammaincinv :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [gammaincinv a p] is the [x] with [gammainc a x = p], the gamma
+    distribution's quantile, for [a ≥ 0] and [p] in \[[0.], [1.]\]. A [p]
+    above [1/2] is read as one minus the upper tail, so the result keeps its
+    precision near either end. It is [0.] at [p = 0.], [inf] at [p = 1.] and
+    where [a] is [inf] for [p > 0], and at [a = 0.], where the mass is at
+    [0.], [0.] for [p < 1]. For [0 < a ≤ 2{^20}] within
+    [4 + κ (32 (1 + |log p|) + 4)] ulps, where [κ = |p / (x ∂ₓP(a, x))|]. *)
+
+val gammainccinv :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [gammainccinv a q] is the [x] with [gammaincc a x = q], as
+    {!gammaincinv} from the upper tail: [inf] at [q = 0.], [0.] at [q = 1.],
+    and [0.] at [a = 0.] for [q > 0]. Within the bound of {!gammaincinv},
+    in [q]. *)
+
+val betainc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [betainc a b x] is the regularised incomplete beta function
+    [I_x(a, b) = (1/B(a, b)) ∫₀ˣ t{^a-1} (1 - t){^b-1} dt], the distribution
+    function at [x] of the beta distribution of shapes [a] and [b], for
+    [a, b ≥ 0] and [x] in \[[0.], [1.]\]. It is [0.] at [x = 0.] and [1.] at
+    [x = 1.]; its limits, [1.] at [a = 0.] and where [b] is [inf], and [0.]
+    at [b = 0.] and where [a] is [inf]; NaN where two of these disagree. For
+    [0 < a, b ≤ 2{^20}] within [64 (1 + |log I|) + 4] ulps; above, its
+    error grows with [a] and [b]. *)
+
+val betaincc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [betaincc a b x] is [1 - I_x(a, b)] ({!betainc}), the upper tail, to its
+    own relative precision where [I] rounds to [1.]: [betaincc 1. 60. 0.5] is
+    [2{^-60}]. For [x ≥ 1/2] it is [betainc b a (1 - x)] bit for bit. Its
+    edges are the complements of {!betainc}'s. Within
+    [64 (1 + |log (1 - I)|) + 4] ulps for [0 < a, b ≤ 2{^20}]. *)
+
+val log_betainc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [log_betainc a b x] is [log I_x(a, b)] ({!betainc}), finite for finite
+    [a, b > 0] and [x] in (0, 1\], where {!betainc} underflows included. It
+    is [-inf] where {!betainc} is [0.], [0.] at [x = 1.], and [-0.] at
+    [a = 0.] and where [b] is [inf] for [x] in (0, 1), where the limit is
+    reached from below. For [0 < a, b ≤ 2{^20}] within 32 ulps, absolute
+    near zeros. *)
+
+val log_betaincc :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [log_betaincc a b x] is [log (1 - I_x(a, b))] ({!betaincc}), finite for
+    finite [a, b > 0] and [x] in \[0, 1). It is [-inf] where {!betaincc} is
+    [0.], [0.] at [x = 0.], and [-0.] at [b = 0.] and where [a] is [inf] for
+    [x] in (0, 1). Within the bound of {!log_betainc}. *)
+
+val i0e : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [i0e x] is [e{^-|x|} I₀(x)], [I₀] the modified Bessel function of the
+    first kind of order 0: even, [1.] at [0.] and [0.] at [±inf]. The von
+    Mises normaliser [2π I₀(k)] has the logarithm [k + log (2π i0e k)], finite
+    where [I₀(k)] overflows, past [k] about [714] at float64 and [92] at
+    float32. Within 8 ulps. *)
+
+val i1e : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [i1e x] is [e{^-|x|} I₁(x)], [I₁] the modified Bessel function of the
+    first kind of order 1: odd, so [-0.] at [-0.] and at [-inf], and [0.] at
+    [inf]. [i1e k / i0e k] is the mean of [cos θ] under the von Mises
+    distribution of concentration [k]. Within 8 ulps. *)
+
 (** {2:rounding Rounding}
 
     Floats and integers; the identity on integers. *)

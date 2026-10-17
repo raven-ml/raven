@@ -31,7 +31,8 @@
   test_operators
   test_complex
   test_matrices
-  test_print)
+  test_print
+  test_special)
  (modules
   test_devices
   test_values
@@ -60,7 +61,8 @@
   test_operators
   test_complex
   test_matrices
-  test_print)
+  test_print
+  test_special)
  (libraries
   nx
   nx_array
@@ -69,7 +71,10 @@
   nx_cpu
   nx_support
   rig
-  windtrap))
+  windtrap)
+ ; test_special reads nx's goldens of its special functions.
+ (deps
+  (glob_files ../../../packages/nx/test/golden/special/*.golden)))
 
 (copy_files
  (files ../lib/{grid,devices,route,prim,place,pairwise,expand,exec,repr}.{ml,mli}))

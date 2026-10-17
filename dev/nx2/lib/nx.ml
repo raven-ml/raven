@@ -1854,6 +1854,64 @@ let atanh x =
       let signed = E.(where (x < lit 0.) (-r) r) in
       E.(where (a < lit tiny) x signed))
 
+let erfc x = float_map ~by:"Nx.erfc" [ x ] (fun _ i -> Special.erfc i.(0))
+let erfinv p = float_map ~by:"Nx.erfinv" [ p ] (fun _ i -> Special.erfinv i.(0))
+let ndtr x = float_map ~by:"Nx.ndtr" [ x ] (fun _ i -> Special.ndtr i.(0))
+
+let log_ndtr x =
+  float_map ~by:"Nx.log_ndtr" [ x ] (fun _ i -> Special.log_ndtr i.(0))
+
+let ndtri p = float_map ~by:"Nx.ndtri" [ p ] (fun _ i -> Special.ndtri i.(0))
+let lgamma x = float_map ~by:"Nx.lgamma" [ x ] (fun _ i -> Special.lgamma i.(0))
+
+let digamma x =
+  float_map ~by:"Nx.digamma" [ x ] (fun _ i -> Special.digamma i.(0))
+
+let lbeta a b =
+  float_map ~by:"Nx.lbeta" [ a; b ] (fun _ i -> Special.lbeta i.(0) i.(1))
+
+let gammainc a x =
+  float_map ~by:"Nx.gammainc" [ a; x ] (fun _ i -> Special.gammainc i.(0) i.(1))
+
+let gammaincc a x =
+  float_map ~by:"Nx.gammaincc" [ a; x ] (fun _ i ->
+      Special.gammaincc i.(0) i.(1))
+
+let log_gammainc a x =
+  float_map ~by:"Nx.log_gammainc" [ a; x ] (fun _ i ->
+      Special.log_gammainc i.(0) i.(1))
+
+let log_gammaincc a x =
+  float_map ~by:"Nx.log_gammaincc" [ a; x ] (fun _ i ->
+      Special.log_gammaincc i.(0) i.(1))
+
+let gammaincinv a p =
+  float_map ~by:"Nx.gammaincinv" [ a; p ] (fun _ i ->
+      Special.gammaincinv i.(0) i.(1))
+
+let gammainccinv a q =
+  float_map ~by:"Nx.gammainccinv" [ a; q ] (fun _ i ->
+      Special.gammainccinv i.(0) i.(1))
+
+let betainc a b x =
+  float_map ~by:"Nx.betainc" [ a; b; x ] (fun _ i ->
+      Special.betainc i.(0) i.(1) i.(2))
+
+let betaincc a b x =
+  float_map ~by:"Nx.betaincc" [ a; b; x ] (fun _ i ->
+      Special.betaincc i.(0) i.(1) i.(2))
+
+let log_betainc a b x =
+  float_map ~by:"Nx.log_betainc" [ a; b; x ] (fun _ i ->
+      Special.log_betainc i.(0) i.(1) i.(2))
+
+let log_betaincc a b x =
+  float_map ~by:"Nx.log_betaincc" [ a; b; x ] (fun _ i ->
+      Special.log_betaincc i.(0) i.(1) i.(2))
+
+let i0e x = float_map ~by:"Nx.i0e" [ x ] (fun _ i -> Special.i0e i.(0))
+let i1e x = float_map ~by:"Nx.i1e" [ x ] (fun _ i -> Special.i1e i.(0))
+
 (* Statistics *)
 
 (* The reductions [rs] along [axes] of [out] over [xs], each of shape [s]: its
