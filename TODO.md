@@ -78,6 +78,13 @@ raven / llama.cpp (Vulkan; ROCm):
   per machine, with a fallback, so system memory maps once for every GPU;
   `reaches` true only where Linux's p2pdma allows (a common upstream switch
   port, or a host bridge its whitelist names)
+- rig.pci on a machine whose IOMMU translates (fudge): `Gpus.detach`
+  refuses a GPU that is not already on vfio-pci, and nothing binds it, so
+  detach binds the function and its siblings to vfio-pci itself; `attach`
+  leaves a sibling (the GPU's audio function) on vfio-pci with its
+  driver_override set, so attach gives each sibling back to its driver; a
+  kernel daemon holding the GPU's files (nvidia-persistenced) is named in
+  detach's refusal
 - rig remote and host pool: of _plans/rig-release/dropped-patches/, check
   ci-fix-remote/0001 (exit-hook order on Windows), ci-tests/0001
   (rig_model's staging refusal), sanitizers/0001 and the two .wip patches;
