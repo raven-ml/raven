@@ -1832,10 +1832,42 @@ let run_steps ~waits (p : here) (f : frame) =
   done;
   points p
 
+(* Re-entry
+
+   A call of rig's from a signal handler, finaliser or Gc.Memprof callback
+   inside a lock of its thread's raises as it starts. A load or a run checks
+   first, since its later calls of rig would raise after it changed its
+   state. A run holds its program's lock across its calls of rig, so that
+   lock does not count among the thread's: a callback between them runs as
+   any code does. *)
+
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+let check_held fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_program." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
+
+(* Takes a program's lock, after [check_held]. A take by the thread that
+   holds it, a run from a callback inside a run of the same program, raises
+   having taken nothing. A signal handler that runs inside a contended take
+   may raise a [Sys_error] of its own. *)
+let lock m =
+  check_held "run";
+  match Mutex.lock m with
+  | () -> ()
+  | exception Sys_error w when String.starts_with ~prefix:"Mutex.lock:" w ->
+      invalid_arg "Rig_program.run: called on the thread that runs it"
+
 (* The lock without [Mutex.protect]'s closure: a run allocates only its
    answer. *)
 let run_here ~waits (p : here) (f : frame) =
-  Mutex.lock p.lock;
+  lock p.lock;
   match run_steps ~waits p f with
   | points ->
       unbind p;
@@ -1941,6 +1973,7 @@ let load_there t devices =
 let no_rails _ = None
 
 let load ?rails t devices =
+  check_held "load";
   let devices = Iarray.to_array devices in
   let here () =
     let rails = Option.value rails ~default:no_rails in
@@ -2037,7 +2070,7 @@ let run_words ~waits p (f : frame) =
 
 (* The lock as [run_here] takes it. *)
 let run_there ~waits p (f : frame) =
-  Mutex.lock p.lock;
+  lock p.lock;
   match run_words ~waits p f with
   | points ->
       Mutex.unlock p.lock;

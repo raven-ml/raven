@@ -376,8 +376,9 @@ val load :
        is [Error why].}}
 
     Raises [Invalid_argument] if [devices] are of several machines, or are of
-    another machine and [rails] is given; {!Rig.Out_of_memory} if memory
-    cannot be made; and {!Rig.Lost} if a device is lost. *)
+    another machine and [rails] is given, or, having done nothing, from a
+    callback inside a lock ({!Rig.section-domains}); {!Rig.Out_of_memory} if
+    memory cannot be made; and {!Rig.Lost} if a device is lost. *)
 
 (** {1:running Running}
 
@@ -414,7 +415,9 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     {- before any step runs, if [f] has another number of inputs than [p]
        or more ints, or if an input is not on its device, holds fewer bytes,
        is read-only memory ({!Rig.Buffer.val-access}) that the run writes,
-       or cannot be borrowed by a device that names it;}
+       or cannot be borrowed by a device that names it, if it is called on
+       the thread that runs [p], as from a callback inside that run, or from
+       a callback inside a lock ({!Rig.section-domains});}
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
        ({!Rig.Submission.Run}), if a copy's offset is past an [int] or puts

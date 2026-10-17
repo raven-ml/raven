@@ -723,6 +723,97 @@ let test_after () =
     (Rig.signaled a);
   Array.iter Rig.Point.wait last
 
+(* Re-entry *)
+
+(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+
+let reentered = "Rig_program.run: called on the thread that runs it"
+
+let inside_lock fn =
+  "Rig_program." ^ fn
+  ^ ": called from a signal handler, finaliser or Gc.Memprof callback inside \
+     a lock of the calling thread's"
+
+(* A load and a run of a program from a [Gc.Memprof] callback at the [n]-th
+   allocation of a run of it and the wait for that run, on a fresh device,
+   whose first sleep logs itself in a section of its lock that allocates:
+   inside a lock both raise [Invalid_argument] having done nothing; outside
+   every lock the load loads, and the run raises where the thread runs the
+   program. Is whether the allocation was reached, whether the thread held a
+   lock, and what the callback's run answered. *)
+let reenter n =
+  let d, _ = polled "reenter" in
+  let t = one_device_fill d in
+  let p = load_ok t [ d ] in
+  let empty = { G.inputs = [||]; ints = [||] } in
+  let held = ref false and ran = ref "" and loaded = ref "" in
+  let allocated = ref 0 in
+  let call () =
+    held := holds () > 0;
+    let before = Rig.allocated d in
+    (loaded :=
+       match G.load t (Iarray.of_list [ d ]) with
+       | Ok _ -> "loaded"
+       | Error why -> why
+       | exception Invalid_argument why -> why);
+    (ran :=
+       match G.run p empty with
+       | _ -> "ran"
+       | exception Invalid_argument why -> why);
+    allocated := Rig.allocated d - before
+  in
+  let reached =
+    Rig_support.interrupted ~landing:(Call call) n (fun () ->
+        Array.iter Rig.Point.wait (G.run p empty))
+  in
+  if reached && !held then begin
+    equal ~msg:"a load inside a lock" string (inside_lock "load") !loaded;
+    equal ~msg:"a run inside a lock" string (inside_lock "run") !ran;
+    equal ~msg:"bytes allocated inside a lock" int 0 !allocated
+  end
+  else if reached then
+    equal ~msg:"a load outside every lock" string "loaded" !loaded;
+  Array.iter Rig.Point.wait (G.run p empty);
+  (reached, !held, !ran)
+
+let test_reentry () =
+  let rec from n inside again =
+    match reenter n with
+    | false, _, _ -> (inside, again)
+    | true, true, _ -> from (n + 1) (inside + 1) again
+    | true, false, ran ->
+        if ran <> "ran" then
+          equal ~msg:"a run outside every lock" string reentered ran;
+        from (n + 1) inside (if ran = reentered then again + 1 else again)
+  in
+  let inside, again = from 1 0 0 in
+  greater ~msg:"landings inside a lock" int ~than:0 inside;
+  greater ~msg:"runs on the thread that runs the program" int ~than:0 again
+
+(* A run interrupted from its [n]-th allocation by an exception at every
+   allocation from that one on, then another run: the first leaves no lock
+   held, its program's lock included, so the second runs, or raises
+   [Rig.Lost] where the exception lost the device. Is whether the allocation
+   was reached. *)
+let interrupt_run n =
+  let d, _ = polled "interrupt" in
+  let p = load_ok (one_device_fill d) [ d ] in
+  let empty = { G.inputs = [||]; ints = [||] } in
+  let reached =
+    Rig_support.interrupted n (fun () ->
+        Array.iter Rig.Point.wait (G.run p empty))
+  in
+  equal ~msg:(strf "from allocation %d, locks held after" n) int 0 (holds ());
+  (match G.run p empty with
+  | points -> Array.iter Rig.Point.wait points
+  | exception Rig.Lost _ when Option.is_some (Rig.lost d) -> ());
+  reached
+
+let test_interrupt_run () =
+  let rec from n = if interrupt_run n then from (n + 1) else n - 1 in
+  greater ~msg:"allocations interrupted" int ~than:0 (from 1)
+
 (* Refusals *)
 
 let base d =
@@ -3179,6 +3270,15 @@ let tests =
           test_read_only_input;
         test "run raises for a read-only input a copy part writes"
           test_read_only_copy;
+      ];
+    group ~timeout "re-entry"
+      [
+        test
+          "a load and a run from a callback inside a lock raise, and a run on \
+           the thread that runs the program raises"
+          test_reentry;
+        test "a run ended by an exception at any allocation leaves no lock held"
+          test_interrupt_run;
       ];
     group ~timeout "frame"
       [
