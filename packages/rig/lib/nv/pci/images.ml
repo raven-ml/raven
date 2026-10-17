@@ -43,6 +43,10 @@ let names : Chip.family -> string list = function
 
 let pinned = Defs.pinned
 
+let gsp_image =
+  let file = List.hd (names Ampere) in
+  (~file, ~digest:(List.assoc file pinned))
+
 (* Reading containers *)
 
 (* A container whose fields point outside it is refused with [Short], one that

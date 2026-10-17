@@ -263,6 +263,11 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 
 (**/**)
 
+(* The GSP's firmware, the same for every family: its path under a firmware
+   directory and its pinned digest, for the suites that look for it as an
+   open does. *)
+val gsp_firmware : file:string * digest:string
+
 (* The GSP's formats and the falcons' register accesses, for the suites that
    check them. *)
 module Rpc = Rpc

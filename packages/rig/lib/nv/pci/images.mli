@@ -60,6 +60,10 @@ val names : Chip.family -> string list
 (** [names f] is the paths of the three files of family [f] under a firmware
     directory, GSP first. *)
 
+val gsp_image : file:string * digest:string
+(** [gsp_image] is the GSP's firmware, the first of {!names} for every family: its
+    path under a firmware directory and its pinned digest. *)
+
 val find : string list -> string -> (Rig_pci.Firmware.image, string) result
 (** [find dirs file] is [file] in the first of the directories [dirs] that holds
     it with its pinned digest ({!Rig_pci.Firmware.find}). [file] is one of

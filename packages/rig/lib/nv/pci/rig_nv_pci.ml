@@ -443,6 +443,8 @@ let gpu ?machine ?(firmware = []) i : Rig_nv.t Rig_edge.opener =
     make = (fun ~word -> open_ ?machine ~word ~firmware i);
   }
 
+let gsp_firmware = Images.gsp_image
+
 module Rpc = Rpc
 module Fb_layout = Fb_layout
 module Page_entry = Page_entry

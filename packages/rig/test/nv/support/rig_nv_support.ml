@@ -20,14 +20,9 @@ let driver bus =
   | link -> Some (Filename.basename link)
   | exception Unix.Unix_error _ -> None
 
-(* The GSP's firmware, the same for every family, and its pinned digest
-   ({!Rig_nv_pci}). An open over PCI looks in the directories it is given,
-   then in rig's firmware directory and the system's, for the file with that
-   digest. *)
-let gsp = "nvidia/ga102/gsp/gsp-570.144.bin"
-let gsp_digest =
-  "877edf9f772d262d1ea72b9a6ebe52643e60a37c1d312f6456ebbf7f03feb03f"
-
+(* An open over PCI looks in the directories it is given, then in rig's
+   firmware directory and the system's, for the GSP's firmware with its
+   pinned digest. *)
 let given () =
   match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
   | Some dirs -> String.split_on_char ':' dirs
@@ -39,7 +34,8 @@ let firmware () =
     @ Option.to_list (Rig_pci.Firmware.directory ())
     @ [ "/lib/firmware" ]
   in
-  match Rig_pci.Firmware.find dirs gsp ~digest:gsp_digest with
+  let ~file, ~digest = Rig_nv_pci.gsp_firmware in
+  match Rig_pci.Firmware.find dirs file ~digest with
   | Ok _ -> Some dirs
   | Error _ -> None
 
