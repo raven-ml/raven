@@ -1812,7 +1812,9 @@ val submit :
     blocks, as some do while a profile is being taken. Where the work
     exceeds [d]'s queues and its driver grows them
     ({!Rig_edge.Driver.grow}), [submit] grows them first. It allocates
-    nothing unless it waits, a profile is being taken or [d]'s queues grow.
+    nothing unless it waits, a profile is being taken or [d]'s queues grow,
+    and, in a build without cross-module inlining, a [~waits] given as an
+    array allocates its option.
     Once it has assigned [v], [d]'s driver receives [v]'s work or [d] is
     lost, and the stamps of every allocation the work uses name [(d, v)]
     either way. On {!host}, [v]'s work is done when [submit] returns, and
