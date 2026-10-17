@@ -1533,6 +1533,35 @@ let peers (module G : Gpu) () =
   G.D.free g' h;
   G.D.free g' d
 
+(* A device that views another's Mapped memory submits as before once the
+   other has stopped: nothing the viewer's submissions read goes with the
+   other's stop. *)
+let views_past_stop (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  with_second (module G) @@ fun g' ->
+  let stopped = ref false in
+  let stop () =
+    if not !stopped then begin
+      stopped := true;
+      G.D.stop g' ~fault:None
+    end
+  in
+  Fun.protect ~finally:stop @@ fun () ->
+  match G.D.alloc g' Mapped 4096 with
+  | None -> skip ~reason:"the second device has no Mapped memory" ()
+  | Some m -> (
+      match G.D.map_peer t.g g' m with
+      | None ->
+          G.D.free g' m;
+          skip ~reason:"the device does not view the second's Mapped memory"
+            ()
+      | Some v ->
+          Rig.Point.wait (empty_point t.d);
+          stop ();
+          Rig.Point.wait (empty_point t.d);
+          G.D.free t.g v;
+          G.D.free g' m)
+
 (* [Rig.reaches] between two devices of the driver answers from what they
    learned when they opened: the same once either is closed. *)
 let reaches_closed (module G : Gpu) () =
@@ -1814,6 +1843,8 @@ let laws (module G : Gpu) =
       test "work runs after another device's point it waits for"
         (device_waits g);
       test "peer is whether map_peer maps Device memory" (peers g);
+      test "a device viewing another's Mapped memory submits after its stop"
+        (views_past_stop g);
       test "reaches between two devices answers the same once they close"
         (reaches_closed g);
       stateful ~timeout:300. ~count:100 ~steps:20

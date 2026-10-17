@@ -854,9 +854,8 @@ let make_gpu c ~dev ~index bus =
       Rm.uvm_call c D.uvm_register_gpu_vaspace v V.rm_status
         "registering the GPU's address space"
     in
-    (* The flush word's page, which every device that reads it may outlive:
-       kept with the GPU's objects. A GPU whose BAR has no room for it has
-       none, and its devices no Mapped memory. *)
+    (* The flush word's page, kept with the GPU's objects. A GPU whose BAR
+       has no room for it has none, and its devices no Mapped memory. *)
     let* bar = alloc_video g ~cpu:true page in
     match bar with
     | Some (_, va, _, _) -> Ok { g with flush = Some va }

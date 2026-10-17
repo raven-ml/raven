@@ -44,11 +44,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- NV-PCI: a GPU's stop unmaps its BAR windows (function.ml:91-104) while a
-  peer's flush entry for its flush word still counts (rig_nv.ml:1097-1110),
-  so the peer's next submit reads an unmapped page (rig_nv_stubs.h:369-383):
-  drop peers' entries at the stop, or keep the flush page until the last
-  peer region goes
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)

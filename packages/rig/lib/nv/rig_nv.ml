@@ -360,6 +360,8 @@ external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_flush : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
 [@@noalloc]
+
+external drop_flush : int -> unit = "caml_rig_nv_drop" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
 external copy_word : int -> int -> unit = "caml_rig_nv_copy_word" [@@noalloc]
 
@@ -494,8 +496,8 @@ and 'm reg = {
   free : 'm memory -> unit;
   bytes : int;
   flush : int option;
-      (* the flush word of the GPU whose BAR the host writes the memory
-         through, for Mapped memory and views of it *)
+      (* the device whose BAR the host writes the memory through, by its
+         [self], for Mapped memory and views of it *)
 }
 
 type t = T : 'm dev -> t
@@ -1129,9 +1131,10 @@ let make ~word p =
 let region d (p : _ path) flush bytes m =
   R { dev = d; mem = m; free = p.free; bytes; flush }
 
-(* Counts [delta] regions written through the BAR of the flush word [w] in
-   [d]'s flushes: [false] if [d] has no free entry for [w]. *)
-let count d w delta = count_flush d.self w delta
+(* Counts [delta] regions written through the BAR of the device [src]'s flush
+   word in [d]'s flushes: [false] if [d] has no free entry for it, or [src]
+   has stopped. *)
+let count d src delta = count_flush d.self src delta
 
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
@@ -1146,18 +1149,18 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   | Mapped -> (
       match d.flush with
       | None -> None
-      | Some w -> (
+      | Some _ -> (
           match path_alloc p Mapped n with
           | None -> None
           | Some m ->
               (* The device's own word has its entry from [make]. *)
-              ignore (count d w 1 : bool);
-              Some (region d p (Some w) n m)))
+              ignore (count d d.self 1 : bool);
+              Some (region d p (Some d.self) n m)))
 
 (* A region holds its device: rig frees it on that device. *)
 let free (T _) (R r) =
   give r.free r.mem;
-  Option.iter (fun w -> ignore (count r.dev w (-1) : bool)) r.flush
+  Option.iter (fun src -> ignore (count r.dev src (-1) : bool)) r.flush
 
 let address (R r) = r.mem.address
 
@@ -1187,7 +1190,8 @@ let map_peer (T d) (T _) (R r) =
       | Some m -> (
           match r.flush with
           | None -> Some (region d l.path None r.bytes m)
-          | Some w when count d w 1 -> Some (region d l.path (Some w) r.bytes m)
+          | Some src when count d src 1 ->
+              Some (region d l.path (Some src) r.bytes m)
           | Some _ ->
               give l.path.free m;
               None))
@@ -1475,6 +1479,10 @@ let halt d l =
     ok (fun () -> rm.free ~parent:l.path.device l.debugger)
     && ok (fun () -> rm.free ~parent:l.path.device l.group)
   in
+  (* No work on another device uses this GPU's memory once it is lost
+     ([Rig]'s loss section), so their submissions stop reading its flush word
+     before the path may unmap it. *)
+  drop_flush d.self;
   let path = try l.path.stop () with Fault _ -> `Unknown in
   let stopped = (unregistered && freed) || path = `Stopped in
   if stopped then begin

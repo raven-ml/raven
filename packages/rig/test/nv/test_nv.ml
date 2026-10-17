@@ -363,46 +363,24 @@ let views_of_mapped () =
   N.free t.g out;
   N.free t.g v'
 
-(* A view of another device's Mapped memory makes the viewer's submissions
-   read a word of the BAR behind it before their doorbells, so that work
-   through the view reads what the host wrote there; the viewer holds that
-   word until its own stop, past the owner's stop and the memory's free, as a
-   read of a word given back would fault. *)
+(* A stopped device's Mapped memory lies behind a BAR word that no viewer's
+   submissions read any more, so nothing would order the host's writes
+   through it before a viewer's work: no view of it is made. *)
 let views_of_bar () =
-  let n = 4096 in
   let a = S.driver () in
-  let src = alloc a Mapped n in
+  let src = alloc a Mapped 4096 in
   S.stop_driver a;
   S.with_ @@ fun t ->
-  let v =
-    require_some ~msg:"a view of Mapped memory" (N.map_peer t.g a src)
-  in
-  let k = S.kernels t in
-  let l = S.launches t.g in
-  let out = alloc t.g Pinned n in
-  let copy () =
-    S.run t [| S.words (copy_after l k ~dst:(address out) ~src:(address v) n) |]
-  in
-  for seed = 1 to 3 do
-    S.pattern (host src) n seed;
-    copy ();
-    equal int ~msg:(strf "the host's write %d" seed) (-1)
-      (S.mismatch (host out) n seed)
-  done;
-  N.free a src;
-  copy ();
-  equal int ~msg:"after the memory's free" (-1) (S.mismatch (host out) n 3);
-  S.free_launches l;
-  N.free t.g out;
-  N.free t.g v
+  is_none ~msg:"a view of a stopped device's Mapped memory"
+    (N.map_peer t.g a src);
+  N.free a src
 
 let memory =
   group ~timeout:120. "memory"
     [
       test "a view of memory its GPU maps lasts until its own free"
         views_of_mapped;
-      test "a view of Mapped memory reads the host's writes, and its BAR \
-            word lasts until the viewer's stop"
+      test "map_peer of a stopped device's Mapped memory is None"
         views_of_bar;
       test "a copy longer than the copy engine's is the identity" long_copy;
       test

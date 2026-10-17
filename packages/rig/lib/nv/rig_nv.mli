@@ -240,8 +240,11 @@ val capability : t -> Rig_nv_abi.Gpu.t
 
     {!peer} is [true] iff paths of one [key] opened both devices and this
     device's path reaches the other GPU's memory ([reaches] of
-    {!type-path}), and {!val-map_peer} then maps it. Peer
-    access between GPUs is untested. {!val-map_host} returns [None] if the
+    {!type-path}), and {!val-map_peer} then maps it. A view of [Mapped]
+    memory orders the host's writes through the other GPU's BAR before this
+    device's later work until the other device stops. {!val-map_peer} of a
+    stopped device's [Mapped] memory is [None]. Peer access between GPUs is
+    untested. {!val-map_host} returns [None] if the
     path maps no host memory or refuses the pages ({!field-map_host}). *)
 
 (** {1:images Images}
@@ -410,12 +413,10 @@ type 'm path = {
           [Mapped] memory, which a device reads before waking its channels
           so that the host's writes through the GPU's BAR reach the GPU
           first; [None] if the BAR had no room for it, and the device then
-          has no [Mapped] memory. The word must stay mapped while a device
-          may read it: this GPU's devices, and the devices that view its
-          [Mapped] memory ([map_peer]), until their stop. [Rig_nv_nvidia]
-          keeps it for the life of the process. [Rig_nv_pci] unmaps it at
-          the GPU's stop, with the BAR windows, so a view of a stopped GPU's
-          [Mapped] memory on another device is not covered. *)
+          has no [Mapped] memory. The word must stay mapped until [stop] is
+          called. Devices that view the GPU's [Mapped] memory ([map_peer])
+          read it too, until {!val-stop}, which waits for their reads before
+          it calls [stop]. *)
   alloc : Rig_edge.memory -> int -> 'm memory option;
       (** [alloc k n] is [n] new bytes of the kind [k] ({!section-regions}) at
           an address aligned to 4 KiB, [Mapped] memory mapped uncached for the
