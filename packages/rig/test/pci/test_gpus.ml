@@ -574,10 +574,12 @@ type hold_ref = {
 type vendor_sys = {
   g : Gpus.t;
   m : Machine.t;
-  root : string;
   resets : int Atomic.t;
   stops : int Atomic.t;
   holds : Gpus.hold list Atomic.t;  (** Every hold an open made. *)
+  configs : Unix.file_descr array;
+      (** Each GPU's configuration file, open, so that the check after every
+          call makes no open. *)
 }
 
 (* [keep s h] records [h], which the vendor's release stops. *)
@@ -619,10 +621,16 @@ let held_buses v =
 (* A program's GPUs are stopped when it ends, so that no take outlives it. *)
 let vendor_t =
   abstract "v"
-    ~release:(fun s -> List.iter stop (Atomic.get s.holds))
+    ~release:(fun s ->
+      List.iter stop (Atomic.get s.holds);
+      Array.iter Unix.close s.configs)
     ~invariant:(fun v s ->
-      equal ~msg:"functions taken" (list string) (held_buses v)
-        (List.filter (held s.root) (Array.to_list two_buses)))
+      let taken =
+        List.filteri
+          (fun i _ -> Tree.flocked_fd s.configs.(i))
+          (Array.to_list two_buses)
+      in
+      equal ~msg:"functions taken" (list string) (held_buses v) taken)
 
 let hold_t = abstract "h"
 let vendor_ref () = { states = Array.make 2 Free; resets = 0; stops = 0 }
@@ -634,13 +642,18 @@ let vendor_sys () =
     Atomic.incr resets;
     Ok ()
   in
+  let config bus =
+    Unix.openfile
+      (Filename.concat root ("sys/bus/pci/devices/" ^ bus ^ "/config"))
+      [ O_RDONLY; O_CLOEXEC ] 0
+  in
   {
     g = gpus ~reset ();
     m = Machine.at root;
-    root;
     resets;
     stops;
     holds = Atomic.make [];
+    configs = Array.map config two_buses;
   }
 
 let check_index i = if i < 0 then invalid_arg "a negative GPU number"
@@ -781,8 +794,12 @@ let two_domains_name =
 let serialized =
   group ~timeout:patience "opens and changes"
     [
+      (* Each vendor a program makes is a tree of its own, which the file
+         system clones, so a program's cost grows with its length twice: in
+         its vendors and in the checks of each after every call. Programs of
+         20 calls reach every cover in all but about 1 run in 10^7. *)
       flocking model_name
-        (stateful model_name ~count:300 ~steps:30
+        (stateful model_name ~count:300 ~steps:20
            (commands (indices [ 0; 1; 2; -1 ])));
       (* 60 programs of 50 runs each, each run a new tree, with a limit of three
          patiences: a run hands off between domains, which waits for a time

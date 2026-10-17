@@ -321,6 +321,25 @@ value rig_pci_test_flocked(value v_path) {
 #endif
 }
 
+/* Whether another open file holds flock's lock on the file [v_fd] is open
+   on: [v_fd] takes the exclusive lock without waiting and gives it back at
+   once if it got it. */
+value rig_pci_test_flocked_fd(value v_fd) {
+#ifdef _WIN32
+  (void)v_fd;
+  caml_failwith("rig_pci_test_flocked_fd: Windows has no flock");
+#else
+  int fd = Int_val(v_fd);
+  int r = flock(fd, LOCK_EX | LOCK_NB), e = errno;
+  if (r == 0) {
+    flock(fd, LOCK_UN);
+    return Val_false;
+  }
+  if (e != EWOULDBLOCK) caml_unix_error(e, "flock", Nothing);
+  return Val_true;
+#endif
+}
+
 /* Clones the directory tree [v_src] at [v_dst] in one call where the file
    system copies on write (APFS's clonefile): [true] if it did, [false] where
    the system cannot, which makes nothing. */

@@ -270,6 +270,11 @@ module Tree : sig
       shared or exclusive, so that a new open of it cannot take the exclusive
       one. Raises [Unix.Unix_error] if [file] cannot be opened. *)
 
+  val flocked_fd : Unix.file_descr -> bool
+  (** [flocked_fd fd] is {!flocked} of the file [fd] is open on, asked
+      through [fd], which must hold no lock of the file: it makes no open, so
+      a check repeated after every call costs two system calls. *)
+
   val add : string -> string -> string -> unit
   (** [add root file s] writes [s] to [file], a path from the tree [root],
       making its directories. *)
