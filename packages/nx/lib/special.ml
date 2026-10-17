@@ -249,8 +249,9 @@ let ndtri_fit_r = 27.
    is the asymptote [log (ndtr x) = -h - log (2h) / 2 - 1 / (2h) - log (2 pi) /
    2 + O (1 / h^2)] for [h = x^2/2], solved for [h] by two fixed-point steps
    from [h = -log q - log (2 pi) / 2], which leave a relative error of 4e-10 at
-   [x = -38] and less further out. The step squares the guess's error, to below
-   the roundoff of [x].
+   [x = -38] and less further out. [log (2h)] is taken as [log h + log 2] and
+   [1 / (2h)] as [0.5 / h], so that neither overflows for a finite [h]. The
+   step squares the guess's error, to below the roundoff of [x].
 
    Down to the table's threshold the step's ratio is [exp (log_ndtr x + x^2/2 +
    log (2 pi)/2)]; below, [(1 + s) / (-x)] from [ndtr]'s series, where the sum
@@ -263,7 +264,9 @@ let ndtri_log_tail log_q =
   let rational = ndtri_tail_guess (clamp fit log_q fit_log_q) in
   let v = rsub_s (-.log_sqrt_2pi) (clamp (logical_not fit) log_q fit_log_q) in
   let fixed h =
-    sub (sub v (mul_s (log (mul_s h 2.)) 0.5)) (recip (mul_s h 2.))
+    sub
+      (sub v (mul_s (add_s (log h) (Float.log 2.)) 0.5))
+      (mul_s (recip h) 0.5)
   in
   let asymptote = mul_s (sqrt (fixed (fixed v))) (-.Float.sqrt 2.) in
   let x = where fit rational asymptote in

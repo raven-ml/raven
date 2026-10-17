@@ -1456,31 +1456,34 @@ let distribution_tests =
       let xs = draw (Rng.key (Hashtbl.hash name)) in
       at_most float_exact ~than:(tolerance (Array.length xs)) (gap law xs))
 
-(* Tails. An interval 5 to 1e6 standard deviations out, on either side, from a
-   width of 1e-3 to unbounded, holds its draws to the conditioned law as the
-   table's rows do, at fewer draws per case. A correct sampler fails a case with
-   probability below 1e-9 (Dvoretzky-Kiefer-Wolfowitz). Rounding a draw to its
-   dtype, and the inversion's error, move it by at most [tail_ulps] units in the
-   last place of the farthest finite draw, which moves the cdf by at most that
-   much times the law's largest density, at the bound nearer zero: the tolerance
-   adds it. *)
+(* Tails. An interval 5 standard deviations out to the dtype's largest float,
+   on either side, from a width of 1e-3 to unbounded, holds its draws to the
+   conditioned law as the table's rows do, at fewer draws per case. A correct
+   sampler fails a case with probability below 1e-9 (Dvoretzky-Kiefer-Wolfowitz).
+   Rounding a draw to its dtype, and the inversion's error, move it by at most
+   [tail_ulps] units in the last place of the farthest finite draw, which moves
+   the cdf by at most that much times the law's largest density, at the bound
+   nearer zero: the tolerance adds it. *)
 let tail_draws = 10_000
 let tail_ulps = 4.
 
-(* Mills' ratio [Q x / pdf x] for [x >= 5], from Laplace's continued fraction [1
-   / (x + 1 / (x + 2 / (x + 3 / ...)))], which has converged to the float64
-   roundoff by 30 terms there. *)
-let mills x =
+(* The inverse of Mills' ratio, [pdf x / Q x] for [x >= 5], from Laplace's
+   continued fraction [x + 1 / (x + 2 / (x + 3 / ...))], which has converged to
+   the float64 roundoff by 30 terms there. *)
+let inverse_mills x =
   let t = ref x in
   for k = 30 downto 1 do
     t := x +. (float_of_int k /. !t)
   done;
-  1. /. !t
+  !t
 
-(* [Q x / Q a] for [a <= x], which holds its digits where [Q] underflows. *)
+(* [Q x / Q a] for [a <= x], which holds its digits where [Q] underflows and
+   where [x + a] would overflow. *)
 let tail_ratio a x =
   if x = infinity then 0.
-  else Float.exp (-0.5 *. (x -. a) *. (x +. a)) *. mills x /. mills a
+  else
+    Float.exp (-.(x -. a) *. ((0.5 *. x) +. (0.5 *. a)))
+    *. inverse_mills a /. inverse_mills x
 
 (* The standard normal conditioned on [a, b], [5 <= a < b], through its upper
    tail. *)
@@ -1490,11 +1493,18 @@ let far_tail a b =
 
 let tail_tolerance (type b) (d : (float, b) Nx.dtype) near far =
   let dkw = Float.sqrt (Float.log 2e9 /. (2. *. float_of_int tail_draws)) in
-  let density = 1. /. (mills near *. (1. -. tail_ratio near far)) in
+  let density = inverse_mills near /. (1. -. tail_ratio near far) in
   (* A draw past an unbounded side stays within [near + 40 / near]. *)
   let reach = if Float.is_finite far then far else near +. (40. /. near) in
   let ulp = Float.ldexp 1. (snd (Float.frexp reach) - significand d) in
   dkw +. (density *. tail_ulps *. ulp)
+
+(* The largest finite float of [d]. *)
+let largest (type b) (d : (float, b) Nx.dtype) =
+  match d with
+  | Float32 -> Int32.float_of_bits 0x7f7fffffl
+  | Float64 -> Float.max_float
+  | _ -> invalid_arg "largest"
 
 (* An interval [near] to [near + width] standard deviations out, on the left
    side or the right, its bounds given in either order. *)
@@ -1512,34 +1522,38 @@ let pp_tail ppf t =
     t.near (t.near +. t.width)
     (if t.swapped then ", swapped" else "")
 
+let log_uniform lo hi =
+  Gen.map (fun e -> 10. ** e) (Gen.float_range (Float.log10 lo) (Float.log10 hi))
+
+(* Nearer bounds from 5 standard deviations to the largest float, with its
+   neighbourhoods drawn on their own: past the square root of the largest float
+   [x^2] overflows while the tail's log mass is still finite, up to the square
+   root of twice it. *)
 let tail =
   let open Gen in
-  let width =
-    frequency
-      [
-        (1, constant infinity);
-        (3, map (fun e -> 10. ** e) (float_range (-3.) 0.5));
-      ]
-  in
-  let near =
+  with_pp pp_tail
+  @@ let* dtype = of_list [ F Nx.float32; F Nx.float64 ] in
+  let top = match dtype with F d -> largest d in
+  let* near =
     frequency
       [
         (2, float_range 5. 30.);
-        (1, map (fun e -> 10. ** e) (float_range 1.5 6.));
+        (2, map (Float.min top) (log_uniform 31.6 top));
+        (1, map (fun e -> Float.sqrt top *. (2. ** e)) (float_range 0. 0.5));
+        (1, log_uniform (top /. 10.) top);
       ]
   in
-  with_pp pp_tail
-    (let+ dtype = of_list [ F Nx.float32; F Nx.float64 ]
-     and+ near
-     and+ width
-     and+ left = bool
-     and+ swapped = bool in
-     { dtype; near; width; left; swapped })
+  let+ width =
+    frequency
+      [ (1, constant infinity); (3, log_uniform 1e-3 3.) ]
+  and+ left = bool
+  and+ swapped = bool in
+  { dtype; near; width; left; swapped }
 
 let tails =
   prop
-    "truncated_normal 5 to 1e6 standard deviations out lands in its interval \
-     and follows the conditioned law"
+    "truncated_normal 5 standard deviations out to the largest float lands in \
+     its interval and follows the conditioned law"
     (Gen.pair key tail) (fun (k, { dtype = F d; near; width; left; swapped }) ->
       let a, b = (near, near +. width) in
       let a, b = if left then (-.b, -.a) else (a, b) in
@@ -1551,10 +1565,13 @@ let tails =
       let lo = Float.min a b and hi = Float.max a b in
       let near = Float.min (Float.abs a) (Float.abs b)
       and far = Float.max (Float.abs a) (Float.abs b) in
-      let p = significand d in
+      let p = significand d and top = largest d in
       cover "float32 past 13 standard deviations" (p = 24 && near > 13.);
       cover "float64 past 8.3 standard deviations" (p = 53 && near > 8.3);
       cover "float64 past 1e4 standard deviations" (p = 53 && near > 1e4);
+      cover "between the square roots of the largest float and of twice it"
+        (near > Float.sqrt top && near < Float.sqrt (2. *. top));
+      cover "in the last decade of the dtype's range" (near > top /. 10.);
       cover "an unbounded side" (far = infinity);
       cover "a width below 0.01" (far -. near < 0.01);
       let xs = floats (Rng.truncated_normal k lower upper) in
