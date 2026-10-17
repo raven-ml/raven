@@ -577,7 +577,7 @@ value rig_test_polled_last_times(value v_p) {
   return Val_long(at);
 }
 
-/* The waits of the last submit, as [| kind; at; value; … |]. */
+/* The waits of the last submit, as [| at; value; … |]. */
 value rig_test_polled_last_waits(value v_p) {
   CAMLparam1(v_p);
   CAMLlocal1(a);
@@ -590,11 +590,10 @@ value rig_test_polled_last_waits(value v_p) {
     memcpy(w, p->run->last, sizeof w);
   }
   unlock(&p->mu);
-  a = caml_alloc_tuple(3 * (mlsize_t)n);
+  a = caml_alloc_tuple(2 * (mlsize_t)n);
   for (int i = 0; i < n; i++) {
-    Store_field(a, 3 * i, Val_int(w[i].kind));
-    Store_field(a, 3 * i + 1, Val_long((intnat)w[i].at));
-    Store_field(a, 3 * i + 2, Val_long((intnat)w[i].value));
+    Store_field(a, 2 * i, Val_long((intnat)w[i].at));
+    Store_field(a, 2 * i + 1, Val_long((intnat)w[i].value));
   }
   CAMLreturn(a);
 }
@@ -654,17 +653,6 @@ value rig_test_rig_local(value unit) {
   CAMLreturn(t);
 }
 
-/* The wait kinds of rig_edge.h. */
-value rig_test_rig_word(value unit) {
-  (void)unit;
-  return Val_int(RIG_WORD);
-}
-
-value rig_test_rig_object(value unit) {
-  (void)unit;
-  return Val_int(RIG_OBJECT);
-}
-
 value rig_test_polled_queued(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
@@ -674,10 +662,7 @@ value rig_test_polled_queued(value v_p) {
 }
 
 static int wait_holds(const struct rig_wait *wait) {
-  /* An object is a 64-bit counter at its handle, as Polled's word. */
-  uint64_t w = atomic_load((_Atomic uint64_t *)(uintptr_t)wait->at);
-  return wait->kind == RIG_WORD || wait->kind == RIG_OBJECT ? w >= wait->value
-                                                            : w == wait->value;
+  return atomic_load((_Atomic uint64_t *)(uintptr_t)wait->at) >= wait->value;
 }
 
 /* What [p]'s queue breaks by reading the word of the wait [wait], or -1:
@@ -687,7 +672,6 @@ static int wait_holds(const struct rig_wait *wait) {
    so a mapping rig gave back is seen only once [p] holds none of that
    word. [p]'s lock is held. */
 static int wait_breaks(struct polled *p, const struct rig_wait *wait) {
-  if (wait->kind != RIG_WORD) return -1;
   uintptr_t at = (uintptr_t)wait->at, words = (uintptr_t)rig_words();
   if (at >= words && at < words + RIG_WORDS_BYTES) return -1;
   struct polled *q = enrolled(at);

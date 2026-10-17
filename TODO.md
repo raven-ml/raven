@@ -84,8 +84,8 @@ raven / llama.cpp (Vulkan; ROCm):
   rig_nv_nvidia.mli states the bound): map in larger pages if that is the
   cause
 - size cuts in _plans/rig-size-audit/SUMMARY.md §A (core, PCI, NV, small):
-  the unused `Object` completion, the CUDA page-lock registry, NV's five
-  field accessors, the debugfs scan; classify each unused value
+  the CUDA page-lock registry, NV's five field accessors, the debugfs scan;
+  classify each unused value
   (speculative, superseded, unpropagated, missed) before it goes
 - test cuts in _plans/rig-simplify-audit/tests.md, each shown covered
   before it goes: rows 2, 5, 7 (once rig_pool.h stops stating its

@@ -19,7 +19,7 @@
    Set copy.device_memory to 1 only when both endpoints are Device memory
    owned by this device, and to 0 otherwise.
    The parts on one queue run in array order across channel changes. A
-   wait is RIG_WORD on a 64-bit word the device maps, compared circularly;
+   wait names a 64-bit word the device maps, compared circularly;
    a submission has at most 256, for which rig_nv_room, which does not see
    them, keeps room. */
 

@@ -133,7 +133,7 @@ module Driver = struct
       queues = [ { name = "COMPUTE:0"; runs = [ Fill ] } ];
       copy_engine = None;
       completion = Host;
-      waits = { stores = false; hosts = false; objects = false; most = 0 };
+      waits = { stores = false; hosts = false; most = 0 };
       (* LATE_QUEUE: room never fits more fills. *)
       most_parts = 256;
       may_block = false;

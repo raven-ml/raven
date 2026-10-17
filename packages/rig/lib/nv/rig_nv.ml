@@ -538,8 +538,7 @@ let queues =
 
 (* Its channels wait on any 64-bit word the device maps, whoever writes it, up
    to rig_nv_ring.c's MAX_WAITS. *)
-let waits =
-  { Rig_edge.stores = true; hosts = true; objects = false; most = 256 }
+let waits = { Rig_edge.stores = true; hosts = true; most = 256 }
 
 let capability (T d) = d.capability
 

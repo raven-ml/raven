@@ -48,7 +48,7 @@ value rig_amd_bench_submit(value v_edge, value v_v, value v_at, value v_value,
   if (n > 16) caml_invalid_argument("submit: more than 16 waits");
   for (int i = 0; i < n; i++)
     w[i] = (struct rig_wait){(uint64_t)Long_val(v_at),
-                            (uint64_t)Long_val(v_value), RIG_WORD};
+                            (uint64_t)Long_val(v_value)};
   if (driver->room(self, NULL, 0, NULL, NULL) != RIG_FITS)
     caml_failwith("submit: no room");
   const char *why = NULL;

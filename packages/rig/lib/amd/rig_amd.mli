@@ -221,7 +221,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- [completion], [Store], since the queue that releases a value writes
        the word;}
     {- [waits], [stores] and [hosts] iff the compute queue compares 64-bit
-       words ({!section-order}), never [objects], and [most] of [255];}
+       words ({!section-order}), and [most] of [255];}
     {- [may_block], [false], since the C functions write memory and call no
        system function;}
     {- [hang_ms], the path's [hang_ms], [None] on a path whose kernel driver

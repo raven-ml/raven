@@ -201,8 +201,7 @@ value rig_cuda_bench_entry_waits(value v_self, value v_v, value v_at,
   void *self = (void *)Nativeint_val(v_self);
   uint64_t v = (uint64_t)Long_val(v_v);
   for (int i = 0; i < n; i++)
-    w[i] = (struct rig_wait){.at = (uint64_t)Long_val(v_at), .value = 1,
-                            .kind = RIG_WORD};
+    w[i] = (struct rig_wait){.at = (uint64_t)Long_val(v_at), .value = 1};
   const char *why = NULL;
   int r = rig_cuda_submit(self, v, w, n, NULL, 0, NULL, NULL, NULL, 0, NULL,
                           &why);

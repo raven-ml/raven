@@ -82,7 +82,7 @@ value rig_nv_bench_waits(value v_at, value v_n) {
   int n = Int_val(v_n);
   if (n > 16) caml_invalid_argument("rig_nv_bench_waits: more than 16");
   for (int i = 0; i < n; i++)
-    waits[i] = (struct rig_wait){(uint64_t)Long_val(v_at), 1, RIG_WORD};
+    waits[i] = (struct rig_wait){(uint64_t)Long_val(v_at), 1};
   submit(waits, n, NULL, 0);
   spin();
   return Val_unit;

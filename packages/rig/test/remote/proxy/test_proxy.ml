@@ -29,8 +29,7 @@ let rec_w =
 let completion_w =
   Testable.structural ~pp:(fun ppf -> function
     | Rig_edge.Host -> Format.pp_print_string ppf "Host"
-    | Store -> Format.pp_print_string ppf "Store"
-    | Object h -> Format.fprintf ppf "Object %nd" h)
+    | Store -> Format.pp_print_string ppf "Store")
 
 let driver_facts () =
   with_job_link @@ fun far ->
@@ -44,8 +43,7 @@ let driver_facts () =
     (List.for_all (fun (q : Rig_edge.queue) -> q.runs = [ Copy ]) f.queues);
   equal (option int) ~msg:"the copy engine" (Some 1) f.copy_engine;
   equal completion_w Host f.completion;
-  equal (list bool) [ true; false; false ]
-    [ f.waits.hosts; f.waits.stores; f.waits.objects ];
+  equal (list bool) [ true; false ] [ f.waits.hosts; f.waits.stores ];
   equal int max_int f.waits.most;
   equal bool true f.may_block;
   equal bool false f.maps_host;

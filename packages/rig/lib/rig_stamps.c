@@ -790,10 +790,10 @@ value caml_rig_run_point(value v_r, value v_i) {
   return Val_long((intnat)Run_val(v_r)->points[Int_val(v_i)]);
 }
 
-/* Adds an in-queue wait on the producer [v_producer]'s value [v_value], at
-   [v_at] by the kind [v_kind] (RIG_WORD, RIG_OBJECT). */
+/* Adds an in-queue wait on the producer [v_producer]'s value [v_value], whose
+   word is at [v_at]. */
 value caml_rig_run_wait(value v_r, value v_producer, value v_at,
-                        value v_value, value v_kind) {
+                        value v_value) {
   struct rig_run *r = Run_val(v_r);
   if (r->nwaits == r->cwaits) {
     int c = r->cwaits == 0 ? 8 : 2 * r->cwaits;
@@ -806,8 +806,7 @@ value caml_rig_run_wait(value v_r, value v_producer, value v_at,
     r->cwaits = c;
   }
   r->waits[r->nwaits] = (struct rig_wait){(uint64_t)Long_val(v_at),
-                                          (uint64_t)Long_val(v_value),
-                                          Int_val(v_kind)};
+                                          (uint64_t)Long_val(v_value)};
   r->producers[r->nwaits] = Int_val(v_producer);
   r->nwaits++;
   return Val_unit;

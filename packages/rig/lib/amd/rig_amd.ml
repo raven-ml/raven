@@ -593,13 +593,7 @@ let facts g =
     queues = device_queues;
     copy_engine = Some 1;
     completion = Store;
-    waits =
-      {
-        stores = g.waits64;
-        hosts = g.waits64;
-        objects = false;
-        most = max_waits ();
-      };
+    waits = { stores = g.waits64; hosts = g.waits64; most = max_waits () };
     most_parts = most_parts g.self;
     may_block = false;
     hang_ms = g.hang_ms;

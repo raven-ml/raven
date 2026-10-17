@@ -413,8 +413,7 @@ let test_hang_in_queue () =
 let test_hang_held_read () =
   let producer, pp = P.open_ "submit:held-read-producer" in
   let d, p =
-    P.open_ ~hang_ms ~completion:`Object ~waits_on:[ `Host ]
-      "submit:held-read"
+    P.open_ ~hang_ms ~completion:`Store ~waits_on:[ `Host ] "submit:held-read"
   in
   let a = submit (empty producer) in
   ignore (submit (empty d) ~waits:[| a |]);
@@ -758,29 +757,20 @@ let test_run_keeps () =
   equal ~msg:"another domain's buffer" bool false (Support.Reader.host b = !at);
   Rig.Point.wait run
 
-(* A Polled device that waits on host-written words waits for a producer in its
-   queue: the submit hands it over without waiting. *)
+(* A Polled device that waits on the words of producers of [completion] waits
+   for a producer in its queue: the submit hands it over without waiting, and
+   the wait names the producer's word. *)
 let in_queue ~completion =
-  let name = match completion with `Host -> "host" | `Object -> "object" in
+  let name = match completion with `Host -> "host" | `Store -> "store" in
   let producer, pp = P.open_ ~completion ("submit:iq-producer-" ^ name) in
   let consumer, cp =
     P.open_
-      ~waits_on:[ (completion :> [ `Store | `Host | `Object ]) ]
+      ~waits_on:[ (completion :> [ `Store | `Host ]) ]
       ("submit:iq-consumer-" ^ name)
   in
   let a = submit (empty producer) in
   let b = submit (empty consumer) ~waits:[| a |] in
-  (* The wait names the producer's word, or its object, by rig_edge.h's kinds:
-     Polled's word and object are both at its word's address. *)
-  let kind =
-    match completion with
-    | `Host -> Support.rig_word
-    | `Object -> Support.rig_object
-  in
-  equal
-    (list (triple int int int))
-    [ (kind, P.word_at pp, 1) ]
-    (P.last_waits cp);
+  equal (list (pair int int)) [ (P.word_at pp, 1) ] (P.last_waits cp);
   equal int 1 (P.queued pp);
   equal int 1 (P.queued cp);
   equal int 0 (P.run cp);
@@ -834,7 +824,7 @@ let test_unmapped_wait () =
   equal int (Rig.Point.value a) (Rig.signaled producer)
 
 let test_in_queue () = in_queue ~completion:`Host
-let test_in_queue_object () = in_queue ~completion:`Object
+let test_in_queue_store () = in_queue ~completion:`Store
 
 (* A Polled device that runs itself completes its work though no wait sleeps on
    it. *)
@@ -1947,8 +1937,8 @@ let tests =
           test_max_waits;
         test "a driver answering negative waits has the host wait for all"
           test_negative_max_waits;
-        test "a queue that waits on objects waits on the producer's object"
-          test_in_queue_object;
+        test "a queue that waits on stores waits on the producer's word"
+          test_in_queue_store;
         test "a submission of more than the most parts runs where room has it"
           test_most_parts;
         test "a full queue's submit waits for room" test_room;

@@ -37,7 +37,7 @@ module D = struct
         [ { name = "COMPUTE:0"; runs = all }; { name = "COPY:0"; runs = all } ];
       copy_engine = Some 1;
       completion = Host;
-      waits = { stores = false; hosts = false; objects = false; most = 0 };
+      waits = { stores = false; hosts = false; most = 0 };
       most_parts = max_int;
       may_block = true;
       hang_ms = None;

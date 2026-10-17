@@ -977,7 +977,6 @@ let work =
           equal bool ~msg:"may block" false f.may_block;
           equal bool ~msg:"host addresses" false f.host_addresses;
           equal int ~msg:"alignment" 4096 f.alignment;
-          equal bool ~msg:"waits on objects" false f.waits.objects;
           equal bool ~msg:"waits on words as on the host" f.waits.hosts
             f.waits.stores;
           equal int ~msg:"most waits" 255 f.waits.most;

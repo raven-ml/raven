@@ -58,10 +58,6 @@ type kind =
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
 
-(** The type for how a device's word advances ({!Rig_edge.completion}), an
-    object as an int. *)
-type completion = Store | Object of int | Host_writes
-
 (** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
 
@@ -145,7 +141,7 @@ and live = {
   queues : Rig_edge.queue array;  (** Its queues, as its driver lists them. *)
   copy_engine : int option;
       (** Its copy engine's index in [queues], if it has one. *)
-  completion : completion;  (** How its word advances. *)
+  completion : Rig_edge.completion;  (** How its word advances. *)
   waits : Rig_edge.waits;
       (** Whose words its queues wait on, and the most per submit. *)
   hang_ms : int option;  (** Its hang bound. *)
@@ -213,9 +209,9 @@ and live = {
 
 (** The type for how a device's queues wait for the values of a producer
     slot's device [occupant] (its [opened]): [way] is [-1] on the host,
-    otherwise the producer's object or its word's address as the waiting
-    device maps it; [word_map] is the waiting device's mapping of the
-    producer's word, with that producer, whose [word_unmaps] counts it. *)
+    otherwise the producer's word's address as the waiting device maps it;
+    [word_map] is the waiting device's mapping of the producer's word, with
+    that producer, whose [word_unmaps] counts it. *)
 and pair = {
   occupant : int;
   way : int;

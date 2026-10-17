@@ -203,10 +203,9 @@ val capability : t -> Rig_cuda_abi.t
     another's. Only the devices' streams write their words, and a word that
     work wrote could move backwards or show work that has not completed.
 
-    A wait is a [RIG_WORD]. It holds the work back until the aligned 64-bit
-    word at [at] holds at least [value], compared circularly, in the sense
-    that [x] is at least [w] if [x - w], as a signed 64-bit integer, is not
-    negative.
+    A wait holds the work back until the aligned 64-bit word at [at] holds
+    at least [value], compared circularly, in the sense that [x] is at least
+    [w] if [x - w], as a signed 64-bit integer, is not negative.
 
     [rig_cuda_room] never returns [RIG_LATER], since a stream takes any
     amount of work. [rig_cuda_submit] and [rig_cuda_commit] instead block

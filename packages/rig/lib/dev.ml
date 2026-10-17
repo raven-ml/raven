@@ -144,7 +144,7 @@ end
 module Cache = Tbl.Make (Int)
 module Strings = Tbl.Make (String)
 
-let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
+let no_waits = { Rig_edge.stores = false; hosts = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~most_parts
@@ -215,7 +215,7 @@ let host =
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
-      ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
+      ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None ~maps_host:false
       ~alignment:malloc_alignment ~most_parts:max_int ~host_addresses:false
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
@@ -758,23 +758,23 @@ let rec wait_from d v seen since =
     let still = now - since in
     let l = d.live in
     (match l.completion with
-    | Host_writes -> sleep d ~seen:w ~still_ms
-    | (Store | Object _) when l.word = 0 -> sleep d ~seen:w ~still_ms
-    | (Store | Object _) when still >= still_ms ->
+    | Rig_edge.Host -> sleep d ~seen:w ~still_ms
+    | Store when l.word = 0 -> sleep d ~seen:w ~still_ms
+    | Store when still >= still_ms ->
         look_at_producers d;
         sleep d ~seen:w ~still_ms
-    | Store | Object _ ->
+    | Store ->
         if spin_held d v (now_ns () + held_ns) < v then
           ignore (c_spin l.c v (still_ms - still)));
     wait_from d v w since
   end
 
 (* How a wait blocks depends on who writes the word. A word the host writes
-   ([Host_writes]), or one with no host address, changes only on an event the
-   driver sees, so the wait sleeps in the driver from its first read. A word a
-   queue or an object writes is read with the domain lock held for [held_ns],
-   then spun on with the lock released, and once it stood still for
-   [still_ms] the wait sleeps in the driver between reads. *)
+   ([Host]), or one with no host address, changes only on an event the driver
+   sees, so the wait sleeps in the driver from its first read. A word a queue
+   writes is read with the domain lock held for [held_ns], then spun on with
+   the lock released, and once it stood still for [still_ms] the wait sleeps
+   in the driver between reads. *)
 let wait_value d v =
   let w = word d in
   if w < v && not (is_lost d) then wait_from d v w (now_ms ());
@@ -1046,11 +1046,6 @@ let open_named ~fn ~machine ~name ~key make =
       Lock.broadcast table_lock;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-let completion_of = function
-  | Rig_edge.Store -> Store
-  | Object o -> Object (Nativeint.to_int o)
-  | Host -> Host_writes
-
 (* Publishes the C record of [d], which is in the tables: spreads, failures and
    the fork handler walk it for good. A device lost at birth by a failure of the
    process is stopped here. *)
@@ -1102,7 +1097,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
       ~c ~arch:f.arch ~queues ~copy_engine:f.copy_engine
-      ~completion:(completion_of f.completion)
+      ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
       ~alignment:f.alignment ~most_parts:f.most_parts
       ~host_addresses:f.host_addresses ~word
@@ -1155,7 +1150,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
         let d =
           make_device ~index ~name:full ~machine
             ~kind:(Io { m = (module I); h })
-            ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Host_writes
+            ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
             ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
             ~most_parts:0 ~host_addresses:false ~word:0 ~word_region:None ~key
             ~memory_device:false ~fault:[%extension_constructor I.Fault]

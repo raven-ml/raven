@@ -99,10 +99,6 @@ type completion =
   | Host
       (** The host writes the word, from the driver's handler or before the
           driver's [submit] or [commit] returns ({!section-calls}). *)
-  | Object of nativeint
-      (** An object of the driver's API completes, and the driver then writes
-          the word. The object must fit in 62 bits, since a wait passes it as
-          an integer. *)
 
 (** The type for the producers a device's queues wait for. A {e producer}
     is a device whose value another device's work waits for. rig waits on the
@@ -111,9 +107,6 @@ type completion =
 type waits = {
   stores : bool;  (** Its queues wait for a [Store] producer. *)
   hosts : bool;  (** Its queues wait for a [Host] producer. *)
-  objects : bool;
-      (** Its queues wait for an [Object] producer of the same driver, whose
-          objects they know. *)
   most : int;  (** The most waits one submission carries in its queues. *)
 }
 

@@ -122,8 +122,7 @@ external run_collect : c -> run -> int array -> int
 
 external run_point : run -> int -> int = "caml_rig_run_point" [@@noalloc]
 
-external run_wait : run -> int -> int -> int -> int -> unit
-  = "caml_rig_run_wait"
+external run_wait : run -> int -> int -> int -> unit = "caml_rig_run_wait"
 
 external run_check : run -> unit = "caml_rig_run_check" [@@noalloc]
 
@@ -856,8 +855,6 @@ let address s b =
 
 (* In-queue waits *)
 
-let rig_word = 0
-let rig_object = 1
 let host_wait = -1
 
 (* rig's array of timeline words, where every device's word lies, but for a
@@ -927,27 +924,24 @@ let map_word d p r =
             (host_wait, None))
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
-   queue that waits in it, the producer's object for an object completion, or
-   the address of [p]'s word as [d] maps it: inside [d]'s one mapping of rig's
-   array, or, for a device of [p]'s driver that maps no host memory, a mapping
-   of [p]'s word region, which comes with the way. *)
+   queue that waits in it, the address of [p]'s word as [d] maps it: inside
+   [d]'s one mapping of rig's array, or, for a device of [p]'s driver that maps
+   no host memory, a mapping of [p]'s word region, which comes with the way. *)
 let decide d p =
   let l = d.live and pl = p.live in
   let waits =
     match pl.completion with
-    | Store -> l.waits.stores
-    | Object _ -> l.waits.objects && d.key = p.key
-    | Host_writes -> l.waits.hosts
+    | Rig_edge.Store -> l.waits.stores
+    | Host -> l.waits.hosts
   in
   if (not waits) || not (Dev.same_machine p d) then (host_wait, None)
+  else if d.maps_host && pl.word <> 0 then
+    let at = words_at d in
+    ((if at = host_wait then at else at + (pl.word - words_start)), None)
   else
-    match (pl.completion, pl.word_region) with
-    | Object o, _ -> (o, None)
-    | _, _ when d.maps_host && pl.word <> 0 ->
-        let at = words_at d in
-        ((if at = host_wait then at else at + (pl.word - words_start)), None)
-    | _, Some r when d.key = p.key -> map_word d p r
-    | _, _ -> (host_wait, None)
+    match pl.word_region with
+    | Some r when d.key = p.key -> map_word d p r
+    | _ -> (host_wait, None)
 
 let known_pair pairs i =
   if i < Array.length pairs then pairs.(i) else Memory.undecided
@@ -1095,12 +1089,7 @@ let rec wait_points s run n i count =
         end
         else begin
           Dev.commit producer v;
-          let kind =
-            match producer.live.completion with
-            | Object _ -> rig_object
-            | _ -> rig_word
-          in
-          run_wait run producer.index way v kind;
+          run_wait run producer.index way v;
           wait_points s run n (i + 1) (count + 1)
         end
 

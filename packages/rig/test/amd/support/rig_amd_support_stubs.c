@@ -61,7 +61,6 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
   int *after = (int *)(scratch + nparts * RIG_SCRATCH);
   uint32_t *words = (uint32_t *)(after + nafter);
   for (int i = 0; i < nwaits; i++) {
-    w[i].kind = RIG_WORD;
     w[i].at = (uint64_t)at(v_waits, 2 * i);
     w[i].value = (uint64_t)at(v_waits, 2 * i + 1);
   }

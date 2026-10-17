@@ -130,10 +130,10 @@ val capability : t -> Rig_nv_abi.Gpu.t
     channel. A copy runs on either channel and keeps its place in its
     queue's order, even a copy of zero bytes.
 
-    A [RIG_WORD] wait names an aligned 64-bit word that the device's work
-    addresses, and a value [w]. It holds the submission's work back until
-    the word holds at least [w] in circular order
-    ({!Rig_nv_abi.Method.acquire}), whoever wrote it.
+    A wait names an aligned 64-bit word that the device's work addresses,
+    and a value [w]. It holds the submission's work back until the word
+    holds at least [w] in circular order ({!Rig_nv_abi.Method.acquire}),
+    whoever wrote it.
 
     Each channel's ring holds 16,384 entries, a number this driver chooses
     when {!make} allocates the channel. A [Words] part of [n] words takes

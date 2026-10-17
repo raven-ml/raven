@@ -78,7 +78,7 @@ let test_many_waits () =
   let a, pa = P.open_ "loss:many-a" in
   let b, pb = P.open_ "loss:many-b" in
   let c, _ =
-    P.open_ ~completion:`Object ~waits_on:[ `Host ] "loss:many-consumer"
+    P.open_ ~completion:`Store ~waits_on:[ `Host ] "loss:many-consumer"
   in
   let waiting_on producer =
     submit (empty c) ~waits:[| submit (empty producer) |]

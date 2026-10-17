@@ -45,8 +45,8 @@ module Polled : sig
     ?memory:int ->
     ?window:int ->
     ?may_block:bool ->
-    ?completion:[ `Host | `Object ] ->
-    ?waits_on:[ `Store | `Object | `Host ] list ->
+    ?completion:[ `Host | `Store ] ->
+    ?waits_on:[ `Store | `Host ] list ->
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
@@ -80,27 +80,25 @@ module Polled : sig
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
       memory and [window] bytes of [Mapped] memory (default to [max_int]);
       [Pinned] memory is unbounded. Its word advances as [completion] says
-      (defaults to [`Host]): with [`Object], it is the driver's object, its
-      handle the word's address. Its queue waits for producers of the
-      completions [waits_on] lists (defaults to none), at most [max_waits] of
-      them per submission (defaults to [max_int]). With [answer] [`Stopped] (the
-      default) its stop drops its queued work and writes the last value it
-      received into its word, and frees what it ran work with: its queue, and
-      the records {!last_waits}, {!layout}, {!copy_sides},
-      {!copy_device_memory}, {!blocked} and {!launches} read, which then read
-      none. With [`Unknown] it leaves all of it, as a driver whose work may
-      still run. With [runs] [`Itself] (the default is [`When_slept]) a thread
-      of the driver also runs its queue as work arrives, until the stop, as a
-      device runs its own work: its work is done at no point a test chooses.
-      With [lag]
-      (defaults to [1]) it commits on its own once [lag] values are uncommitted,
-      and before a submit waits for room: with [1] each hand-over commits its
-      value. Its queue runs only committed submissions, and a sleep that finds
-      only uncommitted ones queued, its word unmoved, raises
-      [Failure "Polled: nothing committed"], as a wait for work nobody committed
-      would hang. With [hang_ms] its facts bound hangs to that many milliseconds
-      (defaults to no bound). Its facts declare [capability] (defaults to [()]
-      under {!capability_key}).
+      (defaults to [`Host]): with [`Store], as a queue's store writes it. Its
+      queue waits for producers of the completions [waits_on] lists (defaults
+      to none), at most [max_waits] of them per submission (defaults to
+      [max_int]). With [answer] [`Stopped] (the default) its stop drops its
+      queued work and writes the last value it received into its word, and frees
+      what it ran work with: its queue, and the records {!last_waits},
+      {!layout}, {!copy_sides}, {!copy_device_memory}, {!blocked} and
+      {!launches} read, which then read none. With [`Unknown] it leaves all of
+      it, as a driver whose work may still run. With [runs] [`Itself] (the
+      default is [`When_slept]) a thread of the driver also runs its queue as
+      work arrives, until the stop, as a device runs its own work: its work is
+      done at no point a test chooses. With [lag] (defaults to [1]) it commits
+      on its own once [lag] values are uncommitted, and before a submit waits
+      for room: with [1] each hand-over commits its value. Its queue runs only
+      committed submissions, and a sleep that finds only uncommitted ones
+      queued, its word unmoved, raises [Failure "Polled: nothing committed"], as
+      a wait for work nobody committed would hang. With [hang_ms] its facts
+      bound hangs to that many milliseconds (defaults to no bound). Its facts
+      declare [capability] (defaults to [()] under {!capability_key}).
 
       Raises [Invalid_argument] if [lag < 1] or [most_parts > capacity]. *)
 
@@ -131,8 +129,8 @@ module Polled : sig
     ?memory:int ->
     ?window:int ->
     ?may_block:bool ->
-    ?completion:[ `Host | `Object ] ->
-    ?waits_on:[ `Store | `Object | `Host ] list ->
+    ?completion:[ `Host | `Store ] ->
+    ?waits_on:[ `Store | `Host ] list ->
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
@@ -221,8 +219,7 @@ module Polled : sig
       ended, which {!log} misses. *)
 
   val word_at : t -> int
-  (** [word_at d] is the host address of [d]'s word, which is also its object
-      ([completion]). *)
+  (** [word_at d] is the host address of [d]'s word. *)
 
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"] (of
@@ -260,9 +257,9 @@ module Polled : sig
   (** [last_times d] is the host address where the run of [d]'s last submit
       writes its times, [0] for nowhere. *)
 
-  val last_waits : t -> (int * int * int) list
+  val last_waits : t -> (int * int) list
   (** [last_waits d] is the waits [d]'s last submit received, at most 8, as
-      [(kind, at, value)], [kind] one of {!rig_word} and {!rig_object}. *)
+      [(at, value)]. *)
 
   val layout : t -> (int * int list) list
   (** [layout d] is, for each part of the last submission [d]'s hand-over
@@ -382,12 +379,6 @@ module Polled : sig
   (** [stall d n] makes [d]'s next [n] sleeps return after their still interval
       without running the queue, as over work that runs long. *)
 end
-
-val rig_word : int
-(** [rig_word] is [rig_edge.h]'s [RIG_WORD]. *)
-
-val rig_object : int
-(** [rig_object] is [rig_edge.h]'s [RIG_OBJECT]. *)
 
 val noop : nativeint
 (** [noop] is a fill that returns without reading its argument. *)

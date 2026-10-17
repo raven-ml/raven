@@ -170,8 +170,8 @@ let facts () =
   equal (option int) ~msg:"the copy engine" (Some 1) f.copy_engine;
   equal int ~msg:"alignment" 4096 f.alignment;
   equal bool ~msg:"completion is the store" true (f.completion = Store);
-  equal (list bool) ~msg:"waits on stores, hosts, objects" [ true; true; false ]
-    [ f.waits.stores; f.waits.hosts; f.waits.objects ];
+  equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
+    [ f.waits.stores; f.waits.hosts ];
   equal int ~msg:"most waits" 256 f.waits.most;
   equal bool ~msg:"may block" false f.may_block;
   let w = N.locate f.word in

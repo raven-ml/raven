@@ -43,7 +43,7 @@ type config = {
   visible : bool;
   transport : bool;
   peers : bool;
-  objects : bool;
+  stores : bool;
   waits : bool;
   unknown : bool;
   maps_host : bool;
@@ -60,7 +60,7 @@ let polled =
     visible = true;
     transport = false;
     peers = true;
-    objects = false;
+    stores = false;
     waits = false;
     unknown = false;
     maps_host = true;
@@ -76,8 +76,8 @@ let host_addresses c = c.visible && not c.transport
 (* Polled's configurations and the weight each is drawn with: memory the host
    does not address is what a device's queue copies, so it weighs most. Only the
    host copies the memory of a device that runs no copy: [copies = false] keeps
-   [visible]. A device of driver objects keeps its word behind a transport: rig
-   spins a still interval, 200 ms, on a word of driver objects the host reads
+   [visible]. A device whose queue stores its word keeps that word behind a
+   transport: rig spins a still interval, 200 ms, on such a word the host reads
    before it sleeps in the driver, which is where Polled runs its queue. *)
 let configs =
   [
@@ -97,8 +97,8 @@ let configs =
     ( 1,
       {
         polled with
-        label = "polled-objects";
-        objects = true;
+        label = "polled-stores";
+        stores = true;
         waits = true;
         transport = true;
       } );
@@ -657,8 +657,8 @@ let fresh kind =
       let d, p =
         P.open_ ~capacity:c.capacity ~copies:c.copies ~host_visible:c.visible
           ~transport:c.transport ~peers:c.peers ~maps_host:c.maps_host
-          ~completion:(if c.objects then `Object else `Host)
-          ~waits_on:(if c.waits then [ `Host; `Object ] else [])
+          ~completion:(if c.stores then `Store else `Host)
+          ~waits_on:(if c.waits then [ `Host; `Store ] else [])
           ~answer:(if c.unknown then `Unknown else `Stopped)
           ~runs:(if c.itself then `Itself else `When_slept)
           ~may_block:c.may_block ~lag:c.lag (name ())

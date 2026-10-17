@@ -112,8 +112,8 @@ let facts () =
   equal (option int) ~msg:"the copy engine" (Some 1) f.copy_engine;
   equal int ~msg:"alignment" 256 f.alignment;
   equal bool ~msg:"completion is the store" true (f.completion = Store);
-  equal (list bool) ~msg:"waits on stores, hosts, objects" [ true; true; false ]
-    [ f.waits.stores; f.waits.hosts; f.waits.objects ];
+  equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
+    [ f.waits.stores; f.waits.hosts ];
   equal int ~msg:"most waits" max_int f.waits.most;
   equal bool ~msg:"submit may block" true f.may_block;
   equal (option int) ~msg:"the hang bound, where no display's watchdog bounds"

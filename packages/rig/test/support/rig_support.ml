@@ -42,8 +42,6 @@ external polled_launches : polled -> string array
   = "rig_test_polled_launches"
 
 external rig_local : unit -> int * int * int = "rig_test_rig_local"
-external rig_word : unit -> int = "rig_test_rig_word"
-external rig_object : unit -> int = "rig_test_rig_object"
 external polled_word_at : polled -> int = "rig_test_polled_word_at"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
@@ -107,8 +105,6 @@ external move : dst:int -> src:int -> int -> unit = "rig_test_move"
 
 let noop = noop ()
 let bump = bump ()
-let rig_word = rig_word ()
-let rig_object = rig_object ()
 let poke = poke ()
 let far = far ()
 let carry = carry ()
@@ -185,8 +181,8 @@ module Driver = struct
     budget : int;
     limits : kind -> int;
     may_block : bool;
-    objects : bool;
-    waits : [ `Store | `Object | `Host ] list;
+    stores : bool;
+    waits : [ `Store | `Host ] list;
     max_waits : int;
     hang_ms : int option;
     answer : [ `Stopped | `Unknown ];
@@ -272,15 +268,8 @@ module Driver = struct
         (if d.copies then [ compute; { name = "COPY:0"; runs } ]
          else [ compute ]);
       copy_engine = (if d.copies then Some 1 else None);
-      completion =
-        (if d.objects then Object (Nativeint.of_int d.word_at) else Host);
-      waits =
-        {
-          stores = has `Store;
-          hosts = has `Host;
-          objects = has `Object;
-          most = d.max_waits;
-        };
+      completion = (if d.stores then Store else Host);
+      waits = { stores = has `Store; hosts = has `Host; most = d.max_waits };
       most_parts = d.most_parts;
       may_block = d.may_block;
       hang_ms = d.hang_ms;
@@ -596,7 +585,7 @@ module Polled = struct
         budget;
         limits;
         may_block;
-        objects = completion = `Object;
+        stores = completion = `Store;
         waits = waits_on;
         max_waits;
         hang_ms;
@@ -692,9 +681,7 @@ module Polled = struct
 
   let last_waits d =
     let a = polled_last_waits d.c in
-    List.init
-      (Array.length a / 3)
-      (fun i -> (a.(3 * i), a.((3 * i) + 1), a.((3 * i) + 2)))
+    List.init (Array.length a / 2) (fun i -> (a.(2 * i), a.((2 * i) + 1)))
 
 
   let layout d =

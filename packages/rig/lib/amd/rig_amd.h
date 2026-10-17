@@ -18,9 +18,9 @@
    which are GPU addresses. Set copy.device_memory to 1 only when both
    original allocations are Device memory owned by this device, otherwise
    0. Nonempty eligible copies may run on the compute engine; all parts,
-   including empty ones, retain their logical queue order. A wait is RIG_WORD
-   on a 64-bit word the device
-   maps, which the compute queue waits on, at most 255 per submission.
+   including empty ones, retain their logical queue order. A wait names a
+   64-bit word the device maps, which the compute queue waits on, at most 255
+   per submission.
    Rig_amd's interface states the rules in full. */
 
 #ifndef RIG_AMD_H

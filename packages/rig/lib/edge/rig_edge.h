@@ -35,16 +35,13 @@ enum { RIG_FITS, RIG_LATER, RIG_NEVER, RIG_GROW };
    lost; and, for a submission, done with every value up to it committed. */
 enum { RIG_OK, RIG_FAILED, RIG_COMMITTED };
 
-/* A wait's kinds: the 64-bit word at the mapped address [at] holds at
-   least [value]; [at] is an object of the driver that reaches [value]. */
-enum { RIG_WORD, RIG_OBJECT };
-
 /* Which side of a copy is memory of the calling process, if any. */
 enum { RIG_LOCAL_NONE, RIG_LOCAL_SRC, RIG_LOCAL_DST };
 
+/* A wait: the 64-bit word at the mapped address [at] holds at least
+   [value]. */
 struct rig_wait {
   uint64_t at, value;
-  int kind;
 };
 
 /* A part's kinds. 0 is no part: a room check answers RIG_NEVER for it. */

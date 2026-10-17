@@ -16,15 +16,14 @@ device's facts once, when it opens, and calls three C functions of the
 driver to run work, with the OCaml runtime released. Below, `submit` alone
 names the driver's C function, and `Rig.submit` the OCaml call.
 
-The device reports progress in its timeline word, which only the driver
-writes. A store on a queue writes it, the host writes it from a handler, or
-the driver writes it once an object of its API completes. A wait reads the
-word directly, or through the driver's `signaled` where the word has no host
-address. Three properties of a driver carry every rule of `Rig`'s Order
+The device reports progress in its timeline word, which only the driver writes.
+A store on a queue writes it, or the host writes it from a handler. A wait
+reads the word directly, or through the driver's `signaled` where the word has
+no host address. Three properties of a driver carry every rule of `Rig`'s Order
 section: the work handed to each queue runs in order, a value's work starts
-after the previous value's work has completed, and the host learns through
-the word which values have completed, or that the device faulted. Device
-order is rule 1 of the Order section seen from the driver.
+after the previous value's work has completed, and the host learns through the
+word which values have completed, or that the device faulted. Device order is
+rule 1 of the Order section seen from the driver.
 
 ## One submission
 
