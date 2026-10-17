@@ -148,6 +148,7 @@ let survey ~firmware (d : Discovery.t) =
       Ok (report, Ok (layout, firmware))
 
 let report ~firmware table =
+  Amd.Lock.check "Rig_amd_pci.report";
   let* d = Discovery.of_string table in
   Result.map fst (survey ~firmware d)
 
@@ -162,10 +163,12 @@ let memory r = { Amd.address = Memory.address r; host = host r; data = r }
 
 (* What the path's memory functions use: a GPU's memory and the lock its calls
    take. Memory the path gave holds them until its free, also after stop, so
-   they hold nothing else of the GPU, and stop releases the memory. *)
-type gpu = { memory : Memory.t; lock : Mutex.t }
+   they hold nothing else of the GPU, and stop releases the memory. The lock
+   nests inside the vendor's lock and a hold's ([Gpus]), and outside rig.pci's
+   memory locks; [machines_lock] holds no other. *)
+type gpu = { memory : Memory.t; lock : Amd.Lock.t }
 
-let protect g f = Mutex.protect g.lock f
+let protect g f = Amd.Lock.protect g.lock f
 
 (* What the path keeps of each machine, from its first open there: the key
    its devices share, so that a GPU's number names the same GPU for each of
@@ -179,10 +182,10 @@ type known = {
 }
 
 let machines : (Machine.t * known) list ref = ref []
-let machines_lock = Mutex.create ()
+let machines_lock = Amd.Lock.create ()
 
 let known m =
-  Mutex.protect machines_lock @@ fun () ->
+  Amd.Lock.protect machines_lock @@ fun () ->
   match List.assq_opt m !machines with
   | Some on -> on
   | None ->
@@ -191,7 +194,7 @@ let known m =
       on
 
 let learn on index reach =
-  Mutex.protect machines_lock @@ fun () ->
+  Amd.Lock.protect machines_lock @@ fun () ->
   on.reached <- (index, reach) :: List.remove_assoc index on.reached
 
 let reaches on ~index j =
@@ -200,7 +203,7 @@ let reaches on ~index j =
     | Some r, Some o -> Memory.reaches r o
     | _ -> false
   in
-  j = index || Mutex.protect machines_lock reach
+  j = index || Amd.Lock.protect machines_lock reach
 
 (* A path function raises Rig_amd.Fault for a register sequence that does not
    complete. A flush the hubs do not confirm is raised by the next sleep. *)
@@ -359,13 +362,24 @@ let start ~word ~firmware ~index h fn =
   | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 
 let open_ ?(machine = Machine.this) ~word ~firmware i =
+  Amd.Lock.check "Rig_amd_pci.gpu";
   Gpus.open_ gpus machine i (start ~word ~firmware ~index:i)
 
 (* Changes to the machine *)
 
-let detach i = Gpus.detach gpus Machine.this i
-let attach i = Gpus.attach gpus Machine.this i
-let reset ?(machine = Machine.this) i = Gpus.reset gpus machine i
+(* Each takes the vendor's lock ([Gpus]), which an open holds through its boot,
+   so a call from a callback inside a lock is refused first. *)
+let detach i =
+  Amd.Lock.check "Rig_amd_pci.detach";
+  Gpus.detach gpus Machine.this i
+
+let attach i =
+  Amd.Lock.check "Rig_amd_pci.attach";
+  Gpus.attach gpus Machine.this i
+
+let reset ?(machine = Machine.this) i =
+  Amd.Lock.check "Rig_amd_pci.reset";
+  Gpus.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)
 let system_firmware = "/lib/firmware"

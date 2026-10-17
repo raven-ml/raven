@@ -22,6 +22,87 @@ module Sdma = Abi.Sdma
 exception Fault of string
 exception Refused of string
 
+external reraise : exn -> 'a = "%reraise"
+
+(* Locks
+
+   Each lock counts among the locks its thread holds (rig_hold in rig_edge.h),
+   from before its take to after its give: a call of rig's or of this driver's
+   from a signal handler, finaliser or Gc.Memprof callback inside it is refused
+   as it starts, and never waits for the lock its own thread holds. Locks nest
+   in this order: an image's, which [entry] holds while it grows the scratch; a
+   device's guard; on the PCI path, rig.pci's vendor lock and a hold's
+   ([Rig_pci.Gpus]), which an open, a reset and a stop hold; a path's; then
+   rig.pci's memory locks. A device's HDP lock holds no other.
+
+   An image's lock is held while the scratch grows, a device's guard while
+   its scratch and traces change, and the PCI path's lock across register
+   sequences that wait for the GPU to answer: each must see its state whole,
+   and a sequence left half done leaves the GPU in an unknown state. A call
+   of rig's from a callback during one raises. *)
+
+module Lock = struct
+  external holds : unit -> (int[@untagged])
+    = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+  [@@noalloc]
+
+  external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+  external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+  type t = Mutex.t
+
+  let create = Mutex.create
+
+  (* [take m] takes [m], counted from before the take, so that a signal handler
+     that runs inside a contended take sees it held. An exception that ends the
+     take gives the count back first, having taken nothing: one a handler
+     raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+     thread that holds [m], which only a call that skipped its check makes and
+     which raises [Invalid_argument]. *)
+  let take m =
+    hold ();
+    match Mutex.lock m with
+    | () -> ()
+    | exception e -> (
+        unhold ();
+        match e with
+        | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+            invalid_arg
+              "Rig_amd: a lock taken again by the thread that holds it, from a \
+               signal handler, finaliser or Gc.Memprof callback"
+        | e -> reraise e)
+
+  (* Gives [m] back, then its count, with nothing between that allocates or
+     polls. *)
+  let give m =
+    Mutex.unlock m;
+    unhold ()
+
+  (* [protect m f] is [f ()] holding [m], taken as the last step before the
+     handler and given back as the first step of both exits, where nothing
+     allocates or polls, so an exception anywhere in [f], an asynchronous one
+     too, leaves [m] free and the count right. *)
+  let protect m f =
+    take m;
+    match f () with
+    | x ->
+        give m;
+        x
+    | exception e ->
+        give m;
+        reraise e
+
+  (* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
+     call comes from a signal handler, finaliser or Gc.Memprof callback inside
+     that lock, and would wait for it or see its section half done. *)
+  let check fn =
+    if holds () <> 0 then
+      invalid_arg
+        (fn
+       ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+          inside a lock of the calling thread's")
+end
+
 type 'm memory = { address : int; host : int option; data : 'm }
 type clock = Source of int | Round_trip
 
@@ -154,8 +235,6 @@ external free_launch : int -> unit = "caml_rig_amd_launch_free" [@@noalloc]
 external free_launches : int list -> unit = "caml_rig_amd_launches_free"
 [@@noalloc]
 
-external reraise : exn -> 'a = "%reraise"
-
 external set_copy_launch : int -> int -> unit = "caml_rig_amd_copy_launch"
 [@@noalloc]
 
@@ -209,7 +288,7 @@ type t = {
   aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
   hdp : int option;
-  hdps : Mutex.t; (* the HDP registers' counts *)
+  hdps : Lock.t; (* the HDP registers' counts *)
   budget : int;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
@@ -217,7 +296,7 @@ type t = {
   word : region; (* rig frees a word of the device's own after stop *)
   reaches : int -> bool; (* the path's *)
   capability : Abi.Capability.t;
-  guard : Mutex.t;
+  guard : Lock.t;
       (* held by [grow_scratch], [make_trace], and stop over [live] *)
   mutable live : live option; (* [None] once stop began *)
 }
@@ -424,7 +503,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
                 Served))
 
 let grow_scratch g n =
-  Mutex.protect g.guard @@ fun () ->
+  Lock.protect g.guard @@ fun () ->
   match g.live with
   | None -> Stopped
   | Some l -> grow_held g.self l.ops g.gpu ~aql:g.aql ~desc:l.desc l.scratch n
@@ -441,7 +520,7 @@ let trace_bytes = 256 lsl 20
    are made under the device's guard, as the scratch grows, so a stop, which
    frees them, waits for them or refuses them. *)
 let make_trace g =
-  Mutex.protect g.guard @@ fun () ->
+  Lock.protect g.guard @@ fun () ->
   match g.live with
   | None -> Error "the device is stopped"
   | Some { traces = Some (t, _); _ } -> Ok t
@@ -475,8 +554,11 @@ let make_trace g =
           Option.iter free_mem e;
           Error (strf "no memory for %d bytes of trace buffers" n))
 
-(* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane. *)
+(* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane.
+   Compiled code calls it and [trace] outside rig's calls, so each checks its
+   thread's locks first. *)
 let scratch g n =
+  Lock.check "Rig_amd_abi.Capability.scratch";
   match grow_scratch g n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
@@ -532,7 +614,7 @@ let live g =
 (* Counts a region that needs [reg] flushed before a doorbell: [false] if the
    device keeps no more registers. *)
 let count_hdp g reg delta =
-  Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
+  Lock.protect g.hdps (fun () -> hdp_count g.self reg delta)
 
 let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
@@ -602,7 +684,7 @@ type image = {
   co : Code_object.t;
   base : int; (* the address of the region it was laid over *)
   dev : t;
-  lock : Mutex.t;
+  lock : Lock.t;
   mutable launches : int Names.t; (* by function: its C launch *)
   mutable made : int list; (* the launches *)
 }
@@ -634,7 +716,7 @@ let image g bin =
               co;
               base;
               dev = g;
-              lock = Mutex.create ();
+              lock = Lock.create ();
               launches = Names.empty;
               made = [];
             },
@@ -785,7 +867,7 @@ let entry m f =
   | None -> Rig_edge.Absent
   | Some k -> (
       let made =
-        Mutex.protect m.lock @@ fun () ->
+        Lock.protect m.lock @@ fun () ->
         match Names.find_opt f m.launches with
         | Some l -> Ok l
         | None -> launch m f k
@@ -805,15 +887,16 @@ let entry m f =
 let grow _ = Rig_edge.Grown
 
 (* The image's code is in a region rig frees; the launches [entry] made go
-   here. rig unloads an image once, so the unload allocates nothing and polls
-   nowhere: an exception cannot end it with launches held. *)
+   here. rig unloads an image once, so past its take the unload allocates
+   nothing and polls nowhere: an exception cannot end it with launches held.
+   One that ends the take ends it before it changed anything. *)
 let unload _ m =
-  Mutex.lock m.lock;
+  Lock.take m.lock;
   let made = m.made in
   m.launches <- Names.empty;
   m.made <- [];
   free_launches made;
-  Mutex.unlock m.lock
+  Lock.give m.lock
 
 (* Opening *)
 
@@ -996,7 +1079,7 @@ let make (type m) ~word (p : m path) =
         aql;
         lds = p.lds;
         hdp = p.hdp;
-        hdps = Mutex.create ();
+        hdps = Lock.create ();
         budget = p.budget;
         hang_ms = p.hang_ms;
         waits64;
@@ -1010,9 +1093,12 @@ let make (type m) ~word (p : m path) =
             compute =
               (if aql then Aql { scratch = (fun n -> scratch g n) } else Pm4);
             wgps = p.wgps;
-            trace = (fun () -> make_trace g);
+            trace =
+              (fun () ->
+                Lock.check "Rig_amd_abi.Capability.trace";
+                make_trace g);
           };
-        guard = Mutex.create ();
+        guard = Lock.create ();
         live =
           Some
             {
@@ -1076,13 +1162,13 @@ let halt g l ~fault =
    read none of it. *)
 let stop g ~fault =
   let l =
-    Mutex.protect g.guard @@ fun () ->
+    Lock.protect g.guard @@ fun () ->
     let l = g.live in
     g.live <- None;
     l
   in
   Option.iter (fun l -> halt g l ~fault) l;
-  Mutex.protect g.hdps (fun () -> end_state g.self)
+  Lock.protect g.hdps (fun () -> end_state g.self)
 
 (* Tests *)
 
@@ -1093,7 +1179,8 @@ let refuse_stopped g what =
     invalid_argf "Rig_amd.%s: the device stopped" what
 
 let renumber ?(age = 0) g v =
-  Mutex.protect g.guard @@ fun () ->
+  Lock.check "Rig_amd.renumber";
+  Lock.protect g.guard @@ fun () ->
   refuse_stopped g "renumber";
   let last = last g.self in
   if signaled g <> last then
@@ -1107,10 +1194,11 @@ let renumber ?(age = 0) g v =
 external placed : int -> int -> int * int = "caml_rig_amd_placed"
 
 let ring g q =
+  Lock.check "Rig_amd.ring";
   let named (d : Rig_edge.queue) = d.name = q in
   match List.find_index named device_queues with
   | Some i ->
-      Mutex.protect g.guard @@ fun () ->
+      Lock.protect g.guard @@ fun () ->
       refuse_stopped g "ring";
       placed g.self i
   | None -> invalid_argf "Rig_amd.ring: no queue %S" q

@@ -150,7 +150,12 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
 
     {b Domains.} Any domain may call any value. Opens, resets and changes to
     the machine of AMD GPUs run one at a time, so a boot delays the
-    others. *)
+    others. Each holds a lock for its whole run, a boot included, so a call
+    of rig's from a callback on its thread meanwhile is made inside a lock
+    and raises [Invalid_argument] ([Rig]'s domains section). An opener's
+    [make], {!report}, {!detach}, {!attach} and {!reset}, called from a
+    callback inside a lock, raise [Invalid_argument], having changed
+    nothing ({!Rig_edge.section-drivers}). *)
 
 val gpu :
   ?machine:Rig_pci.Machine.t ->

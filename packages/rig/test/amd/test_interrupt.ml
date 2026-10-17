@@ -15,7 +15,12 @@
    grow, leaves every view's free and the memory's own free to succeed. A
    view's free is also walked with a signal at each of its allocations, as a
    Ctrl-C lands: a free it stopped leaves the view to a later free, after
-   which the memory's own free gives its GPU memory back. *)
+   which the memory's own free gives its GPU memory back.
+
+   A path's lock counts among the locks its thread holds: a callback at any
+   allocation inside it that takes it again raises Invalid_argument, having
+   taken nothing, and the capability's calls from inside a lock raise it as
+   they start. *)
 
 open Windtrap
 module A = Rig_amd
@@ -217,10 +222,116 @@ let test_view_free () =
     (held ());
   reached
 
+(* Locks *)
+
+(* The locks the calling thread holds, and a count of one more and one fewer
+   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
+external holds : unit -> int = "caml_rig_edge_holds_byte"
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
+
+(* A callback at any allocation of a section under a path's lock takes the lock
+   and checks the thread's locks: inside the section both raise
+   [Invalid_argument], having taken nothing; outside it both run. *)
+let test_lock_reentered () =
+  let before = holds () in
+  let l = A.Lock.create () in
+  let inside = ref 0 and outside = ref 0 in
+  let rec from n =
+    let call () =
+      let held = holds () > before in
+      let took =
+        match A.Lock.protect l (fun () -> ()) with
+        | () -> true
+        | exception Invalid_argument why when held ->
+            starts_with ~msg:"the refusal" ~affix:"Rig_amd: a lock taken again"
+              why;
+            false
+      in
+      let checked =
+        match A.Lock.check "the call" with
+        | () -> true
+        | exception Invalid_argument why when held ->
+            starts_with ~msg:"the check" ~affix:"the call: " why;
+            false
+      in
+      equal ~msg:"the take and the check agree" bool took checked;
+      if took then incr outside else incr inside
+    in
+    let section () =
+      let xs = List.init 4 (fun i -> ref i) in
+      A.Lock.protect l (fun () ->
+          ignore (Sys.opaque_identity (List.map (fun r -> ref !r) xs)))
+    in
+    let reached = Rig_support.interrupted ~landing:(Call call) n section in
+    equal ~msg:(strf "locks held, called at %d" n) int before (holds ());
+    if reached then from (n + 1)
+  in
+  from 1;
+  greater ~msg:"calls inside the lock" int ~than:0 !inside;
+  greater ~msg:"calls outside it" int ~than:0 !outside
+
+(* An exception at any allocation of a section under a path's lock gives the
+   lock back: the thread holds what it held before, and takes the lock again. *)
+let test_lock_interrupted () =
+  let before = holds () in
+  let l = A.Lock.create () in
+  let rec from n =
+    let section () =
+      let xs = List.init 4 (fun i -> ref i) in
+      A.Lock.protect l (fun () ->
+          ignore (Sys.opaque_identity (List.map (fun r -> ref !r) xs)))
+    in
+    let reached = Rig_support.interrupted n section in
+    equal ~msg:(strf "locks held, interrupted at %d" n) int before (holds ());
+    A.Lock.protect l ignore;
+    if reached then from (n + 1)
+  in
+  from 1
+
+(* The capability's trace and, on an AQL queue, its scratch, from inside a lock
+   of the calling thread: each raises as it starts. A scratch outside the lock
+   runs. *)
+let test_capability_held () =
+  opened @@ fun g ->
+  let c = A.capability g in
+  let refused what f =
+    hold ();
+    let r =
+      Fun.protect ~finally:unhold (fun () ->
+          match f () with
+          | () -> None
+          | exception Invalid_argument why -> Some why)
+    in
+    match r with
+    | None -> failf "%s ran inside a lock" what
+    | Some why -> starts_with ~msg:what ~affix:(what ^ ": called from") why
+  in
+  refused "Rig_amd_abi.Capability.trace" (fun () -> ignore (c.trace ()));
+  match c.compute with
+  | Aql { scratch } ->
+      refused "Rig_amd_abi.Capability.scratch" (fun () -> ignore (scratch 16));
+      equal ~msg:"a scratch outside a lock" (result unit string) (Ok ())
+        (scratch 16)
+  | Pm4 -> ()
+
 let () =
   exit
     (run "rig_amd interrupt"
        [
+         group ~timeout "a path's lock"
+           [
+             test
+               "a callback's take inside it raises Invalid_argument, having \
+                taken nothing, and one outside it runs"
+               test_lock_reentered;
+             test "an exception at any allocation inside it gives it back"
+               test_lock_interrupted;
+             test
+               "the capability's calls from inside a lock raise \
+                Invalid_argument as they start"
+               test_capability_held;
+           ];
          group ~timeout "an exception at any allocation"
            [
              test

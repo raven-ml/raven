@@ -50,7 +50,7 @@ type t = {
          flush the hubs did not confirm *)
   mutable eops : Memory.region list;
   mutable stopped : [ `Clean | `Lost | `Unknown ] option;
-  hw : Mutex.t; (* the register sequences and page-table edits *)
+  hw : Rig_amd.Lock.t; (* the register sequences and page-table edits *)
 }
 
 let space = Rig_pci.Space.create ~base:0x2000_0000_0000 (1 lsl 44)
@@ -338,7 +338,7 @@ let stop_locked g =
   end
 
 let stop g =
-  Mutex.protect g.hw @@ fun () ->
+  Rig_amd.Lock.protect g.hw @@ fun () ->
   match g.stopped with
   | Some s -> s
   | None ->
@@ -544,7 +544,7 @@ let start ~gpus f first =
       fault;
       eops = [];
       stopped = None;
-      hw = Mutex.create ();
+      hw = Rig_amd.Lock.create ();
     }
   in
   (* From here the GPU's registers are written: a failure stops it as lost. *)
@@ -569,7 +569,7 @@ let start ~gpus f first =
 let gpu g = Regs.gpu (Regs.layout_of g.r)
 let gc g = (Regs.discovery (Regs.layout_of g.r)).gc
 let mec g = g.images.mec
-let wgps g = Mutex.protect g.hw (fun () -> Gfx.wgps g.gfx)
+let wgps g = Rig_amd.Lock.protect g.hw (fun () -> Gfx.wgps g.gfx)
 let memory g = g.memory
 let hive g = Gmc.hive g.gmc
 let budget g = Page_table.main_pool g.tables
@@ -583,7 +583,7 @@ let eop_bytes = 0x1000
 let doorbell_bytes = 8
 
 let queue g kind ~ring ~bytes ~read ~write =
-  Mutex.protect g.hw @@ fun () ->
+  Rig_amd.Lock.protect g.hw @@ fun () ->
   let doorbell index =
     match host g.doorbells (doorbell_bytes * index) with
     | Some a -> Ok a
@@ -611,7 +611,8 @@ let fault g why =
   raise (Rig_amd.Fault why)
 
 let faulted g why =
-  Mutex.protect g.hw @@ fun () -> if !(g.fault) = None then g.fault := Some why
+  Rig_amd.Lock.protect g.hw @@ fun () ->
+  if !(g.fault) = None then g.fault := Some why
 
 (* The GPU's fatal hardware errors, which NBIO flags outside the interrupt ring,
    with the power manager's machine-check banks: the report, and the flags it
@@ -670,12 +671,14 @@ let events g reports =
 let sleep g ~ms =
   (match !(g.fault) with Some why -> raise (Rig_amd.Fault why) | None -> ());
   let stopped () = Option.is_some g.stopped in
-  let moved () = Mutex.protect g.hw (fun () -> stopped () || Ih.pending g.ih) in
+  let moved () =
+    Rig_amd.Lock.protect g.hw (fun () -> stopped () || Ih.pending g.ih)
+  in
   (* A failed wait is read below, with the ring. *)
   ignore
     (Function.wait g.f ~us:(ms * 1000) "the interrupt ring" moved
       : (unit, string) result);
-  Mutex.protect g.hw @@ fun () ->
+  Rig_amd.Lock.protect g.hw @@ fun () ->
   match !(g.fault) with
   | Some why -> raise (Rig_amd.Fault why)
   | None when stopped () -> ()
@@ -830,11 +833,11 @@ let reset f =
                    "the GPU still runs its security processor or interrupt \
                     rings after its reset"))
 
-let give_back g = Mutex.protect g.hw (fun () -> give_back_access g)
+let give_back g = Rig_amd.Lock.protect g.hw (fun () -> give_back_access g)
 
 (* The boot holds the clocks at their highest; the GC's gating then is all that
    moves them, which the profile modes of the kernel turn off as this does
    (amdgpu_dpm.c). *)
 let stable_power g =
   if g.vf then Error "a virtual function's host holds its clocks"
-  else Ok (Mutex.protect g.hw (fun () -> Gfx.ungate g.gfx))
+  else Ok (Rig_amd.Lock.protect g.hw (fun () -> Gfx.ungate g.gfx))

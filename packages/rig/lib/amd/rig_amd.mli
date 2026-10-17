@@ -56,7 +56,10 @@
     {!val-free} and {!val-stop} never raise it. Any domain may call any
     value concurrently with others, except the C functions and {!val-stop},
     which rig calls as {!Rig_edge.Driver} states. {!val-sleep} may run
-    beside the C functions.
+    beside the C functions. The [scratch] and [trace] of the device's
+    {!capability}, and an opener's [make], called from a callback inside a
+    lock ([Rig]'s domains section), raise [Invalid_argument], having changed
+    nothing ({!Rig_edge.section-drivers}).
 
     A program names a GPU through a path's opener:
     {[
@@ -487,7 +490,9 @@ type 'm path = {
        the path gave, and [reaches] for the life of the process.}
     {- A [sleep] that another domain began before [stop] may still be waiting
        when [stop] runs. It returns without reading the GPU once [stop] has
-       begun.}} *)
+       begun.}
+    {- A function that holds a lock across OCaml code must take it with
+       {!Lock.protect} ({!section-locks}).}} *)
 
 val make : word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is a device of the GPU [p] reaches, whose timeline word is
@@ -522,6 +527,46 @@ val is_gpu : vendor:int -> class_:int -> bool
     [0x12]. Every path numbers a machine's GPUs [0], [1], … in bus order among
     such functions. *)
 
+(** {2:locks A path's locks}
+
+    For a path's implementation. A path that holds a lock across OCaml code
+    must take it with {!Lock.protect}, which counts it among its thread's
+    locks ([rig_hold] in [rig_edge.h]), so that a call of rig's or of the
+    driver's from a callback inside it is refused as the call starts and
+    does not wait for good.
+
+    {b Warning.} The path must take its locks in the order {!Lock.create}
+    states. Nothing checks it, and two threads that take two locks in
+    opposite orders wait for each other for good. Only a take by the thread
+    that holds the lock raises. A path's entries must call {!Lock.check}
+    themselves, before they change anything; one that does not may raise
+    [Invalid_argument] from a lock it takes later, with what it changed
+    before left changed. *)
+
+module Lock : sig
+  type t
+  (** The type for a path's locks. *)
+
+  val create : unit -> t
+  (** [create ()] is a new lock. A thread may take it while it holds an
+      image's lock, a device's, or rig.pci's vendor lock or a hold's
+      ([Rig_pci.Gpus]), and may take rig.pci's memory locks while it holds
+      it. *)
+
+  val protect : t -> (unit -> 'a) -> 'a
+  (** [protect l f] is [f ()] run holding [l], which it gives back as [f]
+      returns or raises.
+
+      Raises [Invalid_argument], having taken nothing, if the calling thread
+      holds [l], as a callback that interrupts a section does. *)
+
+  val check : string -> unit
+  (** [check fn] raises [Invalid_argument], naming [fn], if the calling
+      thread holds a lock of rig's or of a driver's. A path's opener's
+      [make] and its public functions that may take a lock call it as they
+      start, before they change anything ({!Rig_edge.section-drivers}). *)
+end
+
 (** {1:references References}
 
     {ul
@@ -540,7 +585,8 @@ val is_gpu : vendor:int -> class_:int -> bool
    past 2^31 values of age, without making that many submissions.
 
    Raises [Invalid_argument] if [g] has stopped or is not idle, if [v - 1] is
-   below its last value, or if [age] is negative or above [v - 1]. *)
+   below its last value, if [age] is negative or above [v - 1], or from a
+   callback inside a lock ({!Lock.check}). *)
 val renumber : ?age:int -> t -> int -> unit
 
 (* [ring g q] is [(n, size)]: the 32-bit words [g] placed on the ring of its
@@ -548,5 +594,6 @@ val renumber : ?age:int -> t -> int -> unit
    place on the ring is its count modulo [size]. Tests check that their
    submissions wrapped a ring.
 
-   Raises [Invalid_argument] if [g] has stopped or has no queue [q]. *)
+   Raises [Invalid_argument] if [g] has stopped, if it has no queue [q], or
+   from a callback inside a lock ({!Lock.check}). *)
 val ring : t -> string -> int * int

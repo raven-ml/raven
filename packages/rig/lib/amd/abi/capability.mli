@@ -30,7 +30,8 @@ type compute =
           the work placed before the call completes. Any domain may call
           it. The result is [Error msg] if the device cannot allocate the
           buffer. Raises [Invalid_argument] as {!Scratch.descriptor} or
-          {!Scratch.tmpring} does for it. *)
+          {!Scratch.tmpring} does for it, and, having changed nothing, from
+          a callback inside a lock ([Rig]'s domains section). *)
 
 type trace = {
   buffers : int;  (** The GPU address of the trace windows. *)
@@ -69,7 +70,8 @@ type t = {
           as tracing needs. Any domain may call it. The result is
           [Error msg] if the device lacks the memory, cannot hold its GPU
           steady, as when another process holds the GPU so, or is
-          stopped. *)
+          stopped. Raises [Invalid_argument], having changed nothing, from a
+          callback inside a lock ([Rig]'s domains section). *)
 }
 (** The type for what compiled code needs from an AMD device. *)
 

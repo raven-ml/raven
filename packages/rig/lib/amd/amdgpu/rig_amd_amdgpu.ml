@@ -12,7 +12,8 @@
 
 (* The process's KFD state (its file, each GPU's address space, the event page)
    is made under [opening]; a device's queues and events are its own. Any domain
-   may call the path's functions. *)
+   may call the path's functions. Its locks ([Rig_amd.Lock]) hold no other but
+   [opening], which [stable_power] takes under a device's guard. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -83,7 +84,7 @@ type gpu = {
       (* the exception events, memory and hardware, of its open devices *)
 }
 
-let opening = Mutex.create ()
+let opening = Amd.Lock.create ()
 
 (* The process that opened the file, and the file. *)
 let kfd : (int * int) option ref = ref None
@@ -110,7 +111,7 @@ let event_page : (int * int * int) option ref = ref None
    free unmaps it. A count changes with its MAP or UNMAP, under [views_lock], so
    that a free never unmaps a mapping a new view counts on. *)
 let views : int Pairs.t ref = ref Pairs.empty
-let views_lock = Mutex.create ()
+let views_lock = Amd.Lock.create ()
 
 (* Host memory mapped for a GPU. A process has one address space per GPU, which
    every device it opens on the GPU shares, and KFD maps a host page in it once:
@@ -125,7 +126,7 @@ type registration = {
 }
 
 let registry : registration list ref = ref []
-let registry_lock = Mutex.create ()
+let registry_lock = Amd.Lock.create ()
 
 (* KFD serves a file to the process that opened it only: a forked child opens
    its own, and the parent's address spaces, event page, views and host mappings
@@ -169,7 +170,7 @@ let map_gpu fd handle gpu map =
    allocates between the MAP and its count. *)
 let take_view fd handle gpu =
   let key = (handle, gpu) in
-  Mutex.protect views_lock @@ fun () ->
+  Amd.Lock.protect views_lock @@ fun () ->
   let n = Option.value ~default:0 (Pairs.find_opt key !views) in
   let counted = Pairs.add key (n + 1) !views in
   match if n = 0 then map_gpu fd handle gpu true with
@@ -185,7 +186,7 @@ let take_view fd handle gpu =
    leaves the count and the mapping in step. *)
 let give_view fd handle gpu =
   let key = (handle, gpu) in
-  Mutex.protect views_lock @@ fun () ->
+  Amd.Lock.protect views_lock @@ fun () ->
   match Pairs.find key !views - 1 with
   | 0 -> (
       let removed = Pairs.remove key !views in
@@ -244,7 +245,7 @@ let free fd g (m : mem Amd.memory) =
       check "freeing GPU memory" (fun () -> kfd_free fd p.handle);
       unmap_mem p.at p.bytes
   | Borrowed e ->
-      Mutex.protect registry_lock @@ fun () ->
+      Amd.Lock.protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
       if e.maps = 0 then begin
         registry := List.filter (fun e' -> e' != e) !registry;
@@ -267,7 +268,7 @@ let map_host fd g a n : mem Amd.memory option =
     in
     Some { Amd.address = a; host = Some a; data }
   in
-  Mutex.protect registry_lock @@ fun () ->
+  Amd.Lock.protect registry_lock @@ fun () ->
   match List.find_opt inside !registry with
   | Some e ->
       e.maps <- e.maps + 1;
@@ -335,7 +336,7 @@ let runtime_enable fd =
 type machine = {
   root : string;
   gpus : (string * (Topology.node, string) result) array;
-  look : Mutex.t;
+  look : Amd.Lock.t;
 }
 
 let machine_at root =
@@ -345,11 +346,11 @@ let machine_at root =
     {
       root;
       gpus = Array.of_list (List.map node buses);
-      look = Mutex.create ();
+      look = Amd.Lock.create ();
     }
 
 let nodes m =
-  Mutex.protect m.look @@ fun () ->
+  Amd.Lock.protect m.look @@ fun () ->
   Array.iteri
     (fun i (bus, node) ->
       if Result.is_error node then m.gpus.(i) <- (bus, Topology.node m.root bus))
@@ -357,6 +358,7 @@ let nodes m =
   Array.copy m.gpus
 
 let gpus_of m =
+  Amd.Lock.check "Rig_amd_amdgpu.gpus_of";
   Array.to_list
     (Array.map
        (fun (bus, node) ->
@@ -366,11 +368,11 @@ let gpus_of m =
 (* The machine as each root shows it, read at the root's first use that reads
    it: a read that fails is not kept, so the next use reads again. *)
 let machines : machine list ref = ref []
-let machines_lock = Mutex.create ()
+let machines_lock = Amd.Lock.create ()
 
 let topology root =
   let* m =
-    Mutex.protect machines_lock @@ fun () ->
+    Amd.Lock.protect machines_lock @@ fun () ->
     match List.find_opt (fun m -> m.root = root) !machines with
     | Some m -> Ok m
     | None ->
@@ -501,7 +503,7 @@ type device = {
 let drop_events d =
   if d.events_held then begin
     d.events_held <- false;
-    Mutex.protect opening (fun () ->
+    Amd.Lock.protect opening (fun () ->
         d.gpu.live <- List.filter (fun e -> e != d.events) d.gpu.live);
     Array.iter (fun id -> quietly (fun () -> destroy_event d.fd id)) d.events
   end
@@ -581,7 +583,7 @@ let queue d kind ~ring ~bytes ~read ~write =
       Error (strf "making a KFD queue: %s" (message e))
   | id, doorbell_offset ->
       d.queues <- (id, taken) :: d.queues;
-      Ok (Mutex.protect opening (fun () -> doorbell d doorbell_offset))
+      Ok (Amd.Lock.protect opening (fun () -> doorbell d doorbell_offset))
 
 (* Records the fault [why]. rig refuses the GPU for the rest of the process
    once its work faulted, since by default (amdgpu's
@@ -624,7 +626,7 @@ let poll_faults fd g =
     g.live
 
 let stable_power g () =
-  Mutex.protect opening @@ fun () ->
+  Amd.Lock.protect opening @@ fun () ->
   match g.node.gpu.target with
   | 9, _, _ -> Ok ()
   | _ when g.stable -> Ok ()
@@ -742,6 +744,7 @@ let device_name i =
   if i = 0 then "AMD" else strf "AMD:%d" i
 
 let open_ ?(root = "/") ~word i =
+  Amd.Lock.check "Rig_amd_amdgpu.gpu";
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   let* gpus =
     Result.map_error
@@ -753,7 +756,7 @@ let open_ ?(root = "/") ~word i =
   else
     let* node = snd gpus.(i) in
     let* fd, g, events =
-      Mutex.protect opening (fun () ->
+      Amd.Lock.protect opening (fun () ->
           let* fd = kfd_fd ~dev:(Filename.concat root "dev") in
           let* g = acquire fd ~root ~gpus node in
           poll_faults fd g;
@@ -774,7 +777,7 @@ let open_ ?(root = "/") ~word i =
     let give_back () = if d.queues = [] then drop_events d in
     match Amd.make ~word (path d ~gpus ~index:i) with
     | Ok _ as r ->
-        Mutex.protect opening (fun () -> g.live <- events :: g.live);
+        Amd.Lock.protect opening (fun () -> g.live <- events :: g.live);
         r
     | Error _ as e ->
         give_back ();

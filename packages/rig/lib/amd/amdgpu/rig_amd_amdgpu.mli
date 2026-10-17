@@ -71,7 +71,8 @@ val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
     {- with {!Rig_amd.make}'s message, or the report of a fault while the
        device opens.}}
 
-    Raises [Invalid_argument] if [i < 0]. *)
+    Raises [Invalid_argument] if [i < 0]. [make] raises it, having opened
+    nothing, from a callback inside a lock ([Rig]'s domains section). *)
 
 (** {1:process The process's GPU}
 
@@ -131,7 +132,8 @@ type machine
 val machine_at : string -> (machine, string) result
 
 (* [gpus_of m] is the GPUs of [m] in bus order as {!gpu_at} describes each. A
-   GPU [Error] at the last look is looked at again; one found is kept. *)
+   GPU [Error] at the last look is looked at again; one found is kept. Raises
+   [Invalid_argument] from a callback inside a lock ({!Rig_amd.Lock.check}). *)
 val gpus_of : machine -> (string * (Rig_amd_abi.Gpu.t, string) result) list
 
 (* [save_area_at root bus] is the bytes of a compute queue's context save area

@@ -54,10 +54,6 @@ raven / llama.cpp (Vulkan; ROCm):
   leaks it (mallinfo2, heaptrack)
 - exceptions: the mlx5 wait loses an event's count to an exception after
   the kernel delivered it (uverbs/path.ml:576-621)
-- refusals: rig.amd's `entry`, `unload`, `stop` and `grow_scratch`, and
-  its PCI path's `sleep` (`g.hw`), hold a `Mutex`, whose re-take from a
-  callback raises `Sys_error`: refuse with `Rig_amd.Refused` through a
-  holder check
 - rig.pci: `Memory.map_peer` refuses with `Invalid_argument` a peer's own
   memory and memory it maps already, which `Rig_edge.Driver.map_peer`
   allows
