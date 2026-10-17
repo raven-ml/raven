@@ -1453,7 +1453,7 @@ value caml_rig_times_give(value v_d, value v_v) {
 
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
    value, stores it as submitted, hands the work over with the run [r]'s
-   waits, and raises the stamps. Called under [d]'s turn. */
+   waits, and raises the stamps, but for the host. Called under [d]'s turn. */
 static int admit(struct rig_device *d, const struct rig_sub *s,
                  struct rig_run *r) {
   /* A submission with copies of slots hands over the run's parts
@@ -1480,7 +1480,8 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   int a = d->driver.submit(d->self, v, r->waits, r->nwaits, parts,
                            s->nparts, s->scratch, r->args, r->addresses,
                            r->nslots, times, &why);
-  rig_sub_raise(s, r, RIG_POINT(d->index, v));
+  /* The host reserves no word ([add_memory]). */
+  if (d->index != 0) rig_sub_raise(s, r, RIG_POINT(d->index, v));
   r->v = v;
   if (a == RIG_COMMITTED)
     atomic_store_explicit(&d->committed, v, memory_order_release);

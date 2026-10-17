@@ -706,10 +706,17 @@ add_point(struct rig_run *r, int own, uint64_t own_base, uint64_t p) {
    device order covers its own work, and the write word beside its use word
    holds its own write or a spent device's done point. The points folded
    into the head come after the words. [own] is the device of slot [own]
-   that started after [base]. */
+   that started after [base].
+
+   The host, of index 0, reserves no word and gets NULL: its work is done
+   when its submit returns, before a raise could store its point, so a
+   point of it orders nothing. Its reservation would be (0, 0), the empty
+   word, which another device's reservation takes. */
 static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
                                     struct rig_stamps *st, enum rig_use u) {
-  if (u == RIG_USE_UNORDERED) return reserve_any(st, own, base, 1);
+  int host = own == 0;
+  if (u == RIG_USE_UNORDERED)
+    return host ? NULL : reserve_any(st, own, base, 1);
   int every = u == RIG_USE_WRITE;
   /* Memory that only [own] uses, the common case, has nothing to follow:
      its first use word is [own]'s and its second empty, so nothing is
@@ -738,6 +745,7 @@ static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
   }
   uint64_t folded = rig_stamps_folded(st, every);
   if (folded != 0) add_point(r, own, base, folded);
+  if (host) return NULL;
   return mine != NULL ? mine : reserve_any(st, own, base, 0);
 }
 

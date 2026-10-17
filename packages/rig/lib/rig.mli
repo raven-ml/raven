@@ -421,7 +421,8 @@ val signaled : t -> int
     assigned its value [v] on [d], it hands the work to [d]'s driver and adds
     [(d, v)] to the stamps of every allocation the work uses, also when the
     driver fails to take the work and [d] is lost. A copy that a device runs
-    does the same. A later access reads the stamps of the memory it uses and
+    does the same. Work on {!host} is done when its submit returns, so it
+    adds no point. A later access reads the stamps of the memory it uses and
     follows the points they name. Where the device's queues cannot wait for
     another device's point, {!submit} waits for it on the host, so a submit
     may block.
@@ -790,8 +791,8 @@ type access =
        {!Buffer.of_io} makes it, with empty stamps.}
     {- {!Buffer.view} and {!Buffer.borrow} make further buffers over it.}
     {- Copies, submissions and host access use it, each after the points its
-       stamps name. Submissions, and copies that a device runs, add a point
-       of their own.}
+       stamps name. Submissions on a device other than {!Rig.host}, and
+       copies that such a device runs, add a point of their own.}
     {- It returns to its device some time after no buffer over it, and no
        array made of it, is reachable ({!Rig.section-reclaim}).}} *)
 module Buffer : sig
@@ -1734,7 +1735,8 @@ val submit :
     nothing unless it waits, a profile is being taken or [d]'s queues grow.
     Once it has assigned [v], [d]'s driver receives [v]'s work or [d] is
     lost, and the stamps of every allocation the work uses name [(d, v)]
-    either way.
+    either way. On {!host}, [v]'s work is done when [submit] returns, and
+    the stamps name no point of it.
 
     Raises [Invalid_argument] if:
     {ul

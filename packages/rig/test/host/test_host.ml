@@ -347,6 +347,63 @@ let test_keeps_buffers () =
   Domain.join d;
   equal ~msg:"its memory reused while the launch ran" bool false reused
 
+(* The bytes of host memory a Polled device borrows. *)
+let shared_bytes = 65536
+
+(* [f ()] while waiting.c, on its own domain, also reads [m]: the host's
+   submit has read [m]'s stamps, and returns once [f] returns or raises. *)
+let during_host_read m f =
+  let image = load "waiting" and w = S.words 2 in
+  let host =
+    Domain.spawn (fun () ->
+        ignore
+          (launch image "waiting"
+             ~refs:Sub.[| write 0 ~at:0; read 1 ~at:16 |]
+             ~params:24
+             ~set:(fun run k -> Run.int64 run k 8 20_000_000_000)
+             [| B.of_bigarray w; m |]))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      w.{0} <- 1L;
+      Domain.join host)
+    (fun () ->
+      Rig_support.await "the launch running" (fun () -> w.{1} = 1L);
+      f ())
+
+(* The point of work on [d] that reads [m] and does nothing. *)
+let device_reading d m =
+  Rig.submit
+    (Sub.make d [| Rig_support.touching [| Sub.read |] |])
+    ~run:(Run.make ())
+    ~buffers:[| require_some (B.borrow d m) |]
+
+(* A device reads memory while a host launch reads it: a wait for a write
+   once both submits have returned follows the device's read. *)
+let test_beside_host () =
+  let d, _ = P.open_ "host:beside" in
+  let m = B.create Rig.host shared_bytes in
+  let p = during_host_read m (fun () -> device_reading d m) in
+  B.wait m Read_write;
+  equal ~msg:"the device's read reached" bool true (Rig.Point.reached p)
+
+(* A host launch on memory whose first use is a closed device's, done, and
+   whose second is a live device's read: a wait for a write that starts
+   while the launch runs follows the read. *)
+let test_host_after_closed () =
+  let m = B.create Rig.host shared_bytes in
+  let closed, _ = P.open_ "host:closed" in
+  Rig.Point.wait (device_reading closed m);
+  let d, _ = P.open_ "host:live" in
+  let p = device_reading d m in
+  Rig.close closed;
+  let reached =
+    during_host_read m (fun () ->
+        B.wait m Read_write;
+        Rig.Point.reached p)
+  in
+  equal ~msg:"the device's read reached" bool true reached
+
 let domain_tests =
   group ~timeout "domains"
     [
@@ -355,6 +412,12 @@ let domain_tests =
         "launches and pool jobs from two domains each run every unit once"
         domain_commands;
       test "the runtime is released while a launch runs" test_released;
+      test "a wait for a write follows a device's read beside a host launch"
+        test_beside_host;
+      test
+        "a wait for a write during a host launch follows a device's read \
+         after a closed device's"
+        test_host_after_closed;
     ]
 
 (* Code memory *)
