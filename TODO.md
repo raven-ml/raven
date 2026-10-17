@@ -458,8 +458,9 @@ raven / llama.cpp (Vulkan; ROCm):
   design campaign that audits its references (formats' specs, zlib, zstd,
   lz4, snappy) and holds it to rig's bar; `Nx_io.gunzip` moves with it
 - private modules: each gets an .mli per doc/dev/documentation.md, rig as
-  the reference (143 lib/ modules have none; jera, norn and ymir dropped
-  theirs)
+  the reference. Left, in rig's lib/: amd/amdgpu/request.ml,
+  nv/pci/gsp_defs.ml and the `defs.ml` of amd/abi, amd/pci, bnxt, mlx5,
+  mlx5/abi, mlx5/uverbs, nv, nv/abi, nv/nvidia and nv/pci
 - windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
   drop the git pins in dune-project and ci.yml
 - tests: CI runtest under a memory cap
