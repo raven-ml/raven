@@ -267,7 +267,10 @@ raven / llama.cpp (Vulkan; ROCm):
   saves ~20%); float64 sin/cos inline the full Payne–Hanek reduction (40-170
   KB kernels); structural comparisons in the rewriter (~6%); parallel
   compile saturates at ~4 domains (a shard lock per node, domains spawned
-  per `Worker.map`); Metal builds run one at a time and NVRTC in-process
+  per `Worker.map`); Metal builds run one at a time and NVRTC in-process;
+  a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
+  renders as 32-lane float selects of transposed loads that clang -O2
+  takes over 2 min on
 - compile time and launch counts: a NUTS program takes 9-14 s to build, a
   ymir aperture gradient 98 s cold; loop bodies store each carry and row in
   its own kernel (drawing-scan-256: 6 per trip against 2). Multi-output
