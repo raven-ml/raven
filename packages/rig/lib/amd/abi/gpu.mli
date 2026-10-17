@@ -38,8 +38,9 @@ type t = {
       (** The waves a compute unit runs concurrently with scratch
           memory. *)
 }
-(** The type for GPUs. Every count is positive, which the encoders assume
-    and do not check. A device checks it when it is made. *)
+(** The type for GPUs. Every count is positive, which this library's
+    functions assume and do not check. A device checks it when it is
+    made. *)
 
 val processor : t -> string
 (** [processor g] is the processor [g] runs code objects of, as LLVM names

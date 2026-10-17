@@ -47,21 +47,6 @@ let copies_of length =
      let+ dst = addr and+ src = addr and+ n = length (largest v) in
      (v, dst, src, n))
 
-(* Lengths around the largest copy and its multiples. *)
-let copies =
-  copies_of (fun max ->
-      Gen.frequency
-        [
-          (2, Gen.int_range 0 4096);
-          (1, Gen.constant max);
-          ( 2,
-            Gen.map
-              (fun (k, d) -> (k * max) + d)
-              (Gen.pair (Gen.int_range 0 3) (Gen.int_range (-2) 2))
-            |> Gen.such_that (fun n -> n >= 0) );
-          (1, Gen.int_range 0 (3 * max));
-        ])
-
 (* Lengths of one linear copy, from 1 to the largest, its bounds included. *)
 let linear_copies =
   copies_of (fun max ->
@@ -84,22 +69,6 @@ let rec pieces = function
 let copy =
   group ~timeout "copy"
     [
-      prop
-        "a copy is linear copies of the largest size, in order, then the rest"
-        copies (fun (v, dst, src, n) ->
-          let max = largest v in
-          cover "two pieces or more" (n > max);
-          cover "exactly the largest" (n = max);
-          let rec expected at =
-            if at >= n then []
-            else
-              let k = Int.min max (n - at) in
-              (k, src + at, dst + at) :: expected (at + k)
-          in
-          equal
-            (list (triple int int int))
-            (expected 0)
-            (pieces (words (Sdma.copy (gpu v) ~dst ~src n))));
       prop "a linear copy is one piece of its bytes, up to the largest"
         linear_copies (fun (v, dst, src, n) ->
           let max = Sdma.max_copy (gpu v) in
@@ -108,31 +77,7 @@ let copy =
           equal
             (list (triple int int int))
             [ (n, src, dst) ]
-            (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n)));
-          equal (list int) ~msg:"as copy's"
-            (words (Sdma.copy (gpu v) ~dst ~src n))
-            (words (Sdma.copy_linear ~dst ~src ~bytes:n)));
-      test "a copy of no bytes is no packet" (fun () ->
-          equal (list int) []
-            (words (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 0)));
-      test "a negative copy is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
-              Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (-1)));
-      cases ~name:string_of_int "a copy past 2^48 bytes is refused"
-        [ (1 lsl 48) + 1; max_int - (1 lsl 30) + 2; max_int ]
-        (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
-              Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 n));
-      (* 2^18 copies of 1 GiB, of 7 words each, within a stack of 2^16
-         words: none per copy. *)
-      test "a copy of 2^48 bytes is taken" (fun () ->
-          let gc = Gc.get () in
-          Gc.set { gc with stack_limit = 1 lsl 16 };
-          let size =
-            Fun.protect ~finally:(fun () -> Gc.set gc) (fun () ->
-                Packet.size (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48)))
-          in
-          equal int ((1 lsl 18) * 7) size);
+            (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n))));
     ]
 
 let others =

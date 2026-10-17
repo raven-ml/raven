@@ -5,8 +5,6 @@
 
 open Packet
 
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
 (* A field's value, from its (mask, shift). *)
 let field (mask, shift) v = (v land mask) lsl shift
 
@@ -24,9 +22,6 @@ let copy_header =
   Defs.sdma_op_copy
   lor field Defs.sdma_pkt_copy_linear_header_sub_op Defs.sdma_subop_copy_linear
 
-(* The longest copy: what a GPU's 48-bit virtual addresses reach. *)
-let max_bytes = 1 lsl 48
-
 let copy_linear ~dst ~src ~bytes =
   [
     Dword copy_header;
@@ -35,23 +30,6 @@ let copy_linear ~dst ~src ~bytes =
     W64 (Value src);
     W64 (Value dst);
   ]
-
-let copy g ~dst ~src n =
-  if n < 0 || n > max_bytes then
-    invalid_argf "Sdma.copy: %d bytes, expected 0 to 2^48" n;
-  let max = max_copy g in
-  let piece i =
-    let off = i * max in
-    let at v = if off = 0 then Value v else Add (Value v, Int64.of_int off) in
-    [
-      Dword copy_header;
-      Dword (Int.min max (n - off) - 1);
-      Dword 0;
-      W64 (at src);
-      W64 (at dst);
-    ]
-  in
-  List.concat_map piece (List.init ((n + max - 1) / max) Fun.id)
 
 (* The interval and retries of a poll, as the kernel driver sets them. *)
 let interval = 0x04

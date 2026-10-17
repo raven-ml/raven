@@ -6,109 +6,58 @@
 (** The bytes an AMD GPU shares with its driver and with compiled code, as
     values.
 
-    This library describes what an AMD GPU reads and writes: the packets its
-    queues read, the registers and scratch memory those packets set up, the
-    code objects they run, and the counters and thread traces a run records.
+    This library describes what an AMD GPU reads and writes: the code
+    objects it runs, and the thread traces and counters a run records.
     Nothing here acts on a GPU. Each value describes bytes, and its caller
-    writes them where the GPU reads them.
-
-    A {e packet} ({!Packet.t}) is a list of a queue's 32-bit words, some
-    fixed by the layout and the others values of the caller's type ['v],
-    which the caller encodes, templates or compiles ({!Packet}). An
-    encoder whose words depend on the GPU takes a {!Gpu.t}, the
+    writes them where the GPU reads them, or reads them where the GPU wrote
+    them. A format whose bytes depend on the GPU takes a {!Gpu.t}, the
     versions of the GPU's blocks and the number of its parts.
 
-    A {e code object} ({!Code_object.t}) is a program the GPU runs. A loader
-    writes its image into the GPU's memory, and a dispatch ({!Pm4.dispatch},
-    {!Aql.dispatch}) launches one of its kernels from there.
+    A {e code object} ({!Code_object.t}) is a program the GPU runs. A device
+    loads its image into the GPU's memory and launches its kernels from
+    there.
 
-    A device's driver declares what compiled code needs to encode work for
-    the device as a {!Capability.t} ({!declare}): its GPU, its clock, the
-    packets its compute queue reads and its trace buffers. Compiled code
-    finds it under {!key}.
+    A device's driver declares what compiled code needs of the device as a
+    {!Capability.t} ({!declare}): its GPU, its clock, what its compute queue
+    reads and its trace buffers. Compiled code finds it under {!key}.
 
-    {v
-    code object bytes
-      --Code_object.of_string--> Code_object.t --kernel--> kernel
-                                      |                      |
-                            size, image, patches  Pm4.dispatch, Aql.dispatch
-                                      |                      |
-                            a loader writes them             v
-    Gpu.t --> Pm4, Aql, Sdma, Thread_trace ------------> 'v Packet.t
-          --> Register, Scratch: values the packets carry      |
-                                   encode, template, a compiler's own nodes
-    v}
-
-    A driver that knows its addresses encodes a launch of the kernel
-    ["add"] of a code object [co] loaded at [base]:
+    Compiled code checks that a device [d] runs a code object [co]:
     {[
-    let k = Option.get (Code_object.kernel co "add") in
-    let p =
-      Aql.dispatch k ~descriptor:(base + k.descriptor) ~args
-        ~threads:(64, 1, 1) ~grid:(1024, 1, 1)
-    in
-    Packet.encode Int64.of_int p
+    let runs d co =
+      match Rig.capability d key with
+      | Some c -> Code_object.runs_on co c.gpu
+      | None -> false
     ]}
-    The result is one AQL packet, 64 bytes, which the driver places in its
-    queue's ring as {!Aql} says.
 
     The modules below are in reading order.
 
     {1:conventions Conventions}
 
-    This library cannot check an operand of the caller's type ['v]. Each
-    function states the alignment and range such an operand must have, and
-    the caller must keep them.
-
     Misuse raises [Invalid_argument], such as an integer outside the range
-    its function states, or a register or packet the GPU's GC does not have.
-    A code object that is not one for AMD GPUs is [Error msg], [msg] saying
-    why.
+    its function states, or a register the GPU's GC does not have. A code
+    object that is not one for AMD GPUs is [Error msg], [msg] saying why.
 
     The library has no state, and any domain may use any of its values.
 
     {1:references References}
 
     {ul
-    {- HSA Foundation. {e HSA Platform System Architecture Specification}:
-       the Architected Queuing Language (AQL) packets.}
     {- LLVM's
        {{:https://llvm.org/docs/AMDGPUUsage.html}User Guide for AMDGPU
        Backend}: code objects, their relocation records, their metadata and
        kernel descriptors.}} *)
-
-(** {1:words Queue words} *)
-
-module Packet = Packet
-(** Packets, the 32-bit words a GPU's queue reads. *)
 
 (** {1:gpus GPUs} *)
 
 module Gpu = Gpu
 (** AMD GPUs, as their formats depend on them. *)
 
-module Register = Register
-(** The registers of a GPU's GC. *)
-
 (** {1:programs Programs} *)
 
 module Code_object = Code_object
 (** Code objects, the programs AMD GPUs run. *)
 
-module Scratch = Scratch
-(** Scratch memory, which holds the private memory of kernels'
-    work-items. *)
-
-(** {1:commands Commands} *)
-
-module Pm4 = Pm4
-(** The PM4 packets a compute queue reads. *)
-
-module Aql = Aql
-(** The AQL packets of a queue that dispatches over every die. *)
-
-module Sdma = Sdma
-(** The SDMA packets a copy queue reads. *)
+(** {1:records Records of runs} *)
 
 module Thread_trace = Thread_trace
 (** Thread traces, which a GPU's shader engines record while they run
@@ -130,3 +79,36 @@ val key : Capability.t Type.Id.t
 val declare : Capability.t -> Rig_edge.capability
 (** [declare c] is [c] under {!key}, as the facts of an AMD device carry it
     ({!Rig_edge.type-facts}). *)
+
+(**/**)
+
+(* The packets a GPU's queues read, and the registers and scratch memory
+   they set up. rig's AMD driver encodes its queues' work with them; tests
+   check them against AMD's headers without a GPU.
+
+   A packet ([Packet.t]) is a list of a queue's 32-bit words, some fixed by
+   the layout and the others values of the caller's type ['v], which the
+   caller encodes or templates. This library cannot check such an operand:
+   each function states the alignment and range it must have, and the
+   caller must keep them. The HSA Foundation's HSA Platform System
+   Architecture Specification defines the Architected Queuing Language
+   (AQL) packets. *)
+
+module Packet = Packet
+(** Packets, the 32-bit words a GPU's queue reads. *)
+
+module Register = Register
+(** The registers of a GPU's GC. *)
+
+module Scratch = Scratch
+(** Scratch memory, which holds the private memory of kernels'
+    work-items. *)
+
+module Pm4 = Pm4
+(** The PM4 packets a compute queue reads. *)
+
+module Aql = Aql
+(** The AQL packets of a queue that dispatches over every die. *)
+
+module Sdma = Sdma
+(** The SDMA packets a copy queue reads. *)

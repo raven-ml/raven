@@ -10,14 +10,6 @@
     ring's end with zeros and starts a packet that does not fit before it at
     the ring's start. *)
 
-val copy : Gpu.t -> dst:'v -> src:'v -> int -> 'v Packet.t
-(** [copy g ~dst ~src n] copies [n] bytes from address [src] to address
-    [dst], in linear copies of at most {!max_copy}[ g] bytes each. It is [[]]
-    for [n = 0].
-
-    Raises [Invalid_argument] if [n] is not in \[[0];[2{^48}]\], what a
-    GPU's 48-bit virtual addresses reach. *)
-
 val max_copy : Gpu.t -> int
 (** [max_copy g] is the most bytes one linear copy of [g]'s engine moves:
     1 GiB from SDMA 4.4.2 below 5 and from 5.2, and 4 MiB otherwise. *)
@@ -25,8 +17,7 @@ val max_copy : Gpu.t -> int
 val copy_linear : dst:'v -> src:'v -> bytes:'v -> 'v Packet.t
 (** [copy_linear ~dst ~src ~bytes] copies [bytes] bytes from address [src]
     to address [dst] in one linear copy of the engine. The caller must keep
-    [bytes] in \[[1];[max_copy g]\] for the engine's GPU [g]. {!copy} is a
-    sequence of them. *)
+    [bytes] in \[[1];[max_copy g]\] for the engine's GPU [g]. *)
 
 val poll : 'v -> Packet.comparison -> 'v -> ?mask:int -> unit -> 'v Packet.t
 (** [poll addr cmp v ~mask ()] waits until the 32 bits at [addr], masked by

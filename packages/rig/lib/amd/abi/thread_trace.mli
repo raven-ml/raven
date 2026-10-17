@@ -8,9 +8,9 @@
 
     While tracing, each shader engine writes a stream of packets into a
     buffer of its own: when each wave starts and ends, the instructions it
-    issues and, from GFX11 on, markers of the GPU's clock ({!Pm4.source})
-    from time to time. Its times count the engine's cycles from the start of
-    the trace.
+    issues and, from GFX11 on, markers of the GPU's clock
+    ({!Capability.t.clock_hz}) from time to time. Its times count the
+    engine's cycles from the start of the trace.
 
     A compute queue starts tracing with the PM4 packets of {!val-start} and
     stops with those of {!val-stop}, which a submission places on the queue
@@ -93,8 +93,8 @@ val waves : Gpu.t -> string -> wave list
 
 val clock : Gpu.t -> string -> (int -> int) option
 (** [clock g trace] maps a shader time of [trace] to the GPU's clock
-    ({!Pm4.source}) through [trace]'s realtime markers. A time between two
-    markers maps on the line through them, and a time outside them on the
-    line through the first two or the last two. It is [None] for a trace of
-    fewer than two markers at distinct shader times, such as any trace of a
-    GFX9 GPU. *)
+    ({!Capability.t.clock_hz}) through [trace]'s realtime markers. A time
+    between two markers maps on the line through them, and a time outside
+    them on the line through the first two or the last two. It is [None]
+    for a trace of fewer than two markers at distinct shader times, such as
+    any trace of a GFX9 GPU. *)

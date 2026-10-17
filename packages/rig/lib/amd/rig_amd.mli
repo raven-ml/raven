@@ -291,7 +291,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     device holds, each a launch whose arguments take at most 4352 bytes,
     which every kernel of at most 4096 bytes of explicit arguments and code
     object version 5's 256 bytes of implicit ones meets, or a copy of at
-    most {!Rig_amd_abi.Sdma.max_copy} bytes (1 GiB; 4 MiB on SDMA engines
+    most the bytes of one SDMA copy packet (1 GiB; 4 MiB on SDMA engines
     before 4.4.2 and on 5.0 and 5.1). A launch of more arguments, a longer
     copy and words take the room their sizes take. It does not run:
     {ul
@@ -317,9 +317,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     {b Times.} While a profile is taken, each queue a value's work enters
     writes the GPU's clock after the value's waits, and the queue that
     releases the value writes it before the release: on ["COMPUTE:0"] once
-    the dispatches before it have completed ({!Rig_amd_abi.Pm4.copy_data}
-    of the clock), on ["COPY:0"] after a fence has waited for its copies
-    ({!Rig_amd_abi.Sdma.timestamp}). [settle], or a later [submit],
+    the dispatches before it have completed (PM4's [COPY_DATA] of the
+    clock), on ["COPY:0"] after a fence has waited for its copies (SDMA's
+    [TIMESTAMP]). [settle], or a later [submit],
     converts the earliest start and the end to the host's clock, in value
     order, with each no earlier than the end of the value converted before
     it, since a value's work starts once every earlier value's work has

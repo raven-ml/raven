@@ -12,27 +12,28 @@
     as a {!t} when it opens the device ({!declare}), and compiled code finds
     them under {!key}.
 
-    {b Times.} The GPU writes times ({!Pm4.copy_data} of {!Pm4.Clock},
-    {!Sdma.timestamp}, the markers of a {!Thread_trace}) as counts of its
-    clock, which runs at {!field-clock_hz}. A reader converts them to the
+    {b Times.} The GPU writes times (the stamps its queues write, the
+    markers of a {!Thread_trace}) as counts of its clock, which runs at
+    {!field-clock_hz}. A reader converts them to the
     host clock ([CLOCK_MONOTONIC]) by that frequency and an offset, measured
     with a time the GPU writes between two readings of the host clock. *)
 
 (** The type for the packets a device's compute queue reads. *)
 type compute =
   | Pm4
-      (** PM4 packets ({!module-Pm4}), which one die runs. Each dispatch
-          names its scratch buffer ({!Pm4.dispatch}). *)
+      (** PM4 packets, which one die runs. Each dispatch names its scratch
+          buffer. *)
   | Aql of { scratch : int -> (unit, string) result }
-      (** AQL packets ({!module-Aql}), which every die runs. The queue hands
+      (** AQL packets, 64 bytes each, which every die runs. The queue hands
           every kernel it dispatches one scratch buffer, the driver's.
-          [scratch n] makes it serve kernels of up to [n] bytes per lane
-          ({!Scratch.size}). It does nothing if the buffer already does, and
-          otherwise replaces it with a larger one, keeping the old one until
-          the work placed before the call completes. Any domain may call
-          it. The result is [Error msg] if the device cannot allocate the
-          buffer. Raises [Invalid_argument] as {!Scratch.descriptor} or
-          {!Scratch.tmpring} does for it, and, having changed nothing, from
+          [scratch n] makes it serve kernels of up to [n] bytes per lane. It
+          does nothing if the buffer already does, and otherwise replaces it
+          with a larger one, keeping the old one until the work placed
+          before the call completes. Any domain may call it. The result is
+          [Error msg] if the device cannot allocate the buffer. Raises
+          [Invalid_argument] if [n] is more than a code object may take on
+          the GPU ({!Code_object.of_string}), if the buffer would hold
+          [2{^32}] bytes or more per die, and, having changed nothing, from
           a callback inside a lock ([Rig]'s domains section). *)
 
 type trace = {
@@ -58,7 +59,7 @@ type trace = {
     later run takes it. *)
 
 type t = {
-  gpu : Gpu.t;  (** The device's GPU, as the encoders take it. *)
+  gpu : Gpu.t;  (** The device's GPU, as this library's formats take it. *)
   clock_hz : int;  (** The frequency of the GPU's clock, in hertz. *)
   compute : compute;  (** What its compute queue reads. *)
   wgps : int array array;

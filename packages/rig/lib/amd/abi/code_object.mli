@@ -12,11 +12,15 @@
     image, which a dispatch reads: where the kernel's code starts, the memory
     it takes, and the registers it sets up for its waves.
 
-    The image ({!image}) is {!size} bytes: the image of {!elf}
-    ({!Rig_elf}), zeros up to {!size}, then each of {!patches} written over
-    them, in order. It starts at the object's lowest section the image holds
-    ([(elf co).address]), so the headers and tables a linker puts before its
-    code are not loaded. A loader writes it into its destination.
+    The image ({!image}) is {!size} bytes: the object's sections laid out
+    as {!Rig_elf} lays out its image, zeros up to {!size}, then the word
+    each of its relocations computes written over them, in the object's
+    order. It starts at the object's lowest section the image holds, so the
+    headers and tables a linker puts before its code are not loaded. Each
+    relocation writes an [R_AMDGPU_REL64] word, [S + A - P]: its target's
+    offset plus the relocation's addend, less the word's own offset. The
+    image therefore holds wherever it is loaded. A loader writes it into its
+    destination.
 
     Offsets are offsets in the image, in bytes. *)
 
@@ -36,8 +40,9 @@ val of_string : string -> (t, string) result
     {- its image exceeds [2{^48}] bytes, or a kernel's descriptor or first
        instruction lies outside it;}
     {- a kernel takes more than a dispatch gives: over 511 * 512 bytes of
-       LDS, or more scratch per lane than {!Scratch.tmpring} accepts on its
-       generation;}
+       LDS, or more scratch per lane than a wave's scratch register holds on
+       its generation, 131056 bytes on GFX9 and GFX10, 131068 on GFX11 and
+       1048572 from GFX12;}
     {- a note runs past its section, or the metadata is malformed, bounds a
        kernel's workgroups outside \[[1];[1024]\] work-items, or places an
        argument outside the kernel's arguments.}} *)
@@ -53,19 +58,9 @@ val runs_on : t -> Gpu.t -> bool
     under. *)
 
 val size : t -> int
-(** [size co] is the length of [co]'s image, in bytes: [(elf co).size]
-    rounded up to whole 32-bit words. *)
-
-val elf : t -> Rig_elf.t
-(** [elf co] is the object [co] was read from, which lays out its image. *)
-
-val patches : t -> (int * string) list
-(** [patches co] is what [co]'s relocations write over its image, in the
-    order of the object's relocations. Each [(off, p)] puts the bytes [p] at
-    offset [off], and [off + String.length p <= size co]. Each [p] is the 8
-    little-endian bytes of an [R_AMDGPU_REL64] word, [S + A - P]: its
-    target's offset plus the relocation's addend, less the word's own
-    offset. A patch holds wherever the image is loaded. *)
+(** [size co] is the length of [co]'s image, in bytes: the size of the
+    object's image as {!Rig_elf} lays it out, rounded up to whole 32-bit
+    words. *)
 
 val image : t -> string
 (** [image co] is [co]'s image: {!size} bytes, laid out as the module's
@@ -138,3 +133,18 @@ type kernel = {
 val kernel : t -> string -> kernel option
 (** [kernel co name] is the kernel [name] of [co], whose descriptor is at
     the symbol [name ^ ".kd"], if [co] defines it ({!kernels}). *)
+
+(**/**)
+
+(* What lays out the image, which tests check against the object. *)
+
+val elf : t -> Rig_elf.t
+(** [elf co] is the object [co] was read from, which lays out its image:
+    {!image} starts at [(elf co).address] and holds [(elf co).size] bytes
+    of it. *)
+
+val patches : t -> (int * string) list
+(** [patches co] is what [co]'s relocations write over its image, in the
+    order of the object's relocations. Each [(off, p)] puts the 8
+    little-endian bytes [p] of a relocation's word at offset [off], and
+    [off + 8 <= size co]. *)
