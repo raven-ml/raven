@@ -13,9 +13,10 @@
     every set has no placement and joins the others: operands that are all of
     every set give no route. Each other operand is first given the axes the
     operation reads whole on each device (an axis it acts along), and moved to
-    the result's axes. The target is the last of these that cuts an axis; else,
-    where some lie on one device, that device, which every such operand must
-    share; else the first. Each operand is then read where it lies if that gives
+    the result's axes. The target is the one of these that cuts the results
+    into the most windows, the last of them where several do; else, where
+    some lie on one device, that device, which every such operand must share;
+    else the first. Each operand is then read where it lies if that gives
     every device of the target the part of the operand the device's window of
     the result depends on, and lies on no other device: the same window, or the
     whole operand on each device of the target; otherwise it is read at the
@@ -34,6 +35,13 @@
     the results then hold all of its terms between them, and combine their
     partial results ({!Partial}). Otherwise every operand is read as above,
     whole along its reduced axes.
+
+    Operands placed where a route reads them route to it again: each then
+    lies, moved to the results' axes, at the target or at the target with
+    some cuts undone, which makes fewer windows. The engine routes an
+    operation again once it has placed its operands, and a deferred value's
+    placement comes from a route over operands not yet placed: the two
+    agree.
 
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,
@@ -91,7 +99,9 @@ type rule =
           {!route}, which takes a row per operand, never receives it. *)
   | Into of axis array array
       (** [Axes]' windows, written into the last operand: the target is the last
-          operand's placement where it lies on the set. *)
+          operand's placement where it lies on the set, or, where it is of
+          every set, the target {!route} gives with the results' axes it
+          does not become whole. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> int option
 (** [moved m s a] is the axis that axis [a] of a value of shape [s] becomes

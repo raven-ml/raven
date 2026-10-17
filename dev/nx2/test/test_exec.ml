@@ -1378,7 +1378,8 @@ let ckinds =
    three or four devices; over both mesh axes; over the minor one, beside
    [a]'s rows over the major one; over the minor one, beside the batch over
    the major one in both; or pair 0 over the major axis and pair 1 over the
-   minor one. *)
+   minor one. Or [b]'s pair [p] alone cut, over the minor axis, and [a]'s
+   batch over the major one and rows over the minor one. *)
 type ccut =
   | Pair3 of int
   | Pair4 of int
@@ -1386,6 +1387,7 @@ type ccut =
   | Pair_rows of int
   | Pair_batch of int
   | Pairs
+  | Batch_rows of int
 
 (* Where [init] lies: at the result's placement, or whole on every device,
    which differs where the result is cut. *)
@@ -1414,6 +1416,7 @@ let pp_ccase ppf c =
     | Pair_rows p -> Printf.sprintf "pair %d/b rows/a" p
     | Pair_batch p -> Printf.sprintf "pair %d/b batch/a" p
     | Pairs -> "pair 0/a pair 1/b"
+    | Batch_rows p -> Printf.sprintf "batch/a rows/b, b's pair %d/b" p
   in
   Format.fprintf ppf "%s %s%d x %d by %a, %s, %s order%s, seed %d"
     (D.name k.cdtype)
@@ -1447,11 +1450,15 @@ let ccase =
          of_list
            [ Pair3 1; Pair4 1; Pair_mesh 1; Pair_rows 1; Pair_mesh 0; Pairs ]
        else
-         of_list [ Pair3 0; Pair4 0; Pair_mesh 0; Pair_rows 0; Pair_batch 0 ]
+         of_list
+           [
+             Pair3 0; Pair4 0; Pair_mesh 0; Pair_rows 0; Pair_batch 0;
+             Batch_rows 0;
+           ]
      in
      let* nb =
        match ccut with
-       | Pair_batch _ -> map Option.some (of_list [ 1; 2; 3 ])
+       | Pair_batch _ | Batch_rows _ -> map Option.some (of_list [ 1; 2; 3 ])
        | _ -> frequency [ (3, constant None); (1, constant (Some 2)) ]
      in
      let* rows = int_range 1 3 in
@@ -1523,7 +1530,7 @@ let law_ccase c =
     match c.ccut with
     | Pair3 p -> (p, 3)
     | Pair4 p | Pair_mesh p -> (p, 4)
-    | Pair_rows p | Pair_batch p -> (p, 2)
+    | Pair_rows p | Pair_batch p | Batch_rows p -> (p, 2)
     | Pairs -> (1, 2)
   in
   let kc = c.ks.(cut_pair) in
@@ -1538,7 +1545,10 @@ let law_ccase c =
   cover "from init" c.init;
   cover "from init on every device beside a cut result"
     (c.init && c.iwhere = Init_everywhere
-    && match c.ccut with Pair_rows _ | Pair_batch _ -> true | _ -> false);
+    &&
+    match c.ccut with
+    | Pair_rows _ | Pair_batch _ | Batch_rows _ -> true
+    | _ -> false);
   cover "no product" (terms = 0);
   cover "an empty window along the cut pair" (kc > 0 && kc < tiles);
   cover "an uneven cut" (kc mod tiles <> 0);
@@ -1550,6 +1560,8 @@ let law_ccase c =
     (match c.ccut with Pair_rows _ -> true | _ -> false);
   cover "a pair cut beside the batch"
     (match c.ccut with Pair_batch _ -> true | _ -> false);
+  cover "a pair cut in b alone beside a's batch and rows"
+    (match c.ccut with Batch_rows _ -> true | _ -> false);
   cover "a lane block that window edges split"
     (c.order = Lane && one_pair && terms > block
     && List.exists (fun e -> e mod block <> 0) edges);
@@ -1587,6 +1599,9 @@ let law_ccase c =
           (mesh [ (0, [ "a" ]); (pa p, [ "b" ]) ])
           (mesh [ (0, [ "a" ]); (pb p, [ "b" ]) ])
           (result [ (0, [ "a" ]) ])
+    | Batch_rows p ->
+        let batch_rows = [ (0, [ "a" ]); (1, [ "b" ]) ] in
+        at (mesh batch_rows) (mesh [ (pb p, [ "b" ]) ]) (result batch_rows)
     | Pairs ->
         at
           (mesh [ (pa 0, [ "a" ]); (pa 1, [ "b" ]) ])
@@ -1679,7 +1694,7 @@ let law_nx_case c =
         product
           (Nx.place (mesh [ (1, [ "a"; "b" ]) ]) a)
           (Nx.place (mesh [ (0, [ "a"; "b" ]) ]) b)
-    | Pair_rows _ | Pair_batch _ | Pairs ->
+    | Pair_rows _ | Pair_batch _ | Pairs | Batch_rows _ ->
         product
           (Nx.place (mesh [ (0, [ "a" ]); (1, [ "b" ]) ]) a)
           (Nx.place (mesh [ (0, [ "b" ]) ]) b)

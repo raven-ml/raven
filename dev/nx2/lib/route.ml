@@ -192,6 +192,9 @@ let check ~by rule shapes =
         || not (Array.for_all2 fits t shapes)
       then invalid_argf "%s: a rule that does not name each operand's axes" by
 
+(* The number of windows [g] cuts a value into. *)
+let windows g = Array.fold_left (fun n (_, t) -> n * t) 1 (Grid.cuts g)
+
 (* Any route, worked out from the operands' grids. *)
 let general ~by rule ps shapes =
   let n = Array.length ps in
@@ -214,14 +217,27 @@ let general ~by rule ps shapes =
           (fun i -> forward rule i (rank i) (Devices.grid (placed i)))
           concrete
       in
+      (* The target is a fixpoint: placed where the route reads it, each
+         operand lies, forward, at the target with the cuts of the axes it
+         lacks undone, which makes fewer windows, and the operand the
+         target came from lies at it. Routing them there again picks the
+         same target. *)
+      let most =
+        List.fold_left
+          (fun best g ->
+            match best with
+            | Some b when windows g < windows b -> best
+            | Some _ | None -> if Grid.is_cut g then Some g else best)
+          None fwd
+      in
       let target =
         match rule with
         | Into _ when ps.(n - 1) <> None ->
             forward rule (n - 1) (rank (n - 1)) (Devices.grid (placed (n - 1)))
         | _ -> (
-            match List.rev (List.filter Grid.is_cut fwd) with
-            | g :: _ -> g
-            | [] -> (
+            match most with
+            | Some g -> g
+            | None -> (
                 match
                   List.sort_uniq Int.compare (List.filter_map Grid.one fwd)
                 with
@@ -234,6 +250,16 @@ let general ~by rule ps shapes =
                       (Rig.name (Devices.rig set k))
                       (Rig.name (Devices.rig set k'))
                 | [] -> List.hd fwd))
+      in
+      (* An [Into]'s results lie where its last operand is read: of every
+         set, it is read at the target with the axes it lacks whole. *)
+      let target =
+        match rule with
+        | Into _ when ps.(n - 1) = None ->
+            let last = n - 1 in
+            forward rule last (rank last)
+              (backward rule last (rank last) target)
+        | Elementwise | Axes _ | Into _ -> target
       in
       let wants = Array.init n (fun i -> backward rule i (rank i) target) in
       (* Where an operand lies cut along a reduced axis, the grid each operand

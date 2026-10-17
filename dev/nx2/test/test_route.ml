@@ -393,6 +393,33 @@ let exact =
             (fun p -> equal (list int) target (devices_of p))
             r.operands)
 
+(* The engine places operands where their route reads them, then routes the
+   operation again, as a deferred value's form does over unplaced operands:
+   that route must be the first. *)
+let fixpoint =
+  prop ~count:500 "operands placed where their route reads them route alike"
+    case (fun c ->
+      match route c.rule c.ps c.shapes with
+      | exception Invalid_argument _ -> ()
+      | None -> ()
+      | Some r ->
+          let moved =
+            Array.exists2
+              (fun p q ->
+                match p with
+                | Some p -> not (Devices.equal p q)
+                | None -> true)
+              c.ps r.operands
+          in
+          cover "an operand moved" moved;
+          let r' = placed c.rule r.operands c.shapes in
+          equal placement ~msg:"the results" r.result r'.result;
+          Array.iteri
+            (fun i p ->
+              equal placement ~msg:(Printf.sprintf "operand %d" i) p
+                r'.operands.(i))
+            r.operands)
+
 let keeps =
   prop "operands already at the result's placement stay there" case (fun c ->
       assume (c.ps.(0) <> None);
@@ -579,6 +606,35 @@ let cases_ =
           equal placement (Devices.mesh ~by:"t" mesh [ (0, [ "a" ]) ]) r.result;
           equal bool true (r.operands.(0) == x);
           equal bool true (r.operands.(1) == y));
+      test "a batched contraction over an operand cut on fewer axes routes \
+            alike once placed"
+        (fun () ->
+          let s8 =
+            mint
+              (List.init 8 (fun k ->
+                   Result.get_ok
+                     (Rig.memory_device (Printf.sprintf "q%d" k))))
+          in
+          let mesh =
+            Devices.mesh_v ~by:"t" s8 [ ("a", 2); ("b", 2); ("c", 2) ]
+          in
+          let rule =
+            Route.Axes
+              [|
+                [| Becomes 0; Becomes 1; Reduced 0 |];
+                [| Becomes 0; Reduced 0; Becomes 2 |];
+              |]
+          in
+          let shapes = [| [| 4; 4; 4 |]; [| 4; 4; 3 |] |] in
+          let a =
+            Devices.mesh ~by:"t" mesh
+              [ (0, [ "c" ]); (1, [ "a" ]); (2, [ "b" ]) ]
+          and b = Devices.mesh ~by:"t" mesh [ (1, [ "b" ]) ] in
+          let r = placed rule [| a; b |] shapes in
+          let r' = placed rule r.operands shapes in
+          equal placement r.result r'.result;
+          equal placement r.operands.(0) r'.operands.(0);
+          equal placement r.operands.(1) r'.operands.(1));
       test "a contraction reads a pair cut unlike whole" (fun () ->
           let x = Devices.mesh ~by:"t" mesh [ (1, [ "a" ]) ] in
           let y = Devices.mesh ~by:"t" mesh [ (0, [ "b" ]) ] in
@@ -732,4 +788,7 @@ let move_law =
 let () =
   exit
     (run "nx route"
-       [ group "laws" [ law; exact; keeps; at_law; move_law ]; cases_ ])
+       [
+         group "laws" [ law; exact; fixpoint; keeps; at_law; move_law ];
+         cases_;
+       ])
