@@ -109,9 +109,8 @@ raven / llama.cpp (Vulkan; ROCm):
   `No_memory` and memory above 2^40; a Metal command-buffer fault, or why
   it cannot be forced
 - flakes, each failed once: test_submit "a part follows the earlier parts
-  that may share memory"; test_model on one domain, `Oom_at` on device 3 or
-  4 about 1 in 120 (loop it with logs kept); test_image 1 in 3 on the Mac
-  before its 2026-10-12 fix (rerun 30 times)
+  that may share memory"; test_image 1 in 3 on the Mac before its
+  2026-10-12 fix (rerun 30 times)
 - relock windtrap once its `workers-block` branch (a883e72, a start
   barrier that sleeps once workers stop arriving) lands: rig_pci.space
   "two domains allocate and free at once" times out at its 10 s bound in

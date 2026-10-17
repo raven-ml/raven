@@ -1077,6 +1077,14 @@ let new_kept_sys w =
 
 (* Creation *)
 
+(* Where the bytes of [memory] that [d] creates are for a copy. *)
+let created d memory =
+  match d.kind with
+  | Polled cfg when memory = B.Device && not cfg.visible -> Remote
+  | Gpu (Cuda | Nv | Amd) when memory = B.Device -> Remote
+  | Disk -> Io
+  | _ -> Local
+
 let create_ref (v : rdevv) memory n c outcome =
   let d = v.r and w = c.w in
   let vd = verdict () in
@@ -1095,13 +1103,7 @@ let create_ref (v : rdevv) memory n c outcome =
     if n > d.budget then vd.oom <- `Must
     else if may_refuse w d (made_bytes d) n then vd.oom <- `May;
   judge w vd outcome (fun () ->
-      let local =
-        match d.kind with
-        | Polled cfg when memory = B.Device && not cfg.visible -> Remote
-        | Gpu (Cuda | Nv | Amd) when memory = B.Device -> Remote
-        | Disk -> Io
-        | _ -> Local
-      in
+      let local = created d memory in
       let mkind = if d.kind = Host then Heap else Owned memory in
       if budgeted && (not w.two) && live_bytes w d + n > d.budget then
         failf "%s holds %d bytes and %d more in a budget of %d"
@@ -1431,6 +1433,9 @@ let transfer_ref (v : rdevv) (v' : rdevv) n seed outcome =
   judge v.dw vd outcome (fun s ->
       seen v.dw "a copy between two devices"
         (device_work v.r && device_work v'.r && v.r != v'.r && n > 0);
+      seen v.dw "a copy a device runs"
+        (n > 0
+        && List.exists (fun d -> created d B.Device = Remote) [ v.r; v'.r ]);
       if not (String.equal s (Bytes.unsafe_to_string (pattern seed n))) then
         failf "a transfer from %s to %s read other bytes" (kind_name v.r.kind)
           (kind_name v'.r.kind))
