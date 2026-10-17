@@ -38,6 +38,5 @@ val openers : unit -> (string * (unit -> (Rig.t, string) result)) list
     the system's devices, and opens no GPU. Opening has a cost and takes the
     GPU, so a program opens only the GPU it uses.
 
-    Raises {!Rig_cuda.exception-Refused} as {!Rig_cuda.count} does, from a
-    signal handler, finaliser or [Gc.Memprof] callback that interrupts a
-    call of {!Rig_cuda} on the same thread. *)
+    Raises [Invalid_argument] as {!Rig_cuda.count} does, from a callback
+    inside a lock ([Rig]'s domains section). *)

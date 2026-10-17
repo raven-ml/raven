@@ -14,42 +14,87 @@
    process keeps: their calls take the context, so they also serve after the
    device's C state is gone.
 
-   Every lock is a guard, which a thread holds at most one of: a call from a
-   signal handler, finaliser or Gc.Memprof callback inside a guard's section
-   raises [Refused] at its first take, before it changed anything. *)
+   Every lock is a [Mutex.t] that [protect] holds, counted among the locks its
+   thread holds (rig_hold in rig_edge.h). No section takes a second lock, so
+   locks never nest. A function that a caller outside rig makes and that may
+   take a lock, [count], an opener's [make] and a graph call, starts with
+   [check].
+
+   The locks are held across calls of the CUDA driver that may wait for the
+   GPU: the library's load, a host range's registration, a function's
+   lookup, a graph's construction. Each must see its table or its device
+   whole, and the driver gives no way to end such a call early, so a call of
+   rig's from a callback during one raises. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
 exception Fault of string
+
+(* Rig_edge.Driver declares it; the driver never raises it. *)
 exception Refused of string
 
-let () = Callback.register_exception "Rig_cuda.Refused" (Refused "")
+(* Locks *)
 
-(* A guard, a mutex whose take runs no signal handler. A take while the
-   thread holds a guard, as a callback inside a section would, raises
-   [Refused] before it takes anything. *)
-type guard
+(* The locks the calling thread holds, and a count of one more and one fewer
+   (rig_holds, rig_hold and rig_unhold in rig_edge.h). *)
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
 
-external guard : unit -> guard = "caml_rig_cuda_guard"
-external take_guard : guard -> unit = "caml_rig_cuda_guard_take"
-external give_guard : guard -> unit = "caml_rig_cuda_guard_give" [@@noalloc]
+external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
+external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-(* [protect g f] is [f ()] under the guard [g], taken as the last step
-   before the handler and given back as the first step of both exits, where
-   nothing allocates or polls, so an exception anywhere in [f], an
-   asynchronous one too, leaves it free. *)
-let protect g f =
-  take_guard g;
+(* [take m] takes [m], counted from before the take, so that a signal handler
+   that runs inside a contended take sees it held. An exception that ends the
+   take gives the count back first, having taken nothing: one a handler
+   raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
+   thread that holds [m], which only a call that skipped its check makes and
+   which raises [Invalid_argument]. *)
+let take m =
+  hold ();
+  match Mutex.lock m with
+  | () -> ()
+  | exception e -> (
+      unhold ();
+      match e with
+      | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
+          invalid_arg
+            "Rig_cuda: a lock taken again by the thread that holds it, from a \
+             signal handler, finaliser or Gc.Memprof callback"
+      | e -> reraise e)
+
+(* Gives [m] back, then its count, with nothing between that allocates or
+   polls. *)
+let give m =
+  Mutex.unlock m;
+  unhold ()
+
+(* [protect m f] is [f ()] holding [m], taken as the last step before the
+   handler and given back as the first step of both exits, where nothing
+   allocates or polls, so an exception anywhere in [f], an asynchronous one
+   too, leaves [m] free and the count right. *)
+let protect m f =
+  take m;
   match f () with
   | x ->
-      give_guard g;
+      give m;
       x
   | exception e ->
-      give_guard g;
+      give m;
       reraise e
+
+(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
+   call comes from a signal handler, finaliser or Gc.Memprof callback inside
+   that lock, and would wait for it or see its section half done. *)
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      (fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
    int, or CUDA's status negated. *)
@@ -119,10 +164,10 @@ type gpus = {
 
 let unheld = 0
 let taken = 1
-let lock = guard ()
+let lock = Mutex.create ()
 
 (* Held by a claim of a GPU. *)
-let held_lock = guard ()
+let held_lock = Mutex.create ()
 let gpus = ref None
 
 let discover () =
@@ -214,7 +259,7 @@ type image = {
   owner : int; (* the C state of the device that loaded it *)
   context : int;
   m : int;
-  lock : guard;
+  lock : Mutex.t;
   mutable entries : (string * Rig_edge.entry) list; [@atomic]
   (* twice the references, plus one after unload *)
   mutable graphs : int; [@atomic]
@@ -230,7 +275,7 @@ type t = {
   held : int Atomic.t;
   images : image list Atomic.t; (* loaded, whose functions a graph may run *)
   pending : graph_cleanup list Atomic.t;
-  guard : guard; (* held by a graph call and by stop *)
+  guard : Mutex.t; (* held by a graph call and by stop *)
   stopped : bool Atomic.t; (* stop began *)
   cap : Rig_cuda_abi.t;
   params_bound : int; (* the most parameter bytes of a kernel it launches *)
@@ -247,6 +292,7 @@ external keep_word : int -> int = "caml_rig_cuda_keep_word" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
+  check "Rig_cuda.count";
   match find_gpus () with Ok g -> Array.length g.devices | Error _ -> 0
 
 let device_name i =
@@ -342,6 +388,7 @@ let release_image (m : image) =
 
 let graph context guard stopped images pending
     (ks : Rig_cuda_abi.kernel array) =
+  check "Rig_cuda_abi.graph";
   let sizes = Array.concat (Array.to_list (Array.mapi sizes ks)) in
   protect guard @@ fun () ->
   drain pending;
@@ -455,7 +502,7 @@ let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
 (* The registrations [map_host] made, with the regions over each. *)
 let registry : registration list ref = ref []
-let registry_lock = guard ()
+let registry_lock = Mutex.create ()
 
 (* rig's array of timeline words: its address and its bytes. *)
 external words : unit -> int * int = "caml_rig_edge_words"
@@ -470,6 +517,7 @@ let note_words () =
     registry := { start; bytes; maps = 1 } :: !registry
 
 let open_ ~word i =
+  check "Rig_cuda.gpu";
   if i < 0 then invalid_argf "Rig_cuda.gpu: GPU %d is negative" i;
   let* g = find_gpus () in
   let n = Array.length g.devices in
@@ -524,7 +572,7 @@ let open_ ~word i =
           in
           let images = Atomic.make [] in
           let pending = g.pending.(i) in
-          let guard = guard () and stopped = Atomic.make false in
+          let guard = Mutex.create () and stopped = Atomic.make false in
           let graph = graph context guard stopped images pending in
           let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
           let facts =
@@ -705,7 +753,7 @@ let image g bin =
           owner = g.self;
           context = g.context;
           m;
-          lock = guard ();
+          lock = Mutex.create ();
           entries = [];
           graphs = 0;
           params_bound = g.params_bound;

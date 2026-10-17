@@ -59,11 +59,14 @@
     call any function of this module, at the same time as other domains. A
     function that waits for CUDA lets other domains run while it waits.
 
-    A call of {!count}, an opener's [make], {!map_host}, {!free}, {!entry},
-    {!stop} or the [graph] function of {!val-capability} from a signal
-    handler, finaliser or [Gc.Memprof] callback may raise
-    {!exception-Refused}, having changed nothing, when the callback
-    interrupts one of these calls, of any CUDA device, on the same thread.
+    {!count}, an opener's [make] and the [graph] function of
+    {!val-capability}, called from a callback inside a lock ([Rig]'s domains
+    section), raise [Invalid_argument], having changed nothing. rig calls
+    the functions of {!section-driver}, but [locate], [peer] and [signaled],
+    holding no lock ({!Rig_edge.section-drivers}); one called from such a
+    callback raises
+    [Invalid_argument], having changed nothing, where it would take a lock
+    that the interrupted call holds.
 
     {!Rig_edge} states how rig drives a device through its driver, and
     {!Rig_edge.section-calls} how it hands the driver work. *)
