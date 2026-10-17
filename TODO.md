@@ -294,6 +294,23 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx2
 
+- frontend, `Ptree` at a brand (RFC 0006's names at `('s, 'd) t`, `Walk`,
+  `S`, `sized`, the `tensor` alias), with `check` over it, `Rng.ptree` and
+  `associative_scan`
+- frontend, `fuse` and `widen` (`float_fn`, `Ptree.fuse`): one rounding
+  per element, bit for bit with `f ()` on one kernel library
+- frontend, symbolic shapes: `Size.v`, `Size.dims`; `shape`, `dim` and
+  `numel` raising on a symbolic axis under a trace; inheritance through
+  `_like`, movements, broadcasting and pattern groups
+- frontend, `attention` with `causal`, `kv` (`Dense | Paged`) and `pair`,
+  over new primitives
+- frontend, `contract`'s `?a_scale`, `?b_scale` (`scale`) and `?segments`,
+  after `Prim.Contract` and nx.cpu take them
+- frontend, `sync` with deferred per-set checks (a read raises the earliest
+  failed one); then the samplers' parameter checks move there, and
+  `Rng.truncated_normal`, `dirichlet`, `categorical`, `permutation`
+- frontend, donated reuse for `set`'s and `scatter`'s target and
+  `contract`'s `init`, with a `dispatch/kv-append-4096` row
 - `Interp`'s `running` field is shared by fibers on one domain;
   `Nx_array.to_device` copies a strided view's whole span (probes:
   `refs/audit/20261010-deep/worktrees/wt-18`)
@@ -335,12 +352,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - svd at order 64: the panel reduction's serial path (labrd) costs 2% on
   fudge (svd-f64-64 1.023, svd-f64-64x32 1.019): find what the in-order
   chunks pay over one pass
-- 28 of the Mac's nx rows run 1.5-3.7x their records with the library
-  unchanged since each row builds its inputs in its own setup
-  (dispatch/zeros_like-1M 52 -> 132 us; the 1M frontend maps,
-  index/concatenate, move/copy-1M, the small attention einsums); rig's
-  pacing explains part (zeros_like 119 -> 89 us under a proposed due
-  point): find the rest, then re-record
 - MR-aligned GEMM row subdivision
   (`refs/audit/20261010-deep/branches/few-units`): public matmul A/Bs and
   baselines on the Mac and fudge
