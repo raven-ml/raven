@@ -5,16 +5,20 @@
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-type rule = Elementwise | Axes of int array array | Into of int array array
+type axis = Becomes of int | Whole | Reduced
+type rule = Elementwise | Axes of axis array array | Into of axis array array
 
 type 'd t = {
   operands : 'd Devices.placement array;
   result : 'd Devices.placement;
 }
 
-(* The result axis that axis [a] of operand [i] becomes; negative for none. *)
+(* The result axis that axis [a] of operand [i] becomes, if any. *)
 let becomes rule i a =
-  match rule with Elementwise -> a | Axes t | Into t -> t.(i).(a)
+  match rule with
+  | Elementwise -> Some a
+  | Axes t | Into t -> (
+      match t.(i).(a) with Becomes a' -> Some a' | Whole | Reduced -> None)
 
 let product s lo hi =
   let p = ref 1 in
@@ -67,41 +71,47 @@ let window rule ~operand:i shape (w : Nx_array.Move.range array) =
   | Elementwise -> w
   | Axes t | Into t ->
       Array.mapi
-        (fun a d -> if t.(i).(a) < 0 then full d else w.(t.(i).(a)))
+        (fun a d ->
+          match t.(i).(a) with
+          | Becomes a' -> w.(a')
+          | Whole | Reduced -> full d)
         shape
 
 let keeps rule a' =
   match rule with
   | Elementwise -> false
-  | Axes t | Into t -> not (Array.exists (Array.mem a') t)
+  | Axes t | Into t -> not (Array.exists (Array.mem (Becomes a')) t)
 
 let uncut_all axes g = Array.fold_left (fun g axis -> Grid.uncut g ~axis) g axes
 
 (* Operand [i]'s grid, of rank [rank], on the result's axes: an axis it becomes
-   none of holds copies. *)
+   none of holds copies. [Grid.map_axes] renumbers the cut axes alone, each one
+   that becomes a result axis. *)
 let forward rule i rank g =
   let g = ref g in
   for a = 0 to rank - 1 do
-    if becomes rule i a < 0 then g := Grid.uncut !g ~axis:a
+    if becomes rule i a = None then g := Grid.uncut !g ~axis:a
   done;
-  Grid.map_axes (becomes rule i) !g
+  Grid.map_axes (fun a -> Option.get (becomes rule i a)) !g
 
 (* The target moved back to operand [i]'s axes, of rank [rank]: a result axis no
    axis of it becomes holds copies. *)
 let backward rule i rank target =
   let source a' =
     let rec find a =
-      if a = rank then -1 else if becomes rule i a = a' then a else find (a + 1)
+      if a = rank then None
+      else if becomes rule i a = Some a' then Some a
+      else find (a + 1)
     in
     find 0
   in
   let orphans =
     Array.of_list
       (List.filter_map
-         (fun (axis, _) -> if source axis < 0 then Some axis else None)
+         (fun (axis, _) -> if source axis = None then Some axis else None)
          (Array.to_list (Grid.cuts target)))
   in
-  Grid.map_axes source (uncut_all orphans target)
+  Grid.map_axes (fun a' -> Option.get (source a')) (uncut_all orphans target)
 
 (* Whether an operand at [g] gives every device of [want] the part [want] gives
    it, and lies on no other device: the same windows, or the whole on each of

@@ -31,10 +31,19 @@ let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
+let pp_axis ppf : Route.axis -> unit = function
+  | Becomes a -> Format.pp_print_int ppf a
+  | Whole -> Format.pp_print_string ppf "whole"
+  | Reduced -> Format.pp_print_string ppf "reduced"
+
+let pp_axes ppf a =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map (Format.asprintf "%a" pp_axis) a)))
+
 let pp_table ppf t =
   Format.fprintf ppf "[%s]"
     (String.concat "; "
-       (Array.to_list (Array.map (Format.asprintf "%a" pp_ints) t)))
+       (Array.to_list (Array.map (Format.asprintf "%a" pp_axes) t)))
 
 let pp_rule ppf = function
   | Route.Elementwise -> Format.pp_print_string ppf "Elementwise"
@@ -83,22 +92,30 @@ let placement_of rank =
 let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
-   the results, of its extent, or none, of any extent. *)
+   the results, of its extent, or none, whole or reduced, of any extent. *)
 let operand_of out =
   let open Gen in
   let rank = Array.length out in
   let* r = int_range 1 3 in
   let+ order = permutation (List.init rank Fun.id @ List.init r (fun _ -> -1))
-  and+ along = array ~size:(constant r) extent in
+  and+ along = array ~size:(constant r) extent
+  and+ reduced = array ~size:(constant r) bool in
   let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
-  (axes, Array.mapi (fun a t -> if t < 0 then along.(a) else out.(t)) axes)
+  let axis a t : Route.axis =
+    if t >= 0 then Becomes t else if reduced.(a) then Reduced else Whole
+  in
+  ( Array.mapi axis axes,
+    Array.mapi (fun a t -> if t < 0 then along.(a) else out.(t)) axes )
 
 (* The operand a scatter writes into: the results' shape, each axis becoming
    itself or read whole. *)
 let into_of out =
   Gen.map
     (fun whole ->
-      (Array.mapi (fun a w -> if w then -1 else a) whole, Array.copy out))
+      ( Array.mapi
+          (fun a w : Route.axis -> if w then Whole else Becomes a)
+          whole,
+        Array.copy out ))
     (Gen.array ~size:(Gen.constant (Array.length out)) Gen.bool)
 
 let case =
@@ -142,8 +159,9 @@ let depends c i (w : R.range array) =
   | Axes t | Into t ->
       Array.mapi
         (fun a d ->
-          if t.(i).(a) < 0 then { R.start = 0; count = d; step = 1 }
-          else w.(t.(i).(a)))
+          match t.(i).(a) with
+          | Route.Becomes a' -> w.(a')
+          | Whole | Reduced -> { R.start = 0; count = d; step = 1 })
         c.shapes.(i)
 
 let pp_ranges ppf (w : R.range array) =
@@ -191,7 +209,12 @@ let law =
             let read_whole =
               match c.rule with
               | Route.Elementwise -> false
-              | Axes t | Into t -> Array.exists (Array.mem (-1)) t
+              | Axes t | Into t ->
+                  Array.exists
+                    (Array.exists (function
+                      | Route.Becomes _ -> false
+                      | Whole | Reduced -> true))
+                    t
             in
             cover "a split result beside an axis read whole"
               (read_whole && Grid.cuts target <> [||]);
@@ -312,22 +335,28 @@ let cases_ =
           equal placement x r.operands.(1));
       test "a reduction of a split axis is whole on each device" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = placed (Axes [| [| 0; -1 |] |]) [| x |] [| [| 4; 8 |] |] in
+          let r =
+            placed (Axes [| [| Becomes 0; Reduced |] |]) [| x |] [| [| 4; 8 |] |]
+          in
           equal placement (Devices.on s4) r.result;
           equal placement (Devices.on s4) r.operands.(0));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = placed (Axes [| [| -1; 0 |] |]) [| x |] [| [| 4; 8 |] |] in
+          let r =
+            placed (Axes [| [| Reduced; Becomes 0 |] |]) [| x |] [| [| 4; 8 |] |]
+          in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
       test "a scatter writes where its target lies" (fun () ->
           let into = Devices.split ~by:"t" ~axis:1 s4 and u = Devices.on s4 in
-          let rule = Route.Into [| [| -1; 1 |]; [| -1; 1 |] |] in
+          let rule =
+            Route.Into [| [| Whole; Becomes 1 |]; [| Whole; Becomes 1 |] |]
+          in
           let r = placed rule [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
       test "an operation reading all whole lies on its operands' devices"
         (fun () ->
-          let whole = Route.Axes [| [| -1 |] |] in
+          let whole = Route.Axes [| [| Whole |] |] in
           let r = placed whole [| Devices.one s4 2 |] [| [| 4 |] |] in
           equal placement (Devices.one s4 2) r.result;
           let x = Devices.split ~by:"t" ~axis:0 s4 in
@@ -336,12 +365,14 @@ let cases_ =
       test "operands read whole alone on two devices raise" (fun () ->
           invalid (fun () ->
               placed
-                (Axes [| [| -1 |]; [| -1 |] |])
+                (Axes [| [| Whole |]; [| Whole |] |])
                 [| Devices.one s4 0; Devices.one s4 1 |]
                 [| [| 4 |]; [| 4 |] |]));
       test "a contraction keeps its batch and free cuts" (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
-          let rule = Route.Axes [| [| 0; -1 |]; [| -1; 1 |] |] in
+          let rule =
+            Route.Axes [| [| Becomes 0; Reduced |]; [| Reduced; Becomes 1 |] |]
+          in
           let r =
             placed rule [| x; Devices.on s4 |] [| [| 8; 4 |]; [| 4; 4 |] |]
           in
@@ -366,7 +397,7 @@ let cases_ =
       test "a rule that does not name each axis raises" (fun () ->
           invalid (fun () ->
               placed
-                (Axes [| [| 0; 1 |]; [| 0 |] |])
+                (Axes [| [| Becomes 0; Becomes 1 |]; [| Becomes 0 |] |])
                 [| Devices.on s4; Devices.on s4 |]
                 [| [| 4; 4 |]; [| 4; 4 |] |]));
       test "placements and shapes of two lengths raise" (fun () ->

@@ -29,30 +29,41 @@
     arrangement holds both, and moving one is a choice the program makes with
     [Nx.place]. *)
 
+(** The type for what an operation makes of an operand's axis. *)
+type axis =
+  | Becomes of int
+      (** The results' axis [a] of [Becomes a], of its extent: a window of the
+          results reads the operand's axis at its range along [a]. *)
+  | Whole
+      (** Read whole on each device: an axis the operation acts along, as a
+          scan's, a sort's, a transform's or a gather's source axis, and one a
+          padded load pads, crops or windows. *)
+  | Reduced
+      (** Gone from the results: a reduction's axes and a contraction's
+          contracting pairs, but one a padded load of the reduction pads,
+          crops or windows, which is [Whole] for every load. Read whole on
+          each device. *)
+
 (** The type for how an operation's results depend on its operands: for each
-    axis of each operand, the axis of the results it becomes, of its extent, or
-    none. A window of the results reads each operand's axis that becomes one of
-    theirs at that axis's range, and every other axis whole: an axis the
-    operation acts along (a scan's, a sort's, a transform's, a reduction's, a
-    contraction's contracting pairs, a gather's source axis) and one a padded
-    load pads, crops or windows. A result axis that no operand's axis becomes is
-    kept whole: every window the engine computes holds all of it.
+    axis of each operand, what the operation makes of it. A window of the
+    results reads each operand's axis that becomes one of theirs at that axis's
+    range, and every other axis whole. A result axis that no operand's axis
+    becomes is kept whole: every window the engine computes holds all of it.
 
     This is the sharding rule of Shardy
     ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}) with one
-    factor per axis: its reduction and need-replication factors are both read
-    whole. *)
+    factor per axis: its reduction factors are [Reduced] axes and its
+    need-replication factors [Whole] ones, both read whole. *)
 type rule =
   | Elementwise
       (** Operands and results of one shape, each axis becoming itself. *)
-  | Axes of int array array
-      (** Axis [a] of operand [i] becomes the results' axis [t.(i).(a)] of
-          [Axes t], none where it is negative. No two axes of an operand become
-          one. A loop of no load has one row and no operand behind it: the
-          loop's space, which {!keeps} and {!window} read as an operand of the
-          loop's shape. {!at} routes it over no operand; {!route}, which takes
-          a row per operand, never receives it. *)
-  | Into of int array array
+  | Axes of axis array array
+      (** Axis [a] of operand [i] is [t.(i).(a)] of [Axes t]. No two axes of
+          an operand become one. A loop of no load has one row and no operand
+          behind it: the loop's space, which {!keeps} and {!window} read as an
+          operand of the loop's shape. {!at} routes it over no operand;
+          {!route}, which takes a row per operand, never receives it. *)
+  | Into of axis array array
       (** [Axes]' windows, written into the last operand: the target is the last
           operand's placement where it lies on the set. *)
 

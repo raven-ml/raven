@@ -744,7 +744,7 @@ let becoming rule i x r =
   | Elementwise -> Some r
   | Axes t | Into t ->
       List.find_opt
-        (fun a -> t.(i).(a) = r)
+        (fun a -> t.(i).(a) = Route.Becomes r)
         (List.init (Prim.rank x) Fun.id)
 
 let expandable =

@@ -805,7 +805,8 @@ let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
 (* An operand of rank [r] whose axis becomes the results' axis of its index, but
    those of [whole], read whole. *)
 let reading whole r =
-  Array.init r (fun a -> if Array.mem a whole then -1 else a)
+  Array.init r (fun a ->
+      if Array.mem a whole then Route.Whole else Route.Becomes a)
 
 (* A loop's operands' ranks: its rank, but a padded load's own. A loop of no
    load has the one row of its rank, so that on a split placement each device
@@ -819,15 +820,18 @@ let load_ranks (type d) layout (loads : d load array) =
       loads
 
 (* A loop's rule over loads of [ranks]: a load's axis becomes the results' axis
-   of its index less the axes reduced before it, but those reduced and those
-   read whole: its scan's axis and those its padded loads pad, crop or
-   window. *)
+   of its index less the axes reduced before it, but those read whole, its
+   scan's axis and those its padded loads pad, crop or window, and those
+   reduced. *)
 let loop_rule : type r. r prim -> int array -> Route.rule =
  fun op ranks ->
   let rows axes whole =
-    let becomes a =
-      if Array.mem a axes || Array.mem a whole then -1
-      else a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes
+    let becomes a : Route.axis =
+      if Array.mem a whole then Whole
+      else if Array.mem a axes then Reduced
+      else
+        Becomes
+          (a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
     in
     Route.Axes (Array.map (fun r -> Array.init r becomes) ranks)
   in
@@ -864,11 +868,11 @@ let contract_rule batch contracting ra rb init =
     let next = ref first in
     Array.init r (fun a ->
         match Array.find_index (fun p -> side p = a) batch with
-        | Some j -> j
-        | None when Array.exists (fun p -> side p = a) contracting -> -1
+        | Some j -> Route.Becomes j
+        | None when Array.exists (fun p -> side p = a) contracting -> Reduced
         | None ->
             incr next;
-            !next - 1)
+            Becomes (!next - 1))
   in
   let nb = Array.length batch and nc = Array.length contracting in
   let a = operand fst ra nb and b = operand snd rb (ra - nc) in
@@ -878,7 +882,9 @@ let contract_rule batch contracting ra rb init =
 
 let move_rule m x =
   let s = shape x in
-  let becomes a = Option.value (Route.moved m s a) ~default:(-1) in
+  let becomes a : Route.axis =
+    match Route.moved m s a with Some a' -> Becomes a' | None -> Whole
+  in
   Route.Axes [| Array.init (Array.length s) becomes |]
 
 let bitcast_rule dt x =
@@ -907,7 +913,7 @@ let rule : type r. r prim -> Route.rule =
   | Assemble { pieces; _ } ->
       Axes
         (Array.of_list
-           (List.map (fun (_, x) -> Array.make (rank x) (-1)) pieces))
+           (List.map (fun (_, x) -> Array.make (rank x) Route.Whole) pieces))
   | Contract { batch; contracting; a; b; init; _ } ->
       contract_rule batch contracting (rank a) (rank b) (Option.map rank init)
   | Copy _ -> Elementwise
