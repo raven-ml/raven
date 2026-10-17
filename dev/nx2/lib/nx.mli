@@ -1956,6 +1956,140 @@ val uniform_filter :
 
     Raises [Invalid_argument] as {!maximum_filter} does. *)
 
+(** {2:segments Segments and ranges}
+
+    A {e row} of [x] is its value at one position of its first axis. A
+    {e segment} is the rows whose id, held in data, is one number; a
+    {e range} is the rows between two bounds held in data. As positions held
+    in data, an id or a bound never raises: an id outside the segments drops
+    its row, and a bound clips into the rows.
+
+    {!reduce_segments} and {!reduce_ranges} fold each segment's or range's
+    rows, in row order, by a {!combine}:
+    - [Add] sums from [+0], so a sum of [-0.] rows is [+0.]; the float formats
+      narrower than 32 bits sum at [float32] and round once, and integers
+      wrap. Every dtype but booleans.
+    - [Max] and [Min] keep the greatest or least row as {!maximum} orders
+      them, or the first NaN, as {!max} does. Every dtype.
+    - [Set] keeps the last row.
+
+    A segment or range of no row holds [Add]'s and [Set]'s zero, or [Max]'s
+    least and [Min]'s greatest value in the dtype's order: [neg_infinity] and
+    [infinity], [-448.] and [448.] in [float8_e4m3fn], which has no infinity,
+    the least and greatest integers, [false] and [true], and for complex
+    numbers both parts so. *)
+
+val reduce_segments :
+  combine -> segments:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [reduce_segments c ~segments ids x] is [segments] rows, row [s] the rows [i]
+    of [x] with [ids.{i} = s] folded by [c]. [ids] holds one id per row: give
+    a row that belongs to no segment the id [-1]. It is
+    [scatter ~combine:c ~axis:0] of [x]'s rows into [segments] rows of the
+    identity, so its sums have {!scatter}'s bits.
+
+    {[
+    let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
+    let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
+    (* [|4.; 0.; 7.|] and [|3.; neg_infinity; 5.|] *)
+    let sums = Nx.reduce_segments Add ~segments:3 ids x
+    let maxima = Nx.reduce_segments Max ~segments:3 ids x
+    ]}
+
+    Counts are [Add] of ones, a mean is [Add] divided by the counts, and each
+    segment's first row is [Min] of the row positions, then a {!take}.
+
+    Raises [Invalid_argument] if [segments] is negative, [x] is 0-d, [ids] is
+    not 1-d with one id per row of [x], or [c] is [Add] and [x] is boolean. *)
+
+val reduce_ranges :
+  combine ->
+  lo:'d int64_t ->
+  hi:'d int64_t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [reduce_ranges c ~lo ~hi x] is one row per range, row [i] the rows of [x]
+    from [lo.{i}] included to [hi.{i}] excluded folded by [c]. Bounds clip into
+    [\[0, n\]] for [n] rows, so a range may reach past either end of [x], and
+    one whose clipped [lo] is at or after its clipped [hi] holds the identity.
+
+    A row's bits depend on its range's bounds and rows alone: rows outside it
+    never enter it, so a large row outside a range never cancels into its sum.
+    A growing window, a running fold, is the ranges from [0] to [i + 1]. Its
+    work is [O((n + m) log n)] for [m] ranges, and its memory [O(n + m)].
+
+    {[
+    let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
+    let lo = Nx.create Nx.int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
+    let hi = Nx.create Nx.int64 [| 4 |] [| 1L; 3L; 3L; 9L |]
+    (* [|1.; 6.; 0.; 5.|] and [|1.; 3.; neg_infinity; 5.|] *)
+    let sums = Nx.reduce_ranges Add ~lo ~hi x
+    let maxima = Nx.reduce_ranges Max ~lo ~hi x
+    ]}
+
+    Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
+    length, or [c] is [Add] and [x] is boolean. *)
+
+val map_segments :
+  segments:int ->
+  'd int64_t ->
+  ('d int64_t -> ('v, 's, 'd) t -> ('w, 'r, 'd) t) ->
+  ('v, 's, 'd) t ->
+  ('w, 'r, 'd) t
+(** [map_segments ~segments ids f x] is [f] applied to each position alone,
+    the per-position map: at each position [p] of [ids], the row [f] gives
+    [p]'s row of [x] with owner [ids.{p}] where [ids.{p}] is in
+    [\[0, segments)], and zeros otherwise, whatever [x] holds at [p]. [f] is
+    called once on the rows grouped by id, so what [f] reads by owner is read
+    once per block, where a per-position map reads it once per position.
+
+    {b Shapes.} Positions are the indices of [ids], of shape [[| s… |]]. The
+    first [ndim ids] axes of [x] broadcast to [[| s… |]], and [p]'s row is [x]
+    at [p] after that broadcast, of shape [[| r… |]]. The result has shape
+    [[| s…; r'… |]]. Ids may repeat. Results agree with the per-position map
+    up to how [f] rounds rows it computes together.
+
+    {b What [f] receives.} [f owners rows] is called exactly once. [rows] is
+    [[| g; c; r… |]] at [x]'s dtype, [g] blocks of [c] rows, and [owners] is
+    [[| g |]], every owner in range. Every row of block [b] is the row of an
+    in-range position whose id is [owners.{b}]: each such position fills one
+    row, and the block's other rows repeat rows it already holds. A block no
+    position fills takes the owner and row of an in-range position of its
+    group. A position whose id is out of range never reaches [f]. In a group
+    with no in-range position, every row is zeros. The order of blocks, and
+    of rows in a block, is unspecified. [f] returns [[| g; c; r'… |]], with
+    [r'] independent of [g] and [c], and computes each row of its result from
+    that row and its block's owner alone.
+
+    {b Selection.} Results are selected, never multiplied by a mask: what [f]
+    gives a repeated row never reaches the result, and a position out of range
+    reaches neither [f] nor the result, whatever its row holds.
+
+    {b Groups and blocks.} Positions are grouped per device. [g] and [c]
+    depend on shapes, [segments] and placement, never on the ids' values, so
+    the shapes [f] sees never depend on the routing. [c] is [1] when a group
+    holds few positions per segment, as one token over many experts: then each
+    position is its own block and nothing is sorted. With [segments] zero or
+    no positions, [g] is [0] and the result is zeros. [ids] and [x] may be
+    split over devices along their first axis only, identically or one of them
+    whole on each device; [rows], [owners] and [f]'s result are split along
+    their first axis as the positions are.
+
+    {[
+    let ids = Nx.create Nx.int64 [| 4 |] [| 1L; -1L; 0L; 1L |]
+    let x = Nx.create Nx.float64 [| 4; 1 |] [| 1.; 2.; 3.; 4. |]
+    let scale = Nx.create Nx.float64 [| 2; 1; 1 |] [| 10.; 100. |]
+    (* [|100.; 0.; 30.; 400.|] *)
+    let y =
+      Nx.map_segments ~segments:2 ids
+        (fun owners rows -> Nx.mul rows (Nx.take ~axis:0 owners scale))
+        x
+    ]}
+
+    Raises [Invalid_argument] if [segments] is negative, [x] has fewer axes
+    than [ids] or its leading axes do not broadcast to [ids]', [ids] or [x] is
+    split along another axis or in another number of windows, or [f]'s result
+    does not have shape [[| g; c; … |]]. *)
+
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]

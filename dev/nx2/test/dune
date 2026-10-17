@@ -33,7 +33,8 @@
   test_matrices
   test_print
   test_special
-  test_patches)
+  test_patches
+  test_segments)
  (modules
   test_devices
   test_values
@@ -64,7 +65,8 @@
   test_matrices
   test_print
   test_special
-  test_patches)
+  test_patches
+  test_segments)
  (libraries
   nx
   nx_array

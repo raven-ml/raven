@@ -1179,8 +1179,9 @@ let take ?axis p x =
   | Some a ->
       take_axis ~by (axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x)) p x
 
-let take_along_axis ~axis:a p x =
-  let by = "Nx.take_along_axis" in
+(* [x] read along [a] at the positions [p] of [x]'s rank, for the function
+   [by]. *)
+let take_along ~by a p x =
   let a = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x) in
   if ndim p <> ndim x then
     invalid_argf "%s: positions %a for %a of another rank" by pp_value p
@@ -1196,6 +1197,8 @@ let take_along_axis ~axis:a p x =
          idx = broadcast ~by (at sp.(a)) p;
          x = broadcast ~by (at sx.(a)) x;
        })
+
+let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
 
 (* Functional updates *)
 
@@ -3055,6 +3058,508 @@ let uniform_filter ~kernel_size ?stride x =
   let total = reduce ~by Sum w taps y in
   let n = fill ~by w [||] (Float.of_int (product kernel_size)) in
   cast_by ~by dt (binary ~by (Binary Fdiv) total n)
+
+(* Segments and ranges *)
+
+(* What a segment or a range of no row holds: [+0] for [Add], zero for
+   [Set], and the least or greatest value in the dtype's order for [Max] and
+   [Min]. *)
+let identity (type v s) ~by (c : combine) (dt : (v, s) D.t) : v =
+  match (c, D.kind dt) with
+  | Add, D.Boolean -> invalid_argf "%s: %s has no sum" by (D.name dt)
+  | (Set | Add), _ -> D.zero dt
+  | Max, D.Complex -> { Complex.re = Float.neg_infinity; im = neg_infinity }
+  | Min, D.Complex -> { Complex.re = Float.infinity; im = infinity }
+  | Max, _ -> D.min_value dt
+  | Min, _ -> D.max_value dt
+
+let rows_of ~by x =
+  if ndim x = 0 then invalid_argf "%s: %a has no rows" by pp_value x
+
+let reduce_segments c ~segments ids x =
+  let by = "Nx.reduce_segments" in
+  if segments < 0 then invalid_argf "%s: %d segments" by segments;
+  rows_of ~by x;
+  if ndim ids <> 1 || Prim.dim ids 0 <> Prim.dim x 0 then
+    invalid_argf "%s: ids %a for the rows of %a" by pp_value ids pp_value x;
+  let dt = dtype x and s = shape x in
+  let start = identity ~by c dt in
+  let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
+  let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
+  let idx = broadcast ~by s (move ~by (Reshape along) ids) in
+  let combine : Nx_kernel.combine =
+    match c with Set -> Set | Add -> Add | Max -> Max | Min -> Min
+  in
+  Eval.eval ~by
+    (Value.Scatter
+       {
+         combine;
+         unique = false;
+         axis = 0;
+         idx;
+         updates = x;
+         into = fill ~by dt into start;
+       })
+
+(* [a] then [b] combined by [c], [a]'s rows before [b]'s: [Add] adds; [Max]
+   and [Min] keep the first NaN, else {!maximum}'s or {!minimum}'s, so that
+   an extreme is one of its rows. *)
+let combined (type v s d) ~by (c : combine) (a : (v, s, d) t) (b : (v, s, d) t)
+    : (v, s, d) t =
+  match c with
+  | Set -> b
+  | Add -> binary ~by (Binary Add) a b
+  | Max | Min -> (
+      let k : P.binary = if c = Max then Maximum else Minimum in
+      match D.kind (dtype a) with
+      | D.Float | D.Complex ->
+          let x = operand 0 a and y = operand 1 b in
+          elementwise ~by (dtype a) [ Any a; Any b ]
+            E.(where (x <> x) x (where (y <> y) y (binary k x y)))
+      | D.Signed | D.Unsigned | D.Boolean -> binary ~by (Binary k) a b)
+
+(* The greatest [k] with [2^k <= v], for [v >= 1]. *)
+let top_bit v =
+  let rec go k = if v lsr (k + 1) = 0 then k else go (k + 1) in
+  go 0
+
+(* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
+   rows combined from that row to the chunk's end, its suffix, and from the
+   chunk's start to that row, its prefix. A range from [l] to [r] inclusive,
+   [l < r], is answered at the one level where [l] and [r] lie in the two
+   halves of one chunk of the next level, the highest bit where they differ:
+   [l]'s suffix, then [r]'s prefix. Its bits are so a function of [l], [r]
+   and their rows alone. Level [k] comes from level [k - 1]: a first half's
+   suffix goes on through the second half's total, the suffix of its first
+   row, and a second half's prefix starts from the first half's total, the
+   prefix of its last row. Rows are padded to whole chunks of the top level;
+   no answer reads the padding. *)
+let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
+  let n = Prim.dim x 0 and dt = dtype x in
+  let rows = Array.sub (shape x) 1 (ndim x - 1) in
+  let m = Prim.dim l 0 in
+  let per_range t =
+    move ~by (Reshape (Array.append [| m |] (Array.map (fun _ -> 1) rows))) t
+  in
+  let where c a b = ternary ~by Where (per_range c) a b in
+  let li = operand 0 l and ri = operand 1 r in
+  let single =
+    elementwise ~by D.Bool [ Any l; Any r ] E.(li = ri)
+  in
+  let res = where single (take_axis ~by 0 r x) none in
+  if n < 2 then res
+  else
+    let top = top_bit (n - 1) in
+    let chunk = 1 lsl top in
+    let padded = (n + chunk - 1) / chunk * chunk in
+    let full = Array.append [| padded |] rows in
+    let xp =
+      if padded = n then x
+      else assemble ~by dt full (D.zero dt) [ (Array.map whole (shape x), x) ]
+    in
+    let whole_rows = Array.map whole rows in
+    let double k suf pre =
+      let h = 1 lsl (k - 1) in
+      let blocks = padded / (2 * h) in
+      let halves = Array.append [| blocks; 2; h |] rows in
+      let part half start count t =
+        move ~by
+          (Slice
+             (Array.append
+                [|
+                  whole blocks;
+                  { start = half; count = 1; step = 1 };
+                  { start; count; step = 1 };
+                |]
+                whole_rows))
+          (move ~by (Reshape halves) t)
+      in
+      let half i =
+        Array.append
+          [| whole blocks; { start = i; count = 1; step = 1 }; whole h |]
+          whole_rows
+      in
+      let joined first second =
+        move ~by (Reshape full)
+          (assemble ~by dt halves (D.zero dt)
+             [ (half 0, first); (half 1, second) ])
+      in
+      let ( ++ ) a b = combined ~by c a b in
+      ( joined (part 0 0 h suf ++ part 1 0 1 suf) (part 1 0 h suf),
+        joined (part 0 0 h pre) (part 0 (h - 1) 1 pre ++ part 1 0 h pre) )
+    in
+    let rec go k suf pre res =
+      let span = i64 (1 lsl k) in
+      let here =
+        elementwise ~by D.Bool [ Any l; Any r ]
+          E.(
+            li < ri
+            && binary Xor (binary Idiv li span) (binary Idiv ri span) = i64 1)
+      in
+      let v = combined ~by c (take_axis ~by 0 l suf) (take_axis ~by 0 r pre) in
+      let res = where here v res in
+      if k = top then res
+      else
+        let suf, pre = double (k + 1) suf pre in
+        go (k + 1) suf pre res
+    in
+    go 0 xp xp res
+
+let reduce_ranges c ~lo ~hi x =
+  let by = "Nx.reduce_ranges" in
+  rows_of ~by x;
+  if ndim lo <> 1 || not (same_shape lo hi) then
+    invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
+      lo pp_value hi;
+  let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
+  let rows = Array.sub (shape x) 1 (ndim x - 1) in
+  let start = identity ~by c dt in
+  let clip b =
+    elementwise ~by D.Int64 [ Any b ]
+      E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
+  in
+  let l = clip lo and h = clip hi in
+  let r = elementwise ~by D.Int64 [ Any h ] E.(operand 0 h - i64 1) in
+  let empty dt v = fill ~by dt (Array.append [| m |] rows) v in
+  match c with
+  | Set ->
+      let some =
+        elementwise ~by D.Bool [ Any l; Any h ] E.(operand 0 l < operand 1 h)
+      in
+      let some =
+        move ~by
+          (Reshape (Array.append [| m |] (Array.map (fun _ -> 1) rows)))
+          some
+      in
+      ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
+  | Max | Min -> ranges ~by c ~l ~r x (empty dt start)
+  | Add ->
+      (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
+         [+0.], as {!sum}'s is. *)
+      let (D.Any w) = summed dt in
+      let zero = D.zero w in
+      let s = ranges ~by c ~l ~r (cast_by ~by w x) (empty w zero) in
+      cast_by ~by dt (binary ~by (Binary Add) s (fill ~by w [||] zero))
+
+(* Maps over segments
+
+   [map_segments] sorts each group's positions by id, pads each id's run to
+   whole blocks of [c] rows, calls [f] once on every block, and gathers each
+   position's row of [f]'s result back. A block's pad rows repeat a row the
+   block holds, so [f] meets only pairs the per-position map meets: a row of
+   zeros is a pair that map never evaluates, where [f] may not be finite.
+
+   The helpers below take a group's ids [[| r; j |]], [r] groups of [j]
+   positions, and their rows [[| r; j; row... |]]. [call ~g ~c owners rows] is
+   [f]'s result and its row shape, after checking its leading axes. *)
+
+(* A block holds as many rows as its padding allows, up to 16: padding costs at
+   most [c - 1] rows per segment, which stay below half the positions. Larger
+   blocks read each segment's data fewer times, and 16 rows are the tile a GPU's
+   tensor core multiplies at once. gpt-oss-20b's gate and up product of 512
+   tokens took 2.9 ms in blocks of 16 on an RTX 5000 Ada, 4.1 ms in blocks of
+   32 and 7.5 ms in blocks of 8. *)
+let largest_block = 16
+
+(* The rows of a block of [j] positions over [segments] segments, 1 when no
+   block of 2 or more keeps the padding below half of them: then each position
+   is its own block and nothing is sorted. With as many segments as positions
+   no block of 2 or more qualifies, since [2 (c - 1) segments >= 2 j > j];
+   deciding it first keeps the product below [30 j]. *)
+let block ~segments j =
+  let rec go c =
+    if c < 2 || 2 * (c - 1) * segments < j then c else go (c / 2)
+  in
+  if segments >= j then 1 else go largest_block
+
+(* The number of windows of devices that cut [t]'s first axis, which must be
+   a position axis. *)
+let device_windows ~by what ~positional t =
+  match Prim.at t with
+  | None -> 1
+  | Some p ->
+      Array.fold_left
+        (fun r (a, n) ->
+          if a <> 0 || not positional then
+            invalid_argf "%s: %s is split over devices along axis %d" by what a;
+          r * n)
+        1
+        (Grid.cuts (Devices.grid p))
+
+(* [x] with each axis of [axes] kept of extent 1. *)
+let keep_axes ~by s axes y =
+  let kept a d = if List.mem a axes then 1 else d in
+  move ~by (Reshape (Array.mapi kept s)) y
+
+(* Per group of [named] along [axes], its first in-range position as a
+   position of the group, and whether it has one. [named] has a group's shape,
+   [[| r; ... |]] for [r] groups of [j] positions; with no in-range position
+   the first is [j], which a gather reads as zero. One maximum finds it: the
+   first in-range position has the most positions after it. *)
+let first_named ~by ~axes named =
+  let s = shape named in
+  let r = s.(0) in
+  let j = numel named / r in
+  let last = j - 1 in
+  let after =
+    move ~by (Reshape s) (leaf ~by D.Int64 [| r; j |] E.(i64 last - coord 1))
+  in
+  let most =
+    keep_axes ~by s axes
+      (reduce ~by Max D.Int64 (Array.of_list axes)
+         (ternary ~by Where named after (fill ~by D.Int64 [||] (-1L))))
+  in
+  ( elementwise ~by D.Int64 [ Any most ] E.(i64 last - operand 0 most),
+    elementwise ~by D.Bool [ Any most ] E.(i64 0 <= operand 0 most) )
+
+(* [owners], in range already: the clamp writes that range into the program,
+   where the gathers by them read it. *)
+let in_range ~by ~segments owners =
+  let last = i64 (segments - 1) in
+  elementwise ~by D.Int64 [ Any owners ]
+    E.(minimum (maximum (operand 0 owners) (i64 0)) last)
+
+let units t = Array.make (Array.length t) 1
+
+(* Each position its own block. [gs] is a group's positions as axes,
+   [[| r; ... |]], and [x] holds their rows in that shape, with an axis of
+   length 1 where positions share a row. An out-of-range position keeps its row
+   and takes the owner of the first in-range position that reads it. A row
+   that no in-range position reads takes the group's first in-range position
+   and its row, or zeros. Rows then vary only along the axes [x] varies along:
+   at one token over a few experts, every block reads the token's row. *)
+let direct ~by ~segments ~call ~named ~gs ids x =
+  let r = Prim.dim ids 0 and j = Prim.dim ids 1 in
+  let n = Array.length gs in
+  let lead = Array.sub (shape x) 0 n in
+  let row = Array.sub (shape x) n (ndim x - n) in
+  let where c a b = ternary ~by Where c a b in
+  let inner = List.init (n - 1) succ in
+  let varies = List.exists (fun a -> lead.(a) > 1) inner in
+  let shared = List.filter (fun a -> lead.(a) = 1 && gs.(a) > 1) inner in
+  let at, any = first_named ~by ~axes:[ 1 ] named in
+  let id = take_along ~by 1 at ids in
+  let per_group t =
+    move ~by (Reshape (Array.append [| r |] (Array.make (n - 1) 1))) t
+  in
+  let by_row t = move ~by (Reshape (Array.append (shape t) (units row))) t in
+  let owners, read =
+    if not varies then (where named ids id, per_group any)
+    else if shared = [] then (where named ids id, move ~by (Reshape gs) named)
+    else
+      let at_row, read =
+        first_named ~by ~axes:shared (move ~by (Reshape gs) named)
+      in
+      let flat t = move ~by (Reshape [| r; j |]) (broadcast ~by gs t) in
+      let owner = take_along ~by 1 (flat at_row) ids in
+      (where named ids (where (flat read) owner id), read)
+  in
+  let fallback =
+    if not varies then scalar_beside ~by x (dtype x) (D.zero (dtype x))
+    else
+      let rows =
+        move ~by
+          (Reshape (Array.append [| r; j |] row))
+          (broadcast ~by (Array.append gs row) x)
+      in
+      move ~by
+        (Reshape (Array.append (shape (per_group at)) row))
+        (take_along ~by 1
+           (broadcast ~by (Array.append [| r; 1 |] row) (by_row at))
+           rows)
+  in
+  let rows = where (by_row read) x fallback in
+  let y, out =
+    call ~g:(r * j) ~c:1
+      (move ~by (Reshape [| r * j |]) (in_range ~by ~segments owners))
+      (move ~by
+         (Reshape (Array.append [| r * j; 1 |] row))
+         (broadcast ~by (Array.append gs row) rows))
+  in
+  (move ~by (Reshape (Array.append [| r; j |] out)) y, out)
+
+(* Each group's positions sorted by id into blocks of [c] rows. *)
+let grouped ~by ~segments ~c ~call ~named ids x =
+  let r = Prim.dim ids 0 and j = Prim.dim ids 1 in
+  let row = Array.sub (shape x) 2 (ndim x - 2) in
+  let where c a b = ternary ~by Where c a b in
+  let int64 v = fill ~by D.Int64 [||] (Int64.of_int v) in
+  let along t p = take_along ~by 1 p t in
+  let arith2 f a b =
+    elementwise ~by D.Int64 [ Any a; Any b ] (f (operand 0 a) (operand 1 b))
+  in
+  let iota n step = leaf ~by D.Int64 [| n |] E.(coord 0 * i64 step) in
+  let at, any = first_named ~by ~axes:[ 1 ] named in
+  let id = along ids at in
+  (* Out-of-range positions sort last, as segment [segments], and take no
+     slot. *)
+  let key = where named ids (int64 segments) in
+  let order = snd (sorted ~by 1 key) in
+  (* Each segment's run in sorted order, [[| r; segments |]]: its length, first
+     position, and slots padded to whole blocks. *)
+  let count =
+    Eval.eval ~by
+      (Value.Scatter
+         {
+           combine = Add;
+           unique = false;
+           axis = 1;
+           idx = key;
+           updates = fill ~by D.Int64 [| r; j |] 1L;
+           into = fill ~by D.Int64 [| r; segments |] 0L;
+         })
+  in
+  let sub = arith2 E.( - ) in
+  let first = sub (scan_along ~by Sum 1 count) count in
+  let padded =
+    let carry = i64 (c - 1) in
+    elementwise ~by D.Int64 [ Any count ]
+      E.(binary Idiv (operand 0 count + carry) (i64 c) * i64 c)
+  in
+  let ends = scan_along ~by Sum 1 padded in
+  let starts = sub ends padded in
+  (* Blocks: a bound of the padded runs, whatever the ids. *)
+  let blocks = (j + (Stdlib.min segments j * (c - 1)) + c - 1) / c in
+  let slots = blocks * c in
+  (* A block's owner is the number of runs that end at or before its first slot;
+     a block past the last run takes the fallback id. *)
+  let ended =
+    let s3 = [| r; blocks; segments |] in
+    let e = broadcast ~by s3 (move ~by (Reshape [| r; 1; segments |]) ends) in
+    let b =
+      broadcast ~by s3 (move ~by (Reshape [| 1; blocks; 1 |]) (iota blocks c))
+    in
+    fst
+      (reduce_by ~by s3 [| 2 |] [ Any e; Any b ]
+         Value.[ Monoid (Sum, 0, D.Int64) ]
+         E.(where (operand 0 e <= operand 1 b) (i64 1) (i64 0)))
+  in
+  let owners =
+    in_range ~by ~segments
+      (where
+         (elementwise ~by D.Bool [ Any ended ]
+            E.(operand 0 ended < i64 segments))
+         ended id)
+  in
+  let slot_owner =
+    move ~by (Reshape [| r; slots |])
+      (broadcast ~by [| r; blocks; c |]
+         (move ~by (Reshape [| r; blocks; 1 |]) owners))
+  in
+  (* A slot past its run repeats the run's last row, which its block holds. *)
+  let offset =
+    sub
+      (move ~by (Reshape [| 1; slots |]) (iota slots 1))
+      (along starts slot_owner)
+  in
+  let held =
+    arith2
+      (fun o n -> E.(minimum o (n - i64 1)))
+      offset (along count slot_owner)
+  in
+  let position = along order (arith2 E.( + ) (along first slot_owner) held) in
+  let position = where any position (int64 (-1)) in
+  let by_row t = move ~by (Reshape (Array.append (shape t) (units row))) t in
+  let rows =
+    along x (broadcast ~by (Array.append [| r; slots |] row) (by_row position))
+  in
+  let y, out =
+    call ~g:(r * blocks) ~c
+      (move ~by (Reshape [| r * blocks |]) owners)
+      (move ~by (Reshape (Array.append [| r * blocks; c |] row)) rows)
+  in
+  (* Each position's slot: its run's first slot and its rank in the run, and -1
+     out of range, which a gather reads as zero. *)
+  let rank =
+    Eval.eval ~by
+      (Value.Scatter
+         {
+           combine = Set;
+           unique = true;
+           axis = 1;
+           idx = order;
+           updates = broadcast ~by [| r; j |] (iota j 1);
+           into = fill ~by D.Int64 [| r; j |] 0L;
+         })
+  in
+  let slot = arith2 E.( + ) (along starts key) (sub rank (along first key)) in
+  let slot = where named slot (int64 (-1)) in
+  let by_out t = move ~by (Reshape (Array.append (shape t) (units out))) t in
+  ( along
+      (move ~by (Reshape (Array.append [| r; slots |] out)) y)
+      (broadcast ~by (Array.append [| r; j |] out) (by_out slot)),
+    out )
+
+let map_segments ~segments ids f x =
+  let by = "Nx.map_segments" in
+  if segments < 0 then invalid_argf "%s: %d segments" by segments;
+  let s = shape ids and xs = shape x in
+  let ns = Array.length s in
+  if
+    Array.length xs < ns
+    || not (Array.for_all2 (fun d e -> d = e || d = 1) (Array.sub xs 0 ns) s)
+  then
+    invalid_argf "%s: %a does not broadcast to the ids %a" by pp_value x
+      pp_value ids;
+  let row = Array.sub xs ns (Array.length xs - ns) in
+  let positional = ns > 0 in
+  let r =
+    match
+      ( device_windows ~by "ids" ~positional ids,
+        device_windows ~by "x" ~positional x )
+    with
+    | 1, r | r, 1 -> r
+    | a, b when a = b -> a
+    | a, b -> invalid_argf "%s: ids are split in %d windows and x in %d" by a b
+  in
+  let call ~g ~c owners rows =
+    let y = f owners rows in
+    let ys = shape y in
+    if Array.length ys < 2 || ys.(0) <> g || ys.(1) <> c then
+      invalid_argf "%s: f gave %a for %d blocks of %d rows" by pp_value y g c;
+    (y, Array.sub ys 2 (Array.length ys - 2))
+  in
+  let p = numel ids in
+  if segments = 0 || p = 0 then
+    let y, out =
+      call ~g:0 ~c:1
+        (fill ~by D.Int64 [| 0 |] 0L)
+        (fill ~by (dtype x) (Array.append [| 0; 1 |] row) (D.zero (dtype x)))
+    in
+    fill ~by (dtype y) (Array.append s out) (D.zero (dtype y))
+  else
+    let j = p / r in
+    let ids = move ~by (Reshape [| r; j |]) ids in
+    let named =
+      elementwise ~by D.Bool [ Any ids ]
+        E.(i64 0 <= operand 0 ids && operand 0 ids < i64 segments)
+    in
+    let c = block ~segments j in
+    let y, out =
+      if c = 1 then
+        (* A group's positions as axes, and [x]'s rows in that shape,
+           unbroadcast. *)
+        let gs, lead =
+          if not positional then ([| 1; 1 |], [| 1; 1 |])
+          else
+            let split d = if d = 1 then [| 1; 1 |] else [| r; d / r |] in
+            let rest t = Array.sub t 1 (ns - 1) in
+            ( Array.append (split s.(0)) (rest s),
+              Array.append (split xs.(0)) (rest xs) )
+        in
+        direct ~by ~segments ~call ~named ~gs ids
+          (move ~by (Reshape (Array.append lead row)) x)
+      else
+        let full = broadcast ~by (Array.append s row) x in
+        grouped ~by ~segments ~c ~call ~named ids
+          (move ~by (Reshape (Array.append [| r; j |] row)) full)
+    in
+    let named =
+      move ~by (Reshape (Array.append [| r; j |] (units out))) named
+    in
+    move ~by
+      (Reshape (Array.append s out))
+      (ternary ~by Where named y (fill ~by (dtype y) [||] (D.zero (dtype y))))
 
 (* Printing *)
 
