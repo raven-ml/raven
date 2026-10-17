@@ -1104,6 +1104,10 @@ end
     parameters those {!Transform.code} lists, (φ₀, θ₀) = (0°, 90°) for a
     zenithal projection and (0°, 0°) for a cylindrical one, LATPOLE 90°,
     and LONPOLE 180° + φ₀ when CRVAL's latitude is below θ₀, φ₀ otherwise.
+    Where θ₀ = 0, CRVAL's latitude is 0 and LONPOLE is 90° from φ₀, LATPOLE
+    alone fixes the celestial pole's latitude and has no default: a header
+    without it is an [Error], which astropy (WCSLIB) reads with the pole at
+    90°.
     CROTA2 reads as the PC matrix it implies. [PVi_3] and [PVi_4] on the
     longitude axis are LONPOLE's and LATPOLE's other spellings outside TPV; a
     header giving both spellings of one with different values is an [Error].
@@ -1180,7 +1184,8 @@ module Wcs : sig
       as in
       ["SCI: FK5 at equinox 2000.0; the caller expects icrs. Read with
        Frame.fk5_j2000."], if a keyword's value is outside what WCS allows,
-      or as [kw] is. Its own errors start with the header's [EXTNAME].
+      if LATPOLE is absent where it alone fixes the pole (see above), or as
+      [kw] is. Its own errors start with the header's [EXTNAME].
 
       Raises [Invalid_argument] if [alt] is not [' '] or ['A'] to ['Z']. *)
 

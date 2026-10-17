@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Wcs.read` refuses a header that omits LATPOLE where LATPOLE alone fixes
+  the celestial pole (θ₀ = 0, CRVAL's latitude 0, LONPOLE 90° from φ₀), as
+  FITS 4.0 gives it no default there; it read as 90°. astropy reads such a
+  header, with the pole at 90°. `Wcs.write` always writes LATPOLE there.
 - `Fits.write` works on Windows, where it raised
   `Invalid_argument "Unix.fchmod not implemented"`: Windows has no file
   modes, and the file stays writable there.

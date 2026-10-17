@@ -492,11 +492,17 @@ let pc_of_crota kw axes (d1, d2) =
 let default_lonpole ~delta0 ~theta0 ~phi0 =
   (if delta0 < theta0 then 180. else 0.) +. phi0
 
-let default_latpole = 90.
+(* LATPOLE's default (FITS 4.0 §8.3): 90°, and none where LATPOLE alone fixes
+   the celestial pole's latitude, with θ₀ = 0, δ₀ = 0 and LONPOLE 90° from φ₀
+   (Paper II §2.4, rule 6). WCSLIB takes 90° there too. *)
+let default_latpole ~delta0 ~theta0 ~phi0 ~lonpole =
+  let quarter = Float.rem (Float.abs (lonpole -. phi0)) 180. = 90. in
+  if theta0 = 0. && delta0 = 0. && quarter then None else Some 90.
 
 (* [pole kw key alt default] reads LONPOLE or LATPOLE, which FITS also spells
    PVi_3 and PVi_4 on the longitude axis [i] (Paper II §2.5); under TPV
-   those are TPV's terms, and [alt] is [None]. *)
+   those are TPV's terms, and [alt] is [None]. Absent with no [default], it
+   is an [Error]. *)
 let pole kw key alt default =
   let* a = kw.float key in
   let* b =
@@ -506,7 +512,15 @@ let pole kw key alt default =
   | Some x, Some y, Some alt when not (Float.equal x y) ->
       fail kw "%s = %g and %s = %g spell one value and disagree" key x alt y
   | Some x, _, _ | None, Some x, _ -> Ok x
-  | None, None, _ -> Ok default
+  | None, None, _ -> (
+      match default with
+      | Some d -> Ok d
+      | None ->
+          fail kw
+            "%s is absent, and FITS gives it no default where θ₀ = 0, CRVAL's \
+             latitude is 0 and LONPOLE is 90° from φ₀: it alone fixes the \
+             celestial pole"
+            key)
 
 let read ?alt (frame : 'f Frame.t) kw =
   let f64 = Nx.float64 in
@@ -577,9 +591,13 @@ let read ?alt (frame : 'f Frame.t) kw =
     | Tpv _ -> None
   in
   let* lonpole =
-    pole kw ("LONPOLE" ^ sfx) (alt 3) (default_lonpole ~delta0 ~theta0 ~phi0)
+    pole kw ("LONPOLE" ^ sfx) (alt 3)
+      (Some (default_lonpole ~delta0 ~theta0 ~phi0))
   in
-  let* latpole = pole kw ("LATPOLE" ^ sfx) (alt 4) default_latpole in
+  let* latpole =
+    pole kw ("LATPOLE" ^ sfx) (alt 4)
+      (default_latpole ~delta0 ~theta0 ~phi0 ~lonpole)
+  in
   let deg x = Quantity.v U.degree x in
   let swap =
     if axes.lng = 1 then Transform.id else Transform.axes [| 1; 0 |] ~origin:0
@@ -776,7 +794,10 @@ let pole_cards kw key alt x d =
   match alt with
   | Some alt when has kw.float alt ->
       [ card ~optional:true key (F x); card ~optional:true alt (F x) ]
-  | _ -> [ default x d key ]
+  | _ -> (
+      match d with
+      | Some d -> [ default x d key ]
+      | None -> [ card key (F x) ])
 
 (* [term_cards ~key ~default values stated] spells [values]: a stated
    term or one away from its default is always written. *)
@@ -981,8 +1002,9 @@ let cards kw sfx window steps =
       ]
     @ pv_cards
     @ pole_cards kw ("LONPOLE" ^ sfx) (pole_alt 3) c.lonpole
-        (default_lonpole ~delta0 ~theta0 ~phi0)
-    @ pole_cards kw ("LATPOLE" ^ sfx) (pole_alt 4) c.latpole default_latpole
+        (Some (default_lonpole ~delta0 ~theta0 ~phi0))
+    @ pole_cards kw ("LATPOLE" ^ sfx) (pole_alt 4) c.latpole
+        (default_latpole ~delta0 ~theta0 ~phi0 ~lonpole:c.lonpole)
     @ frame_cards kw sfx c.frame
     @ sip_cards)
 

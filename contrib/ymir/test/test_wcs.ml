@@ -278,6 +278,38 @@ let errors =
         (fun (_, view, f) ->
           let h = edit [ f ] in
           equal string (require_error (view h)) (read_error h));
+      test
+        "LATPOLE alone fixes the pole for θ₀ = 0, CRVAL's latitude 0 and \
+         LONPOLE 90° from φ₀"
+        (fun () ->
+          (* A plate carrée with unit steps from pixel (0, 0): pixel (90, 0)
+             is the native pole. FITS gives LATPOLE no default here and takes
+             it as the pole's latitude, where astropy (WCSLIB) reads the
+             header without it and puts the pole at 90° whatever it says. *)
+          let car =
+            [
+              set_s "CTYPE1" "RA---CAR"; set_s "CTYPE2" "DEC--CAR";
+              set_f "CRVAL1" 10.; set_f "CRVAL2" 0.; set_f "CRPIX1" 1.;
+              set_f "CRPIX2" 1.; set_f "CDELT1" 1.; set_f "CDELT2" 1.;
+              set_f "PC1_1" 1.; set_f "PC1_2" 0.; set_f "PC2_1" 0.;
+              set_f "PC2_2" 1.; set_f "LONPOLE" 90.;
+            ]
+          in
+          equal string
+            "LATPOLE is absent, and FITS gives it no default where θ₀ = 0, \
+             CRVAL's latitude is 0 and LONPOLE is 90° from φ₀: it alone fixes \
+             the celestial pole"
+            (read_error (edit car));
+          let h = edit (car @ [ set_f "LATPOLE" 30. ]) in
+          let t = read Frame.icrs h in
+          let world = Transform.apply t (pixels [| 0.; 0.; 90.; 0. |]) in
+          let off =
+            separation world (lonlat_deg Frame.icrs [| 10.; 0.; -80.; 30. |])
+          in
+          less float_exact ~than:1e-12 (Array.fold_left max 0. off);
+          let h' = apply (write t Fits.Header.empty) Fits.Header.empty in
+          equal (option float_exact) (Some 30.)
+            (ok (Fits.Header.find Fits.Value.float "LATPOLE" h')));
       test "keywords whose cards disagree are the view's error" (fun () ->
           let h =
             header
