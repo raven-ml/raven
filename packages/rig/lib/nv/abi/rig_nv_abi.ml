@@ -12,6 +12,10 @@ module Template = Template
 module Method = Method
 module Gpfifo = Gpfifo
 module Gpu = Gpu
+
+let key : Gpu.t Type.Id.t = Type.Id.make ()
+let declare c = Rig_edge.Capability (key, c)
+
 module Local_memory = Local_memory
 module Cubin = Cubin
 module Launch = Launch

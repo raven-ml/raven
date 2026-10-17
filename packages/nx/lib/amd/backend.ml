@@ -123,7 +123,7 @@ type device = {
 
 let devices =
   Rig.Local.new_key (fun d ->
-      let c = Option.get (Rig.capability d Rig_amd_abi.Capability.key) in
+      let c = Option.get (Rig.capability d Rig_amd_abi.key) in
       let gpu = c.gpu in
       {
         target = target gpu;
@@ -1132,7 +1132,7 @@ let arg_reduce_name : Nx_backend.arg_reduce -> string = function
 
 module Kernels : Nx_backend.S = struct
   let name = name
-  let runs_on d = Option.is_some (Rig.capability d Rig_amd_abi.Capability.key)
+  let runs_on d = Option.is_some (Rig.capability d Rig_amd_abi.key)
   let owns = runs_on
   let no what = refuse "no %s" what
 

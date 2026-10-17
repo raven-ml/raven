@@ -17,8 +17,8 @@ let vendor d =
   let declares k = Option.is_some (Rig.capability d k) in
   if declares Rig_metal_abi.key then Some "METAL"
   else if declares Rig_cuda_abi.key then Some "CUDA"
-  else if declares Rig_amd_abi.Capability.key then Some "AMD"
-  else if declares Rig_nv_abi.Gpu.key then Some "NV"
+  else if declares Rig_amd_abi.key then Some "AMD"
+  else if declares Rig_nv_abi.key then Some "NV"
   else None
 
 (* The target of a device kind, which names no interface and no indices. *)

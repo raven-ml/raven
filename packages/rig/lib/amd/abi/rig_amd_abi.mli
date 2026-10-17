@@ -23,9 +23,9 @@
     {!Aql.dispatch}) launches one of its kernels from there.
 
     A device's driver declares what compiled code needs to encode work for
-    the device as a {!Capability.t} ({!Capability.declare}): its GPU, its
-    clock, the packets its compute queue reads and its trace buffers.
-    Compiled code finds it under {!Capability.key}.
+    the device as a {!Capability.t} ({!declare}): its GPU, its clock, the
+    packets its compute queue reads and its trace buffers. Compiled code
+    finds it under {!key}.
 
     {v
     code object bytes
@@ -121,3 +121,12 @@ module Counter = Counter
 
 module Capability = Capability
 (** What compiled code needs from an AMD device. *)
+
+val key : Capability.t Type.Id.t
+(** [key] is the key of an AMD device's record. Compiled code finds the record
+    of a device [d] with [Rig.capability d key], which is [None] if [d] is
+    not an AMD device. *)
+
+val declare : Capability.t -> Rig_edge.capability
+(** [declare c] is [c] under {!key}, as the facts of an AMD device carry it
+    ({!Rig_edge.type-facts}). *)

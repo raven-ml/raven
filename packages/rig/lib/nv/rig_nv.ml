@@ -557,7 +557,7 @@ let facts (T d) =
     maps_host = d.maps_host;
     host_addresses = false;
     alignment = region_alignment;
-    capability = Abi.Gpu.declare d.capability;
+    capability = Abi.declare d.capability;
     word = R d.word;
     edge = Nativeint.of_int d.self;
   }

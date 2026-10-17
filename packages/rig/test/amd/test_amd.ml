@@ -878,10 +878,10 @@ let launching =
 (* rig finds the record the device's facts declare, and none on the host. *)
 let declared () =
   S.with_ @@ fun t ->
-  (match Rig.capability t.d Abi.Capability.key with
+  (match Rig.capability t.d Abi.key with
   | Some c -> equal bool ~msg:"the record" true (c == A.capability t.g)
   | None -> fail "no record under the key");
-  is_none ~msg:"the host" (Rig.capability Rig.host Abi.Capability.key)
+  is_none ~msg:"the host" (Rig.capability Rig.host Abi.key)
 
 (* [locate] names a region by its GPU address, its handle too, and the host
    addresses every region but Device memory. *)

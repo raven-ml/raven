@@ -233,7 +233,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- [alignment], [4096], since both paths allocate whole 4 KiB pages of
        the GPU, at addresses that start on one;}
     {- [capability], {!capability}, declared with
-       {!Rig_amd_abi.Capability.declare};}
+       {!Rig_amd_abi.declare};}
     {- [word], the device's timeline word, as {b Word.} below states.}}
 
     {b Capability.} The record holds the GPU, its clock, its compute queue's

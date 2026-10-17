@@ -14,6 +14,3 @@ type t = {
   local_window : int;
   local : int -> (unit, string) result;
 }
-
-let key : t Type.Id.t = Type.Id.make ()
-let declare c = Rig_edge.Capability (key, c)

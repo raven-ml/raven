@@ -606,7 +606,7 @@ let facts g =
     maps_host = g.maps_host;
     host_addresses = false;
     alignment = region_alignment;
-    capability = Abi.Capability.declare g.capability;
+    capability = Abi.declare g.capability;
     word = g.word;
     edge = Nativeint.of_int g.self;
   }

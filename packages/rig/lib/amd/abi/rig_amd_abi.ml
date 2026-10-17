@@ -25,3 +25,6 @@ module Sdma = Sdma
 module Thread_trace = Thread_trace
 module Counter = Counter
 module Capability = Capability
+
+let key : Capability.t Type.Id.t = Type.Id.make ()
+let declare c = Rig_edge.Capability (key, c)

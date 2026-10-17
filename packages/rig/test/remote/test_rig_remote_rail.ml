@@ -22,7 +22,7 @@ module type Gpu = Rig_gpu_support.Conformance
    AMD ring holds the PM4 packets themselves, with no commands apart; an NV ring
    holds a GPFIFO entry of the methods at [commands]. *)
 let amd d ~marker ~arrived ~commands:_ =
-  let g = (require_some (Rig.capability d A.Capability.key)).gpu in
+  let g = (require_some (Rig.capability d A.key)).gpu in
   ( A.Packet.encode Fun.id
       (A.Pm4.release_mem g System marker (Data_64 1L)
       @ A.Pm4.wait_64 g arrived Greater_equal 1L ()

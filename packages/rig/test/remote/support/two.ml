@@ -42,7 +42,7 @@ let far h =
    [arrived] are at least [c]. An AMD ring holds the PM4 packets themselves; an
    NV ring holds a GPFIFO entry of the methods at [commands]. *)
 let amd d ~arrived ~commands:_ c =
-  let g = (Option.get (Rig.capability d A.Capability.key)).gpu in
+  let g = (Option.get (Rig.capability d A.key)).gpu in
   ( A.Packet.encode Fun.id
       (A.Pm4.wait_64 g arrived Greater_equal c () @ A.Pm4.acquire_mem g System),
     "" )

@@ -18,7 +18,7 @@
       descriptor and parameters.
     - A {e GPU} ({!Gpu.t}) is what the formats depend on: its classes, its
       geometry and the windows its driver chose, declared by the driver
-      ({!Gpu.declare}). A cubin's kernel ({!Cubin}) set up for launch on a GPU
+      ({!declare}). A cubin's kernel ({!Cubin}) set up for launch on a GPU
       is a {!Launch.t}, from which its descriptor is built; {!Local_memory}
       sizes the local memory its threads take.
 
@@ -70,6 +70,15 @@ module Gpfifo = Gpfifo
 
 module Gpu = Gpu
 (** NVIDIA GPUs, as their formats depend on them. *)
+
+val key : Gpu.t Type.Id.t
+(** [key] is the key of an NVIDIA GPU's record. Compiled code finds the record
+    of a device [d] with [Rig.capability d key], which is [None] if [d] is
+    not an NVIDIA GPU. *)
+
+val declare : Gpu.t -> Rig_edge.capability
+(** [declare c] is [c] under {!key}, as the facts of an NVIDIA GPU carry it
+    ({!Rig_edge.type-facts}). *)
 
 module Local_memory = Local_memory
 (** Kernels' local memory. *)

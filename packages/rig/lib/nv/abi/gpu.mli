@@ -51,12 +51,3 @@ type t = {
           device cannot allocate it. Any domain may call it. *)
 }
 (** The type for GPUs. Every count is positive. *)
-
-val key : t Type.Id.t
-(** [key] is the key of an NVIDIA GPU's record. Compiled code finds the record
-    of a device [d] with [Rig.capability d key], which is [None] if [d] is
-    not an NVIDIA GPU. *)
-
-val declare : t -> Rig_edge.capability
-(** [declare c] is [c] under {!key}, as the facts of an NVIDIA GPU carry it
-    ({!Rig_edge.type-facts}). *)

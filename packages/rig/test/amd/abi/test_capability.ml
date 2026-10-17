@@ -35,16 +35,16 @@ let key =
   group ~timeout "key"
     [
       test "finds the record the device declared" (fun () ->
-          with_device (Capability.declare record) @@ fun d ->
-          match Rig.capability d Capability.key with
+          with_device (Rig_amd_abi.declare record) @@ fun d ->
+          match Rig.capability d Rig_amd_abi.key with
           | None -> fail "no record on the device"
           | Some c -> equal int 100_000_000 c.clock_hz);
       test "finds none on another device" (fun () ->
-          is_none ~msg:"the host" (Rig.capability Rig.host Capability.key);
+          is_none ~msg:"the host" (Rig.capability Rig.host Rig_amd_abi.key);
           with_device (Rig_edge.Capability (Type.Id.make (), record))
           @@ fun d ->
           is_none ~msg:"the record under another key"
-            (Rig.capability d Capability.key));
+            (Rig.capability d Rig_amd_abi.key));
     ]
 
 let () = exit (run "rig_amd_abi.capability" [ key ])

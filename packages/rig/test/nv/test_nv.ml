@@ -203,10 +203,10 @@ let capability () =
 (* rig finds the record the device's facts declare, and none on the host. *)
 let declared () =
   S.with_ @@ fun t ->
-  (match Rig.capability t.d A.Gpu.key with
+  (match Rig.capability t.d A.key with
   | Some c -> equal bool ~msg:"the record" true (c == N.capability t.g)
   | None -> fail "no record under the key");
-  is_none ~msg:"the host" (Rig.capability Rig.host A.Gpu.key)
+  is_none ~msg:"the host" (Rig.capability Rig.host A.key)
 
 (* The host addresses every kind but Device memory. The GPU addresses the
    kinds the host addresses below the windows, and Device memory outside

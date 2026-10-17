@@ -74,12 +74,3 @@ type t = {
           callback inside a lock ([Rig]'s domains section). *)
 }
 (** The type for what compiled code needs from an AMD device. *)
-
-val key : t Type.Id.t
-(** [key] is the key of an AMD device's record. Compiled code finds the record
-    of a device [d] with [Rig.capability d key], which is [None] if [d] is
-    not an AMD device. *)
-
-val declare : t -> Rig_edge.capability
-(** [declare c] is [c] under {!key}, as the facts of an AMD device carry it
-    ({!Rig_edge.type-facts}). *)

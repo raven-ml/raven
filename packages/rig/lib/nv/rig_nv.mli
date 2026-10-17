@@ -58,10 +58,10 @@
     ({!Lock}).
 
     Compiled code finds the record its launch descriptors depend on under
-    {!Rig_nv_abi.Gpu.key}:
+    {!Rig_nv_abi.key}:
     {[
     let d = Result.get_ok (Rig.open_ (Rig_nv_nvidia.gpu 0)) in
-    let g = Option.get (Rig.capability d Rig_nv_abi.Gpu.key) in
+    let g = Option.get (Rig.capability d Rig_nv_abi.key) in
     Printf.printf "%s, %d SMs\n" (Rig.arch d)
       (g.gpcs * g.tpcs_per_gpc * g.sms_per_tpc)
     ]}
@@ -74,7 +74,7 @@ include Rig_edge.Driver
 
 val capability : t -> Rig_nv_abi.Gpu.t
 (** [capability g] is [g]'s GPU as compiled code sees it, which [g]'s facts
-    declare ({!Rig_nv_abi.Gpu.declare}). *)
+    declare ({!Rig_nv_abi.declare}). *)
 
 (** {1:facts Facts}
 
@@ -92,7 +92,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [maps_host] | [true] iff the path maps host memory. |
       | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [alignment] | [4096]: each path allocates whole pages of 4 KiB. |
-      | [capability] | {!val-capability} ({!Rig_nv_abi.Gpu.declare}). |
+      | [capability] | {!val-capability} ({!Rig_nv_abi.declare}). |
       | [word] | The word [make] was given, mapped through the path. |
     }
 
