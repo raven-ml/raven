@@ -35,6 +35,7 @@ let pp_axis ppf : Route.axis -> unit = function
   | Becomes a -> Format.pp_print_int ppf a
   | Whole -> Format.pp_print_string ppf "whole"
   | Reduced -> Format.pp_print_string ppf "reduced"
+  | Scanned a -> Format.fprintf ppf "scanned %d" a
 
 let pp_axes ppf a =
   Format.fprintf ppf "[%s]"
@@ -93,17 +94,21 @@ let placement_of rank =
 let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
-   the results, of its extent, or none, whole or reduced, of any extent. *)
+   the results, of its extent, plainly or scanned, or none, whole or reduced,
+   of any extent. *)
 let operand_of out =
   let open Gen in
   let rank = Array.length out in
   let* r = int_range 1 3 in
   let+ order = permutation (List.init rank Fun.id @ List.init r (fun _ -> -1))
   and+ along = array ~size:(constant r) extent
-  and+ reduced = array ~size:(constant r) bool in
+  and+ reduced = array ~size:(constant r) bool
+  and+ scanned = array ~size:(constant r) bool in
   let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
   let axis a t : Route.axis =
-    if t >= 0 then Becomes t else if reduced.(a) then Reduced else Whole
+    if t >= 0 then if scanned.(a) then Scanned t else Becomes t
+    else if reduced.(a) then Reduced
+    else Whole
   in
   ( Array.mapi axis axes,
     Array.mapi (fun a t -> if t < 0 then along.(a) else out.(t)) axes )
@@ -161,7 +166,7 @@ let depends c i (w : R.range array) =
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
-          | Route.Becomes a' -> w.(a')
+          | Route.Becomes a' | Scanned a' -> w.(a')
           | Whole | Reduced -> { R.start = 0; count = d; step = 1 })
         c.shapes.(i)
 
@@ -245,7 +250,7 @@ let law =
               | Axes t | Into t ->
                   Array.exists
                     (Array.exists (function
-                      | Route.Becomes _ -> false
+                      | Route.Becomes _ | Scanned _ -> false
                       | Whole | Reduced -> true))
                     t
             in
@@ -435,6 +440,17 @@ let cases_ =
             placed (Axes [| [| Becomes 0; Whole |] |]) [| x |] [| [| 4; 8 |] |]
           in
           equal placement (Devices.on s4) r.operands.(0));
+      test "a scan of a split axis reads it where it lies and keeps it split"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let r =
+            placed
+              (Axes [| [| Becomes 0; Scanned 1 |] |])
+              [| x |]
+              [| [| 4; 8 |] |]
+          in
+          equal placement x r.result;
+          equal bool true (r.operands.(0) == x));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =

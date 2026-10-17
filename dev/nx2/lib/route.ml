@@ -5,7 +5,7 @@
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-type axis = Becomes of int | Whole | Reduced
+type axis = Becomes of int | Whole | Reduced | Scanned of int
 type rule = Elementwise | Axes of axis array array | Into of axis array array
 
 type 'd t = {
@@ -18,7 +18,9 @@ let becomes rule i a =
   match rule with
   | Elementwise -> Some a
   | Axes t | Into t -> (
-      match t.(i).(a) with Becomes a' -> Some a' | Whole | Reduced -> None)
+      match t.(i).(a) with
+      | Becomes a' | Scanned a' -> Some a'
+      | Whole | Reduced -> None)
 
 let product s lo hi =
   let p = ref 1 in
@@ -73,14 +75,18 @@ let window rule ~operand:i shape (w : Nx_array.Move.range array) =
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
-          | Becomes a' -> w.(a')
+          | Becomes a' | Scanned a' -> w.(a')
           | Whole | Reduced -> full d)
         shape
 
 let keeps rule a' =
   match rule with
   | Elementwise -> false
-  | Axes t | Into t -> not (Array.exists (Array.mem (Becomes a')) t)
+  | Axes t | Into t ->
+      not
+        (Array.exists
+           (fun row -> Array.mem (Becomes a') row || Array.mem (Scanned a') row)
+           t)
 
 let uncut_all axes g = Array.fold_left (fun g axis -> Grid.uncut g ~axis) g axes
 
@@ -120,6 +126,15 @@ let reduced rule i rank =
   | Axes t | Into t ->
       Array.of_list
         (List.filter (fun a -> t.(i).(a) = Reduced) (List.init rank Fun.id))
+
+let scanned rule i rank =
+  match rule with
+  | Elementwise -> [||]
+  | Axes t | Into t ->
+      Array.of_list
+        (List.filter
+           (fun a -> match t.(i).(a) with Scanned _ -> true | _ -> false)
+           (List.init rank Fun.id))
 
 (* Whether an operand at [g] gives every device of [want] the part [want] gives
    it, and lies on no other device: the same windows, or the whole on each of

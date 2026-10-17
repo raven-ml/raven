@@ -194,11 +194,14 @@ and _ prim =
       prog : Nx_kernel.Prog.t;
       reduction : ('d, 'r) reduction;
       loads : 'd load array;
+      carry : 'd any option;
     }
       -> 'r prim
       (** The reduction of [prog]'s output over the indices along [axis] up to
           each index's, inclusive: [layout]'s shape, C-contiguous. [prog]
-          reads coordinates as a map's. *)
+          reads coordinates as a map's. With [Some c], each slice continues
+          from its element of [c] ({!Nx_kernel.S.scan}'s carry), operand
+          [Array.length loads]. *)
   | Gather : {
       axis : int;
       idx : 'd index;

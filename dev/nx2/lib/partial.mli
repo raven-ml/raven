@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (** Operations whose route reads an operand cut along an axis they reduce
-    ({!Route.Reduced}), as core operations applied through [apply]: on one
-    device each, or a [Place].
+    ({!Route.Reduced}) or scan ({!Route.Scanned}), as core operations applied
+    through [apply]: on one device each, or a [Place].
 
     A [Reduce] computes per group of its results' devices that hold one window
     of its results. A device's window along the reduced axes is its
@@ -66,12 +66,56 @@
     [[8192; 1000]] cut along axis 1. Laying a window's terms out is one pass,
     after a map where the program is not its operand. Any other operation, a
     [Contract], reads its operands whole along the axes it reduces, placed
-    as above. *)
+    as above.
+
+    A [Scan] computes per group of its results' devices that hold one window
+    of the axes off its axis; a device's window along its axis is its
+    {e tile}, and the group's tiles are in their order along it. Each
+    device's results have the bits of the scan on one device:
+
+    - An integer or boolean [Sum], [Prod], [Max] or [Min] scans each tile's
+      terms into the carrier, a float or complex [Max] or [Min] into the
+      result's dtype, and an [Arg] into an extreme and its positions, which
+      count from the axis's start. The carry into a tile is the last results
+      of the tiles before it combined in order on its device; one map
+      combines it with each of the tile's results: by [Add], [Mul],
+      [Maximum] or [Minimum] for an integer or a boolean; for a float
+      extreme, a NaN carry, else a NaN result, else their extreme; for an
+      [Arg], the first extreme, as a reduction's partials combine.
+    - A float or complex [Sum] or [Prod], a complex sum part by part as
+      floats, continues the scan's chunks ({!Nx_kernel.type-reduction}).
+      The total of each chunk but the last is a reduction of exactly its
+      terms, with whether one is a NaN: one reduction per tile over the
+      chunks it holds whole, and lane order's units over a chunk across
+      tiles, as a [Reduce]'s, combined on the tile holding the next chunk's
+      start. The carry into each chunk combines the totals before it in
+      order, on the tile holding its start. A tile scans from the carry
+      into its first chunk ({!Nx_kernel.S.scan}'s carry), and its terms
+      before that from the running result before them in the carrier: the
+      tile before it scans its last piece again into the carrier where the
+      result's dtype is not, so tiles that share a chunk scan in turn. Where
+      a term before a tile's first chunk, or before the tile, is a NaN,
+      each of those results is the first such term, from a reduction of
+      each piece of a tile within one chunk into the result's dtype.
+    - A device whose tile is empty scans its window alone; one whose tile
+      another holds takes that one's results.
+
+    An exact or ranked scan moves one row of each tile's window of the
+    results off the axis to the next tile, plus a map over the tile's
+    results. A float sum or product moves its chunk totals as rows, three
+    per chunk where the carrier is not the result's dtype, two elsewhere,
+    and a chunk across tiles moves as a reduction's units do; it adds a
+    reduction over the tile's terms, a map over its results but the first
+    tile's, an assembly where the tile starts inside a
+    chunk, and, for a narrower float, a scan of up to a chunk of 4096 terms
+    per slice into the carrier. Tiles sharing a chunk scan one after the
+    other. *)
 
 val applies : 'r Value.prim -> bool
 (** [applies op] is whether [op], whose operands lie where its route reads
-    them, reads one cut along an axis it reduces. It allocates nothing where
-    no operand of a [Reduce] or a [Contract] is cut. *)
+    them, reads one cut along an axis it reduces or scans. It allocates
+    nothing where no operand of a [Reduce], a [Scan] or a [Contract] is
+    cut. *)
 
 val run :
   ('q. by:string -> 'q Value.prim -> 'q) -> by:string -> 'r Value.prim -> 'r

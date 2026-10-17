@@ -795,6 +795,7 @@ let scan ?(axis = 1) reduction x =
          prog = Nx_kernel.Prog.v ~ins:[| D.Any dt |] [| In 0 |] ~outs:[| 0 |];
          reduction;
          loads = [| Plain x |];
+         carry = None;
        })
 
 let scan_rows =

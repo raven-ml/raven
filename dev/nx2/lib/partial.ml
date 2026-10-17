@@ -14,14 +14,19 @@ let is_cut (type v s d) (x : (v, s, d) Value.t) =
 
 let applies (type r) (op : r Value.prim) =
   match op with
-  | (Value.Reduce _ | Value.Contract _) when Prim.exists is_cut op ->
+  | (Value.Reduce _ | Value.Scan _ | Value.Contract _)
+    when Prim.exists is_cut op ->
       let rule = Prim.rule op and found = ref false in
       Prim.iteri
         (fun i x ->
           match Prim.at x with
           | None -> ()
           | Some p ->
-              let axes = Route.reduced rule i (Prim.rank x) in
+              let axes =
+                Array.append
+                  (Route.reduced rule i (Prim.rank x))
+                  (Route.scanned rule i (Prim.rank x))
+              in
               let cuts = Grid.cuts (Devices.grid p) in
               if Array.exists (fun (a, _) -> Array.mem a axes) cuts then
                 found := true)
@@ -382,7 +387,7 @@ let devices (type d) ~by (p : d Devices.placement) rule shape axes
           | Some i -> (
               match row i a with
               | Route.Whole -> full d
-              | Becomes _ | Reduced -> owns.(i).(a)))
+              | Becomes _ | Reduced | Scanned _ -> owns.(i).(a)))
         shape
     in
     let tile = Array.map (fun a -> loop.(a)) axes in
@@ -978,9 +983,703 @@ let reduce (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     in
     results rs (assemble plans 0 0)
 
+(* Scans over cut axes *)
+
+(* The terms of a scan's chunk ({!Nx_kernel.type-reduction}). *)
+let chunk = 4096
+
+(* [x], a value on one device, along [axis] from [start], [count] of them. *)
+let cut_along (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    axis (x : (v, s, d) Value.t) start count : (v, s, d) Value.t =
+  let r = Array.map full (Prim.shape x) in
+  if start = 0 && count = r.(axis).count then x
+  else begin
+    r.(axis) <- { M.start; count; step = 1 };
+    apply ~by (Value.Move (Slice r, x))
+  end
+
+let identity (D.Any dt) = P.of_node ~ins:[| D.Any dt |] (In 0)
+
+(* The scan of [x], a value on one device, along [axis] by [r], from
+   [carry]. *)
+let scanned (type v s d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    axis (x : (v, s, d) Value.t) (r : (d, a) Value.reduction) carry : a =
+  apply ~by
+    (Value.Scan
+       {
+         layout = L.contiguous (Prim.shape x);
+         axis;
+         prog = identity (D.Any (Prim.dtype x));
+         reduction = r;
+         loads = [| Value.Plain x |];
+         carry;
+       })
+
+(* [x] of [shape], its axes of extent 1 stretched. *)
+let spread (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  if Prim.has_shape x shape then x
+  else apply ~by (Value.Move (Broadcast (Array.copy shape), x))
+
+(* Output [o] of [prog], of the dtype [term], over [loads] in the window [w] of
+   the loop of [layout], on device [k] of [set]: the load's view where [prog]
+   is its identity. *)
+let window_terms (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (set : d Devices.t) layout (prog : P.t) o (D.Any term)
+    (loads : d Value.load array) k w : d Value.any =
+  let at = Devices.one set k in
+  let viewed = Array.map (fun l -> view_load ~by k at l w) loads in
+  let mapped () =
+    let out = Iarray.get prog.outs o in
+    let one = P.v ~ins:prog.ins prog.nodes ~outs:[| out |] in
+    let map =
+      Value.Map { layout; prog = one; outs = Value.[ term ]; loads = viewed }
+    in
+    Value.Any (fst (apply ~by (Prim.within map w)))
+  in
+  match viewed with
+  | [| Plain x |] when P.is_identity prog -> (
+      match D.equal_witness (Prim.dtype x) term with
+      | Some Type.Equal -> Value.Any x
+      | None -> mapped ())
+  | _ -> mapped ()
+
+(* A tile of a group along the scanned axis: its terms [s, e) and the device
+   that computes it, the first of the group holding them. *)
+type tile = { s : int; e : int; holder : int }
+
+(* Scans that combine exactly: each tile scans its own terms, and the carry of
+   the tiles before it, their last results combined in order, combines with
+   each result. Its partials and how two combine, the earlier first:
+   [Exact_scan] in the carrier by a kind, [Extreme_scan] in the result's dtype
+   by its extreme, a NaN first, and [Arg_scan] as an extreme and its position
+   in the whole's order, the first extreme. *)
+type exact_scan =
+  | Exact_scan of Nx_kernel.monoid * P.binary
+  | Extreme_scan of Nx_kernel.monoid * P.binary
+  | Arg_scan of Nx_kernel.extreme
+
+(* Two float or complex extremes [c] then [t] combined by [k]: a NaN [c], else
+   a NaN [t], else their extreme. *)
+let first_extreme (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (k : P.binary) (Value.Any c : d Value.any) (t : d Value.any) : d Value.any
+    =
+  let dt = Prim.dtype c in
+  let t = Prim.expect dt t in
+  let x i = E.input i dt in
+  let nan i = E.(x i <> x i) in
+  let prog =
+    P.of_exprs
+      ~ins:[| D.Any dt; D.Any dt |]
+      [|
+        E.any
+          E.(where (nan 0) (x 0) (where (nan 1) (x 1) (binary k (x 0) (x 1))));
+      |]
+  in
+  let layout = L.contiguous (Prim.shape c) in
+  let loads = Value.[| Plain c; Plain t |] in
+  let y, () =
+    apply ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
+  in
+  Value.Any y
+
+(* [pos] shifted by [s]. *)
+let shifted (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by s
+    (pos : d Value.any) : d Value.any =
+  if s = 0 then pos
+  else
+    let pos = Prim.expect D.Int64 pos in
+    let prog =
+      P.of_exprs
+        ~ins:[| D.Any D.Int64 |]
+        [| E.any E.(input 0 D.Int64 + const D.Int64 (Int64.of_int s)) |]
+    in
+    let layout = L.contiguous (Prim.shape pos) in
+    let y, () =
+      apply ~by
+        (Value.Map
+           { layout; prog; outs = Value.[ D.Int64 ]; loads = [| Plain pos |] })
+    in
+    Value.Any y
+
+(* The value of [r]'s results [vs]. *)
+let one_result : type d a. (d, a) Value.reduction -> d Value.any list -> a =
+ fun r vs ->
+  match (r, vs) with
+  | Monoid (_, _, dt), [ v ] -> Prim.expect dt v
+  | Moments (_, dt), [ m; v ] -> (Prim.expect dt m, Prim.expect dt v)
+  | Arg (_, _, dt), [ e; q ] -> (Prim.expect dt e, Prim.expect D.Int64 q)
+  | _ -> invalid_arg "Partial.one_result: one value per result"
+
+(* The results of [tiles] along [axis], each on its holder, from their terms
+   [x]: [into] is the result's dtype. *)
+let exact_tiles (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (set : d Devices.t) axis plan (D.Any into) (tiles : tile array)
+    (x : d Value.any Lazy.t array) : d Value.any list array =
+  let here t = Devices.one set tiles.(t).holder in
+  let local t =
+    let (Value.Any xv) = Lazy.force x.(t) in
+    match plan with
+    | Exact_scan (m, _) ->
+        let (D.Any c) = Prim.carrier (D.Any (Prim.dtype xv)) in
+        [ Value.Any (scanned apply ~by axis xv (Monoid (m, 0, c)) None) ]
+    | Extreme_scan (m, _) ->
+        [ Value.Any (scanned apply ~by axis xv (Monoid (m, 0, into)) None) ]
+    | Arg_scan e ->
+        let ex, pos = scanned apply ~by axis xv (Arg (e, 0, into)) None in
+        [ Value.Any ex; shifted apply ~by tiles.(t).s (Value.Any pos) ]
+  in
+  let locals = Array.init (Array.length tiles) local in
+  let last t =
+    let n = tiles.(t).e - tiles.(t).s in
+    List.map
+      (fun (Value.Any v) -> Value.Any (cut_along apply ~by axis v (n - 1) 1))
+      locals.(t)
+  in
+  let combine c l =
+    match (plan, c, l) with
+    | Exact_scan (_, k), [ c ], [ l ] -> [ fold_exact apply ~by k [ c; l ] ]
+    | Extreme_scan (_, k), [ c ], [ l ] -> [ first_extreme apply ~by k c l ]
+    | Arg_scan e, [ c0; c1 ], [ l0; l1 ] ->
+        let y, q = first_of apply ~by e (c0, c1) (l0, l1) in
+        [ y; q ]
+    | _ -> invalid_arg "Partial.exact_tiles: partials of one kind"
+  in
+  let on h vs =
+    List.map (fun (Value.Any v) -> Value.Any (moved apply ~by h v)) vs
+  in
+  let count = Array.length tiles in
+  let carries = Array.make count [] in
+  for t = 1 to count - 1 do
+    let h = here t in
+    carries.(t) <-
+      (if t = 1 then on h (last 0)
+       else combine (on h carries.(t - 1)) (on h (last (t - 1))))
+  done;
+  let finish (Value.Any v) =
+    match plan with
+    | Exact_scan _ -> cast apply ~by (D.Any into) (Value.Any v)
+    | Extreme_scan _ | Arg_scan _ -> Value.Any v
+  in
+  Array.mapi
+    (fun t l ->
+      if t = 0 then List.map finish l
+      else
+        let wide =
+          List.map2
+            (fun (Value.Any c) (Value.Any v) ->
+              Value.Any (spread apply ~by (Prim.shape v) c))
+            carries.(t) l
+        in
+        List.map finish (combine wide l))
+    locals
+
+(* Float and complex sums and products: chunk totals as lane order's units,
+   the carry into each chunk, and each tile's scan from the carry into its
+   first whole chunk and, where it starts inside a chunk, from the running
+   result before it. *)
+
+(* Where an earlier term is a NaN [f], and the first such term in the result's
+   dtype [q], per slice. *)
+type 'd seen =
+  | Seen : {
+      f : (bool, D.bool_elt, 'd) Value.t;
+      q : ('w, 'r, 'd) Value.t;
+    }
+      -> 'd seen
+
+let seen_of (Unit u : 'd unit_value) = Seen { f = u.f; q = u.q }
+
+let seen_on (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by here
+    (Seen s : d seen) : d seen =
+  Seen { f = moved apply ~by here s.f; q = moved apply ~by here s.q }
+
+(* [a] then [b]: whether either has a NaN, and the earlier's first NaN. *)
+let seen_node (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (Seen a : d seen) (Seen b : d seen) : d seen =
+  let qt = Prim.dtype a.q in
+  let qb = Prim.expect qt (Value.Any b.q) in
+  let ins : D.any iarray =
+    [| D.Any D.Bool; D.Any qt; D.Any D.Bool; D.Any qt |]
+  in
+  let fa = E.input 0 D.Bool in
+  let prog =
+    P.of_exprs ~ins
+      [|
+        E.any E.(fa || input 2 D.Bool);
+        E.any (E.where fa (E.input 1 qt) (E.input 3 qt));
+      |]
+  in
+  let layout = L.contiguous (Prim.shape a.f) in
+  let loads = Value.[| Plain a.f; Plain a.q; Plain b.f; Plain qb |] in
+  let f, (q, ()) =
+    apply ~by (Value.Map { layout; prog; outs = Value.[ D.Bool; qt ]; loads })
+  in
+  Seen { f; q }
+
+(* Unit [u]'s row [i] along [axis], of shape [rows]. *)
+let unit_row (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
+    rows (Unit u : d unit_value) i : d unit_value =
+  let row (type v s) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
+    apply ~by (Value.Move (Reshape rows, cut_along apply ~by axis y i 1))
+  in
+  let s = row u.s and f = row u.f in
+  match D.equal_witness (Prim.dtype u.q) (Prim.dtype u.s) with
+  | Some Type.Equal when u.q == u.s -> Unit { s; f; q = s }
+  | Some _ | None -> Unit { s; f; q = row u.q }
+
+(* [x] of [shape]. *)
+let reshaped (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  if Prim.has_shape x shape then x
+  else apply ~by (Value.Move (Reshape (Array.copy shape), x))
+
+(* The results of [tiles] along [axis] of [n] terms, each on its holder, from
+   their terms [x] by [ln]. *)
+let lane_tiles (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ln
+    (set : d Devices.t) axis n (tiles : tile array)
+    (x : d Value.any Lazy.t array) : d Value.any array =
+  let count = Array.length tiles in
+  let here t = Devices.one set tiles.(t).holder in
+  let chunks = (n + chunk - 1) / chunk in
+  let tile_of i =
+    let t = ref 0 in
+    while tiles.(!t).e <= i do
+      incr t
+    done;
+    !t
+  in
+  let (D.Any c) = ln.carrier in
+  let flagged_terms = flagged (identity ln.term) 0 in
+  let window t =
+    let (Value.Any v) = Lazy.force x.(t) in
+    Prim.shape v
+  in
+  let w0 = window 0 in
+  let rank = Array.length w0 in
+  (* Each tile's slices, one row each, and a carry's shape there. *)
+  let rows = [| numel (Prim.reduced w0 [| axis |]) |] in
+  let carry_shape t =
+    let s = window t in
+    s.(axis) <- 1;
+    s
+  in
+  let units xs w =
+    unit_value apply ~by ln ~layout:(L.contiguous w) ~axes:[| axis |]
+      flagged_terms xs None rows
+  in
+  let piece t l len =
+    let (Value.Any v) = Lazy.force x.(t) in
+    Value.Any (cut_along apply ~by axis v l len)
+  in
+  (* The totals of the chunks before the last: of whole chunks where a tile
+     holds them, one reduction per tile; of a chunk across tiles, lane order's
+     units over its terms, combined on the tile holding the next chunk's
+     start. *)
+  let totals = Array.make chunks None in
+  Array.iteri
+    (fun t { s; e; _ } ->
+      let lo = (s + chunk - 1) / chunk in
+      let hi = Int.min (e / chunk) (chunks - 1) in
+      if hi > lo then begin
+        let (Value.Any v) = Lazy.force x.(t) in
+        let v =
+          cut_along apply ~by axis v ((lo * chunk) - s) ((hi - lo) * chunk)
+        in
+        let w = Prim.shape v in
+        let split =
+          Array.concat
+            [
+              Array.sub w 0 axis;
+              [| hi - lo; chunk |];
+              Array.sub w (axis + 1) (rank - axis - 1);
+            ]
+        in
+        let v = reshaped apply ~by split v in
+        let u =
+          unit_value apply ~by ln ~layout:(L.contiguous split)
+            ~axes:[| axis + 1 |] flagged_terms [| Value.Plain v |] None
+            (Prim.reduced split [| axis + 1 |])
+        in
+        for k = lo to hi - 1 do
+          totals.(k) <- Some (unit_row apply ~by axis rows u (k - lo))
+        done
+      end)
+    tiles;
+  for k = 0 to chunks - 2 do
+    if Option.is_none totals.(k) then begin
+      let lo = k * chunk and hi = Int.min n ((k + 1) * chunk) in
+      let ts =
+        Array.of_list
+          (List.filter
+             (fun t -> tiles.(t).s < hi && tiles.(t).e > lo)
+             (List.init count Fun.id))
+      in
+      let runs =
+        Array.mapi
+          (fun i t ->
+            let a = Int.max tiles.(t).s lo and b = Int.min tiles.(t).e hi in
+            { g = a - lo; l = a - tiles.(t).s; len = b - a; owner = i })
+          ts
+      in
+      let tr, leaves = tree (hi - lo) (Array.length ts) runs in
+      let value lf =
+        let terms =
+          match lf.parts with
+          | [ p ] -> piece ts.(p.owner) p.l p.len
+          | parts ->
+              (* Each part moves to the device of the unit, then the parts
+                 are assembled in term order. *)
+              let h = here ts.(lf.dest) in
+              let (Value.Any x0) = Lazy.force x.(ts.(lf.dest)) in
+              let dt = Prim.dtype x0 in
+              let shape = window ts.(lf.dest) in
+              shape.(axis) <- lf.hi - lf.lo;
+              let part p =
+                let region = Array.map full shape in
+                region.(axis) <-
+                  { M.start = p.g - lf.lo; count = p.len; step = 1 };
+                let y = Prim.expect dt (piece ts.(p.owner) p.l p.len) in
+                (region, moved apply ~by h y)
+              in
+              Value.Any
+                (apply ~by
+                   (Value.Assemble
+                      {
+                        dtype = dt;
+                        shape;
+                        fill = D.zero dt;
+                        pieces = List.map part parts;
+                      }))
+        in
+        let (Value.Any y) = terms in
+        units [| Value.Plain y |] (Prim.shape y)
+      in
+      let values = Array.map value leaves in
+      let h = here (tile_of hi) in
+      let rec combine = function
+        | Leaf i -> unit_on apply ~by h values.(i)
+        | Node (a, b) -> node apply ~by ln (combine a) (combine b)
+      in
+      totals.(k) <- Some (combine tr)
+    end
+  done;
+  (* The carry into each chunk, on the tile holding its start. *)
+  let carries = Array.make chunks None in
+  for k = 1 to chunks - 1 do
+    let h = here (tile_of (k * chunk)) in
+    let u = unit_on apply ~by h (Option.get totals.(k - 1)) in
+    carries.(k) <-
+      Some
+        (match carries.(k - 1) with
+        | None -> u
+        | Some prev -> node apply ~by ln (unit_on apply ~by h prev) u)
+  done;
+  (* Whether each piece of a tile, its terms in one chunk, holds a NaN, and
+     its first: a whole chunk's from its total, another's by a reduction. *)
+  let seen_pieces t =
+    let { s; e; _ } = tiles.(t) in
+    let h = here t in
+    let rec pieces i acc =
+      if i >= e then List.rev acc
+      else
+        let k = i / chunk in
+        let j = Int.min e ((k + 1) * chunk) in
+        let sn =
+          match totals.(k) with
+          | Some u when i = k * chunk && j = (k + 1) * chunk ->
+              seen_on apply ~by h (seen_of u)
+          | Some _ | None ->
+              let (Value.Any y) = piece t (i - s) (j - i) in
+              seen_of (units [| Value.Plain y |] (Prim.shape y))
+        in
+        pieces j (sn :: acc)
+    in
+    pieces s []
+  in
+  let seen = Array.map (fun _ -> None) tiles in
+  let pieces_of t =
+    match seen.(t) with
+    | Some l -> l
+    | None ->
+        let l = seen_pieces t in
+        seen.(t) <- Some l;
+        l
+  in
+  let fold = function
+    | [] -> None
+    | first :: rest -> Some (List.fold_left (seen_node apply ~by) first rest)
+  in
+  let after h a b =
+    match (a, b) with
+    | None, b -> Option.map (seen_on apply ~by h) b
+    | a, None -> Option.map (seen_on apply ~by h) a
+    | Some a, Some b ->
+        let a = seen_on apply ~by h a and b = seen_on apply ~by h b in
+        Some (seen_node apply ~by a b)
+  in
+  (* Whether the terms before each tile hold a NaN, and the first. *)
+  let before = Array.make count None in
+  for t = 1 to count - 1 do
+    before.(t) <- after (here t) before.(t - 1) (fold (pieces_of (t - 1)))
+  done;
+  (* [res], of [qd], where [sn] has a NaN: its first, everywhere. *)
+  let filled (type v s) t (qd : (v, s) D.t) sn (res : (v, s, d) Value.t) =
+    match sn with
+    | None -> res
+    | Some (Seen sn) ->
+        let shape = Prim.shape res in
+        let wide (type w r) (y : (w, r, d) Value.t) =
+          spread apply ~by shape (reshaped apply ~by (carry_shape t) y)
+        in
+        let fq = Prim.expect qd (Value.Any sn.q) in
+        let prog =
+          P.of_exprs
+            ~ins:[| D.Any D.Bool; D.Any qd; D.Any qd |]
+            [|
+              E.any (E.where (E.input 0 D.Bool) (E.input 1 qd) (E.input 2 qd));
+            |]
+        in
+        let loads = Value.[| Plain (wide sn.f); Plain (wide fq); Plain res |] in
+        let y, () =
+          apply ~by
+            (Value.Map
+               {
+                 layout = L.contiguous shape;
+                 prog;
+                 outs = Value.[ qd ];
+                 loads;
+               })
+        in
+        y
+  in
+  (* A carry of rows, as a scan's, on [h]. *)
+  let as_carry h t (Unit u) =
+    Value.Any (reshaped apply ~by (carry_shape t) (moved apply ~by h u.s))
+  in
+  let monoid = ln.monoid and into = ln.rounds in
+  let (D.Any qd) = into in
+  let run = ref None in
+  Array.mapi
+    (fun t { s; e; _ } ->
+      let h = here t in
+      let (Value.Any v) = Lazy.force x.(t) in
+      let carry_at b =
+        if b >= chunk then Some (as_carry h t (Option.get carries.(b / chunk)))
+        else None
+      in
+      let start = (s + chunk - 1) / chunk * chunk in
+      let b0 = Int.max s start in
+      let carried_in =
+        Option.map (fun (Value.Any r) -> Value.Any (moved apply ~by h r)) !run
+      in
+      (* A tile starting inside a chunk continues its running result there;
+         from its first chunk's start, it continues the carry into it. Where
+         earlier terms hold a NaN, every result is the first. *)
+      let head =
+        if s mod chunk = 0 then None
+        else
+          let y =
+            scanned apply ~by axis
+              (cut_along apply ~by axis v 0 (Int.min e start - s))
+              (Monoid (monoid, 0, qd)) carried_in
+          in
+          Some (filled t qd before.(t) y)
+      in
+      let body =
+        if b0 >= e then None
+        else
+          let y =
+            scanned apply ~by axis
+              (cut_along apply ~by axis v (b0 - s) (e - b0))
+              (Monoid (monoid, 0, qd)) (carry_at b0)
+          in
+          let head_seen =
+            if Option.is_some head then fold [ List.hd (pieces_of t) ] else None
+          in
+          Some (filled t qd (after h before.(t) head_seen) y)
+      in
+      let res =
+        match (head, body) with
+        | Some a, None -> a
+        | None, Some b -> b
+        | Some a, Some b ->
+            let shape = Prim.shape v in
+            let region off len =
+              let r = Array.map full shape in
+              r.(axis) <- { M.start = off; count = len; step = 1 };
+              r
+            in
+            apply ~by
+              (Value.Assemble
+                 {
+                   dtype = qd;
+                   shape = Array.copy shape;
+                   fill = D.zero qd;
+                   pieces =
+                     [ (region 0 (b0 - s), a); (region (b0 - s) (e - b0), b) ];
+                 })
+        | None, None -> invalid_arg "Partial.lane_tiles: an empty tile"
+      in
+      (* The running result before the next tile, in the carrier, where that
+         tile starts inside a chunk. *)
+      (run :=
+         if e >= n || e mod chunk = 0 then None
+         else if same ln.carrier into then
+           Some (Value.Any (cut_along apply ~by axis res (e - s - 1) 1))
+         else
+           let l0 = Int.max s (e / chunk * chunk) in
+           let from =
+             if l0 = s && s mod chunk <> 0 then carried_in else carry_at l0
+           in
+           let y =
+             scanned apply ~by axis
+               (cut_along apply ~by axis v (l0 - s) (e - l0))
+               (Monoid (monoid, 0, c)) from
+           in
+           Some (Value.Any (cut_along apply ~by axis y (e - l0 - 1) 1)));
+      Value.Any res)
+    tiles
+
+let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (op : a Value.prim) layout axis (prog : P.t) (r : (d, a) Value.reduction)
+    (loads : d Value.load array) : a =
+  let shape = L.shape layout in
+  let n = shape.(axis) in
+  let p = (Option.get (Prim.loads_route ~by op layout loads)).result in
+  let set = Devices.set p in
+  let ks = Grid.devices (Devices.grid p) in
+  let windows = Array.mapi (fun j _ -> Devices.window ~by p shape j) ks in
+  let o, (D.Any into as dt) =
+    match r with
+    | Monoid (_, o, dt) -> (o, D.Any dt)
+    | Arg (_, o, dt) -> (o, D.Any dt)
+    | Moments (o, dt) -> (o, D.Any dt)
+  in
+  let term = P.dtype prog (Iarray.get prog.outs o) in
+  let (D.Any t) = term in
+  let floats = match D.kind t with D.Float | D.Complex -> true | _ -> false in
+  (* A complex sum scans each part as a float. *)
+  let part =
+    match (r, D.kind t) with
+    | Monoid (Sum, _, _), D.Complex -> Some (float_part term)
+    | _ -> None
+  in
+  let off w = Array.mapi (fun a rg -> if a = axis then full 0 else rg) w in
+  let results = Array.make (Array.length ks) None in
+  let group j =
+    let members =
+      List.filter
+        (fun i -> off windows.(i) = off windows.(j))
+        (List.init (Array.length ks) Fun.id)
+    in
+    let held =
+      List.filter (fun i -> windows.(i).(axis).count > 0) members
+    in
+    let starts =
+      List.sort_uniq compare
+        (List.map (fun i -> windows.(i).(axis).start) held)
+    in
+    let tiles =
+      Array.of_list
+        (List.map
+           (fun s ->
+             let i = List.find (fun i -> windows.(i).(axis).start = s) held in
+             let rg = windows.(i).(axis) in
+             (i, { s; e = s + rg.count; holder = ks.(i) }))
+           starts)
+    in
+    let terms (i, _) =
+      lazy
+        (let v =
+           window_terms apply ~by set layout prog o term loads ks.(i)
+             windows.(i)
+         in
+         match part with
+         | None -> v
+         | Some (D.Any pt) ->
+             let (Value.Any v) = v in
+             Value.Any (apply ~by (Value.Bitcast (pt, v))))
+    in
+    let x = Array.map terms tiles in
+    let ts = Array.map snd tiles in
+    let computed =
+      if Array.length ts = 0 then [||]
+      else
+        match r with
+        | Monoid (((Sum | Prod) as m), _, _) when floats ->
+            let ln =
+              match part with
+              | None -> lane m 0 term dt
+              | Some pt -> lane m 0 pt (float_part dt)
+            in
+            let ys = lane_tiles apply ~by ln set axis n ts x in
+            Array.map
+              (fun y ->
+                match part with
+                | None -> [ y ]
+                | Some _ ->
+                    let (Value.Any y) = y in
+                    [ Value.Any (apply ~by (Value.Bitcast (into, y))) ])
+              ys
+        | Monoid (((Sum | Prod | Max | Min) as m), _, _) ->
+            let k : P.binary =
+              match m with
+              | Sum -> Add
+              | Prod -> Mul
+              | Max -> Maximum
+              | Min | Logsumexp -> Minimum
+            in
+            let plan =
+              if floats then Extreme_scan (m, k) else Exact_scan (m, k)
+            in
+            exact_tiles apply ~by set axis plan dt ts x
+        | Arg (e, _, _) -> exact_tiles apply ~by set axis (Arg_scan e) dt ts x
+        | Monoid (Logsumexp, _, _) | Moments _ ->
+            invalid_arg "Partial.scan: a scan that reads its axis whole"
+    in
+    List.iter
+      (fun i ->
+        let here = Devices.one set ks.(i) in
+        let w = windows.(i) in
+        results.(i) <-
+          Some
+            (if w.(axis).count = 0 then
+               let viewed =
+                 Array.map (fun l -> view_load ~by ks.(i) here l w) loads
+               in
+               values r
+                 (apply ~by
+                    (Prim.within
+                       (Value.Scan
+                          {
+                            layout;
+                            axis;
+                            prog;
+                            reduction = r;
+                            loads = viewed;
+                            carry = None;
+                          })
+                       w))
+             else
+               let t =
+                 Option.get
+                   (Array.find_index (fun ti -> ti.s = w.(axis).start) ts)
+               in
+               List.map
+                 (fun (Value.Any y) -> Value.Any (moved apply ~by here y))
+                 computed.(t)))
+      members
+  in
+  Array.iteri (fun j _ -> if Option.is_none results.(j) then group j) ks;
+  let finals = Array.map (fun v -> [ Option.get v ]) results in
+  one_result r (at_placement p shape finals 0)
+
 let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (op : r Value.prim) : r =
   match op with
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       reduce apply ~by op layout axes prog reductions loads
+  | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
+      scan apply ~by op layout axis prog reduction loads
   | _ -> gathered apply ~by op

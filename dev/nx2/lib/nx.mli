@@ -1300,7 +1300,20 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     inside one of the order's blocks ({!Nx_kernel.section-orders}), that
     block's terms move to one device first. {!var}, {!std}, {!logsumexp}
     and {!logmeanexp} take two such rounds: the maximum or the mean, then
-    sums. A float result that a NaN reaches is the first NaN in C order. A
+    sums.
+
+    A scan's bits do not depend on where [x] lies either. Along an axis cut
+    across devices, each device scans its own window from the state of the
+    terms before it. {!cumsum} and {!cumprod} of floats and complex numbers
+    continue the scan's chunks ({!Nx_kernel.type-reduction}): the totals of
+    the chunks before a window move to it as rows of partial results, and
+    devices whose windows share one chunk scan it one after the other, at
+    most a chunk of 4096 terms per slice. Over integers and booleans, and
+    for {!cummax} and {!cummin}, one row moves per device and one more pass
+    combines it with the device's results. {!ewma} reads its axis whole on
+    each device.
+
+    A float result that a NaN reaches is the first NaN in C order. A
     complex number with a NaN part is a NaN to {!prod}, {!max}, {!min}, their
     positions and scans; {!sum} and {!cumsum} add the parts apart. The float
     formats narrower than 32 bits accumulate at [float32] and round once.
@@ -1434,7 +1447,8 @@ val ewma : ?axis:int -> alpha:float -> (float, 's, 'd) t -> (float, 's, 'd) t
     without [axis], of its elements in C order, in [x]'s shape.
 
     The average of a prefix of [x] is the prefix of its average, bit for
-    bit. Element [i] passes through at most [max(0, 2⌈log₂(i+1)⌉ - 1)]
+    bit. Along an axis cut across devices, each device reads the axis
+    whole. Element [i] passes through at most [max(0, 2⌈log₂(i+1)⌉ - 1)]
     compositions of the recurrence's affine maps [y ↦ a y + b], in [O(n)]
     work for [n] elements. A NaN reaches every later element,
     and an infinity as the recurrence carries it; a finite term whose weight
@@ -3147,13 +3161,19 @@ module Prim : sig
         prog : Nx_kernel.Prog.t;
         reduction : ('d, 'r) reduction;
         loads : 'd load array;
+        carry : 'd any option;
       }
         -> 'r t
         (** The reduction of [prog]'s output over the indices along [axis] up to
             each index's, inclusive, of [layout]'s shape, as
             {!Nx_kernel.S.scan} says: a running [Moments] is the running mean
             and variance. The scan of a prefix of the axis is the prefix of
-            the scan, bit for bit. [prog] reads coordinates as a map's. *)
+            the scan, bit for bit. [prog] reads coordinates as a map's. With
+            [Some c], of a [Sum], [Prod], [Max] or [Min], each slice continues
+            from its element of [c], [S.scan]'s carry: of the results' shape
+            but extent [1] along [axis], in the carrier of the output's dtype,
+            [float32] for a narrower float, [int8] and [uint8] for [int4] and
+            [uint4], [bool] for [bit]. *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;

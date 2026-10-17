@@ -149,13 +149,14 @@ val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 
 val loads_route :
   by:string ->
+  ?carry:'d any ->
   'r prim ->
   Nx_array.Layout.t ->
   'd load array ->
   'd Route.t option
-(** [loads_route ~by op layout loads] is the route of [op], a loop of
-    [layout]'s shape, over [loads]: where it reads each and where its results
-    lie; [None] where every load is of every set. *)
+(** [loads_route ~by ?carry op layout loads] is the route of [op], a loop of
+    [layout]'s shape, over [loads], then a scan's [carry]: where it reads each
+    and where its results lie; [None] where every operand is of every set. *)
 
 val results :
   by:string ->
@@ -177,6 +178,11 @@ val reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
 
 val reduced : int array -> int array -> int array
 (** [reduced s axes] is [s] without [axes]. *)
+
+val carrier : Nx_array.Dtype.any -> Nx_array.Dtype.any
+(** [carrier dt] is the dtype kernels reduce and scan terms of [dt] in, and a
+    scan's carry's: [float32] for a float narrower than it, [int8] and [uint8]
+    for [int4] and [uint4], [bool] for [bit], else [dt]. *)
 
 val op1 :
   by:string ->

@@ -587,6 +587,7 @@ let scan1 r axis x =
          prog = identity (Nx.dtype x);
          reduction = r;
          loads = [| Plain x |];
+         carry = None;
        })
 
 (* Where a Moments scan computes: by the expansion on {!Core}, by nx.cpu on

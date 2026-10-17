@@ -256,7 +256,8 @@ let is_padded (type d) (l : d load) =
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
   | Reduce { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
-  | Scan { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
+  | Scan { loads; carry; _ } ->
+      Operands (Array.to_list (Array.map load_any loads) @ Option.to_list carry)
   | Gather { idx; x; _ } -> Operands [ Any idx; Any x ]
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
@@ -288,7 +289,9 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
   match op with
   | Map { loads; _ } -> iteri_loads f loads
   | Reduce { loads; _ } -> iteri_loads f loads
-  | Scan { loads; _ } -> iteri_loads f loads
+  | Scan { loads; carry; _ } -> (
+      iteri_loads f loads;
+      match carry with Some (Any c) -> f (Array.length loads) c | None -> ())
   | Gather { idx; x; _ } ->
       f 0 idx;
       f 1 x
@@ -328,7 +331,9 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   match op with
   | Map { loads; _ } -> loads_exist f loads 0
   | Reduce { loads; _ } -> loads_exist f loads 0
-  | Scan { loads; _ } -> loads_exist f loads 0
+  | Scan { loads; carry; _ } -> (
+      loads_exist f loads 0
+      || match carry with Some (Any c) -> f c | None -> false)
   | Gather { idx; x; _ } -> f idx || f x
   | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
   | Sort { x; _ } -> f x
@@ -357,7 +362,15 @@ let mapi : type r.
   match op with
   | Map p -> Map { p with loads = Array.mapi map_load p.loads }
   | Reduce p -> Reduce { p with loads = Array.mapi map_load p.loads }
-  | Scan p -> Scan { p with loads = Array.mapi map_load p.loads }
+  | Scan p ->
+      let loads = Array.mapi map_load p.loads in
+      let n = Array.length loads in
+      Scan
+        {
+          p with
+          loads;
+          carry = Option.map (fun (Any c) -> Any (m n c)) p.carry;
+        }
   | Gather g ->
       let idx = m 0 g.idx in
       Gather { g with idx; x = m 1 g.x }
@@ -705,6 +718,16 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
   in
   check 0 outs
 
+let carrier (D.Any dt as d) =
+  match dt with
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
+  | D.Float4_e2m1fn ->
+      D.Any D.Float32
+  | D.Int4 -> D.Any D.Int8
+  | D.Uint4 -> D.Any D.Uint8
+  | D.Bit -> D.Any D.Bool
+  | _ -> d
+
 (* A reduction's rule over [prog]'s outputs, reducing [axes] of [shape]: its
    output exists and is of a dtype it takes, and an extreme has a term. *)
 let check_reduction ~by (prog : P.t) shape axes (r, k) =
@@ -757,13 +780,30 @@ let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
   | l -> List.iter (check_reduction ~by prog shape axes) l);
   check_width ~by loads (results_width rs)
 
+let any_shape (Any x) = shape x
+
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
-    (loads : d load array) =
+    (loads : d load array) (carry : d any option) =
   check_loads ~by ~what:"scan" layout prog loads;
   let shape = L.shape layout in
   check_axes ~by shape [| axis |];
   check_reduction ~by prog shape [||] (reduction r);
-  check_width ~by loads (reduction_width r)
+  check_width ~by loads (reduction_width r);
+  match (carry, r) with
+  | None, _ -> ()
+  | Some (Any c), Monoid ((Sum | Prod | Max | Min), k, _) ->
+      let want = Array.copy shape in
+      want.(axis) <- 1;
+      let have = any_shape (Any c) in
+      if have <> want then
+        invalid_argf "%s: a carry of shape %a for a scan of shape %a" by
+          pp_shape have pp_shape shape;
+      let (D.Any want) = carrier (P.dtype prog (Iarray.get prog.outs k)) in
+      if not (same_dtype want (dtype c)) then
+        invalid_argf "%s: a carry of %s where the terms carry in %s" by
+          (D.name (dtype c)) (D.name want)
+  | Some _, (Monoid (Logsumexp, _, _) | Moments _ | Arg _) ->
+      invalid_argf "%s: a carry for %s" by (reduction_name (fst (reduction r)))
 
 (* [shape] without [axes]. *)
 let reduced shape axes =
@@ -819,16 +859,25 @@ let load_ranks (type d) layout (loads : d load array) =
         match l with Plain _ -> L.rank layout | Padded { x; _ } -> rank x)
       loads
 
+(* Whether a scan by [r] continues from the terms before a window: one of a
+   [Sum], [Prod], [Max], [Min] or [Arg], whose kernels take a carry or whose
+   results combine exactly. *)
+let carries : type d a. (d, a) reduction -> bool = function
+  | Monoid ((Sum | Prod | Max | Min), _, _) | Arg _ -> true
+  | Monoid (Logsumexp, _, _) | Moments _ -> false
+
 (* A loop's rule over loads of [ranks]: a load's axis becomes the results' axis
-   of its index less the axes reduced before it, but those read whole, its
-   scan's axis and those its padded loads pad, crop or window, and those
-   reduced. *)
+   of its index less the axes reduced before it, but those read whole, those
+   its padded loads pad, crop or window and a scan's axis that does not carry
+   or has a carry already, and those reduced. A scan's axis that carries is
+   [Scanned] where every load reads it plain. *)
 let loop_rule : type r. r prim -> int array -> Route.rule =
  fun op ranks ->
-  let rows axes whole =
+  let rows ?scanned axes whole =
     let becomes a : Route.axis =
       if Array.mem a whole then Whole
       else if Array.mem a axes then Reduced
+      else if scanned = Some a then Scanned a
       else
         Becomes
           (a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
@@ -842,8 +891,13 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
   match op with
   | Map { layout; loads; _ } -> rows [||] (padded layout loads [||])
   | Reduce { layout; axes; loads; _ } -> rows axes (padded layout loads [||])
-  | Scan { layout; axis; loads; _ } ->
-      rows [||] (padded layout loads [| axis |])
+  | Scan { layout; axis; loads; reduction; carry; _ } ->
+      let plain = not (Array.exists is_padded loads) in
+      (* A loop of no load has no operand to cut: it scans whole. *)
+      let loaded = Array.length loads > 0 in
+      if carries reduction && Option.is_none carry && plain && loaded then
+        rows ~scanned:axis [||] [||]
+      else rows [||] (padded layout loads [| axis |])
   | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
       invalid_arg "Prim.loop_rule: not a loop"
@@ -898,7 +952,18 @@ let rule : type r. r prim -> Route.rule =
   | Map { loads; _ } when not (Array.exists is_padded loads) -> Elementwise
   | Map { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
   | Reduce { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
-  | Scan { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
+  | Scan { layout; loads; carry = None; _ } ->
+      loop_rule op (load_ranks layout loads)
+  | Scan { layout; axis; loads; carry = Some _; _ } -> (
+      (* The carry, of the loop's rank, reads the scan's axis whole and the
+         others as a plain load does. *)
+      let rank = L.rank layout in
+      let ranks = Array.append (load_ranks layout loads) [| rank |] in
+      match loop_rule op ranks with
+      | Axes t ->
+          t.(Array.length loads).(axis) <- Route.Whole;
+          Axes t
+      | Elementwise | Into _ -> invalid_arg "Prim.rule: a loop's rule")
   | Gather { axis; idx; x } ->
       Axes [| reading [||] (rank idx); reading [| axis |] (rank x) |]
   | Scatter { axis; idx; updates; into; _ } ->
@@ -939,21 +1004,32 @@ let routed (type d r) ~by (op : r prim) (xs : d any array) : d Route.t option =
   | Route.One _ | Route.Other ->
       Route.route ~by (rule op) ps (Array.map (fun (Any x) -> shape x) xs)
 
-(* A loop [op]'s route, over loads of [layout]'s shape but where padded. *)
-let loads_route (type d r) ~by (op : r prim) layout (loads : d load array) =
+(* A loop [op]'s route, over loads of [layout]'s shape but where padded, then a
+   scan's carry. *)
+let loads_route (type d r) ~by ?(carry : d any option) (op : r prim) layout
+    (loads : d load array) =
   let placement (l : d load) =
     match l with Plain x -> at x | Padded { x; _ } -> at x
   in
-  let ps = Array.map placement loads in
+  let extra = Option.to_list carry in
+  let ps =
+    Array.append
+      (Array.map placement loads)
+      (Array.of_list (List.map (fun (Any c) -> at c) extra))
+  in
   match Route.common ps with
   | Route.Every_set -> None
   | Route.One p when uncut p -> at_one ps p
   | Route.One _ | Route.Other ->
       let s = L.shape layout in
-      let shape (l : d load) =
+      let shape_of (l : d load) =
         match l with Plain _ -> s | Padded { x; _ } -> shape x
       in
-      Route.route ~by (rule op) ps (Array.map shape loads)
+      let shapes =
+        Array.append (Array.map shape_of loads)
+          (Array.of_list (List.map (fun (Any c) -> shape c) extra))
+      in
+      Route.route ~by (rule op) ps shapes
 
 let rec make_outs : type d r.
     ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->
@@ -1388,9 +1464,9 @@ let results : type r.
       let placement = result (loads_route ~by op layout loads) in
       let out = L.contiguous (reduced (L.shape layout) axes) in
       make_reductions m 0 out placement reductions
-  | Scan { layout; axis; prog; reduction; loads } ->
-      check_scan ~by layout axis prog reduction loads;
-      let placement = result (loads_route ~by op layout loads) in
+  | Scan { layout; axis; prog; reduction; loads; carry } ->
+      check_scan ~by layout axis prog reduction loads carry;
+      let placement = result (loads_route ~by ?carry op layout loads) in
       make_reduction m 0 layout placement reduction
   | Gather { axis; idx; x } ->
       check_gather ~by axis idx x;
@@ -1573,10 +1649,20 @@ let prepare : type r.
       | Some loads -> Reduce { p with loads }
       | None -> op)
   | Scan p -> (
-      check_scan ~by p.layout p.axis p.prog p.reduction p.loads;
-      let r = loads_route ~by op p.layout p.loads in
+      check_scan ~by p.layout p.axis p.prog p.reduction p.loads p.carry;
+      let r = loads_route ~by ?carry:p.carry op p.layout p.loads in
+      let moved = ref false in
+      let carry =
+        Option.map
+          (fun (Any c) ->
+            let c' = place (read_at r (Array.length p.loads)) c in
+            if c' != c then moved := true;
+            Any c')
+          p.carry
+      in
       match placed place r p.loads with
-      | Some loads -> Scan { p with loads }
+      | Some loads -> Scan { p with loads; carry }
+      | None when !moved -> Scan { p with carry }
       | None -> op)
   | Gather g ->
       check_gather ~by g.axis g.idx g.x;

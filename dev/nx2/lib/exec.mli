@@ -14,11 +14,12 @@
     of that placement then computes its window of the results by the set's
     kernels, over each operand's window there ({!Route.window}); a program that
     reads coordinates adds the window's first index to them. Where the route
-    reads an operand cut along an axis the operation reduces, {!Partial}
-    computes it instead. [Done] is the result; a refusal raises through
-    {!Nx_array.refused} naming [by]. A device whose kernels decline computes
-    its window by the expansion ({!Expand.run}) over its own operands there,
-    copied into its window where the results lie on several devices. A decline nx has no expansion for raises naming the
+    reads an operand cut along an axis the operation reduces or scans,
+    {!Partial} computes it instead. [Done] is the result; a refusal raises
+    through {!Nx_array.refused} naming [by]. A device whose kernels decline
+    computes its window by the expansion ({!Expand.run}) over its own operands
+    there, copied into its window where the results lie on several devices. A
+    decline nx has no expansion for raises naming the
     kernels, the kind, the dtypes, the device and the move the program makes,
     [Nx.place] onto a set whose kernels compute it: no data moves between
     devices on its own. The decline of a routine also says that its expansion is

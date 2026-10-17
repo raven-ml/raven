@@ -44,13 +44,20 @@ type axis =
           results reads the operand's axis at its range along [a]. *)
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
-          scan's, a sort's, a transform's or a gather's source axis, and one a
-          padded load pads, crops or windows. *)
+          [Moments] or [Logsumexp] scan's, a sort's, a transform's or a
+          gather's source axis, and one a padded load pads, crops or
+          windows. *)
   | Reduced
       (** Gone from the results: a reduction's axes and a contraction's
           contracting pairs, but one a padded load of the reduction pads,
           crops or windows, which is [Whole] for every load. Read whole on
           each device, or cut where the operand lies so ({!route}). *)
+  | Scanned of int
+      (** The results' axis [a] of [Scanned a], along which a scan of a
+          [Sum], [Prod], [Max], [Min] or [Arg] without a carry runs, every
+          load reading it plain: cut as the operand is, as [Becomes a] routes
+          it, but a window of the results depends on the terms before it, so
+          the window law does not hold along it ({!Partial}). *)
 
 (** The type for how an operation's results depend on its operands: for each
     axis of each operand, what the operation makes of it. A window of the
@@ -87,6 +94,10 @@ val reduced : rule -> int -> int -> int array
 (** [reduced r i rank] is the axes of operand [i], of rank [rank], that [r]
     reduces ({!Reduced}), in increasing order. *)
 
+val scanned : rule -> int -> int -> int array
+(** [scanned r i rank] is the axes of operand [i], of rank [rank], that [r]
+    scans ({!Scanned}), in increasing order. *)
+
 val window :
   rule ->
   operand:int ->
@@ -102,11 +113,11 @@ val window :
     operands' windows, under the {e window law}: for every window [w] of the
     results, the operation over each operand's [window r ~operand:i s w] equals
     the window [w] of the operation over the whole operands, bitwise. It
-    computes every route that reads no operand cut along a [Reduced] axis. A
-    kernel library meets it where an element's association, its algorithm and
-    whether the library declines depend on the extents the element reads
-    whole, the dtypes, the attributes, the library and the device's
-    architecture, never on the extents its window cuts. *)
+    computes every route that reads no operand cut along a [Reduced] or a
+    [Scanned] axis. A kernel library meets it where an element's association,
+    its algorithm and whether the library declines depend on the extents the
+    element reads whole, the dtypes, the attributes, the library and the
+    device's architecture, never on the extents its window cuts. *)
 
 type 'd t = {
   operands : 'd Devices.placement array;

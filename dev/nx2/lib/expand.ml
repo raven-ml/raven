@@ -735,8 +735,8 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
   all rs
 
 let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
-    axis prog (r : (d, a) Value.reduction) (loads : d Value.load array) :
-    a option =
+    axis prog (r : (d, a) Value.reduction) (loads : d Value.load array)
+    (carry : d Value.any option) : a option =
   let loop : type q.
       Nx_array.Layout.t ->
       P.t ->
@@ -744,7 +744,15 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
       d Value.load array ->
       q =
    fun layout prog reduction loads ->
-    apply ~by (Value.Scan { layout; axis; prog; reduction; loads })
+    (* A complex sum scans its parts as floats, and its carry's. *)
+    let carry =
+      match (carry, reduction) with
+      | Some (Value.Any c), Value.Monoid (_, _, dt)
+        when Prim.rank c < L.rank layout ->
+          Some (Value.Any (apply ~by (Value.Bitcast (dt, c))))
+      | _ -> carry
+    in
+    apply ~by (Value.Scan { layout; axis; prog; reduction; loads; carry })
   in
   match r with
   | Moments (k, dt) ->
@@ -1938,9 +1946,9 @@ let run : type r.
     when Array.exists Prim.is_padded loads || not (core_reduce prog reductions)
     ->
       reduce apply ~by layout axes prog reductions loads
-  | Value.Scan { layout; axis; prog; reduction = r; loads }
+  | Value.Scan { layout; axis; prog; reduction = r; loads; carry }
     when Array.exists Prim.is_padded loads || not (core_scan prog r) ->
-      scan apply ~by layout axis prog r loads
+      scan apply ~by layout axis prog r loads carry
   | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
       Some (contract apply ~by ~order ~batch ~contracting ~acc out a b init)
   | Value.Map { layout; prog; outs; loads } ->

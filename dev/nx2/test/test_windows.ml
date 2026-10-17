@@ -232,11 +232,25 @@ let scan_of loop prog loads =
   if arg then
     Op
       (Value.Scan
-         { layout; axis; prog; reduction = Arg (Max, 0, D.Float32); loads })
+         {
+           layout;
+           axis;
+           prog;
+           reduction = Arg (Max, 0, D.Float32);
+           loads;
+           carry = None;
+         })
   else
     Op
       (Value.Scan
-         { layout; axis; prog; reduction = Monoid (Sum, 0, D.Float32); loads })
+         {
+           layout;
+           axis;
+           prog;
+           reduction = Monoid (Sum, 0, D.Float32);
+           loads;
+           carry = None;
+         })
 
 let scan_op ~padded =
   let open Gen in
@@ -507,13 +521,20 @@ let shape_of_results (Op op) =
        op);
   !first
 
+(* Whether a scan runs along the results' axis [a] of [rule]: the law holds of
+   no window that cuts it. *)
+let scans (rule : Route.rule) a =
+  match rule with
+  | Elementwise -> false
+  | Axes t | Into t -> Array.exists (Array.mem (Route.Scanned a)) t
+
 let case =
   let open Gen in
   let* (Op op as o) = one_of ops in
   let rule = Prim.rule op and s = shape_of_results o in
   let+ w =
     let range a d =
-      if Route.keeps rule a || d = 0 then constant (full d)
+      if Route.keeps rule a || scans rule a || d = 0 then constant (full d)
       else
         let* start = int_range 0 (d - 1) in
         let+ count = int_range 0 (d - start) in

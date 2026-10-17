@@ -1332,6 +1332,264 @@ let law_split_dot (xs, ys) =
   let bits v = Array.map float_bits (elements v) in
   equal (array string) (bits (Nx.dot x y)) (bits (Nx.dot (split x) (split y)))
 
+(* Scans along cut axes *)
+
+type scan = Cumsum | Cumprod | Cummax | Cummin
+
+let scan_name = function
+  | Cumsum -> "cumsum"
+  | Cumprod -> "cumprod"
+  | Cummax -> "cummax"
+  | Cummin -> "cummin"
+
+(* Each result's bits as strings, [show] printing an element's, or the message
+   of the refusal. *)
+let scan_bits (type v s d) (show : v -> string) r axis (x : (v, s, d) Nx.t) =
+  match
+    match r with
+    | Cumsum -> Nx.cumsum ~axis x
+    | Cumprod -> Nx.cumprod ~axis x
+    | Cummax -> Nx.cummax ~axis x
+    | Cummin -> Nx.cummin ~axis x
+  with
+  | y -> Ok (Array.map show (elements y))
+  | exception Invalid_argument m -> Error m
+
+(* {!scan_bits} of [x] placed as [w]. *)
+let scan_at (type v s) w (show : v -> string) r axis
+    (x : (v, s, Nx.Host.d) Nx.t) =
+  match w with
+  | Split3 a -> scan_bits show r axis (Nx.place (Set3.split ~axis:a) x)
+  | Split4 a -> scan_bits show r axis (Nx.place (Set4.split ~axis:a) x)
+  | Cuts (a, b) ->
+      let cuts =
+        if a = b then [ (a, [ "a"; "b" ]) ] else [ (a, [ "a" ]); (b, [ "b" ]) ]
+      in
+      scan_bits show r axis (Nx.place (Nx.Placement.mesh mesh4 cuts) x)
+  | Minor a ->
+      scan_bits show r axis
+        (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
+
+type scan_case = {
+  skind : any_reduced;
+  sshape : int array;
+  saxis : int;
+  swhere : where;
+  sr : scan;
+  sseed : int;
+  smarks : (float * special) list;
+}
+
+let pp_scan_case ppf c =
+  let (Reduced k) = c.skind in
+  Format.fprintf ppf "%s along %d of %s %a at %a, seed %d, specials %s"
+    (scan_name c.sr) c.saxis (D.name k.rdtype) pp_ints c.sshape pp_where
+    c.swhere c.sseed
+    (String.concat "; "
+       (List.map
+          (fun (f, s) -> Printf.sprintf "%g:%h" f (special_value s))
+          c.smarks))
+
+(* The case's terms: a float's or a complex's as {!lane_data} draws a sum's or
+   a product's, another dtype's drawn from its values. *)
+let scan_data (type v s) (k : (v, s) reduced) c : v array =
+  match D.kind k.rdtype with
+  | D.Float | D.Complex ->
+      lane_data k.rdtype
+        {
+          lkind = Lane_kind (k.rdtype, k.rshow);
+          lshape = c.sshape;
+          laxes = None;
+          lwhere = c.swhere;
+          lr = (if c.sr = Cumprod then Prod else Sum);
+          seed = c.sseed;
+          marks = c.smarks;
+        }
+  | D.Signed | D.Unsigned | D.Boolean ->
+      let st = Random.State.make [| c.sseed |] in
+      let values = Array.of_list k.rvalues in
+      Array.init
+        (Array.fold_left ( * ) 1 c.sshape)
+        (fun _ -> values.(Random.State.int st (Array.length values)))
+
+let scan_case =
+  let open Gen in
+  with_pp pp_scan_case
+    (let* rank = int_range 1 3 in
+     let* swhere = where_of rank in
+     let cut = List.map fst (tiles swhere) in
+     (* Along a cut axis most often. *)
+     let* saxis =
+       frequency [ (5, of_list cut); (1, int_range 0 (rank - 1)) ]
+     in
+     let* many =
+       frequency
+         [
+           (1, of_list [ 0; 1; 2; 3; 5; 7 ]);
+           ( 3,
+             of_list
+               [ 4095; 4096; 4097; 6000; 8192; 9001; 12289; 16384; 20000 ] );
+         ]
+     in
+     let* sshape = array ~size:(constant rank) (of_list [ 1; 2; 3 ]) in
+     sshape.(saxis) <- many;
+     let* (Reduced k as skind) = of_list reduced_kinds in
+     let* sr =
+       of_list
+         (match D.kind k.rdtype with
+         | D.Boolean -> [ Cummax; Cummin ]
+         | _ -> [ Cumsum; Cumprod; Cummax; Cummin ])
+     in
+     let* sseed = int in
+     let early = float_range 0. 0.3 and late = float_range 0.6 1. in
+     let made a b = [ (a, Inf); (b, Neg_inf) ] in
+     let nan_term = map (fun x -> Nan x) (of_list [ nan; -.nan ]) in
+     let+ smarks =
+       frequency
+         [
+           (1, constant []);
+           ( 2,
+             list ~size:(int_range 1 3)
+               (pair (float_range 0. 1.) (of_list specials)) );
+           ( 1,
+             let+ a = early and+ b = early and+ c = late and+ x = nan_term in
+             made a b @ [ (c, x) ] );
+           ( 1,
+             let+ a = late and+ b = late and+ c = early and+ x = nan_term in
+             (c, x) :: made a b );
+         ]
+     in
+     { skind; sshape; saxis; swhere; sr; sseed; smarks })
+
+(* Balanced windows' starts along an axis of [e] over [t] tiles. *)
+let starts e t =
+  let q = e / t and r = e mod t in
+  List.init t (fun j -> (j * q) + Stdlib.min j r)
+
+let law_scans c =
+  let (Reduced k) = c.skind in
+  let n = c.sshape.(c.saxis) in
+  let cut =
+    List.filter_map
+      (fun (a, t) -> if a = c.saxis then Some t else None)
+      (tiles c.swhere)
+  in
+  let along = cut <> [] in
+  let ss = List.concat_map (fun t -> starts n t) cut in
+  let chunk = 4096 in
+  cover "a scan along a cut axis" along;
+  cover ("a scan along a cut axis: " ^ scan_name c.sr) along;
+  cover ("a scan along a cut axis of " ^ D.name k.rdtype) along;
+  cover "chunks across windows" (along && n > chunk);
+  cover "a window starting inside a chunk past the first"
+    (List.exists (fun s -> s > chunk && s mod chunk <> 0) ss);
+  cover "a window starting at a chunk's start"
+    (List.exists (fun s -> s > 0 && s mod chunk = 0) ss);
+  cover "windows that share a chunk"
+    (List.exists
+       (fun s ->
+         s mod chunk <> 0
+         && List.exists
+              (fun s' -> s' < s && s' / chunk = s / chunk && s' mod chunk <> 0)
+              ss)
+       ss);
+  cover "an empty window along the scanned axis"
+    (List.exists (fun t -> n > 0 && n < t) cut);
+  cover "an uneven cut along the scanned axis"
+    (List.exists (fun t -> n mod t <> 0) cut);
+  cover "a scanned axis of no term" (along && n = 0);
+  cover "a scanned axis cut over two mesh axes"
+    (along && match c.swhere with Cuts (a, b) -> a = b | _ -> false);
+  cover "a scanned axis cut, the other mesh axis holding copies"
+    (along && match c.swhere with Minor _ -> true | _ -> false);
+  cover "a scanned axis cut beside another"
+    (along && List.length (tiles c.swhere) > 1);
+  let floats =
+    match D.kind k.rdtype with
+    | D.Float | D.Complex -> true
+    | D.Signed | D.Unsigned | D.Boolean -> false
+  in
+  let nans = List.exists (function _, Nan _ -> true | _ -> false) c.smarks in
+  let infs =
+    List.mem Inf (List.map snd c.smarks)
+    && List.mem Neg_inf (List.map snd c.smarks)
+  in
+  cover "a NaN term along a cut axis" (along && floats && nans);
+  cover "infinities of both signs along a cut axis" (along && floats && infs);
+  let data = scan_data k c in
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array k.rdtype c.sshape data) in
+  equal string
+    (printed (scan_bits k.rshow c.sr c.saxis x))
+    (printed (scan_at c.swhere k.rshow c.sr c.saxis x))
+
+(* A prefix of a cut float32 value along its cut axis, of [n] terms and [m]
+   kept. *)
+let prefix_case =
+  let open Gen in
+  with_pp
+    (fun ppf (n, m, seed, split4) ->
+      Format.fprintf ppf "%d of [%d] split over %d, seed %d" m n
+        (if split4 then 4 else 3)
+        seed)
+    (let* n = of_list [ 7; 4097; 9001; 12289 ] in
+     let* m = int_range 0 n in
+     let* seed = int in
+     let+ split4 = bool in
+     (n, m, seed, split4))
+
+let law_prefix (n, m, seed, split4) =
+  cover "a prefix ending inside a later window" (m > n / 2);
+  let st = Random.State.make [| seed |] in
+  let data =
+    Array.init n (fun _ ->
+        Float.ldexp
+          (Random.State.float st 2. -. 1.)
+          (Random.State.int st 41 - 20))
+  in
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] data) in
+  let bits y = Array.map float_bits (elements y) in
+  let laws (type d) (x : (float, D.float32_elt, d) Nx.t) =
+    let prefix y = Nx.slice [ Nx.R (0, m) ] y in
+    equal (array string)
+      (bits (prefix (Nx.cumsum ~axis:0 x)))
+      (bits (Nx.cumsum ~axis:0 (prefix x)))
+  in
+  if split4 then laws (Nx.place (Set4.split ~axis:0) x)
+  else laws (Nx.place (Set3.split ~axis:0) x)
+
+let test_scans_move () =
+  (* Read whole, each of four devices would scan every term: [4 n] positions.
+     Cut, each device scans its window: an integer scan adds one combination
+     per result, a float scan the chunk totals, the units of the chunks
+     across windows and the NaN fill, and a float16 one, where windows end
+     inside chunks, scans each window's last piece again into float32. *)
+  let counted (type v s) (x : (v, s) A.t) f =
+    let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
+    C.reset ();
+    let y = f x in
+    let n = C.positions () in
+    ignore (elements y);
+    n
+  in
+  let under what n limit got =
+    less int ~msg:(Printf.sprintf "%s of %d terms" what n) ~than:limit got
+  in
+  List.iter
+    (fun n ->
+      let ints = A.of_array D.Int32 [| n |] (Array.init n Int32.of_int) in
+      let floats dt =
+        A.of_array dt [| n |]
+          (Array.init n (fun i -> Float.of_int (i mod 7) /. 7.))
+      in
+      under "an integer cumsum" n (2 * n) (counted ints (Nx.cumsum ~axis:0));
+      under "a float cummax" n (2 * n)
+        (counted (floats D.Float32) (Nx.cummax ~axis:0));
+      under "a float cumsum" n (3 * n)
+        (counted (floats D.Float32) (Nx.cumsum ~axis:0));
+      under "a float16 cumprod" n (4 * n)
+        (counted (floats D.Float16) (Nx.cumprod ~axis:0)))
+    [ 16384; 9001 ]
+
 let placements =
   group "placements"
     [
@@ -1353,6 +1611,12 @@ let placements =
         lane_case law_lanes;
       test "a float reduction over a cut axis moves partials, not the operand"
         test_float_partials_move;
+      prop ~count:500 "a scan along cut axes gives its bits on one device"
+        scan_case law_scans;
+      prop ~count:100 "a scan of a cut value's prefix is its scan's prefix"
+        prefix_case law_prefix;
+      test "a scan along a cut axis scans each window, not the operand"
+        test_scans_move;
     ]
 
 let () =

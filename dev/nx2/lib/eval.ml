@@ -87,10 +87,11 @@ let replayed : type r d.
       let op = Reduce { layout; axes; prog; reductions; loads } in
       Prim.iter_reductions add reductions (applied i ~by op);
       List.rev !all
-  | Scan { layout; axis; prog; reduction; loads } ->
+  | Scan { layout; axis; prog; reduction; loads; carry } ->
       let (Reduction reduction) = reduction_at reduction in
       let loads = Array.map load loads in
-      let op = Scan { layout; axis; prog; reduction; loads } in
+      let carry = Option.map (fun (Any c) -> Any (sub c)) carry in
+      let op = Scan { layout; axis; prog; reduction; loads; carry } in
       Prim.iter_reduction add reduction (applied i ~by op);
       List.rev !all
   | Gather { axis; idx; x } -> one (Gather { axis; idx = sub idx; x = sub x })

@@ -64,13 +64,13 @@ let load_array : Nx_kernel.load -> A.any = function
   | Nx_kernel.Padded { x; _ } -> A.Any x
 
 (* As [ran], for a loop over [loads]. *)
-let ran_loads ~by answer dsts loads =
+let ran_loads ~by ?(reads = []) answer dsts loads =
   match (answer : A.answer) with
   | Done -> true
   | Declined -> false
   | refusal ->
       A.refused by refusal
-        (Array.to_list dsts @ List.map load_array (Array.to_list loads))
+        (Array.to_list dsts @ List.map load_array (Array.to_list loads) @ reads)
 
 (* Values from arrays *)
 
@@ -600,10 +600,13 @@ let call : type r.
       let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
       let rs = Prim.reductions reductions and shape = L.shape layout in
       ran_loads ~by (K.reduce prog ~shape ~axes rs ~dsts loads) dsts loads
-  | Value.Scan { axis; prog; reduction; loads; _ } ->
+  | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
       let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
       let reduction = Prim.reduction reduction in
-      ran_loads ~by (K.scan prog ~axis reduction ~dsts loads) dsts loads
+      let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
+      let reads = Option.to_list carry in
+      ran_loads ~by ~reads (K.scan ?carry prog ~axis reduction ~dsts loads) dsts
+        loads
   | Value.Contract { order; batch; contracting; acc; a; b; init; _ } ->
       let dst = nth j r and a = one a and b = one b in
       let init = Option.map one init in
@@ -857,8 +860,9 @@ and compute : type r.
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
-  | (Value.Reduce _ | Value.Contract _) when Partial.applies op -> (
-      (* An operand read cut along an axis the operation reduces. *)
+  | (Value.Reduce _ | Value.Scan _ | Value.Contract _) when Partial.applies op
+    -> (
+      (* An operand read cut along an axis the operation reduces or scans. *)
       match at with
       | None -> Partial.run run ~by op
       | Some q -> Partial.run (fun ~by op -> apply_at q ~by op) ~by op)

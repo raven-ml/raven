@@ -1551,6 +1551,7 @@ let scan_along ~by m axis x =
          prog = P.of_node ~ins:[| D.Any dt |] (In 0);
          reduction = Monoid (m, 0, dt);
          loads = [| Plain x |];
+         carry = None;
        })
 
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
@@ -4645,6 +4646,7 @@ module Prim = struct
         prog : Nx_kernel.Prog.t;
         reduction : ('d, 'r) reduction;
         loads : 'd load array;
+        carry : 'd any option;
       }
         -> 'r t
     | Gather : {

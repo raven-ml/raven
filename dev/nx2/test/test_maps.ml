@@ -320,6 +320,7 @@ let coordinate_scans () : (float, D.float32_elt, b) Value.t =
          prog = coords 0;
          reduction = Monoid (Sum, 0, D.Float32);
          loads = [||];
+         carry = None;
        })
 
 (* The shapes of [x]'s arrays, one per device. *)
@@ -336,6 +337,7 @@ let row_scans () : (float, D.float32_elt, b) Value.t =
          prog = coords 1;
          reduction = Monoid (Sum, 0, D.Float32);
          loads = [||];
+         carry = None;
        })
 
 let forced =
@@ -446,6 +448,7 @@ let rules =
                  prog = coords 1;
                  reduction = Monoid (Sum, 0, D.Float32);
                  loads = [||];
+                 carry = None;
                }));
     ]
 
