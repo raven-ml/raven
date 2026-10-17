@@ -239,11 +239,7 @@ let launch d ~writes ds =
       Sub.Run.groups run b gx gy gz;
       Sub.Run.threads run b threads 1 1;
       for w = 0 to (String.length args.words / 8) - 1 do
-        (* Two halves, so that a word's 64th bit is stored too. *)
-        let v = String.get_int64_le args.words (8 * w) in
-        Sub.Run.int32 run b (8 * w) (Int64.to_int v);
-        Sub.Run.int32 run b ((8 * w) + 4)
-          (Int64.to_int (Int64.shift_right_logical v 32))
+        Sub.Run.int64 run b (8 * w) (String.get_int64_le args.words (8 * w))
       done)
     ds;
   ignore (Rig.submit run ~buffers:(Array.of_list !slots))

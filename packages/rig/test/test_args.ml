@@ -20,8 +20,8 @@ let word b at = Support.load (Support.Reader.host b + at)
 let take run = if not (Run.take run) then fail "the run is taken"
 
 let store run block ~offset value =
-  Run.int64 run block 0 offset;
-  Run.int64 run block 8 value
+  Run.int64 run block 0 (Int64.of_int offset);
+  Run.int64 run block 8 (Int64.of_int value)
 
 (* The same run can serve successive hand-overs while the first still waits in a
    queue. Both its parameter bytes and its resolved addresses belong to each
@@ -86,7 +86,7 @@ let test_mixed () =
   in
   let run = Run.make s in
   store run (Sub.block s 0) ~offset:0 17;
-  Run.int64 run (Sub.block s 0) 4088 127;
+  Run.int64 run (Sub.block s 0) 4088 127L;
   let block = Sub.block s 1 in
   Run.groups run block 1 1 1;
   Run.threads run block 1 1 1;
@@ -107,8 +107,8 @@ let test_wide_fill () =
         [| fill ~params:8192 ~refs:[| Sub.write 0 ~at:8184 |] Support.far |]
     in
     let run = Run.make s and block = Sub.block s 0 in
-    Run.int64 run block 4096 59;
-    Run.int64 run block 8184 8;
+    Run.int64 run block 4096 59L;
+    Run.int64 run block 8184 8L;
     let out = B.create d 16 in
     (out, submit run [| out |])
   in
@@ -127,9 +127,9 @@ let test_refs () =
   let run = Run.make s and block = Sub.block s 0 in
   let src = B.create d 24 and dst = B.create d 24 in
   Support.store (Support.Reader.host src + 8) 101;
-  Run.int64 run block 0 16;
-  Run.int64 run block 8 8;
-  Run.int64 run block 16 8;
+  Run.int64 run block 0 16L;
+  Run.int64 run block 8 8L;
+  Run.int64 run block 16 8L;
   ignore (submit run [| dst; src |]);
   ignore (P.run p);
   equal int 101 (word dst 16)

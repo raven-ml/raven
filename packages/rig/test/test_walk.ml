@@ -211,7 +211,7 @@ let memory_attempt n =
   in
   let run = Sub.Run.make (Option.get !s) and buffers = [| counter |] in
   for i = 0 to fills - 1 do
-    Sub.Run.int64 run (Sub.block (Option.get !s) i) 0 0
+    Sub.Run.int64 run (Sub.block (Option.get !s) i) 0 0L
   done;
   Rig.Point.wait (once ~buffers run);
   let heap, fds = census () in

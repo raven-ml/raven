@@ -1698,9 +1698,10 @@ let submit_sys last rc wc sc =
         Sub.Run.groups run b 1 1 1;
         Sub.Run.threads run b 1 1 1
       end;
-      Sub.Run.int64 run b 0 0;
-      Sub.Run.int64 run b 8 0;
-      Sub.Run.int64 run b 16 (min (B.length r.b) (B.length wb.b)));
+      Sub.Run.int64 run b 0 0L;
+      Sub.Run.int64 run b 8 0L;
+      let n = min (B.length r.b) (B.length wb.b) in
+      Sub.Run.int64 run b 16 (Int64.of_int n));
   let buffers = if sub.slotted then [| onto r.b; onto wb.b |] else [||] in
   Rig.Point.value (Rig.submit run ~buffers)
 

@@ -287,8 +287,8 @@ let test_fill () =
   Support.store (Support.Reader.host arg) 0;
   let s = Sub.make d [| bump; bump |] in
   let run = Sub.Run.make s and buffers = [| on d arg |] in
-  Sub.Run.int64 run (Sub.block s 0) 0 0;
-  Sub.Run.int64 run (Sub.block s 1) 0 0;
+  Sub.Run.int64 run (Sub.block s 0) 0 0L;
+  Sub.Run.int64 run (Sub.block s 1) 0 0L;
   ignore (submit ~run ~buffers s);
   ignore (submit ~run ~buffers s);
   equal int 4 (word arg)
@@ -682,7 +682,7 @@ let[@inline never] dropped_bump d use =
   let bump = Sub.fill ~refs:[| use 0 ~at:0 |] Support.bump ~params:8 in
   let s = Sub.make d [| bump |] in
   let run = Sub.Run.make s in
-  Sub.Run.int64 run (Sub.block s 0) 0 0;
+  Sub.Run.int64 run (Sub.block s 0) 0 0L;
   submit ~run s ~buffers:[| b |]
 
 let test_cached_unordered_host () =
@@ -710,7 +710,7 @@ let test_cached_unordered_foreign (name, access) =
   in
   let s = Sub.make d [| poke |] in
   let run = Sub.Run.make s in
-  Sub.Run.int64 run (Sub.block s 0) 8 41;
+  Sub.Run.int64 run (Sub.block s 0) 8 41L;
   Rig.Point.wait (submit ~run ~buffers:[| on d b |] s);
   Rig.Point.wait old;
   equal ~msg:"the new buffer after the old work finishes" int 41 (word b)
@@ -895,7 +895,7 @@ let bumps d arg n =
   let s = Sub.make d (Array.make n bump) in
   let run = Sub.Run.make s in
   for i = 0 to n - 1 do
-    Sub.Run.int64 run (Sub.block s i) 0 0
+    Sub.Run.int64 run (Sub.block s i) 0 0L
   done;
   (* Some tests submit it on another domain. *)
   Sub.Run.release run;
@@ -1048,7 +1048,7 @@ let test_run_beside_wait () =
     let run = Sub.Run.make s in
     Sub.Run.groups run block 1 1 1;
     Sub.Run.threads run block 1 1 1;
-    Sub.Run.int64 run block 0 value;
+    Sub.Run.int64 run block 0 (Int64.of_int value);
     Sub.Run.release run;
     run
   in
@@ -1545,9 +1545,9 @@ let test_device_order () =
     in
     let s = Sub.make d [| part |] in
     let run = Sub.Run.make s and block = Sub.block s 0 in
-    Sub.Run.int64 run block 0 0;
-    Sub.Run.int64 run block 8 0;
-    Sub.Run.int64 run block 16 n;
+    Sub.Run.int64 run block 0 0L;
+    Sub.Run.int64 run block 8 0L;
+    Sub.Run.int64 run block 16 (Int64.of_int n);
     ignore (submit ~run ~buffers:[| on d dst; on d src |] s)
   in
   let copy src dst =
@@ -1811,8 +1811,8 @@ let shared_commands =
       (fun t ->
         let run = take_run t in
         match
-          Sub.Run.int64 run (Sub.block t.sub 0) 0 0;
-          Sub.Run.int64 run (Sub.block t.sub 1) 0 0
+          Sub.Run.int64 run (Sub.block t.sub 0) 0 0L;
+          Sub.Run.int64 run (Sub.block t.sub 1) 0 0L
         with
         | () -> Rig.Point.value (submit ~run ~buffers:t.buffers t.sub) - t.base
         | exception e ->

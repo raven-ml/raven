@@ -1026,14 +1026,13 @@ value caml_rig_run_int32_byte(value v_r, value b, value i, value v) {
   return caml_rig_run_int32(v_r, b, Long_val(i), Long_val(v));
 }
 
-value caml_rig_run_int64(value v_r, value b, intnat i, intnat v) {
-  int64_t x = v;
-  param_store(v_r, b, i, &x, sizeof x);
+value caml_rig_run_int64(value v_r, value b, intnat i, int64_t v) {
+  param_store(v_r, b, i, &v, sizeof v);
   return Val_unit;
 }
 
 value caml_rig_run_int64_byte(value v_r, value b, value i, value v) {
-  return caml_rig_run_int64(v_r, b, Long_val(i), Long_val(v));
+  return caml_rig_run_int64(v_r, b, Long_val(i), Int64_val(v));
 }
 
 value caml_rig_run_float32(value v_r, value b, intnat i, double v) {

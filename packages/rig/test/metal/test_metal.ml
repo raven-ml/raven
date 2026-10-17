@@ -1088,7 +1088,7 @@ let shared_law grid =
   let k = Sub.block s 0 in
   set_grid run k grid;
   Run.shared run k (4 * per);
-  Run.int64 run k 0 0;
+  Run.int64 run k 0 0L;
   Run.int32 run k 8 7;
   run_wait run [| out |];
   equal (array int)
@@ -1170,7 +1170,7 @@ let widest () =
   for w = 0 to 1021 do
     Run.int32 run k (4 * w) (w + 1)
   done;
-  Run.int64 run k 4088 0;
+  Run.int64 run k 4088 0L;
   run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
@@ -1190,7 +1190,7 @@ let past_set_bytes () =
   for w = 0 to 1021 do
     Run.int32 run k (4 * w) (w + 1)
   done;
-  Run.int64 run k 4088 0;
+  Run.int64 run k 4088 0L;
   run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
@@ -1207,7 +1207,7 @@ let arena () =
   let out = zeroed t.d (8 * n) in
   let set run k i =
     set_grid run k one;
-    Run.int64 run k 0 (8 * i);
+    Run.int64 run k 0 (Int64.of_int (8 * i));
     Run.int32 run k 4096 i;
     Run.int32 run k 8188 (1000 + i)
   in
@@ -1292,7 +1292,7 @@ let refused_geometry () =
     raises_match Exn.invalid_arg (fun () ->
         set_grid run k { groups; threads };
         Run.shared run k shared;
-        Run.int64 run k 0 0;
+        Run.int64 run k 0 0L;
         Rig.submit run ~buffers:[| out |]);
     equal (option string) None (Rig.lost t.d)
   in
@@ -1324,7 +1324,7 @@ let spans_in_order n =
   for i = 0 to 1 do
     let k = Sub.block s i in
     set_grid run k one;
-    Run.int64 run k 0 0
+    Run.int64 run k 0 0L
   done;
   let before = Rig.Profile.now () in
   let (), events =
@@ -1371,7 +1371,7 @@ let no_allocation () =
   let go () =
     if not (Run.take run) then fail "the run is taken";
     set_grid run k one;
-    Run.int64 run k 0 0;
+    Run.int64 run k 0 0L;
     ignore (Rig.submit run ~buffers)
   in
   go ();

@@ -109,7 +109,7 @@ let submit =
       B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
       let s = Sub.make d [| bump |] in
       let run = Sub.Run.make s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0;
+      Sub.Run.int64 run (Sub.block s 0) 0 0L;
       fun _ ->
         Rig.Point.wait (once ~buffers run);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
@@ -180,7 +180,7 @@ let profile =
       let arg = B.create d 8 in
       let s = Sub.make d [| bump |] in
       let run = Sub.Run.make s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0;
+      Sub.Run.int64 run (Sub.block s 0) 0 0L;
       fun _ ->
         ignore
           (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers run))))

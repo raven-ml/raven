@@ -126,7 +126,8 @@ let failing_fill d =
   let fixed = [ (Option.get (B.borrow d arg), Rig.Read_write) ] in
   let part = Sub.fill Rig_support.countdown ~params:8 in
   let init s run i =
-    Sub.Run.int64 run (Sub.block s i) 0 (Rig_support.Reader.host arg)
+    let host = Rig_support.Reader.host arg in
+    Sub.Run.int64 run (Sub.block s i) 0 (Int64.of_int host)
   in
   { part = (fun _ -> part); buffers = [||]; fixed; keep = Kept (); init }
 
@@ -168,8 +169,8 @@ let ids l ~out ~groups:(gx, gy, gz) ~threads:(tx, ty, tz) ~offset ~a ~b ~f =
     (fun run k ->
       Sub.Run.groups run k gx gy gz;
       Sub.Run.threads run k tx ty tz;
-      Sub.Run.int64 run k 0 offset;
-      Sub.Run.int64 run k 8 a;
+      Sub.Run.int64 run k 0 (Int64.of_int offset);
+      Sub.Run.int64 run k 8 (Int64.of_int a);
       Sub.Run.int32 run k 16 b;
       Sub.Run.float32 run k 20 f)
 
@@ -180,8 +181,8 @@ let twice l ~dst ~src n ~offset ~c =
     (fun run k ->
       Sub.Run.groups run k n 1 1;
       Sub.Run.threads run k 1 1 1;
-      Sub.Run.int64 run k 0 offset;
-      Sub.Run.int64 run k 8 offset;
+      Sub.Run.int64 run k 0 (Int64.of_int offset);
+      Sub.Run.int64 run k 8 (Int64.of_int offset);
       Sub.Run.int32 run k 16 c)
 
 (* [n] 32-bit words, word [i] holding [f i]. *)
@@ -998,8 +999,8 @@ let largest_launches (module G : Gpu) =
         (fun run k ->
           Sub.Run.groups run k 1 1 1;
           Sub.Run.threads run k 1 1 1;
-          Sub.Run.int64 run k 0 (4 * i);
-          Sub.Run.int64 run k 8 (i + 1);
+          Sub.Run.int64 run k 0 (Int64.of_int (4 * i));
+          Sub.Run.int64 run k 8 (Int64.of_int (i + 1));
           Sub.Run.int32 run k 16 0;
           Sub.Run.float32 run k 20 0.)
     in

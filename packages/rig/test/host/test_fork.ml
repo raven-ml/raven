@@ -58,9 +58,9 @@ let affine image ~n ~a ~c =
   let run = Run.make s and k = Sub.block s 0 in
   Run.groups run k ((n + 63) / 64) 1 1;
   Run.threads run k 64 1 1;
-  Run.int64 run k 16 n;
-  Run.int64 run k 24 a;
-  Run.int64 run k 32 c;
+  Run.int64 run k 16 (Int64.of_int n);
+  Run.int64 run k 24 (Int64.of_int a);
+  Run.int64 run k 32 (Int64.of_int c);
   ignore
     (Rig.submit run ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]);
   let right = ref true in

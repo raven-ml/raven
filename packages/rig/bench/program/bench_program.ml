@@ -112,7 +112,7 @@ let by_hand steps () =
     let run = Sub.Run.make s and b = Sub.block s 0 in
     Sub.Run.groups run b 1 1 1;
     Sub.Run.threads run b 1 1 1;
-    Sub.Run.int64 run b 8 7;
+    Sub.Run.int64 run b 8 7L;
     (run, xs.(d))
   in
   let subs = Array.init steps sub in

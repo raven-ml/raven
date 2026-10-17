@@ -149,7 +149,7 @@ let store run b l =
     Run.int32 run b (4 * k)
       (Int32.to_int (String.get_int32_le l.params (4 * k)))
   done;
-  List.iter (fun r -> Run.int64 run b r.at r.offset) l.refs
+  List.iter (fun r -> Run.int64 run b r.at (Int64.of_int r.offset)) l.refs
 
 (* What the function reads: the parameters, each ref's word the address of its
    buffer plus the offset. *)
@@ -254,8 +254,8 @@ let test_write_seen () =
   let run = Run.make s and b = Sub.block s 0 in
   Run.groups run b 2 2 1;
   Run.threads run b 1 1 1;
-  Run.int64 run b 0 0;
-  Run.int64 run b 8 100;
+  Run.int64 run b 0 0L;
+  Run.int64 run b 8 100L;
   ignore (submit ~buffers:[| out |] run);
   B.wait out Read;
   let host = B.create Rig.host 32 in
@@ -287,7 +287,7 @@ let test_device_order () =
   in
   let run = Run.make copying and blk = Sub.block copying 0 in
   one run blk;
-  Run.int64 run blk 16 64;
+  Run.int64 run blk 16 64L;
   ignore (submit (Run.make copy_into_b));
   ignore (submit ~buffers:[| b; c |] run);
   let out = B.create Rig.host 64 in
@@ -300,8 +300,8 @@ let test_device_order () =
   let run = Run.make filling and blk = Sub.block filling 0 in
   Run.groups run blk 8 1 1;
   Run.threads run blk 1 1 1;
-  Run.int64 run blk 0 0;
-  Run.int64 run blk 8 7;
+  Run.int64 run blk 0 0L;
+  Run.int64 run blk 8 7L;
   ignore (submit ~buffers:[| b |] run);
   let copy_b = Sub.make d [| copy_part ~dst:c b |] in
   ignore (submit (Run.make copy_b));
@@ -333,8 +333,8 @@ let test_parts_changed () =
   let out = B.create d 8 in
   let run = Run.make s and b = Sub.block s 0 in
   one run b;
-  Run.int64 run b 0 0;
-  Run.int64 run b 8 7;
+  Run.int64 run b 0 0L;
+  Run.int64 run b 8 7L;
   ignore (submit ~buffers:[| out |] run);
   let host = B.create Rig.host 8 in
   B.copy ~src:out ~dst:host;
@@ -352,8 +352,8 @@ let test_parts_read_once () =
   let out = B.create d 8 in
   let run = Run.make s and b = Sub.block s 0 in
   one run b;
-  Run.int64 run b 0 0;
-  Run.int64 run b 8 7;
+  Run.int64 run b 0 0L;
+  Run.int64 run b 8 7L;
   ignore (P.launches p);
   ignore (submit ~buffers:[| out |] run);
   ignore (P.run p);
@@ -487,7 +487,7 @@ let test_setter_refusals () =
   let run = Run.make s and b = Sub.block s 0 in
   refused ~msg:"int32 at -1" (fun () -> Run.int32 run b (-1) 0);
   refused ~msg:"int32 at 9 of 12" (fun () -> Run.int32 run b 9 0);
-  refused ~msg:"int64 at 8 of 12" (fun () -> Run.int64 run b 8 0);
+  refused ~msg:"int64 at 8 of 12" (fun () -> Run.int64 run b 8 0L);
   refused ~msg:"float64 at max_int" (fun () -> Run.float64 run b max_int 0.);
   refused ~msg:"float32 at 12 of 12" (fun () -> Run.float32 run b 12 0.);
   refused ~msg:"negative groups" (fun () -> Run.groups run b 1 (-1) 1);
@@ -505,7 +505,7 @@ let test_setter_refusals () =
   Run.threads run b 32 32 1;
   refused ~msg:"negative shared memory" (fun () -> Run.shared run b (-1));
   Run.int32 run b 8 0;
-  Run.int64 run b 4 0;
+  Run.int64 run b 4 0L;
   Run.float32 run b 8 0.;
   Run.groups run b 0xffff_ffff 1 1
 
@@ -571,13 +571,13 @@ let test_setter_in_use () =
   let s = Sub.make d [| launch image "main" ~params:8 |] in
   let run = Run.make s and b = Sub.block s 0 in
   one run b;
-  Run.int64 run b 0 41;
+  Run.int64 run b 0 41L;
   let point = submit (Run.make (Sub.make producer [||])) in
   let refused = ref None in
   let handle _ =
     refused :=
       Some
-        (match Run.int64 run b 0 42 with
+        (match Run.int64 run b 0 42L with
         | () -> "stored"
         | exception Invalid_argument why -> why)
   in
@@ -615,12 +615,12 @@ let test_block_owner () =
   in
   equal bool ~msg:"its submission" true (Run.submission run == s1);
   one run b1;
-  Run.int64 run b1 8 41;
+  Run.int64 run b1 8 41L;
   equal ~msg:"its own stores" int 41 (fill run);
   take run;
   raises_match ~msg:"another's block"
     (Exn.invalid_arg ~substring:"another submission's") (fun () ->
-      Run.int64 run b2 8 42);
+      Run.int64 run b2 8 42L);
   Run.release run;
   equal ~msg:"its last store, kept across submits" int 41 (fill run);
   let fresh = Run.make s1 in
@@ -638,7 +638,7 @@ let test_take () =
   let s = Sub.make d [| launch image "main" ~params:8 |] in
   let run = Run.make s and b = Sub.block s 0 in
   one run b;
-  Run.int64 run b 0 41;
+  Run.int64 run b 0 41L;
   equal ~msg:"a run make took" bool false (Run.take run);
   let other f = Domain.join (Domain.spawn f) in
   let outcome f =
@@ -650,7 +650,7 @@ let test_take () =
     (other (fun () -> Run.take run));
   other (fun () -> Run.release run);
   contains ~msg:"another thread's store" ~sub:"has not taken the run"
-    (other (fun () -> outcome (fun () -> Run.int64 run b 0 42)));
+    (other (fun () -> outcome (fun () -> Run.int64 run b 0 42L)));
   contains ~msg:"another thread's submit" ~sub:"another thread took the run"
     (other (fun () -> outcome (fun () -> submit run)));
   equal ~msg:"values assigned" int 0 (Rig.submitted d);
@@ -680,7 +680,7 @@ let test_submit_frees () =
   raises_match ~msg:"a submit that loses the device" lost (fun () ->
       submit run);
   take run;
-  Run.int64 run b 0 41;
+  Run.int64 run b 0 41L;
   raises_match ~msg:"a submit on the lost device" lost (fun () -> submit run);
   equal ~msg:"another thread's take" bool true
     (Domain.join (Domain.spawn (fun () -> Run.take run)))
@@ -738,7 +738,7 @@ let block () =
    run was held. *)
 let use run v =
   if not (Run.take run) then raise Exit;
-  match Run.int64 run (block ()) 8 v with
+  match Run.int64 run (block ()) 8 (Int64.of_int v) with
   | () -> fill run
   | exception e ->
       Run.release run;
@@ -771,7 +771,7 @@ let shared_commands =
         | Ok () -> fail "a store into a run the thread has not taken"
         | Error e when busy e -> ()
         | Error e -> raise e)
-      (fun run v -> Run.int64 run (block ()) 8 v);
+      (fun run v -> Run.int64 run (block ()) 8 (Int64.of_int v));
     command "submit"
       (shared_t ^-> judges int)
       (fun r -> function
@@ -827,7 +827,7 @@ let grow_child () =
   limit max_int;
   let run = Run.make small and b = Sub.block small 0 and out = B.create d 8 in
   one run b;
-  Run.int64 run b 8 41;
+  Run.int64 run b 8 41L;
   Rig.Point.wait (submit ~buffers:[| out |] run);
   Printf.printf "%s\n%Ld\n" refused (String.get_int64_le (host_bytes out 8) 0)
 
@@ -885,7 +885,7 @@ let test_allocation () =
   setter "threads" (fun i -> Run.threads run b ((i land 7) + 1) 1 1);
   setter "shared" (fun i -> Run.shared run b i);
   setter "int32" (fun i -> Run.int32 run b 0 i);
-  setter "int64" (fun i -> Run.int64 run b 8 i);
+  setter "int64" (fun i -> Run.int64 run b 8 (Int64.of_int i));
   setter "float32" (fun i -> Run.float32 run b 16 (float_of_int i *. 0.5));
   setter "float64" (fun i -> Run.float64 run b 24 (float_of_int i *. 0.5));
   let last = submit ~buffers run in

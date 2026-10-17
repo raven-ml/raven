@@ -230,8 +230,8 @@ let launching = Rig_gpu_support.launching
 
 let launch t kernel a b =
   launching (modules t.d) kernel ~params:16 [||] (fun run k ->
-      Rig.Submission.Run.int64 run k 0 a;
-      Rig.Submission.Run.int64 run k 8 b)
+      Rig.Submission.Run.int64 run k 0 (Int64.of_int a);
+      Rig.Submission.Run.int64 run k 8 (Int64.of_int b))
 
 (* Conformance *)
 
@@ -267,4 +267,4 @@ let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching (modules t.d) "spin" ~params:16
     [| (flag, Rig.Read, 0) |]
-    (fun run k -> Rig.Submission.Run.int64 run k 8 ns)
+    (fun run k -> Rig.Submission.Run.int64 run k 8 (Int64.of_int ns))

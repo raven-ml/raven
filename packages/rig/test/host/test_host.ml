@@ -54,9 +54,9 @@ let affine = lazy (load "affine")
 (* affine.c over [n] elements, in groups of [t] threads. *)
 let affine_launch ~n ~t ~a ~c out inb =
   let set run k =
-    Run.int64 run k 16 n;
-    Run.int64 run k 24 a;
-    Run.int64 run k 32 c
+    Run.int64 run k 16 (Int64.of_int n);
+    Run.int64 run k 24 (Int64.of_int a);
+    Run.int64 run k 32 (Int64.of_int c)
   in
   launch (Lazy.force affine) "affine"
     ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
@@ -76,6 +76,29 @@ let test_affine (n, t, a, c, input) =
   equal (array int) expected (Array.init n (fun i -> Int64.to_int out.{i}));
   equal ~msg:"the word past the last" int64 7L out.{n}
 
+(* An int64 parameter holds every int64, those whose bits 63 and 62 differ
+   among them: affine.c with [a = 0] stores its [c] into [out]. *)
+let test_int64_parameter () =
+  let values =
+    Int64.
+      [ min_int; max_int; add min_int 1L; 0x4000_0000_0000_0000L; -1L; 0L ]
+  in
+  List.iter
+    (fun c ->
+      let inb = S.words 1 and out = S.words 1 in
+      let set run k =
+        Run.int64 run k 16 1L;
+        Run.int64 run k 24 0L;
+        Run.int64 run k 32 c
+      in
+      ignore
+        (launch (Lazy.force affine) "affine"
+           ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
+           ~params:40 ~set
+           (words [| out; inb |]));
+      equal ~msg:(Int64.to_string c) int64 c out.{0})
+    values
+
 let affine_case =
   let open Gen in
   let* n = frequency [ (1, constant 1); (4, int_range 1 200) ] in
@@ -92,7 +115,7 @@ let test_linked () =
     (launch (load "linked") "linked"
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:24
-       ~set:(fun run k -> Run.int64 run k 16 2)
+       ~set:(fun run k -> Run.int64 run k 16 2L)
        [| B.of_bigarray out; B.of_bigarray inb |]);
   equal ~msg:"cbrt 27" float_exact (Float.cbrt 27.) out.{0};
   equal ~msg:"table.(2)" float_exact 3.125 out.{1};
@@ -119,7 +142,7 @@ let test_follows () =
     (launch (Lazy.force affine) "affine"
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:40
-       ~set:(fun run k -> Run.int64 run k 16 1)
+       ~set:(fun run k -> Run.int64 run k 16 1L)
        [| B.of_bigarray out; shared |]);
   equal ~msg:"the Polled work it follows" bool true (Rig.Point.reached written)
 
@@ -145,7 +168,7 @@ let deep_launch groups =
     (launch (load "deep") "deep"
        ~refs:Sub.[| write 0 ~at:0 |]
        ~params:16
-       ~set:(fun run k -> Run.int64 run k 8 0)
+       ~set:(fun run k -> Run.int64 run k 8 0L)
        ~grid:{ one with groups = (groups, 1, 1) }
        (words [| out |]));
   Array.init groups (fun i -> Int64.to_int out.{i})
@@ -189,6 +212,7 @@ let program_tests =
     [
       prop "a launch runs its function on its parameters over every thread"
         affine_case test_affine;
+      test "an int64 parameter holds every int64" test_int64_parameter;
       test "a profile records a launch's span" test_profiled;
       test "a launch reads 8,192 bytes of parameters" test_wide;
       test "a launch's parameters are bounded only by what a run holds"
@@ -336,7 +360,7 @@ let domain_commands =
 (* waiting.c's launch over [w] and [b], spinning until w[0] is set. *)
 let waiting w ~rounds =
   launch (load "waiting") "waiting" ~refs:Sub.[| write 0 ~at:0 |] ~params:16
-    ~set:(fun run k -> Run.int64 run k 8 rounds)
+    ~set:(fun run k -> Run.int64 run k 8 (Int64.of_int rounds))
     [| w |]
 
 (* Sets w[0] once w[1] is set, then whether the launch had returned. *)
@@ -393,7 +417,7 @@ let during_host_read m f =
           (launch image "waiting"
              ~refs:Sub.[| write 0 ~at:0; read 1 ~at:16 |]
              ~params:24
-             ~set:(fun run k -> Run.int64 run k 8 20_000_000_000)
+             ~set:(fun run k -> Run.int64 run k 8 20_000_000_000L)
              [| B.of_bigarray w; m |]))
   in
   Fun.protect
@@ -479,9 +503,9 @@ let test_survives () =
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:40
        ~set:(fun run k ->
-         Run.int64 run k 16 1;
-         Run.int64 run k 24 3;
-         Run.int64 run k 32 1)
+         Run.int64 run k 16 1L;
+         Run.int64 run k 24 3L;
+         Run.int64 run k 32 1L)
        (words [| out; inb |]));
   equal int64 16L out.{0};
   equal ~msg:"mapped" bool true
@@ -505,7 +529,7 @@ let test_running () =
         let run = Run.make s and k = Sub.block s 0 in
         Run.groups run k 1 1 1;
         Run.threads run k 1 1 1;
-        Run.int64 run k 8 20_000_000_000;
+        Run.int64 run k 8 20_000_000_000L;
         ignore (Rig.submit run ~buffers:[| B.of_bigarray w |]))
   in
   Rig_support.await "the launch running" (fun () -> w.{1} = 1L);
@@ -540,7 +564,7 @@ let test_keeps_callee () =
         let run = Run.make s and k = Sub.block s 0 in
         Run.groups run k 1 1 1;
         Run.threads run k 1 1 1;
-        Run.int64 run k 16 20_000_000_000;
+        Run.int64 run k 16 20_000_000_000L;
         ignore (Rig.submit run ~buffers:[| B.of_bigarray w |]))
   in
   Rig_support.await "the callee running" (fun () -> w.{1} = 1L);

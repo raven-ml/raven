@@ -30,9 +30,9 @@ let affine fn ~groups:g ~threads:t ~n ~a ~c out inp =
   Submission.Run.(
     groups run k g 1 1;
     threads run k t 1 1;
-    int64 run k 16 n;
-    int64 run k 24 a;
-    int64 run k 32 c);
+    int64 run k 16 (Int64.of_int n);
+    int64 run k 24 (Int64.of_int a);
+    int64 run k 32 (Int64.of_int c));
   ignore (submit run ~buffers:[| out; inp |])
 
 let iota n =

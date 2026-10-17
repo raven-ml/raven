@@ -393,9 +393,9 @@ let no_allocation () =
     Run.groups run b 1 1 1;
     Run.threads run b 32 1 1;
     Run.shared run b 0;
-    Run.int64 run b 0 0;
+    Run.int64 run b 0 0L;
     Run.float64 run b 8 2.5;
-    Run.int64 run b 8 i;
+    Run.int64 run b 8 (Int64.of_int i);
     Run.int32 run b 16 3;
     Run.float32 run b 20 1.5;
     Sys.opaque_identity (submitted run buffers)

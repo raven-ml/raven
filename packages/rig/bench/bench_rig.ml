@@ -227,8 +227,8 @@ let rec first_run p = function
 let pooled p blocks buffers =
   let run = first_run p (Atomic.get p.runs) in
   match
-    Sub.Run.int64 run (Array.unsafe_get blocks 0) 0 0;
-    Sub.Run.int64 run (Array.unsafe_get blocks 1) 0 0
+    Sub.Run.int64 run (Array.unsafe_get blocks 0) 0 0L;
+    Sub.Run.int64 run (Array.unsafe_get blocks 1) 0 0L
   with
   | () -> Rig.submit run ~buffers
   | exception e ->
@@ -320,7 +320,7 @@ let submit_rows =
       row "launch-refs-8" launching (fun (t, run, b, buffers) ->
           take run;
           for k = 0 to refs - 1 do
-            Sub.Run.int64 run b (8 * k) 0
+            Sub.Run.int64 run b (8 * k) 0L
           done;
           ignore (Rig.submit run ~buffers);
           drained t);
@@ -382,8 +382,8 @@ let run r =
   r.t.n <- r.t.n + 1;
   ignore (P.run r.t.p);
   take c.run;
-  Sub.Run.int64 c.run c.block 0 0;
-  Sub.Run.int64 c.run c.block 8 r.t.n;
+  Sub.Run.int64 c.run c.block 0 0L;
+  Sub.Run.int64 c.run c.block 8 (Int64.of_int r.t.n);
   Rig.submit c.run ~buffers:c.buffers
 
 let replay_rows =

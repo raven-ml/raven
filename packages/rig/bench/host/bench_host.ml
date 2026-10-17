@@ -93,7 +93,7 @@ let scale_rows =
   let buffers = [| B.of_bigarray x |] in
   let scale ~groups =
     launch image "scale" ~refs:Sub.[| write 0 ~at:0 |] ~params:16
-      ~set:(fun run k -> Sub.Run.int64 run k 8 n)
+      ~set:(fun run k -> Sub.Run.int64 run k 8 (Int64.of_int n))
       ~groups
       ~threads:((n + groups - 1) / groups)
   in

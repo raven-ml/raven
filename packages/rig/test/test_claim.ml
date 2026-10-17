@@ -904,9 +904,9 @@ let test_submit_donation (name, kind) () =
             [| part fill |]
         in
         let run = Sub.Run.make s and block = Sub.block s 0 in
-        Sub.Run.int64 run block 0 (Sub.address s dst);
-        Sub.Run.int64 run block 8 (Sub.address s src);
-        Sub.Run.int64 run block 16 8;
+        Sub.Run.int64 run block 0 (Int64.of_int (Sub.address s dst));
+        Sub.Run.int64 run block 8 (Int64.of_int (Sub.address s src));
+        Sub.Run.int64 run block 16 8L;
         (* The submit runs on another domain. *)
         Sub.Run.release run;
         run
@@ -1230,8 +1230,8 @@ let test_donor_submits () =
             [| Sub.fill Rig_support.poke ~params:16 |]
         in
         let run = Sub.Run.make s in
-        Sub.Run.int64 run (Sub.block s 0) 0 (Sub.address s b');
-        Sub.Run.int64 run (Sub.block s 0) 8 42;
+        Sub.Run.int64 run (Sub.block s 0) 0 (Int64.of_int (Sub.address s b'));
+        Sub.Run.int64 run (Sub.block s 0) 8 42L;
         Rig.Point.wait (Rig.submit run ~buffers:[||]);
         b')
   in

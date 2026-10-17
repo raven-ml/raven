@@ -296,7 +296,7 @@ let launching t kernel ~params ~blocks uses store =
 let copy_words t ~dst ~src =
   launching t "copy_after" ~params:32 ~blocks:1
     [| (dst, Rig.Read_write, 8); (src, Rig.Read, 16) |]
-    (fun run b -> Sub.Run.int64 run b 24 (B.length src))
+    (fun run b -> Sub.Run.int64 run b 24 (Int64.of_int (B.length src)))
 
 (* rig_nv.mli: "5 us once a measure within the bound is taken, plus the
    line's rate error over the time since the latest measure, at most
@@ -313,7 +313,7 @@ let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching t "spin" ~params:16 ~blocks:1
     [| (flag, Rig.Read, 0) |]
-    (fun run b -> Sub.Run.int64 run b 8 ns)
+    (fun run b -> Sub.Run.int64 run b 8 (Int64.of_int ns))
 
 let launch_binary () = Some (fixture ~dir:fixtures "launch_sm89.cubin")
 let wide_binary _ = launch_binary ()

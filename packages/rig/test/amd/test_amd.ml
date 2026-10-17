@@ -755,7 +755,7 @@ let scratch_launch () =
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(64, 1, 1)
     ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0;
+      Sub.Run.int64 run b 0 0L;
       Sub.Run.int32 run b 8 5)
     ~uses:[ (out, Rig.Read_write) ]
     ();
@@ -773,7 +773,7 @@ let lds_launch n () =
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(64, 1, 1) ~shared:(4 * n)
     ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0;
+      Sub.Run.int64 run b 0 0L;
       Sub.Run.int32 run b 8 own;
       Sub.Run.int32 run b 12 n)
     ~uses:[ (out, Rig.Read_write) ]
@@ -807,7 +807,7 @@ let refused_blocks =
           launch t p "ids" ~params:24
             ~refs:[ (0, 0) ]
             ~groups ~threads
-            ~set:(fun run b -> Sub.Run.int64 run b 0 0)
+            ~set:(fun run b -> Sub.Run.int64 run b 0 0L)
             ~uses:[ (out, Rig.Read_write) ]
             ());
       equal (option string) ~msg:"the device's loss" None (Rig.lost t.d))
@@ -840,7 +840,9 @@ let launch_segments_hw () =
   for round = 0 to rounds - 1 do
     if not (Sub.Run.take run) then fail "the run is taken";
     Array.iteri
-      (fun i b -> Sub.Run.int64 run b 0 (4 * lanes * ((round * count) + i)))
+      (fun i b ->
+        let at = 4 * lanes * ((round * count) + i) in
+        Sub.Run.int64 run b 0 (Int64.of_int at))
       blocks;
     last := Some (Rig.submit run ~buffers:[| out |])
   done;
@@ -860,7 +862,7 @@ let wide_launch () =
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(1, 1, 1)
     ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0;
+      Sub.Run.int64 run b 0 0L;
       Sub.Run.int32 run b 8 0x2a)
     ~uses:[ (out, Rig.Read_write) ]
     ();

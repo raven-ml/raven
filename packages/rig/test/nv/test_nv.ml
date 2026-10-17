@@ -507,8 +507,8 @@ let submitted run ~buffers = Rig.submit run ~buffers
 (* Stores [ids]'s parameters into the block [k] of [run]: its words from [out]
    [offset] bytes on hold [a + b * k]. *)
 let ids_params run k ~offset ~a ~b =
-  Run.int64 run k 0 offset;
-  Run.int64 run k 8 a;
+  Run.int64 run k 0 (Int64.of_int offset);
+  Run.int64 run k 8 (Int64.of_int a);
   Run.int32 run k 16 b;
   Run.float32 run k 20 0.
 
@@ -585,7 +585,7 @@ let most_shared_memory () =
       ~threads:(256, 1, 1) ~shared
   in
   let b = Sub.block (Run.submission run) 0 in
-  Run.int64 run b 0 0;
+  Run.int64 run b 0 0L;
   Run.int32 run b 8 5;
   let out = B.create d (4 * 512) in
   Rig.Point.wait (submitted run ~buffers:[| out |]);
@@ -623,7 +623,7 @@ let static_shared () =
           Run.groups run blk groups 1 1;
           Run.threads run blk threads 1 1;
           Run.shared run blk 0;
-          Run.int64 run blk 0 0;
+          Run.int64 run blk 0 0L;
           Run.int32 run blk 8 k)
         [| 5; 9 |];
       Rig.Point.wait (submitted run ~buffers:[| a; b |]);
@@ -692,8 +692,8 @@ let jump_table () =
       let b = Sub.block s 0 in
       Run.groups run b 1 1 1;
       Run.threads run b n 1 1;
-      Run.int64 run b 0 0;
-      Run.int64 run b 8 0;
+      Run.int64 run b 0 0L;
+      Run.int64 run b 8 0L;
       Run.int32 run b 16 t;
       Rig.Point.wait (submitted run ~buffers:[| input; out |]);
       equal (array int) ~msg:(strf "type %d" t)
@@ -714,8 +714,8 @@ let no_allocation () =
     Run.groups run b 1 1 1;
     Run.threads run b 32 1 1;
     Run.shared run b 0;
-    Run.int64 run b 0 0;
-    Run.int64 run b 8 i;
+    Run.int64 run b 0 0L;
+    Run.int64 run b 8 (Int64.of_int i);
     Run.int32 run b 16 1;
     Run.float32 run b 20 1.5;
     Run.float64 run b 16 2.5;
@@ -756,8 +756,8 @@ let launch_copy_launch () =
   ids_params run b0 ~offset:0 ~a:11 ~b:3;
   Run.groups run b2 (n / 256) 1 1;
   Run.threads run b2 256 1 1;
-  Run.int64 run b2 0 0;
-  Run.int64 run b2 8 0;
+  Run.int64 run b2 0 0L;
+  Run.int64 run b2 8 0L;
   Run.int32 run b2 16 1;
   Rig.Point.wait (submitted run ~buffers:[| out; mid; dst |]);
   equal (array int)
@@ -908,7 +908,7 @@ let local_launch () =
   let b = Sub.block s 0 in
   Run.groups run b (n / 256) 1 1;
   Run.threads run b 256 1 1;
-  Run.int64 run b 0 0;
+  Run.int64 run b 0 0L;
   Run.int32 run b 8 n;
   Rig.Point.wait (submitted run ~buffers:[| out |]);
   equal (array int)
@@ -939,7 +939,7 @@ let grid_parameters (groups, threads) =
         let b = Sub.block s part in
         Run.groups run b groups 1 1;
         Run.threads run b threads 1 1;
-        Run.int64 run b 0 0;
+        Run.int64 run b 0 0L;
         for i = 0 to 3 do
           Run.int32 run b (8 + (4 * i)) (value round part i)
         done)

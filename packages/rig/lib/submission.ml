@@ -869,7 +869,8 @@ module Run = struct
   external int32 : t -> block -> (int[@untagged]) -> (int[@untagged]) -> unit
     = "caml_rig_run_int32_byte" "caml_rig_run_int32"
 
-  external int64 : t -> block -> (int[@untagged]) -> (int[@untagged]) -> unit
+  external int64 :
+    t -> block -> (int[@untagged]) -> (int64[@unboxed]) -> unit
     = "caml_rig_run_int64_byte" "caml_rig_run_int64"
 
   external float32 : t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit

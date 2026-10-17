@@ -71,8 +71,8 @@ let adder device driver image a b out =
           params.{3} <- Int64.of_int count);
       let run = Submission.Run.make submission in
       let block = Submission.block submission 0 in
-      Submission.Run.int64 run block 0 (Nativeint.to_int icb.handle);
-      Submission.Run.int64 run block 8 1;
+      Submission.Run.int64 run block 0 (Int64.of_nativeint icb.handle);
+      Submission.Run.int64 run block 8 1L;
       (run, [||])
     end
     else begin
@@ -84,7 +84,7 @@ let adder device driver image a b out =
       let block = Submission.block submission 0 in
       Submission.Run.groups run block 1 1 1;
       Submission.Run.threads run block count 1 1;
-      Submission.Run.int64 run block 24 count;
+      Submission.Run.int64 run block 24 (Int64.of_int count);
       (run, [| a; b; out |])
     end
   in

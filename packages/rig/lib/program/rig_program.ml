@@ -1324,13 +1324,12 @@ let per_run = function Word _ -> true | Known _ -> false
 let hole_per_run h = Iarray.exists (fun (x, _) -> per_run x) h.terms
 
 (* Stores hole [h] of a launch's parameters [params] over its sum [v] into its
-   block [b]. A 64-bit word goes as two 32-bit halves: an [int] setter would
-   drop its bit 63. *)
+   block [b]. *)
 let store_hole r b params h v =
   let w = hole_word h v (get_word params h) in
-  Sub.Run.int32 r b h.at (Int64.to_int (Int64.logand w 0xffff_ffffL));
-  if h.width = W64 then
-    Sub.Run.int32 r b (h.at + 4) (Int64.to_int (Int64.shift_right_logical w 32))
+  match h.width with
+  | W32 -> Sub.Run.int32 r b h.at (Int64.to_int w)
+  | W64 -> Sub.Run.int64 r b h.at w
 
 let store_geometry r b (gx, gy, gz) (tx, ty, tz) shared value =
   Sub.Run.groups r b (value gx) (value gy) (value gz);

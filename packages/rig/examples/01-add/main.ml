@@ -96,7 +96,7 @@ let () =
   Submission.Run.(
     groups run k (n / group) 1 1;
     threads run k group 1 1;
-    int64 run k 24 n);
+    int64 run k 24 (Int64.of_int n));
   let p = submit run ~buffers:[| a; b; out |] in
   Format.eprintf "%s (%s) ran add at %a@." (name d) (arch d) Point.pp p;
 

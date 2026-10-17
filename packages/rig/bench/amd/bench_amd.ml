@@ -403,7 +403,7 @@ let launch_rows =
     let b = Rig.Submission.(block (Run.submission r) 0) in
     Rig.Submission.Run.groups r b 1 1 1;
     Rig.Submission.Run.threads r b 64 1 1;
-    Rig.Submission.Run.int64 r b 0 0;
+    Rig.Submission.Run.int64 r b 0 0L;
     (t, p, r, [| out |])
   in
   let bar () =

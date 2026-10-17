@@ -24,9 +24,9 @@ let call_ready image ~out ~counts ~fn v c =
   let run = Sub.Run.make s and k = Sub.block s 0 in
   Sub.Run.groups run k 1 1 1;
   Sub.Run.threads run k 1 1 1;
-  Sub.Run.int64 run k 16 (Nativeint.to_int fn);
-  Sub.Run.int64 run k 24 v;
-  Sub.Run.int64 run k 32 c;
+  Sub.Run.int64 run k 16 (Int64.of_nativeint fn);
+  Sub.Run.int64 run k 24 (Int64.of_int v);
+  Sub.Run.int64 run k 32 (Int64.of_int c);
   ignore (Rig.submit run ~buffers:[| out; counts |])
 
 let read fd n =

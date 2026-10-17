@@ -90,7 +90,7 @@ let run_add d binary ~n a b =
   let run = Sub.Run.make s and blk = Sub.block s 0 in
   Sub.Run.groups run blk ((n + 63) / 64) 1 1;
   Sub.Run.threads run blk 64 1 1;
-  Sub.Run.int64 run blk 24 n;
+  Sub.Run.int64 run blk 24 (Int64.of_int n);
   ignore (Rig.submit run ~buffers:[| a; b; out |]);
   let bytes = Bytes.create (4 * n) in
   Rig.Buffer.blit_to_bytes out 0 bytes 0 (4 * n);

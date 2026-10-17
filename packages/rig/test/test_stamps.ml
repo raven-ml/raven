@@ -301,8 +301,8 @@ let run_replay t =
   Support.store (Support.Reader.host out) (-1);
   let block = Sub.block (Sub.Run.submission run) 0 in
   if not (Sub.Run.take run) then fail "the run is taken";
-  Sub.Run.int64 run block 0 0;
-  Sub.Run.int64 run block 8 n;
+  Sub.Run.int64 run block 0 0L;
+  Sub.Run.int64 run block 8 (Int64.of_int n);
   let v = Rig.Point.value (Rig.submit run ~buffers:[| out |]) in
   Hashtbl.replace t.outs n out;
   Hashtbl.replace t.points n v;

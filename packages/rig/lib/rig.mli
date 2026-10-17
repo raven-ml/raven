@@ -1332,7 +1332,7 @@ end
     let run = Submission.Run.make s and k = Submission.block s 0 in
     Submission.Run.groups run k 64 1 1;
     Submission.Run.threads run k ((n + 63) / 64) 1 1;
-    Submission.Run.int64 run k 24 n;
+    Submission.Run.int64 run k 24 (Int64.of_int n);
     ignore (submit run ~buffers:[| x; y; z |])
     ]} *)
 
@@ -1752,11 +1752,10 @@ module Submission : sig
 
         [int32 r b i v] stores [v] at byte [i] of [b]'s parameters, in the
         host's byte order, and the others store likewise for their sizes:
-        [int32] the 32 low bits of [v], [int64] [v] sign-extended, [float32]
-        [v] rounded to single precision, [float64] [v]. At a buffer ref's
-        [at], the 8 bytes are the offset into its buffer ({!type-ref}). At an
-        entry ref's, each submit writes the function's value
-        ({!Submission.entry}).
+        [int32] the 32 low bits of [v], [int64] [v], [float32] [v] rounded to
+        single precision, [float64] [v]. At a buffer ref's [at], the 8 bytes
+        are the offset into its buffer ({!type-ref}). At an entry ref's, each
+        submit writes the function's value ({!Submission.entry}).
 
         Each raises [Invalid_argument] if [i] is negative or the bytes it
         stores end past [b]'s parameters. *)
@@ -1766,7 +1765,7 @@ module Submission : sig
       = "caml_rig_run_int32_byte" "caml_rig_run_int32"
 
     external int64 :
-      t -> block -> (int[@untagged]) -> (int[@untagged]) -> unit
+      t -> block -> (int[@untagged]) -> (int64[@unboxed]) -> unit
       = "caml_rig_run_int64_byte" "caml_rig_run_int64"
 
     external float32 :
