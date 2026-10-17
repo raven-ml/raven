@@ -290,12 +290,17 @@ module Tree = struct
     group : string option;
     enabled : bool;
     reset : string option;
+    host : string;
+    bridges : string list;
     bars : bar list;
   }
 
-  let gpu ?driver ?group ?(enabled = true) ?(reset = Some "bus") bus =
+  let gpu ?driver ?group ?(enabled = true) ?(reset = Some "bus")
+      ?(host = "pci0000:00") ?(bridges = [ "0000:00:01.0" ]) bus =
     {
       bus;
+      host;
+      bridges;
       vendor = 0x1002;
       device = 0x744c;
       class_ = 0x030000;
@@ -378,8 +383,12 @@ module Tree = struct
       (lines @ List.init (13 - List.length lines) (fun _ -> zero))
     ^ "\n"
 
-  let config fn =
-    let b = Bytes.make 64 '\000' in
+  (* Configuration space as a reader without CAP_SYS_ADMIN sees it, its first
+     64 bytes, or as root does, all 4096. *)
+  let config_bytes privileged = if privileged then 4096 else 64
+
+  let config ~privileged fn =
+    let b = Bytes.make (config_bytes privileged) '\000' in
     Bytes.set_uint16_le b 0 fn.vendor;
     Bytes.set_uint16_le b 2 fn.device;
     Bytes.set_uint8 b 0x09 (fn.class_ land 0xff);
@@ -390,8 +399,17 @@ module Tree = struct
       (registers fn.bars);
     Bytes.to_string b
 
+  (* A bridge above functions: an AMD root port, PCI-to-PCI bridges' class. *)
+  let bridge ~privileged d =
+    if not (Sys.file_exists (d / "class")) then begin
+      write (d / "vendor") "0x1022\n";
+      write (d / "device") "0x1483\n";
+      write (d / "class") "0x060400\n";
+      write (d / "config") (String.make (config_bytes privileged) '\000')
+    end
+
   let make ?(lockdown = "[none] integrity confidentiality") ?(groups = [])
-      ?(noiommu = []) fns =
+      ?(noiommu = []) ?(privileged = false) fns =
     if Sys.win32 then skip ~reason:"Windows names no file with a colon" ();
     let root =
       Lazy.force trees / string_of_int (Atomic.fetch_and_add count 1)
@@ -403,13 +421,27 @@ module Tree = struct
     write (sys / "bus/pci/drivers_probe") "";
     List.iter
       (fun fn ->
-        let d = devices / fn.bus in
+        (* Linux keeps a function under its host bridge and bridges in
+           /sys/devices, and links it from /sys/bus/pci/devices. *)
+        let above =
+          List.fold_left
+            (fun dir b ->
+              let d = dir / b in
+              bridge ~privileged d;
+              d)
+            (sys / "devices" / fn.host)
+            fn.bridges
+        in
+        let d = above / fn.bus in
+        mkdir_p d;
+        mkdir_p devices;
+        Unix.symlink d (devices / fn.bus);
         write (d / "vendor") (strf "0x%04x\n" fn.vendor);
         write (d / "device") (strf "0x%04x\n" fn.device);
         write (d / "class") (strf "0x%06x\n" fn.class_);
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
-        write (d / "config") (config fn);
+        write (d / "config") (config ~privileged fn);
         (* A BAR's file is as long as the BAR, as Linux makes it: sparse, so
            it holds no bytes on disk. *)
         let zeroes file n =
@@ -442,13 +474,11 @@ module Tree = struct
           (fun drv ->
             write (sys / "bus/pci/drivers" / drv / "bind") "";
             write (sys / "bus/pci/drivers" / drv / "unbind") "";
-            Unix.symlink ("../../drivers" / drv) (d / "driver"))
+            Unix.symlink (sys / "bus/pci/drivers" / drv) (d / "driver"))
           fn.driver;
         Option.iter
           (fun g ->
-            Unix.symlink
-              ("../../../../kernel/iommu_groups" / g)
-              (d / "iommu_group");
+            Unix.symlink (sys / "kernel/iommu_groups" / g) (d / "iommu_group");
             let gd = sys / "kernel/iommu_groups" / g in
             write (gd / "devices" / fn.bus) "";
             write (gd / "type")

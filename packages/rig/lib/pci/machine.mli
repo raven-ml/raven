@@ -195,9 +195,9 @@ val take_locked : t -> 's Sysfs.lock -> (fn, string) result
 val reserved : t -> int -> int -> bool
 
 (* [files m] is the files of [m] if the process reaches [m] without a transport:
-   {!this}'s, or those of a machine {!at} made. Only {!Gpus} reads them, to lock
-   a GPU's function across its checks, its take and its changes to kernel
-   drivers. *)
+   {!this}'s, or those of a machine {!at} made. {!Gpus} reads them, to lock a
+   GPU's function across its checks, its take and its changes to kernel
+   drivers, and {!Memory} the way up the bus from a GPU. *)
 val files : t -> Sysfs.t option
 
 (* [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or

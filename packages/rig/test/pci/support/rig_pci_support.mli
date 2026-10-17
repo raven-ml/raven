@@ -208,6 +208,11 @@ module Tree : sig
     reset : string option;
         (** Its [reset_method], the methods Linux resets it with, in order, or
             [None] for a function without a reset. *)
+    host : string;  (** Its host bridge, as [/sys/devices] names it. *)
+    bridges : string list;
+        (** The bridges above it, by bus address, from its host bridge's root
+            bus down. Each is an AMD root port where no function of the tree
+            made it first, with no ACS. *)
     bars : bar list;
   }
   (** The type for a function of a machine. *)
@@ -217,10 +222,14 @@ module Tree : sig
     ?group:string ->
     ?enabled:bool ->
     ?reset:string option ->
+    ?host:string ->
+    ?bridges:string list ->
     string ->
     fn
   (** [gpu bus] is an AMD display controller at [bus], enabled and bound to no
-      driver, reset through its bus ([reset] defaults to [Some "bus"]), with a
+      driver, reset through its bus ([reset] defaults to [Some "bus"]), under
+      the root port [0000:00:01.0] of the host bridge [pci0000:00] ([host]
+      and [bridges]), with a
       64-bit BAR 0 of 256 MiB at [0x7c_0000_0000], a 64-bit BAR 2
       of 2 MiB at [0xfc00_0000], an I/O BAR 4 of 256 bytes at [0xe000] and a
       32-bit BAR 5 of 1 MiB at [0xfcc0_0000]. *)
@@ -229,13 +238,18 @@ module Tree : sig
     ?lockdown:string ->
     ?groups:(string * string) list ->
     ?noiommu:string list ->
+    ?privileged:bool ->
     fn list ->
     string
   (** [make fns] is the root of a new tree whose functions are [fns]. [groups]
       gives each IOMMU group's type (defaults to [[]], a group whose type is not
       given is ["DMA"]), [noiommu] the groups VFIO's no-IOMMU mode holds, and
       [lockdown] the kernel's lockdown file (defaults to
-      ["[none] integrity confidentiality"]). *)
+      ["[none] integrity confidentiality"]). Each function's directory lies
+      under its host bridge and bridges in [sys/devices], linked from
+      [sys/bus/pci/devices]. Configuration files hold 64 bytes, as a reader
+      without [CAP_SYS_ADMIN] sees them, or 4096 with [~privileged:true]
+      (defaults to [false]). *)
 
   val device_number : string -> string
   (** [device_number file] is the number of the character device at [file], as a

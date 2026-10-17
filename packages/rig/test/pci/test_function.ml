@@ -473,8 +473,10 @@ let test_take_locked () =
   let f = require_ok (Function.take m fn.bus) in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
   let d = "sys/bus/pci/devices/0000:03:00.0/" in
-  Tree.link root (d ^ "driver") "../../drivers/vfio-pci";
-  Tree.link root (d ^ "iommu_group") "../../../../kernel/iommu_groups/12";
+  Tree.link root (d ^ "driver")
+    (Filename.concat root "sys/bus/pci/drivers/vfio-pci");
+  Tree.link root (d ^ "iommu_group")
+    (Filename.concat root "sys/kernel/iommu_groups/12");
   contains ~sub:"0000:03:00.0 is taken already"
     (require_error (Function.take m fn.bus))
 

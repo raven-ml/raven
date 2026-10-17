@@ -16,6 +16,7 @@ type reach = {
   addressing : Machine.addressing;
   small_bar : bool;
   link : link option;
+  route : Sysfs.route option; (* its way up the bus, without a transport *)
 }
 
 (* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
@@ -90,6 +91,10 @@ let create ?link fn tables ~bar =
         addressing = Function.addressing fn;
         small_bar = bar_size < Page_table.memory tables;
         link;
+        route =
+          Option.bind
+            (Machine.files (Function.machine fn))
+            (fun files -> Sysfs.route files (Function.bus fn));
       };
     bar;
     bar_base;
@@ -144,6 +149,13 @@ let linked (r : reach) (o : reach) =
   | Some l, Some l' -> Int64.equal l.fabric l'.fabric
   | _ -> false
 
+(* Whether the bus carries [r]'s requests to [o]'s BAR, which only a machine
+   reached without a transport tells. *)
+let carried (r : reach) (o : reach) =
+  match (r.route, o.route) with
+  | Some client, Some provider -> Sysfs.forwards ~provider ~client
+  | _ -> false
+
 (* A GPU maps its own memory already. A link's entries name the peer's own
    memory, which crosses no IOMMU; a BAR's name its bus address, which the
    IOMMU translates. *)
@@ -154,7 +166,7 @@ let reaches (r : reach) (o : reach) =
   && (linked r o
      || r.addressing = Machine.Physical
         && o.addressing = Machine.Physical
-        && not o.small_bar)
+        && (not o.small_bar) && carried r o)
 
 (* Errors *)
 
@@ -361,8 +373,9 @@ let map_new m h tables r =
         Error
           (strf
              "%s does not reach %s's memory: it needs a link of one fabric, or \
-              both GPUs off an IOMMU and a memory BAR as large as the memory, \
-              which Resizable BAR in the firmware settings gives"
+              both GPUs off an IOMMU, a memory BAR as large as the memory, \
+              which Resizable BAR in the firmware settings gives, and a bus \
+              that carries requests between them, as Linux's p2pdma decides"
              m.reach.bus o.reach.bus)
     | Gpu | Peer _ -> (
         let target, pages =

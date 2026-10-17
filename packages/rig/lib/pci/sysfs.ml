@@ -446,6 +446,194 @@ let resize { files = m; bus; _ } i =
     in
     try_from largest
 
+(* Peer requests
+
+   Linux decides whether a PCI bus carries one device's requests to another's
+   BAR in drivers/pci/p2pdma.c (calc_map_type_and_dist). Walking up from the
+   device that owns the BAR, the first bridge above both carries them, unless
+   a device on the way up to it, that bridge included, redirects peer
+   requests to the root complex by ACS. Requests that go through the root
+   complex, with no common bridge or with a redirect, are carried only where
+   the CPU is an AMD one from Zen on, or the root complexes are on Linux's
+   list (pci_p2pdma_whitelist). *)
+
+(* A host bridge on Linux's list, some only between devices under that one
+   bridge. *)
+type listed = Unlisted | Same_bridge | Any_bridge
+
+let intel = 0x8086
+
+(* Linux's list, by the vendor and device of the first device of the host
+   bridge's root bus: Xeon E5 and Core i7; Xeon E7 v3, E5 v3 and Core i7;
+   Skylake-E. *)
+let whitelist =
+  [
+    (0x3c00, Same_bridge);
+    (0x3c01, Same_bridge);
+    (0x2f00, Same_bridge);
+    (0x2f01, Same_bridge);
+    (0x2030, Any_bridge);
+    (0x2031, Any_bridge);
+    (0x2032, Any_bridge);
+    (0x2033, Any_bridge);
+    (0x2020, Any_bridge);
+    (0x09a2, Any_bridge);
+  ]
+
+(* AMD's CPUs from Zen, family 0x17, on carry requests between any of their
+   root complexes (cpu_supports_p2pdma). *)
+let zen = 0x17
+
+type route = {
+  nodes : (string * bool) list;
+      (* the function, then each bridge above it up to its root bus, with
+         whether it redirects peer requests *)
+  host : string; (* its host bridge, as /sys/devices names it *)
+  listed : listed;
+  any_host : bool; (* the CPU carries requests between host bridges *)
+}
+
+(* The configuration space's extended capabilities start at [extended]; ACS's
+   identifier, its control register and the controls that redirect peer
+   requests: request redirect, completion redirect and egress control
+   (include/uapi/linux/pci_regs.h). A reader without CAP_SYS_ADMIN sees 64
+   bytes, so ACS cannot be read, and the device counts as redirecting. *)
+let extended = 0x100
+let config_size = 0x1000
+let acs_id = 0x0d
+let acs_control = 0x06
+let acs_redirects = 0x04 lor 0x08 lor 0x20
+
+let redirects dir =
+  let c =
+    In_channel.with_open_bin (Filename.concat dir "config") In_channel.input_all
+  in
+  let n = String.length c in
+  let header at = Int32.to_int (String.get_int32_le c at) land 0xffff_ffff in
+  let rec walk at hops =
+    let h = header at in
+    if h = 0 || h = 0xffff_ffff || hops = 0 then false
+    else if h land 0xffff = acs_id then
+      at + acs_control + 2 > n
+      || String.get_uint16_le c (at + acs_control) land acs_redirects <> 0
+    else
+      let next = (h lsr 20) land 0xffc in
+      next >= extended && walk next (hops - 1)
+  in
+  if n < extended then true
+  else n >= config_size && walk extended (config_size / 4)
+
+let is_bus s = Option.is_some (Bus_address.numbers s)
+
+(* Whether the device at [dir] is a PCI Express root port: its capability
+   list, from the pointer at [caps], holds the PCI Express capability, whose
+   flags name the port's type (pci_pcie_type). A reader that sees 64 bytes
+   cannot tell, and the device counts as none. *)
+let caps = 0x34
+let pcie_id = 0x10
+let root_port = 0x4
+
+let is_root_port dir =
+  let c =
+    In_channel.with_open_bin (Filename.concat dir "config") In_channel.input_all
+  in
+  let n = String.length c in
+  let rec walk at hops =
+    if at < 0x40 || at + 4 > n || hops = 0 then false
+    else if String.get_uint8 c at = pcie_id then
+      (String.get_uint16_le c (at + 2) lsr 4) land 0xf = root_port
+    else walk (String.get_uint8 c (at + 1) land 0xfc) (hops - 1)
+  in
+  n > caps && walk (String.get_uint8 c caps land 0xfc) 48
+
+(* The first device of a host bridge's root bus, its bus's first, which Linux
+   takes if it is the bus's device 00.0 or a root port. *)
+let listed host_dir =
+  let first =
+    List.filter is_bus (Array.to_list (Sys.readdir host_dir))
+    |> List.sort Bus_address.compare
+  in
+  match first with
+  | [] -> Unlisted
+  | d :: _ -> (
+      let dir = Filename.concat host_dir d in
+      let file f = read_hex (Filename.concat dir f) in
+      let _, _, device, fn = Option.get (Bus_address.numbers d) in
+      if (device, fn) <> (0, 0) && not (is_root_port dir) then Unlisted
+      else if file "vendor" <> intel then Unlisted
+      else
+        match List.assoc_opt (file "device") whitelist with
+        | Some l -> l
+        | None -> Unlisted)
+
+(* /proc/cpuinfo's first [vendor_id] and [cpu family]. *)
+let any_host m =
+  match
+    In_channel.with_open_text (Filename.concat m.root "proc/cpuinfo")
+      In_channel.input_all
+  with
+  | exception Sys_error _ -> false
+  | s ->
+      let field name =
+        String.split_on_char '\n' s
+        |> List.find_map (fun line ->
+            match String.index_opt line ':' with
+            | Some i when String.trim (String.sub line 0 i) = name ->
+                Some
+                  (String.trim
+                     (String.sub line (i + 1) (String.length line - i - 1)))
+            | _ -> None)
+      in
+      field "vendor_id" = Some "AuthenticAMD"
+      && Option.bind (field "cpu family") int_of_string_opt
+         |> Option.fold ~none:false ~some:(fun f -> f >= zen)
+
+(* A function's directory under /sys/devices names its host bridge, then each
+   bridge down to it: /sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0. *)
+let route m bus =
+  match Unix.realpath (Filename.concat m.devices bus) with
+  | exception Unix.Unix_error _ -> None
+  | dir -> (
+      let rec split dir acc =
+        let name = Filename.basename dir in
+        if is_bus name then split (Filename.dirname dir) (dir :: acc)
+        else (dir, acc)
+      in
+      let host_dir, down = split dir [] in
+      let host = Filename.basename host_dir in
+      if down = [] || not (String.starts_with ~prefix:"pci" host) then None
+      else
+        try
+          let nodes =
+            List.rev_map (fun d -> (Filename.basename d, redirects d)) down
+          in
+          Some { nodes; host; listed = listed host_dir; any_host = any_host m }
+        with Sys_error _ | Fail.Failed _ -> None)
+
+let through_host ~provider ~client =
+  provider.any_host
+  ||
+  if provider.host = client.host then provider.listed <> Unlisted
+  else provider.listed = Any_bridge && client.listed = Any_bridge
+
+let forwards ~provider ~client =
+  let rec up redirected = function
+    | [] -> None
+    | (b, r) :: rest -> (
+        let redirected = redirected || r in
+        let rec below acc = function
+          | [] -> None
+          | (b', _) :: _ when b' = b -> Some acc
+          | (_, r') :: rest -> below (acc || r') rest
+        in
+        match below false client.nodes with
+        | Some r' -> Some (redirected || r')
+        | None -> up redirected rest)
+  in
+  match up false provider.nodes with
+  | Some false -> true
+  | Some true | None -> through_host ~provider ~client
+
 (* Open devices *)
 
 (* A [dev] file holds a device's number as "MAJOR:MINOR". *)

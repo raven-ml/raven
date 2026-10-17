@@ -80,7 +80,14 @@ val reaches : reach -> reach -> bool
     GPU memory of another GPU of reach [o], given room. That holds iff both
     are on one machine, their page tables share a space, and either links of
     one fabric join them, or neither GPU is behind an IOMMU
-    ({!Machine.Iommu}) and [o]'s memory BAR reaches all of [o]'s memory.
+    ({!Machine.Iommu}), [o]'s memory BAR reaches all of [o]'s memory and the
+    bus carries [r]'s requests to it. The bus carries them as Linux's p2pdma
+    decides (drivers/pci/p2pdma.c): through a bridge above both GPUs, where
+    no device on the way to it redirects peer requests to the root complex
+    by ACS, or else through the root complex where the CPU is AMD's from Zen
+    on, or where Linux lists both GPUs' host bridges, some of them only for
+    GPUs under one host bridge. A machine reached through a transport carries
+    none.
     It is [false] for two reaches of one GPU, [reaches r r] included, since
     the GPU maps its own memory already. *)
 

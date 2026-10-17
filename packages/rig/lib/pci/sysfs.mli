@@ -133,6 +133,29 @@ val resize : 's lock -> int -> unit
     permission, so its BAR may stay small. Raises {!Fail.Failed}, naming the
     file, if the process may not write it. *)
 
+(** {1:peers Peer requests} *)
+
+type route
+(** The type for the way from a function up to its machine's root complex, as
+    Linux's p2pdma reads it to decide whether the bus carries peer requests. *)
+
+val route : t -> string -> route option
+(** [route m bus] is the way from the function at [bus] up to its host bridge,
+    read from the function's directory under [/sys/devices], each device's
+    ACS controls in its [config], the host bridge's root bus and
+    [proc/cpuinfo]. A device whose ACS controls cannot be read, as by a
+    process without [CAP_SYS_ADMIN], counts as redirecting peer requests. It
+    is [None] if the files cannot be read. *)
+
+val forwards : provider:route -> client:route -> bool
+(** [forwards ~provider ~client] is [true] iff Linux's p2pdma
+    ([calc_map_type_and_dist]) lets the function of [client] reach a BAR of
+    the function of [provider]: a bridge above both carries the requests, and
+    no device from [provider] up to it, nor from [client] up to below it,
+    redirects them by ACS; or else the CPU or both host bridges carry them
+    through the root complex ([cpu_supports_p2pdma],
+    [pci_p2pdma_whitelist]). *)
+
 (** {1:open Open devices} *)
 
 val held : t -> string -> string list -> string option

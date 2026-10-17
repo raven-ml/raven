@@ -170,7 +170,8 @@ val report :
     [hang_ms]).
 
     Two GPUs map each other's memory only if both are taken physically, on
-    one machine, and each BAR reaches all of its GPU's memory.
+    one machine, each BAR reaches all of its GPU's memory, and the bus carries
+    requests between them ({!Rig_pci.Memory.reaches}).
 
     A device reads the GPU's timer registers through BAR 0
     ({!Rig_nv.Registers}) at open only, so the times of its profiles drift

@@ -102,12 +102,13 @@ type on_tree = {
 let needs_linux () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
 
-(* The machine of a new tree of [n] GPUs, its root and their buses, with the
-   space and the lent range reserved. *)
-let tree_machine n =
+(* The machine of a new tree of [n] GPUs under one root port, as root reads
+   it, its root and their buses, with the space and the lent range
+   reserved. *)
+let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) n =
   needs_linux ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
-  let root = Tree.make (List.map Tree.gpu buses) in
+  let root = Tree.make ~privileged:true (List.mapi gpu buses) in
   let m = Machine.at root in
   List.iter
     (fun (base, n) ->
@@ -375,6 +376,125 @@ let test_reaches (_, c) =
         (fst (Memory.pages p));
       Memory.free x.t_memory p)
     peer;
+  Memory.free o.t_memory r
+
+(* Whether the bus carries one GPU's requests to the other's BAR, as Linux's
+   p2pdma decides: a bridge above both without ACS redirection, or else a CPU
+   or host bridges that carry them through the root complex. *)
+(* The [i]th GPU under a root port of its own, or a host bridge of its own. *)
+let port_of i bus = Tree.gpu ~bridges:[ strf "0000:00:0%d.0" (i + 1) ] bus
+
+let host_of i bus =
+  let h = if i = 0 then "00" else "40" in
+  Tree.gpu ~host:("pci0000:" ^ h) ~bridges:[ strf "0000:%s:01.0" h ] bus
+
+(* A host bridge's first device, at 00.0 of its root bus, Intel's [device]. *)
+let first_device h device root =
+  let d = strf "sys/devices/pci0000:%s/0000:%s:00.0/" h h in
+  Tree.add root (d ^ "vendor") "0x8086\n";
+  Tree.add root (d ^ "device") (strf "0x%04x\n" device);
+  Tree.add root (d ^ "class") "0x060000\n"
+
+let root_port = "sys/devices/pci0000:00/0000:00:01.0/config"
+
+(* The first GPU's port, 00:01.0, made Intel's [device], with a PCI Express
+   capability of port type [kind]: 4 for a root port, 6 for a downstream
+   port. *)
+let intel_port device kind root =
+  let d = "sys/devices/pci0000:00/0000:00:01.0/" in
+  Tree.add root (d ^ "vendor") "0x8086\n";
+  Tree.add root (d ^ "device") (strf "0x%04x\n" device);
+  let b = Bytes.make 4096 '\000' in
+  Bytes.set_uint8 b 0x34 0x40;
+  Bytes.set_uint8 b 0x40 0x10;
+  Bytes.set_uint16_le b 0x42 (kind lsl 4);
+  Tree.add root root_port (Bytes.to_string b)
+
+(* A root port whose ACS, the first extended capability, redirects peer
+   requests. *)
+let acs_redirect root =
+  let b = Bytes.make 4096 '\000' in
+  Bytes.set_int32_le b 0x100 (Int32.of_int (0x0d lor (1 lsl 16)));
+  Bytes.set_uint16_le b 0x106 0x04;
+  Tree.add root root_port (Bytes.to_string b)
+
+let routes =
+  [
+    ("under one root port", (fun _ bus -> Tree.gpu bus), ignore, true);
+    ( "under two root ports of a host bridge Linux does not list",
+      port_of,
+      ignore,
+      false );
+    ( "under two root ports of a host bridge Linux lists",
+      port_of,
+      first_device "00" 0x2020,
+      true );
+    ( "under two root ports of a host bridge Linux lists for itself",
+      port_of,
+      first_device "00" 0x3c00,
+      true );
+    ( "under two root ports, the first a root port Linux lists",
+      port_of,
+      intel_port 0x2030 4,
+      true );
+    ( "under two root ports, the first a downstream port of a listed device",
+      port_of,
+      intel_port 0x2030 6,
+      false );
+    ( "under two host bridges Linux lists for themselves",
+      host_of,
+      (fun root ->
+        first_device "00" 0x3c00 root;
+        first_device "40" 0x3c00 root),
+      false );
+    ( "under two host bridges Linux lists",
+      host_of,
+      (fun root ->
+        first_device "00" 0x2020 root;
+        first_device "40" 0x2020 root),
+      true );
+    ( "under a root port whose ACS redirects",
+      (fun _ bus -> Tree.gpu bus),
+      acs_redirect,
+      false );
+    ( "under a root port whose ACS cannot be read",
+      (fun _ bus -> Tree.gpu bus),
+      (fun root -> Tree.add root root_port (String.make 64 '\000')),
+      false );
+    ( "under two root ports, on an AMD CPU from Zen on",
+      port_of,
+      (fun root ->
+        Tree.add root "proc/cpuinfo"
+          "vendor_id\t: AuthenticAMD\ncpu family\t: 25\n"),
+      true );
+    ( "under two root ports, on an AMD CPU before Zen",
+      port_of,
+      (fun root ->
+        Tree.add root "proc/cpuinfo"
+          "vendor_id\t: AuthenticAMD\ncpu family\t: 21\n"),
+      false );
+  ]
+
+let test_route (_, gpu, setup, carried) =
+  let root, m, buses = tree_machine ~gpu 2 in
+  setup root;
+  let space = Space.create ~base:space_base space_length in
+  let x = take_gpu ~space m (List.nth buses 0) in
+  let o = take_gpu ~space m (List.nth buses 1) in
+  Fun.protect ~finally:(fun () ->
+      Function.release x.t_fn;
+      Function.release o.t_fn)
+  @@ fun () ->
+  equal ~msg:"reaches" bool carried
+    (Memory.reaches (Memory.reach x.t_memory) (Memory.reach o.t_memory));
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  (match Memory.map_peer x.t_memory r with
+  | Ok p ->
+      equal ~msg:"maps" bool carried true;
+      Option.iter (Memory.free x.t_memory) p
+  | Error why ->
+      equal ~msg:"maps" bool carried false;
+      contains ~sub:"carries requests between them" why);
   Memory.free o.t_memory r
 
 (* A peer's region maps the region its owner gave, at its address. *)
@@ -1445,6 +1565,9 @@ let on_files =
         test_unaligned;
       cases "reaches is whether map_peer maps the GPU's memory" ~name:fst
         pairings test_reaches;
+      cases "reaches holds where the bus carries requests between the GPUs"
+        ~name:(fun (n, _, _, _) -> n)
+        routes test_route;
       test "map_peer of a peer's region maps the region its owner gave"
         test_peer_of_peer;
       test
