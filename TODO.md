@@ -188,9 +188,7 @@ raven / llama.cpp (Vulkan; ROCm):
   before its 2026-10-12 fix (rerun 30 times); rig_pci.space "two domains
   allocate and free at once" timed out at its 10 s bound in case 10 twice
   at load ~56 (`s1:784492d14ef6cd47`, 2.1 s alone): make the case fast at
-  its cause; rig_remote_proxy.link "a root cause reaches the peer's
-  process as \"the agent lost its GPU\"" failed once at load 20 with
-  "link_peer idle did not connect" (100/100 alone)
+  its cause
 - hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
   dc72412596); root on an NVIDIA host (NV over PCI's open/close law and
   test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs

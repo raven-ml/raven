@@ -286,6 +286,33 @@ let peer_exe =
 
 type helper = { pid : int; out : Unix.file_descr }
 
+let status_text = function
+  | Unix.WEXITED n -> Printf.sprintf "exited with %d" n
+  | Unix.WSIGNALED n | Unix.WSTOPPED n -> Printf.sprintf "ended by signal %d" n
+
+(* Waits until link_peer [pid] connects to [l], however long its start takes
+   on a loaded machine: [None], or [Some status] once it has exited without
+   connecting. *)
+let rec connects l pid =
+  if readable l 0.1 then None
+  else
+    match Unix.waitpid [ WNOHANG ] pid with
+    | 0, _ -> connects l pid
+    | _, status -> Some status
+
+let kill h =
+  (try Unix.kill h.pid Sys.sigkill with Unix.Unix_error _ -> ());
+  (try Unix.close h.out with Unix.Unix_error _ -> ());
+  try ignore (Unix.waitpid [] h.pid) with Unix.Unix_error _ -> ()
+
+(* Runs [f] with [h], killing [h] if [f] raises. *)
+let guard h f =
+  match f () with
+  | v -> v
+  | exception e ->
+      kill h;
+      raise e
+
 (* Starts link_peer in [mode] and makes its link in [j], named [name]. *)
 let start j mode ~name =
   let l, port = loopback () in
@@ -300,10 +327,12 @@ let start j mode ~name =
       in
       Unix.close w;
       let h = { pid; out = r } in
-      if not (readable l patience) then begin
-        Unix.kill pid Sys.sigkill;
-        failf "link_peer %s did not connect" mode
-      end;
+      (* A peer that never connects dies when the group's timeout raises. *)
+      (match guard h (fun () -> connects l pid) with
+      | None -> ()
+      | Some status ->
+          Unix.close r;
+          failf "link_peer %s %s before connecting" mode (status_text status));
       let fd, _ = Unix.accept ~cloexec:true l in
       (h, Link.make j fd ~name ~peer:(Wire.Agent 1)))
 
@@ -312,29 +341,13 @@ let finish h =
   let out = read_all h.out in
   Unix.close h.out;
   let _, status = Unix.waitpid [] h.pid in
-  (match status with
-  | Unix.WEXITED 0 -> ()
-  | Unix.WEXITED n -> failf "link_peer exited with %d" n
-  | Unix.WSIGNALED n | Unix.WSTOPPED n -> failf "link_peer ended by signal %d" n);
+  if status <> Unix.WEXITED 0 then failf "link_peer %s" (status_text status);
   (* Its lines end with CRLF on Windows. *)
   let line l =
     if String.ends_with ~suffix:"\r" l then String.sub l 0 (String.length l - 1)
     else l
   in
   String.split_on_char '\n' out |> List.map line |> List.filter (( <> ) "")
-
-let kill h =
-  (try Unix.kill h.pid Sys.sigkill with Unix.Unix_error _ -> ());
-  (try Unix.close h.out with Unix.Unix_error _ -> ());
-  try ignore (Unix.waitpid [] h.pid) with Unix.Unix_error _ -> ()
-
-(* Runs [f] with [h], killing [h] if [f] raises. *)
-let guard h f =
-  match f () with
-  | v -> v
-  | exception e ->
-      kill h;
-      raise e
 
 (* link_peer's answers, which this suite states. *)
 let echo_open kind =
