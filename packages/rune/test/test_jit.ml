@@ -5219,11 +5219,9 @@ let on_one_device ~name d =
           equal floats
             (Nx.create Nx.float32 [| 4 |] [| 10.; 6.; 30.; 2. |])
             (host r);
-          (* A device that shares the host's memory borrows the file's pages,
+          (* A device whose memory the host addresses borrows the file's pages,
              which it must not lend; another copies them into its own. *)
-          let copied =
-            not (Rig.shares_host_memory (Nx.Device.memory d))
-          in
+          let copied = not (Rig.reaches Rig.host (Nx.Device.memory d)) in
           equal bool ~msg:"lent" copied
             (List.for_all2 Witness.same before (Witness.buffers r));
           raises_invalid_arg (fun () -> Nx.to_array pool);

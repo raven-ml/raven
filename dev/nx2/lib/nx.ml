@@ -382,7 +382,7 @@ let item i x =
   in
   let one = Array.of_list (List.mapi at i) in
   match readable ~by x with
-  | Value.Array { a; _ } when Rig.shares_host_memory (Nx_array.device a) ->
+  | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
       Nx_array.get a (Array.map (fun (w : Nx_array.Move.range) -> w.start) one)
   | x ->
       let v = Exec.run ~by (Value.Move (Slice one, x)) in

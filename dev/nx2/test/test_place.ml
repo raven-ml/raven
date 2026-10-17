@@ -130,7 +130,7 @@ let shards (V x) = Iarray.to_array (require_some (Nx.Repr.shards x))
 
 (* [a]'s elements, read on the host. *)
 let elements a =
-  if Rig.shares_host_memory (A.device a) then A.to_array a
+  if Rig.reaches Rig.host (A.device a) then A.to_array a
   else A.to_array (A.to_device Rig.host a)
 
 (* [x] holds, on each device of [w], that device's window of [xs]. *)

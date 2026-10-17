@@ -295,13 +295,6 @@ val reaches : t -> t -> bool
     memory devices also map host memory that starts elsewhere, such as a host
     buffer under 64 KiB. *)
 
-val shares_host_memory : t -> bool
-(** [shares_host_memory d] is [reaches host d && reaches d host]. It holds
-    for {!host}, a {!memory_device}, and a driver's device of this machine
-    whose driver declares both [host_addresses] and [maps_host]
-    ({!Rig_edge.type-facts}), such as Metal's. It is [false] for every device
-    of another machine, that machine's host included. *)
-
 (** {1:timeline Timelines}
 
     {!submit} assigns the values of a device's timeline, and so do
@@ -481,8 +474,8 @@ val signaled : t -> int
     count of its locks does not say which they are. A function that takes no
     lock may be called from a callback at any point, and never raises it:
     {!name}, {!equal}, {!pp}, {!arch}, {!computes}, {!runs_on_host},
-    {!most_parts}, {!capability}, {!host_of}, {!reaches},
-    {!shares_host_memory}, {!submitted}, {!signaled}, {!lost}, {!failure},
+    {!most_parts}, {!capability}, {!host_of}, {!reaches}, {!submitted},
+    {!signaled}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of
     {!Buffer}, {!Buffer.view}, {!Buffer.of_bigarray}, {!Image.device},

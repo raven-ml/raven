@@ -10,9 +10,10 @@
     holds its window of the value and allocates at most the window's bytes.
 
     Where one source array holds the window, the device takes the array itself
-    on the same device, a borrow where the array's memory and the device are
-    both the host's ({!Rig.shares_host_memory}), or a copy of the bytes the window reaches where they
-    are no more than the window's ({!Nx_array.to_device}), keeping its layout.
+    on the same device, a borrow where the host addresses both the array's
+    memory and the device's ({!Rig.reaches}), or a copy of the bytes the
+    window reaches where they are no more than the window's
+    ({!Nx_array.to_device}), keeping its layout.
 
     Otherwise the device gathers its window into a fresh C-contiguous array:
     each distinct source window gives the box it shares with the destination's,

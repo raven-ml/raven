@@ -546,14 +546,12 @@ let test_map_host_paged () =
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d b));
   equal ~msg:"mappings off a page" (list int) [] !off_page
 
-(* A device that maps no host memory reaches none: it shares none with the host,
-   and a borrow of host memory that starts on a page is [None], with no mapping
-   asked of its driver. *)
+(* A device that maps no host memory reaches none, and a borrow of host memory
+   that starts on a page is [None], with no mapping asked of its driver. *)
 let test_maps_no_host () =
   let d, p = P.open_ ~maps_host:false "buffer:no-host-maps" in
   let h = B.create Rig.host (64 * 1024) in
   equal ~msg:"reaches" bool false (Rig.reaches d Rig.host);
-  equal ~msg:"shares" bool false (Rig.shares_host_memory d);
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
   equal ~msg:"maps" (list int) [] (P.host_maps p);
   equal ~msg:"an empty borrow" bool true

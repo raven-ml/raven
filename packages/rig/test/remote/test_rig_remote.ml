@@ -412,7 +412,8 @@ let hosts () =
   let h = List.hd (Rig_remote.hosts j) and a = List.hd agents in
   equal string (Rig.arch Rig.host) (Rig.arch h);
   equal bool true (Rig.equal h (Rig.host_of h));
-  equal bool false (Rig.shares_host_memory h);
+  equal (list bool) [ false; false ]
+    [ Rig.reaches h Rig.host; Rig.reaches Rig.host h ];
   (match Rig.capability h Rig_remote_abi.key with
   | Some (Rig_remote_abi.Host r) ->
       equal string (at a (Rig.name h)) r.machine;

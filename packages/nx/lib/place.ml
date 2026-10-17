@@ -180,9 +180,9 @@ let run_in dtype b v =
 (* [file_windows v ds windows b] is the view each device of [ds] has of its
    window of the view [v] of the file bytes [b], and each device's storage: the
    bytes the window reaches, borrowed from the file's pages. It is [None] unless
-   every device shares the host's memory, every window has an element and starts
-   on a byte, the windows are one view of their storages, and every device
-   borrows them. *)
+   the host addresses every device's memory, every window has an element and
+   starts on a byte, the windows are one view of their storages, and every
+   device borrows them. *)
 let file_windows dtype v ds windows b =
   let bits = Nx_dtype.Scalar.(bitsize (of_dtype dtype)) in
   let span w =
@@ -199,7 +199,7 @@ let file_windows dtype v ds windows b =
   in
   let spans = List.map span windows in
   if
-    List.for_all (fun d -> Rig.shares_host_memory (Device.memory d)) ds
+    List.for_all (fun d -> Rig.reaches Rig.host (Device.memory d)) ds
     && List.for_all Option.is_some spans
   then
     let spans = List.map Option.get spans in
@@ -262,7 +262,7 @@ let host_of : type a b. (a, b) t -> (a, b) Nx_array.t = function
   | Placed r -> read_host r
   | Traced _ -> outside_trace ()
 
-(* A value on the disk is placed on devices that share the host's memory by
+(* A value on the disk is placed on devices whose memory the host addresses by
    borrowing its file's pages, and keeps its view ([file_windows]). Otherwise a
    window that is a contiguous run of a value's one runtime buffer is copied
    from it, device to device: a value on the disk is read into the device. Other

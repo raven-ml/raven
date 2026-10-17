@@ -62,7 +62,6 @@ let rig_facts () =
   equal ~msg:"most parts" int 101 (Rig.most_parts d);
   equal bool true (Rig.equal m.host (Rig.host_of d));
   equal bool true (Rig.computes d);
-  equal bool false (Rig.shares_host_memory m.host);
   equal bool false (Rig.reaches m.host Rig.host);
   equal bool false (Rig.reaches Rig.host m.host);
   starts_with ~affix:"MEM:1@proxy-test:" (Rig.name d);

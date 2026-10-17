@@ -47,13 +47,13 @@ let slice a (w : M.range array) =
     | Some v -> v
     | None -> invalid_arg "Place: a slice of an array is a view"
 
-let hosted a = Rig.shares_host_memory (A.device a)
+let hosted a = Rig.reaches Rig.host (A.device a)
 
-(* [a] over its own memory on [d], where both are the host's: a device that only
-   maps host memory takes a copy instead, so its work reads memory of its
+(* [a] over its own memory on [d], where the host addresses both: a device that
+   only maps host memory takes a copy instead, so its work reads memory of its
    own. *)
 let share d a =
-  if Rig.shares_host_memory d && hosted a then A.borrow d a else None
+  if Rig.reaches Rig.host d && hosted a then A.borrow d a else None
 
 (* [a] on [d]: itself, its memory shared, or a copy keeping its layout. *)
 let bring d a =
@@ -161,8 +161,7 @@ let from_one d dt w sources =
    then brought to [d]. *)
 let gather d dt w sources =
   let on =
-    if A.Dtype.bits dt mod 8 = 0 || Rig.shares_host_memory d then d
-    else Rig.host
+    if A.Dtype.bits dt mod 8 = 0 || Rig.reaches Rig.host d then d else Rig.host
   in
   let dst = A.create on dt (Array.map (fun (r : M.range) -> r.count) w) in
   let seen = ref [] in

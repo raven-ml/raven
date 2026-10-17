@@ -1377,7 +1377,7 @@ module Runtimes = struct
         (* A value on the disk is borrowed from its file's pages by devices
            whose memory the host addresses, which receive no byte, unless a
            window of elements narrower than a byte starts inside a byte. *)
-        let borrows = List.for_all Rig.shares_host_memory ms in
+        let borrows = List.for_all (Rig.reaches Rig.host) ms in
         let round_trip ~disk (Case c) =
           prop
             (c.name ^ " values"

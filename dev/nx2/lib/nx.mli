@@ -1738,8 +1738,8 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 
 val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
-    over [x]'s own memory where [x] already lies there, or where [x]'s memory is
-    the host's and that device shares host memory ({!Rig.shares_host_memory});
+    over [x]'s own memory where [x] already lies there, or where the host
+    addresses both [x]'s memory and that device's ({!Rig.reaches});
     otherwise it holds a copy of its window, allocating at most the window's
     bytes. A value of every set is computed at [p]. Across sets it changes the
     brand; within one, the arrangement.

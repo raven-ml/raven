@@ -6,7 +6,7 @@
 module D = Nx_array.Dtype
 
 let name = "nx.cpu"
-let computes_on = Rig.shares_host_memory
+let computes_on d = Rig.reaches Rig.host d
 
 (* Declines
 

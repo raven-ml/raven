@@ -30,7 +30,6 @@ let test_facts () =
   equal bool true (Rig.computes d);
   equal bool true (Rig.runs_on_host d);
   equal bool false (Rig.runs_on_host p);
-  equal bool true (Rig.shares_host_memory d);
   equal bool true (Rig.reaches d Rig.host);
   equal bool true (Rig.reaches Rig.host d);
   equal device Rig.host (Rig.host_of d);
@@ -41,7 +40,7 @@ let test_host () =
   mem string (Rig.arch Rig.host) [ "arm64"; "x86_64" ];
   equal bool true (Rig.computes Rig.host);
   equal bool true (Rig.runs_on_host Rig.host);
-  equal bool true (Rig.shares_host_memory Rig.host);
+  equal bool true (Rig.reaches Rig.host Rig.host);
   equal device Rig.host (Rig.host_of Rig.host)
 
 (* What a driver's device reaches follows its facts: the host reaches its memory
@@ -53,16 +52,14 @@ let test_reach () =
   let f, _ = P.open_ ~peers:false "open:reach-alone" in
   let h, _ = P.open_ ~host_visible:false "open:reach-hidden" in
   let g, _ = P.open_ ~copies:false ~host_visible:false "open:reach-no-copy" in
-  let reach d =
-    [ Rig.reaches d Rig.host; Rig.reaches Rig.host d; Rig.shares_host_memory d ]
-  in
+  let reach d = [ Rig.reaches d Rig.host; Rig.reaches Rig.host d ] in
   equal string "polled" (Rig.arch d);
   equal ~msg:"a copy queue, memory the host addresses" (list bool)
-    [ true; true; true ] (reach d);
+    [ true; true ] (reach d);
   equal ~msg:"a copy queue, memory the host does not address" (list bool)
-    [ true; false; false ] (reach h);
+    [ true; false ] (reach h);
   equal ~msg:"no copy queue, memory the host does not address" (list bool)
-    [ true; false; false ] (reach g);
+    [ true; false ] (reach g);
   equal (list bool) [ true; false ] [ Rig.reaches d e; Rig.reaches f d ]
 
 (* Where the host reaches a device's memory, every buffer of it has a host
@@ -368,10 +365,14 @@ let test_machine () =
   equal ~msg:"beside this machine's host" device Rig.host
     (Rig.host_of (beside Rig.host "open:here"));
   equal device far (Rig.host_of far);
-  equal ~msg:"shares this process's host memory" (list bool) [ false; false ]
-    [ Rig.shares_host_memory g; Rig.shares_host_memory far ];
-  equal (list bool) [ false; false ]
-    [ Rig.reaches g Rig.host; Rig.reaches Rig.host g ];
+  equal (list bool)
+    [ false; false; false; false ]
+    [
+      Rig.reaches g Rig.host;
+      Rig.reaches Rig.host g;
+      Rig.reaches far Rig.host;
+      Rig.reaches Rig.host far;
+    ];
   equal ~msg:"computes" bool true (Rig.computes far);
   ignore (submit (Rig.Submission.make far [||]))
 
@@ -1037,7 +1038,6 @@ let test_ended () =
     [
       Rig.computes d;
       Rig.runs_on_host d;
-      Rig.shares_host_memory d;
       Rig.reaches Rig.host d;
       Rig.reaches d Rig.host;
     ]

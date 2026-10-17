@@ -18,7 +18,6 @@ let computes d =
 let runs_on_host d = Dev.is_host d || d.memory_device
 let most_parts d = d.most_parts
 let reaches = Dev.reaches
-let shares_host_memory d = Dev.reaches Dev.host d && Dev.reaches d Dev.host
 let budget d = d.budget
 let allocated = Memory.allocated
 let set_budget = Memory.set_budget

@@ -5,7 +5,8 @@
 
 (** Kernels for host memory.
 
-    [computes_on d] is {!Rig.shares_host_memory}[ d]. Each kernel computes from
+    [computes_on d] is {!Rig.reaches}[ Rig.host d]: the host addresses [d]'s
+    memory, which the kernels compute on. Each kernel computes from
     operands of [dst]'s shape and any layouts, on memory the host addresses. It
     claims every operand through the door of [nx_array.h] for the extent of its
     call. It answers [Done] once its work is done, or, before any write, a
