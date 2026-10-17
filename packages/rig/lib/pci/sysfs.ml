@@ -341,7 +341,8 @@ let keep_off { files = m; bus; _ } ~remove =
         | None -> strf "%s (unbound)" f
       in
       Fail.fail
-        "%s shares its device with %s, which detach leaves; remove or detach          them first"
+        "%s shares its device with %s, which detach leaves; remove or detach \
+         them first"
         bus
         (String.concat ", " (List.map named s.siblings))
     end;

@@ -1366,6 +1366,7 @@ let test_keep_siblings () =
   let g = gpus ~siblings:Gpus.Keep () in
   let why = require_error (Gpus.detach g (Machine.at root) 0) in
   contains ~sub:"0000:03:00.1 (bound to snd_hda_intel)" why;
+  contains ~sub:"which detach leaves; remove or detach them first" why;
   equal ~msg:"the override" string "(null)"
     (pci_file root (devices gpu_bus "driver_override"));
   equal ~msg:"the other function" string ""
