@@ -2002,11 +2002,10 @@ module Profile : sig
             ["words"]. A device whose driver cannot time a submission's work
             records none of it.
 
-            Its times are as exact as its driver's correlation of the
-            device's clock with the host's, which the driver's interface
-            states: within microseconds where the driver reads the device's
-            clock directly, and off by the device clock's rate error since
-            open where the driver measures it at open only. *)
+            Its driver converts the device's clock to the host's through
+            measures of one against the other. A time's error is the
+            deviation of the measures it was converted with, as each driver
+            states, plus the error of extrapolating since the latest. *)
     | Span of {
         device : device;
         lane : string;  (** Its track within the device. *)
