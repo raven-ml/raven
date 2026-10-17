@@ -315,8 +315,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- compiled `Nx.svd` is inaccurate on graded float64 spectra: relative
-  errors 6e-7 at n=16, 9e-9 at n=32
 - nx.wide's `chunk_levels` was tuned when each chunk compiled two kernels:
   time `compile/wide/sum-1e6` at 2-5 levels
 - `betaincinv`, once tolk compiles long programs (~20-25k ops)

@@ -236,6 +236,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.svd` converges on graded, rank-deficient and repeated
+  spectra. It stopped its rotations short there: a 16 x 16 `float64` matrix
+  graded to `1e-13` had singular values off by `1e-9`, and most such
+  matrices got NaN factors. It now runs a compiled `Nx.eigh`'s count of
+  sweeps, about three times as many at `float64`.
 - `Rune.Total.collect` returns its total at `zero`'s placement, as documented.
   An addition on a device moved a host total there, and one on a device other
   than the total's raised `Invalid_argument`.

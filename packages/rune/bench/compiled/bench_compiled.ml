@@ -407,10 +407,10 @@ let special =
       ])
 
 (* Symmetric eigendecompositions and singular value decompositions of 64 float32
-   matrices of 8 x 8, eagerly and compiled for the host. Compiled, an eigh is 56
-   rounds of Jacobi rotations and an svd 42, each round a kernel that computes
-   its rotations and one for each rotated value, which a loop runs; svd also
-   runs two Householder QRs of 8 steps. *)
+   matrices of 8 x 8, eagerly and compiled for the host. Compiled, an eigh and
+   an svd are each 56 rounds of Jacobi rotations, each round a kernel that
+   computes its rotations and one for each rotated value, which a loop runs; svd
+   also runs two Householder QRs of 8 steps. *)
 let factorizations =
   let batch = 64 and n = 8 in
   let a () =

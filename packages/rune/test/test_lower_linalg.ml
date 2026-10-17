@@ -669,6 +669,31 @@ let svd_agrees ~bound ~full_matrices a =
        (Nx.mul (columns u') (Nx.unsqueeze ~axes:[ Nx.ndim s' - 1 ] s'))
        (rows vt'))
 
+(* Spectra on which one-sided Jacobi converges slowest: graded down to a
+   thousand roundoffs, half of the values zero, and two values each repeated,
+   [1] and [0.9]. *)
+let spectra u n =
+  [
+    ( "graded",
+      Array.init n (fun i ->
+          (1e3 *. u) ** (float_of_int i /. float_of_int (n - 1))) );
+    ("rank-deficient", Array.init n (fun i -> if i < n / 2 then 1. else 0.));
+    ("repeated", Array.init n (fun i -> if i mod 2 = 0 then 1. else 0.9));
+  ]
+
+(* [q1 diag(sigmas) q2ᵀ] at [dtype], [q1] and [q2] the Q of a QR of seeded
+   normal matrices. *)
+let with_spectrum dtype sigmas =
+  let n = Array.length sigmas in
+  let q seed =
+    fst (Nx.qr (Nx.Rng.normal (Nx.Rng.key seed) Nx.float64 [| n; n |]))
+  in
+  let s = Nx.create Nx.float64 [| n |] sigmas in
+  Nx.cast dtype
+    (Nx.matmul
+       (Nx.mul (q 1) (Nx.unsqueeze ~axes:[ 0 ] s))
+       (Nx.matrix_transpose (q 2)))
+
 let svd =
   group "svd"
     [
@@ -701,6 +726,25 @@ let svd =
           let _, s, _ = Nx.svd a in
           let _, s', _ = traced3 (fun () -> Nx.svd a) in
           near ~bound:(32. *. 12. *. 0x1p-53) s s');
+      per_float
+        (List.filter
+           (fun (F (_, dt, _)) -> Nx_dtype.itemsize dt >= 4)
+           factor_dtypes)
+        "slow spectra"
+        {
+          on_float =
+            (fun dt u ->
+              List.concat_map
+                (fun n ->
+                  List.map
+                    (fun (name, sigmas) ->
+                      test (Printf.sprintf "%s, %d x %d" name n n) (fun () ->
+                          svd_agrees
+                            ~bound:(16. *. float_of_int n *. u)
+                            ~full_matrices:false (with_spectrum dt sigmas)))
+                    (spectra u n))
+                [ 16; 32 ]);
+        };
       test "a rank-deficient matrix has orthonormal vectors and +0. values"
         (fun () ->
           let r1 =

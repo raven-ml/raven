@@ -381,10 +381,18 @@ let rotate u axis rotations = advance (turn u axis rotations) axis
    accumulates the rotations. [u] and [v] are square and are kept stacked, [u]
    above [v], so that a round rotates the columns of both at once. *)
 
-(* The rounds that bring [num] columns to orthogonality. The rotations converge
-   quadratically once the columns are nearly orthogonal, and the sweeps it takes
-   to get there grow as the logarithm of [num]. *)
-let rounds num = if num < 2 then 0 else (ceil_log2 num + 3) * sweep num
+(* The sweeps that bring a matrix of [n] rows or columns to diagonal or to
+   orthogonality, for a precision of [p] bits. Jacobi rotations converge
+   quadratically on distinct values, but only linearly on repeated ones, a
+   constant number of bits a sweep, fewer as [n] grows, and slowly at first on
+   graded ones. Over repeated, clustered, graded and ill-conditioned spectra,
+   reaching an off-diagonal norm of [4 n u] by two-sided rotations took at most
+   [0.83] of [⌈p ⌈log2 n⌉ / 10⌉] sweeps, [u] the unit roundoff, up to [n = 64];
+   reaching columns orthogonal within [16 n u] by one-sided rotations, as [svd]
+   checks, took at most [0.8] of them up to [n = 128], over the same spectra and
+   spectra of half zeros, of two values each repeated, and graded down to a
+   thousand roundoffs, in [float32] and [float64]. *)
+let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
 
 let svd ~device ~full_matrices a =
   let dt = dtype a in
@@ -392,6 +400,7 @@ let svd ~device ~full_matrices a =
   let num = Int.min m n and q_num = Int.max m n in
   let x = Lower_arith.widen a in
   let wdt = dtype x in
+  let _, mantissa = Dtype.finfo wdt in
   let q, r = householder ~device (if m >= n then x else transpose x) in
   let square k = Shape.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
   let rank = Shape.ndim r in
@@ -417,7 +426,8 @@ let svd ~device ~full_matrices a =
   in
   let y =
     List.hd
-      (Loop.repeat device (rounds num)
+      (Loop.repeat device
+         (sweeps num (mantissa + 1) * sweep num)
          [
            Shape.cat ~axis:(rank - 2)
              (block (triu r) (Some (0, num)) (Some (0, num)))
@@ -484,14 +494,6 @@ let svd ~device ~full_matrices a =
    sweep: a [float32] 5 x 5 matrix of eigenvalues -1, 1 and 2 took 13 sweeps
    to reach [4 n u], against its 8. The element left is within the roundoff
    the sweeps reach. *)
-
-(* The sweeps that bring a matrix of [n] rows to diagonal, for a precision of
-   [p] bits, [⌈p ⌈log2 n⌉ / 10⌉]: the slowest spectra are of repeated
-   eigenvalues. Over repeated, clustered, graded and random spectra up to [n =
-   64] in [float32] and [float64], [0.83] of them reached an off-diagonal norm
-   of [0.43 n u], [u] the unit roundoff, against the [16 n u] a matrix fails
-   beyond. *)
-let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
 
 let eigh ~device ~vectors a =
   let x = Lower_arith.widen a in
