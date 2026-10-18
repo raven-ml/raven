@@ -2009,8 +2009,8 @@ let two =
 (* The level the kernel driver holds GPU 0's clocks at. *)
 let level () =
   match Rig_amd_amdgpu.buses () with
-  | [] -> None
-  | bus :: _ ->
+  | Error _ | Ok [] -> None
+  | Ok (bus :: _) ->
       let file =
         "/sys/bus/pci/devices/" ^ bus ^ "/power_dpm_force_performance_level"
       in

@@ -336,7 +336,7 @@ let image_rows =
     ]
 
 let () =
-  if Rig_nv_nvidia.count () > 0 then
+  if Result.value (Rig_nv_nvidia.count ()) ~default:0 > 0 then
     exit
     @@ Thumper.run "rig_nv"
          [

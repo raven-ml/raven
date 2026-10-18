@@ -937,8 +937,8 @@ let path g =
 
 (* Opening *)
 
-let buses ?(root = "/") () = Result.value (Sysfs.gpus root) ~default:[]
-let count ?root () = List.length (buses ?root ())
+let buses ?(root = "/") () = Sysfs.gpus root
+let count ?root () = Result.map List.length (buses ?root ())
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;

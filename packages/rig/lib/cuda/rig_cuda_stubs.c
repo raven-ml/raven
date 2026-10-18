@@ -139,6 +139,7 @@ enum {
   X(cuDeviceGetCount, (int *))                                                 \
   X(cuDeviceGet, (CUdevice *, int))                                            \
   X(cuDeviceGetAttribute, (int *, int, CUdevice))                              \
+  X(cuDeviceGetPCIBusId, (char *, int, CUdevice))                              \
   X(cuDeviceTotalMem_v2, (size_t *, CUdevice))                                 \
   X(cuDeviceCanAccessPeer, (int *, CUdevice, CUdevice))                        \
   X(cuDevicePrimaryCtxRetain, (CUcontext *, CUdevice))                         \
@@ -294,6 +295,15 @@ value caml_rig_cuda_attribute(value v_device, value v_attribute) {
   CUresult s = p_cuDeviceGetAttribute(&a, Int_val(v_attribute),
                                       Int_val(v_device));
   return answer(s, a);
+}
+
+/* The PCI bus address of the CUdevice [v_device] into [v_id], NUL-ended:
+   [0], or CUDA's status negated. */
+value caml_rig_cuda_bus(value v_device, value v_id) {
+  CUresult s = p_cuDeviceGetPCIBusId((char *)Bytes_val(v_id),
+                                     (int)caml_string_length(v_id),
+                                     Int_val(v_device));
+  return answer(s, 0);
 }
 
 value caml_rig_cuda_total_memory(value v_device) {

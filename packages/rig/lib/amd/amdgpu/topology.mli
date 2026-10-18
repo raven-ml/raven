@@ -7,7 +7,7 @@
     directory (["/"] for this machine): its PCI functions, the kernel
     driver's topology of its GPUs, and the versions of their blocks. Each
     value only reads files, so any domain may call it. A file that is
-    missing or unreadable reads as absent, but for {!gpus}. *)
+    missing or unreadable reads as absent, but for {!gpus}'s directory. *)
 
 type node = {
   index : int;  (** Its node in the topology. *)
@@ -32,10 +32,11 @@ val gpus : string -> (string list, string) result
 (** [gpus root] is the bus addresses of the AMD GPUs among the PCI functions
     under [root], in bus order: by domain, bus, device and function, each as
     a number. It is [Ok []] where [root/sys/bus/pci/devices] does not exist.
-    A function without a [vendor] or [class] file is not a GPU.
+    A function whose [vendor] or [class] file cannot be read, as while the
+    kernel removes it, is left out.
 
-    [Error] with the system's error if the directory or such a file exists
-    and cannot be read, such as when the process has no file left. *)
+    [Error] with the system's error if the directory exists and cannot be
+    read, such as when the process has no file left. *)
 
 val node : string -> string -> (node, string) result
 (** [node root bus] is the GPU at bus address [bus], or why the kernel driver

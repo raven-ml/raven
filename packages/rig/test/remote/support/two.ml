@@ -54,7 +54,7 @@ let nv _ ~arrived ~commands c =
   ((N.Gpfifo.entry (i commands) ~offset:0 ~words).bytes, methods)
 
 let near () =
-  if Rig_amd_amdgpu.count () > 0 then
+  if Result.value (Rig_amd_amdgpu.count ()) ~default:0 > 0 then
     (get (Rig.open_ (Rig_amd_amdgpu.gpu 0)), amd)
   else if Rig_nv_support.present () then
     (get (Rig.open_ (Rig_nv_support.opener 0)), nv)

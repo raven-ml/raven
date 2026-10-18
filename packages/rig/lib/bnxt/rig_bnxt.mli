@@ -112,13 +112,16 @@
 type t
 (** The type for NICs the process holds. *)
 
-val buses : ?machine:Rig_pci.Machine.t -> unit -> string list
+val buses : ?machine:Rig_pci.Machine.t -> unit -> (string list, string) result
 (** [buses ~machine ()] is the bus addresses of the NICs of [machine] (defaults
-    to {!Rig_pci.Machine.this}), in bus order. It is [[]] for a machine that
-    lists no PCI functions, such as this one off Linux. *)
+    to {!Rig_pci.Machine.this}), in bus order. It is [Ok []] for a machine
+    that lists no PCI functions, such as this one off Linux.
 
-val count : ?machine:Rig_pci.Machine.t -> unit -> int
-(** [count ~machine ()] is [List.length (buses ~machine ())]. *)
+    [Error why] if the machine's PCI functions cannot be listed. *)
+
+val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
+(** [count ~machine ()] is the number of {!buses}, or their [Error]. A
+    machine with no NIC is [Ok 0]. *)
 
 val open_ : ?machine:Rig_pci.Machine.t -> int -> (t, string) result
 (** [open_ ~machine i] holds NIC [i] of [machine] (defaults to
@@ -128,9 +131,10 @@ val open_ : ?machine:Rig_pci.Machine.t -> int -> (t, string) result
     Every open resets the NIC, whatever ran on it before. The process holds the
     NIC until {!val-close}, or until it exits, which closes it.
 
-    [Error msg], with [msg] starting with the NIC's name, if [machine] has no
-    NIC [i], if a process holds it, if its function cannot be taken or reset, or
-    if its firmware refuses a request or does not answer in time.
+    [Error msg], with [msg] starting with the NIC's name, if [machine]'s PCI
+    functions cannot be listed, if it has no NIC [i], if a process holds it, if
+    its function cannot be taken or reset, or if its firmware refuses a request
+    or does not answer in time.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -314,7 +318,8 @@ end
     {!detach} and {!attach} change this machine as {!Rig_pci.Driver}
     describes, and their changes persist after the process. Each refuses a NIC
     a process holds, this one included, and needs [CAP_SYS_ADMIN] and write
-    access to the files under [/sys/bus/pci] they write. *)
+    access to the files under [/sys/bus/pci] they write. Each returns
+    [Error msg] if the machine's PCI functions cannot be listed. *)
 
 val detach : int -> (Rig_pci.Driver.progress, string) result
 (** [detach i] takes NIC [i] of this machine from its kernel driver as

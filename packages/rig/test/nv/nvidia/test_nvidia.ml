@@ -7,6 +7,11 @@ open Windtrap
 module N = Rig_nv_nvidia
 module S = Rig_nv_nvidia_support
 
+(* [listed ?root ()] and [counted ?root ()] are the path's GPUs, which the
+   test requires it lists. *)
+let listed ?root () = require_ok ~pp:Format.pp_print_string (N.buses ?root ())
+let counted ?root () = require_ok ~pp:Format.pp_print_string (N.count ?root ())
+
 (* Machines in a tree *)
 
 let rec mkdir_p d =
@@ -64,12 +69,13 @@ let numbering () =
   in
   equal (list string)
     [ "0000:01:00.0"; "0000:0a:00.0"; "ffff:00:00.0"; "10000:00:01.0" ]
-    (N.buses ~root ());
-  equal int 4 (N.count ~root ())
+    (listed ~root ());
+  equal int 4 (counted ~root ())
 
-(* A machine whose PCI files cannot be read, its functions' directory or a
-   function's [vendor] file, lists no GPU, and an open says why. The test makes
-   the file unreadable, which a process that reads every file cannot test. *)
+(* A machine whose functions' directory cannot be read lists no GPU and says
+   why, as an open does. A function whose [vendor] file cannot be read is left
+   out, as rig.pci leaves it out. The test makes the file unreadable, which a
+   process that reads every file cannot test. *)
 let unreadable file =
   let root =
     tree "unreadable" [ ("0000:01:00.0", Some "0x10de", Some "0x030000") ]
@@ -83,10 +89,16 @@ let unreadable file =
       close_in ic;
       skip ~reason:"the process reads unreadable files" ()
   | exception Sys_error _ -> ());
-  equal (list string) [] (N.buses ~root ());
-  equal int 0 (N.count ~root ());
-  let e = require_error (Rig_gpu_support.opened (N.gpu ~root 0)) in
-  contains ~sub:"reading the machine's GPUs" e
+  if Filename.basename file = "vendor" then
+    equal (result (list string) string) (Ok []) (N.buses ~root ())
+  else begin
+    let why = require_error (N.buses ~root ()) in
+    contains ~msg:"names the file" ~sub:path why;
+    equal (result int string) (Error why) (N.count ~root ());
+    let e = require_error (Rig_gpu_support.opened (N.gpu ~root 0)) in
+    contains ~sub:"reading the machine's GPUs" e;
+    contains ~sub:why e
+  end
 
 (* The kernel driver lists the GPUs it holds under /proc, by bus address: on a
    machine whose driver holds every NVIDIA GPU, they are the GPUs the path
@@ -97,12 +109,12 @@ let kernel_list () =
   if not (Sys.file_exists proc_gpus) then
     skip ~reason:"NVIDIA's kernel driver is not loaded" ();
   let held = List.sort compare (Array.to_list (Sys.readdir proc_gpus)) in
-  equal (list string) held (List.sort compare (N.buses ()))
+  equal (list string) held (List.sort compare (listed ()))
 
 (* A device's objects are the GPU's for the process: a stopped device's GPU
    opens again. *)
 let once () =
-  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
     require_error ~msg:"a second open" (Rig_gpu_support.opened (N.gpu 0))
@@ -131,12 +143,12 @@ let display_active bus =
 (* The RM's watchdog does not run on a GPU without a display: rig then loses
    the device once its work has made no progress for 30 s. *)
 let hang_bound () =
-  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let hang_ms = (Rig_nv.facts g).hang_ms in
   Rig_nv.stop g ~fault:None;
   mem (option int) ~msg:"hang_ms" hang_ms [ None; Some 30_000 ];
-  match display_active (List.hd (N.buses ())) with
+  match display_active (List.hd (listed ())) with
   | None -> skip ~reason:"nvidia-smi does not answer" ()
   | Some true -> ()
   | Some false ->
@@ -148,13 +160,13 @@ let hang_bound () =
 let mirror = Filename.concat "trees" "mirror"
 
 let other_root () =
-  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   mkdir_p "trees";
   (match Unix.lstat mirror with
   | _ -> Unix.unlink mirror
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
   Unix.symlink "/" mirror;
-  equal (list string) (N.buses ()) (N.buses ~root:mirror ());
+  equal (list string) (listed ()) (listed ~root:mirror ());
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
     require_error ~msg:"an open through the other root"
@@ -202,7 +214,7 @@ let cycles cycle =
 (* Opening and stopping a GPU again and again keeps at most one device's
    mappings per open. *)
 let reopen () =
-  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   cycles (fun () ->
       let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
       Rig_nv.stop g ~fault:None)
@@ -210,7 +222,7 @@ let reopen () =
 (* Opening and closing a GPU through rig again and again keeps at most one
    device's mappings per open, once its memory returned. *)
 let reclose () =
-  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   cycles (fun () ->
       let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
       Rig.close d;
@@ -233,7 +245,7 @@ let inside_lock () =
             "refused")
   in
   equal ~msg:"the open inside the lock" string "refused" refused;
-  if N.count () > 0 then
+  if counted () > 0 then
     let opened = Rig_gpu_support.opened (N.gpu 0) in
     Rig_nv.stop (require_ok ~pp:Format.pp_print_string opened) ~fault:None
 
@@ -246,8 +258,12 @@ let () =
              test "the GPUs are NVIDIA's display functions in bus order"
                numbering;
              test "a machine without PCI functions has no GPU" (fun () ->
-                 equal (list string) [] (N.buses ~root:"no-such-directory" ()));
-             cases ~name:(Printf.sprintf "an unreadable %s lists no GPU")
+                 equal (list string) [] (listed ~root:"no-such-directory" ()));
+             cases
+               ~name:(fun f ->
+                 if Filename.basename f = "vendor" then
+                   "an unreadable vendor file leaves its function out"
+                 else "an unreadable functions' directory is an Error naming it")
                "unreadable files"
                [
                  "sys/bus/pci/devices";
@@ -263,13 +279,13 @@ let () =
          group ~timeout:60. "opening"
            [
              test "count answers on a machine whose /sys reads" (fun () ->
-                 at_least int ~than:0 (N.count ()));
+                 at_least int ~than:0 (counted ()));
              test "a negative GPU raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () ->
                      Rig_gpu_support.opened (N.gpu (-1)));
                  raises_match Exn.invalid_arg (fun () -> (N.gpu (-1)).name));
              test "a GPU past the count is an error naming the count" (fun () ->
-                 let n = N.count () in
+                 let n = counted () in
                  let e = require_error (Rig_gpu_support.opened (N.gpu n)) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
              test "an open inside a lock of its thread's raises" inside_lock;

@@ -85,16 +85,17 @@ let machines =
 
 (* Functions *)
 
-let id =
-  Testable.make
-    ~pp:(fun ppf (d : Machine.id) ->
-      Format.fprintf ppf "%s %04x:%04x class %06x" d.bus d.vendor d.device
-        d.class_)
-    ~equal:( = )
+let pp_id ppf (d : Machine.id) =
+  Format.fprintf ppf "%s %04x:%04x class %06x" d.bus d.vendor d.device d.class_
+
+let id = Testable.make ~pp:pp_id ~equal:( = )
+
+(* [listed m] is [m]'s functions, which the test requires it lists. *)
+let listed m = require_ok ~pp:Format.pp_print_string (Machine.functions m)
 
 let test_no_sysfs () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
-  equal (list id) [] (Machine.functions Machine.this)
+  equal (result (list id) string) (Ok []) (Machine.functions Machine.this)
 
 (* A machine's functions, from their files, in hexadecimal: the class code
    whole, its subclass and programming interface kept, so that a VGA controller
@@ -132,7 +133,7 @@ let test_tree () =
         class_ = 0x030200;
       };
     ]
-    (Machine.functions m)
+    (listed m)
 
 (* A function whose files cannot be read, as while the kernel removes it, is
    left out. *)
@@ -144,7 +145,7 @@ let test_tree_unreadable () =
   equal (list string) [ "0000:03:00.0" ]
     (List.map
        (fun (d : Machine.id) -> d.bus)
-       (Machine.functions (Machine.at root)))
+       (listed (Machine.at root)))
 
 (* Whatever order the files list them in, with domains of four and five
    digits. *)
@@ -160,10 +161,11 @@ let listed_in_bus_order =
       equal (list string) (List.map address ns)
         (List.map
            (fun (d : Machine.id) -> d.bus)
-           (Machine.functions (Machine.at root))))
+           (listed (Machine.at root))))
 
-(* A machine whose functions' directory cannot be read lists none. The test
-   makes it unreadable, which a process that reads every file cannot test. *)
+(* A machine whose functions' directory cannot be read says why, naming the
+   directory. The test makes it unreadable, which a process that reads every
+   file cannot test. *)
 let test_tree_unlisted () =
   let root = Tree.make [ Tree.gpu "0000:03:00.0" ] in
   let devices = Filename.concat root "sys/bus/pci/devices" in
@@ -172,10 +174,15 @@ let test_tree_unlisted () =
   (match Sys.readdir devices with
   | _ -> skip ~reason:"the process reads unreadable directories" ()
   | exception Sys_error _ -> ());
-  equal (list id) [] (Machine.functions (Machine.at root))
+  let why =
+    require_error
+      ~pp:(Format.pp_print_list pp_id)
+      (Machine.functions (Machine.at root))
+  in
+  contains ~sub:devices why
 
 let test_tree_empty () =
-  equal (list id) [] (Machine.functions (Machine.at (Tree.make [])))
+  equal (list id) [] (listed (Machine.at (Tree.make [])))
 
 (* Read only: this machine lists the functions its kernel shows. *)
 let test_sysfs () =
@@ -183,7 +190,7 @@ let test_sysfs () =
   let buses = Array.to_list (Sys.readdir "/sys/bus/pci/devices") in
   equal (list string)
     (List.sort Machine.compare_address buses)
-    (List.map (fun (d : Machine.id) -> d.bus) (Machine.functions Machine.this))
+    (List.map (fun (d : Machine.id) -> d.bus) (listed Machine.this))
 
 let functions =
   group ~timeout:patience "functions"
@@ -194,7 +201,7 @@ let functions =
       test "a function whose files cannot be read is left out"
         test_tree_unreadable;
       test "a machine without functions lists none" test_tree_empty;
-      test "a machine whose functions cannot be listed lists none"
+      test "a machine whose functions cannot be listed says why"
         test_tree_unlisted;
       test "this machine's are those of /sys/bus/pci, in bus order" test_sysfs;
     ]
@@ -303,7 +310,8 @@ let recorder () =
         transport = Window.unsafe_transport tr;
         page = far_page;
         functions =
-          (fun () -> List.map id [ "0000:43:00.0"; far_bus; "0000:0a:00.0" ]);
+          (fun () ->
+            Ok (List.map id [ "0000:43:00.0"; far_bus; "0000:0a:00.0" ]));
         take =
           (fun bus ->
             log "take %s" bus;
@@ -330,7 +338,7 @@ let test_far_machine () =
   equal ~msg:"page" int far_page (Machine.page r.m);
   equal ~msg:"functions, in bus order" (list string)
     [ far_bus; "0000:0a:00.0"; "0000:43:00.0" ]
-    (List.map (fun (d : Machine.id) -> d.bus) (Machine.functions r.m));
+    (List.map (fun (d : Machine.id) -> d.bus) (listed r.m));
   equal ~msg:"failed" (option string) None (Machine.failed r.m);
   break r.tr;
   let why = Some "far: the link broke" in

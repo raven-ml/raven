@@ -198,7 +198,8 @@ let check op lim r =
   equal ~msg:(at ^ ": opens again") bool true r.reopened
 
 let need_gpu () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ()
+  if Result.value (P.count ()) ~default:0 = 0 then
+    skip ~reason:"the machine has no NVIDIA GPU" ()
 
 (* Walks [op] through 0, 1, … more files, up to the first that lets it
    succeed. *)

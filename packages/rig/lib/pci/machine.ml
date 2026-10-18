@@ -32,7 +32,7 @@ type fn = Ops.fn = {
 type ops = Ops.ops = {
   transport : Window.transport;
   page : int;
-  functions : unit -> id list;
+  functions : unit -> (id list, string) result;
   take : string -> (fn, string) result;
   reserve : base:int -> int -> (unit, string) result;
 }
@@ -73,7 +73,9 @@ let window m a n =
   | None -> Window.through m.ops.transport a n
 
 let functions m =
-  List.sort (fun a b -> Bus_address.compare a.bus b.bus) (m.ops.functions ())
+  Result.map
+    (List.sort (fun a b -> Bus_address.compare a.bus b.bus))
+    (m.ops.functions ())
 
 let rec record m range =
   let ranges = Atomic.get m.reserved in

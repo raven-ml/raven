@@ -16,8 +16,9 @@
     A program opens each of the machine's AMD GPUs through its opener:
     {[
     let devices =
-      List.init (Rig_amd_amdgpu.count ()) (fun i ->
-          Rig.open_ (Rig_amd_amdgpu.gpu i))
+      Result.map
+        (fun n -> List.init n (fun i -> Rig.open_ (Rig_amd_amdgpu.gpu i)))
+        (Rig_amd_amdgpu.count ())
     ]}
 
     {b Numbering.} GPU [i] is the [i]th of the machine's AMD GPUs in bus
@@ -36,19 +37,23 @@
     the GPU's render node, [/dev/dri/renderD*], which members of the
     [render] group have, and no other privilege. *)
 
-val buses : ?root:string -> unit -> string list
+val buses : ?root:string -> unit -> (string list, string) result
 (** [buses ~root ()] is the bus addresses of the machine's AMD GPUs
     ({!Rig_amd.is_gpu}) under [root] (defaults to ["/"]), in bus order: by
     domain, bus, device and function, each as a number. GPU [i] is the
-    [i]th, whichever driver holds it. It is [[]] where [root/sys/bus/pci]
-    does not exist, such as off Linux, and where the machine's PCI functions
-    cannot be read, such as when the process has no file left; {!gpu}'s
-    [make] then says why. Each call reads the files again, and changes
-    nothing on the machine. *)
+    [i]th, whichever driver holds it. It is [Ok []] where [root/sys/bus/pci]
+    does not exist, such as off Linux. Each call reads the files again, and
+    changes nothing on the machine.
 
-val count : ?root:string -> unit -> int
-(** [count ~root ()] is [List.length (buses ~root ())], so GPUs are numbered
-    [0] to [count ~root () - 1]. *)
+    A function whose files cannot be read, as while the kernel removes it, is
+    left out.
+
+    [Error why] if the machine's PCI functions cannot be listed, such as
+    when the process has no file left. *)
+
+val count : ?root:string -> unit -> (int, string) result
+(** [count ~root ()] is the number [n] of {!buses}, so GPUs are numbered [0]
+    to [n - 1], or their [Error]. A machine with no AMD GPU is [Ok 0]. *)
 
 val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
 (** [gpu ~root i] is the opener of GPU [i] under [root] (defaults to ["/"]),

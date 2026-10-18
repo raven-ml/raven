@@ -94,9 +94,11 @@ val name : t -> int -> string
     such as ["AMD-PCI"], and that name followed by [":i"] otherwise, such as
     ["AMD-PCI:1"]. *)
 
-val buses : t -> Machine.t -> string list
+val buses : t -> Machine.t -> (string list, string) result
 (** [buses d m] is the bus addresses of [d]'s functions on [m], in bus order.
-    Function [i] is the [i]th. *)
+    Function [i] is the [i]th.
+
+    [Error why] if [m]'s functions cannot be listed ({!Machine.functions}). *)
 
 (** {1:holds Opening}
 
@@ -133,13 +135,13 @@ val open_ :
     get the function's name as a prefix too. A lost function, or one a dead
     process left reaching memory, is renewed before [f] runs ({!renew}).
 
-    [Error why] without calling [f] if [m] has no function [i] of [d], saying
-    how many [d] drives there, if the process holds it already, if it is
-    unbound and its kernel driver has not let go of it yet ([unreleased] of
-    {!make}), or if it cannot be taken, with {!Function.take}'s reason.
-    [Error why] with the driver's reason if its renewal fails, and the
-    function is then lost. An exception raised by the driver's reset passes
-    through, and the function is lost.
+    [Error why] without calling [f] if [m]'s functions cannot be listed, if [m]
+    has no function [i] of [d], saying how many [d] drives there, if the
+    process holds it already, if it is unbound and its kernel driver has not
+    let go of it yet ([unreleased] of {!make}), or if it cannot be taken, with
+    {!Function.take}'s reason. [Error why] with the driver's reason if its
+    renewal fails, and the function is then lost. An exception raised by the
+    driver's reset passes through, and the function is lost.
 
     Raises [Invalid_argument], with the function released, if [f] returns [Ok _]
     without {!set_stop}. *)
@@ -203,12 +205,13 @@ val hang_ms : int
       and, with [Remove], [vfio-pci]'s [unbind] and the [driver_override] of
       each other function of the device that it gives back.
 
-    Each of them returns [Error why], changing nothing, if [m] has no function
-    [i] of the driver or if a process holds it. {!detach} and {!attach} also
-    return [Error why] on a machine reached through a transport, and {!attach}
-    when the process may not write a file, naming the file. {!attach} and
-    {!reset} also return [Error why] if the function cannot be taken, or if it
-    is unbound and its kernel driver has not let go of it yet.
+    Each of them returns [Error why], changing nothing, if [m]'s functions
+    cannot be listed, if [m] has no function [i] of the driver or if a process
+    holds it. {!detach} and {!attach} also return [Error why] on a machine
+    reached through a transport, and {!attach} when the process may not write a
+    file, naming the file. {!attach} and {!reset} also return [Error why] if
+    the function cannot be taken, or if it is unbound and its kernel driver has
+    not let go of it yet.
 
     A kernel driver lets go of a function, writing to it as it does, once the
     last file of the function's character devices has gone. Its unbind either

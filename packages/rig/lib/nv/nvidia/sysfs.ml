@@ -3,17 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let ( let* ) = Result.bind
-
 (* The integer in the file [path], as Linux writes [vendor] and [class]:
-   ["0x10de\n"]; [Ok None] if there is no such file. *)
+   ["0x10de\n"]; [None] if the file cannot be read. *)
 let read path =
-  if not (Sys.file_exists path) then Ok None
-  else
-    match In_channel.with_open_bin path In_channel.input_line with
-    | Some line -> Ok (int_of_string_opt (String.trim line))
-    | None -> Ok None
-    | exception Sys_error e -> Error e
+  match In_channel.with_open_bin path In_channel.input_line with
+  | Some line -> int_of_string_opt (String.trim line)
+  | None -> None
+  | exception Sys_error _ -> None
 
 (* A bus address "dddd:bb:dd.f" as integers, for sorting: a domain may have more
    than four digits. *)
@@ -26,27 +22,21 @@ let key bus =
       | _ -> [])
   | _ -> []
 
+(* A function whose files cannot be read, as while the kernel removes it, is
+   left out, as rig.pci leaves it out, so that one card is listed by every
+   path or by none. *)
 let gpus root =
   let dir = Filename.concat root "sys/bus/pci/devices" in
   let gpu bus =
     let file f = read (Filename.concat (Filename.concat dir bus) f) in
-    let* vendor = file "vendor" in
-    let* class_ = file "class" in
-    match (vendor, class_) with
-    | Some vendor, Some class_ -> Ok (Rig_nv.is_gpu ~vendor ~class_)
-    | _ -> Ok false
-  in
-  let rec keep = function
-    | [] -> Ok []
-    | bus :: rest ->
-        let* is_gpu = gpu bus in
-        let* gpus = keep rest in
-        Ok (if is_gpu then bus :: gpus else gpus)
+    match (file "vendor", file "class") with
+    | Some vendor, Some class_ -> Rig_nv.is_gpu ~vendor ~class_
+    | _ -> false
   in
   if not (Sys.file_exists dir) then Ok []
   else
     match Sys.readdir dir with
     | exception Sys_error e -> Error e
     | names ->
-        let* gpus = keep (Array.to_list names) in
+        let gpus = List.filter gpu (Array.to_list names) in
         Ok (List.sort (fun a b -> compare (key a, a) (key b, b)) gpus)

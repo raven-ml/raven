@@ -82,15 +82,16 @@ let name g i =
 let named g i r = Result.map_error (fun why -> strf "%s: %s" (name g i) why) r
 
 let buses g m =
-  List.filter_map
-    (fun (id : Machine.id) -> if g.matches id then Some id.bus else None)
+  Result.map
+    (List.filter_map (fun (id : Machine.id) ->
+         if g.matches id then Some id.bus else None))
     (Machine.functions m)
 
 (* Checks *)
 
 (* The bus of function [i] of [m], which the process does not hold. *)
 let nth g m i =
-  let all = buses g m in
+  let* all = buses g m in
   match List.nth_opt all i with
   | None when all = [] ->
       Error (strf "no such function; %s drives none here" g.name)

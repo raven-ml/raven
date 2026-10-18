@@ -82,23 +82,29 @@
     {- unified addressing, under which the GPU's memory and the host's share
        one address space.}}
 
-    The CUDA library ([libcuda]) is loaded at the first call of {!count} or
-    of an opener's [make], by its standard name from the platform's library
-    search path: [libcuda.so.1] (or [libcuda.so]) on Linux, [nvcuda.dll] on
-    Windows, [libcuda.dylib] on macOS. A library of that name earlier on the
-    path is loaded in its place, for the whole process. A load that fails is
-    tried again at the next call. Building and linking this library needs no
-    CUDA installation. *)
+    The CUDA library ([libcuda]) is loaded at the first call of {!count},
+    {!buses} or an opener's [make], by its standard name from the platform's
+    library search path: [libcuda.so.1] (or [libcuda.so]) on Linux,
+    [nvcuda.dll] on Windows, [libcuda.dylib] on macOS. A library of that name
+    earlier on the path is loaded in its place, for the whole process. A load
+    that fails is tried again at the next call. Building and linking this
+    library needs no CUDA installation. *)
 
 type t
 (** The type for open devices: a GPU's primary context, two streams and a
     timeline word. *)
 
-val count : unit -> int
-(** [count ()] is the number of GPUs CUDA sees, or [0] if the CUDA library
-    cannot be loaded or initialised. [CUDA_VISIBLE_DEVICES] decides which
-    GPUs CUDA sees. The list is read at the first call whose load and listing
-    both succeed, and kept for the process. *)
+val count : unit -> (int, string) result
+(** [count ()] is the number of GPUs CUDA sees, or [Error why] if the CUDA
+    library cannot be loaded or initialised or CUDA cannot list its GPUs. A
+    machine with none is [Ok 0]. [CUDA_VISIBLE_DEVICES] decides which GPUs
+    CUDA sees. The list is read at the first call whose load and listing both
+    succeed, and kept for the process. *)
+
+val buses : unit -> (string list, string) result
+(** [buses ()] is the PCI bus addresses of the GPUs CUDA sees, in {!gpu}'s
+    order, as Linux writes them under [/sys/bus/pci], such as
+    ["0000:01:00.0"], or {!count}'s [Error]. *)
 
 val gpu : int -> t Rig_edge.opener
 (** [gpu i] is the opener of GPU [i], the [i]th by PCI address among the GPUs
@@ -113,8 +119,8 @@ val gpu : int -> t Rig_edge.opener
        [i] still runs;}
     {- if the CUDA library cannot be loaded or initialised, or lacks a
        function of CUDA 12.4;}
-    {- if [i >= count ()], or the GPU lacks what {!section-opening}
-       requires;}
+    {- if CUDA sees no GPU [i] ({!count}), or the GPU lacks what
+       {!section-opening} requires;}
     {- with CUDA's error, such as the error of a fault earlier in the
        process.}}
 

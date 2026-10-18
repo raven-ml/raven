@@ -1886,7 +1886,7 @@ let opening =
       test "the device states an alignment of 256" alignment;
       test "off macOS no device opens" (fun () ->
           if S.macos then skip ~reason:"macOS" ();
-          equal int 0 (Rig_metal.count ());
+          equal (result int string) (Ok 0) (Rig_metal.count ());
           equal (result pass string) (Error "Metal exists on macOS only")
             (Rig_gpu_support.opened (Rig_metal.gpu 0)));
       test "a virtual Mac's GPU opens no device, for want of a residency set"

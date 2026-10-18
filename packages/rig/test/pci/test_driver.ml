@@ -189,7 +189,10 @@ let test_in_order ids =
     { (Tree.gpu id.bus) with vendor = id.vendor; class_ = id.class_ }
   in
   let m = Machine.at (Tree.make (List.map fn ids)) in
-  equal (list string) (gpus_of ids) (Driver.buses (gpus ()) m)
+  equal
+    (result (list string) string)
+    (Ok (gpus_of ids))
+    (Driver.buses (gpus ()) m)
 
 let test_ith () =
   needs_flock ();
@@ -238,7 +241,7 @@ let test_no_gpu (_, f, i) =
 let test_none () =
   let m = Machine.at (Tree.make [ audio "0000:03:00.1" ]) in
   let g = gpus () in
-  equal (list string) [] (Driver.buses g m);
+  equal (result (list string) string) (Ok []) (Driver.buses g m);
   has_none (unopened (open_ g m 0));
   has_none (unopened (reset g m 0))
 
@@ -467,7 +470,7 @@ let test_this_none () =
       ~teardown_ms ~reset:counted (fun _ -> false)
   in
   let this = Machine.this in
-  equal (list string) [] (Driver.buses g this);
+  equal (result (list string) string) (Ok []) (Driver.buses g this);
   has_none (unopened (open_ g this 0));
   has_none (unopened (reset g this 0));
   ignore (require_error (Driver.detach g this 0));

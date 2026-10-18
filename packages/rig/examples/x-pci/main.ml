@@ -22,8 +22,9 @@ let kind ~vendor ~class_ =
 let () =
   let m = Rig_pci.Machine.this in
   match Rig_pci.Machine.functions m with
-  | [] -> print_endline "no PCI functions on this machine"
-  | fs ->
+  | Error why -> prerr_endline why
+  | Ok [] -> print_endline "no PCI functions on this machine"
+  | Ok fs ->
       Printf.printf "%d PCI functions, pages of %d bytes\n" (List.length fs)
         (Rig_pci.Machine.page m);
       List.iter
@@ -31,5 +32,7 @@ let () =
           Printf.printf "  %s  %04x:%04x  class %06x  %s\n" bus vendor device
             class_ (kind ~vendor ~class_))
         fs;
-      Printf.printf "AMD GPUs: %d; NVIDIA GPUs: %d\n" (Rig_amd_amdgpu.count ())
-        (Rig_nv_nvidia.count ())
+      let count = function Ok n -> string_of_int n | Error why -> why in
+      Printf.printf "AMD GPUs: %s; NVIDIA GPUs: %s\n"
+        (count (Rig_amd_amdgpu.count ()))
+        (count (Rig_nv_nvidia.count ()))

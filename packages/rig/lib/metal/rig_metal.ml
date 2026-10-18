@@ -13,7 +13,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type buffer = Rig_edge.location
 
-external count : unit -> int = "caml_rig_metal_count"
+external gpus : unit -> int = "caml_rig_metal_count"
 external open_device : nativeint -> int = "caml_rig_metal_open"
 external device_facts : int -> int * int = "caml_rig_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_rig_metal_alloc"
@@ -322,11 +322,13 @@ let open_failures =
 
 let no_memory = Array.length open_failures + 1
 
+let count () = Ok (gpus ())
+
 (* The handlers write the word from the host: no work addresses it. *)
 let open_ ~word i =
   check "Rig_metal.gpu";
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
-  if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
+  if i > 0 then Error (strf "no such GPU; Metal sees %d" (gpus ()))
   else
     let guard = Mutex.create () in
     let self = open_device word in

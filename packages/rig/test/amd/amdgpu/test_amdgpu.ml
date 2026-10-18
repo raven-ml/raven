@@ -9,6 +9,11 @@ module Gpu = Rig_amd_abi.Gpu
 
 let strf = Printf.sprintf
 
+(* [listed ?root ()] and [counted ?root ()] are the path's GPUs, which the
+   test requires it lists. *)
+let listed ?root () = require_ok ~pp:Format.pp_print_string (P.buses ?root ())
+let counted ?root () = require_ok ~pp:Format.pp_print_string (P.count ?root ())
+
 (* Machines as their files show them, written under a temporary directory of
    this process's own, which it removes at its exit, so that no two runs share a
    tree: an R9700 (gfx1201) behind two bridges of its own, with its audio
@@ -209,13 +214,14 @@ let driven () =
     |> List.filter (fun f -> String.contains f ':')
     |> List.sort compare
   in
-  let buses = P.buses () in
+  let buses = listed () in
   equal (list string) functions
     (List.sort compare (List.filter (fun b -> List.mem b functions) buses))
 
-(* A machine whose PCI files cannot be read, its functions' directory or a
-   function's [vendor] file, lists no GPU, and an open says why. The test makes
-   the file unreadable, which a process that reads every file cannot test. *)
+(* A machine whose functions' directory cannot be read lists no GPU and says
+   why, as an open does. A function whose [vendor] file cannot be read is left
+   out, as rig.pci leaves it out. The test makes the file unreadable, which a
+   process that reads every file cannot test. *)
 let unreadable file =
   let root = tree "unreadable" (functions r9700_functions @ r9700_node) in
   let path = Filename.concat root file in
@@ -227,17 +233,23 @@ let unreadable file =
       close_in ic;
       skip ~reason:"the process reads unreadable files" ()
   | exception Sys_error _ -> ());
-  equal (list string) [] (P.buses ~root ());
-  equal int 0 (P.count ~root ());
-  let e = require_error (Rig_gpu_support.opened (P.gpu ~root 0)) in
-  contains ~sub:"reading the machine's GPUs" e
+  if Filename.basename file = "vendor" then
+    equal (result (list string) string) (Ok []) (P.buses ~root ())
+  else begin
+    let why = require_error (P.buses ~root ()) in
+    contains ~msg:"names the file" ~sub:path why;
+    equal (result int string) (Error why) (P.count ~root ());
+    let e = require_error (Rig_gpu_support.opened (P.gpu ~root 0)) in
+    contains ~sub:"reading the machine's GPUs" e;
+    contains ~sub:why e
+  end
 
 let numbering =
   group ~timeout:10. "numbering"
     [
       test "a machine's AMD GPUs are its display functions, in bus order"
         (fun () ->
-          equal (list string) [ "0000:05:00.0" ] (P.buses ~root:(r9700 ()) ()));
+          equal (list string) [ "0000:05:00.0" ] (listed ~root:(r9700 ()) ()));
       test "an accelerator is a GPU, and GPUs come in bus order" (fun () ->
           let root =
             tree "two"
@@ -250,8 +262,8 @@ let numbering =
           in
           equal (list string)
             [ "0000:05:00.0"; "0000:c1:00.0" ]
-            (P.buses ~root ());
-          equal int 2 (P.count ~root ()));
+            (listed ~root ());
+          equal int 2 (counted ~root ()));
       test "bus order compares a domain of five digits as a number" (fun () ->
           let root =
             tree "domains"
@@ -263,12 +275,17 @@ let numbering =
           in
           equal (list string)
             [ "ffff:00:00.0"; "10000:00:01.0" ]
-            (P.buses ~root ()));
-      cases ~name:(strf "an unreadable %s lists no GPU") "unreadable files"
+            (listed ~root ()));
+      cases
+        ~name:(fun f ->
+          if Filename.basename f = "vendor" then
+            "an unreadable vendor file leaves its function out"
+          else "an unreadable functions' directory is an Error naming it")
+        "unreadable files"
         [ "sys/bus/pci/devices"; "sys/bus/pci/devices/0000:05:00.0/vendor" ]
         unreadable;
       test "a machine without PCI files has no GPU" (fun () ->
-          equal (list string) [] (P.buses ~root:(tree "empty" []) ()));
+          equal (list string) [] (listed ~root:(tree "empty" []) ()));
       test "this machine's GPUs hold every function amdgpu drives" driven;
     ]
 
@@ -510,7 +527,7 @@ let names =
           equal string ("AMD:" ^ string_of_int max_int) o.name;
           is_error (Rig_gpu_support.opened o));
       test "a GPU past the machine's is refused, naming their number" (fun () ->
-          let n = P.count () in
+          let n = counted () in
           match Rig_gpu_support.opened (P.gpu n) with
           | Ok _ -> fail "opened a GPU past the machine's"
           | Error why ->
@@ -532,11 +549,11 @@ let opening =
     [
       test "buses reads the machine's files at each call" (fun () ->
           let root = tree "growing" (display "0000:05:00.0") in
-          equal (list string) [ "0000:05:00.0" ] (P.buses ~root ());
+          equal (list string) [ "0000:05:00.0" ] (listed ~root ());
           add root (display "0000:c1:00.0");
           equal (list string)
             [ "0000:05:00.0"; "0000:c1:00.0" ]
-            (P.buses ~root ()));
+            (listed ~root ()));
       test "a GPU the driver does not hold is refused" (fun () ->
           let root = tree "unheld-open" (functions r9700_functions) in
           contains ~sub:"not held by the amdgpu driver" (refusal ~root 0));
@@ -548,7 +565,7 @@ let opening =
           let root = tree "kept" (display "0000:05:00.0") in
           ignore (refusal ~root 0 : string);
           add root (display "0000:c1:00.0");
-          equal int ~msg:"the GPUs listed" 2 (P.count ~root ());
+          equal int ~msg:"the GPUs listed" 2 (counted ~root ());
           equal string "no GPU 1; the machine has 1 AMD GPUs" (refusal ~root 1));
     ]
 

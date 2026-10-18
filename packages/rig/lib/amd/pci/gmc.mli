@@ -81,12 +81,15 @@ val fabric : t -> int -> int
 val hive : t -> bool
 (** [hive g] is [true] iff the GPU is one of several joined by a fabric. *)
 
-val link : t -> gpus:int Lazy.t -> Rig_pci.Memory.link option
-(** [link g ~gpus] is the GPU's node in its fabric if {!hive} and the
-    machine's [gpus] AMD GPUs number the fabric's nodes, and [None]
-    otherwise. [gpus] is forced only if {!hive}. The library reads no
-    fabric's identity, so halves of two fabrics that number one fabric's
-    nodes are taken for one fabric. *)
+val link :
+  t ->
+  gpus:(int, string) result Lazy.t ->
+  (Rig_pci.Memory.link option, string) result
+(** [link g ~gpus] is the GPU's node in its fabric if {!hive} and the machine's
+    [gpus] AMD GPUs number the fabric's nodes, and [None] otherwise, or
+    [gpus]'s [Error]. [gpus] is forced only if {!hive}. The library reads no
+    fabric's identity, so halves of two fabrics that number one fabric's nodes
+    are taken for one fabric. *)
 
 val instances : t -> [ `Gc | `Mm ] -> int list
 (** [instances g hub] is the instances of [hub]: GC's dies, or MM's hubs,

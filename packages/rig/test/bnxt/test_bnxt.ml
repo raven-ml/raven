@@ -72,12 +72,12 @@ let test_inside_lock () =
         ~affix:(Printf.sprintf "Rig_bnxt.%s: called from" what)
         (inside_lock f))
     [
-      ("open_", fun () -> ignore (B.open_ (B.count ())));
+      ("open_", fun () -> ignore (B.open_ (require_ok (B.count ()))));
       ("detach", fun () -> ignore (B.detach 0));
       ("attach", fun () -> ignore (B.attach 0));
     ];
   equal ~msg:"locks held" int before (Rig_support.holds ());
-  match B.open_ (B.count ()) with
+  match B.open_ (require_ok (B.count ())) with
   | Ok _ -> fail "opened a NIC past the last"
   | Error e -> contains ~msg:"an open outside a lock" ~sub:"no such function" e
 
@@ -89,7 +89,7 @@ let refusals =
          Invalid_argument as they start, and an open after runs"
         test_inside_lock;
       test "a NIC past the last is an error naming it" (fun () ->
-          let i = B.count () in
+          let i = require_ok (B.count ()) in
           let name = if i = 0 then "BNXT" else Printf.sprintf "BNXT:%d" i in
           match B.open_ i with
           | Ok _ -> fail "opened a NIC past the last"

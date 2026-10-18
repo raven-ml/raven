@@ -93,14 +93,17 @@
     {!Rig_pci.Machine.t} transport, which an open refuses. Listing GPUs
     changes nothing on the machine. *)
 
-val buses : ?machine:Rig_pci.Machine.t -> unit -> string list
+val buses : ?machine:Rig_pci.Machine.t -> unit -> (string list, string) result
 (** [buses ~machine ()] is the bus addresses of the NVIDIA GPUs of
     [machine] (defaults to {!Rig_pci.Machine.this}), in bus order
-    ({!Rig_pci.Machine.val-functions}): GPU [i] is the [i]th. It is [[]] where
-    the machine lists no PCI functions, as off Linux. *)
+    ({!Rig_pci.Machine.val-functions}): GPU [i] is the [i]th. It is [Ok []]
+    where the machine lists no PCI functions, as off Linux.
 
-val count : ?machine:Rig_pci.Machine.t -> unit -> int
-(** [count ~machine ()] is the number of {!buses}. *)
+    [Error why] if the machine's PCI functions cannot be listed. *)
+
+val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
+(** [count ~machine ()] is the number of {!buses}, or their [Error]. A
+    machine with no NVIDIA GPU is [Ok 0]. *)
 
 (** {1:firmware Firmware}
 
@@ -164,7 +167,8 @@ val gpu :
 
     Each [Error] names the GPU, then the reason. [make] gives back what it
     took and leaves the GPU as the open found it if:
-    - [i >= count ~machine ()], saying how many GPUs there are;
+    - [machine]'s PCI functions cannot be listed, saying why;
+    - [machine] has no GPU [i] ({!count}), saying how many there are;
     - a kernel driver holds GPU [i], or the process holds it already;
     - its function cannot be taken, with {!Rig_pci.Function.take}'s reason;
     - [machine]'s windows are not mapped into the process, as through a
@@ -187,7 +191,8 @@ val gpu :
 (** {1:changes Changes to the machine}
 
     These changes persist after the process, and each refuses a GPU this
-    process holds. {!detach} and {!attach} act on this machine: they write
+    process holds. Each returns [Error why] if the machine's PCI functions
+    cannot be listed. {!detach} and {!attach} act on this machine: they write
     its [/sys/bus/pci] files, and need [CAP_SYS_ADMIN] and write access to
     those files, which root has. Detaching or attaching another machine's
     GPUs needs a program there. *)

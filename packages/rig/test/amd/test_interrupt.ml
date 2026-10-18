@@ -139,7 +139,7 @@ let bytes = 4096
    [g] maps [g']'s memory. *)
 let linked f =
   if S.driverless () then skip ~reason:"the walk is of amdgpu's views" ();
-  if Rig_amd_amdgpu.count () < 2 then
+  if Result.value (Rig_amd_amdgpu.count ()) ~default:0 < 2 then
     skip ~reason:"the machine has one AMD GPU" ();
   let opened i =
     match Rig_gpu_support.opened (Rig_amd_amdgpu.gpu i) with

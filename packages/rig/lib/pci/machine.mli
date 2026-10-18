@@ -78,12 +78,15 @@ type id = Ops.id = {
 }
 (** The type for the identity of a function. *)
 
-val functions : t -> id list
+val functions : t -> (id list, string) result
 (** [functions m] is the PCI functions of [m], in bus order
     ({!compare_address}). Listing them changes nothing on [m]. For a machine
-    without a transport it is [[]] where the system has no [/sys/bus/pci] or
-    its functions cannot be listed, and a function whose files cannot be read,
-    as while the kernel removes it, is left out. *)
+    without a transport it is [Ok []] where the system has no
+    [/sys/bus/pci], and a function whose files cannot be read, as while the
+    kernel removes it, is left out.
+
+    [Error why] if the functions cannot be listed, such as when the process
+    has no file left or the transport has failed. *)
 
 val reserve : t -> base:int -> int -> (unit, string) result
 (** [reserve m ~base n] reserves the [n] addresses from [base] on, in the
@@ -166,7 +169,8 @@ type ops = Ops.ops = {
       (** The C accesses to the machine's addresses. The machine's windows use
           them, and their [failed] function is {!failed}'s. *)
   page : int;  (** {!val-page}. *)
-  functions : unit -> id list;  (** {!val-functions}, in any order. *)
+  functions : unit -> (id list, string) result;
+      (** {!val-functions}, in any order. *)
   take : string -> (fn, string) result;  (** {!Function.take} on the machine. *)
   reserve : base:int -> int -> (unit, string) result;  (** {!val-reserve}. *)
 }

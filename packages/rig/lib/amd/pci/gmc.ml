@@ -237,9 +237,11 @@ let hive g = g.hive
    one fabric's nodes but belong to several, as two halves of two fabrics, is
    taken for one fabric. Only a GPU in a fabric counts them. *)
 let link g ~gpus =
-  if g.hive && Lazy.force gpus = g.regions + 1 then
-    Some { Rig_pci.Memory.fabric = 0L; node = g.region }
-  else None
+  let node n =
+    if n <> g.regions + 1 then None
+    else Some { Rig_pci.Memory.fabric = 0L; node = g.region }
+  in
+  if g.hive then Result.map node (Lazy.force gpus) else Ok None
 
 let instances g = function `Gc -> g.xccs | `Mm -> g.mm
 

@@ -673,7 +673,7 @@ let nics =
     ~teardown_ms:10_000 ~reset:Function.reset is_bnxt
 
 let buses ?(machine = Machine.this) () = Driver.buses nics machine
-let count ?machine () = List.length (buses ?machine ())
+let count ?machine () = Result.map List.length (buses ?machine ())
 
 let map fn i =
   match Function.map ~combine:false fn i with

@@ -521,6 +521,7 @@ let start ~gpus f first =
         Option.iter (fun why -> raise (Regs.Stuck why)) !fault;
         (tables, pool))
   in
+  let* link = refused (Gmc.link gmc ~gpus) in
   let* fault_page, fault_bus = refused (alloc_fault_page f) in
   let g =
     {
@@ -530,7 +531,7 @@ let start ~gpus f first =
       doorbells;
       mmio;
       tables;
-      memory = Memory.create ?link:(Gmc.link gmc ~gpus) f tables ~bar:vram_bar;
+      memory = Memory.create ?link f tables ~bar:vram_bar;
       ih = Ih.make r gmc vram ~rings:pool.ih_rings ~wptr:pool.ih_wptr;
       psp = Psp.make r gmc vram tables pool.psp;
       smu = Smu.make r gmc ~table:pool.smu_table;

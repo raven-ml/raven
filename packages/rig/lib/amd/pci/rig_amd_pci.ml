@@ -86,7 +86,7 @@ let gpus =
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let buses ?(machine = Machine.this) () = Driver.buses gpus machine
-let count ?machine () = List.length (buses ?machine ())
+let count ?machine () = Result.map List.length (buses ?machine ())
 let device_name i = Driver.name gpus i
 
 (* Boot reports *)
@@ -306,7 +306,8 @@ let path g h fn ~index : Memory.region Amd.path =
 let boot h fn ~firmware =
   let lost () = Driver.set_stop h (fun () -> `Lost) in
   let gpus =
-    lazy (List.length (Driver.buses gpus (Rig_pci.Function.machine fn)))
+    lazy
+      (Result.map List.length (Driver.buses gpus (Rig_pci.Function.machine fn)))
   in
   let first d =
     let* _, loads = survey ~firmware d in

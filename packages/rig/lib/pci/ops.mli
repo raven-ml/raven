@@ -38,7 +38,7 @@ type fn = {
 type ops = {
   transport : Window.transport;
   page : int;
-  functions : unit -> id list;
+  functions : unit -> (id list, string) result;
   take : string -> (fn, string) result;
   reserve : base:int -> int -> (unit, string) result;
 }

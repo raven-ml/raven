@@ -104,6 +104,7 @@ external device_count : unit -> int = "caml_rig_cuda_count"
 external device : int -> int = "caml_rig_cuda_device"
 external attribute : int -> int -> int = "caml_rig_cuda_attribute"
 external total_memory : int -> int = "caml_rig_cuda_total_memory"
+external bus : int -> bytes -> int = "caml_rig_cuda_bus" [@@noalloc]
 
 (* From cuda.h *)
 
@@ -153,6 +154,7 @@ type graph_cleanup = { pid : int; dispose : unit -> unit }
    survives close and is drained only by that GPU's later blocking calls. *)
 type gpus = {
   devices : int array;
+  buses : string list;
   held : int Atomic.t array;
   first : int option array;
   reached : int list Atomic.t array;
@@ -166,6 +168,17 @@ let lock = Mutex.create ()
 (* Held by a claim of a GPU. *)
 let held_lock = Mutex.create ()
 let gpus = ref None
+
+(* A GPU's bus address as Linux's sysfs writes it, such as "0000:01:00.0".
+   cuDeviceGetPCIBusId writes that form, in hexadecimal digits, and needs 13
+   bytes with its NUL for a 16-bit domain; a wider domain takes more. *)
+let bus_id_bytes = 32
+
+let bus_address d =
+  let id = Bytes.make bus_id_bytes '\000' in
+  ignore (get "finding CUDA's GPUs" (bus d id));
+  let n = Option.value (Bytes.index_opt id '\000') ~default:bus_id_bytes in
+  String.lowercase_ascii (Bytes.sub_string id 0 n)
 
 let discover () =
   let* () =
@@ -196,18 +209,22 @@ let discover () =
         (address d, d))
   with
   | exception Fault why -> Error why
-  | ds ->
+  | ds -> (
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
+      match Array.to_list (Array.map bus_address devices) with
+      | exception Fault why -> Error why
+      | buses ->
       let each x = Array.map (fun _ -> Atomic.make x) devices in
       let first = Array.map (fun _ -> None) devices in
       Ok
         {
           devices;
+          buses;
           held = each unheld;
           first;
           reached = each [];
           pending = each [];
-        }
+        })
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
    they are found: a failed load is tried again by the next call, so a driver
@@ -296,7 +313,11 @@ external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
   check "Rig_cuda.count";
-  match find_gpus () with Ok g -> Array.length g.devices | Error _ -> 0
+  Result.map (fun g -> Array.length g.devices) (find_gpus ())
+
+let buses () =
+  check "Rig_cuda.buses";
+  Result.map (fun g -> g.buses) (find_gpus ())
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_cuda.gpu: GPU %d is negative" i;

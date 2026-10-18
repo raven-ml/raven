@@ -117,7 +117,7 @@ let test_killed_holder () =
 let test_peer_machines () =
   let firmware = firmware () in
   let m = Rig_pci.Machine.at "/" in
-  if Rig_amd_pci.count ~machine:m () < 2 then
+  if require_ok (Rig_amd_pci.count ~machine:m ()) < 2 then
     skip ~reason:"the machine has one AMD GPU" ();
   let open_on machine i =
     match Rig.open_ (Rig_amd_pci.gpu ~machine ~firmware i) with

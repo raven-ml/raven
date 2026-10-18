@@ -48,7 +48,9 @@ let gpu_once () =
 let unloadable = "--unloadable"
 
 let print_unloadable () =
-  Printf.printf "%d\n%!" (C.count ());
+  (match C.count () with
+  | Ok n -> Printf.printf "%d\n%!" n
+  | Error why -> Printf.printf "Error %s\n%!" why);
   match Rig_gpu_support.opened (C.gpu 0) with
   | Ok _ -> print_string "opened"
   | Error why -> print_string why
@@ -70,8 +72,8 @@ let search () =
     | _ -> None
 
 (* count and make in a process whose search path finds no CUDA library that
-   loads, whatever the machine installed: count is 0, and make is an error
-   naming the library. *)
+   loads, whatever the machine installed: each is an error naming the
+   library. *)
 let test_unloadable () =
   let names, var =
     match search () with
@@ -113,18 +115,51 @@ let test_unloadable () =
   equal ~msg:"the child's exit code" int 0 code;
   match String.split_on_char '\n' out with
   | [ count; why ] ->
-      equal ~msg:"count" string "0" count;
+      starts_with ~msg:"count" ~affix:"Error " count;
+      contains ~msg:"count's error" ~sub:(List.hd names) count;
       contains ~msg:"make's error" ~sub:(List.hd names) why
   | _ -> failf "the child printed %S" out
+
+(* Where CUDA lists its GPUs, buses is one address per GPU, in the form
+   /sys/bus/pci names them, and on Linux each is there; where it cannot, both
+   answer the same error. *)
+let buses () =
+  match (C.count (), C.buses ()) with
+  | Error why, b ->
+      equal (result (list string) string) (Error why) b
+  | Ok n, Error why -> failf "count is %d, buses is Error %S" n why
+  | Ok n, Ok buses ->
+      equal ~msg:"one per GPU" int n (List.length buses);
+      let hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') in
+      let address b =
+        match String.split_on_char ':' b with
+        | [ domain; bus; slot ] ->
+            String.length domain >= 4
+            && String.length bus = 2
+            && String.length slot = 4
+            && slot.[2] = '.'
+            && String.for_all hex (domain ^ bus ^ String.sub slot 0 2)
+            && slot.[3] >= '0' && slot.[3] <= '7'
+        | _ -> false
+      in
+      let listed b = Sys.file_exists ("/sys/bus/pci/devices/" ^ b) in
+      List.iter
+        (fun b ->
+          satisfies ~claim:"a bus address" string address b;
+          if Sys.file_exists "/sys/bus/pci/devices" then
+            satisfies ~claim:"a function of /sys/bus/pci" string listed b)
+        buses
 
 let opening =
   group ~timeout:60. "opening"
     [
-      test "count never raises" (fun () -> at_least int ~than:0 (C.count ()));
+      test "count never raises" (fun () ->
+          ignore (C.count () : (int, string) result));
       test
-        "with no CUDA library that loads, count is 0 and make is an error \
-         naming the library"
+        "with no CUDA library that loads, count and make are errors naming \
+         the library"
         test_unloadable;
+      test "buses has a sysfs address per GPU CUDA sees" buses;
       test "names GPU 0 CUDA and GPU i CUDA:i" (fun () ->
           equal (list string)
             [ "CUDA"; "CUDA:1"; "CUDA:7" ]
@@ -134,7 +169,7 @@ let opening =
               Rig_gpu_support.opened (C.gpu (-1)));
           raises_match Exn.invalid_arg (fun () -> (C.gpu (-1)).name));
       test "a GPU past the count is an error naming the count" (fun () ->
-          let n = C.count () in
+          let n = Result.value (C.count ()) ~default:0 in
           let e = require_error (Rig_gpu_support.opened (C.gpu n)) in
           contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is closed" gpu_once;
@@ -142,10 +177,12 @@ let opening =
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"
         [
-          ("count", fun () () -> ignore (C.count () : int));
+          ("count", fun () () -> ignore (C.count () : (int, string) result));
+          ( "buses",
+            fun () () -> ignore (C.buses () : (string list, string) result) );
           ( "gpu",
             fun () ->
-              let o = C.gpu (C.count ()) in
+              let o = C.gpu (Result.value (C.count ()) ~default:0) in
               fun () -> ignore (Rig_gpu_support.opened o : _ result) );
         ]
         (fun (fn, prepare) ->

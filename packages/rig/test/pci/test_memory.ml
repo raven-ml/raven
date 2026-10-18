@@ -918,7 +918,7 @@ let test_map_host_transport () =
       {
         transport = tr;
         page;
-        functions = (fun () -> []);
+        functions = (fun () -> Ok []);
         take = (fun _ -> Ok fn);
         reserve = (fun ~base:_ _ -> Ok ());
       }
@@ -966,7 +966,7 @@ let far_gpu ?(reserved = true) () =
       {
         transport = Window.unsafe_transport (far 0 page);
         page;
-        functions = (fun () -> []);
+        functions = (fun () -> Ok []);
         take = (fun _ -> Ok fn);
         reserve = (fun ~base:_ _ -> Ok ());
       }

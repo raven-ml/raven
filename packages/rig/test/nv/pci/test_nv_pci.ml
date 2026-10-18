@@ -44,14 +44,25 @@ let numbering =
       test "GPUs are NVIDIA's display and 3D controllers in bus order"
         (fun () ->
           let machine = Rig_pci.Machine.at (machine ()) in
-          equal (list string)
-            [ "0000:03:00.0"; "0000:83:00.0" ]
+          equal
+            (result (list string) string)
+            (Ok [ "0000:03:00.0"; "0000:83:00.0" ])
             (Rig_nv_pci.buses ~machine ());
-          equal int 2 (Rig_nv_pci.count ~machine ()));
+          equal (result int string) (Ok 2) (Rig_nv_pci.count ~machine ()));
       test "a machine with no PCI functions has no GPU" (fun () ->
           let machine = Rig_pci.Machine.at (Tree.make []) in
-          equal (list string) [] (Rig_nv_pci.buses ~machine ());
-          equal int 0 (Rig_nv_pci.count ~machine ()));
+          equal
+            (result (list string) string)
+            (Ok []) (Rig_nv_pci.buses ~machine ());
+          equal (result int string) (Ok 0) (Rig_nv_pci.count ~machine ()));
+      test "a machine whose functions cannot be listed says why" (fun () ->
+          let machine = Rig_pci_support.unlisted () in
+          equal (result int string) (Error Rig_pci_support.unlisted_why)
+            (Rig_nv_pci.count ~machine ());
+          let why =
+            require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
+          in
+          equal string ("NV-PCI: " ^ Rig_pci_support.unlisted_why) why);
       cases ~name:fst "GPUs are named by number"
         [
           ("0", (0, "NV-PCI")); ("1", (1, "NV-PCI:1")); ("12", (12, "NV-PCI:12"));
@@ -71,7 +82,7 @@ let opening =
               equal string "NV-PCI:2: no such function; NV-PCI drives 2 here" why);
       test "a GPU past the last is an error to detach, attach or reset"
         (fun () ->
-          let n = Rig_nv_pci.count () in
+          let n = require_ok (Rig_nv_pci.count ()) in
           is_error ~msg:"detach" (Rig_nv_pci.detach n);
           is_error ~msg:"attach" (Rig_nv_pci.attach n);
           let machine = Rig_pci.Machine.at (machine ()) in
@@ -88,7 +99,7 @@ let opening =
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"
         (let on () = Rig_pci.Machine.at (machine ()) in
-         let past () = Rig_nv_pci.count () in
+         let past () = require_ok (Rig_nv_pci.count ()) in
          [
            ( "gpu",
              fun () ->
@@ -681,8 +692,9 @@ let driver bus =
 let with_gpu f =
   let firmware = firmware () in
   (match Rig_nv_pci.buses () with
-  | [] -> skip ~reason:"this machine has no NVIDIA GPU" ()
-  | bus :: _ -> (
+  | Error why -> skip ~reason:why ()
+  | Ok [] -> skip ~reason:"this machine has no NVIDIA GPU" ()
+  | Ok (bus :: _) -> (
       match driver bus with
       | Some d when d <> "vfio-pci" ->
           skip ~reason:(strf "GPU 0 (%s) is bound to %s" bus d) ()

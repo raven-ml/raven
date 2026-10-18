@@ -6,7 +6,8 @@
 let openers () =
   let path count (gpu : int -> _ Rig_edge.opener) =
     let name = (gpu 0).name in
-    List.init (count ()) (fun i -> (name, fun () -> Rig.open_ (gpu i)))
+    let n = Result.value (count ()) ~default:0 in
+    List.init n (fun i -> (name, fun () -> Rig.open_ (gpu i)))
   in
   List.concat
     [

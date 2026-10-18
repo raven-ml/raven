@@ -849,13 +849,13 @@ let path d ~gpus ~index : mem Amd.path =
 
 (* Numbering *)
 
-let buses ?(root = "/") () = Result.value (Topology.gpus root) ~default:[]
+let buses ?(root = "/") () = Topology.gpus root
 
 let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
 let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
-let count ?root () = List.length (buses ?root ())
+let count ?root () = Result.map List.length (buses ?root ())
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;

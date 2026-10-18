@@ -66,16 +66,22 @@
 
     Any domain may call any function, at the same time as others. *)
 
-val buses : ?root:string -> unit -> string list
+val buses : ?root:string -> unit -> (string list, string) result
 (** [buses ~root ()] is the bus addresses of this machine's NVIDIA GPUs
     ({!Rig_nv.is_gpu}) under [root] (defaults to ["/"]), in bus order: by
     domain, bus, device and function, each as a number. GPU [i] is the
-    [i]th. It is [[]] where [root/sys/bus/pci] does not exist, such as off
-    Linux, and where the machine's PCI functions cannot be read, such as when
-    the process has no file left; {!gpu}'s [make] then says why. *)
+    [i]th. It is [Ok []] where [root/sys/bus/pci] does not exist, such as off
+    Linux.
 
-val count : ?root:string -> unit -> int
-(** [count ~root ()] is [List.length (buses ~root ())]. *)
+    A function whose files cannot be read, as while the kernel removes it, is
+    left out.
+
+    [Error why] if the machine's PCI functions cannot be listed, such as
+    when the process has no file left. *)
+
+val count : ?root:string -> unit -> (int, string) result
+(** [count ~root ()] is the number of {!buses}, or their [Error]. A machine
+    with no NVIDIA GPU is [Ok 0]. *)
 
 val gpu : ?root:string -> int -> Rig_nv.t Rig_edge.opener
 (** [gpu ~root i] is the opener of GPU [i] under [root] (defaults to
@@ -85,7 +91,7 @@ val gpu : ?root:string -> int -> Rig_nv.t Rig_edge.opener
 
     [make] returns [Error msg], having given back what it took for GPU [i],
     if:
-    - [i >= count ~root ()], saying how many GPUs there are;
+    - the machine has no GPU [i] ({!count}), saying how many there are;
     - the machine's PCI functions cannot be read, saying why;
     - the kernel driver does not hold GPU [i], or cannot be opened;
     - the kernel driver's release is none of those {!Rig_nv.make} accepts;

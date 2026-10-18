@@ -87,7 +87,8 @@ let limited () =
   go 0 []
 
 let files () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if Result.value (P.count ()) ~default:0 = 0 then
+    skip ~reason:"the machine has no NVIDIA GPU" ();
   let fresh = require_ok ~msg:"an open in a fresh process" (in_child taken) in
   let failures, opened =
     require_ok ~msg:"opens under limits" (in_child limited)
@@ -119,7 +120,8 @@ let reserved () =
   (first, second)
 
 let addresses () =
-  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if Result.value (P.count ()) ~default:0 = 0 then
+    skip ~reason:"the machine has no NVIDIA GPU" ();
   let first, second = require_ok (in_child reserved) in
   ignore (require_error ~msg:"the open with an address taken" first : string);
   equal (result unit string) ~msg:"the next open" (Ok ()) second

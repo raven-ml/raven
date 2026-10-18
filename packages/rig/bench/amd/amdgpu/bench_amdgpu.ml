@@ -17,7 +17,7 @@ let open_stop () =
   | Error why -> failwith why
 
 let () =
-  if P.count () > 0 then
+  if Result.value (P.count ()) ~default:0 > 0 then
     exit
     @@ Thumper.run "rig_amd_amdgpu"
          [ Thumper.group "open" [ Thumper.bench "0" open_stop ] ]

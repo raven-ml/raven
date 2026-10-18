@@ -105,6 +105,14 @@ val log : int -> (bool * int * int) list
 (** [log far] is [far]'s accesses since the last call, oldest first, as
     [(write, address, bytes)]. *)
 
+val unlisted_why : string
+(** [unlisted_why] is ["far: the link broke"]. *)
+
+val unlisted : unit -> Rig_pci.Machine.t
+(** [unlisted ()] is a machine reached through a broken far machine, whose
+    listing of its functions answers [Error unlisted_why], as a transport
+    that failed does. Its take and reserve fail the test. *)
+
 (** {1:tables Page tables in a fake format} *)
 
 (** Page tables in a fake format, in a fake GPU memory that keeps their entries

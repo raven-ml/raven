@@ -46,7 +46,7 @@ type path = Kernel | Pci
    GSP's firmware there. Behind an IOMMU that translates, Function.take
    refuses an unbound GPU, so its open fails, naming why. *)
 let path_of i =
-  match List.nth_opt (Rig_nv_pci.buses ()) i with
+  match List.nth_opt (Result.value (Rig_nv_pci.buses ()) ~default:[]) i with
   | None -> None
   | Some bus -> (
       match driver bus with

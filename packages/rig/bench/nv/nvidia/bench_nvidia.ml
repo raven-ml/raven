@@ -15,7 +15,7 @@ let open_stop () =
   | Error why -> failwith why
 
 let () =
-  if Rig_nv_nvidia.count () > 0 then
+  if Result.value (Rig_nv_nvidia.count ()) ~default:0 > 0 then
     exit
     @@ Thumper.run "rig_nv_nvidia"
          [ Thumper.group "open" [ Thumper.bench "0" open_stop ] ]

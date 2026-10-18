@@ -117,14 +117,14 @@ let driver l = driver_of l.files l.bus
 let group m bus = link m bus "iommu_group"
 
 (* A function the kernel lists but whose files cannot be read, as while it is
-   being removed, is left out, and a directory that cannot be read lists
-   none. *)
+   being removed, is left out. A system without the directory has none. *)
 let functions m =
-  match Sys.readdir m.devices with
-  | exception Sys_error _ -> []
-  | buses ->
-      Array.to_list buses
-      |> List.filter_map (fun bus ->
+  if not (Sys.file_exists m.devices) then Ok []
+  else
+    match Sys.readdir m.devices with
+    | exception Sys_error why -> Error ("listing the PCI functions: " ^ why)
+    | buses ->
+        let id bus =
           match
             {
               Ops.bus;
@@ -134,7 +134,9 @@ let functions m =
             }
           with
           | id -> Some id
-          | exception Fail.Failed _ -> None)
+          | exception Fail.Failed _ -> None
+        in
+        Ok (List.filter_map id (Array.to_list buses))
 
 (* The other functions of [bus]'s device, such as its audio function. *)
 let siblings m bus =

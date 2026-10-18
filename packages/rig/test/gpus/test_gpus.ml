@@ -7,7 +7,7 @@ open Windtrap
 
 (* Each path's GPUs, in the preference order the .mli states. *)
 let preferred () =
-  let path name n = List.init n (fun _ -> name) in
+  let path name n = List.init (Result.value n ~default:0) (fun _ -> name) in
   List.concat
     [
       path "METAL" (Rig_metal.count ());

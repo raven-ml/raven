@@ -49,7 +49,7 @@ let gpus =
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let buses ?(machine = Machine.this) () = Driver.buses gpus machine
-let count ?machine () = List.length (buses ?machine ())
+let count ?machine () = Result.map List.length (buses ?machine ())
 let device_name i = Driver.name gpus i
 
 (* Boot reports *)

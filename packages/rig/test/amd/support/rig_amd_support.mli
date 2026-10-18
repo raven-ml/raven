@@ -12,7 +12,8 @@ val driverless : unit -> bool
 val gpus : unit -> int
 (** [gpus ()] is the number of AMD GPUs the suites can open: amdgpu's
     ({!Rig_amd_amdgpu.count}), or, where the variable [RIG_AMD_PCI_FIRMWARE] is
-    set, the machine's ({!Rig_amd_pci.count}). *)
+    set, the machine's ({!Rig_amd_pci.count}), and [0] where the path cannot
+    list them. *)
 
 val gpu : unit -> Rig_amd.t Rig_edge.opener
 (** [gpu ()] describes GPU [0] through the selected kernel or PCI path. *)

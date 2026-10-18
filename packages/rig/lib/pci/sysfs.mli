@@ -49,8 +49,9 @@ val keep : 's lock -> Unix.file_descr
 val exists : t -> string -> bool
 (** [exists m bus] is [true] iff [m] has a function at [bus]. *)
 
-val functions : t -> Ops.id list
-(** [functions m] is [m]'s functions, [[]] without [sys/bus/pci]. *)
+val functions : t -> (Ops.id list, string) result
+(** [functions m] is [m]'s functions, [Ok []] without [sys/bus/pci], or
+    [Error why] if its directory cannot be read. *)
 
 val vfio_pci : string
 (** [vfio_pci] is VFIO's driver, ["vfio-pci"]. *)

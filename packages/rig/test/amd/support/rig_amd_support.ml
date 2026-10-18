@@ -12,8 +12,8 @@ let driverless () = Option.is_some pci_firmware
 
 let gpus () =
   match pci_firmware with
-  | Some _ -> Rig_amd_pci.count ()
-  | None -> Rig_amd_amdgpu.count ()
+  | Some _ -> Result.value (Rig_amd_pci.count ()) ~default:0
+  | None -> Result.value (Rig_amd_amdgpu.count ()) ~default:0
 
 let gpu () =
   match pci_firmware with
@@ -79,7 +79,7 @@ let slot bus =
 let at bus n = slot bus = Some (n.domain, n.location lsr 3)
 
 let vram i =
-  match List.nth_opt (Rig_amd_amdgpu.buses ()) i with
+  match List.nth_opt (Result.value (Rig_amd_amdgpu.buses ()) ~default:[]) i with
   | None -> None
   | Some bus -> (
       let pid = string_of_int (Unix.getpid ()) in

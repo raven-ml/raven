@@ -163,7 +163,7 @@ let kinds firmware =
           | Ok d -> go (d :: acc) (i + 1) n
           | Error _ as e -> e
       in
-      go [] 0 (count ())
+      go [] 0 (Result.value (count ()) ~default:0)
     in
     ((gpu 0).name, all)
   in
