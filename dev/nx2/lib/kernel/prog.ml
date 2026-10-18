@@ -183,7 +183,7 @@ type node =
 
 type t = { ins : D.any iarray; nodes : node iarray; outs : int iarray }
 
-let max_operands = 16
+let max_operands = Nx_array.max_operands - 2
 
 (* Whether [n]'s kind takes node operands of the dtypes [d0], [d1] and [d2],
    in order, past its arity unread. *)

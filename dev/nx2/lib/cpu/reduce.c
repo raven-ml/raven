@@ -3960,7 +3960,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   }
   if (!e && want != nd) e = NX_ARITY;
   /* A reduction's loop holds its destinations, the virtual operand and the
-     loads: a program's loads leave room for them (nx_array.h). */
+     loads: a program's loads leave room for them (Prog.max_operands). */
   if (!e && 3 + nl > NX_MAX_OPERANDS) e = NX_ARITY;
   /* The pads on the heap, where a load is padded, as its copy will be. */
   int padded[NX_MAX_OPERANDS] = {0};

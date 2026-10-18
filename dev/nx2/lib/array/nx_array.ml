@@ -25,6 +25,8 @@ let layout a = a.layout
 let buffer a = a.buffer
 let device a = Buffer.device a.buffer
 
+let max_operands = Shape.max_operands
+
 (* Answers. C answers Val_int of nx_array.h's codes, whose enum lists them
    in this order. *)
 

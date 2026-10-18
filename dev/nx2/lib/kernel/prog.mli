@@ -193,7 +193,10 @@ type t = private {
     plain data, compared and hashed structurally. *)
 
 val max_operands : int
-(** [max_operands] is [16], the most operands plus outputs a program has. *)
+(** [max_operands] is [16], the most operands plus outputs a program has:
+    {!Nx_array.max_operands} less the two arrays a kernel's loop iterates
+    beside them: a map's index, or a reduction's second destination and
+    virtual operand. *)
 
 val v :
   ins:Nx_array.Dtype.any iarray -> node iarray -> outs:int iarray -> t

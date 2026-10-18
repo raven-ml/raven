@@ -38,10 +38,8 @@
 #include "nx_dtype.h"
 
 #define NX_MAX_RANK 32
-/* The most operands of a loop: a program's operands and outputs, at most
-   Prog.max_operands (16), and the two more a kernel's loop adds, a map's
-   index or a reduction's second destination and virtual operand. It
-   follows Prog.max_operands + 2 should that cap change. */
+/* The most operands of a loop: Nx_array.max_operands, which shape.ml sets
+   to the same number. */
 #define NX_MAX_OPERANDS 18
 
 /* A layout's flags, computed when it is made. */

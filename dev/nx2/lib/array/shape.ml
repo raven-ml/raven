@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let max_rank = 32
+let max_operands = 18
 let max_numel = 1 lsl 53
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 

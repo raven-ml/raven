@@ -112,8 +112,8 @@ val coalesce : t array -> t array
     adjacent axes merged where every layout lays them out as one run. Each has
     at least one axis.
 
-    Raises [Invalid_argument] unless [ls] has 1 to 16 layouts, the most
-    operands and outputs of a program, all of one shape. *)
+    Raises [Invalid_argument] unless [ls] has 1 to {!Nx_array.max_operands}
+    layouts, all of one shape. *)
 
 (** {1:eq Equality} *)
 

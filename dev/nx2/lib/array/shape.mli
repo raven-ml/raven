@@ -12,6 +12,9 @@
 val max_rank : int
 (** {!Nx_array.Layout.max_rank}. *)
 
+val max_operands : int
+(** {!Nx_array.max_operands}. *)
+
 val check_rank : string -> int -> unit
 (** [check_rank fn r] raises [Invalid_argument] if [r > max_rank]. *)
 

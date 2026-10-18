@@ -288,6 +288,10 @@ val of_bigarray :
 
 (** {1:kernels Kernels} *)
 
+val max_operands : int
+(** [max_operands] is [18], the most arrays one loop iterates: [nx_array.h]'s
+    [NX_MAX_OPERANDS], and the most layouts {!Layout.coalesce} takes. *)
+
 (** The type for what a kernel answers, and the door. A kernel answers [Done]
     once its work is done on the host or queued on the device's timeline,
     [Declined] for a case it does not compute, and otherwise, before any write,
@@ -309,10 +313,10 @@ type answer =
       (** The operands' shapes do not fit the operation: operands of one loop
           of different shapes, or shapes its descriptor refuses. *)
   | Bad_arity
-      (** No operand, more than a loop takes, or other destinations than an
-          operation names, as a reduction given other than its one or two: a
-          guard for C callers, which a call within a kernel library's
-          contract never meets. *)
+      (** No operand, more than {!max_operands} to a loop, or other
+          destinations than an operation names, as a reduction given other
+          than its one or two: a guard for C callers, which a call within a
+          kernel library's contract never meets. *)
 
 val door :
   written:any array -> read:any array -> ('a -> unit) -> 'a -> answer
