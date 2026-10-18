@@ -136,5 +136,3 @@ val mesh_v : by:string -> 'd t -> (string * int) list -> 'd mesh
 (** [mesh_v ~by s axes] lays [s]'s devices in row-major order over the named
     [axes]. Raises [Invalid_argument] naming [by] unless the extents are
     positive and multiply to [count s] and the names are distinct. *)
-
-val mesh_set : 'd mesh -> 'd t

@@ -211,5 +211,3 @@ let mesh_v ~by s axes =
       done)
     names;
   { mesh_set = s; names; extents }
-
-let mesh_set m = m.mesh_set

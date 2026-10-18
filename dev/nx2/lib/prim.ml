@@ -187,6 +187,7 @@ let routine_name : type d r. (d, r) linalg -> string = function
   | Eig _ -> "Eig"
   | Solve_triangular _ -> "Solve_triangular"
 
+(* [l]'s operands: [a], then [b] for a triangular solve. *)
 let linalg_operands : type d r. (d, r) linalg -> d any list = function
   | Cholesky { a; _ } -> [ Any a ]
   | Lu a -> [ Any a ]

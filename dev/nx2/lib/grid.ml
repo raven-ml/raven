@@ -167,37 +167,6 @@ let map_axes f = function
       Grid
         { g with cuts = List.sort (fun a b -> Int.compare a.axis b.axis) cuts }
 
-let select g ~axis j =
-  match g with
-  | One _ -> g
-  | Grid { devices; extents; cuts } -> (
-      match List.find_opt (fun c -> c.axis = axis) cuts with
-      | None -> g
-      | Some cut ->
-          let n = tiles extents cut in
-          if j < 0 || j >= n then
-            invalid_arg
-              (Printf.sprintf "Grid.select: tile %d of an axis cut in %d" j n);
-          let keep =
-            List.filteri
-              (fun i _ ->
-                List.exists
-                  (fun (a, _, t) -> a = axis && t = j)
-                  (tile_index g i))
-              devices
-          in
-          let gone = List.sort (fun a b -> Int.compare b a) cut.over in
-          let extents =
-            List.filteri (fun a _ -> not (List.mem a gone)) extents
-          in
-          let cuts =
-            List.fold_left
-              (fun cuts a -> without a cuts)
-              (List.filter (fun c -> c.axis <> axis) cuts)
-              gone
-          in
-          normal keep extents cuts)
-
 let uncut g ~axis =
   match g with
   | One _ -> g

@@ -325,14 +325,8 @@ val is_padded : 'd load -> bool
 
 (** {1:families Transforms and factorisations} *)
 
-val fft_axes : ('d, 'r) fft -> int iarray
-val fft_operand : ('d, 'r) fft -> 'd any
-
 val routine_name : ('d, 'r) linalg -> string
 (** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
-
-val linalg_operands : ('d, 'r) linalg -> 'd any list
-(** [linalg_operands l] is [a], then [b] for a triangular solve. *)
 
 val is_constant : ('v, 's, 'd) t -> bool
 

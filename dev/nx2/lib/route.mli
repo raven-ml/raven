@@ -113,14 +113,6 @@ val moved : Nx_array.Move.t -> int array -> int -> int option
     product of the extents before it, a slice that keeps all of it. [None] for
     any other. *)
 
-val reduced : rule -> int -> int -> int array
-(** [reduced r i rank] is the axes of operand [i], of rank [rank], that [r]
-    reduces ({!Reduced}), in increasing order. *)
-
-val scanned : rule -> int -> int -> int array
-(** [scanned r i rank] is the axes of operand [i], of rank [rank], that [r]
-    scans ({!Scanned}), in increasing order. *)
-
 val window :
   rule ->
   operand:int ->

@@ -62,12 +62,6 @@ val map_axes : (int -> int) -> t -> t
     grid axes: [g] for a value whose axes [f] renumbers. [f] is injective on
     [g]'s cut axes; nothing checks it. *)
 
-val select : t -> axis:int -> int -> t
-(** [select g ~axis j] is the grid of [g]'s devices that hold tile [j] of the
-    cut [axis]: the grid axes of that cut go. [g] itself if [axis] is not cut.
-
-    Raises [Invalid_argument] if [j] is not a tile of [axis]. *)
-
 val uncut : t -> axis:int -> t
 (** [uncut g ~axis] is [g] with the value's [axis] whole on every device: the
     grid axes that cut it hold copies. [g] itself if [axis] is not cut. *)

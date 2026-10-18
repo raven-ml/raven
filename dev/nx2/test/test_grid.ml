@@ -122,25 +122,35 @@ let tile n t j =
     step = 1;
   }
 
-(* The window of the device at position [i] of [r]: along a cut, its tile
-   numbered major first over the cut's grid axes, of their extents' product. *)
-let model r i =
+(* The tile the device at position [i] of [r] holds of a cut over the grid
+   axes [over]: its coordinates along them, numbered major first. *)
+let tile_number r over i =
   let g = Array.length r.extents in
   let coord = Array.make g 0 and k = ref i in
   for h = g - 1 downto 0 do
     coord.(h) <- !k mod r.extents.(h);
     k := !k / r.extents.(h)
   done;
+  Array.fold_left (fun j h -> (j * r.extents.(h)) + coord.(h)) 0 over
+
+(* The window of the device at position [i] of [r]: along a cut, its tile
+   numbered major first over the cut's grid axes, of their extents' product. *)
+let model r i =
   let w = Array.map (fun n -> { M.start = 0; count = n; step = 1 }) r.shape in
   Array.iter
     (fun (a, over) ->
       let t = Array.fold_left (fun t h -> t * r.extents.(h)) 1 over in
-      let j =
-        Array.fold_left (fun j h -> (j * r.extents.(h)) + coord.(h)) 0 over
-      in
-      w.(a) <- tile r.shape.(a) t j)
+      w.(a) <- tile r.shape.(a) t (tile_number r over i))
     r.cuts;
   w
+
+(* The devices of [r] that hold tile [j] of its cut [axis]. *)
+let holding r axis j =
+  let _, over = Option.get (Array.find_opt (fun (a, _) -> a = axis) r.cuts) in
+  Array.of_list
+    (List.filter_map
+       (fun i -> if tile_number r over i = j then Some r.devices.(i) else None)
+       (List.init (Array.length r.devices) Fun.id))
 
 let of_raw r = v r.devices r.extents r.cuts
 
@@ -180,7 +190,7 @@ let laws =
               cover "a cut of an empty axis" (n = 0);
               let ws =
                 Array.init t (fun j ->
-                    let held = Grid.devices (Grid.select g ~axis j) in
+                    let held = holding r axis j in
                     let w k = (window g r.shape (position g k)).(axis) in
                     Array.iter
                       (fun k ->
@@ -292,11 +302,6 @@ let operations =
             (require_error
                ~pp:(fun ppf _ -> Format.pp_print_string ppf "a window")
                (Grid.window (split 1) [| 6 |] 0)));
-      test "selecting a tile keeps the devices that hold it" (fun () ->
-          equal (option int) (Some 2)
-            (Grid.one (Grid.select (split 0) ~axis:0 2));
-          raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-              Grid.select (split 0) ~axis:0 4));
       test "uncutting an axis leaves copies on the same devices" (fun () ->
           equal grid on (Grid.uncut (split 1) ~axis:1));
       test "a grid prints as the placement that makes it" (fun () ->
