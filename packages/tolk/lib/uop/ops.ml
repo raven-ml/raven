@@ -2669,7 +2669,7 @@ module Upat = struct
   type node = t
 
   type t = {
-    ops : Op.t list option;
+    ops : Op.Set.t option;
     dtypes : Dtype.t list option;
     p_arg : arg option;
     p_name : string option;
@@ -2704,7 +2704,7 @@ module Upat = struct
   let same p q =
     p == q
     || p.cached && q.cached
-       && Option.equal (List.equal Op.equal) p.ops q.ops
+       && Option.equal Op.Set.equal p.ops q.ops
        && Option.equal String.equal p.p_name q.p_name
        && Option.equal (List.equal Dtype.equal) p.dtypes q.dtypes
        && Option.equal equal_arg p.p_arg q.p_arg
@@ -2737,13 +2737,13 @@ module Upat = struct
           in
           List.fold_left
             (fun acc p ->
-              match p.ops with
+              match Option.map Op.Set.to_list p.ops with
               | Some [ o ] when not (List.mem o acc) -> acc @ [ o ]
               | _ -> acc)
             [] firsts
     in
     {
-      ops;
+      ops = Option.map Op.Set.of_list ops;
       dtypes;
       p_arg = arg;
       p_name = name;
@@ -2798,7 +2798,9 @@ module Upat = struct
   let any ps = make ~in_src:(Fixed ps) ~is_any:true ()
 
   let named name p =
-    make ?ops:p.ops ?dtypes:p.dtypes ?in_src:p.in_src
+    make
+      ?ops:(Option.map Op.Set.to_list p.ops)
+      ?dtypes:p.dtypes ?in_src:p.in_src
       ~allow_any_len:(not p.strict_length) ?arg:p.p_arg ~name ?tags:p.tags
       ?early_reject:p.custom_early_reject ()
 
@@ -2943,7 +2945,7 @@ module Upat = struct
      without continuations: a match costs only the names it binds. *)
   let rec bind p (u : node) store =
     match p.ops with
-    | Some ops when not (List.mem u.op ops) -> raise_notrace No_match
+    | Some ops when not (Op.Set.mem u.op ops) -> raise_notrace No_match
     | _ when not (fits p u) -> raise_notrace No_match
     | _ -> (
         let store = named_in p u store in
@@ -2975,7 +2977,7 @@ module Upat = struct
       | _ -> None
     else
       match p.ops with
-      | Some ops when not (List.mem u.op ops) -> None
+      | Some ops when not (Op.Set.mem u.op ops) -> None
       | _ when not (fits p u) -> None
       | _ -> (
           match named_in p u store with
@@ -3080,7 +3082,7 @@ module Pattern_matcher = struct
         | Some ops ->
             List.iter
               (fun o -> by_op.(Op.to_int o) <- r :: by_op.(Op.to_int o))
-              ops)
+              (Op.Set.to_list ops))
       rules;
     { by_op = Array.map List.rev by_op; declines }
 

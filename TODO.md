@@ -205,7 +205,10 @@ raven / llama.cpp (Vulkan; ROCm):
   solution; keep it with its reason or replace it
 - compile speed: one Clang process per kernel (~30 ms each; one per program
   saves ~20%); float64 sin/cos inline the full Payne–Hanek reduction (40-170
-  KB kernels); structural comparisons in the rewriter (~6%); parallel
+  KB kernels); structural comparisons in the rewriter (~6% before patterns
+  tested their operations as a set): the polymorphic `List.mem` left in
+  ops.ml on operation lists (1549, 2208, 2220, 2231, 2319) and dtype lists
+  (1503, 1609, 1719, 2189, 2244), until a profile clears them; parallel
   compile saturates at ~4 domains (a shard lock per node, domains spawned
   per `Worker.map`); Metal builds run one at a time and NVRTC in-process;
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
