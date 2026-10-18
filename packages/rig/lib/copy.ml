@@ -12,9 +12,7 @@ open Def
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 external memmove : int -> int -> int -> unit = "caml_rig_memmove"
-
-(* The calling thread's number, which no other thread of the process has. *)
-external c_thread : unit -> int = "caml_rig_thread" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
 
 let fn = "Buffer.copy"
 let local m = Dev.same_machine m.dev Dev.host && m.host >= 0
@@ -44,160 +42,121 @@ let record src dst bytes start =
    other half's last one, so each half is an allocation of its own. *)
 let half_bytes = 32 * 1024 * 1024
 
-type stage = {
-  owner : device; (* the host, or the device whose Pinned memory it is *)
-  halves : buffer option array array;
-  holders : int array; (* each slot's thread ([c_thread]), 0 while free *)
-}
-
-let stage owner =
-  {
-    owner;
-    halves = [| [| None; None |]; [| None; None |] |];
-    holders = [| 0; 0 |];
-  }
-
-(* The host's stage, made at load: its halves wait for a copy, and a lazy
-   that two domains' first copies force at once raises in one of them. *)
-let host_stage = stage Dev.host
-
-(* The stages of devices that map no host memory, by device index. *)
-module Stages = Tbl.Make (Int)
-
-let device_stages : stage Stages.t = Stages.create 4
-let slots_lock = Lock.create ()
-
 let names_lost b =
   match Memory.check_points b.mem.alloc.entry.stamps with
   | () -> false
   | exception Dev.Lost _ -> true
 
-(* The stage of [d], made at its first staged copy; the stages of lost devices
-   go then, so that their memory returns. A stage of the slot that is another
-   device's belongs to a device that gave the slot to [d]. *)
-let find_stage d =
-  let lost i st is = if Dev.is_lost st.owner then i :: is else is in
-  List.iter (Stages.remove device_stages) (Stages.fold lost device_stages []);
-  match Stages.find_opt device_stages d.index with
-  | Some st when st.owner == d -> st
-  | Some _ | None ->
-      let st = stage d in
-      Stages.replace device_stages d.index st;
-      st
+(* Staging memory lives in its device's [live] ([slots]), under the device's
+   lock: the host's, or that of a device that maps no host memory. Memory
+   returns its free halves under pressure, at [free_cache] and [set_budget],
+   and once the device is lost and has stopped ([Memory.release_staging]). *)
 
-let stage_of d = Lock.protect slots_lock find_stage d
-
-(* Under [slots_lock]: a free slot of [st], marked the calling thread's, or
-   [None] while both are held. A thread that holds both, as a callback inside
-   a copy inside a copy does, would wait for good, so it raises before the
-   copy moves a byte. *)
-let claim_slot st =
-  let me = c_thread () in
-  if st.holders.(0) = 0 then begin
-    st.holders.(0) <- me;
-    Some 0
+(* Under [d]'s lock: the first slot of [d]'s staging memory from [i] that no
+   copy holds, held now, or a new one once every slot is held, so no copy
+   waits for a slot. A new slot is published by the last store, so an
+   asynchronous exception before it changes nothing. It makes no half, whose
+   creation can run the out-of-memory ladder, which takes every device's
+   lock. *)
+let rec claim_from d i =
+  let l = d.live in
+  if i = Array.length l.slots then begin
+    let s =
+      { halves = [| None; None |]; held = true; last = l.claims; owner = d }
+    in
+    l.slots <- Array.append l.slots [| s |];
+    s
   end
-  else if st.holders.(1) = 0 then begin
-    st.holders.(1) <- me;
-    Some 1
+  else if l.slots.(i).held then claim_from d (i + 1)
+  else begin
+    l.slots.(i).held <- true;
+    l.slots.(i).last <- l.claims;
+    l.slots.(i)
   end
-  else if st.holders.(0) = me && st.holders.(1) = me then
-    invalid_argf "Rig.%s: both staging slots of %s are this thread's" fn
-      st.owner.name
-  else None
 
-let take_slot st = Lock.await slots_lock claim_slot st
+let claim_slot d =
+  d.live.claims <- d.live.claims + 1;
+  claim_from d 0
 
-let free_slot st =
-  if st.holders.(0) = 0 then 0 else if st.holders.(1) = 0 then 1 else -1
+let take_slot d = Dev.protect d claim_slot d
 
-(* Under [slots_lock]: a free slot [i] of [a] and [j] of [b], both marked the
-   calling thread's, as [2 * i + j], or [None] while either has none free. A
-   copy that took one stage's slot and waited for the other's could wait for
-   good on copies the other way round, each holding the slot the other
-   needs; taking both in one hold of the lock waits holding none. The answer
-   is made before the slots are marked, so no asynchronous exception keeps
-   them. *)
-let claim_slots (a, b) =
-  let me = c_thread () in
-  let mine st = st.holders.(0) = me && st.holders.(1) = me in
-  if mine a || mine b then
-    invalid_argf "Rig.%s: both staging slots of %s are this thread's" fn
-      (if mine a then a else b).owner.name;
-  let i = free_slot a and j = free_slot b in
-  if i < 0 || j < 0 then None
-  else
-    let r = Some ((2 * i) + j) in
-    a.holders.(i) <- me;
-    b.holders.(j) <- me;
-    r
-
-let take_slots a b = Lock.await slots_lock claim_slots (a, b)
+let release_slot s = s.held <- false
 
 (* Allocates nothing, so no asynchronous exception keeps the slot. *)
-let give_slot st i =
-  Lock.hold slots_lock;
-  st.holders.(i) <- 0;
-  Lock.broadcast slots_lock;
-  Lock.release slots_lock
+let give_slot s = Dev.protect s.owner release_slot s
 
-let half st i h =
-  match st.halves.(i).(h) with
+let rec idle_halves hs h (s : slot) =
+  if h = 2 then hs
+  else
+    match s.halves.(h) with
+    | Some b ->
+        s.halves.(h) <- None;
+        idle_halves (b :: hs) (h + 1) s
+    | None -> idle_halves hs (h + 1) s
+
+(* Under [d]'s lock: the halves of each free slot of [d] from [i] that no
+   claim took within the last claims, as many as [d] has slots, taken out of
+   them. *)
+let rec take_idle d i hs =
+  let l = d.live in
+  if i = Array.length l.slots then hs
+  else
+    let s = l.slots.(i) in
+    if (not s.held) && l.claims - s.last >= Array.length l.slots then
+      take_idle d (i + 1) (idle_halves hs 0 s)
+    else take_idle d (i + 1) hs
+
+let take_idle_halves d = take_idle d 0 []
+
+(* Returns the halves of [d]'s idle slots as memory returns free halves
+   ([Memory.return_half]), after a give, outside the lock. Copies that keep a
+   slot busy, one after another or in lockstep on several threads, claim it
+   within every window and keep its halves; the extra slots of a burst go
+   idle once as many later claims as there are slots have passed them by. An
+   exception meanwhile leaves the halves it took to their collection. *)
+let age d = List.iter Memory.return_half (Dev.protect d take_idle_halves d)
+
+(* The half [h] of [s], made where it is missing or names a lost device's
+   work, outside every lock. *)
+let half s h =
+  match s.halves.(h) with
   | Some b when not (names_lost b) -> b
   | _ ->
+      let d = s.owner in
       let b =
-        if Dev.is_host st.owner then Buffer.create st.owner half_bytes
-        else Buffer.create ~memory:Pinned st.owner half_bytes
+        if Dev.is_host d then Buffer.create d half_bytes
+        else Buffer.create ~memory:Pinned d half_bytes
       in
-      st.halves.(i).(h) <- Some b;
+      s.halves.(h) <- Some b;
       b
 
-(* Maps the staging half [h] of [st] on [d], which runs legs through it. A map
-   of the host's half that [d]'s driver refuses is memory [d] cannot give: the
-   out-of-memory ladder reclaims for it, then raises [Out_of_memory]. A device's
-   half is its own Pinned memory, which another device maps as a peer's or not
-   at all: a refusal is no copy between the two. *)
-let map_half st d h =
+(* Maps the staging half [h] of the slot [s] on [d], which runs legs through
+   it. A map of the host's half that [d]'s driver refuses is memory [d] cannot
+   give: the out-of-memory ladder reclaims for it, then raises
+   [Out_of_memory]. A device's half is its own Pinned memory, which another
+   device maps as a peer's or not at all: a refusal is no copy between the
+   two. *)
+let map_half s d h =
   if not (Memory.maps d h.mem) then
-    if Dev.is_host st.owner then
+    if Dev.is_host s.owner then
       Memory.reclaiming d ~pool:d half_bytes (fun () ->
           if Memory.maps d h.mem then Some () else None)
     else
       invalid_argf "Rig.%s: no device copies between %s and %s" fn d.name
-        st.owner.name
+        s.owner.name
 
 (* Whether a device of this machine runs the legs of a staged copy to or from
    [b]; another machine's reaches no staging memory. *)
 let runs b = not (local b.mem || Dev.is_io b.mem.dev)
 
-(* Maps the halves [h0] and [h1] of [st] for a staged copy of [pieces] on the
+(* Maps the halves [h0] and [h1] of [s] for a staged copy of [pieces] on the
    device that runs [b]'s legs, if one does, before they run. *)
-let map_halves st b ~pieces h0 h1 =
+let map_halves s b ~pieces h0 h1 =
   let d = b.mem.dev in
   if runs b && Dev.same_machine d Dev.host then begin
-    map_half st d h0;
-    if pieces > 1 then map_half st d h1
+    map_half s d h0;
+    if pieces > 1 then map_half s d h1
   end
-
-(* Whether [m] is the memory of a half of [st]: no closure, so the host's check
-   allocates nothing. Racy: another thread changes only the halves of a slot it
-   took, which [m] is not, so a stale half answers the same. *)
-let holds_half st m i h =
-  match st.halves.(i).(h) with Some b -> b.mem.alloc == m.alloc | None -> false
-
-let holds st m =
-  holds_half st m 0 0 || holds_half st m 0 1 || holds_half st m 1 0
-  || holds_half st m 1 1
-
-let staged_in m =
-  Stages.fold (fun _ st r -> r || holds st m) device_stages false
-
-(* Whether [m] is a staging slot's memory: a copy through it that no device runs
-   goes no further. *)
-let is_slot m =
-  holds host_stage m
-  || Stages.length device_stages > 0
-     && Lock.protect slots_lock staged_in m
 
 let queued d ~src ~dst =
   Dev.wait d (Point.value (Submission.run_copy d ~src ~dst))
@@ -292,13 +251,13 @@ let needs_own b =
   let d = runner b in
   runs b && Dev.same_machine d Dev.host && not d.maps_host
 
-(* The stage a transfer between the host's values and [b] goes through: its
-   device's own where it needs one, and the host's otherwise. *)
-let stage_with b =
-  if needs_own b then stage_of (runner b) else host_stage
+(* The device whose staging memory a transfer between the host's values and
+   [b] goes through: [b]'s runner where it needs its own, and the host
+   otherwise. *)
+let stage_with b = if needs_own b then runner b else Dev.host
 
-(* The stage a copy between [src] and [dst] goes through, where one stage
-   serves both. *)
+(* The device whose staging memory a copy between [src] and [dst] goes
+   through, where one serves both. *)
 let stage_for src dst = if needs_own src then stage_with src else stage_with dst
 
 (* Whether a staged copy between [src] and [dst] goes through two stages: two
@@ -306,65 +265,70 @@ let stage_for src dst = if needs_own src then stage_with src else stage_with dst
 let two_stages src dst =
   needs_own src && needs_own dst && runner src != runner dst
 
-let rec wait_halves st i h =
+let rec wait_halves s h =
   if h < 2 then begin
-    (match st.halves.(i).(h) with
+    (match s.halves.(h) with
     | Some b -> ( try Buffer.wait b Buffer.Read_write with Dev.Lost _ -> ())
     | None -> ());
-    wait_halves st i (h + 1)
+    wait_halves s (h + 1)
   end
 
-(* Waits for the legs through slot [i]'s halves, so that no leg outlives its
-   transfer, then gives the slot back, also when a wait raises, such as
+(* Waits for the legs through the slot [s]'s halves, so that no leg outlives
+   its transfer, then gives the slot back, also when a wait raises, such as
    [Sys.Break]: the halves' stamps order their next use, and lost halves are
    replaced. *)
-let settle st i =
-  match wait_halves st i 0 with
-  | () -> give_slot st i
+let settle s =
+  match wait_halves s 0 with
+  | () ->
+      give_slot s;
+      age s.owner
   | exception e ->
-      give_slot st i;
+      give_slot s;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* Waits for the legs through slot [i] of [a] and slot [j] of [b], then gives
-   both back, as [settle] does. *)
-let settle_two a i b j =
+(* Waits for the legs through the slots [a] and [b], then gives both back, as
+   [settle] does. *)
+let settle_two a b =
   match
-    wait_halves a i 0;
-    wait_halves b j 0
+    wait_halves a 0;
+    wait_halves b 0
   with
   | () ->
-      give_slot a i;
-      give_slot b j
+      give_slot a;
+      give_slot b;
+      age a.owner;
+      age b.owner
   | exception e ->
-      give_slot a i;
-      give_slot b j;
+      give_slot a;
+      give_slot b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let pieces n = (n + half_bytes - 1) / half_bytes
 let piece_bytes n k = Int.min half_bytes (n - (k * half_bytes))
 
-(* Moves [n] bytes through a slot of [st], whose two halves take the pieces in
-   turn, so one half fills while the other drains: [into h at] fills the half
-   [h] with the bytes from byte [at], and [out_of h at] drains it. The halves
-   are first mapped on the devices that run legs of [sides]. A leg on a
-   device's queue runs without the host waiting for it: the next leg that reads
-   or writes its half waits for it by the half's stamps. With [ahead], the leg
-   into the slot runs one piece ahead of the leg out of it, as when a device
-   fills and the host drains; otherwise the host's leg into the slot fills one
-   half while a device drains the other. *)
-let through st n ~sides ~ahead ~into ~out_of =
+(* Moves [n] bytes through a slot of [d]'s staging memory, whose two halves
+   take the pieces in turn, so one half fills while the other drains:
+   [into h at] fills the half [h] with the bytes from byte [at], and
+   [out_of h at] drains it. The halves are first mapped on the devices that
+   run legs of [sides]. A leg on a device's queue runs without the host
+   waiting for it: the next leg that reads or writes its half waits for it by
+   the half's stamps. With [ahead], the leg into the slot runs one piece ahead
+   of the leg out of it, as when a device fills and the host drains;
+   otherwise the host's leg into the slot fills one half while a device
+   drains the other. *)
+let through d n ~sides ~ahead ~into ~out_of =
   let pieces = pieces n in
   let len k = piece_bytes n k in
-  let run i =
-    let h0 = half st i 0 in
+  let run s =
+    let h0 = half s 0 in
     (* One piece goes through the first half alone. *)
-    let h1 = if pieces > 1 then half st i 1 else h0 in
+    let h1 = if pieces > 1 then half s 1 else h0 in
     let half k =
       Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0 ~length:(len k)
     in
     let into k = into (half k) (k * half_bytes) in
     let out_of k = out_of (half k) (k * half_bytes) in
-    List.iter (fun b -> map_halves st b ~pieces h0 h1) sides;
+    List.iter (fun b -> map_halves s b ~pieces h0 h1) sides;
     if ahead then into 0;
     for k = 0 to pieces - 1 do
       if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
@@ -373,16 +337,16 @@ let through st n ~sides ~ahead ~into ~out_of =
   in
   (* Nothing allocates between taking the slot and the handlers that give it
      back, so no asynchronous exception keeps it. *)
-  let i = take_slot st in
-  match run i with
-  | () -> settle st i
+  let s = take_slot d in
+  match run s with
+  | () -> settle s
   | exception e -> (
       match Printexc.get_raw_backtrace () with
       | bt ->
-          settle st i;
+          settle s;
           Printexc.raise_with_backtrace e bt
       | exception x ->
-          give_slot st i;
+          give_slot s;
           raise x)
 
 (* The bytes of [b] from [at] that go through the half [h]. *)
@@ -423,8 +387,9 @@ and claimed src dst n =
 and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   if direct ~wait src dst n then ()
-  else if is_slot src.mem || is_slot dst.mem || far sd || far dd then
-    invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
+  else if far sd || far dd then
+    invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
+      dd.name
   else staged src dst n
 
 (* Through staging memory. Where a device runs the legs out of [src], each runs
@@ -442,14 +407,14 @@ and staged src dst n =
    into a half of a slot of [dst]'s device's stage, and that device drains it.
    The leg into the next half runs while the host moves the last. *)
 and between src dst n =
-  let a = stage_of (runner src) and b = stage_of (runner dst) in
+  let a = runner src and b = runner dst in
   let pieces = pieces n in
-  let run i j =
-    let a0 = half a i 0 and b0 = half b j 0 in
-    let a1 = if pieces > 1 then half a i 1 else a0 in
-    let b1 = if pieces > 1 then half b j 1 else b0 in
-    map_halves a src ~pieces a0 a1;
-    map_halves b dst ~pieces b0 b1;
+  let run sa sb =
+    let a0 = half sa 0 and b0 = half sb 0 in
+    let a1 = if pieces > 1 then half sa 1 else a0 in
+    let b1 = if pieces > 1 then half sb 1 else b0 in
+    map_halves sa src ~pieces a0 a1;
+    map_halves sb dst ~pieces b0 b1;
     let half h0 h1 k =
       Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0
         ~length:(piece_bytes n k)
@@ -466,25 +431,33 @@ and between src dst n =
       leg ~src:hb ~dst:(piece dst (k * half_bytes) hb)
     done
   in
-  (* Nothing allocates between taking the slots and the handlers that give
-     them back. *)
-  let k = take_slots a b in
-  let i = k lsr 1 and j = k land 1 in
-  match run i j with
-  | () -> settle_two a i b j
-  | exception e -> (
-      match Printexc.get_raw_backtrace () with
-      | bt ->
-          settle_two a i b j;
-          Printexc.raise_with_backtrace e bt
-      | exception x ->
-          give_slot a i;
-          give_slot b j;
-          raise x)
+  (* Nothing allocates between taking a slot and the handler that gives it
+     back. *)
+  let sa = take_slot a in
+  match take_slot b with
+  | exception e ->
+      give_slot sa;
+      reraise e
+  | sb -> (
+      match run sa sb with
+      | () -> settle_two sa sb
+      | exception e -> (
+          match Printexc.get_raw_backtrace () with
+          | bt ->
+              settle_two sa sb;
+              Printexc.raise_with_backtrace e bt
+          | exception x ->
+              give_slot sa;
+              give_slot sb;
+              raise x))
 
 (* One leg of a staged copy, which a device's queue runs without the host
-   waiting. *)
-and leg ~src ~dst = route ~wait:false src dst (Buffer.length src)
+   waiting. A leg runs in one transfer by construction: one that finds none,
+   such as into a device that runs no copy, goes no further. *)
+and leg ~src ~dst =
+  if not (direct ~wait:false src dst (Buffer.length src)) then
+    invalid_argf "Rig.%s: no device copies between %s and %s" fn
+      src.mem.dev.name dst.mem.dev.name
 
 (* The host's values *)
 

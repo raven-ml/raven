@@ -177,6 +177,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       words = 0;
       word_maps = [];
       mapped = Cache.create 4;
+      slots = [||];
+      claims = 0;
     }
   in
   {

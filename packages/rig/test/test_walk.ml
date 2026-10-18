@@ -74,7 +74,7 @@ let census () =
   (S.heap_bytes (), S.descriptors ())
 
 (* The regions [p] still holds of the sizes the operations use: the staging
-   memory, which the host keeps for good, has its own. *)
+   memory, which the host keeps, has its own. *)
 let left p = List.filter (fun n -> n = 64 || n = page) (P.outstanding p)
 
 (* Runs [op] on a device it ran on once, which made what the device keeps for

@@ -592,10 +592,12 @@ let made_bytes d =
 
 (* Staging memory *)
 
-(* A copy that no device runs in one transfer goes through staging memory: two
-   slots of two halves of 32 MiB, each half an allocation made at the first
-   piece that needs it (copy.mli). The model's sizes are under a piece, so
-   a copy needs the first half of its slot alone. *)
+(* A copy that no device runs in one transfer goes through staging memory:
+   slots of two halves of 32 MiB, a slot for each copy running, each half an
+   allocation made at the first piece that needs it, and a give drops the
+   halves of slots no recent claim took, as reclamation and free_cache drop
+   those of free slots (copy.mli). The model's sizes are
+   under a piece, so a copy needs the first half of its slot alone. *)
 let half_bytes = 32 * 1024 * 1024
 
 (* The device whose own staging memory a copy between [b] and host memory goes
@@ -636,7 +638,8 @@ let stages w v r users =
   then v.oom <- `May
 
 (* A copy through [r]'s own staging memory returned: on one domain it took the
-   first slot, whose first half is then made. On two, either slot. *)
+   one slot, which keeps its first half, made then. On two, a copy may have
+   taken a new slot, whose halves another give may drop once idle. *)
 let staged w r = if not w.two then r.halves <- 1
 
 (* The system *)

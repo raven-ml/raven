@@ -836,6 +836,47 @@ let release_early (a : alloc) =
     let kept = stamps_token a st in
     if kept != no_token then Dev.protect a.owner release_locked (a, kept)
 
+(* Staging memory
+
+   A device's staging slots are copy's, in its [live]; memory returns their
+   free halves where it returns cached memory, as collected memory returns. *)
+
+external buffer_free : buffer -> string -> int = "caml_rig_buffer_free"
+
+let rec halves_of hs h (s : slot) =
+  if h = 2 then hs
+  else
+    match s.halves.(h) with
+    | Some b -> halves_of (b :: hs) (h + 1) s
+    | None -> halves_of hs (h + 1) s
+
+(* Under [l]'s lock: the halves of [l]'s free slots, taken out of them, each
+   slot's list made before its stores. *)
+let take_free_halves l =
+  Array.fold_left
+    (fun hs (s : slot) ->
+      if s.held then hs
+      else
+        let hs = halves_of hs 0 s in
+        s.halves.(0) <- None;
+        s.halves.(1) <- None;
+        hs)
+    [] l.slots
+
+(* Whether a slot of [l] has a half, which keeps [l]'s device's slot. *)
+let has_halves l =
+  let some = function Some _ -> true | None -> false in
+  Array.exists
+    (fun (s : slot) -> some s.halves.(0) || some s.halves.(1))
+    l.slots
+
+let return_half b = if buffer_free b "freed" = 1 then release_early b.mem.alloc
+
+(* Returns [d]'s free staging halves ([return_half]). *)
+let release_staging d =
+  if Array.length d.live.slots > 0 then
+    List.iter return_half (Dev.protect d take_free_halves d.live)
+
 (* Under [hold_lock]: releases the holds at the front of the list's hand whose
    memory is live and pops them: whether there were any. *)
 let release_hold () =
@@ -1203,6 +1244,7 @@ let kept_locked l =
   l.cached > 0 || l.word_maps != [] || l.retired != []
   || Cache.length l.mapped > 0
   || first_mapped l.pairs 0 >= 0
+  || has_halves l
 
 (* Whether the lost [d] keeps what returns once it is Stopped: its cache and
    its mappings. Read under the lock: a pair's mapping that a decision
@@ -1219,6 +1261,7 @@ let drain d =
   if Dev.orphaned d then forget d
   else begin
     if Dev.is_lost d then Dev.run_own d;
+    if Dev.is_lost d && Dev.stopped d then release_staging d;
     if (not (idle d.live)) || (Dev.is_lost d && kept d) then drain_own d;
     if Dev.stop_returned d && (not (kept d)) && Dev.free_slot d then
       let_go_word d;
@@ -1300,6 +1343,8 @@ let reclaim_round pool round =
       release_cache_if ~wait:true d (charged pool));
   drain_all ();
   if round >= 2 then begin
+    release_staging Dev.host;
+    Dev.iter release_staging;
     Gc.full_major ();
     drain_all ()
   end
@@ -1761,11 +1806,14 @@ let set_budget d n =
   Dev.check_held "set_budget";
   if n < 0 then invalid_argf "Rig.set_budget: budget %d is negative" n;
   Dev.protect d set_device_budget (d, n);
-  if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d
+  if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d;
+  if allocated d > n then release_staging d
 
-(* [d]'s drain first returns what was collected since its last call, and a
-   Stopped device's cache with it. *)
+(* [d]'s free staging halves go first, then its drain returns what was
+   collected since its last call, the halves among it once their legs are
+   done, and a Stopped device's cache with it. *)
 let free_cache d =
   Dev.check_held "free_cache";
+  release_staging d;
   drain d;
   if Dev.is_host d then heap_drop () else release_cache ~wait:false d

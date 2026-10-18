@@ -360,8 +360,17 @@ val of_io : device -> io_region -> access:access -> int -> memory
     {!Rig.section-reclaim} states. A round frees, on each device that is
     live or Stopped, the cached memory that counts in the refusing budget,
     and for the host's budget the host's kept buffers. Then every device
-    drains, and from the second round a full major collection runs and
-    every device drains again. *)
+    drains, and from the second round every device's free staging halves
+    return ({!return_half}), a full major collection runs and every device
+    drains again. *)
+
+val return_half : buffer -> unit
+(** [return_half b] returns [b], a staging half ({!Def.slot}) that its slot no
+    longer holds, as {!Rig.Buffer.free} returns memory: [b] is consumed, and
+    its memory goes back once the work that uses it is done, through its
+    device's retiring memory, so a leg still queued on it finishes first. A
+    half that a claim holds is left to its collection. The caller holds no
+    lock. *)
 
 val drain : device -> unit
 (** [drain d] releases the collected holds ({!hold_token}), moves [d]'s

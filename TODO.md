@@ -44,13 +44,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### limits and size
 
-- staging memory holds two slots, and a copy holds its slot across waits
-  and io callbacks: two threads each holding one slot, whose io reads copy
-  to the same mapless device, wait forever. Slots made on demand, so no copy
-  waits for one, remove `holders`, `c_thread`, `claim_slots` and the
-  third-copy refusal; staging memory then grows with the copies running at
-  once (32-64 MiB each). `copy.mli`'s "copies the other way round never hold
-  the slot it waits for" is wrong: a waiting copy holds no slot
 - limits no hardware or spec imposes, one commit each
   (_plans/rig-device-reuse/70-, 71-): NV's 256 waits per submission
   (`MAX_WAITS`, `facts.waits.most`): room keeps a fixed reserve because it

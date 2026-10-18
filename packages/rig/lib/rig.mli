@@ -439,17 +439,10 @@ val signaled : t -> int
     domains needs synchronization of the program's own, as for any shared
     bigarray.
 
-    While a function waits it holds no lock of rig's, with three
-    exceptions:
+    While a function waits it holds no lock of rig's, with two exceptions:
     {ul
     {- {!open_} holds its name's lock while the opener runs, so opens of one
        name run one at a time while opens of other names go on.}
-    {- A {!Buffer.copy} through staging memory holds one of that staging
-       memory's two slots until its pieces are done, and a copy between two
-       devices that stage through memory of their own holds one slot of
-       each, taken together. At most two copies run through one staging
-       memory at a time, and a third waits until one is done, or raises
-       [Invalid_argument] on the thread that holds both.}
     {- While a driver's [room], [submit] or [commit] blocks, where its
        driver declares [may_block], other submits and commits on that device
        wait for it. On {!host} and a {!memory_device}, whose submit runs its
@@ -611,7 +604,9 @@ val signaled : t -> int
     decides what a fork does to it, as a child of [fork] keeps the open
     files of its parent. An io device whose stop has not returned at the
     fork, owed or under way, stays lost in the child, which runs no stop of
-    it and frees none of its memory, since that stop is the parent's. A
+    it and frees none of its memory, since that stop is the parent's. The
+    host's staging memory that a thread of the parent was copying through
+    at the fork ({!Buffer.section-copying}) stays in the child for good. A
     device the child opens is its own. *)
 
 (** {2:errors Errors and failure}
@@ -703,9 +698,11 @@ val failure : unit -> string option
        new buffer over it waits for no work of its earlier use.}
     {- {e Release.} Cached memory returns to the driver when the cache is
        freed ({!free_cache}), when the budget is lowered ({!set_budget}), or
-       when an allocation needs the room. An allocation that finishes
-       waiting while its device holds more than its budget skips the cache,
-       as does an io device's memory, and returns to the driver. A lost
+       when an allocation needs the room. Staging memory that no copy uses
+       ({!Buffer.section-copying}) returns at these times too, once the work
+       that used it is done. An allocation that finishes waiting while its
+       device holds more than its budget skips the cache, as does an io
+       device's memory, and returns to the driver. A lost
        device's memory returns as {!section-stops} states.}}
     Memory that an asynchronous exception leaked ({!section-errors}) may
     never take these steps.
@@ -752,8 +749,9 @@ val failure : unit -> string option
        cache.}
     {- An allocation that its budget or its driver refuses first reclaims.
        rig frees the cached memory charged to that budget, waits for the work
-       that holds back other collected memory, from the second round on runs
-       the collector, and tries again. The allocation raises {!Out_of_memory}
+       that holds back other collected memory, from the second round on
+       returns staging memory that no copy uses and runs the collector, and
+       tries again. The allocation raises {!Out_of_memory}
        after three such rounds.}
     {- A growth of a device's queues ({!submit}) that its driver has no
        memory for reclaims as an allocation does, both the device's budget
@@ -777,11 +775,12 @@ val set_budget : t -> int -> unit
     Raises [Invalid_argument] if [n < 0]. *)
 
 val free_cache : t -> unit
-(** [free_cache d] first moves [d]'s collected memory ({!section-reclaim}),
-    then returns [d]'s cached memory to its driver once the work using it is
-    done. On a lost [d] that has stopped ({!section-stops}), that is all of
-    its memory that is collected. On {!host}, it frees the collected buffers
-    the host keeps for reuse. *)
+(** [free_cache d] first returns [d]'s staging memory that no copy uses
+    ({!Buffer.section-copying}), then moves [d]'s collected memory
+    ({!section-reclaim}), then returns [d]'s cached memory to its driver
+    once the work using it is done. On a lost [d] that has stopped
+    ({!section-stops}), that is all of its memory that is collected. On
+    {!host}, it frees the collected buffers the host keeps for reuse. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,
@@ -1094,11 +1093,29 @@ module Buffer : sig
 
       A copy that no device can run directly passes through {e staging
       memory}, host memory that rig makes in allocations of 32 MiB, each at
-      the first copy whose bytes need it, and keeps for the life of the
-      process. A device that maps no host memory ([maps_host] in
+      the first copy whose bytes need it. A copy uses one allocation, or two
+      for more than 32 MiB, that no other copy uses while it runs. Staging
+      memory so grows by 32 or 64 MiB for each copy running at once.
+
+      A copy's allocations serve the copies after it. Let [n] be the most
+      copies that have run through one staging memory at once. When a copy
+      returns, the allocations that none of the last [n] copies used return
+      as {!free} returns memory. Copies that run one after another, or
+      several at a time over and over, keep theirs.
+
+      Staging memory that no copy uses also returns with its device's
+      cache: at {!free_cache} of that device ({!host} for host memory), at a
+      {!set_budget} that leaves the device over its budget, and from
+      reclamation's second round ({!Rig.section-reclaim}). After copies to
+      many devices at once, their allocations so stay until [n] later copies
+      have run or one of these returns them. An allocation returns once the
+      work that used it is done.
+
+      A device that maps no host memory ([maps_host] in
       {!Rig_edge.type-facts}) stages through [Pinned] memory of its own,
-      which it keeps until it is lost. Between two such devices, the host
-      copies from one device's staging memory into the other's.
+      kept and returned in the same way, and returned too once the device
+      is lost and has stopped. Between two such devices, the host copies
+      from one device's staging memory into the other's.
 
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the
@@ -1118,12 +1135,10 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] or [dst] is dead, they differ in
       length or overlap ({!overlaps}), [dst] admits only [Read], one side is
       an io device's memory and the other a borrow of it, a side's memory is
-      held exclusive, the copy has bytes and no device can copy between the
-      two sides, or it goes through staging memory whose two slots the
-      calling thread holds ({!section-domains}). Raises {!Lost} if
-      a device that runs the copy is lost or the copy loses it,
-      {!Out_of_memory} if staging memory cannot be allocated or mapped, and
-      what an io device's read or write raises. *)
+      held exclusive, or the copy has bytes and no device can copy between
+      the two sides. Raises {!Lost} if a device that runs the copy is lost or
+      the copy loses it, {!Out_of_memory} if staging memory cannot be
+      allocated or mapped, and what an io device's read or write raises. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
   (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into
