@@ -121,17 +121,19 @@ let numbers = Complex :: reals
 let every = Boolean :: numbers
 
 let unary_domain : P.unary -> cls list = function
-  | Neg | Recip -> numbers
-  | Abs | Sign | Floor | Ceil | Round | Trunc -> reals
-  | Sqrt | Exp | Exp2 | Log | Log2 | Log1p | Expm1 | Sin | Cos | Tan | Asin
-  | Acos | Atan | Sinh | Cosh | Tanh | Erf ->
-      [ Float ]
+  | Neg | Recip | Sign -> numbers
+  | Abs | Floor | Ceil | Round | Trunc -> reals
+  | Sqrt | Exp | Exp2 | Log | Log2 | Sin | Cos | Tan | Asin | Acos | Atan
+  | Sinh | Cosh | Tanh ->
+      [ Float; Complex ]
+  | Log1p | Expm1 | Erf -> [ Float ]
 
 let binary_domain : P.binary -> cls list = function
   | Add | Sub | Mul -> numbers
   | Fdiv -> [ Float; Complex ]
   | Idiv -> integers
-  | Mod | Pow -> reals
+  | Mod -> reals
+  | Pow -> numbers
   | Atan2 -> [ Float ]
   | Maximum | Minimum -> every
   | And | Or | Xor -> Boolean :: integers
@@ -222,7 +224,8 @@ let test_domains_computed () =
     D.
       [
         Any Float32; Any Float64; Any Int8; Any Uint8; Any Int16; Any Uint16;
-        Any Int32; Any Uint32; Any Int64; Any Uint64; Any Bool;
+        Any Int32; Any Uint32; Any Int64; Any Uint64; Any Bool; Any Complex64;
+        Any Complex128;
       ]
   in
   let compute (D.Any dt as d) =
@@ -233,13 +236,16 @@ let test_domains_computed () =
     | Signed, _ -> `Int "i32"
     | Unsigned, 64 -> `Int "u64"
     | (Unsigned | Boolean), _ -> `Int "u32"
-    | Complex, _ -> invalid_arg "no compute type"
+    | Complex, 64 -> `C64
+    | Complex, _ -> `C128
   in
   let calls kind arity d =
     match compute d with
     | `F32 -> ignore (Nx_kinds_support.f32 kind (Array.make arity 0))
     | `F64 -> ignore (Nx_kinds_support.f64 kind (Array.make arity 0.))
     | `Int ty -> ignore (Nx_kinds_support.int ty kind (Array.make arity 0L))
+    | `C64 -> ignore (Nx_kinds_support.c64 kind (Array.make (2 * arity) 0))
+    | `C128 -> ignore (Nx_kinds_support.c128 kind (Array.make (2 * arity) 0.))
   in
   let identity = P.[ Floor; Ceil; Round; Trunc ] in
   List.iter
@@ -1108,6 +1114,27 @@ let test_exprs_refuse () =
             P.[ Where; Fma ])
         base_dtypes)
     base_dtypes;
+  (* The kinds of floats and complex numbers check their operand, as no type
+     states that domain. *)
+  let z = P.E.input 0 D.Complex64 and n = P.E.input 0 D.Int32 in
+  let takes name (f : 'v 's. ('v, 's) P.E.t -> ('v, 's) P.E.t) =
+    refuses ~msg:(name ^ " complex64") false (fun () -> f z);
+    refuses ~msg:(name ^ " int32") true (fun () -> f n)
+  in
+  takes "sqrt" P.E.sqrt;
+  takes "exp" P.E.exp;
+  takes "exp2" P.E.exp2;
+  takes "log" P.E.log;
+  takes "log2" P.E.log2;
+  takes "sin" P.E.sin;
+  takes "cos" P.E.cos;
+  takes "tan" P.E.tan;
+  takes "asin" P.E.asin;
+  takes "acos" P.E.acos;
+  takes "atan" P.E.atan;
+  takes "sinh" P.E.sinh;
+  takes "cosh" P.E.cosh;
+  takes "tanh" P.E.tanh;
   raises_match ~msg:"an axis past max_rank" Exn.invalid_arg (fun () ->
       P.E.coord Nx_array.Layout.max_rank);
   raises_match ~msg:"a negative axis" Exn.invalid_arg (fun () -> P.E.coord (-1));

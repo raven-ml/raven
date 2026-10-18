@@ -134,9 +134,27 @@ value nx_kinds_support_int(value ty, value name, value args) {
    the real part. */
 #define COMPLEX_CALL(C, T)                                                    \
   static int call_##C(const char *k, int n, const nx_##C *x, nx_##C *y) {     \
-    if (n == 1 && !strcmp(k, "neg")) *y = nx_neg_##C(x[0]);                   \
-    else if (n == 1 && !strcmp(k, "recip")) *y = nx_recip_##C(x[0]);          \
-    else if (n != 2) return 0;                                                \
+    if (n == 1) {                                                             \
+      if (!strcmp(k, "neg")) *y = nx_neg_##C(x[0]);                           \
+      else if (!strcmp(k, "recip")) *y = nx_recip_##C(x[0]);                  \
+      else if (!strcmp(k, "sign")) *y = nx_sign_##C(x[0]);                    \
+      else if (!strcmp(k, "sqrt")) *y = nx_sqrt_##C(x[0]);                    \
+      else if (!strcmp(k, "exp")) *y = nx_exp_##C(x[0]);                      \
+      else if (!strcmp(k, "exp2")) *y = nx_exp2_##C(x[0]);                    \
+      else if (!strcmp(k, "log")) *y = nx_log_##C(x[0]);                      \
+      else if (!strcmp(k, "log2")) *y = nx_log2_##C(x[0]);                    \
+      else if (!strcmp(k, "sin")) *y = nx_sin_##C(x[0]);                      \
+      else if (!strcmp(k, "cos")) *y = nx_cos_##C(x[0]);                      \
+      else if (!strcmp(k, "tan")) *y = nx_tan_##C(x[0]);                      \
+      else if (!strcmp(k, "asin")) *y = nx_asin_##C(x[0]);                    \
+      else if (!strcmp(k, "acos")) *y = nx_acos_##C(x[0]);                    \
+      else if (!strcmp(k, "atan")) *y = nx_atan_##C(x[0]);                    \
+      else if (!strcmp(k, "sinh")) *y = nx_sinh_##C(x[0]);                    \
+      else if (!strcmp(k, "cosh")) *y = nx_cosh_##C(x[0]);                    \
+      else if (!strcmp(k, "tanh")) *y = nx_tanh_##C(x[0]);                    \
+      else return 0;                                                          \
+    } else if (n != 2) return 0;                                              \
+    else if (!strcmp(k, "pow")) *y = nx_pow_##C(x[0], x[1]);                  \
     else if (!strcmp(k, "add")) *y = nx_add_##C(x[0], x[1]);                  \
     else if (!strcmp(k, "sub")) *y = nx_sub_##C(x[0], x[1]);                  \
     else if (!strcmp(k, "mul")) *y = nx_mul_##C(x[0], x[1]);                  \

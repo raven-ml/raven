@@ -76,17 +76,19 @@ let class_of : type v s. (v, s) D.t -> int =
   | Complex -> complex
 
 let unary_takes = function
-  | Neg | Recip -> numbers
-  | Abs | Sign | Floor | Ceil | Round | Trunc -> real
-  | Sqrt | Exp | Exp2 | Log | Log2 | Log1p | Expm1 | Sin | Cos | Tan | Asin
-  | Acos | Atan | Sinh | Cosh | Tanh | Erf ->
-      float
+  | Neg | Recip | Sign -> numbers
+  | Abs | Floor | Ceil | Round | Trunc -> real
+  | Sqrt | Exp | Exp2 | Log | Log2 | Sin | Cos | Tan | Asin | Acos | Atan
+  | Sinh | Cosh | Tanh ->
+      float lor complex
+  | Log1p | Expm1 | Erf -> float
 
 let binary_takes = function
   | Add | Sub | Mul -> numbers
   | Fdiv -> float lor complex
   | Idiv -> integers
-  | Mod | Pow -> real
+  | Mod -> real
+  | Pow -> numbers
   | Atan2 -> float
   | Maximum | Minimum -> every
   | And | Or | Xor -> integers lor boolean
@@ -408,22 +410,22 @@ module E = struct
   let recip x = unary (Unary Recip) x
   let abs x = unary (Unary Abs) x
   let sign x = unary (Unary Sign) x
-  let sqrt x = Op1 (Unary Sqrt, dtype x, x)
-  let exp x = Op1 (Unary Exp, dtype x, x)
-  let exp2 x = Op1 (Unary Exp2, dtype x, x)
-  let log x = Op1 (Unary Log, dtype x, x)
-  let log2 x = Op1 (Unary Log2, dtype x, x)
+  let sqrt x = unary (Unary Sqrt) x
+  let exp x = unary (Unary Exp) x
+  let exp2 x = unary (Unary Exp2) x
+  let log x = unary (Unary Log) x
+  let log2 x = unary (Unary Log2) x
   let log1p x = Op1 (Unary Log1p, dtype x, x)
   let expm1 x = Op1 (Unary Expm1, dtype x, x)
-  let sin x = Op1 (Unary Sin, dtype x, x)
-  let cos x = Op1 (Unary Cos, dtype x, x)
-  let tan x = Op1 (Unary Tan, dtype x, x)
-  let asin x = Op1 (Unary Asin, dtype x, x)
-  let acos x = Op1 (Unary Acos, dtype x, x)
-  let atan x = Op1 (Unary Atan, dtype x, x)
-  let sinh x = Op1 (Unary Sinh, dtype x, x)
-  let cosh x = Op1 (Unary Cosh, dtype x, x)
-  let tanh x = Op1 (Unary Tanh, dtype x, x)
+  let sin x = unary (Unary Sin) x
+  let cos x = unary (Unary Cos) x
+  let tan x = unary (Unary Tan) x
+  let asin x = unary (Unary Asin) x
+  let acos x = unary (Unary Acos) x
+  let atan x = unary (Unary Atan) x
+  let sinh x = unary (Unary Sinh) x
+  let cosh x = unary (Unary Cosh) x
+  let tanh x = unary (Unary Tanh) x
   let erf x = Op1 (Unary Erf, dtype x, x)
   let floor x = unary (Unary Floor) x
   let ceil x = unary (Unary Ceil) x

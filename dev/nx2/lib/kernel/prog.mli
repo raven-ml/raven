@@ -14,12 +14,15 @@
 (** {1:kinds Kinds} *)
 
 (** The type for kinds of one operand, of its dtype. Trigonometric kinds take
-    radians. *)
+    radians. On complex numbers a kind is its principal value, with the branch
+    cuts of C99 7.3, as [nx_kinds.h] states. *)
 type unary =
   | Neg
   | Recip  (** On integers, [x] for [1] and [-1], [0] otherwise. *)
   | Abs
-  | Sign  (** [-1], [0] or [1]; NaN for a NaN. *)
+  | Sign
+      (** [-1], [0] or [1]; NaN for a NaN. On complex numbers [z / |z|], and
+          [z] at [0]. *)
   | Sqrt
   | Exp
   | Exp2  (** [2{^x}], exact at integers whose power is in the dtype. *)
@@ -57,7 +60,9 @@ type binary =
   | Mod
       (** The remainder, of the dividend's sign: the dividend by zero on
           integers, [fmod] on floats. *)
-  | Pow  (** The first operand to the power of the second. *)
+  | Pow
+      (** The first operand to the power of the second; on complex numbers
+          [e{^w log z}] of [z] to the power [w]. *)
   | Atan2  (** The angle of [(x, y)], [y] the first operand, in \[-π, π\]. *)
   | Maximum
       (** The IEEE 754 maximum: NaN propagates and [-0] orders below [+0]. *)
@@ -126,11 +131,14 @@ type op3 =
     [Minimum] is [And]. A kind keeps its operands' dtype where its type
     says so: the absolute value of a complex number is no kind.
 
-    - [Neg], [Recip], [Add], [Sub], [Mul]: every dtype but booleans.
+    - [Neg], [Recip], [Sign], [Add], [Sub], [Mul], [Pow]: every dtype but
+      booleans.
     - [Fdiv]: floats and complex. [Idiv]: integers.
-    - [Abs], [Sign], [Floor], [Ceil], [Round], [Trunc], [Mod], [Pow], [Fma]:
-      floats and integers.
-    - [Sqrt], [Atan2] and the transcendental kinds, [Exp] to [Erf]: floats.
+    - [Abs], [Floor], [Ceil], [Round], [Trunc], [Mod], [Fma]: floats and
+      integers.
+    - [Sqrt], [Exp], [Exp2], [Log], [Log2], and [Sin] to [Tanh]: floats and
+      complex.
+    - [Log1p], [Expm1], [Erf], [Atan2]: floats.
     - [And], [Or], [Xor]: integers and booleans. [Threefry]: [uint64].
     - [Maximum], [Minimum] and the comparisons: every dtype.
     - [Copy]: every dtype, into itself. [Cast]: every pair. [Bitcast]: every
@@ -308,22 +316,22 @@ module E : sig
   val recip : ('v, 's) t -> ('v, 's) t
   val abs : ('v, 's) t -> ('v, 's) t
   val sign : ('v, 's) t -> ('v, 's) t
-  val sqrt : (float, 's) t -> (float, 's) t
-  val exp : (float, 's) t -> (float, 's) t
-  val exp2 : (float, 's) t -> (float, 's) t
-  val log : (float, 's) t -> (float, 's) t
-  val log2 : (float, 's) t -> (float, 's) t
+  val sqrt : ('v, 's) t -> ('v, 's) t
+  val exp : ('v, 's) t -> ('v, 's) t
+  val exp2 : ('v, 's) t -> ('v, 's) t
+  val log : ('v, 's) t -> ('v, 's) t
+  val log2 : ('v, 's) t -> ('v, 's) t
   val log1p : (float, 's) t -> (float, 's) t
   val expm1 : (float, 's) t -> (float, 's) t
-  val sin : (float, 's) t -> (float, 's) t
-  val cos : (float, 's) t -> (float, 's) t
-  val tan : (float, 's) t -> (float, 's) t
-  val asin : (float, 's) t -> (float, 's) t
-  val acos : (float, 's) t -> (float, 's) t
-  val atan : (float, 's) t -> (float, 's) t
-  val sinh : (float, 's) t -> (float, 's) t
-  val cosh : (float, 's) t -> (float, 's) t
-  val tanh : (float, 's) t -> (float, 's) t
+  val sin : ('v, 's) t -> ('v, 's) t
+  val cos : ('v, 's) t -> ('v, 's) t
+  val tan : ('v, 's) t -> ('v, 's) t
+  val asin : ('v, 's) t -> ('v, 's) t
+  val acos : ('v, 's) t -> ('v, 's) t
+  val atan : ('v, 's) t -> ('v, 's) t
+  val sinh : ('v, 's) t -> ('v, 's) t
+  val cosh : ('v, 's) t -> ('v, 's) t
+  val tanh : ('v, 's) t -> ('v, 's) t
   val erf : (float, 's) t -> (float, 's) t
   val floor : ('v, 's) t -> ('v, 's) t
   val ceil : ('v, 's) t -> ('v, 's) t

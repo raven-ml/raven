@@ -366,15 +366,27 @@ IDENT(8, uint64_t)
   BIN(or_##D, T, T, (CT), nx_or_##S)                                         \
   BIN(xor_##D, T, T, (CT), nx_xor_##S)
 
-/* Complex numbers take the arithmetic kinds but Mod and Pow, and Fdiv. */
+/* The kinds of one operand of complex numbers, as FLOAT_KINDS1's. */
+#define COMPLEX_KINDS1(X, ...)                                               \
+  X(NEG, neg, __VA_ARGS__) X(RECIP, recip, __VA_ARGS__)                      \
+  X(SIGN, sign, __VA_ARGS__) X(SQRT, sqrt, __VA_ARGS__)                      \
+  X(EXP, exp, __VA_ARGS__) X(EXP2, exp2, __VA_ARGS__)                        \
+  X(LOG, log, __VA_ARGS__) X(LOG2, log2, __VA_ARGS__)                        \
+  X(SIN, sin, __VA_ARGS__) X(COS, cos, __VA_ARGS__)                          \
+  X(TAN, tan, __VA_ARGS__) X(ASIN, asin, __VA_ARGS__)                        \
+  X(ACOS, acos, __VA_ARGS__) X(ATAN, atan, __VA_ARGS__)                      \
+  X(SINH, sinh, __VA_ARGS__) X(COSH, cosh, __VA_ARGS__)                      \
+  X(TANH, tanh, __VA_ARGS__)
+
+/* Complex numbers take the arithmetic kinds but Mod, and Fdiv. */
 #define COMPLEX(D, T)                                                        \
   COMPARES(D, T, , D)                                                        \
   BIN(add_##D, T, T, , nx_add_##D)                                           \
   BIN(sub_##D, T, T, , nx_sub_##D)                                           \
   BIN(mul_##D, T, T, , nx_mul_##D)                                           \
   BIN(fdiv_##D, T, T, , nx_fdiv_##D)                                         \
-  UN(neg_##D, T, , nx_neg_##D)                                               \
-  UN(recip_##D, T, , nx_recip_##D)
+  BIN(pow_##D, T, T, , nx_pow_##D)                                           \
+  COMPLEX_KINDS1(FLOAT1, D, T)
 
 /* A boolean is 1 where its byte is not zero. */
 #define BOOL_LD(v) ((uint32_t)((v) != 0))
@@ -623,8 +635,8 @@ FILL(16, w16)
   t->op2[NX_OP2_SUB][DT] = sub_##D;                                          \
   t->op2[NX_OP2_MUL][DT] = mul_##D;                                          \
   t->op2[NX_OP2_FDIV][DT] = fdiv_##D;                                        \
-  t->op1[NX_OP1_NEG][DT] = neg_##D;                                          \
-  t->op1[NX_OP1_RECIP][DT] = recip_##D
+  t->op2[NX_OP2_POW][DT] = pow_##D;                                          \
+  COMPLEX_KINDS1(SET1, DT, D)
 
 static void set(nx_cpu_target *t) {
   COMPLEX_ROWS(NX_COMPLEX64, c64);

@@ -8,14 +8,17 @@
     uv run dev/nx2/test/kernel/gen/kinds.py --fits [NAME ...]
 
 The first form writes `dev/nx2/test/kernel/golden/kinds/<fn>.golden`, the
-f64 points each transcendental kind is held to; with --check nothing is
+f64 points each transcendental kind is held to, and `complex-<fn>.golden`,
+the c128 and c64 points of each complex one; with --check nothing is
 written, and the run fails if a file would change.
 
 A golden is a table of hexadecimal doubles, one row per point: the
 arguments, the value correctly rounded to binary64, or `nan`, and the
 exact value's remainder past it rounded to binary64, 0 where the value
 is no finite rounding, so that a test measures errors to a fraction of
-an ulp.
+an ulp. A complex row has both parts of each argument, then each part of
+the value and its remainder; its c64 points are those whose arguments
+are binary32's.
 
 The second form prints the minimax fits that nx_kinds.h's polynomials
 copy, each with its weighted error, coefficients from the constant term
@@ -468,9 +471,180 @@ def rounded(v):
     return f"{hexf(hi)}\t{hexf(lo)}"
 
 
+# Complex kinds
+
+COMPLEX = {
+    "exp": E.exp, "exp2": lambda z: E.power(2, z), "log": E.log,
+    "log2": lambda z: E.log(z) / E.log(2), "sqrt": E.sqrt, "sin": E.sin, "cos": E.cos,
+    "tan": E.tan, "asin": E.asin, "acos": E.acos, "atan": E.atan, "sinh": E.sinh,
+    "cosh": E.cosh, "tanh": E.tanh, "sign": E.sign, "pow": E.power,
+}
+
+# A zero part stands for the limit from its side: a branch cut takes the
+# side its sign names, as C99 7.3.3 says.
+SIDE = mpf(2) ** -3000
+
+
+def limit(x, y):
+    def part(v):
+        return mpf(v) if v != 0 else (SIDE if math.copysign(1, v) > 0 else -SIDE)
+    return E.mpc(part(x), part(y))
+
+
+def f32(x):
+    """x rounded to binary32, or None past its range."""
+    try:
+        return struct.unpack("<f", struct.pack("<f", x))[0]
+    except OverflowError:
+        return None
+
+
+def complex_points(fn, rng, single):
+    """Operands of a complex kind: drawn over the whole range, near the
+    kind's branch points, cuts, zeros and poles, and where its parts
+    overflow; binary32's own for single."""
+    lo_e, hi_e = (-149, 127) if single else (-1074, 1023)
+    big = 88.0 if single else 709.0
+    n = 80 if single else 140
+    pts = []
+
+    def mag(a, b):
+        return math.ldexp(1 + rng.random(), rng.randint(a, b)) * rng.choice([1, -1])
+
+    def near(cx, cy, k_lo=1, k_hi=None):
+        k_hi = k_hi or (24 if single else 53)
+        for _ in range(8):
+            d = math.ldexp(1, -rng.randint(k_lo, k_hi))
+            t = rng.uniform(0, 2 * math.pi)
+            pts.append((cx + d * math.cos(t), cy + d * math.sin(t)))
+
+    for _ in range(n):
+        pts.append((mag(lo_e, hi_e), mag(lo_e, hi_e)))
+        pts.append((mag(-30, 6), mag(-30, 6)))
+        pts.append((rng.uniform(-4, 4), rng.uniform(-4, 4)))
+    for _ in range(n // 4):
+        pts.append((mag(lo_e, hi_e), rng.choice([0.0, -0.0])))
+        pts.append((rng.choice([0.0, -0.0]), mag(lo_e, hi_e)))
+        pts.append((rng.uniform(-4, 4), rng.choice([0.0, -0.0])))
+        pts.append((rng.choice([0.0, -0.0]), rng.uniform(-4, 4)))
+    hp = math.pi / 2
+    if fn in ("exp", "exp2", "sinh", "cosh"):
+        top = (2.2 if fn == "exp2" else 1.0) * (194 if single else 1456)
+        for _ in range(n):
+            pts.append((rng.uniform(big - 30, top) * (1 if fn == "exp" else rng.choice([1, -1])),
+                        mag(-149 if single else -1074, 4)))
+            pts.append((rng.uniform(-30, 30), mag(5, 30 if single else 60)))
+    if fn in ("sinh", "cosh", "tanh", "sin", "cos", "tan"):
+        swap = fn in ("sin", "cos", "tan")
+        for k in range(-3, 4):
+            for c in (k * math.pi, k * math.pi + hp):
+                near(0.0, c, 1, 30) if not swap else near(c, 0.0, 1, 30)
+        for _ in range(n // 2):
+            x = rng.uniform(5, 30) * rng.choice([1, -1])
+            pts.append((x, rng.uniform(-8, 8)) if not swap else (rng.uniform(-8, 8), x))
+    if fn in ("log", "log2", "sqrt", "pow"):
+        for _ in range(n):
+            t = rng.uniform(-math.pi, math.pi)
+            r = 1 + math.ldexp(rng.uniform(-1, 1), -rng.randint(1, 60))
+            pts.append((r * math.cos(t), r * math.sin(t)))
+        for c in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)):
+            near(*c)
+        for _ in range(n // 4):
+            pts.append((-mag(-30, 30) ** 2, mag(lo_e, -20)))
+    if fn in ("asin", "acos", "atan"):
+        cuts = ((1.0, 0.0), (-1.0, 0.0)) if fn != "atan" else ((0.0, 1.0), (0.0, -1.0))
+        for c in cuts:
+            near(*c)
+            near(*c, 1, 10)
+        for _ in range(n // 2):
+            far, tiny = abs(mag(-20, 30)) + 1, mag(lo_e, -10)
+            pts.append((far * rng.choice([1, -1]), tiny) if fn != "atan" else (tiny, far * rng.choice([1, -1])))
+            pts.append((mag(10, hi_e), mag(10, hi_e)))
+    if single:
+        pts = [(f32(x), f32(y)) for x, y in pts]
+        pts = [(x, y) for x, y in pts if x is not None and y is not None]
+    return pts
+
+
+def complex_powers(rng, single):
+    """Base and exponent pairs: exponents real, imaginary, integer and
+    general, of moderate size, so that |w log z| stays near the bound's
+    range."""
+    out = []
+    for z in complex_points("pow", rng, single):
+        w = rng.choice([
+            (rng.uniform(-4, 4), rng.uniform(-4, 4)), (float(rng.randint(-6, 6)), 0.0),
+            (rng.uniform(-8, 8), 0.0), (0.0, rng.uniform(-4, 4)), (0.5, 0.0)])
+        if single:
+            w = (f32(w[0]), f32(w[1]))
+        out.append((z, w))
+    return out
+
+
+def settled(f, ops):
+    """f() at a precision past the operands' exponent range, doubled until
+    doubling it moves neither part past 2^-110 of itself: mpmath's precision
+    bounds an error against its operands' larger parts, and a far smaller
+    part of the value needs more, as asin z = z + z^3/6 does of 1 - z^2 at
+    a tiny z."""
+    def close(a, b):
+        return all(abs(p - q) <= abs(p) * mpf(2) ** -110 or abs(p) < mpf(2) ** -1100
+                   for p, q in ((a.real, b.real), (a.imag, b.imag)))
+    span = max([abs(math.frexp(o)[1]) for o in ops if o != 0 and math.isfinite(o)] + [0])
+    prec, prev = 320 + 2 * span, None
+    for _ in range(5):
+        with mp.workprec(prec):
+            v = f()
+        if prev is not None and close(prev, v):
+            return v
+        prev, prec = v, 2 * prec
+    raise ValueError("no precision settles the value")
+
+
+def complex_row(fn, args, single):
+    """The row of fn at args, or None where its value leaves the range the
+    bounds hold in."""
+    if fn == "pow":
+        (x, y), (u, v) = args
+        if x == 0 and y == 0:
+            return None
+        val = settled(lambda: E.power(limit(x, y), limit(u, v)), (x, y, u, v))
+        ops = (x, y, u, v)
+    else:
+        x, y = args
+        if fn == "sign" and x == 0 and y == 0:
+            return None
+        if fn == "exp2" and abs(y) > (2.0**16 if single else 2.0**35):
+            return None
+        val = settled(lambda: COMPLEX[fn](limit(x, y)), (x, y))
+        ops = (x, y)
+    m = abs(val)
+    lo, hi = (mpf(2) ** -100, mpf(2) ** 127) if single else (mpf(2) ** -969, mpf(2) ** 1023)
+    if not (lo <= m <= hi):
+        return None
+    cols = [hexf(a) for a in ops] + [rounded(val.real), rounded(val.imag)]
+    return "\t".join(cols) + "\n"
+
+
+def complex_goldens():
+    files = {}
+    for fn in COMPLEX:
+        rows = []
+        for single in (False, True):
+            rng = random.Random(f"nx_kinds:complex:{fn}:{'c64' if single else 'c128'}")
+            pts = complex_powers(rng, single) if fn == "pow" else complex_points(fn, rng, single)
+            for a in pts:
+                r = complex_row(fn, a, single)
+                if r is not None:
+                    rows.append(r)
+        cols = "x\ty\tu\tv\tre\tlo\tim\tlo\n" if fn == "pow" else "x\ty\tre\tlo\tim\tlo\n"
+        files[f"complex-{fn}"] = HEADER + cols + "".join(rows)
+    return files
+
+
 def goldens():
     mp.prec = 320
-    files = {}
+    files = complex_goldens()
     for fn in UNARY:
         rng = random.Random(f"nx_kinds:{fn}")
         rows = [f"{hexf(x)}\t{rounded(unary_ref(fn, x))}\n" for x in unary_points(fn, rng)]

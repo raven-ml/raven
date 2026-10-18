@@ -18,4 +18,5 @@
   golden/kinds/f32-sweep.txt
   golden/linalg/bidiagonal-255.txt
   ../../lib/kernel/nx_kinds.h
-  ../../lib/kernel/nx_kinds_real.h))
+  ../../lib/kernel/nx_kinds_real.h
+  ../../lib/kernel/nx_kinds_complex.h))

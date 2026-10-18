@@ -12,6 +12,7 @@
   (extra_deps
    ../../../lib/kernel/nx_kinds.h
    ../../../lib/kernel/nx_kinds_real.h
+   ../../../lib/kernel/nx_kinds_complex.h
    ../../../lib/array/nx_dtype.h
    nx_kinds_support.h
    nx_kinds_strata.h)
@@ -25,6 +26,7 @@
   (extra_deps
    ../../../lib/kernel/nx_kinds.h
    ../../../lib/kernel/nx_kinds_real.h
+   ../../../lib/kernel/nx_kinds_complex.h
    ../../../lib/array/nx_dtype.h
    nx_kinds_support.h)
   (flags

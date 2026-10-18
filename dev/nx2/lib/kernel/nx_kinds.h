@@ -12,7 +12,8 @@
    bit for bit and two libraries agree wherever the kind is exact. The
    float kinds are written once, in nx_kinds_real.h, which this header
    includes for f32 and f64; the pieces whose algorithm differs between the
-   two are written here.
+   two are written here. The complex transcendental kinds are written once
+   too, in nx_kinds_complex.h, included for c64 and c128.
 
    Compute types. float16, bfloat16 and the float8 dtypes compute in f32
    through nx_dtype.h's codecs and round once on the store. 8- and 16-bit
@@ -315,6 +316,17 @@ NX_INLINE uint32_t nx_two_over_pi_at(int32_t g) {
 #define NX_POW_LO_F32 -160.0f
 #define NX_PIO2_BIG_F32 0x1p+15f
 #define NX_TRIG_TINY_F32 0x1p-12f
+/* The complex kinds': ln2 rounded and its remainder; clamps past which
+   e^x c and 2^x c overflow for every finite non-zero c; where sinh and
+   cosh are e^|x|/2, asin and acos their terms at infinity, and atanh is
+   past its overflow guard, sqrt of the largest float over 4. */
+#define NX_LN2_F32 0x1.62e430p-1f
+#define NX_LN2_LOW_F32 -0x1.05c610p-29f
+#define NX_CEXP_HI_F32 194.0f
+#define NX_CEXP2_HI_F32 280.0f
+#define NX_HYP_BIG_F32 12.0f
+#define NX_ASIN_BIG_F32 0x1p13f
+#define NX_ATANH_BIG_F32 0x1p62f
 
 typedef struct {
   float hi, lo;
@@ -646,6 +658,13 @@ NX_INLINE int nx_double_nan(double d) {
 #define NX_POW_LO_F64 -1080.0
 #define NX_PIO2_BIG_F64 0x1p+28
 #define NX_TRIG_TINY_F64 0x1p-27
+#define NX_LN2_F64 0x1.62e42fefa39efp-1
+#define NX_LN2_LOW_F64 0x1.abc9e3b39803fp-56
+#define NX_CEXP_HI_F64 1456.0
+#define NX_CEXP2_HI_F64 2101.0
+#define NX_HYP_BIG_F64 22.0
+#define NX_ASIN_BIG_F64 0x1p28
+#define NX_ATANH_BIG_F64 0x1p510
 
 typedef struct {
   double hi, lo;
@@ -1045,7 +1064,43 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    Less_equal by the order. A number with a NaN part is a NaN: Equal, Less
    and Less_equal with it are false, and Maximum and Minimum give the first
    such operand, as the real kinds do. Maximum and Minimum order -0 below
-   +0 in each part. */
+   +0 in each part.
+
+   The transcendental kinds, exp, exp2, log, log2, sqrt, sin, cos, tan,
+   asin, acos, atan, sinh, cosh, tanh and pow, are the principal values of
+   C99 7.3 (ISO/IEC 9899), with the special values of its Annex G, G.6; sign
+   is z / |z|. nx_kinds_complex.h computes them from the part type's kinds,
+   branching, so that a vector loop runs them on scalars. Their bounds,
+   normwise in u where the result's modulus is a normal float:
+
+     sqrt, sign                                3
+     exp, exp2, log, log2                      4
+     asin, acos, atan                          5
+     sin, cos, tan, sinh, cosh, tanh           6
+     pow, z^w                                  3 + 3 |w log z|
+
+   exp2's holds while |Im z| < 2^(2p/3), p the part's precision: 2^16 at
+   c64 and 2^35 at c128. On the real axis, at a non-zero real part where
+   the float kind is defined, the real part is the float kind's result;
+   pow's is at a positive base and a real exponent. Every NaN part of their
+   results is the quiet NaN of a clear sign bit.
+
+   Where Annex G leaves a sign unspecified, each kind keeps f(conj z) =
+   conj f(z) and its parity bit for bit, a NaN part's sign bit counting as
+   its sign, and gives, at operands of positive parts:
+
+     exp(-inf + i inf), exp(-inf + i NaN)      +0 + i0
+     exp(inf + i inf), exp(inf + i NaN)        inf + i NaN
+     sqrt(-inf + i NaN)                        NaN + i inf
+     sinh(+0 + i inf), sinh(+0 + i NaN)        +0 + i NaN
+     sinh(inf + i inf), sinh(inf + i NaN)      inf + i NaN
+     cosh(+0 + i inf), cosh(+0 + i NaN),
+       cosh(NaN + i0)                          NaN + i0
+     cosh(inf + i inf)                         inf + i NaN
+     tanh(inf + i inf), tanh(inf + i NaN)      1 + i0
+     asin(inf + i NaN)                         NaN + i inf
+     acos(inf + i NaN)                         NaN - i inf
+     atan(inf + i NaN)                         pi/2 + i0 */
 
 #define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN, NANC)                    \
   typedef struct {                                                           \
@@ -1140,6 +1195,56 @@ NX_COMPLEX_KINDS(c64, float, f32, nx_fmaf, nx_float_nan, nx_float_sign,
 #ifndef __METAL_VERSION__
 NX_COMPLEX_KINDS(c128, double, f64, nx_fmad, nx_double_nan, nx_double_sign,
                  NX_NAN_F64)
+#endif
+
+#define NX_T float
+#define NX_U uint32_t
+#define NX_CT nx_c64
+#define NX_(f) f##_f32
+#define NX_Z(f) f##_c64
+#define NX_MK nx_c64_of
+#define NX_C(c) NX_##c##_F32
+#define NX_FMA nx_fmaf
+#define NX_SQRT nx_sqrtf
+#define NX_BITS nx_float_bits
+#define NX_OF_BITS nx_bits_float
+#include "nx_kinds_complex.h"
+#undef NX_T
+#undef NX_U
+#undef NX_CT
+#undef NX_
+#undef NX_Z
+#undef NX_MK
+#undef NX_C
+#undef NX_FMA
+#undef NX_SQRT
+#undef NX_BITS
+#undef NX_OF_BITS
+
+#ifndef __METAL_VERSION__
+#define NX_T double
+#define NX_U uint64_t
+#define NX_CT nx_c128
+#define NX_(f) f##_f64
+#define NX_Z(f) f##_c128
+#define NX_MK nx_c128_of
+#define NX_C(c) NX_##c##_F64
+#define NX_FMA nx_fmad
+#define NX_SQRT nx_sqrtd
+#define NX_BITS nx_double_bits
+#define NX_OF_BITS nx_bits_double
+#include "nx_kinds_complex.h"
+#undef NX_T
+#undef NX_U
+#undef NX_CT
+#undef NX_
+#undef NX_Z
+#undef NX_MK
+#undef NX_C
+#undef NX_FMA
+#undef NX_SQRT
+#undef NX_BITS
+#undef NX_OF_BITS
 #endif
 
 #endif /* NX_KINDS_H */

@@ -5,7 +5,9 @@
 
 (* nx_kinds.h: the transcendental kinds within their bounds, f32 at every
    argument and f64 at the goldens' points; the exact kinds against their
-   meaning, with NaN, -0, infinities, subnormals and integer extremes drawn. *)
+   meaning, with NaN, -0, infinities, subnormals and integer extremes drawn;
+   the complex transcendental kinds at the goldens' points, at C99 Annex G's
+   special values and by their symmetries. *)
 
 open Windtrap
 module K = Nx_kinds_support
@@ -1041,6 +1043,324 @@ let test_complex_order =
           equal t (meaning k a b) (c64_call k [ a; b ])))
     [ "equal"; "not_equal"; "less"; "less_equal"; "maximum"; "minimum" ]
 
+(* The complex transcendental kinds *)
+
+let complex_kinds =
+  [
+    "exp"; "exp2"; "log"; "log2"; "sqrt"; "sign"; "sin"; "cos"; "tan"; "asin";
+    "acos"; "atan"; "sinh"; "cosh"; "tanh";
+  ]
+
+(* Each kind's bound, normwise in units of its part's u, and the largest
+   error its algorithm last reached at the goldens, at c128 and at c64: a
+   change may lower one, never raise it. pow's bound is (3 + 3|w log z|)u. *)
+let complex_bounds =
+  [
+    ("exp", 4., 2.131, 1.779);
+    ("exp2", 4., 1.873, 1.896);
+    ("log", 4., 1.590, 1.547);
+    ("log2", 4., 1.684, 2.114);
+    ("sqrt", 3., 1.596, 1.534);
+    ("sign", 3., 1.513, 1.407);
+    ("asin", 5., 2.620, 2.522);
+    ("acos", 5., 2.707, 1.974);
+    ("atan", 5., 2.420, 1.907);
+    ("sin", 6., 2.586, 3.033);
+    ("cos", 6., 2.361, 2.007);
+    ("tan", 6., 3.671, 3.009);
+    ("sinh", 6., 3.007, 3.020);
+    ("cosh", 6., 3.628, 2.557);
+    ("tanh", 6., 3.344, 3.053);
+  ]
+
+(* The rows of golden/kinds/complex-<kind>.golden: operands, then each part
+   of the value correctly rounded and its remainder. *)
+let complex_golden kind = golden ("complex-" ^ kind)
+
+(* Whether a row's operands are binary32's and its value is in the range
+   c64's bounds hold in. *)
+let single_row args (re, im) =
+  Array.for_all (fun a -> round_f32 a = a) args
+  && Float.is_finite (round_f32 (Float.hypot (fst re) (fst im)))
+  && Float.hypot (fst re) (fst im) >= 0x1p-100
+
+let golden_value row n = ((row.(n), row.(n + 1)), (row.(n + 2), row.(n + 3)))
+
+let test_complex_goldens =
+  let check kind ~bound ~ceiling64 ~ceiling32 =
+    let worst128 = ref 0. and worst64 = ref 0. in
+    List.iter
+      (fun row ->
+        let n = Array.length row - 4 in
+        let args = Array.sub row 0 n and want = golden_value row n in
+        let at got =
+          strf "%s %s: got %h %h" kind
+            (String.concat " " (List.map (strf "%h") (Array.to_list args)))
+            (fst got) (snd got)
+        in
+        let ops =
+          List.init (n / 2) (fun i -> (args.(2 * i), args.(2 * i + 1)))
+        in
+        let got = c128_call kind ops in
+        let e = normwise 0x1p-53 got want in
+        at_most float_exact ~than:bound e ~msg:(at got);
+        worst128 := Float.max !worst128 e;
+        if single_row args want then begin
+          let got = c64_call kind ops in
+          let e = normwise 0x1p-24 got want in
+          at_most float_exact ~than:bound e ~msg:(at got);
+          worst64 := Float.max !worst64 e
+        end)
+      (complex_golden kind);
+    at_most float_exact ~than:ceiling64 (thousandths !worst128)
+      ~msg:(kind ^ " c128");
+    at_most float_exact ~than:ceiling32 (thousandths !worst64)
+      ~msg:(kind ^ " c64")
+  in
+  cases
+    ~name:(fun (k, _, _, _) -> k)
+    "complex at the goldens" complex_bounds
+    (fun (kind, bound, ceiling64, ceiling32) ->
+      check kind ~bound ~ceiling64 ~ceiling32)
+
+(* pow within (3 + 3|w log z|)u: its error is log z's, multiplied by w and
+   carried into the exponential. *)
+let test_complex_pow_goldens =
+  test "pow at the goldens" (fun () ->
+      List.iter
+        (fun row ->
+          let args = Array.sub row 0 4 and want = golden_value row 4 in
+          let z = (args.(0), args.(1)) and w = (args.(2), args.(3)) in
+          let modulus (re, im) = Float.hypot re im in
+          let log_z = (Float.log (modulus z), Float.atan2 (snd z) (fst z)) in
+          let bound = 3. +. (3. *. modulus w *. modulus log_z) in
+          let at (re, im) =
+            strf "pow %h %h %h %h: got %h %h" args.(0) args.(1) args.(2)
+              args.(3) re im
+          in
+          let check u got =
+            at_most float_exact ~than:bound (normwise u got want) ~msg:(at got)
+          in
+          check 0x1p-53 (c128_call "pow" [ z; w ]);
+          if single_row args want then check 0x1p-24 (c64_call "pow" [ z; w ]))
+        (complex_golden "pow"))
+
+(* C99 Annex G's special values, G.6.1 to G.6.4, at c128 and c64. Where it
+   leaves a sign unspecified, the value is nx_kinds.h's choice. A NaN part is
+   the quiet NaN of a clear sign bit. *)
+
+let inf = Float.infinity
+let ninf = Float.neg_infinity
+let nan = Float.nan
+let pi = Float.pi
+
+let special_values =
+  [
+    ("exp", (0., 0.), (1., 0.)); ("exp", (-0., 0.), (1., 0.));
+    ("exp", (0., -0.), (1., -0.)); ("exp", (2., inf), (nan, nan));
+    ("exp", (2., nan), (nan, nan)); ("exp", (inf, 0.), (inf, 0.));
+    ("exp", (ninf, 1.), (0., 0.)); ("exp", (ninf, 3.), (-0., 0.));
+    ("exp", (inf, 1.), (inf, inf)); ("exp", (inf, 3.), (ninf, inf));
+    ("exp", (ninf, inf), (0., 0.)); ("exp", (ninf, ninf), (0., -0.));
+    ("exp", (inf, inf), (inf, nan)); ("exp", (ninf, nan), (0., 0.));
+    ("exp", (inf, nan), (inf, nan)); ("exp", (nan, 0.), (nan, 0.));
+    ("exp", (nan, 1.), (nan, nan)); ("exp", (nan, nan), (nan, nan));
+    ("exp2", (0., 0.), (1., 0.)); ("exp2", (ninf, 1.), (0., 0.));
+    ("exp2", (inf, 1.), (inf, inf)); ("exp2", (nan, 0.), (nan, 0.));
+    ("exp2", (2., inf), (nan, nan)); ("exp2", (3., 0.), (8., 0.));
+    ("log", (-0., 0.), (ninf, pi)); ("log", (0., 0.), (ninf, 0.));
+    ("log", (0., -0.), (ninf, -0.)); ("log", (2., inf), (inf, pi /. 2.));
+    ("log", (2., nan), (nan, nan)); ("log", (ninf, 1.), (inf, pi));
+    ("log", (inf, 1.), (inf, 0.)); ("log", (ninf, inf), (inf, 3. *. pi /. 4.));
+    ("log", (inf, inf), (inf, pi /. 4.)); ("log", (inf, nan), (inf, nan));
+    ("log", (ninf, nan), (inf, nan)); ("log", (nan, 1.), (nan, nan));
+    ("log", (nan, inf), (inf, nan)); ("log", (nan, nan), (nan, nan));
+    ("log2", (0., 0.), (ninf, 0.)); ("log2", (inf, 1.), (inf, 0.));
+    ("log2", (nan, inf), (inf, nan)); ("log2", (8., 0.), (3., 0.));
+    ("sqrt", (0., 0.), (0., 0.)); ("sqrt", (-0., 0.), (0., 0.));
+    ("sqrt", (2., inf), (inf, inf)); ("sqrt", (nan, inf), (inf, inf));
+    ("sqrt", (2., nan), (nan, nan)); ("sqrt", (ninf, 1.), (0., inf));
+    ("sqrt", (inf, 1.), (inf, 0.)); ("sqrt", (ninf, nan), (nan, inf));
+    ("sqrt", (inf, nan), (inf, nan)); ("sqrt", (nan, 1.), (nan, nan));
+    ("sqrt", (nan, nan), (nan, nan)); ("sqrt", (-4., 0.), (0., 2.));
+    ("sqrt", (-4., -0.), (0., -2.));
+    ("sinh", (0., 0.), (0., 0.)); ("sinh", (0., inf), (0., nan));
+    ("sinh", (0., nan), (0., nan)); ("sinh", (2., inf), (nan, nan));
+    ("sinh", (2., nan), (nan, nan)); ("sinh", (inf, 0.), (inf, 0.));
+    ("sinh", (inf, 1.), (inf, inf)); ("sinh", (inf, 3.), (ninf, inf));
+    ("sinh", (inf, inf), (inf, nan)); ("sinh", (inf, nan), (inf, nan));
+    ("sinh", (nan, 0.), (nan, 0.)); ("sinh", (nan, 1.), (nan, nan));
+    ("sinh", (nan, nan), (nan, nan));
+    ("cosh", (0., 0.), (1., 0.)); ("cosh", (0., inf), (nan, 0.));
+    ("cosh", (0., nan), (nan, 0.)); ("cosh", (2., inf), (nan, nan));
+    ("cosh", (2., nan), (nan, nan)); ("cosh", (inf, 0.), (inf, 0.));
+    ("cosh", (inf, 1.), (inf, inf)); ("cosh", (inf, 3.), (ninf, inf));
+    ("cosh", (inf, inf), (inf, nan)); ("cosh", (inf, nan), (inf, nan));
+    ("cosh", (nan, 0.), (nan, 0.)); ("cosh", (nan, 1.), (nan, nan));
+    ("cosh", (nan, nan), (nan, nan));
+    ("tanh", (0., 0.), (0., 0.)); ("tanh", (2., inf), (nan, nan));
+    ("tanh", (2., nan), (nan, nan)); ("tanh", (inf, 1.), (1., 0.));
+    ("tanh", (inf, 2.), (1., -0.)); ("tanh", (inf, inf), (1., 0.));
+    ("tanh", (inf, nan), (1., 0.)); ("tanh", (nan, 0.), (nan, 0.));
+    ("tanh", (nan, 1.), (nan, nan)); ("tanh", (nan, nan), (nan, nan));
+    ("acos", (0., 0.), (pi /. 2., -0.)); ("acos", (-0., 0.), (pi /. 2., -0.));
+    ("acos", (0., nan), (pi /. 2., nan)); ("acos", (2., inf), (pi /. 2., ninf));
+    ("acos", (2., nan), (nan, nan)); ("acos", (ninf, 1.), (pi, ninf));
+    ("acos", (inf, 1.), (0., ninf));
+    ("acos", (ninf, inf), (3. *. pi /. 4., ninf));
+    ("acos", (inf, inf), (pi /. 4., ninf)); ("acos", (inf, nan), (nan, ninf));
+    ("acos", (nan, 1.), (nan, nan)); ("acos", (nan, inf), (nan, ninf));
+    ("acos", (nan, nan), (nan, nan));
+    ("asin", (0., 0.), (0., 0.)); ("asin", (-0., 0.), (-0., 0.));
+    ("asin", (0., nan), (0., nan)); ("asin", (2., nan), (nan, nan));
+    ("asin", (inf, 1.), (pi /. 2., inf)); ("asin", (1., inf), (0., inf));
+    ("asin", (inf, inf), (pi /. 4., inf)); ("asin", (nan, inf), (nan, inf));
+    ("asin", (inf, nan), (nan, inf)); ("asin", (nan, 1.), (nan, nan));
+    ("asin", (nan, 0.), (nan, nan)); ("asin", (nan, nan), (nan, nan));
+    ("atan", (0., 0.), (0., 0.)); ("atan", (nan, 0.), (nan, 0.));
+    ("atan", (inf, 1.), (pi /. 2., 0.)); ("atan", (1., inf), (pi /. 2., 0.));
+    ("atan", (0., 1.), (0., inf)); ("atan", (inf, nan), (pi /. 2., 0.));
+    ("atan", (nan, inf), (nan, 0.)); ("atan", (2., nan), (nan, nan));
+    ("atan", (nan, 2.), (nan, nan)); ("atan", (nan, nan), (nan, nan));
+    ("sin", (0., 0.), (0., 0.)); ("sin", (inf, 0.), (nan, 0.));
+    ("cos", (0., 0.), (1., -0.)); ("cos", (inf, 0.), (nan, -0.));
+    ("tan", (0., 0.), (0., 0.)); ("tan", (0., inf), (0., 1.));
+    ("sign", (inf, 2.), (1., 0.));
+    ("sign", (inf, ninf), (sqrt 0.5, -.sqrt 0.5));
+    ("sign", (0., -0.), (0., -0.)); ("sign", (nan, 1.), (nan, nan));
+    ("sign", (2., nan), (nan, nan)); ("sign", (-3., 4.), (-0.6, 0.8));
+  ]
+
+let quiet x = Int64.equal (bits64 x) 0x7FF8_0000_0000_0000L
+
+(* Bit for bit, a NaN part the quiet NaN of a clear sign bit. *)
+let special_part =
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "%h (0x%016Lx)" x (bits64 x))
+    ~equal:(fun want got ->
+      if Float.is_nan want then quiet got
+      else Int64.equal (bits64 want) (bits64 got))
+
+let test_complex_special =
+  cases
+    ~name:(fun (k, (x, y), _) -> strf "%s %h %h" k x y)
+    "Annex G's special values" special_values
+    (fun (kind, z, (re, im)) ->
+      let t = pair special_part special_part in
+      equal t (re, im) (c128_call kind [ z ]);
+      equal t (round_f32 re, round_f32 im) (c64_call kind [ f32_pair z ]))
+
+(* Laws over drawn parts, NaNs, infinities, zeros and subnormals among
+   them. Each holds bit for bit, any NaN for a NaN. *)
+
+let gen_z64 = Gen.pair gen64 gen64
+let gen_z32 = Gen.map (fun (a, b) -> (f a, f b)) (Gen.pair gen32 gen32)
+let conj (re, im) = (re, Float.neg im)
+let negz (re, im) = (Float.neg re, Float.neg im)
+let both_parts = pair value64 value64
+
+(* For each kind, f(conj z) = conj f(z), C99's G.6's symmetry. *)
+let test_complex_conj =
+  List.concat_map
+    (fun k ->
+      [
+        prop (strf "%s c128 of conj z is its conj" k) gen_z64 (fun z ->
+            equal both_parts
+              (conj (c128_call k [ z ]))
+              (c128_call k [ conj z ]));
+        prop (strf "%s c64 of conj z is its conj" k) gen_z32 (fun z ->
+            equal both_parts (conj (c64_call k [ z ])) (c64_call k [ conj z ]));
+      ])
+    complex_kinds
+
+(* The odd kinds give -f(z) at -z, the even ones f(z). *)
+let test_complex_parity =
+  let odd = [ "sinh"; "tanh"; "sin"; "tan"; "asin"; "atan"; "sign" ] in
+  let even = [ "cosh"; "cos" ] in
+  List.concat_map
+    (fun k ->
+      let side v = if List.mem k odd then negz v else v in
+      [
+        prop (strf "%s c128 at -z" k) gen_z64 (fun z ->
+            equal both_parts
+              (side (c128_call k [ z ]))
+              (c128_call k [ negz z ]));
+        prop (strf "%s c64 at -z" k) gen_z32 (fun z ->
+            equal both_parts (side (c64_call k [ z ])) (c64_call k [ negz z ]));
+      ])
+    (odd @ even)
+
+(* On the real axis, where the float kind is defined, the real part is the
+   float kind's value. *)
+let test_complex_real_axis =
+  let unit64 =
+    let ends = Gen.of_list [ 0.; -0.; 1.; -1.; 0x1p-1074 ] in
+    Gen.(frequency [ (3, float_range (-1.) 1.); (1, ends) ])
+  in
+  let unit32 = Gen.map bits32 unit64 in
+  let positive64 = Gen.map Float.abs gen64 in
+  let positive32 = Gen.map (fun b -> b land 0x7FFF_FFFF) gen32 in
+  let real =
+    [
+      ("exp", gen64, gen32); ("exp2", gen64, gen32); ("sinh", gen64, gen32);
+      ("cosh", gen64, gen32); ("tanh", gen64, gen32); ("sin", gen64, gen32);
+      ("cos", gen64, gen32); ("tan", gen64, gen32); ("atan", gen64, gen32);
+      ("sqrt", positive64, positive32); ("asin", unit64, unit32);
+      ("acos", unit64, unit32);
+    ]
+  in
+  List.concat_map
+    (fun (k, g64, g32) ->
+      [
+        prop (strf "%s c128 at x + 0i is the float kind's" k) g64 (fun x ->
+            equal value64 (K.f64 k [| x |]) (fst (c128_call k [ (x, 0.) ])));
+        prop (strf "%s c64 at x + 0i is the float kind's" k) g32 (fun x ->
+            equal value64
+              (f (K.f32 k [| x |]))
+              (fst (c64_call k [ (f x, 0.) ])));
+      ])
+    real
+  @ List.map
+      (fun k ->
+        prop (strf "%s c128 at x + 0i is the float kind's of |x|" k) gen64
+          (fun x ->
+            equal value64
+              (K.f64 k [| Float.abs x |])
+              (fst (c128_call k [ (x, 0.) ]))))
+      [ "log"; "log2" ]
+  @ [
+      prop "pow c128 of positive reals is the float kind's"
+        (Gen.pair gen64 gen64)
+        (fun (x, w) ->
+          assume (x > 0.);
+          equal value64 (K.f64 "pow" [| x; w |])
+            (fst (c128_call "pow" [ (x, 0.); (w, 0.) ])));
+    ]
+
+(* Identities within the bounds the kinds' compose to, at parts in
+   [2^-40, 2^40]: exp (log z) = z within (5 + 4|log z|)u, the exponential
+   carrying log's absolute error into a relative one; sqrt z * sqrt z = z
+   within 8u, twice sqrt's bound and mul's. *)
+let test_complex_identities =
+  let modulus (re, im) = Float.hypot re im in
+  let dd z = let re, im = z in ((re, 0.), (im, 0.)) in
+  let check name u call round =
+    [
+      prop (strf "exp (log z) = z %s" name) parts (fun z ->
+          let z = round z in
+          let l = call "log" [ z ] in
+          let bound = 5. +. (4. *. modulus l) in
+          at_most float_exact ~than:bound
+            (normwise u (call "exp" [ l ]) (dd z)));
+      prop (strf "sqrt z * sqrt z = z %s" name) parts (fun z ->
+          let z = round z in
+          let s = call "sqrt" [ z ] in
+          at_most float_exact ~than:8.
+            (normwise u (call "mul" [ s; s ]) (dd z)));
+    ]
+  in
+  check "c128" 0x1p-53 c128_call Fun.id @ check "c64" 0x1p-24 c64_call f32_pair
+
 let () =
   exit
   @@ run "nx_array.kinds"
@@ -1063,4 +1383,11 @@ let () =
          group ~timeout:10. "complex"
            (test_complex_bounds @ test_complex_parts @ test_complex_order
            @ [ test_complex_nan; test_complex_smith ]);
+         group ~timeout:10. "complex transcendentals"
+           ([
+              test_complex_goldens; test_complex_pow_goldens;
+              test_complex_special;
+            ]
+           @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
+           @ test_complex_identities);
        ]
