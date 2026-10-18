@@ -172,47 +172,60 @@ let v_args =
             ] );
       ]
   in
+  (* Non-negative strides and the offset that puts the last position at
+     [max_numel - 1], so the span ends at [max_numel]: the draws below seldom
+     do. *)
+  let at_end =
+    let* s = shape in
+    let+ strides = array ~size:(const (Array.length s)) (int_range 0 3) in
+    let reach = ref 0 in
+    Array.iteri (fun i d -> reach := !reach + (max 0 (d - 1) * strides.(i))) s;
+    (s, strides, max_numel - 1 - !reach)
+  in
+  let drawn =
+    let* s = shapes in
+    let* n = frequency [ (8, const (Array.length s)); (1, int_range 0 5) ] in
+    let+ strides = array ~size:(const n) stride
+    and+ least =
+      frequency
+        [
+          (6, int_range (-2) 12);
+          ( 1,
+            ints_of
+              [
+                max_int;
+                max_int - 1;
+                min_int;
+                max_int / 2;
+                max_numel;
+                max_numel - 1;
+                max_numel - 2;
+              ] );
+        ]
+    and+ lifted = bool in
+    (* Raise the offset by the reach of the negative strides, where it fits, so
+       that a negative stride often meets an offset that keeps positions
+       non-negative. *)
+    let offset =
+      if lifted && n = Array.length s then
+        let up =
+          Array.fold_left add (Some least)
+            (Array.map2
+               (fun d t ->
+                 if d > 1 && t < 0 && t <> min_int then
+                   if fits d t then Some ((d - 1) * -t) else None
+                 else Some 0)
+               s strides)
+        in
+        Option.value up ~default:least
+      else least
+    in
+    (s, strides, offset)
+  in
   with_pp
     (fun ppf (s, st, o) ->
       Format.fprintf ppf "~offset:%d ~strides:%a %a" o pp_ints st pp_ints s)
-    (let* s = shapes in
-     let* n = frequency [ (8, const (Array.length s)); (1, int_range 0 5) ] in
-     let+ strides = array ~size:(const n) stride
-     and+ least =
-       frequency
-         [
-           (6, int_range (-2) 12);
-           ( 1,
-             ints_of
-               [
-                 max_int;
-                 max_int - 1;
-                 min_int;
-                 max_int / 2;
-                 max_numel;
-                 max_numel - 1;
-                 max_numel - 2;
-               ] );
-         ]
-     and+ lifted = bool in
-     (* Raise the offset by the reach of the negative strides, where it fits, so
-        that a negative stride often meets an offset that keeps positions
-        non-negative. *)
-     let offset =
-       if lifted && n = Array.length s then
-         let up =
-           Array.fold_left add (Some least)
-             (Array.map2
-                (fun d t ->
-                  if d > 1 && t < 0 && t <> min_int then
-                    if fits d t then Some ((d - 1) * -t) else None
-                  else Some 0)
-                s strides)
-         in
-         Option.value up ~default:least
-       else least
-     in
-     (s, strides, offset))
+    (frequency [ (19, drawn); (1, at_end) ])
 
 let reasons =
   [

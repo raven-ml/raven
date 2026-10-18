@@ -239,7 +239,22 @@ let near_bounds s =
     let+ ws = list ~size:(int_range 0 3) window in
     M.Window (Array.of_list ws)
   in
-  one_of [ reshape; broadcast; permute; slice; windows ]
+  (* One window whose reach passes its axis, so the axis gives no window: the
+     random windows above are rarely all valid and that long. *)
+  let longer =
+    match List.filter (fun i -> s.(i) >= 1) (List.init r Fun.id) with
+    | [] -> windows
+    | axes ->
+        let* axis = ints_of axes in
+        let+ dilation = int_range 1 3
+        and+ past = int_range 1 3
+        and+ step = int_range 1 3 in
+        (* The least size whose reach, [dilation·(size - 1) + 1], is at
+           least [s.(axis) + past]. *)
+        let size = 1 + ((s.(axis) + past - 1 + dilation - 1) / dilation) in
+        M.Window [| { M.axis; size; step; dilation } |]
+  in
+  one_of [ reshape; broadcast; permute; slice; windows; longer ]
 
 (* Shapes of up to four axes, an extent among them now and then negative, with
    movements valid or not. *)
