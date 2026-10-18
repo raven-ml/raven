@@ -83,6 +83,25 @@ static int memory_room(void *self, const struct rig_part *parts, int n,
   return RIG_FITS;
 }
 
+/* Runs the copy part [p] over host addresses: a fill sets its row, and a
+   box moves its rows, in one move where both sides' rows are contiguous. */
+static void memory_copy(const struct rig_part *p) {
+  size_t width = (size_t)p->copy.width, rows = (size_t)p->copy.rows;
+  if (width == 0 || rows == 0) return;
+  char *dst = (char *)(uintptr_t)p->copy.dst + p->copy.dst_offset;
+  if (p->copy.fill) {
+    memset(dst, p->copy.byte, width);
+    return;
+  }
+  const char *src = (const char *)(uintptr_t)p->copy.src + p->copy.src_offset;
+  if (p->copy.src_pitch == width && p->copy.dst_pitch == width) {
+    memmove(dst, src, width * rows);
+    return;
+  }
+  for (size_t i = 0; i < rows; i++)
+    memmove(dst + i * p->copy.dst_pitch, src + i * p->copy.src_pitch, width);
+}
+
 /* Runs the parts in order, the fills with no queue context, then makes [v]
    observable. Its handles are host addresses. */
 static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
@@ -103,10 +122,8 @@ static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
         *failure = "a fill failed";
         return RIG_FAILED;
       }
-    } else if (p->copy.width != 0)
-      memmove((char *)(uintptr_t)p->copy.dst + p->copy.dst_offset,
-              (const char *)(uintptr_t)p->copy.src + p->copy.src_offset,
-              (size_t)p->copy.width);
+    } else
+      memory_copy(p);
   }
   atomic_store_explicit(m->word, v, memory_order_release);
   return RIG_COMMITTED;
