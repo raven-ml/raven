@@ -128,7 +128,14 @@ val capability : t -> Rig_nv_abi.Gpu.t
     starts once the parts before it on its queue have completed, and reads
     what they wrote. [Words] run on their queue's
     channel. A copy runs on either channel and keeps its place in its
-    queue's order, even a copy of zero bytes.
+    queue's order, even a copy of zero bytes. On ["COPY:0"] a copy part of
+    rows runs as one multi-line launch of the copy engine for each
+    [2{^32} - 1] rows, and a copy of one row, or of rows that hold more than
+    2 GiB or lie [2{^32}] bytes or more apart, as one launch of one line for
+    each 2 GiB of each row. A fill writes its byte by the copy engine's
+    remap of a constant, which reads no memory: in components of four bytes
+    from the first multiple of 4 of its address, 2 GiB a launch, and of one
+    byte in the at most three bytes at each end.
 
     A wait names an aligned 64-bit word that the device's work addresses,
     and a value [w]. It holds the submission's work back until the word
@@ -189,13 +196,14 @@ val capability : t -> Rig_nv_abi.Gpu.t
       {!Rig_nv_abi.Launch.max_threads}, or whose dynamic shared memory,
       rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared}.
 
-    Launches, whose constant bank 0 {!entry} bounds, and copies of at most
-    2 GiB take no ring entry of their own, and the segment and launch rings
-    grow to hold them. The driver's words for them close into an entry for
-    each 4 MiB of segment, and a segment ring lies below [2{^40}], so their
-    entries stay below the 262,144 a channel's ring holds from its open,
-    and only memory bounds them. Words, and longer copies, take the entries
-    their sizes take.
+    Launches, whose constant bank 0 {!entry} bounds, copies whose rows
+    hold at most 2 GiB, with pitches and rows below [2{^32}], and fills of
+    at most 2 GiB take no ring entry of their own, and the segment and
+    launch rings grow to hold them. The driver's words for them close into
+    an entry for each 4 MiB of segment, and a segment ring lies below
+    [2{^40}], so their entries stay below the 262,144 a channel's ring holds
+    from its open, and only memory bounds them. Words, and longer copies,
+    take the entries their sizes take.
 
     A launch's constant bank 0 is its kernel's, of at most
     {!Rig_nv_abi.Launch.max_bank_bytes}: its first KiB holds the driver's

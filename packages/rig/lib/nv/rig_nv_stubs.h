@@ -34,7 +34,7 @@ enum {
   T_ACQUIRE,      /* (address, value): wait until the word is at least value */
   T_RELEASE,      /* (address, value): wait for idle, then write value */
   T_COPY_RELEASE, /* (address, value): after the copies, write value */
-  T_COPY,         /* (dst, src, bytes): one copy of at most COPY_MAX bytes */
+  T_COPY,         /* (dst, src, bytes): one line of at most COPY_MAX bytes */
   T_LOCAL,        /* (address, per_tpc): the compute channel's local memory */
   T_SETUP,        /* (): a channel's engine binding, and compute's windows */
   T_SETUP_COPY,   /* (): the copy channel's engine binding */
@@ -43,14 +43,22 @@ enum {
   T_SCHEDULE,     /* (address): schedule the launch descriptor there */
   T_STAMP,        /* (address, value): T_RELEASE, and the timer at +8 */
   T_COPY_STAMP,   /* (address, value): T_COPY_RELEASE, and the timer at +8 */
+  T_FILL,         /* (dst, word, count): count 4-byte components of word */
+  T_FILL_BYTES,   /* (dst, byte, count): count bytes of byte */
+  T_BOX,          /* (dst, src, width, rows, dst_pitch, src_pitch) */
   TEMPLATES
 };
 
 /* A channel template's bytes, and its values: two addresses or an address
-   and a value, then a size. */
+   and a value, then a size, then a box's rows and pitches. */
 #define TEMPLATE_WORDS 16
-#define TEMPLATE_VALUES 3
+#define TEMPLATE_VALUES 6
+
+/* The most bytes of a copy's row or a fill's launch (Rig_nv_abi.Method's
+   max_copy), and the most rows and pitch bytes of a copy's launch:
+   LINE_COUNT, PITCH_IN and PITCH_OUT are 32 bits (clc7b5.h). */
 #define COPY_MAX (UINT64_C(1) << 31)
+#define LINES_MAX UINT64_C(0xFFFFFFFF)
 
 /* The most bytes of a segment: an entry's length holds 2^21 - 1 words
    (clc56f.h, GP_ENTRY1_LENGTH 30:10). */

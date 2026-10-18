@@ -311,6 +311,9 @@ let t_idle = 8
 let t_schedule = 9
 let t_stamp = 10
 let t_copy_stamp = 11
+let t_fill = 12
+let t_fill_bytes = 13
+let t_box = 14
 
 (* rig_nv_stubs.h's launch values, by slot: the grid's sizes along X, Y and Z,
    the group's, bank 0's address, the next descriptor's, the dynamic shared
@@ -805,12 +808,19 @@ let template self k (t : Template.t) = set_template self k t.bytes (patches t)
 
 let templates self (g : gpu) =
   (* The writer's values, by slot: two addresses or an address and a value, then
-     a size. *)
+     a size, then a box's rows and pitches. *)
   let a = Template.Slot 0 and b = Template.Slot 1 and n = Template.Slot 2 in
+  let rows = Template.Slot 3
+  and dst_pitch = Template.Slot 4
+  and src_pitch = Template.Slot 5 in
   template self t_acquire (Method.acquire a b);
   template self t_release (Method.release a b);
   template self t_copy_release (Method.copy_release a b);
   template self t_copy (Method.copy ~dst:a ~src:b n);
+  template self t_box
+    (Method.box ~dst:a ~src:b ~dst_pitch ~src_pitch ~rows n);
+  template self t_fill (Method.fill Four ~dst:a b n);
+  template self t_fill_bytes (Method.fill One ~dst:a b n);
   template self t_local (Method.local_memory a ~per_tpc:b);
   template self t_setup
     (Template.concat
@@ -1164,11 +1174,12 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
       else Error "the GPU's timer could not be read"
     in
     (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of
-       at least 256 KiB between two of the device's own [Device] allocations
-       runs as this kernel on the compute channel (rig_nv_ring.c's
-       [kernel_copies] and [route]). Smaller copies, copies that touch host,
-       [Pinned], [Mapped] or a peer's memory, and every copy on other
-       architectures, run on the copy channel. The kernel's image takes
+       one row of at least 256 KiB between two of the device's own [Device]
+       allocations runs as this kernel on the compute channel
+       (rig_nv_ring.c's [kernel_copies] and [route]). Smaller copies, boxes
+       of more rows, fills, copies that touch host, [Pinned], [Mapped] or a
+       peer's memory, and every copy on other architectures, run on the copy
+       channel. The kernel's image takes
        [Cubin.size] bytes of [Pinned] memory, and its descriptors lie in host
        memory until the channels end. *)
     let* copy_kernel =

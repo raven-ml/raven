@@ -144,7 +144,7 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
     c->open = c->written;
   }
   uint64_t at = c->written & (c->size - 1);
-  const uint64_t values[3] = {a, b, 0};
+  const uint64_t values[TEMPLATE_VALUES] = {a, b};
   rig_nv_fill(t, values, c->segments + at);
   c->written += bytes;
   c->open_words += bytes / 4;

@@ -134,18 +134,70 @@ let schedule addr =
 
 let max_copy = 1 lsl 31
 
+(* A launch of one transfer after the last has completed, between memory in
+   pitch layout. *)
+let transfer =
+  set D.nvc7b5_launch_dma_data_transfer_type
+    D.nvc7b5_launch_dma_data_transfer_type_non_pipelined
+  lor set D.nvc7b5_launch_dma_src_memory_layout
+        D.nvc7b5_launch_dma_src_memory_layout_pitch
+  lor set D.nvc7b5_launch_dma_dst_memory_layout
+        D.nvc7b5_launch_dma_dst_memory_layout_pitch
+
 let copy ~dst ~src n =
-  let launch =
-    set D.nvc7b5_launch_dma_data_transfer_type
-      D.nvc7b5_launch_dma_data_transfer_type_non_pipelined
-    lor set D.nvc7b5_launch_dma_src_memory_layout
-          D.nvc7b5_launch_dma_src_memory_layout_pitch
-    lor set D.nvc7b5_launch_dma_dst_memory_layout
-          D.nvc7b5_launch_dma_dst_memory_layout_pitch
-  in
   Template.concat
     [
       methods (subchannel Copy) D.nvc7b5_offset_in_upper (hi_lo src @ hi_lo dst);
+      methods (subchannel Copy) D.nvc7b5_line_length_in [ u32 0 n ];
+      methods (subchannel Copy) D.nvc7b5_launch_dma [ dword transfer ];
+    ]
+
+(* OFFSET_IN_UPPER to LINE_COUNT, eight words after one header, then a
+   multi-line launch, as NVK issues a 2D copy (Mesa 25.2,
+   nvk_cmd_copy.c). *)
+let box ~dst ~src ~dst_pitch ~src_pitch ~rows n =
+  let launch =
+    transfer
+    lor set D.nvc7b5_launch_dma_multi_line_enable
+          D.nvc7b5_launch_dma_multi_line_enable_true
+  in
+  Template.concat
+    [
+      methods (subchannel Copy) D.nvc7b5_offset_in_upper
+        (hi_lo src @ hi_lo dst
+        @ [ u32 0 src_pitch; u32 0 dst_pitch; u32 0 n; u32 0 rows ]);
+      methods (subchannel Copy) D.nvc7b5_launch_dma [ dword launch ];
+    ]
+
+type component = One | Four
+
+(* SET_REMAP_CONST_B and SET_REMAP_COMPONENTS, each destination component
+   taken from CONST_B, then a remapped launch of [n] components at [dst], as
+   NVIDIA's UVM driver fills (open-gpu-kernel-modules 570.144,
+   uvm_maxwell_ce.c, memset_common). *)
+let fill c ~dst v n =
+  let size =
+    match c with
+    | One -> D.nvc7b5_set_remap_components_component_size_one
+    | Four -> D.nvc7b5_set_remap_components_component_size_four
+  in
+  let components =
+    set D.nvc7b5_set_remap_components_dst_x
+      D.nvc7b5_set_remap_components_dst_x_const_b
+    lor set D.nvc7b5_set_remap_components_component_size size
+    lor set D.nvc7b5_set_remap_components_num_dst_components
+          D.nvc7b5_set_remap_components_num_dst_components_one
+  in
+  let launch =
+    transfer
+    lor set D.nvc7b5_launch_dma_remap_enable
+          D.nvc7b5_launch_dma_remap_enable_true
+  in
+  Template.concat
+    [
+      methods (subchannel Copy) D.nvc7b5_set_remap_const_b
+        [ u32 0 v; dword components ];
+      methods (subchannel Copy) D.nvc7b5_offset_out_upper (hi_lo dst);
       methods (subchannel Copy) D.nvc7b5_line_length_in [ u32 0 n ];
       methods (subchannel Copy) D.nvc7b5_launch_dma [ dword launch ];
     ]

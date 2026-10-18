@@ -47,7 +47,12 @@ let names =
     (0x404, "OFFSET_IN_LOWER");
     (0x408, "OFFSET_OUT_UPPER");
     (0x40c, "OFFSET_OUT_LOWER");
+    (0x410, "PITCH_IN");
+    (0x414, "PITCH_OUT");
     (0x418, "LINE_LENGTH_IN");
+    (0x41c, "LINE_COUNT");
+    (0x704, "SET_REMAP_CONST_B");
+    (0x708, "SET_REMAP_COMPONENTS");
   ]
 
 (* A host method, between SET_OBJECT and 0x100, runs on any subchannel, so its
@@ -100,6 +105,8 @@ type call =
   | Wait_for_idle
   | Schedule of int64
   | Copy of int64 * int64 * int64
+  | Box of int64 * int64 * int64 * int64 * int64 * int64
+  | Fill of Method.component * int64 * int64 * int64
   | Copy_release of int64 * int64
   | Copy_release_stamp of int64 * int64
 
@@ -123,6 +130,15 @@ let pp_call ppf = function
   | Schedule a -> Format.fprintf ppf "schedule 0x%Lx" a
   | Copy (d, s, n) ->
       Format.fprintf ppf "copy ~dst:0x%Lx ~src:0x%Lx 0x%Lx" d s n
+  | Box (d, s, dp, sp, rows, n) ->
+      Format.fprintf ppf
+        "box ~dst:0x%Lx ~src:0x%Lx ~dst_pitch:0x%Lx ~src_pitch:0x%Lx \
+         ~rows:0x%Lx 0x%Lx"
+        d s dp sp rows n
+  | Fill (c, d, v, n) ->
+      Format.fprintf ppf "fill %s ~dst:0x%Lx 0x%Lx 0x%Lx"
+        (match c with One -> "One" | Four -> "Four")
+        d v n
   | Copy_release (a, v) -> Format.fprintf ppf "copy_release 0x%Lx 0x%Lx" a v
   | Copy_release_stamp (a, v) ->
       Format.fprintf ppf "copy_release_stamp 0x%Lx 0x%Lx" a v
@@ -139,6 +155,8 @@ let args = function
   | Copy_release_stamp (a, v) ->
       [ a; v ]
   | Copy (d, s, n) -> [ d; s; n ]
+  | Box (d, s, dp, sp, rows, n) -> [ d; s; dp; sp; rows; n ]
+  | Fill (_, d, v, n) -> [ d; v; n ]
 
 (* The words of [c], each operand known, or left to the slot of its position if
    [slots]. *)
@@ -158,6 +176,10 @@ let encode ~slots c =
   | Wait_for_idle -> Method.wait_for_idle
   | Schedule _ -> Method.schedule (a 0)
   | Copy _ -> Method.copy ~dst:(a 0) ~src:(a 1) (a 2)
+  | Box _ ->
+      Method.box ~dst:(a 0) ~src:(a 1) ~dst_pitch:(a 2) ~src_pitch:(a 3)
+        ~rows:(a 4) (a 5)
+  | Fill (c, _, _, _) -> Method.fill c ~dst:(a 0) (a 1) (a 2)
   | Copy_release _ -> Method.copy_release (a 0) (a 1)
   | Copy_release_stamp _ -> Method.copy_release_stamp (a 0) (a 1)
 
@@ -178,6 +200,9 @@ let calls =
     Wait_for_idle;
     Schedule 0x12_3456_7800L;
     Copy (0x1_0000_0000L, 0x2_0000_0000L, 0x8000_0000L);
+    Box (0x1_0000_0000L, 0x2_0000_0000L, 0x300L, 0x500L, 0xffff_ffffL, 0x100L);
+    Fill (Four, 0x1_0000_0004L, 0x6161_6161L, 0x2000_0000L);
+    Fill (One, 0x1_0000_0001L, 0x61L, 3L);
     Copy_release (0x12_3456_7808L, 7L);
     Copy_release_stamp (0x12_3456_7810L, 7L);
   ]
@@ -190,7 +215,7 @@ let operations =
         (fun c ->
           equal string (packet c).bytes
             (Template.fill (List.nth (args c)) (encode ~slots:true c)));
-      test "a copy moves at most 2^31 bytes" (fun () ->
+      test "a copy's row and a fill take at most 2^31 bytes" (fun () ->
           equal int (1 lsl 31) Method.max_copy);
     ]
 
@@ -261,6 +286,30 @@ let words =
               subch 4 OFFSET_OUT_LOWER 0x00000000
               subch 4 LINE_LENGTH_IN 0x80000000
               subch 4 LAUNCH_DMA 0x00000182
+            box ~dst:0x100000000 ~src:0x200000000 ~dst_pitch:0x300 ~src_pitch:0x500 ~rows:0xffffffff 0x100
+              subch 4 OFFSET_IN_UPPER 0x00000002
+              subch 4 OFFSET_IN_LOWER 0x00000000
+              subch 4 OFFSET_OUT_UPPER 0x00000001
+              subch 4 OFFSET_OUT_LOWER 0x00000000
+              subch 4 PITCH_IN 0x00000500
+              subch 4 PITCH_OUT 0x00000300
+              subch 4 LINE_LENGTH_IN 0x00000100
+              subch 4 LINE_COUNT 0xffffffff
+              subch 4 LAUNCH_DMA 0x00000382
+            fill Four ~dst:0x100000004 0x61616161 0x20000000
+              subch 4 SET_REMAP_CONST_B 0x61616161
+              subch 4 SET_REMAP_COMPONENTS 0x00030005
+              subch 4 OFFSET_OUT_UPPER 0x00000001
+              subch 4 OFFSET_OUT_LOWER 0x00000004
+              subch 4 LINE_LENGTH_IN 0x20000000
+              subch 4 LAUNCH_DMA 0x00000582
+            fill One ~dst:0x100000001 0x61 0x3
+              subch 4 SET_REMAP_CONST_B 0x00000061
+              subch 4 SET_REMAP_COMPONENTS 0x00000005
+              subch 4 OFFSET_OUT_UPPER 0x00000001
+              subch 4 OFFSET_OUT_LOWER 0x00000001
+              subch 4 LINE_LENGTH_IN 0x00000003
+              subch 4 LAUNCH_DMA 0x00000582
             copy_release 0x1234567808 0x7
               subch 4 SET_SEMAPHORE_A 0x00000012
               subch 4 SET_SEMAPHORE_B 0x34567808

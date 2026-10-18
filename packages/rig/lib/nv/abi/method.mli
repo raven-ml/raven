@@ -101,13 +101,41 @@ val schedule : Template.operand -> Template.t
 (** {1:copy Copies} *)
 
 val max_copy : int
-(** [max_copy] is the most bytes one {!val-copy} moves, [2{^31}]. *)
+(** [max_copy] is the most bytes one {!val-copy} moves, of one row of a
+    {!box}, and of one {!val-fill}, [2{^31}]. *)
 
 val copy :
   dst:Template.operand -> src:Template.operand -> Template.operand -> Template.t
 (** [copy ~dst ~src n] copies the [n] bytes at [src] to [dst] on the copy
-    engine. [n] is at most {!max_copy}; a longer copy is several, at increasing
-    offsets. *)
+    engine, in one launch of one line. [n] is at most {!max_copy}; a longer
+    copy is several, at increasing offsets. *)
+
+val box :
+  dst:Template.operand ->
+  src:Template.operand ->
+  dst_pitch:Template.operand ->
+  src_pitch:Template.operand ->
+  rows:Template.operand ->
+  Template.operand ->
+  Template.t
+(** [box ~dst ~src ~dst_pitch ~src_pitch ~rows n] copies [rows] rows of [n]
+    bytes on the copy engine, row [i] from [src + i * src_pitch] to
+    [dst + i * dst_pitch], in one multi-line launch. [n] is at most
+    {!max_copy}, and [rows] and each pitch below [2{^32}]; a larger box is
+    several. *)
+
+(** The type for the sizes of a fill's components. *)
+type component =
+  | One  (** One byte. *)
+  | Four  (** Four bytes. *)
+
+val fill :
+  component -> dst:Template.operand -> Template.operand -> Template.operand ->
+  Template.t
+(** [fill c ~dst v n] writes [n] components of [c]'s size from [dst] on the
+    copy engine, each holding the low bytes of the 32-bit [v], least
+    significant first, in one launch that reads no memory. [n] components
+    take at most {!max_copy} bytes. *)
 
 val copy_release : Template.operand -> Template.operand -> Template.t
 (** [copy_release addr v] writes the 64-bit [v] into the 8 bytes at [addr],

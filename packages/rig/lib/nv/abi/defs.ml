@@ -164,7 +164,9 @@ let nvc7c0_send_signaling_pcas2_b_pcas_action = { lo = 0; bits = 4 }
 let nvc7b5_set_semaphore_a = 0x240
 let nvc7b5_launch_dma = 0x300
 let nvc7b5_offset_in_upper = 0x400
+let nvc7b5_offset_out_upper = 0x408
 let nvc7b5_line_length_in = 0x418
+let nvc7b5_set_remap_const_b = 0x704
 let nvc7b5_launch_dma_data_transfer_type_non_pipelined = 2
 let nvc7b5_launch_dma_src_memory_layout_pitch = 1
 let nvc7b5_launch_dma_dst_memory_layout_pitch = 1
@@ -173,6 +175,12 @@ let nvc7b5_launch_dma_flush_type_sys = 0
 let nvc7b5_launch_dma_semaphore_type_release_one_word_semaphore = 1
 let nvc7b5_launch_dma_semaphore_type_release_four_word_semaphore = 2
 let nvc7b5_launch_dma_semaphore_payload_size_two_word = 1
+let nvc7b5_launch_dma_multi_line_enable_true = 1
+let nvc7b5_launch_dma_remap_enable_true = 1
+let nvc7b5_set_remap_components_dst_x_const_b = 5
+let nvc7b5_set_remap_components_component_size_one = 0
+let nvc7b5_set_remap_components_component_size_four = 3
+let nvc7b5_set_remap_components_num_dst_components_one = 0
 let nvc7b5_launch_dma_data_transfer_type = { lo = 0; bits = 2 }
 let nvc7b5_launch_dma_flush_enable = { lo = 2; bits = 1 }
 let nvc7b5_launch_dma_flush_type = { lo = 0x19; bits = 1 }
@@ -180,6 +188,11 @@ let nvc7b5_launch_dma_semaphore_type = { lo = 3; bits = 2 }
 let nvc7b5_launch_dma_semaphore_payload_size = { lo = 0x1b; bits = 1 }
 let nvc7b5_launch_dma_src_memory_layout = { lo = 7; bits = 1 }
 let nvc7b5_launch_dma_dst_memory_layout = { lo = 8; bits = 1 }
+let nvc7b5_launch_dma_multi_line_enable = { lo = 9; bits = 1 }
+let nvc7b5_launch_dma_remap_enable = { lo = 0xa; bits = 1 }
+let nvc7b5_set_remap_components_dst_x = { lo = 0; bits = 3 }
+let nvc7b5_set_remap_components_component_size = { lo = 0x10; bits = 2 }
+let nvc7b5_set_remap_components_num_dst_components = { lo = 0x18; bits = 2 }
 
 (* Launch descriptors *)
 
