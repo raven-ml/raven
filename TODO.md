@@ -284,13 +284,14 @@ raven / llama.cpp (Vulkan; ROCm):
   `Rng.truncated_normal`, `dirichlet`, `categorical`, `permutation`
 - frontend, donated reuse for `set`'s and `scatter`'s target and
   `contract`'s `init`, with a `dispatch/kv-append-4096` row
-- `Interp`'s `running` field is shared by fibers on one domain;
-  `Nx_array.to_device` copies a strided view's whole span (probes:
+- `Nx_array.to_device` copies a strided view's whole span (probes:
   `refs/audit/20261010-deep/worktrees/wt-18`)
 - order and counting operations: check their contracts, public laws and
   bench baselines
 - nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and
-  gpt-oss comparisons
+  gpt-oss comparisons; rune.mli refuses a traced value on "another fiber",
+  where `Nx.Prim` refuses one on a fiber a scheduler outside the
+  interpretation forks: state rune's boundary as nx's
 - nx.cpu's jobs size their threads by older cost estimates, many below the
   call prices' measured kind and term costs, so costly kinds get too few
   threads (a float64 pow over 16 K elements runs on 3): derive the job

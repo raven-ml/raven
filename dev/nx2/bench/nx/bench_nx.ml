@@ -567,9 +567,9 @@ let index_rows =
 
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
-   on another domain; while one lives on this domain around another fiber, which
-   costs each add a perform; and on a traced value, delivered to its
-   interpretation's rule. *)
+   on another domain, and while one lives on this domain around another fiber,
+   either of which costs each add a perform; and on a traced value, delivered to
+   its interpretation's rule. *)
 
 let adds x =
   for _ = 1 to 100 do

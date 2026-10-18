@@ -2997,15 +2997,31 @@ end
 
 (** Operations as data, for interpreters such as rune's.
 
-    An operation goes to the innermost live interpretation that reaches it.
-    Every interpretation reaches the operations on its traced values. An
-    [Extent] interpretation also reaches every operation the calling fiber
-    applies inside its extent, on its domain. Innermost is by start order. An
-    interpretation does not reach the operations its own running rule applies,
-    and that rule applying an operation to the interpretation's own traced
-    values raises. An operation no interpretation reaches computes now on its
-    operands' set's kernels, and raises if the set has none. Each refusal raises
-    [Invalid_argument] naming [by] and the interpretation.
+    An operation goes to the innermost interpretation around it that reaches
+    it. An interpretation is around the operations of its extent: those applied
+    by the function {!interpret} calls, on whatever domain it resumes, and by
+    the fibers that a scheduler installed in the extent runs on the domain the
+    extent runs on. Outside the extent are a systhread or a domain started in
+    it, a fiber forked by a scheduler installed outside the interpretation, and
+    a fiber that a scheduler installed in the extent resumes on another domain:
+    there, an operation on a traced value raises, and an [Extent]
+    interpretation reaches none of the other operations. Every interpretation
+    reaches the operations on its traced values; an [Extent] interpretation
+    reaches every operation of its extent. An operation no interpretation
+    reaches computes now on its operands' set's kernels, and raises if the set
+    has none.
+
+    A rule runs outside its own interpretation and outside every handler
+    installed in its extent, with the extent suspended until it returns: its
+    operations go to the interpretations around its own, never to its own
+    except through {!expand}, and an effect it performs reaches the handlers
+    around the interpretation. So a rule is never entered while it runs,
+    except by the operations of an {!expand} it calls, which reach it again,
+    and its state needs no lock.
+
+    An operation on a traced value raises [Invalid_argument] naming [by] and
+    the interpretation where the interpretation is not around it: after it
+    returned, in its own rule, or outside its extent.
 
     A value of every set reaches a [Values] interpretation's rule as it is, a
     formula with no placement. An [Extent] interpretation's rule receives the
@@ -3337,9 +3353,7 @@ module Prim : sig
 
   type reach =
     | Values  (** Reaches the operations on its traced values. *)
-    | Extent
-        (** Also reaches every operation its starting fiber applies inside its
-            extent, on its domain. *)
+    | Extent  (** Also reaches every operation of its extent. *)
 
   type ('v, 's, +'d) payload = ..
   (** What an interpretation keeps in its traced values. A payload holds values,
@@ -3376,9 +3390,8 @@ module Prim : sig
   (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
 
   val later : interpretation -> interpretation -> bool
-  (** [later a b] is [true] iff [a] started after [b].
-
-      Raises [Invalid_argument] if they started on two domains. *)
+  (** [later a b] is [true] iff [a] started after [b], on any domains. Of two
+      interpretations around one operation, the later is inside the other. *)
 
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
@@ -3386,9 +3399,11 @@ module Prim : sig
 
   val expand : interpretation -> by:string -> 'r t -> 'r option
   (** [expand i ~by op] is [Some r], [r] [op] as core operations applied by
-      {!eval} with [i] not running, so that they reach [i] again; [None] for an
+      {!eval} around [i] again, so that they reach [i]; [None] for an
       operation that has no expansion. A map of several nodes expands into one
-      map per node. *)
+      map per node.
+
+      Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)
 end
 
 (**/**)

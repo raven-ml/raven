@@ -4729,7 +4729,7 @@ module Prim = struct
   type reach = Value.reach = Values | Extent
   type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
 
-  let interpret = Interp.interpret
+  let interpret = Eval.interpret
   let traced = Interp.traced
   let payload = Interp.payload
   let owner = Interp.owner

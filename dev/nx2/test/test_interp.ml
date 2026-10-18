@@ -93,7 +93,7 @@ let test_innermost () =
     (received outer)
 
 (* A rule's own operations on concrete parts compute; on its own values they
-   raise naming it. *)
+   raise naming it, outside its extent, also under an extent around it. *)
 let test_running () =
   let x = x3 () in
   let log = ref [] in
@@ -113,10 +113,16 @@ let test_running () =
     ignore (Nx.copy (tag i x));
     Nx.Prim.eval ~by op
   in
-  invalid ~sub:"Nx.copy: test.own's rule applied an operation to its own value"
-    (fun () ->
+  let outside =
+    "Nx.copy: a value of test.own, used outside test.own's extent"
+  in
+  invalid ~sub:outside (fun () ->
       Nx.Prim.interpret ~name:"test.own" Values own (fun i ->
-          ignore (Nx.add (tag i x) x)))
+          ignore (Nx.add (tag i x) x)));
+  invalid ~sub:outside (fun () ->
+      logged ~name:"test.extent" Extent (ref []) (fun _ ->
+          Nx.Prim.interpret ~name:"test.own" Values own (fun i ->
+              ignore (Nx.add (tag i x) x))))
 
 let test_after_return () =
   let x = x3 () in
@@ -131,7 +137,15 @@ let test_after_return () =
   equal ~msg:"its payload answers" bool true
     (match Nx.Prim.payload i t with Some (Tag 0) -> true | _ -> false);
   invalid ~sub:"Nx.Repr.array: a value traced by test.values has no bytes"
-    (fun () -> Nx.Repr.array t)
+    (fun () -> Nx.Repr.array t);
+  let expansion = ref ignore in
+  Nx.Prim.interpret ~name:"test.extent" Extent
+    (fun i ~by op ->
+      (expansion := fun () -> ignore (Nx.Prim.expand i ~by op));
+      Nx.Prim.eval ~by op)
+    (fun _ -> ignore (Nx.add x x));
+  invalid ~sub:"Nx.add: an expansion for test.extent after it returned"
+    !expansion
 
 let test_domains () =
   let x = x3 () in
@@ -145,8 +159,7 @@ let test_domains () =
       in
       match Domain.join (Domain.spawn elsewhere) with
       | Some m ->
-          contains ~sub:"Nx.add: a value of test.values, used on another domain"
-            m
+          contains ~sub:"Nx.add: a value of test.values, used outside" m
       | None -> fail "a traced value computed on another domain");
   let log = ref [] in
   let y =
@@ -168,8 +181,8 @@ let test_later () =
     Domain.join
       (Domain.spawn (fun () -> logged ~name:"c" Values (ref []) Fun.id))
   in
-  invalid ~sub:"Nx.Prim.later: c and a started on two domains" (fun () ->
-      Nx.Prim.later c a)
+  equal ~msg:"c, started after them on another domain" bool true
+    (Nx.Prim.later c b)
 
 (* A formula reaches a Values rule as it is, computing nothing. *)
 let test_constants () =
@@ -223,13 +236,13 @@ let rule =
       test "values reach the operations on their values alone" test_values_reach;
       test "an extent reaches every operation inside it, creations included"
         test_extent_reach;
-      test "the innermost by start receives" test_innermost;
-      test "a running rule computes, and refuses its own values" test_running;
+      test "the innermost that reaches an operation receives it" test_innermost;
+      test "a rule computes, and refuses its own values" test_running;
       test "a value used after its interpretation returned raises"
         test_after_return;
       test "a value refuses another domain; an extent does not reach one"
         test_domains;
-      test "later orders by start on one domain" test_later;
+      test "later orders by start, across domains" test_later;
       test "a formula reaches a values rule as it is" test_constants;
       test "a captured formula reaches an extent as its operations"
         test_captured;
@@ -1363,8 +1376,8 @@ let test_dropped () =
   logged ~name:"test.extent" Extent log (fun _ -> ignore (Nx.zeros f32 [| 2 |]));
   equal ~msg:"a later extent" names [ "Map" ] (received log)
 
-(* An extent started on this domain and ended on another: each domain's extents
-   still reach their creations. *)
+(* An extent started on this domain and resumed on another still reaches its
+   operations there, and each domain's own extents reach theirs. *)
 let test_migrated () =
   let log = ref [] in
   let suspended = ref None in
@@ -1392,11 +1405,92 @@ let test_migrated () =
          (Option.get !suspended) ();
          logged ~name:"test.there" Extent there (fun _ ->
              ignore (Nx.zeros f32 [| 2 |]))));
-  equal ~msg:"the migrated extent, from another domain" names [] (received log);
+  equal ~msg:"the migrated extent, from another domain" names [ "Map" ]
+    (received log);
   equal ~msg:"an extent on the other domain" names [ "Map" ] (received there);
   let here = ref [] in
   logged ~name:"test.here" Extent here (fun _ -> ignore (Nx.zeros f32 [| 3 |]));
   equal ~msg:"an extent on this domain" names [ "Map" ] (received here)
+
+(* A traced value used on a fiber that a scheduler outside its interpretation
+   runs raises, while the interpretation is live. *)
+let test_outer_fiber () =
+  let x = x3 () in
+  let leaked = ref None and used = ref "" in
+  schedule
+    [
+      ( "values",
+        fun () ->
+          logged ~name:"test.values" Values (ref []) (fun i ->
+              leaked := Some (tag i x);
+              yield ()) );
+      ( "outer",
+        fun () ->
+          match Nx.add (Option.get !leaked) x with
+          | _ -> used := "computed"
+          | exception Invalid_argument m -> used := m );
+    ];
+  contains
+    ~sub:"Nx.add: a value of test.values, used outside test.values's extent"
+    !used
+
+(* A rule that suspends its fiber suspends its extent with it: its yield
+   reaches the scheduler around the interpretation, past the one inside the
+   extent; a fiber beside the extent runs, and no fiber inside it runs until the
+   rule returns. *)
+let test_suspended_rule () =
+  let events = ref [] and calls = ref 0 in
+  let say e = events := e :: !events in
+  let rule i ~by op =
+    incr calls;
+    let n = !calls in
+    say (Printf.sprintf "enter %d" n);
+    if n = 1 then yield ();
+    say (Printf.sprintf "leave %d" n);
+    tagged i ~by op
+  in
+  let x = x3 () in
+  schedule
+    [
+      ( "extent",
+        fun () ->
+          Nx.Prim.interpret ~name:"test.extent" Extent rule (fun _ ->
+              schedule
+                [
+                  ( "first",
+                    fun () ->
+                      yield ();
+                      ignore (Nx.copy x) );
+                  ( "second",
+                    fun () ->
+                      yield ();
+                      ignore (Nx.copy x) );
+                ]) );
+      ("beside", fun () -> say "beside");
+    ];
+  equal ~msg:"events" names
+    [ "enter 1"; "beside"; "leave 1"; "enter 2"; "leave 2" ]
+    (List.rev !events)
+
+(* A rule's exception raises at the operation, inside the extent, whose
+   handlers and finalisers see it. *)
+let test_rule_raises () =
+  let x = x3 () in
+  let finalised = ref false in
+  let got =
+    Nx.Prim.interpret ~name:"test.values" Values
+      (fun _ ~by:_ _ -> failwith "the rule")
+      (fun i ->
+        match
+          Fun.protect
+            ~finally:(fun () -> finalised := true)
+            (fun () -> Nx.add (tag i x) x)
+        with
+        | _ -> "returned"
+        | exception Failure m -> m)
+  in
+  equal ~msg:"caught inside" string "the rule" got;
+  equal ~msg:"finalised" bool true !finalised
 
 let fibers =
   group "fibers"
@@ -1404,8 +1498,89 @@ let fibers =
       test "a fiber beside an extent computes" test_two_fibers;
       test "a continuation dropped inside an extent changes no result"
         test_dropped;
-      test "an extent that ends on another domain leaves both counts right"
-        test_migrated;
+      test "an extent resumed on another domain still receives" test_migrated;
+      test "a fiber an outer scheduler runs refuses a traced value"
+        test_outer_fiber;
+      test "a suspended rule holds its extent and enters once"
+        test_suspended_rule;
+      test "a rule's exception raises inside the extent" test_rule_raises;
+    ]
+
+(* Memory
+
+   While backtraces are recorded, the runtime keeps the last exception raised
+   reachable. An operation keeps none of its operands' bytes once it returns,
+   wherever it computed. *)
+
+let device = Nx_support.memory 2
+
+module Mem = (val Nx.devices [ device ])
+
+(* The bytes [device] holds after four rounds of collection, each of which
+   returns to the device what it collected. *)
+let settled () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create device 0);
+    Rig.free_cache device
+  done;
+  Rig.allocated device
+
+(* Reshapes a fresh value on [device] and drops both: a movement makes a view,
+   which allocates nothing. *)
+let[@inline never] moved () =
+  let x = Nx.place Mem.on (Nx.zeros f32 [| 1024 |]) in
+  ignore (Sys.opaque_identity (Nx.reshape [| 32; 32 |] x))
+
+(* Raises and catches, so the last exception raised holds nothing. *)
+let[@inline never] cleared () =
+  try raise (Sys.opaque_identity Exit) with Exit -> ()
+
+(* The bytes [device] holds once [f ()] returns, beyond those it held before,
+   after one uncounted run, with backtraces recorded. The count before follows a
+   raise, so what one run of [f] keeps counts whatever the run before kept. *)
+let held_after f =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+  @@ fun () ->
+  f ();
+  cleared ();
+  let before = settled () in
+  f ();
+  settled () - before
+
+let evaluating name f =
+  Nx.Prim.interpret ~name Extent (fun _ ~by op -> Nx.Prim.eval ~by op) f
+
+(* [beside f] is [f ()] while another domain is inside an extent. *)
+let beside f =
+  let inside = Atomic.make false and stop = Atomic.make false in
+  let other =
+    Domain.spawn (fun () ->
+        evaluating "test.other" (fun _ ->
+            Atomic.set inside true;
+            while not (Atomic.get stop) do
+              Domain.cpu_relax ()
+            done))
+  in
+  while not (Atomic.get inside) do
+    Domain.cpu_relax ()
+  done;
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set stop true;
+      Domain.join other)
+    f
+
+let memory =
+  group "memory"
+    [
+      test "an operation beside another domain's extent keeps no bytes"
+        (fun () -> equal int 0 (held_after (fun () -> beside moved)));
+      test "an operation a rule applies keeps no bytes" (fun () ->
+          let within () = evaluating "test.extent" (fun _ -> moved ()) in
+          equal int 0 (held_after within));
     ]
 
 (* The rule on two domains: each domain's operations go where the rule says,
@@ -1480,4 +1655,5 @@ let domains =
         rule_commands;
     ]
 
-let () = exit (run "nx interp" [ rule; laws; fibers; interpreters; domains ])
+let () =
+  exit (run "nx interp" [ rule; laws; fibers; memory; interpreters; domains ])

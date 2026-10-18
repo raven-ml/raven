@@ -94,24 +94,20 @@ and 'd any = Any : ('v, 's, 'd) t -> 'd any
 
 and reach =
   | Values  (** Reaches the operations on its traced values. *)
-  | Extent
-      (** Also reaches every operation its starting fiber applies inside its
-          extent, on its domain. *)
+  | Extent  (** Also reaches every operation of its extent. *)
 
 and interpretation = {
   name : string;  (** In messages, as ["Rune.grad"]. *)
   reach : reach;
   rule : 'r. interpretation -> by:string -> 'r prim -> 'r;
       (** What it makes of the operations it receives. *)
-  start : int;  (** Its order of start on [domain]. *)
-  domain : Domain.id;  (** Where it started. *)
+  start : int;  (** Its order of start in the process. *)
   live : bool Atomic.t;  (** Cleared when its extent ends. *)
-  mutable running : bool;  (** Whether its rule runs, on [domain]. *)
   mutable formulas : (int, unit) Hashtbl.t option;
       (** Nodes of the formulas an [Extent]'s rule returned, made when it
           returns its first. *)
 }
-(** An interpretation. Only {!Interp} writes its fields. *)
+(** An interpretation. Only {!Eval} and {!Interp} write its fields. *)
 
 (** {1:operations Operations}
 

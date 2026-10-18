@@ -5,10 +5,15 @@
 
 open Value
 
+(* The next start, and the live [Extent] interpretations, of the process. *)
+let next = Atomic.make 0
+let extents = Atomic.make 0
+let quiet () = Atomic.get extents = 0
+
 (* [i]'s rule on [op]. The formulas it returns are [i]'s own: an operation
    reads them as they are. *)
 let applied i ~by op =
-  let r = Interp.apply i ~by op in
+  let r = i.rule i ~by op in
   (match i.reach with
   | Values -> ()
   | Extent ->
@@ -212,19 +217,126 @@ let received (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   | Deferred _ when changes i x -> replay i x
   | Deferred _ | Array _ | Shards _ | Traced _ -> x
 
+let is_traced (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Traced _ -> true
+  | Array _ | Shards _ | Donated _ | Deferred _ -> false
+
+let owns i (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Traced { owner; _ } -> owner == i
+  | Array _ | Shards _ | Donated _ | Deferred _ -> false
+
+let refuse ~by o =
+  if Atomic.get o.live then
+    Format.kasprintf invalid_arg "%s: a value of %s, used outside %s's extent"
+      by o.name o.name
+  else
+    Format.kasprintf invalid_arg "%s: a value of %s, used after %s returned" by
+      o.name o.name
+
+(* Dispatch
+
+   [Receive] carries an operation to the handlers around the caller. The
+   innermost whose interpretation reaches it runs the rule in its clause, on
+   the handler's parent fiber: outside the interpretation and every handler
+   inside it, with the extent suspended until the rule returns. The cell is
+   emptied once no handler answered: [Effect.Unhandled] holds the effect, and
+   the runtime keeps the last exception raised reachable while backtraces are
+   recorded. [Around i] is answered by [i]'s handler alone. *)
+type _ Effect.t +=
+  | Receive : { by : string; mutable op : 'r prim option } -> 'r Effect.t
+  | Around : interpretation -> unit Effect.t
+
+(* Whether [o]'s handler is around the caller. *)
+let around o =
+  match Effect.perform (Around o) with
+  | () -> true
+  | exception Effect.Unhandled (Around _) -> false
+
+(* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
+   is refused unless its interpretation is around [i], which is asked once per
+   interpretation. An operation the rule receives consumes its handles, a
+   movement too: the rule's results hold none to pass on. *)
+let deliver i ~by op =
+  let checked = ref ([] : interpretation list) in
+  Prim.iteri
+    (fun _ x ->
+      match x with
+      | Traced { owner; _ } when owner != i && not (List.memq owner !checked)
+        ->
+          if not (around owner) then refuse ~by owner;
+          checked := List.cons owner !checked
+      | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
+    op;
+  Exec.consume ~by op;
+  let op =
+    if Prim.exists (fun x -> changes i x) op then
+      Prim.map (fun x -> received i x) op
+    else op
+  in
+  applied i ~by op
+
+let reaches i op =
+  match i.reach with
+  | Extent -> true
+  | Values -> Prim.exists (fun x -> owns i x) op
+
+let handler i =
+  {
+    Effect.Deep.effc =
+      (fun (type a) (e : a Effect.t) ->
+        match e with
+        | Receive { by; op = Some op } when reaches i op ->
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                match deliver i ~by op with
+                | r -> Effect.Deep.continue k r
+                | exception x ->
+                    let bt = Printexc.get_raw_backtrace () in
+                    Effect.Deep.discontinue_with_backtrace k x bt)
+        | Around j when j == i ->
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                Effect.Deep.continue k ())
+        | _ -> None);
+  }
+
+let interpret ~name reach
+    (rule : 'r. interpretation -> by:string -> 'r prim -> 'r) f =
+  let start = Atomic.fetch_and_add next 1 in
+  let live = Atomic.make true in
+  let i = { name; reach; rule; start; live; formulas = None } in
+  let run () = Effect.Deep.try_with f i (handler i) in
+  match reach with
+  | Values -> Fun.protect ~finally:(fun () -> Atomic.set live false) run
+  | Extent ->
+      Atomic.incr extents;
+      Fun.protect
+        ~finally:(fun () ->
+          Atomic.set live false;
+          Atomic.decr extents)
+        run
+
+(* An operation no handler answered computes, unless an operand is traced. *)
+let unreached ~by op =
+  Prim.iteri
+    (fun _ x ->
+      match x with
+      | Traced { owner; _ } -> refuse ~by owner
+      | Array _ | Shards _ | Donated _ | Deferred _ -> ())
+    op;
+  Exec.run ~by op
+
 let eval ~by op =
-  match Interp.receiver ~by op with
-  | None -> Exec.run ~by op
-  | Some i ->
-      (* An operation the rule receives consumes its handles, a movement
-         too: the rule's results hold none to pass on. *)
-      Exec.consume ~by op;
-      let op =
-        if Prim.exists (fun x -> changes i x) op then
-          Prim.map (fun x -> received i x) op
-        else op
-      in
-      applied i ~by op
+  if quiet () && not (Prim.exists is_traced op) then Exec.run ~by op
+  else
+    let e = Receive { by; op = Some op } in
+    match Effect.perform e with
+    | r -> r
+    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
+        (match e with Receive cell -> cell.op <- None | _ -> ());
+        unreached ~by op
 
 (* The one-node maps, built and evaluated: the paths an interpretation may
    reach. *)
@@ -240,33 +352,32 @@ let eval3 ~by k c x y =
   let v, () = eval ~by (Prim.op3 ~by k c x y) in
   v
 
-(* No traced operand and no live [Extent] on the domain is the condition under
-   which {!Interp.receiver} gives [None], checked on the operands before the
-   operation is built. *)
+(* No traced operand and no live [Extent] is the condition under which {!eval}
+   performs nothing, checked on the operands before the operation is built. *)
 let apply1 ~by k dt x =
   match x with
   | Traced _ -> eval1 ~by k dt x
   | Array _ | Shards _ | Donated _ | Deferred _ ->
-      if Interp.quiet () then Exec.apply1 ~by k dt x else eval1 ~by k dt x
+      if quiet () then Exec.apply1 ~by k dt x else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
   match (x, y) with
   | Traced _, _ | _, Traced _ -> eval2 ~by k dt x y
   | _ ->
-      if Interp.quiet () then Exec.apply2 ~by k dt x y
+      if quiet () then Exec.apply2 ~by k dt x y
       else eval2 ~by k dt x y
 
 let apply3 ~by k c x y =
   match (c, x, y) with
   | Traced _, _, _ | _, Traced _, _ | _, _, Traced _ -> eval3 ~by k c x y
   | _ ->
-      if Interp.quiet () then Exec.apply3 ~by k c x y
+      if quiet () then Exec.apply3 ~by k c x y
       else eval3 ~by k c x y
 
 let contract ~by ~shape ~rows ~columns ~batch ~contracting ~acc dt a b init =
   let order = Prim.contract_order_of ~rows ~columns a b in
   let fast =
-    if Interp.quiet () then
+    if quiet () then
       Exec.contract ~by ~order ~shape ~batch ~contracting ~acc dt a b init
     else None
   in
@@ -281,11 +392,15 @@ let place ~by p x =
   | Array r
     when Devices.rebrand r.at == p
          && r.dead == Live
-         && Interp.quiet () ->
+         && quiet () ->
       (* A second value over the memory shares it. *)
       Rig.Claim.share (Nx_array.buffer r.a);
       Array { at = p; a = r.a; dead = Live }
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
 
-let expand i ~by op = Interp.expanding i (fun () -> Expand.run eval ~by op)
+let expand i ~by op =
+  if not (Atomic.get i.live) then
+    Format.kasprintf invalid_arg "%s: an expansion for %s after it returned" by
+      i.name;
+  Effect.Deep.try_with (fun () -> Expand.run eval ~by op) () (handler i)
