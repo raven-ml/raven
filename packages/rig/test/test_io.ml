@@ -213,6 +213,34 @@ let reference a ra b rb =
 
 let range_gen = Gen.pair (Gen.int_range 0 32) (Gen.int_range 0 32)
 
+(* Pairs whose second buffer holds the first's bytes [shift] bytes in: one
+   buffer twice, but the empty view; a borrow beside its memory; the bigarray
+   beside the io memory, its host borrow and its device's borrow, which hold its
+   bytes from 8. *)
+let aligned =
+  let pair shift (i, j) = Gen.constant (i, j, shift) in
+  [
+    Gen.map (fun k -> (k, k, 0)) (Gen.int_range 0 (universe_size - 2));
+    Gen.one_of (List.map (pair 0) borrows);
+    Gen.one_of (List.map (fun j -> pair 8 (bigarray_at, j)) [ 1; 2; 5 ]);
+  ]
+
+(* An aligned pair and two non-empty ranges within its first 8 bytes, which
+   every buffer but the empty view holds: the second over the first's bytes, or
+   after them. Ranges drawn independently reach these in few cases. *)
+let aligned_case =
+  Gen.bind
+    (Gen.pair (Gen.one_of aligned) (Gen.int_range 0 6))
+    (fun ((i, j, shift), f) ->
+      Gen.bind (Gen.int_range 1 (7 - f)) (fun n ->
+          Gen.map
+            (fun (after, m) ->
+              let second =
+                if after then (f + n + shift, m) else (f + shift, n)
+              in
+              ((i, j), ((f, n), second)))
+            (Gen.pair Gen.bool (Gen.int_range 1 (8 - f - n)))))
+
 let overlap_case =
   let any = Gen.int_range 0 (universe_size - 1) in
   let io = Gen.map (fun k -> io_family.(k)) (Gen.int_range 0 4) in
@@ -220,9 +248,12 @@ let overlap_case =
   let one_buffer = Gen.map (fun k -> (k, k)) any in
   let borrow = Gen.one_of (List.map Gen.constant borrows) in
   let dead = Gen.pair (Gen.constant freed_at) any in
-  Gen.pair
-    (Gen.one_of [ Gen.pair any any; one_buffer; borrow; dead; beside_pages ])
-    (Gen.pair range_gen range_gen)
+  let drawn =
+    Gen.pair
+      (Gen.one_of [ Gen.pair any any; one_buffer; borrow; dead; beside_pages ])
+      (Gen.pair range_gen range_gen)
+  in
+  Gen.frequency [ (1, drawn); (1, aligned_case) ]
 
 let overlap_law ((i, j), (ri, rj)) =
   let all = Lazy.force universe in
@@ -732,8 +763,8 @@ let tests =
         test "overlaps uses cached io pages without mapping" test_overlaps;
         test "an io span stays stable when its pages are published"
           test_span_stable;
-        prop "rig_buffers_overlap of two ranges is Buffer.overlaps of their \
-              views"
+        prop ~count:300
+          "rig_buffers_overlap of two ranges is Buffer.overlaps of their views"
           overlap_case overlap_law;
         test "rig_buffers_overlap of ranges at a buffer's bounds"
           test_overlap_bounds;
