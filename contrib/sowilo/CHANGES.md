@@ -5,6 +5,11 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `gaussian_blur` with a `sigma` of 0 or less takes a fixed kernel for a
+  `ksize` up to 9 (`[1 2 1] / 4` for 3) and the Gaussian of sigma
+  `0.3 * ((ksize - 1) / 2 - 1) + 0.8` beyond. It raises `Invalid_argument`
+  for a NaN `sigma` or without a `ksize`; `unsharp_mask` and `canny` raise
+  for such a `sigma`. It built its kernel from `0 / 0` and returned NaN.
 - `sobel` and `laplacian` use their `?ksize`, 1, 3, 5 or 7 for `sobel` and
   any positive odd size for `laplacian`, and raise `Invalid_argument` for any
   other. Both ignored it. `laplacian`'s default is `ksize` 1, the

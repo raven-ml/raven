@@ -134,9 +134,21 @@ val gaussian_blur : sigma:float -> ?ksize:int -> Nx.float32_t -> Nx.float32_t
     convolution. [ksize] defaults to [2 * ceil(3 * sigma) + 1], capturing 99.7%
     of the distribution.
 
-    Raises [Invalid_argument] if [ksize] is even or not positive, or if
-    [ksize] is not given and [sigma] is so large that
-    [2 * ceil(3 * sigma) + 1] exceeds [max_int]. *)
+    If [sigma] is [0] or less, the kernel follows from the given [ksize]. For
+    [ksize] [1] to [9] it is fixed, each row below over its sum:
+    {v
+    ksize 1: 1
+    ksize 3: 1 2 1
+    ksize 5: 1 4 6 4 1
+    ksize 7: 2 7 14 18 14 7 2
+    ksize 9: 4 13 30 51 60 51 30 13 4
+    v}
+    For a larger [ksize] it is the Gaussian of sigma
+    [0.3 * ((ksize - 1) / 2 - 1) + 0.8].
+
+    Raises [Invalid_argument] if [ksize] is even or not positive, if [sigma]
+    is NaN, or if [ksize] is not given and [sigma] is not positive or so large
+    that [2 * ceil(3 * sigma) + 1] exceeds [max_int]. *)
 
 val box_blur : ksize:int -> Nx.float32_t -> Nx.float32_t
 (** [box_blur ~ksize img] applies a [ksize * ksize] averaging filter. Each
@@ -162,7 +174,9 @@ val filter2d : Nx.float32_t -> Nx.float32_t -> Nx.float32_t
 val unsharp_mask : sigma:float -> ?amount:float -> Nx.float32_t -> Nx.float32_t
 (** [unsharp_mask ~sigma img] sharpens by subtracting a Gaussian blur:
     [img + amount * (img - gaussian_blur ~sigma img)]. [amount] defaults to
-    [1.0]. *)
+    [1.0].
+
+    Raises [Invalid_argument] if [sigma] is not positive. *)
 
 (** {1:morphology Morphological operations} *)
 
@@ -252,4 +266,6 @@ val canny :
     [1.4]. Input must have [C = 1].
 
     {b Note.} Not differentiable: uses non-maximum suppression and hysteresis
-    thresholding. *)
+    thresholding.
+
+    Raises [Invalid_argument] if [sigma] is not positive. *)

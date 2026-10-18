@@ -290,6 +290,55 @@ let gaussian_bad_ksize ksize =
   raises_match (Exn.invalid_arg ~substring:"ksize") (fun () ->
       gaussian_blur ~sigma:1.0 ~ksize img)
 
+(* A sigma of 0 or less takes a fixed kernel for a ksize of 1 to 9, the
+   tables OpenCV's getGaussianKernel uses: a blurred impulse is the outer
+   product of the table with itself. *)
+let gaussian_tables =
+  [
+    (0.0, [| 1. |], 1.);
+    (0.0, [| 1.; 2.; 1. |], 4.);
+    (-0.0, [| 1.; 4.; 6.; 4.; 1. |], 16.);
+    (-1.0, [| 2.; 7.; 14.; 18.; 14.; 7.; 2. |], 64.);
+    (0.0, [| 4.; 13.; 30.; 51.; 60.; 51.; 30.; 13.; 4. |], 256.);
+  ]
+
+let gaussian_table (sigma, taps, denominator) =
+  let n = 11 and c = 5 in
+  let k = Array.length taps in
+  let h = k / 2 in
+  let img =
+    Nx.create Nx.float32 [| n; n; 1 |]
+      (Array.init (n * n) (fun i -> if i = n * n / 2 then 1.0 else 0.0))
+  in
+  let tap d = if abs d > h then 0.0 else taps.(d + h) /. denominator in
+  let expected =
+    Array.init (n * n) (fun i -> tap ((i / n) - c) *. tap ((i mod n) - c))
+  in
+  equal (array (float 1e-7)) expected
+    (Nx.to_array (gaussian_blur ~sigma ~ksize:k img))
+
+(* Beyond the tables, a sigma of 0 or less is derived from ksize as
+   [0.3 * ((ksize - 1) * 0.5 - 1) + 0.8], so the blur equals the one with that
+   sigma. *)
+let gaussian_derived_sigma (sigma, ksize) =
+  let img = create_centered_square 9 9 3 in
+  let derived = (0.3 *. ((Float.of_int (ksize - 1) *. 0.5) -. 1.0)) +. 0.8 in
+  equal (array (float 1e-6))
+    (Nx.to_array (gaussian_blur ~sigma:derived ~ksize img))
+    (Nx.to_array (gaussian_blur ~sigma ~ksize img))
+
+let gaussian_no_sigma sigma =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+      gaussian_blur ~sigma img)
+
+(* A NaN sigma is neither positive nor 0 or less: nothing derives a kernel
+   from it. *)
+let gaussian_nan_sigma ksize =
+  let img = create_gray_f 5 5 0.5 in
+  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+      gaussian_blur ~sigma:Float.nan ~ksize img)
+
 (* A sigma whose default ksize [2 * ceil(3 * sigma) + 1] exceeds [max_int]
    has no kernel to blur with. *)
 let gaussian_huge_sigma sigma =
@@ -569,6 +618,19 @@ let () =
             gaussian_default_ksize;
           cases "gaussian_blur_bad_ksize" ~name:string_of_int [ 0; -3; 2; 4 ]
             gaussian_bad_ksize;
+          cases "gaussian_blur_table"
+            ~name:(fun (sigma, taps, _) ->
+              Printf.sprintf "sigma %g, ksize %d" sigma (Array.length taps))
+            gaussian_tables gaussian_table;
+          cases "gaussian_blur_derived_sigma"
+            ~name:(fun (sigma, k) ->
+              Printf.sprintf "sigma %g, ksize %d" sigma k)
+            [ (0.0, 11); (-1.0, 13); (-0.0, 15) ]
+            gaussian_derived_sigma;
+          cases "gaussian_blur_no_sigma" ~name:string_of_float
+            [ 0.0; -0.0; -2.5; Float.nan ] gaussian_no_sigma;
+          cases "gaussian_blur_nan_sigma" ~name:string_of_int [ 1; 3; 11 ]
+            gaussian_nan_sigma;
           cases "gaussian_blur_huge_sigma" ~name:string_of_float
             [ infinity; 1e300; Float.of_int max_int ]
             gaussian_huge_sigma;

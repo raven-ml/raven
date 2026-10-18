@@ -22,15 +22,48 @@ let default_ksize sigma =
          sigma);
   (2 * int_of_float half) + 1
 
+(* The taps OpenCV's getGaussianKernel fixes for a sigma of 0 or less, up to
+   an odd size of 9: the kernel is the taps over their sum. *)
+let fixed_taps = function
+  | 1 -> Some [| 1. |]
+  | 3 -> Some [| 1.; 2.; 1. |]
+  | 5 -> Some [| 1.; 4.; 6.; 4.; 1. |]
+  | 7 -> Some [| 2.; 7.; 14.; 18.; 14.; 7.; 2. |]
+  | 9 -> Some [| 4.; 13.; 30.; 51.; 60.; 51.; 30.; 13.; 4. |]
+  | _ -> None
+
+(* The kernel of a sigma of 0 or less, as getGaussianKernel builds it: a fixed
+   table, or beyond the tables the sigma derived from [ksize]. *)
+let derived_kernel ksize =
+  match fixed_taps ksize with
+  | Some taps ->
+      let sum = Array.fold_left ( +. ) 0.0 taps in
+      Nx.create Nx.float32 [| ksize |] (Array.map (fun t -> t /. sum) taps)
+  | None ->
+      let sigma = (0.3 *. ((Float.of_int (ksize - 1) *. 0.5) -. 1.0)) +. 0.8 in
+      generate_gaussian_kernel ksize sigma
+
 let gaussian_blur ~sigma ?ksize img =
+  if Float.is_nan sigma then invalid_arg "gaussian_blur: sigma is NaN";
+  let positive = sigma > 0.0 in
   let ksize =
-    match ksize with Some ksize -> ksize | None -> default_ksize sigma
+    match ksize with
+    | Some ksize -> ksize
+    | None when positive -> default_ksize sigma
+    | None ->
+        invalid_arg
+          (Printf.sprintf
+             "gaussian_blur: sigma must be positive without a ksize, got %g"
+             sigma)
   in
   if ksize <= 0 || ksize mod 2 = 0 then
     invalid_arg
       (Printf.sprintf
          "gaussian_blur: ksize must be a positive odd integer, got %d" ksize);
-  let kernel_1d = generate_gaussian_kernel ksize sigma in
+  let kernel_1d =
+    if positive then generate_gaussian_kernel ksize sigma
+    else derived_kernel ksize
+  in
   let kernel_h = Nx.reshape [| 1; ksize |] kernel_1d in
   let kernel_v = Nx.reshape [| ksize; 1 |] kernel_1d in
   Helpers.with_batch
