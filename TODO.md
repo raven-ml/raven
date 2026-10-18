@@ -68,16 +68,11 @@ raven / llama.cpp (Vulkan; ROCm):
   past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;
   rig_nv_nvidia.mli states the bound): map in larger pages if that is the
   cause
-- size cuts in _plans/rig-size-audit/SUMMARY.md §A (core, PCI, NV, small):
-  NV's five field accessors, the debugfs scan; classify each unused value
-  (speculative, superseded, unpropagated, missed) before it goes
+- memory.ml's release paths: `retired` and `pending` both wait for a
+  device value; word unmaps become a `pending` case, kept sorted at
+  insertion (`retire_locked` reads `next_value`, `pending` `submitted`)
 - test cuts in _plans/rig-simplify-audit/tests.md, each shown covered
-  before it goes: rows 2, 5, 7 (once rig_pool.h stops stating its
-  internals), 11-14, 18 (format models only), 19-26; decide 10, 15-17
-- docs: an inventory (file:line pairs) of contracts restated across rig's
-  .mli files, then each folded to one place; rig_disk_stubs.c's six
-  platform branches into its Windows and POSIX sections; rig_device.c's
-  Windows locks against rig_pool.c's pthreads: say why or agree
+  before it goes: AMD rows 5, 11, 12 and 15
 
 ### API
 
