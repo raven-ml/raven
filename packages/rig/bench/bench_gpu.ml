@@ -359,6 +359,10 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
     (src, dst)
   in
   let copy (src, dst) = B.copy ~src ~dst in
+  let filling bytes () =
+    let g, _ = opened () in
+    B.create g bytes
+  in
   let blit_into bytes () =
     let g, _ = opened () in
     (String.make bytes 'b', B.create g bytes)
@@ -426,6 +430,14 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
         row "from-device-256M" (copying paged ~to_device:false) copy;
         row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
         row "from-device-off-page-256M" (copying off_page ~to_device:false) copy;
+      ];
+    (* A fill of the device's own memory, which its copy engine sets where
+       the host does not address it; one byte is what nx sets at the end
+       of each sub-byte result. *)
+    Thumper.group (strf "fill/%s" v)
+      [
+        row "device-64M" (filling (64 lsl 20)) (fun b -> B.fill b 'f');
+        row "device-1B" (filling 1) (fun b -> B.fill b 'f');
       ];
     Thumper.group (strf "wait/%s" v)
       [ row "reached" reached Rig.Point.wait ];
