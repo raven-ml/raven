@@ -324,6 +324,197 @@ module Watch (D : Rig_edge.Driver) = struct
   let late_reads h = (find h).late_reads
 end
 
+(* A driver's copies *)
+
+external edge_copy : nativeint -> int -> int -> nativeint array -> int
+  = "rig_gpu_edge_copy"
+
+type raw = {
+  dst : nativeint;
+  dst_offset : int;
+  src : nativeint;
+  src_offset : int;
+  width : int;
+  rows : int;
+  src_pitch : int;
+  dst_pitch : int;
+  local : [ `None | `Src | `Dst ];
+  device_memory : bool;
+  fill : char option;
+}
+
+type answer = Handed | Room of int | Failed
+
+(* rig_edge.h's RIG_LOCAL_NONE, RIG_LOCAL_SRC and RIG_LOCAL_DST, and its room
+   answers. *)
+let hand edge ~v ~queue p =
+  let n = Nativeint.of_int in
+  let fields =
+    [|
+      p.dst;
+      n p.dst_offset;
+      p.src;
+      n p.src_offset;
+      n p.width;
+      n p.rows;
+      n p.src_pitch;
+      n p.dst_pitch;
+      (match p.local with `None -> 0n | `Src -> 1n | `Dst -> 2n);
+      (if p.device_memory then 1n else 0n);
+      (if p.fill = None then 0n else 1n);
+      n (match p.fill with Some c -> Char.code c | None -> 0);
+    |]
+  in
+  match edge_copy edge v queue fields with
+  | 0 -> Handed
+  | -1 -> Failed
+  | r -> Room r
+
+module Edge (D : Rig_edge.Driver) = struct
+  type t = { g : D.t; mutable last : int; mutable regions : D.region list }
+  type region = { r : D.region; memory : Rig_edge.memory; bytes : int }
+  type side = Region of region | Host of int
+
+  type part = {
+    dst : side;
+    dst_offset : int;
+    src : side option;
+    src_offset : int;
+    width : int;
+    rows : int;
+    src_pitch : int;
+    dst_pitch : int;
+    fill : char option;
+  }
+
+  let facts t = D.facts t.g
+
+  (* The value the device's word holds: the word's own bytes where the host
+     addresses them, and the driver's read otherwise. *)
+  let signaled t =
+    match (D.locate (facts t).word).host with
+    | Some at -> Host.get64 at
+    | None -> D.signaled t.g
+
+  let make g =
+    let t = { g; last = 0; regions = [] } in
+    t.last <- signaled t;
+    t
+
+  let alloc t memory bytes =
+    match D.alloc t.g memory bytes with
+    | Some r ->
+        t.regions <- r :: t.regions;
+        { r; memory; bytes }
+    | None -> failf "no %d bytes of memory to allocate" bytes
+
+  let release t =
+    List.iter (D.free t.g) t.regions;
+    t.regions <- []
+
+  let handle = function
+    | Region r -> (D.locate r.r).handle
+    | Host at -> Nativeint.of_int at
+
+  (* Waits for the word to reach [v], at most 10 s. *)
+  let wait t v =
+    let t0 = Rig.Profile.now () in
+    while signaled t < v do
+      if Rig.Profile.now () - t0 > 10_000_000_000 then
+        failf "value %d within 10 s" v;
+      D.sleep t.g ~seen:(signaled t) ~still_ms:100
+    done
+
+  let run t (p : part) =
+    let queue =
+      match (facts t).copy_engine with
+      | Some q -> q
+      | None -> invalid_arg "Edge.run: the device has no copy engine"
+    in
+    let device = function
+      | Region r -> r.memory = Device
+      | Host _ -> false
+    in
+    let local =
+      match (p.src, p.dst) with
+      | Some (Host _), _ -> `Src
+      | _, Host _ -> `Dst
+      | _ -> `None
+    in
+    let raw =
+      {
+        dst = handle p.dst;
+        dst_offset = p.dst_offset;
+        src = (match p.src with Some s -> handle s | None -> 0n);
+        src_offset = p.src_offset;
+        width = p.width;
+        rows = p.rows;
+        src_pitch = p.src_pitch;
+        dst_pitch = p.dst_pitch;
+        local;
+        device_memory =
+          device p.dst
+          && (match p.src with Some s -> device s | None -> true);
+        fill = p.fill;
+      }
+    in
+    let v = t.last + 1 in
+    let rec go () =
+      match hand (facts t).edge ~v ~queue raw with
+      | Handed -> ()
+      | Room 1 ->
+          D.sleep t.g ~seen:(signaled t) ~still_ms:10;
+          go ()
+      | Room 3 -> (
+          match D.grow t.g with
+          | Grown -> go ()
+          | Short n -> failf "no %d bytes for the queues to grow" n)
+      | Room _ -> failf "the device never runs the part"
+      | Failed -> failf "the device failed the part"
+    in
+    go ();
+    t.last <- v;
+    wait t v
+
+  let one_row ~dst ~dst_offset ~src ~src_offset n =
+    {
+      dst;
+      dst_offset;
+      src = Some src;
+      src_offset;
+      width = n;
+      rows = 1;
+      src_pitch = n;
+      dst_pitch = n;
+      fill = None;
+    }
+
+  (* [n] bytes of [r] from [at], through a copy into [Pinned] memory where
+     the host does not address [r]. *)
+  let rec read t r ~at n =
+    match (D.locate r.r).host with
+    | Some h -> Host.read (h + at) n
+    | None ->
+        let p = alloc t Pinned (Int.max n 1) in
+        if n > 0 then
+          run t
+            (one_row ~dst:(Region p) ~dst_offset:0 ~src:(Region r)
+               ~src_offset:at n);
+        read t p ~at:0 n
+
+  let rec write t r ~at s =
+    let n = String.length s in
+    match (D.locate r.r).host with
+    | Some h -> Host.write (h + at) s
+    | None ->
+        let p = alloc t Pinned (Int.max n 1) in
+        write t p ~at:0 s;
+        if n > 0 then
+          run t
+            (one_row ~dst:(Region r) ~dst_offset:at ~src:(Region p)
+               ~src_offset:0 n)
+end
+
 (* Conformance *)
 
 module type Conformance = sig

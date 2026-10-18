@@ -610,6 +610,195 @@ let blits (module G : Gpu) (memory, n) =
   equal octets ~msg:"work after a fill reads it" (String.make n 'f')
     (get filled_out)
 
+(* Boxes and fills at the edge *)
+
+(* A box of [rows] rows of [width] bytes, each side at its offset into memory
+   of its kind, its pitch [width] plus its pad, the memory [slack] bytes past
+   the side's last row. *)
+type box = {
+  width : int;
+  rows : int;
+  sides : (Rig_edge.memory * int * int) * (Rig_edge.memory * int * int);
+      (** Each side's memory, offset and pad, the source's first. *)
+  slack : int;
+}
+
+let pp_edge_memory ppf (m : Rig_edge.memory) =
+  Format.pp_print_string ppf
+    (match m with Device -> "Device" | Pinned -> "Pinned" | Mapped -> "Mapped")
+
+(* Device memory twice as often, so that both sides are Device memory in
+   nearly half the draws. *)
+let edge_memory =
+  Gen.with_pp pp_edge_memory
+    Gen.(
+      frequency
+        [ (2, constant Rig_edge.Device); (1, constant Rig_edge.Pinned) ])
+
+(* The bytes a side's rows span. *)
+let span ~width ~rows ~pitch =
+  if rows = 0 then 0 else ((rows - 1) * pitch) + width
+
+(* Widths at 0, 1, a few bytes, pages, and around SDMA's 14-bit fields;
+   pads of 0, where rows lie end to end, and of a few bytes. *)
+let boxes =
+  let open Gen in
+  let width =
+    frequency
+      [
+        (2, constant 0);
+        (4, int_range 1 64);
+        (2, int_range 65 4096);
+        (1, of_list ~pp:Format.pp_print_int [ 16383; 16384; 16385 ]);
+      ]
+  in
+  let rows =
+    frequency [ (2, constant 0); (2, constant 1); (6, int_range 2 6) ]
+  in
+  let pad = frequency [ (2, constant 0); (1, int_range 1 37) ] in
+  let side =
+    let+ m = edge_memory and+ offset = int_range 0 19 and+ pad = pad in
+    (m, offset, pad)
+  in
+  let slack = frequency [ (1, constant 0); (2, int_range 1 64) ] in
+  with_pp
+    (fun ppf b ->
+      let (sm, so, sp), (dm, d_o, dp) = b.sides in
+      Format.fprintf ppf
+        "%d rows of %d bytes, %a at %d pitch %d into %a at %d pitch %d, \
+         slack %d"
+        b.rows b.width pp_edge_memory sm so (b.width + sp) pp_edge_memory dm
+        d_o (b.width + dp) b.slack)
+    (let+ width = width
+     and+ rows = rows
+     and+ src = side
+     and+ dst = side
+     and+ slack = slack in
+     { width; rows; sides = (src, dst); slack })
+
+(* A copy part of rows and pitches copies each row of its source into its
+   place, and writes no other byte of its destination. *)
+let edge_boxes (module G : Gpu) b =
+  let (sm, so, sp), (dm, d_o, dp) = b.sides in
+  let width = b.width and rows = b.rows in
+  let src_pitch = width + sp and dst_pitch = width + dp in
+  cover "a box of no rows" (rows = 0);
+  cover "a box of no width" (width = 0 && rows > 0);
+  cover "one row" (rows = 1 && width > 0);
+  cover "rows end to end on both sides" (rows > 1 && sp = 0 && dp = 0);
+  cover "rows apart" (rows > 1 && (sp > 0 || dp > 0));
+  cover "an unaligned offset" (so land 3 <> 0 || d_o land 3 <> 0);
+  cover "the last row at the end of its memory"
+    (b.slack = 0 && rows > 0 && width > 0);
+  cover "Device memory on both sides, rows apart"
+    (sm = Device && dm = Device && rows > 1 && (sp > 0 || dp > 0));
+  G.with_driver @@ fun g ->
+  if (G.D.facts g).copy_engine = None then
+    skip ~reason:"the device has no copy engine" ();
+  let module E = Rig_gpu_support.Edge (G.D) in
+  let e = E.make g in
+  Fun.protect ~finally:(fun () -> E.release e) @@ fun () ->
+  let bytes offset pitch = offset + span ~width ~rows ~pitch + b.slack in
+  let ns = bytes so src_pitch and nd = bytes d_o dst_pitch in
+  let src = E.alloc e sm (Int.max ns 1)
+  and dst = E.alloc e dm (Int.max nd 1) in
+  let from = pattern ns 1 and into = pattern nd 2 in
+  E.write e src ~at:0 from;
+  E.write e dst ~at:0 into;
+  E.run e
+    {
+      dst = Region dst;
+      dst_offset = d_o;
+      src = Some (Region src);
+      src_offset = so;
+      width;
+      rows;
+      src_pitch;
+      dst_pitch;
+      fill = None;
+    };
+  let model = Bytes.of_string into in
+  for r = 0 to rows - 1 do
+    Bytes.blit_string from (so + (r * src_pitch)) model
+      (d_o + (r * dst_pitch))
+      width
+  done;
+  equal octets (Bytes.to_string model) (E.read e dst ~at:0 nd)
+
+(* A fill of [n] bytes at [offset] into memory of a kind, [slack] bytes
+   before its end. *)
+type fill = { memory : Rig_edge.memory; offset : int; n : int; slack : int }
+
+(* Fills of no bytes, one to seven bytes and their ends, and larger fills
+   with a body of four-byte words and unaligned ends. *)
+let fills =
+  let open Gen in
+  let n =
+    frequency
+      [
+        (3, constant 0);
+        (6, int_range 1 7);
+        (3, int_range 8 64);
+        (1, int_range 65533 65539);
+      ]
+  in
+  with_pp
+    (fun ppf f ->
+      Format.fprintf ppf "%d bytes of %a at %d, slack %d" f.n pp_edge_memory
+        f.memory f.offset f.slack)
+    (let+ memory = edge_memory
+     and+ offset = int_range 0 7
+     and+ n = n
+     and+ slack = frequency [ (1, constant 0); (2, int_range 1 7) ] in
+     { memory; offset; n; slack })
+
+(* A fill part sets each byte of its row to its byte, and writes no other. *)
+let edge_fills (module G : Gpu) f =
+  cover "a fill of no bytes" (f.n = 0);
+  cover "a fill of fewer than 8 bytes" (f.n > 0 && f.n < 8);
+  cover "an unaligned start" (f.n > 0 && f.offset land 3 <> 0);
+  cover "an unaligned end" (f.n > 0 && (f.offset + f.n) land 3 <> 0);
+  cover "a body of words" (f.n >= 8);
+  cover "the fill ends its memory" (f.slack = 0 && f.n > 0);
+  G.with_driver @@ fun g ->
+  if (G.D.facts g).copy_engine = None then
+    skip ~reason:"the device has no copy engine" ();
+  let module E = Rig_gpu_support.Edge (G.D) in
+  let e = E.make g in
+  Fun.protect ~finally:(fun () -> E.release e) @@ fun () ->
+  let size = f.offset + f.n + f.slack in
+  let dst = E.alloc e f.memory (Int.max size 1) in
+  let before = pattern size 3 in
+  E.write e dst ~at:0 before;
+  E.run e
+    {
+      dst = Region dst;
+      dst_offset = f.offset;
+      src = None;
+      src_offset = 0;
+      width = f.n;
+      rows = 1;
+      src_pitch = 0;
+      dst_pitch = f.n;
+      fill = Some 'f';
+    };
+  let model = Bytes.of_string before in
+  Bytes.fill model f.offset f.n 'f';
+  equal octets (Bytes.to_string model) (E.read e dst ~at:0 size)
+
+(* [Buffer.fill] sets each byte of its view, on any memory, and no other. *)
+let buffer_fills (module G : Gpu) ((memory : B.kind), f) =
+  cover "a fill of no bytes" (f.n = 0);
+  cover "an unaligned view" (f.n > 0 && f.offset land 3 <> 0);
+  cover "Device memory" (memory = Device && f.n > 0);
+  G.with_ @@ fun t ->
+  let size = f.offset + f.n + f.slack in
+  let b = filled ~memory t.d (pattern size 4) in
+  B.fill (B.view b ~first:f.offset ~length:f.n) 'f';
+  let model = Bytes.of_string (pattern size 4) in
+  Bytes.fill model f.offset f.n 'f';
+  equal octets (Bytes.to_string model) (get b)
+
 (* Device order *)
 
 (* A value's work starts once every earlier value's completed, on every queue.
@@ -1808,6 +1997,14 @@ let laws (module G : Gpu) =
          not address goes through. *)
       test "a blit or a fill of three staging pieces is ordered as one"
         (fun () -> blits g (Device, (64 lsl 20) + 8));
+      prop ~count:100
+        "a copy part copies each row of its box into place, and no other byte"
+        boxes (edge_boxes g);
+      prop ~count:60 "a fill part sets each byte of its row, and no other"
+        fills (edge_fills g);
+      prop ~count:60 "a fill sets each byte of its view, and no other"
+        (Gen.pair memory fills)
+        (buffer_fills g);
       test "a value's work starts once every earlier value's completed"
         (device_order g);
       test "a profile around a submission records a span that bounds its work"
