@@ -23,12 +23,6 @@ let write set_byte (off, n) x =
 let set b f x = write (Bytes.set_uint8 b) f x
 let get s f = read (String.get_uint8 s) f
 
-let pget (p : Rig_nv.params) f =
-  read (fun i -> Char.code (Bigarray.Array1.get p i)) f
-
-let pset (p : Rig_nv.params) f x =
-  write (fun i v -> Bigarray.Array1.set p i (Char.unsafe_chr v)) f x
-
 let at (base, _) (off, n) = (base + off, n)
 
 let record size fill =

@@ -124,16 +124,3 @@ val uvm :
 val uvm_call :
   t -> int -> Rig_nv.params -> int * int -> string -> (unit, string) result
 (** [uvm_call] is {!uvm} that checks the status. *)
-
-(** {1:params Parameters} *)
-
-val params : int -> Rig_nv.params
-(** [params n] is [n] zero bytes. *)
-
-val get : Rig_nv.params -> int * int -> int
-(** [get p f] reads the field [f] of [p], a (byte offset, bytes) of 1, 2, 4
-    or 8 bytes. *)
-
-val set : Rig_nv.params -> int * int -> int -> unit
-(** [set p f x] writes [x] to the field [f] of [p]. *)
-

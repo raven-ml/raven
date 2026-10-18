@@ -27,9 +27,9 @@ module D = Defs
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
-let params = Rm.params
-let get = Rm.get
-let set = Rm.set
+let params = Rig_nv.params
+let get = Rig_nv.get
+let set = Rig_nv.set
 let page = 0x1000
 let huge_page = 2 lsl 20
 

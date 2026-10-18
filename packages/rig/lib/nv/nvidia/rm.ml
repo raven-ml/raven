@@ -32,39 +32,9 @@ let guard what f =
   | v -> Ok v
   | exception Unix.Unix_error (e, _, _) -> failed what e
 
-(* Parameters *)
-
-external get16 : Rig_nv.params -> int -> int = "%caml_bigstring_get16"
-external get32 : Rig_nv.params -> int -> int32 = "%caml_bigstring_get32"
-external get64 : Rig_nv.params -> int -> int64 = "%caml_bigstring_get64"
-
-external set16 : Rig_nv.params -> int -> int -> unit
-  = "%caml_bigstring_set16"
-
-external set32 : Rig_nv.params -> int -> int32 -> unit
-  = "%caml_bigstring_set32"
-
-external set64 : Rig_nv.params -> int -> int64 -> unit
-  = "%caml_bigstring_set64"
-
-let params n =
-  let p = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
-  Bigarray.Array1.fill p '\000';
-  p
-
-let get p (at, n) =
-  match n with
-  | 1 -> Char.code (Bigarray.Array1.get p at)
-  | 2 -> get16 p at
-  | 4 -> Int32.to_int (get32 p at) land 0xffff_ffff
-  | _ -> Int64.to_int (get64 p at)
-
-let set p (at, n) v =
-  match n with
-  | 1 -> Bigarray.Array1.set p at (Char.unsafe_chr (v land 0xff))
-  | 2 -> set16 p at (v land 0xffff)
-  | 4 -> set32 p at (Int32.of_int v)
-  | _ -> set64 p at (Int64.of_int v)
+let params = Rig_nv.params
+let get = Rig_nv.get
+let set = Rig_nv.set
 
 (* Files and mappings *)
 

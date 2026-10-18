@@ -19,12 +19,6 @@ val get : string -> int * int -> int
 (** [get s f] reads the field [f] of [s], of 1 to 8 bytes: unsigned for fewer
     than 8, and for 8 the value [Int64.to_int] gives, its top bit dropped. *)
 
-val pset : Rig_nv.params -> int * int -> int -> unit
-(** [pset p f x] is {!set} on the parameters [p] of an RM call. *)
-
-val pget : Rig_nv.params -> int * int -> int
-(** [pget p f] is {!get} on the parameters [p] of an RM call. *)
-
 val at : int * int -> int * int -> int * int
 (** [at s f] is the field [f] of the structure [s], itself a field. *)
 

@@ -139,6 +139,60 @@ let locks =
       test "answer a try while another thread holds them" test_try_held;
     ]
 
+(* Parameters *)
+
+let widths = [ 1; 2; 4; 8 ]
+let bytes_of p = List.init (Bigarray.Array1.dim p) (fun i -> Char.code p.{i})
+
+(* A field of 1, 2, 4 or 8 bytes in parameters of up to 32 bytes, its last
+   possible place drawn at a fixed weight, and a value to write to it. *)
+let field =
+  let open Gen in
+  let* n = of_list ~pp:Format.pp_print_int widths in
+  let* size = int_range n 32 in
+  let+ at = frequency [ (3, int_range 0 (size - n)); (1, constant (size - n)) ]
+  and+ x = int in
+  (size, (at, n), x)
+
+let field_law (size, (at, n), x) =
+  cover "the field ends the parameters" (at + n = size);
+  cover "8 bytes" (n = 8);
+  let p = N.params size in
+  N.set p (at, n) x;
+  let byte i =
+    if i < at || i >= at + n then 0 else (x asr (8 * (i - at))) land 0xff
+  in
+  equal (list int) ~msg:"the bytes, little-endian" (List.init size byte)
+    (bytes_of p);
+  let unsigned = if n = 8 then x else x land ((1 lsl (8 * n)) - 1) in
+  equal int ~msg:"the field read back" unsigned (N.get p (at, n))
+
+let refused msg f = raises_match ~msg Exn.invalid_arg f
+
+let parameters =
+  group ~timeout:10. "parameters"
+    [
+      cases ~name:string_of_int "params n is n zero bytes" [ 0; 1; 17 ]
+        (fun n ->
+          equal (list int) (List.init n (fun _ -> 0)) (bytes_of (N.params n)));
+      prop "a field reads back the low bytes written to it, little-endian"
+        field field_law;
+      cases ~name:string_of_int "a field of another width is refused"
+        [ 0; 3; 5; 16; -1 ]
+        (fun n ->
+          let p = N.params 32 in
+          refused "get" (fun () -> N.get p (0, n));
+          refused "set" (fun () -> N.set p (0, n) 0));
+      cases ~name:string_of_int "a field past the parameters is refused" widths
+        (fun n ->
+          let p = N.params 8 in
+          List.iter
+            (fun at ->
+              refused "get" (fun () -> N.get p (at, n));
+              refused "set" (fun () -> N.set p (at, n) 0))
+            [ -1; 8 - n + 1 ]);
+    ]
+
 (* Facts *)
 
 let digits s = String.for_all (function '0' .. '9' -> true | _ -> false) s
@@ -1771,6 +1825,7 @@ let () =
        [
          gpus;
          locks;
+         parameters;
          facts;
          memory;
          work;

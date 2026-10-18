@@ -326,9 +326,6 @@ let string_of_params (p : Rig_nv.params) =
 let blit_params s (p : Rig_nv.params) =
   String.iteri (fun i c -> Bigarray.Array1.set p i c) s
 
-let params n =
-  Bigarray.Array1.init Bigarray.char Bigarray.c_layout n (fun _ -> '\000')
-
 (* The RM's statuses that say it lacks memory or another resource
    (nvstatuscodes.h): NV_ERR_NO_MEMORY and NV_ERR_INSUFFICIENT_RESOURCES. *)
 let nv_err_no_memory = 0x51
@@ -388,10 +385,10 @@ let paddr (m : Page_table.mapping) = fst (List.hd m.pages)
    which the host writes, must be snooped. *)
 let memdesc p field ~base ~size ~space =
   let module M = Defs.Memory_desc in
-  pset p (at field M.base) base;
-  pset p (at field M.size) size;
-  pset p (at field M.address_space) space;
-  pset p (at field M.cache_attrib) Defs.nv_memory_cached
+  Rig_nv.set p (at field M.base) base;
+  Rig_nv.set p (at field M.size) size;
+  Rig_nv.set p (at field M.address_space) space;
+  Rig_nv.set p (at field M.cache_attrib) Defs.nv_memory_cached
 
 (* A channel's instance block, RAMFC and method buffer, which CPU-RM gives the
    GSP: a page, its first 0x200 bytes the RAMFC, and 0x5000 bytes. *)
@@ -416,13 +413,13 @@ let channel_memory g ~client ~locate p =
   memdesc p G.ramfc_mem ~base:(paddr ramfc) ~size:ramfc_size ~space:fb;
   memdesc p G.instance_mem ~base:(paddr ramfc) ~size:instance_size ~space:fb;
   memdesc p G.mthdbuf_mem ~base:mthd ~size:method_buffer_size ~space:fb;
-  if client = priv_root || pget p G.h_object_error = 0 then Ok ()
+  if client = priv_root || Rig_nv.get p G.h_object_error = 0 then Ok ()
   else begin
     (* The error notifier is described in no memory: the GSP reports a channel's
        error as an event (RC_TRIGGERED), which the path reads instead. *)
     memdesc p G.error_notifier_mem ~base:0 ~size:notifier_size ~space:0;
-    let h = pget p (fst3 G.h_userd_memory, 4) in
-    let off = pget p (fst3 G.userd_offset, 8) in
+    let h = Rig_nv.get p (fst3 G.h_userd_memory, 4) in
+    let off = Rig_nv.get p (fst3 G.userd_offset, 8) in
     match locate h off with
     | None ->
         Error
@@ -441,11 +438,11 @@ let channel_memory g ~client ~locate p =
 let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
   let module Pr = Defs.Promote_ctx in
   let module E = Defs.Promote_entry in
-  let p = params Pr.sizeof in
-  pset p Pr.entry_count (List.length buffers);
-  pset p Pr.engine_type Defs.nv2080_engine_type_graphics;
-  pset p Pr.h_chan_client client;
-  pset p Pr.h_object channel;
+  let p = Rig_nv.params Pr.sizeof in
+  Rig_nv.set p Pr.entry_count (List.length buffers);
+  Rig_nv.set p Pr.engine_type Defs.nv2080_engine_type_graphics;
+  Rig_nv.set p Pr.h_chan_client client;
+  Rig_nv.set p Pr.h_object channel;
   let rec fill i made = function
     | [] -> Ok (List.rev made)
     | (id, b) :: rest ->
@@ -457,15 +454,15 @@ let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
           | None -> lacking (object_memory g b.size)
         in
         let f x = elt Pr.promote_entry i x in
-        pset p (f E.buffer_id) id;
-        pset p (f E.gpu_virt_addr) (if v then m.Page_table.va else 0);
-        pset p (f E.b_initialize) (Bool.to_int ph);
-        pset p (f E.gpu_phys_addr) (if ph then paddr m else 0);
-        pset p (f E.size) (if ph then b.size else 0);
+        Rig_nv.set p (f E.buffer_id) id;
+        Rig_nv.set p (f E.gpu_virt_addr) (if v then m.Page_table.va else 0);
+        Rig_nv.set p (f E.b_initialize) (Bool.to_int ph);
+        Rig_nv.set p (f E.gpu_phys_addr) (if ph then paddr m else 0);
+        Rig_nv.set p (f E.size) (if ph then b.size else 0);
         (* NV2080_CTRL_GPU_PROMOTE_CTX_PHYS_ATTR: in the GPU's memory,
            cached. *)
-        pset p (f E.phys_attr) (if ph then 0x4 else 0);
-        pset p (f E.b_nonmapped) (Bool.to_int (ph && not v));
+        Rig_nv.set p (f E.phys_attr) (if ph then 0x4 else 0);
+        Rig_nv.set p (f E.b_nonmapped) (Bool.to_int (ph && not v));
         fill (i + 1) ((id, m) :: made) rest
   in
   let* made = fill 0 [] buffers in
@@ -502,7 +499,7 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   if cls = channel_class then
     Option.iter
       (fun p ->
-        let e = pget p Defs.Gpfifo_alloc.engine_type in
+        let e = Rig_nv.get p Defs.Gpfifo_alloc.engine_type in
         let runlist = Option.value ~default:0 (List.assoc_opt e g.runlists) in
         g.channels <- Channels.add obj runlist g.channels)
       p;
@@ -539,8 +536,8 @@ let token g obj p =
   let module W = Defs.Work_submit_token in
   let runlist = Option.value ~default:0 (Channels.find_opt obj g.channels) in
   let blackwell = g.p.chip.family = Blackwell in
-  pset p W.work_submit_token
-    (pget p W.work_submit_token lor (runlist lsl 16)
+  Rig_nv.set p W.work_submit_token
+    (Rig_nv.get p W.work_submit_token lor (runlist lsl 16)
     lor if blackwell then 1 lsl 30 else 0)
 
 let client_rm g ~client ~locate =
@@ -566,7 +563,7 @@ let rm g ~locate =
   let* _ =
     Result.map_error why
       (r.alloc ~parent:0 Defs.nv01_root
-         (Some (params Defs.Nv0000_alloc.sizeof)))
+         (Some (Rig_nv.params Defs.Nv0000_alloc.sizeof)))
   in
   Ok r
 
@@ -580,19 +577,20 @@ let va_size = (1 lsl 49) - (80 lsl 20)
 let objects (rm : Rig_nv.rm) =
   let module D = Defs.Nv0080_alloc in
   let module V = Defs.Vaspace_alloc in
-  let dp = params D.sizeof in
-  pset dp D.h_client_share rm.client;
-  pset dp D.va_mode Defs.nv_device_allocation_vamode_optional_multiple_vaspaces;
+  let dp = Rig_nv.params D.sizeof in
+  Rig_nv.set dp D.h_client_share rm.client;
+  Rig_nv.set dp D.va_mode
+    Defs.nv_device_allocation_vamode_optional_multiple_vaspaces;
   let alloc ~parent cls p = Result.map_error why (rm.alloc ~parent cls p) in
   let* device = alloc ~parent:rm.client Defs.nv01_device_0 (Some dp) in
   let* subdevice =
     alloc ~parent:device Defs.nv20_subdevice_0
-      (Some (params Defs.Nv2080_alloc.sizeof))
+      (Some (Rig_nv.params Defs.Nv2080_alloc.sizeof))
   in
-  let vp = params V.sizeof in
-  pset vp V.va_base va_base;
-  pset vp V.va_size va_size;
-  pset vp V.flags
+  let vp = Rig_nv.params V.sizeof in
+  Rig_nv.set vp V.va_base va_base;
+  Rig_nv.set vp V.va_size va_size;
+  Rig_nv.set vp V.flags
     (Defs.nv_vaspace_allocation_flags_enable_page_faulting
    lor Defs.nv_vaspace_allocation_flags_is_externally_owned);
   let* vaspace = alloc ~parent:device Defs.fermi_vaspace_a (Some vp) in
@@ -614,7 +612,7 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
   let module S = Defs.Static_gr_info in
   let module L = Defs.Gr_info_list in
   let module I = Defs.Internal_gr_info in
-  let p = params S.sizeof in
+  let p = Rig_nv.params S.sizeof in
   let* () =
     Result.map_error why
       (rm.control subdevice Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info
@@ -622,7 +620,7 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
   in
   let info i =
     let engine = elt S.engine_info 0 (0, 0) in
-    pget p (elt L.info_list i (fst engine + fst I.data, snd I.data))
+    Rig_nv.get p (elt L.info_list i (fst engine + fst I.data, snd I.data))
   in
   match List.map info gr_indices with
   | [ gpcs; tpcs_per_gpc; sms_per_tpc; warps_per_sm; sm_version ] ->
@@ -664,18 +662,19 @@ let golden g =
       (alloc g ~client:priv_root ~locate ~objects ~parent cls p)
   in
   let* _ =
-    alloc ~parent:0 Defs.nv01_root (Some (params Defs.Nv0000_alloc.sizeof))
+    alloc ~parent:0 Defs.nv01_root
+      (Some (Rig_nv.params Defs.Nv0000_alloc.sizeof))
   in
-  let dp = params Defs.Nv0080_alloc.sizeof in
-  pset dp Defs.Nv0080_alloc.h_client_share priv_root;
+  let dp = Rig_nv.params Defs.Nv0080_alloc.sizeof in
+  Rig_nv.set dp Defs.Nv0080_alloc.h_client_share priv_root;
   let* dev = alloc ~parent:priv_root Defs.nv01_device_0 (Some dp) in
   let* subdev =
     alloc ~parent:dev Defs.nv20_subdevice_0
-      (Some (params Defs.Nv2080_alloc.sizeof))
+      (Some (Rig_nv.params Defs.Nv2080_alloc.sizeof))
   in
   let* vaspace =
     alloc ~parent:dev Defs.fermi_vaspace_a
-      (Some (params Defs.Vaspace_alloc.sizeof))
+      (Some (Rig_nv.params Defs.Vaspace_alloc.sizeof))
   in
   let control obj cmd p =
     Result.map_error why (control g ~client:priv_root obj cmd p)
@@ -683,13 +682,15 @@ let golden g =
   (* Each engine's runlist, from the device information table. *)
   let module T = Defs.Device_info_table in
   let module E = Defs.Device_entry in
-  let t = params T.sizeof in
+  let t = Rig_nv.params T.sizeof in
   let* () =
     control subdev Defs.nv2080_ctrl_cmd_fifo_get_device_info_table (Some t)
   in
   g.runlists <-
-    List.init (pget t T.num_entries) (fun i ->
-        let data k = pget t (elt T.entries i (elt E.engine_data k (0, 4))) in
+    List.init (Rig_nv.get t T.num_entries) (fun i ->
+        let data k =
+          Rig_nv.get t (elt T.entries i (elt E.engine_data k (0, 4)))
+        in
         (data 2, data 3));
   (* The reserved page directory entries. *)
   let tables = g.p.tables in
@@ -704,20 +705,20 @@ let golden g =
     | None -> Error "no GPU memory for the GSP's page directory"
   in
   let module R = Defs.Reserved_pdes in
-  let r = params R.sizeof in
-  pset r R.page_size reserved;
-  pset r R.num_levels_to_copy (List.length levels);
-  pset r R.virt_addr_lo va;
-  pset r R.virt_addr_hi (va + reserved - 1);
+  let r = Rig_nv.params R.sizeof in
+  Rig_nv.set r R.page_size reserved;
+  Rig_nv.set r R.num_levels_to_copy (List.length levels);
+  Rig_nv.set r R.virt_addr_lo va;
+  Rig_nv.set r R.virt_addr_hi (va + reserved - 1);
   let shifts = List.rev (Page_entry.levels (Mmu.version g.p.chip.family)) in
   List.iteri
     (fun i table ->
       let f x = elt R.levels i x in
-      pset r (f R.levels_phys_address) table;
-      pset r (f R.levels_size)
+      Rig_nv.set r (f R.levels_phys_address) table;
+      Rig_nv.set r (f R.levels_size)
         (if i = 0 then root_entries g.p.chip * 8 else page);
-      pset r (f R.levels_page_shift) (List.nth shifts i);
-      pset r (f R.levels_aperture) 1)
+      Rig_nv.set r (f R.levels_page_shift) (List.nth shifts i);
+      Rig_nv.set r (f R.levels_aperture) 1)
     levels;
   let* () =
     control vaspace Defs.nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes
@@ -726,32 +727,32 @@ let golden g =
   (* The channel. *)
   let* area = object_memory g page in
   let module G = Defs.Gpfifo_alloc in
-  let gp = params G.sizeof in
-  pset gp G.gp_fifo_offset area.va;
-  pset gp G.gp_fifo_entries golden_entries;
-  pset gp G.engine_type Defs.nv2080_engine_type_graphics;
-  pset gp G.cid golden_cid;
-  pset gp G.h_va_space vaspace;
-  pset gp (fst3 G.userd_offset, 8) golden_userd;
+  let gp = Rig_nv.params G.sizeof in
+  Rig_nv.set gp G.gp_fifo_offset area.va;
+  Rig_nv.set gp G.gp_fifo_entries golden_entries;
+  Rig_nv.set gp G.engine_type Defs.nv2080_engine_type_graphics;
+  Rig_nv.set gp G.cid golden_cid;
+  Rig_nv.set gp G.h_va_space vaspace;
+  Rig_nv.set gp (fst3 G.userd_offset, 8) golden_userd;
   memdesc gp G.userd_mem
     ~base:(paddr area + golden_userd)
     ~size:golden_userd_size ~space:Defs.addr_fbmem;
-  pset gp G.internal_flags golden_internal_flags;
-  pset gp G.flags golden_flags;
+  Rig_nv.set gp G.internal_flags golden_internal_flags;
+  Rig_nv.set gp G.flags golden_flags;
   let channel_class, compute_class, copy_class = classes g.p.chip.family in
   let* channel = alloc ~parent:dev channel_class (Some gp) in
   (* The context buffers' sizes. *)
   let module C = Defs.Context_buffers_info in
   let module Cb = Defs.Context_buffers in
   let module B = Defs.Context_buffer in
-  let c = params C.sizeof in
+  let c = Rig_nv.params C.sizeof in
   let* () =
     control subdev
       Defs.nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info (Some c)
   in
   let info ?(add = 0) ?align idx =
     let f x =
-      pget c (elt C.engine_context_buffers_info 0 (elt Cb.engine idx x))
+      Rig_nv.get c (elt C.engine_context_buffers_info 0 (elt Cb.engine idx x))
     in
     round_up (f B.size + add) (Option.value align ~default:(f B.alignment))
   in

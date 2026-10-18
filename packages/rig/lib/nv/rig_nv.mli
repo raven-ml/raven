@@ -363,6 +363,25 @@ type params =
 (** The type for the parameters of an RM call: bytes outside the OCaml heap,
     which the RM reads and writes in place. *)
 
+val params : int -> params
+(** [params n] is [n] zero bytes. *)
+
+val get : params -> int * int -> int
+(** [get p (at, n)] is the field of [n] bytes at byte [at] of [p], in the
+    host's byte order, as the RM lays out its parameters: unsigned for 1, 2
+    and 4 bytes, and for 8 the value [Int64.to_int] gives, its top bit
+    dropped.
+
+    Raises [Invalid_argument] if [n] is not 1, 2, 4 or 8, or if the field
+    ends past [p]. *)
+
+val set : params -> int * int -> int -> unit
+(** [set p (at, n) x] writes the low [n] bytes of [x] to the field of [n]
+    bytes at byte [at] of [p], as {!get} reads it.
+
+    Raises [Invalid_argument] if [n] is not 1, 2, 4 or 8, or if the field
+    ends past [p]. *)
+
 type refusal =
   | Lacking of string
       (** The RM or the path lacks the memory or another resource the call

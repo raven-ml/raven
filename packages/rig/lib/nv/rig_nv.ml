@@ -449,21 +449,21 @@ let params n =
   Bigarray.Array1.fill p '\000';
   p
 
-(* A field is (byte offset, bytes); the generated tables hold widths of 1, 2, 4
-   and 8 bytes only. *)
 let get p (at, n) =
   match n with
   | 1 -> Char.code (Bigarray.Array1.get p at)
   | 2 -> get16 p at
   | 4 -> Int32.to_int (get32 p at) land 0xffff_ffff
-  | _ -> Int64.to_int (get64 p at)
+  | 8 -> Int64.to_int (get64 p at)
+  | n -> invalid_argf "Rig_nv.get: a field of %d bytes" n
 
 let set p (at, n) v =
   match n with
   | 1 -> Bigarray.Array1.set p at (Char.unsafe_chr (v land 0xff))
   | 2 -> set16 p at (v land 0xffff)
   | 4 -> set32 p at (Int32.of_int v)
-  | _ -> set64 p at (Int64.of_int v)
+  | 8 -> set64 p at (Int64.of_int v)
+  | n -> invalid_argf "Rig_nv.set: a field of %d bytes" n
 
 (* Element [i] of the array field (offset, bytes of an element, elements), and
    the field [f] of that element. *)
