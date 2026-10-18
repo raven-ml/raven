@@ -297,6 +297,22 @@ let others =
           let before = Rig.allocated (m 0) in
           ignore (Nx.neg (Nx.donate d));
           equal int before (Rig.allocated (m 0)));
+      test "a check that raises at issue holds none of its data" (fun () ->
+          let d = Nx.place S.on (host_of Nx.float32 [| 1 |] [| 1. |]) in
+          let ok = Nx.place S.on (host_of Nx.bool [| 1 |] [| false |]) in
+          check ok [ d ] (fun _ _ -> raise Exit);
+          (* The wait that reads the failing check again ends its hold. *)
+          let drain () = try Nx.sync d with Exit -> () in
+          Fun.protect ~finally:drain (fun () ->
+              let d' = host_of Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+              let d' = Nx.copy (Nx.place S.on d') in
+              let ok' = host_of Nx.bool [| 3 |] [| true; true; true |] in
+              let ok' = Nx.place S.on ok' in
+              raises Exit (fun () -> check ok' [ d' ] (fun _ _ -> Failed 0));
+              Rig.free_cache (m 0);
+              let before = Rig.allocated (m 0) in
+              ignore (Nx.neg (Nx.donate d'));
+              equal int before (Rig.allocated (m 0))));
       (* A loop that draws over a fresh parameter on S each step and never
          waits on S: once warm, the device holds as many bytes after 200 more
          steps as after the first, its collected memory moved and its cache
