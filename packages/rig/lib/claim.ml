@@ -91,7 +91,7 @@ let write_bytes b k f =
   Dev.check_held fn;
   Buffer.check_live fn b;
   if Buffer.access b = Read then
-    invalid_argf "Rig.%s: the buffer's memory admits only reads" fn;
+    invalid_argf "Rig.%s: the buffer admits only reads" fn;
   scope fn Read_write b k f
 
 let mark b =
@@ -279,7 +279,8 @@ let refuse_ended () =
   invalid_arg "Rig.Claim.consume: the claims' with_ returned"
 
 (* The claims hold [b]'s memory until they end, so a word exclusive is theirs;
-   [consumed] moves it only while they have not ended. *)
+   [consumed] moves it only while they have not ended. The generation it
+   raises to says what the buffer admits ({!Memory.admits}). *)
 let consume c ~why b =
   if ended c then refuse_ended ();
   let cl = b.mem.alloc in

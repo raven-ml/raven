@@ -805,12 +805,12 @@ exception Out_of_memory of t * int
 
 (** {1:buffers Buffers} *)
 
-(** The type for accesses to memory: what memory admits, what a host access
-    waits for, and how fixed memory is used ({!Submission.make}). *)
+(** The type for accesses to memory: what a buffer admits, what a host
+    access waits for, and how fixed memory is used ({!Submission.make}). *)
 type access =
   | Read  (** Reading. *)
   | Read_write
-      (** Reading and writing, which the memory must admit
+      (** Reading and writing, which the buffer must admit
           ({!Buffer.val-access}). *)
 
 (** Buffers of device memory.
@@ -968,15 +968,18 @@ module Buffer : sig
       bigarrays over the same bytes. An empty buffer overlaps nothing. *)
 
   val access : t -> access
-  (** [access b] is the access [b]'s memory admits, the same through each of
-      its views and borrows. It is [Read_write] for memory {!create},
-      {!of_string} and {!of_bigarray} make, and what {!of_io} was given.
+  (** [access b] is the access [b] admits, which its views and borrows
+      admit too. It is what [b]'s memory admits: [Read_write] for memory
+      {!create}, {!of_string} and {!of_bigarray} make, and what {!of_io} was
+      given. A buffer {!Claim.consume} returned from memory its claims did
+      not hold exclusive admits only [Read] ({!Rig.section-claims}).
 
-      rig never writes [Read] memory, and refuses a copy or work that would
-      ({!copy}, {!Submission.make}, {!submit}), and {!write} of it raises. A
-      write through an array {!export} made breaks this, and reads of the
-      memory then see unspecified bytes. A library that writes its caller's
-      buffer checks this first, so that it reports the error itself. *)
+      rig never writes through a [Read] buffer, and refuses a copy or work
+      that would ({!copy}, {!Submission.make}, {!submit}), and {!write} of
+      it raises. A write through an array {!export} made breaks this, and
+      reads of the memory then see unspecified bytes. A library that writes
+      its caller's buffer checks this first, so that it reports the error
+      itself. *)
 
   val dead : t -> string option
   (** [dead b] is [Some why] if [b] is dead, where [why] is the reason its
@@ -1052,7 +1055,7 @@ module Buffer : sig
       returns sees [f]'s writes. [f] must not keep [a] after it returns,
       since nothing orders a later access through it.
 
-      Raises [Invalid_argument] also if [b]'s memory admits only [Read]
+      Raises [Invalid_argument] also if [b] admits only [Read]
       ({!val-access}). *)
 
   val export :
@@ -1106,11 +1109,11 @@ module Buffer : sig
       are there.
 
       Raises [Invalid_argument] if [src] or [dst] is dead, they differ in
-      length or overlap ({!overlaps}), [dst]'s memory admits only [Read], one
-      side is an io device's memory and the other a borrow of it, a side's
-      memory is held exclusive, the copy has bytes and no device can copy
-      between the two sides, or it goes through staging memory whose two
-      slots the calling thread holds ({!section-domains}). Raises {!Lost} if
+      length or overlap ({!overlaps}), [dst] admits only [Read], one side is
+      an io device's memory and the other a borrow of it, a side's memory is
+      held exclusive, the copy has bytes and no device can copy between the
+      two sides, or it goes through staging memory whose two slots the
+      calling thread holds ({!section-domains}). Raises {!Lost} if
       a device that runs the copy is lost or the copy loses it,
       {!Out_of_memory} if staging memory cannot be allocated or mapped, and
       what an io device's read or write raises. *)
@@ -1120,8 +1123,7 @@ module Buffer : sig
       [b] from its byte [j].
 
       Raises [Invalid_argument] if the ranges are not valid, [b] is dead or
-      its memory admits only [Read], and otherwise as {!copy}[ ~dst:b]
-      raises. *)
+      it admits only [Read], and otherwise as {!copy}[ ~dst:b] raises. *)
 
   val blit_to_bytes : t -> int -> bytes -> int -> int -> unit
   (** [blit_to_bytes b i s j n] copies the [n] bytes of [b] from its byte [i]
@@ -1133,8 +1135,8 @@ module Buffer : sig
   val fill : t -> char -> unit
   (** [fill b c] sets every byte of [b] to [c].
 
-      Raises [Invalid_argument] if [b] is dead or its memory admits only
-      [Read], and otherwise as {!copy}[ ~dst:b] raises. *)
+      Raises [Invalid_argument] if [b] is dead or admits only [Read], and
+      otherwise as {!copy}[ ~dst:b] raises. *)
 
   (** {1:low Low level}
 
@@ -1541,13 +1543,13 @@ module Submission : sig
 
   val write : int -> at:int -> ref
   (** [write slot ~at] is a ref through which the work reads and writes the
-      buffer [slot], whose memory must admit writes ({!Buffer.val-access}). *)
+      buffer [slot], which must admit writes ({!Buffer.val-access}). *)
 
   val unordered : int -> at:int -> ref
   (** [unordered slot ~at] is a ref through which the work reads and writes
       the buffer [slot] at any time, ordered only by device order, the
-      exception to rule 3 of {!Rig.section-order}. The buffer's memory must
-      admit writes. *)
+      exception to rule 3 of {!Rig.section-order}. The buffer must admit
+      writes. *)
 
   val entry : Image.func -> at:int -> ref
   (** [entry fn ~at] is a ref whose 8 bytes hold, when the work runs, the
@@ -1568,8 +1570,8 @@ module Submission : sig
 
   val copy : src:side -> dst:side -> part
   (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
-      have one length and share no byte ({!Buffer.overlaps}), and [dst]'s
-      memory must admit writes. Each buffer must be on the device
+      have one length and share no byte ({!Buffer.overlaps}), and [dst] must
+      admit writes. Each buffer must be on the device
       ({!Buffer.borrow} puts another device's memory there). On a driver's
       device of another machine, one of the two may instead be memory this
       process's host addresses, whose bytes the device's driver carries. A
@@ -1578,8 +1580,8 @@ module Submission : sig
       checks the ends that are slots, with its buffers.
 
       Raises [Invalid_argument] if [src] and [dst] are one slot or a slot is
-      negative, a buffer end is dead, [dst] is a buffer whose memory admits
-      only reads, or both ends are buffers and they differ in length or
+      negative, a buffer end is dead, [dst] is a buffer that admits only
+      reads, or both ends are buffers and they differ in length or
       share a byte. *)
 
   val launch : ?refs:ref array -> Image.func -> params:int -> part
@@ -1922,16 +1924,19 @@ end
        {e outside the claims}
        and never exclusive. This holds for memory {!Buffer.of_bigarray} and
        {!Buffer.of_io} make, memory {!Buffer.export} exported, and memory
-       {!Claim.share} marked. [Read] memory ({!Buffer.val-access}) is never
-       exclusive either.}
+       {!Claim.share} marked. Memory that admits only [Read]
+       ({!Buffer.val-access}) is never exclusive either.}
     {- {!Claim.consume} consumes an allocation. A call that uses a dead
        buffer's bytes raises [Invalid_argument] with the reason given to the
        consumption. Consuming frees nothing, and the memory lives on in the
        buffer that {!Claim.consume} returns. Where the memory was held
-       exclusive, that buffer's holder may write it in place, and no holder
-       of a buffer made before the consumption sees the write. Code that the
-       holder hands the new buffer sees the write, so the holder must order
-       that code's accesses as for a buffer it made.}}
+       exclusive, that buffer admits writes, its holder may write it in
+       place, and no holder of a buffer made before the consumption sees the
+       write. Code that the holder hands the new buffer sees the write, so
+       the holder must order that code's accesses as for a buffer it made.
+       Otherwise another claim reads the memory, and the buffer admits only
+       [Read] ({!Buffer.val-access}), so the bytes that claim reads are never
+       written through it.}}
 
     Taking a claim never waits. A read claim on memory held exclusive raises
     [Invalid_argument], and a donated input whose memory another claim holds
@@ -1939,13 +1944,17 @@ end
 
     Which inputs a function donates is part of that function's contract, and
     the function decides alone. A caller that passes a buffer to such a
-    function and still needs it afterwards must hold a read claim on it
-    across the call. The donation then stays a read claim, and the function
-    writes its result elsewhere. A host reader of memory that another
-    domain may donate uses {!Buffer.read}, which claims before it waits,
-    since a claim taken after {!Buffer.wait} returns leaves a moment in which
-    the donation writes the memory. Host code over several buffers waits for
-    them ({!Buffer.wait}) inside a {!Claim.with_} that reads them. Where no
+    function and still needs its bytes holds a read claim on it across the
+    call. The donation then stays a read claim, the function writes its
+    result elsewhere, and the bytes stay as they were. Whether the caller's
+    buffer stays live is the function's contract too: a function that
+    consumes its input kills the buffer under any claim.
+
+    A host reader of memory that another domain may donate uses
+    {!Buffer.read}, which claims before it waits, since a claim taken after
+    {!Buffer.wait} returns leaves a moment in which the donation writes the
+    memory. Host code over several buffers waits for them ({!Buffer.wait})
+    inside a {!Claim.with_} that reads them. Where no
     other domain may donate the memory, the reader may use {!Buffer.wait}.
 
     A prepared submission claims the memory it uses only while a submit
@@ -2014,9 +2023,10 @@ module Claim : sig
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why], so [b]
       and every buffer made over that memory until then are dead. It is a live
-      buffer over the same memory, the only one. The caller must not write
-      it in place unless [exclusive c b] was [true] before the call. [c] no longer
-      holds the memory exclusive, and the buffer is claimed as any other.
+      buffer over the same memory, the only one. It admits writes if [c]
+      held the memory exclusive ({!exclusive}), and only [Read] otherwise
+      ({!Buffer.val-access}). [c] no longer holds the memory exclusive, and
+      the buffer is claimed as any other.
 
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
       does not claim [b]'s memory, or [b] is dead or does not

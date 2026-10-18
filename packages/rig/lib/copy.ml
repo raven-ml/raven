@@ -403,7 +403,7 @@ let rec copy ~src ~dst =
   then
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then
-    invalid_argf "Rig.%s: the destination's memory admits only reads" fn;
+    invalid_argf "Rig.%s: the destination admits only reads" fn;
   Claim.hold2 fn src dst claimed n
 
 (* [copy] under read claims on both sides, which keep a donation from writing
@@ -490,7 +490,7 @@ and leg ~src ~dst = route ~wait:false src dst (Buffer.length src)
 
 let writable fn b =
   if Buffer.access b = Read then
-    invalid_argf "Rig.%s: the buffer's memory admits only reads" fn
+    invalid_argf "Rig.%s: the buffer admits only reads" fn
 
 (* The bytes of [dst], which the host does not address, through staging
    memory, holding a read claim on it as a copy does: [put h at] writes the

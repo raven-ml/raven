@@ -205,6 +205,13 @@ let no_entry = entry Dev.host (Kept Nothing) 0 0
 
 let outside = 1
 let read_only = 2
+
+(* A generation's low bit is set iff its buffers admit only reads: the first
+   one of memory that admits only reads, and the one a consumption of memory
+   not held exclusive raises to. Each buffer carries its generation, so it
+   carries its access in no word of its own. *)
+let admits g : access = if g land 1 = 1 then Read else Read_write
+let first_generation (e : entry) = if e.access = Read then 1 else 0
 let one_claim = 4
 let exclusive = -1
 
@@ -255,7 +262,7 @@ let own ~keep ~host ~address ~handle dev entry =
       owner = dev;
       host;
       count;
-      generation = 0;
+      generation = first_generation entry;
       why = "";
       entry;
       token = no_token;

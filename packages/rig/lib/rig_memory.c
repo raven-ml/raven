@@ -198,7 +198,6 @@ enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
 /* The claim word as rig's Memory module lays it out: from 0 up, bits for
    memory outside the claims and memory that admits only reads, and the
    step per read claim; -1, held exclusive. */
-#define CLAIM_READ_ONLY 2
 #define CLAIM_ONE 4
 #define CLAIM_EXCLUSIVE (-1)
 
@@ -413,11 +412,12 @@ claim_checked(value b, enum rig_access access, int every) {
   value dev = Field(Field(b, BUFFER_MEM), MEMORY_DEV);
   value alloc = alloc_of(b);
   _Atomic value *word = (_Atomic value *)&Field(alloc, ALLOC_COUNT);
+  /* A buffer admits only reads iff its generation is odd. */
+  if (access == RIG_READ_WRITE && (Long_val(Field(b, BUFFER_GEN)) & 1))
+    return RIG_READ_ONLY;
   value w = atomic_load_explicit(word, memory_order_relaxed);
   do {
     if (Long_val(w) < 0) return RIG_EXCLUSIVE;
-    if (access == RIG_READ_WRITE && (Long_val(w) & CLAIM_READ_ONLY))
-      return RIG_READ_ONLY;
   } while (!atomic_compare_exchange_weak(word, &w,
                                          Val_long(Long_val(w) + CLAIM_ONE)));
   if (Long_val(load_field(alloc, ALLOC_GEN)) != Long_val(Field(b, BUFFER_GEN))) {
@@ -540,6 +540,13 @@ static _Atomic value *claims_state(value v_c) {
   return (_Atomic value *)&Field(v_c, CLAIMS_STATE);
 }
 
+/* The generation a consumption raises [g] to: the next even one for memory
+   held exclusive, whose new buffer admits writes, and the next odd one
+   otherwise, whose new buffer admits only reads (Memory.admits). */
+static intnat next_generation(intnat g, int exclusive) {
+  return ((g >> 1) + 1) * 2 + (exclusive ? 0 : 1);
+}
+
 /* What the step answers when the claims have ended, or when [v_b] is
    dead: another consumption of its memory came first. */
 #define CONSUME_ENDED (-1)
@@ -566,14 +573,18 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
      buffer dead. Word first, such a claim would pass its check and read
      beside the consumer's writes. */
   if (atomic_load(gen) == g) caml_modify(&Field(alloc, ALLOC_WHY), v_why);
-  if (!atomic_compare_exchange_strong(gen, &g, Val_long(Long_val(g) + 1))) {
+  /* The claims' read claim keeps any other with_ from making the memory
+     exclusive, so the word read here is what it is at the raise. */
+  int held = atomic_load(claim_word(v_b)) == Val_long(CLAIM_EXCLUSIVE);
+  value next = Val_long(next_generation(Long_val(g), held));
+  if (!atomic_compare_exchange_strong(gen, &g, next)) {
     atomic_fetch_sub(state, CLAIMS_CONSUMING);
     return Val_long(CONSUME_DEAD);
   }
   value w = Val_long(CLAIM_EXCLUSIVE);
   atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_ONE));
   atomic_fetch_sub(state, CLAIMS_CONSUMING);
-  return Val_long(Long_val(g) + 1);
+  return next;
 }
 
 /* Waits until the claims [v_c], which have ended, have no consumption

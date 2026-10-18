@@ -189,6 +189,13 @@ val proxy : entry -> int
 val outside : int
 (** [outside] is bit 0, set for memory outside the claims. *)
 
+val admits : int -> access
+(** [admits g] is what the buffers of the generation [g] admit: [Read] iff
+    [g] is odd. The first generation of memory that admits only reads is 1,
+    others' 0; a consumption raises the generation to the next even one
+    where its claims held the memory exclusive, and to the next odd one
+    otherwise ([caml_rig_claim_consume]). *)
+
 val read_only : int
 (** [read_only] is bit 1, set for memory that admits only reads. *)
 

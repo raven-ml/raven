@@ -293,7 +293,8 @@ type alloc = {
       (** The claim word ({!Memory.section-claims}). *)
   mutable generation : int; [@atomic]
       (** Raised by each consumption, which kills the buffers of older
-          ones. *)
+          ones. Its low bit is set iff the buffers of the generation admit
+          only reads ({!Memory.admits}). *)
   mutable why : string;  (** The last consumption's reason. *)
   mutable entry : entry; [@atomic]
       (** The allocation's entry, {!Memory.no_entry} for host memory no
@@ -321,7 +322,8 @@ type memory = {
     is [alloc]'s [owner], or a borrow's. *)
 
 type buffer = { mem : memory; offset : int; length : int; generation : int }
-(** {!Rig.Buffer.t}: live while [generation] is its allocation's. *)
+(** {!Rig.Buffer.t}: live while [generation] is its allocation's, whose low
+    bit says what it admits ({!Memory.admits}). *)
 
 type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that

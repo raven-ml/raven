@@ -14,7 +14,7 @@ type access = Def.access = Read | Read_write
 let generation (a : alloc) = Atomic.Loc.get [%atomic.loc a.generation]
 let is_live b = b.generation = generation b.mem.alloc
 let dead b = if is_live b then None else Some b.mem.alloc.why
-let access b = b.mem.alloc.entry.access
+let access b = Memory.admits b.generation
 
 let refuse_dead fn b =
   invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.alloc.why

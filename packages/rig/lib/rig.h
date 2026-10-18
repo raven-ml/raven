@@ -65,7 +65,8 @@ enum rig_claim {
   RIG_LOST,      /* claimed: rig_buffer_wait answers Rig.Lost */
   RIG_DEAD,      /* not claimed: rig_buffer_why gives the reason */
   RIG_EXCLUSIVE, /* not claimed: the memory is held exclusive */
-  RIG_READ_ONLY  /* not claimed: RIG_READ_WRITE on Read memory */
+  RIG_READ_ONLY  /* not claimed: RIG_READ_WRITE of a buffer that admits
+                    only reads (Rig.Buffer.access) */
 };
 
 /* Claims [b]'s memory for [access]. It claims, then checks [b] under the

@@ -387,6 +387,51 @@ let test_consume_twice () =
   ignore (Sys.opaque_identity (B.create Rig.host (1 lsl 16)));
   equal char 'c' (B.read b'' Bigarray.char (fun a -> a.{(1 lsl 16) - 1}))
 
+(* A consumption of memory that another claim reads kills every earlier buffer
+   as any other, and the buffer it gives admits only reads, through its views
+   too, so the reader's bytes are never written in place. Consumed again where
+   the donation holds it exclusive, the memory admits writes again. *)
+let test_consume_read () =
+  let access =
+    Testable.make
+      ~pp:(fun ppf a ->
+        Format.pp_print_string ppf
+          (match a with Rig.Read -> "Read" | Rig.Read_write -> "Read_write"))
+      ~equal:( = )
+  in
+  let reads msg f =
+    raises_match ~msg (Exn.invalid_arg ~substring:"admits only reads") f
+  in
+  let b = B.create Rig.host 8 in
+  B.fill b 'a';
+  let b' =
+    Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
+        Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+            equal ~msg:"exclusive" bool false (Claim.exclusive c b);
+            let b' = Claim.consume c ~why:"donated" b in
+            reads "a write under the reader's claim" (fun () ->
+                B.write b' Bigarray.char ignore);
+            b'))
+  in
+  equal ~msg:"the earlier buffer" (option string) (Some "donated") (B.dead b);
+  equal ~msg:"the consumed buffer's access" access Rig.Read (B.access b');
+  equal ~msg:"a view's access" access Rig.Read
+    (B.access (B.view b' ~first:0 ~length:4));
+  reads "a write" (fun () -> B.write b' Bigarray.char ignore);
+  reads "a fill" (fun () -> B.fill b' 'z');
+  reads "a copy into it" (fun () -> B.copy ~src:(B.of_string "12345678") ~dst:b');
+  equal ~msg:"a claim from C to write" answer R.Read_only
+    (R.claim b' Rig.Read_write);
+  equal ~msg:"its bytes" char 'a' (B.read b' Bigarray.char (fun a -> a.{7}));
+  let b'' =
+    Claim.with_ ~read:[] ~donate:[ b' ] (fun c ->
+        equal ~msg:"exclusive again" bool true (Claim.exclusive c b');
+        Claim.consume c ~why:"again" b')
+  in
+  equal ~msg:"consumed exclusive" access Rig.Read_write (B.access b'');
+  B.fill b'' 'z';
+  equal ~msg:"written" char 'z' (B.read b'' Bigarray.char (fun a -> a.{7}))
+
 let test_consume_refusals () =
   let b = B.create Rig.host 16 in
   let part = B.view b ~first:0 ~length:8 in
@@ -1407,6 +1452,8 @@ let tests =
       [
         test "memory consumed twice lives while its last buffer does"
           test_consume_twice;
+        test "a buffer consumed while another claim reads admits only reads"
+          test_consume_read;
         test "only a claimed buffer that spans its memory is consumed"
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"

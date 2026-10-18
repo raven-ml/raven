@@ -133,7 +133,7 @@ let copy ~src ~dst =
   | _ -> ());
   (match dst with
   | Buffer b when Buffer.access b = Def.Read ->
-      invalid_argf "Rig.%s: into memory that admits only reads" fn
+      invalid_argf "Rig.%s: into a buffer that admits only reads" fn
   | Slot _ | Buffer _ -> ());
   Copy { src; dst }
 
@@ -1065,9 +1065,9 @@ let check_owner s b =
   if o != s.dev && o != m.dev && Dev.is_lost o then Dev.raise_lost o
 
 (* Refuses [b], the run's buffer [k], used with [use], unless it is live, on
-   [s]'s device or carried for copies alone, and, written, of memory that
-   admits writes; and hands its stamps and address to the call's slot [k],
-   and what a copy passes the driver to its side [k]. *)
+   [s]'s device or carried for copies alone, and, written, admits writes; and
+   hands its stamps and address to the call's slot [k], and what a copy passes
+   the driver to its side [k]. *)
 let name_one s c use k b =
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.alloc.why;
@@ -1083,9 +1083,8 @@ let name_one s c use k b =
   let a = b.mem.alloc in
   if a.entry == Memory.no_entry then Memory.ensure_entry a;
   let e = a.entry in
-  if use <> Use_read && e.access = Def.Read then
-    invalid_argf
-      "Rig.%s: buffers.(%d) is written and its memory admits only reads" fn k;
+  if use <> Use_read && Buffer.access b = Def.Read then
+    invalid_argf "Rig.%s: buffers.(%d) is written and admits only reads" fn k;
   (* -1 for memory with no address, which the collect refuses a ref to. *)
   let address = if b.mem.address < 0 then -1 else b.mem.address + b.offset in
   call_slot c k e.stamps address;
