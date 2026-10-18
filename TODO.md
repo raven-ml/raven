@@ -282,8 +282,8 @@ raven / llama.cpp (Vulkan; ROCm):
 - frontend, `sync` with deferred per-set checks (a read raises the earliest
   failed one); then the samplers' parameter checks move there, and
   `Rng.truncated_normal`, `dirichlet`, `categorical`, `permutation`
-- frontend, donated reuse for `set`'s and `scatter`'s target and
-  `contract`'s `init`, with a `dispatch/kv-append-4096` row
+- record `dispatch/kv-append-4096` and its `-copied` twin; donation's kill
+  criterion is at least 2x over the copy on CUDA and AMD
 - order and counting operations: check their contracts, public laws and
   bench baselines
 - nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and

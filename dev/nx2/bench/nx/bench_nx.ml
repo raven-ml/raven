@@ -5,8 +5,9 @@
 
 (* nx's per-call costs above the array layer, each row what a user calls: an
    operation on one-element host values, its kernel called as nx calls it and
-   directly, a view, constants, an operation over two devices, reading a value's
-   shape, placing, and operations beside and under interpretations.
+   directly, a decode step's cache update, a view, constants, an operation
+   over two devices, reading a value's shape, placing, and operations beside
+   and under interpretations.
 
    Each row builds its inputs in its setup, in the worker that times it, so
    that a worker holds one row's inputs. *)
@@ -42,6 +43,16 @@ let chain half n =
   go n (Nx.zeros D.Float32 [| 1 |])
 
 let half () = Nx.scalar D.Float32 0.5
+
+(* A decode step's cache update: one row written at a position held in data
+   into gpt-oss's keys of one layer, a [1; 8; 4096; 64] bfloat16 cache, each
+   call updating the last call's result as decode steps do. Donated, the row
+   is written in place; copied, the cache is copied first. *)
+let kv_cache () =
+  let cache = Nx.copy (filled D.Bfloat16 [| 1; 8; 4096; 64 |] 0.) in
+  let row = filled D.Bfloat16 [| 1; 8; 1; 64 |] 1. in
+  let pos = on_host (Nx.scalar D.Int64 2048L) in
+  (ref cache, row, Nx.[ A; A; D (pos, 1); A ])
 
 let dispatch_rows =
   Thumper.group "dispatch"
@@ -81,6 +92,10 @@ let dispatch_rows =
       Thumper.bench_with_setup "add-held-scalar-1"
         ~setup:(fun () -> (one (), half ()))
         (fun (x, half) -> Nx.add x half);
+      Thumper.bench_with_setup "kv-append-4096" ~setup:kv_cache
+        (fun (cache, row, at) -> cache := Nx.set at row (Nx.donate !cache));
+      Thumper.bench_with_setup "kv-append-4096-copied" ~setup:kv_cache
+        (fun (cache, row, at) -> cache := Nx.set at row !cache);
     ]
 
 let constant_rows =
