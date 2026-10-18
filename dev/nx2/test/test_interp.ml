@@ -368,20 +368,6 @@ let test_systhreads () =
   equal ~msg:"another systhread computes" (array float_exact) [| 2.; 4.; 6. |]
     (elements y)
 
-let test_later () =
-  let a, b =
-    logged ~name:"a" Values (ref []) (fun a ->
-        logged ~name:"b" Values (ref []) (fun b -> (a, b)))
-  in
-  equal ~msg:"b later" bool true (Nx.Prim.later b a);
-  equal ~msg:"a not later" bool false (Nx.Prim.later a b);
-  let c =
-    Domain.join
-      (Domain.spawn (fun () -> logged ~name:"c" Values (ref []) Fun.id))
-  in
-  equal ~msg:"c, started after them on another domain" bool true
-    (Nx.Prim.later c b)
-
 (* A formula reaches a Values rule as it is, computing nothing. *)
 let test_constants () =
   let c = Nx.zeros f32 [| 3 |] in
@@ -453,7 +439,6 @@ let rule =
         test_domains;
       test "a value refuses another systhread; an extent does not reach one"
         test_systhreads;
-      test "later orders by start, across domains" test_later;
       test "a formula reaches a values rule as it is" test_constants;
       test "a captured formula reaches an extent as its operations"
         test_captured;
@@ -1719,6 +1704,217 @@ let fibers =
       test "a rule's exception raises inside the extent" test_rule_raises;
     ]
 
+(* Nesting: an interpretation that adopts another's values *)
+
+let adopting ~name p log f = logged ~name (Adopting p) log f
+
+(* A rule's answer to an operation, or the message of its refusal. *)
+let answer f =
+  match f () with
+  | _ -> "computed"
+  | exception Invalid_argument m -> m
+
+(* An adopting interpretation receives the operations on its parent's values
+   as on its own, before the parent, which receives none of them. *)
+let test_adopting_reach () =
+  let x = x3 () in
+  let parent = ref [] and adopted = ref [] in
+  logged ~name:"test.p" Values parent (fun p ->
+      let t = tag p x in
+      adopting ~name:"test.c" p adopted (fun c ->
+          ignore (Nx.copy t);
+          ignore (Nx.add (tag c x) x);
+          ignore (Nx.add x x)));
+  equal ~msg:"the adopting one" names [ "Copy"; "Map" ] (received adopted);
+  equal ~msg:"the parent" names [] (received parent)
+
+(* Adoption follows the parents: the innermost receives its grandparent's
+   values. A returned sibling's value is refused. *)
+let test_adopting_chain () =
+  let x = x3 () in
+  let log = ref [] in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      let sibling =
+        adopting ~name:"test.sibling" p (ref []) (fun s -> tag s x)
+      in
+      adopting ~name:"test.c1" p (ref []) (fun c1 ->
+          let t1 = tag c1 x in
+          adopting ~name:"test.c2" c1 log (fun _ ->
+              ignore (Nx.copy (tag p x));
+              ignore (Nx.copy t1);
+              equal ~msg:"the sibling's value" string
+                "Nx.copy: a value of test.sibling, used after test.sibling \
+                 returned"
+                (answer (fun () -> Nx.copy sibling)))));
+  equal ~msg:"the innermost" names [ "Copy"; "Copy" ] (received log)
+
+(* Inside an extent, an adopting interpretation receives an operation on its
+   parent's value before the extent, and the operations its rule applies reach
+   the extent. *)
+let test_adopting_inside_extent () =
+  let x = x3 () in
+  let extent = ref [] and adopted = ref [] in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      let t = tag p x in
+      logged ~name:"test.extent" Extent extent (fun _ ->
+          Nx.Prim.interpret ~name:"test.c" (Adopting p)
+            (fun c ~by op ->
+              adopted := Nx.Prim.name op :: !adopted;
+              ignore (Nx.neg x);
+              tagged c ~by op)
+            (fun _ -> ignore (Nx.copy t))));
+  equal ~msg:"the adopting one" names [ "Copy" ] (received adopted);
+  equal ~msg:"the extent, the rule's operation" names [ "Map" ]
+    (received extent)
+
+(* Adopting an interpretation that returned, an extent, or one that is not
+   around the caller raises. *)
+let test_adopting_refused () =
+  let x = x3 () in
+  let adopt p =
+    answer (fun () ->
+        Nx.Prim.interpret ~name:"test.c" (Adopting p) tagged ignore)
+  in
+  let p = logged ~name:"test.p" Values (ref []) Fun.id in
+  equal ~msg:"returned" string "test.c: adopts test.p, which returned"
+    (adopt p);
+  logged ~name:"test.extent" Extent (ref []) (fun e ->
+      equal ~msg:"an extent" string "test.c: adopts test.extent, an Extent"
+        (adopt e));
+  let outside = "test.c: adopts test.p outside test.p's extent" in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      equal ~msg:"another domain" string outside
+        (Domain.join (Domain.spawn (fun () -> adopt p))));
+  let in_rule = ref "" in
+  Nx.Prim.interpret ~name:"test.p" Values
+    (fun p ~by op ->
+      in_rule := adopt p;
+      tagged p ~by op)
+    (fun p -> ignore (Nx.copy (tag p x)));
+  equal ~msg:"its parent's rule" string outside !in_rule
+
+(* A fiber beside an adopting interpretation's, under a scheduler inside the
+   parent, reaches the parent; the adopting fiber's operations, before and
+   after it yields, reach the adopting one. *)
+let test_adopting_yield () =
+  let x = x3 () in
+  let parent = ref [] and adopted = ref [] in
+  logged ~name:"test.p" Values parent (fun p ->
+      let t = tag p x in
+      schedule
+        [
+          ( "adopting",
+            fun () ->
+              adopting ~name:"test.c" p adopted (fun _ ->
+                  ignore (Nx.copy t);
+                  yield ();
+                  ignore (Nx.copy t)) );
+          ("beside", fun () -> ignore (Nx.add t t));
+        ]);
+  equal ~msg:"the adopting one" names [ "Copy"; "Copy" ] (received adopted);
+  equal ~msg:"the parent" names [ "Map" ] (received parent)
+
+(* [f ()] on a fiber that its first yield suspends, then resumed on another
+   domain. *)
+let migrated f =
+  let suspended = ref None in
+  Effect.Deep.match_with f ()
+    {
+      retc = Fun.id;
+      exnc = raise;
+      effc =
+        (fun (type a) (e : a Effect.t) ->
+          match e with
+          | Yield ->
+              Some
+                (fun (k : (a, unit) Effect.Deep.continuation) ->
+                  suspended := Some (fun () -> Effect.Deep.continue k ()))
+          | _ -> None);
+    };
+  Domain.join (Domain.spawn (Option.get !suspended))
+
+(* An adopting interpretation resumed on another domain without its parent
+   refuses there its own values and its parent's. *)
+let test_adopting_migrated () =
+  let x = x3 () in
+  let got = ref [] in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      migrated (fun () ->
+          adopting ~name:"test.c" p (ref []) (fun c ->
+              let own = tag c x in
+              yield ();
+              got :=
+                [
+                  answer (fun () -> Nx.copy (tag p x));
+                  answer (fun () -> Nx.copy own);
+                ])));
+  equal ~msg:"refused there" names
+    [
+      "Nx.copy: a value of test.p, used outside test.p's extent";
+      "Nx.copy: a value of test.c, used outside test.c's extent";
+    ]
+    !got
+
+(* An adopting interpretation resumed on another domain with its parent, and
+   an extent between them, still receives its own values and its parent's
+   there, before the extent. *)
+let test_adopting_migrated_whole () =
+  let x = x3 () in
+  let parent = ref [] and extent = ref [] and adopted = ref [] in
+  migrated (fun () ->
+      logged ~name:"test.p" Values parent (fun p ->
+          logged ~name:"test.extent" Extent extent (fun _ ->
+              adopting ~name:"test.c" p adopted (fun c ->
+                  let own = tag c x in
+                  yield ();
+                  ignore (Nx.copy (tag p x));
+                  ignore (Nx.copy own)))));
+  equal ~msg:"the adopting one" names [ "Copy"; "Copy" ] (received adopted);
+  equal ~msg:"the extent" names [] (received extent);
+  equal ~msg:"the parent" names [] (received parent)
+
+(* The words an operation allocates, over [n] runs after one uncounted. *)
+let words_per f =
+  let n = 1000 in
+  f ();
+  let before = Gc.minor_words () in
+  for _ = 1 to n do
+    f ()
+  done;
+  (Gc.minor_words () -. before) /. Float.of_int n
+
+(* An operation on a parent's value allocates what one on the adopting
+   interpretation's own value does: the parent is around by construction. *)
+let test_adopting_words () =
+  let x = x3 () in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      let t = tag p x in
+      Nx.Prim.interpret ~name:"test.c" (Adopting p) tagged (fun c ->
+          let own = tag c x in
+          let copy y () = ignore (Sys.opaque_identity (Nx.copy y)) in
+          equal ~msg:"words per operation" float_exact
+            (words_per (copy own))
+            (words_per (copy t))))
+
+let nesting =
+  group "nesting"
+    [
+      test "an adopting interpretation receives its parent's values"
+        test_adopting_reach;
+      test "adoption follows the parents" test_adopting_chain;
+      test "an adopting interpretation is reached before an extent"
+        test_adopting_inside_extent;
+      test "adopting a returned, an extent or an absent one raises"
+        test_adopting_refused;
+      test "a fiber beside an adopting one reaches the parent"
+        test_adopting_yield;
+      test "an adopting interpretation left by its parent refuses"
+        test_adopting_migrated;
+      test "an adopting interpretation migrated with its parent receives"
+        test_adopting_migrated_whole;
+      test "a parent's value costs what an own value does" test_adopting_words;
+    ]
+
 (* Memory
 
    While backtraces are recorded, the runtime keeps the last exception raised
@@ -1869,4 +2065,6 @@ let domains =
     ]
 
 let () =
-  exit (run "nx interp" [ rule; laws; fibers; memory; interpreters; domains ])
+  exit
+    (run "nx interp"
+       [ rule; laws; fibers; nesting; memory; interpreters; domains ])

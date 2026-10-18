@@ -11,7 +11,11 @@
     reaches it answers: by running the rule in its clause, on the handler's
     parent fiber, outside the interpretation and every handler inside it, with
     the extent suspended until the rule returns. The receiver first refuses a
-    traced operand of another interpretation that is not around it. An
+    traced operand of another interpretation that is not around it, but one
+    it adopts, which is around by construction. On another domain than the
+    one it was installed on, an adopting interpretation's handler answers an
+    operation it reaches only where its parent is around too, and refuses it
+    otherwise. An
     operation no handler answers is {!Exec.run}'s, and raises where an operand
     is traced.
 
@@ -42,7 +46,10 @@ val interpret :
 (** [interpret ~name reach rule f] is [f i] under [i]'s handler, [i] a new
     interpretation that gives the operations it reaches the meaning
     [rule i ~by op]. [i] is live, and counted if [reach] is [Extent], until [f]
-    returns or raises. *)
+    returns or raises.
+
+    Raises [Invalid_argument] naming [name] and [p], with [Adopting p], if [p]
+    is an [Extent], returned, or is not around the caller. *)
 
 val traced :
   interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t
@@ -53,10 +60,6 @@ val payload : interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload option
 
 val owner : ('v, 's, 'd) t -> interpretation option
 (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
-
-val later : interpretation -> interpretation -> bool
-(** [later a b] is [true] iff [a] started after [b], on any domains. Of two
-    interpretations around one operation, the later is inside the other. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)

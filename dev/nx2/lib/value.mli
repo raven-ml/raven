@@ -93,14 +93,13 @@ and 'd any = Any : ('v, 's, 'd) t -> 'd any
 
 (** {1:interpretations Interpretations} *)
 
-and reach = Values | Extent
+and reach = Values | Extent | Adopting of interpretation
 
 and interpretation = {
   name : string;  (** In messages, as ["Rune.grad"]. *)
   reach : reach;
   rule : 'r. interpretation -> by:string -> 'r prim -> 'r;
       (** What it makes of the operations it receives. *)
-  start : int;  (** Its order of start in the process. *)
   live : bool Atomic.t;  (** Cleared when its extent ends. *)
   mutable formulas : (int, unit) Hashtbl.t option;
       (** Nodes of the formulas an [Extent]'s rule returned, made when it

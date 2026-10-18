@@ -5715,14 +5715,16 @@ module Prim = struct
   let contract_order = Prim.contract_order
 
   type interpretation = Value.interpretation
-  type reach = Value.reach = Values | Extent
+  type reach = Value.reach =
+    | Values
+    | Extent
+    | Adopting of interpretation
   type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
 
   let interpret = Eval.interpret
   let traced = Eval.traced
   let payload = Eval.payload
   let owner = Eval.owner
-  let later = Eval.later
   let eval = Eval.eval
   let expand = Eval.expand
 end
