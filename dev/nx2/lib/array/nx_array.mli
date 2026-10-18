@@ -254,8 +254,8 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
 
 (** {1:bigarrays Bigarrays}
 
-    {!bigarray} and {!of_bigarray} share bytes with the value they take, without
-    a copy. *)
+    {!bigarray}, {!read} and {!of_bigarray} share bytes with the value they
+    take, without a copy. *)
 
 val bigarray :
   ('v, 's) Bigarray.kind ->
@@ -277,6 +277,30 @@ val bigarray :
 
     Raises [Invalid_argument] if [a]'s buffer is dead, or its memory is held
     exclusive by claims that have not consumed it. *)
+
+val read :
+  ('v, 's) Bigarray.kind ->
+  ('v, 's) t ->
+  (('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> 'a) ->
+  'a
+(** [read k a f] is [f b], where [b] is a bigarray of [a]'s shape over [a]'s own
+    bytes; an [a] with no element gives an empty [b], whatever its memory. It
+    claims [a]'s memory for reading, waits for the device work a read must
+    follow ({!Rig.Buffer.wait}), and ends the claim when [f] returns or raises.
+    The memory stays inside the claims, so a donation can hold it exclusive once
+    [f] returns, which {!bigarray} prevents for good.
+
+    [f] must not write through [b], since work that reads the memory may still
+    run, and must not keep [b] after it returns: a donation or
+    {!Rig.Buffer.free} can then give the memory to another array. The claim
+    orders [b] only against donations: work another domain submits while [f]
+    runs needs the program's own synchronization.
+
+    Raises [Invalid_argument] naming [Nx_array.read] unless [a] is C-contiguous
+    ({!Layout.is_contiguous}) and of rank at most 16, the most axes a Bigarray
+    has, and, if it has an element, the host addresses its memory; or, as
+    {!refused} raises it, if [a]'s buffer is dead or its memory is held
+    exclusive. Raises {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
 
 val of_bigarray :
   ('v, 's) Dtype.t ->

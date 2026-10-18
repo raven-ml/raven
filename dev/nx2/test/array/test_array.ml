@@ -2013,6 +2013,119 @@ let test_ocaml_door_pending () =
   equal ~msg:"ran before the pending work" bool true !behind;
   no_claim x
 
+(* Scoped reads *)
+
+let read_fails ?msg substring f =
+  raises_match ?msg
+    (fun e ->
+      Exn.invalid_arg ~substring:"Nx_array.read" e
+      && Exn.invalid_arg ~substring e)
+    f
+
+(* [read] passes a bigarray of a C-contiguous array's shape holding its
+   elements, on the host and on a memory device, and refuses a strided one. It
+   leaves no claim. *)
+let law_read (Case (a, m)) =
+  let check : type v s. (v, s) A.t -> unit =
+   fun a ->
+    let l = A.layout a in
+    let contiguous = L.is_contiguous l in
+    cover "contiguous" contiguous;
+    cover "strided" (not contiguous);
+    cover "an offset" (contiguous && L.offset l > 0);
+    cover "no element" (L.numel l = 0);
+    (match kind (A.dtype a) with
+    | None -> ()
+    | Some k when contiguous ->
+        let elements g =
+          Array.of_list
+            (List.map (Bigarray.Genarray.get g) (indices (L.shape l)))
+        in
+        let dims, xs =
+          A.read k a (fun g -> (Bigarray.Genarray.dims g, elements g))
+        in
+        equal ints (L.shape l) dims;
+        equal (values (A.dtype a)) (A.to_array a) xs
+    | Some k -> read_fails "contiguous" (fun () -> A.read k a ignore));
+    equal ~msg:"released" bool true (unclaimed (A.buffer a))
+  in
+  let a =
+    match Option.bind m (fun m -> A.move m a) with Some b -> b | None -> a
+  in
+  check a;
+  check (Option.get (A.borrow (Lazy.force memory) a));
+  (* The elements after the first as a vector: C-contiguous at an offset. *)
+  let l = A.layout a in
+  let n = L.numel l in
+  if L.is_contiguous l && n >= 2 then
+    check
+      (A.v (A.dtype a)
+         (L.v ~offset:(L.offset l + 1) ~strides:[| 1 |] [| n - 1 |])
+         (A.buffer a))
+
+(* The claim holds while [f] runs and ends when it returns or raises, leaving
+   the memory to later donations. *)
+let test_read_claim () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  let inside = A.read Bigarray.float32 a (fun _ -> unclaimed (A.buffer a)) in
+  equal ~msg:"claimed while f runs" bool false inside;
+  equal ~msg:"released" bool true (unclaimed (A.buffer a));
+  raises Raised (fun () -> A.read Bigarray.float32 a (fun _ -> raise Raised));
+  equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
+
+let test_read_refuses () =
+  let off = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
+  read_fails ~msg:"off the host" "host" (fun () ->
+      A.read Bigarray.float32 off ignore);
+  let dead = floats32 [| 2 |] [| 1.; 2. |] in
+  kill (A.buffer dead);
+  read_fails ~msg:"dead" "consumed by the test" (fun () ->
+      A.read Bigarray.float32 dead ignore);
+  let held = floats32 [| 2 |] [| 1.; 2. |] in
+  Rig.Claim.with_ ~read:[]
+    ~donate:[ A.buffer held ]
+    (fun _ ->
+      read_fails ~msg:"held exclusive" "exclusive" (fun () ->
+          A.read Bigarray.float32 held ignore));
+  let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
+  equal ~msg:"16 axes" ints (Array.make 16 1)
+    (A.read Bigarray.int8_unsigned a Bigarray.Genarray.dims);
+  let a = A.create Rig.host D.Uint8 (Array.make 17 1) in
+  read_fails ~msg:"17 axes" "17" (fun () ->
+      A.read Bigarray.int8_unsigned a ignore)
+
+(* An array with no element reads as an empty bigarray, whatever its memory. *)
+let test_read_empty () =
+  let dims a = A.read Bigarray.float32 a Bigarray.Genarray.dims in
+  equal ~msg:"on the host" ints [| 2; 0 |]
+    (dims (A.create Rig.host f32 [| 2; 0 |]));
+  equal ~msg:"off the host" ints [| 0 |]
+    (dims (A.create (S.io_device ()) f32 [| 0 |]))
+
+let test_wait_read () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal (values f32) [| 3.; 4. |]
+    (A.read Bigarray.float32 a (fun g ->
+         Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |])));
+  no_claim a
+
+(* A lost device's array raises Lost at the claim, before [f] runs. *)
+let test_read_lost () =
+  let ran = ref false in
+  let read a = A.read Bigarray.float32 a (fun _ -> ran := true) in
+  let d, l = late () in
+  let x = on_late d [| 1.; 2. |] in
+  pending x [| 3.; 4. |];
+  S.Late.fault l "gone";
+  raises_match ~msg:"faulted" lost (fun () -> read x);
+  let d, _ = late () in
+  let y = on_late d [| 1.; 2. |] in
+  Rig.close d;
+  raises_match ~msg:"closed" lost (fun () -> read y);
+  equal ~msg:"ran" bool false !ran
+
 (* Two domains: kernels that read an array on a Late device, against submits
    that write it and donations that consume it. Every submit stores ones, so a
    kernel that ran reads ones. A kernel refuses the array as dead, or as held
@@ -2053,6 +2166,11 @@ let kernel x =
 
 let to_array x = equal (values f32) ones (A.to_array x)
 
+let read x =
+  equal (values f32) ones
+    (A.read Bigarray.float32 x (fun g ->
+         Array.init 4 (fun i -> Bigarray.Genarray.get g [| i |])))
+
 let submit x =
   Rig.Claim.with_ ~read:[ A.buffer x ] ~donate:[] (fun _ -> pending x ones)
 
@@ -2075,6 +2193,7 @@ let door_commands =
       (shared ^-> judges (pair answer (values f32)))
       judge_kernel kernel;
     command "to_array" (shared ^-> judges unit) judge_live to_array;
+    command "read" (shared ^-> judges unit) judge_live read;
     command "submit" (shared ^-> judges unit) judge_live submit;
     command "donate" (shared ^-> judges bool) judge_donate donate;
   ]
@@ -2203,6 +2322,17 @@ let tests =
         test "bigarray takes up to 16 axes" test_bigarray_rank;
         test "of_bigarray refuses a bigarray misaligned for its elements"
           test_of_bigarray_misaligned;
+      ];
+    group "read"
+      [
+        prop "read passes a C-contiguous host-addressed array's bytes" case
+          law_read;
+        test "read claims the memory while its function runs" test_read_claim;
+        test "read refuses what it cannot pass" test_read_refuses;
+        test "read passes an array with no element, whatever its memory"
+          test_read_empty;
+        test "read waits for the work on its array" test_wait_read;
+        test "read raises Lost for a lost device's array" test_read_lost;
       ];
     group "door"
       [

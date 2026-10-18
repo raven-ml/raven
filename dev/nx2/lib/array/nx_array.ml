@@ -746,6 +746,17 @@ let borrow d a =
 
 (* Bigarrays *)
 
+(* The most axes a Bigarray has. *)
+let bigarray_max_rank = 16
+
+(* The bytes of [a], a C-contiguous array of elements of [k]'s width. *)
+let bigarray_bytes k a =
+  let l = a.layout and w = Bigarray.kind_size_in_bytes k in
+  Buffer.view a.buffer ~first:(Layout.offset l * w) ~length:(Layout.numel l * w)
+
+let of_flat a flat =
+  Bigarray.reshape (Bigarray.genarray_of_array1 flat) (Layout.shape a.layout)
+
 let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
     (v, s, Bigarray.c_layout) Bigarray.Genarray.t option =
   live "Nx_array.bigarray" a.buffer;
@@ -753,15 +764,28 @@ let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
   if
     (not (Rig.equal (Buffer.device a.buffer) Rig.host))
     || (not (Layout.is_contiguous l))
-    || Layout.rank l > 16
+    || Layout.rank l > bigarray_max_rank
   then None
-  else
-    let w = Bigarray.kind_size_in_bytes k and n = Layout.numel l in
-    let view =
-      Buffer.view a.buffer ~first:(Layout.offset l * w) ~length:(n * w)
-    in
-    let flat = Buffer.export view k in
-    Some (Bigarray.reshape (Bigarray.genarray_of_array1 flat) (Layout.shape l))
+  else Some (of_flat a (Buffer.export (bigarray_bytes k a) k))
+
+(* Under the door's read claim, which names this function in a refusal, rig's
+   read waits and passes the bytes. An array with no element has no byte to
+   address, so it reads wherever its memory lies, as rig's read does. *)
+let read k a f =
+  let fn = "Nx_array.read" in
+  let l = a.layout in
+  if not (Layout.is_contiguous l) then
+    invalid_argf "%s: %a is not C-contiguous" fn Layout.pp l;
+  if Layout.rank l > bigarray_max_rank then
+    invalid_argf "%s: %d axes, a bigarray has at most %d" fn (Layout.rank l)
+      bigarray_max_rank;
+  let result = ref None in
+  reading fn a (fun () ->
+      if Layout.numel l > 0 && host_address a.buffer < 0 then
+        refused fn Off_host [ Any a ];
+      let pass flat = f (of_flat a flat) in
+      result := Some (Buffer.read (bigarray_bytes k a) k pass));
+  Option.get !result
 
 let of_bigarray dt g =
   let dims = Bigarray.Genarray.dims g in
