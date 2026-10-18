@@ -182,12 +182,20 @@ raven / llama.cpp (Vulkan; ROCm):
 - a compile on 10 domains takes about twice the CPU of one domain. At load
   25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
   10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
-  y'' = -tanh y, 5.0, 3.4 and 3.8 s. Candidate cause: the domain count, 10
-  over the M1 Max's 8 P-cores and 2 E-cores (cap at the P-cores). Decided on
-  fudge, quiet: wall and CPU time at 1, 2, 4, 8 and 10 domains; `s` at the
-  default and at 4M, one domain included; minor collections and promoted
-  words (`OCAMLRUNPARAM=v=0x400`); a sample of the 10-domain run, the
-  stop-the-world barrier against `pthread_mutex_lock`
+  y'' = -tanh y, 5.0, 3.4 and 3.8 s. Counts: minor collections do not grow
+  with domains (rune's test_laws compilation group, 1971 at `PARALLEL=1`,
+  1874 at 10), which rules out more collections. Each compiling domain's
+  exit also empties every minor heap (191 spawns among the 1874).
+  Candidates: time inside each collection, waiting for the slowest domain
+  (an E-core's, or one descheduled at that load); major marking and
+  sweeping shared across domains; the shard lock per node; spawn and join
+  per `Worker.map`. Decided by time: on fudge (6P+8E), quiet, wall and CPU
+  at 1, 2, 4, 6 and 14 domains, and 6 pinned to the P-cores; `s` at the
+  default and at 4M; a sample of the 14-domain run, the stop-the-world
+  barrier against `pthread_mutex_lock`. nx2's P-core cap, on this CPU
+  (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
+  64x32x32 at x1.59 slower. The M1 Max's cap at its 8 P-cores
+  (`hw.perflevel0.physicalcpu`, as nx2's) needs the same runs on the Mac
 - tolk.engine refuses a back edge whose flag moves with the run's words
   (tolk_engine.ml:775); no GPU test of a loop whose body mixes a GPU kernel
   and a host program
@@ -204,7 +212,12 @@ raven / llama.cpp (Vulkan; ROCm):
   references (tinygrad HEAD, papers, other compilers) for a better
   solution; keep it with its reason or replace it
 - compile speed: one Clang process per kernel (~30 ms each; one per program
-  saves ~20%); float64 sin/cos inline the full Payne–Hanek reduction (40-170
+  saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
+  time against its source's bytes, on a model-size schedule; if the process
+  start dominates, one Clang invocation over several translation units, one
+  object per kernel (`clang -c 0/k.c 1/k.c ...`), keeps per-kernel cache
+  keys and Worker.map's balance, once each object is shown a function of its
+  source alone; float64 sin/cos inline the full Payne–Hanek reduction (40-170
   KB kernels); structural comparisons in the rewriter (~6% before patterns
   tested their operations as a set): the polymorphic `List.mem` left in
   ops.ml on operation lists (1549, 2208, 2220, 2231, 2319) and dtype lists
