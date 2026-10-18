@@ -1770,18 +1770,13 @@ let names =
               equal ~msg:(by ^ ", " ^ keying) (list string)
                 (List.sort String.compare (by :: made))
                 (observed_names (fun () -> under draw))));
-      test "a dead operand names the sampler" (fun () ->
+      test "a dead first operand names the sampler and the operand" (fun () ->
           each_sampler (fun by keying _ operands make under ->
               if operands > 0 then
                 let draw = make ~dead:true in
-                let named = function
-                  | Invalid_argument m ->
-                      String.starts_with ~prefix:(by ^ ": operand ") m
-                      && String.ends_with ~suffix:" was donated to Nx.copy" m
-                  | _ -> false
-                in
-                raises_match ~msg:(by ^ ", " ^ keying) named (fun () ->
-                    under draw)));
+                let want = by ^ ": operand 1 was donated to Nx.copy" in
+                raises ~msg:(by ^ ", " ^ keying) (Invalid_argument want)
+                  (fun () -> under draw)));
     ]
 
 (* Goldens *)

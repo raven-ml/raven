@@ -86,7 +86,16 @@ let test_refused_kills_none () =
   invalid ~sub:"Nx.add: operand 2 was donated to Nx.mul" (fun () ->
       Nx.add (Nx.donate x2) d1);
   equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
-    (elements (Nx.add x2 x2))
+    (elements (Nx.add x2 x2));
+  (* Refused on its first operand, an add spends no handle of its second,
+     which it would broadcast. *)
+  let dead = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  ignore (Nx.copy (Nx.donate dead));
+  let b = Nx.donate (fresh [| 7.; 8. |]) in
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () ->
+      Nx.add dead b);
+  equal ~msg:"the broadcast operand's handle lives" (array float_exact)
+    [| 7.; 8. |] (elements (Nx.copy b))
 
 (* A function that computes through several operations kills its donors only
    when it returns: refused, from its own checks or from an operation inside,
@@ -1498,13 +1507,10 @@ let test_dead_names =
       match c.dead with
       | Prints death -> equal ~msg:name string death (run ())
       | Raises ->
-          let named = function
-            | Invalid_argument m ->
-                String.starts_with ~prefix:(c.by ^ ": operand ") m
-                && String.ends_with ~suffix:" was donated to Nx.copy" m
-            | _ -> false
+          let want =
+            Printf.sprintf "%s: operand %d was donated to Nx.copy" c.by (i + 1)
           in
-          raises_match ~msg:name named run)
+          raises ~msg:name (Invalid_argument want) run)
 
 (* A case: one of the table's, and the operands it donates, as a mask. *)
 let donations =

@@ -425,10 +425,19 @@ let broadcast ~by s x =
 
 let same_shape = Prim.same_shape
 
+(* A function whose operations read its operands one at a time, as a
+   broadcast does, or in another order than the call's checks them first, in
+   the call's order: a dead one raises named by its place in the call, before
+   any handle is spent. *)
+let alive2 ~by a b =
+  Prim.alive ~by 0 a;
+  Prim.alive ~by 1 b
+
 let binary ~by k a b =
   if same_shape a b then Eval.apply2 ~by k (dtype a) a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
+    alive2 ~by a b;
     Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
@@ -456,16 +465,20 @@ let comparison ~by k a b =
   if same_shape a b then Eval.apply2 ~by k D.Bool a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
+    alive2 ~by a b;
     Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
 
 let equal a b = comparison ~by:"Nx.equal" (Compare Equal) a b
 let not_equal a b = comparison ~by:"Nx.not_equal" (Compare Not_equal) a b
 let less a b = comparison ~by:"Nx.less" (Compare Less) a b
 let less_equal a b = comparison ~by:"Nx.less_equal" (Compare Less_equal) a b
-let greater a b = comparison ~by:"Nx.greater" (Compare Less) b a
+(* [a > b] as [b < a]: the operation reads the operands swapped. *)
+let swapped ~by k a b =
+  alive2 ~by a b;
+  comparison ~by k b a
 
-let greater_equal a b =
-  comparison ~by:"Nx.greater_equal" (Compare Less_equal) b a
+let greater a b = swapped ~by:"Nx.greater" (Compare Less) a b
+let greater_equal a b = swapped ~by:"Nx.greater_equal" (Compare Less_equal) a b
 
 (* Scalar forms: the constant [c] of [x]'s dtype, of every set, beside [x]. *)
 
@@ -480,13 +493,17 @@ let mod_s x c = scalar_binary ~by:"Nx.mod_s" (Binary Mod) x c
 let maximum_s x c = scalar_binary ~by:"Nx.maximum_s" (Binary Maximum) x c
 let minimum_s x c = scalar_binary ~by:"Nx.minimum_s" (Binary Minimum) x c
 
-let reversed ~by k c x = binary ~by k (constant ~by x c) x
+let reversed ~by k c x =
+  Prim.alive ~by 0 x;
+  binary ~by k (constant ~by x c) x
 let rsub_s c x = reversed ~by:"Nx.rsub_s" (Binary Sub) c x
 let rdiv_s c x = reversed ~by:"Nx.rdiv_s" (Binary (quotient (dtype x))) c x
 let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
 
 let compared ~by k x c = comparison ~by k x (constant ~by x c)
-let compared_by ~by k c x = comparison ~by k (constant ~by x c) x
+let compared_by ~by k c x =
+  Prim.alive ~by 0 x;
+  comparison ~by k (constant ~by x c) x
 let equal_s x c = compared ~by:"Nx.equal_s" (Compare Equal) x c
 let not_equal_s x c = compared ~by:"Nx.not_equal_s" (Compare Not_equal) x c
 let less_s x c = compared ~by:"Nx.less_s" (Compare Less) x c
@@ -504,6 +521,8 @@ let ternary ~by k c x y =
         (Prim.broadcast_shape ~by (shape c) (shape x))
         (shape y)
     in
+    alive2 ~by c x;
+    Prim.alive ~by 2 y;
     Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
 
@@ -673,6 +692,7 @@ let broadcast_shapes ss = broadcast_all ~by:"Nx.broadcast_shapes" ss
 let broadcast_arrays xs =
   let by = "Nx.broadcast_arrays" in
   let s = broadcast_all ~by (List.map shape xs) in
+  List.iteri (Prim.alive ~by) xs;
   List.map (broadcast ~by s) xs
 
 let squeeze ?axes:l x =
@@ -875,6 +895,7 @@ let stack ?axis:(a = 0) xs =
           if not (same_shape x x0) then
             invalid_argf "%s: %a and %a differ" by pp_value x0 pp_value x)
         xs;
+      List.iteri (Prim.alive ~by) xs;
       let unit =
         Array.init r (fun i ->
             if i < a then s0.(i) else if i = a then 1 else s0.(i - 1))
@@ -1170,8 +1191,23 @@ let take_axis ~by axis p y =
   in
   if Prim.has_shape g s' then g else reshaped ~by s' g
 
+(* The values [idx] holds checked live as {!alive2} does, numbered from 0 as
+   written: the number checked. *)
+let index_alive ~by idx =
+  let held i x =
+    Prim.alive ~by i x;
+    i + 1
+  in
+  List.fold_left
+    (fun i -> function
+      | T p -> held i p
+      | D (start, _) -> held i start
+      | I _ | L _ | R _ | Rs _ | A | N -> i)
+    0 idx
+
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
+  Prim.alive ~by (index_alive ~by idx) x;
   let s = shape x in
   let ranges = Array.map whole s in
   List.iter
@@ -1422,6 +1458,9 @@ let positions ~by = function
 let set idx v x =
   let by = "Nx.set" in
   let picks = picks ~by idx x in
+  let n = index_alive ~by idx in
+  Prim.alive ~by n v;
+  Prim.alive ~by (n + 1) x;
   List.iter
     (fun (p, _) ->
       match p with
@@ -2308,6 +2347,7 @@ let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
     ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let by = "Nx.complex" in
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
+  alive2 ~by re im;
   let r = Array.length s in
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
@@ -3689,6 +3729,7 @@ let correlate ?(padding = `Valid) x kernel =
   if Array.exists (( = ) 0) ks then
     invalid_argf "%s: the kernel %a has an axis of no element" by pp_value
       kernel;
+  alive2 ~by x kernel;
   let lead = Array.sub s 0 (r - kr) and spatial = Array.sub s (r - kr) kr in
   let runs = Array.init kr (fun i -> run_of padding spatial.(i) ks.(i)) in
   let lo = Array.init kr (fun i -> ks.(i) - 1 - fst runs.(i)) in
@@ -4243,6 +4284,7 @@ let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
   let o = dim 0 w in
   if groups < 1 || o mod groups <> 0 then
     invalid_argf "%s: %d groups for %d output channels" by groups o;
+  alive2 ~by x w;
   (stride, padding, dilation, groups)
 
 (* [w], [[o; k…; c / groups]], as [[groups; o / groups; k…; c / groups]]. *)

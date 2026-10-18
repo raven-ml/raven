@@ -338,8 +338,14 @@ let next_key_by ~by : 'd key =
 
 let next_key () = next_key_by ~by:"Nx.Rng.next_key"
 
-(* The key a sampler [by] draws from: [key], or the next one. *)
-let resolve ~by = function Some k -> k | None -> next_key_by ~by
+(* The key a sampler [by] draws from: [key], or the next one. A dead [key]
+   raises numbered as its operand after the sampler's [after] values: its
+   draw reads the key first. *)
+let resolve ~by ~after = function
+  | Some k ->
+      Prim.alive ~by after k;
+      k
+  | None -> next_key_by ~by
 
 let place p k = Eval.place ~by:"Nx.Rng.place" p k
 
@@ -353,7 +359,7 @@ let bits ?key s =
     lowered bits_programs D.Int32 [||] (fun ~key ~j ->
         E.cast D.Int32 (word ~key j))
   in
-  draw ~by (resolve ~by key) D.Int32 s prog
+  draw ~by (resolve ~by ~after:0 key) D.Int32 s prog
 
 let uniform_programs = programs ()
 
@@ -364,7 +370,7 @@ let uniform ?key dt s =
         let (Prim.Wide c) = Prim.wide dt in
         rounded dt (unit ~key ~p:(precision dt) c j))
   in
-  draw ~by (resolve ~by key) dt s prog
+  draw ~by (resolve ~by ~after:0 key) dt s prog
 
 (* The Box-Muller transform of the draws [u1] and [u2] in [0, 1) with [p] bits:
    two independent standard normal draws, the cosine's then the sine's, of the
@@ -392,7 +398,7 @@ let normal ?key dt s =
         let x, y = box_muller ~p c u.(0) u.(1) in
         rounded dt E.(where (j land u64 1L = u64 0L) x y))
   in
-  draw ~by (resolve ~by key) dt s prog
+  draw ~by (resolve ~by ~after:0 key) dt s prog
 
 (* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is [0
    - log (1 - u)], where a negation would make -0 of u = 0. *)
@@ -406,7 +412,7 @@ let exponential ?key dt s =
         let u = unit ~key ~p:(precision c) c j in
         rounded dt E.(lit c 0. - log (lit c 1. - u)))
   in
-  draw ~by (resolve ~by key) dt s prog
+  draw ~by (resolve ~by ~after:0 key) dt s prog
 
 let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF
 
@@ -447,7 +453,7 @@ let randint ?key ?(low = 0) ~high s =
     |> bind 1 (u64 threshold)
     |> bind 0 (u64 range)
   in
-  draw ~by (resolve ~by key) D.Int32 s prog
+  draw ~by (resolve ~by ~after:0 key) D.Int32 s prog
 
 (* Parameters *)
 
@@ -535,8 +541,8 @@ let bernoulli_by ~by ?key p =
         let scaled = E.(param c 0 dt * lit c (Float.ldexp 1. 53)) in
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
   in
-  draw ~by ~params:[| Value.Any p |] (resolve ~by key) D.Bool (Prim.shape p)
-    prog
+  let key = resolve ~by ~after:1 key in
+  draw ~by ~params:[| Value.Any p |] key D.Bool (Prim.shape p) prog
 
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
@@ -634,7 +640,8 @@ let gamma_by ~by ?key a =
         let shift = E.(boost ** recip a) in
         rounded dt E.(where below (acc * shift) acc))
   in
-  draw ~by ~params:[| Value.Any a |] (resolve ~by key) dt (Prim.shape a) prog
+  let key = resolve ~by ~after:1 key in
+  draw ~by ~params:[| Value.Any a |] key dt (Prim.shape a) prog
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
@@ -671,7 +678,8 @@ let beta_by ~by ?key a b =
         let d = E.(lb - la + shift) in
         rounded dt E.(lit 1. / (lit 1. + exp d)))
   in
-  draw ~by ~params:[| Value.Any a; Value.Any b |] (resolve ~by key) dt s prog
+  let key = resolve ~by ~after:2 key in
+  draw ~by ~params:[| Value.Any a; Value.Any b |] key dt s prog
 
 let beta ?key a b =
   let by = "Nx.Rng.beta" in
@@ -757,7 +765,7 @@ let von_mises_by ~by ?key kappa =
         rounded dt theta)
   in
   let params = [| Value.Any kappa |] in
-  draw ~by ~params (resolve ~by key) dt (Prim.shape kappa) prog
+  draw ~by ~params (resolve ~by ~after:1 key) dt (Prim.shape kappa) prog
 
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
@@ -905,7 +913,7 @@ let poisson_by ~by ?key rate =
         E.(cast D.Int32 (where small inversion rejection)))
   in
   let params = [| Value.Any rate |] in
-  draw ~by ~params (resolve ~by key) D.Int32 (Prim.shape rate) prog
+  draw ~by ~params (resolve ~by ~after:1 key) D.Int32 (Prim.shape rate) prog
 
 let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
@@ -1001,7 +1009,7 @@ let binomial_by ~by ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
         E.(where flip (count - y) y))
   in
   let params = [| Value.Any count; Value.Any prob |] in
-  draw ~by ~params (resolve ~by key) D.Int32 s prog
+  draw ~by ~params (resolve ~by ~after:2 key) D.Int32 s prog
 
 let binomial ?key count prob =
   let by = "Nx.Rng.binomial" in
@@ -1124,7 +1132,7 @@ let truncated_normal_by ~by ?key lower upper =
         masses ~by upper;
       ]
   in
-  draw ~by ~params (resolve ~by key) dt s prog
+  draw ~by ~params (resolve ~by ~after:2 key) dt s prog
 
 let truncated_normal ?key lower upper =
   let by = "Nx.Rng.truncated_normal" in
@@ -1170,7 +1178,7 @@ let dirichlet_by ~by ?key a =
   let r = Array.length s in
   if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
   require ~by "a" positive a;
-  let key = resolve ~by key in
+  let key = resolve ~by ~after:1 key in
   let dt = Prim.dtype a in
   let (Prim.Wide c) = Prim.wide dt in
   let shape = Array.append (batch key) s in
@@ -1256,7 +1264,8 @@ let categorical ?key ?(axis = -1) logits =
   if s.(a) = 0 then
     invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
       pp_shape s;
-  let key = resolve ~by key in
+  Prim.alive ~by 0 logits;
+  let key = resolve ~by ~after:1 key in
   let (Prim.Wide c) = Prim.wide dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
@@ -1300,7 +1309,7 @@ let permutation ?key n =
   let prog =
     lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
   in
-  let words = draw ~by (resolve ~by key) D.Uint64 [| n |] prog in
+  let words = draw ~by (resolve ~by ~after:0 key) D.Uint64 [| n |] prog in
   let axis = Array.length (Prim.shape words) - 1 in
   let _, positions =
     Eval.eval ~by
