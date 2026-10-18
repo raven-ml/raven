@@ -221,9 +221,10 @@ let at_call =
 
 (* Systhreads *)
 
-(* The systhreads of a domain share its checks. A real-time signal every 20 us
-   yields the running systhread at its next poll point, so that two issuers
-   interleave inside nx's own updates. Each of [sets] sets gets one failing
+(* The systhreads of a domain share its checks. A signal every 20 us of CPU
+   time yields the running systhread at its next poll point, so that two
+   issuers interleave inside nx's own updates. It is the virtual timer's: the
+   real-time one is windtrap's, for its timeouts. Each of [sets] sets gets one failing
    check a round, and every one must raise. *)
 let systhreads () =
   let sets =
@@ -248,13 +249,13 @@ let systhreads () =
         match side.wait Sync with () -> lost + 1 | exception Failed _ -> lost)
       0 sets
   in
-  let previous = Sys.signal Sys.sigalrm yield in
-  ignore (Unix.setitimer Unix.ITIMER_REAL tick);
+  let previous = Sys.signal Sys.sigvtalrm yield in
+  ignore (Unix.setitimer Unix.ITIMER_VIRTUAL tick);
   let lost =
     Fun.protect
       ~finally:(fun () ->
-        ignore (Unix.setitimer Unix.ITIMER_REAL still);
-        Sys.set_signal Sys.sigalrm previous)
+        ignore (Unix.setitimer Unix.ITIMER_VIRTUAL still);
+        Sys.set_signal Sys.sigvtalrm previous)
       (fun () -> List.init 5 (fun _ -> round ()))
   in
   equal (list int) [ 0; 0; 0; 0; 0 ] lost
