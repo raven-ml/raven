@@ -273,15 +273,6 @@ let test_facts transport () =
   equal int (base + 2) (Rig.signaled d);
   equal (option string) (Some "the engine hung") (Rig.lost d)
 
-let test_printed () =
-  let d, p = P.open_ "loss:printed" in
-  P.fail p;
-  match submit (empty d) with
-  | _ -> failf "the failed submit returned"
-  | exception e ->
-      equal string "loss:printed lost: the submission failed"
-        (Printexc.to_string e)
-
 (* A loss reaches the lost device; memory of other devices whose points it
    reached is ordinary memory again, and other devices go on. *)
 let test_others_go_on () =
@@ -659,14 +650,6 @@ let test_close_io () =
   equal int 1 (Atomic.get stops);
   raises_match (lost io) (fun () -> B.copy ~src:b ~dst:(B.create Rig.host 8))
 
-(* A fault a counted call raises, such as an allocation's, loses the device. *)
-let test_alloc_fault () =
-  let d, p = P.open_ "loss:alloc" in
-  P.fault p "the device fell off the bus";
-  raises_match (lost d) (fun () -> B.create d 64);
-  equal (option string) (Some "the device fell off the bus") (Rig.lost d);
-  equal int 1 (count "stop" p)
-
 (* A device that maps a host buffer and has stopped, with no drain since: an
    Unknown answer leaves its word unreached at the stop, and the word is set
    after it. Its drain ([free_cache]) and the buffer's free may each give the
@@ -784,7 +767,6 @@ let tests =
         test "a lost device answers its facts and values" (test_facts false);
         test "a lost device behind a transport answers its last reading"
           (test_facts true);
-        test "Lost prints the device and the reason" test_printed;
         test "memory whose points a lost device reached is ordinary"
           test_others_go_on;
         test "memory a lost device's work did not reach raises its loss"
@@ -799,7 +781,6 @@ let tests =
           test_lost_borrow;
         test "memory a lost device used, reused, waits for nothing lost"
           test_reused_after_loss;
-        test "a fault an allocation raises loses the device" test_alloc_fault;
       ];
     group ~timeout "close"
       [

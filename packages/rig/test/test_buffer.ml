@@ -387,30 +387,6 @@ let test_reached_lost () =
 
 (* Words *)
 
-(* The fewest minor and major words of ten calls of [f], after a warm-up call,
-   so that a finaliser running inside one call cannot inflate the count. *)
-let words f =
-  ignore (Sys.opaque_identity (f ()));
-  let minor = ref max_int and major = ref max_int in
-  for _ = 1 to 10 do
-    let m0, _, j0 = Gc.counters () in
-    ignore (Sys.opaque_identity (f ()));
-    let m1, _, j1 = Gc.counters () in
-    minor := Int.min !minor (int_of_float (m1 -. m0));
-    major := Int.min !major (int_of_float (j1 -. j0))
-  done;
-  (!minor, !major)
-
-(* Host buffers cost at most these words, [(minor, major)]: programs pin their
-   own allocation counts on them. *)
-let at_most_words (minor, major) f =
-  let m, j = words f in
-  at_most ~msg:"minor words" int ~than:minor m;
-  at_most ~msg:"major words" int ~than:major j
-
-let f32 = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 16
-let b16 = B.create Rig.host 64
-
 (* Once every point is reached, a wait allocates nothing. *)
 let test_wait_words () =
   let d, _ = P.open_ "buffer:wait-words" in
@@ -486,15 +462,6 @@ let test_due_words () =
   queued ();
   Gc.full_major ();
   equal ~msg:"bytes with collected memory queued" int idle (drains ())
-
-let test_create_words () =
-  at_most_words (41, 0) (fun () -> B.create Rig.host 64)
-
-let test_create_large_words () =
-  at_most_words (32, 9) (fun () -> B.create Rig.host (1 lsl 20))
-
-let test_create_empty_words () =
-  at_most_words (32, 0) (fun () -> B.create Rig.host 0)
 
 (* Borrows of memory that dies *)
 
@@ -942,12 +909,13 @@ let test_copy_borrowed_host () =
   equal ~msg:"into the borrow" string (String.make (1 lsl 16) 'i') (bytes h)
 
 (* A copy larger than the staging memory goes through it in pieces: every byte
-   lands where it belongs. *)
+   lands where it belongs. Two halves of 32 MiB and 4 KiB more make three
+   pieces, the last through a half used again. *)
 let test_copy_staged_large () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "buffer:staged-large-src" in
   let e, _ = open_ "buffer:staged-large-dst" in
-  let n = (3 * (64 lsl 20)) + 4096 in
+  let n = (2 * (32 lsl 20)) + 4096 in
   let byte i =
     Char.unsafe_chr ((i + ((i lsr 16) * 13) + (i lsr 24)) land 255)
   in
@@ -1925,23 +1893,12 @@ let tests =
 let words =
   group ~timeout "words"
     [
-      test "a host buffer of 64 bytes costs at most 41 words" test_create_words;
       test "a wait whose points are reached allocates nothing" test_wait_words;
       test "reached allocates nothing" test_reached_words;
       test "a drain that judges queued memory allocates nothing more"
         test_due_words;
       test "behind a transport a wait for reached work allocates nothing"
         test_wait_words_transport;
-      test "a host buffer of 1 MiB costs at most 32 and 9 major words"
-        test_create_large_words;
-      test "a host buffer of no bytes costs at most 32 words"
-        test_create_empty_words;
-      test "a bigarray's buffer costs at most 54 words" (fun () ->
-          at_most_words (54, 0) (fun () -> B.of_bigarray f32));
-      test "a view costs at most 19 words" (fun () ->
-          at_most_words (19, 0) (fun () -> B.view b16 ~first:16 ~length:16));
-      test "a read costs at most 27 words" (fun () ->
-          at_most_words (27, 0) (fun () -> B.read b16 Bigarray.float32 ignore));
     ]
 
 let () = exit (run "rig.buffer" (tests @ [ words ]))

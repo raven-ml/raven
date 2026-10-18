@@ -196,22 +196,12 @@ let law c =
 
 (* Cases *)
 
-(* A donation overlapping a read that begins before a shorter read: the overlap
-   is not with the read next to it in memory order. *)
-let test_nested_overlap () =
-  let b = B.create Rig.host 27 in
-  let view first length = B.view b ~first ~length in
-  raises_match Exn.invalid_arg (fun () ->
-      Claim.with_ ~read:[ view 0 20; view 2 1 ] ~donate:[ view 19 1 ] ignore)
-
-(* Donations that overlap each other are refused, as values of their own or
-   within one value, with nothing else claimed. *)
+(* Donations that overlap each other are refused, with nothing else
+   claimed. *)
 let test_donations_overlap () =
   let b = B.create Rig.host 16 in
   let view first length = B.view b ~first ~length in
-  raises_match ~msg:"two values" Exn.invalid_arg (fun () ->
-      Claim.with_ ~read:[] ~donate:[ view 0 8; view 4 8 ] ignore);
-  raises_match ~msg:"one value" Exn.invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       Claim.with_ ~read:[] ~donate:[ view 0 8; view 4 8 ] ignore);
   Claim.with_ ~read:[] ~donate:[ view 0 8; view 8 8 ] (fun c ->
       equal ~msg:"apart, neither spans" (pair bool bool) (false, false)
@@ -238,7 +228,6 @@ let test_claims () =
 
   Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal bool true (Claim.exclusive c b);
-      raises_match Exn.invalid_arg (fun () -> Claim.with_ ~read:[ b ] ~donate:[] ignore);
       raises_match Exn.invalid_arg (fun () ->
           Claim.with_ ~read:[ b ] ~donate:[] ignore))
 
@@ -1855,6 +1844,9 @@ let tests =
         prop
           ~examples:
             [
+              (* A donation overlapping a read that begins before a shorter
+                 read: the overlap is not with the read next to it in memory
+                 order. *)
               {
                 n = 27;
                 views =
@@ -1866,9 +1858,6 @@ let tests =
             ]
           "with_ refuses overlapping donations and holds what spans alone" case
           law;
-        test
-          "a donation inside a long read with a short read between is refused"
-          test_nested_overlap;
         test "donations that overlap each other are refused"
           test_donations_overlap;
         test "memories with no address are claimed apart" test_io_spans;

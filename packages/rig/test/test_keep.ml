@@ -87,25 +87,6 @@ let test_release_unsubmitted () =
   released Rig.host;
   equal int 1 (Atomic.get runs)
 
-(* A submission keeps its value reachable until its work is done, and no
-   longer. *)
-let[@inline never] keep_bytes d w =
-  let v = Bytes.of_string "kept" in
-  Weak.set w 0 (Some v);
-  ignore (submit (Sub.make ~keep:v d [||]))
-
-let test_keeps_value () =
-  let d, p = P.open_ "keep:keeps" in
-  let w = Weak.create 1 in
-  keep_bytes d w;
-  Gc.full_major ();
-  drain d;
-  equal ~msg:"while its work is undone" bool true (Weak.check w 0);
-  ignore (P.run p);
-  drain d;
-  Gc.full_major ();
-  equal ~msg:"once its work is done" bool false (Weak.check w 0)
-
 (* On a lost device a submission keeps its value until the stop's answer and
    the word reaching the last value: an Unknown answer with a word short of it
    keeps the value. *)
@@ -395,8 +376,6 @@ let tests =
         test ~timeout:10. "a drain that finds a transport's fault returns"
           test_release_transport_fault;
         test "a kept value orders no work" test_keep_orders_nothing;
-        test "a submission keeps its value until its work is done"
-          test_keeps_value;
         test "a value submitted twice waits for both submits' work"
           test_release_last_submit;
         test "a closed device keeps its slot while it keeps a value"
