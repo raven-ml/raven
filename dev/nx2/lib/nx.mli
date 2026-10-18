@@ -1309,8 +1309,9 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     the chunks before a window move to it as rows of partial results, and
     a window whose edge falls inside a chunk adds at most one chunk's work,
     4096 terms per slice. Over integers and booleans, and for {!cummax} and
-    {!cummin}, one row moves per device and one more pass combines it with
-    the device's results. {!ewma} reads its axis whole on each device.
+    {!cummin}, each device's total moves as one row to the devices after
+    it, which scan from those rows. {!ewma} reads its axis whole on each
+    device.
 
     A float result that a NaN reaches is a quiet NaN with the first NaN's
     sign and payload, the first in C order: a signalling NaN comes out with
