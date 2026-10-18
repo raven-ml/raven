@@ -177,111 +177,36 @@ let map p ~dsts loads =
         (Array.to_list dsts @ Array.to_list (Array.map operand loads))
   | answer -> answer
 
-(* Reductions and scans (reduce.c). nx.cpu computes a program's one
-   operand, unchanged: one reduction, reduced or scanned, as [reduction]
-   takes it, and a [Moments] scan by its own external. The externals
-   take the reduction, read as an int, a padded load's pad
-   and its fill's bits, and [threads]: [1] for one thread, [0] for as many
+(* Reductions and scans (reduce.c), of a program's outputs through it,
+   each load passing its padding: an external each, which reads the terms
+   of a program that is its one load's identity in place and those of
+   another block by block (reduce.c's Programs), and checks each
+   reduction's destinations and a scan's carry. Neither allocates for a
+   program of plain loads. [threads] is [1] for one thread, [0] for as many
    as the job gives. *)
 
-(* The reductions reduce.c computes: the monoids in [Nx_kernel.monoid]'s
-   order, then those it computes by a state of each block of terms. *)
-type reduction =
-  | Sum
-  | Prod
-  | Max
-  | Min
-  | Logsumexp
-  | Arg_max
-  | Arg_min
-  | Moments
-
 external reduce_c :
-  reduction ->
-  int iarray ->
-  Nx_array.any array ->
-  ('v, 's) Nx_array.t ->
-  (Nx_kernel.pad * string) option ->
-  int ->
-  Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
-
-(* A program's reductions, scan or Moments scan, [0], [1] or [2], by pairs
-   of a reduction, read as an int, and an output; a scan's carry. *)
-external reduce_prog_c :
-  int ->
   Nx_kernel.Prog.t ->
-  int array ->
+  (Nx_kernel.reduction * int) array ->
   int array ->
   int iarray ->
   Nx_array.any array ->
   Nx_kernel.load array ->
   (Nx_kernel.pad * string) option array ->
-  Nx_array.any option ->
   int ->
-  Nx_array.answer = "nx_cpu_reduce_prog_byte" "nx_cpu_reduce_prog"
+  Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
 
+(* A scan, over its first destination's shape. *)
 external scan_c :
-  reduction ->
+  Nx_kernel.Prog.t ->
+  Nx_kernel.reduction * int ->
   int ->
   Nx_array.any array ->
-  ('v, 's) Nx_array.t ->
-  (Nx_kernel.pad * string) option ->
+  Nx_kernel.load array ->
+  (Nx_kernel.pad * string) option array ->
   Nx_array.any option ->
   int ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
-
-external moments_c :
-  int ->
-  Nx_array.any ->
-  Nx_array.any ->
-  ('v, 's) Nx_array.t ->
-  (Nx_kernel.pad * string) option ->
-  int ->
-  Nx_array.answer = "nx_cpu_moments_scan_byte" "nx_cpu_moments_scan"
-
-(* Whether the kernels compute [Logsumexp] and [Moments] of terms of [dt]:
-   the floats, the narrower ones in float32. *)
-let floats (type v s) (dt : (v, s) D.t) =
-  match dt with
-  | Float32 | Float64 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
-  | Float4_e2m1fn ->
-      true
-  | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64 | Uint64 | Int4
-  | Uint4 | Complex64 | Complex128 | Bool | Bit ->
-      false
-
-let of_monoid : Nx_kernel.monoid -> reduction = function
-  | Sum -> Sum
-  | Prod -> Prod
-  | Max -> Max
-  | Min -> Min
-  | Logsumexp -> Logsumexp
-
-(* The destinations of [r]: one, or a [Moments]' mean and variance, an
-   [Arg]'s extremes and positions. *)
-let width : Nx_kernel.reduction -> int = function
-  | Monoid _ -> 1
-  | Arg _ | Moments -> 2
-
-(* Whether the kernels compute [r] of terms of [dt] into the destinations
-   of [dsts] from [d], [r]'s, which the caller checked are there: of any
-   dtype but an [Arg]'s positions, of int64. A predicate apart from the
-   reduction it names, reading [dsts] in place, so that the reductions
-   allocate nothing for it. *)
-let computes (type v s) (r : Nx_kernel.reduction) (dt : (v, s) D.t) dsts d =
-  match r with
-  | Monoid Logsumexp | Moments -> floats dt
-  | Monoid (Sum | Prod | Max | Min) -> true
-  | Arg _ ->
-      let (Nx_array.Any i) = dsts.(d + 1) in
-      D.equal (Nx_array.dtype i) D.Int64
-
-(* The reduction reduce.c computes for [r]. *)
-let reduction : Nx_kernel.reduction -> reduction = function
-  | Monoid m -> of_monoid m
-  | Arg Max -> Arg_max
-  | Arg Min -> Arg_min
-  | Moments -> Moments
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =
@@ -291,138 +216,44 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
 let rec all_accepted p rs i =
   i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
 
+(* Whether a load of [loads] from [i] on is padded: a loop of its own, as
+   [Array.exists]' closure would allocate on every reduction. *)
+let rec any_padded (loads : Nx_kernel.load array) i =
+  i < Array.length loads && (padded loads.(i) || any_padded loads (i + 1))
+
 (* The loads' paddings, or none where no load is padded. *)
-let pads loads =
-  if Array.exists padded loads then Array.map padding loads else [||]
+let pads loads = if any_padded loads 0 then Array.map padding loads else [||]
 
-(* [r]'s code in reduce.c. *)
-let code : reduction -> int = function
-  | Sum -> 0
-  | Prod -> 1
-  | Max -> 2
-  | Min -> 3
-  | Logsumexp -> 4
-  | Arg_max -> 5
-  | Arg_min -> 6
-  | Moments -> 7
+(* Whether the layouts [l] and [l'] have one extent from axis [i] on, of
+   one rank. *)
+let rec same_extents l l' i =
+  i = Nx_array.Layout.rank l
+  || Nx_array.Layout.dim l i = Nx_array.Layout.dim l' i
+     && same_extents l l' (i + 1)
 
-(* What the kernels answer a reduction [r] into [dsts] they do not compute,
-   its terms' dtype accepted: destinations other than [r]'s, or an [Arg]'s
-   positions of another dtype than int64. *)
-let refusal r dsts =
-  if Array.length dsts <> width r then Nx_array.Bad_arity
-  else Nx_array.Wrong_dtype
+(* Whether load [i] on of [loads] have the shape of the destination [d]
+   once loaded, as {!fits} says, read without allocating for a plain
+   load. *)
+let rec fits_dst (Nx_array.Any d as any) (loads : Nx_kernel.load array) i =
+  let l = Nx_array.layout d in
+  i = Array.length loads
+  || (match loads.(i) with
+     | Plain x ->
+         let lx = Nx_array.layout x in
+         Nx_array.Layout.rank lx = Nx_array.Layout.rank l && same_extents lx l 0
+     | Padded _ -> fits (loop_of any) loads i)
+     && fits_dst any loads (i + 1)
 
-(* Fills [codes] with each reduction of [rs] from [i] on, its code in
-   reduce.c and its output, its destinations from [d] on: [Done], or the
-   refusal of the first the kernels do not compute, or of destinations
-   other than the reductions'. *)
-let rec fill_codes p rs dsts codes i d =
-  if i = Array.length rs then
-    if d = Array.length dsts then Nx_array.Done else Nx_array.Bad_arity
-  else
-    let r, k = rs.(i) in
-    let (D.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
-    if d + width r > Array.length dsts then Nx_array.Bad_arity
-    else if not (computes r dt dsts d) then Nx_array.Wrong_dtype
-    else begin
-      codes.(2 * i) <- code (reduction r);
-      codes.((2 * i) + 1) <- k;
-      fill_codes p rs dsts codes (i + 1) (d + width r)
-    end
-
-(* Reductions of a program's outputs through it: each (reduction, output)
-   pair of [rs] into its one or two destinations of [dsts] in turn, in one
-   call, which checks every destination before it writes any. *)
-let fused_reduce ~threads p ~shape ~axes rs ~dsts loads =
-  let codes = Array.make (2 * Array.length rs) 0 in
-  match fill_codes p rs dsts codes 0 0 with
-  | Nx_array.Done ->
-      reduce_prog_c 0 p codes shape axes dsts loads (pads loads) None threads
-  | refused -> refused
-
-(* nx.cpu reads the terms of a program that is its one operand's identity
-   in place, and those of another, or of several reductions, through the
-   program, block by block (reduce.c's Programs), over the loop's [shape].
-   A padded load passes its pad and its fill's bits. *)
-let reduce_answer ~threads p ~shape ~axes rs ~dsts
-    (loads : Nx_kernel.load array) =
+let reduce_answer ~threads p ~shape ~axes rs ~dsts loads =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
   else if not (fits shape loads 0) then Nx_array.Shape_mismatch
-  else
-    match (rs, loads) with
-    | [| (r, 0) |], [| l |] when Nx_kernel.Prog.is_identity p ->
-        let (Any x) = operand l in
-        if Array.length dsts = width r && computes r (Nx_array.dtype x) dsts 0
-        then reduce_c (reduction r) axes dsts x (padding l) threads
-        else refusal r dsts
-    | _ -> fused_reduce ~threads p ~shape ~axes rs ~dsts loads
+  else reduce_c p rs shape axes dsts loads (pads loads) threads
 
-(* A scan of a program other than its one operand's identity, through it,
-   over its destinations' shape. *)
-let fused_scan ~threads ?carry p ~axis (r, k) ~dsts loads =
-  let (D.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
-  let shape (Nx_array.Any d) = Nx_array.Layout.shape (Nx_array.layout d) in
-  match (r, dsts) with
-  | Nx_kernel.Moments, [| mean; _ |] when floats dt ->
-      reduce_prog_c 2 p [| code Moments; k |] (shape mean) [| axis |] dsts
-        loads (pads loads) None threads
-  | _ when Array.length dsts = width r && computes r dt dsts 0 ->
-      reduce_prog_c 1 p
-        [| code (reduction r); k |]
-        (shape dsts.(0)) [| axis |] dsts loads (pads loads) carry threads
-  | _ -> refusal r dsts
-
-(* The dtype terms of [dt] reduce in (reduce.c's Stage). *)
-let carrier (D.Any dt as d) =
-  match dt with
-  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
-      D.Any D.Float32
-  | Int4 -> D.Any D.Int8
-  | Uint4 -> D.Any D.Uint8
-  | Bit -> D.Any D.Bool
-  | Float32 | Float64 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64
-  | Uint64 | Complex64 | Complex128 | Bool ->
-      d
-
-(* Whether [c] can carry a scan of [r] of [p]'s output [k] along [axis] into
-   [dst]: [Done], or the refusal. *)
-let carries p ~axis (r, k) dst (Nx_array.Any c) =
-  match (r : Nx_kernel.reduction) with
-  | Monoid (Sum | Prod | Max | Min) ->
-      let want = Array.copy (loop_of dst) in
-      if axis >= 0 && axis < Array.length want then want.(axis) <- 1;
-      let (D.Any ct) = carrier (Nx_kernel.Prog.dtype p (Iarray.get p.outs k)) in
-      if Nx_array.Layout.shape (Nx_array.layout c) <> want then
-        Nx_array.Shape_mismatch
-      else if not (D.equal (Nx_array.dtype c) ct) then Nx_array.Wrong_dtype
-      else Nx_array.Done
-  | Monoid Logsumexp | Moments | Arg _ -> Nx_array.Bad_arity
-
-let scan_answer ~threads ?carry p ~axis rk ~dsts (loads : Nx_kernel.load array)
-    =
+let scan_answer ~threads ?carry p ~axis rk ~dsts loads =
   if not (accepted p rk) then Nx_array.Wrong_dtype
   else if Array.length dsts = 0 then Nx_array.Bad_arity
-  else if not (fits (loop_of dsts.(0)) loads 0) then Nx_array.Shape_mismatch
-  else
-    match Option.map (carries p ~axis rk dsts.(0)) carry with
-    | None | Some Nx_array.Done -> (
-        if not (Nx_kernel.Prog.is_identity p) then
-          fused_scan ~threads ?carry p ~axis rk ~dsts loads
-        else
-          match (rk, dsts, loads) with
-          | (Moments, 0), [| mean; var |], [| l |] ->
-              let (Any x) = operand l in
-              moments_c axis mean var x (padding l) threads
-          | (r, 0), _, [| l |] ->
-              let (Any x) = operand l in
-              if
-                Array.length dsts = width r
-                && computes r (Nx_array.dtype x) dsts 0
-              then scan_c (reduction r) axis dsts x (padding l) carry threads
-              else refusal r dsts
-          | _ -> Nx_array.Bad_arity)
-    | Some refused -> refused
+  else if not (fits_dst dsts.(0) loads 0) then Nx_array.Shape_mismatch
+  else scan_c p rk axis dsts loads (pads loads) carry threads
 
 (* The operands of a reduction or scan, to name a decline. *)
 let loop_operands dsts loads =

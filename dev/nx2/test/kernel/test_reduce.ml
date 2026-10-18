@@ -4621,6 +4621,32 @@ let test_malformed (b : Support.backend) () =
   equal ~msg:"a scan into no destination" Elements.answer A.Bad_arity
     (K.scan p ~axis:1 (Monoid Sum, 0) ~dsts:[||] [| plain_of (A.Any x) |])
 
+(* A reduction and a scan of a program that is its one load's identity, of
+   plain loads, allocate nothing: their tables live in C. *)
+let test_identity_allocates_nothing (b : Support.backend) =
+  let module K = (val b.kernels) in
+  let n = 1024 in
+  let x = A.of_array D.Float32 [| n |] (Array.make n 1.) in
+  let p = identity (D.Any D.Float32) and loads = [| Nx_kernel.Plain x |] in
+  let into = [| A.Any (A.create Rig.host D.Float32 [||]) |] in
+  let along = [| A.Any (A.create Rig.host D.Float32 [| n |]) |] in
+  let shape = [| n |] and axes = Iarray.of_array [| 0 |] in
+  let rs = [| (Nx_kernel.Monoid Sum, 0) |] and rk = (Nx_kernel.Monoid Sum, 0) in
+  let reduce () = K.reduce p ~shape ~axes rs ~dsts:into loads in
+  let scan () = K.scan p ~axis:0 rk ~dsts:along loads in
+  let words f =
+    (match f () with
+    | A.Done -> ()
+    | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r);
+    let before = Gc.minor_words () in
+    for _ = 1 to 100 do
+      ignore (Sys.opaque_identity (f ()))
+    done;
+    Gc.minor_words () -. before
+  in
+  equal ~msg:"reduce" (float 0.5) 0. (words reduce);
+  equal ~msg:"scan" (float 0.5) 0. (words scan)
+
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
@@ -4633,6 +4659,8 @@ let cpu (b : Support.backend) =
         (fun () -> b.around (test_most_loads b));
       test "refuses destinations other than a reduction's" (fun () ->
           b.around (test_malformed b));
+      test "an identity reduction and scan allocate nothing" (fun () ->
+          b.around (fun () -> test_identity_allocates_nothing b));
       prop ~examples:dot_examples "a sum of one axis is a contraction with ones"
         dots (run (law_contract b));
       prop ~examples:into_examples

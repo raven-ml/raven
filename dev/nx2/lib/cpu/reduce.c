@@ -3767,10 +3767,37 @@ static int carried(const call *c, const nx_array *cy, const nx_array *y) {
   return NX_OK;
 }
 
-static value run(const call *c, value d0, value d1, value vx, value vpad,
-                 value vcarry) {
+/* reduce.c's code of the Nx_kernel.reduction [r]: a Monoid's monoid,
+   NX_CPU_ARG_MAX or NX_CPU_ARG_MIN for an Arg, NX_CPU_MOMENTS for
+   Moments. */
+static int code_of(value r) {
+  if (Is_long(r)) return NX_CPU_MOMENTS;
+  int k = Int_val(Field(r, 0));
+  return Tag_val(r) == 0 ? k : NX_CPU_ARG_MAX + k;
+}
+
+/* The dtype of the program [vp]'s one load where [vp] is that load's
+   identity (Prog.is_identity), else -1. Reads [vp] alone. */
+static int identity_of(value vp) {
+  value ins = Field(vp, NX_PROG_INS), outs = Field(vp, NX_PROG_OUTS);
+  if (Wosize_val(ins) != 1 || Wosize_val(outs) != 1) return -1;
+  value node = Field(Field(vp, NX_PROG_NODES), Int_val(Field(outs, 0)));
+  return Tag_val(node) == NX_NODE_IN ? Int_val(Field(ins, 0)) : -1;
+}
+
+/* Computes [c] of [vx], a program's one load that is its identity, of
+   the program's dtype [dt], read in place, into the destinations [d0] and
+   [d1] (Val_unit where [c] has one), from the carries [vcarry] where it is
+   Some; [vpad] holds the load's pad and fill where it is padded. Nothing
+   is copied before the door: a call of a few elements allocates nothing.
+   A padded load is read from its padded copy; one a destination aliases,
+   from a copy too, since a scan reads its terms again after it writes
+   their results: for its chunks' totals, and in a Moments scan's exact
+   pass. */
+static value run(const call *c, int dt, value d0, value d1, value vx,
+                 value vpad, value vcarry) {
   CAMLparam5(d0, d1, vx, vpad, vcarry);
-  int dt = nx_array_dtype(vx), nd = d1 == Val_unit ? 1 : 2;
+  int nd = d1 == Val_unit ? 1 : 2;
   int arg =
       c->op != MOMENTS && (c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN);
   /* The pad and the fill, copied before anything that can move them. */
@@ -3788,10 +3815,6 @@ static value run(const call *c, value d0, value d1, value vx, value vpad,
   int e = nx_read(n, in, a);
   if (e) CAMLreturn(Val_int(e));
   const nx_array *cy = nc ? &a[nd + 1] : NULL;
-  /* A padded operand is read from its padded copy; one a destination
-     aliases, from a copy too, since a scan reads its terms again after it
-     writes their results: for its chunks' totals, and in a Moments scan's
-     exact pass. */
   int copy = padded || x->alias;
   int64_t ys[NX_MAX_RANK], terms, outputs;
   if (padded) nx_cpu_padded_shape(&pad, x->rank, x->dim, ys);
@@ -3824,11 +3847,10 @@ static value run(const call *c, value d0, value d1, value vx, value vpad,
   }
   if (copy) x = &loaded;
   if (kept_carry.base != NULL) cy = &kept_carry;
-  int threads = c->threads;
   e = c->op == MOMENTS
-          ? moments_into(c->axes[0], &a[0], &a[1], x, NULL, threads)
+          ? moments_into(c->axes[0], &a[0], &a[1], x, NULL, c->threads)
           : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
-                        x, cy, NULL, threads);
+                        x, cy, NULL, c->threads);
   if (padded) free(loaded.base);
   else if (copy) nx_cpu_give(loaded.base);
   free(kept_carry.base);
@@ -3844,28 +3866,6 @@ static int axis_of(value v, int *a) {
   if (x < 0 || x >= NX_MAX_RANK) return 1;
   *a = (int)x;
   return 0;
-}
-
-/* [dsts] holds Arg's and Moments' two destinations, the others' one. */
-value nx_cpu_reduce(value r, value axes, value dsts, value x, value pad,
-                    value threads) {
-  call c = {.op = REDUCE,
-            .r = Int_val(r),
-            .naxes = (int)Wosize_val(axes),
-            .threads = Int_val(threads)};
-  int two = c.r == NX_CPU_ARG_MAX || c.r == NX_CPU_ARG_MIN ||
-            c.r == NX_CPU_MOMENTS;
-  if (Wosize_val(dsts) != (mlsize_t)(1 + two)) return Val_int(NX_ARITY);
-  if (c.naxes > NX_MAX_RANK) return Val_int(NX_SHAPE);
-  for (int i = 0; i < c.naxes; i++)
-    if (axis_of(Field(axes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad,
-             Val_none);
-}
-
-value nx_cpu_reduce_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_cpu_reduce(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
 
 /* Whether [op] by [r] has two destinations: Arg's and Moments'. */
@@ -3901,22 +3901,24 @@ static struct custom_operations fused_ops = {
     custom_compare_ext_default, custom_fixed_length_default};
 
 /* Computes [c] of the program [vp] over the loop of [rank] axes of extents
-   [shape], its loads [vloads], each copied padded where [vpads], empty
-   where none is padded, holds Some (pad, fill), by the reductions [vrs],
-   pairs of a reduction and an output, in turn into the destinations
-   [vdsts], each reduction's one or two as run takes them. A scan takes
-   one. The loop's terms are virtual, read through the program (Programs),
-   in the output's held dtype. Every destination is checked before any is
-   written, so that a refusal writes nothing. The program and the pads are
+   [shape], or of its first destination's shape where [rank] is -1, its
+   loads [vloads], each copied padded where [vpads], empty where none is
+   padded, holds Some (pad, fill), by the reductions [vrs], an array of
+   pairs of an Nx_kernel.reduction and an output, or a scan's one pair
+   where [single], in turn into the destinations [vdsts], each reduction's
+   one or two as run takes them. The loop's terms are virtual, read
+   through the program (Programs), in the output's held dtype. Every
+   destination is checked before any is written, so that a refusal writes
+   nothing. The program and the pads are
    copied before the door. Each reduction's loop holds its one or two
    destinations, the virtual operand and the loads, whatever the count of
    reductions, which nothing bounds: their tables, and the door's of every
    destination and load, live on the stack up to NX_MAX_OPERANDS entries
    and past it on the heap, which a custom block owns with the program's
    copy. */
-static value run_fused(const call *c, value vp, value vrs, int rank,
-                       const int64_t *shape, value vdsts, value vloads,
-                       value vpads, value vcarry) {
+static value run_fused(const call *c, value vp, value vrs, int single,
+                       int rank, const int64_t *shape, value vdsts,
+                       value vloads, value vpads, value vcarry) {
   CAMLparam5(vp, vrs, vdsts, vloads, vpads);
   CAMLxparam1(vcarry);
   CAMLlocal1(owner);
@@ -3927,7 +3929,7 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   ((fused_held *)Data_custom_val(owner))->g = g;
   int nl = nx_cpu_prog_ins(g), nd = (int)Wosize_val(vdsts), e = NX_OK;
   int nc = Is_block(vcarry);
-  int nr = (int)Wosize_val(vrs) / 2, want = 0;
+  int nr = single ? 1 : (int)Wosize_val(vrs), want = 0;
   /* The tables, on the stack up to NX_MAX_OPERANDS entries, else in one
      block of the heap: the door's descriptors and operands, then each
      reduction's code, output and first destination. */
@@ -3952,8 +3954,9 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   if (nr < 1 || (c->op != REDUCE && nr != 1) || (int)Wosize_val(vloads) != nl)
     e = NX_ARITY;
   for (int i = 0; !e && i < nr; i++) {
-    rs[i] = Int_val(Field(vrs, 2 * i));
-    ks[i] = Int_val(Field(vrs, 2 * i + 1));
+    value pair = single ? vrs : Field(vrs, i);
+    rs[i] = code_of(Field(pair, 0));
+    ks[i] = Int_val(Field(pair, 1));
     first[i] = want;
     want += 1 + two(c->op, rs[i]);
     if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_ARITY;
@@ -4006,6 +4009,10 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     release(owner);
     CAMLreturn(Val_int(e));
   }
+  if (rank < 0) {
+    rank = a[0].rank;
+    shape = a[0].dim;
+  }
   const nx_array *cy = nc ? &a[nd + nl] : NULL;
   /* Every reduction's destinations fit the loop, before any load is
      copied; nx_cpu.ml checked that the loads have its shape. */
@@ -4027,9 +4034,9 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
     release(owner);
     CAMLreturn(Val_int(e));
   }
-  /* The call's price (cpu.h, Calls): each reduction's, as run prices one over
-     the loop's C-contiguous virtual operand (call_cost), each term also
-     running the program's kinds (nx_cpu_prog_cost), and the copies of
+  /* The call's price (cpu.h, Calls): each reduction's, as run prices
+     one over the loop's C-contiguous virtual operand (call_cost), each term
+     also running the program's kinds (nx_cpu_prog_cost), and the copies of
      padded and aliased loads. */
   double per = 0, cost = 0;
   for (int i = 0; i < nl; i++)
@@ -4106,70 +4113,75 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   CAMLreturn(Val_int(e));
 }
 
-/* As nx_cpu_reduce, nx_cpu_scan and nx_cpu_moments_scan, as [op] says (0,
-   1 and 2), of the program [p] over the loop of shape [vshape], [loads]
-   and their paddings [pads], by the reductions [rs], pairs of a
-   reduction, or a monoid, and an output, in turn: a scan's one, [axes]
-   its one axis, from the carries [carry] where it is Some. */
-value nx_cpu_reduce_prog(value op, value p, value rs, value vshape,
-                         value axes, value dsts, value loads, value pads,
-                         value carry, value threads) {
-  call c = {.op = Int_val(op) == 0   ? REDUCE
-                  : Int_val(op) == 1 ? SCAN
-                                     : MOMENTS,
-            .naxes = (int)Wosize_val(axes),
+/* Computes [c] by the one pair [vr] of a reduction and an output of [vp]
+   into [vdsts], where [vp] is its one load's identity: NX_ARITY unless
+   the destinations are the reduction's. Sets [*done] to 0, and computes
+   nothing, where [vp] is not. */
+static value in_place(call *c, value vp, value vr, value vdsts,
+                      value vloads, value vpads, value vcarry, int *done) {
+  int dt = identity_of(vp);
+  *done = dt >= 0 && Int_val(Field(vr, 1)) == 0 && Wosize_val(vloads) == 1;
+  if (!*done) return Val_unit;
+  c->r = code_of(Field(vr, 0));
+  int nd = 1 + two(c->op, c->r);
+  if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_ARITY);
+  value pad = Wosize_val(vpads) > 0 ? Field(vpads, 0) : Val_none;
+  return run(c, dt, Field(vdsts, 0), nd == 2 ? Field(vdsts, 1) : Val_unit,
+             Field(Field(vloads, 0), 0), pad, vcarry);
+}
+
+/* Reduces the program [vp] over the loop of shape [vshape] along [vaxes],
+   its [loads] and their paddings [pads], by the reductions [vrs], pairs
+   of an Nx_kernel.reduction and an output, in turn into [vdsts]. A
+   program that is its one load's identity reads the load in place. */
+value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
+                    value vdsts, value vloads, value vpads, value threads) {
+  call c = {.op = REDUCE,
+            .naxes = (int)Wosize_val(vaxes),
             .threads = Int_val(threads)};
   int rank = (int)Wosize_val(vshape);
-  if (c.naxes > NX_MAX_RANK || rank > NX_MAX_RANK ||
-      (c.op != REDUCE && c.naxes != 1))
-    return Val_int(NX_SHAPE);
+  if (c.naxes > NX_MAX_RANK || rank > NX_MAX_RANK) return Val_int(NX_SHAPE);
   int64_t shape[NX_MAX_RANK];
   for (int d = 0; d < rank; d++)
     if ((shape[d] = Long_val(Field(vshape, d))) < 0) return Val_int(NX_SHAPE);
   for (int i = 0; i < c.naxes; i++)
-    if (axis_of(Field(axes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  return run_fused(&c, p, rs, rank, shape, dsts, loads, pads, carry);
+    if (axis_of(Field(vaxes, i), &c.axes[i])) return Val_int(NX_SHAPE);
+  int done = 0;
+  if (Wosize_val(vrs) == 1) {
+    value r = in_place(&c, vp, Field(vrs, 0), vdsts, vloads, vpads, Val_none,
+                       &done);
+    if (done) return r;
+  }
+  return run_fused(&c, vp, vrs, 0, rank, shape, vdsts, vloads, vpads,
+                   Val_none);
 }
 
-value nx_cpu_reduce_prog_byte(value *argv, int argn) {
+value nx_cpu_reduce_byte(value *argv, int argn) {
   (void)argn;
-  return nx_cpu_reduce_prog(argv[0], argv[1], argv[2], argv[3], argv[4],
-                            argv[5], argv[6], argv[7], argv[8], argv[9]);
+  return nx_cpu_reduce(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                       argv[6], argv[7]);
 }
 
-/* [dsts] holds Arg's two destinations, a monoid's or Logsumexp's one; a
-   monoid's scan starts from the carries [carry] where it is Some. */
-value nx_cpu_scan(value r, value axis, value dsts, value x, value pad,
-                  value carry, value threads) {
-  call c = {.op = SCAN,
-            .r = Int_val(r),
+/* Scans the program [vp] along [vaxis] by the pair [vr] of a reduction and
+   an output, Moments by its own scan, its [loads] and their paddings
+   [pads], into [vdsts], over their first one's shape, from the carries
+   [vcarry] where it is Some. */
+value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
+                  value vpads, value vcarry, value threads) {
+  call c = {.op = Is_long(Field(vr, 0)) ? MOMENTS : SCAN,
             .naxes = 1,
             .threads = Int_val(threads)};
-  int two = c.r == NX_CPU_ARG_MAX || c.r == NX_CPU_ARG_MIN;
-  if (c.r == NX_CPU_MOMENTS || Wosize_val(dsts) != (mlsize_t)(1 + two))
-    return Val_int(NX_ARITY);
-  if (axis_of(axis, &c.axes[0])) return Val_int(NX_SHAPE);
-  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad,
-             carry);
+  if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
+  int done = 0;
+  value r = in_place(&c, vp, vr, vdsts, vloads, vpads, vcarry, &done);
+  if (done) return r;
+  return run_fused(&c, vp, vr, 1, -1, NULL, vdsts, vloads, vpads, vcarry);
 }
 
 value nx_cpu_scan_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                     argv[6]);
-}
-
-value nx_cpu_moments_scan(value axis, value mean, value var, value x,
-                          value pad, value threads) {
-  call c = {.op = MOMENTS, .naxes = 1, .threads = Int_val(threads)};
-  if (axis_of(axis, &c.axes[0])) return Val_int(NX_SHAPE);
-  return run(&c, mean, var, x, pad, Val_none);
-}
-
-value nx_cpu_moments_scan_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_cpu_moments_scan(argv[0], argv[1], argv[2], argv[3], argv[4],
-                             argv[5]);
+                     argv[6], argv[7]);
 }
 
 #elif !defined(__x86_64__)
