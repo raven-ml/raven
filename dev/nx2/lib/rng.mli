@@ -74,5 +74,23 @@ val binomial :
   (float, 's, 'd) Value.t ->
   (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 
+val truncated_normal :
+  ?key:'d key ->
+  (float, 's, 'd) Value.t ->
+  (float, 's, 'd) Value.t ->
+  (float, 's, 'd) Value.t
+
+val dirichlet :
+  ?key:'d key -> (float, 's, 'd) Value.t -> (float, 's, 'd) Value.t
+
+val categorical :
+  ?key:'d key ->
+  ?axis:int ->
+  (float, 's, 'd) Value.t ->
+  (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
+
+val permutation :
+  ?key:'d key -> int -> (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
+
 val with_key : 'd key -> (unit -> 'a) -> 'a
 val next_key : unit -> 'd key

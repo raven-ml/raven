@@ -2939,6 +2939,65 @@ module Rng : sig
       Raises [Invalid_argument] if the shapes do not broadcast, an element of
       [n] is negative, or one of [p] is outside [[0, 1]]. *)
 
+  val truncated_normal :
+    ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [truncated_normal lower upper] is standard normal draws conditioned on
+      [[lower, upper]], elementwise over their broadcast shape. The bounds may
+      come in either order, an infinite one leaves its side open, and equal
+      ones give the bound. Draw [j] in C order is the [x] with
+      [Φ(x) = (1 - u) Φ(lower) + u Φ(upper)], [Φ] the normal distribution
+      function ({!ndtr}), and [u] {!uniform}'s draw [j] from the same key at
+      float64 for float64 and at float32 otherwise, floored at its least
+      positive value. It inverts the smaller of the masses below and above
+      [x], held as logarithms in the tails, so that bounds far out on one side
+      keep their digits, and its cost does not depend on the interval's mass.
+      A draw lies in the interval, and at float32 within [6·2{^-23}] plus 3
+      units in the last place of the exact solution. The masses at each bound
+      are computed once per element of the bound as given, so a scalar bound
+      costs one.
+
+      Raises [Invalid_argument] if the shapes do not broadcast or an element of
+      [lower] or [upper] is NaN. *)
+
+  val dirichlet : ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [dirichlet a] is Dirichlet draws of concentrations [a] along its last
+      axis, one draw per row: the {!gamma} draws of [a] from the same key, each
+      row divided by its sum. The quotient is formed from the draws'
+      logarithms, so that a row of concentrations so small that its gamma draws
+      underflow keeps their ratios: each row sums to 1 and has an element of at
+      least [1 / n], [n] its length, up to rounding. It inherits {!gamma}'s
+      rounds.
+
+      Raises [Invalid_argument] if [a] has no axis, or an element of [a] is
+      outside [(0, inf)]. *)
+
+  val categorical : ?key:'d key -> ?axis:int -> (float, 's, 'd) t -> 'd int64_t
+  (** [categorical logits] is a position along [axis] of each row of [logits],
+      drawn with probability proportional to the exponential of its logit:
+      [axis] is the last by default, a negative one counted from the end. A
+      logit of [-inf] is never drawn. The result has [logits]' shape without
+      [axis]; broadcast [logits] for several draws of one row.
+
+      It is the {!argmax} of the logits plus Gumbel noise [-log e], computed at
+      float64 for float64 and float32 for the other floats, [e] an exponential
+      draw formed from [b] random bits, 53 at float64 and 32 otherwise, that
+      keeps its relative precision near 0. The noise is bounded, so a category
+      whose logit lies more than [(b + 1) ln 2 + ln ((b + 1) ln 2)] below its
+      row's largest, about 26 at float32 and 41 at float64, is never drawn:
+      its probability is below [e{^-26}] or [e{^-41}].
+
+      Raises [Invalid_argument] if [axis] is not an axis of [logits] or has no
+      element, or if a row's largest logit is not finite: [+inf], NaN, or a row
+      of [-inf]. *)
+
+  val permutation : ?key:'d key -> int -> 'd int64_t
+  (** [permutation n] is a uniformly random ordering of [0], …, [n - 1]: the
+      positions that sort [n] random 64-bit words. Two words collide, and
+      their positions keep their order, with probability below
+      [n{^2} / 2{^65}].
+
+      Raises [Invalid_argument] if [n] is negative. *)
+
   (** {1:scope Scope} *)
 
   val with_key : 'd key -> (unit -> 'a) -> 'a

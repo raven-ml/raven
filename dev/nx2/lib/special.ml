@@ -293,22 +293,20 @@ let ndtri_central dc =
   let r = rsub_s T.ndtri_central_r (mul dc dc) in
   mul dc (div (horner t.ndtri_central_p r) (horner t.ndtri_central_q r))
 
-(* AS 241's guess on the nearer tail [q], then one Newton step: on [erf (x/sqrt
-   2)/2 = p - 1/2] where [|p - 1/2| <= 0.425], whose residual is relative to
-   [x]; on [log_ndtr x = log q] in the tails, where [q] may be far below the
-   least normal float. One [erfc_parts] serves both steps, at the central
-   [x/sqrt 2] or at the tail's [-x/sqrt 2]. *)
-let ndtri_at p =
-  let t = tables p in
-  let d = sub_s p 0.5 in
-  let central = cmple (abs d) (lit p T.ndtri_central_below) in
+(* [x] with [ndtr x = 1/2 + d], from [d] and [log_q], the logarithm of the
+   nearer tail's mass [1/2 - |d|], finite: a tail's mass may lie far below the
+   least positive float while its logarithm keeps its digits. AS 241's guess on
+   the nearer tail, then one Newton step: on [erf (x/sqrt 2)/2 = d] where [|d|
+   <= 0.425], whose residual is relative to [x]; on [log_ndtr x = log_q] in the
+   tails. One [erfc_parts] serves both steps, at the central [x/sqrt 2] or at
+   the tail's [-x/sqrt 2]. *)
+let ndtri_mass d log_q =
+  let t = tables d in
+  let central = cmple (abs d) (lit d T.ndtri_central_below) in
   let dc = clamp central d 0. in
   let xc = ndtri_central dc in
-  let lower = lt p 0.5 in
-  let q = where lower p (rsub_s 1. p) in
-  let tail = logical_and (logical_not central) (cmpgt q (zeros_like q)) in
-  let q = clamp tail q 0.01 in
-  let log_q = log q in
+  let lower = lt d 0. in
+  let log_q = where central (lit d (Stdlib.log 0.01)) log_q in
   let xt = ndtri_tail_guess log_q in
   let th, tl = split_sqrt1_2 xt in
   let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
@@ -335,6 +333,10 @@ let ndtri_at p =
   in
   let xt = sub xt (mul (sub lf log_q) e) in
   where central central_x (where lower xt (neg xt))
+
+let ndtri_at p =
+  let q = where (lt p 0.5) p (rsub_s 1. p) in
+  ndtri_mass (sub_s p 0.5) (log (clamp (cmpgt q (zeros_like q)) q 0.01))
 
 (* Gamma *)
 

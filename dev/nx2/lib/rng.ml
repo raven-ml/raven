@@ -592,6 +592,15 @@ let marsaglia ~p c a (u : _ array) =
   let boost = E.maximum u.(2 * rounds) tiny in
   (draw, below, boost)
 
+(* The logarithm of the gamma draw [j] of concentration [a], as [la + q / a]:
+   [la] the logarithm of Gamma(boosted), and [q] the logarithm of the shift's
+   uniform below a concentration of 1, 0 elsewhere. Apart, [q / a] stays
+   unformed where a tiny [a] would make it [-inf]. *)
+let log_gamma ~key ~p c j a =
+  let u = uniforms ~key ~p c j gamma_uniforms in
+  let acc, below, boost = marsaglia ~p c a u in
+  (E.log acc, E.(where below (log boost) (lit c 0.)))
+
 let gamma_programs = programs ()
 
 let gamma ?key a =
@@ -634,13 +643,9 @@ let beta ?key a b =
         let (C c) = compute dt in
         let p = precision c and lit = lit c in
         let a = param c 0 dt and b = param c 1 dt in
-        let gamma i x =
-          let u = uniforms ~key ~p c i gamma_uniforms in
-          let acc, below, boost = marsaglia ~p c x u in
-          (E.log acc, E.(where below (log boost) (lit 0.)))
-        in
         let even = E.(j * u64 2L) in
-        let la, qa = gamma even a and lb, qb = gamma E.(even + u64 1L) b in
+        let la, qa = log_gamma ~key ~p c even a in
+        let lb, qb = log_gamma ~key ~p c E.(even + u64 1L) b in
         let least = E.minimum a b in
         let shift = E.(((least / b * qb) - (least / a * qa)) / least) in
         let d = E.(lb - la + shift) in
@@ -968,3 +973,298 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   in
   let params = [| Value.Any count; Value.Any prob |] in
   draw ~by ~params (resolve key) D.Int32 s prog
+
+(* Truncated normal *)
+
+(* Inverse-CDF truncation: one uniform [u] per draw and no acceptance test, so
+   that the cost does not depend on the interval's mass. The draw [x] has [ndtr
+   x = (1 - u) ndtr lower + u ndtr upper], and equally [Q x = (1 - u) Q lower +
+   u Q upper] for the mass [Q x = ndtr (-x)] above it. Each is a sum of positive
+   terms, which keeps the relative precision of its parts, held as masses for
+   the central route and as logarithms for the tails, so that no bound is too
+   far out. The smaller of the two, at most 1/2, is inverted: right of zero
+   through [Q], left of it through [ndtr], so that both tails of an interval
+   about zero keep their digits. This follows SciPy's [truncnorm], which
+   chooses the side from the bounds where this chooses it per draw.
+
+   [u] is floored at 2^-p, its least positive value, so that an open lower side
+   gives a finite draw. A draw within its error of a bound can round past it,
+   so it is clamped into the interval. *)
+
+let not_nan = { text = "[-inf, inf]"; inside = (fun _ x -> E.(x = x)) }
+
+(* A bound's masses below and above it, [ndtr b] and [Q b], then their
+   logarithms, at the compute dtype: one map at the bound's own shape. *)
+let mass_programs = programs ()
+
+let masses ~by (b : (float, 's, 'd) Value.t) =
+  let dt = Prim.dtype b in
+  let (C c) = compute dt in
+  let slot = mass_programs.(D.code dt) in
+  let prog =
+    match Atomic.get slot with
+    | Some p -> p
+    | None ->
+        let x = rounded c (E.input 0 dt) in
+        let positive, n, log_n, log_m = Special.ndtr_halves x in
+        let m = E.(lit c 1. - n) in
+        let side y z = E.(any (where positive y z)) in
+        let p =
+          P.of_exprs ~ins:[| D.Any dt |]
+            [| side m n; side n m; side log_m log_n; side log_n log_m |]
+        in
+        Atomic.set slot (Some p);
+        p
+  in
+  let layout = Nx_array.Layout.contiguous (Prim.shape b) in
+  let below, (above, (log_below, (log_above, ()))) =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout;
+           prog;
+           outs = Value.[ c; c; c; c ];
+           loads = [| Value.Plain b |];
+         })
+  in
+  Value.
+    [| Any below; Any above; Any log_below; Any log_above |]
+
+(* [log (exp a + exp b)], [-inf] where both are. *)
+let log_sum c a b =
+  let m = E.maximum a b in
+  let finite = E.(where (lit c Float.neg_infinity < m) m (lit c 0.)) in
+  E.(m + log1p (exp (minimum a b - finite)))
+
+let truncated_normal_programs = programs ()
+
+let truncated_normal ?key lower upper =
+  let by = "Nx.Rng.truncated_normal" in
+  require ~by "lower" not_nan lower;
+  require ~by "upper" not_nan upper;
+  let dt = Prim.dtype lower in
+  let s = Prim.broadcast_shape ~by (Prim.shape lower) (Prim.shape upper) in
+  let ins =
+    let (C c) = compute dt in
+    Array.append [| D.Any dt; D.Any dt |] (Array.make 8 (D.Any c))
+  in
+  let prog =
+    lowered truncated_normal_programs dt ins (fun ~key ~j ->
+        let (C c) = compute dt in
+        let p = precision c and lit = lit c in
+        let mass i = operand i c in
+        let below_lo = mass 2 and above_lo = mass 3 in
+        let log_below_lo = mass 4 and log_above_lo = mass 5 in
+        let below_hi = mass 6 and above_hi = mass 7 in
+        let log_below_hi = mass 8 and log_above_hi = mass 9 in
+        let u = E.maximum (unit ~key ~p c j) (lit (Float.ldexp 1. (-p))) in
+        let v = E.(lit 1. - u) in
+        let mix lo hi = E.((v * lo) + (u * hi)) in
+        let right = mix above_lo above_hi and left = mix below_lo below_hi in
+        let on_right = E.(right < left) in
+        let side y z = E.where on_right y z in
+        let q = side right left in
+        let log_q =
+          log_sum c
+            E.(log v + side log_above_lo log_below_lo)
+            E.(log u + side log_above_hi log_below_hi)
+        in
+        (* [log_q] is [-inf] only where both masses on its side underflow, both
+           bounds far out on it: the draw is then the nearer bound, onto which a
+           draw of 0 clamps. *)
+        let finite = E.(lit Float.neg_infinity < log_q) in
+        let y =
+          Special.ndtri_mass
+            E.(q - lit 0.5)
+            (E.where finite log_q (lit (Float.log 0.5)))
+        in
+        let x = E.(where finite (where on_right (-y) y) (lit 0.)) in
+        let lower = param c 0 dt and upper = param c 1 dt in
+        let least = E.minimum lower upper and most = E.maximum lower upper in
+        rounded dt E.(minimum (maximum x least) most))
+  in
+  let params =
+    Array.concat
+      [
+        [| Value.Any lower; Value.Any upper |];
+        masses ~by lower;
+        masses ~by upper;
+      ]
+  in
+  draw ~by ~params (resolve key) dt s prog
+
+(* Reductions along a draw's last axis *)
+
+(* [x] reduced along the last axis of [shape], its program's output folded by
+   [monoid] in [c], kept as an axis of 1. *)
+let along_last ~by shape prog monoid c loads =
+  let r = Array.length shape in
+  let loads =
+    Iarray.init (Array.length loads) (fun i ->
+        let (Value.Any x) = loads.(i) in
+        Value.Plain (stretch ~by shape x))
+  in
+  let x, () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = Nx_array.Layout.contiguous shape;
+           axes = [| r - 1 |];
+           prog;
+           reductions = Value.[ Monoid (monoid, 0, c) ];
+           loads;
+         })
+  in
+  reshape ~by (Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape) x
+
+(* Dirichlet *)
+
+(* A row's gamma draws normalised in logarithms. Draw [j] is [G_j = exp (la_j +
+   q_j / a_j)] ({!log_gamma}), and [q_j / a_j] overflows to [-inf] at a tiny
+   concentration, so the logarithms are scaled by [s], the least of 1 and the
+   row's concentrations: [z_j = s la_j + (s / a_j) q_j] is finite, since [s /
+   a_j <= 1], and [log G_j = z_j / s]. The draw is then [e_j / Σ e] for [e_j =
+   exp ((z_j - max z) / s)], each at most 1 and one of them 1, so that no row is
+   NaN or all zero. *)
+let dirichlet_programs = programs ()
+
+let dirichlet ?key a =
+  let by = "Nx.Rng.dirichlet" in
+  let s = Prim.shape a in
+  let r = Array.length s in
+  if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
+  require ~by "a" positive a;
+  let key = resolve key in
+  let dt = Prim.dtype a in
+  let (C c) = compute dt in
+  let shape = Array.append (batch key) s in
+  if s.(r - 1) = 0 then
+    map ~by shape (P.of_exprs ~ins:[||] [| E.(any (const dt 0.)) |]) dt [||]
+  else
+    let least =
+      let x = E.minimum (rounded c (E.input 0 dt)) (lit c 1.) in
+      along_last ~by s
+        (P.of_exprs ~ins:[| D.Any dt |] [| E.any x |])
+        Nx_kernel.Min c [| Value.Any a |]
+    in
+    let prog =
+      lowered dirichlet_programs dt [| D.Any dt; D.Any c |] (fun ~key ~j ->
+          let p = precision c in
+          let a = param c 0 dt and least = operand 1 c in
+          let la, q = log_gamma ~key ~p c j a in
+          E.((least * la) + (least / a * q)))
+    in
+    let z = draw ~by ~params:[| Value.Any a; Value.Any least |] key c s prog in
+    let top =
+      along_last ~by shape
+        (P.of_node ~ins:[| D.Any c |] (In 0))
+        Nx_kernel.Max c [| Value.Any z |]
+    in
+    let ins : D.any iarray = [| D.Any c; D.Any c; D.Any c |] in
+    let e = E.(exp ((input 0 c - input 1 c) / input 2 c)) in
+    let loads = [| Value.Any z; Value.Any top; Value.Any least |] in
+    let sum =
+      along_last ~by shape
+        (P.of_exprs ~ins [| E.any e |])
+        Nx_kernel.Sum c loads
+    in
+    let out = rounded dt E.(e / input 3 c) in
+    let loads =
+      Array.map
+        (fun (Value.Any x) -> Value.Any (stretch ~by shape x))
+        (Array.append loads [| Value.Any sum |])
+    in
+    map ~by shape
+      (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c; D.Any c |] [| E.any out |])
+      dt loads
+
+(* Categorical *)
+
+(* Gumbel-max: the argmax of the logits plus Gumbel noise [-log e], [e] an
+   exponential draw, is a draw of the distribution they describe. [e] comes from
+   [b] random bits [k], 53 at float64 and 32 otherwise: [-log1p (-lo)] for [lo =
+   (k + 1/2) 2^-b] below 1/2, else [-log hi] for [hi = (2^b - 1 - k + 1/2)
+   2^-b], so that it keeps its relative precision near 0, where the noise that
+   wins lies, and is never 0 or infinite. The noise is then bounded by [(b + 1)
+   ln 2] above and [-ln ((b + 1) ln 2)] below. *)
+let gumbel (type s) ~key (c : (float, s) D.t) j : (float, s) E.t =
+  let b, k =
+    match c with
+    | D.Float64 -> (53, bits53 (block ~key j))
+    | _ -> (32, word ~key j)
+  in
+  let scale = lit c (Float.ldexp 1. (-b)) in
+  let half = lit c 0.5 in
+  let top = u64 (Int64.sub (Int64.shift_left 1L b) 1L) in
+  let lo = E.((cast c k + half) * scale) in
+  let hi = E.((cast c (top - k) + half) * scale) in
+  let half_range = u64 (Int64.shift_left 1L (b - 1)) in
+  let low = E.(k < half_range) in
+  let e = E.(where low (lit c 0. - log1p (-lo)) (lit c 0. - log hi)) in
+  E.(-log e)
+
+let categorical_programs = programs ()
+
+let categorical ?key ?(axis = -1) logits =
+  let by = "Nx.Rng.categorical" in
+  let s = Prim.shape logits in
+  let r = Array.length s in
+  let a = if axis < 0 then axis + r else axis in
+  let dt = Prim.dtype logits in
+  if a < 0 || a >= r then
+    invalid_argf "%s: %d is not an axis of %s %a" by axis (D.name dt) pp_shape
+      s;
+  if s.(a) = 0 then
+    invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
+      pp_shape s;
+  let key = resolve key in
+  let (C c) = compute dt in
+  let prog =
+    lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
+        E.(param c 0 dt + gumbel ~key c j))
+  in
+  let noisy = draw ~by ~params:[| Value.Any logits |] key c s prog in
+  let shape = Prim.shape noisy in
+  let (largest, at), () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = Nx_array.Layout.contiguous shape;
+           axes = [| Array.length (batch key) + a |];
+           prog = P.of_node ~ins:[| D.Any c |] (In 0);
+           reductions = Value.[ Arg (Nx_kernel.Max, 0, c) ];
+           loads = [| Value.Plain noisy |];
+         })
+  in
+  (* The noise is finite, so a row's largest sum is finite exactly where its
+     largest logit is, and is that logit where it is not. *)
+  let ins : D.any iarray = [| D.Any c |] in
+  let inside = finite c (E.input 0 c) in
+  let ok =
+    map ~by (Prim.shape largest)
+      (P.of_exprs ~ins [| E.any inside |])
+      D.Bool [| Value.Any largest |]
+  in
+  refuse ~by "the largest logit" "(-inf, inf)" ~show:(Printf.sprintf "%g")
+    largest ok;
+  at
+
+(* Permutation *)
+
+(* The positions that sort one Threefry block per element: 64-bit words, so
+   that collisions, which the stable sort leaves in order, are rare. *)
+let permutation_programs = programs ()
+
+let permutation ?key n =
+  let by = "Nx.Rng.permutation" in
+  if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
+  let prog =
+    lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
+  in
+  let words = draw ~by (resolve key) D.Uint64 [| n |] prog in
+  let axis = Array.length (Prim.shape words) - 1 in
+  let _, positions =
+    Eval.eval ~by
+      (Value.Sort { axis; descending = false; k = None; x = words })
+  in
+  positions

@@ -282,6 +282,22 @@ let samplers =
         fun k s ->
           of_ints
             (read (Rng.binomial ~key:k (counts s) (full Nx.float32 s 0.25))) );
+      ( "truncated_normal",
+        fun k s ->
+          read
+            (Rng.truncated_normal ~key:k (full Nx.float32 s (-1.))
+               (full Nx.float32 s 2.)) );
+      ( "dirichlet",
+        fun k s ->
+          let a = full Nx.float64 (Array.append s [| 3 |]) 0.7 in
+          read (Rng.dirichlet ~key:k a) );
+      ( "categorical",
+        fun k s ->
+          let logits = full Nx.float32 (Array.append s [| 4 |]) 0. in
+          Array.map Int64.to_float (read (Rng.categorical ~key:k logits)) );
+      ( "permutation",
+        fun k s ->
+          Array.map Int64.to_float (read (Rng.permutation ~key:k (numel s))) );
     ]
 
 (* The words [w] at their uniform's precision [p] of 24 or less: their low [p]
@@ -416,6 +432,15 @@ let draws =
                     (Rng.split ~n k)))
           in
           equal (array float_exact) each batch);
+      prop "a batch of keys draws each key's draw, for every sampler"
+        (Gen.triple keys (Gen.int_range 1 3) samplers)
+        (fun (k, n, (_, draw)) ->
+          let s = [| 2; 3 |] in
+          let each =
+            Array.concat
+              (Array.to_list (Array.map (fun k -> draw k s) (Rng.split ~n k)))
+          in
+          equal (array float_exact) each (draw (Rng.split_batch ~n k) s));
       prop "a narrow float uniform is the low p bits of bits, scaled"
         (Gen.pair keys floats)
         (fun (k, (F dt, p)) ->
@@ -1071,6 +1096,359 @@ let rejection =
             (message (fun () -> Rng.binomial count (full Nx.float32 0.5))));
     ]
 
+(* Inversions and normalisations *)
+
+let inv_sqrt_2pi = 1. /. sqrt (2. *. Float.pi)
+
+let pdf x =
+  if Float.is_finite x then inv_sqrt_2pi *. exp (-0.5 *. x *. x) else 0.
+
+(* The standard normal's masses below and above [x], each to its relative
+   precision. *)
+let below x = 0.5 *. Float.erfc (-.x /. sqrt 2.)
+let above x = 0.5 *. Float.erfc (x /. sqrt 2.)
+
+(* The standard normal conditioned on [[a, b]], [a <= b]: its mean, variance
+   and CDF, from the masses on the side of 0 that keeps their digits. *)
+let truncated a b =
+  let right = a >= 0. in
+  let z = if right then above a -. above b else below b -. below a in
+  let xpdf x = if Float.is_finite x then x *. pdf x else 0. in
+  let mean = (pdf a -. pdf b) /. z in
+  let var = 1. +. ((xpdf a -. xpdf b) /. z) -. (mean *. mean) in
+  let cdf x =
+    if x <= a then 0.
+    else if x >= b then 1.
+    else if right then (above a -. above x) /. z
+    else (below x -. below a) /. z
+  in
+  (mean, var, cdf)
+
+let pp_bounds ppf (a, b) = Format.fprintf ppf "[%g, %g]" a b
+
+let intervals =
+  Gen.of_list ~pp:pp_bounds
+    [
+      (Float.neg_infinity, Float.infinity);
+      (0., Float.infinity);
+      (-1., 2.);
+      (3., -1.);
+      (-0.5, 0.5);
+      (2., 3.);
+      (5., Float.infinity);
+      (Float.neg_infinity, -6.);
+      (15., 16.);
+      (-40., -38.);
+    ]
+
+(* A row of [k] concentrations, [x] each. *)
+let rows dt k x = host_of dt [| n; k |] (Array.make (n * k) x)
+
+(* [xs] as rows of [k]. *)
+let rows_of k xs =
+  Array.init (Array.length xs / k) (fun i -> Array.sub xs (i * k) k)
+
+let others =
+  group "inversions and normalisations"
+    [
+      prop "truncated_normal draws lie in their interval"
+        (Gen.triple keys floats
+           (Gen.of_list ~pp:pp_bounds
+              [
+                (Float.neg_infinity, Float.infinity);
+                (-1., 2.);
+                (2., -1.);
+                (0.5, 0.5);
+                (40., Float.infinity);
+                (Float.neg_infinity, -40.);
+                (30., 30.5);
+              ]))
+        (fun (k, (F dt, _), (a, b)) ->
+          let a = A.Dtype.of_float dt a and b = A.Dtype.of_float dt b in
+          let lo = Float.min a b and hi = Float.max a b in
+          let xs =
+            read
+              (Rng.truncated_normal ~key:k (host_of dt [||] [| a |])
+                 (host_of dt [| n |] (Array.make n b)))
+          in
+          Array.iter
+            (fun x -> if not (x >= lo && x <= hi) then failf "draw %h" x)
+            xs);
+      (* A sample's KS statistic against the conditioned CDF, and its mean
+         within 6 standard errors, for intervals on both sides and far out,
+         where float32's masses underflow. *)
+      prop "truncated_normal: mean and CDF of the conditioned normal"
+        (Gen.triple keys wide intervals) (fun (k, F dt, (a, b)) ->
+          let lo = Float.min a b and hi = Float.max a b in
+          let xs =
+            read
+              (Rng.truncated_normal ~key:k
+                 (host_of dt [| n |] (Array.make n a))
+                 (host_of dt [| n |] (Array.make n b)))
+          in
+          let want, var, cdf = truncated lo hi in
+          near ~var want (mean xs);
+          ks cdf xs);
+      (* A float32 draw against the quantile of its own uniform [u], floored at
+         2^-24, formed in float64 from the smaller of the masses below and above
+         it: within 6 ε + 3 ulps of float32. *)
+      prop "a float32 truncated_normal draw inverts its uniform"
+        (Gen.pair keys
+           (Gen.of_list ~pp:pp_bounds
+              [
+                (Float.neg_infinity, Float.infinity);
+                (0., Float.infinity);
+                (-1., 2.);
+                (-0.5, 0.5);
+                (2., 3.);
+                (5., Float.infinity);
+                (Float.neg_infinity, -6.);
+                (15., 16.);
+              ]))
+        (fun (k, (a, b)) ->
+          let full v = host_of Nx.float32 [| n |] (Array.make n v) in
+          let xs = read (Rng.truncated_normal ~key:k (full a) (full b)) in
+          let us = read (Rng.uniform ~key:k Nx.float32 [| n |]) in
+          let us = Array.map (Float.max (Float.ldexp 1. (-24))) us in
+          let right u = ((1. -. u) *. above a) +. (u *. above b) in
+          let left u = ((1. -. u) *. below a) +. (u *. below b) in
+          let qs = Array.map (fun u -> Float.min (right u) (left u)) us in
+          let ys = read (Nx.ndtri (host_of Nx.float64 [| n |] qs)) in
+          let eps = Float.ldexp 1. (-23) in
+          let worst = ref 0. in
+          Array.iteri
+            (fun i x ->
+              let u = us.(i) in
+              let want = if right u < left u then -.ys.(i) else ys.(i) in
+              let want =
+                Float.min (Float.max want (Float.min a b)) (Float.max a b)
+              in
+              let ulp = Float.ldexp eps (snd (Float.frexp want) - 1) in
+              let bound = (6. *. eps) +. (3. *. ulp) in
+              worst := Float.max !worst (Float.abs (x -. want) /. bound))
+            xs;
+          at_most float_exact ~than:1. !worst);
+      prop "dirichlet rows sum to 1, each with an element of at least 1 / k"
+        (Gen.triple keys wide
+           (Gen.pair (Gen.int_range 1 5)
+              (params [ Least; V 1e-30; V 0.01; V 0.5; V 1.; V 30.; V 1e6 ])))
+        (fun (key, F dt, (k, a)) ->
+          let a = at dt a in
+          let eps = (A.Dtype.float_format dt).epsilon in
+          let xs = read (Rng.dirichlet ~key (rows dt k a)) in
+          Array.iter
+            (fun row ->
+              let sum = Array.fold_left ( +. ) 0. row in
+              let top = Array.fold_left Float.max 0. row in
+              Array.iter
+                (fun x -> if not (x >= 0. && x <= 1.) then failf "element %h" x)
+                row;
+              at_most float_exact
+                ~than:(Float.of_int (k + 2) *. eps)
+                (Float.abs (sum -. 1.));
+              at_least float_exact
+                ~than:((1. -. (4. *. eps)) /. Float.of_int k)
+                top)
+            (rows_of k xs));
+      (* Component i of Dirichlet(a) has mean a_i / s and variance a_i (s - a_i)
+         / (s^2 (s + 1)), s the concentrations' sum. *)
+      prop ~count:few "dirichlet: each component's mean"
+        (Gen.pair keys
+           (Gen.of_list
+              ~pp:(fun ppf a ->
+                Format.fprintf ppf "[%s]"
+                  (String.concat "; "
+                     (Array.to_list (Array.map string_of_float a))))
+              [
+                [| 1.; 1.; 1. |];
+                [| 0.3; 2.; 5. |];
+                [| 0.05; 0.05 |];
+                [| 40.; 2. |];
+              ]))
+        (fun (key, a) ->
+          let k = Array.length a in
+          let conc =
+            host_of Nx.float64 [| n; k |]
+              (Array.concat (List.init n (fun _ -> a)))
+          in
+          let xs = rows_of k (read (Rng.dirichlet ~key conc)) in
+          let s = Array.fold_left ( +. ) 0. a in
+          Array.iteri
+            (fun i ai ->
+              let var = ai *. (s -. ai) /. (s *. s *. (s +. 1.)) in
+              near ~var (ai /. s) (mean (Array.map (fun row -> row.(i)) xs)))
+            a);
+      (* Dirichlet draw j is gamma draw j of the same key, divided by its row's
+         sum: each logarithm is rounded, so each element lies within a few ulps
+         of the logarithms' magnitudes of the ratio formed in float64 from the
+         gamma draws. *)
+      prop ~count:few "dirichlet is the gammas' row ratios"
+        (Gen.pair keys
+           (Gen.of_list
+              ~pp:(fun ppf a ->
+                Format.fprintf ppf "[%s]"
+                  (String.concat "; "
+                     (Array.to_list (Array.map string_of_float a))))
+              [ [| 0.5; 0.5 |]; [| 0.3; 4.; 2. |]; [| 9.; 0.7; 1.; 1. |] ]))
+        (fun (key, a) ->
+          let k = Array.length a in
+          let conc =
+            host_of Nx.float64 [| n; k |]
+              (Array.concat (List.init n (fun _ -> a)))
+          in
+          let g = rows_of k (read (Rng.gamma ~key conc)) in
+          let d = rows_of k (read (Rng.dirichlet ~key conc)) in
+          let worst = ref 0. in
+          Array.iteri
+            (fun r row ->
+              let sum = Array.fold_left ( +. ) 0. row in
+              let logs =
+                Array.fold_left
+                  (fun m x -> Float.max m (Float.abs (log x)))
+                  0. row
+              in
+              Array.iteri
+                (fun i gi ->
+                  let want = gi /. sum in
+                  let bound =
+                    (16. *. epsilon_float *. want *. (2. +. (2. *. logs)))
+                    +. (4. *. (Float.succ want -. want))
+                  in
+                  worst :=
+                    Float.max !worst (Float.abs (d.(r).(i) -. want) /. bound))
+                row)
+            g;
+          at_most float_exact ~than:1. !worst);
+      test "dirichlet of no component is empty, of one is 1" (fun () ->
+          let k = Rng.key 401 in
+          equal (array float_exact) [||]
+            (read (Rng.dirichlet ~key:k (host_of Nx.float32 [| 3; 0 |] [||])));
+          equal (array float_exact) [| 1.; 1. |]
+            (read
+               (Rng.dirichlet ~key:k
+                  (host_of Nx.float32 [| 2; 1 |] [| 0.2; 7. |]))));
+      (* Each category's frequency within 6 standard errors of its probability,
+         a logit of -inf never. *)
+      prop "categorical: frequencies follow the softmax"
+        (Gen.triple keys
+           (Gen.of_list ~pp:pp_dtype
+              [ F Nx.float32; F Nx.float64; F Nx.float16 ])
+           (Gen.of_list ~pp:(fun ppf a -> Format.pp_print_int ppf a) [ 0; 1 ]))
+        (fun (key, F dt, axis) ->
+          let logits = [| 0.; log 2.; log 3.; Float.neg_infinity; -1. |] in
+          let k = Array.length logits in
+          let rows =
+            host_of dt [| n; k |] (Array.concat (List.init n (fun _ -> logits)))
+          in
+          let rows = if axis = 0 then Nx.transpose rows else rows in
+          let axis = if axis = 0 then 0 else -1 in
+          let draws = read (Rng.categorical ~key ~axis rows) in
+          equal int n (Array.length draws);
+          let counts = Array.make k 0 in
+          Array.iter
+            (fun i -> counts.(Int64.to_int i) <- counts.(Int64.to_int i) + 1)
+            draws;
+          let ws = Array.map (fun l -> exp (A.Dtype.of_float dt l)) logits in
+          let total = Array.fold_left ( +. ) 0. ws in
+          Array.iteri
+            (fun i w ->
+              let p = w /. total in
+              near
+                ~var:(p *. (1. -. p))
+                p
+                (Float.of_int counts.(i) /. Float.of_int n))
+            ws);
+      prop "permutation is an ordering of 0 to n - 1"
+        (Gen.pair keys (Gen.int_range 0 70))
+        (fun (key, m) ->
+          cover "none" (m = 0);
+          let xs = read (Rng.permutation ~key m) in
+          let sorted = Array.copy xs in
+          Array.sort Int64.compare sorted;
+          equal (array int64) (Array.init m Int64.of_int) sorted);
+      (* Each of the 6 orderings of 3 within 6 standard errors of 1/6, over a
+         batch of keys. *)
+      prop ~count:few "permutation: orderings are equally likely" keys
+        (fun key ->
+          let xs = read (Rng.permutation ~key:(Rng.split_batch ~n key) 3) in
+          let counts = Hashtbl.create 6 in
+          for i = 0 to n - 1 do
+            let o = (xs.(3 * i), xs.((3 * i) + 1)) in
+            Hashtbl.replace counts o
+              (1 + Option.value ~default:0 (Hashtbl.find_opt counts o))
+          done;
+          equal int 6 (Hashtbl.length counts);
+          Hashtbl.iter
+            (fun _ c ->
+              let f = Float.of_int c /. Float.of_int n in
+              near ~var:(5. /. 36.) (1. /. 6.) f)
+            counts);
+      cases
+        ~name:(fun (name, _, _) -> name)
+        "refusals at the call"
+        [
+          ( "truncated_normal of a NaN bound",
+            (fun () ->
+              Rng.truncated_normal
+                (host_of Nx.float64 [| 2 |] [| 0.; Float.nan |])
+                (host_of Nx.float64 [||] [| 1. |])),
+            "Nx.Rng.truncated_normal: lower at [1] is nan, not in [-inf, inf]"
+          );
+          ( "truncated_normal of bounds that do not broadcast",
+            (fun () ->
+              Rng.truncated_normal
+                (host_of Nx.float64 [| 2 |] [| 0.; 1. |])
+                (host_of Nx.float64 [| 3 |] [| 1.; 2.; 3. |])),
+            "Nx.Rng.truncated_normal: shapes [2] and [3] do not broadcast" );
+          ( "dirichlet of no axis",
+            (fun () -> Rng.dirichlet (host_of Nx.float64 [||] [| 1. |])),
+            "Nx.Rng.dirichlet: concentrations of shape [] have no axis" );
+          ( "dirichlet of a zero concentration",
+            (fun () ->
+              Rng.dirichlet (host_of Nx.float64 [| 1; 2 |] [| 1.; 0. |])),
+            "Nx.Rng.dirichlet: a at [0; 1] is 0, not in (0, inf)" );
+        ]
+        (fun (_, f, want) ->
+          equal string want (message (fun () -> ignore (f ()))));
+      cases
+        ~name:(fun (name, _, _) -> name)
+        "categorical refusals at the call"
+        [
+          ( "an axis it lacks",
+            (fun () ->
+              Rng.categorical ~axis:2
+                (host_of Nx.float32 [| 2; 3 |] (Array.make 6 0.))),
+            "Nx.Rng.categorical: 2 is not an axis of float32 [2; 3]" );
+          ( "an empty axis",
+            (fun () -> Rng.categorical (host_of Nx.float32 [| 2; 0 |] [||])),
+            "Nx.Rng.categorical: axis -1 of float32 [2; 0] has no category" );
+          ( "an infinite logit",
+            (fun () ->
+              let inf = Float.infinity in
+              let logits = [| 0.; 1.; 0.; inf |] in
+              Rng.categorical (host_of Nx.float32 [| 2; 2 |] logits)),
+            "Nx.Rng.categorical: the largest logit at [1] is inf, not in \
+             (-inf, inf)" );
+          ( "a NaN logit",
+            (fun () ->
+              Rng.categorical
+                (host_of Nx.float32 [| 1; 2 |] [| 0.; Float.nan |])),
+            "Nx.Rng.categorical: the largest logit at [0] is nan, not in \
+             (-inf, inf)" );
+          ( "a row of -inf",
+            (fun () ->
+              Rng.categorical
+                (host_of Nx.float32 [| 1; 2 |]
+                   [| Float.neg_infinity; Float.neg_infinity |])),
+            "Nx.Rng.categorical: the largest logit at [0] is -inf, not in \
+             (-inf, inf)" );
+          ( "permutation of a negative n",
+            (fun () -> Rng.permutation (-1)),
+            "Nx.Rng.permutation: n is -1, not at least 0" );
+        ]
+        (fun (_, f, want) ->
+          equal string want (message (fun () -> ignore (f ()))));
+    ]
 (* Parameter checks: a sampler names the first parameter outside its domain, in
    C order, whatever the dtype, shape and placement: at the call on the host,
    and on another set at the next wait there, the draw itself waiting for
@@ -1179,6 +1557,18 @@ let checks =
                let n = Nx.place S2.on n in
                waits (Rng.binomial n good)),
              "Nx.Rng.binomial: n at [0] is -1, not in [0, inf)" );
+           ( "truncated_normal",
+             (fun () ->
+               waits (Rng.truncated_normal good (on [| 1.; Float.nan |]))),
+             "Nx.Rng.truncated_normal: upper at [1] is nan, not in \
+              [-inf, inf]" );
+           ( "dirichlet",
+             (fun () -> waits (Rng.dirichlet (on [| 1.; -2. |]))),
+             "Nx.Rng.dirichlet: a at [1] is -2, not in (0, inf)" );
+           ( "categorical",
+             (fun () -> waits (Rng.categorical (on [| 0.; Float.infinity |]))),
+             "Nx.Rng.categorical: the largest logit at [] is inf, not in \
+              (-inf, inf)" );
          ]
          (fun (_, draw, want) ->
            let wait = draw () in
@@ -1294,6 +1684,24 @@ let goldens =
         (read (Rng.binomial ~key:k (counts 40l) (full Nx.float32 0.25)));
       ints "binomial f64"
         (read (Rng.binomial ~key:k (counts 10l) (full Nx.float64 0.3)));
+      floats "truncated_normal f32"
+        (read
+           (Rng.truncated_normal ~key:k (full Nx.float32 (-1.))
+              (full Nx.float32 2.)));
+      floats "truncated_normal f64"
+        (read
+           (Rng.truncated_normal ~key:k (full Nx.float64 5.)
+              (full Nx.float64 Float.infinity)));
+      floats "dirichlet f64"
+        (read (Rng.dirichlet ~key:k (full Nx.float64 0.5)));
+      let positions name xs =
+        Printf.printf "%s:%s\n" name
+          (String.concat ""
+             (Array.to_list (Array.map (Printf.sprintf " %Ld") xs)))
+      in
+      let logits = host_of Nx.float32 [| 4; 3 |] (Array.make 12 0.) in
+      positions "categorical" (read (Rng.categorical ~key:k logits));
+      positions "permutation" (read (Rng.permutation ~key:k 8));
       expect (output ()) @@ __POS_OF__ {|
         bits: 1797259609 -1715843330 1351547692 -1059176654
         uniform f16: 0x1.59p-3 0x1.bf8p-1 0x1.96p-2 0x1.cc8p-1
@@ -1313,6 +1721,11 @@ let goldens =
         poisson f64: 29 37 35 24
         binomial f32: 12 4 13 10
         binomial f64: 0 2 2 5
+        truncated_normal f32: -0x1.47d256p-1 0x1.607708p-1 0x1.2db01ap-2 0x1.1f88c4p+0
+        truncated_normal f64: 0x1.400085479d28p+2 0x1.47b476d59b514p+2 0x1.429fe288808d7p+2 0x1.459cab42bf8a3p+2
+        dirichlet f64: 0x1.31936afa5218ep-6 0x1.b6c005bb54a9cp-2 0x1.e60e2452158e3p-9 0x1.192d53a63104cp-1
+        categorical: 2 1 1 2
+        permutation: 3 5 7 0 4 6 1 2
         |})
 
 let () =
@@ -1324,6 +1737,7 @@ let () =
          draws;
          distributions;
          rejection;
+         others;
          checks;
          scope;
          goldens;
