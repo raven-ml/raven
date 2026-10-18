@@ -86,12 +86,12 @@ val capability : t -> Rig_remote_abi.t
 
     A proxy runs copies, and the machine's host also runs
     [Rig.Submission.words] parts, each a run of the rig.program code loaded on
-    that host. A copy from this process's memory carries its bytes in its
-    [handover], and a copy into it in a [bytes] message of the agent's, which
-    the receiving thread writes where the copy names before the timeline word
-    reaches the copy's value. Either crosses the link once. The agent runs the
-    parts of both queues in one order, that of the [handover], after the
-    proxy's earlier values.
+    that host. The work goes to the agent and back as [Rig_remote]'s order
+    section states, a copy into this process's memory in a [bytes] message
+    of the agent's ({!Wire.section-messages}), whose bytes the receiving
+    thread writes where the copy names ({!section-progress}). A copy's bytes
+    cross the link once. The agent runs the parts of both queues in one
+    order, that of the [handover], after the proxy's earlier values.
 
     The driver's [room] returns:
     - [RIG_NEVER] for a part other than words and copies, for words on a

@@ -256,7 +256,7 @@ val launched : unit -> (t, string) result option
     is the process's own.
 
     Once the job has failed, each of its processes still running raises
-    every count of every rail, so that no wait for one blocks. It sends the
+    every count of every rail ({!Rig_remote_abi.section-rails}). It sends the
     other processes an abort with its root cause, after the message each
     connection is sending, and ends its side of each connection. It then
     reads and discards what arrives on each connection until the other end

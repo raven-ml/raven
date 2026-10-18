@@ -44,36 +44,32 @@
 
     [NAME] is the link's {!name}. A reason is any bytes, at most 4096 of them.
     A longer one is cut there, here and in an agent's refusal ({!answer}).
-    Each process records its own root cause. A cause that starts
-    ["NAME aborted: "] is the peer's, and every other is this process's own.
+    Each process records its own root cause ([Rig_remote]'s failure
+    section).
 
     Once the job fails, {!request} and {!next} return [Error], the proxies'
     sleeps return, and every count of every rail of the job reads
-    [Int64.max_int], except the rails {!release_rail} is releasing. Every
-    link of the job that has sent no close then sends its peer an abort with
-    the root cause, after the message it is sending if any, and ends its
-    stream; a link whose send failed sends none, its stream cut. It sends no
-    message it is given, handles no message it receives, and reads and
-    discards its peer's bytes until the peer ends its stream, since a socket
-    closed over unread bytes makes the system reset the connection, which
-    may drop the abort before the peer reads it. The peer ends its stream
-    once it has read the abort. A link gives up the abort's send when it
-    makes no progress for 10 seconds, and the reading 10 seconds after it
-    starts. A peer misses the abort when the network fails, when it reads
-    nothing for 10 seconds, so that the send or the reading gives up, or
-    when this process ends before {!close} has returned. The peer then
-    records its own cause, such as
-    ["NAME: closed its connection"]. Nothing raises from a C thread, and
-    nothing calls OCaml. The process learns of the failure from {!failed},
-    {!wait} or a function's [Error].
+    [Int64.max_int], except the rails {!release_rail} is releasing. Each
+    link then ends its connection as [Rig_remote]'s failure section states.
+    A link that has sent no close sends its peer the abort and ends its
+    stream, then reads and discards its peer's bytes until the peer ends its
+    stream, which the peer does once it has read the abort. A link whose
+    send failed sends no abort, its stream cut. A failed link sends no
+    message it is given and handles no message it receives. It gives up the
+    abort's send when it makes no progress for 10 seconds, and the reading
+    10 seconds after it starts. A peer misses the abort in the cases that
+    section lists, and this process's end before {!close} has returned is
+    one of them. Nothing raises from a C thread, and nothing calls OCaml.
+    The process learns of the failure from {!failed}, {!wait} or a
+    function's [Error].
 
-    A child of [fork] never uses its parent's links, whose streams it would
-    interleave with the parent's. Every function compares the process id with
-    the one that started the job, and in a child the job is failed with
+    A child of [fork] never uses its parent's links ([Rig_remote]'s failure
+    section), whose streams it would interleave with the parent's. Every
+    function compares the process id with the one that started the job, and
+    in a child the job is failed with
     ["a child of fork does not use its parent's connections"], in the child's
-    copy alone. There every count of every rail reads [Int64.max_int], as
-    after any failure. The child sends nothing on its parent's links and
-    closes none of them, and a link it makes is failed, its socket closed.
+    copy alone. The child sends nothing on its parent's links and closes none
+    of them, and a link it makes is failed, its socket closed.
 
     {1:domains Domains}
 
