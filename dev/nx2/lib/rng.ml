@@ -54,14 +54,8 @@ let precision (type s) (dt : (float, s) D.t) =
   let f = D.float_format dt in
   min (f.fraction_bits + 1) (1 - snd (Float.frexp (f.min_normal *. f.epsilon)))
 
-(* A sampler's compute dtype. Samplers compute at float64 for float64 and at
-   float32 for the other floats. *)
-type compute = C : (float, 's) D.t -> compute
-
-let compute (type s) (dt : (float, s) D.t) =
-  match dt with D.Float64 -> C D.Float64 | _ -> C D.Float32
-
-(* [x] as a constant of the compute dtype [c]. *)
+(* [x] as a constant of the compute dtype [c], the format a sampler computes
+   in ({!Prim.wide}). *)
 let lit c x = E.const c (D.of_float c x)
 
 (* [x] rounded once to [dt]. *)
@@ -359,7 +353,7 @@ let uniform_programs = programs ()
 let uniform ?key dt s =
   let prog =
     lowered uniform_programs dt [||] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         rounded dt (unit ~key ~p:(precision dt) c j))
   in
   draw ~by:"Nx.Rng.uniform" (resolve key) dt s prog
@@ -383,7 +377,7 @@ let normal_programs = programs ()
 let normal ?key dt s =
   let prog =
     lowered normal_programs dt [||] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c in
         let u = uniforms ~key ~p c E.(j / u64 2L) 2 in
         let x, y = box_muller ~p c u.(0) u.(1) in
@@ -398,7 +392,7 @@ let exponential_programs = programs ()
 let exponential ?key dt s =
   let prog =
     lowered exponential_programs dt [||] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let u = unit ~key ~p:(precision c) c j in
         rounded dt E.(lit c 0. - log (lit c 1. - u)))
   in
@@ -491,7 +485,7 @@ let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
 
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
-  let (C c) = compute (Prim.dtype p) in
+  let (Prim.Wide c) = Prim.wide (Prim.dtype p) in
   let ins : D.any iarray = [| D.Any (Prim.dtype p) |] in
   let inside = d.inside c (rounded c (E.input 0 (Prim.dtype p))) in
   let ok =
@@ -518,7 +512,7 @@ let bernoulli ?key p =
   let dt = Prim.dtype p in
   let prog =
     lowered bernoulli_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let scaled = E.(param c 0 dt * lit c (Float.ldexp 1. 53)) in
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
   in
@@ -609,7 +603,7 @@ let gamma ?key a =
   let dt = Prim.dtype a in
   let prog =
     lowered gamma_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c in
         let a = param c 0 dt in
         let u = uniforms ~key ~p c j gamma_uniforms in
@@ -640,7 +634,7 @@ let beta ?key a b =
   let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b) in
   let prog =
     lowered beta_programs dt [| D.Any dt; D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c and lit = lit c in
         let a = param c 0 dt and b = param c 1 dt in
         let even = E.(j * u64 2L) in
@@ -709,7 +703,7 @@ let von_mises ?key kappa =
   let dt = Prim.dtype kappa in
   let prog =
     lowered von_mises_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c and lit = lit c in
         let rho, one_minus_rho, a = wrapped_cauchy c (param c 0 dt) in
         let one_plus_rho = E.(lit 1. + rho) in
@@ -834,7 +828,7 @@ let poisson ?key rate =
   let dt = Prim.dtype rate in
   let prog =
     lowered poisson_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c and lit = lit c in
         let rate = param c 0 dt in
         let draws = uniforms ~key ~p c j (1 + (2 * poisson_rejection_rounds)) in
@@ -904,7 +898,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
   let prog =
     lowered binomial_programs dt [| D.Any D.Int32; D.Any dt |] (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let bits = precision c and lit = lit c in
         let count = operand 0 D.Int32 in
         let n = E.cast c count in
@@ -999,7 +993,7 @@ let mass_programs = programs ()
 
 let masses ~by (b : (float, 's, 'd) Value.t) =
   let dt = Prim.dtype b in
-  let (C c) = compute dt in
+  let (Prim.Wide c) = Prim.wide dt in
   let slot = mass_programs.(D.code dt) in
   let prog =
     match Atomic.get slot with
@@ -1045,12 +1039,12 @@ let truncated_normal ?key lower upper =
   let dt = Prim.dtype lower in
   let s = Prim.broadcast_shape ~by (Prim.shape lower) (Prim.shape upper) in
   let ins =
-    let (C c) = compute dt in
+    let (Prim.Wide c) = Prim.wide dt in
     Array.append [| D.Any dt; D.Any dt |] (Array.make 8 (D.Any c))
   in
   let prog =
     lowered truncated_normal_programs dt ins (fun ~key ~j ->
-        let (C c) = compute dt in
+        let (Prim.Wide c) = Prim.wide dt in
         let p = precision c and lit = lit c in
         let mass i = operand i c in
         let below_lo = mass 2 and above_lo = mass 3 in
@@ -1137,7 +1131,7 @@ let dirichlet ?key a =
   require ~by "a" positive a;
   let key = resolve key in
   let dt = Prim.dtype a in
-  let (C c) = compute dt in
+  let (Prim.Wide c) = Prim.wide dt in
   let shape = Array.append (batch key) s in
   if s.(r - 1) = 0 then
     map ~by shape (P.of_exprs ~ins:[||] [| E.(any (const dt 0.)) |]) dt [||]
@@ -1218,7 +1212,7 @@ let categorical ?key ?(axis = -1) logits =
     invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
       pp_shape s;
   let key = resolve key in
-  let (C c) = compute dt in
+  let (Prim.Wide c) = Prim.wide dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
         E.(param c 0 dt + gumbel ~key c j))

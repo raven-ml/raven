@@ -858,6 +858,10 @@ let reduced shape axes =
   Array.of_list
     (List.filteri (fun a _ -> not (Iarray.mem a axes)) (Array.to_list shape))
 
+type wide = Nx_kernel.wide = Wide : (float, 's) D.t -> wide
+
+let wide = Nx_kernel.float_carrier
+
 (* Each operation's rule ({!rule}) and route: where it reads its operands, in
    [operands]'s order, and where its results lie. [results] and [prepare] take
    placements from it alone. *)

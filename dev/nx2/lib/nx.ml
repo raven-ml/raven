@@ -1526,9 +1526,9 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
     kept ~keepdims s axes (cast dt (div (reduce ~by Sum acc axes x) count))
   in
   match D.kind dt with
-  | D.Float when D.bits dt < 32 ->
-      within D.Float32 (scalar D.Float32 (Float.of_int n))
-  | D.Float -> within dt (scalar dt (Float.of_int n))
+  | D.Float ->
+      let (Prim.Wide w) = Prim.wide dt in
+      within w (scalar w (Float.of_int n))
   | D.Complex -> within dt (scalar dt { Complex.re = Float.of_int n; im = 0. })
   | D.Signed | D.Unsigned | D.Boolean ->
       invalid_argf "%s: %s is neither a float nor a complex dtype" by
@@ -1750,13 +1750,6 @@ let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true 
 
 (* Float functions *)
 
-(* The format a float function of [dt] computes in: float32 for the floats
-   narrower, [dt] itself otherwise. *)
-type wide = Wide : (float, 's) D.t -> wide
-
-let wide (type s) (dt : (float, s) D.t) =
-  if D.bits dt < 32 then Wide D.Float32 else Wide dt
-
 (* The float function [f w ins] of [xs], of one dtype, computed in its wide
    format [w] and rounded once to that dtype. *)
 let float_map (type v s d) ~by (xs : (v, s, d) t list)
@@ -1765,7 +1758,7 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
   let dt = dtype (List.hd xs) in
   match D.kind dt with
   | D.Float ->
-      let (Wide w) = wide dt in
+      let (Prim.Wide w) = Prim.wide dt in
       let ins = Array.of_list (List.mapi (fun k x -> at w (operand k x)) xs) in
       elementwise ~by dt (List.map (fun x -> Value.Any x) xs) (at dt (f w ins))
   | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
@@ -2001,7 +1994,7 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   let n = reduced_count s axes in
   if ddof < 0 || (n > 0 && ddof >= n) then
     invalid_argf "%s: ddof %d for %d elements" by ddof n;
-  let (Wide w) = wide dt in
+  let (Prim.Wide w) = Prim.wide dt in
   let (_, v), () =
     reduce_by ~by s axes [ Any x ]
       Value.[ Moments (0, w) ]
@@ -2033,7 +2026,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
-  let (Wide w) = wide dt in
+  let (Prim.Wide w) = Prim.wide dt in
   let l = reduce ~by Logsumexp w axes x in
   let y =
     elementwise ~by dt [ Any l ] E.(cast dt (operand 0 l - log (const w n)))
@@ -2069,7 +2062,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
     let y = Pairwise.scan Eval.eval ~by s axis combine terms in
     cast dt (Prim.expect w y.(1))
   in
-  let (Wide w) = wide dt in
+  let (Prim.Wide w) = Prim.wide dt in
   go w
 
 let ewma ?axis:along ~alpha x =
@@ -2112,7 +2105,7 @@ let normalised (type s d) ~by
   let axes = reduced_axes ~by x (Some axes) in
   if numel x = 0 then x
   else
-    let (Wide w) = wide dt in
+    let (Prim.Wide w) = Prim.wide dt in
     let scaled =
       let x = E.cast w (operand 0 x) in
       if scale = 1. then x else E.(x * const w scale)
@@ -2162,7 +2155,9 @@ let imag dt z =
 let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
     (body : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t) : (float, r, d) t =
   let (Parts (f, part)) = parts ~by z in
-  let (Wide w) = if D.bits dt > D.bits f then Wide dt else Wide f in
+  let (Prim.Wide w) =
+    if D.bits dt > D.bits f then Prim.Wide dt else Prim.Wide f
+  in
   let re = part 0 and im = part 1 in
   let v = body w (at w (operand 0 re)) (at w (operand 1 im)) in
   elementwise ~by dt [ Any re; Any im ] (at dt v)
@@ -2754,12 +2749,12 @@ let signed_of_width = function
    float4_e2m1fn's values read as float8_e4m3fn's at 8 bits. *)
 let float_of_width (type s) (dt : (float, s) D.t) w =
   match (w, dt) with
-  | 16, D.Bfloat16 -> Wide D.Bfloat16
-  | 8, D.Float4_e2m1fn -> Wide D.Float8_e4m3fn
-  | w, dt when D.bits dt = w -> Wide dt
-  | 16, _ -> Wide D.Float16
-  | 32, _ -> Wide D.Float32
-  | _ -> Wide D.Float64
+  | 16, D.Bfloat16 -> Prim.Wide D.Bfloat16
+  | 8, D.Float4_e2m1fn -> Prim.Wide D.Float8_e4m3fn
+  | w, dt when D.bits dt = w -> Prim.Wide dt
+  | 16, _ -> Prim.Wide D.Float16
+  | 32, _ -> Prim.Wide D.Float32
+  | _ -> Prim.Wide D.Float64
 
 (* The node of [x]'s key in the unsigned [kd] of [w] bits: an integer's value
    with the sign bit flipped, a float's bits flipped where negative and only its
@@ -2775,7 +2770,7 @@ let key_node (type v s k r) ~merge (dt : (v, s) D.t) (kd : (k, r) D.t) w
   | D.Signed -> E.bitcast kd E.(cast s x lxor int sign_bit)
   | D.Complex -> assert false
   | D.Float ->
-      let (Wide f) = float_of_width dt w in
+      let (Prim.Wide f) = float_of_width dt w in
       let v = at f x in
       let v = if merge then E.(v + const f 0.) else v in
       let i = E.bitcast s v in
@@ -3056,7 +3051,7 @@ let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   let below = take_axis ~by a (index lo) s
   and above = take_axis ~by a (index hi) s in
   let dt = dtype x in
-  let (Wide w) = wide dt in
+  let (Prim.Wide w) = Prim.wide dt in
   let along =
     Array.mapi (fun i _ -> if i = a then Array.length qs else 1) (shape x)
   in
@@ -3171,12 +3166,14 @@ let one_hot ~num_classes x =
   elementwise ~by D.Uint8 [ Any x ]
     (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
 
-(* The format a window's sum adds in: float32 for the floats narrower than 32
-   bits, the dtype itself otherwise. *)
+(* The format a window's sum adds in: a float's compute format
+   ({!Prim.wide}), the dtype itself otherwise. *)
 let summed (type v s) (dt : (v, s) D.t) =
   match D.kind dt with
-  | D.Float when D.bits dt < 32 -> D.Any D.Float32
-  | D.Float | D.Complex | D.Signed | D.Unsigned | D.Boolean -> D.Any dt
+  | D.Float ->
+      let (Prim.Wide w) = Prim.wide dt in
+      D.Any w
+  | D.Complex | D.Signed | D.Unsigned | D.Boolean -> D.Any dt
 
 let no_sum (type v s) ~by (dt : (v, s) D.t) =
   if D.is D.Boolean dt then invalid_argf "%s: %s has no sum" by (D.name dt)
@@ -4130,10 +4127,11 @@ let scaled_parts (type s d) ~by c (z : (Complex.t, s, d) t) :
    its precision. *)
 type pair = Pair : (float, 'r) D.t * (Complex.t, 'c) D.t -> pair
 
-(* The pair of the wider of a float [dt]'s precision and a complex [c]'s, at
-   least float32's. *)
+(* The pair of the wider of a float [dt]'s compute format ({!Prim.wide}) and a
+   complex [c]'s precision. *)
 let pair dt c =
-  if D.bits dt > 32 || D.bits c > 64 then Pair (D.Float64, D.Complex128)
+  let (Prim.Wide w) = Prim.wide dt in
+  if D.bits w > 32 || D.bits c > 64 then Pair (D.Float64, D.Complex128)
   else Pair (D.Float32, D.Complex64)
 
 (* The other axes, ascending, the real one, the last of [axes], and whether it
@@ -4360,12 +4358,9 @@ let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
       in
       if Array.exists (( = ) 0) (shape x) then copy x
       else
-        match dtype x with
-        | D.Float32 -> run D.Float32 D.Complex64 x
-        | D.Float64 -> run D.Float64 D.Complex128 x
-        | dt ->
-            (* A narrow format computes at float32 and rounds once. *)
-            cast_by ~by dt (run D.Float32 D.Complex64 (cast_by ~by D.Float32 x)))
+        (* At [x]'s compute format, rounded once to its dtype. *)
+        let (Pair (f, c)) = pair (dtype x) D.Complex64 in
+        cast_by ~by (dtype x) (run f c (cast_by ~by f x)))
 
 let dct ?type_ ?axes ?norm x =
   trigonometric ~by:"Nx.dct" Cosine ~inverse:false ?type_ ?axes ?norm x

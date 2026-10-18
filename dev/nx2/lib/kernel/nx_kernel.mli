@@ -150,6 +150,12 @@ val carrier : Nx_array.Dtype.any -> Nx_array.Dtype.any
     scan's carry's: [float32] for a float narrower than it, [int8] and [uint8]
     for [int4] and [uint4], [bool] for [bit], else [dt]. *)
 
+(** The type for a float dtype. *)
+type wide = Wide : (float, 's) Nx_array.Dtype.t -> wide
+
+val float_carrier : (float, 's) Nx_array.Dtype.t -> wide
+(** [float_carrier dt] is {!carrier} of the float [dt], a float. *)
+
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] iff [dt] is a {e base dtype}, one every kernel library
     computes: [float32], [float64], the 8- to 64-bit integers and [bool]. *)
