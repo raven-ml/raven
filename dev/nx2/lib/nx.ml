@@ -4752,6 +4752,49 @@ let check s ok data fail =
   let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
   Eval.eval ~by (Value.Check { ok; data = d; fail })
 
+(* The scan by [Pairwise.circuit], whose states are the structure's arrays: each
+   combination rebuilds two runs as structures for [f] and flattens its
+   result. *)
+let associative_scan ?axis:(a = 0) s f x =
+  let by = "Nx.associative_scan" in
+  let flat y =
+    let leaves, k = Ptree.flatten s y in
+    (Array.of_list (List.map (fun (P t) -> Value.Any t) leaves), k)
+  in
+  let structure states =
+    Ptree.rebuild s ~like:x
+      (Array.to_list (Array.map (fun (Value.Any t) -> P t) states))
+  in
+  let states, skeleton = flat x in
+  let axes = Array.map (fun (Value.Any t) -> axis ~by t a) states in
+  Array.iteri
+    (fun k (Value.Any t) ->
+      let (Value.Any t0) = states.(0) in
+      if Prim.dim t axes.(k) <> Prim.dim t0 axes.(0) then
+        invalid_argf "%s: %a and %a differ along axis %d" by pp_value t0
+          pp_value t a)
+    states;
+  (* [f] of two runs, checked to keep its operands' visits, dtypes and
+     shapes. *)
+  let combine earlier later =
+    let ys, k = flat (f (structure earlier) (structure later)) in
+    (match
+       Ptree.Skeleton.diff ~this:"in f's result" k ~that:"in its operand"
+         skeleton
+     with
+    | Some m -> invalid_argf "%s: %s" by m
+    | None -> ());
+    Array.iter2
+      (fun (Value.Any u) (Value.Any v) ->
+        if not (D.equal (dtype u) (dtype v) && shape u = shape v) then
+          invalid_argf "%s: f returned %a for an operand of %a" by pp_value v
+            pp_value u)
+      earlier ys;
+    ys
+  in
+  if Array.length states = 0 then x
+  else structure (Pairwise.circuit Eval.eval ~by axes combine states)
+
 (* Operations as data *)
 
 module Prim = struct

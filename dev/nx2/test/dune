@@ -37,7 +37,8 @@
   test_segments
   test_sync
   test_ptree
-  test_check)
+  test_check
+  test_scan)
  (modules
   test_devices
   test_values
@@ -72,7 +73,8 @@
   test_segments
   test_sync
   test_ptree
-  test_check)
+  test_check
+  test_scan)
  (libraries
   nx
   nx_array

@@ -319,14 +319,11 @@ raven / llama.cpp (Vulkan; ROCm):
   every value submitted there. Done when rig offers a read of a remote
   device's memory that doesn't follow its later work
 
-- frontend, `Ptree` at a brand (RFC 0006's names at `('s, 'd) t`, `Walk`,
-  `S`, `sized`, the `tensor` alias), with `check` over it, `Rng.ptree` and
-  `associative_scan`
 - frontend, `fuse` and `widen` (`float_fn`, `Ptree.fuse`): one rounding
   per element, bit for bit with `f ()` on one kernel library
-- frontend, symbolic shapes: `Size.v`, `Size.dims`; `shape`, `dim` and
-  `numel` raising on a symbolic axis under a trace; inheritance through
-  `_like`, movements, broadcasting and pattern groups
+- frontend, symbolic shapes: `Size.v`, `Size.dims`, `Ptree.sized`; `shape`,
+  `dim` and `numel` raising on a symbolic axis under a trace; inheritance
+  through `_like`, movements, broadcasting and pattern groups
 - frontend, `attention` with `causal`, `kv` (`Dense | Paged`) and `pair`,
   over new primitives
 - frontend, `contract`'s `?a_scale`, `?b_scale` (`scale`) and `?segments`,

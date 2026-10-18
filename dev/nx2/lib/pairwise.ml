@@ -41,6 +41,8 @@ let part (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
   let ranges = along_axis (Prim.shape x) axis start count step in
   Value.Any (apply ~by (Value.Move (Slice ranges, x)))
 
+let shape_of (Value.Any x) = Prim.shape x
+
 (* [xs] read plainly. *)
 let plain xs =
   Iarray.init (Array.length xs) (fun i ->
@@ -57,53 +59,33 @@ let plain xs =
 
    Output [i]'s depth [f(i)] follows [f(0) = 0], [f(2j+1) = 1 + f(j)] and
    [f(2j) = 2 + f(j-1)], so [f(i) <= max(0, 2⌈log₂(i+1)⌉ - 1)]. *)
-let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    axis ?first combine (state : d Value.any array) : d Value.any array =
-  let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
-  let along e =
-    let s = Array.copy shape in
-    s.(axis) <- e;
-    s
-  in
+let circuit (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axes
+    ?first combine (state : d Value.any array) : d Value.any array =
   let parts start count step =
-    Array.map (part apply ~by axis start count step)
+    Array.mapi (fun k x -> part apply ~by axes.(k) start count step x)
   in
-  let ins = Iarray.of_array (Array.append dts dts) in
-  let prog = P.of_exprs ~ins (Iarray.of_array combine) in
-  (* The states [combine] makes of the [e] indices of the two. *)
-  let combined e earlier later =
-    map_n apply ~by (along e) prog dts (plain (Array.append earlier later))
-  in
-  (* Index [0]'s result, from [state]'s first. *)
   let head first state =
     let s0 = parts 0 1 1 state in
-    match first with
-    | None -> s0
-    | Some first ->
-        let ins = Iarray.of_array dts in
-        let prog = P.of_exprs ~ins (Iarray.of_array first) in
-        map_n apply ~by (along 1) prog dts (plain s0)
+    match first with None -> s0 | Some first -> first s0
   in
   let rec level first state m =
     if m = 0 || (m = 1 && Option.is_none first) then state
     else if m = 1 then head first state
     else
       let half = m / 2 and rows = (m + 1) / 2 in
-      let p = combined half (parts 0 half 2 state) (parts 1 half 2 state) in
+      let p = combine (parts 0 half 2 state) (parts 1 half 2 state) in
       let q = level None p half in
       let evens =
         if rows = 1 then [||]
-        else
-          combined (rows - 1) (parts 0 (rows - 1) 1 q)
-            (parts 2 (rows - 1) 2 state)
+        else combine (parts 0 (rows - 1) 1 q) (parts 2 (rows - 1) 2 state)
       in
       let h = head first state in
-      let shape = along m in
       Array.mapi
         (fun k (Value.Any y0) ->
           let dt = Prim.dtype y0 in
+          let shape = shape_of state.(k) in
           let piece start count v =
-            (along_axis shape axis start count 2, Prim.expect dt v)
+            (along_axis shape axes.(k) start count 2, Prim.expect dt v)
           in
           let pieces =
             piece 0 1 (Value.Any y0)
@@ -115,4 +97,26 @@ let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
             (apply ~by (Value.Assemble { dtype = dt; shape; fill; pieces })))
         h
   in
-  level first state shape.(axis)
+  if Array.length state = 0 then state
+  else level first state (shape_of state.(0)).(axes.(0))
+
+let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    axis ?first combine (state : d Value.any array) : d Value.any array =
+  let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
+  let along e =
+    let s = Array.copy shape in
+    s.(axis) <- e;
+    s
+  in
+  (* The map of [exprs] over [xs], of [e] indices along [axis]. *)
+  let mapped ins exprs xs =
+    let e = (shape_of xs.(0)).(axis) in
+    let prog = P.of_exprs ~ins (Iarray.of_array exprs) in
+    map_n apply ~by (along e) prog dts (plain xs)
+  in
+  let combine earlier later =
+    mapped (Iarray.of_array (Array.append dts dts)) combine
+      (Array.append earlier later)
+  in
+  let first = Option.map (fun f -> mapped (Iarray.of_array dts) f) first in
+  circuit apply ~by (Array.make (Array.length state) axis) ?first combine state

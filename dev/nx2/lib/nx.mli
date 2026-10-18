@@ -2790,7 +2790,7 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 
     A structure is an OCaml type whose values hold arrays: a model's parameters,
     an optimiser's state, a cache. {!Ptree} describes one by the function that
-    walks it, and {!check} takes its description. *)
+    walks it, and {!check} and {!associative_scan} take its description. *)
 
 type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 (** [tensor] is {!t}, named for {!Ptree}'s signatures, in which [t] is a
@@ -3314,6 +3314,38 @@ val check :
     Raises [Invalid_argument] naming [Nx.check] at the call if an array of
     [data] does not broadcast to [ok]'s shape, or if [s]'s walk refuses 0-d
     arrays. *)
+
+val associative_scan :
+  ?axis:int -> ('s, 'd) Ptree.t -> ('s -> 's -> 's) -> 's -> 's
+(** [associative_scan s f x] is the inclusive scan of [f] along [axis] over the
+    structure [x]: its element [i] combines [x]'s elements [0] to [i] by [f],
+    each earlier run as [f]'s first operand, an element being the structure of
+    every array's slice at one index of its [axis]. [axis] defaults to [0] and
+    counts from each array's last axis when negative.
+
+    [f] must be associative and elementwise: [f (f a b) c] equals [f a (f b c)],
+    and an element of [f a b] depends on [a]'s and [b]'s elements at its own
+    index alone. The combinations follow Brent and Kung's circuit: of the
+    elements [x₀], …, [xₙ₋₁], the pairs [pₖ = f x₂ₖ x₂ₖ₊₁] are scanned so into
+    [q], then [y₀ = x₀], [y₂ₖ₊₁ = qₖ] and [y₂ₖ = f qₖ₋₁ x₂ₖ]. Element [i] is
+    thus a tree of [f] whose shape depends on [i] alone, of depth at most
+    [max(0, 2⌈log₂(i+1)⌉ - 1)]: the scan of a prefix of [x] is the prefix of the
+    scan of [x], bit for bit, where [f] computes each element from its operands'
+    elements at its index alone, whatever their slices' extents. For a float [f]
+    these are not the left fold's bits. [f] is called at most [2⌈log₂ n⌉] times
+    for [n] elements, each time over slices of every array, and combines fewer
+    than [2n] pairs of elements in all; [f] needs no identity.
+
+    Other scans are lifts of [f]: an exclusive scan is the inclusive one shifted
+    by one along [axis], [f]'s identity first; a reversed scan is the scan of
+    [x] flipped along [axis], flipped back; a segmented scan is the scan of
+    pairs [(start, v)], [start] [true] at each segment's first element, by
+    [fun (s1, v1) (s2, v2) -> (logical_or s1 s2, where s2 v2 (f v1 v2))].
+
+    Raises [Invalid_argument] naming [Nx.associative_scan] if [axis] is not an
+    axis of an array of [x], if two arrays of [x] have different extents along
+    it, or if [f] returns a structure whose visits, dtypes or shapes differ from
+    its operands'. *)
 
 (** {1:random Random numbers} *)
 
