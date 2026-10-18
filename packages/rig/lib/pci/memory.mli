@@ -110,18 +110,6 @@ type region
 (** The type for ranges of memory a GPU addresses: what {!val-alloc},
     {!map_host} or {!map_peer} gave, until {!free}. *)
 
-(** The type for how a region came to its GPU. *)
-type source =
-  | Allocated  (** By {!val-alloc}. *)
-  | Borrowed of int
-      (** Memory of the machine at this address of the process, by {!map_host}.
-      *)
-  | Peer of region
-      (** Another GPU's region, allocated or borrowed there, by {!map_peer}. *)
-
-val source : region -> source
-(** [source r] is how [r] came to its GPU. *)
-
 val address : region -> int
 (** [address r] is the GPU address of [r]'s first byte. *)
 
@@ -134,7 +122,8 @@ val pages : region -> Page_table.target * (int * int) list
 val host : region -> Window.t option
 (** [host r] is the process's window on [r]'s bytes, if it has one: the system
     memory {!val-alloc} gave, the BAR window on {!Bar} memory, the bytes
-    {!map_host} borrowed, or the window of the region a {!Peer} maps. *)
+    {!map_host} borrowed, or the window of the region a {!map_peer} region
+    maps. *)
 
 (** {1:alloc Allocating and mapping}
 
@@ -167,8 +156,8 @@ val map_host : t -> int -> int -> (region option, string) result
     [n] bytes at [a]. It {!Function.pin}s them and maps them, snooped and
     uncached, at addresses it takes from the GPU's space ({!Page_table.space}),
     whatever [a] is. In the result, {!address} is where the GPU reaches byte
-    [a], {!host} is a window on the [n] bytes at [a], and the source is
-    [Borrowed a]. Each call maps anew, so memory mapped already maps again at
+    [a], and {!host} is a window on the [n] bytes at [a]. Each call maps
+    anew, so memory mapped already maps again at
     other addresses and is pinned once more.
 
     [Error why] if the pages cannot be pinned, with {!Function.pin}'s reason,
@@ -181,9 +170,8 @@ val map_peer : t -> region -> (region option, string) result
     GPU of [m], at the address [r] has there. GPU memory is mapped through its
     owner's memory BAR or their fabric's link. System memory, allocated or
     borrowed, is mapped at its pages, which {!Function.pin} keeps for [m]'s
-    GPU. If [r] is itself a {!Peer} region, [map_peer] maps the region it
-    maps. The result's source is [Peer r'], where [r'] is the region its
-    owner gave.
+    GPU. If [map_peer] gave [r] itself, [map_peer] maps the region that [r]
+    maps, which its owner gave.
 
     Where the GPU of [m] maps that memory already, as its own or through
     another region [map_peer] gave, the result is a new region over the same
@@ -202,8 +190,18 @@ val map_peer : t -> region -> (region option, string) result
 val free : t -> region -> unit
 (** [free m r] gives back what {!val-alloc}, {!map_host} or {!map_peer} gave.
     Once no other region of [m] over [r]'s mapping is out, it unmaps [r], then
-    frees its memory or unpins it, and returns its addresses. A {!Peer}
-    region's memory stays its owner's. After the function's release it writes
-    no table.
+    frees its memory or unpins it, and returns its addresses. The memory of a
+    region {!map_peer} gave stays its owner's. After the function's release it
+    writes no table.
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)
+
+(**/**)
+
+(* How a region came to its GPU: by {!val-alloc}, by {!map_host} at this
+   address of the process, or by {!map_peer} from another GPU's region,
+   allocated or borrowed there. *)
+type source = Allocated | Borrowed of int | Peer of region
+
+(* [source r] is how [r] came to its GPU. *)
+val source : region -> source
