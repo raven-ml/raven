@@ -333,8 +333,9 @@ val to_bigarray :
     share its checks. A wait drains the checks its domain issued on the set
     before it and raises the earliest failure among them; the later ones are
     dropped. A wait on one set raises nothing of another's checks; a check no
-    wait follows never raises. Until a wait drains it, a check keeps its data's
-    memory, so a donation of that data computes into fresh memory. *)
+    wait follows never raises. A check keeps its data's memory until a wait
+    drains it, or until its flags are computed and a later check on its set is
+    issued, so a donation of that data meanwhile computes into fresh memory. *)
 
 val sync : ('v, 's, 'd) t -> unit
 (** [sync x] waits for the work [x] depends on, then drains the checks pending

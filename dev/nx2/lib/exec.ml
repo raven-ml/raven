@@ -634,8 +634,11 @@ type ('d, 'e) issued = {
   fail : int array -> 'e -> exn;
 }
 
-(* A check, and the hold on its data's memory. *)
-type pending = Pending : ('d, 'e) issued * Rig.Claim.hold -> pending
+(* A check and the hold on its data's memory, or the exception of one that
+   failed before any wait read it. *)
+type pending =
+  | Pending : ('d, 'e) issued * Rig.Claim.hold -> pending
+  | Raised : exn -> pending
 
 module Sets = Map.Make (Int)
 
@@ -655,8 +658,27 @@ let rec update f =
 
 let of_set n sets = Option.value ~default:[] (Sets.find_opt n sets)
 
-(* Adds [p] to set [n]'s pending checks. *)
-let pend n p = update (fun sets -> (Sets.add n (p :: of_set n sets) sets, ()))
+let raised = function Raised _ -> true | Pending _ -> false
+
+(* Adds [p] to set [n]'s pending checks, unless an earlier one failed, whose
+   exception the next wait raises in place of any later one's: [false] then. *)
+let pend n p =
+  update (fun sets ->
+      let l = of_set n sets in
+      if List.exists raised l then (sets, false)
+      else (Sets.add n (p :: l) sets, true))
+
+(* Ends a check's hold. *)
+let release = function
+  | Pending (_, h) -> Rig.Claim.release h
+  | Raised _ -> ()
+
+(* Whether [c]'s flags are computed, so that reading them waits for nothing.
+   It commits the work that computes them where it is not done. *)
+let reached c =
+  Iarray.for_all
+    (fun a -> Rig.Buffer.reached (A.buffer a) Read)
+    (Prim.arrays c.holds)
 
 (* Set [n]'s pending checks, oldest first, taken off the list. *)
 let drained n =
@@ -1195,7 +1217,9 @@ and check : type d e.
         let data = kept data in
         let held = Rig.Claim.hold (data_buffers data) in
         let c = { holds; first; shape; data; fail } in
-        pend (Devices.number (Devices.set p)) (Pending (c, held))
+        let n = Devices.number (Devices.set p) in
+        settle_reached ~by n;
+        if not (pend n (Pending (c, held))) then Rig.Claim.release held
     | Some _ | None ->
         (* A passing check runs one [Min]; [Arg], for the first [false], costs
            more and runs only on a failure. *)
@@ -1254,12 +1278,54 @@ and wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
    later ones go unread. Every check's hold ends then, so that a donation of its
    data right after the wait may reuse the memory. *)
 and settle ~by checks =
-  let release () =
-    List.iter (fun (Pending (_, h)) -> Rig.Claim.release h) checks
+  let failure = function
+    | Pending (c, _) -> outcome ~by c
+    | Raised e -> Some e
   in
-  Fun.protect ~finally:release (fun () ->
-      let failure = List.find_map (fun (Pending (c, _)) -> outcome ~by c) in
-      Option.iter raise (failure checks))
+  Fun.protect ~finally:(fun () -> List.iter release checks) (fun () ->
+      Option.iter raise (List.find_map failure checks))
+
+(* Settles set [n]'s earlier checks whose flags are computed, so that a domain
+   that never waits on the set holds only the data of the checks still
+   running: a passing check goes, a failing one keeps only its exception, and
+   the checks after it go, since no wait can raise them. It reads them oldest
+   first and stops at the first still running, so it asks rig of one check
+   more than it settles. The checks are read outside the update, which then
+   takes off those still pending, against a wait on another systhread that
+   drains them meanwhile. *)
+and settle_reached ~by n =
+  let earlier = List.rev (of_set n (Atomic.get (Domain.DLS.get checks))) in
+  let rec read = function
+    | [] | Raised _ :: _ -> []
+    | (Pending (c, _) as p) :: rest -> (
+        if not (reached c) then []
+        else
+          match outcome ~by c with
+          | None -> (p, None) :: read rest
+          | Some e -> [ (p, Some e) ])
+  in
+  let outcomes = read earlier in
+  (* Set [n]'s checks after the update, oldest first, and those it ends. *)
+  let rec cut = function
+    | [] -> ([], [])
+    | (Raised _ as r) :: rest -> ([ r ], rest)
+    | (Pending _ as p) :: rest -> (
+        match List.assq_opt p outcomes with
+        | None ->
+            let kept, ended = cut rest in
+            (p :: kept, ended)
+        | Some None ->
+            let kept, ended = cut rest in
+            (kept, p :: ended)
+        | Some (Some e) -> ([ Raised e ], p :: rest))
+  in
+  let ended =
+    update (fun sets ->
+        match cut (List.rev (of_set n sets)) with
+        | [], ended -> (Sets.remove n sets, ended)
+        | kept, ended -> (Sets.add n (List.rev kept) sets, ended))
+  in
+  List.iter release ended
 
 (* [c]'s exception, read on the host, where a flag is false. *)
 and outcome : type d e. by:string -> (d, e) issued -> exn option =

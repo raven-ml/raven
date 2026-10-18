@@ -30,8 +30,10 @@
     On the host it reads them and raises at once; on another set it holds them
     and its data, unread, on the calling domain's list of the set's pending
     checks, which the domain's systhreads share, until a {!wait} on the set
-    drains them. A [Place] onto the host
-    from another set is a {!wait} on that set first.
+    drains them. Issuing a check there first settles the set's earlier checks
+    whose flags are computed ({!Rig.Buffer.reached}): a passing one goes and
+    a failing one keeps only its exception. A [Place] onto the host from
+    another set is a {!wait} on that set first.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}) or by
