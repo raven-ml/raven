@@ -10,6 +10,7 @@
 
 open Windtrap
 module B = Rig.Buffer
+module Sub = Rig.Submission
 module Support = Rig_disk_support
 
 let strf = Printf.sprintf
@@ -122,10 +123,18 @@ let write b s = B.copy ~src:(host_of_string s) ~dst:b
 (* A device whose memory is the host's, which maps any host memory. *)
 let memory_device = lazy (Result.get_ok (Rig.memory_device "DISK-TEST"))
 
-(* [borrowed d b] is the bytes of [d]'s borrow of [b], if [d] maps it. *)
+(* [borrowed d b] is the bytes of [d]'s borrow of [b], if [d] maps it, as the
+   host reads them or [d]'s work copies them out. *)
 let borrowed d b =
+  let out p =
+    let h = B.create host (B.length p) in
+    let dst = Option.get (B.borrow d h) in
+    let s = Sub.make d [| Sub.copy ~src:(Buffer p) ~dst:(Buffer dst) |] in
+    Rig.Point.wait (Rig.submit (Sub.Run.make s) ~buffers:[||]);
+    string_of_host h
+  in
   Option.map
-    (fun p -> if Rig.equal d host then string_of_host p else read p)
+    (fun p -> if Rig.equal d host then string_of_host p else out p)
     (B.borrow d b)
 
 let poke b i c = B.write b Bigarray.char (fun a -> Bigarray.Array1.set a i c)
@@ -1048,6 +1057,21 @@ let test_truncated kind =
   removing [ other ] @@ fun () ->
   equal octets ~msg:"another file" "other" (read (of_file other))
 
+(* A copy from a host borrow of a file truncated since raises Sys_error naming
+   the file, where a read of the borrow's pages past the end would end the
+   process: a child copies from a page that the truncation cut off. *)
+let test_truncated_borrow kind =
+  if Sys.win32 then skip ~reason:"no truncation of a mapped file" ();
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  equal string "Sys_error naming the file"
+    (child
+       [
+         "truncated-borrow";
+         (match kind with Opened -> "opened" | Created -> "created");
+         path;
+       ])
+
 let descriptors =
   group ~timeout "descriptors"
     [
@@ -1091,6 +1115,11 @@ let descriptors =
         "a copy past the end of a file truncated since raises Sys_error naming \
          it, and the disk goes on"
         [ Opened; Created ] test_truncated;
+      cases
+        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
+        "a copy from a host borrow of a file truncated since raises \
+         Sys_error naming it"
+        [ Opened; Created ] test_truncated_borrow;
     ]
 
 (* Barriers *)
@@ -1642,6 +1671,34 @@ let fork_child path out =
       | WEXITED n -> Printf.printf "exited %d" n
       | WSIGNALED n | WSTOPPED n -> Printf.printf "signal %d" n)
 
+(* Makes a file of three pages at [path], opened or created as [kind] says,
+   borrows it on the host, truncates it to 4 bytes, then copies 5 bytes of its
+   third page out of the borrow, and prints how the copy ended. *)
+let truncated_borrow_child kind path =
+  let s = pattern 3 (3 * 16384) in
+  let file =
+    match kind with
+    | "opened" -> of_file (make_file ~path s)
+    | _ ->
+        let b = create path (String.length s) in
+        write b s;
+        b
+  in
+  let borrow = require_some (B.borrow host file) in
+  let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
+  Unix.ftruncate fd 4;
+  Unix.close fd;
+  print_string
+    (match
+       B.copy
+         ~src:(B.view borrow ~first:(2 * 16384) ~length:5)
+         ~dst:(B.create host 5)
+     with
+    | () -> "copied"
+    | exception Sys_error why when String.starts_with ~prefix:path why ->
+        "Sys_error naming the file"
+    | exception e -> Printexc.to_string e)
+
 (* Runs [op] at [path] under a limit of this process: a create_file of 1 MiB or
    a copy of 8 KiB into a file made before, under a limit of a file's size of
    4 KiB; or an of_file of a file made before or a create_file, with no
@@ -1694,6 +1751,7 @@ let () =
   | [ _; "open-files" ] -> open_files_child ()
   | [ _; "limited"; op; path ] -> limited_child op path
   | [ _; "fork"; path; out ] -> fork_child path out
+  | [ _; "truncated-borrow"; kind; path ] -> truncated_borrow_child kind path
   | _ ->
       clear dir;
       let code =

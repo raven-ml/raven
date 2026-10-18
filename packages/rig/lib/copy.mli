@@ -8,7 +8,12 @@
 
     A copy takes the first route that runs it in one transfer. The host
     copies between memory of this machine it addresses, and between such
-    memory and an io device's, through the io library's read or write. A
+    memory and an io device's, through the io library's read or write.
+    Memory an io device owns, a borrow of its pages included, moves only
+    through that read or write, which see writes through the pages
+    ({!Rig_edge.Io.pages}); toward a device's copy engine it goes through
+    staging memory, which the host's side of a copy with another machine's
+    device also takes. A
     device's copy engine copies between memory it reaches, its own or a
     borrow's, and a device of another machine between its memory and this
     process's, which its driver carries. A borrow on a device that runs no

@@ -16,9 +16,15 @@ external reraise : exn -> 'a = "%reraise"
 
 let fn = "Buffer.copy"
 let local m = Dev.same_machine m.dev Dev.host && m.host >= 0
+
+(* Whether [m] is memory an io device owns: its own, or a borrow of its
+   pages. *)
+let io_owned m = Dev.is_io m.alloc.owner
+
 let host_address b = b.mem.host + b.offset
 
-(* A driver's device of another machine, which no staging memory reaches. *)
+(* A driver's device of another machine, which has no staging memory of its
+   own: it reaches the host's only from a side the host moves ([hosted]). *)
 let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
 
 (* Records the host's transfer of [bytes] from [src] to [dst] asked at [start],
@@ -145,6 +151,11 @@ let map_half s d h =
       invalid_argf "Rig.%s: no device copies between %s and %s" fn d.name
         s.owner.name
 
+(* Whether the host moves [b]'s bytes into or out of staging memory: memory
+   it addresses or an io device's. Only such a side reaches a device of
+   another machine, through the host's staging memory. *)
+let hosted b = local b.mem || io_owned b.mem
+
 (* Whether a device of this machine runs the legs of a staged copy to or from
    [b]; another machine's reaches no staging memory. *)
 let runs b = not (local b.mem || Dev.is_io b.mem.dev)
@@ -181,11 +192,14 @@ let on_queue ~wait d src dst =
       true
   | _ -> false
 
+(* An io device's read or write of memory it owns, a borrow of its pages
+   included, is a counted call of that device, so its fault loses the io
+   device. *)
 let io_read src dst n =
   match src.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
-      Dev.counted src.mem.dev Dev.Faults (fun () ->
+      Dev.counted src.mem.alloc.owner Dev.Faults (fun () ->
           I.read h r ~at:src.offset ~dst:(host_address dst) ~len:n)
   | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the source is no io memory" fn
@@ -194,7 +208,7 @@ let io_write src dst n =
   match dst.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
-      Dev.counted dst.mem.dev Dev.Faults (fun () ->
+      Dev.counted dst.mem.alloc.owner Dev.Faults (fun () ->
           I.write h r ~at:dst.offset ~src:(host_address src) ~len:n)
   | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the destination is no io memory" fn
@@ -217,15 +231,21 @@ let on_host transfer src dst n start =
 
 (* Copies [n] bytes from [src] to [dst] in one transfer, where one runs it: the
    host between memory it addresses or with an io device's, or a device's copy
-   queue between memory it maps. A copy on a queue returns at once unless
-   [wait]: what reads or writes its buffers later waits for it by their stamps.
-   The host records its transfer, a submit a queued one. Is whether it ran. *)
+   queue between memory it maps. Memory an io device owns moves only through
+   that device's read or write, never through a borrow of its pages, so a
+   file cut short raises in the read where a read of its pages would end the
+   process, and no device maps the pages for a copy. A copy on a queue
+   returns at once unless [wait]: what reads or writes its buffers later
+   waits for it by their stamps. The host records its transfer, a submit a
+   queued one. Is whether it ran. *)
 let direct ~wait src dst n =
-  let sd = src.mem.dev and dd = dst.mem.dev in
+  let si = io_owned src.mem and di = io_owned dst.mem in
   let start = Profile.now () in
-  if local src.mem && local dst.mem then on_host Move src dst n start
-  else if Dev.is_io sd && local dst.mem then on_host Io_read src dst n start
-  else if Dev.is_io dd && local src.mem then on_host Io_write src dst n start
+  if local src.mem && local dst.mem && not (si || di) then
+    on_host Move src dst n start
+  else if si && (not di) && local dst.mem then on_host Io_read src dst n start
+  else if di && (not si) && local src.mem then on_host Io_write src dst n start
+  else if si || di then false
   else
     let side = if local src.mem then dst else src in
     (* A borrow on a device that runs no copy copies by its memory's own
@@ -387,7 +407,7 @@ and claimed src dst n =
 and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   if direct ~wait src dst n then ()
-  else if far sd || far dd then
+  else if (far sd || far dd) && not (hosted src || hosted dst) then
     invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
       dd.name
   else staged src dst n
@@ -497,9 +517,14 @@ let download fn src take =
               ~dst:h)
           ~out_of:take)
 
-(* Where the host addresses the buffer, the blits and [fill] claim and wait,
-   move the bytes, and drop the claim. The move neither raises nor polls in
-   native code, so no handler is needed and no asynchronous exception keeps
+(* Whether the host moves the bytes of [b] for a blit or a fill itself: [b]'s
+   memory is addressed by the host and no io device owns it, whose memory
+   moves through its read or write, as in [direct]. *)
+let host_moved b = Buffer.host_addressed b && not (io_owned b.mem)
+
+(* Where the host moves the buffer's bytes, the blits and [fill] claim and
+   wait, move the bytes, and drop the claim. The move neither raises nor polls
+   in native code, so no handler is needed and no asynchronous exception keeps
    the claim. *)
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
@@ -507,7 +532,7 @@ let blit_from_string s i b j n =
   Buffer.check_range fn "string" (String.length s) i n;
   Buffer.check_range fn "buffer" (Buffer.length b) j n;
   writable fn b;
-  if Buffer.host_addressed b then begin
+  if host_moved b then begin
     Claim.wait fn Buffer.Read_write b;
     Buffer.blit_string s i b j n;
     Memory.claim_drop b
@@ -526,7 +551,7 @@ let blit_to_bytes b i s j n =
   Dev.check_held fn;
   Buffer.check_range fn "buffer" (Buffer.length b) i n;
   Buffer.check_range fn "bytes" (Bytes.length s) j n;
-  if Buffer.host_addressed b then begin
+  if host_moved b then begin
     Claim.wait fn Buffer.Read b;
     Buffer.blit_bytes b i s j n;
     Memory.claim_drop b
@@ -542,7 +567,7 @@ let fill b c =
   let fn = "Buffer.fill" in
   Dev.check_held fn;
   writable fn b;
-  if Buffer.host_addressed b then begin
+  if host_moved b then begin
     Claim.wait fn Buffer.Read_write b;
     Buffer.set_bytes b 0 (Buffer.length b) c;
     Memory.claim_drop b

@@ -567,6 +567,105 @@ let test_faults () =
   equal ~msg:"after Fault" (option string) (Some "the link went down")
     (Rig.lost io)
 
+(* A copy from or into a borrow of io memory's pages goes through the io
+   library's read or write, never the pages: toward host memory, toward a
+   device's memory, where the device maps none of the pages, and back, and so
+   do the blits and a fill, and a copy between two views of the one
+   allocation. *)
+let test_borrow_copies () =
+  let io, t = open_pages () in
+  let d, p = P.open_ ~host_visible:false "io:borrow-copies" in
+  let m = B.create io page_bytes in
+  let hb = require_some (B.borrow Rig.host m) in
+  let calls () = (count "read" t, count "write" t) in
+  let calls_of f =
+    let r, w = calls () in
+    f ();
+    let r', w' = calls () in
+    (r' - r, w' - w)
+  in
+  let reads_writes = pair int int in
+  equal ~msg:"from the host into the borrow" reads_writes (0, 1)
+    (calls_of (fun () -> B.copy ~src:(filled page_bytes 'a') ~dst:hb));
+  let out = filled page_bytes '0' in
+  equal ~msg:"from the borrow into the host" reads_writes (1, 0)
+    (calls_of (fun () -> B.copy ~src:hb ~dst:out));
+  equal ~msg:"the host's bytes" string (String.make page_bytes 'a') (bytes out);
+  let on_d = B.create d page_bytes in
+  equal ~msg:"from the borrow into the device" reads_writes (1, 0)
+    (calls_of (fun () -> B.copy ~src:hb ~dst:on_d));
+  equal ~msg:"from the device into the borrow" reads_writes (0, 1)
+    (calls_of (fun () -> B.copy ~src:on_d ~dst:hb));
+  equal ~msg:"the device's maps of the pages" bool false
+    (List.mem page_bytes (P.host_maps p));
+  let into = Bytes.create page_bytes in
+  equal ~msg:"a blit out of the borrow" reads_writes (1, 0)
+    (calls_of (fun () -> B.blit_to_bytes hb 0 into 0 page_bytes));
+  equal ~msg:"a blit into the borrow" reads_writes (0, 1)
+    (calls_of (fun () ->
+         B.blit_from_string (Bytes.to_string into) 0 hb 0 page_bytes));
+  equal ~msg:"a fill of the borrow" reads_writes (0, 1)
+    (calls_of (fun () -> B.fill hb 'c'));
+  let half = page_bytes / 2 in
+  B.copy ~src:(filled half 'b') ~dst:(B.view hb ~first:0 ~length:half);
+  equal ~msg:"within the allocation" reads_writes (1, 1)
+    (calls_of (fun () ->
+         B.copy
+           ~src:(B.view hb ~first:0 ~length:half)
+           ~dst:(B.view hb ~first:half ~length:half)));
+  B.copy ~src:m ~dst:out;
+  equal ~msg:"the moved bytes" string (String.make page_bytes 'b') (bytes out)
+
+(* Io memory and a borrow of its pages copy to and from a device of another
+   machine, through the host's staging memory: the io library reads and
+   writes, and every byte lands. *)
+let test_far_copies () =
+  let io, t = open_pages () in
+  let machine = Support.machine "io-far" in
+  let far =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ ~machine
+         {
+           name = "io:far";
+           driver = (module P);
+           make =
+             (fun ~word ->
+               Ok (P.bind ~word (P.make ~host_visible:false ~peers:false ())));
+         })
+  in
+  let m = B.create io page_bytes in
+  let hb = require_some (B.borrow Rig.host m) in
+  let on_far = B.create far page_bytes in
+  let reads = count "read" t and writes = count "write" t in
+  B.copy ~src:(filled page_bytes 'f') ~dst:on_far;
+  B.copy ~src:on_far ~dst:m;
+  B.copy ~src:(filled page_bytes 'g') ~dst:hb;
+  B.copy ~src:hb ~dst:on_far;
+  let out = filled page_bytes '0' in
+  B.copy ~src:on_far ~dst:out;
+  equal ~msg:"from the borrow, through the far device" string
+    (String.make page_bytes 'g') (bytes out);
+  B.copy ~src:(filled page_bytes 'h') ~dst:on_far;
+  B.copy ~src:on_far ~dst:hb;
+  B.copy ~src:m ~dst:on_far;
+  B.copy ~src:on_far ~dst:out;
+  equal ~msg:"into the borrow, then from the io memory" string
+    (String.make page_bytes 'h') (bytes out);
+  equal ~msg:"reads and writes of the io library" (pair int int) (2, 3)
+    (count "read" t - reads, count "write" t - writes)
+
+(* A fault of an io read under a copy from a borrow of its pages loses the io
+   device, which owns the memory, and leaves the host. *)
+let test_borrow_fault () =
+  let io, t = open_pages () in
+  let hb = require_some (B.borrow Rig.host (B.create io page_bytes)) in
+  t.during <- (fun () -> raise (Pages.Fault "the link went down"));
+  raises_match (lost io) (fun () ->
+      B.copy ~src:hb ~dst:(filled page_bytes '0'));
+  equal ~msg:"the io device" (option string) (Some "the link went down")
+    (Rig.lost io);
+  equal ~msg:"the host" (option string) None (Rig.lost Rig.host)
+
 (* A region an io library made is a buffer of its io device only, by its
    library's key, never exclusive. *)
 let test_of_io () =
@@ -790,6 +889,15 @@ let tests =
           test_staged_device;
         test "a fault of io loses its device, a failure of its memory nothing"
           test_faults;
+        test
+          "a copy from or into a borrow of io memory goes through its io \
+           library"
+          test_borrow_copies;
+        test "a fault under a copy from a borrow loses the io device"
+          test_borrow_fault;
+        test
+          "io memory and a borrow of it copy with another machine's device"
+          test_far_copies;
         test "a region an io library made is a buffer of its device alone"
           test_of_io;
         test "a closed io device makes no buffer" test_of_io_closed;

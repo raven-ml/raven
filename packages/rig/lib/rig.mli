@@ -912,7 +912,11 @@ module Buffer : sig
       memory, so work through it is ordered as work on [b]. A borrow of a
       borrow maps the memory the first one maps. Every borrow on [d] of one
       allocation shares one mapping, which lasts until the allocation
-      returns or [d] has stopped.
+      returns or [d] has stopped. A borrow of an io device's memory is its
+      pages, whose reads by the host or by work are as the io device states
+      once the object behind them changes, such as the end of the process
+      by [SIGBUS] for a truncated file ([Rig_disk]). A copy reads such
+      memory through the io device ({!section-copying}).
 
       Raises [Invalid_argument] if [b] is dead or, on a device other than
       [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is
@@ -1091,6 +1095,15 @@ module Buffer : sig
       value of that device's timeline ({!Rig.submitted}). On another machine,
       a device of that machine copies.
 
+      Memory an io device owns, its own or a borrow of its pages
+      ({!borrow}), moves only through that io device's read or write. A
+      copy from or into it never reads or writes the pages, and no device
+      maps them for it, so a copy from a file cut short raises what the io
+      device's read raises. Two allocations of one object, such as two
+      opens of one file, are two memories that share no byte ({!overlaps}).
+      A program must not copy between bytes of the object that both name,
+      whose result is unspecified.
+
       A copy that no device can run directly passes through {e staging
       memory}, host memory that rig makes in allocations of 32 MiB, each at
       the first copy whose bytes need it. A copy uses one allocation, or two
@@ -1119,8 +1132,9 @@ module Buffer : sig
 
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the
-      host addresses the buffer ({!section-host_access}), the host copies
-      once the work the copy follows is done. Otherwise the bytes pass
+      host addresses the buffer ({!section-host_access}) and no io device
+      owns its memory, the host copies once the work the copy follows is
+      done. Otherwise the bytes pass
       through staging memory, and a device copies them to or from the buffer
       as {!copy} does. Each returns once its bytes are where they go.
 
