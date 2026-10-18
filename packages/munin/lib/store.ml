@@ -30,9 +30,8 @@ let newest_first a b =
   | 0 -> String.compare (Run.id b) (Run.id a)
   | c -> c
 
-(* Index-based listing: filter on header fields, return lazy Run.t *)
-let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
-  Hashtbl.to_seq index |> List.of_seq
+let list_runs t ?experiment ?status ?tag ?parent ?group () =
+  Index.read t.root |> Hashtbl.to_seq |> List.of_seq
   |> List.filter_map (fun (id, (entry : Index.entry)) ->
       if
         Option.fold ~none:true ~some:(String.equal entry.experiment) experiment
@@ -44,41 +43,12 @@ let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
              ~some:(fun p -> entry.parent_id = Some p)
              parent
         && Option.fold ~none:true ~some:(fun g -> entry.group = Some g) group
-      then Some (run_of_entry ~root id entry)
+      then Some (run_of_entry ~root:t.root id entry)
       else None)
   |> List.sort newest_first
 
-(* Filesystem-based listing: fallback when no index *)
-let list_runs_scan ~root ?experiment ?status ?tag ?parent ?group () =
-  let runs =
-    match experiment with
-    | Some experiment ->
-        Run.list ~root ~experiment ?status ?tag ?parent ?group ()
-    | None ->
-        Fs.list_dirs (Filename.concat root "experiments")
-        |> List.concat_map (fun experiment ->
-            Run.list ~root ~experiment ?status ?tag ?parent ?group ())
-  in
-  List.sort newest_first runs
-
-let list_runs t ?experiment ?status ?tag ?parent ?group () =
-  match Index.read t.root with
-  | Some index ->
-      list_runs_indexed index ~root:t.root ?experiment ?status ?tag ?parent
-        ?group ()
-  | None ->
-      list_runs_scan ~root:t.root ?experiment ?status ?tag ?parent ?group ()
-
 let find_run t id =
-  match Index.read t.root with
-  | Some index -> (
-      match Hashtbl.find_opt index id with
-      | Some entry -> Some (run_of_entry ~root:t.root id entry)
-      | None -> None)
-  | None ->
-      List.find_map
-        (fun experiment -> Run.load ~root:t.root ~experiment ~id)
-        (list_experiments t)
+  Option.map (run_of_entry ~root:t.root id) (Index.find t.root ~id)
 
 let latest_run t ?experiment ?status ?tag ?parent ?group () =
   match list_runs t ?experiment ?status ?tag ?parent ?group () with

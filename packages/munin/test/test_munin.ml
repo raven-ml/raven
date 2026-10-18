@@ -1145,6 +1145,80 @@ let test_store_list_artifacts () =
   equal ~msg:"filter by name" int 1
     (List.length (Store.list_artifacts store ~name:"data" ()))
 
+(* The index at the store root caches the header of each run on disk. The runs
+   a store lists are the run directories with a manifest, whatever the index
+   holds or lacks. *)
+
+let index_path root = Filename.concat root "index.json"
+
+let start_runs store n =
+  List.init n (fun _ ->
+      let session = Session.start ~store ~experiment:"exp" () in
+      Session.finish session;
+      Session.id session)
+
+let listed store = List.map Run.id (Store.list_runs store ())
+
+let test_store_index_wrong_shape () =
+  List.iter
+    (fun text ->
+      with_temp_dir @@ fun root ->
+      let store = Store.open_ ~root () in
+      let ids = start_runs store 2 in
+      write_text (index_path root) text;
+      equal
+        ~msg:(Printf.sprintf "runs under an index of %s" text)
+        (slist string String.compare)
+        ids (listed store);
+      List.iter
+        (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
+        ids)
+    [ "{}"; "[]"; "42"; "null"; "\"runs\"" ]
+
+(* An index that lacks a run on disk, as a process killed between writing a
+   run's manifest and its index entry leaves, or that holds a run whose
+   directory is gone. *)
+let test_store_index_stale () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let kept = start_runs store 2 in
+  let saved = read_text (index_path root) in
+  let missing = start_runs store 1 in
+  write_text (index_path root) saved;
+  let gone = List.hd kept in
+  rm_rf (Run.dir (Option.get (Store.find_run store gone)));
+  let ids = List.tl kept @ missing in
+  equal ~msg:"runs listed" (slist string String.compare) ids (listed store);
+  List.iter
+    (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
+    ids;
+  is_none ~msg:("find_run " ^ gone) (Store.find_run store gone)
+
+(* An index is damaged by hand, or by a power loss before its write reached the
+   disk. A store written before it had an index has none. The next change
+   rebuilds the index from the runs on disk. *)
+let test_store_index_damaged () =
+  List.iter
+    (fun damage ->
+      with_temp_dir @@ fun root ->
+      let store = Store.open_ ~root () in
+      let before = start_runs store 2 in
+      damage (index_path root);
+      let after = start_runs store 1 in
+      let ids = before @ after in
+      equal ~msg:"runs listed" (slist string String.compare) ids (listed store);
+      List.iter
+        (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
+        ids)
+    [
+      (fun path ->
+        let text = read_text path in
+        write_text path (String.sub text 0 (String.length text / 2)));
+      (fun path -> write_text path "");
+      (fun path -> write_text path "[]");
+      Sys.remove;
+    ]
+
 let store_tests =
   [
     test "open creates dirs" test_store_open;
@@ -1162,6 +1236,9 @@ let store_tests =
     test "gc" test_store_gc;
     test "find_artifact" test_store_find_artifact;
     test "list_artifacts" test_store_list_artifacts;
+    test "index of another shape" test_store_index_wrong_shape;
+    test "stale index" test_store_index_stale;
+    test "damaged index" test_store_index_damaged;
   ]
 
 (* Reloading *)

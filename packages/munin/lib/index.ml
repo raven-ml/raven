@@ -73,21 +73,19 @@ let entry_of_json json =
           started_at;
         }
 
-let read root =
+(* The entries of [index.json], none if it is missing or damaged. *)
+let load root =
+  let tbl = Hashtbl.create 64 in
   let path = index_path root in
-  if not (Sys.file_exists path) then None
-  else
-    try
-      let json = Fs.read_file path |> Json_utils.json_of_string in
-      let tbl = Hashtbl.create 64 in
-      List.iter
-        (fun (id, value) ->
-          match entry_of_json value with
-          | Some entry -> Hashtbl.replace tbl id entry
-          | None -> ())
-        (Json_utils.json_assoc json);
-      Some tbl
-    with _ -> None
+  (if Sys.file_exists path then
+     try
+       Fs.read_file path |> Json_utils.json_of_string |> Json_utils.json_assoc
+       |> List.iter (fun (id, value) ->
+           match entry_of_json value with
+           | Some entry -> Hashtbl.replace tbl id entry
+           | None -> ())
+     with _ -> ());
+  tbl
 
 let write root tbl =
   let entries =
@@ -99,12 +97,57 @@ let write root tbl =
   Fs.write_file (index_path root)
     (Json_utils.json_to_string ~pretty:true json ^ "\n")
 
+let entry_of_run run =
+  {
+    experiment = Run.experiment run;
+    name = Run.name run;
+    group = Run.group run;
+    parent_id = Run.parent_id run;
+    status = Run.status run;
+    tags = Run.tags run;
+    started_at = Run.started_at run;
+  }
+
+(* The runs on disk are the directories under [experiments/*/runs]; the index
+   only saves reading their manifests. A run the index lacks, as a process
+   killed between writing a run's manifest and its entry leaves, has its
+   manifest read. An entry whose directory is gone is dropped. *)
+
+let experiments_dir root = Filename.concat root "experiments"
+
+let runs_dir root experiment =
+  Filename.concat (Filename.concat (experiments_dir root) experiment) "runs"
+
+let header root cached ~experiment ~id =
+  match Hashtbl.find_opt cached id with
+  | Some entry when String.equal entry.experiment experiment -> Some entry
+  | _ -> Option.map entry_of_run (Run.load ~root ~experiment ~id)
+
+let reconcile root cached =
+  let tbl = Hashtbl.create 64 in
+  Fs.list_dirs (experiments_dir root)
+  |> List.iter (fun experiment ->
+      Fs.list_dirs (runs_dir root experiment)
+      |> List.iter (fun id ->
+          match header root cached ~experiment ~id with
+          | Some entry -> Hashtbl.replace tbl id entry
+          | None -> ()));
+  tbl
+
+let read root = reconcile root (load root)
+
+let find root ~id =
+  let cached = load root in
+  Fs.list_dirs (experiments_dir root)
+  |> List.find_map (fun experiment ->
+      if not (Fs.is_directory (Filename.concat (runs_dir root experiment) id))
+      then None
+      else header root cached ~experiment ~id)
+
 let modify root f =
-  let tbl =
-    match read root with Some tbl -> tbl | None -> Hashtbl.create 16
-  in
+  let tbl = load root in
   f tbl;
-  write root tbl
+  write root (reconcile root tbl)
 
 let add root ~id entry = modify root (fun tbl -> Hashtbl.replace tbl id entry)
 

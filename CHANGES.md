@@ -1492,6 +1492,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Store.list_runs` and `Store.find_run` take a store's runs from its run
+  directories, and `index.json` only caches their headers. A run the index
+  lacked, as a killed process or an index of another shape leaves, was
+  hidden, and a run whose directory was removed was still listed.
 - `Session.start` never gives two runs one directory. Runs started within
   one second drew ids that collided about once in 65,536 pairs, and the
   second wrote into the first's run.
