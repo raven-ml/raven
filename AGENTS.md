@@ -193,6 +193,11 @@ promises, through the public interface, never what the code does today.
 A review reads `REVIEW.md` and the `REVIEW.md` of each package the change
 touches, and reports as they say.
 
+A change that touches a public `.mli`, library code, C or a contract gets a
+review by an agent that did not write it, and lands once each finding is
+fixed or answered with a reason. A design finding means redesigning before
+landing.
+
 ## Commits
 
 - Subject: `type(scope): Imperative summary` (`feat`, `fix`, `perf`,
