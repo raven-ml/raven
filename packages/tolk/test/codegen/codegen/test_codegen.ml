@@ -1959,6 +1959,104 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
+(* Reductions over a variable size
+
+   A kernel reduces [x], of [hi] floats, over a range whose size is a variable
+   [n] from 0 to [hi]: over [x.(k)] for each [k] below [n], or over [x.(k / 2)],
+   whose index the range's bounds fold to 0 when [hi] is 1, so that the reduced
+   value then ignores the range. [x.(0)] is an infinity. *)
+
+type index = Each | Halved
+
+let reduction_by_size rop index hi =
+  let out = Call.param ~shape:[ Int 1 ] 0 Float32 in
+  let x = Call.param ~shape:[ Int hi ] 1 Float32 in
+  let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
+  let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
+  let at = match index with Each -> r | Halved -> Ops.O.(r // int 2) in
+  let reduced = Ops.reduce (Ops.index x [ at ]) rop [ r ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) reduced ]
+
+(* The reduction from its identity, as Tolk.Op.Reduce defines it. *)
+let reduced_by_size rop index x n =
+  let identity, f =
+    match rop with
+    | Op.Add -> (0., ( +. ))
+    | _ -> (Float.neg_infinity, Float.max)
+  in
+  let at k = match index with Each -> k | Halved -> k / 2 in
+  List.fold_left (fun acc k -> f acc x.(at k)) identity (List.init n Fun.id)
+
+let reduces_by_size (rop, index, hi) =
+  let x =
+    Array.init hi (fun j ->
+        if j = 0 then Float.infinity else 1. +. float_of_int j)
+  in
+  let prg =
+    Codegen.to_program (reduction_by_size rop index hi) (Lazy.force host)
+  in
+  let run n =
+    let inputs = [ (1, Array.map (fun f -> `Float f) x) ] in
+    List.assoc 0 (Run.on_host ~vars:[ ("n", n) ] prg inputs)
+  in
+  List.iter
+    (fun n ->
+      equal
+        ~msg:(Printf.sprintf "at n = %d" n)
+        (array Dtypes.value)
+        [| `Float (reduced_by_size rop index x n) |]
+        (run n))
+    (List.init (hi + 1) Fun.id)
+
+(* The int32 maximum of [2 k] for [k] below a variable [n] of at most [hi]: a
+   factor that ignores the range moves out of the maximum. *)
+let max_of_a_product hi =
+  let out = Call.param ~shape:[ Int 1 ] 0 Int32 in
+  let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
+  let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
+  let doubled = Ops.O.(Ops.cast r Int32 * Ops.int ~dtype:Int32 2) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.reduce doubled Op.Max [ r ]);
+    ]
+
+let maximum_of_a_product hi =
+  let prg = Codegen.to_program (max_of_a_product hi) (Lazy.force host) in
+  let at n =
+    if n = 0 then `Int (Bigint.of_int32 Int32.min_int)
+    else `Int (Bigint.of_int (2 * (n - 1)))
+  in
+  List.iter
+    (fun n ->
+      equal
+        ~msg:(Printf.sprintf "at n = %d" n)
+        (array Dtypes.value)
+        [| at n |]
+        (List.assoc 0 (Run.on_host ~vars:[ ("n", n) ] prg [])))
+    (List.init (hi + 1) Fun.id)
+
+let variable_sizes =
+  let name (rop, index, hi) =
+    Format.asprintf "%a of x.(%s) below n <= %d" Op.pp rop
+      (match index with Each -> "k" | Halved -> "k / 2")
+      hi
+  in
+  group "reductions over a variable size"
+    [
+      cases ~name "are their identity where the size is 0, and reduce elsewhere"
+        (List.concat_map
+           (fun rop ->
+             List.concat_map
+               (fun index -> List.map (fun hi -> (rop, index, hi)) [ 1; 3 ])
+               [ Each; Halved ])
+           [ Op.Add; Op.Max ])
+        reduces_by_size;
+      cases ~name:(Printf.sprintf "n <= %d")
+        "a maximum of a product is the identity where the size is 0" [ 1; 3 ]
+        maximum_of_a_product;
+    ]
+
 (* Multiply-adds
 
    A sum adds each product of its source into its running sum as one
@@ -2907,6 +3005,7 @@ let () =
          lowering_claims;
          whole_graphs;
          accumulators;
+         variable_sizes;
          multiply_adds;
          lanes;
          bfloat16_casts;

@@ -26,8 +26,11 @@ val linearize : Ops.t -> Ops.t list
     which sorts nodes by, in turn:
 
     - their run count, the product of the sizes of the ranges they run inside
-      ({!Ops.val-ranges}), a range's size being its {!Ops.vmax} plus one: fewer
-      runs come first, so that work leaves the loops it does not need;
+      ({!Ops.val-ranges}), a range's size being its {!Ops.vmax} plus one and
+      at least two: fewer runs come first, so that work leaves the loops it
+      does not need. The floor of two makes a loop's body count more runs than
+      the nodes around the loop, which a range of size 0 or 1, as one over a
+      variable of at most 1, would not, so that they are placed outside it;
     - their kind: parameters first, by slot; then buffers outside local memory,
       buffers in local memory, loop ends ({!Op.End} and {!Op.Backedge}), loads,
       the other nodes, stores, and ranges last;

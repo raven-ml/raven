@@ -1548,6 +1548,9 @@ thread.
 
 ### Tolk (new)
 
+- A kernel reducing over a variable size computes the reduction's identity
+  where the size is 0. A sum read its accumulator unwritten; over a value the
+  range does not change, a sum of an infinity was NaN and a maximum the value.
 - `Codegen.made` is the program `to_program` has made of a kernel in this
   process, if any, without waiting; `Realize.lower_and_compile` compiles only
   the kernels without one.

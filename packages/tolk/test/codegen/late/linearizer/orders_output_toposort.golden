@@ -86,13 +86,13 @@
 84 Ops.END dtypes.void [83, 65, 77]
 85 Ops.SINK dtypes.void [84]
 86 Ops.LINEAR dtypes.void [2, 3, 64, 73, 65, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85]
-87 Ops.RANGE dtypes.weakint [5] (2, AxisType.LOOP)
-88 Ops.INDEX dtypes.float [3, 87]
-89 Ops.ADD dtypes.float [9, 38]
-90 Ops.STORE dtypes.void [88, 89]
-91 Ops.END dtypes.void [90, 87]
+87 Ops.ADD dtypes.float [9, 38]
+88 Ops.RANGE dtypes.weakint [5] (2, AxisType.LOOP)
+89 Ops.INDEX dtypes.float [3, 88]
+90 Ops.STORE dtypes.void [89, 87]
+91 Ops.END dtypes.void [90, 88]
 92 Ops.SINK dtypes.void [91, 7]
-93 Ops.LINEAR dtypes.void [5, 87, 3, 88, 2, 8, 9, 38, 89, 90, 4, 91, 6, 7, 92]
+93 Ops.LINEAR dtypes.void [2, 3, 4, 5, 8, 9, 38, 87, 88, 89, 90, 91, 6, 7, 92]
 94 Ops.CAST dtypes.float [38] dtypes.float
 95 Ops.STORE dtypes.void [66, 94]
 96 Ops.END dtypes.void [95, 65]

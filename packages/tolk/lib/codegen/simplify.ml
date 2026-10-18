@@ -234,6 +234,11 @@ let pm_split_ranges =
 
 let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])
 
+(* A reduction over a range its value ignores folds the value once per run of
+   the range: a sum multiplies it by the range's size, a product raises it to
+   it, and a maximum is the value. A range whose size may be 0, as a variable's,
+   runs no time when it is, and the reduction is then its identity, where the
+   sum of an infinity would be NaN and the maximum the value. *)
 let reduce_unparented red =
   match arg red with
   | Reduce { op = (Op.Add | Op.Max | Op.Mul) as rop; _ } -> (
@@ -248,14 +253,20 @@ let reduce_unparented red =
             if List.is_empty parented then value
             else replace red ~src:(value :: parented)
           in
-          Some
-            (List.fold_left
-               (fun ret r ->
-                 match rop with
-                 | Op.Add -> O.(ret * nth r 0)
-                 | Op.Mul -> pow ret (nth r 0)
-                 | _ -> ret)
-               ret unparented))
+          let fold ret r =
+            let size = nth r 0 in
+            let folded =
+              match rop with
+              | Op.Add -> O.(ret * size)
+              | Op.Mul -> pow ret size
+              | _ -> ret
+            in
+            if V.(vmin size > of_int 0) then folded
+            else
+              let identity = identity_element rop (dtype red) in
+              where O.(int 0 < size) folded (const_like red identity)
+          in
+          Some (List.fold_left fold ret unparented))
   | _ -> None
 
 let pm_reduce_unparented =

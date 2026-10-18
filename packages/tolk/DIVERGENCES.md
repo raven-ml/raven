@@ -3965,3 +3965,42 @@ submission, and a range a loop of rig's program (D146).
   process's write in progress`, `› processes putting in turn keep the cache
   within cachesize`, `› a cachesize of 0 keeps every entry` and `› a
   negative cachesize is refused`.
+
+## D154. A range whose size may be 0 runs no time
+
+- **tinygrad:** `codegen/late/linearizer.py:20` (`run_count`, the product of
+  `vmax + 1` over a node's ranges), `codegen/simplify.py:81-91`
+  (`reduce_unparented`, a sum times the size, a product to its power, a
+  maximum the value) and `uop/symbolic.py:390-398` (`reduce_mul_chain`, an
+  integer maximum of a product times the factor that ignores its ranges).
+- **tolk:** `lib/codegen/late/linearizer.ml:16` (`runs`),
+  `lib/codegen/simplify.ml:242` (`reduce_unparented`) and
+  `lib/uop/symbolic.ml:165` (`reduce_mul_chain`); `gen/tinygrad.patch` makes
+  the three changes in tinygrad, so the goldens state tolk's order.
+- **Differs:** the linearizer counts a range as at least two runs, so a
+  loop's body always sorts after the nodes around the loop. tinygrad counts a
+  range over a variable of size 0 or 1 as one run, its body ties with what
+  precedes the loop, and a sum's first store of its accumulator was placed
+  inside the loop: at size 0 the sum read its accumulator unwritten. A
+  reduction over a range its value ignores, whose size may be 0, is its
+  identity where the size is 0: tinygrad's sum of an infinity over it is NaN
+  there, and its maximum the value. Where the size's bounds make each use of
+  the range fold, as `r // 2` for a size of at most 1, the value ignores the
+  range and the reduction took that form. An integer maximum of a product by
+  a factor that ignores its ranges, over a range whose size may be 0, is its
+  identity there too: tinygrad's is the identity times the factor, which
+  wraps. The order of the goldens'
+  `empty_range_runs_none` changes: the nodes outside its range of size 0 come
+  before it.
+- **Reason:** (c). `Tolk_engine.run` binds a variable to any value of its
+  range, its lower bound included, and runs each range's trips; a size of 0
+  is a binding the schedule must compute. With concrete shapes the scheduler
+  folds an empty value first (`Prepare`), so only a variable reaches it.
+- **Pinned by:** `Tolk.Codegen › reductions over a variable size`, which runs
+  sums and maxima over sizes of at most 1 and 3 on the host at every size,
+  and an int32 maximum of `2 k` among them;
+  `Tolk.Linearizer › laws › after splitting and chaining, the rest runs
+  outside each loop`, whose kernels hold ranges of constant sizes from 0 and
+  of variable sizes; `Tolk.Simplify › pm_reduce_unparented › a reduction
+  keeps its value over a range that may run no time`; the linearizer's
+  `orders_output` goldens.

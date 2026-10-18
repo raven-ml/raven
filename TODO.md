@@ -186,10 +186,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - tolk.engine refuses a back edge whose flag moves with the run's words
   (tolk_engine.ml:775); no GPU test of a loop whose body mixes a GPU kernel
   and a host program
-- sizes in [0,1], unreachable with concrete shapes (prepare.ml:607 folds
-  empty values first): a sum at n=0 reads its accumulator uninitialised; a
-  loop whose index uses fold to 0 loads at invalid ids. Fix with symbolic
-  shapes
 - search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
   counters and thread traces are not collected: encode both as words parts
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an

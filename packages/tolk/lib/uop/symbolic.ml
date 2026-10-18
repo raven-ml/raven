@@ -159,7 +159,9 @@ let simplify_valid valid =
 (* Phase 3: the complete symbolic *)
 
 (* A float factor moved out of a sum changes its rounding, and out of a maximum
-   its NaN and signed zeros. *)
+   its NaN and signed zeros. A maximum over a range whose size may be 0 is its
+   identity when it is, which the factor would scale: it keeps the identity
+   there. *)
 let reduce_mul_chain r =
   match arg r with
   | Reduce { op = (Op.Add | Op.Max) as rop; _ }
@@ -174,11 +176,19 @@ let reduce_mul_chain r =
       let prod = List.fold_left mul (int 1) in
       match List.partition outside (split_uop (nth r 0) Op.Mul) with
       | [], _ -> None
-      | out, inside ->
+      | out, inside -> (
           let body =
             match inside with [] -> const_v (nth r 0) one | _ -> prod inside
           in
-          Some (mul (replace r ~src:(body :: ranges)) (prod out)))
+          let moved = mul (replace r ~src:(body :: ranges)) (prod out) in
+          let runs rg = O.(int 0 < nth rg 0) in
+          match List.filter (fun rg -> V.(vmin (nth rg 0) <= zero)) ranges with
+          | [] -> Some moved
+          | _ when rop = Op.Add -> Some moved
+          | rg :: rest ->
+              let all = List.fold_left (fun c rg -> O.(c land runs rg)) in
+              let identity = identity_element rop (dtype r) in
+              Some (where (all (runs rg) rest) moved (const_like r identity))))
   | _ -> None
 
 let drop_and_clauses cond x i =

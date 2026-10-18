@@ -10,11 +10,13 @@ module Ready = Set.Make (Int)
 
 (* Linearizing *)
 
+(* A range counts at least two runs. Counted as one, a range over a variable of
+   at most 1 would tie its body with an accumulator's first store, which would
+   then be placed inside the loop and skipped when it runs no time. *)
+let runs r = max 2 (Dtype.Value.to_int (vmax r) + 1)
+
 let priority u =
-  (* Nodes with higher run counts are placed later. *)
-  let run_count =
-    Nodes.fold (fun r n -> n * (Dtype.Value.to_int (vmax r) + 1)) (ranges u) 1
-  in
+  let run_count = Nodes.fold (fun r n -> n * runs r) (ranges u) 1 in
   (* Smaller numbers are placed closer to the top. *)
   let priority, extra =
     match (op u, arg u) with

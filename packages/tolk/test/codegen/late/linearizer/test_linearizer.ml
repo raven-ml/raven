@@ -129,6 +129,24 @@ let bodies_inside_loops order =
         (Ops.Nodes.to_list (Ops.ranges u)))
     order
 
+(* A node that runs outside a range comes before the range opens or after the
+   end that closes it. *)
+let others_outside_loops order =
+  let at = positions order in
+  List.iter
+    (fun e ->
+      if is_end e then
+        let r = Ops.nth e 1 in
+        List.iter
+          (fun u ->
+            let runs_inside = Ops.Nodes.mem r (Ops.ranges u) in
+            if not (runs_inside || Ops.equal u e) then
+              satisfies ~claim:"outside the loop" (pair int int)
+                (fun (start, stop) -> at u < start || at u > stop)
+                (at r, at e))
+          order)
+    order
+
 (* Each end closes one range after pm_split_ends. *)
 let ends_are_single sink =
   List.iter
@@ -139,11 +157,14 @@ let ends_are_single sink =
 
 (* Generated kernels: trees of loops storing into parameters. A loop either
    closes its own range, or [fuses] its children's ends into its own, as kernels
-   ending several ranges at once do. A store may read the output of the effect
-   before it, so that sibling loops depend on each other. *)
+   ending several ranges at once do. Its size is a constant or a variable from
+   [0] to a bound, as a symbolic shape is. A store may read the output of the
+   effect before it, so that sibling loops depend on each other. *)
+type size = Fixed of int | Up_to of int
+
 type item =
   | Store of { reads : bool }
-  | Loop of { size : int; fuses : bool; body : item list }
+  | Loop of { size : size; fuses : bool; body : item list }
 
 let rec item depth =
   let open Gen in
@@ -154,7 +175,12 @@ let rec item depth =
       [
         (2, store);
         ( 3,
-          let+ size = int_range 0 4
+          let+ size =
+            one_of
+              [
+                map (fun n -> Fixed n) (int_range 0 4);
+                map (fun n -> Up_to n) (int_range 1 4);
+              ]
           and+ fuses = frequency [ (3, constant false); (1, constant true) ]
           and+ body = list ~size:(int_range 1 3) (item (depth - 1)) in
           Loop { size; fuses; body } );
@@ -188,7 +214,16 @@ let kernel items =
         in
         (Ops.store (Ops.index (fbuf (fresh slot)) [ at ]) value, [])
     | Loop { size; fuses; body } ->
-        let r = Ops.range ~axis_type:Loop (Int size) [ fresh axis ] in
+        let id = fresh axis in
+        let size : Ops.sint =
+          match size with
+          | Fixed n -> Int n
+          | Up_to n ->
+              let name = Printf.sprintf "n%d" id in
+              Sym
+                (Ops.variable name (`Int Bigint.zero) (`Int (Bigint.of_int n)))
+        in
+        let r = Ops.range ~axis_type:Loop size [ id ] in
         let children = effects ~defer:fuses (r :: outer) body in
         let u = Ops.group (List.map fst children)
         and pending = r :: List.concat_map snd children in
@@ -202,6 +237,19 @@ let kernels_gen =
     (Gen.map kernel (Gen.list ~size:(Gen.int_range 1 3) (item 3)))
 
 let compiled sink = Linearizer.linearize (chain (split sink))
+
+(* The ranges whose run count the linearizer raises to two: a variable size of
+   at most 1, and a constant size of 0 or 1. *)
+let cover_small_ranges k =
+  let sizes =
+    List.filter_map
+      (fun u -> if Ops.op u = Op.Range then Some (Ops.nth u 0) else None)
+      (Ops.toposort ~calls:Enter k)
+  in
+  let at_most_one u = Dtype.Value.(Ops.vmax u <= of_int 1) in
+  let small o = List.exists (fun u -> Ops.op u = o && at_most_one u) sizes in
+  cover "a range over a variable of at most 1" (small Op.Param);
+  cover "a range of constant size 0 or 1" (small Op.Const)
 
 let unsplit_kernels =
   List.map (fun name -> sink name "_unsplit") (recorded `Split)
@@ -221,7 +269,12 @@ let laws =
         kernels_gen (fun k -> loops_nest (compiled k));
       prop "after splitting and chaining, a range's body runs inside its loop"
         ~examples:unsplit_kernels kernels_gen (fun k ->
+          cover_small_ranges k;
           bodies_inside_loops (compiled k));
+      prop "after splitting and chaining, the rest runs outside each loop"
+        ~examples:unsplit_kernels kernels_gen (fun k ->
+          cover_small_ranges k;
+          others_outside_loops (compiled k));
       prop "pm_split_ends leaves each end closing one range"
         ~examples:unsplit_kernels kernels_gen (fun k ->
           ends_are_single (split k));
