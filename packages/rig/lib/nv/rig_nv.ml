@@ -343,6 +343,7 @@ external create : int -> int -> int -> int -> int -> int = "caml_rig_nv_create"
 [@@noalloc]
 
 external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
+external set_joins : int -> int -> unit = "caml_rig_nv_joins" [@@noalloc]
 external most_parts : int -> int = "caml_rig_nv_most_parts"
 
 external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
@@ -931,6 +932,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   if self = 0 then Error "no host memory for the device's state"
   else
     let () = taken (fun () -> destroy self) in
+    set_joins self (words_host + 8);
     let channel q engine (notifier, notifier_host) =
       let module G = R.Gpfifo_alloc in
       let* ch =

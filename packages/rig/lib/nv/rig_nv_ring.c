@@ -24,9 +24,10 @@
    Joins: a part that a later part on the other channel runs after (one
    its [after] names, or its queue's previous part), and a channel's last
    part when the other channel releases v, signal their channel's join
-   word with the tag v << 16 | i + 1, i the part's index; the waiter
-   acquires the tag. Tags rise on each join word, and the acquire compares
-   64 bits circularly, so ">=" is exact. The channel of the last part
+   word with the channel's next join number, counted from JOINS_START at
+   the device's open; the waiter acquires that number. A channel's numbers
+   rise in the order its work runs, and the acquire compares 64 bits
+   circularly, so ">=" is exact. The channel of the last part
    (COMPUTE when there is none, or when v's low 32 bits are 0) waits for
    the other channel's last part, then releases v into the timeline word:
    on COMPUTE a release that waits for the channel to be idle, on COPY a
@@ -52,6 +53,7 @@
 
 #define _GNU_SOURCE
 
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,8 +63,6 @@
 /* The waits a submission may carry: rig_nv_room, which does not see
    them, keeps room for this many on each channel. */
 #define MAX_WAITS 256
-
-static uint64_t tag(uint64_t v, int i) { return v << 16 | (uint64_t)(i + 1); }
 
 static int other(int q) { return q == COMPUTE ? COPY : COMPUTE; }
 
@@ -217,7 +217,7 @@ static size_t words_of(const struct rig_part *p) {
 /* Whether [p]'s parts, whose launches' blocks lie in [args], are ones the
    device runs. */
 static int runs(const struct rig_part *p, int n, const uint8_t *args) {
-  if (n < 0 || n > MAX_PARTS) return 0;
+  if (n < 0) return 0;
   for (int i = 0; i < n; i++) {
     const struct rig_part *x = &p[i];
     if (x->queue != COMPUTE && x->queue != COPY) return 0;
@@ -389,7 +389,7 @@ static uint64_t larger(uint64_t a, uint64_t b) { return a > b ? a : b; }
    part before it on its queue and to one of the other queue. Both channels
    are used, and either may release the value. The segment ring grows to
    hold them too, so the ring's entries bound them, through the closes of
-   their segments, and a join tag's index. */
+   their segments. */
 int rig_nv_most_parts(const struct device *d) {
   struct cost room = room_of(d), fixed = {0}, launch = {0}, copy = {0};
   uint64_t release = larger(end_bytes(d, COMPUTE), end_bytes(d, COPY));
@@ -400,7 +400,7 @@ int rig_nv_most_parts(const struct device *d) {
   }
   part_cost(d, COMPUTE, 0, 2, qmd, 0, 0, &launch);
   part_cost(d, COPY, 0, 2, 0, 0, 1, &copy);
-  uint64_t n = MAX_PARTS;
+  uint64_t n = INT_MAX;
   for (int q = 0; q < CHANNELS; q++) {
     uint64_t closes = room.entries[q] - fixed.entries[q];
     n = least(n, closes * (SEGMENT_BYTES_MAX / 2), fixed.bytes[q],
@@ -514,6 +514,7 @@ struct pending {
 struct submission {
   struct device *d;
   const struct route *routes; /* its parts' */
+  uint64_t joins[CHANNELS];   /* each channel's last join before it */
   uint64_t v;
   const struct rig_wait *waits;
   int nwaits;
@@ -703,6 +704,12 @@ static void enter(struct submission *s, int q) {
     emit(d, c, T_INVALIDATE, 0, 0, 0);
 }
 
+/* The join number that part [a], placed, signalled on its channel. */
+static uint64_t joined(const struct submission *s, int a) {
+  const struct route *x = &s->routes[a];
+  return s->joins[x->channel] + x->signal;
+}
+
 /* Places the waits of part [i] for the parts on the other channel it runs
    after: its join, then those its [after] names. Answers whether it placed
    one. */
@@ -712,11 +719,11 @@ static int join(struct submission *s, const struct rig_part *p, int i) {
   struct channel *c = &d->ch[x->channel];
   uint64_t at = JOIN_GPU(d, other(x->channel));
   int waits = x->join >= 0;
-  if (waits) emit(d, c, T_ACQUIRE, at, tag(s->v, x->join), 0);
+  if (waits) emit(d, c, T_ACQUIRE, at, joined(s, x->join), 0);
   for (int j = 0; j < p[i].nafter; j++) {
     int a = p[i].after[j];
     if (s->routes[a].channel == x->channel) continue;
-    emit(d, c, T_ACQUIRE, at, tag(s->v, a), 0);
+    emit(d, c, T_ACQUIRE, at, joined(s, a), 0);
     waits = 1;
   }
   return waits;
@@ -862,6 +869,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   struct route *routes = scratch;
   struct submission s = {.d = d,
                          .routes = routes,
+                         .joins = {d->ch[COMPUTE].joins, d->ch[COPY].joins},
                          .v = v,
                          .waits = waits,
                          .nwaits = nwaits,
@@ -870,6 +878,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int r = releaser(routes, n, v);
   int last[CHANNELS] = {-1, -1};
   for (int i = 0; i < n; i++) last[routes[i].channel] = i;
+  uint32_t signalled[CHANNELS] = {0, 0};
   uint64_t start = compute->launched;
   for (int i = 0; i < n; i++) {
     const struct route *x = &routes[i];
@@ -886,8 +895,10 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
       place(d, &d->ch[q], &p[i]);
     }
     if (q == COMPUTE) s.running = 1;
-    if (x->awaited || (i == last[q] && q != r)) {
-      signal_word(d, q, JOIN_GPU(d, q), tag(v, i));
+    int signal = x->awaited || (i == last[q] && q != r);
+    routes[i].signal = signal ? ++signalled[q] : 0;
+    if (signal) {
+      signal_word(d, q, JOIN_GPU(d, q), joined(&s, i));
       if (q == COMPUTE) {
         settle(compute, &s.open, 0);
         s.running = 0;
@@ -898,7 +909,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   enter(&s, r);
   int o = other(r);
   if (s.used[o])
-    emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), tag(v, last[o]), 0);
+    emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), joined(&s, last[o]), 0);
   if (s.timed != NULL)
     stamp(d, r, records(d, s.timed) + offsetof(struct stamps, end), v);
   signal_word(d, r, d->word_gpu, v);
@@ -906,6 +917,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   for (int q = 0; q < CHANNELS; q++) {
     if (!s.used[q]) continue;
     struct channel *c = &d->ch[q];
+    c->joins += signalled[q];
     close_segment(d, c);
     c->marks[(c->first + c->count++) & (c->entries - 1)] =
         (struct mark){v, c->put, c->written, c->launched};

@@ -151,8 +151,8 @@ val capability : t -> Rig_nv_abi.Gpu.t
     stops.
 
     [rig_nv_room] returns [RIG_NEVER] for parts whose entries a channel's
-    ring would not hold even when empty, for more than 65,535 parts, and
-    for a part the device does not run:
+    ring would not hold even when empty, and for a part the device does not
+    run:
     - a part on neither queue, a launch on ["COPY:0"], or a copy of one byte
       or more on ["COMPUTE:0"];
     - ring entries of an odd number of words;
@@ -162,13 +162,13 @@ val capability : t -> Rig_nv_abi.Gpu.t
       {!Rig_nv_abi.Launch.max_threads}, or whose dynamic shared memory,
       rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared}.
 
-    The device's [most_parts] ({!Rig_edge.type-facts}) is 65,535, the most
-    parts [rig_nv_room] takes in one submission: the driver's tags for the
-    order between its two channels hold a part's index in 16 bits. Launches,
-    whose constant bank 0 {!entry} bounds, and copies of at most 2 GiB take
-    no ring entry of their own, and the segment and launch rings grow to
-    hold them. Words, and longer copies, take the entries their sizes
-    take.
+    Launches, whose constant bank 0 {!entry} bounds, and copies of at most
+    2 GiB take no ring entry of their own, and the segment and launch rings
+    grow to hold them. The driver's words for them close into an entry for
+    each 4 MiB of segment, so a channel's entries alone bound their number:
+    the device's [most_parts] ({!Rig_edge.type-facts}) is the most such
+    parts, each joined to a part of the other channel, that 16,384 entries
+    hold. Words, and longer copies, take the entries their sizes take.
 
     A launch's constant bank 0 is its kernel's, of at most
     {!Rig_nv_abi.Launch.max_bank_bytes}: its first KiB holds the driver's

@@ -165,23 +165,33 @@ struct channel {
      a mark of an earlier value counts in rings a growth replaced */
   uint64_t segments_from, launches_from;
   uint64_t released; /* the last value this channel released into the word */
+  uint64_t joins;    /* JOINS_START and the joins it signalled since */
   int owes_setup;    /* whether its setup words were not yet placed */
   volatile const uint8_t *notifier; /* its error notification, RM's */
   /* During a submission: where its open segment starts and its words. */
   uint64_t open, open_words;
 };
 
-/* A join tag, v << 16 | i + 1, holds a part's index in its low 16 bits:
-   the tag's layout bounds a submission's parts, not the GPU. */
-#define MAX_PARTS 65535
+/* The join count each channel starts at, and its join word, 2^10 below
+   2^32: the word's high 32 bits first change within a channel's first
+   thousand joins, so that every device soon crosses the carry that the
+   copy engine's write of two 32-bit words must keep whole (rig_nv_ring.c's
+   [releaser]), and so does every test that joins its channels that
+   often. */
+#define JOINS_START ((UINT64_C(1) << 32) - (UINT64_C(1) << 10))
 
 /* Where a part of a submission runs: its channel; whether the driver's
-   copy kernel runs it; whether a later part on the other channel runs
-   after it; and the part before it on its queue, when that ran on the
-   other channel, or -1. */
+   copy kernel runs it; and whether a later part on the other channel runs
+   after it. Until the writer placed the part, [join] is the part before it
+   on its queue, when that ran on the other channel, or -1; then [signal]
+   is the number of the join it signalled among its channel's joins in the
+   submission, from 1, or 0 if it signalled none. */
 struct route {
   uint8_t channel, kernel, awaited;
-  int32_t join;
+  union {
+    int32_t join;
+    uint32_t signal;
+  };
 };
 
 /* A submission's routes lie in its scratch. */

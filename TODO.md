@@ -59,9 +59,7 @@ raven / llama.cpp (Vulkan; ROCm):
   (_plans/rig-device-reuse/70-, 71-): AMD's 512 parts per submission;
   AMD's segment grows as NV's segment and launch rings do, and its compute
   and copy rings resize only at idle (`AMDKFD_IOC_UPDATE_QUEUE` or the PCI
-  MQD; check KFD keeps rptr/wptr), then `Rig.most_parts` goes; NV's 65,535
-  parts (the 16-bit index of `v << 16 | i + 1`): a per-channel join counter
-  has no bound;
+  MQD; check KFD keeps rptr/wptr), then `Rig.most_parts` goes;
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
   it
 - NV address spaces: Device memory in the 49-bit space on the PCI path;

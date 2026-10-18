@@ -121,6 +121,18 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
   return Val_long((intnat)e);
 }
 
+/* Starts each channel's join count, and its join word at the host address
+   [v_joins] + 8 * q, at JOINS_START. */
+value caml_rig_nv_joins(value v_self, value v_joins) {
+  struct device *d = Device_val(v_self);
+  volatile uint64_t *words = Pointer_val(v_joins);
+  for (int q = 0; q < CHANNELS; q++) {
+    d->ch[q].joins = JOINS_START;
+    words[q] = JOINS_START;
+  }
+  return Val_unit;
+}
+
 /* Frees the records of [d]'s rings: those handed, installed and retired. */
 static void free_rings(struct device *d) {
   for (int i = 0; i <= CHANNELS; i++) {
