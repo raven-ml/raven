@@ -460,8 +460,16 @@ let access_rows =
           y);
     ]
 
-(* Copies to a device, here the host: the bytes a layout reaches, between its
-   first and last position, with no kernel. *)
+(* Copies to a device, here the host, with no kernel: the bytes a layout
+   reaches, between its first and last position, or a view's elements alone
+   where they are fewer, as for a column. *)
+let column () =
+  let m = 1024 in
+  let a = A.of_array f32 [| m; m |] (Array.make (m * m) 1.5) in
+  let all = { M.start = 0; count = m; step = 1 } in
+  let first = { M.start = 0; count = 1; step = 1 } in
+  Option.get (A.move (M.Slice [| all; first |]) a)
+
 let placement_rows =
   let n = mib in
   Thumper.group "placement"
@@ -474,6 +482,7 @@ let placement_rows =
         (fun () ->
           transpose (A.of_array f32 [| 512; 512 |] (Array.make (512 * 512) 1.5)))
         (A.to_device Rig.host);
+      row "to_device-column-1024x1024" column (A.to_device Rig.host);
     ]
 
 (* A kernel after device work: a submit on Late writes [z], and the door waits

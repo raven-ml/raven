@@ -568,8 +568,9 @@ let index_rows =
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
    on another domain, and while one lives on this domain around another fiber,
-   either of which costs each add a perform; and on a traced value, delivered to
-   its interpretation's rule. *)
+   either of which costs each add a perform; on a traced value, delivered to its
+   interpretation's rule; and on an outer interpretation's traced value under an
+   inner Extent, whose receiver asks each add whether the outer is around it. *)
 
 let adds x =
   for _ = 1 to 100 do
@@ -645,6 +646,14 @@ let interp_rows =
               for _ = 1 to 100 do
                 ignore (Sys.opaque_identity (Nx.add t t))
               done));
+      Thumper.bench_with_setup "traced-add-1-100-under-inner-extent" ~setup:one
+        (fun x ->
+          Nx.Prim.interpret ~name:"bench.outer" Values tracing (fun o ->
+              let t = Nx.Prim.traced o (Nx.Prim.form x) Traced in
+              Nx.Prim.interpret ~name:"bench.inner" Extent tracing (fun _ ->
+                  for _ = 1 to 100 do
+                    ignore (Sys.opaque_identity (Nx.add t t))
+                  done)));
     ]
 
 (* The frontend's compositions over 1M host elements, each what a user calls:
