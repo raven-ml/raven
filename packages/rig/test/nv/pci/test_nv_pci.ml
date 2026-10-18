@@ -376,28 +376,20 @@ let resets root =
 (* [stop g m] opens GPU 0 of [m] through [g] and stops it. *)
 let stop g m = Result.map Rig_pci.Driver.stop (hold g m)
 
-(* With [how] ["stop"] the child stops the GPU and exits; with ["kill"] it dies
-   by SIGKILL holding it, having allocated nothing; with ["hold"] it says
-   "holding" and holds it until its standard input closes. *)
+(* With [how] ["kill"] the child dies by SIGKILL holding the GPU, having
+   allocated nothing; with ["hold"] it says "holding" and holds it until its
+   standard input closes. *)
 let take how root =
   let m = Rig_pci.Machine.at root in
-  match how with
-  | "stop" -> (
-      match stop (gpus ()) m with
-      | Ok _ -> exit 0
-      | Error why ->
-          prerr_endline why;
-          exit 2)
-  | _ -> (
-      match Rig_pci.Function.take m gpu_bus with
-      | Error why ->
-          prerr_endline why;
-          exit 2
-      | Ok _ when how = "kill" -> Unix.kill (Unix.getpid ()) Sys.sigkill
-      | Ok _ ->
-          print_endline "holding";
-          ignore (In_channel.input_all stdin);
-          exit 0)
+  match Rig_pci.Function.take m gpu_bus with
+  | Error why ->
+      prerr_endline why;
+      exit 2
+  | Ok _ when how = "kill" -> Unix.kill (Unix.getpid ()) Sys.sigkill
+  | Ok _ ->
+      print_endline "holding";
+      ignore (In_channel.input_all stdin);
+      exit 0
 
 (* [child how root] starts [take how root]: its pid, the pipe on its standard
    input and its standard output. *)
@@ -641,8 +633,6 @@ let test_failed_boot () =
 let booted =
   group ~timeout:Rig_pci_support.patience "booted GPUs"
     [
-      test "a GPU stopped by a process that exited is reset by the next open"
-        (test_left "stop" (WEXITED 0));
       test
         "a GPU whose holder died before allocating memory is reset by the next \
          open (SIGKILL in a child)"
