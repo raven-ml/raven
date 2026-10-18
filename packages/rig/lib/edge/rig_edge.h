@@ -8,10 +8,11 @@
    A device's driver keeps its C state for one device, [self], whose first
    member is a pointer to the driver's struct rig_driver: four functions
    in the shapes rig_room_fn, rig_submit_fn, rig_commit_fn and
-   rig_settle_fn, which the caller that holds its submissions in C calls
-   with [self] and the structures below. The functions are called one at a
-   time per device, the room check before its submission, without the
-   OCaml runtime: they call no function of it and read no OCaml value.
+   rig_settle_fn, which rig calls with [self] and the structures below.
+   The section "The C functions" of rig_edge.mli states what each must do
+   and how rig calls them. This header gives their C shapes and the layout
+   of what they are handed. rig calls them without the OCaml runtime: they
+   must call no function of it and read no OCaml value.
 
    A submission is the work of one value [v] of the device's timeline: an
    array of parts, each on one of the device's queues, and the waits on
@@ -25,14 +26,11 @@
 #include <stdint.h>
 #include <string.h>
 
-/* What a room check answers: the parts fit the device's queues now; they
-   fit once one of the device's values is reached; they never fit the
-   device's empty queues; they fit the queues once these grow
-   (Rig_edge.Driver.grow). */
+/* What a room check answers (rig_edge.mli, The C functions). */
 enum { RIG_FITS, RIG_LATER, RIG_NEVER, RIG_GROW };
 
-/* What a submission and a commit answer: done; failed, and the device is
-   lost; and, for a submission, done with every value up to it committed. */
+/* What a submission, a commit and a settle answer (rig_edge.mli, The C
+   functions). */
 enum { RIG_OK, RIG_FAILED, RIG_COMMITTED };
 
 /* Which side of a copy is memory of the calling process, if any. */
@@ -144,68 +142,39 @@ struct rig_part {
 };
 
 /* The bytes of scratch a submission holds for each of its parts, aligned
-   to 8 bytes. A room check and a submit may write the [n * RIG_SCRATCH]
-   bytes at [scratch] and read them back during the call. No other call
-   uses them meanwhile, and a call finds whatever an earlier one left. A
-   driver keeps there what it decides per part, such as which engine runs
-   it, so that neither call allocates. It decides again on each call what
-   it derives from a copy part's fields, which may differ on the next
-   call. */
+   to 8 bytes: the [n * RIG_SCRATCH] bytes at [scratch] that a room check
+   and a submit are handed. rig_edge.mli's section "The C functions" states
+   how the two may use them. */
 #define RIG_SCRATCH 8
 
-/* Answers RIG_FITS, RIG_LATER, RIG_NEVER or RIG_GROW for the [n] parts at
-   [parts], whose launches' and fills' blocks lie in [args]. A launch never
-   fits whose grid or group has a size of 0 along an axis, whose groups or
-   threads exceed the device's or the function's limits, or whose shared
-   memory exceeds the function's. */
+/* The room check of the [n] parts at [parts], whose launches' and fills'
+   blocks lie in [args] (rig_edge.mli, The C functions: [room]). */
 typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
                         void *scratch, const uint8_t *args);
 
-/* Encodes [parts] on the device's queues as the work of [v], the value
-   after the last one it received, which starts after [waits] and runs
-   without another call. The word shows [v] once [v] is committed and its
-   work completed. [args] holds the launches' and fills' blocks, of which
-   the driver writes only their places (rig_place), and [slots]
-   the address of each of the run's [nslots] buffers, as the device's work
-   addresses it, for their refs. [times] is NULL unless a profile is
-   being taken; otherwise the driver stores at [times[0]] and [times[1]] the
-   nanoseconds of rig's host clock (Rig.Profile.now: CLOCK_UPTIME_RAW on
-   macOS, CLOCK_MONOTONIC elsewhere) at which [v]'s work started and ended
-   on the device: before the word shows [v] if its settle is NULL, and
-   before its settle of [v] returns otherwise (rig_settle_fn). [times]
-   stays valid, and is given to no other value, until then. It leaves both
-   0 if it cannot time the work.
-   Answers RIG_COMMITTED if every value up to [v] is committed, RIG_OK if
-   [v] is encoded only, or RIG_FAILED with [*failure] set to the driver's
-   message, which lives as long as the device. */
+/* Encodes [parts] as the work of [v] after [waits] (rig_edge.mli, The C
+   functions: [submit]). [args] holds the launches' and fills' blocks, of
+   which the driver writes only their places (rig_place), and [slots] the
+   address of each of the run's [nslots] buffers, as the device's work
+   addresses it, for their refs. [times] is NULL unless a profile is being
+   taken; otherwise the driver stores at [times[0]] and [times[1]] the
+   times of rig_now_ns at which [v]'s work started and ended on the device.
+   A failure sets [*failure] to the driver's message, which must live as
+   long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          void *scratch, uint8_t *args,
                          const uint64_t *slots, int nslots, uint64_t *times,
                          const char **failure);
 
-/* Commits the device's work up to [v], at most the last value it received:
-   the device writes [v] or a later value into the word once the work up to
-   it completed. Committing a committed value does nothing. The driver also
-   commits on its own, at least once every [k] values it receives, [k] a
-   bound of its own. Answers RIG_OK, or RIG_FAILED with [*failure] set as a
-   submission's. */
+/* Commits the device's work up to [v] (rig_edge.mli, The C functions:
+   [commit]). A failure sets [*failure] as a submission's. */
 typedef int rig_commit_fn(void *self, uint64_t v, const char **failure);
 
 /* Writes the times of [v], whose submission was given [times], unless the
-   driver wrote them already. The caller calls it after the word shows [v] and
-   before it reads the times or gives their pair to another value. It may call
-   it more than once for a value, one call at a time as every function here,
-   and a later call finds the times written and leaves them. It may never call
-   it, as for a device lost first. A driver whose GPU writes the word has the
-   work write stamps into the driver's own memory, and converts them to the
-   host's clock here, or in a later submit once [v]'s work has completed.
-   Settle never waits for the device's work. It may read a clock of the
-   device, with one system call or register read. Answers RIG_OK, or
-   RIG_FAILED with [*failure] set as a submission's if it could not write the
-   times, such as for a stamp the work never wrote, which loses the device. A
-   driver that writes the times before the word shows [v] sets [settle] to
-   NULL. */
+   driver wrote them already (rig_edge.mli, The C functions: [settle]). A
+   failure sets [*failure] as a submission's. A driver that writes the
+   times before the word shows [v] sets [settle] to NULL. */
 typedef int rig_settle_fn(void *self, uint64_t v, const char **failure);
 
 /* A driver's functions, which the first member of its state for each
@@ -276,8 +245,10 @@ _Atomic uint64_t *rig_words(void);
    array's address and RIG_WORDS_BYTES, for OCaml code that maps it whole. */
 
 /* rig_now_ns () is the host's clock: nanoseconds of the system's monotonic
-   clock from an unspecified start; on macOS, mach time, the time base of
-   Metal's command buffer times. A driver writes a value's times and
+   clock from an unspecified start (CLOCK_MONOTONIC on Linux,
+   QueryPerformanceCounter on Windows); on macOS, mach time
+   (CLOCK_UPTIME_RAW), the time base of Metal's command buffer times. It is
+   the clock of [Rig.Profile.now]. A driver writes a value's times and
    measures its waits on it (Rig_edge's calls section). OCaml reads it
    through the noalloc external caml_rig_edge_now, which answers an
    untagged int, and caml_rig_edge_now_byte. */
@@ -289,13 +260,9 @@ uint64_t rig_now_ns(void);
    driver's and an io library's, each that OCaml code runs inside or that a
    stub holds while it runs pending signal handlers. rig_hold () counts one,
    from before its take, and answers the count before it; rig_unhold ()
-   counts its give, after it. A signal handler, finaliser or Gc.Memprof
-   callback runs where the code it interrupts allocates or polls, so it may
-   run inside such a lock, and a call it makes that takes the lock again
-   would wait for good. So a function that a caller outside rig makes, and
-   that may take a lock, must check rig_holds () as it starts and raise
-   Invalid_argument, having changed nothing, if it is not 0 (Rig's domains
-   section). OCaml reads the count through the noalloc external
+   counts its give, after it. rig_edge.mli's Drivers section states which
+   locks a driver counts and which of its functions must check the count
+   as they start. OCaml reads the count through the noalloc external
    caml_rig_edge_holds, which answers an untagged int, and
    caml_rig_edge_holds_byte, and counts a lock of its own through the
    noalloc externals caml_rig_edge_hold and caml_rig_edge_unhold, of type
