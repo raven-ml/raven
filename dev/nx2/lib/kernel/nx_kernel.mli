@@ -109,13 +109,12 @@ type extreme = Max | Min
     chunk [c + 1] is the carry into chunk [c] combined with [c]'s total,
     and each result of a chunk is its carry combined with the chunk's terms
     up to it, left to right. Combining is {!Prog.Add} or {!Prog.Mul} in the
-    carrier, [float32] for a float narrower than it, and each result rounds
-    once into its destination. Any other float scan associates in an order
-    that is a function of the shapes alone, which each kernel library states
-    with the bounds of [Logsumexp], reduced and scanned, and those of
-    [Moments] reduced. A float sum of [n]
-    terms is within [γ(n - 1) Σ|x|] of the exact sum, a product within a
-    relative [γ(n - 1)] barring overflow and underflow, where
+    carrier ({!carrier}), and each result rounds once into its destination.
+    Any other float scan associates in an order that is a function of the
+    shapes alone, which each kernel library states with the bounds of
+    [Logsumexp], reduced and scanned, and those of [Moments] reduced. A float
+    sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact sum, a product
+    within a relative [γ(n - 1)] barring overflow and underflow, where
     [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
 
     A [Moments] scan gives the same bits in every library that computes
@@ -145,6 +144,15 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
 (** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
     every dtype but booleans; [Max], [Min] and [Arg] every dtype; [Logsumexp]
     and [Moments] floats. *)
+
+val carrier : Nx_array.Dtype.any -> Nx_array.Dtype.any
+(** [carrier dt] is the dtype kernels reduce and scan terms of [dt] in, and a
+    scan's carry's: [float32] for a float narrower than it, [int8] and [uint8]
+    for [int4] and [uint4], [bool] for [bit], else [dt]. *)
+
+val base : Nx_array.Dtype.any -> bool
+(** [base dt] is [true] iff [dt] is a {e base dtype}, one every kernel library
+    computes: [float32], [float64], the 8- to 64-bit integers and [bool]. *)
 
 (** {2:orders Orders of summation}
 
@@ -406,12 +414,12 @@ end
     {!Rig.Out_of_memory} if its device's does.
 
     A kernel answers [Wrong_dtype] for dtypes its doc does not take. A decline
-    of [apply0] to [apply3] at a base dtype (float32, float64, the 8- to 64-bit
-    integers and bool), of [reduce] or [scan] of one [Sum], [Prod], [Max] or
-    [Min] of a program's one operand into its own dtype, read plain, at a base
-    dtype, of [gather] at a dtype of eight bits or more, or of [scatter] with
-    [unique] at such a dtype, is an error its caller raises; elsewhere its
-    caller computes the case from other operations. *)
+    of [apply0] to [apply3] at a base dtype ({!base}), of [reduce] or [scan] of
+    one [Sum], [Prod], [Max] or [Min] of a program's one operand into its own
+    dtype, read plain, at a base dtype, of [gather] at a dtype of eight bits
+    or more, or of [scatter] with [unique] at such a dtype, is an error its
+    caller raises; elsewhere its caller computes the case from other
+    operations. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
@@ -465,12 +473,12 @@ module type S = sig
     answer
   (** [reduce p ~shape ~axes rs ~dsts loads] reduces, for each [(r, k)] of
       [rs], output [k] of [p] over the loop of shape [shape] along [axes] by
-      [r], in that output's dtype, [float32] for a float narrower than it,
-      rounded once to its destination's. Destinations follow [rs]: one for a
-      [Monoid], the mean then the variance for [Moments], the extreme then
-      its [int64] position for [Arg]. Each has the shape {!Shape.reduce}
-      gives of [shape]. It answers [Wrong_dtype] where {!accepts} is [false]
-      of a reduction and its output's dtype. *)
+      [r], in that output's carrier ({!carrier}), rounded once to its
+      destination's. Destinations follow [rs]: one for a [Monoid], the mean
+      then the variance for [Moments], the extreme then its [int64] position
+      for [Arg]. Each has the shape {!Shape.reduce} gives of [shape]. It
+      answers [Wrong_dtype] where {!accepts} is [false] of a reduction and its
+      output's dtype. *)
 
   val scan :
     ?carry:any ->
@@ -494,21 +502,19 @@ module type S = sig
       With [carry], of a [Monoid Sum], [Prod], [Max] or [Min], the scan of
       each slice continues from its element of [carry], an array of the
       destinations' shape with extent [1] along [axis], of the output's
-      carrier: [float32] for a float narrower than it, [int8] and [uint8]
-      for [int4] and [uint4], [bool] for [bit], else the output's dtype.
-      Chunk 0 of each slice ({!type-reduction}) starts from that element in
-      place of the identity, and a product's chunk 0 then has one. So the
-      scan of the terms of a slice from a chunk's start, with the carry
-      into that chunk, has the bits of the scan of the whole slice from that
-      chunk on. An integer's or a boolean's scan, and a [Max]'s or a [Min]'s,
-      is exact, so this holds from any term, with the result before it, in
-      the carrier, as the carry. A [Sum]'s or [Prod]'s NaN carry counts as made from
-      numbers: results before the slice's first NaN term are the made NaN,
-      and from it on that term quieted. A [Max]'s or [Min]'s carry is a term
-      before the slice's first: where it is a NaN, every result is it,
-      quieted. It answers [Bad_arity] for a carry of any other reduction,
-      [Shape_mismatch] for a carry of another shape and [Wrong_dtype] for
-      one of another dtype. *)
+      carrier ({!carrier}). Chunk 0 of each slice ({!type-reduction}) starts
+      from that element in place of the identity, and a product's chunk 0
+      then has one. So the scan of the terms of a slice from a chunk's start,
+      with the carry into that chunk, has the bits of the scan of the whole
+      slice from that chunk on. An integer's or a boolean's scan, and a
+      [Max]'s or a [Min]'s, is exact, so this holds from any term, with the
+      result before it, in the carrier, as the carry. A [Sum]'s or [Prod]'s
+      NaN carry counts as made from numbers: results before the slice's first
+      NaN term are the made NaN, and from it on that term quieted. A [Max]'s
+      or [Min]'s carry is a term before the slice's first: where it is a NaN,
+      every result is it, quieted. It answers [Bad_arity] for a carry of any
+      other reduction, [Shape_mismatch] for a carry of another shape and
+      [Wrong_dtype] for one of another dtype. *)
 
   (** {1:index Gathers and scatters} *)
 

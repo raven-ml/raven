@@ -671,7 +671,7 @@ struct
         let parts = complex term && m = Nx_kernel.Sum in
         let t = if parts then part term else term in
         let q = if parts then part (D.Any dt) else D.Any dt in
-        let c = Prim.carrier t in
+        let c = Nx_kernel.carrier t in
         let rows j =
           let n = numel (counts (outw j)) in
           if parts then [| n; 2 |] else [| n |]
@@ -726,7 +726,7 @@ struct
       in
       match r with
       | Monoid (((Sum | Prod | Max | Min) as m), o, dt) when exactly o ->
-          let (D.Any c) = Prim.carrier (term o) in
+          let (D.Any c) = Nx_kernel.carrier (term o) in
           let unit j =
             let v, () = apply (local j prog Value.[ Monoid (m, o, c) ]) in
             [ Value.Any v ]
@@ -839,7 +839,7 @@ struct
           (* Each chunk continues from the carry of the chunks before it;
              where one of their terms is a NaN, every result is the
              first. *)
-          let c = Prim.carrier t in
+          let c = Nx_kernel.carrier t in
           let total x m' len _ =
             let prog = flagged (identity t) 0 in
             lane_unit m c (D.Any qd) (rows x m') (fun rs -> units x m' len prog rs)
@@ -858,7 +858,7 @@ struct
           (* Exact: each tile continues from the tiles before it. A float
              extreme's carry is a term before the tile's, their first NaN
              where one is. *)
-          let (D.Any c) = Prim.carrier t in
+          let (D.Any c) = Nx_kernel.carrier t in
           let total x m' len _ =
             let v, () = apply (units x m' len (identity t) Value.[ Monoid (m, 0, c) ]) in
             [ Value.Any v ]

@@ -3313,9 +3313,8 @@ module Prim : sig
             the scan, bit for bit. [prog] reads coordinates as a map's. With
             [Some c], of a [Sum], [Prod], [Max] or [Min], each slice continues
             from its element of [c], [S.scan]'s carry: of the results' shape
-            but extent [1] along [axis], in the carrier of the output's dtype,
-            [float32] for a narrower float, [int8] and [uint8] for [int4] and
-            [uint4], [bool] for [bit]. *)
+            but extent [1] along [axis], in the carrier of the output's dtype
+            ({!Nx_kernel.carrier}). *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;

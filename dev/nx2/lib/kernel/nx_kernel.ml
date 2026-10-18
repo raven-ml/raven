@@ -32,6 +32,26 @@ let accepts (type v s) r (dt : (v, s) D.t) =
   | (Monoid Logsumexp | Moments), _ -> false
   | _ -> true
 
+let carrier (D.Any dt as d) =
+  match dt with
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
+      D.Any Float32
+  | Int4 -> D.Any Int8
+  | Uint4 -> D.Any Uint8
+  | Bit -> D.Any Bool
+  | Float32 | Float64 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64
+  | Uint64 | Complex64 | Complex128 | Bool ->
+      d
+
+let base (D.Any dt) =
+  match dt with
+  | Float32 | Float64 | Int64 | Uint64 | Int32 | Uint32 | Int16 | Uint16 | Int8
+  | Uint8 | Bool ->
+      true
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn | Int4
+  | Uint4 | Bit | Complex64 | Complex128 ->
+      false
+
 type order = Chain | Lane
 type combine = Set | Add | Max | Min
 

@@ -774,16 +774,6 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
   in
   check 0 outs
 
-let carrier (D.Any dt as d) =
-  match dt with
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
-  | D.Float4_e2m1fn ->
-      D.Any D.Float32
-  | D.Int4 -> D.Any D.Int8
-  | D.Uint4 -> D.Any D.Uint8
-  | D.Bit -> D.Any D.Bool
-  | _ -> d
-
 (* A reduction's rule over [prog]'s outputs, reducing [axes] of [shape]: its
    output exists and is of a dtype it takes, and an extreme has a term. *)
 let check_reduction ~by (prog : P.t) shape axes (r, k) =
@@ -854,7 +844,9 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
       if have <> want then
         invalid_argf "%s: a carry of shape %a for a scan of shape %a" by
           pp_shape have pp_shape shape;
-      let (D.Any want) = carrier (P.dtype prog (Iarray.get prog.outs k)) in
+      let (D.Any want) =
+        Nx_kernel.carrier (P.dtype prog (Iarray.get prog.outs k))
+      in
       if not (same_dtype want (dtype c)) then
         invalid_argf "%s: a carry of %s where the terms carry in %s" by
           (D.name (dtype c)) (D.name want)

@@ -117,7 +117,7 @@ let plain prog r =
   let k, dt = target r in
   P.is_identity prog && k = 0
   && same (output prog 0) dt
-  && same (Prim.carrier dt) dt
+  && same (Nx_kernel.carrier dt) dt
   && not (complex_sum r)
 
 (* Whether a scan is core: a plain [Sum], [Prod], [Max] or [Min]. *)
@@ -176,7 +176,7 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   match r with
   | Monoid (m, k, dt) ->
       let (Value.Any b) =
-        body apply ~by layout prog k loads (Prim.carrier (output prog k))
+        body apply ~by layout prog k loads (Nx_kernel.carrier (output prog k))
       in
       let bt = Prim.dtype b in
       let plain (type v s) (x : (v, s, d) Value.t) =
@@ -696,13 +696,15 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
     | Monoid (Logsumexp, k, dt) ->
         let (Floats x) =
           floats ~by
-            (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
+            (body apply ~by layout prog k loads
+               (Nx_kernel.carrier (output prog k)))
         in
         Some (cast_to apply ~by dt (logsumexp apply ~by shape axes x))
     | Moments (k, dt) ->
         let (Floats x) =
           floats ~by
-            (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
+            (body apply ~by layout prog k loads
+               (Nx_kernel.carrier (output prog k)))
         in
         let mean, var = moments apply ~by shape axes x in
         Some (cast_to apply ~by dt mean, cast_to apply ~by dt var)
@@ -747,14 +749,16 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   | Moments (k, dt) ->
       let (Floats x) =
         floats ~by
-          (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
+          (body apply ~by layout prog k loads
+             (Nx_kernel.carrier (output prog k)))
       in
       let mean, var = running_moments apply ~by (L.shape layout) axis x in
       Some (cast_to apply ~by dt mean, cast_to apply ~by dt var)
   | Monoid (Logsumexp, k, dt) ->
       let (Floats x) =
         floats ~by
-          (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
+          (body apply ~by layout prog k loads
+             (Nx_kernel.carrier (output prog k)))
       in
       let y = running_logsumexp apply ~by (L.shape layout) axis x in
       Some (cast_to apply ~by dt y)
@@ -765,17 +769,6 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   | Monoid _ -> reduction apply ~by ~loop layout prog loads r
 
 (* Narrow dtypes *)
-
-(* Whether [dt] is a base dtype, which every library's kernels compute: float32,
-   float64, the 8- to 64-bit integers and bool. *)
-let base (D.Any dt) =
-  match dt with
-  | D.Float32 | D.Float64 | D.Int64 | D.Uint64 | D.Int32 | D.Uint32 | D.Int16
-  | D.Uint16 | D.Int8 | D.Uint8 | D.Bool ->
-      true
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
-  | D.Int4 | D.Uint4 | D.Bit | D.Complex64 | D.Complex128 ->
-      false
 
 (* The bits [b] of an element of [from], as an element of [into], which holds
    its value exactly. *)
@@ -797,12 +790,12 @@ let widened_bits (D.Any from) b (D.Any into) =
 (* float32 would not do for the floats of 8 or 16 bits: a store from it quiets
    their signalling NaNs. *)
 let kept (D.Any dt as d) =
-  if base d then d
+  if Nx_kernel.base d then d
   else
     match D.bits dt with
     | 8 -> D.Any D.Uint8
     | 16 -> D.Any D.Uint16
-    | b when b < 8 -> Prim.carrier d
+    | b when b < 8 -> Nx_kernel.carrier d
     | _ -> d
 
 (* [x] held in [dt]: its bits where [dt] has its width, else its value. *)
@@ -816,10 +809,10 @@ let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 
 (* A one-node map at dtypes some library declines, as the node at dtypes that
    hold its values exactly, its result rounded once to its dtype: their
-   carriers ({!Prim.carrier}), or for a selection, a constant and a copy the
-   dtypes {!kept} gives, its result read back as {!held} reads it. [None] for a
-   node whose dtypes all stay, and for a cast and a bitcast, which no other
-   dtype computes exactly. *)
+   carriers ({!Nx_kernel.carrier}), or for a selection, a constant and a copy
+   the dtypes {!kept} gives, its result read back as {!held} reads it. [None]
+   for a node whose dtypes all stay, and for a cast and a bitcast, which no
+   other dtype computes exactly. *)
 let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     (prog : P.t) (outs : (d, r) Value.outs) (loads : d Value.load iarray) :
     r option =
@@ -829,7 +822,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   let wide =
     match (node : P.node) with
     | Const _ | Op1 (Copy, _, _) | Op3 (Where, _, _, _) -> kept
-    | _ -> Prim.carrier
+    | _ -> Nx_kernel.carrier
   in
   let result = P.dtype prog (n - 1) in
   let stays d = same (wide d) d in
@@ -838,7 +831,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     match (node : P.node) with
     | Op1 ((Cast | Bitcast), _, _) | In _ | Coord _ -> false
     | Const _ | Op1 _ | Op2 _ | Op3 _ ->
-        Array.for_all (fun d -> base (wide d) || stays d) all
+        Array.for_all (fun d -> Nx_kernel.base (wide d) || stays d) all
         && not (Array.for_all stays all)
   in
   if not widens then None
@@ -1591,7 +1584,7 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
    decline to gather or scatter: [None] for a dtype of a byte or more. *)
 let sub_byte (type v s d) (x : (v, s, d) Value.t) =
   let dt = Prim.dtype x in
-  if D.bits dt >= 8 then None else Some (Prim.carrier (D.Any dt))
+  if D.bits dt >= 8 then None else Some (Nx_kernel.carrier (D.Any dt))
 
 (* A sub-byte gather at its accumulator, cast back once. *)
 let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
@@ -1684,7 +1677,7 @@ let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   match sub_byte into with
   | None when unique -> None
   | None -> (
-      match (combine, Prim.carrier (D.Any (Prim.dtype into))) with
+      match (combine, Nx_kernel.carrier (D.Any (Prim.dtype into))) with
       | Nx_kernel.Add, D.Any w
         when not (same (D.Any w) (D.Any (Prim.dtype into))) ->
           Some (rounded_once apply ~by w axis idx updates into)

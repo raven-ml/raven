@@ -15,12 +15,11 @@
     one device:
 
     - An integer or boolean [Sum], [Prod], [Max] or [Min] reduces into the
-      carrier of its output's dtype, [int8] and [uint8] for [int4] and
-      [uint4] and [bool] for [bit], one partial per output and device. Each
-      device takes the partials of each tile it does not hold from the first
-      device of its group that holds it, and combines one per tile in the
-      tiles' order by [Add], [Mul], [Maximum] or [Minimum], exact in the
-      carrier.
+      carrier of its output's dtype ({!Nx_kernel.carrier}), one partial per
+      output and device. Each device takes the partials of each tile it does
+      not hold from the first device of its group that holds it, and combines
+      one per tile in the tiles' order by [Add], [Mul], [Maximum] or
+      [Minimum], exact in the carrier.
     - An [Arg], and a float or complex [Max] or [Min], reduces as an [Arg]
       into its output's dtype, each position renumbered from C order of the
       window's reduced indices into C order of the whole's, and its partials

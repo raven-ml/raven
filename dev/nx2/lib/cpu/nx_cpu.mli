@@ -67,12 +67,11 @@
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand, read plain or padded, at every dtype, into a
-    destination of any dtype. Terms of a float narrower than [float32]
-    reduce in [float32], of [int4] and [uint4] in [int8] and [uint8], and
-    of [bit] in [bool], their carrier, each block of them converted into it
-    as a cast does; others in their own dtype. Each result rounds once
-    into its destination's dtype, as a cast does, which keeps a NaN's sign
-    and payload: into the operand's own dtype, a NaN result where a term is
+    destination of any dtype. Terms reduce in their carrier
+    ({!Nx_kernel.carrier}), each block of them converted into it as a cast
+    does where it is not their dtype. Each result rounds once into its
+    destination's dtype, as a cast does, which keeps a NaN's sign and
+    payload: into the operand's own dtype, a NaN result where a term is
     NaN is the first such term quieted. They also compute one [Arg] so, its
     positions into [int64] and its extreme into the operand's own dtype the
     term itself, quieted where a NaN, and one [Logsumexp] so at every

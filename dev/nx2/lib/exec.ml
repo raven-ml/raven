@@ -17,19 +17,18 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
    nx moves no data between devices on its own. *)
 let move = "place its operands with Nx.place on a set whose kernels compute it"
 
+let names dts = String.concat ", " (List.map (fun (D.Any dt) -> D.name dt) dts)
+
 let refuses ~by ~kernels kind d dts =
   invalid_argf "%s: %s does not compute %s on %s (%s); %s" by kernels kind
-    (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
-    (Rig.name d) move
+    (names dts) (Rig.name d) move
 
 (* As [refuses], for an optional case whose expansion nx does not have yet. *)
 let unexpanded ~by ~kernels kind d dts =
   invalid_argf
     "%s: %s does not compute %s on %s (%s), and its expansion is not \
      available yet; %s"
-    by kernels kind
-    (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
-    (Rig.name d) move
+    by kernels kind (names dts) (Rig.name d) move
 
 let declined ~by ~kernels node d dts =
   refuses ~by ~kernels (Prim.kind node) d dts
@@ -443,11 +442,9 @@ let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
       K.apply3 k ~dst c (A.expect dt ops.(1)) (A.expect dt ops.(2))
   | In _ -> Declined
 
-(* [prog] over [loads] into [dsts] on device [d]: its kernel where it is one
-   node over plain loads, else the kernels' map. [false] where the kernels
-   decline the map; a one-node program they decline raises, since its node is
-   core. *)
-let map_on ~by (module K : Nx_kernel.S) d (prog : P.t) loads dsts =
+(* [prog] over [loads] into [dsts]: its kernel where it is one node over plain
+   loads, else the kernels' map. [false] where the kernels decline. *)
+let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
   let plain = function
     | Nx_kernel.Plain _ -> true
     | Nx_kernel.Padded _ -> false
@@ -455,14 +452,7 @@ let map_on ~by (module K : Nx_kernel.S) d (prog : P.t) loads dsts =
   match Expand.single prog with
   | Some node when Array.for_all plain loads ->
       let ops = Array.map load_array loads in
-      let arrays = Array.append dsts ops in
       ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
-      ||
-      (* A decline at base dtypes is the kernels' error; at others the node
-         expands. *)
-      if Array.for_all (fun (A.Any a) -> Expand.base (D.Any (A.dtype a))) arrays
-      then declined ~by ~kernels:K.name node d (Array.to_list arrays)
-      else false
   | Some _ | None -> ran_loads ~by (K.map prog ~dsts loads) dsts loads
 
 (* [K]'s copy of [a] into [dst]; where it declines [a]'s dtype, its copy of
@@ -490,7 +480,7 @@ let copy_array ~by kernels a =
   then
     declined ~by ~kernels:K.name
       (Op1 (Copy, D.Any (A.dtype a), 0))
-      (A.device a) [ A.Any a ];
+      (A.device a) [ D.Any (A.dtype a) ];
   dst
 
 (* [a] moved by [mv]: a view over [a]'s memory where a layout expresses it, a
@@ -734,22 +724,15 @@ let kernel_loads loads =
 let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
 let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
 
-(* [op]'s kernel on device [d], over its operands' arrays there, into the
-   results [r]'s arrays at position [j]: [false] where it declines. A refusal
-   raises naming [by]. *)
+(* [op]'s kernel over its operands' arrays, into the results [r]'s arrays at
+   position [j]: [false] where it declines. A refusal raises naming [by]. *)
 let call : type r.
-    by:string ->
-    (module Nx_kernel.S) ->
-    Rig.t ->
-    r Value.prim ->
-    r ->
-    int ->
-    bool =
- fun ~by kernels d op r j ->
+    by:string -> (module Nx_kernel.S) -> r Value.prim -> r -> int -> bool =
+ fun ~by kernels op r j ->
   let (module K : Nx_kernel.S) = kernels in
   match op with
   | Value.Map { prog; loads; _ } ->
-      map_on ~by kernels d prog (kernel_loads loads) (dsts_at op r j)
+      map_on ~by kernels prog (kernel_loads loads) (dsts_at op r j)
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       let dsts = dsts_at op r j and loads = kernel_loads loads in
       let rs = Prim.reductions reductions and shape = L.shape layout in
@@ -856,15 +839,22 @@ let call : type r.
       invalid_arg "Exec.call: an operation no kernel computes"
 
 (* Raises for [op], whose kernels on [d] declined it and which nx does not
-   expand: a core case, or a routine whose expansion is not available yet. *)
+   expand: a core case, or a routine whose expansion is not available yet. A
+   one-node map is named by its node, its result's dtype listed first. *)
 let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
     =
  fun ~by ~kernels d op ->
   let dts = ref [] in
-  Prim.iteri (fun _ x -> dts := A.Any (one x) :: !dts) op;
+  Prim.iteri (fun _ x -> dts := D.Any (Prim.dtype x) :: !dts) op;
   let dts = List.rev !dts in
   match op with
   | Value.Linalg l -> unexpanded ~by ~kernels (Prim.routine_name l) d dts
+  | Value.Map { prog; _ } -> (
+      match Expand.single prog with
+      | Some node ->
+          let out = P.dtype prog (Iarray.get prog.outs 0) in
+          refuses ~by ~kernels (Prim.kind node) d (out :: dts)
+      | None -> refuses ~by ~kernels (Prim.name op) d dts)
   | _ -> refuses ~by ~kernels (Prim.name op) d dts
 
 (* Two handles of one donor in [op] raise before any operand's death does: the
@@ -1047,7 +1037,7 @@ and sharded : type r.
              of an expansion is an operand ({!Expand.run}), so nothing is
              copied. *)
           let d = Devices.rig set k in
-          if call ~by kernels d op r 0 then r
+          if call ~by kernels op r 0 then r
           else
             begin match expand ~by ?at op with
             | Some y -> y
@@ -1088,7 +1078,7 @@ and on_device : type r.
     unit =
  fun ~by kernels set op r j k local ->
   let d = Devices.rig set k and q = Devices.one set k in
-  if not (call ~by kernels d local r j) then
+  if not (call ~by kernels local r j) then
     match expand ~by ~at:q local with
     | Some y -> copied ~by kernels q local y op r j
     | None ->
@@ -1125,7 +1115,7 @@ and copied : type r.
       then
         declined ~by ~kernels:K.name
           (Op1 (Copy, D.Any (A.dtype v), 0))
-          (A.device v) [ A.Any v ])
+          (A.device v) [ D.Any (A.dtype v) ])
     (List.rev !srcs)
 
 (* [op]'s expansion, its operations applied where their operands lie, or at
