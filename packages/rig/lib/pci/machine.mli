@@ -23,11 +23,6 @@
     ["DDDD:BB:DD.F"], its domain, bus, device and function numbers in lowercase
     hexadecimal, the domain in at least four digits. *)
 
-val address : domain:int -> bus:int -> device:int -> fn:int -> string
-(** [address ~domain ~bus ~device ~fn] is the bus address of function [fn] of
-    device [device] on bus [bus] of domain [domain], such as ["0000:03:00.0"].
-*)
-
 val compare_address : string -> string -> int
 (** [compare_address a b] orders bus addresses in bus order: by domain, then
     bus, device and function, each as a number.
@@ -40,21 +35,7 @@ type t
 (** The type for machines. *)
 
 val this : t
-(** [this] is the machine this process runs on, [at "/"]. *)
-
-val at : string -> t
-(** [at root] is this machine as the directory [root] shows it. Its functions
-    are read under [root/sys/bus/pci], its IOMMU groups under
-    [root/sys/kernel/iommu_groups], its lockdown state at
-    [root/sys/kernel/security/lockdown], its VFIO files under [root/dev/vfio],
-    and the memory of functions taken physically under [root/dev/hugepages],
-    [root/proc/self/mounts] and [root/proc/self/pagemap]. {!Driver.detach} also
-    reads its processes under [root/proc] and its DRM clients under
-    [root/sys/kernel/debug/dri]. A root that shows no PCI functions makes a
-    machine with none.
-
-    Each call makes another machine. Two machines at one root share no holds
-    ({!Driver}), and the kernel still refuses a second take of one function. *)
+(** [this] is the machine this process runs on. *)
 
 val name : t -> string option
 (** [name m] is the name of [m] as its transport gives it, such as
@@ -180,6 +161,24 @@ val make : name:string -> ops -> t
 (** [make ~name ops] is the machine named [name] that [ops] reaches. *)
 
 (**/**)
+
+(* [address ~domain ~bus ~device ~fn] is the bus address of function [fn] of
+   device [device] on bus [bus] of domain [domain], such as ["0000:03:00.0"]. *)
+val address : domain:int -> bus:int -> device:int -> fn:int -> string
+
+(* [at root] is this machine as the directory [root] shows it, {!this} being
+   [at "/"]. Its functions are read under [root/sys/bus/pci], its IOMMU groups
+   under [root/sys/kernel/iommu_groups], its lockdown state at
+   [root/sys/kernel/security/lockdown], its VFIO files under [root/dev/vfio],
+   and the memory of functions taken physically under [root/dev/hugepages],
+   [root/proc/self/mounts] and [root/proc/self/pagemap]. {!Driver.detach} also
+   reads its processes under [root/proc] and its DRM clients under
+   [root/sys/kernel/debug/dri]. A root that shows no PCI functions makes a
+   machine with none.
+
+   Each call makes another machine. Two machines at one root share no holds
+   ({!Driver}), and the kernel still refuses a second take of one function. *)
+val at : string -> t
 
 val window : t -> int -> int -> Window.t
 (** [window m a n] is the [n] bytes at address [a] on [m], reached through [m]'s
