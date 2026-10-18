@@ -1495,6 +1495,11 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Store.list_runs` and `Store.find_run` take a run's status from its event
+  log where `index.json` is behind it, as a process killed between the two
+  writes of `Session.finish` or `Session.resume` leaves it: such a run read as
+  running for good, or as finished and not resumable. A run directory without
+  a manifest is no longer listed.
 - Runs that several processes or domains start and finish in one store at
   the same time keep their status in `Store.list_runs`. A change to
   `index.json` holds a file lock and replaces the file whole. Where the file

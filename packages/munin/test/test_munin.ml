@@ -1145,9 +1145,9 @@ let test_store_list_artifacts () =
   equal ~msg:"filter by name" int 1
     (List.length (Store.list_artifacts store ~name:"data" ()))
 
-(* The index at the store root caches the header of each run on disk. The runs
-   a store lists are the run directories with a manifest, whatever the index
-   holds or lacks. *)
+(* The index at the store root caches the header of each run on disk. The runs a
+   store lists are the run directories with a manifest, whatever the index holds
+   or lacks. *)
 
 let index_path root = Filename.concat root "index.json"
 
@@ -1219,12 +1219,105 @@ let test_store_index_damaged () =
       Sys.remove;
     ]
 
+(* A process killed after it appends its run's Finished event and before it
+   updates the index leaves the index calling the run running. The run's event
+   log ends with the Finished event, so the store reports the run ended. *)
+let status_name = function
+  | `Running -> "running"
+  | `Finished -> "finished"
+  | `Failed -> "failed"
+  | `Killed -> "killed"
+
+let test_store_index_status_behind () =
+  List.iter
+    (fun status ->
+      with_temp_dir @@ fun root ->
+      let store = Store.open_ ~root () in
+      let session = Session.start ~store ~experiment:"exp" () in
+      let running = read_text (index_path root) in
+      Session.finish ~status session;
+      write_text (index_path root) running;
+      let id = Session.id session in
+      equal ~msg:"listed" (list string)
+        [ status_name status ]
+        (List.map
+           (fun run -> status_name (Run.status run))
+           (Store.list_runs store ()));
+      equal ~msg:"found" (option string)
+        (Some (status_name status))
+        (Option.map
+           (fun run -> status_name (Run.status run))
+           (Store.find_run store id)))
+    [ `Finished; `Failed; `Killed ]
+
+let events_path store id =
+  Filename.concat
+    (Run.dir (Option.get (Store.find_run store id)))
+    "events.jsonl"
+
+let append_text path text =
+  Out_channel.with_open_gen [ Open_append; Open_creat; Open_binary ] 0o644 path
+    (fun oc -> Out_channel.output_string oc text)
+
+let found_status store id =
+  Option.map (fun run -> status_name (Run.status run)) (Store.find_run store id)
+
+(* A process killed after [Session.resume] appends its [Resumed] event and
+   before it updates the index leaves the index calling a resumed run finished.
+   The run's event log, which runs on after the [Resumed] event, says the run is
+   running again, and the store reports it so. *)
+let test_store_index_resume_behind () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  Session.finish session;
+  let id = Session.id session in
+  let events = events_path store id in
+  append_text events {|{"type":"resumed","at":1.0}|};
+  append_text events "\n";
+  equal ~msg:"found" (option string) (Some "running") (found_status store id);
+  equal ~msg:"listed" (list string) [ "running" ]
+    (List.map
+       (fun run -> status_name (Run.status run))
+       (Store.list_runs store ()))
+
+(* A last line that starts at the first of the log's last 4096 bytes is read
+   whole. The line is a [Finished] event padded with spaces to 4095 bytes. *)
+let test_store_log_tail_bound () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let id = Session.id session in
+  let events = events_path store id in
+  append_text events {|{"type":"resumed","at":1.0}|};
+  append_text events "\n";
+  let finished = {|{"type":"finished","status":"failed","ended_at":2.0}|} in
+  let line = String.make (4095 - String.length finished) ' ' ^ finished in
+  append_text events (line ^ "\n");
+  equal ~msg:"found" (option string) (Some "failed") (found_status store id)
+
+(* A run directory that no longer holds a manifest, as a [delete_run] killed
+   partway leaves, is not a run, whatever its cached header. *)
+let test_store_index_no_manifest () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let ids = start_runs store 2 in
+  let gone = List.hd ids in
+  Sys.remove
+    (Filename.concat
+       (Run.dir (Option.get (Store.find_run store gone)))
+       "run.json");
+  equal ~msg:"runs listed"
+    (slist string String.compare)
+    (List.tl ids) (listed store);
+  is_none ~msg:("find_run " ^ gone) (Store.find_run store gone)
+
 (* Processes that change one store at once each keep their change: a sweep
    starts its runs together, and each run's finished status reaches the store.
    Each child of [support/start_run.exe] starts and finishes one run once its
-   standard input ends, so closing their pipes releases them all at once. A
-   lost change shows only when the children's changes overlap, so code that
-   loses one can still pass a run of this test. *)
+   standard input ends, so closing their pipes releases them all at once. A lost
+   change shows only when the children's changes overlap, so code that loses one
+   can still pass a run of this test. *)
 
 let start_run = Filename.concat "support" "start_run.exe"
 let writers = 8
@@ -1259,7 +1352,9 @@ let test_store_concurrent_starts () =
   let children = List.init writers (fun _ -> spawn_start root) in
   List.iter (fun (_, stdin_w, _) -> Unix.close stdin_w) children;
   let ids = List.map wait_start children in
-  equal ~msg:"runs finished" (slist string String.compare) ids
+  equal ~msg:"runs finished"
+    (slist string String.compare)
+    ids
     (List.map Run.id (Store.list_runs store ~status:`Finished ()))
 
 (* Domains of one process that start and finish runs in one store at once each
@@ -1306,6 +1401,10 @@ let store_tests =
     test "index of another shape" test_store_index_wrong_shape;
     test "stale index" test_store_index_stale;
     test "damaged index" test_store_index_damaged;
+    test "index behind a run's status" test_store_index_status_behind;
+    test "index behind a resume" test_store_index_resume_behind;
+    test "log tail bound" test_store_log_tail_bound;
+    test "run without a manifest" test_store_index_no_manifest;
     test "runs started by processes at once" test_store_concurrent_starts;
     stateful ~count:4 ~domains:2 "runs started by domains at once"
       store_commands;

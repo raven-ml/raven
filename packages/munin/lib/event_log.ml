@@ -245,6 +245,38 @@ let to_json = function
 
 let encode event = Json_utils.json_to_string (to_json event)
 
+(* A run's last event lies in the file's last [tail_bytes]: a [Finished] line,
+   the one a reader looks for, is far shorter. *)
+let tail_bytes = 4096
+
+(* The last whole line ends at the read's last newline and starts after the
+   newline before it, or at the file's start. The read takes one byte more than
+   [tail_bytes], so that it holds the newline before a line that starts at the
+   first of the last [tail_bytes] bytes. A line that starts earlier is longer
+   than any [Finished] line, so it reads as no event, and so does a log
+   truncated while it is read. *)
+let last_line ic =
+  let length = Int64.to_int (In_channel.length ic) in
+  let start = Int.max 0 (length - tail_bytes - 1) in
+  In_channel.seek ic (Int64.of_int start);
+  let tail = really_input_string ic (length - start) in
+  match String.rindex_opt tail '\n' with
+  | None -> None
+  | Some stop -> (
+      let from =
+        match String.rindex_from_opt tail (stop - 1) '\n' with
+        | Some i -> Some (i + 1)
+        | None -> if start = 0 then Some 0 else None
+      in
+      match from with
+      | None -> None
+      | Some from -> Some (String.sub tail from (stop - from)))
+
+let last path =
+  match In_channel.with_open_bin path last_line with
+  | line -> Option.bind line decode_line
+  | exception (Sys_error _ | End_of_file) -> None
+
 (* [read_from path ~pos] is the events written after byte [pos] of [path],
    paired with the offset they were read up to. A log shorter than [pos] was
    truncated or replaced, so reading restarts at its beginning. A trailing
