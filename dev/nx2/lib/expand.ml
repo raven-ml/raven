@@ -71,19 +71,6 @@ let rec results : type d r. (d, r) Value.outs -> d Value.any list -> r =
 
 let same (D.Any a) (D.Any b) = D.code a = D.code b
 
-(* The dtype a reduction of [dt] accumulates in: [float32] for the floats
-   narrower than 32 bits, the byte-wide dtype of the sub-byte ones, whose
-   integers wrap to the same bits, [dt] otherwise. *)
-let accumulator (D.Any dt as d) =
-  match dt with
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
-    ->
-      D.Any D.Float32
-  | D.Int4 -> D.Any D.Int8
-  | D.Uint4 -> D.Any D.Uint8
-  | D.Bit -> D.Any D.Bool
-  | _ -> d
-
 let output (prog : P.t) k = P.dtype prog (Iarray.get prog.outs k)
 
 (* A value of floats: Logsumexp and Moments reduce floats alone
@@ -124,7 +111,7 @@ let plain prog r =
   let k, dt = target r in
   P.is_identity prog && k = 0
   && same (output prog 0) dt
-  && same (accumulator dt) dt
+  && same (Prim.carrier dt) dt
   && not (complex_sum r)
 
 (* Whether a scan is core: a plain [Sum], [Prod], [Max] or [Min]. *)
@@ -182,7 +169,7 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   match r with
   | Monoid (m, k, dt) ->
       let (Value.Any b) =
-        body apply ~by layout prog k loads (accumulator (output prog k))
+        body apply ~by layout prog k loads (Prim.carrier (output prog k))
       in
       let bt = Prim.dtype b in
       let plain (type v s) (x : (v, s, d) Value.t) =
@@ -693,13 +680,13 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
     | Monoid (Logsumexp, k, dt) ->
         let (Floats x) =
           floats ~by
-            (body apply ~by layout prog k loads (accumulator (output prog k)))
+            (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
         in
         Some (cast_to apply ~by dt (logsumexp apply ~by shape axes x))
     | Moments (k, dt) ->
         let (Floats x) =
           floats ~by
-            (body apply ~by layout prog k loads (accumulator (output prog k)))
+            (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
         in
         let mean, var = moments apply ~by shape axes x in
         Some (cast_to apply ~by dt mean, cast_to apply ~by dt var)
@@ -744,14 +731,14 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   | Moments (k, dt) ->
       let (Floats x) =
         floats ~by
-          (body apply ~by layout prog k loads (accumulator (output prog k)))
+          (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
       in
       let mean, var = running_moments apply ~by (L.shape layout) axis x in
       Some (cast_to apply ~by dt mean, cast_to apply ~by dt var)
   | Monoid (Logsumexp, k, dt) ->
       let (Floats x) =
         floats ~by
-          (body apply ~by layout prog k loads (accumulator (output prog k)))
+          (body apply ~by layout prog k loads (Prim.carrier (output prog k)))
       in
       let y = running_logsumexp apply ~by (L.shape layout) axis x in
       Some (cast_to apply ~by dt y)
@@ -799,7 +786,7 @@ let kept (D.Any dt as d) =
     match D.bits dt with
     | 8 -> D.Any D.Uint8
     | 16 -> D.Any D.Uint16
-    | b when b < 8 -> accumulator d
+    | b when b < 8 -> Prim.carrier d
     | _ -> d
 
 (* [x] held in [dt]: its bits where [dt] has its width, else its value. *)
@@ -813,7 +800,7 @@ let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 
 (* A one-node map at dtypes some library declines, as the node at dtypes that
    hold its values exactly, its result rounded once to its dtype: their
-   accumulators ({!accumulator}), or for a selection, a constant and a copy the
+   carriers ({!Prim.carrier}), or for a selection, a constant and a copy the
    dtypes {!kept} gives, its result read back as {!held} reads it. [None] for a
    node whose dtypes all stay, and for a cast and a bitcast, which no other
    dtype computes exactly. *)
@@ -826,7 +813,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   let wide =
     match (node : P.node) with
     | Const _ | Op1 (Copy, _, _) | Op3 (Where, _, _, _) -> kept
-    | _ -> accumulator
+    | _ -> Prim.carrier
   in
   let result = P.dtype prog (n - 1) in
   let stays d = same (wide d) d in
@@ -1555,11 +1542,11 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
 
 (* Gathers and scatters *)
 
-(* The accumulator of [x]'s dtype where it is sub-byte, which kernels may
+(* The carrier of [x]'s dtype where it is sub-byte, which kernels may
    decline to gather or scatter: [None] for a dtype of a byte or more. *)
 let sub_byte (type v s d) (x : (v, s, d) Value.t) =
   let dt = Prim.dtype x in
-  if D.bits dt >= 8 then None else Some (accumulator (D.Any dt))
+  if D.bits dt >= 8 then None else Some (Prim.carrier (D.Any dt))
 
 (* A sub-byte gather at its accumulator, cast back once. *)
 let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
@@ -1654,7 +1641,7 @@ let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   match sub_byte into with
   | None when unique -> None
   | None -> (
-      match (combine, accumulator (D.Any (Prim.dtype into))) with
+      match (combine, Prim.carrier (D.Any (Prim.dtype into))) with
       | Nx_kernel.Add, D.Any w
         when not (same (D.Any w) (D.Any (Prim.dtype into))) ->
           Some (rounded_once apply ~by w axis idx updates into)
