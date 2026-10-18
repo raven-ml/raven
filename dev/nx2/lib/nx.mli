@@ -3138,7 +3138,7 @@ module Prim : sig
   type ('v, 's, 'd) form = {
     dtype : ('v, 's) dtype;
     layout : Nx_array.Layout.t;
-    placement : 'd Placement.t option;
+    placement : 'd Placement.t option;  (** [None] for a value of every set. *)
   }
   (** A value without its bytes. A value cut over devices has the C-contiguous
       layout of the whole. *)
@@ -3163,13 +3163,14 @@ module Prim : sig
         (** A check's data: values whose elements at one index its failure
             receives, in order. *)
 
-  (** What a loop's reduction makes of one output of its program. *)
+  (** What a loop's reduction makes of one output of its program. It computes
+      in the output's carrier ({!Nx_kernel.carrier}). *)
   type ('d, _) reduction =
     | Monoid :
         Nx_kernel.monoid * int * ('v, 's) dtype
         -> ('d, ('v, 's, 'd) nx) reduction
-        (** [Monoid (m, k, dt)] folds output [k] by [m] in that output's dtype
-            and rounds once to [dt]. *)
+        (** [Monoid (m, k, dt)] folds output [k] by [m] in its carrier and
+            rounds once to [dt]. *)
     | Moments :
         int * ('v, 's) dtype
         -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) reduction
@@ -3311,14 +3312,14 @@ module Prim : sig
       }
         -> 'r t
         (** The reduction of [prog]'s output over the indices along [axis] up to
-            each index's, inclusive, of [layout]'s shape, as
-            {!Nx_kernel.S.scan} says: a running [Moments] is the running mean
-            and variance. The scan of a prefix of the axis is the prefix of
-            the scan, bit for bit. [prog] reads coordinates as a map's. With
-            [Some c], of a [Sum], [Prod], [Max] or [Min], each slice continues
-            from its element of [c], [S.scan]'s carry: of the results' shape
-            but extent [1] along [axis], in the carrier of the output's dtype
-            ({!Nx_kernel.carrier}). *)
+            each index's, inclusive, as {!Nx_kernel.S.scan} says: a running
+            [Moments] is the running mean and variance. Its results have
+            [layout]'s shape and are C-contiguous. The scan of a prefix of the
+            axis is the prefix of the scan, bit for bit. [prog] reads
+            coordinates as a map's. With [Some c], of a [Sum], [Prod], [Max]
+            or [Min], each slice continues from its element of [c], [S.scan]'s
+            carry, of the results' shape but extent [1] along [axis] and of
+            the output's carrier ({!Nx_kernel.carrier}). *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;
@@ -3410,11 +3411,11 @@ module Prim : sig
         -> unit t
         (** Raises [fail i e] at the first index [i], in C order, where [ok]
             is [false], [e] each of [data]'s elements at [i], in order: OCaml
-            values, which belong to no device set. An empty [ok] passes. It
-            is computed on [ok]'s set, or the first datum's where [ok] is of
-            every set, or the host where every operand is: at the call on
-            the host, and otherwise at the next {{!section-waiting}wait} on
-            that set. *)
+            values, which belong to no device set. Each value of [data] has
+            [ok]'s shape. An empty [ok] passes. It is computed on [ok]'s set,
+            or the first datum's where [ok] is of every set, or the host where
+            every operand is: at the call on the host, and otherwise at the
+            next {{!section-waiting}wait} on that set. *)
 
   type operands = Operands : 'd any list -> operands
 
@@ -3428,9 +3429,11 @@ module Prim : sig
       outputs, and as [nK] where it is read. *)
 
   val operands : 'r t -> operands
-  (** [operands op] is [op]'s operands in order: a map's loads, a contraction's
-      [a], [b] then [init], [Check]'s [ok] then its data, the one operand of the
-      others. *)
+  (** [operands op] is [op]'s operands in order: a loop's loads, then a scan's
+      carry; a gather's [idx] then [x]; a scatter's [idx], [updates] then
+      [into]; an assembly's pieces; a contraction's [a], [b] then [init]; a
+      triangular solve's [a] then [b]; [Check]'s [ok] then its data; the one
+      operand of the others. *)
 
   val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
   (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
