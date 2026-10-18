@@ -227,10 +227,9 @@ val capability : t -> Rig_cuda_abi.t
     1,024 values before it, whose events it reuses, if that value was
     timed.
     [rig_cuda_settle], or a later timed [rig_cuda_submit], converts the
-    earliest start and the end to the host's clock, in value order, with
-    each no earlier than the end of the value converted before it, since a
-    value's work starts once every earlier value's work has completed. A
-    failed conversion loses the device.
+    earliest start and the end to the host's clock, in value order, as
+    {!Rig_edge.section-calls} requires of [settle]. A failed conversion
+    loses the device.
 
     The device measures its clock against the host's when it opens, and
     again in a timed [rig_cuda_submit] that finds the last measure 8 s old.
@@ -243,8 +242,7 @@ val capability : t -> Rig_cuda_abi.t
     round trip of the host's clock, 5 µs once a round trip within 10 µs is
     seen, plus the GPU timer's rate error since the measure, plus half a
     float step at its distance from the reference, half a microsecond
-    within 8 s. [rig_cuda_settle] never waits for the
-    device's work.
+    within 8 s.
 
     {2:launches Launches}
 

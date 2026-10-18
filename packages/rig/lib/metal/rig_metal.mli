@@ -146,7 +146,7 @@ val capability : t -> Rig_metal_abi.t
       | [queues]         | ["COMPUTE:0"], which runs [Fill], [Launch]     |
       | [copy_engine]    | [None]                                         |
       | [completion]     | [Host]                                         |
-      | [waits]          | no [stores], [hosts] or [objects]; [most] [0]  |
+      | [waits]          | no [stores] or [hosts]; [most] [0]             |
       | [may_block]      | [true]                                         |
       | [hang_ms]        | [None]                                         |
       | [maps_host]      | [true]                                         |
