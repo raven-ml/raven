@@ -44,6 +44,20 @@ val interpret :
     [rule i ~by op]. [i] is live, and counted if [reach] is [Extent], until [f]
     returns or raises. *)
 
+val traced :
+  interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t
+(** [traced i f p] is a value of form [f] that [i] owns, keeping [p]. *)
+
+val payload : interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload option
+(** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. *)
+
+val owner : ('v, 's, 'd) t -> interpretation option
+(** [owner x] is the interpretation that owns [x], if [x] is traced. *)
+
+val later : interpretation -> interpretation -> bool
+(** [later a b] is [true] iff [a] started after [b], on any domains. Of two
+    interpretations around one operation, the later is inside the other. *)
+
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
 

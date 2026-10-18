@@ -353,7 +353,7 @@ let of_bigarray b =
    interpretation receives it. *)
 let readable ~by x =
   Prim.alive ~by 0 x;
-  match Interp.owner x with
+  match Eval.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
   | None ->
       let x = Exec.live x in
@@ -4720,10 +4720,10 @@ module Prim = struct
   type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
 
   let interpret = Eval.interpret
-  let traced = Interp.traced
-  let payload = Interp.payload
-  let owner = Interp.owner
-  let later = Interp.later
+  let traced = Eval.traced
+  let payload = Eval.payload
+  let owner = Eval.owner
+  let later = Eval.later
   let eval = Eval.eval
   let expand = Eval.expand
 end

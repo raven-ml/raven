@@ -106,7 +106,7 @@ and interpretation = {
       (** Nodes of the formulas an [Extent]'s rule returned, made when it
           returns its first. *)
 }
-(** An interpretation. Only {!Eval} and {!Interp} write its fields. *)
+(** An interpretation. Only {!Eval} writes its fields. *)
 
 (** {1:operations Operations} *)
 

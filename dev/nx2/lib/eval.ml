@@ -10,6 +10,18 @@ let next = Atomic.make 0
 let extents = Atomic.make 0
 let quiet () = Atomic.get extents = 0
 
+(* The nodes of the formulas [i]'s rule returned. *)
+let add_formula i id =
+  match i.formulas with
+  | Some t -> Hashtbl.replace t id ()
+  | None ->
+      let t = Hashtbl.create 16 in
+      Hashtbl.replace t id ();
+      i.formulas <- Some t
+
+let is_formula i id =
+  match i.formulas with Some t -> Hashtbl.mem t id | None -> false
+
 (* [i]'s rule on [op]. The formulas it returns are [i]'s own: an operation
    reads them as they are. *)
 let applied i ~by op =
@@ -20,7 +32,7 @@ let applied i ~by op =
       Prim.iter_results
         (fun y ->
           match y with
-          | Deferred { node = Node n; _ } -> Interp.add_formula i n.id
+          | Deferred { node = Node n; _ } -> add_formula i n.id
           | Array _ | Shards _ | Donated _ | Traced _ -> ())
         op r);
   r
@@ -164,10 +176,10 @@ let replayed : type r d.
    is. *)
 let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   let results : (int, d any array) Hashtbl.t = Hashtbl.create 8 in
-  let known id = Interp.is_formula i id || Hashtbl.mem results id in
+  let known id = is_formula i id || Hashtbl.mem results id in
   let sub : type w q e. (w, q, e) t -> (w, q, d) t = function
     | Deferred { form; node = Node n as node; k } ->
-        if Interp.is_formula i n.id then
+        if is_formula i n.id then
           Deferred { form = { form with placement = None }; node; k }
         else Prim.expect form.dtype (Hashtbl.find results n.id).(k)
     | Array _ | Shards _ | Donated _ | Traced _ ->
@@ -206,7 +218,7 @@ let changes (type v s d) i (x : (v, s, d) t) =
   match x with
   | Deferred { node = Node n; _ } -> (
       match i.reach with
-      | Extent -> not (Interp.is_formula i n.id)
+      | Extent -> not (is_formula i n.id)
       | Values -> false)
   | Array _ | Shards _ | Donated _ | Traced _ -> false
 
@@ -316,6 +328,20 @@ let interpret ~name reach
           Atomic.set live false;
           Atomic.decr extents)
         run
+
+let traced i form payload = Traced { form; owner = i; payload }
+
+let payload (type v s d) i (x : (v, s, d) t) =
+  match x with
+  | Traced { owner; payload; _ } when owner == i -> Some payload
+  | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> None
+
+let owner (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Traced { owner; _ } -> Some owner
+  | Array _ | Shards _ | Donated _ | Deferred _ -> None
+
+let later a b = a.start > b.start
 
 (* An operation no handler answered computes, unless an operand is traced. *)
 let unreached ~by op =

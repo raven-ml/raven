@@ -9,7 +9,6 @@
   route
   value
   prim
-  interp
   place
   pairwise
   expand
@@ -29,7 +28,6 @@
   route
   value
   prim
-  interp
   place
   pairwise
   expand
