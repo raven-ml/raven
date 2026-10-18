@@ -691,18 +691,18 @@ static double call_cost(int t, const nx_array *x, const nx_array *y,
    call's price reaches NX_CPU_RELEASE_BYTES: each target's table keeps
    its own plans. */
 static int run(int t, int inverse, const nx_array *x, const nx_array *y,
-               const int *axes, int na, int threads) {
+               const int *axes, int na) {
   int single = (t == C2R ? x->dtype : y->dtype) == NX_COMPLEX64, ok;
   int released = nx_cpu_release(call_cost(t, x, y, axes, na));
   if (t == C2C)
-    ok = single ? c2c_f32(x, y, axes, na, inverse, threads)
-                : c2c_f64(x, y, axes, na, inverse, threads);
+    ok = single ? c2c_f32(x, y, axes, na, inverse)
+                : c2c_f64(x, y, axes, na, inverse);
   else if (t == R2C)
-    ok = single ? r2c_f32(x, y, axes, na, threads)
-                : r2c_f64(x, y, axes, na, threads);
+    ok = single ? r2c_f32(x, y, axes, na)
+                : r2c_f64(x, y, axes, na);
   else
-    ok = single ? c2r_f32(x, y, axes, na, threads)
-                : c2r_f64(x, y, axes, na, threads);
+    ok = single ? c2r_f32(x, y, axes, na)
+                : c2r_f64(x, y, axes, na);
   nx_cpu_reacquire(released);
   return ok;
 }
@@ -713,10 +713,9 @@ void nx_cpu_set_fft_v3(nx_cpu_target *t) { t->fft = run; }
 void nx_cpu_set_fft_base(nx_cpu_target *t) { t->fft = run; }
 
 /* Runs the transform [t], [inverse] for c2c's Inverse, of x into dst
-   along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked, on
-   [threads] threads as cpu.h states. The caller roots its values. */
-static value transform(int t, int inverse, value vaxes, value dst, value x,
-                       int threads) {
+   along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked. The
+   caller roots its values. */
+static value transform(int t, int inverse, value vaxes, value dst, value x) {
   int axes[NX_MAX_RANK], na = (int)Wosize_val(vaxes);
   for (int i = 0; i < na; i++) axes[i] = Int_val(Field(vaxes, i));
   nx_operand in[2] = {{x, nx_array_dtype(x), 0},
@@ -724,27 +723,25 @@ static value transform(int t, int inverse, value vaxes, value dst, value x,
   nx_array a[2];
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  int ok = nx_cpu_table->fft(t, inverse, &a[0], &a[1], axes, na, threads);
+  int ok = nx_cpu_table->fft(t, inverse, &a[0], &a[1], axes, na);
   nx_done(2, a);
   if (!ok) caml_raise_out_of_memory();
   return Val_int(NX_OK);
 }
 
-value nx_cpu_c2c(value threads, value direction, value axes, value dst,
-                 value x) {
+value nx_cpu_c2c(value direction, value axes, value dst, value x) {
   CAMLparam3(axes, dst, x);
-  CAMLreturn(transform(C2C, Int_val(direction), axes, dst, x,
-                       Int_val(threads)));
+  CAMLreturn(transform(C2C, Int_val(direction), axes, dst, x));
 }
 
-value nx_cpu_r2c(value threads, value axes, value dst, value x) {
+value nx_cpu_r2c(value axes, value dst, value x) {
   CAMLparam3(axes, dst, x);
-  CAMLreturn(transform(R2C, 0, axes, dst, x, Int_val(threads)));
+  CAMLreturn(transform(R2C, 0, axes, dst, x));
 }
 
-value nx_cpu_c2r(value threads, value axes, value dst, value x) {
+value nx_cpu_c2r(value axes, value dst, value x) {
   CAMLparam3(axes, dst, x);
-  CAMLreturn(transform(C2R, 0, axes, dst, x, Int_val(threads)));
+  CAMLreturn(transform(C2R, 0, axes, dst, x));
 }
 #endif
 

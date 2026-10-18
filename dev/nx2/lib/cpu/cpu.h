@@ -417,10 +417,9 @@ typedef struct {
      NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
   nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];
   /* fft runs fft.c's transform t (its C2C, R2C or C2R; inverse for C2C's
-     Inverse) of x into y along [axes] on [threads] threads: 0 if memory
-     runs out. */
+     Inverse) of x into y along [axes]: 0 if memory runs out. */
   int (*fft)(int t, int inverse, const nx_array *x, const nx_array *y,
-             const int *axes, int na, int threads);
+             const int *axes, int na);
   /* linalg runs units of linalg.c's call [ctx], a job's body. */
   rig_pool_body linalg;
 } nx_cpu_target;
@@ -558,6 +557,10 @@ double nx_cpu_kind_cost(int arity, int k, int dt);
    nx_cpu_reacquire clears it at its exit. */
 extern _Thread_local int nx_cpu_held;
 
+/* Whether the calling thread runs every job on itself alone, as a test of
+   nx_cpu.ml's one_thread asks: the bits are those of any threads. */
+extern _Thread_local int nx_cpu_one;
+
 /* Releases the domain lock for a call's work that costs [price],
    NX_CPU_RELEASE_BYTES or more, else marks the call held; answers
    whether it released, for nx_cpu_reacquire. */
@@ -596,7 +599,8 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
 
 /* The threads nx_cpu_job gives such work, if it has as many units: at
    least 1, one per NX_CPU_THREAD_BYTES of cost, the bytes a core moves in
-   the time a job takes to start, and 1 in a held call (job.c). */
+   the time a job takes to start, and 1 in a held call or under
+   nx_cpu_one (job.c). */
 int nx_cpu_threads(int64_t bytes, double cost);
 
 /* nx_cpu_job and nx_cpu_threads with one thread per [thread_bytes] of

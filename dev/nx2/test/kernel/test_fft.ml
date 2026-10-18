@@ -426,37 +426,38 @@ let result c =
 
 (* The kernels' result of [c] on [x], into [dst] or a fresh array, answering
    [Done] or failing. *)
-let run ?(threads = 0) ?dst c (A.Any x) =
+let run ?(one_thread = false) ?dst c (A.Any x) =
   let D.Any dt, s = result c in
   let y =
     match dst with
     | Some d -> A.expect dt d
     | None -> A.create Rig.host dt s
   in
-  let got =
+  let call () =
     match (c.kind, A.dtype x, dt) with
     | C2c d, (D.Complex64 as cx), D.Complex64 ->
-        Nx_cpu.c2c_on ~threads d ~axes:(Iarray.of_array c.axes) ~dst:y
+        Nx_cpu.c2c d ~axes:(Iarray.of_array c.axes) ~dst:y
           (A.expect cx (A.Any x))
     | C2c d, (D.Complex128 as cx), D.Complex128 ->
-        Nx_cpu.c2c_on ~threads d ~axes:(Iarray.of_array c.axes) ~dst:y
+        Nx_cpu.c2c d ~axes:(Iarray.of_array c.axes) ~dst:y
           (A.expect cx (A.Any x))
     | R2c, (D.Float32 as fx), D.Complex64 ->
-        Nx_cpu.r2c_on ~threads ~axes:(Iarray.of_array c.axes) ~dst:y
+        Nx_cpu.r2c ~axes:(Iarray.of_array c.axes) ~dst:y
           (A.expect fx (A.Any x))
     | R2c, (D.Float64 as fx), D.Complex128 ->
-        Nx_cpu.r2c_on ~threads ~axes:(Iarray.of_array c.axes) ~dst:y
+        Nx_cpu.r2c ~axes:(Iarray.of_array c.axes) ~dst:y
           (A.expect fx (A.Any x))
     | C2r _, (D.Complex64 as cx), D.Float32 ->
-        Nx_cpu.c2r_on ~threads ~axes:(Iarray.of_array c.axes)
+        Nx_cpu.c2r ~axes:(Iarray.of_array c.axes)
           ~dst:(A.expect D.Float32 (A.Any y))
           (A.expect cx (A.Any x))
     | C2r _, (D.Complex128 as cx), D.Float64 ->
-        Nx_cpu.c2r_on ~threads ~axes:(Iarray.of_array c.axes)
+        Nx_cpu.c2r ~axes:(Iarray.of_array c.axes)
           ~dst:(A.expect D.Float64 (A.Any y))
           (A.expect cx (A.Any x))
     | _ -> invalid_arg "run"
   in
+  let got = if one_thread then Nx_cpu.one_thread call else call () in
   equal answer A.Done got;
   A.Any y
 
@@ -585,7 +586,7 @@ let law_bits c =
   let bits = array (pair int64 int64) in
   let want = bits_of (run plain px) in
   equal bits want (bits_of (run c x));
-  equal bits want (bits_of (run ~threads:1 plain px));
+  equal bits want (bits_of (run ~one_thread:true plain px));
   (* Each line along a single axis, alone: its bits in the batch's. *)
   let s = snd (result c) in
   if Array.length c.axes = 1 && total s > 0 then begin
@@ -638,7 +639,7 @@ let test_long () =
     let c = { kind; wide; shape; axes = [| 0 |]; view = plain 1; xs } in
     let x = operand c in
     let y = run c x in
-    equal (array string) (elements y) (elements (run ~threads:1 c x));
+    equal (array string) (elements y) (elements (run ~one_thread:true c x));
     let w = units_of n in
     let want =
       Array.init
@@ -699,7 +700,9 @@ let test_streamed () =
     }
   in
   let x = operand c in
-  equal (array string) (elements (run c x)) (elements (run ~threads:1 c x));
+  equal (array string)
+    (elements (run c x))
+    (elements (run ~one_thread:true c x));
   let large shape seed =
     let rs = Random.State.make [| seed |] in
     let xs =
@@ -712,7 +715,7 @@ let test_streamed () =
     in
     let x = operand c in
     equal (array (pair int64 int64)) (bits_of (run c x))
-      (bits_of (run ~threads:1 c x))
+      (bits_of (run ~one_thread:true c x))
   in
   large [| 1 lsl 22 |] 22;
   large [| 2048; 2048 |] 11;
@@ -731,7 +734,10 @@ let test_streamed () =
   let ys = bits_of (run c (operand c)) in
   (* One thread: x86-64 streams a result under its largest cache only
      there. *)
-  equal (array (pair int64 int64)) ys (bits_of (run ~threads:1 c (operand c)));
+  equal
+    (array (pair int64 int64))
+    ys
+    (bits_of (run ~one_thread:true c (operand c)));
   List.iter
     (fun l ->
       let alone =
@@ -809,13 +815,13 @@ let test_streamed_guards () =
       List.iter
         (fun side ->
           List.iter
-            (fun threads ->
+            (fun one_thread ->
               let call xs ds =
-                ignore (run ~threads ~dst:ds.(0) c xs.(0));
+                ignore (run ~one_thread ~dst:ds.(0) c xs.(0));
                 A.Done
               in
               ignore (same_guarded side ~call [| operand c |] [| result c |]))
-            [ 0; 1 ])
+            [ false; true ])
         Support.[ Before; After ])
     [
       line (1 lsl 19) 1 true 19;

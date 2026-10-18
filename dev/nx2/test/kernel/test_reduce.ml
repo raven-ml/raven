@@ -1464,8 +1464,11 @@ let law_contract (b : Support.backend) c =
 module One = struct
   include Nx_cpu
 
-  let reduce = Nx_cpu.reduce_on ~threads:1
-  let scan = Nx_cpu.scan_on ~threads:1
+  let reduce p ~shape ~axes rs ~dsts loads =
+    Nx_cpu.one_thread (fun () -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads)
+
+  let scan ?carry p ~axis rk ~dsts loads =
+    Nx_cpu.one_thread (fun () -> Nx_cpu.scan ?carry p ~axis rk ~dsts loads)
 end
 
 (* One thread gives the bits of the job's threads. *)

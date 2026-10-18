@@ -182,8 +182,7 @@ let map p ~dsts loads =
    of a program that is its one load's identity in place and those of
    another block by block (reduce.c's Programs), and checks each
    reduction's destinations and a scan's carry. Neither allocates for a
-   program of plain loads. [threads] is [1] for one thread, [0] for as many
-   as the job gives. *)
+   program of plain loads. *)
 
 external reduce_c :
   Nx_kernel.Prog.t ->
@@ -193,7 +192,6 @@ external reduce_c :
   Nx_array.any array ->
   Nx_kernel.load array ->
   (Nx_kernel.pad * string) option array ->
-  int ->
   Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
 
 (* A scan, over its first destination's shape. *)
@@ -205,7 +203,6 @@ external scan_c :
   Nx_kernel.load array ->
   (Nx_kernel.pad * string) option array ->
   Nx_array.any option ->
-  int ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
@@ -244,36 +241,30 @@ let rec fits_dst (Nx_array.Any d as any) (loads : Nx_kernel.load array) i =
      | Padded _ -> fits (loop_of any) loads i)
      && fits_dst any loads (i + 1)
 
-let reduce_answer ~threads p ~shape ~axes rs ~dsts loads =
-  if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
-  else if not (fits shape loads 0) then Nx_array.Shape_mismatch
-  else reduce_c p rs shape axes dsts loads (pads loads) threads
-
-let scan_answer ~threads ?carry p ~axis rk ~dsts loads =
-  if not (accepted p rk) then Nx_array.Wrong_dtype
-  else if Array.length dsts = 0 then Nx_array.Bad_arity
-  else if not (fits_dst dsts.(0) loads 0) then Nx_array.Shape_mismatch
-  else scan_c p rk axis dsts loads (pads loads) carry threads
-
 (* The operands of a reduction or scan, to name a decline. *)
 let loop_operands dsts loads =
   Array.to_list dsts @ Array.to_list (Array.map operand loads)
 
-let reduce_on ~threads p ~shape ~axes rs ~dsts loads =
-  match reduce_answer ~threads p ~shape ~axes rs ~dsts loads with
+let reduce_answer p ~shape ~axes rs ~dsts loads =
+  if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
+  else if not (fits shape loads 0) then Nx_array.Shape_mismatch
+  else reduce_c p rs shape axes dsts loads (pads loads)
+
+let scan_answer ?carry p ~axis rk ~dsts loads =
+  if not (accepted p rk) then Nx_array.Wrong_dtype
+  else if Array.length dsts = 0 then Nx_array.Bad_arity
+  else if not (fits_dst dsts.(0) loads 0) then Nx_array.Shape_mismatch
+  else scan_c p rk axis dsts loads (pads loads) carry
+
+let reduce p ~shape ~axes rs ~dsts loads =
+  match reduce_answer p ~shape ~axes rs ~dsts loads with
   | Nx_array.Declined -> declined "reduce" (loop_operands dsts loads)
   | answer -> answer
 
-let scan_on ~threads ?carry p ~axis rk ~dsts loads =
-  match scan_answer ~threads ?carry p ~axis rk ~dsts loads with
+let scan ?carry p ~axis rk ~dsts loads =
+  match scan_answer ?carry p ~axis rk ~dsts loads with
   | Nx_array.Declined -> declined "scan" (loop_operands dsts loads)
   | answer -> answer
-
-let reduce p ~shape ~axes rs ~dsts loads =
-  reduce_on ~threads:0 p ~shape ~axes rs ~dsts loads
-
-let scan ?carry p ~axis rk ~dsts loads =
-  scan_on ~threads:0 ?carry p ~axis rk ~dsts loads
 
 (* Gathers and scatters (index.c) *)
 
@@ -384,10 +375,9 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
     | answer -> answer
 
 (* Fourier transforms (fft.c). The shapes are checked here; the externals take
-   [threads] as reduce's do, and the direction as its int. *)
+   the direction as its int. *)
 
 external c2c_c :
-  int ->
   Nx_kernel.direction ->
   int iarray ->
   (Complex.t, 's) Nx_array.t ->
@@ -395,14 +385,12 @@ external c2c_c :
   Nx_array.answer = "nx_cpu_c2c"
 
 external r2c_c :
-  int ->
   int iarray ->
   (Complex.t, 'c) Nx_array.t ->
   (float, 'r) Nx_array.t ->
   Nx_array.answer = "nx_cpu_r2c"
 
 external c2r_c :
-  int ->
   int iarray ->
   (float, 'r) Nx_array.t ->
   (Complex.t, 'c) Nx_array.t ->
@@ -420,19 +408,19 @@ let fits want dst =
       let rec same i = i = Array.length s || (s.(i) = dim i && same (i + 1)) in
       Array.length s = Nx_array.Layout.rank l && same 0
 
-let c2c_on ~threads d ~axes ~dst x =
+let c2c d ~axes ~dst x =
   if not (fits (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
-  else c2c_c threads d axes dst x
+  else c2c_c d axes dst x
 
-let r2c_on ~threads ~axes ~dst x =
+let r2c ~axes ~dst x =
   if not (Nx_kernel.same_precision (Nx_array.dtype x) (Nx_array.dtype dst)) then
     Nx_array.Wrong_dtype
   else if not (fits (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
-  else r2c_c threads axes dst x
+  else r2c_c axes dst x
 
-let c2r_on ~threads ~axes ~dst x =
+let c2r ~axes ~dst x =
   if not (Nx_kernel.same_precision (Nx_array.dtype dst) (Nx_array.dtype x)) then
     Nx_array.Wrong_dtype
   else
@@ -443,11 +431,7 @@ let c2r_on ~threads ~axes ~dst x =
     in
     if n < 0 || not (fits (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst) then
       Nx_array.Shape_mismatch
-    else c2r_c threads axes dst x
-
-let c2c d ~axes ~dst x = c2c_on ~threads:0 d ~axes ~dst x
-let r2c ~axes ~dst x = r2c_on ~threads:0 ~axes ~dst x
-let c2r ~axes ~dst x = c2r_on ~threads:0 ~axes ~dst x
+    else c2r_c axes dst x
 
 (* Matrices (linalg.c) *)
 
@@ -510,3 +494,11 @@ let eig ~w ?v a =
   let fit = fits w && Option.fold ~none:true ~some:fits v in
   if not (Nx_kernel.full_precision dt && fit) then Nx_array.Wrong_dtype
   else eig_c ~w v a
+
+(* One thread *)
+
+external swap_one : bool -> bool = "nx_cpu_one_thread" [@@noalloc]
+
+let one_thread f =
+  let was = swap_one true in
+  Fun.protect ~finally:(fun () -> ignore (swap_one was : bool)) f

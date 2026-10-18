@@ -1131,7 +1131,7 @@ static void F(halve)(const T *z, const lines *y, int64_t o, int64_t lo,
 /* Jobs */
 
 static int F(transform)(const PLAN *p, const lines *x, const lines *y,
-                        int64_t count, int threads);
+                        int64_t count);
 
 /* A job of one step over its units: lines, a line's column or row steps,
    or chunks of a line's or of every line's points. */
@@ -1215,54 +1215,50 @@ static void F(body)(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* Runs [j]'s step over [units] that touch [bytes] and cost [cost] as
-   job.c prices them, on one thread where [threads] is 1. */
-static int F(run)(F(job) * j, int64_t units, int64_t bytes, double cost,
-                  int threads) {
+   job.c prices them. */
+static int F(run)(F(job) * j, int64_t units, int64_t bytes, double cost) {
   if (units == 0) return 1;
-  if (threads == 1) F(body)(0, units, 0, j);
-  else nx_cpu_job(units, bytes, cost, F(body), j);
+  nx_cpu_job(units, bytes, cost, F(body), j);
   return !j->failed;
 }
 
 /* Line j->l's four steps, each a job over j->u: its column steps, then
    its row steps. */
-static int F(four_steps)(F(job) * j, int64_t bytes, double cost,
-                         int threads) {
+static int F(four_steps)(F(job) * j, int64_t bytes, double cost) {
   j->step = COLUMNS;
-  if (!F(run)(j, j->u->columns, bytes, cost, threads)) return 0;
+  if (!F(run)(j, j->u->columns, bytes, cost)) return 0;
   j->step = ROWS;
-  return F(run)(j, j->u->rows, bytes, cost, threads);
+  return F(run)(j, j->u->rows, bytes, cost);
 }
 
 /* Line j->l by Bluestein's convolution, each step a job, in the shared
    row j->r. */
-static int F(blue_steps)(F(job) * j, int64_t bytes, double cost,
-                         int threads) {
+static int F(blue_steps)(F(job) * j, int64_t bytes, double cost) {
   const PLAN *p = j->p;
   lines rows = F(rows)(j->r, 1, p->m);
   int64_t chunks = (p->m + CHUNK - 1) / CHUNK;
   j->per = chunks;
   j->step = CHIRP;
-  if (!F(run)(j, chunks, bytes, cost, threads)) return 0;
-  if (!F(transform)(p->pm, &rows, &rows, 1, threads)) return 0;
+  if (!F(run)(j, chunks, bytes, cost)) return 0;
+  if (!F(transform)(p->pm, &rows, &rows, 1)) return 0;
   j->step = CONVOLVE;
-  if (!F(run)(j, chunks, bytes, cost, threads)) return 0;
-  if (!F(transform)(p->pm, &rows, &rows, 1, threads)) return 0;
+  if (!F(run)(j, chunks, bytes, cost)) return 0;
+  if (!F(transform)(p->pm, &rows, &rows, 1)) return 0;
   j->step = UNCHIRP;
   j->per = (p->n + CHUNK - 1) / CHUNK;
-  return F(run)(j, j->per, bytes, cost, threads);
+  return F(run)(j, j->per, bytes, cost);
 }
 
 /* [count] lines of x by [p] into y. Lines are the units where there are
    enough for the threads; else each line's steps are jobs of their own,
    which share a grid, or Bluestein's row, in scratch the call holds. */
 static int F(transform)(const PLAN *p, const lines *x, const lines *y,
-                        int64_t count, int threads) {
+                        int64_t count) {
   int64_t n = p->n, bytes = 4 * (int64_t)sizeof(T) * n * count;
   double cost = cost_of(bytes, n, p->kind == BLUESTEIN ? p->m : 0);
   /* A result streams where its lines' bytes gain on the threads that
      write them (streams). */
-  int t = threads == 1 ? 1 : nx_cpu_threads(bytes, cost);
+  int t = nx_cpu_threads(bytes, cost);
   int64_t out = (y->real ? 1 : 2) * (int64_t)sizeof(T) * n * count;
   lines result;
   if (y->stream) {
@@ -1277,9 +1273,7 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
   if (p->kind == FOUR && lines_side_by_side(y, 0, L) && count / L >= t)
     j.per = L;
   int64_t units = (count + j.per - 1) / j.per;
-  if (threads == 1 || p->kind == PASSES ||
-      units >= nx_cpu_threads(bytes, cost))
-    return F(run)(&j, units, bytes, cost, threads);
+  if (p->kind == PASSES || units >= t) return F(run)(&j, units, bytes, cost);
   int four = p->kind == FOUR;
   int64_t shared = four ? (int64_t)sizeof(CV) * F(grid)(p, 0)
                         : (int64_t)sizeof(T) * 2 * p->m;
@@ -1291,8 +1285,8 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
   int ok = 1;
   for (j.l = 0; j.l < count && ok; j.l++) {
     if (four) F(unit_at)(&u, p, x, y, j.l, 0, buffer);
-    ok = four ? F(four_steps)(&j, bytes / count, cost / count, threads)
-              : F(blue_steps)(&j, bytes / count, cost / count, threads);
+    ok = four ? F(four_steps)(&j, bytes / count, cost / count)
+              : F(blue_steps)(&j, bytes / count, cost / count);
   }
   nx_cpu_give(buffer);
   return ok;
@@ -1301,7 +1295,7 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
 /* [count] real lines of [n] points of x into y's bins by [rp], as r2c
    states. */
 static int F(r2c_lines)(const PLAN *rp, int64_t n, const lines *x,
-                        const lines *y, int64_t count, int threads) {
+                        const lines *y, int64_t count) {
   int64_t h = n / 2, bytes = 3 * (int64_t)sizeof(T) * n * count;
   F(job) j = {.p = rp, .x = x, .y = y, .count = count};
   if (halved(n)) {
@@ -1309,19 +1303,19 @@ static int F(r2c_lines)(const PLAN *rp, int64_t n, const lines *x,
     pairs.step = 2 * x->step;
     pairs.io = x->step;
     pairs.real = 0;
-    if (!F(transform)(rp, &pairs, y, count, threads)) return 0;
+    if (!F(transform)(rp, &pairs, y, count)) return 0;
     j.step = SPLIT;
     j.per = (h / 2 + 1 + CHUNK - 1) / CHUNK;
-    return F(run)(&j, count * j.per, bytes, HALF_COST * bytes, threads);
+    return F(run)(&j, count * j.per, bytes, HALF_COST * bytes);
   }
   T *r = malloc(sizeof(T) * 2 * n * count);
   if (r == NULL) return 0;
   lines rows = F(rows)(r, count, n);
-  int ok = F(transform)(rp, x, &rows, count, threads);
+  int ok = F(transform)(rp, x, &rows, count);
   j.step = HALVE;
   j.r = r;
   j.per = (h + 1 + CHUNK - 1) / CHUNK;
-  ok = ok && F(run)(&j, count * j.per, bytes, bytes, threads);
+  ok = ok && F(run)(&j, count * j.per, bytes, bytes);
   free(r);
   return ok;
 }
@@ -1329,7 +1323,7 @@ static int F(r2c_lines)(const PLAN *rp, int64_t n, const lines *x,
 /* [count] lines of x's bins into y's real lines of [n] points by [rp],
    as c2r states. */
 static int F(c2r_lines)(const PLAN *rp, int64_t n, const lines *x,
-                        const lines *y, int64_t count, int threads) {
+                        const lines *y, int64_t count) {
   int64_t h = n / 2, bytes = 3 * (int64_t)sizeof(T) * n * count;
   int half = halved(n);
   int64_t points = half ? h : n;
@@ -1338,8 +1332,7 @@ static int F(c2r_lines)(const PLAN *rp, int64_t n, const lines *x,
   F(job) j = {.p = rp, .x = x, .y = y, .count = count, .r = r};
   j.step = half ? MERGE : COMPLETE;
   j.per = ((half ? h / 2 + 1 : n) + CHUNK - 1) / CHUNK;
-  int ok = F(run)(&j, count * j.per, bytes, (half ? HALF_COST : 1) * bytes,
-                  threads);
+  int ok = F(run)(&j, count * j.per, bytes, (half ? HALF_COST : 1) * bytes);
   lines rows = F(rows)(r, count, points), out = *y;
   rows.conj = out.conj = 1;
   if (half) {
@@ -1347,7 +1340,7 @@ static int F(c2r_lines)(const PLAN *rp, int64_t n, const lines *x,
     out.io = y->step;
     out.real = 0;
   }
-  ok = ok && F(transform)(rp, &rows, &out, count, threads);
+  ok = ok && F(transform)(rp, &rows, &out, count);
   free(r);
   return ok;
 }
@@ -1357,7 +1350,7 @@ static int F(c2r_lines)(const PLAN *rp, int64_t n, const lines *x,
 /* The transform [inverse] of x into y along [axes], one after another,
    the first from x, the others in place in y. */
 static int F(c2c)(const nx_array *x, const nx_array *y, const int *axes,
-                  int na, int inverse, int threads) {
+                  int na, int inverse) {
   for (int i = 0; i < na; i++) {
     int a = axes[i];
     int64_t n = y->dim[a], count = numel(y) / (n > 0 ? n : 1);
@@ -1367,7 +1360,7 @@ static int F(c2c)(const nx_array *x, const nx_array *y, const int *axes,
     ys.stream = 1;
     PLAN *p = plan_get(n, RDT, ANY);
     if (p == NULL) return 0;
-    int ok = F(transform)(p, &xs, &ys, count, threads);
+    int ok = F(transform)(p, &xs, &ys, count);
     plan_put(p, RDT);
     if (!ok) return 0;
   }
@@ -1377,7 +1370,7 @@ static int F(c2c)(const nx_array *x, const nx_array *y, const int *axes,
 /* x's real lines along the last of [axes] into y's bins, then the
    forward transform along each of the others. */
 static int F(r2c)(const nx_array *x, const nx_array *y, const int *axes,
-                  int na, int threads) {
+                  int na) {
   int l = axes[na - 1];
   int64_t n = x->dim[l], count = numel(x) / (n > 0 ? n : 1);
   if (numel(y) == 0) return 1;
@@ -1390,15 +1383,15 @@ static int F(r2c)(const nx_array *x, const nx_array *y, const int *axes,
   ys.stream = 1;
   PLAN *rp = plan_get(n, RDT, REAL);
   if (rp == NULL) return 0;
-  int ok = F(r2c_lines)(rp, n, &xs, &ys, count, threads);
+  int ok = F(r2c_lines)(rp, n, &xs, &ys, count);
   plan_put(rp, RDT);
-  return ok && F(c2c)(y, y, axes, na - 1, 0, threads);
+  return ok && F(c2c)(y, y, axes, na - 1, 0);
 }
 
 /* The inverse transform of x along each of [axes] but the last, into a
    copy, then x's bins along the last into y's real lines. */
 static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
-                  int na, int threads) {
+                  int na) {
   int l = axes[na - 1];
   int64_t n = y->dim[l], count = numel(y) / (n > 0 ? n : 1);
   if (count == 0 || n == 0) return 1;
@@ -1414,7 +1407,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
       copy.dim[x->rank + i] = step;
       step *= x->dim[i];
     }
-    if (!F(c2c)(x, &copy, axes, na - 1, 1, threads)) {
+    if (!F(c2c)(x, &copy, axes, na - 1, 1)) {
       free(c);
       return 0;
     }
@@ -1423,7 +1416,7 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
   ys.real = 1;
   ys.stream = 1;
   PLAN *rp = plan_get(n, RDT, REAL);
-  int ok = rp != NULL && F(c2r_lines)(rp, n, &xs, &ys, count, threads);
+  int ok = rp != NULL && F(c2r_lines)(rp, n, &xs, &ys, count);
   if (rp != NULL) plan_put(rp, RDT);
   free(c);
   return ok;

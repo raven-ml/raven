@@ -2618,14 +2618,6 @@ static void finish_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
 
 static int64_t magnitude(int64_t x) { return x < 0 ? -x : x; }
 
-/* Runs [body] over [total] units on at most [threads] threads, touching
-   [bytes] in the time memcpy moves [cost]. */
-static void job(int64_t total, int64_t bytes, double cost, int threads,
-                rig_pool_body body, void *ctx) {
-  if (threads == 1) body(0, total, 0, ctx);
-  else nx_cpu_job(total, bytes, cost, body, ctx);
-}
-
 /* A plan's units [lo, hi) on one thread, with the thread's work. */
 typedef void (*units_body)(const plan *q, work *wk, int64_t lo, int64_t hi);
 
@@ -2648,14 +2640,22 @@ static void with_work(int64_t lo, int64_t hi, int worker, void *ctx) {
   nx_cpu_give(wk);
 }
 
-/* As job, the plan [q]'s units each by [body]. Once a range's work could
-   not be taken, no later job runs: it would read what that range left
-   unwritten. */
-static void units_job(int64_t total, int64_t bytes, double cost, int threads,
+/* nx_cpu_job of the plan [q]'s units each by [body]. Once a range's work
+   could not be taken, no later job runs: it would read what that range
+   left unwritten. */
+static void units_job(int64_t total, int64_t bytes, double cost,
                       units_body body, const plan *q) {
   if (*q->failed) return;
   plan_job j = {body, q};
-  job(total, bytes, cost, threads, with_work, &j);
+  nx_cpu_job(total, bytes, cost, with_work, &j);
+}
+
+/* As units_job, on the calling thread alone: each unit reads the results
+   of the units before it. */
+static void units_serial(int64_t total, units_body body, const plan *q) {
+  if (*q->failed) return;
+  plan_job j = {body, q};
+  with_work(0, total, 0, &j);
 }
 
 /* Adds the axis of extent [e] and steps [s] (operand), [d] and [d1]
@@ -3252,15 +3252,14 @@ static void lay_out(plan *q, task op, const int *axes, int naxes,
 
 /* A reduction's units: each unit's blocks, or each unit's groups of them
    then the groups combined. */
-static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost,
-                        int threads) {
+static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost) {
   if (q->groups == 1) {
-    units_job(units, bytes, cost, threads, reduce_units, q);
+    units_job(units, bytes, cost, reduce_units, q);
     return;
   }
   int64_t values = units * q->groups * q->row * q->size;
-  units_job(units * q->groups, bytes, cost, threads, reduce_units, q);
-  units_job(units, values, values, threads, finish_units, q);
+  units_job(units * q->groups, bytes, cost, reduce_units, q);
+  units_job(units, values, values, finish_units, q);
 }
 
 /* Whether [op] by [r] of [x] along the [naxes] axes [axes] fits the
@@ -3292,8 +3291,8 @@ static int checked(task op, int r, const int *axes, int naxes,
    reduce_into runs around it take none of its plan's frame. */
 static __attribute__((noinline)) int reduce_in(
     task op, int r, int dt, const int *axes, int naxes, const nx_array *y,
-    const nx_array *y1, const nx_array *x, const nx_array *cy, const fused *z,
-    int threads) {
+    const nx_array *y1, const nx_array *x, const nx_array *cy,
+    const fused *z) {
   int64_t terms, outputs;
   int e = checked(op, r, axes, naxes, y, y1, x, &terms, &outputs);
   if (e) return e;
@@ -3340,7 +3339,7 @@ static __attribute__((noinline)) int reduce_in(
                                                  : bytes;
   /* A program's kinds take about memcpy's time each, per term. */
   if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes;
-  q.threads = threads == 1 ? 1 : nx_cpu_threads(bytes, cost);
+  q.threads = nx_cpu_threads(bytes, cost);
   lay_out(&q, op, axes, naxes, y, y1, x);
   int64_t units = q.outer * q.bands * q.chunks;
   if (q.groups > 1)
@@ -3355,26 +3354,24 @@ static __attribute__((noinline)) int reduce_in(
   if (center) {
     q.r = &st->center;
     q.centering = 1;
-    reduce_jobs(&q, units, bytes, cost, threads);
+    reduce_jobs(&q, units, bytes, cost);
     q.r = &st->value;
     q.centering = 0;
   }
-  if (op == REDUCE) reduce_jobs(&q, units, bytes, cost, threads);
-  else if (q.groups == 1)
-    units_job(units, bytes, cost, threads, scan_units, &q);
+  if (op == REDUCE) reduce_jobs(&q, units, bytes, cost);
+  else if (q.groups == 1) units_job(units, bytes, cost, scan_units, &q);
   else {
     int64_t K = side(&q);
     if (q.row == 1 && q.z != NULL && !q.arg)
-      units_job(units * ((q.groups - 1 + K - 1) / K), bytes, cost, threads,
+      units_job(units * ((q.groups - 1 + K - 1) / K), bytes, cost,
                 total_quads, &q);
-    else units_job(units * q.groups, bytes, cost, threads, total_units, &q);
-    units_job(units, bytes, cost, 1, carries, &q);
+    else units_job(units * q.groups, bytes, cost, total_units, &q);
+    units_serial(units, carries, &q);
     if (q.row == 1)
-      units_job(units * ((q.groups + K - 1) / K), bytes, cost, threads,
-                rescan_quads, &q);
-    else
-      units_job(units * q.groups, bytes, cost, threads, rescan_units, &q);
-    units_job(units, bytes, cost, 1, settle_units, &q);
+      units_job(units * ((q.groups + K - 1) / K), bytes, cost, rescan_quads,
+                &q);
+    else units_job(units * q.groups, bytes, cost, rescan_units, &q);
+    units_serial(units, settle_units, &q);
   }
   free(q.scratch);
   free(q.centers);
@@ -3441,8 +3438,8 @@ static __attribute__((noinline)) void cast(const nx_array *b,
    NULL. */
 static int reduce_into(task op, int r, const int *axes, int naxes,
                        const nx_array *y, const nx_array *y1,
-                       const nx_array *x, const nx_array *cy, const fused *z,
-                       int threads) {
+                       const nx_array *x, const nx_array *cy,
+                       const fused *z) {
   int c = nx_cpu_carrier(x->dtype);
   int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
   const nx_array *y2[2] = {y, y1}, *d[2] = {y, y1};
@@ -3460,7 +3457,7 @@ static int reduce_into(task op, int r, const int *axes, int naxes,
     }
   }
   if (e == NX_OK)
-    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z, threads);
+    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z);
   for (int k = 0; k < 2; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK) cast(y2[k], &t[k]);
@@ -3573,7 +3570,7 @@ static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
    casts around it run on a small frame. */
 static __attribute__((noinline)) int moments_in(
     int axis, int64_t terms, int64_t outputs, const nx_array *m,
-    const nx_array *v, const nx_array *x, const fused *z, int threads) {
+    const nx_array *v, const nx_array *x, const fused *z) {
   moments q = {.a = {m, v, x}, .len = terms, .fused = z};
   nx_loop *l = &q.outer;
   int r = x->rank, k = 0, nl = z != NULL ? z->nloads : 0;
@@ -3601,7 +3598,7 @@ static __attribute__((noinline)) int moments_in(
   int64_t bytes = 3 * terms * outputs * nx_cpu_width(x->dtype);
   double cost = 4.0 * bytes;
   if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes / 3;
-  job(q.rows * q.chunks, bytes, cost, threads, moments_units, &q);
+  nx_cpu_job(q.rows * q.chunks, bytes, cost, moments_units, &q);
   return q.failed ? -1 : NX_OK;
 }
 
@@ -3612,7 +3609,7 @@ static __attribute__((noinline)) int moments_in(
    once into them. NX_OK, NX_SHAPE for shapes that do not fit, or -1 if host
    memory runs out. */
 static int moments_into(int axis, const nx_array *m, const nx_array *v,
-                        const nx_array *x, const fused *z, int threads) {
+                        const nx_array *x, const fused *z) {
   int64_t terms, outputs;
   if (!fits(MOMENTS, x->dim, x->rank, m->dim, m->rank, &axis, 1, &terms,
             &outputs) ||
@@ -3642,7 +3639,7 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
     copied[k] = 1;
   }
   if (e == NX_OK)
-    e = moments_in(axis, terms, outputs, d[0], d[1], d[2], z, threads);
+    e = moments_in(axis, terms, outputs, d[0], d[1], d[2], z);
   for (int k = 0; k < 3; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK && k < 2) cast(a[k], &t[k]);
@@ -3663,7 +3660,7 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
    anything reads [x]. */
 typedef struct {
   task op;
-  int r, naxes, threads;
+  int r, naxes;
   int axes[NX_MAX_RANK];
 } call;
 
@@ -3848,9 +3845,9 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
   if (copy) x = &loaded;
   if (kept_carry.base != NULL) cy = &kept_carry;
   e = c->op == MOMENTS
-          ? moments_into(c->axes[0], &a[0], &a[1], x, NULL, c->threads)
+          ? moments_into(c->axes[0], &a[0], &a[1], x, NULL)
           : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
-                        x, cy, NULL, c->threads);
+                        x, cy, NULL);
   if (padded) free(loaded.base);
   else if (copy) nx_cpu_give(loaded.base);
   free(kept_carry.base);
@@ -4095,9 +4092,8 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     x.bits = nx_dtype_row_of(dt).bits;
     z->k = ks[i];
     e = c->op == MOMENTS
-            ? moments_into(c->axes[0], y, y1, &x, z, c->threads)
-            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, cy, z,
-                          c->threads);
+            ? moments_into(c->axes[0], y, y1, &x, z)
+            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, cy, z);
   }
   /* A program that could not have its arenas computed nothing. */
   if (!oom && !e && nx_cpu_prog_failed(g)) e = -1;
@@ -4135,10 +4131,8 @@ static value in_place(call *c, value vp, value vr, value vdsts,
    of an Nx_kernel.reduction and an output, in turn into [vdsts]. A
    program that is its one load's identity reads the load in place. */
 value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
-                    value vdsts, value vloads, value vpads, value threads) {
-  call c = {.op = REDUCE,
-            .naxes = (int)Wosize_val(vaxes),
-            .threads = Int_val(threads)};
+                    value vdsts, value vloads, value vpads) {
+  call c = {.op = REDUCE, .naxes = (int)Wosize_val(vaxes)};
   int rank = (int)Wosize_val(vshape);
   if (c.naxes > NX_MAX_RANK || rank > NX_MAX_RANK) return Val_int(NX_SHAPE);
   int64_t shape[NX_MAX_RANK];
@@ -4159,7 +4153,7 @@ value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
 value nx_cpu_reduce_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_reduce(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                       argv[6], argv[7]);
+                       argv[6]);
 }
 
 /* Scans the program [vp] along [vaxis] by the pair [vr] of a reduction and
@@ -4167,10 +4161,8 @@ value nx_cpu_reduce_byte(value *argv, int argn) {
    [pads], into [vdsts], over their first one's shape, from the carries
    [vcarry] where it is Some. */
 value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
-                  value vpads, value vcarry, value threads) {
-  call c = {.op = Is_long(Field(vr, 0)) ? MOMENTS : SCAN,
-            .naxes = 1,
-            .threads = Int_val(threads)};
+                  value vpads, value vcarry) {
+  call c = {.op = Is_long(Field(vr, 0)) ? MOMENTS : SCAN, .naxes = 1};
   if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
   int done = 0;
   value r = in_place(&c, vp, vr, vdsts, vloads, vpads, vcarry, &done);
@@ -4181,7 +4173,7 @@ value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
 value nx_cpu_scan_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                     argv[6], argv[7]);
+                     argv[6]);
 }
 
 #elif !defined(__x86_64__)

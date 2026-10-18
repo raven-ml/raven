@@ -97,18 +97,18 @@ let f32 s = A.create Rig.host D.Float32 s
 
 let identity = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |]
 
-let reduce ?(threads = 0) r axes ~dst x =
+let reduce r axes ~dst x =
   let shape = Nx_array.Layout.shape (A.layout x) in
   done_
-    (Nx_cpu.reduce_on ~threads identity ~shape ~axes
+    (Nx_cpu.reduce identity ~shape ~axes
        [| (r, 0) |]
        ~dsts:[| A.Any dst |]
        [| Nx_kernel.Plain x |])
 
 let scan ~dsts r x =
-  done_
-    (Nx_cpu.scan_on ~threads:1 identity ~axis:0 (r, 0) ~dsts
-       [| Nx_kernel.Plain x |])
+  Nx_cpu.one_thread (fun () ->
+      done_
+        (Nx_cpu.scan identity ~axis:0 (r, 0) ~dsts [| Nx_kernel.Plain x |]))
 
 let n = 1 lsl 25
 let ones = lazy (A.of_array D.Float32 [| n |] (Array.make n 1.))
@@ -124,15 +124,17 @@ let reductions =
               ~outs:[| 1 |]
           in
           releases (fun () ->
-              done_
-                (Nx_cpu.reduce_on ~threads:1 exp ~shape:[| n |] ~axes:[| 0 |]
-                   [| (Monoid Logsumexp, 0); (Monoid Sum, 0) |]
-                   ~dsts:[| A.Any lse; A.Any sum |]
-                   [| Nx_kernel.Plain x |])));
+              Nx_cpu.one_thread (fun () ->
+                  done_
+                    (Nx_cpu.reduce exp ~shape:[| n |] ~axes:[| 0 |]
+                       [| (Monoid Logsumexp, 0); (Monoid Sum, 0) |]
+                       ~dsts:[| A.Any lse; A.Any sum |]
+                       [| Nx_kernel.Plain x |]))));
       test "a logsumexp on one thread" (fun () ->
           let x = Lazy.force ones and dst = f32 [||] in
           releases (fun () ->
-              reduce ~threads:1 (Monoid Logsumexp) [| 0 |] ~dst x));
+              Nx_cpu.one_thread (fun () ->
+                  reduce (Monoid Logsumexp) [| 0 |] ~dst x)));
       test "a scan on one thread" (fun () ->
           let x = Lazy.force ones and dst = f32 [| n |] in
           releases (fun () -> scan (Monoid Sum) ~dsts:[| A.Any dst |] x));
@@ -155,12 +157,14 @@ let transforms =
       test "a transform on one thread" (fun () ->
           let x = c64 [| n |] and y = c64 [| n |] in
           releases (fun () ->
-              done_ (Nx_cpu.c2c_on ~threads:1 Forward ~axes:[| 0 |] ~dst:y x)));
+              Nx_cpu.one_thread (fun () ->
+                  done_ (Nx_cpu.c2c Forward ~axes:[| 0 |] ~dst:y x))));
       test "a real transform's inverse on one thread" (fun () ->
           let n = 2 * n in
           let x = c64 [| (n / 2) + 1 |] and y = f32 [| n |] in
           releases (fun () ->
-              done_ (Nx_cpu.c2r_on ~threads:1 ~axes:[| 0 |] ~dst:y x)));
+              Nx_cpu.one_thread (fun () ->
+                  done_ (Nx_cpu.c2r ~axes:[| 0 |] ~dst:y x))));
       test "a real transform of no point" (fun () ->
           let n = 2 * n in
           let x = f32 [| n; 0 |] and y = c64 [| n; 1 |] in

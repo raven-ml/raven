@@ -232,52 +232,9 @@ include Nx_kernel.S
 
 (**/**)
 
-val reduce_on :
-  threads:int ->
-  Nx_kernel.Prog.t ->
-  shape:int array ->
-  axes:int iarray ->
-  (Nx_kernel.reduction * int) array ->
-  dsts:Nx_array.any array ->
-  Nx_kernel.load array ->
-  Nx_array.answer
-(** [reduce_on ~threads] is {!reduce} on one thread where [threads] is [1],
-    on as many as its job gives where it is [0]. The bits are the same. *)
-
-val scan_on :
-  threads:int ->
-  ?carry:Nx_array.any ->
-  Nx_kernel.Prog.t ->
-  axis:int ->
-  Nx_kernel.reduction * int ->
-  dsts:Nx_array.any array ->
-  Nx_kernel.load array ->
-  Nx_array.answer
-(** [scan_on ~threads] is {!scan}, threaded as {!reduce_on}. *)
-
-val c2c_on :
-  threads:int ->
-  Nx_kernel.direction ->
-  axes:int iarray ->
-  dst:(Complex.t, 's) Nx_array.t ->
-  (Complex.t, 's) Nx_array.t ->
-  Nx_array.answer
-(** [c2c_on ~threads] is {!c2c}, threaded as {!reduce_on}. *)
-
-val r2c_on :
-  threads:int ->
-  axes:int iarray ->
-  dst:(Complex.t, 'c) Nx_array.t ->
-  (float, 'r) Nx_array.t ->
-  Nx_array.answer
-(** [r2c_on ~threads] is {!r2c}, threaded as {!reduce_on}. *)
-
-val c2r_on :
-  threads:int ->
-  axes:int iarray ->
-  dst:(float, 'r) Nx_array.t ->
-  (Complex.t, 'c) Nx_array.t ->
-  Nx_array.answer
-(** [c2r_on ~threads] is {!c2r}, threaded as {!reduce_on}. *)
+val one_thread : (unit -> 'a) -> 'a
+(** [one_thread f] is [f ()], every call of the calling thread running its
+    work on that thread alone while [f] runs, nested calls included. The
+    bits are those of any threads. For tests. *)
 
 (**/**)

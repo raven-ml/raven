@@ -47,13 +47,22 @@
 #define CACHE_BYTES (32 * 1024 * 1024)
 
 _Thread_local int nx_cpu_held;
+_Thread_local int nx_cpu_one;
+
+/* Sets nx_cpu_one to [v] and answers its value before: one_thread's
+   scope. */
+value nx_cpu_one_thread(value v) {
+  value was = Val_bool(nx_cpu_one);
+  nx_cpu_one = Bool_val(v);
+  return was;
+}
 
 int nx_cpu_threads(int64_t bytes, double cost) {
   return nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);
 }
 
 int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes) {
-  if (nx_cpu_held) return 1;
+  if (nx_cpu_held || nx_cpu_one) return 1;
   double threads = cost / thread_bytes;
   int cores =
       bytes > CACHE_BYTES ? rig_pool_cores() : rig_pool_performance_cores();
