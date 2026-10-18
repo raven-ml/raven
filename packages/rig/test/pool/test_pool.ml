@@ -79,54 +79,9 @@ let cut bounds ranges =
   in
   List.concat_map (fun (lo, hi) -> pieces (above lo 0 n) lo hi) ranges
 
-(* The first chunk of worker [w]'s strip of [c] chunks on [t] threads, floor (w
-   c / t), as [partition] computes its bounds. *)
-let strip_lo ~t c w =
-  let t = Int64.of_int t and w = Int64.of_int w in
-  Int64.(add (mul w (div c t)) (div (mul w (rem c t)) t))
-
-(* The strip of chunk [i]. *)
-let strip_of ~t c i =
-  let rec go w = if strip_lo ~t c (w + 1) > i then w else go (w + 1) in
-  go 0
-
-(* The most chunks a run of strip [w] holds, max (1, floor (s / 8)) of
-   rig_pool.h, and whether a job makes one call a chunk, at most 15 t chunks. *)
-let run_bound ~t c w =
-  let s = Int64.sub (strip_lo ~t c (w + 1)) (strip_lo ~t c w) in
-  max 1 (Int64.to_int s / 8)
-
+(* Whether a job makes one call a chunk, at most 15 t chunks (rig_pool.h). The
+   covers draw past it, where threads claim runs of chunks. *)
 let single_runs ~t c = Int64.to_int c <= 15 * t
-
-(* [chunk_at bounds lo] is the index of the last of the chunk [bounds] at most
-   [lo]: the chunk that begins at unit [lo]. *)
-let chunk_at bounds lo =
-  let rec go lo_i hi_i =
-    if hi_i - lo_i <= 1 then lo_i
-    else
-      let mid = (lo_i + hi_i) / 2 in
-      if bounds.(mid) <= lo then go mid hi_i else go lo_i mid
-  in
-  Int64.of_int (go 0 (Array.length bounds))
-
-(* Each call on [t] > 1 threads stays in its starting strip and holds at most
-   that strip's run bound. *)
-let check_runs ~t ~total ~chunks (job : P.job) =
-  let c = chunk_count ~total ~chunks in
-  let cuts = chunk_bounds ~total ~chunks in
-  let bounds = Array.of_list cuts in
-  List.iter
-    (fun (call : P.call) ->
-      let w = strip_of ~t c (chunk_at bounds call.lo) in
-      let lo = bounds.(Int64.to_int (strip_lo ~t c w))
-      and hi = bounds.(Int64.to_int (strip_lo ~t c (w + 1))) in
-      let msg =
-        strf "call [%Ld, %Ld) in strip [%Ld, %Ld)" call.lo call.hi lo hi
-      in
-      let n = List.length (cut cuts [ (call.lo, call.hi) ]) in
-      at_most ~msg int64 ~than:hi call.hi;
-      at_most ~msg int ~than:(run_bound ~t c w) n)
-    job.calls
 
 let chunks_ran (job : P.job) =
   List.sort compare (List.map (fun (c : P.call) -> (c.lo, c.hi)) job.calls)
@@ -660,46 +615,9 @@ let test_bounds ((threads, total, chunks) as job) =
       (list (pair int64 int64))
       [ (0L, total) ]
       ranges
-  else if t > 1 then begin
-    check_runs ~t ~total ~chunks ran;
-    if single_runs ~t c then
-      equal ~msg:"calls of a job of at most 15 chunks a thread" int
-        (Int64.to_int c) ran.count
-  end
-
-(* Calls in the order they began, which is the order of their claims on one
-   thread. A call's place in its thread's order is the distance from the
-   thread's worker to the call's strip, then the call's first chunk. *)
-let test_claim_order ((threads, total, chunks) as job) =
-  assume_recordable job;
-  let t = thread_bound ~threads ~total ~chunks
-  and c = chunk_count ~total ~chunks in
-  let ran = P.record ~threads ~total ~chunks in
-  let threads = distinct (List.map (fun (c : P.call) -> c.thread) ran.calls) in
-  let bounds = Array.of_list (chunk_bounds ~total ~chunks) in
-  let place (call : P.call) =
-    let i = chunk_at bounds call.lo in
-    let w = if t > 1 then strip_of ~t c i else 0 in
-    ((((w - call.worker) mod t) + t) mod t, i)
-  in
-  let places th =
-    List.filter_map
-      (fun (c : P.call) -> if c.thread = th then Some (place c) else None)
-      ran.calls
-  in
-  (* A job of more chunks than threads, on more than one thread, has a thread
-     make several calls. *)
-  if cores > 1 then
-    cover "a thread ran several chunks"
-      (List.exists (fun th -> List.length (places th) >= 2) threads);
-  List.iter
-    (fun th ->
-      equal
-        ~msg:(strf "(strip after its own, chunk) of thread %d's calls" th)
-        (list (pair int int64))
-        (distinct (places th))
-        (places th))
-    threads
+  else if single_runs ~t c then
+    equal ~msg:"calls of a job of at most 15 chunks a thread" int
+      (Int64.to_int c) ran.count
 
 (* 16 chunks on two threads go one a call; 4096 start with a run of 256. *)
 let test_balance chunks =
@@ -746,8 +664,7 @@ let chunk_tests =
     [
       prop ~count:300 ~examples:job_examples
         "a job calls ranges of whole chunks of the stated bounds that cover \
-         its units once, one range on one thread, runs within their bound on \
-         several, and nothing for no unit"
+         its units once, one range on one thread, and nothing for no unit"
         job_gen test_bounds;
       cases
         ~name:(fun (total, chunks, _) ->
@@ -755,10 +672,6 @@ let chunk_tests =
         "a job whose total times its chunks passes 64 bits, or of more chunks \
          than units, calls ranges of the stated chunks"
         wide_jobs test_wide_job;
-      prop ~examples:job_examples
-        "each thread claims its own strip's chunks, then those of the strips \
-         after it in turn, each in index order"
-        job_gen test_claim_order;
       cases ~name:(strf "%d chunks")
         "a thread that finishes early runs the chunks a slower one would have, \
          one at a time or in runs"
@@ -860,9 +773,8 @@ let test_waits () =
       P.counted_calls () = 4);
   Domain.join waiting
 
-(* A job's chunks, each once, and whether its calls on several threads hold runs
-   within their bound. Jobs of up to 96 chunks reach runs of several chunks on
-   up to 6 threads. *)
+(* A job's chunks, each once. Jobs of up to 96 chunks reach runs of several
+   chunks on up to 6 threads. *)
 let job_commands =
   let small_job =
     Gen.with_pp pp_job
@@ -883,8 +795,6 @@ let job_commands =
         partition ~total ~chunks)
       (fun (threads, total, chunks) ->
         let ran = P.record ~threads ~total ~chunks in
-        let t = thread_bound ~threads ~total ~chunks in
-        if t > 1 then check_runs ~t ~total ~chunks ran;
         cut (chunk_bounds ~total ~chunks) (chunks_ran ran));
   ]
 

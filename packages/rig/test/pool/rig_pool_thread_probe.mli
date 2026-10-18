@@ -6,18 +6,6 @@
 (** Probes of [rig_pool.h]'s threads (rig_pool_thread_probe_stubs.c): what a
     body sees on a worker, and the workers' life. POSIX only. *)
 
-(** {1:burst A burst of jobs} *)
-
-val burst : unit -> unit
-(** [burst ()] runs a job on every core, then jobs of two chunks on two threads
-    back to back until {!burst_stop}. *)
-
-val burst_stop : unit -> unit
-(** [burst_stop ()] ends {!burst}. *)
-
-val burst_jobs : unit -> int
-(** [burst_jobs ()] is the jobs of two threads the running {!burst} ran. *)
-
 (** {1:bodies Bodies on a worker} *)
 
 val worker_mask : unit -> bool * (string * bool) list
@@ -51,9 +39,6 @@ type scenario =
 val in_child : scenario -> string * int array
 (** [in_child s] is how the child ended, ["exit 0"] once it answered, and its
     values. *)
-
-val fork : unit -> unit
-(** [fork ()] forks a child that exits at once, and waits for it. *)
 
 val limits_threads : unit -> bool
 (** [limits_threads ()] is whether the system can limit a process's own threads:

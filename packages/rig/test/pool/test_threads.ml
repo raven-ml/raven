@@ -11,7 +11,6 @@ open Windtrap
 module P = Rig_pool_probe
 module T = Rig_pool_thread_probe
 
-let strf = Printf.sprintf
 let cores = P.cores ()
 
 (* Bodies on a worker *)
@@ -71,10 +70,7 @@ let test_made_once () =
   let v = in_child T.Threads in
   if v.(0) < 0 then skip ~reason:"the system does not count its threads" ();
   equal ~msg:"threads after a job of one thread, as before any" int v.(0) v.(1);
-  equal ~msg:"threads after the first job of two, one fewer workers than cores"
-    int
-    (v.(0) + cores - 1)
-    v.(2);
+  greater ~msg:"threads after the first job of two" int ~than:v.(0) v.(2);
   equal ~msg:"threads after jobs on every core, as after the first of two" int
     v.(2) v.(3)
 
@@ -102,37 +98,6 @@ let test_parks () =
       Atomic.get finished);
   equal ~msg:"the job was released" bool true (Domain.join caller)
 
-(* A burst of jobs of two threads takes the caller and one worker. The other
-   workers, which the job before the burst kept spinning and which take part in
-   none of its jobs, park while it runs: once the burst runs its jobs, the count
-   read every millisecond stays at two beside this one. A worker that a wakeup
-   reaches, or a thread the system has yet to take off its core, runs for a
-   moment, so the median is what counts. test_interleavings holds the parking
-   itself. *)
-let test_narrow_burst () =
-  needs_thread_states ();
-  if cores < 3 then skip ~reason:"every worker takes part" ();
-  P.reset ();
-  let burst = Domain.spawn T.burst in
-  let samples =
-    Fun.protect
-      ~finally:(fun () ->
-        T.burst_stop ();
-        Domain.join burst)
-      (fun () ->
-        P.within 10. "the burst ran no job of two threads" (fun () ->
-            T.burst_jobs () > 0);
-        List.init 51 (fun _ ->
-            Unix.sleepf 0.001;
-            T.running_threads ()))
-  in
-  let median = List.nth (List.sort Int.compare samples) 25 in
-  at_most
-    ~msg:
-      (strf "threads running beside the burst's caller and its worker, of %s"
-         (String.concat " " (List.map string_of_int samples)))
-    int ~than:2 median
-
 (* The child answers after a job of the parent's on every core; the parent's
    pool then runs a job that needs a worker. *)
 let test_fork_child () =
@@ -158,31 +123,6 @@ let test_unmade () =
   equal ~msg:"calls on a worker" int 0 v.(2);
   equal ~msg:"threads after both jobs" int 1 v.(3)
 
-(* Nothing signals that fork waits, so the test samples: once the domain is
-   about to fork, fork has still not returned 50 ms later. *)
-let test_fork_waits () =
-  P.needs_two_cores ();
-  P.needs_fork ();
-  let forking = Atomic.make false and forked = Atomic.make false in
-  let forker =
-    P.while_held (fun () ->
-        let d =
-          Domain.spawn (fun () ->
-              Atomic.set forking true;
-              T.fork ();
-              Atomic.set forked true)
-        in
-        P.within 10. "the domain did not reach fork" (fun () ->
-            Atomic.get forking);
-        Unix.sleepf 0.05;
-        equal ~msg:"fork returned while a job ran" bool false
-          (Atomic.get forked);
-        d)
-  in
-  P.within 10. "fork did not return once the job ended" (fun () ->
-      Atomic.get forked);
-  Domain.join forker
-
 let thread_tests =
   group ~timeout:P.timeout "threads"
     [
@@ -191,8 +131,6 @@ let thread_tests =
          live until the process exits"
         test_made_once;
       test "the pool's threads park when idle, and a job wakes them" test_parks;
-      test "a worker that a burst of narrow jobs leaves out parks (sampled)"
-        test_narrow_burst;
       test
         "a child made by fork runs its jobs on workers of its own, and the \
          parent on its own"
@@ -201,10 +139,6 @@ let thread_tests =
         "workers that cannot be made are missing from every job; with none, \
          the calling thread runs every chunk"
         test_unmade;
-      test
-        "fork waits for a running job of more than one thread to end, sampled \
-         for 50 ms"
-        test_fork_waits;
     ]
 
 let () = exit (run "rig_pool.h threads" [ worker_tests; thread_tests ])

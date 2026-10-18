@@ -10,16 +10,20 @@ open Windtrap
 module P = Rig_pool_probe
 module H = Rig_pool_hooked_probe
 
-(* [scenario names expected run ()] runs [run] under a watchdog and checks that
-   its timeline held and that each named value is [expected]'s. *)
-let scenario names expected run () =
-  if H.cores () < 3 then skip ~reason:"the host has fewer than three cores" ();
+(* [held cores names expected run ()] runs [run] under a watchdog, on a host of
+   at least [cores] cores, and checks that its timeline held and that each
+   named value is [expected]'s. *)
+let held cores names expected run () =
+  if H.cores () < cores then
+    skip ~reason:(Printf.sprintf "the host has fewer than %d cores" cores) ();
   let timed_out, values = P.finishes "the scenario" run in
   equal ~msg:"the hold that gave up" string "" timed_out;
   equal
     (list (pair string int))
     (List.combine names expected)
     (List.combine names (Array.to_list values))
+
+let scenario names expected run () = held 3 names expected run ()
 
 (* Entering and closing *)
 
@@ -133,9 +137,9 @@ let waiting_tests =
 
 (* Fork *)
 
-let forked names expected run () =
+let forked ?(cores = 3) names expected run () =
   P.needs_fork ();
-  scenario names expected run ()
+  held cores names expected run ()
 
 let fork_tests =
   group ~timeout:P.timeout "fork"
@@ -147,7 +151,7 @@ let fork_tests =
       test
         "fork waits for another thread's job, and the child runs a job on \
          every core"
-        (forked
+        (forked ~cores:2
            [
              "fork returned after the job's body";
              "the child's chunks not run once";
