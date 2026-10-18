@@ -295,8 +295,8 @@ val reaches : t -> t -> bool
 (** {1:timeline Timelines}
 
     {!submit} assigns the values of a device's timeline, and so do
-    {!Buffer.copy} and {!Image.load} for the copies the device runs, in the
-    order the device accepts the work, whichever domain submits it. The
+    {!Buffer.copy}, {!Buffer.fill} and {!Image.load} for the copies and
+    fills the device runs, in the order the device accepts the work, whichever domain submits it. The
     device's {e submitted} value is the last value assigned on its timeline
     ({!submitted}). A device reports the values it has reached
     ({!signaled}), and a lost device may report more ({!section-loss}).
@@ -1133,10 +1133,14 @@ module Buffer : sig
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the
       host addresses the buffer ({!section-host_access}) and no io device
-      owns its memory, the host copies once the work the copy follows is
-      done. Otherwise the bytes pass
-      through staging memory, and a device copies them to or from the buffer
-      as {!copy} does. Each returns once its bytes are where they go.
+      owns its memory, the host copies or sets the bytes once the work the
+      copy follows is done. Otherwise the blits' bytes pass through staging
+      memory, and a device copies them to or from the buffer as {!copy}
+      does. A fill of memory an io device owns is the io device's writes
+      from host memory that holds the byte. Any other fill runs on the copy
+      engine of the buffer's device, or, for a borrow on a device that runs
+      no copy, of the device whose memory it borrows, and reads no memory.
+      Each returns once its bytes are where they go.
 
       A copy, blit or fill holds a read claim on its buffers' memory until it
       returns, so that no donation writes the memory meanwhile
@@ -1169,10 +1173,13 @@ module Buffer : sig
       and otherwise as {!copy}[ ~src:b] raises. *)
 
   val fill : t -> char -> unit
-  (** [fill b c] sets every byte of [b] to [c].
+  (** [fill b c] sets every byte of [b] to [c] and returns once they are
+      set.
 
-      Raises [Invalid_argument] if [b] is dead or admits only [Read], and
-      otherwise as {!copy}[ ~dst:b] raises. *)
+      Raises [Invalid_argument] if [b] is dead or admits only [Read], its
+      memory is held exclusive, or [b] has bytes, the host does not address
+      it and no device sets them. Raises {!Lost} if the device that sets them
+      is lost or the fill loses it, and what an io device's write raises. *)
 
   (** {1:low Low level}
 
@@ -2206,7 +2213,9 @@ module Profile : sig
             and otherwise when {!take} reads that it is done, so the event
             then lasts at least as long as the copy. A copy through staging
             memory records each piece into and out of it, with {!host} as
-            one side, and no event of its own. *)
+            one side, and no event of its own. A {!Buffer.fill} moves no
+            bytes from memory and records none: where a device runs it, its
+            submission's [Work] is named ["copies"]. *)
 
   val take : (unit -> 'a) -> 'a * event list
   (** [take f] is [f ()] and the events recorded while it ran, in time order

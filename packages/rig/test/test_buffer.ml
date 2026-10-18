@@ -1596,6 +1596,40 @@ let test_blits_staged_large () =
   B.blit_to_bytes b 0 got 0 n;
   equal ~msg:"bytes the fill missed" int 0 (differ (String.make n 'q') got)
 
+(* A fill of memory the host does not address is one fill of its byte on the
+   device's copy engine, which reads no memory, and stages nothing: Polled
+   runs one copy part, a fill of one row of the view's bytes. An empty fill
+   runs none. *)
+let test_fill_on_engine () =
+  let d, p = P.open_ ~host_visible:false "buffer:fill-engine" in
+  let b = B.create d 4099 in
+  B.fill (B.view b ~first:3 ~length:4096) 'f';
+  B.fill (B.view b ~first:0 ~length:0) 'e';
+  let pp ppf (c : P.copy) =
+    Format.fprintf ppf "{ width = %d; rows = %d; dst_pitch = %d; fill = %s }"
+      c.width c.rows c.dst_pitch
+      (match c.fill with Some c -> Printf.sprintf "%C" c | None -> "None")
+  in
+  let copy = Testable.make ~pp ~equal:( = ) in
+  equal (list copy)
+    [
+      {
+        local = `None;
+        device_memory = true;
+        width = 4096;
+        rows = 1;
+        src_pitch = 0;
+        dst_pitch = 4096;
+        fill = Some 'f';
+      };
+    ]
+    (P.copies p);
+  let got = Bytes.create 4099 in
+  B.blit_to_bytes b 0 got 0 4099;
+  equal ~msg:"the view's bytes" string (String.make 4096 'f')
+    (Bytes.sub_string got 3 4096);
+  Rig.close d
+
 (* Host access *)
 
 (* The host reads and writes the memory of a device that it addresses as the
@@ -1972,6 +2006,10 @@ let tests =
           (law_fill Unaddressed);
         test "blits and a fill through several staging pieces keep every byte"
           test_blits_staged_large;
+        test
+          "a fill of memory the host does not address is one fill on its \
+           copy engine"
+          test_fill_on_engine;
         test "a blit waits as a host access of its kind does" test_blit_waits;
       ];
     group ~timeout "host access"

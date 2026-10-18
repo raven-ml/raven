@@ -277,9 +277,11 @@ int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b);
 
 /* A copy part of a submission: its index and, for its source and its
    destination, the run's slot, or -1 for a buffer the submission names,
-   whose side is in [ends]. */
+   whose side is in [ends]. A fill, [fill] 1, sets its destination's bytes
+   to [byte] and has no source: [src] is -1 and [ends[0]] zero. */
 struct rig_copy {
-  int part, src, dst;
+  int part, src, dst, fill;
+  uint8_t byte;
   struct rig_side ends[2]; /* the source's, the destination's */
 };
 

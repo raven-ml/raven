@@ -93,6 +93,12 @@ val entry : func -> at:int -> ref
 val copy : src:side -> dst:side -> part
 (** [copy ~src ~dst] is {!Rig.Submission.copy}[ ~src ~dst]. *)
 
+val set : dst:side -> char -> part
+(** [set ~dst c] is a copy part that sets every byte of [dst] to [c],
+    reading no memory: a fill at the edge ([copy.fill] in [rig_edge.h]). It
+    checks nothing of [dst]; {!make} refuses a [dst] buffer that is dead,
+    not the device's, or this process's memory. *)
+
 val launch : ?refs:ref array -> func -> params:int -> part
 (** [launch ~refs f ~params] is {!Rig.Submission.launch}[ ~refs f ~params]. *)
 
@@ -192,4 +198,10 @@ val run_copy : device -> src:buffer -> dst:buffer -> int
     which holds no bytes, so any number of copies submit it at once. [d]
     must reach both buffers. They are [d]'s, or, for a device of another
     machine, one of them may be this process's memory. It raises as
+    {!Rig.Submission.make} and {!Rig.submit} do. *)
+
+val run_set : device -> dst:buffer -> char -> int
+(** [run_set d ~dst c] submits a fill of [dst] with [c] on [d]'s copy
+    engine, and is its point. It makes [d]'s submission of the one part
+    [set ~dst:(Slot 0) c] for the call. [dst] must be [d]'s. It raises as
     {!Rig.Submission.make} and {!Rig.submit} do. *)

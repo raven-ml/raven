@@ -48,6 +48,7 @@ type part =
   | Words of buffer
   | Fill of { fill : nativeint; params : int; refs : ref array }
   | Copy of { src : side; dst : side }
+  | Set of { dst : side; byte : char }
   | Launch of { fn : func; params : int; refs : ref array }
 
 (* The most parameter bytes of a launch or a fill: a block counts 16 bytes
@@ -137,6 +138,9 @@ let copy ~src ~dst =
   | Slot _ | Buffer _ -> ());
   Copy { src; dst }
 
+(* Internal: rig's own fills, whose [dst] is checked where they are made. *)
+let set ~dst byte = Set { dst; byte }
+
 let words b =
   let fn = "Submission.words" in
   Buffer.check_live fn b;
@@ -177,6 +181,8 @@ external sub_code : c -> int -> int -> int -> int -> unit
   = "caml_rig_sub_code"
 
 external sub_copy : c -> int -> int -> int -> int -> unit = "caml_rig_sub_copy"
+
+external sub_set : c -> int -> int -> int -> char -> unit = "caml_rig_sub_set"
 
 external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
   = "caml_rig_sub_side_byte" "caml_rig_sub_side"
@@ -261,7 +267,8 @@ type t = {
   span : (string * string) option;
       (** The first part's queue and the launches' functions, or the first
           part's kind. [None] for no parts. *)
-  copies : (side * side) array;  (** The copy parts' sides, in order. *)
+  copies : (side * side) array;
+      (** The sides of the copy parts that read memory, in order. *)
 }
 
 let no_block = (0, -1, 0, 0, "")
@@ -269,7 +276,7 @@ let no_block = (0, -1, 0, 0, "")
 let kind_of = function
   | Words _ -> Rig_edge.Words
   | Fill _ -> Fill
-  | Copy _ -> Copy
+  | Copy _ | Set _ -> Copy
   | Launch _ -> Launch
 
 let kind_name = function
@@ -308,21 +315,23 @@ let owns_device_memory d b =
 (* Hands the C form [c] its [k]th fixed buffer's stamps and access. *)
 let fix c k b use = sub_fixed c k (entry_of b).stamps use
 
-(* Refuses part [i]'s copy on [d] unless each buffer end is live and [d]'s,
-   or carried, and two buffer ends are not both carried. A slot end's buffer
-   only a run gives, which the submit checks. *)
+(* Refuses part [i]'s copy end on [d] unless its buffer is live and [d]'s,
+   or carried. A slot end's buffer only a run gives, which the submit
+   checks. *)
+let check_end fn d i = function
+  | Slot _ -> ()
+  | Buffer b ->
+      Buffer.check_live fn b;
+      if b.mem.dev != d && not (carried d b) then
+        invalid_argf "Rig.%s: part %d copies a buffer on %s, not on %s: \
+                      borrow it"
+          fn i b.mem.dev.name d.name
+
+(* Refuses part [i]'s copy on [d] unless each end passes [check_end], and
+   two buffer ends are not both carried. *)
 let check_ends fn d i src dst =
-  let check = function
-    | Slot _ -> ()
-    | Buffer b ->
-        Buffer.check_live fn b;
-        if b.mem.dev != d && not (carried d b) then
-          invalid_argf "Rig.%s: part %d copies a buffer on %s, not on %s: \
-                        borrow it"
-            fn i b.mem.dev.name d.name
-  in
-  check src;
-  check dst;
+  check_end fn d i src;
+  check_end fn d i dst;
   match (src, dst) with
   | Buffer a, Buffer b when carried d a && carried d b ->
       invalid_argf "Rig.%s: neither of part %d's buffers is %s's memory" fn i
@@ -359,7 +368,7 @@ let entry_code fn d i (f : func) =
 
 let refs_of = function
   | Fill { refs; _ } | Launch { refs; _ } -> refs
-  | Words _ | Copy _ -> [||]
+  | Words _ | Copy _ | Set _ -> [||]
 
 (* The buffer refs of [refs], which C places. *)
 let slot_refs refs =
@@ -378,6 +387,8 @@ let slots_of = function
         | Buffer _ -> []
       in
       named Use_read src @ named Use_write dst
+  | Set { dst = Slot k; _ } -> [ (k, Use_write, Copies) ]
+  | Set { dst = Buffer _; _ } -> []
   | p ->
       Array.to_list
         (Array.map (fun r -> (r.slot, r.use, Refs)) (slot_refs (refs_of p)))
@@ -439,6 +450,8 @@ let reaches = function
         | Buffer b -> named writes b
       in
       [ side false src; side true dst ]
+  | Set { dst = Slot _; _ } -> [ slot true ]
+  | Set { dst = Buffer b; _ } -> [ named true b ]
   | Fill { refs; _ } | Launch { refs; _ } ->
       Array.fold_right
         (fun r acc ->
@@ -611,7 +624,7 @@ let place fn d last = function
       match Array.find_index prepares d.live.queues with
       | Some q -> q
       | None -> first_runs fn d Rig_edge.Words)
-  | Copy _ -> (
+  | Copy _ | Set _ -> (
       let q = ref (-1) in
       Array.iteri
         (fun q' i -> if i >= 0 && (!q < 0 || i > last.(!q)) then q := q')
@@ -652,7 +665,7 @@ let order fn d reach fixed parts =
     List.iter (follow o last) fixed;
     (match parts.(j) with
     | Words _ -> Array.blit latest 0 last 0 nq
-    | Fill _ | Copy _ | Launch _ -> ());
+    | Fill _ | Copy _ | Set _ | Launch _ -> ());
     let q = place fn d last parts.(j) in
     queues.(j) <- q;
     afters.(j) <- after q last;
@@ -681,7 +694,8 @@ let named_buffers fixed parts =
       | Copy { src; dst } ->
           let side s bs = match s with Buffer b -> b :: bs | Slot _ -> bs in
           side src (side dst bs)
-      | Fill _ | Launch _ -> bs)
+      | Set { dst = Buffer b; _ } -> b :: bs
+      | Set { dst = Slot _; _ } | Fill _ | Launch _ -> bs)
     parts (List.map fst fixed)
 
 let build keep ~fixed ~held d parts =
@@ -691,7 +705,7 @@ let build keep ~fixed ~held d parts =
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
-  let ncopies = ref 0 in
+  let ncopies = ref 0 and nmoves = ref 0 in
   let slots = Array.map (fun p -> slot_refs (refs_of p)) parts in
   (* Each part's entry refs: where they lie in its parameters, their value
      and their image. *)
@@ -717,6 +731,15 @@ let build keep ~fixed ~held d parts =
           check_ends fn d i src dst;
           let buffer = function Buffer _ -> 1 | Slot _ -> 0 in
           nfixed := !nfixed + buffer src + buffer dst;
+          incr ncopies;
+          incr nmoves
+      | Set { dst; _ } ->
+          check_end fn d i dst;
+          (match dst with
+          | Buffer b when carried d b ->
+              invalid_argf "Rig.%s: part %d fills this process's memory" fn i
+          | Buffer _ -> incr nfixed
+          | Slot _ -> ());
           incr ncopies
       | Launch l ->
           check_launch fn d i l.fn;
@@ -736,13 +759,21 @@ let build keep ~fixed ~held d parts =
       !ncodes !ncopies
   in
   let blocks = Array.make (Array.length parts) no_block in
-  let copies = Array.make !ncopies (Slot 0, Slot 0) in
+  let copies = Array.make !nmoves (Slot 0, Slot 0) in
   let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
+  let n = ref 0 in
   let fixed = ref [] and images = ref [] in
   let fix_next b use =
     fix c !k b use;
     incr k;
     fixed := b :: !fixed
+  in
+  let slot_of = function Slot k -> k | Buffer _ -> -1 in
+  let copy_side ~dst use = function
+    | Slot _ -> ()
+    | Buffer b ->
+        sub_side c !m dst b (carried d b) (owns_device_memory d b);
+        fix_next b use
   in
   let place_codes i place =
     List.iter
@@ -766,17 +797,15 @@ let build keep ~fixed ~held d parts =
           blocks.(i) <- (sub_id c, place, f.params, 0, "");
           r := !r + Array.length slots.(i)
       | Copy { src; dst } ->
-          let slot = function Slot k -> k | Buffer _ -> -1 in
-          sub_copy c !m i (slot src) (slot dst);
-          copies.(!m) <- (src, dst);
-          let side ~dst use = function
-            | Slot _ -> ()
-            | Buffer b ->
-                sub_side c !m dst b (carried d b) (owns_device_memory d b);
-                fix_next b use
-          in
-          side ~dst:false Use_read src;
-          side ~dst:true Use_write dst;
+          sub_copy c !m i (slot_of src) (slot_of dst);
+          copies.(!n) <- (src, dst);
+          copy_side ~dst:false Use_read src;
+          copy_side ~dst:true Use_write dst;
+          incr m;
+          incr n
+      | Set { dst; byte } ->
+          sub_set c !m i (slot_of dst) byte;
+          copy_side ~dst:true Use_write dst;
           incr m
       | Launch l ->
           let e = l.fn.fentry in
@@ -1406,3 +1435,9 @@ let copiers =
 let run_copy d ~src ~dst =
   let run = Dev.local copiers d in
   submit_run run.sub run [| src; dst |] [||]
+
+(* A fill's byte is part of its submission, so each makes its own: one
+   part, no launch or fill, and a run that holds no bytes. *)
+let run_set d ~dst c =
+  let run = Run.make (make d [| set ~dst:(Slot 0) c |]) in
+  submit_run run.sub run [| dst |] [||]

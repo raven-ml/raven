@@ -269,12 +269,39 @@ let within_machine () =
     crossing;
   equal string "within the machine" (read b)
 
+(* A fill of another machine's memory is one fill part of its view, which
+   carries no bytes across the link. *)
+let far_fill () =
+  with_machine @@ fun m ->
+  let far = far_of_string m.host "abcdefgh" in
+  B.fill (B.view far ~first:2 ~length:4) 'z';
+  equal string "abzzzzgh" (read far);
+  let fills =
+    List.concat_map
+      (function
+        | Handover { parts; local; _ } ->
+            List.filter_map
+              (function
+                | Wire.Fill { dst = Wire.Region { offset; _ }; bytes; byte } ->
+                    Some (offset, bytes, byte, local)
+                | _ -> None)
+              parts
+        | _ -> [])
+      (events m.ag)
+  in
+  equal
+    (list (pair (pair int int) (pair char int)))
+    [ ((2, 4), ('z', 0)) ]
+    (List.map (fun (o, n, c, l) -> ((o, n), (c, l))) fills)
+
 let copies =
   group "copy"
     [
       test "queued download batches keep empty copies in order" download_batches;
       test "a copy within the machine moves no byte across the link"
         within_machine;
+      test "a fill of the machine's memory is one fill part, carrying no byte"
+        far_fill;
     ]
 
 (* Work *)

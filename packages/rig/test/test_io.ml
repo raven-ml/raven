@@ -780,6 +780,23 @@ let test_blits () =
   B.blit_to_bytes m 1 got 2 4;
   equal ~msg:"a blit out of it" string "..rrrr.." (Bytes.to_string got)
 
+(* A fill of io memory of more than its writes take at a time, 1 MiB, at an
+   offset: every byte of the view and no other. *)
+let test_large_fill () =
+  let io, t = open_pages () in
+  let n = (2 lsl 20) + 7 in
+  let r = Option.get (Pages.alloc t (n + 6)) in
+  Bigarray.Array1.fill r.bytes 'r';
+  let m = B.of_io io Pages.region_key r ~access:Read_write (n + 6) in
+  B.fill (B.view m ~first:3 ~length:n) 'f';
+  let expected = "rrr" ^ String.make n 'f' ^ "rrr" in
+  let got = String.init (n + 6) (Bigarray.Array1.get r.bytes) in
+  equal ~msg:"bytes that differ" int 0
+    (List.length
+       (List.filter
+          (fun i -> got.[i] <> expected.[i])
+          (List.init (n + 6) Fun.id)))
+
 (* A blit from a string refuses memory that admits only reads; a blit to bytes
    reads it. *)
 let test_read_blits () =
@@ -917,6 +934,8 @@ let tests =
           test_read_claims;
         test "the blits and a fill reach io memory at their view's offset"
           test_blits;
+        test "a fill of io memory over 2 MiB sets every byte of its view"
+          test_large_fill;
         test "a blit from a string refuses memory that admits only reads"
           test_read_blits;
       ];

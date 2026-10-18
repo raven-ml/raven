@@ -48,8 +48,11 @@
 
     The host's values reach memory the host addresses by its own copy, and
     other memory through staging memory, as a copy whose one side the host
-    fills or empties. A fill writes its byte into the halves for the first
-    two pieces only, after which both hold it.
+    fills or empties. A fill sets memory the host addresses itself, writes
+    memory an io device owns through the io library's writes from host
+    memory that holds the byte, 1 MiB at a time, and sets any other memory
+    with a fill part on the copy engine of the device a copy of it would run
+    on ({!Submission.run_set}), staging nothing.
 
     A copy, blit or fill takes its read claims ({!Rig.Buffer.section-copying})
     before it checks its buffers and waits. The host moves bytes that

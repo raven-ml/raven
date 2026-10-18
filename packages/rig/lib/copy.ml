@@ -563,6 +563,39 @@ let blit_to_bytes b i s j n =
         Buffer.blit_bytes h 0 s (j + at) (Buffer.length h))
   end
 
+(* The bytes an io device's fill writes at a time, from host memory holding
+   the byte. *)
+let io_fill_bytes = 1 lsl 20
+
+(* Fills [b], memory an io device owns, with [c] through the io device's
+   writes, after the work it follows. *)
+let fill_io b c =
+  let n = Buffer.length b in
+  let k = Int.min n io_fill_bytes in
+  let h = Buffer.create Dev.host k in
+  Buffer.set_bytes h 0 k c;
+  Buffer.wait_points b Buffer.Read_write;
+  let rec go at =
+    if at < n then begin
+      let len = Int.min k (n - at) in
+      io_write h (Buffer.view b ~first:at ~length:len) len;
+      go (at + len)
+    end
+  in
+  go 0
+
+(* Fills [b] with [c] on the copy engine of the device that runs its legs
+   ([runner]), reading no memory, and waits for it. *)
+let fill_on_engine fn b c =
+  let d = runner b in
+  match (d.live.copy_engine, mine d b.mem) with
+  | Some _, Some m when not (Dev.is_io d) ->
+      Dev.wait d (Point.value (Submission.run_set d ~dst:{ b with mem = m } c))
+  | _ -> invalid_argf "Rig.%s: no device sets the bytes of %s" fn b.mem.dev.name
+
+(* Where the host addresses [b], the host sets its bytes; where [b] is an io
+   device's memory, the io device writes them; otherwise a copy engine sets
+   them. Each holds a read claim on [b] while it runs. *)
 let fill b c =
   let fn = "Buffer.fill" in
   Dev.check_held fn;
@@ -572,10 +605,11 @@ let fill b c =
     Buffer.set_bytes b 0 (Buffer.length b) c;
     Memory.claim_drop b
   end
-  else
-    (* The halves keep [c] once the first two pieces filled them. *)
-    upload fn b (fun h at ->
-        if at < 2 * half_bytes then begin
-          Buffer.wait h Buffer.Read_write;
-          Buffer.set_bytes h 0 (Buffer.length h) c
-        end)
+  else begin
+    Buffer.check_live fn b;
+    Claim.reading fn b (fun () ->
+        Memory.check_owner b.mem;
+        Memory.drain b.mem.dev;
+        if Buffer.length b > 0 then
+          if io_owned b.mem then fill_io b c else fill_on_engine fn b c)
+  end

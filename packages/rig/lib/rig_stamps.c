@@ -361,6 +361,23 @@ value caml_rig_sub_copy(value v_s, value v_k, value v_i, value v_src,
   return Val_unit;
 }
 
+/* The submission's [v_k]th copy is part [v_i], a fill of the run's slot
+   [v_dst], or of a buffer that [caml_rig_sub_side] sets for -1, with the
+   byte [v_byte]. */
+value caml_rig_sub_set(value v_s, value v_k, value v_i, value v_dst,
+                       value v_byte) {
+  struct rig_sub *s = Sub_val(v_s);
+  struct rig_copy *c = &s->copies[Int_val(v_k)];
+  s->parts[Int_val(v_i)].kind = RIG_COPY;
+  memset(c, 0, sizeof *c);
+  c->part = Int_val(v_i);
+  c->src = -1;
+  c->dst = Int_val(v_dst);
+  c->fill = 1;
+  c->byte = (uint8_t)Int_val(v_byte);
+  return Val_unit;
+}
+
 /* Sets the buffer [v_b] as the [v_k]th copy's destination if [v_dst], its
    source otherwise, passed as this process's memory iff [v_local], with the
    copy.device_memory fact [v_device_memory]. The side's alias is read once,
@@ -382,9 +399,21 @@ value caml_rig_sub_side_byte(value *argv, int argn) {
                            argv[5]);
 }
 
-/* Sets the fields of [p], a copy from [src] into [dst]. */
-static void set_copy(struct rig_part *p, const struct rig_side *src,
-                     const struct rig_side *dst) {
+/* Sets the fields of [p], the copy [c] from [src] into [dst], or its fill
+   of [dst], which reads no memory. */
+static void set_copy(struct rig_part *p, const struct rig_copy *c,
+                     const struct rig_side *src, const struct rig_side *dst) {
+  if (c->fill) {
+    memset(&p->copy, 0, sizeof p->copy);
+    p->copy.dst = dst->handle;
+    p->copy.dst_offset = dst->offset;
+    p->copy.width = p->copy.dst_pitch = dst->bytes;
+    p->copy.rows = 1;
+    p->copy.device_memory = dst->device_memory;
+    p->copy.fill = 1;
+    p->copy.byte = c->byte;
+    return;
+  }
   p->copy.dst = dst->handle;
   p->copy.dst_offset = dst->offset;
   p->copy.src = src->handle;
@@ -405,7 +434,7 @@ value caml_rig_sub_seal(value v_s) {
   for (int k = 0; k < s->ncopies; k++) {
     struct rig_copy *c = &s->copies[k];
     if (c->src < 0 && c->dst < 0)
-      set_copy(&s->parts[c->part], &c->ends[0], &c->ends[1]);
+      set_copy(&s->parts[c->part], c, &c->ends[0], &c->ends[1]);
     else
       s->nslotted++;
   }
@@ -697,6 +726,13 @@ static void set_copies(const struct rig_sub *s, struct rig_call *r) {
     if (c->src < 0 && c->dst < 0) continue;
     const struct rig_side *src = c->src < 0 ? &c->ends[0] : &r->sides[c->src];
     const struct rig_side *dst = c->dst < 0 ? &c->ends[1] : &r->sides[c->dst];
+    if (c->fill) {
+      if (dst->local)
+        caml_invalid_argument(
+            "Rig.submit: a fill's buffer is not its device's memory");
+      set_copy(&r->parts[c->part], c, src, dst);
+      continue;
+    }
     if (src->bytes != dst->bytes)
       caml_invalid_argument("Rig.submit: a copy's buffers differ in size");
     if (rig_sides_overlap(src, dst))
@@ -704,7 +740,7 @@ static void set_copies(const struct rig_sub *s, struct rig_call *r) {
     if (src->local && dst->local)
       caml_invalid_argument(
           "Rig.submit: neither of a copy's buffers is its device's memory");
-    set_copy(&r->parts[c->part], src, dst);
+    set_copy(&r->parts[c->part], c, src, dst);
   }
 }
 

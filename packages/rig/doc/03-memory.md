@@ -84,9 +84,9 @@ copy to a function, once the work the access follows is done, and
 `Buffer.export` waits once and hands the bytes out for good. These three
 need memory the host addresses. The blits and `Buffer.fill` reach any
 buffer and wait themselves. Where the host does not address the buffer,
-the bytes pass through staging memory, which a device copies to or from
-the buffer, as `Buffer.copy` does between memories no device copies
-directly. The `Buffer` module's Host access and Copying sections of
+the blits' bytes pass through staging memory, which a device copies to or
+from the buffer, as `Buffer.copy` does between memories no device copies
+directly, and the device's copy engine sets a fill's bytes itself. The `Buffer` module's Host access and Copying sections of
 [`rig.mli`](../lib/rig.mli) state these rules, and its Loss section what an
 exported array reads after a device is lost.
 

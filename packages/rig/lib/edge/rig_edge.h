@@ -104,8 +104,8 @@ struct rig_args {
      process instead: its handle field holds the host address of the
      memory, and its offset field the offset into it. Only a driver of a
      device of another machine is handed one. [copy.device_memory] is 1
-     exactly when both buffers' original allocations belong to this device
-     and have memory kind Device. Views and borrows on the owning device
+     exactly when both buffers' original allocations, a fill's one buffer's,
+     belong to this device and have memory kind Device. Views and borrows on the owning device
      preserve it. Pinned, Mapped, this process's host memory, peer borrows
      and unbacked empty buffers have 0. Every field of a copy part may
      differ from one call to the next, since its ends may be a run's
