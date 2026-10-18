@@ -500,9 +500,9 @@ module type S = sig
       place of the identity, and a product's chunk 0 then has one. So the
       scan of the terms of a slice from a chunk's start, with the carry
       into that chunk, has the bits of the scan of the whole slice from that
-      chunk on; and the scan of terms within one chunk, carried from the
-      running result in the carrier before them, has the bits of the scan of
-      the whole there. A [Sum]'s or [Prod]'s NaN carry counts as made from
+      chunk on. An integer's or a boolean's scan, and a [Max]'s or a [Min]'s,
+      is exact, so this holds from any term, with the result before it, in
+      the carrier, as the carry. A [Sum]'s or [Prod]'s NaN carry counts as made from
       numbers: results before the slice's first NaN term are the made NaN,
       and from it on that term quieted. A [Max]'s or [Min]'s carry is a term
       before the slice's first: where it is a NaN, every result is it,

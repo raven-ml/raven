@@ -3924,10 +3924,11 @@ let carried_kinds =
 
 (* A scan along axis 1 of [[outer; p + m; inner]] whose last [m] terms of
    each slice are scanned from the carry of its first [p]: [p] whole chunks,
-   or [p + m] terms within one. The first [p] hold no NaN, but a NaN made
-   from numbers where [made] and a NaN term where [nan_before], of a [Max]
-   or [Min]; the last hold a NaN where [nan_after]. The terms are a
-   program's copy of the operand where [through]. *)
+   or, for an exact scan, [p + m] terms within one. The first [p] hold no
+   NaN, but a NaN made from numbers where [made] and a NaN term where
+   [nan_before], of a [Max] or [Min]; the last hold a NaN where
+   [nan_after]. The terms are a program's copy of the operand where
+   [through]. *)
 type carry_case = {
   kind : carried;
   cm : monoid;
@@ -3973,7 +3974,10 @@ let carry_case =
      in
      let* outer = of_list [ 1; 2 ] in
      let* inner = of_list [ 1; 3 ] in
-     let* aligned = bool in
+     let exact =
+       (cm = Max || cm = Min) || not (D.is D.Float dt || D.is D.Complex dt)
+     in
+     let* aligned = if exact then bool else constant true in
      (* Such a case needs two terms before the carry and one after it. *)
      let least k l = if both then List.filter (fun n -> n >= k) l else l in
      let* p, m =
@@ -4046,7 +4050,7 @@ let law_carry (b : Support.backend) c =
   let n = c.p + c.m in
   let aligned = c.p mod 4096 = 0 in
   cover "a carry into a chunk's start" aligned;
-  cover "a carry within a chunk" (not aligned);
+  cover "an exact scan's carry within a chunk" (not aligned);
   cover "several chunks after a carry" (aligned && c.m > 4096);
   cover "no term after a carry" (c.m = 0);
   cover "several slices" (c.outer * c.inner > 1);
