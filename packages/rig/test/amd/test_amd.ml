@@ -1847,7 +1847,7 @@ let two_roots () =
   Unix.symlink "/" mirror;
   Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
   let through_mirror () =
-    Rig_gpu_support.opened (Rig_amd_amdgpu.gpu ~root:mirror 0)
+    Rig_gpu_support.opened (Rig_amd_amdgpu.gpu_under ~root:mirror 0)
   in
   S.with_ (fun t -> one_gpu_shared ~second:through_mirror t.g);
   let g = match through_mirror () with Ok g -> g | Error why -> fail why in

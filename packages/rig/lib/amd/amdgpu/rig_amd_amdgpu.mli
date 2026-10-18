@@ -27,23 +27,20 @@
     are named ["AMD"], ["AMD:1"], ["AMD:2"], ….
 
     {b The machine's files.} {!buses}, {!count} and an opener's [make] read
-    the machine's files under the directory [root] (defaults to ["/"]): its
-    PCI functions under [root/sys/bus/pci], the kernel driver's description
-    of its GPUs under [root/sys], and the kernel driver's files under
-    [root/dev], such as a container's view of its host. Every [root] a
-    process uses must show the same kernel driver.
+    the machine's files: its PCI functions under [/sys/bus/pci], the kernel
+    driver's description of its GPUs under [/sys], and the kernel driver's
+    files under [/dev].
 
     {b Privileges.} Opening needs read and write access to [/dev/kfd] and to
     the GPU's render node, [/dev/dri/renderD*], which members of the
     [render] group have, and no other privilege. *)
 
-val buses : ?root:string -> unit -> (string list, string) result
-(** [buses ~root ()] is the bus addresses of the machine's AMD GPUs
-    ({!Rig_amd.is_gpu}) under [root] (defaults to ["/"]), in bus order: by
-    domain, bus, device and function, each as a number. GPU [i] is the
-    [i]th, whichever driver holds it. It is [Ok []] where [root/sys/bus/pci]
-    does not exist, such as off Linux. Each call reads the files again, and
-    changes nothing on the machine.
+val buses : unit -> (string list, string) result
+(** [buses ()] is the bus addresses of the machine's AMD GPUs
+    ({!Rig_amd.is_gpu}), in bus order: by domain, bus, device and function,
+    each as a number. GPU [i] is the [i]th, whichever driver holds it. It is
+    [Ok []] where [/sys/bus/pci] does not exist, such as off Linux. Each call
+    reads the files again, and changes nothing on the machine.
 
     A function whose files cannot be read, as while the kernel removes it, is
     left out.
@@ -51,17 +48,16 @@ val buses : ?root:string -> unit -> (string list, string) result
     [Error why] if the machine's PCI functions cannot be listed, such as
     when the process has no file left. *)
 
-val count : ?root:string -> unit -> (int, string) result
-(** [count ~root ()] is the number [n] of {!buses}, so GPUs are numbered [0]
+val count : unit -> (int, string) result
+(** [count ()] is the number [n] of {!buses}, so GPUs are numbered [0]
     to [n - 1], or their [Error]. A machine with no AMD GPU is [Ok 0]. *)
 
-val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
-(** [gpu ~root i] is the opener of GPU [i] under [root] (defaults to ["/"]),
-    named ["AMD"] for [0] and ["AMD:i"] otherwise. Each [make ()] opens a
-    new device of the GPU with queues of its own, also while other devices
-    of the GPU are open. The process reads the list of GPUs under a [root]
-    at the first [make] there that can read it, and keeps it, so after a GPU
-    is plugged in or removed it may differ from {!buses}.
+val gpu : int -> Rig_amd.t Rig_edge.opener
+(** [gpu i] is the opener of GPU [i], named ["AMD"] for [0] and ["AMD:i"]
+    otherwise. Each [make ()] opens a new device of the GPU with queues of
+    its own, also while other devices of the GPU are open. The process reads
+    the list of GPUs at the first [make] that can read it, and keeps it, so
+    after a GPU is plugged in or removed it may differ from {!buses}.
 
     [make ()] returns [Error msg]:
     {ul
@@ -81,8 +77,8 @@ val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
 
 (** {1:process The process's GPU}
 
-    The process opens [/dev/kfd] once, under the [root] of the first open
-    that succeeds in making it, and every later open uses that file. The
+    The process opens [/dev/kfd] once, at the first open that succeeds in
+    making it, and every later open uses that file. The
     kernel driver gives a process one address space per GPU, which the
     first open of the GPU takes and the process keeps until it exits. Every
     device of the GPU works in it, and a fault of one device's work is
@@ -120,6 +116,17 @@ val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
     GFX 9 GPU, traces take no power state. *)
 
 (**/**)
+
+(* [buses_under ~root], [count_under ~root] and [gpu_under ~root] are
+   {!buses}, {!count} and {!gpu} for the machine whose files are under the
+   directory [root] in place of ["/"], such as a container's view of its host
+   or a test's tree. Every [root] a process uses must show the same kernel
+   driver. The process opens [/dev/kfd] under the [root] of the first open
+   that makes it, and reads the list of GPUs under a [root] at the first
+   [make] there that can read it. *)
+val buses_under : root:string -> (string list, string) result
+val count_under : root:string -> (int, string) result
+val gpu_under : root:string -> int -> Rig_amd.t Rig_edge.opener
 
 (* [gpu_at root bus] is the GPU at bus address [bus] as the [amdgpu] driver
    describes it under the directory [root]: its topology node and its blocks'

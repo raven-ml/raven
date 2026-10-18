@@ -7,10 +7,13 @@ open Windtrap
 module N = Rig_nv_nvidia
 module S = Rig_nv_nvidia_support
 
-(* [listed ?root ()] and [counted ?root ()] are the path's GPUs, which the
-   test requires it lists. *)
-let listed ?root () = require_ok ~pp:Format.pp_print_string (N.buses ?root ())
-let counted ?root () = require_ok ~pp:Format.pp_print_string (N.count ?root ())
+(* [listed ~root ()] and [counted ~root ()] are the path's GPUs under [root]
+   (defaults to ["/"]), which the test requires it lists. *)
+let listed ?(root = "/") () =
+  require_ok ~pp:Format.pp_print_string (N.buses_under ~root)
+
+let counted ?(root = "/") () =
+  require_ok ~pp:Format.pp_print_string (N.count_under ~root)
 
 (* Machines in a tree *)
 
@@ -90,12 +93,12 @@ let unreadable file =
       skip ~reason:"the process reads unreadable files" ()
   | exception Sys_error _ -> ());
   if Filename.basename file = "vendor" then
-    equal (result (list string) string) (Ok []) (N.buses ~root ())
+    equal (result (list string) string) (Ok []) (N.buses_under ~root)
   else begin
-    let why = require_error (N.buses ~root ()) in
+    let why = require_error (N.buses_under ~root) in
     contains ~msg:"names the file" ~sub:path why;
-    equal (result int string) (Error why) (N.count ~root ());
-    let e = require_error (Rig_gpu_support.opened (N.gpu ~root 0)) in
+    equal (result int string) (Error why) (N.count_under ~root);
+    let e = require_error (Rig_gpu_support.opened (N.gpu_under ~root 0)) in
     contains ~sub:"reading the machine's GPUs" e;
     contains ~sub:why e
   end
@@ -170,13 +173,13 @@ let other_root () =
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
     require_error ~msg:"an open through the other root"
-      (Rig_gpu_support.opened (N.gpu ~root:mirror 0))
+      (Rig_gpu_support.opened (N.gpu_under ~root:mirror 0))
   in
   contains ~sub:"has a device open" e;
   Rig_nv.stop g ~fault:None;
   let g' =
     require_ok ~msg:"an open through it after stop"
-      (Rig_gpu_support.opened (N.gpu ~root:mirror 0))
+      (Rig_gpu_support.opened (N.gpu_under ~root:mirror 0))
   in
   let e =
     require_error ~msg:"an open through /" (Rig_gpu_support.opened (N.gpu 0))

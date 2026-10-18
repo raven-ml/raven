@@ -9,10 +9,13 @@ module Gpu = Rig_amd_abi.Gpu
 
 let strf = Printf.sprintf
 
-(* [listed ?root ()] and [counted ?root ()] are the path's GPUs, which the
-   test requires it lists. *)
-let listed ?root () = require_ok ~pp:Format.pp_print_string (P.buses ?root ())
-let counted ?root () = require_ok ~pp:Format.pp_print_string (P.count ?root ())
+(* [listed ~root ()] and [counted ~root ()] are the path's GPUs under [root]
+   (defaults to ["/"]), which the test requires it lists. *)
+let listed ?(root = "/") () =
+  require_ok ~pp:Format.pp_print_string (P.buses_under ~root)
+
+let counted ?(root = "/") () =
+  require_ok ~pp:Format.pp_print_string (P.count_under ~root)
 
 (* Machines as their files show them, written under a temporary directory of
    this process's own, which it removes at its exit, so that no two runs share a
@@ -234,12 +237,12 @@ let unreadable file =
       skip ~reason:"the process reads unreadable files" ()
   | exception Sys_error _ -> ());
   if Filename.basename file = "vendor" then
-    equal (result (list string) string) (Ok []) (P.buses ~root ())
+    equal (result (list string) string) (Ok []) (P.buses_under ~root)
   else begin
-    let why = require_error (P.buses ~root ()) in
+    let why = require_error (P.buses_under ~root) in
     contains ~msg:"names the file" ~sub:path why;
-    equal (result int string) (Error why) (P.count ~root ());
-    let e = require_error (Rig_gpu_support.opened (P.gpu ~root 0)) in
+    equal (result int string) (Error why) (P.count_under ~root);
+    let e = require_error (Rig_gpu_support.opened (P.gpu_under ~root 0)) in
     contains ~sub:"reading the machine's GPUs" e;
     contains ~sub:why e
   end
@@ -372,7 +375,7 @@ let inside_lock =
             fun () ->
               let root = tree "inside-gpu" (functions r9700_functions) in
               fun () ->
-                match Rig_gpu_support.opened (P.gpu ~root 1) with
+                match Rig_gpu_support.opened (P.gpu_under ~root 1) with
                 | Ok _ -> "opened"
                 | Error _ -> "error" );
           ( "gpus_of",
@@ -523,7 +526,7 @@ let names =
       test "a negative GPU is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"gpu") (fun () -> P.gpu (-1)));
       test "constructing an opener reads no machine files" (fun () ->
-          let o = P.gpu ~root:"no-such-directory" max_int in
+          let o = P.gpu_under ~root:"no-such-directory" max_int in
           equal string ("AMD:" ^ string_of_int max_int) o.name;
           is_error (Rig_gpu_support.opened o));
       test "a GPU past the machine's is refused, naming their number" (fun () ->
@@ -540,7 +543,7 @@ let names =
    at its first open and kept, and the kernel driver's files. *)
 let opening =
   let refusal ?(root = "/") i =
-    match Rig_gpu_support.opened (P.gpu ~root i) with
+    match Rig_gpu_support.opened (P.gpu_under ~root i) with
     | Ok _ -> fail "a GPU opened"
     | Error why -> why
   in

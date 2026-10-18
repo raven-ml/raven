@@ -25,11 +25,10 @@
 
     A device's life goes in four steps:
     + The first open that succeeds in creating the process's client of the
-      kernel driver keeps it for the process, made from that open's
-      [root/dev]. The client is three open files and a reservation of the
-      process's addresses from 384 GiB to [2{^40}], where the GPUs' memory
-      that the host maps too lies. Every later open uses it, whatever its
-      [root] and whether or not that open succeeds.
+      kernel driver keeps it for the process. The client is three open files
+      and a reservation of the process's addresses from 384 GiB to
+      [2{^40}], where the GPUs' memory that the host maps too lies. Every
+      later open uses it, whether or not that open succeeds.
     + The first open of a GPU makes the GPU's objects in the RM, which stay
       for the process. Later opens of that GPU reuse them.
     + The open makes the device ({!Rig_nv.make}). A GPU has one device at a
@@ -57,21 +56,17 @@
     every further mapping ([NV_ERR_NO_MEMORY]), however the memory is split,
     and {!Rig_nv.val-map_host} returns [None] until mappings are freed.
 
-    {!buses}, {!count} and an opener's [make] read the machine's files under
-    the directory [root] (defaults to ["/"]): its PCI functions under
-    [root/sys/bus/pci], and the kernel driver's files under [root/dev]. A
-    container may see its host's files under a [root] of its own. Every
-    [root] a program passes must show the same kernel driver. Listing GPUs
-    changes nothing on the machine.
+    {!buses}, {!count} and an opener's [make] read the machine's files: its
+    PCI functions under [/sys/bus/pci], and the kernel driver's files under
+    [/dev]. Listing GPUs changes nothing on the machine.
 
     Any domain may call any function, at the same time as others. *)
 
-val buses : ?root:string -> unit -> (string list, string) result
-(** [buses ~root ()] is the bus addresses of this machine's NVIDIA GPUs
-    ({!Rig_nv.is_gpu}) under [root] (defaults to ["/"]), in bus order: by
-    domain, bus, device and function, each as a number. GPU [i] is the
-    [i]th. It is [Ok []] where [root/sys/bus/pci] does not exist, such as off
-    Linux.
+val buses : unit -> (string list, string) result
+(** [buses ()] is the bus addresses of this machine's NVIDIA GPUs
+    ({!Rig_nv.is_gpu}), in bus order: by domain, bus, device and function,
+    each as a number. GPU [i] is the [i]th. It is [Ok []] where
+    [/sys/bus/pci] does not exist, such as off Linux.
 
     A function whose files cannot be read, as while the kernel removes it, is
     left out.
@@ -79,15 +74,14 @@ val buses : ?root:string -> unit -> (string list, string) result
     [Error why] if the machine's PCI functions cannot be listed, such as
     when the process has no file left. *)
 
-val count : ?root:string -> unit -> (int, string) result
-(** [count ~root ()] is the number of {!buses}, or their [Error]. A machine
+val count : unit -> (int, string) result
+(** [count ()] is the number of {!buses}, or their [Error]. A machine
     with no NVIDIA GPU is [Ok 0]. *)
 
-val gpu : ?root:string -> int -> Rig_nv.t Rig_edge.opener
-(** [gpu ~root i] is the opener of GPU [i] under [root] (defaults to
-    ["/"]), named ["NV"] for [0] and ["NV:i"] otherwise. Its [make] opens the
-    GPU that is [i]th when it runs, and changes only the kernel driver's
-    state for this process.
+val gpu : int -> Rig_nv.t Rig_edge.opener
+(** [gpu i] is the opener of GPU [i], named ["NV"] for [0] and ["NV:i"]
+    otherwise. Its [make] opens the GPU that is [i]th when it runs, and
+    changes only the kernel driver's state for this process.
 
     [make] returns [Error msg], having given back what it took for GPU [i],
     if:
@@ -100,3 +94,16 @@ val gpu : ?root:string -> int -> Rig_nv.t Rig_edge.opener
 
     Raises [Invalid_argument] if [i < 0]. [make] raises it, having opened
     nothing, from a callback inside a lock ([Rig]'s domains section). *)
+
+(**/**)
+
+(* [buses_under ~root], [count_under ~root] and [gpu_under ~root] are
+   {!buses}, {!count} and {!gpu} for the machine whose files are under the
+   directory [root] in place of ["/"], such as a container's view of its host
+   or a test's tree. Every [root] a process uses must show the same kernel
+   driver. The process's client of the kernel driver is made from the
+   [root/dev] of the first open that makes it, and every later open uses it,
+   whatever its [root]. *)
+val buses_under : root:string -> (string list, string) result
+val count_under : root:string -> (int, string) result
+val gpu_under : root:string -> int -> Rig_nv.t Rig_edge.opener

@@ -937,14 +937,16 @@ let path g =
 
 (* Opening *)
 
-let buses ?(root = "/") () = Sysfs.gpus root
-let count ?root () = Result.map List.length (buses ?root ())
+let buses_under ~root = Sysfs.gpus root
+let buses () = buses_under ~root:"/"
+let count_under ~root = Result.map List.length (buses_under ~root)
+let count () = count_under ~root:"/"
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-let open_ ?(root = "/") ~word i =
+let open_ ~root ~word i =
   Rig_nv.Lock.check "Rig_nv_nvidia.gpu";
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   let* buses =
@@ -974,9 +976,11 @@ let open_ ?(root = "/") ~word i =
             Rig_nv.Lock.protect gpus_lock (fun () -> g.opened <- false);
             e)
 
-let gpu ?root i : Rig_nv.t Rig_edge.opener =
+let gpu_under ~root i : Rig_nv.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_nv);
-    make = (fun ~word -> open_ ?root ~word i);
+    make = (fun ~word -> open_ ~root ~word i);
   }
+
+let gpu i = gpu_under ~root:"/" i

@@ -849,19 +849,21 @@ let path d ~gpus ~index : mem Amd.path =
 
 (* Numbering *)
 
-let buses ?(root = "/") () = Topology.gpus root
+let buses_under ~root = Topology.gpus root
+let buses () = buses_under ~root:"/"
 
 let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
 let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
-let count ?root () = Result.map List.length (buses ?root ())
+let count_under ~root = Result.map List.length (buses_under ~root)
+let count () = count_under ~root:"/"
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   if i = 0 then "AMD" else strf "AMD:%d" i
 
-let open_ ?(root = "/") ~word i =
+let open_ ~root ~word i =
   Amd.Lock.check "Rig_amd_amdgpu.gpu";
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   let* gpus =
@@ -904,9 +906,11 @@ let open_ ?(root = "/") ~word i =
         give_back ();
         Error why
 
-let gpu ?root i : Rig_amd.t Rig_edge.opener =
+let gpu_under ~root i : Rig_amd.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_amd);
-    make = (fun ~word -> open_ ?root ~word i);
+    make = (fun ~word -> open_ ~root ~word i);
   }
+
+let gpu i = gpu_under ~root:"/" i
