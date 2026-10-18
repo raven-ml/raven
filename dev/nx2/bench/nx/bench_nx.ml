@@ -136,14 +136,53 @@ let rows_two () =
   let x = host (64 * 64) |> Nx.reshape [| 64; 64 |] in
   Operands (Nx.place (Two.split ~axis:0) x, Nx.place Two.on x)
 
+(* Ones of shape [s] split along [axis] over [n] memory devices. *)
+let split_over n ~axis s () =
+  let module Set = (val Nx.devices (List.init n memory)) in
+  Value (Nx.place (Set.split ~axis) (filled D.Float32 s 1.))
+
+(* A 256 × 4096 by 4096 × 256 matmul's operands split along k over four
+   memory devices: each device holds a quarter of the contracted terms. *)
+let k_four () =
+  let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
+  in
+  let a = filled D.Float32 [| 256; 4096 |] 1.
+  and b = filled D.Float32 [| 4096; 256 |] 1. in
+  Operands (Nx.place (Four.split ~axis:1) a, Nx.place (Four.split ~axis:0) b)
+
+(* Reductions, scans and a contraction along cut axes, each device computing
+   partial results where its terms lie: a column sum of rows over eight
+   devices; a sum of all of a [8192; 1000] cut by columns, whose windows
+   interleave along the reduced axes; a cumsum along a long cut axis and
+   along rows of 8192 over four devices, windows shorter than a scan's
+   chunk; and a matmul cut along k. *)
+let partial_rows =
+  [
+    Thumper.bench_with_setup "sum-f32-8192x4096-cols-split8"
+      ~setup:(split_over 8 ~axis:0 [| 8192; 4096 |])
+      (fun (Value x) -> Value (Nx.sum ~axes:[ 0 ] x));
+    Thumper.bench_with_setup "sum-f32-8192x1000-split4-axis1"
+      ~setup:(split_over 4 ~axis:1 [| 8192; 1000 |])
+      (fun (Value x) -> Value (Nx.sum x));
+    Thumper.bench_with_setup "cumsum-f32-1M-split4"
+      ~setup:(split_over 4 ~axis:0 [| 1 lsl 20 |])
+      (fun (Value x) -> Value (Nx.cumsum ~axis:0 x));
+    Thumper.bench_with_setup "cumsum-f32-256x8192-rows-split4"
+      ~setup:(split_over 4 ~axis:1 [| 256; 8192 |])
+      (fun (Value x) -> Value (Nx.cumsum ~axis:1 x));
+    Thumper.bench_with_setup "matmul-f32-256x4096x256-k-split4" ~setup:k_four
+      (fun (Operands (a, b)) -> Value (Nx.matmul a b));
+  ]
+
 let placed_rows =
   Thumper.group "placed"
-    [
-      Thumper.bench_with_setup "add-1-two-memory-devices" ~setup:split_two
-        (fun (Value two) -> Value (Nx.add two two));
-      Thumper.bench_with_setup "matmul-f32-64-rows-two-memory-devices"
-        ~setup:rows_two (fun (Operands (a, b)) -> Value (Nx.matmul a b));
-    ]
+    ([
+       Thumper.bench_with_setup "add-1-two-memory-devices" ~setup:split_two
+         (fun (Value two) -> Value (Nx.add two two));
+       Thumper.bench_with_setup "matmul-f32-64-rows-two-memory-devices"
+         ~setup:rows_two (fun (Operands (a, b)) -> Value (Nx.matmul a b));
+     ]
+    @ partial_rows)
 
 let place_rows =
   Thumper.group "place"
