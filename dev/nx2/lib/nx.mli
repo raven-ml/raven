@@ -667,7 +667,7 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     from the end. *)
 
 (** The type for how {!scatter} combines a target with its updates. *)
-type combine =
+type combine = Nx_kernel.combine =
   | Set  (** The last update. *)
   | Add  (** [+0] plus the target plus its updates. *)
   | Max  (** The largest of the target and its updates, or the first NaN. *)
@@ -1809,12 +1809,12 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 (** The type for a square matrix's triangles, each with its diagonal: the
     elements on and below it, or on and above it. *)
-type triangle = Lower | Upper
+type triangle = Nx_kernel.triangle = Lower | Upper
 
 (** The type for how much of a matrix's unitary factors a factorisation gives:
     [k] columns of the left one and [k] rows of the right one, or the whole
     squares, of [m] and of [n]. *)
-type factors = Reduced | Complete
+type factors = Nx_kernel.factors = Reduced | Complete
 
 val cholesky : ?triangle:triangle -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [cholesky a] is the factor of the Hermitian positive definite matrix that

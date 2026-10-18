@@ -1464,13 +1464,10 @@ let set idx v x =
       in
       reshaped ~by s updated
 
-type combine = Set | Add | Max | Min
+type combine = Nx_kernel.combine = Set | Add | Max | Min
 
 let scatter ?(combine = Set) ~axis:a p u x =
   let by = "Nx.scatter" in
-  let combine : Nx_kernel.combine =
-    match combine with Set -> Set | Add -> Add | Max -> Max | Min -> Min
-  in
   let axis = axis ~by x a in
   Eval.eval ~by
     (Value.Scatter
@@ -2319,16 +2316,8 @@ let vdot a b =
 
 (* Linear algebra *)
 
-type triangle = Lower | Upper
-type factors = Reduced | Complete
-
-let kernel_triangle : triangle -> Nx_kernel.triangle = function
-  | Lower -> Lower
-  | Upper -> Upper
-
-let kernel_factors : factors -> Nx_kernel.factors = function
-  | Reduced -> Reduced
-  | Complete -> Complete
+type triangle = Nx_kernel.triangle = Lower | Upper
+type factors = Nx_kernel.factors = Reduced | Complete
 
 let routine ~by l = Eval.eval ~by (Value.Linalg l)
 
@@ -2428,12 +2417,12 @@ let cholesky ?(triangle = Lower) a =
   let by = "Nx.cholesky" in
   square_matrices ~by a;
   let a = lower_of triangle a in
-  routine ~by (Cholesky { triangle = kernel_triangle triangle; a })
+  routine ~by (Cholesky { triangle; a })
 
 let qr ?(factors = Reduced) a =
   let by = "Nx.qr" in
   matrices ~by a;
-  routine ~by (Qr { factors = kernel_factors factors; a })
+  routine ~by (Qr { factors; a })
 
 let lu a =
   let by = "Nx.lu" in
@@ -2449,9 +2438,7 @@ let svd ?(vectors = true) ?(factors = Reduced) a =
   let by = "Nx.svd" in
   matrices ~by a;
   if vectors then
-    let s, (u, vh) =
-      routine ~by (Svd { vectors = Vectors (kernel_factors factors); a })
-    in
+    let s, (u, vh) = routine ~by (Svd { vectors = Vectors factors; a }) in
     (u, s, vh)
   else
     let s, () = routine ~by (Svd { vectors = No_vectors; a }) in
@@ -2540,14 +2527,7 @@ let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
   let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
   let solved adjoint b =
     routine ~by
-      (Solve_triangular
-         {
-           triangle = kernel_triangle triangle;
-           adjoint;
-           unit_diagonal = unit_diag;
-           a;
-           b;
-         })
+      (Solve_triangular { triangle; adjoint; unit_diagonal = unit_diag; a; b })
   in
   back
     (match transpose with
@@ -3505,13 +3485,10 @@ let reduce_segments c ~segments ids x =
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
   let idx = broadcast ~by s (reshaped ~by along ids) in
-  let combine : Nx_kernel.combine =
-    match c with Set -> Set | Add -> Add | Max -> Max | Min -> Min
-  in
   Eval.eval ~by
     (Value.Scatter
        {
-         combine;
+         combine = c;
          unique = false;
          axis = 0;
          idx;
