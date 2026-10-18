@@ -106,13 +106,15 @@ val to_program :
     raises keeps nothing, and the next call makes the program anew.
 
     Programs are also kept on disk ({!Helpers.Diskcache}, table ["to_program"]),
-    for later processes: a program is read back under the same key, the same
-    table of its compiler's binaries ({!Renderer.Compiler.cachekey}), which
-    names the compiler and its options, and the same sources of this library. A
-    program read back is not checked against {!Spec.program} again. An entry
-    that does not read as a program is made anew and replaced. A program is kept
-    on disk only while its compiler keeps its binaries there, and the program of
-    a kernel that asks for a beam search is not.
+    for later processes, up to their source: a program is read back under the
+    same key, the same table of its compiler's binaries
+    ({!Renderer.Compiler.cachekey}), which names the compiler and its options,
+    and the same sources of this library, and its binary is then the one that
+    table keeps for its source ({!Renderer.Compiler.compile_cached}). A program
+    read back is not checked against {!Spec.program} again. An entry that does
+    not read as a program up to its source is made anew and replaced. A program
+    is kept on disk only while its compiler keeps its binaries there, and the
+    program of a kernel that asks for a beam search is not.
 
     When the setting {!Setting.debug} is [3] or more, the optimisations applied
     are printed on standard output, from [4] the source too, and from [7] the

@@ -1547,35 +1547,31 @@ let program_key ast (ren : Renderer.t) =
      ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
-(* A program holds its binary: it is kept on disk only while its compiler's
-   binaries are, under a table that names the compiler. A kernel that asks for a
-   beam search is not kept, since its program is what the search found. *)
+(* A program is kept on disk up to its source, only while its compiler's
+   binaries are, under a table that names the compiler: its binary is the
+   compiler's entry for that source, so each binary is stored once. A kernel
+   that asks for a beam search is not kept, since its program is what the
+   search found. *)
 let kept (k : kernel_info) (ren : Renderer.t) =
   Setting.value Setting.ccache
   && Option.is_some (Renderer.Compiler.cachekey ren.compiler)
   && k.beam = 0
 
-let program prg = op prg = Op.Program && List.length (src prg) = 4
+let rendered prg = op prg = Op.Program && List.length (src prg) = 3
 
-(* A program read back is shown as a compiled one is: its source from DEBUG 4,
-   its instructions from 7. *)
-let show_kept (ren : Renderer.t) prg =
-  match (arg (nth prg 2), arg (nth prg 3)) with
-  | String source, Bytes lib ->
-      if setting Setting.debug >= 4 then print_endline source;
-      if setting Setting.debug >= 7 then
-        Renderer.Compiler.disassemble ren.compiler lib
-  | _ -> ()
-
-let made_program ?beam ~key ~kernel ast ren =
-  let make () =
-    compiled Renderer.Compiler.compile_cached (linearized ?beam ast ren) ren
+(* A program read back is compiled as a made one is, so it shows its source
+   from DEBUG 4 and its instructions from 7. *)
+let made_program ?beam ~key ~kernel ast (ren : Renderer.t) =
+  let render () =
+    let prg = linearized ?beam ast ren in
+    Option.get (do_render ren prg (nth prg 1))
   in
-  if not (kept kernel ren) then make ()
-  else
-    let prg, hit = Graph.cached ~table:"to_program" ~key ~valid:program make in
-    if hit then show_kept ren prg;
-    prg
+  let prg =
+    if not (kept kernel ren) then render ()
+    else fst (Graph.cached ~table:"to_program" ~key ~valid:rendered render)
+  in
+  Option.get
+    (do_compile (ren, Renderer.Compiler.compile_cached) prg (nth prg 2))
 
 let to_program ?beam ast ren =
   let kernel = kernel_of ast in

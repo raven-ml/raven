@@ -866,6 +866,16 @@ let recovers damage () =
   equal outcome ~msg:"made again" (the_program ()) (made db);
   equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
 
+(* A program read back takes its binary from its compiler's table: with the
+   binaries removed, it is compiled again. *)
+let takes_its_binary () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  List.iter Sys.remove (Disk_cache.entries ~table:"test_codegen_bytes" db);
+  equal outcome ~msg:"binaries removed" compiled (read_from_disk db);
+  equal outcome ~msg:"made again" (the_program ()) (made db);
+  equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
+
 let shows_its_source () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
@@ -945,6 +955,8 @@ let on_disk =
            (fun (name, value) -> test name (misses_on [ (name, value) ]))
            (other_values ()));
       test "a program read back shows its source at DEBUG 4" shows_its_source;
+      test "a program read back takes its binary from its compiler's table"
+        takes_its_binary;
       group "a damaged entry is made anew, and replaced"
         [
           test "truncated" (recovers Disk_cache.truncated);

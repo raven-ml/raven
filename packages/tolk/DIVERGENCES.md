@@ -1511,8 +1511,8 @@ driver sizes local memory as it loads a function (D146).
   `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
-- **tolk:** `lib/codegen/codegen.ml:1157` (`program_key`), `:1167`
-  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:356`
+- **tolk:** `lib/codegen/codegen.ml:1539` (`program_key`), `:1555`
+  (`kept`) and `:1564` (`made_program`); `lib/schedule/schedule.ml:356`
   (`in_order`), `:388` (`schedule_key`) and `:393`
   (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
@@ -1520,11 +1520,13 @@ driver sizes local memory as it loads a function (D146).
   (`shaping`); `lib/setting.ml:294` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
-- **Differs:** the program `to_program` makes of a kernel, and by default
-  the schedule `lower_sink_to_linear` makes of a function, are also put in
-  the disk cache (tables `to_program` and `schedule_cache`) as their graphs'
-  text (`Graph`), and a later process reads them back instead of making
-  them. tinygrad keeps programs for its process only, and schedules on disk
+- **Differs:** the program `to_program` makes of a kernel, up to its
+  source, and by default the schedule `lower_sink_to_linear` makes of a
+  function, are also put in the disk cache (tables `to_program` and
+  `schedule_cache`) as their graphs' text (`Graph`), and a later process
+  reads them back instead of making them. A program read back takes its
+  binary from its compiler's table, under its source, so each binary is
+  stored once. tinygrad keeps programs for its process only, and schedules on disk
   only when asked. Each key is the kernel or function, a function with its
   ranges and its storage replaced by placeholders numbered in order (whoever
   makes a loop numbers its range, and whoever makes a staged loop's carry or
@@ -2796,7 +2798,7 @@ encodes its barriers (D146).
   `lib/runtime/support/compiler_cpu.ml:38` (`statement`)
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
-  (`C.identity`); `lib/codegen/codegen.ml:1181-1198` (`program_key`, `kept`);
+  (`C.identity`); `lib/codegen/codegen.ml:1539-1558` (`program_key`, `kept`);
   `lib/setting.ml:285-290` (the search's settings) and
   `lib/codegen/opt/search.ml:300` (the beam search's key).
 - **Differs:** a table also names everything besides the source that

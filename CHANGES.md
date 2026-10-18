@@ -1529,6 +1529,8 @@ thread.
 
 ### Tolk (new)
 
+- The disk cache keeps a `Codegen.to_program` program up to its source and
+  takes its binary from the compiler's table, so each binary is stored once.
 - A `Tolk_engine.link` that raises ends the holds it took on bound buffers
   (`Rig.Claim.release`), so a donation right after it reuses their memory.
 - `Tolk_engine.link` holds the memory of every bound buffer a kernel or
