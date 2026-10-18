@@ -41,6 +41,31 @@ val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
 module Dtype = Nx_array.Dtype
 (** Dtypes: their constructors, element types and properties. *)
 
+(** {!Dtype}'s element types, under the same names: [float32_elt] is
+    [Dtype.float32_elt]. *)
+
+type float64_elt = Dtype.float64_elt
+type float32_elt = Dtype.float32_elt
+type float16_elt = Dtype.float16_elt
+type bfloat16_elt = Dtype.bfloat16_elt
+type float8_e4m3fn_elt = Dtype.float8_e4m3fn_elt
+type float8_e5m2_elt = Dtype.float8_e5m2_elt
+type float4_e2m1fn_elt = Dtype.float4_e2m1fn_elt
+type int64_elt = Dtype.int64_elt
+type uint64_elt = Dtype.uint64_elt
+type int32_elt = Dtype.int32_elt
+type uint32_elt = Dtype.uint32_elt
+type int16_signed_elt = Dtype.int16_signed_elt
+type int16_unsigned_elt = Dtype.int16_unsigned_elt
+type int8_signed_elt = Dtype.int8_signed_elt
+type int8_unsigned_elt = Dtype.int8_unsigned_elt
+type int4_elt = Dtype.int4_elt
+type uint4_elt = Dtype.uint4_elt
+type complex64_elt = Dtype.complex64_elt
+type complex32_elt = Dtype.complex32_elt
+type bool_elt = Dtype.bool_elt
+type bit_elt = Dtype.bit_elt
+
 val float64 : (float, Dtype.float64_elt) dtype
 val float32 : (float, Dtype.float32_elt) dtype
 val float16 : (float, Dtype.float16_elt) dtype

@@ -39,6 +39,31 @@ let values =
           in
           equal (array int) s (Nx.shape x);
           equal bool true (A.Dtype.equal A.Dtype.Float32 (Nx.dtype x)));
+      test "Nx's element types are Nx.Dtype's" (fun () ->
+          (* Compiling is the check: each function's annotation names one
+             module's element type, its argument the other's. *)
+          let f32 (x : (float, Nx.float32_elt, Nx.host) Nx.t) = Nx.shape x in
+          let x : (float, Nx.Dtype.float32_elt, Nx.host) Nx.t =
+            Nx.zeros Nx.float32 [| 2 |]
+          in
+          equal ~msg:"float32" (array int) [| 2 |] (f32 x);
+          let bf16 (x : (float, Nx.Dtype.bfloat16_elt, Nx.host) Nx.t) =
+            Nx.shape x
+          in
+          let x : (float, Nx.bfloat16_elt, Nx.host) Nx.t =
+            Nx.zeros Nx.bfloat16 [| 3 |]
+          in
+          equal ~msg:"bfloat16" (array int) [| 3 |] (bf16 x);
+          let i32 (x : (int32, Nx.int32_elt, Nx.host) Nx.t) = Nx.shape x in
+          let x : Nx.host Nx.int32_t = Nx.zeros Nx.int32 [| 4 |] in
+          equal ~msg:"int32" (array int) [| 4 |] (i32 x);
+          let u8 (dt : (int, Nx.int8_unsigned_elt) Nx.dtype) =
+            Nx.Dtype.name dt
+          in
+          equal ~msg:"uint8" string "uint8" (u8 Nx.Dtype.Uint8);
+          let b (dt : (bool, Nx.Dtype.bool_elt) Nx.dtype) = Nx.Dtype.name dt in
+          equal ~msg:"bool" string "bool"
+            (b (Nx.bool : (bool, Nx.bool_elt) Nx.dtype)));
       test "shape is a fresh array" (fun () ->
           let x = Nx.Repr.of_array Nx.Host.v (on Rig.host [| 2; 3 |]) in
           (Nx.shape x).(0) <- 7;
