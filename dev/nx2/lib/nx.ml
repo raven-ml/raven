@@ -2721,16 +2721,31 @@ let vector ~by p axes m =
   else if p = 1. then sum m
   else power_norm ~by p axes m
 
+(* [f x] for a dtype the routines take; for a narrower float, [f] of [x] at its
+   carrier, rounded once to [x]'s dtype. *)
+let carried (type v s d) ~by (x : (v, s, d) t)
+    (f : 'w 'r. ('w, 'r, d) t -> ('w, 'r, d) t) : (v, s, d) t =
+  let dt = dtype x in
+  match D.kind dt with
+  | D.Float when not (Nx_kernel.full_precision dt) ->
+      let (Prim.Wide w) = Prim.wide dt in
+      cast_by ~by dt (f (cast_by ~by w x))
+  | _ ->
+      routine_dtype ~by x;
+      f x
+
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
   renamed ~by (fun () ->
-      routine_dtype ~by x;
       let along =
         match l with
         | None -> List.init (ndim x) Fun.id
         | Some l -> axes ~by x l
       in
-      let y = magnitudes ~by x (fun m -> vector ~by ord along m) in
+      let y =
+        carried ~by x (fun x ->
+            magnitudes ~by x (fun m -> vector ~by ord along m))
+      in
       if keepdims then y
       else
         let along = Iarray.of_list (List.sort compare along) in
@@ -2739,7 +2754,7 @@ let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
 let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   let by = "Nx.matrix_norm" in
   renamed ~by (fun () ->
-      matrices ~by x;
+      matrix ~by x;
       let r = ndim x - 2 and c = ndim x - 1 in
       (* The greatest or least sum of a line's magnitudes, [summed] along
          it. *)
@@ -2747,8 +2762,9 @@ let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
         reduction ~by k ~axes:[ chosen ] ~keepdims:true
           (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
       in
-      (* The singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
-      let singular k =
+      (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along
+         it. *)
+      let singular k x =
         let _, s, _ = svd ~vectors:false x in
         let s = unsqueeze ~axes:[ -1 ] s in
         match k with
@@ -2756,17 +2772,18 @@ let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
         | `Max -> reduction ~by Max ~axes:[ r ] ~keepdims:true s
         | `Min -> reduction ~by Min ~axes:[ r ] ~keepdims:true s
       in
-      let y =
+      let norm x =
         match ord with
         | `Fro -> magnitudes ~by x (fun m -> power_norm ~by 2. [ r; c ] m)
         | `One -> magnitudes ~by x (fun m -> lines Max r c m)
         | `NegOne -> magnitudes ~by x (fun m -> lines Min r c m)
         | `Inf -> magnitudes ~by x (fun m -> lines Max c r m)
         | `NegInf -> magnitudes ~by x (fun m -> lines Min c r m)
-        | `Nuc -> singular `Sum
-        | `Two -> singular `Max
-        | `NegTwo -> singular `Min
+        | `Nuc -> singular `Sum x
+        | `Two -> singular `Max x
+        | `NegTwo -> singular `Min x
       in
+      let y = carried ~by x norm in
       if keepdims then y else reshaped ~by (batch x) y)
 
 (* Order *)

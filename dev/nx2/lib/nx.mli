@@ -1797,8 +1797,10 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Factorisations, solves and norms of the matrices of a batch, laid out as
     {!section-matrices} says, [m] rows, [n] columns and [k = min m n]. They
     compute [float32], [float64], [complex64] and [complex128]: another dtype
-    raises [Invalid_argument]. [aᴴ] is the conjugate transpose, the transpose
-    of a real [a].
+    raises [Invalid_argument]. {!vector_norm} and {!matrix_norm} also take the
+    float formats narrower than 32 bits, which they compute at [float32] and
+    round once. [aᴴ] is the conjugate transpose, the transpose of a real
+    [a].
 
     Every result has its operand's dtype. A real result of a complex operand
     (a singular value, an eigenvalue of {!eigh}, {!slogdet}'s logarithm, a

@@ -834,6 +834,76 @@ let test_norm_cases () =
   equal ~msg:"no matrix" (array int) [| 0 |]
     (Nx.shape (Nx.matrix_norm ~ord:`Inf (Nx.zeros Nx.float64 [| 0; 0; 3 |])))
 
+(* Narrow floats: a norm computes at float32 and rounds once. *)
+
+type narrow = Narrow : (float, 's) D.t * int array * float array -> narrow
+
+let narrow_dtypes =
+  List.filter
+    (fun (D.Any dt) -> D.is D.Float dt && D.bits dt < 32)
+    D.all
+
+let narrow_case =
+  let open Gen in
+  with_pp
+    (fun ppf (Narrow (dt, s, _)) ->
+      Format.fprintf ppf "%a [%s]" D.pp dt
+        (String.concat "; " (Array.to_list (Array.map string_of_int s))))
+    (let* (D.Any dt) =
+       of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) narrow_dtypes
+     in
+     match D.kind dt with
+     | D.Float ->
+         let* s = array ~size:(int_range 2 3) (int_range 0 3) in
+         let+ xs =
+           array
+             ~size:(constant (Array.fold_left ( * ) 1 s))
+             (frequency
+                [
+                  (6, float_range (-8.) 8.);
+                  ( 1,
+                    of_list
+                      [ 0.; -0.; 1e4; -1e4; Float.infinity; Float.nan ] );
+                ])
+         in
+         Narrow (dt, s, xs)
+     | _ -> assert false)
+
+(* Each order of [x], at its dtype and at float32 rounded once: the bits of
+   each, or [None] where it raises. *)
+let law_narrow_norms (Narrow (dt, s, xs)) =
+  let x = Nx.create dt s xs in
+  let wide = Nx.cast Nx.float32 x in
+  let bits y =
+    Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y))
+  in
+  let outcome f =
+    match f () with y -> Some (bits y) | exception Invalid_argument _ -> None
+  in
+  let same msg (f : 'r. (float, 'r, Nx.host) Nx.t -> (float, 'r, Nx.host) Nx.t)
+      =
+    let narrow = outcome (fun () -> f x)
+    and rounded = outcome (fun () -> Nx.cast dt (f wide)) in
+    cover "computed" (Option.is_some narrow);
+    equal ~msg (option (array int64)) rounded narrow
+  in
+  List.iter
+    (fun ord ->
+      same (Printf.sprintf "vector_norm ord %g" ord) (fun x ->
+          Nx.vector_norm ~ord ~axes:[ -1 ] x))
+    [ 2.; 1.; 3.; 0.5; 0.; -1.; -2.; Float.infinity; Float.neg_infinity ];
+  List.iter
+    (fun (name, ord) -> same name (fun x -> Nx.matrix_norm ~ord x))
+    [
+      ("fro", `Fro); ("nuc", `Nuc); ("one", `One); ("two", `Two);
+      ("inf", `Inf); ("negone", `NegOne); ("negtwo", `NegTwo);
+      ("neginf", `NegInf);
+    ]
+
+let test_narrow_norms =
+  prop "a narrow float's norms are float32's, rounded once" narrow_case
+    law_narrow_norms
+
 let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
 let test_refusals () =
@@ -851,7 +921,8 @@ let test_refusals () =
   invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq ~rtol:Float.nan r (Nx.ones Nx.float64 [| 2 |]));
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true r);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true (Nx.zeros Nx.float64 [| 0; 3 |]));
-  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm h);
+  let i = Nx.ones Nx.int32 [| 2; 2 |] in
+  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm i);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~ord:Float.nan r);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 2 ] r);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 0; 0 ] r);
@@ -859,7 +930,7 @@ let test_refusals () =
       Nx.vector_norm ~ord:Float.infinity (Nx.zeros Nx.float64 [| 0 |]));
   invalid_by ~by:"Nx.vector_norm" (fun () ->
       Nx.vector_norm ~ord:Float.neg_infinity (Nx.zeros Nx.float64 [| 2; 0 |]));
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm h);
+  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm i);
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm (Nx.ones Nx.float64 [| 3 |]));
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two (Nx.zeros Nx.float64 [| 2; 0 |]));
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`One (Nx.zeros Nx.float64 [| 2; 0 |]))
@@ -919,6 +990,7 @@ let () =
              test_vector_norms;
              test_matrix_norms;
              test "norms at their edges" test_norm_cases;
+             test_narrow_norms;
            ];
          group "refusals"
            [
