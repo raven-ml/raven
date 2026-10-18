@@ -161,10 +161,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
-- `Diskcache.put` trims after its write, so on a full disk every put fails
-  and nothing trims. Count and trim before writing, measuring first when the
-  size file is missing; `count` failing after the rename fails a put whose
-  entry is stored
 - Windows: `mark`'s `Unix.utimes` opens the entry without
   `FILE_SHARE_DELETE`, so a concurrent `Diskcache.clear` raises `Sys_error`.
   `clear` leaves such an entry, as `trim`'s `discard` does

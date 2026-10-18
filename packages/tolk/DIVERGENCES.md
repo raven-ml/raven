@@ -3934,9 +3934,12 @@ submission, and a range a loop of rig's program (D146).
 - **tolk:** `lib/helpers.ml:469` (`mark`), `:492` (`size_file`), `:507`
   (`count`), `:569` (`trim`) and `:601` (`put`); `lib/setting.ml:247`
   (`cachesize`, 5 GiB by default, `0` for no bound).
-- **Differs:** a put that takes the cache's files past `CACHESIZE` bytes
-  removes entries of every table and version, the least recently used by
-  file time first, until they hold four fifths of it, and removes the writes
+- **Differs:** a put that would take the cache's files past `CACHESIZE`
+  bytes first removes entries of every table and version, the least recently
+  used by file time first, until they would hold four fifths of it with its
+  entry; it removes them before it writes, so that on a full disk the write
+  finds their space. A put of an entry larger than the bound writes nothing.
+  It also removes the writes
   that killed processes left: those last written an hour or more before, the
   age at which ccache removes its temporary files, so that another process's
   write in progress stays. A hit sets its entry's time. Processes count
@@ -3953,6 +3956,8 @@ submission, and a range a loop of rig's program (D146).
   hold more than cachesize`, `› a put past cachesize removes entries used
   least recently first`, `› a put past cachesize removes the writes a killed
   process left`, `› a put past cachesize keeps another process's write in
-  progress`, `› processes putting in turn keep the cache within
+  progress`, `› a put that cannot write removes entries past cachesize
+  first`, `› a put that cannot count the cache's size stores its entry`,
+  `› processes putting in turn keep the cache within
   cachesize`, `› a cachesize of 0 keeps every entry` and `› a negative
   cachesize is refused`.

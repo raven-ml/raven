@@ -744,6 +744,52 @@ let keeps_writes_in_progress () =
   equal bool true (Sys.file_exists write);
   Diskcache.clear ()
 
+(* The file in which the puts of all processes count the cache's size. *)
+let size_file = Filename.concat cachedb "f7bd60b75b29d79b660a2859395c1a24_size"
+
+(* No put can count while a directory stands at the size's file. *)
+let stores_uncounted () =
+  Diskcache.clear ();
+  if not (Sys.file_exists cachedb) then Sys.mkdir cachedb 0o755;
+  Sys.mkdir size_file 0o755;
+  let table = fresh_table () in
+  let stored =
+    Fun.protect
+      ~finally:(fun () -> Sys.rmdir size_file)
+      (fun () ->
+        sized (1 lsl 16) (fun () -> Diskcache.put ~table "k" "v");
+        Diskcache.get ~table "k")
+  in
+  equal (option string) (Some "v") stored;
+  Diskcache.clear ()
+
+(* A put into a table whose directory the process may not write fails, as a put
+   on a full disk does. Entries used up to 16 minutes ago fill the cache past a
+   bound of 64 KiB, the oldest under the key "0". *)
+let trims_before_writing () =
+  if Sys.win32 || Unix.geteuid () = 0 then
+    skip ~reason:"every directory is writable" ()
+  else begin
+    Diskcache.clear ();
+    let full = fresh_table () and locked = fresh_table () in
+    let v = String.make 4096 'v' and dir = table_directory locked in
+    for i = 0 to 15 do
+      ago
+        (put_entry ~table:full (string_of_int i) v)
+        (float_of_int ((16 - i) * 60))
+    done;
+    Unix.chmod dir 0o555;
+    Fun.protect
+      ~finally:(fun () -> Unix.chmod dir 0o755)
+      (fun () ->
+        raises_match
+          (function Sys_error _ -> true | _ -> false)
+          (fun () ->
+            sized (1 lsl 16) (fun () -> Diskcache.put ~table:locked "k2" v)));
+    equal (option string) None (Diskcache.get ~table:full "0");
+    Diskcache.clear ()
+  end
+
 let unbounded () =
   Diskcache.clear ();
   let table = fresh_table () and v = String.make 4096 'v' in
@@ -948,6 +994,10 @@ let diskcache =
             removes_stale_writes;
           test "a put past cachesize keeps another process's write in progress"
             keeps_writes_in_progress;
+          test "a put that cannot write removes entries past cachesize first"
+            trims_before_writing;
+          test "a put that cannot count the cache's size stores its entry"
+            stores_uncounted;
           test "a cachesize of 0 keeps every entry" unbounded;
           test "a negative cachesize is refused" refuses_negative_size;
           test "processes putting in turn keep the cache within cachesize"

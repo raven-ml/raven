@@ -199,15 +199,17 @@ val cachedb : string
     cache is disabled while {!Setting.cachelevel} is not positive.
 
     The files of the cache hold at most {!Setting.cachesize} bytes, or any
-    number while it is [0]. A put that takes them past it then removes entries
-    of every table and version, the least recently used first, until they hold
-    four fifths of it. An entry is used when it is put or read, at the time its
-    file takes then, so two uses within one tick of the file system's clock are
-    unordered. Removing walks every entry, so it leaves a fifth of the bound for
-    the puts that follow. It also removes the writes in progress last written
-    an hour or more before: a process killed while writing leaves one, which
-    goes uncounted until then. An entry larger than the bound is removed by its
-    own put. An entry that cannot be removed, as on Windows while another
+    number while it is [0]. A put that would take them past it first removes
+    entries of every table and version, the least recently used first, until
+    they would hold four fifths of it with the new entry. It removes them before
+    it writes, so that its write finds their space even on a full disk. An entry
+    is used when it is put or read, at the time its file takes then, so two uses
+    within one tick of the file system's clock are unordered. Removing walks
+    every entry, so it leaves a fifth of the bound for the puts that follow. It
+    also removes the writes in progress last written an hour or more before: a
+    process killed while writing leaves one, which goes uncounted until then. A
+    put of an entry that alone would take the files past the bound writes
+    nothing. An entry that cannot be removed, as on Windows while another
     process has it open, stays for a later removal.
 
     The puts of all processes count together, in the file

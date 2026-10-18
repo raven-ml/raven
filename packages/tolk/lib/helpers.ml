@@ -502,18 +502,18 @@ module Diskcache = struct
     let access = if Sys.win32 then [] else [ Unix.O_WRONLY ] in
     access @ [ Unix.O_APPEND; O_CREAT; O_CLOEXEC; O_SHARE_DELETE ]
 
-  (* [count bytes] adds an entry of [bytes] to the size and is the KiB
-     counted. *)
+  (* [count bytes] adds an entry of [bytes] to the size and is the KiB counted,
+     or [None] if the size cannot be written, as on a full disk. *)
   let count bytes =
     match Unix.openfile size_file append_flags 0o644 with
-    | exception Unix.Unix_error (e, _, _) -> raise (sys_error size_file e)
+    | exception Unix.Unix_error _ -> None
     | fd -> (
         Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
         let n = kib bytes in
         try
           ignore (Unix.write_substring fd (String.make n '\000') 0 n);
-          (Unix.fstat fd).st_size
-        with Unix.Unix_error (e, _, _) -> raise (sys_error size_file e))
+          Some (Unix.fstat fd).st_size
+        with Unix.Unix_error _ -> None)
 
   (* The files named like entries in every table and version, whole or being
      written, each with its name, path, length and the time it was last used. *)
@@ -558,19 +558,19 @@ module Diskcache = struct
         (fun () -> Unix.ftruncate fd kib)
     with Unix.Unix_error _ -> ()
 
-  (* A put writes its entry aside and renames it within moments, so a write
-     in progress last written this many seconds ago is one a process killed
-     while writing left. ccache removes its temporary files at this age. *)
+  (* A put writes its entry aside and renames it within moments, so a write in
+     progress last written this many seconds ago is one a process killed while
+     writing left. ccache removes its temporary files at this age. *)
   let stale_write = 3600.
 
-  (* Entries are kept from the one used most recently, while they and their
-     count hold four fifths of [limit]; the rest are removed. A trim walks every
-     entry, so it leaves a fifth of the bound for the puts before the next.
-     Stale writes are removed, since nothing else would. A trim never fails a
-     put: what it cannot read or remove, as a table another process clears or,
-     on Windows, a file another process has open, it leaves for the next
-     trim. *)
-  let trim limit =
+  (* Entries are kept from the one used most recently, while they, an entry of
+     [room] bytes about to be written and their count hold four fifths of
+     [limit]; the rest are removed. A trim walks every entry, so it leaves a
+     fifth of the bound for the puts before the next. Stale writes are removed,
+     since nothing else would. A trim never fails a put: what it cannot read or
+     remove, as a table another process clears or, on Windows, a file another
+     process has open, it leaves for the next trim. *)
+  let trim limit room =
     let stale = Unix.gettimeofday () -. stale_write in
     let target = limit - (limit / 5) in
     let entries, writes =
@@ -583,14 +583,14 @@ module Diskcache = struct
       if discard path then kept else kept + size
     in
     let rec keep kept = function
-      | (_, _, size, _) :: older when held (kept + size) <= target ->
+      | (_, _, size, _) :: older when held (kept + size + room) <= target ->
           keep (kept + size) older
       | rest -> List.fold_left unless_discarded kept rest
     in
     let newest_first =
       List.sort (fun (_, _, _, a) (_, _, _, b) -> Float.compare b a) entries
     in
-    set_count (kib (keep 0 newest_first))
+    set_count (kib (keep 0 newest_first + room))
 
   let rec mkdir_p dir =
     if not (Sys.file_exists dir) then begin
@@ -598,39 +598,54 @@ module Diskcache = struct
       try Sys.mkdir dir 0o755 with Sys_error _ when Sys.file_exists dir -> ()
     end
 
+  (* The entry is counted, and the cache trimmed, before it is written: a write
+     that fails for want of space then finds the space freed, by its own trim or
+     the next put's. A size that cannot be counted is measured, as is a cache
+     without a size, new or written before the cache counted it. *)
+  let make_room limit bytes =
+    let measured = Sys.file_exists size_file in
+    let over =
+      match count bytes with
+      | Some counted -> held (counted * 1024) > limit
+      | None -> true
+    in
+    if limit > 0 && ((not measured) || over) then trim limit bytes
+
   (* The entry is written aside and renamed into place, so readers never see it
      half written. On Windows the rename can fail while a reader holds the entry
-     open; that entry is complete, so it stays. A cache without a size, new or
-     written before the cache counted it, is measured. *)
+     open; that entry is complete, so it stays. *)
+  let write path entry =
+    let dir = Filename.dirname path in
+    mkdir_p dir;
+    let tmp, oc =
+      Filename.open_temp_file ~mode:[ Open_binary ] ~temp_dir:dir
+        (Filename.basename path ^ ".")
+        ".tmp"
+    in
+    match
+      output_string oc entry;
+      close_out oc
+    with
+    | exception e ->
+        close_out_noerr oc;
+        (try Sys.remove tmp with Sys_error _ -> ());
+        raise e
+    | () -> (
+        try Sys.rename tmp path
+        with Sys_error _ when Sys.file_exists path -> remove tmp)
+
   let put ~table key value =
     let limit = Setting.value Setting.cachesize in
     if limit < 0 then
       invalid_arg
         (Printf.sprintf "Diskcache.put: cachesize %d, expected 0 or more" limit);
     if enabled () then begin
-      let path = entry_path table key and entry = encode key value in
-      let dir = Filename.dirname path in
-      mkdir_p dir;
-      let tmp, oc =
-        Filename.open_temp_file ~mode:[ Open_binary ] ~temp_dir:dir
-          (Filename.basename path ^ ".")
-          ".tmp"
-      in
-      match
-        output_string oc entry;
-        close_out oc
-      with
-      | exception e ->
-          close_out_noerr oc;
-          (try Sys.remove tmp with Sys_error _ -> ());
-          raise e
-      | () ->
-          (try Sys.rename tmp path
-           with Sys_error _ when Sys.file_exists path -> remove tmp);
-          let measured = Sys.file_exists size_file in
-          let counted = count (String.length entry) in
-          let over = (not measured) || held (counted * 1024) > limit in
-          if limit > 0 && over then trim limit
+      let entry = encode key value in
+      let bytes = String.length entry in
+      if limit = 0 || held bytes <= limit then begin
+        make_room limit bytes;
+        write (entry_path table key) entry
+      end
     end
 
   (* Only files named like entries are removed, so a [CACHEDB] pointing at a
