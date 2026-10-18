@@ -50,11 +50,10 @@
 (** {1:order Order}
 
     A step's work follows other work by the memory the step names, as every
-    {!Rig.submit} does: work that reads memory follows the work that last
-    wrote it, and work that writes memory follows every earlier use of it, on
-    any device. A [Submit] step names the memory of its [slots], of its
-    parts' views and of its [fixed]. A step therefore follows the earlier
-    steps whose memory it names, and its device's earlier work.
+    {!Rig.submit}'s does ({!Rig.section-order}). A [Submit] step names the
+    memory of its [slots], of its parts' views and of its [fixed]. A step
+    therefore follows the earlier steps whose memory it names, and its
+    device's earlier work.
 
     Work that reaches memory through an address it was given escapes this
     order, so an address or handle may stand only where its step names the
