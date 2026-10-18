@@ -63,9 +63,9 @@ void rig_pci_window_of(value w, struct rig_pci_window *out);
 
 /* Orders every access before it before every access after it, as devices
    see them: on arm64 the full-system barrier stores to a BAR need; on
-   x86_64 mfence, as Linux's mb(), which Intel's manual names to order
-   streaming loads from write-combined memory (MOVNTDQA). A C11 fence is
-   not that: gcc compiles it to a locked instruction. */
+   x86_64 mfence, as Linux's mb(), since accesses to write-combined memory
+   are weakly ordered. A C11 fence is not that: gcc compiles it to a locked
+   instruction. */
 static inline void rig_pci_barrier(void) {
 #if defined(__aarch64__)
   __asm__ __volatile__("dsb sy" ::: "memory");

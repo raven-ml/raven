@@ -77,43 +77,15 @@ value caml_rig_pci_set64_byte(value a, value off, value x) {
    aligned: memory behind a BAR need not accept the wider or narrower
    accesses the C library's copies make. A combining window, memory behind a
    prefetchable BAR, takes them 16 bytes at a time from its first 16-byte
-   boundary: a write-combining buffer then fills in four stores, and on x86
-   a streaming load reads 64 bytes from write-combined memory into a buffer
-   that the next three loads hit (unverified on hardware). The process's
-   side takes any alignment. Each wide access returns the offset where it
+   boundary: a write-combining buffer then fills in four stores. The
+   process's side takes any alignment. Each wide access returns the offset where it
    stopped, before the last 16 bytes the copy does not hold. */
 
 #if defined(__x86_64__)
-#include <cpuid.h>
 #include <emmintrin.h>
-#include <smmintrin.h>
-
-/* Whether the processor has SSE4.1's streaming load (CPUID leaf 1, ECX bit
-   19), asked once: -1 until known. */
-static int streaming = -1;
-
-static int streams(void) {
-  int s = __atomic_load_n(&streaming, __ATOMIC_RELAXED);
-  if (s < 0) {
-    unsigned a, b, c, d;
-    s = __get_cpuid(1, &a, &b, &c, &d) && (c & (1u << 19));
-    __atomic_store_n(&streaming, s, __ATOMIC_RELAXED);
-  }
-  return s;
-}
-
-__attribute__((target("sse4.1"))) static size_t
-load16_streaming(uint8_t *dst, const volatile uint8_t *src, size_t i,
-                 size_t n) {
-  for (; i + 16 <= n; i += 16)
-    _mm_storeu_si128((__m128i *)(dst + i),
-                     _mm_stream_load_si128((__m128i *)(uintptr_t)(src + i)));
-  return i;
-}
 
 static size_t load16(uint8_t *dst, const volatile uint8_t *src, size_t i,
                      size_t n) {
-  if (streams()) return load16_streaming(dst, src, i, n);
   for (; i + 16 <= n; i += 16)
     _mm_storeu_si128((__m128i *)(dst + i), *(const volatile __m128i *)(src + i));
   return i;
