@@ -78,8 +78,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### tests and runs
 
-- flakes, each failed once: test_submit "a part follows the earlier parts
-  that may share memory"
 - relock windtrap once its `workers-block` branch (a883e72, a start
   barrier that sleeps once workers stop arriving) lands: rig_pci.space
   "two domains allocate and free at once" times out at its 10 s bound in
