@@ -40,8 +40,6 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
-
 #if defined(__APPLE__)
 #include <sys/mount.h>
 #endif
@@ -52,6 +50,7 @@
 #include <sys/syscall.h>
 #if defined(IO_URING_OP_SUPPORTED) && defined(__NR_io_uring_setup)
 #define RIG_DISK_IO_URING 1
+#endif
 #endif
 #endif
 #endif
@@ -69,10 +68,10 @@
    Linux (0x7ffff000) and of the BSDs (INT_MAX). */
 #define CALL_BYTES ((intnat)1 << 30)
 
-/* Opening, identity, closing, syncing */
-
 /* The most bytes of an identity: a device, a handle's type and its bytes. */
 #define IDENTITY_BYTES 160
+
+/* Windows */
 
 #ifdef _WIN32
 
@@ -145,7 +144,68 @@ static int sync_file(intnat h) {
   return FlushFileBuffers((HANDLE)h) ? 0 : (int)GetLastError();
 }
 
+/* The writes through the mapping at [addr] of [n] bytes, in its file. */
+static int sync_mapping(void *addr, uintnat n) {
+  return FlushViewOfFile(addr, n) ? 0 : (int)GetLastError();
+}
+
+/* The errno of the system's error [code], GetLastError's. */
+static int unix_code(int code) {
+  caml_win32_maperr((DWORD)code);
+  return errno;
+}
+
+static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
+                             intnat n) {
+  intnat done = 0;
+  while (done < n) {
+    DWORD len = (DWORD)(n - done < CALL_BYTES ? n - done : CALL_BYTES);
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    ov.Offset = (DWORD)(uint64_t)(pos + done);
+    ov.OffsetHigh = (DWORD)((uint64_t)(pos + done) >> 32);
+    DWORD moved = 0;
+    BOOL ok = write ? WriteFile((HANDLE)h, buf + done, len, &moved, &ov)
+                    : ReadFile((HANDLE)h, buf + done, len, &moved, &ov);
+    if (!ok) {
+      DWORD e = GetLastError();
+      if (!write && e == ERROR_HANDLE_EOF) break;
+      return -(intnat)e;
+    }
+    if (moved == 0) {
+      if (write) return -(intnat)ERROR_WRITE_FAULT;
+      break;
+    }
+    done += moved;
+  }
+  return done;
+}
+
+static intnat transfer(int write, intnat h, int64_t pos, char *buf,
+                       intnat n) {
+  return transfer_calls(write, h, pos, buf, n);
+}
+
+static void watch_forks(void) {}
+
+static int fork_count(void) { return 0; }
+
+extern value caml_win32_alloc_handle(HANDLE);
+
+static value handle_descr(intnat h) {
+  return caml_win32_alloc_handle((HANDLE)h);
+}
+
+static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
+  (void)h;
+  if (pages == NULL || n <= 0) return;
+  WIN32_MEMORY_RANGE_ENTRY range = {pages + pos, (SIZE_T)n};
+  PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0);
+}
+
 #else
+
+/* POSIX */
 
 static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
   memcpy(id + *len, p, n);
@@ -294,98 +354,11 @@ static int sync_file(intnat h) { return fsync_retrying((int)h); }
 
 #endif
 
-#endif
-
-/* Raises [Unix.Unix_error] for the system's error [code] (errno, or
-   GetLastError on Windows) of [call] on [arg]. */
-static void fail(int code, const char *call, value arg) {
-#ifdef _WIN32
-  caml_win32_maperr((DWORD)code);
-  code = errno;
-#endif
-  caml_unix_error(code, call, arg);
+static int sync_mapping(void *addr, uintnat n) {
+  return msync(addr, n, MS_SYNC) == 0 ? 0 : errno;
 }
 
-/* [open_file path mode size] is [(handle, size, id)], [handle] -1 if [path]
-   names no regular file: [id] names the opened file exactly, two files never
-   having the same, or is empty where the system gives no exact identity.
-   [MODE_CREATE] creates the file at [size] bytes. Releases the runtime. */
-value caml_rig_disk_open(value v_path, value v_mode, value v_size) {
-  CAMLparam3(v_path, v_mode, v_size);
-  CAMLlocal2(r, s);
-  intnat h = -1;
-  int64_t size = 0;
-  unsigned char id[IDENTITY_BYTES];
-  size_t len = 0;
-  int code = open_file(String_val(v_path), Int_val(v_mode), Long_val(v_size),
-                       &h, &size, id, &len);
-  if (code == NOT_REGULAR) h = -1;
-  else if (code != 0) fail(code, "open", v_path);
-  s = caml_alloc_initialized_string(len, (const char *)id);
-  r = caml_alloc_tuple(3);
-  Store_field(r, 0, Val_long(h));
-  Store_field(r, 1, Val_long(size));
-  Store_field(r, 2, s);
-  CAMLreturn(r);
-}
-
-/* [close h] closes the descriptor [h]. Releases the runtime. */
-value caml_rig_disk_close(value v_handle) {
-  intnat h = Long_val(v_handle);
-  caml_enter_blocking_section_no_pending();
-  close_file(h);
-  caml_leave_blocking_section();
-  return Val_unit;
-}
-
-/* [sync h] returns once the bytes written to the file [h] are ordered before
-   every later change to the file system, across a crash. Releases the
-   runtime. */
-value caml_rig_disk_sync(value v_handle) {
-  intnat h = Long_val(v_handle);
-  caml_release_runtime_system();
-  int code = sync_file(h);
-  caml_acquire_runtime_system();
-  if (code != 0) fail(code, "fsync", Nothing);
-  return Val_unit;
-}
-
-/* Transfers
-
-   [transfer write h pos buf n] moves [n] bytes between the file [h] from byte
-   [pos] and host memory at [buf]: from the file when [write] is 0, into it
-   otherwise. It is the number of bytes moved, fewer than [n] when a read
-   reaches the end of the file, or the system's error negated. */
-
-#ifdef _WIN32
-
-static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
-                             intnat n) {
-  intnat done = 0;
-  while (done < n) {
-    DWORD len = (DWORD)(n - done < CALL_BYTES ? n - done : CALL_BYTES);
-    OVERLAPPED ov;
-    memset(&ov, 0, sizeof ov);
-    ov.Offset = (DWORD)(uint64_t)(pos + done);
-    ov.OffsetHigh = (DWORD)((uint64_t)(pos + done) >> 32);
-    DWORD moved = 0;
-    BOOL ok = write ? WriteFile((HANDLE)h, buf + done, len, &moved, &ov)
-                    : ReadFile((HANDLE)h, buf + done, len, &moved, &ov);
-    if (!ok) {
-      DWORD e = GetLastError();
-      if (!write && e == ERROR_HANDLE_EOF) break;
-      return -(intnat)e;
-    }
-    if (moved == 0) {
-      if (write) return -(intnat)ERROR_WRITE_FAULT;
-      break;
-    }
-    done += moved;
-  }
-  return done;
-}
-
-#else
+static int unix_code(int code) { return code; }
 
 static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
                              intnat n) {
@@ -407,8 +380,6 @@ static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
   }
   return done;
 }
-
-#endif
 
 #ifdef RIG_DISK_IO_URING
 
@@ -604,7 +575,6 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
    fork: the descriptor table's lock and the files' sync locks, which the
    OCaml side makes anew once [forks] has moved, and the io_uring ring. */
 
-#ifndef _WIN32
 static atomic_int forks;
 
 static void forked_child(void) {
@@ -616,28 +586,87 @@ static void forked_child(void) {
 
 static pthread_once_t watch_once = PTHREAD_ONCE_INIT;
 static void watch(void) { pthread_atfork(NULL, NULL, forked_child); }
+
+static void watch_forks(void) { pthread_once(&watch_once, watch); }
+
+static int fork_count(void) { return atomic_load(&forks); }
+
+static value handle_descr(intnat h) { return Val_long(h); }
+
+static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
+#if defined(__APPLE__)
+  (void)pages;
+  while (n > 0) {
+    int count = n > (1 << 30) ? (1 << 30) : (int)n;
+    struct radvisory ra = {.ra_offset = (off_t)pos, .ra_count = count};
+    if (fcntl((int)h, F_RDADVISE, &ra) != 0) break;
+    pos += count;
+    n -= count;
+  }
+#else
+  (void)pages;
+  if (n > 0) posix_fadvise((int)h, (off_t)pos, (off_t)n, POSIX_FADV_WILLNEED);
+#endif
+}
+
 #endif
 
-/* [watch_forks ()] has a forked child run [forked_child]. Called as the
-   library starts, before any of its locks can be held. Keeps the runtime. */
-value caml_rig_disk_watch_forks(value unit) {
-  (void)unit;
-#ifndef _WIN32
-  pthread_once(&watch_once, watch);
-#endif
+/* Raises [Unix.Unix_error] for the system's error [code] (errno, or
+   GetLastError on Windows) of [call] on [arg]. */
+static void fail(int code, const char *call, value arg) {
+  caml_unix_error(unix_code(code), call, arg);
+}
+
+/* [open_file path mode size] is [(handle, size, id)], [handle] -1 if [path]
+   names no regular file: [id] names the opened file exactly, two files never
+   having the same, or is empty where the system gives no exact identity.
+   [MODE_CREATE] creates the file at [size] bytes. Releases the runtime. */
+value caml_rig_disk_open(value v_path, value v_mode, value v_size) {
+  CAMLparam3(v_path, v_mode, v_size);
+  CAMLlocal2(r, s);
+  intnat h = -1;
+  int64_t size = 0;
+  unsigned char id[IDENTITY_BYTES];
+  size_t len = 0;
+  int code = open_file(String_val(v_path), Int_val(v_mode), Long_val(v_size),
+                       &h, &size, id, &len);
+  if (code == NOT_REGULAR) h = -1;
+  else if (code != 0) fail(code, "open", v_path);
+  s = caml_alloc_initialized_string(len, (const char *)id);
+  r = caml_alloc_tuple(3);
+  Store_field(r, 0, Val_long(h));
+  Store_field(r, 1, Val_long(size));
+  Store_field(r, 2, s);
+  CAMLreturn(r);
+}
+
+/* [close h] closes the descriptor [h]. Releases the runtime. */
+value caml_rig_disk_close(value v_handle) {
+  intnat h = Long_val(v_handle);
+  caml_enter_blocking_section_no_pending();
+  close_file(h);
+  caml_leave_blocking_section();
   return Val_unit;
 }
 
-/* [forks ()] is the number of forks between the process the library started
-   in and this one. Keeps the runtime. */
-value caml_rig_disk_forks(value unit) {
-  (void)unit;
-#ifdef _WIN32
-  return Val_int(0);
-#else
-  return Val_int(atomic_load(&forks));
-#endif
+/* [sync h] returns once the bytes written to the file [h] are ordered before
+   every later change to the file system, across a crash. Releases the
+   runtime. */
+value caml_rig_disk_sync(value v_handle) {
+  intnat h = Long_val(v_handle);
+  caml_release_runtime_system();
+  int code = sync_file(h);
+  caml_acquire_runtime_system();
+  if (code != 0) fail(code, "fsync", Nothing);
+  return Val_unit;
 }
+
+/* Transfers
+
+   [transfer write h pos buf n] moves [n] bytes between the file [h] from byte
+   [pos] and host memory at [buf]: from the file when [write] is 0, into it
+   otherwise. It is the number of bytes moved, fewer than [n] when a read
+   reaches the end of the file, or the system's error negated. */
 
 /* [read h pos dst n] reads [n] bytes of the file [h] from byte [pos] into host
    memory at [dst]: the bytes read. Releases the runtime. */
@@ -669,17 +698,26 @@ value caml_rig_disk_write_byte(value h, value pos, value src, value n) {
                                          Long_val(src), Long_val(n)));
 }
 
+/* [watch_forks ()] has a forked child run [forked_child]. Called as the
+   library starts, before any of its locks can be held. Keeps the runtime. */
+value caml_rig_disk_watch_forks(value unit) {
+  (void)unit;
+  watch_forks();
+  return Val_unit;
+}
+
+/* [forks ()] is the number of forks between the process the library started
+   in and this one. Keeps the runtime. */
+value caml_rig_disk_forks(value unit) {
+  (void)unit;
+  return Val_int(fork_count());
+}
+
 /* [descr h] is the descriptor [h] as a [Unix.file_descr]. Keeps the
    runtime. */
-#ifdef _WIN32
-extern value caml_win32_alloc_handle(HANDLE);
-
 value caml_rig_disk_descr(value v_handle) {
-  return caml_win32_alloc_handle((HANDLE)Long_val(v_handle));
+  return handle_descr(Long_val(v_handle));
 }
-#else
-value caml_rig_disk_descr(value v_handle) { return v_handle; }
-#endif
 
 /* [advise h pages pos n] asks the system to read the [n] bytes of the file
    [h] from byte [pos] ahead of their use, without waiting for them. Linux and
@@ -688,27 +726,6 @@ value caml_rig_disk_descr(value v_handle) { return v_handle; }
    the file's mapping [pages]. A hint: failures are ignored. Releases the
    runtime, with [pages] rooted: Linux allocates the range's pages and submits
    their reads in the caller. */
-
-static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
-#if defined(__APPLE__)
-  (void)pages;
-  while (n > 0) {
-    int count = n > (1 << 30) ? (1 << 30) : (int)n;
-    struct radvisory ra = {.ra_offset = (off_t)pos, .ra_count = count};
-    if (fcntl((int)h, F_RDADVISE, &ra) != 0) break;
-    pos += count;
-    n -= count;
-  }
-#elif defined(_WIN32)
-  (void)h;
-  if (pages == NULL || n <= 0) return;
-  WIN32_MEMORY_RANGE_ENTRY range = {pages + pos, (SIZE_T)n};
-  PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0);
-#else
-  (void)pages;
-  if (n > 0) posix_fadvise((int)h, (off_t)pos, (off_t)n, POSIX_FADV_WILLNEED);
-#endif
-}
 
 value caml_rig_disk_advise(value v_handle, value v_pages, value v_pos,
                            value v_n) {
@@ -731,11 +748,7 @@ value caml_rig_disk_msync(value v_pages) {
   void *addr = Caml_ba_data_val(v_pages);
   uintnat n = caml_ba_byte_size(Caml_ba_array_val(v_pages));
   caml_release_runtime_system();
-#ifdef _WIN32
-  int code = FlushViewOfFile(addr, n) ? 0 : (int)GetLastError();
-#else
-  int code = msync(addr, n, MS_SYNC) == 0 ? 0 : errno;
-#endif
+  int code = sync_mapping(addr, n);
   caml_acquire_runtime_system();
   if (code != 0) fail(code, "msync", Nothing);
   CAMLreturn(Val_unit);
