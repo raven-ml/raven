@@ -227,8 +227,10 @@ value caml_rig_stamps_next(value v_c) {
 }
 
 /* Forgets every point of memory taken out of its device's cache: all its
-   points settled before it entered the cache. No live operation reads or
-   writes these stamps, so the stores race with nothing. */
+   points settled before it entered the cache. No live buffer reads or
+   writes these stamps. A wait that began on a buffer a free then killed may
+   still read them (Memory.release_early); the words are atomic, so it reads
+   points of this use or the next, and only waits longer. */
 value caml_rig_stamps_clear(value v_s) {
   struct rig_stamps *s = Stamps_val(v_s);
   atomic_store(&s->lost_use, 0);

@@ -722,7 +722,8 @@ let route_one d =
     | Memory e when cacheable d e -> cache e
     | Memory e -> retire_entry e
     | Image (loaded, code) -> append_pending (d, Unload (loaded, code))
-    | Release h -> append_pending (d, Let_go h));
+    | Release h -> append_pending (d, Let_go h)
+    | Stamps st -> stamps_unref st);
     release_pop l.release;
     true
   end
@@ -767,6 +768,45 @@ external token_link : token -> unit = "caml_rig_token_link" [@@noalloc]
 let release_hold_now t h =
   unhold_all h;
   token_link t
+
+(* Early release *)
+
+(* Under [a]'s owner's lock, which a borrow's first entry takes too: puts
+   [a]'s entry on the release list as [a]'s collection would, and lets go of
+   the host memory [a] keeps, which returns once the entry no longer keeps it
+   and the collector frees it. [kept] becomes [a]'s token: it releases the
+   reference [a] took on the stamps once [a] is collected. Every reader of
+   [a]'s entry checks its buffer live first, and [a]'s buffers are dead, but
+   a walk of the stamps that began before keeps reading them. An entry of
+   host memory keeps its bytes, so [a] lets it go; another entry stays, so
+   that a dead buffer keeps its place ({!Rig.Buffer.overlaps}). *)
+let release_locked ((a : alloc), kept) =
+  token_link a.token;
+  a.token <- kept;
+  a.keep <- Nothing;
+  match a.entry.backing with
+  | Kept _ -> a.entry <- no_entry
+  | Driver_memory _ | Io_memory _ -> ()
+
+(* The token that releases the stamps [st] once collected, or [no_token] if
+   [a]'s owner's list is closed: [a]'s memory then returns at its
+   collection. *)
+let stamps_token (a : alloc) st =
+  stamps_ref st;
+  match token a.owner.live.release (Stamps st) 0 max_int (-1) with
+  | t ->
+      if t == no_token then stamps_unref st;
+      t
+  | exception e ->
+      stamps_unref st;
+      raise e
+
+let release_early (a : alloc) =
+  let st = a.entry.stamps in
+  if st = 0 then Dev.protect a.owner release_locked (a, no_token)
+  else
+    let kept = stamps_token a st in
+    if kept != no_token then Dev.protect a.owner release_locked (a, kept)
 
 (* Under [hold_lock]: releases the holds at the front of the list's hand whose
    memory is live and pops them: whether there were any. *)

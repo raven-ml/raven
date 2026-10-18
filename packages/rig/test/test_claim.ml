@@ -294,6 +294,17 @@ let test_exclusive_writes () =
   let m = donated (B.create d 8) in
   equal string ~msg:"memory the host does not address" "zzcdijkl" (written m)
 
+(* A borrow of memory a donation holds exclusive raises: it claims the
+   memory while it maps it, so that no free returns the memory meanwhile. *)
+let test_borrow_exclusive () =
+  let d = Result.get_ok (Rig.memory_device "claim:borrow-exclusive") in
+  let b = B.create Rig.host (1 lsl 16) in
+  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      equal ~msg:"exclusive" bool true (Claim.exclusive c b);
+      raises_match (Exn.invalid_arg ~substring:"held exclusive") (fun () ->
+          B.borrow d b));
+  is_some ~msg:"once the donation returned" (B.borrow d b)
+
 (* A borrow and the memory it maps share one count. *)
 let test_borrow_counts () =
   let d = Result.get_ok (Rig.memory_device "claim:borrow") in
@@ -767,9 +778,10 @@ let group_commands =
 
 (* Two domains: reads, exports and shares against a donation that consumes the
    memory when it holds it exclusive, and writes it in place through the buffer
-   the consumption gives. A read, an export or a share before the donation
-   keeps it a read; one after a consumption finds the buffer dead. A donation
-   may also stay a read while another domain's claims hold the memory. *)
+   the consumption gives, or a free, which consumes it as a donation does. A
+   read, an export or a share before the donation keeps it a read; one after a
+   consumption finds the buffer dead. A donation may also stay a read while
+   another domain's claims hold the memory. *)
 type memory = { mutable dead : bool; mutable reads : int; mutable out : bool }
 
 let memory =
@@ -798,6 +810,18 @@ let judge_donate r = function
       if consumed then
         equal ~msg:"reads, outside" (pair int bool) (0, false) (r.reads, r.out);
       r.dead <- consumed
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+(* A free consumes as a donation does. One that keeps the memory found
+   another claim on it, such as another domain's donation holding it
+   exclusive before it consumes, which no order of whole calls shows. *)
+let judge_free r = function
+  | Ok true ->
+      equal ~msg:"dead, reads, outside" (triple bool int bool)
+        (false, 0, false) (r.dead, r.reads, r.out);
+      r.dead <- true
+  | Ok false -> ()
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
   | Error e -> raise e
 
@@ -832,6 +856,7 @@ let donation_commands =
     command "export" (memory ^-> judges unit) judge_outside export;
     command "share" (memory ^-> judges unit) judge_outside Claim.share;
     command "donate" (memory ^-> judges bool) judge_donate donate;
+    command "free" (memory ^-> judges bool) judge_free B.free;
   ]
 
 (* Two domains: a donor that hands its claims to another domain and returns at
@@ -1362,6 +1387,53 @@ let donate_while_waiting p b access donor =
   P.open_gate p;
   (donated, Domain.join ended)
 
+(* Two domains: a wait held at its device's point while a free on the other
+   kills its buffer, and the memory returns once the work ran. The wait
+   walks the stamps it began on, which live while the dead buffer is
+   reachable, so it returns. Run with MallocScribble=1 (macOS) or under
+   AddressSanitizer, a walk of freed stamps reads garbage. *)
+let test_free_beside_wait () =
+  let d, p = P.open_ "claim:free-wait" in
+  let h = B.create Rig.host (1 lsl 16) in
+  write d (require_some (B.borrow d h));
+  P.gate p;
+  let waited =
+    Domain.spawn (fun () ->
+        match B.wait h Rig.Read_write with
+        | () -> "returned"
+        | exception e -> Printexc.to_string e)
+  in
+  Rig_support.await "the wait at the gate" (fun () -> P.sleepers p = 1);
+  equal ~msg:"freed" bool true (B.free h);
+  ignore (P.run p);
+  for _ = 1 to 2 do
+    ignore (Sys.opaque_identity (B.create Rig.host 0));
+    Rig.free_cache d
+  done;
+  P.open_gate p;
+  equal ~msg:"the wait" string "returned" (Domain.join waited);
+  ignore (P.run p)
+
+(* Two domains: a borrow held while it maps, and a free on the other. The
+   borrow claims the memory while it maps it, so the free changes nothing
+   then, and succeeds once the borrow returned. *)
+let test_free_beside_borrow () =
+  let d, p = P.open_ "claim:free-borrow" in
+  let h = B.create Rig.host (1 lsl 16) in
+  P.gate_locates p;
+  let borrowed =
+    Domain.spawn (fun () ->
+        match B.borrow d h with
+        | Some _ -> "borrowed"
+        | None -> "not mapped"
+        | exception e -> Printexc.to_string e)
+  in
+  Rig_support.await "the borrow mapping" (fun () -> P.locaters p = 1);
+  equal ~msg:"a free while the borrow maps" bool false (B.free h);
+  P.open_locates p;
+  equal ~msg:"the borrow" string "borrowed" (Domain.join borrowed);
+  equal ~msg:"a free once it returned" bool true (B.free h)
+
 (* The copy reads the source after the wait for its destination's last use. *)
 let test_host_copy_source () =
   let d, p = P.open_ "claim:host-copy-source" in
@@ -1593,6 +1665,7 @@ let tests =
           test_exclusive_writes;
         test "a borrow and the memory it maps share one count"
           test_borrow_counts;
+        test "a borrow of memory held exclusive raises" test_borrow_exclusive;
         test "a bigarray's memory is never exclusive" test_of_bigarray;
         test "memory shared through any of its buffers is never exclusive"
           test_share_covers;
@@ -1686,6 +1759,10 @@ let tests =
           "reads, exports and shares beside a consuming donation are ordered \
            with it"
           donation_commands;
+        test "a wait beside a free walks the stamps it began on"
+          test_free_beside_wait;
+        test "a free beside a borrow that maps changes nothing"
+          test_free_beside_borrow;
         test "a host copy waiting holds its source from a donation"
           test_host_copy_source;
         test "a host copy waiting holds its destination from a donation"

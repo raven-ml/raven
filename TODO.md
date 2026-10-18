@@ -26,10 +26,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rig
 
-### semantics
-
-- ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5)
-
 ### drivers
 
 - NV: each open and close of a device on fudge grows glibc's C heap by

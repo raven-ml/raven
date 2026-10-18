@@ -245,7 +245,9 @@ let rec claim c =
   if i >= 0 then begin
     let b = nth c i in
     refusal "Claim.with_" b;
-    Memory.check b.mem;
+    (* A loss refused it: the check that raises it walks the stamps under a
+       read claim, so that no free returns them meanwhile. *)
+    reading "Claim.with_" b (fun () -> Memory.check b.mem);
     claim c
   end
 
@@ -295,6 +297,23 @@ let consume c ~why b =
   | -2 -> Buffer.refuse_dead "Claim.consume" b
   | -3 -> invalid_arg "Rig.Claim.consume: the memory is held"
   | g -> { b with generation = g }
+
+(* [free]'s step: 1 if it consumed [b]'s memory, 0 if a claim, a hold or a
+   bit of the word kept it, 2 if [b] is dead. *)
+external freed : buffer -> string -> int = "caml_rig_buffer_free"
+
+let free b =
+  let fn = "Buffer.free" in
+  Dev.check_held fn;
+  Buffer.check_live fn b;
+  Buffer.spans b
+  &&
+  match freed b "freed" with
+  | 0 -> false
+  | 1 ->
+      Memory.release_early b.mem.alloc;
+      true
+  | _ -> Buffer.refuse_dead fn b
 
 let consumable c b =
   let cl = b.mem.alloc in

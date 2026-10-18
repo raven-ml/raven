@@ -298,14 +298,16 @@ type alloc = {
   mutable why : string;  (** The last consumption's reason. *)
   mutable entry : entry; [@atomic]
       (** The allocation's entry, {!Memory.no_entry} for host memory no
-          device borrowed. Set once, under [owner]'s lock, and read without
-          it: the read orders the reader's access to the entry's stamps,
-          which C initialised. *)
+          device borrowed and once a free let it go ({!Rig.Buffer.free}). Set
+          under [owner]'s lock, and read without it: the read orders the
+          reader's access to the entry's stamps, which C initialised. *)
   mutable token : token;
       (** Puts [entry] on [owner]'s release list once collected.
           {!Memory.no_token} for host memory until its first borrow, and for
           an image's code memory, whose entry the image releases. *)
-  keep : keep;  (** The host memory it keeps reachable. *)
+  mutable keep : keep;
+      (** The host memory it keeps reachable, until a free lets it go
+          ({!Rig.Buffer.free}). *)
 }
 (** The type for one lifetime of an allocation, which every memory record
     over it shares: its claim, and the token that releases its entry. A
@@ -389,3 +391,6 @@ type released =
   | Memory of entry
   | Image of loaded * entry option  (** The image and its code's memory. *)
   | Release of held
+  | Stamps of int
+      (** The stamps a freed allocation keeps a reference on
+          ({!Memory.release_early}), dropped once it is collected. *)

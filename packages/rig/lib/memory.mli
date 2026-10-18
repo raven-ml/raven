@@ -226,6 +226,13 @@ val release_hold_now : token -> holds -> unit
     now, for a caller that gives them up: [t]'s record goes on the list of
     holds with none left to release. *)
 
+val release_early : alloc -> unit
+(** [release_early a] returns the memory of [a], whose buffers are dead, as
+    [a]'s collection would ({!Rig.Buffer.free}): its entry goes on its
+    owner's release list, and it lets go of the host memory [a] keeps. [a]
+    keeps a reference on the entry's stamps until it is collected, so a walk
+    of them that began before the release reads live memory. *)
+
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 

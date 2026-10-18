@@ -1092,8 +1092,89 @@ let budget_commands =
     command "alloc" (budgeted ^-> judges unit) judge_alloc alloc_budgeted;
   ]
 
+(* Early release *)
+
+(* A freed buffer's memory returns once the work using it is done, while the
+   buffer is still reachable, dead with the reason "freed": an allocation of
+   its size reuses it then, and not before. *)
+let test_free () =
+  let d, p = P.open_ "memory:free" in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  let b = B.create d (4 * kib) in
+  ignore (submit s ~buffers:[| b |]);
+  let at = Support.at b in
+  equal ~msg:"freed" bool true (B.free b);
+  equal ~msg:"its death" (option string) (Some "freed") (B.dead b);
+  let other = B.create d (4 * kib) in
+  equal ~msg:"while its work is queued" bool false (Support.at other = at);
+  ignore (P.run p);
+  equal ~msg:"once its work ran" int at (Support.at (B.create d (4 * kib)));
+  ignore (Sys.opaque_identity (b, other))
+
+(* Freed host memory that a device borrowed returns once the device's work on
+   it ran and the collector has run, while the buffer is still reachable. *)
+let test_free_host () =
+  let d, p = P.open_ "memory:free-host" in
+  let n = 1 lsl 20 in
+  let h = B.create Rig.host n in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  ignore (submit s ~buffers:[| require_some (B.borrow d h) |]);
+  let settle () =
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (B.create Rig.host 0);
+    Gc.full_major ();
+    Rig.allocated Rig.host
+  in
+  let before = settle () in
+  equal ~msg:"freed" bool true (B.free h);
+  at_least ~msg:"while the work on it is queued" int ~than:before (settle ());
+  ignore (P.run p);
+  at_most ~msg:"once the work ran" int ~than:(before - n) (settle ());
+  ignore (Sys.opaque_identity h)
+
+(* A free that cannot take the memory exclusive is [false] and changes
+   nothing: of a part of the memory, of memory another claim reads or holds or
+   a donation holds exclusive, and of memory outside the claims. A free of a
+   dead buffer raises. *)
+let test_free_refused () =
+  let d, _ = P.open_ "memory:free-refused" in
+  let kept msg b =
+    equal ~msg bool false (B.free b);
+    equal ~msg (option string) None (B.dead b)
+  in
+  let b = B.create d 64 in
+  kept "a view" (B.view b ~first:0 ~length:8);
+  (match Support.Reader.claim b Rig.Read with
+  | Support.Reader.Claimed -> ()
+  | _ -> fail "a claim of a new buffer");
+  kept "read by a claim" b;
+  Support.Reader.release b;
+  let h = Rig.Claim.hold [ b ] in
+  kept "held" b;
+  ignore (Sys.opaque_identity h);
+  let x = B.create d 64 in
+  Rig.Claim.with_ ~read:[] ~donate:[ x ] (fun _ ->
+      kept "held exclusive" x);
+  let shared = B.create Rig.host 64 in
+  Rig.Claim.share shared;
+  kept "shared" shared;
+  kept "a bigarray's"
+    (B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8));
+  let freed = B.create d 64 in
+  equal ~msg:"a live buffer" bool true (B.free freed);
+  raises_match (Exn.invalid_arg ~substring:"freed") (fun () -> B.free freed)
+
 let tests =
   [
+    group ~timeout "early release"
+      [
+        test "a freed buffer's memory returns once its work is done" test_free;
+        test "freed host memory returns once a device's work on it ran"
+          test_free_host;
+        test "a free that cannot take the memory exclusive changes nothing"
+          test_free_refused;
+      ];
     group ~timeout "budget"
       [
         test "the host's allocated bytes count its buffers"

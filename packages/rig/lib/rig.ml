@@ -90,6 +90,7 @@ module Buffer = struct
   let blit_from_string = Copy.blit_from_string
   let blit_to_bytes = Copy.blit_to_bytes
   let fill = Copy.fill
+  let free = Claim.free
 end
 
 module Claim = Claim

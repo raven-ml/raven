@@ -703,14 +703,14 @@ val failure : unit -> string option
 
 (** {1:reclaim Reclamation}
 
-    No function frees a buffer. After its use, the life of an allocation
-    goes like this:
+    Memory returns on its own once collected, or early through
+    {!Buffer.free}. After its use, the life of an allocation goes like this:
     {ol
     {- {e Collection.} Once every buffer over the allocation, and every
        array {!Buffer.read}, {!Buffer.write} or {!Buffer.export} made of it,
        is unreachable, the OCaml collector collects it, on whichever domain
        the collector runs. A prepared submission keeps the buffers it uses
-       reachable ({!Submission}).}
+       reachable ({!Submission}). {!Buffer.free} skips this step.}
     {- {e Waiting.} It waits until every point of its stamps, and of the
        work that used it through {!Submission.unordered} refs, which rig
        records beside the stamps, is reached or dropped.}
@@ -748,9 +748,9 @@ val failure : unit -> string option
     takes of the C library's memory: its own, and up to 112 more where it
     starts on 128 bytes ({!Buffer.create}). An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
-    buffers more often. Live buffers are never freed, so a program that
-    keeps every buffer reachable runs out of memory however large its
-    budget.
+    buffers more often. Live buffers are freed only by {!Buffer.free}, so a
+    program that keeps every buffer reachable and frees none runs out of
+    memory however large its budget.
     {ul
     {- A dropped host buffer of 64 KiB or more holds its memory until a
        major cycle of the collector frees it. A cycle comes once the bytes
@@ -936,9 +936,22 @@ module Buffer : sig
       allocation shares one mapping, which lasts until the allocation
       returns or [d] has stopped.
 
-      Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is lost or its
-      driver faults during the borrow; and [Sys_error] if asking an io device
-      for [b]'s pages fails transiently ({!Rig_edge.Io.pages}). *)
+      Raises [Invalid_argument] if [b] is dead or, on a device other than
+      [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is
+      lost or its driver faults during the borrow; and [Sys_error] if asking
+      an io device for [b]'s pages fails transiently
+      ({!Rig_edge.Io.pages}). *)
+
+  val free : t -> bool
+  (** [free b] tries to return [b]'s memory early, and is [false], changing
+      nothing, if [b] does not span its memory ({!spans}), another claim
+      holds it, or it is outside the claims ({!Rig.section-claims}). Otherwise
+      it takes the memory exclusive and consumes it with the reason
+      ["freed"], so every buffer over it is dead, the memory returns once the
+      work using it is done, as collected memory does
+      ({!Rig.section-reclaim}), and it is [true].
+
+      Raises [Invalid_argument] if [b] is dead. *)
 
   (** {1:properties Properties}
 
@@ -967,7 +980,9 @@ module Buffer : sig
   val overlaps : t -> t -> bool
   (** [overlaps b b'] is [true] iff [b] and [b'] share a byte of memory,
       through views of one allocation, a borrow and the memory it maps, or two
-      bigarrays over the same bytes. An empty buffer overlaps nothing. *)
+      bigarrays over the same bytes. An empty buffer overlaps nothing. A
+      buffer {!free} killed keeps its place, which memory made since may
+      take. *)
 
   val access : t -> access
   (** [access b] is the access [b] admits, which its views and borrows
@@ -1179,7 +1194,8 @@ module Buffer : sig
 
       {b Warning.} The object lives only while [b] is reachable. Work that
       uses it must keep [b] reachable until the work is done, for example
-      with the [keep] of its submission ({!Submission.make}).
+      with the [keep] of its submission ({!Submission.make}), and must not
+      {!free} it.
 
       Raises [Invalid_argument] if [b] is dead, or is {!host}'s or an io
       device's memory, which no driver object names. *)

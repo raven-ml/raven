@@ -496,6 +496,39 @@ value caml_rig_claim_drop(value v_b) {
 
 void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
 
+/* Buffer.free's step, as a donation's: a read claim, a check of [v_b] under
+   it, then the memory exclusive if that claim is its only one and no hold
+   or bit is on its word. It then raises the generation from [v_b]'s own
+   with the reason [v_why], and leaves the word empty. Exclusive meanwhile,
+   the memory refuses every claim, so a claim that follows finds [v_b]
+   dead. It is 1 if it consumed the memory, 0 if the word refused it, and 2
+   if [v_b] is dead, holding nothing. */
+value caml_rig_buffer_free(value v_b, value v_why) {
+  _Atomic value *word = claim_word(v_b);
+  value w = atomic_load_explicit(word, memory_order_relaxed);
+  do {
+    if (Long_val(w) < 0) return Val_long(0);
+  } while (!atomic_compare_exchange_weak(word, &w,
+                                         Val_long(Long_val(w) + CLAIM_ONE)));
+  value alloc = alloc_of(v_b);
+  _Atomic value *gen = (_Atomic value *)&Field(alloc, ALLOC_GEN);
+  value g = Field(v_b, BUFFER_GEN);
+  if (atomic_load(gen) != g) {
+    claim_end(v_b, "Rig.Buffer.free");
+    return Val_long(2);
+  }
+  value one = Val_long(CLAIM_ONE);
+  if (!atomic_compare_exchange_strong(word, &one,
+                                      Val_long(CLAIM_EXCLUSIVE))) {
+    claim_end(v_b, "Rig.Buffer.free");
+    return Val_long(0);
+  }
+  caml_modify(&Field(alloc, ALLOC_WHY), v_why);
+  atomic_store(gen, Val_long(Long_val(g) + 1));
+  atomic_store_explicit(word, Val_long(0), memory_order_release);
+  return Val_long(1);
+}
+
 /* Holds
 
    A hold adds CLAIM_HOLD to the word unless the memory is held exclusive,

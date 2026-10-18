@@ -126,14 +126,31 @@ let borrow d b =
     Memory.drain d;
     Dev.raise_lost d
   end;
-  Memory.check b.mem;
-  if b.mem.dev == d then Some b
-  else
-    match Memory.borrow d b.mem with
+  if b.mem.dev == d then begin
+    Memory.check b.mem;
+    Some b
+  end
+  else begin
+    (* A read claim keeps a free from returning the memory while it maps: the
+       claim, then the checks under it, as every claim does. *)
+    if not (Memory.claim_add b) then
+      invalid_argf "Rig.Buffer.borrow: the memory is held exclusive";
+    match
+      check_live "Buffer.borrow" b;
+      Memory.check b.mem;
+      Memory.borrow d b.mem
+    with
     | Some mem ->
+        Memory.claim_drop b;
         Memory.prefetch d b.mem ~at:b.offset ~len:b.length;
         Some { b with mem }
-    | None -> None
+    | None ->
+        Memory.claim_drop b;
+        None
+    | exception e ->
+        Memory.claim_drop b;
+        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  end
 
 let wait_points b access =
   if access = Read then Memory.wait_write b.mem else Memory.wait_points b.mem

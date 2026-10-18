@@ -145,6 +145,14 @@ let one_donor (w : Value.death Atomic.Loc.t) w' =
   | Value.Offered k, Value.Offered k' -> k = k'
   | (Value.Live | Value.Offered _ | Value.Died _), _ -> false
 
+(* Whether [b] and [b'] are one buffer, or live and share memory: a dead
+   buffer's place may lie in memory made since its memory was freed. *)
+let share b b' =
+  b == b'
+  || Option.is_none (Rig.Buffer.dead b)
+     && Option.is_none (Rig.Buffer.dead b')
+     && Rig.Buffer.overlaps b b'
+
 (* The donated operands among [xs]. Two handles of one donor or over one memory
    raise naming [Nx.donate]: the same handle twice, two donations of one value,
    or one handle and a value a movement passed on. *)
@@ -165,8 +173,7 @@ let handles ~by xs =
                   || Iarray.exists
                        (fun p ->
                          Iarray.exists
-                           (fun q ->
-                             Rig.Buffer.overlaps (A.buffer p) (A.buffer q))
+                           (fun q -> share (A.buffer p) (A.buffer q))
                            b.arrays)
                        a.arrays
               | _ -> false
@@ -278,8 +285,9 @@ let take ~by b =
       else None)
 
 (* Ends the claimed handles [hs] once [by] read them: memory no other value
-   reads, and that [by] did not write its result into ([reused]), is
-   consumed. *)
+   reads, every shard of a value or none, and that [by] did not write its
+   result into ([reused]), is consumed and then freed, so that it returns to
+   its device once the work on it is done. *)
 let consumed ~by ~reused hs =
   List.iter
     (fun (Handle (_, x) as h) ->
@@ -290,7 +298,9 @@ let consumed ~by ~reused hs =
           if not (List.exists (fun b -> List.memq b reused) bufs) then
             Rig.Claim.with_ ~read:[] ~donate:bufs (fun c ->
                 if List.for_all (Rig.Claim.exclusive c) bufs then
-                  List.iter (fun b -> ignore (Rig.Claim.consume c ~why b)) bufs)
+                  List.map (Rig.Claim.consume c ~why) bufs
+                else [])
+            |> List.iter (fun b -> ignore (Rig.Buffer.free b : bool))
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
 
@@ -1295,7 +1305,7 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
    result of [dt]: [h] is claimed, then its memory takes the
    result where rig holds it exclusive and it has the result's dtype and
    C-contiguous layout over all of its memory; otherwise the result is fresh
-   and the memory, where no other value reads it, is consumed after the kernel.
+   and the memory, where no other value reads it, is freed after the kernel.
    [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
@@ -1314,7 +1324,7 @@ let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
       | None -> run (destination dt a) a)
   | Some _ | None ->
       let r = run (destination dt a) a in
-      ignore (take ~by (A.buffer a));
+      ignore (Rig.Buffer.free (A.buffer a) : bool);
       r
 
 (* Whether [x] is a live array at [at]. *)
