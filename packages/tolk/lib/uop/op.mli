@@ -79,7 +79,13 @@ type t =
   | Shl  (** Shifts [x] left by [y] bits. *)
   | Shr  (** Shifts [x] right by [y] bits. *)
   | Cdiv  (** Integer division rounding toward zero. *)
-  | Max  (** The greater of [x] and [y]. *)
+  | Max
+      (** The greater of [x] and [y], computed as [y] where [x < y] and as [x]
+          elsewhere. Where neither is less than the other, a NaN against any
+          value or [-0.] against [0.], it is either of the two: rewrites treat
+          [Max] as commutative ({!Set.commutative}) and may swap them. It is
+          neither IEEE 754's maximum, which gives NaN, nor its maximumNumber,
+          which gives the number; a caller that needs one tests for NaN. *)
   | Cmod  (** The remainder of {!Cdiv}: it has the sign of [x]. *)
   | Cmplt  (** [x < y]. *)
   | Cmpne  (** [x <> y]. *)
@@ -133,7 +139,12 @@ type t =
   | Unshard
       (** Reassembles a value sharded across devices: its source is one shard
           and its result is the whole. *)
-  | Reduce  (** Reduces axes of its source with {!Add}, {!Mul} or {!Max}. *)
+  | Reduce
+      (** Reduces axes of its source with {!Add}, {!Mul} or {!Max}, in an
+          order the compiler chooses; over no element it is the operation's
+          identity. Since {!Max} gives either operand for a NaN, a maximum
+          over elements one of which is NaN is NaN, the identity or one of
+          the elements. *)
   | Allreduce  (** Reduces a value across devices. *)
 
 val equal : t -> t -> bool
@@ -233,8 +244,10 @@ module Set : sig
       {!Reshape}, {!Expand}, {!Permute}, {!Pad}, {!Shrink} and {!Flip}. *)
 
   val commutative : t
-  (** [commutative] is the binary operations [f] with [f x y = f y x]: {!Add},
-      {!Mul}, {!Max}, {!Cmpne}, {!Cmpeq}, {!Xor}, {!And} and {!Or}. *)
+  (** [commutative] is the binary operations [f] with [f x y = f y x], whose
+      operands rewrites may swap: {!Add}, {!Mul}, {!Max}, {!Cmpne}, {!Cmpeq},
+      {!Xor}, {!And} and {!Or}. For {!Max} it holds up to which of two values
+      neither less than the other it gives. *)
 
   val associative : t
   (** [associative] is the binary operations that rewrites may regroup, each
