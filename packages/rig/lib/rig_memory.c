@@ -13,7 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sched.h>
 #endif
 

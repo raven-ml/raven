@@ -28,11 +28,11 @@
 #include <caml/signals.h>
 #include <caml/threads.h>
 
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <sched.h>
-#include <time.h>
 #endif
 
 #include "rig_stubs.h"
@@ -55,28 +55,20 @@ enum {
   SUBMIT_GROW
 };
 
-/* Mutexes and conditions */
+/* Mutexes and conditions
 
-#ifdef _WIN32
-static void mutex_init(rig_mutex *m) { InitializeSRWLock(m); }
-static int mutex_try(rig_mutex *m) { return TryAcquireSRWLockExclusive(m); }
-static void mutex_lock(rig_mutex *m) { AcquireSRWLockExclusive(m); }
-static void mutex_unlock(rig_mutex *m) { ReleaseSRWLockExclusive(m); }
-static void cond_init(rig_cond *c) { InitializeConditionVariable(c); }
-static void cond_broadcast(rig_cond *c) { WakeAllConditionVariable(c); }
-static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
-  SleepConditionVariableSRW(c, m, (DWORD)ms, 0);
-}
-#else
+   POSIX threads on every system, as in rig_pool.c and rig_remote_link.c:
+   on Windows they are winpthreads, which OCaml's runtime links. */
+
 static void mutex_init(rig_mutex *m) { pthread_mutex_init(m, NULL); }
 static int mutex_try(rig_mutex *m) { return pthread_mutex_trylock(m) == 0; }
 static void mutex_lock(rig_mutex *m) { pthread_mutex_lock(m); }
 static void mutex_unlock(rig_mutex *m) { pthread_mutex_unlock(m); }
-/* A condition waits on a clock no step of the wall clock moves: macOS has no
-   clock attribute for conditions and waits for the time left; elsewhere the
-   condition waits on CLOCK_MONOTONIC. */
+/* A condition waits on a clock no step of the wall clock moves: macOS and
+   Windows wait for the time left; elsewhere the condition waits on
+   CLOCK_MONOTONIC. */
 static void cond_init(rig_cond *c) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   pthread_cond_init(c, NULL);
 #else
   pthread_condattr_t monotonic;
@@ -89,7 +81,7 @@ static void cond_init(rig_cond *c) {
 static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
 static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
   struct timespec t = {ms / 1000, (long)(ms % 1000) * 1000000};
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   pthread_cond_timedwait_relative_np(c, m, &t);
 #else
   struct timespec now;
@@ -103,7 +95,6 @@ static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
   pthread_cond_timedwait(c, m, &t);
 #endif
 }
-#endif
 
 static void cv_wait_ms(struct rig_device *d, int ms) {
   cond_wait_ms(&d->cv, &d->mu, ms);
@@ -193,11 +184,7 @@ static void set_running(int i, int on) {
   else atomic_fetch_and(&running[i / 64], ~bit);
 }
 
-#ifdef _WIN32
-static rig_mutex table_mu = SRWLOCK_INIT;
-#else
 static rig_mutex table_mu = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
 /* The free slots, taken last freed first, and the next slot no device has
    taken, under [table_mu]. */
@@ -345,11 +332,7 @@ static struct rig_lock *locks;
 /* C mutexes nest in the order [table_mu], a device's [mu], its [times.mu],
    [locks_mu]. */
 
-#ifdef _WIN32
-static rig_mutex locks_mu = SRWLOCK_INIT;
-#else
 static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
 /* The process's loss facts: the first failure, 0 for none, a device's index
    for its loss, -1 for [fail]'s; and [fail]'s reason. */
@@ -429,10 +412,8 @@ static void lock_finalize(value v) {
   else locks = l->next;
   if (l->next != NULL) l->next->prev = l->prev;
   mutex_unlock(&locks_mu);
-#ifndef _WIN32
   pthread_mutex_destroy(&l->mu);
   pthread_cond_destroy(&l->cv);
-#endif
   free(l);
 }
 
@@ -536,11 +517,9 @@ static void device_finalize(value v) {
   if (atomic_load_explicit(&devices[d->index], memory_order_acquire) == d ||
       atomic_load(&d->release.count) != 0)
     return;
-#ifndef _WIN32
   pthread_mutex_destroy(&d->mu);
   pthread_cond_destroy(&d->cv);
   pthread_mutex_destroy(&d->times.mu);
-#endif
   if (d->own_why) free(atomic_load(&d->lost));
   for (int i = 0; i < d->times.nchunks; i++) free(d->times.chunks[i]);
   free(d->times.chunks);

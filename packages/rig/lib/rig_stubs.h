@@ -9,6 +9,7 @@
 #ifndef RIG_STUBS_H
 #define RIG_STUBS_H
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,15 +18,8 @@
 
 #include "rig_edge.h"
 
-#ifdef _WIN32
-#include <windows.h>
-typedef SRWLOCK rig_mutex;
-typedef CONDITION_VARIABLE rig_cond;
-#else
-#include <pthread.h>
 typedef pthread_mutex_t rig_mutex;
 typedef pthread_cond_t rig_cond;
-#endif
 
 /* Points, encoded as point.mli states, which changes with these. A point
    from index 32768 on is a negative OCaml int, so it crosses from OCaml as
