@@ -236,6 +236,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` program holds the storage it captures (`Rig.Claim.hold`):
+  another call that consumes a capture computes from a copy, and the
+  capture stays live for every library, where its documentation said a
+  host capture died and the program's next run raised.
 - A construct no transformation answers, such as a `Rune.detach` beside
   another domain's `Rune.grad`, keeps none of its arguments once it returns.
   With backtraces recorded, the `Effect.Unhandled` its fallback catches stayed
@@ -1525,6 +1529,10 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` holds the memory of every bound buffer a kernel or
+  copy accesses (`Rig.Claim.hold`) while the schedule is reachable, so no
+  call consumes it between runs. A bound buffer that died between two runs
+  made the next one raise.
 - `Tolk_engine.run`, `time` and `link` raise `Invalid_argument` for a buffer
   a kernel accesses that does not start at its parameter's phase, such as
   `Rig.Buffer.view b ~first:4` for a phase-0 parameter, whose vector accesses

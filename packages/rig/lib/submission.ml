@@ -1158,17 +1158,17 @@ let held_exclusive () = invalid_arg "Rig.submit: the memory is held exclusive"
 (* Read claims on the [m] buffers of a frame, [m] from 1 to 4, taken in order:
    one that fails releases those taken before it. *)
 let hold_frame m b0 b1 b2 b3 =
-  if not (Memory.claim_hold b0) then held_exclusive ();
-  if m > 1 && not (Memory.claim_hold b1) then begin
+  if not (Memory.claim_add b0) then held_exclusive ();
+  if m > 1 && not (Memory.claim_add b1) then begin
     Memory.claim_drop b0;
     held_exclusive ()
   end;
-  if m > 2 && not (Memory.claim_hold b2) then begin
+  if m > 2 && not (Memory.claim_add b2) then begin
     Memory.claim_drop b0;
     Memory.claim_drop b1;
     held_exclusive ()
   end;
-  if m > 3 && not (Memory.claim_hold b3) then begin
+  if m > 3 && not (Memory.claim_add b3) then begin
     Memory.claim_drop b0;
     Memory.claim_drop b1;
     Memory.claim_drop b2;
@@ -1339,7 +1339,7 @@ let submit_run s run buffers waits =
        donation cannot overwrite them before hand-over publishes their use. *)
     while !claimed < Array.length s.fixed do
       let b = Array.unsafe_get s.fixed !claimed in
-      if not (Memory.claim_hold b) then held_exclusive ();
+      if not (Memory.claim_add b) then held_exclusive ();
       incr claimed;
       Buffer.check_live fn b;
       check_owner s b

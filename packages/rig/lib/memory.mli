@@ -175,16 +175,20 @@ val proxy : entry -> int
 
 (** {1:claims Claim words}
 
-    An allocation's [count] is one word, so that a claim, a donation and an
-    export are each one compare-and-set with one winner. A word from zero up
-    holds two bits and a count. Bit 0 ({!outside}) is set once something outside
-    the claims reaches the memory: the bigarray {!Rig.Buffer.of_bigarray}
-    was given, an io library's region, an array {!Rig.Buffer.export} made,
-    or a value {!Rig.Claim.share} marked. Bit 1 ({!read_only}) is set for
-    memory that admits only reads. The read claims count in steps of
-    {!one_claim}. Only the word {!one_claim}, one claim and no bit, may
-    become {!exclusive}, and it is {!one_claim} again once the claims have
-    consumed the memory. {!make} sets the bits. *)
+    An allocation's [count] is one word, so that a claim, a donation, a hold
+    and an export are each one compare-and-set with one winner. A word from
+    zero up holds three bits and two counts. Bit 0 ({!outside}) is set once
+    something outside the claims reaches the memory: the bigarray
+    {!Rig.Buffer.of_bigarray} was given, an io library's region, an array
+    {!Rig.Buffer.export} made, or a value {!Rig.Claim.share} marked. Bit 1
+    ({!read_only}) is set for memory that admits only reads. Bit 2 is set
+    while a consumption of memory not held exclusive checks that no hold
+    holds it and raises the generation, a few instructions in C, which a
+    hold waits out. The read claims count in steps of {!one_claim} from bit
+    3, and the holds ({!Rig.Claim.hold}) in steps of {!one_hold} from bit
+    32. Only the word {!one_claim}, one claim and no bit or hold, may become
+    {!exclusive}, and it is {!one_claim} again once the claims have consumed
+    the memory. {!make} sets the bits. *)
 
 val outside : int
 (** [outside] is bit 0, set for memory outside the claims. *)
@@ -202,11 +206,26 @@ val read_only : int
 val one_claim : int
 (** [one_claim] is the step of one read claim. *)
 
+val one_hold : int
+(** [one_hold] is the step of one hold. *)
+
+val held : alloc -> bool
+(** [held a] is [true] iff a hold holds [a]'s memory. *)
+
+val hold_token : holds -> token
+(** [hold_token h] is a token that puts [h] on the list of holds once
+    collected, whose holds the next {!drain} of any device then releases,
+    those taken over memory still live. Raises [Stdlib.Out_of_memory] if the
+    C heap has no room for it. *)
+
+val no_hold : token
+(** [no_hold] is the hold of no buffer, which releases nothing. *)
+
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 
-val claim_hold : buffer -> bool
-(** [claim_hold b] adds a read claim to [b]'s memory, with no check of [b],
+val claim_add : buffer -> bool
+(** [claim_add b] adds a read claim to [b]'s memory, with no check of [b],
     unless the memory is held exclusive: whether it did. It tries one
     compare-and-set and retries in C, so in native code nothing in it polls
     or allocates, contended or not, and a sequence of takes needs no
@@ -323,14 +342,15 @@ val of_io : device -> io_region -> access:access -> int -> memory
     round a full major collection runs and every device drains again. *)
 
 val drain : device -> unit
-(** [drain d] moves [d]'s collected memory whose points are settled to its
-    cache or its driver, returns a Stopped device's cache and gives back its
-    mappings of other devices' memory and words, and runs the pending
-    releases whose value [d] reached, which let go of the values that [d]'s
-    collected submissions kept. On an orphaned device it only routes [d]'s
-    release list and lets go of the kept values pending on it, since its
-    frees would call its parent's driver. It may raise {!Dev.Lost} when the
-    read of a word with no host address loses its device. *)
+(** [drain d] releases the collected holds ({!hold_token}), moves [d]'s
+    collected memory whose points are settled to its cache or its driver,
+    returns a Stopped device's cache and gives back its mappings of other
+    devices' memory and words, and runs the pending releases whose value [d]
+    reached, which let go of the values that [d]'s collected submissions
+    kept. On an orphaned device it only routes [d]'s release list and lets
+    go of the kept values pending on it, since its frees would call its
+    parent's driver. It may raise {!Dev.Lost} when the read of a word with
+    no host address loses its device. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]

@@ -229,31 +229,6 @@ let difference paths k k' =
 
 (* Programs *)
 
-(* Pins. A program reads its captures on every call, so no call lends their
-   memory to a result: it copies instead. The pins are the captures of the
-   programs alive, held weakly through the list each program keeps. *)
-module Pins = struct
-  let lock = Mutex.create ()
-  let pinned : B.t list Weak.t list ref = ref []
-
-  let add = function
-    | [] -> ()
-    | captured ->
-        let w = Weak.create 1 in
-        Weak.set w 0 (Some captured);
-        Mutex.protect lock (fun () ->
-            pinned := w :: List.filter (fun w -> Weak.check w 0) !pinned)
-
-  let hold buffers =
-    let held w =
-      match Weak.get w 0 with
-      | Some captured ->
-          List.exists (fun c -> List.exists (B.overlaps c) buffers) captured
-      | None -> false
-    in
-    Mutex.protect lock (fun () -> List.exists held !pinned)
-end
-
 type output = Empty | Fresh of int | Lent of int
 
 (* A result leaf: a tensor of its dtype, its shape, placement and storage. *)
@@ -748,7 +723,6 @@ let compile ?beam ?parallel (type a r) (args_s : a Ptree.t)
       rebuild = Ptree.rebuild result_s ~like;
     }
   in
-  Pins.add p.captured;
   p
 
 (* Calls *)
@@ -806,14 +780,29 @@ let rec answer p results j k =
     answer p results (j + 1 + c.leaves) (k + 1)
   end
 
+(* The buffers of a consumed leaf, consumed under [c]: a buffer whose memory
+   another domain held since [Claim.consumable] answered stays live, and the
+   call copies from it. Memory a lent leaf holds exclusive takes no hold, so a
+   lent leaf is consumed whole. *)
+let copied c ~why buffers =
+  List.map
+    (fun b ->
+      match Claim.consume c ~why b with
+      | b' -> b'
+      | exception (Invalid_argument _ as e) ->
+          if Claim.consumable c b || Option.is_some (B.dead b) then raise e;
+          b)
+    buffers
+
 (* [run entry p leaves] runs [p] on [leaves] under claims on their memory. A
-   consumed leaf whose buffers span their memory and that no other live program
-   captures is consumed. It is lent to its result if it also covers its storage
-   and its memory is exclusive, and then consumed before the run, so that no
-   work queued on its old handles reads the write. Otherwise its result is a
-   copy, and it is consumed after the run. A leaf over a window of its memory,
-   or captured by another program, is copied and stays live. Once [p] has run,
-   the first of its checks that failed raises. *)
+   consumed leaf whose buffers rig lets it consume (they span their memory,
+   and no program holds them as captures) is consumed. It is lent to its
+   result if it also covers its storage and its memory is exclusive, and then
+   consumed before the run, so that no work queued on its old handles reads
+   the write. Otherwise its result is a copy, and it is consumed after the
+   run. A leaf over a window of its memory, or captured by another program, is
+   copied and stays live. Once [p] has run, the first of its checks that
+   failed raises. *)
 let run entry p leaves =
   let n = Array.length leaves in
   Array.iteri
@@ -839,21 +828,16 @@ let run entry p leaves =
      consumptions return. *)
   let lends, bufs, results =
     Claim.with_ ~read ~donate @@ fun c ->
-    let consumable =
-      Array.mapi
-        (fun i l ->
-          p.consumed.(i)
-          && List.for_all B.spans l.buffers
-          && not (Pins.hold l.buffers))
-        leaves
-    in
+    let consumable = Array.make n false in
+    for i = 0 to n - 1 do
+      consumable.(i) <-
+        p.consumed.(i) && List.for_all (Claim.consumable c) leaves.(i).buffers
+    done;
     let lendable i =
       let l = leaves.(i) in
       consumable.(i) && covers l && List.for_all (Claim.exclusive c) (claimed l)
     in
-    let consume i =
-      List.map (Claim.consume c ~why:(why p.paths.(i))) leaves.(i).buffers
-    in
+    let consume i = copied c ~why:(why p.paths.(i)) leaves.(i).buffers in
     let lends = Array.make n false in
     let storage =
       Array.map

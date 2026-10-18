@@ -732,8 +732,10 @@ val failure : unit -> string option
     points are reached or dropped on the devices they use, and let go of the
     values that collected submissions on those devices keep, once the work
     submitted on the device before the first such call after the collection
-    is done, also when they then raise {!Lost}. {!free_cache} moves memory on its device, reclamation on every
-    device, and a lost device's stop on its own. Memory collected while a
+    is done, also when they then raise {!Lost}. {!free_cache} moves memory
+    on its device, reclamation on every device, and a lost device's stop on
+    its own. Each of these moves first releases the holds collected on any
+    device ({!Claim.hold}). Memory collected while a
     domain blocks returns through other domains' calls. A device reports its
     values up to [k] values late ({!section-timeline}), and memory and kept
     values return by what it reports.
@@ -1912,7 +1914,9 @@ end
     {ul
     {- A {e read claim} marks an allocation as being read. The host holds
        one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
-       every buffer it is given. {!submit} holds one on every allocation
+       every buffer it is given. A {e hold} ({!Claim.hold}) is a read claim
+       that lasts while its value is reachable, and that no consumption
+       ends. {!submit} holds one on every allocation
        the work uses until it returns, and a copy, blit or fill
        ({!Buffer.section-copying}) on its buffers until it returns. Work on
        a device holds none, since the stamps order a write in place after
@@ -1960,8 +1964,8 @@ end
     A prepared submission claims the memory it uses only while a submit
     runs. A donation between two submits can consume that memory, and the
     next submit then raises [Invalid_argument] for the dead buffer. A
-    library that keeps a submission over memory it does not own holds a read
-    claim on that memory for as long as it keeps the submission, or passes
+    library that keeps a submission over memory it does not own holds that
+    memory ({!Claim.hold}) for as long as it keeps the submission, or passes
     the memory to {!Claim.share}.
 
     A donor takes its inputs with {!Claim.with_}. It consumes an input it
@@ -2029,8 +2033,29 @@ module Claim : sig
       the buffer is claimed as any other.
 
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
-      does not claim [b]'s memory, or [b] is dead or does not
-      {!Buffer.spans} its memory. *)
+      does not claim [b]'s memory, [b] is dead or does not {!Buffer.spans}
+      its memory, or a {!hold} holds the memory. *)
+
+  val consumable : t -> Buffer.t -> bool
+  (** [consumable c b] is [true] iff [c]'s {!with_} is running, [c] claims
+      [b]'s memory, [b] is live and {!Buffer.spans} it, and no {!hold} holds
+      it: {!consume}[ c b] then succeeds, unless another domain holds the
+      memory meanwhile. *)
+
+  type hold
+  (** The type for claims that keep buffers in use while their value is
+      reachable. *)
+
+  val hold : Buffer.t list -> hold
+  (** [hold bs] takes a read claim on the memory of each of [bs] that no
+      donation writes and no {!consume} ends ({!consumable}), held until the
+      hold is unreachable: the first call that moves collected memory after
+      its collection releases it ({!Rig.section-reclaim}). A library that
+      keeps buffers it does not own over calls, such as a linked program's
+      inputs, holds them.
+
+      Raises [Invalid_argument], holding none of [bs], if a buffer is dead or
+      its memory is held exclusive. *)
 end
 
 (** {1:profiles Profiles} *)

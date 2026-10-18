@@ -325,6 +325,13 @@ type buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its allocation's, whose low
     bit says what it admits ({!Memory.admits}). *)
 
+type holds = { allocs : alloc Weak.t; taken : Bytes.t }
+(** The type for the allocations a {!Rig.Claim.hold} holds, by the index of
+    its buffer, and whether each hold is taken, ['\001'], which the C steps
+    that take and release a hold set. The allocations are weak, so a hold
+    keeps no memory from its return: a collected allocation needs no
+    release. *)
+
 type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that
     unloads it once collected. *)

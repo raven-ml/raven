@@ -404,7 +404,7 @@ let rec copy ~src ~dst =
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then
     invalid_argf "Rig.%s: the destination admits only reads" fn;
-  Claim.hold2 fn src dst claimed n
+  Claim.reading2 fn src dst claimed n
 
 (* [copy] under read claims on both sides, which keep a donation from writing
    either while the copy waits and runs. The claims' release after it keeps the
@@ -497,7 +497,7 @@ let writable fn b =
    bytes from [dst]'s byte [at] into the half [h], after the half's last
    leg. *)
 let upload fn dst put =
-  Claim.hold fn dst (fun () ->
+  Claim.reading fn dst (fun () ->
       Memory.check_owner dst.mem;
       Memory.drain dst.mem.dev;
       let n = Buffer.length dst in
@@ -513,7 +513,7 @@ let upload fn dst put =
    memory, holding a read claim on it: [take h at] reads the bytes from
    [src]'s byte [at] out of the half [h], after the leg that wrote it. *)
 let download fn src take =
-  Claim.hold fn src (fun () ->
+  Claim.reading fn src (fun () ->
       Memory.check_owner src.mem;
       Memory.drain src.mem.dev;
       let n = Buffer.length src in

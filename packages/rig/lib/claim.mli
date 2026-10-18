@@ -31,8 +31,15 @@
     compare-and-set that reads the word given back, or any later one, is
     followed by a check that sees the new generation. Every path that claims
     checks under its claim, since a check before the claim would pass a
-    buffer that a consumption kills between the two. A claim refused by a
-    hold that has since ended is tried again.
+    buffer that a consumption kills between the two. A claim refused by
+    memory held exclusive that its with_ has since released is tried again.
+
+    A hold ({!hold}) adds {!Memory.one_hold} to the word unless it is
+    exclusive. A consumption of memory not held exclusive sets the word's
+    lock bit if no hold holds the memory, raises the generation, and clears
+    the bit; a hold waits while the bit is set and checks its buffer live
+    once it holds. So a consumption either finds the hold and raises, or
+    the hold finds the buffer dead.
 
     {!with_} takes its claims in one C call, the last step before its
     function's handler. Both exits begin with [finish], which ends the
@@ -45,10 +52,10 @@
     leaves no claim behind.
 
     {!Submission.submit} takes read claims of its own, with
-    {!Memory.claim_hold}, on the buffers
+    {!Memory.claim_add}, on the buffers
     of a run and the fixed memory, and releases them once the driver's
     [submit] has returned. A copy, blit or fill ({!Copy}) holds read claims
-    on its buffers until it returns ({!hold2}, {!wait}). *)
+    on its buffers until it returns ({!reading2}, {!wait}). *)
 
 val read_bytes :
   Def.buffer ->
@@ -71,29 +78,29 @@ val wait : string -> Def.access -> Def.buffer -> unit
     The caller ends the claim with {!Memory.claim_drop}. It allocates nothing
     when the work the access follows is done.
 
-    Raises as {!hold} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
+    Raises as {!reading} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
     holding no claim. *)
 
-val hold : string -> Def.buffer -> (unit -> 'a) -> 'a
-(** [hold fn b f] is [f ()] under a read claim on [b]'s memory for a call of
+val reading : string -> Def.buffer -> (unit -> 'a) -> 'a
+(** [reading fn b f] is [f ()] under a read claim on [b]'s memory for a call of
     [fn]. It checks [b] live under the claim, as {!with_} does, and the claim
     ends in C as [f] returns or raises.
 
     Raises [Invalid_argument] naming [fn] if the memory is held exclusive or
     [b] is dead. *)
 
-val hold2 :
+val reading2 :
   string ->
   Def.buffer ->
   Def.buffer ->
   (Def.buffer -> Def.buffer -> 'a -> 'b) ->
   'a ->
   'b
-(** [hold2 fn a b f x] is [f a b x] under read claims on [a]'s and [b]'s
-    memory, as {!hold} takes them. It allocates nothing when [f] is a
-    top-level function.
+(** [reading2 fn a b f x] is [f a b x] under read claims on [a]'s and
+    [b]'s memory, as {!reading} takes them. It allocates nothing when [f] is
+    a top-level function.
 
-    Raises as {!hold} does, for either buffer. *)
+    Raises as {!reading} does, for either buffer. *)
 
 val share : Def.buffer -> unit
 (** [share b] is {!Rig.Claim.share}[ b]. Memory already outside the claims
@@ -111,3 +118,17 @@ val exclusive : t -> Def.buffer -> bool
 
 val consume : t -> why:string -> Def.buffer -> Def.buffer
 (** [consume c ~why b] is {!Rig.Claim.consume}[ c ~why b]. *)
+
+val consumable : t -> Def.buffer -> bool
+(** [consumable c b] is {!Rig.Claim.consumable}[ c b]. *)
+
+type hold
+(** The type for holds: a token whose collection releases them
+    ({!Memory.hold_token}). *)
+
+val held : string -> Def.buffer list -> hold
+(** [held fn bs] is {!Rig.Claim.hold}[ bs] for a call of [fn], which its
+    errors name. *)
+
+val hold : Def.buffer list -> hold
+(** [hold bs] is {!held}[ "Claim.hold" bs]. *)

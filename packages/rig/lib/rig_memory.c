@@ -196,10 +196,23 @@ enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
        ENTRY_MAPS, ENTRY_UNMAPS, ENTRY_PAGES };
 
 /* The claim word as rig's Memory module lays it out: from 0 up, bits for
-   memory outside the claims and memory that admits only reads, and the
-   step per read claim; -1, held exclusive. */
-#define CLAIM_ONE 4
+   memory outside the claims, memory that admits only reads and a
+   consumption under way, the step per read claim from bit 3 and the step
+   per hold from bit 32; -1, held exclusive. */
+#define CLAIM_LOCKED 4
+#define CLAIM_ONE 8
+#define CLAIM_HOLD ((intnat)1 << 32)
 #define CLAIM_EXCLUSIVE (-1)
+
+/* A spin's pause while another domain's step holds CLAIM_LOCKED, a few
+   instructions: the core's hint that it spins, as rig's pool spins. */
+static inline void relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+  __builtin_ia32_pause();
+#elif defined(__aarch64__)
+  __asm__ __volatile__("yield");
+#endif
+}
 
 /* A field another domain writes. Read after the claim's compare-and-set,
    which acquires, so it shows what the release of any earlier claim
@@ -451,10 +464,10 @@ caml_result rig_buffer_wait(value b, enum rig_access access) {
 }
 
 /* A read claim on [v_b]'s memory, with no check of [v_b], for
-   Memory.claim_hold once another domain's claim beat its compare-and-set:
+   Memory.claim_add once another domain's claim beat its compare-and-set:
    false, claiming nothing, if the memory is held exclusive. The loop is in
    C so nothing polls between its read and its claim. */
-value caml_rig_claim_hold(value v_b) {
+value caml_rig_claim_add(value v_b) {
   _Atomic value *word = claim_word(v_b);
   value w = atomic_load_explicit(word, memory_order_relaxed);
   do {
@@ -466,17 +479,16 @@ value caml_rig_claim_hold(value v_b) {
 }
 
 /* Ends a read claim on [b]'s memory: one subtraction of the tagged step.
-   If the word was below CLAIM_ONE, it held no read claim, and the word the
-   subtraction left matches none of the claims' states, so the process
-   aborts. */
+   If the word's read claims were none, the word the subtraction left matches
+   none of the claims' states, so the process aborts. */
 static void claim_end(value b, const char *who) {
   value w = atomic_fetch_sub_explicit(
       claim_word(b), Val_long(CLAIM_ONE) - Val_long(0), memory_order_release);
-  if (Long_val(w) < CLAIM_ONE)
+  if (Long_val(w) < 0 || (Long_val(w) & (CLAIM_HOLD - 1)) < CLAIM_ONE)
     caml_fatal_error("%s: no read claim to end", who);
 }
 
-/* Ends a read claim of Memory.claim_hold. */
+/* Ends a read claim of Memory.claim_add. */
 value caml_rig_claim_drop(value v_b) {
   claim_end(v_b, "caml_rig_claim_drop");
   return Val_unit;
@@ -491,6 +503,75 @@ value caml_rig_claim_drop_prefix(value v_buffers, value v_n) {
 }
 
 void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
+
+/* Holds
+
+   A hold adds CLAIM_HOLD to the word unless the memory is held exclusive,
+   and waits out a consumption under way, which checks for holds and raises
+   the generation with CLAIM_LOCKED set: so either the consumption finds the
+   hold, or the hold's check finds the buffer dead. A hold's record marks each
+   hold taken with a byte, which the steps below set and clear with the word,
+   so each hold is released once. */
+
+static void unhold_word(_Atomic value *word) {
+  value w = atomic_fetch_sub_explicit(
+      word, Val_long(CLAIM_HOLD) - Val_long(0), memory_order_release);
+  if (Long_val(w) < CLAIM_HOLD)
+    caml_fatal_error("Rig.Claim.hold: no hold to end");
+}
+
+/* A hold of [b]'s memory, checked under it: false, holding nothing, if the
+   memory is held exclusive or [b] is dead. */
+static int hold_one(value b) {
+  _Atomic value *word = claim_word(b);
+  value w = atomic_load_explicit(word, memory_order_relaxed);
+  for (;;) {
+    if (Long_val(w) < 0) return 0;
+    if (Long_val(w) & CLAIM_LOCKED) {
+      relax();
+      w = atomic_load_explicit(word, memory_order_relaxed);
+      continue;
+    }
+    if (atomic_compare_exchange_weak(word, &w,
+                                     Val_long(Long_val(w) + CLAIM_HOLD)))
+      break;
+  }
+  if (Long_val(load_field(alloc_of(b), ALLOC_GEN)) !=
+      Long_val(Field(b, BUFFER_GEN))) {
+    unhold_word(word);
+    return 0;
+  }
+  return 1;
+}
+
+/* Holds the memory of each buffer [i] of [v_bs], and marks byte [i] of
+   [v_taken]: -1, or the index of the buffer refused, holding nothing. */
+value caml_rig_claim_holds(value v_bs, value v_taken) {
+  unsigned char *taken = Bytes_val(v_taken);
+  intnat i = 0;
+  for (value l = v_bs; l != Val_emptylist; l = Field(l, 1), i++) {
+    if (!hold_one(Field(l, 0))) {
+      intnat n = 0;
+      for (value k = v_bs; n < i; k = Field(k, 1), n++) {
+        unhold_word(claim_word(Field(k, 0)));
+        taken[n] = 0;
+      }
+      return Val_long(i);
+    }
+    taken[i] = 1;
+  }
+  return Val_long(-1);
+}
+
+/* Ends the hold [v_i] of [v_taken] on the allocation [v_alloc]'s memory, if
+   it is taken. */
+value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc) {
+  unsigned char *taken = Bytes_val(v_taken) + Long_val(v_i);
+  if (*taken == 0) return Val_unit;
+  *taken = 0;
+  unhold_word((_Atomic value *)&Field(v_alloc, ALLOC_COUNT));
+  return Val_unit;
+}
 
 /* Claim.with_'s claims, taken in one call and released in one, neither
    running OCaml. */
@@ -547,15 +628,18 @@ static intnat next_generation(intnat g, int exclusive) {
   return ((g >> 1) + 1) * 2 + (exclusive ? 0 : 1);
 }
 
-/* What the step answers when the claims have ended, or when [v_b] is
-   dead: another consumption of its memory came first. */
+/* What the step answers when the claims have ended, when [v_b] is dead
+   (another consumption of its memory came first), or when a hold holds the
+   memory. */
 #define CONSUME_ENDED (-1)
 #define CONSUME_DEAD (-2)
+#define CONSUME_HELD (-3)
 
 /* Claim.consume's effects, as one step against the end of the claims
    [v_c]: raises the generation of [v_b]'s memory from [v_b]'s own,
    records [v_why] and gives an exclusive word back to the claims' one read
-   claim. The new generation, or CONSUME_ENDED or CONSUME_DEAD, doing
+   claim. Memory not held exclusive is locked against holds meanwhile. The
+   new generation, or CONSUME_ENDED, CONSUME_DEAD or CONSUME_HELD, doing
    nothing. */
 value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
   _Atomic value *state = claims_state(v_c);
@@ -564,8 +648,23 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
     return Val_long(CONSUME_ENDED);
   }
   value alloc = alloc_of(v_b);
+  _Atomic value *word = claim_word(v_b);
   _Atomic value *gen = (_Atomic value *)&Field(alloc, ALLOC_GEN);
   value g = Field(v_b, BUFFER_GEN);
+  int locked = 0;
+  value w = atomic_load(word);
+  while (!locked && Long_val(w) >= 0) {
+    if (Long_val(w) >= CLAIM_HOLD) {
+      atomic_fetch_sub(state, CLAIMS_CONSUMING);
+      return Val_long(CONSUME_HELD);
+    }
+    if (Long_val(w) & CLAIM_LOCKED) {
+      relax();
+      w = atomic_load(word);
+    } else
+      locked = atomic_compare_exchange_weak(
+          word, &w, Val_long(Long_val(w) | CLAIM_LOCKED));
+  }
   /* The reason before the generation, so that a buffer found dead shows
      it; a consumption that loses the race below wrote it too. The
      generation before the word: a claim whose compare-and-set reads the
@@ -573,18 +672,17 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
      buffer dead. Word first, such a claim would pass its check and read
      beside the consumer's writes. */
   if (atomic_load(gen) == g) caml_modify(&Field(alloc, ALLOC_WHY), v_why);
-  /* The claims' read claim keeps any other with_ from making the memory
-     exclusive, so the word read here is what it is at the raise. */
-  int held = atomic_load(claim_word(v_b)) == Val_long(CLAIM_EXCLUSIVE);
-  value next = Val_long(next_generation(Long_val(g), held));
-  if (!atomic_compare_exchange_strong(gen, &g, next)) {
-    atomic_fetch_sub(state, CLAIMS_CONSUMING);
-    return Val_long(CONSUME_DEAD);
+  int raised = atomic_compare_exchange_strong(
+      gen, &g, Val_long(next_generation(Long_val(g), !locked)));
+  if (locked)
+    atomic_fetch_sub(word, Val_long(CLAIM_LOCKED) - Val_long(0));
+  else {
+    w = Val_long(CLAIM_EXCLUSIVE);
+    if (raised) atomic_compare_exchange_strong(word, &w, Val_long(CLAIM_ONE));
   }
-  value w = Val_long(CLAIM_EXCLUSIVE);
-  atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_ONE));
   atomic_fetch_sub(state, CLAIMS_CONSUMING);
-  return next;
+  return raised ? Val_long(next_generation(Long_val(g), !locked))
+                : Val_long(CONSUME_DEAD);
 }
 
 /* Waits until the claims [v_c], which have ended, have no consumption

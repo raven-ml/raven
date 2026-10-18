@@ -54,10 +54,9 @@
     in C order over its storage, is lent with no store: the result's storage is
     the leaf's memory.
 
-    A program keeps the storage it binds as captures. Host storage records no
-    such binding: a host capture that another call consumes is dead for the
-    program too, whose next run raises [Invalid_argument] naming the path at
-    which it was consumed.
+    A program holds the storage it binds as captures while it is reachable
+    ({!Rig.Claim.hold}). Another call that consumes a capture computes from
+    a copy of it, and the capture stays live.
 
     {b Reports.} With [RUNE_JIT_DEBUG=1] in the environment when the module is
     initialised, a call prints on standard error each retrace, with the first

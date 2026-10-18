@@ -212,16 +212,22 @@ let read_only = 2
    carries its access in no word of its own. *)
 let admits g : access = if g land 1 = 1 then Read else Read_write
 let first_generation (e : entry) = if e.access = Read then 1 else 0
-let one_claim = 4
+
+let one_claim = 8
+let one_hold = 1 lsl 32
 let exclusive = -1
 
-external claim_retry : buffer -> bool = "caml_rig_claim_hold" [@@noalloc]
+(* Bit 2 is set while a consumption of memory that is not held exclusive
+   checks for holds and raises the generation, in C. *)
+let held (a : alloc) = Atomic.Loc.get [%atomic.loc a.count] >= one_hold
+
+external claim_retry : buffer -> bool = "caml_rig_claim_add" [@@noalloc]
 
 (* One compare-and-set in OCaml: with one domain running, the runtime's is a
    plain store, which a C take's locked one is not. A retry, after another
    domain's claim beat it, loops in C, since an OCaml loop's back edge
    polls. *)
-let claim_hold b =
+let claim_add b =
   let a = b.mem.alloc in
   let w = Atomic.Loc.get [%atomic.loc a.count] in
   w >= 0
@@ -723,6 +729,51 @@ let route_one d =
 
 let rec route_released d = if Dev.protect d route_one d then route_released d
 
+(* Holds
+
+   The holds of {!Rig.Claim.hold} go on one list of no device, so that any
+   drain releases those collected, under [hold_lock]. Releasing them waits
+   for no work: work holds no claim. *)
+
+external release_list : unit -> int = "caml_rig_release_list"
+
+external hold_token : int -> holds -> int -> int -> int -> token
+  = "caml_rig_token"
+
+external hold_record : int -> holds = "caml_rig_node_record" [@@noalloc]
+
+(* Releases the hold [i] of [taken] on [a]'s memory if it is taken, in one
+   step, so a release that an asynchronous exception interrupts and a later
+   drain runs again releases each hold once. *)
+external unhold : Bytes.t -> int -> alloc -> unit = "caml_rig_claim_unhold"
+[@@noalloc]
+
+let hold_list = release_list ()
+let hold_lock = Lock.create ()
+let hold_token h = hold_token hold_list h 0 max_int (-1)
+
+(* The hold of no buffer, which has nothing to release. *)
+let no_hold = no_token
+
+(* Under [hold_lock]: releases the holds at the front of the list's hand whose
+   memory is live and pops them: whether there were any. *)
+let release_hold () =
+  let n = release_front hold_list in
+  n <> 0
+  && begin
+    let h = hold_record n in
+    for i = 0 to Weak.length h.allocs - 1 do
+      match Weak.get h.allocs i with
+      | Some a -> unhold h.taken i a
+      | None -> ()
+    done;
+    release_pop hold_list;
+    true
+  end
+
+let rec release_holds () =
+  if Lock.protect hold_lock release_hold () then release_holds ()
+
 type fate = Stays | Cached | Freed
 
 (* What becomes of the retiring [e] of [d]. *)
@@ -1086,8 +1137,9 @@ let kept d = Dev.protect d kept_locked d.live
    owed stop first. A device whose stop returned frees its slot once its last
    memory and mapping went back and its last kept value went, then lets go
    of its word. Every drain gives back the words that lost their last
-   mapping. *)
+   mapping, and first releases the holds collected. *)
 let drain d =
+  if released_any hold_list then release_holds ();
   if Dev.orphaned d then forget d
   else begin
     if Dev.is_lost d then Dev.run_own d;

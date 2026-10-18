@@ -60,7 +60,9 @@ val link :
     - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffers in [bound]
       (default [[]]), one per device of its placement, and is made at link
       otherwise, in its device's memory, which the runs share, starting at its
-      phase ({!run}).
+      phase ({!run}). The schedule holds the memory of every bound buffer a
+      kernel or copy accesses ({!Rig.Claim.hold}) while it is reachable, so
+      no call consumes it.
     - A kernel's lanes are the devices of its first argument: it is launched on
       each, with the lane's shard of each argument and ["_device_num"] bound to
       the lane's index. A host program is launched on its device's host, which
@@ -88,15 +90,17 @@ val link :
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     its devices are of several machines, if a kernel's lane is a device of
     another kind than its program's target, if [bound] gives a storage node
-    buffers of other devices, sizes or number than its placement, or a buffer a
-    kernel accesses that does not start at the node's phase ({!run}), if a
-    computing device starts its memory on fewer bytes ({!Rig.alignment}) than
-    the alignment of a storage node made there, if kernels access a parameter at
-    two alignments or phases, if a value under a range moves with its trips in
-    another way than above, if a back edge's flag moves with the run's words, or
-    if [linear] is not a compiled schedule; {!Rig.Out_of_memory} if a device
-    cannot allocate its storage; and [Failure] with the reason if the program
-    does not load, such as a device that refuses a program's binary. *)
+    buffers of other devices, sizes or number than its placement, a buffer a
+    kernel or copy accesses that is dead or whose memory is held exclusive, or a
+    buffer a kernel accesses that does not start at the node's phase ({!run}),
+    if a computing device starts its memory on fewer bytes ({!Rig.alignment})
+    than the alignment of a storage node made there, if kernels access a
+    parameter at two alignments or phases, if a value under a range moves with
+    its trips in another way than above, if a back edge's flag moves with the
+    run's words, or if [linear] is not a compiled schedule; {!Rig.Out_of_memory}
+    if a device cannot allocate its storage; and [Failure] with the reason if
+    the program does not load, such as a device that refuses a program's
+    binary. *)
 
 val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
 (** [run ~vars s slots] runs [s] with [slots.(i)] bound to its parameter [i] (an

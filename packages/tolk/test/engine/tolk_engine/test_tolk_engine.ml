@@ -1641,6 +1641,24 @@ let with_bound k f () =
 
 let floats_on d n = Run.buffer (device d) Float32 (Array.make n (`Float 0.))
 
+(* A buffer a donation consumed. *)
+let consumed_floats () =
+  let b = floats_on "CPU" 16 in
+  ignore
+    (Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+         Rig.Claim.consume c ~why:"donated" b));
+  b
+
+(* A linked schedule holds each bound buffer its runs read: a donation of one
+   is never exclusive, and no consumption ends it. *)
+let holds_bound () =
+  let b = floats_on "CPU" 16 in
+  let s = with_bound 2 (fun _ -> [ b ]) () in
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      equal ~msg:"exclusive" bool false (Rig.Claim.exclusive c b);
+      equal ~msg:"consumable" bool false (Rig.Claim.consumable c b));
+  ignore (Sys.opaque_identity s)
+
 let refusals =
   group "refusals"
     [
@@ -1660,6 +1678,9 @@ let refusals =
         (with_bound 4 (fun _ -> [ floats_on "CPU" 15 ]));
       link_refuses "storage bound to a buffer for each of two devices"
         (with_bound 4 (fun bs -> bs @ bs));
+      link_refuses "storage a kernel reads bound to a dead buffer"
+        (with_bound 2 (fun _ -> [ consumed_floats () ]));
+      test "link holds the bound buffers its runs read" holds_bound;
       test "link refuses storage a kernel reads bound off its phase" (fun () ->
           raises_match off_its_phase
             (with_bound 2 (fun _ -> [ at_phase host 4 64 ])));

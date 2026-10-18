@@ -11,10 +11,10 @@ let swap (a : alloc) w w' =
   Atomic.Loc.compare_and_set [%atomic.loc a.count] w w'
 
 let read_claim fn b =
-  if not (Memory.claim_hold b) then
+  if not (Memory.claim_add b) then
     invalid_argf "Rig.%s: the memory is held exclusive" fn
 
-let hold fn b f =
+let reading fn b f =
   read_claim fn b;
   match
     Buffer.check_live fn b;
@@ -27,8 +27,8 @@ let hold fn b f =
       Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* [hold] of two buffers with no closure, for a staged copy's sides. *)
-let hold2 fn a b f x =
+(* [reading] of two buffers with no closure, for a staged copy's sides. *)
+let reading2 fn a b f x =
   read_claim fn a;
   match read_claim fn b with
   | exception e ->
@@ -205,9 +205,9 @@ external release_all : buffer list -> buffer list -> unit
    another domain at most. *)
 external await_consumed : t -> unit = "caml_rig_claim_await" [@@noalloc]
 
-(* [consume]'s effects, as one step against [finish] and other consumptions
-   of the memory: the new generation, or -1 if [c] has ended, or -2 if [b] is
-   dead. *)
+(* [consume]'s effects, as one step against [finish], holds and other
+   consumptions of the memory: the new generation, or -1 if [c] has ended,
+   -2 if [b] is dead, or -3 if a hold holds the memory. *)
 external consumed : t -> buffer -> string -> int = "caml_rig_claim_consume"
 
 (* Holds each buffer of [donate] exclusive that spans its memory and has no
@@ -232,19 +232,20 @@ let nth c i =
   let n = List.length c.read in
   if i < n then List.nth c.read i else List.nth c.donate (i - n)
 
-(* Raises why [b] refused its claim, or returns once the refusal has passed,
-   as when the with_ that held it exclusive has ended. *)
-let refusal b =
+(* Raises why [b] refused its claim for a call of [fn], or returns once the
+   refusal has passed, as when the with_ that held it exclusive has ended. *)
+let refusal fn b =
   if count b.mem.alloc < 0 then
-    invalid_arg "Rig.Claim.with_: the memory is held exclusive";
-  Buffer.check_live "Claim.with_" b;
-  Memory.check b.mem
+    invalid_argf "Rig.%s: the memory is held exclusive" fn;
+  Buffer.check_live fn b
 
 (* Takes [c]'s claims, or raises why a buffer refused its claim. *)
 let rec claim c =
   let i = claim_all c.read c.donate in
   if i >= 0 then begin
-    refusal (nth c i);
+    let b = nth c i in
+    refusal "Claim.with_" b;
+    Memory.check b.mem;
     claim c
   end
 
@@ -292,4 +293,46 @@ let consume c ~why b =
   match consumed c b why with
   | -1 -> refuse_ended ()
   | -2 -> Buffer.refuse_dead "Claim.consume" b
+  | -3 -> invalid_arg "Rig.Claim.consume: the memory is held"
   | g -> { b with generation = g }
+
+let consumable c b =
+  let cl = b.mem.alloc in
+  (not (ended c))
+  && (names cl c.read || names cl c.donate)
+  && Buffer.spans b && Buffer.is_live b
+  && not (Memory.held cl)
+
+(* Holds *)
+
+(* A hold is its token: collected, it puts its record on the list of holds,
+   whose next drain releases them. The record is made and the token over it
+   before the holds are taken, in one C step that marks each taken in the
+   record, so an asynchronous exception anywhere leaves either no hold or a
+   token that releases them. *)
+type hold = token
+
+external take_holds : buffer list -> Bytes.t -> int = "caml_rig_claim_holds"
+[@@noalloc]
+
+let rec take_all fn bs taken =
+  let i = take_holds bs taken in
+  if i >= 0 then begin
+    refusal fn (List.nth bs i);
+    take_all fn bs taken
+  end
+
+let held fn bs =
+  List.iter (Buffer.check_live fn) bs;
+  match bs with
+  | [] -> Memory.no_hold
+  | _ ->
+      let n = List.length bs in
+      let allocs = Weak.create n in
+      List.iteri (fun i b -> Weak.set allocs i (Some b.mem.alloc)) bs;
+      let taken = Bytes.make n '\000' in
+      let t = Memory.hold_token { allocs; taken } in
+      take_all fn bs taken;
+      t
+
+let hold bs = held "Claim.hold" bs

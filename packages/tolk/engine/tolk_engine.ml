@@ -187,8 +187,11 @@ type word_kind = Computed of (env -> int) | Trip
 (* Inputs *)
 
 (* A buffer a run is given: a lane of a parameter's buffers, or a buffer bound
-   at link. *)
-type source = Lane of { slot : int; lane : int } | Bound of Rig.Buffer.t
+   at link, with its hold, which keeps every call from consuming what each
+   run accesses while the schedule lives. *)
+type source =
+  | Lane of { slot : int; lane : int }
+  | Bound of Rig.Buffer.t * Rig.Claim.hold
 
 (* An input of the program: a buffer a run is given, or the bytes of one at an
    offset the run's words compute. *)
@@ -387,12 +390,18 @@ let lane_input b ~slot ~lane d n =
       Hashtbl.replace b.lane_inputs (slot, lane) i;
       i
 
+(* A hold of the bound [buf], refused in the link's name. *)
+let hold b buf =
+  match Rig.Claim.hold [ buf ] with
+  | h -> h
+  | exception Invalid_argument why -> fail b.fn "a bound buffer: %s" why
+
 let bound_input b buf =
   match List.assq_opt buf b.bound_inputs with
   | Some i -> i
   | None ->
       let i =
-        add_input b (Whole (Bound buf))
+        add_input b (Whole (Bound (buf, hold b buf)))
           {
             device = device_index b (Rig.Buffer.device buf);
             bytes = Rig.Buffer.length buf;
@@ -655,7 +664,7 @@ let note_start b (l : located) =
                 "slot %d is accessed %d bytes past a multiple of %d and %d \
                  past %d"
                 slot p align p' align')
-      | Whole (Bound buf) when not (starts_at buf l.start) ->
+      | Whole (Bound (buf, _)) when not (starts_at buf l.start) ->
           let align, p = l.start in
           fail b.fn
             "a bound buffer of %s starts %d bytes past a multiple of %d, not %d"
@@ -806,7 +815,7 @@ let move_end b (l : located) n : Rig_program.slot =
         a.terms = [] && a.add = 0
         &&
         match source with
-        | Bound buf -> Rig.Buffer.length buf = n
+        | Bound (buf, _) -> Rig.Buffer.length buf = n
         | Lane _ -> false
       in
       if whole then Input i
@@ -1049,7 +1058,7 @@ let check_slots t slots =
   check_starts fn slots t.starts
 
 let buffer slots = function
-  | Bound buf -> buf
+  | Bound (buf, _) -> buf
   | Lane { slot; lane } -> (
       match slots.(slot) with [ buf ] -> buf | bs -> List.nth bs lane)
 

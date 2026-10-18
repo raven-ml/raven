@@ -570,6 +570,132 @@ let test_signal_raised () =
       Rig_support.interrupt ();
       raise_notrace Raised)
 
+(* Holds *)
+
+(* After the holds over a memory are unreachable, a call that moves collected
+   memory releases them: a donation then finds the memory exclusive. *)
+let collect_holds () =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create Rig.host 8))
+
+(* A hold keeps its memory live through donations, which stay read claims and
+   consume nothing, while reads and writes go on. Once the hold is collected,
+   the first call that moves collected memory, on any device, releases it. *)
+let test_hold () =
+  let d, _ = P.open_ "claim:hold" in
+  let a = B.create Rig.host 64 and b = B.create d 64 in
+  let h = Claim.hold [ a; b ] in
+  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
+      equal ~msg:"exclusive" (pair bool bool) (false, false)
+        (Claim.exclusive c a, Claim.exclusive c b);
+      equal ~msg:"consumable" (pair bool bool) (false, false)
+        (Claim.consumable c a, Claim.consumable c b);
+      raises_match ~msg:"a consumption" (Exn.invalid_arg ~substring:"held")
+        (fun () -> Claim.consume c ~why:"donated" a));
+  equal ~msg:"live" (option string) None (B.dead a);
+  B.fill a 'h';
+  equal ~msg:"written under the hold" char 'h'
+    (B.read a Bigarray.char (fun x -> x.{0}));
+  ignore (Sys.opaque_identity h);
+  collect_holds ();
+  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
+      equal ~msg:"exclusive once collected" (pair bool bool) (true, true)
+        (Claim.exclusive c a, Claim.exclusive c b))
+
+(* A hold of a dead buffer, or of memory held exclusive, raises and holds none
+   of the buffers it was given. *)
+let test_hold_refusals () =
+  let a = B.create Rig.host 8 and b = B.create Rig.host 8 in
+  Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
+      raises_match ~msg:"held exclusive"
+        (Exn.invalid_arg ~substring:"held exclusive")
+        (fun () -> Claim.hold [ a; b ]));
+  ignore (require_some (Rig_support.donated b));
+  raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.hold [ a; b ]);
+  equal ~msg:"the other buffer" bool true (donated_exclusive a)
+
+(* [consumable c b] says whether [consume c b] succeeds: for memory [c]
+   claims, live, spanned by [b] and not held, read by another claim or not. *)
+let test_consumable () =
+  let b = B.create Rig.host 16 and other = B.create Rig.host 16 in
+  let part = B.view b ~first:0 ~length:8 in
+  Claim.with_ ~read:[ b ] ~donate:[] (fun c ->
+      equal ~msg:"a view" bool false (Claim.consumable c part);
+      equal ~msg:"unclaimed" bool false (Claim.consumable c other);
+      claim_read b;
+      equal ~msg:"read by another claim" bool true (Claim.consumable c b);
+      claim_release b;
+      ignore (Claim.consume c ~why:"consumed" b);
+      equal ~msg:"dead" bool false (Claim.consumable c b));
+  let stale = Claim.with_ ~read:[ other ] ~donate:[] Fun.id in
+  equal ~msg:"ended" bool false (Claim.consumable stale other)
+
+(* Two domains: holds of a memory against consumptions of it under a read
+   claim. A consumption succeeds only while no hold holds the memory, and kills
+   it; a hold of a consumed memory raises. Whole calls interleave here: the
+   window between a consumption's check for holds and its raise of the
+   generation lies inside one C call with no poll point, which no test can
+   hold, so its order is argued in claim.mli. *)
+type held = { mutable consumed : bool; mutable holds : int }
+
+let held_memory =
+  abstract
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "consumed %b, holds %d" r.consumed r.holds)
+    "m"
+
+(* The holds taken, kept reachable to the end of the run. *)
+let kept : Claim.hold list Atomic.t = Atomic.make []
+
+let rec keep h =
+  let hs = Atomic.get kept in
+  if not (Atomic.compare_and_set kept hs (h :: hs)) then keep h
+
+let take_hold b = keep (Claim.hold [ b ])
+
+let judge_hold r = function
+  | Ok () ->
+      equal ~msg:"consumed" bool false r.consumed;
+      r.holds <- r.holds + 1
+  | Error (Invalid_argument _) -> equal ~msg:"consumed" bool true r.consumed
+  | Error e -> raise e
+
+(* What a consumption under a read claim found: the memory consumed, held, or
+   the buffer dead. A held memory is never consumed later, as the holds are
+   kept, so a refusal of a buffer still live is a hold's. *)
+let consume_read b =
+  match
+    Claim.with_ ~read:[ b ] ~donate:[] (fun c ->
+        ignore (Claim.consume c ~why:"consumed" b))
+  with
+  | () -> "consumed"
+  | exception Invalid_argument _ -> if B.dead b = None then "held" else "dead"
+
+let judge_consume r = function
+  | Ok "consumed" ->
+      equal ~msg:"consumed, held" (pair bool int) (false, 0)
+        (r.consumed, r.holds);
+      r.consumed <- true
+  | Ok "held" ->
+      equal ~msg:"consumed" bool false r.consumed;
+      greater ~msg:"holds" int ~than:0 r.holds
+  | Ok "dead" -> equal ~msg:"consumed" bool true r.consumed
+  | Ok what -> failf "a consumption found %s" what
+  | Error e -> raise e
+
+let hold_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes held_memory)
+      (fun () -> { consumed = false; holds = 0 })
+      (fun () -> B.create Rig.host 64);
+    command "hold" (held_memory ^-> judges unit) judge_hold take_hold;
+    command "consume"
+      (held_memory ^-> judges string)
+      judge_consume consume_read;
+  ]
+
 (* Two domains: with_ of a group of two memories, against a read of the second
    that ends in the same call. Whatever the order, no claim outlives its call:
    at the end the group is exclusive again. *)
@@ -1471,6 +1597,17 @@ let tests =
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;
+      ];
+    group ~timeout "holds"
+      [
+        test "a hold keeps memory from donation until it is collected"
+          test_hold;
+        test "a hold of a dead buffer or memory held exclusive holds nothing"
+          test_hold_refusals;
+        test "consumable says whether a consumption succeeds" test_consumable;
+        stateful ~domains:2
+          "holds beside consumptions of one memory are ordered with them"
+          hold_commands;
       ];
     group ~timeout "claims from C"
       [
