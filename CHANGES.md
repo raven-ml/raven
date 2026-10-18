@@ -1529,6 +1529,8 @@ thread.
 
 ### Tolk (new)
 
+- A `Tolk_engine.link` that raises ends the holds it took on bound buffers
+  (`Rig.Claim.release`), so a donation right after it reuses their memory.
 - `Tolk_engine.link` holds the memory of every bound buffer a kernel or
   copy accesses (`Rig.Claim.hold`) while the schedule is reachable, so no
   call consumes it between runs. A bound buffer that died between two runs

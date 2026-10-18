@@ -930,6 +930,56 @@ type t = {
   kernels : kernel list;
 }
 
+(* The schedule [linear] that [b] links. *)
+let assemble b linear =
+  List.iter (entry b) (Ops.src linear);
+  flush b;
+  let rigs = Dynarray.to_list b.rigs in
+  let inputs = Dynarray.to_list b.inputs in
+  let words = Dynarray.to_array b.words in
+  let desc =
+    {
+      Rig_program.devices = Iarray.of_list (List.map Rig.arch rigs);
+      memory = Iarray.of_list (Dynarray.to_list b.memory);
+      images = Iarray.of_list (Dynarray.to_list b.images);
+      inputs = Iarray.of_list (List.map snd inputs);
+      ints = Array.length words;
+      steps = Iarray.of_list (List.rev b.steps);
+    }
+  in
+  let loaded =
+    match Rig_program.load desc (Iarray.of_list rigs) with
+    | Ok l -> l
+    | Error why -> failwith (b.fn ^ ": " ^ why)
+  in
+  let n = Hashtbl.length b.cells in
+  let inputs = Array.of_list (List.map fst inputs) in
+  {
+    lock = Mutex.create ();
+    loaded;
+    params = List.rev b.params;
+    starts = Hashtbl.fold (fun k v l -> (k, v) :: l) b.starts [];
+    cells = b.cells;
+    env = { values = Array.make n 0; set = Array.make n false };
+    words;
+    inputs;
+    frame =
+      {
+        inputs = Array.make (Array.length inputs) (Rig.Buffer.of_string "");
+        ints = Array.make (Array.length words) 0;
+        step_points = Rig_program.step_points loaded;
+      };
+    calls = List.length (Ops.src linear);
+    kernels = List.rev b.kernels;
+  }
+
+(* Ends the holds of the buffers bound in [b], whose link raised, so that a
+   donation right after the raise consumes their memory. *)
+let release_bound (b : builder) =
+  Dynarray.iter
+    (function Whole (Bound (_, h)), _ -> Rig.Claim.release h | _ -> ())
+    b.inputs
+
 let link_with ~separate ~devices ?(bound = []) linear =
   let fn = "Tolk_engine.link" in
   if Ops.op linear <> Op.Linear then fail fn "not a compiled schedule";
@@ -976,46 +1026,12 @@ let link_with ~separate ~devices ?(bound = []) linear =
       kernels = [];
     }
   in
-  List.iter (entry b) (Ops.src linear);
-  flush b;
-  let rigs = Dynarray.to_list b.rigs in
-  let inputs = Dynarray.to_list b.inputs in
-  let words = Dynarray.to_array b.words in
-  let desc =
-    {
-      Rig_program.devices = Iarray.of_list (List.map Rig.arch rigs);
-      memory = Iarray.of_list (Dynarray.to_list b.memory);
-      images = Iarray.of_list (Dynarray.to_list b.images);
-      inputs = Iarray.of_list (List.map snd inputs);
-      ints = Array.length words;
-      steps = Iarray.of_list (List.rev b.steps);
-    }
-  in
-  let loaded =
-    match Rig_program.load desc (Iarray.of_list rigs) with
-    | Ok l -> l
-    | Error why -> failwith (fn ^ ": " ^ why)
-  in
-  let n = Hashtbl.length b.cells in
-  let inputs = Array.of_list (List.map fst inputs) in
-  {
-    lock = Mutex.create ();
-    loaded;
-    params = List.rev b.params;
-    starts = Hashtbl.fold (fun k v l -> (k, v) :: l) b.starts [];
-    cells = b.cells;
-    env = { values = Array.make n 0; set = Array.make n false };
-    words;
-    inputs;
-    frame =
-      {
-        inputs = Array.make (Array.length inputs) (Rig.Buffer.of_string "");
-        ints = Array.make (Array.length words) 0;
-        step_points = Rig_program.step_points loaded;
-      };
-    calls = List.length (Ops.src linear);
-    kernels = List.rev b.kernels;
-  }
+  match assemble b linear with
+  | t -> t
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      release_bound b;
+      Printexc.raise_with_backtrace e bt
 
 let link ~devices ?bound linear =
   link_with ~separate:(Setting.value Setting.debug >= 2) ~devices ?bound linear

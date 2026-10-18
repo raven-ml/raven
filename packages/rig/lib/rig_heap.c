@@ -86,7 +86,7 @@ struct release_node {
 };
 
 struct token {
-  struct release_list *list;
+  _Atomic(struct release_list *) list;
   struct release_node *node;
 };
 
@@ -99,17 +99,19 @@ value caml_rig_release_list(value unit) {
 }
 
 /* Links the node of the token [t] onto its list, once: a token its list
-   refused, never made or already linked has no list. */
+   refused, never made or already linked has no list. The link takes the list
+   in one exchange, so of two links on two domains one links the node. */
 static void token_link(struct token *t) {
+  struct release_list *l =
+      atomic_exchange_explicit(&t->list, NULL, memory_order_relaxed);
+  if (l == NULL) return;
   struct release_node *n = t->node;
-  if (t->list == NULL) return;
   struct release_node *head =
-      atomic_load_explicit(&t->list->head, memory_order_relaxed);
+      atomic_load_explicit(&l->head, memory_order_relaxed);
   do
     n->next = head;
   while (!atomic_compare_exchange_weak_explicit(
-      &t->list->head, &head, n, memory_order_release, memory_order_relaxed));
-  t->list = NULL;
+      &l->head, &head, n, memory_order_release, memory_order_relaxed));
 }
 
 static void token_finalize(value v) { token_link(Data_custom_val(v)); }
@@ -169,7 +171,7 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
                         pace(mem, (mlsize_t)Long_val(v_room),
                              Long_val(v_live)));
   struct token *t = Data_custom_val(v);
-  t->list = NULL;
+  atomic_init(&t->list, NULL);
   t->node = NULL;
   struct release_node *n = malloc(sizeof *n);
   if (n == NULL) caml_raise_out_of_memory();
@@ -182,14 +184,14 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   n->next = NULL;
   n->record = v_record;
   caml_register_generational_global_root(&n->record);
-  t->list = l;
   t->node = n;
+  atomic_store_explicit(&t->list, l, memory_order_relaxed);
   CAMLreturn(v);
 }
 
 /* Puts the record of the token [v_t] on its list now, as its collection
-   would, which then does nothing; [()] is no token. The caller serializes
-   this with other links of [v_t]. */
+   would, which then does nothing; [()] is no token. Of several links of
+   [v_t], on any domains, the first links it. */
 value caml_rig_token_link(value v_t) {
   if (Is_block(v_t)) token_link(Data_custom_val(v_t));
   return Val_unit;

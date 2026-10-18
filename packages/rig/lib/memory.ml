@@ -744,8 +744,10 @@ external hold_token : int -> holds -> int -> int -> int -> token
 external hold_record : int -> holds = "caml_rig_node_record" [@@noalloc]
 
 (* Releases the hold [i] of [taken] on [a]'s memory if it is taken, in one
-   step, so a release that an asynchronous exception interrupts and a later
-   drain runs again releases each hold once. *)
+   step, so releases that run concurrently, on several domains or in a
+   callback that interrupts another at [Weak.get]'s allocation, and a release
+   that an asynchronous exception interrupts and a later drain runs again,
+   release each hold once. *)
 external unhold : Bytes.t -> int -> alloc -> unit = "caml_rig_claim_unhold"
 [@@noalloc]
 
@@ -764,7 +766,8 @@ let unhold_all (h : holds) =
 external token_link : token -> unit = "caml_rig_token_link" [@@noalloc]
 
 (* The holds released, the token's record goes on the list now, and the
-   next drain only frees its node. *)
+   next drain only frees its node. It takes no lock, so a callback may run it
+   inside one. *)
 let release_hold_now t h =
   unhold_all h;
   token_link t

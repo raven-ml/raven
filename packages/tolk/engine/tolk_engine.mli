@@ -62,7 +62,7 @@ val link :
       otherwise, in its device's memory, which the runs share, starting at its
       phase ({!run}). The schedule holds the memory of every bound buffer a
       kernel or copy accesses ({!Rig.Claim.hold}) while it is reachable, so
-      no call consumes it.
+      no call consumes it. A link that raises holds none of them.
     - A kernel's lanes are the devices of its first argument: it is launched on
       each, with the lane's shard of each argument and ["_device_num"] bound to
       the lane's index. A host program is launched on its device's host, which

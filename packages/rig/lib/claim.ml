@@ -357,4 +357,4 @@ let held fn bs =
       { token; record }
 
 let hold bs = held "Claim.hold" bs
-let unhold h = Memory.release_hold_now h.token h.record
+let release h = Memory.release_hold_now h.token h.record

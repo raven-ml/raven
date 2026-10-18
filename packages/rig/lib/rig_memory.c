@@ -607,11 +607,13 @@ value caml_rig_claim_holds(value v_bs, value v_taken) {
 }
 
 /* Ends the hold [v_i] of [v_taken] on the allocation [v_alloc]'s memory, if
-   it is taken. */
+   it is taken. The mark is cleared in one exchange, so of two releases on two
+   domains one ends the hold. */
 value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc) {
-  unsigned char *taken = Bytes_val(v_taken) + Long_val(v_i);
-  if (*taken == 0) return Val_unit;
-  *taken = 0;
+  _Atomic unsigned char *taken =
+      (_Atomic unsigned char *)(Bytes_val(v_taken) + Long_val(v_i));
+  if (atomic_exchange_explicit(taken, 0, memory_order_relaxed) == 0)
+    return Val_unit;
   unhold_word((_Atomic value *)&Field(v_alloc, ALLOC_COUNT));
   return Val_unit;
 }

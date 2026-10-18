@@ -826,7 +826,7 @@ let make ?keep ?(fixed = []) d parts =
   match build keep ~fixed ~held d parts with
   | s -> s
   | exception e ->
-      Claim.unhold held;
+      Claim.release held;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let block s i =

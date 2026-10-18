@@ -549,6 +549,7 @@ let probes () =
       free "Buffer.of_bigarray" (fun () -> ignore (B.of_bigarray ba));
       free "Claim.with_" (fun () ->
           Rig.Claim.with_ ~read:[ b ] ~donate:[] ignore);
+      free "Claim.release" (fun () -> Rig.Claim.release (Rig.Claim.hold [ h ]));
       free "Image.name" (fun () -> ignore (Rig.Image.name fill));
       free "Image.image" (fun () -> ignore (Rig.Image.image fill));
       free "Image.params" (fun () -> ignore (Rig.Image.params fill));

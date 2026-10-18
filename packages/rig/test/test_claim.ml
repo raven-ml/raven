@@ -724,6 +724,109 @@ let test_hold () =
       equal ~msg:"exclusive once collected" (pair bool bool) (true, true)
         (Claim.exclusive c a, Claim.exclusive c b))
 
+(* A release ends a hold at once: while the hold is still reachable and
+   nothing was collected, a donation finds its memory exclusive and consumes
+   it. *)
+let test_release () =
+  let d, _ = P.open_ "claim:release" in
+  let a = B.create Rig.host 64 and b = B.create d 64 in
+  let h = Claim.hold [ a; b ] in
+  Claim.release h;
+  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
+      equal ~msg:"exclusive" (pair bool bool) (true, true)
+        (Claim.exclusive c a, Claim.exclusive c b);
+      ignore (Claim.consume c ~why:"donated" a));
+  equal ~msg:"consumed" (option string) (Some "donated") (B.dead a);
+  ignore (Sys.opaque_identity h)
+
+(* A later release of a hold, and its collection, end nothing: another hold of
+   the same memory holds it until its own release. *)
+let test_release_once () =
+  let a = B.create Rig.host 64 in
+  let h1 = Claim.hold [ a ] and h2 = Claim.hold [ a ] in
+  Claim.release h1;
+  Claim.release h1;
+  equal ~msg:"after a second release" bool false (donated_exclusive a);
+  ignore (Sys.opaque_identity h1);
+  collect_holds ();
+  equal ~msg:"after the collection" bool false (donated_exclusive a);
+  Claim.release h2;
+  equal ~msg:"after the other's release" bool true (donated_exclusive a);
+  Claim.release (Claim.hold []);
+  ignore (Sys.opaque_identity h2)
+
+(* Two domains: releases of one hold over two memories, beside drops of the
+   hold, which release it, collections and donations of both memories. Another
+   hold keeps the second memory to the end. A release after the first ends
+   nothing, so the first memory is exclusive once the hold is released and
+   the second never is. A drop beside a release releases the hold twice on two
+   domains, and a collection after it runs the drain of the hold's record
+   beside the other domain's release. *)
+type releases = { mutable released : bool }
+
+type held_pair = {
+  first : B.t;
+  second : B.t;
+  hold : Claim.hold option Atomic.t;
+  keeper : Claim.hold;
+}
+
+let held_pair =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "released %b" r.released)
+    ~release:(fun p -> ignore (Sys.opaque_identity p.keeper))
+    "p"
+
+let make_pair () =
+  let first = B.create Rig.host 64 and second = B.create Rig.host 64 in
+  let hold = Atomic.make (Some (Claim.hold [ first; second ])) in
+  { first; second; hold; keeper = Claim.hold [ second ] }
+
+let release_pair p = Option.iter Claim.release (Atomic.get p.hold)
+let drop_pair p = Option.iter Claim.release (Atomic.exchange p.hold None)
+
+(* A collection that drains: a minor collection finalises a token dropped
+   while young, and the allocation drains the list of holds, on which a
+   release or the finaliser put the hold's record. *)
+let collect_pair (_ : held_pair) =
+  Gc.minor ();
+  ignore (Sys.opaque_identity (B.create Rig.host 8))
+
+let donate_pair p =
+  Claim.with_ ~read:[]
+    ~donate:[ p.first; p.second ]
+    (fun c -> (Claim.exclusive c p.first, Claim.exclusive c p.second))
+
+let release_model r = r.released <- true
+
+(* The kept memory is never exclusive, and the first only once the hold is
+   released. Two donations side by side may each find the other's read claim
+   on the first and get a read claim, or one holds it exclusive and the other
+   raises. *)
+let judge_donation r = function
+  | Ok (first, second) ->
+      equal ~msg:"the kept memory exclusive" bool false second;
+      if not r.released then equal ~msg:"held, exclusive" bool false first
+  | Error (Invalid_argument _) -> equal ~msg:"released" bool true r.released
+  | Error e -> raise e
+
+let release_commands =
+  [
+    command "make" (Gen.unit @-> makes held_pair)
+      (fun () -> { released = false })
+      make_pair;
+    command "release"
+      (held_pair ^-> returns unit)
+      release_model release_pair;
+    command "drop"
+      (held_pair ^-> returns unit)
+      release_model drop_pair;
+    command "collect" (held_pair ^-> returns unit) ignore collect_pair;
+    command "donate"
+      (held_pair ^-> judges (pair bool bool))
+      judge_donation donate_pair;
+  ]
+
 (* A submission holds its fixed memory and the buffers its parts name, which
    every run reads, as a hold does: none of them donates while the submission
    is reachable, and each does once it is collected. Slots hold nothing. *)
@@ -1820,6 +1923,14 @@ let tests =
           test_hold;
         test "a hold of a dead buffer or memory held exclusive holds nothing"
           test_hold_refusals;
+        test "a release ends a hold before its collection" test_release;
+        test "a later release and the collection of a released hold end \
+              nothing"
+          test_release_once;
+        stateful ~domains:2
+          "releases of one hold on two domains beside its collection end it \
+           once"
+          release_commands;
         test "a submission holds the memory every run reads" test_submission_holds;
         test "consumable says whether a consumption succeeds" test_consumable;
         stateful ~domains:2

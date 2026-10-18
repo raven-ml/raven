@@ -1935,12 +1935,12 @@ end
     {- A {e read claim} marks an allocation as being read. The host holds
        one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
        every buffer it is given. A {e hold} ({!Claim.hold}) is a read claim
-       that lasts while its value is reachable, and that no consumption
-       ends. {!submit} holds one on every allocation
-       the work uses until it returns, and a copy, blit or fill
-       ({!Buffer.section-copying}) on its buffers until it returns. Work on
-       a device holds none, since the stamps order a write in place after
-       that work.}
+       that lasts until {!Claim.release} ends it or its value is
+       unreachable, and that no consumption ends. {!submit} holds one on
+       every allocation the work uses until it returns, and a copy, blit or
+       fill ({!Buffer.section-copying}) on its buffers until it returns.
+       Work on a device holds none, since the stamps order a write in place
+       after that work.}
     {- Only {!Claim.with_} holds memory exclusive, for an input its call
        donates, until it consumes the memory. Every other claim is a read
        claim.}
@@ -2064,19 +2064,27 @@ module Claim : sig
       memory meanwhile. *)
 
   type hold
-  (** The type for claims that keep buffers in use while their value is
-      reachable. *)
+  (** The type for claims that keep buffers in use until they are released
+      or their value is unreachable. *)
 
   val hold : Buffer.t list -> hold
   (** [hold bs] takes a read claim on the memory of each of [bs] that no
-      donation writes and no {!consume} ends ({!consumable}), held until the
-      hold is unreachable: the first call that moves collected memory after
-      its collection releases it ({!Rig.section-reclaim}). A library that
-      keeps buffers it does not own over calls, such as a linked program's
-      inputs, holds them.
+      donation writes and no {!consume} ends ({!consumable}). The claims last
+      until {!release} ends them or, once the hold is unreachable, until the
+      first call that moves collected memory after its collection
+      ({!Rig.section-reclaim}). A library that keeps buffers it does not own
+      over calls, such as a linked program's inputs, holds them.
 
       Raises [Invalid_argument], holding none of [bs], if a buffer is dead or
       its memory is held exclusive. *)
+
+  val release : hold -> unit
+  (** [release h] ends [h]'s claims now, so a {!with_} that starts after it
+      returns finds none of them. A later release of [h], and [h]'s
+      collection, then end nothing. It takes no lock, so it may run on any
+      domain and in a callback inside a lock ({!Rig.section-domains}). If an
+      asynchronous exception interrupts it, the claims it has not ended last
+      until a later release or [h]'s collection. *)
 end
 
 (** {1:profiles Profiles} *)

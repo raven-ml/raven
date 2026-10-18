@@ -39,7 +39,10 @@
     lock bit if no hold holds the memory, raises the generation, and clears
     the bit; a hold waits while the bit is set and checks its buffer live
     once it holds. So a consumption either finds the hold and raises, or
-    the hold finds the buffer dead.
+    the hold finds the buffer dead. A release ({!release}) clears each
+    hold's mark in its record and takes {!Memory.one_hold} off the word in
+    one C step, so each hold ends once, whichever release, on any domain,
+    or drain after the hold's collection comes first.
 
     {!with_} takes its claims in one C call, the last step before its
     function's handler. Both exits begin with [finish], which ends the
@@ -139,6 +142,5 @@ val held : string -> Def.buffer list -> hold
 val hold : Def.buffer list -> hold
 (** [hold bs] is {!held}[ "Claim.hold" bs]. *)
 
-val unhold : hold -> unit
-(** [unhold h] releases [h] now, for a caller that gives [h] up because the
-    call that took it raises. *)
+val release : hold -> unit
+(** [release h] is {!Rig.Claim.release}[ h]. *)

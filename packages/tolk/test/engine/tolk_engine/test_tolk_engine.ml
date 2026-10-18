@@ -139,14 +139,18 @@ let buffers () =
 let axpy_on_host prg =
   Engine.link_call ~devices (call_on "CPU" ~size:4 ~slots:3 prg)
 
-(* [n] bytes of a buffer of [d] whose first byte lies [phase] bytes past a
-   16-byte boundary, holding [bytes] where given. *)
-let at_phase ?bytes d phase n =
-  let b = Buffer.create d (n + 15) in
+(* A view of [n] bytes of [b] whose first byte lies [phase] bytes past a
+   16-byte boundary. *)
+let view_at_phase b phase n =
   let rec first j =
     if Buffer.aligned b ~at:(j - phase) 16 then j else first (j + 1)
   in
-  let v = Buffer.view b ~first:(first 0) ~length:n in
+  Buffer.view b ~first:(first 0) ~length:n
+
+(* [n] bytes of a buffer of [d] whose first byte lies [phase] bytes past a
+   16-byte boundary, holding [bytes] where given. *)
+let at_phase ?bytes d phase n =
+  let v = view_at_phase (Buffer.create d (n + 15)) phase n in
   Option.iter (fun src -> Buffer.copy ~src ~dst:v) bytes;
   v
 
@@ -1659,6 +1663,14 @@ let holds_bound () =
       equal ~msg:"consumable" bool false (Rig.Claim.consumable c b));
   ignore (Sys.opaque_identity s)
 
+(* A link that raises holds none of its bound buffers: a donation of their
+   memory right after it finds the memory exclusive. *)
+let refusal_holds_nothing () =
+  let b = Buffer.create host (64 + 15) in
+  raises_match off_its_phase (with_bound 2 (fun _ -> [ view_at_phase b 4 64 ]));
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      equal ~msg:"exclusive" bool true (Rig.Claim.exclusive c b))
+
 let refusals =
   group "refusals"
     [
@@ -1684,6 +1696,8 @@ let refusals =
       test "link refuses storage a kernel reads bound off its phase" (fun () ->
           raises_match off_its_phase
             (with_bound 2 (fun _ -> [ at_phase host 4 64 ])));
+      test "a refused link holds none of its bound buffers"
+        refusal_holds_nothing;
       link_refuses "a bound node that is no storage" (fun () ->
           let storage = storage_of (program "add") in
           let bound =

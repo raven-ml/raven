@@ -224,7 +224,9 @@ val no_hold : token
 val release_hold_now : token -> holds -> unit
 (** [release_hold_now t h] releases the holds of [h], whose token is [t],
     now, for a caller that gives them up: [t]'s record goes on the list of
-    holds with none left to release. *)
+    holds with none left to release. Each hold is released once, however many
+    calls on any domains run it, and [t]'s collection then does nothing. It
+    takes no lock. *)
 
 val release_early : alloc -> unit
 (** [release_early a] returns the memory of [a], whose buffers are dead, as
