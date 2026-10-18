@@ -1,0 +1,7 @@
+; golden/ holds mpmath's exact results, written by gen/generate.py.
+
+(test
+ (name test_wide)
+ (libraries nx nx_array nx_support nx_wide rig windtrap)
+ (deps
+  (glob_files golden/*.golden)))

@@ -1,0 +1,5 @@
+; nx.wide: double-word floats as compositions of nx's operations.
+
+(library
+ (name nx_wide)
+ (libraries nx nx_array))
