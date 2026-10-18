@@ -610,11 +610,11 @@ let execute_all_cells m =
   List.iter
     (fun cell ->
       match cell with
-      | Cell.Code { id; source; _ } ->
+      | Cell.Code { id; source; _ } when Cell.is_ocaml cell ->
           session := Session.mark_running id !session;
           m.kernel.execute ~cell_id:id ~code:source;
           session := drain_events m.event_queue !session
-      | Cell.Text _ -> ())
+      | Cell.Code _ | Cell.Text _ -> ())
     (Doc.cells (Session.doc !session));
   clear_footer_message { m with session = !session; dirty = true }
 

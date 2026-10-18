@@ -21,6 +21,11 @@ let constructor_tests =
         match c with
         | Cell.Code { language; _ } -> equal string "python" language
         | _ -> fail "expected Code cell");
+    test "is_ocaml" (fun () ->
+        is_true (Cell.is_ocaml (Cell.code "let x = 1"));
+        is_false (Cell.is_ocaml (Cell.code ~language:"bash" "ls"));
+        is_false (Cell.is_ocaml (Cell.code ~language:"" "plain"));
+        is_false (Cell.is_ocaml (Cell.text "let x = 1")));
     test "text cell" (fun () ->
         let c = Cell.text "# Hello" in
         equal string "# Hello" (Cell.source c);
