@@ -9,7 +9,10 @@
     images the driver was validated with. Each image has a pinned {!digest},
     and no file with another digest is loaded. The driver says where images
     are, rig's own {!directory} among them; this module reads files and writes
-    nothing.
+    nothing. The [rig firmware] command fetches the pinned images into rig's
+    directory. A directory of the caller's must stay apart from
+    [/lib/firmware], since the kernel's drivers load their images from there
+    and an image replaced there changes what they load.
 
     An image found is kept for the life of the process, with its file's identity
     when it was read: its device, inode, size and modification time. A later

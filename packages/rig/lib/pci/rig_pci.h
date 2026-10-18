@@ -12,12 +12,12 @@
    whose windows may be another machine's declares that its submission may
    block and runs it without the OCaml runtime.
 
-   An access reports nothing. Once the transport failed, a read gives all
-   ones and a write is dropped, as for a function that left the bus. A
-   submission asks rig_pci_failed once, after its last access: NULL
-   there means the transport had not failed by then. A store may return
-   before it reaches the machine, so only a NULL after a load, such as
-   rig_pci_flush's, also means the stores before the load reached it.
+   An access reports nothing, and gives what window.mli states for an
+   access of a failed machine. A submission asks rig_pci_failed once, after
+   its last access: NULL there means the transport had not failed by then.
+   A store may return before it reaches the machine, so only a NULL after a
+   load, such as rig_pci_flush's, also means the stores before the load
+   reached it.
    Values are little-endian; so is every host this library builds for. */
 
 #ifndef RIG_PCI_H
@@ -61,11 +61,9 @@ struct rig_pci_window {
    without it. Bounds are the caller's: no access below checks them. */
 void rig_pci_window_of(value w, struct rig_pci_window *out);
 
-/* Orders every access before it before every access after it, as devices
-   see them: on arm64 the full-system barrier stores to a BAR need; on
-   x86_64 mfence, as Linux's mb(), since accesses to write-combined memory
-   are weakly ordered. A C11 fence is not that: gcc compiles it to a locked
-   instruction. */
+/* Window.barrier (window.mli) from C. On x86_64 it is mfence, Linux's mb(),
+   its barrier for device memory. A C11 fence is not that: gcc compiles it to
+   a locked instruction. */
 static inline void rig_pci_barrier(void) {
 #if defined(__aarch64__)
   __asm__ __volatile__("dsb sy" ::: "memory");
@@ -84,8 +82,8 @@ rig_pci_failed(const struct rig_pci_window *w) {
   return w->transport->failed(w->transport->ctx);
 }
 
-/* Register accesses: each is one access of exactly its width, at an
-   address aligned to it. */
+/* Register accesses, as window.mli's Accesses section states them, at an
+   address aligned to their width. */
 
 static inline void rig_pci_store32(const struct rig_pci_window *w,
                                       size_t off, uint32_t x) {
@@ -121,12 +119,8 @@ static inline uint64_t rig_pci_load64(const struct rig_pci_window *w,
   return x;
 }
 
-/* Makes the stores made through [w] before it reach the function before
-   any access after it, through any window: a barrier, then a load of [w]'s
-   first word, which the bus answers only after them. A driver flushes the
-   window it wrote before the store that has the function read what it
-   wrote, such as a doorbell. [w] holds at least 4 bytes from a 4-byte
-   boundary. */
+/* Window.flush (window.mli) from C, which window.mli's Accesses section
+   says when to call. [w] holds at least 4 bytes from a 4-byte boundary. */
 static inline void rig_pci_flush(const struct rig_pci_window *w) {
   rig_pci_barrier();
   (void)rig_pci_load32(w, 0);

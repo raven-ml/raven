@@ -84,8 +84,8 @@ val reserve : t -> base:int -> int -> (unit, string) result
     from the operations below. A transport runs each operation on the other
     machine as the same operation of {!this} runs here. A request it cannot run
     returns [Error why], with [why] starting with the machine's name, and so
-    does the reason its transport failed ({!failed}). Once the transport has
-    failed, its accesses read all ones, drop writes, and raise nothing.
+    does the reason its transport failed ({!failed}). {!Window} states what
+    accesses give once the transport has failed.
 
     {!Function} refuses misuse before it calls an operation, and counts the
     windows and pins of each function. An operation is called only with
@@ -204,11 +204,7 @@ val reserved : t -> int -> int -> bool
    {!Memory} the way up the bus from a GPU. *)
 val files : t -> Sysfs.t option
 
-(* [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or
-   at least [us] microseconds passed on a monotonic clock. It is [true] iff [f]
-   became [true] while [m] had not failed: [m]'s state is read after each call
-   of [f], so an answer computed from the all ones of a failed machine is not
-   trusted. For its first millisecond it calls [f] back to back, relaxing the
-   processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
-   core. {!Function.wait} builds on it. *)
+(* [wait m ~us f] is the loop of {!Function.wait} on [m], which builds on it:
+   it calls [f] until it is [true], [m] failed, or at least [us] microseconds
+   passed, and is [true] iff [f] became [true] while [m] had not failed. *)
 val wait : t -> us:int -> (unit -> bool) -> bool

@@ -58,8 +58,10 @@ val sub : t -> int -> int -> t
     accesses. Stores may merge and reach the function in another order, and
     loads may be served early, until a {!barrier} orders them. A driver puts a
     barrier between a load of a word the function wrote and the loads that
-    word guards. It flushes the window ({!flush}) before the store that has the
-    function read what it wrote.
+    word guards.
+
+    A driver flushes each window it wrote ({!flush}) before the store that has
+    the function read what it wrote, such as a doorbell.
 
     {!read}, {!blit_string}, {!write} and {!fill} copy memory, at widths they
     choose. On a mapped window they move a 32-bit word at a time, which memory

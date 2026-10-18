@@ -26,9 +26,7 @@
     the boot pool, which holds what the GPU needs to start. {!booted} ends
     booting, and later tables and memory come from the other pools. Memory is
     then allocated and mapped ({!alloc}, {!map}) and given back ({!free},
-    {!unmap}). {!free} gives back the memory and addresses only once the GPU
-    has confirmed that it no longer reaches them. {!unmap} returns the tables
-    it empties to their pool before its flush, whatever the flush returns.
+    {!unmap}), which flush and state what an unconfirmed flush keeps.
 
     The GPU's owner makes one call at a time. *)
 
@@ -229,7 +227,8 @@ val tables : t -> va:int -> int -> int list option
 
 val unmap : t -> va:int -> int -> bool
 (** [unmap t ~va n] unmaps the [n] bytes mapped from [va], frees the tables that
-    become empty, and flushes. It is [true] iff the flush was confirmed, so
+    become empty, and flushes. The tables go back to their pool before the
+    flush, whatever it returns. It is [true] iff the flush was confirmed, so
     that the GPU no longer reaches the memory. On [false] it may still reach
     it.
 

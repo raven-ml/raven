@@ -639,15 +639,12 @@ machine here.
 
 ## Memory ordering
 
-### On x86, order streaming loads with mfence
+### On x86, the barrier for device memory is mfence
 
 A C11 sequentially consistent fence compiles to `mfence` with clang and to
-`lock orq $0, (%rsp)` with gcc 14. A locked instruction orders ordinary loads
-and stores. Intel's manual names `MFENCE` or `LFENCE` for the non-temporal
-loads (`MOVNTDQA`) that fast reads of write-combining memory use, and Linux's
-`mb()`, its barrier for device memory, is `mfence`. The barrier for device
-memory is therefore `mfence` written out (`lib/pci/rig_pci.h`,
-`rig_pci_barrier`). It costs about 4 ns more:
+`lock orq $0, (%rsp)` with gcc 14. Linux's `mb()`, its barrier for device
+memory, is `mfence`, so rig's is `mfence` written out (`lib/pci/rig_pci.h`,
+`rig_pci_barrier`), whichever compiler builds it. It costs about 4 ns more:
 8.2 against 4.0 ns per fence on the RTX 5000 Ada's host, 7.4 against 3.9 ns on
 the R9700's, beside bus round trips of hundreds of nanoseconds. On arm64 the
 barrier is `dsb sy`.

@@ -18,14 +18,11 @@
       the memory the process maps for it, at device addresses the process
       chooses.
     - {e Physically}, through [/sys/bus/pci], with write access to the
-      function's files there. The function must be enabled and bound to no
-      driver or to [vfio-pci], and the IOMMU, if any, must not translate its
-      addresses. A function that Linux resets through its bus must also be
-      alone on its device, since Linux refuses that reset while another
-      function shares the bus. It reaches system memory at physical
-      addresses, and nothing confines its DMA. An address that its work or page
-      tables get wrong reads or writes whatever memory of the machine lies
-      there, the kernel's included.
+      function's files there, for a function bound to no driver or to
+      [vfio-pci] whose addresses no IOMMU translates. It reaches system memory
+      at physical addresses, and nothing confines its DMA. An address that its
+      work or page tables get wrong reads or writes whatever memory of the
+      machine lies there, the kernel's included.
 
     {!take} lists what refuses a take. An operation that needs a further
     privilege, such as {!reset}, names it. A function of another machine is
@@ -53,10 +50,11 @@
     ({{!dma}system memory}), and its legacy interrupts stay off until a kernel
     driver enables the function.
 
-    A take changes the function's legacy interrupts until its release, and a
-    release turns bus mastering off. A function taken physically also gets
-    memory that outlives the process ({{!dma}system memory}). {!Driver.detach}
-    and {!Driver.attach} are the calls that change the machine.
+    A take changes the function's legacy interrupts until its release
+    ({!take}), and a release turns bus mastering off. A function taken
+    physically also gets memory that outlives the process
+    ({{!dma}system memory}). {!Driver.detach} and {!Driver.attach} are the
+    calls that change the machine.
 
     One owner makes a function's calls one at a time, except that {!pin},
     {!unpin}, {!alloc_dma}, {!free_dma} and {!wait} may be called from any
@@ -85,9 +83,10 @@ val take : Machine.t -> string -> (t, string) result
     - it is bound to a driver other than [vfio-pci] ({!Driver.detach});
     - the IOMMU translates its addresses and it is not bound to [vfio-pci];
     - not behind an IOMMU, it is disabled, or it shares its device with
-      another function and Linux resets it through its bus: the first method
-      of its [reset_method] is [bus] or [cxl_bus], or the kernel lists none
-      and the function has a [reset] ({!Driver.detach});
+      another function and Linux resets it through its bus, which Linux
+      refuses while another function shares the bus. Linux resets it so when
+      the first method of its [reset_method] is [bus] or [cxl_bus], or the
+      kernel lists none and the function has a [reset] ({!Driver.detach});
     - it is not behind an IOMMU and the kernel is locked down
       ([/sys/kernel/security/lockdown], which Secure Boot turns on in several
       distributions), which refuses every mapping of a BAR;
@@ -391,15 +390,13 @@ val unpin : t -> int -> int -> unit
    take keeps until its release. *)
 val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
 
-(* [inherited f] is [true] iff a dead process left [f] reaching memory of
-   its machine when [f] was taken, which [f] may still write, and {!forget} has
-   not run since. *)
+(* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
+   {!forget} returns [Ok ()], and [false] after. *)
 val inherited : t -> bool
 
-(* [forget f] records that [f]'s device was reset, so that [f] reaches none of
-   the memory dead processes left: that memory goes once no other function
-   reaches it. The memory this process allocated stays listed for [f], so that
-   the process's own death still leaves [f] to be reset.
+(* [forget f] is the [forget] of [f]'s take ({!Machine.fn}). The memory this
+   process allocated stays listed for [f], so that the process's own death
+   still leaves [f] to be reset.
 
    Raises [Invalid_argument] if [f] was released. *)
 val forget : t -> (unit, string) result
