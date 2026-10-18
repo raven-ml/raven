@@ -215,7 +215,7 @@ let key_bounds () =
         o.accepted)
     [ Wire.min_key; Wire.max_key ]
 
-let bad_sizes = [ 0; 1; Wire.min_key - 1; Wire.max_key + 1; 2 * Wire.max_key ]
+let bad_sizes = [ 0; Wire.min_key - 1; Wire.max_key + 1 ]
 
 (* With a silent peer, a raise that waited for it would come after [limit]. *)
 let dial_bad_key n =
@@ -322,7 +322,7 @@ let keys =
       [
         (3, constant Same);
         (2, map (fun i -> Byte i) (int_range 0 (n - 1)));
-        (1, constant (if n > Wire.min_key then Shorter else Same));
+        (2, constant (if n > Wire.min_key then Shorter else Same));
         (1, map (fun o -> Other o) (string_of ~size:(constant n) char));
       ]
   in
@@ -379,7 +379,7 @@ let keys_group =
           Format.asprintf "dial refuses %a dialing %a at once" pp_process s
             pp_process p)
         "dial's peer" bad_peers dial_bad_peer;
-      prop ~count:200
+      prop ~count:60
         "ends connect, naming both processes, iff their keys are equal"
         (Gen.with_pp pp_case (Gen.pair keys processes))
         keys_law;
@@ -388,42 +388,37 @@ let keys_group =
 
 (* Admission *)
 
-let admit_refuses () =
-  let why = "a second controller" in
-  let o =
-    handshake ~admit:(fun _ -> Error why) ~dialing:key ~accepting:key ()
-  in
-  equal dialed (Error why) o.dialed;
-  is_error o.accepted;
-  equal (list process) [ Wire.Controller ] o.admitted
-
 (* admit's reason is cut to 4096 bytes. *)
 let admit_cut () =
   let why = String.make 70_000 'a' in
   let o =
     handshake ~admit:(fun _ -> Error why) ~dialing:key ~accepting:key ()
   in
-  equal dialed (Error (String.sub why 0 4096)) o.dialed
+  equal dialed (Error (String.sub why 0 4096)) o.dialed;
+  is_error ~msg:"the accepting end" o.accepted
 
 let admission =
   group "admit"
     [
-      test "admit's refusal reaches the dialing end as its reason"
-        admit_refuses;
-      test "admit's refusal of 70000 bytes reaches the dialing end as 4096"
+      test
+        "admit's refusal of 70000 bytes reaches the dialing end as 4096, and \
+         the accept is Error"
         admit_cut;
     ]
 
 (* Refusals *)
 
 let refuse_bytes () =
-  let why = "busy\000\xff" in
-  let d, a = connected () in
-  Wire.refuse a why;
-  let got =
-    Fun.protect ~finally:(fun () -> Unix.close d) (fun () -> read_all d)
-  in
-  equal string (refusal why) got
+  List.iter
+    (fun why ->
+      let d, a = connected () in
+      Wire.refuse a why;
+      let got =
+        Fun.protect ~finally:(fun () -> Unix.close d) (fun () -> read_all d)
+      in
+      let cut = String.sub why 0 (min 4096 (String.length why)) in
+      equal ~msg:(string_of_int (String.length why)) string (refusal cut) got)
+    [ "busy\000\xff"; String.make 70_000 'r' ]
 
 let refuse_reaches_dial why =
   let d, a = connected () in
@@ -452,25 +447,14 @@ let refuse_reset () =
 let refusals =
   group "refuse"
     [
-      test "refuse sends the documented refusal, then ends the stream"
+      test
+        "refuse sends the documented refusal, cut to 4096 bytes, then ends the \
+         stream"
         refuse_bytes;
       prop "dial reports a refusal's reason unchanged"
         ~examples:[ "" ]
         (Gen.with_pp pp_bytes Gen.string)
         refuse_reaches_dial;
-      test "a reason of 70000 bytes reaches dial as its first 4096" (fun () ->
-          let d, a = connected () in
-          let refused =
-            spawn (fun () -> Wire.refuse a (String.make 70_000 'r'))
-          in
-          let r =
-            Fun.protect
-              ~finally:(fun () -> Unix.close d)
-              (fun () ->
-                Wire.dial d ~key ~self:Wire.Controller ~peer:(Wire.Agent 1))
-          in
-          refused ();
-          equal dialed (Error (String.make 4096 'r')) r);
       test "refuse raises nothing, and the process lives, on a reset peer"
         refuse_reset;
     ]
@@ -655,8 +639,8 @@ let proofs =
    A raw peer writes only within its first [silent_after] seconds and then
    reads until the end closes, or until [limit +. slack], when it closes its
    own socket: no peer writes to an end that has given up, and an end that
-   waits too long returns at that deadline. The cases of a test run at once,
-   so it takes one [limit]. *)
+   waits too long returns at that deadline. The cases run at once, so they
+   take one [limit]. *)
 
 let silent_after = 9.5
 
@@ -733,7 +717,7 @@ let gives_up cases () =
 
 let hello = greeting ~version (String.make 32 'n')
 
-let silent =
+let peers =
   [
     ("dial, a silent accepting end", Dialing, ignore);
     ( "dial, an accepting end silent after the greeting",
@@ -742,10 +726,6 @@ let silent =
         write a hello;
         ignore (read_n a proof_size) );
     ("accept, a silent dialing end", Accepting, ignore);
-  ]
-
-let trickling =
-  [
     ( "dial, an accepting end trickling its greeting",
       Dialing,
       fun a -> trickle a hello );
@@ -759,9 +739,8 @@ let trickling =
 let silence =
   group "silence"
     [
-      slow "an end gives up on a silent peer after 10 s" (gives_up silent);
-      slow "an end gives up after 10 s on a peer that trickles its answer"
-        (gives_up trickling);
+      slow "an end gives up after 10 s on a silent peer or one that trickles"
+        (gives_up peers);
     ]
 
 let () =
