@@ -28,6 +28,7 @@ dev.opam
 
 # Agent files
 CLAUDE.local.md
+AGENTS.local.md
 
 # Run logs
 runs/
