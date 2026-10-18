@@ -71,7 +71,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - copies: a device copy that returns once queued, copies of several runs or
   a strided box in one call, `fill` on the copy engine, run-value offsets in
   rig_program's `Move` step; done when placing on N GPUs costs one wait
-- from its callers: `Profile.take` raises `Lost`
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
   GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
   dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'

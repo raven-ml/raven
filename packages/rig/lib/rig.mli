@@ -2198,9 +2198,17 @@ module Profile : sig
   (** [take f] is [f ()] and the events recorded while it ran, in time order
       and, at equal times, longest first, then in the order they were
       recorded. Before it returns it waits for the work whose events are
-      still to be read, such as the submissions made while it ran, and leaves
-      out those of a device lost meanwhile. If [f] raises, [take] discards
-      the events and raises the exception again with its backtrace. *)
+      still to be read, such as the submissions made while it ran. If [f]
+      raises, [take] discards the events and raises the exception again with
+      its backtrace.
+
+      Raises {!Lost} naming a device whose events are still to be read if it
+      is lost before they are read, having discarded the events. That device
+      may be any whose work was recorded while [f] ran, another domain's
+      included. A {!close} first reads its device's events of completed
+      work, so a device that [f] closes raises nothing. An event that
+      another domain's [take] has begun to read when the close starts stays
+      that [take]'s, which then raises the close's {!Lost}. *)
 
   val enabled : unit -> bool
   (** [enabled ()] is [true] iff some profile is being taken. *)

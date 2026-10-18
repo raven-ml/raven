@@ -185,23 +185,82 @@ let recorded_order (n, e) (n', e') =
   match order e e' with 0 -> Int.compare n n' | c -> c
 
 (* Reads the entries [p] took into it, newest first, which waits for the
-   last value first. Each waits for its value and reads its events, or none
-   if its device is lost meanwhile. An entry leaves [p] as its wait starts
-   and is dropped however its read ends, so an exception, such as
-   [Sys.Break] in the wait, leaves the rest in [p] for [stop] to drop. *)
+   last value first. Each waits for its value and reads its events, and
+   raises [Lost] if its device is lost before they are read. An entry leaves
+   [p] as its wait starts and is dropped however its read ends, so an
+   exception, such as [Lost] or [Sys.Break] in the wait, leaves the rest in
+   [p] for [stop] to drop. *)
 let rec read_all p =
   let e = pop p in
   if e != no_pending then begin
     (match
-       match Dev.wait e.device e.value with
-       | () -> e.read p
-       | exception Dev.Lost _ -> ()
+       Dev.wait e.device e.value;
+       e.read p
      with
     | () -> e.drop ()
     | exception x ->
         e.drop ();
         Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ()));
     read_all p
+  end
+
+(* Takes out of [p] its first entry that [mine] holds of: it, or
+   [no_pending] if none, or once [p] is closed. *)
+let rec take_one p mine =
+  match Atomic.get p.pending with
+  | Closed -> no_pending
+  | (Open l | Reading l) as before -> (
+      match List.find_opt mine l with
+      | None -> no_pending
+      | Some e ->
+          let rest = List.filter (fun e' -> e' != e) l in
+          let after =
+            match before with Open _ -> Open rest | _ -> Reading rest
+          in
+          if Atomic.compare_and_set p.pending before after then e
+          else take_one p mine)
+
+(* Gives [e] back to [p], whose [take] then reads it, or drops it once [p] is
+   closed. *)
+let rec restore p e =
+  match Atomic.get p.pending with
+  | Closed -> e.drop ()
+  | (Open l | Reading l) as before ->
+      let after =
+        match before with Open _ -> Open (e :: l) | _ -> Reading (e :: l)
+      in
+      if not (Atomic.compare_and_set p.pending before after) then restore p e
+
+(* Reads [p]'s entries that [mine] holds of, one at a time, as [read_all]
+   does: each leaves [p] as its wait starts and is dropped however its read
+   ends, so an exception leaves the rest in [p]. An entry whose device is
+   lost goes back to [p] instead, for its [take] to raise, and ends the
+   reads. *)
+let rec read_mine p mine =
+  let e = take_one p mine in
+  if e != no_pending then
+    match
+      Dev.wait e.device e.value;
+      e.read p
+    with
+    | () ->
+        e.drop ();
+        read_mine p mine
+    | exception Dev.Lost _ -> restore p e
+    | exception x ->
+        e.drop ();
+        Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ())
+
+(* Whether [e] is of [d], or of a device of the machine whose host [d] is,
+   which [d]'s close closes. *)
+let closed_by d e =
+  e.device == d
+  || match d.machine with Hosts _ -> Dev.same_machine e.device d | _ -> false
+
+let read_closing d =
+  if enabled () && not (Dev.is_host d) then begin
+    Dev.check_held "close";
+    List.iter (fun p -> read_mine p (closed_by d)) (active ())
   end
 
 let take f =

@@ -173,4 +173,6 @@ val time : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> float
     allocates no device memory and loads nothing.
 
     Raises as {!run} does, and {!Rig.Lost} if a device that runs a kernel of [s]
-    is lost during the run. *)
+    is lost during the run, or if another domain's device whose work the
+    run's profile recorded is lost before the profile reads it
+    ({!Rig.Profile.take}). *)

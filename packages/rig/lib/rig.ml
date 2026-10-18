@@ -70,7 +70,9 @@ let signaled = Dev.signaled
 exception Lost = Dev.Lost
 
 let lost = Dev.lost
-let close = Dev.close
+let close d =
+  Profile.read_closing d;
+  Dev.close d
 let fail = Dev.fail
 let failure = Dev.failure
 

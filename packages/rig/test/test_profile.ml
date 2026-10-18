@@ -14,6 +14,10 @@ let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits (Sub.Run.make s) ~buffers
 
 let timeout = 60.
+
+(* Whether an exception is [d]'s loss. *)
+let lost_of d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+
 let memory name = Result.get_ok (Rig.memory_device name)
 let empty d = Sub.make d [||]
 
@@ -281,37 +285,69 @@ let test_span_profiles () =
   in
   equal ~msg:"outer" int 1 (List.length (device_spans d outer))
 
-(* A profile leaves out the span of a device lost before it was read. *)
+(* A take whose device is lost before its span was read raises the loss, and
+   leaves no profile open. *)
 let test_span_lost () =
   let d, p = P.open_ "profile:device-lost" in
   let arg = B.create Rig.host (1 lsl 16) in
+  raises_match (lost_of d) (fun () ->
+      Prof.take (fun () ->
+          ignore (submit_parts ~buffers:[| arg |] d [| bump |]);
+          P.fail p;
+          try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ()));
+  equal ~msg:"a profile open" bool false (Prof.enabled ())
+
+(* A close inside a take reads the work of its device first: the take returns
+   the spans of the device's two submissions, the second never waited for,
+   and raises nothing. *)
+let test_span_closed () =
+  let d, _ = P.open_ "profile:device-closed" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]);
+        ignore (submit_parts ~buffers:[| arg |] d [| bump |]);
+        Rig.close d)
+  in
+  equal ~msg:"the closed device's spans" int 2
+    (List.length (device_spans d events));
+  equal ~msg:"its loss" (option string) (Some "closed") (Rig.lost d)
+
+(* A close interrupted in its wait for the first entry it reads drops that
+   entry and leaves the device's other entry to the take, which reads it: the
+   take returns one span of the device's two submissions, and the device stays
+   open. *)
+let test_close_interrupted () =
+  let d, p = P.open_ "profile:close-interrupted" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  let broke = ref false in
   let (), events =
     Prof.take (fun () ->
         ignore (submit_parts ~buffers:[| arg |] d [| bump |]);
-        P.fail p;
-        try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ())
+        ignore (submit_parts ~buffers:[| arg |] d [| bump |]);
+        P.interrupt p;
+        Sys.catch_break true;
+        Fun.protect
+          ~finally:(fun () -> Sys.catch_break false)
+          (fun () -> try Rig.close d with Sys.Break -> broke := true))
   in
-  equal (list string) [] (named events)
+  equal ~msg:"the close broke" bool true !broke;
+  equal ~msg:"spans" int 1 (List.length (device_spans d events));
+  equal ~msg:"its loss" (option string) None (Rig.lost d)
 
 (* A settle that fails loses the device, with the driver's reason, and the
-   profile has no span and no copy of the value it settled. *)
+   take raises the loss. *)
 let test_settle_fails () =
   let d, p = P.open_ "profile:settle-fails" in
   let host () = B.create Rig.host (1 lsl 16) in
   let copy = Sub.copy ~src:(Slot 1) ~dst:(Slot 2) in
   P.fail_settle p;
-  let (), events =
-    Prof.take (fun () ->
-        Rig.Point.wait
-          (submit_parts
-             ~buffers:[| host (); host (); host () |]
-             d [| bump; copy |]))
-  in
-  equal (list string) [] (named events);
-  equal ~msg:"copies" (list int) []
-    (List.filter_map
-       (function Prof.Copy c -> Some c.bytes | _ -> None)
-       events);
+  raises_match (lost_of d) (fun () ->
+      Prof.take (fun () ->
+          Rig.Point.wait
+            (submit_parts
+               ~buffers:[| host (); host (); host () |]
+               d [| bump; copy |])));
   equal (option string) (Some "the settle failed") (Rig.lost d)
 
 (* A pending timing callback may outlive its failed profile. It must keep no
@@ -914,8 +950,14 @@ let tests =
           test_no_span;
         test "a span goes to the profiles taken at its submit"
           test_span_profiles;
-        test "a profile leaves out a lost device's unread span" test_span_lost;
-        test "a settle that fails loses the device" test_settle_fails;
+        test "a take raises the loss of a device whose span it did not read"
+          test_span_lost;
+        test "a close inside a take keeps its device's work"
+          test_span_closed;
+        test "an interrupted close leaves the rest of its reads to the take"
+          test_close_interrupted;
+        test "a settle that fails loses the device and raises in the take"
+          test_settle_fails;
         cases ~name:fst "failed histories release their image binaries"
           [ ("body", `Body); ("loss", `Lost); ("pending read", `Read) ]
           (fun (_, failure) -> test_failed_history failure);

@@ -20,8 +20,10 @@
     more entries, and [take] reads those it took into it alone, one at a
     time, then stops it.
     An entry leaves the profile as [take] starts to wait for its value, and
-    is dropped however its read ends. A device lost meanwhile has its
-    entries dropped.
+    is dropped however its read ends. A device lost before its entry is read
+    makes the read raise [Lost], which [take] raises as it raises an
+    exception of its function. A close first reads its device's entries
+    ({!read_closing}), so the loss a close makes raises nothing.
 
     A profile detaches its events in one exchange when it stops, which no
     allocation precedes, so an asynchronous exception cannot leave it open,
@@ -109,6 +111,16 @@ val add : t list -> event -> unit
 
 val take : (unit -> 'a) -> 'a * event list
 (** [take f] is {!Rig.Profile.take}[ f]. *)
+
+val read_closing : device -> unit
+(** [read_closing d] reads into each profile its entries of [d], and for a
+    machine's host of the machine's devices, before {!Rig.close}[ d] loses
+    them: it waits for their values and reads their events, one entry at a
+    time as [take] does, so an exception, such as [Sys.Break] in a wait,
+    leaves the rest in the profile. An entry whose device is lost meanwhile
+    stays for its [take] to raise. An entry a [take] of another domain has
+    begun to read is that [take]'s, which raises the close's [Lost]. Raises
+    [Invalid_argument] inside a lock, as {!Rig.close} does. *)
 
 val enabled : unit -> bool
 (** [enabled ()] is {!Rig.Profile.enabled}[ ()]: whether a profile is

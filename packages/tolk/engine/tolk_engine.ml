@@ -1235,21 +1235,12 @@ let time ?(vars = []) t slots =
     Array.iter Rig.Point.wait ends
   in
   let (), events = Rig.Profile.take run in
-  let ns = ref 0 and timed = ref [] in
+  let ns = ref 0 in
   List.iter
     (function
       | Rig.Profile.Work w as e when Array.mem w.point !steps && runs_kernel t e
         ->
-          ns := !ns + (w.stop - w.start);
-          timed := w.device :: !timed
+          ns := !ns + (w.stop - w.start)
       | _ -> ())
     events;
-  (* A kernel's device that recorded none of the run's work may be lost. *)
-  List.iter
-    (fun k ->
-      if not (List.exists (Rig.equal k.device) !timed) then
-        Option.iter
-          (fun why -> raise (Rig.Lost (k.device, why)))
-          (Rig.lost k.device))
-    t.kernels;
   Float.of_int !ns *. 1e-9
