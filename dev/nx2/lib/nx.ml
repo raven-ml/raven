@@ -1343,7 +1343,7 @@ let targets ~by x picks =
     | v :: rest ->
         inputs := rest;
         read v
-    | [] -> invalid_arg "Nx.targets: a pick without its input"
+    | [] -> assert false (* [inputs] holds one per position held in data. *)
   in
   let add a index = sum := E.(!sum + (index * i64 strides.(a))) in
   (* A position held in data, and whether it lies in [0, d). *)
