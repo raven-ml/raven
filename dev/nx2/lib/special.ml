@@ -77,10 +77,27 @@ let clamp inside x b = where inside x (lit x b)
 let tables (type w) (x : (float, w) E.t) =
   match E.dtype x with D.Float64 -> T.float64 | _ -> T.float32
 
-let log_sqrt_2pi = 0.5 *. Stdlib.log (2. *. Float.pi)
+(* Logarithms rounded to a double, written out: [Stdlib.log] calls the C
+   library, whose last bit may differ by system, and on Windows by domain.
+   [log_2pi] is the logarithm of [2. *. Float.pi], [log_two_over_sqrt_pi] of [2.
+   /. Float.sqrt Float.pi]. *)
+let ln2 = 0x1.62e42fefa39efp-1
+let ln10 = 0x1.26bb1bbb55516p+1
+let log_pi = 0x1.250d048e7a1bdp+0
+let log_2pi = 0x1.d67f1c864beb4p+0
+let log_sqrt_2pi = 0.5 *. log_2pi
+let log_two_over_sqrt_pi = 0x1.eeb95b094c190p-4
+let log_0_9 = -0x1.af8e8210a415cp-4
+let log_0_01 = -0x1.26bb1bbb55515p+2
 
 let max_float_of (type w) (x : (float, w) E.t) =
   match E.dtype x with D.Float64 -> max_float | _ -> 0x1.fffffep127
+
+(* [log (max_float_of x)]. *)
+let log_max_float_of (type w) (x : (float, w) E.t) =
+  match E.dtype x with
+  | D.Float64 -> 0x1.62e42fefa39efp+9
+  | _ -> 0x1.62e42feba39efp+6
 
 (* Error function *)
 
@@ -306,7 +323,7 @@ let ndtri_mass d log_q =
   let dc = clamp central d 0. in
   let xc = ndtri_central dc in
   let lower = lt d 0. in
-  let log_q = where central (lit d (Stdlib.log 0.01)) log_q in
+  let log_q = where central (lit d log_0_01) log_q in
   let xt = ndtri_tail_guess log_q in
   let th, tl = split_sqrt1_2 xt in
   let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
@@ -446,7 +463,7 @@ let lgamma_at x =
   let s = sinpi_abs (clamp negative x (-0.5)) in
   let pole = is s 0. in
   let reflected =
-    sub (rsub_s (Stdlib.log Float.pi) (log (where pole (ones_like s) s))) r
+    sub (rsub_s log_pi (log (where pole (ones_like s) s))) r
   in
   let inf = lit x Float.infinity in
   let r = where negative (where pole inf reflected) r in
@@ -711,8 +728,6 @@ let stirling_from_one (t : T.t) a =
     t.igamma_shift_terms;
   !s
 
-let log_2pi = Stdlib.log (2. *. Float.pi)
-
 (* [erfc w e^(w^2)] for [w >= 0]: erf's rationals below 1.25, fdlibm's tails
    [exp (R/S - 0.5625) / w] up to [erfcx_far], past which they lose their
    precision, and the asymptotic series beyond. *)
@@ -776,7 +791,6 @@ let temme_sum (t : T.t) eta u =
 
 (* [log (1 - e^l)] for [l < 0]. *)
 let log1mexp l =
-  let ln2 = Stdlib.log 2. in
   let near = cmpgt l (lit l (-.ln2)) in
   where near
     (log (neg (expm1 (clamp near l (-1.)))))
@@ -885,7 +899,7 @@ let igamma_core a x log_x upper =
   let lq_cf = sub (add lr (log a_c)) (log (igamma_cf t a_c x_c)) in
   (* The corner. *)
   let x_k = clamp corner x 0.5 in
-  let log_xk = clamp corner log_x (Stdlib.log 0.5) in
+  let log_xk = clamp corner log_x (-.ln2) in
   let xj = corner_series t a_lo x_k in
   let c_a = sub log_xk lg1p_ratio in
   let c = mul a_lo c_a in
@@ -1081,7 +1095,7 @@ let gaminv_guess t a l q_tail lp lq =
   (* Below 1 otherwise, the power form on [P], divided by [1 - x/(a + 1)]. *)
   let power =
     where
-      (lt (sub lq y) (Stdlib.log 1e-8))
+      (lt (sub lq y) (-8. *. ln10))
       (neg (add_s (div (exp lq) a_lo) euler_gamma))
       (div (add lp lg1_lo) a_lo)
   in
@@ -1125,7 +1139,7 @@ let gaminv_guess t a l q_tail lp lq =
       (cmpge yh
          (mul_s
             (where (cmpgt (mul ab am1) (lit ab 2.)) (mul ab am1) (lit ab 2.))
-            (Stdlib.log 10.)))
+            ln10))
   in
   let g_beyond =
     where far
@@ -1197,7 +1211,7 @@ let igamma_inverse a p upper =
   let y = gaminv_guess t a l q_tail lp lq in
   let log_a = log a in
   let sign = where q_tail (lit a (-1.)) (ones_like a) in
-  let y_hi = Stdlib.log (max_float_of a) in
+  let y_hi = log_max_float_of a in
   let y_lo =
     div (lit a (-.max_float_of a /. 4.)) (where (lt a 1.) (ones_like a) a)
   in
@@ -1492,7 +1506,7 @@ let basym a b lam =
     sum := add !sum (add t0 t1);
     n := !n + 2
   done;
-  sub (sub (add_s (log !sum) (Stdlib.log c0)) f) (bcorr p q)
+  sub (sub (add_s (log !sum) log_two_over_sqrt_pi) f) (bcorr p q)
 
 (* [Q(b, z) / (e^-z z^b / Gamma(b))] for [b <= 1], [z > 0], from the incomplete
    gamma's corner below [igamma_corner], [(e^c j - expm1 c) / (b e^(c - z))],
@@ -1543,6 +1557,10 @@ let bgrat a0 b x y lx m =
       sum := add !sum (mul (horner d b) !j))
     t.bgrat;
   mul u !sum
+
+(* [log T.beta_power_x] and [log T.beta_power_bx], written out as above. *)
+let log_beta_power_x = -0x1.af8e8210a415cp-4
+let log_beta_power_bx = -0x1.6d3c324e13f50p-2
 
 (* [log I_x(a, b)], or [log (1 - I_x(a, b))] where [upper], for finite [a, b >
    0] and [0 < x < 1]. After the swap, the regions name the method for [(a0, b0,
@@ -1604,11 +1622,11 @@ let log_betainc_at upper a b x =
   let far = ge x0 T.beta_x_far in
   let low =
     ge a0 T.beta_a_small ||| cmpge a0 b0
-    ||| le (mul a0 lx0) (Stdlib.log T.beta_power_x)
+    ||| le (mul a0 lx0) log_beta_power_x
   in
   let near_pow =
     lt x0 T.beta_x_near
-    &&& le (mul a0 (log (mul x0 b0))) (Stdlib.log T.beta_power_bx)
+    &&& le (mul a0 (log (mul x0 b0))) log_beta_power_bx
   in
   let bp_small =
     fp ||| tiny_a
@@ -1660,8 +1678,8 @@ let log_betainc_at upper a b x =
   let f_a = clamp f_on f_a 2. and f_b = clamp f_on f_b 2. in
   let f_x = clamp f_on (where on_y y0 x0) 0.5 in
   let f_y = clamp f_on (where on_y x0 y0) 0.5 in
-  let f_lx = clamp f_on (where on_y ly0 lx0) (-.Stdlib.log 2.) in
-  let f_ly = clamp f_on (where on_y lx0 ly0) (-.Stdlib.log 2.) in
+  let f_lx = clamp f_on (where on_y ly0 lx0) (-.ln2) in
+  let f_ly = clamp f_on (where on_y lx0 ly0) (-.ln2) in
   (* [f_x] is [x] itself where it is [x0] unswapped or [y0] swapped. *)
   let f_lam = lam_at f_a f_b (logical_not (logical_xor on_y swap)) in
   let fr, fr_x = front f_a f_b f_x f_y f_lx f_ly (clamp f_on f_lam 0.) in
@@ -1700,7 +1718,7 @@ let log_betainc_at upper a b x =
   let g_b = clamp g_on (where bup_g bb a0) 0.5 in
   let g_x = clamp g_on (where bup_g x0 y0) 0.9 in
   let g_y = clamp g_on (where bup_g y0 x0) 0.1 in
-  let g_lx = clamp g_on (where bup_g lx0 ly0) (Stdlib.log 0.9) in
+  let g_lx = clamp g_on (where bup_g lx0 ly0) log_0_9 in
   let g_m = where (g20 ||| bup2_on) (lit b0 terms) (zeros_like b0) in
   let g_u = clamp g_on (where bup_g bb b0) 1. in
   let grat = mul g_u (bgrat g_a0 g_b g_x g_y g_lx g_m) in
@@ -1727,6 +1745,7 @@ let log_betainc_at upper a b x =
 (* The argument a vanishing tail is measured at: its ratio to the argument there
    is the tail's slope at 0, to within its square. *)
 let beta_vanishing = 0x1p-61
+let log_beta_vanishing = -61. *. ln2
 
 (* A tail on the whole domain: [a, b >= 0], [x] in [0, 1], as its logarithm and
    its value. The lower tail is 1 at [x = 1], at [a = 0] and at [b = +inf], 0 at
@@ -1754,7 +1773,7 @@ let beta_tail upper a b x =
       (clamp run x 0.5)
   in
   let n = clamp slope (where at_a0 a b) 0.5 in
-  let log_c = clamp slope (sub_s r (Stdlib.log beta_vanishing)) 0. in
+  let log_c = clamp slope (sub_s r log_beta_vanishing) 0. in
   (* [+ 0] writes the tail at [n = -0] as [+0]. *)
   let vanishing = add_s (mul n (exp log_c)) 0. in
   let wants = where at_a0 upper (logical_not upper) in

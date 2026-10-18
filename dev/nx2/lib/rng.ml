@@ -1073,10 +1073,11 @@ let truncated_normal ?key lower upper =
            bounds far out on it: the draw is then the nearer bound, onto which a
            draw of 0 clamps. *)
         let finite = E.(lit Float.neg_infinity < log_q) in
+        let log_half = -0x1.62e42fefa39efp-1 in
         let y =
           Special.ndtri_mass
             E.(q - lit 0.5)
-            (E.where finite log_q (lit (Float.log 0.5)))
+            (E.where finite log_q (lit log_half))
         in
         let x = E.(where finite (where on_right (-y) y) (lit 0.)) in
         let lower = param c 0 dt and upper = param c 1 dt in
