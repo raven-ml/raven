@@ -1514,26 +1514,6 @@ let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
 let max ?axes ?keepdims x = reduction ~by:"Nx.max" Max ?axes ?keepdims x
 let min ?axes ?keepdims x = reduction ~by:"Nx.min" Min ?axes ?keepdims x
 
-(* The sum at [acc], divided there by the count [n], stored in [x]'s dtype: each
-   element rounds once to it. *)
-let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
-    =
-  let by = "Nx.mean" in
-  let s = shape x and dt = dtype x in
-  let axes = reduced_axes ~by x axes in
-  let n = Iarray.fold_left (fun n a -> n * s.(a)) 1 axes in
-  let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
-    kept ~keepdims s axes (cast dt (div (reduce ~by Sum acc axes x) count))
-  in
-  match D.kind dt with
-  | D.Float ->
-      let (Prim.Wide w) = Prim.wide dt in
-      within w (scalar w (Float.of_int n))
-  | D.Complex -> within dt (scalar dt { Complex.re = Float.of_int n; im = 0. })
-  | D.Signed | D.Unsigned | D.Boolean ->
-      invalid_argf "%s: %s is neither a float nor a complex dtype" by
-        (D.name dt)
-
 (* The inclusive prefix of [m] along [axis] of [x]. *)
 let scan_along ~by m axis x =
   let dt = dtype x in
@@ -1983,6 +1963,89 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
 
 let argmax ?axis ?keepdims x = arg ~by:"Nx.argmax" Max ?axis ?keepdims x
 let argmin ?axis ?keepdims x = arg ~by:"Nx.argmin" Min ?axis ?keepdims x
+
+(* The mean of [n] integers of [b] bits truncated toward zero, exact in the
+   64-bit accumulator [acc] of [x]'s signedness. Below 64 bits, the sum of
+   fewer than [2^(64 - b)] of them holds in [acc]. At 64 bits, with
+   [x = q n + r] and [0 <= r < n], the sum is [n Q + R] for [Q] the sum of the
+   quotients and [R] that of the remainders, so its floor, [down], is
+   [Q + R / n]. The floor lies between the least and greatest element, so [Q]
+   may wrap on the way; [R] stays below [n^2], below 2^62 for fewer than 2^31
+   elements. One pass over [x] reduces both sums. *)
+let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
+    (x : (v, s, d) t) : (v, s, d) t =
+  let dt = dtype x in
+  let b = D.bits dt in
+  let exact = if b = 64 then 1 lsl 31 else 1 lsl (64 - b) in
+  if n >= exact then
+    invalid_argf "%s: %d elements of %s; an integer mean takes fewer than %d"
+      by n (D.name dt) exact;
+  let count = E.const acc (Int64.of_int n) and zero = E.const acc 0L in
+  if b < 64 then
+    let sum, () =
+      reduce_by ~by s axes [ Any x ]
+        Value.[ Monoid (Sum, 0, acc) ]
+        (E.cast acc (operand 0 x))
+    in
+    elementwise ~by dt [ Any sum ] (E.cast dt E.(operand 0 sum / count))
+  else
+    let x' = at acc (operand 0 x) in
+    let q = E.(x' / count) and r = E.(x' mod count) in
+    (* [/] truncates toward zero: step a negative remainder up. Unsigned,
+       none is negative. *)
+    let negative = E.(r < zero) in
+    let q = E.(where negative (q - const acc 1L) q)
+    and r = E.(where negative (r + count) r) in
+    let q, (r, ()) =
+      Eval.eval ~by
+        (Value.Reduce
+           {
+             layout = Nx_array.Layout.contiguous s;
+             axes;
+             prog = P.of_exprs ~ins:[| D.Any dt |] [| E.any q; E.any r |];
+             reductions = Value.[ Monoid (Sum, 0, acc); Monoid (Sum, 1, acc) ];
+             loads = [| Plain x |];
+           })
+    in
+    let down = E.(operand 0 q + (operand 1 r / count)) in
+    let inexact = E.(down < zero && operand 1 r mod count <> zero) in
+    elementwise ~by dt [ Any q; Any r ]
+      (at dt E.(where inexact (down + const acc 1L) down))
+
+(* A float or complex mean: the sum at [acc], divided there by the count [n],
+   stored in [x]'s dtype, so that each element rounds once to it. An integer
+   mean: [int_mean]. *)
+let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
+    =
+  let by = "Nx.mean" in
+  let s = shape x and dt = dtype x in
+  let axes = reduced_axes ~by x axes in
+  let n = reduced_count s axes in
+  let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
+    cast dt (div (reduce ~by Sum acc axes x) count)
+  in
+  (* An integer mean of no term has no value, where the result has an
+     element to hold it. *)
+  let integer acc =
+    let filled a e = e > 0 || Iarray.mem a axes in
+    if n = 0 && Array.for_all Fun.id (Array.mapi filled s) then
+      invalid_argf "%s: %a has no integer mean along an empty axis" by pp_value
+        x;
+    int_mean ~by acc s axes n x
+  in
+  let y =
+    match D.kind dt with
+    | D.Float ->
+        let (Prim.Wide w) = Prim.wide dt in
+        within w (scalar w (Float.of_int n))
+    | D.Complex -> within dt (scalar dt { Complex.re = Float.of_int n; im = 0. })
+    | D.Signed -> integer D.Int64
+    | D.Unsigned -> integer D.Uint64
+    | D.Boolean ->
+        invalid_argf "%s: %s is not an integer, float or complex dtype" by
+          (D.name dt)
+  in
+  kept ~keepdims s axes y
 
 (* The variance by the kernels' moments in [x]'s wide format, scaled by [n / (n
    - ddof)] and rooted where [root], then rounded once. *)

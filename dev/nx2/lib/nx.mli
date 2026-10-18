@@ -1381,8 +1381,16 @@ val min : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [min ~axes x] is the least element, as {!max}; all on booleans. *)
 
 val mean : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [mean ~axes x] is the {!sum} divided by the number of elements, rounded
-    once: NaN for none. Floats and complex numbers. *)
+(** [mean ~axes x] is the {!sum} divided by the number of elements. Over floats
+    and complex numbers it rounds once: NaN for none. Over integers it is the
+    exact mean truncated toward zero, as {!div} rounds: it lies between the
+    least and greatest element, so it never wraps. Every dtype but booleans.
+
+    Raises [Invalid_argument] over integers where an axis it reduces is empty
+    and the result has an element, since the mean of nothing has no integer
+    value, or where the axes hold more elements than an integer mean computes
+    exactly: [2{^31}] or more at 64 bits, [2{^(64 - b)}] or more at [b]
+    bits. *)
 
 val all : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> 'd bool_t
 (** [all ~axes x] is [true] where every element is non-zero, as {!cast} into
