@@ -3932,8 +3932,9 @@ submission, and a range a loop of rig's program (D146).
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
 - **tolk:** `lib/helpers.ml:469` (`mark`), `:492` (`size_file`), `:507`
-  (`count`), `:569` (`trim`) and `:601` (`put`); `lib/setting.ml:247`
-  (`cachesize`, 5 GiB by default, `0` for no bound).
+  (`count`), `:576` (`trim`), `:608` (`make_room`), `:640` (`put`) and
+  `:660` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
+  for no bound).
 - **Differs:** a put that would take the cache's files past `CACHESIZE`
   bytes first removes entries of every table and version, the least recently
   used by file time first, until they would hold four fifths of it with its
@@ -3944,7 +3945,9 @@ submission, and a range a loop of rig's program (D146).
   age at which ccache removes its temporary files, so that another process's
   write in progress stays. A hit sets its entry's time. Processes count
   each other's puts in the length of one file, to which each put appends a
-  byte per KiB.
+  byte per KiB. `diskcache_clear` removes every entry; `clear` keeps a write
+  in progress and an entry it cannot remove, as on Windows one another
+  process marks used.
 - **Reason:** (b). Programs, schedules and beam results are keyed by the
   digest of tolk's sources (D63), so each change of the sources leaves the
   previous build's entries unread, about 0.6 GB for the tests of tolk and
@@ -3958,6 +3961,7 @@ submission, and a range a loop of rig's program (D146).
   process left`, `› a put past cachesize keeps another process's write in
   progress`, `› a put that cannot write removes entries past cachesize
   first`, `› a put that cannot count the cache's size stores its entry`,
-  `› processes putting in turn keep the cache within
-  cachesize`, `› a cachesize of 0 keeps every entry` and `› a negative
-  cachesize is refused`.
+  `› clear leaves the entries it cannot remove`, `› clear keeps another
+  process's write in progress`, `› processes putting in turn keep the cache
+  within cachesize`, `› a cachesize of 0 keeps every entry` and `› a
+  negative cachesize is refused`.

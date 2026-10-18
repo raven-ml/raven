@@ -515,6 +515,14 @@ module Diskcache = struct
           Some (Unix.fstat fd).st_size
         with Unix.Unix_error _ -> None)
 
+  (* The directories named like tables, of every version. *)
+  let tables () =
+    match Sys.readdir cachedb with
+    | names ->
+        Array.to_list names |> List.filter is_table_dir
+        |> List.map (Filename.concat cachedb)
+    | exception Sys_error _ -> []
+
   (* The files named like entries in every table and version, whole or being
      written, each with its name, path, length and the time it was last used. *)
   let files () =
@@ -524,19 +532,14 @@ module Diskcache = struct
       | st -> Some (name, path, st.st_size, st.st_mtime)
       | exception Unix.Unix_error _ -> None
     in
-    let in_table name =
-      let dir = Filename.concat cachedb name in
+    let in_table dir =
       match Sys.readdir dir with
       | names ->
           Array.to_list names |> List.filter is_entry
           |> List.filter_map (stat dir)
       | exception Sys_error _ -> []
     in
-    match Sys.readdir cachedb with
-    | names ->
-        Array.to_list names |> List.filter is_table_dir
-        |> List.concat_map in_table
-    | exception Sys_error _ -> []
+    List.concat_map in_table (tables ())
 
   (* [discard path] removes [path] if it can; it is whether [path] is gone. *)
   let discard path =
@@ -649,24 +652,21 @@ module Diskcache = struct
     end
 
   (* Only files named like entries are removed, so a [CACHEDB] pointing at a
-     directory holding other files keeps them. Entries and tables may vanish
-     meanwhile, cleared by another process. *)
+     directory holding other files keeps them. A write in progress is kept
+     unless stale: its put renames it once the clear is done, as if it came
+     after. What cannot be removed stays, as in a trim: a table another process
+     clears, a file another process has open on Windows, and a table still
+     holding files. *)
   let clear () =
-    let clear_table dir =
-      Array.iter
-        (fun f -> if is_entry f then remove (Filename.concat dir f))
-        (Sys.readdir dir);
-      if Sys.readdir dir = [||] then
-        try Sys.rmdir dir
-        with Sys_error _ when not (Sys.file_exists dir) -> ()
-    in
-    if Sys.file_exists cachedb then
-      Array.iter
-        (fun name ->
-          let dir = Filename.concat cachedb name in
-          if is_table_dir name && Sys.is_directory dir then clear_table dir)
-        (Sys.readdir cachedb);
-    remove size_file
+    let stale = Unix.gettimeofday () -. stale_write in
+    List.iter
+      (fun (name, path, _, time) ->
+        if is_whole_entry name || time < stale then ignore (discard path))
+      (files ());
+    List.iter
+      (fun dir -> try Sys.rmdir dir with Sys_error _ -> ())
+      (tables ());
+    ignore (discard size_file)
 end
 
 (* Programs *)

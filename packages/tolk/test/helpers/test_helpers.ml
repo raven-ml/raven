@@ -742,6 +742,7 @@ let keeps_writes_in_progress () =
   let write = write_aside table 4096 60. in
   sized (1 lsl 16) (fun () -> fill_until_trimmed table);
   equal bool true (Sys.file_exists write);
+  Sys.remove write;
   Diskcache.clear ()
 
 (* The file in which the puts of all processes count the cache's size. *)
@@ -787,6 +788,42 @@ let trims_before_writing () =
           (fun () ->
             sized (1 lsl 16) (fun () -> Diskcache.put ~table:locked "k2" v)));
     equal (option string) None (Diskcache.get ~table:full "0");
+    Diskcache.clear ()
+  end
+
+(* A write in progress a minute old stays through a clear, one two hours old
+   does not. *)
+let clear_keeps_writes_in_progress () =
+  let kept = Sys.file_exists in
+  let young = write_aside (fresh_table ()) 4096 60. in
+  let stale = write_aside (fresh_table ()) 4096 7200. in
+  Diskcache.clear ();
+  equal (pair bool bool) (true, false) (kept young, kept stale);
+  Sys.remove young;
+  Diskcache.clear ()
+
+(* An entry that cannot be removed: on Windows one held open without sharing
+   deletion, elsewhere one in a table directory the process may not write. *)
+let clear_leaves_held_entries () =
+  if (not Sys.win32) && Unix.geteuid () = 0 then
+    skip ~reason:"every directory is writable" ()
+  else begin
+    let held = fresh_table () and free = fresh_table () in
+    let entry = put_entry ~table:held "k" "v" in
+    Diskcache.put ~table:free "k" "v";
+    let hold, release =
+      if Sys.win32 then
+        (* Opened without sharing deletion, as a program other than the cache
+           may. *)
+        let fd = Unix.openfile entry [ O_RDONLY ] 0 in
+        ((fun () -> ()), fun () -> Unix.close fd)
+      else
+        let dir = Filename.dirname entry in
+        ((fun () -> Unix.chmod dir 0o555), fun () -> Unix.chmod dir 0o755)
+    in
+    hold ();
+    Fun.protect ~finally:release Diskcache.clear;
+    equal (option string) None (Diskcache.get ~table:free "k");
     Diskcache.clear ()
   end
 
@@ -961,6 +998,10 @@ let diskcache =
                 (Diskcache.get ~table:a "k", Diskcache.get ~table:b "k"));
           test "put and clear keep the files that are not entries"
             keeps_foreign_files;
+          test "clear leaves the entries it cannot remove"
+            clear_leaves_held_entries;
+          test "clear keeps another process's write in progress"
+            clear_keeps_writes_in_progress;
           cases ~name:(Printf.sprintf "cachelevel=%d")
             "a disabled cache neither reads nor writes" [ 0; -1 ] (fun level ->
               let table = fresh_table () in

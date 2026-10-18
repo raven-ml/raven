@@ -161,9 +161,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
-- Windows: `mark`'s `Unix.utimes` opens the entry without
-  `FILE_SHARE_DELETE`, so a concurrent `Diskcache.clear` raises `Sys_error`.
-  `clear` leaves such an entry, as `trim`'s `discard` does
 - `upcast_vectors` (heuristic.ml) has no term for a kernel's size: 8 nested
   float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
   in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
