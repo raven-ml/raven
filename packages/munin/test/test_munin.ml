@@ -1219,6 +1219,73 @@ let test_store_index_damaged () =
       Sys.remove;
     ]
 
+(* Processes that change one store at once each keep their change: a sweep
+   starts its runs together, and each run's finished status reaches the store.
+   Each child of [support/start_run.exe] starts and finishes one run once its
+   standard input ends, so closing their pipes releases them all at once. A
+   lost change shows only when the children's changes overlap, so code that
+   loses one can still pass a run of this test. *)
+
+let start_run = Filename.concat "support" "start_run.exe"
+let writers = 8
+
+let status_to_string = function
+  | Unix.WEXITED n -> Printf.sprintf "exited %d" n
+  | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
+  | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
+
+let spawn_start root =
+  let stdin_r, stdin_w = Unix.pipe ~cloexec:true () in
+  let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process start_run [| start_run; root |] stdin_r stdout_w
+      Unix.stderr
+  in
+  Unix.close stdin_r;
+  Unix.close stdout_w;
+  (pid, stdin_w, stdout_r)
+
+let wait_start (pid, _, stdout_r) =
+  let ic = Unix.in_channel_of_descr stdout_r in
+  let id = In_channel.input_all ic in
+  close_in ic;
+  let _, status = Unix.waitpid [] pid in
+  equal ~msg:"start_run" string "exited 0" (status_to_string status);
+  id
+
+let test_store_concurrent_starts () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let children = List.init writers (fun _ -> spawn_start root) in
+  List.iter (fun (_, stdin_w, _) -> Unix.close stdin_w) children;
+  let ids = List.map wait_start children in
+  equal ~msg:"runs finished" (slist string String.compare) ids
+    (List.map Run.id (Store.list_runs store ~status:`Finished ()))
+
+(* Domains of one process that start and finish runs in one store at once each
+   keep their changes too. The model is the number of runs finished. *)
+
+let open_store () =
+  let root = Filename.temp_file "munin" "test" in
+  Sys.remove root;
+  Unix.mkdir root 0o755;
+  Store.open_ ~root ()
+
+let store_w = abstract "store" ~release:(fun store -> rm_rf (Store.root store))
+
+let store_commands =
+  [
+    command "open" (Gen.unit @-> makes store_w) (fun () -> ref 0) open_store;
+    command "start"
+      (store_w ^-> returns unit)
+      incr
+      (fun store -> ignore (start_runs store 1));
+    command "count"
+      (store_w ^-> returns int)
+      ( ! )
+      (fun store -> List.length (Store.list_runs store ~status:`Finished ()));
+  ]
+
 let store_tests =
   [
     test "open creates dirs" test_store_open;
@@ -1239,6 +1306,9 @@ let store_tests =
     test "index of another shape" test_store_index_wrong_shape;
     test "stale index" test_store_index_stale;
     test "damaged index" test_store_index_damaged;
+    test "runs started by processes at once" test_store_concurrent_starts;
+    stateful ~count:4 ~domains:2 "runs started by domains at once"
+      store_commands;
   ]
 
 (* Reloading *)

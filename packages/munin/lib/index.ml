@@ -73,6 +73,46 @@ let entry_of_json json =
           started_at;
         }
 
+(* A change reads the index, changes it and writes it back under an exclusive
+   lock on [index.lock], and a read holds a shared one, so changes from several
+   processes apply one after another. A write goes to a temporary file that then
+   replaces the index whole, so a reader never meets half an index. Windows also
+   refuses to replace a file that a reader holds open, which the shared lock
+   rules out. [Unix.lockf] locks belong to a process, and closing any of its
+   descriptors on the file drops them, so the threads and domains of one process
+   take turns under [mutex] first. *)
+
+let lock_path root = Filename.concat root "index.lock"
+let temp_path root = Filename.concat root "index.json.tmp"
+let mutex = Mutex.create ()
+
+(* [lock fd command] is [false] if the file system refuses locks: NFS without
+   its lock daemon answers ENOLCK, Lustre without flock ENOSYS, others
+   EOPNOTSUPP, EINVAL or an ENOTSUP the Unix library does not name. A wait
+   that a signal interrupts is taken again. *)
+let rec lock fd command =
+  match Unix.lockf fd command 0 with
+  | () -> true
+  | exception Unix.Unix_error (EINTR, _, _) -> lock fd command
+  | exception
+      Unix.Unix_error
+        ((ENOLCK | ENOSYS | EOPNOTSUPP | EINVAL | EUNKNOWNERR _), _, _) ->
+      false
+
+(* [with_lock root mode ~refused f] is [f ()] under the lock, or [refused ()]
+   where the file system refuses it. *)
+let with_lock root mode ~refused f =
+  let flags, command =
+    match mode with
+    | `Read -> ([ Unix.O_RDONLY; O_CREAT; O_CLOEXEC ], Unix.F_RLOCK)
+    | `Write -> ([ Unix.O_RDWR; O_CREAT; O_CLOEXEC ], Unix.F_LOCK)
+  in
+  Mutex.protect mutex @@ fun () ->
+  let fd = Unix.openfile (lock_path root) flags 0o644 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  if not (lock fd command) then refused ()
+  else Fun.protect ~finally:(fun () -> Unix.lockf fd F_ULOCK 0) f
+
 (* The entries of [index.json], none if it is missing or damaged. *)
 let load root =
   let tbl = Hashtbl.create 64 in
@@ -94,8 +134,9 @@ let write root tbl =
     |> List.map (fun (id, entry) -> (id, entry_to_json entry))
   in
   let json = Json_utils.json_obj entries in
-  Fs.write_file (index_path root)
-    (Json_utils.json_to_string ~pretty:true json ^ "\n")
+  Fs.write_file (temp_path root)
+    (Json_utils.json_to_string ~pretty:true json ^ "\n");
+  Unix.rename (temp_path root) (index_path root)
 
 let entry_of_run run =
   {
@@ -134,17 +175,38 @@ let reconcile root cached =
           | None -> ()));
   tbl
 
-let read root = reconcile root (load root)
+(* A read takes no lock where the file system refuses locks, and there a change
+   removes the index, so a read meets no index and reads every manifest. A
+   store whose lock file cannot be opened, as on a read-only file system with
+   none yet, reads the same way. *)
+let cached root =
+  if not (Sys.file_exists (index_path root)) then Hashtbl.create 0
+  else
+    try
+      with_lock root `Read ~refused:(fun () -> Hashtbl.create 0) (fun () ->
+          load root)
+    with Unix.Unix_error _ -> Hashtbl.create 0
+
+let read root = reconcile root (cached root)
 
 let find root ~id =
-  let cached = load root in
+  let cached = cached root in
   Fs.list_dirs (experiments_dir root)
   |> List.find_map (fun experiment ->
       if not (Fs.is_directory (Filename.concat (runs_dir root experiment) id))
       then None
       else header root cached ~experiment ~id)
 
+(* Where locks are refused, two changes could each write back an index that
+   lacks the other's, so the index is removed instead and reads fall back to
+   the manifests. *)
+let unlink root =
+  try Unix.unlink (index_path root)
+  with Unix.Unix_error (ENOENT, _, _) -> ()
+
 let modify root f =
+  Fs.ensure_dir root;
+  with_lock root `Write ~refused:(fun () -> unlink root) @@ fun () ->
   let tbl = load root in
   f tbl;
   write root (reconcile root tbl)

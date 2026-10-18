@@ -1492,6 +1492,11 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- Runs that several processes or domains start and finish in one store at
+  the same time keep their status in `Store.list_runs`. A change to
+  `index.json` holds a file lock and replaces the file whole. Where the file
+  system refuses locks, a change removes `index.json`, and runs are read
+  from their manifests.
 - `Store.list_runs` and `Store.find_run` take a store's runs from its run
   directories, and `index.json` only caches their headers. A run the index
   lacked, as a killed process or an index of another shape leaves, was

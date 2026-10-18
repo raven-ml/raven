@@ -1,4 +1,5 @@
 (test
  (name test_munin)
  (package munin)
+ (deps support/start_run.exe)
  (libraries munin unix windtrap jsont))
