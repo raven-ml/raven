@@ -157,14 +157,11 @@ let unmap w = unmap_range (Window.address w) (Window.length w)
    reaches the file. A hugetlbfs refuses write(2), so a list cannot be a file's
    contents; a marker is made and removed in one call each, so no reader meets
    half a list, and two processes that change one file's list lose neither's
-   change. A function that no longer reaches memory leaves the list: at its
-   release the process's file; at its GPU's reset every file under the root that
-   a process that died left. A file that no marker names and that holds no block
-   goes, and a dead process's file that no marker names goes at the next take of
-   a function of the machine, blocks and all. The process holds a shared flock
-   on its file from before the file has a name until it dies, so a take or a
-   reset tells a dead process's file by taking the lock, and reads its markers
-   only then, once they can no longer change. *)
+   change. [close], [forget], [collect_dead] and [exit] in sysmem.mli state
+   when a function leaves a list and when a file goes. The process holds a
+   shared flock on its file from before the file has a name until it dies, so
+   a take or a reset tells a dead process's file by taking the lock, and reads
+   its markers only then, once they can no longer change. *)
 
 type file = {
   pid : int; (* the process that made it *)

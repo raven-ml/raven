@@ -6,11 +6,8 @@
 (** The library's locks.
 
     Each lock counts among the locks its thread holds, from before its take to
-    after its give ([rig_hold] in [rig_edge.h]). A signal handler, finaliser or
-    [Gc.Memprof] callback runs where the code it interrupts allocates or polls,
-    so it may run inside one, and a call of rig's or of a driver's that it makes
-    is then refused as the call starts, before it could wait for the lock its
-    own thread holds.
+    after its give ([rig_hold] in [rig_edge.h]), so that a call from a
+    callback inside one is refused as {{!Rig_pci.errors}errors} states.
 
     Locks nest in this order. A driver's lock ({!Driver}) is held over an
     open, a reset or a change, and a hold's lock over its stop. Under either
@@ -24,8 +21,7 @@
     A vendor's lock is held across a whole open, a boot included, and a
     reset, which wait for the GPU: two of them on one GPU would interleave
     their writes. A container's and system memory's locks are held across
-    the system calls that map memory for a device. A call of rig's from a
-    callback during one raises. *)
+    the system calls that map memory for a device. *)
 
 type t
 (** The type for locks. *)

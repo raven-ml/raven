@@ -6,12 +6,10 @@
 (** Two-level segregated fit allocators of address ranges.
 
     An allocator hands out blocks of a range of addresses. Free blocks are
-    indexed by the most significant bit of their size, then by the next four
-    bits, in bitmaps searched with find-first-set; each class keeps a doubly
-    linked list. A request is rounded up to the next class before the search, so
-    any block found fits, and allocating and freeing take a time bounded
-    independently of what the allocator holds. A freed block merges with its
-    free neighbours immediately.
+    kept in size classes, laid out in [tlsf.ml]. A request is rounded up to
+    the next class before the search, so any block found fits, and allocating
+    and freeing take a time bounded independently of what the allocator holds.
+    A freed block merges with its free neighbours immediately.
 
     The bound costs fit. A request of [n] bytes aligned to [a] succeeds while a
     free block of [2 * (max n 16 + a)] bytes exists, and may fail with a smaller

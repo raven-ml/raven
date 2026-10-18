@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* Blocks tile the range. Each knows the blocks before and after it. Free
-   blocks are also on the list of their class: first level [f], the bit length
-   of their size, and second level [s], the four bits below the top one.
-   [firsts] has bit [f] set iff level [f] has a free block, and [seconds.(f)]
-   bit [s] iff class [(f, s)] has one. No two free blocks are neighbours: a
-   freed block merges at once.
+   blocks are also on the doubly linked list of their class: first level [f],
+   the bit length of their size, and second level [s], the four bits below the
+   top one. [firsts] has bit [f] set iff level [f] has a free block, and
+   [seconds.(f)] bit [s] iff class [(f, s)] has one, so a search takes the
+   lowest set bit of each from the class it starts at. No two free blocks are
+   neighbours: a freed block merges at once.
 
    A call allocates everything it needs first: the result, and the records of
    the blocks it makes, bound in the table while unlinked. It then changes

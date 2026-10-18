@@ -32,12 +32,10 @@ val unmap : Window.t -> unit
 
 (** {1:store Memory that outlives the process}
 
-    A function taken physically writes physical pages, and keeps writing after
-    its process dies. Its memory lies in huge pages of a file of the process
-    under the machine's root, in [dev/hugepages]. The file keeps its pages when
-    the process dies, and the kernel neither swaps nor compacts them. Each
-    2 MiB block of addresses that holds memory maps one huge page, which the
-    allocations of every function of the machine in that block share. *)
+    The memory of functions taken physically, which outlives the process as
+    {{!Function.dma}system memory} states. It lies in huge pages of a file of
+    the process under the machine's root, in [dev/hugepages], laid out as
+    [sysmem.ml] comments. *)
 
 type store
 (** The type for the memory of one function taken physically. *)

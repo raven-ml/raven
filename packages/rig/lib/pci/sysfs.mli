@@ -166,13 +166,9 @@ val route : t -> string -> route option
     is [None] if the files cannot be read. *)
 
 val forwards : provider:route -> client:route -> bool
-(** [forwards ~provider ~client] is [true] iff Linux's p2pdma
-    ([calc_map_type_and_dist]) lets the function of [client] reach a BAR of
-    the function of [provider]: a bridge above both carries the requests, and
-    no device from [provider] up to it, nor from [client] up to below it,
-    redirects them by ACS; or else the CPU or both host bridges carry them
-    through the root complex ([cpu_supports_p2pdma],
-    [pci_p2pdma_whitelist]). *)
+(** [forwards ~provider ~client] is [true] iff the bus carries the requests
+    of [client]'s function to a BAR of [provider]'s, as {!Memory.reaches}
+    states Linux's p2pdma decides. *)
 
 (** {1:open Open devices} *)
 
