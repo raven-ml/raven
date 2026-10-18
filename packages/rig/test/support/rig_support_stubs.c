@@ -1811,6 +1811,36 @@ value rig_test_reader_release(value v_b) {
   return Val_unit;
 }
 
+/* rig_buffers_claim of the OCaml arrays [v_bs] and [v_access], whose
+   outcome is Reader.outcome: All of the answers, or Refused of the index
+   and its answer. */
+value rig_test_reader_claim_all(value v_bs, value v_access) {
+  CAMLparam2(v_bs, v_access);
+  CAMLlocal2(r, answers);
+  int n = (int)Wosize_val(v_bs);
+  enum rig_access access[n > 0 ? n : 1];
+  enum rig_claim answer[n > 0 ? n : 1];
+  for (int k = 0; k < n; k++)
+    access[k] = Int_val(Field(v_access, k)) == 0 ? RIG_READ : RIG_READ_WRITE;
+  int refused = rig_buffers_claim(n, Op_val(v_bs), access, answer);
+  if (refused >= 0) {
+    r = caml_alloc(2, 1);
+    Store_field(r, 0, Val_int(refused));
+    Store_field(r, 1, Val_int(answer[refused]));
+    CAMLreturn(r);
+  }
+  answers = caml_alloc(n, 0);
+  for (int k = 0; k < n; k++) Store_field(answers, k, Val_int(answer[k]));
+  r = caml_alloc(1, 0);
+  Store_field(r, 0, answers);
+  CAMLreturn(r);
+}
+
+value rig_test_reader_release_all(value v_bs) {
+  rig_buffers_release((int)Wosize_val(v_bs), Op_val(v_bs));
+  return Val_unit;
+}
+
 value rig_test_reader_span(value v_b) {
   CAMLparam1(v_b);
   CAMLlocal1(r);

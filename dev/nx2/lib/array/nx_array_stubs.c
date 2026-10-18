@@ -112,14 +112,23 @@ static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
      checks under it that the buffer lives, so a dead operand is refused as
      dead whatever else is wrong with it, and before any wait, so a wait
      runs under every claim and no donation on another domain consumes an
-     operand while the call waits. */
-  for (int k = 0; k < n; k++) {
-    enum rig_claim c = rig_buffer_claim(
-        out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
-    int e = claim_code(c);
-    if (e) return refuse_claimed(k, out, e);
+     operand while the call waits. The claims go in runs of up to
+     NX_MAX_OPERANDS, gathered on the stack, and a run refused releases the
+     runs before it. */
+  value buffer[NX_MAX_OPERANDS];
+  enum rig_access access[NX_MAX_OPERANDS];
+  enum rig_claim answer[NX_MAX_OPERANDS];
+  for (int at = 0; at < n; at += NX_MAX_OPERANDS) {
+    int m = n - at < NX_MAX_OPERANDS ? n - at : NX_MAX_OPERANDS;
+    for (int j = 0; j < m; j++) {
+      buffer[j] = out[at + j].buffer;
+      access[j] = in[at + j].written ? RIG_READ_WRITE : RIG_READ;
+    }
+    int refused = rig_buffers_claim(m, buffer, access, answer);
+    if (refused >= 0)
+      return refuse_claimed(at, out, claim_code(answer[refused]));
     /* A loss's wait raises it. */
-    out[k].wait = c == RIG_WAIT || c == RIG_LOST;
+    for (int j = 0; j < m; j++) out[at + j].wait = answer[j] != RIG_CLAIMED;
   }
   /* Each operand's bytes, as host addresses, read once with its layout's
      span: [first, last) at span[2k], span[2k + 1]. */
@@ -240,31 +249,35 @@ static void release_first(value written, value read, mlsize_t n) {
     rig_buffer_release(nth_buffer(written, read, k));
 }
 
-/* The array index from which claim_all's mask has one bit for the rest. */
-#define LOST_LAST 53
-
 /* Claims every array of [written] for writing and of [read] for reading, or
    none, and waits for nothing. Answers the refusal's code, with nothing
-   claimed; or NX_OK, every array claimed, plus 256 times a mask of the
-   arrays whose claim answered RIG_LOST: a lost device is behind them, which
-   the door probes for its exception. Bit k is the [k]th array of
-   [written], then [read]; bit LOST_LAST stands for every array from it
-   on. A read array identical to a written one is claimed too: claims are
-   counted, so two of one memory do not conflict. */
+   claimed; or NX_OK, every array claimed, plus 256 times one more than the
+   index of the first array whose claim answered RIG_LOST, 0 for none: a
+   lost device is behind it, which the door probes for its exception. The
+   index counts [written], then [read]. A read array identical to a written
+   one is claimed too: claims are counted, so two of one memory do not
+   conflict. It claims in runs, as nx_read does. */
 intnat nx_array_claim_all(value written, value read) {
   mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
-  intnat lost = 0;
-  for (mlsize_t k = 0; k < n; k++) {
-    enum rig_claim c = rig_buffer_claim(nth_buffer(written, read, k),
-                                        k < nw ? RIG_READ_WRITE : RIG_READ);
-    int e = claim_code(c);
-    if (e) {
-      release_first(written, read, k);
-      return e;
+  value buffer[NX_MAX_OPERANDS];
+  enum rig_access access[NX_MAX_OPERANDS];
+  enum rig_claim answer[NX_MAX_OPERANDS];
+  mlsize_t lost = 0;
+  for (mlsize_t at = 0; at < n; at += NX_MAX_OPERANDS) {
+    int m = n - at < NX_MAX_OPERANDS ? (int)(n - at) : NX_MAX_OPERANDS;
+    for (int j = 0; j < m; j++) {
+      buffer[j] = nth_buffer(written, read, at + j);
+      access[j] = at + j < nw ? RIG_READ_WRITE : RIG_READ;
     }
-    if (c == RIG_LOST) lost |= (intnat)1 << (k < LOST_LAST ? k : LOST_LAST);
+    int refused = rig_buffers_claim(m, buffer, access, answer);
+    if (refused >= 0) {
+      release_first(written, read, at);
+      return claim_code(answer[refused]);
+    }
+    for (int j = 0; j < m && lost == 0; j++)
+      if (answer[j] == RIG_LOST) lost = at + j + 1;
   }
-  return NX_OK + 256 * lost;
+  return NX_OK + 256 * (intnat)lost;
 }
 
 value nx_array_claim_all_byte(value written, value read) {

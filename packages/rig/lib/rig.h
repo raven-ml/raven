@@ -62,7 +62,8 @@ enum rig_access { RIG_READ, RIG_READ_WRITE };
 enum rig_claim {
   RIG_CLAIMED,   /* claimed, and the work the access must follow is done */
   RIG_WAIT,      /* claimed: call rig_buffer_wait before the access */
-  RIG_LOST,      /* claimed: rig_buffer_wait answers Rig.Lost */
+  RIG_LOST,      /* claimed: rig_buffer_wait answers Rig.Lost at once,
+                    waiting for no work */
   RIG_DEAD,      /* not claimed: rig_buffer_why gives the reason */
   RIG_EXCLUSIVE, /* not claimed: the memory is held exclusive */
   RIG_READ_ONLY  /* not claimed: RIG_READ_WRITE of a buffer that admits
@@ -100,5 +101,20 @@ caml_result rig_buffer_wait(value b, enum rig_access access);
    claim the caller does not hold ends another reader's. If [b]'s memory
    holds no read claim, it aborts the process. */
 void rig_buffer_release(value b);
+
+/* Claims the memory of buffers[0..n) for access[k], every claim or none,
+   as rig_buffer_claim claims each in turn. It is -1 if it claimed every
+   buffer, with answer[k] RIG_CLAIMED, RIG_WAIT or RIG_LOST for each;
+   otherwise it is the index of the first buffer refused, answer[that] says
+   why (RIG_DEAD, RIG_EXCLUSIVE, RIG_READ_ONLY), and nothing is held. It
+   allocates nothing and never releases the runtime, so [buffers] may point
+   into an OCaml block. A buffer may appear more than once: claims count. */
+int rig_buffers_claim(int n, const value *buffers,
+                      const enum rig_access *access,
+                      enum rig_claim *answer);
+
+/* Ends the claims rig_buffers_claim made on buffers[0..n), as
+   rig_buffer_release ends each. */
+void rig_buffers_release(int n, const value *buffers);
 
 #endif

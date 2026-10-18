@@ -496,6 +496,24 @@ value caml_rig_claim_drop(value v_b) {
 
 void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
 
+void rig_buffers_release(int n, const value *buffers) {
+  for (int k = 0; k < n; k++) claim_end(buffers[k], "rig_buffers_release");
+}
+
+int rig_buffers_claim(int n, const value *buffers,
+                      const enum rig_access *access,
+                      enum rig_claim *answer) {
+  for (int k = 0; k < n; k++) {
+    enum rig_claim a = rig_buffer_claim(buffers[k], access[k]);
+    answer[k] = a;
+    if (a == RIG_DEAD || a == RIG_EXCLUSIVE || a == RIG_READ_ONLY) {
+      rig_buffers_release(k, buffers);
+      return k;
+    }
+  }
+  return -1;
+}
+
 /* Buffer.free's step, as a donation's: a read claim, a check of [v_b] under
    it, then the memory exclusive if that claim is its only one and no hold
    or bit is on its word. It then raises the generation from [v_b]'s own

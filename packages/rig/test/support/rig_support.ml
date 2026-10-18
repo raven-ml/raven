@@ -1028,6 +1028,15 @@ module Reader = struct
   external release : Rig.Buffer.t -> unit = "rig_test_reader_release"
   [@@noalloc]
 
+  type outcome = All of answer array | Refused of int * answer
+
+  external claim_all : Rig.Buffer.t array -> Rig.access array -> outcome
+    = "rig_test_reader_claim_all"
+
+  external release_all : Rig.Buffer.t array -> unit
+    = "rig_test_reader_release_all"
+  [@@noalloc]
+
   external span : Rig.Buffer.t -> int * int = "rig_test_reader_span"
 
   let read b =

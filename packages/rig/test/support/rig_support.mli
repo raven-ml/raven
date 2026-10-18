@@ -665,6 +665,17 @@ module Reader : sig
   val release : Rig.Buffer.t -> unit
   (** [release b] is [rig_buffer_release b]. *)
 
+  (** The outcomes of [rig_buffers_claim]: every buffer claimed, with each
+      one's answer, or the index of the first buffer refused and why, with
+      none claimed. *)
+  type outcome = All of answer array | Refused of int * answer
+
+  val claim_all : Rig.Buffer.t array -> Rig.access array -> outcome
+  (** [claim_all bs access] is [rig_buffers_claim] of [bs] for [access]. *)
+
+  val release_all : Rig.Buffer.t array -> unit
+  (** [release_all bs] is [rig_buffers_release] of [bs]. *)
+
   val read : Rig.Buffer.t -> unit
   (** [read b] takes a read claim on [b]'s memory with {!claim}, held until
       {!release}, without waiting. It raises [Invalid_argument] where the claim

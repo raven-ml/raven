@@ -581,6 +581,116 @@ let test_signal_raised () =
       Rig_support.interrupt ();
       raise_notrace Raised)
 
+(* Claims of several buffers from C *)
+
+(* What a buffer of a case is to [rig_buffers_claim]: live, read or written;
+   with a write it must wait for; dead; held exclusive; or admitting only
+   reads, claimed to write. *)
+type state = Live of Rig.access | Pending | Dead | Held | Read_only
+
+let state =
+  Gen.of_list
+    ~pp:(fun ppf s ->
+      Format.pp_print_string ppf
+        (match s with
+        | Live Rig.Read -> "read"
+        | Live Rig.Read_write -> "written"
+        | Pending -> "pending"
+        | Dead -> "dead"
+        | Held -> "held"
+        | Read_only -> "read-only"))
+    [ Live Rig.Read; Live Rig.Read_write; Pending; Dead; Held; Read_only ]
+
+let states = Gen.list ~size:(Gen.int_range 0 6) state
+
+let refusal = function
+  | Dead -> Some R.Dead
+  | Held -> Some R.Exclusive
+  | Read_only -> Some R.Read_only
+  | Live _ | Pending -> None
+
+let claims_device = lazy (P.open_ "claim:claim-all")
+
+(* A buffer in [s], the access it is claimed for, and whether its memory
+   should donate once the claims end. *)
+let buffer_in s =
+  let d, _ = Lazy.force claims_device in
+  let consumed b = Rig_support.donated b |> Option.get in
+  match s with
+  | Live a -> (B.create Rig.host 8, a)
+  | Pending ->
+      let b = B.create d 8 in
+      let s =
+        Rig.Submission.make d
+          [| Rig_support.touching [| Rig.Submission.write |] |]
+      in
+      ignore (submit s ~buffers:[| b |]);
+      (b, Rig.Read)
+  | Dead ->
+      let b = B.create Rig.host 8 in
+      ignore (consumed b);
+      (b, Rig.Read)
+  | Held -> (B.create Rig.host 8, Rig.Read)
+  | Read_only ->
+      let b = B.create Rig.host 8 in
+      let b' =
+        Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
+            Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+                Claim.consume c ~why:"consumed" b))
+      in
+      (b', Rig.Read_write)
+
+(* [rig_buffers_claim] claims every buffer or none: it refuses at the first
+   buffer that [rig_buffer_claim] would refuse, holding nothing, and otherwise
+   answers each buffer as [rig_buffer_claim] would and holds them all until
+   [rig_buffers_release]. *)
+let claim_all_law ss =
+  let bs = List.map buffer_in ss in
+  let buffers = Array.of_list (List.map fst bs) in
+  let access = Array.of_list (List.map snd bs) in
+  let held =
+    List.filter_map (fun (s, (b, _)) -> if s = Held then Some b else None)
+      (List.combine ss bs)
+  in
+  let free () =
+    List.iter2
+      (fun s (b, _) ->
+        match s with
+        | Live _ | Pending ->
+            equal ~msg:"no claim left" bool true (donated_exclusive b)
+        | Dead | Held | Read_only -> ())
+      ss bs
+  in
+  let expected =
+    List.find_mapi
+      (fun i s -> Option.map (fun a -> (i, a)) (refusal s))
+      ss
+  in
+  let outcome = Claim.with_ ~read:[] ~donate:held (fun _ ->
+      R.claim_all buffers access)
+  in
+  (match (outcome, expected) with
+  | R.Refused (i, a), Some (i', a') ->
+      cover "a refusal after a claim" (i > 0);
+      equal ~msg:"the refused buffer" (pair int answer) (i', a') (i, a)
+  | R.All answers, None ->
+      cover "every buffer of several claimed" (Array.length answers > 1);
+      equal ~msg:"the answers" (array answer)
+        (Array.of_list
+           (List.map (function Pending -> R.Wait | _ -> R.Claimed) ss))
+        answers;
+      List.iter2
+        (fun s (b, _) ->
+          if s <> Held then
+            equal ~msg:"claimed" bool false (donated_exclusive b))
+        ss bs;
+      R.release_all buffers
+  | R.All _, Some _ -> fail "every buffer claimed past a refusal"
+  | R.Refused (i, a), None ->
+      failf "buffer %d refused (%a) with none to refuse" i R.pp_answer a);
+  free ();
+  ignore (P.run (snd (Lazy.force claims_device)))
+
 (* Holds *)
 
 (* After the holds over a memory are unreachable, a call that moves collected
@@ -1718,6 +1828,8 @@ let tests =
       ];
     group ~timeout "claims from C"
       [
+        prop "rig_buffers_claim claims every buffer or none" states
+          claim_all_law;
         test "a claim from C is a read claim" test_c_claims;
         test
           "a claim from C holds the memory and waits until the word shows \

@@ -165,10 +165,10 @@ int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    runs out. It checks in this order and answers the first refusal: each
    operand's dtype; then each operand's claim of its memory, for writing if
    written: NX_DEAD if its buffer is dead, NX_EXCLUSIVE if the memory is
-   held exclusive, NX_READ_ONLY if a written operand's memory is Read; then,
-   per operand, that a written one is NX_DISTINCT and that the host
-   addresses one with an element; then that a written operand shares no
-   byte with another written operand, nor with a read operand unless the
+   held exclusive, NX_READ_ONLY if a written operand's buffer admits only
+   Read; then, per operand, that a written one is NX_DISTINCT and that the
+   host addresses one with an element; then that a written operand shares
+   no byte with another written operand, nor with a read operand unless the
    two are identical: one width, and every index at one byte (equal extents
    and strides, one first bit). A read operand identical to a written one
    is claimed through it, once. Under the claims it waits for the device

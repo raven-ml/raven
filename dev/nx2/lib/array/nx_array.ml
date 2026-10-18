@@ -93,14 +93,11 @@ let refused name answer operands =
    for nothing. It allocates nothing: the loops index the caller's arrays. *)
 
 (* A refusal's code with nothing claimed, or [NX_OK] with every array claimed
-   plus 256 times the mask of the arrays whose claim found a lost device
-   behind them: bit [k] for the [k]th array of [written], then [read], bit
-   [lost_last] for every array from it on. *)
+   plus 256 times one more than the index of the first array whose claim
+   found a lost device behind it, across [written] then [read], or 0. *)
 external claim_all : any array -> any array -> (int[@untagged])
   = "nx_array_claim_all_byte" "nx_array_claim_all"
 [@@noalloc]
-
-let lost_last = 53
 
 (* An answer is the immediate of its code (nx_array.h). *)
 external answer_of_code : int -> answer = "%identity"
@@ -156,24 +153,20 @@ let check written read =
    it, and every handler ends the claims in C before it allocates the
    backtrace. *)
 
-(* Raises [Rig.Lost] if an array of the mask [lost] is a lost device's
-   memory, or follows work of a lost device: a read claim checks exactly
-   that, and waits for nothing. *)
-let probe_lost written read lost =
+(* Raises [Rig.Lost] for the array [k], a lost device's memory, or behind
+   work of a lost device: the wait for its access, under its claim, raises it
+   at once, waiting for no work. *)
+let probe_lost written read k =
   let nw = Array.length written in
-  for k = 0 to nw + Array.length read - 1 do
-    if lost land (1 lsl min k lost_last) <> 0 then begin
-      let (Any a) = if k < nw then written.(k) else read.(k - nw) in
-      Rig.Claim.with_ ~read:[ a.buffer ] ~donate:[] ignore
-    end
-  done
+  let (Any a) = if k < nw then written.(k) else read.(k - nw) in
+  Buffer.wait a.buffer (if k < nw then Rig.Read_write else Rig.Read)
 
 (* [check] and [probe_lost] under the claims [claim_all] answered
    [claimed] for. *)
 let checked written read claimed =
   let answer = check written read in
   let lost = claimed lsr 8 in
-  if answer = Done && lost <> 0 then probe_lost written read lost;
+  if answer = Done && lost <> 0 then probe_lost written read (lost - 1);
   answer
 
 (* [Done] with every array claimed, or a refusal with none. Raises

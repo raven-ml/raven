@@ -322,5 +322,38 @@ let of_shards =
           is_true (share_memory b (storage x)));
     ]
 
+(* Claims *)
+
+(* A kernel of many operands claims them all or none: a concatenation of more
+   operands than one run of claims computes, and one whose operand past the
+   first run was consumed raises naming where, holding no claim on the
+   others, which a donation then finds exclusive. *)
+let claims =
+  group "claims"
+    [
+      test "a kernel of many operands claims every one or none" (fun () ->
+          let n = 40 in
+          let xs =
+            List.init n (fun i ->
+                Nx.place (Nx.Placement.on d1)
+                  (Nx.full Nx.int32 [| 1 |] (Int32.of_int i)))
+          in
+          equal ~msg:"the concatenation" (array int32)
+            (Array.init n Int32.of_int)
+            (Nx.to_array (Nx.concatenate ~axis:0 xs));
+          Devices.consume (Devices.storage_of (List.nth xs 35)) ~path:"0.x";
+          raises_match (Exn.invalid_arg ~substring:"0.x") (fun () ->
+              ignore (Nx.concatenate ~axis:0 xs));
+          let b =
+            List.hd
+              (Nx.Repr.Storage.buffers (Devices.storage_of (List.hd xs)))
+          in
+          equal ~msg:"the first operand's memory" bool true
+            (Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+                 Rig.Claim.exclusive c b)));
+    ]
+
 let () =
-  exit (run "nx buffers" [ reads; to_buffer; of_buffer; shards; of_shards ])
+  exit
+    (run "nx buffers"
+       [ reads; to_buffer; of_buffer; shards; of_shards; claims ])

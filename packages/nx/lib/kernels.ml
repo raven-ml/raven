@@ -30,18 +30,43 @@ let host =
 
 let shape_of (a : ('a, 'b) Nx_array.t) = View.shape a.view
 
-(* Kernels read their operands' memory under read claims, so that no compiled
-   call lends it to a result meanwhile. A kernel the host runs first waits for
-   the work that wrote its operands. Claims are released however the kernel
-   ends, and none allocates. *)
+(* Kernels read their operands' memory under read claims, every operand or
+   none, so that no compiled call lends it to a result meanwhile. A kernel the
+   host runs first waits for the work that wrote its operands. Claims are
+   released however the kernel ends. A kernel's operands lie on its device,
+   which the first one names. *)
 
-external claim_device : Rig.Buffer.t -> unit = "caml_nx_claim"
-external claim_host : Rig.Buffer.t -> unit = "caml_nx_claim_host"
+(* How a kernel follows the work that wrote its operands: its claims wait for
+   that work, for a kernel the host runs, or its device orders it. The C
+   stubs read the constructors by rank. *)
+type follows = Waits | Device_orders
+
+external claim1 : Rig.Buffer.t -> follows -> unit = "caml_nx_claim"
+
+external claim2 : Rig.Buffer.t -> Rig.Buffer.t -> follows -> unit
+  = "caml_nx_claim2"
+
+external claim3 :
+  Rig.Buffer.t -> Rig.Buffer.t -> Rig.Buffer.t -> follows -> unit
+  = "caml_nx_claim3"
+
+external claim_array : Rig.Buffer.t array -> follows -> unit
+  = "caml_nx_claim_all"
+
 external release_buffer : Rig.Buffer.t -> unit = "caml_nx_release" [@@noalloc]
 
-let claim (a : ('a, 'b) Nx_array.t) =
-  if Rig.runs_on_host (Rig.Buffer.device a.buffer) then claim_host a.buffer
-  else claim_device a.buffer
+let waits (a : ('a, 'b) Nx_array.t) =
+  if Rig.runs_on_host (Rig.Buffer.device a.buffer) then Waits
+  else Device_orders
+
+let claim (a : ('a, 'b) Nx_array.t) = claim1 a.buffer (waits a)
+
+let claim2 (a : ('a, 'b) Nx_array.t) (b : ('c, 'd) Nx_array.t) =
+  claim2 a.buffer b.buffer (waits a)
+
+let claim3 (a : ('a, 'b) Nx_array.t) (b : ('c, 'd) Nx_array.t)
+    (c : ('e, 'f) Nx_array.t) =
+  claim3 a.buffer b.buffer c.buffer (waits a)
 
 let release (a : ('a, 'b) Nx_array.t) = release_buffer a.buffer
 
@@ -53,34 +78,10 @@ let release3 a b c =
   release2 a b;
   release c
 
-let claim2 a b =
-  claim a;
-  match claim b with
-  | () -> ()
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      release a;
-      Printexc.raise_with_backtrace e bt
-
-let claim3 a b c =
-  claim2 a b;
-  match claim c with
-  | () -> ()
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      release2 a b;
-      Printexc.raise_with_backtrace e bt
-
-let rec claim_all = function
-  | [] -> ()
-  | a :: rest -> (
-      claim a;
-      match claim_all rest with
-      | () -> ()
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          release a;
-          Printexc.raise_with_backtrace e bt)
+let claim_all xs =
+  claim_array
+    (Array.of_list (List.map (fun (x : _ Nx_array.t) -> x.buffer) xs))
+    (waits (List.hd xs))
 
 let release_all xs = List.iter release xs
 
