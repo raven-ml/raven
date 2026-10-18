@@ -591,7 +591,8 @@ val path : ?root:string -> string -> (path, string) result
 
     The result is [Error msg] if no RDMA device [name] exists, it has no verbs
     file, its verbs file cannot be opened ([msg] names the file and the
-    reason), or the kernel lists no driver for [name]. *)
+    reason), or the kernel lists no driver for [name]. Every other [msg]
+    names the device. *)
 
 val names_under : root:string -> unit -> (string list, string) result
 (** [names_under ~root ()] is {!names} of the machine whose files are under

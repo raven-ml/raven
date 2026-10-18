@@ -30,10 +30,6 @@ val driver_name : string -> string -> string option
 (** {1:path The path} *)
 
 val open_ : root:string -> string -> (Path.t, string) result
-(** [open_ ~root name] opens the verbs file of the RDMA device [name] under
-    [root] and is the path through it, which names the device's driver as the
-    kernel's RDMA netlink lists it. The path works on port 1.
-
-    It is [Error msg] if the device has no verbs file, the file cannot be
-    opened, or the kernel lists no driver of [name], [msg] naming the file or
-    the device and the reason. *)
+(** [open_ ~root name] is {!Rig_mlx5.val-path}[ ~root name] for a device
+    [name] that exists under [root], which it does not check. The kernel's
+    RDMA netlink lists the driver the path names. *)
