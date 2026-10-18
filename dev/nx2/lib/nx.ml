@@ -317,7 +317,7 @@ let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
 
 (* Data in and out *)
 
-type 'd packed = P : ('v, 's, 'd) t -> 'd packed
+type 'd packed = 'd Ptree.packed = P : ('v, 's, 'd) t -> 'd packed
 
 let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
   match D.equal_witness (dtype x) dt with
@@ -4606,6 +4606,114 @@ let pp ppf x =
 
 let to_string x = Format.asprintf "%a" pp x
 let print x = Format.printf "%a@." pp x
+
+(* Structures *)
+
+type ('v, 's, 'd) tensor = ('v, 's, 'd) t
+
+module Ptree = struct
+  include Ptree
+
+  (* The vector's arrays are the float and complex ones: [components dt a] is
+     [a]'s real components at [dt], a complex array's real then imaginary parts,
+     none for another dtype. *)
+  let components (type v s c d) (dt : (float, c) dtype) (a : (v, s, d) tensor) :
+      (float, c, d) tensor list =
+    match D.kind (dtype a) with
+    | D.Float -> [ cast dt a ]
+    | D.Complex -> [ real dt a; imag dt a ]
+    | D.Signed | D.Unsigned | D.Boolean -> []
+
+  (* [a] scaled by the 0-d [k] in its own format, part by part for a complex
+     [a], so that a part never meets the other's infinity. *)
+  let scaled (type v s c d) ~by (k : (float, c, d) tensor)
+      (a : (v, s, d) tensor) : (v, s, d) tensor option =
+    match D.kind (dtype a) with
+    | D.Float -> Some (mul (cast (dtype a) k) a)
+    | D.Complex ->
+        let (Parts (f, part)) = parts ~by a in
+        let k = cast f k in
+        Some (complex (dtype a) ~re:(mul k (part 0)) ~im:(mul k (part 1)))
+    | D.Signed | D.Unsigned | D.Boolean -> None
+
+  (* Refuses a factor with axes. *)
+  let factor ~by k =
+    if ndim k <> 0 then invalid_argf "%s: %a is not 0-d" by pp_value k
+
+  (* Refuses arrays of two shapes at one path. *)
+  let same_shape ~by p a b =
+    if shape a <> shape b then
+      invalid_argf "%s: %a: %a in the first value, %a in the second" by pp_path
+        p pp_shape (shape a) pp_shape (shape b)
+
+  let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
+    let by = "Nx.Ptree.dot" in
+    let acc = ref (scalar dt 0.) in
+    let term : type v r.
+        Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
+     fun p a b ->
+      same_shape ~by p a b;
+      List.iter2
+        (fun u w -> acc := add !acc (vdot u w))
+        (components dt a) (components dt b);
+      a
+    in
+    ignore (zip ~by s term x y);
+    !acc
+
+  (* The norm of [x]'s components, scaled by their largest magnitude [m] so that
+     no square overflows or underflows to nothing where the result is
+     representable, computed at [dt]'s carrier, float32 for a narrower float. *)
+  let norm (type c d) s (dt : (float, c) dtype) x : (float, c, d) tensor =
+    let (Prim.Wide w) = Prim.wide dt in
+    let xs =
+      fold s (fun _ a acc -> List.rev_append (components w a) acc) x []
+      |> List.filter (fun u -> numel u > 0)
+    in
+    let zero = scalar w 0. and one = scalar w 1. in
+    let m = List.fold_left (fun m u -> maximum m (max (abs u))) zero xs in
+    let infinite = isinf m in
+    let safe = where (logical_or (equal m zero) infinite) one m in
+    let sum =
+      List.fold_left
+        (fun acc u ->
+          let u = div u safe in
+          add acc (vdot u u))
+        zero (List.rev xs)
+    in
+    cast dt (where infinite m (mul safe (sqrt sum)))
+
+  let scale (type d) s (k : (float, _, d) tensor) x =
+    let by = "Nx.Ptree.scale" in
+    factor ~by k;
+    let f : type v r. Path.t -> (v, r, d) tensor -> (v, r, d) tensor =
+     fun _ a -> Option.value ~default:a (scaled ~by k a)
+    in
+    map s f x
+
+  let axpy (type d) s (k : (float, _, d) tensor) x y =
+    let by = "Nx.Ptree.axpy" in
+    factor ~by k;
+    let f : type v r.
+        Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
+     fun p a b ->
+      same_shape ~by p a b;
+      match scaled ~by k a with Some ka -> add ka b | None -> b
+    in
+    zip ~by s f x y
+
+  let place (type v s d e) (module U : S) (p : e Placement.t)
+      (x : ((v, s, d) tensor, d) U.t) : ((v, s, e) tensor, e) U.t =
+    let by = "Nx.Ptree.place" in
+    let visitor =
+      { tensor = (fun _ x -> Eval.place ~by p x); report = (fun _ _ -> ()) }
+    in
+    walk (module U) (Eval.place ~by p) visitor x
+
+  let cast (type v s w r d) (module U : S) (dt : (w, r) dtype)
+      (x : ((v, s, d) tensor, d) U.t) : ((w, r, d) tensor, d) U.t =
+    walk (module U) (cast dt) keep x
+end
 
 (* Operations as data *)
 

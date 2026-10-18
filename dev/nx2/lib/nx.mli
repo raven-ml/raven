@@ -2785,6 +2785,514 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 (** [placement x] is where [x]'s bytes are, or [None] for a value of every set,
     which has none. *)
 
+(** {1:structures Structures}
+
+    A structure is an OCaml type whose values hold arrays: a model's parameters,
+    an optimiser's state, a cache. {!Ptree} describes one by the function that
+    walks it. *)
+
+type ('v, 's, 'd) tensor = ('v, 's, 'd) t
+(** [tensor] is {!t}, named for {!Ptree}'s signatures, in which [t] is a
+    description. *)
+
+(** Structures of arrays.
+
+    A structure is a type [('a, 'd) t] with one function, [walk], that walks the
+    parts of a value with a {!Walk.cursor}: the positions of its parameter ['a],
+    its arrays of a fixed type, its {e fixed arrays}, on the set ['d], and the
+    data a program depends on (a window, a list's length, a variant's case).
+    Every operation here runs that function, so all of them visit the parts in
+    one order: maps and folds, casts, placement, the names under which arrays
+    are saved and the lists of arrays that interpreters trace.
+
+    A {e description}, [('s, 'd) t], is a structure at one type ['s] whose
+    arrays are all on ['d]. A map's function may then close over an array of
+    ['d]. Changing the set of a value, as changing a dtype, goes through the
+    structure's module: {!place} and {!cast} take one.
+
+    A description is made where it is used. Every description but {!tensor} and
+    {!unit} is a function's result, so OCaml fixes its dtype and its set at its
+    first use, and a set minted in a local scope has no description outside it.
+    A library therefore exports a structure's module, or a walk such as
+    {!Rng.walk}, and its users describe the structure at their dtype and set.
+
+    {[
+    type 'a linear = { w : 'a; b : 'a option }
+
+    module Linear = struct
+      type ('a, _) t = 'a linear
+
+      let walk c { w; b } =
+        let open Nx.Ptree.Walk in
+        let w = field c "w" leaf w in
+        let b = field c "b" (option leaf) b in
+        { w; b }
+    end
+
+    let params = { w = Nx.ones Nx.float32 [| 4; 2 |]; b = None }
+    let linear = Nx.Ptree.instantiate (module Linear)
+    let zeros = Nx.Ptree.map linear (fun _ x -> Nx.zeros_like x) params
+    let on_gpu = Nx.Ptree.place (module Linear) Gpu.on params
+    ]} *)
+module Ptree : sig
+  (** {1:paths Paths} *)
+
+  (** Paths from a value's root to one of its parts. *)
+  module Path : sig
+    (** The type for a path's steps. *)
+    type seg =
+      | Field of string  (** A named part, such as a record's field. *)
+      | Index of int
+          (** A numbered part: a list's or array's element, a tuple's component,
+              a pair's side. *)
+
+    type t
+    (** The type for paths. [Some] and a variant's case add no step. *)
+
+    val root : t
+    (** [root] is the path of no step. *)
+
+    val v : seg list -> t
+    (** [v segs] is the path of [segs], from the root. *)
+
+    val add : seg -> t -> t
+    (** [add seg p] is [p] then [seg], in constant time, sharing [p]. *)
+
+    val segments : t -> seg list
+    (** [segments p] is [p]'s steps, from the root. *)
+
+    val equal : t -> t -> bool
+    (** [equal p q] is [true] iff [p] and [q] have equal steps: the one field
+        ["a.b"] and the field [a] then [b] differ, though they print alike. *)
+
+    val to_string : t -> string
+    (** [to_string p] is [p]'s steps joined by ["."], as ["blocks.3.fc.b"]: the
+        name of the part at [p] in a saved value. The root is [""]. *)
+
+    val pp : Format.formatter -> t -> unit
+    (** [pp] formats a path as {!to_string}. *)
+  end
+
+  (** {1:walk Writing a structure} *)
+
+  type ('s, 'd) t
+  (** The type for descriptions of structures ['s] whose arrays are on ['d]. *)
+
+  (** The functions a [walk] is written with, one per kind of part.
+
+      Each walks one part at the cursor's path. A sub-structure is walked by its
+      own [walk], and a variant names its case before its other parts:
+
+      {[
+      type ('a, 'd) weight =
+        | Float of 'a
+        | Mxfp4 of { blocks : 'd uint8_t; scales : 'd uint8_t }
+
+      let walk_weight c =
+        let open Nx.Ptree.Walk in
+        function
+        | Float w ->
+            case c "float";
+            Float (leaf c w)
+        | Mxfp4 { blocks; scales } ->
+            case c "mxfp4";
+            let blocks = field c "blocks" tensor blocks in
+            let scales = field c "scales" tensor scales in
+            Mxfp4 { blocks; scales }
+      ]} *)
+  module Walk : sig
+    type ('a, 'b, 'd, 'e) cursor
+    (** The type for cursors of a walk that turns the parameter's positions from
+        ['a] into ['b] and the fixed arrays from the set ['d] to ['e]. A cursor
+        stands at a path of the value walked. *)
+
+    val field :
+      ('a, 'b, 'd, 'e) cursor ->
+      string ->
+      (('a, 'b, 'd, 'e) cursor -> 'u -> 'w) ->
+      'u ->
+      'w
+    (** [field c name walk x] is [walk c' x], [c'] at [c]'s path then
+        [Field name]. *)
+
+    val index :
+      ('a, 'b, 'd, 'e) cursor ->
+      int ->
+      (('a, 'b, 'd, 'e) cursor -> 'u -> 'w) ->
+      'u ->
+      'w
+    (** [index c i walk x] is [walk c' x], [c'] at [c]'s path then [Index i].
+        Tuples and arrays number their parts with it; an array also reports its
+        length with {!int}. *)
+
+    val leaf : ('a, 'b, 'd, 'e) cursor -> 'a -> 'b
+    (** [leaf c x] walks [x], a position of the parameter, at [c]'s path. *)
+
+    val tensor :
+      ('a, 'b, 'd, 'e) cursor -> ('v, 's, 'd) tensor -> ('v, 's, 'e) tensor
+    (** [tensor c x] walks [x], a fixed array, at [c]'s path. A description
+        treats it as any other array; {!Payload}'s maps and {!cast} keep it, and
+        {!place} places it. *)
+
+    val int : ('a, 'b, 'd, 'e) cursor -> int -> int
+    (** [int c n] reports [n] at [c]'s path and is [n]. A bool is reported as
+        [0] or [1]. *)
+
+    val case : ('a, 'b, 'd, 'e) cursor -> string -> unit
+    (** [case c tag] reports the variant case [tag] at [c]'s path. *)
+
+    val option :
+      (('a, 'b, 'd, 'e) cursor -> 'u -> 'w) ->
+      ('a, 'b, 'd, 'e) cursor ->
+      'u option ->
+      'w option
+    (** [option walk c x] reports whether [x] is present at [c]'s path and, if
+        it is, walks its content with [walk] at the same path. *)
+
+    val list :
+      (('a, 'b, 'd, 'e) cursor -> 'u -> 'w) ->
+      ('a, 'b, 'd, 'e) cursor ->
+      'u list ->
+      'w list
+    (** [list walk c l] reports [l]'s length at [c]'s path, then walks its
+        [i]-th element with [walk] at [c]'s path then [Index i], from the first.
+    *)
+
+    val structure : ('s, 'd) t -> ('a, 'b, 'd, 'd) cursor -> 's -> 's
+    (** [structure s c x] walks [x], a value of the description [s], at [c]'s
+        path: each of its arrays as {!tensor} walks one, each of its reports as
+        [s] makes it, at [s]'s paths after [c]'s. [tensor c x] is
+        [structure Nx.Ptree.tensor c x].
+
+        A description is at one set, so a walk that calls [structure] is too: it
+        makes a description with {!v}, never a structure's module, and {!place}
+        cannot move what it walks. A part of a fixed type that moves between
+        sets is walked by its own walk, as {!Rng.walk} walks a key:
+
+        {[
+        type ('a, 'd) state = {
+          params : 'a linear;
+          key : 'd Nx.Rng.key;
+          step : 'd Nx.int32_t;
+        }
+
+        module State = struct
+          type ('a, 'd) t = ('a, 'd) state
+
+          let walk c s =
+            let open Nx.Ptree.Walk in
+            let params = field c "params" Linear.walk s.params in
+            let key = field c "key" Nx.Rng.walk s.key in
+            let step = field c "step" tensor s.step in
+            { params; key; step }
+        end
+        ]}
+
+        [Nx.Ptree.place (module State) Gpu.on s] places the parameters, the key
+        and the step. *)
+  end
+
+  (** Structures.
+
+      [walk c x] walks every part of [x] once and rebuilds [x] from what each
+      walk returns:
+      - each position of the parameter with {!Walk.leaf}, each fixed array with
+        {!Walk.tensor}, and each sub-structure with its own [walk];
+      - each integer that changes what a program computes (a window, a block
+        shape, a layer kind) is reported with {!Walk.int}; other scalar data a
+        program depends on belongs in an array;
+      - a variant reports its case with {!Walk.case} before its case's other
+        parts, with a tag no other case of the type uses;
+      - options and lists are walked with {!Walk.option} and {!Walk.list}, which
+        report presence and length, so a part with no array still counts;
+      - a dictionary reports its size with {!Walk.int} and each key with
+        {!Walk.case} before walking the key's value with {!Walk.field};
+      - a walk that returns each part unchanged rebuilds an equal value.
+
+      The type checker ensures no position of the parameter is forgotten, since
+      {!Walk.leaf} changes its type. A forgotten fixed array, integer or case
+      compiles; a test of the structure's {!val-visits} catches it.
+
+      A record literal evaluates its fields in an order OCaml leaves
+      unspecified, and every operation runs the same [walk]: write the fields as
+      a sequence of [let]s where the order must show.
+
+      ['d] is the set of the fixed arrays: a structure whose every array is at
+      its parameter ignores it, as [type ('a, _) t = 'a linear]. *)
+  module type S = sig
+    type ('a, 'd) t
+    (** The type for values with parameter ['a] and fixed arrays on ['d]. *)
+
+    val walk : ('a, 'b, 'd, 'e) Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
+    (** [walk c x] walks every part of [x] with [c] and is [x] rebuilt from what
+        the walks return. *)
+  end
+
+  (** {1:descriptions Descriptions} *)
+
+  val instantiate : (module U : S) -> ((('v, 's, 'd) tensor, 'd) U.t, 'd) t
+  (** [instantiate (module U)] is [U] with arrays at its parameter's positions:
+      [nest (module U) tensor]. A binding is at one dtype and one set, as every
+      description ({!Ptree}), annotated only where nothing else in its
+      compilation unit fixes them. *)
+
+  val nest : (module U : S) -> ('s, 'd) t -> (('s, 'd) U.t, 'd) t
+  (** [nest (module U) s] is [U] whose parameter's positions are values of [s],
+      walked by [s] with their paths after the position's. An optimiser's state
+      over a model is nested. *)
+
+  val v : ('a 'b. ('a, 'b, 'd, 'd) Walk.cursor -> 's -> 's) -> ('s, 'd) t
+  (** [v walk] is the description whose values [walk] walks: a structure without
+      a parameter, on one set, such as a record of parts walked with
+      {!Walk.structure}. [walk] keeps the contract of {!S}'s [walk], with no
+      position of a parameter. {!place} cannot move its values: a structure that
+      moves between sets has a module. *)
+
+  val tensor : (('v, 's, 'd) tensor, 'd) t
+  (** [tensor] is one array, at the root. *)
+
+  val unit : (unit, 'd) t
+  (** [unit] is [()], which has no part. *)
+
+  val pair : ('a, 'd) t -> ('b, 'd) t -> ('a * 'b, 'd) t
+  (** [pair a b] walks a pair's first component with [a] at [Index 0], then its
+      second with [b] at [Index 1]. *)
+
+  val option : ('a, 'd) t -> ('a option, 'd) t
+  (** [option a] reports presence as {!Walk.option} does and walks the content
+      with [a] at the same path. *)
+
+  val list : ('a, 'd) t -> ('a list, 'd) t
+  (** [list a] reports the length as {!Walk.list} does and walks the [i]-th
+      element with [a] at [Index i]. *)
+
+  (** {1:derived Maps and folds}
+
+      These pass every array its path, in walk order. Each array has its own
+      dtype, so their functions are polymorphic; fixed arrays are arrays like
+      the others.
+
+      Two values that differ raise [Invalid_argument] with the message
+      [fn: p: a in the first value, b in the second], [p] the path of the first
+      visit at which they differ and [a] and [b] what each holds there, as
+      {!pp_visit} words it, or [nothing] for a value with no more visits. Where
+      the two visits are at different paths, [b] reads [b at q], [q] the
+      second's path; paths that print alike print as their steps. *)
+
+  val map :
+    ('s, 'd) t ->
+    ('v 'r. Path.t -> ('v, 'r, 'd) tensor -> ('v, 'r, 'd) tensor) ->
+    's ->
+    's
+  (** [map s f x] is [x] with each array [a] at path [p] replaced by [f p a]. *)
+
+  val map2 :
+    ('s, 'd) t ->
+    ('v 'r.
+     Path.t -> ('v, 'r, 'd) tensor -> ('v, 'r, 'd) tensor -> ('v, 'r, 'd) tensor) ->
+    's ->
+    's ->
+    's
+  (** [map2 s f x y] is [x] with each array [a] at path [p] replaced by
+      [f p a b], [b] [y]'s array at [p].
+
+      Raises [Invalid_argument] before applying [f] if [x] and [y] have
+      different {!val-visits}, with the message of {!section-derived} prefixed
+      by ["Nx.Ptree.map2"]; and, after applying [f] to the arrays before [p], if
+      the arrays at [p] differ in dtype, as in
+      ["Nx.Ptree.map2: w: float32 in the first value, int32 in the second"], or
+      if [s] walks one value two ways, which breaks {!S}'s contract. *)
+
+  val fold :
+    ('s, 'd) t ->
+    ('v 'r. Path.t -> ('v, 'r, 'd) tensor -> 'acc -> 'acc) ->
+    's ->
+    'acc ->
+    'acc
+  (** [fold s f x acc] is [f pn an (… (f p1 a1 acc))], [a1], …, [an] [x]'s
+      arrays and [p1], …, [pn] their paths. *)
+
+  (** {1:payloads Sets, dtypes and payloads}
+
+      A structure's [walk] also changes the type of its parameter's positions
+      and the set of its fixed arrays. These take the structure's module, since
+      only a module names its type constructor. *)
+
+  val place :
+    (module U : S) ->
+    'e Placement.t ->
+    (('v, 's, 'd) tensor, 'd) U.t ->
+    (('v, 's, 'e) tensor, 'e) U.t
+  (** [place (module U) p x] is [x] with each array, fixed ones included, at
+      [p], as {!Nx.place}. *)
+
+  val cast :
+    (module U : S) ->
+    ('w, 'r) dtype ->
+    (('v, 's, 'd) tensor, 'd) U.t ->
+    (('w, 'r, 'd) tensor, 'd) U.t
+  (** [cast (module U) dt x] is [x] with each array at a position of [U]'s
+      parameter cast to [dt], as {!Nx.cast}. Fixed arrays are kept. *)
+
+  (** Maps and folds at any payload: a mask, a learning rate per array, a plan,
+      dimensions. The positions of the parameter hold the payloads; fixed
+      arrays, and those of parts walked with {!Walk.structure}, are kept from
+      the first value, and neither passed nor compared. *)
+  module Payload : sig
+    val map :
+      (module U : S) -> (Path.t -> 'a -> 'b) -> ('a, 'd) U.t -> ('b, 'd) U.t
+    (** [map (module U) f x] is [x] with each payload [a] at path [p] replaced
+        by [f p a], in walk order. *)
+
+    val map2 :
+      (module U : S) ->
+      (Path.t -> 'a -> 'b -> 'c) -> ('a, 'd) U.t -> ('b, 'd) U.t -> ('c, 'd) U.t
+    (** [map2 (module U) f x y] is [x] with each payload [a] at path [p]
+        replaced by [f p a b], [b] [y]'s payload at [p].
+
+        Raises [Invalid_argument] before applying [f] if [x] and [y] differ in
+        their payloads' paths or in their reports, with the message of
+        {!section-derived} prefixed by ["Nx.Ptree.Payload.map2"], and if
+        [U.walk] walks one value two ways. *)
+  end
+
+  (** {1:arithmetic Arithmetic}
+
+      A value's float and complex arrays are one real vector, each complex
+      element two of its coordinates, its real and imaginary parts: the inner
+      product of two complex arrays is [Re (conj a · b)]. These functions are
+      the vector's linear algebra, the steps of optimisers, integrators and
+      samplers written over a structure. An array of another dtype, a counter or
+      a key, is not part of the vector: {!dot} and {!norm} skip it, {!scale} and
+      {!axpy} keep it.
+
+      The functions of two values raise [Invalid_argument] as {!map2} does, with
+      their own name, and where the arrays at one path differ in shape, as in
+      ["Nx.Ptree.dot: w: [2; 3] in the first value, [3; 2] in the second"]. *)
+
+  val dot :
+    ('s, 'd) t -> (float, 'c) dtype -> 's -> 's -> (float, 'c, 'd) tensor
+  (** [dot s dt x y] is the 0-d inner product of [x] and [y] at [dt]: from [0],
+      the sum in walk order, over each array [a] of the vector and [y]'s array
+      [b] at its path, of [vdot (cast dt a) (cast dt b)] for floats and of the
+      same over the real parts, then the imaginary parts, stored in [dt], for
+      complex arrays. *)
+
+  val norm : ('s, 'd) t -> (float, 'c) dtype -> 's -> (float, 'c, 'd) tensor
+  (** [norm s dt x] is [x]'s Euclidean norm, [sqrt (dot s dt x x)] in exact
+      arithmetic, computed so that no square overflows: each coordinate is
+      divided by their greatest magnitude [m], and [m] multiplies the root of
+      the quotients' sum of squares. It computes in [dt]'s carrier, float32 for
+      a narrower float, and rounds once to [dt], so it is finite wherever the
+      norm is: [+∞] where a coordinate is infinite and none is NaN, NaN where
+      one is NaN, [0] of no coordinate. *)
+
+  val scale : ('s, 'd) t -> (float, 'c, 'd) tensor -> 's -> 's
+  (** [scale s k x] is [x] with each array [a] of the vector replaced by
+      [k' * a], [k'] [k] cast to [a]'s format, part by part for a complex [a].
+
+      Raises [Invalid_argument] naming [Nx.Ptree.scale] unless [k] is 0-d. *)
+
+  val axpy : ('s, 'd) t -> (float, 'c, 'd) tensor -> 's -> 's -> 's
+  (** [axpy s k x y] is [x] with each array [a] replaced by [k' * a + b], [b]
+      [y]'s array at its path and [k'] [k] cast to [a]'s format, the product and
+      the sum each rounded to it, a complex [a] part by part; and by [b] where
+      [a] is not in the vector.
+
+      Raises [Invalid_argument] naming [Nx.Ptree.axpy] unless [k] is 0-d. *)
+
+  (** {1:visits Visits} *)
+
+  (** The type for what a walk reports. *)
+  type report =
+    | Int of int  (** From {!Walk.int}. *)
+    | Case of string  (** From {!Walk.case}. *)
+    | Present of bool  (** From {!Walk.option} and {!option}. *)
+    | Length of int  (** From {!Walk.list} and {!list}. *)
+
+  (** The type for the steps of a walk. *)
+  type visit =
+    | Leaf of Path.t  (** An array, at its path. *)
+    | Report of Path.t * report  (** A report, at the path it is made at. *)
+
+  val visits : ('s, 'd) t -> 's -> visit list
+  (** [visits s x] is the steps of [s]'s walk of [x], in walk order. A
+      structure's test compares them with the arrays, integers and cases its
+      [walk] must visit. *)
+
+  val pp_visit : Format.formatter -> visit -> unit
+  (** [pp_visit ppf v] formats [v] as its path and what is there:
+      ["blocks.3.moe: case \"mxfp4\""], ["0.keys: a leaf"],
+      ["layers: length 4"], ["bias: Some"], ["window: int 8"]. The root is
+      formatted ["the root"]. *)
+
+  (** {1:signatures Signatures of compiled functions}
+
+      A signature has the shape of the function an interpreter compiles:
+      [tensor @-> index @-> consumes caches @@ returns (pair tensor caches)]. An
+      argument built with {!( @-> )} is read; one built with {!consumes} is
+      given up by each call. Each argument has its own type, so
+      [tensor @-> tensor @-> …] takes arrays of two dtypes. *)
+
+  (** The type for how a call treats an argument. *)
+  type role =
+    | Read  (** The call reads the argument. *)
+    | Consumed  (** The call consumes the argument. *)
+
+  (** The type for signatures of functions of type ['f] on the set ['d]. *)
+  type (_, 'd) fn = private
+    | Returns : ('a, 'd) t -> ('a, 'd) fn  (** A result. *)
+    | Arg : role * ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
+        (** An argument, then the rest of the signature. *)
+
+  val ( @-> ) : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
+  (** [a @-> f] reads an argument of [a], then is [f]. *)
+
+  val consumes : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
+  (** [consumes a f] consumes an argument of [a], then is [f]. It is written
+      [consumes a @@ f]. *)
+
+  val returns : ('a, 'd) t -> ('a, 'd) fn
+  (** [returns a] is a result of [a]. *)
+
+  (** {1:flattening Flattening}
+
+      {b Low level.} A value as its arrays and its skeleton: what interpreters
+      key compiled programs on and put results back with. *)
+
+  (** Skeletons of values. *)
+  module Skeleton : sig
+    type t
+    (** The type for a value's skeleton: its {!val-visits}. *)
+
+    val equal : t -> t -> bool
+    (** [equal k k'] is [true] iff [k] and [k'] have equal visits, their paths
+        compared by {!Path.equal}. *)
+
+    val hash : t -> int
+    (** [hash k] hashes [k]: equal skeletons hash equal. *)
+
+    val diff : this:string -> t -> that:string -> t -> string option
+    (** [diff ~this k ~that k'] is [None] iff [equal k k'], and otherwise the
+        message of {!section-derived} for their first differing visit, [this]
+        and [that] placing each side: with [~this:"here"] and
+        [~that:"in the previous key"],
+        ["window: int 8 here, int 4 in the previous key"]. *)
+  end
+
+  val flatten : ('s, 'd) t -> 's -> 'd packed list * Skeleton.t
+  (** [flatten s x] is [x]'s arrays in walk order and [x]'s skeleton. *)
+
+  val rebuild : ('s, 'd) t -> like:'s -> 'd packed list -> 's
+  (** [rebuild s ~like xs] is [like] with its arrays replaced by [xs], in walk
+      order. [rebuild s ~like (fst (flatten s like))] is [like].
+
+      Raises [Invalid_argument] naming [Nx.Ptree.rebuild] if [xs] has fewer
+      arrays than [like], naming the path of the first left without one; if it
+      has more, naming both counts; or if an array has another dtype than
+      [like]'s at its position, naming the path and both dtypes. *)
+end
+
 (** {1:random Random numbers} *)
 
 (** Random numbers from one Threefry-2x32 generator.
@@ -2824,6 +3332,13 @@ module Rng : sig
   val place : 'e Placement.t -> 'd key -> 'e key
   (** [place p k] is [k] at [p], as {!Nx.place}; a draw from it computes at [p].
   *)
+
+  val walk : ('a, 'b, 'd, 'e) Ptree.Walk.cursor -> 'd key -> 'e key
+  (** [walk c k] walks [k], a key or a batch of keys, at [c]'s path as one
+      fixed array ({!Ptree.Walk.tensor}), and rebuilds it as {!of_tensor}
+      does. A structure holding a key walks it with
+      [field c "key" Nx.Rng.walk k]; [Nx.Ptree.v Nx.Rng.walk] describes a key
+      alone. *)
 
   val split : ?n:int -> 'd key -> 'd key array
   (** [split ~n k] is [n] keys derived from [k] ([n] defaults to [2]),

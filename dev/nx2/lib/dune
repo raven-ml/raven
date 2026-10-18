@@ -18,6 +18,7 @@
   repr
   pattern
   contraction
+  ptree
   rng
   special_tables
   special
@@ -37,6 +38,7 @@
   repr
   pattern
   contraction
+  ptree
   rng
   special_tables
   special)

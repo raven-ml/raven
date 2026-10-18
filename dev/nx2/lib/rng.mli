@@ -12,6 +12,7 @@ val key : int -> 'd key
 val of_tensor : (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
 val to_tensor : 'd key -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 val place : 'e Devices.placement -> 'd key -> 'e key
+val walk : ('a, 'b, 'd, 'e) Ptree.Walk.cursor -> 'd key -> 'e key
 val split : ?n:int -> 'd key -> 'd key array
 val split_batch : n:int -> 'd key -> 'd key
 val fold_in : 'd key -> int -> 'd key

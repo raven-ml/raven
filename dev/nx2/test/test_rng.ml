@@ -162,6 +162,19 @@ let keys_group =
           equal (array int32) [| word (s asr 32); word s |] (words (Rng.key s)));
       test "a key is a value of every set" (fun () ->
           is_none (Nx.placement (Rng.to_tensor (Rng.key 7))));
+      test "a key's walk is one array at the root, checked on rebuild"
+        (fun () ->
+          let k = Rng.key 7 and ptree = Nx.Ptree.v Rng.walk in
+          equal ~msg:"visits" (list string) [ "the root: a leaf" ]
+            (List.map
+               (Format.asprintf "%a" Nx.Ptree.pp_visit)
+               (Nx.Ptree.visits ptree k));
+          let k' = Nx.Ptree.map ptree (fun _ a -> a) k in
+          equal ~msg:"map" (array int32) (words k) (words k');
+          let word = Nx.P (host_of Nx.int32 [| 3 |] [| 1l; 2l; 3l |]) in
+          raises_match
+            (Exn.invalid_arg ~substring:"Nx.Rng.of_tensor: ")
+            (fun () -> Nx.Ptree.rebuild ptree ~like:k [ word ]));
       prop "split's keys are split_batch's rows"
         (Gen.pair keys (Gen.int_range 1 6))
         (fun (k, n) ->

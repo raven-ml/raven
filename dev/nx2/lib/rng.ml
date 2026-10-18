@@ -222,6 +222,8 @@ let of_tensor (t : (int32, D.int32_elt, 'd) Value.t) : 'd key =
 
 let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 
+let walk c k = of_tensor (Ptree.Walk.tensor c k)
+
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch. *)
 let keys ~by (k : 'd key) shape f : 'd key =
