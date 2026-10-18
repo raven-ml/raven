@@ -653,8 +653,279 @@ let copy_span ~head ~tail src dst =
     if tail && (n > 1 || not head) then edge (n - 1)
   end
 
-let to_device d a =
-  live "Nx_array.to_device" a.buffer;
+(* Holds a read claim on [b] while [f ()] runs: no donation writes [b]
+   meanwhile. The copies under it order themselves after [b]'s work. *)
+let reading fn b f =
+  ignore (take_claim fn b Rig.Read : bool);
+  match f () with
+  | x ->
+      end_claim b;
+      x
+  | exception e ->
+      end_claim b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* The elements of [l]: one per index, an axis of stride 0 counted once. *)
+let elements l =
+  let n = ref (if Layout.numel l = 0 then 0 else 1) in
+  for a = 0 to Layout.rank l - 1 do
+    if Layout.stride l a <> 0 then n := !n * Layout.dim l a
+  done;
+  !n
+
+(* [l]'s axes of nonzero stride, outermost first: by decreasing magnitude of
+   stride, ties in axis order. *)
+let stride_order l =
+  List.init (Layout.rank l) Fun.id
+  |> List.filter (fun a -> Layout.stride l a <> 0)
+  |> List.stable_sort (fun a b ->
+      Int.compare (abs (Layout.stride l b)) (abs (Layout.stride l a)))
+  |> Array.of_list
+
+(* [l]'s shape laid out in [l]'s stride order, as to_device's .mli states: [3;
+   2] at strides [2; 2] packs to [2; 1]. *)
+let packed l =
+  let strides = Array.make (Layout.rank l) 0 in
+  let offset = ref 0 and next = ref 1 in
+  let order = stride_order l in
+  for k = Array.length order - 1 downto 0 do
+    let a = order.(k) in
+    let d = Layout.dim l a in
+    if Layout.stride l a > 0 then strides.(a) <- !next
+    else begin
+      strides.(a) <- - !next;
+      offset := !offset + ((d - 1) * !next)
+    end;
+    next := !next * d
+  done;
+  Layout.v ~offset:!offset ~strides (Layout.shape l)
+
+(* [l]'s axes that take more than one index, outermost first: by decreasing
+   magnitude of stride, ties in axis order. *)
+let run_order l =
+  List.init (Layout.rank l) Fun.id
+  |> List.filter (fun a -> Layout.dim l a > 1)
+  |> List.stable_sort (fun a b ->
+      Int.compare (abs (Layout.stride l b)) (abs (Layout.stride l a)))
+  |> Array.of_list
+
+(* The axes outside the runs that copy between layouts [s] and [t] of one shape,
+   outermost first, and the runs' length: [t]'s innermost axes in its stride
+   order where both lie as consecutive positions. *)
+let runs s t =
+  let order = run_order t in
+  let k = ref (Array.length order) and n = ref 1 in
+  while
+    !k > 0
+    &&
+    let a = order.(!k - 1) in
+    Layout.stride t a = !n && Layout.stride s a = !n
+  do
+    decr k;
+    n := !n * Layout.dim t order.(!k)
+  done;
+  (Array.sub order 0 !k, !n)
+
+(* Calls [f ps pt n] for each run of [n] elements consecutive at position [ps]
+   of [s] and [pt] of [t], layouts of one shape. Runs follow [t]'s stride order,
+   so a transposed view's runs into its packed layout are as long as its rows in
+   memory. *)
+let iter_runs s t f =
+  let outer, n = runs s t in
+  let k = Array.length outer in
+  let idx = Array.make k 0 in
+  let ps = ref (Layout.offset s) and pt = ref (Layout.offset t) in
+  let go = ref (Layout.numel t > 0) in
+  while !go do
+    f !ps !pt n;
+    let j = ref (k - 1) in
+    while !j >= 0 && idx.(!j) + 1 = Layout.dim t outer.(!j) do
+      let a = outer.(!j) in
+      ps := !ps - (idx.(!j) * Layout.stride s a);
+      pt := !pt - (idx.(!j) * Layout.stride t a);
+      idx.(!j) <- 0;
+      decr j
+    done;
+    if !j < 0 then go := false
+    else begin
+      let a = outer.(!j) in
+      idx.(!j) <- idx.(!j) + 1;
+      ps := !ps + Layout.stride s a;
+      pt := !pt + Layout.stride t a
+    end
+  done
+
+(* [a] with each axis of stride 0 cut to its first index: [blit] stores into a
+   destination that reaches each element once. *)
+let first_of_broadcast a =
+  let l = a.layout in
+  let range i =
+    let d = Layout.dim l i in
+    {
+      Move.start = 0;
+      count = (if Layout.stride l i = 0 then min d 1 else d);
+      step = 1;
+    }
+  in
+  match move (Move.Slice (Array.init (Layout.rank l) range)) a with
+  | Some a -> a
+  | None -> invalid_arg "Nx_array: a slice is a view"
+
+(* The host gathers [a]'s runs into [h], on memory it addresses, each run
+   brought into one host scratch by [Buffer.copy] where the host does not
+   address [a]'s memory. *)
+let gather_runs a h =
+  let bits = Dtype.bits a.dtype in
+  let covering ps n =
+    (ps * bits / 8, ((((ps + n) * bits) + 7) / 8) - (ps * bits / 8))
+  in
+  let scratch = ref None in
+  iter_runs a.layout h.layout (fun ps pt n ->
+      let first, length = covering ps n in
+      let s =
+        match !scratch with
+        | Some s -> s
+        | None ->
+            (* A run of [n] elements covers at most one byte more than they
+               fill. *)
+            let s = Buffer.create Rig.host (Dtype.bytes a.dtype n + 1) in
+            scratch := Some s;
+            s
+      in
+      let run = Buffer.view s ~first:0 ~length in
+      Buffer.copy ~src:(Buffer.view a.buffer ~first ~length) ~dst:run;
+      let src =
+        {
+          a with
+          layout =
+            Layout.v ~offset:(ps - (8 * first / bits)) ~strides:[| 1 |] [| n |];
+          buffer = run;
+        }
+      and dst =
+        { h with layout = Layout.v ~offset:pt ~strides:[| 1 |] [| n |] }
+      in
+      blit ~src ~dst)
+
+(* [src]'s device copies [src]'s runs into [dst], on that device, in submissions
+   of at most [Rig.most_parts] copies. *)
+let pack_on_device src dst =
+  let d = device src and eb = Dtype.bits src.dtype / 8 in
+  let most = Rig.most_parts d in
+  let submit parts =
+    let s = Rig.Submission.make d (Array.of_list (List.rev parts)) in
+    ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[||] : Rig.Point.t)
+  in
+  let parts = ref [] and count = ref 0 in
+  iter_runs src.layout dst.layout (fun ps pt n ->
+      let view b p =
+        Rig.Submission.Buffer (Buffer.view b ~first:(p * eb) ~length:(n * eb))
+      in
+      parts :=
+        Rig.Submission.copy ~src:(view src.buffer ps) ~dst:(view dst.buffer pt)
+        :: !parts;
+      incr count;
+      if !count = most then begin
+        submit !parts;
+        parts := [];
+        count := 0
+      end);
+  if !parts <> [] then submit !parts
+
+(* Copies each run between [src] and [dst] by its own [Buffer.copy], which
+   chooses the path between their devices. *)
+let copy_runs src dst =
+  let eb = Dtype.bits src.dtype / 8 in
+  iter_runs src.layout dst.layout (fun ps pt n ->
+      Buffer.copy
+        ~src:(Buffer.view src.buffer ~first:(ps * eb) ~length:(n * eb))
+        ~dst:(Buffer.view dst.buffer ~first:(pt * eb) ~length:(n * eb)))
+
+(* Stores [s], laid out in [t]'s stride order, into [t]: by a copy per run,
+   unless the host addresses [t] and the runs are several, where the host blits
+   from [s] brought to it whole. *)
+let spread s t =
+  let _, n = runs s.layout t.layout in
+  if n = Layout.numel t.layout || host_address t.buffer < 0 then copy_runs s t
+  else begin
+    let h =
+      if host_address s.buffer >= 0 then s
+      else { s with buffer = Buffer.create Rig.host (Buffer.length s.buffer) }
+    in
+    if h != s then Buffer.copy ~src:s.buffer ~dst:h.buffer;
+    blit ~src:h ~dst:t
+  end
+
+(* The host blits where it addresses both arrays' memory. Otherwise a device
+   that computes and that the host does not address packs its source's runs; the
+   host gathers them from other memory, and of a sub-byte array, whose runs a
+   byte copy cannot cut. Each gathers into the destination where it reaches it,
+   otherwise into a buffer laid out in the destination's stride order on its
+   side, which [spread] moves, unless the runs between the two arrays are
+   already as long. *)
+let transfer_by fn ~src ~dst =
+  live fn src.buffer;
+  live fn dst.buffer;
+  if Layout.shape src.layout <> Layout.shape dst.layout then
+    refused fn Shape_mismatch [ Any dst; Any src ];
+  if not (Layout.is_distinct dst.layout) then
+    refused fn Repeated_elements [ Any dst; Any src ];
+  let hosted b = host_address b >= 0 in
+  let bits = Dtype.bits src.dtype in
+  if bits < 8 && not (hosted dst.buffer) then
+    refused fn Off_host [ Any dst; Any src ];
+  if hosted src.buffer && hosted dst.buffer then blit ~src ~dst
+  else if Layout.numel dst.layout > 0 then begin
+    let packs =
+      bits >= 8 && (not (hosted src.buffer)) && Rig.computes (device src)
+    in
+    let gather t =
+      if packs then pack_on_device src t
+      else if hosted src.buffer then blit ~src ~dst:t
+      else gather_runs src t
+    in
+    let direct =
+      if packs then Rig.equal (device src) (device dst) else hosted dst.buffer
+    in
+    reading fn src.buffer (fun () ->
+        if direct then gather dst
+        else
+          let l = packed dst.layout in
+          if snd (runs src.layout dst.layout) >= snd (runs l dst.layout) then
+            copy_runs src dst
+          else begin
+            let side = if packs then device src else Rig.host in
+            let n = Layout.numel dst.layout in
+            let buffer = Buffer.create side (Dtype.bytes dst.dtype n) in
+            let stage = { dst with layout = l; buffer } in
+            gather stage;
+            spread stage dst
+          end)
+  end
+
+let transfer ~src ~dst = transfer_by "Nx_array.transfer" ~src ~dst
+
+(* [a]'s elements laid out [packed] on [d]. The host gathers a sub-byte array it
+   cannot store on [d] into a buffer of its own, moved whole. *)
+let move_packed d a =
+  let t = packed a.layout and bits = Dtype.bits a.dtype in
+  let n = elements a.layout in
+  let fresh d =
+    let buffer = Buffer.create d (Dtype.bytes a.dtype n) in
+    zero_tail bits n buffer;
+    { a with layout = t; buffer }
+  in
+  let dst = fresh d in
+  let into =
+    if bits < 8 && host_address dst.buffer < 0 then fresh Rig.host else dst
+  in
+  transfer_by "Nx_array.to_device" ~src:(first_of_broadcast a)
+    ~dst:(first_of_broadcast into);
+  if into != dst then Buffer.copy ~src:into.buffer ~dst:dst.buffer;
+  dst
+
+(* [a] over a copy of the bytes from its first to its last position, its layout
+   shifted to the copy. *)
+let move_span d a =
   let l = a.layout and bits = Dtype.bits a.dtype in
   let lo, hi = Layout.span l in
   let first = lo * bits / 8 and last = ((hi * bits) + 7) / 8 in
@@ -662,18 +933,20 @@ let to_device d a =
   if last > first then begin
     let src = Buffer.view a.buffer ~first ~length:(last - first) in
     let head = lo * bits mod 8 <> 0 and tail = hi * bits mod 8 <> 0 in
-    (* The read claim keeps a donation from writing [src] while it is
-       copied; the copy orders itself after [src]'s work. *)
-    ignore (take_claim "Nx_array.to_device" src Rig.Read : bool);
-    match copy_span ~head ~tail src buffer with
-    | () -> end_claim src
-    | exception e ->
-        end_claim src;
-        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+    reading "Nx_array.to_device" src (fun () ->
+        copy_span ~head ~tail src buffer)
   end;
   let offset = Layout.offset l - (8 * first / bits) in
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in
   v a.dtype layout buffer
+
+let to_device d a =
+  live "Nx_array.to_device" a.buffer;
+  let l = a.layout and bits = Dtype.bits a.dtype in
+  let lo, hi = Layout.span l in
+  let span = (((hi * bits) + 7) / 8) - (lo * bits / 8) in
+  if span <= Dtype.bytes a.dtype (elements l) then move_span d a
+  else move_packed d a
 
 let borrow d a =
   live "Nx_array.borrow" a.buffer;

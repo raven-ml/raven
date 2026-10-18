@@ -55,90 +55,14 @@ let hosted a = Rig.reaches Rig.host (A.device a)
 let share d a =
   if Rig.reaches Rig.host d && hosted a then A.borrow d a else None
 
-(* [a] on [d]: itself, its memory shared, or a copy keeping its layout. *)
+(* [a] on [d]: itself, its memory shared, or a copy of its elements. *)
 let bring d a =
   if Rig.equal (A.device a) d then a
   else match share d a with Some b -> b | None -> A.to_device d a
 
-(* The bytes [A.to_device] copies of [a]: those between its first and last
-   position. *)
-let reach a =
-  let lo, hi = L.span (A.layout a) and bits = A.Dtype.bits (A.dtype a) in
-  (((hi * bits) + 7) / 8) - (lo * bits / 8)
-
-let iter_box extents f =
-  let r = Array.length extents in
-  if not (Array.exists (( = ) 0) extents) then begin
-    let idx = Array.make r 0 in
-    let go = ref true in
-    while !go do
-      f idx;
-      let a = ref (r - 1) in
-      while !a >= 0 && idx.(!a) + 1 = extents.(!a) do
-        idx.(!a) <- 0;
-        decr a
-      done;
-      if !a < 0 then go := false else idx.(!a) <- idx.(!a) + 1
-    done
-  end
-
-(* The runs that copy between layouts [s] and [t] of one shape: [(k, n)] where
-   the axes from [k] on lie as [n] consecutive positions in both, so each index
-   of the axes before [k] starts a run of [n] elements. An axis of extent 1
-   joins any run. *)
-let run s t =
-  let n = ref 1 and a = ref (L.rank s - 1) in
-  while
-    !a >= 0 && (L.dim s !a = 1 || (L.stride s !a = !n && L.stride t !a = !n))
-  do
-    n := !n * L.dim s !a;
-    decr a
-  done;
-  (!a + 1, !n)
-
-(* [a] on memory the host addresses: itself, or a copy of the bytes it
-   reaches. *)
-let addressed a = if hosted a then a else A.to_device Rig.host a
-
-(* Copies [s] into [t], arrays of one shape. The host copies into memory it
-   addresses, from [s] or from the bytes [s] reaches brought to it. Otherwise
-   [t]'s elements are whole bytes, copied by runs through [Rig.Buffer.copy],
-   which chooses the path between the devices; [s] is first packed in C order on
-   the host where that lengthens the runs, as for a transposed or broadcast
-   array. *)
-let copy_box s t =
-  if hosted t then A.blit ~src:(addressed s) ~dst:t
-  else begin
-    let lt = A.layout t and eb = A.Dtype.bits (A.dtype t) / 8 in
-    let _, packed = run (L.contiguous (L.shape lt)) lt in
-    let s =
-      if snd (run (A.layout s) lt) < packed then A.copy (addressed s) else s
-    in
-    let ls = A.layout s in
-    let k, n = run ls lt in
-    let sb = A.buffer s and tb = A.buffer t in
-    iter_box
-      (Array.sub (L.shape ls) 0 k)
-      (fun idx ->
-        let ps = ref (L.offset ls) and pt = ref (L.offset lt) in
-        Array.iteri
-          (fun a i ->
-            ps := !ps + (i * L.stride ls a);
-            pt := !pt + (i * L.stride lt a))
-          idx;
-        Rig.Buffer.copy
-          ~src:(Rig.Buffer.view sb ~first:(!ps * eb) ~length:(n * eb))
-          ~dst:(Rig.Buffer.view tb ~first:(!pt * eb) ~length:(n * eb)))
-  end
-
-let bytes dt (w : M.range array) =
-  A.Dtype.bytes dt (Array.fold_left (fun n (r : M.range) -> n * r.count) 1 w)
-
-(* [w] on [d] from one array of [sources] that holds it, where that allocates no
-   more than [w]'s bytes: a view of the array on [d], a borrow, or a copy of the
-   bytes the window reaches where they are no more than [w]'s, as for whole rows
-   or a broadcast. *)
-let from_one d dt w sources =
+(* [w] on [d] from one array of [sources] that holds it: a view of the array on
+   [d], a borrow, or a copy of the window's elements. *)
+let from_one d w sources =
   let views =
     Array.fold_right
       (fun (sw, a) vs ->
@@ -150,9 +74,7 @@ let from_one d dt w sources =
   | None -> (
       match List.find_map (share d) views with
       | Some v -> Some v
-      | None ->
-          List.find_opt (fun v -> reach v <= bytes dt w) views
-          |> Option.map (A.to_device d))
+      | None -> Option.map (A.to_device d) (List.nth_opt views 0))
 
 (* [w] on [d] gathered into a fresh C-contiguous array: each distinct window of
    [sources] gives the box it shares with [w], from an array on [d] where one
@@ -178,7 +100,9 @@ let gather d dt w sources =
               | Some (_, a) -> a
               | None -> a
             in
-            copy_box (slice a (relative sw box)) (slice dst (relative w box))
+            A.transfer
+              ~src:(slice a (relative sw box))
+              ~dst:(slice dst (relative w box))
       end)
     sources;
   bring d dst
@@ -212,7 +136,7 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
       (Iarray.init (Array.length devices) (fun j ->
            let w = Devices.window ~by p shape j
            and d = Devices.rig set devices.(j) in
-           match from_one d dt w sources with
+           match from_one d w sources with
            | Some a -> a
            | None -> gather d dt w sources))
   end

@@ -643,26 +643,30 @@ let gather_commands =
       (fun i a -> A.get a [| i |]);
   ]
 
-(* to_device of elements 1 to 4 of six int4s copies the bytes they reach, the
-   first and last shared with elements 0 and 5, while another domain stores
-   those: the copy holds elements 1 to 4, and the stores are kept. *)
-let inner = [| 1; -2; 3; -4 |]
-
-let placed a =
-  let view = M.Slice [| { M.start = 1; count = 4; step = 1 } |] in
-  A.to_array (A.to_device Rig.host (Option.get (A.move view a)))
-
-let to_device_commands =
-  let neighbour = Gen.map (fun last -> if last then 5 else 0) Gen.bool in
+(* to_device of [count] int4s from element 1, the first sharing a byte with
+   element 0, while another domain stores element 0 and the element after the
+   view: the copy holds the view's elements, and the stores are kept. Four
+   elements reach three bytes and pack; five reach three and keep the layout,
+   copying element 0's half byte. *)
+let to_device_commands count =
+  let n = count + 2 in
+  let inner =
+    Array.init count (fun i -> if i mod 2 = 0 then i + 1 else -i - 1)
+  in
   let start = Array.concat [ [| 0 |]; inner; [| 0 |] ] in
+  let neighbour = Gen.map (fun last -> if last then n - 1 else 0) Gen.bool in
+  let placed a =
+    let view = M.Slice [| { M.start = 1; count; step = 1 } |] in
+    A.to_array (A.to_device Rig.host (Option.get (A.move view a)))
+  in
   [
     command "create"
       (Gen.unit @-> makes int4s)
       (fun () -> Array.copy start)
-      (fun () -> A.of_array D.Int4 [| 6 |] start);
+      (fun () -> A.of_array D.Int4 [| n |] start);
     command "to_device"
       (int4s ^-> returns (array int))
-      (fun m -> Array.sub m 1 4)
+      (fun m -> Array.sub m 1 count)
       placed;
     command "set"
       (neighbour @-> nibble @-> int4s ^-> returns unit)
@@ -1053,23 +1057,85 @@ let law_tiles (Tiles (a, src)) =
     (Array.map (stored dt) xs)
     (A.to_array (A.of_array dt ds xs))
 
+(* The elements of [l]: one per index, an axis of stride 0 counted once. *)
+let count l =
+  if L.numel l = 0 then 0
+  else
+    Array.fold_left ( * ) 1
+      (Array.mapi (fun a d -> if L.stride l a = 0 then 1 else d) (L.shape l))
+
+(* The layout [to_device] gives a layout [l] of [bits]-bit elements, by its
+   .mli, and whether it keeps [l]: [l] shifted to the copy where the bytes of
+   its span are no more than its elements', one per index with an axis of stride
+   0 counted once; otherwise [l]'s stride order from position 0. *)
+let moved bits l =
+  let r = L.rank l in
+  let axes = List.init r Fun.id in
+  let n = count l in
+  let lo, hi = L.span l in
+  let first = lo * bits / 8 in
+  if reach_bytes bits hi - first <= reach_bytes bits n then
+    ( `Kept,
+      L.v
+        ~offset:(L.offset l - (8 * first / bits))
+        ~strides:(L.strides l) (L.shape l) )
+  else
+    let order =
+      List.stable_sort
+        (fun a b -> compare (abs (L.stride l b)) (abs (L.stride l a)))
+        (List.filter (fun a -> L.stride l a <> 0) axes)
+    in
+    let strides = Array.make r 0 and offset = ref 0 and next = ref 1 in
+    List.iter
+      (fun a ->
+        let t = L.stride l a in
+        strides.(a) <- (if t < 0 then - !next else !next);
+        if t < 0 then offset := !offset + ((L.dim l a - 1) * !next);
+        next := !next * L.dim l a)
+      (List.rev order);
+    (`Packed, L.v ~offset:!offset ~strides (L.shape l))
+
+let check_moved ?(msg = "") d a =
+  let c = A.to_device d a in
+  let bits = D.bits (A.dtype a) in
+  let how, want = moved bits (A.layout a) in
+  equal ~msg:(msg ^ "device") bool true (Rig.equal d (A.device c));
+  equal ~msg:(msg ^ "layout") layout want (A.layout c);
+  let lo, hi = L.span want in
+  let bytes =
+    match how with
+    | `Kept -> reach_bytes bits hi - (lo * bits / 8)
+    | `Packed -> reach_bytes bits hi
+  in
+  equal ~msg:(msg ^ "bytes") int bytes (B.length (A.buffer c));
+  at_most
+    ~msg:(msg ^ "no larger than the elements")
+    int
+    ~than:(reach_bytes bits (count (A.layout a)))
+    (B.length (A.buffer c));
+  let on_host x =
+    if Rig.reaches Rig.host (A.device x) then x else A.to_device Rig.host x
+  in
+  equal ~msg:(msg ^ "elements")
+    (values (A.dtype a))
+    (A.to_array (on_host a))
+    (A.to_array (on_host c));
+  (how, c)
+
 let law_to_device (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
-    let c = A.to_device Rig.host a in
-    let bits = D.bits (A.dtype a) in
-    let lo, hi = L.span (A.layout a) in
+    let how, c = check_moved Rig.host a in
+    let l = A.layout a and bits = D.bits (A.dtype a) in
+    cover "a packed copy" (how = `Packed);
+    cover "a packed sub-byte copy" (how = `Packed && bits < 8);
+    cover "a kept strided view" (how = `Kept && not (L.is_contiguous l));
     cover "a sub-byte span sharing an end byte"
-      (L.numel (A.layout a) > 0
-      && (lo * bits mod 8 <> 0 || hi * bits mod 8 <> 0));
-    let first = lo * bits / 8 in
-    equal ~msg:"bytes" int (reach_bytes bits hi - first) (B.length (A.buffer c));
-    equal ~msg:"offset" int
-      (L.offset (A.layout a) - (8 * first / bits))
-      (L.offset (A.layout c));
-    equal ints (L.shape (A.layout a)) (L.shape (A.layout c));
-    equal ints (L.strides (A.layout a)) (L.strides (A.layout c));
-    equal (values (A.dtype a)) (A.to_array a) (A.to_array c);
+      (how = `Kept && bits < 8
+      && L.numel l > 0
+      &&
+      let lo, hi = L.span l in
+      lo * bits mod 8 <> 0 || hi * bits mod 8 <> 0);
     if B.length (A.buffer c) > 0 then
       equal bool false (B.overlaps (A.buffer c) (A.buffer a))
   in
@@ -1078,6 +1144,121 @@ let law_to_device (Case (a, m)) =
       cover "a view" true;
       check b
   | None -> check a
+
+let slice rs a =
+  Option.get
+    (A.move
+       (M.Slice
+          (Array.of_list
+             (List.map
+                (fun (start, count, step) -> { M.start; count; step })
+                rs)))
+       a)
+
+let iota dt s =
+  let n = Array.fold_left ( * ) 1 s in
+  A.of_array dt s
+    (Array.init n (fun i -> D.of_float dt (float_of_int (i mod 7))))
+
+(* A column of a 1024 x 1024 matrix moves its 4 KiB alone, at stride 1. *)
+let test_to_device_column () =
+  let n = 1024 in
+  let m = iota f32 [| n; n |] in
+  let col = slice [ (0, n, 1); (3, 1, 1) ] m in
+  let c = A.to_device Rig.host col in
+  equal ~msg:"bytes" int (4 * n) (B.length (A.buffer c));
+  equal layout (L.v ~strides:[| 1; 0 |] [| n; 1 |]) (A.layout c);
+  equal (values f32) (A.to_array col) (A.to_array c)
+
+let test_to_device_layouts () =
+  let moves name dt want a =
+    let c = A.to_device Rig.host a in
+    equal ~msg:name layout want (A.layout c);
+    equal ~msg:name (values dt) (A.to_array a) (A.to_array c)
+  in
+  let m = iota f32 [| 8; 8 |] in
+  moves "overlap" f32
+    (L.v ~strides:[| 2; 1 |] [| 3; 2 |])
+    (A.v f32 (L.v ~strides:[| 2; 2 |] [| 3; 2 |]) (A.buffer m));
+  moves "broadcast of a column" f32
+    (L.v ~strides:[| 1; 0 |] [| 8; 4 |])
+    (Option.get
+       (A.move (M.Broadcast [| 8; 4 |]) (slice [ (0, 8, 1); (2, 1, 1) ] m)));
+  moves "transposed slice" f32
+    (L.v ~strides:[| 1; 3 |] [| 3; 4 |])
+    (Option.get
+       (A.move (M.Permute [| 1; 0 |]) (slice [ (0, 4, 2); (1, 3, 2) ] m)));
+  moves "reversed column" f32
+    (L.v ~offset:7 ~strides:[| -1; 0 |] [| 8; 1 |])
+    (slice [ (7, 8, -1); (5, 1, 1) ] m);
+  let q = iota D.Int4 [| 4; 4 |] in
+  moves "int4 column" D.Int4
+    (L.v ~strides:[| 1; 0 |] [| 4; 1 |])
+    (slice [ (0, 4, 1); (1, 1, 1) ] q);
+  moves "window with a gap, kept" f32
+    (L.v ~strides:[| 4; 1; 1 |] [| 2; 2; 2 |])
+    (A.v f32 (L.v ~offset:9 ~strides:[| 4; 1; 1 |] [| 2; 2; 2 |]) (A.buffer m))
+
+(* transfer stores its source's elements, on the host or an io device, into the
+   elements at odd indices of an array on either, and no other element; a
+   sub-byte destination the host does not address raises. *)
+let law_transfer (Case (a, m), (io_src, io_dst)) =
+  let io = S.io_device () in
+  let on_host x =
+    if Rig.reaches Rig.host (A.device x) then x else A.to_device Rig.host x
+  in
+  let check : type v s. (v, s) A.t -> unit =
+   fun src ->
+    let dt = A.dtype src and s = L.shape (A.layout src) in
+    let wide = Array.map (fun d -> (2 * d) + 1) s in
+    let n = Array.fold_left ( * ) 1 wide in
+    let before =
+      A.of_array dt wide
+        (Array.init n (fun k -> D.of_float dt (float_of_int (k mod 5))))
+    in
+    let big = if io_dst then A.to_device io before else A.copy before in
+    let dst = slice (Array.to_list (Array.map (fun d -> (1, d, 2)) s)) big in
+    cover "from an io device" io_src;
+    cover "into an io device" io_dst;
+    if D.bits dt < 8 && io_dst then
+      raises_match (Exn.invalid_arg ~substring:"host") (fun () ->
+          A.transfer ~src ~dst)
+    else begin
+      A.transfer ~src ~dst;
+      equal ~msg:"elements" (values dt)
+        (A.to_array (on_host src))
+        (A.to_array (on_host dst));
+      let outside k =
+        let r = ref k and out = ref false in
+        for ax = Array.length wide - 1 downto 0 do
+          if !r mod wide.(ax) mod 2 = 0 then out := true;
+          r := !r / wide.(ax)
+        done;
+        !out
+      in
+      let others xs =
+        Array.of_list (List.filteri (fun k _ -> outside k) (Array.to_list xs))
+      in
+      equal ~msg:"other elements" (values dt)
+        (others (A.to_array before))
+        (others (A.to_array (on_host big)))
+    end
+  in
+  let base = if io_src then A.to_device io a else a in
+  match Option.bind m (fun m -> A.move m base) with
+  | Some b -> check b
+  | None -> check base
+
+let test_transfer_refusals () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  let fails what substring f =
+    raises_match ~msg:what (Exn.invalid_arg ~substring) f
+  in
+  fails "another shape" "shapes differ" (fun () ->
+      A.transfer ~src:a ~dst:(A.create (S.io_device ()) f32 [| 3 |]));
+  fails "a broadcast destination" "twice" (fun () ->
+      let one = A.create (S.io_device ()) f32 [| 1 |] in
+      A.transfer ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one)))
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
 let memory = lazy (Result.get_ok (Rig.memory_device "nx2-test-memory"))
@@ -1152,7 +1333,35 @@ let test_to_device_io () =
   let back = A.to_device Rig.host (A.to_device d s) in
   equal bool true (Rig.equal Rig.host (A.device back));
   equal (array int) [| -6; -4; -2 |] (A.to_array back);
-  equal int 1 (L.offset (A.layout back) - 4)
+  equal layout (L.v ~offset:2 ~strides:[| -1 |] [| 3 |]) (A.layout back)
+
+(* Views of an io device's array move through the host, to the host and to
+   another io device, as does a sub-byte view off a memory device. *)
+let test_to_device_io_views () =
+  let io = S.io_device () in
+  let m = A.to_device io (iota f32 [| 6; 5 |]) in
+  let views =
+    [
+      ("column", slice [ (0, 6, 1); (2, 1, 1) ] m);
+      ("reversed rows, strided", slice [ (5, 3, -2); (0, 3, 2) ] m);
+      ( "transposed",
+        Option.get
+          (A.move (M.Permute [| 1; 0 |]) (slice [ (0, 3, 2); (0, 5, 1) ] m)) );
+    ]
+  in
+  List.iter
+    (fun (name, v) ->
+      ignore (check_moved ~msg:(name ^ " to the host: ") Rig.host v);
+      ignore (check_moved ~msg:(name ^ " to an io device: ") io v))
+    views;
+  let q = A.to_device io (iota D.Int4 [| 5; 3 |]) in
+  ignore
+    (check_moved ~msg:"int4 column: " Rig.host
+       (slice [ (0, 5, 1); (1, 1, 1) ] q));
+  let mem = A.to_device (Lazy.force memory) (iota D.Int4 [| 5; 3 |]) in
+  ignore
+    (check_moved ~msg:"int4 column to an io device: " io
+       (slice [ (0, 5, 1); (1, 1, 1) ] mem))
 
 (* Bigarrays *)
 
@@ -1786,9 +1995,13 @@ let tests =
            another domain"
           gather_commands;
         stateful ~domains:2
-          "to_device copies a sub-byte view while another domain stores its \
+          "to_device packs a sub-byte view while another domain stores its \
            neighbours"
-          to_device_commands;
+          (to_device_commands 4);
+        stateful ~domains:2
+          "to_device copies a sub-byte span while another domain stores its \
+           neighbours"
+          (to_device_commands 5);
       ];
     group "bulk"
       [
@@ -1811,9 +2024,22 @@ let tests =
           "copy, to_array and of_array keep every element of views about 256 \
            bytes a side"
           tiles law_tiles;
-        prop "to_device copies and keeps the layout" case law_to_device;
+        (* About one case in fifty packs, one in 250 a sub-byte dtype: 3000
+           cases reach both in every run. *)
+        prop ~count:3000
+          "to_device copies the elements, keeping a layout that fits them" case
+          law_to_device;
+        test "to_device moves a column's elements alone" test_to_device_column;
+        prop "transfer stores the elements alone, on the host or an io device"
+          (Gen.pair case (Gen.pair Gen.bool Gen.bool))
+          law_transfer;
+        test "transfer refuses another shape and a broadcast destination"
+          test_transfer_refusals;
+        test "to_device packs in stride order" test_to_device_layouts;
         test "to_device moves sub-byte views through an io device"
           test_to_device_io;
+        test "to_device packs views of io and memory devices on the host"
+          test_to_device_io_views;
         test "bitcast is a view on a memory device and an io device"
           test_bitcast_devices;
         prop "borrow shares memory and keeps the layout" case law_borrow;

@@ -192,9 +192,9 @@ let split = function
   | Host | One | On -> false
 
 (* Whether the io device's window of [a], of shape [s], at [w] reaches more of
-   [a]'s elements than it holds: placing then gathers it, copying by runs into
-   memory the host does not address. *)
-let gathered a s w =
+   [a]'s elements than it holds: placing then packs its elements into memory the
+   host does not address. *)
+let packed a s w =
   match windows w s with
   | [ _; _; _; (_, b) ] ->
       let range (start, count) = { M.start; count; step = 1 } in
@@ -221,8 +221,8 @@ let laws =
                (fun a -> s.(a) > 0 && List.mem 0 (counts a))
                axes);
           let a = source l s in
-          cover "a window gathered into memory the host does not address"
-            (gathered a s w);
+          cover "a window packed into memory the host does not address"
+            (packed a s w);
           let x = V (Nx.Repr.of_array Nx.Host.v a) in
           holds (A.to_array a) s w (place w x));
       prop ~count:500 "each device holds its window after a second placement"

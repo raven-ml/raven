@@ -190,18 +190,55 @@ val blit : src:('v, 's) t -> dst:('v, 's) t -> unit
 (** {1:placement Placement} *)
 
 val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
-(** [to_device d a] is [a] over a fresh buffer on [d], made by
-    {!Rig.Buffer.copy} of the bytes [a]'s layout reaches between its first and
-    last position; its layout is [a]'s, shifted to the copy. It copies on [a]'s
-    own device too, runs no kernel and keeps strided and broadcast layouts. For
-    a sub-byte array, the copy's first and last bytes keep the bits of the
-    source's neighbouring elements, as found before or after a store another
-    domain makes to them while it copies.
+(** [to_device d a] is [a]'s elements on [d], bit for bit, in a fresh buffer no
+    larger than they are: [Dtype.bytes] of one element per index of [a], an axis
+    of stride [0] counted once. It copies on [a]'s own device too, and runs no
+    kernel.
+
+    Where the bytes between [a]'s first and last position are no more than that,
+    as for whole rows, a transpose or an overlapping window, the copy is one
+    {!Rig.Buffer.copy} of those bytes, in [a]'s layout shifted to the copy. A
+    sub-byte copy's first and last bytes then keep the source's neighbouring
+    bits, as found before or after a store another domain makes to them
+    meanwhile.
+
+    Otherwise the copy is laid out in [a]'s stride order and filled by
+    {!transfer}: axes by decreasing magnitude of [a]'s stride, ties in axis
+    order, the last at stride [1] and each other at the product of the extents
+    after it, each stride with the sign of [a]'s, an axis of stride [0] keeping
+    [0], the least position at [0]. A column of a matrix gets stride [1]; shape
+    [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]]. A sub-byte copy is
+    filled on the host where the host does not address [d]'s memory, then moved
+    by one {!Rig.Buffer.copy}.
 
     {!borrow} shares the memory instead, where [d] maps it.
 
     Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
-    exclusive, and what {!Rig.Buffer.create} and {!Rig.Buffer.copy} raise. *)
+    exclusive, and what {!Rig.Buffer.create}, {!Rig.Buffer.copy} and
+    {!Rig.submit} raise. *)
+
+val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
+(** [transfer ~src ~dst] stores [src]'s elements into [dst], of the same shape,
+    bit for bit, on any devices, and runs no kernel.
+
+    The host blits where it addresses both arrays' memory ({!blit}). Otherwise
+    [src]'s device copies where it computes and the host does not address
+    [src]'s memory, one {!Rig.Submission.copy} per run of elements consecutive
+    in both, in submissions of at most {!Rig.most_parts}; for other memory and
+    for a sub-byte array, the host gathers each run, brought by its own
+    {!Rig.Buffer.copy} from memory it does not address. That device stores into
+    [dst] where [dst] is on it, the host where it addresses [dst]'s memory.
+    Otherwise, if [dst]'s own runs are longer, it stores into a buffer of
+    [dst]'s size on its side laid out in [dst]'s stride order ({!to_device}),
+    whose runs then move to [dst] each by a {!Rig.Buffer.copy}, or, into memory
+    the host addresses, by one {!Rig.Buffer.copy} to the host and a blit. Where
+    they are not, each run moves by its own {!Rig.Buffer.copy}.
+
+    Raises [Invalid_argument] if the shapes differ, a buffer is dead or its
+    memory is held exclusive, [dst] reaches an element twice
+    ({!Layout.is_distinct}), or [dst]'s elements are narrower than a byte and
+    the host does not address its memory, as {!blit} raises, and what
+    {!Rig.Buffer.create}, {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
 
 val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
 (** [borrow d a] is [Some a'], [a]'s elements on [d] without a copy: [a]'s

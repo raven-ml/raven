@@ -11,21 +11,15 @@
 
     Where one source array holds the window, the device takes the array itself
     on the same device, a borrow where the host addresses both the array's
-    memory and the device's ({!Rig.reaches}), or a copy of the bytes the
-    window reaches where they are no more than the window's
-    ({!Nx_array.to_device}), keeping its layout.
+    memory and the device's ({!Rig.reaches}), or a copy of the window's
+    elements ({!Nx_array.to_device}).
 
     Otherwise the device gathers its window into a fresh C-contiguous array:
     each distinct source window gives the box it shares with the destination's,
-    from a source on the device where one holds it. Into memory the host
-    addresses, the host copies each box ({!Nx_array.blit}), first bringing to
-    the host the bytes a box reaches in a source it does not address. Into other
-    memory, runs of whole bytes copy through {!Rig.Buffer.copy}, which stages
-    between devices that do not reach each other; a transposed or broadcast
-    source is first packed in C order on the host, box by box. An element
-    narrower than a byte gathers on the host for such a device, and the window
-    is then brought to it. Nothing holds the whole value unless the destination
-    does. *)
+    from a source on the device where one holds it, each box stored by
+    {!Nx_array.transfer}. An element narrower than a byte gathers on the host
+    where the host does not address the device's memory, and the window is then
+    brought to it. Nothing holds the whole value unless the destination does. *)
 
 val value :
   by:string ->

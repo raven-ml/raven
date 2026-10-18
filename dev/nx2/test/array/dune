@@ -3,3 +3,11 @@
  (modules test_dtype test_move test_layout test_array)
  (libraries nx_array nx_array_support nx_array_gen rig windtrap)
  (deps golden/float_text.txt))
+
+; Opens this machine's first GPU, so it holds the lock GPU tests share.
+
+(test
+ (name test_array_gpu)
+ (modules test_array_gpu)
+ (locks %{workspace_root}/gpu)
+ (libraries nx_array rig rig.gpus windtrap))

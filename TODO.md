@@ -284,8 +284,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `Rng.truncated_normal`, `dirichlet`, `categorical`, `permutation`
 - frontend, donated reuse for `set`'s and `scatter`'s target and
   `contract`'s `init`, with a `dispatch/kv-append-4096` row
-- `Nx_array.to_device` copies a strided view's whole span (probes:
-  `refs/audit/20261010-deep/worktrees/wt-18`)
 - order and counting operations: check their contracts, public laws and
   bench baselines
 - nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and
