@@ -1852,6 +1852,19 @@ value rig_test_reader_span(value v_b) {
   CAMLreturn(r);
 }
 
+/* rig_buffers_overlap, from a [@@noalloc] external. */
+value rig_test_reader_overlap(value v_a, value v_af, value v_an, value v_b,
+                              value v_bf, value v_bn) {
+  return Val_bool(rig_buffers_overlap(v_a, Long_val(v_af), Long_val(v_an), v_b,
+                                      Long_val(v_bf), Long_val(v_bn)));
+}
+
+value rig_test_reader_overlap_byte(value *argv, int argn) {
+  (void)argn;
+  return rig_test_reader_overlap(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                 argv[5]);
+}
+
 /* How many holders share [v_ba]'s storage, as its proxy counts them. */
 value rig_test_shares(value v_ba) {
   struct caml_ba_proxy *p = Caml_ba_array_val(v_ba)->proxy;

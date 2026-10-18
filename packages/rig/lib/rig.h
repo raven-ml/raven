@@ -34,9 +34,25 @@ size_t rig_buffer_bytes(value b);
    allocation's space and their offset in it, including when io pages are first
    mapped. Equal spaces with intersecting ranges share bytes. Distinct spaces
    may alias: an io memory and a bigarray over its mapped pages are one such
-   pair. Rig.Buffer.overlaps includes these aliases. A buffer of no bytes
+   pair. rig_buffers_overlap includes these aliases. A buffer of no bytes
    shares none. */
 void rig_buffer_span(value b, intnat *space, intnat *first);
+
+/* Answers 1 if the [a_bytes] bytes of [a] from its byte [a_first] and the
+   [b_bytes] bytes of [b] from its byte [b_first] share a byte of memory, and
+   0 otherwise. It is 1 exactly where Rig.Buffer.overlaps of the views
+   Rig.Buffer.view a ~first:a_first ~length:a_bytes and b's is true. Each
+   range must lie within its buffer, with no bound negative or past
+   rig_buffer_bytes. A range that does not aborts the process, as
+   rig_buffer_release does for a claim the caller does not hold. A dead
+   buffer's range is that range of the place Rig.Buffer.overlaps gives the
+   buffer, though no view of it can be made. Beyond the buffers' spans, it
+   reads the host address of the pages a borrow mapped for an io memory, and
+   maps no pages itself. It makes no view, takes no lock and never releases
+   the domain lock, so a [@@noalloc] external may call it, also inside a lock
+   (Rig's domains section). */
+int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
+                        intnat b_first, intnat b_bytes);
 
 /* The reason the consumption of [b] gave if [b] is dead, as a C string in
    the OCaml heap; NULL if [b] is live. Like String_val's, the pointer holds

@@ -146,6 +146,116 @@ let test_overlaps () =
   Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ disjoint ] (fun _ -> ());
   equal ~msg:"inspection reuses the mapping" int 1 (count "pages" t)
 
+(* rig_buffers_overlap of two byte ranges answers as Buffer.overlaps of the
+   views over them, over buffers of every kind of place: host memory, a view
+   of it and a device's borrow of it; io memory, its views, a device's borrow,
+   the host borrow that maps its pages and a bigarray over those pages; memory
+   a free killed and memory made after it; an empty view. Besides any two
+   buffers, pairs put two ranges in one buffer, a borrow beside its memory,
+   the dead buffer beside any, or the bigarray beside a buffer of the io
+   memory, whose overlap only the cached host address shows. *)
+let bigarray_at = 0
+let io_family = [| 1; 2; 3; 4; 5 |]
+let freed_at = 9
+
+(* The buffers, made at the first case: the bigarray at [bigarray_at], the io
+   memory's buffers at [io_family], the dead one at [freed_at]. *)
+let universe =
+  lazy
+    (let io, _ = open_pages () in
+     let d, _ = P.open_ "io:overlap" in
+     let h = B.create Rig.host page_bytes and m = B.create io page_bytes in
+     let mapped = require_some (B.borrow Rig.host m) in
+     let pages = B.read mapped Bigarray.char Fun.id in
+     let freed = B.create Rig.host 64 in
+     ignore (B.free freed : bool);
+     [|
+       B.of_bigarray (Bigarray.Array1.sub pages 8 16);
+       m;
+       mapped;
+       B.view m ~first:12 ~length:8;
+       B.view m ~first:24 ~length:8;
+       require_some (B.borrow d m);
+       h;
+       B.view h ~first:16 ~length:32;
+       require_some (B.borrow d h);
+       freed;
+       B.create Rig.host 64;
+       B.view h ~first:0 ~length:0;
+     |])
+
+let universe_size = 12
+
+(* The borrows beside their memory: [(borrow, memory)]. *)
+let borrows = [ (2, 1); (5, 1); (8, 6) ]
+
+(* A range of at most 32 bytes from the first 32 of [b]. *)
+let range b (first, bytes) =
+  let first = Int.min first (B.length b) in
+  (first, Int.min bytes (B.length b - first))
+
+(* Whether two ranges share bytes, by their buffers' spans, for a dead
+   buffer, whose views raise. The dead buffer is freed host memory, whose
+   place no io page shares, as the pages are live host memory of their own:
+   the ranges share bytes iff they intersect in one space. *)
+let spans_overlap a (af, an) b (bf, bn) =
+  let sa, fa = Support.Reader.span a and sb, fb = Support.Reader.span b in
+  an > 0 && bn > 0 && sa = sb
+  && fa + af < fb + bf + bn
+  && fb + bf < fa + af + an
+
+(* Whether two ranges share bytes, by Buffer.overlaps of their views where
+   both buffers are live. *)
+let reference a ra b rb =
+  let view b (first, bytes) = B.view b ~first ~length:bytes in
+  if B.dead a <> None || B.dead b <> None then spans_overlap a ra b rb
+  else B.overlaps (view a ra) (view b rb)
+
+let range_gen = Gen.pair (Gen.int_range 0 32) (Gen.int_range 0 32)
+
+let overlap_case =
+  let any = Gen.int_range 0 (universe_size - 1) in
+  let io = Gen.map (fun k -> io_family.(k)) (Gen.int_range 0 4) in
+  let beside_pages = Gen.pair (Gen.constant bigarray_at) io in
+  let one_buffer = Gen.map (fun k -> (k, k)) any in
+  let borrow = Gen.one_of (List.map Gen.constant borrows) in
+  let dead = Gen.pair (Gen.constant freed_at) any in
+  Gen.pair
+    (Gen.one_of [ Gen.pair any any; one_buffer; borrow; dead; beside_pages ])
+    (Gen.pair range_gen range_gen)
+
+let overlap_law ((i, j), (ri, rj)) =
+  let all = Lazy.force universe in
+  let a = all.(i) and b = all.(j) in
+  let ((af, an) as ra) = range a ri and ((bf, bn) as rb) = range b rj in
+  let expected = reference a ra b rb in
+  cover "overlapping" expected;
+  cover "disjoint" (not expected);
+  cover "disjoint slices of one buffer"
+    (i = j && (not expected) && an > 0 && bn > 0);
+  cover "overlapping slices of one buffer" (i = j && expected);
+  cover "a borrow beside its memory, overlapping"
+    (expected && List.mem (i, j) borrows);
+  cover "a bigarray over io pages beside the io memory, overlapping"
+    (expected && i = bigarray_at && Array.mem j io_family);
+  cover "a part of a dead buffer"
+    (i = freed_at && B.dead a <> None && an < B.length a);
+  cover "an empty range" (an = 0 || bn = 0);
+  equal ~msg:"rig_buffers_overlap" bool expected
+    (Support.Reader.overlap a af an b bf bn)
+
+(* Ranges at a buffer's bounds lie within it: an empty range at its end
+   overlaps nothing, its last byte overlaps itself, and two halves of it share
+   no byte. A range past the bounds aborts the process, which no test in the
+   process can observe. *)
+let test_overlap_bounds () =
+  let a = B.create Rig.host 64 in
+  let overlap af an bf bn = Support.Reader.overlap a af an a bf bn in
+  equal ~msg:"an empty range at the end" bool false (overlap 64 0 0 64);
+  equal ~msg:"the last byte" bool true (overlap 63 1 63 1);
+  equal ~msg:"two halves" bool false (overlap 0 32 32 32);
+  equal ~msg:"the whole buffer" bool true (overlap 0 64 0 64)
+
 (* Publishing a host mapping cannot move the coordinates of a span already read
    by an overlap check. Views retain their offsets in the same space. *)
 let test_span_stable () =
@@ -622,6 +732,11 @@ let tests =
         test "overlaps uses cached io pages without mapping" test_overlaps;
         test "an io span stays stable when its pages are published"
           test_span_stable;
+        prop "rig_buffers_overlap of two ranges is Buffer.overlaps of their \
+              views"
+          overlap_case overlap_law;
+        test "rig_buffers_overlap of ranges at a buffer's bounds"
+          test_overlap_bounds;
         test "sorted claims check cached io aliases" test_sorted_overlaps;
         test "a borrow back on the io device is its memory" test_borrow_back;
         test "an empty io borrow keeps its host address without mapping"

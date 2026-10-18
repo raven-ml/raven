@@ -1039,6 +1039,11 @@ module Reader = struct
 
   external span : Rig.Buffer.t -> int * int = "rig_test_reader_span"
 
+  external overlap :
+    Rig.Buffer.t -> int -> int -> Rig.Buffer.t -> int -> int -> bool
+    = "rig_test_reader_overlap_byte" "rig_test_reader_overlap"
+  [@@noalloc]
+
   let read b =
     match claim b Rig.Read with
     | Claimed | Wait -> ()

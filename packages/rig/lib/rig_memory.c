@@ -305,11 +305,35 @@ void rig_buffer_side(value b, int local, struct rig_side *s) {
   s->local = local;
 }
 
-value caml_rig_buffer_overlaps(value b, value other) {
+/* [b]'s side narrowed to its [bytes] bytes from its byte [first]. A range
+   outside [b] is the caller's bug, which aborts as a release of no claim
+   does. */
+static void side_range(value b, intnat first, intnat bytes,
+                       struct rig_side *s) {
+  intnat n = (intnat)rig_buffer_bytes(b);
+  if (first < 0 || bytes < 0 || first > n || bytes > n - first)
+    caml_fatal_error("rig_buffers_overlap: %" ARCH_INTNAT_PRINTF_FORMAT
+                     "d bytes from byte %" ARCH_INTNAT_PRINTF_FORMAT
+                     "d lie outside the buffer's %" ARCH_INTNAT_PRINTF_FORMAT
+                     "d",
+                     bytes, first, n);
+  side_span(b, s);
+  s->first += first;
+  if (s->alias != 0) s->alias += first;
+  s->bytes = (size_t)bytes;
+}
+
+int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
+                        intnat b_first, intnat b_bytes) {
   struct rig_side x, y;
-  side_span(b, &x);
-  side_span(other, &y);
-  return Val_bool(rig_sides_overlap(&x, &y));
+  side_range(a, a_first, a_bytes, &x);
+  side_range(b, b_first, b_bytes, &y);
+  return rig_sides_overlap(&x, &y);
+}
+
+value caml_rig_buffer_overlaps(value b, value other) {
+  intnat n = (intnat)rig_buffer_bytes(b), m = (intnat)rig_buffer_bytes(other);
+  return Val_bool(rig_buffers_overlap(b, 0, n, other, 0, m));
 }
 
 intnat caml_rig_cached_host(value b) { return cached_host(b); }

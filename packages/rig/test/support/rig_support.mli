@@ -684,6 +684,11 @@ module Reader : sig
 
   val span : Rig.Buffer.t -> int * int
   (** [span b] is the space and first byte [rig_buffer_span b] gives. *)
+
+  val overlap :
+    Rig.Buffer.t -> int -> int -> Rig.Buffer.t -> int -> int -> bool
+  (** [overlap a af an b bf bn] is [rig_buffers_overlap a af an b bf bn],
+      called from a [[@@noalloc]] external. *)
 end
 
 val at : Rig.Buffer.t -> int
