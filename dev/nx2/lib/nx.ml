@@ -3226,10 +3226,13 @@ let summed (type v s) (dt : (v, s) D.t) =
 let no_sum (type v s) ~by (dt : (v, s) D.t) =
   if D.is D.Boolean dt then invalid_argf "%s: %s has no sum" by (D.name dt)
 
+(* The extent of a window of [k] taps [dilation] apart: none for no tap. *)
+let dilated k dilation = if k = 0 then 0 else (dilation * (k - 1)) + 1
+
 (* The windows along an axis of [n] elements padded by [lo] and [hi]: none
    where the dilated window is longer. *)
 let windows_along n (lo, hi) k step dilation =
-  let span = (dilation * (k - 1)) + 1 and e = n + lo + hi in
+  let span = dilated k dilation and e = n + lo + hi in
   if e < span then 0 else ((e - span) / step) + 1
 
 (* Refuses a window geometry other than [K > 0] kernel axes, each with a
@@ -3373,13 +3376,22 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   let y = cast_by ~by w y in
   cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
 
+(* +0 of [x]'s dtype and of [shape], where [x] lies, or [w] for a constant
+   [x]: a sum over no term. *)
+let no_term ~by x w shape =
+  let zeros = fill ~by (dtype x) shape (D.zero (dtype x)) in
+  match Prim.at x with
+  | Some _ -> beside ~by x zeros
+  | None -> beside ~by w zeros
+
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
    as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels):
    one reduction over the loop [[n; t…; g; oc; ic; k…]] that reads [x], its
    channels split into groups and broadcast over [oc], through a padded load
    whose windows append the taps, and sums the taps and [ic]. [interior]
    zeros go between [x]'s elements. A padding that cuts more than an axis
-   holds leaves it empty, with no window. *)
+   holds leaves it empty, with no window. A kernel axis of no tap sums no
+   term. *)
 let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
@@ -3392,59 +3404,63 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
     let d = spatial.(i) in
     if d = 0 then 0 else d + (interior.(i) * (d - 1))
   in
-  let hi = Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i)))) in
   let counts =
     Array.init k (fun i ->
         windows_along (extent i) (lo.(i), hi.(i)) taps.(i) stride.(i)
           dilation.(i))
   in
   let out = Array.concat [ [| n |]; counts; [| g * oc |] ] in
-  let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
-  let x' = reshaped ~by grouped x in
-  let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
-  let x' = broadcast ~by wide x' in
-  (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
-  let spatially a =
-    Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
-  in
-  let windows =
-    Iarray.init k (fun i : Nx_array.Move.window ->
-        {
-          axis = 1 + i;
-          size = taps.(i);
-          step = stride.(i);
-          dilation = dilation.(i);
-        })
-  in
-  let pad : Nx_kernel.pad =
-    {
-      lo = spatially lo;
-      hi = spatially hi;
-      interior = spatially interior;
-      windows;
-    }
-  in
-  let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
-  let (D.Any acc) = summed dt in
-  let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
-  let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
-  let prog = P.of_exprs ~ins [| E.any term |] in
-  let y, () =
-    Eval.eval ~by
-      (Value.Reduce
-         {
-           layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
-           axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
-           prog;
-           reductions = Value.[ Monoid (Sum, 0, dt) ];
-           loads =
-             [|
-               Padded { x = x'; fill = D.zero dt; pad };
-               Plain (broadcast ~by loop w);
-             |];
-         })
-  in
-  reshaped ~by out y
+  if Array.mem 0 taps then no_term ~by x w out
+  else
+    let hi =
+      Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i))))
+    in
+    let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
+    let x' = reshaped ~by grouped x in
+    let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
+    let x' = broadcast ~by wide x' in
+    (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
+    let spatially a =
+      Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
+    in
+    let windows =
+      Iarray.init k (fun i : Nx_array.Move.window ->
+          {
+            axis = 1 + i;
+            size = taps.(i);
+            step = stride.(i);
+            dilation = dilation.(i);
+          })
+    in
+    let pad : Nx_kernel.pad =
+      {
+        lo = spatially lo;
+        hi = spatially hi;
+        interior = spatially interior;
+        windows;
+      }
+    in
+    let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
+    let (D.Any acc) = summed dt in
+    let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
+    let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
+    let prog = P.of_exprs ~ins [| E.any term |] in
+    let y, () =
+      Eval.eval ~by
+        (Value.Reduce
+           {
+             layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
+             axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
+             prog;
+             reductions = Value.[ Monoid (Sum, 0, dt) ];
+             loads =
+               [|
+                 Padded { x = x'; fill = D.zero dt; pad };
+                 Plain (broadcast ~by loop w);
+               |];
+           })
+    in
+    reshaped ~by out y
 
 (* For each spatial axis, the run of values that [padding] keeps: its first
    value and its count, as the interface states them. *)
@@ -4018,9 +4034,6 @@ let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
   let at_least_one name v = if v < 1 then invalid_argf "%s: %s %d" by name v in
   Array.iter (at_least_one "stride") stride;
   Array.iter (at_least_one "dilation") dilation;
-  if Array.exists (( = ) 0) (Array.sub (shape w) 1 k) then
-    invalid_argf "%s: the kernel %a has a spatial axis of no element" by
-      pp_value w;
   let o = dim 0 w in
   if groups < 1 || o mod groups <> 0 then
     invalid_argf "%s: %d groups for %d output channels" by groups o;
@@ -4050,11 +4063,11 @@ let conv ?stride ?padding ?dilation ?groups x w =
     (permute ~by p (by_groups ~by groups w))
 
 (* The transpose is the convolution at stride one of [x] with [stride - 1]
-   zeros between its elements, padded by [dilation (k - 1) - lo] before, by
-   [w] reversed along its taps and with its channels exchanged. The padding
-   after, [dilation (k - 1) - hi] where the least input is the formula's,
-   is the one that gives the least input's extent [d]: the padded axis is
-   then [d + dilation (k - 1)] long, which holds [d] windows. *)
+   zeros between its elements, padded by [e - 1 - lo] before, [e] the dilated
+   kernel's extent, by [w] reversed along its taps and with its channels
+   exchanged. The padding after, [e - 1 - hi] where the least input is the
+   formula's, is the one that gives the least input's extent [d]: the padded
+   axis is then [d + e - 1] long, which holds [d] windows. *)
 let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv_transpose" in
   let stride, padding, dilation, groups =
@@ -4066,7 +4079,7 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
       x o pp_value w;
   let k = ndim x - 2 in
   let s = shape x and taps = Array.sub (shape w) 1 k in
-  let span i = dilation.(i) * (taps.(i) - 1) in
+  let span i = dilated taps.(i) dilation.(i) - 1 in
   (* [x]'s extent along spatial axis [i] once [stride - 1] zeros go between
      its elements. *)
   let spread i =

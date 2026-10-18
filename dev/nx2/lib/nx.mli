@@ -1673,8 +1673,10 @@ val conv :
     [w[j, q…, i]], an element outside [x] reading zero. The kernel is not
     flipped. [x] is padded along each spatial axis by [padding]'s [(lo, hi)]
     (default none), a negative one cutting; [stride] and [dilation] default
-    to ones; and [t = (s + lo + hi - dilation (k - 1) - 1) / stride + 1], none
-    where the padded axis is shorter than the dilated kernel. Under [groups]
+    to ones; and [t = (s + lo + hi - e) / stride + 1], none where the padded
+    axis is shorter than [e], the dilated kernel's extent
+    [dilation (k - 1) + 1]. A kernel extent of [0] sums no term: [e] is [0]
+    and each element is [+0]. Under [groups]
     (default [1]) the channels split into [groups] runs, output channels
     [g · o / groups] to [(g + 1) · o / groups - 1] reading input run [g]
     alone.
@@ -1685,9 +1687,9 @@ val conv :
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
-    a stride or a dilation is below [1]; a kernel extent is [0]; [groups] is
-    below [1] or does not divide [o]; [x]'s channels are not [groups] times
-    [w]'s last extent; or the dtype is a boolean. *)
+    a stride or a dilation is below [1]; [groups] is below [1] or does not
+    divide [o]; [x]'s channels are not [groups] times [w]'s last extent; or
+    the dtype is a boolean. *)
 
 val conv_transpose :
   ?stride:int array ->
@@ -1701,8 +1703,8 @@ val conv_transpose :
     for the [z] of the least spatial extents whose [conv z w], under the same
     arguments, has [x]'s shape [[n; t…; o]], it is the [[n; s…; c]] value
     with [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for
-    every such [z]: [s = (t - 1) stride + dilation (k - 1) + 1 - lo - hi], or
-    [0] where that is negative or [t = 0]. It is one reduction over [x] with
+    every such [z]: [s = (t - 1) stride + e - lo - hi], [e] as {!conv}
+    states, or [0] where that is negative or [t = 0]. It is one reduction over [x] with
     [stride - 1] zeros between its elements, windowed by [w] reversed along
     its spatial axes, never stored.
 
