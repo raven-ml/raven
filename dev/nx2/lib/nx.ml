@@ -5725,6 +5725,8 @@ module Prim = struct
   let traced = Eval.traced
   let payload = Eval.payload
   let owner = Eval.owner
+  let donated = Exec.is_handle
+  let consume = Exec.consume_list
   let eval = Eval.eval
   let expand = Eval.expand
 end

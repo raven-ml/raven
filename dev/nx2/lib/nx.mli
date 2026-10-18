@@ -4321,6 +4321,26 @@ module Prim : sig
   val owner : ('v, 's, 'd) nx -> interpretation option
   (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
 
+  val donated : ('v, 's, 'd) nx -> bool
+  (** [donated x] is [true] iff [x] is a handle {!Nx.donate} made, live or
+      not. It allocates nothing. *)
+
+  val consume : by:string -> 'd any list -> 'd any list
+  (** [consume ~by xs] is [xs] read by one consumer named [by] that is no
+      operation, as a compiled call: as an operation reads its operands
+      ({!Nx.donate}), each handle as a live value over its arrays, a donor
+      beside its handle as it was, and any other value as it is. Each
+      handle's donor is then dead, naming [by]. It checks every value before
+      it kills any, and orders its claims with every operation's and every
+      other consumer's, on any domain. The handles' memory is not consumed:
+      a consumer that writes into it takes it from rig, which says whether
+      it is exclusive ({!Rig.Claim.with_}).
+
+      Raises [Invalid_argument] as an operation's operands do: naming
+      [Nx.donate] for two handles of one donor or over one memory, then
+      naming [by] for a value that died. In sequence it then kills
+      nothing. *)
+
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)

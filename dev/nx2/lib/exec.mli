@@ -156,6 +156,15 @@ val resolve :
     claim after [k] then raises naming that consumer. The hold ends when [k]
     returns or raises. *)
 
+val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
+(** [consume_list ~by xs] is {!consume} of a consumer [by] of the operands
+    [xs], which is no operation: [xs] as they were when it was called, the
+    donors of their handles dead. *)
+
+val is_handle : ('v, 's, 'd) Value.t -> bool
+(** [is_handle x] is [true] iff [x] is a handle ({!Value.Donated}), live or
+    not. *)
+
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the

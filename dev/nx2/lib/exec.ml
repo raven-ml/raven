@@ -345,6 +345,17 @@ let resolve (type d a) ~by (xs : d Value.any list)
           claim ~by hs;
           result)
 
+let consume_list ~by xs =
+  let hs =
+    if List.exists (fun (Value.Any x) -> is_handle x) xs then handles ~by xs
+    else []
+  in
+  List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
+  let keys = offered hs in
+  let read = List.map (fun (Value.Any x) -> Value.Any (as_called keys x)) xs in
+  claim ~by hs;
+  read
+
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
 let take ~by b =
