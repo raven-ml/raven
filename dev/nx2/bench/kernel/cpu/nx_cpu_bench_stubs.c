@@ -199,7 +199,7 @@ value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
 }
 
 /* [block_transposed dst src n bits] copies the transpose of [src], [n] x
-   [n] elements of [bits] bits, into [dst] with nx_array.h's block copy, on
+   [n] elements of [bits] bits, into [dst] with nx_copy_box, on
    the calling thread: the copy kernel the walk runs, without the walk. */
 value nx_cpu_bench_block_transposed(value dst, value src, value n,
                                     value bits) {

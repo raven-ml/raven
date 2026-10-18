@@ -20,7 +20,7 @@
    C, CUDA and HIP sources compile this header with no OCaml header, their
    device code included. Metal sources compile it too, without the row
    table and the functions of doubles, which Metal lacks. Runs over many
-   elements, which use the host's vector instructions, are in nx_array.h. */
+   elements, which use the host's vector instructions, are nx.cpu's. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H

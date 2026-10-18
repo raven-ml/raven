@@ -53,12 +53,11 @@ value nx_array_bench_claim_3(value z, value x, value y) {
   return Val_unit;
 }
 
-/* Conversions over runs
+/* Conversions
 
    Each stub converts the elements of the bigarray [src] into [dst], of the
    same length, as a kernel's inner loop does: one call of nx_dtype.h's
-   function per element, or one call of a run form over all of them. A
-   float4 code takes a byte of its own here. */
+   function per element. A float4 code takes a byte of its own here. */
 
 #define BENCH_EACH(name, S, D, f)                         \
   value nx_array_bench_##name(value src, value dst) {     \
@@ -67,13 +66,6 @@ value nx_array_bench_claim_3(value z, value x, value y) {
     intnat n = Caml_ba_array_val(src)->dim[0];            \
     for (intnat i = 0; i < n; i++) d[i] = f(s[i]);        \
     return Val_unit;                                      \
-  }
-
-#define BENCH_RUN(name, S, D, f)                             \
-  value nx_array_bench_##name(value src, value dst) {        \
-    f((const S *)Caml_ba_data_val(src), (D *)Caml_ba_data_val(dst), \
-      (size_t)Caml_ba_array_val(src)->dim[0]);               \
-    return Val_unit;                                         \
   }
 
 static inline int32_t to_i32(double x) {
@@ -93,10 +85,6 @@ BENCH_EACH(e2m1fn_to_f32, uint8_t, float, nx_e2m1fn_to_float)
 BENCH_EACH(f64_to_f16, double, uint16_t, nx_double_to_f16)
 BENCH_EACH(f64_to_i32, double, int32_t, to_i32)
 BENCH_EACH(f64_to_e4m3fn, double, uint8_t, nx_double_to_e4m3fn)
-BENCH_RUN(f64_to_f16_run, double, uint16_t, nx_double_to_f16_run)
-BENCH_RUN(f16_to_f64_run, uint16_t, double, nx_f16_to_double_run)
-BENCH_RUN(f64_to_bf16_run, double, uint16_t, nx_double_to_bf16_run)
-BENCH_RUN(bf16_to_f64_run, uint16_t, double, nx_bf16_to_double_run)
 
 /* Floors: loops of the same bytes in and out whose work per element is one
    instruction. */

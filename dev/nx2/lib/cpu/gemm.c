@@ -487,7 +487,7 @@ static int panel_sliver(const panel *c, int64_t e, int64_t v, int64_t j,
 }
 
 /* tile's path where R's columns are apart: MR rows at a time through a
-   buffer, each way a box copy (nx_array.h), which transposes square blocks
+   buffer, each way a box copy (nx_copy_box), which transposes square blocks
    where R's rows are adjacent, as a transposed product's are. Apart from
    tile, so that tile's frame holds no buffer, which macOS would probe page
    by page at each call. */

@@ -81,18 +81,6 @@ external f64_to_i32 : f64 -> i32 -> unit = "nx_array_bench_f64_to_i32"
 external f64_to_e4m3fn : f64 -> u8 -> unit = "nx_array_bench_f64_to_e4m3fn"
 [@@noalloc]
 
-external f64_to_f16_run : f64 -> u16 -> unit = "nx_array_bench_f64_to_f16_run"
-[@@noalloc]
-
-external f16_to_f64_run : u16 -> f64 -> unit = "nx_array_bench_f16_to_f64_run"
-[@@noalloc]
-
-external f64_to_bf16_run : f64 -> u16 -> unit = "nx_array_bench_f64_to_bf16_run"
-[@@noalloc]
-
-external bf16_to_f64_run : u16 -> f64 -> unit = "nx_array_bench_bf16_to_f64_run"
-[@@noalloc]
-
 external floor_f32_to_u16 : f32 -> u16 -> unit
   = "nx_array_bench_floor_f32_to_u16"
 [@@noalloc]
@@ -179,12 +167,8 @@ let dtype_rows =
       decode "floor-u8-to-f32-1M" u8 ~codes:f32_to_e4m3fn float32
         floor_u8_to_f32;
       convert "f64-to-f16-1M" float64 u16 f64_to_f16;
-      convert "f64-to-f16-run-1M" float64 u16 f64_to_f16_run;
-      convert "f64-to-bf16-run-1M" float64 u16 f64_to_bf16_run;
       convert "f64-to-e4m3fn-1M" float64 u8 f64_to_e4m3fn;
       convert "floor-f64-to-u16-1M" float64 u16 floor_f64_to_u16;
-      decode "f16-to-f64-run-1M" u16 ~codes:f32_to_f16 float64 f16_to_f64_run;
-      decode "bf16-to-f64-run-1M" u16 ~codes:f32_to_bf16 float64 bf16_to_f64_run;
       convert "f64-to-i32-1M" float64 Bigarray.int32 f64_to_i32;
       convert "floor-f64-to-i32-1M" float64 Bigarray.int32 floor_f64_to_i32;
       row "floor-copy-f32-1M"

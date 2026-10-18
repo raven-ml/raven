@@ -8,7 +8,7 @@
    dune compiles this file as itself for the base target, the instructions
    every host of the architecture has: SSE2 on x86-64, NEON on arm64. It
    compiles it again as convert_v3.c with NX_CPU_V3 and, on x86-64, AVX2,
-   FMA, F16C and BMI2, the headers' inline codecs and nx_array.h's runs
+   FMA, F16C and BMI2, the headers' inline codecs and runs.h's runs
    included. Everything here but the fill is static, so no code compiled
    for v3 reaches the base table. Elsewhere the v3 unit is empty.
 
@@ -18,6 +18,7 @@
    branch, so every loop vectorises. */
 
 #include "cpu.h"
+#include "runs.h"
 
 #if !defined(NX_CPU_V3) || defined(__x86_64__)
 
@@ -139,7 +140,7 @@ typedef struct {
 DSTS(PAIRS)
 
 /* Narrow floats to float32: a sub-byte one's codes, one per byte.
-   float16, bfloat16 and e4m3fn convert in nx_array.h's runs, below. */
+   float16, bfloat16 and e4m3fn convert in runs.h's runs, below. */
 #define DECODE(S, ST, f)                                                \
   static void S##_FLOAT32(const void *src, void *dst, int64_t n) {      \
     const ST *s = src;                                                  \
@@ -149,7 +150,7 @@ DSTS(PAIRS)
 DECODE(FLOAT8_E5M2, uint8_t, e5m2)
 DECODE(FLOAT4_E2M1FN, uint8_t, e2m1fn)
 
-/* nx_array.h's runs, where they are faster than a loop of a codec. */
+/* runs.h's runs, where they are faster than a loop of a codec. */
 #define RUN(S, D, f)                                                   \
   static void run_##S##_##D(const void *src, void *dst, int64_t n) {   \
     f(src, dst, (size_t)n);                                             \

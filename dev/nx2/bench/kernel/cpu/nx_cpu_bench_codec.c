@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* Floors of the conversions whose own operations can cost more than their
-   bytes' move: the fastest loop of the codec, nx_array.h's run or a loop of
+   bytes' move: the fastest loop of the codec, runs.h's run or a loop of
    nx_dtype.h's scalar codec, over the cast's elements, sliced on the pool's
    threads as the other floors are. Neither CPU converts to or from bfloat16
    or e4m3fn, neither converts a vector of 64-bit integers or narrows a
@@ -30,7 +30,7 @@
 #include <caml/signals.h>
 
 #include "cpu.h"
-#include "nx_array.h"
+#include "runs.h"
 #include "rig_pool.h"
 
 /* The codecs, in the order of the bench's [codec] constructors. */
