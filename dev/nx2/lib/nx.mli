@@ -356,7 +356,8 @@ val to_bigarray :
     {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}.
 
     A check is a condition on data whose failure raises the caller's exception:
-    a sampler's parameter outside its domain ({!Rng}), or a {!Prim.Check}. On
+    one stated with {!check}, a sampler's parameter outside its domain
+    ({!Rng}), or a {!Prim.Check}. On
     the host it raises at the call. On another set it is computed where its data
     lies, and its failure raises at the next wait on that set on the domain that
     issued it, so that no check makes the host wait, except on a device of
@@ -2789,7 +2790,7 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 
     A structure is an OCaml type whose values hold arrays: a model's parameters,
     an optimiser's state, a cache. {!Ptree} describes one by the function that
-    walks it. *)
+    walks it, and {!check} takes its description. *)
 
 type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 (** [tensor] is {!t}, named for {!Ptree}'s signatures, in which [t] is a
@@ -3292,6 +3293,27 @@ module Ptree : sig
       has more, naming both counts; or if an array has another dtype than
       [like]'s at its position, naming the path and both dtypes. *)
 end
+
+val check :
+  ('a, 'd) Ptree.t -> 'd bool_t -> 'a -> (int array -> 'a -> exn) -> unit
+(** [check s ok data fail] raises [fail i d] if an element of [ok] is [false],
+    [i] the index of the first in C order and [d] the structure [data] with each
+    array replaced by its element at [i], a 0-d value of every set. Each array
+    of [data] broadcasts to [ok]'s shape; an empty [ok] passes. A check with no
+    data passes {!Ptree.unit} and [()].
+
+    It is a {{!section-waiting}check}: on the host it raises at the call, and on
+    another set at the next wait on that set. It computes on [ok]'s set, or, for
+    an [ok] of every set, on the set of the first array of [data] in walk order
+    that has bytes, or on the host where none has.
+
+    [s]'s walk must rebuild [data] with each array replaced by a 0-d one, as
+    [fail]'s [d] is built; a walk that checks its arrays' shapes, as {!Rng.walk}
+    does, may refuse. [check] tries that rebuild at the call.
+
+    Raises [Invalid_argument] naming [Nx.check] at the call if an array of
+    [data] does not broadcast to [ok]'s shape, or if [s]'s walk refuses 0-d
+    arrays. *)
 
 (** {1:random Random numbers} *)
 

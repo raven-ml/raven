@@ -4715,6 +4715,43 @@ module Ptree = struct
     walk (module U) (cast dt) keep x
 end
 
+(* Each datum of a check, and how to read its elements as 0-d values. *)
+type 'd datum =
+  | Datum : ('d, 'e) Value.data * ('e -> 'd packed list) -> 'd datum
+
+let check s ok data fail =
+  let by = "Nx.check" in
+  let target = shape ok in
+  let rec datum = function
+    | [] -> Datum (Value.[], fun () -> [])
+    | P x :: rest ->
+        let (Datum (d, read)) = datum rest in
+        let fits =
+          match Prim.merge (shape x) target with
+          | Ok s -> s = target
+          | Error _ -> false
+        in
+        if not fits then
+          invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape
+            target;
+        let x = broadcast ~by target x in
+        let read (v, e) = P (scalar (dtype x) v) :: read e in
+        Datum (Value.( :: ) (x, d), read)
+  in
+  let leaves = fst (Ptree.flatten s data) in
+  let (Datum (d, read)) = datum leaves in
+  (* [fail]'s structure is rebuilt from 0-d arrays when the failure is found,
+     maybe at a later check's issue: a walk that refuses them raises now. *)
+  (match
+     Ptree.rebuild s ~like:data
+       (List.map (fun (P x) -> P (zeros (dtype x) [||])) leaves)
+   with
+  | _ -> ()
+  | exception Invalid_argument m ->
+      invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
+  let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
+  Eval.eval ~by (Value.Check { ok; data = d; fail })
+
 (* Operations as data *)
 
 module Prim = struct
