@@ -95,46 +95,43 @@
 
     A [Scan] computes per group of its results' devices that hold one window
     of the axes off its axis; a device's window along its axis is its
-    {e tile}, and the group's tiles are in their order along it. Each
-    device's results have the bits of the scan on one device:
+    {e tile}, and the group's tiles are in their order along it. A device
+    scans its tile from a carry, the partials of the {e units} before it
+    combined in order on that device. Each device's results have the bits
+    of the scan on one device:
 
-    - An integer or boolean [Sum], [Prod], [Max] or [Min] scans each tile's
-      terms into the carrier, a float or complex [Max] or [Min] into the
-      result's dtype, and an [Arg] into an extreme and its positions, which
-      count from the axis's start. The carry into a tile is the last results
-      of the tiles before it combined in order on its device; one map
-      combines it with each of the tile's results: by [Add], [Mul],
-      [Maximum] or [Minimum] for an integer or a boolean; for a float
-      extreme, a NaN carry, else a NaN result, else their extreme; for an
-      [Arg], the first extreme, as a reduction's partials combine.
+    - An integer or boolean [Sum], [Prod], [Max] or [Min], and a float or
+      complex [Max] or [Min]: a unit is a tile, its partial its terms
+      reduced into the carrier of the result's dtype. Partials combine by
+      [Add], [Mul], [Maximum] or [Minimum], a float extreme keeping the
+      first NaN, and the tile scans from the carry by
+      {!Nx_kernel.S.scan}.
+    - An [Arg]: a unit is a tile, its partial its terms' first extreme and
+      its position from the axis's start. The tile scans alone, and one map
+      combines each result with the carry into the first extreme, as a
+      reduction's partials combine.
     - A float or complex [Sum] or [Prod], a complex sum part by part as
-      floats, continues the scan's chunks ({!Nx_kernel.type-reduction}).
-      The total of each chunk but the last is a reduction of exactly its
-      terms, with whether one is a NaN: one reduction per tile over the
-      chunks it holds whole, and lane order's units over a chunk across
-      tiles, as a [Reduce]'s, combined on the tile holding the next chunk's
-      start. The carry into each chunk combines the totals before it in
-      order, on the tile holding its start. A tile scans from the carry
-      into its first chunk ({!Nx_kernel.S.scan}'s carry), and its terms
-      before that from the running result before them in the carrier: the
-      tile before it scans its last piece again into the carrier where the
-      result's dtype is not, so tiles that share a chunk scan in turn. Where
-      a term before a tile's first chunk, or before the tile, is a NaN,
-      each of those results is the first such term, from a reduction of
-      each piece of a tile within one chunk into the result's dtype.
-    - A device whose tile is empty scans its window alone; one whose tile
-      another holds takes that one's results.
+      floats: a unit is a chunk of the scan ({!Nx_kernel.type-reduction}).
+      A tile first takes the terms before it back to its first chunk's
+      start from the tiles holding them, so that the device holding a
+      chunk's end holds the chunk whole. A unit's partial is a reduction of
+      exactly its terms with whether one is a NaN, in one reduction over
+      the chunks that end in the tile, all but the axis's last. The tile
+      scans from the carry into its first chunk and drops the results
+      before its own. Where a term before that chunk is a NaN, one map makes
+      each result the first such term, quieted, from the first NaN unit's
+      reduction into the result's dtype.
+    - A device whose tile is empty scans its window alone.
 
-    An exact or ranked scan moves one row of each tile's window of the
-    results off the axis to the next tile, plus a map over the tile's
-    results. A float sum or product moves its chunk totals as rows, three
-    per chunk where the carrier is not the result's dtype, two elsewhere,
-    and a chunk across tiles moves as a reduction's units do; it adds a
-    reduction over the tile's terms, a map over its results but the first
-    tile's, an assembly where the tile starts inside a
-    chunk, and, for a narrower float, a scan of up to a chunk of 4096 terms
-    per slice into the carrier. Tiles sharing a chunk scan one after the
-    other. *)
+    Each device takes, as rows of its window of the results off the axis,
+    the partials of the units before its tile: one row per tile for an
+    exact scan, two for an [Arg], and for a float sum or product three per
+    chunk, two where the carrier is the result's dtype. No device waits for
+    another's results. A float sum or product whose tile starts inside a
+    chunk also moves the at most 4095 terms per slice before it in that
+    chunk, once, assembles them with the tile's own and scans them again;
+    it maps over its results where a chunk lies before its first. An [Arg]
+    maps twice over each tile's results but the first's. *)
 
 val reduce :
   ('q. by:string -> 'q Value.prim -> 'q) ->
