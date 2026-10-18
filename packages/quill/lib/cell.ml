@@ -109,6 +109,10 @@ let id = function Code c -> c.id | Text t -> t.id
 let source = function Code c -> c.source | Text t -> t.source
 let attrs = function Code c -> c.attrs | Text t -> t.attrs
 
+let is_ocaml = function
+  | Code { language = "ocaml"; _ } -> true
+  | Code _ | Text _ -> false
+
 let set_source s = function
   | Code c -> Code { c with source = s }
   | Text t -> Text { t with source = s }
