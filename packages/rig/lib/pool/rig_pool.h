@@ -13,11 +13,8 @@
    A job is a range of units [0, total) cut into contiguous chunks, run on
    at most a given number of threads, which call the job's body on the
    chunks they claim. The calling thread is worker 0, and the pool's
-   workers take the other indices. Each thread has a strip of
-   consecutive chunks, which it runs first. A strip is the same in every job
-   of the same total, chunks and threads, so a job run again over the same
-   memory finds each strip in the caches of the core that ran it. A thread
-   that finishes its strip early runs the chunks left in the others'.
+   workers take the other indices. Threads claim chunks as they go, so a
+   thread that finishes early runs chunks another would have run.
    rig_pool_run returns once every chunk has run. Only one job runs on
    several threads at a time (see Jobs).
 
@@ -29,10 +26,9 @@
 
    The life of the pool goes like this:
 
-     1. The first job on several threads makes the workers, one fewer
-        than rig_pool_cores ().
+     1. The first job on several threads makes the workers.
      2. Each job calls on the workers it needs. A worker that waits for a
-        job spins for up to 100 us before it sleeps (see Jobs).
+        job spins for a moment before it sleeps (see Jobs).
      3. The workers live until the process exits. fork waits for a running
         job on several threads to end, and the child makes a pool of
         its own at its first job on several threads.
@@ -111,35 +107,28 @@ int rig_pool_performance_cores(void);
    for every total and c. The chunks partition [0, total), none is empty,
    and floor (total / c) <= hi - lo <= ceil (total / c).
 
-   On t > 1 threads, worker w's strip is the chunks
-
-     [floor (w * c / t), floor ((w + 1) * c / t))
-
-   none empty, where t counts only the workers the pool made. A thread
-   claims its own strip's chunks in index order, then those left in each
-   other strip in turn, from worker w + 1's on, in index order within each.
-   A thread that never comes to the job leaves its whole strip to the
-   others.
-
-   A thread claims a run of consecutive chunks of a strip at a time and
-   runs it in one call. A run is about an eighth of the chunks left in the
-   strip, and at most max (1, floor (s / 8)) chunks, where s is the number
-   of chunks in the strip. A job of many short chunks then costs few
-   claims, and a slow thread still leaves most of its strip to faster ones.
-   A job of at most 15 t chunks makes one call a chunk.
+   A thread claims a run of consecutive chunks at a time and runs it in one
+   call. A run is a fraction of the chunks left, and one chunk where they
+   are few, so a job of many short chunks costs few claims. A job of at most
+   15 t chunks makes one call a chunk, so a costly chunk holds up only the
+   thread that claimed it. A thread that finishes early runs chunks another
+   would have run, so a thread slowed or taken off its core delays the end
+   of the job by about the call it is in. Which thread runs which chunks,
+   and in which order, is unspecified.
 
    Only one job runs on several threads at a time. A job of t = 1, or a job
    begun from a body of a job on several threads, runs immediately on the
    calling thread alone, in one call as worker 0. Any other job first waits
    for another thread's job to end.
 
-   A thread that waits, for a job or for the end of its own, spins for up
-   to 100 us before it sleeps, and keeps its core while it spins. Jobs that
-   follow each other closely therefore start without a system call, and
-   other programs get those cores only when the system preempts a spinning
-   thread. A thread that the system takes off its core inside a job, while
-   every core is busy, can end the job up to 100 us late, once the job's
-   other threads stop spinning. */
+   A thread that waits, for a job or for the end of its own, spins for a
+   moment before it sleeps, and keeps its core while it spins. Jobs that
+   follow each other closely therefore start without a system call, an
+   idle pool takes no core, and other programs get the spinning cores only
+   when the system preempts a spinning thread. A thread that the system
+   takes off its core inside a job, while every core is busy, can end the
+   job late by up to a spin's length, once the job's other threads stop
+   spinning. */
 
 /* The type for the function a job calls on each of its ranges. [lo, hi)
    are the range's units, [worker] the index of the thread that runs it, and

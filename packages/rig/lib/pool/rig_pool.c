@@ -14,6 +14,19 @@
    inside, so a worker late to see the job, or kept off its core by the
    system, delays nothing.
 
+   On t > 1 threads, worker w's strip is the chunks
+
+     [floor (w * c / t), floor ((w + 1) * c / t))
+
+   none empty, where t counts only the workers made. A strip is the same in
+   every job of the same total, chunks and threads, so a job run again over
+   the same memory finds each strip in the caches of the core that ran it.
+   A thread claims its own strip's chunks in index order, then those left in
+   each other strip in turn, from worker w + 1's on, in index order within
+   each. A thread that never comes to the job leaves its whole strip to the
+   others. A run holds at most max (1, floor (s / claim_split)) chunks of a
+   strip of s, so a job of at most 15 t chunks makes one call a chunk.
+
    Jobs come in bursts, such as the kernels of a compiled program a few
    microseconds apart. A waiting thread spins for spin_ns before it parks on
    a condition variable, and a job wakes the parked workers only if one of
