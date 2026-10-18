@@ -359,13 +359,23 @@ val to_bigarray :
     a sampler's parameter outside its domain ({!Rng}), or a {!Prim.Check}. On
     the host it raises at the call. On another set it is computed where its data
     lies, and its failure raises at the next wait on that set on the domain that
-    issued it, so that no check makes the host wait. The systhreads of a domain
+    issued it, so that no check makes the host wait, except on a device of
+    another machine, where reading whether a check passed waits for the work
+    submitted there. The systhreads of a domain
     share its checks. A wait drains the checks its domain issued on the set
     before it and raises the earliest failure among them; the later ones are
     dropped. A wait on one set raises nothing of another's checks; a check no
     wait follows never raises. A check keeps its data's memory until a wait
-    drains it, or until its flags are computed and a later check on its set is
-    issued, so a donation of that data meanwhile computes into fresh memory. *)
+    drains it, or until a later check on its set is issued once its devices
+    report its flags computed, so a donation of that data meanwhile computes
+    into fresh memory. A device reports its work at most a fixed number of
+    submissions late while work is submitted on it ({!Rig.section-timeline}),
+    and a check on a device that gets no more work is found computed when the
+    next check is issued, so the checks of a loop that never waits keep the
+    data of a bounded window of steps. A failing check's data is read when its failure is found, at a
+    wait or at a later check's issue, and that read may wait for the set.
+    Once a check is known to fail, the checks after it release their data,
+    and a check issued later on its set is not kept. *)
 
 val sync : ('v, 's, 'd) t -> unit
 (** [sync x] waits for the work [x] depends on, then drains the checks pending

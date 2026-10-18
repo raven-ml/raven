@@ -314,6 +314,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - `reduce_ranges` flattens its result to quiet it, which gathers a result
   cut along its row axis onto every device; its sparse table's `assemble`
   gathers a row-cut `x` at every level
+- a check on another machine's device waits for its step: settling reads
+  its result with `Nx_array.to_device`, whose `Rig.Buffer.copy` follows
+  every value submitted there. Done when rig offers a read of a remote
+  device's memory that doesn't follow its later work
 
 - frontend, `Ptree` at a brand (RFC 0006's names at `('s, 'd) t`, `Walk`,
   `S`, `sized`, the `tensor` alias), with `check` over it, `Rng.ptree` and

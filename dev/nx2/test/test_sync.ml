@@ -262,6 +262,28 @@ let systhreads () =
 
 (* Domains, donation and sync *)
 
+(* A loop that draws over a fresh parameter at [at] each step and never waits
+   on its set: once warm, device [d] holds as many bytes after 200 more steps
+   as after the first, its collected memory moved and its cache freed
+   alike. *)
+let bounded at d =
+  let n = 1 lsl 16 in
+  let p = host_of Nx.float32 [| n |] (Array.make n 0.5) in
+  let step () = ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place at p))) in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      Rig.free_cache d
+    done;
+    Rig.allocated d
+  in
+  step ();
+  let warm = settled () in
+  for _ = 1 to 200 do
+    step ()
+  done;
+  at_most int ~than:warm (settled ())
+
 let others =
   group "domains, donation and sync"
     [
@@ -316,29 +338,14 @@ let others =
               let before = Rig.allocated (m 0) in
               ignore (Nx.neg (Nx.donate d'));
               equal int before (Rig.allocated (m 0))));
-      (* A loop that draws over a fresh parameter on S each step and never
-         waits on S: once warm, the device holds as many bytes after 200 more
-         steps as after the first, its collected memory moved and its cache
-         freed alike. *)
       test "checks no wait follows hold bounded memory" (fun () ->
-          let n = 1 lsl 16 in
-          let p = host_of Nx.float32 [| n |] (Array.make n 0.5) in
-          let step () =
-            ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place S.on p)))
-          in
-          let settled () =
-            for _ = 1 to 4 do
-              Gc.full_major ();
-              Rig.free_cache (m 0)
-            done;
-            Rig.allocated (m 0)
-          in
-          step ();
-          let warm = settled () in
-          for _ = 1 to 200 do
-            step ()
-          done;
-          at_most int ~than:warm (settled ()));
+          bounded S.on (m 0));
+      test "a check on a device then idle leaves later checks bounded"
+        (fun () ->
+          let on k = Nx.Placement.device S2.v (m k) in
+          let p = host_of Nx.float32 [| 4 |] (Array.make 4 0.5) in
+          ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place (on 3) p)));
+          bounded (on 2) (m 2));
       test "a print that raises a failed check prints nothing" (fun () ->
           let d = Nx.place S.on (host_of Nx.float32 [| 2 |] [| 1.; 2. |]) in
           let ok = Nx.place S.on (host_of Nx.bool [| 2 |] [| false; true |]) in

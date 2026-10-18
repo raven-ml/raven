@@ -616,7 +616,11 @@ let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
    reports. *)
 
 type ('d, 'e) issued = {
-  holds : (bool, D.bool_elt, 'd) Value.t;  (* Whether every flag holds. *)
+  holds : (bool, D.bool_elt) A.t;
+      (* Whether every flag holds, in memory the host addresses where its
+         device is of this machine ({!readable}). *)
+  mark : int;
+      (* [holds]'s device's last value once [holds] was written. *)
   first : (int64, D.int64_elt, 'd) Value.t;
       (* The first false flag's position in C order. *)
   shape : int array;  (* The flags'. *)
@@ -663,12 +667,37 @@ let release = function
   | Pending (_, h) -> Rig.Claim.release h
   | Raised _ -> ()
 
-(* Whether [c]'s flags are computed, so that reading them waits for nothing.
-   It commits the work that computes them where it is not done. *)
-let reached c =
-  Iarray.for_all
-    (fun a -> Rig.Buffer.reached (A.buffer a) Read)
-    (Prim.arrays c.holds)
+(* [a] in memory the host addresses where its device is of this machine:
+   itself where the host addresses the device's memory, else a copy the
+   device makes in its order into memory both address, which the host then
+   reads without a copy once the device reports the copy done. *)
+let readable a =
+  let d = A.device a in
+  if Rig.reaches Rig.host d || not (Rig.equal (Rig.host_of d) Rig.host) then a
+  else
+    let dst = A.create ~memory:Pinned d (A.dtype a) (L.shape (A.layout a)) in
+    A.transfer ~src:a ~dst;
+    dst
+
+(* Whether [c.holds] is written, so that reading it waits for nothing, asked
+   while issuing a check on devices [ds]. On one of [ds], its device's report
+   decides, which commits nothing and waits for nothing: a device reports its
+   work at most its driver's batch of values late while work is submitted on
+   it ({!Rig.section-timeline}). Another device may get no more work, and its
+   last values would then stay unreported: asking commits them, since an idle
+   device has nothing to batch. The final reduction on [c.holds]'s device
+   follows the work on the others, so that device alone decides. *)
+let reached ds c =
+  let d = A.device c.holds in
+  if List.exists (Rig.equal d) ds then Rig.signaled d >= c.mark
+  else Rig.Buffer.reached (A.buffer c.holds) Read
+
+(* [a]'s element, read on the host: in place where it addresses [a]'s memory,
+   else through a copy. *)
+let get_on_host a =
+  let d = A.device a in
+  if Rig.equal (Rig.host_of d) Rig.host then A.get a [||]
+  else A.get (A.to_device Rig.host a) [||]
 
 (* Set [n]'s pending checks, oldest first, taken off the list. *)
 let drained n =
@@ -1204,14 +1233,18 @@ and check : type d e.
         (* The set's earlier checks settle first, so that a raise there leaves
            this check unissued and none of its data held. A set that holds a
            failure keeps no later check, which then computes nothing. *)
-        let n = Devices.number (Devices.set p) in
-        if settle_reached ~by n then begin
+        let set = Devices.set p in
+        let n = Devices.number set in
+        let ds = Array.map (Devices.rig set) (Grid.devices (Devices.grid p)) in
+        if settle_reached ~by n (Array.to_list ds) then begin
           (* One reduction gives both whether every flag holds and the first
              false, so that the check leaves only scalars to read later. *)
           let (holds, first), () = reduce (Arg (Min, 0, D.Bool)) in
+          let holds = readable (Iarray.get (Prim.arrays holds) 0) in
+          let mark = Rig.submitted (A.device holds) in
           let data = kept data in
           let held = Rig.Claim.hold (data_buffers data) in
-          let c = { holds; first; shape; data; fail } in
+          let c = { holds; mark; first; shape; data; fail } in
           if not (pend n (Pending (c, held))) then Rig.Claim.release held
         end
     | Some _ | None ->
@@ -1286,13 +1319,14 @@ and settle ~by checks =
    first and stops at the first still running, so it asks rig of one check
    more than it settles. The checks are read outside the update, which then
    takes off those still pending, against a wait on another systhread that
-   drains them meanwhile. [false] where the set then holds a failure. *)
-and settle_reached ~by n =
+   drains them meanwhile. [ds] are the devices of the check being issued
+   ({!reached}). [false] where the set then holds a failure. *)
+and settle_reached ~by n ds =
   let earlier = List.rev (of_set n (Atomic.get (Domain.DLS.get checks))) in
   let rec read = function
     | [] | Raised _ :: _ -> []
     | (Pending (c, _) as p) :: rest -> (
-        if not (reached c) then []
+        if not (reached ds c) then []
         else
           match outcome ~by c with
           | None -> (p, None) :: read rest
@@ -1328,7 +1362,7 @@ and settle_reached ~by n =
 (* [c]'s exception, read on the host, where a flag is false. *)
 and outcome : type d e. by:string -> (d, e) issued -> exn option =
  fun ~by c ->
-  if A.get (on_host ~by c.holds) [||] then None
+  if get_on_host c.holds then None
   else
     let first = A.get (on_host ~by c.first) [||] in
     Some (failed ~by first c.shape c.data c.fail)

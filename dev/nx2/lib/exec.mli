@@ -30,12 +30,26 @@
     On the host it reads them and raises at once; on another set it holds them
     and its data, unread, on the calling domain's list of the set's pending
     checks, which the domain's systhreads share, until a {!wait} on the set
-    drains them. Issuing a check there first settles the set's earlier checks
-    whose flags are computed ({!Rig.Buffer.reached}): a passing one goes and
-    a failing one keeps only its exception. The new check is computed and
-    kept only if no failure of the set is known then, and a raise while
-    settling leaves it unissued. A [Place] onto the host from another set is
-    a {!wait} on that set first.
+    drains them. There, a device of this machine whose memory the host does
+    not address copies whether all hold, in its order, into [Pinned] memory
+    ({!Rig.Buffer.kind}), which both address: one more copy submitted per
+    check, which nothing waits for. On another machine's device the host
+    reads it through a copy, which follows that device's later work, so
+    settling such a check waits for the work submitted there; no rig read
+    avoids that yet. The check records its result's device's submitted value
+    ({!Rig.submitted}). Issuing a check on the set first settles its earlier
+    checks whose result is written: on a device the new check computes on,
+    once the device has reported that value ({!Rig.signaled}), which commits
+    no work and waits for none; on another, which may get no more work, as
+    {!Rig.Buffer.reached} finds it, which commits that device's work. A
+    passing one goes and a failing one keeps only its exception. A device
+    reports its work at most its driver's batch of values late while work is
+    submitted on it, so the checks no wait follows hold the data of the work
+    in flight and of that batch; on a domain whose submits stop, they hold it
+    until a wait. A failing check's elements are read through a copy where
+    the host does not address them. The new check is computed and kept only if no failure of
+    the set is known then, and a raise while settling leaves it unissued. A
+    [Place] onto the host from another set is a {!wait} on that set first.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}) or by
