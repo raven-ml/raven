@@ -71,7 +71,7 @@
 
     The NIC's requests to its firmware, which the other calls make, run one at a
     time. {!open_}, {!detach} and {!attach} hold a lock of rig.pci's for their
-    whole run ({!Rig_pci.Gpus}), a reset of the NIC included, so a call of
+    whole run ({!Rig_pci.Driver}), a reset of the NIC included, so a call of
     rig's from a callback on their thread meanwhile is made inside a lock
     and raises [Invalid_argument] ([Rig]'s domains section).
 
@@ -311,14 +311,14 @@ end
 
 (** {1:changes Changes to the machine}
 
-    {!detach} and {!attach} change this machine as {!Rig_pci.Gpus} describes,
-    and their changes persist after the process. Each refuses a NIC a process
-    holds, this one included, and needs [CAP_SYS_ADMIN] and write access to the
-    files under [/sys/bus/pci] they write. *)
+    {!detach} and {!attach} change this machine as {!Rig_pci.Driver}
+    describes, and their changes persist after the process. Each refuses a NIC
+    a process holds, this one included, and needs [CAP_SYS_ADMIN] and write
+    access to the files under [/sys/bus/pci] they write. *)
 
-val detach : int -> (Rig_pci.Gpus.progress, string) result
+val detach : int -> (Rig_pci.Driver.progress, string) result
 (** [detach i] takes NIC [i] of this machine from its kernel driver as
-    {!Rig_pci.Gpus.detach} does. Its network interfaces and RDMA devices go
+    {!Rig_pci.Driver.detach} does. Its network interfaces and RDMA devices go
     until {!attach} or a reboot. It leaves the other functions of the NIC's
     device, such as a card's other ports, and so returns [Error msg], naming
     them and their drivers, while the device has any and the NIC is not bound to
@@ -328,6 +328,6 @@ val detach : int -> (Rig_pci.Gpus.progress, string) result
 
 val attach : int -> (unit, string) result
 (** [attach i] gives NIC [i] of this machine back to its kernel driver as
-    {!Rig_pci.Gpus.attach} does.
+    {!Rig_pci.Driver.attach} does.
 
     Raises [Invalid_argument] if [i < 0]. *)

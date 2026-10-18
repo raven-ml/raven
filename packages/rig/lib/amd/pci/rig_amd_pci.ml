@@ -16,7 +16,7 @@
 module Machine = Rig_pci.Machine
 module Memory = Rig_pci.Memory
 module Window = Rig_pci.Window
-module Gpus = Rig_pci.Gpus
+module Driver = Rig_pci.Driver
 module Amd = Rig_amd
 
 let strf = Printf.sprintf
@@ -26,8 +26,8 @@ let ( let* ) = Result.bind
 
    amdgpu releases a GPU's device, its teardown writing to the GPU, when the
    last file of its DRM nodes goes, KFD's references to them included, which
-   Gpus waits for. The release removes the GPU's node from KFD's topology at its
-   start, and the device's [ip_discovery] directory at its end: of an unbound
+   Driver waits for. The release removes the GPU's node from KFD's topology at
+   its start, and the device's [ip_discovery] directory at its end: of an unbound
    GPU, either one still there means amdgpu has not let go. A release that never
    comes, as after a failed resume, leaves the directory for good, and a load of
    amdgpu then fails on it. *)
@@ -78,16 +78,16 @@ let unreleased ~root bus =
 (* Numbering *)
 
 (* The kernel driver serves a GPU through DRM nodes, each with a [dev] file
-   under the GPU's directory, which {!Gpus.detach} finds itself. *)
+   under the GPU's directory, which {!Driver.detach} finds itself. *)
 let gpus =
-  Gpus.make ~name:"AMD-PCI" ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
+  Driver.make ~name:"AMD-PCI" ~memory_bar:(Some 0) ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased ~teardown_ms:30_000 ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
-let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
+let buses ?(machine = Machine.this) () = Driver.buses gpus machine
 let count ?machine () = List.length (buses ?machine ())
-let device_name i = Gpus.name gpus i
+let device_name i = Driver.name gpus i
 
 (* Boot reports *)
 
@@ -164,7 +164,7 @@ let memory r = { Amd.address = Memory.address r; host = host r; data = r }
 (* What the path's memory functions use: a GPU's memory and the lock its calls
    take. Memory the path gave holds them until its free, also after stop, so
    they hold nothing else of the GPU, and stop releases the memory. The lock
-   nests inside the vendor's lock and a hold's ([Gpus]), and outside rig.pci's
+   nests inside the driver's lock and a hold's ([Driver]), and outside rig.pci's
    memory locks; [machines_lock] holds no other. *)
 type gpu = { memory : Memory.t; lock : Amd.Lock.t }
 
@@ -265,7 +265,7 @@ let path g h fn ~index : Memory.region Amd.path =
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
     Fun.protect
-      (fun () -> Gpus.stop h)
+      (fun () -> Driver.stop h)
       ~finally:(fun () -> protect mem (fun () -> Memory.release mem.memory))
   in
   let on = known (Rig_pci.Function.machine fn) in
@@ -295,7 +295,7 @@ let path g h fn ~index : Memory.region Amd.path =
         guard (fun () -> Boot.queue g kind ~ring ~bytes ~read ~write));
     hdp = Boot.hdp g;
     interrupt;
-    hang_ms = Some Gpus.hang_ms;
+    hang_ms = Some Driver.hang_ms;
     sleep = (fun ~ms -> guard (fun () -> Boot.sleep g ~ms));
     stable_power = (fun () -> guard (fun () -> Boot.stable_power g));
     stop;
@@ -304,9 +304,9 @@ let path g h fn ~index : Memory.region Amd.path =
 (* A boot that wrote to the GPU and failed stopped it, as lost, before it
    answered: the hold's stop then answers so. *)
 let boot h fn ~firmware =
-  let lost () = Gpus.set_stop h (fun () -> `Lost) in
+  let lost () = Driver.set_stop h (fun () -> `Lost) in
   let gpus =
-    lazy (List.length (Gpus.buses gpus (Rig_pci.Function.machine fn)))
+    lazy (List.length (Driver.buses gpus (Rig_pci.Function.machine fn)))
   in
   let first d =
     let* _, loads = survey ~firmware d in
@@ -331,7 +331,7 @@ let booted h fn ~firmware =
   | Ok g -> Ok g
   | Error (`Refused why) -> Error why
   | Error `Running -> (
-      let* () = Gpus.renew h in
+      let* () = Driver.renew h in
       match boot h fn ~firmware with
       | Ok g -> Ok g
       | Error (`Refused why) -> Error why
@@ -348,7 +348,7 @@ let start ~word ~firmware ~index h fn =
       (Rig_pci.Space.length Boot.space)
   in
   let* g = booted h fn ~firmware in
-  Gpus.set_stop h (fun () -> Boot.stop g);
+  Driver.set_stop h (fun () -> Boot.stop g);
   match Amd.make ~word (path g h fn ~index) with
   | Ok d ->
       (* A host resets a VF that holds its access long: every queue is made, so
@@ -363,23 +363,23 @@ let start ~word ~firmware ~index h fn =
 
 let open_ ?(machine = Machine.this) ~word ~firmware i =
   Amd.Lock.check "Rig_amd_pci.gpu";
-  Gpus.open_ gpus machine i (start ~word ~firmware ~index:i)
+  Driver.open_ gpus machine i (start ~word ~firmware ~index:i)
 
 (* Changes to the machine *)
 
-(* Each takes the vendor's lock ([Gpus]), which an open holds through its boot,
-   so a call from a callback inside a lock is refused first. *)
+(* Each takes the driver's lock ([Driver]), which an open holds through its
+   boot, so a call from a callback inside a lock is refused first. *)
 let detach i =
   Amd.Lock.check "Rig_amd_pci.detach";
-  Gpus.detach gpus Machine.this i
+  Driver.detach gpus Machine.this i
 
 let attach i =
   Amd.Lock.check "Rig_amd_pci.attach";
-  Gpus.attach gpus Machine.this i
+  Driver.attach gpus Machine.this i
 
 let reset ?(machine = Machine.this) i =
   Amd.Lock.check "Rig_amd_pci.reset";
-  Gpus.reset gpus machine i
+  Driver.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)
 let system_firmware = "/lib/firmware"

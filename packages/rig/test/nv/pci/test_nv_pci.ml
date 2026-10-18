@@ -68,7 +68,7 @@ let opening =
           match Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 2) with
           | Ok _ -> fail "GPU 2 opened"
           | Error why ->
-              equal string "NV-PCI:2: no such GPU; the machine has 2" why);
+              equal string "NV-PCI:2: no such function; NV-PCI drives 2 here" why);
       test "a GPU past the last is an error to detach, attach or reset"
         (fun () ->
           let n = Rig_nv_pci.count () in
@@ -277,7 +277,7 @@ let reports =
 (* Stopping *)
 
 let gpus () =
-  Rig_pci.Gpus.make ~name:"NV-PCI" ~noun:"GPU" ~memory_bar:(Some 1)
+  Rig_pci.Driver.make ~name:"NV-PCI" ~memory_bar:(Some 1)
     ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
@@ -286,8 +286,8 @@ let gpus () =
       Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let hold g m =
-  Rig_pci.Gpus.open_ g m 0 (fun h _ ->
-      Rig_pci.Gpus.set_stop h (fun () -> `Clean);
+  Rig_pci.Driver.open_ g m 0 (fun h _ ->
+      Rig_pci.Driver.set_stop h (fun () -> `Clean);
       Ok h)
 
 let state =
@@ -363,7 +363,7 @@ let resets root =
   In_channel.with_open_bin file In_channel.input_all
 
 (* [stop g m] opens GPU 0 of [m] through [g] and stops it. *)
-let stop g m = Result.map Rig_pci.Gpus.stop (hold g m)
+let stop g m = Result.map Rig_pci.Driver.stop (hold g m)
 
 (* With [how] ["stop"] the child stops the GPU and exits; with ["kill"] it dies
    by SIGKILL holding it, having allocated nothing; with ["hold"] it says
@@ -445,7 +445,7 @@ let test_stopped_here () =
   let root = fixture () in
   let g = gpus () and machine = Rig_pci.Machine.at root in
   equal ~msg:"the stop" state `Stopped (require_ok (stop g machine));
-  ignore (Rig_pci.Gpus.stop (require_ok (hold g machine)));
+  ignore (Rig_pci.Driver.stop (require_ok (hold g machine)));
   let why =
     require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
   in

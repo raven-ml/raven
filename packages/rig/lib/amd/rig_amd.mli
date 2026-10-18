@@ -560,8 +560,8 @@ module Lock : sig
 
   val create : unit -> t
   (** [create ()] is a new lock. A thread may take it while it holds an
-      image's lock, a device's, or rig.pci's vendor lock or a hold's
-      ([Rig_pci.Gpus]), and may take rig.pci's memory locks while it holds
+      image's lock, a device's, or rig.pci's driver lock or a hold's
+      ([Rig_pci.Driver]), and may take rig.pci's memory locks while it holds
       it. *)
 
   val protect : t -> (unit -> 'a) -> 'a

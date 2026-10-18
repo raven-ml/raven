@@ -20,8 +20,8 @@ function, and it is GPU 0 of its vendor whichever driver holds it
 An administrator detaches it once, outside the program:
 `Rig_amd_pci.detach` unbinds `amdgpu`, keeps every kernel driver off the
 function, removes the audio function and grows the GPU's memory window
-([`Gpus`](../lib/pci/gpus.mli), "Changes to the machine"). The desktop loses
-the GPU until it is attached again or the machine reboots.
+([`Rig_pci.Driver`](../lib/pci/driver.mli), "Changes to the machine"). The
+desktop loses the GPU until it is attached again or the machine reboots.
 
 The machine's state then decides how a process will take the function
 ([`Function`](../lib/pci/function.mli)):
@@ -35,7 +35,7 @@ The machine's state then decides how a process will take the function
 ## The GPU's states
 
 From here the GPU moves between three states
-([`Gpus`](../lib/pci/gpus.mli)):
+([`Rig_pci.Driver`](../lib/pci/driver.mli)):
 
 ```
                  detach                 Rig.open_
@@ -100,7 +100,7 @@ states what its boot needs and what it refuses.
 
 Once booted, the GPU runs submissions as it would under its kernel driver.
 The process stops it when the device closes, and at the process's exit
-([`Gpus`](../lib/pci/gpus.mli), "Opening").
+([`Rig_pci.Driver`](../lib/pci/driver.mli), "Opening").
 
 ## Memory the GPU may write
 
@@ -125,7 +125,7 @@ pages while a GPU whose process died still writes them. An IOMMU is the only
 protection from both ([`Rig_pci`](../lib/pci/rig_pci.mli), "What a function
 can reach"). No kernel bounds a driver-less GPU's work either, so its device
 declares a hang bound, and rig loses the device when its work stops
-advancing ([`Gpus.hang_ms`](../lib/pci/gpus.mli), and
+advancing ([`Rig_pci.Driver.hang_ms`](../lib/pci/driver.mli), and
 [`Rig`](../lib/rig.mli), "Loss").
 
 ## Status

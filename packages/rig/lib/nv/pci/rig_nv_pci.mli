@@ -132,7 +132,7 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
     runs once, front to back: one an exception cuts short is a fault, which
     loses the GPU. Only the process uses a GPU it has booted, so the GPU's
     work waits for nobody else's, and rig loses the device once its timeline
-    makes no progress for {!Rig_pci.Gpus.hang_ms} (the device's
+    makes no progress for {!Rig_pci.Driver.hang_ms} (the device's
     [hang_ms]).
 
     Two GPUs map each other's memory only if both are taken physically, on
@@ -192,10 +192,10 @@ val gpu :
     those files, which root has. Detaching or attaching another machine's
     GPUs needs a program there. *)
 
-val detach : int -> (Rig_pci.Gpus.progress, string) result
+val detach : int -> (Rig_pci.Driver.progress, string) result
 (** [detach i] detaches GPU [i] of this machine from its kernel driver, so
     that its opener can take it, unless it is detached already
-    ({!Rig_pci.Gpus.detach}). The kernel driver's users, a display among
+    ({!Rig_pci.Driver.detach}). The kernel driver's users, a display among
     them, lose the GPU until {!attach} or a reboot. It refuses a GPU while a
     process holds its [/dev/nvidiaN] or nvidia-drm's DRM nodes open or
     mapped, and with nvidia-drm loaded it needs debugfs mounted at
@@ -203,19 +203,19 @@ val detach : int -> (Rig_pci.Gpus.progress, string) result
 
     It returns [Error why] only before its first write to the machine, and
     after that write [Ok Detached] or [Ok (Part_way why)]
-    ({!Rig_pci.Gpus.type-progress}). It is [Error why], changing nothing, if
+    ({!Rig_pci.Driver.type-progress}). It is [Error why], changing nothing, if
     there is no GPU [i], if this process holds it over PCI, if a process
-    holds a file of its devices, naming it, or as {!Rig_pci.Gpus.detach}.
+    holds a file of its devices, naming it, or as {!Rig_pci.Driver.detach}.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 val attach : int -> (unit, string) result
 (** [attach i] gives GPU [i] of this machine back to its kernel driver,
     resetting it first as {!reset} does if no kernel driver has it
-    ({!Rig_pci.Gpus.attach}).
+    ({!Rig_pci.Driver.attach}).
 
     [Error why] if there is no GPU [i], if this process holds it, or as
-    {!Rig_pci.Gpus.attach}.
+    {!Rig_pci.Driver.attach}.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

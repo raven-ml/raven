@@ -40,7 +40,7 @@
     v}
 
     A driver's open of a GPU usually goes like this:
-    + {!Gpus.open_} holds GPU [i] of a machine, takes its function and calls
+    + {!Driver.open_} holds GPU [i] of a machine, takes its function and calls
       the driver's [f], which starts the GPU.
     + [f] reserves its vendor's space on the machine
       ({!Machine.val-reserve}), maps the function's BARs ({!Function.map}) and
@@ -49,9 +49,9 @@
       the GPU's {!Memory} over them, from which it allocates its rings and its
       users' buffers.
     + Before the GPU can be left running, [f] gives the hold the GPU's stop
-      ({!Gpus.set_stop}).
+      ({!Driver.set_stop}).
     + The driver submits work through windows.
-    + {!Gpus.stop} ends the GPU's work and releases its function. The
+    + {!Driver.stop} ends the GPU's work and releases its function. The
       process's exit does this for each GPU it still holds.
 
     The modules below are in reading order, from the hardware up; each builds
@@ -62,11 +62,11 @@
     A {e PCI function} is one device on a machine's PCI bus, named by its bus
     address, such as [0000:03:00.0]. A GPU is one function, beside others of
     its card such as its audio function. GPU [i] of a machine is the [i]th GPU
-    of its vendor in bus order, whichever driver holds it ({!Gpus}).
+    of its vendor in bus order, whichever driver holds it ({!Driver}).
 
     An open of a GPU with no kernel driver needs:
     - The GPU detached from its kernel driver, once, outside the program
-      ({!Gpus.detach}). {!Gpus.section-changes} states the privileges this
+      ({!Driver.detach}). {!Driver.section-changes} states the privileges this
       needs and what persists.
     - A function the process can take, behind an IOMMU or physically, as the
       machine's state decides ({!Function}).
@@ -80,8 +80,8 @@
       the kernel's drivers load their images from there, and an image
       replaced there changes what they load.
 
-    {!Gpus} defines the states a GPU then passes through: detached, held and
-    lost. Each driver states what its next open does in each.
+    {!Driver} defines the states a function then passes through: detached,
+    held and lost. Each driver states what its next open does in each.
 
     {1:safety What a function can reach}
 
@@ -92,7 +92,7 @@
     dies by a signal or a crash, so the library gives it memory that outlives
     the process.
     {!Function} states both ways, the privileges each needs, and what stays
-    after the process. {!Gpus} states the changes to the machine that
+    after the process. {!Driver} states the changes to the machine that
     persist.
 
     {!Function} also states when a function's access ends, after its
@@ -126,7 +126,7 @@
       section). A call of this library's from such a callback raises
       [Invalid_argument] where it would take a lock its thread holds,
       without taking it. What it did before stays done, as after any
-      exception there, and a {!Gpus.stop} that raised so gives its GPU back
+      exception there, and a {!Driver.stop} that raised so gives its GPU back
       at the next stop.
 
     A message names what failed and, where something grants what is missing, the
@@ -190,10 +190,10 @@ module Page_table = Page_table
 module Memory = Memory
 (** The memory a GPU addresses, placed by kind. *)
 
-(** {1:gpus GPUs} *)
+(** {1:drivers Drivers} *)
 
 module Firmware = Firmware
 (** Firmware images, verified by digest. *)
 
-module Gpus = Gpus
-(** A vendor's GPUs, and the process's hold on them. *)
+module Driver = Driver
+(** User-space drivers of a machine's PCI functions. *)

@@ -13,7 +13,7 @@ module D = Defs
 module Machine = Rig_pci.Machine
 module Function = Rig_pci.Function
 module Window = Rig_pci.Window
-module Gpus = Rig_pci.Gpus
+module Driver = Rig_pci.Driver
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -96,8 +96,8 @@ let get s (off, n) =
    rig_edge.h), from before its take to after its give, so that a call from a
    signal handler, finaliser or Gc.Memprof callback inside it, of rig's or of
    this library's, is refused as it starts and never waits for the lock its own
-   thread holds. It nests inside rig.pci's vendor and hold locks ([Gpus]), whose
-   stop takes it, and holds rig.pci's function and memory locks. It is held
+   thread holds. It nests inside rig.pci's driver and hold locks ([Driver]),
+   whose stop takes it, and holds rig.pci's function and memory locks. It is held
    across a request to the firmware, which waits for its answer: the
    firmware's channel takes one request at a time. *)
 
@@ -636,7 +636,7 @@ let gid_of_mac mac = String.make 10 '\000' ^ "\xff\xff\x0a" ^ String.sub mac 3 3
 
 type t = {
   name : string;
-  hold : Gpus.hold;
+  hold : Driver.hold;
   hw : hw;
   rc : rcfw;
   nq_id : int;
@@ -665,14 +665,14 @@ let is_bnxt (id : Machine.id) =
 
 (* The kernel driver serves the NIC through network interfaces, which hold no
    file, and its RoCE driver through files with a [dev] file under the
-   function's directory, which {!Gpus.detach} finds itself. *)
+   function's directory, which {!Driver.detach} finds itself. *)
 let nics =
-  Gpus.make ~name:"BNXT" ~noun:"NIC" ~memory_bar:None ~siblings:Keep
+  Driver.make ~name:"BNXT" ~memory_bar:None ~siblings:Keep
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:10_000 ~reset:Function.reset is_bnxt
 
-let buses ?(machine = Machine.this) () = Gpus.buses nics machine
+let buses ?(machine = Machine.this) () = Driver.buses nics machine
 let count ?machine () = List.length (buses ?machine ())
 
 let map fn i =
@@ -777,29 +777,29 @@ let index what i =
 let open_ ?(machine = Machine.this) i =
   check "open_";
   index "open_" i;
-  let name = Gpus.name nics i in
-  Gpus.open_ nics machine i (fun h fn ->
+  let name = Driver.name nics i in
+  Driver.open_ nics machine i (fun h fn ->
       guard @@ fun () ->
       let hw = channel fn in
-      Gpus.set_stop h (stop hw);
+      Driver.set_stop h (stop hw);
       boot ~name h hw)
 
 let close nic =
   check "close";
   if not nic.closed then begin
     nic.closed <- true;
-    ignore (Gpus.stop nic.hold)
+    ignore (Driver.stop nic.hold)
   end
 
 let detach i =
   check "detach";
   index "detach" i;
-  Gpus.detach nics Machine.this i
+  Driver.detach nics Machine.this i
 
 let attach i =
   check "attach";
   index "attach" i;
-  Gpus.attach nics Machine.this i
+  Driver.attach nics Machine.this i
 
 (* Regions *)
 

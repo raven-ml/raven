@@ -55,8 +55,8 @@
 
     A take changes the function's legacy interrupts until its release, and a
     release turns bus mastering off. A function taken physically also gets
-    memory that outlives the process ({{!dma}system memory}). {!Gpus.detach}
-    and {!Gpus.attach} are the calls that change the machine.
+    memory that outlives the process ({{!dma}system memory}). {!Driver.detach}
+    and {!Driver.attach} are the calls that change the machine.
 
     One owner makes a function's calls one at a time, except that {!pin},
     {!unpin}, {!alloc_dma}, {!free_dma} and {!wait} may be called from any
@@ -82,12 +82,12 @@ val take : Machine.t -> string -> (t, string) result
 
     [Error why] if [bus] is not a function of [m], if [m] has failed, if a
     process, this one included, holds it, or if neither way is open:
-    - it is bound to a driver other than [vfio-pci] ({!Gpus.detach});
+    - it is bound to a driver other than [vfio-pci] ({!Driver.detach});
     - the IOMMU translates its addresses and it is not bound to [vfio-pci];
     - not behind an IOMMU, it is disabled, or it shares its device with
       another function and Linux resets it through its bus: the first method
       of its [reset_method] is [bus] or [cxl_bus], or the kernel lists none
-      and the function has a [reset] ({!Gpus.detach});
+      and the function has a [reset] ({!Driver.detach});
     - it is not behind an IOMMU and the kernel is locked down
       ([/sys/kernel/security/lockdown], which Secure Boot turns on in several
       distributions), which refuses every mapping of a BAR;
@@ -288,13 +288,13 @@ val reset : t -> (unit, string) result
       still holds, the file goes whatever memory it holds, unless a
       function's bus mastering stayed on.
     - A file a dead process left goes once every function that reached it has
-      been released with its bus mastering off, or its GPU has been reset
-      ({!Gpus.reset}, which {!Gpus.attach} runs too, as does {!Gpus.open_} of a
-      GPU such a file names). It goes at that reset, or at the next {!take} of a
-      function of the machine.
+      been released with its bus mastering off, or it has been reset
+      ({!Driver.reset}, which {!Driver.attach} runs too, as does
+      {!Driver.open_} of a function such a file names). It goes at that
+      reset, or at the next {!take} of a function of the machine.
     - A pinned block ({!pin}) stays, after the process's death too, until each
-      pin is {!unpin}ned or the pinning function's GPU is reset ({!Gpus.reset})
-      or renewed ({!Gpus.renew}).
+      pin is {!unpin}ned or the pinning function is reset ({!Driver.reset})
+      or renewed ({!Driver.renew}).
 
     Either way, a function reaches only the addresses its engines hold,
     which its driver states with {!set_dma_bits}, as Linux's drivers do with

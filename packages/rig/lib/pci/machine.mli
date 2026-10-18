@@ -48,13 +48,13 @@ val at : string -> t
     [root/sys/kernel/iommu_groups], its lockdown state at
     [root/sys/kernel/security/lockdown], its VFIO files under [root/dev/vfio],
     and the memory of functions taken physically under [root/dev/hugepages],
-    [root/proc/self/mounts] and [root/proc/self/pagemap]. {!Gpus.detach} also
+    [root/proc/self/mounts] and [root/proc/self/pagemap]. {!Driver.detach} also
     reads its processes under [root/proc] and its DRM clients under
     [root/sys/kernel/debug/dri]. A root that shows no PCI functions makes a
     machine with none.
 
     Each call makes another machine. Two machines at one root share no holds
-    ({!Gpus}), and the kernel still refuses a second take of one function. *)
+    ({!Driver}), and the kernel still refuses a second take of one function. *)
 
 val name : t -> string option
 (** [name m] is the name of [m] as its transport gives it, such as
@@ -196,9 +196,9 @@ val take_locked : t -> 's Sysfs.lock -> (fn, string) result
 val reserved : t -> int -> int -> bool
 
 (* [files m] is the files of [m] if the process reaches [m] without a transport:
-   {!this}'s, or those of a machine {!at} made. {!Gpus} reads them, to lock a
-   GPU's function across its checks, its take and its changes to kernel
-   drivers, and {!Memory} the way up the bus from a GPU. *)
+   {!this}'s, or those of a machine {!at} made. {!Driver} reads them, to lock a
+   function across its checks, its take and its changes to kernel drivers, and
+   {!Memory} the way up the bus from a GPU. *)
 val files : t -> Sysfs.t option
 
 (* [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or

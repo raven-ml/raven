@@ -30,8 +30,8 @@ external reraise : exn -> 'a = "%reraise"
    from a signal handler, finaliser or Gc.Memprof callback inside it is refused
    as it starts, and never waits for the lock its own thread holds. Locks nest
    in this order: an image's, which [entry] holds while it grows the scratch; a
-   device's guard; on the PCI path, rig.pci's vendor lock and a hold's
-   ([Rig_pci.Gpus]), which an open, a reset and a stop hold; a path's; then
+   device's guard; on the PCI path, rig.pci's driver lock and a hold's
+   ([Rig_pci.Driver]), which an open, a reset and a stop hold; a path's; then
    rig.pci's memory locks. A device's HDP lock holds no other.
 
    An image's lock is held while the scratch grows, a device's guard while

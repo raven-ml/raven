@@ -28,10 +28,10 @@
     {ul
     {- While [amdgpu] is bound, the kernel driver holds the GPU. {!detach}
        takes it from the kernel driver, and {!attach} gives it back.}
-    {- A detached GPU ({!Rig_pci.Gpus}) is bound to no kernel driver, or to
+    {- A detached GPU ({!Rig_pci.Driver}) is bound to no kernel driver, or to
        [vfio-pci], [amdgpu] has let go of it, and no process holds it.}
     {- A held GPU belongs to this process, from [Rig.open_] until its device
-       stops ({!Rig_pci.Gpus.type-hold}). Closing the device stops the
+       stops ({!Rig_pci.Driver.type-hold}). Closing the device stops the
        GPU's work and leaves it detached, marked clean, so that the next
        open boots it in part ({!section-opening}).}
     {- A GPU is lost when a fault or a hang ended its device, a boot failed
@@ -143,7 +143,7 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
     faults with their address, shader errors, and fatal hardware errors with
     its machine-check banks. {!Rig_amd.val-sleep} raises them. No kernel
     bounds the GPU's work, so the device declares [hang_ms]
-    ({!Rig_edge.type-facts}) of {!Rig_pci.Gpus.hang_ms}. A device stopped
+    ({!Rig_edge.type-facts}) of {!Rig_pci.Driver.hang_ms}. A device stopped
     with the fault it was lost for, a hang included, leaves its GPU lost,
     since its stop does not wait for the queues to leave.
 
@@ -172,7 +172,7 @@ val gpu :
     [make ()] returns [Error msg], [msg] starting with the GPU's name.
     Before the boot writes to the GPU, it refuses:
     {ul
-    {- a GPU [i] the machine does not have, saying how many it has;}
+    {- a GPU [i] the machine does not have, saying how many it has there;}
     {- a GPU this process holds, or one [amdgpu] has not let go of;}
     {- a function the process cannot take, with
        {!Rig_pci.Function.take}'s reason;}
@@ -198,23 +198,23 @@ val gpu :
 (** {1:changes Changes to the machine}
 
     {!detach}, {!attach} and {!reset} change the machine as
-    {!Rig_pci.Gpus} describes, and their changes persist after the process.
+    {!Rig_pci.Driver} describes, and their changes persist after the process.
     Each refuses a GPU that a process holds, this one included, over PCI or
     through a file of its kernel driver, such as the GPU's render node.
     {!detach} and {!attach} act on this machine alone, and need
     [CAP_SYS_ADMIN] and write access to the files under [/sys/bus/pci] they
     write, which root has. An [Error] or a [Part_way] for a file names it. *)
 
-val detach : int -> (Rig_pci.Gpus.progress, string) result
+val detach : int -> (Rig_pci.Driver.progress, string) result
 (** [detach i] takes GPU [i] of this machine from [amdgpu] as
-    {!Rig_pci.Gpus.detach} does, and makes its memory BAR as large as the
+    {!Rig_pci.Driver.detach} does, and makes its memory BAR as large as the
     BAR and its bridge allow. It waits up to 30 s for KFD to drop the files
     of the GPU's DRM nodes that it holds for processes that have exited,
     reading them in debugfs, which must be mounted at [/sys/kernel/debug].
     Once [detach] returns [Ok Detached], [amdgpu]'s last write to the GPU is
     done.
 
-    The result is as {!Rig_pci.Gpus.detach} returns it. While KFD's
+    The result is as {!Rig_pci.Driver.detach} returns it. While KFD's
     topology still lists the GPU or its [ip_discovery] directory stays after
     the unbind, [amdgpu] has not let go of the GPU. [detach] then returns
     [Ok (Unreleased msg)], and a later [detach] waits up to 30 s for both
@@ -224,8 +224,8 @@ val detach : int -> (Rig_pci.Gpus.progress, string) result
 
 val attach : int -> (unit, string) result
 (** [attach i] gives GPU [i] of this machine back to [amdgpu] as
-    {!Rig_pci.Gpus.attach} does, resetting it first as {!reset} does if it
-    is detached. The result is [Error msg] as {!Rig_pci.Gpus.attach}
+    {!Rig_pci.Driver.attach} does, resetting it first as {!reset} does if it
+    is detached. The result is [Error msg] as {!Rig_pci.Driver.attach}
     returns it.
 
     After a detach, [amdgpu] serves the GPU's render node again, but KFD

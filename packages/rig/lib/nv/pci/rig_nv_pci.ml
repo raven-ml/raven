@@ -42,15 +42,15 @@ let memory_bar = 1
 (* NVIDIA's driver holds no file of a GPU's devices past the process that opened
    it, and tells nothing of an unbound GPU. *)
 let gpus =
-  Gpus.make ~name:"NV-PCI" ~noun:"GPU" ~memory_bar:(Some memory_bar)
+  Driver.make ~name:"NV-PCI" ~memory_bar:(Some memory_bar)
     ~siblings:Remove ~nodes:Held.nodes
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Function.reset
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
-let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
+let buses ?(machine = Machine.this) () = Driver.buses gpus machine
 let count ?machine () = List.length (buses ?machine ())
-let device_name i = Gpus.name gpus i
+let device_name i = Driver.name gpus i
 
 (* Boot reports *)
 
@@ -270,7 +270,7 @@ let wpr2 c =
 let started hold (c : Chip.t) =
   if not (Chip.booted c) then Ok ()
   else
-    let* () = Gpus.renew hold in
+    let* () = Driver.renew hold in
     if not (Chip.booted c) then Ok ()
     else
       Error
@@ -322,11 +322,11 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
       register = (fun _ -> Ok ());
       unregister = (fun _ -> Ok ());
       check = check g gsp;
-      hang_ms = Some Gpus.hang_ms;
+      hang_ms = Some Driver.hang_ms;
       stop =
         (fun () ->
           Fun.protect
-            (fun () -> Gpus.stop hold)
+            (fun () -> Driver.stop hold)
             ~finally:(fun () ->
               protect g (fun () ->
                   g.names <- None;
@@ -356,7 +356,7 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
      the main pool. *)
   Page_table.booted tables;
   let* gsp = Gsp.create { chip = c; memory; tables; bar; space } fw fwsec in
-  Gpus.set_stop h (fun () -> Gsp.stop gsp);
+  Driver.set_stop h (fun () -> Gsp.stop gsp);
   let* () = Gsp.boot gsp in
   Ok (gsp, tables)
 
@@ -415,21 +415,21 @@ let boot ~word ~on ~firmware ~index h fn =
 let open_ ?(machine = Machine.this) ~word ~firmware i =
   Rig_nv.Lock.check "Rig_nv_pci.gpu";
   let on = known machine in
-  Gpus.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
+  Driver.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
 
 (* Changes to the machine *)
 
 let detach i =
   Rig_nv.Lock.check "Rig_nv_pci.detach";
-  Gpus.detach gpus Machine.this i
+  Driver.detach gpus Machine.this i
 
 let attach i =
   Rig_nv.Lock.check "Rig_nv_pci.attach";
-  Gpus.attach gpus Machine.this i
+  Driver.attach gpus Machine.this i
 
 let reset ?(machine = Machine.this) i =
   Rig_nv.Lock.check "Rig_nv_pci.reset";
-  Gpus.reset gpus machine i
+  Driver.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)
 let system_firmware = "/lib/firmware"

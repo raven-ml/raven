@@ -295,11 +295,11 @@ let numbering =
           match Rig_gpu_support.opened (Rig_amd_pci.gpu ~machine 3) with
           | Ok _ -> fail "GPU 3 opened"
           | Error why ->
-              equal string "AMD-PCI:3: no such GPU; the machine has 3" why);
+              equal string "AMD-PCI:3: no such function; AMD-PCI drives 3 here" why);
       test "a reset past the last GPU names the GPU and the count" (fun () ->
           let machine = Rig_pci.Machine.at (machine ()) in
           equal (result pass string)
-            (Error "AMD-PCI:3: no such GPU; the machine has 3")
+            (Error "AMD-PCI:3: no such function; AMD-PCI drives 3 here")
             (Rig_amd_pci.reset ~machine 3));
       cases ~name:fst "a negative GPU number raises"
         [

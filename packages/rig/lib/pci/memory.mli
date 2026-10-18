@@ -20,7 +20,7 @@
     {!region}, and {!free} gives any region back.
 
     {b After the GPU is given back.} Once the GPU's function is released
-    ({!Function.release}, which {!Gpus.stop} and {!release} do), {!free}
+    ({!Function.release}, which {!Driver.stop} and {!release} do), {!free}
     writes none of the GPU's tables. It gives back system memory, pins and
     virtual addresses only, and {!val-alloc}, {!map_host} and {!map_peer} raise
     [Invalid_argument]. Once the function is released, another open may reset
@@ -63,8 +63,8 @@ val create : ?link:link -> Function.t -> Page_table.t -> bar:int -> t
 val release : t -> unit
 (** [release m] releases the function of [m]'s GPU ({!Function.release}), then
     drops the page tables {!create} was given, which only a live GPU uses. A
-    driver that keeps [m] past the GPU's stop ({!Gpus.stop}) releases it there,
-    so that [m] holds no page table. Releasing [m] again does nothing. *)
+    driver that keeps [m] past the GPU's stop ({!Driver.stop}) releases it
+    there, so that [m] holds no page table. Releasing [m] again does nothing. *)
 
 type reach
 (** The type for the facts that decide whose GPU memory a GPU maps

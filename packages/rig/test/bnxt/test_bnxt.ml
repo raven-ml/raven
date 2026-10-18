@@ -79,7 +79,7 @@ let test_inside_lock () =
   equal ~msg:"locks held" int before (Rig_support.holds ());
   match B.open_ (B.count ()) with
   | Ok _ -> fail "opened a NIC past the last"
-  | Error e -> contains ~msg:"an open outside a lock" ~sub:"no such NIC" e
+  | Error e -> contains ~msg:"an open outside a lock" ~sub:"no such function" e
 
 let refusals =
   group "refusals"
@@ -96,7 +96,7 @@ let refusals =
           | Error e ->
               equal string ~msg:"the message's start" name
                 (String.sub e 0 (min (String.length e) (String.length name)));
-              contains ~sub:"no such NIC" e);
+              contains ~sub:"no such function" e);
       test "a negative index raises" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
               ignore (B.open_ (-1)));

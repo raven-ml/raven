@@ -6,14 +6,14 @@
   test_space
   test_page_table
   test_firmware)
- (modules :standard \ test_function test_gpus)
+ (modules :standard \ test_function test_driver)
  (libraries rig_pci rig_pci_support rig_support unix windtrap))
 
-; test_function and test_gpus take this machine's GPUs.
+; test_function and test_driver take this machine's GPUs.
 
 (tests
- (names test_function test_gpus)
- (modules test_function test_gpus)
+ (names test_function test_driver)
+ (modules test_function test_driver)
  (locks %{workspace_root}/gpu)
  (libraries rig_pci rig_pci_support rig_support unix windtrap))
 

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** The device file [/dev/nvidiaN] through which NVIDIA's kernel driver
-    serves a GPU, which a detach must find closed ({!Rig_pci.Gpus.make}'s
+    serves a GPU, which a detach must find closed ({!Rig_pci.Driver.make}'s
     [nodes]). *)
 
 val nodes : root:string -> string -> string list

@@ -45,11 +45,11 @@ let teardown_ms = 2000
 let name = "AMD-PCI"
 
 let gpus ?(reset = counted) ?(nodes = no_nodes) ?(unreleased = released)
-    ?(teardown_ms = teardown_ms) ?(noun = "GPU") ?(siblings = Gpus.Remove) () =
-  Gpus.make ~name ~noun ~memory_bar:(Some 0) ~siblings ~nodes ~unreleased
+    ?(teardown_ms = teardown_ms) ?(siblings = Driver.Remove) () =
+  Driver.make ~name ~memory_bar:(Some 0) ~siblings ~nodes ~unreleased
     ~teardown_ms ~reset is_gpu
 
-let pp_progress ppf (d : Gpus.progress) =
+let pp_progress ppf (d : Driver.progress) =
   match d with
   | Detached -> Format.pp_print_string ppf "Detached"
   | Unreleased why -> Format.fprintf ppf "Unreleased %S" why
@@ -60,7 +60,7 @@ let progress = Testable.make ~pp:pp_progress ~equal:( = )
 (* [r]'s reason of a detach that stopped part-way. *)
 let part_way r =
   match require_ok ~pp:Format.pp_print_string r with
-  | Gpus.Part_way why -> why
+  | Driver.Part_way why -> why
   | d -> failf "detach went %a, not part-way" pp_progress d
 
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
@@ -102,11 +102,11 @@ let ok () = Ok ()
 
 (* [kept h] gives [h] a clean stop and keeps it. *)
 let kept h =
-  Gpus.set_stop h (fun () -> `Clean);
+  Driver.set_stop h (fun () -> `Clean);
   Ok h
 
 let open_ g m i d =
-  Gpus.open_ g m i (fun h _ ->
+  Driver.open_ g m i (fun h _ ->
       let r = d () in
       if Result.is_ok r then ignore (kept h);
       r)
@@ -114,23 +114,23 @@ let open_ g m i d =
 (* [reset g m i d] resets GPU [i], calling [d] once per reset the vendor ran. *)
 let reset g m i d =
   let before = Atomic.get vendor_resets in
-  let r = Gpus.reset g m i in
+  let r = Driver.reset g m i in
   for _ = before + 1 to Atomic.get vendor_resets do
     ignore (d ())
   done;
   r
 
-let hold g m i = require_ok (Gpus.open_ g m i (fun h _ -> kept h))
+let hold g m i = require_ok (Driver.open_ g m i (fun h _ -> kept h))
 
 (* [stopping g m i answer] holds GPU [i], whose vendor's stop answers
    [answer]. *)
 let stopping g m i answer =
   require_ok
-    (Gpus.open_ g m i (fun h _ ->
-         Gpus.set_stop h (fun () -> answer);
+    (Driver.open_ g m i (fun h _ ->
+         Driver.set_stop h (fun () -> answer);
          Ok h))
 
-let stop h = ignore (Gpus.stop h : [ `Stopped | `Unknown ])
+let stop h = ignore (Driver.stop h : [ `Stopped | `Unknown ])
 
 (* [unopened open_] is the message of [open_ driver], an [Error] that never
    called [driver]. *)
@@ -146,7 +146,7 @@ let unopened ?__POS__ open_ =
 
 (* [names n why] asserts that the number [n] is a word of [why]. *)
 (* The refusal of a GPU on a machine that has none says so. *)
-let has_none why = contains ~sub:"the machine has none" why
+let has_none why = contains ~sub:(name ^ " drives none here") why
 
 let names n why =
   let digits c = if c >= '0' && c <= '9' then c else ' ' in
@@ -189,7 +189,7 @@ let test_in_order ids =
     { (Tree.gpu id.bus) with vendor = id.vendor; class_ = id.class_ }
   in
   let m = Machine.at (Tree.make (List.map fn ids)) in
-  equal (list string) (gpus_of ids) (Gpus.buses (gpus ()) m)
+  equal (list string) (gpus_of ids) (Driver.buses (gpus ()) m)
 
 let test_ith () =
   needs_flock ();
@@ -198,7 +198,7 @@ let test_ith () =
     let msg = strf "GPU %d" i in
     stop
       (require_ok ~msg
-         (Gpus.open_ g m i (fun h fn ->
+         (Driver.open_ g m i (fun h fn ->
               equal ~msg string bus (Function.bus fn);
               equal ~msg (option string) (Machine.name m)
                 (Machine.name (Function.machine fn));
@@ -219,7 +219,7 @@ let test_reset_ith () =
   in
   let reset i bus =
     seen := [];
-    require_ok (Gpus.reset g m i);
+    require_ok (Driver.reset g m i);
     equal ~msg:(strf "GPU %d" i) (list string) [ bus ] !seen
   in
   List.iteri reset gpu_buses
@@ -232,19 +232,13 @@ let no_gpu =
 let test_no_gpu (_, f, i) =
   let g, m, _ = three () in
   let why = unopened (f g m i) in
-  starts_with ~msg:"names the GPU" ~affix:(Gpus.name g i) why;
+  starts_with ~msg:"names the GPU" ~affix:(Driver.name g i) why;
   names 3 why
-
-(* Messages call the vendor's devices by its noun. *)
-let test_noun () =
-  let m = Machine.at (Tree.make []) in
-  let why = unopened (open_ (gpus ~noun:"NIC" ()) m 0) in
-  contains ~sub:"no such NIC" why
 
 let test_none () =
   let m = Machine.at (Tree.make [ audio "0000:03:00.1" ]) in
   let g = gpus () in
-  equal (list string) [] (Gpus.buses g m);
+  equal (list string) [] (Driver.buses g m);
   has_none (unopened (open_ g m 0));
   has_none (unopened (reset g m 0))
 
@@ -256,11 +250,11 @@ let negative =
   List.concat_map
     (fun (name, f) -> List.map (fun i -> (name, f, i)) [ -1; min_int ])
     [
-      ("name", fun i -> ignore (Gpus.name (gpus ()) i));
+      ("name", fun i -> ignore (Driver.name (gpus ()) i));
       ("open_", fun i -> ignore (open_ (gpus ()) (far ()) i ok));
       ("reset", fun i -> ignore (reset (gpus ()) (far ()) i ok));
-      ("detach", fun i -> ignore (Gpus.detach (gpus ()) Machine.this i));
-      ("attach", fun i -> ignore (Gpus.attach (gpus ()) Machine.this i));
+      ("detach", fun i -> ignore (Driver.detach (gpus ()) Machine.this i));
+      ("attach", fun i -> ignore (Driver.attach (gpus ()) Machine.this i));
     ]
 
 (* GPU 0 bears the vendor's name, and GPU i that name and its number. *)
@@ -268,7 +262,7 @@ let test_name =
   cases ~name:(strf "GPU %d") "a GPU is named after its vendor and number"
     [ 0; 1; 12; max_int ] (fun i ->
       let want = if i = 0 then name else strf "%s:%d" name i in
-      equal string want (Gpus.name (gpus ()) i))
+      equal string want (Driver.name (gpus ()) i))
 
 let numbering =
   group ~timeout:patience "numbering"
@@ -284,7 +278,6 @@ let numbering =
         ~name:(fun (f, _, i) -> strf "%s %d" f i)
         no_gpu test_no_gpu;
       test "a machine without the vendor's GPUs has none to open" test_none;
-      test "an Error calls the devices by the vendor's noun" test_noun;
       cases "a negative GPU number raises Invalid_argument"
         ~name:(fun (f, _, i) -> strf "%s %d" f i)
         negative
@@ -299,11 +292,11 @@ let test_result () =
   needs_flock ();
   let g, m, _ = three () in
   equal (result int string) (Ok 42)
-    (Gpus.open_ g m 0 (fun h _ -> Result.map (fun _ -> 42) (kept h)));
+    (Driver.open_ g m 0 (fun h _ -> Result.map (fun _ -> 42) (kept h)));
   let why =
-    require_error (Gpus.open_ g m 1 (fun _ _ -> Error "the GPU did not start"))
+    require_error (Driver.open_ g m 1 (fun _ _ -> Error "the GPU did not start"))
   in
-  starts_with ~msg:"names the GPU" ~affix:(Gpus.name g 1) why;
+  starts_with ~msg:"names the GPU" ~affix:(Driver.name g 1) why;
   ends_with ~msg:"the driver's" ~affix:"the GPU did not start" why
 
 (* [given_back g m root] asserts that GPU 0's function was given back, and that
@@ -315,7 +308,7 @@ let given_back g m root =
 let test_error_gives_back () =
   needs_flock ();
   let g, m, root = three () in
-  ignore (Gpus.open_ g m 0 (fun _ _ -> Error "the GPU did not start"));
+  ignore (Driver.open_ g m 0 (fun _ _ -> Error "the GPU did not start"));
   given_back g m root
 
 let passed =
@@ -331,8 +324,8 @@ let passed =
           ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
         ])
     [
-      ("open_", fun g m e -> Gpus.open_ g m 0 (fun _ _ -> raise e));
-      ("reset", fun g m _ -> Gpus.reset g m 0);
+      ("open_", fun g m e -> Driver.open_ g m 0 (fun _ _ -> raise e));
+      ("reset", fun g m _ -> Driver.reset g m 0);
     ]
 
 (* A driver's start that raises before its stop releases the GPU as found, and
@@ -361,7 +354,7 @@ let test_take_refused () =
   needs_flock ();
   let g = gpus () in
   let why = unopened (open_ g (refusing ()) 0) in
-  starts_with ~msg:"names the GPU" ~affix:(Gpus.name g 0) why;
+  starts_with ~msg:"names the GPU" ~affix:(Driver.name g 0) why;
   contains ~msg:"the take's" ~sub:"0000:03:00.0 is bound to the driver amdgpu"
     why
 
@@ -428,7 +421,7 @@ let test_reset () =
     seen := (bus, Function.released fn, held root bus) :: !seen;
     Ok ()
   in
-  require_ok (Gpus.reset (gpus ~reset:reset_gpu ()) m 1);
+  require_ok (Driver.reset (gpus ~reset:reset_gpu ()) m 1);
   equal ~msg:"what the reset saw: bus, released, held"
     (list (triple string bool bool))
     [ ("0000:43:00.0", false, true) ]
@@ -445,7 +438,7 @@ let test_reset_failure () =
   needs_flock ();
   let _, m, root = three () in
   let g = gpus ~reset:(fun _ -> Error "the GPU did not come back") () in
-  let why = require_error (Gpus.reset g m 0) in
+  let why = require_error (Driver.reset g m 0) in
   contains ~sub:"the GPU did not come back" why;
   equal ~msg:"held after" bool false (held root "0000:03:00.0")
 
@@ -469,16 +462,16 @@ let resets =
 
 let test_this_none () =
   let g =
-    Gpus.make ~name ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
+    Driver.make ~name ~memory_bar:(Some 0) ~siblings:Remove
       ~nodes:no_nodes ~unreleased:released
       ~teardown_ms ~reset:counted (fun _ -> false)
   in
   let this = Machine.this in
-  equal (list string) [] (Gpus.buses g this);
+  equal (list string) [] (Driver.buses g this);
   has_none (unopened (open_ g this 0));
   has_none (unopened (reset g this 0));
-  ignore (require_error (Gpus.detach g this 0));
-  ignore (require_error (Gpus.attach g this 0))
+  ignore (require_error (Driver.detach g this 0));
+  ignore (require_error (Driver.attach g this 0))
 
 let this_machine =
   group ~timeout:patience "this machine"
@@ -495,7 +488,7 @@ let sample () = Unix.sleepf 0.05
 
 (* While GPU 0's driver starts, another domain opens or resets GPU 1. Its driver
    must not run before GPU 0's returns. GPU 0's driver waits until the other
-   domain is about to call Gpus, then samples a window in which a driver that is
+   domain is about to call Driver, then samples a window in which a driver that is
    not held back runs inside it. *)
 let test_one_at_a_time (_, other) =
   needs_flock ();
@@ -516,13 +509,13 @@ let test_one_at_a_time (_, other) =
           Atomic.set about true;
           other g m 1 driver)
     in
-    equal ~msg:"the other domain reached Gpus" bool true
+    equal ~msg:"the other domain reached Driver" bool true
       (poll (fun () -> Atomic.get about));
     sample ();
     Atomic.set inside false;
     Result.map (fun _ -> d) (kept h)
   in
-  let d = require_ok (Gpus.open_ g m 0 start) in
+  let d = require_ok (Driver.open_ g m 0 start) in
   require_ok (Domain.join d);
   equal ~msg:"the other driver ran" bool true (Atomic.get ran);
   equal ~msg:"the other driver ran inside GPU 0's" bool false
@@ -542,7 +535,7 @@ let test_stop_waits answer =
     Atomic.set inside true;
     Result.map (fun _ -> poll (fun () -> Atomic.get back)) (kept h)
   in
-  let d = Domain.spawn (fun () -> Gpus.open_ g m 0 start) in
+  let d = Domain.spawn (fun () -> Driver.open_ g m 0 start) in
   equal ~msg:"GPU 0's driver started" bool true
     (poll (fun () -> Atomic.get inside));
   stop h1;
@@ -572,11 +565,11 @@ type hold_ref = {
 }
 
 type vendor_sys = {
-  g : Gpus.t;
+  g : Driver.t;
   m : Machine.t;
   resets : int Atomic.t;
   stops : int Atomic.t;
-  holds : Gpus.hold list Atomic.t;  (** Every hold an open made. *)
+  holds : Driver.hold list Atomic.t;  (** Every hold an open made. *)
   configs : Unix.file_descr array;
       (** Each GPU's configuration file, open, so that the check after every
           call makes no open. *)
@@ -692,7 +685,7 @@ let open_sys s start answer i =
   let driver h _ =
     begun := true;
     let set () =
-      Gpus.set_stop h (fun () ->
+      Driver.set_stop h (fun () ->
           Atomic.incr s.stops;
           answer)
     in
@@ -709,7 +702,7 @@ let open_sys s start answer i =
         set ();
         invalid_arg err_driver_bug
   in
-  match Gpus.open_ s.g s.m i driver with
+  match Driver.open_ s.g s.m i driver with
   | Ok h ->
       keep s h;
       h
@@ -725,7 +718,7 @@ let try_open_ref v i =
   free
 
 let try_open_sys s i =
-  match Gpus.open_ s.g s.m i (fun h _ -> kept h) with
+  match Driver.open_ s.g s.m i (fun h _ -> kept h) with
   | Ok h ->
       keep s h;
       true
@@ -754,7 +747,7 @@ let reset_ref v i =
   end;
   free
 
-let reset_sys s i = Result.is_ok (Gpus.reset s.g s.m i)
+let reset_sys s i = Result.is_ok (Driver.reset s.g s.m i)
 
 (* Two domains contend for GPU 0 alone, so that they meet. *)
 let commands index =
@@ -766,7 +759,7 @@ let commands index =
     command "open_, kept"
       (vendor_t ^-> index @-> returns bool)
       try_open_ref try_open_sys;
-    command "stop" (hold_t ^-> returns stopped) stop_ref Gpus.stop;
+    command "stop" (hold_t ^-> returns stopped) stop_ref Driver.stop;
     command "reset" (vendor_t ^-> index @-> returns bool) reset_ref reset_sys;
     command "resets"
       (vendor_t ^-> returns int)
@@ -1010,9 +1003,9 @@ let test_change (_, fns, change, refusal, files) =
   let m = Machine.at root in
   let r =
     match change with
-    | `Detach | `Detach_locked_down -> Gpus.detach (gpus ()) m 0
+    | `Detach | `Detach_locked_down -> Driver.detach (gpus ()) m 0
     | `Attach ->
-        Result.map (fun () -> Gpus.Detached) (Gpus.attach (gpus ()) m 0)
+        Result.map (fun () -> Driver.Detached) (Driver.attach (gpus ()) m 0)
   in
   (match refusal with
   | `Done -> equal progress Detached (require_ok r)
@@ -1053,7 +1046,7 @@ let test_detach_stops_mastering () =
   let root = Tree.make [ Tree.gpu gpu_bus ] in
   mastering root;
   equal progress Detached
-    (require_ok (Gpus.detach (gpus ()) (Machine.at root) 0));
+    (require_ok (Driver.detach (gpus ()) (Machine.at root) 0));
   equal hex memory_space (command_in root)
 
 (* A detach that stops part-way may leave the GPU bound to its kernel driver
@@ -1063,10 +1056,10 @@ let test_attach_part_way () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu ~driver:"amdgpu" gpu_bus ] in
   let g = gpus () and m = Machine.at root in
-  contains ~sub:"stays bound" (part_way (Gpus.detach g m 0));
+  contains ~sub:"stays bound" (part_way (Driver.detach g m 0));
   equal ~msg:"kept off" string "none"
     (pci_file root (devices gpu_bus "driver_override"));
-  require_ok ~pp:Format.pp_print_string (Gpus.attach g m 0);
+  require_ok ~pp:Format.pp_print_string (Driver.attach g m 0);
   equal ~msg:"the override" string ""
     (pci_file root (devices gpu_bus "driver_override"));
   equal ~msg:"rescan" string "1" (pci_file root "rescan")
@@ -1089,7 +1082,7 @@ let test_attach_resets () =
   in
   let m = Machine.at root in
   contains ~sub:"no kernel driver took 0000:03:00.0"
-    (require_error (Gpus.attach (gpus ~reset ()) m 0));
+    (require_error (Driver.attach (gpus ~reset ()) m 0));
   equal ~msg:"what the reset saw"
     (list (triple hex string string))
     [ (memory_space, "none", "") ]
@@ -1107,7 +1100,7 @@ let test_attach_refused () =
   Tree.add root (sys (devices gpu_bus "driver_override")) "none\n";
   let reset _ = Error "the GPU did not come back" in
   contains ~sub:"the GPU did not come back"
-    (require_error (Gpus.attach (gpus ~reset ()) (Machine.at root) 0));
+    (require_error (Driver.attach (gpus ~reset ()) (Machine.at root) 0));
   List.iter
     (fun (file, want) -> equal ~msg:file string want (pci_file root file))
     [
@@ -1121,7 +1114,7 @@ let test_attach_bound () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu ~driver:"amdgpu" gpu_bus ] in
   let before = Atomic.get vendor_resets in
-  require_ok (Gpus.attach (gpus ()) (Machine.at root) 0);
+  require_ok (Driver.attach (gpus ()) (Machine.at root) 0);
   equal ~msg:"resets" int 0 (Atomic.get vendor_resets - before)
 
 (* A GPU this process lost and attach reset opens again without a reset. *)
@@ -1132,7 +1125,7 @@ let test_attach_lost () =
   stop (stopping g m 0 `Lost);
   let before = Atomic.get vendor_resets in
   contains ~sub:"no kernel driver took 0000:03:00.0"
-    (require_error (Gpus.attach g m 0));
+    (require_error (Driver.attach g m 0));
   equal ~msg:"reset by attach" int 1 (Atomic.get vendor_resets - before);
   Tree.add root (sys (devices gpu_bus "enable")) "1\n";
   stop (hold g m 0);
@@ -1143,9 +1136,9 @@ let test_change_held () =
   let g = gpus () and m = Machine.at (Tree.make [ Tree.gpu gpu_bus ]) in
   let h = hold g m 0 in
   contains ~msg:"detach" ~sub:"0000:03:00.0 is open in this process"
-    (require_error (Gpus.detach g m 0));
+    (require_error (Driver.detach g m 0));
   contains ~msg:"attach" ~sub:"0000:03:00.0 is open in this process"
-    (require_error (Gpus.attach g m 0));
+    (require_error (Driver.attach g m 0));
   stop h
 
 let test_change_unwritable () =
@@ -1157,7 +1150,7 @@ let test_change_unwritable () =
     Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "enable")
   in
   Unix.chmod enable 0o444;
-  let why = part_way (Gpus.detach (gpus ()) (Machine.at root) 0) in
+  let why = part_way (Driver.detach (gpus ()) (Machine.at root) 0) in
   contains ~msg:"names the file" ~sub:enable why;
   contains ~msg:"names the privilege" ~sub:"run as root" why
 
@@ -1252,7 +1245,7 @@ let test_open_device (_, setup, nodes, want) =
   let root = Tree.make [ Tree.gpu gpu_bus ] in
   setup root;
   let g = gpus ~nodes () in
-  match (want, Gpus.detach g (Machine.at root) 0) with
+  match (want, Driver.detach g (Machine.at root) 0) with
   | `Detached, r -> equal progress Detached (require_ok r)
   | `Refused file, r ->
       let why = require_error r in
@@ -1290,7 +1283,7 @@ let test_held_elsewhere () =
       Tree.link root link "/dev/null";
       Tree.link root "proc/4242/fd/8" "/dev/zero";
       let before = override root in
-      let why = require_error (Gpus.detach g (Machine.at root) 0) in
+      let why = require_error (Driver.detach g (Machine.at root) 0) in
       contains ~msg ~sub:"process 4242 holds /dev/null" why;
       equal ~msg string before (override root))
     [
@@ -1306,7 +1299,7 @@ let test_held_by_daemon () =
   Tree.link root "proc/4242/fd/7" "/dev/null";
   Tree.add root "proc/4242/comm" "nvidia-persistenced\n";
   let g = gpus ~teardown_ms:60_000 () in
-  let why = require_error (Gpus.detach g (Machine.at root) 0) in
+  let why = require_error (Driver.detach g (Machine.at root) 0) in
   contains ~sub:"process 4242 (nvidia-persistenced) holds /dev/null" why;
   contains ~sub:"stop it first" why
 
@@ -1321,7 +1314,7 @@ let test_let_go_drm () =
         Unix.sleepf 0.2;
         clients root [])
   in
-  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  let r = Driver.detach (gpus ()) (Machine.at root) 0 in
   Domain.join closer;
   equal progress Detached (require_ok r);
   equal ~msg:"detached" string "none" (String.trim (override root))
@@ -1334,7 +1327,7 @@ let test_kernel_holds () =
   clients root [ (4242, "a compositor") ];
   let before = override root in
   let why =
-    require_error (Gpus.detach (gpus ~teardown_ms:200 ()) (Machine.at root) 0)
+    require_error (Driver.detach (gpus ~teardown_ms:200 ()) (Machine.at root) 0)
   in
   contains ~msg:"names the process" ~sub:"process 4242 (a compositor)" why;
   equal ~msg:"nothing written" string before (override root)
@@ -1347,7 +1340,7 @@ let test_own_drm () =
   clients root [ (Unix.getpid (), "this test") ];
   let g = gpus ~teardown_ms:60_000 () in
   contains ~sub:"0000:03:00.0 is open in this process"
-    (require_error (Gpus.detach g (Machine.at root) 0))
+    (require_error (Driver.detach g (Machine.at root) 0))
 
 (* A GPU with a DRM device whose files debugfs does not list is refused, since
    detach cannot know them, naming the list. *)
@@ -1357,7 +1350,7 @@ let test_no_debugfs () =
   let list = strf "sys/kernel/debug/dri/%s/clients" gpu_bus in
   Sys.remove (Filename.concat root list);
   let before = override root in
-  contains ~sub:list (require_error (Gpus.detach (gpus ()) (Machine.at root) 0));
+  contains ~sub:list (require_error (Driver.detach (gpus ()) (Machine.at root) 0));
   equal ~msg:"nothing written" string before (override root)
 
 (* A process's [/proc] entry that cannot be read for a reason other than its end
@@ -1370,7 +1363,7 @@ let test_unreadable_proc () =
   Tree.link root "proc/4242/fd/3" "/dev/zero";
   let fd = Filename.concat root "proc/4242/fd" in
   Unix.chmod fd 0o000;
-  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  let r = Driver.detach (gpus ()) (Machine.at root) 0 in
   Unix.chmod fd 0o755;
   contains ~sub:"proc/4242/fd" (require_error r)
 
@@ -1384,7 +1377,7 @@ let test_unreadable_mapping () =
   Tree.link root "proc/4242/map_files/7f00-7f01" "/dev/zero";
   let dir = Filename.concat root "proc/4242/map_files" in
   Unix.chmod dir 0o444;
-  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  let r = Driver.detach (gpus ()) (Machine.at root) 0 in
   Unix.chmod dir 0o755;
   let why = require_error r in
   contains ~sub:"proc/4242/map_files/7f00-7f01" why
@@ -1400,14 +1393,14 @@ let test_unreleased () =
     else None
   in
   equal progress Detached
-    (require_ok (Gpus.detach (gpus ~unreleased:twice ()) (Machine.at root) 0));
+    (require_ok (Driver.detach (gpus ~unreleased:twice ()) (Machine.at root) 0));
   at_least ~msg:"asked until it let go" int ~than:3 (Atomic.get asked);
   let root = held_tree () in
   let original = override root in
   let always ~root:_ _ = Some "its release pending" in
   let why =
     require_error
-      (Gpus.detach
+      (Driver.detach
          (gpus ~unreleased:always ~teardown_ms:200 ())
          (Machine.at root) 0)
   in
@@ -1452,9 +1445,9 @@ let test_reset_unreleased () =
   let g = gpus ~unreleased () and m = Machine.at root in
   let before = Atomic.get vendor_resets in
   contains ~msg:"reset" ~sub:"its release pending"
-    (require_error (Gpus.reset g m 0));
+    (require_error (Driver.reset g m 0));
   contains ~msg:"attach" ~sub:"its release pending"
-    (require_error (Gpus.attach g m 0));
+    (require_error (Driver.attach g m 0));
   equal ~msg:"resets" int 0 (Atomic.get vendor_resets - before)
 
 (* A GPU bound to vfio-pci stays as it is: nothing is waited for. *)
@@ -1464,7 +1457,7 @@ let test_vfio_unwaited () =
   let always ~root:_ _ = Some "its release pending" in
   equal progress Detached
     (require_ok
-       (Gpus.detach
+       (Driver.detach
           (gpus ~unreleased:always ~teardown_ms:60_000 ())
           (Machine.at root) 0))
 
@@ -1490,9 +1483,9 @@ let test_attach_vfio_part_way () =
       ]
   in
   contains ~sub:"snd_hda_intel stays bound"
-    (part_way (Gpus.detach g (Machine.at bound) 0));
+    (part_way (Driver.detach g (Machine.at bound) 0));
   require_ok ~msg:"attach of a GPU still bound"
-    (Gpus.attach g (Machine.at bound) 0);
+    (Driver.attach g (Machine.at bound) 0);
   equal ~msg:"the GPU's override" string ""
     (pci_file bound (devices gpu_bus "driver_override"));
   equal ~msg:"the other function's override" string ""
@@ -1506,11 +1499,11 @@ let test_attach_vfio_part_way () =
       ]
   in
   contains ~sub:"vfio-pci did not take"
-    (part_way (Gpus.detach g (Machine.at unbound) 0));
+    (part_way (Driver.detach g (Machine.at unbound) 0));
   Tree.add unbound
     (Filename.concat "sys/bus/pci" (devices gpu_bus "driver_override"))
     "";
-  let why = require_error (Gpus.attach g (Machine.at unbound) 0) in
+  let why = require_error (Driver.attach g (Machine.at unbound) 0) in
   contains ~msg:"attach binds the GPU to vfio-pci first"
     ~sub:"vfio-pci did not take 0000:03:00.0" why;
   contains ~msg:"where to find why" ~sub:"the kernel's log (dmesg)" why;
@@ -1522,8 +1515,8 @@ let test_attach_vfio_part_way () =
 let test_keep_siblings () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu gpu_bus; audio "0000:03:00.1" ] in
-  let g = gpus ~siblings:Gpus.Keep () in
-  let why = require_error (Gpus.detach g (Machine.at root) 0) in
+  let g = gpus ~siblings:Driver.Keep () in
+  let why = require_error (Driver.detach g (Machine.at root) 0) in
   contains ~sub:"0000:03:00.1 (bound to snd_hda_intel)" why;
   contains ~sub:"which detach leaves" why;
   contains ~sub:"remove or detach them first" why;
@@ -1533,13 +1526,13 @@ let test_keep_siblings () =
     (pci_file root (devices "0000:03:00.1" "remove"));
   let alone = Tree.make [ Tree.gpu gpu_bus ] in
   equal progress Detached
-    (require_ok (Gpus.detach g (Machine.at alone) 0));
+    (require_ok (Driver.detach g (Machine.at alone) 0));
   let own =
     Tree.make
       [ Tree.gpu ~reset:(Some "flr bus") gpu_bus; audio "0000:03:00.1" ]
   in
   equal progress Detached
-    (require_ok ~msg:"a reset of its own" (Gpus.detach g (Machine.at own) 0));
+    (require_ok ~msg:"a reset of its own" (Driver.detach g (Machine.at own) 0));
   equal ~msg:"the other function, kept" string ""
     (pci_file own (devices "0000:03:00.1" "remove"))
 
@@ -1616,7 +1609,7 @@ let tree_changes =
    functions it takes physically, which needs Linux. *)
 
 type tree = {
-  g : Gpus.t;
+  g : Driver.t;
   m : Machine.t;
   root : string;
   resets : int Atomic.t;
@@ -1641,7 +1634,7 @@ let resets_of t = Atomic.get t.resets
 let opened t f =
   let before = ref None in
   let r =
-    Gpus.open_ t.g t.m 0 (fun h fn ->
+    Driver.open_ t.g t.m 0 (fun h fn ->
         before := Some (resets_of t);
         f h fn)
   in
@@ -1654,30 +1647,30 @@ let reset_before = option int
 let test_named_errors (_, request) =
   let t = tree ~gpus_on:[ gpu_bus; "0000:43:00.0" ] () in
   let h = hold t.g t.m 1 in
-  starts_with ~affix:(Gpus.name t.g 1 ^ ":") (require_error (request t));
+  starts_with ~affix:(Driver.name t.g 1 ^ ":") (require_error (request t));
   stop h
 
 let named_requests =
   [
     ("open_", fun t -> open_ t.g t.m 1 ok);
-    ("reset", fun t -> Gpus.reset t.g t.m 1);
-    ("detach", fun t -> Result.map ignore (Gpus.detach t.g t.m 1));
-    ("attach", fun t -> Gpus.attach t.g t.m 1);
+    ("reset", fun t -> Driver.reset t.g t.m 1);
+    ("detach", fun t -> Result.map ignore (Driver.detach t.g t.m 1));
+    ("attach", fun t -> Driver.attach t.g t.m 1);
   ]
 
 let test_set_stop_twice () =
   let t = tree () in
   let h =
     require_ok
-      (Gpus.open_ t.g t.m 0 (fun h _ ->
-           Gpus.set_stop h (fun () -> `Clean);
+      (Driver.open_ t.g t.m 0 (fun h _ ->
+           Driver.set_stop h (fun () -> `Clean);
            raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-               Gpus.set_stop h (fun () -> `Lost));
+               Driver.set_stop h (fun () -> `Lost));
            Ok h))
   in
   stop h;
   raises_match ~msg:"a stop once stopped" (Exn.invalid_arg ~substring:"")
-    (fun () -> Gpus.set_stop h (fun () -> `Clean));
+    (fun () -> Driver.set_stop h (fun () -> `Clean));
   let r, before = opened t (fun h _ -> kept h) in
   stop (require_ok r);
   equal ~msg:"the first stop kept: resets before the next start" reset_before
@@ -1689,15 +1682,15 @@ let test_stop_once answer =
   let calls = Atomic.make 0 in
   let h, fn =
     require_ok
-      (Gpus.open_ t.g t.m 0 (fun h fn ->
-           Gpus.set_stop h (fun () ->
+      (Driver.open_ t.g t.m 0 (fun h fn ->
+           Driver.set_stop h (fun () ->
                Atomic.incr calls;
                answer);
            Ok (h, fn)))
   in
   let want = if answer = `Unknown then `Unknown else `Stopped in
-  equal ~msg:"the first stop" stopped want (Gpus.stop h);
-  equal ~msg:"the second" stopped want (Gpus.stop h);
+  equal ~msg:"the first stop" stopped want (Driver.stop h);
+  equal ~msg:"the second" stopped want (Driver.stop h);
   equal ~msg:"calls of the vendor's stop" int 1 (Atomic.get calls);
   equal ~msg:"the function released" bool true (Function.released fn)
 
@@ -1712,8 +1705,8 @@ let test_stop_in_stop () =
     let stops = [| 0; 0 |] in
     let open_ i =
       require_ok
-        (Gpus.open_ t.g t.m i (fun h fn ->
-             Gpus.set_stop h (fun () ->
+        (Driver.open_ t.g t.m i (fun h fn ->
+             Driver.set_stop h (fun () ->
                  stops.(i) <- stops.(i) + 1;
                  `Clean);
              Ok (h, fn)))
@@ -1721,7 +1714,7 @@ let test_stop_in_stop () =
     let h0, f0 = open_ 0 in
     let h1, f1 = open_ 1 in
     let call () =
-      match Gpus.stop h1 with
+      match Driver.stop h1 with
       | _ -> ()
       | exception Invalid_argument why
         when String.starts_with ~prefix:"Rig_pci: a lock taken again" why ->
@@ -1777,7 +1770,7 @@ let test_fails_after (_, how) =
   run_failing how (fun () ->
       fst
         (opened t (fun h _ ->
-             Gpus.set_stop h (fun () ->
+             Driver.set_stop h (fun () ->
                  Atomic.incr calls;
                  `Clean);
              fail_start how)));
@@ -1790,7 +1783,7 @@ let test_stop_answer answer =
   let t = tree () in
   let r, _ =
     opened t (fun h _ ->
-        Gpus.set_stop h (fun () -> answer);
+        Driver.set_stop h (fun () -> answer);
         Ok h)
   in
   stop (require_ok r);
@@ -1808,7 +1801,7 @@ let test_renew_error (_, answers) =
   let r, _ =
     opened t (fun h _ ->
         contains ~msg:"the reset's reason" ~sub:"the GPU is stuck"
-          (require_error (Gpus.renew h));
+          (require_error (Driver.renew h));
         if answers then Result.map Option.some (kept h)
         else Error "the GPU did not start")
   in
@@ -1847,7 +1840,7 @@ let test_dead_left_stuck () =
   (t.answer := fun () -> Error "the GPU is stuck");
   let r, before = opened t (fun h _ -> kept h) in
   let why = require_error r in
-  starts_with ~msg:"names the GPU" ~affix:(Gpus.name t.g 0) why;
+  starts_with ~msg:"names the GPU" ~affix:(Driver.name t.g 0) why;
   contains ~msg:"the reset's reason" ~sub:"the GPU is stuck" why;
   equal ~msg:"the driver" reset_before None before;
   equal ~msg:"the memory kept" bool true (Sys.file_exists file);
@@ -1887,7 +1880,7 @@ let test_renew_raises () =
   (t.answer := fun () -> raise Exit);
   raises Exit (fun () ->
       opened t (fun h _ ->
-          ignore (Gpus.renew h : (unit, string) result);
+          ignore (Driver.renew h : (unit, string) result);
           kept h));
   t.answer := ok;
   let r, before = opened t (fun h _ -> kept h) in
@@ -1901,7 +1894,7 @@ let test_open_while_stopping () =
   let during = ref None in
   let r, _ =
     opened t (fun h _ ->
-        Gpus.set_stop h (fun () ->
+        Driver.set_stop h (fun () ->
             let other =
               Domain.spawn (fun () -> fst (opened t (fun h _ -> kept h)))
             in
@@ -1978,11 +1971,11 @@ let exit_holding_gpus root =
   let g = gpus () and m = Machine.at root in
   let open_ i stop =
     let start h fn =
-      Gpus.set_stop h (stop fn);
+      Driver.set_stop h (stop fn);
       Function.set_bus_master fn true;
       Ok h
     in
-    Result.get_ok (Gpus.open_ g m i start)
+    Result.get_ok (Driver.open_ g m i start)
   in
   let prints fn () =
     let on = Function.config16 fn command land bus_master <> 0 in
@@ -2011,11 +2004,11 @@ let exit_inside_lock root =
     `Clean
   in
   let start h fn =
-    Gpus.set_stop h (prints fn);
+    Driver.set_stop h (prints fn);
     Ok h
   in
-  ignore (Result.get_ok (Gpus.open_ g m 1 start));
-  ignore (Gpus.open_ g m 2 (fun _ _ -> exit 0))
+  ignore (Result.get_ok (Driver.open_ g m 1 start));
+  ignore (Driver.open_ g m 2 (fun _ _ -> exit 0))
 
 (* The lines the suite's executable run with [mode] on the tree [root] printed
    on standard output, and what it printed on standard error. *)
@@ -2085,7 +2078,7 @@ let () =
   | [| _; arg; root |] when arg = exit_inside -> exit_inside_lock root
   | _ ->
       exit
-      @@ run "rig_pci.gpus"
+      @@ run "rig_pci.driver"
            [
              numbering;
              opening;

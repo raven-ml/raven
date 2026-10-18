@@ -960,7 +960,7 @@ let test_memory_machines () =
   Function.free_dma f w
 
 let fixture_gpus ?(reset = fun _ -> Ok ()) () =
-  Gpus.make ~name:"fixture" ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
+  Driver.make ~name:"fixture" ~memory_bar:(Some 0) ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset
@@ -987,11 +987,11 @@ let hold_memory how root bus va =
     (* Opens the GPU, allocates its memory, renews it, and dies. *)
     let g = fixture_gpus () in
     ignore
-      (Gpus.open_ g (Machine.at root) 0 (fun h f ->
+      (Driver.open_ g (Machine.at root) 0 (fun h f ->
            ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
            if Option.is_none (ok (Function.alloc_dma ~va f mib)) then
              exit refused_code;
-           ok (Gpus.renew h);
+           ok (Driver.renew h);
            Unix.kill (Unix.getpid ()) Sys.sigkill;
            Ok ()))
   end;
@@ -1069,11 +1069,11 @@ let counted_gpus n =
 
 (* [kept h] gives [h] a clean stop and keeps it. *)
 let kept h =
-  Gpus.set_stop h (fun () -> `Clean);
+  Driver.set_stop h (fun () -> `Clean);
   Ok h
 
-let open_held g m = Gpus.open_ g m 0 (fun h _ -> kept h)
-let stop h = ignore (Gpus.stop h : [ `Stopped | `Unknown ])
+let open_held g m = Driver.open_ g m 0 (fun h _ -> kept h)
+let stop h = ignore (Driver.stop h : [ `Stopped | `Unknown ])
 
 (* What a process that died left stays through another take and release, which
    does not reset the GPU, and goes once its GPU is reset. *)
@@ -1095,7 +1095,7 @@ let test_death () =
   Function.release (require_ok (Function.take m fn.bus));
   equal ~msg:"kept through a take and a release" (list string) left
     (memory_files root);
-  require_ok (Gpus.reset (fixture_gpus ()) m 0);
+  require_ok (Driver.reset (fixture_gpus ()) m 0);
   equal ~msg:"gone once the GPU is reset" (list string) [] (memory_files root)
 
 (* A reset of a GPU another process holds is refused, its memory untouched; the
@@ -1115,7 +1115,7 @@ let test_reset_held () =
   end;
   let held = memory_files root in
   equal ~msg:"the holder's memory" int 1 (List.length held);
-  ignore (require_error (Gpus.reset (fixture_gpus ()) (Machine.at root) 0));
+  ignore (require_error (Driver.reset (fixture_gpus ()) (Machine.at root) 0));
   equal ~msg:"kept while held" (list string) held (memory_files root);
   Unix.close feed;
   (match wait_exit pid with
@@ -1153,7 +1153,7 @@ let test_released_holder how () =
   ignore (frames root va mib);
   let pid, feed, said = holder how root fn.bus va in
   let reset () =
-    require_ok (Gpus.reset (fixture_gpus ()) (Machine.at root) 0)
+    require_ok (Driver.reset (fixture_gpus ()) (Machine.at root) 0)
   in
   match how with
   | "released-die" ->
@@ -1235,7 +1235,7 @@ let test_left_files () =
   equal ~msg:"the file listing a function stays" (list string)
     [ "rig-pci-3-3"; "rig-pci-3-3.reach" ]
     (hugepages root);
-  require_ok (Gpus.reset (fixture_gpus ()) m 1);
+  require_ok (Driver.reset (fixture_gpus ()) m 1);
   equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
 
 (* A driver that finds firmware it cannot continue from renews the GPU it holds:
@@ -1247,7 +1247,7 @@ let test_renew () =
   let root = left_by_death () in
   let m = Machine.at root and resets = Atomic.make 0 in
   let renewing g =
-    Gpus.open_ g m 0 (fun h _ -> Result.bind (Gpus.renew h) (fun () -> kept h))
+    Driver.open_ g m 0 (fun h _ -> Result.bind (Driver.renew h) (fun () -> kept h))
   in
   let g = counted_gpus resets in
   Atomic.set resets 0;

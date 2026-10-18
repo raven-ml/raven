@@ -87,9 +87,7 @@ raven / llama.cpp (Vulkan; ROCm):
   rig_program's `Move` step; done when placing on N GPUs costs one wait
 - from its callers: `Profile.take` raises `Lost`
 - rig.gpus: one card appears through two paths, and `openers` drops each
-  path's refusal reason and names paths, not GPUs; `Rig_pci.Gpus`, which bnxt's
-  NICs use too, becomes `Rig_pci.Driver`: a user-space PCI driver's match,
-  hold, reset and stop, as Linux's `struct pci_driver` (API review)
+  path's refusal reason and names paths, not GPUs (API review)
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
   GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
   dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'

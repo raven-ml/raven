@@ -744,9 +744,9 @@ Writing a size to `resourceN_resize` fails with `ENOSPC` when the bridge
 window above has no room for it, and a smaller size may then fit. Any other
 refusal (`EBUSY`, a bridge that cannot move, no privilege) holds for every
 size, and the BAR keeps its own (`lib/pci/sysfs.ml`, `resize`). Read in
-source, and seen on the R9700: `Gpus.detach`, run as root, was refused every
-size from 32 GiB down to 1 GiB, its bridges' prefetchable window lying below
-4 GiB, and took 512 MiB, where amdgpu had left 256 MiB. The kernel moves the
+source, and seen on the R9700: `Rig_pci.Driver.detach`, run as root, was
+refused every size from 32 GiB down to 1 GiB, its bridges' prefetchable window
+lying below 4 GiB, and took 512 MiB, where amdgpu had left 256 MiB. The kernel moves the
 device's other BARs as it resizes: the doorbell BAR went from `0xa0000000` to
 `0xb0000000`.
 
@@ -757,8 +757,8 @@ writing after its process dies: SIGKILL, the OOM killer and a crash run no
 exit function, so nothing turns bus mastering off, and Linux gives the
 process's pages to others immediately. The PCI library keeps a physical take's
 memory in huge pages of a file under `/dev/hugepages`, which keep their pages
-allocated until each GPU that reached them is reset (`Gpus.reset`, which attach
-runs), and refuses the process's own memory to such a GPU (`Function.pin`). A
+allocated until each GPU that reached them is reset (`Rig_pci.Driver.reset`,
+which attach runs), and refuses the process's own memory to such a GPU (`Function.pin`). A
 kernel booted by kexec skips the platform's reset and inherits a GPU still
 writing.
 
@@ -807,9 +807,9 @@ calls `amdgpu_amdkfd_suspend(adev, false)` (`amdgpu_device.c:3390`), whose
 `kgd2kfd_suspend` raises the counter (`kfd_device.c:1021`); the device is then
 freed without the matching resume, and nothing lowers it again. The kernel
 frees KFD's device first only for a surprise removal
-(`amdgpu_device.c:4756`). Seen on the R9700 after `Gpus.detach` then
-`Gpus.attach`, on Linux 6.12.111; source read at v6.12.111. Reloading amdgpu
-(`modprobe -r amdgpu`, then `modprobe amdgpu`) clears it, so a session that
+(`amdgpu_device.c:4756`). Seen on the R9700 after `Rig_pci.Driver.detach`
+then `Rig_pci.Driver.attach`, on Linux 6.12.111; source read at v6.12.111.
+Reloading amdgpu (`modprobe -r amdgpu`, then `modprobe amdgpu`) clears it, so a session that
 detaches an AMD GPU reloads the module before KFD's users come back.
 
 ## Round trips on these machines

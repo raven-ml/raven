@@ -12,12 +12,12 @@
     is then refused as the call starts, before it could wait for the lock its
     own thread holds.
 
-    Locks nest in this order. A vendor's lock ({!Gpus}) is held over an open, a
-    reset or a change, and a hold's lock over its stop. Under either come the
-    GPUs' holds ({!Gpus}) and the vendor's driver's own locks. Under those come
-    VFIO's list of containers, then a container's lock ({!Vfio}), then a
-    space's ({!Space}); and system memory's
-    state ({!Sysmem}), then its reservations' lock. A function's lock
+    Locks nest in this order. A driver's lock ({!Driver}) is held over an
+    open, a reset or a change, and a hold's lock over its stop. Under either
+    come the driver's holds ({!Driver}) and the driver's own locks. Under
+    those come VFIO's list of containers, then a container's lock ({!Vfio}),
+    then a space's ({!Space}); and system memory's state ({!Sysmem}), then
+    its reservations' lock. A function's lock
     ({!Function}), a seek ({!Local}) and the firmware found ({!Firmware}) hold
     no other.
 
