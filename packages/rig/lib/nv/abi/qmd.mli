@@ -15,7 +15,8 @@
     {!Template.t}: a value known when encoding is in its bytes, and each slot a
     patch.
 
-    {b References.} NVIDIA's descriptor headers in open-gpu-doc: [clc7c0qmd.h]
+    {b References.} NVIDIA's descriptor headers in
+    {{:https://github.com/NVIDIA/open-gpu-doc}open-gpu-doc}: [clc7c0qmd.h]
     (version 3) and [clcec0qmd.h] (version 5). *)
 
 (** {1:sizes Sizes} *)

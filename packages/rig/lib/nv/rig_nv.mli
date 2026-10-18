@@ -122,11 +122,11 @@ val capability : t -> Rig_nv_abi.Gpu.t
     [Words] and [Copy] parts. A part of [Words] is ring entries that
     compiled code wrote ({!Rig_nv_abi.Gpfifo.entry}).
 
-    A value's work starts once the work of every value before it has
-    completed, and the release of [v] waits for the work of [v] to complete,
-    so two submissions never overlap on the GPU. Each queue runs its parts
-    in array order: a part starts once the parts before it on its queue have
-    completed, and reads what they wrote. [Words] run on their queue's
+    The device keeps device order and prefix order
+    ({!Rig_edge.section-calls}), and the release of [v] waits for the work
+    of [v] to complete, so two submissions never overlap on the GPU. A part
+    starts once the parts before it on its queue have completed, and reads
+    what they wrote. [Words] run on their queue's
     channel. A copy runs on either channel and keeps its place in its
     queue's order, even a copy of zero bytes.
 
@@ -177,11 +177,9 @@ val capability : t -> Rig_nv_abi.Gpu.t
     [rig_nv_room] returns [RIG_NEVER] for parts that take more than
     [2{^31} - 1] entries of a channel's ring, the most the ring holds: a
     channel holds the log2 of its ring's entries in 5 bits on each
-    generation this driver runs (NVIDIA's open-gpu-doc, [dev_pbdma.ref.txt],
-    [NV_PPBDMA_GP_BASE_HI_LIMIT2] on Ampere and Ada; open-gpu-kernel-modules,
-    [dev_esched_pbdma.h], [NV_PBDMA_GP_INFO_LIMIT2] on Hopper and
-    [NV_PBDMA_MISC_FETCH_STATE_GP_INFO_LIMIT2] on Blackwell). It
-    returns it too for a part the device does not run:
+    generation this driver runs. It returns it too for a part the device
+    does not run:
+    - a part that is no words, copy or launch;
     - a part on neither queue, a launch on ["COPY:0"], or a copy of one byte
       or more on ["COMPUTE:0"];
     - ring entries of an odd number of words;
@@ -206,11 +204,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     A launch's bytes past those the kernel reads ({!Rig.Image.params}) are
     left out.
 
-    It reads the word first, so [RIG_LATER] means that a value the device
-    was given is not yet reached. [rig_nv_submit] returns [RIG_COMMITTED],
-    since the channels run work as soon as they fetch it, and rig never asks
-    the device to commit. A submission of no parts writes its value after
-    its waits and every earlier value.
+    [rig_nv_room] reads the word first, so [RIG_LATER] means that a value
+    the device was given is not yet reached. [rig_nv_submit] never fails,
+    since it only stores to memory, and returns [RIG_COMMITTED], since the
+    channels run work as soon as they fetch it, and rig never asks the
+    device to commit. A submission of no parts writes its value after its
+    waits and every earlier value.
 
     While a profile is taken, each channel a value's work enters writes a
     stamp of the GPU's timer after the value's waits, and the channel that
@@ -218,11 +217,10 @@ val capability : t -> Rig_nv_abi.Gpu.t
     ({!Rig_nv_abi.Method.release_stamp}). On COMPUTE a stamp waits for the
     channel's earlier work to complete. [rig_nv_settle], the [edge]'s
     [settle], or a later [rig_nv_submit] converts the earliest start and
-    the end to the host's clock, in value order, with each no earlier than
-    the end of the value converted before it, since a value's work starts
-    once every earlier value's work has completed. A stamp of a completed
-    value that the work never wrote makes the next [rig_nv_settle] fail,
-    which loses the device.
+    the end to the host's clock, as {!Rig_edge.section-calls} states for
+    [settle]. A stamp of a completed value that the work never wrote makes
+    the next [rig_nv_settle] fail, and so does a failed read of the GPU's
+    timer in it. Either loses the device.
 
     A device measures the timer against the host's clock through the
     path's {!type-clock}, and converts a stamp along the line through its
@@ -406,9 +404,9 @@ type rm = {
   free : (parent:int -> int -> (unit, refusal) result) option;
       (** [Some f] if the RM frees objects before it stops, where [f ~parent
           obj] frees [obj] and every object under it, or is the RM's refusal;
-          [None] if every object lives as long as the RM. A device of an RM
-          that frees no object keeps the channels a growth replaces until it
-          stops ({!section-submitting}). *)
+          [None] if every object lives as long as the RM, so that a device
+          keeps the channels a growth replaces until it stops
+          ({!section-submitting}). *)
 }
 (** The type for a GPU's resource manager, as a path reaches it. Any domain may
     call its functions at any time. *)
@@ -527,9 +525,8 @@ type 'm path = {
 (** The type for what a path gives a device. Each function must return the
     RM's refusal as its result and raise {!Fault} for any other failure, and
     must allow any domain to call it at the same time as others. It takes
-    its locks with {!Lock.protect}, never one inside another. A path's
-    opener must check the locks its thread holds before it changes anything
-    ({!Rig_edge.section-drivers}). After the device's {!val-stop}, the
+    its locks, and its opener checks the thread's, as {!section-locks}
+    states. After the device's {!val-stop}, the
     device calls only [free] and [reaches]. It keeps [free] until it has
     given back all the memory the path gave, and [reaches] for the life of
     the process. *)
@@ -539,11 +536,12 @@ type 'm path = {
     For a path's implementation. A path must take each lock it holds across
     OCaml code with {!Lock.protect}, which counts it among the locks its
     thread holds, so that a call from a callback inside it is refused as it
-    starts ({!Rig_edge.section-drivers}). A take of an image's, a device's
-    or a path's lock inside a path's lock raises [Invalid_argument], having
-    taken nothing.
+    starts ({!Rig_edge.section-drivers}). A path's lock comes last in the
+    order of the module's preamble, and a path holds one of its locks at a
+    time ({!Lock.protect}).
 
-    {b Warning.} A path's entries must call {!Lock.check} themselves, before
+    {b Warning.} A path's opener's [make] and its public functions that may
+    take a lock must call {!Lock.check} themselves as they start, before
     they change anything; one that does not may raise [Invalid_argument]
     from a lock it takes later, with what it changed before left
     changed. *)
@@ -570,16 +568,15 @@ module Lock : sig
 
   val check : string -> unit
   (** [check fn] raises [Invalid_argument], naming [fn], if the calling
-      thread holds a lock of rig's or of a driver's. A path's opener's
-      [make] and its public functions that may take a lock call it as they
-      start, before they change anything ({!Rig_edge.section-drivers}). *)
+      thread holds a lock of rig's or of a driver's. A path calls it as
+      {!section-locks} states. *)
 end
 
 val make : word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is the device of the GPU [p] reaches, whose timeline word
     is the 8 bytes at the host address [word] ({!Rig_edge.type-opener}).
     Under [p.device] it allocates a channel group with one context share,
-    the two channels, whose rings hold 262,144 entries each, and their
+    the two channels, whose rings {!section-submitting} sizes, and their
     memory, and asks the RM to run the GPU at its highest clocks.
 
     It then takes its first measure of the GPU's timer through [p.clock].

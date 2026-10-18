@@ -65,9 +65,8 @@ enum {
    hardware. */
 #define ENTRIES_MAX (UINT64_C(1) << 31)
 
-/* A patch, Rig_nv_abi.Template.patch: the little-endian word of [width]
-   bytes (1, 2, 4 or 8) at byte [at] whose low [bits] bits take
-   (value [slot] + [add]) >> [shift]; its other bits stay. */
+/* A patch, as Rig_nv_abi.Template.patch defines it, with [width] the
+   bytes of its word. */
 struct patch {
   uint16_t at;
   uint8_t width, bits, slot, shift;
@@ -283,10 +282,8 @@ struct flush {
    from a path's source, once they lie RATE_BASE_NS apart, and at the
    timer's nominal rate before. A measure whose host readings lie more than
    READ_BOUND_NS apart is dropped. A device of the timer's registers
-   measures at open only. Values convert in value order, and a value's
-   start is never before the end of the value converted before it: a
-   value's work starts once the work of every value before it has
-   completed, on every channel. */
+   measures at open only. Values convert in value order, as Rig_edge's
+   calls section states for settle. */
 
 /* A release with the timer: the value released and the timer's
    nanoseconds. */

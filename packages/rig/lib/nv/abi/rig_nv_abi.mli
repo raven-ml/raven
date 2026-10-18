@@ -51,9 +51,7 @@
 
     {1:references References}
 
-    NVIDIA's launch descriptor headers in
-    {{:https://github.com/NVIDIA/open-gpu-doc}open-gpu-doc}: [clc7c0qmd.h]
-    (version 3) and [clcec0qmd.h] (version 5). *)
+    {!Qmd} and {!Launch} name the documents of NVIDIA's that they follow. *)
 
 (** {1:words Channel words} *)
 
