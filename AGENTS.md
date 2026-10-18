@@ -32,16 +32,18 @@ Breaking one causes real damage.
 | `packages/rig` | devices: Metal, CUDA, NVIDIA and AMD GPUs through their kernel drivers or over PCI, files and remote machines; the order of work across them |
 | `packages/rune` | autodiff, vmap and compilation over nx |
 | `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |
-| `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
+| `packages/kaun` | layers, losses and data batching over nx structures. Models live in `examples/`, never in the library |
 | `packages/vega` | optimizers as values |
 | `packages/jera` | numerical methods: quadrature, interpolation, differential equations, splittings |
 | `packages/norn` | probabilistic inference over structures: distributions, bijectors, samplers, diagnostics; the model language is `norn.model` |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
-| `contrib/` | fehu, sowilo: own `dune-project`, own `CHANGES.md`, public core libraries only |
+| `packages/ppx_ptree` | derives a structure's `walk` from its type, for users; no raven library depends on it |
+| `contrib/` | fehu, sowilo, ymir: own `dune-project`, own `CHANGES.md`, public core libraries only |
 
 A package's main library lives at `lib/`, each sub-library at
 `lib/<name>/`, named without the package prefix. tolk keeps its
-`include_subdirs` module groups.
+`include_subdirs` module groups. A package's own `AGENTS.md` holds its
+boundaries, decisions and traps.
 
 Accepted designs live in `doc/rfc/`.
 
@@ -185,6 +187,11 @@ promises, through the public interface, never what the code does today.
   hold, such as gpt-oss's decode step on real weights, lives outside it, and
   it says why. Benches never run in `dune build`.
 - Time only on a quiet machine. Correctness runs need no quiet.
+
+## Reviewing
+
+A review reads `REVIEW.md` and the `REVIEW.md` of each package the change
+touches, and reports as they say.
 
 ## Commits
 
