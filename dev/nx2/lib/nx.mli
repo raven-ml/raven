@@ -1790,6 +1790,82 @@ val conv_transpose :
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
 
+(** {2:attention Attention}
+
+    Attention weighs values by how well their keys match a query: for each
+    query row, a softmax over the row's scores against the keys, times the
+    values. Masks and score rewrites are plain Nx code over the coordinates
+    of one query-key pair. *)
+
+(** Keys and values, by key head [hk] and key [tk]. *)
+type ('v, 's, 'd) kv =
+  | Dense of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t }
+      (** [k] [[lead…; hk; tk; dk]], [v] [[lead…; hk; tk; dv]]. *)
+  | Paged of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t; table : 'd int64_t }
+      (** Pools [k] [[pages; hk; page; dk]] and [v] [[pages; hk; page; dv]]
+          read through [table] [[lead…; max_pages]]: key [t] of lead index
+          [b] is the pools' entry [table[b; t / page]] at [t mod page], and
+          [tk = max_pages · page]. *)
+
+type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
+(** The 0-d coordinates of one query-key pair: the query row, the key column,
+    the row's visible length, and the number of query rows. *)
+
+val causal : 'd pair -> 'd bool_t
+(** [causal p] holds where [p.k <= p.q + (p.len - p.tq)]: the last query row
+    sees every key before the row's length, and each row before it one key
+    fewer. *)
+
+val attention :
+  ?scale:float ->
+  ?lengths:'d int64_t ->
+  ?mask:('d pair -> 'd bool_t) ->
+  ?score:('d pair -> 'd float32_t -> 'd float32_t) ->
+  kv:('v, 's, 'd) kv ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t * 'd float32_t
+(** [attention ~kv q] is [(o, lse)] for [q] [[lead…; hq; tq; dk]], [hk]
+    dividing [hq], query head [h] reading key head [h / (hq / hk)]. [o],
+    [[lead…; hq; tq; dv]], is the softmax over each row's visible keys of
+    [scale · q kᵀ] (default [1 / √dk]), rewritten by [score], times [v], in
+    [q]'s dtype; [lse], [[lead…; hq; tq]], is the row's log-sum-exp in
+    float32. A pair is visible where [mask] holds, its key is before its lead
+    index's entry of [lengths] ([[lead…]], default [tk]), and a paged key's
+    table entry is in [[0, pages)]. A row with no visible key, or only [-∞]
+    scores, gives [o = 0] and [lse = -∞].
+
+    A hidden pair's score never reaches [o] or [lse], whatever its value.
+    Keys past a row's length and paged keys out of range are never read. A key
+    in range that [mask] hides from a row with a visible key is read with
+    weight zero, so a NaN or an infinity in its value makes that row's [o]
+    NaN.
+
+    [mask] and [score] are plain [Nx] code over 0-d values, applied once to
+    stand-ins and kept as programs that run at each pair. An array they
+    capture is read at each pair and broadcasts to [[lead…; hq; tq; tk]]. On
+    the pair's values they apply elementwise functions and broadcasts; another
+    operation on them, or a read of one, raises naming [Nx.attention].
+
+    {[
+    let window p = Nx.(logical_and (causal p) (less p.q (add_s p.k 128L)))
+    let alibi slopes p s = Nx.(s - cast float32 (p.q - p.k) * slopes)
+    (* slopes [hq; 1; 1] *)
+    let o, lse = Nx.attention ~mask:window ~score:(alibi slopes) ~kv q
+    ]}
+
+    [q]'s dtype is float16, bfloat16 or float32. Scores, their maxima and
+    sums, and [lse] compute in float32, and [o] rounds once to [q]'s dtype.
+    Its error has no stated bound yet.
+
+    It computes as a contraction for the scores, a map and a reduction for
+    the visible scores' log-sum-exp, a map for the weights and a contraction
+    for [o], so it stores the [tq × tk] scores of every head. An
+    interpretation receives those operations; none is attention's own.
+
+    Raises [Invalid_argument] if [q]'s dtype is another, [q] has fewer than
+    three axes, extents disagree, [hk] does not divide [hq], or [lengths] is
+    not of shape [[lead…]]. *)
+
 (** {2:matrices Matrices}
 
     A value of two axes or more is a batch of matrices over its last two:

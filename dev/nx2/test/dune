@@ -12,6 +12,7 @@
   test_reduce
   test_statistics
   test_activations
+  test_attention
   test_order
   test_sort
   test_fft
@@ -48,6 +49,7 @@
   test_reduce
   test_statistics
   test_activations
+  test_attention
   test_order
   test_sort
   test_fft

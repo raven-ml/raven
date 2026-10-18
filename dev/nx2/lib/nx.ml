@@ -4148,6 +4148,399 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
 
+(* Attention *)
+
+type ('v, 's, 'd) kv =
+  | Dense of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t }
+  | Paged of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t; table : 'd int64_t }
+
+type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
+
+let causal p = less_equal p.k (add p.q (sub_s p.len (Int64.of_int p.tq)))
+
+(* A mask or a score runs once on stand-ins for a pair's values, under an
+   interpretation that records each map it receives as cells of one list, so
+   that it computes at every pair as part of one program:
+
+     stand-ins --maps--> cells --pair_program--> the map over every pair
+
+   A recorded value keeps its cell and the arrays its cells capture, each
+   with its number, at the value's brand. *)
+
+type leaf = Score | Query | Key | Length
+type cell = Leaf of leaf | Capture of int | Node of P.node
+
+type recording = {
+  mutable cells : cell list;  (* Newest first. *)
+  mutable count : int;
+  mutable captures : int;
+}
+
+(* An array a mask or score captures, with its number. *)
+type +'d captured = Captured : int * ('v, 's, 'd) t -> 'd captured
+
+type ('v, 's, 'd) Value.payload +=
+  | Cell : int * 'd captured list -> ('v, 's, 'd) Value.payload
+
+let push st c =
+  st.cells <- c :: st.cells;
+  st.count <- st.count + 1;
+  st.count - 1
+
+let capture st =
+  let c = st.captures in
+  st.captures <- c + 1;
+  (c, push st (Capture c))
+
+let cell i x =
+  match Eval.payload i x with Some (Cell (n, cs)) -> Some (n, cs) | _ -> None
+
+let refuse by =
+  invalid_argf
+    "Nx.attention: %s on a pair's value: a mask or score applies \
+     elementwise functions and broadcasts alone"
+    by
+
+(* A map's results, each keeping its cell and the captures [cs]. *)
+let rec captured : type d r.
+    Value.interpretation ->
+    (d, r) Value.outs ->
+    d captured list ->
+    r ->
+    r =
+ fun i outs cs r ->
+  match (outs, r) with
+  | Value.[], () -> ()
+  | Value.(_ :: outs), (y, rest) ->
+      let y =
+        match cell i y with
+        | Some (n, _) -> Eval.traced i (Prim.form y) (Cell (n, cs))
+        | None -> y
+      in
+      (y, captured i outs cs rest)
+
+let record (type r) st i ~by (op : r Value.prim) : r =
+  match op with
+  | Value.Map { prog; outs; loads; _ } ->
+      let cs = ref [] in
+      let operand = function
+        | Value.Padded _ -> refuse by
+        | Value.Plain x -> (
+            match cell i x with
+            | Some (n, more) ->
+                cs := more @ !cs;
+                n
+            | None ->
+                let c, n = capture st in
+                cs := Captured (c, x) :: !cs;
+                n)
+      in
+      let ins = Iarray.map operand loads in
+      let at = Array.make (Iarray.length prog.nodes) 0 in
+      Iarray.iteri
+        (fun j (node : P.node) ->
+          at.(j) <-
+            (match node with
+            | In o -> Iarray.get ins o
+            | Coord _ -> refuse by
+            | Const _ -> push st (Node node)
+            | Op1 (k, dt, a) -> push st (Node (Op1 (k, dt, at.(a))))
+            | Op2 (k, a, b) -> push st (Node (Op2 (k, at.(a), at.(b))))
+            | Op3 (k, a, b, c) ->
+                push st (Node (Op3 (k, at.(a), at.(b), at.(c))))))
+        prog.nodes;
+      let results =
+        Prim.results ~by
+          (fun k form ->
+            Eval.traced i form (Cell (at.(Iarray.get prog.outs k), [])))
+          op
+      in
+      captured i outs !cs results
+  | Value.Move (Broadcast _, x) -> (
+      match cell i x with
+      | None -> refuse by
+      | Some (n, cs) ->
+          let y =
+            Prim.results ~by (fun _ form -> Eval.traced i form (Cell (n, []))) op
+          in
+          Eval.traced i (Prim.form y) (Cell (n, cs)))
+  | _ -> refuse by
+
+(* [mask] and [score] applied to stand-ins: the recording, and each one's
+   cell and captures. A result that no stand-in reaches is a capture. *)
+let recorded (type d) ~tq ?mask ?score () =
+  let st = { cells = []; count = 0; captures = 0 } in
+  let stand_in i dt leaf =
+    let layout = Nx_array.Layout.contiguous [||] in
+    let form : (_, _, d) Value.form = { dtype = dt; layout; placement = None } in
+    Eval.traced i form (Cell (push st (Leaf leaf), []))
+  in
+  let i, m, s =
+    Eval.interpret ~name:"Nx.attention" Values
+      (fun i ~by op -> record st i ~by op)
+      (fun i ->
+        let p =
+          {
+            q = stand_in i D.Int64 Query;
+            k = stand_in i D.Int64 Key;
+            len = stand_in i D.Int64 Length;
+            tq;
+          }
+        in
+        let s = stand_in i D.Float32 Score in
+        (i, Option.map (fun f -> f p) mask, Option.map (fun f -> f p s) score))
+  in
+  let result y =
+    match cell i y with
+    | Some r -> r
+    | None ->
+        let c, n = capture st in
+        (n, [ Captured (c, y) ])
+  in
+  (st, Option.map result m, Option.map result s)
+
+(* The program at each pair of a loop of [rank] axes, the last two the query
+   and the key: operand 0 the unscaled score, 1 the row's length, 2 with
+   [paged] the key's position in its pool, then the captures [captures], each
+   a number and a dtype. Its output is [score]'s cell, or the scaled score,
+   where [mask]'s cell holds and the key is visible, and [-∞] elsewhere. *)
+let pair_program ~by ~rank ~scale ~paged st ~mask ~score captures =
+  let nodes = ref [] and count = ref 0 in
+  let add (n : P.node) =
+    nodes := n :: !nodes;
+    incr count;
+    !count - 1
+  in
+  let f32 x = add (Const (D.Any D.Float32, P.bits D.Float32 x)) in
+  let raw = add (In 0) and len = add (In 1) in
+  let first = if paged then 3 else 2 in
+  let position = if paged then Some (add (In 2)) else None in
+  let operands =
+    List.mapi (fun j (c, _) -> (c, add (In (first + j)))) captures
+  in
+  let scaled = add (Op2 (Binary Mul, raw, f32 scale)) in
+  let query = add (Coord (rank - 2)) and key = add (Coord (rank - 1)) in
+  let cells = Array.of_list (List.rev st.cells) in
+  let at = Array.make (Array.length cells) (-1) in
+  let rec node c =
+    if at.(c) >= 0 then at.(c)
+    else
+      let n =
+        match cells.(c) with
+        | Leaf Score -> scaled
+        | Leaf Query -> query
+        | Leaf Key -> key
+        | Leaf Length -> len
+        | Capture j -> List.assoc j operands
+        | Node (Op1 (k, dt, a)) ->
+            let a = node a in
+            add (Op1 (k, dt, a))
+        | Node (Op2 (k, a, b)) ->
+            let a = node a in
+            let b = node b in
+            add (Op2 (k, a, b))
+        | Node (Op3 (k, a, b, d)) ->
+            let a = node a in
+            let b = node b in
+            let d = node d in
+            add (Op3 (k, a, b, d))
+        | Node n -> add n
+      in
+      at.(c) <- n;
+      n
+  in
+  let out = match score with None -> scaled | Some c -> node c in
+  let visible = add (Op2 (Compare Less, key, len)) in
+  let visible =
+    match position with
+    | None -> visible
+    | Some p ->
+        let zero = add (Const (D.Any D.Int64, P.bits D.Int64 0L)) in
+        add (Op2 (Binary And, visible, add (Op2 (Compare Less_equal, zero, p))))
+  in
+  let visible =
+    match mask with
+    | None -> visible
+    | Some c -> add (Op2 (Binary And, visible, node c))
+  in
+  let out = add (Op3 (Where, visible, out, f32 Float.neg_infinity)) in
+  let ins =
+    D.Any D.Float32 :: D.Any D.Int64
+    :: (if paged then [ D.Any D.Int64 ] else [])
+  in
+  let ins = Iarray.of_list (ins @ List.map snd captures) in
+  let nodes = Iarray.of_list (List.rev !nodes) in
+  renamed ~by (fun () -> P.v ~ins nodes ~outs:[| out |])
+
+let scores = Pattern.v "... (h g) i d, ... h j d -> ... h g i j | d"
+let weighted = Pattern.v "... (h g) i j, ... h j e -> ... h g i e | j"
+let pooled = Pattern.v "p h s d -> h (p s) d"
+
+(* Each key's position in its pool flattened as [[hk; pages · page; d]], or
+   [-1] where its table entry is outside [[0, pages)]: [[lead…; tk]]. *)
+let pool_positions ~by ~pages ~page table =
+  let s = shape table in
+  let r = Array.length s in
+  let lead = Array.sub s 0 (r - 1) and max_pages = s.(r - 1) in
+  let entries = Array.append lead [| max_pages; page |] in
+  let t =
+    broadcast ~by entries
+      (reshaped ~by (Array.append lead [| max_pages; 1 |]) table)
+  in
+  let e = E.input 0 D.Int64 in
+  let p = E.((e * i64 page) + coord r) in
+  let y =
+    elementwise ~by D.Int64 [ Any t ]
+      E.(where (i64 0 <= e && e < i64 pages) p (i64 (-1)))
+  in
+  reshaped ~by (Array.append lead [| max_pages * page |]) y
+
+(* The pool [[pages; hk; page; d]] read at [positions], [[lead…; tk]]:
+   [[lead…; hk; tk; d]], zero at a position of [-1]. *)
+let paged_read ~by positions pool =
+  let lead = Array.sub (shape positions) 0 (ndim positions - 1) in
+  let tk = dim (-1) positions in
+  let flat = rearrange pooled pool in
+  let hk = dim 0 flat and d = dim 2 flat in
+  let x = broadcast ~by (Array.append lead (shape flat)) flat in
+  let idx =
+    broadcast ~by
+      (Array.append lead [| hk; tk; d |])
+      (reshaped ~by (Array.append lead [| 1; tk; 1 |]) positions)
+  in
+  Eval.eval ~by (Value.Gather { axis = Array.length lead + 1; idx; x })
+
+let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
+    (q : (v, s, d) t) : (v, s, d) t * d float32_t =
+  let by = "Nx.attention" in
+  (match dtype q with
+  | D.Float16 | D.Bfloat16 | D.Float32 -> ()
+  | dt ->
+      invalid_argf "%s: %s is not float16, bfloat16 or float32" by (D.name dt));
+  let r = ndim q in
+  if r < 3 then
+    invalid_argf "%s: the query %a has fewer than three axes" by pp_value q;
+  let lead = Array.sub (shape q) 0 (r - 3) in
+  let hq = dim (-3) q and tq = dim (-2) q and dk = dim (-1) q in
+  let with_lead tail = Array.append lead tail in
+  let expect name x s =
+    if shape x <> s then
+      invalid_argf "%s: the %s %a are not of shape %a, as the query %a needs"
+        by name pp_value x pp_shape s pp_value q
+  in
+  let rank name x n =
+    if ndim x <> n then
+      invalid_argf "%s: the %s %a do not have %d axes" by name pp_value x n
+  in
+  let k, v, positions =
+    match kv with
+    | Dense { k; v } ->
+        rank "keys" k r;
+        rank "values" v r;
+        let hk = dim (-3) k and tk = dim (-2) k in
+        expect "keys" k (with_lead [| hk; tk; dk |]);
+        expect "values" v (with_lead [| hk; tk; dim (-1) v |]);
+        (k, v, None)
+    | Paged { k; v; table } ->
+        rank "key pool" k 4;
+        rank "value pool" v 4;
+        rank "page table" table (r - 2);
+        let pages = dim 0 k and hk = dim 1 k and page = dim 2 k in
+        expect "key pool" k [| pages; hk; page; dk |];
+        expect "value pool" v [| pages; hk; page; dim (-1) v |];
+        expect "page table" table (with_lead [| dim (-1) table |]);
+        let p = pool_positions ~by ~pages ~page table in
+        (paged_read ~by p k, paged_read ~by p v, Some p)
+  in
+  let hk = dim (-3) k and tk = dim (-2) k and dv = dim (-1) v in
+  if hk = 0 || hq mod hk <> 0 then
+    invalid_argf "%s: %d key heads do not divide %d query heads" by hk hq;
+  let groups = [ ("g", hq / hk) ] in
+  let f = with_lead [| hq; tq; tk |] in
+  let length =
+    match lengths with
+    | None -> fill ~by D.Int64 [||] (Int64.of_int tk)
+    | Some l ->
+        expect "lengths" l lead;
+        reshaped ~by (with_lead [| 1; 1; 1 |]) l
+  in
+  (* Values past a row's length are never read. *)
+  let v =
+    match lengths with
+    | None -> v
+    | Some _ ->
+        let dt = dtype v in
+        let before = E.(coord Stdlib.(r - 2) < operand 1 length) in
+        elementwise ~by dt [ Any v; Any length ]
+          E.(where before (operand 0 v) (const dt (D.zero dt)))
+  in
+  let scale =
+    match scale with Some s -> s | None -> 1. /. Float.sqrt (Float.of_int dk)
+  in
+  let st, mask, score = recorded ~tq ?mask ?score () in
+  let captures =
+    List.concat_map snd (List.filter_map Fun.id [ mask; score ])
+    |> List.sort_uniq (fun (Captured (a, _)) (Captured (b, _)) ->
+           Int.compare a b)
+  in
+  let load (Captured (_, x)) =
+    (match Prim.merge (shape x) f with
+    | Ok s when s = f -> ()
+    | _ ->
+        invalid_argf
+          "%s: a mask or score captures %a, which does not broadcast to %a" by
+          pp_value x pp_shape f);
+    Value.Plain (broadcast ~by f x)
+  in
+  let prog =
+    pair_program ~by ~rank:r ~scale ~paged:(Option.is_some positions) st
+      ~mask:(Option.map fst mask) ~score:(Option.map fst score)
+      (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
+  in
+  let s =
+    reshaped ~by f (Contraction.contract ~by ~sizes:groups D.Float32 scores q k)
+  in
+  let pairs =
+    Value.Plain s
+    :: Value.Plain (broadcast ~by f length)
+    :: (match positions with
+       | None -> []
+       | Some p ->
+           let p = reshaped ~by (with_lead [| 1; 1; tk |]) p in
+           [ Value.Plain (broadcast ~by f p) ])
+  in
+  let m, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = Nx_array.Layout.contiguous f;
+           prog;
+           outs = Value.[ D.Float32 ];
+           loads = Iarray.of_list (pairs @ List.map load captures);
+         })
+  in
+  let lse = reduce ~by Logsumexp D.Float32 [| r - 1 |] m in
+  (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
+     weights and [o] are zero, whatever its values hold. *)
+  let row = reshaped ~by (with_lead [| hq; tq; 1 |]) lse in
+  let hidden = E.(operand 1 row = const D.Float32 Float.neg_infinity) in
+  let p =
+    elementwise ~by D.Float32 [ Any m; Any row ]
+      E.(where hidden (const D.Float32 0.) (exp (operand 0 m - operand 1 row)))
+  in
+  let dt = dtype q in
+  let o =
+    reshaped ~by
+      (with_lead [| hq; tq; dv |])
+      (Contraction.contract ~by ~sizes:groups dt weighted p v)
+  in
+  let o =
+    elementwise ~by dt [ Any o; Any row ]
+      E.(where hidden (const dt (D.zero dt)) (operand 0 o))
+  in
+  (o, lse)
+
+
 (* Fourier transforms *)
 
 type fft_norm = Backward | Forward | Ortho
@@ -4217,7 +4610,7 @@ let scaled_parts (type s d) ~by c (z : (Complex.t, s, d) t) :
 
 (* A real transform's compute formats: a float format and the complex one of
    its precision. *)
-type pair = Pair : (float, 'r) D.t * (Complex.t, 'c) D.t -> pair
+type formats = Pair : (float, 'r) D.t * (Complex.t, 'c) D.t -> formats
 
 (* The pair of the wider of a float [dt]'s compute format ({!Prim.wide}) and a
    complex [c]'s precision. *)
