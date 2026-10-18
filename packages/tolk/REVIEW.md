@@ -46,5 +46,5 @@ A golden diff as a test to update. Goldens are tinygrad's output.
 
 ## Skip
 
-`test/golden/`, `test/gen/` output, `bench/*.graph`, `bench/tolk.thumper`,
+`test/**/*.golden`, `bench/*.graph`, `bench/tolk.thumper`,
 `LICENSE-tinygrad`.
