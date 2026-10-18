@@ -180,11 +180,7 @@ type block = {
   mutable users : int; (* bytes allocations and peers hold in it *)
 }
 
-type store = {
-  root : string;
-  bus : string;
-  placed : unit Tables.Address.t; (* the addresses of its live windows *)
-}
+type store = { root : string; bus : string }
 
 (* [state] guards every value below and every store, file and block. *)
 let state = Lock.create ()
@@ -194,7 +190,7 @@ let blocks : block Tables.Address.t = Tables.Address.create 16
 (* The range memory without an address takes its addresses from. *)
 let own_length = 1 lsl 30
 let own : Tlsf.t option ref = ref None
-let store ~root ~bus = { root; bus; placed = Tables.Address.create 16 }
+let store ~root ~bus = { root; bus }
 let root s = s.root
 let prefix = "rig-pci-"
 let hugepages = "dev/hugepages"
@@ -448,9 +444,9 @@ let own_addresses ~align n =
 let own_free a =
   match !own with
   | Some t when a >= Tlsf.base t && a < Tlsf.base t + Tlsf.length t ->
-      (* [free] gives back only addresses [placed] holds. *)
+      (* Function frees only the live windows [alloc] gave. *)
       if not (Tlsf.free t a) then
-        invalid_arg (strf "Function.free_dma: no addresses at 0x%x" a)
+        failwith (strf "freeing system memory: no addresses at 0x%x" a)
   | _ -> ()
 
 (* The physical runs of the [n] bytes at [a], whose blocks exist: one a block,
@@ -510,21 +506,16 @@ let alloc ?(contiguous = false) ?va s n =
           raise e)
   with
   | exception Exhausted -> None
-  | a ->
-      Tables.Address.replace s.placed a ();
-      Some (Window.v a n, runs a n)
+  | a -> Some (Window.v a n, runs a n)
 
-let free s w =
+let free w =
   let a = Window.address w and n = Window.length w in
   Lock.protect state @@ fun () ->
-  if Tables.Address.mem s.placed a then begin
-    Tables.Address.remove s.placed a;
-    List.iter
-      (fun (at, _, len) ->
-        Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
-      (parts a n);
-    own_free a
-  end
+  List.iter
+    (fun (at, _, len) ->
+      Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
+    (parts a n);
+  own_free a
 
 (* The function at [bus] under [root] leaves the lists of the process's
    files. *)

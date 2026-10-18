@@ -219,7 +219,7 @@ let free_dma t w =
   | Iommu_take c ->
       Vfio.unmap_dma t.bus c (Window.address w) (Window.length w);
       Sysmem.unmap w
-  | Physical_take s -> Sysmem.free s w
+  | Physical_take _ -> Sysmem.free w
 
 (* Taken physically, a function reaches only memory that outlives the process:
    what alloc_dma gave on its machine. *)

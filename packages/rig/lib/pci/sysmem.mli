@@ -67,8 +67,8 @@ val alloc :
     another root, or if the root's [proc/self/mounts] shows its [dev/hugepages]
     on no hugetlbfs of 2 MiB pages. *)
 
-val free : store -> Window.t -> unit
-(** [free s w] unmaps {!alloc}'s memory [w]. A huge page goes back once no
+val free : Window.t -> unit
+(** [free w] unmaps {!alloc}'s live memory [w]. A huge page goes back once no
     allocation holds it and no function maps it as a peer's ({!reach}). *)
 
 val close : store -> unit
