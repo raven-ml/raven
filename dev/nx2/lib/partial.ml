@@ -67,20 +67,20 @@ let chunk = 4096
 let position p k =
   Option.get (Array.find_index (( = ) k) (Grid.devices (Devices.grid p)))
 
-(* The window of operand [i], of [shape], that a device reads by [rule]: of
-   its window [w] of the results along an axis that becomes one of theirs,
-   [tile f] along one of the folded factor [f], whole along any other. *)
+(* The window of operand [i], of [shape], that a device reads by [rule]: the
+   window its window [w] of the results reads ({!Route.window}), but [tile f]
+   along an axis of the folded factor [f]. *)
 let reads rule i shape (w : M.range array) tile =
   match (rule : Route.rule) with
   | Elementwise -> w
   | Axes t | Into t ->
+      let window = Route.window rule ~operand:i shape w in
       Array.mapi
-        (fun a d ->
+        (fun a r ->
           match t.(i).(a) with
-          | Route.Becomes a' | Scanned a' -> w.(a')
-          | Reduced f -> tile f
-          | Whole -> full d)
-        shape
+          | Route.Reduced f -> tile f
+          | Becomes _ | Scanned _ | Regroups _ | Whole -> r)
+        window
 
 (* Groups *)
 

@@ -5,7 +5,13 @@
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-type axis = Becomes of int | Whole | Reduced of int | Scanned of int
+type axis =
+  | Becomes of int
+  | Whole
+  | Reduced of int
+  | Scanned of int
+  | Regroups of { axis : int; extent : int }
+
 type rule = Elementwise | Axes of axis array array | Into of axis array array
 
 type compute = Windows | Partials
@@ -16,13 +22,17 @@ type 'd t = {
   compute : compute;
 }
 
-(* The result axis that axis [a] of operand [i] becomes, if any. *)
-let becomes rule i a =
+(* The result axis that a cut of axis [a] of operand [i], of shape [s], into
+   [t] tiles lands on: one it becomes, or one it regroups into where [t]
+   divides both extents. *)
+let lands rule i s a t =
   match rule with
   | Elementwise -> Some a
-  | Axes t | Into t -> (
-      match t.(i).(a) with
+  | Axes r | Into r -> (
+      match r.(i).(a) with
       | Becomes a' | Scanned a' -> Some a'
+      | Regroups { axis; extent } ->
+          if s.(a) mod t = 0 && extent mod t = 0 then Some axis else None
       | Whole | Reduced _ -> None)
 
 let product s lo hi =
@@ -32,38 +42,54 @@ let product s lo hi =
   done;
   !p
 
-(* The result axis that axis [a] of a value of shape [s] becomes under [m],
-   where it keeps its elements in order: a reshape keeps an axis whose extent,
-   and the product of the extents before it, the result has too. *)
-(* CR: Match reshape cuts using their tile count. Reshaping [8] split over
-   two devices to [2;4] currently gathers a full [8] on each device;
-   each existing [4] shard can instead reshape to [1;4]. For positive
-   shapes, match a cut axis to the first new axis of equal prefix
-   product where every window holds whole rows of the axes after it:
-   the tile count divides that axis's extent, or the axes after it hold
-   one element; an uneven cut has the second alone. Otherwise windows
-   straddle rows and it still gathers: [12] over 4 to [2;6] has windows
-   of 3 across rows of 6. Walk actual cuts and use this one
-   correspondence in forward, backward and localize; extent equality
-   needlessly loses it. *)
-let moved (m : Nx_array.Move.t) s a =
+(* What [m] makes of axis [a] of a value of shape [s]. A reshape pairs the
+   axes of one product of the extents before them in order, each with the
+   result's next axis of that product and of its extent: [1; 8] to [1; 1; 8]
+   pairs 0 with 0 and 1 with 2, and [1; 1] to [1] pairs 0 alone. An unpaired
+   axis regroups into the result's axis of more than one element of that
+   product: [8] into [2; 4]'s axis 0, [2; 4]'s axis 0 into [8], and [8] into
+   [1; 2; 4]'s axis 1. Each window of a cut into tiles that divide both
+   extents holds whole rows on both sides, so each shard reshapes alone: [8]
+   over two devices holds [4] on each, which becomes [1; 4]. *)
+let moved (m : Nx_array.Move.t) s a : axis =
   match m with
-  | Permute p -> Iarray.find_index (( = ) a) p
+  | Permute p -> (
+      match Iarray.find_index (( = ) a) p with
+      | Some a' -> Becomes a'
+      | None -> Whole)
   | Broadcast s' ->
       let a' = a + Iarray.length s' - Array.length s in
-      if s.(a) = Iarray.get s' a' then Some a' else None
-  | Reshape s' ->
+      if s.(a) = Iarray.get s' a' then Becomes a' else Whole
+  | Reshape s' -> (
       let s' = Iarray.to_array s' in
       let before = product s 0 a in
-      let rec find a' =
-        if a' >= Array.length s' then None
-        else if product s' 0 a' = before && s'.(a') = s.(a) then Some a'
-        else find (a' + 1)
+      let run sh =
+        List.filter
+          (fun x -> product sh 0 x = before)
+          (List.init (Array.length sh) Fun.id)
       in
-      find 0
+      let rec next e = function
+        | [] -> None
+        | y :: ys -> if s'.(y) = e then Some (y, ys) else next e ys
+      in
+      let rec pair xs ys =
+        match xs with
+        | [] -> None
+        | x :: xs -> (
+            match next s.(x) ys with
+            | Some (y, ys') -> if x = a then Some y else pair xs ys'
+            | None -> if x = a then None else pair xs ys)
+      in
+      match pair (run s) (run s') with
+      | Some a' -> Becomes a'
+      | None when before > 0 && s.(a) > 1 -> (
+          match List.find_opt (fun y -> s'.(y) > 1) (run s') with
+          | Some y -> Regroups { axis = y; extent = s'.(y) }
+          | None -> Whole)
+      | None -> Whole)
   | Slice rs ->
       let r = Iarray.get rs a in
-      if r.start = 0 && r.step = 1 && r.count = s.(a) then Some a else None
+      if r.start = 0 && r.step = 1 && r.count = s.(a) then Becomes a else Whole
   | Window ws ->
       (* CR: Preserve this axis's cut for a window of size 1 and step 1.
          It keeps every element in order and only appends a unit axis.
@@ -72,8 +98,8 @@ let moved (m : Nx_array.Move.t) s a =
          Recognize the identity axis here: localize and Layout.move already
          handle it, preserving the Window primitive's other semantics. *)
       if Iarray.exists (fun (w : Nx_array.Move.window) -> w.axis = a) ws then
-        None
-      else Some a
+        Whole
+      else Becomes a
 
 let full d = { Nx_array.Move.start = 0; count = d; step = 1 }
 
@@ -85,6 +111,10 @@ let window rule ~operand:i shape (w : Nx_array.Move.range array) =
         (fun a d ->
           match t.(i).(a) with
           | Becomes a' | Scanned a' -> w.(a')
+          | Regroups { axis; extent } ->
+              let r = w.(axis) in
+              let scale n = n * d / extent in
+              { r with start = scale r.start; count = scale r.count }
           | Whole | Reduced _ -> full d)
         shape
 
@@ -92,30 +122,39 @@ let keeps rule a' =
   match rule with
   | Elementwise -> false
   | Axes t | Into t ->
-      not
-        (Array.exists
-           (fun row -> Array.mem (Becomes a') row || Array.mem (Scanned a') row)
-           t)
+      let into : axis -> bool = function
+        | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a'
+        | Whole | Reduced _ -> false
+      in
+      not (Array.exists (Array.exists into) t)
 
 let uncut_all axes g = Array.fold_left (fun g axis -> Grid.uncut g ~axis) g axes
 
-(* Operand [i]'s grid, of rank [rank], on the result's axes: an axis it becomes
-   none of holds copies. [Grid.map_axes] renumbers the cut axes alone, each one
-   that becomes a result axis. *)
-let forward rule i rank g =
-  let g = ref g in
-  for a = 0 to rank - 1 do
-    if becomes rule i a = None then g := Grid.uncut !g ~axis:a
-  done;
-  Grid.map_axes (fun a -> Option.get (becomes rule i a)) !g
+(* The tiles of [g]'s cut axis [a]. *)
+let tiles g a =
+  Option.get
+    (Array.find_map (fun (c, t) -> if c = a then Some t else None) (Grid.cuts g))
 
-(* The target moved back to operand [i]'s axes, of rank [rank]: a result axis no
-   axis of it becomes holds copies. *)
-let backward rule i rank target =
-  let source a' =
+(* Operand [i]'s grid [g], of shape [s], on the result's axes: a cut that lands
+   on none of them holds copies. [Grid.map_axes] renumbers the cut axes alone,
+   each one that lands on a result axis. *)
+let forward rule i s g =
+  let lost =
+    Array.of_list
+      (List.filter_map
+         (fun (a, t) -> if lands rule i s a t = None then Some a else None)
+         (Array.to_list (Grid.cuts g)))
+  in
+  let g = uncut_all lost g in
+  Grid.map_axes (fun a -> Option.get (lands rule i s a (tiles g a))) g
+
+(* The target moved back to operand [i]'s axes, of shape [s]: a cut of a result
+   axis that no cut of it lands on holds copies. *)
+let backward rule i s target =
+  let source a' t =
     let rec find a =
-      if a = rank then None
-      else if becomes rule i a = Some a' then Some a
+      if a = Array.length s then None
+      else if lands rule i s a t = Some a' then Some a
       else find (a + 1)
     in
     find 0
@@ -123,10 +162,37 @@ let backward rule i rank target =
   let orphans =
     Array.of_list
       (List.filter_map
-         (fun (axis, _) -> if source axis = None then Some axis else None)
+         (fun (a', t) -> if source a' t = None then Some a' else None)
          (Array.to_list (Grid.cuts target)))
   in
-  Grid.map_axes (fun a' -> Option.get (source a')) (uncut_all orphans target)
+  let target = uncut_all orphans target in
+  Grid.map_axes (fun a' -> Option.get (source a' (tiles target a'))) target
+
+(* [target] with each cut undone that an operand of [shapes] regroups into
+   across rows: its tiles do not divide both extents. *)
+let aligned rule shapes target =
+  match rule with
+  | Elementwise -> target
+  | Axes r | Into r ->
+      let across (a', t) =
+        let straddles i s =
+          Array.exists
+            (fun a ->
+              match r.(i).(a) with
+              | Regroups { axis; extent } ->
+                  axis = a' && (s.(a) mod t <> 0 || extent mod t <> 0)
+              | Becomes _ | Scanned _ | Whole | Reduced _ -> false)
+            (Array.init (Array.length s) Fun.id)
+        in
+        Array.exists Fun.id (Array.mapi straddles shapes)
+      in
+      let undone =
+        Array.of_list
+          (List.filter_map
+             (fun ((a', _) as c) -> if across c then Some a' else None)
+             (Array.to_list (Grid.cuts target)))
+      in
+      uncut_all undone target
 
 (* The factor of operand [i]'s axis [a], if [rule] reduces it. *)
 let factor rule i a =
@@ -135,7 +201,7 @@ let factor rule i a =
   | Axes t | Into t -> (
       match t.(i).(a) with
       | Reduced f -> Some f
-      | Becomes _ | Whole | Scanned _ -> None)
+      | Becomes _ | Whole | Scanned _ | Regroups _ -> None)
 
 let reduced rule i rank =
   Array.of_list
@@ -223,7 +289,7 @@ let general ~by rule ps shapes =
         concrete;
       let fwd =
         List.map
-          (fun i -> forward rule i (rank i) (Devices.grid (placed i)))
+          (fun i -> forward rule i shapes.(i) (Devices.grid (placed i)))
           concrete
       in
       (* The target is a fixpoint: placed where the route reads it, each
@@ -242,7 +308,7 @@ let general ~by rule ps shapes =
       let target =
         match rule with
         | Into _ when ps.(n - 1) <> None ->
-            forward rule (n - 1) (rank (n - 1)) (Devices.grid (placed (n - 1)))
+            forward rule (n - 1) shapes.(n - 1) (Devices.grid (placed (n - 1)))
         | _ -> (
             match most with
             | Some g -> g
@@ -266,11 +332,12 @@ let general ~by rule ps shapes =
         match rule with
         | Into _ when ps.(n - 1) = None ->
             let last = n - 1 in
-            forward rule last (rank last)
-              (backward rule last (rank last) target)
+            forward rule last shapes.(last)
+              (backward rule last shapes.(last) target)
         | Elementwise | Axes _ | Into _ -> target
       in
-      let wants = Array.init n (fun i -> backward rule i (rank i) target) in
+      let target = aligned rule shapes target in
+      let wants = Array.init n (fun i -> backward rule i shapes.(i) target) in
       let folds i =
         Array.append (reduced rule i (rank i)) (scanned rule i (rank i))
       in
@@ -311,8 +378,8 @@ let general ~by rule ps shapes =
             lies
             && covers (uncut_all axes q) wants.(i)
             && Grid.equal
-                 (forward rule i (rank i) q)
-                 (forward rule i (rank i) wants.(i))
+                 (forward rule i shapes.(i) q)
+                 (forward rule i shapes.(i) wants.(i))
             && Grid.equal
                  (factors rule i (rank i) q)
                  (factors rule c (rank c) g)
@@ -337,7 +404,7 @@ let general ~by rule ps shapes =
                cut the reduced axes then hold copies in the results. *)
             let gives i =
               match reads.(i) with
-              | Some q -> Grid.equal (forward rule i (rank i) q) target
+              | Some q -> Grid.equal (forward rule i shapes.(i) q) target
               | None -> false
             in
             if List.for_all read_cut all && List.exists gives all then
@@ -410,9 +477,9 @@ let at ~by rule shapes p =
          (Array.to_list (Grid.cuts (Devices.grid p))))
   in
   let set = Devices.set p in
-  let target = uncut_all kept (Devices.grid p) in
+  let target = aligned rule shapes (uncut_all kept (Devices.grid p)) in
   let operand i s =
-    let g = backward rule i (Array.length s) target in
+    let g = backward rule i s target in
     (match Grid.window g s 0 with
     | Ok _ -> ()
     | Error e -> invalid_argf "%s: %s" by e);

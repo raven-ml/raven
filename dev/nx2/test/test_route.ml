@@ -41,6 +41,8 @@ let pp_axis ppf : Route.axis -> unit = function
   | Whole -> Format.pp_print_string ppf "whole"
   | Reduced f -> Format.fprintf ppf "reduced %d" f
   | Scanned a -> Format.fprintf ppf "scanned %d" a
+  | Regroups { axis; extent } ->
+      Format.fprintf ppf "regroups %d of %d" axis extent
 
 let pp_axes ppf a =
   Format.fprintf ppf "[%s]"
@@ -99,8 +101,9 @@ let placement_of rank =
 let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
-   the results, of its extent, plainly or scanned, or none, whole of any extent
-   or reduced. Its reduced axes, in order, have the factors 0, 1 and 2, of
+   the results, of its extent, plainly or scanned, or regroups into one, both
+   extents above one and its own even, or none, whole of any extent or
+   reduced. Its reduced axes, in order, have the factors 0, 1 and 2, of
    [factors]' extents. *)
 let operand_of factors out =
   let open Gen in
@@ -109,7 +112,9 @@ let operand_of factors out =
   let+ order = permutation (List.init rank Fun.id @ List.init r (fun _ -> -1))
   and+ along = array ~size:(constant r) extent
   and+ reduced = array ~size:(constant r) bool
-  and+ scanned = array ~size:(constant r) bool in
+  and+ scanned = array ~size:(constant r) bool
+  and+ regroups = array ~size:(constant r) bool
+  and+ rows = array ~size:(constant r) (of_list [ 2; 4; 6; 8; 12; 16 ]) in
   let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
   let factor a =
     let f = ref 0 in
@@ -118,13 +123,18 @@ let operand_of factors out =
     done;
     !f
   in
+  let regroup a t =
+    t >= 0 && regroups.(a) && out.(t) > 1 && rows.(a) <> out.(t)
+  in
   let axis a t : Route.axis =
-    if t >= 0 then if scanned.(a) then Scanned t else Becomes t
+    if regroup a t then Regroups { axis = t; extent = out.(t) }
+    else if t >= 0 then if scanned.(a) then Scanned t else Becomes t
     else if reduced.(a) then Reduced (factor a)
     else Whole
   in
   let extent a t =
-    if t >= 0 then out.(t)
+    if regroup a t then rows.(a)
+    else if t >= 0 then out.(t)
     else if reduced.(a) then factors.(factor a)
     else along.(a)
   in
@@ -172,14 +182,26 @@ let case =
     | Route.Elementwise -> None
     | Axes t | Into t -> Array.find_index (( = ) (Route.Reduced 0)) t.(i)
   in
+  (* Often an operand's axis that regroups split over the four devices. *)
+  let* split_regroup = bool in
+  let regroup i =
+    match rule with
+    | Route.Elementwise -> None
+    | Axes t | Into t ->
+        Array.find_index
+          (function Route.Regroups _ -> true | _ -> false)
+          t.(i)
+  in
   let rec placements i =
     if i = n then constant []
     else
       let* p =
-        match factor0 i with
-        | Some axis when paired ->
+        match (factor0 i, regroup i) with
+        | Some axis, _ when paired ->
             constant (Some (Devices.split ~by:"t" ~axis s4))
-        | Some _ | None -> placement_of (Array.length shapes.(i))
+        | _, Some axis when split_regroup ->
+            constant (Some (Devices.split ~by:"t" ~axis s4))
+        | _ -> placement_of (Array.length shapes.(i))
       in
       let+ rest = placements (i + 1) in
       p :: rest
@@ -189,7 +211,9 @@ let case =
 
 let case = Gen.with_pp pp_case case
 
-(* The part of operand [i] that result window [w] depends on. *)
+(* The part of operand [i] that result window [w] depends on. Along an axis of
+   [d] that regroups into one of [e], the rows of [d / e] the window's range
+   touches. *)
 let depends c i (w : R.range array) =
   match c.rule with
   | Route.Elementwise -> w
@@ -198,6 +222,11 @@ let depends c i (w : R.range array) =
         (fun a d ->
           match t.(i).(a) with
           | Route.Becomes a' | Scanned a' -> w.(a')
+          | Regroups { axis; extent = e } ->
+              let r = w.(axis) in
+              let lo = r.start * d / e in
+              let hi = (((r.start + r.count) * d) + e - 1) / e in
+              { R.start = lo; count = hi - lo; step = 1 }
           | Whole | Reduced _ -> { R.start = 0; count = d; step = 1 })
         c.shapes.(i)
 
@@ -226,7 +255,7 @@ let factor_of c i a =
   | Axes t | Into t -> (
       match t.(i).(a) with
       | Route.Reduced f -> Some f
-      | Becomes _ | Whole | Scanned _ -> None)
+      | Becomes _ | Whole | Scanned _ | Regroups _ -> None)
 
 let is_reduced c i a = factor_of c i a <> None
 
@@ -257,7 +286,7 @@ let together (ws : R.range array list) (box : R.range array) =
   walk 0
 
 let law =
-  prop ~count:500 "each result window reads operands on its own device" case
+  prop ~count:2000 "each result window reads operands on its own device" case
     (fun c ->
       let all_constant = Array.for_all (fun p -> p = None) c.ps in
       cover "constants only" all_constant;
@@ -286,12 +315,40 @@ let law =
               | Axes t | Into t ->
                   Array.exists
                     (Array.exists (function
-                      | Route.Becomes _ | Scanned _ -> false
+                      | Route.Becomes _ | Scanned _ | Regroups _ -> false
                       | Whole | Reduced _ -> true))
                     t
             in
             cover "a split result beside an axis read whole"
               (read_whole && Grid.cuts target <> [||]);
+            (* Cuts of an axis that regroups, at [ps], whose tiles divide both
+               extents or not. *)
+            let regrouped ps aligned =
+              match c.rule with
+              | Route.Elementwise -> false
+              | Axes t | Into t ->
+                  Array.exists Fun.id
+                    (Array.mapi
+                       (fun i p ->
+                         match p with
+                         | None -> false
+                         | Some p ->
+                             Array.exists
+                               (fun (a, n) ->
+                                 match t.(i).(a) with
+                                 | Route.Regroups { extent; _ } ->
+                                     aligned
+                                     = (c.shapes.(i).(a) mod n = 0
+                                       && extent mod n = 0)
+                                 | Becomes _ | Scanned _ | Whole | Reduced _ ->
+                                     false)
+                               (Grid.cuts (Devices.grid p)))
+                       ps)
+            in
+            cover "a cut read along an axis that regroups"
+              (regrouped (Array.map Option.some r.operands) true);
+            cover "a cut across rows of an axis that regroups"
+              (regrouped c.ps false);
             let windows = Grid.devices target in
             Array.iteri
               (fun j k ->
@@ -438,7 +495,7 @@ let computes =
             | Axes t | Into t -> (
                 match t.(i).(a) with
                 | Route.Reduced _ | Scanned _ -> true
-                | Becomes _ | Whole -> false)
+                | Becomes _ | Whole | Regroups _ -> false)
           in
           let empty =
             Array.exists Fun.id

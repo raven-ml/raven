@@ -16,11 +16,13 @@
     the result's axes. The target is the one of these that cuts the results
     into the most windows, the last of them where several do; else, where
     some lie on one device, that device, which every such operand must share;
-    else the first. Each operand is then read where it lies if that gives
-    every device of the target the part of the operand the device's window of
-    the result depends on, and lies on no other device: the same window, or the
-    whole operand on each device of the target; otherwise it is read at the
-    target moved back to its axes, which the engine places it at.
+    else the first. A cut of the target along an axis that an operand regroups
+    into, in tiles that do not divide both extents, is undone. Each operand is
+    then read where it lies if that gives every device of the target the part
+    of the operand the device's window of the result depends on, and lies on no
+    other device: the same window, or the whole operand on each device of the
+    target; otherwise it is read at the target moved back to its axes, which
+    the engine places it at.
 
     An operand may instead be read cut along the axes the operation reduces
     ({!Reduced}), where the first operand lying so gives the grid of the
@@ -79,12 +81,22 @@ type axis =
           load reading it plain: cut as the operand is, as [Becomes a] routes
           it, but a window of the results depends on the terms before it, so
           the window law does not hold along it ({!Partial}). *)
+  | Regroups of { axis : int; extent : int }
+      (** The results' [axis], of [extent] elements, another extent than the
+          operand's, both above one: a reshape that factors or merges the
+          operand's axis keeps its elements in order, in rows of other
+          lengths. A cut of it into [t] tiles routes as [Becomes axis] where
+          [t] divides both extents: each window then holds whole rows on both
+          sides. Otherwise the axis is read whole on each device, and the
+          results whole along [axis]. *)
 
 (** The type for how an operation's results depend on its operands: for each
     axis of each operand, what the operation makes of it. A window of the
     results reads each operand's axis that becomes one of theirs at that axis's
-    range, and every other axis whole. A result axis that no operand's axis
-    becomes is kept whole: every window the engine computes holds all of it.
+    range, one that regroups into one of theirs at that range scaled by the
+    ratio of the extents, and every other axis whole. A result axis that no
+    operand's axis becomes or regroups into is kept whole: every window the
+    engine computes holds all of it.
 
     This is the sharding rule of Shardy
     ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}): a
@@ -106,12 +118,18 @@ type rule =
           every set, the target {!route} gives with the results' axes it
           does not become whole. *)
 
-val moved : Nx_array.Move.t -> int array -> int -> int option
-(** [moved m s a] is the axis that axis [a] of a value of shape [s] becomes
-    under [m], where it keeps its elements in order: a permutation's, a
-    broadcast that does not stretch it, a reshape that keeps its extent and the
-    product of the extents before it, a slice that keeps all of it. [None] for
-    any other. *)
+val moved : Nx_array.Move.t -> int array -> int -> axis
+(** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:
+    - [Becomes a'] where [m] keeps the axis's elements in order along [a']: a
+      permutation's, a broadcast's that does not stretch it, a slice's that
+      keeps all of it, and a reshape's pair. A reshape pairs the axes of one
+      product of the extents before them in order, each with the result's
+      next axis of that product and of its extent.
+    - [Regroups] for an axis a reshape leaves unpaired, of more than one
+      element after a positive product, onto the result's axis of more than one
+      element after the same product, where there is one: unit axes are
+      skipped.
+    - [Whole] for any other. *)
 
 val window :
   rule ->
@@ -121,8 +139,10 @@ val window :
   Nx_array.Move.range array
 (** [window r ~operand:i s w] is the window of operand [i], of shape [s], that
     the window [w] of an operation's results reads by [r]: [w]'s range along an
-    axis that becomes one of the results', whole along any other. Where an
-    operation has several results, [w] is a window of the first.
+    axis that becomes one of the results', that range scaled by [e / extent]
+    along an axis of [e] elements that regroups into one, whole along any
+    other. Where an operation has several results, [w] is a window of the
+    first.
 
     The engine computes an operation one window at a time, each device over its
     operands' windows, under the {e window law}: for every window [w] of the
@@ -182,13 +202,14 @@ val route :
 
 val keeps : rule -> int -> bool
 (** [keeps r a] is whether the results of an operation of rule [r] keep their
-    axis [a] whole: no row's axis becomes it. *)
+    axis [a] whole: no row's axis becomes it or regroups into it. *)
 
 val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
 (** [at ~by r shapes p] routes an operation of rule [r] over operands of
-    [shapes] whose results are wanted at [p]: the result lies at [p] with each
-    axis [r] keeps whole in the results whole ({!keeps}), and each operand is
-    read at that target moved back to its axes.
+    [shapes] whose results are wanted at [p]: the result lies at [p], with
+    each axis [r] keeps whole in the results whole ({!keeps}) and each cut an
+    operand regroups across rows undone ({!Regroups}); each operand is read at
+    that target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if a placement an operand is read at
     cuts an axis its shape lacks. *)

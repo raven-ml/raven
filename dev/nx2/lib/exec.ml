@@ -543,16 +543,20 @@ let cast ~by set dt a =
       Option.get (A.bitcast dt (copy_array ~by kernels a))
 
 (* [mv] on one shard of a value of [shape] cut as [cuts], the shard of shape
-   [local]: a cut axis is one the movement keeps in order ({!Route.moved}), so
-   where the movement names its extent, the shard's own extent along it
-   replaces it. *)
+   [local]: a cut axis is one the movement keeps in order or regroups in tiles
+   that divide both extents ({!Route.moved}), so where the movement names its
+   extent, the shard's own extent along it, or its tile of the regrouped
+   extent, replaces it. *)
 let localize (mv : M.t) shape cuts local : M.t =
   let cut a = Array.exists (fun (c, _) -> c = a) cuts in
   let target s' =
     let s' = Iarray.to_array s' in
     Array.iter
-      (fun (a, _) ->
-        Option.iter (fun a' -> s'.(a') <- local.(a)) (Route.moved mv shape a))
+      (fun (a, t) ->
+        match Route.moved mv shape a with
+        | Becomes a' -> s'.(a') <- local.(a)
+        | Regroups { axis; extent } -> s'.(axis) <- extent / t
+        | Whole | Reduced _ | Scanned _ -> ())
       cuts;
     Iarray.of_array s'
   in

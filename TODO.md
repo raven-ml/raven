@@ -303,6 +303,11 @@ raven / llama.cpp (Vulkan; ROCm):
 - `reduce_ranges` flattens its result to quiet it, which gathers a result
   cut along its row axis onto every device; its sparse table's `assemble`
   gathers a row-cut `x` at every level
+- a reshape that factors or merges a cut axis gathers it whole onto every
+  device where the tiles don't divide both extents: gpt-oss's 2880 inputs,
+  90 MXFP4 blocks, over 4 or 8 devices. A halo exchange, as GSPMD's
+  reshape realigns an uneven cut (arXiv 2105.04663 §4.1), would move only
+  the rows across each window's boundary
 - a check on another machine's device waits for its step: settling reads
   its result with `Nx_array.to_device`, whose `Rig.Buffer.copy` follows
   every value submitted there. Done when rig offers a read of a remote

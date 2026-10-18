@@ -996,10 +996,7 @@ let contract_rule batch contracting ra rb init =
 
 let move_rule m x =
   let s = shape x in
-  let becomes a : Route.axis =
-    match Route.moved m s a with Some a' -> Becomes a' | None -> Whole
-  in
-  Route.Axes [| Array.init (Array.length s) becomes |]
+  Route.Axes [| Array.init (Array.length s) (Route.moved m s) |]
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then
