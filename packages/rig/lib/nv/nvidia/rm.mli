@@ -103,8 +103,12 @@ val control :
     checked, once it has written at each field of [p] that [refs] names the
     address of that ref's bytes, which it keeps through the call. *)
 
+val free : t -> parent:int -> int -> (unit, string) result
+(** [free c ~parent obj] frees [obj], a child of [parent], and every object
+    under it, or is the RM's refusal ([NV_ESC_RM_FREE]). *)
+
 val rm : t -> Rig_nv.rm
-(** [rm c] is the RM as the driver calls it. *)
+(** [rm c] is the RM as the driver calls it, whose [free] is {!free}. *)
 
 val control_request : int
 (** [control_request] is the ioctl of a control on the control file

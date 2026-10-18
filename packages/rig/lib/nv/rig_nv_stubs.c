@@ -103,6 +103,12 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
     free(d);
     return Val_long(0);
   }
+  if (pthread_mutex_init(&d->channels_mu, NULL) != 0) {
+    pthread_mutex_destroy(&e->flush_mu);
+    free(e);
+    free(d);
+    return Val_long(0);
+  }
   e->driver = &driver;
   e->word = Pointer_val(v_word);
   e->d = d;
@@ -119,18 +125,6 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
   }
   link_edge(e);
   return Val_long((intnat)e);
-}
-
-/* Starts each channel's join count, and its join word at the host address
-   [v_joins] + 8 * q, at JOINS_START. */
-value caml_rig_nv_joins(value v_self, value v_joins) {
-  struct device *d = Device_val(v_self);
-  volatile uint64_t *words = Pointer_val(v_joins);
-  for (int q = 0; q < CHANNELS; q++) {
-    d->ch[q].joins = JOINS_START;
-    words[q] = JOINS_START;
-  }
-  return Val_unit;
 }
 
 /* Frees the records of [d]'s rings: those handed, installed and retired. */
@@ -153,42 +147,115 @@ value caml_rig_nv_destroy(value v_self) {
   free_rings(d);
   free(d->copy_launch);
   free(d->timed);
+  pthread_mutex_destroy(&d->channels_mu);
   free(d);
   pthread_mutex_destroy(&Edge_val(v_self)->flush_mu);
   free(Edge_val(v_self));
   return Val_unit;
 }
 
-/* The fields of [caml_rig_nv_channel]'s ints. */
-enum {
-  ch_ring,
-  ch_entries,
-  ch_gp_put,
-  ch_token,
-  ch_segments,
-  ch_segments_gpu,
-  ch_size,
-  ch_notifier,
-  ch_fields
-};
+/* The fields of a channel's ints in [caml_rig_nv_channels] and
+   [caml_rig_nv_hand_channels], the compute channel's first. */
+enum { ch_ring, ch_entries, ch_gp_put, ch_token, ch_notifier, ch_fields };
 
-/* Sets channel [v_q] of [v_self] from [v_ints], host addresses and sizes
-   as above; [entries] and [size] are powers of two. [true], or [false]
-   without memory for its marks. */
-value caml_rig_nv_channel(value v_self, value v_q, value v_ints) {
-  struct channel *c = &Device_val(v_self)->ch[Int_val(v_q)];
-#define F(i) Long_val(Field(v_ints, i))
-  c->ring = Pointer_val(Field(v_ints, ch_ring));
-  c->entries = (uint64_t)F(ch_entries);
-  c->gp_put = Pointer_val(Field(v_ints, ch_gp_put));
-  c->token = (uint32_t)F(ch_token);
-  c->segments = Pointer_val(Field(v_ints, ch_segments));
-  c->segments_gpu = (uint64_t)F(ch_segments_gpu);
-  c->size = (uint64_t)F(ch_size);
-  c->notifier = Pointer_val(Field(v_ints, ch_notifier));
+/* The channels whose rings' GPU address is [v_id], from [v_ints], host
+   addresses and counts as above; [entries] are powers of two. */
+static void channels_of(struct channels *g, value v_id, value v_ints) {
+  g->id = (uint64_t)Long_val(v_id);
+  for (int q = 0; q < CHANNELS; q++) {
+#define F(i) Field(v_ints, q * ch_fields + (i))
+    g->ch[q].ring = Pointer_val(F(ch_ring));
+    g->ch[q].entries = (uint64_t)Long_val(F(ch_entries));
+    g->ch[q].gp_put = Pointer_val(F(ch_gp_put));
+    g->ch[q].token = (uint32_t)Long_val(F(ch_token));
+    g->ch[q].notifier = Pointer_val(F(ch_notifier));
 #undef F
-  c->marks = malloc(c->entries * sizeof *c->marks);
-  return Val_bool(c->marks != NULL);
+  }
+}
+
+/* Sets [v_self]'s channels, at its open, to the channels [v_id] of
+   [v_ints] (as [channels_of] reads them). */
+value caml_rig_nv_channels(value v_self, value v_id, value v_ints) {
+  struct device *d = Device_val(v_self);
+  struct channels g;
+  channels_of(&g, v_id, v_ints);
+  for (int q = 0; q < CHANNELS; q++) {
+    struct channel *c = &d->ch[q];
+    c->ring = g.ch[q].ring;
+    c->entries = g.ch[q].entries;
+    c->gp_put = g.ch[q].gp_put;
+    c->token = g.ch[q].token;
+    c->notifier = g.ch[q].notifier;
+  }
+  d->installed = g.id;
+  return Val_unit;
+}
+
+/* The record of the channels [v_id] of [v_ints] (as [channels_of] reads
+   them), which the OCaml side frees once no device holds it, or 0 without
+   host memory for it. */
+value caml_rig_nv_channels_record(value v_id, value v_ints) {
+  struct channels *g = malloc(sizeof *g);
+  if (g == NULL) return Val_long(0);
+  channels_of(g, v_id, v_ints);
+  return Val_long((intnat)g);
+}
+
+/* Hands the next room that needs them the channels of the record
+   [v_record], in place of those handed before and not installed. The
+   OCaml side frees a record once its channels are neither handed nor
+   installed ([caml_rig_nv_channels_state]). Under the device's local
+   lock. */
+value caml_rig_nv_hand_channels(value v_self, value v_record) {
+  struct device *d = Device_val(v_self);
+  pthread_mutex_lock(&d->channels_mu);
+  d->grown_channels = Pointer_val(v_record);
+  pthread_mutex_unlock(&d->channels_mu);
+  return Val_unit;
+}
+
+/* Starts each channel's join count, and its join word at the host address
+   [v_joins] + 8 * q, at JOINS_START. */
+value caml_rig_nv_joins(value v_self, value v_joins) {
+  struct device *d = Device_val(v_self);
+  volatile uint64_t *words = Pointer_val(v_joins);
+  for (int q = 0; q < CHANNELS; q++) {
+    d->ch[q].joins = JOINS_START;
+    words[q] = JOINS_START;
+  }
+  return Val_unit;
+}
+
+/* The ids of [v_self]'s channels installed and of those handed, 0 for none,
+   read at one instant. */
+value caml_rig_nv_channels_state(value v_self) {
+  CAMLparam1(v_self);
+  CAMLlocal1(v);
+  struct device *d = Device_val(v_self);
+  pthread_mutex_lock(&d->channels_mu);
+  uint64_t installed = d->installed;
+  uint64_t handed = d->grown_channels == NULL ? 0 : d->grown_channels->id;
+  pthread_mutex_unlock(&d->channels_mu);
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, Val_long((intnat)installed));
+  Store_field(v, 1, Val_long((intnat)handed));
+  CAMLreturn(v);
+}
+
+value caml_rig_nv_channels_free(value v_record) {
+  free(Pointer_val(v_record));
+  return Val_unit;
+}
+
+/* Sets channel [v_q]'s segment ring to the [v_size] bytes, a power of two,
+   at the host address [v_host] and the GPU's [v_gpu]. */
+value caml_rig_nv_segments(value v_self, value v_q, value v_host,
+                           value v_gpu, value v_size) {
+  struct channel *c = &Device_val(v_self)->ch[Int_val(v_q)];
+  c->segments = Pointer_val(v_host);
+  c->segments_gpu = (uint64_t)Long_val(v_gpu);
+  c->size = (uint64_t)Long_val(v_size);
+  return Val_unit;
 }
 
 /* Sets COMPUTE's launch ring to the [v_size] bytes, a power of two, at the
@@ -208,15 +275,25 @@ static uint64_t size_of(const struct ring *r) {
   return r == NULL ? 0 : r->size;
 }
 
-/* The bytes each ring must hold for the submission whose rig_nv_room last
-   answered RIG_GROW on this thread, as rig_nv_asked numbers them, 0 for
-   those the installed ring or one handed holds; the record is consumed.
-   Under the device's local lock. */
+/* The entries of the ring a growth makes for [w] entries: the first power
+   of two that holds twice them, at most ENTRIES_MAX, of which rig_nv_room
+   asks for fewer. */
+static uint64_t grown_entries(uint64_t w) {
+  uint64_t n = 1;
+  while (n < 2 * w && n < ENTRIES_MAX) n *= 2;
+  return n;
+}
+
+/* What the submission whose rig_nv_room last answered RIG_GROW on this
+   thread needs, as rig_nv_asked numbers it: the bytes each ring must hold,
+   then the entries each channel's ring must have, 0 for those the
+   installed rings or channels or those handed hold; the record is
+   consumed. Under the device's local lock. */
 value caml_rig_nv_needed(value v_self) {
   CAMLparam1(v_self);
   CAMLlocal1(v);
   struct device *d = Device_val(v_self);
-  v = caml_alloc_tuple(CHANNELS + 1);
+  v = caml_alloc_tuple(CHANNELS + 1 + CHANNELS);
   int mine = rig_nv_asked.d == d;
   rig_nv_asked.d = NULL;
   for (int i = 0; i <= CHANNELS; i++) {
@@ -226,6 +303,15 @@ value caml_rig_nv_needed(value v_self) {
       w = 0;
     Store_field(v, i, Val_long((intnat)w));
   }
+  pthread_mutex_lock(&d->channels_mu);
+  for (int q = 0; q < CHANNELS; q++) {
+    uint64_t w = mine ? rig_nv_asked.entries[q] : 0;
+    const struct channels *g = d->grown_channels;
+    if (w < d->ch[q].entries || (g != NULL && w < g->ch[q].entries)) w = 0;
+    Store_field(v, CHANNELS + 1 + q,
+                Val_long(w == 0 ? 0 : (intnat)grown_entries(w)));
+  }
+  pthread_mutex_unlock(&d->channels_mu);
   CAMLreturn(v);
 }
 
@@ -292,9 +378,10 @@ value caml_rig_nv_retiring(value v_self) {
 }
 
 /* Sets the stamp ring to the [v_slots] slots, a power of two, at the host
-   address [v_host] and the GPU's [v_gpu], zeroed: [true], or [false]
-   without memory for their host side. Raises [Invalid_argument] if the
-   [v_bytes] bytes there hold fewer slots. */
+   address [v_host] and the GPU's [v_gpu], zeroed, and each channel's queue
+   of marks to as many: [true], or [false] without memory for their host
+   side. Raises [Invalid_argument] if the [v_bytes] bytes there hold fewer
+   slots. */
 value caml_rig_nv_stamps(value v_self, value v_host, value v_gpu,
                          value v_bytes, value v_slots) {
   struct device *d = Device_val(v_self);
@@ -303,6 +390,10 @@ value caml_rig_nv_stamps(value v_self, value v_host, value v_gpu,
     caml_invalid_argument("Rig_nv: the stamp ring is too small");
   d->timed = calloc(slots, sizeof *d->timed);
   if (d->timed == NULL) return Val_false;
+  for (int q = 0; q < CHANNELS; q++) {
+    d->ch[q].marks = malloc(slots * sizeof *d->ch[q].marks);
+    if (d->ch[q].marks == NULL) return Val_false;
+  }
   d->stamps = Pointer_val(v_host);
   d->stamps_gpu = (uint64_t)Long_val(v_gpu);
   d->slots = slots;
@@ -423,10 +514,6 @@ value caml_rig_nv_launch(value v_structures, value v_ints) {
   }
   Nativeint_val(result) = (intnat)l;
   CAMLreturn(result);
-}
-
-value caml_rig_nv_most_parts(value v_self) {
-  return Val_long(rig_nv_most_parts(Device_val(v_self)));
 }
 
 value caml_rig_nv_launch_free(value v_launch) {
@@ -589,11 +676,15 @@ value caml_rig_nv_signaled(value v_self) {
 }
 
 /* The error the RM wrote into channel [q]'s notifier, its code and its
-   status: [code lsl 16 lor status], or [0] if none. */
-static uint64_t notification(const struct device *d, int q) {
+   status: [code lsl 16 lor status], or [0] if none. Read under
+   [channels_mu], so that the notifier is the installed channel's, whose
+   memory stays while it is installed. */
+static uint64_t notification(struct device *d, int q) {
+  pthread_mutex_lock(&d->channels_mu);
   volatile const uint8_t *n = d->ch[q].notifier;
   uint32_t code = *(volatile const uint32_t *)(n + d->info32_at);
   uint16_t status = *(volatile const uint16_t *)(n + d->status_at);
+  pthread_mutex_unlock(&d->channels_mu);
   return (uint64_t)code << 16 | status;
 }
 
@@ -624,6 +715,7 @@ value caml_rig_nv_end(value v_self, value v_stopped) {
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free_rings(d);
   free(d->timed);
+  pthread_mutex_destroy(&d->channels_mu);
   free(d);
   return Val_unit;
 }

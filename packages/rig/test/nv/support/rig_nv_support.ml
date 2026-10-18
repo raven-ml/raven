@@ -83,7 +83,19 @@ module Edge = struct
   external submit_c : nativeint -> int -> (int * int array) array -> unit
     = "rig_nv_test_submit"
 
+  external room_c : nativeint -> (int * int array) array -> int
+    = "rig_nv_test_room"
+
   let submit g ~v ps = submit_c (N.facts g).edge v ps
+
+  (* rig_edge.h's answers, by value. *)
+  let room g ps =
+    match room_c (N.facts g).edge ps with
+    | 0 -> "FITS"
+    | 1 -> "LATER"
+    | 2 -> "NEVER"
+    | 3 -> "GROW"
+    | a -> Printf.sprintf "answer %d" a
 end
 
 (* Host memory *)

@@ -329,15 +329,32 @@ let blit_params s (p : Rig_nv.params) =
 let params n =
   Bigarray.Array1.init Bigarray.char Bigarray.c_layout n (fun _ -> '\000')
 
+(* The RM's statuses that say it lacks memory or another resource
+   (nvstatuscodes.h): NV_ERR_NO_MEMORY and NV_ERR_INSUFFICIENT_RESOURCES. *)
+let nv_err_no_memory = 0x51
+let nv_err_insufficient_resources = 0x1a
+
+(* The refusal [why] of a call the RM answered with [status]. *)
+let refusal why status =
+  if status = nv_err_no_memory || status = nv_err_insufficient_resources then
+    Rig_nv.Lacking why
+  else Refused why
+
+let failed r = Result.map_error (fun why -> Rig_nv.Refused why) r
+let lacking r = Result.map_error (fun why -> Rig_nv.Lacking why) r
+let why = function Rig_nv.Lacking why | Refused why -> why
+
 let control g ~client obj cmd p =
   let body = Option.fold ~none:"" ~some:string_of_params p in
   let* answer =
-    call g Defs.nv_vgpu_msg_function_gsp_rm_control
-      (Rpc.rm_control ~client ~obj ~cmd body)
+    failed
+      (call g Defs.nv_vgpu_msg_function_gsp_rm_control
+         (Rpc.rm_control ~client ~obj ~cmd body))
   in
-  let* status, out = Rpc.rm_answer `Control answer in
+  let* status, out = failed (Rpc.rm_answer `Control answer) in
   if status <> 0 then
-    Error (strf "the RM refused command 0x%x: 0x%x" cmd status)
+    Error
+      (refusal (strf "the RM refused command 0x%x: 0x%x" cmd status) status)
   else (
     Option.iter (blit_params out) p;
     Ok ())
@@ -346,11 +363,13 @@ let alloc_object g ~client ~parent cls p =
   let obj = handle g in
   let body = Option.fold ~none:"" ~some:string_of_params p in
   let* answer =
-    call g Defs.nv_vgpu_msg_function_gsp_rm_alloc
-      (Rpc.rm_alloc ~client ~parent ~obj ~cls body)
+    failed
+      (call g Defs.nv_vgpu_msg_function_gsp_rm_alloc
+         (Rpc.rm_alloc ~client ~parent ~obj ~cls body))
   in
-  let* status, _ = Rpc.rm_answer `Alloc answer in
-  if status <> 0 then Error (strf "the RM refused class 0x%x: 0x%x" cls status)
+  let* status, _ = failed (Rpc.rm_answer `Alloc answer) in
+  if status <> 0 then
+    Error (refusal (strf "the RM refused class 0x%x: 0x%x" cls status) status)
   else Ok obj
 
 (* Memory of the GSP's objects: GPU memory mapped at addresses of the GPU's
@@ -386,11 +405,12 @@ let notifier_size = 0xecc
 
 let channel_memory g ~client ~locate p =
   let module G = Defs.Gpfifo_alloc in
-  let* ramfc = object_memory g instance_size in
+  let* ramfc = lacking (object_memory g instance_size) in
   let* mthd =
     match Page_table.palloc g.p.tables method_buffer_size with
     | Some pa -> Ok pa
-    | None -> Error "no GPU memory for a channel's method buffer"
+    | None ->
+        Error (Rig_nv.Lacking "no GPU memory for a channel's method buffer")
   in
   let fb = Defs.addr_fbmem in
   memdesc p G.ramfc_mem ~base:(paddr ramfc) ~size:ramfc_size ~space:fb;
@@ -404,7 +424,10 @@ let channel_memory g ~client ~locate p =
     let h = pget p (fst3 G.h_userd_memory, 4) in
     let off = pget p (fst3 G.userd_offset, 8) in
     match locate h off with
-    | None -> Error (strf "no memory of handle 0x%x for a channel's USERD" h)
+    | None ->
+        Error
+          (Rig_nv.Refused
+             (strf "no memory of handle 0x%x for a channel's USERD" h))
     | Some (where, a) ->
         let space =
           match where with `Gpu -> fb | `System -> Defs.addr_sysmem
@@ -431,7 +454,7 @@ let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
         let* m =
           match List.assoc_opt id have with
           | Some m -> Ok m
-          | None -> object_memory g b.size
+          | None -> lacking (object_memory g b.size)
         in
         let f x = elt Pr.promote_entry i x in
         pset p (f E.buffer_id) id;
@@ -466,7 +489,8 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   let channel_class, compute_class, _ = classes g.p.chip.family in
   let* () =
     match p with
-    | Some p when cls = channel_class -> channel_memory g ~client ~locate p
+    | Some p when cls = channel_class ->
+        channel_memory g ~client ~locate p
     | _ -> Ok ()
   in
   let* obj =
@@ -487,10 +511,11 @@ let alloc g ~client ~locate ~objects ~parent cls p =
     if client = priv_root then Ok ()
     else if cls = Defs.fermi_vaspace_a then
       let* _ =
-        call g Defs.nv_vgpu_msg_function_set_page_directory
-          (Rpc.page_directory ~client ~device:parent ~vaspace:obj
-             ~root:(Page_table.root g.p.tables)
-             ~entries:(root_entries g.p.chip))
+        failed
+          (call g Defs.nv_vgpu_msg_function_set_page_directory
+             (Rpc.page_directory ~client ~device:parent ~vaspace:obj
+                ~root:(Page_table.root g.p.tables)
+                ~entries:(root_entries g.p.chip)))
       in
       Ok ()
     else if cls = compute_class then
@@ -531,8 +556,7 @@ let client_rm g ~client ~locate =
         if cmd = Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
           Option.iter (token g obj) p;
         Ok ());
-    free =
-      (fun ~parent:_ _ -> Error "the GSP's objects live as long as the GSP");
+    free = None;
   }
 
 let rm g ~locate =
@@ -540,7 +564,9 @@ let rm g ~locate =
   g.clients <- client + 1;
   let r = client_rm g ~client ~locate in
   let* _ =
-    r.alloc ~parent:0 Defs.nv01_root (Some (params Defs.Nv0000_alloc.sizeof))
+    Result.map_error why
+      (r.alloc ~parent:0 Defs.nv01_root
+         (Some (params Defs.Nv0000_alloc.sizeof)))
   in
   Ok r
 
@@ -557,9 +583,10 @@ let objects (rm : Rig_nv.rm) =
   let dp = params D.sizeof in
   pset dp D.h_client_share rm.client;
   pset dp D.va_mode Defs.nv_device_allocation_vamode_optional_multiple_vaspaces;
-  let* device = rm.alloc ~parent:rm.client Defs.nv01_device_0 (Some dp) in
+  let alloc ~parent cls p = Result.map_error why (rm.alloc ~parent cls p) in
+  let* device = alloc ~parent:rm.client Defs.nv01_device_0 (Some dp) in
   let* subdevice =
-    rm.alloc ~parent:device Defs.nv20_subdevice_0
+    alloc ~parent:device Defs.nv20_subdevice_0
       (Some (params Defs.Nv2080_alloc.sizeof))
   in
   let vp = params V.sizeof in
@@ -568,7 +595,7 @@ let objects (rm : Rig_nv.rm) =
   pset vp V.flags
     (Defs.nv_vaspace_allocation_flags_enable_page_faulting
    lor Defs.nv_vaspace_allocation_flags_is_externally_owned);
-  let* vaspace = rm.alloc ~parent:device Defs.fermi_vaspace_a (Some vp) in
+  let* vaspace = alloc ~parent:device Defs.fermi_vaspace_a (Some vp) in
   Ok (device, subdevice, vaspace)
 
 (* GR information *)
@@ -589,8 +616,9 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
   let module I = Defs.Internal_gr_info in
   let p = params S.sizeof in
   let* () =
-    rm.control subdevice Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info
-      (Some p)
+    Result.map_error why
+      (rm.control subdevice Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info
+         (Some p))
   in
   let info i =
     let engine = elt S.engine_info 0 (0, 0) in
@@ -631,7 +659,10 @@ let golden_internal_flags = 0x1a
 let golden g =
   let objects = { subdevice = 0 } in
   let locate _ _ = None in
-  let alloc = alloc g ~client:priv_root ~locate ~objects in
+  let alloc ~parent cls p =
+    Result.map_error why
+      (alloc g ~client:priv_root ~locate ~objects ~parent cls p)
+  in
   let* _ =
     alloc ~parent:0 Defs.nv01_root (Some (params Defs.Nv0000_alloc.sizeof))
   in
@@ -646,7 +677,9 @@ let golden g =
     alloc ~parent:dev Defs.fermi_vaspace_a
       (Some (params Defs.Vaspace_alloc.sizeof))
   in
-  let control = control g ~client:priv_root in
+  let control obj cmd p =
+    Result.map_error why (control g ~client:priv_root obj cmd p)
+  in
   (* Each engine's runlist, from the device information table. *)
   let module T = Defs.Device_info_table in
   let module E = Defs.Device_entry in
@@ -753,9 +786,10 @@ let golden g =
         (11, buf (global 10) ~phys:true ~virt:true);
       ];
   let* _ =
-    promote g ~client:priv_root ~subdevice:subdev channel
-      (List.filter (fun (_, b) -> not b.local) g.buffers)
-      ~virt:None ~phys:None ()
+    Result.map_error why
+      (promote g ~client:priv_root ~subdevice:subdev channel
+         (List.filter (fun (_, b) -> not b.local) g.buffers)
+         ~virt:None ~phys:None ())
   in
   let* _ = alloc ~parent:channel compute_class None in
   let* _ = alloc ~parent:channel copy_class None in

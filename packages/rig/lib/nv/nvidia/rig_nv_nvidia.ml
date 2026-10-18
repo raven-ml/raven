@@ -301,7 +301,7 @@ let describe g va size =
 
 (* Frees [g]'s object [h], whose handle [naming] chose. *)
 let free_object ~naming g h =
-  match (Rm.rm g.c).free ~parent:g.device h with
+  match Rm.free g.c ~parent:g.device h with
   | Ok () -> if naming = Self_named then Rm.free_handle h
   | Error _ -> ()
 
@@ -654,6 +654,8 @@ let gr_info c subdevice =
     (List.init n (fun i -> get infos (fst I.data + (i * I.sizeof), snd I.data)))
 
 (* The frame buffer's fact [index], in bytes. *)
+let why = function Rig_nv.Lacking why | Refused why -> why
+
 let fb_info c rm subdevice index =
   let (module R : D.RELEASE) = c.Rm.layouts in
   let module G = R.Fb_get_info in
@@ -667,7 +669,8 @@ let fb_info c rm subdevice index =
   in
   set p (elt F.index) index;
   let* () =
-    rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p)
+    Result.map_error why
+      (rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p))
   in
   (* The RM reports the frame buffer's facts in KiB. *)
   Ok (get p (elt F.data) * 1024)
@@ -679,7 +682,9 @@ let hang_bound rm subdevice =
   let module W = D.Watchdog_info in
   let p = params W.sizeof in
   let* () =
-    rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_rc_get_watchdog_info (Some p)
+    Result.map_error why
+      (rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_rc_get_watchdog_info
+         (Some p))
   in
   let running = D.nv2080_ctrl_rc_get_watchdog_info_flags_running in
   if get p W.watchdog_status_flags land running <> 0 then Ok None
@@ -708,13 +713,14 @@ let make_gpu c ~dev ~index bus =
     let id = params D.Id_info.sizeof in
     set id D.Id_info.gpu_id gpu_id;
     let* () =
-      rm.control c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 (Some id)
+      Result.map_error why
+        (rm.control c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 (Some id))
     in
     let instance = get id D.Id_info.device_instance in
     let alloc ~parent cls f size =
       let p = params size in
       f p;
-      rm.alloc ~parent cls (Some p)
+      Result.map_error why (rm.alloc ~parent cls (Some p))
     in
     let* device =
       alloc ~parent:c.root D.nv01_device_0
@@ -726,7 +732,7 @@ let make_gpu c ~dev ~index bus =
         D.Nv0080_alloc.sizeof
     in
     (* Freeing the device frees every object under it. *)
-    taken (fun () -> ignore (rm.free ~parent:c.root device));
+    taken (fun () -> ignore (Rm.free c ~parent:c.root device));
     let* subdevice =
       alloc ~parent:device D.nv20_subdevice_0 ignore D.Nv2080_alloc.sizeof
     in
@@ -780,11 +786,14 @@ let make_gpu c ~dev ~index bus =
          D.nv2080_gpu_cmd_gpu_get_gid_flags_format_binary);
     set gid Gi.length 16;
     let* () =
-      rm.control subdevice D.nv2080_ctrl_cmd_gpu_get_gid_info (Some gid)
+      Result.map_error why
+        (rm.control subdevice D.nv2080_ctrl_cmd_gpu_get_gid_info (Some gid))
     in
     let data, _, _ = Gi.data in
     let uuid = String.init 16 (fun i -> Bigarray.Array1.get gid (data + i)) in
-    let* usermode = rm.alloc ~parent:subdevice usermode_class None in
+    let* usermode =
+      Result.map_error why (rm.alloc ~parent:subdevice usermode_class None)
+    in
     let* doorbell =
       match Va.alloc c.low ~align:page usermode_bytes with
       | Some va -> Ok va

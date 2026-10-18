@@ -83,7 +83,7 @@ let in_child (f : unit -> 'a) : ('a, string) result =
 
 (* Operations *)
 
-type op = Open | Alloc of Rig_edge.memory | Map_host
+type op = Open | Alloc of Rig_edge.memory | Map_host | Grow
 
 let op_name = function
   | Open -> "open"
@@ -91,10 +91,13 @@ let op_name = function
   | Alloc Pinned -> "alloc of pinned memory"
   | Alloc Mapped -> "alloc of mapped memory"
   | Map_host -> "map_host"
+  | Grow -> "a growth of the channels"
 
 (* The operations other than an open act on an open GPU [g], and [map_host] on
-   [host], host memory starting on a page. *)
-type on = { g : N.t option; host : int }
+   [host], host memory starting on a page. A growth asks for channels whose
+   rings hold twice the entries of the last it asked for, [want], from more
+   than the 262,144 a ring holds at open. *)
+type on = { g : N.t option; host : int; mutable want : int }
 
 let host_bytes = 16 * page
 
@@ -113,7 +116,16 @@ let take on op =
   | Alloc kind, Some g -> region g (N.alloc g kind page)
   | Map_host, Some g ->
       region g (N.map_host g on.host host_bytes)
-  | (Alloc _ | Map_host), None -> invalid_arg "no open GPU"
+  | Grow, Some g -> (
+      on.want <- 2 * on.want;
+      let nops = [| (0, Array.make (2 * on.want) 0) |] in
+      match Rig_nv_support.Edge.room g nops with
+      | "GROW" -> (
+          match N.grow g with
+          | Rig_edge.Grown -> ("Grown", ignore)
+          | Short n -> (strf "Short %d" n, ignore))
+      | a -> ("room " ^ a, ignore))
+  | (Alloc _ | Map_host | Grow), None -> invalid_arg "no open GPU"
 
 let answer on op =
   match take on op with
@@ -143,7 +155,7 @@ let attempt ?(cold = false) op lim =
   in
   let host = H.pages host_bytes in
   Fun.protect ~finally:(fun () -> H.free_pages host host_bytes) @@ fun () ->
-  let on = { g; host } in
+  let on = { g; host; want = 140_000 } in
   if not cold then ignore (run_once on op);
   let files = S.files () and maps = S.mappings () in
   let got, give = under lim (fun () -> answer on op) in
@@ -157,16 +169,18 @@ let attempt ?(cold = false) op lim =
   in
   { got; files; maps; again; reopened }
 
-let succeeded = function "Ok" | "Some" -> true | _ -> false
+let succeeded = function "Ok" | "Some" | "Grown" -> true | _ -> false
 
 (* What the .mli allows [op] to answer when a limit stops it: an open's [Error];
    an allocation's or a mapping's [None], or [Fault] for a failure that is no
-   refusal. *)
+   refusal; a growth's [Short], since a shortage keeps the device's
+   channels. *)
 let allowed op got =
   match op with
   | Open -> String.starts_with ~prefix:"Error " got
   | Alloc _ | Map_host ->
       got = "None" || String.starts_with ~prefix:"Fault " got
+  | Grow -> String.starts_with ~prefix:"Short " got
 
 (* A failure leaves the process's files and the GPU's mappings as they were.
    An open that succeeds keeps its device's timeline word for the process. *)
@@ -242,7 +256,7 @@ let alloc_starved op () =
   need_gpu ();
   equal string "None" (starved op)
 
-let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host ]
+let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
 
 let () =
   exit

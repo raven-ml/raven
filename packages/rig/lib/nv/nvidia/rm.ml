@@ -108,10 +108,21 @@ let iowr ~type_ nr size =
 let control_request =
   iowr ~type_:D.nv_ioctl_magic D.nv_esc_rm_control D.Nvos54.sizeof
 
-(* An escape ioctl of the driver's magic, with the parameters [p]. *)
-let escape fd nr p what =
+let why = function Rig_nv.Lacking why | Refused why -> why
+
+(* An escape ioctl of the driver's magic, with the parameters [p]: its
+   failure as the driver's refusal, [Lacking] where the kernel lacked the
+   memory for it (ENOMEM). *)
+let escape_rm fd nr p what =
   let request = iowr ~type_:D.nv_ioctl_magic nr (Bigarray.Array1.dim p) in
-  guard what (fun () -> ioctl fd request p)
+  match ioctl fd request p with
+  | () -> Ok ()
+  | exception Unix.Unix_error (e, _, _) ->
+      let message = strf "%s: %s" what (Unix.error_message e) in
+      if e = Unix.ENOMEM then Error (Rig_nv.Lacking message)
+      else Error (Rig_nv.Refused message)
+
+let escape fd nr p what = Result.map_error why (escape_rm fd nr p what)
 
 let register fd ~ctl =
   let p = params D.Register_fd.sizeof in
@@ -142,11 +153,12 @@ let alloc_raw ctl ~root ~parent cls p =
   set a A.h_object_parent parent;
   set a A.h_class cls;
   Option.iter (fun p -> set a A.p_alloc_parms (address p)) p;
-  let* () = escape ctl D.nv_esc_rm_alloc a "allocating a GPU object" in
+  let* () = escape_rm ctl D.nv_esc_rm_alloc a "allocating a GPU object" in
   ignore (Sys.opaque_identity p);
   Ok (get a A.status, get a A.h_object_new)
 
-let alloc c ~parent cls p = alloc_raw c.ctl ~root:c.root ~parent cls p
+let alloc c ~parent cls p =
+  Result.map_error why (alloc_raw c.ctl ~root:c.root ~parent cls p)
 
 let control_raw ctl ~root obj cmd p =
   let module C = D.Nvos54 in
@@ -159,36 +171,63 @@ let control_raw ctl ~root obj cmd p =
       set a C.params_size (Bigarray.Array1.dim p);
       set a C.params (address p))
     p;
-  let* () = escape ctl D.nv_esc_rm_control a "controlling a GPU object" in
+  let* () = escape_rm ctl D.nv_esc_rm_control a "controlling a GPU object" in
   ignore (Sys.opaque_identity p);
   Ok (get a C.status)
 
 let control c ?(refs = []) obj cmd p =
   List.iter (fun (field, q) -> set p field (address q)) refs;
-  let* s = control_raw c.ctl ~root:c.root obj cmd (Some p) in
+  let* s =
+    Result.map_error why (control_raw c.ctl ~root:c.root obj cmd (Some p))
+  in
   ignore (Sys.opaque_identity refs);
   check c (strf "command 0x%x" cmd) s
 
+(* NV_ESC_RM_FREE of [obj] under [parent]: the status. *)
+let free_raw c ~parent obj =
+  let module F = D.Nvos00 in
+  let a = params F.sizeof in
+  set a F.h_root c.root;
+  set a F.h_object_parent parent;
+  set a F.h_object_old obj;
+  let* () = escape_rm c.ctl D.nv_esc_rm_free a "freeing a GPU object" in
+  Ok (get a F.status)
+
+let free c ~parent obj =
+  let* s = Result.map_error why (free_raw c ~parent obj) in
+  check c "freeing a GPU object" s
+
+(* [x] if the RM answered [s] = NV_OK to the call [what], its refusal
+   otherwise, or the escape's that failed before the RM answered. *)
+let answer c what x = function
+  | Error _ as e -> e
+  | Ok s when s = D.nv_ok -> Ok x
+  | Ok s ->
+      let why = strf "%s: %s" what (status_name c.layouts s) in
+      if s = D.nv_err_no_memory || s = D.nv_err_insufficient_resources then
+        Error (Rig_nv.Lacking why)
+      else Error (Refused why)
+
 let rm c =
   let alloc ~parent cls p =
-    let* s, h = alloc c ~parent cls p in
-    let* () = check c (strf "allocating class 0x%x" cls) s in
-    Ok h
+    match alloc_raw c.ctl ~root:c.root ~parent cls p with
+    | Ok (s, h) -> answer c (strf "allocating class 0x%x" cls) h (Ok s)
+    | Error _ as e -> e
   in
   let control obj cmd p =
-    let* s = control_raw c.ctl ~root:c.root obj cmd p in
-    check c (strf "command 0x%x" cmd) s
+    answer c (strf "command 0x%x" cmd) ()
+      (control_raw c.ctl ~root:c.root obj cmd p)
   in
   let free ~parent obj =
-    let module F = D.Nvos00 in
-    let a = params F.sizeof in
-    set a F.h_root c.root;
-    set a F.h_object_parent parent;
-    set a F.h_object_old obj;
-    let* () = escape c.ctl D.nv_esc_rm_free a "freeing a GPU object" in
-    check c "freeing a GPU object" (get a F.status)
+    answer c "freeing a GPU object" () (free_raw c ~parent obj)
   in
-  { Rig_nv.release = c.release; client = c.root; alloc; control; free }
+  {
+    Rig_nv.release = c.release;
+    client = c.root;
+    alloc;
+    control;
+    free = Some free;
+  }
 
 (* Unified memory *)
 
@@ -221,8 +260,9 @@ let driver_version ctl root =
   let module B = D.Build_version in
   let v = params B.sizeof in
   let* s =
-    control_raw ctl ~root root D.nv0000_ctrl_cmd_system_get_build_version_v2
-      (Some v)
+    Result.map_error why
+      (control_raw ctl ~root root D.nv0000_ctrl_cmd_system_get_build_version_v2
+         (Some v))
   in
   if s <> D.nv_ok then
     Error (strf "reading the driver's version: status 0x%x" s)
@@ -244,7 +284,10 @@ let make_client ~dev =
   let opened_client =
     let* ctl = open_file (Filename.concat dev "nvidiactl") in
     taken (fun () -> close ctl);
-    let* s, root = alloc_raw ctl ~root:0 ~parent:0 D.nv01_root_client None in
+    let* s, root =
+      Result.map_error why
+        (alloc_raw ctl ~root:0 ~parent:0 D.nv01_root_client None)
+    in
     let* () =
       if s = D.nv_ok then Ok ()
       else Error (strf "creating a client of NVIDIA's driver: status 0x%x" s)

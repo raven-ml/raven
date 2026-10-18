@@ -73,8 +73,8 @@ val rm :
     handle [h] at offset [off] (a physical address in the GPU's memory, a bus
     address in system memory); a virtual address space gets the GPU's page
     directory; a compute engine's context buffers are promoted; a channel's work
-    submit token carries its runlist. Its [free] returns [Error], since the
-    GSP's objects live as long as the GSP. *)
+    submit token carries its runlist. Its [free] is [None], since the GSP's
+    objects live as long as the GSP. *)
 
 val objects : Rig_nv.rm -> (int * int * int, string) result
 (** [objects rm] is the GPU's device, subdevice and virtual address space, new

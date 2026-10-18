@@ -38,43 +38,70 @@ value rig_nv_test_mismatch(value v_p, value v_n, value v_seed) {
   return Val_long(-1);
 }
 
+/* The parts [v_parts], each [(queue, words)], in C, with their scratch
+   and words, which [parts_free] frees. Raises [Out_of_memory]. */
+struct parts {
+  int n;
+  struct rig_part *p;
+  void *scratch;
+  uint32_t *words;
+};
+
+static void parts_free(struct parts *x) {
+  free(x->p);
+  free(x->scratch);
+  free(x->words);
+}
+
+static struct parts parts_of(value v_parts) {
+  struct parts x = {.n = (int)Wosize_val(v_parts)};
+  size_t nwords = 0;
+  for (int i = 0; i < x.n; i++)
+    nwords += Wosize_val(Field(Field(v_parts, i), 1));
+  x.p = calloc((size_t)x.n + 1, sizeof *x.p);
+  x.scratch = calloc((size_t)x.n + 1, RIG_SCRATCH);
+  x.words = calloc(nwords + 1, sizeof *x.words);
+  if (x.p == NULL || x.scratch == NULL || x.words == NULL) {
+    parts_free(&x);
+    caml_raise_out_of_memory();
+  }
+  uint32_t *w = x.words;
+  for (int i = 0; i < x.n; i++) {
+    value k = Field(v_parts, i), v_words = Field(k, 1);
+    size_t m = Wosize_val(v_words);
+    for (size_t j = 0; j < m; j++) w[j] = (uint32_t)Long_val(Field(v_words, j));
+    x.p[i] = (struct rig_part){
+        .queue = Int_val(Field(k, 0)), .kind = RIG_WORDS, .words = {w, m}};
+    w += m;
+  }
+  return x;
+}
+
+/* What the room check of the device whose C state is [v_self] answers for
+   the parts [v_parts], each [(queue, words)]: rig_edge.h's RIG_FITS,
+   RIG_LATER, RIG_NEVER or RIG_GROW. */
+value rig_nv_test_room(value v_self, value v_parts) {
+  struct parts x = parts_of(v_parts);
+  int room = rig_nv_room((void *)Nativeint_val(v_self), x.p, x.n, x.scratch,
+                         NULL);
+  parts_free(&x);
+  return Val_int(room);
+}
+
 /* Hands the device whose C state is [v_self] the parts [v_parts], each
    [(queue, words)], as the value [v_v] with no waits, through its room
    check and submit. Raises [Failure] unless the parts fit and the submit
    succeeds. */
 value rig_nv_test_submit(value v_self, value v_v, value v_parts) {
   void *self = (void *)Nativeint_val(v_self);
-  int n = (int)Wosize_val(v_parts);
-  size_t nwords = 0;
-  for (int i = 0; i < n; i++)
-    nwords += Wosize_val(Field(Field(v_parts, i), 1));
-  struct rig_part *p = calloc((size_t)n + 1, sizeof *p);
-  void *scratch = calloc((size_t)n + 1, RIG_SCRATCH);
-  uint32_t *words = calloc(nwords + 1, sizeof *words);
-  if (p == NULL || scratch == NULL || words == NULL) {
-    free(p);
-    free(scratch);
-    free(words);
-    caml_raise_out_of_memory();
-  }
-  uint32_t *w = words;
-  for (int i = 0; i < n; i++) {
-    value k = Field(v_parts, i), v_words = Field(k, 1);
-    size_t m = Wosize_val(v_words);
-    for (size_t j = 0; j < m; j++) w[j] = (uint32_t)Long_val(Field(v_words, j));
-    p[i] = (struct rig_part){
-        .queue = Int_val(Field(k, 0)), .kind = RIG_WORDS, .words = {w, m}};
-    w += m;
-  }
+  struct parts x = parts_of(v_parts);
   const char *failure = NULL;
-  int room = rig_nv_room(self, p, n, scratch, NULL);
-  int r = room != RIG_FITS ? RIG_FAILED
-                           : rig_nv_submit(self, (uint64_t)Long_val(v_v), NULL,
-                                           0, p, n, scratch, NULL, NULL, 0,
-                                           NULL, &failure);
-  free(p);
-  free(scratch);
-  free(words);
+  int room = rig_nv_room(self, x.p, x.n, x.scratch, NULL);
+  int r = room != RIG_FITS
+              ? RIG_FAILED
+              : rig_nv_submit(self, (uint64_t)Long_val(v_v), NULL, 0, x.p,
+                              x.n, x.scratch, NULL, NULL, 0, NULL, &failure);
+  parts_free(&x);
   if (room != RIG_FITS)
     caml_failwith("rig_nv_test_submit: the parts do not fit");
   if (r == RIG_FAILED) caml_failwith(failure != NULL ? failure : "");

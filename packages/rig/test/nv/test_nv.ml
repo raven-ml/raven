@@ -447,18 +447,14 @@ let high_word () =
   S.free_launches l;
   N.free t.g b
 
-(* Parts NV's channels have no room for, refused when submitted: a ring entry
-   cut in half, and more ring words than a channel's ring holds. No value is
+(* A ring entry cut in half is refused when submitted, and no value is
    assigned. *)
 let refused () =
   S.with_ @@ fun t ->
   let base = Rig.submitted t.d in
-  let refuses msg ps =
-    raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
-        S.submit t ps)
-  in
-  refuses "one ring word" [| S.words [| 0 |] |];
-  refuses "32,768 ring words" [| S.words (Array.make 32_768 0) |];
+  raises_match ~msg:"one ring word"
+    (Exn.invalid_arg ~substring:"never fit")
+    (fun () -> S.submit t [| S.words [| 0 |] |]);
   equal int ~msg:"values assigned" base (Rig.submitted t.d)
 
 let work =
@@ -468,7 +464,7 @@ let work =
       test "an allocation or mapping of no bytes raises" misuse;
       test "a wait holds work on another device's host word above 2^40"
         high_word;
-      test "a submission the rings have no room for raises" refused;
+      test "a submission of half a ring entry raises" refused;
     ]
 
 (* Launches, through rig. The conformance suite states the laws every driver's
@@ -1227,6 +1223,128 @@ let local () =
   S.free_launches l;
   N.free t.g out
 
+(* Ring entries past the 262,144 of a channel's ring at open run once the
+   device made its channels anew, as one value. Then a kernel with local
+   memory still computes, and a copy, words and a copy, joined across the
+   channels, run in order: the new channels get the device's setup and local
+   memory again. *)
+let channels_grown () =
+  S.with_ @@ fun t ->
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let n = 1024 in
+  let out = alloc t.g Pinned (4 * n) in
+  let b = alloc t.g Pinned 8 in
+  H.set64 (host b) 0;
+  let compute msg =
+    H.write (host out) (String.make (4 * n) '\000');
+    S.run t [| S.words (S.launch l k "stack" ~blocks:4 [ address out; n ]) |];
+    S.reset l;
+    equal (list int) ~msg (List.init n stacked) (words32 (host out) n)
+  in
+  compute "before";
+  (* 300,000 entries that do nothing. *)
+  let nops = S.words (Array.make 600_000 0) in
+  let before = Rig.submitted t.d in
+  S.run t [| nops; S.words (release l (address b) 9) |];
+  S.reset l;
+  equal int ~msg:"its value" (before + 1) (Rig.submitted t.d);
+  equal int ~msg:"the release after the entries" 9 (H.get64 (host b));
+  compute "after";
+  let h, ha = S.shared t 16 and back, ba = S.shared t 16 in
+  let a = B.create t.d 16 in
+  S.pattern ha 16 3;
+  S.run t
+    [|
+      S.copy ~dst:a h; S.words (release l (address b) 10); S.copy ~dst:back a;
+    |];
+  S.reset l;
+  equal int ~msg:"the words between the copies" 10 (H.get64 (host b));
+  equal int ~msg:"the first byte that differs" (-1) (S.mismatch ba 16 3);
+  S.free_launches l;
+  List.iter (N.free t.g) [ out; b ]
+
+(* A growth of the channels while a value is held on a host word: once a
+   room asked for new channels and the growth made them, every room answers
+   LATER until the device reached every value, after a second growth
+   replaced the first set before its install too. The submission then
+   starts on the new channels; after an allocation, which gives the replaced
+   sets back where the RM frees objects, words on both channels, joined, run
+   on the new ones. *)
+let drained_growth () =
+  S.with_driver @@ fun g ->
+  let l = S.launches g in
+  let gate = alloc g Pinned 8 and out = alloc g Pinned 16 in
+  List.iter (fun a -> H.set64 a 0) [ host gate; host out; host out + 8 ];
+  let base = N.signaled g in
+  let reach v =
+    S.watchdog (strf "the value %d" v) (fun () ->
+        while N.signaled g < v do
+          Domain.cpu_relax ()
+        done)
+  in
+  let grown = function
+    | Rig_edge.Grown -> "Grown"
+    | Short n -> strf "Short %d" n
+  in
+  let nops n = [| (0, Array.make (2 * n) 0) |] in
+  (* The set [big] grows takes rings of 2^20 entries, which [bigger]
+     exceeds. *)
+  let big = nops 300_000 and bigger = nops 1_100_000 in
+  let copy_release a x = S.segment l (A.Method.copy_release (Int a) (Int x)) in
+  let small = [| (1, copy_release (address out) 1) |] in
+  S.Edge.submit g ~v:(base + 1) [| (0, acquire l (address gate) 1) |];
+  releasing gate 1 (fun () ->
+      equal string ~msg:"past the rings" "GROW" (S.Edge.room g big);
+      equal string ~msg:"the first growth" "Grown" (grown (N.grow g));
+      equal string ~msg:"past the set handed" "GROW" (S.Edge.room g bigger);
+      equal string ~msg:"the second growth" "Grown" (grown (N.grow g));
+      equal string ~msg:"held" "LATER" (S.Edge.room g big);
+      equal string ~msg:"a small room while held" "LATER" (S.Edge.room g small);
+      H.set64 (host gate) 1;
+      reach (base + 1);
+      equal string ~msg:"once reached" "FITS" (S.Edge.room g bigger));
+  S.Edge.submit g ~v:(base + 2) bigger;
+  reach (base + 2);
+  N.free g (alloc g Pinned H.page);
+  S.Edge.submit g ~v:(base + 3)
+    [| (1, copy_release (address out) 7); (0, release l (address out + 8) 8) |];
+  reach (base + 3);
+  equal (list int) ~msg:"the releases" [ 7; 8 ]
+    [ H.get64 (host out); H.get64 (host out + 8) ];
+  S.free_launches l;
+  List.iter (N.free g) [ gate; out ]
+
+(* The driver holds 32,768 values in flight: behind a value held on a host
+   word, 32,767 more submissions return, and the next waits until the held
+   value is reached. One submission of many launches first grows the compute
+   channel's segment ring past what the empty submissions take. *)
+let in_flight () =
+  S.with_ @@ fun t ->
+  let l = S.launches t.g in
+  let gate = alloc t.g Pinned 8 in
+  H.set64 (host gate) 0;
+  ignore (snd (numbered_submit t.d 16_384) ());
+  S.watchdog "32,768 values in flight" (fun () ->
+      releasing gate 1 (fun () ->
+          ignore (S.submit t [| S.words (acquire l (address gate) 1) |]);
+          for _ = 2 to 32_768 do
+            ignore (S.submit t [||])
+          done;
+          let next = Atomic.make false in
+          let d =
+            Domain.spawn (fun () ->
+                Rig.Point.wait (S.submit t [||]);
+                Atomic.set next true)
+          in
+          still ~msg:"the next submission" bool false
+            (fun () -> Atomic.get next)
+            ~ms:20;
+          H.set64 (host gate) 1;
+          Domain.join d));
+  S.free_launches l;
+  N.free t.g gate
+
 (* A kernel holds its local memory while the device grows it and schedules a
    kernel on the new one: both compute right. *)
 let growth () =
@@ -1325,6 +1443,16 @@ let local =
       test "a growth leaves a running kernel's local memory intact" growth;
       test "a replaced local memory stays until the kernels on it ran"
         handover;
+    ]
+
+let channels =
+  group ~timeout:120. "channels"
+    [
+      test "300,000 ring entries run, and kernels and joins run after"
+        channels_grown;
+      test "a growth of the channels waits for the work in flight"
+        drained_growth;
+      test "32,768 values stay in flight, and the next waits" in_flight;
     ]
 
 (* Images *)
@@ -1649,6 +1777,7 @@ let () =
          launches;
          room;
          local;
+         channels;
          images;
          timeline;
          stateful;

@@ -135,24 +135,53 @@ val capability : t -> Rig_nv_abi.Gpu.t
     holds at least [w] in circular order ({!Rig_nv_abi.Method.acquire}),
     whoever wrote it.
 
-    Each channel's ring holds 16,384 entries, a number this driver chooses
-    when {!make} allocates the channel. A [Words] part of [n] words takes
-    [1 + n/2] of them, and none if [n] is [0]; launches and copies take none
-    of their own. The driver's own words go into segments of the channel's
-    segment ring, and each launch's descriptor and constant bank 0 into the
-    compute channel's launch ring. [rig_nv_room] returns [RIG_GROW] for
-    parts that exceed the segment ring or the launch ring. The growth
-    ({!val-grow}) makes each such ring anew, of the least power of two of
-    bytes, at least a page, that holds twice what the parts take, and the
-    next submission that needs it starts on it. A ring a growth made goes
-    back, once a later growth replaced it, at the device's next growth or
-    allocation after the device has reached the work of the submissions
-    that used it. The 1 MiB rings the device opened with stay until it
-    stops.
+    Each channel's ring holds 262,144 entries when {!make} allocates the
+    channel. A [Words] part of [n] words takes [1 + n/2] of them, and none
+    if [n] is [0]; launches and copies take none of their own. The driver's
+    own words go into segments of the channel's segment ring, and each
+    launch's descriptor and constant bank 0 into the compute channel's
+    launch ring. [rig_nv_room] returns [RIG_GROW] for parts that exceed the
+    segment ring, the launch ring or a channel's ring. The growth
+    ({!val-grow}) makes each such segment or launch ring anew, of the least
+    power of two of bytes, at least a page, that holds twice what the parts
+    take, and the next submission that needs it starts on it. A ring a
+    growth made goes back, once a later growth replaced it, at the device's
+    next growth or allocation after the device has reached the work of the
+    submissions that used it. The 1 MiB rings the device opened with stay
+    until it stops.
 
-    [rig_nv_room] returns [RIG_NEVER] for parts whose entries a channel's
-    ring would not hold even when empty, and for a part the device does not
-    run:
+    The RM fixes the entries of a channel's ring when it allocates the
+    channel, so for parts that exceed a channel's ring the growth makes the
+    device's two channels anew, in a new channel group, as {!make} does:
+    each ring holds the least power of two of entries that holds twice what
+    the parts take, at most [2{^31}], and no fewer than the newest
+    channels'. Once a submission needs the new channels, every submission
+    on the device waits until the device has reached every value submitted
+    before it; the next then starts on them, and places there the words a
+    new channel owes before its parts: the engines' binding, the windows
+    and the local memory. The channels they replace go back at the
+    device's next growth or allocation. A growth that the path or the RM
+    lacks memory or another resource for answers [Short]
+    ({!Rig_edge.type-grown}), and the device keeps its channels. Where the
+    path's RM frees no object ({!type-rm}'s [free] is [None]), the channels
+    a growth replaces stay until the device stops. Each growth at least
+    doubles a channel's ring, from 262,144 entries to at most [2{^31}], so
+    a device keeps at most 26 replaced sets: their rings, which take less
+    than twice the largest of each channel, and the objects the RM made for
+    each set's channels.
+
+    The driver holds at most 32,768 values in flight, a number it chooses
+    for its stamp ring and its marks of each channel's work: [rig_nv_room]
+    returns [RIG_LATER] while that many values submitted are not reached.
+
+    [rig_nv_room] returns [RIG_NEVER] for parts that take more than
+    [2{^31} - 1] entries of a channel's ring, the most the ring holds: a
+    channel holds the log2 of its ring's entries in 5 bits on each
+    generation this driver runs (NVIDIA's open-gpu-doc, [dev_pbdma.ref.txt],
+    [NV_PPBDMA_GP_BASE_HI_LIMIT2] on Ampere and Ada; open-gpu-kernel-modules,
+    [dev_esched_pbdma.h], [NV_PBDMA_GP_INFO_LIMIT2] on Hopper and
+    [NV_PBDMA_MISC_FETCH_STATE_GP_INFO_LIMIT2] on Blackwell). It
+    returns it too for a part the device does not run:
     - a part on neither queue, a launch on ["COPY:0"], or a copy of one byte
       or more on ["COMPUTE:0"];
     - ring entries of an odd number of words;
@@ -165,10 +194,11 @@ val capability : t -> Rig_nv_abi.Gpu.t
     Launches, whose constant bank 0 {!entry} bounds, and copies of at most
     2 GiB take no ring entry of their own, and the segment and launch rings
     grow to hold them. The driver's words for them close into an entry for
-    each 4 MiB of segment, so a channel's entries alone bound their number:
-    the device's [most_parts] ({!Rig_edge.type-facts}) is the most such
-    parts, each joined to a part of the other channel, that 16,384 entries
-    hold. Words, and longer copies, take the entries their sizes take.
+    each 4 MiB of segment, and a segment ring lies below [2{^40}], so their
+    entries stay below the 262,144 a channel's ring holds from its open:
+    the device's [most_parts] ({!Rig_edge.type-facts}) is [max_int], and
+    only memory bounds them. Words, and longer copies, take the entries
+    their sizes take.
 
     A launch's constant bank 0 is its kernel's, of at most
     {!Rig_nv_abi.Launch.max_bank_bytes}: its first KiB holds the driver's
@@ -333,20 +363,33 @@ type params =
 (** The type for the parameters of an RM call: bytes outside the OCaml heap,
     which the RM reads and writes in place. *)
 
+type refusal =
+  | Lacking of string
+      (** The RM or the path lacks the memory or another resource the call
+          takes, such as an RM that answered [NV_ERR_NO_MEMORY] or
+          [NV_ERR_INSUFFICIENT_RESOURCES] (NVIDIA's [nvstatuscodes.h]), or a
+          kernel that failed the call with [ENOMEM]. *)
+  | Refused of string  (** Any other refusal or failure. *)
+(** The type for the RM's refusal of a call, with a message that names the
+    call and the answer. *)
+
 type rm = {
   release : int;
       (** The release of the RM's interface, such as [615], which sets the
           layout of parameters that changed between releases. *)
   client : int;  (** The client, which the device's objects descend from. *)
-  alloc : parent:int -> int -> params option -> (int, string) result;
+  alloc : parent:int -> int -> params option -> (int, refusal) result;
       (** [alloc ~parent cls p] is a new object of class [cls] under [parent],
           made with the parameters [p], or the RM's refusal. *)
-  control : int -> int -> params option -> (unit, string) result;
+  control : int -> int -> params option -> (unit, refusal) result;
       (** [control obj cmd p] runs the command [cmd] on [obj], which reads and
           writes [p] in place, or is the RM's refusal. *)
-  free : parent:int -> int -> (unit, string) result;
-      (** [free ~parent obj] frees [obj] and every object under it, or is the
-          RM's refusal. *)
+  free : (parent:int -> int -> (unit, refusal) result) option;
+      (** [Some f] if the RM frees objects before it stops, where [f ~parent
+          obj] frees [obj] and every object under it, or is the RM's refusal;
+          [None] if every object lives as long as the RM. A device of an RM
+          that frees no object keeps the channels a growth replaces until it
+          stops ({!section-submitting}). *)
 }
 (** The type for a GPU's resource manager, as a path reaches it. Any domain may
     call its functions at any time. *)
@@ -517,8 +560,8 @@ val make : word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is the device of the GPU [p] reaches, whose timeline word
     is the 8 bytes at the host address [word] ({!Rig_edge.type-opener}).
     Under [p.device] it allocates a channel group with one context share,
-    the two channels and their memory, and asks the RM to run the GPU at its
-    highest clocks.
+    the two channels, whose rings hold 262,144 entries each, and their
+    memory, and asks the RM to run the GPU at its highest clocks.
 
     It then takes its first measure of the GPU's timer through [p.clock].
 

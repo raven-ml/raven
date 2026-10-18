@@ -5,8 +5,11 @@
 
 (* Any domain may call any function, as the interface says. The C state is
    written by [make], then by [room] and [submit], which rig calls one at a
-   time for each device; [local] holds the device's lock while it grows the
-   local memory, and [stop] while it drops the device's live state.
+   time for each device, and by [grow]; [local] holds the device's lock while
+   it grows the local memory, [grow] while it makes rings and channels, and
+   [stop] while it drops the device's live state. The C state's own locks,
+   [flush_mu] and [channels_mu] (rig_nv_stubs.h), are leaves: no OCaml code
+   runs while one is held, and no other lock is taken inside it.
 
    Every lock of the driver's and of its paths is a [Mutex] taken through
    [take_lock], which counts it among the locks its thread holds (rig_hold in
@@ -169,12 +172,14 @@ end
 type params =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
+type refusal = Lacking of string | Refused of string
+
 type rm = {
   release : int;
   client : int;
-  alloc : parent:int -> int -> params option -> (int, string) result;
-  control : int -> int -> params option -> (unit, string) result;
-  free : parent:int -> int -> (unit, string) result;
+  alloc : parent:int -> int -> params option -> (int, refusal) result;
+  control : int -> int -> params option -> (unit, refusal) result;
+  free : (parent:int -> int -> (unit, refusal) result) option;
 }
 
 type gpu = {
@@ -272,16 +277,21 @@ let words_bytes = 8 * 3
    maps to reach its word there: whole pages on every host. *)
 let chunk = 1 lsl 16
 
-(* Each channel's ring holds [entries] entries, and its segment ring
-   [segment_bytes] bytes, both powers of two: a submission takes at least one
-   entry of each channel it uses, so thousands may be in flight. *)
-let entries = 16384
+(* Each channel's ring holds [entries] entries at open, and its segment ring
+   [segment_bytes] bytes, both powers of two. A submission's launches and
+   copies take ring entries only to close the driver's segments: at most a
+   segment ring's bytes, which lie below the windows, so at most 2^39, the
+   largest power of two there; and an entry for each [SEGMENT_BYTES_MAX / 2]
+   of them, 2^22 - 2 bytes (rig_nv_ring.c's [segment_closes]), 2^17 entries,
+   with 3 more each channel takes. [entries] holds them, so only Words make
+   a device's channels anew. *)
+let entries = 1 lsl 18
 let segment_bytes = 1 lsl 20
 
-(* The stamp ring's slots, one per value modulo their number, rig_nv_stubs.h's
-   Times: more than the values the two channels' rings may hold unreached. A
-   slot is three records of 16 bytes. *)
-let slots = 2 * entries
+(* The most values in flight, a power of two: each holds a slot of the stamp
+   ring, one per value modulo their number (rig_nv_stubs.h's Times), and a
+   mark of each channel it uses. A slot is three records of 16 bytes. *)
+let slots = 1 lsl 15
 let stamps_bytes = slots * 48
 
 (* The compute channel's launch ring holds [launch_bytes] bytes of launches'
@@ -343,10 +353,27 @@ external create : int -> int -> int -> int -> int -> int = "caml_rig_nv_create"
 [@@noalloc]
 
 external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
-external set_joins : int -> int -> unit = "caml_rig_nv_joins" [@@noalloc]
-external most_parts : int -> int = "caml_rig_nv_most_parts"
 
-external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
+external set_channels : int -> int -> int array -> unit
+  = "caml_rig_nv_channels"
+[@@noalloc]
+
+external channels_record : int -> int array -> int
+  = "caml_rig_nv_channels_record"
+[@@noalloc]
+
+external hand_channels : int -> int -> unit = "caml_rig_nv_hand_channels"
+[@@noalloc]
+
+external set_joins : int -> int -> unit = "caml_rig_nv_joins" [@@noalloc]
+
+external channels_state : int -> int * int = "caml_rig_nv_channels_state"
+
+external free_channels : int -> unit = "caml_rig_nv_channels_free"
+[@@noalloc]
+
+external set_segments : int -> int -> int -> int -> int -> unit
+  = "caml_rig_nv_segments"
 [@@noalloc]
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
@@ -455,6 +482,25 @@ type 'm retired = { mem : 'm memory; mutable until : int }
    then. *)
 type 'm ring = { mutable ring : 'm memory option }
 
+(* A set of the device's two channels: the GPU address of their rings, by
+   which rig_nv_stubs.h's struct channels names them; each ring's entries;
+   the Pinned memory of their rings and USERDs, and of their error
+   notifiers; their group, whose context they share; the debugger, which
+   reads the compute engine's errors; the channels, compute's first; and the
+   C record of a set a growth handed, 0 until then and for the set made at
+   open. The RM fixes a ring's entries when it allocates its channel, so a
+   ring grows as a new set. *)
+type 'm channels = {
+  id : int;
+  entries : int array;
+  block : 'm memory;
+  notifiers : 'm memory array;
+  group : int;
+  debugger : int;
+  handles : int array;
+  record : int;
+}
+
 (* What only a running device uses. The handle outlives the device in its
    properties, so stop drops it. *)
 type 'm live = {
@@ -464,10 +510,10 @@ type 'm live = {
   mutable rings : 'm ring list;
       (* the rings growths made, under [local_lock], until the device retired
          them and its word passed their work (rig_nv_stubs.h) *)
-  group : int;
-  debugger : int;
-  channels : int list;
-  compute_channel : int;
+  release : (module D.RELEASE);
+  mutable sets : 'm channels list;
+      (* the sets of channels, the newest first, under [local_lock]: the one
+         installed, the one handed, and those not yet given back *)
   mutable per_thread : int; (* under [local_lock], as the fields below *)
   mutable local_current : 'm memory option;
   mutable local_pending : 'm memory option;
@@ -551,7 +597,7 @@ let facts (T d) =
     copy_engine = Some 1;
     completion = Store;
     waits;
-    most_parts = most_parts d.self;
+    most_parts = max_int;
     may_block = false;
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;
@@ -677,6 +723,58 @@ let rec retire_rings d l =
   | a ->
       drop_ring l a;
       retire_rings d l
+
+(* Retired channels *)
+
+let why = function Lacking why | Refused why -> why
+
+(* Whether the RM freed its object [h] under [parent]: [false] if it refused,
+   or frees no object. *)
+let freed (p : _ path) ~parent h =
+  match p.rm.free with
+  | None -> false
+  | Some free -> (
+      match free ~parent h with
+      | Ok () -> true
+      | Error _ | (exception Fault _) -> false)
+
+(* Gives back the set [s]: its channels, then their memory, which the GPU no
+   longer reads once the RM freed them; a set the RM did not free keeps its
+   memory. *)
+let drop_channels l s =
+  let unregistered =
+    Array.for_all Fun.id
+      (Array.map
+         (fun ch ->
+           match l.path.unregister ch with
+           | Ok () -> true
+           | Error _ | (exception Fault _) -> false)
+         s.handles)
+  in
+  let device = l.path.device in
+  let freed =
+    freed l.path ~parent:device s.debugger
+    && freed l.path ~parent:device s.group
+  in
+  if unregistered && freed then begin
+    give l.path.free s.block;
+    Array.iter (give l.path.free) s.notifiers
+  end;
+  if s.record <> 0 then free_channels s.record
+
+(* Gives back the sets of channels neither installed nor handed. No work
+   uses them: a room installs a set once the device reached every value
+   submitted, and a set replaced before its install ran nothing. Where the
+   path's RM frees no object, they stay until the device stops. *)
+let retire_channels d l =
+  match l.sets with
+  | [] | [ _ ] -> ()
+  | _ when Option.is_none l.path.rm.free -> ()
+  | sets ->
+      let installed, handed = channels_state d.self in
+      let kept s = s.id = installed || s.id = handed in
+      l.sets <- List.filter kept sets;
+      List.iter (drop_channels l) (List.filter (fun s -> not (kept s)) sets)
 
 let local d n =
   check_held "Rig_nv_abi.Gpu.local";
@@ -816,19 +914,143 @@ let descriptors l base code per_thread (k : Cubin.kernel) =
 
 (* Opening *)
 
-(* A channel's place in the block of channel memory: the two rings, the two
-   USERDs a page each, then the two segment rings. *)
-let ring_bytes = 8 * entries
-let ring_at q = q * ring_bytes
-let userd_at q = (2 * ring_bytes) + (q * page)
-let segments_at q = (2 * ring_bytes) + (2 * page) + (q * segment_bytes)
-let block_bytes = segments_at 2
-let in_rm what = Result.map_error (fun e -> strf "%s: %s" what e)
+let in_rm what = Result.map_error (fun e -> strf "%s: %s" what (why e))
+
+(* [r], a path's result, in the RM's terms. *)
+let of_path r = Result.map_error (fun why -> Refused why) r
 
 let host what (m : _ memory) =
   match m.host with
   | Some h -> Ok h
   | None -> Error (strf "the %s is not mapped for the host" what)
+
+(* The RM's object of class [cls] under [parent], its [size] bytes of
+   parameters set by [fill], given back by [taken] if a later step fails. *)
+let new_object (p : _ path) ~taken ~parent cls what fill size =
+  let q = params size in
+  fill q;
+  let* h = in_rm what (p.rm.alloc ~parent cls (Some q)) in
+  taken (fun () -> ignore (freed p ~parent h : bool));
+  Ok h
+
+(* Channels *)
+
+(* A channel's place in the memory of its set: the two rings, of [entries]
+   entries each, then the two USERDs, a page each. *)
+let ring_at entries q = if q = 0 then 0 else 8 * entries.(0)
+let userd_at entries q = (8 * (entries.(0) + entries.(1))) + (q * page)
+let block_bytes entries = userd_at entries 2
+
+(* The memory of a set of channels whose rings hold [entries], from [alloc]:
+   their rings and USERDs, and a page for each one's error notifier,
+   zeroed. *)
+let channel_memory alloc entries =
+  let* block = alloc (block_bytes entries) "channels' rings" in
+  let notifier q =
+    let* m = alloc page (strf "error notifier of channel %d" q) in
+    let* h = host "error notifier" m in
+    zero h page;
+    Ok m
+  in
+  let* compute = notifier 0 in
+  let* copy = notifier 1 in
+  Ok (block, [| compute; copy |])
+
+(* Makes the set of channels whose rings hold [entries] over [block] and
+   [notifiers], each RM object given back by [taken] if a later step fails:
+   the set, and the ints rig_nv_stubs.c's [channels_of] reads. *)
+let make_channels (type m) (p : m path) (module R : D.RELEASE) ~taken entries
+    ((block : m memory), notifiers) =
+  let new_object = new_object p ~taken in
+  let* block_host = host "channels' rings" block in
+  let* group =
+    new_object ~parent:p.device D.kepler_channel_group_a "the channel group"
+      (fun q ->
+        set q R.Channel_group_alloc.engine_type D.nv2080_engine_type_graphics)
+      R.Channel_group_alloc.sizeof
+  in
+  let* ctxshare =
+    let module C = D.Ctxshare_alloc in
+    new_object ~parent:group D.fermi_context_share_a "the context share"
+      (fun q ->
+        set q C.h_va_space p.vaspace;
+        set q C.flags
+          (bits D.nv_ctxshare_allocation_flags_subcontext
+             D.nv_ctxshare_allocation_flags_subcontext_async))
+      C.sizeof
+  in
+  let channel q engine =
+    let module G = R.Gpfifo_alloc in
+    let notifier : m memory = notifiers.(q) in
+    let* notifier_host = host "error notifier" notifier in
+    let* ch =
+      new_object ~parent:group p.gpu.channel_class (strf "channel %d" q)
+        (fun f ->
+          set f G.gp_fifo_offset (block.address + ring_at entries q);
+          set f G.gp_fifo_entries entries.(q);
+          set f G.h_object_error notifier.handle;
+          set f G.h_object_buffer block.handle;
+          set f (elt G.h_userd_memory 0) block.handle;
+          set f (elt G.userd_offset 0) (userd_at entries q);
+          set f G.h_context_share ctxshare)
+        G.sizeof
+    in
+    let* engine_object =
+      in_rm "an engine" (p.rm.alloc ~parent:ch engine None)
+    in
+    let token = params D.Work_submit_token.sizeof in
+    set token D.Work_submit_token.work_submit_token 0xffff_ffff;
+    let* () =
+      in_rm "the work submit token"
+        (p.rm.control ch D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token
+           (Some token))
+    in
+    let* () =
+      in_rm (strf "registering channel %d" q) (of_path (p.register ch))
+    in
+    taken (fun () -> ignore (p.unregister ch));
+    let ints =
+      [
+        block_host + ring_at entries q;
+        entries.(q);
+        block_host + userd_at entries q + fst D.Userd.gp_put;
+        get token D.Work_submit_token.work_submit_token;
+        notifier_host;
+      ]
+    in
+    Ok (ch, engine_object, ints)
+  in
+  let* compute, compute_engine, compute_ints =
+    channel 0 p.gpu.compute_class
+  in
+  let* copy, _, copy_ints = channel 1 p.gpu.copy_class in
+  let* debugger =
+    let module A = D.Nv83de_alloc in
+    new_object ~parent:p.device D.gt200_debugger "the debugger"
+      (fun q ->
+        set q A.h_app_client p.rm.client;
+        set q A.h_class3d_object compute_engine)
+      A.sizeof
+  in
+  let schedule = params R.Group_schedule.sizeof in
+  set schedule R.Group_schedule.b_enable 1;
+  let* () =
+    in_rm "scheduling the channels"
+      (p.rm.control group D.nva06c_ctrl_cmd_gpfifo_schedule (Some schedule))
+  in
+  let set =
+    {
+      id = block.address;
+      entries;
+      block;
+      notifiers;
+      group;
+      debugger;
+      handles = [| compute; copy |];
+      record = 0;
+    }
+  in
+  Ok (set, Array.of_list (compute_ints @ copy_ints))
 
 (* The device's objects and memory, each given back by [taken] if a later step
    fails. *)
@@ -840,13 +1062,6 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     | Some m ->
         taken (fun () -> p.free m);
         Ok m
-  in
-  let new_object ~parent cls what fill size =
-    let q = params size in
-    fill q;
-    let* h = in_rm what (rm.alloc ~parent cls (Some q)) in
-    taken (fun () -> ignore (rm.free ~parent h));
-    Ok h
   in
   let* words = alloc Pinned page "join words" in
   let* words_host = host "join words" words in
@@ -877,19 +1092,13 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         copy_word words_host word;
         (words_host, words)
   in
-  let* block = alloc Pinned block_bytes "channels' rings" in
-  let* block_host = host "channels' rings" block in
-  let notifier q =
-    let* m = alloc Pinned page (strf "error notifier of channel %d" q) in
-    let* h = host "error notifier" m in
-    zero h page;
-    Ok (m, h)
-  in
+  let opened = [| entries; entries |] in
+  let* memory = channel_memory (alloc Pinned) opened in
+  let* segments = alloc Pinned (2 * segment_bytes) "segment rings" in
+  let* segments_host = host "segment rings" segments in
   let* stamps = alloc Pinned stamps_bytes "stamp ring" in
   let* stamps_host = host "stamp ring" stamps in
   zero stamps_host stamps_bytes;
-  let* compute_notifier = notifier 0 in
-  let* copy_notifier = notifier 1 in
   (* The GPU reads a launch's descriptor and bank as the launch before it
      completes: from its own memory, through the BAR, where the BAR has room
      and a flush word orders the host's writes through it. *)
@@ -908,22 +1117,6 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         Ok (m, false)
   in
   let* launches_host = host "launch ring" launches in
-  let* group =
-    new_object ~parent:p.device D.kepler_channel_group_a "the channel group"
-      (fun q ->
-        set q R.Channel_group_alloc.engine_type D.nv2080_engine_type_graphics)
-      R.Channel_group_alloc.sizeof
-  in
-  let* ctxshare =
-    let module C = D.Ctxshare_alloc in
-    new_object ~parent:group D.fermi_context_share_a "the context share"
-      (fun q ->
-        set q C.h_va_space p.vaspace;
-        set q C.flags
-          (bits D.nv_ctxshare_allocation_flags_subcontext
-             D.nv_ctxshare_allocation_flags_subcontext_async))
-      C.sizeof
-  in
   let self =
     create word_host word_mem.address words.address
       (fst D.Notification.info32)
@@ -933,66 +1126,20 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   else
     let () = taken (fun () -> destroy self) in
     set_joins self (words_host + 8);
-    let channel q engine (notifier, notifier_host) =
-      let module G = R.Gpfifo_alloc in
-      let* ch =
-        new_object ~parent:group p.gpu.channel_class (strf "channel %d" q)
-          (fun f ->
-            set f G.gp_fifo_offset (block.address + ring_at q);
-            set f G.gp_fifo_entries entries;
-            set f G.h_object_error notifier.handle;
-            set f G.h_object_buffer block.handle;
-            set f (elt G.h_userd_memory 0) block.handle;
-            set f (elt G.userd_offset 0) (userd_at q);
-            set f G.h_context_share ctxshare)
-          G.sizeof
-      in
-      let* engine_object =
-        in_rm "an engine" (rm.alloc ~parent:ch engine None)
-      in
-      let token = params D.Work_submit_token.sizeof in
-      set token D.Work_submit_token.work_submit_token 0xffff_ffff;
-      let* () =
-        in_rm "the work submit token"
-          (rm.control ch D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token
-             (Some token))
-      in
-      let* () = in_rm (strf "registering channel %d" q) (p.register ch) in
-      taken (fun () -> ignore (p.unregister ch));
-      let ints =
-        [|
-          block_host + ring_at q;
-          entries;
-          block_host + userd_at q + fst D.Userd.gp_put;
-          get token D.Work_submit_token.work_submit_token;
-          block_host + segments_at q;
-          block.address + segments_at q;
-          segment_bytes;
-          notifier_host;
-        |]
-      in
-      if not (set_channel self q ints) then
-        Error "no host memory for the channels' state"
-      else Ok (ch, engine_object)
-    in
-    let* compute, compute_engine =
-      channel 0 p.gpu.compute_class compute_notifier
-    in
-    let* copy, _ = channel 1 p.gpu.copy_class copy_notifier in
-    let* debugger =
-      let module A = D.Nv83de_alloc in
-      new_object ~parent:p.device D.gt200_debugger "the debugger"
-        (fun q ->
-          set q A.h_app_client rm.client;
-          set q A.h_class3d_object compute_engine)
-        A.sizeof
-    in
-    let schedule = params R.Group_schedule.sizeof in
-    set schedule R.Group_schedule.b_enable 1;
     let* () =
-      in_rm "scheduling the channels"
-        (rm.control group D.nva06c_ctrl_cmd_gpfifo_schedule (Some schedule))
+      if set_stamps self stamps_host stamps.address stamps_bytes slots then
+        Ok ()
+      else Error "no host memory for the stamps' and the marks' state"
     in
+    let* channels, ints =
+      make_channels p (module R) ~taken opened memory
+    in
+    set_channels self channels.id ints;
+    for q = 0 to 1 do
+      let at = q * segment_bytes in
+      set_segments self q (segments_host + at) (segments.address + at)
+        segment_bytes
+    done;
     let boost = params D.Perf_boost.sizeof in
     set boost D.Perf_boost.duration D.nv2080_ctrl_perf_boost_duration_infinite;
     set boost D.Perf_boost.flags
@@ -1014,11 +1161,8 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
       match p.clock with Source c -> (c, 0) | Registers a -> (0, a)
     in
     let* () =
-      if not (set_stamps self stamps_host stamps.address stamps_bytes slots)
-      then Error "no host memory for the stamp ring's state"
-      else if not (set_clock self source bar) then
-        Error "the GPU's timer could not be read"
-      else Ok ()
+      if set_clock self source bar then Ok ()
+      else Error "the GPU's timer could not be read"
     in
     (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of
        at least 256 KiB between two of the device's own [Device] allocations
@@ -1041,7 +1185,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     (* rig's word goes back with the device's mapping of it; rig frees a
        word of the device's own, with its page, once no queue waits on it. *)
     let owned =
-      [ block; launches; stamps; fst compute_notifier; fst copy_notifier ]
+      [ segments; launches; stamps ]
       @ match mapped with Some m -> [ m; words ] | None -> []
     in
     let owned =
@@ -1082,10 +1226,8 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
               error_names = R.robust_channel_errors;
               owned;
               rings = [];
-              group;
-              debugger;
-              channels = [ compute; copy ];
-              compute_channel = compute;
+              release = (module R);
+              sets = [ channels ];
               per_thread = 0;
               local_current = None;
               local_pending = None;
@@ -1147,9 +1289,17 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   let l = live d in
   let p = l.path in
-  (* Rings the device retired go back first where no growth holds them. *)
-  if rings_retired d.self then
-    ignore (try_protect d.local_lock (fun () -> retire_rings d l) : bool);
+  (* Rings and channels the device retired go back first where no growth
+     holds them. *)
+  let channels_retire =
+    Option.is_some p.rm.free && List.compare_length_with l.sets 1 > 0
+  in
+  if rings_retired d.self || channels_retire then
+    ignore
+      (try_protect d.local_lock (fun () ->
+           retire_rings d l;
+           retire_channels d l)
+        : bool);
   match memory with
   | Device | Pinned ->
       Option.map (region d p None n) (path_alloc p memory n)
@@ -1246,15 +1396,87 @@ let hand_ring d l i n bar (m : _ memory) =
   | 0 -> ()
   | a -> drop_ring l a
 
-(* The rings the submission whose room answered RIG_GROW on this thread
-   needs, each listed before its allocation. A growth short of memory for one
-   still hands those it made, and the submission's room asks for the rest
-   anew after its round of reclamation. *)
+(* Hands the next room that needs it a set of channels whose rings have
+   [want] entries, 0 for a channel whose ring holds what the room asked, and
+   no fewer than the newest set's, so that it holds what every earlier
+   growth made a set for. Answers [0], or the bytes of memory the set takes
+   if the path lacked them, or the RM lacked memory or another resource for
+   it; the device keeps its channels then. The set enters [sets] before its
+   hand, and an exception before it enters gives back what the growth
+   made. *)
+let grow_channels d l want =
+  if Array.for_all (( = ) 0) want then 0
+  else
+    let p = l.path in
+    let entries = Array.map2 max want (List.hd l.sets).entries in
+    let undo = ref [] and lacked = ref false and recorded = ref false in
+    let taken f = undo := f :: !undo in
+    let give_back () =
+      List.iter (fun f -> try f () with Fault _ -> ()) !undo
+    in
+    let alloc n what =
+      match path_alloc p Pinned n with
+      | Some m ->
+          taken (fun () -> p.free m);
+          Ok m
+      | None ->
+          lacked := true;
+          Error (strf "no memory for the %s" what)
+    in
+    let lacking r =
+      (match r with Error (Lacking _) -> lacked := true | Ok _ | Error _ -> ());
+      r
+    in
+    let rm =
+      {
+        p.rm with
+        alloc = (fun ~parent cls q -> lacking (p.rm.alloc ~parent cls q));
+        control = (fun obj cmd q -> lacking (p.rm.control obj cmd q));
+      }
+    in
+    let record = ref 0 in
+    taken (fun () -> if !record <> 0 then free_channels !record);
+    let made =
+      try
+        let* memory = channel_memory alloc entries in
+        let* set, ints =
+          make_channels { p with rm } l.release ~taken entries memory
+        in
+        record := channels_record set.id ints;
+        if !record = 0 then Error "no host memory for the channels' record"
+        else
+          let set = { set with record = !record } in
+          let sets = set :: l.sets in
+          l.sets <- sets;
+          recorded := true;
+          Ok set
+      with exn ->
+        let bt = Printexc.get_raw_backtrace () in
+        if not !recorded then give_back ();
+        Printexc.raise_with_backtrace exn bt
+    in
+    match made with
+    | Error _ when !lacked ->
+        give_back ();
+        block_bytes entries + (2 * page)
+    | Error why ->
+        give_back ();
+        raise (Fault why)
+    | Ok set ->
+        hand_channels d.self set.record;
+        0
+
+(* The rings and channels the submission whose room answered RIG_GROW on
+   this thread needs, each listed before its allocation. A growth short of
+   memory for one still hands those it made, and the submission's room asks
+   for the rest anew after its round of reclamation. *)
 let grow (T d) =
   protect d.local_lock @@ fun () ->
   let l = live d in
   retire_rings d l;
-  let w = needed d.self in
+  retire_channels d l;
+  let needs = needed d.self in
+  let w = Array.sub needs 0 (launch_ring + 1) in
   let sizes = Array.map grown_bytes w in
   let rings = Array.map (fun _ -> { ring = None }) w in
   let bars = Array.make (Array.length w) false in
@@ -1270,6 +1492,8 @@ let grow (T d) =
   Array.iteri
     (fun i r -> Option.iter (hand_ring d l i sizes.(i) bars.(i)) r.ring)
     rings;
+  let lacked = grow_channels d l (Array.sub needs (launch_ring + 1) 2) in
+  if !short = 0 then short := lacked;
   if !short = 0 then Rig_edge.Grown else Short !short
 
 (* Images *)
@@ -1405,9 +1629,10 @@ let report d l =
     | [ a; b ] when a = b -> [ a ]
     | errors -> errors
   in
-  let control cmd p = l.path.rm.control l.debugger cmd (Some p) in
+  let control (c : _ channels) cmd p =
+    Result.map_error why (l.path.rm.control c.debugger cmd (Some p))
+  in
   let sm = params S.sizeof and mmu = params M.sizeof in
-  set sm S.h_target_channel l.compute_channel;
   set sm S.num_s_ms_to_read sm_errors;
   let sm_fault i =
     let f x = elt_field S.sm_error_state_array i x in
@@ -1426,13 +1651,19 @@ let report d l =
       (fault_name D.fault_types (get mmu (f F.fault_type)))
       (fault_name D.access_types (get mmu (f F.access_type)))
   in
+  (* The installed set's debugger, under the lock a growth gives sets back
+     under, so that the set stays while its debugger reads. *)
   let faults =
-    match control D.nv83de_ctrl_cmd_debug_read_all_sm_error_states sm with
+    protect d.local_lock @@ fun () ->
+    let installed, _ = channels_state d.self in
+    let c = List.find (fun s -> s.id = installed) l.sets in
+    set sm S.h_target_channel c.handles.(0);
+    match control c D.nv83de_ctrl_cmd_debug_read_all_sm_error_states sm with
     | Error e -> [ strf "reading the multiprocessors' errors: %s" e ]
     | Ok () when get sm S.mmu_fault_valid = 0 ->
         List.filter_map sm_fault (List.init sm_errors Fun.id)
     | Ok () -> (
-        match control D.nv83de_ctrl_cmd_debug_read_mmu_fault_info mmu with
+        match control c D.nv83de_ctrl_cmd_debug_read_mmu_fault_info mmu with
         | Error e -> [ strf "reading the MMU's faults: %s" e ]
         | Ok () -> List.init (get mmu M.count) mmu_fault)
   in
@@ -1477,14 +1708,21 @@ let halt d l =
   let ok f =
     match f () with Ok () -> true | Error _ | (exception Fault _) -> false
   in
-  let rm = l.path.rm in
+  let unregister ch = ok (fun () -> l.path.unregister ch) in
   let unregistered =
     List.for_all Fun.id
-      (List.map (fun ch -> ok (fun () -> l.path.unregister ch)) l.channels)
+      (List.concat_map
+         (fun s -> Array.to_list (Array.map unregister s.handles))
+         l.sets)
   in
+  let device = l.path.device in
   let freed =
-    ok (fun () -> rm.free ~parent:l.path.device l.debugger)
-    && ok (fun () -> rm.free ~parent:l.path.device l.group)
+    List.for_all Fun.id
+      (List.map
+         (fun s ->
+           freed l.path ~parent:device s.debugger
+           && freed l.path ~parent:device s.group)
+         l.sets)
   in
   (* No work on another device uses this GPU's memory once it is lost
      ([Rig]'s loss section), so their submissions stop reading its flush word
@@ -1497,6 +1735,11 @@ let halt d l =
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
     List.iter (give l.path.free) l.owned;
+    List.iter
+      (fun s ->
+        give l.path.free s.block;
+        Array.iter (give l.path.free) s.notifiers)
+      l.sets;
     List.iter (fun r -> Option.iter (give l.path.free) r.ring) l.rings;
     Option.iter (give l.path.free) l.local_current;
     Option.iter (give l.path.free) l.local_pending;
@@ -1509,7 +1752,8 @@ let halt d l =
        release its own values. *)
   else if notification d.self 0 <> 0 && notification d.self 1 <> 0 then
     raise_word d.self;
-  end_state d.self stopped
+  end_state d.self stopped;
+  List.iter (fun s -> if s.record <> 0 then free_channels s.record) l.sets
 
 let stop (T d) ~fault:_ =
   let l =

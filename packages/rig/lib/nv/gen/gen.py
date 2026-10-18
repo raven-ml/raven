@@ -349,7 +349,8 @@ NVIDIA = Defs(
     },
     per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NVOS46_PARAMETERS", "NV_VASPACE_ALLOCATION_PARAMETERS",
                  "UVM_FREE_PARAMS", "UVM_UNREGISTER_CHANNEL_PARAMS"},
-    statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INVALID_ADDRESS", "NV_ERR_INVALID_ARGUMENT"],
+    statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INSUFFICIENT_RESOURCES", "NV_ERR_INVALID_ADDRESS",
+              "NV_ERR_INVALID_ARGUMENT"],
     # The unified memory driver's mapping types moved to nv_uvm_user_types.h
     # from uvm_types.h.
     since={"nv_uvm_user_types.h": 580},

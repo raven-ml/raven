@@ -60,6 +60,14 @@ raven / llama.cpp (Vulkan; ROCm):
   AMD's segment grows as NV's segment and launch rings do, and its compute
   and copy rings resize only at idle (`AMDKFD_IOC_UPDATE_QUEUE` or the PCI
   MQD; check KFD keeps rptr/wptr), then `Rig.most_parts` goes;
+  NV's 256 waits per submission (`MAX_WAITS`, `facts.waits.most`): room
+  keeps a fixed reserve because it cannot see the waits, so it goes once
+  `room` takes the waits' count;
+  NV over PCI keeps the channel sets a growth replaces until stop: free
+  them through the GSP's free RPC (NV_VGPU_MSG_FUNCTION_FREE,
+  `rpcRmApiFree_GSP`), with gsp.ml tracking per object the instance block,
+  method buffer and context buffers it gave the GSP, so `Gsp.rm`'s `free`
+  becomes `Some`;
   PCI system memory's arena from physical memory; bnxt sized as Linux sizes
   it
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
@@ -109,6 +117,11 @@ raven / llama.cpp (Vulkan; ROCm):
   library on a host with the driver; NV's `entry` `No_memory`, which a
   kernel whose local memory outgrows the GPU's forces
   (_plans/rig-release/failure-paths.md)
+- fudge, NV's channel growth: test_nv's "channels" group, joined_parts and
+  join_alternation, which cross the join words' 32-bit carry; and the
+  largest channel ring the RM accepts (rings of 2^20, 2^24 and 2^31
+  entries): `ENTRIES_MAX` and rig_nv.mli's RIG_NEVER bound become the
+  RM's cap if it is below 2^31; re-record rig_nv's bench after both
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
   whose only Linux rows are kimchi's; on the M1, Metal

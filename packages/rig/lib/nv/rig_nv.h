@@ -32,7 +32,8 @@
    words, is a copy on queue 0 or a launch on queue 1, is on no queue of the
    device, has an [after] index not below its own part's, is a launch whose
    block in [args] its function does not run (Rig_nv's facts), or if the
-   parts exceed the device's empty rings;
+   parts take more than 2^31 - 1 entries of a channel's ring; RIG_GROW if
+   they exceed the device's rings or channels as they are (Rig_nv's grow);
    RIG_LATER if they fit once a value the device was given is reached, as
    its timeline word reads now; RIG_FITS otherwise. */
 int rig_nv_room(void *self, const struct rig_part *parts, int n,

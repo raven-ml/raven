@@ -77,7 +77,14 @@
     A boot also takes system memory for the GSP, most of it for the
     firmware's image, and it counts against the same limit. The GSP's logs
     and bootloader, and on Blackwell the FMC, each lie in one run of bus
-    addresses. *)
+    addresses.
+
+    The GSP's objects live as long as the GSP: its RM frees none
+    ([Rig_nv.rm]'s [free] is [None]). A device of this path keeps the
+    channels a growth replaces until it stops ({!Rig_nv.section-submitting}):
+    at most 26 sets, each with its rings, the instance blocks and method
+    buffers of its two channels, and the compute engine's context buffers,
+    in the GPU's memory. *)
 
 (** {1:gpus GPUs}
 

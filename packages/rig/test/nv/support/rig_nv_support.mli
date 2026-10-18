@@ -66,6 +66,12 @@ module Edge : sig
       numbers the values of a device rig never took ({!driver}). Fails the
       test if the room check answers other than [RIG_FITS] or the submit
       fails. *)
+
+  val room : Rig_nv.t -> (int * int array) array -> string
+  (** [room g ps] is what [g]'s C room check answers for the parts [ps], as
+      {!submit} hands them: ["FITS"], ["LATER"], ["NEVER"] or ["GROW"]. A
+      ["GROW"] leaves its request for {!Rig_nv.grow} on the calling
+      thread. *)
 end
 
 (** {1:host Host memory} *)

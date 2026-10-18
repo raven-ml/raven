@@ -154,6 +154,7 @@ let uvm_gpu_mapping_type_read_write_atomic = 1
 (* Statuses, the same in every release. *)
 let nv_ok = 0
 let nv_err_no_memory = 0x51
+let nv_err_insufficient_resources = 0x1a
 let nv_err_invalid_address = 0x1e
 let nv_err_invalid_argument = 0x1f
 
