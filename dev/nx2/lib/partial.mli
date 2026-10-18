@@ -6,8 +6,8 @@
 (** Operations whose route computes by partials ({!Route.Partials}), as core
     operations applied through [apply]: on one device each, or a [Place].
 
-    A [Reduce] computes per group of its results' devices that hold one window
-    of its results. A device's window along the reduced axes is its
+    A [Reduce] of several reductions computes each one alone. One computes
+    per group of its results' devices that hold one window of its results. A device's window along the reduced axes is its
     {e tile}; a device whose tile is empty reduces nothing. Each device of a
     group reduces terms its tile holds into partial results, takes the
     others' and combines them, rounding once into the result's dtype. The
@@ -60,7 +60,8 @@
     unit of each block: per block, a [Place] per other tile, an assembly, a
     reduction and a combination on each device, some 8000 of each for
     [[8192; 1000]] cut along axis 1. Laying a window's terms out is one pass,
-    after a map where the program is not its operand.
+    after a map where the program is not its operand. A [Reduce] of [k]
+    reductions runs [k] loops over each device's loads.
 
     A [Contract] computes per group of its result's devices that hold one
     window of it, in its order of summation, the whole contraction's. A
