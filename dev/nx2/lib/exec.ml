@@ -138,9 +138,6 @@ let is_handle (type v s d) (x : (v, s, d) Value.t) =
 
 let is_concrete x = not (Prim.is_constant x)
 
-let is_cut x =
-  match Prim.at x with Some p -> Grid.is_cut (Devices.grid p) | None -> false
-
 (* Whether the donor words [w] and [w'] are one donor's: an offered donor has
    one key. *)
 let one_donor (w : Value.death Atomic.Loc.t) w' =
@@ -863,83 +860,68 @@ and compute : type r.
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
-  | Value.Reduce { layout; axes; prog; reductions; loads }
-    when Prim.exists is_cut op -> (
-      match Prim.loads_route ~by op layout loads with
-      | Some ({ compute = Partials; _ } as r) ->
-          Partial.reduce (fun ~by op -> folded ~by ?at op) ~by r layout axes prog
-            reductions loads
-      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
-  | Value.Scan { layout; axis; prog; reduction; loads; carry = None }
-    when Prim.exists is_cut op -> (
-      match Prim.loads_route ~by op layout loads with
-      | Some ({ compute = Partials; _ } as r) ->
-          Partial.scan (fun ~by op -> folded ~by ?at op) ~by r layout axis prog
-            reduction loads
-      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
-  | Value.Contract { order; batch; contracting; acc; out; a; b; init }
-    when Prim.exists is_cut op -> (
-      match Prim.contract_route ~by op a b init with
-      | Some ({ compute = Partials; _ } as r) ->
-          Partial.contract (fun ~by op -> folded ~by ?at op) ~by r ~order ~batch
-            ~contracting ~acc out a b init
-      | Some { compute = Windows; _ } | None -> sharded ~by ?into ?at op)
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
       sharded ~by ?into ?at op
 
-(* [op]'s results, fresh where its route places them or at [at], each device's
-   window [w] of the first computed there by its kernels over each operand's
-   window ({!Route.window}). A device whose kernels decline computes its window
-   by the expansion, over its own operands: no data leaves the device. On one
-   device the expansion's results are the results; on several, or into a donated
+(* [op]'s results, by {!Partial} where its route computes by partials. Else
+   fresh where its route places them or at [at], each device's window [w] of
+   the first computed there by its kernels over each operand's window
+   ({!Route.window}). A device whose kernels decline computes its window by the
+   expansion, over its own operands: no data leaves the device. On one device
+   the expansion's results are the results; on several, or into a donated
    operand's memory, they are copied into the device's window. *)
 and sharded : type r.
     by:string -> ?into:A.any -> ?at:unit Devices.placement -> r Value.prim -> r
     =
  fun ~by ?into ?at op ->
   let where = ref None and first = ref no_layout in
-  let r =
-    Prim.results ~by
+  let made =
+    Prim.results_or_partial ~by
       (fun k f ->
         if k = 0 then first := f.layout;
         alloc ~by ?at ~where ?into k f)
       op
   in
-  let p = Option.get !where in
-  let set = Devices.set p in
-  let kernels = kernels_of ~by ~op:(Prim.name op) set in
-  match Grid.one (Devices.grid p) with
-  | Some k when Option.is_none into ->
-      (* On one device the expansion's results are the results: no result of an
-         expansion is an operand ({!Expand.run}), so nothing is copied. *)
-      let d = Devices.rig set k in
-      if call ~by kernels d op r 0 then r
-      else
-        begin match expand ~by ?at op with
-        | Some y -> y
-        | None ->
-            let (module K : Nx_kernel.S) = kernels in
-            refused ~by ~kernels:K.name d op
-        end
-  | Some k ->
-      on_device ~by kernels set op r 0 k op;
-      r
-  | None ->
-      let rule = Prim.rule op and first = L.shape !first in
-      Array.iteri
-        (fun j k ->
-          let w = Devices.window ~by p first j in
-          let view i x =
-            let at = Devices.one (Devices.set (Prim.placement x)) k in
-            let w' = Route.window rule ~operand:i (Prim.shape x) w in
-            let a = Place.view ~by x k w' in
-            Value.Array { at; a; dead = Value.Live }
-          in
-          on_device ~by kernels set op r j k (Prim.local (Prim.mapi view op) w))
-        (Grid.devices (Devices.grid p));
-      r
+  match made with
+  | Right c -> Partial.run (fun ~by op -> folded ~by ?at op) ~by c
+  | Left r -> (
+      let p = Option.get !where in
+      let set = Devices.set p in
+      let kernels = kernels_of ~by ~op:(Prim.name op) set in
+      match Grid.one (Devices.grid p) with
+      | Some k when Option.is_none into ->
+          (* On one device the expansion's results are the results: no result
+             of an expansion is an operand ({!Expand.run}), so nothing is
+             copied. *)
+          let d = Devices.rig set k in
+          if call ~by kernels d op r 0 then r
+          else
+            begin match expand ~by ?at op with
+            | Some y -> y
+            | None ->
+                let (module K : Nx_kernel.S) = kernels in
+                refused ~by ~kernels:K.name d op
+            end
+      | Some k ->
+          on_device ~by kernels set op r 0 k op;
+          r
+      | None ->
+          let rule = Prim.rule op and first = L.shape !first in
+          Array.iteri
+            (fun j k ->
+              let w = Devices.window ~by p first j in
+              let view i x =
+                let at = Devices.one (Devices.set (Prim.placement x)) k in
+                let w' = Route.window rule ~operand:i (Prim.shape x) w in
+                let a = Place.view ~by x k w' in
+                Value.Array { at; a; dead = Value.Live }
+              in
+              on_device ~by kernels set op r j k
+                (Prim.local (Prim.mapi view op) w))
+            (Grid.devices (Devices.grid p));
+          r)
 
 (* [local], [op] on device [k] of [set] at position [j], into [op]'s results
    [r]: by the kernels, or where they decline by the expansion copied there. *)

@@ -1456,54 +1456,92 @@ let linalg_results : type d r.
   | Eig { vectors = Vectors (); dtype; _ } -> two dtype dtype
   | Solve_triangular { a; _ } -> one 0 (dtype a)
 
-let results : type r.
+type 'r partial =
+  | Reduce_partial : {
+      route : 'd Route.t;
+      layout : L.t;
+      axes : int array;
+      prog : P.t;
+      reductions : ('d, 'r) reductions;
+      loads : 'd load array;
+    }
+      -> 'r partial
+  | Scan_partial : {
+      route : 'd Route.t;
+      layout : L.t;
+      axis : int;
+      prog : P.t;
+      reduction : ('d, 'r) reduction;
+      loads : 'd load array;
+    }
+      -> 'r partial
+  | Contract_partial : {
+      route : 'd Route.t;
+      order : Nx_kernel.order;
+      batch : (int * int) array;
+      contracting : (int * int) array;
+      acc : D.any;
+      out : ('v, 's) dtype;
+      a : ('a, 'b, 'd) t;
+      b : ('c, 'e, 'd) t;
+      init : ('v, 's, 'd) t option;
+    }
+      -> ('v, 's, 'd) t partial
+
+let results_or_partial : type r.
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
     r prim ->
-    r =
+    (r, r partial) Either.t =
  fun ~by m op ->
   match op with
   | Map { layout; prog; outs; loads } ->
       check_map ~by layout prog outs loads;
       let placement = result (loads_route ~by op layout loads) in
-      make_outs m 0 layout placement outs
-  | Reduce { layout; axes; prog; reductions; loads } ->
+      Left (make_outs m 0 layout placement outs)
+  | Reduce { layout; axes; prog; reductions; loads } -> (
       check_reduce ~by layout axes prog reductions loads;
-      let placement = result (loads_route ~by op layout loads) in
-      let out = L.contiguous (reduced (L.shape layout) axes) in
-      make_reductions m 0 out placement reductions
-  | Scan { layout; axis; prog; reduction; loads; carry } ->
+      match loads_route ~by op layout loads with
+      | Some ({ compute = Partials; _ } as route) ->
+          Right (Reduce_partial { route; layout; axes; prog; reductions; loads })
+      | r ->
+          let out = L.contiguous (reduced (L.shape layout) axes) in
+          Left (make_reductions m 0 out (result r) reductions))
+  | Scan { layout; axis; prog; reduction; loads; carry } -> (
       check_scan ~by layout axis prog reduction loads carry;
-      let placement = result (loads_route ~by ?carry op layout loads) in
-      make_reduction m 0 layout placement reduction
+      match loads_route ~by ?carry op layout loads with
+      | Some ({ compute = Partials; _ } as route) when Option.is_none carry ->
+          Right (Scan_partial { route; layout; axis; prog; reduction; loads })
+      | r -> Left (make_reduction m 0 layout (result r) reduction))
   | Gather { axis; idx; x } ->
       check_gather ~by axis idx x;
       let placement = result (routed ~by op [| Any idx; Any x |]) in
-      m 0 (of_layout (dtype x) (L.contiguous (shape idx)) placement)
+      Left (m 0 (of_layout (dtype x) (L.contiguous (shape idx)) placement))
   | Scatter { combine; axis; idx; updates; into; _ } ->
       check_scatter ~by combine axis idx updates into;
       let placement =
         result (routed ~by op [| Any idx; Any updates; Any into |])
       in
-      m 0 (of_layout (dtype into) (L.contiguous (shape into)) placement)
+      Left (m 0 (of_layout (dtype into) (L.contiguous (shape into)) placement))
   | Sort { axis; k; x; _ } ->
       let s = sort_shape ~by axis k x in
       let placement = one_result ~by op x in
       let layout = L.contiguous s in
       let values = m 0 (of_layout (dtype x) layout placement) in
-      (values, m 1 (of_layout D.Int64 layout placement))
+      Left (values, m 1 (of_layout D.Int64 layout placement))
   | Fft f ->
       let layout = L.contiguous (fft_shape ~by f) in
       let placement = result (routed ~by op [| fft_operand f |]) in
-      (match f with
-      | C2c { x; _ } -> m 0 (of_layout (dtype x) layout placement)
-      | R2c { dtype; _ } -> m 0 (of_layout dtype layout placement)
-      | C2r { dtype; _ } -> m 0 (of_layout dtype layout placement))
-  | Linalg l -> linalg_results ~by m op l
+      Left
+        (match f with
+        | C2c { x; _ } -> m 0 (of_layout (dtype x) layout placement)
+        | R2c { dtype; _ } -> m 0 (of_layout dtype layout placement)
+        | C2r { dtype; _ } -> m 0 (of_layout dtype layout placement))
+  | Linalg l -> Left (linalg_results ~by m op l)
   | Fold { shape; pad; x } ->
       check_fold ~by shape pad x;
       let placement = one_result ~by op x in
-      m 0 (of_layout (dtype x) (L.contiguous shape) placement)
+      Left (m 0 (of_layout (dtype x) (L.contiguous shape) placement))
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
       let placement =
@@ -1511,14 +1549,18 @@ let results : type r.
           (routed ~by op
              (Array.of_list (List.map (fun (_, x) -> Any x) pieces)))
       in
-      m 0 (of_layout dtype (L.contiguous shape) placement)
-  | Contract { batch; contracting; acc; out; a; b; init; _ } ->
+      Left (m 0 (of_layout dtype (L.contiguous shape) placement))
+  | Contract { order; batch; contracting; acc; out; a; b; init } -> (
       let shape = contract_shape ~by ~batch ~contracting ~acc a b init in
-      let placement = result (contract_route ~by op a b init) in
-      m 0 (of_layout out (L.contiguous shape) placement)
+      match contract_route ~by op a b init with
+      | Some ({ compute = Partials; _ } as route) ->
+          Right
+            (Contract_partial
+               { route; order; batch; contracting; acc; out; a; b; init })
+      | r -> Left (m 0 (of_layout out (L.contiguous shape) (result r))))
   | Copy x ->
       let placement = one_result ~by op x in
-      m 0 (of_layout (dtype x) (L.contiguous (shape x)) placement)
+      Left (m 0 (of_layout (dtype x) (L.contiguous (shape x)) placement))
   | Move (mv, x) ->
       let s' = moved_shape ~by mv x in
       let placement = one_result ~by op x in
@@ -1527,13 +1569,13 @@ let results : type r.
         | Some l -> l
         | None -> L.contiguous s'
       in
-      m 0 (of_layout (dtype x) layout placement)
+      Left (m 0 (of_layout (dtype x) layout placement))
   | Bitcast (dt, x) ->
       let layout =
         bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt)
       in
       let placement = one_result ~by op x in
-      m 0 (of_layout dt layout placement)
+      Left (m 0 (of_layout dt layout placement))
   | Place (p, x) ->
       let s = shape x in
       ignore (Devices.window ~by p s 0);
@@ -1542,7 +1584,7 @@ let results : type r.
         | Array { a; _ }, Some _ -> Nx_array.layout a
         | _ -> L.contiguous s
       in
-      m 0 (of_layout (dtype x) layout (Some p))
+      Left (m 0 (of_layout (dtype x) layout (Some p)))
   | Check { ok; data; _ } ->
       let s = shape ok in
       List.iteri
@@ -1550,7 +1592,35 @@ let results : type r.
           if shape x <> s then
             invalid_argf "%s: datum %d has shape %a, the flag %a" by i pp_shape
               (shape x) pp_shape s)
-        data
+        data;
+      Left ()
+
+(* The results of [op], computed by partials, at its route's result. *)
+let partial_results : type r.
+    by:string ->
+    ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+    r partial ->
+    r =
+ fun ~by m op ->
+  match op with
+  | Reduce_partial { route; layout; axes; reductions; _ } ->
+      let out = L.contiguous (reduced (L.shape layout) axes) in
+      make_reductions m 0 out (Some route.result) reductions
+  | Scan_partial { route; layout; reduction; _ } ->
+      make_reduction m 0 layout (Some route.result) reduction
+  | Contract_partial { route; batch; contracting; acc; out; a; b; init; _ } ->
+      let shape = contract_shape ~by ~batch ~contracting ~acc a b init in
+      m 0 (of_layout out (L.contiguous shape) (Some route.result))
+
+let results : type r.
+    by:string ->
+    ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+    r prim ->
+    r =
+ fun ~by m op ->
+  match results_or_partial ~by m op with
+  | Left r -> r
+  | Right p -> partial_results ~by m p
 
 (* One-node maps *)
 

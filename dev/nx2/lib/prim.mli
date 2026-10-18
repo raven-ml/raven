@@ -147,28 +147,6 @@ val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 
     Raises [Invalid_argument] for an operation that is not a loop. *)
 
-val loads_route :
-  by:string ->
-  ?carry:'d any ->
-  'r prim ->
-  Nx_array.Layout.t ->
-  'd load array ->
-  'd Route.t option
-(** [loads_route ~by ?carry op layout loads] is the route of [op], a loop of
-    [layout]'s shape, over [loads], then a scan's [carry]: where it reads each
-    and where its results lie; [None] where every operand is of every set. *)
-
-val contract_route :
-  by:string ->
-  'r prim ->
-  ('a, 'b, 'd) t ->
-  ('c, 'e, 'd) t ->
-  ('v, 's, 'd) t option ->
-  'd Route.t option
-(** [contract_route ~by op a b init] is the route of [op], a contraction of
-    [a] with [b] from [init]: where it reads each and where its result lies;
-    [None] where every operand is of every set. *)
-
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
@@ -179,6 +157,51 @@ val results :
 
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
+
+(** The type for a reduction, a scan of no carry or a contraction whose route
+    computes by partials ({!Route.Partials}): its fields and that route. *)
+type 'r partial =
+  | Reduce_partial : {
+      route : 'd Route.t;
+      layout : Nx_array.Layout.t;
+      axes : int array;
+      prog : Nx_kernel.Prog.t;
+      reductions : ('d, 'r) reductions;
+      loads : 'd load array;
+    }
+      -> 'r partial
+  | Scan_partial : {
+      route : 'd Route.t;
+      layout : Nx_array.Layout.t;
+      axis : int;
+      prog : Nx_kernel.Prog.t;
+      reduction : ('d, 'r) reduction;
+      loads : 'd load array;
+    }
+      -> 'r partial
+  | Contract_partial : {
+      route : 'd Route.t;
+      order : Nx_kernel.order;
+      batch : (int * int) array;
+      contracting : (int * int) array;
+      acc : Nx_array.Dtype.any;
+      out : ('v, 's) dtype;
+      a : ('a, 'b, 'd) t;
+      b : ('c, 'e, 'd) t;
+      init : ('v, 's, 'd) t option;
+    }
+      -> ('v, 's, 'd) t partial
+
+val results_or_partial :
+  by:string ->
+  ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+  'r prim ->
+  ('r, 'r partial) Either.t
+(** [results_or_partial ~by m op] is [Right] [op] with its route where that
+    computes by partials, [m] never called, else [Left (results ~by m op)].
+    It routes [op] once.
+
+    Raises as {!results}. *)
 
 val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
 (** [reduction r] is [r] as {!Nx_kernel.S.scan} takes it: what it computes and

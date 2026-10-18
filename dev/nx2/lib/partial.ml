@@ -407,6 +407,29 @@ struct
     | Leaf i -> moves here (value i)
     | Node (a, b) -> node (fold node here value a) (fold node here value b)
 
+  (* The partials [value i] of [tree]'s leaves combined up it by [node] on
+     [here j] for each member [j] of [g], each given to [settle j]. *)
+  let combine here g tree value node settle =
+    List.iter (fun j -> settle j (fold node (here j) value tree)) g.members
+
+  (* Lane order's tree over [g]'s [n] terms, whose runs are [held], its
+     leaves' partials by [unit], combined as {!combine}. *)
+  let lane_fold here g n held unit node settle =
+    let tree, leaves = tree n (Array.length g.tiles) held in
+    let values = Array.map unit leaves in
+    combine here g tree (Array.get values) node settle
+
+  (* The tile of each device of [route]'s result, in order: its window along
+     [axes] of operand [0], of [shape], where [route] reads it. The route
+     reads every operand alike along them. *)
+  let tiles (route : 'd Route.t) shape axes =
+    let q = route.operands.(0) in
+    Array.map
+      (fun k ->
+        let w = Devices.window ~by q shape (position q k) in
+        Array.map (fun a -> w.(a)) axes)
+      (Grid.devices (Devices.grid route.result))
+
   (* Kinds *)
 
   (* Two exact partials combined by [k], the earlier [a] first: a float
@@ -586,16 +609,9 @@ struct
     let whole = Array.map (fun a -> shape.(a)) axes in
     let outw j = Devices.window ~by p out j in
     let here j = Devices.one set ks.(j) in
-    (* Each device's tile, as it reads load 0: the route reads every load
-       alike along the reduced axes. *)
     let tiles =
       let (Value.Any x) = Prim.load_any loads.(0) in
-      let q = route.operands.(0) in
-      Array.map
-        (fun k ->
-          let w = Devices.window ~by q (Prim.shape x) (position q k) in
-          Array.map (fun a -> w.(a)) axes)
-        ks
+      tiles route (Prim.shape x) axes
     in
     let along j a = tiles.(j).(Option.get (Array.find_index (( = ) a) axes)) in
     let loop j =
@@ -618,19 +634,14 @@ struct
     let term o = P.dtype prog (Iarray.get prog.outs o) in
     let one (type a) (r : (d, a) Value.reduction) : a =
       let per = Array.make (Array.length ks) [] in
-      (* Each group's partials [value t] of its leaves, combined up [tree]
-         by [node] on each member and settled there. *)
-      let combined g tree value node settle =
-        List.iter
-          (fun j -> per.(j) <- settle j (fold node (here j) value tree))
-          g.members
-      in
+      let store settle j vs = per.(j) <- settle j vs in
       (* One partial per tile, by [unit] on its holder, in tile order. *)
       let by_tiles unit node settle =
         List.iter
           (fun g ->
             let values = Array.map unit g.holder in
-            combined g (chain (Array.length g.tiles)) (Array.get values) node settle)
+            combine here g (chain (Array.length g.tiles)) (Array.get values) node
+              (store settle))
           gs
       in
       let ranked e o (D.Any dt) gives =
@@ -669,7 +680,6 @@ struct
         in
         List.iter
           (fun g ->
-            let tree, leaves = tree (numel whole) (Array.length g.tiles) g.held in
             let slabs = Array.map (fun j -> lazy (slab j)) g.holder in
             let value lf =
               let j = g.holder.(lf.dest) in
@@ -685,13 +695,13 @@ struct
                   lane_unit m c q (rows j) (fun rs ->
                       Value.Reduce { layout; axes = [| 1 |]; prog; reductions = rs; loads = [| Plain x |] })
             in
-            let values = Array.map value leaves in
             let settle j vs =
               let v = settle m vs in
               let (Value.Any v) = if parts then bitcast (D.Any dt) v else v in
               [ Value.Any (reshape (counts (outw j)) v) ]
             in
-            combined g tree (Array.get values) (lane (binary m)) settle)
+            lane_fold here g (numel whole) g.held value (lane (binary m))
+              (store settle))
           gs;
         result r p out per
       in
@@ -991,16 +1001,7 @@ struct
     in
     let resw j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
-    (* Each device's tile, its window of [a] along the contracting pairs:
-       the route reads [b] alike along them. *)
-    let tiles =
-      let q = route.operands.(0) in
-      Array.map
-        (fun k ->
-          let w = Devices.window ~by q (Prim.shape a) (position q k) in
-          Array.map (fun (i, _) -> w.(i)) contracting)
-        ks
-    in
+    let tiles = tiles route (Prim.shape a) (Array.map fst contracting) in
     let read (type w r) j i (x : (w, r, d) Value.t) =
       view ks.(j) (here j)
         (reads rule i (Prim.shape x) (resw j) (Array.get tiles.(j)))
@@ -1071,23 +1072,19 @@ struct
           (* A complex sum's product is two terms, one of each part. *)
           let two = if complex acc then 2 else 1 in
           let scale f r = { r with g = f r.g; l = f r.l; len = f r.len } in
-          let tree, leaves =
-            tree (numel whole * two) (Array.length g.tiles)
-              (Array.map (scale (fun x -> x * two)) g.held)
-          in
           let value lf =
             let j = g.holder.(lf.dest) in
             let parts = List.map (scale (fun x -> x / two)) lf.parts in
             let sl = gather (here j) slab (lf.lo / two) (lf.hi / two) parts in
             [ contracted sl None ]
           in
-          let values = Array.map value leaves in
-          List.iter
-            (fun j ->
-              let s = fold (exact Add) (here j) (Array.get values) tree in
-              let s = match init_on j with None -> s | Some x -> exact Add s [ x ] in
-              per.(j) <- [ rounded j (List.hd s) ])
-            g.members
+          let settle j s =
+            let s = match init_on j with None -> s | Some x -> exact Add s [ x ] in
+            per.(j) <- [ rounded j (List.hd s) ]
+          in
+          lane_fold here g (numel whole * two)
+            (Array.map (scale (fun x -> x * two)) g.held)
+            value (exact Add) settle
       | Chain ->
           (* Each run continues the sum before it, on its holder. *)
           let step sum r =
@@ -1107,26 +1104,17 @@ struct
     Prim.expect out (at_placement p shape (Array.map List.hd per))
 end
 
-let reduce (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route layout axes
-    prog rs loads =
+let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (op : r Prim.partial) : r =
   let module F = Make (struct
     let by = by
     let apply = apply
   end) in
-  F.reduce route layout axes prog rs loads
-
-let contract (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route ~order
-    ~batch ~contracting ~acc out a b init =
-  let module F = Make (struct
-    let by = by
-    let apply = apply
-  end) in
-  F.contract route ~order ~batch ~contracting ~acc out a b init
-
-let scan (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route layout axis
-    prog r loads =
-  let module F = Make (struct
-    let by = by
-    let apply = apply
-  end) in
-  F.scan route layout axis prog r loads
+  match op with
+  | Reduce_partial { route; layout; axes; prog; reductions; loads } ->
+      F.reduce route layout axes prog reductions loads
+  | Scan_partial { route; layout; axis; prog; reduction; loads } ->
+      F.scan route layout axis prog reduction loads
+  | Contract_partial { route; order; batch; contracting; acc; out; a; b; init }
+    ->
+      F.contract route ~order ~batch ~contracting ~acc out a b init

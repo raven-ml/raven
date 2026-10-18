@@ -133,46 +133,7 @@
     it maps over its results where a chunk lies before its first. An [Arg]
     maps twice over each tile's results but the first's. *)
 
-val reduce :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  'd Route.t ->
-  Nx_array.Layout.t ->
-  int array ->
-  Nx_kernel.Prog.t ->
-  ('d, 'r) Value.reductions ->
-  'd Value.load array ->
-  'r
-(** [reduce apply ~by route layout axes prog rs loads] is the [Reduce] of
-    those fields, its loads lying where [route] reads them and [route]
-    computing by {!Route.Partials}, computed through [apply] as stated
-    above. *)
-
-val scan :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  'd Route.t ->
-  Nx_array.Layout.t ->
-  int ->
-  Nx_kernel.Prog.t ->
-  ('d, 'r) Value.reduction ->
-  'd Value.load array ->
-  'r
-(** [scan apply ~by route layout axis prog r loads] is the [Scan] of those
-    fields and no carry, as {!reduce}. *)
-
-val contract :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  'd Route.t ->
-  order:Nx_kernel.order ->
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
-  acc:Nx_array.Dtype.any ->
-  ('v, 's) Nx_array.Dtype.t ->
-  ('a, 'b, 'd) Value.t ->
-  ('c, 'e, 'd) Value.t ->
-  ('v, 's, 'd) Value.t option ->
-  ('v, 's, 'd) Value.t
-(** [contract apply ~by route ~order ~batch ~contracting ~acc out a b init]
-    is the [Contract] of those fields, as {!reduce}. *)
+val run :
+  ('q. by:string -> 'q Value.prim -> 'q) -> by:string -> 'r Prim.partial -> 'r
+(** [run apply ~by op] is [op], its operands lying where its route reads them,
+    computed through [apply] as stated above. *)
