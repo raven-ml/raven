@@ -411,7 +411,7 @@ let f64 = D.Float64
    by chance where threads steal units. Both products sum in chain order,
    as nx gives them. *)
 let after_subnormals =
-  let acc = D.Any f32 and contracting = [| (1, 0) |] in
+  let acc = D.Any f32 and contracting : _ iarray = [| (1, 0) |] in
   let bench (module K : Nx_kernel.S) =
     let product dst a b =
       ok
@@ -526,7 +526,7 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
       in
       (identity dt, s, [| (r, 0) |], [| Nx_kernel.Plain x |], dsts))
     (fun (p, shape, rs, loads, dsts) ->
-      ok (K.reduce p ~shape ~axes rs ~dsts loads))
+      ok (K.reduce p ~shape ~axes:(Iarray.of_array axes) rs ~dsts loads))
 
 let scan name r ~axis a (module K : Nx_kernel.S) =
   row name
@@ -1087,7 +1087,7 @@ let view =
   row "spec/contract-view-bf16-4096"
     (fun () ->
       let x () = A.create Rig.host bf16 [| 1; 4096; 4096 |] in
-      ([| (0, 0) |], [| (2, 2) |], x (), x (), x ()))
+      (([| (0, 0) |] : _ iarray), ([| (2, 2) |] : _ iarray), x (), x (), x ()))
     (fun (batch, contracting, dst, a, b) ->
       ignore
         (Nx_kernel.Contract_view.v ~batch ~contracting ~dst ~init:None a b))

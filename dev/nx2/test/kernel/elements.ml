@@ -217,11 +217,11 @@ let operand dt s v f =
     else
       move
         (M.Slice
-           (Array.mapi
+           (Iarray.mapi
               (fun i e ->
                 if i = last then { M.start = 1; count = made.(i); step = 2 }
                 else whole e)
-              made'))
+              (Iarray.of_array made')))
         x
   in
   let x =
@@ -229,16 +229,16 @@ let operand dt s v f =
     | Some a when made.(a) > 0 ->
         move
           (M.Slice
-             (Array.mapi
+             (Iarray.mapi
                 (fun i e ->
                   if i = a then { M.start = e - 1; count = e; step = -1 }
                   else whole e)
-                made))
+                (Iarray.of_array made)))
           x
     | _ -> x
   in
-  let x = move (M.Permute v.perm) x in
-  if v.broadcast = [] then x else move (M.Broadcast s) x
+  let x = move (M.Permute (Iarray.of_array v.perm)) x in
+  if v.broadcast = [] then x else move (M.Broadcast (Iarray.of_array s)) x
 
 (* Positions: in range mostly, and at -1, the extent, past it, and the extremes
    of int64. *)

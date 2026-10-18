@@ -144,12 +144,14 @@ let check_shape ~by s =
     invalid_argf "%s: shape %a has a negative extent" by pp_shape s
 
 let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
-let reshape ~by s x = if Prim.has_shape x s then x else move ~by (M.Reshape s) x
+
+let reshape ~by s x =
+  if Prim.has_shape x s then x else move ~by (M.Reshape (Iarray.of_array s)) x
 
 (* [x] at the shape [s], with leading axes: [x]'s own shape [t] aligned
    right. *)
 let stretch ~by s x =
-  if Prim.has_shape x s then x else move ~by (M.Broadcast s) x
+  if Prim.has_shape x s then x else move ~by (M.Broadcast (Iarray.of_array s)) x
 
 (* A key's batch shape: its shape without the last axis, which holds the two
    words. Every key has that axis: [of_tensor] checks it, and the other
@@ -165,7 +167,11 @@ let pack ~by (k : 'd key) : (int64, D.uint64_elt, 'd) Value.t =
 
 let map ~by shape prog dt loads =
   let layout = Nx_array.Layout.contiguous shape in
-  let loads = Array.map (fun (Value.Any x) -> Value.Plain x) loads in
+  let loads =
+    Iarray.init (Array.length loads) (fun i ->
+        let (Value.Any x) = loads.(i) in
+        Value.Plain x)
+  in
   let x, () =
     Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
   in

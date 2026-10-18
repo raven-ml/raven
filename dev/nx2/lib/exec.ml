@@ -311,7 +311,7 @@ let consumed ~by ~reused hs =
    consumed, naming [by], and its index, buffer and new array are the
    answer. *)
 let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
-    (loads : d Value.load array) =
+    (loads : d Value.load iarray) =
   match outs with
   | [] -> None
   | dt :: _ -> (
@@ -323,7 +323,7 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
             D.equal (A.dtype a) dt
             && L.equal (A.layout a) layout
             && Rig.Buffer.spans (A.buffer a)
-            && Array.for_all
+            && Iarray.for_all
                  (fun l ->
                    let (Value.Any z) = Prim.load_any l in
                    match Prim.at z with
@@ -335,10 +335,10 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
             | Value.Deferred _ | Value.Traced _ ) ->
             false
       in
-      match Array.find_index fits loads with
+      match Iarray.find_index fits loads with
       | None -> None
       | Some i -> (
-          match loads.(i) with
+          match Iarray.get loads i with
           | Value.Plain (Value.Donated d) ->
               let a = Iarray.get d.arrays 0 in
               let b = A.buffer a in
@@ -483,12 +483,12 @@ let cast ~by set dt a =
 let localize (mv : M.t) shape cuts local : M.t =
   let cut a = Array.exists (fun (c, _) -> c = a) cuts in
   let target s' =
-    let s' = Array.copy s' in
+    let s' = Iarray.to_array s' in
     Array.iter
       (fun (a, _) ->
         Option.iter (fun a' -> s'.(a') <- local.(a)) (Route.moved mv shape a))
       cuts;
-    s'
+    Iarray.of_array s'
   in
   match mv with
   | Permute _ | Window _ -> mv
@@ -496,7 +496,7 @@ let localize (mv : M.t) shape cuts local : M.t =
   | Broadcast s' -> Broadcast (target s')
   | Slice rs ->
       Slice
-        (Array.mapi
+        (Iarray.mapi
            (fun a (r : M.range) ->
              if cut a then { M.start = 0; count = local.(a); step = 1 } else r)
            rs)
@@ -590,6 +590,9 @@ let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
   | Value.Plain x -> Nx_kernel.Plain (one x)
   | Value.Padded { x; fill; pad } -> Nx_kernel.Padded { x = one x; fill; pad }
 
+let kernel_loads loads =
+  Array.init (Iarray.length loads) (fun i -> kernel_load (Iarray.get loads i))
+
 (* The arrays at position [j] of [x] and of the results [r] of [op]. *)
 let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
 let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
@@ -609,13 +612,13 @@ let call : type r.
   let (module K : Nx_kernel.S) = kernels in
   match op with
   | Value.Map { prog; loads; _ } ->
-      map_on ~by kernels d prog (Array.map kernel_load loads) (dsts_at op r j)
+      map_on ~by kernels d prog (kernel_loads loads) (dsts_at op r j)
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
-      let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
+      let dsts = dsts_at op r j and loads = kernel_loads loads in
       let rs = Prim.reductions reductions and shape = L.shape layout in
       ran_loads ~by (K.reduce prog ~shape ~axes rs ~dsts loads) dsts loads
   | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
-      let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
+      let dsts = dsts_at op r j and loads = kernel_loads loads in
       let reduction = Prim.reduction reduction in
       let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
       let reads = Option.to_list carry in
@@ -786,7 +789,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           in
           let r =
             plain ~by ~into:a
-              (Value.Map { m with loads = Array.mapi load loads })
+              (Value.Map { m with loads = Iarray.mapi load loads })
           in
           consumed ~by ~reused:[ b ] hs;
           r
@@ -1057,7 +1060,7 @@ and check : type d e.
         (Value.Reduce
            {
              layout = L.contiguous shape;
-             axes = Array.init (Array.length shape) Fun.id;
+             axes = Iarray.init (Array.length shape) Fun.id;
              prog = P.of_node ~ins:[| D.Any D.Bool |] (In 0);
              reductions = Value.[ r ];
              loads = [| Plain ok |];
@@ -1274,10 +1277,9 @@ and compute_node :
                 let wp = Devices.window ~by p shape j in
                 let wq = Devices.window ~by q shape jq in
                 let w =
-                  Array.map2
-                    (fun (rp : M.range) (rq : M.range) ->
-                      { rp with M.start = rp.start - rq.start })
-                    wp wq
+                  Iarray.init (Array.length wp) (fun i ->
+                      let (rp : M.range) = wp.(i) in
+                      { rp with M.start = rp.start - wq.(i).start })
                 in
                 let (A.Any a) = per.(jq) in
                 A.Any (A.copy (Option.get (A.move (Slice w) a))))

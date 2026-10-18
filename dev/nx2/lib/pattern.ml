@@ -491,9 +491,12 @@ let moves ~by ~sizes p s what =
       let perm, merged = arrangement ~by ~text plan ext covered atom split in
       let permuted = Array.map (fun i -> split.(i)) perm in
       let moves =
-        if merged = permuted then [] else [ Nx_array.Move.Reshape merged ]
+        if merged = permuted then []
+        else [ Nx_array.Move.Reshape (Iarray.of_array merged) ]
       in
       let moves =
-        if is_identity perm then moves else Nx_array.Move.Permute perm :: moves
+        if is_identity perm then moves
+        else Nx_array.Move.Permute (Iarray.of_array perm) :: moves
       in
-      if split = s then moves else Nx_array.Move.Reshape split :: moves
+      if split = s then moves
+      else Nx_array.Move.Reshape (Iarray.of_array split) :: moves

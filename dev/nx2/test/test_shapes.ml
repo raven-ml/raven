@@ -68,7 +68,8 @@ let lay (type v s) l (dt : (v, s) D.t) s (data : v array) : (v, s) A.t =
           (fun d : M.range -> { start = max 0 (d - 1); count = d; step = -1 })
           s
       in
-      view (Slice whole)
+      view
+        (Slice (Iarray.of_array whole))
         (A.of_array dt s (Array.of_list (List.rev (Array.to_list data))))
   | Transposed ->
       let t = Array.map (fun a -> s.(a)) (rev_axes r) in
@@ -76,10 +77,11 @@ let lay (type v s) l (dt : (v, s) D.t) s (data : v array) : (v, s) A.t =
         init t (fun j ->
             data.(position s (Array.map (fun a -> j.(a)) (rev_axes r))))
       in
-      view (Permute (rev_axes r)) (A.of_array dt t base)
+      view (Permute (Iarray.of_array (rev_axes r))) (A.of_array dt t base)
   | Broadcast ->
       if Array.length data = 0 then A.of_array dt s data
-      else view (Broadcast s) (A.of_array dt [||] [| data.(0) |])
+      else
+        view (Broadcast (Iarray.of_array s)) (A.of_array dt [||] [| data.(0) |])
 
 (* What [lay] reads back: a broadcast holds its first element everywhere. *)
 let read l data =

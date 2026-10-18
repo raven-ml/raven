@@ -121,8 +121,8 @@ val contract :
   by:string ->
   order:Nx_kernel.order ->
   shape:int array ->
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
   ('v, 's) Value.dtype ->
   ('a, 'b, 'd) Value.t ->

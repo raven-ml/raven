@@ -3091,14 +3091,14 @@ module Prim : sig
   type ('d, _) fft =
     | C2c : {
         direction : Nx_kernel.direction;
-        axes : int array;
+        axes : int iarray;
         x : (Complex.t, 's, 'd) nx;
       }
         -> ('d, (Complex.t, 's, 'd) nx) fft
         (** The transform [direction] of [x] along each of [axes]. *)
     | R2c : {
         dtype : (Complex.t, 'c) dtype;
-        axes : int array;
+        axes : int iarray;
         x : (float, 's, 'd) nx;
       }
         -> ('d, (Complex.t, 'c, 'd) nx) fft
@@ -3107,7 +3107,7 @@ module Prim : sig
     | C2r : {
         dtype : (float, 'r) dtype;
         n : int;
-        axes : int array;
+        axes : int iarray;
         x : (Complex.t, 's, 'd) nx;
       }
         -> ('d, (float, 'r, 'd) nx) fft
@@ -3167,14 +3167,15 @@ module Prim : sig
       }
         -> ('d, ('v, 's, 'd) nx) linalg
 
-  (** The operations. A loop's loads have exactly its iteration shape: no
-      operation broadcasts or promotes. *)
+  (** The operations. Their arrays are immutable, so an operation once built
+      never changes, whoever keeps it. A loop's loads have exactly its
+      iteration shape: no operation broadcasts or promotes. *)
   type 'r t =
     | Map : {
         layout : Nx_array.Layout.t;
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
-        loads : 'd load array;
+        loads : 'd load iarray;
       }
         -> 'r t
         (** [prog] at every index of [layout]'s shape, reading load [i] as its
@@ -3184,10 +3185,10 @@ module Prim : sig
             program that reads one past its rank is refused. *)
     | Reduce : {
         layout : Nx_array.Layout.t;
-        axes : int array;
+        axes : int iarray;
         prog : Nx_kernel.Prog.t;
         reductions : ('d, 'r) reductions;
-        loads : 'd load array;
+        loads : 'd load iarray;
       }
         -> 'r t
         (** [prog] at every index of [layout]'s shape, as a map's, each
@@ -3199,7 +3200,7 @@ module Prim : sig
         axis : int;
         prog : Nx_kernel.Prog.t;
         reduction : ('d, 'r) reduction;
-        loads : 'd load array;
+        loads : 'd load iarray;
         carry : 'd any option;
       }
         -> 'r t
@@ -3246,7 +3247,7 @@ module Prim : sig
             order, reversed where [descending], then their positions along
             [axis]; with [Some k], the first [k] of each slice. *)
     | Fold : {
-        shape : int array;
+        shape : int iarray;
         pad : Nx_kernel.pad;
         x : ('v, 's, 'd) nx;
       }
@@ -3255,9 +3256,9 @@ module Prim : sig
             ({!Nx_kernel.S.fold}). *)
     | Assemble : {
         dtype : ('v, 's) dtype;
-        shape : int array;
+        shape : int iarray;
         fill : 'v;
-        pieces : (Nx_array.Move.range array * ('v, 's, 'd) nx) list;
+        pieces : (Nx_array.Move.range iarray * ('v, 's, 'd) nx) list;
       }
         -> ('v, 's, 'd) nx t
         (** The value of [shape] whose element at an index is the last piece's
@@ -3269,8 +3270,8 @@ module Prim : sig
                 contraction's ({!contract_order}). Where no kernel computes
                 it, its expansion sums rounded products by a reduction, in
                 the reduction's order. *)
-        batch : (int * int) array;
-        contracting : (int * int) array;
+        batch : (int * int) iarray;
+        contracting : (int * int) iarray;
         acc : Dtype.any;
             (** A dtype {!Nx_kernel.accumulates} takes. *)
         out : ('v, 's) dtype;
@@ -3340,8 +3341,8 @@ module Prim : sig
       operands break its rule. *)
 
   val contract_order :
-    batch:(int * int) array ->
-    contracting:(int * int) array ->
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
     ('a, 'b, 'd) nx ->
     ('c, 'e, 'd) nx ->
     Nx_kernel.order

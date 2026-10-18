@@ -20,6 +20,7 @@ let source m s idx =
   let r = Array.length s in
   match m with
   | M.Reshape s' ->
+      let s' = Iarray.to_array s' in
       let k = ref 0 in
       Array.iteri (fun i j -> k := (!k * s'.(i)) + j) idx;
       let src = Array.make r 0 in
@@ -29,14 +30,19 @@ let source m s idx =
       done;
       src
   | M.Broadcast s' ->
+      let s' = Iarray.to_array s' in
       let off = Array.length s' - r in
       Array.init r (fun i -> if s.(i) = 1 then 0 else idx.(off + i))
   | M.Permute p ->
+      let p = Iarray.to_array p in
       let src = Array.make r 0 in
       Array.iteri (fun i a -> src.(a) <- idx.(i)) p;
       src
-  | M.Slice rs -> Array.init r (fun i -> rs.(i).start + (idx.(i) * rs.(i).step))
+  | M.Slice rs ->
+      let rs = Iarray.to_array rs in
+      Array.init r (fun i -> rs.(i).start + (idx.(i) * rs.(i).step))
   | M.Window ws ->
+      let ws = Iarray.to_array ws in
       let src = Array.sub idx 0 r in
       Array.iteri
         (fun j (w : M.window) ->
@@ -426,11 +432,13 @@ let law_move (l, m) =
 
 let test_move_ownership () =
   let s' = [| 3; 2 |] in
-  let l = Option.get (L.move (M.Reshape s') (L.contiguous [| 6 |])) in
+  let l =
+    Option.get (L.move (M.Reshape (Iarray.of_array s')) (L.contiguous [| 6 |]))
+  in
   s'.(0) <- 1_000_000;
   equal ints [| 3; 2 |] (L.shape l);
   let p = [| 1; 0 |] in
-  let l = Option.get (L.move (M.Permute p) l) in
+  let l = Option.get (L.move (M.Permute (Iarray.of_array p)) l) in
   p.(0) <- 0;
   equal ints [| 2; 3 |] (L.shape l)
 

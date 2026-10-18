@@ -97,7 +97,8 @@ let result_bits x = bits_of (host_array x)
 
 (* [a] broadcast to [s], as a view. *)
 let stretched s a =
-  if L.shape (A.layout a) = s then a else Option.get (A.move (M.Broadcast s) a)
+  if L.shape (A.layout a) = s then a
+  else Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)
 
 let reference1 k dt s a =
   let dst = A.create Rig.host dt s in

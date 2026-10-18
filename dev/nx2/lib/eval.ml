@@ -83,18 +83,18 @@ let replayed : type r d.
   match op with
   | Map { layout; prog; outs; loads } ->
       let (Outs outs) = outs_at outs in
-      let op = Map { layout; prog; outs; loads = Array.map load loads } in
+      let op = Map { layout; prog; outs; loads = Iarray.map load loads } in
       Prim.iter_outs add outs (applied i ~by op);
       List.rev !all
   | Reduce { layout; axes; prog; reductions; loads } ->
       let (Reductions reductions) = reductions_at reductions in
-      let loads = Array.map load loads in
+      let loads = Iarray.map load loads in
       let op = Reduce { layout; axes; prog; reductions; loads } in
       Prim.iter_reductions add reductions (applied i ~by op);
       List.rev !all
   | Scan { layout; axis; prog; reduction; loads; carry } ->
       let (Reduction reduction) = reduction_at reduction in
-      let loads = Array.map load loads in
+      let loads = Iarray.map load loads in
       let carry = Option.map (fun (Any c) -> Any (sub c)) carry in
       let op = Scan { layout; axis; prog; reduction; loads; carry } in
       Prim.iter_reduction add reduction (applied i ~by op);

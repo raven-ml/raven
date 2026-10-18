@@ -43,7 +43,7 @@ let slice a (w : M.range array) =
   done;
   if !whole then a
   else
-    match A.move (M.Slice w) a with
+    match A.move (M.Slice (Iarray.of_array w)) a with
     | Some v -> v
     | None -> invalid_arg "Place: a slice of an array is a view"
 

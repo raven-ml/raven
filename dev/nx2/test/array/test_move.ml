@@ -59,12 +59,14 @@ let expected m s =
   let* s' =
     match m with
     | M.Reshape s' ->
+        let s' = Iarray.to_array s' in
         let* () = guard (Array.for_all (fun d -> d >= 0) s') in
         let* n = numel s in
         let* n' = numel s' in
         let* () = guard (n = n') in
         Some s'
     | M.Broadcast s' ->
+        let s' = Iarray.to_array s' in
         let off = Array.length s' - r in
         let* () = guard (Array.for_all (fun d -> d >= 0) s' && off >= 0) in
         let* () =
@@ -74,10 +76,12 @@ let expected m s =
         in
         Some s'
     | M.Permute p ->
+        let p = Iarray.to_array p in
         let sorted = List.sort compare (Array.to_list p) in
         let* () = guard (sorted = List.init r Fun.id) in
         Some (Array.map (fun a -> s.(a)) p)
     | M.Slice rs ->
+        let rs = Iarray.to_array rs in
         let* () = guard (Array.length rs = r) in
         let* () =
           guard
@@ -86,6 +90,7 @@ let expected m s =
         in
         Some (Array.map (fun (x : M.range) -> x.count) rs)
     | M.Window ws ->
+        let ws = Iarray.to_array ws in
         let ws = Array.to_list ws in
         let* () =
           guard
@@ -118,7 +123,7 @@ let law_shape (s, m) =
   cover "a window longer than its axis"
     (match m with
     | M.Window ws when e <> None ->
-        Array.exists
+        Iarray.exists
           (fun (w : M.window) -> s.(w.axis) > 0 && windows s.(w.axis) w = 0)
           ws
     | _ -> false);
@@ -182,9 +187,11 @@ let bounds =
       (M.Slice [| r 3 2 min_int |])
       [| 4 |];
     ok "a reshape to the most axes"
-      (M.Reshape (Array.make 32 1))
+      (M.Reshape (Iarray.of_array (Array.make 32 1)))
       [| 1 |] (Array.make 32 1);
-    refused "a reshape past the most axes" (M.Reshape (Array.make 33 1)) [| 1 |];
+    refused "a reshape past the most axes"
+      (M.Reshape (Iarray.of_array (Array.make 33 1)))
+      [| 1 |];
     refused "a reshape whose elements overflow"
       (M.Reshape [| (max_int / 2) + 1; 2 |])
       [| 4 |];
@@ -211,7 +218,7 @@ let bounds =
       (M.Broadcast [| 0; 3 |])
       [| 1; 3 |] [| 0; 3 |];
     refused "a broadcast past the most axes"
-      (M.Broadcast (Array.make 33 1))
+      (M.Broadcast (Iarray.of_array (Array.make 33 1)))
       [| 1 |];
     refused "a broadcast whose elements overflow"
       (M.Broadcast [| max_int; 2 |])
@@ -239,13 +246,13 @@ let bounds =
       [| 0; 1 lsl 27; 1 lsl 27 |];
     ok "a permutation of no axis" (M.Permute [||]) [||] [||];
     refused "a permutation of an argument past the most axes"
-      (M.Permute (Array.init 33 Fun.id))
+      (M.Permute (Iarray.init 33 Fun.id))
       (Array.make 33 1);
     refused "a permutation of 64 axes"
-      (M.Permute (Array.init 64 Fun.id))
+      (M.Permute (Iarray.init 64 Fun.id))
       (Array.make 64 1);
     refused "a slice of an argument past the most axes"
-      (M.Slice (Array.make 40 (r 0 1 1)))
+      (M.Slice (Iarray.of_array (Array.make 40 (r 0 1 1))))
       (Array.make 40 1);
   ]
 
@@ -258,11 +265,11 @@ let test_bound c =
 
 let test_fresh () =
   let s' = [| 3; 2 |] and s = [| 6 |] in
-  let out = M.shape (M.Reshape s') s in
+  let out = M.shape (M.Reshape (Iarray.of_array s')) s in
   out.(0) <- 0;
   equal ints [| 3; 2 |] s';
   let s' = [| 4; 6 |] in
-  let out = M.shape (M.Broadcast s') s in
+  let out = M.shape (M.Broadcast (Iarray.of_array s')) s in
   out.(0) <- 0;
   equal ints [| 4; 6 |] s';
   let out = M.shape (M.Permute [| 0 |]) s in

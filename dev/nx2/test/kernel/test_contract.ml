@@ -223,16 +223,19 @@ let operand ?(wide_ints = false) dt s nb v seed =
   let x =
     if identity v.stored then x
     else
-      let t = A.copy (move (M.Permute v.stored) x) in
-      move (M.Permute (inverse v.stored)) t
+      let t = A.copy (move (M.Permute (Iarray.of_array v.stored)) x) in
+      move (M.Permute (Iarray.of_array (inverse v.stored))) t
   in
   let step i e =
     if i = last then { M.start = 1; count = s.(i); step = 2 }
     else { M.start = 0; count = e; step = 1 }
   in
-  let x = if v.stepped then move (M.Slice (Array.mapi step made)) x else x in
-  let x = if v.broadcast then move (M.Broadcast s) x else x in
-  A.Any (move (M.Permute v.perm) x)
+  let x =
+    if v.stepped then move (M.Slice (Iarray.of_array (Array.mapi step made))) x
+    else x
+  in
+  let x = if v.broadcast then move (M.Broadcast (Iarray.of_array s)) x else x in
+  A.Any (move (M.Permute (Iarray.of_array v.perm)) x)
 
 (* The bounds gemm.c's paths turn on, on every table: a product of more
    rows and columns than [few_rows_most] (AVX2's few, the largest) takes
@@ -332,7 +335,8 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
   let b = operand ~wide_ints db sb nb vb (seed + 1) in
   let y =
     match
-      Nx_kernel.Shape.contract ~batch:pairs ~contracting (shape_of a)
+      Nx_kernel.Shape.contract ~batch:(Iarray.of_array pairs)
+        ~contracting:(Iarray.of_array contracting) (shape_of a)
         (shape_of b)
     with
     | Ok y -> y
@@ -821,7 +825,8 @@ let sizes c =
   let sa = shape_of c.a in
   let y =
     match
-      Nx_kernel.Shape.contract ~batch:c.batch ~contracting:c.contracting sa
+      Nx_kernel.Shape.contract ~batch:(Iarray.of_array c.batch)
+          ~contracting:(Iarray.of_array c.contracting) sa
         (shape_of c.b)
     with
     | Ok y -> y
@@ -837,7 +842,8 @@ let operands c = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init)
 let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
     init =
   let init = Option.map (A.expect (A.dtype d)) init in
-  K.contract ~order:c.order ~batch:c.batch ~contracting:c.contracting
+  K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
+    ~contracting:(Iarray.of_array c.contracting)
     ~acc:c.acc ~dst:d ~init a b
 
 (* Whether nx_cpu.mli says nx.cpu computes [c]: an acc it computes in, of
@@ -1293,7 +1299,12 @@ let shifted (A.Any x as a) =
   let last = Array.length s - 1 in
   let made = Array.mapi (fun i e -> if i = last then e + 1 else e) s in
   let at i e = { M.start = (if i = last then 1 else 0); count = e; step = 1 } in
-  let y = Option.get (A.move (M.Slice (Array.mapi at s)) (A.create Rig.host (A.dtype x) made)) in
+  let y =
+    Option.get
+      (A.move
+         (M.Slice (Iarray.of_array (Array.mapi at s)))
+         (A.create Rig.host (A.dtype x) made))
+  in
   A.blit ~src:x ~dst:y;
   A.Any y
 
@@ -1655,7 +1666,7 @@ let test_misfits (b : Support.backend) () =
       (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
   in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
-  let refused ~msg ?(batch = [||]) contracting dst a b' =
+  let refused ~msg ?(batch : _ iarray = [||]) contracting dst a b' =
     let before = A.to_array (to64 (host (A.Any dst))) in
     equal ~msg answer A.Shape_mismatch
       (K.contract ~order:Chain ~batch ~contracting ~acc:(D.Any D.Float32) ~dst
@@ -1663,7 +1674,7 @@ let test_misfits (b : Support.backend) () =
     equal ~msg:(msg ^ ": untouched") (array float_exact) before
       (A.to_array (to64 (host (A.Any dst))))
   in
-  let mm = [| (1, 0) |] in
+  let mm : _ iarray = [| (1, 0) |] in
   refused ~msg:"contracted extents" mm (arr [| 2; 3 |]) (arr [| 2; 4 |])
     (arr [| 5; 3 |]);
   refused ~msg:"dst's shape" mm (arr [| 3; 2 |]) (arr [| 2; 4 |])
@@ -1770,7 +1781,7 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     if g.heads = 1 then make [| r; c |]
     else move (M.Permute [| 0; 2; 1; 3 |]) (make [| 2; r; g.heads; c |])
   in
-  let batch, contracting =
+  let (batch : _ iarray), (contracting : _ iarray) =
     if g.heads = 1 then ([||], [| (1, 0) |])
     else ([| (0, 0); (1, 1) |], [| (3, 2) |])
   in
@@ -1779,7 +1790,9 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     let cols = { M.start = g.c0; count = g.n; step = 1 } in
     let s = L.shape (A.layout x) in
     let r = Array.length s in
-    move (M.Slice (Array.init r (fun i -> if i = r - 1 then cols else all s.(i)))) x
+    move
+      (M.Slice (Iarray.init r (fun i -> if i = r - 1 then cols else all s.(i))))
+      x
   in
   let product ~dst a x =
     match

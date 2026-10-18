@@ -274,7 +274,7 @@ let rec reference : type v s.
       in
       let dst = A.create Rig.host dt out in
       match
-        Nx_cpu.reduce (identity dt) ~shape:s ~axes
+        Nx_cpu.reduce (identity dt) ~shape:s ~axes:(Iarray.of_array axes)
           [| (Monoid m, 0) |]
           ~dsts:[| A.Any dst |]
           [| Plain a |]
@@ -478,7 +478,7 @@ let law_logsumexp (s, axes, xs) =
   let ax = normal (Array.length s) axes in
   let x = core (A.of_array D.Float64 s xs) in
   let got =
-    read (reduce1 (Monoid (Logsumexp, 0, Nx.float64)) (Array.of_list ax) x)
+    read (reduce1 (Monoid (Logsumexp, 0, Nx.float64)) (Iarray.of_list ax) x)
   in
   Array.iteri
     (fun i ts ->
@@ -537,7 +537,7 @@ let moments_case =
 let law_moments (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
   let x = core (A.of_array D.Float32 s xs) in
-  let mean, var = reduce1 (Moments (0, Nx.float32)) (Array.of_list ax) x in
+  let mean, var = reduce1 (Moments (0, Nx.float32)) (Iarray.of_list ax) x in
   let mean = read mean and var = read var in
   let u = ldexp 1. (-24) in
   let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
@@ -832,7 +832,7 @@ let law_arg (s, axes, _, xs) =
     let x = core (A.of_array D.Int32 s xs) in
     List.iter
       (fun (name, e, better) ->
-        let v, p = reduce1 (Arg (e, 0, Nx.int32)) (Array.of_list ax) x in
+        let v, p = reduce1 (Arg (e, 0, Nx.int32)) (Iarray.of_list ax) x in
         let want = Array.map (first_extreme better) (terms s ax xs) in
         equal ~msg:(name ^ " extremes") (array int32) (Array.map fst want)
           (read v);

@@ -74,8 +74,8 @@ let accepts m (D.Any dt) = Nx_kernel.accepts (Monoid m) dt
 let compute (module K : Nx_kernel.S) ~scan p m axes dst loads =
   if scan then K.scan p ~axis:axes.(0) (Monoid m, 0) ~dsts:[| dst |] loads
   else
-    K.reduce p ~shape:(loop_shape loads) ~axes [| (Monoid m, 0) |]
-      ~dsts:[| dst |] loads
+    K.reduce p ~shape:(loop_shape loads) ~axes:(Iarray.of_array axes)
+      [| (Monoid m, 0) |] ~dsts:[| dst |] loads
 
 (* The result's shape. *)
 let result_shape c =
@@ -239,17 +239,18 @@ let operand_with make s v =
   let whole e = { M.start = 0; count = e; step = 1 } in
   let move m x = Option.get (A.move m x) in
   let (A.Any x) = make (total made') in
-  let x = move (M.Reshape made') x in
+  let x = move (M.Reshape (Iarray.of_array made')) x in
   let x =
     if not v.stepped then x
     else
       move
         (M.Slice
-           (Array.mapi
+           (Iarray.of_array
+              (Array.mapi
               (fun i e ->
                 if i = last then { M.start = 1; count = made.(i); step = 2 }
                 else whole e)
-              made'))
+              made')))
         x
   in
   let x =
@@ -257,16 +258,17 @@ let operand_with make s v =
     | Some a when made.(a) > 0 ->
         move
           (M.Slice
-             (Array.mapi
+             (Iarray.of_array
+                (Array.mapi
                 (fun i e ->
                   if i = a then { M.start = e - 1; count = e; step = -1 }
                   else whole e)
-                made))
+                made)))
           x
     | _ -> x
   in
-  let x = move (M.Permute v.perm) x in
-  A.Any (if v.broadcast then move (M.Broadcast s) x else x)
+  let x = move (M.Permute (Iarray.of_array v.perm)) x in
+  A.Any (if v.broadcast then move (M.Broadcast (Iarray.of_array s)) x else x)
 
 (* An array of [dt] of shape [s] through the view [v], of [elements]. *)
 let operand (D.Any dt) s v ~specials seed =
@@ -1116,11 +1118,11 @@ let law_prefix (b : Support.backend) c =
       (Option.get
          (A.move
             (M.Slice
-               (Array.mapi
+               (Iarray.of_array (Array.mapi
                   (fun i e ->
                     if i = a then { M.start = 0; count = m; step = 1 }
                     else { M.start = 0; count = e; step = 1 })
-                  s))
+                  s)))
             x))
   in
   match (run b c, run b { c with x = cut }) with
@@ -1131,11 +1133,11 @@ let law_prefix (b : Support.backend) c =
           (Option.get
              (A.move
                 (M.Slice
-                   (Array.mapi
+                   (Iarray.of_array (Array.mapi
                       (fun i e ->
                         if i = a then { M.start = 0; count = m; step = 1 }
                         else { M.start = 0; count = e; step = 1 })
-                      s))
+                      s)))
                 y))
       in
       equal (list string) [] (differ (got prefix) y')
@@ -1643,9 +1645,10 @@ let pp_padded ppf p =
     Format.fprintf ppf "(%d %d %d %d)" w.axis w.size w.step w.dilation
   in
   Format.fprintf ppf "lo %a hi %a interior %a windows %a of %a: " pp_ints
-    p.pad.lo pp_ints p.pad.hi pp_ints p.pad.interior
+    (Iarray.to_array p.pad.lo) pp_ints (Iarray.to_array p.pad.hi) pp_ints
+    (Iarray.to_array p.pad.interior)
     (Format.pp_print_list pp_window)
-    (Array.to_list p.pad.windows) pp_ints (shape_of p.x);
+    (Iarray.to_list p.pad.windows) pp_ints (shape_of p.x);
   match p.loaded with
   | Reads c -> pp_case ppf c
   | Refused r ->
@@ -1665,7 +1668,8 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
   let padded =
     Array.init r (fun i ->
         let d = s.(i) in
-        pad.lo.(i) + pad.hi.(i) + d + if d > 0 then pad.interior.(i) * (d - 1) else 0)
+        Iarray.get pad.lo i + Iarray.get pad.hi i + d
+        + if d > 0 then Iarray.get pad.interior i * (d - 1) else 0)
   in
   let bytes = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy x))) in
   let b = Bytes.create (max 1 (w * total padded)) in
@@ -1674,7 +1678,8 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
       let src = ref 0 and inside = ref true in
       Array.iteri
         (fun i j ->
-          let c = j - pad.lo.(i) and step = pad.interior.(i) + 1 in
+          let c = j - Iarray.get pad.lo i
+          and step = Iarray.get pad.interior i + 1 in
           if c < 0 || c mod step <> 0 || c / step >= s.(i) then inside := false
           else src := (!src * s.(i)) + (c / step))
         idx;
@@ -1684,7 +1689,7 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
       done)
     (indices padded);
   let a = A.v dt (L.contiguous padded) (Rig.Buffer.of_string (Bytes.to_string b)) in
-  if pad.windows = [||] then A.Any a
+  if Iarray.length pad.windows = 0 then A.Any a
   else A.Any (Option.get (A.move (M.Window pad.windows) a))
 
 (* The fills a law draws: zero, one, the extremes and a NaN of floats, the
@@ -1726,28 +1731,32 @@ let pad_of s =
     | Some axis -> [| { M.axis; size; step; dilation } |]
     | None -> [||]
   in
-  { Nx_kernel.lo; hi; interior; windows }
+  let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+  let interior = Iarray.of_array interior in
+  { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
 
 (* The padded extents of an operand of shape [s], below zero where a crop
    passes the axis. *)
 let extents s (pad : Nx_kernel.pad) =
   Array.mapi
     (fun i d ->
-      pad.lo.(i) + pad.hi.(i) + d + if d > 0 then pad.interior.(i) * (d - 1) else 0)
+      Iarray.get pad.lo i + Iarray.get pad.hi i + d
+      + if d > 0 then Iarray.get pad.interior i * (d - 1) else 0)
     s
 
 (* The shape a reading of [pad] that checked nothing would give: [s] for a
    padding of another rank, else the padded extents, each window's axis by
    its count from truncating division, then the windows' sizes. *)
 let unchecked s (pad : Nx_kernel.pad) =
-  if Array.length pad.lo <> Array.length s then s
+  if Iarray.length pad.lo <> Array.length s then s
   else
     let e = extents s pad in
-    Array.iter
+    Iarray.iter
       (fun (w : M.window) ->
         e.(w.axis) <- ((e.(w.axis) - 1 - (w.dilation * (w.size - 1))) / w.step) + 1)
       pad.windows;
-    Array.append e (Array.map (fun (w : M.window) -> w.size) pad.windows)
+    Array.append e
+        (Iarray.to_array (Iarray.map (fun (w : M.window) -> w.size) pad.windows))
 
 (* [x] loaded padded with the element of bits [fill] as [pad] says. *)
 let padded_load (A.Any x) fill pad =
@@ -1761,7 +1770,8 @@ let refuses ~scan monoid axes load =
   let y = Shape.loaded [| load |] in
   Result.is_error
     (if scan then Result.bind y (Shape.scan ~axis:axes.(0))
-     else Result.bind y (Shape.reduce ~axes [| Monoid monoid |]))
+     else Result.bind y
+         (Shape.reduce ~axes:(Iarray.of_array axes) [| Monoid monoid |]))
 
 (* The reduction or scan by [monoid] along [axes] of an operand of dtype
    [d] and shape [s] drawn from [seed], loaded as [pad] with [fill]. *)
@@ -1802,7 +1812,11 @@ let padded_case =
    one. *)
 let padded_examples =
   let f32 = D.Any D.Float32 and one = "\000\000\128\063" in
-  let pad ?(windows = [||]) lo hi interior = { Nx_kernel.lo; hi; interior; windows } in
+  let pad ?(windows = [||]) lo hi interior =
+      let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+      let interior = Iarray.of_array interior in
+      { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
+    in
   let w axis size step = { M.axis; size; step; dilation = 1 } in
   let reduce m s p axes = padded ~scan:false f32 m s p one axes 7 in
   [
@@ -1835,8 +1849,8 @@ let law_padded (b : Support.backend) p =
   let s = shape_of p.x in
   let pad = p.pad in
   cover "windows" (pad.windows <> [||]);
-  cover "cropped" (Array.exists (fun l -> l < 0) pad.lo);
-  cover "interior" (Array.exists (fun i -> i > 0) pad.interior);
+  cover "cropped" (Iarray.exists (fun l -> l < 0) pad.lo);
+  cover "interior" (Iarray.exists (fun i -> i > 0) pad.interior);
   match p.loaded with
   | Reads c ->
       let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
@@ -1844,7 +1858,7 @@ let law_padded (b : Support.backend) p =
       (* It gives no window along that axis. *)
       let e = extents s pad in
       cover "a window wider than its axis"
-        (Array.exists
+        (Iarray.exists
            (fun (w : M.window) -> e.(w.axis) < (w.dilation * (w.size - 1)) + 1)
            pad.windows);
       let p = identity (dtype_of p.x) in
@@ -1852,7 +1866,7 @@ let law_padded (b : Support.backend) p =
       | A.Done -> equal (list string) [] (differ (expected c) dst)
       | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
   | Refused r ->
-      let same = Array.length pad.lo = Array.length s in
+      let same = Iarray.length pad.lo = Array.length s in
       let e = if same then extents s pad else s in
       cover "a padding of another rank" (not same);
       cover "an axis cropped below zero" (Array.exists (fun d -> d < 0) e);
@@ -2348,8 +2362,8 @@ let run_stat k c =
   let module K = (val k : Nx_kernel.S) in
   let dsts = stat_dsts c in
   match
-    K.reduce (identity (dtype_of c.x)) ~shape:(shape_of c.x) ~axes:c.axes
-      [| (c.r, 0) |] ~dsts [| plain_of c.x |]
+    K.reduce (identity (dtype_of c.x)) ~shape:(shape_of c.x)
+      ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |] ~dsts [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
@@ -3286,8 +3300,9 @@ let law_guards (b : Support.backend) ((g : guard), side) =
   let call xs ds =
     let p = identity dt and loads = [| plain_of xs.(0) |] in
     if g.scan then K.scan p ~axis:g.axes.(0) (g.r, 0) ~dsts:ds loads
-    else K.reduce p ~shape:(loop_shape loads) ~axes:g.axes [| (g.r, 0) |]
-      ~dsts:ds loads
+    else
+      K.reduce p ~shape:(loop_shape loads) ~axes:(Iarray.of_array g.axes)
+        [| (g.r, 0) |] ~dsts:ds loads
   in
   equal Elements.answer A.Done
     (Elements.same_guarded side ~call [| g.x |] dsts)
@@ -3299,7 +3314,7 @@ let law_padded_guards (b : Support.backend) (p, side) =
   | Refused _ -> reject ()
   | Reads c ->
       cover "windows" (p.pad.windows <> [||]);
-      cover "cropped" (Array.exists (fun l -> l < 0) p.pad.lo);
+      cover "cropped" (Iarray.exists (fun l -> l < 0) p.pad.lo);
       cover "at the page after" (side = Support.After);
       cover "at the page before" (side = Support.Before);
       let dt = dtype_of p.x in
@@ -3504,7 +3519,7 @@ let fused_case =
     if i = 1 && lanes then
       let row = Array.mapi (fun j e -> if Array.mem j axes then 1 else e) s in
       let (A.Any x) = operand d row lv ~specials (seed + i) in
-      A.Any (Option.get (A.move (M.Broadcast s) x))
+      A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x))
     else operand d s (if i = 0 then v else lv) ~specials (seed + i)
   in
   {
@@ -3528,7 +3543,7 @@ let fused_example ?(d = D.Any D.Float32) ?(scan = false) ?(broadcast = false)
     if j = 1 && lanes then
       let row = Array.mapi (fun a e -> if Array.mem a axes then 1 else e) s in
       let (A.Any x) = operand d row plain ~specials:0 (7 + j) in
-      A.Any (Option.get (A.move (M.Broadcast s) x))
+      A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x))
     else operand d s { plain with broadcast = broadcast && j = 0 } ~specials:0
         (7 + j)
   in
@@ -3659,7 +3674,9 @@ let law_fused (b : Support.backend) c =
   let want = fused_dsts b c in
   let compute_in (module M : Nx_kernel.S) p k ~dsts loads =
     if c.scan then M.scan p ~axis:c.axes.(0) (c.red, k) ~dsts loads
-    else M.reduce p ~shape:c.shape ~axes:c.axes [| (c.red, k) |] ~dsts loads
+    else
+      M.reduce p ~shape:c.shape ~axes:(Iarray.of_array c.axes) [| (c.red, k) |]
+        ~dsts loads
   in
   let compute = compute_in b.kernels in
   (* An extreme of no term refuses alike. *)
@@ -3680,11 +3697,11 @@ let law_fused (b : Support.backend) c =
               Option.get
                 (A.move
                    (M.Slice
-                      (Array.mapi
+                      (Iarray.of_array (Array.mapi
                          (fun i e ->
                            { M.start = 0; count = (if st.(i) = 0 then min e 1 else e);
                              step = 1 })
-                         (L.shape l)))
+                         (L.shape l))))
                    y)
             in
             A.blit ~src:(once x) ~dst:(once g);
@@ -3798,12 +3815,13 @@ let law_several (b : Support.backend) s =
   let loads = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) c.loads in
   let alone red k =
     let d = dsts_of b c red k in
-    (K.reduce c.prog ~shape:c.shape ~axes:c.axes [| (red, k) |] ~dsts:d loads, d)
+    let axes = Iarray.of_array c.axes in
+    (K.reduce c.prog ~shape:c.shape ~axes [| (red, k) |] ~dsts:d loads, d)
   in
   let a1, w1 = alone c.red c.k and a2, w2 = alone s.red2 s.k2 in
   let d1 = dsts_of b c c.red c.k and d2 = dsts_of b c s.red2 s.k2 in
   let answer =
-    K.reduce c.prog ~shape:c.shape ~axes:c.axes
+    K.reduce c.prog ~shape:c.shape ~axes:(Iarray.of_array c.axes)
       [| (c.red, c.k); (s.red2, s.k2) |]
       ~dsts:(Array.append d1 d2) loads
   in
@@ -4042,7 +4060,7 @@ let along1 (A.Any x) lo count =
         else { M.start = 0; count = e; step = 1 })
       s
   in
-  A.Any (Option.get (A.move (M.Slice r) x))
+  A.Any (Option.get (A.move (M.Slice (Iarray.of_array r)) x))
 
 let law_carry (b : Support.backend) c =
   let (Carried (dt, vs)) = c.kind in
@@ -4374,7 +4392,9 @@ let stat_run k ~scan (c : stat) (D.Any d) x =
   let p = identity (dtype_of x) and loads = [| plain_of x |] in
   let answer =
     if scan then K.scan p ~axis:c.axes.(0) (c.r, 0) ~dsts loads
-    else K.reduce p ~shape:(shape_of x) ~axes:c.axes [| (c.r, 0) |] ~dsts loads
+    else
+      K.reduce p ~shape:(shape_of x) ~axes:(Iarray.of_array c.axes)
+        [| (c.r, 0) |] ~dsts loads
   in
   match answer with
   | A.Done -> dsts

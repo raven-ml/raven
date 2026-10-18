@@ -30,10 +30,11 @@ let pp_case ppf c =
     "fold into %a of %a %a: lo %a hi %a interior %a, windows %s (%s), load \
      (%s)"
     pp_ints c.shape D.pp (A.dtype x) pp_ints (shape_of c.x) pp_ints
-    c.pad.lo pp_ints c.pad.hi pp_ints c.pad.interior
+    (Iarray.to_array c.pad.lo) pp_ints (Iarray.to_array c.pad.hi) pp_ints
+    (Iarray.to_array c.pad.interior)
     (String.concat "; "
-       (Array.to_list
-          (Array.map
+       (Iarray.to_list
+          (Iarray.map
              (fun (w : M.window) ->
                Printf.sprintf "%d:%dx%d+%d" w.axis w.size w.step w.dilation)
              c.pad.windows)))
@@ -107,7 +108,11 @@ let case_gen ?(dtypes = folded) ?last () =
            else None)
          (List.init r Fun.id))
   in
-  let pad = { Nx_kernel.lo; hi; interior; windows } in
+  let pad =
+    let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+    let interior = Iarray.of_array interior in
+    { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
+  in
   let* seed = int in
   let xs = loaded pad shape in
   let rx = match xs with Some s -> Array.length s | None -> 0 in
@@ -139,14 +144,15 @@ let fold_on (b : Support.backend) c =
 let target c xi =
   let r = Array.length c.shape in
   let q = Array.sub xi 0 r in
-  Array.iteri
+  Iarray.iteri
     (fun k (w : M.window) ->
       q.(w.axis) <- (xi.(w.axis) * w.step) + (xi.(r + k) * w.dilation))
     c.pad.windows;
   let i =
     Array.mapi
       (fun a q ->
-        let t = q - c.pad.lo.(a) and s = c.pad.interior.(a) + 1 in
+        let t = q - Iarray.get c.pad.lo a
+        and s = Iarray.get c.pad.interior a + 1 in
         if t < 0 || t mod s <> 0 || t / s >= c.shape.(a) then -1 else t / s)
       q
   in
@@ -171,7 +177,7 @@ let add (D.Any dt as d) a b =
 let expected c =
   let d = dtype_of c.x in
   let xs = shape_of c.x and es = elements c.x in
-  let r = Array.length c.shape and nw = Array.length c.pad.windows in
+  let r = Array.length c.shape and nw = Iarray.length c.pad.windows in
   let acc = Array.make (total c.shape) (zero d) in
   let taps = Array.sub xs r nw and outer = Array.sub xs 0 r in
   for t = 0 to total taps - 1 do
@@ -189,7 +195,7 @@ let expected c =
 let leading c =
   let r = Array.length c.shape in
   let windowed a =
-    Array.exists (fun (w : M.window) -> w.axis = a) c.pad.windows
+    Iarray.exists (fun (w : M.window) -> w.axis = a) c.pad.windows
   in
   let rec go a = if a < r && not (windowed a) then go (a + 1) else a in
   go 0
@@ -199,7 +205,9 @@ let leading c =
 let slabs c =
   let p = c.pad in
   let covers a =
-    p.lo.(a) = 0 && p.hi.(a) >= 0 && (p.interior.(a) = 0 || c.shape.(a) <= 1)
+    Iarray.get p.lo a = 0
+    && Iarray.get p.hi a >= 0
+    && (Iarray.get p.interior a = 0 || c.shape.(a) <= 1)
   in
   List.for_all covers (List.init (leading c) Fun.id)
 
@@ -208,16 +216,16 @@ let law_reference (b : Support.backend) = function
   | Some c -> (
       let n = leading c and r = Array.length c.shape in
       let work =
-        c.pad.windows <> [||] && total c.shape > 0 && total (shape_of c.x) > 0
+        Iarray.length c.pad.windows > 0 && total c.shape > 0 && total (shape_of c.x) > 0
       in
       let units = total (Array.sub c.shape 0 n) in
-      cover "windows" (c.pad.windows <> [||]);
-      cover "interior" (Array.exists (fun i -> i > 0) c.pad.interior);
-      cover "cropped" (Array.exists (fun l -> l < 0) c.pad.lo);
+      cover "windows" (Iarray.length c.pad.windows > 0);
+      cover "interior" (Iarray.exists (fun i -> i > 0) c.pad.interior);
+      cover "cropped" (Iarray.exists (fun l -> l < 0) c.pad.lo);
       cover "slabs zeroed per unit" (work && n > 0 && units > 1 && slabs c);
       cover "whole zeroed, a leading axis padded"
         (work && n > 0 && not (slabs c));
-      let taps = Array.sub (shape_of c.x) r (Array.length c.pad.windows) in
+      let taps = Array.sub (shape_of c.x) r (Iarray.length c.pad.windows) in
       cover "taps innermost" (work && n < r && total taps > 1);
       (let (D.Any d) = dtype_of c.x in
        cover "a narrow float" (work && is_narrow (D.Any d));
@@ -276,7 +284,7 @@ let law_load (b : Support.backend) = function
       let p = Nx_kernel.Prog.v ~ins:[| d |] [| In 0 |] ~outs:[| 0 |] in
       let some = total xs > 0 in
       cover "padding read" (some && total c.shape < total xs);
-      cover "a windowed load" (some && c.pad.windows <> [||]);
+      cover "a windowed load" (some && Iarray.length c.pad.windows > 0);
       cover "sub-byte" (some && D.bits dt < 8);
       cover "a stepped operand" (some && c.load.stepped);
       cover "a reversed operand" (some && c.load.reversed <> None);
@@ -411,7 +419,7 @@ let law_guards (b : Support.backend) (c, side) =
   | None -> reject ()
   | Some c ->
       let after = side = Support.After in
-      cover "windows" (c.pad.windows <> [||]);
+      cover "windows" (Iarray.length c.pad.windows > 0);
       cover "sub-byte" (let (D.Any dt) = dtype_of c.x in D.bits dt < 8);
       cover "a stepped operand at the page before"
         ((not after) && List.mem "stepped" c.views);

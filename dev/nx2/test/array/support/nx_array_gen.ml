@@ -38,22 +38,23 @@ let pp_ints ppf a =
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_move ppf = function
-  | M.Reshape s -> Format.fprintf ppf "Reshape %a" pp_ints s
-  | M.Broadcast s -> Format.fprintf ppf "Broadcast %a" pp_ints s
-  | M.Permute p -> Format.fprintf ppf "Permute %a" pp_ints p
+  | M.Reshape s -> Format.fprintf ppf "Reshape %a" pp_ints (Iarray.to_array s)
+  | M.Broadcast s ->
+      Format.fprintf ppf "Broadcast %a" pp_ints (Iarray.to_array s)
+  | M.Permute p -> Format.fprintf ppf "Permute %a" pp_ints (Iarray.to_array p)
   | M.Slice rs ->
       Format.fprintf ppf "Slice [%s]"
         (String.concat "; "
-           (Array.to_list
-              (Array.map
+           (Iarray.to_list
+              (Iarray.map
                  (fun (x : M.range) ->
                    Printf.sprintf "%d,%d,%d" x.start x.count x.step)
                  rs)))
   | M.Window ws ->
       Format.fprintf ppf "Window [%s]"
         (String.concat "; "
-           (Array.to_list
-              (Array.map
+           (Iarray.to_list
+              (Iarray.map
                  (fun (w : M.window) ->
                    Printf.sprintf "axis %d size %d step %d dilation %d" w.axis
                      w.size w.step w.dilation)
@@ -121,7 +122,7 @@ let windows ~apart s =
         w :: ws
   in
   let+ ws = all axes in
-  M.Window (Array.of_list ws)
+  M.Window (Iarray.of_list ws)
 
 (* Shapes of [n] elements, of rank up to 4, with extents of 1 among them. *)
 let reshape_target s =
@@ -131,7 +132,7 @@ let reshape_target s =
     let+ s' = array ~size:(int_range 1 4) (int_range 0 3) in
     let s' = Array.copy s' in
     s'.(0) <- 0;
-    M.Reshape s')
+    M.Reshape (Iarray.of_array s'))
   else
     (* Deal [n]'s prime factors to four axes, then drop or keep ones. *)
     let rec primes n p =
@@ -145,7 +146,7 @@ let reshape_target s =
     let s' = Array.make 4 1 in
     List.iter2 (fun p k -> s'.(k) <- s'.(k) * p) ps slots;
     M.Reshape
-      (Array.of_list
+      (Iarray.of_list
          (List.filteri (fun i d -> d > 1 || keep.(i)) (Array.to_list s')))
 
 let movement ~apart s =
@@ -155,12 +156,13 @@ let movement ~apart s =
     let* extra = array ~size:(int_range 0 2) (int_range 0 3) in
     let+ fill = array ~size:(const r) (int_range 0 3) in
     M.Broadcast
-      (Array.append extra
-         (Array.mapi (fun i d -> if d = 1 then fill.(i) else d) s))
+      (Iarray.of_array
+         (Array.append extra
+            (Array.mapi (fun i d -> if d = 1 then fill.(i) else d) s)))
   in
   let permute =
     let+ p = permutation ~pp:Format.pp_print_int (List.init r Fun.id) in
-    M.Permute (Array.of_list p)
+    M.Permute (Iarray.of_list p)
   in
   let slice =
     let rec all i =
@@ -170,7 +172,7 @@ let movement ~apart s =
         x :: xs
     in
     let+ rs = all 0 in
-    M.Slice (Array.of_list rs)
+    M.Slice (Iarray.of_list rs)
   in
   let views = [ permute; slice; windows ~apart s ] in
   if apart then one_of views else one_of (reshape_target s :: broadcast :: views)
@@ -199,17 +201,17 @@ let near_bounds s =
   let small = int_range (-1) 5 in
   let reshape =
     let+ s' = array ~size:(int_range 0 4) small in
-    M.Reshape s'
+    M.Reshape (Iarray.of_array s')
   in
   let broadcast =
     let+ s' = array ~size:(int_range (max 0 (r - 1)) (r + 2)) small in
-    M.Broadcast s'
+    M.Broadcast (Iarray.of_array s')
   in
   let permute =
     let+ p =
       array ~size:(int_range (max 0 (r - 1)) (r + 1)) (int_range (-1) r)
     in
-    M.Permute p
+    M.Permute (Iarray.of_array p)
   in
   let range d =
     let+ start = int_range (-1) (d + 1)
@@ -226,7 +228,7 @@ let near_bounds s =
         x :: xs
     in
     let+ rs = all 0 in
-    M.Slice (Array.of_list rs)
+    M.Slice (Iarray.of_list rs)
   in
   let window =
     let+ axis = int_range (-1) r
@@ -237,7 +239,7 @@ let near_bounds s =
   in
   let windows =
     let+ ws = list ~size:(int_range 0 3) window in
-    M.Window (Array.of_list ws)
+    M.Window (Iarray.of_list ws)
   in
   (* One window whose reach passes its axis, so the axis gives no window: the
      random windows above are rarely all valid and that long. *)

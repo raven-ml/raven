@@ -259,18 +259,8 @@ let reshape l s' =
   done;
   if !runs then Some (moved s' strides (offset l)) else None
 
-(* A movement's arrays are its caller's, read once: [move] copies those it reads
-   after [Move.shape] checks them. Of a [Reshape] or a [Broadcast] it reads only
-   the shape [Move.shape] returns, a copy. *)
-let own : Move.t -> Move.t = function
-  | (Reshape _ | Broadcast _) as m -> m
-  | Permute p -> Permute (Shape.copy p)
-  | Slice rs -> Slice (Array.copy rs)
-  | Window ws -> Window (Array.copy ws)
-
 (* [Move.shape] neither keeps nor writes the shape it is given. *)
 let move m l =
-  let m = own m in
   let s' = Move.shape m l.shape in
   let r = rank l and r' = Array.length s' in
   (* CR: Pass st into reshape: move already owns a zeroed stride array,
@@ -290,13 +280,13 @@ let move m l =
         Some (moved s' st (offset l))
     | Permute p ->
         for i = 0 to r' - 1 do
-          st.(i) <- unsafe_stride l (Array.unsafe_get p i)
+          st.(i) <- unsafe_stride l (Iarray.unsafe_get p i)
         done;
         Some (moved s' st (offset l))
     | Slice rs ->
         let offset = ref (offset l) in
         for i = 0 to r - 1 do
-          let x = rs.(i) and s = unsafe_stride l i in
+          let x = Iarray.unsafe_get rs i and s = unsafe_stride l i in
           offset := !offset + (x.start * s);
           st.(i) <- (if x.count > 1 then s * x.step else 0)
         done;
@@ -307,7 +297,7 @@ let move m l =
         for i = 0 to r - 1 do
           st.(i) <- unsafe_stride l i
         done;
-        Array.iteri
+        Iarray.iteri
           (fun j (w : Move.window) ->
             let s = unsafe_stride l w.axis in
             st.(w.axis) <- (if s'.(w.axis) > 1 then s * w.step else 0);

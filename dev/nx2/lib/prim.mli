@@ -164,10 +164,10 @@ type 'r partial =
   | Reduce_partial : {
       route : 'd Route.t;
       layout : Nx_array.Layout.t;
-      axes : int array;
+      axes : int iarray;
       prog : Nx_kernel.Prog.t;
       reductions : ('d, 'r) reductions;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r partial
   | Scan_partial : {
@@ -176,14 +176,14 @@ type 'r partial =
       axis : int;
       prog : Nx_kernel.Prog.t;
       reduction : ('d, 'r) reduction;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r partial
   | Contract_partial : {
       route : 'd Route.t;
       order : Nx_kernel.order;
-      batch : (int * int) array;
-      contracting : (int * int) array;
+      batch : (int * int) iarray;
+      contracting : (int * int) iarray;
       acc : Nx_array.Dtype.any;
       out : ('v, 's) dtype;
       a : ('a, 'b, 'd) t;
@@ -210,7 +210,7 @@ val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
 val reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
 (** [reductions rs] is [rs] as {!Nx_kernel.S.reduce} takes them. *)
 
-val reduced : int array -> int array -> int array
+val reduced : int array -> int iarray -> int array
 (** [reduced s axes] is [s] without [axes]. *)
 
 val carrier : Nx_array.Dtype.any -> Nx_array.Dtype.any
@@ -261,8 +261,8 @@ val prepare :
 
 val contract_shape :
   by:string ->
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
   ('a, 'b, 'd) t ->
   ('c, 'e, 'd) t ->
@@ -277,8 +277,8 @@ val contract_shape :
     than float32. *)
 
 val contract_order :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   ('a, 'b, 'd) t ->
   ('c, 'e, 'd) t ->
   Nx_kernel.order
@@ -291,8 +291,8 @@ val contract_order :
     several kinds, or both are of every set, it is the one nx.cpu chooses. *)
 
 val free_extent :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   int array ->
   (int * int -> int) ->
   int
@@ -316,7 +316,7 @@ val is_padded : 'd load -> bool
 
 (** {1:families Transforms and factorisations} *)
 
-val fft_axes : ('d, 'r) fft -> int array
+val fft_axes : ('d, 'r) fft -> int iarray
 val fft_operand : ('d, 'r) fft -> 'd any
 
 val routine_name : ('d, 'r) linalg -> string

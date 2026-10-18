@@ -21,7 +21,7 @@ let rec outputs : type d. D.any list -> d outputs = function
 
 (* The map of [prog] over [loads], of [shape], into [dts]. *)
 let map_n (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    prog dts (loads : d Value.load array) : d Value.any array =
+    prog dts (loads : d Value.load iarray) : d Value.any array =
   let (Outputs (outs, read)) = outputs (Array.to_list dts) in
   let layout = L.contiguous shape in
   Array.of_list (read (apply ~by (Value.Map { layout; prog; outs; loads })))
@@ -33,7 +33,7 @@ let along_axis shape axis start count step =
     if a = axis then { M.start; count; step }
     else { M.start = 0; count = e; step = 1 }
   in
-  Array.mapi keep shape
+  Iarray.init (Array.length shape) (fun a -> keep a shape.(a))
 
 (* [x]'s elements [start + j step], [j < count], along [axis]. *)
 let part (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
@@ -41,7 +41,11 @@ let part (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
   let ranges = along_axis (Prim.shape x) axis start count step in
   Value.Any (apply ~by (Value.Move (Slice ranges, x)))
 
-let plain (Value.Any x) = Value.Plain x
+(* [xs] read plainly. *)
+let plain xs =
+  Iarray.init (Array.length xs) (fun i ->
+      let (Value.Any x) = xs.(i) in
+      Value.Plain x)
 
 (* Ladner and Fischer's prefix circuit at its least size, the tree of Brent
    and Kung:
@@ -68,8 +72,7 @@ let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let prog = P.of_exprs ~ins (Iarray.of_array combine) in
   (* The states [combine] makes of the [e] indices of the two. *)
   let combined e earlier later =
-    let loads = Array.map plain (Array.append earlier later) in
-    map_n apply ~by (along e) prog dts loads
+    map_n apply ~by (along e) prog dts (plain (Array.append earlier later))
   in
   (* Index [0]'s result, from [state]'s first. *)
   let head first state =
@@ -79,7 +82,7 @@ let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     | Some first ->
         let ins = Iarray.of_array dts in
         let prog = P.of_exprs ~ins (Iarray.of_array first) in
-        map_n apply ~by (along 1) prog dts (Array.map plain s0)
+        map_n apply ~by (along 1) prog dts (plain s0)
   in
   let rec level first state m =
     if m = 0 || (m = 1 && Option.is_none first) then state
@@ -107,7 +110,7 @@ let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
             :: piece 1 half q.(k)
             :: (if rows = 1 then [] else [ piece 2 (rows - 1) evens.(k) ])
           in
-          let fill = D.zero dt in
+          let fill = D.zero dt and shape = Iarray.of_array shape in
           Value.Any
             (apply ~by (Value.Assemble { dtype = dt; shape; fill; pieces })))
         h

@@ -33,6 +33,14 @@ let copy s =
   done;
   s'
 
+let of_iarray s =
+  let r = Iarray.length s in
+  let s' = zeros r in
+  for i = 0 to r - 1 do
+    Array.unsafe_set s' i (Iarray.unsafe_get s i)
+  done;
+  s'
+
 let check_rank fn r =
   if r > max_rank then invalid_argf "%s: rank %d exceeds %d" fn r max_rank
 

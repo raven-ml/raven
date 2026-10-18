@@ -111,8 +111,8 @@ and interpretation = {
 
 (** {1:operations Operations}
 
-    An operation's arrays are its own: whoever builds one from a caller's array
-    copies it, so that nothing a caller changes later reaches it.
+    An operation's arrays are immutable, so an operation once built never
+    changes, whoever keeps it.
 
     A loop's loads have exactly its iteration shape: no operation broadcasts or
     promotes. *)
@@ -173,7 +173,7 @@ and _ prim =
       layout : Nx_array.Layout.t;
       prog : Nx_kernel.Prog.t;
       outs : ('d, 'r) outs;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r prim
       (** [prog] at every index of [layout]'s shape, reading load [i] as its
@@ -183,10 +183,10 @@ and _ prim =
           reads one past its rank is refused. *)
   | Reduce : {
       layout : Nx_array.Layout.t;
-      axes : int array;
+      axes : int iarray;
       prog : Nx_kernel.Prog.t;
       reductions : ('d, 'r) reductions;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r prim
       (** [prog] at every index of [layout]'s shape, as a map's, each reduction
@@ -197,7 +197,7 @@ and _ prim =
       axis : int;
       prog : Nx_kernel.Prog.t;
       reduction : ('d, 'r) reduction;
-      loads : 'd load array;
+      loads : 'd load iarray;
       carry : 'd any option;
     }
       -> 'r prim
@@ -239,7 +239,7 @@ and _ prim =
           order, reversed where [descending], then their positions along [axis];
           with [Some k], the first [k] of each slice. *)
   | Fold : {
-      shape : int array;
+      shape : int iarray;
       pad : Nx_kernel.pad;
       x : ('v, 's, 'd) t;
     }
@@ -248,9 +248,9 @@ and _ prim =
           ({!Nx_kernel.S.fold}). *)
   | Assemble : {
       dtype : ('v, 's) dtype;
-      shape : int array;
+      shape : int iarray;
       fill : 'v;
-      pieces : (Nx_array.Move.range array * ('v, 's, 'd) t) list;
+      pieces : (Nx_array.Move.range iarray * ('v, 's, 'd) t) list;
     }
       -> ('v, 's, 'd) t prim
       (** The value of [shape] whose element at an index is the last piece's
@@ -262,8 +262,8 @@ and _ prim =
               contraction's ({!Prim.contract_order}). Where no kernel
               computes it, its expansion sums rounded products by a
               reduction, in the reduction's order. *)
-      batch : (int * int) array;
-      contracting : (int * int) array;
+      batch : (int * int) iarray;
+      contracting : (int * int) iarray;
       acc : Nx_array.Dtype.any;
           (** A dtype {!Nx_kernel.accumulates} takes. *)
       out : ('v, 's) dtype;
@@ -301,14 +301,14 @@ and _ prim =
 and ('d, _) fft =
   | C2c : {
       direction : Nx_kernel.direction;
-      axes : int array;
+      axes : int iarray;
       x : (Complex.t, 's, 'd) t;
     }
       -> ('d, (Complex.t, 's, 'd) t) fft
       (** The transform [direction] of [x] along each of [axes]. *)
   | R2c : {
       dtype : (Complex.t, 'c) dtype;
-      axes : int array;
+      axes : int iarray;
       x : (float, 's, 'd) t;
     }
       -> ('d, (Complex.t, 'c, 'd) t) fft
@@ -317,7 +317,7 @@ and ('d, _) fft =
   | C2r : {
       dtype : (float, 'r) dtype;
       n : int;
-      axes : int array;
+      axes : int iarray;
       x : (Complex.t, 's, 'd) t;
     }
       -> ('d, (float, 'r, 'd) t) fft

@@ -69,9 +69,9 @@ let inverse p =
 let pairs_of c =
   let nb = Array.length c.batch and nr = Array.length c.rows in
   let ia = inverse c.pa and ib = inverse c.pb in
-  let batch = Array.init nb (fun k -> (ia.(k), ib.(k))) in
+  let batch = Iarray.init nb (fun k -> (ia.(k), ib.(k))) in
   let contracting =
-    Array.init (Array.length c.contracted) (fun k ->
+    Iarray.init (Array.length c.contracted) (fun k ->
         (ia.(nb + nr + k), ib.(nb + k)))
   in
   (batch, contracting)
@@ -102,7 +102,7 @@ let layout_of ~canonical s =
   if canonical then Gen.constant (L.contiguous s)
   else Gen.one_of [ Gen.constant (L.contiguous s); strided_of s ]
 
-let permuted l p = Option.get (L.move (M.Permute p) l)
+let permuted l p = Option.get (L.move (M.Permute (Iarray.of_array p)) l)
 
 (* [p] with the memory axes [lo] to [lo + n - 1] in increasing order of the axes
    that hold them: a free group's axes keep memory order, so they lie as one run
@@ -144,6 +144,7 @@ let case ~canonical =
     { batch; rows; contracted; columns; pa; pb; la; lb; ly = la; li = None }
   in
   let b, k = pairs_of c in
+  let b = Iarray.to_array b and k = Iarray.to_array k in
   let y = result_shape (L.shape la) (L.shape lb) b k in
   let* ly = layout_of y in
   let+ li = option (layout_of y) in
@@ -159,7 +160,8 @@ let law_contract c =
 
 let test_contract_refuses () =
   let a = [| 2; 3; 4 |] and b = [| 2; 4; 5 |] in
-  let contract ?(batch = [| (0, 0) |]) ?(contracting = [| (2, 1) |]) a b =
+  let contract ?(batch : _ iarray = [| (0, 0) |])
+        ?(contracting : _ iarray = [| (2, 1) |]) a b =
     Shape.contract ~batch ~contracting a b
   in
   fits ~msg:"fits" [ 2; 3; 5 ] (contract a b);
@@ -201,8 +203,8 @@ let test_accumulates () =
 
 (* Every shape Shape derives, at max_numel and past it. *)
 let test_admits () =
-  let big = L.max_numel and z = [| 0 |] in
-  let pad ?(interior = [| 0 |]) lo hi =
+  let big = L.max_numel and z : int iarray = [| 0 |] in
+  let pad ?(interior : int iarray = [| 0 |]) lo hi =
     { Nx_kernel.lo; hi; interior; windows = [||] }
   in
   fits ~msg:"padded to max_numel" [ big ]
@@ -268,7 +270,9 @@ type loop = {
 
 let pp_pad ppf (pad : Nx_kernel.pad) =
   Format.fprintf ppf "padded lo %a hi %a interior %a, %d windows" pp_ints
-    pad.lo pp_ints pad.hi pp_ints pad.interior (Array.length pad.windows)
+    (Iarray.to_array pad.lo) pp_ints (Iarray.to_array pad.hi) pp_ints
+    (Iarray.to_array pad.interior)
+    (Iarray.length pad.windows)
 
 let pp_loop ppf c =
   Format.fprintf ppf "shape %a, loads %a" pp_ints c.shape
@@ -292,7 +296,9 @@ let pad_of r =
         [| { M.axis; size; step = 1 + (size mod 2); dilation = 1 } |]
     | _ -> [||]
   in
-  { Nx_kernel.lo; hi; interior; windows }
+  let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+  let interior = Iarray.of_array interior in
+  { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
 
 let loop =
   Gen.with_pp pp_loop
@@ -309,7 +315,7 @@ let loop =
 
 (* An operand of [dt] and shape [s], its one element broadcast. *)
 let operand (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
-  Option.get (A.move (M.Broadcast s) (A.create Rig.host dt [||]))
+  Option.get (A.move (M.Broadcast (Iarray.of_array s)) (A.create Rig.host dt [||]))
 
 let loads c =
   Array.map2
@@ -340,8 +346,8 @@ let loaded x = function
   | Some (pad : Nx_kernel.pad) ->
       let extent i d =
         let f = Float.of_int in
-        f pad.lo.(i) +. f pad.hi.(i) +. f d
-        +. (f pad.interior.(i) *. Float.of_int (max 0 (d - 1)))
+        f (Iarray.get pad.lo i) +. f (Iarray.get pad.hi i) +. f d
+        +. (f (Iarray.get pad.interior i) *. Float.of_int (max 0 (d - 1)))
       in
       let padded = Array.mapi extent x in
       if Array.exists (fun d -> d < 0. || d > Float.of_int L.max_numel) padded
@@ -387,7 +393,9 @@ let law_padded c =
 
 let test_loaded_refuses () =
   let z = { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } in
-  let window axis size = [| { M.axis; size; step = 1; dilation = 1 } |] in
+  let window axis size : _ iarray =
+    [| { M.axis; size; step = 1; dilation = 1 } |]
+  in
   let x = operand D.Float32 [| 2 |] and y = operand D.Float32 [| 3 |] in
   let padded pad = Nx_kernel.Padded { x; fill = 0.; pad } in
   refuses ~msg:"no load" (Shape.loaded [||]);
@@ -480,7 +488,8 @@ let law_reduce c =
   cover "fits" (Result.is_ok want);
   cover "no term" no_term;
   cover "an extreme of no term" (Result.is_error want);
-  equal shape_t want (of_shape (Shape.reduce ~axes:c.axes c.rs c.y))
+  let axes = Iarray.of_array c.axes in
+  equal shape_t want (of_shape (Shape.reduce ~axes c.rs c.y))
 
 let test_reduce_refuses () =
   let y = [| 2; 3 |] and sum = [| Nx_kernel.Monoid Sum |] in
@@ -615,10 +624,13 @@ let assemble_case =
 
 (* Each piece has its region's shape, as Move.Slice keeps it. *)
 let law_assemble c =
-  let pieces = Array.map (fun r -> Array.to_list (M.shape (Slice r) c.shape)) c.regions in
+  let regions = Array.map Iarray.of_array c.regions in
+  let pieces =
+    Array.map (fun r -> Array.to_list (M.shape (Slice r) c.shape)) regions
+  in
   cover "pieces" (c.regions <> [||]);
   equal shapes_t (Ok (Array.to_list pieces))
-    (of_shapes (Result.map Array.to_list (Shape.assemble c.shape c.regions)))
+    (of_shapes (Result.map Array.to_list (Shape.assemble c.shape regions)))
 
 let test_assemble_refuses () =
   let r start count step = { M.start; count; step } in
@@ -675,6 +687,7 @@ let fft_case =
      { t; fft_axes; x })
 
 let transform t ~axes x =
+  let axes = Iarray.of_array axes in
   match t with
   | C2c -> Shape.c2c ~axes x
   | R2c -> Shape.r2c ~axes x
@@ -941,10 +954,10 @@ let view c =
 let groups c =
   let batch, contracting = pairs_of c in
   let ra = L.rank c.la and rb = L.rank c.lb in
-  let side f ps = Array.to_list (Array.map f ps) in
+  let side f ps = Iarray.to_list (Iarray.map f ps) in
   let fa = free ra (side fst batch @ side fst contracting) in
   let fb = free rb (side snd batch @ side snd contracting) in
-  let nb = Array.length batch and nfa = List.length fa in
+  let nb = Iarray.length batch and nfa = List.length fa in
   let y =
     [
       (V.Batch, List.init nb Fun.id);
@@ -1078,7 +1091,8 @@ let law_one_axis (c, (misfit, s)) =
     | 1 -> (c.la, c.lb, longer 0 c.ly, c.li)
     | 2 -> (c.la, c.lb, c.ly, Option.map (longer 0) c.li)
     | 3 -> (longer 0 c.la, c.lb, c.ly, c.li)
-    | 4 when Array.length batch > 0 -> (c.la, longer (snd batch.(0)) c.lb, c.ly, c.li)
+    | 4 when Iarray.length batch > 0 ->
+        (c.la, longer (snd (Iarray.get batch 0)) c.lb, c.ly, c.li)
     | _ -> (c.la, c.lb, c.ly, c.li)
   in
   let dst = over ly and init = Option.map over li in
@@ -1086,7 +1100,8 @@ let law_one_axis (c, (misfit, s)) =
   let ra = L.rank la and rb = L.rank lb in
   let v' =
     V.v ~batch
-      ~contracting:(Array.append contracting [| (ra, rb); (ra + 1, rb + 1) |])
+      ~contracting:
+          (Iarray.append contracting [| (ra, rb); (ra + 1, rb + 1) |])
       ~dst ~init
       (over (with_unit_axes s la))
       (over (with_unit_axes s lb))
@@ -1099,7 +1114,7 @@ let law_one_axis (c, (misfit, s)) =
   cover "one-axis groups, grouped" (one && Result.is_ok v);
   cover "one-axis groups, refused" (one && Result.is_error v);
   cover "one-axis groups, a batch misfit between a and b"
-    (one && misfit = 4 && Array.length batch > 0);
+    (one && misfit = 4 && Iarray.length batch > 0);
   cover "one-axis groups, an empty operand"
     (one && (L.numel la = 0 || L.numel lb = 0));
   cover "one-axis groups, a batch axis" (one && Array.length c.batch = 1);
@@ -1114,7 +1129,8 @@ let law_one_axis (c, (misfit, s)) =
    whose group does not merge. *)
 let test_view_declines () =
   let arr s = over (L.contiguous s) in
-  let view ?(batch = [||]) ?(contracting = [| (1, 0) |]) ?init ~dst a b =
+  let view ?(batch : _ iarray = [||]) ?(contracting : _ iarray = [| (1, 0) |])
+      ?init ~dst a b =
     V.v ~batch ~contracting ~dst ~init a b
   in
   let mm ?batch ?contracting ?init ~dst a b =
@@ -1190,7 +1206,7 @@ let test_view_allocates_nothing () =
   let arr s = over (L.contiguous s) in
   let a = arr [| 2; 3; 4 |] and b = arr [| 2; 4; 5 |] in
   let init = Some (arr [| 2; 3; 5 |]) and dst = arr [| 2; 3; 5 |] in
-  let batch = [| (0, 0) |] and contracting = [| (2, 1) |] in
+  let batch : _ iarray = [| (0, 0) |] and contracting : _ iarray = [| (2, 1) |] in
   let calls () =
     for _ = 1 to 1000 do
       ignore

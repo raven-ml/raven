@@ -11,10 +11,10 @@ type ('v, 's) a = ('v, 's) Nx_array.t
 type index = (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 
 type pad = {
-  lo : int array;
-  hi : int array;
-  interior : int array;
-  windows : Nx_array.Move.window array;
+  lo : int iarray;
+  hi : int iarray;
+  interior : int iarray;
+  windows : Nx_array.Move.window iarray;
 }
 
 type load =
@@ -108,16 +108,18 @@ module Shape = struct
 
   let padded (p : pad) x =
     let r = Array.length x in
-    if Array.length p.lo <> r || Array.length p.hi <> r
-       || Array.length p.interior <> r
-    then errorf "a pad of rank %d for an operand of rank %d" (Array.length p.lo) r
-    else if Array.exists (fun i -> i < 0) p.interior then
+    if Iarray.length p.lo <> r || Iarray.length p.hi <> r
+       || Iarray.length p.interior <> r
+    then
+      errorf "a pad of rank %d for an operand of rank %d" (Iarray.length p.lo) r
+    else if Iarray.exists (fun i -> i < 0) p.interior then
       errorf "a negative interior padding"
     else
       let padded =
         Array.mapi
           (fun i d ->
-            padded_extent p.lo.(i) p.hi.(i) p.interior.(i) d
+            padded_extent (Iarray.get p.lo i) (Iarray.get p.hi i)
+              (Iarray.get p.interior i) d
             |> Option.value ~default:(-1))
           x
       in
@@ -125,7 +127,7 @@ module Shape = struct
       | Some i -> errorf "padded axis %d is negative or overflows" i
       | None -> (
           let* padded = admit "a padded operand" padded in
-          if p.windows = [||] then Ok padded
+          if Iarray.length p.windows = 0 then Ok padded
           else
             match Nx_array.Move.shape (Window p.windows) padded with
             | y -> Ok y
@@ -152,21 +154,24 @@ module Shape = struct
   (* [axes] strictly increasing axes of a rank [r]. *)
   let check_axes axes r =
     let rec bad i =
-      i < Array.length axes
-      && (let a = axes.(i) in
-          a < 0 || a >= r || (i > 0 && a <= axes.(i - 1)) || bad (i + 1))
+      i < Iarray.length axes
+      && (let a = Iarray.get axes i in
+          a < 0 || a >= r
+          || (i > 0 && a <= Iarray.get axes (i - 1))
+          || bad (i + 1))
     in
     if bad 0 then
-      errorf "axes %a are not strictly increasing axes of a rank %d" pp axes r
+      errorf "axes %a are not strictly increasing axes of a rank %d" pp
+        (Iarray.to_array axes) r
     else Ok ()
 
   let reduce ~axes rs y =
     let* () = check_axes axes (Array.length y) in
     let kept =
       Array.of_list
-        (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list y))
+        (List.filteri (fun i _ -> not (Iarray.mem i axes)) (Array.to_list y))
     in
-    let terms = Array.fold_left (fun n a -> n * y.(a)) 1 axes in
+    let terms = Iarray.fold_left (fun n a -> n * y.(a)) 1 axes in
     let total = Array.fold_left ( * ) 1 kept in
     let extreme = function Monoid (Max | Min) | Arg _ -> true | _ -> false in
     if terms = 0 && total > 0 && Array.exists extreme rs then
@@ -243,19 +248,19 @@ module Shape = struct
       end
     in
     let rec pairs what ps k =
-      if k = Array.length ps then Ok ()
+      if k = Iarray.length ps then Ok ()
       else
-        let* () = pair what k ps.(k) in
+        let* () = pair what k (Iarray.get ps k) in
         pairs what ps (k + 1)
     in
     let* () = pairs "batch" batch 0 in
     let* () = pairs "contracting" contracting 0 in
     (* The batch extents, then the free ones: [a]'s, then [b]'s. *)
-    let nb = Array.length batch in
-    let paired = nb + Array.length contracting in
+    let nb = Iarray.length batch in
+    let paired = nb + Iarray.length contracting in
     let y = Array.make (nb + ra + rb - (2 * paired)) 0 in
     for k = 0 to nb - 1 do
-      y.(k) <- a.(fst batch.(k))
+      y.(k) <- a.(fst (Iarray.get batch k))
     done;
     let k = ref nb in
     for ax = 0 to ra + rb - 1 do
@@ -269,24 +274,26 @@ module Shape = struct
     else admit "a contraction" y
 
   let c2c ~axes x =
-    if Array.length axes = 0 then Error "a transform along no axis"
+    if Iarray.length axes = 0 then Error "a transform along no axis"
     else
       let* () = check_axes axes (Array.length x) in
       Ok x
 
+  let last axes = Iarray.get axes (Iarray.length axes - 1)
+
   (* [x] with [n] along the last of [axes]. *)
   let along_last axes x n =
     let y = Array.copy x in
-    y.(axes.(Array.length axes - 1)) <- n;
+    y.(last axes) <- n;
     admit "a transform" y
 
   let r2c ~axes x =
     let* x = c2c ~axes x in
-    along_last axes x ((x.(axes.(Array.length axes - 1)) / 2) + 1)
+    along_last axes x ((x.(last axes) / 2) + 1)
 
   let c2r ~axes ~n x =
     let* x = c2c ~axes x in
-    let last = axes.(Array.length axes - 1) in
+    let last = last axes in
     if n < 0 then errorf "a transform of %d points" n
     else if x.(last) <> (n / 2) + 1 then
       errorf "%d bins along axis %d for %d points" x.(last) last n
@@ -380,7 +387,7 @@ module type S = sig
   val reduce :
     Prog.t ->
     shape:int array ->
-    axes:int array ->
+    axes:int iarray ->
     (reduction * int) array ->
     dsts:any array ->
     load array ->
@@ -418,7 +425,7 @@ module type S = sig
   val assemble :
     fill:'v ->
     dst:('v, 's) a ->
-    (Nx_array.Move.range array * ('v, 's) a) array ->
+    (Nx_array.Move.range iarray * ('v, 's) a) array ->
     answer
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
@@ -426,8 +433,8 @@ module type S = sig
 
   val contract :
     order:order ->
-    batch:(int * int) array ->
-    contracting:(int * int) array ->
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
     acc:Nx_array.Dtype.any ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
@@ -436,10 +443,10 @@ module type S = sig
     answer
 
   val c2c :
-    direction -> axes:int array -> dst:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
+    direction -> axes:int iarray -> dst:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
 
-  val r2c : axes:int array -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
-  val c2r : axes:int array -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
+  val r2c : axes:int iarray -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
+  val c2r : axes:int iarray -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   val cholesky : triangle -> dst:('v, 's) a -> ('v, 's) a -> answer
   val lu : lu:('v, 's) a -> pivots:index -> perm:index -> ('v, 's) a -> answer
   val qr : q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
@@ -490,8 +497,8 @@ module Contract_view = struct
   let has_init v = v.(at_has_init) <> 0
 
   external v :
-    batch:(int * int) array ->
-    contracting:(int * int) array ->
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
     dst:('v, 's) Nx_array.t ->
     init:('v, 's) Nx_array.t option ->
     ('a, 'b) Nx_array.t ->

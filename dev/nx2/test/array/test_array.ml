@@ -217,7 +217,7 @@ let law_move (Case (a, m)) =
 let test_reshape_ownership () =
   let a = floats32 [| 6 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let s = [| 2; 3 |] in
-  let b = Option.get (A.move (M.Reshape s) a) in
+  let b = Option.get (A.move (M.Reshape (Iarray.of_array s)) a) in
   s.(0) <- 1_000_000;
   equal ints [| 2; 3 |] (L.shape (A.layout b));
   raises_match Exn.invalid_arg (fun () -> A.get b [| 1_000; 0 |]);
@@ -782,7 +782,8 @@ let law_blit (Case (a, m)) =
     let rev x = Array.init r (fun i -> x.(r - 1 - i)) in
     let base = A.create Rig.host (A.dtype a) (rev s) in
     let dst =
-      Option.get (A.move (M.Permute (rev (Array.init r Fun.id))) base)
+      Option.get
+        (A.move (M.Permute (Iarray.of_array (rev (Array.init r Fun.id)))) base)
     in
     cover "a strided destination" (not (L.is_contiguous (A.layout dst)));
     A.blit ~src:a ~dst;
@@ -916,10 +917,10 @@ let tiles =
   let src = bytes_of_seed seed (D.bytes dt n) in
   let a = A.v dt (L.contiguous s) (B.of_string src) in
   let r = Array.length s in
-  let reverse = M.Permute (Array.init r (fun i -> r - 1 - i)) in
+  let reverse = M.Permute (Iarray.init r (fun i -> r - 1 - i)) in
   let swap =
     M.Permute
-      (Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i))
+      (Iarray.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i))
   in
   let slice =
     let axis d =
@@ -937,11 +938,11 @@ let tiles =
         x :: xs
     in
     let+ rs = all 0 in
-    M.Slice (Array.of_list rs)
+    M.Slice (Iarray.of_list rs)
   in
   let row =
     M.Slice
-      (Array.init r (fun i ->
+      (Iarray.init r (fun i ->
            if i = r - 2 then { M.start = 0; count = 1; step = 1 }
            else { M.start = 0; count = s.(i); step = 1 }))
   in
@@ -949,7 +950,7 @@ let tiles =
      inside a byte. *)
   let shift =
     M.Slice
-      (Array.init r (fun i ->
+      (Iarray.init r (fun i ->
            let d = s.(i) in
            if i = r - 1 && d > 1 then { M.start = 1; count = d - 1; step = 1 }
            else { M.start = 0; count = d; step = 1 }))
@@ -961,8 +962,8 @@ let tiles =
         (1, constant [ swap ]);
         (1, constant [ reverse ]);
         (1, map (fun m -> [ m; swap ]) slice);
-        (1, constant [ row; M.Broadcast s ]);
-        (1, constant [ row; M.Broadcast s; swap ]);
+        (1, constant [ row; M.Broadcast (Iarray.of_array s) ]);
+        (1, constant [ row; M.Broadcast (Iarray.of_array s); swap ]);
         (2, constant [ shift ]);
       ]
   in
@@ -1149,7 +1150,7 @@ let slice rs a =
   Option.get
     (A.move
        (M.Slice
-          (Array.of_list
+          (Iarray.of_list
              (List.map
                 (fun (start, count, step) -> { M.start; count; step })
                 rs)))

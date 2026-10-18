@@ -250,7 +250,7 @@ struct
 
   let reshape (type v s d) shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     if Prim.has_shape x shape then x
-    else apply (Value.Move (Reshape (Array.copy shape), x))
+    else apply (Value.Move (Reshape (Iarray.of_array shape), x))
 
   (* Elements [start, start + count) of [x] along [axis]. *)
   let slice (type v s d) axis start count (x : (v, s, d) Value.t) :
@@ -259,13 +259,13 @@ struct
     if start = 0 && count = r.(axis).count then x
     else begin
       r.(axis) <- { M.start; count; step = 1 };
-      apply (Value.Move (Slice r, x))
+      apply (Value.Move (Slice (Iarray.of_array r), x))
     end
 
   (* [x] of [shape], its axes of extent 1 stretched. *)
   let spread (type v s d) shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     if Prim.has_shape x shape then x
-    else apply (Value.Move (Broadcast (Array.copy shape), x))
+    else apply (Value.Move (Broadcast (Iarray.of_array shape), x))
 
   let cast (type d) (D.Any dt) (Value.Any x : d Value.any) : d Value.any =
     match D.equal_witness (Prim.dtype x) dt with
@@ -282,7 +282,7 @@ struct
     let order = Array.concat (Array.to_list groups) in
     let x =
       if Array.for_all2 ( = ) order (Array.init (Array.length s) Fun.id) then x
-      else apply (Value.Move (Permute order, x))
+      else apply (Value.Move (Permute (Iarray.of_array order), x))
     in
     reshape (Array.map (fun g -> numel (Array.map (fun a -> s.(a)) g)) groups) x
 
@@ -299,7 +299,7 @@ struct
   (* Output [o] of [prog], of [term], over [loads] in the window [w] of a
      loop of [layout]: the load itself where [prog] is its identity. *)
   let terms (type d) layout (prog : P.t) o (D.Any term)
-      (loads : d Value.load array) w : d Value.any =
+      (loads : d Value.load iarray) w : d Value.any =
     match loads with
     | [| Plain x |]
       when P.is_identity prog && D.equal (Prim.dtype x) term ->
@@ -353,7 +353,8 @@ struct
     let (Value.Any x) = List.hd vs in
     let layout = L.contiguous (Prim.shape x) in
     let plain (Value.Any x : d Value.any) = Value.Plain x in
-    read (apply (Value.Map { layout; prog; outs; loads = Array.of_list (List.map plain vs) }))
+    let loads = Iarray.of_list (List.map plain vs) in
+    read (apply (Value.Map { layout; prog; outs; loads }))
 
   (* Slabs *)
 
@@ -392,10 +393,12 @@ struct
             let y = Prim.expect dt (fst (List.nth sl i)) in
             let r = Array.map full shape in
             r.(a) <- { M.start = o; count = (Prim.shape y).(a); step = 1 };
-            (r, y)
+            (Iarray.of_array r, y)
           in
           let pieces = List.map region pieces in
-          (Value.Any (apply (Value.Assemble { dtype = dt; shape; fill = D.zero dt; pieces })), a)
+          let shape = Iarray.of_array shape and fill = D.zero dt in
+          let y = apply (Value.Assemble { dtype = dt; shape; fill; pieces }) in
+          (Value.Any y, a)
         in
         List.mapi assemble (snd (List.hd pieces))
 
@@ -600,28 +603,30 @@ struct
   (* Reductions *)
 
   let reduce (type d r) (route : d Route.t) layout axes prog
-      (rs : (d, r) Value.reductions) (loads : d Value.load array) : r =
-    let shape = L.shape layout in
+      (rs : (d, r) Value.reductions) (loads : d Value.load iarray) : r =
+    let shape = L.shape layout and ax = Iarray.to_array axes in
     let p = route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let rule = Prim.rule (Value.Reduce { layout; axes; prog; reductions = rs; loads }) in
     let out = Prim.reduced shape axes in
-    let whole = Array.map (fun a -> shape.(a)) axes in
+    let whole = Array.map (fun a -> shape.(a)) ax in
     let outw j = Devices.window ~by p out j in
     let here j = Devices.one set ks.(j) in
     let tiles =
-      let (Value.Any x) = Prim.load_any loads.(0) in
-      tiles route (Prim.shape x) axes
+      let (Value.Any x) = Prim.load_any (Iarray.get loads 0) in
+      tiles route (Prim.shape x) ax
     in
-    let along j a = tiles.(j).(Option.get (Array.find_index (( = ) a) axes)) in
+    let along j a = tiles.(j).(Option.get (Array.find_index (( = ) a) ax)) in
     let loop j =
       let w = outw j in
-      let before a = Array.fold_left (fun n b -> if b < a then n + 1 else n) 0 axes in
+      let before a =
+        Array.fold_left (fun n b -> if b < a then n + 1 else n) 0 ax
+      in
       Array.init (Array.length shape) (fun a ->
-          if Array.mem a axes then along j a else w.(a - before a))
+          if Array.mem a ax then along j a else w.(a - before a))
     in
     let viewed j =
-      Array.mapi
+      Iarray.mapi
         (fun i l ->
           let (Value.Any x) = Prim.load_any l in
           view_load ks.(j) (here j) (reads rule i (Prim.shape x) (outw j) (along j)) l)
@@ -671,11 +676,16 @@ struct
           let n = numel (counts (outw j)) in
           if parts then [| n; 2 |] else [| n |]
         in
-        let kept = Array.of_list (List.filter (fun a -> not (Array.mem a axes)) (List.init (Array.length shape) Fun.id)) in
+        let kept =
+          Array.of_list
+            (List.filter
+               (fun a -> not (Array.mem a ax))
+               (List.init (Array.length shape) Fun.id))
+        in
         (* A tile's terms on its holder, as [outputs; terms]. *)
         let slab j =
           let (Value.Any x) = terms layout prog o term (viewed j) (loop j) in
-          let x = Value.Any (grouped [| kept; axes |] x) in
+          let x = Value.Any (grouped [| kept; ax |] x) in
           [ ((if parts then bitcast t x else x), 1) ]
         in
         List.iter
@@ -747,7 +757,7 @@ struct
   (* Scans *)
 
   let scan (type d a) (route : d Route.t) layout axis prog
-      (r : (d, a) Value.reduction) (loads : d Value.load array) : a =
+      (r : (d, a) Value.reduction) (loads : d Value.load iarray) : a =
     let shape = L.shape layout in
     let n = shape.(axis) in
     let p = route.result in
@@ -760,7 +770,7 @@ struct
     let here j = Devices.one set ks.(j) in
     let viewed j =
       let tile _ = invalid_arg "Partial.scan: a reduced axis" in
-      Array.mapi
+      Iarray.mapi
         (fun i l ->
           let (Value.Any x) = Prim.load_any l in
           view_load ks.(j) (here j) (reads rule i (Prim.shape x) (win j) tile) l)
@@ -797,7 +807,7 @@ struct
             Array.sub w (axis + 1) (Array.length w - axis - 1);
           ]
       in
-      let loads = [| Value.Plain (reshape split x) |] in
+      let loads : d Value.load iarray = [| Value.Plain (reshape split x) |] in
       Value.Reduce
         { layout = L.contiguous split; axes = [| axis + 1 |]; prog; reductions = rs; loads }
     in
@@ -992,7 +1002,10 @@ struct
       (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option) :
       (v, s, d) Value.t =
     let shape = Prim.contract_shape ~by ~batch ~contracting ~acc a b init in
-    let whole = Array.map (fun (i, _) -> Prim.dim a i) contracting in
+    let sides f ps =
+      Array.init (Iarray.length ps) (fun i -> f (Iarray.get ps i))
+    in
+    let whole = sides (fun (i, _) -> Prim.dim a i) contracting in
     let p = route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let rule =
@@ -1001,23 +1014,23 @@ struct
     in
     let resw j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
-    let tiles = tiles route (Prim.shape a) (Array.map fst contracting) in
+    let tiles = tiles route (Prim.shape a) (sides fst contracting) in
     let read (type w r) j i (x : (w, r, d) Value.t) =
       view ks.(j) (here j)
         (reads rule i (Prim.shape x) (resw j) (Array.get tiles.(j)))
         x
     in
     let free side rank =
-      let named pairs x = Array.exists (fun pr -> side pr = x) pairs in
+      let named pairs x = Iarray.exists (fun pr -> side pr = x) pairs in
       Array.of_list
         (List.filter
            (fun x -> not (named batch x || named contracting x))
            (List.init rank Fun.id))
     in
     let a_axes =
-      [| Array.map fst batch; free fst (Prim.rank a); Array.map fst contracting |]
+      [| sides fst batch; free fst (Prim.rank a); sides fst contracting |]
     and b_axes =
-      [| Array.map snd batch; Array.map snd contracting; free snd (Prim.rank b) |]
+      [| sides snd batch; sides snd contracting; free snd (Prim.rank b) |]
     in
     (* A device's [a] as [[batch; rows; terms]] and [b] as
        [[batch; terms; columns]], the terms in their number's order. *)
@@ -1051,7 +1064,7 @@ struct
        [[batch; rows; columns]], in the accumulator. *)
     let init_on j =
       let w = counts (resw j) in
-      let nb = Array.length batch and nr = Array.length a_axes.(1) in
+      let nb = Iarray.length batch and nr = Array.length a_axes.(1) in
       let part lo len = numel (Array.sub w lo len) in
       let flat =
         [| part 0 nb; part nb nr; part (nb + nr) (Array.length w - nb - nr) |]

@@ -136,24 +136,27 @@ let laid_out how (A.Any x) =
       let swap i = if i = r - 2 then r - 1 else if i = r - 1 then r - 2 else i in
       let perm = Array.init r swap in
       let t = A.create Rig.host (A.dtype x) (Array.map (fun i -> s.(i)) perm) in
-      into (Option.get (A.move (M.Permute perm) t))
+      into (Option.get (A.move (M.Permute (Iarray.of_array perm)) t))
   | Stepped ->
       let wide = Array.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
       let w = A.create Rig.host (A.dtype x) wide in
       let range i d = { M.start = 0; count = d; step = (if i = r - 1 then 2 else 1) } in
-      into (Option.get (A.move (M.Slice (Array.mapi range s)) w))
+      let ranges = Iarray.of_array (Array.mapi range s) in
+      into (Option.get (A.move (M.Slice ranges) w))
   | Padded ->
       let wide = Array.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
       let w = A.create Rig.host (A.dtype x) wide in
       let range _ d = { M.start = 0; count = d; step = 1 } in
-      into (Option.get (A.move (M.Slice (Array.mapi range s)) w))
+      let ranges = Iarray.of_array (Array.mapi range s) in
+      into (Option.get (A.move (M.Slice ranges) w))
   | Reversed ->
       let t = A.create Rig.host (A.dtype x) s in
       let range i d =
         if i = r - 1 && d > 0 then { M.start = d - 1; count = d; step = -1 }
         else { M.start = 0; count = d; step = 1 }
       in
-      into (Option.get (A.move (M.Slice (Array.mapi range s)) t))
+      let ranges = Iarray.of_array (Array.mapi range s) in
+      into (Option.get (A.move (M.Slice ranges) t))
 
 (* Double-double sums *)
 
@@ -1022,7 +1025,9 @@ let agree_bits (b : Support.backend) r x =
   let (A.Any a) = x in
   let t = Domain.recommended_domain_count () in
   let s = Array.append [| t |] (L.shape (A.layout a)) in
-  let batch = A.Any (A.copy (Option.get (A.move (M.Broadcast s) a))) in
+  let batch =
+    A.Any (A.copy (Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)))
+  in
   let z = run b r [| laid_out Transposed x |] in
   match (run b r [| x |], z, run b r [| batch |]) with
   | Some y, Some z, Some w ->
@@ -2298,7 +2303,7 @@ let result_bits (A.Any x as r) =
 (* [o] repeated along [c]'s batch. *)
 let repeated c (A.Any x) =
   let s = Array.append c.batch (L.shape (A.layout x)) in
-  A.Any (A.copy (Option.get (A.move (M.Broadcast s) x)))
+  A.Any (A.copy (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x)))
 
 (* [c] with a batch of at least as many matrices as the host has cores,
    along one axis or two by its seed: nx.cpu then computes each matrix

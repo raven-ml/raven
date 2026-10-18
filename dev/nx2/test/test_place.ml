@@ -103,10 +103,12 @@ let source layout shape =
   | Contiguous -> of_shape shape
   | Transposed ->
       let rev a = Array.init r (fun i -> a.(r - 1 - i)) in
-      view (M.Permute (rev (Array.init r Fun.id))) (of_shape (rev shape))
+      view
+        (M.Permute (Iarray.of_array (rev (Array.init r Fun.id))))
+        (of_shape (rev shape))
   | Broadcast ->
       let row = Array.mapi (fun i n -> if i = 0 then 1 else n) shape in
-      view (M.Broadcast shape) (of_shape row)
+      view (M.Broadcast (Iarray.of_array shape)) (of_shape row)
 
 let host shape =
   V
@@ -198,7 +200,9 @@ let packed a s w =
   match windows w s with
   | [ _; _; _; (_, b) ] ->
       let range (start, count) = { M.start; count; step = 1 } in
-      let v = Option.get (A.move (M.Slice (Array.map range b)) a) in
+      let v =
+        Option.get (A.move (M.Slice (Iarray.of_array (Array.map range b))) a)
+      in
       let lo, hi = A.Layout.span (A.layout v) in
       let n = Array.fold_left (fun n (_, k) -> n * k) 1 b in
       n > 0 && hi - lo > n

@@ -264,7 +264,7 @@ let assemblies =
           let dst = f32 [| np |] in
           let piece i =
             let range = { Nx_array.Move.start = i; count = 1; step = 1 } in
-            ([| range |], f32 [| 1 |])
+            (([| range |] : _ iarray), f32 [| 1 |])
           in
           let pieces = Array.init np piece in
           releases (fun () -> done_ (Nx_cpu.assemble ~fill:0. ~dst pieces)));

@@ -69,7 +69,7 @@ let gather axis idx x = Exec.run ~by:"t" (Value.Gather { axis; idx; x })
 let scatter ?(unique = false) combine axis idx updates into =
   Exec.run ~by:"t" (Value.Scatter { combine; unique; axis; idx; updates; into })
 
-let row i : M.range array =
+let row i : M.range iarray =
   [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
 
 let rules =

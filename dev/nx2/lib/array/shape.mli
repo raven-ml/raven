@@ -29,5 +29,8 @@ val zeros : int -> int array
 val copy : int array -> int array
 (** [copy s] is a fresh copy of [s]. *)
 
+val of_iarray : int iarray -> int array
+(** [of_iarray s] is a fresh array of [s]'s extents. *)
+
 val pp : Format.formatter -> int array -> unit
 (** [pp] formats a shape or an index for messages, as [[2; 3]]. *)

@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 external view_fields :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
@@ -14,8 +14,8 @@ external view_fields :
   = "nx_kernel_support_view_byte" "nx_kernel_support_view"
 
 external view_groups :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->

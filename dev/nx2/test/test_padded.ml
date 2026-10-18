@@ -46,7 +46,8 @@ let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 let host a = Nx.Repr.of_array Nx.Host.v a
 let identity dt = P.v ~ins:[| D.Any dt |] [| P.In 0 |] ~outs:[| 0 |]
 
-let pad ?(lo = [| 0 |]) ?(hi = [| 0 |]) ?(interior = [| 0 |]) windows =
+let pad ?(lo : int iarray = [| 0 |]) ?(hi : int iarray = [| 0 |])
+    ?(interior : int iarray = [| 0 |]) windows =
   { Nx_kernel.lo; hi; interior; windows }
 
 let window size step = { A.Move.axis = 0; size; step; dilation = 1 }
@@ -210,13 +211,14 @@ let reference s xs ~fill (p : Nx_kernel.pad) shape =
         k := !k / shape.(a)
       done;
       let padded = Array.sub ix 0 r in
-      Array.iteri
+      Iarray.iteri
         (fun j (w : A.Move.window) ->
           padded.(w.axis) <- (ix.(w.axis) * w.step) + (ix.(r + j) * w.dilation))
         p.windows;
       let at = ref 0 and inside = ref true in
       for a = 0 to r - 1 do
-        let q = padded.(a) - p.lo.(a) and gap = p.interior.(a) + 1 in
+        let q = padded.(a) - Iarray.get p.lo a
+        and gap = Iarray.get p.interior a + 1 in
         if q < 0 || q mod gap <> 0 || q / gap >= s.(a) then inside := false
         else at := (!at * s.(a)) + (q / gap)
       done;
@@ -232,10 +234,13 @@ type padded = {
 let pp_padded ppf c =
   let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
   Format.fprintf ppf "[%s] lo [%s] hi [%s] interior [%s] windows [%s] fill %g"
-    (ints c.s) (ints c.p.lo) (ints c.p.hi) (ints c.p.interior)
+    (ints c.s)
+    (ints (Iarray.to_array c.p.lo))
+    (ints (Iarray.to_array c.p.hi))
+    (ints (Iarray.to_array c.p.interior))
     (String.concat "; "
-       (Array.to_list
-          (Array.map
+       (Iarray.to_list
+          (Iarray.map
              (fun (w : A.Move.window) ->
                Printf.sprintf "%d:%d/%d*%d" w.axis w.size w.step w.dilation)
              c.p.windows)))
@@ -273,6 +278,9 @@ let padded_case =
          ~size:(constant (Array.fold_left ( * ) 1 s))
          (map Float.of_int (int_range (-8) 8))
      in
+     let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+     let interior = Iarray.of_array interior in
+     let windows = Iarray.of_array windows in
      { s; p = { Nx_kernel.lo; hi; interior; windows }; xs; fill }
 
 let law_padded c =
@@ -280,9 +288,9 @@ let law_padded c =
   | Error _ -> reject ()
   | Ok shape ->
       cover "a negative lo or hi"
-        (Array.exists (fun e -> e < 0) (Array.append c.p.lo c.p.hi));
-      cover "interior padding" (Array.exists (fun e -> e > 0) c.p.interior);
-      cover "windows" (c.p.windows <> [||]);
+        (Iarray.exists (fun e -> e < 0) (Iarray.append c.p.lo c.p.hi));
+      cover "interior padding" (Iarray.exists (fun e -> e > 0) c.p.interior);
+      cover "windows" (Iarray.length c.p.windows > 0);
       cover "an element loaded" (Array.fold_left ( * ) 1 shape > 0);
       let a = A.of_array D.Float32 c.s c.xs in
       let want = reference c.s c.xs ~fill:c.fill c.p shape in
@@ -332,7 +340,7 @@ let fold_case =
      let+ xs =
        array ~size:(constant 64) (of_list [ 1e8; 1.; -1e8; 0.1; -0.; 3. ])
      in
-     ({ c with p = { c.p with windows } }, xs)
+     ({ c with p = { c.p with windows = Iarray.of_array windows } }, xs)
 
 (* The operand shape a fold [c] reads, if [c]'s padding fits its shape. *)
 let fold_operand c =
@@ -348,7 +356,7 @@ let fold_agrees c xshape pool =
   in
   let fold p =
     Nx.Prim.eval ~by:"t"
-      (Fold { shape = c.s; pad = c.p; x = Nx.place p (host x) })
+      (Fold { shape = Iarray.of_array c.s; pad = c.p; x = Nx.place p (host x) })
   in
   equal ~msg:"as nx.cpu's, bit for bit" (array int32)
     (Array.map Int32.bits_of_float (read (fold Count.on)))
@@ -359,10 +367,10 @@ let law_fold (c, pool) =
   | None -> reject ()
   | Some xshape ->
       cover "an axis without a window"
-        (Array.length c.p.windows < Array.length c.s);
-      cover "interior padding" (Array.exists (fun e -> e > 0) c.p.interior);
+        (Iarray.length c.p.windows < Array.length c.s);
+      cover "interior padding" (Iarray.exists (fun e -> e > 0) c.p.interior);
       cover "a negative lo or hi"
-        (Array.exists (fun e -> e < 0) (Array.append c.p.lo c.p.hi));
+        (Iarray.exists (fun e -> e < 0) (Iarray.append c.p.lo c.p.hi));
       fold_agrees c xshape pool
 
 let test_many_taps () =

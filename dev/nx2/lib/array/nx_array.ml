@@ -767,7 +767,7 @@ let first_of_broadcast a =
       step = 1;
     }
   in
-  match move (Move.Slice (Array.init (Layout.rank l) range)) a with
+  match move (Move.Slice (Iarray.init (Layout.rank l) range)) a with
   | Some a -> a
   | None -> invalid_arg "Nx_array: a slice is a view"
 

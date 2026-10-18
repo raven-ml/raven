@@ -48,11 +48,12 @@ let product s lo hi =
    needlessly loses it. *)
 let moved (m : Nx_array.Move.t) s a =
   match m with
-  | Permute p -> Array.find_index (( = ) a) p
+  | Permute p -> Iarray.find_index (( = ) a) p
   | Broadcast s' ->
-      let a' = a + Array.length s' - Array.length s in
-      if s.(a) = s'.(a') then Some a' else None
+      let a' = a + Iarray.length s' - Array.length s in
+      if s.(a) = Iarray.get s' a' then Some a' else None
   | Reshape s' ->
+      let s' = Iarray.to_array s' in
       let before = product s 0 a in
       let rec find a' =
         if a' >= Array.length s' then None
@@ -61,7 +62,7 @@ let moved (m : Nx_array.Move.t) s a =
       in
       find 0
   | Slice rs ->
-      let r = rs.(a) in
+      let r = Iarray.get rs a in
       if r.start = 0 && r.step = 1 && r.count = s.(a) then Some a else None
   | Window ws ->
       (* CR: Preserve this axis's cut for a window of size 1 and step 1.
@@ -70,7 +71,7 @@ let moved (m : Nx_array.Move.t) s a =
          gathers two full [8] copies; each [4] shard can give a [4;1] view.
          Recognize the identity axis here: localize and Layout.move already
          handle it, preserving the Window primitive's other semantics. *)
-      if Array.exists (fun (w : Nx_array.Move.window) -> w.axis = a) ws then
+      if Iarray.exists (fun (w : Nx_array.Move.window) -> w.axis = a) ws then
         None
       else Some a
 

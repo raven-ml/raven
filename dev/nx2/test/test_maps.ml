@@ -344,7 +344,9 @@ let forced =
       cases "pieces read on one device assemble there" ~name:fst
         [ ("on one device", d0); ("split", split2) ]
         (fun (_, p) ->
-          let r = [| { Nx_array.Move.start = 1; count = 2; step = 1 } |] in
+          let r : _ iarray =
+            [| { Nx_array.Move.start = 1; count = 2; step = 1 } |]
+          in
           equal (array bits) [| 7.; 1.; 1.; 7. |]
             (at p (assembly [ (r, ones 2) ])));
       (* The kernels compute a loop of no load over its shape: one call on
@@ -901,7 +903,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
     Value.Reduce
       {
         layout = A.Layout.contiguous shape;
-        axes;
+        axes = Iarray.of_array axes;
         prog = P.of_node ~ins:[| D.Any dt |] (In 0);
         reductions = Value.[ Monoid (Logsumexp, 0, dt) ];
         loads = [| Plain x |];

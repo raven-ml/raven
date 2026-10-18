@@ -64,7 +64,8 @@ let laid l s =
               { start = max 0 (d - 1); count = d; step = -1 })
             s
         in
-        view (Slice whole)
+        view
+          (Slice (Iarray.of_array whole))
           (A.of_array D.Int32 s (Array.of_list (List.rev (Array.to_list data))))
     | Transposed ->
         let ts = Array.map (fun a -> s.(a)) rev in
@@ -72,10 +73,13 @@ let laid l s =
           Array.init n (fun k ->
               data.(position s (Array.map (fun a -> (index ts k).(a)) rev)))
         in
-        view (Permute rev) (A.of_array D.Int32 ts base)
+        view (Permute (Iarray.of_array rev)) (A.of_array D.Int32 ts base)
     | Broadcast ->
         if n = 0 then A.of_array D.Int32 s data
-        else view (Broadcast s) (A.of_array D.Int32 [||] [| 1l |])
+        else
+          view
+            (Broadcast (Iarray.of_array s))
+            (A.of_array D.Int32 [||] [| 1l |])
   in
   let read =
     match l with Broadcast -> Array.map (fun _ -> 1l) data | _ -> data

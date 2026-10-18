@@ -32,10 +32,10 @@ type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 (** {1:loops Loops} *)
 
 type pad = {
-  lo : int array;
-  hi : int array;
-  interior : int array;
-  windows : Nx_array.Move.window array;
+  lo : int iarray;
+  hi : int iarray;
+  interior : int iarray;
+  windows : Nx_array.Move.window iarray;
 }
 (** The type for paddings of an operand of rank [r], each array of [lo], [hi]
     and [interior] of length [r]. Along axis [i] it puts [lo.(i)] elements
@@ -265,7 +265,7 @@ module Shape : sig
   (** [loaded ls] is the one shape the loads [ls] have once loaded.
       [loaded [||]] is an [Error]. *)
 
-  val reduce : axes:int array -> reduction array -> t -> t result
+  val reduce : axes:int iarray -> reduction array -> t -> t result
   (** [reduce ~axes rs y] is the shape of each destination of reductions
       [rs] along [axes] of a loop of shape [y]: [y] without [axes]. It is an
       [Error] unless [axes] are strictly increasing axes of [y], and where a
@@ -294,7 +294,7 @@ module Shape : sig
 
   (** {1:assembly Assemblies} *)
 
-  val assemble : t -> Nx_array.Move.range array array -> t array result
+  val assemble : t -> Nx_array.Move.range iarray array -> t array result
   (** [assemble y regions] is the shape of each piece of an assembly of
       shape [y]: its region's, the elements [regions.(i)] keep of each axis
       of [y], as {!Nx_array.Move.Slice} keeps them. A fold's operand has the
@@ -303,7 +303,7 @@ module Shape : sig
   (** {1:contraction Contraction} *)
 
   val contract :
-    batch:(int * int) array -> contracting:(int * int) array -> t -> t -> t result
+    batch:(int * int) iarray -> contracting:(int * int) iarray -> t -> t -> t result
   (** [contract ~batch ~contracting a b] is the shape of a contraction of [a]
       with [b]: the batch axes in pair order, then [a]'s free axes, then
       [b]'s, in axis order. It is an [Error] unless each pair names an axis
@@ -312,15 +312,15 @@ module Shape : sig
 
   (** {1:fft Fourier transforms} *)
 
-  val c2c : axes:int array -> t -> t result
+  val c2c : axes:int iarray -> t -> t result
   (** [c2c ~axes x] is [x], where [axes] are strictly increasing axes of [x],
       not empty. *)
 
-  val r2c : axes:int array -> t -> t result
+  val r2c : axes:int iarray -> t -> t result
   (** [r2c ~axes x] is [x] but [n/2 + 1] bins along the last of [axes], [n]
       [x]'s extent there, with [axes] as {!c2c} takes them. *)
 
-  val c2r : axes:int array -> n:int -> t -> t result
+  val c2r : axes:int iarray -> n:int -> t -> t result
   (** [c2r ~axes ~n x] is [x] but [n] points along the last of [axes], with
       [axes] as {!c2c} takes them, where [x] has [n/2 + 1] bins there and [n]
       is not negative. *)
@@ -458,7 +458,7 @@ module type S = sig
   val reduce :
     Prog.t ->
     shape:int array ->
-    axes:int array ->
+    axes:int iarray ->
     (reduction * int) array ->
     dsts:any array ->
     load array ->
@@ -573,7 +573,7 @@ module type S = sig
   val assemble :
     fill:'v ->
     dst:('v, 's) a ->
-    (Nx_array.Move.range array * ('v, 's) a) array ->
+    (Nx_array.Move.range iarray * ('v, 's) a) array ->
     answer
   (** [assemble ~fill ~dst pieces] stores into [dst], at each index, the
       element at that index of the last piece whose region holds it, or [fill]
@@ -599,8 +599,8 @@ module type S = sig
 
   val contract :
     order:order ->
-    batch:(int * int) array ->
-    contracting:(int * int) array ->
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
     acc:Nx_array.Dtype.any ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
@@ -640,15 +640,15 @@ module type S = sig
       unspecified. *)
 
   val c2c :
-    direction -> axes:int array -> dst:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
+    direction -> axes:int iarray -> dst:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
   (** [c2c d ~axes ~dst x] stores the transform [d] of [x] into [dst]. *)
 
-  val r2c : axes:int array -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
+  val r2c : axes:int iarray -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
   (** [r2c ~axes ~dst x] stores the [Forward] transform of [x], bins [0] to
       [n/2] along the last of [axes], [n] [x]'s extent there: one bin of [+0]
       for [n = 0]. [x] and [dst] are of the {!same_precision}. *)
 
-  val c2r : axes:int array -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
+  val c2r : axes:int iarray -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   (** [c2r ~axes ~dst x] reads [n/2 + 1] bins [X] along the last of [axes], [n]
       [dst]'s extent there. It is the [Inverse] transform along each of [axes]
       but the last, then along the last the real parts of the [Inverse]
@@ -764,8 +764,8 @@ module Contract_view : sig
   type axis = Batch | Row | Column | Contracted
 
   val v :
-    batch:(int * int) array ->
-    contracting:(int * int) array ->
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
     ('a, 'b) a ->

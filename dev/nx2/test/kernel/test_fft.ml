@@ -436,19 +436,23 @@ let run ?(threads = 0) ?dst c (A.Any x) =
   let got =
     match (c.kind, A.dtype x, dt) with
     | C2c d, (D.Complex64 as cx), D.Complex64 ->
-        Nx_cpu.c2c_on ~threads d ~axes:c.axes ~dst:y (A.expect cx (A.Any x))
+        Nx_cpu.c2c_on ~threads d ~axes:(Iarray.of_array c.axes) ~dst:y
+          (A.expect cx (A.Any x))
     | C2c d, (D.Complex128 as cx), D.Complex128 ->
-        Nx_cpu.c2c_on ~threads d ~axes:c.axes ~dst:y (A.expect cx (A.Any x))
+        Nx_cpu.c2c_on ~threads d ~axes:(Iarray.of_array c.axes) ~dst:y
+          (A.expect cx (A.Any x))
     | R2c, (D.Float32 as fx), D.Complex64 ->
-        Nx_cpu.r2c_on ~threads ~axes:c.axes ~dst:y (A.expect fx (A.Any x))
+        Nx_cpu.r2c_on ~threads ~axes:(Iarray.of_array c.axes) ~dst:y
+          (A.expect fx (A.Any x))
     | R2c, (D.Float64 as fx), D.Complex128 ->
-        Nx_cpu.r2c_on ~threads ~axes:c.axes ~dst:y (A.expect fx (A.Any x))
+        Nx_cpu.r2c_on ~threads ~axes:(Iarray.of_array c.axes) ~dst:y
+          (A.expect fx (A.Any x))
     | C2r _, (D.Complex64 as cx), D.Float32 ->
-        Nx_cpu.c2r_on ~threads ~axes:c.axes
+        Nx_cpu.c2r_on ~threads ~axes:(Iarray.of_array c.axes)
           ~dst:(A.expect D.Float32 (A.Any y))
           (A.expect cx (A.Any x))
     | C2r _, (D.Complex128 as cx), D.Float64 ->
-        Nx_cpu.c2r_on ~threads ~axes:c.axes
+        Nx_cpu.c2r_on ~threads ~axes:(Iarray.of_array c.axes)
           ~dst:(A.expect D.Float64 (A.Any y))
           (A.expect cx (A.Any x))
     | _ -> invalid_arg "run"

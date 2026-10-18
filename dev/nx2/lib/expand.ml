@@ -37,6 +37,12 @@ let single (prog : P.t) =
 
 (* Node [i] of [prog] over [loads], as a one-node map of [shape] over [value j]
    for each node [j] it reads. *)
+(* [xs] as plain loads. *)
+let plains (type d) (xs : d Value.any array) : d Value.load iarray =
+  Iarray.init (Array.length xs) (fun i ->
+      let (Value.Any x) = xs.(i) in
+      Value.Plain x)
+
 let node_map (type d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by layout
     (prog : P.t) (loads : d Value.any array) (value : int -> d Value.any) i :
     d Value.any =
@@ -46,7 +52,7 @@ let node_map (type d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by layout
       Iarray.of_array
         (Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) reads)
     in
-    let loads = Array.map (fun (Value.Any x) -> Value.Plain x) reads in
+    let loads = plains reads in
     let prog = P.of_node ~ins node in
     let v, () =
       apply ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
@@ -127,7 +133,7 @@ let core_reduce (type d q) prog (rs : (d, q) Value.reductions) =
 (* Output [k] of [prog] over [loads], of [layout]'s shape, stored in [acc]: the
    operand itself where [prog] is the identity and [acc] its dtype. *)
 let body (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
-    (prog : P.t) k (loads : d Value.load array) (D.Any acc) : d Value.any =
+    (prog : P.t) k (loads : d Value.load iarray) (D.Any acc) : d Value.any =
   let out = Iarray.get prog.outs k in
   let cast = not (same (P.dtype prog out) (D.Any acc)) in
   match loads with
@@ -163,8 +169,9 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
        Nx_array.Layout.t ->
        P.t ->
        (d, 'q) Value.reduction ->
-       d Value.load array ->
-       'q) layout prog (loads : d Value.load array) (r : (d, a) Value.reduction)
+       d Value.load iarray ->
+       'q) layout prog (loads : d Value.load iarray)
+    (r : (d, a) Value.reduction)
     : a option =
   match r with
   | Monoid (m, k, dt) ->
@@ -196,14 +203,19 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 (* [x], [shape] reduced along [axes], broadcast back to [shape]. *)
 let spread_back (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     shape axes (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let units = Array.mapi (fun a e -> if Array.mem a axes then 1 else e) shape in
+  let units =
+    Array.mapi (fun a e -> if Iarray.mem a axes then 1 else e) shape
+  in
   let move mv x = apply ~by (Value.Move (mv, x)) in
-  let x = if Prim.has_shape x units then x else move (M.Reshape units) x in
-  if units = shape then x else move (M.Broadcast (Array.copy shape)) x
+  let x =
+    if Prim.has_shape x units then x
+    else move (M.Reshape (Iarray.of_array units)) x
+  in
+  if units = shape then x else move (M.Broadcast (Iarray.of_array shape)) x
 
 (* The map of [prog] over [loads], of [shape], into [dt]. *)
 let map1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    prog (dt : (w, r) D.t) (loads : d Value.load array) : (w, r, d) Value.t =
+    prog (dt : (w, r) D.t) (loads : d Value.load iarray) : (w, r, d) Value.t =
   fst
     (apply ~by
        (Value.Map
@@ -212,7 +224,7 @@ let map1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
 (* The monoid [m] of [prog]'s output over [loads], of [shape], along [axes], in
    [dt]. *)
 let reduce1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    axes m prog (dt : (w, r) D.t) (loads : d Value.load array) :
+    axes m prog (dt : (w, r) D.t) (loads : d Value.load iarray) :
     (w, r, d) Value.t =
   fst
     (apply ~by
@@ -252,19 +264,19 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let out = Prim.reduced shape axes in
   let f v = E.const dt (D.of_float dt v) in
   let sum_exp shift =
-    let loads =
+    let loads : _ Value.load iarray =
       match shift with
       | None -> [| Value.Plain x |]
       | Some m ->
           [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes m) |]
     in
-    let ins = Iarray.init (Array.length loads) (fun _ -> D.Any dt) in
+    let ins = Iarray.init (Iarray.length loads) (fun _ -> D.Any dt) in
     let t = E.input 0 dt in
     let y = match shift with None -> t | Some _ -> E.(t - input 1 dt) in
     let e = E.(where (y < f (exp_cutoff dt)) (f 0.) (exp y)) in
     reduce1 apply ~by shape axes Sum (P.of_exprs ~ins [| E.any e |]) dt loads
   in
-  if Array.exists (fun a -> shape.(a) = 0) axes then
+  if Iarray.exists (fun a -> shape.(a) = 0) axes then
     map1 apply ~by out
       (P.of_node ~ins:[| D.Any dt |] (Op1 (Unary Log, D.Any dt, 0)))
       dt
@@ -301,7 +313,7 @@ let moments (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (float, s, d) Value.t * (float, s, d) Value.t =
   let dt = Prim.dtype x in
   let out = Prim.reduced shape axes in
-  let n = Array.fold_left (fun n a -> n * shape.(a)) 1 axes in
+  let n = Iarray.fold_left (fun n a -> n * shape.(a)) 1 axes in
   let count = E.const dt (D.of_float dt (Float.of_int n)) in
   let one : D.any iarray = [| D.Any dt |]
   and two : D.any iarray = [| D.Any dt; D.Any dt |]
@@ -339,13 +351,14 @@ let moments (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    view of [shape]. *)
 let half (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     (pairs : (v, s, d) Value.t) j : (v, s, d) Value.t =
+  let r = Array.length shape in
   let ranges =
-    Array.append
-      (Array.map (fun e -> { M.start = 0; count = e; step = 1 }) shape)
-      [| { M.start = j; count = 1; step = 1 } |]
+    Iarray.init (r + 1) (fun a ->
+        if a < r then { M.start = 0; count = shape.(a); step = 1 }
+        else { M.start = j; count = 1; step = 1 })
   in
   let p = apply ~by (Value.Move (Slice ranges, pairs)) in
-  apply ~by (Value.Move (Reshape (Array.copy shape), p))
+  apply ~by (Value.Move (Reshape (Iarray.of_array shape), p))
 
 (* Values whose elements are all equal at two indices iff [x]'s bits are there:
    [x] itself for an integer or a boolean, its bits read as an unsigned integer
@@ -409,7 +422,7 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   in
   let int64 n = E.const D.Int64 (Int64.of_int n) in
   let position, _ =
-    Array.fold_right
+    Iarray.fold_right
       (fun a (pos, stride) ->
         (E.(pos + (coord a * int64 stride)), stride * shape.(a)))
       axes
@@ -418,7 +431,7 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let pick = E.(where found position (const D.Int64 Int64.max_int)) in
   let p =
     reduce1 apply ~by shape axes Min (P.of_exprs ~ins [| E.any pick |]) D.Int64
-      (Array.map (fun (Value.Any y) -> Value.Plain y) loads)
+      (plains loads)
   in
   (m, p)
 
@@ -471,7 +484,7 @@ let rec outputs : type d. D.any list -> d outputs = function
 
 (* The map of [prog] over [loads], of [shape], into [dts]. *)
 let map_n (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    prog dts (loads : d Value.load array) : d Value.any array =
+    prog dts (loads : d Value.load iarray) : d Value.any array =
   let (Outputs (outs, read)) = outputs (Array.to_list dts) in
   let layout = L.contiguous shape in
   Array.of_list (read (apply ~by (Value.Map { layout; prog; outs; loads })))
@@ -548,11 +561,14 @@ let running_moments (type s d)
     two (P.of_exprs ~ins:[||] [| E.any (f 0.); E.any (f 0.) |]) [||]
   else
     let first =
-      let keep a e =
+      let rank = Array.length shape and keep a e =
         { M.start = 0; count = (if a = axis then 1 else e); step = 1 }
       in
-      let x0 = apply ~by (Value.Move (Slice (Array.mapi keep shape), x)) in
-      apply ~by (Value.Move (Broadcast (Array.copy shape), x0))
+      let x0 =
+        apply ~by
+          (Value.Move (Slice (Iarray.init rank (fun a -> keep a shape.(a))), x))
+      in
+      apply ~by (Value.Move (Broadcast (Iarray.of_array shape), x0))
     in
     let dts = [| D.Any dt; D.Any dt; D.Any dt; D.Any D.Bool |] in
     let terms =
@@ -660,13 +676,13 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     Prim.expect D.Int64 state.(1) )
 
 let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
-    axes prog (rs : (d, q) Value.reductions) (loads : d Value.load array) :
+    axes prog (rs : (d, q) Value.reductions) (loads : d Value.load iarray) :
     q option =
   let loop : type a.
       Nx_array.Layout.t ->
       P.t ->
       (d, a) Value.reduction ->
-      d Value.load array ->
+      d Value.load iarray ->
       a =
    fun layout prog r loads ->
     let v, () =
@@ -708,13 +724,13 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
   all rs
 
 let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
-    axis prog (r : (d, a) Value.reduction) (loads : d Value.load array)
+    axis prog (r : (d, a) Value.reduction) (loads : d Value.load iarray)
     (carry : d Value.any option) : a option =
   let loop : type q.
       Nx_array.Layout.t ->
       P.t ->
       (d, q) Value.reduction ->
-      d Value.load array ->
+      d Value.load iarray ->
       q =
    fun layout prog reduction loads ->
     (* A complex sum scans its parts as floats, and its carry's. *)
@@ -805,11 +821,11 @@ let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    node whose dtypes all stay, and for a cast and a bitcast, which no other
    dtype computes exactly. *)
 let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
-    (prog : P.t) (outs : (d, r) Value.outs) (loads : d Value.load array) :
+    (prog : P.t) (outs : (d, r) Value.outs) (loads : d Value.load iarray) :
     r option =
   let n = Iarray.length prog.nodes in
   let node = Iarray.get prog.nodes (n - 1) in
-  let dts = Array.map Prim.load_dtype loads in
+  let dts = Iarray.to_array (Iarray.map Prim.load_dtype loads) in
   let wide =
     match (node : P.node) with
     | Const _ | Op1 (Copy, _, _) | Op3 (Where, _, _, _) -> kept
@@ -832,7 +848,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
       let (D.Any w) = wide (D.Any (Prim.dtype x)) in
       Value.Any (held apply ~by w x)
     in
-    let operands = Array.map load loads in
+    let operands = Iarray.to_array (Iarray.map load loads) in
     let ins =
       Iarray.of_array
         (Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) operands)
@@ -854,22 +870,22 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
              layout;
              prog = P.of_node ~ins node;
              outs = Value.[ w ];
-             loads = Array.map (fun (Value.Any x) -> Value.Plain x) operands;
+             loads = plains operands;
            })
     in
     match outs with [ dt ] -> Some (held apply ~by dt v, ()) | _ -> None
 
 (* The program of a region's flat positions in a C-contiguous value whose axes
    have [strides]: [Σ (start + i·step)·stride] at the region's index [i]. *)
-let positions (rs : Nx_array.Move.range array) strides =
+let positions (rs : Nx_array.Move.range iarray) strides =
   let first = ref 0 in
-  Array.iteri
+  Iarray.iteri
     (fun d (g : Nx_array.Move.range) ->
       first := !first + (g.start * strides.(d)))
     rs;
   let int64 n = E.const D.Int64 (Int64.of_int n) in
   let sum = ref (int64 !first) in
-  Array.iteri
+  Iarray.iteri
     (fun d (g : Nx_array.Move.range) ->
       let k = int64 (g.step * strides.(d)) in
       sum := E.(!sum + (coord d * k)))
@@ -880,8 +896,9 @@ let positions (rs : Nx_array.Move.range array) strides =
    of its elements at their flat positions: O(n) per piece. *)
 let assemble (type v s d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by
     (dt : (v, s) Value.dtype) shape (fill : v)
-    (pieces : (Nx_array.Move.range array * (v, s, d) Value.t) list) :
+    (pieces : (Nx_array.Move.range iarray * (v, s, d) Value.t) list) :
     (v, s, d) Value.t =
+  let shape = Iarray.to_array shape in
   let create : type w q.
       (w, q) Value.dtype -> int array -> P.t -> (w, q, d) Value.t =
    fun dt shape prog ->
@@ -926,7 +943,8 @@ let assemble (type v s d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by
            })
   in
   apply ~by
-    (Value.Move (Reshape (Array.copy shape), List.fold_left place flat pieces))
+    (Value.Move
+       (Reshape (Iarray.of_array shape), List.fold_left place flat pieces))
 
 (* Padded loads *)
 
@@ -938,7 +956,8 @@ let padded (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let s = Prim.shape x in
   let extent a =
     let d = s.(a) in
-    p.lo.(a) + p.hi.(a) + d + (p.interior.(a) * max 0 (d - 1))
+    Iarray.get p.lo a + Iarray.get p.hi a + d
+    + (Iarray.get p.interior a * max 0 (d - 1))
   in
   let shape = Array.init (Array.length s) extent in
   (* The elements of axis [a] the padding keeps, [first] and on: those whose
@@ -950,7 +969,7 @@ let padded (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
      Narrow only retained ranges; use step 1 when count=1, since
      the true gap may exceed max_int. Cover both as tiny public maps. *)
   let kept a =
-    let gap = p.interior.(a) + 1 and lo = p.lo.(a) in
+    let gap = Iarray.get p.interior a + 1 and lo = Iarray.get p.lo a in
     let first = if lo >= 0 then 0 else (-lo + gap - 1) / gap in
     let room = shape.(a) - 1 - lo in
     let last = if room < 0 then -1 else min (s.(a) - 1) (room / gap) in
@@ -961,15 +980,17 @@ let padded (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     if Array.exists (fun (_, count, _) -> count = 0) ks then []
     else
       let region =
-        Array.mapi
-          (fun a (first, count, gap) ->
-            { M.start = p.lo.(a) + (first * gap); count; step = gap })
-          ks
+        Iarray.init (Array.length ks) (fun a ->
+            let first, count, gap = ks.(a) in
+            { M.start = Iarray.get p.lo a + (first * gap); count; step = gap })
       and slice =
-        Array.map (fun (start, count, _) -> { M.start; count; step = 1 }) ks
+        Iarray.init (Array.length ks) (fun a ->
+            let start, count, _ = ks.(a) in
+            { M.start; count; step = 1 })
       in
       [ (region, apply ~by (Value.Move (Slice slice, x))) ]
   in
+  let shape = Iarray.of_array shape in
   apply ~by (Value.Assemble { dtype = Prim.dtype x; shape; fill; pieces })
 
 (* A load read plainly: a padded one as {!padded}'s assembly, viewed through its
@@ -980,7 +1001,7 @@ let unpadded (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   | Plain _ -> l
   | Padded { x; fill; pad } ->
       let y = padded apply ~by x fill pad in
-      if pad.windows = [||] then Plain y
+      if Iarray.length pad.windows = 0 then Plain y
       else Plain (apply ~by (Value.Move (Window pad.windows, y)))
 
 (* Folds *)
@@ -999,10 +1020,12 @@ let run_taps = P.max_operands - 2
 let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     (p : Nx_kernel.pad) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x and r = Array.length shape in
-  let xs = Prim.shape x and nw = Array.length p.windows in
+  let xs = Prim.shape x and nw = Iarray.length p.windows in
   let along = Array.make r None in
-  Array.iteri (fun k (w : M.window) -> along.(w.axis) <- Some (k, w)) p.windows;
-  let sizes = Array.map (fun (w : M.window) -> w.size) p.windows in
+  Iarray.iteri
+    (fun k (w : M.window) -> along.(w.axis) <- Some (k, w))
+    p.windows;
+  let sizes = Array.init nw (fun k -> (Iarray.get p.windows k).size) in
   let taps = Array.fold_left ( * ) 1 sizes in
   (* CR: Derive bounded source/result progressions for each tap. A valid
      shape [2], interior [L.max_numel], lo [-L.max_numel], hi [0] needs
@@ -1015,7 +1038,7 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   (* The loop's shape: the result's, then an axis of one per axis read every
      [interior + 1] with [interior > 0], in axis order. *)
   let strided =
-    List.filter (fun a -> p.interior.(a) > 0) (List.init r Fun.id)
+    List.filter (fun a -> Iarray.get p.interior a > 0) (List.init r Fun.id)
   in
   let wide = Array.append shape (Array.make (List.length strided) 1) in
   (* Tap [t]'s padded load, [j] its indices along the windows' axes. *)
@@ -1026,12 +1049,13 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
       t := !t / sizes.(k)
     done;
     let ranges =
-      Array.init (r + nw) (fun a ->
+      Iarray.init (r + nw) (fun a ->
           if a < r then { M.start = 0; count = xs.(a); step = 1 }
           else { M.start = j.(a - r); count = 1; step = 1 })
     in
     let xt = apply ~by (Value.Move (Slice ranges, x)) in
-    let xt = apply ~by (Value.Move (Reshape (Array.sub xs 0 r), xt)) in
+    let lead = Iarray.init r (Array.get xs) in
+    let xt = apply ~by (Value.Move (Reshape lead, xt)) in
     let lo = Array.make r 0 and hi = Array.make r 0 in
     let interior = Array.make r 0 in
     for a = 0 to r - 1 do
@@ -1041,18 +1065,21 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
         | Some (k, w) -> (w.step, j.(k) * w.dilation)
         | None -> (1, 0)
       in
-      let extent = ((shape.(a) - 1) * (p.interior.(a) + 1)) + 1 in
+      let extent = ((shape.(a) - 1) * (Iarray.get p.interior a + 1)) + 1 in
       interior.(a) <- step - 1;
-      lo.(a) <- off - p.lo.(a);
+      lo.(a) <- off - Iarray.get p.lo a;
       hi.(a) <- extent - lo.(a) - c - ((step - 1) * (c - 1))
     done;
     let windows =
-      Array.of_list
+      Iarray.of_list
         (List.map
            (fun a ->
-             { M.axis = a; size = 1; step = p.interior.(a) + 1; dilation = 1 })
+             let step = Iarray.get p.interior a + 1 in
+             { M.axis = a; size = 1; step; dilation = 1 })
            strided)
     in
+    let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+    let interior = Iarray.of_array interior in
     Padded { x = xt; fill = D.zero dt; pad = { lo; hi; interior; windows } }
   in
   let zero = E.const dt (D.zero dt) in
@@ -1060,9 +1087,9 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let add sum first count =
     let held = match sum with None -> [] | Some s -> [ Value.Plain s ] in
     let loads =
-      Array.of_list (held @ List.init count (fun i -> tap (first + i)))
+      Iarray.of_list (held @ List.init count (fun i -> tap (first + i)))
     in
-    let ins = Iarray.init (Array.length loads) (fun _ -> D.Any dt) in
+    let ins = Iarray.init (Iarray.length loads) (fun _ -> D.Any dt) in
     let at = List.length held in
     let total = ref (if at = 0 then zero else E.input 0 dt) in
     for i = at to at + count - 1 do
@@ -1078,7 +1105,7 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   in
   if Array.exists (( = ) 0) shape || Array.exists (( = ) 0) xs then
     map1 apply ~by shape (P.of_exprs ~ins:[||] [| E.any zero |]) dt [||]
-  else apply ~by (Value.Move (Reshape (Array.copy shape), runs None 0))
+  else apply ~by (Value.Move (Reshape (Iarray.of_array shape), runs None 0))
 
 (* Fourier transforms
 
@@ -1100,14 +1127,14 @@ let to_pairs (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (pt : (w, r) D.t) (x : (v, s, d) Value.t) : (w, r, d) Value.t =
   let z = apply ~by (Value.Bitcast (pt, x)) in
   let r = Prim.rank x in
-  let order = Array.init (r + 1) (fun i -> if i = 0 then r else i - 1) in
+  let order = Iarray.init (r + 1) (fun i -> if i = 0 then r else i - 1) in
   apply ~by (Value.Move (Permute order, z))
 
 (* [pairs] as a complex value of [dt]. *)
 let of_pairs (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (dt : (v, s) D.t) (pairs : (w, r, d) Value.t) : (v, s, d) Value.t =
   let r = Prim.rank pairs - 1 in
-  let order = Array.init (r + 1) (fun i -> if i = r then 0 else i + 1) in
+  let order = Iarray.init (r + 1) (fun i -> if i = r then 0 else i + 1) in
   let z = apply ~by (Value.Move (Permute order, pairs)) in
   apply ~by (Value.Bitcast (dt, z))
 
@@ -1125,17 +1152,14 @@ let pairs_map (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let part c x =
     let s = Prim.shape x in
     let ranges =
-      Array.mapi
-        (fun a e ->
-          if a = 0 then { M.start = c; count = 1; step = 1 } else whole e)
-        s
+      Iarray.init (Array.length s) (fun a ->
+          if a = 0 then { M.start = c; count = 1; step = 1 } else whole s.(a))
     in
     let y = apply ~by (Value.Move (Slice ranges, x)) in
-    Value.Plain (apply ~by (Value.Move (Broadcast (Array.copy out), y)))
+    Value.Plain (apply ~by (Value.Move (Broadcast (Iarray.of_array out), y)))
   in
   let views =
-    Array.concat
-      (Array.to_list (Array.map (fun x -> [| part 0 x; part 1 x |]) loads))
+    Iarray.init (2 * Array.length loads) (fun i -> part (i mod 2) loads.(i / 2))
   in
   map1 apply ~by out (P.of_exprs ~ins [| E.(any (where imaginary im re)) |]) dt views
 
@@ -1163,7 +1187,7 @@ let stockham (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       let out = [| 2; batch; m; 2; s |] in
       let v = move (Reshape [| 2; batch; nl; s |]) x in
       let part first c =
-        let ranges =
+        let ranges : M.range iarray =
           [|
             { M.start = c; count = 1; step = 1 };
             whole batch;
@@ -1174,7 +1198,7 @@ let stockham (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         let y =
           move (Reshape [| 1; batch; m; 1; s |]) (move (Slice ranges) v)
         in
-        Value.Plain (move (Broadcast out) y)
+        Value.Plain (move (Broadcast (Iarray.of_array out)) y)
       in
       let ins = Iarray.init 4 (fun _ -> D.Any dt) in
       let x k = E.input k dt in
@@ -1300,7 +1324,7 @@ let along (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by sign
     let order =
       Array.of_list (List.filter (( <> ) a) (List.init r Fun.id) @ [ a ])
     in
-    let moved = move (Permute order) pairs in
+    let moved = move (Permute (Iarray.of_array order)) pairs in
     let ms = Prim.shape moved in
     let batch = Array.fold_left ( * ) 1 (Array.sub ms 1 (r - 2)) in
     let lines = move (Reshape [| 2; batch; n |]) moved in
@@ -1310,7 +1334,8 @@ let along (type r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by sign
     in
     let back = Array.make r 0 in
     Array.iteri (fun i o -> back.(o) <- i) order;
-    move (Permute back) (move (Reshape ms) y)
+    let y = move (Reshape (Iarray.of_array ms)) y in
+    move (Permute (Iarray.of_array back)) y
 
 let sign_of : Nx_kernel.direction -> float = function
   | Forward -> -1.
@@ -1331,7 +1356,10 @@ let fft : type d r.
     let s = Prim.shape x in
     apply ~by
       (Value.Move
-         (Slice (Array.mapi (fun i e -> if i = a then range else whole e) s), x))
+         ( Slice
+             (Iarray.init (Array.length s) (fun i ->
+                  if i = a then range else whole s.(i))),
+           x ))
   in
   match f with
   | C2c { direction; axes; x } ->
@@ -1341,13 +1369,13 @@ let fft : type d r.
         let (Part pt) = Option.get (parts (D.Any dt)) in
         let p = to_pairs apply ~by pt x in
         let p =
-          Array.fold_left
+          Iarray.fold_left
             (fun p a -> along apply ~by (sign_of direction) a p)
             p axes
         in
         of_pairs apply ~by dt p
   | R2c { dtype; axes; x } ->
-      let s = Prim.shape x and l = axes.(Array.length axes - 1) in
+      let s = Prim.shape x and l = Iarray.get axes (Iarray.length axes - 1) in
       let out = set s l ((s.(l) / 2) + 1) in
       if numel s = 0 then zeros apply ~by dtype out
       else
@@ -1357,32 +1385,39 @@ let fft : type d r.
             (Value.Assemble
                {
                  dtype = pt;
-                 shape = Array.append [| 2 |] s;
+                 shape = Iarray.of_array (Array.append [| 2 |] s);
                  fill = D.zero pt;
                  pieces =
                    [
-                     ( Array.append
-                         [| { M.start = 0; count = 1; step = 1 } |]
-                         (Array.map whole s),
+                     ( Iarray.of_array
+                         (Array.append
+                            [| { M.start = 0; count = 1; step = 1 } |]
+                            (Array.map whole s)),
                        apply ~by
-                         (Value.Move (Reshape (Array.append [| 1 |] s), x)) );
+                         (Value.Move
+                            ( Reshape
+                                (Iarray.append [| 1 |] (Iarray.of_array s)),
+                              x ))
+                     );
                    ];
                })
         in
-        let p = Array.fold_left (fun p a -> along apply ~by (-1.) a p) p axes in
+        let p =
+          Iarray.fold_left (fun p a -> along apply ~by (-1.) a p) p axes
+        in
         of_pairs apply ~by dtype (slice p (l + 1) (whole out.(l)))
   | C2r { dtype; n; axes; x } ->
-      let s = Prim.shape x and k = Array.length axes - 1 in
-      let l = axes.(k) in
+      let s = Prim.shape x and k = Iarray.length axes - 1 in
+      let l = Iarray.get axes k in
       let out = set s l n in
       if numel out = 0 then zeros apply ~by dtype out
       else
         let (Part pt) = Option.get (parts (D.Any (Prim.dtype x))) in
         let p = to_pairs apply ~by pt x in
         let p =
-          Array.fold_left
+          Iarray.fold_left
             (fun p a -> along apply ~by 1. a p)
-            p (Array.sub axes 0 k)
+            p (Iarray.sub axes ~pos:0 ~len:k)
         in
         (* Bins [0] and, for an even [n], [n/2] keep their real parts alone. *)
         let p =
@@ -1406,18 +1441,19 @@ let fft : type d r.
                   let re, im = parts.(0) in
                   (re, E.neg im))
             in
+            let shape = Iarray.of_array (Array.append [| 2 |] out) in
             let region from count =
-              Array.mapi
+              Iarray.mapi
                 (fun i e ->
                   if i = l + 1 then { M.start = from; count; step = 1 }
                   else whole e)
-                (Array.append [| 2 |] out)
+                shape
             in
             apply ~by
               (Value.Assemble
                  {
                    dtype = pt;
-                   shape = Array.append [| 2 |] out;
+                   shape;
                    fill = D.zero pt;
                    pieces = [ (region 0 h, p); (region h mirrored, conj) ];
                  })
@@ -1426,7 +1462,8 @@ let fft : type d r.
         let re =
           apply ~by
             (Value.Move
-               (Reshape out, slice p 0 { M.start = 0; count = 1; step = 1 }))
+               ( Reshape (Iarray.of_array out),
+                 slice p 0 { M.start = 0; count = 1; step = 1 } ))
         in
         cast_to apply ~by dtype (apply ~by (Value.Copy re))
 
@@ -1440,10 +1477,16 @@ let spread (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let order = Array.init r Fun.id in
   Array.sort (fun i j -> compare at.(i) at.(j)) order;
   let move mv x = apply ~by (Value.Move (mv, x)) in
-  let x = if order = Array.init r Fun.id then x else move (M.Permute order) x in
+  let x =
+    if order = Array.init r Fun.id then x
+    else move (M.Permute (Iarray.of_array order)) x
+  in
   let units = Array.mapi (fun k e -> if Array.mem k at then e else 1) full in
-  let x = if Prim.has_shape x units then x else move (M.Reshape units) x in
-  if units = full then x else move (M.Broadcast full) x
+  let x =
+    if Prim.has_shape x units then x
+    else move (M.Reshape (Iarray.of_array units)) x
+  in
+  if units = full then x else move (M.Broadcast (Iarray.of_array full)) x
 
 (* The contraction of [a] and [b] by the pairs [batch] and [contracting] from
    [init], computed in [acc] into [out], as other operations. A result of
@@ -1473,29 +1516,30 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
       List.filter
         (fun i ->
           not
-            (Array.exists (fun p -> side p = i) batch
-            || Array.exists (fun p -> side p = i) contracting))
+            (Iarray.exists (fun p -> side p = i) batch
+            || Iarray.exists (fun p -> side p = i) contracting))
         (List.init (Array.length s) Fun.id)
     in
     let fa = free sa fst and fb = free sb snd in
-    let nb = Array.length batch and nfa = List.length fa in
+    let nb = Iarray.length batch and nfa = List.length fa in
     let rshape =
       Array.concat
         [
-          Array.map (fun (i, _) -> sa.(i)) batch;
+          Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) batch);
           Array.of_list (List.map (fun i -> sa.(i)) fa);
           Array.of_list (List.map (fun i -> sb.(i)) fb);
         ]
     in
     let nr = Array.length rshape in
     let full =
-      Array.append rshape (Array.map (fun (i, _) -> sa.(i)) contracting)
+      Array.append rshape
+        (Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) contracting))
     in
     let positions s side frees offset =
       let at = Array.make (Array.length s) 0 in
-      Array.iteri (fun k p -> at.(side p) <- k) batch;
+      Iarray.iteri (fun k p -> at.(side p) <- k) batch;
       List.iteri (fun j i -> at.(i) <- nb + offset + j) frees;
-      Array.iteri (fun c p -> at.(side p) <- nr + c) contracting;
+      Iarray.iteri (fun c p -> at.(side p) <- nr + c) contracting;
       at
     in
     let va = spread apply ~by a (positions sa fst fa 0) full in
@@ -1513,9 +1557,9 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
         ~outs:[| 4 |]
     in
     let layout = Nx_array.Layout.contiguous full in
-    let loads = [| Value.Plain va; Value.Plain vb |] in
+    let loads : _ Value.load iarray = [| Value.Plain va; Value.Plain vb |] in
     let sum =
-      if Array.length contracting = 0 then
+      if Iarray.length contracting = 0 then
         fst
           (apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads }))
       else
@@ -1524,7 +1568,8 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
              (Value.Reduce
                 {
                   layout;
-                  axes = Array.init (Array.length contracting) (fun c -> nr + c);
+                  axes =
+                    Iarray.init (Iarray.length contracting) (fun c -> nr + c);
                   prog;
                   reductions = Value.[ Monoid (Sum, 0, acc) ];
                   loads;
@@ -1569,11 +1614,9 @@ let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let at : type w q. int -> (w, q, d) Value.t -> (w, q, d) Value.t =
    fun i x ->
     let w =
-      Array.mapi
-        (fun a n ->
+      Iarray.init (Array.length s) (fun a ->
           if a = axis then { M.start = i; count = 1; step = 1 }
-          else { M.start = 0; count = n; step = 1 })
-        s
+          else { M.start = 0; count = s.(a); step = 1 })
     in
     apply ~by (Value.Move (Slice w, x))
   in
@@ -1727,7 +1770,7 @@ let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   (* The keys [ks] over [loads], one map each. *)
   let keys loads ks =
     let ins = Iarray.of_array (Array.map (fun (Value.Any y) -> D.Any (Prim.dtype y)) loads) in
-    let loads = Array.map (fun (Value.Any y) -> Value.Plain y) loads in
+    let loads = plains loads in
     List.map
       (fun k -> map1 apply ~by shape (P.of_exprs ~ins [| E.any k |]) D.Int64 loads)
       ks
@@ -1780,7 +1823,10 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
   let stages = bit_length (n - 1) in
   let wide = Array.copy shape in
   wide.(axis) <- 1 lsl stages;
-  let whole s = Array.map (fun e -> { M.start = 0; count = e; step = 1 }) s in
+  let whole s =
+    Iarray.init (Array.length s) (fun a ->
+        { M.start = 0; count = s.(a); step = 1 })
+  in
   let x =
     if wide.(axis) = n then packed
     else
@@ -1788,7 +1834,7 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
         (Value.Assemble
            {
              dtype = D.Int64;
-             shape = wide;
+             shape = Iarray.of_array wide;
              fill = (if descending then -1L else Int64.max_int);
              pieces = [ (whole shape, packed) ];
            })
@@ -1882,7 +1928,7 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
                 (Prim.shape y)
             in
             rs.(axis) <- { M.start = 0; count = k; step = 1 };
-            apply ~by (Value.Move (Slice rs, y))
+            apply ~by (Value.Move (Slice (Iarray.of_array rs), y))
       in
       Some (first values, first positions)
 
@@ -1894,11 +1940,14 @@ let run : type r.
  fun apply ~by op ->
   match op with
   | Value.Map { layout; prog; outs; loads }
-    when Array.exists Prim.is_padded loads ->
-      let loads = Array.map (unpadded apply ~by) loads in
+    when Iarray.exists Prim.is_padded loads ->
+      let loads = Iarray.map (unpadded apply ~by) loads in
       Some (apply ~by (Value.Map { layout; prog; outs; loads }))
   | Value.Map { layout; prog; outs; loads } when Option.is_none (single prog) ->
-      let loads = Array.map Prim.load_any loads in
+      let loads =
+        Array.init (Iarray.length loads) (fun i ->
+            Prim.load_any (Iarray.get loads i))
+      in
       let values = Array.make (Iarray.length prog.nodes) None in
       let value j = Option.get values.(j) in
       Array.iteri
@@ -1915,11 +1964,11 @@ let run : type r.
       in
       Some (results outs (List.map out (Iarray.to_list prog.outs)))
   | Value.Reduce { layout; axes; prog; reductions; loads }
-    when Array.exists Prim.is_padded loads || not (core_reduce prog reductions)
+    when Iarray.exists Prim.is_padded loads || not (core_reduce prog reductions)
     ->
       reduce apply ~by layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction = r; loads; carry }
-    when Array.exists Prim.is_padded loads || not (core_scan prog r) ->
+    when Iarray.exists Prim.is_padded loads || not (core_scan prog r) ->
       scan apply ~by layout axis prog r loads carry
   | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
       Some (contract apply ~by ~order ~batch ~contracting ~acc out a b init)
@@ -1933,7 +1982,8 @@ let run : type r.
   | Value.Sort { axis; descending; k; x } ->
       let bits = key_bits (Prim.dim x axis) in
       sort apply ~by ~bits axis descending k x
-  | Value.Fold { shape; pad; x } -> Some (fold apply ~by shape pad x)
+  | Value.Fold { shape; pad; x } ->
+      Some (fold apply ~by (Iarray.to_array shape) pad x)
   | Value.Fft f -> Some (fft apply ~by f)
   | Value.Copy x ->
       (* A copy is the map of one [Copy]. *)

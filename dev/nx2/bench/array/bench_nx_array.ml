@@ -266,7 +266,7 @@ let operand ?(shape = rank4) () = A.create Rig.host f32 shape
 (* [a] with its axes reversed. *)
 let transpose a =
   let r = L.rank (A.layout a) in
-  Option.get (A.move (M.Permute (Array.init r (fun i -> r - 1 - i))) a)
+  Option.get (A.move (M.Permute (Iarray.init r (fun i -> r - 1 - i))) a)
 
 (* A kernel's OCaml wrapper: an answer other than [Done] is a refusal. *)
 let add z x y =
@@ -316,7 +316,7 @@ let door_rows =
       row "loop-3-scalar"
         (fun () ->
           let s = A.create Rig.host f32 [||] in
-          let s = Option.get (A.move (M.Broadcast rank4) s) in
+          let s = Option.get (A.move (M.Broadcast (Iarray.of_array rank4)) s) in
           let z, x, _ = three () in
           if loop_3 z x s <> 1 then failwith "loop-3-scalar: not one run";
           (z, x, s))

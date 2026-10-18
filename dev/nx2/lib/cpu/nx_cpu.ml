@@ -198,7 +198,7 @@ type reduction =
 
 external reduce_c :
   reduction ->
-  int array ->
+  int iarray ->
   Nx_array.any array ->
   ('v, 's) Nx_array.t ->
   (Nx_kernel.pad * string) option ->
@@ -212,7 +212,7 @@ external reduce_prog_c :
   Nx_kernel.Prog.t ->
   int array ->
   int array ->
-  int array ->
+  int iarray ->
   Nx_array.any array ->
   Nx_kernel.load array ->
   (Nx_kernel.pad * string) option array ->
@@ -485,7 +485,7 @@ external sort :
 external assemble_c :
   string ->
   ('v, 's) Nx_array.t ->
-  (Nx_array.Move.range array * ('v, 's) Nx_array.t) array ->
+  (Nx_array.Move.range iarray * ('v, 's) Nx_array.t) array ->
   Nx_array.answer = "nx_cpu_assemble"
 
 let assemble ~fill ~dst pieces =
@@ -526,8 +526,8 @@ let contract_order ~rows ~columns : Nx_kernel.order =
    ([nx_contract_view_fill]). *)
 external contract_c :
   Nx_kernel.order ->
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   int ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
@@ -558,21 +558,21 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
 external c2c_c :
   int ->
   Nx_kernel.direction ->
-  int array ->
+  int iarray ->
   (Complex.t, 's) Nx_array.t ->
   (Complex.t, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_c2c"
 
 external r2c_c :
   int ->
-  int array ->
+  int iarray ->
   (Complex.t, 'c) Nx_array.t ->
   (float, 'r) Nx_array.t ->
   Nx_array.answer = "nx_cpu_r2c"
 
 external c2r_c :
   int ->
-  int array ->
+  int iarray ->
   (float, 'r) Nx_array.t ->
   (Complex.t, 'c) Nx_array.t ->
   Nx_array.answer = "nx_cpu_c2r"
@@ -605,10 +605,10 @@ let c2r_on ~threads ~axes ~dst x =
   if not (Nx_kernel.same_precision (Nx_array.dtype dst) (Nx_array.dtype x)) then
     Nx_array.Wrong_dtype
   else
-    let s = shape dst and k = Array.length axes - 1 in
+    let s = shape dst and k = Iarray.length axes - 1 in
     let n =
-      if k >= 0 && axes.(k) >= 0 && axes.(k) < Array.length s then s.(axes.(k))
-      else -1
+      let a = if k >= 0 then Iarray.get axes k else -1 in
+      if a >= 0 && a < Array.length s then s.(a) else -1
     in
     if n < 0 || not (fits (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst) then
       Nx_array.Shape_mismatch

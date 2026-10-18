@@ -282,7 +282,7 @@ let operand kind shape : (float, D.float32_elt, Count.d) Nx.t =
         Nx.place Count.on
           (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 t data))
       in
-      Nx.Prim.eval ~by:"test" (Move (Permute rev, base))
+      Nx.Prim.eval ~by:"test" (Move (Permute (Iarray.of_array rev), base))
 
 let add_prog =
   P.v
@@ -303,9 +303,11 @@ let cases_of shape a b =
   let numel = Array.fold_left ( * ) 1 shape in
   [
     Case ("copy", Copy x);
-    Case ("reverse", Move (Permute (Array.init r (fun i -> r - 1 - i)), x));
+    Case ("reverse", Move (Permute (Iarray.init r (fun i -> r - 1 - i)), x));
     Case ("flatten", Move (Reshape [| numel |], x));
-    Case ("broadcast", Move (Broadcast (Array.append [| 2 |] shape), x));
+    Case
+      ( "broadcast",
+        Move (Broadcast (Iarray.of_array (Array.append [| 2 |] shape)), x) );
     Case ("int32", Bitcast (Nx.int32, x));
     Case ("bytes", Bitcast (Nx.uint8, x));
     Case ("host", Place (Nx.Host.on, x));
@@ -693,14 +695,14 @@ let one_node (prog : P.t) =
 
 (* The tangent of the one node [node] over [loads], whose primal result is
    [y]. *)
-let tangent (type v s d) i node (loads : d Nx.Prim.load array)
+let tangent (type v s d) i node (loads : d Nx.Prim.load iarray)
     (y : (v, s, d) Nx.t) : (v, s, d) Nx.t =
   let p j =
-    match loads.(j) with
+    match Iarray.get loads j with
     | Nx.Prim.Plain x -> Nx.Prim.Any (fst (parts i x))
     | Nx.Prim.Padded _ -> fail "test.jvp: a padded load"
   and t j =
-    match loads.(j) with
+    match Iarray.get loads j with
     | Nx.Prim.Plain x -> Nx.Prim.Any (snd (parts i x))
     | Nx.Prim.Padded _ -> fail "test.jvp: a padded load"
   in

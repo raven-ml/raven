@@ -257,22 +257,22 @@ let pp_ints ppf a =
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_move ppf = function
-  | M.Reshape s -> Format.fprintf ppf "reshape %a" pp_ints s
-  | Broadcast s -> Format.fprintf ppf "broadcast %a" pp_ints s
-  | Permute p -> Format.fprintf ppf "permute %a" pp_ints p
+  | M.Reshape s -> Format.fprintf ppf "reshape %a" pp_ints (Iarray.to_array s)
+  | Broadcast s -> Format.fprintf ppf "broadcast %a" pp_ints (Iarray.to_array s)
+  | Permute p -> Format.fprintf ppf "permute %a" pp_ints (Iarray.to_array p)
   | Slice rs ->
       Format.fprintf ppf "slice %s"
         (String.concat " "
-           (Array.to_list
-              (Array.map
+           (Iarray.to_list
+              (Iarray.map
                  (fun (r : M.range) ->
                    Printf.sprintf "%d+%d/%d" r.start r.count r.step)
                  rs)))
   | Window ws ->
       Format.fprintf ppf "window %s"
         (String.concat " "
-           (Array.to_list
-              (Array.map
+           (Iarray.to_list
+              (Iarray.map
                  (fun (w : M.window) ->
                    Printf.sprintf "%d:%d/%d" w.axis w.size w.step)
                  ws)))
@@ -295,22 +295,25 @@ let moved =
        one_of
          [
            map
-             (fun p -> M.Permute (Array.of_list p))
+             (fun p -> M.Permute (Iarray.of_list p))
              (permutation (List.init rank Fun.id));
            constant (M.Reshape [| n |]);
            constant (M.Reshape [| n; 1 |]);
-           constant (M.Broadcast (Array.append [| 3 |] s));
+           constant (M.Broadcast (Iarray.of_array (Array.append [| 3 |] s)));
            constant
-             (M.Broadcast (Array.map (fun d -> if d = 1 then 3 else d) s));
+             (M.Broadcast
+                (Iarray.of_array
+                   (Array.map (fun d -> if d = 1 then 3 else d) s)));
            map
              (fun rev ->
                M.Slice
-                 (Array.map
-                    (fun d ->
-                      if rev && d > 1 then
-                        { M.start = d - 1; count = d / 2; step = -2 }
-                      else { M.start = 0; count = d; step = 1 })
-                    s))
+                 (Iarray.of_array
+                    (Array.map
+                       (fun d ->
+                         if rev && d > 1 then
+                           { M.start = d - 1; count = d / 2; step = -2 }
+                         else { M.start = 0; count = d; step = 1 })
+                       s)))
              bool;
            constant
              (M.Window [| { axis = 0; size = 1; step = 1; dilation = 1 } |]);
@@ -342,7 +345,7 @@ let movements =
           let rank = Array.length s0 in
           let x =
             if flip then
-              moved_by (M.Permute (Array.init rank (fun i -> rank - 1 - i))) x
+              moved_by (M.Permute (Iarray.init rank (fun i -> rank - 1 - i))) x
             else x
           in
           let s = Prim.shape x in
@@ -522,8 +525,8 @@ let ops () =
    [init]. *)
 let contractions =
   let a = f32 [| 2; 3 |] and b = f32 [| 3; 2 |] in
-  let contract ?(contracting = [| (1, 0) |]) ?(acc = D.Any D.Float32) init : op
-      =
+  let contract ?(contracting : _ iarray = [| (1, 0) |]) ?(acc = D.Any D.Float32)
+      init : op =
     Op
       (Contract
          {

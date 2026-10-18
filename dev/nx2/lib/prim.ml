@@ -99,6 +99,8 @@ let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
+let pp_ints ppf s = pp_shape ppf (Iarray.to_array s)
+
 let merge s s' =
   let r = Int.max (Array.length s) (Array.length s') in
   let at s i =
@@ -194,7 +196,7 @@ let linalg_operands : type d r. (d, r) linalg -> d any list = function
   | Eig { a; _ } -> [ Any a ]
   | Solve_triangular { a; b; _ } -> [ Any a; Any b ]
 
-let fft_axes : type d r. (d, r) fft -> int array = function
+let fft_axes : type d r. (d, r) fft -> int iarray = function
   | C2c { axes; _ } | R2c { axes; _ } | C2r { axes; _ } -> axes
 
 let fft_operand : type d r. (d, r) fft -> d any = function
@@ -271,10 +273,11 @@ let rec map_data : type d e.
       x :: map_data m (i + 1) rest
 
 let operands : type r. r prim -> operands = function
-  | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
-  | Reduce { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
+  | Map { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
+  | Reduce { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
   | Scan { loads; carry; _ } ->
-      Operands (Array.to_list (Array.map load_any loads) @ Option.to_list carry)
+      let loads = Iarray.to_list (Iarray.map load_any loads) in
+      Operands (loads @ Option.to_list carry)
   | Gather { idx; x; _ } -> Operands [ Any idx; Any x ]
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
@@ -293,10 +296,10 @@ let operands : type r. r prim -> operands = function
   | Check { ok; data; _ } -> Operands (Any ok :: data_any data)
 
 let iteri_loads : type d.
-    ('v 's. int -> ('v, 's, d) t -> unit) -> d load array -> unit =
+    ('v 's. int -> ('v, 's, d) t -> unit) -> d load iarray -> unit =
  fun f loads ->
-  for i = 0 to Array.length loads - 1 do
-    let (Any x) = load_any loads.(i) in
+  for i = 0 to Iarray.length loads - 1 do
+    let (Any x) = load_any (Iarray.get loads i) in
     f i x
   done
 
@@ -308,7 +311,7 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
   | Reduce { loads; _ } -> iteri_loads f loads
   | Scan { loads; carry; _ } -> (
       iteri_loads f loads;
-      match carry with Some (Any c) -> f (Array.length loads) c | None -> ())
+      match carry with Some (Any c) -> f (Iarray.length loads) c | None -> ())
   | Gather { idx; x; _ } ->
       f 0 idx;
       f 1 x
@@ -336,11 +339,11 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       List.iteri (fun i (Any x) -> f (i + 1) x) (data_any data)
 
 let rec loads_exist : type d.
-    ('v 's. ('v, 's, d) t -> bool) -> d load array -> int -> bool =
+    ('v 's. ('v, 's, d) t -> bool) -> d load iarray -> int -> bool =
  fun f loads i ->
-  i < Array.length loads
+  i < Iarray.length loads
   &&
-  let (Any x) = load_any loads.(i) in
+  let (Any x) = load_any (Iarray.get loads i) in
   f x || loads_exist f loads (i + 1)
 
 let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
@@ -378,11 +381,11 @@ let mapi : type r.
     | Padded p -> Padded { p with x = m i p.x }
   in
   match op with
-  | Map p -> Map { p with loads = Array.mapi map_load p.loads }
-  | Reduce p -> Reduce { p with loads = Array.mapi map_load p.loads }
+  | Map p -> Map { p with loads = Iarray.mapi map_load p.loads }
+  | Reduce p -> Reduce { p with loads = Iarray.mapi map_load p.loads }
   | Scan p ->
-      let loads = Array.mapi map_load p.loads in
-      let n = Array.length loads in
+      let loads = Iarray.mapi map_load p.loads in
+      let n = Iarray.length loads in
       Scan
         {
           p with
@@ -606,7 +609,7 @@ let pp : type r. Format.formatter -> r prim -> unit =
       let pr = printer prog (reduced_roots prog rs) in
       Format.fprintf ppf "%a [%a] over %a" pr.bindings ()
         (Format.pp_print_list ~pp_sep:sep (pp_reduced prog pr))
-        rs pp_shape axes
+        rs pp_ints axes
   | Scan { prog; axis; reduction = s; _ } ->
       let r = reduction s in
       let pr = printer prog (reduced_roots prog [ r ]) in
@@ -636,10 +639,10 @@ let pp : type r. Format.formatter -> r prim -> unit =
         | R2c _ -> "R2c"
         | C2r { n; _ } -> Printf.sprintf "C2r of %d points" n
       in
-      Format.fprintf ppf " %s along %a" kind pp_shape (fft_axes f)
+      Format.fprintf ppf " %s along %a" kind pp_ints (fft_axes f)
   | Linalg l -> Format.fprintf ppf " %s" (routine_name l)
-  | Fold { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
-  | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
+  | Fold { shape; _ } -> Format.fprintf ppf " into %a" pp_ints shape
+  | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_ints shape
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
 
@@ -673,13 +676,13 @@ let has_layout_shape x l =
 (* A loop's rule on its loads and coordinates: a load per operand of [prog],
    of its dtype and of [layout]'s shape, which is C-contiguous, and a
    coordinate along an axis of that shape. [what] names the loop. *)
-let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load array)
+let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
     =
   let ins = prog.ins in
-  if Array.length loads <> Iarray.length ins then
+  if Iarray.length loads <> Iarray.length ins then
     invalid_argf "%s: a program of %d operands over %d loads" by
-      (Iarray.length ins) (Array.length loads);
-  Array.iteri
+      (Iarray.length ins) (Iarray.length loads);
+  Iarray.iteri
     (fun i l ->
       let (D.Any want) = Iarray.get ins i in
       let (D.Any have) = load_dtype l in
@@ -689,7 +692,7 @@ let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load array)
     loads;
   if not (L.is_contiguous layout && L.offset layout = 0) then
     invalid_argf "%s: a %s's layout %a is not C-contiguous" by what L.pp layout;
-  Array.iteri
+  Iarray.iteri
     (fun i l ->
       let fits =
         match l with
@@ -710,7 +713,7 @@ let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load array)
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
 let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
-    (loads : d load array) =
+    (loads : d load iarray) =
   check_loads ~by ~what:"map" layout prog loads;
   let produced = prog.outs in
   let rec check : type q. int -> (d, q) outs -> unit =
@@ -751,7 +754,7 @@ let check_reduction ~by (prog : P.t) shape axes (r, k) =
   let (D.Any have) = P.dtype prog (Iarray.get produced k) in
   if not (Nx_kernel.accepts r have) then
     invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have);
-  let empty = Array.exists (fun a -> shape.(a) = 0) axes in
+  let empty = Iarray.exists (fun a -> shape.(a) = 0) axes in
   match r with
   | (Monoid (Max | Min) | Arg _) when empty ->
       invalid_argf "%s: %s of no term" by (reduction_name r)
@@ -759,13 +762,13 @@ let check_reduction ~by (prog : P.t) shape axes (r, k) =
 
 (* [axes] strictly increasing, each an axis of [shape]. *)
 let check_axes ~by shape axes =
-  Array.iteri
+  Iarray.iteri
     (fun i a ->
       if a < 0 || a >= Array.length shape then
         invalid_argf "%s: axis %d of a value of rank %d" by a
           (Array.length shape);
-      if i > 0 && axes.(i - 1) >= a then
-        invalid_argf "%s: axes %a are not strictly increasing" by pp_shape axes)
+      if i > 0 && Iarray.get axes (i - 1) >= a then
+        invalid_argf "%s: axes %a are not strictly increasing" by pp_ints axes)
     axes
 
 let reduction_width : type d a. (d, a) reduction -> int = function
@@ -779,12 +782,12 @@ let rec results_width : type d r. (d, r) reductions -> int = function
 (* A loop's loads and results number at most [Prog.max_operands], as a
    program's operands and outputs do. *)
 let check_width ~by loads results =
-  if Array.length loads + results > P.max_operands then
-    invalid_argf "%s: %d loads and %d results, past %d" by (Array.length loads)
+  if Iarray.length loads + results > P.max_operands then
+    invalid_argf "%s: %d loads and %d results, past %d" by (Iarray.length loads)
       results P.max_operands
 
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
-    (loads : d load array) =
+    (loads : d load iarray) =
   check_loads ~by ~what:"reduction" layout prog loads;
   let shape = L.shape layout in
   check_axes ~by shape axes;
@@ -796,7 +799,7 @@ let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
 let any_shape (Any x) = shape x
 
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
-    (loads : d load array) (carry : d any option) =
+    (loads : d load iarray) (carry : d any option) =
   check_loads ~by ~what:"scan" layout prog loads;
   let shape = L.shape layout in
   check_axes ~by shape [| axis |];
@@ -821,7 +824,7 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
 (* [shape] without [axes]. *)
 let reduced shape axes =
   Array.of_list
-    (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list shape))
+    (List.filteri (fun a _ -> not (Iarray.mem a axes)) (Array.to_list shape))
 
 (* Each operation's rule ({!rule}) and route: where it reads its operands, in
    [operands]'s order, and where its results lie. [results] and [prepare] take
@@ -831,25 +834,26 @@ let reduced shape axes =
    padded load by [p] reads whole: those it pads, crops or windows, and those
    its windows append. *)
 let mark_padded whole (p : Nx_kernel.pad) =
-  let r = Array.length p.lo in
-  Array.iteri
-    (fun a _ ->
-      if a >= r || p.lo.(a) <> 0 || p.hi.(a) <> 0 || p.interior.(a) <> 0 then
-        whole.(a) <- true)
-    whole;
-  Array.iter
+  let r = Iarray.length p.lo in
+  let padded a =
+    Iarray.get p.lo a <> 0 || Iarray.get p.hi a <> 0
+    || Iarray.get p.interior a <> 0
+  in
+  Array.iteri (fun a _ -> if a >= r || padded a then whole.(a) <- true) whole;
+  Iarray.iter
     (fun (w : Nx_array.Move.window) -> whole.(w.axis) <- true)
     p.windows
 
 let marked whole =
-  Array.of_list
+  Iarray.of_list
     (List.filter (fun a -> whole.(a)) (List.init (Array.length whole) Fun.id))
 
 (* The axes of a loop of [layout] that its loads read whole, beside [axes]. *)
-let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
+let padded_axes (type d) layout ?(axes : int iarray = [||])
+    (loads : d load iarray) =
   let whole = Array.make (Array.length (L.shape layout)) false in
-  Array.iter (fun a -> whole.(a) <- true) axes;
-  Array.iter
+  Iarray.iter (fun a -> whole.(a) <- true) axes;
+  Iarray.iter
     (fun (l : d load) ->
       match l with Plain _ -> () | Padded { pad; _ } -> mark_padded whole pad)
     loads;
@@ -859,18 +863,18 @@ let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
    those of [whole], read whole. *)
 let reading whole r =
   Array.init r (fun a ->
-      if Array.mem a whole then Route.Whole else Route.Becomes a)
+      if Iarray.mem a whole then Route.Whole else Route.Becomes a)
 
 (* A loop's operands' ranks: its rank, but a padded load's own. A loop of no
    load has the one row of its rank, so that on a split placement each device
    computes its window as over a load of the loop's shape. *)
-let load_ranks (type d) layout (loads : d load array) =
-  if Array.length loads = 0 then [| L.rank layout |]
+let load_ranks (type d) layout (loads : d load iarray) =
+  if Iarray.length loads = 0 then [| L.rank layout |]
   else
-    Array.map
-      (fun (l : d load) ->
-        match l with Plain _ -> L.rank layout | Padded { x; _ } -> rank x)
-      loads
+    Array.init (Iarray.length loads) (fun i ->
+        match Iarray.get loads i with
+        | Plain _ -> L.rank layout
+        | Padded { x; _ } -> rank x)
 
 (* Whether a scan by [r] continues from the terms before a window: one of a
    [Sum], [Prod], [Max], [Min] or [Arg], whose kernels take a carry or whose
@@ -888,26 +892,26 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
  fun op ranks ->
   let rows ?scanned axes whole =
     let becomes a : Route.axis =
-      if Array.mem a whole then Whole
-      else if Array.mem a axes then Reduced a
+      if Iarray.mem a whole then Whole
+      else if Iarray.mem a axes then Reduced a
       else if scanned = Some a then Scanned a
       else
         Becomes
-          (a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
+          (a - Iarray.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
     in
     Route.Axes (Array.map (fun r -> Array.init r becomes) ranks)
   in
-  let padded (type d) layout (loads : d load array) axes =
-    if Array.exists is_padded loads then padded_axes layout ~axes loads
+  let padded (type d) layout (loads : d load iarray) axes =
+    if Iarray.exists is_padded loads then padded_axes layout ~axes loads
     else axes
   in
   match op with
   | Map { layout; loads; _ } -> rows [||] (padded layout loads [||])
   | Reduce { layout; axes; loads; _ } -> rows axes (padded layout loads [||])
   | Scan { layout; axis; loads; reduction; carry; _ } ->
-      let plain = not (Array.exists is_padded loads) in
+      let plain = not (Iarray.exists is_padded loads) in
       (* A loop of no load has no operand to cut: it scans whole. *)
-      let loaded = Array.length loads > 0 in
+      let loaded = Iarray.length loads > 0 in
       if carries reduction && Option.is_none carry && plain && loaded then
         rows ~scanned:axis [||] [||]
       else rows [||] (padded layout loads [| axis |])
@@ -935,16 +939,16 @@ let contract_rule batch contracting ra rb init =
   let operand side r first =
     let next = ref first in
     Array.init r (fun a ->
-        match Array.find_index (fun p -> side p = a) batch with
+        match Iarray.find_index (fun p -> side p = a) batch with
         | Some j -> Route.Becomes j
         | None -> (
-            match Array.find_index (fun p -> side p = a) contracting with
+            match Iarray.find_index (fun p -> side p = a) contracting with
             | Some p -> Reduced p
             | None ->
                 incr next;
                 Becomes (!next - 1)))
   in
-  let nb = Array.length batch and nc = Array.length contracting in
+  let nb = Iarray.length batch and nc = Iarray.length contracting in
   let a = operand fst ra nb and b = operand snd rb (ra - nc) in
   match init with
   | None -> Route.Axes [| a; b |]
@@ -965,7 +969,7 @@ let bitcast_rule dt x =
 let rule : type r. r prim -> Route.rule =
  fun op ->
   match op with
-  | Map { loads; _ } when not (Array.exists is_padded loads) -> Elementwise
+  | Map { loads; _ } when not (Iarray.exists is_padded loads) -> Elementwise
   | Map { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
   | Reduce { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
   | Scan { layout; loads; carry = None; _ } ->
@@ -977,7 +981,7 @@ let rule : type r. r prim -> Route.rule =
       let ranks = Array.append (load_ranks layout loads) [| rank |] in
       match loop_rule op ranks with
       | Axes t ->
-          t.(Array.length loads).(axis) <- Route.Whole;
+          t.(Iarray.length loads).(axis) <- Route.Whole;
           Axes t
       | Elementwise | Into _ -> invalid_arg "Prim.rule: a loop's rule")
   | Gather { axis; idx; x } ->
@@ -1028,14 +1032,14 @@ let routed (type d r) ~by (op : r prim) (xs : d any array) : d Route.t option =
 (* A loop [op]'s route, over loads of [layout]'s shape but where padded, then a
    scan's carry. *)
 let loads_route (type d r) ~by ?(carry : d any option) (op : r prim) layout
-    (loads : d load array) =
+    (loads : d load iarray) =
   let placement (l : d load) =
     match l with Plain x -> at x | Padded { x; _ } -> at x
   in
-  let extra = Option.to_list carry in
+  let extra = Option.to_list carry and n = Iarray.length loads in
   let ps =
     Array.append
-      (Array.map placement loads)
+      (Array.init n (fun i -> placement (Iarray.get loads i)))
       (Array.of_list (List.map (fun (Any c) -> at c) extra))
   in
   match Route.common ps with
@@ -1047,7 +1051,8 @@ let loads_route (type d r) ~by ?(carry : d any option) (op : r prim) layout
         match l with Plain _ -> s | Padded { x; _ } -> shape x
       in
       let shapes =
-        Array.append (Array.map shape_of loads)
+        Array.append
+          (Array.init n (fun i -> shape_of (Iarray.get loads i)))
           (Array.of_list (List.map (fun (Any c) -> shape c) extra))
       in
       Route.route ~by (rule op) ps shapes
@@ -1187,7 +1192,7 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   (* A loop's window: the window of a load of its shape. *)
   let loop layout =
     match op with
-    | Map { loads; _ } when not (Array.exists is_padded loads) -> w
+    | Map { loads; _ } when not (Iarray.exists is_padded loads) -> w
     | _ ->
         let r = loop_rule op [| L.rank layout |] in
         Route.window r ~operand:0 (L.shape layout) w
@@ -1196,9 +1201,9 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   | Map m -> within op (loop m.layout)
   | Reduce m -> within op (loop m.layout)
   | Scan m -> within op (loop m.layout)
-  | Fold f -> Fold { f with shape = extents w }
+  | Fold f -> Fold { f with shape = Iarray.of_array (extents w) }
   | Assemble a ->
-      if extents w <> a.shape then
+      if extents w <> Iarray.to_array a.shape then
         invalid_arg "Prim.local: an assembly is computed whole";
       op
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
@@ -1357,7 +1362,7 @@ let check_fold ~by whole pad x =
       pp_shape s
 
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
-    (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
+    (pieces : (Nx_array.Move.range iarray * (v, s, d) t) list) =
   (match L.contiguous whole with
   | _ -> ()
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
@@ -1395,7 +1400,7 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
    [max_int] past it. *)
 let free_extent ~batch ~contracting s side =
   let rec names ps i k =
-    k < Array.length ps && (side ps.(k) = i || names ps i (k + 1))
+    k < Iarray.length ps && (side (Iarray.get ps k) = i || names ps i (k + 1))
   in
   let n = ref 1 in
   for i = 0 to Array.length s - 1 do
@@ -1473,10 +1478,10 @@ type 'r partial =
   | Reduce_partial : {
       route : 'd Route.t;
       layout : L.t;
-      axes : int array;
+      axes : int iarray;
       prog : P.t;
       reductions : ('d, 'r) reductions;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r partial
   | Scan_partial : {
@@ -1485,14 +1490,14 @@ type 'r partial =
       axis : int;
       prog : P.t;
       reduction : ('d, 'r) reduction;
-      loads : 'd load array;
+      loads : 'd load iarray;
     }
       -> 'r partial
   | Contract_partial : {
       route : 'd Route.t;
       order : Nx_kernel.order;
-      batch : (int * int) array;
-      contracting : (int * int) array;
+      batch : (int * int) iarray;
+      contracting : (int * int) iarray;
       acc : D.any;
       out : ('v, 's) dtype;
       a : ('a, 'b, 'd) t;
@@ -1552,10 +1557,12 @@ let results_or_partial : type r.
         | C2r { dtype; _ } -> m 0 (of_layout dtype layout placement))
   | Linalg l -> Left (linalg_results ~by m op l)
   | Fold { shape; pad; x } ->
+      let shape = Iarray.to_array shape in
       check_fold ~by shape pad x;
       let placement = one_result ~by op x in
       Left (m 0 (of_layout (dtype x) (L.contiguous shape) placement))
   | Assemble { dtype; shape; fill; pieces } ->
+      let shape = Iarray.to_array shape in
       check_assemble ~by dtype shape fill pieces;
       let placement =
         result
@@ -1644,7 +1651,7 @@ let refused ~by node ins =
        (List.map (fun (D.Any dt) -> D.name dt) (Iarray.to_list ins)))
 
 let one_node node dt ins loads =
-  let (Any x) = load_any loads.(0) in
+  let (Any x) = load_any (Iarray.get loads 0) in
   let shape = shape x in
   Map
     {
@@ -1684,12 +1691,12 @@ let read_at (r : _ Route.t option) i =
 let placed : type d.
     ('v 's 'e. 'e Devices.placement option -> ('v, 's, 'e) t -> ('v, 's, 'e) t) ->
     d Route.t option ->
-    d load array ->
-    d load array option =
+    d load iarray ->
+    d load iarray option =
  fun place r loads ->
   let moved = ref false in
   let loads =
-    Array.mapi
+    Iarray.mapi
       (fun i l ->
         match l with
         | Plain x ->
@@ -1746,7 +1753,7 @@ let prepare : type r.
       let carry =
         Option.map
           (fun (Any c) ->
-            let c' = place (read_at r (Array.length p.loads)) c in
+            let c' = place (read_at r (Iarray.length p.loads)) c in
             if c' != c then moved := true;
             Any c')
           p.carry
@@ -1774,7 +1781,7 @@ let prepare : type r.
       ignore (sort_shape ~by s.axis s.k s.x);
       Sort { s with x = placed_one ~by place op s.x }
   | Fold f ->
-      check_fold ~by f.shape f.pad f.x;
+      check_fold ~by (Iarray.to_array f.shape) f.pad f.x;
       Fold { f with x = placed_one ~by place op f.x }
   | Fft f ->
       ignore (fft_shape ~by f);
@@ -1785,7 +1792,7 @@ let prepare : type r.
       let r = routed ~by op (Array.of_list (linalg_operands l)) in
       Linalg (map_linalg (fun i x -> place (read_at r i) x) l)
   | Assemble a ->
-      check_assemble ~by a.dtype a.shape a.fill a.pieces;
+      check_assemble ~by a.dtype (Iarray.to_array a.shape) a.fill a.pieces;
       let r =
         routed ~by op
           (Array.of_list (List.map (fun (_, x) -> Any x) a.pieces))

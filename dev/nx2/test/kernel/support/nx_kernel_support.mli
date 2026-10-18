@@ -6,8 +6,8 @@
 (** What nx.kernel's suite needs beyond the library's interface. *)
 
 val view_fields :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
@@ -20,8 +20,8 @@ val view_fields :
     [Error] of what the fill answers. *)
 
 val view_groups :
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->

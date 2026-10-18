@@ -66,6 +66,7 @@ module Dft = struct
 
   let transform kind ~axes ~dst x =
     Atomic.incr calls;
+    let axes = Iarray.to_array axes in
     let last = axes.(Array.length axes - 1) in
     let z = complexes x and shape = L.shape (A.layout x) in
     let along sign (z, shape) a = lines z shape a shape.(a) (dft sign) in
@@ -116,7 +117,9 @@ module Dft = struct
   let r2c ~axes ~dst x = transform R2c ~axes ~dst x
 
   let c2r ~axes ~dst x =
-    let n = (L.shape (A.layout dst)).(axes.(Array.length axes - 1)) in
+    let n =
+      (L.shape (A.layout dst)).(Iarray.get axes (Iarray.length axes - 1))
+    in
     transform (C2r n) ~axes ~dst x
 end
 
@@ -339,7 +342,7 @@ let law_declined c =
   let complexes xs = Array.map (fun re -> { Complex.re; im = 0. }) xs in
   let compute p =
     let on a = Nx.place p (Nx.Repr.of_array Nx.Host.v a) in
-    let axes = c.axes and s = c.shape in
+    let axes = Iarray.of_array c.axes and s = c.shape in
     match (c.kind, c.wide) with
     | Complex direction, true ->
         let x = on (A.of_array D.Complex128 s c.xs) in
@@ -496,6 +499,7 @@ let errors c seed =
     let axes = [| 0 |] and s = [| count |] in
     let reals = Array.map (fun (z : Complex.t) -> z.re) in
     let complexes = Array.map (fun re -> { Complex.re; im = 0. }) in
+    let axes = Iarray.of_array axes in
     match (c.kind, c.wide) with
     | Complex direction, true ->
         let x = on (A.of_array D.Complex128 s xs) in

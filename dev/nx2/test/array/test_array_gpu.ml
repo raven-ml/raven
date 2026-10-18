@@ -31,7 +31,7 @@ let slice rs a =
   Option.get
     (A.move
        (M.Slice
-          (Array.of_list
+          (Iarray.of_list
              (List.map
                 (fun (start, count, step) -> { M.start; count; step })
                 rs)))

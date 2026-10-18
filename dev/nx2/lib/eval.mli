@@ -79,8 +79,8 @@ val contract :
   shape:int array ->
   rows:int ->
   columns:int ->
-  batch:(int * int) array ->
-  contracting:(int * int) array ->
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
   ('v, 's) dtype ->
   ('a, 'b, 'd) t ->

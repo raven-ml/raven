@@ -123,7 +123,7 @@ let pad_of s =
   let d = s.(a) in
   let extent = lo + hi + d + (interior * max 0 (d - 1)) in
   let hi = hi + max 0 ((if windowed then 2 else 0) - extent) in
-  let at v = Array.init rank (fun i -> if i = a then v else 0) in
+  let at v = Iarray.init rank (fun i -> if i = a then v else 0) in
   {
     Nx_kernel.lo = at lo;
     hi = at hi;
@@ -196,7 +196,7 @@ let reduce_of loop prog loads =
       (Value.Reduce
          {
            layout;
-           axes;
+           axes = Iarray.of_array axes;
            prog;
            reductions =
              Value.[ Monoid (Sum, 0, D.Float32); Arg (Max, 0, D.Float32) ];
@@ -207,7 +207,7 @@ let reduce_of loop prog loads =
       (Value.Reduce
          {
            layout;
-           axes;
+           axes = Iarray.of_array axes;
            prog;
            reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
            loads;
@@ -304,7 +304,7 @@ let fold_op =
   let* s = shape_of rank in
   let* pad = pad_of s in
   let+ x = f32 (loop_of pad s) in
-  Op (Value.Fold { shape = s; pad; x })
+  Op (Value.Fold { shape = Iarray.of_array s; pad; x })
 
 let fft_op =
   let open Gen in
@@ -432,6 +432,8 @@ let contract_of extents =
   let* b = f32 sb in
   let result = Array.of_list (List.map snd batch_axes @ [ rows; cols ]) in
   let+ init = if init then map Option.some (f32 result) else constant None in
+  let batch = Iarray.of_array batch
+  and contracting = Iarray.of_array contracting in
   let order = Prim.contract_order ~batch ~contracting a b in
   Op
     (Value.Contract
@@ -479,7 +481,7 @@ let ops =
 (* Each case's family, as the covers name it. *)
 let family (Op op) =
   let loop kind loads =
-    if Array.exists Prim.is_padded loads then "padded " ^ kind else kind
+    if Iarray.exists Prim.is_padded loads then "padded " ^ kind else kind
   in
   match op with
   | Value.Map { loads; _ } -> loop "Map" loads
@@ -595,7 +597,10 @@ let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
   Array.mapi
     (fun i (A.Any a) ->
       let a =
-        Option.get (A.move (Slice (windows i (L.shape (A.layout a)))) a)
+        Option.get
+          (A.move
+             (Slice (Iarray.of_array (windows i (L.shape (A.layout a)))))
+             a)
       in
       let a = if nan_bits_unspecified op then any_nan (A.copy a) else a in
       A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))))
@@ -606,7 +611,10 @@ let agrees (Op op, w) =
   let whole = Exec.run ~by:"t" op in
   let view i x =
     let win = Route.window rule ~operand:i (Prim.shape x) w in
-    let a = Option.get (A.move (Slice win) (Iarray.get (Prim.arrays x) 0)) in
+    let a =
+      Option.get
+        (A.move (Slice (Iarray.of_array win)) (Iarray.get (Prim.arrays x) 0))
+    in
     Value.Array { at = Prim.placement x; a; dead = Value.Live }
   in
   let local = Prim.local (Prim.mapi view op) w in
@@ -645,7 +653,7 @@ let law (o, w) =
 let threshold_case =
   let open Gen in
   let* (Op op as o) = threshold_op in
-  let nb = match op with Value.Contract c -> Array.length c.batch | _ -> 0 in
+  let nb = match op with Value.Contract c -> Iarray.length c.batch | _ -> 0 in
   let s = shape_of_results o in
   let range a d =
     let* count =
@@ -670,7 +678,7 @@ let threshold_case =
 let threshold_law ((Op op as o), (w : M.range array)) =
   (match op with
   | Value.Contract { order; batch; _ } ->
-      let nb = Array.length batch and s = shape_of_results o in
+      let nb = Iarray.length batch and s = shape_of_results o in
       let m = w.(nb).count and n = w.(nb + 1).count in
       let cut = m < s.(nb) || n < s.(nb + 1) in
       let chain = order = Nx_kernel.Chain and some = m > 0 && n > 0 in
@@ -862,7 +870,7 @@ let test_contract_rows () =
       (Array.init 24 (fun i -> [| 1e7; 0.1; -1e7 |].(i mod 3)))
   in
   let b = value D.Float32 [| 3; 8 |] (Array.make 24 1.) in
-  let batch = [||] and contracting = [| (1, 0) |] in
+  let batch : _ iarray = [||] and contracting : _ iarray = [| (1, 0) |] in
   let op =
     Value.Contract
       {
@@ -904,7 +912,7 @@ let test_contract_nans () =
       (Array.init 24 (fun i -> [| nan; -.nan; 1. |].(i mod 3)))
   in
   let b = value D.Float32 [| 3; 8 |] (Array.make 24 1.) in
-  let batch = [||] and contracting = [| (1, 0) |] in
+  let batch : _ iarray = [||] and contracting : _ iarray = [| (1, 0) |] in
   let op =
     Value.Contract
       {
@@ -1006,7 +1014,7 @@ let mixed (x : (float, D.float32_elt, b) Value.t)
   Value.Reduce
     {
       layout = L.contiguous shape;
-      axes;
+      axes = Iarray.of_array axes;
       prog =
         P.v ~ins:[| D.Any D.Float32; D.Any D.Int8 |] [| In 0; In 1 |]
           ~outs:[| 0; 1 |];

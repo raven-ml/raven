@@ -725,6 +725,7 @@ let source mv s idx =
   let r = Array.length s in
   match mv with
   | R.Reshape s' ->
+      let s' = Iarray.to_array s' in
       let k = ref 0 in
       Array.iteri (fun i j -> k := (!k * s'.(i)) + j) idx;
       let src = Array.make r 0 in
@@ -734,14 +735,19 @@ let source mv s idx =
       done;
       src
   | Broadcast s' ->
+      let s' = Iarray.to_array s' in
       let off = Array.length s' - r in
       Array.init r (fun i -> if s.(i) = 1 then 0 else idx.(off + i))
   | Permute p ->
+      let p = Iarray.to_array p in
       let src = Array.make r 0 in
       Array.iteri (fun i a -> src.(a) <- idx.(i)) p;
       src
-  | Slice rs -> Array.init r (fun i -> rs.(i).start + (idx.(i) * rs.(i).step))
+  | Slice rs ->
+      let rs = Iarray.to_array rs in
+      Array.init r (fun i -> rs.(i).start + (idx.(i) * rs.(i).step))
   | Window ws ->
+      let ws = Iarray.to_array ws in
       let src = Array.sub idx 0 r in
       Array.iteri
         (fun j (w : R.window) ->
@@ -755,21 +761,24 @@ let move_of s =
   one_of
     ([
        map
-         (fun p -> R.Permute (Array.of_list p))
+         (fun p -> R.Permute (Iarray.of_list p))
          (permutation (List.init r Fun.id));
-       constant (R.Broadcast (Array.append [| 3 |] s));
+       constant (R.Broadcast (Iarray.of_array (Array.append [| 3 |] s)));
        constant
-         (R.Reshape (Array.append [| 2; s.(0) / 2 |] (Array.sub s 1 (r - 1))));
+         (R.Reshape
+            (Iarray.of_array
+               (Array.append [| 2; s.(0) / 2 |] (Array.sub s 1 (r - 1)))));
        map
          (fun choice ->
            R.Slice
-             (Array.mapi
-                (fun i d ->
-                  match (choice + i) mod 3 with
-                  | 0 -> { R.start = 0; count = d; step = 1 }
-                  | 1 -> { R.start = 0; count = d / 2; step = 1 }
-                  | _ -> { R.start = d - 1; count = d; step = -1 })
-                s))
+             (Iarray.of_array
+                (Array.mapi
+                   (fun i d ->
+                     match (choice + i) mod 3 with
+                     | 0 -> { R.start = 0; count = d; step = 1 }
+                     | 1 -> { R.start = 0; count = d / 2; step = 1 }
+                     | _ -> { R.start = d - 1; count = d; step = -1 })
+                   s)))
          (int_range 0 2);
        map
          (fun a ->
@@ -780,7 +789,9 @@ let move_of s =
     if r >= 2 then
       [
         constant
-          (R.Reshape (Array.append [| s.(0) * s.(1) |] (Array.sub s 2 (r - 2))));
+          (R.Reshape
+             (Iarray.of_array
+                (Array.append [| s.(0) * s.(1) |] (Array.sub s 2 (r - 2)))));
       ]
     else [])
 

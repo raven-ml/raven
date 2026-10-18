@@ -236,7 +236,7 @@ val reduce_on :
   threads:int ->
   Nx_kernel.Prog.t ->
   shape:int array ->
-  axes:int array ->
+  axes:int iarray ->
   (Nx_kernel.reduction * int) array ->
   dsts:Nx_array.any array ->
   Nx_kernel.load array ->
@@ -258,7 +258,7 @@ val scan_on :
 val c2c_on :
   threads:int ->
   Nx_kernel.direction ->
-  axes:int array ->
+  axes:int iarray ->
   dst:(Complex.t, 's) Nx_array.t ->
   (Complex.t, 's) Nx_array.t ->
   Nx_array.answer
@@ -266,7 +266,7 @@ val c2c_on :
 
 val r2c_on :
   threads:int ->
-  axes:int array ->
+  axes:int iarray ->
   dst:(Complex.t, 'c) Nx_array.t ->
   (float, 'r) Nx_array.t ->
   Nx_array.answer
@@ -274,7 +274,7 @@ val r2c_on :
 
 val c2r_on :
   threads:int ->
-  axes:int array ->
+  axes:int iarray ->
   dst:(float, 'r) Nx_array.t ->
   (Complex.t, 'c) Nx_array.t ->
   Nx_array.answer

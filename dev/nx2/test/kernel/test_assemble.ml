@@ -114,7 +114,10 @@ let case_gen ?(dtypes = D.all) ?(shapes = small) () =
   let pieces =
     Array.mapi
       (fun j r ->
-        operand d (M.shape (Slice r) shape) views.(j) (fun _ -> element d rs))
+        operand d
+          (M.shape (Slice (Iarray.of_array r)) shape)
+          views.(j)
+          (fun _ -> element d rs))
       regions
   in
   let fill = canonical d (element d rs) in
@@ -130,7 +133,9 @@ let assemble_on (b : Support.backend) ?(in_place = false) c =
       (p, Array.mapi (fun j x -> if j = 0 then p else x) pieces)
     else (A.create Rig.host dt c.shape, pieces)
   in
-  let pieces = Array.map2 (fun r x -> (r, x)) c.regions pieces in
+  let pieces =
+    Array.map2 (fun r x -> (Iarray.of_array r, x)) c.regions pieces
+  in
   match K.assemble ~fill:(value dt c.fill) ~dst pieces with
   | A.Done -> Some (A.Any dst)
   | A.Declined -> None
@@ -140,7 +145,8 @@ let expected c =
   let out = Array.make (total c.shape) c.fill in
   Array.iteri
     (fun j r ->
-      let ps = M.shape (Slice r) c.shape and es = elements c.pieces.(j) in
+      let ps = M.shape (Slice (Iarray.of_array r)) c.shape
+      and es = elements c.pieces.(j) in
       Array.iteri
         (fun k e ->
           let i = index_of ps k in
@@ -189,7 +195,7 @@ let test_threads (b : Support.backend) () =
   let case d form shape region =
     let piece =
       operand d
-        (M.shape (Slice region) shape)
+        (M.shape (Slice (Iarray.of_array region)) shape)
         (plain (Array.length shape))
         (fun _ -> element d rs)
     in
@@ -273,7 +279,10 @@ let misfits =
 let law_refuses (b : Support.backend) c =
   let module K = (val b.kernels) in
   let zeros s = A.of_array D.Float32 s (Array.make (total s) 0.) in
-  let want = Nx_kernel.Shape.assemble c.into (Array.map fst c.parts) in
+  let want =
+    Nx_kernel.Shape.assemble c.into
+      (Array.map (fun (r, _) -> Iarray.of_array r) c.parts)
+  in
   let fit = want = Ok (Array.map snd c.parts) in
   cover "fits" fit;
   cover "misfits" (not fit);
@@ -281,12 +290,12 @@ let law_refuses (b : Support.backend) c =
     (if fit then A.Done else A.Shape_mismatch)
     (K.assemble ~fill:0.
        ~dst:(A.create Rig.host D.Float32 c.into)
-       (Array.map (fun (r, s) -> (r, zeros s)) c.parts))
+       (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts))
 
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
-  let region = [| { M.start = 1; count = 2; step = 1 } |] in
+  let region : _ iarray = [| { M.start = 1; count = 2; step = 1 } |] in
   let dst = A.create Rig.host D.Float32 [| 4 |] in
   equal ~msg:"a piece off its region" answer A.Shape_mismatch
     (K.assemble ~fill:0. ~dst
@@ -311,7 +320,9 @@ let law_guards (b : Support.backend) (c, side) =
   cover "at the page before" (side = Support.Before);
   let (D.Any dt) = c.dtype in
   let call xs ds =
-    let pieces = Array.map2 (fun r x -> (r, A.expect dt x)) c.regions xs in
+    let pieces =
+      Array.map2 (fun r x -> (Iarray.of_array r, A.expect dt x)) c.regions xs
+    in
     K.assemble ~fill:(value dt c.fill) ~dst:(A.expect dt ds.(0)) pieces
   in
   equal answer A.Done

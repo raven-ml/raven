@@ -51,7 +51,7 @@ let lay (type v s) l (dt : (v, s) D.t) shape (data : v array) : (v, s) A.t =
           (Array.of_list (List.init (Array.length data) (fun _ -> data.(0))))
       in
       (* Fill the transposed base so that its view reads [data] in C order. *)
-      let view = Option.get (A.move (M.Permute rev) base) in
+      let view = Option.get (A.move (M.Permute (Iarray.of_array rev)) base) in
       let idx = Array.make r 0 in
       Array.iteri
         (fun k v ->
@@ -75,12 +75,12 @@ let lay (type v s) l (dt : (v, s) D.t) shape (data : v array) : (v, s) A.t =
         Option.get
           (A.move (M.Slice [| { start = 1; count = n; step = 1 } |]) padded)
       in
-      Option.get (A.move (M.Reshape shape) tail)
+      Option.get (A.move (M.Reshape (Iarray.of_array shape)) tail)
   | Broadcast ->
       if Array.length data = 0 then A.of_array dt shape data
       else
         let one = A.of_array dt [||] [| data.(0) |] in
-        Option.get (A.move (M.Broadcast shape) one)
+        Option.get (A.move (M.Broadcast (Iarray.of_array shape)) one)
 
 (* What [lay] reads back: a broadcast holds its first element everywhere. *)
 let read l data =
@@ -1551,8 +1551,8 @@ let ccontract (type v s d) (cshow : v -> string) c acc batch contracting
       (Contract
          {
            order = c.order;
-           batch;
-           contracting;
+           batch = Iarray.of_array batch;
+           contracting = Iarray.of_array contracting;
            acc;
            out = Nx.dtype a;
            a;

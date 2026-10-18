@@ -382,7 +382,7 @@ let case_of dts =
   let* a = drawn dt s in
   let lead =
     let+ e = int_range 2 3 in
-    Some (M.Broadcast (Array.append [| e |] s))
+    Some (M.Broadcast (Iarray.of_array (Array.append [| e |] s)))
   in
   let+ m = frequency [ (4, option (movement ~apart:false s)); (1, lead) ] in
   let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
@@ -896,7 +896,7 @@ let alike (type v s) (x : (v, s) A.t) : (v, s) A.t Gen.t =
   let* flip = bool in
   if flip && r >= 2 then
     let+ y = drawn (A.dtype x) (Array.map (fun i -> s.(i)) rev) in
-    Option.get (A.move (M.Permute rev) y)
+    Option.get (A.move (M.Permute (Iarray.of_array rev)) y)
   else drawn (A.dtype x) s
 
 type pair = Pair : ('v, 's) A.t * ('v, 's) A.t -> pair
@@ -1658,7 +1658,7 @@ let held (p : P.t) =
 (* [x] as a padded load of no padding, filled with zeros: it reads [x] as
    a plain load does. *)
 let unpadded (type v s) (x : (v, s) A.t) =
-  let none = Array.make (L.rank (A.layout x)) 0 in
+  let none = Iarray.init (L.rank (A.layout x)) (fun _ -> 0) in
   let pad =
     { Nx_kernel.lo = none; hi = none; interior = none; windows = [||] }
   in
