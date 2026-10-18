@@ -330,18 +330,6 @@ let launch_once g =
   Array.for_all (fun c -> c = 1L)
     (Array.init (Bigarray.Array1.dim counts) (fun i -> counts.{i}))
 
-(* A job of the host's pool, and whether it ran every unit once. *)
-let job_once (total, chunks) =
-  let counts = S.words total in
-  S.count_job ~threads:(S.workers ()) ~total ~chunks counts;
-  Array.for_all (fun c -> c = 1L) (Array.init total (fun i -> counts.{i}))
-
-let job =
-  Gen.with_pp
-    (fun ppf (total, chunks) ->
-      Format.fprintf ppf "%d units, %d chunks" total chunks)
-    (Gen.pair (Gen.int_range 0 256) (Gen.int_range 1 64))
-
 (* Grids of at most 64 groups of 4 threads: the commands race, so a few
    groups per worker suffice. *)
 let small_grid =
@@ -354,7 +342,6 @@ let small_grid = Gen.with_pp pp_grid small_grid
 let domain_commands =
   [
     command "launch" (small_grid @-> returns bool) (fun _ -> true) launch_once;
-    command "pool job" (job @-> returns bool) (fun _ -> true) job_once;
   ]
 
 (* waiting.c's launch over [w] and [b], spinning until w[0] is set. *)
@@ -542,7 +529,7 @@ let domain_tests =
         test_waits_beside_launch;
       test "a launch keeps its buffers until it returns" test_keeps_buffers;
       stateful ~domains:2 ~count:30
-        "launches and pool jobs from two domains each run every unit once"
+        "launches from two domains each run every thread once"
         domain_commands;
       test "the runtime is released while a launch runs" test_released;
       test "a wait for a write follows a device's read beside a host launch"

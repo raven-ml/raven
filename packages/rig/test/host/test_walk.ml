@@ -64,9 +64,9 @@ let child room =
   ignore (linked ());
   collect ();
   let before = mappings () in
-  checked (S.set_address_space (mapped () + room));
+  checked (Rig_support.set_address_space (mapped () + room));
   let got = linked () in
-  checked (S.set_address_space max_int);
+  checked (Rig_support.set_address_space max_int);
   collect ();
   let back = mappings () = before in
   Printf.printf "%s\n%s\nagain: %s\n" got

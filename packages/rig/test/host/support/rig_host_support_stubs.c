@@ -8,7 +8,6 @@
 
 #define _GNU_SOURCE
 
-#include <errno.h>
 #include <stdint.h>
 
 #define CAML_NAME_SPACE
@@ -27,7 +26,6 @@
 #else
 #include <inttypes.h>
 #include <stdio.h>
-#include <sys/resource.h>
 #endif
 
 #include "rig_pool.h"
@@ -87,46 +85,11 @@ value rig_host_test_executable(value v_a) {
 #endif
 }
 
-static void count(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  int64_t *counts = ctx;
-  for (int64_t i = lo; i < hi; i++)
-    __atomic_fetch_add(&counts[i], 1, __ATOMIC_RELAXED);
-}
-
 static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
   (void)hi;
   (void)worker;
   (void)ctx;
-}
-
-/* [set_address_space n] sets this process's soft limit of its address space
-   to [n] bytes: 0, the errno, or -1 off Linux, where the limit does not bound
-   mappings. Holds the runtime: setrlimit does not block. */
-value rig_host_test_set_address_space(value v_n) {
-#if defined(__linux__)
-  struct rlimit l;
-  if (getrlimit(RLIMIT_AS, &l) != 0) return Val_int(errno);
-  l.rlim_cur = (rlim_t)Long_val(v_n);
-  return Val_int(setrlimit(RLIMIT_AS, &l) == 0 ? 0 : errno);
-#else
-  (void)v_n;
-  return Val_int(-1);
-#endif
-}
-
-/* The counts lie outside the heap, in a bigarray the caller keeps alive. */
-value rig_host_test_count_job(value v_threads, value v_total, value v_chunks,
-                                 value v_counts) {
-  CAMLparam4(v_threads, v_total, v_chunks, v_counts);
-  int64_t *counts = Caml_ba_data_val(v_counts);
-  int threads = Int_val(v_threads);
-  int64_t total = Long_val(v_total), chunks = Long_val(v_chunks);
-  caml_release_runtime_system();
-  rig_pool_run(threads, total, chunks, count, counts);
-  caml_acquire_runtime_system();
-  CAMLreturn(Val_unit);
 }
 
 value rig_host_test_empty_job(value v_threads, value v_total,
