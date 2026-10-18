@@ -52,10 +52,15 @@ let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
    last axis, of a result of two or three axes. *)
 type lead = Drawn | Slabs | Padded
 
+(* The complex and sub-byte dtypes, which the laws cover, drawn more often than
+   the others, so that every run of a hundred cases reaches them. *)
+let weight (D.Any d) =
+  if D.is D.Complex d then 10 else if D.bits d < 8 then 6 else 2
+
 (* [last], where given, draws the result's last extent. *)
 let case_gen ?(dtypes = folded) ?last () =
   let open Gen in
-  let* d = of_list ~pp:pp_dtype dtypes in
+  let* d = frequency (List.map (fun d -> (weight d, constant d)) dtypes) in
   let* lead =
     frequency
       [ (2, constant Drawn); (1, constant Slabs); (1, constant Padded) ]
