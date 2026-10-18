@@ -97,6 +97,25 @@ let io =
     | Error e -> failwith e)
 
 let io_device () = Lazy.force io
+
+(* The io device's memory, its pages mapped by the host as its bigarray. *)
+module Mapped = struct
+  include Io
+
+  let pages () (r : region) = Some r
+end
+
+let mapped =
+  lazy
+    (match
+       Rig.open_io
+         { name = "nx2-io-mapped"; io = (module Mapped); make = (fun () -> Ok ()) }
+     with
+    | Ok d -> d
+    | Error e -> failwith e)
+
+let mapped_io_device () = Lazy.force mapped
+let mapped_pages b = Option.get (Rig.Buffer.io b Io.region_key)
 let io_allocations () = Atomic.get Io.allocations
 
 let read_only n =

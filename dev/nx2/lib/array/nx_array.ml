@@ -89,102 +89,17 @@ let refused name answer operands =
        pp_operand)
     operands
 
-(* The OCaml door. It claims every array or none, as nx_read does, then
-   checks under the claims what nx_read checks of a written array, so that a
-   dead array is refused as dead whatever else is wrong with it, and waits
-   for nothing. It allocates nothing: the loops index the caller's arrays. *)
+(* The OCaml door. [admit] claims every array or none, checks under the
+   claims what nx_read checks of a written array, and waits for nothing. An
+   asynchronous exception (a signal handler's, a finaliser's) is raised at a
+   poll point: an allocation, a function's entry or a loop's back edge. No
+   claim the door takes is held across one outside the handler that ends
+   it. *)
 
-(* A refusal's code with nothing claimed, or [NX_OK] with every array claimed
-   plus 256 times one more than the index of the first array whose claim
-   found a lost device behind it, across [written] then [read], or 0. *)
-external claim_all : any array -> any array -> (int[@untagged])
-  = "nx_array_claim_all_byte" "nx_array_claim_all"
-[@@noalloc]
-
-(* An answer is the immediate of its code (nx_array.h). *)
-external answer_of_code : int -> answer = "%identity"
+external admit : any array -> any array -> answer = "nx_array_admit"
 
 external release_all : any array -> any array -> unit = "nx_array_release_all"
 [@@noalloc]
-
-external shares :
-  ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
-  = "nx_array_shares_byte" "nx_array_shares"
-[@@noalloc]
-
-let shares_bytes (Any a) (Any b) =
-  Buffer.overlaps a.buffer b.buffer
-  && shares a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
-
-external same_bytes :
-  ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
-  = "nx_array_identical_byte" "nx_array_identical"
-[@@noalloc]
-
-(* Whether [a] and [b] are identical: one width, one memory, and every index
-   at one byte. *)
-let identical (Any a) (Any b) =
-  Buffer.overlaps a.buffer b.buffer
-  && same_bytes a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
-
-(* The first refusal of a written array, or [Done]: it reaches an element
-   twice, or shares a byte with another written array or with a read array
-   not identical to it. Identity is tested only for arrays that share
-   bytes. *)
-let check written read =
-  let answer = ref Done and i = ref 0 in
-  while !answer = Done && !i < Array.length written do
-    let (Any w as aw) = written.(!i) in
-    if not (Layout.is_distinct w.layout) then answer := Repeated_elements
-    else begin
-      for j = 0 to Array.length written - 1 do
-        if j <> !i && shares_bytes aw written.(j) then answer := Overlapping
-      done;
-      for j = 0 to Array.length read - 1 do
-        if shares_bytes aw read.(j) && not (identical aw read.(j)) then
-          answer := Overlapping
-      done
-    end;
-    incr i
-  done;
-  !answer
-
-(* An asynchronous exception (a signal handler's, a finaliser's) is raised
-   at a poll point: an allocation, a function's entry or a loop's back edge.
-   No claim the door takes is held across one outside a handler that ends
-   it, and every handler ends the claims in C before it allocates the
-   backtrace. *)
-
-(* Raises [Rig.Lost] for the array [k], a lost device's memory, or behind
-   work of a lost device: the wait for its access, under its claim, raises it
-   at once, waiting for no work. *)
-let probe_lost written read k =
-  let nw = Array.length written in
-  let (Any a) = if k < nw then written.(k) else read.(k - nw) in
-  Buffer.wait a.buffer (if k < nw then Rig.Read_write else Rig.Read)
-
-(* [check] and [probe_lost] under the claims [claim_all] answered
-   [claimed] for. *)
-let checked written read claimed =
-  let answer = check written read in
-  let lost = claimed lsr 8 in
-  if answer = Done && lost <> 0 then probe_lost written read (lost - 1);
-  answer
-
-(* [Done] with every array claimed, or a refusal with none. Raises
-   [Rig.Lost], with none, for an array behind a lost device. *)
-let admit written read =
-  let claimed = claim_all written read in
-  if claimed land 0xff <> 0 then answer_of_code (claimed land 0xff)
-  else
-    match checked written read claimed with
-    | Done -> Done
-    | refusal ->
-        release_all written read;
-        refusal
-    | exception e ->
-        release_all written read;
-        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let door ~written ~read f x =
   match admit written read with
@@ -337,33 +252,6 @@ let expect (type v s) (dt : (v, s) Dtype.t) (Any a) : (v, s) t =
 
 (* Single elements *)
 
-external get_float :
-  Buffer.t ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (float[@unboxed]) = "nx_array_get_float_byte" "nx_array_get_float"
-[@@noalloc]
-
-external get_int :
-  Buffer.t -> (int[@untagged]) -> (int[@untagged]) -> (int64[@unboxed])
-  = "nx_array_get_int_byte" "nx_array_get_int"
-[@@noalloc]
-
-external set_float :
-  Buffer.t ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (float[@unboxed]) ->
-  unit = "nx_array_set_float_byte" "nx_array_set_float"
-[@@noalloc]
-
-external set_int :
-  Buffer.t -> (int[@untagged]) -> (int[@untagged]) -> (int64[@unboxed]) -> unit
-  = "nx_array_set_int_byte" "nx_array_set_int"
-[@@noalloc]
-
 let position fn a idx =
   let l = a.layout in
   let r = Layout.rank l in
@@ -379,67 +267,16 @@ let position fn a idx =
   done;
   !p
 
-(* A refusal's code with no claim held, or [NX_OK] with [b]'s memory claimed
-   for [access], plus 256 if the access must wait for device work first. It
-   waits for nothing. *)
-external claim_code : Buffer.t -> Rig.access -> (int[@untagged])
-  = "nx_array_claim_byte" "nx_array_claim"
-[@@noalloc]
+(* A refusal of [get_at], raised by C, which allocates no result block. *)
+exception Refused of answer
 
-external end_claim : Buffer.t -> unit = "nx_array_end_claim" [@@noalloc]
+let () = Callback.register_exception "Nx_array.Refused" (Refused Done)
 
-(* Claims [b]'s memory for [access] under [fn]'s name, and is whether the
-   access must wait for device work first. *)
-let take_claim fn b access =
-  let c = claim_code b access in
-  match answer_of_code (c land 0xff) with
-  | Done -> c lsr 8 <> 0
-  | Dead_buffer ->
-      live fn b;
-      invalid_argf "%s: the buffer is dead" fn
-  | refusal -> invalid_argf "%s: %s" fn (reason refusal)
+(* [a]'s element at position [p], through the door. Raises [Refused]. *)
+external get_at : ('v, 's) t -> int -> 'v = "nx_array_get"
 
-(* Claims [b]'s memory and waits for the work [access] follows, as
-   [Rig.Buffer.read] and [Rig.Buffer.write] do but without an array, and
-   returns with the claim held: the caller ends it with [end_claim], under a
-   handler that ends it too, as the door does. *)
-let claim fn b access =
-  live fn b;
-  if host_address b < 0 then
-    invalid_argf "%s: the host does not address the buffer's memory" fn;
-  if take_claim fn b access then
-    match Buffer.wait b access with
-    | () -> ()
-    | exception e ->
-        end_claim b;
-        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-let load : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v =
- fun dt b p ->
-  let c = Dtype.code dt in
-  let complex () = { Complex.re = get_float b c p 0; im = get_float b c p 1 } in
-  match dt with
-  | Float64 -> get_float b c p 0
-  | Float32 -> get_float b c p 0
-  | Float16 -> get_float b c p 0
-  | Bfloat16 -> get_float b c p 0
-  | Float8_e4m3fn -> get_float b c p 0
-  | Float8_e5m2 -> get_float b c p 0
-  | Float4_e2m1fn -> get_float b c p 0
-  | Int64 -> get_int b c p
-  | Uint64 -> get_int b c p
-  | Int32 -> Int64.to_int32 (get_int b c p)
-  | Uint32 -> Int64.to_int32 (get_int b c p)
-  | Int16 -> Int64.to_int (get_int b c p)
-  | Uint16 -> Int64.to_int (get_int b c p)
-  | Int8 -> Int64.to_int (get_int b c p)
-  | Uint8 -> Int64.to_int (get_int b c p)
-  | Int4 -> Int64.to_int (get_int b c p)
-  | Uint4 -> Int64.to_int (get_int b c p)
-  | Complex128 -> complex ()
-  | Complex64 -> complex ()
-  | Bool -> get_int b c p <> 0L
-  | Bit -> get_int b c p <> 0L
+(* Stores [x] at [a]'s position [p], through the door. *)
+external set_at : ('v, 's) t -> int -> 'v -> answer = "nx_array_set"
 
 (* Raises unless the [int] [x] lies in [dt]'s range. *)
 let check_int fn dt x =
@@ -463,62 +300,17 @@ let checked : type v s. string -> (v, s) Dtype.t -> v -> unit =
   | Bool | Bit ->
       ()
 
-let store : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v -> unit =
- fun dt b p x ->
-  let c = Dtype.code dt in
-  let complex (z : Complex.t) =
-    set_float b c p 0 z.re;
-    set_float b c p 1 z.im
-  in
-  let int x = set_int b c p (Int64.of_int x) in
-  match dt with
-  | Float64 -> set_float b c p 0 x
-  | Float32 -> set_float b c p 0 x
-  | Float16 -> set_float b c p 0 x
-  | Bfloat16 -> set_float b c p 0 x
-  | Float8_e4m3fn -> set_float b c p 0 x
-  | Float8_e5m2 -> set_float b c p 0 x
-  | Float4_e2m1fn -> set_float b c p 0 x
-  | Int64 -> set_int b c p x
-  | Uint64 -> set_int b c p x
-  | Int32 -> set_int b c p (Int64.of_int32 x)
-  | Uint32 -> set_int b c p (Int64.of_int32 x)
-  | Int16 -> int x
-  | Uint16 -> int x
-  | Int8 -> int x
-  | Uint8 -> int x
-  | Int4 -> int x
-  | Uint4 -> int x
-  | Complex128 -> complex x
-  | Complex64 -> complex x
-  | Bool -> int (Bool.to_int x)
-  | Bit -> int (Bool.to_int x)
-
 let get a idx =
-  let p = position "Nx_array.get" a idx in
-  claim "Nx_array.get" a.buffer Rig.Read;
-  match load a.dtype a.buffer p with
-  | x ->
-      end_claim a.buffer;
-      x
-  | exception e ->
-      end_claim a.buffer;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  let fn = "Nx_array.get" in
+  match get_at a (position fn a idx) with
+  | x -> x
+  | exception Refused refusal -> refused fn refusal [ Any a ]
 
 let set a idx x =
   let fn = "Nx_array.set" in
   let p = position fn a idx in
   checked fn a.dtype x;
-  if not (Layout.is_distinct a.layout) then
-    invalid_argf "%s: the array reaches an element twice" fn;
-  if Buffer.access a.buffer = Rig.Read then
-    invalid_argf "%s: the array's memory is read-only" fn;
-  claim fn a.buffer Rig.Read_write;
-  match store a.dtype a.buffer p x with
-  | () -> end_claim a.buffer
-  | exception e ->
-      end_claim a.buffer;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  match set_at a p x with Done -> () | refusal -> refused fn refusal [ Any a ]
 
 (* Bulk access *)
 
@@ -655,17 +447,12 @@ let copy_span ~head ~tail src dst =
     if tail && (n > 1 || not head) then edge (n - 1)
   end
 
-(* Holds a read claim on [b] while [f ()] runs: no donation writes [b]
-   meanwhile. The copies under it order themselves after [b]'s work. *)
-let reading fn b f =
-  ignore (take_claim fn b Rig.Read : bool);
-  match f () with
-  | x ->
-      end_claim b;
-      x
-  | exception e ->
-      end_claim b;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+(* Holds a read claim on [a]'s memory while [f ()] runs: no donation writes
+   it meanwhile. The copies under it order themselves after [a]'s work. *)
+let reading fn a f =
+  match door ~written:[||] ~read:[| Any a |] f () with
+  | Done -> ()
+  | refusal -> refused fn refusal [ Any a ]
 
 (* The elements of [l]: one per index, an axis of stride 0 counted once. *)
 let elements l =
@@ -888,7 +675,7 @@ let transfer_by fn ~src ~dst =
     let direct =
       if packs then Rig.equal (device src) (device dst) else hosted dst.buffer
     in
-    reading fn src.buffer (fun () ->
+    reading fn src (fun () ->
         if direct then gather dst
         else
           let l = packed dst.layout in
@@ -935,7 +722,7 @@ let move_span d a =
   if last > first then begin
     let src = Buffer.view a.buffer ~first ~length:(last - first) in
     let head = lo * bits mod 8 <> 0 and tail = hi * bits mod 8 <> 0 in
-    reading "Nx_array.to_device" src (fun () ->
+    reading "Nx_array.to_device" a (fun () ->
         copy_span ~head ~tail src buffer)
   end;
   let offset = Layout.offset l - (8 * first / bits) in

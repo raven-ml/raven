@@ -149,7 +149,10 @@ val get : ('v, 's) t -> int array -> 'v
 (** [get a i] is [a]'s element at index [i].
 
     Raises [Invalid_argument] unless [i] has [Layout.rank (layout a)] entries,
-    each in [\[0, Layout.dim (layout a) j)] for entry [j]. *)
+    each in [\[0, Layout.dim (layout a) j)] for entry [j], and, as {!refused}
+    raises it, if [a]'s buffer is dead, its memory is held exclusive or the
+    host does not address it. Raises {!Rig.Lost} if its memory is a lost
+    device's or follows work a lost device did not finish. *)
 
 val set : ('v, 's) t -> int array -> 'v -> unit
 (** [set a i x] stores [x] at [a]'s index [i]. Stores to the other elements of a
@@ -330,12 +333,13 @@ val door :
     [Held_exclusive] and [Read_only] come before the others: a dead array is
     [Dead_buffer] whatever else is wrong with it.
 
-    Two arrays are {e identical} when they have one element width, lie in one
-    memory, and place every index at the same byte. A written array may share
-    bytes with read arrays identical to it, and with no other: [Overlapping]
-    for one that shares a byte with another written array, or with a read
-    array not identical to it, of another width or placing an index at another
-    byte.
+    Two arrays are {e identical} when they have one element width and place
+    every index at the same bits, which two memories may hold, as an io
+    memory and a bigarray over its pages do ({!Rig.Buffer.overlaps}). A
+    written array may share bytes with read arrays identical to it, and with
+    no other: [Overlapping] for one that shares a byte with another written
+    array, or with a read array not identical to it, of another width or
+    placing an index at other bits.
 
     It waits for no device work. [f] touches the arrays' elements only through
     work it submits with {!Rig.submit}, naming each array of [written] in its

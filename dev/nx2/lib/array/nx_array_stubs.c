@@ -8,6 +8,7 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/callback.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -73,15 +74,46 @@ static int claim_code(enum rig_claim c) {
   caml_fatal_error("nx_read: rig_buffer_claim answered %d", (int)c);
 }
 
-/* Whether the descriptors [a] and [b], both with elements, are identical:
-   one width, and every index at one byte: equal extents and strides, and
-   one first bit. */
+/* Where an operand's bytes lie: [lo, hi) bytes past its buffer's first,
+   from its layout's span. */
+typedef struct {
+  int64_t lo, hi;
+} where;
+
+/* Whether the operands [a] and [b], both with elements, share a byte. Two
+   the host addresses compare host addresses; others ask rig, as
+   Rig.Buffer.overlaps of the views of their bytes would answer, which sees
+   a borrow and the memory it maps, and an io memory and a bigarray over
+   its pages. A layout lies within its buffer (Nx_array.v), so rig's bounds
+   hold; were one past it, the pair would count as sharing. */
+static int meet(const nx_array *a, const where *wa, const nx_array *b,
+                const where *wb) {
+  if (a->base != NULL && b->base != NULL) {
+    intptr_t x = (intptr_t)a->base, y = (intptr_t)b->base;
+    return x + wa->lo < y + wb->hi && y + wb->lo < x + wa->hi;
+  }
+  if ((size_t)wa->hi > rig_buffer_bytes(a->buffer) ||
+      (size_t)wb->hi > rig_buffer_bytes(b->buffer))
+    return 1;
+  return rig_buffers_overlap(a->buffer, wa->lo, wa->hi - wa->lo, b->buffer,
+                             wb->lo, wb->hi - wb->lo);
+}
+
+/* Whether [a] and [b], which share a byte, are identical: one width, and
+   every index at one byte: equal extents and strides, and one first bit,
+   the bits of its byte compared, the byte by host address or by rig. */
 static int identical(const nx_array *a, const nx_array *b) {
   if (a->bits != b->bits || a->rank != b->rank) return 0;
   for (int i = 0; i < 2 * a->rank; i++)
     if (a->dim[i] != b->dim[i]) return 0;
-  return (int64_t)(intptr_t)a->base * 8 + a->offset * a->bits ==
-         (int64_t)(intptr_t)b->base * 8 + b->offset * b->bits;
+  int64_t fa = a->offset * a->bits, fb = b->offset * b->bits;
+  if (fa % 8 != fb % 8) return 0;
+  if (a->base != NULL && b->base != NULL)
+    return (intptr_t)a->base + fa / 8 == (intptr_t)b->base + fb / 8;
+  if ((size_t)(fa / 8) >= rig_buffer_bytes(a->buffer) ||
+      (size_t)(fb / 8) >= rig_buffer_bytes(b->buffer))
+    return 0;
+  return rig_buffers_overlap(a->buffer, fa / 8, 1, b->buffer, fb / 8, 1);
 }
 
 /* Releases the claims of the first [n] operands [a] made, and answers [e]: a
@@ -91,9 +123,11 @@ static int refuse_claimed(int n, const nx_array *a, int e) {
   return e;
 }
 
-/* nx_read's checks, which claim every operand or none: [span] holds 2n
-   words for the operands' bytes. */
-static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
+/* The door's checks, which claim every operand or none, for [host] kernels
+   or for a kernel that submits device work: [w] holds n operands' byte
+   ranges. */
+static int checks(int n, const nx_operand *in, nx_array *out, where *w,
+                  int host) {
   for (int k = 0; k < n; k++) {
     value v = in[k].array;
     nx_array *a = &out[k];
@@ -123,27 +157,23 @@ static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
     int refused = rig_buffers_claim(m, buffer, access, answer);
     if (refused >= 0)
       return refuse_claimed(at, out, claim_code(answer[refused]));
-    /* A loss's wait raises it. */
-    for (int j = 0; j < m; j++) out[at + j].wait = answer[j] != RIG_CLAIMED;
+    for (int j = 0; j < m; j++) out[at + j].wait = answer[j];
   }
-  /* Each operand's bytes, as host addresses, read once with its layout's
-     span: [first, last) at span[2k], span[2k + 1]. */
+  /* Each operand's bytes, read once with its layout's span. */
   for (int k = 0; k < n; k++) {
     nx_array *a = &out[k];
-    int64_t *first = &span[2 * k], *last = &span[2 * k + 1];
     if (in[k].written && !(a->flags & NX_DISTINCT))
       return refuse_claimed(n, out, NX_NOT_DISTINCT);
     if (a->flags & NX_EMPTY) {
       a->base = NULL;
-      *first = *last = 0;
+      w[k].lo = w[k].hi = 0;
       continue;
     }
-    if ((a->base = rig_buffer_host(a->buffer)) == NULL)
-      return refuse_claimed(n, out, NX_NOT_HOST);
+    a->base = rig_buffer_host(a->buffer);
+    if (host && a->base == NULL) return refuse_claimed(n, out, NX_NOT_HOST);
     value l = Field(in[k].array, ARRAY_LAYOUT);
-    int64_t base = (int64_t)(intptr_t)a->base;
-    *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
-    *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+    w[k].lo = Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+    w[k].hi = (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
   }
   /* A written operand shares bytes with no other but a read operand
      identical to it, which is marked its alias. Identity is of bytes, and
@@ -153,11 +183,10 @@ static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
      loss. Read operands may share bytes, so only pairs with a written
      operand are compared. */
   for (int k = 0; k < n; k++) {
-    int64_t fk = span[2 * k], lk = span[2 * k + 1];
-    if (!in[k].written || fk == lk) continue;
+    if (!in[k].written || w[k].lo == w[k].hi) continue;
     for (int j = 0; j < n; j++) {
-      if (j == k || out[j].alias) continue;
-      if (!(span[2 * j] < lk && fk < span[2 * j + 1])) continue;
+      if (j == k || out[j].alias || w[j].lo == w[j].hi) continue;
+      if (!meet(&out[k], &w[k], &out[j], &w[j])) continue;
       if (in[j].written || !identical(&out[k], &out[j]))
         return refuse_claimed(n, out, NX_OVERLAP);
       out[j].alias = 1;
@@ -166,17 +195,22 @@ static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
   return NX_OK;
 }
 
+/* checks, its byte ranges on the stack up to NX_MAX_OPERANDS operands,
+   beyond on the heap, allocated before any claim. */
+static int admit(int n, const nx_operand *in, nx_array *out, int host) {
+  where local[NX_MAX_OPERANDS], *w = local;
+  if (n > NX_MAX_OPERANDS) {
+    w = malloc((size_t)n * sizeof *w);
+    if (w == NULL) caml_raise_out_of_memory();
+  }
+  int e = checks(n, in, out, w, host);
+  if (w != local) free(w);
+  return e;
+}
+
 int nx_read(int n, const nx_operand *in, nx_array *out) {
   if (n <= 0) return NX_OK;
-  /* The spans live on the stack up to NX_MAX_OPERANDS operands, beyond on
-     the heap, allocated before any claim. */
-  int64_t local[2 * NX_MAX_OPERANDS], *span = local;
-  if (n > NX_MAX_OPERANDS) {
-    span = malloc(2 * (size_t)n * sizeof *span);
-    if (span == NULL) caml_raise_out_of_memory();
-  }
-  int e = admit(n, in, out, span);
-  if (span != local) free(span);
+  int e = admit(n, in, out, 1);
   if (e) return e;
   int waits = 0;
   for (int k = 0; k < n; k++) waits |= out[k].wait;
@@ -225,142 +259,67 @@ void nx_done(int n, nx_array *a) {
   *p = a[0].roots.next;
 }
 
-/* The OCaml door (Nx_array.door) claims through these, in C, so that no
+/* The OCaml door (Nx_array.door) admits through admit, in C, so that no
    OCaml code, and so no asynchronous exception, runs between two claims.
    [written] and [read] are OCaml arrays of Nx_array.any, which is unboxed:
    an any is its array's block. */
 
-static value any_buffer(value anys, mlsize_t k) {
-  return Field(Field(anys, k), ARRAY_BUFFER);
-}
-
-/* The buffer of the [k]th array of [written], then [read]. */
-static value nth_buffer(value written, value read, mlsize_t k) {
+static value nth_array(value written, value read, mlsize_t k) {
   mlsize_t nw = Wosize_val(written);
-  return k < nw ? any_buffer(written, k) : any_buffer(read, k - nw);
+  return k < nw ? Field(written, k) : Field(read, k - nw);
 }
 
 static void release_first(value written, value read, mlsize_t n) {
   for (mlsize_t k = 0; k < n; k++)
-    rig_buffer_release(nth_buffer(written, read, k));
+    rig_buffer_release(Field(nth_array(written, read, k), ARRAY_BUFFER));
 }
 
-/* Claims every array of [written] for writing and of [read] for reading, or
-   none, and waits for nothing. Answers the refusal's code, with nothing
-   claimed; or NX_OK, every array claimed, plus 256 times one more than the
-   index of the first array whose claim answered RIG_LOST, 0 for none: a
-   lost device is behind it, which the door probes for its exception. The
-   index counts [written], then [read]. A read array identical to a written
-   one is claimed too: claims are counted, so two of one memory do not
-   conflict. It claims in runs, as nx_read does. */
-intnat nx_array_claim_all(value written, value read) {
-  mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
-  value buffer[NX_MAX_OPERANDS];
-  enum rig_access access[NX_MAX_OPERANDS];
-  enum rig_claim answer[NX_MAX_OPERANDS];
-  mlsize_t lost = 0;
-  for (mlsize_t at = 0; at < n; at += NX_MAX_OPERANDS) {
-    int m = n - at < NX_MAX_OPERANDS ? (int)(n - at) : NX_MAX_OPERANDS;
-    for (int j = 0; j < m; j++) {
-      buffer[j] = nth_buffer(written, read, at + j);
-      access[j] = at + j < nw ? RIG_READ_WRITE : RIG_READ;
-    }
-    int refused = rig_buffers_claim(m, buffer, access, answer);
-    if (refused >= 0) {
-      release_first(written, read, at);
-      return claim_code(answer[refused]);
-    }
-    for (int j = 0; j < m && lost == 0; j++)
-      if (answer[j] == RIG_LOST) lost = at + j + 1;
+/* Admits every array of [written] for writing and of [read] for reading, of
+   any dtype and wherever its memory lies, and waits for nothing: NX_OK with
+   every array claimed, or a refusal's code with none. A read array
+   identical to a written one is claimed too: claims are counted, so two of
+   one memory do not conflict. If an array is a lost device's memory, or
+   follows a lost device's work, it raises Rig.Lost, as the wait for its
+   access does at once, holding no claim. */
+value nx_array_admit(value written, value read) {
+  CAMLparam2(written, read);
+  mlsize_t n = Wosize_val(written) + Wosize_val(read);
+  /* The operands, their descriptors and their byte ranges, on the stack
+     up to NX_MAX_OPERANDS, past it in one block of the heap. */
+  nx_operand local_in[NX_MAX_OPERANDS], *in = local_in;
+  nx_array local_out[NX_MAX_OPERANDS], *out = local_out;
+  where local_w[NX_MAX_OPERANDS], *w = local_w;
+  if (n > NX_MAX_OPERANDS) {
+    uint8_t *b = malloc(n * (sizeof *in + sizeof *out + sizeof *w));
+    if (b == NULL) caml_raise_out_of_memory();
+    out = (nx_array *)b;
+    w = (where *)(b + n * sizeof *out);
+    in = (nx_operand *)(b + n * (sizeof *out + sizeof *w));
   }
-  return NX_OK + 256 * (intnat)lost;
-}
-
-value nx_array_claim_all_byte(value written, value read) {
-  return Val_long(nx_array_claim_all(written, read));
+  for (mlsize_t k = 0; k < n; k++) {
+    value v = nth_array(written, read, k);
+    in[k] = (nx_operand){v, nx_array_dtype(v), k < Wosize_val(written)};
+  }
+  int e = checks((int)n, in, out, w, 0);
+  mlsize_t lost = n;
+  for (mlsize_t k = 0; !e && k < n && lost == n; k++)
+    if (out[k].wait == RIG_LOST) lost = k;
+  if (out != local_out) free(out);
+  if (e || lost == n) CAMLreturn(Val_int(e));
+  value a = nth_array(written, read, lost);
+  caml_result r = rig_buffer_wait(Field(a, ARRAY_BUFFER),
+                                  lost < Wosize_val(written) ? RIG_READ_WRITE
+                                                             : RIG_READ);
+  if (caml_result_is_exception(r)) {
+    release_first(written, read, n);
+    (void)caml_get_value_or_raise(r);
+  }
+  CAMLreturn(Val_int(NX_OK));
 }
 
 value nx_array_release_all(value written, value read) {
   release_first(written, read, Wosize_val(written) + Wosize_val(read));
   return Val_unit;
-}
-
-/* Claims [b]'s memory for [access], RIG_READ or RIG_READ_WRITE as the
-   constructors of Rig.access, and waits for nothing: NX_OK with the claim
-   held, which nx_array_end_claim ends, plus 256 if the access must wait first
-   (RIG_WAIT or RIG_LOST); or a refusal's code with none. */
-intnat nx_array_claim(value b, value v_access) {
-  enum rig_claim c = rig_buffer_claim(b, (enum rig_access)Int_val(v_access));
-  int e = claim_code(c);
-  if (e) return e;
-  return c == RIG_CLAIMED ? NX_OK : NX_OK + 256;
-}
-
-value nx_array_claim_byte(value b, value v_access) {
-  return Val_long(nx_array_claim(b, v_access));
-}
-
-/* Ends a claim nx_array_claim took on [b]. */
-value nx_array_end_claim(value b) {
-  rig_buffer_release(b);
-  return Val_unit;
-}
-
-/* Whether the arrays [a] and [b] reach a common byte. Their buffers' first
-   bytes lie at their host addresses where the host addresses both, and
-   otherwise at [pa] and [pb] of one memory. */
-value nx_array_shares(value a, value b, intnat pa, intnat pb) {
-  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
-  if ((Long_val(Field(la, NX_LAYOUT_FLAGS)) |
-       Long_val(Field(lb, NX_LAYOUT_FLAGS))) &
-      NX_EMPTY)
-    return Val_false;
-  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
-  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
-  if (ha != NULL && hb != NULL) {
-    pa = (intnat)(intptr_t)ha;
-    pb = (intnat)(intptr_t)hb;
-  }
-  /* A span's end is at most NX_MAX_NUMEL: times 128 bits, it fits. */
-  int64_t bits_a = nx_dtype_row_of(nx_array_dtype(a)).bits;
-  int64_t bits_b = nx_dtype_row_of(nx_array_dtype(b)).bits;
-  int64_t first_a = pa + Long_val(Field(la, NX_LAYOUT_LO)) * bits_a / 8;
-  int64_t last_a = pa + (Long_val(Field(la, NX_LAYOUT_HI)) * bits_a + 7) / 8;
-  int64_t first_b = pb + Long_val(Field(lb, NX_LAYOUT_LO)) * bits_b / 8;
-  int64_t last_b = pb + (Long_val(Field(lb, NX_LAYOUT_HI)) * bits_b + 7) / 8;
-  return Val_bool(first_a < last_b && first_b < last_a);
-}
-
-value nx_array_shares_byte(value a, value b, value pa, value pb) {
-  return nx_array_shares(a, b, Long_val(pa), Long_val(pb));
-}
-
-/* Whether the arrays [a] and [b], which share a byte, are identical: one
-   width, equal extents and strides, and one first bit, their buffers placed
-   as nx_array_shares places them. */
-value nx_array_identical(value a, value b, intnat pa, intnat pb) {
-  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
-  int64_t bits = nx_dtype_row_of(nx_array_dtype(a)).bits;
-  if (bits != nx_dtype_row_of(nx_array_dtype(b)).bits) return Val_false;
-  value sa = Field(la, NX_LAYOUT_SHAPE), sb = Field(lb, NX_LAYOUT_SHAPE);
-  value ta = Field(la, NX_LAYOUT_STRIDES), tb = Field(lb, NX_LAYOUT_STRIDES);
-  mlsize_t r = Wosize_val(sa);
-  if (Wosize_val(sb) != r) return Val_false;
-  for (mlsize_t i = 0; i < r; i++)
-    if (Field(sa, i) != Field(sb, i) || Field(ta, i) != Field(tb, i))
-      return Val_false;
-  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
-  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
-  if (ha != NULL && hb != NULL) {
-    pa = (intnat)(intptr_t)ha;
-    pb = (intnat)(intptr_t)hb;
-  }
-  return Val_bool(pa * 8 + Long_val(Field(la, NX_LAYOUT_OFFSET)) * bits ==
-                  pb * 8 + Long_val(Field(lb, NX_LAYOUT_OFFSET)) * bits);
-}
-
-value nx_array_identical_byte(value a, value b, value pa, value pb) {
-  return nx_array_identical(a, b, Long_val(pa), Long_val(pb));
 }
 
 /* Coalescing */
@@ -615,31 +574,9 @@ static void store_int(uint8_t *base, int dt, int64_t p, int64_t x) {
   }
 }
 
-/* Element access from OCaml, on a buffer the caller claimed and waited
-   for, at a position its layout reaches. */
-
 intnat nx_array_host(value b) {
   void *p = rig_buffer_host(b);
   return p == NULL ? -1 : (intnat)(intptr_t)p;
-}
-
-double nx_array_get_float(value b, intnat dt, intnat p, intnat part) {
-  return load_float(rig_buffer_host(b), (int)dt, p, (int)part);
-}
-
-int64_t nx_array_get_int(value b, intnat dt, intnat p) {
-  return load_int(rig_buffer_host(b), (int)dt, p);
-}
-
-value nx_array_set_float(value b, intnat dt, intnat p, intnat part,
-                         double x) {
-  store_float(rig_buffer_host(b), (int)dt, p, (int)part, x);
-  return Val_unit;
-}
-
-value nx_array_set_int(value b, intnat dt, intnat p, int64_t x) {
-  store_int(rig_buffer_host(b), (int)dt, p, x);
-  return Val_unit;
 }
 
 value nx_array_host_byte(value b) { return Val_long(nx_array_host(b)); }
@@ -655,23 +592,78 @@ value nx_array_load_byte_byte(value b, value i) {
   return Val_long(nx_array_load_byte(b, Long_val(i)));
 }
 
-value nx_array_get_float_byte(value b, value dt, value p, value part) {
-  return caml_copy_double(
-      nx_array_get_float(b, Long_val(dt), Long_val(p), Long_val(part)));
+/* get: [v]'s element at position [vp], which its layout reaches, read
+   through the door and boxed as its dtype's OCaml values are. A refusal
+   raises Nx_array's Refused with its code, holding no claim. The element
+   is loaded under the claim and boxed after it, so that an allocation that
+   raises holds no claim. */
+value nx_array_get(value v, value vp) {
+  CAMLparam1(v);
+  CAMLlocal1(x);
+  nx_operand in = {v, nx_array_dtype(v), 0};
+  nx_array a;
+  int e = nx_read(1, &in, &a);
+  if (e) {
+    static const value *refused = NULL;
+    if (refused == NULL) refused = caml_named_value("Nx_array.Refused");
+    caml_raise_with_arg(*refused, Val_int(e));
+  }
+  int dt = a.dtype;
+  int64_t p = Long_val(vp), i = 0;
+  double re = 0, im = 0;
+  int kind = nx_dtype_row_of(dt).kind;
+  if (kind == NX_KIND_FLOAT || kind == NX_KIND_COMPLEX) {
+    re = load_float(a.base, dt, p, 0);
+    if (kind == NX_KIND_COMPLEX) im = load_float(a.base, dt, p, 1);
+  } else
+    i = load_int(a.base, dt, p);
+  nx_done(1, &a);
+  switch (kind) {
+    case NX_KIND_FLOAT: x = caml_copy_double(re); break;
+    case NX_KIND_COMPLEX:
+      x = caml_alloc_small(2 * Double_wosize, Double_array_tag);
+      Store_double_flat_field(x, 0, re);
+      Store_double_flat_field(x, 1, im);
+      break;
+    default:
+      if (dt == NX_INT64 || dt == NX_UINT64) x = caml_copy_int64(i);
+      else if (dt == NX_INT32 || dt == NX_UINT32)
+        x = caml_copy_int32((int32_t)i);
+      else if (dt == NX_BOOL || dt == NX_BIT) x = Val_bool(i != 0);
+      else x = Val_long(i);
+  }
+  CAMLreturn(x);
 }
 
-value nx_array_get_int_byte(value b, value dt, value p) {
-  return caml_copy_int64(nx_array_get_int(b, Long_val(dt), Long_val(p)));
-}
-
-value nx_array_set_float_byte(value b, value dt, value p, value part,
-                              value x) {
-  return nx_array_set_float(b, Long_val(dt), Long_val(p), Long_val(part),
-                            Double_val(x));
-}
-
-value nx_array_set_int_byte(value b, value dt, value p, value x) {
-  return nx_array_set_int(b, Long_val(dt), Long_val(p), Int64_val(x));
+/* set: stores [x] at [v]'s position [vp], which its layout reaches, through
+   the door, and answers its code. [x] is read before the door, whose wait
+   may move it. */
+value nx_array_set(value v, value vp, value x) {
+  CAMLparam1(v);
+  int dt = nx_array_dtype(v);
+  int kind = nx_dtype_row_of(dt).kind;
+  double re = 0, im = 0;
+  int64_t i = 0;
+  if (kind == NX_KIND_FLOAT) re = Double_val(x);
+  else if (kind == NX_KIND_COMPLEX) {
+    re = Double_flat_field(x, 0);
+    im = Double_flat_field(x, 1);
+  } else if (dt == NX_INT64 || dt == NX_UINT64) i = Int64_val(x);
+  else if (dt == NX_INT32 || dt == NX_UINT32) i = Int32_val(x);
+  else if (dt == NX_BOOL || dt == NX_BIT) i = Bool_val(x);
+  else i = Long_val(x);
+  nx_operand in = {v, dt, 1};
+  nx_array a;
+  int e = nx_read(1, &in, &a);
+  if (e) CAMLreturn(Val_int(e));
+  int64_t p = Long_val(vp);
+  if (kind == NX_KIND_FLOAT || kind == NX_KIND_COMPLEX) {
+    store_float(a.base, dt, p, 0, re);
+    if (kind == NX_KIND_COMPLEX) store_float(a.base, dt, p, 1, im);
+  } else
+    store_int(a.base, dt, p, i);
+  nx_done(1, &a);
+  CAMLreturn(Val_int(NX_OK));
 }
 
 /* Bulk access */

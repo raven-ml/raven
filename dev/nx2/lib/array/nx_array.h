@@ -120,8 +120,9 @@ typedef struct {
      writes its bytes, so it may read it at an index only before it writes
      that index. */
   int alias;
-  /* Private: the claimed buffer, a local root until nx_done, and whether
-     nx_read waits for device work on it. */
+  /* Private: the claimed buffer, a local root until nx_done, and the
+     claim's answer (enum rig_claim): nx_read waits for device work on it
+     unless RIG_CLAIMED. */
   value buffer;
   int wait;
   struct caml__roots_block roots;
@@ -152,7 +153,8 @@ int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    no byte with another written operand, nor with a read operand unless the
    two are identical: one width, and every index at one byte (equal extents
    and strides, one first bit). A read operand identical to a written one
-   is claimed through it, once. Under the claims it waits for the device
+   is claimed too, as its own memory, which may be another than the
+   written one's. Under the claims it waits for the device
    work each operand's access must follow, as Rig.Buffer.wait does; this
    alone runs OCaml code, and only while such work is unfinished. If the
    wait raises, as Rig.Lost does for a lost device, nx_read releases every

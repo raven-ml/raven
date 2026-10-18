@@ -79,6 +79,16 @@ val io_device : unit -> Rig.t
 (** [io_device ()] is an io device over bigarrays: memory the host does not
     address. *)
 
+val mapped_io_device : unit -> Rig.t
+(** [mapped_io_device ()] is {!io_device} with pages: a borrow on {!Rig.host}
+    maps its memory's bytes, which then also lie at a host address. *)
+
+val mapped_pages :
+  Rig.Buffer.t ->
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+(** [mapped_pages b] is the pages of [b]'s memory, of {!mapped_io_device}: the
+    bigarray its memory lies in, which a borrow maps. *)
+
 val read_only : int -> Rig.Buffer.t
 (** [read_only n] is a buffer of [n] bytes on {!io_device} whose memory is
     [Read]. *)

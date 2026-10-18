@@ -1734,6 +1734,153 @@ let test_ocaml_door_bigarrays () =
   equal ~msg:"beside" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| head (over 0) |] [| head (over 2) |])
 
+(* An io memory of 32 bytes on the mapped io device, a host borrow of it,
+   whose bytes are its pages, and those pages as a bigarray. *)
+let mapped_io () =
+  let bytes = A.of_array D.Uint8 [| 32 |] (Array.make 32 0) in
+  let io = A.to_device (S.mapped_io_device ()) bytes in
+  let host = Option.get (A.borrow Rig.host io) in
+  (A.buffer io, A.buffer host, S.mapped_pages (A.buffer io))
+
+(* An array of [dt] over [count] elements of [b] from element [offset]. *)
+let view dt b offset count =
+  A.Any (A.v dt (L.v ~offset ~strides:[| 1 |] [| count |]) b)
+
+(* An io memory lies in its own space and, once a borrow maps its pages, at
+   their host address too: its views and its borrow's compare by offset, a
+   bigarray over its pages by address, int4 views by their bits. *)
+let test_ocaml_door_io_pages () =
+  let io, host, pages = mapped_io () in
+  let io_at = view f32 io and borrow_at = view f32 host in
+  let over first count =
+    let b = Bigarray.Array1.sub pages (4 * first) (4 * count) in
+    view f32 (B.of_bigarray b) 0 count
+  in
+  let door = pair answer (option bool) in
+  let check ~msg r written read =
+    let ran = if r = A.Done then Some true else None in
+    equal ~msg door (r, ran) (ocaml_door [| written |] [| read |])
+  in
+  check ~msg:"io beside its pages' bigarray" A.Done (io_at 0 2) (over 4 4);
+  check ~msg:"io meeting its pages' bigarray" A.Overlapping (io_at 0 3) (over 2 2);
+  check ~msg:"io identical to its pages' bigarray" A.Done (io_at 2 2) (over 2 2);
+  check ~msg:"the bigarray meeting io" A.Overlapping (over 0 3) (io_at 2 2);
+  check ~msg:"a borrow beside io" A.Done (borrow_at 0 2) (io_at 2 2);
+  check ~msg:"a borrow meeting io" A.Overlapping (borrow_at 0 3) (io_at 2 2);
+  check ~msg:"a borrow identical to io" A.Done (borrow_at 1 2) (io_at 1 2);
+  check ~msg:"a borrow meeting the bigarray" A.Overlapping (borrow_at 0 3)
+    (over 2 2);
+  (* int4 elements of byte 0 of the pages, through a bigarray of that byte
+     alone: identity is by bits, and one byte holds two elements. *)
+  let int4 = view D.Int4 io in
+  let nibble = view D.Int4 (B.of_bigarray (Bigarray.Array1.sub pages 0 1)) in
+  check ~msg:"one int4 element, through io and the bigarray" A.Done
+    (int4 1 1) (nibble 1 1);
+  check ~msg:"the other int4 element of the byte" A.Overlapping (int4 0 1)
+    (nibble 1 1);
+  check ~msg:"an int4 element of the next byte" A.Done (int4 2 1)
+    (nibble 1 1)
+
+(* nx_read compares host-addressed operands by address: a borrow of an io
+   memory and a bigarray over its pages. *)
+let test_door_io_pages () =
+  let _, host, pages = mapped_io () in
+  let borrow_at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 2 |]) host in
+  let over first =
+    A.v f32 (L.contiguous [| 2 |])
+      (B.of_bigarray (Bigarray.Array1.sub pages (4 * first) 8))
+  in
+  let x = zeros [| 2 |] in
+  equal ~msg:"meeting" answer A.Overlapping (S.add (borrow_at 0) x (over 1));
+  equal ~msg:"beside" answer A.Done (S.add (borrow_at 0) x (over 2));
+  equal ~msg:"identical" answer A.Done (S.add (borrow_at 2) x (over 2))
+
+(* The door's overlap is Rig.Buffer.overlaps of the arrays' bytes, and its
+   identity is one width and one first bit, wherever the bytes lie: views of
+   an io memory, of its borrow, of a bigarray over its pages and of plain
+   host memory, of uint16, uint8 and int4. *)
+type side = Io | Borrow | Pages | Plain
+
+type operand = { side : side; bits : int; offset : int; count : int }
+
+let pp_operand ppf o =
+  Format.fprintf ppf "%s %d-bit elements %d+%d"
+    (match o.side with
+    | Io -> "io"
+    | Borrow -> "borrow"
+    | Pages -> "pages"
+    | Plain -> "plain")
+    o.bits o.offset o.count
+
+let operand_gen =
+  let open Gen in
+  let* side = one_of (List.map constant [ Io; Borrow; Pages; Plain ]) in
+  let* bits = one_of (List.map constant [ 4; 8; 16 ]) in
+  let n = 256 / bits in
+  let* offset = int_range 0 (n - 1) in
+  let+ count = int_range 1 (n - offset) in
+  { side; bits; offset; count }
+
+(* A pair, the second a copy of the first's elements on another side as
+   often as not, so that identical pairs come up. *)
+let operands_gen =
+  let open Gen in
+  let* a = operand_gen in
+  let* copy = bool in
+  let* side = one_of (List.map constant [ Io; Borrow; Pages; Plain ]) in
+  let+ b = operand_gen in
+  (a, if copy then { a with side } else b)
+
+let operands_gen =
+  Gen.with_pp
+    (fun ppf (a, b) ->
+      Format.fprintf ppf "%a into %a" pp_operand b pp_operand a)
+    operands_gen
+
+let law_door_overlaps =
+  let io, host, pages = mapped_io () in
+  let pages = B.of_bigarray pages in
+  let plain =
+    B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 32)
+  in
+  let buffer = function
+    | Io -> io
+    | Borrow -> host
+    | Pages -> pages
+    | Plain -> plain
+  in
+  let array o =
+    let b = buffer o.side in
+    match o.bits with
+    | 4 -> view D.Int4 b o.offset o.count
+    | 8 -> view D.Uint8 b o.offset o.count
+    | _ -> view D.Uint16 b o.offset o.count
+  in
+  (* [o]'s bytes from byte [first] on, [length] of them. *)
+  let bytes o first length = B.view (buffer o.side) ~first ~length in
+  let span o =
+    let lo = o.offset * o.bits / 8 in
+    bytes o lo ((((o.offset + o.count) * o.bits) + 7) / 8 - lo)
+  in
+  fun (a, b) ->
+    let meet = B.overlaps (span a) (span b) in
+    let first o = o.offset * o.bits in
+    let identical =
+      a.bits = b.bits && a.count = b.count
+      && first a mod 8 = first b mod 8
+      && B.overlaps (bytes a (first a / 8) 1) (bytes b (first b / 8) 1)
+    in
+    cover "a pair the host does not address both of"
+      (a.side = Io || b.side = Io);
+    cover "sub-byte" (a.bits = 4);
+    cover "meeting" meet;
+    cover "identical" (meet && identical);
+    cover "beside" (not meet);
+    let want = if meet && not identical then A.Overlapping else A.Done in
+    equal (pair answer (option bool))
+      (want, if want = A.Done then Some true else None)
+      (ocaml_door [| array a |] [| array b |])
+
 exception Raised
 
 let test_ocaml_door_raises () =
@@ -2073,6 +2220,8 @@ let tests =
           test_door_empty;
         test "a read releases its claims" test_door_releases;
         test "a read survives a moving collection" test_door_moving_gc;
+        test "host-addressed operands compare by address"
+          test_door_io_pages;
       ];
     group "OCaml door"
       [
@@ -2086,6 +2235,12 @@ let tests =
           test_ocaml_door_off_host;
         test "bigarrays over one memory overlap by their addresses"
           test_ocaml_door_bigarrays;
+        test "an io memory overlaps its borrow and its pages' bigarrays"
+          test_ocaml_door_io_pages;
+        prop ~count:500
+          "overlap is Rig.Buffer.overlaps of the arrays' bytes, identity one \
+           width and one first bit"
+          operands_gen law_door_overlaps;
         test "releases its claims when its function raises"
           test_ocaml_door_raises;
       ];
