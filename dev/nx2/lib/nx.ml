@@ -4261,18 +4261,23 @@ let record (type r) st i ~by (op : r Value.prim) : r =
       | None -> refuse by
       | Some (n, cs) ->
           let y =
-            Prim.results ~by (fun _ form -> Eval.traced i form (Cell (n, []))) op
+            Prim.results ~by
+              (fun _ form -> Eval.traced i form (Cell (n, [])))
+              op
           in
           Eval.traced i (Prim.form y) (Cell (n, cs)))
   | _ -> refuse by
 
 (* [mask] and [score] applied to stand-ins: the recording, and each one's
-   cell and captures. A result that no stand-in reaches is a capture. *)
+   cell, captures and shape. A result that no stand-in reaches is a
+   capture. *)
 let recorded (type d) ~tq ?mask ?score () =
   let st = { cells = []; count = 0; captures = 0 } in
   let stand_in i dt leaf =
     let layout = Nx_array.Layout.contiguous [||] in
-    let form : (_, _, d) Value.form = { dtype = dt; layout; placement = None } in
+    let form : (_, _, d) Value.form =
+      { dtype = dt; layout; placement = None }
+    in
     Eval.traced i form (Cell (push st (Leaf leaf), []))
   in
   let i, m, s =
@@ -4292,10 +4297,10 @@ let recorded (type d) ~tq ?mask ?score () =
   in
   let result y =
     match cell i y with
-    | Some r -> r
+    | Some (n, cs) -> (n, cs, shape y)
     | None ->
         let c, n = capture st in
-        (n, [ Captured (c, y) ])
+        (n, [ Captured (c, y) ], shape y)
   in
   (st, Option.map result m, Option.map result s)
 
@@ -4453,9 +4458,10 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         (paged_read ~by p k, paged_read ~by p v, Some p)
   in
   let hk = dim (-3) k and tk = dim (-2) k and dv = dim (-1) v in
-  if hk = 0 || hq mod hk <> 0 then
+  if (hk = 0 && hq <> 0) || (hk > 0 && hq mod hk <> 0) then
     invalid_argf "%s: %d key heads do not divide %d query heads" by hk hq;
-  let groups = [ ("g", hq / hk) ] in
+  let g = if hk = 0 then 1 else hq / hk in
+  let groups = [ ("g", g) ] in
   let f = with_lead [| hq; tq; tk |] in
   let length =
     match lengths with
@@ -4464,7 +4470,8 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         expect "lengths" l lead;
         reshaped ~by (with_lead [| 1; 1; 1 |]) l
   in
-  (* Values past a row's length are never read. *)
+  (* Values past a row's length are zeroed: a hidden NaN there would reach
+     [p v]. *)
   let v =
     match lengths with
     | None -> v
@@ -4475,32 +4482,43 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
           E.(where before (operand 0 v) (const dt (D.zero dt)))
   in
   let scale =
-    match scale with Some s -> s | None -> 1. /. Float.sqrt (Float.of_int dk)
+    match scale with
+    | Some s -> s
+    | None when dk = 0 ->
+        invalid_argf "%s: keys of no dimension need a scale" by
+    | None -> 1. /. Float.sqrt (Float.of_int dk)
   in
   let st, mask, score = recorded ~tq ?mask ?score () in
   let captures =
-    List.concat_map snd (List.filter_map Fun.id [ mask; score ])
+    List.filter_map Fun.id [ mask; score ]
+    |> List.concat_map (fun (_, cs, _) -> cs)
     |> List.sort_uniq (fun (Captured (a, _)) (Captured (b, _)) ->
            Int.compare a b)
   in
-  let load (Captured (_, x)) =
-    (match Prim.merge (shape x) f with
-    | Ok s when s = f -> ()
+  let fits what s =
+    match Prim.merge s f with
+    | Ok s' when s' = f -> ()
     | _ ->
-        invalid_argf
-          "%s: a mask or score captures %a, which does not broadcast to %a" by
-          pp_value x pp_shape f);
+        invalid_argf "%s: %s %a does not broadcast to %a" by what pp_shape s
+          pp_shape f
+  in
+  let result what (_, _, s) = fits ("a " ^ what ^ " of shape") s in
+  Option.iter (result "mask") mask;
+  Option.iter (result "score") score;
+  let load (Captured (_, x)) =
+    fits "a captured array of shape" (shape x);
     Value.Plain (broadcast ~by f x)
   in
+  let cell (n, _, _) = n in
   let prog =
     pair_program ~by ~rank:r ~scale ~paged:(Option.is_some positions) st
-      ~mask:(Option.map fst mask) ~score:(Option.map fst score)
+      ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
   let s =
     reshaped ~by f (Contraction.contract ~by ~sizes:groups D.Float32 scores q k)
   in
-  let pairs =
+  let loads =
     Value.Plain s
     :: Value.Plain (broadcast ~by f length)
     :: (match positions with
@@ -4509,15 +4527,11 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
            let p = reshaped ~by (with_lead [| 1; 1; tk |]) p in
            [ Value.Plain (broadcast ~by f p) ])
   in
+  let loads = Iarray.of_list (loads @ List.map load captures) in
+  let layout = Nx_array.Layout.contiguous f in
   let m, () =
-    Eval.eval ~by
-      (Value.Map
-         {
-           layout = Nx_array.Layout.contiguous f;
-           prog;
-           outs = Value.[ D.Float32 ];
-           loads = Iarray.of_list (pairs @ List.map load captures);
-         })
+    let outs = Value.[ D.Float32 ] in
+    Eval.eval ~by (Value.Map { layout; prog; outs; loads })
   in
   let lse = reduce ~by Logsumexp D.Float32 [| r - 1 |] m in
   (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
@@ -4610,14 +4624,14 @@ let scaled_parts (type s d) ~by c (z : (Complex.t, s, d) t) :
 
 (* A real transform's compute formats: a float format and the complex one of
    its precision. *)
-type formats = Pair : (float, 'r) D.t * (Complex.t, 'c) D.t -> formats
+type formats = Formats : (float, 'r) D.t * (Complex.t, 'c) D.t -> formats
 
-(* The pair of the wider of a float [dt]'s compute format ({!Prim.wide}) and a
-   complex [c]'s precision. *)
-let pair dt c =
+(* The formats of the wider of a float [dt]'s compute format ({!Prim.wide})
+   and a complex [c]'s precision. *)
+let formats dt c =
   let (Prim.Wide w) = Prim.wide dt in
-  if D.bits w > 32 || D.bits c > 64 then Pair (D.Float64, D.Complex128)
-  else Pair (D.Float32, D.Complex64)
+  if D.bits w > 32 || D.bits c > 64 then Formats (D.Float64, D.Complex128)
+  else Formats (D.Float32, D.Complex64)
 
 (* The other axes, ascending, the real one, the last of [axes], and whether it
    is past the others: the kernels' real transforms run along the last of
@@ -4649,7 +4663,7 @@ let rfft dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
   let x = resized ~by x axes sizes in
   let n = List.fold_left ( * ) 1 sizes in
-  let (Pair (r, c)) = pair (dtype x) dt in
+  let (Formats (r, c)) = formats (dtype x) dt in
   let x = cast_by ~by r x in
   let others, real, last = real_axes axes in
   let y =
@@ -4681,7 +4695,7 @@ let irfft dt ?axes ?s ?(norm = Backward) z =
     List.mapi (fun i d -> if i = last_axis then (d / 2) + 1 else d) sizes
   in
   let z = resized ~by z axes bins in
-  let (Pair (r, c)) = pair dt (dtype z) in
+  let (Formats (r, c)) = formats dt (dtype z) in
   let z = cast_by ~by c z in
   let y =
     if last then
@@ -4844,7 +4858,7 @@ let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
       if Array.exists (( = ) 0) (shape x) then copy x
       else
         (* At [x]'s compute format, rounded once to its dtype. *)
-        let (Pair (f, c)) = pair (dtype x) D.Complex64 in
+        let (Formats (f, c)) = formats (dtype x) D.Complex64 in
         cast_by ~by (dtype x) (run f c (cast_by ~by f x)))
 
 let dct ?type_ ?axes ?norm x =

@@ -324,13 +324,17 @@ raven / llama.cpp (Vulkan; ROCm):
 - frontend, symbolic shapes: `Size.v`, `Size.dims`, `Ptree.sized`; `shape`,
   `dim` and `numel` raising on a symbolic axis under a trace; inheritance
   through `_like`, movements, broadcasting and pattern groups
+- `Nx.attention`'s error bound: derive it for the identity score, state it
+  in nx.mli, and tie the law's tolerance in `test_attention.ml` to it
 - the attention family: `Attention`, `Attention_tangent` and
   `Attention_cotangent` with nx.cpu's forward and cotangent kernels and
   `Prog.status`, in place of `Nx.attention`'s composition, which stores each
   head's `tq × tk` scores and gives an interpreter only its contractions,
-  maps and reduction. Record `attention/host-*` and
-  `gpu/*/attention-4096-causal` on the composition first; the family lands
-  only if its kernels beat it by 2x on each, forward and cotangent
+  maps and reduction. Kernels keep hidden values out of `o`: a partial
+  tile with a non-finite value takes the selecting path. Record
+  `attention/host-*` and `gpu/*/attention-4096-causal` on the composition
+  first; the family lands only if its kernels beat it by 2x on each,
+  forward and cotangent
 - frontend, `contract`'s `?a_scale`, `?b_scale` (`scale`) and `?segments`,
   after `Prim.Contract` and nx.cpu take them
 - record `dispatch/kv-append-4096` and its `-copied` twin; donation's kill

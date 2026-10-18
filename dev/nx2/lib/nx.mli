@@ -1825,26 +1825,32 @@ val attention :
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t * 'd float32_t
 (** [attention ~kv q] is [(o, lse)] for [q] [[lead…; hq; tq; dk]], [hk]
-    dividing [hq], query head [h] reading key head [h / (hq / hk)]. [o],
-    [[lead…; hq; tq; dv]], is the softmax over each row's visible keys of
-    [scale · q kᵀ] (default [1 / √dk]), rewritten by [score], times [v], in
-    [q]'s dtype; [lse], [[lead…; hq; tq]], is the row's log-sum-exp in
-    float32. A pair is visible where [mask] holds, its key is before its lead
-    index's entry of [lengths] ([[lead…]], default [tk]), and a paged key's
-    table entry is in [[0, pages)]. A row with no visible key, or only [-∞]
-    scores, gives [o = 0] and [lse = -∞].
+    dividing [hq] (zero heads divide zero), query head [h] reading key head
+    [h / (hq / hk)]. [o], [[lead…; hq; tq; dv]], is the softmax over each
+    row's visible keys of [scale · q kᵀ] (default [1 / √dk]), rewritten by
+    [score], times [v], in [q]'s dtype; [lse], [[lead…; hq; tq]], is the
+    row's log-sum-exp in float32. A pair is visible where [mask] holds, its
+    key is before its lead index's entry of [lengths] ([[lead…]], default
+    [tk]), and a paged key's table entry is in [[0, pages)]. A row with no
+    visible key, or only [-∞] scores, gives [o = 0] and [lse = -∞].
 
-    A hidden pair's score never reaches [o] or [lse], whatever its value.
-    Keys past a row's length and paged keys out of range are never read. A key
-    in range that [mask] hides from a row with a visible key is read with
-    weight zero, so a NaN or an infinity in its value makes that row's [o]
-    NaN.
+    A hidden pair's score never changes [o] or [lse], and a table entry
+    outside [[0, pages)] reads no page. A finite value at a hidden key never
+    changes [o]: its weight is exactly zero. Values past a row's length are
+    zeroed, so they never change [o]. A NaN or an infinity at a key hidden
+    from a row but within its length makes that row's [o] NaN, since [o]
+    reads it at weight zero; a kernel library that skips hidden blocks may
+    give a finite [o] instead, and says so in its own documentation. The
+    weights are float32, and a visible key whose weight underflows to zero
+    still counts: a NaN in its value makes the row's [o] NaN. A sum of zeros
+    is [+0].
 
     [mask] and [score] are plain [Nx] code over 0-d values, applied once to
-    stand-ins and kept as programs that run at each pair. An array they
-    capture is read at each pair and broadcasts to [[lead…; hq; tq; tk]]. On
-    the pair's values they apply elementwise functions and broadcasts; another
-    operation on them, or a read of one, raises naming [Nx.attention].
+    stand-ins and kept as programs that run at each pair. Their results, and
+    the arrays they capture, broadcast to [[lead…; hq; tq; tk]]; a captured
+    array is read at each pair. On the pair's values they apply elementwise
+    functions and broadcasts; another operation on them, or a read of one,
+    raises naming [Nx.attention].
 
     {[
     let window p = Nx.(logical_and (causal p) (less p.q (add_s p.k 128L)))
@@ -1855,16 +1861,20 @@ val attention :
 
     [q]'s dtype is float16, bfloat16 or float32. Scores, their maxima and
     sums, and [lse] compute in float32, and [o] rounds once to [q]'s dtype.
-    Its error has no stated bound yet.
 
     It computes as a contraction for the scores, a map and a reduction for
     the visible scores' log-sum-exp, a map for the weights and a contraction
-    for [o], so it stores the [tq × tk] scores of every head. An
-    interpretation receives those operations; none is attention's own.
+    for [o]. Each call stores three float32 arrays of
+    [[lead…; hq; tq; tk]]: the scores, the visible scores and the weights.
+    With [lengths], it copies [v] with its keys past each row's length
+    zeroed; with [Paged], it copies the keys and values the table reads into
+    dense [[lead…; hk; tk; dk]] and [[lead…; hk; tk; dv]] arrays. An
+    interpretation receives these operations; none is attention's own.
 
     Raises [Invalid_argument] if [q]'s dtype is another, [q] has fewer than
-    three axes, extents disagree, [hk] does not divide [hq], or [lengths] is
-    not of shape [[lead…]]. *)
+    three axes, extents disagree, [hk] does not divide [hq], [lengths] is not
+    of shape [[lead…]], [dk] is [0] without [scale], or a result or capture
+    of [mask] or [score] does not broadcast to [[lead…; hq; tq; tk]]. *)
 
 (** {2:matrices Matrices}
 
