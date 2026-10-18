@@ -241,7 +241,7 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:406-652` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:406-672` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk's own version.
@@ -3931,9 +3931,9 @@ submission, and a range a loop of rig's program (D146).
 - **tinygrad:** `helpers.py:416-447` (`diskcache_clear`, `diskcache_get`,
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
-- **tolk:** `lib/helpers.ml:469` (`mark`), `:492` (`size_file`), `:507`
-  (`count`), `:576` (`trim`), `:608` (`make_room`), `:640` (`put`) and
-  `:660` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
+- **tolk:** `lib/helpers.ml:469` (`mark`), `:499` (`size_file`), `:514`
+  (`count`), `:580` (`trim`), `:612` (`make_room`), `:644` (`put`) and
+  `:665` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
   for no bound).
 - **Differs:** a put that would take the cache's files past `CACHESIZE`
   bytes first removes entries of every table and version, the least recently
@@ -3946,8 +3946,8 @@ submission, and a range a loop of rig's program (D146).
   write in progress stays. A hit sets its entry's time. Processes count
   each other's puts in the length of one file, to which each put appends a
   byte per KiB. `diskcache_clear` removes every entry; `clear` keeps a write
-  in progress and an entry it cannot remove, as on Windows one another
-  process marks used.
+  in progress, an entry it cannot remove, as on Windows one another process
+  marks used, and the tables' directories, which a put meanwhile writes in.
 - **Reason:** (b). Programs, schedules and beam results are keyed by the
   digest of tolk's sources (D63), so each change of the sources leaves the
   previous build's entries unread, about 0.6 GB for the tests of tolk and
@@ -3964,7 +3964,8 @@ submission, and a range a loop of rig's program (D146).
   `› clear leaves the entries it cannot remove`, `› clear keeps another
   process's write in progress`, `› processes putting in turn keep the cache
   within cachesize`, `› a cachesize of 0 keeps every entry` and `› a
-  negative cachesize is refused`.
+  negative cachesize is refused`; `Tolk.Helpers › Diskcache on two domains ›
+  behaves as a table of entries, whatever the order of the calls`.
 
 ## D154. A range whose size may be 0 runs no time
 

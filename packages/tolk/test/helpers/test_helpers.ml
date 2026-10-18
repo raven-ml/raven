@@ -591,11 +591,13 @@ let rec files dir =
 
 (* The entries of the cache: the files of its directories. *)
 let entries_on_disk () =
-  List.concat_map
-    (fun name ->
-      let dir = Filename.concat cachedb name in
-      if Sys.is_directory dir then files dir else [])
-    (Array.to_list (Sys.readdir cachedb))
+  if not (Sys.file_exists cachedb) then []
+  else
+    List.concat_map
+      (fun name ->
+        let dir = Filename.concat cachedb name in
+        if Sys.is_directory dir then files dir else [])
+      (Array.to_list (Sys.readdir cachedb))
 
 (* Runs [damage] on every entry of the cache when it holds one, then reads the
    entry back. *)
@@ -827,6 +829,13 @@ let clear_leaves_held_entries () =
     Diskcache.clear ()
   end
 
+(* The directory of a table stays through a clear, so that a put in another
+   process that has made it can still write there. *)
+let clear_keeps_tables () =
+  let dir = table_directory (fresh_table ()) in
+  Diskcache.clear ();
+  equal bool true (Sys.file_exists dir && Sys.is_directory dir)
+
 let unbounded () =
   Diskcache.clear ();
   let table = fresh_table () and v = String.make 4096 'v' in
@@ -1000,6 +1009,7 @@ let diskcache =
             keeps_foreign_files;
           test "clear leaves the entries it cannot remove"
             clear_leaves_held_entries;
+          test "clear keeps the directories of the tables" clear_keeps_tables;
           test "clear keeps another process's write in progress"
             clear_keeps_writes_in_progress;
           cases ~name:(Printf.sprintf "cachelevel=%d")
@@ -1046,6 +1056,19 @@ let diskcache =
           test "get fails on a truncated entry" (fun () -> damaged truncate);
           test "get fails on an entry that is no entry" (fun () ->
               damaged overwrite);
+        ]
+
+(* Calls on two domains, each branch on its own: an entry is put, read and
+   cleared while another domain puts, reads and clears. *)
+let diskcache_domains =
+  match Sys.getenv_opt "CACHEDB" with
+  | None -> group "Diskcache on two domains" []
+  | Some _ ->
+      group "Diskcache on two domains"
+        [
+          stateful ~count:4 ~domains:2
+            "behaves as a table of entries, whatever the order of the calls"
+            model;
         ]
 
 (* Programs *)
@@ -1139,4 +1162,5 @@ let () =
              terminal_text;
              diskcache;
              programs;
+             diskcache_domains;
            ])

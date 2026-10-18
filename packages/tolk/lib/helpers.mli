@@ -235,7 +235,9 @@ module Diskcache : sig
   (** [clear ()] removes every entry of every table, of every version, and the
       writes in progress last written an hour or more before. An entry that
       cannot be removed, as on Windows while another process has it open,
-      stays. Files under {!cachedb} that the cache did not write are kept. *)
+      stays. The directories of the tables stay, so that a put meanwhile finds
+      its table's, and so do the files under {!cachedb} that the cache did not
+      write. *)
 end
 
 (** {1:exec Programs} *)
