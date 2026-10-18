@@ -284,6 +284,19 @@ let others =
           let negated = Nx.neg (Nx.donate d) in
           raises (At ([| 1 |], 5.)) (fun () -> Nx.sync negated);
           equal (array float_exact) [| -4.; -5.; -6. |] (Nx.to_array negated));
+      test "a donation after a sync reuses the checked data's memory"
+        (fun () ->
+          (* A copy owns its memory: a placement onto a memory device borrows
+             the host's, which no donation writes. *)
+          let d = host_of Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+          let d = Nx.copy (Nx.place S.on d) in
+          let ok = host_of Nx.bool [| 3 |] [| true; true; true |] in
+          let ok = Nx.place S.on ok in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v));
+          Nx.sync d;
+          let before = Rig.allocated (m 0) in
+          ignore (Nx.neg (Nx.donate d));
+          equal int before (Rig.allocated (m 0)));
       test "a print that raises a failed check prints nothing" (fun () ->
           let d = Nx.place S.on (host_of Nx.float32 [| 2 |] [| 1.; 2. |]) in
           let ok = Nx.place S.on (host_of Nx.bool [| 2 |] [| false; true |]) in

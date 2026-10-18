@@ -122,7 +122,8 @@ val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
     checks the calling domain issued on [x]'s set: it reads them in issue order
     up to the first that fails, which raises its exception, and drops the later
-    ones unread. A constant has no set: it returns.
+    ones unread. Each drained check's hold on its data ends then
+    ({!Rig.Claim.release}). A constant has no set: it returns.
 
     Raises [Invalid_argument] naming [by] for a traced [x]. *)
 

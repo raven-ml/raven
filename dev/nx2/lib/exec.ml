@@ -1251,14 +1251,23 @@ and wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
       settle ~by (drained (Devices.number (Devices.set (Prim.placement x))))
 
 (* Reads [checks], oldest first, up to the first that fails, which raises: the
-   later ones go unread. *)
-and settle ~by = function
-  | [] -> ()
-  | Pending (c, _) :: rest ->
-      if A.get (on_host ~by c.holds) [||] then settle ~by rest
-      else
-        let first = A.get (on_host ~by c.first) [||] in
-        raise (failed ~by first c.shape c.data c.fail)
+   later ones go unread. Every check's hold ends then, so that a donation of its
+   data right after the wait may reuse the memory. *)
+and settle ~by checks =
+  let release () =
+    List.iter (fun (Pending (_, h)) -> Rig.Claim.release h) checks
+  in
+  Fun.protect ~finally:release (fun () ->
+      let failure = List.find_map (fun (Pending (c, _)) -> outcome ~by c) in
+      Option.iter raise (failure checks))
+
+(* [c]'s exception, read on the host, where a flag is false. *)
+and outcome : type d e. by:string -> (d, e) issued -> exn option =
+ fun ~by c ->
+  if A.get (on_host ~by c.holds) [||] then None
+  else
+    let first = A.get (on_host ~by c.first) [||] in
+    Some (failed ~by first c.shape c.data c.fail)
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken
    from their memos or computed for this alone: a value given to a caller shares
