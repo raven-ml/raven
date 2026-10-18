@@ -356,14 +356,12 @@ val of_io : device -> io_region -> access:access -> int -> memory
 (** {1:allocation Allocation and drains}
 
     An allocation that its budget or its driver refuses enters the
-    out-of-memory ladder ({!reclaiming}), which runs up to three rounds and
-    tries again after each. In a round, on every device whose lock is free,
-    cached memory that counts in the refusing budget returns once the work
-    submitted on the device until then is done, waiting for that work. A
-    device whose submitted work holds back the return of memory that counts
-    in the budget is waited for too. For the host's budget, the host's kept
-    buffers return as well. Then every device drains, and from the second
-    round a full major collection runs and every device drains again. *)
+    out-of-memory ladder ({!reclaiming}), whose rounds
+    {!Rig.section-reclaim} states. A round frees, on each device that is
+    live or Stopped, the cached memory that counts in the refusing budget,
+    and for the host's budget the host's kept buffers. Then every device
+    drains, and from the second round a full major collection runs and
+    every device drains again. *)
 
 val drain : device -> unit
 (** [drain d] releases the collected holds ({!hold_token}), moves [d]'s

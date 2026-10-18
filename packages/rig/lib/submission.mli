@@ -54,9 +54,9 @@
     What that C call returns ({!Dev.Answer}) makes the submit retry while
     another call holds the device, wait for the device's next value while its
     queues have no room, grow the device's record of waits in its queue, or
-    raise. What one submit collects and returns is in its call, so any number
-    of submits of one submission run concurrently, each with its own run, or
-    with one run that holds no bytes.
+    raise. What one submit collects and returns is in its call, so submits
+    of one submission run concurrently as {!Rig.Submission} and
+    {!Rig.Submission.Run.take} state.
 
     While a profile is being taken, a submit asks its driver for the times of
     its value and reads, from its buffers, the devices and bytes of each copy

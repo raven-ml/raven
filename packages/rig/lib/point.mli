@@ -30,6 +30,5 @@ val max_value : int
 (** [max_value] is [2]{^ 47}[ - 1], the largest value a point holds. *)
 
 val max_index : int
-(** [max_index] is [65_535], the largest device index. An index passes to
-    a later device once its device has stopped, so at most this many devices
-    besides the host are open at once. *)
+(** [max_index] is [65_535], the largest device index, so the process has
+    this many device slots ({!Rig.section-opening}). *)

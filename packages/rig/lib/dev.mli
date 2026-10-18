@@ -145,42 +145,41 @@ val drop_values : device -> unit
     A device's state is one word of its C line:
     {v
     Live ─loss─> Losing ─spread─> Owed ─claimed─> Stopping ─returned─> Ended
-    any state, in a forked child, for a driver's device ─> Orphaned
+    any state, in a forked child, for a device whose work is the parent's
+      ─> Orphaned
     v}
-    A device is lost once. The first loss, by {!lose}, {!close}, {!fail} or
-    a failure of the driver's [submit] or [commit], records its reason and
-    the value the word read at the loss. It then spreads to every device
-    whose unreached work waits in its queue on an unreached value of the
-    lost one, and from each of those in turn. A device lost by this spread
-    has the reason ["<name> lost"], where <name> is the device it waited on,
-    or, under {!fail}, [fail]'s reason. The stop is then owed. It runs once
-    no counted call on the device is in flight, in a call that acts for the
-    device ({!run_own}): its counted calls but a wait's, a submit on it, a
-    commit or settle that fails, a counted call it refuses as lost, a drain
-    of its memory, its {!close}, its publication, an open of its name and
-    {!fail}. Every round of reclamation and an open that finds every slot
-    held drain every device. A wait runs none: an interrupt there half-runs
-    no driver's stop. An Ended device is {e Stopped} once its word reads its
-    last submitted value. An io device is Stopped as soon as it is Ended,
-    since its reads and writes run inside the calls that ask for them. Work
-    a driver's device took before the loss may run until then, and only
-    then are its memory and objects given back. Its word, records and line
-    stay for the process.
+    {!lose}, {!close}, {!fail} and a failure of the driver's [submit] or
+    [commit] lose a device. The first loss records its reason and the value
+    the word read at the loss, then spreads along queue waits as
+    {!Rig.section-loss} states, with the reasons {!Rig.Lost} lists. The stop
+    is then owed. It runs once no counted call on the device is in flight,
+    in a call that acts for the device ({!run_own}): its counted calls but a
+    wait's, a submit on it, a commit or settle that fails, a counted call it
+    refuses as lost, a drain of its memory, its {!close}, its publication,
+    an open of its name and {!fail}. Every round of reclamation and an open
+    that finds every slot held drain every device. A wait runs none. An
+    Ended device is {e Stopped} once its word reads its last submitted
+    value, the stopped of {!Rig.section-stops}. An io device is Stopped as
+    soon as it is Ended, since its reads and writes run inside the calls
+    that ask for them. Work a driver's device took before the
+    loss may run until then, so only then are its memory and objects given
+    back. Its word, records and line stay for the process.
 
-    A forked child makes every lock anew. Each driver's device it inherited
-    is Orphaned, and lost with the reason ["forked"] unless it was lost
-    already. Its stop never runs, its word is never read, and its objects are
-    forgotten without a call, since its work is the parent's. An io device
-    keeps its state, and a stop that a thread of the parent had claimed is
-    owed again. *)
+    A forked child makes every lock anew ({!Lock}). A device whose work is
+    the parent's is Orphaned: each driver's device the child inherited,
+    lost with the reason ["forked"] unless it was lost already, and each io
+    device whose stop had not returned at the fork ({!Rig.section-stops}).
+    An Orphaned device's stop never runs, its word is never read, and its
+    objects are forgotten without a call. Every other io device keeps its
+    state. *)
 
 val is_lost : device -> bool
 (** [is_lost d] is [true] iff [d] is lost. It is [false] for the host
     without reading a record. *)
 
 val orphaned : device -> bool
-(** [orphaned d] is [true] iff [d] is a driver's device this process
-    inherited from the parent it was forked from. *)
+(** [orphaned d] is [true] iff [d] is Orphaned: this process is a forked
+    child and [d]'s work is the parent's ({!section-loss}). *)
 
 val lost : device -> string option
 (** [lost d] is {!Rig.lost}[ d]. *)
@@ -375,7 +374,8 @@ val is_done : int -> bool
     read of the word that finds [p]'s device lost answers from its line. It
     raises [Invalid_argument] where the driver refuses the read, and another
     exception of the driver's that is no fault, as {!word} does. A point of
-    a device that gave its slot to a later one is done. *)
+    a device that gave its slot to a later one is done unless that device's
+    loss dropped it ({!free_slot}). *)
 
 val reached_point : int -> bool
 (** [reached_point p] is {!Rig.Point.reached}: {!is_done}[ p], after a commit

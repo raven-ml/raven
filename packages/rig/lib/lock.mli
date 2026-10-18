@@ -9,9 +9,9 @@
     those of the tables in {!Dev}, {!Memory} and {!Copy}.
 
     An exception raised while a lock is held must not leave it held, or the
-    next call that takes it waits for good. An asynchronous exception, such
-    as [Sys.Break] or [Out_of_memory], arises where OCaml code allocates or
-    polls, and [Stack_overflow] where a function starts. So a section
+    next call that takes it waits for good. An asynchronous exception
+    ({!Rig.section-errors}) arises where OCaml code allocates, polls or
+    starts a function. So a section
     between {!hold} and {!release} allocates nothing, loops nowhere and calls
     no OCaml function, and every other section runs in {!protect}.
 

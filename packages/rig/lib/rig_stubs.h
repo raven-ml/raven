@@ -27,10 +27,9 @@ typedef pthread_mutex_t rig_mutex;
 typedef pthread_cond_t rig_cond;
 #endif
 
-/* Points: a device's index in bits 47 to 62 and a value in bits 0 to 46,
-   the 63 bits of an OCaml int. From index 32768 the int is negative, so a
-   point crosses from OCaml as Unsigned_long_val reads it. The word 0 is no
-   point: index 0 is the host, whose values start at 1. */
+/* Points, encoded as point.mli states, which changes with these. A point
+   from index 32768 on is a negative OCaml int, so it crosses from OCaml as
+   Unsigned_long_val reads it. */
 #define RIG_VALUE_BITS 47
 #define RIG_VALUE_MASK ((UINT64_C(1) << RIG_VALUE_BITS) - 1)
 #define RIG_POINT(index, v) (((uint64_t)(index) << RIG_VALUE_BITS) | (v))
@@ -38,18 +37,11 @@ typedef pthread_cond_t rig_cond;
 #define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
 /* A device's index is its slot, from 1 to RIG_SLOTS - 1, and its line in
-   rig's array of timeline words ([rig_edge.h]). A slot passes to a later
-   device once its device has stopped, and that device's timeline goes on
-   from the value the slot's word holds. */
+   rig's array of timeline words ([rig_edge.h]). dev.mli says how a slot
+   passes to a later device. */
 
-/* A device's state. A loss moves a live device to LOSING while its loser
-   spreads it, then to OWED, until a claimant takes its stop (STOPPING).
-   Once the stop returned it is ENDED. A driver's device a forked child
-   inherited is ORPHANED: its stop never runs and its work is the
-   parent's.
-
-     LIVE -> LOSING -> OWED -> STOPPING -> ENDED
-     LIVE, or any loss state, -> ORPHANED (in a forked child) */
+/* A device's state, in the order of the states of dev.mli's "Loss and
+   stops" section, which defines them. */
 enum { RIG_LIVE, RIG_LOSING, RIG_OWED, RIG_STOPPING, RIG_ENDED, RIG_ORPHANED };
 
 /* One in-queue wait of a device's unreached work on another device's value:

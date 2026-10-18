@@ -7,8 +7,8 @@
 
     A change allocates what it needs first and then publishes it with one
     store, and growing builds the new buckets whole before one store
-    replaces the old ones. An exception raised where a change allocates or
-    polls, such as [Sys.Break] or [Out_of_memory], leaves the table as it
+    replaces the old ones. An asynchronous exception
+    ({!Rig.section-errors}) raised inside a change leaves the table as it
     was before the change or as the change made it. The stdlib's
     [Hashtbl] stores its new bucket array before it fills it, so an
     exception while it grows loses the table.

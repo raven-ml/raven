@@ -22,12 +22,11 @@
     allocation of its own, since stamps order the uses of a whole allocation,
     and is made at the first piece that needs it, so a copy of one piece
     makes one.
-    The host's slots serve every device that maps host memory. A device of
-    this machine that maps none stages through slots of its own [Pinned]
-    memory, which go with it once it is lost. Between two such devices, the
-    host copies from one device's staging memory into the other's, and the
-    copy takes a slot of each in one step, so that copies the other way
-    round never hold the slot it waits for. The legs into and out of a half
+    The host's slots serve every device that maps host memory, and a device
+    of this machine that maps none has slots of its own
+    ({!Rig.Buffer.section-copying}). A copy between two such devices takes a
+    slot of each in one step, so that copies the other way round never hold
+    the slot it waits for. The legs into and out of a half
     alternate, so one half fills while the other
     empties. A leg on a device's queue runs without the host waiting for it,
     and the next leg on its half follows it by the half's stamps. A half whose
@@ -39,8 +38,8 @@
     fills or empties. A fill writes its byte into the halves for the first
     two pieces only, after which both hold it.
 
-    A copy, blit or fill takes a read claim on its buffers before it checks
-    them and waits, and holds it until it returns. The host moves bytes that
+    A copy, blit or fill takes its read claims ({!Rig.Buffer.section-copying})
+    before it checks its buffers and waits. The host moves bytes that
     no stamp orders, so a donation meanwhile would write them, or kill the
     buffer the next leg names. *)
 
