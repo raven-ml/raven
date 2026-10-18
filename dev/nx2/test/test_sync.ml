@@ -294,6 +294,9 @@ let others =
           let ok = Nx.place S.on ok in
           check ok [ d ] (fun idx (v, ()) -> At (idx, v));
           Nx.sync d;
+          (* The count includes cached memory, which a refused donation would
+             take unseen. *)
+          Rig.free_cache (m 0);
           let before = Rig.allocated (m 0) in
           ignore (Nx.neg (Nx.donate d));
           equal int before (Rig.allocated (m 0)));
