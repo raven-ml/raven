@@ -101,6 +101,11 @@ let pp_shape ppf s =
 
 let pp_ints ppf s = pp_shape ppf (Iarray.to_array s)
 
+let axis ~by r a what =
+  let a' = if a < 0 then a + r else a in
+  if a' < 0 || a' >= r then invalid_argf "%s: %d is not an axis of %t" by a what
+  else a'
+
 let merge s s' =
   let r = Int.max (Array.length s) (Array.length s') in
   let at s i =

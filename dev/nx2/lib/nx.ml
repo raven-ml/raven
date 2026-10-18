@@ -536,14 +536,7 @@ let pp_value ppf x =
 
 let pp_ints ppf l = pp_shape ppf (Array.of_list l)
 
-(* [a] as an axis of a value of rank [r], counting from the end where negative.
-   [what] names the value in the message. *)
-let axis_of ~by r a what =
-  let a' = if a < 0 then a + r else a in
-  if a' < 0 || a' >= r then invalid_argf "%s: %d is not an axis of %t" by a what
-  else a'
-
-let axis ~by x a = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x)
+let axis ~by x a = Prim.axis ~by (ndim x) a (fun ppf -> pp_value ppf x)
 let dim a x = Prim.dim x (axis ~by:"Nx.dim" x a)
 
 (* Distinct axes of [x], or raises naming the repeated one. *)
@@ -672,7 +665,7 @@ let unsqueeze ~axes:l x =
   List.iter
     (fun a ->
       let a' =
-        axis_of ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
+        Prim.axis ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
       in
       if added.(a') then invalid_argf "%s: position %d repeats" by a;
       added.(a') <- true)
@@ -828,7 +821,7 @@ let stack ?axis:(a = 0) xs =
       let s0 = shape x0 in
       let r = Array.length s0 + 1 in
       let a =
-        axis_of ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
+        Prim.axis ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
       in
       List.iter
         (fun x ->
@@ -1187,17 +1180,16 @@ let get p x =
     (Reshape (Iarray.of_array (Array.sub s k (Array.length s - k))))
     (sliced ~by ranges x)
 
-let take ?axis p x =
+let take ?axis:along p x =
   let by = "Nx.take" in
-  match axis with
+  match along with
   | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
-  | Some a ->
-      take_axis ~by (axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x)) p x
+  | Some a -> take_axis ~by (axis ~by x a) p x
 
 (* [x] read along [a] at the positions [p] of [x]'s rank, for the function
    [by]. *)
 let take_along ~by a p x =
-  let a = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x) in
+  let a = axis ~by x a in
   if ndim p <> ndim x then
     invalid_argf "%s: positions %a for %a of another rank" by pp_value p
       pp_value x;
@@ -1479,34 +1471,18 @@ let scatter ?(combine = Set) ~axis:a p u x =
   let combine : Nx_kernel.combine =
     match combine with Set -> Set | Add -> Add | Max -> Max | Min -> Min
   in
-  let axis = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x) in
+  let axis = axis ~by x a in
   Eval.eval ~by
     (Value.Scatter
        { combine; unique = false; axis; idx = p; updates = u; into = x })
 
 (* Reductions and scans *)
 
-(* [axes] of a value of rank [r], a negative one counted from the end, sorted:
-   every axis without [axes]. *)
-let reduced_axes ~by r axes =
-  match axes with
-  | None -> Iarray.init r Fun.id
-  | Some axes ->
-      let axis a =
-        let a' = if a < 0 then a + r else a in
-        if a' < 0 || a' >= r then
-          invalid_argf "%s: axis %d of a value of rank %d" by a' r;
-        a'
-      in
-      let axes = List.sort Int.compare (List.map axis axes) in
-      let rec repeats = function
-        | a :: (b :: _ as rest) ->
-            if a = b then invalid_argf "%s: axis %d repeats" by a;
-            repeats rest
-        | [] | [ _ ] -> ()
-      in
-      repeats axes;
-      Iarray.of_list axes
+(* The distinct axes [l] of [x], sorted: every axis without [l]. *)
+let reduced_axes ~by x l =
+  match l with
+  | None -> Iarray.init (ndim x) Fun.id
+  | Some l -> Iarray.of_list (List.sort Int.compare (axes ~by x l))
 
 (* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
 let reduce (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
@@ -1533,7 +1509,7 @@ let kept ~keepdims s axes y =
 
 let reduction ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by x axes in
   kept ~keepdims s axes (reduce ~by m (dtype x) axes x)
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
@@ -1547,7 +1523,7 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
     =
   let by = "Nx.mean" in
   let s = shape x and dt = dtype x in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by x axes in
   let n = Iarray.fold_left (fun n a -> n * s.(a)) 1 axes in
   let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
     kept ~keepdims s axes (cast dt (div (reduce ~by Sum acc axes x) count))
@@ -1576,18 +1552,12 @@ let scan_along ~by m axis x =
        })
 
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
-let scan ~by m ?axis x =
-  let s = shape x in
-  let r = Array.length s in
-  match axis with
+let scan ~by m ?axis:along x =
+  match along with
   | None ->
-      let n = Array.fold_left ( * ) 1 s in
-      reshape s (scan_along ~by m 0 (reshape [| n |] x))
-  | Some axis ->
-      let a = if axis < 0 then axis + r else axis in
-      if a < 0 || a >= r then
-        invalid_argf "%s: axis %d of a value of rank %d" by axis r;
-      scan_along ~by m a x
+      let s = shape x in
+      reshaped ~by s (scan_along ~by m 0 (reshaped ~by [| numel x |] x))
+  | Some a -> scan_along ~by m (axis ~by x a) x
 
 let cumsum ?axis x = scan ~by:"Nx.cumsum" Sum ?axis x
 let cumprod ?axis x = scan ~by:"Nx.cumprod" Prod ?axis x
@@ -1966,7 +1936,7 @@ let reduced_count s axes = Iarray.fold_left (fun n a -> n * s.(a)) 1 axes
    count of [false]s is zero, [Min]'s [true]. *)
 let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
   let s = shape x in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by x axes in
   let y =
     if reduced_count s axes > 0 then
       match D.equal_witness (dtype x) D.Bool with
@@ -1994,7 +1964,7 @@ let any ?axes ?keepdims x = truth ~by:"Nx.any" Max ?axes ?keepdims x
 let count ?axes ?(keepdims = false) m =
   let by = "Nx.count" in
   let s = shape m in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by m axes in
   let y, () =
     reduce_by ~by s axes [ Any m ]
       Value.[ Monoid (Sum, 0, D.Int64) ]
@@ -2030,7 +2000,7 @@ let argmin ?axis ?keepdims x = arg ~by:"Nx.argmin" Min ?axis ?keepdims x
 let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
     (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
   if ddof < 0 || (n > 0 && ddof >= n) then
     invalid_argf "%s: ddof %d for %d elements" by ddof n;
@@ -2064,7 +2034,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.logmeanexp" in
   let s = shape x and dt = dtype x in
-  let axes = reduced_axes ~by (Array.length s) axes in
+  let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
   let (Wide w) = wide dt in
   let l = reduce ~by Logsumexp w axes x in
@@ -2142,7 +2112,7 @@ let normalised (type s d) ~by
     (finish : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t)
     ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
-  let axes = reduced_axes ~by (Array.length s) (Some axes) in
+  let axes = reduced_axes ~by x (Some axes) in
   if numel x = 0 then x
   else
     let (Wide w) = wide dt in

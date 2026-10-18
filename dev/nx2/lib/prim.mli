@@ -69,6 +69,11 @@ val shape : ('v, 's, 'd) t -> int array
 val has_shape : ('v, 's, 'd) t -> int array -> bool
 (** [has_shape x s] is [shape x = s]. It allocates nothing. *)
 
+val axis : by:string -> int -> int -> (Format.formatter -> unit) -> int
+(** [axis ~by r a what] is [a] as an axis of a value of rank [r], counted from
+    the end where [a] is negative. Raises [Invalid_argument] naming [by], [a]
+    and the value as [what] prints it, if [a] is no axis of it. *)
+
 val merge : int array -> int array -> (int array, int * int * int) result
 (** [merge s s'] is the shape [s] and [s'] broadcast to, aligned at their last
     axes, each extent equal or [1]; [Error (a, e, e')] at the first axis [a] of

@@ -1209,12 +1209,11 @@ let categorical_programs = programs ()
 let categorical ?key ?(axis = -1) logits =
   let by = "Nx.Rng.categorical" in
   let s = Prim.shape logits in
-  let r = Array.length s in
-  let a = if axis < 0 then axis + r else axis in
   let dt = Prim.dtype logits in
-  if a < 0 || a >= r then
-    invalid_argf "%s: %d is not an axis of %s %a" by axis (D.name dt) pp_shape
-      s;
+  let a =
+    Prim.axis ~by (Array.length s) axis (fun ppf ->
+        Format.fprintf ppf "%s %a" (D.name dt) pp_shape s)
+  in
   if s.(a) = 0 then
     invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
       pp_shape s;

@@ -363,6 +363,15 @@ let test_errors () =
   names "cumsum" (fun () ->
       Nx.cumsum (value (A.of_array D.Bool [| 2 |] [| true; false |])))
 
+(* A refused axis is printed as the caller passed it. *)
+let test_axis_printed () =
+  let x = value (A.of_array D.Float32 [| 2; 3; 4 |] (Array.make 24 1.)) in
+  let says sub f = raises_match (Exn.invalid_arg ~substring:sub) f in
+  says "Nx.sum: -5 is not an axis of float32 [2; 3; 4]" (fun () ->
+      Nx.sum ~axes:[ -5 ] x);
+  says "Nx.sum: axis -1 of float32 [2; 3; 4] repeats" (fun () ->
+      Nx.sum ~axes:[ 2; -1 ] x)
+
 let test_mean () =
   let x = value (A.of_array D.Float32 [| 2; 2 |] [| 1.; 2.; 3.; 6. |]) in
   equal (array float_exact) [| 2.; 4. |]
@@ -2424,6 +2433,7 @@ let reductions_group =
       test
         "bad axes, empty extremes and refused dtypes raise naming the function"
         test_errors;
+      test "a refused axis is printed as passed" test_axis_printed;
       test "mean divides the sum by the count" test_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_expansions;
