@@ -3937,7 +3937,9 @@ submission, and a range a loop of rig's program (D146).
 - **Differs:** a put that takes the cache's files past `CACHESIZE` bytes
   removes entries of every table and version, the least recently used by
   file time first, until they hold four fifths of it, and removes the writes
-  that killed processes left. A hit sets its entry's time. Processes count
+  that killed processes left: those last written an hour or more before, the
+  age at which ccache removes its temporary files, so that another process's
+  write in progress stays. A hit sets its entry's time. Processes count
   each other's puts in the length of one file, to which each put appends a
   byte per KiB.
 - **Reason:** (b). Programs, schedules and beam results are keyed by the
@@ -3950,6 +3952,7 @@ submission, and a range a loop of rig's program (D146).
 - **Pinned by:** `Tolk.Helpers › Diskcache › the files of the cache never
   hold more than cachesize`, `› a put past cachesize removes entries used
   least recently first`, `› a put past cachesize removes the writes a killed
-  process left`, `› processes putting in turn keep the cache within
+  process left`, `› a put past cachesize keeps another process's write in
+  progress`, `› processes putting in turn keep the cache within
   cachesize`, `› a cachesize of 0 keeps every entry` and `› a negative
   cachesize is refused`.

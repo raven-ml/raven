@@ -161,11 +161,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
-- `Diskcache.trim` removes every `.tmp` older than its start, another
-  process's write in progress included, and `put` tolerates its temporary
-  vanishing. Remove only writes older than a fixed age (ccache's is an
-  hour), which drops that branch and the `.mli`'s "a put whose write is
-  removed keeps nothing"
 - `Diskcache.put` trims after its write, so on a full disk every put fails
   and nothing trims. Count and trim before writing, measuring first when the
   size file is missing; `count` failing after the rename fails a put whose

@@ -558,21 +558,26 @@ module Diskcache = struct
         (fun () -> Unix.ftruncate fd kib)
     with Unix.Unix_error _ -> ()
 
+  (* A put writes its entry aside and renames it within moments, so a write
+     in progress last written this many seconds ago is one a process killed
+     while writing left. ccache removes its temporary files at this age. *)
+  let stale_write = 3600.
+
   (* Entries are kept from the one used most recently, while they and their
      count hold four fifths of [limit]; the rest are removed. A trim walks every
      entry, so it leaves a fifth of the bound for the puts before the next.
-     Writes in progress last touched before the walk began are removed: a
-     process killed while writing leaves them, and nothing else would. A trim
-     never fails a put: what it cannot read or remove, as a table another
-     process clears or, on Windows, a file another process has open, it leaves
-     for the next trim. *)
+     Stale writes are removed, since nothing else would. A trim never fails a
+     put: what it cannot read or remove, as a table another process clears or,
+     on Windows, a file another process has open, it leaves for the next
+     trim. *)
   let trim limit =
-    let start = Unix.gettimeofday () and target = limit - (limit / 5) in
+    let stale = Unix.gettimeofday () -. stale_write in
+    let target = limit - (limit / 5) in
     let entries, writes =
       List.partition (fun (name, _, _, _) -> is_whole_entry name) (files ())
     in
     List.iter
-      (fun (_, path, _, time) -> if time < start then ignore (discard path))
+      (fun (_, path, _, time) -> if time < stale then ignore (discard path))
       writes;
     let unless_discarded kept (_, path, size, _) =
       if discard path then kept else kept + size
@@ -595,9 +600,8 @@ module Diskcache = struct
 
   (* The entry is written aside and renamed into place, so readers never see it
      half written. On Windows the rename can fail while a reader holds the entry
-     open; that entry is complete, so it stays. A write a trim removed is an
-     entry removed. A cache without a size, new or written before the cache
-     counted it, is measured. *)
+     open; that entry is complete, so it stays. A cache without a size, new or
+     written before the cache counted it, is measured. *)
   let put ~table key value =
     let limit = Setting.value Setting.cachesize in
     if limit < 0 then
@@ -621,9 +625,8 @@ module Diskcache = struct
           (try Sys.remove tmp with Sys_error _ -> ());
           raise e
       | () ->
-          (try Sys.rename tmp path with
-          | Sys_error _ when Sys.file_exists path -> remove tmp
-          | Sys_error _ when not (Sys.file_exists tmp) -> ());
+          (try Sys.rename tmp path
+           with Sys_error _ when Sys.file_exists path -> remove tmp);
           let measured = Sys.file_exists size_file in
           let counted = count (String.length entry) in
           let over = (not measured) || held (counted * 1024) > limit in

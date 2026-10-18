@@ -715,19 +715,33 @@ let keeps_recently_used () =
       equal (pair bool bool) (false, true) (kept "unread", kept "read"));
   Diskcache.clear ()
 
-(* A write a killed process left: a file named like an entry being written, last
-   written a minute ago. *)
+(* [write_aside table bytes s] is a file named like an entry of [table] being
+   written, of [bytes] bytes, last written [s] seconds ago. *)
+let write_aside table bytes s =
+  let write =
+    Filename.concat (table_directory table) (String.make 32 'a' ^ ".1.tmp")
+  in
+  Out_channel.with_open_bin write (fun oc ->
+      output_string oc (String.make bytes 'v'));
+  ago write s;
+  write
+
+(* A write a killed process left, last written two hours ago. *)
 let removes_stale_writes () =
   Diskcache.clear ();
   let table = fresh_table () and limit = 1 lsl 16 in
-  let stale =
-    Filename.concat (table_directory table) (String.make 32 'a' ^ ".1.tmp")
-  in
-  Out_channel.with_open_bin stale (fun oc ->
-      output_string oc (String.make (limit / 2) 'v'));
-  ago stale 60.;
+  ignore (write_aside table (limit / 2) 7200.);
   sized limit (fun () -> fill_until_trimmed table);
   at_most int ~than:limit (cache_bytes ());
+  Diskcache.clear ()
+
+(* A write another process has in progress, last written a minute ago. *)
+let keeps_writes_in_progress () =
+  Diskcache.clear ();
+  let table = fresh_table () in
+  let write = write_aside table 4096 60. in
+  sized (1 lsl 16) (fun () -> fill_until_trimmed table);
+  equal bool true (Sys.file_exists write);
   Diskcache.clear ()
 
 let unbounded () =
@@ -932,6 +946,8 @@ let diskcache =
             keeps_recently_used;
           test "a put past cachesize removes the writes a killed process left"
             removes_stale_writes;
+          test "a put past cachesize keeps another process's write in progress"
+            keeps_writes_in_progress;
           test "a cachesize of 0 keeps every entry" unbounded;
           test "a negative cachesize is refused" refuses_negative_size;
           test "processes putting in turn keep the cache within cachesize"

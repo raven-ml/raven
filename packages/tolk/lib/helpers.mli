@@ -205,11 +205,10 @@ val cachedb : string
     file takes then, so two uses within one tick of the file system's clock are
     unordered. Removing walks every entry, so it leaves a fifth of the bound for
     the puts that follow. It also removes the writes in progress last written
-    before the walk began: a process killed while writing leaves one, which goes
-    uncounted until then, and a put whose write is removed keeps nothing. An
-    entry larger than the bound is removed by its own put. An entry that cannot
-    be removed, as on Windows while another process has it open, stays for a
-    later removal.
+    an hour or more before: a process killed while writing leaves one, which
+    goes uncounted until then. An entry larger than the bound is removed by its
+    own put. An entry that cannot be removed, as on Windows while another
+    process has it open, stays for a later removal.
 
     The puts of all processes count together, in the file
     [f7bd60b75b29d79b660a2859395c1a24_size] of {!cachedb}, named like a table by
