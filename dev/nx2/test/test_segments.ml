@@ -447,6 +447,28 @@ let law_nan_ranges (Nan_ranges c) =
   in
   equal (array int) expected (bytes (Option.get (Nx.Repr.array y)))
 
+(* A donated operand: the ranges compute as from the undonated one, and the
+   donor dies naming reduce_ranges, which reads it in many operations. *)
+let test_range_donated () =
+  let lo = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
+  let hi = Nx.create Nx.int64 [| 2 |] [| 3L; 4L |] in
+  let xs = [| 1.; 5.; -2.; 4. |] in
+  List.iter
+    (fun c ->
+      let fresh () =
+        let x = Nx.create Nx.float32 [| 4 |] xs in
+        Nx.add x (Nx.zeros_like x)
+      in
+      let plain = Nx.to_array (Nx.reduce_ranges c ~lo ~hi (fresh ())) in
+      let x = fresh () in
+      let donated = Nx.to_array (Nx.reduce_ranges c ~lo ~hi (Nx.donate x)) in
+      equal (array float_exact) plain donated;
+      raises_match
+        (Exn.invalid_arg
+           ~substring:"Nx.copy: operand 1 was donated to Nx.reduce_ranges")
+        (fun () -> Nx.copy x))
+    [ Nx.Add; Max; Min; Set ]
+
 let ranges =
   group "reduce_ranges"
     [
@@ -458,6 +480,7 @@ let ranges =
       test "narrow floats sum at float32" test_range_narrow;
       test "complex extremes in the dtype's order" test_range_complex;
       test "misuse raises" test_range_errors;
+      test "a donated operand computes and dies" test_range_donated;
     ]
 
 (* map_segments *)

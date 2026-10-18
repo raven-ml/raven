@@ -136,7 +136,28 @@ val consume : by:string -> 'r Value.prim -> 'r Value.prim
     [Invalid_argument] naming [Nx.donate] for two handles of one donor, then
     naming [by] for an operand that died. *)
 
+val resolve :
+  by:string ->
+  'd Value.any list ->
+  (('v 's. ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) -> 'a) ->
+  'a
+(** [resolve ~by xs k] is [k read], the call [by] consuming the donated
+    handles among its operands [xs] once, for a call that reads an operand
+    in more than one operation. [read] gives each handle's arrays, and each
+    of their donors among [xs], as live values; any other value as it is.
+    {!consume}'s checks run before [k], operand [i] being [xs]' element [i].
+    The donors die, naming [by], once [k] returns; if [k] raises, they and
+    their handles live on. [k]'s operations reuse none of their memory,
+    which is freed once no value holds it.
+
+    While [k] runs, a hold on the handles' memory ({!Rig.Claim.hold}) shares
+    it, so that a consumer that claims one of the handles meanwhile, on any
+    domain, computes into fresh memory and overwrites nothing [k] reads; the
+    claim after [k] then raises naming that consumer. The hold ends when [k]
+    returns or raises. *)
+
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
+
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
     checks the calling domain issued on [x]'s set: it reads them in issue order
     up to the first that fails, which raises its exception, and drops the later

@@ -269,11 +269,8 @@ let claim ~by hs =
     (fun (_, Handle (i, x)) -> claim_handle ~by i x)
     (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
 
-(* [op] read as it is when it is called, before its claim kills the donors
-   of its handles [hs]: each handle as its arrays, and each of those donors
-   that is an operand itself as a live value over its arrays. *)
-let unhandled : type r. handle list -> r Value.prim -> r Value.prim =
- fun hs op ->
+(* The keys of the donors of the handles [hs] that are still offered. *)
+let offered hs =
   let key (Handle (_, x)) =
     match x with
     | Value.Donated d -> (
@@ -283,21 +280,32 @@ let unhandled : type r. handle list -> r Value.prim -> r Value.prim =
     | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
         None
   in
-  let keys = List.filter_map key hs in
-  let donor = function
-    | Value.Offered k -> List.mem k keys
-    | Value.Live | Value.Died _ -> false
-  in
-  let read (type v s d) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
-    match y with
-    | Value.Donated _ -> live y
-    | Value.Array r when donor r.dead ->
-        Value.Array { r with dead = Value.Live }
-    | Value.Shards r when donor r.dead ->
-        Value.Shards { r with dead = Value.Live }
-    | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
-  in
-  Prim.map read op
+  List.filter_map key hs
+
+(* Whether [death] is that of a donor offered under one of [keys]. *)
+let among keys = function
+  | Value.Offered k -> List.mem k keys
+  | Value.Live | Value.Died _ -> false
+
+(* [y] read as it is when its call is made, before the call's claim kills the
+   donors of its handles, whose keys are [keys]: a handle as its arrays, and
+   one of those donors as a live value over its arrays. *)
+let as_called : type v s d. int list -> (v, s, d) Value.t -> (v, s, d) Value.t
+    =
+ fun keys y ->
+  match y with
+  | Value.Donated _ -> live y
+  | Value.Array r when among keys r.dead ->
+      Value.Array { r with dead = Value.Live }
+  | Value.Shards r when among keys r.dead ->
+      Value.Shards { r with dead = Value.Live }
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
+
+(* [op] read as it is when it is called, before its claim kills the donors of
+   its handles [hs]. *)
+let unhandled hs op =
+  let keys = offered hs in
+  Prim.map (fun y -> as_called keys y) op
 
 let consume ~by op =
   let (Prim.Operands xs) = Prim.operands op in
@@ -306,6 +314,36 @@ let consume ~by op =
   let read = unhandled hs op in
   claim ~by hs;
   read
+
+let resolve (type d a) ~by (xs : d Value.any list)
+    (k : ('v 's. ('v, 's, d) Value.t -> ('v, 's, d) Value.t) -> a) : a =
+  let hs =
+    if List.exists (fun (Value.Any x) -> is_handle x) xs then handles ~by xs
+    else []
+  in
+  let alive () = List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs in
+  alive ();
+  match hs with
+  | [] -> k (fun y -> y)
+  | hs ->
+      (* The hold shares the donors' memory while [k] runs, so that a consumer
+         that claims a handle meanwhile computes into fresh memory and frees
+         none. A buffer already dead was consumed by a consumer that claimed
+         its handle first, which [alive] names. *)
+      let held =
+        match Rig.Claim.hold (List.concat_map buffers hs) with
+        | h -> h
+        | exception (Invalid_argument _ as e) ->
+            alive ();
+            raise e
+      in
+      let keys = offered hs in
+      Fun.protect
+        ~finally:(fun () -> Rig.Claim.release held)
+        (fun () ->
+          let result = k (fun y -> as_called keys y) in
+          claim ~by hs;
+          result)
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)

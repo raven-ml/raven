@@ -504,12 +504,21 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
   in
   refuse ~by name "[0, inf)" ~show:Int32.to_string n ok
 
+(* A sampler checks its parameters before it draws from them, so it reads
+   each donated one once: [once ~by p f] is [f] of [p] read as a plain value,
+   its donation consumed by the call [by] when [f] returns
+   ({!Exec.resolve}). *)
+let once ~by p f = Exec.resolve ~by [ Value.Any p ] (fun read -> f (read p))
+
+let once2 ~by a b f =
+  Exec.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
+      f (read a) (read b))
+
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
 let bernoulli_programs = programs ()
 
-let bernoulli ?key p =
-  let by = "Nx.Rng.bernoulli" in
+let bernoulli_by ~by ?key p =
   require ~by "p" probability p;
   let dt = Prim.dtype p in
   let prog =
@@ -519,6 +528,10 @@ let bernoulli ?key p =
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
   in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p) prog
+
+let bernoulli ?key p =
+  let by = "Nx.Rng.bernoulli" in
+  once ~by p (bernoulli_by ~by ?key)
 
 (* Rejection *)
 
@@ -599,8 +612,7 @@ let log_gamma ~key ~p c j a =
 
 let gamma_programs = programs ()
 
-let gamma ?key a =
-  let by = "Nx.Rng.gamma" in
+let gamma_by ~by ?key a =
   require ~by "a" positive a;
   let dt = Prim.dtype a in
   let prog =
@@ -615,6 +627,10 @@ let gamma ?key a =
   in
   draw ~by ~params:[| Value.Any a |] (resolve key) dt (Prim.shape a) prog
 
+let gamma ?key a =
+  let by = "Nx.Rng.gamma" in
+  once ~by a (gamma_by ~by ?key)
+
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas, element [j]'s
    being the {!gamma} draws [2j] and [2j + 1] of its key, formed as [1 / (1 +
    exp d)], [d = log G(b) - log G(a)], so that two gammas that underflow keep
@@ -628,8 +644,7 @@ let gamma ?key a =
    zero [q]. *)
 let beta_programs = programs ()
 
-let beta ?key a b =
-  let by = "Nx.Rng.beta" in
+let beta_by ~by ?key a b =
   require ~by "a" positive a;
   require ~by "b" positive b;
   let dt = Prim.dtype a in
@@ -648,6 +663,10 @@ let beta ?key a b =
         rounded dt E.(lit 1. / (lit 1. + exp d)))
   in
   draw ~by ~params:[| Value.Any a; Value.Any b |] (resolve key) dt s prog
+
+let beta ?key a b =
+  let by = "Nx.Rng.beta" in
+  once2 ~by a b (beta_by ~by ?key)
 
 (* Von Mises *)
 
@@ -699,8 +718,7 @@ let wrapped_cauchy c kappa =
 
 let von_mises_programs = programs ()
 
-let von_mises ?key kappa =
-  let by = "Nx.Rng.von_mises" in
+let von_mises_by ~by ?key kappa =
   require ~by "k" non_negative kappa;
   let dt = Prim.dtype kappa in
   let prog =
@@ -731,6 +749,10 @@ let von_mises ?key kappa =
   in
   let params = [| Value.Any kappa |] in
   draw ~by ~params (resolve key) dt (Prim.shape kappa) prog
+
+let von_mises ?key kappa =
+  let by = "Nx.Rng.von_mises" in
+  once ~by kappa (von_mises_by ~by ?key)
 
 (* Counts *)
 
@@ -824,8 +846,7 @@ let poisson_rejection_rounds = 16
 
 let poisson_programs = programs ()
 
-let poisson ?key rate =
-  let by = "Nx.Rng.poisson" in
+let poisson_by ~by ?key rate =
   require ~by "rate" counted rate;
   let dt = Prim.dtype rate in
   let prog =
@@ -877,6 +898,10 @@ let poisson ?key rate =
   let params = [| Value.Any rate |] in
   draw ~by ~params (resolve key) D.Int32 (Prim.shape rate) prog
 
+let poisson ?key rate =
+  let by = "Nx.Rng.poisson" in
+  once ~by rate (poisson_by ~by ?key)
+
 (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half, so
    the regimes see [p <= 1/2], chosen per element by the mean [n p]. Below 10,
    inversion over 48 terms: they follow from [(1 - p)^n] by the ratios [(n - j)
@@ -892,8 +917,7 @@ let binomial_rejection_rounds = 18
 
 let binomial_programs = programs ()
 
-let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
-  let by = "Nx.Rng.binomial" in
+let binomial_by ~by ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   require_counts ~by "n" count;
   require ~by "p" probability prob;
   let dt = Prim.dtype prob in
@@ -970,6 +994,10 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let params = [| Value.Any count; Value.Any prob |] in
   draw ~by ~params (resolve key) D.Int32 s prog
 
+let binomial ?key count prob =
+  let by = "Nx.Rng.binomial" in
+  once2 ~by count prob (binomial_by ~by ?key)
+
 (* Truncated normal *)
 
 (* Inverse-CDF truncation: one uniform [u] per draw and no acceptance test, so
@@ -1034,8 +1062,7 @@ let log_sum c a b =
 
 let truncated_normal_programs = programs ()
 
-let truncated_normal ?key lower upper =
-  let by = "Nx.Rng.truncated_normal" in
+let truncated_normal_by ~by ?key lower upper =
   require ~by "lower" not_nan lower;
   require ~by "upper" not_nan upper;
   let dt = Prim.dtype lower in
@@ -1090,6 +1117,10 @@ let truncated_normal ?key lower upper =
   in
   draw ~by ~params (resolve key) dt s prog
 
+let truncated_normal ?key lower upper =
+  let by = "Nx.Rng.truncated_normal" in
+  once2 ~by lower upper (truncated_normal_by ~by ?key)
+
 (* Reductions along a draw's last axis *)
 
 (* [x] reduced along the last axis of [shape], its program's output folded by
@@ -1125,8 +1156,7 @@ let along_last ~by shape prog monoid c loads =
    NaN or all zero. *)
 let dirichlet_programs = programs ()
 
-let dirichlet ?key a =
-  let by = "Nx.Rng.dirichlet" in
+let dirichlet_by ~by ?key a =
   let s = Prim.shape a in
   let r = Array.length s in
   if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
@@ -1174,6 +1204,10 @@ let dirichlet ?key a =
     map ~by shape
       (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c; D.Any c |] [| E.any out |])
       dt loads
+
+let dirichlet ?key a =
+  let by = "Nx.Rng.dirichlet" in
+  once ~by a (dirichlet_by ~by ?key)
 
 (* Categorical *)
 

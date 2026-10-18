@@ -88,6 +88,46 @@ let test_refused_kills_none () =
   equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
     (elements (Nx.add x2 x2))
 
+(* A function that computes through several operations kills its donors only
+   when it returns: refused, from its own checks or from an operation inside,
+   it leaves each donor and its handle usable. *)
+let test_refused_composite () =
+  let x = fresh_at [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let d = Nx.donate x in
+  invalid ~sub:"Nx.softmax" (fun () -> Nx.softmax ~axes:[ 5 ] d);
+  invalid ~sub:"Nx.roll" (fun () -> Nx.roll ~axis:4 1 d);
+  let a = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let da = Nx.donate a in
+  invalid ~sub:"Nx.lstsq" (fun () -> Nx.lstsq da (fresh [| 1.; 2.; 3. |]));
+  equal ~msg:"the donor lives" (array float_exact)
+    [| 2.; 4.; 6.; 8.; 10.; 12. |]
+    (elements (Nx.add x x));
+  equal ~msg:"its handle reaches a later consumer" (array float_exact)
+    [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    (elements (Nx.copy d));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () ->
+      Nx.add x x);
+  equal ~msg:"the other donor's handle computes" (array float_exact)
+    [| 3.; 7. |]
+    (elements (Nx.sum ~axes:[ 1 ] da));
+  (* [map_segments] reads both handles in operations before it calls [f]; an
+     operation [f] makes refuses, then its own check of [f]'s result. *)
+  let ids = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let di = Nx.donate ids and dx = Nx.donate x in
+  let segments f = Nx.map_segments ~segments:2 di f dx in
+  invalid ~sub:"Nx.reshape" (fun () ->
+      segments (fun _ rows -> Nx.reshape [| 3 |] rows));
+  invalid ~sub:"Nx.map_segments: f gave" (fun () ->
+      segments (fun _ rows -> Nx.reshape [| -1 |] (Nx.mul_s rows 2.)));
+  equal ~msg:"the ids live" (array int64) [| 0L; 1L |]
+    (elements (Nx.copy ids));
+  equal ~msg:"the rows' donor lives" (array float_exact) [| 2.; 4.; 6.; 8. |]
+    (elements (Nx.add x x));
+  equal ~msg:"their handles reach a later consumer" (array float_exact)
+    [| 2.; 4.; 6.; 8. |]
+    (elements (segments (fun _ rows -> Nx.mul_s rows 2.)))
+
 (* An operation that aligns its operands, as [add] broadcasts [1] to [2],
    checks them all before it consumes any. *)
 let test_aligned_refusal () =
@@ -321,6 +361,34 @@ let test_donor_beside () =
   let y = Nx.add (Nx.donate c) c in
   equal ~msg:"doubled, shared" (array float_exact) doubled (elements y);
   equal ~msg:"the view" (array float_exact) original (elements flat)
+
+(* A consumer that takes a composite's donor while the composite runs, here a
+   rule at [softmax]'s first operation, computes into fresh memory, so that
+   [softmax]'s later operations read the donor's elements; [softmax], which
+   lost its donor, raises naming that consumer. *)
+let test_inside_composite () =
+  let run () =
+    let c = cache () and taken = ref None in
+    let rule _ ~by op =
+      if Option.is_none !taken then begin
+        taken := Some (0, [||]);
+        let before = settled () in
+        let y = Nx.add (Nx.donate c) (nines [| width |]) in
+        taken := Some (Rig.allocated device - before, elements y)
+      end;
+      Nx.Prim.eval ~by op
+    in
+    invalid ~sub:"Nx.softmax: operand 1 was donated to Nx.add" (fun () ->
+        Nx.Prim.interpret ~name:"test.taker" Extent rule (fun _ ->
+            Nx.softmax ~axes:[ 1 ] (Nx.donate c)));
+    Option.get !taken
+  in
+  ignore (run ());
+  let grew, y = run () in
+  copied ~msg:"the consumer" ~bytes:size grew;
+  equal ~msg:"the consumer's result" (array float_exact)
+    (Array.map (fun x -> x +. 9.) original)
+    y
 
 (* A donated call gives the bits of the same call undonated: a scatter of
    every combine with repeated positions, positions outside the axis, NaN,
@@ -655,274 +723,821 @@ let test_dies_at_the_call () =
     (fun () -> Nx.cast Nx.float16 (pair ()))
     (Nx.reduce_ranges Nx.Add ~lo ~hi)
 
-(* A dead operand: each public function names itself, the one the user
-   called, whatever it computes through, at every dtype it takes. *)
+(* Every public function that takes a value, called by one table of cases. A
+   case makes fresh operands, passes its operand [i] as [d i x], and prints the
+   results. Two promises run over the table: on a dead operand the function
+   raises naming itself, the one the user called, whatever it computes through;
+   a donated operand gives the undonated result. *)
+
+(* What a function does with a dead operand: raise naming itself, or print
+   [death]. *)
+type dead = Raises | Prints of string
+
+type case = {
+  fn : string;  (* The function, as the user writes it. *)
+  by : string;  (* The name its refusals give. *)
+  dt : string;
+  operands : int;
+  dead : dead;
+  run :
+    ('v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t) -> string;
+}
+
 let product s = Array.fold_left ( * ) 1 s
 
-let ones (type v s) (dt : (v, s) Nx.dtype) shape : (v, s, Nx.host) Nx.t =
-  Nx.create dt shape (Array.make (product shape) (D.one dt))
-
-let dead dt shape =
-  let x = ones dt shape in
-  ignore (Nx.neg (Nx.donate x));
-  x
-
-let i64 xs = Nx.create Nx.int64 [| Array.length xs |] (Array.map Int64.of_int xs)
-
-let names_itself (by, run) =
-  let named = function
-    | Invalid_argument m ->
-        String.starts_with ~prefix:(by ^ ": operand ") m
-        && String.ends_with ~suffix:" was donated to Nx.neg" m
-    | _ -> false
+(* A host value of shape [s] in memory of its own, its elements spread over both
+   signs. *)
+let data (type v s) (dt : (v, s) Nx.dtype) s : (v, s, Nx.host) Nx.t =
+  let n = product s in
+  let x =
+    Nx.cast dt
+      (Nx.create Nx.float64 s
+         (Array.init n (fun i -> Float.of_int ((i * 7 mod 11) - 4) /. 2.)))
   in
-  raises_match ~msg:by named run
+  Nx.add x (Nx.zeros_like x)
+
+(* As [data], of [int64] positions [xs] at shape [s], [[|n|]] by default. *)
+let ints ?s xs =
+  let s = Option.value s ~default:[| Array.length xs |] in
+  let x = Nx.create Nx.int64 s (Array.map Int64.of_int xs) in
+  Nx.add x (Nx.zeros_like x)
+
+let int32s xs =
+  let x =
+    Nx.create Nx.int32 [| Array.length xs |] (Array.map Int32.of_int xs)
+  in
+  Nx.add x (Nx.zeros_like x)
+
+let complex_data s = Nx.complex Nx.complex64 ~re:(data f32 s) ~im:(data f32 s)
+let show x = Nx.to_string x
+let shows l = String.concat "; " l
+let showl l = shows (List.map show l)
+
+(* A case of [Nx.fn], whose refusals name [Nx.by], [Nx.fn] by default. *)
+let c ?by ?(dead = Raises) fn operands run dt =
+  let by = "Nx." ^ Option.value by ~default:fn in
+  { fn = "Nx." ^ fn; by; dt; operands; dead; run }
+
+(* The cases of a group, at the dtype named [dt]. *)
+let table dt cases = List.map (fun case -> case dt) cases
 
 (* The functions of every dtype. *)
 let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
-  let m () = dead dt [| 2; 2 |] and live () = ones dt [| 2; 2 |] in
-  let v () = dead dt [| 4 |] in
-  let c (by, f) = (by, D.name dt, f) in
-  List.map c
+  let x s = data dt s and one = D.one dt in
+  let nonzero s =
+    let a = x s in
+    Nx.add_s (Nx.mul a a) one
+  in
+  let ij_jk = Nx.Pattern.v "i j, j k -> i k | j" in
+  let dead = Prints (D.name dt ^ " [2; 3], donated to Nx.copy") in
+  table (D.name dt)
     [
-      ("Nx.add", fun () -> ignore @@ Nx.add (live ()) (m ()));
-      ("Nx.sub", fun () -> ignore @@ Nx.sub (m ()) (live ()));
-      ("Nx.mul", fun () -> ignore @@ Nx.mul (m ()) (live ()));
-      ("Nx.neg", fun () -> ignore @@ Nx.neg (m ()));
-      ("Nx.equal", fun () -> ignore @@ Nx.equal (m ()) (live ()));
-      ("Nx.not_equal", fun () -> ignore @@ Nx.not_equal (live ()) (m ()));
-      ("Nx.where", fun () -> ignore @@ Nx.where (Nx.equal (live ()) (live ())) (m ()) (live ()));
-      ("Nx.copy", fun () -> ignore @@ Nx.copy (m ()));
-      ("Nx.reshape", fun () -> ignore @@ Nx.reshape [| 4 |] (m ()));
-      ("Nx.broadcast_to", fun () -> ignore @@ Nx.broadcast_to [| 2; 2; 2 |] (m ()));
-      ("Nx.unsqueeze", fun () -> ignore @@ Nx.unsqueeze ~axes:[ 0 ] (m ()));
-      ("Nx.flatten", fun () -> ignore @@ Nx.flatten (m ()));
-      ("Nx.transpose", fun () -> ignore @@ Nx.transpose (m ()));
-      ("Nx.moveaxis", fun () -> ignore @@ Nx.moveaxis 0 1 (m ()));
-      ("Nx.swapaxes", fun () -> ignore @@ Nx.swapaxes 0 1 (m ()));
-      ("Nx.flip", fun () -> ignore @@ Nx.flip (m ()));
-      ("Nx.sliding_window", fun () -> ignore @@ Nx.sliding_window ~window:2 (v ()));
-      ("Nx.split", fun () -> ignore @@ List.hd (Nx.split ~axis:0 2 (m ())));
-      ("Nx.concatenate", fun () -> ignore @@ Nx.concatenate ~axis:0 [ live (); m () ]);
-      ("Nx.stack", fun () -> ignore @@ Nx.stack [ m (); live () ]);
-      ("Nx.pad", fun () -> ignore @@ Nx.pad [| (1, 0); (0, 1) |] (D.one dt) (m ()));
-      ("Nx.roll", fun () -> ignore @@ Nx.roll 1 (v ()));
-      ("Nx.tile", fun () -> ignore @@ Nx.tile [| 2; 1 |] (m ()));
-      ("Nx.repeat", fun () -> ignore @@ Nx.repeat ~axis:0 2 (m ()));
-      ("Nx.slice", fun () -> ignore @@ Nx.slice [ Nx.L [ 1; 0 ] ] (m ()));
-      ("Nx.get", fun () -> ignore @@ Nx.get [ 1 ] (m ()));
-      ("Nx.take", fun () -> ignore @@ Nx.take (i64 [| 1; 0 |]) (m ()));
-      ("Nx.take_along_axis", fun () -> ignore @@
-          Nx.take_along_axis ~axis:0 (Nx.reshape [| 2; 1 |] (i64 [| 1; 0 |])) (m ()));
-      ("Nx.set", fun () -> ignore @@ Nx.set [ Nx.I 0 ] (Nx.reshape [| 2 |] (Nx.get [ 0 ] (live ()))) (m ()));
-      ("Nx.scatter", fun () -> ignore @@
-          Nx.scatter ~axis:0 (Nx.reshape [| 1; 2 |] (i64 [| 0; 1 |]))
-            (ones dt [| 1; 2 |]) (m ()));
-      ("Nx.sum", fun () -> ignore @@ Nx.sum (m ()));
-      ("Nx.prod", fun () -> ignore @@ Nx.prod ~axes:[ 0 ] (m ()));
-      ("Nx.cumsum", fun () -> ignore @@ Nx.cumsum (m ()));
-      ("Nx.cumsum", fun () -> ignore @@ Nx.cumsum ~axis:1 (m ()));
-      ("Nx.mean", fun () -> ignore @@ Nx.mean (m ()));
-      ("Nx.array_equal", fun () -> ignore @@ Nx.array_equal (live ()) (m ()));
-      ("Nx.matrix_transpose", fun () -> ignore @@ Nx.matrix_transpose (m ()));
-      ("Nx.tril", fun () -> ignore @@ Nx.tril (m ()));
-      ("Nx.triu", fun () -> ignore @@ Nx.triu (m ()));
-      ("Nx.diagonal", fun () -> ignore @@ Nx.diagonal (m ()));
-      ("Nx.trace", fun () -> ignore @@ Nx.trace (m ()));
-      ("Nx.diag", fun () -> ignore @@ Nx.diag (v ()));
-      ("Nx.place", fun () -> ignore @@ Nx.place Nx.Host.on (m ()));
-      ("Nx.to_array", fun () -> ignore @@ Nx.to_array (m ()));
-      ("Nx.sync", fun () -> ignore @@ Nx.sync (m ()));
-      ("Nx.item", fun () -> ignore @@ Nx.item [ 0; 0 ] (m ()));
-      ("Nx.matmul", fun () -> ignore @@ Nx.matmul (m ()) (live ()));
-      ("Nx.dot", fun () -> ignore @@ Nx.dot (live ()) (m ()));
+      c "copy" 1 (fun d -> show (Nx.copy (d 0 (x [| 2; 3 |]))));
+      c "map_item" 1 (fun d -> show (Nx.map_item Fun.id (d 0 (x [| 2; 3 |]))));
+      c "to_array" 1 (fun d ->
+          show (Nx.create dt [| 6 |] (Nx.to_array (d 0 (x [| 2; 3 |])))));
+      c "item" 1 (fun d ->
+          show (Nx.scalar dt (Nx.item [ 1; 2 ] (d 0 (x [| 2; 3 |])))));
+      c "sync" 1 (fun d ->
+          Nx.sync (d 0 (x [| 3 |]));
+          "synced");
+      c "to_string" ~dead 1 (fun d -> Nx.to_string (d 0 (x [| 2; 3 |])));
+      c "pp" ~dead 1 (fun d -> Format.asprintf "%a" Nx.pp (d 0 (x [| 2; 3 |])));
+      c "place" 1 (fun d -> show (Nx.place Nx.Host.on (d 0 (x [| 2; 3 |]))));
+      c "Repr.array" 1 (fun d ->
+          show
+            (Nx.Repr.of_array Nx.Host.v
+               (Option.get (Nx.Repr.array (d 0 (x [| 2; 3 |]))))));
+      c "Repr.shards" 1 (fun d ->
+          string_of_int
+            (Iarray.length (Option.get (Nx.Repr.shards (d 0 (x [| 2; 3 |]))))));
+      c "reshape" 1 (fun d -> show (Nx.reshape [| 3; 2 |] (d 0 (x [| 2; 3 |]))));
+      c "broadcast_to" 1 (fun d ->
+          show (Nx.broadcast_to [| 2; 2; 3 |] (d 0 (x [| 2; 3 |]))));
+      c "broadcast_arrays" 2 (fun d ->
+          showl (Nx.broadcast_arrays [ d 0 (x [| 2; 1 |]); d 1 (x [| 3 |]) ]));
+      c "squeeze" 1 (fun d -> show (Nx.squeeze (d 0 (x [| 2; 1; 3 |]))));
+      c "unsqueeze" 1 (fun d ->
+          show (Nx.unsqueeze ~axes:[ 0 ] (d 0 (x [| 3 |]))));
+      c "flatten" 1 (fun d -> show (Nx.flatten (d 0 (x [| 2; 3 |]))));
+      c "transpose" 1 (fun d -> show (Nx.transpose (d 0 (x [| 2; 3 |]))));
+      c "moveaxis" 1 (fun d -> show (Nx.moveaxis 0 1 (d 0 (x [| 2; 3 |]))));
+      c "swapaxes" 1 (fun d -> show (Nx.swapaxes 0 1 (d 0 (x [| 2; 3 |]))));
+      c "flip" 1 (fun d -> show (Nx.flip (d 0 (x [| 2; 3 |]))));
+      c "sliding_window" 1 (fun d ->
+          show (Nx.sliding_window ~window:2 (d 0 (x [| 5 |]))));
+      c "split" 1 (fun d -> showl (Nx.split ~axis:0 2 (d 0 (x [| 4; 2 |]))));
+      c "concatenate" 2 (fun d ->
+          show
+            (Nx.concatenate ~axis:0 [ d 0 (x [| 2; 3 |]); d 1 (x [| 1; 3 |]) ]));
+      c "stack" 2 (fun d ->
+          show (Nx.stack [ d 0 (x [| 3 |]); d 1 (x [| 3 |]) ]));
+      c "pad" 1 (fun d ->
+          show (Nx.pad [| (1, 0); (0, 1) |] one (d 0 (x [| 2; 3 |]))));
+      c "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
+      c "roll" 1 (fun d -> show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
+      c "tile" 1 (fun d -> show (Nx.tile [| 2; 1 |] (d 0 (x [| 2; 3 |]))));
+      c "repeat" 1 (fun d -> show (Nx.repeat ~axis:0 2 (d 0 (x [| 2; 3 |]))));
+      c "rearrange" 1 (fun d ->
+          show (Nx.rearrange (Nx.Pattern.v "a b -> b a") (d 0 (x [| 2; 3 |]))));
+      c "slice" 1 (fun d ->
+          show
+            (Nx.slice [ Nx.R (0, 1); Nx.Rs (2, -4, -1) ] (d 0 (x [| 2; 3 |]))));
+      c "slice" 1 (fun d ->
+          show (Nx.slice [ Nx.L [ 1; 0 ] ] (d 0 (x [| 2; 3 |]))));
+      c "slice" 2 (fun d ->
+          show
+            (Nx.slice
+               [ Nx.A; Nx.T (d 0 (ints [| 2; 0 |])) ]
+               (d 1 (x [| 2; 3 |]))));
+      c "slice" 2 (fun d ->
+          let start = d 0 (ints ~s:[||] [| 1 |]) in
+          show (Nx.slice [ Nx.D (start, 2) ] (d 1 (x [| 4; 2 |]))));
+      c "get" 1 (fun d -> show (Nx.get [ 1 ] (d 0 (x [| 2; 3 |]))));
+      c "take" 2 (fun d ->
+          show (Nx.take ~axis:1 (d 0 (ints [| 2; 0; 2 |])) (d 1 (x [| 2; 3 |]))));
+      c "take_along_axis" 2 (fun d ->
+          let ids = d 0 (ints ~s:[| 2; 1 |] [| 1; 0 |]) in
+          show (Nx.take_along_axis ~axis:1 ids (d 1 (x [| 2; 3 |]))));
+      c "set" 2 (fun d ->
+          show (Nx.set [ Nx.I 0 ] (d 0 (x [| 3 |])) (d 1 (x [| 2; 3 |]))));
+      c "set" 3 (fun d ->
+          show
+            (Nx.set
+               [ Nx.T (d 0 (ints [| 1 |])) ]
+               (d 1 (x [| 1; 3 |]))
+               (d 2 (x [| 2; 3 |]))));
+      c "scatter" 3 (fun d ->
+          let ids = d 0 (ints ~s:[| 2; 2 |] [| 2; 0; 1; 1 |]) in
+          show
+            (Nx.scatter ~axis:1 ids (d 1 (x [| 2; 2 |])) (d 2 (x [| 2; 3 |]))));
+      c "scatter" 3 (fun d ->
+          let ids = d 0 (ints ~s:[| 2; 3 |] [| 1; 1; 0; 1; 0; 0 |]) in
+          show
+            (Nx.scatter ~combine:Add ~axis:0 ids
+               (d 1 (x [| 2; 3 |]))
+               (d 2 (x [| 2; 3 |]))));
+      c "add" 2 (fun d -> show (Nx.add (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
+      c "sub" 2 (fun d ->
+          show (Nx.sub (d 0 (x [| 2; 3 |])) (d 1 (x [| 2; 3 |]))));
+      c "mul" 2 (fun d ->
+          show (Nx.mul (d 0 (x [| 2; 3 |])) (d 1 (x [| 2; 1 |]))));
+      c "div" 2 (fun d ->
+          show (Nx.div (d 0 (x [| 2; 3 |])) (d 1 (nonzero [| 2; 3 |]))));
+      c "neg" 1 (fun d -> show (Nx.neg (d 0 (x [| 2; 3 |]))));
+      c "square" 1 (fun d -> show (Nx.square (d 0 (x [| 2; 3 |]))));
+      c "add_s" 1 (fun d -> show (Nx.add_s (d 0 (x [| 3 |])) one));
+      c "sub_s" 1 (fun d -> show (Nx.sub_s (d 0 (x [| 3 |])) one));
+      c "mul_s" 1 (fun d -> show (Nx.mul_s (d 0 (x [| 3 |])) one));
+      c "div_s" 1 (fun d -> show (Nx.div_s (d 0 (x [| 3 |])) one));
+      c "rsub_s" 1 (fun d -> show (Nx.rsub_s one (d 0 (x [| 3 |]))));
+      c "rdiv_s" 1 (fun d -> show (Nx.rdiv_s one (d 0 (nonzero [| 3 |]))));
+      c "equal" 2 (fun d -> show (Nx.equal (d 0 (x [| 4 |])) (d 1 (x [| 4 |]))));
+      c "not_equal" 2 (fun d ->
+          show (Nx.not_equal (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "equal_s" 1 (fun d -> show (Nx.equal_s (d 0 (x [| 4 |])) one));
+      c "not_equal_s" 1 (fun d -> show (Nx.not_equal_s (d 0 (x [| 4 |])) one));
+      c "array_equal" 2 (fun d ->
+          show (Nx.array_equal (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c "where" 3 (fun d ->
+          let cond = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
+          show
+            (Nx.where cond (d 1 (x [| 2; 3 |])) (d 2 (Nx.flip (x [| 2; 3 |])))));
+      c "sum" 1 (fun d -> show (Nx.sum (d 0 (x [| 2; 3 |]))));
+      c "sum" 1 (fun d ->
+          show (Nx.sum ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
+      c "prod" 1 (fun d -> show (Nx.prod ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
+      c "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
+      c "cumsum" 1 (fun d -> show (Nx.cumsum (d 0 (x [| 2; 3 |]))));
+      c "cumsum" 1 (fun d -> show (Nx.cumsum ~axis:1 (d 0 (x [| 2; 3 |]))));
+      c "cumprod" 1 (fun d -> show (Nx.cumprod ~axis:0 (d 0 (x [| 2; 3 |]))));
+      c "cast" 1 (fun d -> show (Nx.cast Nx.complex128 (d 0 (x [| 3 |]))));
+      c "bitcast" 1 (fun d -> show (Nx.bitcast Nx.uint8 (d 0 (x [| 2 |]))));
+      c "contract" 2 (fun d ->
+          show (Nx.contract dt ij_jk (d 0 (x [| 2; 3 |])) (d 1 (x [| 3; 2 |]))));
+      c "contract" 3 (fun d ->
+          show
+            (Nx.contract
+               ~init:(d 2 (x [| 2; 2 |]))
+               dt ij_jk
+               (d 0 (x [| 2; 3 |]))
+               (d 1 (x [| 3; 2 |]))));
+      c "einsum" 2 (fun d ->
+          show (Nx.einsum ij_jk [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]) ]));
+      c "matmul" 2 (fun d ->
+          show (Nx.matmul (d 0 (x [| 2; 3 |])) (d 1 (x [| 3; 2 |]))));
+      c "dot" 2 (fun d -> show (Nx.dot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c "matrix_transpose" 1 (fun d ->
+          show (Nx.matrix_transpose (d 0 (x [| 2; 3 |]))));
+      c "tril" 1 (fun d -> show (Nx.tril (d 0 (x [| 3; 3 |]))));
+      c "triu" 1 (fun d -> show (Nx.triu ~k:1 (d 0 (x [| 3; 3 |]))));
+      c "diagonal" 1 (fun d -> show (Nx.diagonal (d 0 (x [| 3; 3 |]))));
+      c "trace" 1 (fun d -> show (Nx.trace (d 0 (x [| 3; 3 |]))));
+      c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3 |]))));
+      c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3; 3 |]))));
     ]
 
 (* The functions of floats. *)
 let floats (type s) (dt : (float, s) Nx.dtype) =
-  let m () = dead dt [| 2; 2 |] and live () = ones dt [| 2; 2 |] in
-  let v () = dead dt [| 4 |] and lv () = ones dt [| 4 |] in
-  let ids = i64 [| 0; 1 |] in
-  let c (by, f) = (by, D.name dt, f) in
-  List.map c
+  let x s = data dt s in
+  let positive s = Nx.add_s (Nx.abs (x s)) 0.5 in
+  (* In (0, 1). *)
+  let unit s = Nx.div_s (positive s) 4. in
+  let ids () = ints [| 0; 1; 0; 1 |] in
+  table (D.name dt)
     [
-      ("Nx.div", fun () -> ignore @@ Nx.div (m ()) (live ()));
-      ("Nx.pow", fun () -> ignore @@ Nx.pow (live ()) (m ()));
-      ("Nx.atan2", fun () -> ignore @@ Nx.atan2 (m ()) (live ()));
-      ("Nx.maximum", fun () -> ignore @@ Nx.maximum (m ()) (live ()));
-      ("Nx.less", fun () -> ignore @@ Nx.less (m ()) (live ()));
-      ("Nx.greater", fun () -> ignore @@ Nx.greater (m ()) (live ()));
-      ("Nx.fma", fun () -> ignore @@ Nx.fma (live ()) (live ()) (m ()));
-      ("Nx.add_s", fun () -> ignore @@ Nx.add_s (m ()) 1.);
-      ("Nx.rsub_s", fun () -> ignore @@ Nx.rsub_s 1. (m ()));
-      ("Nx.greater_s", fun () -> ignore @@ Nx.greater_s (m ()) 1.);
-      ("Nx.sqrt", fun () -> ignore @@ Nx.sqrt (m ()));
-      ("Nx.exp", fun () -> ignore @@ Nx.exp (m ()));
-      ("Nx.sin", fun () -> ignore @@ Nx.sin (m ()));
-      ("Nx.floor", fun () -> ignore @@ Nx.floor (m ()));
-      ("Nx.recip", fun () -> ignore @@ Nx.recip (m ()));
-      ("Nx.square", fun () -> ignore @@ Nx.square (m ()));
-      ("Nx.rsqrt", fun () -> ignore @@ Nx.rsqrt (m ()));
-      ("Nx.hypot", fun () -> ignore @@ Nx.hypot (live ()) (m ()));
-      ("Nx.asinh", fun () -> ignore @@ Nx.asinh (m ()));
-      ("Nx.erfc", fun () -> ignore @@ Nx.erfc (m ()));
-      ("Nx.lgamma", fun () -> ignore @@ Nx.lgamma (m ()));
-      ("Nx.clamp", fun () -> ignore @@ Nx.clamp ~min:0. (m ()));
-      ("Nx.isnan", fun () -> ignore @@ Nx.isnan (m ()));
-      ("Nx.isinf", fun () -> ignore @@ Nx.isinf (m ()));
-      ("Nx.isfinite", fun () -> ignore @@ Nx.isfinite (m ()));
-      ("Nx.logical_and", fun () -> ignore @@ Nx.logical_and (m ()) (live ()));
-      ("Nx.logical_not", fun () -> ignore @@ Nx.logical_not (m ()));
-      ("Nx.cast", fun () -> ignore @@ Nx.cast Nx.float32 (Nx.cast Nx.float64 (m ())));
-      ("Nx.max", fun () -> ignore @@ Nx.max (m ()));
-      ("Nx.min", fun () -> ignore @@ Nx.min ~axes:[ 1 ] (m ()));
-      ("Nx.all", fun () -> ignore @@ Nx.all (m ()));
-      ("Nx.any", fun () -> ignore @@ Nx.any ~axes:[ 0 ] (m ()));
-      ("Nx.argmax", fun () -> ignore @@ Nx.argmax (m ()));
-      ("Nx.argmax", fun () -> ignore @@ Nx.argmax ~axis:0 (m ()));
-      ("Nx.argmin", fun () -> ignore @@ Nx.argmin (m ()));
-      ("Nx.cummax", fun () -> ignore @@ Nx.cummax ~axis:0 (m ()));
-      ("Nx.var", fun () -> ignore @@ Nx.var (m ()));
-      ("Nx.std", fun () -> ignore @@ Nx.std ~ddof:1 (m ()));
-      ("Nx.logsumexp", fun () -> ignore @@ Nx.logsumexp (m ()));
-      ("Nx.logmeanexp", fun () -> ignore @@ Nx.logmeanexp (m ()));
-      ("Nx.ewma", fun () -> ignore @@ Nx.ewma ~alpha:0.5 (m ()));
-      ("Nx.ewma", fun () -> ignore @@ Nx.ewma ~axis:0 ~alpha:0.5 (m ()));
-      ("Nx.sigmoid", fun () -> ignore @@ Nx.sigmoid (m ()));
-      ("Nx.softplus", fun () -> ignore @@ Nx.softplus (m ()));
-      ("Nx.softmax", fun () -> ignore @@ Nx.softmax (m ()));
-      ("Nx.log_softmax", fun () -> ignore @@ Nx.log_softmax (m ()));
-      ("Nx.sort", fun () -> ignore @@ fst (Nx.sort (m ())));
-      ("Nx.argsort", fun () -> ignore @@ Nx.argsort (m ()));
-      ("Nx.top_k", fun () -> ignore @@ fst (Nx.top_k ~k:1 (m ())));
-      ("Nx.order_key", fun () -> ignore @@ Nx.order_key Nx.uint64 (m ()));
-      ("Nx.quantile", fun () -> ignore @@ Nx.quantile [| 0.5 |] (m ()));
-      ("Nx.histogram", fun () -> ignore @@ Nx.histogram [ (lv (), m ()) ]);
-      ("Nx.histogram", fun () -> ignore @@ Nx.histogram [ (v (), live ()) ]);
-      ("Nx.searchsorted", fun () -> ignore @@ Nx.searchsorted ~side:`Left (v ()) (live ()));
-      ("Nx.searchsorted", fun () -> ignore @@ Nx.searchsorted ~side:`Right (lv ()) (m ()));
-      ("Nx.unique", fun () -> ignore @@ (Nx.unique (v ())).ids);
-      ("Nx.lexsort", fun () -> ignore @@ Nx.lexsort (m ()));
-      ("Nx.vector_norm", fun () -> ignore @@ Nx.vector_norm (m ()));
-      ("Nx.vector_norm", fun () -> ignore @@ Nx.vector_norm ~ord:3. (m ()));
-      ("Nx.matrix_norm", fun () -> ignore @@ Nx.matrix_norm (m ()));
-      ("Nx.matrix_norm", fun () -> ignore @@ Nx.matrix_norm ~ord:`Two (m ()));
-      ("Nx.correlate", fun () -> ignore @@ Nx.correlate (v ()) (ones dt [| 2 |]));
-      ("Nx.correlate", fun () -> ignore @@ Nx.correlate (lv ()) (dead dt [| 2 |]));
-      ("Nx.conv", fun () -> ignore @@ Nx.conv (dead dt [| 1; 4; 1 |]) (ones dt [| 1; 2; 1 |]));
-      ("Nx.extract_patches", fun () -> ignore @@
-          Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
-            ~dilation:[| 1 |] ~padding:[| (0, 0) |] (m ()));
-      ("Nx.rfft", fun () -> ignore @@ Nx.rfft Nx.complex64 (m ()));
-      ("Nx.dct", fun () -> ignore @@ Nx.dct (m ()));
-      ("Nx.dct", fun () -> ignore @@ Nx.dct ~type_:Nx.Type_1 (m ()));
-      ("Nx.idst", fun () -> ignore @@ Nx.idst (m ()));
-      ("Nx.stft", fun () -> ignore @@ Nx.stft Nx.complex64 ~window:2 (v ()));
-      ("Nx.reduce_segments", fun () -> ignore @@ Nx.reduce_segments Nx.Add ~segments:2 ids (m ()));
-      ("Nx.reduce_ranges", fun () -> ignore @@ Nx.reduce_ranges Nx.Add ~lo:ids ~hi:ids (m ()));
-      ("Nx.reduce_ranges", fun () -> ignore @@ Nx.reduce_ranges Nx.Max ~lo:ids ~hi:ids (m ()));
-      ("Nx.map_segments", fun () -> ignore @@ Nx.map_segments ~segments:2 ids (fun _ r -> r) (m ()));
+      c "mod_" 2 (fun d ->
+          show (Nx.mod_ (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "pow" 2 (fun d ->
+          show (Nx.pow (d 0 (positive [| 4 |])) (d 1 (x [| 4 |]))));
+      c "fma" 3 (fun d ->
+          show (Nx.fma (d 0 (x [| 4 |])) (d 1 (x [| 4 |])) (d 2 (x [| 4 |]))));
+      c "maximum" 2 (fun d ->
+          show (Nx.maximum (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "minimum" 2 (fun d ->
+          show (Nx.minimum (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "recip" 1 (fun d -> show (Nx.recip (d 0 (positive [| 4 |]))));
+      c "abs" 1 (fun d -> show (Nx.abs (d 0 (x [| 4 |]))));
+      c "sign" 1 (fun d -> show (Nx.sign (d 0 (x [| 4 |]))));
+      c "pow_s" 1 (fun d -> show (Nx.pow_s (d 0 (positive [| 4 |])) 1.5));
+      c "mod_s" 1 (fun d -> show (Nx.mod_s (d 0 (x [| 4 |])) 1.5));
+      c "maximum_s" 1 (fun d -> show (Nx.maximum_s (d 0 (x [| 4 |])) 0.));
+      c "minimum_s" 1 (fun d -> show (Nx.minimum_s (d 0 (x [| 4 |])) 0.));
+      c "rpow_s" 1 (fun d -> show (Nx.rpow_s 2. (d 0 (x [| 4 |]))));
+      c "less_s" 1 (fun d -> show (Nx.less_s (d 0 (x [| 4 |])) 0.));
+      c "less_equal_s" 1 (fun d -> show (Nx.less_equal_s (d 0 (x [| 4 |])) 0.));
+      c "greater_s" 1 (fun d -> show (Nx.greater_s (d 0 (x [| 4 |])) 0.));
+      c "greater_equal_s" 1 (fun d ->
+          show (Nx.greater_equal_s (d 0 (x [| 4 |])) 0.));
+      c "less" 2 (fun d ->
+          show (Nx.less (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "less_equal" 2 (fun d ->
+          show (Nx.less_equal (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "greater" 2 (fun d ->
+          show (Nx.greater (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "greater_equal" 2 (fun d ->
+          show (Nx.greater_equal (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "sqrt" 1 (fun d -> show (Nx.sqrt (d 0 (positive [| 4 |]))));
+      c "rsqrt" 1 (fun d -> show (Nx.rsqrt (d 0 (positive [| 4 |]))));
+      c "hypot" 2 (fun d ->
+          show (Nx.hypot (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "exp" 1 (fun d -> show (Nx.exp (d 0 (x [| 4 |]))));
+      c "exp2" 1 (fun d -> show (Nx.exp2 (d 0 (x [| 4 |]))));
+      c "expm1" 1 (fun d -> show (Nx.expm1 (d 0 (x [| 4 |]))));
+      c "log" 1 (fun d -> show (Nx.log (d 0 (positive [| 4 |]))));
+      c "log2" 1 (fun d -> show (Nx.log2 (d 0 (positive [| 4 |]))));
+      c "log1p" 1 (fun d -> show (Nx.log1p (d 0 (positive [| 4 |]))));
+      c "sin" 1 (fun d -> show (Nx.sin (d 0 (x [| 4 |]))));
+      c "cos" 1 (fun d -> show (Nx.cos (d 0 (x [| 4 |]))));
+      c "tan" 1 (fun d -> show (Nx.tan (d 0 (x [| 4 |]))));
+      c "asin" 1 (fun d -> show (Nx.asin (d 0 (unit [| 4 |]))));
+      c "acos" 1 (fun d -> show (Nx.acos (d 0 (unit [| 4 |]))));
+      c "atan" 1 (fun d -> show (Nx.atan (d 0 (x [| 4 |]))));
+      c "atan2" 2 (fun d ->
+          show (Nx.atan2 (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "sinh" 1 (fun d -> show (Nx.sinh (d 0 (x [| 4 |]))));
+      c "cosh" 1 (fun d -> show (Nx.cosh (d 0 (x [| 4 |]))));
+      c "tanh" 1 (fun d -> show (Nx.tanh (d 0 (x [| 4 |]))));
+      c "asinh" 1 (fun d -> show (Nx.asinh (d 0 (x [| 4 |]))));
+      c "acosh" 1 (fun d ->
+          show (Nx.acosh (d 0 (Nx.add_s (positive [| 4 |]) 1.))));
+      c "atanh" 1 (fun d -> show (Nx.atanh (d 0 (unit [| 4 |]))));
+      c "erf" 1 (fun d -> show (Nx.erf (d 0 (x [| 4 |]))));
+      c "erfc" 1 (fun d -> show (Nx.erfc (d 0 (x [| 4 |]))));
+      c "erfinv" 1 (fun d -> show (Nx.erfinv (d 0 (unit [| 4 |]))));
+      c "ndtr" 1 (fun d -> show (Nx.ndtr (d 0 (x [| 4 |]))));
+      c "log_ndtr" 1 (fun d -> show (Nx.log_ndtr (d 0 (x [| 4 |]))));
+      c "ndtri" 1 (fun d -> show (Nx.ndtri (d 0 (unit [| 4 |]))));
+      c "lgamma" 1 (fun d -> show (Nx.lgamma (d 0 (positive [| 4 |]))));
+      c "digamma" 1 (fun d -> show (Nx.digamma (d 0 (positive [| 4 |]))));
+      c "lbeta" 2 (fun d ->
+          show (Nx.lbeta (d 0 (positive [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "gammainc" 2 (fun d ->
+          show (Nx.gammainc (d 0 (positive [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "gammaincc" 2 (fun d ->
+          show (Nx.gammaincc (d 0 (positive [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "log_gammainc" 2 (fun d ->
+          show
+            (Nx.log_gammainc (d 0 (positive [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "log_gammaincc" 2 (fun d ->
+          show
+            (Nx.log_gammaincc (d 0 (positive [| 4 |])) (d 1 (positive [| 4 |]))));
+      c "gammaincinv" 2 (fun d ->
+          show (Nx.gammaincinv (d 0 (positive [| 4 |])) (d 1 (unit [| 4 |]))));
+      c "gammainccinv" 2 (fun d ->
+          show (Nx.gammainccinv (d 0 (positive [| 4 |])) (d 1 (unit [| 4 |]))));
+      c "betainc" 3 (fun d ->
+          show
+            (Nx.betainc
+               (d 0 (positive [| 4 |]))
+               (d 1 (positive [| 4 |]))
+               (d 2 (unit [| 4 |]))));
+      c "betaincc" 3 (fun d ->
+          show
+            (Nx.betaincc
+               (d 0 (positive [| 4 |]))
+               (d 1 (positive [| 4 |]))
+               (d 2 (unit [| 4 |]))));
+      c "log_betainc" 3 (fun d ->
+          show
+            (Nx.log_betainc
+               (d 0 (positive [| 4 |]))
+               (d 1 (positive [| 4 |]))
+               (d 2 (unit [| 4 |]))));
+      c "log_betaincc" 3 (fun d ->
+          show
+            (Nx.log_betaincc
+               (d 0 (positive [| 4 |]))
+               (d 1 (positive [| 4 |]))
+               (d 2 (unit [| 4 |]))));
+      c "i0e" 1 (fun d -> show (Nx.i0e (d 0 (x [| 4 |]))));
+      c "i1e" 1 (fun d -> show (Nx.i1e (d 0 (x [| 4 |]))));
+      c "floor" 1 (fun d -> show (Nx.floor (d 0 (x [| 4 |]))));
+      c "ceil" 1 (fun d -> show (Nx.ceil (d 0 (x [| 4 |]))));
+      c "round" 1 (fun d -> show (Nx.round (d 0 (x [| 4 |]))));
+      c "trunc" 1 (fun d -> show (Nx.trunc (d 0 (x [| 4 |]))));
+      c "logical_and" 2 (fun d ->
+          show (Nx.logical_and (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "logical_or" 2 (fun d ->
+          show (Nx.logical_or (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "logical_xor" 2 (fun d ->
+          show (Nx.logical_xor (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "logical_not" 1 (fun d -> show (Nx.logical_not (d 0 (x [| 4 |]))));
+      c "isnan" 1 (fun d -> show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
+      c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (Nx.log (x [| 4 |])))));
+      c "isfinite" 1 (fun d -> show (Nx.isfinite (d 0 (Nx.log (x [| 4 |])))));
+      c "clamp" 1 (fun d -> show (Nx.clamp ~min:0. (d 0 (x [| 4 |]))));
+      c "clamp" 1 (fun d ->
+          show (Nx.clamp ~min:(-1.) ~max:1. (d 0 (x [| 4 |]))));
+      c "max" 1 (fun d -> show (Nx.max (d 0 (x [| 2; 3 |]))));
+      c "min" 1 (fun d -> show (Nx.min ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
+      c "all" 1 (fun d -> show (Nx.all (d 0 (x [| 2; 3 |]))));
+      c "any" 1 (fun d -> show (Nx.any ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
+      c "argmax" 1 (fun d -> show (Nx.argmax (d 0 (x [| 2; 3 |]))));
+      c "argmax" 1 (fun d -> show (Nx.argmax ~axis:0 (d 0 (x [| 2; 3 |]))));
+      c "argmin" 1 (fun d -> show (Nx.argmin ~axis:1 (d 0 (x [| 2; 3 |]))));
+      c "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
+      c "std" 1 (fun d -> show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
+      c "logsumexp" 1 (fun d -> show (Nx.logsumexp (d 0 (x [| 2; 3 |]))));
+      c "logmeanexp" 1 (fun d ->
+          show (Nx.logmeanexp ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
+      c "cummax" 1 (fun d -> show (Nx.cummax ~axis:0 (d 0 (x [| 2; 3 |]))));
+      c "cummin" 1 (fun d -> show (Nx.cummin (d 0 (x [| 2; 3 |]))));
+      c "ewma" 1 (fun d -> show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
+      c "ewma" 1 (fun d ->
+          show (Nx.ewma ~axis:0 ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
+      c "sigmoid" 1 (fun d -> show (Nx.sigmoid (d 0 (x [| 4 |]))));
+      c "softplus" 1 (fun d -> show (Nx.softplus (d 0 (x [| 4 |]))));
+      c "softmax" 1 (fun d -> show (Nx.softmax (d 0 (x [| 2; 3 |]))));
+      c "log_softmax" 1 (fun d ->
+          show (Nx.log_softmax ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
+      c "conv" 2 (fun d ->
+          show (Nx.conv (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 2; 1 |]))));
+      c "conv_transpose" 2 (fun d ->
+          show
+            (Nx.conv_transpose (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 2; 1 |]))));
+      c "correlate" 2 (fun d ->
+          show (Nx.correlate (d 0 (x [| 4 |])) (d 1 (x [| 2 |]))));
+      c "correlate" 2 (fun d ->
+          show (Nx.correlate ~padding:`Full (d 0 (x [| 4 |])) (d 1 (x [| 2 |]))));
+      c "extract_patches" 1 (fun d ->
+          show
+            (Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+               ~dilation:[| 1 |]
+               ~padding:[| (0, 0) |]
+               (d 0 (x [| 2; 4 |]))));
+      c "combine_patches" 1 (fun d ->
+          show
+            (Nx.combine_patches ~output_size:[| 4 |] ~kernel_size:[| 2 |]
+               ~stride:[| 1 |] ~dilation:[| 1 |]
+               ~padding:[| (0, 0) |]
+               (d 0 (x [| 2; 3 |]))));
+      c "sort" 1 (fun d ->
+          let v, i = Nx.sort (d 0 (x [| 2; 3 |])) in
+          shows [ show v; show i ]);
+      c "sort" 1 (fun d ->
+          let v, i = Nx.sort ~descending:true ~axis:0 (d 0 (x [| 2; 3 |])) in
+          shows [ show v; show i ]);
+      c "argsort" 1 (fun d -> show (Nx.argsort (d 0 (x [| 5 |]))));
+      c "top_k" 1 (fun d ->
+          let v, i = Nx.top_k ~k:2 (d 0 (x [| 2; 3 |])) in
+          shows [ show v; show i ]);
+      c "order_key" 1 (fun d -> show (Nx.order_key Nx.uint64 (d 0 (x [| 4 |]))));
+      c "lexsort" 1 (fun d -> show (Nx.lexsort (d 0 (x [| 5; 2 |]))));
+      c "searchsorted" 2 (fun d ->
+          let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
+          show (Nx.searchsorted ~side:`Left s (d 1 (x [| 3 |]))));
+      c "searchsorted" 2 (fun d ->
+          let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
+          show (Nx.searchsorted ~side:`Right s (d 1 (x [| 3 |]))));
+      c "unique" 1 (fun d ->
+          let g = Nx.unique (d 0 (x [| 6 |])) in
+          showl [ g.ids; g.first; g.counts; g.count ]);
+      c "unique" 1 (fun d ->
+          let g = Nx.unique (d 0 (x [| 4; 2 |])) in
+          showl [ g.ids; g.counts ]);
+      c "quantile" 1 (fun d ->
+          show (Nx.quantile [| 0.25; 0.5 |] (d 0 (x [| 5 |]))));
+      c "histogram" 2 (fun d ->
+          let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
+          show (Nx.histogram [ (edges, d 1 (x [| 6 |])) ]));
+      c "histogram" 3 (fun d ->
+          let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
+          show
+            (Nx.histogram
+               ~weights:(d 2 (x [| 6 |]))
+               [ (edges, d 1 (x [| 6 |])) ]));
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm (d 0 (x [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm ~ord:3. (d 0 (x [| 4 |]))));
+      c "matrix_norm" 1 (fun d -> show (Nx.matrix_norm (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm ~ord:`One (d 0 (x [| 2; 2 |]))));
+      c "rfft" 1 (fun d -> show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c "rfft" 1 (fun d ->
+          show (Nx.rfft Nx.complex64 ~norm:Forward (d 0 (x [| 4 |]))));
+      c "dct" 1 (fun d -> show (Nx.dct (d 0 (x [| 2; 4 |]))));
+      c "dct" 1 (fun d -> show (Nx.dct ~type_:Type_1 (d 0 (x [| 2; 4 |]))));
+      c "idct" 1 (fun d -> show (Nx.idct ~norm:Ortho (d 0 (x [| 4 |]))));
+      c "dst" 1 (fun d -> show (Nx.dst ~type_:Type_1 (d 0 (x [| 4 |]))));
+      c "idst" 1 (fun d -> show (Nx.idst (d 0 (x [| 4 |]))));
+      c "idst" 1 (fun d -> show (Nx.idst ~type_:Type_4 (d 0 (x [| 4 |]))));
+      c "stft" 1 (fun d ->
+          show (Nx.stft Nx.complex64 ~window:2 (d 0 (x [| 4 |]))));
+      c "stft" 2 (fun d ->
+          show
+            (Nx.stft Nx.complex64 ~window:4 ~step:2
+               ~win:(d 1 (x [| 4 |]))
+               (d 0 (x [| 8 |]))));
+      c "reduce_segments" 2 (fun d ->
+          show
+            (Nx.reduce_segments Add ~segments:2
+               (d 0 (ids ()))
+               (d 1 (x [| 4; 2 |]))));
+      c "reduce_segments" 2 (fun d ->
+          show
+            (Nx.reduce_segments Max ~segments:2
+               (d 0 (ids ()))
+               (d 1 (x [| 4 |]))));
+      c "reduce_ranges" 3 (fun d ->
+          let lo = d 0 (ids ()) and hi = d 1 (Nx.add_s (ids ()) 2L) in
+          show (Nx.reduce_ranges Add ~lo ~hi (d 2 (x [| 5; 2 |]))));
+      c "reduce_ranges" 3 (fun d ->
+          let lo = d 0 (ids ()) and hi = d 1 (Nx.add_s (ids ()) 3L) in
+          show (Nx.reduce_ranges Max ~lo ~hi (d 2 (x [| 5 |]))));
+      c "map_segments" 2 (fun d ->
+          show
+            (Nx.map_segments ~segments:2
+               (d 0 (ids ()))
+               (fun _ r -> Nx.mul_s r 2.)
+               (d 1 (x [| 4; 2 |]))));
     ]
 
 (* The routines' functions. *)
 let routines (type v s) (dt : (v, s) Nx.dtype) =
-  let m () = dead dt [| 2; 2 |] and live () = Nx.eye dt 2 in
-  let col () = dead dt [| 2; 1 |] and lcol () = ones dt [| 2; 1 |] in
-  let c (by, f) = (by, D.name dt, f) in
-  List.map c
+  let x s = data dt s in
+  (* Symmetric positive definite: [1.25] on the diagonal, [0.25] off it. *)
+  let spd () =
+    let v i = Nx.Dtype.of_float dt (if i mod 4 = 0 then 1.25 else 0.25) in
+    let a = Nx.create dt [| 3; 3 |] (Array.init 9 v) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  table (D.name dt)
     [
-      ("Nx.cholesky", fun () -> ignore @@ Nx.cholesky (m ()));
-      ("Nx.cholesky", fun () -> ignore @@ Nx.cholesky ~triangle:Upper (m ()));
-      ("Nx.qr", fun () -> ignore @@ fst (Nx.qr (m ())));
-      ("Nx.lu", fun () -> ignore @@ let _, l, _ = Nx.lu (m ()) in l);
-      ("Nx.svd", fun () -> ignore @@ let _, _, vh = Nx.svd (m ()) in vh);
-      ("Nx.eigh", fun () -> ignore @@ snd (Nx.eigh (m ())));
-      ("Nx.eigh", fun () -> ignore @@ snd (Nx.eigh ~triangle:Upper (m ())));
-      ("Nx.det", fun () -> ignore @@ Nx.det (m ()));
-      ("Nx.slogdet", fun () -> ignore @@ fst (Nx.slogdet (m ())));
-      ("Nx.solve", fun () -> ignore @@ Nx.solve (m ()) (lcol ()));
-      ("Nx.solve", fun () -> ignore @@ Nx.solve (live ()) (col ()));
-      ("Nx.solve_triangular", fun () -> ignore @@ Nx.solve_triangular (m ()) (lcol ()));
-      ("Nx.solve_triangular", fun () -> ignore @@
-          Nx.solve_triangular ~transpose:Transpose (live ()) (col ()));
-      ("Nx.inv", fun () -> ignore @@ Nx.inv (m ()));
-      ("Nx.lstsq", fun () -> ignore @@ let x, _, _, _ = Nx.lstsq (m ()) (lcol ()) in x);
-      ("Nx.lstsq", fun () -> ignore @@ let x, _, _, _ = Nx.lstsq (live ()) (col ()) in x);
-      ("Nx.pinv", fun () -> ignore @@ Nx.pinv (m ()));
-      ("Nx.pinv", fun () -> ignore @@ Nx.pinv ~hermitian:true (m ()));
-      ("Nx.vdot", fun () -> ignore @@ Nx.vdot (m ()) (live ()));
-      ("Nx.einsum", fun () -> ignore @@ Nx.einsum (Nx.Pattern.v "i j, j k -> i k | j") [ m (); live () ]);
+      c "cholesky" 1 (fun d -> show (Nx.cholesky (d 0 (spd ()))));
+      c "cholesky" 1 (fun d ->
+          show (Nx.cholesky ~triangle:Upper (d 0 (spd ()))));
+      c "qr" 1 (fun d ->
+          let q, r = Nx.qr (d 0 (spd ())) in
+          showl [ q; r ]);
+      c "lu" 1 (fun d ->
+          let p, l, u = Nx.lu (d 0 (spd ())) in
+          shows [ show p; show l; show u ]);
+      c "svd" 1 (fun d ->
+          let u, s, vh = Nx.svd (d 0 (spd ())) in
+          showl [ u; s; vh ]);
+      c "eigh" 1 (fun d ->
+          showl
+            (let w, v = Nx.eigh (d 0 (spd ())) in
+             [ w; v ]));
+      c "eigh" 1 (fun d -> show (fst (Nx.eigh ~triangle:Upper (d 0 (spd ())))));
+      c "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
+      c "slogdet" 1 (fun d ->
+          showl
+            (let s, l = Nx.slogdet (d 0 (spd ())) in
+             [ s; l ]));
+      c "solve" 2 (fun d -> show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
+      c "solve_triangular" 2 (fun d ->
+          show
+            (Nx.solve_triangular (d 0 (Nx.tril (spd ()))) (d 1 (x [| 3; 1 |]))));
+      c "solve_triangular" 2 (fun d ->
+          show
+            (Nx.solve_triangular ~transpose:Transpose
+               (d 0 (Nx.tril (spd ())))
+               (d 1 (x [| 3; 1 |]))));
+      c "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
+      c "lstsq" 2 (fun d ->
+          let x, r, k, s = Nx.lstsq (d 0 (spd ())) (d 1 (x [| 3 |])) in
+          shows [ show x; show r; show k; show s ]);
+      c "lstsq" 1 (fun d ->
+          (* The donor beside its handle. *)
+          let a = spd () in
+          let x, _, _, _ = Nx.lstsq (d 0 a) a in
+          show x);
+      c "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
+      c "pinv" 1 (fun d -> show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm ~ord:`Two (d 0 (spd ()))));
     ]
 
 (* The functions of complex numbers. *)
 let complexes =
-  let dt = Nx.complex64 in
-  let m () = dead dt [| 2; 2 |] in
-  let c (by, f) = (by, D.name dt, f) in
-  List.map c
+  let z s = complex_data s in
+  table "complex64"
     [
-      ("Nx.real", fun () -> ignore @@ Nx.real Nx.float32 (m ()));
-      ("Nx.imag", fun () -> ignore @@ Nx.imag Nx.float32 (m ()));
-      ("Nx.magnitude", fun () -> ignore @@ Nx.magnitude Nx.float32 (m ()));
-      ("Nx.angle", fun () -> ignore @@ Nx.angle Nx.float32 (m ()));
-      ("Nx.conjugate", fun () -> ignore @@ Nx.conjugate (m ()));
-      ("Nx.isinf", fun () -> ignore @@ Nx.cast Nx.complex64 (Nx.isinf (m ())));
-      ("Nx.fft", fun () -> ignore @@ Nx.fft (m ()));
-      ("Nx.ifft", fun () -> ignore @@ Nx.ifft ~norm:Ortho (m ()));
-      ("Nx.irfft", fun () -> ignore @@ Nx.cast Nx.complex64 (Nx.irfft Nx.float32 (m ())));
-      ("Nx.istft", fun () -> ignore @@
-          Nx.cast Nx.complex64 (Nx.istft Nx.float32 ~window:2 ~step:1 (m ())));
-      ("Nx.complex", fun () -> ignore @@
-          Nx.complex Nx.complex64 ~re:(dead Nx.float32 [| 2 |])
-            ~im:(ones Nx.float32 [| 2 |]));
+      c "real" 1 (fun d -> show (Nx.real f32 (d 0 (z [| 4 |]))));
+      c "imag" 1 (fun d -> show (Nx.imag f32 (d 0 (z [| 4 |]))));
+      c "magnitude" 1 (fun d -> show (Nx.magnitude f32 (d 0 (z [| 4 |]))));
+      c "angle" 1 (fun d -> show (Nx.angle f32 (d 0 (z [| 4 |]))));
+      c "conjugate" 1 (fun d -> show (Nx.conjugate (d 0 (z [| 4 |]))));
+      c "complex" 2 (fun d ->
+          show
+            (Nx.complex Nx.complex64
+               ~re:(d 0 (data f32 [| 4 |]))
+               ~im:(d 1 (data f32 [| 4 |]))));
+      c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (z [| 4 |]))));
+      c "fft" 1 (fun d -> show (Nx.fft (d 0 (z [| 2; 4 |]))));
+      c "fft" 1 (fun d -> show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c "ifft" 1 (fun d -> show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c "irfft" 1 (fun d -> show (Nx.irfft f32 (d 0 (z [| 3 |]))));
+      c "istft" 1 (fun d ->
+          show (Nx.istft f32 ~window:2 ~step:1 (d 0 (z [| 2; 2 |]))));
+      c "istft" 2 (fun d ->
+          show
+            (Nx.istft f32 ~window:4 ~step:2
+               ~win:(d 1 (Nx.add_s (Nx.abs (data f32 [| 4 |])) 1.))
+               (d 0 (z [| 3; 3 |]))));
+      c "eig" 1 (fun d ->
+          let w, v =
+            Nx.eig (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
+          in
+          showl [ w; v ]);
     ]
 
 (* The functions of integers. *)
 let integers =
-  let dt = Nx.int32 in
-  let v () = dead dt [| 4 |] in
-  let c (by, f) = (by, D.name dt, f) in
-  List.map c
+  let x s = Nx.cast Nx.int32 (data f32 s) in
+  let ids () = int32s [| 1; 0; 1; 1 |] in
+  table "int32"
     [
-      ("Nx.bitwise_not", fun () -> ignore @@ Nx.bitwise_not (v ()));
-      ("Nx.bitwise_and", fun () -> ignore @@ Nx.bitwise_and (v ()) (ones dt [| 4 |]));
-      ("Nx.lshift", fun () -> ignore @@ Nx.lshift (v ()) 1);
-      ("Nx.rshift", fun () -> ignore @@ Nx.rshift (v ()) 1);
-      ("Nx.mod_", fun () -> ignore @@ Nx.mod_ (v ()) (ones dt [| 4 |]));
-      ("Nx.positions", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.positions ~size:4 (v ())));
-      ("Nx.one_hot", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.one_hot ~num_classes:2 (v ())));
-      ("Nx.unique", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.unique (v ())).ids);
+      c "bitwise_and" 2 (fun d ->
+          show (Nx.bitwise_and (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "bitwise_or" 2 (fun d ->
+          show (Nx.bitwise_or (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "bitwise_xor" 2 (fun d ->
+          show (Nx.bitwise_xor (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
+      c "bitwise_not" 1 (fun d -> show (Nx.bitwise_not (d 0 (x [| 4 |]))));
+      c "lshift" 1 (fun d -> show (Nx.lshift (d 0 (x [| 4 |])) 1));
+      c "rshift" 1 (fun d -> show (Nx.rshift (d 0 (x [| 4 |])) 1));
+      c "mod_" 2 (fun d -> show (Nx.mod_ (d 0 (x [| 4 |])) (d 1 (ids ()))));
+      c "pow" 2 (fun d -> show (Nx.pow (d 0 (x [| 4 |])) (d 1 (ids ()))));
+      c "abs" 1 (fun d -> show (Nx.abs (d 0 (x [| 4 |]))));
+      c "sign" 1 (fun d -> show (Nx.sign (d 0 (x [| 4 |]))));
+      c "recip" 1 (fun d -> show (Nx.recip (d 0 (x [| 4 |]))));
+      c "maximum" 2 (fun d ->
+          show (Nx.maximum (d 0 (x [| 4 |])) (d 1 (ids ()))));
+      c "less" 2 (fun d -> show (Nx.less (d 0 (x [| 4 |])) (d 1 (ids ()))));
+      c "max" 1 (fun d -> show (Nx.max (d 0 (x [| 4 |]))));
+      c "positions" 1 (fun d -> show (Nx.positions (d 0 (Nx.abs (x [| 4 |])))));
+      c "positions" 1 (fun d ->
+          show (Nx.positions ~size:4 (d 0 (Nx.abs (x [| 4 |])))));
+      c "one_hot" 1 (fun d -> show (Nx.one_hot ~num_classes:2 (d 0 (ids ()))));
+      c "unique" 1 (fun d ->
+          let g = Nx.unique (d 0 (x [| 6 |])) in
+          showl [ g.ids; g.first; g.counts; g.count ]);
+      c "sort" 1 (fun d ->
+          showl
+            (let v, _ = Nx.sort (d 0 (x [| 5 |])) in
+             [ v ]));
     ]
 
-let dead_cases =
+(* The functions of booleans. *)
+let booleans =
+  let b s = Nx.greater_s (data f32 s) 0. in
+  table "bool"
+    [
+      c "logical_and" 2 (fun d ->
+          show (Nx.logical_and (d 0 (b [| 4 |])) (d 1 (Nx.flip (b [| 4 |])))));
+      c "logical_not" 1 (fun d -> show (Nx.logical_not (d 0 (b [| 4 |]))));
+      c "count" 1 (fun d -> show (Nx.count (d 0 (b [| 2; 3 |]))));
+      c "count" 1 (fun d -> show (Nx.count ~axes:[ 1 ] (d 0 (b [| 2; 3 |]))));
+      c "all" 1 (fun d -> show (Nx.all (d 0 (b [| 4 |]))));
+      c "Infix.( && )" ~by:"logical_and" 2 (fun d ->
+          show Nx.Infix.(d 0 (b [| 4 |]) && d 1 (Nx.flip (b [| 4 |]))));
+      c "Infix.( || )" ~by:"logical_or" 2 (fun d ->
+          show Nx.Infix.(d 0 (b [| 4 |]) || d 1 (Nx.flip (b [| 4 |]))));
+    ]
+
+(* The operators, at one dtype: each is a function above. *)
+let operators =
+  let x s = data f32 s in
+  let x2 fn by op =
+    c fn ~by 2 (fun d ->
+        show (op (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))))
+  in
+  let xs fn by op = c fn ~by 1 (fun d -> show (op (d 0 (x [| 4 |])) 1.5)) in
+  table "float32"
+    [
+      x2 "( + )" "add" Nx.( + );
+      x2 "( - )" "sub" Nx.( - );
+      x2 "( * )" "mul" Nx.( * );
+      x2 "( / )" "div" Nx.( / );
+      x2 "( ** )" "pow" Nx.( ** );
+      c "( ~- )" ~by:"neg" 1 (fun d -> show Nx.(-d 0 (x [| 4 |])));
+      xs "( +$ )" "add_s" Nx.( +$ );
+      xs "( -$ )" "sub_s" Nx.( -$ );
+      xs "( *$ )" "mul_s" Nx.( *$ );
+      xs "( /$ )" "div_s" Nx.( /$ );
+      x2 "Infix.( = )" "equal" Nx.Infix.( = );
+      x2 "Infix.( <> )" "not_equal" Nx.Infix.( <> );
+      x2 "Infix.( < )" "less" Nx.Infix.( < );
+      x2 "Infix.( <= )" "less_equal" Nx.Infix.( <= );
+      x2 "Infix.( > )" "greater" Nx.Infix.( > );
+      x2 "Infix.( >= )" "greater_equal" Nx.Infix.( >= );
+      xs "Infix.( =$ )" "equal_s" Nx.Infix.( =$ );
+      xs "Infix.( <>$ )" "not_equal_s" Nx.Infix.( <>$ );
+      xs "Infix.( <$ )" "less_s" Nx.Infix.( <$ );
+      xs "Infix.( <=$ )" "less_equal_s" Nx.Infix.( <=$ );
+      xs "Infix.( >$ )" "greater_s" Nx.Infix.( >$ );
+      xs "Infix.( >=$ )" "greater_equal_s" Nx.Infix.( >=$ );
+    ]
+
+(* The samplers and keys of [Nx.Rng], at one dtype. *)
+let rng =
+  let x s = data f32 s in
+  let positive s = Nx.add_s (Nx.abs (x s)) 0.5 in
+  let unit s = Nx.div_s (positive s) 4. in
+  let key d i = Nx.Rng.of_tensor (d i (int32s [| 7; 11 |])) in
+  let shown_key k = show (Nx.Rng.to_tensor k) in
+  table "float32"
+    [
+      c "Rng.split" 1 (fun d ->
+          shows (Array.to_list (Array.map shown_key (Nx.Rng.split (key d 0)))));
+      c "Rng.split_batch" 1 (fun d ->
+          shown_key (Nx.Rng.split_batch ~n:3 (key d 0)));
+      c "Rng.fold_in" 1 (fun d -> shown_key (Nx.Rng.fold_in (key d 0) 5));
+      c "Rng.fold_in_tensor" 2 (fun d ->
+          shown_key (Nx.Rng.fold_in_tensor (key d 0) (d 1 (int32s [| 1; 2 |]))));
+      c "Rng.place" 1 (fun d -> shown_key (Nx.Rng.place Nx.Host.on (key d 0)));
+      c "Rng.bits" 1 (fun d -> show (Nx.Rng.bits ~key:(key d 0) [| 3 |]));
+      c "Rng.uniform" 1 (fun d ->
+          show (Nx.Rng.uniform ~key:(key d 0) f32 [| 3 |]));
+      c "Rng.normal" 1 (fun d ->
+          show (Nx.Rng.normal ~key:(key d 0) f32 [| 3 |]));
+      c "Rng.exponential" 1 (fun d ->
+          show (Nx.Rng.exponential ~key:(key d 0) f32 [| 3 |]));
+      c "Rng.randint" 1 (fun d ->
+          show (Nx.Rng.randint ~key:(key d 0) ~high:5 [| 3 |]));
+      c "Rng.permutation" 1 (fun d ->
+          show (Nx.Rng.permutation ~key:(key d 0) 4));
+      c "Rng.bernoulli" 2 (fun d ->
+          show (Nx.Rng.bernoulli ~key:(key d 1) (d 0 (unit [| 4 |]))));
+      c "Rng.gamma" 2 (fun d ->
+          show (Nx.Rng.gamma ~key:(key d 1) (d 0 (positive [| 4 |]))));
+      c "Rng.beta" 3 (fun d ->
+          show
+            (Nx.Rng.beta ~key:(key d 2)
+               (d 0 (positive [| 4 |]))
+               (d 1 (positive [| 4 |]))));
+      c "Rng.von_mises" 2 (fun d ->
+          show (Nx.Rng.von_mises ~key:(key d 1) (d 0 (positive [| 4 |]))));
+      c "Rng.poisson" 2 (fun d ->
+          show (Nx.Rng.poisson ~key:(key d 1) (d 0 (positive [| 4 |]))));
+      c "Rng.binomial" 3 (fun d ->
+          show
+            (Nx.Rng.binomial ~key:(key d 2)
+               (d 0 (int32s [| 1; 4; 0; 7 |]))
+               (d 1 (unit [| 4 |]))));
+      c "Rng.truncated_normal" 3 (fun d ->
+          show
+            (Nx.Rng.truncated_normal ~key:(key d 2)
+               (d 0 (Nx.neg (positive [| 4 |])))
+               (d 1 (positive [| 4 |]))));
+      c "Rng.dirichlet" 2 (fun d ->
+          show (Nx.Rng.dirichlet ~key:(key d 1) (d 0 (positive [| 2; 3 |]))));
+      c "Rng.categorical" 2 (fun d ->
+          show (Nx.Rng.categorical ~key:(key d 1) (d 0 (x [| 2; 3 |]))));
+    ]
+
+(* Host crossings at one dtype. *)
+let host =
+  table "float64"
+    [
+      c "to_bigarray" 1 (fun d ->
+          show
+            (Nx.of_bigarray
+               (Nx.to_bigarray Bigarray.float64
+                  (d 0 (data Nx.float64 [| 2; 3 |])))));
+    ]
+
+let all_cases =
   List.concat
     [
-      any_dtype Nx.float64; any_dtype Nx.float16; any_dtype Nx.complex64;
-      any_dtype Nx.int32; floats Nx.float64; floats Nx.float16;
-      routines Nx.float64; routines Nx.complex64; complexes; integers;
+      any_dtype Nx.float64;
+      any_dtype Nx.float16;
+      any_dtype Nx.complex64;
+      any_dtype Nx.int32;
+      floats Nx.float64;
+      floats Nx.float16;
+      routines Nx.float64;
+      routines Nx.complex64;
+      complexes;
+      integers;
+      booleans;
+      operators;
+      rng;
+      host;
     ]
 
-(* Each case's name, its function's and dtype's, with its rank among their
-   cases past the first. *)
+(* Each case with its name, its function's and dtype's, with its rank among
+   their cases past the first. *)
 let named_cases =
   let seen = Hashtbl.create 64 in
   List.map
-    (fun (by, dt, run) ->
-      let key = (by, dt) in
+    (fun c ->
+      let key = (c.fn, c.dt) in
       let k = Option.value (Hashtbl.find_opt seen key) ~default:0 + 1 in
       Hashtbl.replace seen key k;
       let name =
-        if k = 1 then Printf.sprintf "%s, %s" by dt
-        else Printf.sprintf "%s, %s, case %d" by dt k
+        if k = 1 then Printf.sprintf "%s, %s" c.fn c.dt
+        else Printf.sprintf "%s, %s, case %d" c.fn c.dt k
       in
-      (name, by, run))
-    dead_cases
+      (name, c))
+    all_cases
+
+let case_count = List.length named_cases
+let case_at = Array.of_list named_cases
+
+(* [x] dead: donated to [Nx.copy], which consumed it. *)
+let kill x =
+  ignore (Nx.copy (Nx.donate x));
+  x
 
 let test_dead_names =
+  let each =
+    List.concat_map
+      (fun (name, c) -> List.init c.operands (fun i -> (name, c, i)))
+      named_cases
+  in
   cases
-    ~name:(fun (name, _, _) -> name)
-    "a dead operand names the function called" named_cases
-    (fun (_, by, run) -> names_itself (by, run))
+    ~name:(fun (name, _, i) -> Printf.sprintf "%s, operand %d" name (i + 1))
+    "a dead operand names the function called" each
+    (fun (name, c, i) ->
+      let run () = c.run (fun j x -> if j = i then kill x else x) in
+      match c.dead with
+      | Prints death -> equal ~msg:name string death (run ())
+      | Raises ->
+          let named = function
+            | Invalid_argument m ->
+                String.starts_with ~prefix:(c.by ^ ": operand ") m
+                && String.ends_with ~suffix:" was donated to Nx.copy" m
+            | _ -> false
+          in
+          raises_match ~msg:name named run)
+
+(* A case: one of the table's, and the operands it donates, as a mask. *)
+let donations =
+  let pp ppf (k, mask) =
+    Format.fprintf ppf "%s, donating mask %d" (fst case_at.(k)) mask
+  in
+  Gen.with_pp pp
+    (let open Gen in
+     let* k = int_range 0 (case_count - 1) in
+     let c = snd case_at.(k) in
+     let+ mask = int_range 1 ((1 lsl c.operands) - 1) in
+     (k, mask))
+
+(* Each case with each operand donated alone, then with all. *)
+let seeds =
+  List.concat
+    (List.mapi
+       (fun k (_, c) ->
+         List.init c.operands (fun i -> (k, 1 lsl i))
+         @ if c.operands > 1 then [ (k, (1 lsl c.operands) - 1) ] else [])
+       named_cases)
+
+let law_donated (k, mask) =
+  let name, c = case_at.(k) in
+  let plain = c.run (fun _ x -> x) in
+  let donated =
+    c.run (fun i x -> if mask land (1 lsl i) <> 0 then Nx.donate x else x)
+  in
+  equal ~msg:name string plain donated
+
+let test_donated =
+  prop ~examples:seeds "a donated operand gives the undonated result" donations
+    law_donated
 
 let () =
   exit
@@ -937,6 +1552,7 @@ let () =
              test "a value sharing the memory keeps its elements"
                test_sharer_keeps;
              test "a refused consumer kills no donor" test_refused_kills_none;
+             test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;
              test "a value of every set is not donated" test_left_alone;
@@ -945,6 +1561,7 @@ let () =
              test "a donor dies naming the function the user called"
                test_dies_at_the_call;
              test_dead_names;
+             test_donated;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;
@@ -959,6 +1576,8 @@ let () =
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;
+             test "a consumer inside a composite computes beside its donor"
+               test_inside_composite;
              law_scatter_bits;
              law_init_bits;
            ];
