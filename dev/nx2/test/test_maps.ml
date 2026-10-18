@@ -108,10 +108,11 @@ let checks =
               }
           in
           Exec.run ~by:"t"
-            (Value.Check { ok; data = []; fail = (fun _ _ -> Exit) }));
+            (Value.Check { ok; data = []; fail = (fun _ _ -> Exit) });
+          Exec.wait ~by:"t" ok);
       test
-        "a check raises its exception at the first failing index, with the \
-         data there" (fun () ->
+        "a check off the host raises its exception at the next wait, at the \
+         first failing index, with the data there" (fun () ->
           let ok =
             Value.Array
               {
@@ -123,12 +124,9 @@ let checks =
               }
           in
           let fail i (x, ()) = Failed (i, x) in
-          raises
-            (Failed ([| 1 |], 20.))
-            (fun () ->
-              Exec.run ~by:"t"
-                (Value.Check
-                   { ok; data = [ f32 [| 10.; 20.; 30. |] ]; fail })));
+          Exec.run ~by:"t"
+            (Value.Check { ok; data = [ f32 [| 10.; 20.; 30. |] ]; fail });
+          raises (Failed ([| 1 |], 20.)) (fun () -> Exec.wait ~by:"t" ok));
     ]
 
 (* A fresh constant [1.]: a node of its own. *)

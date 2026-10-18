@@ -291,10 +291,11 @@ val of_bigarray :
 
 (** {1:reads Reads}
 
-    A read gives a value's elements to OCaml. It works at every brand: it waits
-    for the work the value depends on, copies its elements to the host and
-    leaves every placement as it was. A value of every set is computed on the
-    host. A read is not an operation: no interpretation receives it.
+    A read gives a value's elements to OCaml. It works at every brand: it is a
+    {{!section-waiting}wait} on the value's set, which may raise a failed
+    check, then copies the value's elements to the host and leaves every
+    placement as it was. A value of every set is computed on the host. A read
+    is not an operation: no interpretation receives it.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
     traced one: [Nx.item: the value is traced by Rune.jit]. *)
@@ -317,6 +318,31 @@ val to_bigarray :
     A dtype Bigarray has no kind for is a type error.
 
     Raises [Invalid_argument] if [x] has more than 16 axes, Bigarray's most. *)
+
+(** {1:waiting Waiting and checks}
+
+    A set's devices may compute while the caller goes on: an operation returns
+    once its work is asked for. The host waits for a set only at a wait:
+    {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}.
+
+    A check is a condition on data whose failure raises the caller's exception:
+    a sampler's parameter outside its domain ({!Rng}), or a {!Prim.Check}. On
+    the host it raises at the call. On another set it is computed where its data
+    lies, and its failure raises at the next wait on that set on the domain that
+    issued it, so that no check makes the host wait. The systhreads of a domain
+    share its checks. A wait drains the checks its domain issued on the set
+    before it and raises the earliest failure among them; the later ones are
+    dropped. A wait on one set raises nothing of another's checks; a check no
+    wait follows never raises. Until a wait drains it, a check keeps its data's
+    memory, so a donation of that data computes into fresh memory. *)
+
+val sync : ('v, 's, 'd) t -> unit
+(** [sync x] waits for the work [x] depends on, then drains the checks pending
+    on [x]'s set, raising the earliest failure, as stated above. A value of
+    every set has no work to wait for: [sync] returns.
+
+    Raises [Invalid_argument] naming [Nx.sync] for a dead value, and for a
+    traced one: [Nx.sync: the value is traced by Rune.jit]. *)
 
 (** {1:shapes Shapes, broadcasting and movements}
 
@@ -2695,10 +2721,11 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     addresses both [x]'s memory and that device's ({!Rig.reaches});
     otherwise it holds a copy of its window, allocating at most the window's
     bytes. A value of every set is computed at [p]. Across sets it changes the
-    brand; within one, the arrangement.
+    brand; within one, the arrangement. Placing onto {!Host} from another set
+    is a {{!section-waiting}wait} on [x]'s set.
 
-    Raises [Invalid_argument] if [p] cuts an axis [x] does not have, and
-    {!Rig.Lost} for a lost device. *)
+    Raises [Invalid_argument] if [p] cuts an axis [x] does not have,
+    {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
 
 val placement : ('v, 's, 'd) t -> 'd Placement.t option
 (** [placement x] is where [x]'s bytes are, or [None] for a value of every set,
@@ -2780,10 +2807,12 @@ module Rng : sig
       shape. Each parameter is checked against its domain: an element outside
       raises [Invalid_argument] naming the sampler, the parameter, the element's
       index and its value, as in
-      [Nx.Rng.bernoulli: p at [3] is 1.5, not in [0, 1]]. The check runs as the
-      sampler is called, computing the parameter if it is a formula; under an
-      interpretation it is a [Check] operation, which raises
-      where the interpretation computes it. *)
+      [Nx.Rng.bernoulli: p at [3] is 1.5, not in [0, 1]]. The check is a
+      {{!Nx.section-waiting}check}: it raises at the call for a parameter on the
+      host or of every set, and for one on another set at the next wait on that
+      set, so that a draw never waits for its parameters. Under an
+      interpretation it is a [Check] operation, which raises where the
+      interpretation computes it. *)
 
   val bits : ?key:'d key -> int array -> 'd int32_t
   (** [bits shape] is uniformly random 32-bit words: word [j] in C order is word
@@ -2936,7 +2965,8 @@ val pp : Format.formatter -> ('v, 's, 'd) t -> unit
     Elements print as {!Dtype.pp_value} does: a float in the shortest form that
     reads back to it in its format, an unsigned integer unsigned. Past 1000
     elements an axis longer than 6 shows its first and last 3 around [...]. A
-    value with elements is read as {!to_array} reads it.
+    value with elements is read as {!to_array} reads it, so it raises a failed
+    check pending on its set ({!section-waiting}).
 
     A value of every set prints [of every set] and the operation that makes it;
     a traced one [traced by] its interpretation; a dead one the function it was
@@ -3317,7 +3347,11 @@ module Prim : sig
         -> unit t
         (** Raises [fail i e] at the first index [i], in C order, where [ok]
             is [false], [e] each of [data]'s elements at [i], in order: OCaml
-            values, which belong to no device set. *)
+            values, which belong to no device set. An empty [ok] passes. It
+            is computed on [ok]'s set, or the first datum's where [ok] is of
+            every set, or the host where every operand is: at the call on
+            the host, and otherwise at the next {{!section-waiting}wait} on
+            that set. *)
 
   type operands = Operands : 'd any list -> operands
 

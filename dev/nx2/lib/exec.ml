@@ -613,6 +613,83 @@ let pending (Value.Node n) p =
    function of nx's own. *)
 let host () = Devices.rebrand (Devices.one Devices.host 0)
 
+(* Whether [p] lies on the host's set. *)
+let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
+
+(* Pending checks
+
+   A check off the host reduces its flags where they lie and leaves the result
+   there unread, since reading it would make the host wait for the set. Each
+   domain lists the checks it issued, by set, and a wait on a set drains that
+   set's, oldest first, up to the first that fails. A pending check holds its
+   data's memory, so that no donation writes the elements its failure
+   reports. *)
+
+type ('d, 'e) issued = {
+  holds : (bool, D.bool_elt, 'd) Value.t;  (* Whether every flag holds. *)
+  first : (int64, D.int64_elt, 'd) Value.t;
+      (* The first false flag's position in C order. *)
+  shape : int array;  (* The flags'. *)
+  data : ('d, 'e) Value.data;
+  fail : int array -> 'e -> exn;
+}
+
+(* A check, and the hold on its data's memory. *)
+type pending = Pending : ('d, 'e) issued * Rig.Claim.hold -> pending
+
+module Sets = Map.Make (Int)
+
+(* Each domain's pending checks, by set number, each set's newest first. The
+   domain's systhreads share them, so every update is a compare-and-set of the
+   whole. *)
+let checks : pending list Sets.t Atomic.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Atomic.make Sets.empty)
+
+(* [f] of the calling domain's pending checks, which it replaces, atomically
+   against the domain's other systhreads. *)
+let rec update f =
+  let a = Domain.DLS.get checks in
+  let sets = Atomic.get a in
+  let sets', r = f sets in
+  if Atomic.compare_and_set a sets sets' then r else update f
+
+let of_set n sets = Option.value ~default:[] (Sets.find_opt n sets)
+
+(* Adds [p] to set [n]'s pending checks. *)
+let pend n p = update (fun sets -> (Sets.add n (p :: of_set n sets) sets, ()))
+
+(* Set [n]'s pending checks, oldest first, taken off the list. *)
+let drained n =
+  update (fun sets -> (Sets.remove n sets, List.rev (of_set n sets)))
+
+(* The first datum's placement, if a datum has bytes. *)
+let rec data_placement : type d e.
+    (d, e) Value.data -> d Devices.placement option = function
+  | [] -> None
+  | x :: rest -> (
+      match Prim.at x with Some p -> Some p | None -> data_placement rest)
+
+(* [data] with each datum that has bytes a live value of its own over them,
+   which no donation of the datum kills. *)
+let rec kept : type d e. (d, e) Value.data -> (d, e) Value.data = function
+  | [] -> []
+  | ((Value.Deferred _ | Value.Traced _) as x) :: rest -> x :: kept rest
+  | x :: rest ->
+      let x =
+        Prim.of_arrays (Prim.placement x) ~shape:(Prim.shape x) (Prim.arrays x)
+      in
+      x :: kept rest
+
+(* The buffers of [data]'s bytes. *)
+let rec data_buffers : type d e. (d, e) Value.data -> Rig.Buffer.t list =
+  function
+  | [] -> []
+  | (Value.Deferred _ | Value.Traced _) :: rest -> data_buffers rest
+  | x :: rest ->
+      Iarray.fold_right
+        (fun a bs -> A.buffer a :: bs)
+        (Prim.arrays x) (data_buffers rest)
+
 (* The next node's id. *)
 let nodes = Atomic.make 0
 
@@ -846,6 +923,8 @@ and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       match x with
       | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
       | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+          if on_host_set p && not (on_host_set (Prim.placement x)) then
+            wait ~by x;
           let y = Place.value ~by p x in
           (* A value over [x]'s memory, kept or borrowed, shares it. *)
           let xs = Prim.arrays x in
@@ -1085,9 +1164,17 @@ and check : type d e.
   let shape = Prim.shape ok in
   if Array.mem 0 shape then ()
   else
-    (* [ok] reduces where it lies, so only scalars reach the host. A passing
-       check runs one [Min]; [Arg], for the first [false] in C order, costs
-       more and runs only on a failure. *)
+    (* The check computes where [ok]'s bytes lie, else where a datum's do, and
+       a constant [ok] is computed there first. With no bytes anywhere, its
+       reduction is a constant, which [failure] computes on the host. *)
+    let where =
+      match Prim.at ok with Some p -> Some p | None -> data_placement data
+    in
+    let ok =
+      match (where, ok) with
+      | Some p, Value.Deferred _ -> at p ok
+      | _ -> ok
+    in
     let reduce r =
       run ~by
         (Value.Reduce
@@ -1100,12 +1187,30 @@ and check : type d e.
            })
     in
     let scalar x = A.get (on_host ~by x) [||] in
-    let all, () = reduce (Monoid (Min, 0, D.Bool)) in
-    if not (scalar all) then begin
-      let (_, first), () = reduce (Arg (Min, 0, D.Bool)) in
-      let idx = unravel (Int64.to_int (scalar first)) shape in
-      raise (fail idx (data_at ~by idx data))
-    end
+    match where with
+    | Some p when not (on_host_set p) ->
+        (* One reduction gives both whether every flag holds and the first
+           false, so that the check leaves only scalars to read later. *)
+        let (holds, first), () = reduce (Arg (Min, 0, D.Bool)) in
+        let data = kept data in
+        let held = Rig.Claim.hold (data_buffers data) in
+        let c = { holds; first; shape; data; fail } in
+        pend (Devices.number (Devices.set p)) (Pending (c, held))
+    | Some _ | None ->
+        (* A passing check runs one [Min]; [Arg], for the first [false], costs
+           more and runs only on a failure. *)
+        let holds, () = reduce (Monoid (Min, 0, D.Bool)) in
+        if not (scalar holds) then
+          let (_, first), () = reduce (Arg (Min, 0, D.Bool)) in
+          raise (failed ~by (scalar first) shape data fail)
+
+(* The exception of a check whose first false lies at [first] in C order. *)
+and failed : type d e.
+    by:string -> int64 -> int array -> (d, e) Value.data ->
+    (int array -> e -> exn) -> exn =
+ fun ~by first shape data fail ->
+  let idx = unravel (Int64.to_int first) shape in
+  fail idx (data_at ~by idx data)
 
 (* Each of [data]'s elements at [idx], read on the host. *)
 and data_at : type d e.
@@ -1134,6 +1239,26 @@ and on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
       invalid_argf "%s: the value is traced by %s" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Donated _ ->
       Iarray.get (Prim.arrays (Place.value ~by host x)) 0
+
+and wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
+ fun ~by x ->
+  match x with
+  | Value.Deferred _ -> ()
+  | Value.Traced { owner; _ } ->
+      invalid_argf "%s: the value is traced by %s" by owner.name
+  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+      Iarray.iter (fun a -> Rig.Buffer.wait (A.buffer a) Read) (Prim.arrays x);
+      settle ~by (drained (Devices.number (Devices.set (Prim.placement x))))
+
+(* Reads [checks], oldest first, up to the first that fails, which raises: the
+   later ones go unread. *)
+and settle ~by = function
+  | [] -> ()
+  | Pending (c, _) :: rest ->
+      if A.get (on_host ~by c.holds) [||] then settle ~by rest
+      else
+        let first = A.get (on_host ~by c.first) [||] in
+        raise (failed ~by first c.shape c.data c.fail)
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken
    from their memos or computed for this alone: a value given to a caller shares

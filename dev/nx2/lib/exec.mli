@@ -26,8 +26,12 @@
     not available yet. A result shares an operand's memory only as its view, or
     where the operand was donated. Movements and bitcasts are views where a
     layout expresses them, and a copy, then a view, otherwise. [Check] reduces
-    its flags where they lie and reads only scalars on the host: whether all
-    hold, then the first failing index, from which it raises its exception.
+    its flags where they lie, to whether all hold and the first failing index.
+    On the host it reads them and raises at once; on another set it holds them
+    and its data, unread, on the calling domain's list of the set's pending
+    checks, which the domain's systhreads share, until a {!wait} on the set
+    drains them. A [Place] onto the host
+    from another set is a {!wait} on that set first.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}) or by
@@ -114,10 +118,19 @@ val consume : by:string -> 'r Value.prim -> 'r Value.prim
     [Invalid_argument] naming [Nx.donate] for two handles of one donor, then
     naming [by] for an operand that died. *)
 
+val wait : by:string -> ('v, 's, 'd) Value.t -> unit
+(** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
+    checks the calling domain issued on [x]'s set: it reads them in issue order
+    up to the first that fails, which raises its exception, and drops the later
+    ones unread. A constant has no set: it returns.
+
+    Raises [Invalid_argument] naming [by] for a traced [x]. *)
+
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 (** [on_host ~by x] is an array on the host holding [x]'s elements: a constant
     computed there, a concrete value placed there ({!Place.value}), over [x]'s
-    own array where it is the host's. No interpretation receives it.
+    own array where it is the host's. No interpretation receives it, and it
+    settles no check ({!wait}).
 
     Raises [Invalid_argument] naming [by] for a traced [x], and what
     {!Place.value} raises. *)

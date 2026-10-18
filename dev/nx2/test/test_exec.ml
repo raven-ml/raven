@@ -481,22 +481,27 @@ let test_placed_view_owns () =
 exception Failed of int array * float * int32
 
 (* A failing check hands its failure the elements of its data at the first
-   failing index, of each datum's dtype, whatever set the data lie on. *)
+   failing index, of each datum's dtype, whatever set the data lie on: at the
+   call on the host, at the next wait on another set. *)
 let test_check_elements () =
   let x = on_host Plain D.Float32 [| 3 |] [| 1.; -1.; -2. |] in
   let check x =
-    raises (Failed ([| 1 |], -1., -1l)) (fun () ->
-        Nx.Prim.eval ~by:"test"
-          (Check
-             {
-               ok = Nx.less (Nx.zeros_like x) x;
-               data = [ x; Nx.cast D.Int32 x ];
-               fail = (fun i (v, (n, ())) -> Failed (i, v, n));
-             }))
+    Nx.Prim.eval ~by:"test"
+      (Check
+         {
+           ok = Nx.less (Nx.zeros_like x) x;
+           data = [ x; Nx.cast D.Int32 x ];
+           fail = (fun i (v, (n, ())) -> Failed (i, v, n));
+         })
   in
-  check x;
-  check (Nx.place Count2.on x);
-  check (Nx.place (Count2.split ~axis:0) x)
+  let failed = Failed ([| 1 |], -1., -1l) in
+  raises failed (fun () -> check x);
+  let off_host x =
+    check x;
+    raises failed (fun () -> Nx.sync x)
+  in
+  off_host (Nx.place Count2.on x);
+  off_host (Nx.place (Count2.split ~axis:0) x)
 
 let sets =
   group "sets"

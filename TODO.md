@@ -279,9 +279,9 @@ raven / llama.cpp (Vulkan; ROCm):
   over new primitives
 - frontend, `contract`'s `?a_scale`, `?b_scale` (`scale`) and `?segments`,
   after `Prim.Contract` and nx.cpu take them
-- frontend, `sync` with deferred per-set checks (a read raises the earliest
-  failed one); then the samplers' parameter checks move there, and
-  `Rng.truncated_normal`, `dirichlet`, `categorical`, `permutation`
+- frontend, a donation right after `sync` copies until a settled check
+  releases its hold on its data
+- frontend, a domain that never waits on a set pins its pending checks' data
 - record `dispatch/kv-append-4096` and its `-copied` twin; donation's kill
   criterion is at least 2x over the copy on CUDA and AMD
 - order and counting operations: check their contracts, public laws and

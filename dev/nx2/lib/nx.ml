@@ -349,13 +349,18 @@ let of_bigarray b =
   let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
   on_host (Nx_array.copy (Nx_array.of_bigarray dt b))
 
-(* [x]'s elements in an array on the host, for the read [by]. A read is not an
-   operation: no interpretation receives it. *)
+(* [x], waited for, for the read [by]. A read is not an operation: no
+   interpretation receives it. *)
 let readable ~by x =
   Prim.alive ~by 0 x;
   match Interp.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
-  | None -> Exec.live x
+  | None ->
+      let x = Exec.live x in
+      Exec.wait ~by x;
+      x
+
+let sync x = ignore (readable ~by:"Nx.sync" x)
 
 let read ~by x = Exec.on_host ~by (readable ~by x)
 
@@ -4535,22 +4540,34 @@ let pp ppf x =
     if Devices.number s <> Devices.number Devices.host then
       Format.fprintf ppf " on %a" Devices.pp s
   in
+  (* What follows the header, read before anything prints: a failed check
+     raises out of the print, as out of any read, with nothing printed. *)
+  let rest : Format.formatter -> unit =
+    match x with
+    | Value.Traced { owner; _ } ->
+        fun ppf -> Format.fprintf ppf " traced by %s" owner.name
+    | Value.Deferred { node = Value.Node n; _ } ->
+        fun ppf -> Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
+    | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
+        match Prim.death x with
+        | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
+        | Value.Live | Value.Offered _ -> (
+            let lost d why ppf =
+              Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
+            in
+            let x = Exec.live x in
+            match Exec.wait ~by:"Nx.pp" x with
+            | exception Rig.Lost (d, why) -> lost d why
+            | () -> (
+                match Exec.on_host ~by:"Nx.pp" x with
+                | a -> fun ppf -> Format.fprintf ppf "@ %a" pp_elements a
+                | exception Rig.Lost (d, why) -> lost d why
+                | exception Invalid_argument why ->
+                    fun ppf -> Format.fprintf ppf ", unread: %s" why)))
+  in
   Format.fprintf ppf "@[<hv 2>%s %a" (D.name (dtype x)) pp_shape (shape x);
   Option.iter (set ppf) (Prim.at x);
-  (match x with
-  | Value.Traced { owner; _ } -> Format.fprintf ppf " traced by %s" owner.name
-  | Value.Deferred { node = Value.Node n; _ } ->
-      Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
-  | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
-      match Prim.death x with
-      | Value.Died f -> Format.fprintf ppf ", donated to %s" f
-      | Value.Live | Value.Offered _ -> (
-          match Exec.on_host ~by:"Nx.pp" (Exec.live x) with
-          | a -> Format.fprintf ppf "@ %a" pp_elements a
-          | exception Rig.Lost (d, why) ->
-              Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
-          | exception Invalid_argument why ->
-              Format.fprintf ppf ", unread: %s" why)));
+  rest ppf;
   Format.fprintf ppf "@]"
 
 let to_string x = Format.asprintf "%a" pp x

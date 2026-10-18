@@ -1072,7 +1072,9 @@ let rejection =
     ]
 
 (* Parameter checks: a sampler names the first parameter outside its domain, in
-   C order, whatever the dtype, shape and placement. *)
+   C order, whatever the dtype, shape and placement: at the call on the host,
+   and on another set at the next wait there, the draw itself waiting for
+   nothing. *)
 
 (* The index of the flat position [i] of a value of shape [s], in C order. *)
 let index s i =
@@ -1126,8 +1128,10 @@ let checks =
               (Printf.sprintf "%g" v) "[0, 1]"
           in
           equal string want (message (fun () -> Rng.bernoulli p));
-          if on_s2 then
-            equal string want (message (fun () -> Rng.bernoulli (split p))));
+          if on_s2 then begin
+            let x = Rng.bernoulli (split p) in
+            equal string want (message (fun () -> Nx.sync x))
+          end);
       prop "binomial names its first negative n" bad_params
         (fun (s, on_s2, (i, j)) ->
           cover "split" on_s2;
@@ -1142,9 +1146,43 @@ let checks =
             refusal "Nx.Rng.binomial" "n" s (Int.min i j) "-2" "[0, inf)"
           in
           equal string want (message (fun () -> Rng.binomial n p));
-          if on_s2 then
-            equal string want
-              (message (fun () -> Rng.binomial (split n) (split p))));
+          if on_s2 then begin
+            let x = Rng.binomial (split n) (split p) in
+            equal string want (message (fun () -> Nx.sync x))
+          end);
+      (let on xs = Nx.place S2.on (host_of Nx.float32 [| 2 |] xs) in
+       (* The draw returns; the wait on its set raises. *)
+       let waits x () = Nx.sync x in
+       let good = on [| 0.5; 0.5 |] in
+       cases
+         ~name:(fun (name, _, _) -> name)
+         "a draw on another set checks its parameters at the next wait"
+         [
+           ( "bernoulli",
+             (fun () -> waits (Rng.bernoulli (on [| 0.5; 2. |]))),
+             "Nx.Rng.bernoulli: p at [1] is 2, not in [0, 1]" );
+           ( "gamma",
+             (fun () -> waits (Rng.gamma (on [| 1.; 0. |]))),
+             "Nx.Rng.gamma: a at [1] is 0, not in (0, inf)" );
+           ( "beta",
+             (fun () -> waits (Rng.beta good (on [| -1.; 1. |]))),
+             "Nx.Rng.beta: b at [0] is -1, not in (0, inf)" );
+           ( "von_mises",
+             (fun () -> waits (Rng.von_mises (on [| Float.nan; 1. |]))),
+             "Nx.Rng.von_mises: k at [0] is nan, not in [0, inf)" );
+           ( "poisson",
+             (fun () -> waits (Rng.poisson (on [| 1.; -3. |]))),
+             "Nx.Rng.poisson: rate at [1] is -3, not in [0, 2^31)" );
+           ( "binomial",
+             (fun () ->
+               let n = host_of Nx.int32 [| 2 |] [| -1l; 2l |] in
+               let n = Nx.place S2.on n in
+               waits (Rng.binomial n good)),
+             "Nx.Rng.binomial: n at [0] is -1, not in [0, inf)" );
+         ]
+         (fun (_, draw, want) ->
+           let wait = draw () in
+           equal string want (message wait)));
     ]
 
 (* The scope *)

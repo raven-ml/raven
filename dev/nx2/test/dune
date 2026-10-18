@@ -34,7 +34,8 @@
   test_print
   test_special
   test_patches
-  test_segments)
+  test_segments
+  test_sync)
  (modules
   test_devices
   test_values
@@ -66,7 +67,8 @@
   test_print
   test_special
   test_patches
-  test_segments)
+  test_segments
+  test_sync)
  (libraries
   nx
   nx_array
@@ -76,6 +78,7 @@
   nx_support
   rig
   threads.posix
+  unix
   windtrap)
  ; test_special reads nx's goldens of its special functions.
  (deps
