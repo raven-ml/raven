@@ -148,33 +148,28 @@ let orphaned () =
   in
   ignore (Thread.create watch ())
 
-(* The kinds the agent serves, as rig agent's help names them: one per path, in
-   the order of Rig_gpus.openers, each named for its GPU 0's device. A kind is
-   every GPU of its path, opened at the controller's first call for it, and no
-   device where the path sees none. The driver-less paths search [firmware]
-   first. *)
+(* The kinds the agent serves, as rig agent's help names them: one per path of
+   Rig_gpus.paths, by its name. A kind is every GPU of its path, listed and
+   opened at the controller's first call for it, which lists no other path:
+   no device where the path sees none, and the path's refusal where it cannot
+   list them. The driver-less paths search [firmware] first. *)
 let kinds firmware =
-  let kind count (gpu : int -> _ Rig_edge.opener) =
-    let all () =
-      let rec go acc i n =
-        if i = n then Ok (List.rev acc)
-        else
-          match Rig.open_ (gpu i) with
-          | Ok d -> go (d :: acc) (i + 1) n
-          | Error _ as e -> e
-      in
-      go [] 0 (Result.value (count ()) ~default:0)
-    in
-    ((gpu 0).name, all)
+  let rec open_all acc = function
+    | [] -> Ok (List.rev acc)
+    | (g : Rig_gpus.gpu) :: gs -> (
+        match g.open_ () with
+        | Ok d -> open_all (d :: acc) gs
+        | Error _ as e -> e)
   in
-  [
-    kind Rig_metal.count Rig_metal.gpu;
-    kind Rig_cuda.count Rig_cuda.gpu;
-    kind Rig_nv_nvidia.count Rig_nv_nvidia.gpu;
-    kind Rig_amd_amdgpu.count Rig_amd_amdgpu.gpu;
-    kind Rig_nv_pci.count (Rig_nv_pci.gpu ~firmware);
-    kind Rig_amd_pci.count (Rig_amd_pci.gpu ~firmware);
-  ]
+  let kind (p : Rig_gpus.path) =
+    let all () =
+      match p.gpus () with
+      | Ok gpus -> open_all [] gpus
+      | Error why -> Error (p.kind ^ ": " ^ why)
+    in
+    (p.kind, all)
+  in
+  List.map kind (Rig_gpus.paths ~firmware ())
 
 let agent ~firmware host port =
   let key =

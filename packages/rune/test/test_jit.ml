@@ -113,11 +113,16 @@ let gpu =
   let opened =
     lazy
       (List.find_map
-         (fun (path, o) ->
-           if List.mem path [ "METAL"; "CUDA"; "NV"; "AMD" ] then
-             Result.to_option (o ())
-           else None)
-         (Rig_gpus.openers ()))
+         (fun (p : Rig_gpus.path) ->
+           if not (List.mem p.kind [ "METAL"; "CUDA"; "NV"; "AMD" ]) then None
+           else
+             match p.gpus () with
+             | Ok gpus ->
+                 List.find_map
+                   (fun (g : Rig_gpus.gpu) -> Result.to_option (g.open_ ()))
+                   gpus
+             | Error _ -> None)
+         (Rig_gpus.paths ()))
   in
   fun () ->
     match Lazy.force opened with

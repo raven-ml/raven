@@ -21,13 +21,7 @@
   (names proc_stubs))
  (libraries
   rig
-  rig.amd.amdgpu
-  rig.amd.pci
-  rig.cuda
-  rig.edge
-  rig.metal
-  rig.nv.nvidia
-  rig.nv.pci
+  rig.gpus
   rig.remote
   rig.remote.proxy
   rig.pci

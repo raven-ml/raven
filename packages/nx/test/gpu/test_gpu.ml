@@ -13,16 +13,20 @@ open Nx_test
 
 let paths = [ "METAL"; "CUDA"; "NV"; "AMD" ]
 
-let suite (path, opener) =
-  let memories = match opener () with Ok m -> [ m ] | Error _ -> [] in
-  group path (Runtimes.laws memories)
+let suite (g : Rig_gpus.gpu) =
+  let memories = match g.open_ () with Ok m -> [ m ] | Error _ -> [] in
+  group g.name (Runtimes.laws memories)
 
 let () =
-  let openers =
-    List.filter (fun (path, _) -> List.mem path paths) (Rig_gpus.openers ())
+  let gpus =
+    List.concat_map
+      (fun (p : Rig_gpus.path) ->
+        if not (List.mem p.kind paths) then []
+        else match p.gpus () with Ok gpus -> gpus | Error _ -> [])
+      (Rig_gpus.paths ())
   in
   exit
     (run "nx on GPUs"
-       (match openers with
+       (match gpus with
        | [] -> [ test "on no GPU" (fun () -> skip ~reason:"no GPU" ()) ]
-       | openers -> List.map suite openers))
+       | gpus -> List.map suite gpus))

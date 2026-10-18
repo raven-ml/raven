@@ -5,39 +5,83 @@
 
 open Windtrap
 
-(* Each path's GPUs, in the preference order the .mli states. *)
-let preferred () =
-  let path name n = List.init (Result.value n ~default:0) (fun _ -> name) in
-  List.concat
-    [
-      path "METAL" (Rig_metal.count ());
-      path "CUDA" (Rig_cuda.count ());
-      path "NV" (Rig_nv_nvidia.count ());
-      path "AMD" (Rig_amd_amdgpu.count ());
-      path "NV-PCI" (Rig_nv_pci.count ());
-      path "AMD-PCI" (Rig_amd_pci.count ());
-    ]
+(* Each path, in the preference order the .mli states: its name, the names
+   its opener gives its GPUs, and its listing, as bus addresses or a count
+   where its GPUs have none. *)
+let names gpu n = List.init n (fun i -> (gpu i : _ Rig_edge.opener).name)
+let by_bus gpu =
+  Result.map (fun b -> (names gpu (List.length b), List.map Option.some b))
 
-let order () =
-  equal (list string) (preferred ()) (List.map fst (Rig_gpus.openers ()))
+let preferred () =
+  let metal =
+    Result.map
+      (fun n -> (names Rig_metal.gpu n, List.init n (fun _ -> None)))
+      (Rig_metal.count ())
+  in
+  [
+    ("METAL", metal);
+    ("CUDA", by_bus Rig_cuda.gpu (Rig_cuda.buses ()));
+    ("NV", by_bus Rig_nv_nvidia.gpu (Rig_nv_nvidia.buses ()));
+    ("AMD", by_bus Rig_amd_amdgpu.gpu (Rig_amd_amdgpu.buses ()));
+    ("NV-PCI", by_bus Rig_nv_pci.gpu (Rig_nv_pci.buses ()));
+    ("AMD-PCI", by_bus Rig_amd_pci.gpu (Rig_amd_pci.buses ()));
+  ]
+
+let seen =
+  List.map (fun (p : Rig_gpus.path) ->
+      ( p.kind,
+        Result.map
+          (fun gpus ->
+            ( List.map (fun (g : Rig_gpus.gpu) -> g.name) gpus,
+              List.map (fun (g : Rig_gpus.gpu) -> g.bus) gpus ))
+          (p.gpus ()) ))
+
+let listing =
+  list
+    (pair string
+       (result (pair (list string) (list (option string))) string))
+
+let order () = equal listing (preferred ()) (seen (Rig_gpus.paths ()))
+
+(* The name of the first GPU of the paths that opens, closed again so that
+   [first] can open it: several paths open one device of a GPU at a time. *)
+let first_name () =
+  let opens (g : Rig_gpus.gpu) =
+    match g.open_ () with
+    | Ok d ->
+        Rig.close d;
+        Some g.name
+    | Error _ -> None
+  in
+  List.find_map
+    (fun (p : Rig_gpus.path) ->
+      match p.gpus () with
+      | Ok gpus -> List.find_map opens gpus
+      | Error _ -> None)
+    (Rig_gpus.paths ())
 
 let opens () =
-  match Rig_gpus.openers () with
-  | [] -> skip ~reason:"no driver sees a GPU" ()
-  | ("METAL", open_) :: _ when Rig_metal_support.virtual_mac -> (
-      match open_ () with
-      | Error "Metal made no residency set" ->
-          skip ~reason:"a virtual Mac's GPU makes no residency set" ()
-      | Error why -> fail why
-      | Ok d ->
-          Rig.close d;
-          fail "a virtual Mac's GPU opened a device")
-  | (path, open_) :: _ -> (
-      match open_ () with
-      | Error why -> fail why
-      | Ok d ->
-          Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
-          equal string ~msg:"the device of the path's GPU 0" path (Rig.name d))
+  let want = first_name () in
+  match (want, Rig_gpus.first ()) with
+  | None, Ok d ->
+      Rig.close d;
+      failf "first opened %s where no GPU of paths opens" (Rig.name d)
+  | None, Error why ->
+      List.iter
+        (fun (p : Rig_gpus.path) ->
+          match p.gpus () with
+          | Error _ -> contains ~msg:"names the refusing path" ~sub:p.kind why
+          | Ok gpus ->
+              List.iter
+                (fun (g : Rig_gpus.gpu) ->
+                  contains ~msg:"names the refusing GPU" ~sub:g.name why)
+                gpus)
+        (Rig_gpus.paths ())
+  | Some name, first ->
+      let d = require_ok ~pp:Format.pp_print_string first in
+      Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+      equal string ~msg:"the device of the first GPU that opens" name
+        (Rig.name d)
 
 (* One launch, the same bytes *)
 
@@ -59,17 +103,23 @@ let binary path arch =
    opened once. *)
 let gpus =
   lazy
-    (List.filter_map
-       (fun (path, open_) ->
-         match open_ () with
-         | Error _ -> None
-         | Ok d -> (
-             match binary path (Rig.arch d) with
-             | Some b -> Some (d, b)
-             | None ->
-                 Rig.close d;
-                 None))
-       (Rig_gpus.openers ()))
+    (List.concat_map
+       (fun (p : Rig_gpus.path) ->
+         match p.gpus () with
+         | Error _ -> []
+         | Ok gpus ->
+             List.filter_map
+               (fun (g : Rig_gpus.gpu) ->
+                 match g.open_ () with
+                 | Error _ -> None
+                 | Ok d -> (
+                     match binary p.kind (Rig.arch d) with
+                     | Some b -> Some (d, b)
+                     | None ->
+                         Rig.close d;
+                         None))
+               gpus)
+       (Rig_gpus.paths ()))
 
 let host_add = lazy (add ("add_" ^ Rig.arch Rig.host ^ ".o"))
 
@@ -125,15 +175,20 @@ let () =
   exit
   @@ run "rig_gpus"
        [
+         (* Before the launches, which hold every GPU they open. *)
+         group ~timeout:60. "paths"
+           [
+             test
+               "each path in preference order, with its GPUs' names and buses \
+                or its refusal"
+               order;
+             test "first opens the first GPU that opens, or names each refusal"
+               opens;
+           ];
          group ~timeout:120. "launches"
            [
              prop ~count:20
                "one launch leaves the same bytes on the host and on each GPU"
                launch_case same_bytes;
-           ];
-         group ~timeout:60. "openers"
-           [
-             test "one per GPU a path sees, paths in preference order" order;
-             test "the first opens its path's GPU 0" opens;
            ];
        ]

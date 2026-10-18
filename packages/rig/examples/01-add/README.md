@@ -12,7 +12,7 @@ dune exec ./main.exe
 
 It prints the sum on stdout, the same on every machine, and the device that
 ran `add` on stderr. With an argument, the name of one of the paths of
-[`Rig_gpus.openers`](../../lib/gpus/rig_gpus.mli), such as `CUDA` or `NV`,
+[`Rig_gpus.paths`](../../lib/gpus/rig_gpus.mli), such as `CUDA` or `NV`,
 it tries only that path's GPUs.
 
 The examples after this one take the program apart: memory, timelines and
@@ -20,7 +20,7 @@ order, steps, the lives of buffers and devices, and host code.
 
 ## What You'll Learn
 
-- Opening the first GPU that rig sees here: `Rig_gpus.openers`
+- Opening the first GPU that rig sees here: `Rig_gpus.paths`
 - Choosing a binary by the device's architecture: `Rig.arch`
 - Loading code and finding its function: `Image.load`, on a GPU or on
   `Rig.host`, and `Image.resolve`
@@ -36,7 +36,7 @@ order, steps, the lives of buffers and devices, and host code.
 
 | Function                                  | Purpose                                     |
 | ----------------------------------------- | ------------------------------------------- |
-| `Rig_gpus.openers ()`                     | An opener for each GPU here, in rig's order |
+| `Rig_gpus.paths ()`                       | Each path's GPUs here, in rig's order       |
 | `Image.load d binary`                     | `binary` loaded on `d`, or why not          |
 | `Image.resolve image f`                   | `image`'s function `f`, if it has one       |
 | `Submission.launch ~refs fn ~params`      | A part that runs `fn` over a grid           |

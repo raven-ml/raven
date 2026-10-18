@@ -7,7 +7,7 @@ devices, and host code. `14-machines` uses another machine's devices.
 
 | Example | Shows | Key functions |
 |---|---|---|
-| [`01-add`](./01-add/) | A kernel on the first GPU here, or on the host's cores | `Rig_gpus.openers`, `Image.load`, `Submission.launch`, `submit` |
+| [`01-add`](./01-add/) | A kernel on the first GPU here, or on the host's cores | `Rig_gpus.paths`, `Image.load`, `Submission.launch`, `submit` |
 | [`02-buffers`](./02-buffers/) | Bytes of a device's memory, on the host | `Buffer.create`, `of_bigarray`, `read`, `write`, `view`, `copy` |
 | [`03-files`](./03-files/) | Files as the disk's memory, copied or borrowed | `Rig_disk.create_file`, `of_file`, `barrier`, `Buffer.borrow` |
 | [`04-timelines`](./04-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.Run.make`, `submit` |

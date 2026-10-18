@@ -13,8 +13,8 @@
    object. Each binary takes the same parameters, the addresses of the three
    arrays then their length, so the program runs one launch on any device.
 
-   With an argument, the name of a path of [Rig_gpus.openers] such as CUDA
-   or NV, it tries only that path's GPUs. The device that ran [add] goes to
+   With an argument, the name of a path of [Rig_gpus.paths] such as CUDA or
+   NV, it tries only that path's GPUs. The device that ran [add] goes to
    stderr, and the sum to stdout, which is the same on every machine. *)
 
 open Rig
@@ -58,21 +58,41 @@ let load (open_device : unit -> (t, string) result) =
           | Ok image -> Some image
           | Error why -> give_up d why))
 
-(* The GPUs to try, in rig's order of preference, then the host. *)
-let devices () =
-  let gpus = Rig_gpus.openers () in
-  let gpus =
+(* The GPUs to try, in rig's order of preference. A path is listed once the
+   paths before it gave no device, and [refused] keeps why a path could not
+   list its GPUs. *)
+let gpus refused =
+  let paths = Rig_gpus.paths () in
+  let paths =
     match Sys.argv with
-    | [| _ |] -> gpus
-    | [| _; path |] -> List.filter (fun (p, _) -> p = path) gpus
+    | [| _ |] -> paths
+    | [| _; path |] ->
+        List.filter (fun (p : Rig_gpus.path) -> p.kind = path) paths
     | _ -> invalid_arg "usage: main.exe [PATH]"
   in
-  List.map snd gpus @ [ (fun () -> Ok host) ]
+  let listed (p : Rig_gpus.path) =
+    match p.gpus () with
+    | Ok gpus -> List.to_seq gpus
+    | Error why ->
+        refused := (p.kind ^ ": " ^ why) :: !refused;
+        Seq.empty
+  in
+  Seq.flat_map listed (List.to_seq paths)
 
 let floats f = Bigarray.(Array1.init float32 c_layout n f)
 
 let () =
-  let image = Option.get (List.find_map load (devices ())) in
+  (* The first GPU that loads [add], or else the host, after the paths'
+     refusals. *)
+  let refused = ref [] in
+  let image =
+    let first (g : Rig_gpus.gpu) = load g.open_ in
+    match Seq.find_map first (gpus refused) with
+    | Some image -> image
+    | None ->
+        List.iter prerr_endline (List.rev !refused);
+        Option.get (load (fun () -> Ok host))
+  in
   let d = Image.device image in
 
   (* Two arrays in [d]'s memory, copied from the host's, and one for the

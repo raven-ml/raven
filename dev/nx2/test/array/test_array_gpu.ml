@@ -15,11 +15,7 @@ module B = Rig.Buffer
 
 let layout = Testable.make ~pp:L.pp ~equal:L.equal
 
-let gpu =
-  lazy
-    (List.find_map
-       (fun (_, o) -> Result.to_option (o ()))
-       (Rig_gpus.openers ()))
+let gpu = lazy (Result.to_option (Rig_gpus.first ()))
 
 let off_host () =
   match Lazy.force gpu with

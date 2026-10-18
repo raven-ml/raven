@@ -81,11 +81,13 @@ let names () =
   |> List.map (fun a -> List.hd (String.split_on_char '=' a))
   |> String.concat " "
 
-(* The first of rig agent's kinds that no GPU here has. *)
+(* The first of rig agent's kinds whose path lists no GPU here. *)
 let empty_kind () =
-  let here = List.map fst (Rig_gpus.openers ()) in
-  [ "METAL"; "CUDA"; "NV"; "AMD"; "NV-PCI"; "AMD-PCI" ]
-  |> List.find (fun k -> not (List.mem k here))
+  List.find_map
+    (fun (p : Rig_gpus.path) ->
+      match p.gpus () with Ok [] -> Some p.kind | Ok _ | Error _ -> None)
+    (Rig_gpus.paths ())
+  |> Option.get
 
 let empty j =
   let kind = empty_kind () in

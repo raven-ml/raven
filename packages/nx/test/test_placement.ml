@@ -142,11 +142,16 @@ type backend = Default | Cpu_backend | Renamed_a | Renamed_b
    it. *)
 let gpu =
   List.find_map
-    (fun (path, o) ->
-      if List.mem path [ "METAL"; "CUDA"; "NV"; "AMD" ] then
-        Result.to_option (o ())
-      else None)
-    (Rig_gpus.openers ())
+    (fun (p : Rig_gpus.path) ->
+      if not (List.mem p.kind [ "METAL"; "CUDA"; "NV"; "AMD" ]) then None
+      else
+        match p.gpus () with
+        | Ok gpus ->
+            List.find_map
+              (fun (g : Rig_gpus.gpu) -> Result.to_option (g.open_ ()))
+              gpus
+        | Error _ -> None)
+    (Rig_gpus.paths ())
 
 let gpu_memory () =
   match gpu with Some m -> m | None -> skip ~reason:"no GPU" ()
