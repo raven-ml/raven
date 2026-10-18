@@ -119,17 +119,12 @@ value caml_rig_amd_write_code(value v_host, value v_bytes) {
   return Val_unit;
 }
 
-/* The word, the slots (set to low32(-1), which no early wait compares
-   with) and the segment, at their host and GPU addresses. */
-value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu,
-                             value v_slots, value v_slots_gpu) {
+/* The word, at its host and GPU addresses. */
+value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu) {
   struct rig_amd *d = Device_val(v_self);
   d->word = Host_val(v_word);
   Edge_val(v_self)->word = d->word;
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
-  d->slots = Host_val(v_slots);
-  d->slots_gpu = (uint64_t)Long_val(v_slots_gpu);
-  for (int i = 0; i < RIG_AMD_SLOTS; i++) d->slots[2 * i] = UINT32_MAX;
   return Val_unit;
 }
 
@@ -503,17 +498,10 @@ value caml_rig_amd_copy_word(value v_to, value v_from) {
 
 /* Makes [v] the value after the device's last one; the device is idle. A
    ring that released the last value is taken to have released v - 1, which
-   the word now holds, and each slot gets low32(v - 1 - age), last written
-   at v - 1 - age: the writer refreshes a slot once it is more than 2^31
-   values old. */
-value caml_rig_amd_renumber(value v_self, value v_v, value v_age) {
+   the word now holds. */
+value caml_rig_amd_renumber(value v_self, value v_v) {
   struct rig_amd *d = Device_val(v_self);
   uint64_t prev = (uint64_t)Long_val(v_v) - 1;
-  uint64_t written = prev - (uint64_t)Long_val(v_age);
-  for (int i = 0; i < RIG_AMD_SLOTS; i++) {
-    d->slots[2 * i] = (uint32_t)written;
-    d->slot_last[i] = written;
-  }
   uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
   for (int q = 0; q < RIG_AMD_QUEUES; q++)
     if (d->rings[q].released == last) d->rings[q].released = prev;

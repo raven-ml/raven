@@ -561,12 +561,6 @@ let grows_with_work (ss, s) =
   at_least int ~msg:"with one part more" ~than:(rank before) (rank after);
   at_least int ~msg:"with parts before it" ~than:(rank alone) (rank after)
 
-let parts_bound () =
-  let f, _ = fresh () in
-  let empty n = Array.init n (fun _ -> E.words ~queue:"COPY:0" [||]) in
-  equal room_answer ~msg:"512 parts" `Fits (E.room f (empty 512));
-  equal room_answer ~msg:"513 parts" `Never (E.room f (empty 513))
-
 let room =
   group ~timeout:300. "room"
     [
@@ -575,7 +569,6 @@ let room =
       prop ~count:100
         "room never fits work with more parts than work it refused" more
         grows_with_work;
-      test "room is Never past 512 parts" parts_bound;
     ]
 
 (* [sleep] runs while another domain submits: a device whose submissions the
@@ -1624,73 +1617,65 @@ let waits =
       test "a submission waits on 255 words" wait_bound;
     ]
 
-(* Slots aged past 2^31
+(* Joins past 512 parts
 
-   A slot word holds the low 32 bits of the last value that wrote it, and a wait
-   compares 32 bits: a slot left 2^31 values old is rewritten before a wait
-   could read it as a value to come. The device starts with every slot 2^31 -
-   600 values old; over 1,300 submissions each slot passes 2^31 and is refreshed
-   at its next turn, while chains of parts alternating between the queues signal
-   and wait on the slots: each compute part writes a token, the copy part after
-   it copies the token out. A wait that passed early would copy a cell before
-   its token. *)
-let aged_slots () =
+   A submission of [n] parts alternates between the queues: each compute part
+   writes a token, and the copy part after it copies the token out, so every
+   part but the first joins the one before it on the other queue. A wait that
+   passed before its signal would copy a cell before its token. Half the draws
+   take the value 2^32, whose low 32 bits are 0. *)
+let joins =
+  Gen.(
+    with_pp
+      (fun ppf (n, carry) ->
+        Format.fprintf ppf "%d parts%s" n (if carry then " at 2^32" else ""))
+      (pair
+         (frequency
+            [
+              (2, of_list [ 1; 2; 511; 512 ]);
+              (3, of_list [ 513; 514; 1024 ]);
+              (3, constant 4096);
+            ])
+         bool))
+
+let joined (n, carry) =
+  cover "more than 512 parts" (n > 512);
+  cover "4096 parts" (n = 4096);
   S.with_ @@ fun { g; _ } ->
-  let values = 1300 and most = 256 in
-  let bytes = 4 * values * most in
-  let cells = Option.get (A.alloc g Pinned bytes) in
+  let cells = (n + 1) / 2 in
+  let bytes = 4 * cells in
+  let src = Option.get (A.alloc g Pinned bytes) in
   let out = Option.get (A.alloc g Pinned bytes) in
-  H.write (host cells) (String.make bytes '\000');
+  H.write (host src) (String.make bytes '\000');
   H.write (host out) (String.make bytes '\000');
-  let token k m = ((k * 1000) + m + 1) land 0xffff_ffff in
-  let at r k m = address r + (4 * ((k * most) + m)) in
-  let pairs k = if k mod 100 = 0 then most else 8 in
-  let age = (1 lsl 31) - 600 in
-  let base = max (1 lsl 31) (A.signaled g + 1) in
-  A.renumber ~age g base;
-  let rec room ps =
-    match E.room g ps with
-    | `Fits -> ()
-    | `Never -> fail "Never"
-    | `Later ->
-        S.reached g (A.signaled g + 1);
-        room ps
+  let token m = m + 1 in
+  let at r m = address r + (4 * m) in
+  if carry then A.renumber g (((A.signaled g lsr 32) + 1) lsl 32);
+  let v = A.signaled g + 1 in
+  let ps =
+    Array.init n (fun i ->
+        let m = i / 2 and after = if i = 0 then [||] else [| i - 1 |] in
+        if i mod 2 = 0 then
+          E.words ~queue:"COMPUTE:0" ~after
+            (words (Pm4.write_data (Memory (at src m)) (token m)))
+        else E.copy ~after ~dst:(at out m) ~src:(at src m) 4)
   in
-  for k = 0 to values - 1 do
-    let ps =
-      Array.concat
-        (List.init (pairs k) (fun m ->
-             let after = if m = 0 then [||] else [| (2 * m) - 1 |] in
-             [|
-               E.words ~queue:"COMPUTE:0" ~after
-                 (words (Pm4.write_data (Memory (at cells k m)) (token k m)));
-               E.copy ~after:[| 2 * m |] ~dst:(at out k m) ~src:(at cells k m) 4;
-             |]))
-    in
-    room ps;
-    equal answer
-      ~msg:(strf "value %d" (base + k))
-      `Ok
-      (submit g ~v:(base + k) ps)
-  done;
-  S.reached g (base + values - 1);
+  equal room_answer ~msg:"room" `Fits (E.room g ps);
+  equal answer ~msg:(strf "value %d" v) `Ok (submit g ~v ps);
+  S.reached g v;
   let got = H.read (host out) bytes in
-  for k = 0 to values - 1 do
-    for m = 0 to pairs k - 1 do
-      let o = 4 * ((k * most) + m) in
-      equal int
-        ~msg:(strf "value %d, pair %d" (base + k) m)
-        (token k m)
-        (Int32.to_int (String.get_int32_le got o) land 0xffff_ffff)
-    done
+  for m = 0 to (n / 2) - 1 do
+    equal int ~msg:(strf "cell %d" m) (token m)
+      (Int32.to_int (String.get_int32_le got (4 * m)) land 0xffff_ffff)
   done;
-  A.free g cells;
+  A.free g src;
   A.free g out
 
 let rings =
   group ~timeout:300. "rings"
     [
-      test "slots aged past 2^31 are refreshed and their waits hold" aged_slots;
+      prop ~count:24 "a submission of parts joined across the queues runs whole"
+        joins joined;
       prop ~count:3
         "submissions landing at, short of and past each ring's end complete in \
          order"

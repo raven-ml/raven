@@ -193,8 +193,7 @@ external create : unit -> int = "caml_rig_amd_create"
 external destroy : int -> unit = "caml_rig_amd_destroy" [@@noalloc]
 external end_state : int -> unit = "caml_rig_amd_end" [@@noalloc]
 
-external set_memory : int -> int -> int -> int -> int -> unit
-  = "caml_rig_amd_memory"
+external set_memory : int -> int -> int -> unit = "caml_rig_amd_memory"
 
 external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
 
@@ -224,7 +223,7 @@ external publish_scratch : int -> int -> int array -> int array -> int
 
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
-external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
+external renumber_device : int -> int -> unit = "caml_rig_amd_renumber"
 external copy_word : int -> int -> unit = "caml_rig_amd_copy_word" [@@noalloc]
 
 external c_launch_pm4 :
@@ -274,7 +273,7 @@ type scratch = {
    outlives the device in its properties, so stop drops it. *)
 type live = {
   ops : ops;
-  own : mem list; (* rings, pointers, segment, slots, private code *)
+  own : mem list; (* rings, pointers, segment, private code *)
   copy_launch : int; (* private launch until confirmed stop; 0 when absent *)
   desc : int; (* the compute queue's descriptor *)
   scratch : scratch;
@@ -312,7 +311,6 @@ type t = {
 let wait64_from = [ ((12, 0, 1), 3010) ]
 let ring_bytes = 16 lsl 20
 let segment_bytes = 2 lsl 20
-let slots = 513
 let pointers_bytes = 4096
 
 (* The stamp ring: RIG_AMD_STAMPS slots of four 8-byte words, then the record
@@ -984,7 +982,6 @@ let make (type m) ~word (p : m path) =
           copy_word host word;
           Ok own
     in
-    let* slot_words = alloc "slot words" (8 * slots) in
     let* segment = alloc "argument segment" segment_bytes in
     let* compute = alloc "compute ring" ring_bytes in
     let* copy = alloc "copy ring" ring_bytes in
@@ -993,7 +990,6 @@ let make (type m) ~word (p : m path) =
     let* stamps_host = host_of "stamp ring" stamps in
     zero stamps_host stamps_bytes;
     let* word_host = host_of "timeline word" word in
-    let* slots_host = host_of "slot words" slot_words in
     let* segment_host = host_of "argument segment" segment in
     let* pointers_host = host_of "queue positions" pointers in
     let* compute_host = host_of "compute ring" compute in
@@ -1045,8 +1041,7 @@ let make (type m) ~word (p : m path) =
     let* copy_bell = queue 1 `Sdma copy in
     (* The queues read none of the C state before a doorbell. *)
     let self = create () in
-    set_memory self word_host (mem_address word) slots_host
-      (mem_address slot_words);
+    set_memory self word_host (mem_address word);
     set_segment self segment_host (mem_address segment) segment_bytes;
     (* The GPU's own register takes the first of the empty table's slots, with
        no region counted, so that its own [`Mapped] memory always finds one and
@@ -1064,7 +1059,7 @@ let make (type m) ~word (p : m path) =
     ring 1 `Sdma copy_host copy_bell;
     (* The values start after the word's: the device numbers on from it as
        an idle one would. *)
-    renumber_device self (signaled_word self + 1) 0;
+    renumber_device self (signaled_word self + 1);
     set_stamps self stamps_host (mem_address stamps) stamps_bytes p.clock_hz;
     let source = match p.clock with Source c -> c | Round_trip -> 0 in
     let* () =
@@ -1108,7 +1103,7 @@ let make (type m) ~word (p : m path) =
               ops;
               own =
                 copy_code
-                @ [ slot_words; segment; compute; copy; pointers; stamps ]
+                @ [ segment; compute; copy; pointers; stamps ]
                 @ Option.to_list mapped;
               copy_launch = !copy_launch;
               desc = mem_address pointers;
@@ -1185,7 +1180,7 @@ let refuse_stopped g what =
   if Option.is_none g.live then
     invalid_argf "Rig_amd.%s: the device stopped" what
 
-let renumber ?(age = 0) g v =
+let renumber g v =
   Lock.check "Rig_amd.renumber";
   Lock.protect g.guard @@ fun () ->
   refuse_stopped g "renumber";
@@ -1194,9 +1189,7 @@ let renumber ?(age = 0) g v =
     invalid_arg "Rig_amd.renumber: the device's work runs";
   if v - 1 < last then
     invalid_argf "Rig_amd.renumber: value %d, expected at least %d" v (last + 1);
-  if age < 0 || age > v - 1 then
-    invalid_argf "Rig_amd.renumber: age %d, expected 0 to %d" age (v - 1);
-  renumber_device g.self v age
+  renumber_device g.self v
 
 external placed : int -> int -> int * int = "caml_rig_amd_placed"
 

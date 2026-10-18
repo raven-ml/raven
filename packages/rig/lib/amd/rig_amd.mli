@@ -284,9 +284,11 @@ val capability : t -> Rig_amd_abi.Capability.t
 
     [room] returns [RIG_NEVER] if the parts exceed what the device holds
     when it is idle, or if a part is one it does not run. An idle device
-    holds 512 parts, and the words and argument bytes that fit in the
-    compute ring, half the copy ring and half the argument segment, since a
-    submission's SDMA packets and argument bytes never wrap. The device's
+    holds the words and argument bytes that fit in the compute ring, half
+    the copy ring and half the argument segment, since a submission's SDMA
+    packets and argument bytes never wrap. The segment also holds 8 bytes
+    per part, the word through which a part of one queue orders a part of
+    the other. The device's
     [most_parts] ({!Rig_edge.type-facts}) is the most parts that an idle
     device holds, each a launch whose arguments take at most 4352 bytes,
     which every kernel of at most 4096 bytes of explicit arguments and code
@@ -588,17 +590,14 @@ end
 
 (**/**)
 
-(* [renumber ~age g v] makes [v] the value after [g]'s last one: the timeline
-   word and the last value given become [v - 1], and every slot word is as if
-   last written [age] (defaults to [0]) values earlier, at [v - 1 - age]. [g] is
-   idle: its word holds the last value it was given. Tests reach the values a
-   long run reaches, such as those past 2^31 and 2^32, and the slots' refresh
-   past 2^31 values of age, without making that many submissions.
+(* [renumber g v] makes [v] the value after [g]'s last one: the timeline word
+   and the last value given become [v - 1]. [g] is idle: its word holds the
+   last value it was given. Tests reach the values a long run reaches, such as
+   those past 2^31 and 2^32, without making that many submissions.
 
    Raises [Invalid_argument] if [g] has stopped or is not idle, if [v - 1] is
-   below its last value, if [age] is negative or above [v - 1], or from a
-   callback inside a lock ({!Lock.check}). *)
-val renumber : ?age:int -> t -> int -> unit
+   below its last value, or from a callback inside a lock ({!Lock.check}). *)
+val renumber : t -> int -> unit
 
 (* [ring g q] is [(n, size)]: the 32-bit words [g] placed on the ring of its
    queue [q] since it made the ring, and the ring's size in words. A word's

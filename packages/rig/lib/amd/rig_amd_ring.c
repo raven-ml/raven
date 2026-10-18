@@ -10,7 +10,12 @@
    wait for v-1 on the timeline word where the other queue released v-1), the
    compute queue's foreign waits, the parts in array order, the slot signals
    and waits that order parts of two queues, and on the last queue the
-   release of v into the word. Each compute part follows a partial flush of
+   release of v into the word. The slot words lie at the start of the
+   submission's run of the segment, one per part and one, W, which the
+   compute queue signals once it passed the waits: the host writes each
+   low32(v - 1) before the queues may read it, so a wait for low32(v) passes
+   only once its signal wrote it, and the run is reused only once the word
+   shows v. Each compute part follows a partial flush of
    the dispatches before it; the first, and any after a slot wait, also
    follows a cache acquire, and any other launch an invalidation of the
    caches above the L2, so that it reads what the dispatches before it
@@ -26,6 +31,7 @@
 
 #define _GNU_SOURCE
 
+#include <limits.h>
 #include <stdatomic.h>
 #include <string.h>
 
@@ -33,9 +39,6 @@
 
 /* The alignment of launch arguments and AQL indirect buffers. */
 #define SEGMENT_ALIGN 64
-
-/* A slot older than this is rewritten from the host before it is used. */
-#define SLOT_STALE (UINT64_C(1) << 31)
 
 /* AQL packets: 16 words, the first of which holds the header (hsa.h). */
 #define AQL_WORDS 16
@@ -259,11 +262,17 @@ static struct cost room_of(const struct rig_amd *d) {
   };
 }
 
+/* The segment bytes of the slot words of a submission of [n] parts. */
+static uint64_t slot_bytes(int n) {
+  return align_up(8 * ((uint64_t)n + 1), SEGMENT_ALIGN);
+}
+
 /* What a submission of the routed [parts] takes. */
 static struct cost need(const struct rig_amd *d,
                         const struct rig_amd_route *routes,
                         const struct rig_part *p, int n) {
   struct cost k = fixed_cost(d);
+  k.bytes += slot_bytes(n);
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
     uint64_t args, w = part_words(d, &p[i], x->kernel, &args);
@@ -290,7 +299,7 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
    launch whose dispatch takes RIG_AMD_LAUNCH_WORDS words and whose
    arguments take RIG_AMD_KERNARG bytes, or a copy of one packet, each
    joined to the part before it on its queue and to one of the other
-   queue. */
+   queue, and each with its slot word. */
 int rig_amd_most_parts(const struct rig_amd *d) {
   struct cost room = room_of(d), fixed = fixed_cost(d);
   uint64_t dispatch =
@@ -298,7 +307,10 @@ int rig_amd_most_parts(const struct rig_amd *d) {
   struct cost launch = part_cost(d, RIG_AMD_COMPUTE, dispatch,
                                  align_up(RIG_AMD_KERNARG, SEGMENT_ALIGN), 2);
   struct cost copy = part_cost(d, RIG_AMD_COPY, words_of(d, S_COPY), 0, 2);
-  uint64_t n = RIG_AMD_PARTS;
+  fixed.bytes += slot_bytes(0);
+  launch.bytes += 8;
+  copy.bytes += 8;
+  uint64_t n = INT_MAX;
   n = least(n, room.compute, fixed.compute, launch.compute);
   n = least(n, room.bytes, fixed.bytes, launch.bytes);
   n = least(n, room.copy, fixed.copy, copy.copy);
@@ -360,7 +372,6 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
 int rig_amd_room(void *self, const struct rig_part *parts, int n,
                  void *routes, const uint8_t *args) {
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
-  if (n > RIG_AMD_PARTS) return RIG_NEVER;
   for (int i = 0; i < n; i++)
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   route(d, routes, parts, n);
@@ -393,13 +404,13 @@ struct submission {
   uint64_t v;
   int used[RIG_AMD_QUEUES];
   int last[RIG_AMD_QUEUES]; /* the queue's last part, or -1 */
-  int nsignalled;
-  int slot[RIG_AMD_SLOTS];
+  uint64_t slots;  /* the GPU address of its first slot word */
+  int w;           /* the index of slot W, after the parts' */
   struct rig_amd_timed *timed; /* its slot, NULL unless it is timed */
 };
 
-static uint64_t slot_gpu(const struct rig_amd *d, int i) {
-  return d->slots_gpu + 8 * (uint64_t)i;
+static uint64_t slot_gpu(const struct submission *s, int i) {
+  return s->slots + 8 * (uint64_t)i;
 }
 
 /* A new scratch: on an AQL queue, the pending writes to the queue's
@@ -563,14 +574,12 @@ static void enter(struct submission *s, int q, const struct rig_wait *waits,
       s->timed->entered |= 1 << q;
       stamp(d, q, records(d, s->timed));
     }
-    if (nwaits > 0 && copy_parts) {
-      emit(d, r, T_SIGNAL, slot_gpu(d, RIG_AMD_SLOT_W), s->v, 0);
-      s->slot[s->nsignalled++] = RIG_AMD_SLOT_W;
-    }
+    if (nwaits > 0 && copy_parts)
+      emit(d, r, T_SIGNAL, slot_gpu(s, s->w), s->v, 0);
     return;
   }
   if (r->released != s->v - 1) emit(d, r, S_POLL, d->word_gpu, s->v - 1, 0);
-  if (nwaits > 0) emit(d, r, S_POLL, slot_gpu(d, RIG_AMD_SLOT_W), s->v, 0);
+  if (nwaits > 0) emit(d, r, S_POLL, slot_gpu(s, s->w), s->v, 0);
   if (s->timed == NULL) return;
   s->timed->entered |= 1 << q;
   stamp(d, q, records(d, s->timed) + 8 * (uint64_t)q);
@@ -579,7 +588,7 @@ static void enter(struct submission *s, int q, const struct rig_wait *waits,
 static void wait_slot(struct submission *s, int q, int j) {
   struct rig_amd *d = s->d;
   emit(d, &d->rings[q], q == RIG_AMD_COMPUTE ? T_WAIT : S_POLL,
-       slot_gpu(d, j), s->v, 0);
+       slot_gpu(s, j), s->v, 0);
 }
 
 /* Orders part [i] after what it follows on its queue: on compute, a partial
@@ -616,9 +625,8 @@ static int prepare(struct submission *s, const struct rig_part *parts, int i,
 static void signal_slot(struct submission *s, int q, int i) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[q];
-  emit(d, r, q == RIG_AMD_COMPUTE ? T_SIGNAL : S_FENCE, slot_gpu(d, i),
+  emit(d, r, q == RIG_AMD_COMPUTE ? T_SIGNAL : S_FENCE, slot_gpu(s, i),
        s->v, 0);
-  s->slot[s->nsignalled++] = i;
 }
 
 static void copy(struct submission *s, const struct rig_part *p) {
@@ -756,16 +764,6 @@ static void hand_over(struct submission *s) {
   }
 }
 
-/* The slot of v mod RIG_AMD_SLOTS, if its last write is old, gets
-   low32(v-1) from the host: no wait of the next 2^32 values compares with
-   it, and no queued work writes it. */
-static void refresh_slot(struct rig_amd *d, uint64_t v) {
-  int i = (int)(v % RIG_AMD_SLOTS);
-  if (v - d->slot_last[i] <= SLOT_STALE) return;
-  d->slots[2 * i] = LOW32(v - 1);
-  d->slot_last[i] = v - 1;
-}
-
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    int nwaits, const struct rig_part *parts, int nparts,
                    void *routes, uint8_t *args,
@@ -774,7 +772,8 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   (void)nslots;
   (void)failure;
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
-  struct submission s = {.d = d, .routes = routes, .v = v, .last = {-1, -1}};
+  struct submission s = {
+      .d = d, .routes = routes, .v = v, .last = {-1, -1}, .w = nparts};
   route(d, routes, parts, nparts);
   int copy_parts = 0;
   for (int i = 0; i < nparts; i++) {
@@ -783,12 +782,16 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   }
   int r = nparts > 0 ? s.routes[nparts - 1].ring : RIG_AMD_COMPUTE;
   if (r == RIG_AMD_COPY && LOW32(v) == 0) r = RIG_AMD_COMPUTE;
-  refresh_slot(d, v);
 
-  /* The submission's segment bytes lie in one run, which never wraps. */
+  /* The submission's segment bytes lie in one run, which never wraps, its
+     slot words first. */
   uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
   struct rig_amd_segment *g = &d->segment;
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
+  volatile uint32_t *slot = (volatile uint32_t *)(g->host + g->put % g->size);
+  for (int i = 0; i <= nparts; i++) slot[2 * i] = LOW32(v - 1);
+  s.slots = g->gpu + g->put % g->size;
+  g->put += slot_bytes(nparts);
 
   struct rig_amd_ring *compute = &d->rings[RIG_AMD_COMPUTE];
   s.timed = take_slot(d, v, nparts > 0 ? times : NULL);
@@ -824,7 +827,6 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   release(&s, r);
   mark(&g->marks, v, g->put);
   hand_over(&s);
-  for (int i = 0; i < s.nsignalled; i++) d->slot_last[s.slot[i]] = v;
   atomic_store_explicit(&d->last, v, memory_order_release);
   return RIG_COMMITTED;
 }

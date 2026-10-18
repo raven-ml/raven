@@ -22,14 +22,9 @@
 
 #include "rig_amd.h"
 
-/* The most parts and waits of a submission, the slot words (one per part
-   and slot W, which the compute queue signals once it passed the waits),
-   and the submissions a ring keeps the end of until their value is
-   reached. */
-#define RIG_AMD_PARTS 512
+/* The most waits of a submission, and the submissions a ring keeps the end
+   of until their value is reached. */
 #define RIG_AMD_WAITS 255
-#define RIG_AMD_SLOTS (RIG_AMD_PARTS + 1)
-#define RIG_AMD_SLOT_W RIG_AMD_PARTS
 #define RIG_AMD_MARKS 4096
 #define RIG_AMD_HDPS 8
 
@@ -311,9 +306,6 @@ struct rig_amd_measure {
 struct rig_amd {
   _Atomic uint64_t *word;
   uint64_t word_gpu;
-  volatile uint32_t *slots;     /* 64 bits apart, their low 32 bits used */
-  uint64_t slots_gpu;
-  uint64_t slot_last[RIG_AMD_SLOTS];
   struct rig_amd_ring rings[RIG_AMD_QUEUES];
   struct rig_amd_segment segment;
   struct rig_amd_template templates[RIG_AMD_TEMPLATES];
