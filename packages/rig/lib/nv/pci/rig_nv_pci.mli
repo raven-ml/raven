@@ -80,11 +80,11 @@
     addresses.
 
     The GSP's objects live as long as the GSP: its RM frees none
-    ([Rig_nv.rm]'s [free] is [None]). A device of this path keeps the
-    channels a growth replaces until it stops ({!Rig_nv.section-submitting}):
-    at most 26 sets, each with its rings, the instance blocks and method
-    buffers of its two channels, and the compute engine's context buffers,
-    in the GPU's memory. *)
+    ([Rig_nv.rm]'s [free] is [None]), so a device of this path keeps the
+    channels a growth replaces as {!Rig_nv.section-submitting} states. Each
+    set it keeps holds, in the GPU's memory, the instance blocks and method
+    buffers of its two channels and the compute engine's context
+    buffers. *)
 
 (** {1:gpus GPUs}
 
@@ -129,8 +129,8 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
 (** {1:opening Opening}
 
     The GSP reports a channel it stopped and a fault its MMU queued, and the
-    device raises them from {!Rig_nv.sleep}. An exception in a sleep, such
-    as [Sys.Break], drops no report: the next sleep raises it. The GSP may
+    device raises them from {!Rig_nv.sleep}, keeping a report through an
+    exception in a sleep as {!Rig_edge.Driver.sleep} requires. The GSP may
     also ask the process to run a sequence of register operations, which
     runs once, front to back: one an exception cuts short is a fault, which
     loses the GPU. Only the process uses a GPU it has booted, so the GPU's
@@ -143,8 +143,8 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     requests between them ({!Rig_pci.Memory.reaches}).
 
     A device reads the GPU's timer registers through BAR 0
-    ({!Rig_nv.Registers}) at open only, so the times of its profiles drift
-    from the host's clock at the timer's rate error since open.
+    ({!Rig_nv.Registers}), so its profiles' times drift from the host's
+    clock as {!Rig_nv.section-submitting} states.
 
     Any domain may call any function. Opens and changes of NVIDIA GPUs run
     one at a time, so a boot delays the others. {!gpu}'s [make], {!detach},
