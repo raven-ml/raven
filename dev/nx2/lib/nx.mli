@@ -220,7 +220,9 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     handle raises naming the movement that spent it. Any other operation
     consumes its handles. Two handles of one donor or over one memory reaching
     one operation raise naming [Nx.donate]: the same handle twice, two donations
-    of one value, or a handle and one a movement passed on.
+    of one value, or a handle and one a movement passed on. The donor itself
+    beside one of its handles is not a second handle: the consumer reads it as
+    it was when called, so [add (donate x) x] is [x + x].
 
     An operation checks every operand before it consumes any, so in sequence a
     refused operation kills nothing. On any number of domains, no operation
@@ -230,13 +232,15 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     operands, which may itself have lost, and the loser's other donated operands
     may be dead. No operation reads elements a consumer has overwritten.
 
-    The consumer may write its result into the donated memory when it reads the
-    operand only at the result's own index (an elementwise operand), the memory
-    is C-contiguous with the result's shape and dtype, and the memory is not
-    shared. Memory is shared once a value outside the donor's handles has been
-    made over it (a view, a borrow by {!place}, a {!Repr} crossing), and stays
-    shared. Otherwise the consumer computes into fresh memory, and a value that
-    shares the memory keeps it. Its result is the same either way.
+    The consumer may write its result into the donated memory when it reads
+    that memory only at the result's own index, through the handle or through
+    [x] itself (an elementwise operand, the target of {!set} or {!scatter},
+    {!contract}'s [init]), the memory is C-contiguous with the result's shape
+    and dtype, and the memory is not shared. Memory is shared once a value
+    outside the donor's handles has been made over it (a view, a borrow by
+    {!place}, a {!Repr} crossing), and stays shared. Otherwise the consumer
+    computes into fresh memory, and a value that shares the memory keeps it.
+    Its result is the same either way.
 
     A traced value and a value of every set are returned unchanged: nothing
     dies, and passing such a value twice raises nothing.
@@ -658,7 +662,10 @@ val scatter :
     first NaN among them quieted: its quiet bit, the top bit of its fraction,
     set, its sign and payload kept. Where no update lands, the element keeps
     its bits, a signalling NaN's included. A position outside [\[0, d)]
-    writes nothing. A float [Add] gives the same bits on every run.
+    writes nothing. A float [Add] gives the same bits on every run. Without
+    {!donate} it costs a copy of [x]; [scatter ~axis p u (donate x)] writes
+    only the updates, into [x]'s memory, where {!donate} lets the consumer
+    write there.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
     differ in shape, their shape differs from [x]'s off [axis], or [combine]
@@ -1564,7 +1571,10 @@ val contract :
     sum of its [K] products, where [γ(n, v) = n v / (1 - n v)] and [u] is
     [acc]'s unit roundoff.
 
-    A donated [init] is consumed as {!donate} states.
+    A donated [init] receives the result in its memory where {!donate} lets
+    the consumer write there and the result's names are the batch names, then
+    [a]'s others, then [b]'s, each in its operand's order, as in
+    ["n i, n o -> i o | n"]; otherwise the result is fresh.
 
     Raises [Invalid_argument] if [dt] is a boolean; [p] has other than two
     operands; an operand's rank is not the number of axes [p] gives it; [...]
@@ -3380,7 +3390,8 @@ module Prim : sig
       An operation [rule] receives is the final consumer of the donated
       handles among its operands ({!Nx.donate}), a movement too, since its
       results hold no handle to pass on: their donors die when it is
-      received, and [rule] reads the handles' arrays. *)
+      received. [rule] reads the operation as it was called: the handles'
+      arrays, and a donor beside its handle as a live value. *)
 
   val traced :
     interpretation ->

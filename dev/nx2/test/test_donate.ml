@@ -22,6 +22,11 @@ let fresh xs =
   in
   Nx.add a (Nx.zeros_like a)
 
+(* As [fresh], of shape [s]: a reshape would make a view, which shares. *)
+let fresh_at s xs =
+  let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 s xs) in
+  Nx.add a (Nx.zeros_like a)
+
 let test_dies_at_its_consumer () =
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
@@ -147,6 +152,255 @@ let test_dies_when_received () =
       Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
     (fun _ -> ignore (Nx.add (Nx.donate x) wide));
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.add" (fun () -> Nx.add x x)
+
+(* Reuse: a consumer that writes its result into donated memory takes no
+   memory of the result's size, counted on a memory device of these tests'
+   own. *)
+let device = Nx_support.memory 3
+
+module Mem = (val Nx.devices [ device ])
+
+(* [xs] of shape [s] on [device] in memory of its own: computed there, since a
+   placement onto it borrows the host's memory, which shares it. *)
+let on_mem s xs =
+  let a =
+    Nx.place Mem.on (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 s xs))
+  in
+  Nx.add a (Nx.zeros_like a)
+
+let positions s ps = Nx.place Mem.on (Nx.create Nx.int64 s ps)
+
+(* The bytes [device] holds after four rounds of collection, each of which
+   returns to the device what it collected. *)
+let settled () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create device 0);
+    Rig.free_cache device
+  done;
+  Rig.allocated device
+
+(* [f (make ())] and the bytes [device] holds more after it, its cache
+   included, so that a donor freed after a copy still counts. One uncounted
+   run comes first, and the count before is read settled, so that no memory
+   collected late serves the counted run. *)
+let grown make f =
+  ignore (f (make ()));
+  let inputs = make () in
+  let before = settled () in
+  let y = f inputs in
+  (y, Rig.allocated device - before)
+
+(* A cache of [rows] rows of [width] float32, row [r] holding [r], and its
+   bytes. *)
+let width = 4096
+let rows = 8
+let size = 4 * rows * width
+let original = Array.init (rows * width) (fun i -> Float.of_int (i / width))
+
+(* The cache's elements with row [r] holding [v]. *)
+let with_row r v =
+  Array.mapi (fun i x -> if i / width = r then v else x) original
+
+let cache () = on_mem [| rows; width |] original
+let nines s = on_mem s (Array.make width 9.)
+
+let in_place ~msg ~bytes grew =
+  less ~msg:(msg ^ ": no memory of the result's size") int ~than:bytes grew
+
+let copied ~msg ~bytes grew =
+  at_least ~msg:(msg ^ ": a fresh result") int ~than:bytes grew
+
+let test_set_in_place () =
+  let check ~msg idx s =
+    let y, grew =
+      grown
+        (fun () -> (cache (), nines s))
+        (fun (c, v) -> Nx.set idx v (Nx.donate c))
+    in
+    in_place ~msg ~bytes:size grew;
+    equal ~msg (array float_exact) (with_row 5 9.) (elements y)
+  in
+  let pos = Nx.place Mem.on (Nx.scalar Nx.int64 5L) in
+  check ~msg:"a window held in data" Nx.[ D (pos, 1); A ] [| 1; width |];
+  check ~msg:"a written position" Nx.[ I 5 ] [| width |];
+  check ~msg:"a list of positions" Nx.[ L [ 5 ] ] [| 1; width |];
+  check ~msg:"positions on two axes" Nx.[ L [ 5 ]; R (0, width) ] [| 1; width |];
+  let c = cache () in
+  ignore (Nx.set Nx.[ I 5 ] (nines [| width |]) (Nx.donate c));
+  invalid ~sub:"donated to Nx.set" (fun () -> Nx.copy c)
+
+let test_scatter_in_place () =
+  let p = positions [| 1; width |] (Array.make width 5L) in
+  let y, grew =
+    grown
+      (fun () -> (cache (), nines [| 1; width |]))
+      (fun (c, u) -> Nx.scatter ~axis:0 p u (Nx.donate c))
+  in
+  in_place ~msg:"scatter" ~bytes:size grew;
+  equal (array float_exact) (with_row 5 9.) (elements y)
+
+let test_init_in_place () =
+  let a = on_mem [| 2; rows |] (Array.make (2 * rows) 1.) in
+  let b = on_mem [| 2; width |] (Array.make (2 * width) 1.) in
+  let plus_two =
+    Array.init (rows * width) (fun i -> Float.of_int (i / width) +. 2.)
+  in
+  let p = Nx.Pattern.v "n i, n o -> i o | n" in
+  let y, grew =
+    grown cache (fun g -> Nx.contract f32 ~init:(Nx.donate g) p a b)
+  in
+  in_place ~msg:"contract" ~bytes:size grew;
+  equal (array float_exact) plus_two (elements y);
+  (* [b]'s names before [a]'s: the kernel's result is the transpose. *)
+  let p = Nx.Pattern.v "n o, n i -> i o | n" in
+  let y, grew =
+    grown cache (fun g -> Nx.contract f32 ~init:(Nx.donate g) p b a)
+  in
+  copied ~msg:"contract, transposed" ~bytes:size grew;
+  equal (array float_exact) plus_two (elements y)
+
+(* A value that is not donated, or that shares the donated memory, keeps its
+   elements, and the result is the same. *)
+let test_kept () =
+  let v = nines [| 1; width |] in
+  let c = cache () in
+  let y, grew = grown (fun () -> c) (fun c -> Nx.set Nx.[ L [ 5 ] ] v c) in
+  copied ~msg:"not donated" ~bytes:size grew;
+  equal ~msg:"the result" (array float_exact) (with_row 5 9.) (elements y);
+  equal ~msg:"the operand" (array float_exact) original (elements c);
+  let shared () =
+    let c = cache () in
+    (c, Nx.reshape [| rows * width |] c)
+  in
+  let (y, flat), grew =
+    grown shared (fun (c, flat) ->
+        (Nx.set Nx.[ L [ 5 ] ] v (Nx.donate c), flat))
+  in
+  copied ~msg:"shared" ~bytes:size grew;
+  equal ~msg:"the result" (array float_exact) (with_row 5 9.) (elements y);
+  equal ~msg:"the view" (array float_exact) original (elements flat)
+
+(* An operation may read the donor beside its handle. Where it reads it at
+   other indices than the result's own, as a scatter's updates or a
+   contraction's operand, it computes into fresh memory; where at the
+   result's own index, as an elementwise operand, it may still write there. *)
+let test_donor_beside () =
+  let p =
+    positions [| rows; width |]
+      (Array.init (rows * width) (fun i ->
+           Int64.of_int (rows - 1 - (i / width))))
+  in
+  let y, grew = grown cache (fun c -> Nx.scatter ~axis:0 p c (Nx.donate c)) in
+  copied ~msg:"the scatter's updates" ~bytes:size grew;
+  equal ~msg:"rows reversed" (array float_exact)
+    (Array.init (rows * width) (fun i -> Float.of_int (rows - 1 - (i / width))))
+    (elements y);
+  let c = cache () in
+  ignore (Nx.scatter ~axis:0 p c (Nx.donate c));
+  invalid ~sub:"donated to Nx.scatter" (fun () -> Nx.copy c);
+  let n = 128 in
+  let ones = on_mem [| n; n |] (Array.make (n * n) 1.) in
+  let sums i = Float.of_int ((n * n * i) + (n * (n - 1) / 2)) in
+  let p = Nx.Pattern.v "i k, k j -> i j | k" in
+  let y, grew =
+    grown
+      (fun () -> on_mem [| n; n |] (Array.init (n * n) Float.of_int))
+      (fun g -> Nx.contract f32 ~init:(Nx.donate g) p g ones)
+  in
+  copied ~msg:"the contraction's operand" ~bytes:(4 * n * n) grew;
+  equal ~msg:"init plus the product" (array float_exact)
+    (Array.init (n * n) (fun i -> Float.of_int i +. sums (i / n)))
+    (elements y);
+  let y, grew = grown cache (fun c -> Nx.add (Nx.donate c) c) in
+  in_place ~msg:"an elementwise operand" ~bytes:size grew;
+  let doubled = Array.map (fun x -> 2. *. x) original in
+  equal ~msg:"doubled" (array float_exact) doubled (elements y);
+  let c = cache () in
+  let flat = Nx.reshape [| rows * width |] c in
+  let y = Nx.add (Nx.donate c) c in
+  equal ~msg:"doubled, shared" (array float_exact) doubled (elements y);
+  equal ~msg:"the view" (array float_exact) original (elements flat)
+
+(* A donated call gives the bits of the same call undonated: a scatter of
+   every combine with repeated positions, positions outside the axis, NaN,
+   -0. and infinities, and a bfloat16 init summed in float32 over a drawn
+   number of terms. *)
+type scatter_case = {
+  combine : Nx.combine;
+  target : float array;
+  targets : int64 array;
+  updates : float array;
+}
+
+let specials = [ 0.; -0.; 1.5; -2.; Float.nan; Float.infinity; 3e38 ]
+
+let scatter_case =
+  Gen.with_pp
+    (fun ppf c ->
+      let fs a =
+        String.concat "; " (Array.to_list (Array.map Float.to_string a))
+      in
+      Format.fprintf ppf "%s target [%s] at [%s] updates [%s]"
+        (match c.combine with
+        | Nx.Set -> "Set"
+        | Add -> "Add"
+        | Max -> "Max"
+        | Min -> "Min")
+        (fs c.target)
+        (String.concat "; "
+           (Array.to_list (Array.map Int64.to_string c.targets)))
+        (fs c.updates))
+    (let open Gen in
+     let* combine = of_list Nx.[ Set; Add; Max; Min ] in
+     let* n = int_range 1 6 in
+     let* m = int_range 0 12 in
+     let* target = array ~size:(constant n) (of_list specials) in
+     let* targets =
+       array ~size:(constant m)
+         (map Int64.of_int (int_range (-1) n))
+     in
+     let+ updates = array ~size:(constant m) (of_list specials) in
+     { combine; target; targets; updates })
+
+let bits32 x = elements (Nx.bitcast D.Int32 x)
+
+let law_scatter_bits =
+  prop "a donated scatter gives the undonated one's bits" scatter_case
+    (fun c ->
+      let m = Array.length c.updates and n = Array.length c.target in
+      let repeated =
+        Array.length (Array.of_list (List.sort_uniq compare (Array.to_list c.targets)))
+        < m
+      in
+      cover "a repeated position" repeated;
+      cover "a position outside the axis"
+        (Array.exists (fun t -> t < 0L || t >= Int64.of_int n) c.targets);
+      cover "a NaN target" (Array.exists Float.is_nan c.target);
+      let p = Nx.create Nx.int64 [| m |] c.targets in
+      let u = fresh c.updates in
+      let combine = c.combine in
+      let kept = Nx.scatter ~combine ~axis:0 p u (fresh c.target) in
+      let given = Nx.scatter ~combine ~axis:0 p u (Nx.donate (fresh c.target)) in
+      equal (array int32) (bits32 kept) (bits32 given))
+
+let terms = Gen.int_range 1 2100
+
+let law_init_bits =
+  prop "a donated bfloat16 init gives the undonated one's bits" terms (fun k ->
+      cover "more terms than a block of 1024" (k > 1024);
+      let value i = Float.of_int ((i * 37 mod 11) - 5) /. 3. in
+      let a = fresh_at [| k; 3 |] (Array.init (3 * k) value) in
+      let b = fresh_at [| k; 5 |] (Array.init (5 * k) (fun i -> value (i + 7))) in
+      let init () =
+        Nx.cast D.Bfloat16 (fresh_at [| 3; 5 |] (Array.init 15 value))
+      in
+      let a = Nx.cast D.Bfloat16 a and b = Nx.cast D.Bfloat16 b in
+      let p = Nx.Pattern.v "k i, k o -> i o | k" in
+      let bits y = elements (Nx.bitcast D.Uint16 y) in
+      let kept = Nx.contract Nx.bfloat16 ~init:(init ()) p a b in
+      let given = Nx.contract Nx.bfloat16 ~init:(Nx.donate (init ())) p a b in
+      equal (array int) (bits kept) (bits given))
 
 (* On two domains: reading a value and consuming it in an addition. Each run is
    explained by some order: a read before the consumer gives the elements, after
@@ -386,5 +640,16 @@ let () =
              stateful ~domains:2 "two-handle consumers on two domains" crossed;
              test "of crossed consumers on two domains, one succeeds"
                test_crossed;
+           ];
+         group "reuse"
+           [
+             test "set writes into a donated target" test_set_in_place;
+             test "scatter writes into a donated target" test_scatter_in_place;
+             test "contract writes into a donated init" test_init_in_place;
+             test "an undonated or shared operand keeps its elements" test_kept;
+             test "an operation may read the donor beside its handle"
+               test_donor_beside;
+             law_scatter_bits;
+             law_init_bits;
            ];
        ])

@@ -124,6 +124,19 @@ let test_running () =
           Nx.Prim.interpret ~name:"test.own" Values own (fun i ->
               ignore (Nx.add (tag i x) x))))
 
+(* A rule reads an operation as it was called: the donor beside its own
+   handle, as in [add (donate x) x], is read as eager execution reads it, and
+   dies once the operation is received. *)
+let test_donor_beside () =
+  let x = x3 () in
+  let y =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> Nx.add (Nx.donate x) x)
+  in
+  equal (array float_exact) [| 2.; 4.; 6. |] (elements y);
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.add" (fun () -> Nx.copy x)
+
 let test_after_return () =
   let x = x3 () in
   let i, t =
@@ -263,6 +276,7 @@ let rule =
         test_extent_reach;
       test "the innermost that reaches an operation receives it" test_innermost;
       test "a rule computes, and refuses its own values" test_running;
+      test "a rule reads the donor beside its handle" test_donor_beside;
       test "a value used after its interpretation returned raises"
         test_after_return;
       test "a value refuses another domain; an extent does not reach one"

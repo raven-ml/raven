@@ -270,11 +270,43 @@ let claim ~by hs =
     (fun (_, Handle (i, x)) -> claim_handle ~by i x)
     (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
 
+(* [op] read as it is when it is called, before its claim kills the donors
+   of its handles [hs]: each handle as its arrays, and each of those donors
+   that is an operand itself as a live value over its arrays. *)
+let unhandled : type r. handle list -> r Value.prim -> r Value.prim =
+ fun hs op ->
+  let key (Handle (_, x)) =
+    match x with
+    | Value.Donated d -> (
+        match Atomic.Loc.get d.donor with
+        | Value.Offered k -> Some k
+        | Value.Live | Value.Died _ -> None)
+    | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
+        None
+  in
+  let keys = List.filter_map key hs in
+  let donor = function
+    | Value.Offered k -> List.mem k keys
+    | Value.Live | Value.Died _ -> false
+  in
+  let read (type v s d) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
+    match y with
+    | Value.Donated _ -> live y
+    | Value.Array r when donor r.dead ->
+        Value.Array { r with dead = Value.Live }
+    | Value.Shards r when donor r.dead ->
+        Value.Shards { r with dead = Value.Live }
+    | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
+  in
+  Prim.map read op
+
 let consume ~by op =
   let (Prim.Operands xs) = Prim.operands op in
   let hs = if Prim.exists is_handle op then handles ~by xs else [] in
   Prim.iteri (fun i x -> Prim.alive ~by i x) op;
-  claim ~by hs
+  let read = unhandled hs op in
+  claim ~by hs;
+  read
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
@@ -304,49 +336,55 @@ let consumed ~by ~reused hs =
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
 
-(* The load of a map whose memory takes the map's first result, if one may: a
-   handle on one device, of the result's dtype, C-contiguous with the map's
-   layout over all of its memory, beside loads at its placement, and whose
-   memory no other value reads (rig holds it exclusive). Its memory is then
-   consumed, naming [by], and its index, buffer and new array are the
-   answer. *)
-let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
-    (loads : d Value.load iarray) =
-  match outs with
-  | [] -> None
-  | dt :: _ -> (
-      let fits = function
-        | Value.Padded _ -> false
-        | Value.Plain (Value.Donated { at; arrays; _ })
-          when Iarray.length arrays = 1 ->
+(* Whether [a] may hold a result of [dt] and [layout] in its memory: of that
+   dtype and layout, over all of its memory. *)
+let holds (D.Any dt) layout a =
+  D.equal (A.dtype a) dt
+  && L.equal (A.layout a) layout
+  && Rig.Buffer.spans (A.buffer a)
+
+(* The handle among [hs] whose memory takes [op]'s first result, if one may:
+   on one device, at an operand position {!Prim.own_index} gives, of the result's
+   dtype, C-contiguous with its layout over all of its memory, beside
+   operands at its placement none of which [op] reads at other indices from
+   that memory, and whose memory no other value reads (rig holds it
+   exclusive). Its memory is then consumed, naming [by], and its position,
+   buffer and the live buffer over its memory are the answer. *)
+let reuse : type r.
+    by:string ->
+    r Value.prim ->
+    handle list ->
+    (int * Rig.Buffer.t * Rig.Buffer.t) option =
+ fun ~by op hs ->
+  match Prim.own_index op with
+  | None -> None
+  | Some (own, layout, dt) -> (
+      let fits (Handle (i, x)) =
+        match x with
+        | Value.Donated { at; arrays; _ }
+          when Iarray.length arrays = 1 && List.mem i own ->
             let a = Iarray.get arrays 0 in
-            D.equal (A.dtype a) dt
-            && L.equal (A.layout a) layout
-            && Rig.Buffer.spans (A.buffer a)
-            && Iarray.for_all
-                 (fun l ->
-                   let (Value.Any z) = Prim.load_any l in
-                   match Prim.at z with
-                   | Some q -> Devices.rebrand q == at
-                   | None -> true)
-                 loads
-        | Value.Plain
-            ( Value.Array _ | Value.Shards _ | Value.Donated _
-            | Value.Deferred _ | Value.Traced _ ) ->
+            let b = A.buffer a and ok = ref true in
+            Prim.iteri
+              (fun j z ->
+                (match Prim.at z with
+                | Some q -> if Devices.rebrand q != at then ok := false
+                | None -> ());
+                if (not (List.mem j own)) && is_concrete z then
+                  Iarray.iter
+                    (fun a' -> if share (A.buffer a') b then ok := false)
+                    (Prim.arrays z))
+              op;
+            !ok && holds dt layout a
+        | Value.Donated _ | Value.Array _ | Value.Shards _ | Value.Deferred _
+        | Value.Traced _ ->
             false
       in
-      match Iarray.find_index fits loads with
+      match List.find_opt fits hs with
       | None -> None
-      | Some i -> (
-          match Iarray.get loads i with
-          | Value.Plain (Value.Donated d) ->
-              let a = Iarray.get d.arrays 0 in
-              let b = A.buffer a in
-              Option.map
-                (fun b' ->
-                  (i, b, A.Any (A.v (A.dtype a) (A.layout a) b')))
-                (take ~by b)
-          | Value.Plain _ | Value.Padded _ -> None))
+      | Some (Handle (i, _) as h) ->
+          let b = List.hd (buffers h) in
+          Option.map (fun b' -> (i, b, b')) (take ~by b))
 
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared
    from then on, so that no donation of [a]'s value writes what the view
@@ -772,39 +810,34 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
       in
       spend ~by 0 x;
       Value.Donated { at; shape; arrays; donor = d.donor; spent = Value.Live }
-  | Value.Map ({ loads; _ } as m) -> (
+  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
+  | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
+  | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
+  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
+      let op = unhandled hs op in
       claim ~by hs;
-      match reuse ~by m.layout m.outs loads with
-      | Some (i, b, a) ->
-          (* Load [i] is the result's memory: the kernel reads each index of it
-             before it writes the result there. *)
-          let load j = function
-            | Value.Padded p -> Value.Padded { p with x = live p.x }
-            | Value.Plain y when j <> i -> Value.Plain (live y)
-            | Value.Plain y ->
-                let at = Prim.placement y in
-                Value.Plain
-                  (Value.Array
-                     { at; a = A.expect (Prim.dtype y) a; dead = Value.Live })
+      match reuse ~by op hs with
+      | Some (i, b, b') ->
+          (* Operand [i]'s memory is the result's, now over [b']: the kernel
+             reads each index of it before it writes the result there. *)
+          let over (type v s d) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
+            match y with
+            | Value.Array r when A.buffer r.a == b ->
+                Value.Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
+            | Value.Array _ | Value.Shards _ | Value.Donated _
+            | Value.Deferred _ | Value.Traced _ ->
+                y
           in
-          let r =
-            plain ~by ~into:a
-              (Value.Map { m with loads = Iarray.mapi load loads })
-          in
+          let op = Prim.map over op in
+          let (Prim.Operands xs) = Prim.operands op in
+          let (Value.Any target) = List.nth xs i in
+          let r = plain ~by ~into:(A.Any (one target)) op in
           consumed ~by ~reused:[ b ] hs;
           r
       | None ->
-          let r = run ~by (Prim.map live op) in
+          let r = run ~by op in
           consumed ~by ~reused:[] hs;
           r)
-  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
-      claim ~by hs;
-      let r = run ~by (Prim.map live op) in
-      consumed ~by ~reused:[] hs;
-      r
 
 and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
  fun ~by ?into op ->
@@ -1302,18 +1335,18 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   else A.create (A.device x) dt (L.shape l)
 
 (* The one-node map over the handle [h], operand [i], whose array is [a], its
-   result of [dt]: [h] is claimed, then its memory takes the
-   result where rig holds it exclusive and it has the result's dtype and
-   C-contiguous layout over all of its memory; otherwise the result is fresh
-   and the memory, where no other value reads it, is freed after the kernel.
-   [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
+   result of [dt]: [h] is claimed, then its memory takes the result where rig
+   holds it exclusive and it {!holds} the result, as [reuse] decides for any
+   operation; otherwise the result is fresh and the memory, where no other
+   value reads it, is freed after the kernel. Its other operands are live
+   arrays, so none is the donor, whose word is offered, and each is read at
+   the result's own index. [run dst a'] is the kernel into [dst] with [a'] for
+   [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
     (w, r, d) Value.t =
   let l = A.layout a in
-  let reusable =
-    L.is_contiguous l && L.offset l = 0 && Rig.Buffer.spans (A.buffer a)
-  in
+  let reusable = holds (D.Any dt) (L.contiguous (L.shape l)) a in
   claim_handle ~by i h;
   match D.equal_witness (A.dtype a) dt with
   | Some Type.Equal when reusable -> (

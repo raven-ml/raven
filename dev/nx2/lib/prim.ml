@@ -295,6 +295,40 @@ let operands : type r. r prim -> operands = function
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data_any data)
 
+(* Whether [region] covers all of [shape] in order, as a kernel's in-place
+   first piece of an assembly must. *)
+let whole_region (region : Nx_array.Move.range iarray) shape =
+  Iarray.length region = Iarray.length shape
+  && Iarray.for_all2
+       (fun (r : Nx_array.Move.range) d ->
+         r.start = 0 && r.count = d && (r.step = 1 || r.count <= 1))
+       region shape
+
+(* The positions are [operands]' above: a scatter's [into] after [idx] and
+   [updates], a contraction's [init] after [a] and [b], an assembly's first
+   piece first. *)
+let own_index : type r. r prim -> (int list * L.t * D.any) option =
+  function
+  | Map { layout; outs = dt :: _; loads; _ } ->
+      let plain = ref ([] : int list) in
+      Iarray.iteri
+        (fun i -> function
+          | Plain _ -> plain := List.cons i !plain
+          | Padded _ -> ())
+        loads;
+      Some (List.rev !plain, layout, D.Any dt)
+  | Scatter { into; _ } ->
+      Some ([ 2 ], L.contiguous (shape into), D.Any (dtype into))
+  | Contract { out; init = Some i; _ } ->
+      Some ([ 2 ], L.contiguous (shape i), D.Any out)
+  | Assemble { dtype; shape; pieces = (region, _) :: _; _ }
+    when whole_region region shape ->
+      Some ([ 0 ], L.contiguous (Iarray.to_array shape), D.Any dtype)
+  | Map _ | Reduce _ | Scan _ | Gather _ | Contract _ | Sort _ | Fft _
+  | Linalg _ | Fold _ | Assemble _ | Copy _ | Move _ | Bitcast _ | Place _
+  | Check _ ->
+      None
+
 let iteri_loads : type d.
     ('v 's. int -> ('v, 's, d) t -> unit) -> d load iarray -> unit =
  fun f loads ->

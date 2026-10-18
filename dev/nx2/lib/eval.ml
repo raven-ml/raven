@@ -200,22 +200,20 @@ let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   done;
   sub x
 
-(* Whether [i]'s rule receives [x] changed: a handle as its arrays, and for an
-   [Extent], a formula its rule did not return replayed. *)
+(* Whether [i]'s rule receives [x] changed: for an [Extent], a formula its
+   rule did not return replayed. *)
 let changes (type v s d) i (x : (v, s, d) t) =
   match x with
-  | Donated _ -> true
   | Deferred { node = Node n; _ } -> (
       match i.reach with
       | Extent -> not (Interp.is_formula i n.id)
       | Values -> false)
-  | Array _ | Shards _ | Traced _ -> false
+  | Array _ | Shards _ | Donated _ | Traced _ -> false
 
 let received (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   match x with
-  | Donated _ -> Exec.live x
   | Deferred _ when changes i x -> replay i x
-  | Deferred _ | Array _ | Shards _ | Traced _ -> x
+  | Deferred _ | Array _ | Shards _ | Donated _ | Traced _ -> x
 
 let is_traced (type v s d) (x : (v, s, d) t) =
   match x with
@@ -257,7 +255,8 @@ let around o =
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
    interpretation. An operation the rule receives consumes its handles, a
-   movement too: the rule's results hold none to pass on. *)
+   movement too: the rule's results hold none to pass on. The rule reads it as
+   it was called ({!Exec.consume}). *)
 let deliver i ~by op =
   let checked = ref ([] : interpretation list) in
   Prim.iteri
@@ -269,7 +268,7 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  Exec.consume ~by op;
+  let op = Exec.consume ~by op in
   let op =
     if Prim.exists (fun x -> changes i x) op then
       Prim.map (fun x -> received i x) op

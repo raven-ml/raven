@@ -107,6 +107,15 @@ val operands : 'r prim -> operands
     [a], [b] then [init], [Check]'s [ok] then its data, the one operand of the
     others. *)
 
+val own_index :
+  'r prim -> (int list * Nx_array.Layout.t * Nx_array.Dtype.any) option
+(** [own_index op] is the positions in {!operands} of the operands [op] reads
+    only at its first result's own index, each of which a kernel may take as
+    that result's destination ({!Nx_kernel.S}), with that result's layout and
+    dtype: a map's plain loads, a scatter's [into], a contraction's [init], an
+    assembly's first piece where it covers the whole result. [None] for an
+    operation with none. *)
+
 val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 (** [iteri f op] is [f i x] for each operand [x] of [op], at its position [i] in
     {!operands}. *)
