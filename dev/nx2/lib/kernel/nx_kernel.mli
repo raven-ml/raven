@@ -502,9 +502,11 @@ module type S = sig
       into that chunk, has the bits of the scan of the whole slice from that
       chunk on; and the scan of terms within one chunk, carried from the
       running result in the carrier before them, has the bits of the scan of
-      the whole there. A NaN carry counts as made from numbers: results
-      before the slice's first NaN term are the made NaN, and from it on
-      that term quieted. It answers [Bad_arity] for a carry of any other reduction,
+      the whole there. A [Sum]'s or [Prod]'s NaN carry counts as made from
+      numbers: results before the slice's first NaN term are the made NaN,
+      and from it on that term quieted. A [Max]'s or [Min]'s carry is a term
+      before the slice's first: where it is a NaN, every result is it,
+      quieted. It answers [Bad_arity] for a carry of any other reduction,
       [Shape_mismatch] for a carry of another shape and [Wrong_dtype] for
       one of another dtype. *)
 

@@ -44,7 +44,9 @@
    stay NaN once they are, since adding, multiplying and the extremes keep
    a NaN: where a slice's last result is NaN, every result from its first
    NaN term on is that term, quieted, and every NaN result before it
-   nx_kinds.h's.
+   nx_kinds.h's. A Max's or a Min's carry is a term before the slice's
+   first, so a NaN one is every result, quieted; a sum's or a product's
+   counts as made from numbers.
 
    Paths. The operand and the destination, read at the operand's shape with
    step 0 along the reduced axes, coalesce: reduced and kept axes never
@@ -1783,6 +1785,8 @@ typedef struct {
   int part, parts;          /* the dtype of a float or its parts, 1 or 2 */
   int first;                /* lanes, rows and slices start from their
                                first term: a complex product's */
+  int extreme;              /* a Max or a Min, whose scan's carry is a
+                               term before its slice */
   int slots;                /* 2 for a complex sum's parts, NaN apart, or 1 */
   int carrier, staged;      /* the dtype terms reduce in; src is not in it */
   int own;                  /* Arg's extreme is of src's dtype, not the
@@ -2929,9 +2933,7 @@ static void scan_run(const plan *q, const unit *x, uint8_t *a,
 static int bare(const plan *q) { return q->first && q->cy == NULL; }
 
 /* The carries of the unit's slices into chunk 0, at [a]: the given ones,
-   else values of no term. Each slice's carry is read before any of its
-   results is written, so a carry its destination aliases reads its own
-   bits. */
+   else values of no term. */
 static void start(const plan *q, const unit *x, uint8_t *a) {
   if (q->cy == NULL) {
     fill(q, a, x->W);
@@ -2979,15 +2981,22 @@ static void rescan(const plan *q, work *wk, const unit *x, int64_t c,
   }
 }
 
-/* Slot [k] of the slice at [p] whose results start at [d]: where its last
-   result is NaN, it takes its first NaN term's from that term on, and
-   nx_kinds.h's NaN for each NaN result before it. */
-static void settle_slot(const plan *q, work *wk, int64_t p, int64_t d, int k) {
+/* Slot [k] of the slice at [p] whose results start at [d], from the carry
+   at [cy] or none: where its last result is NaN, it takes its first NaN
+   term's from that term on, and nx_kinds.h's NaN for each NaN result
+   before it; but where an extreme's carry is NaN, every result is it,
+   quieted. */
+static void settle_slot(const plan *q, work *wk, int64_t p, int64_t d,
+                        const uint8_t *cy, int k) {
   int64_t sw = q->w / q->slots;
   uint8_t *y = q->dst->base + k * sw;
   _Alignas(16) uint8_t first[WIDEST];
   if (!slot_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) return;
-  int64_t i = nan_term(q, wk, p, k, first);
+  int64_t i = 0;
+  if (q->extreme && cy != NULL && slot_nan(q, cy + k * sw)) {
+    memcpy(first, cy, q->w);
+    quiet(q->carrier, first);
+  } else i = nan_term(q, wk, p, k, first);
   for (int64_t t = 0; t < i; t++) {
     uint8_t *e = y + (d + t * q->rd) * q->w;
     if (slot_nan(q, e)) made_nan(q, e);
@@ -3000,9 +3009,12 @@ static void settle_slot(const plan *q, work *wk, int64_t p, int64_t d, int k) {
 /* Settles each slot of each of the unit's slices. */
 static void settle(const plan *q, work *wk, const unit *x) {
   if (!q->nan || q->terms == 0) return;
-  for (int64_t j = 0; j < x->W; j++)
+  for (int64_t j = 0; j < x->W; j++) {
+    const uint8_t *cy =
+        q->cy != NULL ? q->cy->base + (x->c + j * x->sc) * q->w : NULL;
     for (int k = 0; k < q->slots; k++)
-      settle_slot(q, wk, x->p + j * x->s, x->d + j * x->sd, k);
+      settle_slot(q, wk, x->p + j * x->s, x->d + j * x->sd, cy, k);
+  }
 }
 
 static void settle_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
@@ -3298,6 +3310,7 @@ static __attribute__((noinline)) int reduce_in(
             .part = p,
             .parts = p == dt ? 1 : 2,
             .first = r == NX_MONOID_PROD && p != dt,
+            .extreme = r == NX_MONOID_MAX || r == NX_MONOID_MIN,
             .slots = p != dt && r == NX_MONOID_SUM ? 2 : 1,
             .carrier = dt,
             .staged = x->dtype != dt,
@@ -3795,15 +3808,22 @@ static value run(const call *c, value d0, value d1, value vx, value vpad,
   double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
   int released = nx_cpu_release(
       call_cost(c, x, padded ? ys : x->dim, r, copy, extra, a, nd));
-  int failed = padded     ? nx_cpu_unpad(x, &pad, bits, &loaded)
-               : x->alias ? own_copy(x, &loaded, KEPT_SCRATCH)
-                          : 0;
+  /* A carry a destination aliases is read from a copy too: a Max's or a
+     Min's scan reads it again after it writes the results (settle). */
+  nx_array kept_carry = {0};
+  int failed = cy != NULL && cy->alias && own_copy(cy, &kept_carry, HEAP);
+  if (!failed)
+    failed = padded     ? nx_cpu_unpad(x, &pad, bits, &loaded)
+             : x->alias ? own_copy(x, &loaded, KEPT_SCRATCH)
+                        : 0;
   if (failed) {
+    free(kept_carry.base);
     nx_cpu_reacquire(released);
     nx_done(n, a);
     caml_raise_out_of_memory();
   }
   if (copy) x = &loaded;
+  if (kept_carry.base != NULL) cy = &kept_carry;
   int threads = c->threads;
   e = c->op == MOMENTS
           ? moments_into(c->axes[0], &a[0], &a[1], x, NULL, threads)
@@ -3811,6 +3831,7 @@ static value run(const call *c, value d0, value d1, value vx, value vpad,
                         x, cy, NULL, threads);
   if (padded) free(loaded.base);
   else if (copy) nx_cpu_give(loaded.base);
+  free(kept_carry.base);
   nx_cpu_reacquire(released);
   nx_done(n, a);
   if (e < 0) caml_raise_out_of_memory();
@@ -4041,6 +4062,10 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
       oom = nx_cpu_unpad(l, &pad[copied], fill[copied], &loads[copied]);
     else if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
   }
+  /* A carry a destination aliases, from a copy, as run reads it. */
+  nx_array kept_carry = {0};
+  if (!oom && cy != NULL && cy->alias) oom = own_copy(cy, &kept_carry, HEAP);
+  if (kept_carry.base != NULL) cy = &kept_carry;
   /* The virtual operand is C-contiguous over the loop's shape, the
      loads'. */
   int index = 0;
@@ -4072,6 +4097,7 @@ static value run_fused(const call *c, value vp, value vrs, int rank,
   /* A copy that failed left its base NULL: free skips it. */
   for (int i = 0; i < copied; i++)
     if (padded[i] || a[nd + i].alias) free(loads[i].base);
+  free(kept_carry.base);
   nx_cpu_give(held);
   nx_cpu_reacquire(released);
   nx_done(nd + nl + nc, a);

@@ -3925,8 +3925,9 @@ let carried_kinds =
 (* A scan along axis 1 of [[outer; p + m; inner]] whose last [m] terms of
    each slice are scanned from the carry of its first [p]: [p] whole chunks,
    or [p + m] terms within one. The first [p] hold no NaN, but a NaN made
-   from numbers where [made]; the last hold a NaN where [nan_after]. The
-   terms are a program's copy of the operand where [through]. *)
+   from numbers where [made] and a NaN term where [nan_before], of a [Max]
+   or [Min]; the last hold a NaN where [nan_after]. The terms are a
+   program's copy of the operand where [through]. *)
 type carry_case = {
   kind : carried;
   cm : monoid;
@@ -3936,6 +3937,7 @@ type carry_case = {
   p : int;
   m : int;
   made : bool;
+  nan_before : bool;
   nan_after : bool;
   cseed : int;
 }
@@ -3943,10 +3945,11 @@ type carry_case = {
 let pp_carry_case ppf c =
   let (Carried (dt, _)) = c.kind in
   Format.fprintf ppf
-    "scan %s of %s%a [%d; %d + %d; %d]%s%s, seed %d" (monoid_name c.cm)
+    "scan %s of %s%a [%d; %d + %d; %d]%s%s%s, seed %d" (monoid_name c.cm)
     (if c.through then "a copy of " else "")
     D.pp dt c.outer c.p c.m c.inner
     (if c.made then ", a made NaN before" else "")
+    (if c.nan_before then ", a NaN before" else "")
     (if c.nan_after then ", a NaN after" else "")
     c.cseed
 
@@ -3984,10 +3987,14 @@ let carry_case =
          (p, m)
      in
      let* made = if both then constant true else bool in
+     let* nan_before =
+       if both || vs.nans = [] || (cm <> Max && cm <> Min) then constant false
+       else bool
+     in
      let* nan_after = if both then constant true else bool in
      let* through = bool in
      let+ cseed = int in
-     { kind; cm; through; outer; inner; p; m; made; nan_after; cseed })
+     { kind; cm; through; outer; inner; p; m; made; nan_before; nan_after; cseed })
 
 (* The case's terms in C order of [[outer; p + m; inner]]. *)
 let carry_terms (type v) (vs : v drawn) c : v array =
@@ -4015,6 +4022,7 @@ let carry_terms (type v) (vs : v drawn) c : v array =
       set (Random.State.int r (c.p - 1)) u;
       set (c.p - 1) v
   | _ -> ());
+  if c.nan_before then set (Random.State.int r c.p) (pick vs.nans);
   (if c.nan_after && c.m > 0 && vs.nans <> [] then
      let t = c.p + Random.State.int r c.m in
      set t (pick vs.nans));
@@ -4047,6 +4055,7 @@ let law_carry (b : Support.backend) c =
   cover "a NaN carry made from numbers" made;
   cover "a NaN carry and a NaN term after it" (made && c.nan_after && c.m > 0);
   cover "a NaN term after a carry" (floating && c.nan_after && c.m > 0);
+  cover "a NaN term before an extreme's carry" (c.nan_before && c.m > 0);
   cover "a narrow float's carry" (D.bits dt = 16 && D.is D.Float dt);
   cover "a program's terms" c.through;
   let z =
@@ -4149,6 +4158,24 @@ let test_carry_refusals (b : Support.backend) () =
   refuses "a float32 carry of float16 terms" A.Done
     (scan D.Float16 ~carry (Monoid Sum) [| make D.Float16 [| 2; 3 |] |])
 
+(* A Max's NaN carry that is its destination, a slice of one term, is the
+   result, quieted, though the scan writes the carry's bytes. *)
+let test_aliased_carry (b : Support.backend) () =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let on_b x = if Rig.equal (A.device x) b.device then x else A.to_device b.device x in
+  let f64 = Int64.float_of_bits in
+  let y = on_b (A.of_array D.Float64 [| 1; 1 |] [| f64 0x7FF4_0000_0000_0001L |]) in
+  let x = on_b (A.of_array D.Float64 [| 1; 1 |] [| f64 0xFFF9_2340_0000_0000L |]) in
+  let answer =
+    K.scan ~carry:(A.Any y) (identity (D.Any D.Float64)) ~axis:1
+      (Monoid Max, 0) ~dsts:[| A.Any y |] [| Plain x |]
+  in
+  equal ~msg:"answer" Elements.answer A.Done answer;
+  let y = if Rig.equal (A.device y) Rig.host then y else A.to_device Rig.host y in
+  equal (array int64)
+    [| 0x7FFC_0000_0000_0001L |]
+    (Array.map Int64.bits_of_float (A.to_array y))
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -4167,6 +4194,8 @@ let laws (b : Support.backend) =
         carry_case (run (law_carry b));
       test "a carry the scan cannot take is refused" (fun () ->
           b.around (test_carry_refusals b));
+      test "an extreme's carry its destination aliases" (fun () ->
+          b.around (test_aliased_carry b));
     ]
 
 (* A plain sum and scan whose program is Prog.of_node's [In 0], which keeps
