@@ -503,11 +503,61 @@ let test_check_elements () =
   off_host (Nx.place Count2.on x);
   off_host (Nx.place (Count2.split ~axis:0) x)
 
+exception One of int array * float
+
+(* A check of one element reduces nothing: its flag is read where it lies, on
+   its device or on the one of a cut placement that holds it, and the check
+   holds the flag's memory until a wait reads it, so a donation of the flag
+   computes afresh. A flag of every set is computed there first, as alone. *)
+let test_check_one () =
+  let shape = [| 1; 1 |] in
+  let check ok x =
+    Nx.Prim.eval ~by:"test"
+      (Check { ok; data = [ x ]; fail = (fun i (v, ()) -> One (i, v)) })
+  in
+  let failed = One ([| 0; 0 |], 5.) in
+  let at (type d) (p : d Nx.Placement.t) =
+    let flag b =
+      Nx.place p (Nx.Repr.of_array Nx.Host.v (A.of_array D.Bool shape [| b |]))
+    in
+    let x =
+      Nx.place p
+        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 shape [| 5. |]))
+    in
+    let ok = flag true and not_ok = flag false in
+    C.reset ();
+    check ok x;
+    check not_ok x;
+    equal ~msg:"kernel calls" int 0 (C.calls ());
+    raises failed (fun () -> Nx.sync x)
+  in
+  at Count.on;
+  at (Count2.split ~axis:0);
+  at (Count2.split ~axis:1);
+  let on_count dt v =
+    Nx.place Count.on (Nx.Repr.of_array Nx.Host.v (A.of_array dt shape [| v |]))
+  in
+  let x = on_count D.Float32 5. in
+  (* Computed, so the memory is the flag's alone and a donation may write it. *)
+  let ok = Nx.logical_not (on_count D.Bool true) in
+  check ok x;
+  ignore (Nx.logical_not (Nx.donate ok));
+  raises failed (fun () -> Nx.sync x);
+  let formula () = Nx.equal_s (Nx.zeros D.Float32 shape) 1. in
+  C.reset ();
+  ignore (Nx.place Count.on (formula ()));
+  let alone = C.calls () in
+  C.reset ();
+  check (formula ()) x;
+  equal ~msg:"a formula flag's kernel calls" int alone (C.calls ());
+  raises failed (fun () -> Nx.sync x)
+
 let sets =
   group "sets"
     [
       test "a check's failure receives its data's elements"
         test_check_elements;
+      test "a check of one element reduces nothing" test_check_one;
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;

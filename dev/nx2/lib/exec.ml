@@ -674,8 +674,9 @@ type ('d, 'e) issued = {
          device is of this machine ({!readable}). *)
   mark : int;
       (* [holds]'s device's last value once [holds] was written. *)
-  first : (int64, D.int64_elt, 'd) Value.t;
-      (* The first false flag's position in C order. *)
+  first : (int64, D.int64_elt, 'd) Value.t option;
+      (* The first false flag's position in C order; [None] for one flag,
+         whose position is [0]. *)
   shape : int array;  (* The flags'. *)
   data : ('d, 'e) Value.data;
   fail : int array -> 'e -> exn;
@@ -751,6 +752,9 @@ let get_on_host a =
   let d = A.device a in
   if Rig.equal (Rig.host_of d) Rig.host then A.get a [||]
   else A.get (A.to_device Rig.host a) [||]
+
+(* The one element of [a], as a 0-d view. *)
+let unit_view a = Option.get (A.move (Reshape [||]) a)
 
 (* Set [n]'s pending checks, oldest first, taken off the list. *)
 let drained n =
@@ -1281,6 +1285,8 @@ and check : type d e.
            })
     in
     let scalar x = A.get (on_host ~by x) [||] in
+    (* One flag is its own reduction: no kernel reduces it. *)
+    let one = Array.for_all (( = ) 1) shape in
     match where with
     | Some p when not (on_host_set p) ->
         (* The set's earlier checks settle first, so that a raise there leaves
@@ -1291,15 +1297,30 @@ and check : type d e.
         let ds = Array.map (Devices.rig set) (Grid.devices (Devices.grid p)) in
         if settle_reached ~by n (Array.to_list ds) then begin
           (* One reduction gives both whether every flag holds and the first
-             false, so that the check leaves only scalars to read later. *)
-          let (holds, first), () = reduce (Arg (Min, 0, D.Bool)) in
-          let holds = readable (Iarray.get (Prim.arrays holds) 0) in
+             false, so that the check leaves only scalars to read later. The
+             mark follows the copy [readable] submits, which, for one flag,
+             no reduction orders. The hold keeps a donation from writing a
+             flag read in place. *)
+          let holds, first =
+            if one then (element p ok, None)
+            else
+              let (holds, first), () = reduce (Arg (Min, 0, D.Bool)) in
+              (Iarray.get (Prim.arrays holds) 0, Some first)
+          in
+          let holds = readable holds in
           let mark = Rig.submitted (A.device holds) in
           let data = kept data in
-          let held = Rig.Claim.hold (data_buffers data) in
+          let held = Rig.Claim.hold (A.buffer holds :: data_buffers data) in
           let c = { holds; mark; first; shape; data; fail } in
           if not (pend n (Pending (c, held))) then Rig.Claim.release held
         end
+    | Some _ | None when one ->
+        let holds =
+          match where with
+          | Some p -> get_on_host (element p ok)
+          | None -> A.get (unit_view (on_host ~by ok)) [||]
+        in
+        if not holds then raise (failed ~by 0L shape data fail)
     | Some _ | None ->
         (* A passing check runs one [Min]; [Arg], for the first [false], costs
            more and runs only on a failure. *)
@@ -1307,6 +1328,15 @@ and check : type d e.
         if not (scalar holds) then
           let (_, first), () = reduce (Arg (Min, 0, D.Bool)) in
           raise (failed ~by (scalar first) shape data fail)
+
+(* The one element of [x], computed at [p] where [x] is a constant: a 0-d
+   view of the array that holds it. A cut placement's other devices hold
+   empty windows. *)
+and element : type v s d.
+    d Devices.placement -> (v, s, d) Value.t -> (v, s) A.t =
+ fun p x ->
+  let holds a = L.numel (A.layout a) = 1 in
+  unit_view (Option.get (Iarray.find_opt holds (Prim.arrays (at p x))))
 
 (* The exception of a check whose first false lies at [first] in C order. *)
 and failed : type d e.
@@ -1417,7 +1447,11 @@ and outcome : type d e. by:string -> (d, e) issued -> exn option =
  fun ~by c ->
   if get_on_host c.holds then None
   else
-    let first = A.get (on_host ~by c.first) [||] in
+    let first =
+      match c.first with
+      | Some f -> A.get (on_host ~by f) [||]
+      | None -> 0L
+    in
     Some (failed ~by first c.shape c.data c.fail)
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken

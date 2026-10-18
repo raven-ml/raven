@@ -3896,7 +3896,8 @@ end
     [Extent] interpretation reaches every operation of its extent, and an
     [Adopting] one those on the values of the interpretations it adopts. An
     operation no interpretation reaches computes now on its operands' set's
-    kernels, and raises if the set has none.
+    kernels, and raises if the set has none, but a check of one flag that has
+    bytes ([Check]).
 
     A rule runs outside its own interpretation and outside every handler
     installed in its extent, with the extent suspended until it returns: its
@@ -4201,7 +4202,10 @@ module Prim : sig
             [ok]'s shape. An empty [ok] passes. It is computed on [ok]'s set,
             or the first datum's where [ok] is of every set, or the host where
             every operand is: at the call on the host, and otherwise at the
-            next {{!section-waiting}wait} on that set. *)
+            next {{!section-waiting}wait} on that set. A check of one element
+            reduces nothing: its flag is that element, read on the device
+            that holds it, and its first index is [0], so it needs no
+            kernels where [ok] has bytes. A formula [ok] is computed first. *)
 
   type operands = Operands : 'd any list -> operands
 

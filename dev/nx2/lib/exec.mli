@@ -27,6 +27,9 @@
     where the operand was donated. Movements and bitcasts are views where a
     layout expresses them, and a copy, then a view, otherwise. [Check] reduces
     its flags where they lie, to whether all hold and the first failing index.
+    One flag is its own reduction: its element, on the device of the window
+    that holds it, as a 0-d view, and index [0]; a pending one holds the
+    flag's memory as it holds its data's.
     On the host it reads them and raises at once; on another set it holds them
     and its data, unread, on the calling domain's list of the set's pending
     checks, which the domain's systhreads share, until a {!wait} on the set
