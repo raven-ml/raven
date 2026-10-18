@@ -237,13 +237,6 @@ val reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
 val reduced : int array -> int iarray -> int array
 (** [reduced s axes] is [s] without [axes]. *)
 
-(** The type for a float format. *)
-type wide = Nx_kernel.wide = Wide : (float, 's) dtype -> wide
-
-val wide : (float, 's) dtype -> wide
-(** [wide dt] is the format nx computes a float function of [dt] in, rounding
-    once to [dt]: its carrier ({!Nx_kernel.carrier}). *)
-
 val op1 :
   by:string ->
   Nx_kernel.Prog.op1 ->

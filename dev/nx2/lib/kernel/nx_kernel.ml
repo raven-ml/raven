@@ -32,18 +32,18 @@ let accepts (type v s) r (dt : (v, s) D.t) =
   | (Monoid Logsumexp | Moments), _ -> false
   | _ -> true
 
-type wide = Wide : (float, 's) D.t -> wide
+type any_float = Any_float : (float, 's) D.t -> any_float [@@unboxed]
 
 let float_carrier (type s) (dt : (float, s) D.t) =
   match dt with
   | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
-      Wide Float32
-  | Float32 | Float64 -> Wide dt
+      Any_float Float32
+  | Float32 | Float64 -> Any_float dt
 
 let carrier (D.Any dt as d) =
   match D.kind dt with
   | D.Float ->
-      let (Wide c) = float_carrier dt in
+      let (Any_float c) = float_carrier dt in
       D.Any c
   | D.Complex | D.Signed | D.Unsigned | D.Boolean -> (
       match dt with

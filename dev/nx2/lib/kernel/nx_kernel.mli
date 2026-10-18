@@ -150,11 +150,13 @@ val carrier : Nx_array.Dtype.any -> Nx_array.Dtype.any
     scan's carry's: [float32] for a float narrower than it, [int8] and [uint8]
     for [int4] and [uint4], [bool] for [bit], else [dt]. *)
 
-(** The type for a float dtype. *)
-type wide = Wide : (float, 's) Nx_array.Dtype.t -> wide
+(** The type for a float dtype, whatever its storage. *)
+type any_float = Any_float : (float, 's) Nx_array.Dtype.t -> any_float
+[@@unboxed]
 
-val float_carrier : (float, 's) Nx_array.Dtype.t -> wide
-(** [float_carrier dt] is {!carrier} of the float [dt], a float. *)
+val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
+(** [float_carrier dt] is {!carrier} of the float [dt]: the dtype a float
+    function of [dt] computes in before it rounds once to [dt]. *)
 
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] iff [dt] is a {e base dtype}, one every kernel library
