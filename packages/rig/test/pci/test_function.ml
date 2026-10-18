@@ -826,27 +826,36 @@ let test_contiguous () =
 
    A function taken physically keeps writing memory after its process dies: its
    memory lies in huge pages of files under the machine's [dev/hugepages], which
-   keep their pages until no function reaches them. *)
+   keep their pages until no function reaches them. Each function that reaches a
+   file is named by an empty file beside it, [<file>.reach-<bus>]. *)
 
 let memory_files root =
   Sys.readdir (Filename.concat root "dev/hugepages")
   |> Array.to_list
   |> List.filter (fun f ->
-      String.starts_with ~prefix:"rig-pci-" f
-      && not (String.ends_with ~suffix:".reach" f))
+      String.starts_with ~prefix:"rig-pci-" f && not (String.contains f '.'))
 
 let memory_file root =
   match memory_files root with
   | [ f ] -> Filename.concat root ("dev/hugepages/" ^ f)
   | fs -> failf "%d memory files" (List.length fs)
 
-(* Every entry of the machine's [dev/hugepages]: files and their lists. *)
+(* Every entry of the machine's [dev/hugepages]: files and their markers. *)
 let hugepages root =
   Sys.readdir (Filename.concat root "dev/hugepages")
   |> Array.to_list |> List.sort compare
 
+(* The buses the markers of [file] name. *)
 let reachers file =
-  In_channel.with_open_bin (file ^ ".reach") In_channel.input_all
+  let marker = Filename.basename file ^ ".reach-" in
+  Sys.readdir (Filename.dirname file)
+  |> Array.to_list
+  |> List.filter_map (fun f ->
+      if String.starts_with ~prefix:marker f then
+        Some (String.sub f (String.length marker)
+                (String.length f - String.length marker))
+      else None)
+  |> List.sort compare
 
 let reserved f =
   granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib))
@@ -863,8 +872,7 @@ let test_memory_file () =
   equal ~msg:"a file of its own" int 1 (List.length (memory_files root));
   let file = memory_file root in
   equal ~msg:"locked by its process" bool true (Tree.flocked file);
-  equal ~msg:"listing the function" string
-    (Function.bus f ^ "\n")
+  equal ~msg:"listing the function" (list string) [ Function.bus f ]
     (reachers file);
   Function.free_dma f w;
   equal ~msg:"kept while the function is held" int 1
@@ -1077,10 +1085,7 @@ let stop h = ignore (Driver.stop h : [ `Stopped | `Unknown ])
 
 (* What a process that died left stays through another take and release, which
    does not reset the GPU, and goes once its GPU is reset. *)
-let test_death () =
-  if not flocks then skip ~reason:"locking a function's file needs flock" ();
-  let fn = Tree.gpu "0000:03:00.0" in
-  let root = Tree.make [ fn ] in
+let death root (fn : Tree.fn) =
   let va = free_base + (6 * mib) in
   ignore (frames root va mib);
   let pid, feed, said = holder "die" root fn.bus va in
@@ -1097,6 +1102,60 @@ let test_death () =
     (memory_files root);
   require_ok (Driver.reset (fixture_gpus ()) m 0);
   equal ~msg:"gone once the GPU is reset" (list string) [] (memory_files root)
+
+let test_death () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  death (Tree.make [ fn ]) fn
+
+(* A directory of its own on this machine's hugetlbfs of 2 MiB pages at
+   /dev/hugepages, if it has a free page and this process may write it. A
+   hugetlbfs refuses write(2), which an ordinary file system's file accepts, so
+   only it shows that what the memory files record survives that refusal. *)
+let hugetlbfs_dir () =
+  let mounted line =
+    match String.split_on_char ' ' line with
+    | _ :: "/dev/hugepages" :: "hugetlbfs" :: options :: _ ->
+        List.mem "pagesize=2M" (String.split_on_char ',' options)
+    | _ -> false
+  in
+  let free line =
+    match String.split_on_char ':' line with
+    | [ "HugePages_Free"; n ] -> int_of_string (String.trim n) > 0
+    | _ -> false
+  in
+  let lines file = In_channel.with_open_text file In_channel.input_lines in
+  if not (on_linux && List.exists mounted (lines "/proc/self/mounts")) then None
+  else if not (List.exists free (lines "/proc/meminfo")) then None
+  else
+    let dir = strf "/dev/hugepages/rig-pci-test-%d" (Unix.getpid ()) in
+    match Unix.mkdir dir 0o700 with
+    | () -> Some dir
+    | exception Unix.Unix_error _ -> None
+
+(* As [test_death], with the machine's memory files on a real hugetlbfs. *)
+let test_death_hugetlbfs () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  match hugetlbfs_dir () with
+  | None ->
+      skip
+        ~reason:
+          "no hugetlbfs of 2 MiB pages at /dev/hugepages with a free page this \
+           process may write"
+        ()
+  | Some dir ->
+      let fn = Tree.gpu "0000:03:00.0" in
+      let root = Tree.make [ fn ] in
+      let hugepages = Filename.concat root "dev/hugepages" in
+      Unix.rmdir hugepages;
+      Unix.symlink dir hugepages;
+      let clear () =
+        Array.iter
+          (fun f -> Sys.remove (Filename.concat dir f))
+          (Sys.readdir dir);
+        Unix.rmdir dir
+      in
+      Fun.protect ~finally:clear (fun () -> death root fn)
 
 (* A reset of a GPU another process holds is refused, its memory untouched; the
    holder's exit gives the memory back. *)
@@ -1203,7 +1262,7 @@ let test_released_death () =
     fail "the holder did not hold the function"
   end;
   let file = memory_file root in
-  equal ~msg:"listing no function" string "" (reachers file);
+  equal ~msg:"listing no function" (list string) [] (reachers file);
   Function.release (require_ok (Function.take m other));
   equal ~msg:"kept through a take while its process lives" bool true
     (Sys.file_exists file);
@@ -1215,25 +1274,22 @@ let test_released_death () =
   Function.release (require_ok (Function.take m other));
   equal ~msg:"gone at the next take" (list string) [] (hugepages root)
 
-(* At a take, the files processes that died left go if they list no function:
-   one with no list, which died being made, and one with an empty list. A list
-   whose file is gone goes too. One that lists a function stays until that
-   function's GPU is reset. *)
+(* At a take, the files processes that died left go if they list no function,
+   as one that died being made lists none. A marker whose file is gone goes
+   too. One that lists a function stays until that function's GPU is reset. *)
 let test_left_files () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
   let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
-  let add name s = Tree.add root ("dev/hugepages/" ^ name) s in
-  add "rig-pci-1-1" "";
-  add "rig-pci-2-2" "";
-  add "rig-pci-2-2.reach" "";
-  add "rig-pci-3-3" "";
-  add "rig-pci-3-3.reach" (gpu1 ^ "\n");
-  add "rig-pci-4-4.reach" (gpu1 ^ "\n");
+  let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
+  add "rig-pci-1-1";
+  add "rig-pci-3-3";
+  add ("rig-pci-3-3.reach-" ^ gpu1);
+  add ("rig-pci-4-4.reach-" ^ gpu1);
   let m = Machine.at root in
   Function.release (require_ok (Function.take m gpu0));
   equal ~msg:"the file listing a function stays" (list string)
-    [ "rig-pci-3-3"; "rig-pci-3-3.reach" ]
+    [ "rig-pci-3-3"; "rig-pci-3-3.reach-" ^ gpu1 ]
     (hugepages root);
   require_ok (Driver.reset (fixture_gpus ()) m 1);
   equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
@@ -1394,6 +1450,10 @@ let system_memory =
         "memory a killed process left stays through a release and goes at its \
          GPU's reset (SIGKILL in a child)"
         test_death;
+      test
+        "memory a killed process left on a hugetlbfs stays through a release \
+         and goes at its GPU's reset (SIGKILL in a child)"
+        test_death_hugetlbfs;
       test
         "a reset of a GPU another process holds is refused, its memory kept (a \
          child holds)"

@@ -1816,12 +1816,12 @@ let test_renew_error (_, answers) =
   equal ~msg:"resets before the next open's start" reset_before (Some 2) before
 
 (* A process that died leaving GPU 0 reaching memory left a memory file under
-   the machine's dev/hugepages that no process locks, whose list of the
-   functions reaching it names the GPU. *)
+   the machine's dev/hugepages that no process locks, with a marker beside it
+   that names the GPU among the functions reaching it. *)
 let dead_file t =
   let name = "dev/hugepages/rig-pci-999999-1" in
   Tree.add t.root name "";
-  Tree.add t.root (name ^ ".reach") (gpu_bus ^ "\n");
+  Tree.add t.root (name ^ ".reach-" ^ gpu_bus) "";
   Filename.concat t.root name
 
 let test_dead_left () =

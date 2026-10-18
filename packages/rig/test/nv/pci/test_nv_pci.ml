@@ -595,7 +595,7 @@ let fwsec root =
 let memory_files root =
   Sys.readdir (Filename.concat root "dev/hugepages")
   |> Array.to_list
-  |> List.filter (fun f -> not (String.ends_with ~suffix:".reach" f))
+  |> List.filter (fun f -> not (String.contains f '.'))
 
 (* The FRTS region is the 1 MiB below the 1 MiB VGA workspace at the end of the
    GPU's memory (kgspCalculateFbLayout_TU102). FWSEC's DMEM mapper, at 0x80 of

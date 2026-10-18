@@ -179,12 +179,12 @@ let tree_capacity x =
   ( drain (fun () -> Page_table.palloc ~zero:false t 4096) (Page_table.pfree t),
     drain (fun () -> Space.alloc s page) (Space.free s) )
 
-(* The memory files under [root], without their lists of reachers, and the bytes
-   they hold. *)
+(* The memory files under [root], without the markers of their reachers, and the
+   bytes they hold. *)
 let host_files root =
   Sys.readdir (Filename.concat root "dev/hugepages")
   |> Array.to_list
-  |> List.filter (fun f -> not (String.ends_with ~suffix:".reach" f))
+  |> List.filter (fun f -> not (String.contains f '.'))
 
 let held_bytes root =
   List.fold_left
@@ -584,11 +584,12 @@ let test_peer_unrecorded () =
     Filename.concat root
       ("dev/hugepages/" ^ require_some (List.nth_opt (host_files root) 0))
   in
-  (* A directory where the list's new copy goes refuses its write. *)
-  Unix.mkdir (file ^ ".reach.tmp") 0o700;
+  (* A directory where the peer's marker goes refuses the marker. *)
+  let marker = file ^ ".reach-" ^ Function.bus x.t_fn in
+  Unix.mkdir marker 0o700;
   contains ~sub:"could not be written"
     (require_error (Memory.map_peer x.t_memory mem));
-  Unix.rmdir (file ^ ".reach.tmp");
+  Unix.rmdir marker;
   let p = mapped (Memory.map_peer x.t_memory mem) in
   Memory.free x.t_memory p;
   Memory.free o.t_memory mem
