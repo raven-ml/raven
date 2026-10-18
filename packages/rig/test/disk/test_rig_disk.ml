@@ -797,11 +797,26 @@ let test_create_empty () =
   let file = create path 0 in
   equal (pair int string) (0, "") (B.length file, contents path)
 
-let test_unsized () =
-  if Sys.win32 then skip ~reason:"no limit of a file's size" ();
+(* What rig_disk.mli says each call answers under a limit of the process: the
+   answer, whether the path names a file after, the descriptors the call left
+   open, and the disk's loss. *)
+let limited =
+  [
+    ("create_file past the file size limit", "create-sized",
+     "refused naming the path, removed, descriptors as before, not lost");
+    ("a copy into a file past the file size limit", "copy-sized",
+     "Sys_error naming the file, left, descriptors as before, not lost");
+    ("of_file with no descriptor left", "open-no-fd",
+     "refused naming the path, left, descriptors as before, not lost");
+    ("create_file with no descriptor left", "create-no-fd",
+     "refused naming the path, removed, descriptors as before, not lost");
+  ]
+
+let test_limited (_, op, expected) =
+  if Sys.win32 then skip ~reason:"no limits of a process" ();
   let path = new_path () in
   removing [ path ] @@ fun () ->
-  equal string "refused, removed" (child [ "unsized"; path ])
+  equal string expected (child [ "limited"; op; path ])
 
 let opening =
   group ~timeout "opening and creating"
@@ -831,7 +846,11 @@ let opening =
         [ 0o022; 0o077; 0o002 ] test_umask;
       test "a created file of no bytes is an empty file at its path"
         test_create_empty;
-      test "a file create_file could not size is removed" test_unsized;
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "a call refused under a limit of the process answers as rig_disk.mli \
+         states, and closes what it opened"
+        limited test_limited;
     ]
 
 (* Descriptors *)
@@ -980,23 +999,6 @@ let test_forked () =
   equal string "exited 0" (child [ "fork"; path; out ]);
   same ~msg:"the forked child's file" s (contents out)
 
-(* A child run from another directory writes there nothing, and leaves nothing
-   beside the suite. *)
-let test_elsewhere () =
-  if Sys.win32 then skip ~reason:"no limit of open files" ();
-  let elsewhere = Filename.concat root "elsewhere" in
-  clear elsewhere;
-  let here = Sys.getcwd () in
-  Fun.protect
-    ~finally:(fun () -> Sys.chdir here)
-    (fun () ->
-      Sys.chdir elsewhere;
-      ignore (child [ "open-files" ]));
-  equal (array string) ~msg:"where it ran" [||] (Sys.readdir elsewhere);
-  removed elsewhere;
-  equal bool ~msg:"its files beside the suite" false
-    (Sys.file_exists (Filename.concat root "files-limit"))
-
 (* Rounds of collection, enough for a chain of finalisers to run. *)
 let rounds = 10
 
@@ -1084,10 +1086,6 @@ let descriptors =
          tries once more"
         test_too_many;
       test "a forked child reads and writes files with the disk" test_forked;
-      test
-        "a child run from another directory writes nothing there, and leaves \
-         no file"
-        test_elsewhere;
       cases
         ~name:(fun k -> Format.asprintf "%a" pp_kind k)
         "a copy past the end of a file truncated since raises Sys_error naming \
@@ -1583,9 +1581,29 @@ let domains =
 (* Prints how many of this process's descriptors are open on the file [ino]. *)
 let open_on_child ino = print_int (open_where (on_inode (int_of_string ino)))
 
-(* Lowers this process's limit of open files to 16 more than it uses, opens 8
-   files on the disk, takes every descriptor left, then opens a ninth file and
-   reads the first again. *)
+let checked = function 0 -> () | e -> failwith (strf "setrlimit: errno %d" e)
+
+(* Lowers this process's limit of open files to 16 more than it uses. *)
+let limit_open_files () =
+  let highest =
+    Array.fold_left
+      (fun m fd -> Option.fold ~none:m ~some:(max m) (int_of_string_opt fd))
+      0 (Sys.readdir "/dev/fd")
+  in
+  checked (Support.set_open_files (highest + 1 + 16))
+
+(* Takes every descriptor left, for [f ()], and gives them back. *)
+let without_descriptors f =
+  let rec take acc =
+    match Unix.openfile "/dev/null" [ O_RDONLY; O_CLOEXEC ] 0 with
+    | fd -> take (fd :: acc)
+    | exception Unix.Unix_error ((EMFILE | ENFILE), _, _) -> acc
+  in
+  let taken = take [] in
+  Fun.protect ~finally:(fun () -> List.iter Unix.close taken) f
+
+(* Lowers this process's limit of open files, opens 8 files on the disk, takes
+   every descriptor left, then opens a ninth file and reads the first again. *)
 let open_files_child () =
   let dir = Filename.concat root "files-limit" in
   clear dir;
@@ -1593,26 +1611,13 @@ let open_files_child () =
     Array.init 9 (fun i ->
         make_file ~path:(Filename.concat dir (strf "f%d" i)) (strf "f%d" i))
   in
-  let highest =
-    Array.fold_left
-      (fun m fd -> Option.fold ~none:m ~some:(max m) (int_of_string_opt fd))
-      0 (Sys.readdir "/dev/fd")
-  in
-  (match Support.set_open_files (highest + 1 + 16) with
-  | 0 -> ()
-  | e -> failwith (strf "setrlimit: errno %d" e));
-  let rec take acc =
-    match Unix.openfile "/dev/null" [ O_RDONLY; O_CLOEXEC ] 0 with
-    | fd -> take (fd :: acc)
-    | exception Unix.Unix_error ((EMFILE | ENFILE), _, _) -> acc
-  in
+  limit_open_files ();
   let said = function Ok b -> read b | Error why -> "Error " ^ why in
   let opened = Array.init 8 (fun i -> Rig_disk.of_file paths.(i)) in
   Array.iter (fun b -> ignore (said b)) opened;
-  let taken = take [] in
-  Printf.printf "ninth: %s\n" (said (Rig_disk.of_file paths.(8)));
-  Printf.printf "first: %s\n" (said opened.(0));
-  List.iter Unix.close taken;
+  without_descriptors (fun () ->
+      Printf.printf "ninth: %s\n" (said (Rig_disk.of_file paths.(8)));
+      Printf.printf "first: %s\n" (said opened.(0)));
   removed dir
 
 (* Opens [path], reads it, then forks a child that copies it into a new file at
@@ -1637,27 +1642,57 @@ let fork_child path out =
       | WEXITED n -> Printf.printf "exited %d" n
       | WSIGNALED n | WSTOPPED n -> Printf.printf "signal %d" n)
 
-(* Lowers this process's limit of a file's size to 4 KiB, then creates a file of
-   1 MiB, and prints whether the creation was refused, naming its path, and
-   whether the path names anything after. *)
-let unsized_child path =
-  (match Support.set_file_size 4096 with
-  | 0 -> ()
-  | e -> failwith (strf "setrlimit: errno %d" e));
-  let refused =
-    match Rig_disk.create_file path (1 lsl 20) with
-    | Ok _ -> "created"
-    | Error why when String.starts_with ~prefix:path why -> "refused"
-    | Error why -> "refused, not naming the path: " ^ why
+(* Runs [op] at [path] under a limit of this process: a create_file of 1 MiB or
+   a copy of 8 KiB into a file made before, under a limit of a file's size of
+   4 KiB; or an of_file of a file made before or a create_file, with no
+   descriptor left. Prints what [limited] lists. *)
+let limited_child op path =
+  let opened = function
+    | Ok _ -> "opened"
+    | Error why when String.starts_with ~prefix:path why ->
+        "refused naming the path"
+    | Error why -> "refused: " ^ why
   in
-  Printf.printf "%s, %s" refused
+  let n = 8192 in
+  let call =
+    match op with
+    | "create-sized" ->
+        checked (Support.set_file_size 4096);
+        fun () -> opened (Rig_disk.create_file path (1 lsl 20))
+    | "copy-sized" ->
+        let file = create path n in
+        checked (Support.set_file_size 4096);
+        fun () ->
+          (match write file (pattern 1 n) with
+          | () -> "copied"
+          | exception Sys_error m -> naming path m)
+    | "open-no-fd" ->
+        ignore (make_file ~path (pattern 1 n));
+        limit_open_files ();
+        fun () -> without_descriptors (fun () -> opened (Rig_disk.of_file path))
+    | "create-no-fd" ->
+        limit_open_files ();
+        fun () ->
+          without_descriptors (fun () -> opened (Rig_disk.create_file path n))
+    | op -> failwith ("no limited call " ^ op)
+  in
+  let before = Support.descriptors () in
+  let answer = call () in
+  let fds =
+    match (before, Support.descriptors ()) with
+    | Some a, Some b when a <> b -> strf "descriptors %+d" (b - a)
+    | _ -> "descriptors as before"
+  in
+  Printf.printf "%s, %s, %s, %s" answer
     (if Sys.file_exists path then "left" else "removed")
+    fds
+    (Option.value ~default:"not lost" (Rig.lost disk))
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "open-on"; ino ] -> open_on_child ino
   | [ _; "open-files" ] -> open_files_child ()
-  | [ _; "unsized"; path ] -> unsized_child path
+  | [ _; "limited"; op; path ] -> limited_child op path
   | [ _; "fork"; path; out ] -> fork_child path out
   | _ ->
       clear dir;
