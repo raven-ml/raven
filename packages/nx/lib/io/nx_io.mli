@@ -198,7 +198,8 @@ val load_npy : string -> Nx.packed
 (** [load_npy path] loads a tensor from a [.npy] file.
 
     Raises [Failure] if [path] cannot be read, the stream is malformed, or its
-    dtype is unsupported. *)
+    dtype is unsupported, and naming [path] if its dtype is [b1] and a byte of
+    its data is other than 0 or 1. *)
 
 val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
 (** [save_npy ?overwrite path t] writes [t] to a [.npy] file.
@@ -217,7 +218,8 @@ val load_npz : string -> Archive.t
     The keys are entry names without the [.npy] suffix.
 
     Raises [Failure] if [path] cannot be read or the archive or an entry is
-    malformed. *)
+    malformed, and naming [path] and the entry if an entry's dtype is [b1] and
+    a byte of its data is other than 0 or 1. *)
 
 val load_npz_entry : name:string -> string -> Nx.packed
 (** [load_npz_entry ~name path] loads a single entry from an [.npz] archive.
@@ -225,7 +227,8 @@ val load_npz_entry : name:string -> string -> Nx.packed
     [name] is the logical entry name, without the [.npy] suffix.
 
     Raises [Failure] if [path] cannot be read, [name] is missing, or the archive
-    or entry is malformed. *)
+    or entry is malformed, and naming [path] and [name] if the entry's dtype is
+    [b1] and a byte of its data is other than 0 or 1. *)
 
 val save_npz : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_npz ?overwrite path a] writes [a]'s tensors to an [.npz] archive.
@@ -255,17 +258,18 @@ val load_safetensors : string -> Archive.t
 (** [load_safetensors path] is the tensors of the SafeTensors file [path], by
     name.
 
-    Loading opens the file and reads its header; it reads no tensor data. Each
-    entry is a value on the disk device ([Rig_disk.device]), over the entry's
-    bytes in the file. The host reads an entry where it lies: an operation on it
-    computes on the file's pages, mapped copy-on-write, and so does {!Nx.place}
-    onto the host or onto a device whose memory is the host's, such as Metal's,
-    which borrows them without a copy. {!Nx.place} onto a device whose memory
-    the host does not address reads the entry's bytes into it. A movement
-    ({!Nx.reshape}, {!Nx.slice}, {!Nx.transpose}, ...) of an entry is a value on
-    the disk too. An entry whose bytes are not aligned to its elements, which a
-    header of odd length causes, is read instead of mapped. On a big-endian host
-    the entries are read and put in its byte order as they load.
+    Loading opens the file and reads its header and its [BOOL] entries' bytes,
+    to check them; it reads no other tensor data. Each entry is a value on the
+    disk device ([Rig_disk.device]), over the entry's bytes in the file. The
+    host reads an entry where it lies: an operation on it computes on the file's
+    pages, mapped copy-on-write, and so does {!Nx.place} onto the host or onto a
+    device whose memory is the host's, such as Metal's, which borrows them
+    without a copy. {!Nx.place} onto a device whose memory the host does not
+    address reads the entry's bytes into it. A movement ({!Nx.reshape},
+    {!Nx.slice}, {!Nx.transpose}, ...) of an entry is a value on the disk too.
+    An entry whose bytes are not aligned to its elements, which a header of odd
+    length causes, is read instead of mapped. On a big-endian host the entries
+    are read and put in its byte order as they load.
 
     The file stays open, and mapped once read, until the last value over it is
     garbage collected, and its values see the file that was opened:
@@ -279,13 +283,13 @@ val load_safetensors : string -> Archive.t
     An entry whose dtype nx lacks is loaded as its bytes, at [uint8]: [F8_E8M0]
     keeps the entry's shape, and [F4], [F6_E2M3] and [F6_E3M2], whose elements
     are narrower than a byte, have shape [[| n |]] with [n] the entry's size in
-    bytes. A [BOOL] byte other than 0 or 1 is handed out as stored. An entry
-    with no elements is an empty tensor of its shape.
+    bytes. An entry with no elements is an empty tensor of its shape.
 
     Raises [Failure] naming [path], if it is not a regular file that can be
     read, if its header is malformed, longer than 100 MB, names a tensor twice
     or gives a tensor an empty name, or if the file's length differs from the
-    one its header describes, as a partial download's does. *)
+    one its header describes, as a partial download's does, and naming [path]
+    and the entry if a byte of a [BOOL] entry is other than 0 or 1. *)
 
 val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_safetensors ?overwrite path a] writes [a]'s tensors to a SafeTensors

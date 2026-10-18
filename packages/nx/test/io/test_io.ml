@@ -99,6 +99,52 @@ let npy_cases =
 
 let save_npy path (Nx.P t) = Nx_io.save_npy path t
 let save_npz path l = Nx_io.save_npz path (Nx_io.Archive.of_list l)
+let flags = Nx.P (Nx.create Nx.bool [| 3 |] [| false; true; true |])
+
+(* The NPY stream of [flags] with [byte] for its last element's byte. *)
+let npy_flags byte =
+  cut (read (saved "" save_npy flags)) 1 ^ String.make 1 (Char.chr byte)
+
+(* [zip entries] is a ZIP archive of [entries], each a name, a compression
+   method, 0 for stored or 8 for deflated, and the entry's bytes. *)
+let zip entries =
+  let le16 n = String.init 2 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff)) in
+  let add (locals, centrals) (name, method_, contents) =
+    let data =
+      if method_ = 8 then Compress_deflate.Deflate.compress contents
+      else contents
+    in
+    (* Flags, method, time, date, CRC-32, sizes, name and extra lengths. *)
+    let common =
+      String.concat ""
+        [
+          le16 0;
+          le16 method_;
+          le16 0;
+          le16 0;
+          le32 (Compress_deflate.Crc32.string contents);
+          le32 (String.length data);
+          le32 (String.length contents);
+          le16 (String.length name);
+          le16 0;
+        ]
+    in
+    let offset = String.length locals in
+    let local = "PK\003\004" ^ le16 20 ^ common ^ name ^ data in
+    (* Version made by and needed, the common fields, comment length, disk,
+       internal and external attributes, and the local header's offset. *)
+    let central =
+      "PK\001\002" ^ le16 20 ^ le16 20 ^ common ^ le16 0 ^ le16 0 ^ le16 0
+      ^ le32 0 ^ le32 offset ^ name
+    in
+    (locals ^ local, centrals ^ central)
+  in
+  let locals, centrals = List.fold_left add ("", "") entries in
+  let n = List.length entries in
+  locals ^ centrals ^ "PK\005\006" ^ le16 0 ^ le16 0 ^ le16 n ^ le16 n
+  ^ le32 (String.length centrals)
+  ^ le32 (String.length locals)
+  ^ le16 0
 
 let npy =
   let loads name expected =
@@ -126,6 +172,11 @@ let npy =
           let s = read (saved "" save_npy (Nx.P (Nx.zeros Nx.int8 [| 3 |]))) in
           fails (fun () -> Nx_io.load_npy (file "" (s ^ "\000")));
           fails (fun () -> Nx_io.load_npy (fixture "unicode.npy")));
+      test "a b1 byte of 0 or 1 loads and another fails, naming the file"
+        (fun () ->
+          equal packed flags (Nx_io.load_npy (file "" (npy_flags 1)));
+          let path = file "" (npy_flags 2) in
+          fails ~naming:path (fun () -> Nx_io.load_npy path));
       test "a save refuses memory a consuming call holds" (fun () ->
           let x = Nx.arange Nx.int32 0 6 1 in
           let b = Nx.to_buffer x in
@@ -187,6 +238,23 @@ let npz =
           equal packed
             (Nx.P (Nx.create Nx.float64 [| 5 |] [| 0.; 1.5; 3.; 4.5; 6. |]))
             (Nx_io.load_npz_entry ~name:"w" (fixture "unaligned.npz")));
+      cases ~name:fst
+        "an entry's b1 byte of 0 or 1 loads and another fails, naming the file \
+         and the entry"
+        [ ("stored", 0); ("deflated", 8) ]
+        (fun (_, method_) ->
+          let archive byte =
+            file "" (zip [ ("flags.npy", method_, npy_flags byte) ])
+          in
+          let good = archive 1 in
+          equal entries [ ("flags", flags) ] (listed (Nx_io.load_npz good));
+          equal packed flags (Nx_io.load_npz_entry ~name:"flags" good);
+          let bad = archive 2 in
+          List.iter
+            (fun naming ->
+              fails ~naming (fun () -> Nx_io.load_npz bad);
+              fails ~naming (fun () -> Nx_io.load_npz_entry ~name:"flags" bad))
+            [ bad; "flags" ]);
       test "an entry whose checksum does not match fails" (fun () ->
           let s = read (saved "" save_npz [ ("w", one) ]) in
           (* The CRC-32 of the central directory's first entry. *)
@@ -312,7 +380,7 @@ let typed_entries =
     ("f16", "F16", "float16", [ 1 ], pattern 2 4);
     ("f8_e4m3", "F8_E4M3", "float8_e4m3", [ 3 ], pattern 3 5);
     ("f8_e5m2", "F8_E5M2", "float8_e5m2", [ 3 ], pattern 3 6);
-    ("bool", "BOOL", "bool", [ 4 ], "\000\001\002\255");
+    ("bool", "BOOL", "bool", [ 4 ], "\000\001\001\000");
     ("empty", "F32", "float32", [ 0; 3 ], "");
     ("scales", "F8_E8M0", "uint8", [ 2; 3 ], pattern 6 7);
     ("nibbles", "F4", "uint8", [ 2; 4 ], pattern 4 8);
@@ -435,8 +503,9 @@ let safetensors =
               is_true ~msg:"on the disk" (on_disk (Nx_io.load_safetensors path)))
             [ 0; 1 ]);
       test
-        "a load reads the header alone, and a use of an entry its file's pages \
-         where they are aligned to its elements, and its bytes otherwise"
+        "a load reads the header and the BOOL entries alone, and a use of an \
+         entry its file's pages where they are aligned to its elements, and \
+         its bytes otherwise"
         (fun () ->
           let used pad =
             let path = file "" (typed_file ~pad ()) in
@@ -446,7 +515,8 @@ let safetensors =
             let archive, bytes =
               reads (fun () -> Nx_io.load_safetensors path)
             in
-            equal ~msg:"the header" int header bytes;
+            (* The bool entry's four bytes, checked to be 0 or 1. *)
+            equal ~msg:"the header and the bools" int (header + 4) bytes;
             let (Nx.P t) = find archive "u32" in
             (* A computation reads the entry on the host; a bitcast is a view of
                the file, which reads nothing. *)
@@ -498,6 +568,28 @@ let safetensors =
          (fun (_, path) ->
            let path = path () in
            fails ~naming:path (fun () -> Nx_io.load_safetensors path)));
+      (* [bools n i b] is [n] bools, 1 but for [b] at element [i]. *)
+      (let bools n i b =
+         String.init n (fun j -> if j = i then Char.chr b else '\001')
+       in
+       cases ~name:fst
+         "a BOOL byte other than 0 or 1 fails, naming the file and the entry"
+         [
+           ("2 first", bools 3 0 2);
+           ("255 last", bools 3 2 255);
+           ("2 last of 70_000", bools 70_000 69_999 2);
+         ]
+         (fun (_, data) ->
+           let path =
+             file ""
+               (raw_safetensors
+                  [
+                    ("u8", "U8", [ 1 ], "a");
+                    ("flags", "BOOL", [ String.length data ], data);
+                  ])
+           in
+           fails ~naming:path (fun () -> Nx_io.load_safetensors path);
+           fails ~naming:"flags" (fun () -> Nx_io.load_safetensors path)));
       test "a refused rename keeps the temporary file and names it" (fun () ->
           let dir = temp_dir () in
           let path = Filename.concat dir "w.safetensors" in

@@ -41,6 +41,24 @@ let read_string file ~pos n =
   B.blit_to_bytes file pos b 0 n;
   Bytes.unsafe_to_string b
 
+(* [check_bools file name ~off ~len] fails naming the tensor [name] if a byte
+   of the [len] bytes at byte [off] of [file] is other than 0 or 1, which nx's
+   operations read with an unspecified result. It reads them a chunk at a
+   time. *)
+let check_bools file name ~off ~len =
+  let chunk = Bytes.create (Int.min len 65536) in
+  let pos = ref 0 in
+  while !pos < len do
+    let n = Int.min (Bytes.length chunk) (len - !pos) in
+    B.blit_to_bytes file (off + !pos) chunk 0 n;
+    for i = 0 to n - 1 do
+      let v = Bytes.get_uint8 chunk i in
+      if v > 1 then
+        fail_msg "the bool at element %d of tensor %S is %d" (!pos + i) name v
+    done;
+    pos := !pos + n
+  done
+
 (* The header of [file] and the offset of its data, once the file's length is
    the one the header describes. *)
 let read_header file =
@@ -86,9 +104,9 @@ let load_safetensors path =
               | F4 | F6_E2M3 | F6_E3M2 -> [| len |]
               | _ -> Array.of_list info.shape
             in
-            Archive.add name
-              (Storage.mapped file kind shape ~off:(data_start + start) ~len)
-              archive)
+            let off = data_start + start in
+            if info.dtype = BOOL then check_bools file name ~off ~len;
+            Archive.add name (Storage.mapped file kind shape ~off ~len) archive)
           metadata.index_map Archive.empty
       with
       | Failure msg -> fail_msg "%s: %s" path msg

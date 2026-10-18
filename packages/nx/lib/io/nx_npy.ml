@@ -7,7 +7,21 @@ open Error
 
 let strf = Printf.sprintf
 
-let npy_to_nx (Npy.P (kind, buffer, shape)) =
+(* [check_bools ~what p] fails naming [what] if [p] holds bools with a byte
+   other than 0 or 1, which nx's operations read with an unspecified result. *)
+let check_bools ~what (Npy.P (kind, buffer, _)) =
+  match kind with
+  | Nx_dtype.Bool ->
+      Storage.read_bytes buffer @@ fun bytes ->
+      for i = 0 to Bigarray.Array1.dim bytes - 1 do
+        let v = Bigarray.Array1.unsafe_get bytes i in
+        if v > 1 then fail_msg "%s: the bool at element %d is %d" what i v
+      done
+  | _ -> ()
+
+let npy_to_nx ~what packed =
+  check_bools ~what packed;
+  let (Npy.P (kind, buffer, shape)) = packed in
   Nx.P (Nx.of_buffer kind shape buffer)
 
 (* [with_npy ~by t f] is [f] applied to [t] as a NumPy array over its elements,
@@ -26,7 +40,8 @@ let wrap_exn f =
 
 (* Npy *)
 
-let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
+let load_npy path =
+  wrap_exn @@ fun () -> Ok (npy_to_nx ~what:path (Npy.read_copy path))
 
 let save_npy (type a b) ?(overwrite = true) path (arr : (a, b) Nx.t) =
   match Nx.dtype arr with
@@ -47,7 +62,8 @@ let load_npz path =
     if name = "" then failwith "an NPZ entry has an empty name";
     if Archive.mem name archive then
       failwith (strf "duplicate NPZ entry %S" name);
-    Archive.add name (npy_to_nx (Zip_archive.read_npy zi name)) archive
+    let what = strf "%s, entry %S" path name in
+    Archive.add name (npy_to_nx ~what (Zip_archive.read_npy zi name)) archive
   in
   Ok (List.fold_left add Archive.empty entries)
 
@@ -55,7 +71,7 @@ let load_npz_entry ~name path =
   wrap_exn @@ fun () ->
   let zi = Zip_archive.open_in path in
   match Zip_archive.read_npy zi name with
-  | packed -> Ok (npy_to_nx packed)
+  | packed -> Ok (npy_to_nx ~what:(strf "%s, entry %S" path name) packed)
   | exception Not_found -> Error (Missing_entry name)
 
 (* [add_npy zo name t] adds [t] to [zo] as entry [name], naming [name] if NPY

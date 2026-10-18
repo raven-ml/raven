@@ -3962,6 +3962,10 @@ thread.
 
 ### Nx
 
+- `Nx_io.load_npy`, `load_npz`, `load_npz_entry` and `load_safetensors` refuse
+  a bool element whose byte is other than 0 or 1, raising `Failure` naming the
+  file and the entry, as `load_gguf` does. Such a byte gave bool operations an
+  unspecified result. `load_safetensors` now reads its `BOOL` entries' bytes.
 - An operation no `Nx.Op.intercept` claims keeps none of its operands once it
   returns, in an interpreter's `run` and while another domain or thread
   intercepts. With backtraces recorded, the `Effect.Unhandled` its fallback
