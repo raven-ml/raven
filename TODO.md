@@ -48,6 +48,13 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### limits and size
 
+- staging memory holds two slots, and a copy holds its slot across waits
+  and io callbacks: two threads each holding one slot, whose io reads copy
+  to the same mapless device, wait forever. Slots made on demand, so no copy
+  waits for one, remove `holders`, `c_thread`, `claim_slots` and the
+  third-copy refusal; staging memory then grows with the copies running at
+  once (32-64 MiB each). `copy.mli`'s "copies the other way round never hold
+  the slot it waits for" is wrong: a waiting copy holds no slot
 - limits no hardware or spec imposes, one commit each
   (_plans/rig-device-reuse/70-, 71-): AMD's 512 parts per submission;
   AMD's segment grows as NV's segment and launch rings do, and its compute
@@ -160,6 +167,18 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
+- `Diskcache.trim` removes every `.tmp` older than its start, another
+  process's write in progress included, and `put` tolerates its temporary
+  vanishing. Remove only writes older than a fixed age (ccache's is an
+  hour), which drops that branch and the `.mli`'s "a put whose write is
+  removed keeps nothing"
+- `Diskcache.put` trims after its write, so on a full disk every put fails
+  and nothing trims. Count and trim before writing, measuring first when the
+  size file is missing; `count` failing after the rename fails a put whose
+  entry is stored
+- Windows: `mark`'s `Unix.utimes` opens the entry without
+  `FILE_SHARE_DELETE`, so a concurrent `Diskcache.clear` raises `Sys_error`.
+  `clear` leaves such an entry, as `trim`'s `discard` does
 - `upcast_vectors` (heuristic.ml) has no term for a kernel's size: 8 nested
   float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
   in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
@@ -222,6 +241,13 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
+- compiled `eigh` skips a pair below u·‖A‖_F (`norm_roundoff`), svd below
+  u·‖a‖‖b‖ per pair: two rules for one cause. One relative floor in
+  `tangents`, |γ| ≤ u·√(|α||β|) (Demmel and Veselić, LAPACK Working Note
+  15; eager's split test), removes `norm_roundoff`, its reduction and
+  `lower_linalg.mli`'s graded-matrix carve-out. `norm_roundoff` overflows
+  today: a float32 matrix with diagonal 2.5e38 and finite eigenvalues
+  returns NaN
 - baselines on fudge: the `compile` suite's four `trig/` rows, and a
   re-record of the `compiled` suite's float64 sine rows
   (`transcendental/sin*`, `special/sin*`), whose kernels now take vector lanes
@@ -266,6 +292,17 @@ raven / llama.cpp (Vulkan; ROCm):
   another domain's extent, no `Effect.Unhandled` raised
 
 ## nx2
+
+- the kinds quiet the NaN they return. `nx_nan1`, `nx_nan2`, `nx_maximum`
+  and `nx_minimum` keep a signalling NaN's bits (`nx_kinds.h`), while
+  reductions, scans, scatters and ranges promise it quieted, so each Max or
+  Min path quiets again (`reduce.c`'s `quiet_*`, `index.c`'s `QUIETED`,
+  `Expand.quieted`). IEEE 754-2019 §6.2.1 and §9.6 quiet it in the
+  operation. Done when the kinds quiet it and those wrappers are gone;
+  elementwise bits change for signalling NaNs
+- `reduce_ranges` flattens its result to quiet it, which gathers a result
+  cut along its row axis onto every device; its sparse table's `assemble`
+  gathers a row-cut `x` at every level
 
 - frontend, `Ptree` at a brand (RFC 0006's names at `('s, 'd) t`, `Walk`,
   `S`, `sized`, the `tensor` alias), with `check` over it, `Rng.ptree` and
@@ -326,6 +363,15 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## norn, jera
 
+- jera: Newton stops at the floats' limit by three rules (`still`, the
+  merit-rounding branch, `at_limit` with `bounded`), because `still` floors
+  each component at |x|·ε, which is 0 at 0. One test in norm in
+  `Search.judge` (MINPACK's `hybrd`: a step within xtol·‖x‖) covers Root,
+  System, Broyden, Anderson and Minimize, which miss it today. Meanwhile
+  `at_limit` reads a step that did not move (q = r = ∞) as at the limit,
+  and the unscaled `Search.norm` underflows, so a lane of small unknowns
+  converges 100 times off its tolerance; `resolved` converges without
+  meeting `tol`; `jera.mli` states the limit rule for every method
 - eager NUTS: ~3.3 ms per transition, ~475 µs per leapfrog against HMC's
   ~110 µs on the same density. Profile its bookkeeping; add a row
 - jera eager `Sde.march`: 2,000 lanes at Brownian depth 12 take ~6 ms a step
