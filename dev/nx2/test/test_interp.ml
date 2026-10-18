@@ -137,6 +137,166 @@ let test_donor_beside () =
   equal (array float_exact) [| 2.; 4.; 6. |] (elements y);
   invalid ~sub:"Nx.copy: operand 1 was donated to Nx.add" (fun () -> Nx.copy x)
 
+(* The [by]s a rule receives while [f] runs under it, each once, in order. *)
+let observed_names f =
+  let names = ref [] in
+  let observe _ ~by op =
+    if not (List.mem by !names) then names := by :: !names;
+    Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.names" Extent observe (fun _ -> ignore (f ()));
+  List.rev !names
+
+let square64 () = Nx.create f64 [| 2; 2 |] [| 2.; 0.; 0.; 1. |]
+
+(* Every operation a function makes reaches a rule named by the function the
+   user called, whatever functions that one computes through. *)
+let test_by_called () =
+  let m = square64 () in
+  equal ~msg:"trace" names [ "Nx.trace" ] (observed_names (fun () -> Nx.trace m));
+  equal ~msg:"inv" names [ "Nx.inv" ] (observed_names (fun () -> Nx.inv m));
+  equal ~msg:"cholesky Upper" names [ "Nx.cholesky" ]
+    (observed_names (fun () -> Nx.cholesky ~triangle:Upper m));
+  equal ~msg:"a call after the composite" names [ "Nx.trace"; "Nx.neg" ]
+    (observed_names (fun () -> Nx.neg (Nx.trace m)))
+
+(* A rule's refusal reaches the caller as the rule raised it, from inside a
+   composite too; one in the name the rule received names the function the
+   user called. *)
+let test_refusal_named () =
+  let a = square64 () and b = vec f64 [| 1.; 2. |] in
+  let lstsq why =
+    Nx.Prim.interpret ~name:"test.refuse" Extent
+      (fun _ ~by op ->
+        match op with
+        | Nx.Prim.Linalg _ -> invalid_arg (why by)
+        | _ -> Nx.Prim.eval ~by op)
+      (fun _ -> ignore (Nx.lstsq a b))
+  in
+  raises (Invalid_argument "test.refuse: no factorisation") (fun () ->
+      lstsq (fun _ -> "test.refuse: no factorisation"));
+  raises (Invalid_argument "Nx.lstsq: test.refuse has no factorisation")
+    (fun () -> lstsq (fun by -> by ^ ": test.refuse has no factorisation"))
+
+(* A rule is the user's function: a refusal of an nx function it calls reaches
+   the caller as raised, from inside a composite too. *)
+let test_rule_calls_named () =
+  let a = square64 () and b = vec f64 [| 1.; 2. |] in
+  let reshaping _ ~by op =
+    (match op with
+    | Nx.Prim.Linalg _ -> ignore (Nx.reshape [| 3 |] b)
+    | _ -> ());
+    Nx.Prim.eval ~by op
+  in
+  let by_reshape = function
+    | Invalid_argument m -> String.starts_with ~prefix:"Nx.reshape: " m
+    | _ -> false
+  in
+  raises_match by_reshape (fun () ->
+      Nx.Prim.interpret ~name:"test.reshaping" Extent reshaping (fun _ ->
+          Nx.lstsq a b))
+
+(* What a rule donates dies naming the function the rule called, inside a
+   composite too. *)
+let test_rule_donates () =
+  let own = vec f64 [| 1.; 2. |] and spent = ref false in
+  Nx.Prim.interpret ~name:"test.donor" Extent
+    (fun _ ~by op ->
+      if not !spent then begin
+        spent := true;
+        ignore (Nx.neg (Nx.donate own))
+      end;
+      Nx.Prim.eval ~by op)
+    (fun _ -> ignore (Nx.trace (square64 ())));
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () ->
+      Nx.copy own)
+
+(* A rule inside [trace] performs an effect whose handler resumes the rest of
+   the call on a second domain, as a work-stealing scheduler does. A plain
+   operation on the first domain afterwards is named by its own function: its
+   death, and the [by] a rule receives. *)
+type _ Effect.t += Hop : unit Effect.t
+
+let test_names_after_hop () =
+  let hopping f =
+    Effect.Deep.match_with f ()
+      {
+        retc = Fun.id;
+        exnc = raise;
+        effc =
+          (fun (type a) (e : a Effect.t) ->
+            match e with
+            | Hop ->
+                Some
+                  (fun (k : (a, unit) Effect.Deep.continuation) ->
+                    Domain.join
+                      (Domain.spawn (fun () -> Effect.Deep.continue k ())))
+            | _ -> None);
+      }
+  in
+  let hopped = ref false in
+  hopping (fun () ->
+      Nx.Prim.interpret ~name:"test.hop" Extent
+        (fun _ ~by op ->
+          if not !hopped then begin
+            hopped := true;
+            Effect.perform Hop
+          end;
+          Nx.Prim.eval ~by op)
+        (fun _ -> ignore (Nx.trace (square64 ()))));
+  equal ~msg:"hopped" bool true !hopped;
+  let x = vec f64 [| 1.; 2. |] in
+  equal ~msg:"a rule's by" names [ "Nx.neg" ]
+    (observed_names (fun () -> Nx.neg (Nx.donate x)));
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy x)
+
+(* One systhread holds a composite, blocked in its rule, while another of the
+   same domain runs a plain operation: each operation's death and the [by] its
+   rule receives name its own function. *)
+let test_names_two_threads () =
+  let m = Mutex.create () and c = Condition.create () in
+  let inside = ref false and plain_done = ref false in
+  let set flag =
+    Mutex.lock m;
+    flag := true;
+    Condition.broadcast c;
+    Mutex.unlock m
+  in
+  let await flag =
+    Mutex.lock m;
+    while not !flag do
+      Condition.wait c m
+    done;
+    Mutex.unlock m
+  in
+  let a = square64 () and composite = ref [] in
+  let held =
+    Thread.create
+      (fun () ->
+        let names = ref [] in
+        Nx.Prim.interpret ~name:"test.held" Extent
+          (fun _ ~by op ->
+            if not (List.mem by !names) then names := by :: !names;
+            if not !inside then begin
+              set inside;
+              await plain_done
+            end;
+            Nx.Prim.eval ~by op)
+          (fun _ -> ignore (Nx.trace (Nx.donate a)));
+        composite := List.rev !names)
+      ()
+  in
+  await inside;
+  let x = vec f64 [| 1.; 2. |] in
+  let plain = observed_names (fun () -> Nx.neg (Nx.donate x)) in
+  set plain_done;
+  Thread.join held;
+  equal ~msg:"the plain operation's by" names [ "Nx.neg" ] plain;
+  equal ~msg:"the composite's by" names [ "Nx.trace" ] !composite;
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy x);
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.trace" (fun () ->
+      Nx.copy a)
+
 let test_after_return () =
   let x = x3 () in
   let i, t =
@@ -277,6 +437,16 @@ let rule =
       test "the innermost that reaches an operation receives it" test_innermost;
       test "a rule computes, and refuses its own values" test_running;
       test "a rule reads the donor beside its handle" test_donor_beside;
+      test "a rule receives the function the user called" test_by_called;
+      test "a rule's refusal keeps its name inside a composite"
+        test_refusal_named;
+      test "a rule's calls keep their names inside a composite"
+        test_rule_calls_named;
+      test "what a rule donates dies naming the rule's call" test_rule_donates;
+      test "a plain operation after a call resumed on another domain"
+        test_names_after_hop;
+      test "a plain operation beside another systhread's composite"
+        test_names_two_threads;
       test "a value used after its interpretation returned raises"
         test_after_return;
       test "a value refuses another domain; an extent does not reach one"

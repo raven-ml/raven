@@ -813,7 +813,17 @@ let test_ewma_cases () =
     (fun alpha ->
       invalid ~by:"Nx.ewma" (fun () -> Nx.ewma ~alpha (f64 [| 1. |])))
     [ 0.; -1.; 1.5; nan ];
-  invalid ~by:"Nx.ewma" (fun () -> Nx.ewma ~axis:2 ~alpha:0.5 m)
+  invalid ~by:"Nx.ewma" (fun () -> Nx.ewma ~axis:2 ~alpha:0.5 m);
+  (* A donated operand that another operation consumed is dead: ewma names
+     itself, with and without an axis, at a narrow float too, which it
+     computes at float32. *)
+  let dead () =
+    let x = Nx.create Nx.float16 [| 3 |] [| 1.; 2.; 3. |] in
+    ignore (Nx.neg (Nx.donate x));
+    x
+  in
+  invalid ~by:"Nx.ewma" (fun () -> Nx.ewma ~axis:0 ~alpha:0.5 (dead ()));
+  invalid ~by:"Nx.ewma" (fun () -> Nx.ewma ~alpha:0.5 (dead ()))
 
 let () =
   exit

@@ -617,6 +617,313 @@ let crossed =
     command "add2" (handle ^-> handle ^-> judges taken) add2_ref add2_sys;
   ]
 
+(* Naming: a function consumes a donated operand for the user, so the donor
+   and the handle the user holds die naming the function the user called,
+   computed now or received by an interpretation, whatever functions that one
+   computes through. *)
+let test_dies_at_the_call () =
+  let square () = fresh_at [| 2; 2 |] [| 2.; 0.; 0.; 2. |] in
+  let pair () = fresh [| 1.; 2. |] in
+  let lo = Nx.create Nx.int64 [| 1 |] [| 0L |] in
+  let hi = Nx.create Nx.int64 [| 1 |] [| 2L |] in
+  let observed f =
+    Nx.Prim.interpret ~name:"test.observer" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let dies name make f =
+    List.iter
+      (fun (how, run) ->
+        let x = make () in
+        let d = Nx.donate x in
+        run (fun () -> ignore (f d));
+        let sub = "Nx.copy: operand 1 was donated to " ^ name in
+        let msg = Printf.sprintf "%s %s's" how name in
+        raises_match ~msg:(msg ^ " donor") (Exn.invalid_arg ~substring:sub)
+          (fun () -> Nx.copy x);
+        raises_match ~msg:(msg ^ " handle") (Exn.invalid_arg ~substring:sub)
+          (fun () -> Nx.copy d))
+      [ ("computed", fun f -> f ()); ("received", observed) ]
+  in
+  dies "Nx.trace" square (fun d -> Nx.trace d);
+  dies "Nx.inv" square Nx.inv;
+  dies "Nx.cholesky" square (fun d -> Nx.cholesky ~triangle:Upper d);
+  dies "Nx.mean" pair (fun d -> Nx.mean d);
+  dies "Nx.rfft" square (fun d -> Nx.rfft Nx.complex64 d);
+  dies "Nx.complex" pair (fun d -> Nx.complex Nx.complex64 ~re:d ~im:(pair ()));
+  dies "Nx.reduce_ranges"
+    (fun () -> Nx.cast Nx.float16 (pair ()))
+    (Nx.reduce_ranges Nx.Add ~lo ~hi)
+
+(* A dead operand: each public function names itself, the one the user
+   called, whatever it computes through, at every dtype it takes. *)
+let product s = Array.fold_left ( * ) 1 s
+
+let ones (type v s) (dt : (v, s) Nx.dtype) shape : (v, s, Nx.host) Nx.t =
+  Nx.create dt shape (Array.make (product shape) (D.one dt))
+
+let dead dt shape =
+  let x = ones dt shape in
+  ignore (Nx.neg (Nx.donate x));
+  x
+
+let i64 xs = Nx.create Nx.int64 [| Array.length xs |] (Array.map Int64.of_int xs)
+
+let names_itself (by, run) =
+  let named = function
+    | Invalid_argument m ->
+        String.starts_with ~prefix:(by ^ ": operand ") m
+        && String.ends_with ~suffix:" was donated to Nx.neg" m
+    | _ -> false
+  in
+  raises_match ~msg:by named run
+
+(* The functions of every dtype. *)
+let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
+  let m () = dead dt [| 2; 2 |] and live () = ones dt [| 2; 2 |] in
+  let v () = dead dt [| 4 |] in
+  let c (by, f) = (by, D.name dt, f) in
+  List.map c
+    [
+      ("Nx.add", fun () -> ignore @@ Nx.add (live ()) (m ()));
+      ("Nx.sub", fun () -> ignore @@ Nx.sub (m ()) (live ()));
+      ("Nx.mul", fun () -> ignore @@ Nx.mul (m ()) (live ()));
+      ("Nx.neg", fun () -> ignore @@ Nx.neg (m ()));
+      ("Nx.equal", fun () -> ignore @@ Nx.equal (m ()) (live ()));
+      ("Nx.not_equal", fun () -> ignore @@ Nx.not_equal (live ()) (m ()));
+      ("Nx.where", fun () -> ignore @@ Nx.where (Nx.equal (live ()) (live ())) (m ()) (live ()));
+      ("Nx.copy", fun () -> ignore @@ Nx.copy (m ()));
+      ("Nx.reshape", fun () -> ignore @@ Nx.reshape [| 4 |] (m ()));
+      ("Nx.broadcast_to", fun () -> ignore @@ Nx.broadcast_to [| 2; 2; 2 |] (m ()));
+      ("Nx.unsqueeze", fun () -> ignore @@ Nx.unsqueeze ~axes:[ 0 ] (m ()));
+      ("Nx.flatten", fun () -> ignore @@ Nx.flatten (m ()));
+      ("Nx.transpose", fun () -> ignore @@ Nx.transpose (m ()));
+      ("Nx.moveaxis", fun () -> ignore @@ Nx.moveaxis 0 1 (m ()));
+      ("Nx.swapaxes", fun () -> ignore @@ Nx.swapaxes 0 1 (m ()));
+      ("Nx.flip", fun () -> ignore @@ Nx.flip (m ()));
+      ("Nx.sliding_window", fun () -> ignore @@ Nx.sliding_window ~window:2 (v ()));
+      ("Nx.split", fun () -> ignore @@ List.hd (Nx.split ~axis:0 2 (m ())));
+      ("Nx.concatenate", fun () -> ignore @@ Nx.concatenate ~axis:0 [ live (); m () ]);
+      ("Nx.stack", fun () -> ignore @@ Nx.stack [ m (); live () ]);
+      ("Nx.pad", fun () -> ignore @@ Nx.pad [| (1, 0); (0, 1) |] (D.one dt) (m ()));
+      ("Nx.roll", fun () -> ignore @@ Nx.roll 1 (v ()));
+      ("Nx.tile", fun () -> ignore @@ Nx.tile [| 2; 1 |] (m ()));
+      ("Nx.repeat", fun () -> ignore @@ Nx.repeat ~axis:0 2 (m ()));
+      ("Nx.slice", fun () -> ignore @@ Nx.slice [ Nx.L [ 1; 0 ] ] (m ()));
+      ("Nx.get", fun () -> ignore @@ Nx.get [ 1 ] (m ()));
+      ("Nx.take", fun () -> ignore @@ Nx.take (i64 [| 1; 0 |]) (m ()));
+      ("Nx.take_along_axis", fun () -> ignore @@
+          Nx.take_along_axis ~axis:0 (Nx.reshape [| 2; 1 |] (i64 [| 1; 0 |])) (m ()));
+      ("Nx.set", fun () -> ignore @@ Nx.set [ Nx.I 0 ] (Nx.reshape [| 2 |] (Nx.get [ 0 ] (live ()))) (m ()));
+      ("Nx.scatter", fun () -> ignore @@
+          Nx.scatter ~axis:0 (Nx.reshape [| 1; 2 |] (i64 [| 0; 1 |]))
+            (ones dt [| 1; 2 |]) (m ()));
+      ("Nx.sum", fun () -> ignore @@ Nx.sum (m ()));
+      ("Nx.prod", fun () -> ignore @@ Nx.prod ~axes:[ 0 ] (m ()));
+      ("Nx.cumsum", fun () -> ignore @@ Nx.cumsum (m ()));
+      ("Nx.cumsum", fun () -> ignore @@ Nx.cumsum ~axis:1 (m ()));
+      ("Nx.mean", fun () -> ignore @@ Nx.mean (m ()));
+      ("Nx.array_equal", fun () -> ignore @@ Nx.array_equal (live ()) (m ()));
+      ("Nx.matrix_transpose", fun () -> ignore @@ Nx.matrix_transpose (m ()));
+      ("Nx.tril", fun () -> ignore @@ Nx.tril (m ()));
+      ("Nx.triu", fun () -> ignore @@ Nx.triu (m ()));
+      ("Nx.diagonal", fun () -> ignore @@ Nx.diagonal (m ()));
+      ("Nx.trace", fun () -> ignore @@ Nx.trace (m ()));
+      ("Nx.diag", fun () -> ignore @@ Nx.diag (v ()));
+      ("Nx.place", fun () -> ignore @@ Nx.place Nx.Host.on (m ()));
+      ("Nx.to_array", fun () -> ignore @@ Nx.to_array (m ()));
+      ("Nx.sync", fun () -> ignore @@ Nx.sync (m ()));
+      ("Nx.item", fun () -> ignore @@ Nx.item [ 0; 0 ] (m ()));
+      ("Nx.matmul", fun () -> ignore @@ Nx.matmul (m ()) (live ()));
+      ("Nx.dot", fun () -> ignore @@ Nx.dot (live ()) (m ()));
+    ]
+
+(* The functions of floats. *)
+let floats (type s) (dt : (float, s) Nx.dtype) =
+  let m () = dead dt [| 2; 2 |] and live () = ones dt [| 2; 2 |] in
+  let v () = dead dt [| 4 |] and lv () = ones dt [| 4 |] in
+  let ids = i64 [| 0; 1 |] in
+  let c (by, f) = (by, D.name dt, f) in
+  List.map c
+    [
+      ("Nx.div", fun () -> ignore @@ Nx.div (m ()) (live ()));
+      ("Nx.pow", fun () -> ignore @@ Nx.pow (live ()) (m ()));
+      ("Nx.atan2", fun () -> ignore @@ Nx.atan2 (m ()) (live ()));
+      ("Nx.maximum", fun () -> ignore @@ Nx.maximum (m ()) (live ()));
+      ("Nx.less", fun () -> ignore @@ Nx.less (m ()) (live ()));
+      ("Nx.greater", fun () -> ignore @@ Nx.greater (m ()) (live ()));
+      ("Nx.fma", fun () -> ignore @@ Nx.fma (live ()) (live ()) (m ()));
+      ("Nx.add_s", fun () -> ignore @@ Nx.add_s (m ()) 1.);
+      ("Nx.rsub_s", fun () -> ignore @@ Nx.rsub_s 1. (m ()));
+      ("Nx.greater_s", fun () -> ignore @@ Nx.greater_s (m ()) 1.);
+      ("Nx.sqrt", fun () -> ignore @@ Nx.sqrt (m ()));
+      ("Nx.exp", fun () -> ignore @@ Nx.exp (m ()));
+      ("Nx.sin", fun () -> ignore @@ Nx.sin (m ()));
+      ("Nx.floor", fun () -> ignore @@ Nx.floor (m ()));
+      ("Nx.recip", fun () -> ignore @@ Nx.recip (m ()));
+      ("Nx.square", fun () -> ignore @@ Nx.square (m ()));
+      ("Nx.rsqrt", fun () -> ignore @@ Nx.rsqrt (m ()));
+      ("Nx.hypot", fun () -> ignore @@ Nx.hypot (live ()) (m ()));
+      ("Nx.asinh", fun () -> ignore @@ Nx.asinh (m ()));
+      ("Nx.erfc", fun () -> ignore @@ Nx.erfc (m ()));
+      ("Nx.lgamma", fun () -> ignore @@ Nx.lgamma (m ()));
+      ("Nx.clamp", fun () -> ignore @@ Nx.clamp ~min:0. (m ()));
+      ("Nx.isnan", fun () -> ignore @@ Nx.isnan (m ()));
+      ("Nx.isinf", fun () -> ignore @@ Nx.isinf (m ()));
+      ("Nx.isfinite", fun () -> ignore @@ Nx.isfinite (m ()));
+      ("Nx.logical_and", fun () -> ignore @@ Nx.logical_and (m ()) (live ()));
+      ("Nx.logical_not", fun () -> ignore @@ Nx.logical_not (m ()));
+      ("Nx.cast", fun () -> ignore @@ Nx.cast Nx.float32 (Nx.cast Nx.float64 (m ())));
+      ("Nx.max", fun () -> ignore @@ Nx.max (m ()));
+      ("Nx.min", fun () -> ignore @@ Nx.min ~axes:[ 1 ] (m ()));
+      ("Nx.all", fun () -> ignore @@ Nx.all (m ()));
+      ("Nx.any", fun () -> ignore @@ Nx.any ~axes:[ 0 ] (m ()));
+      ("Nx.argmax", fun () -> ignore @@ Nx.argmax (m ()));
+      ("Nx.argmax", fun () -> ignore @@ Nx.argmax ~axis:0 (m ()));
+      ("Nx.argmin", fun () -> ignore @@ Nx.argmin (m ()));
+      ("Nx.cummax", fun () -> ignore @@ Nx.cummax ~axis:0 (m ()));
+      ("Nx.var", fun () -> ignore @@ Nx.var (m ()));
+      ("Nx.std", fun () -> ignore @@ Nx.std ~ddof:1 (m ()));
+      ("Nx.logsumexp", fun () -> ignore @@ Nx.logsumexp (m ()));
+      ("Nx.logmeanexp", fun () -> ignore @@ Nx.logmeanexp (m ()));
+      ("Nx.ewma", fun () -> ignore @@ Nx.ewma ~alpha:0.5 (m ()));
+      ("Nx.ewma", fun () -> ignore @@ Nx.ewma ~axis:0 ~alpha:0.5 (m ()));
+      ("Nx.sigmoid", fun () -> ignore @@ Nx.sigmoid (m ()));
+      ("Nx.softplus", fun () -> ignore @@ Nx.softplus (m ()));
+      ("Nx.softmax", fun () -> ignore @@ Nx.softmax (m ()));
+      ("Nx.log_softmax", fun () -> ignore @@ Nx.log_softmax (m ()));
+      ("Nx.sort", fun () -> ignore @@ fst (Nx.sort (m ())));
+      ("Nx.argsort", fun () -> ignore @@ Nx.argsort (m ()));
+      ("Nx.top_k", fun () -> ignore @@ fst (Nx.top_k ~k:1 (m ())));
+      ("Nx.order_key", fun () -> ignore @@ Nx.order_key Nx.uint64 (m ()));
+      ("Nx.quantile", fun () -> ignore @@ Nx.quantile [| 0.5 |] (m ()));
+      ("Nx.histogram", fun () -> ignore @@ Nx.histogram [ (lv (), m ()) ]);
+      ("Nx.histogram", fun () -> ignore @@ Nx.histogram [ (v (), live ()) ]);
+      ("Nx.searchsorted", fun () -> ignore @@ Nx.searchsorted ~side:`Left (v ()) (live ()));
+      ("Nx.searchsorted", fun () -> ignore @@ Nx.searchsorted ~side:`Right (lv ()) (m ()));
+      ("Nx.unique", fun () -> ignore @@ (Nx.unique (v ())).ids);
+      ("Nx.lexsort", fun () -> ignore @@ Nx.lexsort (m ()));
+      ("Nx.vector_norm", fun () -> ignore @@ Nx.vector_norm (m ()));
+      ("Nx.vector_norm", fun () -> ignore @@ Nx.vector_norm ~ord:3. (m ()));
+      ("Nx.matrix_norm", fun () -> ignore @@ Nx.matrix_norm (m ()));
+      ("Nx.matrix_norm", fun () -> ignore @@ Nx.matrix_norm ~ord:`Two (m ()));
+      ("Nx.correlate", fun () -> ignore @@ Nx.correlate (v ()) (ones dt [| 2 |]));
+      ("Nx.correlate", fun () -> ignore @@ Nx.correlate (lv ()) (dead dt [| 2 |]));
+      ("Nx.conv", fun () -> ignore @@ Nx.conv (dead dt [| 1; 4; 1 |]) (ones dt [| 1; 2; 1 |]));
+      ("Nx.extract_patches", fun () -> ignore @@
+          Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+            ~dilation:[| 1 |] ~padding:[| (0, 0) |] (m ()));
+      ("Nx.rfft", fun () -> ignore @@ Nx.rfft Nx.complex64 (m ()));
+      ("Nx.dct", fun () -> ignore @@ Nx.dct (m ()));
+      ("Nx.dct", fun () -> ignore @@ Nx.dct ~type_:Nx.Type_1 (m ()));
+      ("Nx.idst", fun () -> ignore @@ Nx.idst (m ()));
+      ("Nx.stft", fun () -> ignore @@ Nx.stft Nx.complex64 ~window:2 (v ()));
+      ("Nx.reduce_segments", fun () -> ignore @@ Nx.reduce_segments Nx.Add ~segments:2 ids (m ()));
+      ("Nx.reduce_ranges", fun () -> ignore @@ Nx.reduce_ranges Nx.Add ~lo:ids ~hi:ids (m ()));
+      ("Nx.reduce_ranges", fun () -> ignore @@ Nx.reduce_ranges Nx.Max ~lo:ids ~hi:ids (m ()));
+      ("Nx.map_segments", fun () -> ignore @@ Nx.map_segments ~segments:2 ids (fun _ r -> r) (m ()));
+    ]
+
+(* The routines' functions. *)
+let routines (type v s) (dt : (v, s) Nx.dtype) =
+  let m () = dead dt [| 2; 2 |] and live () = Nx.eye dt 2 in
+  let col () = dead dt [| 2; 1 |] and lcol () = ones dt [| 2; 1 |] in
+  let c (by, f) = (by, D.name dt, f) in
+  List.map c
+    [
+      ("Nx.cholesky", fun () -> ignore @@ Nx.cholesky (m ()));
+      ("Nx.cholesky", fun () -> ignore @@ Nx.cholesky ~triangle:Upper (m ()));
+      ("Nx.qr", fun () -> ignore @@ fst (Nx.qr (m ())));
+      ("Nx.lu", fun () -> ignore @@ let _, l, _ = Nx.lu (m ()) in l);
+      ("Nx.svd", fun () -> ignore @@ let _, _, vh = Nx.svd (m ()) in vh);
+      ("Nx.eigh", fun () -> ignore @@ snd (Nx.eigh (m ())));
+      ("Nx.eigh", fun () -> ignore @@ snd (Nx.eigh ~triangle:Upper (m ())));
+      ("Nx.det", fun () -> ignore @@ Nx.det (m ()));
+      ("Nx.slogdet", fun () -> ignore @@ fst (Nx.slogdet (m ())));
+      ("Nx.solve", fun () -> ignore @@ Nx.solve (m ()) (lcol ()));
+      ("Nx.solve", fun () -> ignore @@ Nx.solve (live ()) (col ()));
+      ("Nx.solve_triangular", fun () -> ignore @@ Nx.solve_triangular (m ()) (lcol ()));
+      ("Nx.solve_triangular", fun () -> ignore @@
+          Nx.solve_triangular ~transpose:Transpose (live ()) (col ()));
+      ("Nx.inv", fun () -> ignore @@ Nx.inv (m ()));
+      ("Nx.lstsq", fun () -> ignore @@ let x, _, _, _ = Nx.lstsq (m ()) (lcol ()) in x);
+      ("Nx.lstsq", fun () -> ignore @@ let x, _, _, _ = Nx.lstsq (live ()) (col ()) in x);
+      ("Nx.pinv", fun () -> ignore @@ Nx.pinv (m ()));
+      ("Nx.pinv", fun () -> ignore @@ Nx.pinv ~hermitian:true (m ()));
+      ("Nx.vdot", fun () -> ignore @@ Nx.vdot (m ()) (live ()));
+      ("Nx.einsum", fun () -> ignore @@ Nx.einsum (Nx.Pattern.v "i j, j k -> i k | j") [ m (); live () ]);
+    ]
+
+(* The functions of complex numbers. *)
+let complexes =
+  let dt = Nx.complex64 in
+  let m () = dead dt [| 2; 2 |] in
+  let c (by, f) = (by, D.name dt, f) in
+  List.map c
+    [
+      ("Nx.real", fun () -> ignore @@ Nx.real Nx.float32 (m ()));
+      ("Nx.imag", fun () -> ignore @@ Nx.imag Nx.float32 (m ()));
+      ("Nx.magnitude", fun () -> ignore @@ Nx.magnitude Nx.float32 (m ()));
+      ("Nx.angle", fun () -> ignore @@ Nx.angle Nx.float32 (m ()));
+      ("Nx.conjugate", fun () -> ignore @@ Nx.conjugate (m ()));
+      ("Nx.isinf", fun () -> ignore @@ Nx.cast Nx.complex64 (Nx.isinf (m ())));
+      ("Nx.fft", fun () -> ignore @@ Nx.fft (m ()));
+      ("Nx.ifft", fun () -> ignore @@ Nx.ifft ~norm:Ortho (m ()));
+      ("Nx.irfft", fun () -> ignore @@ Nx.cast Nx.complex64 (Nx.irfft Nx.float32 (m ())));
+      ("Nx.istft", fun () -> ignore @@
+          Nx.cast Nx.complex64 (Nx.istft Nx.float32 ~window:2 ~step:1 (m ())));
+      ("Nx.complex", fun () -> ignore @@
+          Nx.complex Nx.complex64 ~re:(dead Nx.float32 [| 2 |])
+            ~im:(ones Nx.float32 [| 2 |]));
+    ]
+
+(* The functions of integers. *)
+let integers =
+  let dt = Nx.int32 in
+  let v () = dead dt [| 4 |] in
+  let c (by, f) = (by, D.name dt, f) in
+  List.map c
+    [
+      ("Nx.bitwise_not", fun () -> ignore @@ Nx.bitwise_not (v ()));
+      ("Nx.bitwise_and", fun () -> ignore @@ Nx.bitwise_and (v ()) (ones dt [| 4 |]));
+      ("Nx.lshift", fun () -> ignore @@ Nx.lshift (v ()) 1);
+      ("Nx.rshift", fun () -> ignore @@ Nx.rshift (v ()) 1);
+      ("Nx.mod_", fun () -> ignore @@ Nx.mod_ (v ()) (ones dt [| 4 |]));
+      ("Nx.positions", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.positions ~size:4 (v ())));
+      ("Nx.one_hot", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.one_hot ~num_classes:2 (v ())));
+      ("Nx.unique", fun () -> ignore @@ Nx.cast Nx.int32 (Nx.unique (v ())).ids);
+    ]
+
+let dead_cases =
+  List.concat
+    [
+      any_dtype Nx.float64; any_dtype Nx.float16; any_dtype Nx.complex64;
+      any_dtype Nx.int32; floats Nx.float64; floats Nx.float16;
+      routines Nx.float64; routines Nx.complex64; complexes; integers;
+    ]
+
+(* Each case's name, its function's and dtype's, with its rank among their
+   cases past the first. *)
+let named_cases =
+  let seen = Hashtbl.create 64 in
+  List.map
+    (fun (by, dt, run) ->
+      let key = (by, dt) in
+      let k = Option.value (Hashtbl.find_opt seen key) ~default:0 + 1 in
+      Hashtbl.replace seen key k;
+      let name =
+        if k = 1 then Printf.sprintf "%s, %s" by dt
+        else Printf.sprintf "%s, %s, case %d" by dt k
+      in
+      (name, by, run))
+    dead_cases
+
+let test_dead_names =
+  cases
+    ~name:(fun (name, _, _) -> name)
+    "a dead operand names the function called" named_cases
+    (fun (_, by, run) -> names_itself (by, run))
+
 let () =
   exit
     (run "nx donate"
@@ -635,6 +942,9 @@ let () =
              test "a value of every set is not donated" test_left_alone;
              test "a donor dies at a consumer an interpretation receives"
                test_dies_when_received;
+             test "a donor dies naming the function the user called"
+               test_dies_at_the_call;
+             test_dead_names;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;

@@ -949,6 +949,22 @@ let test_composites_named () =
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Nuc a);
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two a)
 
+(* A donated operand that another operation consumed is dead: a composite
+   names itself, whatever function it computes through. *)
+let test_dead_named () =
+  let dead dt s v =
+    let x = Nx.create dt s (Array.make (Array.fold_left ( * ) 1 s) v) in
+    ignore (Nx.neg (Nx.donate x));
+    x
+  in
+  let square () = dead Nx.float64 [| 2; 2 |] 1. in
+  invalid_by ~by:"Nx.cholesky" (fun () ->
+      Nx.cholesky ~triangle:Upper (square ()));
+  invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh ~triangle:Upper (square ()));
+  invalid_by ~by:"Nx.solve_triangular" (fun () ->
+      Nx.solve_triangular ~transpose:Transpose (Nx.eye Nx.complex64 2)
+        (dead Nx.complex64 [| 2; 1 |] Complex.one))
+
 let () =
   exit
     (run "nx linalg"
@@ -996,5 +1012,6 @@ let () =
            [
              test "each refusal names its function" test_refusals;
              test "a composite names its function" test_composites_named;
+             test "a dead operand names the function called" test_dead_named;
            ];
        ])

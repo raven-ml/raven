@@ -243,11 +243,13 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!sliding_window}), spends its handle and passes a new one to its result,
     whether it makes a view or a copy; the deaths wait for the final consumer. A spent
     handle raises naming the movement that spent it. Any other operation
-    consumes its handles. Two handles of one donor or over one memory reaching
-    one operation raise naming [Nx.donate]: the same handle twice, two donations
-    of one value, or a handle and one a movement passed on. The donor itself
-    beside one of its handles is not a second handle: the consumer reads it as
-    it was when called, so [add (donate x) x] is [x + x].
+    consumes its handles. A function that computes through others, as {!trace}
+    sums a diagonal, is the consumer the deaths name. Two handles of one donor
+    or over one memory reaching one operation raise naming [Nx.donate]: the
+    same handle twice, two donations of one value, or a handle and one a
+    movement passed on. The donor itself beside one of its handles is not a
+    second handle: the consumer reads it as it was when called, so
+    [add (donate x) x] is [x + x].
 
     An operation checks every operand before it consumes any, so in sequence a
     refused operation kills nothing. On any number of domains, no operation
@@ -2750,7 +2752,9 @@ val map_segments :
     Raises [Invalid_argument] if [segments] is negative, [x] has fewer axes
     than [ids] or its leading axes do not broadcast to [ids]', [ids] or [x] is
     split along another axis or in another number of windows, or [f]'s result
-    does not have shape [[| g; c; … |]]. *)
+    does not have shape [[| g; c; … |]]. What [f] raises reaches the caller
+    as raised, and the operations [f] makes are named by the functions it
+    calls. *)
 
 (** {1:devices Device sets and placement}
 
@@ -3757,7 +3761,10 @@ val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
     Every misuse raises [Invalid_argument] whose message is the function the
     user called, a colon, the reason and, where they matter, the operands as
     [dtype shape on set], as in
-    [Nx.add: shapes [2; 3] and [4] do not broadcast]. A lost device
+    [Nx.add: shapes [2; 3] and [4] do not broadcast]. The function is the one
+    the user called whatever functions it computes through. A function the
+    user gives, as {!init}'s [f] or an interpretation's rule, keeps its own
+    errors: what it raises reaches the caller as raised. A lost device
     raises {!Rig.Lost}, and a device's memory that runs out
     {!Rig.Out_of_memory}. Host memory that runs out raises OCaml's
     [Out_of_memory]. *)
@@ -4194,6 +4201,12 @@ module Prim : sig
   (** [interpret ~name reach rule f] is [f i], [i] a new interpretation that
       gives the operations it reaches the meaning [rule i ~by op], live until
       [f] returns or raises. [name] names it in messages, as ["Rune.grad"].
+      [by] is the function the user called, whatever functions that one
+      computes through: each operation of {!trace} reaches [rule] as
+      ["Nx.trace"]. [rule] is the user's function: the operations it makes are
+      named by the functions it calls, and what it raises reaches the caller
+      as raised.
+
 
       An operation [rule] receives is the final consumer of the donated
       handles among its operands ({!Nx.donate}), a movement too, since its

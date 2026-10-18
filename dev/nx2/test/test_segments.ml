@@ -559,6 +559,23 @@ let test_map_errors () =
       let split = Nx.place (S2.split ~axis:1) in
       Nx.map_segments ~segments:2 (Nx.zeros Nx.int64 [| 2; 2 |]) (fun _ r -> r) (split (Nx.zeros Nx.float32 [| 2; 2 |])))
 
+(* [f] is the user's function: a refusal of an nx function it calls reaches
+   the caller as raised, and what it donates dies naming the function it
+   called. *)
+let test_map_callback () =
+  let ids = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
+  let x = Nx.zeros Nx.float32 [| 2; 2 |] in
+  invalid ~by:"Nx.reshape" (fun () ->
+      Nx.map_segments ~segments:2 ids (fun _ r -> Nx.reshape [| 3 |] r) x);
+  let t = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let f _ r =
+    ignore (Nx.neg (Nx.donate t));
+    r
+  in
+  ignore (Nx.map_segments ~segments:2 ids f x);
+  raises_match (Exn.invalid_arg ~substring:"Nx.copy: operand 1 was donated to Nx.neg")
+    (fun () -> Nx.copy t)
+
 let maps =
   group "map_segments"
     [
@@ -569,6 +586,7 @@ let maps =
         test_map_split;
       test "the doc's scaled rows" test_map_doc;
       test "misuse raises" test_map_errors;
+      test "f keeps the names of the functions it calls" test_map_callback;
     ]
 
 (* A donated operand that another operation consumed is dead: each function

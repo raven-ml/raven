@@ -166,21 +166,19 @@ let const ~by dt v =
   | e -> e
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
-(* [f ()] with an [Invalid_argument] from the array layer renamed [by]: its
-   message without the layer's function. *)
-let renamed ~by f =
-  try f ()
-  with Invalid_argument e ->
-    let reason =
-      match String.index_opt e ':' with
-      | Some i -> String.trim (String.sub e (i + 1) (String.length e - i - 1))
-      | None -> e
-    in
-    invalid_argf "%s: %s" by reason
+(* The C-order layout of shape [s], for [by]: a negative extent, which nx's
+   creations refuse, raises naming [by], and any other refusal of the array
+   layer follows [by]. *)
+let contiguous ~by s =
+  if Array.exists (fun e -> e < 0) s then
+    invalid_argf "%s: shape %a has a negative extent" by pp_shape s;
+  match Nx_array.Layout.contiguous s with
+  | l -> l
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
 let fill ~by dt shape v =
   let prog = P.of_node ~ins:[||] (Const (D.Any dt, bits ~by dt v)) in
-  let layout = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let layout = contiguous ~by shape in
   let x, () =
     Eval.eval ~by
       (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
@@ -198,9 +196,11 @@ let beside ~by x c =
   | None -> c
   | Some p -> Eval.eval ~by (Value.Place (p, c))
 
-let full_like x v = beside ~by:"Nx.full_like" x (fill ~by:"Nx.full_like" (dtype x) (shape x) v)
-let zeros_like x = beside ~by:"Nx.zeros_like" x (fill ~by:"Nx.zeros_like" (dtype x) (shape x) (D.zero (dtype x)))
-let ones_like x = beside ~by:"Nx.ones_like" x (fill ~by:"Nx.ones_like" (dtype x) (shape x) (D.one (dtype x)))
+(* [v] in [x]'s dtype and shape, where [x] lies. *)
+let like ~by x v = beside ~by x (fill ~by (dtype x) (shape x) v)
+let full_like x v = like ~by:"Nx.full_like" x v
+let zeros_like x = like ~by:"Nx.zeros_like" x (D.zero (dtype x))
+let ones_like x = like ~by:"Nx.ones_like" x (D.one (dtype x))
 
 (* The 0-d [v] of [dt] beside [x]. A 0-d value has no axis to cut: beside a
    cut [x] it is whole on each of [x]'s devices. *)
@@ -227,7 +227,7 @@ let i64 n = E.const D.Int64 (Int64.of_int n)
 (* The value of [dt] and [shape] whose element at each index is [out], an
    expression of no operand, reading the index through [Coord]. *)
 let leaf (type v s) ~by (dt : (v, s) D.t) shape (out : (v, s) E.t) =
-  let layout = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let layout = contiguous ~by shape in
   let prog = P.of_exprs ~ins:[||] [| E.any out |] in
   let x, () =
     Eval.eval ~by
@@ -253,8 +253,7 @@ let int_bounds (type v s) (dt : (v, s) D.t) =
   | D.Float8_e5m2 | D.Float4_e2m1fn | D.Complex128 | D.Complex64 ->
       None
 
-let arange dt start stop step =
-  let by = "Nx.arange" in
+let arange_by ~by dt start stop step =
   if step = 0 then invalid_argf "%s: step 0" by;
   let n =
     if (step > 0 && stop <= start) || (step < 0 && stop >= start) then 0
@@ -278,6 +277,8 @@ let arange dt start stop step =
            [ start; last ]);
   let int64 n = E.const D.Int64 (Int64.of_int n) in
   leaf ~by dt [| n |] E.(cast dt ((coord 0 * int64 step) + int64 start))
+
+let arange dt start stop step = arange_by ~by:"Nx.arange" dt start stop step
 
 (* [start + i step] for the index [i], by one fused multiply-add at float64. *)
 let ramp ~start ~step =
@@ -328,12 +329,22 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
 
 let on_host a : (_, _, host) t = Repr.of_array Host.v a
 
-let create dt shape vs =
-  renamed ~by:"Nx.create" (fun () -> on_host (Nx_array.of_array dt shape vs))
+(* The host value of [dt] and shape [s] holding [vs], for [by]: a shape or a
+   value count {!create} refuses raises naming [by], and the array layer's
+   other refusals, an [int] outside [dt]'s range among them, follow [by]. *)
+let of_values ~by dt s vs =
+  let n = Nx_array.Layout.numel (contiguous ~by s) in
+  if Array.length vs <> n then
+    invalid_argf "%s: %d values for shape %a" by (Array.length vs) pp_shape s;
+  match Nx_array.of_array dt s vs with
+  | a -> on_host a
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+
+let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
 let init dt shape f =
   let by = "Nx.init" in
-  let l = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let l = contiguous ~by shape in
   let r = Array.length shape in
   (* Each index in C order: the last axis runs fastest. *)
   let index j =
@@ -345,7 +356,7 @@ let init dt shape f =
     i
   in
   let vs = Array.init (Nx_array.Layout.numel l) (fun j -> f (index j)) in
-  renamed ~by (fun () -> on_host (Nx_array.of_array dt shape vs))
+  of_values ~by dt shape vs
 
 let dtype_of_kind (type v s) (k : (v, s) Bigarray.kind) : (v, s) D.t =
   match k with
@@ -431,7 +442,8 @@ let binary ~by k a b =
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
 let sub a b = binary ~by:"Nx.sub" (Binary Sub) a b
-let mul a b = binary ~by:"Nx.mul" (Binary Mul) a b
+let mul_by ~by a b = binary ~by (Binary Mul) a b
+let mul a b = mul_by ~by:"Nx.mul" a b
 
 (* Integers divide by [Idiv]; floats and complex numbers by [Fdiv], whose
    refusal names booleans. *)
@@ -533,17 +545,21 @@ let ceil x = unary ~by:"Nx.ceil" Ceil x
 let round x = unary ~by:"Nx.round" Round x
 let trunc x = unary ~by:"Nx.trunc" Trunc x
 
-let cast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
+let cast_by (type v s w r d) ~by (dt : (w, r) D.t) (x : (v, s, d) t) :
+    (w, r, d) t =
   match D.equal_witness (dtype x) dt with
   | Some Type.Equal -> x
-  | None -> Eval.apply1 ~by:"Nx.cast" Cast dt x
+  | None -> Eval.apply1 ~by Cast dt x
+
+let cast dt x = cast_by ~by:"Nx.cast" dt x
 
 let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   match D.equal_witness (dtype x) dt with
   | Some Type.Equal -> x
   | None -> Eval.eval ~by:"Nx.bitcast" (Value.Bitcast (dt, x))
 
-let copy x = Eval.eval ~by:"Nx.copy" (Value.Copy x)
+let copy_by ~by x = Eval.eval ~by (Value.Copy x)
+let copy x = copy_by ~by:"Nx.copy" x
 let donate x = Exec.donate ~by:"Nx.donate" x
 
 (* Shapes, broadcasting and movements *)
@@ -679,8 +695,7 @@ let squeeze ?axes:l x =
   let kept = List.filteri (fun i _ -> not drop.(i)) (Array.to_list s) in
   reshaped ~by (Array.of_list kept) x
 
-let unsqueeze ~axes:l x =
-  let by = "Nx.unsqueeze" in
+let unsqueeze_by ~by ~axes:l x =
   let s = shape x in
   let r = Array.length s + List.length l in
   let added = Array.make r false in
@@ -698,6 +713,8 @@ let unsqueeze ~axes:l x =
     (fun k i -> s'.(i) <- s.(k))
     (List.filter (fun i -> not added.(i)) (List.init r Fun.id));
   reshaped ~by s' x
+
+let unsqueeze ~axes x = unsqueeze_by ~by:"Nx.unsqueeze" ~axes x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
   let by = "Nx.flatten" in
@@ -732,8 +749,7 @@ let transpose ?axes:l x =
           pp_value x;
       permute ~by (Array.of_list (axes ~by x l)) x
 
-let moveaxis a b x =
-  let by = "Nx.moveaxis" in
+let moveaxis_by ~by a b x =
   let a = axis ~by x a and b = axis ~by x b in
   let rest = List.filter (( <> ) a) (List.init (ndim x) Fun.id) in
   let p =
@@ -741,6 +757,8 @@ let moveaxis a b x =
     @ (a :: List.filteri (fun i _ -> i >= b) rest)
   in
   permute ~by (Array.of_list p) x
+
+let moveaxis a b x = moveaxis_by ~by:"Nx.moveaxis" a b x
 
 let swapaxes a b x =
   let by = "Nx.swapaxes" in
@@ -756,8 +774,7 @@ let whole d : Nx_array.Move.range = { start = 0; count = d; step = 1 }
 (* The region of all of a value of shape [s]. *)
 let all_of s = Iarray.init (Array.length s) (fun a -> whole s.(a))
 
-let flip ?axes:l x =
-  let by = "Nx.flip" in
+let flip_by ~by ?axes:l x =
   let s = shape x in
   let flipped =
     match l with
@@ -773,13 +790,17 @@ let flip ?axes:l x =
   in
   sliced ~by (Array.mapi range s) x
 
-let sliding_window ?axis:(a = -1) ~window ?(step = 1) x =
-  let by = "Nx.sliding_window" in
+let flip ?axes x = flip_by ~by:"Nx.flip" ?axes x
+
+let sliding_window_by ~by ?axis:(a = -1) ~window ?(step = 1) x =
   let axis = axis ~by x a in
   if window < 1 || step < 1 then
     invalid_argf "%s: window %d and step %d over %a; give at least 1" by window
       step pp_value x;
   move ~by (Window [| { axis; size = window; step; dilation = 1 } |]) x
+
+let sliding_window ?axis ~window ?step x =
+  sliding_window_by ~by:"Nx.sliding_window" ?axis ~window ?step x
 
 let split ~axis:a n x =
   let by = "Nx.split" in
@@ -807,8 +828,7 @@ let region s axis start count =
       if a <> axis then whole s.(a)
       else { Nx_array.Move.start; count; step = 1 })
 
-let concatenate ~axis:a xs =
-  let by = "Nx.concatenate" in
+let concatenate_by ~by ~axis:a xs =
   match xs with
   | [] -> invalid_argf "%s: no values" by
   | x0 :: _ ->
@@ -834,6 +854,8 @@ let concatenate ~axis:a xs =
       let s' = Array.copy s0 in
       s'.(a) <- !total;
       assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
+
+let concatenate ~axis xs = concatenate_by ~by:"Nx.concatenate" ~axis xs
 
 let stack ?axis:(a = 0) xs =
   let by = "Nx.stack" in
@@ -889,7 +911,7 @@ let roll ?axis:along k x =
   let k = if d = 0 then 0 else k mod d in
   let k = if k < 0 then k + d else k in
   let rolled =
-    if k = 0 then copy y
+    if k = 0 then copy_by ~by y
     else
       let part start count = move ~by (Slice (region s a start count)) y in
       assemble ~by (dtype y) s
@@ -1142,8 +1164,7 @@ let take_axis ~by axis p y =
   in
   if Prim.has_shape g s' then g else reshaped ~by s' g
 
-let slice idx x =
-  let by = "Nx.slice" in
+let slice_by ~by idx x =
   let picks = picks ~by idx x in
   let s = shape x in
   let ranges = Array.map whole s in
@@ -1181,6 +1202,8 @@ let slice idx x =
   let s' = selection x picks in
   if Prim.has_shape y s' then y else reshaped ~by s' y
 
+let slice idx x = slice_by ~by:"Nx.slice" idx x
+
 let get p x =
   let by = "Nx.get" in
   let s = shape x in
@@ -1200,11 +1223,13 @@ let get p x =
     (Reshape (Iarray.of_array (Array.sub s k (Array.length s - k))))
     (sliced ~by ranges x)
 
-let take ?axis:along p x =
-  let by = "Nx.take" in
+let take_by ~by ?axis:along p x =
   match along with
   | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
   | Some a -> take_axis ~by (axis ~by x a) p x
+
+let take ?axis p x = take_by ~by:"Nx.take" ?axis p x
+
 
 (* [x] read along [a] at the positions [p] of [x]'s rank, for the function
    [by]. *)
@@ -1520,14 +1545,16 @@ let reduce (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
 
 (* [y], reduced from a value of shape [s] along [axes], with each reduced axis
    kept of extent 1 where [keepdims]. *)
-let kept ~keepdims s axes y =
+let kept ~by ~keepdims s axes y =
   if not keepdims then y
-  else reshape (Array.mapi (fun a n -> if Iarray.mem a axes then 1 else n) s) y
+  else
+    let unit a n = if Iarray.mem a axes then 1 else n in
+    reshaped ~by (Array.mapi unit s) y
 
 let reduction ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
   let axes = reduced_axes ~by x axes in
-  kept ~keepdims s axes (reduce ~by m (dtype x) axes x)
+  kept ~by ~keepdims s axes (reduce ~by m (dtype x) axes x)
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
 let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
@@ -1571,7 +1598,8 @@ let einsum ?sizes ?acc p xs =
   let acc = Option.map (fun dt -> D.Any dt) acc in
   Contraction.einsum ~by:"Nx.einsum" ?sizes ?acc p xs
 
-let matmul a b = Contraction.matmul ~by:"Nx.matmul" a b
+let matmul_by ~by a b = Contraction.matmul ~by a b
+let matmul a b = matmul_by ~by:"Nx.matmul" a b
 
 (* Compositions *)
 
@@ -1745,7 +1773,8 @@ let predicate (type v s d) ~by
   | D.Signed | D.Unsigned | D.Boolean ->
       beside ~by x (fill ~by D.Bool (shape x) other)
 
-let isinf x = predicate ~by:"Nx.isinf" (fun dt x -> infinite dt x) Or false x
+let isinf_by ~by x = predicate ~by (fun dt x -> infinite dt x) Or false x
+let isinf x = isinf_by ~by:"Nx.isinf" x
 let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true x
 
 (* Float functions *)
@@ -1943,16 +1972,15 @@ let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
           E.(cast D.Int64 (cast D.Bool (operand 0 x)))
       in
       match (m : Nx_kernel.monoid) with
-      | Max -> not_equal_s n 0L
-      | _ -> equal_s n 0L
+      | Max -> compared ~by (Compare Not_equal) n 0L
+      | _ -> compared ~by (Compare Equal) n 0L
   in
-  kept ~keepdims s axes y
+  kept ~by ~keepdims s axes y
 
 let all ?axes ?keepdims x = truth ~by:"Nx.all" Min ?axes ?keepdims x
 let any ?axes ?keepdims x = truth ~by:"Nx.any" Max ?axes ?keepdims x
 
-let count ?axes ?(keepdims = false) m =
-  let by = "Nx.count" in
+let count_by ~by ?axes ?(keepdims = false) m =
   let s = shape m in
   let axes = reduced_axes ~by m axes in
   let y, () =
@@ -1960,7 +1988,9 @@ let count ?axes ?(keepdims = false) m =
       Value.[ Monoid (Sum, 0, D.Int64) ]
       (E.cast D.Int64 (operand 0 m))
   in
-  kept ~keepdims s axes y
+  kept ~by ~keepdims s axes y
+
+let count ?axes ?keepdims m = count_by ~by:"Nx.count" ?axes ?keepdims m
 
 (* The first position of the extreme [e] along [axis], or among all the elements
    in C order. *)
@@ -1968,7 +1998,7 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
   let s = shape x in
   let x, a =
     match along with
-    | None -> (reshape [| numel x |] x, 0)
+    | None -> (reshaped ~by [| numel x |] x, 0)
     | Some a -> (x, axis ~by x a)
   in
   let (_, i), () =
@@ -1978,8 +2008,8 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
   in
   match along with
   | None ->
-      if keepdims then reshape (Array.map (fun _ -> 1) s) i else reshape [||] i
-  | Some _ -> kept ~keepdims s [| a |] i
+      reshaped ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
+  | Some _ -> kept ~by ~keepdims s [| a |] i
 
 let argmax ?axis ?keepdims x = arg ~by:"Nx.argmax" Max ?axis ?keepdims x
 let argmin ?axis ?keepdims x = arg ~by:"Nx.argmin" Min ?axis ?keepdims x
@@ -2042,7 +2072,8 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
   let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
-    cast dt (div (reduce ~by Sum acc axes x) count)
+    let sum = reduce ~by Sum acc axes x in
+    cast_by ~by dt (binary ~by (Binary (quotient acc)) sum count)
   in
   (* An integer mean of no term has no value, where the result has an
      element to hold it. *)
@@ -2057,15 +2088,16 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
     match D.kind dt with
     | D.Float ->
         let (Prim.Wide w) = Prim.wide dt in
-        within w (scalar w (Float.of_int n))
-    | D.Complex -> within dt (scalar dt { Complex.re = Float.of_int n; im = 0. })
+        within w (fill ~by w [||] (Float.of_int n))
+    | D.Complex ->
+        within dt (fill ~by dt [||] { Complex.re = Float.of_int n; im = 0. })
     | D.Signed -> integer D.Int64
     | D.Unsigned -> integer D.Uint64
     | D.Boolean ->
         invalid_argf "%s: %s is not an integer, float or complex dtype" by
           (D.name dt)
   in
-  kept ~keepdims s axes y
+  kept ~by ~keepdims s axes y
 
 (* The variance by the kernels' moments in [x]'s wide format, scaled by [n / (n
    - ddof)] and rooted where [root], then rounded once. *)
@@ -2083,7 +2115,7 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
       (operand 0 x)
   in
   let y =
-    if ddof = 0 && not root then cast dt v
+    if ddof = 0 && not root then cast_by ~by dt v
     else
       let e = operand 0 v in
       let scale = Float.of_int n /. Float.of_int (n - ddof) in
@@ -2091,7 +2123,7 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
       let e = if root then E.sqrt e else e in
       elementwise ~by dt [ Any v ] (E.cast dt e)
   in
-  kept ~keepdims s axes y
+  kept ~by ~keepdims s axes y
 
 let var ?axes ?keepdims ?ddof x =
   spread ~by:"Nx.var" ~root:false ?axes ?keepdims ?ddof x
@@ -2113,7 +2145,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let y =
     elementwise ~by dt [ Any l ] E.(cast dt (operand 0 l - log (const w n)))
   in
-  kept ~keepdims s axes y
+  kept ~by ~keepdims s axes y
 
 (* The affine maps [y -> a y + b] of the recurrence, composed by
    {!Pairwise.scan}: [(a1, b1)] then [(a2, b2)] is [(a1 a2, a2 b1 + b2)],
@@ -2130,7 +2162,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       let prog = P.of_exprs ~ins:[| D.Any w |] [| E.any a; E.any c |] in
       let layout = Nx_array.Layout.contiguous s in
       let a, (c, ()) =
-        let loads : _ Value.load iarray = [| Value.Plain (cast w x) |] in
+        let loads : _ Value.load iarray = [| Value.Plain (cast_by ~by w x) |] in
         Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ w; w ]; loads })
       in
       [| Value.Any a; Value.Any c |]
@@ -2142,7 +2174,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       E.[| any (a1 * a2); any (where infinite (b1 + b2) (fma a2 b1 b2)) |]
     in
     let y = Pairwise.scan Eval.eval ~by s axis combine terms in
-    cast dt (Prim.expect w y.(1))
+    cast_by ~by dt (Prim.expect w y.(1))
   in
   let (Prim.Wide w) = Prim.wide dt in
   go w
@@ -2152,7 +2184,9 @@ let ewma ?axis:along ~alpha x =
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
   match along with
-  | None -> reshape (shape x) (average ~by ~alpha 0 (reshape [| numel x |] x))
+  | None ->
+      let flat = reshaped ~by [| numel x |] x in
+      reshaped ~by (shape x) (average ~by ~alpha 0 flat)
   | Some a -> average ~by ~alpha (axis ~by x a) x
 
 (* Activations *)
@@ -2192,7 +2226,7 @@ let normalised (type s d) ~by
       let x = E.cast w (operand 0 x) in
       if scale = 1. then x else E.(x * const w scale)
     in
-    let lanes y = broadcast ~by s (kept ~keepdims:true s axes y) in
+    let lanes y = broadcast ~by s (kept ~by ~keepdims:true s axes y) in
     let m, () =
       reduce_by ~by s axes [ Any x ] Value.[ Monoid (Max, 0, w) ] scaled
     in
@@ -2216,21 +2250,16 @@ let log_softmax ?axes ?scale x =
 
 (* Complex parts *)
 
-let cast_by (type v s w r d) ~by (dt : (w, r) D.t) (x : (v, s, d) t) :
-    (w, r, d) t =
-  match D.equal_witness (dtype x) dt with
-  | Some Type.Equal -> x
-  | None -> Eval.apply1 ~by Cast dt x
-
-let real dt z =
-  let by = "Nx.real" in
+let real_by ~by dt z =
   let (Parts (_, part)) = parts ~by z in
   cast_by ~by dt (part 0)
 
-let imag dt z =
-  let by = "Nx.imag" in
+let imag_by ~by dt z =
   let (Parts (_, part)) = parts ~by z in
   cast_by ~by dt (part 1)
+
+let real dt z = real_by ~by:"Nx.real" dt z
+let imag dt z = imag_by ~by:"Nx.imag" dt z
 
 (* [body w re im] of [z]'s parts, computed in the wider of [dt] and the
    parts' format, then stored in [dt]. *)
@@ -2244,8 +2273,10 @@ let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
   let v = body w (at w (operand 0 re)) (at w (operand 1 im)) in
   elementwise ~by dt [ Any re; Any im ] (at dt v)
 
-let magnitude dt z =
-  of_parts ~by:"Nx.magnitude" dt z (fun w re im -> hypotenuse w re im)
+let magnitude_by ~by dt z =
+  of_parts ~by dt z (fun w re im -> hypotenuse w re im)
+
+let magnitude dt z = magnitude_by ~by:"Nx.magnitude" dt z
 
 let angle dt z = of_parts ~by:"Nx.angle" dt z (fun _ re im -> E.atan2 im re)
 
@@ -2266,8 +2297,7 @@ let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
    part's sign bit flipped in the value read as uint64, in the host's byte
    order; for complex128, the odd elements of its pairs of parts negated, in
    one map. Any other value is itself. *)
-let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
-  let by = "Nx.conjugate" in
+let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
   match dtype x with
   | D.Complex64 ->
       let sign = if Sys.big_endian then 0x8000_0000L else Int64.min_int in
@@ -2285,20 +2315,25 @@ let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
       Eval.eval ~by (Value.Bitcast (D.Complex128, y))
   | _ -> x
 
+let conjugate x = conjugate_by ~by:"Nx.conjugate" x
+
 (* Matrices *)
 
 let matrix ~by x =
   if ndim x < 2 then
     invalid_argf "%s: %a has fewer than two axes" by pp_value x
 
-let matrix_transpose x =
+let matrix_transpose_by ~by x =
   let r = ndim x in
   if r < 2 then x
   else
     let p = Array.init r Fun.id in
     p.(r - 2) <- r - 1;
     p.(r - 1) <- r - 2;
-    permute ~by:"Nx.matrix_transpose" p x
+    permute ~by p x
+
+let matrix_transpose x = matrix_transpose_by ~by:"Nx.matrix_transpose" x
+
 
 (* [x] where column - row holds [keep] against [k] over its last two axes, zero
    elsewhere: the last axis is the column, the one before it the row. *)
@@ -2355,21 +2390,22 @@ let trace ?(offset = 0) x =
    elsewhere: one assembly into the two axes merged, the diagonal every
    [m + 1]th element of them from its first. *)
 let on_diagonal ~by dt n m k piece =
-  ignore (renamed ~by (fun () -> Nx_array.Layout.contiguous [| n; m |]));
+  ignore (contiguous ~by [| n; m |]);
   let start = if k >= 0 then k else -k * m in
   let count = Prim.dim piece 0 in
   let along = { Nx_array.Move.start = (if count = 0 then 0 else start); count; step = m + 1 } in
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
   move ~by (Reshape [| n; m |]) flat
 
-let eye ?m ?(k = 0) dt n =
-  let by = "Nx.eye" in
+let eye_by ~by ?m ?(k = 0) dt n =
   let m = Option.value m ~default:n in
   let count =
     Stdlib.max 0
       (if k >= 0 then Stdlib.min n (m - k) else Stdlib.min (n + k) m)
   in
   on_diagonal ~by dt n m k (fill ~by dt [| count |] (D.one dt))
+
+let eye ?m ?k dt n = eye_by ~by:"Nx.eye" ?m ?k dt n
 
 let diag ?(k = 0) v =
   let by = "Nx.diag" in
@@ -2389,7 +2425,7 @@ let vdot a b =
       a pp_value b;
   let flat x = move ~by (Reshape [| numel x |]) x in
   Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
-    (conjugate (flat a)) (flat b)
+    (conjugate_by ~by (flat a)) (flat b)
 
 (* Linear algebra *)
 
@@ -2454,10 +2490,10 @@ let unit_lower ~by x =
 let magnitudes (type v s d) ~by (x : (v, s, d) t)
     (f : 'r. (float, 'r, d) t -> (float, 'r, d) t) : (v, s, d) t =
   match dtype x with
-  | D.Float32 -> f (abs x)
-  | D.Float64 -> f (abs x)
-  | D.Complex64 -> cast_by ~by D.Complex64 (f (magnitude D.Float32 x))
-  | D.Complex128 -> cast_by ~by D.Complex128 (f (magnitude D.Float64 x))
+  | D.Float32 -> f (unary ~by Abs x)
+  | D.Float64 -> f (unary ~by Abs x)
+  | D.Complex64 -> cast_by ~by D.Complex64 (f (magnitude_by ~by D.Float32 x))
+  | D.Complex128 -> cast_by ~by D.Complex128 (f (magnitude_by ~by D.Float64 x))
   | dt -> invalid_argf "%s: %s has no magnitudes" by (D.name dt)
 
 (* [a] and [b] with their leading axes broadcast, [b] as columns of [rows]
@@ -2484,16 +2520,17 @@ let columns ~by ~rows a b =
   in
   (along a, along b, back)
 
-let adjoint x = conjugate (matrix_transpose x)
+let adjoint ~by x = conjugate_by ~by (matrix_transpose_by ~by x)
 
 (* The routines read the lower triangle. The Hermitian matrix an upper one
    names is the one the lower triangle of [aᴴ] names. *)
-let lower_of triangle a = match triangle with Lower -> a | Upper -> adjoint a
+let lower_of ~by triangle a =
+  match triangle with Lower -> a | Upper -> adjoint ~by a
 
 let cholesky ?(triangle = Lower) a =
   let by = "Nx.cholesky" in
   square_matrices ~by a;
-  let a = lower_of triangle a in
+  let a = lower_of ~by triangle a in
   routine ~by (Cholesky { triangle; a })
 
 let qr ?(factors = Reduced) a =
@@ -2511,8 +2548,7 @@ let lu a =
   let u = triangle ~by `Above 0 (corner ~by k n f) in
   (perm, l, u)
 
-let svd ?(vectors = true) ?(factors = Reduced) a =
-  let by = "Nx.svd" in
+let svd_by ~by ?(vectors = true) ?(factors = Reduced) a =
   matrices ~by a;
   if vectors then
     let s, (u, vh) = routine ~by (Svd { vectors = Vectors factors; a }) in
@@ -2523,6 +2559,8 @@ let svd ?(vectors = true) ?(factors = Reduced) a =
     let u = uncomputed ~by a (Array.append lead [| dim (-2) a; 0 |]) in
     let vh = uncomputed ~by a (Array.append lead [| 0; dim (-1) a |]) in
     (u, s, vh)
+
+let svd ?vectors ?factors a = svd_by ~by:"Nx.svd" ?vectors ?factors a
 
 (* The [[…; n; 0]] vectors an eigenvalue routine did not compute. *)
 let no_vectors ~by a =
@@ -2537,14 +2575,15 @@ let eig ?(vectors = true) a =
     let w, () = routine ~by (Eig { vectors = No_vectors; dtype; a }) in
     (w, no_vectors ~by a)
 
-let eigh ?(vectors = true) ?(triangle = Lower) a =
-  let by = "Nx.eigh" in
+let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
   square_matrices ~by a;
-  let a' = lower_of triangle a in
+  let a' = lower_of ~by triangle a in
   if vectors then routine ~by (Eigh { vectors = Vectors (); a = a' })
   else
     let w, () = routine ~by (Eigh { vectors = No_vectors; a = a' }) in
     (w, no_vectors ~by a)
+
+let eigh ?vectors ?triangle a = eigh_by ~by:"Nx.eigh" ?vectors ?triangle a
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -2552,44 +2591,53 @@ let eigh ?(vectors = true) ?(triangle = Lower) a =
 let pivots ~by a =
   let f, steps, _ = routine ~by (Lu a) in
   let k = dim (-1) steps in
-  let moved = not_equal steps (arange D.Int64 0 k 1) in
-  let odd = equal_s (mod_s (count ~axes:[ -1 ] moved) 2L) 1L in
+  let moved =
+    comparison ~by (Compare Not_equal) steps (arange_by ~by D.Int64 0 k 1)
+  in
+  let interchanges = count_by ~by ~axes:[ -1 ] moved in
+  let odd =
+    compared ~by (Compare Equal)
+      (scalar_binary ~by (Binary Mod) interchanges 2L)
+      1L
+  in
   let signed x =
-    let zero = zeros_like x in
-    where (equal x zero) zero (where odd (neg x) x)
+    let zero = like ~by x (D.zero (dtype x)) in
+    let flipped = ternary ~by Where odd (unary ~by Neg x) x in
+    ternary ~by Where (comparison ~by (Compare Equal) x zero) zero flipped
   in
   (diagonal_by ~by f, signed)
 
 let det a =
   let by = "Nx.det" in
-  renamed ~by (fun () ->
-      square_matrices ~by a;
-      let d, signed = pivots ~by a in
-      signed (reduction ~by Prod ~axes:[ -1 ] d))
+  square_matrices ~by a;
+  let d, signed = pivots ~by a in
+  signed (reduction ~by Prod ~axes:[ -1 ] d)
 
 (* [z / |z|], zero where [z] is: a real's sign, a complex number's phase. *)
 let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
   match D.kind (dtype z) with
   | D.Complex ->
       let m = magnitudes ~by z Fun.id in
-      let zero = zeros_like z in
-      where (equal m zero) zero (div z m)
-  | D.Float | D.Signed | D.Unsigned | D.Boolean -> sign z
+      let zero = like ~by z (D.zero (dtype z)) in
+      let unit = binary ~by (Binary Fdiv) z m in
+      ternary ~by Where (comparison ~by (Compare Equal) m zero) zero unit
+  | D.Float | D.Signed | D.Unsigned | D.Boolean -> unary ~by Sign z
 
 let slogdet a =
   let by = "Nx.slogdet" in
-  renamed ~by (fun () ->
-      square_matrices ~by a;
-      let d, signed = pivots ~by a in
-      let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
-      (* A zero pivot beside an infinite one would sum to NaN. *)
-      let singular = equal sign (zeros_like sign) in
-      let logabs =
-        magnitudes ~by d (fun m ->
-            let l = reduction ~by Sum ~axes:[ -1 ] (log m) in
-            where singular (full_like l Float.neg_infinity) l)
-      in
-      (sign, logabs))
+  square_matrices ~by a;
+  let d, signed = pivots ~by a in
+  let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
+  (* A zero pivot beside an infinite one would sum to NaN. *)
+  let singular =
+    comparison ~by (Compare Equal) sign (like ~by sign (D.zero (dtype sign)))
+  in
+  let logabs =
+    magnitudes ~by d (fun m ->
+        let l = reduction ~by Sum ~axes:[ -1 ] (unary ~by Log m) in
+        ternary ~by Where singular (like ~by l Float.neg_infinity) l)
+  in
+  (sign, logabs)
 
 type transpose = Transpose | Adjoint
 
@@ -2611,7 +2659,7 @@ let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
     | None -> solved false b
     | Some Transpose when is_complex a ->
         (* [aᵀ x = b] is [aᴴ x̄ = b̄], and the kernel solves with [aᴴ]. *)
-        conjugate (solved true (conjugate b))
+        conjugate_by ~by (solved true (conjugate_by ~by b))
     | Some (Transpose | Adjoint) -> solved true b)
 
 (* [a]'s rows interchanged by {!lu}, then [L] and [U] solved in turn: the
@@ -2634,15 +2682,18 @@ let inv a =
   let by = "Nx.inv" in
   square_matrices ~by a;
   let n = dim (-1) a in
-  solve_by ~by a (broadcast ~by (shape a) (eye (dtype a) n))
+  solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
 
 (* Each singular value's reciprocal where it is above [tol] times its
    matrix's greatest, zero at or below, NaN where it is. *)
 let reciprocals ~by ~tol s =
   magnitudes ~by s (fun s ->
       let top = reduction ~by Max ~axes:[ -1 ] ~keepdims:true s in
-      let above = greater s (mul_s top tol) in
-      where (isnan s) s (where above (recip s) (zeros_like s)))
+      let cut = scalar_binary ~by (Binary Mul) top tol in
+      let above = comparison ~by (Compare Less) cut s in
+      let zero = like ~by s (D.zero (dtype s)) in
+      let kept = ternary ~by Where above (unary ~by Recip s) zero in
+      ternary ~by Where (comparison ~by (Compare Not_equal) s s) s kept)
 
 (* The cutoff of a singular value relative to its matrix's greatest, [rtol]
    (default the dtype's machine epsilon) times [max m n]. *)
@@ -2653,59 +2704,69 @@ let cutoff ~by rtol a =
   rtol *. Float.of_int (Stdlib.max (dim (-2) a) (dim (-1) a))
 
 (* [vh]ᴴ [diag d] [u]ᴴ: the matrices whose singular values are [d]. *)
-let resynthesise u d vh =
-  matmul (mul (adjoint vh) (unsqueeze ~axes:[ -2 ] d)) (adjoint u)
+let resynthesise ~by u d vh =
+  let scaled = mul_by ~by (adjoint ~by vh) (unsqueeze_by ~by ~axes:[ -2 ] d) in
+  matmul_by ~by scaled (adjoint ~by u)
 
 let lstsq ?rtol a b =
   let by = "Nx.lstsq" in
-  renamed ~by (fun () ->
-      matrices ~by a;
-      let m = dim (-2) a and n = dim (-1) a in
-      let tol = cutoff ~by rtol a in
-      let a', b', back = columns ~by ~rows:m a b in
-      let x, s, rank =
-        if Stdlib.min m n = 0 then
-          let lead = batch b' in
-          let zero dt s = beside ~by b' (fill ~by dt s (D.zero dt)) in
-          ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
-            zero (dtype a) (Array.append (batch a) [| 0 |]),
-            zero D.Int64 (batch a) )
-        else
-          let u, s, vh = svd a in
-          let d = reciprocals ~by ~tol s in
-          let kept = count ~axes:[ -1 ] (not_equal d (zeros_like d)) in
-          let failed = any ~axes:[ -1 ] (isnan s) in
-          let rank = where failed (full_like kept (-1L)) kept in
-          (* [V (Σ⁺ (Uᴴ b))] rounds less than [b] by the pseudoinverse. *)
-          let c = mul (unsqueeze ~axes:[ -1 ] d) (matmul (adjoint u) b') in
-          (matmul (adjoint vh) c, s, rank)
+  matrices ~by a;
+  let m = dim (-2) a and n = dim (-1) a in
+  let tol = cutoff ~by rtol a in
+  let a', b', back = columns ~by ~rows:m a b in
+  let x, s, rank =
+    if Stdlib.min m n = 0 then
+      let lead = batch b' in
+      let zero dt s = beside ~by b' (fill ~by dt s (D.zero dt)) in
+      ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
+        zero (dtype a) (Array.append (batch a) [| 0 |]),
+        zero D.Int64 (batch a) )
+    else
+      let u, s, vh = svd_by ~by a in
+      let d = reciprocals ~by ~tol s in
+      let nonzero =
+        comparison ~by (Compare Not_equal) d (like ~by d (D.zero (dtype d)))
       in
-      let r = sub b' (matmul a' x) in
-      let residuals =
-        magnitudes ~by r (fun r -> reduction ~by Sum ~axes:[ -2 ] (square r))
-      in
-      (back x, back residuals, rank, s))
+      let kept = count_by ~by ~axes:[ -1 ] nonzero in
+      let nan = comparison ~by (Compare Not_equal) s s in
+      let failed = truth ~by Max ~axes:[ -1 ] nan in
+      let rank = ternary ~by Where failed (like ~by kept (-1L)) kept in
+      (* [V (Σ⁺ (Uᴴ b))] rounds less than [b] by the pseudoinverse. *)
+      let ub = matmul_by ~by (adjoint ~by u) b' in
+      let c = mul_by ~by (unsqueeze_by ~by ~axes:[ -1 ] d) ub in
+      (matmul_by ~by (adjoint ~by vh) c, s, rank)
+  in
+  let r = binary ~by (Binary Sub) b' (matmul_by ~by a' x) in
+  let residuals =
+    magnitudes ~by r (fun r -> reduction ~by Sum ~axes:[ -2 ] (mul_by ~by r r))
+  in
+  (back x, back residuals, rank, s)
 
 let pinv ?rtol ?(hermitian = false) a =
   let by = "Nx.pinv" in
-  renamed ~by (fun () ->
-      if hermitian then square_matrices ~by a else matrices ~by a;
-      let m = dim (-2) a and n = dim (-1) a in
-      let tol = cutoff ~by rtol a in
-      if Stdlib.min m n = 0 then
-        let dt = dtype a in
-        beside ~by a
-          (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
-      else if hermitian then begin
-        let w, v = eigh a in
-        (* An eigenvalue's reciprocal keeps its sign: its magnitude decides. *)
-        let kept = reciprocals ~by ~tol w in
-        let w' = where (equal kept (zeros_like kept)) kept (recip w) in
-        matmul (mul v (unsqueeze ~axes:[ -2 ] w')) (adjoint v)
-      end
-      else
-        let u, s, vh = svd a in
-        resynthesise u (reciprocals ~by ~tol s) vh)
+  if hermitian then square_matrices ~by a else matrices ~by a;
+  let m = dim (-2) a and n = dim (-1) a in
+  let tol = cutoff ~by rtol a in
+  if Stdlib.min m n = 0 then
+    let dt = dtype a in
+    beside ~by a (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
+  else if hermitian then begin
+    let w, v = eigh_by ~by a in
+    (* An eigenvalue's reciprocal keeps its sign: its magnitude decides. *)
+    let kept = reciprocals ~by ~tol w in
+    let zero = like ~by kept (D.zero (dtype kept)) in
+    let w' =
+      ternary ~by Where
+        (comparison ~by (Compare Equal) kept zero)
+        kept (unary ~by Recip w)
+    in
+    let scaled = mul_by ~by v (unsqueeze_by ~by ~axes:[ -2 ] w') in
+    matmul_by ~by scaled (adjoint ~by v)
+  end
+  else
+    let u, s, vh = svd_by ~by a in
+    resynthesise ~by u (reciprocals ~by ~tol s) vh
+
 
 (* Norms *)
 
@@ -2717,16 +2778,19 @@ let pinv ?rtol ?(hermitian = false) a =
 let power_norm ~by p axes m =
   let sum x = reduction ~by Sum ~axes ~keepdims:true x in
   if List.exists (fun a -> dim a m = 0) axes then
-    if p > 0. then sum m else full_like (sum m) Float.infinity
+    if p > 0. then sum m else like ~by (sum m) Float.infinity
   else
     let k : Nx_kernel.monoid = if p > 0. then Max else Min in
     let c = reduction ~by k ~axes ~keepdims:true m in
-    let q = div m c in
+    let q = binary ~by (Binary Fdiv) m c in
+    let pow x e = scalar_binary ~by (Binary Pow) x e in
     let r =
-      if p = 2. then sqrt (sum (square q))
-      else pow_s (sum (pow_s q p)) (1. /. p)
+      if p = 2. then unary ~by Sqrt (sum (mul_by ~by q q))
+      else pow (sum (pow q p)) (1. /. p)
     in
-    where (logical_or (equal_s c 0.) (isinf c)) c (mul c r)
+    let infinite = isinf_by ~by c in
+    let held = logical ~by Or (compared ~by (Compare Equal) c 0.) infinite in
+    ternary ~by Where held c (mul_by ~by c r)
 
 (* The norm [p] of the vectors of the magnitudes [m] along [axes], kept as
    axes of one. *)
@@ -2736,8 +2800,11 @@ let vector ~by p axes m =
   if p = Float.infinity then reduction ~by Max ~axes ~keepdims:true m
   else if p = Float.neg_infinity then reduction ~by Min ~axes ~keepdims:true m
   else if p = 0. then
-    let nonzero = cast_by ~by (dtype m) (not_equal m (zeros_like m)) in
-    sum (where (isnan m) m nonzero)
+    let zero = like ~by m (D.zero (dtype m)) in
+    let nonzero =
+      cast_by ~by (dtype m) (comparison ~by (Compare Not_equal) m zero)
+    in
+    sum (ternary ~by Where (comparison ~by (Compare Not_equal) m m) m nonzero)
   else if p = 1. then sum m
   else power_norm ~by p axes m
 
@@ -2756,55 +2823,48 @@ let carried (type v s d) ~by (x : (v, s, d) t)
 
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
-  renamed ~by (fun () ->
-      let along =
-        match l with
-        | None -> List.init (ndim x) Fun.id
-        | Some l -> axes ~by x l
-      in
-      let y =
-        carried ~by x (fun x ->
-            magnitudes ~by x (fun m -> vector ~by ord along m))
-      in
-      if keepdims then y
-      else
-        let along = Iarray.of_list (List.sort compare along) in
-        reshaped ~by (Prim.reduced (shape x) along) y)
+  let along =
+    match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
+  in
+  let y =
+    carried ~by x (fun x -> magnitudes ~by x (fun m -> vector ~by ord along m))
+  in
+  if keepdims then y
+  else
+    let along = Iarray.of_list (List.sort compare along) in
+    reshaped ~by (Prim.reduced (shape x) along) y
 
 let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   let by = "Nx.matrix_norm" in
-  renamed ~by (fun () ->
-      matrix ~by x;
-      let r = ndim x - 2 and c = ndim x - 1 in
-      (* The greatest or least sum of a line's magnitudes, [summed] along
-         it. *)
-      let lines k summed chosen m =
-        reduction ~by k ~axes:[ chosen ] ~keepdims:true
-          (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
-      in
-      (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along
-         it. *)
-      let singular k x =
-        let _, s, _ = svd ~vectors:false x in
-        let s = unsqueeze ~axes:[ -1 ] s in
-        match k with
-        | `Sum -> reduction ~by Sum ~axes:[ r ] ~keepdims:true s
-        | `Max -> reduction ~by Max ~axes:[ r ] ~keepdims:true s
-        | `Min -> reduction ~by Min ~axes:[ r ] ~keepdims:true s
-      in
-      let norm x =
-        match ord with
-        | `Fro -> magnitudes ~by x (fun m -> power_norm ~by 2. [ r; c ] m)
-        | `One -> magnitudes ~by x (fun m -> lines Max r c m)
-        | `NegOne -> magnitudes ~by x (fun m -> lines Min r c m)
-        | `Inf -> magnitudes ~by x (fun m -> lines Max c r m)
-        | `NegInf -> magnitudes ~by x (fun m -> lines Min c r m)
-        | `Nuc -> singular `Sum x
-        | `Two -> singular `Max x
-        | `NegTwo -> singular `Min x
-      in
-      let y = carried ~by x norm in
-      if keepdims then y else reshaped ~by (batch x) y)
+  matrix ~by x;
+  let r = ndim x - 2 and c = ndim x - 1 in
+  (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
+  let lines k summed chosen m =
+    reduction ~by k ~axes:[ chosen ] ~keepdims:true
+      (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
+  in
+  (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
+  let singular k x =
+    let _, s, _ = svd_by ~by ~vectors:false x in
+    let s = unsqueeze_by ~by ~axes:[ -1 ] s in
+    match k with
+    | `Sum -> reduction ~by Sum ~axes:[ r ] ~keepdims:true s
+    | `Max -> reduction ~by Max ~axes:[ r ] ~keepdims:true s
+    | `Min -> reduction ~by Min ~axes:[ r ] ~keepdims:true s
+  in
+  let norm x =
+    match ord with
+    | `Fro -> magnitudes ~by x (fun m -> power_norm ~by 2. [ r; c ] m)
+    | `One -> magnitudes ~by x (fun m -> lines Max r c m)
+    | `NegOne -> magnitudes ~by x (fun m -> lines Min r c m)
+    | `Inf -> magnitudes ~by x (fun m -> lines Max c r m)
+    | `NegInf -> magnitudes ~by x (fun m -> lines Min c r m)
+    | `Nuc -> singular `Sum x
+    | `Two -> singular `Max x
+    | `NegTwo -> singular `Min x
+  in
+  let y = carried ~by x norm in
+  if keepdims then y else reshaped ~by (batch x) y
 
 (* Order *)
 
@@ -2926,7 +2986,7 @@ let rows_order ~by keys =
         let q = positions_of ~by (take_axis ~by 0 p (column ~by j keys)) in
         from (j - 1) (take_axis ~by 0 q p)
     in
-    if w = 0 then arange D.Int64 0 n 1
+    if w = 0 then arange_by ~by D.Int64 0 n 1
     else from (w - 2) (positions_of ~by (column ~by (w - 1) keys))
 
 let lexsort keys =
@@ -2970,7 +3030,7 @@ let search ~by side s v =
         elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
       in
       let j = arg ~by Max ~axis:1 ~keepdims:true differs in
-      reshaped ~by lead (take_along_axis ~axis:1 j c)
+      reshaped ~by lead (take_along ~by 1 j c)
   in
   let rec round i q =
     let c = compared (take_axis ~by 0 q ks) in
@@ -3035,7 +3095,7 @@ let unique ?size keys =
   let n = Prim.dim keys 0 in
   let p = rows_order ~by keys in
   let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
-  let i = arange D.Int64 0 n 1 in
+  let i = arange_by ~by D.Int64 0 n 1 in
   let before =
     take_axis ~by 0
       (elementwise ~by D.Int64 [ Any i ] E.(operand 0 i - i64 1))
@@ -3090,7 +3150,7 @@ let positions ?size c =
   in
   let total = reduce ~by Sum D.Int64 [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
-  let i = arange D.Int64 0 n 1 in
+  let i = arange_by ~by D.Int64 0 n 1 in
   (* An index of no count goes to its own position below zero, which writes
      nothing, so the targets are distinct. *)
   let starts =
@@ -3103,7 +3163,7 @@ let positions ?size c =
   let runs =
     scattered ~by ~unique:true Set starts i (fill ~by D.Int64 [| l |] (-1L))
   in
-  let starts = scan_along ~by Max 0 runs and j = arange D.Int64 0 l 1 in
+  let starts = scan_along ~by Max 0 runs and j = arange_by ~by D.Int64 0 l 1 in
   elementwise ~by D.Int64 [ Any starts; Any j; Any total ]
     E.(where (operand 1 j < operand 2 total) (operand 0 starts) (i64 n))
 
@@ -3243,7 +3303,7 @@ let array_equal a b =
 let map_item f x =
   let by = "Nx.map_item" in
   let vs = Array.map f (Nx_array.to_array (read ~by x)) in
-  renamed ~by (fun () -> on_host (Nx_array.of_array (dtype x) (shape x) vs))
+  of_values ~by (dtype x) (shape x) vs
 
 (* Windows and segments *)
 
@@ -3359,8 +3419,8 @@ let extract_patches ~kernel_size ~stride ~dilation ~padding x =
   in
   reshaped ~by s' (permute ~by taps_first y)
 
-let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
-  let by = "Nx.combine_patches" in
+let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
+    p =
   geometry ~by ~kernel_size ~stride ~dilation ~padding;
   let k = Array.length kernel_size in
   if Array.length output_size <> k then
@@ -3419,6 +3479,11 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   let (D.Any w) = summed dt in
   let y = cast_by ~by w y in
   cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
+
+let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
+  combine_patches_by ~by:"Nx.combine_patches" ~output_size ~kernel_size ~stride
+    ~dilation ~padding p
+
 
 (* +0 of [x]'s dtype and of [shape], where [x] lies, or [w] for a constant
    [x]: a sum over no term. *)
@@ -3493,7 +3558,7 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
       Eval.eval ~by
         (Value.Reduce
            {
-             layout = renamed ~by (fun () -> Nx_array.Layout.contiguous loop);
+             layout = contiguous ~by loop;
              axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
              prog;
              reductions = Value.[ Monoid (Sum, 0, dt) ];
@@ -4143,7 +4208,7 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
   let w = permute ~by p (by_groups ~by groups w) in
   let taps_axes = List.init k (fun i -> 3 + i) in
-  let w = renamed ~by (fun () -> flip ~axes:taps_axes w) in
+  let w = flip_by ~by ~axes:taps_axes w in
   windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
@@ -4309,7 +4374,7 @@ let recorded (type d) ~tq ?mask ?score () =
    [paged] the key's position in its pool, then the captures [captures], each
    a number and a dtype. Its output is [score]'s cell, or the scaled score,
    where [mask]'s cell holds and the key is visible, and [-∞] elsewhere. *)
-let pair_program ~by ~rank ~scale ~paged st ~mask ~score captures =
+let pair_program ~rank ~scale ~paged st ~mask ~score captures =
   let nodes = ref [] and count = ref 0 in
   let add (n : P.node) =
     nodes := n :: !nodes;
@@ -4375,7 +4440,7 @@ let pair_program ~by ~rank ~scale ~paged st ~mask ~score captures =
   in
   let ins = Iarray.of_list (ins @ List.map snd captures) in
   let nodes = Iarray.of_list (List.rev !nodes) in
-  renamed ~by (fun () -> P.v ~ins nodes ~outs:[| out |])
+  P.v ~ins nodes ~outs:[| out |]
 
 let scores = Pattern.v "... (h g) i d, ... h j d -> ... h g i j | d"
 let weighted = Pattern.v "... (h g) i j, ... h j e -> ... h g i e | j"
@@ -4511,7 +4576,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   let cell (n, _, _) = n in
   let prog =
-    pair_program ~by ~rank:r ~scale ~paged:(Option.is_some positions) st
+    pair_program ~rank:r ~scale ~paged:(Option.is_some positions) st
       ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
@@ -4658,8 +4723,7 @@ let fft ?axes ?s ?norm x =
 let ifft ?axes ?s ?norm x =
   complex_by ~by:"Nx.ifft" Nx_kernel.Inverse ?axes ?s ?norm x
 
-let rfft dt ?axes ?s ?(norm = Backward) x =
-  let by = "Nx.rfft" in
+let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
   let x = resized ~by x axes sizes in
   let n = List.fold_left ( * ) 1 sizes in
@@ -4679,8 +4743,9 @@ let rfft dt ?axes ?s ?(norm = Backward) x =
   in
   cast_by ~by dt (scaled_parts ~by (factor norm ~forward:true n) y)
 
-let irfft dt ?axes ?s ?(norm = Backward) z =
-  let by = "Nx.irfft" in
+let rfft dt ?axes ?s ?norm x = rfft_by ~by:"Nx.rfft" dt ?axes ?s ?norm x
+
+let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   let default last d =
     if not last then d
     else if d = 0 then invalid_argf "%s: %a has no bin to invert" by pp_value z
@@ -4712,23 +4777,28 @@ let irfft dt ?axes ?s ?(norm = Backward) z =
   in
   cast_by ~by dt (scaled ~by (factor norm ~forward:false n) y)
 
+let irfft dt ?axes ?s ?norm z = irfft_by ~by:"Nx.irfft" dt ?axes ?s ?norm z
+
+
 (* Cosine and sine transforms, each from one complex transform along the last
    axis. *)
 
 type trig_type = Type_1 | Type_2 | Type_3 | Type_4
 
-let along_last x range =
-  slice (List.init (ndim x - 1) (fun _ -> A) @ [ range ]) x
+let along_last ~by x range =
+  slice_by ~by (List.init (ndim x - 1) (fun _ -> A) @ [ range ]) x
 
-let flipped x = flip ~axes:[ -1 ] x
+let flipped ~by x = flip_by ~by ~axes:[ -1 ] x
+let joined ~by xs = concatenate_by ~by ~axis:(-1) xs
 
 (* [x]'s last axis extended with [n] zeros. *)
 let extended_by ~by x n =
   let s = Array.copy (shape x) in
   s.(Array.length s - 1) <- n;
-  concatenate ~axis:(-1) [ x; fill ~by (dtype x) s (D.zero (dtype x)) ]
+  joined ~by [ x; fill ~by (dtype x) s (D.zero (dtype x)) ]
 
-let odd_bins x n = take ~axis:(-1) (arange D.Int64 1 (2 * n) 2) x
+let odd_bins ~by x n =
+  take_by ~by ~axis:(-1) (arange_by ~by D.Int64 1 (2 * n) 2) x
 
 (* The [n] elements of [dt] along one axis, [f k] at [k], computed at
    float64. *)
@@ -4741,7 +4811,7 @@ let scale_end ~by ~first c x =
   let k = Float.of_int (if first then 0 else n - 1) in
   let lit = E.const D.Float64 in
   let factors i = E.(where (i = lit k) (lit c) (lit 1.)) in
-  mul x (along_axis ~by (dtype x) n factors)
+  mul_by ~by x (along_axis ~by (dtype x) n factors)
 
 let rec cosine : type r c d.
     by:string ->
@@ -4752,31 +4822,31 @@ let rec cosine : type r c d.
     (float, r, d) t =
  fun ~by kind f c x ->
   let n = dim (-1) x in
-  let spectrum y = fft (cast c y) in
+  let spectrum y = complex_by ~by Nx_kernel.Forward (cast_by ~by c y) in
+  let last range = along_last ~by x range in
   match kind with
   | Type_1 ->
-      let interior = flipped (along_last x (R (1, n - 1))) in
-      let mirrored = concatenate ~axis:(-1) [ x; interior ] in
-      real f (along_last (spectrum mirrored) (R (0, n)))
+      let interior = flipped ~by (last (R (1, n - 1))) in
+      let mirrored = joined ~by [ x; interior ] in
+      real_by ~by f (along_last ~by (spectrum mirrored) (R (0, n)))
   | Type_2 ->
       (* [2 Re (X[k] e^(-iπk/2n))] of the even elements, then the odd ones
          reversed. *)
-      let even = along_last x (Rs (0, n, 2)) in
-      let odd = flipped (along_last x (Rs (1, n, 2))) in
-      let z = spectrum (concatenate ~axis:(-1) [ even; odd ]) in
+      let even = last (Rs (0, n, 2)) in
+      let odd = flipped ~by (last (Rs (1, n, 2))) in
+      let z = spectrum (joined ~by [ even; odd ]) in
       let step = Float.pi /. (2. *. Float.of_int n) in
       let theta =
         along_axis ~by f n (fun k -> E.(k * const D.Float64 step))
       in
-      let re = mul (real f z) (cos theta) and im = mul (imag f z) (sin theta) in
-      mul_s (add re im) 2.
+      let re = mul_by ~by (real_by ~by f z) (unary ~by Cos theta) in
+      let im = mul_by ~by (imag_by ~by f z) (unary ~by Sin theta) in
+      scalar_binary ~by (Binary Mul) (binary ~by (Binary Add) re im) 2.
   | Type_3 ->
-      let tail = flipped (along_last x (R (1, n))) in
-      let mirrored =
-        concatenate ~axis:(-1) [ extended_by ~by x ((2 * n) + 1); tail ]
-      in
-      real f (odd_bins (spectrum mirrored) n)
-  | Type_4 -> odd_bins (cosine ~by Type_2 f c (extended_by ~by x n)) n
+      let tail = flipped ~by (last (R (1, n))) in
+      let mirrored = joined ~by [ extended_by ~by x ((2 * n) + 1); tail ] in
+      real_by ~by f (odd_bins ~by (spectrum mirrored) n)
+  | Type_4 -> odd_bins ~by (cosine ~by Type_2 f c (extended_by ~by x n)) n
 
 let sine (type r c d) ~by kind (f : (float, r) D.t) (c : (Complex.t, c) D.t)
     (x : (float, r, d) t) : (float, r, d) t =
@@ -4786,16 +4856,18 @@ let sine (type r c d) ~by kind (f : (float, r) D.t) (c : (Complex.t, c) D.t)
     along_axis ~by f n (fun k ->
         E.(where (rem k (lit 2.) = lit 0.) (lit 1.) (lit (-1.))))
   in
+  let neg x = unary ~by Neg x in
   match kind with
   | Type_1 ->
       let s = Array.copy (shape x) in
       s.(Array.length s - 1) <- 1;
       let zero = fill ~by f s 0. in
-      let odd = concatenate ~axis:(-1) [ zero; x; zero; neg (flipped x) ] in
-      neg (imag f (along_last (fft (cast c odd)) (R (1, n + 1))))
-  | Type_2 -> flipped (cosine ~by Type_2 f c (mul x signs))
-  | Type_3 -> mul signs (cosine ~by Type_3 f c (flipped x))
-  | Type_4 -> flipped (cosine ~by Type_4 f c (mul x signs))
+      let odd = joined ~by [ zero; x; zero; neg (flipped ~by x) ] in
+      let z = complex_by ~by Nx_kernel.Forward (cast_by ~by c odd) in
+      neg (imag_by ~by f (along_last ~by z (R (1, n + 1))))
+  | Type_2 -> flipped ~by (cosine ~by Type_2 f c (mul_by ~by x signs))
+  | Type_3 -> mul_by ~by signs (cosine ~by Type_3 f c (flipped ~by x))
+  | Type_4 -> flipped ~by (cosine ~by Type_4 f c (mul_by ~by x signs))
 
 type family = Cosine | Sine
 
@@ -4813,53 +4885,52 @@ let ortho_ends ~by family kind ~input x =
 
 let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
     ?(norm = Backward) (x : (float, s, d) t) : (float, s, d) t =
-  renamed ~by (fun () ->
-      let axes, _ = transform_axes ~by x axes None in
-      if family = Cosine && type_ = Type_1 then
-        List.iter
-          (fun a ->
-            if dim a x = 1 then
-              invalid_argf "%s: type 1 along axis %d of one element" by a)
-          axes;
-      let kind =
-        match (inverse, type_) with
-        | true, Type_2 -> Type_3
-        | true, Type_3 -> Type_2
-        | _, k -> k
+  let axes, _ = transform_axes ~by x axes None in
+  if family = Cosine && type_ = Type_1 then
+    List.iter
+      (fun a ->
+        if dim a x = 1 then
+          invalid_argf "%s: type 1 along axis %d of one element" by a)
+      axes;
+  let kind =
+    match (inverse, type_) with
+    | true, Type_2 -> Type_3
+    | true, Type_3 -> Type_2
+    | _, k -> k
+  in
+  let length n =
+    match (family, type_) with
+    | Cosine, Type_1 -> 2 * (n - 1)
+    | Sine, Type_1 -> 2 * (n + 1)
+    | _ -> 2 * n
+  in
+  let ends ~input y =
+    match norm with
+    | Ortho -> ortho_ends ~by family kind ~input y
+    | Backward | Forward -> y
+  in
+  (* The transform at [f], through complex transforms at [c]. *)
+  let run : type r c.
+      (float, r) D.t -> (Complex.t, c) D.t -> (float, r, d) t -> (float, r, d) t
+      =
+   fun f c x ->
+    let along x a =
+      let y = ends ~input:true (moveaxis_by ~by a (-1) x) in
+      let y =
+        match family with
+        | Cosine -> cosine ~by kind f c y
+        | Sine -> sine ~by kind f c y
       in
-      let length n =
-        match (family, type_) with
-        | Cosine, Type_1 -> 2 * (n - 1)
-        | Sine, Type_1 -> 2 * (n + 1)
-        | _ -> 2 * n
-      in
-      let ends ~input y =
-        match norm with
-        | Ortho -> ortho_ends ~by family kind ~input y
-        | Backward | Forward -> y
-      in
-      (* The transform at [f], through complex transforms at [c]. *)
-      let run : type r c.
-          (float, r) D.t -> (Complex.t, c) D.t -> (float, r, d) t ->
-          (float, r, d) t =
-       fun f c x ->
-        let along x a =
-          let y = ends ~input:true (moveaxis a (-1) x) in
-          let y =
-            match family with
-            | Cosine -> cosine ~by kind f c y
-            | Sine -> sine ~by kind f c y
-          in
-          let scale = factor norm ~forward:(not inverse) (length (dim a x)) in
-          moveaxis (-1) a (scaled ~by scale (ends ~input:false y))
-        in
-        List.fold_left along x axes
-      in
-      if Array.exists (( = ) 0) (shape x) then copy x
-      else
-        (* At [x]'s compute format, rounded once to its dtype. *)
-        let (Formats (f, c)) = formats (dtype x) D.Complex64 in
-        cast_by ~by (dtype x) (run f c (cast_by ~by f x)))
+      let scale = factor norm ~forward:(not inverse) (length (dim a x)) in
+      moveaxis_by ~by (-1) a (scaled ~by scale (ends ~input:false y))
+    in
+    List.fold_left along x axes
+  in
+  if Array.exists (( = ) 0) (shape x) then copy_by ~by x
+  else
+    (* At [x]'s compute format, rounded once to its dtype. *)
+    let (Formats (f, c)) = formats (dtype x) D.Complex64 in
+    cast_by ~by (dtype x) (run f c (cast_by ~by f x))
 
 let dct ?type_ ?axes ?norm x =
   trigonometric ~by:"Nx.dct" Cosine ~inverse:false ?type_ ?axes ?norm x
@@ -4898,48 +4969,49 @@ let taper ~by dt ~window = function
 
 let stft dt ~window ?step ?win x =
   let by = "Nx.stft" in
-  renamed ~by (fun () ->
-      let step = frame_step ~window step in
-      if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
-      if window < 1 || step < 1 then
-        invalid_argf "%s: window %d, step %d" by window step;
-      if window > dim (-1) x then
-        invalid_argf "%s: window %d exceeds the last axis of %a" by window
-          pp_value x;
-      let w = taper ~by (dtype x) ~window win in
-      rfft dt (mul (sliding_window ~window ~step x) w))
+  let step = frame_step ~window step in
+  if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
+  if window < 1 || step < 1 then
+    invalid_argf "%s: window %d, step %d" by window step;
+  if window > dim (-1) x then
+    invalid_argf "%s: window %d exceeds the last axis of %a" by window pp_value
+      x;
+  let w = taper ~by (dtype x) ~window win in
+  let frames = sliding_window_by ~by ~window ~step x in
+  rfft_by ~by dt (mul_by ~by frames w)
 
 let istft dt ~window ?step ?win ?length z =
   let by = "Nx.istft" in
-  renamed ~by (fun () ->
-      let step = frame_step ~window step in
-      let r = ndim z in
-      if r < 2 then invalid_argf "%s: %a has fewer than two axes" by pp_value z;
-      if window < 1 then invalid_argf "%s: window %d" by window;
-      if step < 1 || step > window then
-        invalid_argf "%s: step %d is outside [1, %d]" by step window;
-      let bins = (window / 2) + 1 in
-      if dim (-1) z <> bins then
-        invalid_argf "%s: %a has not %d bins" by pp_value z bins;
-      (match length with
-      | Some l when l < 1 -> invalid_argf "%s: length %d" by l
-      | _ -> ());
-      let frames = dim (-2) z in
-      let points = ((frames - 1) * step) + window in
-      let w = taper ~by dt ~window win in
-      (* Overlap-add is the adjoint of taking the frames. *)
-      let added t =
-        combine_patches ~output_size:[| points |] ~kernel_size:[| window |]
-          ~stride:[| step |] ~dilation:[| 1 |] ~padding:[| (0, 0) |]
-          (matrix_transpose t)
-      in
-      let signal = added (mul (irfft dt ~s:[ window ] z) w) in
-      let envelope = added (broadcast ~by [| frames; window |] (square w)) in
-      (* Where every frame's taper is zero both are, and the sample is [0.]. *)
-      let zero = zeros_like envelope in
-      let safe = where (equal envelope zero) (ones_like envelope) envelope in
-      let y = div signal safe in
-      match length with None -> y | Some l -> resized ~by y [ r - 2 ] [ l ])
+  let step = frame_step ~window step in
+  let r = ndim z in
+  if r < 2 then invalid_argf "%s: %a has fewer than two axes" by pp_value z;
+  if window < 1 then invalid_argf "%s: window %d" by window;
+  if step < 1 || step > window then
+    invalid_argf "%s: step %d is outside [1, %d]" by step window;
+  let bins = (window / 2) + 1 in
+  if dim (-1) z <> bins then
+    invalid_argf "%s: %a has not %d bins" by pp_value z bins;
+  (match length with
+  | Some l when l < 1 -> invalid_argf "%s: length %d" by l
+  | _ -> ());
+  let frames = dim (-2) z in
+  let points = ((frames - 1) * step) + window in
+  let w = taper ~by dt ~window win in
+  (* Overlap-add is the adjoint of taking the frames. *)
+  let added t =
+    combine_patches_by ~by ~output_size:[| points |] ~kernel_size:[| window |]
+      ~stride:[| step |] ~dilation:[| 1 |] ~padding:[| (0, 0) |]
+      (matrix_transpose_by ~by t)
+  in
+  let signal = added (mul_by ~by (irfft_by ~by dt ~s:[ window ] z) w) in
+  let envelope = added (broadcast ~by [| frames; window |] (mul_by ~by w w)) in
+  (* Where every frame's taper is zero both are, and the sample is [0.]. *)
+  let silent =
+    comparison ~by (Compare Equal) envelope (like ~by envelope 0.)
+  in
+  let safe = ternary ~by Where silent (like ~by envelope 1.) envelope in
+  let y = binary ~by (Binary Fdiv) signal safe in
+  match length with None -> y | Some l -> resized ~by y [ r - 2 ] [ l ]
 
 (* Printing *)
 
