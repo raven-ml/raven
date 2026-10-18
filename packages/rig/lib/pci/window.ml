@@ -61,12 +61,6 @@ external write_at : int -> string -> int -> int -> bool -> unit
 external fill_at : int -> int -> int -> bool -> unit = "caml_rig_pci_fill"
 external barrier : unit -> unit = "caml_rig_pci_barrier" [@@noalloc]
 
-external bigarray_at :
-  int ->
-  int ->
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-  = "caml_rig_pci_bigarray"
-
 (* Through a transport: its C functions. Once it failed, a read gives all ones
    and a write is dropped. [transport_get tr a n] and [transport_set tr a n x]
    are one register of [n] bytes, 1, 4 or 8, its value in the low bytes. *)
@@ -191,10 +185,3 @@ let fill w off n c =
       end
     in
     go off n
-
-let bigarray w =
-  if not (mapped w) then
-    invalid_arg
-      "Window.bigarray: the window is reached through a transport and has no \
-       address in the process";
-  bigarray_at w.address w.length

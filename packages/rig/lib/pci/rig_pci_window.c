@@ -13,7 +13,6 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
-#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -345,12 +344,6 @@ value caml_rig_pci_barrier(value unit) {
   (void)unit;
   rig_pci_barrier();
   return Val_unit;
-}
-
-/* The bytes at an address as a bigarray that owns nothing. */
-value caml_rig_pci_bigarray(value a, value n) {
-  return caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
-                            1, (void *)Long_val(a), (intnat)Long_val(n));
 }
 
 /* Transports, from OCaml. A transport may block for a round trip, so its

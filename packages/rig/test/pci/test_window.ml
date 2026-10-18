@@ -287,26 +287,6 @@ let windows =
         (sub_address through);
     ]
 
-(* Bigarrays *)
-
-let test_bigarray () =
-  let w = Window.sub (mapped 0 16) 3 10 in
-  let b = Window.bigarray w in
-  equal ~msg:"length" int 10 (Bigarray.Array1.dim b);
-  Window.set8 w 0 0x41;
-  equal ~msg:"a store is in the bigarray" char 'A' b.{0};
-  b.{9} <- 'z';
-  equal ~msg:"the bigarray is the window" int (Char.code 'z') (Window.get8 w 9)
-
-let bigarrays =
-  group ~timeout:patience "bigarrays"
-    [
-      test "a mapped window's bigarray is its bytes" test_bigarray;
-      test "a far window has no bigarray" (fun () ->
-          raises_match Exn.invalid_arg (fun () ->
-              Window.bigarray (through 0 16)));
-    ]
-
 (* Long copies
 
    A copy of 8 KiB or more moves in pieces, with the runtime released for each,
@@ -579,4 +559,4 @@ let c_view =
 let () =
   exit
   @@ run "rig_pci.window"
-       [ same_bytes; windows; bigarrays; long; transports; c_view ]
+       [ same_bytes; windows; long; transports; c_view ]
