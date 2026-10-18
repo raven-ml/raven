@@ -504,185 +504,11 @@ let check t sizes devices =
 
 (* A description as bytes: the magic, the format's version, then the
    description. An integer is 64 bits, little-endian; a string or an array its
-   count, then its elements; a variant its tag, a byte, then its arguments. *)
+   count, then its elements; a record its fields in order; a variant its tag, a
+   byte, then its arguments. *)
 
 let magic = "rig.program\n"
 let version = 13
-
-module W = struct
-  let int b n = Buffer.add_int64_le b (Int64.of_int n)
-  let tag b n = Buffer.add_uint8 b n
-
-  let string b s =
-    int b (String.length s);
-    Buffer.add_string b s
-
-  let array f b a =
-    int b (Iarray.length a);
-    Iarray.iter (f b) a
-
-  let option f b = function
-    | None -> tag b 0
-    | Some x ->
-        tag b 1;
-        f b x
-
-  let leaf b = function
-    | Address { memory; on } ->
-        tag b 0;
-        int b memory;
-        int b on
-    | Handle m ->
-        tag b 1;
-        int b m
-    | Entry { image; name } ->
-        tag b 2;
-        int b image;
-        string b name
-    | Ready r ->
-        tag b 3;
-        int b r
-
-  let value b = function
-    | Fixed n ->
-        tag b 0;
-        int b n
-    | Int i ->
-        tag b 1;
-        int b i
-    | Leaf l ->
-        tag b 2;
-        leaf b l
-
-  let terms f b ts =
-    array
-      (fun b (x, factor) ->
-        f b x;
-        int b factor)
-      b ts
-
-  let data f b (d : _ data) =
-    string b d.bytes;
-    array
-      (fun b h ->
-        int b h.at;
-        tag b (match h.width with W32 -> 0 | W64 -> 1);
-        terms f b h.terms;
-        int b h.add;
-        int b h.shift)
-      b d.holes
-
-  let memory_kind b (k : B.kind) =
-    tag b (match k with Device -> 0 | Pinned -> 1 | Mapped -> 2)
-
-  let access b (a : Rig.access) =
-    tag b (match a with Read -> 0 | Read_write -> 1)
-
-  let ref b (r : ref) =
-    int b r.slot;
-    int b r.at;
-    tag b (match r.use with Read -> 0 | Write -> 1 | Unordered -> 2)
-
-  let memory b = function
-    | Alloc { device; kind; bytes; init; copies } ->
-        tag b 0;
-        int b device;
-        memory_kind b kind;
-        int b bytes;
-        data leaf b init;
-        tag b (match copies with One -> 0 | Two -> 1)
-    | Rail { rail; area } ->
-        tag b 1;
-        int b rail;
-        tag b (match area with Outbound -> 0 | Inbound -> 1 | Counts -> 2)
-
-  let view b (v : view) =
-    int b v.memory;
-    int b v.offset;
-    int b v.length
-
-  let slot b = function
-    | Memory v ->
-        tag b 0;
-        view b v
-    | Input i ->
-        tag b 1;
-        int b i
-    | Ints -> tag b 2
-
-  let triple b (x, y, z) =
-    value b x;
-    value b y;
-    value b z
-
-  let part b = function
-    | Words v ->
-        tag b 0;
-        view b v
-    | Fill { fill; params; refs } ->
-        tag b 1;
-        leaf b fill;
-        data value b params;
-        array ref b refs
-    | Copy { src; src_offset; dst; dst_offset; length } ->
-        tag b 2;
-        int b src;
-        terms value b src_offset;
-        int b dst;
-        terms value b dst_offset;
-        int b length
-    | Launch { image; name; params; refs; groups; threads; shared } ->
-        tag b 3;
-        int b image;
-        string b name;
-        data value b params;
-        array ref b refs;
-        triple b groups;
-        triple b threads;
-        value b shared
-
-  let rec step b = function
-    | Submit s ->
-        tag b 0;
-        int b s.device;
-        array part b s.parts;
-        array slot b s.slots;
-        array
-          (fun b (v, a) ->
-            view b v;
-            access b a)
-          b s.fixed
-    | Move { src; dst } ->
-        tag b 1;
-        slot b src;
-        slot b dst
-    | Loop { trips; trip; flag; body } ->
-        tag b 2;
-        value b trips;
-        option int b trip;
-        option
-          (fun b (s, at) ->
-            slot b s;
-            int b at)
-          b flag;
-        array step b body
-
-  let t b t =
-    array string b t.devices;
-    array memory b t.memory;
-    array
-      (fun b (i : image) ->
-        int b i.device;
-        data leaf b i.binary)
-      b t.images;
-    array
-      (fun b (i : input) ->
-        int b i.device;
-        int b i.bytes)
-      b t.inputs;
-    int b t.ints;
-    array step b t.steps
-end
 
 module R = struct
   exception Malformed of int * string
@@ -713,230 +539,465 @@ module R = struct
     let n = int r in
     if n < 0 || n > left r then fail r "a count of %d" n;
     n
+end
 
-  let string r =
-    let n = count r in
-    let s = String.sub r.s r.at n in
-    r.at <- r.at + n;
-    s
+(* Codecs: each type's bytes described once, as its writer and its reader. A
+   record is its fields in order ([record], [field], [finish]), a variant its
+   cases, tagged by their place in the list ([variant], [case]). *)
+module C = struct
+  type 'a t = { w : Buffer.t -> 'a -> unit; r : R.r -> 'a }
 
-  let array f r : _ iarray =
-    let n = count r in
-    if n = 0 then [||]
-    else begin
-      let a = Array.make n (f r) in
-      for i = 1 to n - 1 do
-        a.(i) <- f r
-      done;
-      Iarray.of_array a
-    end
+  let int =
+    { w = (fun b n -> Buffer.add_int64_le b (Int64.of_int n)); r = R.int }
 
-  let option f r =
-    match tag r with
-    | 0 -> None
-    | 1 -> Some (f r)
-    | n -> fail r "an option of tag %d" n
-
-  let bad r what n = fail r "%s of tag %d" what n
-
-  let leaf r =
-    match tag r with
-    | 0 ->
-        let memory = int r in
-        let on = int r in
-        Address { memory; on }
-    | 1 -> Handle (int r)
-    | 2 ->
-        let image = int r in
-        let name = string r in
-        Entry { image; name }
-    | 3 -> Ready (int r)
-    | n -> bad r "a leaf" n
-
-  let value r =
-    match tag r with
-    | 0 -> Fixed (int r)
-    | 1 -> Int (int r)
-    | 2 -> Leaf (leaf r)
-    | n -> bad r "a value" n
-
-  let width r = match tag r with 0 -> W32 | 1 -> W64 | n -> bad r "a width" n
-
-  let terms f r =
-    array
-      (fun r ->
-        let x = f r in
-        let factor = int r in
-        (x, factor))
-      r
-
-  let data f r =
-    let bytes = string r in
-    let holes =
-      array
-        (fun r ->
-          let at = int r in
-          let width = width r in
-          let terms = terms f r in
-          let add = int r in
-          let shift = int r in
-          { at; width; terms; add; shift })
-        r
+  let string =
+    let w b s =
+      int.w b (String.length s);
+      Buffer.add_string b s
     in
-    { bytes; holes }
-
-  let memory_kind r : B.kind =
-    match tag r with
-    | 0 -> Device
-    | 1 -> Pinned
-    | 2 -> Mapped
-    | n -> bad r "a memory kind" n
-
-  let access r : Rig.access =
-    match tag r with 0 -> Read | 1 -> Read_write | n -> bad r "an access" n
-
-  let ref r =
-    let slot = int r in
-    let at = int r in
-    let use =
-      match tag r with
-      | 0 -> Read
-      | 1 -> Write
-      | 2 -> Unordered
-      | n -> bad r "a use" n
+    let r (r : R.r) =
+      let n = R.count r in
+      let s = String.sub r.s r.at n in
+      r.at <- r.at + n;
+      s
     in
-    { slot; at; use }
+    { w; r }
 
-  let copies r = match tag r with 0 -> One | 1 -> Two | n -> bad r "copies" n
-
-  let memory r =
-    match tag r with
-    | 0 ->
-        let device = int r in
-        let kind = memory_kind r in
-        let bytes = int r in
-        let init = data leaf r in
-        let copies = copies r in
-        Alloc { device; kind; bytes; init; copies }
-    | 1 ->
-        let rail = int r in
-        let area =
-          match tag r with
-          | 0 -> Outbound
-          | 1 -> Inbound
-          | 2 -> Counts
-          | n -> bad r "an area" n
-        in
-        Rail { rail; area }
-    | n -> bad r "a memory" n
-
-  let view r =
-    let memory = int r in
-    let offset = int r in
-    let length = int r in
-    { memory; offset; length }
-
-  let slot r =
-    match tag r with
-    | 0 -> Memory (view r)
-    | 1 -> Input (int r)
-    | 2 -> Ints
-    | n -> bad r "a slot" n
-
-  let triple r =
-    let x = value r in
-    let y = value r in
-    let z = value r in
-    (x, y, z)
-
-  let part r =
-    match tag r with
-    | 0 -> Words (view r)
-    | 1 ->
-        let fill = leaf r in
-        let params = data value r in
-        let refs = array ref r in
-        Fill { fill; params; refs }
-    | 2 ->
-        let src = int r in
-        let src_offset = terms value r in
-        let dst = int r in
-        let dst_offset = terms value r in
-        let length = int r in
-        Copy { src; src_offset; dst; dst_offset; length }
-    | 3 ->
-        let image = int r in
-        let name = string r in
-        let params = data value r in
-        let refs = array ref r in
-        let groups = triple r in
-        let threads = triple r in
-        let shared = value r in
-        Launch { image; name; params; refs; groups; threads; shared }
-    | n -> bad r "a part" n
-
-  let rec step r =
-    match tag r with
-    | 0 ->
-        let device = int r in
-        let parts = array part r in
-        let slots = array slot r in
-        let fixed =
-          array
-            (fun r ->
-              let v = view r in
-              let a = access r in
-              (v, a))
-            r
-        in
-        Submit { device; parts; slots; fixed }
-    | 1 ->
-        let src = slot r in
-        let dst = slot r in
-        Move { src; dst }
-    | 2 ->
-        let trips = value r in
-        let trip = option int r in
-        let flag =
-          option
-            (fun r ->
-              let s = slot r in
-              let at = int r in
-              (s, at))
-            r
-        in
-        let body = array step r in
-        Loop { trips; trip; flag; body }
-    | n -> bad r "a step" n
-
-  let t r =
-    let devices = array string r in
-    let memory = array memory r in
-    let images =
-      array
-        (fun r ->
-          let device = int r in
-          let binary = data leaf r in
-          { device; binary })
-        r
+  let array c =
+    let w b a =
+      int.w b (Iarray.length a);
+      Iarray.iter (c.w b) a
     in
-    let inputs =
-      array
-        (fun r ->
-          let device = int r in
-          let bytes = int r in
-          { device; bytes })
-        r
+    let r r : _ iarray =
+      let n = R.count r in
+      if n = 0 then [||]
+      else begin
+        let a = Array.make n (c.r r) in
+        for i = 1 to n - 1 do
+          a.(i) <- c.r r
+        done;
+        Iarray.of_array a
+      end
     in
-    let ints = int r in
-    let steps = array step r in
-    { devices; memory; images; inputs; ints; steps }
+    { w; r }
+
+  (* Records *)
+
+  type ('o, 'f) fields = { fw : Buffer.t -> 'o -> unit; fr : R.r -> 'f }
+
+  let record make = { fw = (fun _ _ -> ()); fr = (fun _ -> make) }
+
+  let field c get f =
+    let fw b o =
+      f.fw b o;
+      c.w b (get o)
+    in
+    let fr r =
+      let k = f.fr r in
+      k (c.r r)
+    in
+    { fw; fr }
+
+  let finish f = { w = f.fw; r = f.fr }
+
+  (* Tuples *)
+
+  let pair a b =
+    record (fun x y -> (x, y)) |> field a fst |> field b snd |> finish
+
+  let triple a b c =
+    record (fun x y z -> (x, y, z))
+    |> field a (fun (x, _, _) -> x)
+    |> field b (fun (_, y, _) -> y)
+    |> field c (fun (_, _, z) -> z)
+    |> finish
+
+  (* Variants
+
+     A variant is its cases, each tagged by its place in the variant's list,
+     and one writer that matches on the value, so the compiler checks that it
+     writes every constructor. [caseN a1 .. aN inj] is a case whose arguments
+     [a1] to [aN] describe and [inj] makes the value of: its [read] reads them
+     and makes the value, and its [put b x1 .. xN] writes its tag and them,
+     allocating nothing. *)
+
+  type ('a, 'put) case = {
+    mutable tag : int; (* its place in its variant's list, once listed *)
+    read : R.r -> 'a;
+    put : 'put;
+  }
+
+  type 'a arm = Arm : ('a, _) case -> 'a arm
+
+  let tag b c =
+    if c.tag < 0 then invalid_arg "Rig_program: a case of no variant";
+    Buffer.add_uint8 b c.tag
+
+  let case0 v =
+    let rec c = { tag = -1; read = (fun _ -> v); put = (fun b -> tag b c) } in
+    c
+
+  let case1 a inj =
+    let rec c =
+      {
+        tag = -1;
+        read = (fun r -> inj (a.r r));
+        put =
+          (fun b x ->
+            tag b c;
+            a.w b x);
+      }
+    in
+    c
+
+  let case2 a b inj =
+    let read r =
+      let x = a.r r in
+      let y = b.r r in
+      inj x y
+    in
+    let rec c =
+      {
+        tag = -1;
+        read;
+        put =
+          (fun buf x y ->
+            tag buf c;
+            a.w buf x;
+            b.w buf y);
+      }
+    in
+    c
+
+  let case3 a b c inj =
+    let read r =
+      let x = a.r r in
+      let y = b.r r in
+      let z = c.r r in
+      inj x y z
+    in
+    let rec k =
+      {
+        tag = -1;
+        read;
+        put =
+          (fun buf x y z ->
+            tag buf k;
+            a.w buf x;
+            b.w buf y;
+            c.w buf z);
+      }
+    in
+    k
+
+  let case4 a b c d inj =
+    let read r =
+      let x = a.r r in
+      let y = b.r r in
+      let z = c.r r in
+      let u = d.r r in
+      inj x y z u
+    in
+    let rec k =
+      {
+        tag = -1;
+        read;
+        put =
+          (fun buf x y z u ->
+            tag buf k;
+            a.w buf x;
+            b.w buf y;
+            c.w buf z;
+            d.w buf u);
+      }
+    in
+    k
+
+  let case5 a b c d e inj =
+    let read r =
+      let x = a.r r in
+      let y = b.r r in
+      let z = c.r r in
+      let u = d.r r in
+      let v = e.r r in
+      inj x y z u v
+    in
+    let rec k =
+      {
+        tag = -1;
+        read;
+        put =
+          (fun buf x y z u v ->
+            tag buf k;
+            a.w buf x;
+            b.w buf y;
+            c.w buf z;
+            d.w buf u;
+            e.w buf v);
+      }
+    in
+    k
+
+  let case7 a b c d e f g inj =
+    let read r =
+      let x = a.r r in
+      let y = b.r r in
+      let z = c.r r in
+      let u = d.r r in
+      let v = e.r r in
+      let s = f.r r in
+      let t = g.r r in
+      inj x y z u v s t
+    in
+    let rec k =
+      {
+        tag = -1;
+        read;
+        put =
+          (fun buf x y z u v s t ->
+            tag buf k;
+            a.w buf x;
+            b.w buf y;
+            c.w buf z;
+            d.w buf u;
+            e.w buf v;
+            f.w buf s;
+            g.w buf t);
+      }
+    in
+    k
+
+  (* [variant what arms w] is the variant of the cases [arms], in tag order,
+     written by [w], which puts each value through its case. *)
+  let variant what arms w =
+    let reads =
+      Array.of_list
+        (List.mapi
+           (fun i (Arm c) ->
+             if c.tag >= 0 then invalid_arg "Rig_program: a case listed twice";
+             c.tag <- i;
+             c.read)
+           arms)
+    in
+    let r r =
+      let n = R.tag r in
+      if n >= Array.length reads then R.fail r "%s of tag %d" what n;
+      reads.(n) r
+    in
+    { w; r }
+
+  (* A variant whose cases take no arguments, [values] in tag order and [tag]
+     each value's place among them, which its construction checks. *)
+  let enum what values tag =
+    List.iteri
+      (fun i v ->
+        if tag v <> i then invalid_arg ("Rig_program: the tags of " ^ what))
+      values;
+    let values = Array.of_list values in
+    let r r =
+      let n = R.tag r in
+      if n >= Array.length values then R.fail r "%s of tag %d" what n;
+      values.(n)
+    in
+    { w = (fun b v -> Buffer.add_uint8 b (tag v)); r }
+
+  let option c =
+    let none = case0 None and some = case1 c Option.some in
+    variant "an option" [ Arm none; Arm some ] (fun b -> function
+      | None -> none.put b
+      | Some x -> some.put b x)
+
+  (* The codec [f] makes of itself, for a type that holds itself. [f] only
+     keeps the codec it is given, so the codec it makes is in place before
+     anything writes or reads. *)
+  let fix f =
+    let self = ref None in
+    let get () = Option.get !self in
+    let c = { w = (fun b x -> (get ()).w b x); r = (fun r -> (get ()).r r) } in
+    self := Some (f c);
+    c
+end
+
+(* The description's codecs. *)
+module D = struct
+  open C
+
+  let leaf =
+    let address = case2 int int (fun memory on -> Address { memory; on })
+    and handle = case1 int (fun m -> Handle m)
+    and entry = case2 int string (fun image name -> Entry { image; name })
+    and ready = case1 int (fun r -> Ready r) in
+    variant "a leaf" [ Arm address; Arm handle; Arm entry; Arm ready ]
+      (fun b -> function
+      | Address { memory; on } -> address.put b memory on
+      | Handle m -> handle.put b m
+      | Entry { image; name } -> entry.put b image name
+      | Ready r -> ready.put b r)
+
+  let value =
+    let fixed = case1 int (fun n -> Fixed n)
+    and int_ = case1 int (fun i -> Int i)
+    and leaf = case1 leaf (fun l -> Leaf l) in
+    variant "a value" [ Arm fixed; Arm int_; Arm leaf ] (fun b -> function
+      | Fixed n -> fixed.put b n
+      | Int i -> int_.put b i
+      | Leaf l -> leaf.put b l)
+
+  let terms v = array (pair v int)
+  let width = enum "a width" [ W32; W64 ] (function W32 -> 0 | W64 -> 1)
+
+  let hole v =
+    record (fun at width terms add shift -> { at; width; terms; add; shift })
+    |> field int (fun (h : _ hole) -> h.at)
+    |> field width (fun h -> h.width)
+    |> field (terms v) (fun h -> h.terms)
+    |> field int (fun h -> h.add)
+    |> field int (fun h -> h.shift)
+    |> finish
+
+  let data v =
+    record (fun bytes holes -> { bytes; holes })
+    |> field string (fun (d : _ data) -> d.bytes)
+    |> field (array (hole v)) (fun d -> d.holes)
+    |> finish
+
+  let kind =
+    enum "a memory kind"
+      B.[ Device; Pinned; Mapped ]
+      (function B.Device -> 0 | Pinned -> 1 | Mapped -> 2)
+
+  let access =
+    enum "an access"
+      Rig.[ Read; Read_write ]
+      (function Rig.Read -> 0 | Read_write -> 1)
+
+  let use =
+    enum "a use" [ Read; Write; Unordered ] (function
+      | Read -> 0
+      | Write -> 1
+      | Unordered -> 2)
+
+  let ref =
+    record (fun slot at use -> { slot; at; use })
+    |> field int (fun (r : ref) -> r.slot)
+    |> field int (fun (r : ref) -> r.at)
+    |> field use (fun (r : ref) -> r.use)
+    |> finish
+
+  let copies = enum "copies" [ One; Two ] (function One -> 0 | Two -> 1)
+
+  let area =
+    enum "an area" [ Outbound; Inbound; Counts ] (function
+      | Outbound -> 0
+      | Inbound -> 1
+      | Counts -> 2)
+
+  let memory =
+    let alloc =
+      case5 int kind int (data leaf) copies
+        (fun device kind bytes init copies ->
+          Alloc { device; kind; bytes; init; copies })
+    and rail = case2 int area (fun rail area -> Rail { rail; area }) in
+    variant "a memory" [ Arm alloc; Arm rail ] (fun b -> function
+      | Alloc { device; kind; bytes; init; copies } ->
+          alloc.put b device kind bytes init copies
+      | Rail { rail = r; area } -> rail.put b r area)
+
+  let view =
+    record (fun memory offset length -> { memory; offset; length })
+    |> field int (fun (v : view) -> v.memory)
+    |> field int (fun (v : view) -> v.offset)
+    |> field int (fun (v : view) -> v.length)
+    |> finish
+
+  let slot =
+    let memory = case1 view (fun v -> Memory v)
+    and input = case1 int (fun i -> Input i)
+    and ints = case0 Ints in
+    variant "a slot" [ Arm memory; Arm input; Arm ints ] (fun b -> function
+      | Memory v -> memory.put b v
+      | Input i -> input.put b i
+      | Ints -> ints.put b)
+
+  let sizes = triple value value value
+
+  let part =
+    let words = case1 view (fun v -> Words v)
+    and fill =
+      case3 leaf (data value) (array ref) (fun fill params refs ->
+          Fill { fill; params; refs })
+    and copy =
+      case5 int (terms value) int (terms value) int
+        (fun src src_offset dst dst_offset length ->
+          Copy { src; src_offset; dst; dst_offset; length })
+    and launch =
+      case7 int string (data value) (array ref) sizes sizes value
+        (fun image name params refs groups threads shared ->
+          Launch { image; name; params; refs; groups; threads; shared })
+    in
+    variant "a part" [ Arm words; Arm fill; Arm copy; Arm launch ]
+      (fun b -> function
+      | Words v -> words.put b v
+      | Fill { fill = l; params; refs } -> fill.put b l params refs
+      | Copy { src; src_offset; dst; dst_offset; length } ->
+          copy.put b src src_offset dst dst_offset length
+      | Launch { image; name; params; refs; groups; threads; shared } ->
+          launch.put b image name params refs groups threads shared)
+
+  let submit =
+    record (fun device parts slots fixed -> { device; parts; slots; fixed })
+    |> field int (fun (s : submit) -> s.device)
+    |> field (array part) (fun s -> s.parts)
+    |> field (array slot) (fun s -> s.slots)
+    |> field (array (pair view access)) (fun s -> s.fixed)
+    |> finish
+
+  let step =
+    fix @@ fun step ->
+    let submit = case1 submit (fun s -> Submit s)
+    and move = case2 slot slot (fun src dst -> Move { src; dst })
+    and loop =
+      case4 value (option int)
+        (option (pair slot int))
+        (array step)
+        (fun trips trip flag body -> Loop { trips; trip; flag; body })
+    in
+    variant "a step" [ Arm submit; Arm move; Arm loop ] (fun b -> function
+      | Submit s -> submit.put b s
+      | Move { src; dst } -> move.put b src dst
+      | Loop { trips; trip; flag; body } -> loop.put b trips trip flag body)
+
+  let image =
+    record (fun device binary -> { device; binary })
+    |> field int (fun (i : image) -> i.device)
+    |> field (data leaf) (fun i -> i.binary)
+    |> finish
+
+  let input =
+    record (fun device bytes -> { device; bytes })
+    |> field int (fun (i : input) -> i.device)
+    |> field int (fun (i : input) -> i.bytes)
+    |> finish
+
+  let description =
+    record (fun devices memory images inputs ints steps ->
+        { devices; memory; images; inputs; ints; steps })
+    |> field (array string) (fun t -> t.devices)
+    |> field (array memory) (fun t -> t.memory)
+    |> field (array image) (fun t -> t.images)
+    |> field (array input) (fun t -> t.inputs)
+    |> field int (fun t -> t.ints)
+    |> field (array step) (fun t -> t.steps)
+    |> finish
+
+  (* Each device's id on the machine that loads a program another sent. *)
+  let ids = array int
 end
 
 let write_description b t =
   Buffer.add_string b magic;
-  W.int b version;
-  W.t b t
+  C.int.w b version;
+  D.description.w b t
 
 let to_string t =
   let b = Buffer.create 4096 in
@@ -959,7 +1020,7 @@ let of_string s =
         Error
           (strf "a program description of format version %d, not %d" v version)
     | _ -> (
-        match R.t r with
+        match D.description.r r with
         | t when R.left r = 0 -> Ok t
         | _ -> Error (strf "%d bytes after a program description" (R.left r))
         | exception R.Malformed (at, why) -> malformed at why)
@@ -2026,7 +2087,7 @@ let load_there t devices =
   in
   let b = Buffer.create 4096 in
   Buffer.add_string b share_magic;
-  W.array W.int b (Iarray.of_array ids);
+  D.ids.w b (Iarray.of_array ids);
   write_description b t;
   match Rig.Image.load host (Buffer.contents b) with
   | Error why -> Error why
@@ -2188,7 +2249,7 @@ let load_received ?rails b ~device =
     Error "not a program another process loads"
   else begin
     r.R.at <- m;
-    match R.array R.int r with
+    match D.ids.r r with
     | exception R.Malformed (at, why) ->
         Error (strf "a malformed program at byte %d: %s" at why)
     | ids -> (
