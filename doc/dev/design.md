@@ -118,7 +118,15 @@ modes; call sites that read as prose. Judge a design by what a production
   lacks, such as a numerically stable form; otherwise the caller composes
   it.
 - **Visibility.** Everything stays out of the `.mli` unless the design
-  needs it exported. Adding to a public `.mli` is a design change.
+  needs it exported. Adding to a public `.mli` is a design change. A
+  value another library truly needs is public under an expert or unsafe
+  warning that states its contract, or behind `(**/**)`; never a
+  `Private` module or a library split to hide it.
+- **No abstraction before its second consumer.** A module type, functor
+  or split module lands with the second user that needs it. A step whose
+  consumer the plan already schedules is not early.
+- **No arbitrary limits.** A bound that no hardware, operating system or
+  specification imposes is a bug, however large.
 - **Fix upstream.** A capability missing in nx, rune or tolk is built
   there, never worked around downstream.
 - **Argue for the most elegant shape.** Each new concept (a module type,

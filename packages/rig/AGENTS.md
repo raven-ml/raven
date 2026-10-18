@@ -24,7 +24,6 @@ writes, so a program never names an event or a fence.
   has most of these in fewer lines: a datapoint for how small each can be.
 - A promise about failure or misuse is no capability. Judge it as any
   design: whether raven should make it at all.
-- A limit no hardware or spec imposes is a bug.
 
 ## API
 
@@ -33,8 +32,6 @@ writes, so a program never names an event or a fence.
   raises `Invalid_argument` at the call that made it.
 - No correctness depends on caller discipline (keeping values alive,
   ordering, locks), except a value labelled expert or unsafe with a warning.
-- Internal values a caller truly needs go public with that warning, or
-  behind `(**/**)`. Never a `Private` module or a split library.
 - Submit, launch, copy and claim allocate nothing where the `.mli` promises
   it.
 - No `CHANGES.md` entries before the first release.

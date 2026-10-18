@@ -14,7 +14,13 @@ Breaking one causes real damage.
   `--build-dir` or `DUNE_CACHE=disabled`, never delete or relock `dune.lock`
   without being asked.
 - NEVER kill a dune you didn't start, unless its session has ended: the
-  maintainer and other agents run dune in watch mode.
+  maintainer and other agents run dune in watch mode. Kill by pid, never by
+  pattern (`pkill`, `killall`).
+- NEVER edit a file under `_build`. dune hardlinks it into the shared cache,
+  so the edit corrupts every tree that reads that entry.
+- NEVER exhaust a system resource (threads, processes, descriptors, memory,
+  disk), in a test or otherwise: it takes down every session on the
+  machine. A failure path that needs a limit sets it on a forked child.
 - NEVER silence a warning or prefix a variable with `_` to hide it. A warning
   is a bug in the change.
 - NEVER add an nx backend operation without being asked.
@@ -45,7 +51,7 @@ A package's main library lives at `lib/`, each sub-library at
 `include_subdirs` module groups. A package's own `AGENTS.md` holds its
 boundaries, decisions and traps.
 
-Accepted designs live in `doc/rfc/`.
+Accepted designs live in `doc/rfc/`. RFCs from 0010 on are not committed.
 
 ## Parallel agents
 
@@ -68,9 +74,12 @@ instead of a long-running one.
 - **Keep.** The claimant keeps its branch rebased on main and copies the
   checkout's `dune.lock` when it changes.
 - **Build.** Run one `dune build --passive-watch-mode` in the background;
-  `dune build` and `dune runtest` forward to it. Before each, run
+  `dune build` and `dune runtest` forward to it, always under `timeout`,
+  since a stalled server hangs its clients forever. Before each, run
   `timeout 5 dune rpc ping`: no answer means the server is stuck, so kill
-  its pid and start another. A server that answers but builds files
+  its pid and start another. A build sent right after an edit can build
+  the old file: let the edit settle a couple of seconds, and check the
+  `_build` copy before trusting a result. A server that answers but builds files
   older than the tree (its errors name code you changed) is stuck too:
   before killing it, save `lsof -p <pid>`, `sample <pid> 5` and the time
   of the last change it noticed to `_plans/dune-stale-watch/`, so the
@@ -116,8 +125,9 @@ of it from references, and how to review it.
 - Don't rename during a tidy unless the name gets clearly better.
 - Shallow code: early returns, no arrow-shaped nesting. Blank lines between
   logical blocks.
-- Short function names, under 30 characters. A variant, not a `bool`, for an
-  argument that selects behaviour.
+- Short function names, under 30 characters. An argument that selects
+  behaviour is a variant, or a labelled `bool` where that reads better at
+  the call site.
 - Name meaningful or recurring values as constants; keep a self-explanatory
   one-off inline. A value from a spec is always named.
 - Hot paths: allocate outside loops, prefer loops to closures, use `unsafe_`
@@ -133,7 +143,12 @@ of it from references, and how to review it.
 
 Tests use windtrap, whose `.mli` (under `_build/_private/default/.pkg/`) is
 the contract, and cram tests for executables. A test states what the `.mli`
-promises, through the public interface, never what the code does today.
+promises, through the public interface, never what the code does today. No
+test reads META, dune files or source text: dune files and review hold the
+structure.
+
+A failing test is diagnosed from the failure, the code it runs and that
+code's recent diffs, never by bisecting.
 
 - Every test runs in its package's `runtest`, which runs within 2 minutes on
   a warm build. A slow test is made fast at its cause (the library, shared
@@ -196,7 +211,8 @@ touches, and reports as they say.
 A change that touches a public `.mli`, library code, C or a contract gets a
 review by an agent that did not write it, and lands once each finding is
 fixed or answered with a reason. A design finding means redesigning before
-landing.
+landing. An author rejects a finding only after reading the whole function,
+its callers and its history, and gives that evidence.
 
 ## Commits
 
