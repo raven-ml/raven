@@ -1439,6 +1439,142 @@ let rng =
           show (Nx.Rng.categorical ~key:(key d 1) (d 0 (x [| 2; 3 |]))));
     ]
 
+(* Attention, at one dtype: the query is operand 1, then the keys, the values
+   and a page table, then the lengths. *)
+let attention =
+  let x s = data f32 s in
+  let shown (o, lse) = showl [ o; lse ] in
+  let pair d =
+    {
+      Nx.q = d 0 (ints [| 0; 1; 2 |]);
+      k = d 1 (ints [| 2; 1; 0 |]);
+      len = d 2 (ints [| 3; 3; 3 |]);
+      tq = 2;
+    }
+  in
+  table "float32"
+    [
+      c "attention" 3 (fun d ->
+          let q = d 0 (x [| 1; 2; 2 |]) in
+          let kv =
+            Nx.Dense { k = d 1 (x [| 1; 3; 2 |]); v = d 2 (x [| 1; 3; 2 |]) }
+          in
+          shown (Nx.attention ~kv q));
+      c "attention" 4 (fun d ->
+          let q = d 0 (x [| 1; 2; 2 |]) in
+          let kv =
+            Nx.Dense { k = d 1 (x [| 1; 3; 2 |]); v = d 2 (x [| 1; 3; 2 |]) }
+          in
+          let lengths = d 3 (ints ~s:[||] [| 2 |]) in
+          shown (Nx.attention ~lengths ~mask:Nx.causal ~kv q));
+      c "attention" 4 (fun d ->
+          let q = d 0 (x [| 1; 2; 2 |]) in
+          let kv =
+            Nx.Paged
+              {
+                k = d 1 (x [| 2; 1; 2; 2 |]);
+                v = d 2 (x [| 2; 1; 2; 2 |]);
+                table = d 3 (ints [| 1; 0 |]);
+              }
+          in
+          shown (Nx.attention ~kv q));
+      c "causal" 3 (fun d -> show (Nx.causal (pair d)));
+    ]
+
+(* An array a score returns is an operand after the call's own: a donated one
+   gives the undonated result and dies naming [Nx.attention]. One that a
+   function reads in the score dies naming that function, which the user
+   called. *)
+let test_captured () =
+  let run score =
+    let q = data f32 [| 1; 2; 2 |] in
+    let kv =
+      Nx.Dense { k = data f32 [| 1; 3; 2 |]; v = data f32 [| 1; 3; 2 |] }
+    in
+    let o, lse = Nx.attention ~score ~kv q in
+    showl [ o; lse ]
+  in
+  List.iter
+    (fun (name, score) ->
+      let bias = data f32 [| 1; 1; 3 |] in
+      let plain = run (score bias) in
+      equal ~msg:name string plain (run (score (Nx.donate bias)));
+      invalid ~sub:("Nx.copy: operand 1 was donated to " ^ name) (fun () ->
+          Nx.copy bias))
+    [
+      ("Nx.attention", fun bias _ _ -> bias);
+      ("Nx.add", fun bias _ s -> Nx.add s bias);
+    ]
+
+(* Functions over structures, at one dtype: a structure's arrays are operands
+   in walk order, after the operands before it in the call. *)
+type ('a, 'd) keyed = { held : 'a; key : 'd Nx.Rng.key }
+
+module Keyed = struct
+  type ('a, 'd) t = ('a, 'd) keyed
+
+  let walk c x =
+    let open Nx.Ptree.Walk in
+    let held = field c "held" leaf x.held in
+    let key = field c "key" Nx.Rng.walk x.key in
+    { held; key }
+end
+
+exception Failed of string
+
+let structures =
+  let module P = Nx.Ptree in
+  let x s = data f32 s in
+  let two () = P.pair P.tensor P.tensor in
+  let shown2 (a, b) = shows [ show a; show b ] in
+  let f (a, b) (a', b') = (Nx.add a a', Nx.mul b b') in
+  table "float32"
+    [
+      c "associative_scan" 2 (fun d ->
+          shown2
+            (Nx.associative_scan (two ()) f
+               (d 0 (x [| 4 |]), d 1 (x [| 4; 2 |]))));
+      c "check" 3 (fun d ->
+          let ok = d 0 (Nx.greater_s (x [| 4 |]) 0.) in
+          let fail _ (a, b) = Failed (shown2 (a, b)) in
+          let data = (d 1 (x [| 4 |]), d 2 (x [| 1 |])) in
+          match Nx.check (two ()) ok data fail with
+          | () -> "passed"
+          | exception Failed s -> s);
+      c "Ptree.dot" 4 (fun d ->
+          show
+            (P.dot (two ()) f32
+               (d 0 (x [| 3 |]), d 1 (complex_data [| 2 |]))
+               (d 2 (x [| 3 |]), d 3 (complex_data [| 2 |]))));
+      c "Ptree.norm" 2 (fun d ->
+          show
+            (P.norm (two ()) f32
+               (d 0 (x [| 3 |]), d 1 (complex_data [| 2 |]))));
+      c "Ptree.scale" 3 (fun d ->
+          shown2
+            (P.scale (two ())
+               (d 0 (x [||]))
+               (d 1 (x [| 3 |]), d 2 (complex_data [| 2 |]))));
+      c "Ptree.axpy" 5 (fun d ->
+          shown2
+            (P.axpy (two ())
+               (d 0 (x [||]))
+               (d 1 (x [| 3 |]), d 2 (complex_data [| 2 |]))
+               (d 3 (x [| 3 |]), d 4 (complex_data [| 2 |]))));
+      c "Ptree.place" 2 (fun d ->
+          let key = Nx.Rng.of_tensor (d 1 (int32s [| 7; 11 |])) in
+          let y =
+            P.place (module Keyed) Nx.Host.on { held = d 0 (x [| 3 |]); key }
+          in
+          shows [ show y.held; show (Nx.Rng.to_tensor y.key) ]);
+      c "Ptree.cast" 1 (fun d ->
+          let y =
+            P.cast (module Keyed) Nx.float64
+              { held = d 0 (x [| 3 |]); key = Nx.Rng.key 7 }
+          in
+          show y.held);
+    ]
+
 (* Host crossings at one dtype. *)
 let host =
   table "float64"
@@ -1466,6 +1602,8 @@ let all_cases =
       booleans;
       operators;
       rng;
+      attention;
+      structures;
       host;
     ]
 
@@ -1568,6 +1706,8 @@ let () =
                test_dies_at_the_call;
              test_dead_names;
              test_donated;
+             test "a captured array dies at the call that reads it"
+               test_captured;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;

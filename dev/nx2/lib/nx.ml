@@ -1001,10 +1001,11 @@ module Pattern = struct
   let inverse p = inverse ~by:"Nx.Pattern.inverse" p
 end
 
-let rearrange ?(sizes = []) p x =
-  let by = "Nx.rearrange" in
+let rearrange_by ~by ?(sizes = []) p x =
   let moves = Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) in
   List.fold_left (fun x mv -> move ~by mv x) x moves
+
+let rearrange ?sizes p x = rearrange_by ~by:"Nx.rearrange" ?sizes p x
 
 (* Indexing and slicing *)
 
@@ -2336,9 +2337,8 @@ let magnitude dt z = magnitude_by ~by:"Nx.magnitude" dt z
 
 let angle dt z = of_parts ~by:"Nx.angle" dt z (fun _ re im -> E.atan2 im re)
 
-let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
-    ~(im : (float, a, d) t) : (Complex.t, c, d) t =
-  let by = "Nx.complex" in
+let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
+    ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
   alive2 ~by re im;
   let r = Array.length s in
@@ -2349,6 +2349,8 @@ let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
     Eval.eval ~by (Value.Bitcast (dt, assemble ~by f both 0. pieces))
   in
   match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
+
+let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
 (* A complex value's imaginary parts negated: for complex64, its imaginary
    part's sign bit flipped in the value read as uint64, in the host's byte
@@ -2475,15 +2477,17 @@ let diag ?(k = 0) v =
 
 let dot a b = Contraction.dot ~by:"Nx.dot" a b
 
-let vdot a b =
-  let by = "Nx.vdot" in
-  once2 ~by a b @@ fun a b ->
+let vdot_by ~by a b =
   if numel a <> numel b then
     invalid_argf "%s: %a and %a differ in their number of elements" by pp_value
       a pp_value b;
   let flat x = move ~by (Reshape [| numel x |]) x in
   Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
     (conjugate_by ~by (flat a)) (flat b)
+
+let vdot a b =
+  let by = "Nx.vdot" in
+  once2 ~by a b @@ fun a b -> vdot_by ~by a b
 
 (* Linear algebra *)
 
@@ -4312,7 +4316,13 @@ type ('v, 's, 'd) kv =
 
 type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 
-let causal p = less_equal p.k (add p.q (sub_s p.len (Int64.of_int p.tq)))
+let causal p =
+  let by = "Nx.causal" in
+  Exec.resolve ~by [ Value.Any p.q; Value.Any p.k; Value.Any p.len ]
+  @@ fun read ->
+  let last = scalar_binary ~by (Binary Sub) (read p.len) (Int64.of_int p.tq) in
+  let seen = binary ~by (Binary Add) (read p.q) last in
+  comparison ~by (Compare Less_equal) (read p.k) seen
 
 (* A mask or a score runs once on stand-ins for a pair's values, under an
    interpretation that records each map it receives as cells of one list, so
@@ -4561,7 +4571,7 @@ let pool_positions ~by ~pages ~page table =
 let paged_read ~by positions pool =
   let lead = Array.sub (shape positions) 0 (ndim positions - 1) in
   let tk = dim (-1) positions in
-  let flat = rearrange pooled pool in
+  let flat = rearrange_by ~by pooled pool in
   let hk = dim 0 flat and d = dim 2 flat in
   let x = broadcast ~by (Array.append lead (shape flat)) flat in
   let idx =
@@ -4593,7 +4603,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     if ndim x <> n then
       invalid_argf "%s: the %s %a do not have %d axes" by name pp_value x n
   in
-  let k, v, positions =
+  let hk, tk, dv, kv_operands =
     match kv with
     | Dense { k; v } ->
         rank "keys" k r;
@@ -4601,7 +4611,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         let hk = dim (-3) k and tk = dim (-2) k in
         expect "keys" k (with_lead [| hk; tk; dk |]);
         expect "values" v (with_lead [| hk; tk; dim (-1) v |]);
-        (k, v, None)
+        (hk, tk, dim (-1) v, [ Value.Any k; Value.Any v ])
     | Paged { k; v; table } ->
         rank "key pool" k 4;
         rank "value pool" v 4;
@@ -4610,33 +4620,15 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         expect "key pool" k [| pages; hk; page; dk |];
         expect "value pool" v [| pages; hk; page; dim (-1) v |];
         expect "page table" table (with_lead [| dim (-1) table |]);
-        let p = pool_positions ~by ~pages ~page table in
-        (paged_read ~by p k, paged_read ~by p v, Some p)
+        let tk = times ~by table (dim (-1) table) page in
+        (hk, tk, dim (-1) v, [ Value.Any k; Value.Any v; Value.Any table ])
   in
-  let hk = dim (-3) k and tk = dim (-2) k and dv = dim (-1) v in
   if (hk = 0 && hq <> 0) || (hk > 0 && hq mod hk <> 0) then
     invalid_argf "%s: %d key heads do not divide %d query heads" by hk hq;
   let g = if hk = 0 then 1 else hq / hk in
   let groups = [ ("g", g) ] in
   let f = with_lead [| hq; tq; tk |] in
-  let length =
-    match lengths with
-    | None -> fill ~by D.Int64 [||] (Int64.of_int tk)
-    | Some l ->
-        expect "lengths" l lead;
-        reshaped ~by (with_lead [| 1; 1; 1 |]) l
-  in
-  (* Values past a row's length are zeroed: a hidden NaN there would reach
-     [p v]. *)
-  let v =
-    match lengths with
-    | None -> v
-    | Some _ ->
-        let dt = dtype v in
-        let before = E.(coord Stdlib.(r - 2) < operand 1 length) in
-        elementwise ~by dt [ Any v; Any length ]
-          E.(where before (operand 0 v) (const dt (D.zero dt)))
-  in
+  Option.iter (fun l -> expect "lengths" l lead) lengths;
   let scale =
     match scale with
     | Some s -> s
@@ -4661,18 +4653,51 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   let result what (_, _, s) = fits ("a " ^ what ^ " of shape") s in
   Option.iter (result "mask") mask;
   Option.iter (result "score") score;
-  let load (Captured (_, x)) =
-    fits "a captured array of shape" (shape x);
-    Value.Plain (broadcast ~by f x)
-  in
+  List.iter
+    (fun (Captured (_, x)) -> fits "a captured array of shape" (shape x))
+    captures;
   let cell (n, _, _) = n in
   let prog =
-    pair_program ~rank:r ~scale ~paged:(Option.is_some positions) st
-      ~mask:(Option.map cell mask) ~score:(Option.map cell score)
+    pair_program ~rank:r ~scale
+      ~paged:(match kv with Paged _ -> true | Dense _ -> false)
+      st ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
+  (* Operands in the call's order: the query, the keys, the values and the
+     page table, the lengths, then the arrays [mask] and [score] capture. *)
+  let operands =
+    (Value.Any q :: kv_operands)
+    @ Option.to_list (Option.map (fun l -> Value.Any l) lengths)
+    @ List.map (fun (Captured (_, x)) -> Value.Any x) captures
+  in
+  Exec.resolve ~by operands @@ fun read ->
+  let k, v, positions =
+    match kv with
+    | Dense { k; v } -> (read k, read v, None)
+    | Paged { k; v; table } ->
+        let pages = dim 0 k and page = dim 2 k in
+        let p = pool_positions ~by ~pages ~page (read table) in
+        (paged_read ~by p (read k), paged_read ~by p (read v), Some p)
+  in
+  let length =
+    match lengths with
+    | None -> fill ~by D.Int64 [||] (Int64.of_int tk)
+    | Some l -> reshaped ~by (with_lead [| 1; 1; 1 |]) (read l)
+  in
+  (* Values past a row's length are zeroed: a hidden NaN there would reach
+     [p v]. *)
+  let v =
+    match lengths with
+    | None -> v
+    | Some _ ->
+        let dt = dtype v in
+        let before = E.(coord Stdlib.(r - 2) < operand 1 length) in
+        elementwise ~by dt [ Any v; Any length ]
+          E.(where before (operand 0 v) (const dt (D.zero dt)))
+  in
   let s =
-    reshaped ~by f (Contraction.contract ~by ~sizes:groups D.Float32 scores q k)
+    reshaped ~by f
+      (Contraction.contract ~by ~sizes:groups D.Float32 scores (read q) k)
   in
   let loads =
     Value.Plain s
@@ -4683,6 +4708,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
            let p = reshaped ~by (with_lead [| 1; 1; tk |]) p in
            [ Value.Plain (broadcast ~by f p) ])
   in
+  let load (Captured (_, x)) = Value.Plain (broadcast ~by f (read x)) in
   let loads = Iarray.of_list (loads @ List.map load captures) in
   let layout = Nx_array.Layout.contiguous f in
   let m, () =
@@ -4709,7 +4735,6 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
       E.(where hidden (const dt (D.zero dt)) (operand 0 o))
   in
   (o, lse)
-
 
 (* Fourier transforms *)
 
@@ -5204,14 +5229,18 @@ type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 module Ptree = struct
   include Ptree
 
+  (* [x]'s arrays as operands, in walk order. *)
+  let operands s x =
+    List.rev (fold s (fun _ a acc -> Value.Any a :: acc) x [])
+
   (* The vector's arrays are the float and complex ones: [components dt a] is
      [a]'s real components at [dt], a complex array's real then imaginary parts,
      none for another dtype. *)
-  let components (type v s c d) (dt : (float, c) dtype) (a : (v, s, d) tensor) :
-      (float, c, d) tensor list =
+  let components (type v s c d) ~by (dt : (float, c) dtype)
+      (a : (v, s, d) tensor) : (float, c, d) tensor list =
     match D.kind (dtype a) with
-    | D.Float -> [ cast dt a ]
-    | D.Complex -> [ real dt a; imag dt a ]
+    | D.Float -> [ cast_by ~by dt a ]
+    | D.Complex -> [ real_by ~by dt a; imag_by ~by dt a ]
     | D.Signed | D.Unsigned | D.Boolean -> []
 
   (* [a] scaled by the 0-d [k] in its own format, part by part for a complex
@@ -5219,11 +5248,12 @@ module Ptree = struct
   let scaled (type v s c d) ~by (k : (float, c, d) tensor)
       (a : (v, s, d) tensor) : (v, s, d) tensor option =
     match D.kind (dtype a) with
-    | D.Float -> Some (mul (cast (dtype a) k) a)
+    | D.Float -> Some (mul_by ~by (cast_by ~by (dtype a) k) a)
     | D.Complex ->
         let (Parts (f, part)) = parts ~by a in
-        let k = cast f k in
-        Some (complex (dtype a) ~re:(mul k (part 0)) ~im:(mul k (part 1)))
+        let k = cast_by ~by f k in
+        let re = mul_by ~by k (part 0) and im = mul_by ~by k (part 1) in
+        Some (complex_of ~by (dtype a) ~re ~im)
     | D.Signed | D.Unsigned | D.Boolean -> None
 
   (* Refuses a factor with axes. *)
@@ -5238,14 +5268,16 @@ module Ptree = struct
 
   let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
     let by = "Nx.Ptree.dot" in
-    let acc = ref (scalar dt 0.) in
+    Exec.resolve ~by (operands s x @ operands s y) @@ fun read ->
+    let acc = ref (fill ~by dt [||] 0.) in
     let term : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
      fun p a b ->
       same_shape ~by p a b;
       List.iter2
-        (fun u w -> acc := add !acc (vdot u w))
-        (components dt a) (components dt b);
+        (fun u w -> acc := binary ~by (Binary Add) !acc (vdot_by ~by u w))
+        (components ~by dt (read a))
+        (components ~by dt (read b));
       a
     in
     ignore (zip ~by s term x y);
@@ -5255,54 +5287,93 @@ module Ptree = struct
      no square overflows or underflows to nothing where the result is
      representable, computed at [dt]'s carrier, float32 for a narrower float. *)
   let norm (type c d) s (dt : (float, c) dtype) x : (float, c, d) tensor =
+    let by = "Nx.Ptree.norm" in
+    Exec.resolve ~by (operands s x) @@ fun read ->
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-    let xs =
-      fold s (fun _ a acc -> List.rev_append (components w a) acc) x []
-      |> List.filter (fun u -> numel u > 0)
+    let add_components _ a acc =
+      List.rev_append (components ~by w (read a)) acc
     in
-    let zero = scalar w 0. and one = scalar w 1. in
-    let m = List.fold_left (fun m u -> maximum m (max (abs u))) zero xs in
-    let infinite = isinf m in
-    let safe = where (logical_or (equal m zero) infinite) one m in
+    let xs =
+      fold s add_components x [] |> List.filter (fun u -> numel u > 0)
+    in
+    let zero = fill ~by w [||] 0. and one = fill ~by w [||] 1. in
+    let largest m u =
+      binary ~by (Binary Maximum) m (reduction ~by Max (unary ~by Abs u))
+    in
+    let m = List.fold_left largest zero xs in
+    let unbounded = predicate ~by (fun dt x -> infinite dt x) Or false m in
+    let degenerate = comparison ~by (Compare Equal) m zero in
+    let safe =
+      ternary ~by Where (logical ~by Or degenerate unbounded) one m
+    in
     let sum =
       List.fold_left
         (fun acc u ->
-          let u = div u safe in
-          add acc (vdot u u))
+          let u = binary ~by (Binary Fdiv) u safe in
+          binary ~by (Binary Add) acc (vdot_by ~by u u))
         zero (List.rev xs)
     in
-    cast dt (where infinite m (mul safe (sqrt sum)))
+    let root = mul_by ~by safe (unary ~by Sqrt sum) in
+    cast_by ~by dt (ternary ~by Where unbounded m root)
 
   let scale (type d) s (k : (float, _, d) tensor) x =
     let by = "Nx.Ptree.scale" in
     factor ~by k;
+    Exec.resolve ~by (Value.Any k :: operands s x) @@ fun read ->
+    let k = read k in
     let f : type v r. Path.t -> (v, r, d) tensor -> (v, r, d) tensor =
-     fun _ a -> Option.value ~default:a (scaled ~by k a)
+     fun _ a ->
+      let a = read a in
+      Option.value ~default:a (scaled ~by k a)
     in
     map s f x
 
   let axpy (type d) s (k : (float, _, d) tensor) x y =
     let by = "Nx.Ptree.axpy" in
     factor ~by k;
+    Exec.resolve ~by ((Value.Any k :: operands s x) @ operands s y)
+    @@ fun read ->
+    let k = read k in
     let f : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
      fun p a b ->
       same_shape ~by p a b;
-      match scaled ~by k a with Some ka -> add ka b | None -> b
+      let b = read b in
+      match scaled ~by k (read a) with
+      | Some ka -> binary ~by (Binary Add) ka b
+      | None -> b
     in
     zip ~by s f x y
 
   let place (type v s d e) (module U : S) (p : e Placement.t)
       (x : ((v, s, d) tensor, d) U.t) : ((v, s, e) tensor, e) U.t =
     let by = "Nx.Ptree.place" in
-    let visitor =
-      { tensor = (fun _ x -> Eval.place ~by p x); report = (fun _ _ -> ()) }
+    (* Every array, fixed ones too, in walk order. *)
+    let seen = ref [] in
+    let note a =
+      seen := Value.Any a :: !seen;
+      a
     in
-    walk (module U) (Eval.place ~by p) visitor x
+    let noted = { tensor = (fun _ a -> note a); report = (fun _ _ -> ()) } in
+    ignore (walk (module U) note noted x);
+    Exec.resolve ~by (List.rev !seen) @@ fun read ->
+    let placed a = Eval.place ~by p (read a) in
+    let visitor =
+      { tensor = (fun _ a -> placed a); report = (fun _ _ -> ()) }
+    in
+    walk (module U) placed visitor x
 
   let cast (type v s w r d) (module U : S) (dt : (w, r) dtype)
       (x : ((v, s, d) tensor, d) U.t) : ((w, r, d) tensor, d) U.t =
-    walk (module U) (cast dt) keep x
+    let by = "Nx.Ptree.cast" in
+    let seen = ref [] in
+    let note a =
+      seen := Value.Any a :: !seen;
+      a
+    in
+    ignore (walk (module U) note keep x);
+    Exec.resolve ~by (List.rev !seen) @@ fun read ->
+    walk (module U) (fun a -> cast_by ~by dt (read a)) keep x
 end
 
 (* Each datum of a check, and how to read its elements as 0-d values. *)
@@ -5312,33 +5383,38 @@ type 'd datum =
 let check s ok data fail =
   let by = "Nx.check" in
   let target = shape ok in
+  let leaves = fst (Ptree.flatten s data) in
+  List.iter
+    (fun (P x) ->
+      let fits =
+        match Prim.merge (shape x) target with
+        | Ok s -> s = target
+        | Error _ -> false
+      in
+      if not fits then
+        invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape
+          target)
+    leaves;
+  (* [fail]'s structure is rebuilt from 0-d arrays when the failure is found,
+     maybe at a later check's issue: a walk that refuses them raises now. *)
+  let zero (P x) = P (fill ~by (dtype x) [||] (D.zero (dtype x))) in
+  (match Ptree.rebuild s ~like:data (List.map zero leaves) with
+  | _ -> ()
+  | exception Invalid_argument m ->
+      invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
+  (* The broadcasts read the operands one at a time: they are checked first,
+     [ok] then [data]'s arrays in walk order. *)
+  Prim.alive ~by 0 ok;
+  List.iteri (fun i (P x) -> Prim.alive ~by (i + 1) x) leaves;
   let rec datum = function
     | [] -> Datum (Value.[], fun () -> [])
     | P x :: rest ->
         let (Datum (d, read)) = datum rest in
-        let fits =
-          match Prim.merge (shape x) target with
-          | Ok s -> s = target
-          | Error _ -> false
-        in
-        if not fits then
-          invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape
-            target;
         let x = broadcast ~by target x in
-        let read (v, e) = P (scalar (dtype x) v) :: read e in
+        let read (v, e) = P (fill ~by (dtype x) [||] v) :: read e in
         Datum (Value.( :: ) (x, d), read)
   in
-  let leaves = fst (Ptree.flatten s data) in
   let (Datum (d, read)) = datum leaves in
-  (* [fail]'s structure is rebuilt from 0-d arrays when the failure is found,
-     maybe at a later check's issue: a walk that refuses them raises now. *)
-  (match
-     Ptree.rebuild s ~like:data
-       (List.map (fun (P x) -> P (zeros (dtype x) [||])) leaves)
-   with
-  | _ -> ()
-  | exception Invalid_argument m ->
-      invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
   let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
   Eval.eval ~by (Value.Check { ok; data = d; fail })
 
@@ -5383,7 +5459,10 @@ let associative_scan ?axis:(a = 0) s f x =
     ys
   in
   if Array.length states = 0 then x
-  else structure (Pairwise.circuit Eval.eval ~by axes combine states)
+  else
+    Exec.resolve ~by (Array.to_list states) @@ fun read ->
+    let states = Array.map (fun (Value.Any t) -> Value.Any (read t)) states in
+    structure (Pairwise.circuit Eval.eval ~by axes combine states)
 
 (* Operations as data *)
 
