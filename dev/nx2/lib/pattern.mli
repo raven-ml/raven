@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Axis patterns: the parser behind [Nx.Pattern], and the movements a
-    one-operand pattern makes of a shape.
+(** Axis patterns: the parser behind [Nx.Pattern], the extents a pattern gives
+    its names where it meets shapes, and the movements a one-operand pattern
+    makes of a shape.
 
     A pattern is checked when parsed: its grammar, its names' places, its sums.
-    Extents are checked where a pattern meets a shape. Messages start with the
+    Extents are checked where a pattern meets shapes. Messages start with the
     [by] the caller passes, then the pattern's text in quotes. *)
 
 (** {1:patterns Patterns} *)
@@ -19,31 +20,16 @@ type 'n axis =
   | Unit  (** [1]: an axis of extent [1]. *)
   | Ellipsis  (** [...]: the axes no name covers. *)
 
-type layout = string axis list
-
-type plan
-(** A one-operand pattern prepared for {!moves}: its names numbered, so that a
-    call reads arrays and allocates only the movements. *)
-
-(** The type for a pattern's operands. *)
-type kind = private
-  | One of { operand : layout; plan : plan }
-  | Many of {
-      names : string array;
-      operands : int axis list list;
-      result : int axis list;
-    }
-      (** Two operands or more, each name numbered by its place in [names],
-          where it stands once, in its first place among the operands. An
-          [Ellipsis] leads every layout or none. *)
-
 type t = private {
   text : string;  (** As written, for messages. *)
-  result : layout;
-      (** As written; [Many]'s [result] is the same layout numbered. *)
-  kind : kind;
+  names : string array;
+      (** Each name once, in its first place among the operands. *)
+  operands : int axis list list;
+      (** Each operand's layout, a name numbered by its place in [names]. *)
+  result : int axis list;  (** The result's layout, numbered alike. *)
 }
-(** A pattern whose structure holds the rules of [Nx.Pattern.v]. *)
+(** A pattern whose structure holds the rules of [Nx.Pattern.v]. With two
+    operands or more, an [Ellipsis] leads every layout or none. *)
 
 val v : by:string -> string -> t
 (** [v ~by s] is the pattern [s].
@@ -58,19 +44,47 @@ val inverse : by:string -> t -> t
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a pattern as its text, quoted. *)
 
+(** {1:extents Extents} *)
+
+val resolve :
+  by:string ->
+  sizes:(string * int) list ->
+  label:(int -> string) ->
+  t ->
+  (string * int array) list ->
+  extents:int array
+  * operands:int array list
+  * result:int array
+  * shape:int array
+(** [resolve ~by ~sizes ~label p xs] meets [p] with the operands [xs], each a
+    dtype's name and a shape, one for each of [p]'s operands. Of [p]'s [n]
+    names and the [c] axes its [...] covers, numbered [n] to [n + c - 1]:
+
+    - [extents] is each one's extent.
+    - [operands] and [result] are each layout's in order, a group's names
+      included, [...] written out and units left out.
+    - [shape] is the result's shape.
+
+    A name takes its extent from [sizes] or from an axis it stands on alone. A
+    group whose known extents multiply to [0] has no element and leaves its
+    other names unknown; otherwise its known extents divide its axis exactly
+    and leave its one unknown name the quotient, which may give another group
+    its own. [label k] names the [k]th operand in messages.
+
+    Raises [Invalid_argument] naming [by] as [Nx.contract] says. *)
+
 (** {1:moves Movements} *)
 
 val moves :
   by:string ->
   sizes:(string * int) list ->
   t ->
-  int array ->
-  (Format.formatter -> unit) ->
+  string * int array ->
   Nx_array.Move.t list
-(** [moves ~by ~sizes p s what] is the movements, in order, that rearrange a
-    value of shape [s] as the one-operand pattern [p] says: a [Reshape] that
-    splits groups and drops units, a [Permute], and a [Reshape] that merges
-    groups and adds units, each left out where it changes nothing. [what]
-    formats the operand in messages.
+(** [moves ~by ~sizes p x] is the movements, in order, that rearrange the
+    operand [x], a dtype's name and a shape, as the one-operand pattern [p]
+    says: a [Reshape] that splits groups and drops units, a [Permute], and a
+    [Reshape] that merges groups and adds units, each left out where it changes
+    nothing.
 
     Raises [Invalid_argument] naming [by] as [Nx.rearrange] says. *)

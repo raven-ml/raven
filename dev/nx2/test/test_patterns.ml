@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Axis patterns through Nx: rearrange against a reference built from the drawn
-   pattern's structure, its round trip through inverse, its views, and the
-   messages of each refusal at Pattern.v and at the call. *)
+   pattern's structure, its round trip through inverse, the shape every arity
+   resolves, its views, and the messages of each refusal at Pattern.v and at
+   the call. *)
 
 open Windtrap
 module A = Nx_array
@@ -268,6 +269,137 @@ let laws =
           equal ~msg:"elements" (array int32) data (elements z));
     ]
 
+(* A drawn pattern of one to four operands that sums nothing: the first operand
+   holds every name, each other some of them, [...] leads every layout or none.
+   [sizes] leaves out of each group of two or more names at most one, which
+   its quotient gives, and every name an operand holds alone, which that axis
+   gives. *)
+type joint = {
+  extents : int array;
+  covered : int array;
+  operands : item list list;
+  result : item list;
+  sizes : (string * int) list;
+}
+
+let joint_text j =
+  String.concat ", " (List.map side j.operands) ^ " -> " ^ side j.result
+
+let alone j i = List.exists (List.mem (Names [ i ])) j.operands
+
+let joint =
+  let open Gen in
+  with_pp
+    (fun ppf j ->
+      Format.fprintf ppf "%S ~sizes:[%s] ~covered:[%s]" (joint_text j)
+        (String.concat "; "
+           (List.map (fun (n, e) -> Printf.sprintf "%s=%d" n e) j.sizes))
+        (String.concat "; "
+           (Array.to_list (Array.map string_of_int j.covered))))
+    (let* n = int_range 1 5 in
+     let* extents = array ~size:(constant n) (int_range 0 3) in
+     let* covered = bool in
+     let* k = int_range 1 2 in
+     let* cov =
+       array ~size:(constant (if covered then k else 0)) (int_range 1 3)
+     in
+     let layout atoms =
+       let* units = int_range 0 1 in
+       let+ l = items atoms ~units ~covered:false in
+       if covered then Covered :: l else l
+     in
+     let* arity = int_range 1 4 in
+     let* first = layout (List.init n Fun.id) in
+     let* others =
+       list
+         ~size:(constant (arity - 1))
+         (let* perm = permutation (List.init n Fun.id) in
+          let* held = int_range 1 n in
+          layout (List.filteri (fun i _ -> i < held) perm))
+     in
+     let* perm = permutation (List.init n Fun.id) in
+     let* result = layout perm in
+     let operands = first :: others in
+     let groups =
+       List.concat_map
+         (List.filter_map (function
+           | Names (_ :: _ :: _ as is) -> Some is
+           | Names _ | Unit | Covered -> None))
+         operands
+     in
+     let+ picks =
+       list ~size:(constant (List.length groups)) (int_range 0 2)
+     in
+     let j = { extents; covered = cov; operands; result; sizes = [] } in
+     let given =
+       List.concat
+         (List.map2
+            (fun is pick ->
+              let left_out = List.nth is (pick mod List.length is) in
+              let others = List.filter (fun i -> i <> left_out) is in
+              let product =
+                List.fold_left (fun a i -> a * extents.(i)) 1 others
+              in
+              if product = 0 then is else others)
+            groups picks)
+     in
+     let given =
+       List.filter
+         (fun i -> not (alone j i))
+         (List.sort_uniq Int.compare given)
+     in
+     { j with sizes = List.map (fun i -> (names.(i), extents.(i))) given })
+
+(* Whether a group of two or more names in [j] holds a name [sizes] leaves
+   out that another operand holds alone, if [by_axis], or that none does. *)
+let solved_by j by_axis =
+  List.exists
+    (List.exists (function
+      | Names (_ :: _ :: _ as is) ->
+          List.exists
+            (fun i ->
+              (not (List.mem_assoc names.(i) j.sizes)) && alone j i = by_axis)
+            is
+      | Names _ | Unit | Covered -> false))
+    j.operands
+
+let resolution =
+  group "resolution"
+    [
+      prop "every arity resolves its names' extents alike" joint (fun j ->
+          let arity = List.length j.operands in
+          cover "one operand" (arity = 1);
+          cover "two operands" (arity = 2);
+          cover "three operands or more" (arity >= 3);
+          cover "a group's quotient" (solved_by j false);
+          cover "another operand's axis" (solved_by j true);
+          cover "[...]" (Array.length j.covered > 0);
+          cover "no element" (Array.exists (( = ) 0) j.extents);
+          let shape l =
+            Array.of_list
+              (List.concat_map
+                 (function
+                   | Names is ->
+                       [ List.fold_left (fun a i -> a * j.extents.(i)) 1 is ]
+                   | Unit -> [ 1 ]
+                   | Covered -> Array.to_list j.covered)
+                 l)
+          in
+          let p = Nx.Pattern.v (joint_text j) and sizes = j.sizes in
+          let xs =
+            List.map (fun l -> Nx.zeros Nx.float32 (shape l)) j.operands
+          in
+          let want = shape j.result in
+          match xs with
+          | [ x ] -> equal (array int) want (Nx.shape (Nx.rearrange ~sizes p x))
+          | [ a; b ] ->
+              equal ~msg:"contract" (array int) want
+                (Nx.shape (Nx.contract ~sizes Nx.float32 p a b));
+              equal ~msg:"einsum" (array int) want
+                (Nx.shape (Nx.einsum ~sizes p xs))
+          | xs -> equal (array int) want (Nx.shape (Nx.einsum ~sizes p xs)));
+    ]
+
 let shares x y =
   let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
@@ -286,6 +418,18 @@ let views =
           in
           equal (array int) [| 2; 2; 3; 4 |] (Nx.shape y);
           equal bool true (shares x y));
+      test "a split and a permutation allocate their budget" (fun () ->
+          let x, _ = host [| 1; 64; 64 |] in
+          let p = Nx.Pattern.v "b t (h d) -> b h t d" in
+          let sizes = [ ("h", 16) ] in
+          ignore (Nx.rearrange ~sizes p x);
+          let n = 1000 in
+          let before = Gc.minor_words () in
+          for _ = 1 to n do
+            ignore (Sys.opaque_identity (Nx.rearrange ~sizes p x))
+          done;
+          let per = (Gc.minor_words () -. before) /. Float.of_int n in
+          at_most (float 0.5) ~than:540. per);
       test "a merge strides cannot express copies" (fun () ->
           let x, _ = host [| 2; 3; 4 |] in
           let y = Nx.rearrange (Nx.Pattern.v "b t d -> (t b) d") x in
@@ -384,27 +528,27 @@ let calls =
           let f32 = Nx.zeros Nx.float32 [| 2; 64; 8 |] in
           raises
             (Invalid_argument
-               "Nx.rearrange: \"b h t d -> b t (h d)\": names 4 axes; the \
-                operand is float32 [2; 64; 8]") (fun () ->
+               "Nx.rearrange: \"b h t d -> b t (h d)\" names 4 axes for x; x \
+                is float32 [2; 64; 8]") (fun () ->
               Nx.rearrange (Nx.Pattern.v "b h t d -> b t (h d)") f32);
           call_error "b ... h t d -> b h t d ..." x
-            ": names at least 4 axes; the operand is int32 [2; 6; 4]";
+            " names at least 4 axes for x; x is int32 [2; 6; 4]";
           call_error "b (h d) t -> b h d t" x
-            ": (h d) has two unknown extents; give one in ~sizes";
+            ": (h d) in x leaves h and d unknown; give one in ~sizes";
           call_error
             ~sizes:[ ("h", 4) ]
             "b (h d) t -> b h d t" x
-            ": (h d) does not divide axis 1 of extent 6";
+            ": (h d) is 6 in x, which 4 does not divide";
           call_error
             ~sizes:[ ("h", 2); ("d", 2) ]
             "b (h d) t -> b h d t" x
-            ": (h d) multiplies to 4, axis 1 has extent 6";
+            ": (h d) is 6 in x, and its names multiply to 4";
           call_error
             ~sizes:[ ("b", 3) ]
-            "b h t -> t h b" x ": b = 3 in ~sizes, axis 0 has extent 2";
+            "b h t -> t h b" x ": b is 3 in ~sizes and 2 in x";
           call_error
             ~sizes:[ ("e", 3) ]
-            "b h t -> t h b" x ": e in ~sizes is not in it";
+            "b h t -> t h b" x ": ~sizes names e, which it lacks";
           call_error
             ~sizes:[ ("h", 2); ("h", 2) ]
             "b (h d) t -> b h d t" x ": h is twice in ~sizes";
@@ -413,8 +557,11 @@ let calls =
             "b (h d) t -> b h d t" x ": h = -2 in ~sizes is negative";
           call_error
             ~sizes:[ ("h", max_int); ("d", 2) ]
-            "b (h d) t -> b h d t" x ": more elements than an int counts";
-          call_error "b 1 t -> b t" x ": axis 1 has extent 6 where it has 1";
+            "b (h d) t -> b h d t" x
+            ": (h d) is 6 in x, and its names multiply to more than an int \
+             counts";
+          call_error "b 1 t -> b t" x
+            ": axis 1 of x is 1 in the pattern and 6 in x";
           call_error "i k, k j -> i j | k" x ": has 2 operands; use Nx.einsum";
           call_error "i k, k j, j -> i | k j" x
             ": has 3 operands; use Nx.einsum");
@@ -435,4 +582,4 @@ let calls =
             (fun () -> Nx.copy x));
     ]
 
-let () = exit (run "nx patterns" [ laws; views; parsing; calls ])
+let () = exit (run "nx patterns" [ laws; resolution; views; parsing; calls ])

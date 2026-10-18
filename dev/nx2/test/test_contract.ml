@@ -1214,7 +1214,7 @@ let errors =
             (x [| 2; 2; 3 |])
             (x [| 3; 3; 2 |]));
       refuses "a size an operand contradicts"
-        {|Nx.contract: "i k, k j -> i j | k": k is 5 in sizes and 3 in a|}
+        {|Nx.contract: "i k, k j -> i j | k": k is 5 in ~sizes and 3 in a|}
         (fun () ->
           Nx.contract ~sizes:[ ("k", 5) ] Nx.float32
             (Nx.Pattern.v "i k, k j -> i j | k")
@@ -1274,6 +1274,16 @@ let errors =
               (x [| 5; 3 |])
           in
           equal (array int) [| 3; 4; 0; 3 |] (Nx.shape y));
+      test "a group's quotient gives another group its last name" (fun () ->
+          (* (a b) gives b = 6 / 2, then (b c) gives c = 12 / 3. *)
+          let y =
+            Nx.contract Nx.float32
+              ~sizes:[ ("a", 2) ]
+              (Nx.Pattern.v "(b c) k, (a b) k -> a b c | k")
+              (x [| 12; 5 |])
+              (x [| 6; 5 |])
+          in
+          equal (array int) [| 2; 3; 4 |] (Nx.shape y));
       refuses "a known zero in a group of elements"
         {|Nx.contract: "(h d) k, k j -> h d j | k": (h d) is 10 in a, and its names multiply to 0|}
         (fun () ->
@@ -1296,6 +1306,21 @@ let errors =
             ~sizes:[ ("z", 2) ]
             (Nx.Pattern.v "i k, k j -> i j | k")
             (x [| 2; 3 |])
+            (x [| 3; 2 |]));
+      refuses "a size given twice"
+        {|Nx.contract: "(h d) k, k j -> h d j | k": h is twice in ~sizes|}
+        (fun () ->
+          Nx.contract Nx.float32
+            ~sizes:[ ("h", 2); ("h", 2) ]
+            (Nx.Pattern.v "(h d) k, k j -> h d j | k")
+            (x [| 10; 5 |])
+            (x [| 5; 3 |]));
+      refuses "too few axes under ..."
+        {|Nx.contract: "... i k, ... k j -> ... i j | k" names at least 2 axes for a; a is float32 [3]|}
+        (fun () ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "... i k, ... k j -> ... i j | k")
+            (x [| 3 |])
             (x [| 3; 2 |]));
       refuses "a one-operand pattern"
         {|Nx.contract: "i k -> k i" has one operand; use Nx.rearrange|}

@@ -1654,14 +1654,15 @@ val contract :
     ["n i, n o -> i o | n"]; otherwise the result is fresh.
 
     Raises [Invalid_argument] if [dt] is a boolean; [p] has other than two
-    operands; an operand's rank is not the number of axes [p] gives it; [...]
-    covers different numbers of axes in the two operands; paired extents
+    operands; an operand's rank is not the number of axes [p] gives it, or
+    fewer with [...]; [...] covers different numbers of axes in the two
+    operands; paired extents
     differ; a group's extents do not multiply to its axis, or it leaves
     two extents unknown; a unit axis's extent is not [1]; a name in [sizes] is
-    not in [p], or its size is negative; [acc] is omitted for an integer and a
-    float operand, or is a boolean, a float narrower than [float32] or than a
-    float operand, or of another kind than [dt]; or [init]'s shape is not the
-    result's. *)
+    not in [p] or is there twice, or its size is negative; [acc] is omitted for
+    an integer and a float operand, or is a boolean, a float narrower than
+    [float32] or than a float operand, or of another kind than [dt]; or
+    [init]'s shape is not the result's. *)
 
 val einsum :
   ?sizes:(string * int) list ->
@@ -1702,13 +1703,13 @@ val einsum :
 
     Raises [Invalid_argument] if [p] has one operand, more than 11, or other
     than [n]; the dtype is a boolean; an operand's rank is not the number of
-    axes [p] gives it; [...] covers different numbers of axes in two operands;
-    a name's extents differ between operands; every tree holds a value of
-    more than {!Nx_array.Layout.max_rank} axes; a group's extents do not
-    multiply to its axis, or it leaves two extents unknown; a unit axis's
-    extent is not [1]; a name in [sizes] is not in [p], or its size is
-    negative; or [acc] is a boolean, a float narrower than [float32] or than
-    the operands, or of another kind than theirs. *)
+    axes [p] gives it, or fewer with [...]; [...] covers different numbers of
+    axes in two operands; a name's extents differ between operands; every tree
+    holds a value of more than {!Nx_array.Layout.max_rank} axes; a group's
+    extents do not multiply to its axis, or it leaves two extents unknown; a
+    unit axis's extent is not [1]; a name in [sizes] is not in [p] or is there
+    twice, or its size is negative; or [acc] is a boolean, a float narrower
+    than [float32] or than the operands, or of another kind than theirs. *)
 
 val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [matmul a b] is the matrix product over the last two axes, leading axes

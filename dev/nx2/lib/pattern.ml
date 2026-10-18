@@ -4,30 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 type 'n axis = Name of 'n | Group of 'n list | Unit | Ellipsis
-type layout = string axis list
 
-(* An axis of a one-operand pattern, over its names numbered in their order on
-   the left: a name or a group, [1], or [...]. *)
-type slot = Of of int array | Lone | Rest
-
-(* A one-operand pattern's names, each side's slots, and the number of names
-   before [...] on the left, where it has one. *)
-type plan = {
+type t = {
+  text : string;
   names : string array;
-  left : slot array;
-  right : slot array;
-  rest : int option;
+  operands : int axis list list;
+  result : int axis list;
 }
-
-type kind =
-  | One of { operand : layout; plan : plan }
-  | Many of {
-      names : string array;
-      operands : int axis list list;
-      result : int axis list;
-    }
-
-type t = { text : string; result : layout; kind : kind }
 
 let pp ppf p = Format.fprintf ppf "%S" p.text
 
@@ -208,45 +191,18 @@ let index_of names n =
   done;
   !i
 
-let plan operand result =
-  let names = Array.of_list (names operand) in
-  let slot = function
-    | Name n -> Of [| index_of names n |]
-    | Group ns -> Of (Array.of_list (List.map (index_of names) ns))
-    | Unit -> Lone
-    | Ellipsis -> Rest
-  in
-  let rec before k = function
-    | [] -> None
-    | Ellipsis :: _ -> Some k
-    | Name _ :: l -> before (k + 1) l
-    | Group ns :: l -> before (k + List.length ns) l
-    | Unit :: l -> before k l
-  in
-  {
-    names;
-    left = Array.of_list (List.map slot operand);
-    right = Array.of_list (List.map slot result);
-    rest = before 0 operand;
-  }
-
-(* A pattern of several operands with its names numbered in their first
-   place among the operands. *)
-let many operands result =
-  let ns = Array.of_list (uniq (List.concat_map names operands)) in
+(* [operands] and [result] with each name numbered by its first place among
+   the operands. *)
+let number operands result =
+  let names = Array.of_list (uniq (List.concat_map names operands)) in
   let number = function
-    | Name n -> Name (index_of ns n)
-    | Group g -> Group (List.map (index_of ns) g)
+    | Name n -> Name (index_of names n)
+    | Group g -> Group (List.map (index_of names) g)
     | Unit -> Unit
     | Ellipsis -> Ellipsis
   in
   let numbered l = List.map number l in
-  Many
-    {
-      names = ns;
-      operands = List.map numbered operands;
-      result = numbered result;
-    }
+  (names, List.map numbered operands, numbered result)
 
 let words ~by s =
   let ts = tokens ~by s in
@@ -268,16 +224,11 @@ let words ~by s =
         (layout ~by s r, List.map name sum)
     | _ -> fail ~by s "| appears twice"
   in
-  let kind =
-    match operands with
-    | [ operand ] ->
-        check_one ~by s operand result summed;
-        One { operand; plan = plan operand result }
-    | operands ->
-        check_many ~by s operands result summed;
-        many operands result
-  in
-  { text = s; result; kind }
+  (match operands with
+  | [ operand ] -> check_one ~by s operand result summed
+  | operands -> check_many ~by s operands result summed);
+  let names, operands, result = number operands result in
+  { text = s; names; operands; result }
 
 (* The pattern a string in NumPy's einsum notation means, each letter a name and
    the names in both operands and not in the result summed; [None] for a string
@@ -337,166 +288,366 @@ let v ~by s =
       | _ -> raise e)
 
 let inverse ~by p =
-  match p.kind with
-  | One { operand; _ } ->
+  match p.operands with
+  | [ operand ] ->
+      let named l =
+        List.map
+          (function
+            | Name i -> Name p.names.(i)
+            | Group is -> Group (List.map (Array.get p.names) is)
+            | Unit -> Unit
+            | Ellipsis -> Ellipsis)
+          l
+      in
+      let left = named p.result and right = named operand in
+      let names, operands, result = number [ left ] right in
       {
-        text = text ~operands:[ p.result ] ~result:operand ~summed:[];
-        result = operand;
-        kind = One { operand = p.result; plan = plan p.result operand };
+        text = text ~operands:[ left ] ~result:right ~summed:[];
+        names;
+        operands;
+        result;
       }
-  | Many { operands; _ } ->
+  | operands ->
       invalid_arg
         (Printf.sprintf "%s: %S has %d operands" by p.text
            (List.length operands))
 
+(* Extents *)
+
+(* A pattern met with operands: [by] and [label] for messages, the number of
+   axes [...] covers, and each name's extent, [-1] where unknown, then those
+   of the covered axes. [where] holds the operand each was learned from, or
+   [-1] for [~sizes]. A call allocates this and walks the layouts with
+   first-order functions, so that [rearrange] costs about its movements. *)
+type state = {
+  by : string;
+  p : t;
+  label : int -> string;
+  covered : int;
+  ext : int array;
+  where : int array;
+}
+
+let shape_text s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
+
+let axes k = if k = 1 then "1 axis" else string_of_int k ^ " axes"
+
+(* The number of axes [l] names, besides its ellipsis. *)
+let written l =
+  List.fold_left (fun w x -> match x with Ellipsis -> w | _ -> w + 1) 0 l
+
+(* Name [i] of [p], or [...k] for the [k]th axis [...] covers. *)
+let name p i =
+  let n = Array.length p.names in
+  if i < n then p.names.(i) else "..." ^ string_of_int (i - n)
+
+let group_text p is = axis_text (Group (List.map (name p) is))
+let source st k = if k < 0 then "~sizes" else st.label k
+
+let rec has_zero ext = function
+  | [] -> false
+  | i :: is -> ext.(i) = 0 || has_zero ext is
+
+(* The product of the known extents of [is], none [0], times [q]: [-1] past an
+   int. *)
+let rec known ext q = function
+  | [] -> q
+  | i :: is ->
+      let d = ext.(i) in
+      if d < 0 || q < 0 then known ext q is
+      else if d > max_int / q then known ext (-1) is
+      else known ext (q * d) is
+
+(* The product of the known extents of [is]: [0] if one is, [-1] past an
+   int. *)
+let product ext is = if has_zero ext is then 0 else known ext 1 is
+
+let rec unknowns ext = function
+  | [] -> 0
+  | i :: is -> (if ext.(i) < 0 then 1 else 0) + unknowns ext is
+
+let rec unknown ext = function
+  | [] -> assert false
+  | i :: is -> if ext.(i) < 0 then i else unknown ext is
+
+(* The place of the name [s] in [names], or [-1]. *)
+let find names s =
+  let rec go i =
+    if i = Array.length names then -1
+    else if String.equal names.(i) s then i
+    else go (i + 1)
+  in
+  go 0
+
+let learn st i d k =
+  if st.ext.(i) < 0 then begin
+    st.ext.(i) <- d;
+    st.where.(i) <- k
+  end
+  else if st.ext.(i) <> d then
+    fail ~by:st.by st.p.text "%s is %d in %s and %d in %s" (name st.p i)
+      st.ext.(i) (source st st.where.(i)) d (source st k)
+
+(* Raises unless each operand's rank fits its layout. *)
+let rec ranks ~by ~label p k ls xs =
+  match (ls, xs) with
+  | l :: ls, (dt, s) :: xs ->
+      let w = written l and r = Array.length s in
+      let dots = has_ellipsis l in
+      if (dots && r < w) || ((not dots) && r <> w) then
+        invalid_arg
+          (Printf.sprintf "%s: %S names %s%s for %s; %s is %s %s" by p.text
+             (if dots then "at least " else "")
+             (axes w) (label k) (label k) dt (shape_text s));
+      ranks ~by ~label p (k + 1) ls xs
+  | _ -> ()
+
+(* The number of axes [...] covers in the [k]th operand on, the same as [c]
+   in the first. *)
+let rec covered ~by ~label p k c ls xs =
+  match (ls, xs) with
+  | l :: ls, (_, s) :: xs ->
+      let c' = Array.length s - written l in
+      if k > 0 && c' <> c then
+        fail ~by p.text "... is %s in %s and %d in %s" (axes c) (label 0) c'
+          (label k);
+      covered ~by ~label p (k + 1) c' ls xs
+  | _ -> c
+
+let rec given st = function
+  | [] -> ()
+  | (s, d) :: sizes ->
+      let i = find st.p.names s and text = st.p.text in
+      if i < 0 then fail ~by:st.by text "~sizes names %s, which it lacks" s;
+      if st.ext.(i) >= 0 then fail ~by:st.by text "%s is twice in ~sizes" s;
+      if d < 0 then fail ~by:st.by text "%s = %d in ~sizes is negative" s d;
+      learn st i d (-1);
+      given st sizes
+
+(* Learns the extents that the [k]th operand's layout [l] gives its names
+   alone and its covered axes, from its axis [a] of shape [s] on. *)
+let rec scan st k s a = function
+  | [] -> ()
+  | Name i :: l ->
+      learn st i s.(a) k;
+      scan st k s (a + 1) l
+  | Unit :: l ->
+      if s.(a) <> 1 then
+        fail ~by:st.by st.p.text
+          "axis %d of %s is 1 in the pattern and %d in %s" a (st.label k) s.(a)
+          (st.label k);
+      scan st k s (a + 1) l
+  | Group _ :: l -> scan st k s (a + 1) l
+  | Ellipsis :: l ->
+      let n = Array.length st.p.names in
+      for j = 0 to st.covered - 1 do
+        learn st (n + j) s.(a + j) k
+      done;
+      scan st k s (a + st.covered) l
+
+let rec scans st k ls xs =
+  match (ls, xs) with
+  | l :: ls, (_, s) :: xs ->
+      scan st k s 0 l;
+      scans st (k + 1) ls xs
+  | _ -> ()
+
+let multiplies st k is d q =
+  fail ~by:st.by st.p.text "%s is %d in %s, and its names multiply to %s"
+    (group_text st.p is) d (st.label k) q
+
+(* Solves the group [is] on an axis of extent [d] of the [k]th operand: a
+   group whose known extents multiply to 0 has no element and learns
+   nothing; otherwise they divide [d] exactly and leave the one unknown name
+   the quotient. [true] if it learned an extent. *)
+let solve st k is d =
+  let q = product st.ext is and u = unknowns st.ext is in
+  if q = 0 then begin
+    if d <> 0 then multiplies st k is d "0";
+    false
+  end
+  else if u = 0 then begin
+    if q < 0 then multiplies st k is d "more than an int counts";
+    if q <> d then multiplies st k is d (string_of_int q);
+    false
+  end
+  else if u > 1 then false
+  else if q < 0 && d = 0 then begin
+    learn st (unknown st.ext is) 0 k;
+    true
+  end
+  else if q > 0 && d mod q = 0 then begin
+    learn st (unknown st.ext is) (d / q) k;
+    true
+  end
+  else
+    fail ~by:st.by st.p.text "%s is %d in %s, which %s does not divide"
+      (group_text st.p is) d (st.label k)
+      (if q < 0 then "a product past an int" else string_of_int q)
+
+(* One pass over the groups of the [k]th operand's layout [l] on, from its
+   axis [a] of shape [s]; [true] if it or [learned] learned an extent. *)
+let rec groups st k s a learned = function
+  | [] -> learned
+  | Group is :: l ->
+      let learned = solve st k is s.(a) || learned in
+      groups st k s (a + 1) learned l
+  | (Name _ | Unit) :: l -> groups st k s (a + 1) learned l
+  | Ellipsis :: l -> groups st k s (a + st.covered) learned l
+
+let rec pass st k learned ls xs =
+  match (ls, xs) with
+  | l :: ls, (_, s) :: xs -> pass st (k + 1) (groups st k s 0 learned l) ls xs
+  | _ -> learned
+
+(* Raises if a group of the [k]th operand's layout on leaves a name unknown. *)
+let rec solved st k = function
+  | [] -> ()
+  | l :: ls ->
+      List.iter
+        (function
+          | Group is when unknowns st.ext is > 0 ->
+              let us = List.filter (fun i -> st.ext.(i) < 0) is in
+              fail ~by:st.by st.p.text
+                "%s in %s leaves %s unknown; give one in ~sizes"
+                (group_text st.p is) (st.label k)
+                (String.concat " and " (List.map (name st.p) us))
+          | Name _ | Group _ | Unit | Ellipsis -> ())
+        l;
+      solved st (k + 1) ls
+
+let rec count c = function
+  | [] -> 0
+  | Name _ :: l -> 1 + count c l
+  | Group is :: l -> List.length is + count c l
+  | Unit :: l -> count c l
+  | Ellipsis :: l -> c + count c l
+
+let rec put a j = function
+  | [] -> j
+  | i :: is ->
+      a.(j) <- i;
+      put a (j + 1) is
+
+(* Writes [l]'s names into [a] from [j] on, in order, those in groups
+   included, its ellipsis written out as the covered axes. *)
+let rec names_into st a j = function
+  | [] -> a
+  | Name i :: l ->
+      a.(j) <- i;
+      names_into st a (j + 1) l
+  | Group is :: l -> names_into st a (put a j is) l
+  | Unit :: l -> names_into st a j l
+  | Ellipsis :: l ->
+      let n = Array.length st.p.names in
+      for e = 0 to st.covered - 1 do
+        a.(j + e) <- n + e
+      done;
+      names_into st a (j + st.covered) l
+
+let named st l = names_into st (Array.make (count st.covered l) 0) 0 l
+
+(* Writes the extents of [l]'s axes into [s] from [j] on. *)
+let rec extents_into st s j = function
+  | [] -> s
+  | Name i :: l ->
+      s.(j) <- st.ext.(i);
+      extents_into st s (j + 1) l
+  | Group is :: l ->
+      let q = product st.ext is in
+      if q < 0 then
+        fail ~by:st.by st.p.text "%s in the result multiplies past an int"
+          (group_text st.p is);
+      s.(j) <- q;
+      extents_into st s (j + 1) l
+  | Unit :: l ->
+      s.(j) <- 1;
+      extents_into st s (j + 1) l
+  | Ellipsis :: l ->
+      let n = Array.length st.p.names in
+      for e = 0 to st.covered - 1 do
+        s.(j + e) <- st.ext.(n + e)
+      done;
+      extents_into st s (j + st.covered) l
+
+let rec all_named st = function
+  | [] -> []
+  | l :: ls -> named st l :: all_named st ls
+
+let resolve ~by ~sizes ~label p xs =
+  ranks ~by ~label p 0 p.operands xs;
+  let covered = covered ~by ~label p 0 0 p.operands xs in
+  let m = Array.length p.names + covered in
+  let st =
+    {
+      by;
+      p;
+      label;
+      covered;
+      ext = Array.make m (-1);
+      where = Array.make m (-1);
+    }
+  in
+  given st sizes;
+  scans st 0 p.operands xs;
+  while pass st 0 false p.operands xs do
+    ()
+  done;
+  solved st 0 p.operands;
+  ( ~extents:st.ext,
+    ~operands:(all_named st p.operands),
+    ~result:(named st p.result),
+    ~shape:
+      (extents_into st
+         (Array.make (written p.result + covered) 0)
+         0 p.result) )
+
 (* Movements *)
-
-let group_text names ids =
-  axis_text (Group (Array.to_list (Array.map (fun i -> names.(i)) ids)))
-
-(* [a * b] for extents, or raises naming [by] and [text] past an [int]. *)
-let times ~by ~text a b =
-  if a <> 0 && b > max_int / a then
-    fail ~by text "more elements than an int counts";
-  a * b
 
 let is_identity perm =
   let rec go i = i = Array.length perm || (perm.(i) = i && go (i + 1)) in
   go 0
 
-(* The extent of each name of [pl] at a shape [s] and [sizes], with the axes
-   [...] covers: the names' extents, and the axes between the reshapes, the
-   names in their order on the left with the covered axes after the names before
-   [...]. Every refusal of a call raises here. *)
-let extents ~by ~text ~sizes pl s what =
-  let fail fmt = fail ~by text fmt in
-  let names = pl.names in
-  let ext = Array.make (Array.length names) (-1) in
-  List.iter
-    (fun (n, e) ->
-      if not (Array.mem n names) then fail "%s in ~sizes is not in it" n;
-      let i = index_of names n in
-      if ext.(i) >= 0 then fail "%s is twice in ~sizes" n;
-      if e < 0 then fail "%s = %d in ~sizes is negative" n e;
-      ext.(i) <- e)
-    sizes;
-  let r = Array.length s in
-  let named =
-    match pl.rest with
-    | None -> Array.length pl.left
-    | Some _ -> Array.length pl.left - 1
-  in
-  let covered = r - named in
-  if pl.rest <> None && covered < 0 then
-    fail "names at least %d axes; the operand is %t" named what;
-  if pl.rest = None && covered <> 0 then
-    fail "names %d axes; the operand is %t" named what;
-  let rest = Option.value ~default:0 pl.rest in
-  let atom i = if pl.rest <> None && i >= rest then i + covered else i in
-  let split = Array.make (Array.length names + covered) 0 in
-  let a = ref 0 in
-  let group ids d =
-    let product = ref 1 and unknown = ref (-1) and unknowns = ref 0 in
-    Array.iter
-      (fun i ->
-        if ext.(i) >= 0 then product := times ~by ~text !product ext.(i)
-        else begin
-          unknown := i;
-          incr unknowns
-        end)
-      ids;
-    if !unknowns > 1 then
-      fail "%s has two unknown extents; give one in ~sizes"
-        (group_text names ids);
-    if !unknowns = 0 && !product <> d then
-      fail "%s multiplies to %d, axis %d has extent %d" (group_text names ids)
-        !product !a d;
-    if !unknowns = 1 then begin
-      if !product = 0 || d mod !product <> 0 then
-        fail "%s does not divide axis %d of extent %d" (group_text names ids) !a
-          d;
-      ext.(!unknown) <- d / !product
-    end
-  in
-  Array.iter
-    (fun slot ->
-      match slot with
-      | Rest ->
-          Array.blit s !a split rest covered;
-          a := !a + covered
-      | Lone ->
-          if s.(!a) <> 1 then
-            fail "axis %d has extent %d where it has 1" !a s.(!a);
-          incr a
-      | Of [| i |] ->
-          let d = s.(!a) in
-          if ext.(i) >= 0 && ext.(i) <> d then
-            fail "%s = %d in ~sizes, axis %d has extent %d" names.(i) ext.(i) !a
-              d;
-          ext.(i) <- d;
-          split.(atom i) <- d;
-          incr a
-      | Of ids ->
-          group ids s.(!a);
-          Array.iter (fun i -> split.(atom i) <- ext.(i)) ids;
-          incr a)
-    pl.left;
-  (ext, covered, atom, split)
+(* The place of [i] in [a]. *)
+let position (a : int array) i =
+  let rec go j = if a.(j) = i then j else go (j + 1) in
+  go 0
 
-(* The atoms in the result's order, and the result's extents. *)
-let arrangement ~by ~text pl ext covered atom split =
-  let rest = Option.value ~default:0 pl.rest in
-  let perm = Array.make (Array.length split) 0 in
-  let merged =
-    Array.make
-      (Array.length pl.right + if pl.rest <> None then covered - 1 else 0)
-      0
+(* Whether [s] is [split] permuted by [perm]. *)
+let permutes (s : int array) split perm =
+  let rec go j =
+    j = Array.length s || (s.(j) = split.(perm.(j)) && go (j + 1))
   in
-  let j = ref 0 and m = ref 0 in
-  let place p e =
-    perm.(!j) <- p;
-    incr j;
-    e
-  in
-  Array.iter
-    (fun slot ->
-      match slot with
-      | Rest ->
-          for c = 0 to covered - 1 do
-            merged.(!m) <- place (rest + c) split.(rest + c);
-            incr m
-          done
-      | Lone ->
-          merged.(!m) <- 1;
-          incr m
-      | Of ids ->
-          let product = ref 1 in
-          Array.iter
-            (fun i ->
-              product := times ~by ~text !product (place (atom i) ext.(i)))
-            ids;
-          merged.(!m) <- !product;
-          incr m)
-    pl.right;
-  (perm, merged)
+  Array.length s = Array.length perm && go 0
 
-let moves ~by ~sizes p s what =
-  let fail fmt = fail ~by p.text fmt in
-  match p.kind with
-  | Many { operands; _ } ->
-      fail "has %d operands; use Nx.einsum" (List.length operands)
-  | One { plan; _ } ->
-      let text = p.text in
-      let ext, covered, atom, split = extents ~by ~text ~sizes plan s what in
-      let perm, merged = arrangement ~by ~text plan ext covered atom split in
-      let permuted = Array.map (fun i -> split.(i)) perm in
+(* The operand split into its names, permuted into the result's, and merged
+   into the result's shape. *)
+let moves ~by ~sizes p x =
+  match p.operands with
+  | [ _ ] ->
+      let label _ = "x" in
+      let ~extents, ~operands, ~result, ~shape =
+        resolve ~by ~sizes ~label p [ x ]
+      in
+      let left = List.hd operands in
+      let split = Array.make (Array.length left) 0 in
+      for j = 0 to Array.length left - 1 do
+        split.(j) <- extents.(left.(j))
+      done;
+      let perm = Array.make (Array.length result) 0 in
+      for j = 0 to Array.length result - 1 do
+        perm.(j) <- position left result.(j)
+      done;
       let moves =
-        if merged = permuted then []
-        else [ Nx_array.Move.Reshape (Iarray.of_array merged) ]
+        if permutes shape split perm then []
+        else [ Nx_array.Move.Reshape (Iarray.of_array shape) ]
       in
       let moves =
         if is_identity perm then moves
         else Nx_array.Move.Permute (Iarray.of_array perm) :: moves
       in
-      if split = s then moves
+      if split = snd x then moves
       else Nx_array.Move.Reshape (Iarray.of_array split) :: moves
+  | operands ->
+      fail ~by p.text "has %d operands; use Nx.einsum" (List.length operands)

@@ -958,9 +958,7 @@ end
 
 let rearrange ?(sizes = []) p x =
   let by = "Nx.rearrange" in
-  let moves =
-    Pattern.moves ~by ~sizes p (shape x) (fun ppf -> pp_value ppf x)
-  in
+  let moves = Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) in
   List.fold_left (fun x mv -> move ~by mv x) x moves
 
 (* Indexing and slicing *)
