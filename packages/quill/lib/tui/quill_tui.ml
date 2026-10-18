@@ -467,10 +467,14 @@ let active_line_colors code cursor =
       } );
   ]
 
+let highlight_ranges source =
+  try Tree_sitter_ocaml.highlight_ocaml source |> Syntax_highlight.of_triples
+  with _ -> []
+
 let highlight_source source =
   try
-    Tree_sitter_ocaml.highlight_ocaml source
-    |> Syntax_theme.apply Syntax_theme.default ~content:source
+    highlight_ranges source
+    |> Syntax_highlight.to_spans ~style:Syntax_style.default ~content:source
   with _ -> []
 
 let editor_on_key m ev =
@@ -1148,11 +1152,11 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
                ());
         ]
     else
-      let highlights = highlight_source source in
+      let syntax = Code.syntax ~language:"ocaml" (highlight_ranges source) in
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
-        [ code ~spans:highlights source ]
+        [ code ~syntax source ]
   in
   let status_row =
     match status with
