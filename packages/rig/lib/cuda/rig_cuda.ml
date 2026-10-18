@@ -609,7 +609,6 @@ let open_ ~word i =
               (* A submission's waits go to its stream in batches, as many
                  as it carries. *)
               waits = { stores = true; hosts = true; most = max_int };
-              most_parts = max_int;
               may_block = true;
               hang_ms = (if watchdog = 0 then Some hang_ms else None);
               maps_host = registers <> 0;

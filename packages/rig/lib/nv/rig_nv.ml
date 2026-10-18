@@ -597,7 +597,6 @@ let facts (T d) =
     copy_engine = Some 1;
     completion = Store;
     waits;
-    most_parts = max_int;
     may_block = false;
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;

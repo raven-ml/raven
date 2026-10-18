@@ -193,9 +193,8 @@ val capability : t -> Rig_nv_abi.Gpu.t
     2 GiB take no ring entry of their own, and the segment and launch rings
     grow to hold them. The driver's words for them close into an entry for
     each 4 MiB of segment, and a segment ring lies below [2{^40}], so their
-    entries stay below the 262,144 a channel's ring holds from its open:
-    the device's [most_parts] ({!Rig_edge.type-facts}) is [max_int], and
-    only memory bounds them. Words, and longer copies, take the entries
+    entries stay below the 262,144 a channel's ring holds from its open,
+    and only memory bounds them. Words, and longer copies, take the entries
     their sizes take.
 
     A launch's constant bank 0 is its kernel's, of at most

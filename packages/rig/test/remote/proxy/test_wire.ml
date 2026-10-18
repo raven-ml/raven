@@ -31,7 +31,7 @@ let u32 n =
   Bytes.to_string b
 
 (* The protocol's version, as wire.mli states it. *)
-let version = 7
+let version = 8
 
 let random_bytes n = String.init n (fun _ -> Char.chr (Random.int 256))
 let greeting ~version nonce = "rig-job\n" ^ u32 version ^ "\000" ^ nonce

@@ -838,13 +838,10 @@ let test_unmapped_wait () =
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_store () = in_queue ~completion:`Store
 
-(* A device's most parts is what it always runs, not a cap: a submission of
-   more parts runs where the device's queues have room for it, and only room
-   refuses one they never hold. *)
-let test_most_parts () =
-  let d, _ = P.open_ ~capacity:4 ~most_parts:2 "submit:most-parts" in
-  equal ~msg:"the device's count" int 2 (Rig.most_parts d);
-  equal ~msg:"the host's" int max_int (Rig.most_parts Rig.host);
+(* Room alone bounds a submission: one the device's queues hold runs, and one
+   they never hold raises. *)
+let test_never_fits () =
+  let d, _ = P.open_ ~capacity:4 "submit:never-fits" in
   let four = Sub.make d (Array.make 4 idle) in
   Rig.Point.wait (submit four);
   let five = Sub.make d (Array.make 5 idle) in
@@ -1971,8 +1968,8 @@ let tests =
           test_negative_max_waits;
         test "a queue that waits on stores waits on the producer's word"
           test_in_queue_store;
-        test "a submission of more than the most parts runs where room has it"
-          test_most_parts;
+        test "a submission runs if its queues hold it, and raises if never"
+          test_never_fits;
         test "a full queue's submit waits for room" test_room;
       ];
     group ~timeout "growth"

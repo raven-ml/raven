@@ -22,7 +22,6 @@ let answer : type a. a Wire.request -> (a, string) result = function
             name = kind;
             arch = "echo";
             budget = 0;
-            most_parts = 1;
             alignment = 16;
             reaches = [];
             reached_by = [];

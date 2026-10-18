@@ -221,7 +221,6 @@ type pending = {
   on : int;
   mutable parts : Rig_program.part list;
   slots : Rig_program.slot Dynarray.t;
-  mutable nparts : int;
 }
 
 (* A kernel of the schedule, for reports and timing: the device it runs on, its
@@ -497,22 +496,18 @@ let flush b =
              fixed = Iarray.of_list [];
            })
 
-(* The submission of [on] that takes the next part: one of at most the parts
-   its device always runs ([Rig.most_parts]). *)
+(* The submission of [on] that takes the next part. *)
 let pending b on =
   match b.pending with
-  | Some p
-    when p.on = on && p.nparts < Rig.most_parts (Dynarray.get b.rigs on) ->
-      p
+  | Some p when p.on = on -> p
   | _ ->
       flush b;
-      let p = { on; parts = []; slots = Dynarray.create (); nparts = 0 } in
+      let p = { on; parts = []; slots = Dynarray.create () } in
       b.pending <- Some p;
       p
 
 let add_part b p part =
   p.parts <- part :: p.parts;
-  p.nparts <- p.nparts + 1;
   if b.separate then flush b
 
 let slot_index p (s : Rig_program.slot) =

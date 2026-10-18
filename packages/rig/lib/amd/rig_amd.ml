@@ -227,7 +227,6 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
-external most_parts : int -> int = "caml_rig_amd_most_parts"
 
 external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
@@ -647,7 +646,6 @@ let facts g =
     copy_engine = Some 1;
     completion = Store;
     waits = { stores = g.waits64; hosts = g.waits64; most = max_waits () };
-    most_parts = most_parts g.self;
     may_block = false;
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;

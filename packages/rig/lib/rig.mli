@@ -236,20 +236,6 @@ val alignment : t -> int
     hold for those sizes only. For a device of another machine, it is that
     machine's device's. *)
 
-val most_parts : t -> int
-(** [most_parts d] is the most parts that an idle [d] always runs in one
-    submission, given memory for its queues to grow ({!submit}), as [d]'s
-    driver states it ({!Rig_edge.type-facts}): [max_int] where its driver
-    has no such bound, and [0] for an io device. For a device of another
-    machine, it is that machine's device's, but [max_int] for an io device
-    there, since its agent runs each part handed to it as a copy of its own.
-
-    The count holds for launches and fills up to the argument size, and
-    copies up to the length, that [d]'s driver's [.mli] states. Words parts,
-    and larger launches and copies, take room by their sizes, which the
-    caller sets. A submission of more parts may still run: {!submit} decides
-    by the room [d]'s queues have. *)
-
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]
     ({!Rig_edge.type-capability}), filled when [d] opened, or [None] if it
@@ -489,7 +475,7 @@ val signaled : t -> int
     thread holds, since the thread's count of its locks does not say which
     they are. A function that takes no lock may be called from a callback at
     any point, and never raises it: {!name}, {!equal}, {!pp}, {!arch},
-    {!computes}, {!runs_on_host}, {!alignment}, {!most_parts}, {!capability},
+    {!computes}, {!runs_on_host}, {!alignment}, {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!signaled}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of
@@ -1833,7 +1819,8 @@ end
     length and share no byte; no ref names handle-only memory
     ({!Buffer.section-low}); and its driver can run the work
     ({!Rig_edge.section-calls}). A driver may bound the words one submission
-    places, as its interface states. {!submit} raises for each. *)
+    places on its queues, its own packets' included, where its queues cannot
+    grow past a size, as its interface states. {!submit} raises for each. *)
 
 (** {2:submits Submitting}
 

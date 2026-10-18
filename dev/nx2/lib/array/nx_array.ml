@@ -580,30 +580,22 @@ let gather_runs a h =
       in
       blit ~src ~dst)
 
-(* [src]'s device copies [src]'s runs into [dst], on that device, in submissions
-   of at most [Rig.most_parts] copies. *)
+(* [src]'s device copies [src]'s runs into [dst], on that device, in one
+   submission. *)
 let pack_on_device src dst =
   let d = device src and eb = Dtype.bits src.dtype / 8 in
-  let most = Rig.most_parts d in
-  let submit parts =
-    let s = Rig.Submission.make d (Array.of_list (List.rev parts)) in
-    ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[||] : Rig.Point.t)
-  in
-  let parts = ref [] and count = ref 0 in
+  let parts = ref [] in
   iter_runs src.layout dst.layout (fun ps pt n ->
       let view b p =
         Rig.Submission.Buffer (Buffer.view b ~first:(p * eb) ~length:(n * eb))
       in
       parts :=
         Rig.Submission.copy ~src:(view src.buffer ps) ~dst:(view dst.buffer pt)
-        :: !parts;
-      incr count;
-      if !count = most then begin
-        submit !parts;
-        parts := [];
-        count := 0
-      end);
-  if !parts <> [] then submit !parts
+        :: !parts);
+  if !parts <> [] then begin
+    let s = Rig.Submission.make d (Array.of_list (List.rev !parts)) in
+    ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[||] : Rig.Point.t)
+  end
 
 (* Copies each run between [src] and [dst] by its own [Buffer.copy], which
    chooses the path between their devices. *)

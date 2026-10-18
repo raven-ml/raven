@@ -31,7 +31,6 @@
 
 #define _GNU_SOURCE
 
-#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -301,37 +300,6 @@ static struct cost need(const struct rig_amd *d,
     k.bytes += c.bytes;
   }
   return k;
-}
-
-/* The most whole parts of [per] units of room after [fixed] fit in [room],
-   capped at [n]. */
-static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
-                      uint64_t per) {
-  if (room < fixed) return 0;
-  uint64_t m = (room - fixed) / per;
-  return m < n ? m : n;
-}
-
-/* The most parts an idle device runs in one submission, each of the largest
-   size the guarantee covers, by [need]'s costs and [most_of]'s bounds: a
-   launch whose dispatch takes RIG_AMD_LAUNCH_WORDS words and whose
-   arguments take RIG_AMD_KERNARG bytes, or a copy of one packet, each
-   joined to the part before it on its queue and to one of the other
-   queue, and each with its slot word. */
-int rig_amd_most_parts(const struct rig_amd *d) {
-  struct cost room = most_of(d), fixed = fixed_cost(d);
-  uint64_t dispatch =
-      RIG_AMD_LAUNCH_WORDS + (aql(d) ? 0 : words_of(d, T_INVALIDATE));
-  struct cost launch = part_cost(d, RIG_AMD_COMPUTE, dispatch,
-                                 align_up(RIG_AMD_KERNARG, SEGMENT_ALIGN), 2);
-  struct cost copy = part_cost(d, RIG_AMD_COPY, words_of(d, S_COPY), 0, 2);
-  fixed.bytes += slot_bytes(0);
-  launch.bytes += 8;
-  copy.bytes += 8;
-  uint64_t n = INT_MAX;
-  n = least(n, room.compute, fixed.compute, launch.compute);
-  n = least(n, room.copy, fixed.copy, copy.copy);
-  return (int)n;
 }
 
 /* Whether launch [p], whose block is in [args], runs: on the compute ring,

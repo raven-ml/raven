@@ -227,8 +227,8 @@ val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
     The host blits where it addresses both arrays' memory ({!blit}). Otherwise
     [src]'s device copies where it computes and the host does not address
     [src]'s memory, one {!Rig.Submission.copy} per run of elements consecutive
-    in both, in submissions of at most {!Rig.most_parts}; for other memory and
-    for a sub-byte array, the host gathers each run, brought by its own
+    in both, in one submission; for other memory and for a sub-byte array,
+    the host gathers each run, brought by its own
     {!Rig.Buffer.copy} from memory it does not address. That device stores into
     [dst] where [dst] is on it, the host where it addresses [dst]'s memory.
     Otherwise, if [dst]'s own runs are longer, it stores into a buffer of

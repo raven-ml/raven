@@ -173,7 +173,6 @@ module Driver = struct
   type t = {
     c : polled;
     mutable word_at : int;  (** The word's host address. *)
-    most_parts : int;  (** The parts its facts state an idle queue runs. *)
     copies : bool;
     host_visible : bool;
     addresses : bool;
@@ -273,7 +272,6 @@ module Driver = struct
       copy_engine = (if d.copies then Some 1 else None);
       completion = (if d.stores then Store else Host);
       waits = { stores = has `Store; hosts = has `Host; most = d.max_waits };
-      most_parts = d.most_parts;
       may_block = d.may_block;
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
@@ -555,7 +553,7 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?grows ?most_parts ?(copies = true)
+  let make ?(capacity = 1024) ?grows ?(copies = true)
       ?(host_visible = true) ?(addresses = true) ?(transport = false)
       ?(peers = true) ?(maps_host = true) ?(alignment = 4096)
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
@@ -564,9 +562,6 @@ module Polled = struct
       ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
-    let most_parts = Option.value most_parts ~default:capacity in
-    if most_parts > capacity then
-      invalid_arg "Polled.make: most_parts is above capacity";
     let limits = function
       | Rig_edge.Device -> memory
       | Mapped -> window
@@ -577,7 +572,6 @@ module Polled = struct
       {
         c;
         word_at = polled_word_at c;
-        most_parts;
         copies;
         host_visible;
         addresses;
@@ -635,11 +629,11 @@ module Polled = struct
       make = (fun ~word -> Ok (bind ?start d ~word));
     }
 
-  let open_ ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
+  let open_ ?capacity ?grows ?copies ?host_visible ?addresses
       ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window ?may_block
       ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
     let p =
-      make ?capacity ?grows ?most_parts ?copies ?host_visible ?addresses
+      make ?capacity ?grows ?copies ?host_visible ?addresses
         ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window
         ?may_block ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms
         ()

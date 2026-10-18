@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 7 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 7 (u32), 1 and why
+     accepting: "rig-job\n", version 8 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 8 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,7 +100,7 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 7. Ends at other
+(** [version] is the protocol's version, the handshake's: 8. Ends at other
     versions refuse each other. *)
 
 val min_key : int
@@ -165,10 +165,6 @@ type account = {
   name : string;  (** Its name on its machine, such as ["CUDA:3"]. *)
   arch : string;  (** Its [Rig.arch] there. *)
   budget : int;  (** Its [Rig.budget] there when it opened. *)
-  most_parts : int;
-      (** Its [Rig.most_parts] there, and [max_int] for a device that runs no
-          submission of its own, such as an io device: the agent runs each
-          part handed over to it as a copy of its own. *)
   alignment : int;  (** Its [Rig.alignment] there. *)
   reaches : int list;
       (** The smaller ids of devices whose own memory it reaches there

@@ -74,8 +74,7 @@ val link :
       ({!Rig.runs_on_host}); otherwise it is a copy of the host's
       ({!Rig.Buffer.copy}), which returns once done.
     - Consecutive kernels and copies of one device are one submission
-      ({!Rig.Submission}) of at most the parts the device always runs
-      ({!Rig.most_parts}), and each of them is a submission of its own while
+      ({!Rig.Submission}), and each of them is a submission of its own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
       profile ({!Rig.Profile.Work}) is one kernel's.
     - A range around calls is a loop of the program, and so is a back edge,

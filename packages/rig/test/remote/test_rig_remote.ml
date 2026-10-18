@@ -452,22 +452,12 @@ let devices () =
   let why = require_error (Rig.Image.load d0 "code") in
   contains ~msg:"says it loads no code" ~sub:"loads no code" why
 
-(* A device of another machine runs as many parts in a submission as the
-   agent's device: TIGHT's 3. *)
-let most_parts () =
-  with_job @@ fun j _ ->
-  let h = List.hd (Rig_remote.hosts j) in
-  let d = List.hd (Result.get_ok (Rig_remote.devices h "TIGHT")) in
-  equal ~msg:"the agent's device's count" int 3 (Rig.most_parts d)
-
-(* An io device of another machine holds any number of parts, as
-   Rig.most_parts says: its agent runs each part handed over as a copy of its
-   own. Its buffers start where the agent's device's do. *)
-let io_parts () =
+(* An io device of another machine's buffers start where the agent's device's
+   do. *)
+let io_alignment () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
   let d = List.hd (Result.get_ok (Rig_remote.devices h "DISK")) in
-  equal ~msg:"no limit" int max_int (Rig.most_parts d);
   equal ~msg:"the io device's alignment" int 1 (Rig.alignment d)
 
 let reaches kinds =
@@ -520,10 +510,8 @@ let machines =
   group "machine"
     [
       test "a machine's host is the agent's, of this machine's arch" hosts;
-      test "a device runs the parts in a submission its agent's does"
-        most_parts;
-      test "an io device of another machine holds any number of parts"
-        io_parts;
+      test "an io device of another machine aligns as the agent's does"
+        io_alignment;
       test "devices are the agent's, named after it, the same at each call"
         devices;
       cases

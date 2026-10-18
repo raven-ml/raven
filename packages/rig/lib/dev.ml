@@ -147,9 +147,8 @@ module Strings = Tbl.Make (String)
 let no_waits = { Rig_edge.stores = false; hosts = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
-    ~completion ~waits ~hang_ms ~maps_host ~alignment ~most_parts
-    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability
-    ~budget ~opened =
+    ~completion ~waits ~hang_ms ~maps_host ~alignment ~host_addresses ~word
+    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
   let live =
     {
       c;
@@ -188,7 +187,6 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     arch;
     maps_host;
     alignment;
-    most_parts;
     host_addresses;
     key;
     memory_device;
@@ -216,7 +214,7 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
       ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~alignment:malloc_alignment ~most_parts:max_int ~host_addresses:false
+      ~alignment:malloc_alignment ~host_addresses:false
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
@@ -1067,10 +1065,6 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
         invalid_argf "Rig.open_: %s's hang bound is %d ms, expected at least 1"
           name n)
     f.hang_ms;
-  if f.most_parts < 1 then
-    invalid_argf
-      "Rig.open_: %s's submissions hold at most %d parts, expected at least 1"
-      name f.most_parts;
   if f.alignment < 1 || f.alignment land (f.alignment - 1) <> 0 then
     invalid_argf
       "Rig.open_: %s's regions start on multiples of %d, expected a power of \
@@ -1099,8 +1093,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~c ~arch:f.arch ~queues ~copy_engine:f.copy_engine
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
-      ~alignment:f.alignment ~most_parts:f.most_parts
-      ~host_addresses:f.host_addresses ~word
+      ~alignment:f.alignment ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
@@ -1152,7 +1145,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~kind:(Io { m = (module I); h })
             ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
             ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
-            ~most_parts:0 ~host_addresses:false ~word:0 ~word_region:None ~key
+            ~host_addresses:false ~word:0 ~word_region:None ~key
             ~memory_device:false ~fault:[%extension_constructor I.Fault]
             ~capability:None ~budget ~opened
         in

@@ -156,11 +156,6 @@ enum {
    explicit ones, which start on 8 bytes. */
 #define RIG_AMD_HIDDEN_BYTES 256
 
-/* The bytes of a launch's arguments that a device's most parts assumes:
-   4096 bytes of parameters and the implicit arguments. A launch may take
-   more. */
-#define RIG_AMD_KERNARG (4096 + RIG_AMD_HIDDEN_BYTES)
-
 struct rig_amd_launch {
   uint32_t words[RIG_AMD_LAUNCH_WORDS];
   int n, nholes, packet; /* an AQL packet, else PM4 */
@@ -423,10 +418,6 @@ static inline void rig_amd_barrier(void) {
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
 #endif
 }
-
-/* The most parts of the largest size an idle device runs in one
-   submission (rig_amd_ring.c). */
-int rig_amd_most_parts(const struct rig_amd *d);
 
 /* What a growth on a thread makes: the bytes the argument segment and
    each ring of [d] must have for the submission whose rig_amd_room last

@@ -289,8 +289,12 @@ val capability : t -> Rig_amd_abi.Capability.t
     the other. [room] returns [RIG_NEVER] for parts that exceed the largest
     rings the path makes ([most_ring] of {!type-path}: 2 GiB through
     [Rig_amd_amdgpu]; through [Rig_amd_pci] 16 GiB for the compute queue and
-    8 GiB for the copy queue), or that the device does not
-    run, and [RIG_GROW] for parts that exceed its rings or its segment.
+    8 GiB for the copy queue, but 16 MiB on SDMA 4, whose one queue that
+    path programs keeps the ring the device opens with), or that the device
+    does not run, and [RIG_GROW] for parts that exceed its rings or its
+    segment. On SDMA 4 over [Rig_amd_pci], a submission of copies past half
+    that ring, about 170,000 copies of one packet, never fits: a strided
+    copy of that many runs raises [Invalid_argument] there.
 
     {!val-grow} then makes, of [Pinned] memory of the first power of two
     from 4096 bytes that holds twice what the parts need and at most
@@ -311,14 +315,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     kind. Segments and rings never shrink. {!val-grow} answers [Short n] if
     the path lacks [n] bytes of memory, or another resource for a queue,
     having made nothing that stays and kept what a growth handed, and
-    raises {!Fault} if the path refuses a queue for another reason. The
-    device's [most_parts] ({!Rig_edge.type-facts}) is the most parts that an
-    idle device holds, each a launch whose arguments take at most 4352
-    bytes, which every kernel of at most 4096 bytes of explicit arguments
-    and code object version 5's 256 bytes of implicit ones meets, or a copy
-    of at most the bytes of one SDMA copy packet (1 GiB; 4 MiB on SDMA
-    engines before 4.4.2 and on 5.0 and 5.1). A launch of more arguments, a
-    longer copy and words take the room their sizes take. It does not run:
+    raises {!Fault} if the path refuses a queue for another reason. A copy
+    takes an SDMA copy packet for each 1 GiB it moves (4 MiB on SDMA
+    engines before 4.4.2 and on 5.0 and 5.1). The device does not run:
     {ul
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}

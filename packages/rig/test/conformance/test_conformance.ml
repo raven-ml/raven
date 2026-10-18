@@ -980,18 +980,15 @@ let empty_launches (module G : Gpu) =
       (Array.init 16 (fun k -> 1 + k))
       (words (get out) ~at:0 16)
 
-(* Past this many parts the law below takes no longer to state. *)
-let most_parts_cap = 1024
-
-(* An idle device runs [min (most_parts d) most_parts_cap] launches in one
-   submission, each with 4096 bytes of parameters, the size most_parts covers:
-   launch [i] stores [i + 1] into word [i]. *)
+(* 1024 launches in one submission, each with 4096 bytes of parameters, more
+   than a driver's queues of a few MiB hold before they grow: launch [i]
+   stores [i + 1] into word [i]. *)
 let largest_launches (module G : Gpu) =
   let launcher = launcher (module G) in
   fun () ->
     G.with_ @@ fun t ->
     let l = launches_on launcher t in
-    let n = Int.min (Rig.most_parts t.d) most_parts_cap in
+    let n = 1024 in
     let out = filled t.d (String.make (4 * n) '\000') in
     let launch i =
       launch_work l "ids" ~params:4096
@@ -1828,7 +1825,7 @@ let laws (module G : Gpu) =
          it reads that"
         geometry (launches_conform g);
       test "a launch of no size along an axis is refused" (empty_launches g);
-      test "an idle device runs its most parts of the largest launches at once"
+      test "a device runs 1024 launches of 4 KiB of parameters at once"
         (largest_launches g);
       test "a launch gives the parameters, and a run sets at most the threads, \
             its image states"

@@ -52,11 +52,9 @@ raven / llama.cpp (Vulkan; ROCm):
   once (32-64 MiB each). `copy.mli`'s "copies the other way round never hold
   the slot it waits for" is wrong: a waiting copy holds no slot
 - limits no hardware or spec imposes, one commit each
-  (_plans/rig-device-reuse/70-, 71-): `Rig.most_parts`, now `max_int` on
-  every driver;
-  NV's 256 waits per submission (`MAX_WAITS`, `facts.waits.most`): room
-  keeps a fixed reserve because it cannot see the waits, so it goes once
-  `room` takes the waits' count;
+  (_plans/rig-device-reuse/70-, 71-): NV's 256 waits per submission
+  (`MAX_WAITS`, `facts.waits.most`): room keeps a fixed reserve because it
+  cannot see the waits, so it goes once `room` takes the waits' count;
   NV over PCI keeps the channel sets a growth replaces until stop: free
   them through the GSP's free RPC (NV_VGPU_MSG_FUNCTION_FREE,
   `rpcRmApiFree_GSP`), with gsp.ml tracking per object the instance block,

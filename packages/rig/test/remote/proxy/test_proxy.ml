@@ -50,7 +50,6 @@ let driver_facts () =
   equal rec_w c (Proxy.capability p);
   equal string "mem3" f.arch;
   equal int ((1 lsl 30) + 3) f.budget;
-  equal ~msg:"the account's most parts" int 103 f.most_parts;
   equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment
 
 let reaches (forward, backward) =

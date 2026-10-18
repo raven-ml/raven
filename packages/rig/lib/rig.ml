@@ -17,7 +17,6 @@ let computes d =
   match d.kind with Host | Driver _ -> true | Io _ -> false
 let runs_on_host d = Dev.is_host d || d.memory_device
 let alignment d = d.alignment
-let most_parts d = d.most_parts
 let reaches = Dev.reaches
 let budget d = d.budget
 let allocated = Memory.allocated

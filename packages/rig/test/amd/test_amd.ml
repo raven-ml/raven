@@ -961,9 +961,8 @@ let launch_segments_hw () =
     (String.concat "" (List.init (count * rounds) (fun _ -> doubled lanes)))
     (get out)
 
-(* A kernel whose arguments take 8 KiB, past what a submission of the device's
-   [most_parts] launches assumes, runs: a launch takes the room its arguments
-   take. [wide] stores its second argument at its first. *)
+(* A kernel whose arguments take 8 KiB runs: a launch takes the room its
+   arguments take. [wide] stores its second argument at its first. *)
 let wide_launch () =
   S.with_ @@ fun t ->
   let p = image ~of_:(code_of (lazy (read_fixture "hidden_gfx1201.hsaco"))) t in

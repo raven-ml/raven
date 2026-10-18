@@ -33,7 +33,6 @@ module Polled : sig
   val make :
     ?capacity:int ->
     ?grows:int ->
-    ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?addresses:bool ->
@@ -62,10 +61,8 @@ module Polled : sig
       for such a submission instead, and its [grow] makes the queue hold the
       parts of the submission whose [room] answered so on the calling
       thread, up to [grows] parts. For more, and where it refuses
-      ({!fail_at}), [grow] answers [Short 4096]. Its facts state
-      [most_parts] (defaults to [capacity]), at most [capacity], so that an
-      idle queue runs that many parts. Without
-      [copies] (defaults to [true]) it lists no copy queue. Its compute queue
+      ({!fail_at}), [grow] answers [Short 4096]. Without [copies] (defaults
+      to [true]) it lists no copy queue. Its compute queue
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
       its [Device] memory. Without [addresses] (defaults to [true]) its
@@ -100,7 +97,7 @@ module Polled : sig
       bound hangs to that many milliseconds (defaults to no bound). Its facts
       declare [capability] (defaults to [()] under {!capability_key}).
 
-      Raises [Invalid_argument] if [lag < 1] or [most_parts > capacity]. *)
+      Raises [Invalid_argument] if [lag < 1]. *)
 
   val bind : ?start:int -> t -> word:nativeint -> t
   (** [bind d ~word] is [d], whose word is now the 8 bytes at [word], as an
@@ -117,7 +114,6 @@ module Polled : sig
   val open_ :
     ?capacity:int ->
     ?grows:int ->
-    ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?addresses:bool ->

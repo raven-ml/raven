@@ -130,15 +130,6 @@ type 'region facts = {
           first queue lets copies run beside the first queue's work. *)
   completion : completion;  (** How the word advances. *)
   waits : waits;  (** The producers its queues wait for. *)
-  most_parts : int;
-      (** The most parts the idle device always runs in one submission, once
-          its queues have grown for them, [max_int] where the driver has no
-          such bound: that many launches and fills up to the argument size,
-          and copies up to the length, that the driver's [.mli] states.
-          [room] must never answer [RIG_NEVER] for such a submission of parts
-          the device runs ({!section-calls}), and may answer [RIG_GROW].
-          Words parts, and larger launches and copies, take the room their
-          sizes take, and [room] alone judges a submission of more parts. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its
@@ -186,8 +177,8 @@ type 'region facts = {
 (** The type for the facts of a device. A {!Driver.Fault} while rig reads
     them makes the open return [Error]. The open raises [Invalid_argument]
     if [copy_engine] names no queue of [queues] or one whose [runs] lacks
-    [Copy], [most_parts] or [hang_ms] is below [1], [alignment] is not a
-    power of two, [edge] is [0n], or the state's first member is [NULL]. rig
+    [Copy], [hang_ms] is below [1], [alignment] is not a power of two,
+    [edge] is [0n], or the state's first member is [NULL]. rig
     checks nothing else of [edge]. A region {!Driver.alloc} makes that breaks
     [host_addresses] or [alignment] is a fault of the device: rig frees the
     region and loses the device, and the allocation raises [Rig.Lost]. *)

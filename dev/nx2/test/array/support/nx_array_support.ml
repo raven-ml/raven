@@ -153,8 +153,6 @@ module Driver = struct
       copy_engine = None;
       completion = Host;
       waits = { stores = false; hosts = false; most = 0 };
-      (* LATE_QUEUE: room never fits more fills. *)
-      most_parts = 256;
       may_block = false;
       hang_ms = None;
       maps_host = false;

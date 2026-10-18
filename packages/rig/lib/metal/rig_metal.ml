@@ -365,7 +365,6 @@ let open_ ~word i =
           copy_engine = None;
           completion = Host;
           waits = { stores = false; hosts = false; most = 0 };
-          most_parts = max_int;
           may_block = true;
           hang_ms = None;
           maps_host = true;
