@@ -83,7 +83,7 @@ module Polled : sig
       [max_int]). With [answer] [`Stopped] (the default) its stop drops its
       queued work and writes the last value it received into its word, and frees
       what it ran work with: its queue, and the records {!last_waits},
-      {!layout}, {!copy_sides}, {!copy_device_memory}, {!blocked} and
+      {!layout}, {!copies}, {!blocked} and
       {!launches} read, which then read none. With [`Unknown] it leaves all of
       it, as a driver whose work may still run. With [runs] [`Itself] (the
       default is [`When_slept]) a thread of the driver also runs its queue as
@@ -262,13 +262,21 @@ module Polled : sig
       received, its queue's index and the parts its [after] lists (the first
       64 parts, and their first 8 afters). *)
 
-  val copy_sides : t -> [ `None | `Src | `Dst ] list
-  (** [copy_sides d] is the side of this process's memory that each copy [d] ran
-      named ([copy_local] in [rig_edge.h]), the first 64, in the order run. *)
+  (** The type for a copy part as [d] ran it: its fields in [rig_edge.h]. *)
+  type copy = {
+    local : [ `None | `Src | `Dst ];
+        (** The side of this process's memory it named ([copy.local]). *)
+    device_memory : bool;  (** Its [copy.device_memory] fact. *)
+    width : int;  (** The bytes of each row. *)
+    rows : int;  (** The number of rows. *)
+    src_pitch : int;  (** The source's bytes from a row to the next. *)
+    dst_pitch : int;  (** The destination's bytes from a row to the next. *)
+    fill : char option;  (** [Some c] for a fill of the byte [c]. *)
+  }
 
-  val copy_device_memory : t -> bool list
-  (** [copy_device_memory d] is the [copy.device_memory] fact of each copy [d]
-      ran, including empty copies, the first 64 in the order run. *)
+  val copies : t -> copy list
+  (** [copies d] is each copy part [d] ran, including empty ones, the first
+      64, in the order run. *)
 
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]

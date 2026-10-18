@@ -549,7 +549,8 @@ let test_copy_across () =
        (Testable.structural ~pp:(fun ppf s ->
             Format.pp_print_string ppf
               (match s with `None -> "none" | `Src -> "src" | `Dst -> "dst"))))
-    [ `Src; `Dst; `None ] (P.copy_sides p)
+    [ `Src; `Dst; `None ]
+    (List.map (fun (c : P.copy) -> c.local) (P.copies p))
 
 (* An empty buffer of a driver's device names no memory: its address and its
    handle are 0. *)

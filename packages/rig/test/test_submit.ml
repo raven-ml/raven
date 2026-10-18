@@ -91,7 +91,8 @@ let test_copy_memory (length, src_first, dst_first) =
     (List.map (fun (label, _, expected) -> (label, expected)) rows)
     (List.map2
        (fun (label, _, _) actual -> (label, actual))
-       rows (P.copy_device_memory p));
+       rows
+       (List.map (fun (c : P.copy) -> c.device_memory) (P.copies p)));
   Rig.close d;
   Rig.close peer
 
@@ -129,14 +130,14 @@ let test_copy_memory_sequence () =
   copy (Buffer host) (Slot 0) [| b |];
   equal (list bool)
     [ true; false; true; false; false; true; false; false; false; false ]
-    (P.copy_device_memory p);
+    (List.map (fun (c : P.copy) -> c.device_memory) (P.copies p));
   equal (list string)
     [
       "none"; "src"; "none"; "dst"; "none"; "none"; "none"; "src"; "dst"; "src";
     ]
     (List.map
        (function `None -> "none" | `Src -> "src" | `Dst -> "dst")
-       (P.copy_sides p));
+       (List.map (fun (c : P.copy) -> c.local) (P.copies p)));
   let other = B.create Rig.host 8 in
   raises_match ~msg:"two local buffers" Exn.invalid_arg (fun () ->
       Sub.make d Sub.[| copy ~src:(Buffer host) ~dst:(Buffer other) |]);

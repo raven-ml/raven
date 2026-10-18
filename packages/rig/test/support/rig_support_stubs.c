@@ -156,6 +156,22 @@ static void move_bytes(uintptr_t dst, uintptr_t src, size_t bytes) {
   if (bytes != 0) memmove((void *)dst, (const void *)src, bytes);
 }
 
+/* Runs the copy part [p] over host memory: a fill sets its row, a box
+   moves its rows. */
+static void move_part(const struct rig_part *p) {
+  uintptr_t dst = (uintptr_t)p->copy.dst + p->copy.dst_offset;
+  size_t width = (size_t)p->copy.width;
+  if (width == 0 || p->copy.rows == 0) return;
+  if (p->copy.fill) {
+    memset((void *)dst, p->copy.byte, width);
+    return;
+  }
+  uintptr_t src = (uintptr_t)p->copy.src + p->copy.src_offset;
+  for (uint64_t i = 0; i < p->copy.rows; i++)
+    move_bytes(dst + i * p->copy.dst_pitch, src + i * p->copy.src_pitch,
+               width);
+}
+
 /* A queued submission. Its launches' and fills' blocks are its own
    copies, made at the hand-over with the refs' addresses added: each such
    part's block is an offset into [blocks]. */
@@ -242,9 +258,8 @@ struct polled_run {
   uint64_t *last_times; /* where the last submit's times go */
   int ntimed, ctimed;   /* each time pair given, with its last value */
   struct timed *timed;
-  int nsides; /* the copy.local of each copy run, the first [LAST_COPIES] */
-  int sides[LAST_COPIES];
-  int device_memory[LAST_COPIES];
+  int ncopies; /* each copy part run, the first [LAST_COPIES] */
+  struct rig_part copies[LAST_COPIES];
   /* The queue and the first [LAST_AFTER] afters of each part of the last
      submit, its first [LAST_PARTS]. */
   int nlayout;
@@ -619,25 +634,33 @@ value rig_test_polled_layout(value v_p) {
   CAMLreturn(a);
 }
 
-/* The copy facts of each copy part [p] ran, in order. */
-value rig_test_polled_copy_facts(value v_p) {
+/* Each copy part [p] ran, in order, as its fields copy.local,
+   copy.device_memory, copy.width, copy.rows, copy.src_pitch,
+   copy.dst_pitch, copy.fill and copy.byte. */
+value rig_test_polled_copies(value v_p) {
   CAMLparam1(v_p);
-  CAMLlocal2(a, facts);
+  CAMLlocal2(a, c);
   struct polled *p = Polled_val(v_p);
-  int s[LAST_COPIES], m[LAST_COPIES], n = 0;
+  struct rig_part s[LAST_COPIES];
+  int n = 0;
   lock(&p->mu);
   if (p->run != NULL) {
-    n = p->run->nsides;
-    memcpy(s, p->run->sides, sizeof s);
-    memcpy(m, p->run->device_memory, sizeof m);
+    n = p->run->ncopies;
+    memcpy(s, p->run->copies, (size_t)n * sizeof *s);
   }
   unlock(&p->mu);
   a = caml_alloc_tuple((mlsize_t)n);
   for (int i = 0; i < n; i++) {
-    facts = caml_alloc_tuple(2);
-    Store_field(facts, 0, Val_int(s[i]));
-    Store_field(facts, 1, Val_bool(m[i]));
-    Store_field(a, i, facts);
+    c = caml_alloc_tuple(8);
+    Store_field(c, 0, Val_int(s[i].copy.local));
+    Store_field(c, 1, Val_bool(s[i].copy.device_memory));
+    Store_field(c, 2, Val_long((intnat)s[i].copy.width));
+    Store_field(c, 3, Val_long((intnat)s[i].copy.rows));
+    Store_field(c, 4, Val_long((intnat)s[i].copy.src_pitch));
+    Store_field(c, 5, Val_long((intnat)s[i].copy.dst_pitch));
+    Store_field(c, 6, Val_bool(s[i].copy.fill));
+    Store_field(c, 7, Val_int(s[i].copy.byte));
+    Store_field(a, i, c);
   }
   CAMLreturn(a);
 }
@@ -752,13 +775,8 @@ static void run_one(struct polled *p, struct queued *s) {
     else if (part->kind == RIG_COPY) {
       /* A side that copy.local names holds a host address, as Polled's own
          handles do. */
-      move_bytes((uintptr_t)part->copy.dst + part->copy.dst_offset,
-                 (uintptr_t)part->copy.src + part->copy.src_offset,
-                 (size_t)part->copy.width);
-      if (r->nsides < LAST_COPIES) {
-        r->sides[r->nsides] = part->copy.local;
-        r->device_memory[r->nsides++] = part->copy.device_memory;
-      }
+      move_part(part);
+      if (r->ncopies < LAST_COPIES) r->copies[r->ncopies++] = *part;
     }
   }
   if (s->times != NULL) s->times[1] = host_ns();

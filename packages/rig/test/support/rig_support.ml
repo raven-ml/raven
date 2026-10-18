@@ -33,8 +33,9 @@ external polled_last_waits : polled -> int array
 
 external polled_layout : polled -> int array = "rig_test_polled_layout"
 
-external polled_copy_facts : polled -> (int * bool) array
-  = "rig_test_polled_copy_facts"
+external polled_copies :
+  polled -> (int * bool * int * int * int * int * bool * int) array
+  = "rig_test_polled_copies"
 
 external polled_kernel : string -> nativeint = "rig_test_polled_kernel"
 
@@ -691,18 +692,37 @@ module Polled = struct
     in
     parts 0
 
-  let copy_sides d =
+  type copy = {
+    local : [ `None | `Src | `Dst ];
+    device_memory : bool;
+    width : int;
+    rows : int;
+    src_pitch : int;
+    dst_pitch : int;
+    fill : char option;
+  }
+
+  let copies d =
     let none, src, dst = rig_local () in
     let side k =
       if k = none then `None
       else if k = src then `Src
       else if k = dst then `Dst
-      else invalid_arg "Polled.copy_sides: an unknown copy_local"
+      else invalid_arg "Polled.copies: an unknown copy_local"
     in
-    List.map (fun (s, _) -> side s) (Array.to_list (polled_copy_facts d.c))
-
-  let copy_device_memory d =
-    List.map snd (Array.to_list (polled_copy_facts d.c))
+    let copy (local, device_memory, width, rows, src_pitch, dst_pitch, fill, c)
+        =
+      {
+        local = side local;
+        device_memory;
+        width;
+        rows;
+        src_pitch;
+        dst_pitch;
+        fill = (if fill then Some (Char.chr c) else None);
+      }
+    in
+    List.map copy (Array.to_list (polled_copies d.c))
 
   type launch = {
     groups : int * int * int;
