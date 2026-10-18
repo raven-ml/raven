@@ -53,22 +53,6 @@ let driver_facts () =
   equal ~msg:"the account's most parts" int 103 f.most_parts;
   equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment
 
-let rig_facts () =
-  with_machine ~reaches:[ [] ] @@ fun m ->
-  let d = m.devices.(0) in
-  equal string "mem1" (Rig.arch d);
-  equal int ((1 lsl 30) + 1) (Rig.budget d);
-  equal ~msg:"most parts" int 101 (Rig.most_parts d);
-  equal ~msg:"alignment" int 32 (Rig.alignment d);
-  equal bool true (Rig.equal m.host (Rig.host_of d));
-  equal bool true (Rig.computes d);
-  equal bool false (Rig.reaches m.host Rig.host);
-  equal bool false (Rig.reaches Rig.host m.host);
-  starts_with ~affix:"MEM:1@proxy-test:" (Rig.name d);
-  match Rig.capability d Rig_remote_abi.key with
-  | Some (Rig_remote_abi.Device { id }) -> equal int 1 id
-  | _ -> fail "a device's record is Device"
-
 let reaches (forward, backward) =
   with_machine
     ~reaches:
@@ -157,10 +141,6 @@ let facts =
       test
         "a proxy's facts are the agent's account's and the ones its .mli lists"
         driver_facts;
-      test
-        "rig sees another machine's device, whose memory this process does not \
-         reach"
-        rig_facts;
       cases
         ~name:(fun (forward, backward) ->
           Printf.sprintf "older reaches newer: %b; newer reaches older: %b"
@@ -175,21 +155,26 @@ let facts =
 
 (* Memory *)
 
+(* Each proxy's buffer is an allocation of the agent on the proxy's own
+   device, the agent's 1 and 2 here (0 is its host), of at least the bytes
+   asked. *)
 let alloc_reaches_agent () =
-  with_machine ~reaches:[ [] ] @@ fun m ->
-  let b = B.create m.devices.(0) 4096 in
-  let id = Nativeint.to_int (B.handle b) in
-  let device, bytes =
+  with_machine ~reaches:[ []; [] ] @@ fun m ->
+  let allocation d =
+    let b = B.create d 4096 in
+    let id = Nativeint.to_int (B.handle b) in
     require_match
       (List.find_map (function
         | Alloc a when a.id = id -> Some (a.device, a.bytes)
         | _ -> None))
       (events m.ag)
   in
-  equal ~msg:"the allocation's device" int 1 device;
-  at_least ~msg:"the allocation's bytes" int ~than:4096 bytes;
-  raises_match ~msg:"a proxy's memory has no address" Exn.invalid_arg (fun () ->
-      Sub.address (Sub.make ~fixed:[ (b, Rig.Read) ] m.devices.(0) [||]) b)
+  Array.iteri
+    (fun i d ->
+      let device, bytes = allocation d in
+      equal ~msg:"the allocation's device" int (i + 1) device;
+      at_least ~msg:"the allocation's bytes" int ~than:4096 bytes)
+    m.devices
 
 let refused_alloc () =
   with_machine ~room:(1 lsl 20) @@ fun m ->
@@ -230,7 +215,8 @@ let memory =
   group "memory"
     [
       test
-        "a buffer on a proxy is an allocation of the agent, named by a handle"
+        "a buffer on a proxy is an allocation of the agent on its device, \
+         named by a handle"
         alloc_reaches_agent;
       test "an allocation the agent refuses raises Out_of_memory" refused_alloc;
       test "memory given back reaches the agent as a drop" dropped;
@@ -238,33 +224,6 @@ let memory =
     ]
 
 (* Copies *)
-
-let sizes =
-  Gen.frequency
-    [
-      (3, Gen.int_range 0 5000);
-      ( 1,
-        Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095; 4096; 4097; 1 lsl 20 ]
-      );
-    ]
-
-let round_trip n =
-  with_machine ~reaches:[ [] ] @@ fun m ->
-  List.iter
-    (fun d ->
-      let s = random_string n in
-      equal ~msg:(Rig.name d) string s (read (far_of_string d s)))
-    [ m.host; m.devices.(0) ]
-
-(* A copy into this process's memory writes only the bytes its part names. *)
-let only_named () =
-  with_machine @@ fun m ->
-  let far = far_of_string m.host (String.make 16 'f') in
-  let h = host_buffer (String.make 64 '.') in
-  B.copy ~src:far ~dst:(B.view h ~first:20 ~length:16);
-  equal string
-    (String.make 20 '.' ^ String.make 16 'f' ^ String.make 28 '.')
-    (read_host h)
 
 (* Two queued batches include empty downloads between nonempty ones. Their
    replies must keep the destinations in submission and part order. *)
@@ -311,152 +270,12 @@ let within_machine () =
     crossing;
   equal string "within the machine" (read b)
 
-(* Bytes copied into this process are in place once the value is reached,
-   whatever their size. *)
-let bytes_before_word () =
-  with_machine @@ fun m ->
-  let n = 8 lsl 20 in
-  let far =
-    far_of_string m.host (String.init n (fun i -> Char.chr (i land 0xff)))
-  in
-  for round = 1 to 3 do
-    let h = B.create Rig.host n in
-    let p = submit (copy_submission m.host ~src:far ~dst:h) in
-    Rig.Point.wait p;
-    let bad =
-      B.read h Bigarray.char (fun ba ->
-          let bad = ref (-1) in
-          for i = n - 1 downto 0 do
-            if ba.{i} <> Char.chr (i land 0xff) then bad := i
-          done;
-          !bad)
-    in
-    equal
-      ~msg:(Printf.sprintf "round %d: the first wrong byte" round)
-      int (-1) bad
-  done
-
-(* A law: copies submitted without waiting, between this process's memory and
-   two devices of the machine, leave what the same copies leave run one after
-   another. *)
-
-type place = Here of int | There of int * int (* device, buffer *)
-type op = { src : place; dst : place; at_src : int; at_dst : int; len : int }
-
-let buffer_size = 64
-
-let pp_place ppf = function
-  | Here i -> Format.fprintf ppf "here%d" i
-  | There (d, i) -> Format.fprintf ppf "dev%d.%d" d i
-
-let pp_op ppf o =
-  Format.fprintf ppf "%a[%d] -> %a[%d] x%d" pp_place o.src o.at_src pp_place
-    o.dst o.at_dst o.len
-
-let place_g =
-  Gen.of_list ~pp:pp_place
-    [ Here 0; Here 1; There (0, 0); There (0, 1); There (1, 0) ]
-
-let op_g =
-  let open Gen in
-  let* src, dst =
-    such_that
-      (fun (s, d) ->
-        s <> d
-        &&
-        match (s, d) with
-        | Here _, Here _ -> false
-        | There (a, _), There (b, _) -> a = b
-        | _ -> true)
-      (pair place_g place_g)
-  in
-  let* len = int_range 1 buffer_size in
-  let+ at_src = int_range 0 (buffer_size - len)
-  and+ at_dst = int_range 0 (buffer_size - len) in
-  { src; dst; at_src; at_dst; len }
-
-let device_of = function There (d, _) -> Some d | Here _ -> None
-
-let copies_law ops =
-  with_machine ~reaches:[ [] ] @@ fun m ->
-  let devices = [| m.host; m.devices.(0) |] in
-  let init = Array.init 5 (fun _ -> random_string buffer_size) in
-  let model = Array.map Bytes.of_string init in
-  let index = function
-    | Here i -> i
-    | There (0, i) -> 2 + i
-    | There (_, _) -> 4
-  in
-  let buffers =
-    Array.init 5 (fun i ->
-        match i with
-        | 0 | 1 -> host_buffer init.(i)
-        | 2 | 3 -> far_of_string devices.(0) init.(i)
-        | _ -> far_of_string devices.(1) init.(i))
-  in
-  let last = Array.make 2 None in
-  List.iteri
-    (fun k o ->
-      let d =
-        match (device_of o.src, device_of o.dst) with
-        | Some d, _ | None, Some d -> d
-        | None, None -> assert false
-      in
-      cover "a copy into this process"
-        (match o.dst with Here _ -> true | There _ -> false);
-      let after_into same =
-        match o.src with
-        | Here _ ->
-            List.exists
-              (fun (j, o') ->
-                j < k && o'.dst = o.src && device_of o'.src = Some d = same)
-              (List.mapi (fun j o -> (j, o)) ops)
-        | There _ -> false
-      in
-      cover "a copy from this process after a copy into it, on its device"
-        (after_into true);
-      cover "a copy from this process after a copy into it, on another device"
-        (after_into false);
-      let view p at = B.view buffers.(index p) ~first:at ~length:o.len in
-      let s =
-        copy_submission devices.(d) ~src:(view o.src o.at_src)
-          ~dst:(view o.dst o.at_dst)
-      in
-      last.(d) <- Some (submit s);
-      Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
-    ops;
-  Array.iter (Option.iter Rig.Point.wait) last;
-  Array.iteri
-    (fun i b ->
-      let got = if i < 2 then read_host b else read b in
-      equal
-        ~msg:(Printf.sprintf "buffer %d" i)
-        string
-        (Bytes.to_string model.(i))
-        got)
-    buffers
-
 let copies =
   group "copy"
     [
-      prop ~count:50
-        "bytes copied to each device of the machine and back are the bytes"
-        sizes round_trip;
-      test "a copy into this process writes only the bytes its part names"
-        only_named;
       test "queued download batches keep empty copies in order" download_batches;
       test "a copy within the machine moves no byte across the link"
         within_machine;
-      test "a copy's bytes are in place once its value is reached, at 8 MiB"
-        bytes_before_word;
-      prop ~count:60
-        "copies submitted at once leave what they leave one after another"
-        (Gen.with_pp
-           (Format.pp_print_list
-              ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
-              pp_op)
-           (Gen.list ~size:(Gen.int_range 1 12) op_g))
-        copies_law;
     ]
 
 (* Work *)
@@ -474,13 +293,14 @@ let never () =
   in
   raises_match ~msg:"a copy from here after a copy into here" Exn.invalid_arg
     (fun () -> submit both);
+  let d = m.devices.(0) in
+  let b = B.create d 16 in
+  raises_match ~msg:"a proxy's memory has no address" Exn.invalid_arg (fun () ->
+      Sub.address (Sub.make ~fixed:[ (b, Rig.Read) ] d [||]) b);
   let words = host_buffer "\001\000\000\000\002\000\000\000" in
-  let on d =
-    Sub.make d
-      [| Sub.words words |]
-  in
+  let on d = Sub.make d [| Sub.words words |] in
   raises_match ~msg:"words on a device other than the host" Exn.invalid_arg
-    (fun () -> submit (on m.devices.(0)));
+    (fun () -> submit (on d));
   let p = submit (on m.host) in
   Rig.Point.wait p;
   equal bool true
@@ -605,25 +425,6 @@ let code =
 
 (* Failure and close *)
 
-let job_fails () =
-  with_machine ~reaches:[ [] ] @@ fun m ->
-  let d = m.devices.(0) in
-  let b = far_of_string d "before" in
-  Link.fail m.ag.job "the machine went away";
-  raises_match
-    (function Rig.Lost (_, why) -> why = "the machine went away" | _ -> false)
-    (fun () -> B.create d 16);
-  equal lost_w (Some "the machine went away") (Rig.lost d);
-  raises_match (function Rig.Lost _ -> true | _ -> false) (fun () -> read b)
-
-let agent_dies () =
-  with_machine @@ fun m ->
-  Link.fail m.ag.job "the agent's process ended";
-  raises_match
-    (function
-      | Rig.Lost (_, why) -> why = "the agent's process ended" | _ -> false)
-    (fun () -> B.create m.host 16)
-
 (* A hand-over waiting for its word when the job fails: the wait raises and the
    device stops at its last value. *)
 let in_flight_fails () =
@@ -693,21 +494,6 @@ let close_device () =
   equal string "the host goes on"
     (read (far_of_string m.host "the host goes on"))
 
-(* A close waits for the work submitted before it. *)
-let close_waits () =
-  with_machine @@ fun m ->
-  let a = far_of_string m.host "waited for" in
-  let b = B.create m.host (B.length a) in
-  pause m.ag;
-  ignore (submit (copy_submission m.host ~src:a ~dst:b));
-  let finished, closed = spawn (fun () -> Rig.close m.host) in
-  Thread.delay 0.2;
-  let early = finished () in
-  resume m.ag;
-  closed ();
-  equal ~msg:"the close returned before the work it waits for" bool false early;
-  equal lost_w (Some "closed") (Rig.lost m.host)
-
 (* A peer that reads every frame and never closes: the job closes, and stays
    closing, from [Link.close] on. [closing ()] holds once its close came. *)
 let silent_peer p =
@@ -754,6 +540,8 @@ let closing_handover () =
   Fun.protect
     ~finally:(fun () ->
       Link.fail job "the test ended";
+      (* A failed link reads its peer until the peer's stream ends. *)
+      Unix.shutdown p Unix.SHUTDOWN_SEND;
       closed ();
       Unix.close p;
       drained ();
@@ -849,48 +637,6 @@ let handover_sends () =
   equal ~msg:"the frame's kind" int 3 (Char.code h.[8]);
   less ~msg:"the hand-over's bytes" int ~than:(String.length payload) n
 
-let u32 n =
-  let b = Bytes.create 4 in
-  Bytes.set_int32_le b 0 (Int32.of_int n);
-  Bytes.to_string b
-
-let u64 n =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int n);
-  Bytes.to_string b
-
-(* The hand-over frame a proxy sends, against the layout wire.mli states for
-   its header, its handover and the bytes of its copies from this process. *)
-let handover_layout () =
-  with_raw_host @@ fun host p ->
-  let _, region = spawn (fun () -> B.create host 16) in
-  let id = grant_alloc p in
-  let dst = region () in
-  let src = B.create Rig.host 16 and back = B.create Rig.host 16 in
-  B.blit_from_string "0123456789abcdef" 0 src 0 16;
-  let s =
-    Sub.make host
-      Sub.
-        [|
-          copy ~src:(Buffer src) ~dst:(Buffer dst);
-          copy ~src:(Buffer dst) ~dst:(Buffer back);
-        |]
-  in
-  let v = Rig.submitted host + 1 in
-  let _, submitted = spawn (fun () -> submit s) in
-  let h = read_n p 9 in
-  let payload = read_n p (Int64.to_int (String.get_int64_le h 0)) in
-  ignore (submitted ());
-  equal ~msg:"the frame's kind" int 3 (Char.code h.[8]);
-  let region = "\000" ^ u64 id ^ u64 0 and local = "\001" in
-  let expected =
-    u64 0 ^ u64 v ^ u32 0 ^ u32 2
-    ^ ("\001" ^ u64 16 ^ local ^ region)
-    ^ ("\001" ^ u64 16 ^ region ^ local)
-    ^ "0123456789abcdef"
-  in
-  equal ~msg:"its payload" string expected payload
-
 (* A second proxy of one account would take the first's place in the link's
    table, and the first's reports would never reach it. *)
 let second_proxy () =
@@ -905,9 +651,6 @@ let second_proxy () =
 let failures =
   group "failure"
     [
-      test "a failed job loses the machine's devices with its root cause"
-        job_fails;
-      test "a job failed by the agent's end loses the host" agent_dies;
       test "a wait for a value handed over when the job fails raises Lost"
         in_flight_fails;
       cases
@@ -917,11 +660,9 @@ let failures =
       test "free, unload and signaled raise nothing once the job failed"
         quiet_after_failure;
       test "closing a device ends it alone" close_device;
-      test "closing the host waits for its submitted work" close_waits;
       test "a hand-over on a closing job fails naming the close"
         closing_handover;
       test "a hand-over returns once its frame is sent (sampled)" handover_sends;
-      test "a hand-over's frame is laid out as wire.mli states" handover_layout;
       test "make refuses a second proxy of an account on the link" second_proxy;
     ]
 

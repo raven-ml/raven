@@ -440,6 +440,7 @@ let devices () =
   let d0 = List.nth ds 0 and d1 = List.nth ds 1 in
   equal ~msg:"arch" string (Rig.arch l0) (Rig.arch d0);
   equal ~msg:"budget" int (Rig.budget l0) (Rig.budget d0);
+  equal ~msg:"computes" bool true (Rig.computes d0);
   equal ~msg:"reaches" bool (Rig.reaches l0 l1) (Rig.reaches d0 d1);
   List.iter (fun d -> equal bool true (Rig.equal h (Rig.host_of d))) ds;
   let id d =
@@ -643,6 +644,8 @@ let copies_law (init, ops) =
         | Some d, _ | None, Some d -> d
         | None, None -> assert false
       in
+      cover "a copy into this process"
+        (match o.dst with Here _ -> true | There _ -> false);
       let after_into same =
         match o.src with
         | Here _ ->
