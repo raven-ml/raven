@@ -1653,6 +1653,137 @@ let scope =
           equal (pair bool int) (true, 2) (Domain.join (Domain.spawn run)));
     ]
 
+(* Names *)
+
+(* The [by]s a rule receives while [f] runs under it, each once, sorted. *)
+let observed_names f =
+  let names = ref [] in
+  let observe _ ~by op =
+    if not (List.mem by !names) then names := by :: !names;
+    Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.names" Extent observe (fun _ -> ignore (f ()));
+  List.sort String.compare !names
+
+(* [x] dead: donated to [Nx.copy], which consumed it. *)
+let kill x =
+  ignore (Nx.copy (Nx.donate x));
+  x
+
+(* Each sampler as [name, (operands, make)]: [make ~dead] makes its operands,
+   the first dead when [dead], and gives the draw from a key, or keyless at
+   [None]. *)
+let calls =
+  let f64 = Nx.float64 in
+  let arg ~dead x = if dead then kill x else x in
+  let floats ~dead xs = arg ~dead (host_of f64 [| Array.length xs |] xs) in
+  let pos ~dead = floats ~dead [| 0.5; 2. |] in
+  let unit ~dead = floats ~dead [| 0.25; 0.75 |] in
+  let none f = (0, fun ~dead:_ -> f) in
+  [
+    ("bits", none (fun key -> ignore (Rng.bits ?key [| 3 |])));
+    ("uniform", none (fun key -> ignore (Rng.uniform ?key f64 [| 3 |])));
+    ("normal", none (fun key -> ignore (Rng.normal ?key f64 [| 3 |])));
+    ( "exponential",
+      none (fun key -> ignore (Rng.exponential ?key f64 [| 3 |])) );
+    ("randint", none (fun key -> ignore (Rng.randint ?key ~high:5 [| 3 |])));
+    ("permutation", none (fun key -> ignore (Rng.permutation ?key 4)));
+    ( "bernoulli",
+      ( 1,
+        fun ~dead ->
+          let p = unit ~dead in
+          fun key -> ignore (Rng.bernoulli ?key p) ) );
+    ( "gamma",
+      ( 1,
+        fun ~dead ->
+          let a = pos ~dead in
+          fun key -> ignore (Rng.gamma ?key a) ) );
+    ( "beta",
+      ( 2,
+        fun ~dead ->
+          let a = pos ~dead and b = pos ~dead:false in
+          fun key -> ignore (Rng.beta ?key a b) ) );
+    ( "von_mises",
+      ( 1,
+        fun ~dead ->
+          let k = pos ~dead in
+          fun key -> ignore (Rng.von_mises ?key k) ) );
+    ( "poisson",
+      ( 1,
+        fun ~dead ->
+          let rate = pos ~dead in
+          fun key -> ignore (Rng.poisson ?key rate) ) );
+    ( "binomial",
+      ( 2,
+        fun ~dead ->
+          let n = arg ~dead (host_of Nx.int32 [| 2 |] [| 3l; 5l |]) in
+          let p = unit ~dead:false in
+          fun key -> ignore (Rng.binomial ?key n p) ) );
+    ( "truncated_normal",
+      ( 2,
+        fun ~dead ->
+          let lower = floats ~dead [| -1.; 0. |] in
+          let upper = floats ~dead:false [| 1.; 2. |] in
+          fun key -> ignore (Rng.truncated_normal ?key lower upper) ) );
+    ( "dirichlet",
+      ( 1,
+        fun ~dead ->
+          let a = pos ~dead in
+          fun key -> ignore (Rng.dirichlet ?key a) ) );
+    ( "categorical",
+      ( 1,
+        fun ~dead ->
+          let logits = pos ~dead in
+          fun key -> ignore (Rng.categorical ?key logits) ) );
+  ]
+
+(* Keyless, unscoped and in a scope, and with a key: each as [name, (made,
+   under)], [made] the functions that made its key, which a rule receives when
+   the key, a value of every set, is computed under it. *)
+let keyings =
+  let k = Rng.key 301 in
+  let placed = Rng.place Nx.Host.on k in
+  [
+    ("unscoped", ([], fun draw -> draw None));
+    ( "scoped",
+      ([ "Nx.Rng.key" ], fun draw -> Rng.with_key k (fun () -> draw None)) );
+    ("keyed", ([], fun draw -> draw (Some placed)));
+  ]
+
+(* [f by keying made operands make under] for each sampler [by] and keying. *)
+let each_sampler f =
+  List.iter
+    (fun (name, (operands, make)) ->
+      List.iter
+        (fun (keying, (made, under)) ->
+          f ("Nx.Rng." ^ name) keying made operands make under)
+        keyings)
+    calls
+
+let names =
+  group "names"
+    [
+      test "every operation a sampler makes reaches a rule as the sampler"
+        (fun () ->
+          each_sampler (fun by keying made _ make under ->
+              let draw = make ~dead:false in
+              equal ~msg:(by ^ ", " ^ keying) (list string)
+                (List.sort String.compare (by :: made))
+                (observed_names (fun () -> under draw))));
+      test "a dead operand names the sampler" (fun () ->
+          each_sampler (fun by keying _ operands make under ->
+              if operands > 0 then
+                let draw = make ~dead:true in
+                let named = function
+                  | Invalid_argument m ->
+                      String.starts_with ~prefix:(by ^ ": operand ") m
+                      && String.ends_with ~suffix:" was donated to Nx.copy" m
+                  | _ -> false
+                in
+                raises_match ~msg:(by ^ ", " ^ keying) named (fun () ->
+                    under draw)));
+    ]
+
 (* Goldens *)
 
 (* Each sampler's first draws under key 0, as exact bits: a baseline that a
@@ -1753,5 +1884,6 @@ let () =
          others;
          checks;
          scope;
+         names;
          goldens;
        ])
