@@ -90,6 +90,25 @@ typedef struct {
   CUcontext context;
 } kernel_node;
 
+/* CUDA_MEMCPY2D_v2: a box of [Height] rows of [WidthInBytes] bytes, each
+   side at its address with its pitch. rig's sides are unified addresses,
+   so neither names a host pointer or an array. */
+typedef struct {
+  size_t srcXInBytes, srcY;
+  int srcMemoryType;
+  const void *srcHost;
+  CUdeviceptr srcDevice;
+  void *srcArray;
+  size_t srcPitch;
+  size_t dstXInBytes, dstY;
+  int dstMemoryType;
+  void *dstHost;
+  CUdeviceptr dstDevice;
+  void *dstArray;
+  size_t dstPitch;
+  size_t WidthInBytes, Height;
+} memcpy2d;
+
 /* CUstreamBatchMemOpParams: a union of 48 bytes, of which waits use this
    member. */
 typedef union {
@@ -114,6 +133,8 @@ enum {
   CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES = 8,
   CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X = 2, /* then Y and Z */
   CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X = 5,  /* then Y and Z */
+  CU_DEVICE_ATTRIBUTE_MAX_PITCH = 11,
+  CU_MEMORYTYPE_UNIFIED = 4,
   CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN = 97,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
   CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
@@ -169,6 +190,8 @@ enum {
   X(cuMemHostGetDevicePointer_v2, (CUdeviceptr *, void *, unsigned int))       \
   X(cuPointerGetAttribute, (void *, int, CUdeviceptr))                         \
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
+  X(cuMemcpy2DAsync_v2, (const memcpy2d *, CUstream))                          \
+  X(cuMemsetD8Async, (CUdeviceptr, unsigned char, size_t, CUstream))           \
   X(cuModuleLoadData, (CUmodule *, const void *))                              \
   X(cuModuleGetFunction, (CUfunction *, CUmodule, const char *))               \
   X(cuModuleGetFunctionCount, (unsigned int *, CUmodule))                      \
@@ -431,6 +454,7 @@ struct device {
   struct stamp stamps[STAMPS];
   uint64_t converted, unconverted, last_end;
   unsigned int groups[3], threads[3]; /* a launch's most along x, y, z */
+  uint64_t max_pitch; /* the most bytes of a 2D copy's pitch */
   _Atomic uint64_t *word;
   CUdeviceptr word_at;
   uint64_t last;       /* the last value submit received */
@@ -631,9 +655,13 @@ static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
 static const struct rig_driver driver = {rig_cuda_room, rig_cuda_submit,
                                          rig_cuda_commit, rig_cuda_settle};
 
-/* Reads the GPU's limits on a launch's groups and threads into [d]. */
+/* Reads the GPU's limits on a launch's groups and threads, and on a 2D
+   copy's pitch, into [d]. */
 static CUresult limits(struct device *d) {
-  CUresult s = CUDA_SUCCESS;
+  int pitch = 0;
+  CUresult s =
+      p_cuDeviceGetAttribute(&pitch, CU_DEVICE_ATTRIBUTE_MAX_PITCH, d->device);
+  d->max_pitch = (uint64_t)pitch;
   for (int k = 0; k < 3 && s == CUDA_SUCCESS; k++) {
     int groups = 0, threads = 0;
     s = p_cuDeviceGetAttribute(&groups, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X + k,
@@ -1185,20 +1213,54 @@ static CUresult launch(const struct submission *s, CUstream stream,
                           b->shared, stream, NULL, size > 0 ? extra : NULL);
 }
 
+/* Enqueues the copy part [p] on [stream]. A run, and a box whose rows lie
+   end to end on both sides, is one copy, and a fill one memset. Another
+   box is one 2D copy, or a copy per row where a pitch exceeds the GPU's
+   most or CUDA refuses the pitches, as cuMemcpy2DAsync may for two
+   regions of one GPU whose pitches cuMemAllocPitch did not make; a refusal
+   of its arguments leaves the context usable. */
+static CUresult copy(const struct device *d, CUstream stream,
+                     const struct rig_part *p) {
+  CUdeviceptr dst = p->copy.dst + p->copy.dst_offset;
+  if (p->copy.fill)
+    return p->copy.width == 0
+               ? CUDA_SUCCESS
+               : p_cuMemsetD8Async(dst, p->copy.byte, p->copy.width, stream);
+  CUdeviceptr src = p->copy.src + p->copy.src_offset;
+  uint64_t width = p->copy.width, rows = p->copy.rows;
+  uint64_t sp = p->copy.src_pitch, dp = p->copy.dst_pitch;
+  if (rows <= 1 || (sp == width && dp == width))
+    return p_cuMemcpyAsync(dst, src, width * rows, stream);
+  if (width == 0) return CUDA_SUCCESS;
+  if (sp <= d->max_pitch && dp <= d->max_pitch) {
+    memcpy2d m = {.srcMemoryType = CU_MEMORYTYPE_UNIFIED,
+                  .srcDevice = src,
+                  .srcPitch = sp,
+                  .dstMemoryType = CU_MEMORYTYPE_UNIFIED,
+                  .dstDevice = dst,
+                  .dstPitch = dp,
+                  .WidthInBytes = width,
+                  .Height = rows};
+    CUresult e = p_cuMemcpy2DAsync_v2(&m, stream);
+    if (e != CUDA_ERROR_INVALID_VALUE) return e;
+  }
+  CUresult e = CUDA_SUCCESS;
+  for (uint64_t i = 0; i < rows && e == CUDA_SUCCESS; i++)
+    e = p_cuMemcpyAsync(dst + i * dp, src + i * sp, width, stream);
+  return e;
+}
+
 /* Enqueues the work of the part [p] on [stream]. */
 static CUresult work(struct submission *s, CUstream stream,
                      const struct rig_part *p, uint64_t v) {
-  s->bytes = p->kind == RIG_COPY ? p->copy.width : 0;
+  s->bytes = p->kind == RIG_COPY ? p->copy.width * p->copy.rows : 0;
   switch (p->kind) {
   case RIG_FILL:
     return in_step(s, filling, rig_fill(stream, p, s->args, s->slots, v));
   case RIG_LAUNCH:
     return in_step(s, launching, launch(s, stream, p));
   default:
-    return in_step(s, copying,
-                   p_cuMemcpyAsync(p->copy.dst + p->copy.dst_offset,
-                                   p->copy.src + p->copy.src_offset,
-                                   p->copy.width, stream));
+    return in_step(s, copying, copy(s->d, stream, p));
   }
 }
 

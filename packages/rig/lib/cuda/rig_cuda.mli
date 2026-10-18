@@ -204,11 +204,14 @@ val capability : t -> Rig_cuda_abi.t
        copy waits for no work enqueued after it.}}
 
     A fill [f] is called as [f stream arg v], with the device's context
-    current on the calling thread ({!Rig_cuda_abi}). A copy moves
-    [copy.bytes] bytes between the handles of two regions of the device, at
-    their offsets. A part must not write a timeline word, the device's or
-    another's. Only the devices' streams write their words, and a word that
-    work wrote could move backwards or show work that has not completed.
+    current on the calling thread ({!Rig_cuda_abi}). A copy part moves its
+    rows between the handles of two regions of the device, at their
+    offsets, in one 2D copy, or a copy per row where a pitch exceeds the
+    GPU's [CU_DEVICE_ATTRIBUTE_MAX_PITCH] or CUDA refuses the pitches, and
+    a copy part that fills sets its bytes with one memset. A part must not
+    write a timeline word, the device's or another's. Only the devices'
+    streams write their words, and a word that work wrote could move
+    backwards or show work that has not completed.
 
     A wait holds the work back until the aligned 64-bit word at [at] holds
     at least [value], compared circularly, in the sense that [x] is at least
