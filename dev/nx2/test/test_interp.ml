@@ -450,7 +450,7 @@ let ill_formed () =
         Check
           {
             ok = Nx.less x x;
-            data = [ Any y ];
+            data = [ y ];
             fail = (fun _ _ -> Failure "fails");
           } );
   ]

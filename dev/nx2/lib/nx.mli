@@ -3053,6 +3053,12 @@ module Prim : sig
         (** [x] padded with [fill] and windowed as [pad] says
             ({!Nx_kernel.load}): the loop's shape is the padded one. *)
 
+  type ('d, 'e) data =
+    | [] : ('d, unit) data
+    | ( :: ) : ('v, 's, 'd) nx * ('d, 'e) data -> ('d, 'v * 'e) data
+        (** A check's data: values whose elements at one index its failure
+            receives, in order. *)
+
   (** What a loop's reduction makes of one output of its program. *)
   type ('d, _) reduction =
     | Monoid :
@@ -3292,12 +3298,13 @@ module Prim : sig
     | Place : 'e Placement.t * ('v, 's, 'd) nx -> ('v, 's, 'e) nx t
     | Check : {
         ok : (bool, Dtype.bool_elt, 'd) nx;
-        data : 'd any list;
-        fail : int array -> 'd any list -> exn;
+        data : ('d, 'e) data;
+        fail : int array -> 'e -> exn;
       }
         -> unit t
-        (** Raises [fail i data_i] at the first index [i], in C order, where
-            [ok] is [false], [data_i] each of [data] at [i]. *)
+        (** Raises [fail i e] at the first index [i], in C order, where [ok]
+            is [false], [e] each of [data]'s elements at [i], in order: OCaml
+            values, which belong to no device set. *)
 
   type operands = Operands : 'd any list -> operands
 

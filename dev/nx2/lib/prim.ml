@@ -253,6 +253,23 @@ let load_dtype (type d) (l : d load) =
 let is_padded (type d) (l : d load) =
   match l with Plain _ -> false | Padded _ -> true
 
+(* A check's data as operands, in order. *)
+let rec data_any : type d e. (d, e) data -> d any list = function
+  | [] -> []
+  | x :: rest -> Any x :: data_any rest
+
+(* [data] with datum [j] mapped by [m (i + j)]. *)
+let rec map_data : type d e.
+    ('v 's. int -> ('v, 's, d) t -> ('v, 's, d) t) ->
+    int ->
+    (d, e) data ->
+    (d, e) data =
+ fun m i -> function
+  | [] -> []
+  | x :: rest ->
+      let x = m i x in
+      x :: map_data m (i + 1) rest
+
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
   | Reduce { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
@@ -273,7 +290,7 @@ let operands : type r. r prim -> operands = function
   | Move (_, x) -> Operands [ Any x ]
   | Bitcast (_, x) -> Operands [ Any x ]
   | Place (_, x) -> Operands [ Any x ]
-  | Check { ok; data; _ } -> Operands (Any ok :: data)
+  | Check { ok; data; _ } -> Operands (Any ok :: data_any data)
 
 let iteri_loads : type d.
     ('v 's. int -> ('v, 's, d) t -> unit) -> d load array -> unit =
@@ -316,7 +333,7 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
   | Place (_, x) -> f 0 x
   | Check { ok; data; _ } ->
       f 0 ok;
-      List.iteri (fun i (Any x) -> f (i + 1) x) data
+      List.iteri (fun i (Any x) -> f (i + 1) x) (data_any data)
 
 let rec loads_exist : type d.
     ('v 's. ('v, 's, d) t -> bool) -> d load array -> int -> bool =
@@ -349,7 +366,8 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Move (_, x) -> f x
   | Bitcast (_, x) -> f x
   | Place (_, x) -> f x
-  | Check { ok; data; _ } -> f ok || List.exists (fun (Any x) -> f x) data
+  | Check { ok; data; _ } ->
+      f ok || List.exists (fun (Any x) -> f x) (data_any data)
 
 let mapi : type r.
     ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -395,12 +413,7 @@ let mapi : type r.
   | Place (p, x) -> Place (p, m 0 x)
   | Check c ->
       let ok = m 0 c.ok in
-      Check
-        {
-          c with
-          ok;
-          data = List.mapi (fun i (Any x) -> Any (m (i + 1) x)) c.data;
-        }
+      Check { c with ok; data = map_data m 1 c.data }
 
 let map : type r.
     ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -1592,7 +1605,7 @@ let results_or_partial : type r.
           if shape x <> s then
             invalid_argf "%s: datum %d has shape %a, the flag %a" by i pp_shape
               (shape x) pp_shape s)
-        data;
+        (data_any data);
       Left ()
 
 (* The results of [op], computed by partials, at its route's result. *)

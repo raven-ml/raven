@@ -476,20 +476,12 @@ let counted =
 (* Raises, at the check, naming [name]'s first element of [p] where [ok], a map
    over [p], is false, [p]'s value there as [show] writes it, and [text]. *)
 let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
-  let dt = Prim.dtype p in
-  let fail i data =
-    let v =
-      match data with
-      | [ x ] -> (
-          match Prim.expect dt x with
-          | Value.Array { a; _ } -> show (Nx_array.get a [||])
-          | _ -> "unread")
-      | _ -> "unread"
-    in
+  let fail i (v, ()) =
     Invalid_argument
-      (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i v text)
+      (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i
+         (show v) text)
   in
-  Eval.eval ~by (Value.Check { ok; data = [ Value.Any p ]; fail })
+  Eval.eval ~by (Value.Check { ok; data = [ p ]; fail })
 
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =

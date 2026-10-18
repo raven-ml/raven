@@ -4542,6 +4542,12 @@ module Prim = struct
       }
         -> 'd load
 
+  (* Declared before [reductions] and [outs]: an unannotated [Prim.[ ... ]] is
+     the list type declared last, [outs]. *)
+  type ('d, 'e) data = ('d, 'e) Value.data =
+    | [] : ('d, unit) data
+    | ( :: ) : ('v, 's, 'd) Value.t * ('d, 'e) data -> ('d, 'v * 'e) data
+
   type ('d, 'a) reduction = ('d, 'a) Value.reduction =
     | Monoid :
         Nx_kernel.monoid * int * ('v, 's) dtype
@@ -4710,8 +4716,8 @@ module Prim = struct
     | Place : 'e Placement.t * ('v, 's, 'd) Value.t -> ('v, 's, 'e) Value.t t
     | Check : {
         ok : (bool, Dtype.bool_elt, 'd) Value.t;
-        data : 'd any list;
-        fail : int array -> 'd any list -> exn;
+        data : ('d, 'e) data;
+        fail : int array -> 'e -> exn;
       }
         -> unit t
 

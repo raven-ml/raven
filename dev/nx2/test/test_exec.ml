@@ -478,9 +478,31 @@ let test_placed_view_owns () =
   A.set v [| 0; 0 |] 42.;
   equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add h c))
 
+exception Failed of int array * float * int32
+
+(* A failing check hands its failure the elements of its data at the first
+   failing index, of each datum's dtype, whatever set the data lie on. *)
+let test_check_elements () =
+  let x = on_host Plain D.Float32 [| 3 |] [| 1.; -1.; -2. |] in
+  let check x =
+    raises (Failed ([| 1 |], -1., -1l)) (fun () ->
+        Nx.Prim.eval ~by:"test"
+          (Check
+             {
+               ok = Nx.less (Nx.zeros_like x) x;
+               data = [ x; Nx.cast D.Int32 x ];
+               fail = (fun i (v, (n, ())) -> Failed (i, v, n));
+             }))
+  in
+  check x;
+  check (Nx.place Count2.on x);
+  check (Nx.place (Count2.split ~axis:0) x)
+
 let sets =
   group "sets"
     [
+      test "a check's failure receives its data's elements"
+        test_check_elements;
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;

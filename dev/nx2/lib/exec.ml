@@ -1039,14 +1039,13 @@ and shard_views : type v s d.
              A.expect f.dtype (A.Any (Iarray.get vs j)))))
     op
 
-and check : type d.
+and check : type d e.
     by:string ->
     (bool, D.bool_elt, d) Value.t ->
-    d Value.any list ->
-    (int array -> d Value.any list -> exn) ->
+    (d, e) Value.data ->
+    (int array -> e -> exn) ->
     unit =
  fun ~by ok data fail ->
-  let host : d Devices.placement = host () in
   let shape = Prim.shape ok in
   if Array.mem 0 shape then ()
   else
@@ -1069,18 +1068,17 @@ and check : type d.
     if not (scalar all) then begin
       let (_, first), () = reduce (Arg (Min, 0, D.Bool)) in
       let idx = unravel (Int64.to_int (scalar first)) shape in
-      let at_idx (Value.Any x) =
-        let a = on_host ~by x in
-        let one =
-          Array.map (fun i -> { M.start = i; count = 1; step = 1 }) idx
-        in
-        let v =
-          Option.get (A.move (Reshape [||]) (Option.get (A.move (Slice one) a)))
-        in
-        Value.Any (Value.Array { at = host; a = v; dead = Value.Live })
-      in
-      raise (fail idx (List.map at_idx data))
+      raise (fail idx (data_at ~by idx data))
     end
+
+(* Each of [data]'s elements at [idx], read on the host. *)
+and data_at : type d e.
+    by:string -> int array -> (d, e) Value.data -> e =
+ fun ~by idx -> function
+  | [] -> ()
+  | x :: rest ->
+      let v = A.get (on_host ~by x) idx in
+      (v, data_at ~by idx rest)
 
 (* A constant read at [p] by an operation: a view of a constant is its operand's
    results read at [p] and viewed; any other its results there, kept in its

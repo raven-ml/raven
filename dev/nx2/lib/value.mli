@@ -129,6 +129,14 @@ and 'd load =
       (** [x] padded with [fill] and windowed as [pad] says
           ({!Nx_kernel.load}): the loop's shape is the padded one. *)
 
+(* Declared before [reductions] and [outs]: an unannotated [Prim.[ ... ]] is the
+   list type declared last, [outs]. *)
+and ('d, _) data =
+  | [] : ('d, unit) data
+  | ( :: ) : ('v, 's, 'd) t * ('d, 'e) data -> ('d, 'v * 'e) data
+      (** A check's data: values whose elements at one index its failure
+          receives, in order. *)
+
 and ('d, _) reduction =
   | Monoid :
       Nx_kernel.monoid * int * ('v, 's) dtype
@@ -283,12 +291,12 @@ and _ prim =
   | Place : 'e Devices.placement * ('v, 's, 'd) t -> ('v, 's, 'e) t prim
   | Check : {
       ok : (bool, Nx_array.Dtype.bool_elt, 'd) t;
-      data : 'd any list;
-      fail : int array -> 'd any list -> exn;
+      data : ('d, 'e) data;
+      fail : int array -> 'e -> exn;
     }
       -> unit prim
-      (** Raises [fail i data_i] at the first index [i], in C order, where [ok]
-          is [false], [data_i] each of [data] at [i]. *)
+      (** Raises [fail i e] at the first index [i], in C order, where [ok] is
+          [false], [e] each of [data]'s elements at [i], in order. *)
 
 and ('d, _) fft =
   | C2c : {

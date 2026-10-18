@@ -480,7 +480,7 @@ let others =
                      (Check
                         {
                           ok;
-                          data = [ Any (f32 [| 2 |]) ];
+                          data = [ f32 [| 2 |] ];
                           fail = (fun _ _ -> Exit);
                         })))));
       test "a check refuses data of another shape" (fun () ->
@@ -490,7 +490,7 @@ let others =
           refuses
             (Op
                (Check
-                  { ok; data = [ Any (f32 [| 3 |]) ]; fail = (fun _ _ -> Exit) })));
+                  { ok; data = [ f32 [| 3 |] ]; fail = (fun _ _ -> Exit) })));
     ]
 
 (* Operands and maps over them *)
@@ -515,7 +515,7 @@ let ops () =
     ("Move", Op (Move (M.Reshape [| 1; 2 |], x)), 1);
     ("Bitcast", Op (Bitcast (D.Int32, x)), 1);
     ("Place", Op (Place (Devices.one s2 1, x)), 1);
-    ("Check", Op (Check { ok; data = [ Any x ]; fail = (fun _ _ -> Exit) }), 2);
+    ("Check", Op (Check { ok; data = [ x ]; fail = (fun _ _ -> Exit) }), 2);
   ]
 
 (* A matrix product of float32 [2; 3] and [3; 2], accumulated in [acc], from

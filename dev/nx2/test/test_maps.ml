@@ -122,20 +122,13 @@ let checks =
                 dead = Value.Live;
               }
           in
-          let fail i data =
-            match data with
-            | [ Value.Any x ] -> (
-                match Repr.array x with
-                | Some a -> Failed (i, A.get (A.expect D.Float32 (A.Any a)) [||])
-                | None -> Exit)
-            | _ -> Exit
-          in
+          let fail i (x, ()) = Failed (i, x) in
           raises
             (Failed ([| 1 |], 20.))
             (fun () ->
               Exec.run ~by:"t"
                 (Value.Check
-                   { ok; data = [ Any (f32 [| 10.; 20.; 30. |]) ]; fail })));
+                   { ok; data = [ f32 [| 10.; 20.; 30. |] ]; fail })));
     ]
 
 (* A fresh constant [1.]: a node of its own. *)
