@@ -276,6 +276,23 @@ let law_contiguous s =
   equal ints s (L.shape l);
   equal (list int) (List.init n Fun.id) (positions l)
 
+(* [fits] is the test its interface states, and {!L.contiguous} takes exactly
+   the shapes it holds of. *)
+let law_fits (s, _, _) =
+  let natural = Array.for_all (fun d -> d >= 0) s in
+  let expected = Array.length s <= L.max_rank && natural && numel s <> None in
+  cover "a layout's shape" expected;
+  cover "a negative extent" (not natural);
+  cover "too many elements" (natural && numel s = None);
+  let taken =
+    match L.contiguous s with _ -> true | exception Invalid_argument _ -> false
+  in
+  equal (pair bool bool) (expected, expected) (L.fits s, taken)
+
+let test_fits_rank () =
+  equal (pair bool bool) (true, false)
+    (L.fits (Array.make L.max_rank 1), L.fits (Array.make (L.max_rank + 1) 1))
+
 let refusals =
   [
     ("contiguous of too many axes", fun () -> L.contiguous (Array.make 33 1));
@@ -649,6 +666,9 @@ let tests =
            fit"
           v_args law_v;
         prop "contiguous places element k at position k" shape law_contiguous;
+        prop ~count:1000 "fits is its test, and contiguous takes what it fits"
+          v_args law_fits;
+        test "fits takes max_rank axes and refuses one more" test_fits_rank;
         cases ~name:fst "refuses" refusals test_refuses;
         test "a shape with no element takes other extents up to max_numel"
           test_no_element;

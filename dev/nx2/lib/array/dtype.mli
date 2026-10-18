@@ -217,6 +217,11 @@ val max_value : ('v, 's) t -> 'v
 
     Raises [Invalid_argument] if [dt] is complex. *)
 
+val holds : ('v, 's) t -> 'v -> bool
+(** [holds dt x] is [false] iff [x] is an [int] below {!min_value}[ dt] or
+    above {!max_value}[ dt]: the only values a store into [dt] refuses. It
+    allocates nothing. *)
+
 val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
 (** [pp_value dt] formats a value of [dt]:
     - a finite float as the shortest decimal that rounds to the same value in

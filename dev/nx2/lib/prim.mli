@@ -80,6 +80,16 @@ val merge : int array -> int array -> (int array, int * int * int) result
     that shape where [s] has [e] and [s'] has [e'], neither [1] nor the other.
 *)
 
+val check_shape : by:string -> int array -> unit
+(** [check_shape ~by s] raises [Invalid_argument] naming [by] and [s] unless
+    [s] is a layout's shape ({!Nx_array.Layout.fits}): where an extent is
+    negative, [s] has more than {!Nx_array.Layout.max_rank} axes, or its
+    extents other than [0] multiply past {!Nx_array.Layout.max_numel}. *)
+
+val check_value : by:string -> ('v, 's) dtype -> 'v -> unit
+(** [check_value ~by dt v] raises [Invalid_argument] naming [by], [v] and
+    [dt]'s range unless [dt] holds [v] ({!Nx_array.Dtype.holds}). *)
+
 val broadcast_shape : by:string -> int array -> int array -> int array
 (** [broadcast_shape ~by s s'] is [merge s s']'s shape. Raises
     [Invalid_argument] naming [by] and both shapes where they do not broadcast.

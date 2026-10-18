@@ -268,6 +268,12 @@ let test_limits (Values (dt, _, _, limits)) =
       raises_match Exn.invalid_arg (fun () -> D.min_value dt);
       raises_match Exn.invalid_arg (fun () -> D.max_value dt)
 
+let test_holds (Values (dt, zero, one, limits)) =
+  let held = List.map (D.holds dt) in
+  let limits = Option.fold ~none:[] ~some:(fun (lo, hi) -> [ lo; hi ]) limits in
+  let vs = zero :: one :: limits in
+  equal (list bool) (List.map (Fun.const true) vs) (held vs)
+
 (* Float formats, by their definitions *)
 
 (* What an all-ones exponent field encodes: an infinity with a zero fraction and
@@ -1165,6 +1171,8 @@ let tests =
           test_identities;
         cases ~name:values_name "min_value and max_value are the range" values
           test_limits;
+        cases ~name:values_name "holds its zero, one and limits" values
+          test_holds;
         cases ~name:format_name "float_format states each format" formats
           test_float_format;
       ];

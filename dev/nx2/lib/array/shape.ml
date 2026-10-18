@@ -45,23 +45,37 @@ let of_iarray s =
 let check_rank fn r =
   if r > max_rank then invalid_argf "%s: rank %d exceeds %d" fn r max_rank
 
-(* A shape with a zero extent has no element, but the product of its other
-   extents is bounded all the same: every product of a layout's extents then
-   fits, whichever of them a kernel multiplies. Each product is formed only
-   once it is known to fit. *)
-let numel fn s =
-  let r = Array.length s and n = ref 1 and zero = ref false in
-  for i = 0 to r - 1 do
-    let d = Array.unsafe_get s i in
-    if d < 0 then invalid_argf "%s: axis %d of %a is %d, below 0" fn i pp s d;
-    if d = 0 then zero := true
-    else begin
-      (* Two factors below 2^26 multiply to at most max_numel: the division,
-         tens of cycles, runs only for larger ones. *)
-      if !n lor d >= 1 lsl 26 && d > max_numel / !n then
-        invalid_argf "%s: the extents of %a other than 0 multiply past %d" fn
-          pp s max_numel;
-      n := !n * d
-    end
+(* The product of [s]'s extents, or the first refusal its scan meets: [-1] at
+   a negative extent, [-2] where the extents other than 0 multiply past
+   [max_numel]. A shape with a zero extent has no element, but the product of
+   its other extents is bounded all the same: every product of a layout's
+   extents then fits, whichever of them a kernel multiplies. Each product is
+   formed only once it is known to fit. *)
+let size s =
+  let r = Array.length s and n = ref 1 and zero = ref false and i = ref 0 in
+  while !i < r && !n > 0 do
+    let d = Array.unsafe_get s !i in
+    if d < 0 then n := -1
+    else if d = 0 then zero := true
+    (* Two factors below 2^26 multiply to at most max_numel: the division,
+       tens of cycles, runs only for larger ones. *)
+    else if !n lor d >= 1 lsl 26 && d > max_numel / !n then n := -2
+    else n := !n * d;
+    incr i
   done;
-  if !zero then 0 else !n
+  if !n > 0 && !zero then 0 else !n
+
+let numel fn s =
+  let n = size s in
+  if n >= 0 then n
+  else if n = -2 then
+    invalid_argf "%s: the extents of %a other than 0 multiply past %d" fn pp s
+      max_numel
+  else
+    let i = ref 0 in
+    while s.(!i) >= 0 do
+      incr i
+    done;
+    invalid_argf "%s: axis %d of %a is %d, below 0" fn !i pp s s.(!i)
+
+let fits s = Array.length s <= max_rank && size s >= 0

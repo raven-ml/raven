@@ -155,29 +155,19 @@ let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
-let bits ~by dt v =
-  match P.bits dt v with
-  | b -> b
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
-
 (* [v] as an expression of [dt], naming [by] where [dt] does not hold it. *)
 let const ~by dt v =
-  match Nx_kernel.Prog.E.const dt v with
-  | e -> e
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  Prim.check_value ~by dt v;
+  P.E.const dt v
 
-(* The C-order layout of shape [s], for [by]: a negative extent, which nx's
-   creations refuse, raises naming [by], and any other refusal of the array
-   layer follows [by]. *)
+(* The C-order layout of shape [s], naming [by] where no layout has [s]. *)
 let contiguous ~by s =
-  if Array.exists (fun e -> e < 0) s then
-    invalid_argf "%s: shape %a has a negative extent" by pp_shape s;
-  match Nx_array.Layout.contiguous s with
-  | l -> l
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  Prim.check_shape ~by s;
+  Nx_array.Layout.contiguous s
 
 let fill ~by dt shape v =
-  let prog = P.of_node ~ins:[||] (Const (D.Any dt, bits ~by dt v)) in
+  Prim.check_value ~by dt v;
+  let prog = P.of_node ~ins:[||] (Const (D.Any dt, P.bits dt v)) in
   let layout = contiguous ~by shape in
   let x, () =
     Eval.eval ~by
@@ -329,16 +319,17 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
 
 let on_host a : (_, _, host) t = Repr.of_array Host.v a
 
-(* The host value of [dt] and shape [s] holding [vs], for [by]: a shape or a
-   value count {!create} refuses raises naming [by], and the array layer's
-   other refusals, an [int] outside [dt]'s range among them, follow [by]. *)
-let of_values ~by dt s vs =
+(* The host value of [dt] and shape [s] holding [vs], naming [by] where
+   {!create} refuses them. Only integers can lie outside their dtype, and
+   iterating over a float array would box each element. *)
+let of_values (type v s) ~by (dt : (v, s) D.t) s (vs : v array) =
   let n = Nx_array.Layout.numel (contiguous ~by s) in
   if Array.length vs <> n then
     invalid_argf "%s: %d values for shape %a" by (Array.length vs) pp_shape s;
-  match Nx_array.of_array dt s vs with
-  | a -> on_host a
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  (match D.kind dt with
+  | Float | Complex | Boolean -> ()
+  | Signed | Unsigned -> Array.iter (Prim.check_value ~by dt) vs);
+  on_host (Nx_array.of_array dt s vs)
 
 let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
@@ -1638,7 +1629,7 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
   let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
   let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
   let prog = P.of_exprs ~ins [| E.any out |] in
-  let layout = Nx_array.Layout.contiguous s in
+  let layout = contiguous ~by s in
   let y, () =
     Eval.eval ~by
       (Value.Map

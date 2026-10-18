@@ -14,7 +14,11 @@
 
 (** {1:values Values}
 
-    A value is a shape, a dtype and the devices its elements lie on. *)
+    A value is a shape, a dtype and the devices its elements lie on. A shape
+    has at most {!Nx_array.Layout.max_rank} axes, no negative extent, and
+    extents other than [0] that multiply to at most
+    {!Nx_array.Layout.max_numel}. A function given or making another shape
+    raises [Invalid_argument] naming itself. *)
 
 type (!'v, !'s, +!'d) t
 (** The type for arrays of ['s]-format elements read as ['v], on the device set

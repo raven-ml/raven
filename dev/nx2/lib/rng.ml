@@ -133,10 +133,6 @@ let lowered table dt ins body =
 
 (* Draws *)
 
-let check_shape ~by s =
-  if Array.exists (fun d -> d < 0) s then
-    invalid_argf "%s: shape %a has a negative extent" by pp_shape s
-
 let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
 
 let reshape ~by s x =
@@ -189,9 +185,10 @@ let position ~rank s =
    one map over the key's batch then [s], each element reading its key, its
    position in [s], and [params], each stretched to the draw's shape. *)
 let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
-  check_shape ~by s;
-  let batch = batch k and w = pack ~by k in
+  let batch = batch k in
   let shape = Array.append batch s in
+  Prim.check_shape ~by shape;
+  let w = pack ~by k in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
   let loads =
     Array.append

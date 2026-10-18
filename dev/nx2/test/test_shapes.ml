@@ -590,6 +590,25 @@ let dtypes =
 (* A refusal: its case's name starts with the function it calls. *)
 let r name f = (name, fun () -> ignore (f ()))
 
+let contains s w =
+  let n = String.length w in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = w || at (i + 1))
+  in
+  at 0
+
+(* A refusal in nx's words: its message starts with the function the user
+   called and names no function of the layers below. *)
+let named ~by f =
+  match f () with
+  | () -> failf "%s raised nothing" by
+  | exception Invalid_argument m ->
+      let n = Int.min (String.length by + 2) (String.length m) in
+      let start = String.sub m 0 n in
+      let below = [ "Nx_array"; "Nx_kernel"; "Layout."; "Move."; "Prog." ] in
+      equal ~msg:m (pair string (list string)) (by ^ ": ", [])
+        (start, List.filter (contains m) below)
+
 let refusals =
   let x = (operand_of [| 2; 3 |] Plain).x in
   group "refusals"
@@ -664,10 +683,34 @@ let refusals =
           r "tile, a negative rep" (fun () -> Nx.tile [| 1; -1 |] x);
           r "repeat, a negative count" (fun () -> Nx.repeat (-1) x);
           r "repeat, not an axis" (fun () -> Nx.repeat ~axis:2 2 x);
+          r "reshape, 33 axes" (fun () ->
+              Nx.reshape (Array.append [| 2; 3 |] (Array.make 31 1)) x);
+          r "reshape, extents past 2^53" (fun () ->
+              Nx.reshape [| 0; 1 lsl 27; 1 lsl 27 |] (Nx.zeros Nx.int32 [| 0 |]));
+          r "broadcast_to, 33 axes" (fun () ->
+              Nx.broadcast_to (Array.append (Array.make 31 1) [| 2; 3 |]) x);
+          r "broadcast_to, extents past 2^53" (fun () ->
+              Nx.broadcast_to [| 1 lsl 27; 1 lsl 27; 2; 3 |] x);
+          r "unsqueeze, 33 axes" (fun () ->
+              Nx.unsqueeze ~axes:[ 0 ] (Nx.zeros Nx.int32 (Array.make 32 1)));
+          r "sliding_window, 33 axes" (fun () ->
+              Nx.sliding_window ~window:1 (Nx.zeros Nx.int32 (Array.make 32 1)));
+          r "tile, 33 reps" (fun () -> Nx.tile (Array.make 33 1) x);
+          r "tile, extents past 2^53" (fun () -> Nx.tile [| 1 lsl 27; 1 lsl 26 |] x);
+          r "pad, widths past 2^53" (fun () ->
+              Nx.pad [| (1 lsl 27, 0); (1 lsl 27, 0) |] 0l x);
+          r "add, a broadcast past 2^53" (fun () ->
+              Nx.add (Nx.zeros Nx.int32 [| 1 lsl 27; 1 |])
+                (Nx.zeros Nx.int32 [| 1; 1 lsl 27 |]));
+          r "logical_and, a broadcast past 2^53" (fun () ->
+              Nx.logical_and (Nx.zeros Nx.int32 [| 1 lsl 27; 1 |])
+                (Nx.zeros Nx.int32 [| 1; 1 lsl 27 |]));
+          r "pad, an int outside the dtype" (fun () ->
+              Nx.pad [| (1, 0) |] 300 (Nx.zeros Nx.uint8 [| 1 |]));
         ]
         (fun (name, f) ->
           let by = "Nx." ^ String.sub name 0 (String.index name ',') in
-          invalid ~by (fun () -> ignore (f ())));
+          named ~by f);
       test "split refuses no runs" (fun () ->
           invalid ~by:"Nx.split" (fun () -> Nx.split ~axis:0 0 x));
     ]

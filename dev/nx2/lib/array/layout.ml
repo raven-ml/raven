@@ -22,6 +22,7 @@ type t = {
 
 let max_rank = Shape.max_rank
 let max_numel = Shape.max_numel
+let fits = Shape.fits
 let contiguous_flag = 1
 let distinct_flag = 2
 let empty_flag = 4

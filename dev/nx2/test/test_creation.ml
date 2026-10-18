@@ -62,12 +62,36 @@ let shape =
 
 let numel s = Array.fold_left ( * ) 1 s
 
+let contains s w =
+  let n = String.length w in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = w || at (i + 1))
+  in
+  at 0
+
+(* A refusal in nx's words: its message starts with the function the user
+   called and names no function of the layers below. *)
+let named ~by f =
+  match f () with
+  | () -> failf "%s raised nothing" by
+  | exception Invalid_argument m ->
+      let n = Int.min (String.length by + 2) (String.length m) in
+      let start = String.sub m 0 n in
+      let below = [ "Nx_array"; "Nx_kernel"; "Layout."; "Move."; "Prog." ] in
+      equal ~msg:m (pair string (list string)) (by ^ ": ", [])
+        (start, List.filter (contains m) below)
+
 (* Each refusal raises naming its function; cases are numbered to name them. *)
 let refusals l =
   cases "refusals"
     ~name:(fun (n, _, _) -> n)
     (List.mapi (fun i (by, f) -> (Printf.sprintf "%d %s" i by, by, f)) l)
-    (fun (_, by, f) -> invalid ~by f)
+    (fun (_, by, f) -> named ~by f)
+
+(* Past the array layer's limits: 33 axes, and extents other than 0 whose
+   product is 2^54. *)
+let ranked = Array.make 33 1
+let huge = [| 0; 1 lsl 27; 1 lsl 27 |]
 
 (* Fills *)
 
@@ -161,6 +185,28 @@ let fills =
           ("Nx.ones", fun () -> ignore (Nx.ones Nx.float32 [| 2; -1 |]));
           ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 [| 2 |] 256));
           ("Nx.full", fun () -> ignore (Nx.full Nx.int4 [| 2 |] (-9)));
+          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 [| -1 |]));
+          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 ranked));
+          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 huge));
+          ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 ranked 0));
+          ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 huge 0));
+          ("Nx.scalar", fun () -> ignore (Nx.scalar Nx.uint8 256));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 [| -1 |] [||]));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 ranked [| 0. |]));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 huge [||]));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 [| 2 |] [| 0. |]));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.uint8 [| 1 |] [| 300 |]));
+          ("Nx.create", fun () -> ignore (Nx.create Nx.int4 [| 2 |] [| 0; -9 |]));
+          ("Nx.init", fun () -> ignore (Nx.init Nx.float32 ranked (fun _ -> 0.)));
+          ("Nx.init", fun () -> ignore (Nx.init Nx.float32 huge (fun _ -> 0.)));
+          ("Nx.init", fun () -> ignore (Nx.init Nx.uint8 [| 1 |] (fun _ -> 300)));
+          ( "Nx.map_item",
+            fun () -> ignore (Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 1 |])) );
+          ("Nx.add_s", fun () -> ignore (Nx.add_s (Nx.zeros Nx.uint8 [| 1 |]) 300));
+          ("Nx.clamp", fun () -> ignore (Nx.clamp ~max:300 (Nx.zeros Nx.uint8 [| 1 |])));
+          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 [| -1 |]));
+          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 ranked));
+          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 huge));
         ]
 
     ]
@@ -304,6 +350,11 @@ let ranges =
           ("Nx.logspace", fun () -> ignore (Nx.logspace Nx.float32 0. 1. (-1)));
           ("Nx.eye", fun () -> ignore (Nx.eye Nx.float32 (-1)));
           ("Nx.eye", fun () -> ignore (Nx.eye ~m:(-2) Nx.float32 2));
+          ("Nx.eye", fun () -> ignore (Nx.eye Nx.float32 (1 lsl 27)));
+          ("Nx.arange", fun () -> ignore (Nx.arange Nx.int64 0 (1 lsl 54) 1));
+          ("Nx.arange_f", fun () -> ignore (Nx.arange_f Nx.float64 0. 0x1p54 1.));
+          ("Nx.linspace", fun () -> ignore (Nx.linspace Nx.float32 0. 1. (1 lsl 54)));
+          ("Nx.logspace", fun () -> ignore (Nx.logspace Nx.float32 0. 1. (1 lsl 54)));
         ]
 
     ]

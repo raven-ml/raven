@@ -278,27 +278,12 @@ external get_at : ('v, 's) t -> int -> 'v = "nx_array_get"
 (* Stores [x] at [a]'s position [p], through the door. *)
 external set_at : ('v, 's) t -> int -> 'v -> answer = "nx_array_set"
 
-(* Raises unless the [int] [x] lies in [dt]'s range. *)
-let check_int fn dt x =
-  let lo = Dtype.min_value dt and hi = Dtype.max_value dt in
-  if x < lo || x > hi then
-    invalid_argf "%s: %d is outside %a's range [%d, %d]" fn x Dtype.pp dt lo hi
-
-(* Raises unless a store of [x] into [dt] keeps it: an [int] in the range of its
-   dtype. *)
-let checked : type v s. string -> (v, s) Dtype.t -> v -> unit =
- fun fn dt x ->
-  match dt with
-  | Int16 -> check_int fn dt x
-  | Uint16 -> check_int fn dt x
-  | Int8 -> check_int fn dt x
-  | Uint8 -> check_int fn dt x
-  | Int4 -> check_int fn dt x
-  | Uint4 -> check_int fn dt x
-  | Float64 | Float32 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
-  | Float4_e2m1fn | Int64 | Uint64 | Int32 | Uint32 | Complex128 | Complex64
-  | Bool | Bit ->
-      ()
+(* Raises unless [dt] holds [x]: an [int] in the range of its dtype. *)
+let checked fn dt x =
+  if not (Dtype.holds dt x) then
+    let pp = Dtype.pp_value dt in
+    invalid_argf "%s: %a is outside %a's range [%a, %a]" fn pp x Dtype.pp dt pp
+      (Dtype.min_value dt) pp (Dtype.max_value dt)
 
 let get a idx =
   let fn = "Nx_array.get" in

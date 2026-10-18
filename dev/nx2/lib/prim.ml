@@ -101,6 +101,25 @@ let pp_shape ppf s =
 
 let pp_ints ppf s = pp_shape ppf (Iarray.to_array s)
 
+(* Each refusal of [Layout.fits] in its own words: they are rare, so the cheap
+   predicate runs first. *)
+let check_shape ~by s =
+  if not (L.fits s) then begin
+    if Array.exists (fun d -> d < 0) s then
+      invalid_argf "%s: shape %a has a negative extent" by pp_shape s;
+    if Array.length s > L.max_rank then
+      invalid_argf "%s: shape %a has %d axes, more than %d" by pp_shape s
+        (Array.length s) L.max_rank;
+    invalid_argf "%s: the extents of shape %a other than 0 multiply past %d" by
+      pp_shape s L.max_numel
+  end
+
+let check_value ~by dt v =
+  if not (D.holds dt v) then
+    let pp = D.pp_value dt in
+    invalid_argf "%s: %a is outside %s's range [%a, %a]" by pp v (D.name dt) pp
+      (D.min_value dt) pp (D.max_value dt)
+
 let axis ~by r a what =
   let a' = if a < 0 then a + r else a in
   if a' < 0 || a' >= r then invalid_argf "%s: %d is not an axis of %t" by a what
@@ -699,9 +718,7 @@ let load_shape (type d) ~by (l : d load) =
   match l with
   | Plain x -> shape x
   | Padded { x; fill; pad } ->
-      (match P.bits (dtype x) fill with
-      | _ -> ()
-      | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+      check_value ~by (dtype x) fill;
       shaped ~by (Shape.padded pad (shape x))
 
 (* Whether [x]'s shape is [l]'s, allocating nothing. *)
@@ -1155,11 +1172,27 @@ let form_layout (type v s d) (x : (v, s, d) t) =
 let result (r : _ Route.t option) =
   Option.map (fun (r : _ Route.t) -> r.result) r
 
-(* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply. *)
+(* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply: as
+   {!check_shape} does for a target shape no layout has, and otherwise naming
+   the movement and [x]'s shape. *)
 let moved_shape ~by mv x =
   match Nx_array.Move.shape mv (shape x) with
   | s' -> s'
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  | exception Invalid_argument _ ->
+      let name =
+        match mv with
+        | Reshape s' ->
+            check_shape ~by (Iarray.to_array s');
+            "Reshape"
+        | Broadcast s' ->
+            check_shape ~by (Iarray.to_array s');
+            "Broadcast"
+        | Permute _ -> "Permute"
+        | Slice _ -> "Slice"
+        | Window _ -> "Window"
+      in
+      invalid_argf "%s: %s does not apply to shape %a" by name pp_shape
+        (shape x)
 
 (* Whether [nd] is a [Coord] of an axis whose window starts at [first > 0]. *)
 let shifted first (nd : P.node) =
@@ -1353,9 +1386,7 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
 let check_fold ~by whole pad x =
   if not (P.accepts2 (Binary Add) (dtype x)) then
     invalid_argf "%s: Fold does not take %s" by (D.name (dtype x));
-  (match L.contiguous whole with
-  | _ -> ()
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  check_shape ~by whole;
   let s = shaped ~by (Shape.padded pad whole) in
   if not (has_shape x s) then
     invalid_argf "%s: an operand of shape %a, not %a" by pp_shape (shape x)
@@ -1363,12 +1394,8 @@ let check_fold ~by whole pad x =
 
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
     (pieces : (Nx_array.Move.range iarray * (v, s, d) t) list) =
-  (match L.contiguous whole with
-  | _ -> ()
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
-  (match P.bits dt fill with
-  | _ -> ()
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  check_shape ~by whole;
+  check_value ~by dt fill;
   let regions = Array.of_list (List.map fst pieces) in
   let shapes = shaped ~by (Shape.assemble whole regions) in
   List.iteri

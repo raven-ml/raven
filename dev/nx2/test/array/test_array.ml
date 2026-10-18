@@ -447,8 +447,8 @@ let law_set_get (Case (a, _)) =
   in
   check a
 
-(* An [int] outside its dtype's range is refused by [set] and [of_array], and
-   one inside stores as itself. *)
+(* An [int] outside its dtype's range is one the dtype does not hold, refused
+   by [set] and [of_array], and one inside stores as itself. *)
 let law_range (type s) (dt : (int, s) D.t) =
   let lo = D.min_value dt and hi = D.max_value dt in
   let x =
@@ -464,11 +464,13 @@ let law_range (type s) (dt : (int, s) D.t) =
       let a = A.create Rig.host dt [| 1 |] in
       if x < lo || x > hi then begin
         cover "out of range" true;
+        equal ~msg:"holds" bool false (D.holds dt x);
         raises_match Exn.invalid_arg (fun () -> A.set a [| 0 |] x);
         raises_match Exn.invalid_arg (fun () -> A.of_array dt [| 1 |] [| x |])
       end
       else begin
         cover "a bound" (x = lo || x = hi);
+        equal ~msg:"holds" bool true (D.holds dt x);
         A.set a [| 0 |] x;
         equal int x (A.get a [| 0 |]);
         equal (array int) [| x |] (A.to_array (A.of_array dt [| 1 |] [| x |]))

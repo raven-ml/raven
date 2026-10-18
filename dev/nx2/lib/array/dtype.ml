@@ -355,6 +355,24 @@ let max_value : type v s. (v, s) t -> v = function
   | Bool -> true
   | Bit -> true
 
+let in_range (dt : (int, _) t) x = x >= min_value dt && x <= max_value dt
+
+(* Only an [int] can lie outside its dtype: every other value type is one a
+   store converts. *)
+let holds : type v s. (v, s) t -> v -> bool =
+ fun dt x ->
+  match dt with
+  | Int16 -> in_range dt x
+  | Uint16 -> in_range dt x
+  | Int8 -> in_range dt x
+  | Uint8 -> in_range dt x
+  | Int4 -> in_range dt x
+  | Uint4 -> in_range dt x
+  | Float64 | Float32 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+  | Float4_e2m1fn | Int64 | Uint64 | Int32 | Uint32 | Complex128 | Complex64
+  | Bool | Bit ->
+      true
+
 (* Conversions. Both stores go through nx_dtype.h, the one source of the rule:
    [round] is a float's value once stored in a float dtype, [store] the bits a
    store writes into an integer dtype, sign-extended for signed ones. *)

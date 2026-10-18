@@ -26,6 +26,9 @@ val numel : string -> int array -> int
     [Invalid_argument] if an extent is negative or the product of the extents
     other than [0] exceeds {!max_numel}. *)
 
+val fits : int array -> bool
+(** {!Nx_array.Layout.fits}. *)
+
 val zeros : int -> int array
 (** [zeros r] is a fresh array of [r] zeros. *)
 

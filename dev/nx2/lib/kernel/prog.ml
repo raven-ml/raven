@@ -123,7 +123,7 @@ external narrow_bits : (int[@untagged]) -> (float[@unboxed]) -> (int[@untagged])
 [@@noalloc]
 
 let check_range dt x =
-  if x < D.min_value dt || x > D.max_value dt then
+  if not (D.holds dt x) then
     invalid_arg
       (Printf.sprintf "Nx_kernel.Prog.bits: %d is outside %s's range" x
          (D.name dt))
