@@ -463,6 +463,25 @@ let test_due_words () =
   Gc.full_major ();
   equal ~msg:"bytes with collected memory queued" int idle (drains ())
 
+(* A drain that caches collected buffers whose work is done, into a cache
+   that held as many of their size before their creates took them, allocates
+   no more than a drain with nothing to cache: [B.create d 0] drains [d]. *)
+let test_drain_words () =
+  let d, _ = P.open_ "buffer:drain-words" in
+  let[@inline never] dropped n =
+    for _ = 1 to n do
+      ignore (Sys.opaque_identity (B.create d 4096))
+    done
+  in
+  let drain n =
+    dropped n;
+    Gc.full_major ();
+    Support.allocated_bytes (fun () -> ignore (B.create d 0))
+  in
+  ignore (drain 100);
+  let idle = drain 0 in
+  equal ~msg:"bytes of a drain of 100 buffers" int idle (drain 100)
+
 (* Borrows of memory that dies *)
 
 (* Memory of another machine's driver device copies only directly: with this
@@ -1998,6 +2017,8 @@ let words =
       test "reached allocates nothing" test_reached_words;
       test "a drain that judges queued memory allocates nothing more"
         test_due_words;
+      test "a drain allocates nothing for each buffer it caches"
+        test_drain_words;
       test "behind a transport a wait for reached work allocates nothing"
         test_wait_words_transport;
     ]

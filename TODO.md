@@ -116,10 +116,9 @@ raven / llama.cpp (Vulkan; ROCm):
   54 ns, 31 words on the M1; nx's `dispatch/add-1` 214 ns): profile malloc
   against the custom block and `host_memory`, then A/B a per-domain free
   list of small host buffers
-- a collected buffer's release allocates in the call that drains it
-  (memory.ml:628-632, ~4 words a buffer); done when `drain/dropped-1000`
-  allocates only its creates and kaun's GPU decode rows measure allocation
-  again (bench_decode.ml's gpu_metrics)
+- kaun's GPU decode rows measure allocation again (bench_decode.ml's
+  gpu_metrics) once a decode call's words are shown not to depend on the
+  collector's phase, on Metal and CUDA
 - results between about a quarter of the last-level cache and half of it
   rotate past it under rig's due point (rig_heap.c, heap_cycle_bytes): at
   a small heap, set-row-8M's 8 MiB results rotate through four buffers,

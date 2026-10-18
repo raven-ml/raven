@@ -166,8 +166,9 @@ and live = {
   mutable used : int; [@atomic]
       (** Its own bytes in live buffers, code and the cache. *)
   mutable cached : int; [@atomic]  (** The bytes in its cache. *)
-  cache : entry list Tbl.Make(Int).t;
-      (** Its cache, by [bytes * 4 + kind]. *)
+  cache : cached Tbl.Make(Int).t;
+      (** Its cache, by [bytes * 4 + kind]. A key stays bound once
+          allocations took its entries, until a release of the cache. *)
   mutable retiring : entry array;
       (** Collected entries that wait for their points or their bigarrays:
           its first [nretiring], in no order. Grown by replacement. *)
@@ -245,6 +246,12 @@ and entry = {
       (** The C proxy of the bigarrays over it, [0] before the first. *)
   id : int;  (** Unique for the life of the process. *)
 }
+
+(** The type for the entries of one key of a device's cache: the first [n]
+    of [entries], the latest cached last, and {!Memory.no_entry} past them.
+    The array grows by replacement and keeps its length until the key is
+    unbound. Guarded by the device's lock. *)
+and cached = { mutable entries : entry array; mutable n : int }
 
 (** The type for an io allocation's pages: not asked yet, a bigarray over
     them, or none. *)

@@ -690,12 +690,39 @@ let viewed (e : entry) =
   end
   else true
 
-(* Puts [e] in its owner's cache, for reuse. The owner's lock is held. *)
+(* Puts [e] in its owner's cache, for reuse. A key's array allocates only as
+   it grows past the most entries it held, so a drain of a size cached before
+   allocates nothing. Each step allocates before it stores. The owner's lock
+   is held. *)
 let cache (e : entry) =
   let l = e.owner.live and k = cache_key e in
-  let es = try Cache.find l.cache k with Not_found -> [] in
-  Cache.replace l.cache k (e :: es);
+  let c =
+    match Cache.find l.cache k with
+    | c -> c
+    | exception Not_found ->
+        let c = { entries = [||]; n = 0 } in
+        Cache.replace l.cache k c;
+        c
+  in
+  let n = c.n in
+  if n = Array.length c.entries then begin
+    let a = Array.make (Int.max 8 (2 * n)) no_entry in
+    Array.blit c.entries 0 a 0 n;
+    c.entries <- a
+  end;
+  c.entries.(n) <- e;
+  c.n <- n + 1;
   l.cached <- l.cached + e.bytes
+
+(* Under the owner's lock: the latest entry of [c], which holds one, taken
+   out of the cache. Its key stays bound. *)
+let uncache l (c : cached) =
+  let n = c.n - 1 in
+  let e = c.entries.(n) in
+  c.entries.(n) <- no_entry;
+  c.n <- n;
+  l.cached <- l.cached - e.bytes;
+  e
 
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
 let retire_entry (e : entry) =
@@ -953,12 +980,10 @@ let cache_keys l = Cache.fold (fun k _ ks -> k :: ks) l.cache []
    kind of memory, so [pick] answers alike for each. *)
 let take_picked (l, k, pick) =
   match Cache.find l.cache k with
-  | e :: rest when pick e ->
-      (match rest with
-      | [] -> Cache.remove l.cache k
-      | _ -> Cache.replace l.cache k rest);
-      l.cached <- l.cached - e.bytes;
-      Some e
+  | c when c.n = 0 ->
+      Cache.remove l.cache k;
+      None
+  | c when pick c.entries.(c.n - 1) -> Some (uncache l c)
   | _ | (exception Not_found) -> None
 
 (* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
@@ -987,8 +1012,11 @@ let release_picked d pick v =
   in
   List.iter take (Dev.protect d cache_keys l)
 
+let rec picked pick (c : cached) i =
+  i < c.n && (pick c.entries.(i) || picked pick c (i + 1))
+
 let any_picked (l, pick) =
-  Cache.fold (fun _ es found -> found || List.exists pick es) l.cache false
+  Cache.fold (fun _ c found -> found || picked pick c 0) l.cache false
 
 (* Frees what [pick] holds of in [d]'s cache once the work [d] was handed
    until now is done: at once if it is, after waiting for it when [wait] and
@@ -1274,16 +1302,14 @@ let () = Dev.answered := drain
 
 let take_cached_key (l, k) =
   match Cache.find l.cache k with
-  | e :: rest ->
-      (match rest with
-      | [] -> Cache.remove l.cache k
-      | _ -> Cache.replace l.cache k rest);
-      l.cached <- l.cached - e.bytes;
+  | c when c.n = 0 -> None
+  | c ->
+      let e = uncache l c in
       (* Every old use has settled. The new buffer has no dependencies on
          its memory's previous lifetime, an unordered use included. *)
       stamps_clear e.stamps;
       Some e
-  | [] | (exception Not_found) -> None
+  | exception Not_found -> None
 
 let take_cached d kind n =
   let l = d.live in
