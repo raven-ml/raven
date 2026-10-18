@@ -8,8 +8,9 @@
    fresh result. nx.cpu's group checks what Nx_kernel.S states, element by
    element against a reference built here from the elements' bits: zero reads
    and dropped writes outside the axis, a target's updates in C order, a narrow
-   float's sum in float32 rounded once, the first NaN of an extreme; at every
-   dtype and through strided, reversed, permuted and broadcast views. *)
+   float's sum in float32 rounded once, the first NaN of an extreme quieted;
+   at every dtype and through strided, reversed, permuted and broadcast
+   views. *)
 
 open Windtrap
 module A = Nx_array
@@ -143,12 +144,20 @@ let combine_gen d =
     (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
      else Nx_kernel.[ Set; Max; Min ])
 
-let scatter_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen)
+let scatter_gen ?(dtypes = all_dtypes) ?combines ?(draw = element)
+    ?(shapes = shape_gen)
     ?(ms = Gen.frequency [ (4, Gen.int_range 0 8); (1, Gen.int_range 9 60) ]) ()
     =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
-  let* combine = combine_gen d in
+  let* combine =
+    match combines with
+    | None -> combine_gen d
+    | Some cs ->
+        of_list
+          ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c))
+          cs
+  in
   let* ts = shapes in
   let r = Array.length ts in
   let* axis = int_range 0 (r - 1) in
@@ -166,8 +175,8 @@ let scatter_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen)
   let* iv = view_of ~broadcast r in
   let+ seed = int in
   let rs = Random.State.make [| seed |] in
-  let into = operand d ts tv (fun _ -> element d rs) in
-  let updates = operand d us uv (fun _ -> element d rs) in
+  let into = operand d ts tv (fun _ -> draw d rs) in
+  let updates = operand d us uv (fun _ -> draw d rs) in
 
   {
     combine;
@@ -292,14 +301,13 @@ let combined (D.Any dt as d) combine x us =
             in
             if keep then a else b
           in
-          Bits (List.fold_left pick x us))
+          Bits (quiet d (List.fold_left pick x us)))
 
-let scatter_expected c =
-  let d = dtype_of c.into in
+(* The updates that land on each target of [c], in C order. *)
+let lands c =
   let ts = shape_of c.into and us = shape_of c.updates in
-  let xs = elements c.into and ues = elements c.updates in
-  let ps = positions c.sidx in
-  let lands = Array.make (Array.length xs) [] in
+  let ues = elements c.updates in
+  let lands = Array.make (total ts) [] in
   Array.iteri
     (fun k p ->
       if p >= 0L && p < Int64.of_int ts.(c.saxis) then begin
@@ -308,8 +316,13 @@ let scatter_expected c =
         let t = flat ts i in
         lands.(t) <- ues.(k) :: lands.(t)
       end)
-    ps;
-  Array.mapi (fun t x -> combined d c.combine x (List.rev lands.(t))) xs
+    (positions c.sidx);
+  Array.map List.rev lands
+
+let scatter_expected c =
+  let d = dtype_of c.into in
+  let ls = lands c in
+  Array.mapi (fun t x -> combined d c.combine x ls.(t)) (elements c.into)
 
 let is_nan_element d e = is_narrow d && Float.is_nan (decode d e)
 
@@ -358,6 +371,76 @@ let law_scatter_reference (b : Support.backend) c =
     (List.length (List.sort_uniq compare inside) < List.length inside);
   cover "dropped updates" (List.length inside < Array.length ps);
   cover "narrow float add" (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
+  scatter_agrees b c
+
+(* A signalling NaN of [d] from its bits, in one part of a complex number or
+   both: the exponent's ones, the quiet bit clear, a payload below it and a
+   sign drawn. float8_e4m3fn's NaNs are quiet: it draws its one NaN of each
+   sign. *)
+let signalling (D.Any dt as d) rs =
+  let part, parts =
+    match dt with
+    | D.Complex64 -> (D.Any D.Float32, 2)
+    | D.Complex128 -> (D.Any D.Float64, 2)
+    | _ -> (d, 1)
+  in
+  let nan () =
+    match quiet_fields part with
+    | None -> String.make 1 (if Random.State.bool rs then '\x7F' else '\xFF')
+    | Some (exp, frac) ->
+        let below = Int64.(sub (shift_left 1L (frac - 1)) 1L) in
+        let payload = Int64.succ (Random.State.int64 rs below) in
+        let ones = Int64.(shift_left (sub (shift_left 1L exp) 1L) frac) in
+        let sign =
+          if Random.State.bool rs then Int64.shift_left 1L (exp + frac) else 0L
+        in
+        let v = Int64.(logor sign (logor ones payload)) in
+        String.init
+          ((1 + exp + frac) / 8)
+          (fun j ->
+            Char.chr (Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF))
+  in
+  if parts = 1 then nan ()
+  else
+    match Random.State.int rs 3 with
+    | 0 -> nan () ^ element part rs
+    | 1 -> element part rs ^ nan ()
+    | _ -> nan () ^ nan ()
+
+(* An element of [d], a signalling NaN one time in three. *)
+let signals_often d rs =
+  if Random.State.int rs 3 = 0 then signalling d rs else element d rs
+
+let nan_dtypes =
+  D.
+    [
+      Any Float16;
+      Any Bfloat16;
+      Any Float8_e4m3fn;
+      Any Float8_e5m2;
+      Any Float32;
+      Any Float64;
+      Any Complex64;
+      Any Complex128;
+    ]
+
+let nan_scatters =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~dtypes:nan_dtypes ~combines:Nx_kernel.[ Max; Min ]
+       ~draw:signals_often ())
+
+(* A Max or Min scatter is the first NaN among a target's element and its
+   updates, quieted; a target no update reaches keeps its bits, a signalling
+   NaN included. *)
+let law_nan_extremes (b : Support.backend) c =
+  let d = dtype_of c.into in
+  let signals e = quiet d e <> e in
+  let xs = elements c.into and ls = lands c in
+  let some f = Array.exists Fun.id (Array.mapi f xs) in
+  cover "a signalling NaN reaches a target"
+    (some (fun t x -> ls.(t) <> [] && List.exists signals (x :: ls.(t))));
+  cover "a signalling NaN no update reaches"
+    (some (fun t x -> ls.(t) = [] && signals x));
   scatter_agrees b c
 
 (* Laws for every library *)
@@ -777,6 +860,8 @@ let cpu (b : Support.backend) =
       prop ~examples:scatter_examples
         "a scatter combines each target's updates in C order" scatters
         (run (law_scatter_reference b));
+      prop "a scatter's Max and Min give the first NaN quieted" nan_scatters
+        (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
       prop ~count:10 "large scatters on the job's threads" large_scatters

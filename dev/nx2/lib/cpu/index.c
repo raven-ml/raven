@@ -36,9 +36,12 @@
    accumulates in float32 in scratch, beside a flag per target that an
    update reached, and encodes those targets once at the end, so that an
    untouched element keeps its bits. Max and Min keep the first NaN, the
-   target's value first; on narrow floats and complex numbers they select
-   an operand by the order of nx_kinds.h's domains, so that the result
-   keeps its bits. */
+   target's value first, quieted as IEEE 754 returns a NaN operand: its
+   quiet bit, the top of its fraction, set, its sign and the rest of its
+   payload kept. Quieting is idempotent, so a NaN target stays the first
+   NaN through later updates. On narrow floats and complex numbers they
+   select an operand by the order of nx_kinds.h's domains, so that the
+   result is an operand's bits, quieted where a NaN. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -350,6 +353,38 @@ static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
     }                                                                        \
   }
 
+/* [g] quieted where a NaN, by a mask of its NaN test: no branch. */
+static inline float quiet_f32(float g) {
+  uint32_t nan = (uint32_t)0 - (uint32_t)(g != g);
+  return nx_bits_float(nx_float_bits(g) | (nan & ((uint32_t)1 << 22)));
+}
+
+static inline double quiet_f64(double g) {
+  uint64_t nan = (uint64_t)0 - (uint64_t)(g != g);
+  return nx_bits_double(nx_double_bits(g) | (nan & ((uint64_t)1 << 51)));
+}
+
+static inline nx_c64 quiet_c64(nx_c64 z) {
+  return nx_c64_of(quiet_f32(z.re), quiet_f32(z.im));
+}
+
+static inline nx_c128 quiet_c128(nx_c128 z) {
+  return nx_c128_of(quiet_f64(z.re), quiet_f64(z.im));
+}
+
+/* The extremes of floats and complex numbers, a NaN result quieted. */
+#define QUIETED(NAME, T, F, Q) \
+  static inline T NAME(T a, T b) { return Q(F(a, b)); }
+
+QUIETED(maximum_f32, float, nx_maximum_f32, quiet_f32)
+QUIETED(minimum_f32, float, nx_minimum_f32, quiet_f32)
+QUIETED(maximum_f64, double, nx_maximum_f64, quiet_f64)
+QUIETED(minimum_f64, double, nx_minimum_f64, quiet_f64)
+QUIETED(maximum_c64, nx_c64, nx_maximum_c64, quiet_c64)
+QUIETED(minimum_c64, nx_c64, nx_minimum_c64, quiet_c64)
+QUIETED(maximum_c128, nx_c128, nx_maximum_c128, quiet_c128)
+QUIETED(minimum_c128, nx_c128, nx_minimum_c128, quiet_c128)
+
 #define SET(a, b) (b)
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 #define MIN(a, b) ((b) < (a) ? (b) : (a))
@@ -373,10 +408,10 @@ SCATTER_RUN(add_8, uint8_t, ADD_U8)
 SCATTER_RUN(add_16, uint16_t, ADD_U16)
 SCATTER_RUN(add_32, uint32_t, ADD_U32)
 SCATTER_RUN(add_64, uint64_t, ADD_U64)
-SCATTER_RUN(max_f32, float, nx_maximum_f32)
-SCATTER_RUN(min_f32, float, nx_minimum_f32)
-SCATTER_RUN(max_f64, double, nx_maximum_f64)
-SCATTER_RUN(min_f64, double, nx_minimum_f64)
+SCATTER_RUN(max_f32, float, maximum_f32)
+SCATTER_RUN(min_f32, float, minimum_f32)
+SCATTER_RUN(max_f64, double, maximum_f64)
+SCATTER_RUN(min_f64, double, minimum_f64)
 SCATTER_RUN(max_i8, int8_t, MAX)
 SCATTER_RUN(min_i8, int8_t, MIN)
 SCATTER_RUN(max_u8, uint8_t, MAX)
@@ -396,11 +431,11 @@ SCATTER_RUN(min_u64, uint64_t, MIN)
 SCATTER_RUN(max_b, uint8_t, OR_B)
 SCATTER_RUN(min_b, uint8_t, AND_B)
 SCATTER_RUN(add_c64_run, nx_c64, add_c64)
-SCATTER_RUN(max_c64, nx_c64, nx_maximum_c64)
-SCATTER_RUN(min_c64, nx_c64, nx_minimum_c64)
+SCATTER_RUN(max_c64, nx_c64, maximum_c64)
+SCATTER_RUN(min_c64, nx_c64, minimum_c64)
 SCATTER_RUN(add_c128_run, nx_c128, add_c128)
-SCATTER_RUN(max_c128, nx_c128, nx_maximum_c128)
-SCATTER_RUN(min_c128, nx_c128, nx_minimum_c128)
+SCATTER_RUN(max_c128, nx_c128, maximum_c128)
+SCATTER_RUN(min_c128, nx_c128, minimum_c128)
 
 /* Elements one at a time: sub-byte dtypes and narrow floats. */
 
@@ -412,6 +447,17 @@ static uint32_t narrow_of_float(int dt, float f) {
     case NX_FLOAT8_E4M3FN: return nx_float_to_e4m3fn(f);
     case NX_FLOAT8_E5M2: return nx_float_to_e5m2(f);
     default: return nx_float_to_e2m1fn(f);
+  }
+}
+
+/* The quiet bit of a narrow float's NaNs, the top of its fraction; 0 for
+   float8_e4m3fn, whose NaNs have it, and float4_e2m1fn, which has none. */
+static uint32_t narrow_quiet(int dt) {
+  switch (dt) {
+    case NX_FLOAT16: return 0x200;
+    case NX_BFLOAT16: return 0x40;
+    case NX_FLOAT8_E5M2: return 0x2;
+    default: return 0;
   }
 }
 
@@ -464,12 +510,14 @@ static void combine_one(const scatter *c, int64_t pd, int64_t pu) {
       c->acc[k] = add_f32(c->acc[k], nx_bits_to_float(dt, b));
       return;
     }
-    /* The update replaces the element where the extreme is not the
-       element's own value. */
+    /* The update's code where the extreme is not the element's own value,
+       else the element's, quieted where a NaN. */
     float x = nx_bits_to_float(dt, a), y = nx_bits_to_float(dt, b);
     float g = c->combine == NX_COMBINE_MAX ? nx_maximum_f32(x, y)
                                         : nx_minimum_f32(x, y);
-    if (nx_float_bits(g) != nx_float_bits(x)) code_put(d, pd, b);
+    uint32_t r = nx_float_bits(g) != nx_float_bits(x) ? b : a;
+    if (g != g) r |= narrow_quiet(dt);
+    if (r != a) code_put(d, pd, r);
     return;
   }
   /* int4, uint4 and bit; Add wraps modulo 16. */

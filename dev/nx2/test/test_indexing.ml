@@ -588,6 +588,155 @@ let declined_case =
         | `Min -> "Min")
         a pp_ints s pp_ints p (bits u) (bits x))
 
+(* Signalling NaNs. A scatter's Max and Min give a target the first NaN
+   among its element and its updates, quieted: its quiet bit set, its sign
+   and the rest of its payload kept. A target no update reaches keeps its
+   bits. Drawn at every float format with a NaN, on nx.cpu and on
+   Unique_scatters, which leaves repeated targets to nx's expansion, from
+   elements whose NaNs {!Nx_support.signalled} makes signalling. *)
+
+(* Floats that tie often: small integers, [-0], infinities, and NaNs whose
+   payload keeps them NaN once signalling in every float format, the two
+   bits below the quiet bit. *)
+let nan_payloads =
+  [| Int64.float_of_bits 0x7FFC000000000000L; Int64.float_of_bits 0xFFFE000000000000L |]
+
+let draw_float rs =
+  match Random.State.int rs 8 with
+  | 0 | 1 | 2 -> Float.of_int (Random.State.int rs 5 - 2)
+  | 3 -> -0.
+  | 4 -> if Random.State.bool rs then Float.infinity else Float.neg_infinity
+  | _ -> nan_payloads.(Random.State.int rs 2)
+
+(* The order of numbers with [-0] below [+0]. *)
+let order x y =
+  let c = Float.compare x y in
+  if c <> 0 then c else Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+
+type nan_dtype =
+  | Nd :
+      ('v, 's) D.t * (Random.State.t -> 'v) * ('v -> bool) * ('v -> 'v -> int)
+      -> nan_dtype
+
+let real dt = Nd (dt, draw_float, Float.is_nan, order)
+
+let complex dt =
+  Nd
+    ( dt,
+      (fun rs -> { Complex.re = draw_float rs; im = draw_float rs }),
+      (fun z -> Float.is_nan z.Complex.re || Float.is_nan z.im),
+      fun a b ->
+        let c = order a.Complex.re b.Complex.re in
+        if c <> 0 then c else order a.im b.im )
+
+type nan_case =
+  | Nan_case : {
+      dt : ('v, 's) D.t;
+      nan : 'v -> bool;
+      order : 'v -> 'v -> int;
+      s : int array;
+      a : int;
+      us : int array;
+      p : int array;
+      max : bool;
+      x : 'v array;
+      u : 'v array;
+    }
+      -> nan_case
+
+let nan_case =
+  Gen.(
+    let* (Nd (dt, draw, nan, order)) =
+      of_list
+        [
+          real D.Float16;
+          real D.Bfloat16;
+          real D.Float8_e4m3fn;
+          real D.Float8_e5m2;
+          real D.Float32;
+          real D.Float64;
+          complex D.Complex64;
+          complex D.Complex128;
+        ]
+    in
+    let* r = int_range 1 3 in
+    let* s = array ~size:(constant r) (int_range 1 3) in
+    let* a = int_range 0 (r - 1) in
+    let* k = int_range 0 5 in
+    let us = Array.mapi (fun i d -> if i = a then k else d) s in
+    let* p = array ~size:(constant (numel us)) (int_range (-1) s.(a)) in
+    let* max = bool in
+    let+ seed = int in
+    let rs = Random.State.make [| seed |] in
+    let x = Array.init (numel s) (fun _ -> draw rs) in
+    let u = Array.init (numel us) (fun _ -> draw rs) in
+    Nan_case { dt; nan; order; s; a; us; p; max; x; u })
+  |> Gen.with_pp (fun ppf (Nan_case c) ->
+      Format.fprintf ppf "%s along %d of %s %a at %a" (if c.max then "Max" else "Min")
+        c.a (D.name c.dt) pp_ints c.s pp_ints c.p)
+
+let law_nan_extremes (Nan_case c) =
+  let x = Nx_support.signalled (A.of_array c.dt c.s c.x) in
+  let u = Nx_support.signalled (A.of_array c.dt c.us c.u) in
+  let bytes a = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))) in
+  let w = D.bits c.dt / 8 in
+  let elt b k = Array.sub b (k * w) w in
+  let xb = bytes x and xq = bytes (Nx_support.quieted x) in
+  let ub = bytes u and uq = bytes (Nx_support.quieted u) in
+  let xs = A.to_array x and vs = A.to_array u in
+  (* Each target's extreme so far: [into]'s element, an update, or none
+     where no update landed. *)
+  let won = Array.make (numel c.s) None in
+  let reached = ref false in
+  for k = 0 to numel c.us - 1 do
+    let q = c.p.(k) in
+    if q >= 0 && q < c.s.(c.a) then begin
+      let ix = index c.us k in
+      ix.(c.a) <- q;
+      let t = position c.s ix in
+      let cur = Option.value won.(t) ~default:`Into in
+      let v = match cur with `Into -> xs.(t) | `Update j -> vs.(j) in
+      let keep =
+        if c.nan v then true
+        else if c.nan vs.(k) then false
+        else
+          let o = c.order v vs.(k) in
+          if c.max then o >= 0 else o <= 0
+      in
+      if elt xb t <> elt xq t || elt ub k <> elt uq k then reached := true;
+      won.(t) <- Some (if keep then cur else `Update k)
+    end
+  done;
+  cover "a signalling NaN reaches a target" !reached;
+  cover "a signalling NaN no update reaches"
+    (Array.exists Fun.id
+       (Array.mapi (fun t v -> v = None && elt xb t <> elt xq t) won));
+  let expected =
+    Array.concat
+      (Array.to_list
+         (Array.mapi
+            (fun t v ->
+              match v with
+              | None -> elt xb t
+              | Some `Into -> elt xq t
+              | Some (`Update k) -> elt uq k)
+            won))
+  in
+  let host a = Nx.Repr.of_array Nx.Host.v a in
+  let combine = if c.max then Nx.Max else Nx.Min in
+  let got y = bytes (Option.get (Nx.Repr.array (Nx.place Nx.Host.on y))) in
+  let on_cpu =
+    Nx.scatter ~combine ~axis:c.a (held c.us c.p) (host u) (host x)
+  in
+  equal ~msg:"on nx.cpu" (array int) expected (got on_cpu);
+  let on v = Nx.place Unique.on v in
+  let declined =
+    Nx.scatter ~combine ~axis:c.a
+      (on (held c.us c.p))
+      (on (host u)) (on (host x))
+  in
+  equal ~msg:"declined" (array int) expected (got declined)
+
 (* nx.cpu, declining every gather of a dtype narrower than a byte, which then
    runs as its expansion. *)
 module Byte_gathers = struct
@@ -675,6 +824,8 @@ let declines =
         test_declined_empty_scatter;
       prop "a declined scatter combines repeated targets in C order"
         declined_case law_declined;
+      prop "a Max or Min scatter gives the first NaN quieted, declined too"
+        nan_case law_nan_extremes;
       test "a declined narrow float sum rounds once" test_declined_narrow_sum;
       test "a scatter its device's kernels decline raises naming the move"
         test_declined_scatter_raises;

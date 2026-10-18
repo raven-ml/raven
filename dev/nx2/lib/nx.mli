@@ -639,8 +639,8 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 type combine =
   | Set  (** The last update. *)
   | Add  (** [+0] plus the target plus its updates. *)
-  | Max  (** The largest of the target and its updates, the first NaN. *)
-  | Min  (** The smallest, the first NaN. *)
+  | Max  (** The largest of the target and its updates, or the first NaN. *)
+  | Min  (** The smallest, or the first NaN. *)
 
 val scatter :
   ?combine:combine ->
@@ -652,11 +652,13 @@ val scatter :
 (** [scatter ~combine ~axis p u x] is [x] with each element of [u] combined
     into [x] at its own index with axis [axis] replaced by [p]'s element there;
     [p] and [u] have one shape. A target's updates apply in C order of [u]:
-    [Set] (default) keeps the last; [Add] gives, where some update lands, [+0]
-    plus the element plus its updates, a narrow float summed in float32 and
-    rounded once, and elsewhere the element keeps its bits; [Max] and [Min]
-    keep the first NaN. A position outside [\[0, d)] writes nothing. A float
-    [Add] gives the same bits on every run.
+    [Set] (default) keeps the last; [Add] gives [+0] plus the element plus
+    its updates, a narrow float summed in float32 and rounded once; [Max] and
+    [Min] give the largest or smallest of the element and its updates, or the
+    first NaN among them quieted: its quiet bit, the top bit of its fraction,
+    set, its sign and payload kept. Where no update lands, the element keeps
+    its bits, a signalling NaN's included. A position outside [\[0, d)]
+    writes nothing. A float [Add] gives the same bits on every run.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
     differ in shape, their shape differs from [x]'s off [axis], or [combine]

@@ -532,14 +532,19 @@ module type S = sig
       targets [into]'s element at [j] with axis [axis] replaced by [idx]'s
       element at [j]; a position outside \[[0], [d]), [d] [into]'s extent
       along [axis], drops it. Where no update lands, the result is [into]'s
-      element, its bits unchanged. Where the updates [u1], …, [un], in C order
-      of their indices, land on [x], it is:
+      element, its bits unchanged, a signalling NaN's included. Where the
+      updates [u1], …, [un], in C order of their indices, land on [x], it
+      is:
       - for [Set], [un];
       - for [Add], [+0 + x + u1 + … + un] by {!Prog.Add}, a narrow float's sum
         computed in float32 and rounded once. Each kernel library states how
         it associates the sum, a function of [n] alone;
       - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x], [u1],
-        …, [un]; a NaN result is the first NaN among them, its bits unchanged.
+        …, [un]; a NaN result is the first NaN among them quieted, as IEEE
+        754 returns a NaN operand: its quiet bit, the top bit of its
+        fraction, set, its sign and the rest of its payload kept, a complex
+        number's NaN parts each so. [float8_e4m3fn]'s NaNs are quiet
+        already.
 
       [unique] promises that no two updates share a target; where two do, the
       result there is unspecified. It answers [Wrong_dtype] for an [Add] of a
