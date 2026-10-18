@@ -61,8 +61,9 @@
     sort of a sub-byte dtype casts its values to their accumulator, computes
     there and casts the result back once; an integer's [Add] wraps there to the
     same bits as at its own dtype. Any other scatter whose targets may repeat is
-    one unique scatter per position along its axis, in order, each of the target
-    so far: O(m |into|) for m positions. A sum associates left to right; a
+    a loop of one unique scatter per position along its axis, in order, each of
+    the target so far and of that position's indices and updates, gathered at a
+    broadcast of the trip's index: O(m |into|) for m positions. A sum associates left to right; a
     narrow float's sums in its accumulator, rounded once, and a [Set] of [true]
     at the same targets keeps the bits of each target no update reaches: twice
     the scatters.
@@ -152,9 +153,25 @@ val square_mod :
 val run :
   ('q. by:string -> 'q Value.prim -> 'q) ->
   by:string ->
+  repeat:
+    ('d.
+    int ->
+    ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
+    'd Value.any list ->
+    'd Value.any list) ->
   'r Value.prim ->
   'r option
-(** [run apply ~by op] is [Some r], [r] [op]'s expansion applied through
-    [apply], or [None] for a core case. No result of [r] is one of [op]'s
-    operands: one that would be is its copy. *)
+(** [run apply ~by ~repeat op] is [Some r], [r] [op]'s expansion applied
+    through [apply], or [None] for a core case. A loop of [n] trips runs as
+    [repeat n step init], whose law {!Nx.Prim.expand} states. No result of [r]
+    is one of [op]'s operands: one that would be is its copy. *)
+
+val folded :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  'r Value.prim ->
+  'r option
+(** [folded apply ~by op] is {!run} with its loops folded now: each trip's
+    position is known, so a step reads it as views where {!run}'s gathers it
+    at a 0-d index. Its values are {!run}'s with a [repeat] that folds. *)
 

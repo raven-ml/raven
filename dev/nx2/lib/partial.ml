@@ -744,7 +744,7 @@ struct
           (* No such reduction is core: each has an expansion, whose own
              reductions compute as above. *)
           let op = Value.Reduce { layout; axes; prog; reductions = Value.[ r ]; loads } in
-          fst (Option.get (Expand.run A.apply ~by op))
+          fst (Option.get (Expand.folded A.apply ~by op))
     in
     let rec each : type q. (d, q) Value.reductions -> q = function
       | [] -> ()

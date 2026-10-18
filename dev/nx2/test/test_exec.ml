@@ -552,12 +552,46 @@ let test_check_one () =
   equal ~msg:"a formula flag's kernel calls" int alone (C.calls ());
   raises failed (fun () -> Nx.sync x)
 
+(* Counting nx.cpu, declining every scatter whose targets may repeat, as a
+   library may: nx's expansion computes those. *)
+module Unique_counting = struct
+  include C
+
+  let scatter c ~unique ~axis ~dst ~into idx u =
+    if unique then C.scatter c ~unique ~axis ~dst ~into idx u else A.Declined
+end
+
+module Unique = (val Nx.devices ~kernels:(module Unique_counting) [ m 0 ])
+
+(* A declined scatter whose targets may repeat is a loop of one unique scatter
+   per position, which reads that position's indices and updates as views:
+   each position adds one kernel call, two for a narrow float's sum, which
+   runs two loops in its accumulator. *)
+let test_repeat_kernels () =
+  let calls dt m =
+    let idx = Nx.place Unique.on (Nx.zeros Nx.int64 [| m |]) in
+    let updates = Nx.place Unique.on (Nx.ones dt [| m |]) in
+    let into = Nx.place Unique.on (Nx.zeros dt [| 1 |]) in
+    C.reset ();
+    let y = Nx.scatter ~combine:Nx.Add ~axis:0 idx updates into in
+    let n = C.calls () in
+    equal ~msg:"the sum" (array float_exact) [| Float.of_int m |]
+      (elements (Nx.cast D.Float64 y));
+    n
+  in
+  equal ~msg:"float32, per position" int 1
+    (calls D.Float32 4 - calls D.Float32 3);
+  equal ~msg:"float16, per position" int 2
+    (calls D.Float16 4 - calls D.Float16 3)
+
 let sets =
   group "sets"
     [
       test "a check's failure receives its data's elements"
         test_check_elements;
       test "a check of one element reduces nothing" test_check_one;
+      test "a repeating scatter's position costs one scatter a loop"
+        test_repeat_kernels;
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;

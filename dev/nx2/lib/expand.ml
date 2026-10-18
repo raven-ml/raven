@@ -1596,52 +1596,77 @@ let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
       let y = apply ~by (Value.Gather { axis; idx; x = x' }) in
       Some (cast_to apply ~by (Prim.dtype x) y)
 
-(* A scatter whose targets may repeat as one unique scatter per position along
-   [axis], in order: a position's updates differ off [axis], so their targets
-   do, and updates to one target land in C order. A sum associates left to
-   right. *)
+(* A loop's trip: a position known now, where the expansion folds, or an
+   interpretation's index, a 0-d int64 value. *)
+type 'd trip = At of int | Index of 'd Value.index
+
+(* A scatter whose targets may repeat as a loop of one unique scatter per
+   position along [axis], in order: a position's updates differ off [axis], so
+   their targets do, and updates to one target land in C order. A sum
+   associates left to right. A trip at a known position reads that position
+   of [idx] and [updates] as views; one at an index gathers it at the index
+   broadcast over a position's slice. Both have one form at every trip. *)
 let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    combine axis idx (updates : (v, s, d) Value.t) (into : (v, s, d) Value.t) :
-    (v, s, d) Value.t =
+    ~(loop :
+       int ->
+       (d trip -> d Value.any list -> d Value.any list) ->
+       d Value.any list ->
+       d Value.any list) combine axis idx (updates : (v, s, d) Value.t)
+    (into : (v, s, d) Value.t) : (v, s, d) Value.t =
   let s = Prim.shape updates in
-  let at : type w q. int -> (w, q, d) Value.t -> (w, q, d) Value.t =
-   fun i x ->
-    let w =
-      Iarray.init (Array.length s) (fun a ->
-          if a = axis then { M.start = i; count = 1; step = 1 }
-          else { M.start = 0; count = s.(a); step = 1 })
-    in
-    apply ~by (Value.Move (Slice w, x))
-  in
+  let r = Array.length s in
+  let dt = Prim.dtype into in
   (* No position leaves [into], copied: no result is an operand. *)
   if s.(axis) = 0 then apply ~by (Value.Copy into)
   else
-  let acc = ref into in
-  for i = 0 to s.(axis) - 1 do
-    acc :=
-      apply ~by
-        (Value.Scatter
-           {
-             combine;
-             unique = true;
-             axis;
-             idx = at i idx;
-             updates = at i updates;
-             into = !acc;
-           })
-  done;
-  !acc
+    let ones = Iarray.init r (fun _ -> 1) in
+    let slice = Iarray.init r (fun a -> if a = axis then 1 else s.(a)) in
+    let window i =
+      Iarray.init r (fun a ->
+          if a = axis then { M.start = i; count = 1; step = 1 }
+          else { M.start = 0; count = s.(a); step = 1 })
+    in
+    let step t carry =
+      (* An index, broadcast once per trip over a position's slice. *)
+      let t =
+        match t with
+        | At _ -> t
+        | Index k ->
+            let k = apply ~by (Value.Move (Reshape ones, k)) in
+            Index (apply ~by (Value.Move (Broadcast slice, k)))
+      in
+      let at (type w q) (x : (w, q, d) Value.t) : (w, q, d) Value.t =
+        match t with
+        | At i -> apply ~by (Value.Move (Slice (window i), x))
+        | Index pos -> apply ~by (Value.Gather { axis; idx = pos; x })
+      in
+      match carry with
+      | [ acc ] ->
+          let into = Prim.expect dt acc in
+          let idx = at idx and updates = at updates in
+          [
+            Value.Any
+              (apply ~by
+                 (Value.Scatter
+                    { combine; unique = true; axis; idx; updates; into }));
+          ]
+      | _ -> invalid_arg "Expand: a scatter's loop carries its target alone"
+    in
+    match loop s.(axis) step [ Value.Any into ] with
+    | [ y ] -> Prim.expect dt y
+    | _ -> invalid_arg "Expand: a scatter's loop gives its target alone"
 
 (* A narrow float's [Add] of repeated targets as {!repeated} in its accumulator,
    rounded once; a target no update reaches, found by a [Set] of [true] at every
    target, keeps [into]'s bits. *)
 let rounded_once (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (w : ('w, 'r) D.t) axis idx (updates : (v, s, d) Value.t)
+    ~loop (w : ('w, 'r) D.t) axis idx (updates : (v, s, d) Value.t)
     (into : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype into in
   let wide x = cast_to apply ~by w x in
   let sum =
-    repeated apply ~by Nx_kernel.Add axis idx (wide updates) (wide into)
+    repeated apply ~by ~loop Nx_kernel.Add axis idx (wide updates)
+      (wide into)
   in
   let fill b shape : (bool, D.bool_elt, d) Value.t =
     let prog = P.of_node ~ins:[||] (Const (D.Any D.Bool, P.bits D.Bool b)) in
@@ -1658,7 +1683,7 @@ let rounded_once (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     v
   in
   let touched =
-    repeated apply ~by Nx_kernel.Set axis idx
+    repeated apply ~by ~loop Nx_kernel.Set axis idx
       (fill true (Prim.shape updates))
       (fill false (Prim.shape into))
   in
@@ -1672,7 +1697,7 @@ let rounded_once (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    repeat at a dtype of a byte or more is {!repeated}, a narrow float's sum
    {!rounded_once}. *)
 let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    combine ~unique axis idx (updates : (v, s, d) Value.t)
+    ~loop combine ~unique axis idx (updates : (v, s, d) Value.t)
     (into : (v, s, d) Value.t) : (v, s, d) Value.t option =
   match sub_byte into with
   | None when unique -> None
@@ -1680,8 +1705,8 @@ let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       match (combine, Nx_kernel.carrier (D.Any (Prim.dtype into))) with
       | Nx_kernel.Add, D.Any w
         when not (same (D.Any w) (D.Any (Prim.dtype into))) ->
-          Some (rounded_once apply ~by w axis idx updates into)
-      | _ -> Some (repeated apply ~by combine axis idx updates into))
+          Some (rounded_once apply ~by ~loop w axis idx updates into)
+      | _ -> Some (repeated apply ~by ~loop combine axis idx updates into))
   | Some (D.Any w) ->
       let wide x = cast_to apply ~by w x in
       let y =
@@ -1925,12 +1950,19 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
       in
       Some (first values, first positions)
 
-let run : type r.
+(* [op]'s expansion, its loops run by [loop]. *)
+let expansion : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
+    loop:
+      ('d.
+      int ->
+      ('d trip -> 'd Value.any list -> 'd Value.any list) ->
+      'd Value.any list ->
+      'd Value.any list) ->
     r Value.prim ->
     r option =
- fun apply ~by op ->
+ fun apply ~by ~loop op ->
   match op with
   | Value.Map { layout; prog; outs; loads }
     when Iarray.exists Prim.is_padded loads ->
@@ -1971,7 +2003,7 @@ let run : type r.
       Some (assemble apply ~by dtype shape fill pieces)
   | Value.Gather { axis; idx; x } -> gather apply ~by axis idx x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
-      scatter apply ~by combine ~unique axis idx updates into
+      scatter apply ~by ~loop combine ~unique axis idx updates into
   | Value.Sort { axis; descending; k; x } ->
       let bits = key_bits (Prim.dim x axis) in
       sort apply ~by ~bits axis descending k x
@@ -1988,3 +2020,22 @@ let run : type r.
   | Value.Reduce _ | Value.Scan _ | Value.Linalg _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None
+
+let run (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(repeat :
+       'd.
+       int ->
+       ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
+       'd Value.any list ->
+       'd Value.any list) op =
+  let loop n step init = repeat n (fun k carry -> step (Index k) carry) init in
+  expansion apply ~by ~loop op
+
+let folded (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by op =
+  let loop n step init =
+    let rec go i carry =
+      if i = n then carry else go (i + 1) (step (At i) carry)
+    in
+    go 0 init
+  in
+  expansion apply ~by ~loop op

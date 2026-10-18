@@ -472,8 +472,14 @@ let place ~by p x =
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
 
-let expand i ~by op =
+let expand i ~by
+    ~(repeat :
+       'd.
+       int -> ('d index -> 'd any list -> 'd any list) -> 'd any list ->
+       'd any list) op =
   if not (Atomic.get i.live) then
     Format.kasprintf invalid_arg "%s: an expansion for %s after it returned" by
       i.name;
-  Effect.Deep.try_with (fun () -> Expand.run eval ~by op) () (handler i)
+  Effect.Deep.try_with
+    (fun () -> Expand.run eval ~by ~repeat op)
+    () (handler i)

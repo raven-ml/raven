@@ -1210,8 +1210,8 @@ and expand : type r.
     by:string -> ?at:unit Devices.placement -> r Value.prim -> r option =
  fun ~by ?at op ->
   match at with
-  | None -> Expand.run run ~by op
-  | Some q -> Expand.run (fun ~by op -> apply_at q ~by op) ~by op
+  | None -> Expand.folded run ~by op
+  | Some q -> Expand.folded (fun ~by op -> apply_at q ~by op) ~by op
 
 (* An operation of a computation by partials ({!Partial}), applied where its
    operands lie, or at [at] for a constant's evaluation. *)

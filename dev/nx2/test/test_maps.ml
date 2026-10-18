@@ -43,6 +43,9 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
+(* [op]'s expansion computed now, its loops folded. *)
+let expand op = Expand.folded Exec.run ~by:"t" op
+
 let maps =
   group "maps"
     [
@@ -628,7 +631,7 @@ let expansions =
                 loads = [| Plain x |];
               }
           in
-          let y, _ = Option.get (Expand.run Exec.run ~by:"t" op) in
+          let y, _ = Option.get (expand op) in
           own_memory x y;
           equal (array bits) [| 1.; 2. |] (elements y));
       test "a scatter of no update is a copy" (fun () ->
@@ -652,7 +655,7 @@ let expansions =
                 into;
               }
           in
-          let y = Option.get (Expand.run Exec.run ~by:"t" op) in
+          let y = Option.get (expand op) in
           own_memory into y;
           equal (array bits) [| 1.; 2. |] (elements y));
     ]
@@ -908,7 +911,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
       }
   in
   let want = first (Exec.run ~by:"t" op) in
-  let got = first (Option.get (Expand.run Exec.run ~by:"t" op)) in
+  let got = first (Option.get (expand op)) in
   equal (array int) (bytes want) (bytes got)
 
 let arithmetic =

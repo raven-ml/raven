@@ -48,6 +48,14 @@ let tag i x = Nx.Prim.traced i (Nx.Prim.form x) (Tag 0)
 let received log = List.rev !log
 let names = list string
 
+(* The [repeat] of an expansion that folds. *)
+let folding n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
+
 (* The rule *)
 
 let x3 () = vec f32 [| 1.; 2.; 3. |]
@@ -314,7 +322,7 @@ let test_after_return () =
   let expansion = ref ignore in
   Nx.Prim.interpret ~name:"test.extent" Extent
     (fun i ~by op ->
-      (expansion := fun () -> ignore (Nx.Prim.expand i ~by op));
+      (expansion := fun () -> ignore (Nx.Prim.expand i ~by ~repeat:folding op));
       Nx.Prim.eval ~by op)
     (fun _ -> ignore (Nx.add x x));
   invalid ~sub:"Nx.add: an expansion for test.extent after it returned"
@@ -681,7 +689,7 @@ let test_ill_formed () =
 let expanding f =
   Nx.Prim.interpret ~name:"test.expand" Extent
     (fun i ~by op ->
-      match Nx.Prim.expand i ~by op with
+      match Nx.Prim.expand i ~by ~repeat:folding op with
       | Some r -> r
       | None -> Nx.Prim.eval ~by op)
     (fun _ -> f ())
@@ -926,14 +934,14 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
   let primal op = Nx.Prim.map (fun x -> fst (parts i x)) op in
   match op with
   | Map ({ outs = [ _ ]; prog; loads; _ } as m) -> (
-      match (one_node prog, Nx.Prim.expand i ~by op) with
+      match (one_node prog, Nx.Prim.expand i ~by ~repeat:folding op) with
       | _, Some r -> r
       | Some node, None ->
           let y, () = Nx.Prim.eval ~by (primal (Map m)) in
           (dual i y (tangent i node loads y), ())
       | None, None -> fail "test.jvp: a map that does not expand")
   | Map _ -> (
-      match Nx.Prim.expand i ~by op with
+      match Nx.Prim.expand i ~by ~repeat:folding op with
       | Some r -> r
       | None -> fail "test.jvp: a map that does not expand")
   | Reduce _ | Scan _ ->
@@ -1374,7 +1382,7 @@ let exprs = Testable.make ~pp:pp_expr ~equal:( = )
 type ('v, 's, 'd) Nx.Prim.payload += Expr : expr -> ('v, 's, 'd) Nx.Prim.payload
 
 let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
-  match Nx.Prim.expand i ~by op with
+  match Nx.Prim.expand i ~by ~repeat:folding op with
   | Some r -> r
   | None ->
       let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
@@ -1915,6 +1923,102 @@ let nesting =
       test "a parent's value costs what an own value does" test_adopting_words;
     ]
 
+(* Loops: an expansion's loop runs through the interpretation's [repeat] *)
+
+(* [repeat] as a fold, counting its trips. *)
+let fold trips n step init =
+  folding n
+    (fun k carry ->
+      incr trips;
+      step k carry)
+    init
+
+let pp_ints ppf a =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
+
+let form_name (Nx.Prim.Any x) =
+  let f = Nx.Prim.form x in
+  Format.asprintf "%s%a" (D.name f.dtype) pp_ints (L.shape f.layout)
+
+(* The forms [step] gives once traced at stand-ins of its index and of [init]:
+   what a stager that holds [step] once sees. *)
+let traced_once step init =
+  Nx.Prim.interpret ~name:"test.stager" Values tagged (fun s ->
+      let stand_in (Nx.Prim.Any x) =
+        Nx.Prim.Any (Nx.Prim.traced s (Nx.Prim.form x) (Tag 0))
+      in
+      let k = Nx.Prim.traced s (Nx.Prim.form (Nx.scalar Nx.int64 0L)) (Tag 0) in
+      List.map form_name (step k (List.map stand_in init)))
+
+(* [f ()] with each scatter whose targets may repeat expanded through
+   [repeat]. *)
+let looping
+    (repeat :
+      'd.
+      int ->
+      ((int64, D.int64_elt, 'd) Nx.t -> 'd Nx.Prim.any list ->
+       'd Nx.Prim.any list) ->
+      'd Nx.Prim.any list ->
+      'd Nx.Prim.any list) f =
+  Nx.Prim.interpret ~name:"test.loops" Extent
+    (fun (type r) i ~by (op : r Nx.Prim.t) : r ->
+      match op with
+      | Scatter { unique = false; _ } -> (
+          match Nx.Prim.expand i ~by ~repeat op with
+          | Some r -> r
+          | None -> fail "a repeating scatter that does not expand")
+      | _ -> Nx.Prim.eval ~by op)
+    (fun _ -> f ())
+
+(* A scatter whose targets may repeat loops once per position along its
+   axis, through [repeat], to the eager sum. *)
+let test_repeat () =
+  let into = vec f32 [| 0.; 0. |] in
+  let idx = vec Nx.int64 [| 0L; 1L; 0L |] in
+  let updates = vec f32 [| 1.; 2.; 3. |] in
+  let loops = ref 0 and trips = ref 0 in
+  let repeat n step init =
+    incr loops;
+    fold trips n step init
+  in
+  let y =
+    looping repeat (fun () ->
+        Nx.scatter ~combine:Nx.Add ~axis:0 idx updates into)
+  in
+  equal ~msg:"the sum" (array float_exact) [| 4.; 2. |] (elements y);
+  equal ~msg:"loops" int 1 !loops;
+  equal ~msg:"trips" int 3 !trips
+
+(* A loop's step keeps its carry's forms, traced once at stand-ins, so that a
+   stager may hold it once; folded, it gives the eager result. *)
+let test_repeat_forms () =
+  let into = Nx.reshape [| 2; 2 |] (vec f32 [| 0.; 0.; 0.; 0. |]) in
+  let idx = Nx.reshape [| 2; 2 |] (vec Nx.int64 [| 0L; 1L; 1L; 1L |]) in
+  let updates = Nx.reshape [| 2; 2 |] (vec f32 [| 1.; 2.; 3.; 4. |]) in
+  let seen = ref [] and trips = ref 0 in
+  let repeat n step init =
+    seen := (List.map form_name init, traced_once step init) :: !seen;
+    fold trips n step init
+  in
+  let y =
+    looping repeat (fun () ->
+        Nx.scatter ~combine:Nx.Max ~axis:1 idx updates into)
+  in
+  equal ~msg:"the result" (array float_exact) [| 1.; 2.; 0.; 4. |]
+    (elements y);
+  equal ~msg:"forms kept"
+    (list (pair (list string) (list string)))
+    [ ([ "float32[2; 2]" ], [ "float32[2; 2]" ]) ]
+    !seen
+
+let loops =
+  group "loops"
+    [
+      test "a repeating scatter loops through repeat" test_repeat;
+      test "a loop's step keeps its carry's forms" test_repeat_forms;
+    ]
+
 (* Memory
 
    While backtraces are recorded, the runtime keeps the last exception raised
@@ -2067,4 +2171,4 @@ let domains =
 let () =
   exit
     (run "nx interp"
-       [ rule; laws; fibers; nesting; memory; interpreters; domains ])
+       [ rule; laws; fibers; nesting; loops; memory; interpreters; domains ])

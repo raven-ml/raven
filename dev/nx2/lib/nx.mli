@@ -4349,11 +4349,44 @@ module Prim : sig
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
 
-  val expand : interpretation -> by:string -> 'r t -> 'r option
-  (** [expand i ~by op] is [Some r], [r] [op] as core operations applied by
-      {!eval} around [i] again, so that they reach [i]; [None] for an
-      operation that has no expansion. A map of several nodes expands into one
-      map per node.
+  val expand :
+    interpretation ->
+    by:string ->
+    repeat:
+      ('d.
+      int ->
+      ((int64, Dtype.int64_elt, 'd) nx -> 'd any list -> 'd any list) ->
+      'd any list ->
+      'd any list) ->
+    'r t ->
+    'r option
+  (** [expand i ~by ~repeat op] is [Some r], [r] [op] as core operations
+      applied by {!eval} around [i] again, so that they reach [i]; [None] for
+      an operation that has no expansion. A map of several nodes expands into
+      one map per node.
+
+      A loop of [n] trips runs as [repeat n step init]. It means the fold
+      [step (n - 1) (… (step 0 init))], [step k] taking the carry of trip [k]
+      to the next, [k] a 0-d int64 value, from [0]: an interpretation whose
+      loop counts in another dtype casts its index to int64 for [step]. A
+      [repeat] gives the fold's values within the expansion's stated
+      tolerance, and need not give its bits: one that stages [step] once may
+      fuse and reorder its operations. [step] gives each carry its form back
+      and applies the same operations at every trip, so it may be traced once
+      at a stand-in index; besides its index and its carry, it reads only
+      values made before the loop: [op]'s operands, constants, and what the
+      expansion computed from them, as a cast of an operand. A [repeat] that
+      folds is always one:
+      {[
+        let repeat n step init =
+          let rec go k c =
+            if k = n then c
+            else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+          in
+          go 0 init
+      ]}
+      A scatter whose targets may repeat loops once per position along its
+      axis.
 
       Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)
 end
