@@ -75,6 +75,7 @@
   nx_cpu
   nx_support
   rig
+  threads.posix
   windtrap)
  ; test_special reads nx's goldens of its special functions.
  (deps

@@ -170,6 +170,31 @@ let test_domains () =
   equal ~msg:"another domain computes" (array float_exact) [| 2.; 4.; 6. |]
     (elements y)
 
+let test_systhreads () =
+  let x = x3 () in
+  logged ~name:"test.values" Values (ref []) (fun i ->
+      let t = tag i x and got = ref None in
+      let elsewhere () =
+        got :=
+          match Nx.add t x with
+          | _ -> None
+          | exception Invalid_argument m -> Some m
+      in
+      Thread.join (Thread.create elsewhere ());
+      match !got with
+      | Some m -> contains ~sub:"Nx.add: a value of test.values, used outside" m
+      | None -> fail "a traced value computed on another systhread");
+  let log = ref [] in
+  let y =
+    logged ~name:"test.extent" Extent log (fun _ ->
+        let y = ref None in
+        Thread.join (Thread.create (fun () -> y := Some (Nx.add x x)) ());
+        Option.get !y)
+  in
+  equal ~msg:"received" names [] (received log);
+  equal ~msg:"another systhread computes" (array float_exact) [| 2.; 4.; 6. |]
+    (elements y)
+
 let test_later () =
   let a, b =
     logged ~name:"a" Values (ref []) (fun a ->
@@ -242,6 +267,8 @@ let rule =
         test_after_return;
       test "a value refuses another domain; an extent does not reach one"
         test_domains;
+      test "a value refuses another systhread; an extent does not reach one"
+        test_systhreads;
       test "later orders by start, across domains" test_later;
       test "a formula reaches a values rule as it is" test_constants;
       test "a captured formula reaches an extent as its operations"
