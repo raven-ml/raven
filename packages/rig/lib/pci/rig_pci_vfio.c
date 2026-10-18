@@ -305,89 +305,50 @@ value caml_rig_pci_wait(value efd, value ms) {
 /* Without Linux every request raises Unix_error ENOSYS, and no interrupt
    comes. */
 
-static value nosys(void) { caml_unix_error(ENOSYS, "ioctl", Nothing); }
+#define FAILS1(f, call)                     \
+  value f(value a) {                        \
+    (void)a;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
 
-value caml_rig_pci_vfio_api_version(value unit) {
-  (void)unit;
-  return nosys();
-}
+#define FAILS2(f, call)                     \
+  value f(value a, value b) {               \
+    (void)a;                                \
+    (void)b;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
 
-value caml_rig_pci_vfio_version(value v_fd) {
-  (void)v_fd;
-  return nosys();
-}
+#define FAILS3(f, call)                     \
+  value f(value a, value b, value c) {      \
+    (void)a;                                \
+    (void)b;                                \
+    (void)c;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
 
-value caml_rig_pci_vfio_supports(value v_fd, value v_model) {
-  (void)v_fd;
-  (void)v_model;
-  return nosys();
-}
+#define FAILS4(f, call)                         \
+  value f(value a, value b, value c, value d) { \
+    (void)a;                                    \
+    (void)b;                                    \
+    (void)c;                                    \
+    (void)d;                                    \
+    caml_unix_error(ENOSYS, call, Nothing);     \
+  }
 
-value caml_rig_pci_vfio_set_iommu(value v_fd, value v_model) {
-  (void)v_fd;
-  (void)v_model;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_viable(value v_group) {
-  (void)v_group;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_set_container(value v_group, value v_container) {
-  (void)v_group;
-  (void)v_container;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_open_device(value v_group, value v_bus) {
-  (void)v_group;
-  (void)v_bus;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_region(value v_fd, value v_region) {
-  (void)v_fd;
-  (void)v_region;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_msi(value v_device, value v_efd) {
-  (void)v_device;
-  (void)v_efd;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_reset(value v_device) {
-  (void)v_device;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_iommu(value v_container) {
-  (void)v_container;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_map(value v_container, value v_va, value v_iova,
-                            value v_bytes) {
-  (void)v_container;
-  (void)v_va;
-  (void)v_iova;
-  (void)v_bytes;
-  return nosys();
-}
-
-value caml_rig_pci_vfio_unmap(value v_container, value v_iova, value v_bytes) {
-  (void)v_container;
-  (void)v_iova;
-  (void)v_bytes;
-  return nosys();
-}
-
-value caml_rig_pci_eventfd(value unit) {
-  (void)unit;
-  caml_unix_error(ENOSYS, "eventfd", Nothing);
-}
+FAILS1(caml_rig_pci_vfio_api_version, "ioctl")
+FAILS1(caml_rig_pci_vfio_version, "ioctl")
+FAILS2(caml_rig_pci_vfio_supports, "ioctl")
+FAILS2(caml_rig_pci_vfio_set_iommu, "ioctl")
+FAILS1(caml_rig_pci_vfio_viable, "ioctl")
+FAILS2(caml_rig_pci_vfio_set_container, "ioctl")
+FAILS2(caml_rig_pci_vfio_open_device, "ioctl")
+FAILS2(caml_rig_pci_vfio_region, "ioctl")
+FAILS2(caml_rig_pci_vfio_msi, "ioctl")
+FAILS1(caml_rig_pci_vfio_reset, "ioctl")
+FAILS1(caml_rig_pci_vfio_iommu, "ioctl")
+FAILS4(caml_rig_pci_vfio_map, "ioctl")
+FAILS3(caml_rig_pci_vfio_unmap, "ioctl")
+FAILS1(caml_rig_pci_eventfd, "eventfd")
 
 value caml_rig_pci_wait(value efd, value ms) {
   (void)efd;

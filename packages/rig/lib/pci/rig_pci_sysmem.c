@@ -51,6 +51,23 @@ value caml_rig_pci_page_size(value unit) {
     caml_unix_error(ENOSYS, call, Nothing); \
   }
 
+#define FAILS3(f, call)                     \
+  value f(value a, value b, value c) {      \
+    (void)a;                                \
+    (void)b;                                \
+    (void)c;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
+
+#define FAILS4(f, call)                         \
+  value f(value a, value b, value c, value d) { \
+    (void)a;                                    \
+    (void)b;                                    \
+    (void)c;                                    \
+    (void)d;                                    \
+    caml_unix_error(ENOSYS, call, Nothing);     \
+  }
+
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/file.h>
@@ -97,13 +114,7 @@ value caml_rig_pci_unmap(value a, value n) {
 
 FAILS1(caml_rig_pci_flock, "flock")
 FAILS2(caml_rig_pci_unmap, "munmap")
-
-value caml_rig_pci_map(value fd, value off, value n) {
-  (void)fd;
-  (void)off;
-  (void)n;
-  caml_unix_error(ENOSYS, "mmap", Nothing);
-}
+FAILS3(caml_rig_pci_map, "mmap")
 #endif
 
 #ifdef __linux__
@@ -288,26 +299,7 @@ FAILS1(caml_rig_pci_sysmem_region, "mmap")
 FAILS2(caml_rig_pci_sysmem_zero, "memset")
 
 FAILS2(caml_rig_pci_sysmem_map, "mmap")
-
-value caml_rig_pci_sysmem_map_file(value fd, value off, value va, value n) {
-  (void)fd;
-  (void)off;
-  (void)va;
-  (void)n;
-  caml_unix_error(ENOSYS, "mmap", Nothing);
-}
-
-value caml_rig_pci_sysmem_punch(value fd, value off, value n) {
-  (void)fd;
-  (void)off;
-  (void)n;
-  caml_unix_error(ENOSYS, "fallocate", Nothing);
-}
-
-value caml_rig_pci_sysmem_allocate(value fd, value off, value n) {
-  (void)fd;
-  (void)off;
-  (void)n;
-  caml_unix_error(ENOSYS, "fallocate", Nothing);
-}
+FAILS4(caml_rig_pci_sysmem_map_file, "mmap")
+FAILS3(caml_rig_pci_sysmem_punch, "fallocate")
+FAILS3(caml_rig_pci_sysmem_allocate, "fallocate")
 #endif
