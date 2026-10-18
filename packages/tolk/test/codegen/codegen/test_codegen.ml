@@ -728,9 +728,43 @@ let makes_anew_after_a_failure () =
   ignore (Codegen.to_program k r);
   equal int ~msg:"compilations" 2 (Atomic.get calls)
 
+(* [made] waits for no program being made: a compiler that starts compiling,
+   then holds the compilation, and with it the program's entry, until [made]
+   has answered. *)
+let made_waits_for_none () =
+  let started = Atomic.make false and answered = Atomic.make false in
+  let compiler =
+    Renderer.Compiler.v (fun src ->
+        Atomic.set started true;
+        while not (Atomic.get answered) do
+          Domain.cpu_relax ()
+        done;
+        src)
+  in
+  let r = renderer_for ~compiler clang_target and k = fresh_kernel () in
+  let making = Domain.spawn (fun () -> Codegen.to_program k r) in
+  while not (Atomic.get started) do
+    Domain.cpu_relax ()
+  done;
+  is_none ~msg:"while it is made" (Codegen.made k r);
+  Atomic.set answered true;
+  let p = Domain.join making in
+  match Codegen.made k r with
+  | Some q -> same_graph p q
+  | None -> fail "the made program is not returned"
+
 let caching =
   group "programs are kept"
     [
+      test "made is no program before to_program, then its program" (fun () ->
+          let _, r = counting () in
+          let k = fresh_kernel () in
+          is_none ~msg:"before" (Codegen.made k r);
+          let p = Codegen.to_program k r in
+          match Codegen.made k r with
+          | Some q -> same_graph p q
+          | None -> fail "the made program is not returned");
+      test "made waits for no program being made" made_waits_for_none;
       test "a second call with an equal kernel compiles nothing"
         keeps_its_programs;
       test "calls from several domains at once make one program, compiled once"

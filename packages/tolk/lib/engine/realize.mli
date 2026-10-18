@@ -71,11 +71,12 @@ val lower_and_compile :
     {!Device.renderer} picks for the target [targets d] of the call's device [d]
     (its first, on several).
 
-    Each kernel is compiled once, the kernels in parallel on {!Worker.map},
-    except when there is only one, or when one asks for a beam search: the
-    search times candidates ([search]), which a concurrent compilation would
-    disturb, so the kernels are then compiled in order. [search] is
-    {!Codegen.to_program}'s [beam].
+    Each kernel is compiled once. A kernel whose program this process has made
+    ({!Codegen.made}) takes it as it is; the others are compiled in parallel on
+    {!Worker.map}, except when there is only one, or when a kernel of [linear]
+    asks for a beam search: the search times candidates ([search]), which a
+    concurrent compilation would disturb, so the kernels are then compiled in
+    order. [search] is {!Codegen.to_program}'s [beam].
 
     Raises as {!Codegen.to_program} does, and [Invalid_argument] if
     {!Device.renderer} finds no renderer for a target. *)

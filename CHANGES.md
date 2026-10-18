@@ -1529,6 +1529,9 @@ thread.
 
 ### Tolk (new)
 
+- `Codegen.made` is the program `to_program` has made of a kernel in this
+  process, if any, without waiting; `Realize.lower_and_compile` compiles only
+  the kernels without one.
 - The disk cache keeps a `Codegen.to_program` program up to its source and
   takes its binary from the compiler's table, so each binary is stored once.
 - A `Tolk_engine.link` that raises ends the holds it took on bound buffers

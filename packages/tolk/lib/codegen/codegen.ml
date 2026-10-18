@@ -1525,8 +1525,9 @@ let compiled compile_source prg (ren : Renderer.t) =
 let compile prg ren = compiled Renderer.Compiler.compile prg ren
 
 (* Each kernel's program is made once: a domain that asks for one being made
-   waits for it, holding the entry's lock, rather than making it again. *)
-type entry = { lock : Mutex.t; mutable prg : Ops.t option }
+   waits for it, holding the entry's lock, rather than making it again. [made]
+   reads a made program without waiting. *)
+type entry = { lock : Mutex.t; prg : Ops.t option Atomic.t }
 
 let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
@@ -1581,14 +1582,20 @@ let to_program ?beam ast ren =
         match Hashtbl.find_opt to_program_cache key with
         | Some entry -> entry
         | None ->
-            let entry = { lock = Mutex.create (); prg = None } in
+            let entry = { lock = Mutex.create (); prg = Atomic.make None } in
             Hashtbl.replace to_program_cache key entry;
             entry)
   in
   Mutex.protect entry.lock (fun () ->
-      match entry.prg with
+      match Atomic.get entry.prg with
       | Some prg -> prg
       | None ->
           let prg = made_program ?beam ~key ~kernel ast ren in
-          entry.prg <- Some prg;
+          Atomic.set entry.prg (Some prg);
           prg)
+
+let made ast ren =
+  let key = program_key ast ren in
+  Mutex.protect to_program_lock (fun () ->
+      Hashtbl.find_opt to_program_cache key)
+  |> Option.fold ~none:None ~some:(fun e -> Atomic.get e.prg)

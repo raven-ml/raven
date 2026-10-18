@@ -153,19 +153,30 @@ let lower_and_compile ?search ~targets linear =
       [] calls
     |> List.rev
   in
+  (* Only the kernels without a program are compiled, so a schedule whose
+     programs are all made spawns no domain. *)
+  let made, missing =
+    List.partition_map
+      (fun ((ast, ren) as a) ->
+        match Codegen.made ast ren with
+        | Some prg -> Left (a, prg)
+        | None -> Right a)
+      todo
+  in
   (* A beam search times its candidates, which concurrent compilations would
      disturb. *)
   let beam (_, (ast, _)) =
     match arg ast with Kernel k -> k.beam > 0 | _ -> false
   in
   let map =
-    if List.compare_length_with todo 1 <= 0 || List.exists beam calls then
+    if List.compare_length_with missing 1 <= 0 || List.exists beam calls then
       List.map
     else Worker.map
   in
   let compiled =
-    List.combine todo
-      (map (fun (ast, ren) -> Codegen.to_program ?beam:search ast ren) todo)
+    made
+    @ List.combine missing
+        (map (fun (ast, ren) -> Codegen.to_program ?beam:search ast ren) missing)
   in
   let program a = snd (List.find (fun (b, _) -> same a b) compiled) in
   substitute ~calls:Skip ~pass:Fixed_point linear

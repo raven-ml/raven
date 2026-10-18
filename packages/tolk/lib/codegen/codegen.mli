@@ -125,6 +125,11 @@ val to_program :
     information, or as {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 
+val made : Ops.t -> Renderer.t -> Ops.t option
+(** [made ast ren] is the program {!to_program} has made of [ast] for [ren] in
+    this process, kept in memory under the same key, if it has. It makes
+    nothing, reads nothing from disk and waits for no program being made. *)
+
 val linearize : Ops.t -> Renderer.t -> Ops.t
 (** [linearize ast ren] is the program of the kernel's sink [ast] for [ren] up
     to its instructions: an {!Op.Program} whose sources are the first two of
