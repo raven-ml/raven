@@ -161,6 +161,12 @@ let wait b access =
   Memory.check_owner b.mem;
   wait_points b access
 
+let reached b access =
+  check_live "Buffer.reached" b;
+  Memory.check_owner b.mem;
+  if access = Read then Memory.reached_write b.mem
+  else Memory.reached_points b.mem
+
 (* rig_buffer_wait in rig.h calls it with RIG_READ or RIG_READ_WRITE, the
    constructors of [access] in order. *)
 let () = Callback.register "rig.buffer.wait" wait

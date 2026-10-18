@@ -81,6 +81,9 @@ val wait : t -> access -> unit
 (** [wait b access] is {!Rig.Buffer.wait}[ b access]. It is the C callback
     ["rig.buffer.wait"], which [rig_buffer_wait] in [rig.h] calls. *)
 
+val reached : t -> access -> bool
+(** [reached b access] is {!Rig.Buffer.reached}[ b access]. *)
+
 val wait_points : t -> access -> unit
 (** [wait_points b access] is {!wait} without its checks, for a live [b]
     whose memory and device the caller found not lost. *)

@@ -497,14 +497,14 @@ val signaled : t -> int
     {!host_of}, {!reaches}, {!submitted}, {!signaled}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of
-    {!Buffer}, {!Buffer.view}, {!Buffer.of_bigarray}, {!Image.device},
-    {!Image.name}, {!Image.image}, {!Image.params}, {!Image.threads},
-    {!Image.entry}, {!Submission}'s refs and parts, {!Submission.block},
-    {!Submission.address}, {!Submission.Run}, {!Claim}, {!Profile} but
-    {!Profile.take}, {!Local.new_key}, and {!Local.get} of a value already
-    made for the device. Nor does {!fail}, which inside a lock leaves the
-    owed stops to later calls. Outside a lock, a call from a callback runs as
-    any call does.
+    {!Buffer}, {!Buffer.view}, {!Buffer.reached}, {!Buffer.of_bigarray},
+    {!Image.device}, {!Image.name}, {!Image.image}, {!Image.params},
+    {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
+    {!Submission.block}, {!Submission.address}, {!Submission.Run},
+    {!Claim}, {!Profile} but {!Profile.take}, {!Local.new_key}, and
+    {!Local.get} of a value already made for the device. Nor does {!fail},
+    which inside a lock leaves the owed stops to later calls. Outside a lock,
+    a call from a callback runs as any call does.
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
     either, in a wait of rig's or for another thread: other calls, and every
@@ -1049,6 +1049,18 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is dead, and {!Lost} where
       {!Rig.section-loss_memory} says, before it waits on any device if the
       loss came first. *)
+
+  val reached : t -> access -> bool
+  (** [reached b access] is [true] iff {!wait}[ b access] would return
+      without blocking, as the work it waits for is done. Host access then
+      follows that work as after {!wait}. Otherwise it commits that work as
+      {!Point.reached} does, so a loop on it ends once the work runs. The
+      commit waits for no work. On each device whose work it commits, it
+      waits up to 200 ms for another submit or commit, and blocks while a
+      driver that declares [may_block] commits. It allocates nothing.
+
+      Raises [Invalid_argument] if [b] is dead, and {!Lost} where {!wait}
+      does. *)
 
   val read :
     t ->

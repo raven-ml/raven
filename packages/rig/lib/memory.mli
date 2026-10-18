@@ -88,6 +88,16 @@ val wait_write : memory -> unit
     stamps, for an access that follows every last write. [m]'s allocation
     stays reachable until it returns. *)
 
+val reached_points : memory -> bool
+(** [reached_points m] is [true] iff every point that {!wait_points}[ m]
+    waits for is done ({!Dev.reached_point}). It visits each point, so it
+    commits the work of each device that has one not done, and raises
+    {!Dev.Lost} for any a lost device did not reach. It allocates nothing. *)
+
+val reached_write : memory -> bool
+(** [reached_write m] is {!reached_points} for the points {!wait_write}[ m]
+    waits for. *)
+
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost
     device and not done. *)

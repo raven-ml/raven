@@ -269,7 +269,9 @@ let test_dead () =
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
-      B.wait b Rig.Read)
+      B.wait b Rig.Read);
+  raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
+      B.reached b Rig.Read)
 
 (* Every function that reaches a dead buffer's bytes refuses it with the
    consumption's reason; [release] accepts it (claim suite). *)
@@ -337,6 +339,52 @@ let test_lost_memory () =
   raises_match lost (fun () -> B.read on Bigarray.char ignore);
   raises_match lost (fun () -> B.wait on Rig.Read)
 
+(* [reached b access] is whether [wait b access] would return at once: false
+   while the work the access follows is queued, and true once it ran, with the
+   work left to run. A read follows only the writes of the memory, so work
+   that reads [b] holds back a write and no read. *)
+let test_reached () =
+  let d, p = P.open_ "buffer:reached" in
+  let b = B.create d 64 in
+  let reached () = (B.reached b Rig.Read, B.reached b Rig.Read_write) in
+  let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
+  let writes = Sub.make d [| Support.touching [| Sub.write |] |] in
+  equal ~msg:"no work" (pair bool bool) (true, true) (reached ());
+  ignore (submit reads ~buffers:[| b |]);
+  equal ~msg:"a read queued" (pair bool bool) (true, false) (reached ());
+  ignore (P.run p);
+  equal ~msg:"the read ran" (pair bool bool) (true, true) (reached ());
+  ignore (submit writes ~buffers:[| b |]);
+  equal ~msg:"a write queued" (pair bool bool) (false, false) (reached ());
+  equal ~msg:"the work left queued" int 1 (P.queued p);
+  ignore (P.run p);
+  equal ~msg:"the write ran" (pair bool bool) (true, true) (reached ())
+
+(* Host memory that a lost device wrote through a borrow and never reached
+   raises Lost for every access, as a wait does. Memory it only read raises
+   for a write, which depends on every point, and is reached for a read. *)
+let test_reached_lost () =
+  let d, p = P.open_ "buffer:reached-lost" in
+  let n = 1 lsl 16 in
+  let written = B.create Rig.host n and read = B.create Rig.host n in
+  let w = require_some (B.borrow d written)
+  and r = require_some (B.borrow d read) in
+  let s = Sub.make d [| Support.touching [| Sub.write; Sub.read |] |] in
+  ignore (submit s ~buffers:[| w; r |]);
+  P.fault p "the engine hung";
+  raises_match ~msg:"the loss" lost (fun () -> B.create d 4096);
+  raises_match ~msg:"a read of the written" lost (fun () ->
+      B.reached written Rig.Read);
+  raises_match ~msg:"a write of the written" lost (fun () ->
+      B.reached written Rig.Read_write);
+  raises_match ~msg:"the written's wait" lost (fun () ->
+      B.wait written Rig.Read);
+  equal ~msg:"a read of the read" bool true (B.reached read Rig.Read);
+  raises_match ~msg:"a write of the read" lost (fun () ->
+      B.reached read Rig.Read_write);
+  raises_match ~msg:"a borrow on the lost device" lost (fun () ->
+      B.reached w Rig.Read)
+
 (* Words *)
 
 (* The fewest minor and major words of ten calls of [f], after a warm-up call,
@@ -375,6 +423,24 @@ let test_wait_words () =
          for _ = 1 to 100 do
            B.wait b Rig.Read_write
          done))
+
+(* [reached] allocates nothing, whether the work is done or still queued
+   once committed. *)
+let test_reached_words () =
+  let d, p = P.open_ "buffer:reached-words" in
+  let b = B.create d 64 in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  let calls () =
+    ignore (B.reached b Rig.Read_write);
+    Support.allocated_bytes (fun () ->
+        for _ = 1 to 100 do
+          ignore (Sys.opaque_identity (B.reached b Rig.Read_write))
+        done)
+  in
+  ignore (submit s ~buffers:[| b |]);
+  equal ~msg:"queued" int 0 (calls ());
+  ignore (P.run p);
+  equal ~msg:"done" int 0 (calls ())
 
 (* Behind a transport, where the host reads a device's word through its
    driver, a wait for reached work allocates nothing: a buffer's wait, and a
@@ -1849,6 +1915,8 @@ let tests =
         test "every function reaching a dead buffer's bytes refuses it"
           test_dead_refused;
         test "memory a lost device wrote raises Lost" test_lost_memory;
+        test "reached says whether a wait would return at once" test_reached;
+        test "reached raises Lost where a wait does" test_reached_lost;
         cases ~name:fst "a host access keeps its buffer through its wait"
           host_accesses test_wait_keeps;
       ];
@@ -1859,6 +1927,7 @@ let words =
     [
       test "a host buffer of 64 bytes costs at most 41 words" test_create_words;
       test "a wait whose points are reached allocates nothing" test_wait_words;
+      test "reached allocates nothing" test_reached_words;
       test "a drain that judges queued memory allocates nothing more"
         test_due_words;
       test "behind a transport a wait for reached work allocates nothing"

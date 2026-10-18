@@ -77,6 +77,31 @@ let wait_all (a : alloc) every =
 let wait_points m = wait_all m.alloc true
 let wait_write m = wait_all m.alloc false
 
+(* Whether the points [wait_from] waits for are done, from the chunk [c]'s
+   [i]th word on, and [ok]: each point is asked, so that each device's work is
+   committed and a point a lost device did not reach raises whatever point
+   comes before it. *)
+let rec reached_from (a : alloc) every c i ok =
+  if c = 0 then ok
+  else if i = uses then reached_from a every (stamps_next c) 0 ok
+  else
+    let p = stamps_followed c i every in
+    if p = ended then ok
+    else
+      let ok = (p = 0 || Dev.reached_point p) && ok in
+      reached_from a every c (i + 1) ok
+
+let reached_all (a : alloc) every =
+  let st = a.entry.stamps in
+  let ok = reached_from a every st 0 true in
+  let p = stamps_folded st every in
+  let ok = (p = 0 || Dev.reached_point p) && ok in
+  ignore (Sys.opaque_identity a);
+  ok
+
+let reached_points m = reached_all m.alloc true
+let reached_write m = reached_all m.alloc false
+
 (* Visit every point even after a refusal: reading a later transport word may
    discover its device's loss. The walk carries no allocated state. *)
 let rec all_from f c i ok =
