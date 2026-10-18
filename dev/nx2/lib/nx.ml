@@ -550,7 +550,17 @@ let fma a b c = ternary ~by:"Nx.fma" Fma a b c
 let unary ~by k x = Eval.apply1 ~by (Unary k) (dtype x) x
 let neg x = unary ~by:"Nx.neg" Neg x
 let recip x = unary ~by:"Nx.recip" Recip x
-let abs x = unary ~by:"Nx.abs" Abs x
+
+(* The modulus of a complex number is [magnitude], of its real dtype. *)
+let abs (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype x) with
+  | D.Complex ->
+      invalid_argf
+        "Nx.abs: %s is not a float or integer dtype; the modulus is \
+         Nx.magnitude"
+        (D.name (dtype x))
+  | _ -> unary ~by:"Nx.abs" Abs x
+
 let sign x = unary ~by:"Nx.sign" Sign x
 let sqrt x = unary ~by:"Nx.sqrt" Sqrt x
 let exp x = unary ~by:"Nx.exp" Exp x
@@ -1864,8 +1874,12 @@ let square x =
   let by = "Nx.square" in
   once ~by x (fun x -> binary ~by (Binary Mul) x x)
 
-let rsqrt x =
-  float_map ~by:"Nx.rsqrt" [ x ] (fun _ ins -> E.(recip (sqrt ins.(0))))
+let rsqrt (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  let by = "Nx.rsqrt" in
+  match D.kind (dtype x) with
+  | D.Complex ->
+      elementwise ~by (dtype x) [ Any x ] E.(recip (sqrt (operand 0 x)))
+  | _ -> float_map ~by [ x ] (fun _ ins -> E.(recip (sqrt ins.(0))))
 
 (* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
    at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the

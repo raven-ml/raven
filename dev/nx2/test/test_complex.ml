@@ -178,6 +178,39 @@ let test_conjugate_real () =
   let x = Nx.create Nx.int8 [| 2 |] [| 1; -1 |] in
   equal bool true (Nx.conjugate x == x)
 
+(* Functions *)
+
+(* A complex value's elements as pairs of part bits, so that values compare
+   bit for bit, any NaN for a NaN. *)
+let parts_of (type s) (z : (Complex.t, s, Nx.host) Nx.t) =
+  Array.to_list (Array.map (fun c -> [ c.Complex.re; c.im ]) (Nx.to_array z))
+  |> List.concat
+
+let law_rsqrt (Z (_, z)) =
+  equal floats (parts_of (Nx.recip (Nx.sqrt z))) (parts_of (Nx.rsqrt z))
+
+(* The modulus of a complex number has one name: magnitude. *)
+let test_abs_declines () =
+  let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |] in
+  raises_match
+    (Exn.invalid_arg ~substring:"Nx.magnitude")
+    (fun () -> Nx.abs z)
+
+(* Each function the elementwise suite holds to its kind takes complex
+   values; spot values from C99's definitions. *)
+let test_spot_values () =
+  let z =
+    Nx.create Nx.complex128 [| 1 |] [| { Complex.re = 0.; im = Float.pi } |]
+  in
+  let e = (Nx.to_array (Nx.exp z)).(0) in
+  equal (float 1e-15) (-1.) e.re;
+  equal (float 1e-15) 0. e.im;
+  let m = Nx.create Nx.complex128 [| 1 |] [| { Complex.re = -4.; im = 0. } |] in
+  equal floats [ 0.; 2. ] (parts_of (Nx.sqrt m));
+  let l = (Nx.to_array (Nx.log m)).(0) in
+  equal (float 1e-15) (Float.log 4.) l.re;
+  equal (float 1e-15) Float.pi l.im
+
 let () =
   exit
     (run "nx complex"
@@ -196,5 +229,11 @@ let () =
            [
              prop "conjugate negates the imaginary parts" complexes law_conjugate;
              test "a value that is not complex is itself" test_conjugate_real;
+           ];
+         group "functions"
+           [
+             prop "rsqrt is recip of sqrt" complexes law_rsqrt;
+             test "abs declines, naming magnitude" test_abs_declines;
+             test "exp, sqrt and log at C99's values" test_spot_values;
            ];
        ])
