@@ -827,7 +827,12 @@ let test_norm_cases () =
   equal ~msg:"two axes" (float 1e-6) (Float.sqrt 8.) (Nx.item [ 0; 1; 0 ] y);
   let e = Nx.zeros Nx.float64 [| 0; 3 |] in
   equal ~msg:"Frobenius of no element" float_exact 0. (one (Nx.matrix_norm e));
-  equal ~msg:"columns of no element" float_exact 0. (one (Nx.matrix_norm ~ord:`One e))
+  equal ~msg:"columns of no element" float_exact 0. (one (Nx.matrix_norm ~ord:`One e));
+  let none = Nx.zeros Nx.float64 [| 0; 0 |] in
+  equal ~msg:"no vector" (array int) [| 0 |]
+    (Nx.shape (Nx.vector_norm ~ord:Float.infinity ~axes:[ 1 ] none));
+  equal ~msg:"no matrix" (array int) [| 0 |]
+    (Nx.shape (Nx.matrix_norm ~ord:`Inf (Nx.zeros Nx.float64 [| 0; 0; 3 |])))
 
 let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 

@@ -197,6 +197,8 @@ let test_arg_cases () =
   equal (array int64) [| 1L; 0L; 1L |] (Nx.to_array (Nx.argmax ~axis:0 m));
   equal (array int) [| 2; 1 |] (Nx.shape (Nx.argmin ~axis:(-1) ~keepdims:true m));
   equal (array int64) [| 0L |] (Nx.to_array (Nx.argmax (Nx.scalar Nx.int32 4l) |> Nx.reshape [| 1 |]));
+  equal (array int) [| 2; 0 |]
+    (Nx.shape (Nx.argmax ~axis:0 (Nx.zeros Nx.int8 [| 0; 2; 0 |])));
   invalid ~by:"Nx.argmax" (fun () -> Nx.argmax (f64 [||]));
   invalid ~by:"Nx.argmin" (fun () -> Nx.argmin ~axis:1 (Nx.zeros Nx.int8 [| 2; 0 |]));
   invalid ~by:"Nx.argmax" (fun () -> Nx.argmax ~axis:2 m)

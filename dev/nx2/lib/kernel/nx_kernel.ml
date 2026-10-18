@@ -200,31 +200,34 @@ module Shape = struct
       Array.of_list
         (List.filteri (fun i _ -> not (Iarray.mem i axes)) (Array.to_list y))
     in
-    let terms = Iarray.fold_left (fun n a -> n * y.(a)) 1 axes in
     let total = Array.fold_left ( * ) 1 kept in
     let extreme = function Monoid (Max | Min) | Arg _ -> true | _ -> false in
-    if terms = 0 && total > 0 && Array.exists extreme rs then
-      Error "an extreme of no term"
-    else Ok kept
+    match Iarray.find_opt (fun a -> y.(a) = 0) axes with
+    | Some a when total > 0 && Array.exists extreme rs ->
+        errorf "an extreme of no term: no element along axis %d of %a" a pp y
+    | Some _ | None -> Ok kept
 
   let scan ~axis y =
     let* () = check_axes [| axis |] (Array.length y) in
     Ok y
 
-  (* Whether [x] and [y] have one rank, above [axis], and one extent along
-     every other axis. *)
+  (* Whether [x] and [y] have one rank and one extent along every axis but
+     [axis]. *)
   let off_axis axis x y =
     Array.length x = Array.length y
-    && axis >= 0
-    && axis < Array.length x
     && Array.for_all Fun.id (Array.mapi (fun i d -> i = axis || d = y.(i)) x)
 
   let gather ~axis idx x =
-    if off_axis axis idx x then Ok idx
+    if axis < 0 || axis >= Array.length x then
+      errorf "axis %d of an operand of rank %d" axis (Array.length x)
+    else if off_axis axis idx x then Ok idx
     else errorf "positions %a do not fit %a along axis %d" pp idx pp x axis
 
   let scatter ~axis into idx u =
-    if idx <> u then errorf "positions %a, updates %a" pp idx pp u
+    if axis < 0 || axis >= Array.length into then
+      errorf "axis %d of a target of rank %d" axis (Array.length into)
+    else if idx <> u then
+      errorf "positions %a and updates %a differ" pp idx pp u
     else if off_axis axis u into then Ok into
     else errorf "updates %a do not fit %a along axis %d" pp u pp into axis
 

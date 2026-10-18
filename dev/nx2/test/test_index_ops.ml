@@ -79,10 +79,11 @@ let rules =
           let x = x23 () in
           C.reset ();
           raises
-            (Invalid_argument
-               "t: positions [2] do not fit an operand [2; 3] along axis 0")
+            (Invalid_argument "t: positions [2] do not fit [2; 3] along axis 0")
             (fun () -> gather 0 (positions [| 2 |] [| 0; 1 |]) x);
-          raises (Invalid_argument "t: axis 2 of an operand of rank 2")
+          raises
+            (Invalid_argument
+               "t: axis 2 of an operand of rank 2")
             (fun () -> gather 2 (positions [| 2; 3 |] (Array.make 6 0)) x);
           equal ~msg:"kernel calls" int 0 (C.calls ()));
       test "a scatter's operands raise before any kernel" (fun () ->

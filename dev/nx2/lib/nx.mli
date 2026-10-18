@@ -1374,7 +1374,8 @@ val max : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [max ~axes x] is the greatest element, as {!maximum} orders them: [-0.]
     below [+0.], any on booleans. Every dtype.
 
-    Raises [Invalid_argument] where an axis it reduces is empty. *)
+    Raises [Invalid_argument] where an axis it reduces is empty and the result
+    has an element, which has then nothing to choose from. *)
 
 val min : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [min ~axes x] is the least element, as {!max}; all on booleans. *)
@@ -1404,7 +1405,8 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('v, 's, 'd) t -> 'd int64_t
     [keepdims]. Every dtype.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank,
-    or where there is no element to choose from. *)
+    or where the result has an element with no element to choose from: [x]
+    is empty without [axis], or [axis] is empty and the result is not. *)
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('v, 's, 'd) t -> 'd int64_t
 (** [argmin ~axis x] is the position of the first element least as {!min}
@@ -2005,7 +2007,7 @@ val vector_norm :
 
     Raises [Invalid_argument] for [x]'s dtype, if an axis is outside [x]'s
     rank or repeats, if [ord] is NaN, or if [ord] is [infinity] or
-    [neg_infinity] and [axes] hold no element. *)
+    [neg_infinity] and a vector has no element. *)
 
 val matrix_norm :
   ?ord:[ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf ] ->
@@ -3296,7 +3298,9 @@ module Prim : sig
         (** [prog] at every index of [layout]'s shape, as a map's, each
             reduction folding its output along [axes], strictly increasing, as
             {!Nx_kernel.S.reduce} says. Results drop [axes] and are
-            C-contiguous. [Max], [Min] and [Arg] of no term are refused. *)
+            C-contiguous. A [Max], [Min] or [Arg] is refused where a result
+            has an element and [axes] hold no term, as
+            {!Nx_kernel.Shape.reduce} says. *)
     | Scan : {
         layout : Nx_array.Layout.t;
         axis : int;

@@ -1971,7 +1971,6 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
     | None -> (reshape [| numel x |] x, 0)
     | Some a -> (x, axis ~by x a)
   in
-  if Prim.dim x a = 0 then invalid_argf "%s: no element along axis %d" by a;
   let (_, i), () =
     reduce_by ~by (shape x) [| a |] [ Any x ]
       Value.[ Arg (e, 0, dtype x) ]
@@ -2627,14 +2626,6 @@ let pinv ?rtol ?(hermitian = false) a =
 
 (* Norms *)
 
-(* The greatest or least of [m] along [axes], kept as axes of one, or raises
-   where there is no element to choose from. *)
-let extreme ~by k axes m =
-  if List.exists (fun a -> dim a m = 0) axes then
-    invalid_argf "%s: no greatest or least element along an empty axis of %a"
-      by pp_value m;
-  reduction ~by k ~axes ~keepdims:true m
-
 (* [c · (Σ (m / c)^p)^(1/p)] along [axes], [c] the greatest of the magnitudes
    [m] for a positive [p] and the least for a negative one, so that nothing
    overflows or underflows on the way; [c] itself where it is zero or
@@ -2645,7 +2636,8 @@ let power_norm ~by p axes m =
   if List.exists (fun a -> dim a m = 0) axes then
     if p > 0. then sum m else full_like (sum m) Float.infinity
   else
-    let c = extreme ~by (if p > 0. then Max else Min) axes m in
+    let k : Nx_kernel.monoid = if p > 0. then Max else Min in
+    let c = reduction ~by k ~axes ~keepdims:true m in
     let q = div m c in
     let r =
       if p = 2. then sqrt (sum (square q))
@@ -2658,8 +2650,8 @@ let power_norm ~by p axes m =
 let vector ~by p axes m =
   if Float.is_nan p then invalid_argf "%s: an order of nan" by;
   let sum x = reduction ~by Sum ~axes ~keepdims:true x in
-  if p = Float.infinity then extreme ~by Max axes m
-  else if p = Float.neg_infinity then extreme ~by Min axes m
+  if p = Float.infinity then reduction ~by Max ~axes ~keepdims:true m
+  else if p = Float.neg_infinity then reduction ~by Min ~axes ~keepdims:true m
   else if p = 0. then
     let nonzero = cast_by ~by (dtype m) (not_equal m (zeros_like m)) in
     sum (where (isnan m) m nonzero)
@@ -2689,7 +2681,7 @@ let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
       (* The greatest or least sum of a line's magnitudes, [summed] along
          it. *)
       let lines k summed chosen m =
-        extreme ~by k [ chosen ]
+        reduction ~by k ~axes:[ chosen ] ~keepdims:true
           (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
       in
       (* The singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
@@ -2698,8 +2690,8 @@ let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
         let s = unsqueeze ~axes:[ -1 ] s in
         match k with
         | `Sum -> reduction ~by Sum ~axes:[ r ] ~keepdims:true s
-        | `Max -> extreme ~by Max [ r ] s
-        | `Min -> extreme ~by Min [ r ] s
+        | `Max -> reduction ~by Max ~axes:[ r ] ~keepdims:true s
+        | `Min -> reduction ~by Min ~axes:[ r ] ~keepdims:true s
       in
       let y =
         match ord with

@@ -135,7 +135,8 @@ let law_int32 (s, axes, keepdims, xs) =
   in
   check "sum" Int32.add 0l (fun ?axes ~keepdims x -> Nx.sum ?axes ~keepdims x);
   check "prod" Int32.mul 1l (fun ?axes ~keepdims x -> Nx.prod ?axes ~keepdims x);
-  if List.exists (fun a -> s.(a) = 0) ax then begin
+  let elements = Array.fold_left ( * ) 1 (reduced s ax) in
+  if List.exists (fun a -> s.(a) = 0) ax && elements > 0 then begin
     names "max" (fun () -> Nx.max ?axes x);
     names "min" (fun () -> Nx.min ?axes x)
   end
@@ -328,14 +329,18 @@ let law_any (Case a, axes) =
   let dt = A.dtype a in
   let s = L.shape (A.layout a) in
   let ax = Array.of_list (normal (Array.length s) axes) in
-  let empty = Array.exists (fun i -> s.(i) = 0) ax in
+  (* An element of the result of no term: an extreme there raises. *)
+  let no_term =
+    Array.exists (fun i -> s.(i) = 0) ax
+    && Array.fold_left ( * ) 1 (reduced s (Array.to_list ax)) > 0
+  in
   List.iter
     (fun (name, m, f) ->
       let f () = bits_of (host_array (f ?axes (value a))) in
       let extreme =
         match (m : Nx_kernel.monoid) with Max | Min -> true | _ -> false
       in
-      if documented m dt && not (empty && extreme) then begin
+      if documented m dt && not (no_term && extreme) then begin
         cover "computed" true;
         match reference m a ax with
         | Some want ->
@@ -1908,7 +1913,7 @@ let test_optional_rules () =
       reduce1 (Moments (0, Nx.int32)) [| 0 |] x);
   raises (Invalid_argument "t: Moments does not take int32") (fun () ->
       scan1 (Moments (0, Nx.int32)) 0 x);
-  raises (Invalid_argument "t: Arg Max of no term") (fun () ->
+  raises (Invalid_argument "t: an extreme of no term: no element along axis 0 of [0]") (fun () ->
       reduce1 (Arg (Max, 0, Nx.int32)) [| 0 |] (vector D.Int32 [||]))
 
 (* NaN results on every path *)
@@ -2421,6 +2426,32 @@ let optional_group =
       test "their rules raise naming the caller" test_optional_rules;
     ]
 
+(* An extreme along an empty axis is refused only where its result has an
+   element: one with none is the empty result, on one device or cut over
+   three along either axis. *)
+let test_empty_extremes () =
+  let empty s = value (A.of_array D.Float32 s [||]) in
+  let shape x = L.shape (A.layout (host_array x)) in
+  equal ~msg:"max" (array int) [| 0 |]
+    (shape (Nx.max ~axes:[ 1 ] (empty [| 0; 0 |])));
+  equal ~msg:"min, kept" (array int) [| 0; 1 |]
+    (shape (Nx.min ~axes:[ 1 ] ~keepdims:true (empty [| 0; 0 |])));
+  equal ~msg:"argmax" (array int) [| 0 |]
+    (shape (Nx.argmax ~axis:1 (empty [| 0; 0 |])));
+  equal ~msg:"argmin" (array int) [| 3; 0 |]
+    (shape (Nx.argmin ~axis:1 (empty [| 3; 0; 0 |])));
+  List.iter
+    (fun axis ->
+      let x = Nx.place (Cpu3.split ~axis) (empty [| 0; 0 |]) in
+      equal ~msg:"max, cut" (array int) [| 0 |] (shape (Nx.max ~axes:[ 1 ] x));
+      equal ~msg:"argmin, cut" (array int) [| 0 |]
+        (shape (Nx.argmin ~axis:1 x)))
+    [ 0; 1 ];
+  names "max" (fun () -> Nx.max ~axes:[ 1 ] (empty [| 2; 0 |]));
+  names "min" (fun () -> Nx.min (empty [| 0; 0 |]));
+  names "argmax" (fun () -> Nx.argmax ~axis:1 (empty [| 2; 0 |]));
+  names "argmin" (fun () -> Nx.argmin (empty [| 0; 0 |]))
+
 let reductions_group =
   group "reductions"
     [
@@ -2434,6 +2465,8 @@ let reductions_group =
         "bad axes, empty extremes and refused dtypes raise naming the function"
         test_errors;
       test "a refused axis is printed as passed" test_axis_printed;
+      test "an extreme of no term raises only where its result has an element"
+        test_empty_extremes;
       test "mean divides the sum by the count" test_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_expansions;

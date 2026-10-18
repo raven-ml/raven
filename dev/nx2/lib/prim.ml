@@ -689,18 +689,20 @@ let pp : type r. Format.formatter -> r prim -> unit =
 (* Rules *)
 
 let same_dtype a b = D.code a = D.code b
+
+(* [r]'s value, or its error raised naming [by]. *)
+let shaped ~by = function Ok s -> s | Error e -> invalid_argf "%s: %s" by e
+
 (* The shape [l] gives its loop, or its refusal raised naming [by]: a padded
    load's fill is an element of its dtype, and its pad fits its operand. *)
 let load_shape (type d) ~by (l : d load) =
   match l with
   | Plain x -> shape x
-  | Padded { x; fill; pad } -> (
+  | Padded { x; fill; pad } ->
       (match P.bits (dtype x) fill with
       | _ -> ()
       | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
-      match Shape.padded pad (shape x) with
-      | Ok s -> s
-      | Error e -> invalid_argf "%s: %s" by e)
+      shaped ~by (Shape.padded pad (shape x))
 
 (* Whether [x]'s shape is [l]'s, allocating nothing. *)
 let has_layout_shape x l =
@@ -774,32 +776,16 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
   in
   check 0 outs
 
-(* A reduction's rule over [prog]'s outputs, reducing [axes] of [shape]: its
-   output exists and is of a dtype it takes, and an extreme has a term. *)
-let check_reduction ~by (prog : P.t) shape axes (r, k) =
+(* A reduction's rule over [prog]'s outputs: its output exists and is of a
+   dtype it takes. *)
+let check_reduction ~by (prog : P.t) (r, k) =
   let produced = prog.outs in
   if k < 0 || k >= Iarray.length produced then
     invalid_argf "%s: a reduction of output %d of a program of %d" by k
       (Iarray.length produced);
   let (D.Any have) = P.dtype prog (Iarray.get produced k) in
   if not (Nx_kernel.accepts r have) then
-    invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have);
-  let empty = Iarray.exists (fun a -> shape.(a) = 0) axes in
-  match r with
-  | (Monoid (Max | Min) | Arg _) when empty ->
-      invalid_argf "%s: %s of no term" by (reduction_name r)
-  | Monoid _ | Moments | Arg _ -> ()
-
-(* [axes] strictly increasing, each an axis of [shape]. *)
-let check_axes ~by shape axes =
-  Iarray.iteri
-    (fun i a ->
-      if a < 0 || a >= Array.length shape then
-        invalid_argf "%s: axis %d of a value of rank %d" by a
-          (Array.length shape);
-      if i > 0 && Iarray.get axes (i - 1) >= a then
-        invalid_argf "%s: axes %a are not strictly increasing" by pp_ints axes)
-    axes
+    invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have)
 
 let reduction_width : type d a. (d, a) reduction -> int = function
   | Monoid _ -> 1
@@ -816,24 +802,29 @@ let check_width ~by loads results =
     invalid_argf "%s: %d loads and %d results, past %d" by (Iarray.length loads)
       results P.max_operands
 
+(* The shape of the results of [rs] along [axes] of a loop of [layout]: its
+   rule. *)
+let reduced_shape ~by layout axes rs =
+  let kinds = Array.map fst (reductions rs) in
+  shaped ~by (Shape.reduce ~axes kinds (L.shape layout))
+
+(* A reduction's rule; its results' shape. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
     (loads : d load iarray) =
   check_loads ~by ~what:"reduction" layout prog loads;
-  let shape = L.shape layout in
-  check_axes ~by shape axes;
   (match reductions_list rs with
   | [] -> invalid_argf "%s: a reduction of no output" by
-  | l -> List.iter (check_reduction ~by prog shape axes) l);
-  check_width ~by loads (results_width rs)
+  | l -> List.iter (check_reduction ~by prog) l);
+  check_width ~by loads (results_width rs);
+  reduced_shape ~by layout axes rs
 
 let any_shape (Any x) = shape x
 
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
     (loads : d load iarray) (carry : d any option) =
   check_loads ~by ~what:"scan" layout prog loads;
-  let shape = L.shape layout in
-  check_axes ~by shape [| axis |];
-  check_reduction ~by prog shape [||] (reduction r);
+  let shape = shaped ~by (Shape.scan ~axis (L.shape layout)) in
+  check_reduction ~by prog (reduction r);
   check_width ~by loads (reduction_width r);
   match (carry, r) with
   | None, _ -> ()
@@ -1284,45 +1275,18 @@ let bitcast_layout ~by l (from : D.any) (into : D.any) =
 
 (* Gathers, scatters and assemblies *)
 
-(* Whether shapes [a] and [b] have one extent along every axis but [axis]. *)
-let off_axis axis a b =
-  Array.length a = Array.length b
-  &&
-  let ok = ref true in
-  Array.iteri (fun i e -> if i <> axis && e <> b.(i) then ok := false) a;
-  !ok
+(* A gather's result's shape: its rule. *)
+let gather_shape ~by axis idx x =
+  shaped ~by (Shape.gather ~axis (shape idx) (shape x))
 
-let check_axis ~by axis r =
-  if axis < 0 || axis >= r then
-    invalid_argf "%s: axis %d of an operand of rank %d" by axis r
-
-let check_gather ~by axis idx x =
-  let si = shape idx and sx = shape x in
-  check_axis ~by axis (Array.length sx);
-  if not (off_axis axis si sx) then
-    invalid_argf "%s: positions %a do not fit an operand %a along axis %d" by
-      pp_shape si pp_shape sx axis
-
-let check_scatter ~by (combine : Nx_kernel.combine) axis idx updates into =
-  let si = shape idx and su = shape updates and st = shape into in
-  check_axis ~by axis (Array.length st);
-  if si <> su then
-    invalid_argf "%s: positions %a and updates %a differ" by pp_shape si
-      pp_shape su;
-  if not (off_axis axis su st) then
-    invalid_argf "%s: updates %a do not fit a target %a along axis %d" by
-      pp_shape su pp_shape st axis;
+(* A scatter's result's shape: its rule, and an [Add] of a dtype it takes. *)
+let scatter_shape ~by (combine : Nx_kernel.combine) axis idx updates into =
   if combine = Add && not (P.accepts2 (Binary Add) (dtype into)) then
-    invalid_argf "%s: Add does not take %s" by (D.name (dtype into))
+    invalid_argf "%s: Add does not take %s" by (D.name (dtype into));
+  shaped ~by (Shape.scatter ~axis (shape into) (shape idx) (shape updates))
 
 (* A sort's values' shape, and its positions': its rule. *)
-let sort_shape ~by axis k x =
-  match Shape.sort ~axis ~k (shape x) with
-  | Ok s -> s
-  | Error e -> invalid_argf "%s: %s" by e
-
-(* [r]'s value, or its error raised naming [by]. *)
-let shaped ~by = function Ok s -> s | Error e -> invalid_argf "%s: %s" by e
+let sort_shape ~by axis k x = shaped ~by (Shape.sort ~axis ~k (shape x))
 
 let check_fft (type d r) ~by (f : (d, r) fft) =
   let into x y fits =
@@ -1405,14 +1369,13 @@ let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
   (match P.bits dt fill with
   | _ -> ()
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  let regions = Array.of_list (List.map fst pieces) in
+  let shapes = shaped ~by (Shape.assemble whole regions) in
   List.iteri
-    (fun i (rs, x) ->
-      match Nx_array.Move.shape (Slice rs) whole with
-      | s ->
-          if not (has_shape x s) then
-            invalid_argf "%s: piece %d has shape %a, its region %a" by i
-              pp_shape (shape x) pp_shape s
-      | exception Invalid_argument e -> invalid_argf "%s: piece %d: %s" by i e)
+    (fun i (_, x) ->
+      if not (has_shape x shapes.(i)) then
+        invalid_argf "%s: piece %d has shape %a, its region %a" by i pp_shape
+          (shape x) pp_shape shapes.(i))
     pieces
 
 (* A contraction's operand shapes, [a], [b], then [init] where there is one. *)
@@ -1554,13 +1517,11 @@ let results_or_partial : type r.
       let placement = result (loads_route ~by op layout loads) in
       Left (make_outs m 0 layout placement outs)
   | Reduce { layout; axes; prog; reductions; loads } -> (
-      check_reduce ~by layout axes prog reductions loads;
+      let s = check_reduce ~by layout axes prog reductions loads in
       match loads_route ~by op layout loads with
       | Some ({ compute = Partials; _ } as route) ->
           Right (Reduce_partial { route; layout; axes; prog; reductions; loads })
-      | r ->
-          let out = L.contiguous (reduced (L.shape layout) axes) in
-          Left (make_reductions m 0 out (result r) reductions))
+      | r -> Left (make_reductions m 0 (L.contiguous s) (result r) reductions))
   | Scan { layout; axis; prog; reduction; loads; carry } -> (
       check_scan ~by layout axis prog reduction loads carry;
       match loads_route ~by ?carry op layout loads with
@@ -1568,15 +1529,17 @@ let results_or_partial : type r.
           Right (Scan_partial { route; layout; axis; prog; reduction; loads })
       | r -> Left (make_reduction m 0 layout (result r) reduction))
   | Gather { axis; idx; x } ->
-      check_gather ~by axis idx x;
+      let layout = L.contiguous (gather_shape ~by axis idx x) in
       let placement = result (routed ~by op [| Any idx; Any x |]) in
-      Left (m 0 (of_layout (dtype x) (L.contiguous (shape idx)) placement))
+      Left (m 0 (of_layout (dtype x) layout placement))
   | Scatter { combine; axis; idx; updates; into; _ } ->
-      check_scatter ~by combine axis idx updates into;
+      let layout =
+        L.contiguous (scatter_shape ~by combine axis idx updates into)
+      in
       let placement =
         result (routed ~by op [| Any idx; Any updates; Any into |])
       in
-      Left (m 0 (of_layout (dtype into) (L.contiguous (shape into)) placement))
+      Left (m 0 (of_layout (dtype into) layout placement))
   | Sort { axis; k; x; _ } ->
       let s = sort_shape ~by axis k x in
       let placement = one_result ~by op x in
@@ -1660,7 +1623,7 @@ let partial_results : type r.
  fun ~by m op ->
   match op with
   | Reduce_partial { route; layout; axes; reductions; _ } ->
-      let out = L.contiguous (reduced (L.shape layout) axes) in
+      let out = L.contiguous (reduced_shape ~by layout axes reductions) in
       make_reductions m 0 out (Some route.result) reductions
   | Scan_partial { route; layout; reduction; _ } ->
       make_reduction m 0 layout (Some route.result) reduction
@@ -1777,7 +1740,7 @@ let prepare : type r.
       | Some loads -> Map { p with loads }
       | None -> op)
   | Reduce p -> (
-      check_reduce ~by p.layout p.axes p.prog p.reductions p.loads;
+      ignore (check_reduce ~by p.layout p.axes p.prog p.reductions p.loads);
       let r = loads_route ~by op p.layout p.loads in
       match placed place r p.loads with
       | Some loads -> Reduce { p with loads }
@@ -1799,12 +1762,12 @@ let prepare : type r.
       | None when !moved -> Scan { p with carry }
       | None -> op)
   | Gather g ->
-      check_gather ~by g.axis g.idx g.x;
+      ignore (gather_shape ~by g.axis g.idx g.x);
       let r = routed ~by op [| Any g.idx; Any g.x |] in
       Gather
         { g with idx = place (read_at r 0) g.idx; x = place (read_at r 1) g.x }
   | Scatter s ->
-      check_scatter ~by s.combine s.axis s.idx s.updates s.into;
+      ignore (scatter_shape ~by s.combine s.axis s.idx s.updates s.into);
       let r = routed ~by op [| Any s.idx; Any s.updates; Any s.into |] in
       Scatter
         {
