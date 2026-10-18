@@ -148,6 +148,17 @@ let copy direction =
         B.copy ~src:dst ~dst:back;
         equal string (pattern page) (bytes back))
 
+(* A fill of [d]'s memory, which the host does not address: one fill part on
+   [d]'s copy engine, read back through the staging memory. *)
+let fill =
+  op "fill" ~opener:staging (fun d ->
+      let on_d = B.create d page in
+      fun _ ->
+        B.fill on_d 'f';
+        let back = B.create Rig.host page in
+        B.copy ~src:on_d ~dst:back;
+        equal string (String.make page 'f') (bytes back))
+
 let load =
   op "load" (fun d failure ->
       match Rig.Image.load d "code:64" with
@@ -199,8 +210,9 @@ let ops =
     profile;
   ]
 
-(* A copy through the staging memory needs [d] to map it. *)
-let staged = [ copy `Into; copy `Out_of ]
+(* A copy through the staging memory needs [d] to map it, and so does a
+   fill's read back. *)
+let staged = [ copy `Into; copy `Out_of; fill ]
 
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
