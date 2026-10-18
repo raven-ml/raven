@@ -459,9 +459,87 @@ let test_host_after_closed () =
   in
   equal ~msg:"the device's read reached" bool true reached
 
+(* [f w] while waiting.c's launch over [w] runs on a domain of its own: [f]'s
+   result and the launch's point. *)
+let while_held f =
+  let w = S.words 2 in
+  let holder =
+    Domain.spawn (fun () -> waiting (B.of_bigarray w) ~rounds:20_000_000_000)
+  in
+  let release () =
+    w.{0} <- 1L;
+    Domain.join holder
+  in
+  match
+    Rig_support.await "the launch running" (fun () -> w.{1} = 1L);
+    f w
+  with
+  | r -> (r, release ())
+  | exception e ->
+      ignore (release ());
+      raise e
+
+(* While one domain's launch runs, another domain's host submit waits before
+   it takes its value. Its work runs after the held launch's: it reads the
+   flag that the held launch waited for. *)
+let test_held_submit () =
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system shows no thread's waits" ();
+  let out = S.words 1 and thread = Atomic.make None in
+  ignore (Lazy.force affine);
+  let (during, other), held =
+    while_held (fun w ->
+        let other =
+          Domain.spawn (fun () ->
+              Atomic.set thread (Some (Rig_support.self ()));
+              affine_launch ~n:1 ~t:1 ~a:2 ~c:1 out w)
+        in
+        Rig_support.await "the other submit waiting" (fun () ->
+            match Atomic.get thread with
+            | Some t -> Rig_support.waits_in_condition t
+            | None -> false);
+        ((Rig.submitted Rig.host, out.{0}), other))
+  in
+  let p = Domain.join other in
+  equal ~msg:"while held: the last value, the other's output"
+    (pair int int64)
+    (Rig.Point.value held, 0L)
+    during;
+  equal ~msg:"the other's value" int (Rig.Point.value held + 1)
+    (Rig.Point.value p);
+  equal ~msg:"the other's output, 2 * flag + 1" int64 3L out.{0}
+
+(* While one domain's launch runs, another domain's waits for the host's
+   earlier work return, and so does a submit on another device that waits
+   for it. *)
+let test_waits_beside_launch () =
+  let d, _ = P.open_ "host:waits-beside" in
+  let out = S.words 1 and inb = S.words 1 in
+  let first = affine_launch ~n:1 ~t:1 ~a:1 ~c:1 out inb in
+  let during, held =
+    while_held (fun _ ->
+        Rig.Point.wait first;
+        let after =
+          Rig.submit ~waits:[| first |]
+            (Run.make (Sub.make d [||]))
+            ~buffers:[||]
+        in
+        Rig.Point.wait after;
+        (Rig.Point.reached first, Rig.signaled Rig.host))
+  in
+  let reached, signaled = during in
+  equal ~msg:"while held: reached" bool true reached;
+  less ~msg:"while held: signaled" int ~than:(Rig.Point.value held) signaled
+
 let domain_tests =
   group ~timeout "domains"
     [
+      test
+        "a host submit waits for another domain's running launch before its \
+         value"
+        test_held_submit;
+      test "waits on the host go on while a launch runs"
+        test_waits_beside_launch;
       test "a launch keeps its buffers until it returns" test_keeps_buffers;
       stateful ~domains:2 ~count:30
         "launches and pool jobs from two domains each run every unit once"

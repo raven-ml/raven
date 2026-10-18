@@ -148,6 +148,101 @@ let test_loss_while_blocked () =
   | Ok v -> failf "the blocked submit returned %d" v);
   equal int 1 (count "stop" p)
 
+(* Runs on a memory device *)
+
+let memory name = Result.get_ok (Rig.memory_device name)
+
+(* A buffer of two zeroed words on [m], and its host address. *)
+let two_words m =
+  let b = B.create m 16 in
+  let a = Support.Reader.host b in
+  Support.store a 0;
+  Support.store (a + 8) 0;
+  (b, a)
+
+(* Work on [m] that runs the fill [f] over the buffer of slot 0. *)
+let fill m f =
+  Sub.make m [| Sub.fill ~refs:[| Sub.write 0 ~at:0 |] f ~params:8 |]
+
+(* [f ()] while [Support.waiting] runs on [m] on a domain of its own: [f]'s
+   result and the held work's point. *)
+let while_held m f =
+  let hold, h = two_words m in
+  let holder =
+    Domain.spawn (fun () -> submit (fill m Support.waiting) ~buffers:[| hold |])
+  in
+  let release () =
+    Support.store h 1;
+    Domain.join holder
+  in
+  match
+    Support.await "the held work running" (fun () -> Support.load (h + 8) = 1);
+    f ()
+  with
+  | r -> (r, release ())
+  | exception e ->
+      ignore (release ());
+      raise e
+
+(* A domain that submits [f ()] and the thread it submits on, once it has
+   published it. *)
+let submitter f =
+  let thread = Atomic.make None in
+  let d =
+    Domain.spawn (fun () ->
+        Atomic.set thread (Some (Support.self ()));
+        f ())
+  in
+  Support.await "the submitter's thread" (fun () -> Atomic.get thread <> None);
+  (d, Option.get (Atomic.get thread))
+
+(* While one domain's work runs on a memory device, another domain's submit
+   on it waits before it takes its value, and its work runs after the held
+   work. *)
+let test_memory_run_holds_submits () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's waits" ();
+  let m = memory "turn:memory-run" in
+  let base = Rig.submitted m in
+  let count, c = two_words m in
+  let (during, other), held =
+    while_held m (fun () ->
+        let other, t =
+          submitter (fun () ->
+              submit (fill m Support.bump) ~buffers:[| count |])
+        in
+        Support.await "the other submit waiting" (fun () ->
+            Support.waits_in_condition t);
+        ((Rig.submitted m, Support.load c), other))
+  in
+  let p = Domain.join other in
+  equal ~msg:"while held: the last value, the other's work"
+    (pair int int) (base + 1, 0) during;
+  equal ~msg:"the held value" int (base + 1) (Rig.Point.value held);
+  equal ~msg:"the other's value" int (base + 2) (Rig.Point.value p);
+  equal ~msg:"the other's work" int 1 (Support.load c)
+
+(* While one domain's work runs on a memory device, another domain's waits
+   for the device's earlier work return, and so does a submit on another
+   device that waits for it. *)
+let test_memory_waits_beside_run () =
+  let m = memory "turn:memory-waits" in
+  let base = Rig.submitted m in
+  let count, _ = two_words m in
+  let first = submit (fill m Support.bump) ~buffers:[| count |] in
+  let e, _ = P.open_ "turn:memory-waits-other" in
+  let during, held =
+    while_held m (fun () ->
+        Rig.Point.wait first;
+        B.wait count Read_write;
+        let after = submit (empty e) ~waits:[| first |] in
+        Rig.Point.wait after;
+        (Rig.Point.reached first, Rig.signaled m))
+  in
+  equal ~msg:"while held: reached, signaled" (pair bool int)
+    (true, base + 1) during;
+  equal ~msg:"the held value" int (base + 2) (Rig.Point.value held)
+
 (* Interruptions *)
 
 (* Windtrap's [raises] lets [Sys.Break] through, as it ends a run. *)
@@ -307,6 +402,25 @@ let test_break_waiting_for_room () =
   equal bool false broke;
   still_works d p ~last:first
 
+(* A submit waiting for another domain's work on a memory device takes
+   Sys.Break, and nothing is assigned to it. *)
+let test_break_waiting_for_run () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's waits" ();
+  let m = memory "turn:break-run" in
+  let base = Rig.submitted m in
+  let count, c = two_words m in
+  let bump () = submit (fill m Support.bump) ~buffers:[| count |] in
+  let (broke, signalled), held =
+    while_held m (fun () -> Support.interrupt_in_wait (fun () -> breaks bump))
+  in
+  equal ~msg:"the signal" bool true signalled;
+  equal ~msg:"the submit" bool true broke;
+  equal ~msg:"the held value" int (base + 1) (Rig.Point.value held);
+  equal ~msg:"after the held work" int (base + 1) (Rig.submitted m);
+  equal ~msg:"the next value" int (base + 2) (Rig.Point.value (bump ()));
+  equal ~msg:"the work run" int 1 (Support.load c)
+
 (* A close that Sys.Break interrupted in its wait leaves the device live, and
    the next close finishes it: the device is lost as closed, stopped once. *)
 let test_break_in_close () =
@@ -433,6 +547,12 @@ let tests =
           test_two_threads;
         test "a loss during a blocked submit stops the device after it returns"
           test_loss_while_blocked;
+        test
+          "a submit on a memory device waits for another domain's running \
+           work before its value"
+          test_memory_run_holds_submits;
+        test "waits on a memory device go on while its work runs"
+          test_memory_waits_beside_run;
       ];
     group ~timeout "interruptions"
       [
@@ -450,6 +570,9 @@ let tests =
         test "a signal whose handler returns ends no wait" test_signal_in_wait;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;
+        test
+          "Sys.Break while waiting for a memory device's run assigns no value"
+          test_break_waiting_for_run;
         test "a close Sys.Break interrupted finishes at the next close"
           test_break_in_close;
         test "a close waiting for another thread's stop takes Sys.Break"

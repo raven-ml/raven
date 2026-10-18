@@ -1309,6 +1309,28 @@ value rig_test_bump(value unit) {
   return caml_copy_nativeint((intnat)&bump);
 }
 
+/* A fill that sets the second of the two 64-bit words at the address its
+   argument holds, then returns once the first is not zero, or after
+   [waiting_ticks] ticks of 1 ms. */
+static const int waiting_ticks = 30000;
+
+static int waiting(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  uint64_t at;
+  memcpy(&at, arg, sizeof at);
+  _Atomic uint64_t *w = (_Atomic uint64_t *)(uintptr_t)at;
+  atomic_store(&w[1], 1);
+  for (int left = waiting_ticks; left > 0 && atomic_load(&w[0]) == 0; left--)
+    sleep_ms(1);
+  return 0;
+}
+
+value rig_test_waiting(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&waiting);
+}
+
 /* A fill that stores the second 64-bit word of its argument at the address
    the first holds. */
 static int poke(void *queue, void *arg, uint64_t v) {
@@ -1486,6 +1508,10 @@ value rig_test_waits_for_lock(value v_t) {
   return Val_bool(in_wait((thread_id)Long_val(v_t), 1));
 }
 
+value rig_test_waits_in_condition(value v_t) {
+  return Val_bool(in_wait((thread_id)Long_val(v_t), 0));
+}
+
 value rig_test_interrupter_start(value unit) {
   (void)unit;
   interrupter.watched = self();
@@ -1521,6 +1547,11 @@ value rig_test_thread_self(value unit) {
 value rig_test_waits_for_lock(value v_t) {
   (void)v_t;
   caml_failwith("Rig_support.waits_for_lock: no view of waits");
+}
+
+value rig_test_waits_in_condition(value v_t) {
+  (void)v_t;
+  caml_failwith("Rig_support.waits_in_condition: no view of waits");
 }
 
 value rig_test_interrupter_start(value unit) {

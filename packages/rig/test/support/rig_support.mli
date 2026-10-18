@@ -393,6 +393,11 @@ val bump : nativeint
 (** [bump] is a fill adding 1 to the 64-bit word at the address in its argument.
 *)
 
+val waiting : nativeint
+(** [waiting] is a fill that sets the second of the two 64-bit words at the
+    address in its argument, then returns once the first is not zero, or
+    after 30 s: work held running until the test releases it. *)
+
 val poke : nativeint
 (** [poke] is a fill storing the second 64-bit word of its argument at the
     address its first holds. *)
@@ -500,6 +505,12 @@ val waits_for_lock : thread -> bool
 (** [waits_for_lock t] is whether [t] blocks taking a mutex, as a take of
     one of rig's locks does, from the system's view of it. A wait for a
     domain's own lock shows too, briefly. It raises [Failure] where not
+    {!sees_waits}. *)
+
+val waits_in_condition : thread -> bool
+(** [waits_in_condition t] is whether [t] blocks in a condition wait, as a
+    submit does while its device is held, from the system's view of it. A
+    wait for a domain's own lock shows too. It raises [Failure] where not
     {!sees_waits}. *)
 
 val interrupt : unit -> unit

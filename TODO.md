@@ -29,8 +29,6 @@ raven / llama.cpp (Vulkan; ROCm):
 ### semantics
 
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): `Buffer.free` (M5)
-- more ledger rows: host and memory work runs after giving the turn up
-  (K2)
 
 ### drivers
 

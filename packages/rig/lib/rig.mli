@@ -470,7 +470,10 @@ val signaled : t -> int
        [Invalid_argument] on the thread that holds both.}
     {- While a driver's [room], [submit] or [commit] blocks, where its
        driver declares [may_block], other submits and commits on that device
-       wait for it.}}
+       wait for it. On {!host} and a {!memory_device}, whose submit runs its
+       work before it returns, other submits on the device wait for that
+       work before they take a value. Waits for the device's earlier values
+       return meanwhile.}}
 
     A wait releases the domain lock while it blocks, and returns to OCaml at
     least every 200 ms, where a pending [Sys.Break] from Ctrl-C raises. An

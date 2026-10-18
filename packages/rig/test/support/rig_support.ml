@@ -70,6 +70,7 @@ external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external noop : unit -> nativeint = "rig_test_noop"
 external bump : unit -> nativeint = "rig_test_bump"
+external waiting : unit -> nativeint = "rig_test_waiting"
 external poke : unit -> nativeint = "rig_test_poke"
 external far : unit -> nativeint = "rig_test_far"
 external carry : unit -> nativeint = "rig_test_carry"
@@ -86,6 +87,7 @@ external interrupter_start : unit -> unit = "rig_test_interrupter_start"
 external interrupter_stop : unit -> bool = "rig_test_interrupter_stop"
 external thread_self : unit -> int = "rig_test_thread_self"
 external waits_for_lock : int -> bool = "rig_test_waits_for_lock"
+external waits_in_condition : int -> bool = "rig_test_waits_in_condition"
 external set_address_space : int -> int = "rig_test_set_address_space"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
@@ -105,6 +107,7 @@ external move : dst:int -> src:int -> int -> unit = "rig_test_move"
 
 let noop = noop ()
 let bump = bump ()
+let waiting = waiting ()
 let poke = poke ()
 let far = far ()
 let carry = carry ()
@@ -819,6 +822,7 @@ type thread = int
 
 let self = thread_self
 let waits_for_lock = waits_for_lock
+let waits_in_condition = waits_in_condition
 let interrupt_after s = interrupt_after_ms (int_of_float (s *. 1000.))
 
 let interrupt_in_wait f =
