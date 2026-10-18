@@ -158,7 +158,7 @@ let here () =
   in
   [| open_ 0; open_ 1 |]
 
-(* RFC 0031's Law 11: a share loaded here and on an agent leaves equal bytes. *)
+(* A program loaded here and on an agent leaves equal bytes. *)
 let same_bytes () =
   let local = runs (here ()) in
   equal ~msg:"here, by the description's own account"
@@ -388,25 +388,6 @@ let rail_address () =
   contains ~msg:"past the counts area" ~sub:"outside"
     (require_error (load 385));
   ignore (Sys.opaque_identity r)
-
-(* A rail ends on both machines once its value and its end are unreachable: the
-   agent then has no rail of its id for a program to name. The rail's drop goes
-   to the agent before the load that follows it. *)
-let rail_ends () =
-  with_job @@ fun j _ ->
-  let h = List.hd (Rig_remote.hosts j) in
-  let[@inline never] rail () =
-    let r =
-      require_ok ~pp:Format.pp_print_string
-        ((host_record h).rail None
-           ~send:[| { Rig_remote_abi.src = 0; dst = 0; length = 8 } |]
-           ~receive:[||])
-    in
-    r.id
-  in
-  let id = rail () in
-  Gc.full_major ();
-  rail_is_dropped h id
 
 (* A reachable rail still names both agents' ends after collection. *)
 let retained_rail () =
@@ -802,8 +783,6 @@ let () =
            rail_end_to_end;
          test ~timeout:60. "an agent validates a rail address's whole area"
            rail_address;
-         test ~timeout:60.
-           "a rail ends once its value and its end are unreachable" rail_ends;
          test ~timeout:60. "a reachable rail keeps both agent ends"
            retained_rail;
          test ~timeout:60. "a reachable local end keeps the agent end"

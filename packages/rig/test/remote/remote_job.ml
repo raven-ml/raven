@@ -324,6 +324,7 @@ let with_hex_agents ?(n = 1) ?vars f =
 let k_request = 1
 let k_answer = 2
 let k_handover = 3
+let k_drop = 4
 let k_beat = 8
 let k_abort = 9
 let k_close = 10

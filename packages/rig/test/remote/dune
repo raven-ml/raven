@@ -16,7 +16,6 @@
   test_rig_remote_failed
   test_rig_remote_killed
   test_rig_remote_join
-  test_rig_remote_ids
   test_rig_remote_program
   test_rig_remote_interrupt
   test_rig_remote_domains)

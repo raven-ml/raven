@@ -401,8 +401,6 @@ let far_of_string d s =
   B.copy ~src:(host_buffer s) ~dst:b;
   b
 
-let random_string n = String.init n (fun _ -> Char.chr (Random.int 256))
-
 let copy_submission d ~src ~dst =
   Sub.make d
     [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]
