@@ -8,12 +8,12 @@
    3.72, and t = 4.88 for SMC and nested sampling's 16 replicates.
    posteriordb_sweep holds the law over every posterior.
 
-   Nested sampling at 25 live points is not held to the shrinkage of ln X. One
-   that shrinks it by 1 / (n - j + 2) at the j-th deleted point, one past the
-   true 1 / (n - j + 1), fails this test on key 1 and on key 35, and passes on
-   the other 38 of keys 1 to 40: its largest error has a median of 2.7 standard
-   errors over the keys, where the correct sampler's has 1.8 and reaches 3.7,
-   against the bound of 4.88. *)
+   Nested sampling runs 13 live points: its run of likelihoods is the slowest
+   cell, and its time is about linear in the points. Its largest error has a median
+   of 2.3 standard errors over keys 1 to 40 and reaches 4.1, against the bound
+   of 4.88. It is not held to the shrinkage of ln X: one that shrinks it by 1 /
+   (n - j + 2) at the j-th deleted point, one past the true 1 / (n - j + 1),
+   fails this test on 6 of keys 1 to 40, its largest error of median 3.6. *)
 
 module P = Posteriordb
 module R = Recovery
@@ -34,7 +34,7 @@ let () =
             (* R-hat 1.011 on one of keys 1 to 40 at 500 draws. *)
             R.chain_cell (R.ensemble ~ensembles:2 ~draws:800) dogs;
             R.replicated_cell (R.smc ~replicates:16 ~draws:100) dogs;
-            R.replicated_cell (R.nested ~replicates:16 ~draws:25) dogs;
+            R.replicated_cell (R.nested ~replicates:16 ~draws:13) dogs;
             (* At the default acceptance a transition or two diverges on 17 of
                keys 1 to 40, and at 0.9 on 3. *)
             R.chain_cell (R.nuts ~accept:0.95 ~draws:300 ()) eight_schools;
