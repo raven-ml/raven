@@ -316,11 +316,15 @@ let test_fixed_refusals () =
       ignore (Rig.Claim.consume c ~why:"donated" dead));
   refused ~msg:"a dead buffer" (fun () -> make [ (dead, Rig.Read) ]);
   refused ~msg:"another device's" (fun () -> make [ (B.create e 8, Rig.Read) ]);
+  let x = B.create d 8 in
+  Rig.Claim.with_ ~read:[] ~donate:[ x ] (fun _ ->
+      refused ~msg:"memory held exclusive" (fun () -> make [ (x, Rig.Read) ]));
   let m = B.create d 8 in
   let s = make [ (m, Rig.Read) ] in
-  ignore (Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"consumed" m)));
-  refused ~msg:"fixed memory that died" (fun () -> submit s)
+  refused ~msg:"a consumption of fixed memory" (fun () ->
+      Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
+          ignore (Rig.Claim.consume c ~why:"consumed" m)));
+  ignore (submit s)
 
 (* Two domains submitting submissions that fix one memory for reading, each on
    a device of its own: no submit waits for the other domain's, whose work

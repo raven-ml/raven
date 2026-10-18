@@ -1511,7 +1511,10 @@ end
     never freed between {!Submission.make} and a submit. A launch needs no
     [keep] for its image, since an image unloads only once the work
     submitted before the image became unreachable is done ({!Image.load}).
-    {!Rig.section-claims} says when it claims that memory. *)
+    Every run reads its fixed memory and the buffers its parts name, so it
+    holds them for its life as {!Claim.hold} does: no donation writes them
+    and no consumption ends them. {!Rig.section-claims} says when it claims
+    the buffers of a run. *)
 module Submission : sig
   type device := t
 
@@ -1796,18 +1799,19 @@ end
 
     A submission is {e valid} when its device runs submitted work and has a
     queue for each of its parts, as {!Rig.Submission} places them; its
-    images, its parts' buffers and its fixed memory are live and on the
-    device, but as {!Submission.copy} admits, and none of its fixed memory
-    written is [Read]; every slot below the highest is named, and none by
-    both an {!Submission.unordered} ref and an ordered use; and its launches
-    and fills fit a run: [2{^31} - 1] bytes, each counting 16 bytes plus its
+    images are live; its parts' buffers and its fixed memory are live, held
+    exclusive by no {!Claim.with_}, and on the device, but as
+    {!Submission.copy} admits; no fixed buffer it writes admits only [Read];
+    every slot below the highest is named, and none by both an
+    {!Submission.unordered} ref and an ordered use; and its launches and
+    fills fit a run: [2{^31} - 1] bytes, each counting 16 bytes plus its
     parameters rounded up to a multiple of 16. {!Submission.make} raises for
     each.
 
     A submit is valid when it passes one buffer per slot; no buffer its work
     uses is dead or held exclusive ({!Claim}); each buffer is on the device
-    ({!Buffer.borrow}), but as {!Submission.copy} admits; it writes no
-    [Read] memory ({!Buffer.val-access}); each copy's two buffers have one
+    ({!Buffer.borrow}), but as {!Submission.copy} admits; it writes through
+    no [Read] buffer ({!Buffer.val-access}); each copy's two buffers have one
     length and share no byte; no ref names handle-only memory
     ({!Buffer.section-low}); and its driver can run the work
     ({!Rig_edge.section-calls}). A driver may bound the words one submission
@@ -1961,12 +1965,13 @@ end
     inside a {!Claim.with_} that reads them. Where no
     other domain may donate the memory, the reader may use {!Buffer.wait}.
 
-    A prepared submission claims the memory it uses only while a submit
-    runs. A donation between two submits can consume that memory, and the
-    next submit then raises [Invalid_argument] for the dead buffer. A
-    library that keeps a submission over memory it does not own holds that
-    memory ({!Claim.hold}) for as long as it keeps the submission, or passes
-    the memory to {!Claim.share}.
+    A prepared submission holds its fixed memory and the buffers its parts
+    name for its life ({!Submission.make}). It claims the buffers of a run
+    only while a submit runs. A donation between two submits can consume one
+    of them, and the next submit with it then raises [Invalid_argument] for
+    the dead buffer. A library that keeps buffers it does not own over its
+    submits holds them ({!Claim.hold}) for as long as it keeps them, or
+    passes their memory to {!Claim.share}.
 
     A donor takes its inputs with {!Claim.with_}. It consumes an input it
     holds exclusive before it uses it, since every call that touches the

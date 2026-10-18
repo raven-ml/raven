@@ -222,13 +222,16 @@ let test_address () =
   raises_match ~msg:"part memory is not explicit fixed memory" Exn.invalid_arg
     (fun () -> Sub.address copy mapped)
 
+(* Fixed memory never dies, since the submission holds it; the address of a
+   dead buffer raises. *)
 let test_dead_address () =
   let d, _ = P.open_ "args:dead-address" in
-  let b = B.create d 8 in
+  let b = B.create d 8 and dead = B.create d 8 in
   let s = Sub.make ~fixed:[ (b, Rig.Read) ] d [||] in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"reused" b));
-  raises_match (Exn.invalid_arg ~substring:"reused") (fun () -> Sub.address s b)
+  Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"reused" dead));
+  raises_match (Exn.invalid_arg ~substring:"reused") (fun () ->
+      Sub.address s dead)
 
 let () =
   exit
@@ -245,5 +248,5 @@ let () =
            test_handle_only;
          test "fixed addresses follow memory identity and view bounds"
            test_address;
-         test "fixed addresses refuse consumed memory" test_dead_address;
+         test "an address of a dead buffer raises" test_dead_address;
        ]

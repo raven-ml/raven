@@ -603,6 +603,38 @@ let test_hold () =
       equal ~msg:"exclusive once collected" (pair bool bool) (true, true)
         (Claim.exclusive c a, Claim.exclusive c b))
 
+(* A submission holds its fixed memory and the buffers its parts name, which
+   every run reads, as a hold does: none of them donates while the submission
+   is reachable, and each does once it is collected. Slots hold nothing. *)
+let test_submission_holds () =
+  let d, _ = P.open_ "claim:submission-holds" in
+  let fixed = B.create d 8 and src = B.create d 8 and dst = B.create d 8 in
+  let ws = B.create Rig.host 8 and slot = B.create d 8 in
+  let all = [ fixed; src; dst; ws; slot ] in
+  let exclusive () =
+    Claim.with_ ~read:[] ~donate:all (fun c ->
+        List.map (Claim.exclusive c) all)
+  in
+  let s =
+    Rig.Submission.(
+      make
+        ~fixed:[ (fixed, Rig.Read) ]
+        d
+        [|
+          copy ~src:(Buffer src) ~dst:(Buffer dst);
+          words ws;
+          copy ~src:(Slot 0) ~dst:(Buffer dst);
+        |])
+  in
+  equal ~msg:"while the submission is reachable" (list bool)
+    [ false; false; false; false; true ]
+    (exclusive ());
+  ignore (Sys.opaque_identity (submit s ~buffers:[| slot |]));
+  collect_holds ();
+  equal ~msg:"once it is collected" (list bool)
+    [ true; true; true; true; true ]
+    (exclusive ())
+
 (* A hold of a dead buffer, or of memory held exclusive, raises and holds none
    of the buffers it was given. *)
 let test_hold_refusals () =
@@ -1059,11 +1091,12 @@ let test_submit_donation (name, kind) () =
   Rig_support.store (R.host src) 42;
   Rig_support.store (R.host dst) 0;
   let part work = work in
-  let run =
+  let run, buffers =
     match kind with
     | `Copy ->
-        Sub.Run.make
-          (Sub.make d [| part Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |])
+        ( Sub.Run.make
+            (Sub.make d [| part Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |]),
+          [| src; dst |] )
     | `Fixed ->
         let fill =
           Sub.fill Rig_support.carry ~params:24
@@ -1080,14 +1113,17 @@ let test_submit_donation (name, kind) () =
         Sub.Run.int64 run block 16 8L;
         (* The submit runs on another domain. *)
         Sub.Run.release run;
-        run
+        (run, [||])
   in
-  equal ~msg:"preparing the submission leaves the source exclusive" bool true
+  (* A submission holds its fixed memory for its life, and claims a run's
+     buffers only while a submit runs. *)
+  let free = kind = `Copy in
+  equal ~msg:"the source once the submission is made" bool free
     (donated_exclusive src);
   let point = submit (Sub.make producer [||]) in
   P.gate pp;
   let waiting =
-    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers:[||])
+    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers)
   in
   let exclusive = ref false in
   Fun.protect
@@ -1108,17 +1144,16 @@ let test_submit_donation (name, kind) () =
     (false, 42)
     (!exclusive, Rig_support.load (R.host dst));
   equal ~msg:"the submitted work completed" int 0 (P.queued p);
-  equal ~msg:"the source is exclusive after hand-over" bool true
-    (donated_exclusive src)
+  equal ~msg:"the source after hand-over" bool free (donated_exclusive src)
 
-let test_fixed_claim_refusals () =
+(* A submit refused for a run's buffer releases every claim it took on the
+   others, each buffer passed in two slots. *)
+let test_run_claim_refusals () =
   let module Sub = Rig.Submission in
-  let d, p = P.open_ "claim:fixed-refusals" in
+  let d, p = P.open_ "claim:run-refusals" in
   let buffers () = Array.init 5 (fun _ -> B.create d 8) in
-  let fixed bs =
-    Array.to_list bs
-    |> List.concat_map (fun b -> [ (b, Rig.Read); (b, Rig.Read) ])
-  in
+  let s = Sub.make d [| Rig_support.touching (Array.make 10 Sub.read) |] in
+  let slots bs = Array.init 10 (fun i -> bs.(i / 2)) in
   let check bs =
     Array.iteri
       (fun i b ->
@@ -1127,37 +1162,36 @@ let test_fixed_claim_refusals () =
       bs
   in
   let bs = buffers () in
-  let s = Sub.make ~fixed:(fixed bs) d [||] in
   Array.iter
     (fun b ->
       Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
           raises_match (Exn.invalid_arg ~substring:"held exclusive")
-            (fun () -> submit s));
+            (fun () -> submit s ~buffers:(slots bs)));
       check bs)
     bs;
-  ignore (submit s);
+  ignore (submit s ~buffers:(slots bs));
   check bs;
   for i = 0 to Array.length bs - 1 do
     let bs = buffers () in
-    let s = Sub.make ~fixed:(fixed bs) d [||] in
     let replacement =
       Claim.with_ ~read:[] ~donate:[ bs.(i) ] (fun c ->
           Claim.consume c ~why:"replaced" bs.(i))
     in
-    raises_match (Exn.invalid_arg ~substring:"replaced") (fun () -> submit s);
+    raises_match (Exn.invalid_arg ~substring:"replaced") (fun () ->
+        submit s ~buffers:(slots bs));
     bs.(i) <- replacement;
     check bs
   done;
   ignore (P.run p)
 
-let test_fixed_wait_raises () =
+(* A submit whose wait raises releases the claims on its run's buffers. *)
+let test_run_wait_raises () =
   let module Sub = Rig.Submission in
-  let producer, pp = P.open_ "claim:fixed-raises-producer" in
-  let d, p = P.open_ "claim:fixed-raises" in
+  let producer, pp = P.open_ "claim:run-raises-producer" in
+  let d, p = P.open_ "claim:run-raises" in
   let a = B.create d 8 and b = B.create d 8 in
-  let s =
-    Sub.make ~fixed:[ (a, Rig.Read); (b, Rig.Read); (a, Rig.Read) ] d [||]
-  in
+  let s = Sub.make d [| Rig_support.touching (Array.make 3 Sub.read) |] in
+  let buffers = [| a; b; a |] in
   let run = Sub.Run.make s in
   let point = submit (Sub.make producer [||]) in
   P.interrupt pp;
@@ -1167,12 +1201,11 @@ let test_fixed_wait_raises () =
   Fun.protect
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () ->
-      raises Exit (fun () ->
-          Rig.submit run ~waits:[| point |] ~buffers:[||]));
+      raises Exit (fun () -> Rig.submit run ~waits:[| point |] ~buffers));
   equal ~msg:"both claims released" (pair bool bool) (true, true)
     (donated_exclusive a, donated_exclusive b);
   ignore (P.run pp);
-  ignore (Rig.submit run ~waits:[| point |] ~buffers:[||]);
+  ignore (Rig.submit run ~waits:[| point |] ~buffers);
   ignore (P.run p)
 
 (* A read whose wait raises leaves no claim: a signal handler's exception
@@ -1604,6 +1637,7 @@ let tests =
           test_hold;
         test "a hold of a dead buffer or memory held exclusive holds nothing"
           test_hold_refusals;
+        test "a submission holds the memory every run reads" test_submission_holds;
         test "consumable says whether a consumption succeeds" test_consumable;
         stateful ~domains:2
           "holds beside consumptions of one memory are ordered with them"
@@ -1639,12 +1673,12 @@ let tests =
       [
         test "fixed memory prevents donation during submit"
           (test_submit_donation ("fixed", `Fixed));
-        test "copy parts prevent donation during submit"
+        test "a run's buffers prevent donation during submit"
           (test_submit_donation ("copy", `Copy));
-        test "fixed-buffer refusals release every acquired claim"
-          test_fixed_claim_refusals;
-        test "an exceptional submit wait releases fixed-buffer claims"
-          test_fixed_wait_raises;
+        test "a run's refused buffer releases every claim the submit took"
+          test_run_claim_refusals;
+        test "an exceptional submit wait releases its run's claims"
+          test_run_wait_raises;
         stateful ~domains:2
           "with_ of a group and reads of its memory leave no claim behind"
           group_commands;

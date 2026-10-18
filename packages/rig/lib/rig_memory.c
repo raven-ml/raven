@@ -494,14 +494,6 @@ value caml_rig_claim_drop(value v_b) {
   return Val_unit;
 }
 
-/* End the acquired prefix without an OCaml loop's interruptible poll. */
-value caml_rig_claim_drop_prefix(value v_buffers, value v_n) {
-  intnat n = Long_val(v_n);
-  for (intnat i = 0; i < n; i++)
-    caml_rig_claim_drop(Field(v_buffers, i));
-  return Val_unit;
-}
-
 void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
 
 /* Holds

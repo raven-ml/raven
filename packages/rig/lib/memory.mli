@@ -221,6 +221,11 @@ val hold_token : holds -> token
 val no_hold : token
 (** [no_hold] is the hold of no buffer, which releases nothing. *)
 
+val release_hold_now : token -> holds -> unit
+(** [release_hold_now t h] releases the holds of [h], whose token is [t],
+    now, for a caller that gives them up: [t]'s record goes on the list of
+    holds with none left to release. *)
+
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 

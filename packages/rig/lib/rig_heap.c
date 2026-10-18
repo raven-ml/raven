@@ -98,17 +98,21 @@ value caml_rig_release_list(value unit) {
   return Val_long((intnat)l);
 }
 
-static void token_finalize(value v) {
-  struct token *t = Data_custom_val(v);
+/* Links the node of the token [t] onto its list, once: a token its list
+   refused, never made or already linked has no list. */
+static void token_link(struct token *t) {
   struct release_node *n = t->node;
-  if (t->list == NULL) return; /* a token its list refused, or never made */
+  if (t->list == NULL) return;
   struct release_node *head =
       atomic_load_explicit(&t->list->head, memory_order_relaxed);
   do
     n->next = head;
   while (!atomic_compare_exchange_weak_explicit(
       &t->list->head, &head, n, memory_order_release, memory_order_relaxed));
+  t->list = NULL;
 }
+
+static void token_finalize(value v) { token_link(Data_custom_val(v)); }
 
 static struct custom_operations token_ops = {
     "rig.token",        token_finalize,
@@ -181,6 +185,14 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   t->list = l;
   t->node = n;
   CAMLreturn(v);
+}
+
+/* Puts the record of the token [v_t] on its list now, as its collection
+   would, which then does nothing; [()] is no token. The caller serializes
+   this with other links of [v_t]. */
+value caml_rig_token_link(value v_t) {
+  if (Is_block(v_t)) token_link(Data_custom_val(v_t));
+  return Val_unit;
 }
 
 /* The node at the front of the hand of the list [v_list], taking the list

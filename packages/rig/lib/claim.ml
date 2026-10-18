@@ -305,12 +305,14 @@ let consumable c b =
 
 (* Holds *)
 
-(* A hold is its token: collected, it puts its record on the list of holds,
-   whose next drain releases them. The record is made and the token over it
+(* A hold keeps its token: collected, the token puts the record on the list of
+   holds, whose next drain releases them. The record is made and the token over it
    before the holds are taken, in one C step that marks each taken in the
    record, so an asynchronous exception anywhere leaves either no hold or a
    token that releases them. *)
-type hold = token
+type hold = { token : token; record : holds }
+
+let no_record = { allocs = Weak.create 0; taken = Bytes.empty }
 
 external take_holds : buffer list -> Bytes.t -> int = "caml_rig_claim_holds"
 [@@noalloc]
@@ -325,14 +327,15 @@ let rec take_all fn bs taken =
 let held fn bs =
   List.iter (Buffer.check_live fn) bs;
   match bs with
-  | [] -> Memory.no_hold
+  | [] -> { token = Memory.no_hold; record = no_record }
   | _ ->
       let n = List.length bs in
       let allocs = Weak.create n in
       List.iteri (fun i b -> Weak.set allocs i (Some b.mem.alloc)) bs;
-      let taken = Bytes.make n '\000' in
-      let t = Memory.hold_token { allocs; taken } in
-      take_all fn bs taken;
-      t
+      let record = { allocs; taken = Bytes.make n '\000' } in
+      let token = Memory.hold_token record in
+      take_all fn bs record.taken;
+      { token; record }
 
 let hold bs = held "Claim.hold" bs
+let unhold h = Memory.release_hold_now h.token h.record

@@ -559,11 +559,11 @@ let test_dead_slot () =
   raises_match Exn.invalid_arg (fun () -> submit s ~buffers:[| borrowed |]);
   equal int base (Rig.submitted d)
 
-(* A submission checks the buffers it was made with: a part's buffer that died
-   refuses the submit after the caller's parts array changed. *)
+(* A submission holds the buffers it was made with, whatever the caller's
+   parts array holds later: a donation of a part's buffer stays a read claim,
+   and one of the buffer the array names since is exclusive. *)
 let test_parts_changed () =
   let d = memory "submit:parts-changed" in
-  let base = Rig.submitted d in
   let a = B.create d 8 and b = B.create d 8 and dst = B.create d 8 in
   let copy src =
     Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -571,10 +571,12 @@ let test_parts_changed () =
   let parts = [| copy a |] in
   let s = Sub.make d parts in
   parts.(0) <- copy b;
-  Rig.Claim.with_ ~read:[] ~donate:[ a ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" a));
-  raises_match Exn.invalid_arg (fun () -> submit s);
-  equal int base (Rig.submitted d)
+  let exclusive x =
+    Rig.Claim.with_ ~read:[] ~donate:[ x ] (fun c -> Rig.Claim.exclusive c x)
+  in
+  equal ~msg:"the part's buffer, the array's" (pair bool bool) (false, true)
+    (exclusive a, exclusive b);
+  Rig.Point.wait (submit s)
 
 (* A submission keeps its parts' buffers after the caller's array changes. *)
 let test_parts_kept () =
@@ -1944,8 +1946,7 @@ let tests =
           test_cleared_on_raise;
         test "a run's buffer that died refuses the submit" test_dead_slot;
         test "a submit claims its buffers while it runs" test_claims;
-        test
-          "a part's buffer that died refuses the submit after its array changed"
+        test "a submission holds its parts' buffers after their array changed"
           test_parts_changed;
         test "a submission keeps its parts' buffers after their array changed"
           test_parts_kept;

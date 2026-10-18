@@ -52,9 +52,9 @@
     leaves no claim behind.
 
     {!Submission.submit} takes read claims of its own, with
-    {!Memory.claim_add}, on the buffers
-    of a run and the fixed memory, and releases them once the driver's
-    [submit] has returned. A copy, blit or fill ({!Copy}) holds read claims
+    {!Memory.claim_add}, on the buffers of a run, and releases them once the
+    driver's [submit] has returned. A submission holds its fixed memory
+    ({!hold}) for its life. A copy, blit or fill ({!Copy}) holds read claims
     on its buffers until it returns ({!reading2}, {!wait}). *)
 
 val read_bytes :
@@ -124,7 +124,7 @@ val consumable : t -> Def.buffer -> bool
 
 type hold
 (** The type for holds: a token whose collection releases them
-    ({!Memory.hold_token}). *)
+    ({!Memory.hold_token}), and their record. *)
 
 val held : string -> Def.buffer list -> hold
 (** [held fn bs] is {!Rig.Claim.hold}[ bs] for a call of [fn], which its
@@ -132,3 +132,7 @@ val held : string -> Def.buffer list -> hold
 
 val hold : Def.buffer list -> hold
 (** [hold bs] is {!held}[ "Claim.hold" bs]. *)
+
+val unhold : hold -> unit
+(** [unhold h] releases [h] now, for a caller that gives [h] up because the
+    call that took it raises. *)

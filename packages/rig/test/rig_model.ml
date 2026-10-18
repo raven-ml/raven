@@ -244,6 +244,10 @@ and rmem = {
   defined : Bytes.t;  (** ['\001'] where [data] is known. *)
   stamps : rstamps;
   mutable readers : int;  (** Read claims. *)
+  mutable holds : int;  (** Submissions in cells that hold it. *)
+  mutable dropped : bool;
+      (** Whether a submission that held it was dropped: its hold goes once it
+          is collected, which the model does not see. *)
   mutable generation : int;
   mutable home : locality;  (** Its owner's buffers' locality. *)
 }
@@ -321,6 +325,8 @@ let new_mem owner mkind data defined =
       defined;
       stamps = empty_stamps ();
       readers = 0;
+      holds = 0;
+      dropped = false;
       generation = 0;
       home = Local;
     }
@@ -1458,6 +1464,24 @@ let transfer_sys ((s : sdev), w) ((s' : sdev), _) n seed =
 
 (* Submissions *)
 
+(* A submission holds its parts' buffers while it is reachable. Once its cell
+   lets it go, the hold goes at a collection, which the model sees only where
+   the collect command forces one ([undrop]). *)
+let undrop w =
+  List.iter
+    (fun d -> List.iter (fun (m : rmem) -> m.dropped <- false) d.made)
+    w.devs
+
+let unhold_sub sc =
+  match sc.sub with
+  | Some { copy = Some (a, b); _ } ->
+      List.iter
+        (fun m ->
+          m.holds <- m.holds - 1;
+          m.dropped <- true)
+        [ a.mem; b.mem ]
+  | Some { copy = None; _ } | None -> ()
+
 (* A copy part, or a fill that copies its read slot into its write slot where
    both are memory the host runs work on. *)
 let make_ref ?keep (v : rdevv) pair sc outcome =
@@ -1485,7 +1509,14 @@ let make_ref ?keep (v : rdevv) pair sc outcome =
     | Error Skipped -> ()
     | _ -> fail "a submission the model does not make was made"
   else
-    judge w vd outcome (fun () -> sc.sub <- Some { dev = d; copy = pair; held })
+    judge w vd outcome (fun () ->
+        unhold_sub sc;
+        Option.iter
+          (fun (a, b) ->
+            a.mem.holds <- a.mem.holds + 1;
+            b.mem.holds <- b.mem.holds + 1)
+          pair;
+        sc.sub <- Some { dev = d; copy = pair; held })
 
 (* The parts of a submission whose runs pass a read slot and a write slot: a
    copy names neither, so a fill that does nothing names them. A GPU of the
@@ -1559,6 +1590,9 @@ let make_own_ref (v : rdevv) n sc outcome =
       in
       let a = part () in
       let b = part () in
+      unhold_sub sc;
+      a.mem.holds <- 1;
+      b.mem.holds <- 1;
       sc.sub <- Some { dev = d; copy = Some (a, b); held = None })
 
 let make_own_sys ((s : sdev), w) n sc =
@@ -1584,6 +1618,7 @@ let make_launch_ref (v : rdevv) sc outcome =
     let vd = verdict () in
     uses vd [ d ];
     judge w vd outcome (fun () ->
+        unhold_sub sc;
         sc.sub <- Some { dev = d; copy = None; held = None })
 
 (* The ref'd words: the read slot's offset, the write slot's, and the bytes to
@@ -1774,7 +1809,9 @@ let rec release_sys c =
   if Atomic.compare_and_set sb.m.claims n (n - 1) then
     guard c.sw @@ fun () -> S.Reader.release sb.b
   else release_sys c
-let exclusive b = spans b && b.mem.readers = 0 && not (never_exclusive b.mem)
+let exclusive b =
+  spans b && b.mem.readers = 0 && b.mem.holds = 0
+  && not (never_exclusive b.mem)
 
 let with_ref r d outcome =
   with_buf r outcome @@ fun a ->
@@ -1795,7 +1832,7 @@ let with_ref r d outcome =
           let expected = a.mem != b.mem && exclusive b in
           if got && not expected then
             fail "a donation held exclusive against its claims";
-          if expected && (not got) && not r.w.two then
+          if expected && (not got) && (not r.w.two) && not b.mem.dropped then
             fail "a donation refused with no other claim")
 
 (* A with_ holds the donated memory exclusive while it runs, which a host
@@ -1822,7 +1859,7 @@ let consume_ref src dst outcome =
           let expected = exclusive b in
           if got && not expected then
             fail "a memory consumed while not exclusive";
-          if expected && (not got) && not src.w.two then
+          if expected && (not got) && (not src.w.two) && not b.mem.dropped then
             fail "a memory with no claim was not consumed";
           if got then begin
             b.mem.generation <- b.mem.generation + 1;
@@ -2509,7 +2546,9 @@ let commands ~two ~fork =
   let drop_sub =
     command "drop submission"
       (subs ^-> returns unit)
-      (fun c -> c.sub <- None)
+      (fun c ->
+        unhold_sub c;
+        c.sub <- None)
       (fun c -> cells [ c.scl ] (fun () -> Atomic.set c.ss None))
   in
   let drop_kept =
@@ -2522,14 +2561,20 @@ let commands ~two ~fork =
             Atomic.set c.sk None))
   in
   (* A major collection marks the whole heap, and on two domains stops both: it
-     costs most of a program's time, so one draw in four collects. It runs the
-     finalisers of values dropped before it began. *)
+     costs most of a program's time, so one draw in four collects. It collects
+     every value dropped before it, and the drain after it releases the holds
+     of the submissions among them: on one domain, memory such a submission
+     held donates again. *)
   let collects = Gen.int_range 0 3 in
   let collect =
     command "collect"
       (collects @-> world ^-> returns unit)
-      (fun _ _ -> ())
-      (fun k _ -> if k = 0 then Gc.major ())
+      (fun k w -> if k = 0 && not w.two then undrop w)
+      (fun k _ ->
+        if k = 0 then begin
+          Gc.full_major ();
+          ignore (Sys.opaque_identity (B.create Rig.host 0))
+        end)
   in
   (* A command listed [n] times is drawn [n] times as often. *)
   let times n c = List.init n (fun _ -> c) in

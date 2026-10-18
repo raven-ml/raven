@@ -240,8 +240,8 @@ type t = {
   dev : device;
   c : c;
   fixed : buffer array;
-      (** The buffers [c] names, checked live at each submit and kept reachable:
-          [c] holds their stamps without a reference. *)
+      (** The buffers [c] names, held ([held]) and kept reachable: [c] holds
+          their stamps without a reference. *)
   addressable : int;
       (** The first [addressable] buffers of [fixed] are the caller's fixed
           memory; the others belong to parts. *)
@@ -250,9 +250,12 @@ type t = {
           which live while the image is loaded. *)
   uses : use array;  (** Each slot's use. *)
   naming : naming array;  (** What names each slot. *)
-  hold : token option;
+  kept : token option;
       (** The token of the value the submission keeps, kept reachable: its
           collection lets the value go once the work is done. *)
+  held : Claim.hold;
+      (** The hold of [fixed], which every run reads, released once the
+          submission is collected. *)
   blocks : block array;
       (** Each part's block, [no_block] for no launch or fill. *)
   span : (string * string) option;
@@ -663,16 +666,28 @@ let order fn d reach fixed parts =
    work done: its record lands on [d]'s release list, and [d]'s drain defers
    it after the work submitted to [d] by then, which covers every submit of the
    submission. The token keeps [d]'s slot until then. *)
-let hold d v =
+let keep_token d v =
   let t = Memory.token d.live.release (Release (Held v)) 0 max_int (-1) in
   if t == Memory.no_token then Dev.raise_lost d;
   t
 
-let build keep ~fixed d parts =
-  let parts = Array.copy parts in
+(* The buffers every run reads: the fixed memory, the words and the copies'
+   buffer sides. *)
+let named_buffers fixed parts =
+  Array.fold_right
+    (fun p bs ->
+      match p with
+      | Words w -> w :: bs
+      | Copy { src; dst } ->
+          let side s bs = match s with Buffer b -> b :: bs | Slot _ -> bs in
+          side src (side dst bs)
+      | Fill _ | Launch _ -> bs)
+    parts (List.map fst fixed)
+
+let build keep ~fixed ~held d parts =
   let fn = "Submission.make" in
   check_device fn d;
-  let hold = Option.map (hold d) keep in
+  let kept = Option.map (keep_token d) keep in
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
@@ -794,15 +809,25 @@ let build keep ~fixed d parts =
     images = !images;
     uses;
     naming;
-    hold;
+    kept;
+    held;
     blocks;
     span;
     copies;
   }
 
+(* The memory is held first, so that no free returns it while [build] reads
+   it, and given back at once if [build] raises. *)
 let make ?keep ?(fixed = []) d parts =
-  Dev.check_held "Submission.make";
-  build keep ~fixed d parts
+  let fn = "Submission.make" in
+  Dev.check_held fn;
+  let parts = Array.copy parts in
+  let held = Claim.held fn (named_buffers fixed parts) in
+  match build keep ~fixed ~held d parts with
+  | s -> s
+  | exception e ->
+      Claim.unhold held;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let block s i =
   if i < 0 || i >= Array.length s.blocks || s.blocks.(i) == no_block then
@@ -1149,10 +1174,6 @@ let rec hand_over s c run round lacked =
     Dev.raise_point_lost (call_producer c)
   else Dev.raise_lost d
 
-external release_fixed : buffer array -> int -> unit
-  = "caml_rig_claim_drop_prefix"
-[@@noalloc]
-
 let held_exclusive () = invalid_arg "Rig.submit: the memory is held exclusive"
 
 (* Read claims on the [m] buffers of a frame, [m] from 1 to 4, taken in order:
@@ -1331,23 +1352,18 @@ let submit_run s run buffers waits =
   let c = submit_begin run s.c in
   if c = -1 then invalid_argf "Rig.%s: another thread took the run" fn;
   if c = -2 then invalid_argf "Rig.%s: another submit is using the run" fn;
-  let t = ref untaken and claimed = ref 0 in
+  let t = ref untaken in
   match
     t := taking s buffers;
     call_timed c (!t != untaken);
-    (* Fixed and part-owned buffers need the same protection as run buffers:
-       donation cannot overwrite them before hand-over publishes their use. *)
-    while !claimed < Array.length s.fixed do
-      let b = Array.unsafe_get s.fixed !claimed in
-      if not (Memory.claim_add b) then held_exclusive ();
-      incr claimed;
-      Buffer.check_live fn b;
-      check_owner s b
+    (* The submission holds its fixed and part-owned buffers, so they are live
+       and no donation writes them: only their devices may be lost. *)
+    for i = 0 to Array.length s.fixed - 1 do
+      check_owner s (Array.unsafe_get s.fixed i)
     done;
     go s c run buffers waits 0
   with
   | p ->
-      if !claimed > 0 then release_fixed s.fixed !claimed;
       let pair = call_pair c in
       submit_end run c;
       (match s.span with
@@ -1356,11 +1372,11 @@ let submit_run s run buffers waits =
       ignore (Sys.opaque_identity s.c);
       ignore (Sys.opaque_identity s.fixed);
       ignore (Sys.opaque_identity s.images);
-      ignore (Sys.opaque_identity s.hold);
+      ignore (Sys.opaque_identity s.kept);
+      ignore (Sys.opaque_identity s.held);
       ignore (Sys.opaque_identity run.r);
       p
   | exception e ->
-      if !claimed > 0 then release_fixed s.fixed !claimed;
       submit_end run c;
       raise e
 

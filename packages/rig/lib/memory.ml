@@ -755,18 +755,26 @@ let hold_token h = hold_token hold_list h 0 max_int (-1)
 (* The hold of no buffer, which has nothing to release. *)
 let no_hold = no_token
 
+let unhold_all (h : holds) =
+  for i = 0 to Weak.length h.allocs - 1 do
+    match Weak.get h.allocs i with Some a -> unhold h.taken i a | None -> ()
+  done
+
+external token_link : token -> unit = "caml_rig_token_link" [@@noalloc]
+
+(* The holds released, the token's record goes on the list now, and the
+   next drain only frees its node. *)
+let release_hold_now t h =
+  unhold_all h;
+  token_link t
+
 (* Under [hold_lock]: releases the holds at the front of the list's hand whose
    memory is live and pops them: whether there were any. *)
 let release_hold () =
   let n = release_front hold_list in
   n <> 0
   && begin
-    let h = hold_record n in
-    for i = 0 to Weak.length h.allocs - 1 do
-      match Weak.get h.allocs i with
-      | Some a -> unhold h.taken i a
-      | None -> ()
-    done;
+    unhold_all (hold_record n);
     release_pop hold_list;
     true
   end

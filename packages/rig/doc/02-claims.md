@@ -21,8 +21,10 @@ on the memory holds no claim, since the stamps order a write in place after
 it. A function consumes an input it holds exclusive before it touches its
 bytes. Until then every call that touches them refuses the memory, a copy
 the host runs included. The consumed buffer then works with every call,
-`Rig.submit` included. A prepared submission claims its buffers only while
-a submit runs, so a donation between two submits can kill one of them.
+`Rig.submit` included. A prepared submission holds its fixed memory and the
+buffers its parts name for its life. It claims the buffers a submit passes
+only while the submit runs, so a donation between two submits can kill one
+of them.
 
 ## Example
 
