@@ -308,9 +308,150 @@ let test_range_errors () =
       Nx.reduce_ranges Add ~lo:b ~hi:b (Nx.zeros Nx.float32 [| 2 |]));
   invalid ~by (fun () -> Nx.reduce_ranges Add ~lo:b ~hi:b (Nx.zeros Nx.bool [| 2 |]))
 
+(* Signalling NaNs. A Max or Min range is the first NaN of its rows
+   quieted, as {!Nx.max} gives it: its quiet bit set, its sign and the rest
+   of its payload kept, a range of one row too. Drawn at every float format
+   with a NaN, from elements whose NaNs {!Nx_support.signalled} makes
+   signalling. *)
+
+(* Floats that tie often: small integers, [-0], infinities, and NaNs whose
+   payload keeps them NaN once signalling in every float format, the two
+   bits below the quiet bit. *)
+let nan_payloads =
+  [| Int64.float_of_bits 0x7FFC000000000000L; Int64.float_of_bits 0xFFFE000000000000L |]
+
+let draw_float rs =
+  match Random.State.int rs 8 with
+  | 0 | 1 | 2 -> Float.of_int (Random.State.int rs 5 - 2)
+  | 3 -> -0.
+  | 4 -> if Random.State.bool rs then Float.infinity else Float.neg_infinity
+  | _ -> nan_payloads.(Random.State.int rs 2)
+
+(* The order of numbers with [-0] below [+0]. *)
+let order x y =
+  let c = Float.compare x y in
+  if c <> 0 then c else Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+
+type nan_dtype =
+  | Nd :
+      ('v, 's) D.t * (Random.State.t -> 'v) * ('v -> bool) * ('v -> 'v -> int)
+      -> nan_dtype
+
+let real dt = Nd (dt, draw_float, Float.is_nan, order)
+
+let complex dt =
+  Nd
+    ( dt,
+      (fun rs -> { Complex.re = draw_float rs; im = draw_float rs }),
+      (fun z -> Float.is_nan z.Complex.re || Float.is_nan z.im),
+      fun a b ->
+        let c = order a.Complex.re b.Complex.re in
+        if c <> 0 then c else order a.im b.im )
+
+type nan_ranges =
+  | Nan_ranges : {
+      dt : ('v, 's) D.t;
+      nan : 'v -> bool;
+      order : 'v -> 'v -> int;
+      s : int array;
+      bounds : (int * int) array;
+      max : bool;
+      x : 'v array;
+    }
+      -> nan_ranges
+
+(* Rows of one or two elements, and ranges of at least one row. *)
+let nan_ranges =
+  Gen.(
+    let* (Nd (dt, draw, nan, order)) =
+      of_list
+        [
+          real D.Float16;
+          real D.Bfloat16;
+          real D.Float8_e4m3fn;
+          real D.Float8_e5m2;
+          real D.Float32;
+          real D.Float64;
+          complex D.Complex64;
+          complex D.Complex128;
+        ]
+    in
+    let* n = int_range 1 6 in
+    let* w = int_range 1 2 in
+    let* k = int_range 1 5 in
+    let* max = bool in
+    let+ seed = int in
+    let rs = Random.State.make [| seed |] in
+    let bounds =
+      Array.init k (fun _ ->
+          let l = Random.State.int rs n in
+          (l, l + 1 + Random.State.int rs (n - l)))
+    in
+    let x = Array.init (n * w) (fun _ -> draw rs) in
+    Nan_ranges { dt; nan; order; s = [| n; w |]; bounds; max; x })
+  |> Gen.with_pp (fun ppf (Nan_ranges c) ->
+      Format.fprintf ppf "%s of %s %a over %s"
+        (if c.max then "Max" else "Min")
+        (D.name c.dt) pp_ints c.s
+        (String.concat "; "
+           (Array.to_list
+              (Array.map (fun (l, h) -> Printf.sprintf "[%d, %d)" l h) c.bounds))))
+
+let law_nan_ranges (Nan_ranges c) =
+  let x = Nx_support.signalled (A.of_array c.dt c.s c.x) in
+  let bytes a = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))) in
+  let w = D.bits c.dt / 8 and row = c.s.(1) in
+  let elt b k = Array.sub b (k * w) w in
+  let xb = bytes x and xq = bytes (Nx_support.quieted x) in
+  let xs = A.to_array x in
+  let signals k = elt xb k <> elt xq k in
+  (* The position of each range's extreme of element [e]: the first NaN,
+     else the first greatest or least. *)
+  let pick (l, h) e =
+    let best = ref (l * row + e) in
+    for i = l + 1 to h - 1 do
+      let a = xs.(!best) and b = xs.(i * row + e) in
+      let keep =
+        if c.nan a then true
+        else if c.nan b then false
+        else
+          let o = c.order a b in
+          if c.max then o >= 0 else o <= 0
+      in
+      if not keep then best := i * row + e
+    done;
+    !best
+  in
+  let picks =
+    Array.concat
+      (Array.to_list
+         (Array.map (fun b -> Array.init row (fun e -> (b, pick b e))) c.bounds))
+  in
+  cover "one row's signalling NaN"
+    (Array.exists (fun ((l, h), k) -> h - l = 1 && signals k) picks);
+  cover "a signalling NaN first of several rows"
+    (Array.exists (fun ((l, h), k) -> h - l > 1 && signals k) picks);
+  let expected =
+    Array.concat (Array.to_list (Array.map (fun (_, k) -> elt xq k) picks))
+  in
+  let bound f =
+    Nx.create Nx.int64
+      [| Array.length c.bounds |]
+      (Array.map (fun b -> Int64.of_int (f b)) c.bounds)
+  in
+  let y =
+    Nx.reduce_ranges
+      (if c.max then Max else Min)
+      ~lo:(bound fst) ~hi:(bound snd)
+      (Nx.Repr.of_array Nx.Host.v x)
+  in
+  equal (array int) expected (bytes (Option.get (Nx.Repr.array y)))
+
 let ranges =
   group "reduce_ranges"
     [
+      prop "a Max or Min range is its first NaN quieted" nan_ranges
+        law_nan_ranges;
       prop "each range folds its clipped rows in order" ranged law_ranges;
       prop "a range's bits read its rows alone" local law_local;
       test "the doc's sums and maxima" test_range_doc;

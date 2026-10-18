@@ -3640,7 +3640,14 @@ let reduce_ranges c ~lo ~hi x =
           some
       in
       ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
-  | Max | Min -> ranges ~by c ~l ~r x (empty dt start)
+  | Max | Min ->
+      (* A NaN extreme is a row's bits, which the selects keep; quieted as
+         {!max} returns it, flat so that a complex value's parts have an
+         axis to take. *)
+      let y = ranges ~by c ~l ~r x (empty dt start) in
+      let s = shape y in
+      let flat = move ~by (Reshape [| Array.fold_left ( * ) 1 s |]) y in
+      move ~by (Reshape s) (Expand.quieted Eval.eval ~by flat)
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)

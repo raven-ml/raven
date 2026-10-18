@@ -117,6 +117,17 @@ val single : Nx_kernel.Prog.t -> Nx_kernel.Prog.node option
     [Coord], or a kind of [m] operands reading nodes [0] to [m - 1] in order,
     [m] nodes before it. [None] otherwise: a map of [p] expands. *)
 
+val quieted :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t
+(** [quieted apply ~by x] is [x] with each NaN of a float, or NaN part of a
+    complex number, quieted, as the kernels return a NaN term: its quiet bit,
+    the top bit of its fraction, set, its sign and the rest of its payload
+    kept. Other dtypes are [x]. One map; a complex [x] is read as its parts,
+    so it needs an axis below the greatest rank. *)
+
 val sort :
   ('q. by:string -> 'q Value.prim -> 'q) ->
   by:string ->
