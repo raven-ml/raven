@@ -143,7 +143,7 @@ enum { COPY_PARAMS = 3 * sizeof(uint64_t) };
    Device memory, large enough to pay for its launch. */
 static int kernel_copies(const struct device *d, const struct rig_part *p) {
   return p->kind == RIG_COPY && p->copy.device_memory &&
-         p->copy.bytes >= COPY_KERNEL_BYTES && d->copy_launch != NULL;
+         p->copy.width >= COPY_KERNEL_BYTES && d->copy_launch != NULL;
 }
 
 /* Decides the routes of [p]'s parts into [r], the submission's scratch. The
@@ -224,7 +224,7 @@ static int runs(const struct rig_part *p, int n, const uint8_t *args) {
     if (x->queue != COMPUTE && x->queue != COPY) return 0;
     if (x->kind != RIG_WORDS && x->kind != RIG_COPY && x->kind != RIG_LAUNCH)
       return 0;
-    if (x->kind == RIG_COPY && x->copy.bytes > 0 && x->queue != COPY)
+    if (x->kind == RIG_COPY && x->copy.width > 0 && x->queue != COPY)
       return 0;
     if (x->kind == RIG_LAUNCH &&
         (x->queue != COMPUTE || x->launch.launch == NULL ||
@@ -342,7 +342,7 @@ static struct cost need(const struct device *d, const struct route *routes,
       l = d->copy_launch;
       params = COPY_PARAMS;
     } else if (p[i].kind == RIG_COPY)
-      pieces = (p[i].copy.bytes + COPY_MAX - 1) / COPY_MAX;
+      pieces = (p[i].copy.width + COPY_MAX - 1) / COPY_MAX;
     if (l != NULL) {
       qmd = l->qmd[0][0].nbytes + QMD_ALIGN - 1;
       bank = bank_bytes(l, params) + BANK_ALIGN - 1;
@@ -851,12 +851,12 @@ static void launch(struct submission *s, const struct rig_part *p,
 static void copy_compute(struct submission *s, const struct rig_part *p,
                          int waited) {
   uint64_t width = COPY_THREADS * COPY_VECTOR_BYTES;
-  uint64_t groups = (p->copy.bytes + width - 1) / width;
+  uint64_t groups = (p->copy.width + width - 1) / width;
   struct rig_block b = {
       .groups = {groups < COPY_GROUPS ? (uint32_t)groups : COPY_GROUPS, 1, 1},
       .threads = {COPY_THREADS, 1, 1}};
   uint64_t params[3] = {p->copy.dst + p->copy.dst_offset,
-                        p->copy.src + p->copy.src_offset, p->copy.bytes};
+                        p->copy.src + p->copy.src_offset, p->copy.width};
   memcpy(dispatch(s, s->d->copy_launch, &b, sizeof params, waited), params,
          sizeof params);
 }
@@ -870,8 +870,8 @@ static void place(struct device *d, struct channel *c,
   }
   uint64_t dst = p->copy.dst + p->copy.dst_offset;
   uint64_t src = p->copy.src + p->copy.src_offset;
-  for (uint64_t at = 0; at < p->copy.bytes; at += COPY_MAX) {
-    uint64_t n = p->copy.bytes - at < COPY_MAX ? p->copy.bytes - at : COPY_MAX;
+  for (uint64_t at = 0; at < p->copy.width; at += COPY_MAX) {
+    uint64_t n = p->copy.width - at < COPY_MAX ? p->copy.width - at : COPY_MAX;
     emit(d, c, T_COPY, dst + at, src + at, n);
   }
 }

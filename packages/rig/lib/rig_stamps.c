@@ -389,7 +389,9 @@ static void set_copy(struct rig_part *p, const struct rig_side *src,
   p->copy.dst_offset = dst->offset;
   p->copy.src = src->handle;
   p->copy.src_offset = src->offset;
-  p->copy.bytes = src->bytes;
+  p->copy.width = src->bytes;
+  p->copy.rows = 1;
+  p->copy.src_pitch = p->copy.dst_pitch = src->bytes;
   p->copy.local = src->local   ? RIG_LOCAL_SRC
                   : dst->local ? RIG_LOCAL_DST
                                : RIG_LOCAL_NONE;

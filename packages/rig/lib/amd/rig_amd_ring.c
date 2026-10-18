@@ -56,7 +56,7 @@ static uint64_t add(uint64_t a, uint64_t b) {
 
 /* A copy of no bytes places nothing. */
 static int is_copy(const struct rig_part *p) {
-  return p->kind == RIG_COPY && p->copy.bytes > 0;
+  return p->kind == RIG_COPY && p->copy.width > 0;
 }
 
 /* Small copies keep SDMA's lower dispatch cost. */
@@ -66,7 +66,7 @@ static int is_copy(const struct rig_part *p) {
    Device memory, large enough to pay for its dispatch. */
 static int kernel_copies(const struct rig_amd *d, const struct rig_part *p) {
   return p->kind == RIG_COPY && p->copy.device_memory &&
-         p->copy.bytes >= COPY_MIN_BYTES && d->copy_launch != NULL;
+         p->copy.width >= COPY_MIN_BYTES && d->copy_launch != NULL;
 }
 
 /* Decides the routes of [p]'s parts into [r]: a copy the kernel runs
@@ -198,7 +198,7 @@ static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
       *args = align_up(arguments(l, 3 * sizeof(uint64_t)), SEGMENT_ALIGN);
       return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
     }
-    return copies(d, p->copy.bytes) * (uint64_t)words_of(d, S_COPY);
+    return copies(d, p->copy.width) * (uint64_t)words_of(d, S_COPY);
   }
 }
 
@@ -728,8 +728,8 @@ static void copy(struct submission *s, const struct rig_part *p) {
   struct rig_amd_ring *r = &d->rings[RIG_AMD_COPY];
   uint64_t dst = p->copy.dst + p->copy.dst_offset;
   uint64_t src = p->copy.src + p->copy.src_offset;
-  for (uint64_t off = 0; off < p->copy.bytes; off += d->max_copy) {
-    uint64_t n = p->copy.bytes - off;
+  for (uint64_t off = 0; off < p->copy.width; off += d->max_copy) {
+    uint64_t n = p->copy.width - off;
     emit(d, r, S_COPY, dst + off, src + off, n < d->max_copy ? n : d->max_copy);
   }
 }
@@ -796,13 +796,13 @@ static void copy_compute(struct submission *s, const struct rig_part *p,
   struct rig_amd_segment *g = &s->d->segment;
   const struct rig_amd_launch *l = s->d->copy_launch;
   uint64_t width = COPY_THREADS * COPY_VECTOR_BYTES;
-  uint64_t groups = (p->copy.bytes + width - 1) / width;
+  uint64_t groups = (p->copy.width + width - 1) / width;
   struct rig_block b = {
       .groups = {groups < COPY_GROUPS ? (uint32_t)groups : COPY_GROUPS, 1, 1},
       .threads = {COPY_THREADS, 1, 1}};
   uint64_t at = g->put % g->size;
   uint64_t params[3] = {p->copy.dst + p->copy.dst_offset,
-                        p->copy.src + p->copy.src_offset, p->copy.bytes};
+                        p->copy.src + p->copy.src_offset, p->copy.width};
   memcpy(g->host + at, params, sizeof params);
   implicit(l, &b, g->host + at);
   g->put += align_up(arguments(l, sizeof params), SEGMENT_ALIGN);

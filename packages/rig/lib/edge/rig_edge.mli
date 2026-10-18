@@ -78,7 +78,9 @@ type memory =
 type kind =
   | Words  (** 32-bit words placed on the queue. *)
   | Fill  (** A C function called with the queue's context. *)
-  | Copy  (** A copy between memory of the device. *)
+  | Copy
+      (** A copy of rows of bytes between memory of the device, or a fill of
+          its memory with a byte. *)
   | Launch  (** A function of an image run over a grid of groups of threads. *)
 
 type queue = {

@@ -79,7 +79,9 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
     case RIG_COPY:
       p[i].copy.dst = (uint64_t)at(k, part_dst);
       p[i].copy.src = (uint64_t)at(k, part_src);
-      p[i].copy.bytes = (uint64_t)at(k, part_copy);
+      p[i].copy.width = (uint64_t)at(k, part_copy);
+      p[i].copy.rows = 1;
+      p[i].copy.src_pitch = p[i].copy.dst_pitch = p[i].copy.width;
       break;
     case RIG_LAUNCH:
       p[i].launch.code = (uint64_t)at(k, part_code);

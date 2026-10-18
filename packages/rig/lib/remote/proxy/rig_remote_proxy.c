@@ -124,7 +124,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
     }
     n += 1 + 8 + (p->copy.local == RIG_LOCAL_SRC ? 1 : 17) +
          (p->copy.local == RIG_LOCAL_DST ? 1 : 17);
-    bytes += p->copy.bytes;
+    bytes += p->copy.width;
     if (p->copy.local == RIG_LOCAL_SRC) nreads++;
     if (p->copy.local != RIG_LOCAL_DST) continue;
     struct rig_remote_local *c = malloc(sizeof *c);
@@ -132,7 +132,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
     c->next = NULL;
     c->value = v;
     c->at = (unsigned char *)(uintptr_t)p->copy.dst + p->copy.dst_offset;
-    c->bytes = p->copy.bytes;
+    c->bytes = p->copy.width;
     if (locals_last != NULL)
       locals_last->next = c;
     else
@@ -166,7 +166,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
       continue;
     }
     *b++ = 1;
-    b = put_u64(b, p->copy.bytes);
+    b = put_u64(b, p->copy.width);
     b = put_side(b, p->copy.local == RIG_LOCAL_SRC, p->copy.src,
                  p->copy.src_offset);
     b = put_side(b, p->copy.local == RIG_LOCAL_DST, p->copy.dst,
@@ -178,7 +178,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
     if (p->kind != RIG_COPY || p->copy.local != RIG_LOCAL_SRC) continue;
     frame->spans[j].p =
         (const unsigned char *)(uintptr_t)p->copy.src + p->copy.src_offset;
-    frame->spans[j++].n = p->copy.bytes;
+    frame->spans[j++].n = p->copy.width;
   }
 
   /* The receiving thread finds the copies into this process's memory and the

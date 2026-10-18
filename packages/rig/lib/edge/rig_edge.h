@@ -91,19 +91,27 @@ struct rig_args {
    - RIG_FILL: [fill.fn] called with the queue's context, the host address
      of its argument, [fill.args] placed (rig_fill), and [v], which returns
      0 or a failure;
-   - RIG_COPY: [copy.bytes] bytes from [copy.src_offset] bytes into the
-     memory whose handle is [copy.src] to [copy.dst_offset] bytes into the
-     memory whose handle is [copy.dst]. The two ranges share no byte. Where
-     [copy.local] is RIG_LOCAL_SRC or RIG_LOCAL_DST, that side is memory of
-     the calling process instead: its handle field holds the host address of
-     the memory, and its offset field the offset into it. Only a driver of a
+   - RIG_COPY: [copy.rows] rows of [copy.width] bytes. Row i goes from
+     [copy.src_offset + i * copy.src_pitch] bytes into the memory whose
+     handle is [copy.src] to [copy.dst_offset + i * copy.dst_pitch] bytes
+     into the memory whose handle is [copy.dst]. Each pitch is at least
+     [copy.width], and no destination byte is a source byte or lies in two
+     rows. A copy of one run has one row and pitches of [copy.width]. Where
+     [copy.fill] is 1 the part reads no memory: it has one row, every
+     destination byte takes [copy.byte], and [copy.src], [copy.src_offset],
+     [copy.src_pitch] and [copy.local] are 0. Where [copy.local] is
+     RIG_LOCAL_SRC or RIG_LOCAL_DST, that side is memory of the calling
+     process instead: its handle field holds the host address of the
+     memory, and its offset field the offset into it. Only a driver of a
      device of another machine is handed one. [copy.device_memory] is 1
      exactly when both buffers' original allocations belong to this device
      and have memory kind Device. Views and borrows on the owning device
      preserve it. Pinned, Mapped, this process's host memory, peer borrows
      and unbacked empty buffers have 0. Every field of a copy part may
      differ from one call to the next, since its ends may be a run's
-     buffers. The driver chooses how to copy on each call;
+     buffers. The driver runs every copy and fill, whatever its rows and
+     pitches, splitting it where its engine's fields are narrower, and
+     chooses how on each call;
    - RIG_LAUNCH: the function whose entry is [launch.code] and
      [launch.launch] (the [code] and [launch] the driver's [entry] gave) run
      once, over the grid of the struct rig_block at byte [launch.args.block]
@@ -130,8 +138,10 @@ struct rig_part {
       struct rig_args args;
     } fill;
     struct {
-      uint64_t dst, dst_offset, src, src_offset, bytes;
-      int local, device_memory;
+      uint64_t dst, dst_offset, src, src_offset, width, rows, src_pitch,
+          dst_pitch;
+      int local, device_memory, fill;
+      uint8_t byte;
     } copy;
     struct {
       uint64_t code;

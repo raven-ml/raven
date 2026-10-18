@@ -103,10 +103,10 @@ static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
         *failure = "a fill failed";
         return RIG_FAILED;
       }
-    } else if (p->copy.bytes != 0)
+    } else if (p->copy.width != 0)
       memmove((char *)(uintptr_t)p->copy.dst + p->copy.dst_offset,
               (const char *)(uintptr_t)p->copy.src + p->copy.src_offset,
-              (size_t)p->copy.bytes);
+              (size_t)p->copy.width);
   }
   atomic_store_explicit(m->word, v, memory_order_release);
   return RIG_COMMITTED;

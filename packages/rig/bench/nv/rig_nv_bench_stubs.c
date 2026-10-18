@@ -223,7 +223,10 @@ value rig_nv_bench_copy(value v_dst, value v_src, value v_n) {
                       .kind = RIG_COPY,
                       .copy = {.dst = (uint64_t)Long_val(v_dst),
                                .src = (uint64_t)Long_val(v_src),
-                               .bytes = (uint64_t)Long_val(v_n)}};
+                               .width = (uint64_t)Long_val(v_n),
+                               .rows = 1,
+                               .src_pitch = (uint64_t)Long_val(v_n),
+                               .dst_pitch = (uint64_t)Long_val(v_n)}};
   submit(NULL, 0, &p, 1);
   spin();
   return Val_unit;

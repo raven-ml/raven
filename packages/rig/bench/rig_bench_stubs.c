@@ -130,7 +130,9 @@ value rig_bench_floor_copy(value v_f, value v_queue, value v_dst, value v_src,
   f->part.kind = RIG_COPY;
   f->part.copy.dst = (uint64_t)Nativeint_val(v_dst);
   f->part.copy.src = (uint64_t)Nativeint_val(v_src);
-  f->part.copy.bytes = (uint64_t)Long_val(v_n);
+  f->part.copy.width = (uint64_t)Long_val(v_n);
+  f->part.copy.rows = 1;
+  f->part.copy.src_pitch = f->part.copy.dst_pitch = (uint64_t)Long_val(v_n);
   return Val_unit;
 }
 

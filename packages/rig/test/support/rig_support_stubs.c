@@ -754,7 +754,7 @@ static void run_one(struct polled *p, struct queued *s) {
          handles do. */
       move_bytes((uintptr_t)part->copy.dst + part->copy.dst_offset,
                  (uintptr_t)part->copy.src + part->copy.src_offset,
-                 (size_t)part->copy.bytes);
+                 (size_t)part->copy.width);
       if (r->nsides < LAST_COPIES) {
         r->sides[r->nsides] = part->copy.local;
         r->device_memory[r->nsides++] = part->copy.device_memory;

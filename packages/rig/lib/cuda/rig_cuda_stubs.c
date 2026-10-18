@@ -1188,7 +1188,7 @@ static CUresult launch(const struct submission *s, CUstream stream,
 /* Enqueues the work of the part [p] on [stream]. */
 static CUresult work(struct submission *s, CUstream stream,
                      const struct rig_part *p, uint64_t v) {
-  s->bytes = p->kind == RIG_COPY ? p->copy.bytes : 0;
+  s->bytes = p->kind == RIG_COPY ? p->copy.width : 0;
   switch (p->kind) {
   case RIG_FILL:
     return in_step(s, filling, rig_fill(stream, p, s->args, s->slots, v));
@@ -1198,7 +1198,7 @@ static CUresult work(struct submission *s, CUstream stream,
     return in_step(s, copying,
                    p_cuMemcpyAsync(p->copy.dst + p->copy.dst_offset,
                                    p->copy.src + p->copy.src_offset,
-                                   p->copy.bytes, stream));
+                                   p->copy.width, stream));
   }
 }
 
