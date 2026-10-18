@@ -1428,6 +1428,18 @@ module Conv = struct
        let* dilation = ints k 1 2 in
        let* los = ints k (-1) 2 in
        let* his = ints k (-1) 2 in
+       (* One case in ten makes axis 0 an input below the formula's extent:
+          one window of one tap, stride 2, over an input of 1 padded by 1 on
+          each side, which an input of 0 has too. Drawn freely it is about
+          one case in a hundred, which some seeds never reach. *)
+       let* below = int_range 0 9 in
+       let at0 v a =
+         if below = 0 then Array.mapi (fun i e -> if i = 0 then v else e) a
+         else a
+       in
+       let spatial = at0 1 spatial and taps = at0 1 taps in
+       let stride = at0 2 stride and dilation = at0 1 dilation in
+       let los = at0 1 los and his = at0 1 his in
        let c0 =
          { n; spatial; groups; cg; og; taps; stride; dilation;
            padding = Array.map2 (fun a b -> (a, b)) los his; xs = [||]; ws = [||] }
