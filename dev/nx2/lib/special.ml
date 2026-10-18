@@ -12,7 +12,7 @@
    maps the whole domain into one region (a reflection, a recurrence shifted by
    a masked count), the input is mapped and one formula runs. Edges and NaN are
    selected last. The tables come from [Special_tables], which
-   packages/nx/test/gen/special.py writes. *)
+   dev/nx2/test/gen/special.py writes. *)
 
 module D = Nx_array.Dtype
 module E = Nx_kernel.Prog.E

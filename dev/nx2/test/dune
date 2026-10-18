@@ -86,9 +86,8 @@
   threads.posix
   unix
   windtrap)
- ; test_special reads nx's goldens of its special functions.
  (deps
-  (glob_files ../../../packages/nx/test/golden/special/*.golden)))
+  (glob_files golden/special/*.golden)))
 
 (copy_files
  (files ../lib/{grid,devices,route,prim,place,pairwise,expand,partial,exec,repr}.{ml,mli}))

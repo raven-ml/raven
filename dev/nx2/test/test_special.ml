@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's special functions against correctly rounded references (nx's
-   golden/special/, written by its gen/special.py), at the bounds nx.mli
+(* nx's special functions against correctly rounded references
+   (golden/special/, written by gen/special.py), at the bounds nx.mli
    states per function and dtype; the narrow floats at the rule nx.mli states
    for them; the laws the functions keep; their edges. *)
 
@@ -25,7 +25,7 @@ let values = Nx.to_array
    the dtype's range. *)
 type row = { args : float array; value : float; overflow : bool; scale : float }
 
-let goldens = "../../../packages/nx/test/golden/special"
+let goldens = "golden/special"
 
 (* The rows of the golden of [name] at the dtype named [short] ("f32",
    "f64"). *)
