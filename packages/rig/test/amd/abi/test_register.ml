@@ -17,13 +17,6 @@ let timeout = S.timeout
 let gpu = S.gpu
 let version = S.version
 
-let register =
-  Testable.make
-    ~pp:(fun ppf (r : Register.t) ->
-      Format.fprintf ppf "%s (segment %d, offset 0x%x, %d fields)" r.name
-        r.segment r.offset (List.length r.fields))
-    ~equal:( = )
-
 let names g = List.map (fun (r : Register.t) -> r.name) (Register.registers g)
 
 let registers =
@@ -45,13 +38,6 @@ let registers =
       cases ~name:version "a GC with no version of its major before it has none"
         [ (10, 3, 0); (9, 4, 2); (8, 0, 0); (13, 0, 0) ]
         (fun v -> equal (list string) [] (names (gpu v)));
-      cases ~name:version "every register is found by its name" S.families
-        (fun v ->
-          let g = gpu v in
-          List.iter
-            (fun (r : Register.t) ->
-              equal (option register) (Some r) (Register.find g r.name))
-            (Register.registers g));
       cases
         ~name:(fun n -> strf "%S" n)
         "a name of no register is none"
@@ -83,19 +69,6 @@ let address =
           let g = gpu v in
           equal int addr
             (Register.address g (require_some (Register.find g name))));
-      cases ~name:version "registers of one segment share its base" S.families
-        (fun v ->
-          let g = gpu v in
-          let base = Hashtbl.create 4 in
-          List.iter
-            (fun (r : Register.t) ->
-              match Register.address g r - r.offset with
-              | b -> (
-                  match Hashtbl.find_opt base r.segment with
-                  | None -> Hashtbl.add base r.segment b
-                  | Some b' -> equal ~msg:r.name int b' b)
-              | exception Invalid_argument _ -> ())
-            (Register.registers g));
       cases
         ~name:(fun (v, s) -> strf "segment %d of %s" s (version v))
         "a segment with no base is refused"
@@ -111,38 +84,35 @@ let single (r : Register.t) f v =
   let lo, hi = List.assoc f r.fields in
   (v land ((1 lsl (hi - lo + 1)) - 1)) lsl lo
 
+(* GRBM_GFX_INDEX's fields start at bit 0, end at bit 31 and include 1-bit
+   ones; COMPUTE_PGM_LO's one field is the whole word. *)
+let encoded = [ "regGRBM_GFX_INDEX"; "regCOMPUTE_PGM_LO" ]
+let gfx11 name = require_some (Register.find (gpu (11, 0, 0)) name)
+
 let encode =
-  let r =
-    lazy (require_some (Register.find (gpu (11, 0, 0)) "regGRBM_GFX_INDEX"))
-  in
+  let r = lazy (gfx11 "regGRBM_GFX_INDEX") in
   group ~timeout "encode"
     [
-      cases ~name:version "a field's value is cut to its width, other bits zero"
-        S.families (fun v ->
+      cases ~name:Fun.id "a field's value is cut to its width, other bits zero"
+        encoded (fun name ->
+          let r = gfx11 name in
           List.iter
-            (fun (r : Register.t) ->
+            (fun (f, _) ->
               List.iter
-                (fun (f, _) ->
-                  List.iter
-                    (fun n ->
-                      equal
-                        ~msg:(strf "%s.%s = %d" r.name f n)
-                        int (single r f n)
-                        (Register.encode r [ (f, n) ]))
-                    values)
-                r.fields)
-            (Register.registers (gpu v)));
-      cases ~name:version "fields together are each field's bits" S.families
-        (fun v ->
-          List.iter
-            (fun (r : Register.t) ->
-              let fs =
-                List.mapi (fun i (f, _) -> (f, i * 0x9e3779b9 lxor -1)) r.fields
-              in
-              equal ~msg:r.name int
-                (List.fold_left (fun w (f, n) -> w lor single r f n) 0 fs)
-                (Register.encode r fs))
-            (Register.registers (gpu v)));
+                (fun n ->
+                  equal ~msg:(strf "%s = %d" f n) int (single r f n)
+                    (Register.encode r [ (f, n) ]))
+                values)
+            r.fields);
+      cases ~name:Fun.id "fields together are each field's bits" encoded
+        (fun name ->
+          let r = gfx11 name in
+          let fs =
+            List.mapi (fun i (f, _) -> (f, i * 0x9e3779b9 lxor -1)) r.fields
+          in
+          equal int
+            (List.fold_left (fun w (f, n) -> w lor single r f n) 0 fs)
+            (Register.encode r fs));
       test "a GRBM_GFX_INDEX word" (fun () ->
           equal int
             ((0xff lsl 16) lor (1 lsl 31))

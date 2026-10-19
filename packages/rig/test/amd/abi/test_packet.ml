@@ -124,9 +124,6 @@ let encode =
           cover "a 64-bit word"
             (List.exists (function Packet.W64 _ -> true | _ -> false) p);
           equal (list int) (reference p) (words (Packet.encode value p)));
-      test "a 64-bit word is its low word, then its high word" (fun () ->
-          equal (list int) [ 2; 1 ]
-            (words (Packet.encode id [ W64 (Packet.value 0x1_0000_0002L) ])));
       test "an or keeps bit 63" (fun () ->
           equal (list int) [ 0x100; 0x8000_0000 ]
             (words

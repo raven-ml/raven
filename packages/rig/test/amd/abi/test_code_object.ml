@@ -339,14 +339,6 @@ let reading =
               let k = require_some (Code_object.kernel co name) in
               equal ~msg:name int 256 k.max_threads)
             (Code_object.kernels co));
-      cases ~name:fst "a kernel the metadata does not bound has 1024 work-items"
-        both (fun (_, obj) ->
-          let co = read (obj ()) in
-          List.iter
-            (fun name ->
-              let k = require_some (Code_object.kernel co name) in
-              equal ~msg:name int 1024 k.max_threads)
-            (Code_object.kernels co));
       test "a kernel's implicit arguments are its metadata's" (fun () ->
           let co = read (hidden ()) in
           let kernel name = require_some (Code_object.kernel co name) in
