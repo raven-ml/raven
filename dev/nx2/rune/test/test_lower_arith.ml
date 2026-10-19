@@ -152,6 +152,47 @@ let int_specials w =
 
 let codes n = List.init n Int64.of_int
 
+(* A complex dtype's parts beyond its format's specials, each of both signs: the
+   unit circle's neighbourhood, where log |z| takes log1p, and magnitudes either
+   side of each switch its kinds take: exp's near range, the clamps of e^z and
+   2^z, where sinh and cosh are e^|x|/2, where asin turns to its terms at
+   infinity, the switch to Payne and Hanek of y and of 2^z's phase y ln2, and
+   atanh's overflow guard. *)
+let c64_parts =
+  [ 0.5; 2.; 0.6; 0.8; 0x1.fffffep-1; 13.; 100.; 200.; 300. ]
+  @ [ 12288.; 40000.; 49152.; 0x1p63; 1e30 ]
+
+let c128_parts =
+  [ 0.5; 2.; 0.6; 0.8; 0x1.fffffffffffffp-1; 23.; 800.; 1500.; 2200. ]
+  @ [ 3e8; 0x1.8p28; 0x1.8p29; 0x1p511; 1e300 ]
+
+(* Leading pairs, which binary kinds also meet as every pair of two: real,
+   imaginary and zero numbers, infinite and NaN parts, a negative real. *)
+let leading =
+  let nan = Float.nan and inf = Float.infinity in
+  [
+    (1., 0.);
+    (0., 1.);
+    (-2., 0.);
+    (0.5, -0.5);
+    (2., -0.);
+    (-0., -2.);
+    (inf, 0.);
+    (0., Float.neg inf);
+    (nan, 1.);
+    (1., nan);
+    (-1.5, 3.);
+    (0., 0.);
+  ]
+
+(* The leading pairs, then every pair of the format's specials and [parts]. *)
+let complex_specials ~e ~m w bits_of parts =
+  let signed = List.concat_map (fun x -> [ bits_of x; bits_of (-.x) ]) parts in
+  let ps = format_specials ~e ~m @ signed in
+  let lead = List.map (fun (re, im) -> le w (bits_of re) ^ le w (bits_of im)) in
+  lead leading
+  @ List.concat_map (fun re -> List.map (fun im -> le w re ^ le w im) ps) ps
+
 let specials (D.Any dt as d) : string list =
   let w = bytes d in
   let of_list xs = List.map (le w) xs in
@@ -164,14 +205,9 @@ let specials (D.Any dt as d) : string list =
   | D.Float8_e4m3fn | D.Float8_e5m2 | D.Uint8 | D.Int8 -> of_list (codes 256)
   | D.Float4_e2m1fn | D.Int4 | D.Uint4 -> of_list (codes 16)
   | D.Bool | D.Bit -> of_list (codes 2)
-  | D.Complex64 ->
-      let fs = format_specials ~e:8 ~m:23 in
-      let fs = List.filteri (fun i _ -> i < 12) fs in
-      List.concat_map (fun re -> List.map (fun im -> le 4 re ^ le 4 im) fs) fs
+  | D.Complex64 -> complex_specials ~e:8 ~m:23 4 f32_bits c64_parts
   | D.Complex128 ->
-      let fs = format_specials ~e:11 ~m:52 in
-      let fs = List.filteri (fun i _ -> i < 12) fs in
-      List.concat_map (fun re -> List.map (fun im -> le 8 re ^ le 8 im) fs) fs
+      complex_specials ~e:11 ~m:52 8 Int64.bits_of_float c128_parts
   | _ -> of_list (int_specials (bits d))
 
 (* A random element: random bits, or a float of moderate size. *)
@@ -366,6 +402,9 @@ let unaries =
       (Sinh, "sinh");
       (Cosh, "cosh");
       (Tanh, "tanh");
+      (Asinh, "asinh");
+      (Acosh, "acosh");
+      (Atanh, "atanh");
       (Erf, "erf");
       (Floor, "floor");
       (Ceil, "ceil");

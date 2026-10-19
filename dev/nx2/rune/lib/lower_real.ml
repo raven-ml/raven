@@ -502,17 +502,68 @@ let two_over_pi_words =
     0x9AF4361DL;
   |]
 
-(* [window g n nb] reads the 32 bits of 2/pi from bit [g] on, bit 0 the first of
-   the zero word, and from bits [g + 32], ..., [g + 32 (n - 1)]: the table's
-   words [w] to [w + n], [w = g >> 5] of [nb] bits, are moved into place by one
+(* The bits of 2 ln2 / pi after the point, behind one zero word, for the complex
+   exp2's phase y ln2, reduced as the trigonometric kinds reduce theirs. *)
+let two_ln2_over_pi_words =
+  [|
+    0x00000000L;
+    0x70F7263DL;
+    0xFA5A6EECL;
+    0xB608582EL;
+    0x55FEF3DDL;
+    0x8E13BECDL;
+    0x1D495C36L;
+    0x1D72013AL;
+    0xEA9F8FCAL;
+    0x76E866FCL;
+    0x9B48BE48L;
+    0x15F5CB6FL;
+    0xD8BEE211L;
+    0x0394DB30L;
+    0x20D6EB52L;
+    0x30FFA9AEL;
+    0x90CBC735L;
+    0x51358CEDL;
+    0x67C0DB3CL;
+    0x490D15BDL;
+    0xD91A29F5L;
+    0x682402AFL;
+    0x5E8F9C23L;
+    0xBFF15CBCL;
+    0x71F05FEDL;
+    0xFE0BB062L;
+    0x2A8C8F67L;
+    0x7309C45AL;
+    0x7502282AL;
+    0xEAD0C243L;
+    0x5C5527BBL;
+    0x759F345EL;
+    0x2D0628E8L;
+    0xB1A563A2L;
+    0x53E62918L;
+    0xEA5FFDABL;
+    0xEAC0D479L;
+    0xCFEDB1B6L;
+    0xFC78B439L;
+    0xA333A25FL;
+    0xDC77BE31L;
+  |]
+
+type table = Two_over_pi | Two_ln2_over_pi
+
+let table_words = function
+  | Two_over_pi -> two_over_pi_words
+  | Two_ln2_over_pi -> two_ln2_over_pi_words
+
+(* [window t g n nb] reads [n] runs of 32 bits of table [t]'s number, from bits
+   [g], [g + 32] and so on, bit 0 the first of the zero word: the table's words
+   [w] to [w + n], [w = g >> 5] of [nb] bits, are moved into place by one
    selection per bit of [w], as a barrel shifter does. *)
-let window g n nb =
+let window t g n nb =
+  let t = table_words t in
   let w = shr g 5 in
   let sh = Ops.cast (band g (int g 31)) Uint64 in
-  let at m =
-    u64 g
-      (if m < Array.length two_over_pi_words then two_over_pi_words.(m) else 0L)
-  in
+  let at m = u64 g (if m < Array.length t then t.(m) else 0L) in
   let words = ref (Array.init (n + (1 lsl nb)) at) in
   for b = nb - 1 downto 0 do
     let step = 1 lsl b and prev = !words in
@@ -527,11 +578,12 @@ let window g n nb =
       let pair = bor (shl ws.(j) 32) ws.(j + 1) in
       band (shr (Ops.shl pair sh) 32) (u64 g 0xFFFFFFFFL))
 
-(* Payne and Hanek at float32, for finite |x| >= 2^15: x = m 2^e, and a window W
-   of 96 bits of 2/pi gives x 2/pi = m W 2^-94 mod 4. Bits 94 and 95 of m W are
-   q, the 64 below the fraction, rounded to nearest so that it is signed. Other
-   lanes read a safe exponent. *)
-let rem_big32 x =
+(* Payne and Hanek at float32: x k reduced by pi/2, for finite |x| >= 2^15 and
+   [t] the bits of k 2/pi, below 1. x = m 2^e, and a window W of 96 bits of [t]
+   gives x t = m W 2^-94 mod 4. Bits 94 and 95 of m W are q, the 64 below the
+   fraction, rounded to nearest so that it is signed. Other lanes read a safe
+   exponent. *)
+let rem_big32 t x =
   let ix = band (bits x) (mag_word x) in
   let big = word ix (pick x pio2_big) in
   let ix = where (lt ix big) big ix in
@@ -541,7 +593,7 @@ let rem_big32 x =
     Ops.cast (bor (band ix (word ix 0x007FFFFFL)) (word ix 0x00800000L)) Uint64
   in
   let g = Ops.add e (int e 30) in
-  let w = window g 3 3 in
+  let w = window t g 3 3 in
   let a0 = m *: w.(2) and a1 = m *: w.(1) and a2 = m *: w.(0) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
   let t1 = Ops.add (shr a0 32) a1 in
@@ -568,7 +620,7 @@ let rem_big32 x =
 
 (* Payne and Hanek at float64, for finite |x| >= 2^28: m of 53 bits and a window
    of 192 bits, the fraction's top 128 bits kept. *)
-let rem_big64 x =
+let rem_big64 t x =
   let ix = band (bits x) (mag_word x) in
   let big = word ix (pick x pio2_big) in
   let ix = where (lt ix big) big ix in
@@ -578,7 +630,7 @@ let rem_big64 x =
     bor (band ix (word ix 0x000FFFFFFFFFFFFFL)) (word ix 0x0010000000000000L)
   in
   let g = Ops.add e (int e 30) in
-  let win = window g 6 5 in
+  let win = window t g 6 5 in
   let w = Array.init 6 (fun j -> win.(5 - j)) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
   let ml = low m and mh = shr m 32 in
@@ -624,9 +676,11 @@ let trig_big x =
   Ops.logical_not (lt a (word a (pick x pio2_big)))
   &&: lt a (word a (pick x inf_bits))
 
+let rem_big t x = if wide x then rem_big64 t x else rem_big32 t x
+
 let rem x =
   let big = trig_big x in
-  let bh, bl, bq = if wide x then rem_big64 x else rem_big32 x in
+  let bh, bl, bq = rem_big Two_over_pi x in
   let nh, nl, nq = rem_cw x in
   (where big bh nh, where big bl nl, where big bq nq)
 
@@ -653,19 +707,22 @@ let flip2 y k =
 let odd q = set (band q (int q 1))
 let small x = Ops.logical_not (ge (magnitude x) (con x trig_tiny))
 
-let sin x =
-  let hi, lo, q = rem x in
+(* sin x and cos x from x's reduction [(hi, lo, q)]. *)
+
+let sin_at x (hi, lo, q) =
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (ch +: cl) (sh +: sl)) q in
   let y = where (is_nan y) (nan y) y in
   where (small x) x y
 
-let cos x =
-  let hi, lo, q = rem x in
+let cos_at x (hi, lo, q) =
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Ops.add q (int q 1)) in
   let y = where (is_nan y) (nan y) y in
   where (is_nan x) x y
+
+let sin x = sin_at x (rem x)
+let cos x = cos_at x (rem x)
 
 let tan x =
   let hi, lo, q = rem x in
@@ -1151,6 +1208,9 @@ let unary (k : Nx_kernel.Prog.unary) x =
   | Ceil -> ceil x
   | Round -> round x
   | Trunc -> trunc x
+  | Asinh -> invalid_arg "Lower_real.unary: floats do not take Asinh"
+  | Acosh -> invalid_arg "Lower_real.unary: floats do not take Acosh"
+  | Atanh -> invalid_arg "Lower_real.unary: floats do not take Atanh"
 
 let binary (k : Nx_kernel.Prog.binary) x y =
   match k with
@@ -1176,3 +1236,8 @@ let compare (k : Nx_kernel.Prog.compare) x y =
 let fma a b c =
   let r = nan1 c (mulacc a b c) in
   where (is_nan a) a (where (is_nan b) b r)
+
+(* Parts of the complex kinds *)
+
+let exp_q r = poly r exp_q
+let exp2_poly r = poly r exp2_p

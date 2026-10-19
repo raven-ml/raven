@@ -80,9 +80,6 @@ let ( lsr ) x n = Ops.shr x (num x n)
 let ( < ) = Ops.lt
 let ( = ) = Ops.eq
 let ( <> ) = Ops.ne
-
-(* IEEE's [x <= y], false on NaN. *)
-let at_most x y = x < y || x = y
 let of_bits t u = Ops.bitcast u t
 let one_if c u = where c (num u 1) (num u 0)
 
@@ -418,76 +415,11 @@ let bool_compare (k : P.compare) x y =
   | Less -> not_ x && y
   | Less_equal -> not_ x || y
 
-(* Complex
-
-   Parts are float32 or float64 nodes. Add, Sub and Neg are the parts' kinds.
-   Mul is the textbook product, each part one fused multiply-add over the other
-   product; Fdiv is Smith's algorithm, the divisor's larger part dividing its
-   smaller. Their NaN parts are the quiet NaN of a clear sign bit. *)
-
-let fdiv x y = Ops.alu x Op.Fdiv [ y ]
-let quiet x = where (is_nan x) (nan x) x
-
-let c_mul (ar, ai) (br, bi) =
-  let ii = ai * bi and ir = ai * br in
-  (quiet (mulacc ar br (negated ii)), quiet (mulacc ar bi ir))
-
-let c_div (ar, ai) (br, bi) =
-  let pb = magnitude br and pi = magnitude bi in
-  let big = pi < pb || pb = pi in
-  let p = where big br bi and q = where big bi br in
-  let x = where big ar ai and y = where big ai ar in
-  let r = fdiv q p in
-  let d = mulacc r q p in
-  let im = where big (mulacc (negated r) x y) (mulacc r x (negated y)) in
-  (quiet (fdiv (mulacc r y x) d), quiet (fdiv im d))
-
-let c_nan (re, im) = is_nan re || is_nan im
-
-(* Whether [x] precedes [y] in the order with -0 below +0, neither NaN. *)
-let before x y = x < y || (x = y && negative x && not_ (negative y))
-let same x y = x = y && negative x = negative y
-let c_before (ar, ai) (br, bi) = before ar br || (same ar br && before ai bi)
-
-(* The first NaN operand, else [pick a b], whether to give [b]. *)
-let c_extreme pick a b =
-  let take c (x, y) (u, v) = (where c x u, where c y v) in
-  let gives_b = not_ (c_nan a) && (c_nan b || pick a b) in
-  take gives_b b a
-
-let c_compare (k : P.compare) ((ar, ai) as a) ((br, bi) as b) =
-  let ordered = not_ (c_nan a || c_nan b) in
-  match k with
-  | Equal -> ar = br && ai = bi
-  | Not_equal -> not_ (ar = br && ai = bi)
-  | Less -> ordered && (ar < br || (ar = br && ai < bi))
-  | Less_equal -> ordered && (ar < br || (ar = br && at_most ai bi))
-
 let pair = function
   | [ re; im ] -> (re, im)
   | _ -> invalid_arg "Lower_arith: a complex value"
 
 let unpair (re, im) = [ re; im ]
-
-let c_unary (k : P.unary) xs =
-  match k with
-  | Neg -> List.map (Lower_real.unary Neg) xs
-  | Recip ->
-      let re, _ = pair xs in
-      let one = Shape.const_like re (`Float 1.)
-      and zero = Shape.const_like re (`Float 0.) in
-      unpair (c_div (one, zero) (pair xs))
-  | _ -> invalid_arg "Lower_arith: a real kind of complex numbers"
-
-let c_binary (k : P.binary) xs ys =
-  let a = pair xs and b = pair ys in
-  match k with
-  | Add | Sub -> List.map2 (Lower_real.binary k) xs ys
-  | Mul -> unpair (c_mul a b)
-  | Fdiv -> unpair (c_div a b)
-  | Maximum -> unpair (c_extreme (fun a b -> c_before a b) a b)
-  | Minimum -> unpair (c_extreme (fun a b -> c_before b a) a b)
-  | _ -> invalid_arg "Lower_arith: a real kind of complex numbers"
 
 (* Casts
 
@@ -631,7 +563,7 @@ let op1 (k : P.op1) ~src:(D.Any s as src) dt xs =
   | Unary u -> (
       match D.kind s with
       | Float -> [ narrowed src (fun xs -> Lower_real.unary u (one xs)) xs ]
-      | Complex -> c_unary u xs
+      | Complex -> unpair (Lower_complex.unary u (pair xs))
       | Signed | Unsigned -> [ int_unary src u (one xs) ]
       | Boolean -> invalid_arg "Lower_arith: a numeric kind of booleans")
 
@@ -643,12 +575,12 @@ let op2 (k : P.op2) (D.Any s as d) xs ys =
           (function [ x; y ] -> Lower_real.binary b x y | _ -> assert false)
           (xs @ ys);
       ]
-  | Binary b, Complex -> c_binary b xs ys
+  | Binary b, Complex -> unpair (Lower_complex.binary b (pair xs) (pair ys))
   | Binary b, (Signed | Unsigned) -> [ int_binary d b (one xs) (one ys) ]
   | Binary b, Boolean -> [ bool_binary b (one xs) (one ys) ]
   | Compare c, Float ->
       [ byte (Lower_real.compare c (widen d (one xs)) (widen d (one ys))) ]
-  | Compare c, Complex -> [ byte (c_compare c (pair xs) (pair ys)) ]
+  | Compare c, Complex -> [ byte (Lower_complex.compare c (pair xs) (pair ys)) ]
   | Compare c, (Signed | Unsigned) ->
       [ byte (compare_exact c (one xs) (one ys)) ]
   | Compare c, Boolean -> [ byte (bool_compare c (one xs) (one ys)) ]
