@@ -18,6 +18,9 @@ type placement = {
   memory : int;  (** The size of the GPU's memory ({!Chip.memory}). *)
   tables : Rig_pci.Page_table.t;
       (** The GPU's page tables: the GSP's objects' memory comes from them. *)
+  tables_lock : Rig_nv.Lock.t;
+      (** The lock under which every call of [tables] runs, which the GSP
+          takes too after its boot. *)
   bar : Rig_pci.Window.t;  (** The GPU's memory BAR. *)
   space : Rig_pci.Space.t;
       (** Where the system memory the GSP is given lies, reserved on the GPU's

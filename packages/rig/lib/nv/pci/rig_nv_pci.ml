@@ -118,7 +118,7 @@ type gpu = {
   index : int;
   fn : Function.t;
   memory : Memory.t;
-  lock : Rig_nv.Lock.t; (* its memory, page tables and names *)
+  lock : Rig_nv.Lock.t; (* its memory, page tables and names, the GSP's too *)
   fault : string option Atomic.t;
   mutable names : names option; (* [None] once stopped *)
 }
@@ -338,7 +338,7 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
    its memory, so a failure gives the GPU back as it found it. From then on the
    hold's stop is the GSP's: a failure stops the GPU through it, and loses
    it. *)
-let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
+let start h (c : Chip.t) (fw : Images.t) fwsec ~failed ~lock =
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false c.fn memory_bar in
@@ -355,7 +355,10 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
   Page_table.booted tables;
-  let* gsp = Gsp.create { chip = c; memory; tables; bar; space } fw fwsec in
+  let* gsp =
+    Gsp.create { chip = c; memory; tables; tables_lock = lock; bar; space } fw
+      fwsec
+  in
   Driver.set_stop h (fun () -> Gsp.stop gsp);
   let* () = Gsp.boot gsp in
   Ok (gsp, tables)
@@ -388,8 +391,9 @@ let boot ~word ~on ~firmware ~index h fn =
     Function.set_bus_master fn false;
     ignore (Atomic.compare_and_set fault None (Some why))
   in
+  let lock = Rig_nv.Lock.create () in
   let* gsp, tables =
-    match start h c fw fwsec ~failed with
+    match start h c fw fwsec ~failed ~lock with
     | r -> r
     | exception Rig_nv.Fault why -> Error why
   in
@@ -401,7 +405,7 @@ let boot ~word ~on ~firmware ~index h fn =
       index;
       fn;
       memory = Memory.create fn tables ~bar:memory_bar;
-      lock = Rig_nv.Lock.create ();
+      lock;
       fault;
       names = Some { regions = Handles.empty; next = 1 };
     }

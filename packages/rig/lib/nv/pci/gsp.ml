@@ -39,6 +39,7 @@ type placement = {
   chip : Chip.t;
   memory : int;
   tables : Page_table.t;
+  tables_lock : Rig_nv.Lock.t;
   bar : Window.t;
   space : Space.t;
 }
@@ -442,10 +443,14 @@ let take_freed g ~client obj =
   g.channels <- drop Channels.remove g.channels;
   memory
 
+(* [f] of the GPU's page tables, which the path's memory calls share from
+   other domains. *)
+let on_tables g f = Rig_nv.Lock.protect g.p.tables_lock (fun () -> f g.p.tables)
+
 (* Memory of the GSP's objects: GPU memory mapped at addresses of the GPU's
    space, recorded for [obj] of [client]. *)
 let object_memory g ~client obj n =
-  match Page_table.alloc ~contiguous:true g.p.tables n with
+  match on_tables g (fun t -> Page_table.alloc ~contiguous:true t n) with
   | None -> Error "no GPU memory for the GSP's objects"
   | Some m ->
       given g ~client obj (Mapped m);
@@ -479,7 +484,7 @@ let channel_memory g ~client ~locate obj p =
   let module G = Defs.Gpfifo_alloc in
   let* ramfc = lacking (object_memory g ~client obj instance_size) in
   let* mthd =
-    match Page_table.palloc g.p.tables method_buffer_size with
+    match on_tables g (fun t -> Page_table.palloc t method_buffer_size) with
     | Some pa ->
         given g ~client obj (Block pa);
         Ok pa
@@ -635,11 +640,12 @@ let free g ~client obj =
   let memory =
     Rig_nv.Lock.protect g.lock (fun () -> take_freed g ~client obj)
   in
-  List.iter
-    (function
-      | Mapped m -> ignore (Page_table.free g.p.tables m : bool)
-      | Block pa -> Page_table.pfree g.p.tables pa)
-    memory;
+  on_tables g (fun t ->
+      List.iter
+        (function
+          | Mapped m -> ignore (Page_table.free t m : bool)
+          | Block pa -> Page_table.pfree t pa)
+        memory);
   Ok ()
 
 let client_rm g ~client ~locate =
@@ -795,14 +801,14 @@ let golden g =
         in
         (data 2, data 3));
   (* The reserved page directory entries. *)
-  let tables = g.p.tables in
+  let space = Page_table.space g.p.tables in
   let* va =
-    match Space.alloc ~align:reserved (Page_table.space tables) reserved with
+    match Space.alloc ~align:reserved space reserved with
     | Some va -> Ok va
     | None -> Error "no addresses for the GSP's page directory"
   in
   let* levels =
-    match Page_table.tables tables ~va reserved with
+    match on_tables g (fun t -> Page_table.tables t ~va reserved) with
     | Some l -> Ok l
     | None -> Error "no GPU memory for the GSP's page directory"
   in
