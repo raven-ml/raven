@@ -45,12 +45,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - limits no hardware or spec imposes, one commit each
   (_plans/rig-device-reuse/70-, 71-): NV's 256 waits per submission
   (`MAX_WAITS`, `facts.waits.most`): room keeps a fixed reserve because it
-  cannot see the waits, so it goes once `room` takes the waits' count;
-  NV over PCI keeps the channel sets a growth replaces until stop: free
-  them through the GSP's free RPC (NV_VGPU_MSG_FUNCTION_FREE,
-  `rpcRmApiFree_GSP`), with gsp.ml tracking per object the instance block,
-  method buffer and context buffers it gave the GSP, so `Gsp.rm`'s `free`
-  becomes `Some`
+  cannot see the waits, so it goes once `room` takes the waits' count
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
   find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
   past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;

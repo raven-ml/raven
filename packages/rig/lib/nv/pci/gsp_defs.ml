@@ -188,6 +188,19 @@ module Rpc_set_page_directory = struct
   let params = (0x10, 0x20)
 end
 
+module Rpc_free = struct
+  let sizeof = 16
+  let params = (0, 0x10)
+end
+
+module Free_params = struct
+  let sizeof = 16
+  let h_root = (0, 4)
+  let h_object_parent = (4, 4)
+  let h_object_old = (8, 4)
+  let status = (0xc, 4)
+end
+
 module Set_page_directory = struct
   let sizeof = 32
   let phys_address = (0, 8)

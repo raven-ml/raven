@@ -54,12 +54,13 @@ val boot : t -> (unit, string) result
 
 val stop : t -> [> `Clean | `Unknown ]
 (** [stop g] stops the GPU [g] booted, or began to: it unloads the GSP if the
-    GPU responds ({!Rig_pci.Function.failed}) and the GSP set its queue up,
-    waiting at most 10 seconds for room in its queue and 10 more for its reply,
-    turns the GPU's bus mastering off, and gives back the memory {!create} took.
-    It is [`Unknown], the memory kept, if the GPU stops responding once its bus
-    mastering is off: it may still read that memory. The GSP runs on until the
-    GPU's next reset. *)
+    GPU responds ({!Rig_pci.Function.failed}), the GSP set its queue up and
+    answered every call within its bound ({!check}), waiting at most 10
+    seconds for room in its queue and 10 more for its reply, turns the GPU's
+    bus mastering off, and gives back the memory {!create} took. It is
+    [`Unknown], the memory kept, if the GPU stops responding once its bus
+    mastering is off: it may still read that memory. The GSP runs on until
+    the GPU's next reset. *)
 
 (** {1:rm The resource manager} *)
 
@@ -73,8 +74,10 @@ val rm :
     handle [h] at offset [off] (a physical address in the GPU's memory, a bus
     address in system memory); a virtual address space gets the GPU's page
     directory; a compute engine's context buffers are promoted; a channel's work
-    submit token carries its runlist. Its [free] is [None], since the GSP's
-    objects live as long as the GSP. *)
+    submit token carries its runlist. Its [free] frees an object and every
+    object under it, then gives back the GPU memory the client gave the GSP
+    for them; once the GPU has left the bus or faulted ({!check}) it is a
+    refusal, and calls nothing. *)
 
 val objects : Rig_nv.rm -> (int * int * int, string) result
 (** [objects rm] is the GPU's device, subdevice and virtual address space, new
@@ -91,7 +94,8 @@ val gpu : t -> Rig_nv.rm -> subdevice:int -> (Rig_nv.gpu, string) result
 val check : t -> string option
 (** [check g] handles the events the GSP sent since the last call, and is the
     first fault one reported ({!Rpc.fault}). A message that cannot be read
-    is a fault too. Once it is [Some], it stays. An event stays in the GSP's queue until it is handled, so an
+    is a fault too, and so is a call the GSP leaves unanswered past its
+    bound. Once it is [Some], it stays. An event stays in the GSP's queue until it is handled, so an
     exception that interrupts [check] or a call leaves it for the next one;
     one that interrupts a CPU sequence the GSP asked for counts as a fault,
     since a sequence runs once, front to back. It never waits for the GSP's

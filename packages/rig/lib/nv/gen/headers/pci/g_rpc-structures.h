@@ -21,6 +21,11 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+typedef struct rpc_free_v03_00
+{
+    NVOS00_PARAMETERS_v03_00 params;
+} rpc_free_v03_00;
+
 typedef struct rpc_unloading_guest_driver_v1F_07
 {
     NvBool     bInPMTransition;

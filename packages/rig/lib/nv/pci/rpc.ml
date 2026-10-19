@@ -154,6 +154,16 @@ let rm_control ~client ~obj ~cmd params =
       set b C.params_size (String.length params))
   ^ params
 
+(* The parent is NV01_NULL_OBJECT, as rpcRmApiFree_GSP gives it: the RM finds
+   the object by its handle. *)
+let free ~client ~obj =
+  let module P = Gsp_defs.Free_params in
+  let p f = at Gsp_defs.Rpc_free.params f in
+  record Gsp_defs.Rpc_free.sizeof (fun b ->
+      set b (p P.h_root) client;
+      set b (p P.h_object_parent) 0;
+      set b (p P.h_object_old) obj)
+
 let rm_answer kind body =
   let size, status, params_size =
     match kind with

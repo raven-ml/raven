@@ -79,12 +79,12 @@
     and bootloader, and on Blackwell the FMC, each lie in one run of bus
     addresses.
 
-    The GSP's objects live as long as the GSP: its RM frees none
-    ([Rig_nv.rm]'s [free] is [None]), so a device of this path keeps the
-    channels a growth replaces as {!Rig_nv.section-submitting} states. Each
-    set it keeps holds, in the GPU's memory, the instance blocks and method
-    buffers of its two channels and the compute engine's context
-    buffers. *)
+    The GSP's RM frees an object and every object under it when a device
+    asks ([Rig_nv.rm]'s [free] is [Some]), so a device of this path gives
+    back the channels a growth replaces as {!Rig_nv.section-submitting}
+    states. With each set goes the GPU memory the path gave the GSP for it:
+    the instance blocks and method buffers of its two channels and the
+    compute engine's context buffers. *)
 
 (** {1:gpus GPUs}
 

@@ -31,3 +31,11 @@ typedef struct NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05
     NvU32      subDeviceId;
     NvU32      pasid;
 } NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05;
+
+typedef struct NVOS00_PARAMETERS_v03_00
+{
+    NvHandle   hRoot;
+    NvHandle   hObjectParent;
+    NvHandle   hObjectOld;
+    NvV32      status;
+} NVOS00_PARAMETERS_v03_00;

@@ -50,9 +50,25 @@ type buffer = { size : int; phys : bool; virt : bool; local : bool }
    point to the FMC in system memory. *)
 type start = Legacy of Vbios.fwsec * Images.booter | Cot of Falcon.op list
 
-(* Each channel's runlist changes by one store of a map made first, so an
-   exception leaves the table whole. *)
+(* Each channel's runlist changes under the GSP's lock by one store of a map
+   made first, so an exception leaves the table whole. *)
 module Channels = Map.Make (Int)
+
+(* GPU memory the process gave the GSP for an object: a channel's instance
+   block and method buffer, or a compute engine's context buffers. *)
+type given = Mapped of Page_table.mapping | Block of int
+
+(* An object of one of the process's clients: its parent, and the memory the
+   process gave the GSP for it, which goes back once the GSP freed the object
+   or an object above it. *)
+type held = { parent : int; given : given list }
+
+(* The objects of the process's clients, by client and handle. *)
+module Objects = Map.Make (struct
+  type t = int * int
+
+  let compare = Stdlib.compare
+end)
 
 type t = {
   p : placement;
@@ -62,11 +78,13 @@ type t = {
   meta : int; (* the WPR metadata's bus address *)
   start : start;
   mutable fault : string option;
+  mutable unanswered : bool; (* a call waited out its bound *)
   mutable sequencing : bool; (* a CPU sequence runs, or an exception cut it *)
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
   mutable runlists : (int * int) list; (* each engine's runlist *)
   mutable channels : int Channels.t; (* each channel's runlist *)
+  mutable held : held Objects.t; (* under [lock] *)
   mutable buffers : (int * buffer) list; (* the graphics context's *)
   taken : sys list ref; (* the system memory the boot took *)
 }
@@ -260,6 +278,16 @@ let drain g ~want =
   in
   go ()
 
+(* Records a call the GSP left unanswered past its bound as the GPU's fault:
+   the GSP's queue is then in a state no later call can trust, and each would
+   wait out its bound in vain, the stop's unload too. *)
+let unanswered g = function
+  | Ok () -> Ok ()
+  | Error why ->
+      g.unanswered <- true;
+      if g.fault = None then g.fault <- Some why;
+      Error why
+
 let wait_for g fn =
   let found = ref (Error (strf "no answer to call %d" fn)) in
   let answered () =
@@ -273,15 +301,17 @@ let wait_for g fn =
         true
   in
   let* () =
-    Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
-      (strf "the GSP's answer to call %d" fn)
-      answered
+    unanswered g
+      (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
+         (strf "the GSP's answer to call %d" fn)
+         answered)
   in
   !found
 
 let send g fn body =
-  Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
-    "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body)
+  unanswered g
+    (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
+       "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body))
 
 let call g fn body =
   Rig_nv.Lock.protect g.lock (fun () ->
@@ -307,11 +337,6 @@ let unload g =
 let priv_root = 0xc1e00004
 let first_client = 0xc1000000
 let first_handle = 0xcf000000
-
-let handle g =
-  let h = g.next in
-  g.next <- h + 1;
-  h
 
 let classes : Chip.family -> int * int * int = function
   | Ampere -> Defs.(ampere_channel_gpfifo_a, ampere_compute_b, ampere_dma_copy_b)
@@ -356,8 +381,7 @@ let control g ~client obj cmd p =
     Option.iter (blit_params out) p;
     Ok ())
 
-let alloc_object g ~client ~parent cls p =
-  let obj = handle g in
+let alloc_object g ~client ~parent ~obj cls p =
   let body = Option.fold ~none:"" ~some:string_of_params p in
   let* answer =
     failed
@@ -369,12 +393,63 @@ let alloc_object g ~client ~parent cls p =
     Error (refusal (strf "the RM refused class 0x%x: 0x%x" cls status) status)
   else Ok obj
 
+(* Objects *)
+
+(* Names a new object of class [cls] of [client] under [parent], and records
+   it before the call that makes it, so that what the process gives the GSP
+   for it from then on goes back with it, whether the GSP made it or not. Is
+   the handle the call names, and the object's, which for a client's root is
+   the client. *)
+let made g ~client ~parent cls =
+  Rig_nv.Lock.protect g.lock (fun () ->
+      let h = g.next in
+      g.next <- h + 1;
+      let obj = if cls = Defs.nv01_root then client else h in
+      g.held <- Objects.add (client, obj) { parent; given = [] } g.held;
+      (h, obj))
+
+(* Records [m] as given for [obj] of [client]. *)
+let given g ~client obj m =
+  Rig_nv.Lock.protect g.lock (fun () ->
+      g.held <-
+        Objects.update (client, obj)
+          (Option.map (fun h -> { h with given = m :: h.given }))
+          g.held)
+
+(* Under [g]'s lock: takes [obj] of [client] and every object under it out of
+   [g]'s records and runlists, and is the memory given for them. *)
+let take_freed g ~client obj =
+  let rec under gone =
+    let more =
+      Objects.filter
+        (fun (c, o) h ->
+          c = client && List.mem h.parent gone && not (List.mem o gone))
+        g.held
+    in
+    if Objects.is_empty more then gone
+    else under (Objects.fold (fun (_, o) _ gone -> o :: gone) more gone)
+  in
+  let gone = under [ obj ] in
+  let memory =
+    List.concat_map
+      (fun o ->
+        Option.fold ~none:[] ~some:(fun h -> h.given)
+          (Objects.find_opt (client, o) g.held))
+      gone
+  in
+  let drop f t = List.fold_left (fun t o -> f o t) t gone in
+  g.held <- drop (fun o -> Objects.remove (client, o)) g.held;
+  g.channels <- drop Channels.remove g.channels;
+  memory
+
 (* Memory of the GSP's objects: GPU memory mapped at addresses of the GPU's
-   space. *)
-let object_memory g n =
+   space, recorded for [obj] of [client]. *)
+let object_memory g ~client obj n =
   match Page_table.alloc ~contiguous:true g.p.tables n with
   | None -> Error "no GPU memory for the GSP's objects"
-  | Some m -> Ok m
+  | Some m ->
+      given g ~client obj (Mapped m);
+      Ok m
 
 let paddr (m : Page_table.mapping) = fst (List.hd m.pages)
 
@@ -400,12 +475,14 @@ let userd_size = 0x400
 (* The size the error notifier is described with. *)
 let notifier_size = 0xecc
 
-let channel_memory g ~client ~locate p =
+let channel_memory g ~client ~locate obj p =
   let module G = Defs.Gpfifo_alloc in
-  let* ramfc = lacking (object_memory g instance_size) in
+  let* ramfc = lacking (object_memory g ~client obj instance_size) in
   let* mthd =
     match Page_table.palloc g.p.tables method_buffer_size with
-    | Some pa -> Ok pa
+    | Some pa ->
+        given g ~client obj (Block pa);
+        Ok pa
     | None ->
         Error (Rig_nv.Lacking "no GPU memory for a channel's method buffer")
   in
@@ -434,8 +511,10 @@ let channel_memory g ~client ~locate p =
   end
 
 (* The context buffers a compute engine's channel needs, promoted twice: their
-   physical memory, then their virtual addresses. *)
-let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
+   physical memory, then their virtual addresses. The memory is recorded for
+   the engine [obj]. *)
+let promote g ~client ~subdevice ~obj channel buffers ?(have = []) ~virt ~phys
+    () =
   let module Pr = Defs.Promote_ctx in
   let module E = Defs.Promote_entry in
   let p = Rig_nv.params Pr.sizeof in
@@ -451,7 +530,7 @@ let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
         let* m =
           match List.assoc_opt id have with
           | Some m -> Ok m
-          | None -> lacking (object_memory g b.size)
+          | None -> lacking (object_memory g ~client obj b.size)
         in
         let f x = elt Pr.promote_entry i x in
         Rig_nv.set p (f E.buffer_id) id;
@@ -484,24 +563,21 @@ type objects = { mutable subdevice : int }
 
 let alloc g ~client ~locate ~objects ~parent cls p =
   let channel_class, compute_class, _ = classes g.p.chip.family in
+  let h, obj = made g ~client ~parent cls in
   let* () =
     match p with
     | Some p when cls = channel_class ->
-        channel_memory g ~client ~locate p
+        channel_memory g ~client ~locate obj p
     | _ -> Ok ()
   in
-  let* obj =
-    if cls = Defs.nv01_root then
-      let* _ = alloc_object g ~client ~parent cls p in
-      Ok client
-    else alloc_object g ~client ~parent cls p
-  in
+  let* _ = alloc_object g ~client ~parent ~obj:h cls p in
   if cls = channel_class then
     Option.iter
       (fun p ->
         let e = Rig_nv.get p Defs.Gpfifo_alloc.engine_type in
         let runlist = Option.value ~default:0 (List.assoc_opt e g.runlists) in
-        g.channels <- Channels.add obj runlist g.channels)
+        Rig_nv.Lock.protect g.lock (fun () ->
+            g.channels <- Channels.add obj runlist g.channels))
       p;
   if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
   let* () =
@@ -518,12 +594,12 @@ let alloc g ~client ~locate ~objects ~parent cls p =
     else if cls = compute_class then
       let bufs = List.filter (fun (k, _) -> List.mem k [ 0; 1; 2 ]) g.buffers in
       let* phys =
-        promote g ~client ~subdevice:objects.subdevice parent bufs
+        promote g ~client ~subdevice:objects.subdevice ~obj parent bufs
           ~virt:(Some false) ~phys:None ()
       in
       let* _ =
-        promote g ~client ~subdevice:objects.subdevice parent bufs ~have:phys
-          ~virt:None ~phys:(Some false) ()
+        promote g ~client ~subdevice:objects.subdevice ~obj parent bufs
+          ~have:phys ~virt:None ~phys:(Some false) ()
       in
       Ok ()
     else Ok ()
@@ -540,6 +616,32 @@ let token g obj p =
     (Rig_nv.get p W.work_submit_token lor (runlist lsl 16)
     lor if blackwell then 1 lsl 30 else 0)
 
+(* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
+   does, whose status is the reply's result. A GPU that left the bus or
+   faulted gets no call, which would wait out its bound in vain, as [stop]
+   sends it no unload. The GPU reads the memory the process gave the GSP for
+   the objects no more once the GSP freed them, so it goes back then; a
+   mapping whose unmap the GPU did not confirm stays, as the GPU may still
+   reach it. A refusal keeps the records. *)
+let free g ~client obj =
+  let* () =
+    if Option.is_some (Function.failed g.p.chip.fn) || Option.is_some g.fault
+    then Error (Rig_nv.Refused "the GSP cannot be reached to free an object")
+    else Ok ()
+  in
+  let* _ =
+    failed (call g Defs.nv_vgpu_msg_function_free (Rpc.free ~client ~obj))
+  in
+  let memory =
+    Rig_nv.Lock.protect g.lock (fun () -> take_freed g ~client obj)
+  in
+  List.iter
+    (function
+      | Mapped m -> ignore (Page_table.free g.p.tables m : bool)
+      | Block pa -> Page_table.pfree g.p.tables pa)
+    memory;
+  Ok ()
+
 let client_rm g ~client ~locate =
   let objects = { subdevice = 0 } in
   {
@@ -553,7 +655,7 @@ let client_rm g ~client ~locate =
         if cmd = Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
           Option.iter (token g obj) p;
         Ok ());
-    free = None;
+    free = Some (fun ~parent:_ obj -> free g ~client obj);
   }
 
 let rm g ~locate =
@@ -724,8 +826,9 @@ let golden g =
     control vaspace Defs.nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes
       (Some r)
   in
-  (* The channel. *)
-  let* area = object_memory g page in
+  (* The channel. The golden context lives as long as the GSP, so its memory
+     is recorded for no object. *)
+  let* area = object_memory g ~client:priv_root 0 page in
   let module G = Defs.Gpfifo_alloc in
   let gp = Rig_nv.params G.sizeof in
   Rig_nv.set gp G.gp_fifo_offset area.va;
@@ -788,7 +891,7 @@ let golden g =
       ];
   let* _ =
     Result.map_error why
-      (promote g ~client:priv_root ~subdevice:subdev channel
+      (promote g ~client:priv_root ~subdevice:subdev ~obj:0 channel
          (List.filter (fun (_, b) -> not b.local) g.buffers)
          ~virt:None ~phys:None ())
   in
@@ -881,11 +984,13 @@ let take p (fw : Images.t) fwsec ~taken =
       meta = first meta;
       start;
       fault = None;
+      unanswered = false;
       sequencing = false;
       next = first_handle;
       clients = first_client;
       runlists = [];
       channels = Channels.empty;
+      held = Objects.empty;
       buffers = [];
       taken;
     }
@@ -961,16 +1066,17 @@ let boot g =
       0;
   golden g
 
-(* The GSP stops every channel, unless the GPU cannot be reached, which an
-   unload would wait for in vain, or the GSP never set its queue up and so runs
-   nothing an unload would stop. With its bus mastering off the GPU reaches
+(* The GSP stops every channel, unless the GPU cannot be reached or the GSP
+   left a call unanswered, which an unload would wait for in vain, or the GSP
+   never set its queue up and so runs nothing an unload would stop. A fault an
+   event reported leaves the GSP answering, so its unload still runs. With its bus mastering off the GPU reaches
    system memory no more, whatever its channels do, and the boot's memory goes
    back. That write to the configuration space completes before it returns, so a
    GPU that answers after it took it: one that does not may still read the
    memory, which stays taken. The GSP runs on, and the next open resets it. *)
 let stop g =
   let answers () = Option.is_none (Function.failed g.p.chip.fn) in
-  if answers () && Msgq.ready g.q then ignore (unload g);
+  if answers () && Msgq.ready g.q && not g.unanswered then ignore (unload g);
   Function.set_bus_master g.p.chip.fn false;
   if not (answers ()) then `Unknown
   else begin

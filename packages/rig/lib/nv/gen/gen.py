@@ -625,6 +625,8 @@ GSP_STRUCTS = {
     "rpc_gsp_rm_control_v03_00": ("Rpc_rm_control", ["hClient", "hObject", "cmd", "status", "paramsSize",
                                                      "flags", "params"]),
     "rpc_set_page_directory_v1E_05": ("Rpc_set_page_directory", ["hClient", "hDevice", "pasid", "params"]),
+    "rpc_free_v03_00": ("Rpc_free", ["params"]),
+    "NVOS00_PARAMETERS_v03_00": ("Free_params", ["hRoot", "hObjectParent", "hObjectOld", "status"]),
     "NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05": ("Set_page_directory", [
         "physAddress", "numEntries", "flags", "hVASpace", "chId", "subDeviceId", "pasid"]),
     "rpc_unloading_guest_driver_v1F_07": ("Rpc_unloading", ["bInPMTransition", "bGc6Entering", "newLevel"]),

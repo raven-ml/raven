@@ -5,7 +5,7 @@
 
 (* The GSP's records, calls and CPU sequences, against open-gpu-kernel-modules
    570.144: message_queue_cpu.c and the RPC headers, g_rpc-structures.h
-   (rpc_gsp_rm_alloc_v03_00, rpc_gsp_rm_control_v03_00,
+   (rpc_gsp_rm_alloc_v03_00, rpc_gsp_rm_control_v03_00, rpc_free_v03_00,
    rpc_set_page_directory_v1E_05, rpc_unloading_guest_driver_v1F_07,
    rpc_run_cpu_sequencer_v17_00, rpc_rc_triggered_v17_02), g_os_nvoc.h
    (PACKED_REGISTRY_TABLE) and rmgspseq.h (the opcodes). *)
@@ -164,6 +164,15 @@ let test_control () =
     [ 1; 2; 0x20800a0a; 0; 2; 0 ]
     (List.init 6 (fun i -> u32 b (4 * i)));
   equal string "xy" (String.sub b 0x18 2)
+
+(* rpc_free_v03_00: NVOS00_PARAMETERS_v03_00's hRoot, hObjectParent,
+   hObjectOld and status as words, the parent NV01_NULL_OBJECT, as
+   rpcRmApiFree_GSP sends it. *)
+let test_free () =
+  let b = Rpc.free ~client:0xc1000000 ~obj:0xcf000004 in
+  equal (list int)
+    [ 0xc1000000; 0; 0xcf000004; 0 ]
+    (List.init (String.length b / 4) (fun i -> u32 b (4 * i)))
 
 let params = Gen.string_of ~size:(Gen.int_range 0 600) Gen.char
 
@@ -357,6 +366,7 @@ let () =
            [
              test "an allocation" test_alloc;
              test "a control" test_control;
+             test "a free" test_free;
              test_answer;
              test "a short answer is refused" test_short_answer;
              test "a page directory" test_page_directory;

@@ -55,6 +55,11 @@ val rm_control : client:int -> obj:int -> cmd:int -> string -> string
 (** [rm_control ~client ~obj ~cmd p] is the body of the RPC [GSP_RM_CONTROL]
     that runs the command [cmd] on [obj] of [client] with the parameters [p]. *)
 
+val free : client:int -> obj:int -> string
+(** [free ~client ~obj] is the body of the RPC [FREE] that frees the object
+    [obj] of [client] and every object under it. The RM's status is the
+    reply's result. *)
+
 val rm_answer : [ `Alloc | `Control ] -> string -> (int * string, string) result
 (** [rm_answer k body] is the RM's status and the parameters it wrote back in
     the GSP's reply [body] to an RPC of kind [k], or [Error] if [body] is

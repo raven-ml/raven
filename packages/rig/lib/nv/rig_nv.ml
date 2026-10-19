@@ -1726,13 +1726,14 @@ let halt d l =
          l.sets)
   in
   let device = l.path.device in
+  (* The first set the RM does not free ends the frees: a GPU that cannot
+     free one frees none of the others either. *)
   let freed =
-    List.for_all Fun.id
-      (List.map
-         (fun s ->
-           freed l.path ~parent:device s.debugger
-           && freed l.path ~parent:device s.group)
-         l.sets)
+    List.for_all
+      (fun s ->
+        freed l.path ~parent:device s.debugger
+        && freed l.path ~parent:device s.group)
+      l.sets
   in
   (* No work on another device uses this GPU's memory once it is lost
      ([Rig]'s loss section), so their submissions stop reading its flush word
