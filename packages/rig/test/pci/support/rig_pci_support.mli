@@ -283,6 +283,12 @@ module Tree : sig
       through [fd], which must hold no lock of the file: it makes no open, so
       a check repeated after every call costs two system calls. *)
 
+  val hold : string -> Unix.file_descr
+  (** [hold path] takes flock's exclusive lock on the file or directory at
+      [path], as another process would, and is the descriptor whose close
+      gives it back. Raises [Unix.Unix_error] if [path] cannot be opened or
+      another open file holds a lock on it. *)
+
   val add : string -> string -> string -> unit
   (** [add root file s] writes [s] to [file], a path from the tree [root],
       making its directories. *)

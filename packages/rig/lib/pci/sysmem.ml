@@ -26,6 +26,12 @@ external create : string -> string -> Unix.file_descr
   = "caml_rig_pci_sysmem_create"
 
 external own_lock : Unix.file_descr -> unit = "caml_rig_pci_flock"
+external flock_wait : Unix.file_descr -> unit = "caml_rig_pci_flock_wait"
+
+external sweep_open : string -> int -> bool -> Unix.file_descr
+  = "caml_rig_pci_sweep_open"
+
+external sweep_close : int -> unit = "caml_rig_pci_sweep_close"
 external zero : int -> int -> unit = "caml_rig_pci_sysmem_zero"
 
 let page = page_size ()
@@ -161,7 +167,16 @@ let unmap w = unmap_range (Window.address w) (Window.length w)
    when a function leaves a list and when a file goes. The process holds a
    shared flock on its file from before the file has a name until it dies, so
    a take or a reset tells a dead process's file by taking the lock, and reads
-   its markers only then, once they can no longer change. *)
+   its markers only then, once they can no longer change.
+
+   A sweep holds a dead process's file's lock while it reads and changes its
+   markers, which another process taking the lock would read as the file's
+   process alive. So each sweep, and each look for what dead processes left,
+   holds the machine's sweep lock, an exclusive flock on the directory of the
+   files: under it, a file's lock is held only by its own process. A flock
+   belongs to the open file, which a forked child would share and keep
+   locked, so a sweep opens its descriptors in slots a forked child closes
+   (rig_pci_sysmem.c). *)
 
 type file = {
   pid : int; (* the process that made it *)
@@ -209,6 +224,25 @@ let marked name =
       let at = i + String.length reach in
       Some (String.sub name 0 i, String.sub name at (String.length name - at))
   | _ -> None
+
+(* The slots of a sweep's descriptors: the directory's and the judged file's. *)
+let dir_slot = 0
+let file_slot = 1
+
+let rec lock_wait fd =
+  match flock_wait fd with
+  | () -> ()
+  | exception Unix.Unix_error (EINTR, _, _) -> lock_wait fd
+
+(* [f ()] under [root]'s sweep lock. Without a directory of memory files there
+   is nothing to sweep, so [f] runs without it. *)
+let swept ~root f =
+  match sweep_open (Filename.concat root hugepages) dir_slot false with
+  | exception Unix.Unix_error _ -> f ()
+  | fd ->
+      Fun.protect ~finally:(fun () -> sweep_close dir_slot) @@ fun () ->
+      lock_wait fd;
+      f ()
 
 let hugetlbfs =
   "it must be a hugetlbfs of 2 MiB pages: mount -t hugetlbfs -o pagesize=2M \
@@ -585,10 +619,10 @@ let unreach ~a ~n =
 (* [f ()] if the process that made the file at [path] died: the lock it held
    while it lived is free. *)
 let if_dead path f =
-  match Unix.openfile path [ O_RDWR; O_CLOEXEC ] 0 with
+  match sweep_open path file_slot true with
   | exception Unix.Unix_error _ -> ()
   | fd -> (
-      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      Fun.protect ~finally:(fun () -> sweep_close file_slot) @@ fun () ->
       match own_lock fd with () -> f () | exception Unix.Unix_error _ -> ())
 
 (* The memory files under [root] other processes made, and the markers whose
@@ -634,25 +668,29 @@ let sweep ~root ~reset =
               | _ -> Option.iter (unmark path) reset)))
     files
 
-let collect_dead ~root = Lock.protect state @@ fun () -> sweep ~root ~reset:None
+let collect_dead ~root =
+  Lock.protect state @@ fun () ->
+  swept ~root @@ fun () -> sweep ~root ~reset:None
 
 let forget ~root ~bus =
-  Lock.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
+  Lock.protect state @@ fun () ->
+  swept ~root @@ fun () -> sweep ~root ~reset:(Some bus)
 
 (* A file that cannot be opened for another reason than its end might hold the
    GPU's memory: it is no answer. *)
 let left ~root ~bus =
   Lock.protect state @@ fun () ->
+  swept ~root @@ fun () ->
   let listed = ref false in
   List.iter
     (fun path ->
       if not !listed then
-        match Unix.openfile path [ O_RDWR; O_CLOEXEC ] 0 with
+        match sweep_open path file_slot true with
         | exception Unix.Unix_error (ENOENT, _, _) -> ()
         | exception Unix.Unix_error (e, _, _) ->
             Fail.fail "reading %s: %s" path (Unix.error_message e)
         | fd -> (
-            Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+            Fun.protect ~finally:(fun () -> sweep_close file_slot) @@ fun () ->
             match own_lock fd with
             | exception Unix.Unix_error _ -> ()
             | () -> listed := Sys.file_exists (marker path bus)))

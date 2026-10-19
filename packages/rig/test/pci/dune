@@ -15,5 +15,5 @@
  (names test_function test_driver)
  (modules test_function test_driver)
  (locks %{workspace_root}/gpu)
- (libraries rig_pci rig_pci_support rig_support unix windtrap))
+ (libraries rig_pci rig_pci_support rig_support threads.posix unix windtrap))
 

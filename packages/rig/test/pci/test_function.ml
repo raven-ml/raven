@@ -1294,6 +1294,109 @@ let test_left_files () =
   require_ok (Driver.reset (fixture_gpus ()) m 1);
   equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
 
+(* Memory a dead process left reaching a function is read as left while
+   another process sweeps the machine's files. The sweep holds the machine's
+   sweep lock, on the directory of the files, and the dead file's own lock while
+   it reads the file's markers; a take waits for the sweep to end. *)
+let test_left_while_swept () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let gpu0 = "0000:03:00.0" in
+  let root = Tree.make [ Tree.gpu gpu0 ] in
+  let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
+  add "rig-pci-3-3";
+  add ("rig-pci-3-3.reach-" ^ gpu0);
+  let dir = Filename.concat root "dev/hugepages" in
+  let sweep = Tree.hold dir in
+  let file = Tree.hold (Filename.concat dir "rig-pci-3-3") in
+  let taken = Atomic.make false in
+  let m = Machine.at root in
+  let taker =
+    Domain.spawn (fun () ->
+        let f = require_ok (Function.take m gpu0) in
+        Atomic.set taken true;
+        let inherited = Function.inherited f in
+        Function.release f;
+        inherited)
+  in
+  Unix.sleepf 0.05;
+  let during = Atomic.get taken in
+  Unix.close file;
+  Unix.close sweep;
+  let inherited = Domain.join taker in
+  equal ~msg:"taken while the sweep held its locks" bool false during;
+  equal ~msg:"the dead process's memory, left for the function" bool true
+    inherited
+
+(* The test's executable, run with [forking], is [fork_in_sweep]'s process: a
+   process that forks may have spawned no domain. *)
+let forking = "--fork-in-sweep"
+
+(* A child forked while a take waits for another process's sweep keeps none of
+   the take's sweeps: once that sweep ends, the take, and a take of another
+   function of the machine after it, end while the child lives. The child
+   closes its copies of the test's own locks, which stand for the other
+   process's. Exits 0 if both takes ended. *)
+let fork_in_sweep () =
+  let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
+  let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
+  let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
+  add "rig-pci-3-3";
+  add ("rig-pci-3-3.reach-" ^ gpu0);
+  let dir = Filename.concat root "dev/hugepages" in
+  let sweep = Tree.hold dir in
+  let file = Tree.hold (Filename.concat dir "rig-pci-3-3") in
+  let m = Machine.at root in
+  let taken = Atomic.make 0 in
+  let takes =
+    Thread.create
+      (fun () ->
+        List.iter
+          (fun bus ->
+            Function.release (require_ok (Function.take m bus));
+            Atomic.incr taken)
+          [ gpu0; gpu1 ])
+      ()
+  in
+  Unix.sleepf 0.05;
+  let ends, end_child = Unix.pipe ~cloexec:true () in
+  let child =
+    match Unix.fork () with
+    | 0 ->
+        List.iter Unix.close [ sweep; file; end_child ];
+        ignore (Unix.read ends (Bytes.create 1) 0 1);
+        Unix._exit 0
+    | pid -> pid
+  in
+  Unix.close ends;
+  Unix.close file;
+  Unix.close sweep;
+  (* Both takes end within 5 s, or wait for the child: it ends once its pipe
+     closes. *)
+  let rec wait n =
+    if Atomic.get taken < 2 && n > 0 then begin
+      Unix.sleepf 0.01;
+      wait (n - 1)
+    end
+  in
+  wait 500;
+  let while_child = Atomic.get taken in
+  Unix.close end_child;
+  ignore (Unix.waitpid [] child);
+  Thread.join takes;
+  exit (if while_child = 2 then 0 else 1)
+
+let test_fork_in_sweep () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; forking |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with
+  | _, WEXITED c ->
+      equal ~msg:"another function taken while the forked child lives" int 0 c
+  | _ -> fail "the process that forked did not exit"
+
 (* A driver that finds firmware it cannot continue from renews the GPU it holds:
    the vendor's reset runs, the memory of processes that died goes, and the
    process's own stays listed, so that its death leaves the GPU to be reset by
@@ -1481,6 +1584,14 @@ let system_memory =
         "a take deletes the files processes that died left listing no \
          function, and keeps one that lists a function until its reset"
         test_left_files;
+      test
+        "a take waits for another process's sweep, and reads the memory a \
+         dead process left as left"
+        test_left_while_swept;
+      test
+        "a child forked while a take waits for a sweep keeps none of it: a \
+         later take goes on while the child lives (fork in a child process)"
+        test_fork_in_sweep;
       cases
         "memory on a mount that is no hugetlbfs of 2 MiB pages is refused"
         ~name:fst other_mounts test_other_mount;
@@ -2111,6 +2222,7 @@ let this_machine =
 let () =
   match Sys.argv with
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
+  | [| _; arg |] when arg = forking -> fork_in_sweep ()
   | [| _; arg; how; root; bus; va |] when arg = holding ->
       hold_memory how root bus (int_of_string va)
   | _ ->

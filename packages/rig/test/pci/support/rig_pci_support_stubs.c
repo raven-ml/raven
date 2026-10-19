@@ -340,6 +340,26 @@ value rig_pci_test_flocked_fd(value v_fd) {
 #endif
 }
 
+/* Takes flock's exclusive lock on the file or directory at [v_path] through a
+   new descriptor, without waiting, and returns the descriptor, whose close
+   gives the lock back. Raises Unix_error if it cannot be opened or locked. */
+value rig_pci_test_flock(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  caml_failwith("rig_pci_test_flock: Windows has no flock");
+#else
+  CAMLparam1(v_path);
+  int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) caml_uerror("open", v_path);
+  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    int e = errno;
+    close(fd);
+    caml_unix_error(e, "flock", v_path);
+  }
+  CAMLreturn(Val_int(fd));
+#endif
+}
+
 /* Clones the directory tree [v_src] at [v_dst] in one call where the file
    system copies on write (APFS's clonefile): [true] if it did, [false] where
    the system cannot, which makes nothing. */
