@@ -882,11 +882,16 @@ let outside_memory () =
   is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
   is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
   send fd (frame k_handover (copy_on_host ~value:1 ~bytes:8 (1, 12) (1, 0)));
+  let why =
+    match next_frame fd with
+    | Some (k, p) when k = k_abort -> String.sub p 4 (String.length p - 4)
+    | Some (k, _) -> failf "a frame of kind %d in place of the abort" k
+    | None -> fail "the agent ended the connection in place of the abort"
+  in
+  equal ~msg:"the abort's reason, the agent's rig's refusal of the view" string
+    "Rig.Buffer.view: 8 bytes from byte 12 lie outside the buffer's 16" why;
   Unix.shutdown fd Unix.SHUTDOWN_SEND;
-  match finish a with
-  | 2, [ why ] -> starts_with ~affix:"failed: " why
-  | code, lines ->
-      failf "the agent exited %d, printing [%s]" code (String.concat "; " lines)
+  equal exit_w (2, [ "failed: " ^ why ]) (finish a)
 
 (* A drop naming no object of the job fails it: a drop has no answer to refuse
    it with. *)
