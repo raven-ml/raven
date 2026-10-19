@@ -847,6 +847,30 @@ let test_tables_full () =
   no_room ~msg:"system memory" (Memory.alloc x.t_memory Host (4 * mib));
   equal ~msg:"no system memory held" int bytes (held_bytes root)
 
+(* System memory without an address takes addresses of the process's own,
+   from a range, then from another once no range has room: eight 2 MiB blocks
+   pass a range of 16 MiB, which holds fewer, as its allocator needs a free
+   block of twice a request and its alignment. Its physical addresses need
+   root, read from the system's page map. *)
+let test_own_addresses () =
+  needs_linux ();
+  if Unix.geteuid () <> 0 then
+    skip ~reason:"the physical addresses of the process's memory need root" ();
+  let bus = "0000:03:00.0" in
+  let root = Tree.make ~privileged:true [ Tree.gpu bus ] in
+  Tree.link root "proc/self/pagemap" "/proc/self/pagemap";
+  let f = require_ok (Function.take (Machine.at root) bus) in
+  let was = Function.set_own_length (16 * mib) in
+  Fun.protect ~finally:(fun () ->
+      ignore (Function.set_own_length was : int);
+      Function.release f)
+  @@ fun () ->
+  let block () =
+    fst (given (Function.alloc_dma ~contiguous:true f (2 * mib)))
+  in
+  let blocks = List.init 8 (fun _ -> block ()) in
+  List.iter (Function.free_dma f) blocks
+
 (* The machine refuses system memory when its memory directory cannot be
    written, and a window on a BAR whose file is shorter than the BAR. *)
 let test_refused () =
@@ -1127,6 +1151,8 @@ let placement =
         "system memory or a BAR window the machine refuses is an Error, having \
          given back what it took"
         test_refused;
+      test "system memory without an address passes a range of addresses"
+        test_own_addresses;
       test "memory the GPU maps already maps again elsewhere"
         test_map_host_mapped;
       test "map_host preserves the machine's transport" test_map_host_transport;

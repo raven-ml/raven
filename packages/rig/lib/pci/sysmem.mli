@@ -8,7 +8,8 @@
     {!Function} checks every argument first. Sizes are positive, addresses are
     on a page, and contiguous memory is at most 2 MiB, a huge page that starts
     on 2 MiB. What the system refuses raises {!Fail.Failed}, and off Linux
-    every value but {!page} raises it. Any domain may use this module. *)
+    every value but {!page} and {!set_own_length} raises it. Any domain may
+    use this module. *)
 
 val page : int
 (** [page] is the system's page size in bytes. *)
@@ -76,6 +77,12 @@ val close : store -> unit
     process's mappings keep their pages until {!free}. A file a dead process
     left goes at {!collect_dead} once it lists no function, or at {!forget} of
     each function it lists. Called once per store. *)
+
+val set_own_length : int -> int
+(** [set_own_length n] makes each range of the process's own addresses that
+    {!alloc} reserves from then on, for memory without an address, [n] bytes,
+    or as many as a request needs. It is the length it replaces. The first
+    is 1 GiB. *)
 
 val reach : root:string -> bus:string -> int -> int -> (int * int) list option
 (** [reach ~root ~bus a n] is the physical runs of the [n] bytes at [a], if

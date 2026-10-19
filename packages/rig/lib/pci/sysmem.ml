@@ -203,9 +203,18 @@ let state = Lock.create ()
 let files : file list ref = ref [] (* the process's live file of each root *)
 let blocks : block Tables.Address.t = Tables.Address.create 16
 
-(* The range memory without an address takes its addresses from. *)
-let own_length = 1 lsl 30
-let own : Tlsf.t option ref = ref None
+(* The ranges memory without an address takes its addresses from, each
+   reserved without memory. A request that no range has room for reserves
+   another, of [own_length] bytes or of the free block the request needs
+   ([Tlsf]'s fit bound), so the addresses run out only with the process's. *)
+let own_length = ref (1 lsl 30)
+let own : Tlsf.t list ref = ref []
+
+let set_own_length n =
+  Lock.protect state @@ fun () ->
+  let was = !own_length in
+  own_length := n;
+  was
 let store ~root ~bus = { root; bus }
 let root s = s.root
 let prefix = "rig-pci-"
@@ -477,33 +486,41 @@ let drop b len =
     collect f
   end
 
+(* A new range of the process's own addresses that holds [n] bytes aligned
+   to [align]. A process out of addresses has no room. *)
+let own_range ~align n =
+  let fits = 2 * (Int.max n 16 + align) in
+  let length = (Int.max !own_length fits + huge - 1) / huge * huge in
+  let base =
+    match region length with
+    | base -> base
+    | exception Unix.Unix_error (ENOMEM, _, _) -> raise Exhausted
+    | exception Unix.Unix_error (e, _, _) ->
+        Fail.fail "reserving addresses for system memory: %s"
+          (Unix.error_message e)
+  in
+  Lock.protect lock (fun () -> Tables.Range.add reserved (base, length) ());
+  let t = Tlsf.create ~base length in
+  own := t :: !own;
+  t
+
 (* The addresses for [n] bytes without an address asked. *)
 let own_addresses ~align n =
-  let t =
-    match !own with
-    | Some t -> t
-    | None ->
-        let base =
-          try region own_length
-          with Unix.Unix_error (e, _, _) ->
-            Fail.fail "reserving addresses for system memory: %s"
-              (Unix.error_message e)
-        in
-        Lock.protect lock (fun () ->
-            Tables.Range.add reserved (base, own_length) ());
-        let t = Tlsf.create ~base own_length in
-        own := Some t;
-        t
-  in
-  match Tlsf.alloc ~align t n with Some a -> a | None -> raise Exhausted
+  match List.find_map (fun t -> Tlsf.alloc ~align t n) !own with
+  | Some a -> a
+  | None -> (
+      match Tlsf.alloc ~align (own_range ~align n) n with
+      | Some a -> a
+      | None -> raise Exhausted)
 
 let own_free a =
-  match !own with
-  | Some t when a >= Tlsf.base t && a < Tlsf.base t + Tlsf.length t ->
+  let holds t = a >= Tlsf.base t && a < Tlsf.base t + Tlsf.length t in
+  match List.find_opt holds !own with
+  | Some t ->
       (* Function frees only the live windows [alloc] gave. *)
       if not (Tlsf.free t a) then
         failwith (strf "freeing system memory: no addresses at 0x%x" a)
-  | _ -> ()
+  | None -> ()
 
 (* The physical runs of the [n] bytes at [a], whose blocks exist: one a block,
    merged where frames follow. *)

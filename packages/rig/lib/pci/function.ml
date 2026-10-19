@@ -257,6 +257,7 @@ let wait f ~us what cond =
     | Some why -> Error (strf "%s: %s" what why)
     | None -> Error (strf "%s did not complete in %d us" what us)
 
+let set_own_length = Sysmem.set_own_length
 let inherited f = Atomic.get f.inherited
 
 let forget f =

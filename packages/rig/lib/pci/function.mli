@@ -390,6 +390,13 @@ val unpin : t -> int -> int -> unit
    take keeps until its release. *)
 val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
 
+(* [set_own_length n] makes each range of this process's own addresses that
+   {!alloc_dma} reserves from then on, for memory of a function taken
+   physically without [va], [n] bytes, or as many as a request needs, and is
+   the length it replaces. A test shrinks it to pass a range with little
+   memory. *)
+val set_own_length : int -> int
+
 (* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
    {!forget} returns [Ok ()], and [false] after. *)
 val inherited : t -> bool
