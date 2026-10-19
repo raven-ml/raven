@@ -1,0 +1,21 @@
+; nx.io's suites. They read files of the formats written by numpy, torch and
+; Python's zipfile, which gen/generate.py writes into support/.
+
+(tests
+ (names test_io test_archive)
+ (modules test_io test_archive io_support fail)
+ (libraries nx nx_array nx_io nx_support rig unix windtrap)
+ (deps
+  (glob_files support/*))
+ ; A stack of 8 MiB, a common system default, so that a parser that recurses
+ ; once per nesting level of a file overflows here.
+ (action
+  (setenv
+   OCAMLRUNPARAM
+   l=1M
+   (run %{test}))))
+
+; Fail, a private module no interface reaches, is tested on a copy.
+
+(copy_files
+ (files ../../lib/io/fail.{ml,mli}))

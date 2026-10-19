@@ -1,0 +1,9 @@
+; nx.io: arrays to and from files.
+
+(library
+ (name nx_io)
+ (private_modules fail save storage npy zip safetensors gguf txt archive)
+ (libraries nx nx_array rig rig.disk unix compress.deflate)
+ (foreign_stubs
+  (language c)
+  (names nx_io_sync)))
