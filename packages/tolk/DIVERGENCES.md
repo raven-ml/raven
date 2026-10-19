@@ -241,7 +241,7 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:406-672` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:406-685` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk's own version.
@@ -3931,23 +3931,26 @@ submission, and a range a loop of rig's program (D146).
 - **tinygrad:** `helpers.py:416-447` (`diskcache_clear`, `diskcache_get`,
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
-- **tolk:** `lib/helpers.ml:469` (`mark`), `:499` (`size_file`), `:514`
-  (`count`), `:580` (`trim`), `:612` (`make_room`), `:644` (`put`) and
-  `:665` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
+- **tolk:** `lib/helpers.ml:478` (`mark`), `:511` (`size_file`), `:526`
+  (`count`), `:592` (`trim`), `:624` (`make_room`), `:657` (`put`) and
+  `:678` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
   for no bound).
 - **Differs:** a put that would take the cache's files past `CACHESIZE`
   bytes first removes entries of every table and version, the least recently
   used by file time first, until they would hold four fifths of it with its
   entry; it removes them before it writes, so that on a full disk the write
   finds their space. A put of an entry larger than the bound writes nothing.
-  It also removes the writes
-  that killed processes left: those last written an hour or more before, the
-  age at which ccache removes its temporary files, so that another process's
-  write in progress stays. A hit sets its entry's time. Processes count
-  each other's puts in the length of one file, to which each put appends a
-  byte per KiB. `diskcache_clear` removes every entry; `clear` keeps a write
-  in progress, an entry it cannot remove, as on Windows one another process
-  marks used, and the tables' directories, which a put meanwhile writes in.
+  It also removes the writes that killed processes left: those last written
+  an hour or more before, the age at which ccache removes its temporary
+  files, so that another process's write in progress stays. A hit sets its
+  entry's time through a descriptor shared for deletion
+  (`lib/helpers_stubs.c`, `futimens` or `SetFileTime`), so that on Windows a
+  put renaming a new entry over it meanwhile still wins. Processes count each other's puts in the length of
+  one file, to which each put appends a byte per KiB. `diskcache_clear`
+  removes every entry; `clear` keeps a write in progress, an entry or size
+  it cannot remove, as on Windows one another program holds open without
+  sharing deletion, and the tables' directories, which a put meanwhile
+  writes in.
 - **Reason:** (b). Programs, schedules and beam results are keyed by the
   digest of tolk's sources (D63), so each change of the sources leaves the
   previous build's entries unread, about 0.6 GB for the tests of tolk and
@@ -3961,7 +3964,9 @@ submission, and a range a loop of rig's program (D146).
   process left`, `› a put past cachesize keeps another process's write in
   progress`, `› a put that cannot write removes entries past cachesize
   first`, `› a put that cannot count the cache's size stores its entry`,
-  `› clear leaves the entries it cannot remove`, `› clear keeps another
+  `› clear leaves the entries it cannot remove`, `› clear keeps the
+  directories of the tables`, `› a put replaces an entry that a read holds
+  open`, `› clear keeps another
   process's write in progress`, `› processes putting in turn keep the cache
   within cachesize`, `› a cachesize of 0 keeps every entry` and `› a
   negative cachesize is refused`; `Tolk.Helpers › Diskcache on two domains ›

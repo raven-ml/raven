@@ -10,6 +10,7 @@
  (foreign_stubs
   (language c)
   (names
+   helpers_stubs
    compiler_cpu_stubs
    compiler_cuda_stubs
    compiler_amd_stubs

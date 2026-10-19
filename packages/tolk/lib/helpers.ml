@@ -463,12 +463,24 @@ module Diskcache = struct
 
   let sys_error path e = Sys_error (path ^ ": " ^ Unix.error_message e)
 
+  (* [touch fd] sets the times of the file [fd] is open on to now. *)
+  external touch : Unix.file_descr -> unit = "tolk_touch"
+
   (* A read marks the entry used, for the order in which a trim removes entries.
      The mark is a hint: an entry removed meanwhile, or one the process may only
-     read, keeps its time and is still a hit. *)
+     read, keeps its time and is still a hit, and no error of the mark escapes.
+
+     It sets the time through a descriptor shared for deletion. [Unix.utimes]
+     sets it by path, and on Windows holds the file without sharing it for
+     deletion meanwhile, so a put renaming a new entry over it would fail and
+     keep the old one. The descriptor is opened for writing, which on Windows
+     is what lets it set the file's times. *)
   let mark path =
-    try Unix.utimes path 0. 0.
-    with Unix.Unix_error ((ENOENT | EACCES | EPERM | EROFS), _, _) -> ()
+    match Unix.openfile path [ O_WRONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 with
+    | exception Unix.Unix_error _ -> ()
+    | fd ->
+        (try touch fd with Unix.Unix_error _ -> ());
+        (try Unix.close fd with Unix.Unix_error _ -> ())
 
   (* An entry missing when it is opened is a miss, even if a put renames one
      into place before the error is read. *)
@@ -619,8 +631,9 @@ module Diskcache = struct
     if limit > 0 && ((not measured) || over) then trim limit bytes
 
   (* The entry is written aside and renamed into place, so readers never see it
-     half written. On Windows the rename can fail while a reader holds the entry
-     open; that entry is complete, so it stays. *)
+     half written. On Windows the rename fails while a program that does not
+     share the entry for deletion holds it open, which the cache's own reads and
+     marks do not; that entry is complete, so it stays. *)
   let write path entry =
     let dir = Filename.dirname path in
     mkdir_p dir;

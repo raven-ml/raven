@@ -836,6 +836,18 @@ let clear_keeps_tables () =
   Diskcache.clear ();
   equal bool true (Sys.file_exists dir && Sys.is_directory dir)
 
+(* A read and a mark hold an entry open, shared for deletion, while a put
+   renames a new entry over it: on Windows a handle that does not share deletion
+   makes that rename fail. *)
+let put_over_a_held_entry () =
+  let table = fresh_table () in
+  let entry = put_entry ~table "k" "old" in
+  let fd = Unix.openfile entry [ O_RDONLY; O_SHARE_DELETE ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () -> Diskcache.put ~table "k" "new");
+  equal (option string) (Some "new") (Diskcache.get ~table "k")
+
 let unbounded () =
   Diskcache.clear ();
   let table = fresh_table () and v = String.make 4096 'v' in
@@ -1010,6 +1022,8 @@ let diskcache =
           test "clear leaves the entries it cannot remove"
             clear_leaves_held_entries;
           test "clear keeps the directories of the tables" clear_keeps_tables;
+          test "a put replaces an entry that a read holds open"
+            put_over_a_held_entry;
           test "clear keeps another process's write in progress"
             clear_keeps_writes_in_progress;
           cases ~name:(Printf.sprintf "cachelevel=%d")
