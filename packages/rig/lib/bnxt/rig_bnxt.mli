@@ -10,15 +10,16 @@
     It resets the NIC, gives its firmware the context memory and command queue
     of its RoCE engine, and gives the NIC its address on the fabric. The NIC
     then moves bytes between memory of its machine and a peer's, by sends and
-    receives on reliable-connected queue pairs over RoCE v2. The NICs it drives
-    are the BCM57608 ([14e4:1760]).
+    receives on reliable-connected queue pairs over RoCE v2, and between its
+    own regions by reads. The NICs it drives are the BCM57608 ([14e4:1760]).
 
     {b Hardware status.} The library is written, never run on hardware.
 
     Two kinds of objects carry the work:
-    - A {e region} ({!Region}) is memory the NIC writes and reads, either system
-      memory the library allocates or another device's memory, such as a GPU's
-      behind its BAR. A byte of a region is named by its offset in it.
+    - A {e region} ({!Region}) is memory the NIC writes and reads: system
+      memory the library allocates, memory of the process pinned for the NIC,
+      or another device's memory, such as a GPU's behind its BAR. A byte of a
+      region is named by its offset in it.
     - A {e queue pair} ({!Qp}) is a send ring and a receive ring, connected to
       one queue pair of a peer. A {e send} posts bytes of a region to the peer,
       where they land in the region of the receive the peer posted next. Each
@@ -62,8 +63,9 @@
 
     Any domain may make any call, concurrently with other domains, with these
     exceptions:
-    - {!Qp.send}, {!Qp.poll} and {!Qp.wait} of one queue pair's [Send] side run
-      one call at a time, and those of its [Receive] side too.
+    - {!Qp.send}, {!Qp.read}, {!Qp.poll} and {!Qp.wait} of one queue pair's
+      [Send] side run one call at a time, and {!Qp.receive}, {!Qp.poll} and
+      {!Qp.wait} of its [Receive] side too.
     - {!Region.deregister} must run after every call that names the region has
       returned, {!Qp.destroy} after every other call on the queue pair has
       returned, and {!val-close} after every other call on the NIC and its
@@ -76,10 +78,10 @@
     and raises [Invalid_argument] ([Rig]'s domains section).
 
     {!open_}, {!val-close}, {!detach}, {!attach}, {!Region.host},
-    {!Region.device}, {!Region.deregister}, {!Qp.make}, {!Qp.connect},
-    {!Qp.poll}, {!Qp.wait} and {!Qp.destroy}, called from a callback inside a
-    lock ([Rig]'s domains section), raise [Invalid_argument], having changed
-    nothing ({!Rig_pci.section-errors}).
+    {!Region.pages}, {!Region.device}, {!Region.deregister}, {!Qp.make},
+    {!Qp.connect}, {!Qp.poll}, {!Qp.wait} and {!Qp.destroy}, called from a
+    callback inside a lock ([Rig]'s domains section), raise
+    [Invalid_argument], having changed nothing ({!Rig_pci.section-errors}).
 
     {1:errors Errors}
 
@@ -128,13 +130,18 @@ val open_ : ?machine:Rig_pci.Machine.t -> int -> (t, string) result
     {!Rig_pci.Machine.this}) and boots it. The NIC must be detached ({!detach}),
     and the process needs what {!Rig_pci.section-needs} lists for a function. It
     needs no firmware file, since the NIC boots from the firmware in its flash.
-    Every open resets the NIC, whatever ran on it before. The process holds the
-    NIC until {!val-close}, or until it exits, which closes it.
+    Every open resets the NIC, whatever ran on it before, and turns relaxed
+    ordering off for every request the NIC starts, so that it writes memory
+    in order ({!Region}). On a root complex where relaxed ordering raises the
+    NIC's write bandwidth, the NIC loses that gain. {!val-close} gives it back
+    as the open found it ({!section-changes}). The process holds the NIC
+    until {!val-close}, or until it exits, which closes it.
 
     [Error msg], with [msg] starting with the NIC's name, if [machine]'s PCI
     functions cannot be listed, if it has no NIC [i], if a process holds it, if
-    its function cannot be taken or reset, or if its firmware refuses a request
-    or does not answer in time.
+    its function cannot be taken or reset, if its relaxed ordering cannot be
+    turned off, or if its firmware refuses a request or does not answer in
+    time.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -147,14 +154,22 @@ val bus : t -> string
 
 val close : t -> unit
 (** [close nic] unregisters the process from [nic]'s firmware, turns its bus
-    mastering off, frees its system memory, regions included, and releases its
+    mastering off, frees its system memory, regions included, turns its
+    relaxed ordering back on if {!open_} found it on, and releases its
     function. The NIC reads and writes no memory of the process once [close]
     returns, and the next open resets it. *)
 
 (** {1:regions Regions} *)
 
 (** A region is memory the NIC writes and reads. It is local to its NIC: a
-    peer's sends write it only through a receive this process posted. *)
+    peer's sends write it only through a receive this process posted, and
+    only queue pairs connected to queue pairs of its own NIC read it
+    ({!Qp.read}).
+
+    The NIC writes a region in the order of the entries that write it, and
+    the bytes of a receive or a read land in system memory before its
+    completion: they are there once {!Qp.poll} or {!Qp.wait} has taken it.
+    This holds because {!open_} turns the NIC's relaxed ordering off. *)
 module Region : sig
   type nic := t
 
@@ -171,6 +186,24 @@ module Region : sig
       {!Rig_pci.Function.alloc_dma} states, or the firmware refuses it.
 
       Raises [Invalid_argument] if [n <= 0]. *)
+
+  val pages : nic -> int -> int -> (t, string) result
+  (** [pages nic a n] is a region over the [n] bytes at address [a] of the
+      process, which start on a page of [nic]'s machine
+      ({!Rig_pci.Machine.val-page}), pinned for [nic] as {!Rig_pci.Function.pin}
+      pins them until the region is deregistered or [nic] closes. The NIC
+      reaches the pages that held the bytes when [pages] ran, whatever the
+      process maps there later.
+
+      [Error msg] if the machine has no room to pin them for [nic], the
+      system refuses to pin them, or the firmware refuses the region. A NIC
+      that is not behind an IOMMU takes only memory
+      {!Rig_pci.Function.alloc_dma} gave, and [pages] of any other memory of
+      the process is [Error msg]: those pages go back to the system when the
+      process dies, while the NIC may still write them
+      ({!Rig_pci.Function.pin}).
+
+      Raises [Invalid_argument] if [n <= 0] or [a] is not on a page. *)
 
   val device : nic -> (int * int) list -> (t, string) result
   (** [device nic runs] is a region over another device's memory at [runs], (bus
@@ -201,11 +234,13 @@ module Region : sig
 
   val deregister : t -> (unit, string) result
   (** [deregister r] deregisters [r] and frees the memory the library allocated
-      for it, the memory {!host} made included. The NIC reads and writes [r] no
-      more once [deregister] returns [Ok ()].
+      for it, the memory {!host} made included, and unpins the memory {!pages}
+      pinned. The NIC reads and writes [r] no more once [deregister] returns
+      [Ok ()].
 
       It is [Error msg] if the firmware refuses. The NIC may then still read and
-      write [r]'s memory, which stays allocated until {!val-close}. *)
+      write [r]'s memory, which stays allocated and pinned until
+      {!val-close}. *)
 end
 
 (** {1:qps Queue pairs} *)
@@ -214,7 +249,8 @@ end
     of a peer. Each ring holds 4095 entries: {!Qp.room} says how many more it
     takes, and an entry's slot is free once {!Qp.poll} or {!Qp.wait} has taken
     its completion. They take the completions of a ring in the order of its
-    entries.
+    entries. A message, the bytes of one send or read, is at most 2{^31}
+    bytes.
 
     A queue pair {e fails} when one of its entries fails, when the NIC reports
     its failure, when its completions hold one of a kind its ring does not
@@ -265,6 +301,10 @@ module Qp : sig
       receive, without end, and a send the peer does not acknowledge is retried
       7 times, each after 67 ms, before its completion fails.
 
+      [e] may be the endpoint of a queue pair of [qp]'s own NIC, [qp]'s own
+      included. [qp] then serves its peer's reads ({!read}), which take bytes
+      of this process's regions.
+
       [Error msg] if the firmware refuses a change of [qp]'s state. A [connect]
       the firmware refused part-way, called again, resumes where it stopped.
 
@@ -281,6 +321,15 @@ module Qp : sig
       Raises [Invalid_argument] if [qp] is not connected, [r] is not a region of
       [qp]'s NIC or is deregistered, the bytes do not lie in [r], [n] is over
       [2{^31}], or [room qp Send] is [0]. *)
+
+  val read : t -> src:Region.t * int -> dst:Region.t * int -> int -> unit
+  (** [read qp ~src:(s, i) ~dst:(r, at) n] posts the read of the [n] bytes at
+      offset [i] of [s] into the [n] bytes at offset [at] of [r], on [qp]'s
+      [Send] ring, whose peer serves it.
+
+      Raises [Invalid_argument] as {!send} does for [r], and if [s] is not a
+      region of [qp]'s NIC or is deregistered, the bytes do not lie in [s], or
+      [qp]'s peer is not a queue pair of [qp]'s NIC. *)
 
   val receive : t -> Region.t -> at:int -> int -> unit
   (** [receive qp r ~at n] posts the receive of up to [n] bytes at offset [at]
@@ -319,7 +368,12 @@ end
     describes, and their changes persist after the process. Each refuses a NIC
     a process holds, this one included, and needs [CAP_SYS_ADMIN] and write
     access to the files under [/sys/bus/pci] they write. Each returns
-    [Error msg] if the machine's PCI functions cannot be listed. *)
+    [Error msg] if the machine's PCI functions cannot be listed.
+
+    {!open_} turns the NIC's relaxed ordering off, and {!val-close} turns it
+    back on if the open found it on. A process that dies without closing the
+    NIC leaves it off, for the kernel's drivers too after {!attach}, until
+    the next open and close or a reboot. *)
 
 val detach : int -> (Rig_pci.Driver.progress, string) result
 (** [detach i] takes NIC [i] of this machine from its kernel driver as

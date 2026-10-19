@@ -42,7 +42,8 @@ let ring_entries = 4096
 let mtu = 4096
 
 (* The largest message: InfiniBand's, which the 32-bit length of an SGE
-   holds. *)
+   holds, and BNXT_RE_MAX_MSG_SIZE, which Linux's bnxt_re refuses a work
+   request past. *)
 let max_message = 1 lsl 31
 
 (* A page of the NIC's page lists and rings. *)
@@ -161,8 +162,9 @@ let check fn =
 
 (* The firmware's channel *)
 
-(* [lock] serializes the requests and commands and guards [allocs]. Every
-   allocation is freed at the NIC's stop, once it masters the bus no more. *)
+(* [lock] serializes the requests and commands and guards [allocs] and
+   [pins]. Every allocation is freed, and every pin given back, at the NIC's
+   stop, once it masters the bus no more. *)
 type hw = {
   fn : Function.t;
   bar0 : Window.t;
@@ -172,7 +174,11 @@ type hw = {
   lock : Mutex.t;
   mutable seq : int;
   mutable allocs : Window.t list;
+  mutable pins : (int * int) list; (* the memory [Region.pages] pinned *)
   mutable registered : bool; (* with the firmware, which stop undoes *)
+  mutable relaxed_at : int option;
+      (* the Device Control register, whose relaxed ordering open turned off
+         and stop turns back on *)
 }
 
 let alloc fn n =
@@ -200,6 +206,16 @@ let pages ?(log = 12) ~bytes runs =
 let free hw w =
   hw.allocs <- List.filter (fun a -> a != w) hw.allocs;
   Function.free_dma hw.fn w
+
+(* Gives back one pin of [hw]'s, which another pin of the same pages may
+   leave in [pins]. *)
+let unpin hw ((a, n) as pin) =
+  let rec drop = function
+    | [] -> []
+    | p :: rest -> if p = pin then rest else p :: drop rest
+  in
+  hw.pins <- drop hw.pins;
+  Function.unpin hw.fn a n
 
 (* [f ()], with [w] given back if [f] is refused. *)
 let freeing hw w f =
@@ -650,6 +666,9 @@ type t = {
 let name nic = nic.name
 let bus nic = Function.bus nic.hw.fn
 
+(* Whether [mac] and [gid] are [nic]'s addresses on the fabric. *)
+let is_at nic ~mac ~gid = String.equal mac nic.mac && String.equal gid nic.gid
+
 let live nic what =
   if nic.closed then invalid_argf "Rig_bnxt.%s: %s is closed" what nic.name
 
@@ -694,12 +713,57 @@ let channel fn =
     lock = Mutex.create ();
     seq = 0;
     allocs = [ resp ];
+    pins = [];
     registered = false;
+    relaxed_at = None;
   }
+
+(* PCI configuration space: the capability list, the PCI Express capability's
+   ID, and its Device Control register, whose Enable Relaxed Ordering bit lets
+   the function set relaxed ordering on the requests it starts (PCI Express
+   Base Specification 7.5.3.4, as Linux's include/uapi/linux/pci_regs.h
+   names them: PCI_CAPABILITY_LIST, PCI_CAP_ID_EXP, PCI_EXP_DEVCTL and
+   PCI_EXP_DEVCTL_RELAX_EN). *)
+let capabilities = 0x34
+let pcie_capability = 0x10
+let device_control = 0x08
+let relaxed_ordering = 0x10
+
+(* The offset of [fn]'s Device Control register. The walk of the capabilities
+   is bounded: a dead link can give back pointers for ever. *)
+let device_control_at fn =
+  let rec walk cap seen =
+    if cap = 0 || List.mem cap seen then None
+    else if Function.config8 fn cap = pcie_capability then Some cap
+    else walk (Function.config8 fn (cap + 1) land 0xfc) (cap :: seen)
+  in
+  match walk (Function.config8 fn capabilities land 0xfc) [] with
+  | None -> fail "the NIC has no PCI Express capability"
+  | Some cap -> cap + device_control
+
+let relaxed fn at = Function.config16 fn at land relaxed_ordering <> 0
+
+(* Turns relaxed ordering off for every request the NIC starts, the writes of
+   its completions and its firmware's included, as Linux's drivers/pci/probe.c
+   (pci_configure_relaxed_ordering) does for a device under a root port that
+   mishandles it; vfio-pci passes the bit through. A posted write that is not
+   relaxed passes no earlier one, so a receive's or a read's bytes reach
+   memory before its completion. *)
+let strict_order fn at =
+  Function.set_config16 fn at
+    (Function.config16 fn at land lnot relaxed_ordering);
+  if relaxed fn at then
+    fail "the NIC keeps relaxed ordering on after it was turned off"
+
+(* Gives the NIC back the relaxed ordering that open found, for the kernel's
+   drivers that take it next. *)
+let restore_order fn at =
+  Function.set_config16 fn at (Function.config16 fn at lor relaxed_ordering)
 
 (* The NIC's stop: a NIC registered with its firmware, whose machine still
    answers, unregisters. The NIC then masters the bus no more, so its memory is
-   freed. A NIC stopped otherwise is reset at its next open, as every open
+   freed and its pins given back, and gets back the relaxed ordering open
+   found. A NIC stopped otherwise is reset at its next open, as every open
    does. *)
 let stop hw () =
   protect hw.lock @@ fun () ->
@@ -714,13 +778,21 @@ let stop hw () =
   Function.set_bus_master hw.fn false;
   List.iter (Function.free_dma hw.fn) hw.allocs;
   hw.allocs <- [];
+  List.iter (fun (a, n) -> Function.unpin hw.fn a n) hw.pins;
+  hw.pins <- [];
+  Option.iter (restore_order hw.fn) hw.relaxed_at;
+  hw.relaxed_at <- None;
   if clean then `Clean else `Lost
 
-(* Resets the NIC, registers with its firmware, gives the RoCE engine its
-   context memory and command queue, opens the Ethernet receive path, and adds
-   the NIC's address. *)
+(* Resets the NIC, turns its relaxed ordering off, registers with its
+   firmware, gives the RoCE engine its context memory and command queue, opens
+   the Ethernet receive path, and adds the NIC's address. *)
 let boot ~name h hw =
+  let at = device_control_at hw.fn in
+  let was = relaxed hw.fn at in
   (match Function.reset hw.fn with Ok () -> () | Error why -> fail "%s" why);
+  if was then hw.relaxed_at <- Some at;
+  strict_order hw.fn at;
   Function.set_bus_master hw.fn true;
   ignore (hwrm hw "ver_get" ~req_type:D.hwrm_ver_get ignore);
   ignore (hwrm hw ~us:reset_us "func_reset" ~req_type:D.hwrm_func_reset ignore);
@@ -806,11 +878,12 @@ let attach i =
 module Region = struct
   type nonrec t = {
     nic : t;
-    key : int;
+    key : int; (* its local key, and its remote key *)
     va : int;
     bytes : int;
     host : Window.t option; (* the memory {!host} made *)
     memory : Window.t list; (* freed at deregistration *)
+    pinned : (int * int) option; (* the pages {!pages} pinned *)
     mutable gone : (unit, string) result option;
   }
 
@@ -828,8 +901,13 @@ module Region = struct
      bytes), [va] being the first run's address. [host] is memory it was made
      over, which it frees at its deregistration. A refused registration frees
      its memory, unless the firmware stopped answering and may still read the
-     page list. *)
-  let register nic runs ~bytes ~host =
+     page list.
+
+     Every region allows remote reads, which only a queue pair connected to
+     one of its own NIC serves ([Qp.connect]): its key, which serves as its
+     remote key as in Linux's bnxt_re, never leaves the process. The NIC
+     writes it in order ([strict_order]). *)
+  let register nic runs ~bytes ~host ~pinned =
     let va = fst (List.hd runs) in
     let log = log_page ~va runs in
     let level, pbl, list = page_list nic.hw (pages ~log ~bytes runs) in
@@ -842,13 +920,15 @@ module Region = struct
           set b M.log2_pg_size_lvl
             ((level lsl D.cmdq_register_mr_lvl_sft)
             lor (log lsl D.cmdq_register_mr_log2_pg_size_sft));
-          set b M.access D.cmdq_register_mr_access_local_write;
+          set b M.access
+            (D.cmdq_register_mr_access_local_write
+            lor D.cmdq_register_mr_access_remote_read);
           set b M.log2_pbl_pg_size 12;
           set b M.pbl pbl;
           set b M.va va;
           set b M.mr_size bytes)
     with
-    | r -> { nic; key = xid r; va; bytes; host; memory; gone = None }
+    | r -> { nic; key = xid r; va; bytes; host; memory; pinned; gone = None }
     | exception e ->
         if not nic.rc.stopped then List.iter (free nic.hw) memory;
         raise e
@@ -857,7 +937,29 @@ module Region = struct
     if n <= 0 then invalid_argf "Rig_bnxt.Region.host: %d bytes" n;
     command nic "Region.host" @@ fun () ->
     let w, runs = sysmem nic.hw n in
-    register nic runs ~bytes:(Window.length w) ~host:(Some w)
+    register nic runs ~bytes:(Window.length w) ~host:(Some w) ~pinned:None
+
+  (* The pin is given back if the registration is refused, unless the firmware
+     stopped answering and may still read the page list, and at deregistration
+     otherwise, or at the NIC's stop. *)
+  let pages nic a n =
+    let page = Machine.page (Function.machine nic.hw.fn) in
+    if n <= 0 then invalid_argf "Rig_bnxt.Region.pages: %d bytes" n;
+    if a < 0 || a land (page - 1) <> 0 then
+      invalid_argf "Rig_bnxt.Region.pages: %#x is not on a page" a;
+    command nic "Region.pages" @@ fun () ->
+    let runs =
+      match Function.pin nic.hw.fn a n with
+      | Ok (Some runs) -> runs
+      | Ok None -> fail "no room to pin %d bytes at %#x for the NIC" n a
+      | Error why -> fail "%s" why
+    in
+    nic.hw.pins <- (a, n) :: nic.hw.pins;
+    match register nic runs ~bytes:n ~host:None ~pinned:(Some (a, n)) with
+    | r -> r
+    | exception (Refused _ as e) ->
+        if not nic.rc.stopped then unpin nic.hw (a, n);
+        raise e
 
   let device nic runs =
     if runs = [] then invalid_arg "Rig_bnxt.Region.device: no runs";
@@ -871,7 +973,7 @@ module Region = struct
       fail
         "the NIC is behind an IOMMU, which maps no other device's memory for it";
     let bytes = List.fold_left (fun s (_, n) -> s + n) 0 runs in
-    register nic runs ~bytes ~host:None
+    register nic runs ~bytes ~host:None ~pinned:None
 
   let length r = r.bytes
 
@@ -904,7 +1006,8 @@ module Region = struct
                ~opcode:D.cmdq_base_opcode_deregister_mr
                ~size:D.Cmdq_deregister_mr.sizeof (fun b ->
                  set b D.Cmdq_deregister_mr.lkey r.key));
-          List.iter (free r.nic.hw) r.memory
+          List.iter (free r.nic.hw) r.memory;
+          Option.iter (unpin r.nic.hw) r.pinned
         in
         r.gone <- Some result;
         result
@@ -952,6 +1055,7 @@ module Qp = struct
     first_psn : int;
     mutable psn : int; (* the first packet of the next send *)
     mutable state : state;
+    mutable peer : endpoint option; (* once ready to receive *)
     failed : string option Atomic.t;
     terminal : int Atomic.t;
         (* the send index of a terminal completion, or [no_index] *)
@@ -960,6 +1064,15 @@ module Qp = struct
 
   let rings qp = function Send -> qp.sends | Receive -> qp.receives
   let access = D.cmdq_modify_qp_access_local_write
+
+  (* A queue pair connected to one of its own NIC serves its peer's reads,
+     which are this process's own: the remote keys they name never leave
+     it. *)
+  let own nic (e : endpoint) = is_at nic ~mac:e.mac ~gid:e.gid
+
+  let access_to nic e =
+    if own nic e then access lor D.cmdq_modify_qp_access_remote_read
+    else access
   let ( ||| ) = List.fold_left ( lor ) 0
 
   let init_mask =
@@ -1150,6 +1263,7 @@ module Qp = struct
         first_psn;
         psn = first_psn;
         state = Initialized;
+        peer = None;
         failed = Atomic.make None;
         terminal = Atomic.make no_index;
         destroyed = None;
@@ -1180,7 +1294,7 @@ module Qp = struct
       modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_rtr ~mask:rtr_mask
         ~network (fun b ->
           set b M.qp_type D.cmdq_modify_qp_qp_type_rc;
-          set b M.access access;
+          set b M.access (access_to nic e);
           set b M.pkey 0xffff;
           Bytes.blit_string e.gid 0 b (fst M.dgid) 16;
           set b M.sgid_index nic.gid_index;
@@ -1192,12 +1306,14 @@ module Qp = struct
           set b M.rq_psn (e.psn land 0xffffff);
           set b M.max_dest_rd_atomic 4;
           set b M.dest_qp_id e.qp);
-      qp.state <- Ready_to_receive
+      qp.state <- Ready_to_receive;
+      qp.peer <- Some e
     end;
+    let peer = Option.value ~default:e qp.peer in
     modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_rts ~mask:rts_mask
       ~network (fun b ->
         set b M.qp_type D.cmdq_modify_qp_qp_type_rc;
-        set b M.access access;
+        set b M.access (access_to nic peer);
         set b M.max_rd_atomic 1;
         set b M.rnr_retry 7;
         set b M.retry_cnt 7;
@@ -1220,44 +1336,63 @@ module Qp = struct
     Window.set32 q.ring (sge + fst D.Sq_sge.l_key) r.key;
     Window.set32 q.ring (sge + fst D.Sq_sge.size) n
 
-  let check_post qp what side (r : Region.t) at n =
-    usable qp what;
+  let check_region qp what (r : Region.t) at n =
     if r.nic != qp.nic then
       invalid_argf "Rig_bnxt.%s: a region of another NIC" what;
     if Option.is_some r.gone then
       invalid_argf "Rig_bnxt.%s: a deregistered region" what;
-    if qp.state <> Ready_to_send then
-      invalid_argf "Rig_bnxt.%s: queue pair %d is not connected" what qp.qpn;
     if at < 0 || n < 0 || n > max_message || at > r.bytes - n then
       invalid_argf "Rig_bnxt.%s: %d bytes at %d of a region of %d" what n at
-        r.bytes;
+        r.bytes
+
+  let check_post qp what side (r : Region.t) at n =
+    usable qp what;
+    check_region qp what r at n;
+    if qp.state <> Ready_to_send then
+      invalid_argf "Rig_bnxt.%s: queue pair %d is not connected" what qp.qpn;
     if room qp side = 0 then invalid_argf "Rig_bnxt.%s: the ring is full" what
 
   (* The packets of a send of [n] bytes: one per [mtu] bytes, at least one. *)
   let packets n = Int.max 1 (ceildiv n mtu)
 
-  (* A post on a failed queue pair writes nothing: its completion is the queue
-     pair's failure. *)
-  let send qp r ~at n =
-    check_post qp "Qp.send" Send r at n;
+  (* What an entry of the send ring does: send, or read the bytes at an offset
+     of a region. *)
+  type op = Sending | Reading of Region.t * int
+
+  (* Writes the entry of [op] that moves the [n] bytes at [at] of [r] in the
+     next slot of the send ring, then its retransmission entry, and rings it.
+     The headers of both entries are 32 bytes, the SGE after them. A post on a
+     failed queue pair writes nothing: its completion is the queue pair's
+     failure. *)
+  let post_send qp op (r : Region.t) at n =
     let s = qp.sends in
     let q = s.entries and i = s.posted in
     let slot = i mod ring_entries in
     s.lengths.(slot) <- n;
     if Option.is_none (Atomic.get qp.failed) then begin
-      let base = slot * q.stride in
-      Window.fill q.ring base (D.Sq_send_hdr.sizeof + D.Sq_sge.sizeof) '\000';
-      Window.set8 q.ring
-        (base + fst D.Sq_send_hdr.wqe_type)
-        D.sq_base_wqe_type_send;
-      Window.set8 q.ring
-        (base + fst D.Sq_send_hdr.flags)
-        D.sq_send_flags_signal_comp;
-      Window.set8 q.ring (base + fst D.Sq_send_hdr.wqe_size) 3;
-      Window.set32 q.ring (base + fst D.Sq_send_hdr.length) n;
+      let base = slot * q.stride and w = q.ring in
+      Window.fill w base (D.Sq_send_hdr.sizeof + D.Sq_sge.sizeof) '\000';
+      (match op with
+      | Sending ->
+          let module H = D.Sq_send_hdr in
+          Window.set8 w (base + fst H.wqe_type) D.sq_base_wqe_type_send;
+          Window.set8 w (base + fst H.flags) D.sq_send_flags_signal_comp;
+          Window.set8 w (base + fst H.wqe_size) 3;
+          Window.set32 w (base + fst H.length) n
+      | Reading (src, from) ->
+          let module H = D.Sq_rdma_hdr in
+          Window.set8 w (base + fst H.wqe_type) D.sq_base_wqe_type_read_wqe;
+          Window.set8 w (base + fst H.flags) D.sq_rdma_hdr_flags_signal_comp;
+          Window.set8 w (base + fst H.wqe_size) 3;
+          Window.set32 w (base + fst H.length) n;
+          Window.set64 w
+            (base + fst H.remote_va)
+            (Int64.of_int (src.va + from));
+          Window.set32 w (base + fst H.remote_key) src.key);
       sge q slot r at n;
       (* The retransmission table's entry of the send: its slot, the packet
-         after it and its first packet. *)
+         after it and its first packet. A read takes as many packets of
+         responses, as Linux's bnxt_re counts them. *)
       let psn = qp.psn land 0xffffff in
       let next = (psn + packets n) land 0xffffff in
       Window.set64 q.ring
@@ -1270,6 +1405,20 @@ module Qp = struct
       ring qp.nic.rc.db ~xid:qp.qpn ~typ:s.typ (i + 1)
     end;
     s.posted <- i + 1
+
+  let send qp r ~at n =
+    check_post qp "Qp.send" Send r at n;
+    post_send qp Sending r at n
+
+  let read qp ~src:((s : Region.t), from) ~dst:(r, at) n =
+    check_post qp "Qp.read" Send r at n;
+    check_region qp "Qp.read" s from n;
+    (match qp.peer with
+    | Some e when own qp.nic e -> ()
+    | _ ->
+        invalid_argf "Rig_bnxt.Qp.read: queue pair %d's peer is on another NIC"
+          qp.qpn);
+    post_send qp (Reading (s, from)) r at n
 
   let receive qp r ~at n =
     check_post qp "Qp.receive" Receive r at n;

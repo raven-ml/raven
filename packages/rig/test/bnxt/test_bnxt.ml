@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* NICs of this machine: what the library refuses on any machine, and two queue
-   pairs of one NIC connected to each other and the transfers between their
-   regions. Those run, as root, on the detached BCM57608 the variable RIG_BNXT
-   numbers, and skip without it. *)
+   pairs of one NIC connected to each other, or one connected to itself, and
+   the transfers and reads between their regions, of the library's memory or
+   the process's. Those run, as root, on the detached BCM57608 the variable
+   RIG_BNXT numbers, and skip without it. *)
 
 open Windtrap
 module B = Rig_bnxt
@@ -202,6 +203,135 @@ let transfers =
               B.Qp.send a r ~at:0 1));
     ]
 
+let loopback =
+  group "reads"
+    [
+      test "a read brings back the bytes of a region of the NIC" (fun () ->
+          with_nic @@ fun nic ->
+          let a, _ = pair nic in
+          let n = (2 * 4096) + 5 in
+          let src = region nic n and dst = region nic n in
+          B.Region.write src 0 (pattern n);
+          B.Qp.read a ~src:(src, 0) ~dst:(dst, 0) n;
+          equal int ~msg:"bytes read" n (wait a Send);
+          equal string (pattern n) (B.Region.read dst 0 n));
+      test "a queue pair connected to itself reads its own regions" (fun () ->
+          with_nic @@ fun nic ->
+          let qp = ok "a queue pair" (B.Qp.make nic) in
+          ok "connecting" (B.Qp.connect qp (B.Qp.endpoint qp));
+          let r = region nic 4096 in
+          B.Region.write r 0 "flush";
+          B.Qp.read qp ~src:(r, 0) ~dst:(r, 100) 4;
+          equal int ~msg:"bytes read" 4 (wait qp Send);
+          equal string "flus" (B.Region.read r 100 4));
+      test "a read sees the bytes a receive landed before it" (fun () ->
+          with_nic @@ fun nic ->
+          let a, b = pair nic in
+          let src = region nic 4096
+          and dst = region nic 4096
+          and back = region nic 4096 in
+          B.Region.write src 0 "landed";
+          B.Qp.receive b dst ~at:0 64;
+          B.Qp.send a src ~at:0 6;
+          equal int ~msg:"bytes received" 6 (wait b Receive);
+          B.Qp.read b ~src:(dst, 0) ~dst:(back, 0) 6;
+          equal int ~msg:"bytes read" 6 (wait b Send);
+          equal string "landed" (B.Region.read back 0 6));
+      test "a read outside its source, or unconnected, raises" (fun () ->
+          with_nic @@ fun nic ->
+          let a, _ = pair nic in
+          let r = region nic 4096 in
+          let n = B.Region.length r in
+          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+              B.Qp.read a ~src:(r, 1) ~dst:(r, 0) n);
+          let qp = ok "a queue pair" (B.Qp.make nic) in
+          raises_match (Exn.invalid_arg ~substring:"not connected") (fun () ->
+              B.Qp.read qp ~src:(r, 0) ~dst:(r, 8) 1));
+      test "a read on a queue pair whose peer is on another NIC raises"
+        (fun () ->
+          with_nic @@ fun nic ->
+          let qp = ok "a queue pair" (B.Qp.make nic) in
+          let own = B.Qp.endpoint qp in
+          let flip s = String.map (fun c -> Char.chr (Char.code c lxor 1)) s in
+          (* The firmware takes the states without reaching the peer. *)
+          ok "connecting"
+            (B.Qp.connect qp
+               { own with gid = flip own.gid; mac = flip own.mac });
+          let r = region nic 4096 in
+          raises_match (Exn.invalid_arg ~substring:"another NIC") (fun () ->
+              B.Qp.read qp ~src:(r, 0) ~dst:(r, 8) 1));
+    ]
+
+(* The NIC's PCI Express Device Control register, as this machine's files show
+   its configuration space: the capability list at 0x34, the PCI Express
+   capability of ID 0x10, Device Control at its byte 8, and Enable Relaxed
+   Ordering its bit 4 (PCI Express Base Specification 7.5.3.4). *)
+let device_control bus =
+  let config =
+    In_channel.with_open_bin
+      (Printf.sprintf "/sys/bus/pci/devices/%s/config" bus)
+      In_channel.input_all
+  in
+  let byte at = Char.code config.[at] in
+  let rec walk cap n =
+    if cap = 0 || n = 48 then fail "no PCI Express capability"
+    else if byte cap = 0x10 then String.get_uint16_le config (cap + 8)
+    else walk (byte (cap + 1) land 0xfc) (n + 1)
+  in
+  walk (byte 0x34 land 0xfc) 0
+
+let order =
+  test "an open turns the NIC's relaxed ordering off, and a close back"
+    (fun () ->
+      let i = index () in
+      let bus = List.nth (ok "the NICs" (B.buses ())) i in
+      let relaxed () = device_control bus land 0x10 in
+      let before = relaxed () in
+      let nic = open_nic () in
+      let opened = relaxed () in
+      B.close nic;
+      equal int ~msg:"open" 0 opened;
+      equal int ~msg:"after close, as before open" before (relaxed ()))
+
+(* Memory of the process, pinned for the NIC: behind an IOMMU it lands sends,
+   and a NIC taken physically refuses it, as Rig_pci.Function.pin states. *)
+let pages =
+  let module H = Rig_gpu_support.Host in
+  group "pages"
+    [
+      test "a region over the process's pages takes and sends its bytes"
+        (fun () ->
+          with_nic @@ fun nic ->
+          let n = 2 * H.page in
+          let at = H.pages n in
+          Fun.protect ~finally:(fun () -> H.free_pages at n) @@ fun () ->
+          match B.Region.pages nic at n with
+          | Error e -> contains ~msg:"taken physically" ~sub:"alloc_dma" e
+          | Ok p ->
+              let a, b = pair nic in
+              let r = region nic n in
+              B.Region.write r 0 (pattern n);
+              B.Qp.receive b p ~at:0 n;
+              B.Qp.send a r ~at:0 n;
+              equal int ~msg:"bytes received" n (wait b Receive);
+              equal string ~msg:"landed" (pattern n) (H.read at n);
+              H.write at "pinned";
+              B.Qp.receive a r ~at:0 n;
+              B.Qp.send b p ~at:0 6;
+              equal int ~msg:"bytes sent" 6 (wait b Send);
+              ignore (wait a Receive);
+              equal string ~msg:"sent" "pinned" (B.Region.read r 0 6);
+              ok "deregistering" (B.Region.deregister p));
+      test "pages off a page, or no bytes, raise" (fun () ->
+          with_nic @@ fun nic ->
+          let at = H.pages H.page in
+          Fun.protect ~finally:(fun () -> H.free_pages at H.page) @@ fun () ->
+          raises_match (Exn.invalid_arg ~substring:"page") (fun () ->
+              ignore (B.Region.pages nic (at + 8) 8));
+          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+              ignore (B.Region.pages nic at 0)));
+    ]
+
 (* From two domains: a transfer one way runs while one the other way does. Each
    way holds its own lock, so that a side runs one call at a time. *)
 let two_domains =
@@ -298,4 +428,12 @@ let misuse =
 let () =
   exit
     (run "rig_bnxt"
-       [ refusals; transfers; group "domains" [ two_domains ]; misuse ])
+       [
+         refusals;
+         transfers;
+         loopback;
+         pages;
+         order;
+         group "domains" [ two_domains ];
+         misuse;
+       ])

@@ -95,13 +95,15 @@ CONSTANTS = [
         "CMDQ_CREATE_QP_TYPE_RC", "CMDQ_MODIFY_QP_QP_TYPE_RC", "CMDQ_MODIFY_QP_NETWORK_TYPE_ROCEV2_IPV4",
         "CMDQ_MODIFY_QP_PATH_MTU_MTU_4096", "CMDQ_MODIFY_QP_NEW_STATE_INIT", "CMDQ_MODIFY_QP_NEW_STATE_RTR",
         "CMDQ_MODIFY_QP_NEW_STATE_RTS", "CMDQ_MODIFY_QP_NEW_STATE_ERR", "CMDQ_MODIFY_QP_ACCESS_LOCAL_WRITE",
+        "CMDQ_MODIFY_QP_ACCESS_REMOTE_READ",
         *[f"CMDQ_MODIFY_QP_MODIFY_MASK_{m}" for m in [
             "STATE", "ACCESS", "PKEY", "DGID", "SGID_INDEX", "HOP_LIMIT", "DEST_MAC", "PATH_MTU", "RQ_PSN",
             "MIN_RNR_TIMER", "MAX_DEST_RD_ATOMIC", "DEST_QP_ID", "TIMEOUT", "RETRY_CNT", "RNR_RETRY",
             "MAX_RD_ATOMIC", "SQ_PSN"]],
         "CMDQ_REGISTER_MR_FLAGS_ALLOC_MR", "CMDQ_REGISTER_MR_LVL_SFT", "CMDQ_REGISTER_MR_LOG2_PG_SIZE_SFT",
-        "CMDQ_REGISTER_MR_ACCESS_LOCAL_WRITE",
-        "SQ_BASE_WQE_TYPE_SEND", "SQ_SEND_FLAGS_SIGNAL_COMP", "RQ_WQE_WQE_TYPE_RCV",
+        "CMDQ_REGISTER_MR_ACCESS_LOCAL_WRITE", "CMDQ_REGISTER_MR_ACCESS_REMOTE_READ",
+        "SQ_BASE_WQE_TYPE_SEND", "SQ_SEND_FLAGS_SIGNAL_COMP", "SQ_BASE_WQE_TYPE_READ_WQE",
+        "SQ_RDMA_HDR_FLAGS_SIGNAL_COMP", "RQ_WQE_WQE_TYPE_RCV",
         "SQ_MSN_SEARCH_START_IDX_SFT", "SQ_MSN_SEARCH_NEXT_PSN_SFT", "CQ_BASE_TOGGLE",
         "CQ_BASE_CQE_TYPE_MASK", "CQ_BASE_CQE_TYPE_REQ", "CQ_BASE_CQE_TYPE_RES_RC",
         "CQ_BASE_CQE_TYPE_TERMINAL",
@@ -139,7 +141,7 @@ STRUCTS = [
 ] + [
     ("roce_hsi.h", s, module(s)) for s in [
         "cmdq_init", "cmdq_base", "creq_base", *[f"cmdq_{c}" for c in RCFW], "creq_create_qp_resp",
-        "sq_send_hdr", "sq_sge", "rq_wqe_hdr", "cq_base", "cq_res_rc", "cq_terminal"]
+        "sq_send_hdr", "sq_rdma_hdr", "sq_sge", "rq_wqe_hdr", "cq_base", "cq_res_rc", "cq_terminal"]
 ]
 
 # Reading C headers

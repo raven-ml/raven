@@ -717,6 +717,8 @@ struct cmdq_add_gid {
 
 	#define SQ_BASE_WQE_TYPE_SEND           0x0UL
 
+	#define SQ_BASE_WQE_TYPE_READ_WQE       0x6UL
+
 struct sq_sge {
 	__le64	va_or_pa;
 	__le32	l_key;
@@ -760,6 +762,34 @@ struct sq_send_hdr {
 	__le32	timestamp;
 	#define SQ_SEND_HDR_TIMESTAMP_MASK 0xffffffUL
 	#define SQ_SEND_HDR_TIMESTAMP_SFT 0
+};
+
+struct sq_rdma_hdr {
+	u8	wqe_type;
+	#define SQ_RDMA_HDR_WQE_TYPE_WRITE_WQE      0x4UL
+	#define SQ_RDMA_HDR_WQE_TYPE_WRITE_W_IMMEAD 0x5UL
+	#define SQ_RDMA_HDR_WQE_TYPE_READ_WQE       0x6UL
+	#define SQ_RDMA_HDR_WQE_TYPE_LAST          SQ_RDMA_HDR_WQE_TYPE_READ_WQE
+	u8	flags;
+	#define SQ_RDMA_HDR_FLAGS_INLINE_SE_UC_FENCE_RD_OR_ATOMIC_FENCE_SIGNAL_COMP_MASK 0xffUL
+	#define SQ_RDMA_HDR_FLAGS_INLINE_SE_UC_FENCE_RD_OR_ATOMIC_FENCE_SIGNAL_COMP_SFT  0
+	#define SQ_RDMA_HDR_FLAGS_SIGNAL_COMP                                            0x1UL
+	#define SQ_RDMA_HDR_FLAGS_RD_OR_ATOMIC_FENCE                                     0x2UL
+	#define SQ_RDMA_HDR_FLAGS_UC_FENCE                                               0x4UL
+	#define SQ_RDMA_HDR_FLAGS_SE                                                     0x8UL
+	#define SQ_RDMA_HDR_FLAGS_INLINE                                                 0x10UL
+	#define SQ_RDMA_HDR_FLAGS_WQE_TS_EN                                              0x20UL
+	#define SQ_RDMA_HDR_FLAGS_DEBUG_TRACE                                            0x40UL
+	u8	wqe_size;
+	u8	reserved8;
+	__le32	imm_data;
+	__le32	length;
+	__le32	reserved32_1;
+	__le64	remote_va;
+	__le32	remote_key;
+	__le32	timestamp;
+	#define SQ_RDMA_HDR_TIMESTAMP_MASK 0xffffffUL
+	#define SQ_RDMA_HDR_TIMESTAMP_SFT 0
 };
 
 	#define RQ_WQE_WQE_TYPE_RCV 0x80UL

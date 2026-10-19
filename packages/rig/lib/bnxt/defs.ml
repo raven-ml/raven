@@ -124,6 +124,7 @@ let cmdq_modify_qp_new_state_rtr = 2
 let cmdq_modify_qp_new_state_rts = 3
 let cmdq_modify_qp_new_state_err = 6
 let cmdq_modify_qp_access_local_write = 1
+let cmdq_modify_qp_access_remote_read = 4
 let cmdq_modify_qp_modify_mask_state = 1
 let cmdq_modify_qp_modify_mask_access = 4
 let cmdq_modify_qp_modify_mask_pkey = 8
@@ -145,8 +146,11 @@ let cmdq_register_mr_flags_alloc_mr = 1
 let cmdq_register_mr_lvl_sft = 0
 let cmdq_register_mr_log2_pg_size_sft = 2
 let cmdq_register_mr_access_local_write = 1
+let cmdq_register_mr_access_remote_read = 2
 let sq_base_wqe_type_send = 0
 let sq_send_flags_signal_comp = 1
+let sq_base_wqe_type_read_wqe = 6
+let sq_rdma_hdr_flags_signal_comp = 1
 let rq_wqe_wqe_type_rcv = 0x80
 let sq_msn_search_start_idx_sft = 0x30
 let sq_msn_search_next_psn_sft = 0x18
@@ -829,6 +833,20 @@ module Sq_send_hdr = struct
   let dst_qp = (16, 4)
   let avid = (20, 4)
   let reserved32 = (24, 4)
+  let timestamp = (28, 4)
+end
+
+module Sq_rdma_hdr = struct
+  let sizeof = 32
+  let wqe_type = (0, 1)
+  let flags = (1, 1)
+  let wqe_size = (2, 1)
+  let reserved8 = (3, 1)
+  let imm_data = (4, 4)
+  let length = (8, 4)
+  let reserved32_1 = (12, 4)
+  let remote_va = (16, 8)
+  let remote_key = (24, 4)
   let timestamp = (28, 4)
 end
 
