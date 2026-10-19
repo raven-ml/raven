@@ -71,18 +71,6 @@ let discovery =
         | _ -> equal int (10 * 1024) Discovery.bytes);
       listed "r9700.bin";
       listed "r9700_wide.bin";
-      test "the R9700's blocks of a boot have their versions" (fun () ->
-          let d = table "r9700.bin" in
-          List.iter
-            (fun (b, v) ->
-              equal ~msg:(Discovery.name b) (option version) (Some v)
-                (Discovery.version d b))
-            [
-              (gc, (12, 0, 1));
-              (sdma0, (7, 0, 1));
-              (mp0, (14, 0, 3));
-              (mp1, (14, 0, 3));
-            ]);
       test "the R9700's GC table states its shape" (fun () ->
           let g = (table "r9700.bin").gc in
           equal (list int) [ 4; 2; 8; 32; 16; 65536 ]

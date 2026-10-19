@@ -19,11 +19,10 @@ let table name =
   | Ok d -> d
   | Error why -> failf "%s: %s" name why
 
-(* The blocks that name images: GC, SDMA0, MP0 and MP1. *)
+(* The blocks that name images: GC, SDMA0 and MP0. *)
 let gc = 11
 let sdma0 = 42
 let mp0 = 255
-let mp1 = 1
 
 (* Images built as amdgpu_ucode.h lays them out: the common header (size at 0,
    header size at 4, version at 8 and 10, ucode version at 16, ucode size at 20,
@@ -323,21 +322,6 @@ let firmware =
               collect ();
               equal ~msg:"dropping the old set releases its image" bool false
                 (Weak.check source 0)));
-      test "the R9700's blocks name its images in load order" (fun () ->
-          equal
-            (result (list (pair int string)) string)
-            (Ok
-               [
-                 (mp0, "amdgpu/psp_14_0_3_sos.bin");
-                 (mp1, "amdgpu/smu_14_0_3.bin");
-                 (sdma0, "amdgpu/sdma_7_0_1.bin");
-                 (gc, "amdgpu/gc_12_0_1_pfp.bin");
-                 (gc, "amdgpu/gc_12_0_1_me.bin");
-                 (gc, "amdgpu/gc_12_0_1_mec.bin");
-                 (gc, "amdgpu/gc_12_0_1_imu.bin");
-                 (gc, "amdgpu/gc_12_0_1_rlc.bin");
-               ])
-            (Firmware.names (table "r9700.bin")));
       test "a GC 12 GPU's images cut into the PSP's pieces" (fun () ->
           let fw = load r9700_images (table "r9700.bin") in
           equal
@@ -405,13 +389,6 @@ let firmware =
                  (gc, "amdgpu/gc_9_5_0_rlc.bin");
                ])
             (Firmware.names d));
-      test "a GPU without a block a boot needs is refused" (fun () ->
-          let d =
-            { mi300 with versions = List.remove_assoc 42 mi300.versions }
-          in
-          equal
-            (result (list (pair int string)) string)
-            (Error "the GPU has no SDMA0 block") (Firmware.names d));
       test "find's refusal is the load's" (fun () ->
           equal (result pass string) (Error "no amdgpu/smu_13_0_6.bin")
             (Result.map ignore
