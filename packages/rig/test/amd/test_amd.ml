@@ -53,6 +53,7 @@ let pp_room ppf = function
   | `Fits -> Format.pp_print_string ppf "`Fits"
   | `Later -> Format.pp_print_string ppf "`Later"
   | `Never -> Format.pp_print_string ppf "`Never"
+  | `Grow -> Format.pp_print_string ppf "`Grow"
 
 let room_answer = Testable.make ~pp:pp_room ~equal:( = )
 
@@ -547,7 +548,7 @@ let room_from_the_word steps =
   cover "the compute ring wrapped" (wrapped "COMPUTE:0");
   cover "the copy ring wrapped" (wrapped "COPY:0")
 
-let rank = function `Fits -> 0 | `Later -> 1 | `Never -> 2
+let rank = function `Fits -> 0 | `Later -> 1 | `Grow -> 2 | `Never -> 3
 
 (* Adding actual parts cannot make work fit that was refused. *)
 let more = Gen.pair (Gen.list ~size:(Gen.int_range 0 4) spec) spec
@@ -569,6 +570,68 @@ let room =
       prop ~count:100
         "room never fits work with more parts than work it refused" more
         grows_with_work;
+    ]
+
+(* Growth
+
+   A growth makes a larger argument segment, which the next room that needs it
+   installs once the device is idle: while a value the device holds is
+   unreached, that room answers [`Later], and so does every room after it, also
+   for work that fits, until the value is reached and the segment installed. *)
+
+let pp_grown ppf = function
+  | Rig_edge.Grown -> Format.pp_print_string ppf "Grown"
+  | Short n -> Format.fprintf ppf "Short %d" n
+
+let grown = Testable.make ~pp:pp_grown ~equal:( = )
+
+let held_growth () =
+  S.with_ @@ fun { g; _ } ->
+  waits_on g;
+  let n = 200 in
+  let flag = Option.get (A.alloc g Pinned 8) in
+  let out = Option.get (A.alloc g Pinned (4 * n)) in
+  H.set64 (host flag) 0;
+  H.write (host out) (String.make (4 * n) '\000');
+  let v = A.signaled g + 1 in
+  equal answer ~msg:"the hold" `Ok
+    (E.submit g ~v ~waits:[| (address flag, 1) |] [||]);
+  let m, r, _ = load g (read_fixture "hidden_gfx1201.hsaco") in
+  let wide = found (A.entry m "wide") in
+  let params i = le64 (4 * i) ^ le32s [ i + 1; 0 ] in
+  let launches =
+    Array.init n (fun i ->
+        E.launch wide ~groups:(1, 1, 1) ~threads:(1, 1, 1) (params i)
+          [ (0, 0) ])
+  in
+  let fits = [| E.raw ~queue:0 ~work:(`Words 16) () |] in
+  equal room_answer ~msg:"work that fits, before the growth" `Fits
+    (E.room g fits);
+  equal room_answer ~msg:"200 launches of 8 KiB of arguments" `Grow
+    (E.room g launches);
+  equal grown ~msg:"the growth" Grown (A.grow g);
+  equal room_answer ~msg:"the launches, the value held" `Later
+    (E.room g launches);
+  equal room_answer ~msg:"work that fits, the value held" `Later
+    (E.room g fits);
+  H.set64 (host flag) 1;
+  S.reached g v;
+  equal room_answer ~msg:"the launches, the value reached" `Fits
+    (E.room g launches);
+  equal answer ~msg:"the launches" `Ok
+    (E.submit g ~v:(v + 1) ~slots:[| address out |] launches);
+  S.reached g (v + 1);
+  equal string ~msg:"the stored words"
+    (le32s (List.init n (fun i -> i + 1)))
+    (H.read (host out) (4 * n));
+  A.unload g m;
+  List.iter (A.free g) [ r; flag; out ]
+
+let growth =
+  group ~timeout:60. "growth"
+    [
+      test "a growth is installed once the device is idle, every room waiting"
+        held_growth;
     ]
 
 (* [sleep] runs while another domain submits: a device whose submissions the
@@ -861,6 +924,63 @@ let wide_launch () =
     ();
   equal string ~msg:"the stored word" (le32s [ 0x2a ]) (get out)
 
+(* A submission of [n] launches of [wide], whose arguments take 8 KiB each, runs
+   whole: from 128 on they exceed half the device's first argument segment,
+   which grows. Launch [i] stores [i + 1] at word [i] of [out]. *)
+let hidden_code = code_of (lazy (read_fixture "hidden_gfx1201.hsaco"))
+
+(* What a submission of [n] launches of [p]'s [wide] on [t] stores into a
+   buffer of its own: launch [i] stores [i + 1] at word [i]. *)
+let tokens n = le32s (List.init n (fun i -> i + 1))
+
+let stores_wide t p n =
+  let out = buffer ~memory:Pinned t (4 * n) in
+  let fn = Option.get (Rig.Image.resolve p "wide") in
+  let s =
+    Sub.make t.d
+      (Array.init n (fun _ ->
+           Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16))
+  in
+  let run = Sub.Run.make s in
+  for i = 0 to n - 1 do
+    let b = Sub.block s i in
+    Sub.Run.groups run b 1 1 1;
+    Sub.Run.threads run b 1 1 1;
+    Sub.Run.int64 run b 0 (Int64.of_int (4 * i));
+    Sub.Run.int32 run b 8 (i + 1)
+  done;
+  Rig.Point.wait (Rig.submit run ~buffers:[| out |]);
+  get out
+
+let wide_launches n =
+  S.with_ @@ fun t ->
+  equal string ~msg:"the stored words" (tokens n)
+    (stores_wide t (image ~of_:hidden_code t) n)
+
+(* Two domains submit launches of 8 KiB of arguments to one device, from one
+   to past half of what its segment holds after two growths, and each
+   submission stores its words, whatever growth the other's needed. *)
+type grower = { t : S.t; wide : Rig.Image.t }
+
+let grower = abstract "g" ~release:(fun x -> S.close x.t)
+
+let launches =
+  Gen.with_pp Format.pp_print_int (Gen.of_list [ 1; 100; 200; 600 ])
+
+let growth_commands =
+  [
+    command "start"
+      (Gen.unit @-> makes grower)
+      (fun () -> ())
+      (fun () ->
+        let t = S.open_ () in
+        { t; wide = image ~of_:hidden_code t });
+    command "launches"
+      (grower ^-> launches @-> returns string)
+      (fun () n -> tokens n)
+      (fun x n -> stores_wide x.t x.wide n);
+  ]
+
 let launching =
   group ~timeout:60. "launching"
     [
@@ -868,6 +988,12 @@ let launching =
         launch_segments_hw;
       test "a launch of a kernel that takes scratch computes" scratch_launch;
       test "a launch of a kernel of 8 KiB of arguments runs" wide_launch;
+      cases ~name:string_of_int
+        "a submission of launches of 8 KiB of arguments each runs whole"
+        [ 1; 128; 300; 1000 ] wide_launches;
+      stateful ~count:10 ~steps:8 ~domains:2
+        "submissions from two domains run whole while the segment grows"
+        growth_commands;
       cases ~name:string_of_int
         "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
         (fun n -> lds_launch n ());
@@ -1383,6 +1509,7 @@ module Wrap = struct
       match E.room g ps with
       | `Fits -> ()
       | `Never -> fail "Never"
+      | `Grow -> fail "Grow"
       | `Later ->
           S.reached g (A.signaled g + 1);
           room ps
@@ -2036,6 +2163,7 @@ let () =
          images;
          entries;
          room;
+         growth;
          domains;
          work;
          code;

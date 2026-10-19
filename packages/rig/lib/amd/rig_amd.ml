@@ -30,9 +30,10 @@ external reraise : exn -> 'a = "%reraise"
    from a signal handler, finaliser or Gc.Memprof callback inside it is refused
    as it starts, and never waits for the lock its own thread holds. Locks nest
    in this order: an image's, which [entry] holds while it grows the scratch; a
-   device's guard; on the PCI path, rig.pci's driver lock and a hold's
-   ([Rig_pci.Driver]), which an open, a reset and a stop hold; a path's; then
-   rig.pci's memory locks. A device's HDP lock holds no other.
+   device's growth lock, which [grow] holds; a device's guard; on the PCI path,
+   rig.pci's driver lock and a hold's ([Rig_pci.Driver]), which an open, a
+   reset and a stop hold; a path's; then rig.pci's memory locks. A device's
+   HDP lock holds no other.
 
    An image's lock is held while the scratch grows, a device's guard while
    its scratch and traces change, and the PCI path's lock across register
@@ -269,11 +270,19 @@ type scratch = {
   mutable retired : retired list;
 }
 
-(* What only a running device uses, under the device's guard. The handle
-   outlives the device in its properties, so stop drops it. *)
+(* Memory a growth made, or the device's first of its kind, named by its GPU
+   address, as the C state's growth names it (rig_amd_stubs.h). *)
+type part = { id : int; mems : mem list }
+
+(* What only a running device uses, under the device's guard but for
+   [parts], under its growth lock. The handle outlives the device in its
+   properties, so stop drops it. *)
 type live = {
   ops : ops;
-  own : mem list; (* rings, pointers, segment, private code *)
+  own : mem list; (* rings, pointers, private code *)
+  mutable parts : part list;
+      (* the segments, until neither installed nor handed (rig_amd_ring.c's
+         Growth) *)
   copy_launch : int; (* private launch until confirmed stop; 0 when absent *)
   desc : int; (* the compute queue's descriptor *)
   scratch : scratch;
@@ -301,6 +310,7 @@ type t = {
   capability : Abi.Capability.t;
   guard : Lock.t;
       (* held by [grow_scratch], [make_trace], and stop over [live] *)
+  growth : Lock.t; (* held by [grow] *)
   mutable live : live option; (* [None] once stop began *)
 }
 
@@ -885,9 +895,6 @@ let entry m f =
             }
       | Error bytes -> No_memory bytes)
 
-(* Its room never answers RIG_GROW. *)
-let grow _ = Rig_edge.Grown
-
 (* The image's code is in a region rig frees; the launches [entry] made go
    here. rig unloads an image once, so past its take the unload allocates
    nothing and polls nowhere: an exception cannot end it with launches held.
@@ -1097,14 +1104,16 @@ let make (type m) ~word (p : m path) =
                 make_trace g);
           };
         guard = Lock.create ();
+        growth = Lock.create ();
         live =
           Some
             {
               ops;
               own =
                 copy_code
-                @ [ segment; compute; copy; pointers; stamps ]
+                @ [ compute; copy; pointers; stamps ]
                 @ Option.to_list mapped;
+              parts = [ { id = mem_address segment; mems = [ segment ] } ];
               copy_launch = !copy_launch;
               desc = mem_address pointers;
               scratch = { installed = None; pending = None; retired = [] };
@@ -1137,6 +1146,56 @@ let signaled g = signaled_word g.self
 let sleep g ~seen ~still_ms =
   if signaled g = seen then (live g).ops.sleep ~ms:still_ms
 
+(* Growth
+
+   A growth makes a larger argument segment and hands it to the C state, whose
+   next room that needs it installs it at idle (rig_amd_ring.c's Growth). *)
+
+external needed : int -> int = "caml_rig_amd_needed"
+external hand : int -> int -> int -> int -> bool = "caml_rig_amd_hand"
+external growth_state : int -> int * int = "caml_rig_amd_growth"
+
+(* The bytes of memory a growth makes for [want] bytes: the first power of two
+   from a page that holds twice them, so that growths come at doublings. *)
+let grown_bytes want =
+  let rec up n = if n >= 2 * want then n else up (2 * n) in
+  up 4096
+
+(* Gives back what growths made that is neither installed nor handed: a
+   replaced segment no work reads, as the device was idle when it was
+   replaced, and a handed one no room installed. Each leaves [l.parts] before
+   its free, so an exception leaves the rest for the next call. *)
+let rec retire g l =
+  let installed, handed = growth_state g.self in
+  match List.find_opt (fun p -> p.id <> installed && p.id <> handed) l.parts with
+  | None -> ()
+  | Some p ->
+      l.parts <- List.filter (fun p' -> p' != p) l.parts;
+      List.iter give_back p.mems;
+      retire g l
+
+(* The segment the submission whose room answered RIG_GROW on this thread
+   needs, listed in [l.parts] before it is handed. *)
+let grow g =
+  Lock.protect g.growth @@ fun () ->
+  let l = live g in
+  retire g l;
+  match needed g.self with
+  | 0 -> Rig_edge.Grown
+  | want -> (
+      let n = grown_bytes want in
+      match l.ops.alloc Pinned n with
+      | None -> Short n
+      | Some m -> (
+          let id = mem_address m in
+          l.parts <- { id; mems = [ m ] } :: l.parts;
+          match mem_host m with
+          | None -> raise (Fault "the host does not address the segment")
+          | Some host ->
+              if not (hand g.self host id n) then
+                raise (Fault "no host memory for a growth's record");
+              Grown))
+
 (* Loss *)
 
 (* A queue the path could not destroy may still run, so its memory stays and its
@@ -1158,7 +1217,8 @@ let halt g l ~fault =
       List.iter give_back
         (List.map fst buffers
         @ List.map (fun r -> r.buffer) st.retired
-        @ traces @ l.own)
+        @ traces @ l.own
+        @ List.concat_map (fun p -> p.mems) l.parts)
 
 (* The C state's run part goes whatever the path's stop answered: the queues
    read none of it. *)

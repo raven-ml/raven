@@ -227,6 +227,14 @@ struct rig_amd_segment {
   struct rig_amd_marks marks;
 };
 
+/* What a growth made (rig_amd_ring.c's Growth): an argument segment of
+   [size] bytes at the host address [host] and the GPU's [gpu], which also
+   names it. */
+struct rig_amd_grown {
+  uint8_t *host;
+  uint64_t gpu, size;
+};
+
 struct rig_amd_edge;
 
 /* A register whose store flushes a GPU's host data path, and the regions
@@ -326,6 +334,16 @@ struct rig_amd {
   _Atomic int scratch_lock;     /* held while the writes change or are read */
   _Atomic uint64_t scratch_taken;   /* the value that placed them */
   _Atomic uint64_t last;
+  /* What a growth made, which the next room that needs it installs once
+     the device reached every value submitted, NULL for none, and the GPU
+     address of the segment installed, under [grown_mu], which rooms take
+     only to install and a growth to hand; and whether every room waits for
+     the device to reach every value submitted, to install it: rooms, which
+     run under rig's turn, alone read and write [draining]. */
+  pthread_mutex_t grown_mu;
+  struct rig_amd_grown *grown;
+  uint64_t installed;
+  int draining;
   /* the stamp ring, as the host reads it and at the GPU's address, and its
      host side; the clock: the path's source, or NULL, the record a stamp
      of the measure at open writes, the clock's rate, the first and the
@@ -384,5 +402,15 @@ static inline void rig_amd_barrier(void) {
 /* The most parts of the largest size an idle device runs in one
    submission (rig_amd_ring.c). */
 int rig_amd_most_parts(const struct rig_amd *d);
+
+/* What a growth on a thread makes: the bytes the argument segment of [d]
+   must have for the submission whose rig_amd_room last answered RIG_GROW
+   on the thread. */
+struct rig_amd_asked {
+  const struct rig_amd *d;
+  uint64_t bytes;
+};
+
+extern _Thread_local struct rig_amd_asked rig_amd_asked;
 
 #endif

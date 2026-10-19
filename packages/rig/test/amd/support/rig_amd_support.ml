@@ -291,6 +291,7 @@ module Edge = struct
     match room_c (Rig_amd.facts g).edge ints args with
     | 0 -> `Fits
     | 1 -> `Later
+    | 3 -> `Grow
     | _ -> `Never
 
   let submit g ~v ?(waits = [||]) ?(slots = [||]) ps =

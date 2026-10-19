@@ -32,7 +32,9 @@
 #define _GNU_SOURCE
 
 #include <limits.h>
+#include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rig_amd_stubs.h"
@@ -253,7 +255,7 @@ static struct cost part_cost(const struct rig_amd *d, int ring, uint64_t w,
 
 /* The most a submission may take: fewer words than the compute ring holds,
    and half the copy ring and half the segment, since a submission's SDMA
-   packets and argument bytes never wrap. */
+   packets and argument bytes never wrap. The segment grows. */
 static struct cost room_of(const struct rig_amd *d) {
   return (struct cost){
       .compute = d->rings[RIG_AMD_COMPUTE].size - 1,
@@ -312,7 +314,6 @@ int rig_amd_most_parts(const struct rig_amd *d) {
   copy.bytes += 8;
   uint64_t n = INT_MAX;
   n = least(n, room.compute, fixed.compute, launch.compute);
-  n = least(n, room.bytes, fixed.bytes, launch.bytes);
   n = least(n, room.copy, fixed.copy, copy.copy);
   return (int)n;
 }
@@ -369,6 +370,62 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
   return 1;
 }
 
+/* Growth
+
+   A growth (Rig_amd's grow) makes a larger segment and hands it here. The
+   next room whose parts need it, or every room once one did, installs it
+   once the word shows the last value submitted, under rig's turn, so no
+   room or submit runs meanwhile, and answers RIG_LATER until then: the
+   device's work ends even while other threads submit. Installing at idle
+   empties the segment of every value's bytes, so the marks, which bound
+   the values in flight (Times), restart. The segment it replaces then holds
+   no work, and the growth's side frees it once it is neither installed nor
+   handed. */
+
+/* Installs what [g] made in [d], which reached every value submitted. */
+static void install(struct rig_amd *d, const struct rig_amd_grown *g) {
+  struct rig_amd_segment *s = &d->segment;
+  s->host = g->host;
+  s->gpu = g->gpu;
+  s->size = g->size;
+  s->put = s->free = 0;
+  s->marks.head = s->marks.count = 0;
+  d->installed = g->gpu;
+}
+
+/* Installs what a growth handed, while [d] drains or if it holds [k], once
+   [d] reached every value submitted: answers RIG_LATER until then, and
+   RIG_FITS otherwise, having installed it or found none to install. */
+static int switch_growth(struct rig_amd *d, const struct cost *k) {
+  pthread_mutex_lock(&d->grown_mu);
+  struct rig_amd_grown *g = d->grown;
+  int r = RIG_FITS;
+  if (g != NULL && (d->draining || k->bytes <= g->size / 2)) {
+    uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
+    r = seen == atomic_load_explicit(&d->last, memory_order_relaxed)
+            ? RIG_FITS
+            : RIG_LATER;
+    d->draining = r == RIG_LATER;
+    if (r == RIG_FITS) {
+      install(d, g);
+      d->grown = NULL;
+      free(g);
+    }
+  }
+  pthread_mutex_unlock(&d->grown_mu);
+  return r;
+}
+
+_Thread_local struct rig_amd_asked rig_amd_asked;
+
+/* Records, for the growth rig asks next on this thread, the segment [d]
+   must have to hold [k]. Each submission's growth makes what it needs, so
+   another's growth never stands in for it. */
+static void ask(const struct rig_amd *d, const struct cost *k) {
+  rig_amd_asked.d = d;
+  rig_amd_asked.bytes = 2 * k->bytes;
+}
+
 int rig_amd_room(void *self, const struct rig_part *parts, int n,
                  void *routes, const uint8_t *args) {
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
@@ -376,8 +433,15 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   route(d, routes, parts, n);
   struct cost k = need(d, routes, parts, n), room = room_of(d);
-  if (k.compute > room.compute || k.copy > room.copy || k.bytes > room.bytes)
-    return RIG_NEVER;
+  if (k.compute > room.compute || k.copy > room.copy) return RIG_NEVER;
+  if (d->draining || k.bytes > room.bytes) {
+    if (switch_growth(d, &k) == RIG_LATER) return RIG_LATER;
+    room = room_of(d);
+    if (k.bytes > room.bytes) {
+      ask(d, &k);
+      return RIG_GROW;
+    }
+  }
   struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
   struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
   struct rig_amd_segment *g = &d->segment;

@@ -80,6 +80,12 @@ value caml_rig_amd_create(value unit) {
     free(d);
     caml_raise_out_of_memory();
   }
+  if (pthread_mutex_init(&d->grown_mu, NULL) != 0) {
+    pthread_mutex_destroy(&e->hdp_mu);
+    free(e);
+    free(d);
+    caml_raise_out_of_memory();
+  }
   e->driver = &driver;
   e->d = d;
   link_edge(e);
@@ -95,6 +101,8 @@ value caml_rig_amd_end(value v_self) {
   struct rig_amd *d = e->d;
   e->d = NULL;
   pthread_mutex_unlock(&e->hdp_mu);
+  free(d->grown);
+  pthread_mutex_destroy(&d->grown_mu);
   free(d);
   return Val_unit;
 }
@@ -103,6 +111,8 @@ value caml_rig_amd_end(value v_self) {
 value caml_rig_amd_destroy(value v_self) {
   struct rig_amd_edge *e = Edge_val(v_self);
   unlink_edge(e);
+  free(e->d->grown);
+  pthread_mutex_destroy(&e->d->grown_mu);
   free(e->d);
   pthread_mutex_destroy(&e->hdp_mu);
   free(e);
@@ -159,13 +169,68 @@ value caml_rig_amd_clock(value v_self, value v_source) {
   return Val_bool(ok);
 }
 
+/* The argument segment, at open: [v_size] bytes, a power of two, at the
+   host address [v_host] and the GPU's [v_gpu]. */
 value caml_rig_amd_segment(value v_self, value v_host, value v_gpu,
-                              value v_size) {
+                           value v_size) {
   struct rig_amd *d = Device_val(v_self);
   d->segment.host = Host_val(v_host);
   d->segment.gpu = (uint64_t)Long_val(v_gpu);
   d->segment.size = (uint64_t)Long_val(v_size);
+  d->installed = d->segment.gpu;
   return Val_unit;
+}
+
+/* Growth (rig_amd_ring.c) */
+
+/* The bytes of argument segment the submission whose rig_amd_room last
+   answered RIG_GROW on this thread needs, or 0 if the segment installed or
+   handed holds them; the record is consumed. Under the device's growth
+   lock. */
+value caml_rig_amd_needed(value v_self) {
+  struct rig_amd *d = Device_val(v_self);
+  uint64_t w = rig_amd_asked.d == d ? rig_amd_asked.bytes : 0;
+  rig_amd_asked.d = NULL;
+  pthread_mutex_lock(&d->grown_mu);
+  if (w <= d->segment.size || (d->grown != NULL && w <= d->grown->size))
+    w = 0;
+  pthread_mutex_unlock(&d->grown_mu);
+  return Val_long((intnat)w);
+}
+
+/* Hands the next room that needs it the segment of [v_size] bytes at the
+   host address [v_host] and the GPU's [v_gpu], in place of one handed
+   before and not installed: [false] without host memory for its record.
+   Under the device's growth lock. */
+value caml_rig_amd_hand(value v_self, value v_host, value v_gpu,
+                        value v_size) {
+  struct rig_amd *d = Device_val(v_self);
+  struct rig_amd_grown *g = malloc(sizeof *g);
+  if (g == NULL) return Val_false;
+  *g = (struct rig_amd_grown){Host_val(v_host), (uint64_t)Long_val(v_gpu),
+                              (uint64_t)Long_val(v_size)};
+  pthread_mutex_lock(&d->grown_mu);
+  struct rig_amd_grown *handed = d->grown;
+  d->grown = g;
+  pthread_mutex_unlock(&d->grown_mu);
+  free(handed);
+  return Val_true;
+}
+
+/* The GPU addresses of the segment installed and of the one handed, 0 for
+   none, read at one instant. */
+value caml_rig_amd_growth(value v_self) {
+  CAMLparam1(v_self);
+  CAMLlocal1(v);
+  struct rig_amd *d = Device_val(v_self);
+  pthread_mutex_lock(&d->grown_mu);
+  uint64_t installed = d->installed;
+  uint64_t handed = d->grown == NULL ? 0 : d->grown->gpu;
+  pthread_mutex_unlock(&d->grown_mu);
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, Val_long((intnat)installed));
+  Store_field(v, 1, Val_long((intnat)handed));
+  CAMLreturn(v);
 }
 
 /* Ring [q]: its words, size in bytes, write-position word and doorbell, all

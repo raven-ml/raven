@@ -93,8 +93,9 @@ module Edge : sig
       fill with a null function, or a copy of [n] bytes between address [0] and
       itself. It is a part a device may refuse. *)
 
-  val room : Rig_amd.t -> part array -> [ `Fits | `Later | `Never ]
-  (** [room g ps] is what [g]'s room entry answers for [ps]. *)
+  val room : Rig_amd.t -> part array -> [ `Fits | `Later | `Never | `Grow ]
+  (** [room g ps] is what [g]'s room entry answers for [ps]. A [`Grow]
+      leaves its request for {!Rig_amd.grow} on the calling thread. *)
 
   val submit :
     Rig_amd.t ->

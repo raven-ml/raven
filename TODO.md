@@ -49,9 +49,8 @@ raven / llama.cpp (Vulkan; ROCm):
   once (32-64 MiB each). `copy.mli`'s "copies the other way round never hold
   the slot it waits for" is wrong: a waiting copy holds no slot
 - limits no hardware or spec imposes, one commit each
-  (_plans/rig-device-reuse/70-, 71-): AMD's segment grows as NV's segment and launch rings do, and its compute
-  and copy rings resize only at idle (`AMDKFD_IOC_UPDATE_QUEUE` or the PCI
-  MQD; check KFD keeps rptr/wptr), then `Rig.most_parts` goes;
+  (_plans/rig-device-reuse/70-, 71-): AMD's compute and copy rings grow as
+  new queues at idle, then `Rig.most_parts` goes;
   NV's 256 waits per submission (`MAX_WAITS`, `facts.waits.most`): room
   keeps a fixed reserve because it cannot see the waits, so it goes once
   `room` takes the waits' count;

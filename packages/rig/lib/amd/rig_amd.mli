@@ -282,13 +282,21 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- on ["COPY:0"], a copy between two GPU addresses, its handles, whose
        ranges do not overlap.}}
 
-    [room] returns [RIG_NEVER] if the parts exceed what the device holds
-    when it is idle, or if a part is one it does not run. An idle device
-    holds the words and argument bytes that fit in the compute ring, half
-    the copy ring and half the argument segment, since a submission's SDMA
-    packets and argument bytes never wrap. The segment also holds 8 bytes
-    per part, the word through which a part of one queue orders a part of
-    the other. The device's
+    [room] returns [RIG_NEVER] if the parts exceed what the device's rings
+    hold when it is idle, or if a part is one it does not run. An idle
+    device holds the words that fit in the compute ring and half the copy
+    ring, and the argument bytes that fit in half the argument segment,
+    since a submission's SDMA packets and argument bytes never wrap. The
+    segment also holds 8 bytes per part, the word through which a part of
+    one queue orders a part of the other. [room] returns [RIG_GROW] for
+    parts whose bytes exceed half the segment, and {!val-grow} makes a
+    segment of [Pinned] memory of the first power of two from 4096 bytes
+    that holds twice them, or answers [Short n] if the path has no memory
+    for its [n] bytes. The next [room] that needs it installs it once the
+    device reached every value submitted, and every [room] answers
+    [RIG_LATER] until then, so the device's work ends while other threads
+    submit. The segment it replaced goes back at the next growth or at
+    {!val-stop}; the segment never shrinks. The device's
     [most_parts] ({!Rig_edge.type-facts}) is the most parts that an idle
     device holds, each a launch whose arguments take at most 4352 bytes,
     which every kernel of at most 4096 bytes of explicit arguments and code
