@@ -4,17 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* nx.cpu's promise: a call whose work takes longer than a copy of about
-   1 MiB on one core runs it with the domain lock released, so that it
-   keeps no other domain waiting to collect. Another domain runs minor
-   collections back to back, and each waits for every domain that holds
-   its lock: while a call holds it, no collection ends. A call that
-   releases the lock for its work lets them end, after as long as the
-   scheduler takes to run the collecting domain and this one's backup
-   thread, milliseconds on a loaded host: each case takes tens of
-   milliseconds, so that one run decides. Each family's calls are
-   ones whose work runs inline, on the calling thread, at any count of
-   cores, or as jobs, whose threads hold the lock wherever their call
-   does. *)
+   1 MiB on one core runs it with the domain lock released, and holds the
+   lock for no longer than about that copy, so that it keeps no other
+   domain waiting to collect. The runtime's hooks on a blocking section
+   show when the calling thread releases the lock and reacquires it, and
+   the thread's CPU time how long it held it, which a loaded host's
+   scheduler does not lengthen. Each family's calls are ones whose work
+   runs inline, on the calling thread, at any count of cores, or as jobs,
+   whose threads hold the lock wherever their call does. *)
 
 open Windtrap
 module A = Nx_array
@@ -23,69 +20,41 @@ module P = Nx_kernel.Prog
 
 (* The probe *)
 
-(* The most collections a run records. *)
-let most = 1 lsl 16
+(* What the bound allows a held stretch: NX_CPU_HOLD_BYTES (cpu.h), 1 MiB,
+   of one core's memcpy, in nanoseconds. *)
+let hold = lazy (Nx_release_support.copy ())
 
-(* [f ()] on this domain while another runs minor collections: [f]'s time,
-   in nanoseconds, and the collections that end within it, an eighth of
-   it away from its ends and the OCaml code there around its external. *)
-let collections f =
-  (* The setup's garbage collected first, so that no collection within the
-     call runs a major slice of it. *)
-  Gc.full_major ();
-  let ends = Array.make most 0 in
-  let count = Atomic.make 0 and stop = Atomic.make false in
-  let other =
-    Domain.spawn (fun () ->
-        while not (Atomic.get stop) do
-          Unix.sleepf 0.0001;
-          Gc.minor ();
-          let n = Atomic.get count in
-          if n < most then (
-            ends.(n) <- Rig.Profile.now ();
-            Atomic.set count (n + 1))
-        done)
-  in
-  (* Collections end before the call starts: the other domain runs. *)
-  while Atomic.get count < 4 do
-    Domain.cpu_relax ()
-  done;
-  let t0 = Rig.Profile.now () in
-  f ();
-  let t1 = Rig.Profile.now () in
-  Atomic.set stop true;
-  Domain.join other;
-  let eighth = (t1 - t0) / 8 and within = ref 0 in
-  for i = 0 to min most (Atomic.get count) - 1 do
-    if ends.(i) > t0 + eighth && ends.(i) < t1 - eighth then incr within
-  done;
-  (t1 - t0, !within)
+(* Runs of a call, each watched: a loaded host's interrupts and page faults
+   lengthen a stretch in some runs, and the least of the runs' longest
+   stretches is the call's own, as [hold] takes the least of its copies. *)
+let runs = 3
 
-(* What the threshold allows a held call, NX_CPU_HOLD_BYTES of one core's
-   memcpy (cpu.h), in nanoseconds: sixteen times the least of five copies
-   of 64 KiB, which run on one thread. *)
-let hold =
-  lazy
-    (let x = A.create Rig.host D.Uint8 [| 1 lsl 16 |] in
-     let y = A.create Rig.host D.Uint8 [| 1 lsl 16 |] in
-     let copy () =
-       let t0 = Rig.Profile.now () in
-       ignore (Nx_cpu.apply1 P.Copy ~dst:y x);
-       Rig.Profile.now () - t0
-     in
-     16 * List.fold_left min max_int (List.init 5 (fun _ -> copy ())))
-
-(* [f ()] takes at most what the threshold allows, or some collection ends
-   within it. *)
+(* [f ()]'s work takes at most what the threshold allows, or it releases
+   the domain lock and holds it for no stretch longer than that, on a
+   loaded host. *)
 let releases f =
   (* An uncounted run first, so that the pool's threads, their kept scratch
-     and the operands' pages exist: first touches of fresh memory on every
-     core keep the collecting domain waiting in the kernel. *)
+     and the operands' pages exist. *)
   f ();
-  let call, within = collections f in
-  if call > Lazy.force hold then
-    greater int ~msg:(Printf.sprintf "collections within %d ns" call)
-      ~than:0 within
+  (* The setup's garbage collected first, so that no collection runs within
+     the calls. *)
+  Gc.full_major ();
+  let hold = Lazy.force hold in
+  let watched = List.init runs (fun _ -> Nx_release_support.watch f) in
+  let long = ref true and least = ref max_int in
+  List.iter
+    (fun (~releases, ~held, ~cpu) ->
+      long := !long && cpu > hold;
+      least := min !least held;
+      if cpu > hold then
+        greater int
+          ~msg:(Printf.sprintf "releases within %d ns of CPU time" cpu)
+          ~than:0 releases)
+    watched;
+  if !long then
+    less int
+      ~msg:"the least of the runs' longest stretches held, in ns of CPU time"
+      ~than:(Nx_release_support.bound ()) !least
 
 let done_ = function
   | A.Done -> ()
@@ -272,6 +241,17 @@ let assemblies =
           in
           let pieces = Array.init np piece in
           releases (fun () -> done_ (Nx_cpu.assemble ~fill:0. ~dst pieces)));
+      test "an assembly of many strided pieces" (fun () ->
+          (* Pieces of two elements two apart: no pair of them is
+             compared, so the call's work grows as the pieces do. *)
+          let np = 32768 in
+          let dst = f32 [| 4 * np |] in
+          let piece i =
+            let range = { Nx_array.Move.start = 4 * i; count = 2; step = 2 } in
+            (([| range |] : _ iarray), f32 [| 2 |])
+          in
+          let pieces = Array.init np piece in
+          releases (fun () -> done_ (Nx_cpu.assemble ~fill:0. ~dst pieces)));
       test "a fold of windows" (fun () ->
           let n = 1 lsl 16 in
           let window =
@@ -366,10 +346,9 @@ let elementwise =
           releases (fun () -> done_ (Nx_cpu.apply2 (Binary Pow) ~dst x x)));
       test "a map of powers" (fun () ->
           let x = halves n and dst = f64 [| n |] in
+          let prog = powers 16 and loads = exponents n (Plain x) in
           releases (fun () ->
-              done_
-                (Nx_cpu.map (powers 16) ~dsts:[| A.Any dst |]
-                   (exponents n (Plain x)))));
+              done_ (Nx_cpu.map prog ~dsts:[| A.Any dst |] loads)));
       test "a map of powers of a padded load" (fun () ->
           let x = halves n and dst = f64 [| n + 2 |] in
           let pad =
@@ -377,67 +356,36 @@ let elementwise =
               windows = [||] }
           in
           let padded = Nx_kernel.Padded { x; fill = 1.5; pad } in
+          let prog = powers 16 and loads = exponents (n + 2) padded in
           releases (fun () ->
-              done_
-                (Nx_cpu.map (powers 16) ~dsts:[| A.Any dst |]
-                   (exponents (n + 2) padded))));
+              done_ (Nx_cpu.map prog ~dsts:[| A.Any dst |] loads)));
     ]
 
 (* Domains *)
 
-(* The longest stretch, in nanoseconds, between this domain's minor
-   collections ending, run back to back for [ns] nanoseconds. *)
-let longest_gap ns =
-  let t0 = Rig.Profile.now () in
-  let last = ref t0 and gap = ref 0 in
-  while !last - t0 < ns do
-    Unix.sleepf 0.0001;
-    Gc.minor ();
-    let t = Rig.Profile.now () in
-    gap := max !gap (t - !last);
-    last := t
-  done;
-  !gap
-
 let domains =
   group "domains"
     [
-      test "small calls beside another domain's long job" (fun () ->
-          (* One domain maps 128 powers over 2^23 float64 elements in
-             place, one long job on the pool, over and over; another adds
-             16384 float64 elements, whose jobs take two threads, over
-             and over. Each of this domain's collections waits for
-             both. *)
-          let m = 1 lsl 23 in
-          let x = halves m in
-          let loads = exponents m (Plain x) in
-          let long () =
-            done_ (Nx_cpu.map (powers 128) ~dsts:[| A.Any x |] loads)
-          in
+      test "a call waits for another domain's job released" (fun () ->
+          (* Another domain occupies the pool with a job that lasts until
+             this thread releases the lock. The call adds 16384 float64
+             elements, whose job takes two threads and so waits for the
+             other's to end: a call that waited holding the lock would
+             never release it, and the other job would end at its
+             deadline instead. *)
           let k = 16384 in
           let a = A.of_array D.Float64 [| k |] (Array.make k 1.) in
           let sum = f64 [| k |] in
           let small () = done_ (Nx_cpu.apply2 (Binary Add) ~dst:sum a a) in
-          long ();
           small ();
-          let t0 = Rig.Profile.now () in
-          long ();
-          let job = Rig.Profile.now () - t0 in
-          Gc.full_major ();
-          let stop = Atomic.make false in
-          let again f =
-            Domain.spawn (fun () ->
-                while not (Atomic.get stop) do
-                  f ()
-                done)
-          in
-          let longs = again long and smalls = again small in
-          let gap = longest_gap (2 * job) in
-          Atomic.set stop true;
-          Domain.join longs;
-          Domain.join smalls;
-          less int ~msg:(Printf.sprintf "longest gap beside %d ns jobs" job)
-            ~than:(job / 2) gap);
+          let other = Domain.spawn Nx_release_support.occupy in
+          while not (Nx_release_support.occupied ()) do
+            Domain.cpu_relax ()
+          done;
+          let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch small in
+          equal ~msg:"the other job ended on the call's release" bool true
+            (Domain.join other);
+          greater int ~msg:"releases" ~than:0 releases);
     ]
 
 let () =
