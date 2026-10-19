@@ -1,0 +1,5 @@
+; nx.quant: block-quantised weights as compositions of nx's operations.
+
+(library
+ (name nx_quant)
+ (libraries nx nx_array))

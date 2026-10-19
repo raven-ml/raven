@@ -1,0 +1,7 @@
+; Reads goldens of ggml's values, written by gen/generate.py.
+
+(test
+ (name test_quant)
+ (libraries nx nx_array nx_quant nx_support rig windtrap)
+ (deps
+  (glob_files golden/*)))

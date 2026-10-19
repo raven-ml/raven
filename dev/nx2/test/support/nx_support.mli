@@ -19,7 +19,8 @@ module Counting : sig
 
   val positions : unit -> int
   (** [positions ()] is the number of loop positions that the [map],
-      [reduce] and [scan] calls since the last {!reset} computed. *)
+      [reduce], [scan] and [apply0] to [apply3] calls since the last {!reset}
+      computed. *)
 
   val products : unit -> int
   (** [products ()] is the number of products that the [contract] calls

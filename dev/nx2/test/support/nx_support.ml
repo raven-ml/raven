@@ -32,18 +32,22 @@ module Counting = struct
 
   let apply0 k ~dst =
     Atomic.incr count;
+    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
     Nx_cpu.apply0 k ~dst
 
   let apply1 k ~dst x =
     Atomic.incr count;
+    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
     Nx_cpu.apply1 k ~dst x
 
   let apply2 k ~dst x y =
     Atomic.incr count;
+    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
     Nx_cpu.apply2 k ~dst x y
 
   let apply3 k ~dst c x y =
     Atomic.incr count;
+    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
     Nx_cpu.apply3 k ~dst c x y
 
   let map p ~dsts loads =

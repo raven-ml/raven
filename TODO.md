@@ -342,7 +342,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - the GPU kernel libraries, nx.cuda, nx.metal and nx.amd, from branch
   `nx2-gpu` (`dev/nx2/lib/{cuda,metal,amd}`) onto nx2's current kernel
   interface
-- nx.quant, nx.ragged and nx.wide on nx2
+- nx.ragged and nx.wide on nx2
 - nx.cpu's jobs size their threads by older cost estimates, many below the
   call prices' measured kind and term costs, so costly kinds get too few
   threads (a float64 pow over 16 K elements runs on 3): derive the job
