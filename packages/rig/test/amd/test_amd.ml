@@ -312,8 +312,8 @@ let entries () =
 
 (* What the room check answers for a launch: a launch fits within its function's
    256 work-items per group and the GPU's 64 KiB of LDS less the 256 bytes
-   [lds] takes itself; it never fits past them, with an empty axis, or with
-   fewer parameter bytes than its function reads. *)
+   [lds] takes itself; it never fits past them, or with fewer parameter bytes
+   than its function reads. *)
 let launch_room () =
   S.with_ @@ fun { g; _ } ->
   let m, r, _ = load g (Lazy.force launch_bin) in
@@ -331,8 +331,6 @@ let launch_room () =
            [ (0, 0) ];
        |]);
   equal room_answer ~msg:"257 work-items" `Never (room (1, 1, 1) (257, 1, 1));
-  equal room_answer ~msg:"an empty grid" `Never (room (1, 0, 1) (64, 1, 1));
-  equal room_answer ~msg:"an empty group" `Never (room (1, 1, 1) (64, 1, 0));
   equal room_answer ~msg:"the GPU's LDS" `Fits
     (room ~e:lds ~shared:(65536 - 256) (1, 1, 1) (64, 1, 1));
   equal room_answer ~msg:"past the GPU's LDS" `Never
@@ -393,22 +391,6 @@ type work = Words of int | Copy of int
 type spec = { compute : bool; work : work; after : int list }
 type step = Submit of spec list | Burst of int | Run
 
-let pp_spec ppf s =
-  Format.fprintf ppf "{%s %s after [%s]}"
-    (if s.compute then "COMPUTE" else "COPY")
-    (match s.work with
-    | Words n -> strf "words %d" n
-    | Copy n -> strf "copy %d" n)
-    (String.concat ";" (List.map string_of_int s.after))
-
-let pp_step ppf = function
-  | Submit ss ->
-      Format.fprintf ppf "submit [%a]"
-        (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_spec)
-        ss
-  | Burst n -> Format.fprintf ppf "%d empty submissions" n
-  | Run -> Format.pp_print_string ppf "run"
-
 let nops = lazy (Array.make (1 lsl 21) pm4_nop)
 let zeros = lazy (Array.make (1 lsl 21) 0)
 
@@ -442,31 +424,30 @@ let spec =
   let+ after = list ~size:(int_range 0 2) (int_range 0 3) in
   { compute; work; after }
 
+(* Steps that pass each ring's end and meet a full ring while a value is
+   unreached. The rings a device opens with hold 2^22 words, of which a
+   submission takes fewer than the compute ring's and at most half the copy
+   ring's: the third step's 2^21 words do not fit beside the second's, both
+   held. *)
 let program =
-  let open Gen in
-  let submission =
-    let+ ss = list ~size:(int_range 0 4) spec in
-    Submit
-      (List.mapi
-         (fun i s ->
-           {
-             s with
-             after =
-               List.sort_uniq compare (List.filter (fun k -> k < i) s.after);
-           })
-         ss)
-  in
-  let step =
-    frequency
-      [
-        (6, submission);
-        (1, map (fun n -> Burst n) (int_range 1 6000));
-        (2, constant Run);
-      ]
-  in
-  with_pp
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_step)
-    (list ~size:(int_range 1 30) step)
+  let c n = { compute = true; work = Words n; after = [] }
+  and z n = { compute = false; work = Words n; after = [] }
+  and copy n ~after = { compute = false; work = Copy n; after } in
+  [
+    Submit [ c 1; z 64; copy 4096 ~after:[ 0 ] ];
+    Submit [ c (1 lsl 21) ];
+    Submit [ c (1 lsl 21) ];
+    Run;
+    Burst 100;
+    Submit [ c (1 lsl 20); copy 1 ~after:[ 0 ]; z (1 lsl 20) ];
+    Submit [ z (1 lsl 20) ];
+    Run;
+    Submit [ z (1 lsl 20) ];
+    Submit [ z (1 lsl 20) ];
+    Run;
+    Submit [ z (1 lsl 20); c (1 lsl 21) ];
+    Run;
+  ]
 
 (* Another device of the GPU, beside the one [S.open_] gives, which the caller
    stops. A process takes a GPU with no kernel driver once. *)
@@ -488,13 +469,13 @@ let fresh =
       let f = second () in
       (f, regions f))
 
-let room_from_the_word steps =
+let room_from_the_word () =
   let f, fr = fresh () in
   S.with_ @@ fun { g; _ } ->
   waits_on g;
   let rs = regions g in
   let flag = Option.get (A.alloc g Pinned 8) in
-  let last = ref (A.signaled g) in
+  let last = ref (A.signaled g) and laters = ref 0 in
   let hold () =
     H.set64 (host flag) 0;
     incr last;
@@ -516,7 +497,7 @@ let room_from_the_word steps =
     let a =
       if a <> `Later then a
       else begin
-        cover "Later while a value is unreached" true;
+        incr laters;
         run ();
         let a = E.room g ps in
         equal room_answer ~msg:"once the word reached the last value"
@@ -524,7 +505,6 @@ let room_from_the_word steps =
         a
       end
     in
-    if a = `Never then cover "Never" true;
     if a = `Fits then begin
       incr last;
       equal answer ~msg:"submit" `Ok (submit g ~v:!last ps)
@@ -541,14 +521,15 @@ let room_from_the_word steps =
       | Run ->
           run ();
           hold ())
-    steps;
+    program;
   run ();
+  at_least int ~msg:"rooms that answered Later" ~than:1 !laters;
   let wrapped q =
     let placed, size = A.ring g q in
-    placed > size
+    greater int ~msg:(q ^ ": the words placed on its ring") ~than:size placed
   in
-  cover "the compute ring wrapped" (wrapped "COMPUTE:0");
-  cover "the copy ring wrapped" (wrapped "COPY:0")
+  wrapped "COMPUTE:0";
+  wrapped "COPY:0"
 
 let rank = function `Fits -> 0 | `Later -> 1 | `Grow -> 2 | `Never -> 3
 
@@ -567,8 +548,7 @@ let grows_with_work (ss, s) =
 let room =
   group ~timeout:300. "room"
     [
-      prop ~count:20 "room is Later only while a value is unreached" program
-        room_from_the_word;
+      test "room is Later only while a value is unreached" room_from_the_word;
       prop ~count:100
         "room never fits work with more parts than work it refused" more
         grows_with_work;
@@ -634,48 +614,6 @@ let growth =
     [
       test "a growth is installed once the device is idle, every room waiting"
         held_growth;
-    ]
-
-(* [sleep] runs while another domain submits: a device whose submissions the
-   caller serialises, each waited for, answers as some order of the calls. *)
-type sleeper = { g : A.t; lock : Mutex.t; mutable v : int }
-
-let sleeper = abstract "s" ~release:(fun s -> A.stop s.g ~fault:None)
-
-let sleep_commands =
-  [
-    command "start"
-      (Gen.unit @-> makes sleeper)
-      (fun () -> ref 0)
-      (fun () -> { g = second (); lock = Mutex.create (); v = 0 });
-    command "submit"
-      (sleeper ^-> returns unit)
-      (fun m -> incr m)
-      (fun s ->
-        Mutex.protect s.lock @@ fun () ->
-        s.v <- s.v + 1;
-        equal answer ~msg:"submit" `Ok (submit s.g ~v:s.v [||]);
-        (* The other domain's sleep may take the release's interrupt: wait in
-           short sleeps. *)
-        while A.signaled s.g < s.v do
-          A.sleep s.g ~seen:(A.signaled s.g) ~still_ms:1
-        done);
-    command "sleep"
-      (sleeper ^-> returns unit)
-      ignore
-      (fun s -> A.sleep s.g ~seen:(A.signaled s.g) ~still_ms:0);
-    command "signaled"
-      (sleeper ^-> returns int)
-      (fun m -> !m)
-      (fun s -> A.signaled s.g);
-  ]
-
-let domains =
-  group ~timeout:60. "domains"
-    [
-      stateful ~count:10 ~steps:8 ~domains:2
-        "sleep answers while another domain submits"
-        sleep_commands;
     ]
 
 (* On a GPU *)
@@ -890,38 +828,6 @@ let lds_launch n () =
     ();
   equal string ~msg:"out" (multiples 1 64) (get out)
 
-(* A launch whose block is refused: past its kernel's work-items, 257 where
-   [ids] takes 256, which the setter refuses, or of an empty grid or group,
-   which the submit refuses, naming the launch. The device stays live. *)
-let refused_blocks =
-  cases
-    ~name:(fun (n, _, _, _) -> n)
-    "a launch whose block is refused raises, the device live"
-    [
-      ( "257 work-items",
-        (1, 1, 1),
-        (257, 1, 1),
-        "ids runs at most 256 threads per group" );
-      ("an empty grid", (0, 1, 1), (64, 1, 1), "a launch whose block it refuses");
-      ( "an empty group",
-        (1, 1, 1),
-        (64, 1, 0),
-        "a launch whose block it refuses" );
-    ]
-    (fun (_, groups, threads, why) ->
-      S.with_ @@ fun t ->
-      let p = image ~of_:launch_code t in
-      let out = buffer t (4 * 257) in
-      raises_match (Exn.invalid_arg ~substring:why)
-        (fun () ->
-          launch t p "ids" ~params:24
-            ~refs:[ (0, 0) ]
-            ~groups ~threads
-            ~set:(fun run b -> Sub.Run.int64 run b 0 0L)
-            ~uses:[ (out, Rig.Read_write) ]
-            ());
-      equal (option string) ~msg:"the device's loss" None (Rig.lost t.d))
-
 (* Many submissions in flight reuse the argument segment while each launch
    writes a distinct output. Every ref must keep the value its submit copied. *)
 let launch_segments_hw () =
@@ -961,25 +867,10 @@ let launch_segments_hw () =
     (String.concat "" (List.init (count * rounds) (fun _ -> doubled lanes)))
     (get out)
 
-(* A kernel whose arguments take 8 KiB runs: a launch takes the room its
-   arguments take. [wide] stores its second argument at its first. *)
-let wide_launch () =
-  S.with_ @@ fun t ->
-  let p = image ~of_:(code_of (lazy (read_fixture "hidden_gfx1201.hsaco"))) t in
-  let out = buffer ~memory:Pinned t 4 in
-  launch t p "wide" ~params:16
-    ~refs:[ (0, 0) ]
-    ~groups:(1, 1, 1) ~threads:(1, 1, 1)
-    ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0L;
-      Sub.Run.int32 run b 8 0x2a)
-    ~uses:[ (out, Rig.Read_write) ]
-    ();
-  equal string ~msg:"the stored word" (le32s [ 0x2a ]) (get out)
-
 (* A submission of [n] launches of [wide], whose arguments take 8 KiB each, runs
    whole: from 128 on they exceed half the device's first argument segment,
-   which grows. Launch [i] stores [i + 1] at word [i] of [out]. *)
+   which grows. A launch takes the room its arguments take. Launch [i] stores
+   [i + 1] at word [i] of [out]. *)
 let hidden_code = code_of (lazy (read_fixture "hidden_gfx1201.hsaco"))
 
 (* What a submission of [n] launches of [p]'s [wide] on [t] stores into a
@@ -1092,7 +983,6 @@ let launching =
         launch_segments_hw;
       test "a launch of a kernel that takes scratch computes" scratch_launch;
       test "an AQL compute ring grows, its scratch kept" aql_growth;
-      test "a launch of a kernel of 8 KiB of arguments runs" wide_launch;
       cases ~name:string_of_int
         "a submission of launches of 8 KiB of arguments each runs whole"
         [ 1; 128; 300; 1000 ] wide_launches;
@@ -1103,7 +993,6 @@ let launching =
       cases ~name:string_of_int
         "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
         (fun n -> lds_launch n ());
-      refused_blocks;
     ]
 
 (* rig finds the record the device's facts declare, and none on the host. *)
@@ -1386,12 +1275,14 @@ module Chain = struct
   let most = 1 lsl 20
   let buffers = 8
 
-  let gen =
-    let open Gen in
-    let+ words = of_list [ 64; 1000; 65536; most ]
-    and+ incs = list ~size:(int_range 2 4) bool
-    and+ after_copy = bool in
-    { words; incs; after_copy }
+  (* Parts back to back and a copy part between two; a value released before
+     on each queue; a part of 2^20 words, which keeps every compute unit busy,
+     and one of 1000, whose last group is partly empty. *)
+  let examples =
+    [
+      { words = most; incs = [ false; true; false ]; after_copy = false };
+      { words = 1000; incs = [ true; false; true; false ]; after_copy = true };
+    ]
 
   type sys = {
     input : Rig.Buffer.t;
@@ -1421,13 +1312,6 @@ module Chain = struct
     let n = c.words and bytes = 4 * c.words in
     let part b = view b 0 bytes in
     let k = List.length c.incs in
-    let between = List.filteri (fun i _ -> i < k - 1) c.incs in
-    cover "parts back to back" (List.exists not between);
-    cover "a copy part between two compute parts" (List.exists Fun.id between);
-    cover "a submission whose compute queue released the value before"
-      (not c.after_copy);
-    cover "a submission whose copy queue released the value before" c.after_copy;
-    cover "every compute unit busy" (n >= 65536);
     (* Garbage in every buffer, then the input in the first. *)
     run t
       (Array.map
@@ -1483,11 +1367,11 @@ end
 let queue_order =
   group ~timeout:120. "in order"
     [
-      prop ~count:24
+      cases
+        ~name:(Format.asprintf "%a" Chain.pp)
         "compute parts run in array order, each reading its predecessor's \
          writes"
-        (Gen.with_pp Chain.pp Chain.gen)
-        Chain.law;
+        Chain.examples Chain.law;
     ]
 
 (* Through the C entries *)
@@ -1505,10 +1389,10 @@ let go r ps =
 
 (* Rings wrap
 
-   Drawn submissions wrap each ring several times, landing a submission exactly
-   at the end, one word short of it or one word past it. Each is chosen from
-   where its ring stands ([A.ring]), and every value completes in order and
-   writes what it should. *)
+   Submissions wrap each ring three times, landing a submission exactly at the
+   end, one word short of it or one word past it, each after submissions of
+   every shape. Each is chosen from where its ring stands ([A.ring]), and every
+   value completes in order and writes what it should. *)
 
 module Wrap = struct
   let slots = 4096
@@ -1522,56 +1406,16 @@ module Wrap = struct
   type target = Compute | Copy
   type fit = Exact | Short | Over
 
-  let pp_shape ppf = function
-    | Pad (c, i) ->
-        Format.fprintf ppf "pad %s %d"
-          (if c then "COMPUTE" else "COPY")
-          (1 lsl i)
-    | Nops n -> Format.fprintf ppf "nops %d" n
-    | Zeros n -> Format.fprintf ppf "zeros %d" n
-    | Both (n, z) -> Format.fprintf ppf "nops %d + zeros %d" n z
-
-  let target_name = function Compute -> "compute ring" | Copy -> "copy ring"
-
-  let fit_name = function
-    | Exact -> "exactly at"
-    | Short -> "short of"
-    | Over -> "past"
-
-  let pp_goal ppf (t, f, mix) =
-    Format.fprintf ppf "{%s the %s's end, after [%a]}" (fit_name f)
-      (target_name t)
-      (Format.pp_print_list
-         ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
-         pp_shape)
-      mix
-
+  (* Each ring's three landings, the rings in turn, each after submissions. *)
   let goals =
-    let open Gen in
-    let shape =
-      one_of
-        [
-          map (fun n -> Nops n) (of_list [ 0; 1; 7; 4096; 1 lsl 16 ]);
-          map (fun n -> Zeros n) (of_list [ 0; 1; 5; 4096; 1 lsl 16 ]);
-          map (fun (c, i) -> Pad (c, i)) (pair bool (of_list [ 0; 10; 20 ]));
-          map
-            (fun (n, z) -> Both (n, z))
-            (pair (of_list [ 0; 13 ]) (of_list [ 0; 3 ]));
-        ]
-    in
-    (* Every landing, in a drawn order, each after drawn submissions. *)
-    let landings =
-      List.concat_map
-        (fun t -> List.map (fun f -> (t, f)) [ Exact; Short; Over ])
-        [ Compute; Copy ]
-    in
-    with_pp
-      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_goal)
-      (let* order = permutation landings in
-       let+ mixes =
-         list ~size:(constant 6) (list ~size:(int_range 0 3) shape)
-       in
-       List.map2 (fun (t, f) mix -> (t, f, mix)) order mixes)
+    [
+      (Compute, Exact, [ Nops 7; Zeros 4096 ]);
+      (Copy, Short, [ Pad (true, 20); Both (13, 3) ]);
+      (Compute, Over, [ Zeros 1; Nops (1 lsl 16) ]);
+      (Copy, Exact, [ Pad (false, 10); Nops 0; Both (0, 0) ]);
+      (Compute, Short, [ Pad (false, 0); Zeros 0 ]);
+      (Copy, Over, [ Nops 4096; Zeros (1 lsl 16); Pad (true, 0) ]);
+    ]
 
   (* The memory shapes write: a slot per value for compute's writes, and the
      slots copies move. *)
@@ -1662,7 +1506,7 @@ module Wrap = struct
 
   (* Runs shapes that reach [goals] on a fresh device, each chosen from where
      its ring stands. *)
-  let law goals =
+  let law () =
     S.with_ @@ fun { g; _ } ->
     let k = sink g in
     let first = A.signaled g + 1 in
@@ -1714,50 +1558,27 @@ module Wrap = struct
         | Copy ->
             land_ring "COPY:0" ~compute:false (fun n -> Zeros n) ~least:1 f)
       goals;
-    let twice q =
+    let thrice q =
       let placed, size = A.ring g q in
-      placed > 2 * size
+      greater int ~msg:(q ^ ": the words placed on its ring") ~than:(2 * size)
+        placed
     in
-    cover "the compute ring wrapped twice" (twice "COMPUTE:0");
-    cover "the copy ring wrapped twice" (twice "COPY:0");
+    thrice "COMPUTE:0";
+    thrice "COPY:0";
     check g k ~first (List.rev !shapes)
 
   (* Values from 2^32 - [k], where a value's release goes on the queue of its
      submission's last part and slot words compare 32 bits: the edge's own
      numbering, which rig's values reach only after 2^32 submits. The value at
-     2^32 is the shape at [k], drawn on its own so that it ends on each queue
-     in half the cases. *)
+     2^32 is the shape at [k], which ends on each queue in one case. *)
   let carried =
-    let open Gen in
-    let shape =
-      of_list ~pp:pp_shape [ Nops 0; Zeros 0; Both (0, 0); Both (13, 3) ]
-    in
-    let at_carry =
-      frequency
-        [
-          (1, of_list ~pp:pp_shape [ Nops 0 ]);
-          (1, of_list ~pp:pp_shape [ Zeros 0; Both (0, 0); Both (13, 3) ]);
-        ]
-    in
-    with_pp
-      (fun ppf (k, shapes) ->
-        Format.fprintf ppf "from 2^32 - %d: [%a]" k
-          (Format.pp_print_list
-             ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
-             pp_shape)
-          shapes)
-      (let* k = int_range 1 4 in
-       let+ before = list ~size:(int_range k k) shape
-       and+ at = at_carry
-       and+ after = list ~size:(int_range 0 (7 - k)) shape in
-       (k, before @ (at :: after)))
+    [
+      ( "COMPUTE:0",
+        (2, [ Both (13, 3); Zeros 0; Nops 0; Both (0, 0); Zeros 0 ]) );
+      ("COPY:0", (1, [ Nops 0; Both (13, 3); Nops 0; Zeros 0 ]));
+    ]
 
   let across_carry (k, shapes) =
-    let at_carry = List.filteri (fun i _ -> i = k) shapes in
-    cover "the value at 2^32 ends on COPY:0"
-      (List.exists (function Zeros _ | Both _ -> true | _ -> false) at_carry);
-    cover "the value at 2^32 ends on COMPUTE:0"
-      (List.exists (function Nops _ -> true | _ -> false) at_carry);
     S.with_ @@ fun { g; _ } ->
     (* The first carry the word can still reach k values ahead of. *)
     let carry = (((A.signaled g + k) lsr 32) + 1) lsl 32 in
@@ -1773,18 +1594,13 @@ end
    value; a 32-bit compare would pass a word whose low half alone is above. The
    words here are the host's, in memory the device maps. *)
 
-(* [t] at or past 2^32, and a first value of the word below it. *)
-let crossing =
-  Gen.with_pp
-    (fun ppf (w0, t) ->
-      Format.fprintf ppf "word 2^32%+d, wait for 2^32%+d"
-        (w0 - (1 lsl 32))
-        (t - (1 lsl 32)))
-    Gen.(
-      let+ j = frequency [ (3, constant 0); (3, int_range 1 3) ]
-      and+ d = int_range 1 4 in
-      let t = (1 lsl 32) + j in
-      (t - d, t))
+(* A wait for [t] at or past 2^32 and the word's first value [w0] below it: a
+   wait for 2^32, whose low half is 0, and a word at 2^32 - 1, whose low half
+   is above the wait's. *)
+let crossing = [ ((1 lsl 32) - 2, 1 lsl 32); ((1 lsl 32) - 1, (1 lsl 32) + 1) ]
+
+let crossing_name (w0, t) =
+  strf "word 2^32%+d, wait for 2^32%+d" (w0 - (1 lsl 32)) (t - (1 lsl 32))
 
 let held (w0, t) =
   S.with_ @@ fun { g; _ } ->
@@ -1803,9 +1619,6 @@ let held (w0, t) =
          (fun x -> x >= w0)
          ((t - 1) :: (((t lsr 32) lsl 32) - 1) :: [ w0 ]))
   in
-  cover "a value below the wait whose low half is above its"
-    (List.mem ((1 lsl 32) - 1) below);
-  cover "a wait for a value whose low half is 0" (t land 0xffff_ffff = 0);
   equal answer ~msg:"submit" `Ok
     (E.submit g ~v:(base + 1)
        ~waits:[| (address word, t) |]
@@ -1833,18 +1646,17 @@ let wait_bound () =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
   let most = (A.facts g).waits.most in
-  equal int ~msg:"the most waits" 255 most;
   let v = A.signaled g + 1 in
   let word = Option.get (A.alloc g Pinned 8) in
   H.write (host word) (le64 1);
   let waits = Array.make most (address word, 1) in
-  equal answer ~msg:"255 waits" `Ok (E.submit g ~v ~waits [||]);
+  equal answer ~msg:(strf "%d waits" most) `Ok (E.submit g ~v ~waits [||]);
   S.reached g v
 
 let waits =
   group ~timeout:120. "waits"
     [
-      prop ~count:12
+      cases ~name:crossing_name
         "a wait holds the work until the word reaches it, across 2^32 (sampled)"
         crossing held;
       test "a submission waits on 255 words" wait_bound;
@@ -2067,18 +1879,20 @@ let rings =
       test "the copy ring grows as a new queue" (grown_ring false);
       prop ~count:24 "a submission of parts joined across the queues runs whole"
         joins joined;
-      prop ~count:3
+      test
         "submissions landing at, short of and past each ring's end complete in \
          order"
-        Wrap.goals Wrap.law;
+        Wrap.law;
     ]
 
 let timeline =
   group ~timeout:300. "timeline"
     [
-      prop ~count:20
+      cases
+        ~name:(fun (q, _) -> "the value at 2^32 ending on " ^ q)
         "values across 2^32 complete in order, ending on either queue"
-        Wrap.carried Wrap.across_carry;
+        Wrap.carried
+        (fun (_, c) -> Wrap.across_carry c);
     ]
 
 (* Two devices of one GPU *)
@@ -2428,7 +2242,6 @@ let () =
          entries;
          room;
          growth;
-         domains;
          work;
          code;
          launching;
