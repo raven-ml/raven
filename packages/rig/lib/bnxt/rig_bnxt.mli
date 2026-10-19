@@ -137,11 +137,23 @@ val open_ : ?machine:Rig_pci.Machine.t -> int -> (t, string) result
     as the open found it ({!section-changes}). The process holds the NIC
     until {!val-close}, or until it exits, which closes it.
 
+    The open gives the NIC's firmware system memory, which stays taken until
+    {!val-close}, for the queue pairs and regions the NIC holds at once.
+    Beyond the queue pairs the firmware keeps for itself, it holds every one
+    the firmware holds where the firmware states limits of its own, and
+    otherwise at most 65,536, plus those the firmware destroys fast. Its
+    regions are the firmware's region entries less its address vectors where
+    the firmware states limits and one count of address vectors, and
+    otherwise half the entries, at most 262,144. A queue pair or a region
+    past them is an [Error] of the call that makes it.
+
     [Error msg], with [msg] starting with the NIC's name, if [machine]'s PCI
     functions cannot be listed, if it has no NIC [i], if a process holds it, if
     its function cannot be taken or reset, if its relaxed ordering cannot be
-    turned off, or if its firmware refuses a request or does not answer in
-    time.
+    turned off, if the machine lacks the system memory the firmware's context
+    takes, as {!Rig_pci.Function.alloc_dma} states (taken physically, free
+    huge pages, [vm.nr_hugepages]), or if its firmware refuses a request or
+    does not answer in time.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

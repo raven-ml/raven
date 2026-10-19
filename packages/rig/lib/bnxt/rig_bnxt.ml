@@ -59,12 +59,14 @@ let hwrm_us = 10_000_000
 let reset_us = 40_000_000
 let rcfw_us = 20_000_000
 
-(* The context types the RoCE engine keeps in host memory, and the entries each
-   takes beyond its minimum: queue pairs first, whose count type 15 repeats to
-   close the configuration. *)
-let qp_contexts = (0, 64)
-let contexts = [ (1, 0); (2, 128); (3, 0); (4, 2); (5, 0); (6, 0); (14, 1024) ]
-let last_type = 15
+(* The most queue pairs, shared receive queues, regions and address vectors
+   the context memory holds beyond the firmware's own where the firmware
+   states no limits of its own: bnxt_alloc_ctx_mem's in Linux's
+   drivers/net/ethernet/broadcom/bnxt/bnxt.c (v6.18). *)
+let most_qps = 65536
+let most_srqs = 8192
+let most_regions = 256 * 1024
+let most_avs = 128 * 1024
 
 (* A terminal completion's consumer index when it names no send. *)
 let no_index = 0xffff
@@ -452,83 +454,163 @@ let xid r = get r D.Creq_create_qp_resp.xid
 
 (* Booting *)
 
-(* The context memory the RoCE engine keeps its queue pairs, regions and
-   completion queues in, per type and instance. An instance whose type asks for
-   it starts with a value at an offset, in doublewords, of each entry. *)
-let backing hw =
+(* What the firmware states of a context type that the NIC keeps in host
+   memory: an entry's bytes, the range and the multiple of its entries, its
+   splits, its instances, and the byte each entry of an instance starts with
+   and its offset in bytes, where the type asks for one. *)
+type context = {
+  typ : int;
+  size : int;
+  least : int;
+  most : int;
+  multiple : int;
+  splits : int list;
+  instances : int list;
+  init : (int * int) option;
+}
+
+let context hw typ =
   let module Q = D.Hwrm_func_backing_store_qcaps_v2_output in
-  let module C = D.Hwrm_func_backing_store_cfg_v2_input in
-  let qsplits =
+  let caps =
+    hwrm hw "func_backing_store_qcaps_v2"
+      ~req_type:D.hwrm_func_backing_store_qcaps_v2 (fun b ->
+        set b D.Hwrm_func_backing_store_qcaps_v2_input.type_ typ)
+  in
+  let splits =
     [ Q.split_entry_0; Q.split_entry_1; Q.split_entry_2; Q.split_entry_3 ]
+    |> List.filteri (fun i _ -> i < get caps Q.subtype_valid_cnt)
+    |> List.map (get caps)
   in
-  let csplits =
-    [ C.split_entry_0; C.split_entry_1; C.split_entry_2; C.split_entry_3 ]
+  let map = get caps Q.instance_bit_map in
+  let instances =
+    match List.filter (fun i -> (map lsr i) land 1 = 1) (List.init 32 Fun.id)
+    with
+    | [] -> [ 0 ]
+    | l -> l
   in
-  let configure ?count (typ, extra) =
-    let caps =
-      hwrm hw "func_backing_store_qcaps_v2"
-        ~req_type:D.hwrm_func_backing_store_qcaps_v2 (fun b ->
-          set b D.Hwrm_func_backing_store_qcaps_v2_input.type_ typ)
-    in
-    let size = get caps Q.entry_size in
-    let splits =
-      List.filteri (fun i _ -> i < get caps Q.subtype_valid_cnt) qsplits
-      |> List.map (get caps)
-    in
-    let n =
-      match count with
-      | Some n -> n
-      | None ->
-          Int.max
-            (get caps Q.min_num_entries)
-            (List.fold_left ( + ) extra splits)
-    in
-    let map = get caps Q.instance_bit_map in
-    let instances =
-      match
-        List.filter (fun i -> (map lsr i) land 1 = 1) (List.init 8 Fun.id)
-      with
-      | [] -> [ 0 ]
-      | l -> l
-    in
-    let init =
+  let init =
+    if
       get caps Q.flags
       land D.hwrm_func_backing_store_qcaps_v2_output_flags_enable_ctx_kind_init
       <> 0
-    in
-    let instance i =
-      let bytes = ceildiv (n * size) page * page in
-      let mem, runs = sysmem hw bytes in
-      if init then begin
-        let v = get caps Q.ctx_init_value in
-        let off = ref (4 * get caps Q.ctx_init_offset) in
+    then Some (get caps Q.ctx_init_value, 4 * get caps Q.ctx_init_offset)
+    else None
+  in
+  {
+    typ;
+    size = get caps Q.entry_size;
+    least = get caps Q.min_num_entries;
+    most = get caps Q.max_num_entries;
+    multiple = get caps Q.entry_multiple;
+    splits;
+    instances;
+    init;
+  }
+
+(* The [i]th split of [c], 0 where the firmware states none. *)
+let split c i = Option.value (List.nth_opt c.splits i) ~default:0
+
+(* Gives the firmware the memory of [entries] entries of [c] in each of its
+   instances, with [splits]: [entries] rounded up to [c]'s multiple and held
+   to its range, as bnxt_setup_ctxm_pg_tbls does. An instance of no entries
+   gets none. [last]'s last instance closes the configuration. *)
+let configure hw ?(last = false) c ~splits entries =
+  let module C = D.Hwrm_func_backing_store_cfg_v2_input in
+  let csplits =
+    [ C.split_entry_0; C.split_entry_1; C.split_entry_2; C.split_entry_3 ]
+  in
+  if c.size = 0 then
+    fail "the firmware states no entry size for context type %d" c.typ;
+  let n =
+    if c.multiple > 0 then ceildiv entries c.multiple * c.multiple
+    else entries
+  in
+  let n = Int.min c.most (Int.max c.least n) in
+  let final = List.length c.instances - 1 in
+  let instance j i =
+    let bytes = ceildiv (n * c.size) page * page in
+    let mem, runs = sysmem hw bytes in
+    Option.iter
+      (fun (v, at) ->
+        let off = ref at in
         while !off < bytes do
           Window.set8 mem !off v;
-          off := !off + size
-        done
-      end;
-      let level, dir, _ = page_list hw (pages ~bytes runs) in
-      ignore
-        (hwrm hw "func_backing_store_cfg_v2"
-           ~req_type:D.hwrm_func_backing_store_cfg_v2 (fun b ->
-             set b C.type_ typ;
-             set b C.instance i;
-             set b C.entry_size size;
-             set b C.num_entries n;
-             set b C.page_dir dir;
-             set b C.page_size_pbl_level level;
-             set b C.subtype_valid_cnt (List.length splits);
-             if typ = last_type then
-               set b C.flags
-                 D.hwrm_func_backing_store_cfg_v2_input_flags_bs_cfg_all_done;
-             List.iteri (fun j v -> set b (List.nth csplits j) v) splits))
-    in
-    List.iter instance instances;
-    n
+          off := !off + c.size
+        done)
+      c.init;
+    let level, dir, _ = page_list hw (pages ~bytes runs) in
+    ignore
+      (hwrm hw "func_backing_store_cfg_v2"
+         ~req_type:D.hwrm_func_backing_store_cfg_v2 (fun b ->
+           set b C.type_ c.typ;
+           set b C.instance i;
+           set b C.entry_size c.size;
+           set b C.num_entries n;
+           set b C.page_dir dir;
+           set b C.page_size_pbl_level level;
+           set b C.subtype_valid_cnt (List.length splits);
+           if last && j = final then
+             set b C.flags
+               D.hwrm_func_backing_store_cfg_v2_input_flags_bs_cfg_all_done;
+           List.iteri (fun k v -> set b (List.nth csplits k) v) splits))
   in
-  let qps = configure qp_contexts in
-  List.iter (fun c -> ignore (configure c)) contexts;
-  ignore (configure ~count:qps (last_type, 0))
+  if n > 0 then List.iteri instance c.instances
+
+(* The context memory the RoCE engine keeps its queue pairs, regions and
+   completion queues in, sized as bnxt_alloc_ctx_mem sizes it for a function
+   with RoCE. The firmware keeps queue pairs of its own for L2 and QP1 (the
+   first two splits of the queue pairs' type). Beyond them the memory holds
+   every queue pair and shared receive queue the firmware holds, where it
+   states that it enforces limits of its own ([limits]), and otherwise
+   [most_qps] queue pairs, plus those it destroys fast (the third split), and
+   [most_srqs] shared receive queues. Each queue pair gets two completion
+   queues, a TIM entry and two entries of each TQM ring. Half the MRAV
+   entries, at most [most_regions], hold regions, and as many, at most
+   [most_avs], address vectors, whose count is the type's one split, unless
+   the firmware states both. Every type is asked for first, then each is
+   configured in the order of its number, the TIM type last. *)
+let backing hw ~limits =
+  let context = context hw in
+  let qp = context D.hwrm_func_backing_store_qcaps_v2_input_type_qp in
+  let srq = context D.hwrm_func_backing_store_qcaps_v2_input_type_srq in
+  let cq = context D.hwrm_func_backing_store_qcaps_v2_input_type_cq in
+  let vnic = context D.hwrm_func_backing_store_qcaps_v2_input_type_vnic in
+  let stat = context D.hwrm_func_backing_store_qcaps_v2_input_type_stat in
+  let stqm =
+    context D.hwrm_func_backing_store_qcaps_v2_input_type_sp_tqm_ring
+  in
+  let ftqm =
+    context D.hwrm_func_backing_store_qcaps_v2_input_type_fp_tqm_ring
+  in
+  let mrav = context D.hwrm_func_backing_store_qcaps_v2_input_type_mrav in
+  let tim = context D.hwrm_func_backing_store_qcaps_v2_input_type_tim in
+  let l2 = split qp 0 and qp1 = split qp 1 and srqs = split srq 0 in
+  let extra_qps, extra_srqs =
+    if limits then (qp.most - l2 - qp1, srq.most - srqs)
+    else
+      ( Int.min most_qps (qp.most - l2 - qp1) + split qp 2,
+        Int.min most_srqs (srq.most - srqs) )
+  in
+  let qps = l2 + qp1 + extra_qps in
+  let regions, avs =
+    if limits && List.length mrav.splits = 1 then
+      (mrav.most - split mrav 0, split mrav 0)
+    else
+      let regions = Int.min (mrav.most / 2) most_regions in
+      (regions, Int.min regions most_avs)
+  in
+  let av = match split mrav 0 with 0 -> avs | n -> Int.min n avs in
+  let tqm = l2 + (2 * (extra_qps + qp1)) in
+  let own c = configure hw c ~splits:c.splits in
+  own qp qps;
+  own srq (srqs + extra_srqs);
+  own cq (split cq 0 + (2 * extra_qps));
+  own vnic vnic.most;
+  own stat stat.most;
+  own stqm (split vnic 0 + tqm + stqm.least);
+  own ftqm tqm;
+  configure hw mrav ~splits:[ av ] (regions + avs);
+  configure hw ~last:true tim ~splits:tim.splits qps
 
 (* The engine's command queue and its completions, then the notification queue
    that completion queues need, which is never armed nor serviced. Is the
@@ -801,6 +883,11 @@ let boot ~name h hw =
         set b D.Hwrm_func_qcaps_input.fid 0xffff)
   in
   let mac = String.sub caps (fst D.Hwrm_func_qcaps_output.mac_address) 6 in
+  let limits =
+    get caps D.Hwrm_func_qcaps_output.flags_ext2
+    land D.hwrm_func_qcaps_output_flags_ext2_sw_max_resource_limits_supported
+    <> 0
+  in
   ignore (hwrm hw "func_drv_rgtr" ~req_type:D.hwrm_func_drv_rgtr ignore);
   hw.registered <- true;
   let cfg =
@@ -812,7 +899,7 @@ let boot ~name h hw =
     fail "the firmware puts the doorbell at %#x, past BAR %d" db_off
       doorbell_bar;
   let db = Window.sub hw.dbs db_off 8 in
-  backing hw;
+  backing hw ~limits;
   let rc, nq_id = open_rcfw hw db in
   open_l2 hw ~nq_id ~mac;
   let gid = gid_of_mac mac in

@@ -203,6 +203,31 @@ let transfers =
               B.Qp.send a r ~at:0 1));
     ]
 
+(* The NIC holds as many queue pairs and regions at once as its context
+   memory gives it, which is sized at open for tens of thousands. 128 queue
+   pairs and 2,048 regions are twice as many as a context memory of 64 queue
+   pairs and 1,024 regions held, and take about 170 MiB and 8 MiB of
+   rings. *)
+let capacity =
+  group "capacity"
+    [
+      test "a NIC holds 128 queue pairs at once" (fun () ->
+          with_nic @@ fun nic ->
+          let qps =
+            List.init 128 (fun i ->
+                ok (Printf.sprintf "queue pair %d" i) (B.Qp.make nic))
+          in
+          List.iter (fun qp -> ok "destroying" (B.Qp.destroy qp)) qps);
+      test "a NIC holds 2,048 regions at once" (fun () ->
+          with_nic @@ fun nic ->
+          let regions =
+            List.init 2048 (fun i ->
+                ok (Printf.sprintf "region %d" i) (B.Region.host nic 4096))
+          in
+          List.iter (fun r -> ok "deregistering" (B.Region.deregister r))
+            regions);
+    ]
+
 let loopback =
   group "reads"
     [
@@ -431,6 +456,7 @@ let () =
        [
          refusals;
          transfers;
+         capacity;
          loopback;
          pages;
          order;
