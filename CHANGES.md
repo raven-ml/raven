@@ -7164,6 +7164,7 @@ thread.
 
 ### Quill
 
+- `quill build --skip-eval` embeds figures stored on disk.
 - A cell that raises `Failure` or `Invalid_argument` shows its message as
   written, as in `Exception: Failure: msg`, where the toplevel printed it as
   a string literal with escaped newlines and quotes.
