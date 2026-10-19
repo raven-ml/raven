@@ -1099,7 +1099,6 @@ let work =
           equal int ~msg:"alignment" 4096 f.alignment;
           equal bool ~msg:"waits on words as on the host" f.waits.hosts
             f.waits.stores;
-          equal int ~msg:"most waits" 255 f.waits.most;
           equal (option int) ~msg:"hang bound" (Some 30_000) f.hang_ms;
           greater int ~msg:"clock" ~than:0 c.clock_hz;
           equal int ~msg:"shader engines"
@@ -1641,17 +1640,29 @@ let held (w0, t) =
     (H.read (host dst) 64);
   List.iter (A.free g) [ word; src; dst ]
 
-(* A submission waits on as many words as its facts state. *)
-let wait_bound () =
-  S.with_ @@ fun { g; _ } ->
+(* A submission waits in its compute queue on every producer it follows,
+   however many: 300 Polled devices' values, more than a fixed reserve of
+   waits held, none of them reached when the submit returns. *)
+let many_waits () =
+  S.with_ @@ fun { d; g } ->
   waits_on g;
-  let most = (A.facts g).waits.most in
-  let v = A.signaled g + 1 in
-  let word = Option.get (A.alloc g Pinned 8) in
-  H.write (host word) (le64 1);
-  let waits = Array.make most (address word, 1) in
-  equal answer ~msg:(strf "%d waits" most) `Ok (E.submit g ~v ~waits [||]);
-  S.reached g v
+  if not (A.facts g).maps_host then
+    skip ~reason:"the GPU maps no host word to wait on" ();
+  let module P = Rig_support.Polled in
+  let producers = List.init 300 (fun i -> P.open_ (strf "amd:wait-%d" i)) in
+  let close () = List.iter (fun (p, _) -> Rig.close p) producers in
+  Fun.protect ~finally:close @@ fun () ->
+  let point (p, _) =
+    let run = Rig.Submission.Run.make (Rig.Submission.make p [||]) in
+    Rig.submit run ~buffers:[||]
+  in
+  let points = Array.of_list (List.map point producers) in
+  let s = Rig.Submission.make d [||] in
+  let v = Rig.submit (Rig.Submission.Run.make s) ~waits:points ~buffers:[||] in
+  let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
+  equal int ~msg:"producers reached on the host" 0 (List.length reached);
+  List.iter (fun (_, p) -> ignore (P.run p)) producers;
+  Rig.Point.wait v
 
 let waits =
   group ~timeout:120. "waits"
@@ -1659,7 +1670,7 @@ let waits =
       cases ~name:crossing_name
         "a wait holds the work until the word reaches it, across 2^32 (sampled)"
         crossing held;
-      test "a submission waits on 255 words" wait_bound;
+      test "a submission waits in its queue on 300 producers" many_waits;
     ]
 
 (* Joins past 512 parts

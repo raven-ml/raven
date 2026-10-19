@@ -44,7 +44,6 @@ let driver_facts () =
   equal (option int) ~msg:"the copy engine" (Some 1) f.copy_engine;
   equal completion_w Host f.completion;
   equal (list bool) [ true; false ] [ f.waits.hosts; f.waits.stores ];
-  equal int max_int f.waits.most;
   equal bool true f.may_block;
   equal bool false f.maps_host;
   equal rec_w c (Proxy.capability p);

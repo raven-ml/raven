@@ -229,7 +229,6 @@ let facts () =
   equal bool ~msg:"completion is the store" true (f.completion = Store);
   equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
     [ f.waits.stores; f.waits.hosts ];
-  equal int ~msg:"most waits" max_int f.waits.most;
   equal bool ~msg:"submit may block" true f.may_block;
   equal (option int) ~msg:"the hang bound, where no display's watchdog bounds"
     (if S.attribute watchdog = 0 then Some 30_000 else None)

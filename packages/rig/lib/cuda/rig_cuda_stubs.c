@@ -1419,8 +1419,9 @@ static int runs(const struct device *d, const struct rig_part *p,
   return threads <= fn->threads && b->shared <= fn->shared;
 }
 
-int rig_cuda_room(void *self, const struct rig_part *p, int n,
+int rig_cuda_room(void *self, int nwaits, const struct rig_part *p, int n,
                   void *scratch, const uint8_t *args) {
+  (void)nwaits;
   (void)scratch;
   const struct device *d = ((struct edge *)self)->d;
   for (int i = 0; i < n; i++) {

@@ -289,8 +289,9 @@ static int arena_room(struct rig_metal_run *r, const struct rig_part *parts,
   return put - freed <= r->arena_size ? RIG_FITS : RIG_LATER;
 }
 
-int rig_metal_room(void *self, const struct rig_part *parts, int n,
-                   void *scratch, const uint8_t *args) {
+int rig_metal_room(void *self, int nwaits, const struct rig_part *parts,
+                   int n, void *scratch, const uint8_t *args) {
+  (void)nwaits;
   (void)scratch;
   for (int i = 0; i < n; i++)
     if (!fits(&parts[i], args)) return RIG_NEVER;

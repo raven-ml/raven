@@ -38,14 +38,14 @@
    has an empty axis or more threads per group or shared memory than its
    function takes, or, on an AQL queue, 2^32 work-items or more along an
    axis, an [after] index not below its own part's. */
-int rig_amd_room(void *self, const struct rig_part *parts, int n,
-                 void *routes, const uint8_t *args);
+int rig_amd_room(void *self, int nwaits, const struct rig_part *parts,
+                 int n, void *routes, const uint8_t *args);
 
 /* Places [parts], which rig_amd_room answered RIG_FITS for, as the work
    of [v], the value after the last one it received, and rings the queues'
-   doorbells: RIG_COMMITTED. rig gives it at most RIG_AMD_WAITS
-   (rig_amd_stubs.h) [waits], and none on a GPU whose compute queue cannot
-   wait on a 64-bit word, as the device's facts state. With [times], the
+   doorbells: RIG_COMMITTED. rig gives it no [waits] on a GPU whose compute
+   queue cannot wait on a 64-bit word, as the device's facts state. With
+   [times], the
    queues stamp [v]'s work with the GPU's clock, which rig_amd_settle
    converts to the host's clock. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,

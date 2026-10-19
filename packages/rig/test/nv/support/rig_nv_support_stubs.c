@@ -82,8 +82,8 @@ static struct parts parts_of(value v_parts) {
    RIG_LATER, RIG_NEVER or RIG_GROW. */
 value rig_nv_test_room(value v_self, value v_parts) {
   struct parts x = parts_of(v_parts);
-  int room = rig_nv_room((void *)Nativeint_val(v_self), x.p, x.n, x.scratch,
-                         NULL);
+  int room = rig_nv_room((void *)Nativeint_val(v_self), 0, x.p, x.n,
+                         x.scratch, NULL);
   parts_free(&x);
   return Val_int(room);
 }
@@ -96,7 +96,7 @@ value rig_nv_test_submit(value v_self, value v_v, value v_parts) {
   void *self = (void *)Nativeint_val(v_self);
   struct parts x = parts_of(v_parts);
   const char *failure = NULL;
-  int room = rig_nv_room(self, x.p, x.n, x.scratch, NULL);
+  int room = rig_nv_room(self, 0, x.p, x.n, x.scratch, NULL);
   int r = room != RIG_FITS
               ? RIG_FAILED
               : rig_nv_submit(self, (uint64_t)Long_val(v_v), NULL, 0, x.p,

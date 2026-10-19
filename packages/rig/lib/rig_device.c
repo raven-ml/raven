@@ -1436,7 +1436,8 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   /* A submission with copies of slots hands over the call's parts
      ([set_copies]). */
   const struct rig_part *parts = s->nslotted > 0 ? r->parts : s->parts;
-  int room = d->driver.room(d->self, parts, s->nparts, s->scratch, args);
+  int room = d->driver.room(d->self, r->nwaits, parts, s->nparts, s->scratch,
+                            args);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_GROW) return SUBMIT_GROW;
   if (room == RIG_LATER) {

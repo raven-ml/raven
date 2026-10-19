@@ -226,7 +226,6 @@ let facts () =
   equal bool ~msg:"completion is the store" true (f.completion = Store);
   equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
     [ f.waits.stores; f.waits.hosts ];
-  equal int ~msg:"most waits" 256 f.waits.most;
   equal bool ~msg:"may block" false f.may_block;
   let w = N.locate f.word in
   equal nativeint ~msg:"the word's handle is its address"
@@ -501,6 +500,30 @@ let high_word () =
   S.free_launches l;
   N.free t.g b
 
+(* A submission waits in its channels on every producer it follows, however
+   many: 300 Polled devices' values, more than a fixed reserve of waits held,
+   none of them reached when the submit returns. *)
+let many_waits () =
+  S.with_ @@ fun t ->
+  let module P = Rig_support.Polled in
+  let producers = List.init 300 (fun i -> P.open_ (strf "POLLED:wait-%d" i)) in
+  let close () = List.iter (fun (d, _) -> Rig.close d) producers in
+  Fun.protect ~finally:close @@ fun () ->
+  let point (d, _) =
+    let run = Rig.Submission.Run.make (Rig.Submission.make d [||]) in
+    Rig.submit run ~buffers:[||]
+  in
+  let points = Array.of_list (List.map point producers) in
+  let s = Rig.Submission.make t.d [||] in
+  S.watchdog "a submission of 300 waits" (fun () ->
+      let v =
+        Rig.submit (Rig.Submission.Run.make s) ~waits:points ~buffers:[||]
+      in
+      let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
+      equal int ~msg:"producers reached on the host" 0 (List.length reached);
+      List.iter (fun (_, p) -> ignore (P.run p)) producers;
+      Rig.Point.wait v)
+
 (* A ring entry cut in half is refused when submitted, and no value is
    assigned. *)
 let refused () =
@@ -518,6 +541,7 @@ let work =
       test "an allocation or mapping of no bytes raises" misuse;
       test "a wait holds work on another device's host word above 2^40"
         high_word;
+      test "a submission waits in its channels on 300 producers" many_waits;
       test "a submission of half a ring entry raises" refused;
     ]
 

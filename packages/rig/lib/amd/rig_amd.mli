@@ -221,7 +221,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- [completion], [Store], since the queue that releases a value writes
        the word;}
     {- [waits], [stores] and [hosts] iff the compute queue compares 64-bit
-       words ({!section-order}), and [most] of [255];}
+       words ({!section-order});}
     {- [may_block], [false], since the C functions write memory and call no
        system function;}
     {- [hang_ms], the path's [hang_ms], [None] on a path whose kernel driver
@@ -339,9 +339,8 @@ val capability : t -> Rig_amd_abi.Capability.t
     before all of them are placed, since [submit] moves the write position
     and rings the doorbell last. An AQL queue may read a packet as soon as
     its header is placed, and [submit] places each header after the rest of
-    its packet. rig gives [submit] at most 255 waits, and none where the
-    compute queue cannot wait, as the device's facts state
-    ({!Rig_edge.type-facts}).
+    its packet. rig gives [submit] no waits where the compute queue cannot
+    wait, as the device's facts state ({!Rig_edge.type-facts}).
 
     {b Times.} While a profile is taken, each queue a value's work enters
     writes the GPU's clock after the value's waits, and the queue that

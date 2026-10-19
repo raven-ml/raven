@@ -152,7 +152,7 @@ module Driver = struct
       queues = [ { name = "COMPUTE:0"; runs = [ Fill ] } ];
       copy_engine = None;
       completion = Host;
-      waits = { stores = false; hosts = false; most = 0 };
+      waits = { stores = false; hosts = false };
       may_block = false;
       hang_ms = None;
       maps_host = false;

@@ -364,7 +364,7 @@ let open_ ~word i =
           queues = [ { name = "COMPUTE:0"; runs = [ Fill; Launch ] } ];
           copy_engine = None;
           completion = Host;
-          waits = { stores = false; hosts = false; most = 0 };
+          waits = { stores = false; hosts = false };
           may_block = true;
           hang_ms = None;
           maps_host = true;

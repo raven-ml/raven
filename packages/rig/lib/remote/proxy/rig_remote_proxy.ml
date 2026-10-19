@@ -70,7 +70,7 @@ let facts d =
     queues = [ { name = "COMPUTE:0"; runs }; { name = "COPY:0"; runs } ];
     copy_engine = Some 1;
     completion = Host;
-    waits = { stores = false; hosts = true; most = max_int };
+    waits = { stores = false; hosts = true };
     may_block = true;
     hang_ms = None;
     maps_host = false;

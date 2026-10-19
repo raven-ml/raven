@@ -165,7 +165,7 @@ value rig_gpu_edge_copy(value v_edge, value v_v, value v_queue,
   p.copy.fill = (int)f[f_fill];
   p.copy.byte = (uint8_t)f[f_byte];
   _Alignas(8) uint8_t scratch[RIG_SCRATCH];
-  int r = d->room(self, &p, 1, scratch, NULL);
+  int r = d->room(self, 0, &p, 1, scratch, NULL);
   if (r != RIG_FITS) return Val_int(r);
   const char *failure = NULL;
   uint64_t v = (uint64_t)Long_val(v_v);

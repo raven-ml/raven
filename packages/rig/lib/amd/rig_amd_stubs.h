@@ -22,9 +22,7 @@
 
 #include "rig_amd.h"
 
-/* The most waits of a submission, and the submissions a ring keeps the end
-   of until their value is reached. */
-#define RIG_AMD_WAITS 255
+/* The submissions a ring keeps the end of until their value is reached. */
 #define RIG_AMD_MARKS 4096
 #define RIG_AMD_HDPS 8
 

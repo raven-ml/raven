@@ -158,9 +158,10 @@ struct rig_part {
 #define RIG_SCRATCH 8
 
 /* The room check of the [n] parts at [parts], whose launches' and fills'
-   blocks lie in [args] (rig_edge.mli, The C functions: [room]). */
-typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
-                        void *scratch, const uint8_t *args);
+   blocks lie in [args], after [nwaits] waits (rig_edge.mli, The C
+   functions: [room]). */
+typedef int rig_room_fn(void *self, int nwaits, const struct rig_part *parts,
+                        int n, void *scratch, const uint8_t *args);
 
 /* Encodes [parts] as the work of [v] after [waits] (rig_edge.mli, The C
    functions: [submit]). [args] holds the launches' and fills' blocks, of

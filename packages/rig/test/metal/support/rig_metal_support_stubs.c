@@ -51,7 +51,7 @@ value rig_metal_test_room(value v_edge, value v_launch, value v_params) {
   p.launch.args.params = (uint32_t)n;
   uint8_t scratch[RIG_SCRATCH];
   void *self = Ptr_val(v_edge);
-  int r = rig_driver_of(self)->room(self, &p, 1, scratch, args);
+  int r = rig_driver_of(self)->room(self, 0, &p, 1, scratch, args);
   free(args);
   return Val_int(r);
 }

@@ -364,9 +364,6 @@ let pointers_bytes = 4096
    of a stamp of the measure at open. *)
 let stamps_bytes = (4096 * 32) + 8
 
-(* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
-external max_waits : unit -> int = "caml_rig_amd_max_waits" [@@noalloc]
-
 (* The queues, as rig_amd_ring.c's [runs] accepts their parts. *)
 let device_queues =
   Rig_edge.
@@ -699,7 +696,7 @@ let facts g =
     queues = device_queues;
     copy_engine = Some 1;
     completion = Store;
-    waits = { stores = g.waits64; hosts = g.waits64; most = max_waits () };
+    waits = { stores = g.waits64; hosts = g.waits64 };
     may_block = false;
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;

@@ -53,7 +53,6 @@ static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
     return Val_int(v);                                                        \
   }
 
-CONSTANT(max_waits, RIG_AMD_WAITS)
 CONSTANT(ring_pm4, RING_PM4)
 CONSTANT(ring_aql, RING_AQL)
 CONSTANT(ring_sdma, RING_SDMA)

@@ -46,7 +46,6 @@ module Polled : sig
     ?may_block:bool ->
     ?completion:[ `Host | `Store ] ->
     ?waits_on:[ `Store | `Host ] list ->
-    ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
     ?lag:int ->
@@ -79,8 +78,7 @@ module Polled : sig
       [Pinned] memory is unbounded. Its word advances as [completion] says
       (defaults to [`Host]): with [`Store], as a queue's store writes it. Its
       queue waits for producers of the completions [waits_on] lists (defaults
-      to none), at most [max_waits] of them per submission (defaults to
-      [max_int]). With [answer] [`Stopped] (the default) its stop drops its
+      to none). With [answer] [`Stopped] (the default) its stop drops its
       queued work and writes the last value it received into its word, and frees
       what it ran work with: its queue, and the records {!last_waits},
       {!layout}, {!copies}, {!blocked} and
@@ -127,7 +125,6 @@ module Polled : sig
     ?may_block:bool ->
     ?completion:[ `Host | `Store ] ->
     ?waits_on:[ `Store | `Host ] list ->
-    ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
     ?lag:int ->
@@ -256,6 +253,10 @@ module Polled : sig
   val last_waits : t -> (int * int) list
   (** [last_waits d] is the waits [d]'s last submit received, at most 8, as
       [(at, value)]. *)
+
+  val room_waits : t -> int
+  (** [room_waits d] is the number of waits [d]'s last room check was
+      given. *)
 
   val layout : t -> (int * int list) list
   (** [layout d] is, for each part of the last submission [d]'s hand-over

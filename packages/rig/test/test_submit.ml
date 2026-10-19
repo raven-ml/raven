@@ -791,35 +791,18 @@ let in_queue ~completion =
   equal int 1 (P.run cp);
   equal int (Rig.Point.value b) (Rig.signaled consumer)
 
-(* A submission with more unreached producers than its device's queue waits on
-   in one submission waits on the host for the others: its queue gets
-   [max_waits] waits, and it completes once those are reached. *)
-let test_max_waits () =
+(* A device's room check is given the number of waits its queue gets in the
+   submit after it, which is the room they take: every unreached producer. *)
+let test_room_waits () =
   let producers =
-    List.init 3 (fun i -> P.open_ (Printf.sprintf "submit:bound-producer-%d" i))
+    List.init 12 (fun i ->
+        P.open_ (Printf.sprintf "submit:room-waits-producer-%d" i))
   in
-  let consumer, cp = P.open_ ~waits_on:[ `Host ] ~max_waits:2 "submit:bound" in
   let points = List.map (fun (d, _) -> submit (empty d)) producers in
-  let b = submit (empty consumer) ~waits:(Array.of_list points) in
-  let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
-  equal ~msg:"waits in the queue" int 2 (List.length (P.last_waits cp));
-  equal ~msg:"producers reached on the host" int 1 (List.length reached);
-  equal ~msg:"before its waits hold" int 0 (P.run cp);
-  List.iter (fun (_, p) -> ignore (P.run p)) producers;
-  equal ~msg:"once they hold" int 1 (P.run cp);
-  equal int (Rig.Point.value b) (Rig.signaled consumer)
-
-(* A driver answering fewer than zero waits has a queue with no room for any:
-   every producer is waited for on the host. *)
-let test_negative_max_waits () =
-  let producer, pp = P.open_ "submit:negative-producer" in
-  let consumer, cp =
-    P.open_ ~waits_on:[ `Host ] ~max_waits:(-1) "submit:negative-consumer"
-  in
-  let a = submit (empty producer) in
-  ignore (submit (empty consumer) ~waits:[| a |]);
-  equal ~msg:"waits in the queue" int 0 (List.length (P.last_waits cp));
-  equal ~msg:"the producer's work" int 0 (P.queued pp)
+  let consumer, cp = P.open_ ~waits_on:[ `Host ] "submit:room-waits" in
+  ignore (submit (empty consumer) ~waits:(Array.of_list points));
+  equal ~msg:"the room's waits" int 12 (P.room_waits cp);
+  List.iter (fun (_, p) -> ignore (P.run p)) producers
 
 (* A producer whose word the device cannot map, as a device that maps no host
    memory, is waited for on the host: the submit returns with the producer's
@@ -1963,10 +1946,8 @@ let tests =
         test "a queue that waits on host words waits in the queue" test_in_queue;
         test "a producer whose word the device cannot map is waited on the host"
           test_unmapped_wait;
-        test "waits beyond the queue's bound are waited for on the host"
-          test_max_waits;
-        test "a driver answering negative waits has the host wait for all"
-          test_negative_max_waits;
+        test "a room check is given the waits its submit is given"
+          test_room_waits;
         test "a queue that waits on stores waits on the producer's word"
           test_in_queue_store;
         test "a submission runs if its queues hold it, and raises if never"

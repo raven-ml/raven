@@ -1148,34 +1148,31 @@ let name_one s c use k b =
       call_side c k b carried (owns_device_memory s.dev b)
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
-   queue, or that its queue has no room for, and adds the others to the call's
-   waits after committing their producers' work. *)
-let rec wait_points s c n i count =
+   queue, and adds the others to the call's waits after committing their
+   producers' work. *)
+let rec wait_points s c n i =
   if i = n then ()
   else
     let p = call_point c i in
-    if Dev.is_done p then wait_points s c n (i + 1) count
+    if Dev.is_done p then wait_points s c n (i + 1)
     else
       let producer = Dev.of_index (Point.index p) and v = Point.value p in
       if Dev.is_lost producer || not (Dev.owns producer p) then begin
         Dev.check p;
-        wait_points s c n (i + 1) count
+        wait_points s c n (i + 1)
       end
       else
-        let way =
-          if count >= s.dev.live.waits.most then host_wait
-          else way_of s.dev c producer
-        in
+        let way = way_of s.dev c producer in
         if way = host_wait then begin
           (* The producer may have stopped since: a point it reached is
              done. *)
           Dev.wait_point 0 true p;
-          wait_points s c n (i + 1) count
+          wait_points s c n (i + 1)
         end
         else begin
           Dev.commit producer v;
           call_wait c producer.index way v;
-          wait_points s c n (i + 1) (count + 1)
+          wait_points s c n (i + 1)
         end
 
 let rec hand_over s c run round lacked =
@@ -1240,7 +1237,7 @@ let release_frame m b0 b1 b2 b3 =
 let rec go s c run buffers waits k =
   let n = Array.length s.uses in
   if k >= n then begin
-    wait_points s c (call_collect s.c c run waits) 0 0;
+    wait_points s c (call_collect s.c c run waits) 0;
     hand_over s c run 1 0
   end
   else

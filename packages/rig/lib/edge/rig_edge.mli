@@ -110,12 +110,10 @@ type completion =
 
 (** The type for the producers a device's queues wait for. A {e producer}
     is a device whose value another device's work waits for. rig waits on the
-    host for the producers a device's queues do not wait for, and for those
-    beyond [most]. *)
+    host for the producers a device's queues do not wait for. *)
 type waits = {
   stores : bool;  (** Its queues wait for a [Store] producer. *)
   hosts : bool;  (** Its queues wait for a [Host] producer. *)
-  most : int;  (** The most waits one submission carries in its queues. *)
 }
 
 (** The type for what compiled code needs from a device, a record that the
@@ -190,14 +188,16 @@ type 'region facts = {
     A driver's [struct rig_driver] holds four C functions, which rig calls
     with the facts' [edge]. They return the constants of [rig_edge.h].
     {ul
-    {- [room] returns [RIG_FITS] if the parts fit the device's queues now,
-       and [RIG_LATER] if they fit once one of its values is reached. It
-       returns [RIG_GROW] for parts that exceed the device's queues as they
-       are but fit once they grow ({!Driver.val-grow}), and [RIG_NEVER] for
-       parts that exceed the device's empty queues however they grow, name
-       work it does not run or have kind [0], and for a launch whose grid or
-       group is empty or exceeds the device's or the function's limits, or
-       whose shared memory exceeds the function's.}
+    {- [room] is given the parts and the number of waits the [submit]
+       after it is given. It returns [RIG_FITS] if the parts and the waits
+       fit the device's queues now, and [RIG_LATER] if they fit once one of
+       its values is reached. It returns [RIG_GROW] for parts and waits that
+       exceed the device's queues as they are but fit once they grow
+       ({!Driver.val-grow}), and [RIG_NEVER] for parts and waits that
+       exceed the device's empty queues however they grow, for parts that
+       name work it does not run or have kind [0], and for a launch whose
+       grid or group is empty or exceeds the device's or the function's
+       limits, or whose shared memory exceeds the function's.}
     {- [submit] encodes the parts on the device's queues as the work of the
        value it is given, after the waits it is given and the device's earlier
        work. Its calls are given the values [b + 1], [b + 2], … in order,

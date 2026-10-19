@@ -113,7 +113,7 @@ value rig_amd_test_room(value v_self, value v_parts, value v_args) {
   struct rig_part *p;
   void *scratch;
   void *mem = edge(Atom(0), v_parts, &w, &p, &scratch);
-  int r = driver_of(v_self)->room((void *)Nativeint_val(v_self), p,
+  int r = driver_of(v_self)->room((void *)Nativeint_val(v_self), 0, p,
                                   (int)Wosize_val(v_parts), scratch,
                                   (const uint8_t *)String_val(v_args));
   free(mem);

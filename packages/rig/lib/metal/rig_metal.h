@@ -11,8 +11,8 @@
 
 #include <rig_edge.h>
 
-int rig_metal_room(void *self, const struct rig_part *parts, int n,
-                   void *scratch, const uint8_t *args);
+int rig_metal_room(void *self, int nwaits, const struct rig_part *parts,
+                   int n, void *scratch, const uint8_t *args);
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                      int nwaits, const struct rig_part *parts, int nparts,

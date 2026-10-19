@@ -31,6 +31,8 @@ external polled_last_times : polled -> int = "rig_test_polled_last_times"
 external polled_last_waits : polled -> int array
   = "rig_test_polled_last_waits"
 
+external polled_room_waits : polled -> int = "rig_test_polled_room_waits"
+
 external polled_layout : polled -> int array = "rig_test_polled_layout"
 
 external polled_copies :
@@ -186,7 +188,6 @@ module Driver = struct
     may_block : bool;
     stores : bool;
     waits : [ `Store | `Host ] list;
-    max_waits : int;
     hang_ms : int option;
     answer : [ `Stopped | `Unknown ];
     capability : Rig_edge.capability;
@@ -272,7 +273,7 @@ module Driver = struct
          else [ compute ]);
       copy_engine = (if d.copies then Some 1 else None);
       completion = (if d.stores then Store else Host);
-      waits = { stores = has `Store; hosts = has `Host; most = d.max_waits };
+      waits = { stores = has `Store; hosts = has `Host };
       may_block = d.may_block;
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
@@ -559,8 +560,7 @@ module Polled = struct
       ?(peers = true) ?(maps_host = true) ?(alignment = 4096)
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
-      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept)
-      ?(lag = 1) ?hang_ms
+      ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
@@ -585,7 +585,6 @@ module Polled = struct
         may_block;
         stores = completion = `Store;
         waits = waits_on;
-        max_waits;
         hang_ms;
         answer;
         capability;
@@ -632,12 +631,11 @@ module Polled = struct
 
   let open_ ?capacity ?grows ?copies ?host_visible ?addresses
       ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window ?may_block
-      ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
+      ?completion ?waits_on ?answer ?runs ?lag ?hang_ms name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?addresses
         ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window
-        ?may_block ?completion ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms
-        ()
+        ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)
@@ -680,6 +678,8 @@ module Polled = struct
   let last_waits d =
     let a = polled_last_waits d.c in
     List.init (Array.length a / 2) (fun i -> (a.(2 * i), a.((2 * i) + 1)))
+
+  let room_waits d = polled_room_waits d.c
 
 
   let layout d =

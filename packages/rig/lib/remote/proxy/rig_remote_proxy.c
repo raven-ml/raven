@@ -42,8 +42,9 @@ static int in_place(const struct rig_part *p) {
 /* Room: only words and copies fit, words only on the host, and no copy
    from this process's memory after a copy into it in one submission, whose
    bytes the hand-over could not wait for. */
-static int proxy_room(void *self, const struct rig_part *parts, int n,
-                      void *scratch, const uint8_t *args) {
+static int proxy_room(void *self, int nwaits, const struct rig_part *parts,
+                      int n, void *scratch, const uint8_t *args) {
+  (void)nwaits;
   (void)scratch;
   (void)args;
   struct rig_remote_dev *d = self;

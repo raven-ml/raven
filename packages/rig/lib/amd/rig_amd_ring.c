@@ -248,14 +248,14 @@ static int aql(const struct rig_amd *d) {
   return d->rings[RIG_AMD_COMPUTE].kind == RING_AQL;
 }
 
-/* What a submission takes besides its parts: on the compute ring its prefix,
-   RIG_AMD_WAITS waits, the scratch writes, its release and the stamps of its
-   start and end, and on the copy ring its prefix, its two stamps, the fence
-   after them and its release. */
-static struct cost fixed_cost(const struct rig_amd *d) {
+/* What a submission of [nwaits] waits takes besides its parts: on the
+   compute ring its prefix, the waits, the scratch writes, its release and
+   the stamps of its start and end, and on the copy ring its prefix, its two
+   stamps, the fence after them and its release. */
+static struct cost fixed_cost(const struct rig_amd *d, int nwaits) {
   uint64_t pm4 = words_of(d, T_WAIT) +
                  RIG_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
-                 RIG_AMD_WAITS * words_of(d, T_WAIT64) +
+                 (uint64_t)nwaits * words_of(d, T_WAIT64) +
                  words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
                  words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
   struct cost k = {
@@ -318,11 +318,11 @@ static uint64_t slot_bytes(int n) {
   return align_up(8 * ((uint64_t)n + 1), SEGMENT_ALIGN);
 }
 
-/* What a submission of the routed [parts] takes. */
-static struct cost need(const struct rig_amd *d,
+/* What a submission of the routed [parts] after [nwaits] waits takes. */
+static struct cost need(const struct rig_amd *d, int nwaits,
                         const struct rig_amd_route *routes,
                         const struct rig_part *p, int n) {
-  struct cost k = fixed_cost(d);
+  struct cost k = fixed_cost(d, nwaits);
   k.bytes += slot_bytes(n);
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
@@ -488,13 +488,13 @@ static void ask(const struct rig_amd *d, const struct cost *k) {
       k->copy > room.copy ? 4 * (2 * k->copy + 1) : 0;
 }
 
-int rig_amd_room(void *self, const struct rig_part *parts, int n,
-                 void *routes, const uint8_t *args) {
+int rig_amd_room(void *self, int nwaits, const struct rig_part *parts,
+                 int n, void *routes, const uint8_t *args) {
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
   for (int i = 0; i < n; i++)
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   route(d, routes, parts, n);
-  struct cost k = need(d, routes, parts, n), room = room_of(d);
+  struct cost k = need(d, nwaits, routes, parts, n), room = room_of(d);
   struct cost most = most_of(d);
   if (k.compute > most.compute || k.copy > most.copy) return RIG_NEVER;
   if (d->draining || !holds(&room, &k)) {
@@ -965,7 +965,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
 
   /* The submission's segment bytes lie in one run, which never wraps, its
      slot words first. */
-  uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
+  uint64_t bytes = need(d, nwaits, s.routes, parts, nparts).bytes;
   struct rig_amd_segment *g = &d->segment;
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
   volatile uint32_t *slot = (volatile uint32_t *)(g->host + g->put % g->size);

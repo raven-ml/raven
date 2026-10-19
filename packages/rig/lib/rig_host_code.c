@@ -365,9 +365,10 @@ static const struct rig_block *block_of(const struct rig_part *p,
 
 /* The host runs launches with no shared memory over a grid of threads that
    fits threads_of. */
-static int host_room(void *self, const struct rig_part *parts, int n,
-                     void *scratch, const uint8_t *args) {
+static int host_room(void *self, int nwaits, const struct rig_part *parts,
+                     int n, void *scratch, const uint8_t *args) {
   (void)self;
+  (void)nwaits;
   (void)scratch;
   for (int i = 0; i < n; i++) {
     const struct rig_part *p = &parts[i];

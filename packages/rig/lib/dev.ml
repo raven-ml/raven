@@ -144,7 +144,7 @@ end
 module Cache = Tbl.Make (Int)
 module Strings = Tbl.Make (String)
 
-let no_waits = { Rig_edge.stores = false; hosts = false; most = 0 }
+let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~host_addresses ~word

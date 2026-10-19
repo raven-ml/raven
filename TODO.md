@@ -40,10 +40,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### limits and size
 
-- limits no hardware or spec imposes, one commit each
-  (_plans/rig-device-reuse/70-, 71-): NV's 256 waits per submission
-  (`MAX_WAITS`, `facts.waits.most`): room keeps a fixed reserve because it
-  cannot see the waits, so it goes once `room` takes the waits' count
 - NV address spaces: Device memory in the 49-bit space on the PCI path;
   find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
   past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;

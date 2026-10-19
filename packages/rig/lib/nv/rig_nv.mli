@@ -86,7 +86,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [queues] | ["COMPUTE:0"] and ["COPY:0"] ({!section-submitting}). |
       | [copy_engine] | [Some 1], ["COPY:0"]. |
       | [completion] | [Store]: the channels' releases write the word. |
-      | [waits] | [stores] and [hosts]; [most] is [256]. |
+      | [waits] | [stores] and [hosts]. |
       | [may_block] | [false]: its C functions only store to memory. |
       | [hang_ms] | The path's {!field-hang_ms}. |
       | [maps_host] | [true] iff the path maps host memory. |

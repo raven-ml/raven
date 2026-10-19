@@ -19,7 +19,7 @@
 #include <rig_edge.h>
 
 /* The room check of Rig_nv's Submitting section (rig_room_fn). */
-int rig_nv_room(void *self, const struct rig_part *parts, int n,
+int rig_nv_room(void *self, int nwaits, const struct rig_part *parts, int n,
                 void *scratch, const uint8_t *args);
 
 /* The submission of Rig_nv's Submitting section (rig_submit_fn), of

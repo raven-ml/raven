@@ -60,10 +60,6 @@
 
 #include "rig_nv_stubs.h"
 
-/* The waits a submission may carry: rig_nv_room, which does not see
-   them, keeps room for this many on each channel. */
-#define MAX_WAITS 256
-
 static int other(int q) { return q == COMPUTE ? COPY : COMPUTE; }
 
 /* Segments */
@@ -322,14 +318,15 @@ static uint64_t end_bytes(const struct device *d, int q) {
   return release_bytes(d, q) + stamp_bytes(d, q);
 }
 
-/* Adds what channel [q] takes when a submission uses it, besides its parts:
-   the words a channel may owe, its first stamp, MAX_WAITS waits, and a wrap
-   of the segment ring that wastes a template's words and splits a
-   segment. */
-static void channel_cost(const struct device *d, int q, struct cost *k) {
+/* Adds what channel [q] takes when a submission of [nwaits] waits uses it,
+   besides its parts: the words a channel may owe, its first stamp, the wait
+   for the value before and for the other channel, the waits, and a wrap of
+   the segment ring that wastes a template's words and splits a segment. */
+static void channel_cost(const struct device *d, int q, int nwaits,
+                         struct cost *k) {
   k->entries[q] += 3;
   k->bytes[q] += stamp_bytes(d, q) +
-                 (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
+                 (2 + (uint64_t)nwaits) * bytes_of(d, T_ACQUIRE) +
                  bytes_of(d, q == COMPUTE ? T_SETUP : T_SETUP_COPY) +
                  4 * TEMPLATE_WORDS;
   if (q == COMPUTE)
@@ -364,10 +361,12 @@ static uint64_t segment_closes(uint64_t bytes) {
   return bytes / (SEGMENT_BYTES_MAX / 2);
 }
 
-/* What [p], routed by [routes], takes, with the most a wrap past the launch
-   ring's end wastes: the largest of its launches' descriptors and banks. */
-static struct cost need(const struct device *d, const struct route *routes,
-                        const struct rig_part *p, int n) {
+/* What [p], routed by [routes], takes after [nwaits] waits, with the most a
+   wrap past the launch ring's end wastes: the largest of its launches'
+   descriptors and banks. */
+static struct cost need(const struct device *d, int nwaits,
+                        const struct route *routes, const struct rig_part *p,
+                        int n) {
   uint64_t v = atomic_load_explicit(&d->last, memory_order_relaxed) + 1;
   int r = releaser(routes, n, v);
   int used[CHANNELS] = {0, 0};
@@ -398,7 +397,7 @@ static struct cost need(const struct device *d, const struct route *routes,
               (uint64_t)p[i].nafter + (x->join >= 0), qmd, bank, copies, &k);
   }
   for (int q = 0; q < CHANNELS; q++)
-    if (used[q]) channel_cost(d, q, &k);
+    if (used[q]) channel_cost(d, q, nwaits, &k);
   k.bytes[r] += end_bytes(d, r);
   for (int q = 0; q < CHANNELS; q++)
     k.entries[q] += segment_closes(k.bytes[q]);
@@ -524,12 +523,12 @@ static void ask(const struct device *d, const struct cost *k) {
       k->launched > d->ch[COMPUTE].launches_size ? k->launched : 0;
 }
 
-int rig_nv_room(void *self, const struct rig_part *p, int n,
+int rig_nv_room(void *self, int nwaits, const struct rig_part *p, int n,
                 void *scratch, const uint8_t *args) {
   struct device *d = ((struct rig_nv_edge *)self)->d;
   if (!runs(p, n, args)) return RIG_NEVER;
   route(d, scratch, p, n);
-  struct cost k = need(d, scratch, p, n);
+  struct cost k = need(d, nwaits, scratch, p, n);
   if (!enters(ENTRIES_MAX, ENTRIES_MAX, &k)) return RIG_NEVER;
   if (!holds(d, &k)) install(d);
   if ((d->draining || !entered(d, &k)) &&

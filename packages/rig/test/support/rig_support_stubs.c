@@ -295,6 +295,7 @@ struct polled {
   int room_gated, room_waiters;     /* [room] blocks while gated */
   int settle_gated, settle_waiters; /* and [settle] */
   _Atomic int freed; /* rig freed its word of its own */
+  _Atomic int room_waits; /* the waits its last room check was given */
   /* The mappings rig holds of it ([map_peer], [map_host]), by address. */
   struct held_map {
     uintptr_t at;
@@ -590,6 +591,10 @@ value rig_test_polled_last_times(value v_p) {
   intnat at = p->run != NULL ? (intnat)p->run->last_times : 0;
   unlock(&p->mu);
   return Val_long(at);
+}
+
+value rig_test_polled_room_waits(value v_p) {
+  return Val_int(atomic_load(&Polled_val(v_p)->room_waits));
 }
 
 /* The waits of the last submit, as [| at; value; … |]. */
@@ -923,10 +928,11 @@ static int scribble(void *scratch, int n) {
   return 1;
 }
 
-static int polled_room(void *self, const struct rig_part *parts, int n,
-                       void *scratch, const uint8_t *args) {
+static int polled_room(void *self, int nwaits, const struct rig_part *parts,
+                       int n, void *scratch, const uint8_t *args) {
   struct polled *p = self;
   struct polled_run *r = p->run;
+  atomic_store(&p->room_waits, nwaits);
   if (!scribble(scratch, n)) return RIG_NEVER;
   for (int i = 0; i < n; i++) {
     int kind = parts[i].kind;
