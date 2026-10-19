@@ -63,8 +63,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - memory.ml's release paths: `retired` and `pending` both wait for a
   device value; word unmaps become a `pending` case, kept sorted at
   insertion (`retire_locked` reads `next_value`, `pending` `submitted`)
-- test cuts in _plans/rig-simplify-audit/tests.md, each shown covered
-  before it goes: AMD rows 5, 11, 12 and 15
 
 ### API
 
