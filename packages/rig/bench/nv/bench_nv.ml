@@ -3,13 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPU 0, opened through NVIDIA's kernel driver and Rig, each row beside its
-   floor: the same submissions through rig_nv_room and rig_nv_submit, called
-   from C in a loop on the device the row opened, then a spin on the timeline
-   word. A row submits through Rig.submit and waits with Rig.Point.wait, as a program
-   does, so its distance to the floor is rig's share and the OCaml side of the
-   driver. Memory rows call the driver. Each case opens its device in its own
-   worker. Without an NVIDIA GPU the suite has no rows. *)
+(* GPU 0, opened through NVIDIA's kernel driver and rig. A row submits through
+   Rig.submit and waits with Rig.Point.wait, as a program does. Memory rows call
+   the driver. Each case opens its device in its own worker. Without an NVIDIA
+   GPU the suite has no rows. *)
 
 module N = Rig_nv
 module B = Rig.Buffer
@@ -17,15 +14,6 @@ module Sub = Rig.Submission
 module Abi = Rig_nv_abi
 module S = Rig_nv_support
 module H = Rig_gpu_support.Host
-
-external start : nativeint -> int -> int -> unit = "rig_nv_bench_start"
-external floor_release : int -> unit = "rig_nv_bench_release"
-external floor_switch : unit -> unit = "rig_nv_bench_switch"
-external floor_waits : int -> int -> unit = "rig_nv_bench_waits"
-external floor_entry : int -> int -> unit = "rig_nv_bench_entry"
-external floor_entries : int array -> unit = "rig_nv_bench_entries"
-external floor_rung : int array -> bool -> unit = "rig_nv_bench_rung"
-external floor_copy : int -> int -> int -> unit = "rig_nv_bench_copy"
 
 let kib = 1024
 let mib = 1024 * kib
@@ -47,12 +35,6 @@ let submission t ps = Sub.Run.make (Sub.make t.d ps)
 let submit run = Rig.submit run ~buffers:[||]
 let run s = Rig.Point.wait (submit s)
 
-(* The floor of [t]: its later values are given from C. *)
-let floor t =
-  let f = N.facts t.g in
-  start f.edge (host f.word) (Rig.submitted t.d);
-  t
-
 (* A host buffer of the ring entry [e], two words. *)
 let entry_words e =
   let b = B.create Rig.host 8 in
@@ -73,11 +55,10 @@ let words s =
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
 (* [count] launches of the kernel [empty] over one thread, their descriptors and
-   constant bank 0 in [Mapped] memory, as compiled code places them: [`Chained],
-   descriptors chained from one segment that schedules the first; [`Apart], a
-   segment scheduling each. The result is the loaded image, which stays loaded
-   while reachable, and the segments' ring entries, two words each. *)
-let launches t count how =
+   constant bank 0 in [Mapped] memory, as compiled code places them, a segment
+   scheduling each. The result is the loaded image, which stays loaded while
+   reachable, and the segments' ring entries, two words each. *)
+let launches t count =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
   let p = get (Rig.Image.load t.d (Lazy.force cubin)) in
@@ -109,17 +90,10 @@ let launches t count how =
   let stride = 512 in
   let qmds = S.mapped t.g (count * stride) in
   for i = 0 to count - 1 do
-    let next = address qmds + ((i + 1) * stride) in
-    let q =
-      if how = `Chained && i < count - 1 then
-        { q with chain = Some (Abi.Template.Int next) }
-      else q
-    in
     H.write (at qmds (i * stride)) (Abi.Qmd.make l q).bytes
   done;
-  let segments = match how with `Chained -> 1 | `Apart -> count in
   let segment_bytes = 256 in
-  let segment = S.mapped t.g (segments * segment_bytes) in
+  let segment = S.mapped t.g (count * segment_bytes) in
   let entry i =
     let qmd = address qmds + (i * stride) in
     let ws = (Abi.Method.schedule (Int qmd)).bytes in
@@ -130,7 +104,7 @@ let launches t count how =
     in
     words e.bytes
   in
-  (p, Array.init segments entry)
+  (p, Array.init count entry)
 
 (* Rows *)
 
@@ -152,41 +126,17 @@ let release_rows =
     in
     (t, copy, none)
   in
-  let floor_of setup () = floor (fst (setup ())) in
   Thumper.group "release"
     [
       row "driver" empty (fun (_, s) -> run s);
-      row "floor" (floor_of empty) (fun _ -> floor_release 1);
       row "mapped" mapped (fun (_, s, _) -> run s);
-      row "floor-mapped"
-        (fun () ->
-          let t, _, m = mapped () in
-          (floor t, m))
-        (fun _ -> floor_release 1);
       row "switch" switching (fun (t, copy, none) ->
           run (if Rig.submitted t.d land 1 = 0 then copy else none));
-      row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
       row "no-wait-100" empty (fun (_, s) ->
           for _ = 1 to 99 do
             ignore (submit s)
           done;
           run s);
-      row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);
-    ]
-
-(* Rig passes a driver only the waits not yet reached, so four satisfied waits
-   are timed from C alone: the waits the driver encodes and the release. *)
-let wait_rows =
-  Thumper.group "waits"
-    [
-      row "floor-4"
-        (fun () ->
-          let t = dev () in
-          let w = alloc t Pinned 8 in
-          H.set64 (host w) 1;
-          ignore (floor t);
-          (t, address w))
-        (fun (_, at) -> floor_waits at 4);
     ]
 
 (* [count] launches of the kernel [empty] over one thread, as Launch parts of
@@ -205,33 +155,23 @@ let launching t count =
 
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
    between and within runs and which no unprivileged process pins. Launches are
-   Launch parts, which the driver chains on one channel. Chained launches in one
-   part of ring words are their floor; [64-parts] orders launches as ring words
-   of parts of one queue, each scheduled after a wait for idle, and [4096-parts]
-   shows what the writer costs per part of a large submission. [4096] is 4,096
-   Launch parts in one submission, more than the launch ring holds when the
-   device opens. *)
+   Launch parts, which the driver chains on one channel. [64-parts] orders
+   launches as ring words of parts of one queue, each scheduled after a wait for
+   idle, and [4096-parts] shows what the writer costs per part of a large
+   submission. [4096] is 4,096 Launch parts in one submission, more than the
+   launch ring holds when the device opens. [submits-64] is 64 launches as 64
+   submissions. *)
 let launch_rows =
-  let launching_as how count () =
+  let launching_as count () =
     let t = dev () in
-    let p, es = launches t count how in
+    let p, es = launches t count in
     let part e = Rig.Submission.words (entry_words e) in
-    (t, p, es.(0), submission t (Array.map part es))
-  in
-  let floor_launching count () =
-    let t, p, e, _ = launching_as `Chained count () in
-    (floor t, p, e)
+    (t, p, submission t (Array.map part es))
   in
   let launch_parts count () =
     let t = dev () in
     (t, launching t count)
   in
-  let floor_run (_, _, e) = floor_entry e.(0) e.(1) in
-  (* 64 launches as 64 submissions, and from C as a submission and a release
-     each through the driver, then as the driver's words written from C, 64
-     values each rung: with a release each, or each ending in the wait for idle
-     that orders the next, with one release for them all. The last two rows' gap
-     is what the releases cost the GPU. *)
   let submitting () =
     let t = dev () in
     (t, (), Array.init 64 (fun _ -> launching t 1))
@@ -242,25 +182,13 @@ let launch_rows =
     done;
     Rig.Point.wait (submit ss.(Array.length ss - 1))
   in
-  let floor_apart () =
-    let t = dev () in
-    let p, es = launches t 64 `Apart in
-    (floor t, p, Array.concat (Array.to_list es))
-  in
   Thumper.group "launch"
     [
       row "1" (launch_parts 1) (fun (_, s) -> run s);
-      row "floor-1" (floor_launching 1) floor_run;
       row "64" (launch_parts 64) (fun (_, s) -> run s);
-      row "floor-64" (floor_launching 64) floor_run;
-      row "64-parts" (launching_as `Apart 64) (fun (_, _, _, s) -> run s);
+      row "64-parts" (launching_as 64) (fun (_, _, s) -> run s);
       row "submits-64" submitting submit_all;
-      row "floor-submits-64" floor_apart (fun (_, _, ws) -> floor_entries ws);
-      row "floor-submits-64-rung" floor_apart (fun (_, _, ws) ->
-          floor_rung ws true);
-      row "floor-submits-64-unreleased" floor_apart (fun (_, _, ws) ->
-          floor_rung ws false);
-      row "4096-parts" (launching_as `Apart 4096) (fun (_, _, _, s) -> run s);
+      row "4096-parts" (launching_as 4096) (fun (_, _, s) -> run s);
       row "4096" (launch_parts 4096) (fun (_, s) -> run s);
     ]
 
@@ -268,22 +196,9 @@ let copy_rows =
   let copying n (dst, src) () =
     let t = dev () in
     let dst = B.create ~memory:dst t.d n and src = B.create ~memory:src t.d n in
-    let s = submission t Sub.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |] in
-    (t, dst, src, s)
+    submission t Sub.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |]
   in
-  let copy name n kinds =
-    [
-      row name (copying n kinds) (fun (_, _, _, s) -> run s);
-      row ("floor-" ^ name)
-        (fun () ->
-          let t, dst, src, _ = copying n kinds () in
-          let s = Sub.make ~fixed:[ (dst, Read_write); (src, Read) ] t.d [||] in
-          (floor t, s, Sub.address s dst, Sub.address s src))
-        (fun (_, s, dst, src) ->
-          floor_copy dst src n;
-          ignore (Sys.opaque_identity s));
-    ]
-  in
+  let copy name n kinds = [ row name (copying n kinds) (fun s -> run s) ] in
   let big = 256 * mib in
   Thumper.group "copy"
     (copy "16B" 16 (B.Device, B.Device)
@@ -341,7 +256,6 @@ let () =
     @@ Thumper.run "rig_nv"
          [
            release_rows;
-           wait_rows;
            launch_rows;
            copy_rows;
            alloc_rows;

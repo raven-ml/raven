@@ -6,8 +6,8 @@
 usage: uv run packages/rig/bench/compare/run.py SCENARIO
            [--torch PYTHON] [--jax PYTHON] [--tinygrad PYTHON] [FILE...]
 
-SCENARIO is ship, start, load (of the checkpoint files FILE...), fit or
-micro. run.py builds the probes, runs each stack interleaved over the
+SCENARIO is ship, start, load (of the checkpoint files FILE...), fit, micro
+or vendor. run.py builds the probes, runs each stack interleaved over the
 rounds, prints a table and writes results/GPU-DATE.json. README.md says
 what each scenario measures, what it needs and what a result holds.
 """
@@ -365,7 +365,43 @@ def micro(probes, files):
     return {'unit': 'ns', 'rows': [row(stack, s, case=f'add{calls}') for (stack, calls), s in samples.items()]}
 
 
-SCENARIOS = {'ship': ship, 'start': start, 'load': load, 'fit': fit, 'micro': micro}
+# The vendor scenario's cases: each its name, the native probe's arguments,
+# and whether it needs a bus to copy across, which the Mac's unified memory
+# lacks. A case the probe answers [unsupported] for, such as in-queue waits
+# on a device whose queues wait on no word, is left out.
+MIB = 1 << 20
+VENDOR_CASES = [
+    ('release-1', ['release', 1], False),
+    ('release-100', ['release', 100], False),
+    ('waits-4', ['waits', 4], False),
+    ('copy-h2d-256M', ['copy', 'h2d', 256 * MIB], True),
+    ('copy-d2h-256M', ['copy', 'd2h', 256 * MIB], True),
+    ('copy-d2d-256M', ['copy', 'd2d', 256 * MIB], False),
+    ('copy-d2d-16B', ['copy', 'd2d', 16], False),
+    ('alloc-64K', ['alloc', 64 << 10], False),
+    ('alloc-64M', ['alloc', 64 * MIB], False),
+    ('map-host-256M', ['map_host', 256 * MIB], False),
+]
+
+
+def vendor(probes, files):
+    native = next(stack for stack in probes if stack.name == 'native')
+    cases = [c for c in VENDOR_CASES if platform() != 'metal' or not c[2]]
+    samples, unsupported = {}, set()
+    for _ in range(ROUNDS):
+        for name, args, _ in cases:
+            if name in unsupported:
+                continue
+            found, _ = native.run(*args)
+            if 'unsupported' in found:
+                unsupported.add(name)
+                print(f'run.py: native {native.device} has no {name}', file=sys.stderr)
+                continue
+            samples.setdefault(name, []).extend(int(t) for t in str(found['samples_ns']).split(','))
+    return {'unit': 'ns', 'rows': [row(native, s, case=name) for name, s in samples.items()]}
+
+
+SCENARIOS = {'ship': ship, 'start': start, 'load': load, 'fit': fit, 'micro': micro, 'vendor': vendor}
 
 
 def measure(scenario, frameworks, files):
@@ -421,6 +457,8 @@ COLUMNS = {
     'fit': [('median MiB', lambda r: mib(median(r)))],
     'micro': [('calls', calls), ('median us', lambda r: us(median(r))), ('us/call', lambda r: us(median(r) / calls(r))),
               ('min us', lambda r: us(min(r['samples'])))],
+    'vendor': [('case', lambda r: r['case']), ('median us', lambda r: us(median(r))),
+               ('min us', lambda r: us(min(r['samples'])))],
 }
 
 
@@ -436,7 +474,7 @@ def table(scenario, record):
                *COLUMNS[scenario], ('samples', lambda r: len(r['samples'])), ('x rig', times_rig)]
     cells = [[h for h, _ in columns]] + [[str(f(r)) for _, f in columns] for r in rows]
     widths = [max(len(line[i]) for line in cells) for i in range(len(columns))]
-    left = {'stack', 'version', 'cache'}
+    left = {'stack', 'version', 'cache', 'case'}
     return '\n'.join('  '.join(c.ljust(w) if h in left else c.rjust(w) for c, w, (h, _) in zip(line, widths, columns))
                      for line in cells)
 

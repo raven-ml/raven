@@ -37,8 +37,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
   615's headers whole (licence checked first) and only `per_release`
   structs for older releases
-- whether the per-driver floor drivers stay in the benches, derived from
-  rig's identity and the rule that a row times what a user calls
 
 ### limits and size
 

@@ -11,10 +11,7 @@
   thumper)
  (foreign_stubs
   (language c)
-  (names rig_metal_bench_stubs)
-  (flags
-   (:standard
-    (:include ../../lib/metal/objc_flags.sexp)))))
+  (names rig_metal_bench_stubs)))
 
 (rule
  (alias bench)

@@ -1,12 +1,3 @@
-(library
- (name rig_nv_bench)
- (modules)
- (libraries rig_edge rig_nv)
- (foreign_stubs
-  (language c)
-  (names rig_nv_bench_stubs)
-  (include_dirs ../../lib/nv)))
-
 (executable
  (name bench_nv)
  (modules bench_nv)
@@ -15,7 +6,6 @@
   rig_gpu_support
   rig_nv
   rig_nv_abi
-  rig_nv_bench
   rig_nv_nvidia
   rig_nv_support
   thumper))

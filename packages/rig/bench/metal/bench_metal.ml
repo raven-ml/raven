@@ -3,15 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The Mac's GPU through the driver, its work submitted through rig, each row
-   beside the raw Metal calls that bound it, made on a queue of their own: a
-   release by a commit and a wait; launches by the same dispatches encoded
-   directly; a launch from an indirect command buffer by the same indirect
-   command buffer; memory and images by the Metal objects they make. A row waits
+(* The Mac's GPU through the driver, its work submitted through rig. A row waits
    as a caller does, through rig's wait; the rows of [sleep] wait while spinning
-   threads hold every core. A floor waits as Metal's own API does, blocking in
-   waitUntilCompleted. Each case opens its device in its own worker, so that no
-   process forks after Metal started. *)
+   threads hold every core. Memory and image rows call the driver. Each case
+   opens its device in its own worker, so that no process forks after Metal
+   started. *)
 
 module M = Rig_metal
 module S = Rig_metal_support
@@ -23,24 +19,6 @@ let found : Rig_edge.entry_answer -> Rig_edge.entry = function
   | Absent -> failwith "no such function"
   | No_memory n -> failwith (Printf.sprintf "no memory for %d bytes" n)
 
-external floor : string -> nativeint = "rig_metal_bench_floor"
-external floor_release : nativeint -> int -> unit = "rig_metal_bench_release"
-external floor_launch : nativeint -> int -> unit = "rig_metal_bench_launch"
-external floor_icb : nativeint -> int -> nativeint = "rig_metal_bench_icb"
-
-external floor_execute : nativeint -> nativeint -> int -> unit
-  = "rig_metal_bench_execute"
-
-external floor_buffers : nativeint -> int -> unit = "rig_metal_bench_buffers"
-
-external floor_pipelined : nativeint -> int -> int -> unit
-  = "rig_metal_bench_pipelined"
-external floor_alloc : nativeint -> int -> unit = "rig_metal_bench_alloc"
-
-external floor_map_host : nativeint -> int -> int -> unit
-  = "rig_metal_bench_map_host"
-
-external floor_image : nativeint -> string -> unit = "rig_metal_bench_image"
 external default_class : unit -> unit = "rig_metal_bench_default_class"
 external load_start : int -> unit = "rig_metal_bench_load_start"
 external load_stop : unit -> unit = "rig_metal_bench_load_stop"
@@ -175,7 +153,6 @@ let stepping () =
   (t, step t)
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
-let floor () = floor metallib
 
 let release_rows =
   let empty () =
@@ -185,21 +162,18 @@ let release_rows =
   Thumper.group "release"
     [
       row "driver" empty (fun (t, s) -> run t s);
-      row "floor" floor (fun f -> floor_release f 1);
       row "pipelined-256" empty (fun (t, s) ->
           for _ = 1 to 256 do
             submit t s
           done;
           wait t);
-      row "floor-pipelined-256" floor (fun f -> floor_release f 256);
       row "after-idle-20ms" empty (fun (t, s) ->
           M.sleep t.g ~seen:t.v ~still_ms:20;
           run t s);
     ]
 
 let launch_rows =
-  (* A submission of [n] launches of [step]: [floor-n] runs the same dispatches
-     in one encoder. *)
+  (* A submission of [n] launches of [step]. *)
   let launched n () =
     let t = dev () in
     (t, launches t n)
@@ -237,10 +211,6 @@ let launch_rows =
     let t = dev () in
     (t, indirect t n)
   in
-  let floor_recorded n () =
-    let f = floor () in
-    (f, floor_icb f n)
-  in
   Thumper.group "launch"
     [
       row "1" (launched 1) run_launches;
@@ -254,15 +224,9 @@ let launch_rows =
       row "submits-64" (launched 1) (submits 64);
       row "submits-1024" (launched 1) (submits 1024);
       row "pipelined-100" (launched 1) pipelined;
-      row "floor-1" floor (fun f -> floor_launch f 1);
-      row "floor-64" floor (fun f -> floor_launch f 64);
-      row "floor-pipelined-100" floor (fun f -> floor_pipelined f depth runs);
       row "1-live-4096" live (fun (t, s, _) -> run_launches (t, s));
       row "icb-1" (recorded 1) (fun (t, s) -> run t s);
       row "icb-64" (recorded 64) (fun (t, s) -> run t s);
-      row "floor-icb-1" (floor_recorded 1) (fun (f, b) -> floor_execute f b 1);
-      row "floor-icb-64" (floor_recorded 64) (fun (f, b) ->
-          floor_execute f b 64);
     ]
 
 let split_rows =
@@ -272,21 +236,14 @@ let split_rows =
     S.split f t.g 64 ~times:(host (alloc t (16 * 64)));
     (t, prepare_fill t f)
   in
-  Thumper.group "split"
-    [
-      row "64" splitting (fun (t, s) -> run t s);
-      row "floor-64" floor (fun f -> floor_buffers f 65);
-    ]
+  Thumper.group "split" [ row "64" splitting (fun (t, s) -> run t s) ]
 
 let alloc_rows =
-  let n_row name n = row name dev (fun t -> M.free t.g (alloc t n))
-  and floor_row name n = row name floor (fun f -> floor_alloc f n) in
+  let n_row name n = row name dev (fun t -> M.free t.g (alloc t n)) in
   Thumper.group "alloc"
     [
       n_row "64KiB" (64 * kib);
       n_row "64MiB" (64 * mib);
-      floor_row "floor-64KiB" (64 * kib);
-      floor_row "floor-64MiB" (64 * mib);
       row "first-use-64MiB" stepping (fun (t, s) ->
           let r = alloc t (64 * mib) in
           H.set64 (host t.args) (address r);
@@ -304,13 +261,11 @@ let map_host_rows =
     done;
     p
   in
-  let pages () = (dev (), written ())
-  and floor_pages () = (floor (), written ()) in
+  let pages () = (dev (), written ()) in
   Thumper.group "map-host"
     [
       row "64MiB" pages (fun (t, p) ->
           M.free t.g (Option.get (M.map_host t.g p n)));
-      row "floor-64MiB" floor_pages (fun (f, p) -> floor_map_host f p n);
     ]
 
 (* An image's load makes no pipeline; its first entry makes one, which Metal's
@@ -324,9 +279,7 @@ let image_rows =
   Thumper.group "image"
     [
       row "fill" dev (fun t -> M.unload t.g (load t.g));
-      row "floor" floor (fun f -> floor_image f "");
       row "first-entry" dev first;
-      row "floor-first-entry" floor (fun f -> floor_image f "fill");
     ]
 
 let icb_rows =
@@ -365,8 +318,6 @@ let sleep_rows =
         (fun (t, s) ->
           submit t s;
           wait t);
-      Thumper.bench_with_setup ~setup:(loaded floor) ~teardown
-        "floor-under-load" (fun f -> floor_launch f 1);
     ]
 
 (* A launch whose argument points into 1 GiB of memory, back to back and after 3

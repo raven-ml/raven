@@ -4,14 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* Submits on Polled, a driver over host memory whose queue runs when the bench
-   runs it, each row beside the floor that bounds it: the driver's own room and
-   submit entries called directly, with the same parts and the same runs of the
-   queue. A row's distance to its floor is rig's share of a submit.
+   runs it, so that a row times rig's share of a submit and little else.
 
-   A row that does not wait runs the queue every [drain] submits, as its floor
-   does, so the queue stays short. A replay row runs the queue once per run,
-   before its submit: the device completes run N-1 while the host prepares run
-   N, with each submit copying its parameters before the run is reused. *)
+   A row that does not wait runs the queue every [drain] submits, so the queue
+   stays short. A replay row runs the queue once per run, before its submit:
+   the device completes run N-1 while the host prepares run N, with each
+   submit copying its parameters before the run is reused. The floor rows
+   time what the host's memory and the runtime cost alone, which bounds the
+   rows of buffers, words and copies. *)
 
 module B = Rig.Buffer
 module Sub = Rig.Submission
@@ -21,21 +21,6 @@ module Claim = Rig.Claim
 
 let strf = Printf.sprintf
 
-external floor_new : nativeint -> nativeint -> nativeint = "rig_bench_floor_new"
-
-external floor_fill : nativeint -> nativeint -> string -> unit
-  = "rig_bench_floor_fill"
-
-external floor_int64 : nativeint -> int -> int -> unit = "rig_bench_floor_int64"
-[@@noalloc]
-
-external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
-[@@noalloc]
-
-external floor_turn_submit : nativeint -> int -> unit
-  = "rig_bench_floor_turn_submit"
-
-external floor_share : nativeint -> nativeint -> unit = "rig_bench_floor_share"
 external claim_3 : B.t -> B.t -> B.t -> unit = "rig_bench_claim_3" [@@noalloc]
 
 let drain = 64
@@ -767,104 +752,12 @@ let memory_floor_rows =
         Gc.full_major ());
   ]
 
-(* Floors *)
-
-(* [timeline] is the address of the driver's timeline word, which a floor loads
-   as rig reads it. *)
-type floor = {
-  f : nativeint;
-  fp : P.t;
-  word : B.t; (* Host memory the floor rewrites before each submit. *)
-  timeline : int;
-  mutable k : int;
-}
-
-let floor () =
-  let fp = P.make () in
-  let f = floor_new (P.facts fp).edge Support.noop in
-  let timeline = Option.get (P.locate (P.facts fp).word).address in
-  { f; fp; word = B.create Rig.host 8; timeline; k = 0 }
-
-let floor_drained t =
-  t.k <- t.k + 1;
-  if t.k mod drain = 0 then ignore (P.run t.fp)
-
-let floor_replay () =
-  let t = floor () in
-  let params = Bytes.make 16 '\000' in
-  Bytes.set_int64_ne params 0 (Int64.of_int (Support.Reader.host t.word));
-  floor_fill t.f Support.poke (Bytes.unsafe_to_string params);
-  t
-
-let floor_run t =
-  t.k <- t.k + 1;
-  ignore (P.run t.fp);
-  floor_int64 t.f 8 t.k;
-  floor_submit t.f 1
-
-(* Another domain calling the same device's entries until the row ends, with a
-   floor of its own: the driver alone serializes the two. With [share], each
-   submit also takes one turn the two share, as rig takes a device's: by
-   try-lock, and otherwise with the runtime released. *)
-let floor_contended ~share () =
-  let t = floor () in
-  let stop = Atomic.make false in
-  let other =
-    { t with f = floor_new (P.facts t.fp).edge Support.noop; k = 0 }
-  in
-  if share then floor_share t.f other.f;
-  let submit = if share then floor_turn_submit else floor_submit in
-  let rival =
-    Domain.spawn (fun () ->
-        while not (Atomic.get stop) do
-          submit other.f 1;
-          floor_drained other
-        done)
-  in
-  (t, stop, rival)
-
 let floor_rows =
-  let row name f = Thumper.bench_with_setup ~setup:floor name f in
-  let replay_row name f = Thumper.bench_with_setup ~setup:floor_replay name f in
   Thumper.group "floor"
-    ([
-       row "polled/release" (fun t ->
-           floor_submit t.f 0;
-           ignore (P.run t.fp);
-           ignore (Support.load t.timeline));
-       row "polled/cost" (fun t ->
-           floor_submit t.f 1;
-           floor_drained t);
-       Thumper.bench_with_setup
-         ~setup:(floor_contended ~share:false)
-         ~teardown:(fun (_, stop, rival) ->
-           Atomic.set stop true;
-           Domain.join rival)
-         "polled/two-domains"
-         (fun (t, _, _) ->
-           floor_submit t.f 1;
-           floor_drained t);
-       Thumper.bench_with_setup
-         ~setup:(floor_contended ~share:true)
-         ~teardown:(fun (_, stop, rival) ->
-           Atomic.set stop true;
-           Domain.join rival)
-         "polled/two-domains-turn"
-         (fun (t, _, _) ->
-           floor_turn_submit t.f 1;
-           floor_drained t);
-       replay_row "polled/run" floor_run;
-       replay_row "polled/pipelined-100" (fun t ->
-           for _ = 1 to runs do
-             floor_run t
-           done;
-           ignore (P.run t.fp);
-           ignore (Support.load t.timeline));
-       Thumper.bench_with_setup ~setup:Mutex.create "mutex-section" (fun m ->
-           Mutex.lock m;
-           Mutex.unlock m);
-     ]
-    @ memory_floor_rows)
+    (Thumper.bench_with_setup ~setup:Mutex.create "mutex-section" (fun m ->
+         Mutex.lock m;
+         Mutex.unlock m)
+    :: memory_floor_rows)
 
 let () =
   exit

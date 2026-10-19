@@ -4,7 +4,6 @@
  (libraries
   rig_amd
   rig_amd_abi
-  rig_amd_amdgpu
   rig_amd_pci
   rig_amd_support
   rig

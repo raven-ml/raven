@@ -7,7 +7,7 @@
 (library
  (name rig_bench)
  (modules)
- (libraries rig rig_edge)
+ (libraries rig)
  (foreign_stubs
   (language c)
   (names rig_bench_stubs)))
@@ -30,7 +30,6 @@
  (modules bench_gpu)
  (libraries
   rig
-  rig_edge
   rig_bench
   rig_gpu_support
   rig_metal

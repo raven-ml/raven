@@ -10,7 +10,7 @@ uv run packages/rig/bench/compare/run.py SCENARIO \
   [--torch PYTHON] [--jax PYTHON] [--tinygrad PYTHON] [FILE...]
 ```
 
-`SCENARIO` is `ship`, `start`, `load`, `fit` or `micro`. Each `PYTHON` is an
+`SCENARIO` is `ship`, `start`, `load`, `fit`, `micro` or `vendor`. Each `PYTHON` is an
 interpreter that has the framework installed, and a framework without one is
 left out. Each scenario prints a table and writes its record into
 `results/GPU-DATE.json`, where `GPU` is the GPU's name in lower case with its
@@ -164,6 +164,38 @@ host's share of a step is timed alone by the `step/remote-1900` row of the
 to a memory device, whose fills run on the host, and hands two runs to a
 `rig agent` over loopback.
 
+**vendor** times, through the vendor's toolkit alone, what rig's driver
+rows time through rig: the native probe only, 5 samples per process after
+3 warmups, each after an idle of 20 ms. The cases:
+
+- `release-1` and `release-100`: 1 or 100 empty submissions and a wait for
+  the last. On NVIDIA and AMD each writes the next 64-bit value into a word
+  of page-locked host memory from the default stream, and the host spins
+  until it reads the last; on the Mac each is an empty command buffer, and
+  the last is waited for as Metal waits.
+- `waits-4`: one submission of 4 waits for a value the word already holds,
+  then its release, where the device states its streams wait on a word
+  (CUDA's `CU_DEVICE_ATTRIBUTE_CAN_USE_64_BIT_STREAM_MEM_OPS`, HIP's
+  `hipDeviceAttributeCanUseStreamWaitValue`). Metal's queues wait on no
+  word of memory, so the Mac has no such case.
+- `copy-h2d-256M`, `copy-d2h-256M`: a copy of 256 MiB between page-locked
+  host memory and the device's, waited for. The Mac's memory is unified,
+  so it has neither.
+- `copy-d2d-256M`, `copy-d2d-16B`: a copy within the device's memory,
+  waited for; on the Mac, a blit between two shared buffers.
+- `alloc-64K`, `alloc-64M`: an allocation of the device's memory and its
+  free.
+- `map-host-256M`: a mapping of 256 MiB of host memory, written once, for
+  the device, and its unmapping: CUDA's and HIP's host registration, or a
+  Metal buffer over the bytes.
+
+The probe checks each copy's bytes after its samples. A number is the
+vendor's cost of the operation with no runtime above it, beside which rig's
+row of the same name in its driver's suite (`../cuda`, `../nv`, `../amd`,
+`../metal`) shows rig's share. rig's own NVIDIA and AMD drivers drive the
+GPU without the vendor's runtime, so their rows compare with CUDA's and
+HIP's.
+
 ## Results
 
 The table gives the medians of release builds run on 2026-10-11. NVIDIA is an
@@ -187,7 +219,7 @@ R9700, where PyTorch is the only framework run. A micro figure is the
 | load, AMD | 38.9 ms | 62.1 ms | 215.9 ms | | |
 
 The Mac (Apple M1 Max) has no records yet: its runs wait for a quiet
-machine.
+machine. vendor has no records on any machine yet.
 
 ## Records
 
@@ -217,7 +249,7 @@ Each row holds these fields:
 | `device` | rig's driver, the native toolkit, the framework's name for the GPU, `host` for read, or `pcie` for the floor |
 | `version` | rig's commit or the framework's version, and `null` for native, read and the floor |
 | `samples` | the samples; a micro sample times all the calls of its case, and ship's one sample is the total |
-| `case` | load's `cold` or `warm`, and `null` for the floor; micro's `add1` or `add64` |
+| `case` | load's `cold` or `warm`, and `null` for the floor; micro's `add1` or `add64`; vendor's case name |
 | `bytes` | load's bytes moved |
 | `installed`, `vendor` | ship's bytes of the stack's own files and of the vendor's libraries |
 | `vendor_libraries` | ship's vendor libraries, each with its `path`, `bytes` and `sha256` |

@@ -3,43 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Submits on this machine's GPUs through rig, beside the same submits through
-   each driver's C entries alone. An executable of its own: a process that links
-   the GPU drivers makes every full collection longer, and rig's host rows run
-   collections. *)
+(* Submits, copies and loads on this machine's GPUs through rig. An executable
+   of its own: a process that links the GPU drivers makes every full collection
+   longer, and rig's host rows run collections. *)
 
 module B = Rig.Buffer
 module Sub = Rig.Submission
 
 let strf = Printf.sprintf
-
-(* The function an entry answered, which the bench needs. *)
-let found : Rig_edge.entry_answer -> Rig_edge.entry = function
-  | Entry e -> e
-  | Absent -> failwith "no such function"
-  | No_memory n -> failwith (Printf.sprintf "no memory for %d bytes" n)
-
-external floor_new : nativeint -> nativeint -> nativeint = "rig_bench_floor_new"
-
-external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
-[@@noalloc]
-
-external floor_encode : nativeint -> int -> unit = "rig_bench_floor_encode"
-[@@noalloc]
-
-external floor_commit : nativeint -> unit = "rig_bench_floor_commit" [@@noalloc]
-
-external floor_fill : nativeint -> nativeint -> string -> unit
-  = "rig_bench_floor_fill"
-
-external floor_words : nativeint -> int -> int -> unit = "rig_bench_floor_words"
-external floor_at : nativeint -> int -> unit = "rig_bench_floor_at"
-
-external floor_copy : nativeint -> int -> nativeint -> nativeint -> int -> unit
-  = "rig_bench_floor_copy"
-
-external floor_launch : nativeint -> int -> nativeint -> int -> unit
-  = "rig_bench_floor_launch"
 
 external evict : string -> int = "rig_bench_evict"
 
@@ -53,8 +24,6 @@ let depth = 3
 let slots = 24
 let runs = 100
 
-(* Rig's still interval: a wait returns to OCaml at least this often. *)
-let still_ms = 200
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
 (* Files: a file's bytes copied into a GPU's memory and back, through
@@ -171,26 +140,11 @@ type gpu_replay = {
   keep : unit -> unit;  (** Holds what the copies' part runs. *)
 }
 
-(* A driver alone: its C entries through [entries], which submit [parts] parts,
-   [sent] the last value they handed over. *)
-type 'd alone = {
-  drv : 'd;
-  entries : nativeint;
-  sent : int ref;
-  parts : int;
-  hold : unit -> unit;
-}
-
-(* A kernel's work, its equivalent through the driver's entries alone, and the
-   driver objects the floor keeps. *)
-type work = {
-  work : Rig_gpu_support.work;
-  floor : nativeint -> unit;
-  keep : unit -> unit;
-}
+(* A kernel's work, and the objects it keeps. *)
+type work = { work : Rig_gpu_support.work; keep : unit -> unit }
 
 (* A launch's block runs one group of one thread; a fill reads no geometry. *)
-let work ~floor part keep =
+let work part keep =
   let init s run i =
     match Sub.block s i with
     | b ->
@@ -198,27 +152,19 @@ let work ~floor part keep =
         Sub.Run.threads run b 1 1 1
     | exception Invalid_argument _ -> ()
   in
-  { work = { (Rig_gpu_support.work part) with init }; floor; keep }
+  { work = { (Rig_gpu_support.work part) with init }; keep }
 
-(* A GPU's submits through rig, beside the same submits through its driver's C
-   entries alone. [empty] and [cost] submit no work and wait for each submit or
-   every [drain]; [wait/reached] waits for a value reached; [kernel] submits the
-   part [kernel] makes over three buffers and waits every [drain]. A floor
-   submits and commits each value; [encode] commits every [drain], as [cost]'s
-   waits do. The replay rows run [depth] copies of a step over [slots]
+(* A GPU's submits through rig. [empty] and [cost] submit no work and wait for
+   each submit or every [drain]; [wait/reached] waits for a value reached;
+   [kernel] submits the part [kernel] makes over three buffers and waits every
+   [drain]. The replay rows run [depth] copies of a step over [slots]
    parameters, each run waiting for its copy's last run: with no part, and with
-   the part [kernel] makes, a launch of the vendor's smallest kernel. A floor
-   spins on the word; [release-sleep], for a driver whose host writes the word
-   ([sleeps]), and the replay floors wait as rig waits for that driver: in its
-   [sleep] from the first read, or spinning. The kernel floor drives the device
-   rig opened, through its driver's entries alone, after rig loaded the kernel.
-   With [graph], the graph rows do the same with the part [graph] makes, the
-   launch of a recorded step of 64 such kernels. Each case opens its GPU in its
-   own worker, so that no process forks after a vendor library started: through
-   rig with [opened], or the driver alone with [open_]. *)
-let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = false)
-    ?(copies = true) ?graph v ~opened open_ ~kernel =
-  let get = function Ok x -> x | Error why -> failwith why in
+   the part [kernel] makes, a launch of the vendor's smallest kernel. With
+   [graph], the graph row does the same with the part [graph] makes, the launch
+   of a recorded step of 64 such kernels. Each case opens its GPU in its own
+   worker with [opened], so that no process forks after a vendor library
+   started. *)
+let gpu_rows ?graph v ~opened ~kernel =
   let rig () =
     let g, _ = opened () in
     (g, Sub.Run.make (Sub.make g [||]), ref 0)
@@ -273,58 +219,6 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
     Rig.Point.wait (run x);
     r.keep ()
   in
-  let entries d = floor_new (D.facts d).edge 0n in
-  let alone () =
-    let drv = get (open_ ()) in
-    { drv; entries = entries drv; sent = ref 0; parts = 0; hold = ignore }
-  in
-  let part_alone make () =
-    let g, drv = opened () in
-    let k = make drv g in
-    let a =
-      {
-        drv;
-        entries = entries drv;
-        sent = ref (Rig.submitted g);
-        parts = 1;
-        hold =
-          (fun () ->
-            ignore (Sys.opaque_identity (g, k.work));
-            k.keep ());
-      }
-    in
-    k.floor a.entries;
-    floor_at a.entries !(a.sent);
-    a
-  in
-  let release a =
-    incr a.sent;
-    floor_submit a.entries a.parts
-  in
-  let spin a v =
-    while D.signaled a.drv < v do
-      Domain.cpu_relax ()
-    done
-  in
-  let rec sleep a v =
-    let seen = D.signaled a.drv in
-    if seen < v then begin
-      D.sleep a.drv ~seen ~still_ms;
-      sleep a v
-    end
-  in
-  let wait = if sleeps then sleep else spin in
-  let floor_run a =
-    wait a (!(a.sent) + 1 - depth);
-    release a
-  in
-  let floor_pipelined a =
-    for _ = 1 to runs do
-      floor_run a
-    done;
-    wait a !(a.sent);
-    a.hold ()
-  in
   let to_device () =
     let g, _ = opened () in
     (ok (Rig_disk.of_file (data "file" file_bytes)), B.create g file_bytes)
@@ -366,32 +260,6 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
   let blit_into bytes () =
     let g, _ = opened () in
     (String.make bytes 'b', B.create g bytes)
-  in
-  (* The driver alone copying between its pinned memory and its own on its copy
-     engine ({!Rig_edge.type-facts}), into its own memory [to_device] or out of
-     it. *)
-  let copy_alone ~to_device () =
-    let a = alone () in
-    let q = (D.facts a.drv).copy_engine in
-    let region k =
-      (D.locate (Option.get (D.alloc a.drv k copy_bytes))).handle
-    in
-    let pinned = region Pinned and device = region Device in
-    let dst, src = if to_device then (device, pinned) else (pinned, device) in
-    floor_copy a.entries (Option.get q) dst src copy_bytes;
-    { a with parts = 1 }
-  in
-  let copy_once a =
-    release a;
-    spin a !(a.sent)
-  in
-  let copy_floors =
-    if not copies then []
-    else
-      [
-        row "copy-to-device-256M" (copy_alone ~to_device:true) copy_once;
-        row "copy-from-device-256M" (copy_alone ~to_device:false) copy_once;
-      ]
   in
   (* Thumper drops each returned buffer. Its warm-up fills the device's cache;
      measured batches include the collections and drains that make reuse
@@ -465,36 +333,6 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
        ]
       @ Option.fold graph ~none:[] ~some:(fun g ->
           [ row "graph-pipelined-100" (part_replaying g) pipelined ]));
-    Thumper.group (strf "floor/%s" v)
-      ([
-         row "release" alone (fun a ->
-             release a;
-             spin a !(a.sent));
-         row "cost" alone (fun a ->
-             release a;
-             if !(a.sent) mod drain = 0 then spin a !(a.sent));
-         row "encode" alone (fun a ->
-             incr a.sent;
-             floor_encode a.entries a.parts;
-             if !(a.sent) mod drain = 0 then begin
-               floor_commit a.entries;
-               spin a !(a.sent)
-             end);
-         row "run" alone floor_run;
-         row "pipelined-100" alone floor_pipelined;
-         row "kernel-pipelined-100" (part_alone kernel) floor_pipelined;
-       ]
-      @ Option.fold graph ~none:[] ~some:(fun g ->
-          [ row "graph-pipelined-100" (part_alone g) floor_pipelined ])
-      @ copy_floors
-      @
-      if sleeps then
-        [
-          row "release-sleep" alone (fun a ->
-              release a;
-              sleep a !(a.sent));
-        ]
-      else []);
   ]
 
 (* Kernels: each vendor's smallest, as the work of one part of the first compute
@@ -504,48 +342,31 @@ let gpu_rows (type a) (module D : Rig_edge.Driver with type t = a) ?(sleeps = fa
 let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
 
 (* [bump] over one thread as a launch, loaded by rig, its parameters left 0: a
-   count of 0 bytes, so it writes nothing. The floor's launch is of the image
-   the driver loads. A case runs in a forked child, which reaches no Metal
-   compiler: the pipelines of [fill]'s kernels come from Metal's shader
-   cache. *)
-let metal_kernel g d =
+   count of 0 bytes, so it writes nothing. A case runs in a forked child, which
+   reaches no Metal compiler: the pipelines of [fill]'s kernels come from
+   Metal's shader cache. *)
+let metal_kernel _ d =
   let module S = Rig_metal_support in
   let bin = S.fixture ~dir:(fixtures "metal") "fill" in
   let image =
     match Rig.Image.load d bin with Ok i -> i | Error why -> failwith why
   in
-  let own =
-    match Rig_metal.image g bin with
-    | Ok (Rig_edge.Loaded i) -> i
-    | Ok (Place _) -> failwith "Metal asked to place its code"
-    | Error why -> failwith why
-  in
-  let e = found (Rig_metal.entry own "bump") in
   let launch =
     Sub.launch (Option.get (Rig.Image.resolve image "bump")) ~params:16
   in
-  work
-    ~floor:(fun f -> floor_launch f e.code e.launch 16)
-    launch
-    (fun () -> ignore (Sys.opaque_identity own))
+  work launch ignore
 
-(* [empty] over one thread as a launch, loaded by rig; the floor's launch is of
-   the image the driver loads. *)
-let cuda_kernel g d =
+(* [empty] over one thread as a launch, loaded by rig. *)
+let cuda_kernel _ d =
   let module S = Rig_cuda_support in
   let bin = S.fixture ~dir:(fixtures "cuda") "kernels.ptx" in
   let image =
     match Rig.Image.load d bin with Ok i -> i | Error why -> failwith why
   in
-  let m, _ = S.kernels ~dir:(fixtures "cuda") g in
-  let e = found (Rig_cuda.entry m "empty") in
   let launch =
     Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
   in
-  work
-    ~floor:(fun f -> floor_launch f e.code e.launch 16)
-    launch
-    (fun () -> ignore (Sys.opaque_identity m))
+  work launch ignore
 
 (* A graph of 64 [empty] kernels over one thread each, made through the device's
    capability, launched by one part. *)
@@ -562,7 +383,6 @@ let cuda_graph g d =
   let f = S.graph_launch gr [||] in
   {
     work = S.part d f;
-    floor = (fun floor -> floor_fill floor (S.fn f) (S.parameters f));
     keep = (fun () -> ignore (Sys.opaque_identity (image, gr, f)));
   }
 
@@ -575,15 +395,10 @@ let nv_kernel g d =
   let words = B.create Rig.host (4 * Array.length ws) in
   B.write words Bigarray.int32 (fun a ->
       Array.iteri (fun i w -> a.{i} <- Int32.of_int w) ws);
-  work
-    ~floor:(fun f ->
-      floor_words f (Rig_gpu_support.Host.at words) (B.length words / 4))
-    (Sub.words words)
-    (fun () -> ignore (Sys.opaque_identity (k, l)))
+  work (Sub.words words) (fun () -> ignore (Sys.opaque_identity (k, l)))
 
-(* [empty] over one work-item as a launch, loaded by rig; the floor's launch is
-   of the image the driver lays over pinned memory, which the host writes. *)
-let amd_kernel g d =
+(* [empty] over one work-item as a launch, loaded by rig. *)
+let amd_kernel _ d =
   let binary =
     In_channel.with_open_bin
       (Filename.concat (fixtures "amd") "kernels_gfx1201.hsaco")
@@ -592,24 +407,10 @@ let amd_kernel g d =
   let image =
     match Rig.Image.load d binary with Ok i -> i | Error why -> failwith why
   in
-  let m, r =
-    match Rig_amd.image g binary with
-    | Ok (Rig_edge.Place (n, lay)) ->
-        let r = Option.get (Rig_amd.alloc g Pinned n) in
-        let m, code = lay r in
-        Rig_gpu_support.Host.write (Option.get (Rig_amd.locate r).host) code;
-        (m, r)
-    | Ok (Loaded _) -> failwith "AMD loaded its code itself"
-    | Error why -> failwith why
-  in
-  let e = found (Rig_amd.entry m "empty") in
   let launch =
     Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:0
   in
-  work
-    ~floor:(fun f -> floor_launch f e.code e.launch 0)
-    launch
-    (fun () -> ignore (Sys.opaque_identity (m, r)))
+  work launch ignore
 
 (* A GPU opened through its suite's fixture, as rig's device and the
    driver's. *)
@@ -621,36 +422,23 @@ let gpus =
   List.concat
     [
       (if Rig_metal_support.present () then
-         gpu_rows
-           (module Rig_metal)
-           ~sleeps:true ~copies:false "metal"
+         gpu_rows "metal"
            ~opened:(fixture (module Rig_metal_support))
-           (fun () -> Rig_gpu_support.opened (Rig_metal.gpu 0))
            ~kernel:metal_kernel
        else []);
       (if Rig_cuda_support.present () then
-         gpu_rows
-           (module Rig_cuda)
-           "cuda"
+         gpu_rows "cuda"
            ~opened:(fixture (module Rig_cuda_support))
-           (fun () -> Rig_gpu_support.opened (Rig_cuda.gpu 0))
            ~kernel:cuda_kernel ~graph:cuda_graph
        else []);
       (if Rig_nv_support.present () then
-         gpu_rows
-           (module Rig_nv)
-           "nv"
+         gpu_rows "nv"
            ~opened:(fixture (module Rig_nv_support))
-           (fun () -> Rig_gpu_support.opened (Rig_nv_nvidia.gpu 0))
            ~kernel:nv_kernel
        else []);
       (if Rig_amd_support.present () then
-         gpu_rows
-           (module Rig_amd)
-           "amd"
+         gpu_rows "amd"
            ~opened:(fixture (module Rig_amd_support))
-           (fun () ->
-             Rig_amd_support.open_gpu ~word:(Rig_gpu_support.Host.word ()))
            ~kernel:amd_kernel
        else []);
     ]

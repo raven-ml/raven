@@ -405,8 +405,8 @@ than spinning (`wake/driver` against `release/driver` in bench/amd).
 KFD keeps one GPU address space per GPU per process, bound to one render node
 file by `AMDKFD_IOC_ACQUIRE_VM`; the process cannot hold a second one on the
 same GPU through another file. A memory fault in that address space reaches
-every user of the GPU in the process. The AMD bench runs its C floors, which
-make their own queues, in worker processes for this reason.
+every user of the GPU in the process. The AMD bench opens each case's device
+in a worker process of its own for this reason.
 
 ### The stable power state has one holder
 
@@ -812,9 +812,12 @@ detaches an AMD GPU reloads the module before KFD's users come back.
 ## Round trips on these machines
 
 Medians of loops in C (Objective-C on the M1 Max) over each vendor's
-interface: the floors the drivers' benches compare against (`release/floor`,
-`launch/floor-1`, `launch/floor-64` and the copy floors in each driver's
-bench).
+interface: what each operation costs with no runtime above it. The
+`vendor` scenario of [bench/compare](../bench/compare/README.md) runs the
+releases and copies through CUDA, HIP and Metal. The RM and KFD columns
+came from loops over the kernel drivers' own interfaces, which no program
+in the tree runs; compare's CUDA and HIP cases stand in for them on those
+GPUs.
 
 | | RTX 5000 Ada, RM | RTX 5000 Ada, CUDA | R9700, KFD | M1 Max, Metal |
 |---|---|---|---|---|
@@ -841,7 +844,8 @@ has one memory, so its copies are the host's.
 - On the R9700 rows that wait on a copy-queue fence are bimodal between
   processes (see the TRAP note above): a round trip that switches queues takes
   14.5 or 18.8-19.8 µs, a 16-byte copy 3.9 to 6.1 µs. One session ran every
-  latency row, floors included, 1.6 times slower; its cause was not found.
+  latency row, the vendor loops included, 1.6 times slower; its cause was not
+  found.
 - The R9700's own link reads 32 GT/s to its PCIe switch, but the root port
   above runs PCIe 3.0 x16, and host copies stop at its 15.75 GB/s. A link
   budget reads every hop up to the root port.
