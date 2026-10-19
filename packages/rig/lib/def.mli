@@ -180,19 +180,15 @@ and live = {
       (** Whether a drain found it lost and Stopped, from when its retiring
           memory is freed as its uses are reached. Never cleared. *)
   mutable pending : (int * pending) list * (int * pending) list; [@atomic]
-      (** Releases by nondecreasing value of it, replaced whole: the front in
-          order, the back reversed, and the front empty only when both are. *)
+      (** Releases, each with the value of it it waits for, by nondecreasing
+          value, replaced whole under the lock: the front in order, the back
+          reversed, and the front empty only when both are. *)
   mutable pairs : pair array;
       (** By producer index, how its queues wait for the values of the slot's
           device it was decided for. A cell holds an immutable pair, so a
           read without the lock sees its fields together. Grown by
           replacement, written under the lock, and read without it. Emptied,
           its mappings given back, once the device is Stopped. *)
-  mutable retired : (int * (region * device)) list; [@atomic]
-      (** Its mappings of words of a slot's earlier devices, which a pair of
-          a later device replaced, each with the value after every submit
-          that may wait through it ({!Dev.next_value}), written under the
-          lock. *)
   mutable words : int; [@atomic]
       (** How its queues read rig's array of words: [0] undecided, [-1] they
           do not, or the array's address as its work addresses it, through
@@ -275,6 +271,10 @@ and pending =
       (** A mapping, and the memory it maps, given back after its last
           unmap. *)
   | Unload of loaded * entry option
+  | Unmap_word of (region * device)
+      (** A mapping of the word of a slot's earlier device, which a pair of a
+          later device replaced, given back after every submit that may wait
+          through it ({!Dev.next_value}). *)
   | Let_go of held
       (** A value a collected submission kept: dropped, it is let go. *)
 

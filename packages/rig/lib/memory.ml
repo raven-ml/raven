@@ -404,14 +404,31 @@ let give_room d budget n =
 
 (* Releases *)
 
-(* Appends [p] after the work that may use it without naming it. Reading the
-   submitted value under the append lock keeps the queue's values ordered. *)
+(* The queue [q] of releases with [p] at the value [v], after the releases
+   of [v] or less. A release at the end, as one at the submitted value
+   nearly always is, takes a cons. One before others, such as a release at
+   the submitted value after an unmap of a word at the next value
+   ([retire_locked]), rebuilds the queue. *)
+let insert (front, back) v p =
+  let rec last = function
+    | [ (v, _) ] -> v
+    | _ :: rest -> last rest
+    | [] -> min_int
+  in
+  let latest = match back with (v, _) :: _ -> v | [] -> last front in
+  if front == [] then ([ (v, p) ], [])
+  else if v >= latest then (front, (v, p) :: back)
+  else
+    let before, after =
+      List.partition (fun (v', _) -> v' <= v) (front @ List.rev back)
+    in
+    (before @ ((v, p) :: after), [])
+
+(* Puts [p] after the work that may use it without naming it. Reading the
+   submitted value under the lock keeps the queue's values ordered. *)
 let append_pending (d, p) =
-  let v = Dev.submitted d in
   let l = d.live in
-  let front, back = l.pending in
-  l.pending <-
-    (if front == [] then ([ (v, p) ], []) else (front, (v, p) :: back))
+  l.pending <- insert l.pending (Dev.submitted d) p
 
 let defer d p = Dev.protect d append_pending (d, p)
 
@@ -539,24 +556,21 @@ let rec give_words () =
          | None -> ());
       give_words ()
 
-let retire_at (d, v, m) = d.live.retired <- (v, m) :: d.live.retired
-let retire_locked d m = retire_at (d, Dev.next_value d, m)
+let retire_locked d m =
+  let l = d.live in
+  l.pending <- insert l.pending (Dev.next_value d) (Unmap_word m)
 
 external reraise : exn -> 'a = "%reraise"
 
-(* Gives back [d]'s mapping [r] of [p]'s word now, or later among [d]'s
-   retired mappings, then runs [d]'s owed stop ([Dev.give]). A free that
-   raises is not run again ([Dev.give]), so [p]'s count drops before the
-   exception passes on, with nothing allocated first. *)
+(* Gives back [d]'s mapping [r] of [p]'s word now, or later ([waits]). A
+   free that raises is not run again ([Dev.give]), so [p]'s count drops
+   before the exception passes on, with nothing allocated first. *)
 let unmap_word d ((r, p) as m) : Dev.given =
   match free_region d r with
   | Given ->
       word_unmapped p;
       Given
-  | Later ->
-      Dev.protect d retire_at (d, 0, m);
-      Dev.run_own d;
-      Later
+  | Later -> waits d (Unmap_word m) Later
   | exception e ->
       word_unmapped p;
       reraise e
@@ -1162,28 +1176,33 @@ let due_at d =
   else if Dev.stopped d then max_int
   else -1
 
-(* Takes one of [l]'s retired mappings of words whose value [w] reached. *)
-let take_retired (l, w) =
+(* Under [l]'s lock: takes the first of [l]'s retired mappings among its
+   pending releases whose value [w] reached, and leaves the others in
+   order. *)
+let take_word (l, w) =
+  let front, back = l.pending in
   let rec take before = function
-    | [] -> None
-    | (v, m) :: rest when v <= w ->
+    | (v, _) :: _ when v > w -> None
+    | (_, Unmap_word m) :: rest ->
         let taken = Some m in
-        l.retired <- List.rev_append before rest;
+        l.pending <- (List.rev_append before rest, []);
         taken
-    | r :: rest -> take (r :: before) rest
+    | p :: rest -> take (p :: before) rest
+    | [] -> None
   in
-  take [] l.retired
+  take [] (if back == [] then front else front @ List.rev back)
 
 (* Gives back [d]'s retired mappings of words whose waits its queue passed,
-   one at a time, as [give_maps] does. A mapping that does not go back ends
-   the walk: it is retired again due at once, since [d] was lost after [w]
-   was read and nothing more of it goes back until its stop. *)
+   one at a time, as [give_maps] does, and runs none of its other releases.
+   A mapping that does not go back ends the walk: it waits again, since [d]
+   was lost after [w] was read and nothing more of it goes back until its
+   stop. *)
 let give_retired d =
   let l = d.live in
-  if l.retired != [] then
+  if fst l.pending != [] then
     let w = due_at d in
     let rec give () =
-      match Lock.protect l.lock take_retired (l, w) with
+      match Lock.protect l.lock take_word (l, w) with
       | None -> ()
       | Some m -> (
           match unmap_word d m with Given -> give () | Later -> ())
@@ -1212,6 +1231,7 @@ let run_pending d : pending -> Dev.given = function
           Given
       | Given, None -> Given
       | Later, _ -> Later)
+  | Unmap_word m -> unmap_word d m
   | Let_go _ -> Given
 
 (* Unloads [d]'s image [l] now, then gives back its code memory [code], or
@@ -1240,8 +1260,7 @@ let due_pending d =
 let drain_own d =
   if released_any d.live.release then route_released d;
   due d;
-  due_pending d;
-  give_retired d
+  due_pending d
 
 let is_let_go = function _, Let_go _ -> true | _ -> false
 
@@ -1265,18 +1284,19 @@ let forget d =
 let idle l =
   l.nretiring = 0
   && fst l.pending == []
-  && l.retired == []
   && not (released_any l.release)
 
 let kept_locked l =
-  l.cached > 0 || l.word_maps != [] || l.retired != []
+  l.cached > 0 || l.word_maps != []
+  || fst l.pending != []
   || Cache.length l.mapped > 0
   || first_mapped l.pairs 0 >= 0
   || has_halves l
 
-(* Whether the lost [d] keeps what returns once it is Stopped: its cache and
-   its mappings. Read under the lock: a pair's mapping that a decision
-   retires is in the cell or among the retired ones. *)
+(* Whether the lost [d] keeps what returns once it is Stopped: its cache,
+   its mappings and its pending releases. Read under the lock: a pair's
+   mapping that a decision retires is in the cell or among the pending
+   releases. *)
 let kept d = Dev.protect d kept_locked d.live
 
 (* A lost device's memory returns once it has stopped, so its drain runs its
@@ -1341,7 +1361,8 @@ let holds_back (pool, l) =
   let holds = function
     | _, (Free e | Give e | Unmap (_, Some e) | Unload (_, Some e)) ->
         charged pool e
-    | _, (Unmap (_, None) | Unload (_, None) | Let_go _) -> false
+    | _, (Unmap (_, None) | Unload (_, None) | Unmap_word _ | Let_go _) ->
+        false
   in
   let front, back = l.pending in
   List.exists holds front || List.exists holds back

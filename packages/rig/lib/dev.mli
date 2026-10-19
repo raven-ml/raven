@@ -201,8 +201,9 @@ val stopped : device -> bool
 val free_slot : device -> bool
 (** [free_slot d] frees [d]'s slot if [d] is Stopped and nothing of it
     remains to give back: no token of its release list that its drains have
-    not routed, nothing in its cache, among its retiring memory or its
-    retired mappings, or waiting for a value. [d] must not be the process's first {!failure}, which
+    not routed, nothing in its cache or among its retiring memory, and no
+    release waiting for a value. [d] must not be the process's first
+    {!failure}, which
     keeps its slot. A [d] lost before it reached every value it was given
     leaves those values on the slot's line as a range that holds [d], so
     its dropped points raise its loss for good. It is whether this call

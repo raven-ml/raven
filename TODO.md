@@ -58,9 +58,6 @@ raven / llama.cpp (Vulkan; ROCm):
   past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;
   rig_nv_nvidia.mli states the bound): map in larger pages if that is the
   cause
-- memory.ml's release paths: `retired` and `pending` both wait for a
-  device value; word unmaps become a `pending` case, kept sorted at
-  insertion (`retire_locked` reads `next_value`, `pending` `submitted`)
 
 ### API
 

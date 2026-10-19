@@ -292,9 +292,9 @@ val unmap : device -> region -> Dev.given
 (** {2:words Mappings of words}
 
     A device counts the mappings of its word that other devices hold, in
-    their pairs ({!Def.live.pairs}) or among their retired mappings
-    ({!Def.live.retired}), plus one until its slot is freed
-    ({!Def.live.word_unmaps}). A word of its driver's own goes back to the
+    their pairs ({!Def.live.pairs}) or among their pending releases as
+    {e retired} mappings ([Unmap_word] of {!Def.pending}), plus one until
+    its slot is freed ({!Def.live.word_unmaps}). A word of its driver's own goes back to the
     driver at the first drain ({!drain}) after the count reached [0], when
     no queue can wait on it: a submit gives back mappings of words, and must
     not wait for a driver's free. *)
@@ -314,21 +314,21 @@ val word_unmapped : device -> unit
     driver. *)
 
 val unmap_word : device -> region * device -> Dev.given
-(** [unmap_word d (r, p)] gives back [d]'s mapping [r] of [p]'s word now, or
-    later among [d]'s retired mappings, then {!word_unmapped}[ p]. It is
-    what {!Dev.give} answered. *)
+(** [unmap_word d (r, p)] gives back [d]'s mapping [r] of [p]'s word now,
+    then {!word_unmapped}[ p], or later among [d]'s pending releases, once
+    [d] stopped. It is what {!Dev.give} answered. *)
 
 val retire_locked : device -> region * device -> unit
 (** [retire_locked d m] puts [d]'s mapping [m] of a producer's word among
-    [d]'s retired mappings at {!Dev.next_value}[ d]: [m] goes back once
+    [d]'s pending releases at {!Dev.next_value}[ d]: [m] goes back once
     [d]'s queue ran every submit that may wait through it. The caller holds
     [d]'s lock. *)
 
 val give_retired : device -> unit
 (** [give_retired d] gives back [d]'s retired mappings whose value [d]
-    reached, up to the first that does not go back. It frees no memory, and
-    leaves a word that loses its last mapping to the next drain
-    ({!word_unmapped}). *)
+    reached, up to the first that does not go back, and leaves its other
+    pending releases. It frees no memory, and leaves a word that loses its
+    last mapping to the next drain ({!word_unmapped}). *)
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]

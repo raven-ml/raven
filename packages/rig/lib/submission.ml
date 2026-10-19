@@ -1045,9 +1045,9 @@ type decided = Decided of pair | Replaced of pair | Taken of pair
    for [p] or a later device of its slot came first, or [d]'s stop returned,
    after which its drain owns its pairs: then the pair to use, and the caller
    gives [map] back. A pair decided for an earlier device of the slot is
-   replaced, and its mapping goes among [d]'s retired ones at the value after
-   every submit that may wait through it ({!Dev.next_value}), in the same
-   section, so that a drain finds it in the cell or among them. Nothing
+   replaced, and its mapping goes among [d]'s pending releases at the value
+   after every submit that may wait through it ({!Dev.next_value}), in the
+   same section, so that a drain finds it in the cell or among them. Nothing
    allocates between the two stores. *)
 let set_pair (d, (p : device), way, map) =
   let l = d.live and i = p.index in

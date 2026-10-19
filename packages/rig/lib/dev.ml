@@ -173,7 +173,6 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       freeing = false;
       pending = ([], []);
       pairs = [||];
-      retired = [];
       words = 0;
       word_maps = [];
       mapped = Cache.create 4;
@@ -471,8 +470,8 @@ let stopped (d : device) =
   end
 
 (* Frees [d]'s slot once [d] has stopped and nothing of it remains to give
-   back: no token its drains have not routed, nothing in its cache, among its
-   retiring memory or its retired mappings, or waiting for a value.
+   back: no token its drains have not routed, nothing in its cache or among
+   its retiring memory, and no release waiting for a value.
    [caml_rig_free] checks the rest.
    Its record then answers as it stood, and a later device takes the slot,
    continuing its timeline. Whether this call freed it. *)
@@ -481,7 +480,6 @@ let free_slot d =
   d.index > 0 && stopped d
   && l.cached = 0
   && l.nretiring = 0
-  && l.retired == []
   && fst l.pending == []
   && c_free l.c d
 
