@@ -4084,6 +4084,9 @@ thread.
 
 ### Quill
 
+- `quill run`, `quill build` and running all cells in the terminal and web
+  notebooks run only OCaml code cells, where they ran a block in another
+  language, such as ```` ```bash ````, as OCaml and stored the error under it.
 - In the terminal notebook, Ctrl+C interrupts the running cell without
   quitting quill, Shift+Enter runs a cell in terminals that report it through
   the kitty keyboard protocol, and F1 opens help while editing, where `?` is
