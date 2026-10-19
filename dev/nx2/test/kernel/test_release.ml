@@ -99,6 +99,15 @@ let reductions =
                        [| (Monoid Logsumexp, 0); (Monoid Sum, 0) |]
                        ~dsts:[| A.Any lse; A.Any sum |]
                        [| Nx_kernel.Plain x |]))));
+      test "many reductions of a program" (fun () ->
+          let m = 4096 and k = 2048 in
+          let x = A.of_array D.Float32 [| m |] (Array.make m 1.) in
+          let dsts = Array.init k (fun _ -> A.Any (f32 [||])) in
+          let rs = Array.make k (Nx_kernel.Monoid Sum, 0) in
+          releases (fun () ->
+              done_
+                (Nx_cpu.reduce identity ~shape:[| m |] ~axes:[| 0 |] rs ~dsts
+                   [| Nx_kernel.Plain x |])));
       test "a logsumexp on one thread" (fun () ->
           let x = Lazy.force ones and dst = f32 [||] in
           releases (fun () ->
@@ -349,6 +358,23 @@ let elementwise =
           let prog = powers 16 and loads = exponents n (Plain x) in
           releases (fun () ->
               done_ (Nx_cpu.map prog ~dsts:[| A.Any dst |] loads)));
+      test "a map of a long program" (fun () ->
+          let m = 64 in
+          let x = halves m and dst = f64 [| m |] in
+          let prog = powers 20000 and loads = exponents m (Plain x) in
+          releases (fun () ->
+              done_ (Nx_cpu.map prog ~dsts:[| A.Any dst |] loads)));
+      test "a map of a very long program of sums" (fun () ->
+          let k = 200000 in
+          let x = halves 1 and dst = f64 [| 1 |] in
+          let prog =
+            P.v ~ins:[| D.Any D.Float64 |]
+              (Iarray.init (k + 1) (fun i ->
+                   if i = 0 then P.In 0 else P.Op2 (Binary Add, i - 1, 0)))
+              ~outs:[| k |]
+          in
+          releases (fun () ->
+              done_ (Nx_cpu.map prog ~dsts:[| A.Any dst |] [| Plain x |])));
       test "a map of powers of a padded load" (fun () ->
           let x = halves n and dst = f64 [| n + 2 |] in
           let pad =

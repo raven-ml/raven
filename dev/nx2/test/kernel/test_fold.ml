@@ -285,8 +285,16 @@ let law_load (b : Support.backend) = function
       let fill = A.get (A.v dt (L.contiguous [||]) drawn) [||] in
       let fill_bits = Nx_kernel.Prog.bits dt fill in
       let xs = shape_of c.x in
-      let dst = A.create Rig.host dt xs in
       let p = Nx_kernel.Prog.v ~ins:[| d |] [| In 0 |] ~outs:[| 0 |] in
+      (* The load beside 100 unused constants: a program long enough that
+         nx.cpu prices it with the domain lock released. *)
+      let long =
+        Nx_kernel.Prog.v ~ins:[| d |]
+          (Iarray.init 101 (fun i ->
+               if i = 0 then Nx_kernel.Prog.In 0
+               else Const (D.Any D.Uint8, "\000")))
+          ~outs:[| 0 |]
+      in
       let some = total xs > 0 in
       cover "padding read" (some && total c.shape < total xs);
       cover "a windowed load" (some && Iarray.length c.pad.windows > 0);
@@ -294,18 +302,21 @@ let law_load (b : Support.backend) = function
       cover "a stepped operand" (some && c.load.stepped);
       cover "a reversed operand" (some && c.load.reversed <> None);
       let load = Nx_kernel.Padded { x = a; fill; pad = c.pad } in
-      match K.map p ~dsts:[| A.Any dst |] [| load |] with
-      | A.Declined -> failf "%s declined a padded map" b.name
-      | A.Done ->
-          let es = elements (A.Any a) in
-          let want =
-            Array.init (total xs) (fun k ->
-                match target c (index_of xs k) with
-                | Some y -> es.(y)
-                | None -> fill_bits)
-          in
-          equal (array string) want (elements (A.Any dst))
-      | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
+      let es = elements (A.Any a) in
+      let want =
+        Array.init (total xs) (fun k ->
+            match target c (index_of xs k) with
+            | Some y -> es.(y)
+            | None -> fill_bits)
+      in
+      List.iter
+        (fun p ->
+          let dst = A.create Rig.host dt xs in
+          match K.map p ~dsts:[| A.Any dst |] [| load |] with
+          | A.Declined -> failf "%s declined a padded map" b.name
+          | A.Done -> equal (array string) want (elements (A.Any dst))
+          | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
+        [ p; long ])
 
 (* A convolution's input gradient, large enough for the job's threads, at
    float32, int4 and bfloat16, the last two from views of the operand. *)

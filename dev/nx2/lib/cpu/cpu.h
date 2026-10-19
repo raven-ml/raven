@@ -506,7 +506,9 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    price reaches NX_CPU_RELEASE_BYTES, and a held call runs its jobs on
    the calling thread alone (job.c). The work reads no OCaml value and
    raises nothing, held or released, so every call that passes
-   nx_cpu_release reaches nx_cpu_reacquire.
+   nx_cpu_release reaches nx_cpu_reacquire. A call reads many operands
+   through nx_read_each, and a long program or many reductions as
+   NX_CPU_ITEM says, so that no count of them lengthens a held stretch.
 
    NX_CPU_HOLD_BYTES is 1 MiB: one core copies it in 12 to 15 us (M1 Max,
    fudge's Core Ultra 5 235), and a release and reacquisition cost 9 to
@@ -541,6 +543,16 @@ static inline double nx_cpu_bytes(const nx_array *a) {
 /* The least price at which a call releases the domain lock: the least
    cost at which a job takes a second thread. */
 #define NX_CPU_RELEASE_BYTES (2 * NX_CPU_THREAD_BYTES)
+
+/* An item of a call's own reading and analysis, before its work: a
+   program's node or a reduction, each copied, checked and priced. A node
+   took about 20 ns (M1 alone, a 20000-node map under load), 1.6 KiB of
+   memcpy. A call whose items cost NX_CPU_RELEASE_BYTES releases the domain
+   lock before it analyses them, and a held loop that reads them from
+   OCaml lets other domains collect (nx_let_collect) every NX_CPU_ITEMS
+   items, a release's worth. */
+#define NX_CPU_ITEM 4096
+#define NX_CPU_ITEMS (NX_CPU_RELEASE_BYTES / NX_CPU_ITEM)
 
 /* A cache line's fetch for an element or term that touches its own, on
    top of the term's own price: Logsumexp along strided float32 terms, its
@@ -880,12 +892,14 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
    the loop's shape, of no buffer. */
 typedef struct nx_cpu_prog nx_cpu_prog;
 
-/* The Prog.t [vp] copied, or NULL if host memory runs out. Reads [vp]
-   alone. */
-nx_cpu_prog *nx_cpu_prog_copy(value vp);
+/* The Prog.t at the root [vp] copied, or NULL if host memory runs out.
+   Reads [vp] alone, letting other domains collect every NX_CPU_ITEMS
+   nodes. */
+nx_cpu_prog *nx_cpu_prog_copy(const value *vp);
 void nx_cpu_prog_free(nx_cpu_prog *j);
 
-/* [j]'s loads and outputs, and their dtypes. */
+/* [j]'s nodes, its loads and outputs, and their dtypes. */
+int nx_cpu_prog_nodes(const nx_cpu_prog *j);
 int nx_cpu_prog_ins(const nx_cpu_prog *j);
 int nx_cpu_prog_in(const nx_cpu_prog *j, int k);
 int nx_cpu_prog_outs(const nx_cpu_prog *j);

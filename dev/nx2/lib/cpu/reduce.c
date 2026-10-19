@@ -3891,11 +3891,54 @@ static void release(value owner) {
   h->pads = NULL;
 }
 
+/* release, what a count sized freed with the domain lock released where
+   [many] (nx_free_released). */
+static void drop(value owner, int many) {
+  if (!many) {
+    release(owner);
+    return;
+  }
+  fused_held h = *(fused_held *)Data_custom_val(owner);
+  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
+  caml_enter_blocking_section_no_pending();
+  nx_cpu_prog_free(h.g);
+  free(h.tables);
+  free(h.pads);
+  caml_leave_blocking_section();
+}
+
 static struct custom_operations fused_ops = {
     "nx.cpu.reduce",            release,
     custom_compare_default,     custom_hash_default,
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
+
+/* The operands of a fused call as the door reads them, from the roots
+   [vdsts], [vloads] and [vcarry]: the destinations, each of its own dtype
+   or the one [dts] names, then the loads, as [g] loads them, then the
+   carry, in the carrier of output [k]'s held dtype. */
+typedef struct {
+  const value *vdsts, *vloads, *vcarry;
+  const int *dts;
+  const nx_cpu_prog *g;
+  int nd, nl, k;
+} fused_operands;
+
+static int fused_operand(void *ctx, int k, nx_operand *in) {
+  const fused_operands *o = ctx;
+  if (k < o->nd) {
+    value y = Field(*o->vdsts, k);
+    int dt = o->dts[k] < 0 ? nx_array_dtype(y) : o->dts[k];
+    *in = (nx_operand){y, dt, 1};
+  } else if (k < o->nd + o->nl) {
+    int i = k - o->nd;
+    *in = (nx_operand){Field(Field(*o->vloads, i), 0), nx_cpu_prog_in(o->g, i),
+                       0};
+  } else
+    *in = (nx_operand){Field(*o->vcarry, 0),
+                       nx_cpu_carrier(nx_cpu_prog_held(o->g, o->k)), 0};
+  return NX_OK;
+}
 
 /* Computes [c] of the program [vp] over the loop of [rank] axes of extents
    [shape], or of its first destination's shape where [rank] is -1, its
@@ -3921,40 +3964,54 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   CAMLlocal1(owner);
   owner = caml_alloc_custom(&fused_ops, sizeof(fused_held), 0, 1);
   *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
-  nx_cpu_prog *g = nx_cpu_prog_copy(vp);
+  nx_cpu_prog *g = nx_cpu_prog_copy(&vp);
   if (g == NULL) caml_raise_out_of_memory();
   ((fused_held *)Data_custom_val(owner))->g = g;
   int nl = nx_cpu_prog_ins(g), nd = (int)Wosize_val(vdsts), e = NX_OK;
   int nc = Is_block(vcarry);
   int nr = single ? 1 : (int)Wosize_val(vrs), want = 0;
   /* The tables, on the stack up to NX_MAX_OPERANDS entries, else in one
-     block of the heap: the door's descriptors and operands, then each
-     reduction's code, output and first destination. */
+     block of the heap: the door's descriptors and each destination's
+     dtype, -1 for its own, then each reduction's code, output and first
+     destination. */
   int nt = nr > NX_MAX_OPERANDS ? nr : NX_MAX_OPERANDS;
   int no = nd + nl + nc > NX_MAX_OPERANDS ? nd + nl + nc : NX_MAX_OPERANDS;
   nx_array a_stack[NX_MAX_OPERANDS], *a = a_stack;
-  nx_operand in_stack[NX_MAX_OPERANDS], *in = in_stack;
-  int tables[3 * NX_MAX_OPERANDS], *rs = tables;
+  int tables[4 * NX_MAX_OPERANDS], *dts = tables;
   if (nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS) {
-    uint8_t *b = malloc((size_t)no * (sizeof *a + sizeof *in) +
-                        3 * (size_t)nt * sizeof *rs);
+    uint8_t *b = malloc((size_t)no * (sizeof *a + sizeof *dts) +
+                        3 * (size_t)nt * sizeof *dts);
     if (b == NULL) {
       release(owner);
       caml_raise_out_of_memory();
     }
     ((fused_held *)Data_custom_val(owner))->tables = b;
     a = (nx_array *)b;
-    in = (nx_operand *)(b + (size_t)no * sizeof *a);
-    rs = (int *)(b + (size_t)no * (sizeof *a + sizeof *in));
+    dts = (int *)(b + (size_t)no * sizeof *a);
   }
-  int *ks = rs + nt, *first = ks + nt;
+  int *rs = dts + no, *ks = rs + nt, *first = ks + nt;
+  /* Tables or a program sized by a count, freed with the lock released. */
+  int many = nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS ||
+             nx_cpu_prog_nodes(g) > NX_CPU_ITEMS;
   if (nr < 1 || (c->op != REDUCE && nr != 1) || (int)Wosize_val(vloads) != nl)
     e = NX_ARITY;
-  for (int i = 0; !e && i < nr; i++) {
+  /* The reductions are read from the root, letting other domains collect
+     every NX_CPU_ITEMS of them. */
+  for (int i = 0, next = NX_CPU_ITEMS; !e && i < nr; i++) {
+    if (i == next) {
+      nx_let_collect();
+      next += NX_CPU_ITEMS;
+    }
     value pair = single ? vrs : Field(vrs, i);
     rs[i] = code_of(Field(pair, 0));
     ks[i] = Int_val(Field(pair, 1));
     first[i] = want;
+    if (want < nd) dts[want] = -1;
+    if (two(c->op, rs[i]) && want + 1 < nd)
+      dts[want + 1] = c->op != MOMENTS && (rs[i] == NX_CPU_ARG_MAX ||
+                                           rs[i] == NX_CPU_ARG_MIN)
+                          ? NX_INT64
+                          : -1;
     want += 1 + two(c->op, rs[i]);
     if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_ARITY;
   }
@@ -3983,29 +4040,26 @@ static value run_fused(const call *c, value vp, value vrs, int single,
       e = NX_SHAPE;
   }
   if (e) {
-    release(owner);
+    drop(owner, many);
     CAMLreturn(Val_int(e));
   }
-  for (int i = 0; i < nr; i++) {
-    int d = first[i];
-    int arg = c->op != MOMENTS &&
-              (rs[i] == NX_CPU_ARG_MAX || rs[i] == NX_CPU_ARG_MIN);
-    value y = Field(vdsts, d);
-    in[d] = (nx_operand){y, nx_array_dtype(y), 1};
-    if (!two(c->op, rs[i])) continue;
-    value y1 = Field(vdsts, d + 1);
-    in[d + 1] = (nx_operand){y1, arg ? NX_INT64 : nx_array_dtype(y1), 1};
+  /* The door: past NX_MAX_OPERANDS operands in runs, else as one. */
+  fused_operands o = {&vdsts, &vloads, &vcarry, dts, g, nd, nl, ks[0]};
+  int n = nd + nl + nc;
+  if (n > NX_MAX_OPERANDS) e = nx_read_each(n, fused_operand, &o, a);
+  else {
+    nx_operand in[NX_MAX_OPERANDS];
+    for (int k = 0; k < n; k++) fused_operand(&o, k, &in[k]);
+    e = nx_read(n, in, a);
   }
-  for (int i = 0; i < nl; i++)
-    in[nd + i] =
-        (nx_operand){Field(Field(vloads, i), 0), nx_cpu_prog_in(g, i), 0};
-  if (nc)
-    in[nd + nl] = (nx_operand){
-        Field(vcarry, 0), nx_cpu_carrier(nx_cpu_prog_held(g, ks[0])), 0};
-  if ((e = nx_read(nd + nl + nc, in, a))) {
-    release(owner);
+  if (e) {
+    drop(owner, many);
     CAMLreturn(Val_int(e));
   }
+  /* A call whose reductions and nodes cost a release's worth to check and
+     price does both with the lock released, whatever its work costs. */
+  int early = nr + nx_cpu_prog_nodes(g) > NX_CPU_ITEMS, released = 0;
+  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
   if (rank < 0) {
     rank = a[0].rank;
     shape = a[0].dim;
@@ -4027,8 +4081,9 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     e = carried(&ci, cy, &a[first[0]]);
   }
   if (e) {
-    nx_done(nd + nl + nc, a);
-    release(owner);
+    nx_cpu_reacquire(released);
+    nx_done(n, a);
+    drop(owner, many);
     CAMLreturn(Val_int(e));
   }
   /* The call's price (cpu.h, Calls): each reduction's, as run prices
@@ -4046,7 +4101,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     cost += call_cost(&ci, &a[nd], shape, rank, 1, per, &a[first[i]],
                       1 + two(c->op, rs[i]));
   }
-  int released = nx_cpu_release(cost);
+  if (!early) released = nx_cpu_release(cost);
   /* The loop of the program and its loads as it reads them, in the
      thread's kept scratch, taken after the door and given back before its
      end, since nothing raises in between: with a reduction's two carrier
@@ -4103,8 +4158,8 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   free(kept_carry.base);
   nx_cpu_give(held);
   nx_cpu_reacquire(released);
-  nx_done(nd + nl + nc, a);
-  release(owner);
+  nx_done(n, a);
+  drop(owner, many);
   if (oom || e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }

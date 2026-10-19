@@ -16,11 +16,14 @@
     [Failure] naming itself and its operands' dtypes and shapes.
 
     A call keeps other domains waiting to collect for no longer than about
-    one unloaded core's copy of 1 MiB. It holds the domain lock while it
-    reads its operands, then runs its work with the lock released where
-    nx.cpu estimates that work to take longer than that copy; the estimate
-    is an upper bound of the work's time on one core of the machines it was
-    measured on, an Apple M1 Max and an Intel Core Ultra 5 235.
+    one unloaded core's copy of 1 MiB at a time, however many operands,
+    reductions or program nodes it has
+    ({!Nx_array.section-kernels}). It runs its work with the domain lock
+    released where nx.cpu estimates that work to take longer than that copy;
+    the estimate is an upper bound of the work's time on one core of the
+    machines it was measured on, an Apple M1 Max and an Intel Core Ultra 5
+    235. Other threads of the calling domain may run OCaml code during a
+    call.
 
     [apply0] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with

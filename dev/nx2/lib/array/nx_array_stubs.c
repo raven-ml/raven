@@ -399,6 +399,32 @@ static int host_overlaps(int n, const nx_operand *in, nx_array *out,
   return NX_OK;
 }
 
+/* The overlap check of [n] claimed operands wherever their memory lies,
+   held, as rig compares memory off the host: it collects every
+   NX_MAX_OPERANDS steps of its loops, compared or skipped. */
+static int collecting_overlaps(int n, const nx_operand *in, nx_array *out,
+                               const where *w) {
+  int64_t steps = 0;
+  for (int k = 0; k < n; k++) {
+    if (++steps % NX_MAX_OPERANDS == 0) nx_let_collect();
+    if (!in[k].written || w[k].lo == w[k].hi) continue;
+    for (int j = 0; j < n; j++) {
+      if (++steps % NX_MAX_OPERANDS == 0) nx_let_collect();
+      if (j == k || out[j].alias || w[j].lo == w[j].hi) continue;
+      if (!meet(&out[k], &w[k], &out[j], &w[j])) continue;
+      if (in[j].written || !identical(&out[k], &out[j])) return NX_OVERLAP;
+      out[j].alias = 1;
+    }
+  }
+  return NX_OK;
+}
+
+/* The exception [r] holds. OCaml 5.5's public caml_result interface has
+   no accessor for it that does not raise it, and it must stay rooted
+   while the claims are released in runs: it reads the field, so that a
+   change to the field fails the build. */
+static value exception_of(caml_result r) { return r.data; }
+
 /* Waits under the claims, in runs, for the device work of the [n]
    operands [out] read for [in]. If a wait raises, it releases every claim
    in runs, holding the exception as a root, unlinks the roots, frees
@@ -414,7 +440,7 @@ static void waits_runs(int n, const nx_operand *in, nx_array *out,
       caml_result r = rig_buffer_wait(
           out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
       if (!caml_result_is_exception(r)) continue;
-      exn = r.data;
+      exn = exception_of(r);
       release_runs(n, out);
       /* The frame goes before the roots under it: no collection runs
          until the raise. */
@@ -533,7 +559,73 @@ static void release_first(value written, value read, mlsize_t n) {
    one memory do not conflict. If an array is a lost device's memory, or
    follows a lost device's work, it raises Rig.Lost, as the wait for its
    access does at once, holding no claim. */
+/* The door's arrays at the roots [written] and [read], as read_runs reads
+   them. */
+typedef struct {
+  const value *written, *read;
+} door_arrays;
+
+static int door_operand(void *ctx, int k, nx_operand *in) {
+  const door_arrays *d = ctx;
+  value v = nth_array(*d->written, *d->read, (mlsize_t)k);
+  *in = (nx_operand){v, nx_array_dtype(v),
+                     (mlsize_t)k < Wosize_val(*d->written)};
+  return NX_OK;
+}
+
+/* Releases the claims of the first [n] arrays of the roots [written] and
+   [read], collecting between runs. */
+static void release_first_runs(const value *written, const value *read,
+                               mlsize_t n) {
+  for (mlsize_t at = 0; at < n; at += NX_MAX_OPERANDS) {
+    if (at > 0) nx_let_collect();
+    mlsize_t end = n - at < NX_MAX_OPERANDS ? n : at + NX_MAX_OPERANDS;
+    for (mlsize_t k = at; k < end; k++)
+      rig_buffer_release(Field(nth_array(*written, *read, k), ARRAY_BUFFER));
+  }
+}
+
+/* nx_array_admit past NX_MAX_OPERANDS arrays, in runs (Many operands). */
+static value admit_many(value written, value read) {
+  CAMLparam2(written, read);
+  CAMLlocal1(exn);
+  int n = (int)(Wosize_val(written) + Wosize_val(read));
+  uint8_t *b = malloc((size_t)n * (sizeof(nx_operand) + sizeof(nx_array) +
+                                   sizeof(where)));
+  if (b == NULL) caml_raise_out_of_memory();
+  nx_array *out = (nx_array *)b;
+  where *w = (where *)(out + n);
+  nx_operand *in = (nx_operand *)(w + n);
+  door_arrays d = {&written, &read};
+  int waiting = 0, lost = n;
+  int e = read_runs(n, door_operand, &d, in, out, w);
+  if (!e && !(e = claim_runs(n, in, out, &waiting, &lost))) {
+    caml_enter_blocking_section_no_pending();
+    e = faults(n, in, out, 0);
+    caml_leave_blocking_section();
+    if (!e) e = collecting_overlaps(n, in, out, w);
+    if (e) release_runs(n, out);
+    /* The claims stay until release_all; the roots end here. */
+    unlink_roots(n, out);
+  }
+  nx_free_released(b);
+  if (e || lost == n) CAMLreturn(Val_int(e));
+  value a = nth_array(written, read, (mlsize_t)lost);
+  caml_result r = rig_buffer_wait(Field(a, ARRAY_BUFFER),
+                                  (mlsize_t)lost < Wosize_val(written)
+                                      ? RIG_READ_WRITE
+                                      : RIG_READ);
+  if (caml_result_is_exception(r)) {
+    exn = exception_of(r);
+    release_first_runs(&written, &read, (mlsize_t)n);
+    caml_raise(exn);
+  }
+  CAMLreturn(Val_int(NX_OK));
+}
+
 value nx_array_admit(value written, value read) {
+  if (Wosize_val(written) + Wosize_val(read) > NX_MAX_OPERANDS)
+    return admit_many(written, read);
   CAMLparam2(written, read);
   mlsize_t n = Wosize_val(written) + Wosize_val(read);
   /* The operands, their descriptors and their byte ranges, on the stack
@@ -572,6 +664,14 @@ value nx_array_admit(value written, value read) {
 value nx_array_release_all(value written, value read) {
   release_first(written, read, Wosize_val(written) + Wosize_val(read));
   return Val_unit;
+}
+
+/* nx_array_release_all past NX_MAX_OPERANDS arrays, collecting between
+   runs. */
+value nx_array_release_many(value written, value read) {
+  CAMLparam2(written, read);
+  release_first_runs(&written, &read, Wosize_val(written) + Wosize_val(read));
+  CAMLreturn(Val_unit);
 }
 
 /* Coalescing */

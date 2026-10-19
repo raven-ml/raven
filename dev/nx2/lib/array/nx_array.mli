@@ -313,7 +313,13 @@ val of_bigarray :
     Raises [Invalid_argument] as {!v} does if [b]'s data is not aligned for its
     elements. *)
 
-(** {1:kernels Kernels} *)
+(** {1:kernels Kernels}
+
+    The door and the kernels that read through it keep other domains
+    waiting to collect for no longer than about one unloaded core's copy of
+    1 MiB at a time, however many arrays they claim and release. Past
+    {!max_operands} arrays, other threads of the calling domain may run
+    OCaml code while the door claims or releases them. *)
 
 val max_operands : int
 (** [max_operands] is [18], the most arrays one loop iterates: [nx_array.h]'s

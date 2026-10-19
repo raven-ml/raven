@@ -709,33 +709,43 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   struct heap heap = {0};
   prog j;
   int64_t most;
+  /* A program whose nodes' analysis costs a release's worth is analysed
+     with the lock released, whatever its walk costs. */
+  int early = pricing == OWN_PRICE && nn > NX_CPU_ITEMS, released = 0;
+  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
   int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &most);
   nx_loop l;
   if (!e && !(e = nx_coalesce(j.n, a, &l))) {
-    int released = 0;
-    if (pricing == OWN_PRICE)
+    if (pricing == OWN_PRICE && !early)
       released = nx_cpu_release(
           nx_cpu_loop_cost(j.n, &l, element_price(s, nn, a, j.n)));
     nx_cpu_walk(j.n, a, &l, most, kinds(s, nn), block, &j);
-    if (pricing == OWN_PRICE) nx_cpu_reacquire(released);
   }
+  if (pricing == OWN_PRICE) nx_cpu_reacquire(released);
   for (int i = 0; i < SPARES; i++) free(heap.spare[i]);
   return heap.failed ? -1 : e;
 }
 
-/* Copies the program [vp], a Prog.t, into the steps [s], one per node: its
-   tag, kind, dtype, operands and a constant's bits, zero-padded; and its
-   operands' dtypes into [ins] and its outputs into [outs]. Prog.v checked
-   every index it follows. */
-static void copy_prog(value vp, step *s, int *ins, int32_t *outs) {
-  value vins = Field(vp, NX_PROG_INS), nodes = Field(vp, NX_PROG_NODES);
-  value vouts = Field(vp, NX_PROG_OUTS);
+/* Copies the program at the root [vp], a Prog.t, into the steps [s], one
+   per node: its tag, kind, dtype, operands and a constant's bits,
+   zero-padded; and its operands' dtypes into [ins] and its outputs into
+   [outs]. Prog.v checked every index it follows. It lets other domains
+   collect every NX_CPU_ITEMS nodes, reading the program again from its
+   root after each. */
+static void copy_prog(const value *vp, step *s, int *ins, int32_t *outs) {
+  value vins = Field(*vp, NX_PROG_INS), vouts = Field(*vp, NX_PROG_OUTS);
+  mlsize_t next = NX_CPU_ITEMS;
   for (mlsize_t k = 0; k < Wosize_val(vins); k++)
     ins[k] = Int_val(Field(vins, k));
   for (mlsize_t o = 0; o < Wosize_val(vouts); o++)
     outs[o] = Int_val(Field(vouts, o));
-  for (mlsize_t i = 0; i < Wosize_val(nodes); i++) {
-    value d = Field(nodes, i);
+  mlsize_t nn = Wosize_val(Field(*vp, NX_PROG_NODES));
+  for (mlsize_t i = 0; i < nn; i++) {
+    if (i == next) {
+      nx_let_collect();
+      next += NX_CPU_ITEMS;
+    }
+    value d = Field(Field(*vp, NX_PROG_NODES), i);
     step *t = &s[i];
     memset(t, 0, sizeof *t);
     t->tag = Tag_val(d);
@@ -789,8 +799,8 @@ struct nx_cpu_prog {
   int64_t most;
 };
 
-nx_cpu_prog *nx_cpu_prog_copy(value vp) {
-  int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES));
+nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
+  int nn = (int)Wosize_val(Field(*vp, NX_PROG_NODES));
   nx_cpu_prog *g = calloc(1, sizeof *g);
   if (g == NULL) return NULL;
   g->s = g->local;
@@ -799,8 +809,8 @@ nx_cpu_prog *nx_cpu_prog_copy(value vp) {
     return NULL;
   }
   g->nn = nn;
-  g->nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
-  g->nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
+  g->nouts = (int)Wosize_val(Field(*vp, NX_PROG_OUTS));
+  g->nins = (int)Wosize_val(Field(*vp, NX_PROG_INS));
   copy_prog(vp, g->s, g->ins, g->outs);
   return g;
 }
@@ -812,6 +822,7 @@ void nx_cpu_prog_free(nx_cpu_prog *g) {
   free(g);
 }
 
+int nx_cpu_prog_nodes(const nx_cpu_prog *g) { return g->nn; }
 int nx_cpu_prog_ins(const nx_cpu_prog *g) { return g->nins; }
 int nx_cpu_prog_in(const nx_cpu_prog *g, int k) { return g->ins[k]; }
 int nx_cpu_prog_outs(const nx_cpu_prog *g) { return g->nouts; }
@@ -898,6 +909,18 @@ static void map_release(value owner) {
   h->pads = NULL;
 }
 
+/* map_release, a long program's steps freed with the domain lock released
+   (nx_free_released). */
+static void map_drop(value owner, int long_program) {
+  map_held *h = Data_custom_val(owner);
+  void *steps = h->s;
+  h->s = NULL;
+  free(h->pads);
+  h->pads = NULL;
+  if (long_program) nx_free_released(steps);
+  else free(steps);
+}
+
 static struct custom_operations map_ops = {
     "nx.cpu.map",               map_release,
     custom_compare_default,     custom_hash_default,
@@ -924,6 +947,10 @@ static int run_padded(step *s, int nn, int nouts, const int32_t *outs,
      writes after them where the program reads a coordinate. */
   nx_array *run = nx_cpu_take((n + 1) * (int64_t)sizeof(nx_array));
   if (run == NULL) return -1;
+  /* A program whose nodes' analysis costs a release's worth is priced
+     with the lock released, as run_map analyses it. */
+  int early = nn > NX_CPU_ITEMS, released = 0;
+  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
   /* The price of the padded copies and the walk over them, each element
      strided: each copy has the loop's shape, the destinations', and its
      load's dtype; the walk's element is priced as run_map prices it, with
@@ -931,8 +958,9 @@ static int run_padded(step *s, int nn, int nouts, const int32_t *outs,
   double copies = 0, per = element_price(s, nn, a, n) + 2 * sizeof(int64_t);
   for (int k = 0; k < n - nouts; k++)
     if (p->padded[k]) copies += nx_cpu_width(a[nouts + k].dtype);
-  int released = nx_cpu_release(nx_cpu_elements(&a[0]) * (copies + per) *
-                                NX_CPU_STRIDED_COST);
+  if (!early)
+    released = nx_cpu_release(nx_cpu_elements(&a[0]) * (copies + per) *
+                              NX_CPU_STRIDED_COST);
   int copied = nouts, e = 0;
   memcpy(run, a, sizeof(nx_array) * (size_t)n);
   for (; copied < n && !e; copied++) {
@@ -997,7 +1025,7 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
   }
   int ins[NX_MAX_OPERANDS];
   int32_t outs[NX_MAX_OPERANDS];
-  copy_prog(vp, s, ins, outs);
+  copy_prog(&vp, s, ins, outs);
   nx_operand in[NX_MAX_OPERANDS];
   for (int o = 0; o < nouts; o++)
     in[o] = (nx_operand){Field(vdsts, o), s[outs[o]].dt, 1};
@@ -1008,7 +1036,7 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
     e = run_padded(s, nn, nouts, outs, a, n, &p);
     nx_done(n, a);
   }
-  if (owned) map_release(owner);
+  if (owned) map_drop(owner, nn > NX_CPU_ITEMS);
   if (e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }

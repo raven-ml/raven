@@ -98,8 +98,18 @@ let refused name answer operands =
 
 external admit : any array -> any array -> answer = "nx_array_admit"
 
-external release_all : any array -> any array -> unit = "nx_array_release_all"
+external release_few : any array -> any array -> unit = "nx_array_release_all"
 [@@noalloc]
+
+external release_many : any array -> any array -> unit
+  = "nx_array_release_many"
+
+(* Past max_operands arrays, the release lets other domains collect between
+   runs of them, which a noalloc external may not. *)
+let release_all written read =
+  if Array.length written + Array.length read <= max_operands then
+    release_few written read
+  else release_many written read
 
 let door ~written ~read f x =
   match admit written read with

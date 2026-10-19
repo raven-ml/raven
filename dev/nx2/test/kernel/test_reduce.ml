@@ -4517,9 +4517,9 @@ let test_most_loads (b : Support.backend) () =
          Float.of_int (15 * (((c + 1) * 3 * r) + (c * (c + 1) / 2)))))
     (A.to_array running)
 
-(* Nine Moments of one loop take 18 destinations, and twenty sums 20 tables
-   of reductions, more than one loop holds beside its load: each result has
-   the bits of a call of few reductions. *)
+(* Nine Moments of one loop take 18 destinations, twenty Args 40, and many
+   sums as many tables of reductions, more than one loop holds beside its
+   load: each result has the bits of a call of few reductions. *)
 let test_many_reductions (b : Support.backend) () =
   let module K = (val b.kernels) in
   let p = identity (D.Any D.Float32) and shape = [| 4; 3 |] in
@@ -4531,21 +4531,28 @@ let test_many_reductions (b : Support.backend) () =
     | Monoid _ -> 1
     | Arg _ | Moments -> 2
   in
+  (* An Arg's second destination is its int64 positions. *)
+  let dst r i =
+    match r with
+    | Nx_kernel.Arg _ when i mod 2 = 1 -> A.Any (A.create Rig.host D.Int64 [| 4 |])
+    | _ -> A.Any (A.create Rig.host D.Float32 [| 4 |])
+  in
+  let bits (A.Any d) =
+    match A.dtype d with
+    | D.Int64 -> A.to_array (A.expect D.Int64 (A.Any d))
+    | _ ->
+        Array.map
+          (fun f -> Int64.of_int32 (Int32.bits_of_float f))
+          (A.to_array (A.expect D.Float32 (A.Any d)))
+  in
   let reduce r n =
-    let dsts =
-      Array.init (n * width r) (fun _ ->
-          A.Any (A.create Rig.host D.Float32 [| 4 |]))
-    in
+    let dsts = Array.init (n * width r) (dst r) in
     equal
       ~msg:(Printf.sprintf "%d reductions" n)
       Elements.answer A.Done
       (K.reduce p ~shape ~axes:[| 1 |] (Array.make n (r, 0)) ~dsts
          [| plain_of (A.Any x) |]);
-    Array.map
-      (fun (A.Any d) ->
-        Array.map Int32.bits_of_float
-          (A.to_array (A.expect D.Float32 (A.Any d))))
-      dsts
+    Array.map bits dsts
   in
   let agree r few many =
     let want = reduce r few and got = reduce r many in
@@ -4553,13 +4560,17 @@ let test_many_reductions (b : Support.backend) () =
       (fun i g ->
         equal
           ~msg:(Printf.sprintf "destination %d" i)
-          (array int32)
+          (array int64)
           want.(i mod Array.length want)
           g)
       got
   in
   agree Nx_kernel.Moments 1 9;
-  agree (Nx_kernel.Monoid Sum) 1 20
+  agree (Nx_kernel.Arg Max) 1 20;
+  (* Sums of 18, 19, 36 and 37 operands, a run of the door's reads and its
+     neighbours, and of 64 and 65 items with the program's node, past
+     which nx.cpu checks and prices them with the lock released. *)
+  List.iter (agree (Nx_kernel.Monoid Sum) 1) [ 17; 18; 35; 36; 63; 64 ]
 
 (* Nine Moments over no axis, the mean each element and the variance 0, take
    every destination and the load in one claim: a broadcast destination or two

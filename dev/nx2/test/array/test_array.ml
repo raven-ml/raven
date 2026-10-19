@@ -1644,6 +1644,83 @@ let test_ocaml_door_runs () =
   released [| z; x |];
   equal (pair answer (option bool)) (A.Done, Some true) (ocaml_door [||] [||])
 
+(* However many arrays the door claims and releases, it holds the domain
+   lock for no stretch longer than the bound: the least of three runs'
+   longest stretch, in CPU time, as test_release takes it. *)
+let test_ocaml_door_holds () =
+  let holds ~msg written read =
+    let e = ref A.Done in
+    let call () = e := A.door ~written ~read ignore () in
+    call ();
+    Gc.full_major ();
+    let least = ref max_int in
+    for _ = 1 to 3 do
+      let ~releases:_, ~held, ~cpu:_ = Nx_release_support.watch call in
+      least := min !least held
+    done;
+    equal ~msg answer A.Done !e;
+    less int
+      ~msg:(msg ^ ": the longest stretch held, in ns of CPU time")
+      ~than:(Nx_release_support.bound ()) !least;
+    released (Array.append written read)
+  in
+  holds ~msg:"many arrays"
+    [| A.Any (zeros [| 1 |]) |]
+    (Array.init 32768 (fun _ -> A.Any (zeros [| 1 |])));
+  (* Few written arrays, each compared with many it skips. *)
+  holds ~msg:"many empty arrays"
+    (Array.init 8 (fun _ -> A.Any (zeros [| 1 |])))
+    (Array.init 32768 (fun _ -> A.Any (zeros [| 0 |])))
+
+(* The door claims every array, then checks the rest: an array claimed in
+   a later run than a written array's other faults is refused first. *)
+let test_ocaml_door_order () =
+  let one = zeros [| 1 |] in
+  let w = Option.get (A.move (M.Broadcast [| 2 |]) one) in
+  let dead = zeros [| 2 |] in
+  kill (A.buffer dead);
+  let read =
+    Array.init (2 * A.max_operands) (fun i ->
+        if i = A.max_operands then A.Any dead else A.Any (zeros [| 2 |]))
+  in
+  equal (pair answer (option bool)) (A.Dead_buffer, None)
+    (ocaml_door [| A.Any w |] read);
+  released (Array.append [| A.Any one |] read)
+
+(* Around each run of claims, the door claims every array while its function
+   runs, then releases them. *)
+let test_ocaml_door_counts () =
+  let m = A.max_operands in
+  List.iter
+    (fun n ->
+      let written = [| A.Any (zeros [| 2 |]) |] in
+      let read = Array.init (n - 1) (fun _ -> A.Any (zeros [| 2 |])) in
+      equal
+        ~msg:(Printf.sprintf "%d arrays" n)
+        (pair answer (option bool)) (A.Done, Some true)
+        (ocaml_door written read);
+      released (Array.append written read))
+    [ m - 1; m; m + 1; (2 * m) - 1; 2 * m; (2 * m) + 1 ]
+
+(* A refusal of an array claimed in a later run than the first leaves no
+   claim on any. *)
+let test_ocaml_door_late_refusals () =
+  let n = 3 * A.max_operands in
+  let refuses ~msg r last =
+    let written = [| A.Any (zeros [| 2 |]) |] in
+    let read = Array.init n (fun _ -> A.Any (zeros [| 2 |])) in
+    read.(n - 1) <- last written.(0);
+    equal ~msg (pair answer (option bool)) (r, None) (ocaml_door written read);
+    released (Array.append written read)
+  in
+  refuses ~msg:"the last read overlapping the written" A.Overlapping
+    (fun (A.Any z) ->
+      A.Any (A.v f32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (A.buffer z)));
+  refuses ~msg:"the last read dead" A.Dead_buffer (fun _ ->
+      let d = zeros [| 2 |] in
+      kill (A.buffer d);
+      A.Any d)
+
 let test_ocaml_door_refuses () =
   let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let refuses ~msg r written read =
@@ -2361,6 +2438,14 @@ let tests =
           test_ocaml_door_runs;
         test "refuses before claiming or running anything"
           test_ocaml_door_refuses;
+        test "a refusal in a later run of claims leaves no claim"
+          test_ocaml_door_late_refusals;
+        test "holds the lock for no long stretch, however many arrays"
+          test_ocaml_door_holds;
+        test "refuses a dead array before a written one's other faults"
+          test_ocaml_door_order;
+        test "claims and releases arrays around each run of claims"
+          test_ocaml_door_counts;
         test "a written array may be identical to read ones, claimed once"
           test_ocaml_door_identical;
         test "off the host, views overlap by their offsets"
