@@ -61,6 +61,10 @@ val payload : interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload option
 val owner : ('v, 's, 'd) t -> interpretation option
 (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
 
+val quiet : unit -> bool
+(** [quiet ()] is [true] iff the count of live [Extent] interpretations is
+    zero: none is live, on any domain. *)
+
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
 

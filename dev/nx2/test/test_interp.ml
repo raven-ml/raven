@@ -376,6 +376,19 @@ let test_systhreads () =
   equal ~msg:"another systhread computes" (array float_exact) [| 2.; 4.; 6. |]
     (elements y)
 
+(* [quiet] is false while an extent lives, seen from any domain; a values
+   interpretation leaves it as it was. It may be false with no extent live,
+   after a continuation dropped in one, so the test asserts nothing of it
+   outside. *)
+let test_quiet () =
+  let outside = Nx.Prim.quiet () in
+  logged ~name:"test.values" Values (ref []) (fun _ ->
+      equal ~msg:"inside values" bool outside (Nx.Prim.quiet ()));
+  logged ~name:"test.extent" Extent (ref []) (fun _ ->
+      equal ~msg:"inside an extent" bool false (Nx.Prim.quiet ());
+      equal ~msg:"on another domain" bool false
+        (Domain.join (Domain.spawn Nx.Prim.quiet)))
+
 (* A formula reaches a Values rule as it is, computing nothing. *)
 let test_constants () =
   let c = Nx.zeros f32 [| 3 |] in
@@ -447,6 +460,7 @@ let rule =
         test_domains;
       test "a value refuses another systhread; an extent does not reach one"
         test_systhreads;
+      test "quiet is false while an extent lives" test_quiet;
       test "a formula reaches a values rule as it is" test_constants;
       test "a captured formula reaches an extent as its operations"
         test_captured;
