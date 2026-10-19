@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Tolk
+open Lower_bits
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
@@ -56,29 +57,6 @@ let of_parts dt us =
 
 let int n = `Int (Bigint.of_int n)
 
-let fill (type v s) (dt : (v, s) D.t) (x : v) : Dtype.const list =
-  match dt with
-  | D.Float64 -> [ `Float x ]
-  | D.Float32 -> [ `Float x ]
-  | D.Float16 -> [ `Float x ]
-  | D.Bfloat16 -> [ `Float x ]
-  | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn ->
-      [ int (Char.code (P.bits dt x).[0]) ]
-  | D.Int64 -> [ `Int (Bigint.of_int64 x) ]
-  | D.Uint64 -> [ `Int (Bigint.of_int64_unsigned x) ]
-  | D.Int32 -> [ int (Int32.to_int x) ]
-  | D.Uint32 -> [ int (Int32.to_int x land 0xffff_ffff) ]
-  | D.Int16 -> [ int x ]
-  | D.Uint16 -> [ int x ]
-  | D.Int8 -> [ int x ]
-  | D.Uint8 -> [ int x ]
-  | D.Int4 -> [ int x ]
-  | D.Uint4 -> [ int x ]
-  | D.Complex128 -> [ `Float x.re; `Float x.im ]
-  | D.Complex64 -> [ `Float x.re; `Float x.im ]
-  | D.Bool -> [ int (Bool.to_int x) ]
-  | D.Bit -> [ int (Bool.to_int x) ]
-
 (* Nodes
 
    Constants take the type and shape of the node they meet. Integer arithmetic
@@ -86,7 +64,6 @@ let fill (type v s) (dt : (v, s) D.t) (x : v) : Dtype.const list =
    narrower ones to [int], whose sums carry past their width. *)
 
 let num ?dtype u n = Shape.const_like ?dtype u (int n)
-let big ?dtype u z = Shape.const_like ?dtype u (`Int z)
 let truth u b = Shape.const_like ~dtype:Bool u (`Bool b)
 let where = Ops.where
 let not_ = Ops.logical_not
@@ -106,41 +83,8 @@ let ( <> ) = Ops.ne
 
 (* IEEE's [x <= y], false on NaN. *)
 let at_most x y = x < y || x = y
-
-let unsigned_of_width = function
-  | 8 -> Dtype.Uint64
-  | 4 -> Dtype.Uint32
-  | 2 -> Dtype.Uint16
-  | _ -> Dtype.Uint8
-
-let unsigned t = unsigned_of_width (Dtype.itemsize t)
-let bits x = Ops.bitcast x (unsigned (Ops.dtype x))
 let of_bits t u = Ops.bitcast u t
 let one_if c u = where c (num u 1) (num u 0)
-
-let sign_mask t =
-  Bigint.shift_left Bigint.one Stdlib.((8 * Dtype.itemsize t) - 1)
-
-(* The float [x] with its sign bit flipped, or cleared: exact on every value,
-   NaN included. *)
-let flip x =
-  of_bits (Ops.dtype x) (bits x lxor big (bits x) (sign_mask (Ops.dtype x)))
-
-let magnitude x =
-  of_bits (Ops.dtype x)
-    (Ops.bitwise_and (bits x)
-       (big (bits x) (Bigint.pred (sign_mask (Ops.dtype x)))))
-
-let is_nan x = x <> x
-
-(* [float_bits t u n] is the float of type [t] whose bits are [n], shaped as
-   [u]. *)
-let float_bits t u n = of_bits t (big ~dtype:(unsigned t) u n)
-
-let quiet_nan t u =
-  let n = if Dtype.equal t Float64 then 0x7FF8 else 0x7FC0 in
-  float_bits t u
-    (Bigint.shift_left (Bigint.of_int n) Stdlib.((8 * Dtype.itemsize t) - 16))
 
 (* Narrow floats
 
@@ -202,7 +146,7 @@ let decode (D.Any dt as d) x =
       f32 ((c lor ((past lsr 9) land 0x40)) lsl 16)
   | D.Float8_e4m3fn ->
       let q = c land 0x7F in
-      let v = where (q = num q 0x7F) (quiet_nan Float32 q) (mini_value q 3 7) in
+      let v = where (q = num q 0x7F) (nan (f32 q)) (mini_value q 3 7) in
       with_sign v (c lsr 7)
   | D.Float8_e5m2 ->
       let q = c land 0x7F in
@@ -481,13 +425,12 @@ let bool_compare (k : P.compare) x y =
    product; Fdiv is Smith's algorithm, the divisor's larger part dividing its
    smaller. Their NaN parts are the quiet NaN of a clear sign bit. *)
 
-let fma a b c = Ops.alu a Op.Mulacc [ b; c ]
 let fdiv x y = Ops.alu x Op.Fdiv [ y ]
-let quiet x = where (is_nan x) (quiet_nan (Ops.dtype x) x) x
+let quiet x = where (is_nan x) (nan x) x
 
 let c_mul (ar, ai) (br, bi) =
   let ii = ai * bi and ir = ai * br in
-  (quiet (fma ar br (flip ii)), quiet (fma ar bi ir))
+  (quiet (mulacc ar br (negated ii)), quiet (mulacc ar bi ir))
 
 let c_div (ar, ai) (br, bi) =
   let pb = magnitude br and pi = magnitude bi in
@@ -495,18 +438,15 @@ let c_div (ar, ai) (br, bi) =
   let p = where big br bi and q = where big bi br in
   let x = where big ar ai and y = where big ai ar in
   let r = fdiv q p in
-  let d = fma r q p in
-  let im = where big (fma (flip r) x y) (fma r x (flip y)) in
-  (quiet (fdiv (fma r y x) d), quiet (fdiv im d))
+  let d = mulacc r q p in
+  let im = where big (mulacc (negated r) x y) (mulacc r x (negated y)) in
+  (quiet (fdiv (mulacc r y x) d), quiet (fdiv im d))
 
 let c_nan (re, im) = is_nan re || is_nan im
 
-let sign_bit x =
-  (bits x lsr Stdlib.((8 * Dtype.itemsize (Ops.dtype x)) - 1)) <> num (bits x) 0
-
 (* Whether [x] precedes [y] in the order with -0 below +0, neither NaN. *)
-let before x y = x < y || (x = y && sign_bit x && not_ (sign_bit y))
-let same x y = x = y && sign_bit x = sign_bit y
+let before x y = x < y || (x = y && negative x && not_ (negative y))
+let same x y = x = y && negative x = negative y
 let c_before (ar, ai) (br, bi) = before ar br || (same ar br && before ai bi)
 
 (* The first NaN operand, else [pick a b], whether to give [b]. *)
@@ -741,17 +681,16 @@ let word b =
   done;
   !n
 
-(* [constant tdt b] is the node of [tdt] whose bits are [b]. A float is its
-   bits' integer, bitcast: a float literal would lose a NaN's sign and
-   payload. *)
-let constant tdt b =
-  let w = word b in
-  if Dtype.is_float tdt then
-    Ops.bitcast (Ops.const ~dtype:(unsigned tdt) (`Int w)) tdt
-  else Ops.const ~dtype:tdt (Dtype.truncate tdt (`Int w) :> Dtype.const)
+(* [value tdt b] is the constant of [tdt] whose bits are [b]. A float is its
+   bits' integer read as [tdt], which keeps a NaN's sign and payload. *)
+let value tdt b : Dtype.const =
+  let w = `Int (word b) in
+  if Dtype.is_float tdt then (Dtype.bitcast (unsigned tdt) tdt w :> Dtype.const)
+  else (Dtype.truncate tdt w :> Dtype.const)
 
-let const (D.Any dt as d) b s =
-  let tdt = dtype d in
+(* [values d b] is the constant of each part of the element of [d] whose bits
+   are [b]. *)
+let values (D.Any dt as d) b =
   let parts =
     match dt with
     | D.Int4 ->
@@ -763,7 +702,12 @@ let const (D.Any dt as d) b s =
         [ String.sub b 0 h; String.sub b h h ]
     | _ -> [ b ]
   in
-  List.map (fun b -> broadcast (constant tdt b) s) parts
+  List.map (value (dtype d)) parts
+
+let const d b s =
+  List.map (fun c -> broadcast (Ops.const ~dtype:(dtype d) c) s) (values d b)
+
+let fill dt x = values (D.Any dt) (P.bits dt x)
 
 let coord s a =
   let r = Array.length s in

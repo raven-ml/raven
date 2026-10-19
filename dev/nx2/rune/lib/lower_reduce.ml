@@ -6,50 +6,132 @@
 open Tolk
 module D = Nx_array.Dtype
 module Arith = Lower_arith
+module Bits = Lower_bits
 
 type monoid = Sum | Prod | Max | Min
 
-let refuse m (D.Any dt) =
-  match m with
-  | (Prod | Max | Min) when D.is D.Complex dt ->
-      invalid_arg "Lower_reduce: a complex product or extreme"
+let refuse m ~scan (D.Any dt) =
+  match (m, dt) with
+  | Prod, (D.Complex64 | D.Complex128) ->
+      invalid_arg "Rune.Lower_reduce: a complex Prod is not lowered"
+  | (Max | Min), D.Complex128 when scan ->
+      invalid_arg
+        "Rune.Lower_reduce: a complex128 Max or Min scan is not lowered"
   | _ -> ()
 
-let extents u =
-  List.map
-    (function
-      | Ops.Int n -> n
-      | Ops.Sym _ -> invalid_arg "Lower_reduce: a symbolic extent")
-    (Shape.shape u)
+let extents u = List.init (Shape.ndim u) (Bits.extent u)
 
 let dims s = List.map (fun e -> Ops.Int e) s
 let int u n = Shape.const_like u (`Int (Bigint.of_int n))
 let bit k = `Int (Bigint.shift_left Bigint.one k)
 
-(* Integers fold on the unsigned pattern of their width: C, Metal and CUDA leave
-   signed overflow undefined, and the pattern wraps as nx's integers do. *)
-let unsigned : Dtype.t -> Dtype.t = function
-  | Int8 -> Uint8
-  | Int16 -> Uint16
-  | Int32 -> Uint32
-  | Int64 -> Uint64
-  | t -> t
+(* [any p us] is the elementwise or of [p] over the nodes [us]. *)
+let any p us =
+  List.fold_left
+    (fun a u -> Ops.bitwise_or a (p u))
+    (p (List.hd us))
+    (List.tl us)
 
-(* The signed integer of a carrier float's width. *)
-let signed : Dtype.t -> Dtype.t = function
-  | Float32 -> Int32
-  | Float64 -> Int64
-  | _ -> invalid_arg "Lower_reduce: a float narrower than its carrier"
+(* Integers fold on unsigned patterns of 32 or 64 bits: C, Metal and CUDA leave
+   signed overflow undefined and promote narrower types to [int], where [65535 *
+   65535] overflows. The pattern wraps as nx's integers do, and [store] keeps
+   its low bits by the unsigned type of the integer's width. *)
+let folded t = if Dtype.itemsize t < 4 then Dtype.Uint32 else Bits.unsigned t
+let lift u = Ops.cast u (folded (Ops.dtype u))
+let store t r = Ops.bitcast (Ops.cast r (Bits.unsigned t)) t
+
+(* [back u axes m] is the result [m] of a reduction of [u] along [axes],
+   expanded to [u]'s shape. *)
+let back u axes m =
+  let s = extents u in
+  let kept = List.mapi (fun i e -> if List.mem i axes then 1 else e) s in
+  Shape.expand (Shape.reshape m (dims kept)) (dims s)
+
+(* NaNs
+
+   Where a fold takes a NaN term, its result is the first NaN term, in C order
+   of the reduced indices, quieted; where it takes none but gives a NaN, made
+   from numbers as [∞ - ∞], the quiet NaN of a clear sign bit. Both are selected
+   by integer bit patterns: bitcasts, integer folds and [where]. So a target
+   whose float adder canonicalises NaNs, as CUDA's does, still gives these bits:
+   no float arithmetic produces them.
+
+   [first f axes ~nan us] is, at each result of the fold [f] along [axes], the
+   bits of each part of [us] at the first term where [nan] holds, from that term
+   on, and [0] where no term so far is a NaN. A term at position [p] of [n] keys
+   as [n - p] where [nan] holds, [0] elsewhere: the greatest key is the first
+   NaN's.
+
+   Cost: for parts of 32 bits and [n < 2^31], each part packs its key over its
+   bits in an int64, [(n - p) lsl 32 lor bits], whose REDUCE Max, or running
+   Max, is that NaN's bits: one fold per part, reading the terms the fold reads,
+   so a float32 sum or extreme takes two REDUCEs. Otherwise, a REDUCE Max of the
+   keys over the whole slice marks the first NaN, and a Max of each part's
+   marked bits, others [0], reads the terms again. *)
+
+(* [positions ~dtype u axes n] is [n - p] at each element of [u], [p] its
+   position in C order of the indices along [axes], [n] their count: [n] down to
+   [1] laid over [axes]. *)
+let positions ~dtype u axes n =
+  let s = extents u in
+  let along = List.mapi (fun i e -> if List.mem i axes then e else 1) s in
+  let keys = Shape.arange ~start:n ~step:(-1) ~dtype 0 in
+  Shape.expand (Shape.reshape keys (dims along)) (dims s)
+
+let first f axes ~nan us =
+  let u = List.hd us in
+  let s = extents u in
+  let n = List.fold_left (fun n a -> n * List.nth s a) 1 axes in
+  let packs =
+    Dtype.itemsize (Ops.dtype u) = 4 && n < Int32.to_int Int32.max_int
+  in
+  if packs then
+    let key = positions ~dtype:Int64 u axes n in
+    let key = Ops.shl key (int key 32) in
+    let part u =
+      let packed = Ops.bitwise_or key (Ops.cast (Bits.bits u) Int64) in
+      Ops.cast (f Op.Max (Ops.where nan packed (int key 0))) Uint32
+    in
+    List.map part us
+  else
+    let dtype : Dtype.t =
+      if n < Int32.to_int Int32.max_int then Int32 else Int64
+    in
+    let key = positions ~dtype u axes n in
+    let key = Ops.where nan key (int key 0) in
+    let marked =
+      Ops.bitwise_and nan (Ops.eq key (back u axes (Shape.rop key Op.Max axes)))
+    in
+    List.map
+      (fun u ->
+        let b = Bits.bits u in
+        f Op.Max (Ops.where marked b (int b 0)))
+      us
+
+(* [nans f axes ~nan us rs] is each part of the fold's result [rs] of the terms
+   [us], with the first term where [nan] holds, each NaN part quieted, where one
+   does, else the quiet NaN of a clear sign bit where the part is a NaN. *)
+let nans f axes ~nan us rs =
+  let bs = first f axes ~nan us in
+  let nonzero b = Ops.ne b (int b 0) in
+  let has = any nonzero bs in
+  let fix b r =
+    let term = Ops.bitcast b (Ops.dtype r) in
+    let term = Ops.where (Bits.is_nan term) (Bits.quieted term) term in
+    Ops.where has term (Ops.where (Bits.is_nan r) (Bits.nan r) r)
+  in
+  List.map2 fix bs rs
 
 (* Sums and products
 
-   [f op u] folds the node [u] by [op]: a reduction or a scan. A float sum adds
-   [+0] to its result: tolk starts a loop's accumulator from [+0], but sums the
-   terms alone where no loop is left, so a sum of [-0] terms would stay [-0]. *)
+   [arith f op u] folds the node [u] by [op]: a reduction or a scan. A float sum
+   adds [+0] to its result: tolk starts a loop's accumulator from [+0], but sums
+   the terms alone where no loop is left, so a sum of [-0] terms would stay
+   [-0]. *)
 
 let arith f op u =
   let t = Ops.dtype u in
-  if not (Dtype.is_float t) then Ops.cast (f op (Ops.cast u (unsigned t))) t
+  if not (Dtype.is_float t) then store t (f op (lift u))
   else
     let r = f op u in
     if Op.equal op Op.Add then Ops.add r (Shape.const_like r (`Float 0.)) else r
@@ -62,82 +144,74 @@ let arith f op u =
    complemented keys. NaN terms take the least key, which no number takes, so
    the maximum is of the numbers alone.
 
-   Where a fold takes a NaN, its result is the first NaN's bits quieted. [first
-   u axes nan] marks each fold's first NaN term: a REDUCE Max of [n - position],
-   [n] the fold's term count, over NaN terms, and [0] over the others. The fold
-   by Add of the marked term's bits, others [0], is that NaN's bits from its
-   position on, [0] before: a NaN's bits are never [0].
-
-   Cost: a reduction takes three REDUCEs: the keys' Max and the positions' Max,
-   which read the same terms, then the marked bits' Add, which reads them again
-   with the positions' result. A scan takes the keys' running Max, the
-   positions' REDUCE Max and the marked bits' running Add. *)
+   A complex number orders by its real part, then its imaginary part. With
+   float32 parts, each key biased to unsigned, [k xor min_int], packs the real
+   key over the imaginary one in a uint64, whose Max is the extreme: NaN terms
+   take [0], below every number's. With float64 parts, a REDUCE Max of the real
+   keys, then of the imaginary keys of the terms whose real key is it: a scan
+   cannot take that second Max, and refuses. *)
 
 let order k =
   let flipped = Shape.const_like k (Dtype.max (Ops.dtype k) :> Dtype.const) in
   Ops.where (Ops.lt k (int k 0)) (Ops.bitwise_xor k flipped) k
 
-(* [positions u axes] is [n - p] at each element of [u], [p] its position in C
-   order of the indices along [axes], [n] their count. *)
-let positions u axes =
-  let s = extents u in
-  let r = List.length s in
-  let n = List.fold_left (fun n a -> n * List.nth s a) 1 axes in
-  let dtype : Dtype.t =
-    if n < Int32.to_int Int32.max_int then Int32 else Int64
-  in
-  let index a =
-    let e = List.nth s a in
-    let along = List.init r (fun i -> Ops.Int (if i = a then e else 1)) in
-    Shape.expand (Shape.reshape (Shape.arange ~dtype e) along) (dims s)
-  in
-  let step a (p, stride) =
-    let i = index a in
-    (Ops.sub p (Ops.mul i (int i stride)), stride * List.nth s a)
-  in
-  let start = Shape.const_like ~dtype u (`Int (Bigint.of_int n)) in
-  fst (List.fold_right step axes (start, 1))
+let least k = Shape.const_like k (Dtype.min (Ops.dtype k) :> Dtype.const)
 
-let first u axes nan =
-  let key = positions u axes in
-  let key = Ops.where nan key (int key 0) in
-  let s = extents u in
-  let kept = List.mapi (fun i e -> if List.mem i axes then 1 else e) s in
-  let m = Shape.rop key Op.Max axes in
-  let m = Shape.expand (Shape.reshape m (dims kept)) (dims s) in
-  Ops.bitwise_and nan (Ops.eq key m)
+let extreme f axes ~greatest ~nan xs =
+  let flip k = if greatest then k else Ops.bitwise_not k in
+  let key u = flip (order (Ops.bitcast u (Bits.signed (Ops.dtype u)))) in
+  let value t k = Ops.bitcast (order (flip k)) t in
+  match xs with
+  | [ x ] when not (Dtype.is_float (Ops.dtype x)) ->
+      [ flip (f Op.Max (flip x)) ]
+  | [ x ] ->
+      let k = key x in
+      [ value (Ops.dtype x) (f Op.Max (Ops.where nan (least k) k)) ]
+  | [ re; im ] when Dtype.itemsize (Ops.dtype re) = 4 ->
+      let biased k =
+        Ops.cast (Ops.bitcast (Ops.bitwise_xor k (least k)) Uint32) Uint64
+      in
+      let kr = biased (key re) and ki = biased (key im) in
+      let packed = Ops.bitwise_or (Ops.shl kr (int kr 32)) ki in
+      let m = f Op.Max (Ops.where nan (int packed 0) packed) in
+      let unbiased u =
+        let k = Ops.bitcast (Ops.cast u Uint32) Int32 in
+        Ops.bitwise_xor k (least k)
+      in
+      [
+        value Float32 (unbiased (Ops.shr m (int m 32)));
+        value Float32 (unbiased m);
+      ]
+  | [ re; im ] ->
+      let kr = key re and ki = key im in
+      let mr = f Op.Max (Ops.where nan (least kr) kr) in
+      let top =
+        Ops.bitwise_and (Ops.logical_not nan) (Ops.eq kr (back re axes mr))
+      in
+      let mi = f Op.Max (Ops.where top ki (least ki)) in
+      [ value Float64 mr; value Float64 mi ]
+  | _ -> invalid_arg "Lower_reduce: a value of another dtype"
 
-let float_extreme f axes ~greatest u =
-  let t = Ops.dtype u in
-  let k = signed t in
-  let nan = Ops.ne u u in
-  let flip key = if greatest then key else Ops.bitwise_not key in
-  let key = flip (order (Ops.bitcast u k)) in
-  let least = Shape.const_like key (Dtype.min k :> Dtype.const) in
-  let m = f Op.Max (Ops.where nan least key) in
-  let value = Ops.bitcast (order (flip m)) t in
-  let bits = Ops.bitcast u (unsigned k) in
-  let nan = f Op.Add (Ops.where (first u axes nan) bits (int bits 0)) in
-  let quiet = Shape.const_like nan (bit (snd (Dtype.finfo t) - 1)) in
-  let quieted = Ops.bitcast (Ops.bitwise_or nan quiet) t in
-  Ops.where (Ops.ne nan (int nan 0)) quieted value
-
-(* An integer's minimum is the complement of the maximum of the complements.
-   Booleans fold as their truths' bytes, 0 or 1: any and all. *)
-let extreme f axes ~greatest u =
-  let flip u = if greatest then u else Ops.bitwise_not u in
-  match Ops.dtype u with
-  | t when Dtype.is_float t -> float_extreme f axes ~greatest u
-  | _ -> flip (f Op.Max (flip u))
-
-(* [fold m f axes c x] folds [x], a value of the carrier [c], by [m] with [f]
-   along [axes]. *)
-let fold m f axes c x =
+(* [fold m f axes xs] folds the parts [xs] of a value of a carrier by [m] with
+   [f] along [axes], NaNs aside. *)
+let fold m f axes xs =
   match m with
-  | Sum -> Arith.of_parts c (List.map (arith f Op.Add) (Arith.parts c x))
-  | Prod -> arith f Op.Mul x
-  | Max -> extreme f axes ~greatest:true x
-  | Min -> extreme f axes ~greatest:false x
+  | Sum -> List.map (arith f Op.Add) xs
+  | Prod -> List.map (arith f Op.Mul) xs
+  | Max | Min -> extreme f axes ~greatest:(m = Max) ~nan:(any Bits.is_nan xs) xs
+
+(* [with_nans m f axes xs ys] is the fold [ys] of the parts [xs] with NaNs as
+   {!Nx_kernel.reduction} states: a sum or a product takes each part's NaNs
+   alone, an extreme a complex number with a NaN part as a NaN. *)
+let with_nans m f axes xs ys =
+  if not (Dtype.is_float (Ops.dtype (List.hd xs))) then ys
+  else
+    match m with
+    | Sum | Prod ->
+        List.map2
+          (fun x y -> List.hd (nans f axes ~nan:(Bits.is_nan x) [ x ] [ y ]))
+          xs ys
+    | Max | Min -> nans f axes ~nan:(any Bits.is_nan xs) xs ys
 
 (* [carried ~src c x] is [x] in the carrier [c]; a boolean as the byte of its
    truth. *)
@@ -146,10 +220,12 @@ let carried ~src (D.Any dt as c) x =
   else Arith.cast ~src c x
 
 let reduce m axes ~src dt x =
-  refuse m src;
+  refuse m ~scan:false src;
   let c = Nx_kernel.carrier src in
   let f op u = Shape.rop u op axes in
-  Arith.cast ~src:c dt (fold m f axes c (carried ~src c x))
+  let xs = Arith.parts c (carried ~src c x) in
+  let ys = with_nans m f axes xs (fold m f axes xs) in
+  Arith.cast ~src:c dt (Arith.of_parts c ys)
 
 (* Scans *)
 
@@ -159,7 +235,7 @@ let join axis k x =
   let cat k x = Shape.cat ~axis k [ x ] in
   match Ops.dtype x with
   | t when Dtype.is_float t ->
-      let b = unsigned (signed t) in
+      let b = Bits.unsigned t in
       Ops.bitcast (cat (Ops.bitcast k b) (Ops.bitcast x b)) t
   | _ -> cat k x
 
@@ -170,31 +246,45 @@ let negative_zeros f x y =
   let t = Ops.dtype x in
   if not (Dtype.is_float t) then y
   else
-    let bits = Ops.bitcast x (unsigned (signed t)) in
+    let bits = Ops.bitcast x (Bits.unsigned t) in
     let sign = Shape.const_like bits (bit ((8 * Dtype.itemsize t) - 1)) in
     let other = f Op.Max (Ops.cast (Ops.ne bits sign) Uint8) in
     let zero = Shape.const_like y (`Float (-0.)) in
     Ops.where (Ops.eq other (int other 0)) zero y
 
 (* A carry is the term before each slice's first: the scan runs over it, then
-   drops its result. *)
+   drops its result. An extreme's NaN rule takes the carry as a term; a sum's or
+   a product's takes the slice's own terms, so a NaN carry counts as made from
+   numbers. *)
 let scan m axis ~carry ~src dt x =
-  refuse m src;
+  refuse m ~scan:true src;
   let c = Nx_kernel.carrier src in
-  let x = carried ~src c x in
+  let xs = Arith.parts c (carried ~src c x) in
   let f op u = Shape.cumalu u axis op in
-  let parts g x y =
-    Arith.of_parts c (List.map2 g (Arith.parts c x) (Arith.parts c y))
-  in
+  let axes = [ axis ] in
+  let out ys = Arith.cast ~src:c dt (Arith.of_parts c ys) in
   match carry with
-  | None -> Arith.cast ~src:c dt (fold m f [ axis ] c x)
+  | None -> out (with_nans m f axes xs (fold m f axes xs))
   | Some k ->
-      let x = parts (join axis) (carried ~src:c c k) x in
-      let y = fold m f [ axis ] c x in
-      let y = if m = Sum then parts (negative_zeros f) x y else y in
-      let n = List.nth (extents y) axis in
-      let drop i = if i = axis then Some (Ops.Int 1, Ops.Int n) else None in
-      Arith.cast ~src:c dt (Shape.shrink y (List.init (Shape.ndim y) drop))
+      let joined =
+        List.map2 (join axis) (Arith.parts c (carried ~src:c c k)) xs
+      in
+      let n = List.nth (extents (List.hd xs)) axis in
+      let drop u =
+        Shape.shrink u
+          (List.init (Shape.ndim u) (fun i ->
+               if i = axis then Some (Ops.Int 1, Ops.Int (n + 1)) else None))
+      in
+      let ys = fold m f axes joined in
+      let ys =
+        match m with
+        | Max | Min -> List.map drop (with_nans m f axes joined ys)
+        | Sum ->
+            let ys = List.map2 (negative_zeros f) joined ys in
+            with_nans m f axes xs (List.map drop ys)
+        | Prod -> with_nans m f axes xs (List.map drop ys)
+      in
+      out ys
 
 (* Contractions
 
@@ -239,8 +329,8 @@ let contract ~batch ~contracting ~acc ~out (da, a) (db, b) init =
   let nb = List.length ba and nfa = List.length fa and nfb = List.length fb in
   let t = Ops.dtype (List.hd a) in
   let float = Dtype.is_float t in
-  let lift u = if float then u else Ops.cast u (unsigned t) in
-  let lay s order ~at ~ones u = lift (laid u s order ~at ~ones target) in
+  let held u = if float then u else lift u in
+  let lay s order ~at ~ones u = held (laid u s order ~at ~ones target) in
   let a = List.map (lay sa (ba @ fa @ ka) ~at:(nb + nfa) ~ones:nfb) a in
   let b = List.map (lay sb (bb @ fb @ kb) ~at:nb ~ones:nfa) b in
   let k = List.init (List.length ka) (fun i -> List.length target - 1 - i) in
@@ -258,10 +348,11 @@ let contract ~batch ~contracting ~acc ~out (da, a) (db, b) init =
   (* The sum starts from [init], or from [+0] added last. *)
   let start =
     match init with
-    | Some i -> List.map lift (Arith.parts acc (Arith.cast ~src:out acc i))
+    | Some i -> List.map held (Arith.parts acc (Arith.cast ~src:out acc i))
     | None ->
         let zero = if float then `Float 0. else `Int Bigint.zero in
         List.map (fun r -> Shape.const_like r zero) r
   in
-  let r = List.map2 (fun r s -> Ops.cast (Ops.add r s) t) r start in
+  let r = List.map2 (fun r s -> Ops.add r s) r start in
+  let r = if float then r else List.map (store t) r in
   Arith.cast ~src:acc out (wrap acc (Arith.of_parts acc r))

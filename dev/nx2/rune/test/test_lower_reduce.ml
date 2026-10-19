@@ -407,21 +407,29 @@ let float_kind x =
   else if x = 0. then "+0"
   else "number"
 
-(* [near ~zeros ~bound e l] checks [l] against [e]: NaN where [e] is, the same
-   infinity, the same zero where [zeros], and otherwise within [bound],
-   inclusive. A zero against a number is within the bound or not, as any other
-   difference. *)
-let near ?(zeros = true) ~bound e l =
+(* The bits of a float or complex dtype's parts. *)
+let part_bits (type v s) (dt : (v, s) D.t) : float -> string =
+  match dt with
+  | D.Complex64 -> hex D.Float32
+  | D.Complex128 -> hex D.Float64
+  | _ -> (
+      match D.kind dt with
+      | D.Float -> hex dt
+      | _ -> invalid_arg "part_bits: not a float")
+
+(* [near ~bits ~zeros ~nans ~bound e l] checks [l] against [e]: [e]'s bits where
+   [e] is a NaN and [nans], a NaN where it is not, the same infinity, the same
+   zero where [zeros], and otherwise within [bound], inclusive. A zero against a
+   number is within the bound or not, as any other difference. *)
+let near ?(zeros = true) ?(nans = true) ~bits ~bound e l =
+  let msg = Printf.sprintf "%h (%s) against %h (%s)" e (bits e) l (bits l) in
   let unsigned k = if zeros || (k <> "+0" && k <> "-0") then k else "0" in
   let k = unsigned (float_kind e) and kl = unsigned (float_kind l) in
   let number k = k = "number" || k = "+0" || k = "-0" || k = "0" in
-  if not (number k && number kl && (k = "number" || kl = "number")) then
-    equal ~msg:(Printf.sprintf "%h against %h" e l) string k kl
-  else
-    less
-      ~msg:(Printf.sprintf "%h against %h" e l)
-      float_exact ~than:(Float.succ bound)
-      (Float.abs (e -. l))
+  if Float.is_nan e && nans then equal ~msg string (bits e) (bits l)
+  else if not (number k && number kl && (k = "number" || kl = "number")) then
+    equal ~msg string k kl
+  else less ~msg float_exact ~than:(Float.succ bound) (Float.abs (e -. l))
 
 (* Bounds
 
@@ -445,49 +453,6 @@ let rounding (type s) (dt : (float, s) D.t) e l =
       let tiny = Float.ldexp 1. (2 - (1 lsl (ex - 1)) - f) in
       (Float.ldexp 1. (-(f + 1)) *. (Float.abs e +. Float.abs l)) +. tiny
 
-(* [members s axes] is, for each element of a value of shape [s] in C order, the
-   position of the result a reduction along [axes] gives it to. *)
-let members s axes =
-  let r = Array.length s in
-  Array.init (numel s) (fun i ->
-      let rest = ref i and o = ref 0 and m = ref 1 in
-      for a = r - 1 downto 0 do
-        let k = !rest mod s.(a) in
-        rest := !rest / s.(a);
-        if not (List.mem a axes) then (
-          o := !o + (k * !m);
-          m := !m * s.(a))
-      done;
-      !o)
-
-let coord s axis i =
-  let after = ref 1 in
-  for a = axis + 1 to Array.length s - 1 do
-    after := !after * s.(a)
-  done;
-  i / !after mod s.(axis)
-
-(* [terms c] is, for each result of [c], the positions of the elements of its
-   operand it folds and whether a carry enters it. *)
-let terms c ~scan =
-  let s = c.shape in
-  if scan then
-    let axis = List.hd c.axes in
-    let slice = members s [ axis ] in
-    Array.init (numel s) (fun j ->
-        List.filter
-          (fun i -> slice.(i) = slice.(j) && coord s axis i <= coord s axis j)
-          (List.init (numel s) Fun.id))
-  else
-    let mem = members s c.axes in
-    let kept =
-      numel
-        (Array.of_list
-           (List.filteri (fun a _ -> not (List.mem a c.axes)) (Array.to_list s)))
-    in
-    Array.init kept (fun o ->
-        List.filter (fun i -> mem.(i) = o) (List.init (numel s) Fun.id))
-
 (* [parts dt xs] is the elements [xs] of the float or complex [dt] as float
    arrays: [[xs]], or their real parts then their imaginary parts. *)
 let parts (type v s) (dt : (v, s) D.t) (xs : v array) : float array list =
@@ -500,39 +465,16 @@ let parts (type v s) (dt : (v, s) D.t) (xs : v array) : float array list =
       ]
   | _ -> invalid_arg "parts: not a float"
 
+(* [parts64 x] is the float or complex [x] as float64 values: [[x]], or its real
+   parts, then its imaginary parts. *)
+let parts64 (type v s) (x : (v, s, Nx.host) Nx.t) =
+  match D.kind (Nx.dtype x) with
+  | D.Float -> [ Nx.cast D.Float64 x ]
+  | D.Complex -> [ Nx.real D.Float64 x; Nx.imag D.Float64 x ]
+  | _ -> invalid_arg "parts64: not a float"
+
 let rounding_of (type v s) (dt : (v, s) D.t) =
   match D.kind dt with D.Float -> rounding dt | _ -> fun _ _ -> 0.
-
-let sum_abs = List.fold_left (fun a v -> a +. Float.abs v) 0.
-
-(* [check_floats c ~scan xs cs e l] checks each part of the eager results [e]
-   against the lowered [l] of a float sum or product of the elements [xs], with
-   the carries [cs]: on each side within [γ(n - 1) Σ|x|] of the exact sum of [n]
-   terms, a relative [γ(n - 1)] of the exact product. *)
-let check_floats c ~scan ~round xs cs e l =
-  let ts = terms c ~scan in
-  let slice = members c.shape c.axes in
-  let u = carrier_roundoff c.dt in
-  List.iteri
-    (fun p x ->
-      let e = List.nth e p and l = List.nth l p in
-      Array.iteri
-        (fun o members ->
-          let carry =
-            match cs with
-            | Some cs -> [ (List.nth cs p).(slice.(o)) ]
-            | None -> []
-          in
-          let vals = carry @ List.map (fun i -> x.(i)) members in
-          let g = gamma u (List.length vals - 1) in
-          let bound =
-            match c.m with
-            | Prod -> 2.01 *. g *. Float.max (Float.abs e.(o)) (Float.abs l.(o))
-            | _ -> 2. *. g *. sum_abs vals
-          in
-          near ~bound:(bound +. round e.(o) l.(o)) e.(o) l.(o))
-        ts)
-    xs
 
 (* A [Max] or [Min] with a result element and no term is refused. *)
 let refused c =
@@ -548,27 +490,101 @@ let exact ~scan c =
   let e, l = results dt ~scan c in
   same_bits dt e l
 
+(* Each part of the eager and the lowered results of a float sum or product of
+   at most [n] terms, the carry's included, is within [γ(n - 1) Σ|x|] of the
+   exact sum, a relative [γ(n - 1)] of the exact product: [Σ|x|] is eager's
+   float64 sum of the terms' magnitudes. *)
 let bounded ~scan c =
   let (D.Any dt) = c.dt in
   let e, l = results dt ~scan c in
-  let xs = parts dt (Nx.to_array (operand dt c)) in
-  let cs =
-    Option.map
-      (fun raws ->
+  let axis = List.hd c.axes in
+  let xs = parts64 (operand dt c) in
+  let carries =
+    match c.carry with
+    | None -> List.map (fun _ -> None) xs
+    | Some raws ->
         let (D.Any cd) = K.carrier c.dt in
-        parts cd
-          (Nx.to_array (value cd (carried c.shape (List.hd c.axes)) raws)))
-      c.carry
+        List.map Option.some (parts64 (value cd (carried c.shape axis) raws))
   in
-  check_floats c ~scan ~round:(rounding_of dt) xs cs (parts dt e) (parts dt l)
+  let magnitudes x carry =
+    let x = Nx.abs x in
+    let m = if scan then Nx.cumsum ~axis x else Nx.sum ~axes:c.axes x in
+    let m = match carry with None -> m | Some k -> Nx.add m (Nx.abs k) in
+    Nx.to_array m
+  in
+  let terms = List.fold_left (fun n a -> n * c.shape.(a)) 1 c.axes in
+  let n = if c.carry = None then terms else terms + 1 in
+  let g = gamma (carrier_roundoff c.dt) (n - 1) in
+  let bits = part_bits dt and round = rounding_of dt in
+  let check (e, l) (x, carry) =
+    let mags = magnitudes x carry in
+    Array.iteri
+      (fun o e ->
+        let l = l.(o) in
+        let bound =
+          match c.m with
+          | Prod -> 2.01 *. g *. Float.max (Float.abs e) (Float.abs l)
+          | _ -> 2. *. g *. mags.(o)
+        in
+        near ~bits ~bound:(bound +. round e l) e l)
+      e
+  in
+  List.iter2 check
+    (List.combine (parts dt e) (parts dt l))
+    (List.combine xs carries)
 
 let is_bool (D.Any dt) = D.is D.Boolean dt
+let is_complex (D.Any dt) = D.is D.Complex dt
 let reduced_empty c = List.exists (fun a -> c.shape.(a) = 0) c.axes
 let cover_monoids c ms = List.iter (fun m -> cover (monoid_name m) (c.m = m)) ms
 
 (* Examples every run takes: a one-element and a zero-size operand, and for
-   float32 and float16 rows of NaNs of both signs and kinds, zeros of both
-   signs, infinities, and all [-0], a NaN carry before the first row. *)
+   float32 and float16 five rows: NaNs of both signs and kinds; infinities of
+   both signs before a signalling NaN; zeros of both signs; all [-0]; and
+   infinities of both signs, a NaN made from numbers by a sum or a product. A
+   scan's carries are [1], a signalling NaN, [+0], [-0] and [-∞]. *)
+
+(* Complex numbers as raws: each part's float64 bits. *)
+let complex_raws zs =
+  Array.concat
+    (List.map
+       (fun (re, im) -> [| Int64.bits_of_float re; Int64.bits_of_float im |])
+       zs)
+
+(* For complex64, five rows: equal real parts; a NaN imaginary part beside a
+   [+0] real part before a NaN real part; zeros of both signs; [-∞] real parts;
+   infinities and a number of two NaN parts. A scan's carries are numbers, a NaN
+   real part and infinities. *)
+let complex_specials =
+  let nan = Int64.float_of_bits 0x7ff4000000000001L in
+  let qnan = Int64.float_of_bits 0xfff8000000000003L in
+  let inf = Float.infinity in
+  ( complex_raws
+      [
+        (1., 2.);
+        (1., 3.);
+        (-0., 4.);
+        (0., -4.);
+        (0., qnan);
+        (inf, 1.);
+        (nan, 0.);
+        (2., 2.);
+        (-0., 1.);
+        (0., 1.);
+        (-0., 2.);
+        (0., 0.);
+        (-.inf, -0.);
+        (-.inf, 0.);
+        (-.inf, -0.);
+        (-.inf, 0.);
+        (1., inf);
+        (1., -.inf);
+        (nan, qnan);
+        (inf, 0.);
+      ],
+    complex_raws [ (1., 2.); (0., 0.); (nan, 1.); (-0., -0.); (inf, -.inf) ] )
+
+let special_carry = [| 0x3f800000L; 0x7f800009L; 0L; 0x80000000L; 0xff800000L |]
 
 let specials (D.Any d) =
   match d with
@@ -591,8 +607,12 @@ let specials (D.Any d) =
             0x80000000L;
             0x80000000L;
             0x80000000L;
+            0x7f800000L;
+            0xff800000L;
+            0x3f800000L;
+            0L;
           |],
-          [| 0x7f800009L; 0x3f800000L; 0x80000000L; 0L |] )
+          special_carry )
   | D.Float16 ->
       Some
         ( [|
@@ -612,8 +632,13 @@ let specials (D.Any d) =
             0x8000L;
             0x8000L;
             0x8000L;
+            0x7c00L;
+            0xfc00L;
+            0x3c00L;
+            0L;
           |],
-          [| 0x7f800009L; 0x3f800000L; 0x80000000L; 0L |] )
+          special_carry )
+  | D.Complex64 -> Some complex_specials
   | _ -> None
 
 let examples ?(scan = false) dts ms =
@@ -628,7 +653,7 @@ let examples ?(scan = false) dts ms =
       match specials dt with
       | None -> []
       | Some (raws, carry) ->
-          [ ex dt m [| 4; 4 |] [ 1 ] raws (if scan then Some carry else None) ]
+          [ ex dt m [| 5; 4 |] [ 1 ] raws (if scan then Some carry else None) ]
     in
     ex dt m [| 1 |] [ 0 ] (Array.make (raws_of dt 1) 1L) None
     :: ex dt m zero [ 1 ] [||] None
@@ -639,10 +664,16 @@ let examples ?(scan = false) dts ms =
 (* Reductions *)
 
 let extremes =
-  let dts = weigh 3 floats @ weigh 2 ints @ weigh 6 D.[ Any Bool; Any Bit ] in
-  prop ~count:25
+  let dts =
+    weigh 3 floats @ weigh 2 ints
+    @ weigh 6 D.[ Any Bool; Any Bit ]
+    @ weigh 4 complexes
+  in
+  prop ~count:30
     ~examples:
-      (examples D.[ Any Float32; Any Float16; Any Bool; Any Int8 ] [ Max; Min ])
+      (examples
+         D.[ Any Float32; Any Float16; Any Bool; Any Int8; Any Complex64 ]
+         [ Max; Min ])
     "extremes give eager's bits"
     (case dts [ Max; Min ])
     (fun c ->
@@ -651,6 +682,7 @@ let extremes =
       cover_floats c;
       cover_shapes c;
       cover "a boolean" (is_bool c.dt);
+      cover "a complex number" (is_complex c.dt);
       cover "an integer" (not (is_float c.dt || is_bool c.dt));
       exact ~scan:false c)
 
@@ -701,11 +733,15 @@ let complex_sums =
 (* Scans *)
 
 let extreme_scans =
-  let dts = weigh 3 floats @ weigh 2 ints @ weigh 6 D.[ Any Bool; Any Bit ] in
-  prop ~count:20
+  let dts =
+    weigh 3 floats @ weigh 2 ints
+    @ weigh 6 D.[ Any Bool; Any Bit ]
+    @ weigh 4 D.[ Any Complex64 ]
+  in
+  prop ~count:24
     ~examples:
       (examples ~scan:true
-         D.[ Any Float32; Any Float16; Any Bool ]
+         D.[ Any Float32; Any Float16; Any Bool; Any Complex64 ]
          [ Max; Min ])
     "extreme scans give eager's bits"
     (case ~scan:true dts [ Max; Min ])
@@ -715,6 +751,7 @@ let extreme_scans =
       cover "a NaN term"
         (float_raws c (fun dt r -> float_class dt r = Nan) <> []);
       cover "a boolean" (is_bool c.dt);
+      cover "a complex number" (is_complex c.dt);
       exact ~scan:true c)
 
 let int_scans =
@@ -870,111 +907,76 @@ let contracted (type v s) (dt : (v, s) D.t) s t raws : (v, s, Nx.host) Nx.t =
   if not t then value dt s raws
   else Nx.transpose (value dt (Array.of_list (List.rev (Array.to_list s))) raws)
 
+(* The contraction of [a] and [b] from [init] into [dt], as [c] pairs their
+   axes, summed in [acc]. *)
+let contraction_op c ~acc dt a b init =
+  let batch = pairs c (fun i -> B i) (Array.length c.eb) in
+  let contracting = pairs c (fun i -> C i) (Array.length c.ek) in
+  P.Contract
+    {
+      order = P.contract_order ~batch ~contracting a b;
+      batch;
+      contracting;
+      acc;
+      out = dt;
+      a;
+      b;
+      init;
+    }
+
 let contract_results (type v s) (dt : (v, s) D.t) c =
   let a = contracted dt (ashape c c.fa c.ra) c.ta c.araws in
   let b = contracted dt (ashape c c.fb c.rb) c.tb c.braws in
   let init = Option.map (value dt (out_shape c)) c.init in
-  let batch = pairs c (fun i -> B i) (Array.length c.eb) in
-  let contracting = pairs c (fun i -> C i) (Array.length c.ek) in
-  let op () =
-    P.eval ~by:"t"
-      (P.Contract
-         {
-           order = P.contract_order ~batch ~contracting a b;
-           batch;
-           contracting;
-           acc = c.acc;
-           out = dt;
-           a;
-           b;
-           init;
-         })
-  in
+  let op () = P.eval ~by:"t" (contraction_op c ~acc:c.acc dt a b init) in
   (a, b, init, Nx.to_array (op ()), Lowered.run op)
 
-let decode dims i =
-  let c = Array.make (Array.length dims) 0 and rest = ref i in
-  for a = Array.length dims - 1 downto 0 do
-    c.(a) <- !rest mod dims.(a);
-    rest := !rest / dims.(a)
-  done;
-  c
-
-let linear dims coords =
-  let i = ref 0 in
-  Array.iteri (fun a k -> i := (!i * dims.(a)) + k) coords;
-  !i
-
-(* [magnitudes c ~term ~start] is, for each result, [start o] plus [term ia ib]
-   over its products of [a]'s element [ia] and [b]'s [ib]. *)
-let magnitudes c ~term ~start =
-  let sa = ashape c c.fa c.ra and sb = ashape c c.fb c.rb in
-  let nb = Array.length c.eb and nfa = Array.length c.fa in
-  Array.init
-    (numel (out_shape c))
-    (fun o ->
-      let oc = decode (out_shape c) o in
-      let at f k = function
-        | B i -> oc.(i)
-        | F i -> oc.(nb + f + i)
-        | C i -> k.(i)
-      in
-      let sum = ref (start o) in
-      for k = 0 to numel c.ek - 1 do
-        let kc = decode c.ek k in
-        let ia = linear sa (Array.map (at 0 kc) c.ra) in
-        let ib = linear sb (Array.map (at nfa kc) c.rb) in
-        sum := !sum +. term ia ib
-      done;
-      !sum)
-
-(* Each part's [|init| + Σ|x·y|] over its products of parts: [ar·br] and [ai·bi]
-   in the real part, [ar·bi] and [ai·br] in the imaginary part. *)
-let part_magnitudes c xs ys init =
-  let start p o =
-    match init with None -> 0. | Some i -> Float.abs (List.nth i p).(o)
+(* Each part's [|init| + Σ|x||y|] over its products of parts, by eager float64
+   contractions: [ar·br] and [ai·bi] in the real part, [ar·bi] and [ai·br] in
+   the imaginary part. *)
+let magnitudes c a b init =
+  let abs ps = List.map Nx.abs ps in
+  let a = abs (parts64 a) and b = abs (parts64 b) in
+  let start p = Option.map (fun i -> List.nth (abs (parts64 i)) p) init in
+  let sum x y init =
+    P.eval ~by:"t" (contraction_op c ~acc:(D.Any D.Float64) D.Float64 x y init)
   in
-  let prod x i y j = Float.abs ((List.nth xs x).(i) *. (List.nth ys y).(j)) in
-  match xs with
-  | [ _ ] -> [ magnitudes c ~term:(fun i j -> prod 0 i 0 j) ~start:(start 0) ]
-  | _ ->
+  match (a, b) with
+  | [ a ], [ b ] -> [ sum a b (start 0) ]
+  | [ ar; ai ], [ br; bi ] ->
       [
-        magnitudes c
-          ~term:(fun i j -> prod 0 i 0 j +. prod 1 i 1 j)
-          ~start:(start 0);
-        magnitudes c
-          ~term:(fun i j -> prod 0 i 1 j +. prod 1 i 0 j)
-          ~start:(start 1);
+        Nx.add (sum ar br (start 0)) (sum ai bi None);
+        Nx.add (sum ar bi (start 1)) (sum ai br None);
       ]
+  | _ -> invalid_arg "magnitudes: not a float"
 
-(* Integers give eager's bits, floats hold the bound. With an init, a zero
-   result's sign follows the order of summation, which the bound leaves open:
-   [+0] added last, or a [-0] init first. *)
+(* Integers give eager's bits. A float result of [K] contracted terms is within
+   [γ(K + 1) (|init| + Σ|a·b|)] of the exact one on each side, a complex
+   result's part within [γ(K + 2)] of that part's magnitudes. With an init, a
+   zero result's sign follows the order of summation, which the bound leaves
+   open: [+0] added last, or a [-0] init first. A NaN result's bits are
+   unspecified. *)
 let contract_check c =
   let (D.Any dt) = c.cdt in
   let a, b, init, e, l = contract_results dt c in
   match D.kind dt with
   | D.Float | D.Complex ->
-      let ps = parts dt in
-      let mags =
-        part_magnitudes c
-          (ps (Nx.to_array a))
-          (ps (Nx.to_array b))
-          (Option.map (fun i -> ps (Nx.to_array i)) init)
+      let k = numel c.ek in
+      let depth = if D.is D.Complex dt then k + 2 else k + 1 in
+      let g = gamma (carrier_roundoff c.acc) depth in
+      let bits = part_bits dt and round = rounding_of dt in
+      let check (e, l) mags =
+        let mags = Nx.to_array mags in
+        Array.iteri
+          (fun o e ->
+            near ~zeros:(c.init = None) ~nans:false ~bits
+              ~bound:((2. *. g *. mags.(o)) +. round e l.(o))
+              e l.(o))
+          e
       in
-      let terms = numel c.ek * List.length mags in
-      let g = gamma (carrier_roundoff c.acc) (terms + 1) in
-      let round = rounding_of dt in
-      List.iteri
-        (fun p (e, l) ->
-          let mags = List.nth mags p in
-          Array.iteri
-            (fun o e ->
-              near ~zeros:(c.init = None)
-                ~bound:((2. *. g *. mags.(o)) +. round e l.(o))
-                e l.(o))
-            e)
-        (List.combine (ps e) (ps l))
+      List.iter2 check
+        (List.combine (parts dt e) (parts dt l))
+        (magnitudes c a b init)
   | _ -> same_bits dt e l
 
 let cover_contraction c =
@@ -1097,6 +1099,51 @@ let several () =
     (fun k -> equal (array int) (Nx.to_array (op k ())) (Lowered.run (op k)))
     [ 0; 1; 2 ]
 
+(* 16-bit products past [int]'s range: [65535 * 65535] wraps. *)
+let uint16_products ~scan () =
+  let x =
+    Nx.create D.Uint16 [| 2; 3 |] [| 65535; 65535; 65535; 2; 65535; 32768 |]
+  in
+  let op () =
+    if scan then P.eval ~by:"t" (scan_op Prod 1 x None)
+    else fst (P.eval ~by:"t" (reduce_op Prod [ 1 ] x))
+  in
+  equal (array int) (Nx.to_array (op ())) (Lowered.run op)
+
+let int16_contraction () =
+  let a = Nx.create D.Int16 [| 4 |] [| -1; -32768; 32767; -32768 |] in
+  let b = Nx.create D.Int16 [| 4 |] [| -1; -32768; -32768; 32767 |] in
+  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (0, 0) ] in
+  let op () =
+    P.eval ~by:"t"
+      (P.Contract
+         {
+           order = P.contract_order ~batch ~contracting a b;
+           batch;
+           contracting;
+           acc = D.Any D.Int16;
+           out = D.Int16;
+           a;
+           b;
+           init = None;
+         })
+  in
+  equal (array int) (Nx.to_array (op ())) (Lowered.run op)
+
+(* A complex product, and a complex128 extreme's scan, are not lowered. *)
+let refused_complex ~scan m () =
+  let x =
+    Nx.create D.Complex128 [| 2 |]
+      [| { Complex.re = 1.; im = 2. }; { re = 3.; im = -1. } |]
+  in
+  let op () =
+    if scan then P.eval ~by:"t" (scan_op m 0 x None)
+    else fst (P.eval ~by:"t" (reduce_op m [ 0 ] x))
+  in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Lowered.run op)
+
 (* Expansions: the operations lower through core reductions and maps. *)
 
 let nan_payload = Int32.float_of_bits 0xffa00001l
@@ -1196,6 +1243,15 @@ let cases =
       test "a min-pooling window gives eager's bits" (fun () ->
           pooled Min Float.infinity);
       test "several reductions of one loop" several;
+      test "a uint16 product wraps past int" (uint16_products ~scan:false);
+      test "a uint16 running product wraps past int"
+        (uint16_products ~scan:true);
+      test "an int16 contraction wraps at the extremes" int16_contraction;
+      test "a complex product is refused" (refused_complex ~scan:false Prod);
+      test "a complex running product is refused"
+        (refused_complex ~scan:true Prod);
+      test "a complex128 running maximum is refused"
+        (refused_complex ~scan:true Max);
       test "an argmax gives eager's bits and positions" (arg Max);
       test "an argmin gives eager's bits and positions" (arg Min);
       test "moments within float32 sums' differences" moments;

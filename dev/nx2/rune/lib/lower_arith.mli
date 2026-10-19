@@ -52,8 +52,9 @@ val of_parts : Nx_array.Dtype.any -> Ops.t list -> Ops.t
 (** [of_parts dt us] is the node of a value of [dt] whose {!parts} are [us]. *)
 
 val fill : ('v, 's) Nx_array.Dtype.t -> 'v -> Dtype.const list
-(** [fill dt x] is the element [x] of [dt] as constants of {!dtype}[ dt], one
-    per part ({!parts}). *)
+(** [fill dt x] is the element [x] of [dt] as the constant of each of its
+    {!parts}. Each holds the bits {!Nx_kernel.Prog.bits} gives [x], as a
+    constant of a program does: a NaN keeps its sign and payload. *)
 
 val prog : Nx_kernel.Prog.t -> int array -> Ops.t array -> Ops.t array
 (** [prog p s ins] is the node of each output of [p] run at every index of the

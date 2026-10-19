@@ -30,5 +30,5 @@ val op :
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
     [Gather], [Scatter], [Sort], [Fold], [Assemble], [Fft], [Linalg], [Place]
-    and [Check], a [Bitcast] that changes width, and a reduction or a scan of a
-    complex [Prod], [Max] or [Min]. *)
+    and [Check], a [Bitcast] that changes width, a reduction or a scan of a
+    complex [Prod], and a scan of a [complex128] [Max] or [Min]. *)

@@ -15,13 +15,14 @@ let unlowered what =
 (* Padded loads
 
    A padded load spaces each axis's elements by its interior padding, pads or
-   crops its ends, then takes its windows: movements, which tolk reads as loads
-   gated by their validity, the fill where they read nothing. A complex value
-   pads each part with its part of the fill. *)
+   crops its ends, then takes its windows: movements that pad with the fill, a
+   constant of its bits, which tolk reads as loads gated by their validity. A
+   complex value pads each part with the fill's part. *)
 
-(* [interior u k] is [u] with [k.(i)] fill elements between neighbours along
-   each axis [i]: each element followed by its [k], the last's cropped. *)
-let interior c u k =
+(* [interior ~value u k] is [u] with [k.(i)] elements of [value] between
+   neighbours along each axis [i]: each element followed by its [k], the last's
+   cropped. *)
+let interior ~value u k =
   let pad1 u i k =
     let s = Shape.shape u in
     match List.nth s i with
@@ -35,7 +36,7 @@ let interior c u k =
                   s))
         in
         let spread =
-          Shape.pad ~value:c spread
+          Shape.pad ~value spread
             (List.init (r + 1) (fun j ->
                  if j = i + 1 then Some (Ops.Int 0, Ops.Int k) else None))
         in
@@ -55,64 +56,59 @@ let interior c u k =
   Iarray.iteri (fun i k -> u := pad1 !u i k) k;
   !u
 
-(* [ends c u lo hi] pads each axis [i] with [lo.(i)] elements before and
-   [hi.(i)] after, cropping where negative. *)
-let ends c u lo hi =
-  let crop =
-    List.mapi
-      (fun i d ->
-        let n = match d with Ops.Int n -> n | Ops.Sym _ -> assert false in
-        let l = Int.max 0 (-Iarray.get lo i)
-        and h = Int.max 0 (-Iarray.get hi i) in
-        Some (Ops.Int l, Ops.Int (n - h)))
-      (Shape.shape u)
-  in
+(* [ends ~value u lo hi] pads each axis [i] with [lo.(i)] elements of [value]
+   before and [hi.(i)] after, cropping where negative. It pads before it crops:
+   a crop may reach into the other end's padding, as [lo = -4], [hi = 2] on an
+   axis of [3]. *)
+let ends ~value u lo hi =
   let pad =
     List.init (Shape.ndim u) (fun i ->
         Some
           ( Ops.Int (Int.max 0 (Iarray.get lo i)),
             Ops.Int (Int.max 0 (Iarray.get hi i)) ))
   in
-  Shape.pad ~value:c (Shape.shrink u crop) pad
+  let u = Shape.pad ~value u pad in
+  Shape.shrink u
+    (List.init (Shape.ndim u) (fun i ->
+         let n = Lower_bits.extent u i in
+         Some
+           ( Ops.Int (Int.max 0 (-Iarray.get lo i)),
+             Ops.Int (n - Int.max 0 (-Iarray.get hi i)) )))
 
 (* [window u w] is [u]'s windows along [w.axis] in its place, their elements
-   along a new last axis. *)
+   along a new last axis. A window longer than the axis gives none, where tolk's
+   pool refuses it. *)
 let window u (w : Nx_array.Move.window) =
   let r = Shape.ndim u in
-  let last = List.filter (( <> ) w.axis) (List.init r Fun.id) @ [ w.axis ] in
-  let pooled =
-    Shape.pool ~stride:[ w.step ] ~dilation:[ w.dilation ]
-      (Shape.permute u last) [ w.size ]
-  in
-  Shape.permute pooled
-    (List.init r (fun a ->
-         if a = w.axis then r - 1 else if a < w.axis then a else a - 1)
-    @ [ r ])
-
-(* A float part pads its bits: tolk pads a value with zeros and adds the fill,
-   which turns a [-0.] fill into [+0.]. *)
-let as_bits (c : Dtype.const) u =
-  let t = Ops.dtype u in
-  if not (Dtype.is_float t) then (c, u, Fun.id)
+  if ((w.size - 1) * w.dilation) + 1 > Lower_bits.extent u w.axis then
+    let s = Shape.shape u in
+    let none = List.mapi (fun j d -> if j = w.axis then Ops.Int 0 else d) s in
+    let empty =
+      Shape.shrink u
+        (List.init r (fun j ->
+             if j = w.axis then Some (Ops.Int 0, Ops.Int 0) else None))
+    in
+    Shape.expand
+      (Shape.reshape empty (none @ [ Ops.Int 1 ]))
+      (none @ [ Ops.Int w.size ])
   else
-    let w =
-      List.find (fun d -> Dtype.itemsize d = Dtype.itemsize t) Dtype.uints
+    let last = List.filter (( <> ) w.axis) (List.init r Fun.id) @ [ w.axis ] in
+    let pooled =
+      Shape.pool ~stride:[ w.step ] ~dilation:[ w.dilation ]
+        (Shape.permute u last) [ w.size ]
     in
-    let c =
-      match c with
-      | #Dtype.value as v -> (Dtype.bitcast t w v :> Dtype.const)
-      | `Invalid -> c
-    in
-    (c, Ops.bitcast u w, fun u -> Ops.bitcast u t)
+    Shape.permute pooled
+      (List.init r (fun a ->
+           if a = w.axis then r - 1 else if a < w.axis then a else a - 1)
+      @ [ r ])
 
 let padded (type v s) (dt : (v, s) D.t) (fill : v) (pad : Nx_kernel.pad) u =
-  let part c u =
-    let c, u, back = as_bits c u in
-    let u = ends c (interior c u pad.interior) pad.lo pad.hi in
-    back (Iarray.fold_left window u pad.windows)
+  let moved u value =
+    let u = ends ~value (interior ~value u pad.interior) pad.lo pad.hi in
+    Iarray.fold_left window u pad.windows
   in
   let d = D.Any dt in
-  Arith.of_parts d (List.map2 part (Arith.fill dt fill) (Arith.parts d u))
+  Arith.of_parts d (List.map2 moved (Arith.parts d u) (Arith.fill dt fill))
 
 let load (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) : 'd P.load -> Ops.t =
   function
@@ -139,13 +135,6 @@ let monoid (m : Nx_kernel.monoid) : Reduce.monoid option =
   | Min -> Some Min
   | Logsumexp -> None
 
-(* A complex term has no order and no product tolk folds. *)
-let direct m src =
-  match (m, src) with
-  | (Reduce.Prod | Max | Min), D.Any dt when D.is D.Complex dt ->
-      unlowered "a complex product or extreme"
-  | _ -> ()
-
 (* [reduction r] is the monoid and the output a reduction folds where a graph
    folds it, and its dtype. *)
 let reduction (type d a) (r : (d, a) P.reduction) =
@@ -169,9 +158,7 @@ let reduce (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axes prog rs
       let ys = body node layout prog loads in
       let axes = Iarray.to_list axes in
       let fold (m, k, dt) =
-        let src = output prog k in
-        direct m src;
-        Reduce.reduce m axes ~src dt ys.(k)
+        Reduce.reduce m axes ~src:(output prog k) dt ys.(k)
       in
       Some (Array.of_list (List.map fold rs))
 
@@ -182,7 +169,6 @@ let scan (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axis prog r loads
   | Some (m, k, dt) ->
       let ys = body node layout prog loads in
       let src = output prog k in
-      direct m src;
       let carry = Option.map (fun (P.Any c) -> node c) carry in
       Some [| Reduce.scan m axis ~carry ~src dt ys.(k) |]
 
@@ -195,20 +181,17 @@ let scan (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axis prog r loads
 
 let sints s = List.map (fun n -> Ops.Int n) s
 
-let extent u i =
-  match List.nth (Shape.shape u) i with
-  | Ops.Int n -> n
-  | Ops.Sym _ -> invalid_arg "Rune.Lower: a symbolic extent"
-
 let slice1 u i ({ start; count; step } : Nx_array.Move.range) =
   let r = Shape.ndim u in
   let only f = List.init r (fun j -> if j = i then Some (f ()) else None) in
-  let n = extent u i in
+  let n = Lower_bits.extent u i in
   let u, start, step =
     if step < 0 then (Shape.flip u [ i ], n - 1 - start, -step)
     else (u, start, step)
   in
-  if count = 0 || step = 1 then
+  (* An empty range's start may lie outside an empty axis. *)
+  if count = 0 then Shape.shrink u (only (fun () -> (Ops.Int 0, Ops.Int 0)))
+  else if step = 1 then
     Shape.shrink u (only (fun () -> (Ops.Int start, Ops.Int (start + count))))
   else
     let stop = Int.min n (start + (count * step)) in

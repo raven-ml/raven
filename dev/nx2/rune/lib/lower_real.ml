@@ -10,6 +10,7 @@
    are made safe first. *)
 
 open Tolk
+open Lower_bits
 
 (* Types
 
@@ -20,8 +21,6 @@ open Tolk
 let wide x = Dtype.equal (Ops.dtype x) Float64
 let pick x (a, b) = if wide x then b else a
 let width x = if wide x then 64 else 32
-let utype x : Dtype.t = if wide x then Uint64 else Uint32
-let itype x : Dtype.t = if wide x then Int64 else Int32
 let num u v = Shape.const_like u (`Float v)
 let int u n = Shape.const_like u (`Int (Bigint.of_int n))
 let word u n = Shape.const_like u (`Int (Bigint.of_int64_unsigned n))
@@ -30,7 +29,6 @@ let u64 u n =
   Shape.const_like ~dtype:Uint64 u (`Int (Bigint.of_int64_unsigned n))
 
 let con x p = num x (pick x p)
-let bits x = Ops.bitcast x (utype x)
 
 let of_bits u =
   Ops.bitcast u (if Dtype.equal (Ops.dtype u) Uint64 then Float64 else Float32)
@@ -41,7 +39,6 @@ let ( +: ) = Ops.add
 let ( -: ) = Ops.sub
 let ( *: ) = Ops.mul
 let ( /: ) x y = Ops.alu x Op.Fdiv [ y ]
-let mulacc a b c = Ops.alu a Op.Mulacc [ b; c ]
 let where = Ops.where
 let lt = Ops.lt
 let gt x y = Ops.lt y x
@@ -53,7 +50,6 @@ let ( &&: ) = Ops.bitwise_and
 (* [x <= y] and [x >= y], false where an operand is NaN. *)
 let le x y = lt x y ||: eq x y
 let ge x y = le y x
-let isnan x = ne x x
 let band = Ops.bitwise_and
 let bor = Ops.bitwise_or
 let bxor = Ops.bitwise_xor
@@ -78,7 +74,6 @@ let one_bits = (0x3F800000L, 0x3FF0000000000000L)
 let sqrt_half_bits = (0x3F3504F3L, 0x3FE6A09E667F3BCDL)
 let min_normal_bits = (0x00800000L, 0x0010000000000000L)
 let inf_bits = (0x7F800000L, 0x7FF0000000000000L)
-let nan_bits = (0x7FC00000L, 0x7FF8000000000000L)
 let sub_scale = (0x1p23, 0x1p52)
 
 (* Adding the shifter rounds a float below half of it to the nearest integer,
@@ -256,18 +251,12 @@ let poly x p = horner x (pick x p)
 
 (* Helpers *)
 
-let abs_bits x = of_bits (band (bits x) (mag_word x))
-let neg x = of_bits (bxor (bits x) (sign_word x))
-
 let copysign m s =
   of_bits (bor (band (bits m) (mag_word m)) (band (bits s) (sign_word s)))
 
-let negative x = set (shr (bits x) (width x - 1))
-let qnan x = of_bits (word (bits x) (pick x nan_bits))
-
 (* 2^k for a normal power, [k] an int32 node. *)
 let pow2 x k =
-  let e = Ops.cast (Ops.add k (int k (pick x bias))) (utype x) in
+  let e = Ops.cast (Ops.add k (int k (pick x bias))) (unsigned (Ops.dtype x)) in
   of_bits (shl e (pick x mbits))
 
 (* y 2^k rounded once: the first product is exact. *)
@@ -289,20 +278,24 @@ let div_pair (nh, nl) (dh, dl) =
   let dh, dl = fast_two_sum dh dl in
   let rd = one dh /: dh in
   let qh = nh *: rd in
-  (qh, (mulacc (neg qh) dh nh +: mulacc (neg qh) dl nl) *: rd)
+  (qh, (mulacc (negated qh) dh nh +: mulacc (negated qh) dl nl) *: rd)
 
 (* From t = v + shifter, the integer nearest v: as a float, and as an int32 from
    the difference of the bits. *)
 let nearest t =
   let s = con t shifter in
-  let d = Ops.sub (Ops.bitcast t (itype t)) (Ops.bitcast s (itype t)) in
+  let d =
+    Ops.sub
+      (Ops.bitcast t (signed (Ops.dtype t)))
+      (Ops.bitcast s (signed (Ops.dtype t)))
+  in
   (t -: s, Ops.cast d Int32)
 
 (* NaN results: the first NaN operand, else the quiet NaN of a clear sign where
    r is a NaN. *)
 
-let nan1 a r = where (isnan a) a (where (isnan r) (qnan r) r)
-let nan2 a b r = where (isnan a) a (nan1 b r)
+let nan1 a r = where (is_nan a) a (where (is_nan r) (nan r) r)
+let nan2 a b r = where (is_nan a) a (nan1 b r)
 
 (* Exact kinds *)
 
@@ -310,10 +303,10 @@ let sign a =
   let s =
     where (gt a (zero a)) (one a) (where (lt a (zero a)) (num a (-1.)) (zero a))
   in
-  where (isnan a) a s
+  where (is_nan a) a s
 
 let trunc a =
-  let m = abs_bits a in
+  let m = magnitude a in
   let c = con a integral in
   let t = m +: c -: c in
   let t = where (gt t m) (t -: one a) t in
@@ -330,18 +323,18 @@ let ceil a =
 
 let round a =
   let t = trunc a in
-  let d = abs_bits (a -: t) in
+  let d = magnitude (a -: t) in
   where (ge d (half a)) (where (lt a (zero a)) (t -: one a) (t +: one a)) t
 
 (* The greater (lesser) operand, [a] where [a] is NaN, and of equal operands the
    AND (OR) of their bits. *)
 let maximum a b =
-  let g = where (isnan a) a (where (gt a b) a b) in
+  let g = where (is_nan a) a (where (gt a b) a b) in
   let ne = where (ne a b) (ones a) (word (bits a) 0L) in
   of_bits (band (bits g) (bor (bits a) ne))
 
 let minimum a b =
-  let g = where (isnan a) a (where (lt a b) a b) in
+  let g = where (is_nan a) a (where (lt a b) a b) in
   let eq = where (ne a b) (word (bits a) 0L) (ones a) in
   of_bits (bor (bits g) (band (bits a) eq))
 
@@ -350,7 +343,7 @@ let minimum a b =
 (* x = k ln2 + r, |r| <= ln2/2, and rc r's rounding error. *)
 let exp_reduce x =
   let kf, k = nearest (mulacc x (con x log2e) (con x shifter)) in
-  let m = neg kf in
+  let m = negated kf in
   let rh = mulacc m (con x ln2_hi) x in
   let r = mulacc m (con x ln2_lo) rh in
   (r, mulacc m (con x ln2_lo) (rh -: r), k)
@@ -360,14 +353,14 @@ let exp x =
   let c = where (gt c (con x exp_lo)) c (con x exp_lo) in
   let r, _, k = exp_reduce c in
   let em = mulacc (r *: r) (poly r exp_q) r in
-  where (isnan x) x (scale (one x +: em) k)
+  where (is_nan x) x (scale (one x +: em) k)
 
 (* exp where 2^k (1 + em) is normal: k added to the exponent. *)
 let exp_near x =
   let r, _, k = exp_reduce x in
   let em = mulacc (r *: r) (poly r exp_q) r in
   let b = bits (one x +: em) in
-  of_bits (Ops.add b (shl (Ops.cast k (utype x)) (pick x mbits)))
+  of_bits (Ops.add b (shl (Ops.cast k (unsigned (Ops.dtype x))) (pick x mbits)))
 
 let exp2 x =
   let x = where (gt x (con x exp2_hi)) (con x exp2_hi) x in
@@ -382,10 +375,10 @@ let expm1 x =
   let h = mulacc (r *: r) (poly r exp_q) (mulacc rc r rc) in
   let cap = int k (pick x expm1_kcap) in
   let m = pow2 x (Ops.sub (int k 0) (where (gt k cap) cap k)) in
-  let uh, ul = two_sum (one x) (neg m) in
+  let uh, ul = two_sum (one x) (negated m) in
   let sh, sl = two_sum uh r in
   let y = scale (sh +: (sl +: (ul +: h))) k in
-  nan1 x (where (lt (abs_bits x) (con x expm1_tiny)) x y)
+  nan1 x (where (lt (magnitude x) (con x expm1_tiny)) x y)
 
 (* Logarithms *)
 
@@ -415,13 +408,13 @@ let log_core (f, k) c =
   let sr =
     mulacc s (mulacc z (poly z log_t) hfsq) (mulacc k (con f ln2_lo) c)
   in
-  mulacc k (con f ln2_hi) (neg (hfsq -: sr -: f))
+  mulacc k (con f ln2_hi) (negated (hfsq -: sr -: f))
 
 let log_special u x y =
   let y = where (eq u (inf u)) u y in
-  let y = where (eq u (zero u)) (neg (inf u)) y in
-  let y = where (lt u (zero u)) (qnan u) y in
-  where (isnan x) x y
+  let y = where (eq u (zero u)) (negated (inf u)) y in
+  let y = where (lt u (zero u)) (nan u) y in
+  where (is_nan x) x y
 
 let log x = log_special x x (log_core (log_reduce x) (zero x))
 
@@ -448,7 +441,7 @@ let log1p x =
    float64, the second product and its subtraction kept as pairs. *)
 let rem_cw x =
   let qf, q = nearest (mulacc x (con x two_over_pi) (con x shifter)) in
-  let mq = neg qf in
+  let mq = negated qf in
   if not (wide x) then
     let a = mulacc mq (con x pio2_hi) x in
     let b = mulacc mq (con x pio2_lo) a in
@@ -457,8 +450,8 @@ let rem_cw x =
   else
     let a = mulacc mq (con x pio2_hi) x in
     let p = qf *: con x pio2_lo in
-    let pe = mulacc qf (con x pio2_lo) (neg p) in
-    let bh, bl = two_sum a (neg p) in
+    let pe = mulacc qf (con x pio2_lo) (negated p) in
+    let bh, bl = two_sum a (negated p) in
     let lo = mulacc mq (con x pio2_3) (bl -: pe) in
     let hi, lo = fast_two_sum bh lo in
     (hi, lo, q)
@@ -564,12 +557,14 @@ let rem_big32 x =
   let vh, vl = two_sum c2 c1 in
   let vlo = vl +: c0 in
   let ph = vh *: con x pio2_hi in
-  let pl = mulacc vh (con x pio2_hi) (neg ph) in
+  let pl = mulacc vh (con x pio2_hi) (negated ph) in
   let pl = mulacc vh (con x pio2_lo) (mulacc vlo (con x pio2_hi) pl) in
   let hi = ph +: pl in
   let lo = pl -: (hi -: ph) in
   let n = negative x in
-  (where n (neg hi) hi, where n (neg lo) lo, where n (Ops.sub (int q 0) q) q)
+  ( where n (negated hi) hi,
+    where n (negated lo) lo,
+    where n (Ops.sub (int q 0) q) q )
 
 (* Payne and Hanek at float64, for finite |x| >= 2^28: m of 53 bits and a window
    of 192 bits, the fraction's top 128 bits kept. *)
@@ -614,11 +609,13 @@ let rem_big64 x =
   let sh, sl = two_sum c2 c1 in
   let vh, vl = fast_two_sum sh (sl +: c0) in
   let ph = vh *: con x pio2_hi in
-  let pl = mulacc vh (con x pio2_hi) (neg ph) in
+  let pl = mulacc vh (con x pio2_hi) (negated ph) in
   let pl = mulacc vh (con x pio2_lo) (mulacc vl (con x pio2_hi) pl) in
   let hi, lo = fast_two_sum ph pl in
   let n = negative x in
-  (where n (neg hi) hi, where n (neg lo) lo, where n (Ops.sub (int q 0) q) q)
+  ( where n (negated hi) hi,
+    where n (negated lo) lo,
+    where n (Ops.sub (int q 0) q) q )
 
 (* Whether x takes the integer reduction: |x| finite and at or past the
    switch. *)
@@ -639,46 +636,47 @@ let sin_kernel hi lo =
 
 let cos_kernel hi lo =
   let z = hi *: hi in
-  let zl = mulacc hi hi (neg z) in
+  let zl = mulacc hi hi (negated z) in
   let hz = half hi *: z in
   let ch = one hi -: hz in
   let tail =
-    mulacc (z *: z) (poly z cos_c) (mulacc (neg hi) lo (num hi (-0.5) *: zl))
+    mulacc (z *: z) (poly z cos_c)
+      (mulacc (negated hi) lo (num hi (-0.5) *: zl))
   in
   (ch, one hi -: ch -: hz +: tail)
 
 (* y with its sign flipped where bit 1 of k is set. *)
 let flip2 y k =
-  let b = Ops.cast (band k (int k 2)) (utype y) in
+  let b = Ops.cast (band k (int k 2)) (unsigned (Ops.dtype y)) in
   of_bits (bxor (bits y) (shl b (width y - 2)))
 
 let odd q = set (band q (int q 1))
-let small x = Ops.logical_not (ge (abs_bits x) (con x trig_tiny))
+let small x = Ops.logical_not (ge (magnitude x) (con x trig_tiny))
 
 let sin x =
   let hi, lo, q = rem x in
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (ch +: cl) (sh +: sl)) q in
-  let y = where (isnan y) (qnan y) y in
+  let y = where (is_nan y) (nan y) y in
   where (small x) x y
 
 let cos x =
   let hi, lo, q = rem x in
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Ops.add q (int q 1)) in
-  let y = where (isnan y) (qnan y) y in
-  where (isnan x) x y
+  let y = where (is_nan y) (nan y) y in
+  where (is_nan x) x y
 
 let tan x =
   let hi, lo, q = rem x in
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   (* -cos / sin in odd quadrants, sin / cos in even *)
   let o = odd q in
-  let n = (where o (neg ch) sh, where o (neg cl) sl) in
+  let n = (where o (negated ch) sh, where o (negated cl) sl) in
   let d = (where o sh ch, where o sl cl) in
   let qh, ql = div_pair n d in
   let y = qh +: ql in
-  let y = where (isnan y) (qnan y) y in
+  let y = where (is_nan y) (nan y) y in
   where (small x) x y
 
 (* Inverse sine and cosine *)
@@ -690,12 +688,12 @@ let asin_reduce a =
   let z = where big ((one a -: a) *: half a) (a *: a) in
   let s = where big (Ops.sqrt z) a in
   let c =
-    where (big &&: gt z (zero a)) (mulacc (neg s) s z /: (s +: s)) (zero a)
+    where (big &&: gt z (zero a)) (mulacc (negated s) s z /: (s +: s)) (zero a)
   in
   (s, mulacc (s *: z) (poly z asin_b) c, big)
 
 let asin x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let s, tail, big = asin_reduce a in
   let d = s +: s in
   let hi = con x pio2_hi -: d in
@@ -703,11 +701,11 @@ let asin x =
     con x pio2_hi -: hi -: d +: mulacc (num x (-2.)) tail (con x pio2_lo)
   in
   let y = where big (hi +: lo) (s +: tail) in
-  let y = where (gt a (one x)) (qnan x) y in
+  let y = where (gt a (one x)) (nan x) y in
   nan1 x (copysign y x)
 
 let acos x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let s, tail, big = asin_reduce a in
   let n = negative x in
   let term = where big (s +: s) s in
@@ -715,11 +713,11 @@ let acos x =
   let base_hi = where big (where n (con x pi_hi) (zero x)) (con x pio2_hi) in
   let base_lo = where big (where n (con x pi_lo) (zero x)) (con x pio2_lo) in
   let plus = ne big n in
-  let term = where plus term (neg term) in
-  let tail = where plus tail (neg tail) in
+  let term = where plus term (negated term) in
+  let tail = where plus tail (negated tail) in
   let hh, hl = two_sum base_hi term in
   let y = hh +: (hl +: (base_lo +: tail)) in
-  nan1 x (where (gt a (one x)) (qnan x) y)
+  nan1 x (where (gt a (one x)) (nan x) y)
 
 (* Hyperbolic functions: for a = k ln2 + r, em = expm1 r and w = 1 + em as
    pairs, and 2^-2k. *)
@@ -734,7 +732,7 @@ let hyp_reduce a =
   ((r, em_lo), (wh, wl +: em_lo), m, k)
 
 let sinh x =
-  let (eh, el), w, m, k = hyp_reduce (abs_bits x) in
+  let (eh, el), w, m, k = hyp_reduce (magnitude x) in
   let nh, nl = two_sum (one x -: m) eh in
   let qh, ql = div_pair (nh, nl +: el) w in
   let vh, vl = two_sum eh qh in
@@ -742,46 +740,46 @@ let sinh x =
   nan1 x (copysign (scale y (Ops.sub k (int k 1))) x)
 
 let cosh x =
-  let _, (wh, wl), m, k = hyp_reduce (abs_bits x) in
+  let _, (wh, wl), m, k = hyp_reduce (magnitude x) in
   let qh, ql = div_pair (m, zero x) (wh, wl) in
   let vh, vl = two_sum wh qh in
   let y = vh +: (vl +: (wl +: ql)) in
   nan1 x (scale y (Ops.sub k (int k 1)))
 
 let tanh x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let z = a *: a in
   let small = mulacc (a *: z) (poly z tanh_t) a in
   let hi = con x tanh_hi in
   let w = exp_near (two x *: where (lt a hi) a hi) in
   let dh, dl = fast_two_sum w (one x) in
   let qh = two x /: dh in
-  let ql = (mulacc (neg qh) dh (two x) -: (qh *: dl)) *: (half x *: qh) in
+  let ql = (mulacc (negated qh) dh (two x) -: (qh *: dl)) *: (half x *: qh) in
   let s = one x -: qh in
   let y =
     where (lt a (con x tanh_small)) small (s +: (one x -: s -: qh -: ql))
   in
   let y = of_bits (bor (bits y) (band (bits x) (sign_word x))) in
-  where (isnan x) x y
+  where (is_nan x) x y
 
 (* pow: 2^(y log2|x|), log2|x| as a pair, the exponential exp2's. *)
 let pow x y =
-  let ax = abs_bits x and ay = abs_bits y in
+  let ax = magnitude x and ay = magnitude y in
   let f, k = log_reduce ax in
   let d = two x +: f in
   let dl = f -: (d -: two x) in
   let rd = one x /: d in
   let sh = f *: rd in
-  let sl = mulacc (neg sh) dl (mulacc (neg sh) d f) *: rd in
+  let sl = mulacc (negated sh) dl (mulacc (negated sh) d f) *: rd in
   (* s^3 as c + cl, sl's share 3 s^2 sl included *)
   let z = sh *: sh in
-  let zl = mulacc sh sh (neg z) in
+  let zl = mulacc sh sh (negated z) in
   let c = sh *: z in
-  let cl = mulacc (num x 3. *: z) sl (mulacc sh zl (mulacc sh z (neg c))) in
+  let cl = mulacc (num x 3. *: z) sl (mulacc sh zl (mulacc sh z (negated c))) in
   (* (2/3) s^3 as a + al *)
   let a = c *: con x two_thirds_hi in
   let al =
-    mulacc c (con x two_thirds_hi) (neg a)
+    mulacc c (con x two_thirds_hi) (negated a)
     +: mulacc c (con x two_thirds_lo) (cl *: con x two_thirds_hi)
   in
   let tp = poly z log_tp in
@@ -791,18 +789,18 @@ let pow x y =
   let lh = head in
   (* log2|x| = k + (lh + ll) / ln2 *)
   let ph = lh *: con x log2e in
-  let pl = mulacc lh (con x log2e) (neg ph) in
+  let pl = mulacc lh (con x log2e) (negated ph) in
   let pl = mulacc lh (con x log2e_lo) (mulacc ll (con x log2e) pl) in
   let g0, g1 = two_sum k ph in
   let gh = g0 +: (g1 +: pl) in
   let gl = g1 +: pl -: (gh -: g0) in
   let at_inf = eq ax (inf x) and at_zero = eq ax (zero x) in
-  let gh = where at_inf ax (where at_zero (neg (inf x)) gh) in
+  let gh = where at_inf ax (where at_zero (negated (inf x)) gh) in
   let gl = where (at_inf ||: at_zero) (zero x) gl in
   (* y log2|x|; past the range the result is 0 or inf and the tail may be NaN *)
   let hi = con x pow_hi and lo = con x pow_lo in
   let yh = y *: gh in
-  let yl = mulacc y gl (mulacc y gh (neg yh)) in
+  let yl = mulacc y gl (mulacc y gh (negated yh)) in
   let yl = where (le yh hi &&: ge yh lo) yl (zero x) in
   let yh = where (gt yh hi) hi yh in
   let yh = where (lt yh lo) lo yh in
@@ -815,9 +813,9 @@ let pow x y =
   let last = where (ge ay i) (bits ay) (bits ty) in
   let odd = lt ay (two x *: i) &&: integer &&: set (band last (int last 1)) in
   let n = negative x in
-  let v = where (n &&: odd) (neg v) v in
+  let v = where (n &&: odd) (negated v) v in
   let finite = ne ax (zero x) &&: lt ax (inf x) in
-  let v = where (n &&: Ops.logical_not integer &&: finite) (qnan x) v in
+  let v = where (n &&: Ops.logical_not integer &&: finite) (nan x) v in
   let v = where (eq ax (one x) &&: eq ay (inf x)) (one x) v in
   let v = nan2 x y v in
   where (eq x (one x) ||: eq y (zero x)) (one x) v
@@ -873,8 +871,8 @@ let atan_pos a al =
   let den = where b4 a (mulacc c a (n 1.)) in
   let rden = n 1. /: den in
   let t = where b1 (num_ *: rden) a in
-  let rest = mulacc (neg t) den num_ in
-  let tl = where b1 (mulacc al (mulacc (neg t) c (n 1.)) rest *: rden) al in
+  let rest = mulacc (negated t) den num_ in
+  let tl = where b1 (mulacc al (mulacc (negated t) c (n 1.)) rest *: rden) al in
   let tl = where b4 (rest *: rden) tl in
   let tl = where (lt a (inf a)) tl (n 0.) in
   let pick4 v4 v3 v2 v1 =
@@ -895,21 +893,21 @@ let atan_pos a al =
   fast_two_sum hh (hl +: (cl +: mulacc tl w p))
 
 let atan x =
-  if wide x then nan1 x (copysign (fst (atan_pos (abs_bits x) (zero x))) x)
+  if wide x then nan1 x (copysign (fst (atan_pos (magnitude x) (zero x))) x)
   else
-    let a = abs_bits x in
+    let a = magnitude x in
     let big = gt a (one x) in
     let p = atan_k32 (where big (one x /: a) a) in
     let y = where big (con x pio2_hi +: (con x pio2_lo -: p)) p in
     let y = copysign y x in
-    let y = where (isnan y) (qnan y) y in
-    where (isnan x) x y
+    let y = where (is_nan y) (nan y) y in
+    where (is_nan x) x y
 
 (* The angle of (|x|, |y|) from atan of the smaller over the larger; by
    quadrant, added to or subtracted from 0, pi/2 or pi as a pair, then given y's
    sign. *)
 let atan2 y x =
-  let ax = abs_bits x and ay = abs_bits y in
+  let ax = magnitude x and ay = magnitude y in
   let swap = gt ay ax in
   let num_ = where swap ax ay and den = where swap ay ax in
   let both_inf = eq ax (inf x) &&: eq ay (inf x) in
@@ -927,7 +925,7 @@ let atan2 y x =
       let t = where (eq den (zero x)) (zero x) t in
       let t = where both_inf (one x) t in
       let p = atan_k32 t in
-      let p = where minus (neg p) p in
+      let p = where minus (negated p) p in
       let hh, hl = two_sum base_hi p in
       hh +: (hl +: base_lo)
     else
@@ -936,20 +934,21 @@ let atan2 y x =
       let num_ = num_ *: s and den = den *: s in
       let rden = one x /: den in
       let t = num_ *: rden in
-      let tl = mulacc (neg t) den num_ *: rden in
+      let tl = mulacc (negated t) den num_ *: rden in
       let degenerate = eq den (zero x) ||: both_inf ||: eq den (inf x) in
       let t = where (eq den (zero x)) (zero x) t in
       let t = where both_inf (one x) t in
       let tl = where degenerate (zero x) tl in
       let ph, pl = atan_pos t tl in
-      let ph = where minus (neg ph) ph and pl = where minus (neg pl) pl in
+      let ph = where minus (negated ph) ph
+      and pl = where minus (negated pl) pl in
       let hh, hl = two_sum base_hi ph in
       hh +: (hl +: (base_lo +: pl))
   in
   nan2 y x (copysign v y)
 
 let erf32 x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let z = a *: a in
   let e =
     horner z
@@ -993,10 +992,10 @@ let erf32 x =
       ]
   in
   let r = copysign (where (lt a (one x)) small (one x -: q)) x in
-  where (isnan x) x r
+  where (is_nan x) x r
 
 let erf_near64 x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let z = a *: a in
   let e =
     horner z
@@ -1050,11 +1049,11 @@ let erf_near64 x =
       ]
   in
   let r = copysign (where (lt a (one x)) small (one x -: q)) x in
-  where (isnan x) x r
+  where (is_nan x) x r
 
 (* Past 2.5: erf a = 1 - exp(G(a) - a^2), a taken as 5.95 past it. *)
 let erf_far64 x =
-  let a = abs_bits x in
+  let a = magnitude x in
   let cap = num x 5.95 in
   let b = where (lt cap a) cap a in
   let u = b -: num x 4.25 in
@@ -1078,7 +1077,7 @@ let erf_far64 x =
 
 let erf x =
   if not (wide x) then erf32 x
-  else where (gt (abs_bits x) (num x 2.5)) (erf_far64 x) (erf_near64 x)
+  else where (gt (magnitude x) (num x 2.5)) (erf_far64 x) (erf_near64 x)
 
 (* fmod, exact. With |x| = mx 2^ex and |y| = my 2^ey, mx and my integers of the
    significand's bits, |x| mod |y| is (mx 2^(ex - ey) mod my) 2^ey: the
@@ -1121,15 +1120,15 @@ let fmod x y =
   let m = Ops.cast !r (Ops.dtype x) *: pow2 x e1 *: pow2 x (Ops.sub e e1) in
   let sx = band (bits x) (sign_word x) in
   let r = where (lt ux uy) x (of_bits (bor (bits m) sx)) in
-  where special (where (isnan x) x (where (isnan y) y (qnan x))) r
+  where special (where (is_nan x) x (where (is_nan y) y (nan x))) r
 
 (* Kinds *)
 
 let unary (k : Nx_kernel.Prog.unary) x =
   match k with
-  | Neg -> neg x
+  | Neg -> negated x
   | Recip -> nan1 x (one x /: x)
-  | Abs -> abs_bits x
+  | Abs -> magnitude x
   | Sign -> sign x
   | Sqrt -> nan1 x (Ops.sqrt x)
   | Exp -> exp x
@@ -1176,4 +1175,4 @@ let compare (k : Nx_kernel.Prog.compare) x y =
 
 let fma a b c =
   let r = nan1 c (mulacc a b c) in
-  where (isnan a) a (where (isnan b) b r)
+  where (is_nan a) a (where (is_nan b) b r)
