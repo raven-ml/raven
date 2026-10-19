@@ -1047,14 +1047,19 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, struct reader *rd) 
   pthread_mutex_lock(&l->mu);
   struct rig_remote_dev *d = dev_of(l, id);
   struct rig_remote_local *c = d != NULL ? d->locals : NULL;
-  if (c == NULL || c->value != v || c->bytes != n - 16) {
+  if (c == NULL || c->value != v || c->width * c->rows != n - 16) {
     pthread_mutex_unlock(&l->mu);
     return MALFORMED;
   }
   pthread_mutex_unlock(&l->mu);
   /* The copy stays pending while its bytes land, so a stop meanwhile leaves
-     the word below it and rig keeps the memory. */
-  r = recv_all(l, c->at, c->bytes, rd);
+     the word below it and rig keeps the memory. Its rows land where they
+     lie, one after another. */
+  if (c->pitch == c->width)
+    r = recv_all(l, c->at, c->width * c->rows, rd);
+  else
+    for (uint64_t i = 0; r == 0 && i < c->rows; i++)
+      r = recv_all(l, c->at + i * c->pitch, c->width, rd);
   pthread_mutex_lock(&l->mu);
   d->locals = c->next;
   if (d->locals == NULL) d->locals_last = NULL;

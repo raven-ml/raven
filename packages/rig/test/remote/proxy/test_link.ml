@@ -455,10 +455,17 @@ let malformed_from_controller =
       frame k_handover (u64_bits Int64.min_int ^ u64 1 ^ u32 0 ^ u32 0) );
     ( "a hand-over copying Local to Local",
       frame k_handover
-        (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\001" ^ u64 4 ^ "\001" ^ "\001"
-       ^ "abcd") );
-    ( "a hand-over with a part of kind 2",
-      frame k_handover (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\002") );
+        (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\001" ^ u64 4 ^ u64 1 ^ u64 4
+       ^ u64 4 ^ "\001" ^ "\001" ^ "abcd") );
+    ( "a hand-over copying rows of 4 bytes at a pitch of 3",
+      frame k_handover
+        (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\001" ^ u64 4 ^ u64 2 ^ u64 3
+       ^ u64 4 ^ "\000" ^ u64 1 ^ u64 0 ^ "\000" ^ u64 2 ^ u64 0) );
+    ( "a hand-over filling Local",
+      frame k_handover
+        (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\002" ^ u64 4 ^ "a" ^ "\001") );
+    ( "a hand-over with a part of kind 3",
+      frame k_handover (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\003") );
     ("a load of max_int bytes", frame k_request ("\005" ^ u64 1 ^ u64 max_int));
     ("a request of 2^62 bytes", u64_bits 0x4000_0000_0000_0000L ^ "\001");
     ( "a rail of id 2^63 + 1",
@@ -1017,7 +1024,17 @@ let requests =
 (* The agent's end *)
 
 type side = Region of int * int | Local
-type part = Words of string | Copy of side * side * int
+
+(* A box's width, rows, source pitch and destination pitch. *)
+type box = { width : int; rows : int; src_pitch : int; dst_pitch : int }
+
+type part =
+  | Words of string
+  | Copy of side * side * box
+  | Fill of side * int * char
+
+(* The box of one run of [n] bytes. *)
+let one_run n = { width = n; rows = 1; src_pitch = n; dst_pitch = n }
 
 let encode_side = function
   | Region (id, offset) -> "\000" ^ u64 id ^ u64 offset
@@ -1025,7 +1042,10 @@ let encode_side = function
 
 let encode_part = function
   | Words w -> "\000" ^ u32 (String.length w / 4) ^ w
-  | Copy (src, dst, n) -> "\001" ^ u64 n ^ encode_side src ^ encode_side dst
+  | Copy (src, dst, b) ->
+      "\001" ^ u64 b.width ^ u64 b.rows ^ u64 b.src_pitch ^ u64 b.dst_pitch
+      ^ encode_side src ^ encode_side dst
+  | Fill (dst, n, c) -> "\002" ^ u64 n ^ String.make 1 c ^ encode_side dst
 
 (* A hand-over and the bytes of its copies from Local, as wire.mli lays them
    out. *)
@@ -1044,8 +1064,10 @@ let expected_handover (device, value, waits, parts, local) =
   in
   let part = function
     | Words w -> Wire.Words w
-    | Copy (src, dst, bytes) ->
-        Wire.Copy { src = side src; dst = side dst; bytes }
+    | Copy (src, dst, { width; rows; src_pitch; dst_pitch }) ->
+        Wire.Copy
+          { src = side src; dst = side dst; width; rows; src_pitch; dst_pitch }
+    | Fill (dst, bytes, byte) -> Wire.Fill { dst = side dst; bytes; byte }
   in
   ( {
       Wire.device;
@@ -1060,10 +1082,19 @@ let handover_g =
   let region = map (fun (i, o) -> Region (i, o)) (pair id id) in
   let side = frequency [ (2, region); (1, constant Local) ] in
   let copy =
-    let* src, dst, n = triple side side (int_range 1 64) in
+    let* src, dst = pair side side in
+    let* width, rows = pair (int_range 0 16) (int_range 0 4) in
+    let* sp, dp = pair (int_range 0 3) (int_range 0 3) in
     let dst = if src = Local && dst = Local then Region (0, 0) else dst in
-    let+ bytes = string_of ~size:(constant n) char in
-    (Copy (src, dst, n), if src = Local then Some bytes else None)
+    let box =
+      { width; rows; src_pitch = width + sp; dst_pitch = width + dp }
+    in
+    let+ bytes = string_of ~size:(constant (width * rows)) char in
+    (Copy (src, dst, box), if src = Local then Some bytes else None)
+  in
+  let fill =
+    let+ dst = region and+ n = id and+ c = char in
+    (Fill (dst, n, c), None)
   in
   let words =
     map
@@ -1074,7 +1105,8 @@ let handover_g =
   and+ value = id
   and+ waits = small_list (pair id id)
   and+ parts =
-    list ~size:(int_range 0 4) (frequency [ (1, words); (2, copy) ])
+    list ~size:(int_range 0 4)
+      (frequency [ (1, words); (2, copy); (1, fill) ])
   in
   (device, value, waits, List.map fst parts, List.filter_map snd parts)
 
@@ -1088,8 +1120,11 @@ let pp_side ppf = function
 
 let pp_part ppf = function
   | Wire.Words w -> Format.fprintf ppf "words %a" pp_bytes w
-  | Wire.Copy { src; dst; bytes } ->
-      Format.fprintf ppf "copy %d %a->%a" bytes pp_side src pp_side dst
+  | Wire.Copy { src; dst; width; rows; src_pitch; dst_pitch } ->
+      Format.fprintf ppf "copy %d x %d, pitches %d %d, %a->%a" width rows
+        src_pitch dst_pitch pp_side src pp_side dst
+  | Wire.Fill { dst; bytes; byte } ->
+      Format.fprintf ppf "fill %d of %C %a" bytes byte pp_side dst
 
 let pp_command ppf = function
   | Wire.Handover (h, areas) ->
@@ -1130,6 +1165,15 @@ let handovers_law hs =
     (fun h ->
       let e, local = expected_handover h in
       cover "a copy from Local" (local <> []);
+      cover "a copy of rows apart"
+        (Array.exists
+           (function
+             | Wire.Copy { rows; width; src_pitch; dst_pitch; _ } ->
+                 rows > 1 && (src_pitch > width || dst_pitch > width)
+             | _ -> false)
+           e.parts);
+      cover "a fill"
+        (Array.exists (function Wire.Fill _ -> true | _ -> false) e.parts);
       cover "words"
         (Array.exists (function Wire.Words _ -> true | _ -> false) e.parts);
       cover "waits" (e.waits <> [||]);
@@ -1213,7 +1257,11 @@ let areas_until_next () =
   let handover v c =
     frame k_handover
       (encode_handover
-         (1, v, [], [ Copy (Local, Region (5, 0), n) ], [ String.make n c ]))
+         ( 1,
+           v,
+           [],
+           [ Copy (Local, Region (5, 0), one_run n) ],
+           [ String.make n c ] ))
   in
   let area () =
     match within j ~what:"next" (fun () -> Link.next l) with
@@ -1252,7 +1300,11 @@ let kept_until_close () =
   let handover =
     frame k_handover
       (encode_handover
-         (1, 1, [], [ Copy (Local, Region (5, 0), n) ], [ String.make n 'a' ]))
+         ( 1,
+           1,
+           [],
+           [ Copy (Local, Region (5, 0), one_run n) ],
+           [ String.make n 'a' ] ))
   in
   let settled () =
     for _ = 1 to 3 do

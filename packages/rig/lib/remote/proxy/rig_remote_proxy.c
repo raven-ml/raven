@@ -33,6 +33,12 @@ static const char *why(struct rig_remote_link *l) {
   return w != NULL ? w->s : "the job failed";
 }
 
+/* Whether the rows of the copy [p] from this process's memory lie end to
+   end, so that its frame sends them where they lie. */
+static int in_place(const struct rig_part *p) {
+  return p->copy.rows <= 1 || p->copy.src_pitch == p->copy.width;
+}
+
 /* Room: only words and copies fit, words only on the host, and no copy
    from this process's memory after a copy into it in one submission, whose
    bytes the hand-over could not wait for. */
@@ -112,6 +118,8 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   size_t n = 8 + 8 + 4 + 16 * (size_t)nwaits + 4;
   uint64_t bytes = 0;
   int nreads = 0;
+  uint64_t packed_bytes = 0;
+  unsigned char *packed = NULL;
   struct rig_remote_local *locals = NULL, *locals_last = NULL;
   struct rig_remote_flight *f = NULL;
   struct rig_remote_frame *frame = NULL;
@@ -122,17 +130,26 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
       bytes += 4 * p->words.n;
       continue;
     }
-    n += 1 + 8 + (p->copy.local == RIG_LOCAL_SRC ? 1 : 17) +
+    if (p->copy.fill) {
+      n += 1 + 8 + 1 + 17;
+      continue;
+    }
+    n += 1 + 32 + (p->copy.local == RIG_LOCAL_SRC ? 1 : 17) +
          (p->copy.local == RIG_LOCAL_DST ? 1 : 17);
-    bytes += p->copy.width;
-    if (p->copy.local == RIG_LOCAL_SRC) nreads++;
+    bytes += p->copy.width * p->copy.rows;
+    if (p->copy.local == RIG_LOCAL_SRC) {
+      nreads++;
+      if (!in_place(p)) packed_bytes += p->copy.width * p->copy.rows;
+    }
     if (p->copy.local != RIG_LOCAL_DST) continue;
     struct rig_remote_local *c = malloc(sizeof *c);
     if (c == NULL) goto no_memory;
     c->next = NULL;
     c->value = v;
     c->at = (unsigned char *)(uintptr_t)p->copy.dst + p->copy.dst_offset;
-    c->bytes = p->copy.width;
+    c->width = p->copy.width;
+    c->rows = p->copy.rows;
+    c->pitch = p->copy.dst_pitch;
     if (locals_last != NULL)
       locals_last->next = c;
     else
@@ -142,6 +159,10 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   f = malloc(sizeof *f);
   frame = rig_remote_frame(K_HANDOVER, n, nreads);
   if (f == NULL || frame == NULL) goto no_memory;
+  if (packed_bytes > 0) {
+    packed = malloc(packed_bytes);
+    if (packed == NULL) goto no_memory;
+  }
 
   if (nreads > 0) {
     pthread_mutex_lock(&l->mu);
@@ -165,20 +186,43 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
       for (size_t w = 0; w < p->words.n; w++) b = put_u32(b, p->words.at[w]);
       continue;
     }
+    if (p->copy.fill) {
+      *b++ = 2;
+      b = put_u64(b, p->copy.width);
+      *b++ = p->copy.byte;
+      b = put_side(b, 0, p->copy.dst, p->copy.dst_offset);
+      continue;
+    }
     *b++ = 1;
     b = put_u64(b, p->copy.width);
+    b = put_u64(b, p->copy.rows);
+    b = put_u64(b, p->copy.src_pitch);
+    b = put_u64(b, p->copy.dst_pitch);
     b = put_side(b, p->copy.local == RIG_LOCAL_SRC, p->copy.src,
                  p->copy.src_offset);
     b = put_side(b, p->copy.local == RIG_LOCAL_DST, p->copy.dst,
                  p->copy.dst_offset);
   }
+  /* A copy from this process's memory sends its rows one after another:
+     where they lie, if they lie end to end, and otherwise packed into
+     [packed], once the work they follow is done. */
   int j = 0;
+  unsigned char *pack = packed;
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];
     if (p->kind != RIG_COPY || p->copy.local != RIG_LOCAL_SRC) continue;
-    frame->spans[j].p =
+    const unsigned char *src =
         (const unsigned char *)(uintptr_t)p->copy.src + p->copy.src_offset;
-    frame->spans[j++].n = p->copy.width;
+    uint64_t bytes = p->copy.width * p->copy.rows;
+    if (!in_place(p)) {
+      for (uint64_t r = 0; r < p->copy.rows; r++)
+        memcpy(pack + r * p->copy.width, src + r * p->copy.src_pitch,
+               p->copy.width);
+      src = pack;
+      pack += bytes;
+    }
+    frame->spans[j].p = src;
+    frame->spans[j++].n = bytes;
   }
 
   /* The receiving thread finds the copies into this process's memory and the
@@ -205,6 +249,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   pthread_mutex_unlock(&l->mu);
 
   int r = rig_remote_send(l, frame, NULL);
+  free(packed);
   if (r == 0) return RIG_COMMITTED;
   *failure = r == -3 ? "the job is closed" : why(l);
   return RIG_FAILED;
@@ -217,6 +262,7 @@ no_memory:
   }
   free(f);
   free(frame);
+  free(packed);
   *failure = "out of memory for a hand-over";
   return RIG_FAILED;
 }

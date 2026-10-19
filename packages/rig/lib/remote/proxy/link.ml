@@ -279,11 +279,21 @@ let part r =
   match u8 r with
   | 0 -> Wire.Words (bytes r (4 * u32 r))
   | 1 ->
-      let bytes = u64 r in
+      let width = u64 r in
+      let rows = u64 r in
+      let src_pitch = u64 r in
+      let dst_pitch = u64 r in
       let src = side r in
       let dst = side r in
       if src = Wire.Local && dst = Wire.Local then raise Malformed;
-      Wire.Copy { src; dst; bytes }
+      if src_pitch < width || dst_pitch < width then raise Malformed;
+      Wire.Copy { src; dst; width; rows; src_pitch; dst_pitch }
+  | 2 ->
+      let bytes = u64 r in
+      let byte = Char.chr (u8 r) in
+      let dst = side r in
+      if dst = Wire.Local then raise Malformed;
+      Wire.Fill { dst; bytes; byte }
   | _ -> raise Malformed
 
 let decode_handover r =
@@ -296,7 +306,9 @@ let decode_handover r =
   in
   let parts = array r part in
   let local = function
-    | Wire.Copy { src = Wire.Local; bytes; _ } ->
+    | Wire.Copy { src = Wire.Local; width; rows; _ } ->
+        if rows > 0 && width > max_int / rows then raise Malformed;
+        let bytes = width * rows in
         Some (Array1.sub r.a (take r bytes) bytes)
     | _ -> None
   in

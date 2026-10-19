@@ -421,5 +421,7 @@ let rail_out id send =
    [src] at [src_at] to memory [dst] at [dst_at]. *)
 let copy_on_host ~value ~bytes (src, src_at) (dst, dst_at) =
   let region id at = u8 0 ^ u64 id ^ u64 at in
-  u64 0 ^ u64 value ^ u32 0 ^ u32 1 ^ u8 1 ^ u64 bytes ^ region src src_at
+  (* One row of [bytes], at pitches of [bytes]. *)
+  let run = u64 bytes ^ u64 1 ^ u64 bytes ^ u64 bytes in
+  u64 0 ^ u64 value ^ u32 0 ^ u32 1 ^ u8 1 ^ run ^ region src src_at
   ^ region dst dst_at

@@ -17,7 +17,7 @@ let err_malformed = "a malformed handshake"
 (* Constants *)
 
 let magic = "rig-job\n"
-let version = 8
+let version = 9
 let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32
@@ -298,7 +298,17 @@ type _ request =
       -> unit request
 
 type side = Region of { id : int; offset : int } | Local
-type part = Words of string | Copy of { src : side; dst : side; bytes : int }
+type part =
+  | Words of string
+  | Copy of {
+      src : side;
+      dst : side;
+      width : int;
+      rows : int;
+      src_pitch : int;
+      dst_pitch : int;
+    }
+  | Fill of { dst : side; bytes : int; byte : char }
 
 type handover = {
   device : int;

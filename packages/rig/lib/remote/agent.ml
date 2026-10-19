@@ -679,10 +679,27 @@ let run s words =
   | Error why -> raise (Refused why)
   | Ok points -> Array.iter Rig.Point.wait points
 
+(* Copies [rows] rows of [width] bytes, row [r] from [r * src_pitch] bytes
+   into [src] to [r * dst_pitch] bytes into [dst]: one copy where the rows
+   lie end to end on both sides, and one per row otherwise. *)
+let copy_rows ~src ~dst ~width ~rows ~src_pitch ~dst_pitch =
+  let row b at = Rig.Buffer.view b ~first:at ~length:width in
+  if width > 0 && rows > 0 then
+    if rows = 1 || (src_pitch = width && dst_pitch = width) then
+      Rig.Buffer.copy
+        ~src:(Rig.Buffer.view src ~first:0 ~length:(width * rows))
+        ~dst:(Rig.Buffer.view dst ~first:0 ~length:(width * rows))
+    else
+      for r = 0 to rows - 1 do
+        Rig.Buffer.copy ~src:(row src (r * src_pitch))
+          ~dst:(row dst (r * dst_pitch))
+      done
+
 (* Runs a hand-over's parts in order, sending the bytes of each copy into the
    controller's memory as it comes, then the word of its value. [local] holds
-   one area per copy from Local, an empty one included. A copy of no bytes into
-   memory skips it: an empty remote buffer may have no driver object. *)
+   one area per copy from Local, an empty one included, its rows one after
+   another. A copy or a fill of no bytes into memory skips it: an empty remote
+   buffer may have no driver object. *)
 let hand_over s (h : Wire.handover) local =
   let next = ref 0 in
   let upload () =
@@ -690,25 +707,70 @@ let hand_over s (h : Wire.handover) local =
     incr next;
     a
   in
-  let side bytes = function
-    | Wire.Region { id; offset } ->
-        Rig.Buffer.view (buffer s id) ~first:offset ~length:bytes
-    | Wire.Local -> Rig.Buffer.of_bigarray (upload ())
+  (* The bytes of a region a box of [rows] rows of [width] bytes at [pitch]
+     spans. *)
+  let region id offset ~width ~rows ~pitch =
+    let length = if rows = 0 then 0 else ((rows - 1) * pitch) + width in
+    Rig.Buffer.view (buffer s id) ~first:offset ~length
   in
   Array.iter
     (function
       | Wire.Words w -> run s w
-      | Wire.Copy { src; dst = Wire.Local; bytes } ->
-          with_host_bytes (side bytes src)
+      | Wire.Copy { src = Wire.Local; dst = Wire.Local; _ } ->
+          raise (Refused "a copy from Local to Local")
+      | Wire.Copy
+          {
+            src = Wire.Region { id; offset };
+            dst = Wire.Local;
+            width;
+            rows;
+            src_pitch;
+            _;
+          } ->
+          let src = region id offset ~width ~rows ~pitch:src_pitch in
+          let packed =
+            if rows <= 1 || src_pitch = width then src
+            else begin
+              let h = Rig.Buffer.create Rig.host (width * rows) in
+              copy_rows ~src ~dst:h ~width ~rows ~src_pitch ~dst_pitch:width;
+              h
+            end
+          in
+          with_host_bytes packed
             (Link.bytes s.link ~device:h.device ~value:h.value)
-      | Wire.Copy { src = Wire.Local; dst; bytes } ->
+      | Wire.Copy
+          {
+            src = Wire.Local;
+            dst = Wire.Region { id; offset };
+            width;
+            rows;
+            dst_pitch;
+            _;
+          } ->
           let a = upload () in
+          if width * rows > 0 then
+            copy_rows ~src:(Rig.Buffer.of_bigarray a)
+              ~dst:(region id offset ~width ~rows ~pitch:dst_pitch)
+              ~width ~rows ~src_pitch:width ~dst_pitch
+      | Wire.Copy
+          {
+            src = Wire.Region { id = i; offset = o };
+            dst = Wire.Region { id = j; offset = p };
+            width;
+            rows;
+            src_pitch;
+            dst_pitch;
+          } ->
+          if width * rows > 0 then
+            copy_rows
+              ~src:(region i o ~width ~rows ~pitch:src_pitch)
+              ~dst:(region j p ~width ~rows ~pitch:dst_pitch)
+              ~width ~rows ~src_pitch ~dst_pitch
+      | Wire.Fill { dst = Wire.Region { id; offset }; bytes; byte } ->
           if bytes > 0 then
-            Rig.Buffer.copy ~src:(Rig.Buffer.of_bigarray a)
-              ~dst:(side bytes dst)
-      | Wire.Copy { src; dst; bytes } ->
-          if bytes > 0 then
-            Rig.Buffer.copy ~src:(side bytes src) ~dst:(side bytes dst))
+            Rig.Buffer.fill (Rig.Buffer.view (buffer s id) ~first:offset
+              ~length:bytes) byte
+      | Wire.Fill { dst = Wire.Local; _ } -> raise (Refused "a fill of Local"))
     h.parts;
   Link.word s.link ~device:h.device h.value
 

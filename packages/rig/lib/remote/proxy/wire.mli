@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 8 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 8 (u32), 1 and why
+     accepting: "rig-job\n", version 9 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 9 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,7 +100,7 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 8. Ends at other
+(** [version] is the protocol's version, the handshake's: 9. Ends at other
     versions refuse each other. *)
 
 val min_key : int
@@ -237,8 +237,20 @@ type side =
 (** The type for the parts of a {!handover}, which the agent runs in order. *)
 type part =
   | Words of string  (** A run's 32-bit words, little-endian. *)
-  | Copy of { src : side; dst : side; bytes : int }
-      (** A copy of [bytes] bytes, [src] and [dst] not both [Local]. *)
+  | Copy of {
+      src : side;
+      dst : side;
+      width : int;
+      rows : int;
+      src_pitch : int;
+      dst_pitch : int;
+    }
+      (** A copy of [rows] rows of [width] bytes, row [i] from
+          [i * src_pitch] bytes past [src] to [i * dst_pitch] bytes past
+          [dst], [src] and [dst] not both [Local]. Each pitch is at least
+          [width]. *)
+  | Fill of { dst : side; bytes : int; byte : char }
+      (** Sets [bytes] bytes of [dst], which is not [Local], to [byte]. *)
 
 type handover = {
   device : int;  (** The device whose work it is. *)
@@ -254,9 +266,15 @@ type handover = {
      device (u64), value (u64), waits (u32) and each device (u64) and
      value (u64), parts (u32) and each part:
        0, words (u32) and the words
-       1, bytes (u64), src side, dst side
+       1, width (u64), rows (u64), src pitch (u64), dst pitch (u64),
+          src side, dst side
+       2, bytes (u64), byte (u8), dst side
      side: 0, id (u64), offset (u64)   or   1
-    v} *)
+    v}
+
+    The bytes of a copy from [Local] follow the handover, and those of a
+    copy into [Local] come back in a [bytes] message: [width * rows] bytes,
+    its rows one after another. *)
 
 (** {1:commands Commands} *)
 
@@ -267,7 +285,7 @@ type command =
           came. *)
   | Handover : handover * Rig_remote_abi.area array -> command
       (** A {!handover} and the bytes of its copies from [Local], one area per
-          such copy, in its parts' order. *)
+          such copy, its rows one after another, in its parts' order. *)
   | Drop : int -> command
       (** Releases the object [id] once the work submitted before no longer
           needs it. *)

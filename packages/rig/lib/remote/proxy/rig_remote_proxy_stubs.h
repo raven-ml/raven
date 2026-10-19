@@ -179,12 +179,13 @@ struct rig_remote_link {
   int64_t sent_ns;
 };
 
-/* A copy into this process's memory whose bytes are to come. */
+/* A copy into this process's memory whose bytes are to come: [rows] rows
+   of [width] bytes, from [at] at [pitch] bytes apart. */
 struct rig_remote_local {
   struct rig_remote_local *next;
   uint64_t value;
   unsigned char *at;
-  uint64_t bytes;
+  uint64_t width, rows, pitch;
 };
 
 /* The work of a value handed over and not reached: its bytes. */

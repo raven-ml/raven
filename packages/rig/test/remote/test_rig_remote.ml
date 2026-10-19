@@ -926,7 +926,9 @@ let empty_upload () =
   is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
   is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
   let local = u8 1 and memory = u8 0 ^ u64 1 ^ u64 0 in
-  let copy bytes src dst = u8 1 ^ u64 bytes ^ src ^ dst in
+  let copy bytes src dst =
+    u8 1 ^ u64 bytes ^ u64 1 ^ u64 bytes ^ u64 bytes ^ src ^ dst
+  in
   send fd
     (frame k_handover
        (u64 0 ^ u64 1 ^ u32 0 ^ u32 3 ^ copy 0 local memory
@@ -943,6 +945,41 @@ let empty_upload () =
     (Option.map fst (next_frame fd));
   equal exit_w (0, [ "closed" ]) (finish a)
 
+(* An agent runs a hand-over's boxes and fills as wire.mli lays them out: it
+   fills memory 1's 16 bytes with 'z', writes "abcdef" into it as three rows
+   of two bytes 5 apart from byte 1, and reads back two rows of three bytes 8
+   apart from byte 0: "zab" and "zzz". *)
+let boxes_and_fills () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let fd = raw_controller a in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
+  is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
+  let local = u8 1 and memory at = u8 0 ^ u64 1 ^ u64 at in
+  let box ~width ~rows ~src_pitch ~dst_pitch src dst =
+    u8 1 ^ u64 width ^ u64 rows ^ u64 src_pitch ^ u64 dst_pitch ^ src ^ dst
+  in
+  let fill n c dst = u8 2 ^ u64 n ^ c ^ dst in
+  send fd
+    (frame k_handover
+       (u64 0 ^ u64 1 ^ u32 0 ^ u32 3
+       ^ fill 16 "z" (memory 0)
+       ^ box ~width:2 ~rows:3 ~src_pitch:2 ~dst_pitch:5 local (memory 1)
+       ^ box ~width:3 ~rows:2 ~src_pitch:8 ~dst_pitch:3 (memory 0) local
+       ^ "abcdef"));
+  let k_word = 5 and k_bytes = 6 in
+  let bytes = next_frame fd in
+  let word = next_frame fd in
+  send fd (frame k_close "");
+  equal
+    (list (option (pair int string)))
+    [ Some (k_bytes, u64 0 ^ u64 1 ^ "zabzzz"); Some (k_word, u64 0 ^ u64 1) ]
+    [ bytes; word ];
+  equal ~msg:"the agent's close" (option int) (Some k_close)
+    (Option.map fst (next_frame fd));
+  equal exit_w (0, [ "closed" ]) (finish a)
+
 let frames =
   group "frames"
     [
@@ -952,6 +989,8 @@ let frames =
         outside_memory;
       test "a drop naming no object fails the job at the agent" unknown_drop;
       test "an empty upload leaves the next upload its bytes" empty_upload;
+      test "an agent runs boxes and fills as the hand-over lays them out"
+        boxes_and_fills;
       test "an exception the agent does not expect fails the job"
         opener_raises;
     ]

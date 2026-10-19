@@ -112,8 +112,10 @@ val capability : t -> Rig_remote_abi.t
     follows is done here: the timeline word of each wait's proxy reaches the
     wait's value, and [d]'s own word the last of [d]'s values with a copy
     into this process's memory. It then sends the copies' bytes from that
-    memory in place, so the bytes they copy are final, and holds the
-    submitting thread while they cross the link.
+    memory, so the bytes they copy are final, and holds the submitting
+    thread while they cross the link: in place where a copy's rows lie end
+    to end, and otherwise packed into memory of its own, which it allocates
+    for the call.
 
     [submit] returns [RIG_COMMITTED] once its message is sent. It returns
     [RIG_FAILED] with the job's root cause if the job has failed, with

@@ -185,39 +185,71 @@ let run_handover ag (h : Wire.handover) (local : Rig_remote_abi.area array) =
   Array.iter
     (function
       | Wire.Words _ -> ()
-      | Wire.Copy { src = Wire.Local; dst = Wire.Region { id; offset }; bytes }
-        ->
+      | Wire.Copy
+          {
+            src = Wire.Local;
+            dst = Wire.Region { id; offset };
+            width;
+            rows;
+            dst_pitch;
+            _;
+          } ->
           let a = local.(!k) in
           incr k;
-          if Bigarray.Array1.dim a <> bytes then
-            violate ag "a local copy of %d bytes came with %d" bytes
-              (Bigarray.Array1.dim a);
+          if Bigarray.Array1.dim a <> width * rows then
+            violate ag "a local copy of %d rows of %d bytes came with %d" rows
+              width (Bigarray.Array1.dim a);
           let m = bytes_of (region ag id) in
-          for i = 0 to bytes - 1 do
-            Bytes.set m (offset + i) a.{i}
+          for r = 0 to rows - 1 do
+            for i = 0 to width - 1 do
+              Bytes.set m (offset + (r * dst_pitch) + i) a.{(r * width) + i}
+            done
           done
-      | Wire.Copy { src = Wire.Region { id; offset }; dst = Wire.Local; bytes }
-        ->
+      | Wire.Copy
+          {
+            src = Wire.Region { id; offset };
+            dst = Wire.Local;
+            width;
+            rows;
+            src_pitch;
+            _;
+          } ->
           let m = bytes_of (region ag id) in
           let a =
-            Bigarray.Array1.create Bigarray.char Bigarray.c_layout bytes
+            Bigarray.Array1.create Bigarray.char Bigarray.c_layout
+              (width * rows)
           in
-          for i = 0 to bytes - 1 do
-            a.{i} <- Bytes.get m (offset + i)
+          for r = 0 to rows - 1 do
+            for i = 0 to width - 1 do
+              a.{(r * width) + i} <- Bytes.get m (offset + (r * src_pitch) + i)
+            done
           done;
           Link.bytes ag.link ~device:h.device ~value:h.value a
       | Wire.Copy
           {
             src = Wire.Region { id = s; offset = so };
             dst = Wire.Region { id = d; offset = doff };
-            bytes;
+            width;
+            rows;
+            src_pitch;
+            dst_pitch;
           } -> (
           let rs = region ag s and rd = region ag d in
           match (rs.bytes, rd.bytes) with
           | None, None -> ()
-          | _ -> Bytes.blit (bytes_of rs) so (bytes_of rd) doff bytes)
+          | _ ->
+              for r = 0 to rows - 1 do
+                Bytes.blit (bytes_of rs)
+                  (so + (r * src_pitch))
+                  (bytes_of rd)
+                  (doff + (r * dst_pitch))
+                  width
+              done)
       | Wire.Copy { src = Wire.Local; dst = Wire.Local; _ } ->
-          violate ag "a copy from Local to Local")
+          violate ag "a copy from Local to Local"
+      | Wire.Fill { dst = Wire.Region { id; offset }; bytes; byte } ->
+          if bytes > 0 then Bytes.fill (bytes_of (region ag id)) offset bytes byte
+      | Wire.Fill { dst = Wire.Local; _ } -> violate ag "a fill of Local")
     h.parts;
   record ag
     (Handover
