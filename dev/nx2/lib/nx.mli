@@ -786,7 +786,8 @@ val mod_ : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val pow : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [pow a b] is [a] to the power [b]. On complex numbers it is the principal
-    value [exp (b * log a)], [1] where [b] is [0], with [log]'s branch cut
+    value [exp (b * log a)]: [1] where [b] is [0], [0] at [a = 0] where
+    [b]'s real part is positive, with [log]'s branch cut
     ({!section-transcendental}); its error grows with [|b log a|], within
     [(3 + 3|b log a|) u |a{^b}|]. Every dtype but booleans. *)
 
@@ -977,15 +978,16 @@ end
     [sqrt (-4 + 0i)] is [2i] and [sqrt (-4 - 0i)] is [-2i]. A result [f'] is
     within [k u |f|] of the value [f], where [|f|] is a normal float: [u] is
     the parts' unit roundoff, [2{^-24}] for complex64 and [2{^-53}] for
-    complex128, and [k] is [3] for {!sqrt}, [4] for {!exp}, {!exp2}, {!log}
-    and {!log2}, [5] for {!asin}, {!acos} and {!atan}, and [6] for {!sin},
-    {!cos}, {!tan}, {!sinh}, {!cosh} and {!tanh}. {!exp2}'s bound holds
-    where [|Im z|] is below [2{^16}] for complex64 and [2{^35}] for
-    complex128. On the real axis, at a non-zero real part where the float
-    function is defined, a function of one operand gives the float
-    function's result as its real part; {!pow} does at a positive base and a
-    real exponent. A NaN part of a result is the quiet NaN of a clear sign
-    bit. *)
+    complex128, and [k] is [3] for {!sqrt}, [4] for {!exp}, {!log} and
+    {!log2}, [5] for {!exp2}, {!asin}, {!acos}, {!atan}, {!asinh}, {!acosh}
+    and {!atanh}, and [6] for {!sin}, {!cos}, {!tan}, {!sinh}, {!cosh} and
+    {!tanh}. {!exp2}'s bound holds where [|Im z|] is below [2{^24}] for
+    complex64 and [2{^53}] for complex128; past it the bound holds for its
+    modulus, [2{^Re z}]. On the real axis, at a non-zero real part where the
+    float function is defined, a function of one operand but {!asinh},
+    {!acosh} and {!atanh} gives the float function's result as its real
+    part; {!pow} does at a positive base and a real exponent. A NaN part of
+    a result is the quiet NaN of a clear sign bit. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.]. On complex numbers its real
@@ -993,7 +995,7 @@ val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val rsqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [rsqrt x] is [recip (sqrt x)]: [inf] at [+0.], [-inf] at [-0.], NaN below.
-*)
+    On complex numbers it is {!recip} of {!sqrt}, NaN at [0]. *)
 
 val hypot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [hypot x y] is [sqrt (x{^2} + y{^2})] with no intermediate overflow: finite
@@ -1057,16 +1059,22 @@ val tanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val asinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [asinh x] is the inverse hyperbolic sine, odd, [x] itself near [0.]: within
-    3 ulps at float32 and float64. Floats. *)
+    3 ulps at float32 and float64. On complex numbers its imaginary part is in
+    \[[-π/2], [π/2]\], with branch cuts on the imaginary axis beyond [-i]
+    and [i]. *)
 
 val acosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [acosh x] is the inverse hyperbolic cosine: [0.] at [1.], NaN below [1.],
-    within 3 ulps at float32 and float64. Floats. *)
+    within 3 ulps at float32 and float64. On complex numbers its real part is
+    not negative and its imaginary part is in \[[-π], [π]\], with a branch
+    cut on the real axis below [1]. *)
 
 val atanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atanh x] is the inverse hyperbolic tangent: [inf] at [1.], [-inf] at
     [-1.], NaN beyond them, odd, [x] itself near [0.]; within 3 ulps at
-    float32 and float64. Floats. *)
+    float32 and float64. On complex numbers its imaginary part is in
+    \[[-π/2], [π/2]\], with branch cuts on the real axis beyond [-1] and
+    [1]. *)
 
 val erf : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]. *)

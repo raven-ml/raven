@@ -225,7 +225,9 @@ static const kind_cost op1_costs[NX_OP1_COUNT] = {
     [NX_OP1_TAN] = {256, 1024, 1024},   [NX_OP1_ASIN] = {256, 512, 512},
     [NX_OP1_ACOS] = {256, 512, 512},    [NX_OP1_ATAN] = {128, 512, 512},
     [NX_OP1_SINH] = {512, 1024, 1024},  [NX_OP1_COSH] = {512, 512, 512},
-    [NX_OP1_TANH] = {256, 512, 512},    [NX_OP1_ERF] = {256, 512, 512},
+    [NX_OP1_TANH] = {256, 512, 512},    [NX_OP1_ASINH] = {256, 512, 512},
+    [NX_OP1_ACOSH] = {256, 512, 512},   [NX_OP1_ATANH] = {256, 512, 512},
+    [NX_OP1_ERF] = {256, 512, 512},
     [NX_OP1_FLOOR] = {64, 128, 128},    [NX_OP1_CEIL] = {64, 128, 128},
     [NX_OP1_ROUND] = {128, 128, 128},   [NX_OP1_TRUNC] = {64, 64, 64},
 };

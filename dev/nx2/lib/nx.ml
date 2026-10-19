@@ -1914,44 +1914,53 @@ let tiny = 0x1p-28
    whose last bit may differ by system, and on Windows by domain. *)
 let ln2 = 0x1.62e42fefa39efp-1
 
-let asinh x =
-  float_map ~by:"Nx.asinh" [ x ] (fun w ins ->
-      let lit = E.const w and x = ins.(0) in
-      let a = E.abs x in
-      let far = E.(log a + lit ln2) in
-      let a2 = E.(a * a) in
-      let root = E.(sqrt (lit 1. + a2)) in
-      let near = E.(log1p (a + (a2 / (lit 1. + root)))) in
-      let r = E.(where (lit big <= a) far near) in
-      let signed = E.(where (x < lit 0.) (-r) r) in
-      E.(where (a < lit tiny) x signed))
+let asinh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype x) with
+  | D.Complex -> unary ~by:"Nx.asinh" Asinh x
+  | _ ->
+      float_map ~by:"Nx.asinh" [ x ] (fun w ins ->
+          let lit = E.const w and x = ins.(0) in
+          let a = E.abs x in
+          let far = E.(log a + lit ln2) in
+          let a2 = E.(a * a) in
+          let root = E.(sqrt (lit 1. + a2)) in
+          let near = E.(log1p (a + (a2 / (lit 1. + root)))) in
+          let r = E.(where (lit big <= a) far near) in
+          let signed = E.(where (x < lit 0.) (-r) r) in
+          E.(where (a < lit tiny) x signed))
 
-let acosh x =
-  float_map ~by:"Nx.acosh" [ x ] (fun w ins ->
-      let lit = E.const w and x = ins.(0) in
-      let far = E.(log x + lit ln2) in
-      let root = E.(sqrt (fma x x (lit (-1.)))) in
-      let mid = E.(log (x + x - recip (x + root))) in
-      let t = E.(x - lit 1.) in
-      let near = E.(log1p (t + sqrt (fma t t (t + t)))) in
-      let r = E.(where (lit 2. <= x) mid near) in
-      let r = E.(where (lit big <= x) far r) in
-      E.(where (x < lit 1.) (lit Float.nan) r))
+let acosh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype x) with
+  | D.Complex -> unary ~by:"Nx.acosh" Acosh x
+  | _ ->
+      float_map ~by:"Nx.acosh" [ x ] (fun w ins ->
+          let lit = E.const w and x = ins.(0) in
+          let far = E.(log x + lit ln2) in
+          let root = E.(sqrt (fma x x (lit (-1.)))) in
+          let mid = E.(log (x + x - recip (x + root))) in
+          let t = E.(x - lit 1.) in
+          let near = E.(log1p (t + sqrt (fma t t (t + t)))) in
+          let r = E.(where (lit 2. <= x) mid near) in
+          let r = E.(where (lit big <= x) far r) in
+          E.(where (x < lit 1.) (lit Float.nan) r))
 
 (* [log1p (2a / (1 - a)) / 2] of [a = |x|], the sign put back: a small [a]
    splits the quotient to keep its digits. *)
-let atanh x =
-  float_map ~by:"Nx.atanh" [ x ] (fun w ins ->
-      let lit = E.const w and x = ins.(0) in
-      let a = E.abs x in
-      let t = E.(a + a) in
-      let one_minus = E.(lit 1. - a) in
-      let small = E.(t + (t * a / one_minus)) in
-      let large = E.(t / one_minus) in
-      let q = E.(where (a < lit 0.5) small large) in
-      let r = E.(lit 0.5 * log1p q) in
-      let signed = E.(where (x < lit 0.) (-r) r) in
-      E.(where (a < lit tiny) x signed))
+let atanh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype x) with
+  | D.Complex -> unary ~by:"Nx.atanh" Atanh x
+  | _ ->
+      float_map ~by:"Nx.atanh" [ x ] (fun w ins ->
+          let lit = E.const w and x = ins.(0) in
+          let a = E.abs x in
+          let t = E.(a + a) in
+          let one_minus = E.(lit 1. - a) in
+          let small = E.(t + (t * a / one_minus)) in
+          let large = E.(t / one_minus) in
+          let q = E.(where (a < lit 0.5) small large) in
+          let r = E.(lit 0.5 * log1p q) in
+          let signed = E.(where (x < lit 0.) (-r) r) in
+          E.(where (a < lit tiny) x signed))
 
 let erfc x = float_map ~by:"Nx.erfc" [ x ] (fun _ i -> Special.erfc i.(0))
 let erfinv p = float_map ~by:"Nx.erfinv" [ p ] (fun _ i -> Special.erfinv i.(0))

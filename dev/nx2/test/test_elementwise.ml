@@ -194,6 +194,25 @@ let law_erf (s, Case a, _) =
         (fun () -> result_bits (Nx.erf (value a)))
   | D.Signed | D.Unsigned | D.Boolean | D.Complex -> cover "computed" true
 
+(* [asinh], [acosh] and [atanh] compute complex numbers by their kinds, and
+   floats by a composition of other kinds that test_math holds. *)
+let law_inverse_hyperbolic (s, Case a, _) =
+  let dt = A.dtype a in
+  List.iter
+    (fun (name, kind, f) ->
+      match D.kind dt with
+      | D.Float -> cover "computed" true
+      | _ ->
+          agrees name
+            ~accepted:(P.accepts1 (Unary kind) dt dt)
+            (fun () -> reference1 (Unary kind) dt s a)
+            (fun () -> result_bits (f (value a))))
+    [
+      ("asinh", P.Asinh, fun x -> Nx.asinh x);
+      ("acosh", P.Acosh, fun x -> Nx.acosh x);
+      ("atanh", P.Atanh, fun x -> Nx.atanh x);
+    ]
+
 (* Binary *)
 
 type binary = {
@@ -334,6 +353,8 @@ let elementwise =
         (Gen.pair ternary_operands (Gen.list ~size:(Gen.constant 8) Gen.bool))
         law_where;
       prop "erf is its kind" unary_operands law_erf;
+      prop "asinh, acosh and atanh of complex numbers are their kinds"
+        unary_operands law_inverse_hyperbolic;
       prop "a bitcast to its own dtype is the value itself" unary_operands
         law_bitcast_same;
       test "atan2 reaches its range's ends, rounded" test_atan2_ends;

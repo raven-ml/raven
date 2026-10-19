@@ -24,6 +24,9 @@ type unary =
   | Sinh
   | Cosh
   | Tanh
+  | Asinh
+  | Acosh
+  | Atanh
   | Erf
   | Floor
   | Ceil
@@ -81,6 +84,7 @@ let unary_takes = function
   | Sqrt | Exp | Exp2 | Log | Log2 | Sin | Cos | Tan | Asin | Acos | Atan
   | Sinh | Cosh | Tanh ->
       float lor complex
+  | Asinh | Acosh | Atanh -> complex
   | Log1p | Expm1 | Erf -> float
 
 let binary_takes = function
@@ -426,6 +430,9 @@ module E = struct
   let sinh x = unary (Unary Sinh) x
   let cosh x = unary (Unary Cosh) x
   let tanh x = unary (Unary Tanh) x
+  let asinh x = unary (Unary Asinh) x
+  let acosh x = unary (Unary Acosh) x
+  let atanh x = unary (Unary Atanh) x
   let erf x = Op1 (Unary Erf, dtype x, x)
   let floor x = unary (Unary Floor) x
   let ceil x = unary (Unary Ceil) x
@@ -504,7 +511,8 @@ let op1s =
     Copy; Cast; Bitcast; Unary Neg; Unary Recip; Unary Abs; Unary Sign;
     Unary Sqrt; Unary Exp; Unary Exp2; Unary Log; Unary Log2; Unary Log1p;
     Unary Expm1; Unary Sin; Unary Cos; Unary Tan; Unary Asin; Unary Acos;
-    Unary Atan; Unary Sinh; Unary Cosh; Unary Tanh; Unary Erf; Unary Floor;
+    Unary Atan; Unary Sinh; Unary Cosh; Unary Tanh; Unary Asinh; Unary Acosh;
+    Unary Atanh; Unary Erf; Unary Floor;
     Unary Ceil; Unary Round; Unary Trunc;
   |]
 

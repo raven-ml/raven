@@ -1067,20 +1067,28 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    +0 in each part.
 
    The transcendental kinds, exp, exp2, log, log2, sqrt, sin, cos, tan,
-   asin, acos, atan, sinh, cosh, tanh and pow, are the principal values of
-   C99 7.3 (ISO/IEC 9899), with the special values of its Annex G, G.6; sign
-   is z / |z|. nx_kinds_complex.h computes them from the part type's kinds,
+   asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh and pow, are the
+   principal values of C99 7.3 (ISO/IEC 9899), with the special values of
+   its Annex G, G.6; sign is z / |z|. asinh, acosh and atanh have no float
+   kind. nx_kinds_complex.h computes them from the part type's kinds,
    branching, so that a vector loop runs them on scalars. Their bounds,
    normwise in u where the result's modulus is a normal float:
 
      sqrt, sign                                3
-     exp, exp2, log, log2                      4
-     asin, acos, atan                          5
+     exp, log, log2                            4
+     exp2, asin, acos, atan, asinh, acosh,
+       atanh                                   5
      sin, cos, tan, sinh, cosh, tanh           6
      pow, z^w                                  3 + 3 |w log z|
 
-   exp2's holds while |Im z| < 2^(2p/3), p the part's precision: 2^16 at
-   c64 and 2^35 at c128. On the real axis, at a non-zero real part where
+   The bounds are measured, not proven: each kind's worst error at the
+   goldens of test/kernel/gen/kinds.py and at ten times as many points of
+   the same regions, branch cuts, poles and overflow edges among them, was
+   at least 1u inside its bound (exp2's 3.92u at c128, tan's 4.53u at
+   c64). exp2's bound holds
+   while |Im z| < 2^p, p the part's precision: 2^24 at c64 and 2^53 at
+   c128; past it the phase errs by about |Im z| 2^(-2p), and the bound
+   holds for the modulus. On the real axis, at a non-zero real part where
    the float kind is defined, the real part is the float kind's result;
    pow's is at a positive base and a real exponent. Every NaN part of their
    results is the quiet NaN of a clear sign bit.
@@ -1100,7 +1108,9 @@ NX_INLINE uint32_t nx_double_sign(double d) {
      tanh(inf + i inf), tanh(inf + i NaN)      1 + i0
      asin(inf + i NaN)                         NaN + i inf
      acos(inf + i NaN)                         NaN - i inf
-     atan(inf + i NaN)                         pi/2 + i0 */
+     atan(inf + i NaN)                         pi/2 + i0
+     asinh(NaN + i inf)                        inf + i NaN
+     atanh(NaN + i inf)                        +0 + i pi/2 */
 
 #define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN, NANC)                    \
   typedef struct {                                                           \

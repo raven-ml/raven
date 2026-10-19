@@ -692,6 +692,9 @@ let unaries =
       (Sinh, "sinh");
       (Cosh, "cosh");
       (Tanh, "tanh");
+      (Asinh, "asinh");
+      (Acosh, "acosh");
+      (Atanh, "atanh");
       (Erf, "erf");
       (Floor, "floor");
       (Ceil, "ceil");
@@ -1201,8 +1204,11 @@ let law_nan_bits (D.Any dt, seed) =
       let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
       let z = specials_only dt n (seed + 2) in
       let kinds =
-        List.map
-          (fun (u, name) -> (name, fun (module K : Nx_kernel.S) dst x -> K.apply1 (Unary u) ~dst x))
+        List.filter_map
+          (fun (u, name) ->
+            if not (P.accepts1 (Unary u) dt dt) then None
+            else
+              Some (name, fun (module K : Nx_kernel.S) dst x -> K.apply1 (Unary u) ~dst x))
           unaries
         @ List.filter_map
             (fun k ->

@@ -1048,7 +1048,7 @@ let test_complex_order =
 let complex_kinds =
   [
     "exp"; "exp2"; "log"; "log2"; "sqrt"; "sign"; "sin"; "cos"; "tan"; "asin";
-    "acos"; "atan"; "sinh"; "cosh"; "tanh";
+    "acos"; "atan"; "sinh"; "cosh"; "tanh"; "asinh"; "acosh"; "atanh";
   ]
 
 (* Each kind's bound, normwise in units of its part's u, and the largest
@@ -1057,9 +1057,9 @@ let complex_kinds =
 let complex_bounds =
   [
     ("exp", 4., 2.131, 1.779);
-    ("exp2", 4., 1.873, 1.896);
+    ("exp2", 5., 2.828, 2.184);
     ("log", 4., 1.590, 1.547);
-    ("log2", 4., 1.684, 2.114);
+    ("log2", 4., 1.684, 1.581);
     ("sqrt", 3., 1.596, 1.534);
     ("sign", 3., 1.513, 1.407);
     ("asin", 5., 2.620, 2.522);
@@ -1069,8 +1069,11 @@ let complex_bounds =
     ("cos", 6., 2.361, 2.007);
     ("tan", 6., 3.671, 3.009);
     ("sinh", 6., 3.007, 3.020);
-    ("cosh", 6., 3.628, 2.557);
+    ("cosh", 6., 3.628, 2.124);
     ("tanh", 6., 3.344, 3.053);
+    ("asinh", 5., 3.349, 2.840);
+    ("acosh", 5., 1.902, 2.278);
+    ("atanh", 5., 2.051, 2.454);
   ]
 
 (* The rows of golden/kinds/complex-<kind>.golden: operands, then each part
@@ -1085,6 +1088,19 @@ let single_row args (re, im) =
   && Float.hypot (fst re) (fst im) >= 0x1p-100
 
 let golden_value row n = ((row.(n), row.(n + 1)), (row.(n + 2), row.(n + 3)))
+
+(* exp2's bound holds while |Im z| is below 2^24 at c64 and 2^53 at c128;
+   past it the bound holds for the modulus. *)
+let exp2_limit u = if u = 0x1p-24 then 0x1p24 else 0x1p53
+
+let modulus_error u (re, im) (((zr, _), (zi, _)) : (float * float) * (float * float)) =
+  let m = Float.hypot zr zi in
+  Float.abs (Float.hypot re im -. m) /. m /. u
+
+let golden_error kind u args got want =
+  if kind = "exp2" && Float.abs args.(1) >= exp2_limit u then
+    modulus_error u got want
+  else normwise u got want
 
 let test_complex_goldens =
   let check kind ~bound ~ceiling64 ~ceiling32 =
@@ -1102,12 +1118,12 @@ let test_complex_goldens =
           List.init (n / 2) (fun i -> (args.(2 * i), args.(2 * i + 1)))
         in
         let got = c128_call kind ops in
-        let e = normwise 0x1p-53 got want in
+        let e = golden_error kind 0x1p-53 args got want in
         at_most float_exact ~than:bound e ~msg:(at got);
         worst128 := Float.max !worst128 e;
         if single_row args want then begin
           let got = c64_call kind ops in
-          let e = normwise 0x1p-24 got want in
+          let e = golden_error kind 0x1p-24 args got want in
           at_most float_exact ~than:bound e ~msg:(at got);
           worst64 := Float.max !worst64 e
         end)
@@ -1229,6 +1245,24 @@ let special_values =
     ("sign", (inf, ninf), (sqrt 0.5, -.sqrt 0.5));
     ("sign", (0., -0.), (0., -0.)); ("sign", (nan, 1.), (nan, nan));
     ("sign", (2., nan), (nan, nan)); ("sign", (-3., 4.), (-0.6, 0.8));
+    ("asinh", (0., 0.), (0., 0.)); ("asinh", (1., inf), (inf, pi /. 2.));
+    ("asinh", (1., nan), (nan, nan)); ("asinh", (inf, 1.), (inf, 0.));
+    ("asinh", (inf, inf), (inf, pi /. 4.)); ("asinh", (inf, nan), (inf, nan));
+    ("asinh", (nan, 0.), (nan, 0.)); ("asinh", (nan, 1.), (nan, nan));
+    ("asinh", (nan, inf), (inf, nan)); ("asinh", (nan, nan), (nan, nan));
+    ("acosh", (0., 0.), (0., pi /. 2.)); ("acosh", (-0., 0.), (0., pi /. 2.));
+    ("acosh", (2., inf), (inf, pi /. 2.)); ("acosh", (2., nan), (nan, nan));
+    ("acosh", (ninf, 1.), (inf, pi)); ("acosh", (inf, 1.), (inf, 0.));
+    ("acosh", (ninf, inf), (inf, 3. *. pi /. 4.));
+    ("acosh", (inf, inf), (inf, pi /. 4.)); ("acosh", (inf, nan), (inf, nan));
+    ("acosh", (ninf, nan), (inf, nan)); ("acosh", (nan, 1.), (nan, nan));
+    ("acosh", (nan, inf), (inf, nan)); ("acosh", (nan, nan), (nan, nan));
+    ("atanh", (0., 0.), (0., 0.)); ("atanh", (0., nan), (0., nan));
+    ("atanh", (1., 0.), (inf, 0.)); ("atanh", (2., inf), (0., pi /. 2.));
+    ("atanh", (2., nan), (nan, nan)); ("atanh", (inf, 1.), (0., pi /. 2.));
+    ("atanh", (inf, inf), (0., pi /. 2.)); ("atanh", (inf, nan), (0., nan));
+    ("atanh", (nan, 1.), (nan, nan)); ("atanh", (nan, inf), (0., pi /. 2.));
+    ("atanh", (nan, nan), (nan, nan));
   ]
 
 let quiet x = Int64.equal (bits64 x) 0x7FF8_0000_0000_0000L
@@ -1275,7 +1309,9 @@ let test_complex_conj =
 
 (* The odd kinds give -f(z) at -z, the even ones f(z). *)
 let test_complex_parity =
-  let odd = [ "sinh"; "tanh"; "sin"; "tan"; "asin"; "atan"; "sign" ] in
+  let odd =
+    [ "sinh"; "tanh"; "sin"; "tan"; "asin"; "atan"; "asinh"; "atanh"; "sign" ]
+  in
   let even = [ "cosh"; "cos" ] in
   List.concat_map
     (fun k ->
@@ -1337,6 +1373,87 @@ let test_complex_real_axis =
             (fst (c128_call "pow" [ (x, 0.); (w, 0.) ])));
     ]
 
+(* exp2's modulus is 2^x within exp2's bound at every finite y, past the
+   limit of its phase's bound too: |2^(x + iy)| = 2^x. *)
+let test_complex_exp2_modulus =
+  let check name u call round =
+    prop (strf "|exp2 (x + iy)| is 2^x %s" name)
+      Gen.(pair (float_range (-60.) 60.) gen64)
+      (fun (x, y) ->
+        let x, y = round (x, y) in
+        assume (Float.is_finite y);
+        cover "past the phase's limit" (Float.abs y >= exp2_limit u);
+        let want = Float.pow 2. x in
+        let got = call "exp2" [ (x, y) ] in
+        at_most float_exact ~than:5.
+          (modulus_error u got ((want, 0.), (0., 0.))))
+  in
+  [
+    check "c128" 0x1p-53 c128_call Fun.id;
+    check "c64" 0x1p-24 c64_call f32_pair;
+    test "exp2 far up the imaginary axis keeps its modulus" (fun () ->
+        let at u call z want =
+          at_most float_exact ~than:5.
+            (modulus_error u (call "exp2" [ z ]) ((want, 0.), (0., 0.)))
+        in
+        at 0x1p-24 c64_call (0., 0x1.5eb852p+29) 1.;
+        at 0x1p-24 c64_call (0., 0x1.5eb852p+26) 1.;
+        at 0x1p-53 c128_call (0., 1e300) 1.;
+        at 0x1p-53 c128_call (0.5, 1e300) (Float.sqrt 2.);
+        at 0x1p-53 c128_call (0., 0x1.5eb851eb851ecp+56) 1.);
+  ]
+
+(* pow at the values its .mli states: 1 where the exponent is 0, any base
+   included; 0 at a zero base where the exponent's real part is positive;
+   the sides of the negative real axis by the sign of a zero imaginary
+   part. *)
+let test_complex_pow_special =
+  let one = pair special_part special_part in
+  let check call round =
+    List.iter
+      (fun z -> equal one (1., 0.) (call "pow" [ round z; (0., 0.) ]))
+      [ (nan, nan); (0., 0.); (inf, 0.); (2., 3.); (ninf, nan) ];
+    equal one (1., 0.) (call "pow" [ round (2., 3.); (-0., 0.) ]);
+    List.iter
+      (fun w ->
+        let re, im = call "pow" [ (0., 0.); round w ] in
+        equal (pair float_exact float_exact) (0., 0.) (Float.abs re, Float.abs im))
+      [ (2., 0.); (0.5, 0.); (1., 1.); (3., -2.) ]
+  in
+  [
+    test "pow at 0 and 1, c128" (fun () -> check c128_call Fun.id);
+    test "pow at 0 and 1, c64" (fun () -> check c64_call f32_pair);
+    test "pow on either side of the negative real axis" (fun () ->
+        let bound = 3. +. (3. *. 0.5 *. Float.hypot (Float.log 4.) pi) in
+        let side u call im want =
+          let got = call "pow" [ (-4., im); (0.5, 0.) ] in
+          at_most float_exact ~than:bound (normwise u got ((0., 0.), (want, 0.)))
+        in
+        side 0x1p-53 c128_call 0. 2.;
+        side 0x1p-53 c128_call (-0.) (-2.);
+        side 0x1p-24 c64_call 0. 2.;
+        side 0x1p-24 c64_call (-0.) (-2.));
+  ]
+
+(* log |z| near the unit circle keeps its digits: the real part of log at
+   points whose modulus is 1 within a few ulps is within 4u of itself. *)
+let test_complex_log_circle =
+  test "log's real part near the unit circle" (fun () ->
+      let check u call z want =
+        let re, _ = call "log" [ z ] in
+        at_most float_exact ~than:4.
+          (Float.abs (re -. want) /. Float.abs want /. u)
+          ~msg:(strf "log %h %h: %h" (fst z) (snd z) re)
+      in
+      check 0x1p-53 c128_call (-0.46684475937821884, -0.8843392848002926)
+        0x1.34c78a964b468p-60;
+      check 0x1p-53 c128_call (0.6, 0.8) 0x1.999999999999ap-56;
+      check 0x1p-53 c128_call (0.8, 0.6) 0x1.999999999999ap-56;
+      check 0x1p-53 c128_call (-0.28, 0.96) (-0x1.eb851eb851eb8p-56);
+      check 0x1p-24 c64_call (0x1.333334p-1, 0x1.99999ap-1) 0x1.9999995c28f5dp-26;
+      check 0x1p-24 c64_call (-0x1.1eb852p-2, 0x1.eb851ep-1)
+        (-0x1.5c28f5f65fd8bp-26))
+
 (* Identities within the bounds the kinds' compose to, at parts in
    [2^-40, 2^40]: exp (log z) = z within (5 + 4|log z|)u, the exponential
    carrying log's absolute error into a relative one; sqrt z * sqrt z = z
@@ -1388,6 +1505,8 @@ let () =
               test_complex_goldens; test_complex_pow_goldens;
               test_complex_special;
             ]
+           @ test_complex_exp2_modulus @ test_complex_pow_special
+           @ [ test_complex_log_circle ]
            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
            @ test_complex_identities);
        ]

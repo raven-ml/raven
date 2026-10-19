@@ -39,6 +39,16 @@ type unary =
   | Sinh
   | Cosh
   | Tanh
+  | Asinh
+      (** On complex numbers only, as nx's float [asinh] composes other
+          kinds; its branch cuts lie on the imaginary axis beyond [-i] and
+          [i]. *)
+  | Acosh
+      (** On complex numbers only; its real part is not negative, and its
+          branch cut lies on the real axis below [1]. *)
+  | Atanh
+      (** On complex numbers only; its branch cuts lie on the real axis
+          beyond [-1] and [1]. *)
   | Erf  (** [2/√π ∫₀ˣ e{^-t²} dt]. *)
   | Floor  (** Toward negative infinity; the identity on integers. *)
   | Ceil  (** Toward positive infinity; the identity on integers. *)
@@ -137,7 +147,7 @@ type op3 =
     - [Abs], [Floor], [Ceil], [Round], [Trunc], [Mod], [Fma]: floats and
       integers.
     - [Sqrt], [Exp], [Exp2], [Log], [Log2], and [Sin] to [Tanh]: floats and
-      complex.
+      complex. [Asinh], [Acosh], [Atanh]: complex.
     - [Log1p], [Expm1], [Erf], [Atan2]: floats.
     - [And], [Or], [Xor]: integers and booleans. [Threefry]: [uint64].
     - [Maximum], [Minimum] and the comparisons: every dtype.
@@ -332,6 +342,9 @@ module E : sig
   val sinh : ('v, 's) t -> ('v, 's) t
   val cosh : ('v, 's) t -> ('v, 's) t
   val tanh : ('v, 's) t -> ('v, 's) t
+  val asinh : ('v, 's) t -> ('v, 's) t
+  val acosh : ('v, 's) t -> ('v, 's) t
+  val atanh : ('v, 's) t -> ('v, 's) t
   val erf : (float, 's) t -> (float, 's) t
   val floor : ('v, 's) t -> ('v, 's) t
   val ceil : ('v, 's) t -> ('v, 's) t

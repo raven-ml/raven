@@ -70,18 +70,27 @@ NX_INLINE NX_T NX_(nx_hypot)(NX_T x, NX_T y) {
 }
 
 /* log |x + iy|: of the larger part a and the smaller b, log a where b is 0;
-   half log1p of a^2 + b^2 - 1, as (a - 1)(a + 1) + b^2, where a is near 1,
-   so that the result keeps its digits near the unit circle; else
+   half log1p of a^2 + b^2 - 1 where a is near 1; else
    log a + log1p((b/a)^2) / 2. inf where a part is, NaN where a part is
-   NaN otherwise. */
+   NaN otherwise. Near 1, a^2 + b^2 - 1 is (a - 1)(a + 1) + b^2 from exact
+   products: a - 1 is exact, a + 1 and each product a head and a tail, and
+   the heads' sum exact, so that it errs by about u^2 of its terms and the
+   result keeps its digits near the unit circle. */
 NX_INLINE NX_T NX_(nx_log_abs)(NX_T x, NX_T y) {
   NX_T ax = NX_(nx_abs_bits)(x), ay = NX_(nx_abs_bits)(y);
   if (ax == NX_C(INF) || ay == NX_C(INF)) return NX_C(INF);
   if (ax != ax || ay != ay) return NX_C(NAN);
   NX_T a = ax > ay ? ax : ay, b = ax > ay ? ay : ax;
   if (b == 0) return NX_(nx_log)(a);
-  if (a >= NX_HALF && a <= (NX_T)2)
-    return NX_HALF * NX_(nx_log1p)(NX_FMA(a - NX_ONE, a + NX_ONE, b * b));
+  if (a >= NX_HALF && a <= (NX_T)2) {
+    NX_T am = a - NX_ONE;
+    NX_(nx_pair) ap = NX_(nx_two_sum)(a, NX_ONE);
+    NX_T h1 = am * ap.hi, h2 = b * b;
+    NX_T l1 = NX_FMA(am, ap.hi, -h1), l2 = NX_FMA(b, b, -h2);
+    NX_(nx_pair) h = NX_(nx_two_sum)(h1, h2);
+    NX_T d = h.hi + (h.lo + NX_FMA(am, ap.lo, l1 + l2));
+    return NX_HALF * NX_(nx_log1p)(d);
+  }
   NX_T q = b / a;
   return NX_FMA(NX_HALF, NX_(nx_log1p)(q * q), NX_(nx_log)(a));
 }
@@ -132,17 +141,18 @@ NX_INLINE NX_CT NX_Z(nx_exp_raw)(NX_T x, NX_T y) {
 }
 
 /* 2^z = 2^x cis(y ln2): 2^x as 2^k m, k the integer nearest x, and the
-   phase y ln2 as p + t, t its rounding error: cos(p + t) is
-   cos p (1 - t^2/2) - t sin p and sin(p + t) likewise, to t^3, which holds
-   the bound while |y| < 2^(2p/3), p the type's precision. */
+   phase y ln2 as p + t, ln2 in two parts and t the rounding error of p:
+   cis p turned by cis t, so that the modulus is 2^x's at every y. The
+   phase errs by about |y| 2^(-2p), p the type's precision, from t's
+   own rounding: the bound holds while |y| < 2^p. */
 NX_INLINE NX_CT NX_Z(nx_exp2_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_exp2)(x), y);
   if (x != x || !NX_(nx_finite)(y)) return NX_Z(nx_exp_raw)(x, y);
   NX_T p = y * NX_C(LN2);
-  NX_T t = NX_FMA(y, NX_C(LN2), -p) + y * NX_C(LN2_LOW);
+  NX_T t = NX_FMA(y, NX_C(LN2_LOW), NX_FMA(y, NX_C(LN2), -p));
   NX_T cp = NX_(nx_cos)(p), sp = NX_(nx_sin)(p);
-  NX_T h = NX_FMA(-NX_HALF * t, t, NX_ONE);
-  NX_T c = NX_FMA(-t, sp, cp * h), s = NX_FMA(t, cp, sp * h);
+  NX_T ct = NX_(nx_cos)(t), st = NX_(nx_sin)(t);
+  NX_T c = NX_(nx_det)(cp, ct, sp, st), s = NX_(nx_det)(sp, ct, -cp, st);
   if (!NX_(nx_finite)(x)) {
     NX_T m = x > 0 ? x : 0;
     return NX_MK(m * c, m * s);
@@ -392,8 +402,9 @@ NX_INLINE NX_CT NX_Z(nx_atanh_raw)(NX_T x, NX_T y) {
 
    The trigonometric kinds are the hyperbolic ones turned by i, as C99
    Annex G defines them: sin z = -i sinh(iz), cos z = cosh(iz),
-   tan z = -i tanh(iz), asin as above, and atan z = -i atanh(iz), where
-   iz = -y + ix and -i(a + ib) = b - ia. Every NaN part is quieted last. */
+   tan z = -i tanh(iz) and atan z = -i atanh(iz), where iz = -y + ix and
+   -i(a + ib) = b - ia; asinh turns asin back, and acosh turns acos. Every
+   NaN part is quieted last. */
 
 #define NX_QUIET(v) (NX_Z(nx_quiet)((v).re, (v).im))
 #define NX_TURN(v) (NX_Z(nx_quiet)((v).im, NX_(nx_neg)((v).re)))
@@ -437,6 +448,27 @@ NX_INLINE NX_CT NX_Z(nx_tan)(NX_CT z) {
 NX_INLINE NX_CT NX_Z(nx_atan)(NX_CT z) {
   NX_CT v = NX_Z(nx_atanh_raw)(NX_(nx_neg)(z.im), z.re);
   return NX_TURN(v);
+}
+
+/* asinh z = i asin(-iz), -iz = y - ix and i(a + ib) = -b + ia. */
+NX_INLINE NX_CT NX_Z(nx_asinh)(NX_CT z) {
+  NX_CT v = NX_Z(nx_asin_raw)(z.im, NX_(nx_neg)(z.re));
+  return NX_Z(nx_quiet)(NX_(nx_neg)(v.im), v.re);
+}
+
+NX_INLINE NX_CT NX_Z(nx_atanh)(NX_CT z) {
+  return NX_QUIET(NX_Z(nx_atanh_raw)(z.re, z.im));
+}
+
+/* acosh z = i acos z above the real axis, where Im(acos z) <= 0 makes the
+   real part non-negative, and its conjugate below: i(a + ib) = -b + ia. A
+   NaN imaginary part beside a finite real one is no direction: NaN, as
+   Annex G's cacosh(x + iNaN). */
+NX_INLINE NX_CT NX_Z(nx_acosh)(NX_CT z) {
+  if (z.im != z.im && NX_(nx_finite)(z.re))
+    return NX_MK(NX_C(NAN), NX_C(NAN));
+  NX_CT v = NX_Z(nx_acos_raw)(z.re, NX_(nx_abs_bits)(z.im));
+  return NX_Z(nx_quiet)(NX_(nx_neg)(v.im), NX_(nx_flip)(v.re, z.im));
 }
 
 #undef NX_KIND1

@@ -17,7 +17,7 @@
 #include "nx_contract_view_fill.h"
 #include "nx_prog.h"
 
-_Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
+_Static_assert(NX_OP1_COUNT == 31 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
                "one code per kind");
 
 /* The bits nx_dtype.h's store of [x] writes into an element of the float

@@ -477,7 +477,8 @@ COMPLEX = {
     "exp": E.exp, "exp2": lambda z: E.power(2, z), "log": E.log,
     "log2": lambda z: E.log(z) / E.log(2), "sqrt": E.sqrt, "sin": E.sin, "cos": E.cos,
     "tan": E.tan, "asin": E.asin, "acos": E.acos, "atan": E.atan, "sinh": E.sinh,
-    "cosh": E.cosh, "tanh": E.tanh, "sign": E.sign, "pow": E.power,
+    "cosh": E.cosh, "tanh": E.tanh, "asinh": E.asinh, "acosh": E.acosh,
+    "atanh": E.atanh, "sign": E.sign, "pow": E.power,
 }
 
 # A zero part stands for the limit from its side: a branch cut takes the
@@ -533,7 +534,7 @@ def complex_points(fn, rng, single):
         for _ in range(n):
             pts.append((rng.uniform(big - 30, top) * (1 if fn == "exp" else rng.choice([1, -1])),
                         mag(-149 if single else -1074, 4)))
-            pts.append((rng.uniform(-30, 30), mag(5, 30 if single else 60)))
+            pts.append((rng.uniform(-30, 30), mag(5, hi_e if fn == "exp2" else 60)))
     if fn in ("sinh", "cosh", "tanh", "sin", "cos", "tan"):
         swap = fn in ("sin", "cos", "tan")
         for k in range(-3, 4):
@@ -551,14 +552,16 @@ def complex_points(fn, rng, single):
             near(*c)
         for _ in range(n // 4):
             pts.append((-mag(-30, 30) ** 2, mag(lo_e, -20)))
-    if fn in ("asin", "acos", "atan"):
-        cuts = ((1.0, 0.0), (-1.0, 0.0)) if fn != "atan" else ((0.0, 1.0), (0.0, -1.0))
+    if fn in ("asin", "acos", "atan", "asinh", "acosh", "atanh"):
+        imaginary = fn in ("atan", "asinh")
+        cuts = ((0.0, 1.0), (0.0, -1.0)) if imaginary else ((1.0, 0.0), (-1.0, 0.0))
         for c in cuts:
             near(*c)
             near(*c, 1, 10)
         for _ in range(n // 2):
             far, tiny = abs(mag(-20, 30)) + 1, mag(lo_e, -10)
-            pts.append((far * rng.choice([1, -1]), tiny) if fn != "atan" else (tiny, far * rng.choice([1, -1])))
+            far = far * rng.choice([1, -1])
+            pts.append((tiny, far) if imaginary else (far, tiny))
             pts.append((mag(10, hi_e), mag(10, hi_e)))
     if single:
         pts = [(f32(x), f32(y)) for x, y in pts]
@@ -591,7 +594,9 @@ def settled(f, ops):
         return all(abs(p - q) <= abs(p) * mpf(2) ** -110 or abs(p) < mpf(2) ** -1100
                    for p, q in ((a.real, b.real), (a.imag, b.imag)))
     span = max([abs(math.frexp(o)[1]) for o in ops if o != 0 and math.isfinite(o)] + [0])
-    prec, prev = 320 + 2 * span, None
+    # A zero part's side, SIDE, must not round away inside the function.
+    side = 2 * 3000 if any(o == 0 for o in ops) else 0
+    prec, prev = 320 + 2 * span + side, None
     for _ in range(5):
         with mp.workprec(prec):
             v = f()
@@ -613,8 +618,6 @@ def complex_row(fn, args, single):
     else:
         x, y = args
         if fn == "sign" and x == 0 and y == 0:
-            return None
-        if fn == "exp2" and abs(y) > (2.0**16 if single else 2.0**35):
             return None
         val = settled(lambda: COMPLEX[fn](limit(x, y)), (x, y))
         ops = (x, y)

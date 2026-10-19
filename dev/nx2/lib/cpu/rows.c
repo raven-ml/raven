@@ -376,7 +376,8 @@ IDENT(8, uint64_t)
   X(TAN, tan, __VA_ARGS__) X(ASIN, asin, __VA_ARGS__)                        \
   X(ACOS, acos, __VA_ARGS__) X(ATAN, atan, __VA_ARGS__)                      \
   X(SINH, sinh, __VA_ARGS__) X(COSH, cosh, __VA_ARGS__)                      \
-  X(TANH, tanh, __VA_ARGS__)
+  X(TANH, tanh, __VA_ARGS__) X(ASINH, asinh, __VA_ARGS__)                    \
+  X(ACOSH, acosh, __VA_ARGS__) X(ATANH, atanh, __VA_ARGS__)
 
 /* Complex numbers take the arithmetic kinds but Mod, and Fdiv. */
 #define COMPLEX(D, T)                                                        \

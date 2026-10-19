@@ -209,7 +209,13 @@ let test_spot_values () =
   equal floats [ 0.; 2. ] (parts_of (Nx.sqrt m));
   let l = (Nx.to_array (Nx.log m)).(0) in
   equal (float 1e-15) (Float.log 4.) l.re;
-  equal (float 1e-15) Float.pi l.im
+  equal (float 1e-15) Float.pi l.im;
+  let zero = Nx.create Nx.complex64 [| 1 |] [| Complex.zero |] in
+  equal floats [ Float.nan; Float.nan ] (parts_of (Nx.rsqrt zero));
+  let two_i = Nx.create Nx.complex128 [| 1 |] [| { Complex.re = 0.; im = 2. } |] in
+  let a = (Nx.to_array (Nx.asinh two_i)).(0) in
+  equal (float 1e-15) (Float.log (2. +. Float.sqrt 3.)) a.re;
+  equal (float 1e-15) (Float.pi /. 2.) a.im
 
 let () =
   exit
@@ -234,6 +240,6 @@ let () =
            [
              prop "rsqrt is recip of sqrt" complexes law_rsqrt;
              test "abs declines, naming magnitude" test_abs_declines;
-             test "exp, sqrt and log at C99's values" test_spot_values;
+             test "exp, sqrt, log, rsqrt and asinh at C99's values" test_spot_values;
            ];
        ])

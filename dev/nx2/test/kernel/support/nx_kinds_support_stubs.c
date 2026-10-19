@@ -152,6 +152,9 @@ value nx_kinds_support_int(value ty, value name, value args) {
       else if (!strcmp(k, "sinh")) *y = nx_sinh_##C(x[0]);                    \
       else if (!strcmp(k, "cosh")) *y = nx_cosh_##C(x[0]);                    \
       else if (!strcmp(k, "tanh")) *y = nx_tanh_##C(x[0]);                    \
+      else if (!strcmp(k, "asinh")) *y = nx_asinh_##C(x[0]);                  \
+      else if (!strcmp(k, "acosh")) *y = nx_acosh_##C(x[0]);                  \
+      else if (!strcmp(k, "atanh")) *y = nx_atanh_##C(x[0]);                  \
       else return 0;                                                          \
     } else if (n != 2) return 0;                                              \
     else if (!strcmp(k, "pow")) *y = nx_pow_##C(x[0], x[1]);                  \

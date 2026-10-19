@@ -72,7 +72,8 @@ static const char *const op1s[NX_OP1_COUNT] = {
     "copy",  "cast", "bitcast", "neg",  "recip", "abs",   "sign",
     "sqrt",  "exp",  "exp2",    "log",  "log2",  "log1p", "expm1",
     "sin",   "cos",  "tan",     "asin", "acos",  "atan",  "sinh",
-    "cosh",  "tanh", "erf",     "floor", "ceil", "round", "trunc"};
+    "cosh",  "tanh", "asinh",   "acosh", "atanh", "erf",  "floor",
+    "ceil",  "round", "trunc"};
 
 static const char *const op2s[NX_OP2_COUNT] = {
     "add",     "sub",     "mul", "fdiv", "idiv",     "mod",
@@ -198,7 +199,9 @@ static const struct {
     CODE(NX_OP1_TAN),           CODE(NX_OP1_ASIN),
     CODE(NX_OP1_ACOS),          CODE(NX_OP1_ATAN),
     CODE(NX_OP1_SINH),          CODE(NX_OP1_COSH),
-    CODE(NX_OP1_TANH),          CODE(NX_OP1_ERF),
+    CODE(NX_OP1_TANH),          CODE(NX_OP1_ASINH),
+    CODE(NX_OP1_ACOSH),         CODE(NX_OP1_ATANH),
+    CODE(NX_OP1_ERF),
     CODE(NX_OP1_FLOOR),         CODE(NX_OP1_CEIL),
     CODE(NX_OP1_ROUND),         CODE(NX_OP1_TRUNC),
     CODE(NX_OP2_ADD),           CODE(NX_OP2_SUB),
