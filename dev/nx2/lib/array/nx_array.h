@@ -81,7 +81,9 @@ enum {
      it uses after nx_read. nx_read raises what Rig.Buffer.wait raises,
      holding no claim: the kernel acquires nothing before it that must be
      undone.
-   - nx_read and nx_done run on one thread, with the domain lock held.
+   - nx_read and nx_done run on one thread, with the domain lock held;
+     nx_read_each, and nx_done past NX_MAX_OPERANDS operands, release it
+     between runs of them and take it back.
    - Descriptors stay where nx_read filled them, in the frame of the C
      function that called it, and are passed by pointer, never copied or
      moved, until nx_done.
@@ -161,8 +163,38 @@ int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    claim and raises it. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
-/* Releases the claims of the [n] operands a successful nx_read filled and
-   unlinks their roots. */
+/* nx_read for a call of many operands, such as an assembly's pieces,
+   which takes more than NX_MAX_OPERANDS: the door reads them in runs of
+   NX_MAX_OPERANDS, and releases the domain lock and takes it back between
+   two runs, so that however many they are, no stretch of their reading
+   keeps another domain waiting to collect longer than a run's. Operand k
+   is what [operand(ctx, k, &in)] writes, called in order with the lock
+   held as its run begins; a release may move OCaml values, so [operand]
+   reads them only through roots, the kernel's CAMLparam ones. It answers
+   NX_OK, or a refusal, which nx_read_each answers having claimed nothing.
+   Its checks are nx_read's in nx_read's order, [operand]'s refusal with
+   the dtypes'. Each operand's memory must be the host's. It allocates
+   before any claim and raises Out_of_memory if host memory runs out. */
+int nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in),
+                 void *ctx, nx_array *out);
+
+/* Releases the domain lock and takes it back, so that other domains
+   collect in between, as the door does between runs: a held loop over
+   many items calls it every few. It runs no signal handler, whose raise
+   would leave claims held. A release may move OCaml values: the loop reads
+   them again from roots. */
+void nx_let_collect(void);
+
+/* Frees [p], which may be NULL, with the domain lock released: a table
+   sized by a count of operands or items, whose pages the system takes
+   time in proportion to return. */
+void nx_free_released(void *p);
+
+/* Releases the claims of the [n] operands a successful nx_read or
+   nx_read_each filled and unlinks their roots. Past NX_MAX_OPERANDS, it
+   releases the domain lock and takes it back between runs of them, as
+   nx_read_each does: the kernel reads what it uses after nx_done through
+   roots. */
 void nx_done(int n, nx_array *a);
 
 /* Coalescing */

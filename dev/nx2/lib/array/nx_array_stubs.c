@@ -12,6 +12,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 
 #include "nx_array.h"
 #include "nx_layout.h"
@@ -208,6 +209,260 @@ static int admit(int n, const nx_operand *in, nx_array *out, int host) {
   return e;
 }
 
+/* Unlinks the roots of the [n] operands [a], pushed in order through
+   a[0].local, under any pushed since. */
+static void unlink_roots(int n, nx_array *a) {
+  struct caml__roots_block **p = a[0].local;
+  while (*p != &a[n - 1].roots) {
+    if (*p == NULL)
+      caml_fatal_error("nx_done: the descriptors' roots were popped before "
+                       "nx_done");
+    p = &(*p)->next;
+  }
+  *p = a[0].roots.next;
+}
+
+/* Many operands
+
+   Past NX_MAX_OPERANDS operands the door works in runs of that many, and
+   releases the domain lock and takes it back between two runs
+   (nx_let_collect), so that no stretch it holds the lock grows with the
+   count. A run first reads its operands and links their buffers as roots,
+   as a release may move OCaml values; then each run claims its operands;
+   then the checks that read C data alone run with the lock released, the
+   tables sized by the count are freed released, and a wait or a raise
+   goes in runs too. The refusals keep nx_read's order: the dtypes, then
+   the claims, then the rest. */
+
+void nx_let_collect(void) {
+  caml_enter_blocking_section_no_pending();
+  caml_leave_blocking_section();
+}
+
+void nx_free_released(void *p) {
+  if (p == NULL) return;
+  caml_enter_blocking_section_no_pending();
+  free(p);
+  caml_leave_blocking_section();
+}
+
+/* The end of the run of operands from [at], of [n]. */
+static int run_end(int at, int n) {
+  return n - at < NX_MAX_OPERANDS ? n : at + NX_MAX_OPERANDS;
+}
+
+/* Releases the claims of the [n] operands [a], collecting between runs. */
+static void release_runs(int n, const nx_array *a) {
+  for (int at = 0; at < n; at = run_end(at, n)) {
+    if (at > 0) nx_let_collect();
+    for (int k = at; k < run_end(at, n); k++) rig_buffer_release(a[k].buffer);
+  }
+}
+
+/* Links the buffers of [a][at, end) as local roots on top of [*roots]. */
+static void push_roots(nx_array *a, int at, int end,
+                       struct caml__roots_block **roots) {
+  struct caml__roots_block *top = *roots;
+  for (int k = at; k < end; k++) {
+    a[k].roots.next = top;
+    a[k].roots.ntables = 1;
+    a[k].roots.nitems = 1;
+    a[k].roots.tables[0] = &a[k].buffer;
+    top = &a[k].roots;
+  }
+  *roots = top;
+}
+
+/* Reads, in runs, the [n] operands [operand] gives into [in], [out] and
+   [w]: the dtype checked, the layout, the byte range and the buffer, which
+   it links as a root through out[0].local. Answers NX_OK, or NX_DTYPE or
+   [operand]'s refusal with no root linked. */
+static int read_runs(int n, int (*operand)(void *, int, nx_operand *),
+                     void *ctx, nx_operand *in, nx_array *out, where *w) {
+  out[0].local = &CAML_LOCAL_ROOTS;
+  for (int at = 0; at < n; at = run_end(at, n)) {
+    if (at > 0) nx_let_collect();
+    for (int k = at; k < run_end(at, n); k++) {
+      int e = operand(ctx, k, &in[k]);
+      nx_array *a = &out[k];
+      value v = in[k].array;
+      if (!e && (a->dtype = nx_array_dtype(v)) != in[k].dtype) e = NX_DTYPE;
+      if (e) {
+        if (at > 0) unlink_roots(at, out);
+        return e;
+      }
+      a->bits = nx_dtype_row_of(a->dtype).bits;
+      read_layout(Field(v, ARRAY_LAYOUT), a);
+      a->buffer = Field(v, ARRAY_BUFFER);
+      a->alias = 0;
+      value l = Field(v, ARRAY_LAYOUT);
+      w[k].lo = w[k].hi = 0;
+      if (!(a->flags & NX_EMPTY)) {
+        w[k].lo = Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+        w[k].hi = (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+      }
+    }
+    push_roots(out, at, run_end(at, n), out[0].local);
+  }
+  return NX_OK;
+}
+
+/* Claims, in runs, the [n] operands read_runs read, each one's wait and
+   host address recorded: NX_OK, [*waits] set if one waits and [*lost] to
+   the first a lost device holds, if one does; or a refusal with none
+   claimed and every root unlinked. */
+static int claim_runs(int n, const nx_operand *in, nx_array *out, int *waits,
+                      int *lost) {
+  value buffer[NX_MAX_OPERANDS];
+  enum rig_access access[NX_MAX_OPERANDS];
+  enum rig_claim answer[NX_MAX_OPERANDS];
+  for (int at = 0; at < n; at = run_end(at, n)) {
+    int m = run_end(at, n) - at;
+    nx_let_collect();
+    for (int j = 0; j < m; j++) {
+      buffer[j] = out[at + j].buffer;
+      access[j] = in[at + j].written ? RIG_READ_WRITE : RIG_READ;
+    }
+    int refused = rig_buffers_claim(m, buffer, access, answer);
+    if (refused >= 0) {
+      release_runs(at, out);
+      unlink_roots(n, out);
+      return claim_code(answer[refused]);
+    }
+    for (int j = 0; j < m; j++) {
+      nx_array *a = &out[at + j];
+      a->wait = answer[j];
+      *waits |= a->wait;
+      if (answer[j] == RIG_LOST && *lost > at + j) *lost = at + j;
+      a->base = a->flags & NX_EMPTY ? NULL : rig_buffer_host(a->buffer);
+    }
+  }
+  return NX_OK;
+}
+
+/* The checks of claimed operands that read C data alone, as nx_read
+   orders them: a written operand distinct, a [host] one's memory the
+   host's. */
+static int faults(int n, const nx_operand *in, const nx_array *out,
+                  int host) {
+  for (int k = 0; k < n; k++) {
+    if (in[k].written && !(out[k].flags & NX_DISTINCT)) return NX_NOT_DISTINCT;
+    if (host && !(out[k].flags & NX_EMPTY) && out[k].base == NULL)
+      return NX_NOT_HOST;
+  }
+  return NX_OK;
+}
+
+/* A written operand's bytes, by host address. */
+typedef struct {
+  intptr_t lo, hi;
+  int k;
+} span;
+
+static int by_lo(const void *x, const void *y) {
+  intptr_t a = ((const span *)x)->lo, b = ((const span *)y)->lo;
+  return (a > b) - (a < b);
+}
+
+/* nx_read's overlap check of [n] claimed host operands, by address, in
+   O(n log n) for [n] of any size: [s] holds n spans. The written spans are
+   sorted; two that meet overlap, and a read operand meets at most one,
+   which it is identical to. Reads C data alone. */
+static int host_overlaps(int n, const nx_operand *in, nx_array *out,
+                         const where *w, span *s) {
+  int ns = 0;
+  for (int k = 0; k < n; k++) {
+    if (!in[k].written || w[k].lo == w[k].hi) continue;
+    intptr_t b = (intptr_t)out[k].base;
+    s[ns++] = (span){b + w[k].lo, b + w[k].hi, k};
+  }
+  qsort(s, (size_t)ns, sizeof *s, by_lo);
+  for (int i = 1; i < ns; i++)
+    if (s[i].lo < s[i - 1].hi) return NX_OVERLAP;
+  for (int j = 0; j < n; j++) {
+    if (in[j].written || w[j].lo == w[j].hi) continue;
+    intptr_t lo = (intptr_t)out[j].base + w[j].lo;
+    intptr_t hi = (intptr_t)out[j].base + w[j].hi;
+    /* The first written span past [lo]: the spans are disjoint, so sorted
+       by their ends too. */
+    int a = 0, b = ns;
+    while (a < b) {
+      int c = a + (b - a) / 2;
+      if (s[c].hi <= lo) a = c + 1;
+      else b = c;
+    }
+    if (a == ns || s[a].lo >= hi) continue;
+    if ((a + 1 < ns && s[a + 1].lo < hi) || !identical(&out[s[a].k], &out[j]))
+      return NX_OVERLAP;
+    out[j].alias = 1;
+  }
+  return NX_OK;
+}
+
+/* Waits under the claims, in runs, for the device work of the [n]
+   operands [out] read for [in]. If a wait raises, it releases every claim
+   in runs, holding the exception as a root, unlinks the roots, frees
+   [scratch] and raises. */
+static void waits_runs(int n, const nx_operand *in, nx_array *out,
+                       void *scratch) {
+  CAMLparam0();
+  CAMLlocal1(exn);
+  for (int at = 0; at < n; at = run_end(at, n)) {
+    if (at > 0) nx_let_collect();
+    for (int k = at; k < run_end(at, n); k++) {
+      if (!out[k].wait) continue;
+      caml_result r = rig_buffer_wait(
+          out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
+      if (!caml_result_is_exception(r)) continue;
+      exn = r.data;
+      release_runs(n, out);
+      /* The frame goes before the roots under it: no collection runs
+         until the raise. */
+      CAMLdrop;
+      unlink_roots(n, out);
+      free(scratch);
+      caml_raise(exn);
+    }
+  }
+  CAMLreturn0;
+}
+
+int nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in),
+                 void *ctx, nx_array *out) {
+  if (n <= 0) return NX_OK;
+  /* The operands, their byte ranges and the spans of the overlap check, on
+     the heap, allocated before any claim. */
+  size_t one = sizeof(nx_operand) + sizeof(where) + sizeof(span);
+  uint8_t *b = malloc((size_t)n * one);
+  if (b == NULL) caml_raise_out_of_memory();
+  nx_operand *in = (nx_operand *)b;
+  where *w = (where *)(in + n);
+  span *s = (span *)(w + n);
+  int waiting = 0, lost = n;
+  int e = read_runs(n, operand, ctx, in, out, w);
+  if (e) {
+    nx_free_released(b);
+    return e;
+  }
+  if ((e = claim_runs(n, in, out, &waiting, &lost))) {
+    nx_free_released(b);
+    return e;
+  }
+  caml_enter_blocking_section_no_pending();
+  e = faults(n, in, out, 1);
+  if (!e) e = host_overlaps(n, in, out, w, s);
+  caml_leave_blocking_section();
+  if (e) {
+    release_runs(n, out);
+    unlink_roots(n, out);
+    nx_free_released(b);
+    return e;
+  }
+  if (waiting) waits_runs(n, in, out, b);
+  nx_free_released(b);
+  return NX_OK;
+}
+
 int nx_read(int n, const nx_operand *in, nx_array *out) {
   if (n <= 0) return NX_OK;
   int e = admit(n, in, out, 1);
@@ -238,7 +493,10 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     caml_result r = rig_buffer_wait(
         out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
     if (caml_result_is_exception(r)) {
-      nx_done(n, out);
+      /* The exception is no root: the claims end without a release of
+         the lock, which nx_done makes past NX_MAX_OPERANDS. */
+      for (int j = 0; j < n; j++) rig_buffer_release(out[j].buffer);
+      unlink_roots(n, out);
       (void)caml_get_value_or_raise(r);
     }
   }
@@ -247,16 +505,10 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
 
 void nx_done(int n, nx_array *a) {
   if (n <= 0) return;
-  for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
-  /* Unlink the roots nx_read pushed, under any pushed since. */
-  struct caml__roots_block **p = a[0].local;
-  while (*p != &a[n - 1].roots) {
-    if (*p == NULL)
-      caml_fatal_error("nx_done: the descriptors' roots were popped before "
-                       "nx_done");
-    p = &(*p)->next;
-  }
-  *p = a[0].roots.next;
+  if (n <= NX_MAX_OPERANDS)
+    for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
+  else release_runs(n, a);
+  unlink_roots(n, a);
 }
 
 /* The OCaml door (Nx_array.door) admits through admit, in C, so that no

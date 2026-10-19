@@ -62,8 +62,17 @@ let regions_gen shape =
     in
     go (r - 1) []
   in
+  (* Up to 7 pieces, or past a run of the door's reads, which takes
+     Nx_array.max_operands operands at a time with the destination. *)
   let any =
-    let+ rs = array ~size:(int_range 0 7) any_region in
+    let pieces =
+      frequency
+        [
+          (3, int_range 0 7);
+          (1, int_range A.max_operands (3 * A.max_operands));
+        ]
+    in
+    let+ rs = array ~size:pieces any_region in
     ("slices", rs)
   in
   let concat =
@@ -160,6 +169,8 @@ let law_reference (b : Support.backend) c =
   cover "concatenation" (c.form = "concatenation");
   cover "pad" (c.form = "pad");
   cover "fill alone" (c.pieces = [||]);
+  cover "pieces past a run of the door's reads"
+    (Array.length c.pieces + 1 > A.max_operands);
   match assemble_on b c with
   | None -> failf "%s declined an assembly" b.name
   | Some y -> equal (array string) (expected c) (elements y)
@@ -309,6 +320,58 @@ let test_refusals (b : Support.backend) () =
        ~dst:(A.create Rig.host D.Float32 [| 4; 1 |])
        [| (region, x) |])
 
+(* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
+let unclaimed b =
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b)
+
+(* Assemblies of 17, 18, 19, 35, 36 and 37 operands, a run of the door's
+   reads and its neighbours: each piece, one element, lands at its
+   index. *)
+let test_run_counts (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let m = A.max_operands in
+  List.iter
+    (fun n ->
+      let np = n - 1 in
+      let dst = A.create Rig.host D.Float32 [| np |] in
+      let piece i =
+        ( ([| { M.start = i; count = 1; step = 1 } |] : _ iarray),
+          A.of_array D.Float32 [| 1 |] [| Float.of_int i |] )
+      in
+      let msg = Printf.sprintf "%d operands" n in
+      equal ~msg answer A.Done
+        (K.assemble ~fill:(-1.) ~dst (Array.init np piece));
+      equal ~msg (array float_exact)
+        (Array.init np Float.of_int)
+        (A.to_array dst))
+    [ m - 1; m; m + 1; (2 * m) - 1; 2 * m; (2 * m) + 1 ]
+
+(* A refusal of a piece read in a later run than the destination's leaves
+   no claim on any operand. *)
+let test_late_refusals (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 3 * A.max_operands in
+  let one i : _ iarray = [| { M.start = i; count = 1; step = 1 } |] in
+  let refused ~msg want last =
+    let dst = A.create Rig.host D.Float32 [| n |] in
+    let xs = Array.init (n - 1) (fun _ -> A.create Rig.host D.Float32 [| 1 |]) in
+    let pieces =
+      Array.append
+        (Array.mapi (fun i x -> (one i, x)) xs)
+        [| (one (n - 1), last dst) |]
+    in
+    equal ~msg answer want (K.assemble ~fill:0. ~dst pieces);
+    Array.iter
+      (fun x ->
+        equal ~msg:(msg ^ ", released") bool true (unclaimed (A.buffer x)))
+      (Array.append [| dst |] xs)
+  in
+  refused ~msg:"a last piece off its region" A.Shape_mismatch (fun _ ->
+      A.create Rig.host D.Float32 [| 2 |]);
+  refused ~msg:"a last piece over the destination's bytes" A.Overlapping
+    (fun dst ->
+      A.v D.Float32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (A.buffer dst))
+
 (* Guard pages *)
 
 (* The same result with the pieces, through their views, and the
@@ -365,6 +428,10 @@ let cpu (b : Support.backend) =
         (run (law_refuses b));
       test "refuses shapes that do not fit" (fun () ->
           b.around (test_refusals b));
+      test "assembles operands around a run of the door's reads" (fun () ->
+          b.around (test_run_counts b));
+      test "a refusal in a later run of reads leaves no claim" (fun () ->
+          b.around (test_late_refusals b));
       prop ~count:300
         "reads and writes no byte past the pieces and dst, whatever pages lie \
          beside them"

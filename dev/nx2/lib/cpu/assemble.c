@@ -198,19 +198,27 @@ static int tiles(int np, int r, int64_t (*lo)[NX_MAX_RANK],
   return sum == total;
 }
 
-/* The pieces' descriptors, boxes, ranges and operands: one C-heap block of
-   their count. A custom block owns it, so that an exception nx_read raises
+/* The pieces' descriptors, boxes and ranges: one C-heap block of their
+   count. A custom block owns it, so that an exception the door raises
    leaves it to the finalizer. */
 typedef struct {
   nx_array *a;
   int64_t (*lo)[NX_MAX_RANK], (*hi)[NX_MAX_RANK];
   int64_t *ranges;
-  nx_operand *in;
 } pieces;
 
 static void free_scratch(value v) {
   free(*(void **)Data_custom_val(v));
   *(void **)Data_custom_val(v) = NULL;
+}
+
+/* Frees the scratch [v] owns, that of [many] pieces with the domain lock
+   released (nx_free_released). */
+static void drop_scratch(value v, int many) {
+  void *b = *(void **)Data_custom_val(v);
+  *(void **)Data_custom_val(v) = NULL;
+  if (many) nx_free_released(b);
+  else free(b);
 }
 
 static struct custom_operations scratch_ops = {
@@ -226,14 +234,13 @@ static int pieces_of(value owner, int np, int r, pieces *p) {
   size_t n = (size_t)np + 1;
   size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
          sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
-  uint8_t *b = malloc(sa + 2 * sb + sr + n * sizeof *p->in);
+  uint8_t *b = malloc(sa + 2 * sb + sr);
   if (b == NULL) return 0;
   *(void **)Data_custom_val(owner) = b;
   p->a = (nx_array *)b;
   p->lo = (int64_t(*)[NX_MAX_RANK])(b + sa);
   p->hi = (int64_t(*)[NX_MAX_RANK])(b + sa + sb);
   p->ranges = (int64_t *)(b + sa + 2 * sb);
-  p->in = (nx_operand *)(b + sa + 2 * sb + sr);
   return 1;
 }
 
@@ -249,14 +256,48 @@ static int keeps(const int64_t *x, int64_t d) {
   return start >= 0 && start < d && last >= 0 && last < d;
 }
 
+/* The operands of an assembly as the door reads them, the destination
+   then each piece, from the roots [vd] and [vpieces]: each piece is read
+   once, its region into [ranges] and checked there, as another domain may
+   write [vpieces]. [elements] counts the pieces', for the price. */
+typedef struct {
+  const value *vd, *vpieces;
+  int r, dt;
+  const int64_t *shape;
+  int64_t *ranges, elements;
+} reading;
+
+static int operand(void *ctx, int k, nx_operand *in) {
+  reading *c = ctx;
+  if (k == 0) {
+    *in = (nx_operand){*c->vd, c->dt, 1};
+    return NX_OK;
+  }
+  int j = k - 1, r = c->r;
+  value piece = Field(*c->vpieces, j), region = Field(piece, 0);
+  int64_t ps[2 * NX_MAX_RANK], off, n = 1;
+  *in = (nx_operand){Field(piece, 1), c->dt, 0};
+  if ((int)Wosize_val(region) != r || nx_array_layout(in->array, ps, &off) != r)
+    return NX_SHAPE;
+  for (int i = 0; i < r; i++) {
+    int64_t *x = c->ranges + 3 * (j * r + i);
+    for (int f = 0; f < 3; f++) x[f] = Long_val(Field(Field(region, i), f));
+    if (!keeps(x, c->shape[i]) || ps[i] != x[1]) return NX_SHAPE;
+    n *= x[1];
+  }
+  c->elements += n;
+  return NX_OK;
+}
+
 /* The external. [vfill] is the fill's bits and [vpieces] the pieces, each a
-   region, a Move.range per axis, and its array. The regions are copied
-   before the door, which may run OCaml code, and checked on the copy. */
+   region, a Move.range per axis, and its array, which the door reads with
+   the regions (operand): through nx_read_each past NX_MAX_OPERANDS
+   operands, through nx_read below. */
 value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   CAMLparam3(vfill, vd, vpieces);
   CAMLlocal1(owner);
   int np = (int)Wosize_val(vpieces);
-  int64_t shape[2 * NX_MAX_RANK], ps[2 * NX_MAX_RANK], off;
+  int64_t shape[2 * NX_MAX_RANK], off;
   int r = nx_array_layout(vd, shape, &off);
   owner = caml_alloc_custom(&scratch_ops, sizeof(void *), 0, 1);
   *(void **)Data_custom_val(owner) = NULL;
@@ -267,33 +308,24 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   memcpy(fill, String_val(vfill), nfill < sizeof fill ? nfill : sizeof fill);
   int dt = nx_array_dtype(vd), bits = nx_dtype_row_of(dt).bits, e;
   int64_t *ranges = p.ranges;
-  nx_operand *in = p.in;
   nx_array *a = p.a;
-  in[0] = (nx_operand){vd, dt, 1};
-  /* Each piece is read once, as another domain may write [vpieces]. */
-  for (int j = 0; j < np; j++) {
-    value piece = Field(vpieces, j), region = Field(piece, 0);
-    in[1 + j] = (nx_operand){Field(piece, 1), dt, 0};
-    int fits = (int)Wosize_val(region) == r &&
-               nx_array_layout(in[1 + j].array, ps, &off) == r;
-    for (int i = 0; i < r && fits; i++) {
-      int64_t *x = ranges + 3 * (j * r + i);
-      for (int f = 0; f < 3; f++) x[f] = Long_val(Field(Field(region, i), f));
-      fits = keeps(x, shape[i]) && ps[i] == x[1];
-    }
-    if (!fits) {
-      free_scratch(owner);
-      CAMLreturn(Val_int(NX_SHAPE));
-    }
+  reading c = {&vd, &vpieces, r, dt, shape, ranges, 0};
+  int n = 1 + np, many = n > NX_MAX_OPERANDS;
+  if (many) e = nx_read_each(n, operand, &c, a);
+  else {
+    nx_operand in[NX_MAX_OPERANDS];
+    e = NX_OK;
+    for (int k = 0; k < n && !e; k++) e = operand(&c, k, &in[k]);
+    if (!e) e = nx_read(n, in, a);
   }
-  if ((e = nx_read(1 + np, in, a))) {
-    free_scratch(owner);
+  if (e) {
+    drop_scratch(owner, many);
     CAMLreturn(Val_int(e));
   }
   double pairs = (double)np * (np - 1) / 2 * r;
-  double cost = NX_CPU_STRIDED_COST * nx_cpu_bytes(&a[0]) + PAIR_COST * pairs;
-  for (int j = 0; j < np; j++)
-    cost += NX_CPU_STRIDED_COST * nx_cpu_bytes(&a[1 + j]) + PIECE_COST;
+  double cost = NX_CPU_STRIDED_COST * nx_cpu_width(dt) *
+                    (nx_cpu_elements(&a[0]) + (double)c.elements) +
+                PAIR_COST * pairs + PIECE_COST * (double)np;
   int released = nx_cpu_release(cost);
   int64_t total = 1;
   for (int i = 0; i < r; i++) total *= shape[i];
@@ -365,8 +397,8 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     nx_cpu_copy_loop(a[0].base, a[1 + j].base, bits, &l);
   }
   nx_cpu_reacquire(released);
-  nx_done(1 + np, a);
-  free_scratch(owner);
+  nx_done(n, a);
+  drop_scratch(owner, many);
   CAMLreturn(Val_int(e));
 }
 
