@@ -226,7 +226,7 @@ let ring_kind = function `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
-external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
+external set_copies : int -> int -> int -> unit = "caml_rig_amd_copies"
 
 external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
@@ -430,6 +430,7 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
     Pm4.acquire_mem g Agent;
     Pm4.event_write Cs_partial_flush @ once (Pm4.copy_data Confirmed Clock 0);
     Sdma.timestamp 0;
+    Sdma.const_fill ~dst:0 ~word:1 ~bytes:2;
   ]
 
 let set_templates self g ~interrupt ~waits64 ~aql =
@@ -438,7 +439,7 @@ let set_templates self g ~interrupt ~waits64 ~aql =
     set_template self i words holes
   in
   List.iteri set (templates g ~interrupt ~waits64 ~aql);
-  set_max_copy self (Sdma.max_copy g)
+  set_copies self (Sdma.max_copy g) (Sdma.max_fill g)
 
 let supported (g : Abi.Gpu.t) =
   let major, _, _ = g.target in

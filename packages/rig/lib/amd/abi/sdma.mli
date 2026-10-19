@@ -19,6 +19,16 @@ val copy_linear : dst:'v -> src:'v -> bytes:'v -> 'v Packet.t
     to address [dst] in one linear copy of the engine. The caller must keep
     [bytes] in \[[1];[max_copy g]\] for the engine's GPU [g]. *)
 
+val max_fill : Gpu.t -> int
+(** [max_fill g] is the most bytes one {!const_fill} of [g]'s engine sets,
+    {!max_copy}[ g]. *)
+
+val const_fill : dst:'v -> word:'v -> bytes:'v -> 'v Packet.t
+(** [const_fill ~dst ~word ~bytes] sets the [bytes] bytes from [dst] to the
+    32-bit [word] repeated, reading no memory. The caller must keep [dst]
+    and [bytes] multiples of 4, and [bytes] in \[[4];[max_fill g]\] for the
+    engine's GPU [g]. *)
+
 val poll : 'v -> Packet.comparison -> 'v -> ?mask:int -> unit -> 'v Packet.t
 (** [poll addr cmp v ~mask ()] waits until the 32 bits at [addr], masked by
     [mask], compare to the low 32 bits of [v] as [cmp] says. [mask] defaults

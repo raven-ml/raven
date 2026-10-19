@@ -80,7 +80,8 @@ raven / llama.cpp (Vulkan; ROCm):
   60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
   barrier, and in none of 96 with it
 - hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
-  dc72412596); root on an NVIDIA host (NV over PCI's open/close law and
+  dc72412596; the conformance suite's box and fill laws over PCI and on
+  SDMA 4 to 6); root on an NVIDIA host (NV over PCI's open/close law and
   test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
   (peers); mlx5 and bnxt NICs; test_cuda's open without a loadable
   library on a host with the driver; NV's `entry` `No_memory`, which a
@@ -102,6 +103,10 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### perf
 
+- AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows on SDMA 4-6,
+  where they run as a COPY_LINEAR per row: measured on an AMD host against
+  rows; it also lifts the row limit of a box on SDMA 4 over PCI, about
+  170,000 rows, past which a box never fits the ring
 - a host buffer's creation: every fresh nx result mallocs through
   `caml_rig_heap_bytes` and allocates a custom block (`buffer/host-create-16`
   54 ns, 31 words on the M1; nx's `dispatch/add-1` 214 ns): profile malloc

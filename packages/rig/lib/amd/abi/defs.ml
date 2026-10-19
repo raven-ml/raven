@@ -4525,6 +4525,7 @@ let sdma_op_fence = 5
 let sdma_op_trap = 6
 let sdma_op_poll_regmem = 8
 let sdma_op_timestamp = 0xd
+let sdma_op_const_fill = 0xb
 let sdma_subop_copy_linear = 0
 let sdma_subop_timestamp_get_global = 2
 
@@ -4538,6 +4539,7 @@ let sdma_pkt_poll_regmem_dw5_interval = (0xffff, 0)
 let sdma_pkt_poll_regmem_dw5_retry_count = (0xfff, 16)
 let sdma_pkt_fence_header_mtype = (7, 16)
 let sdma_pkt_timestamp_get_global_header_sub_op = (0xff, 8)
+let sdma_pkt_constant_fill_header_fillsize = (3, 30)
 let sdma_fence_mtype_from = (5, 0, 0)
 
 (* AQL: hsa.h's constants, and its kernel dispatch packet as (byte offset,

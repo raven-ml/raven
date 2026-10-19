@@ -56,17 +56,19 @@ static uint64_t add(uint64_t a, uint64_t b) {
 
 /* A copy of no bytes places nothing. */
 static int is_copy(const struct rig_part *p) {
-  return p->kind == RIG_COPY && p->copy.width > 0;
+  return p->kind == RIG_COPY && p->copy.width > 0 && p->copy.rows > 0;
 }
 
 /* Small copies keep SDMA's lower dispatch cost. */
 #define COPY_MIN_BYTES (2ULL << 20)
 
-/* Whether the driver's copy kernel runs [p]: a copy within this device's
-   Device memory, large enough to pay for its dispatch. */
+/* Whether the driver's copy kernel runs [p]: a copy of one row within this
+   device's Device memory, large enough to pay for its dispatch. The kernel
+   is linear, and reads its source. */
 static int kernel_copies(const struct rig_amd *d, const struct rig_part *p) {
-  return p->kind == RIG_COPY && p->copy.device_memory &&
-         p->copy.width >= COPY_MIN_BYTES && d->copy_launch != NULL;
+  return p->kind == RIG_COPY && !p->copy.fill && p->copy.rows == 1 &&
+         p->copy.device_memory && p->copy.width >= COPY_MIN_BYTES &&
+         d->copy_launch != NULL;
 }
 
 /* Decides the routes of [p]'s parts into [r]: a copy the kernel runs
@@ -170,8 +172,40 @@ static void mark(struct rig_amd_marks *m, uint64_t v, uint64_t end) {
   m->count++;
 }
 
+static uint64_t ceil_div(uint64_t n, uint64_t k) { return (n + k - 1) / k; }
+
 static uint64_t copies(const struct rig_amd *d, uint64_t bytes) {
-  return (bytes + d->max_copy - 1) / d->max_copy;
+  return ceil_div(bytes, d->max_copy);
+}
+
+/* A fill of [n] bytes at [dst] as the engine runs it: [*head] bytes up to
+   a multiple of 4, [*body] bytes of whole dwords, then the [*tail] bytes
+   left, at most three. CONST_FILL sets dwords; each end is a copy from four
+   bytes of the segment that hold the byte. */
+static void fill_split(uint64_t dst, uint64_t n, uint64_t *head,
+                       uint64_t *body, uint64_t *tail) {
+  uint64_t h = (4 - (dst & 3)) & 3;
+  if (h > n) h = n;
+  *head = h;
+  *body = (n - h) & ~(uint64_t)3;
+  *tail = n - h - *body;
+}
+
+/* The words the copy engine's packets for the copy part [p] take, and in
+   [*args] the segment bytes a fill's ends copy from: [copy] places them. */
+static uint64_t copy_words(const struct rig_amd *d, const struct rig_part *p,
+                           uint64_t *args) {
+  uint64_t width = p->copy.width, rows = p->copy.rows;
+  *args = 0;
+  if (width == 0 || rows == 0) return 0;
+  if (p->copy.fill) {
+    uint64_t head, body, tail;
+    fill_split(p->copy.dst + p->copy.dst_offset, width, &head, &body, &tail);
+    if (head + tail > 0) *args = SEGMENT_ALIGN;
+    return (uint64_t)((head > 0) + (tail > 0)) * words_of(d, S_COPY) +
+           ceil_div(body, d->max_fill) * words_of(d, S_FILL);
+  }
+  return rows * copies(d, width) * (uint64_t)words_of(d, S_COPY);
 }
 
 /* The bytes of launch [l]'s arguments: its parameters, and its function's
@@ -198,7 +232,7 @@ static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
       *args = align_up(arguments(l, 3 * sizeof(uint64_t)), SEGMENT_ALIGN);
       return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
     }
-    return copies(d, p->copy.width) * (uint64_t)words_of(d, S_COPY);
+    return copy_words(d, p, args);
   }
 }
 
@@ -723,15 +757,55 @@ static void signal_slot(struct submission *s, int q, int i) {
        s->v, 0);
 }
 
+/* Places linear copies of the [n] bytes at [src] to [dst], at most
+   max_copy each. */
+static void copy_run(struct rig_amd *d, struct rig_amd_ring *r, uint64_t dst,
+                     uint64_t src, uint64_t n) {
+  for (uint64_t off = 0; off < n; off += d->max_copy) {
+    uint64_t k = n - off;
+    emit(d, r, S_COPY, dst + off, src + off, k < d->max_copy ? k : d->max_copy);
+  }
+}
+
+/* Places the fill [p]: CONST_FILL over its dwords, at most max_fill bytes
+   each, and its ends copied from four bytes of the segment that hold its
+   byte. */
+static void fill(struct submission *s, const struct rig_part *p) {
+  struct rig_amd *d = s->d;
+  struct rig_amd_ring *r = &d->rings[RIG_AMD_COPY];
+  struct rig_amd_segment *g = &d->segment;
+  uint64_t dst = p->copy.dst + p->copy.dst_offset, head, body, tail;
+  fill_split(dst, p->copy.width, &head, &body, &tail);
+  uint64_t word = UINT64_C(0x01010101) * p->copy.byte, ends = 0;
+  if (head + tail > 0) {
+    uint64_t at = g->put % g->size;
+    memcpy(g->host + at, &(uint32_t){(uint32_t)word}, 4);
+    ends = g->gpu + at;
+    g->put += SEGMENT_ALIGN;
+  }
+  if (head > 0) emit(d, r, S_COPY, dst, ends, head);
+  for (uint64_t off = 0; off < body; off += d->max_fill) {
+    uint64_t k = body - off;
+    emit(d, r, S_FILL, dst + head + off, word,
+         k < d->max_fill ? k : d->max_fill);
+  }
+  if (tail > 0) emit(d, r, S_COPY, dst + head + body, ends, tail);
+}
+
+/* Places the copy part [p]: each row as linear copies. */
 static void copy(struct submission *s, const struct rig_part *p) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[RIG_AMD_COPY];
+  if (p->copy.fill) {
+    fill(s, p);
+    return;
+  }
   uint64_t dst = p->copy.dst + p->copy.dst_offset;
   uint64_t src = p->copy.src + p->copy.src_offset;
-  for (uint64_t off = 0; off < p->copy.width; off += d->max_copy) {
-    uint64_t n = p->copy.width - off;
-    emit(d, r, S_COPY, dst + off, src + off, n < d->max_copy ? n : d->max_copy);
-  }
+  uint64_t width = p->copy.width, rows = p->copy.rows;
+  uint64_t sp = p->copy.src_pitch, dp = p->copy.dst_pitch;
+  for (uint64_t i = 0; i < rows; i++)
+    copy_run(d, r, dst + i * dp, src + i * sp, width);
 }
 
 /* Writes into [args] the implicit arguments [l] reads, of a launch of

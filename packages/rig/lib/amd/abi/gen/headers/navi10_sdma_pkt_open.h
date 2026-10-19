@@ -26,6 +26,7 @@
 #define SDMA_OP_FENCE  5
 #define SDMA_OP_TRAP  6
 #define SDMA_OP_POLL_REGMEM  8
+#define SDMA_OP_CONST_FILL  11
 #define SDMA_OP_TIMESTAMP  13
 #define SDMA_SUBOP_TIMESTAMP_GET_GLOBAL  2
 #define SDMA_SUBOP_COPY_LINEAR  0
@@ -33,6 +34,8 @@
 #define SDMA_PKT_COPY_LINEAR_HEADER_sub_op_shift  8
 #define SDMA_PKT_FENCE_HEADER_mtype_mask   0x00000007
 #define SDMA_PKT_FENCE_HEADER_mtype_shift  16
+#define SDMA_PKT_CONSTANT_FILL_HEADER_fillsize_mask   0x00000003
+#define SDMA_PKT_CONSTANT_FILL_HEADER_fillsize_shift  30
 #define SDMA_PKT_POLL_REGMEM_HEADER_func_mask   0x00000007
 #define SDMA_PKT_POLL_REGMEM_HEADER_func_shift  28
 #define SDMA_PKT_POLL_REGMEM_HEADER_mem_poll_mask   0x00000001

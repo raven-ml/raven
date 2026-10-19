@@ -80,6 +80,22 @@ let copy =
             (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n))));
     ]
 
+(* A fill, word for word against CONSTANT_FILL's fields in the headers:
+   fillsize at 31:30, and the count less one. *)
+let fills =
+  group ~timeout "fills"
+    [
+      cases ~name:version "a fill sets as many bytes as a linear copy moves"
+        versions (fun v ->
+          equal int (largest v) (Sdma.max_fill (gpu v)));
+      test "a fill of dwords" (fun () ->
+          equal (list int)
+            [ 0xb lor (2 lsl 30); 0x40; 0x2; 0x6161_6161; 4095 ]
+            (words
+               (Sdma.const_fill ~dst:0x2_0000_0040 ~word:0x6161_6161
+                  ~bytes:4096)));
+    ]
+
 let others =
   group ~timeout "others"
     [
@@ -119,4 +135,4 @@ let others =
             (words (Sdma.timestamp 0x18)));
     ]
 
-let () = exit (run "rig_amd_abi.sdma" [ copy; others ])
+let () = exit (run "rig_amd_abi.sdma" [ copy; fills; others ])

@@ -473,8 +473,11 @@ value caml_rig_amd_launches_free(value v_launches) {
   return Val_unit;
 }
 
-value caml_rig_amd_max_copy(value v_self, value v_n) {
-  Device_val(v_self)->max_copy = (uint64_t)Long_val(v_n);
+/* Sets the bytes one S_COPY moves and one S_FILL sets. */
+value caml_rig_amd_copies(value v_self, value v_copy, value v_fill) {
+  struct rig_amd *d = Device_val(v_self);
+  d->max_copy = (uint64_t)Long_val(v_copy);
+  d->max_fill = (uint64_t)Long_val(v_fill);
   return Val_unit;
 }
 

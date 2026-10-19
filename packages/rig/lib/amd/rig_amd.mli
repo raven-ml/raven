@@ -280,7 +280,12 @@ val capability : t -> Rig_amd_abi.Capability.t
        that starts at work-item 0. A group takes the kernel's group segment
        plus the launch's shared memory of local data share;}
     {- on ["COPY:0"], a copy between two GPU addresses, its handles, whose
-       ranges do not overlap.}}
+       ranges do not overlap. A box is linear copies of each row. A fill is
+       a [CONST_FILL] of its whole dwords, as many bytes a packet as a
+       linear copy moves, and a linear copy of each unaligned end, at most
+       three bytes, from four bytes of the argument segment that hold its
+       byte. It reads no other memory. The compute engine runs only copies
+       of one row.}}
 
     A submission takes fewer words than the compute ring holds, at most
     half the copy ring and at most half the argument segment, since its SDMA
@@ -316,8 +321,8 @@ val capability : t -> Rig_amd_abi.Capability.t
     the path lacks [n] bytes of memory, or another resource for a queue,
     having made nothing that stays and kept what a growth handed, and
     raises {!Fault} if the path refuses a queue for another reason. A copy
-    takes an SDMA copy packet for each 1 GiB it moves (4 MiB on SDMA
-    engines before 4.4.2 and on 5.0 and 5.1). The device does not run:
+    takes an SDMA copy packet for each 1 GiB of each row it moves (4 MiB on
+    SDMA engines before 4.4.2 and on 5.0 and 5.1). The device does not run:
     {ul
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}

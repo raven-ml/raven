@@ -31,6 +31,29 @@ let copy_linear ~dst ~src ~bytes =
     W64 (value dst);
   ]
 
+let minus_one v = { (value v) with add = -1L }
+
+(* A fill's count is as wide as a linear copy's: Linux bounds both alike on
+   every version (fill_max_bytes beside copy_max_bytes in sdma_v4_0.c,
+   sdma_v4_4_2.c, sdma_v5_0.c, sdma_v5_2.c, sdma_v6_0.c and sdma_v7_0.c,
+   torvalds/linux master, read 2026-10-20). *)
+let max_fill = max_copy
+
+(* Mesa's dword fill: [fillsize] 2 counts the fill in dwords, and its count
+   is still in bytes, minus one (ac_cmdbuf_sdma.c,
+   ac_emit_sdma_constant_fill). *)
+let dword_fill = 2
+
+let const_fill ~dst ~word ~bytes =
+  [
+    Dword
+      (Defs.sdma_op_const_fill
+      lor field Defs.sdma_pkt_constant_fill_header_fillsize dword_fill);
+    W64 (value dst);
+    W32 (value word);
+    W32 (minus_one bytes);
+  ]
+
 (* The interval and retries of a poll, as the kernel driver sets them. *)
 let interval = 0x04
 let retries = 0xfff

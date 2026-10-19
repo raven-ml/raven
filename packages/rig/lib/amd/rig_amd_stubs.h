@@ -67,6 +67,7 @@ enum {
   T_INVALIDATE, /* compute: invalidate the caches above the L2 */
   T_STAMP,     /* compute: the dispatches before completed, the clock at 0 */
   S_STAMP,     /* copy: the clock at 0 */
+  S_FILL,      /* copy: 2 bytes from 0, a multiple of 4, set to word 1 */
   RIG_AMD_TEMPLATES
 };
 
@@ -334,6 +335,7 @@ struct rig_amd {
   struct rig_amd_segment segment;
   struct rig_amd_template templates[RIG_AMD_TEMPLATES];
   uint64_t max_copy;            /* the bytes one S_COPY moves */
+  uint64_t max_fill;            /* the bytes one S_FILL sets */
   const struct rig_amd_launch *copy_launch; /* owned until confirmed stop */
   struct rig_amd_hdp hdps[RIG_AMD_HDPS];
   /* set while a submission stores to [hdps]' registers, from before its
