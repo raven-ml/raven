@@ -108,14 +108,14 @@ let connect (p : M.path) (c : M.context) =
     ok "making a completion queue" (p.cq ~entries:16 ~tag:1 "" cq_answer)
   in
   let qp tag =
-    ok "making a queue pair" (p.qp ~cq ~entries:8 ~tag "" qp_answer)
+    ok "making a queue pair" (p.qp ~cq ~sends:8 ~receives:0 ~tag "" qp_answer)
   in
   let a, qa, _ = qp 2 in
   let b, qb, _ = qp 3 in
   let endpoint qp psn = { M.Qp.qp; psn; address = Gid g; mtu = c.mtu } in
   let steps h peer psn =
     [
-      M.Init;
+      M.Init { access = Remote };
       Ready_to_receive { peer; mtu = c.mtu; gid = Some gid; served = c.served };
       Ready_to_send { psn; timeout = 14; retries = 7; reads = c.reads };
     ]

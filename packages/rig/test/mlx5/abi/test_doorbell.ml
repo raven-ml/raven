@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* Doorbell records and access regions, against rdma-core's mlx5dv.h and mlx5.h
-   (a queue pair's send count is word 1 of its record, a completion queue's
-   consumer count word 0 and its arm word word 1; the arm word is sequence << 28
-   | command | count, the command 0 for the next completion; registers sit at
+   (a queue pair's receive count is word 0 of its record and its send count
+   word 1, a completion queue's consumer count word 0 and its arm word word 1;
+   the arm word is sequence << 28 | command | count, the command 0 for the
+   next completion; registers sit at
    0x800 of an access region, the completion queue's at 0x20), mlx5.c's
    numbering of registers (4 per access region, register k of region j at 0x800
    + k * size), and the kernel's mapping offsets (main.c: the command, 3 for
@@ -21,6 +22,8 @@ let records =
       test "a record is two 32-bit words" (fun () -> equal int 8 Doorbell.size);
       test "a queue pair's send count is word 1" (fun () ->
           equal int 4 Doorbell.send);
+      test "a queue pair's receive count is word 0" (fun () ->
+          equal int 0 Doorbell.receive);
       test "a completion queue's consumer count is word 0" (fun () ->
           equal int 0 Doorbell.consumed);
       test "its arm word is word 1" (fun () -> equal int 4 Doorbell.armed);

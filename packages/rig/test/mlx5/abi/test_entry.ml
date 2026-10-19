@@ -6,9 +6,11 @@
 (* Work entries, against the segments of rdma-core's mlx5dv.h: a control segment
    (opcode, index, queue pair and 16-byte units, then the completion flag at
    byte 11), a remote address segment at byte 16, then a data segment or an
-   inline segment at byte 32, every field big-endian. A data segment's byte
-   count of 0 means 2{^31} bytes to the NIC, so a copy of no bytes carries no
-   data segment, as rdma-core's qp.c skips a zero-length one. *)
+   inline segment at byte 32, every field big-endian. A send has no remote
+   address segment, so its data segment is at byte 16, as rdma-core's qp.c
+   writes one. A data segment's byte count of 0 means 2{^31} bytes to the NIC,
+   so a copy of no bytes carries no data segment, as rdma-core's qp.c skips a
+   zero-length one. *)
 
 open Windtrap
 open Rig_mlx5_abi
@@ -41,6 +43,7 @@ let hex b at n =
 
 let rdma_write = 0x08
 let rdma_read = 0x10
+let send = 0x0a
 let cq_update = 0x08
 let inline_seg = 0x8000_0000
 
@@ -88,6 +91,7 @@ let op =
             (fun (data, dst) -> Entry.Write_inline { data; dst })
             (pair inline remote) );
         (2, map (fun (src, dst) -> Entry.Read { src; dst }) (pair remote local));
+        (2, map (fun src -> Entry.Send { src }) local);
       ])
 
 let entry =
@@ -114,6 +118,7 @@ let pp_entry ppf ((e : Entry.t), qp, index, slot) =
     | Read { src; dst } ->
         strf "read %d bytes 0x%x/%x -> 0x%x/%x" dst.bytes src.address src.key
           dst.address dst.key
+    | Send { src } -> strf "send %d bytes 0x%x/%x" src.bytes src.address src.key
   in
   Format.fprintf ppf "%s, signal %b, qp 0x%x, index %d, slot %d" op e.signal qp
     index slot
@@ -129,6 +134,7 @@ let check_entry b at ((e : Entry.t), qp, index) =
           if l.bytes = 0 then 2 else 3 )
     | Write_inline { data; _ } ->
         (rdma_write, (36 + String.length data + 15) / 16)
+    | Send { src } -> (send, if src.bytes = 0 then 1 else 2)
   in
   equal ~msg:"opmod, index, opcode" int
     (((index land 0xffff) lsl 8) lor opcode)
@@ -142,10 +148,10 @@ let check_entry b at ((e : Entry.t), qp, index) =
     equal ~msg:"remote key" int r.key (be b (at + 24) 4);
     equal ~msg:"remote reserved" int 0 (be b (at + 28) 4)
   in
-  let local (l : Entry.local) =
-    equal ~msg:"byte count" int l.bytes (be b (at + 32) 4);
-    equal ~msg:"local key" int l.key (be b (at + 36) 4);
-    equal ~msg:"local address" int l.address (be b (at + 40) 8)
+  let local ?(seg = 32) (l : Entry.local) =
+    equal ~msg:"byte count" int l.bytes (be b (at + seg) 4);
+    equal ~msg:"local key" int l.key (be b (at + seg + 4) 4);
+    equal ~msg:"local address" int l.address (be b (at + seg + 8) 8)
   in
   let rest from =
     for i = from to 63 do
@@ -172,6 +178,11 @@ let check_entry b at ((e : Entry.t), qp, index) =
       equal ~msg:"inline data" string data
         (String.init n (fun i -> Bigarray.Array1.get b (at + 36 + i)));
       rest (36 + n)
+  | Send { src } ->
+      if src.bytes = 0 then rest 16
+      else (
+        local ~seg:16 src;
+        rest 32)
 
 let ring = 4 * Entry.size
 
@@ -185,9 +196,11 @@ let layout =
       prop "an entry's fields are where mlx5dv.h lays them out" placed
         (fun (e, qp, index, slot) ->
           cover "a read" (match e.op with Read _ -> true | _ -> false);
+          cover "a send" (match e.op with Send _ -> true | _ -> false);
           cover "a copy of no bytes"
             (match e.op with
-            | Write { src = l; _ } | Read { dst = l; _ } -> l.bytes = 0
+            | Write { src = l; _ } | Read { dst = l; _ } | Send { src = l } ->
+                l.bytes = 0
             | _ -> false);
           cover "a full inline write"
             (match e.op with
@@ -267,6 +280,25 @@ let transfer =
         00000000 00000000 00000000 00000000
       |})
 
+(* A send as a sender posts it, against the segments by eye. *)
+let send_entry =
+  test "a send's entry" (fun () ->
+      let b = buffer ring in
+      let src =
+        { Entry.address = 0x7f00_1000_0000; bytes = 64; key = 0x1234 }
+      in
+      Entry.write b 0 ~qp:0x1c3 ~index:5 { op = Send { src }; signal = true };
+      print_string
+        (String.concat "\n" (List.init 4 (fun i -> hex b (16 * i) 16)));
+      expect (output ())
+      @@ __POS_OF__
+           {|
+        0000050a 0001c302 00000008 00000000
+        00000040 00001234 00007f00 10000000
+        00000000 00000000 00000000 00000000
+        00000000 00000000 00000000 00000000
+      |})
+
 let refusals =
   let e =
     {
@@ -315,6 +347,9 @@ let refusals =
                 src = { address = 0; key = 0 };
                 dst = { address = 0; bytes = 0x8000_0000; key = 0 };
               }));
+      refused "a send's length past 31 bits"
+        (with_op
+           (Send { src = { address = 0; bytes = 0x8000_0000; key = 0 } }));
       refused "a negative local address"
         (with_op
            (Write
@@ -338,4 +373,5 @@ let refusals =
               }));
     ]
 
-let () = exit (run "rig_mlx5_abi.entry" [ layout; transfer; refusals ])
+let () =
+  exit (run "rig_mlx5_abi.entry" [ layout; transfer; send_entry; refusals ])

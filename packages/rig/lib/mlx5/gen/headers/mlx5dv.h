@@ -144,6 +144,10 @@ struct mlx5_cqe64 {
 };
 
 enum {
+	MLX5_INVALID_LKEY	= 0x100,
+};
+
+enum {
 	MLX5_WQE_CTRL_CQ_UPDATE	= 2 << 2,
 	MLX5_WQE_CTRL_SOLICITED	= 1 << 1,
 	MLX5_WQE_CTRL_FENCE	= 4 << 5,

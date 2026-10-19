@@ -24,6 +24,7 @@ external ring_stub : int -> int -> int -> int -> unit = "caml_rig_mlx5_ring"
 [@@noalloc]
 
 external consumed : int -> int -> unit = "caml_rig_mlx5_consumed" [@@noalloc]
+external posted : int -> int -> unit = "caml_rig_mlx5_posted" [@@noalloc]
 
 external arm_stub : int -> int -> int -> int -> unit = "caml_rig_mlx5_arm"
 [@@noalloc]
@@ -60,7 +61,7 @@ type kernel_event = Path.kernel_event =
   | Port_changed of string
 
 type transition = Path.transition =
-  | Init
+  | Init of { access : access }
   | Ready_to_receive of {
       peer : endpoint;
       mtu : int;
@@ -76,6 +77,7 @@ type context = Path.context = {
   reads : int;
   served : int;
   cqes : int;
+  message : int;
 }
 
 type registered = Path.registered = { handle : int; local : int; remote : int }
@@ -95,7 +97,8 @@ type path = Path.t = {
     (int * (unit -> int) * string, string) result;
   qp :
     cq:int ->
-    entries:int ->
+    sends:int ->
+    receives:int ->
     tag:int ->
     string ->
     int ->
@@ -124,7 +127,8 @@ type t = {
   uar : int array; (* the host address of each system page of registers *)
   per_page : int; (* access regions per system page *)
   register_size : int;
-  sends : int; (* the most entries a queue pair's ring holds *)
+  sends : int; (* the most entries a queue pair's send ring holds *)
+  receives : int; (* the most entries its receive ring holds *)
   gid : int option; (* the index of the RoCE v2 identifier queue pairs use *)
   address : address; (* the port's, as peers name it *)
   random : Random.State.t;
@@ -163,18 +167,24 @@ and cq = {
   mutable c_destroyed : (unit, string) result option; (* its destroy's answer *)
 }
 
+(* A queue pair's memory holds its receive ring, then its send ring at
+   [sends_at], as Linux's drivers/infiniband/hw/mlx5/qp.c places them. *)
 and qp = {
   q_nic : t;
   q_cq : cq;
   q_handle : int;
   q_number : int;
   q_tag : int;
-  q_entries : int;
+  q_entries : int; (* of its send ring *)
+  q_receives : int; (* of its receive ring, 0 for none *)
   q_ring : ring;
+  sends_at : int;
   register : int; (* the host address of its doorbell register *)
   psn : int;
-  posted : int Atomic.t; (* the producer count *)
+  posted : int Atomic.t; (* the send ring's producer count *)
   completed : int Atomic.t; (* entries whose slots are free again *)
+  received : int Atomic.t; (* the receive ring's producer count *)
+  taken : int Atomic.t; (* receives whose slots are free again *)
   mutable rung : int;
   mutable connected : bool;
   mutable q_destroyed : (unit, string) result option; (* its destroy's answer *)
@@ -310,6 +320,7 @@ let read s (at, n) =
 
 let name nic = nic.path.name
 let bus nic = nic.path.bus
+let max_message nic = nic.facts.message
 
 let link nic =
   match nic.facts.port with
@@ -378,6 +389,7 @@ let make p =
           per_page;
           register_size = read resp R.bf_reg_size;
           sends = read resp R.max_send_wqebb;
+          receives = read resp R.max_recv_wr;
           gid;
           address;
           random = Random.State.make_self_init ();
@@ -602,6 +614,16 @@ module Cq = struct
     in
     raise_to (last + 1)
 
+  (* A completion frees the slots of the ring it names. The receives of a
+     queue pair complete in order, so each frees the oldest, as Linux's
+     drivers/infiniband/hw/mlx5/cq.c takes them; one of another kind frees
+     none. *)
+  let free_slots q (c : A.Completion.t) =
+    match c.status with
+    | Done | Failed { ring = Send; _ } -> complete q c.index
+    | Received _ | Failed { ring = Receive; _ } -> Atomic.incr q.taken
+    | Unexpected _ -> ()
+
   let poll cq =
     live_cq "Cq.poll" cq;
     let at = cq.count land (cq.c_entries - 1) * A.Completion.size in
@@ -616,7 +638,7 @@ module Cq = struct
       cq.count <- cq.count + 1;
       consumed (cq.c_ring.record + A.Doorbell.consumed) cq.count;
       List.iter
-        (fun q -> if q.q_number = c.qp then complete q c.index)
+        (fun q -> if q.q_number = c.qp then free_slots q c)
         (Atomic.get cq.members);
       Some c
     end
@@ -679,11 +701,31 @@ module Qp = struct
   let retries = 7
   let timeout = function `Infiniband _ -> 18 | `Ethernet _ -> 14
 
-  let make cq n =
+  (* A receive ring takes at least one basic block, so at least 4 receives,
+     as rdma-core's providers/mlx5/verbs.c sizes it. Its context gives its
+     size as a 4-bit log, as the send ring's, so it too holds at most
+     [counted], and its entries' size as the log [rq_wqe_shift]. *)
+  let least_receives = A.Entry.size / A.Receive.size
+
+  let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
+
+  let make cq ~receives n =
     check "Qp.make";
     let nic = cq.c_nic in
     live_cq "Qp.make" cq;
     if n < 1 then invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
+    if receives < 0 then
+      invalid_arg (strf "Rig_mlx5.Qp.make: %d receives" receives);
+    let most = min nic.receives counted in
+    let* receives =
+      if receives = 0 then Ok 0
+      else
+        Option.to_result
+          ~none:
+            (strf "%s: a queue pair holds at most %d receives" nic.path.name
+               most)
+          (entries ~least:least_receives receives most)
+    in
     let most = min nic.sends counted in
     let* entries =
       Option.to_result
@@ -691,16 +733,18 @@ module Qp = struct
           (strf "%s: a queue pair holds at most %d entries" nic.path.name most)
         (entries ~least:1 n most)
     in
+    let held = entries + receives in
     (* The queue's room is taken before the kernel makes the pair, so that makes
        at once never hold more than the queue. *)
     with_lock nic (fun () ->
-        if cq.held + entries > cq.c_entries then
+        if cq.held + held > cq.c_entries then
           invalid_arg
             (strf "Rig_mlx5.Qp.make: %d entries beside %d, past the queue's %d"
-               entries cq.held cq.c_entries);
-        cq.held <- cq.held + entries);
-    let give_back () = with_lock nic (fun () -> cq.held <- cq.held - entries) in
-    match ring_of nic (entries * A.Entry.size) with
+               held cq.held cq.c_entries);
+        cq.held <- cq.held + held);
+    let give_back () = with_lock nic (fun () -> cq.held <- cq.held - held) in
+    let sends_at = receives * A.Receive.size in
+    match ring_of nic (sends_at + (entries * A.Entry.size)) with
     | Error e ->
         give_back ();
         Error e
@@ -712,12 +756,16 @@ module Qp = struct
               (D.Create_qp.buf_addr, ring.mem);
               (D.Create_qp.db_addr, ring.record);
               (D.Create_qp.sq_wqe_count, entries);
+              (D.Create_qp.rq_wqe_count, receives);
+              ( D.Create_qp.rq_wqe_shift,
+                if receives = 0 then 0 else log2 A.Receive.size );
               (D.Create_qp.uidx, D.mlx5_ib_default_uidx);
             ]
         in
         let made =
           let* handle, number, resp =
-            nic.path.qp ~cq:cq.c_handle ~entries ~tag d D.Create_qp_resp.sizeof
+            nic.path.qp ~cq:cq.c_handle ~sends:entries ~receives ~tag d
+              D.Create_qp_resp.sizeof
           in
           let page, at =
             A.Uar.register ~per_page:nic.per_page ~size:nic.register_size
@@ -753,11 +801,15 @@ module Qp = struct
                 q_number = number;
                 q_tag = tag;
                 q_entries = entries;
+                q_receives = receives;
                 q_ring = ring;
+                sends_at;
                 register;
                 psn;
                 posted = Atomic.make 0;
                 completed = Atomic.make 0;
+                received = Atomic.make 0;
+                taken = Atomic.make 0;
                 rung = 0;
                 connected = false;
                 q_destroyed = None;
@@ -777,7 +829,7 @@ module Qp = struct
     let nic = q.q_nic in
     { qp = q.q_number; psn = q.psn; address = nic.address; mtu = nic.facts.mtu }
 
-  let connect q (e : endpoint) =
+  let connect q access (e : endpoint) =
     let nic = q.q_nic in
     live_qp "Qp.connect" q;
     if q.connected then invalid_arg "Rig_mlx5.Qp.connect: connected";
@@ -791,7 +843,7 @@ module Qp = struct
     let p = nic.path and f = nic.facts in
     let steps =
       [
-        Init;
+        Init { access };
         Ready_to_receive
           { peer = e; mtu = min f.mtu e.mtu; gid = nic.gid; served = f.served };
         Ready_to_send
@@ -806,19 +858,47 @@ module Qp = struct
     q.connected <- true;
     Ok ()
 
-  let room q =
+  let room q (ring : A.ring) =
     live_qp "Qp.room" q;
-    q.q_entries - (Atomic.get q.posted - Atomic.get q.completed)
+    match ring with
+    | Send -> q.q_entries - (Atomic.get q.posted - Atomic.get q.completed)
+    | Receive -> q.q_receives - (Atomic.get q.received - Atomic.get q.taken)
+
+  let length (e : A.Entry.t) =
+    match e.op with
+    | Write { src = l; _ } | Read { dst = l; _ } | Send { src = l } -> l.bytes
+    | Write_inline { data; _ } -> String.length data
 
   let post q e =
     live_qp "Qp.post" q;
     if not q.connected then invalid_arg "Rig_mlx5.Qp.post: not connected";
-    if room q = 0 then invalid_arg "Rig_mlx5.Qp.post: the ring is full";
+    if room q Send = 0 then invalid_arg "Rig_mlx5.Qp.post: the ring is full";
+    if length e > q.q_nic.facts.message then
+      invalid_arg
+        (strf "Rig_mlx5.Qp.post: %d bytes, more than the port's %d" (length e)
+           q.q_nic.facts.message);
     let index = Atomic.get q.posted in
     A.Entry.write q.q_ring.buf
-      (index land (q.q_entries - 1) * A.Entry.size)
+      (q.sends_at + (index land (q.q_entries - 1) * A.Entry.size))
       ~qp:q.q_number ~index e;
     Atomic.set q.posted (index + 1)
+
+  (* The receive is the NIC's once the record counts it, which the NIC reads
+     as a message arrives: no register is rung, as rdma-core's
+     providers/mlx5/qp.c posts receives. *)
+  let receive q l =
+    live_qp "Qp.receive" q;
+    if not q.connected then invalid_arg "Rig_mlx5.Qp.receive: not connected";
+    if q.q_receives = 0 then
+      invalid_arg "Rig_mlx5.Qp.receive: the queue pair has no receive ring";
+    if room q Receive = 0 then
+      invalid_arg "Rig_mlx5.Qp.receive: the ring is full";
+    let index = Atomic.get q.received in
+    A.Receive.write q.q_ring.buf
+      (index land (q.q_receives - 1) * A.Receive.size)
+      l;
+    Atomic.set q.received (index + 1);
+    posted (q.q_ring.record + A.Doorbell.receive) (index + 1)
 
   let ring q =
     live_qp "Qp.ring" q;
@@ -828,7 +908,7 @@ module Qp = struct
       ring_stub
         (q.q_ring.record + A.Doorbell.send)
         posted q.register
-        (q.q_ring.mem + (last * A.Entry.size));
+        (q.q_ring.mem + q.sends_at + (last * A.Entry.size));
       q.rung <- posted
     end
 
@@ -846,7 +926,8 @@ module Qp = struct
         q.q_destroyed <- Some answer;
         with_lock nic (fun () ->
             nic.qps <- List.remove_assoc q.q_tag nic.qps;
-            if Result.is_ok answer then q.q_cq.held <- q.q_cq.held - q.q_entries;
+            if Result.is_ok answer then
+              q.q_cq.held <- q.q_cq.held - q.q_entries - q.q_receives;
             Atomic.set q.q_cq.members
               (List.filter (fun m -> m != q) (Atomic.get q.q_cq.members)));
         free_ring q.q_ring;

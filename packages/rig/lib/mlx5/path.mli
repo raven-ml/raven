@@ -26,7 +26,7 @@ type kernel_event =
   | Port_changed of string
 
 type transition =
-  | Init
+  | Init of { access : access }
   | Ready_to_receive of {
       peer : endpoint;
       mtu : int;
@@ -42,6 +42,7 @@ type context = {
   reads : int;
   served : int;
   cqes : int;
+  message : int;
 }
 
 type registered = { handle : int; local : int; remote : int }
@@ -61,7 +62,8 @@ type t = {
     (int * (unit -> int) * string, string) result;
   qp :
     cq:int ->
-    entries:int ->
+    sends:int ->
+    receives:int ->
     tag:int ->
     string ->
     int ->

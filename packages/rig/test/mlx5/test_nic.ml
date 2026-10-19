@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* A ConnectX NIC of this machine, opened through the kernel: two queue pairs of
-   one NIC connected to each other, the transfers between their regions, and
-   what the library refuses. Every test skips where the machine has no NIC the
-   mlx5 driver holds. *)
+   one NIC connected to each other, or one connected to itself, the transfers
+   between their regions, sends into posted receives, and what the library
+   refuses. Every test skips where the machine has no NIC the mlx5 driver
+   holds. *)
 
 open Windtrap
 module M = Rig_mlx5
@@ -69,37 +70,83 @@ let register nic access order b =
   | Ok r -> r
   | Error e -> failf "registering: %s" e
 
-(* Two queue pairs of [nic] connected to each other, on one queue. *)
+(* Connects [a] to [b], letting [b] do [access] through [a]. *)
+let connect a access b =
+  match M.Qp.connect a access (M.Qp.endpoint b) with
+  | Ok () -> ()
+  | Error e -> failf "connecting: %s" e
+
+(* Two queue pairs of [nic] connected to each other, on one queue: [a], which
+   lets its peer do nothing, and [b], with [receives] receives, which lets its
+   peer do [access]. *)
+let pairs ?(receives = 0) ~access nic =
+  let cq = Result.get_ok (M.Cq.make nic 128) in
+  let a = Result.get_ok (M.Qp.make cq ~receives:0 16) in
+  let b = Result.get_ok (M.Qp.make cq ~receives 16) in
+  connect a Local b;
+  connect b access a;
+  (cq, a, b)
+
 let pair nic =
-  let cq = Result.get_ok (M.Cq.make nic 64) in
-  let a = Result.get_ok (M.Qp.make cq 16) in
-  let b = Result.get_ok (M.Qp.make cq 16) in
-  (match M.Qp.connect a (M.Qp.endpoint b) with
-  | Ok () -> ()
-  | Error e -> failf "connecting: %s" e);
-  (match M.Qp.connect b (M.Qp.endpoint a) with
-  | Ok () -> ()
-  | Error e -> failf "connecting: %s" e);
+  let cq, a, _ = pairs ~access:Remote nic in
   (cq, a)
 
-(* The next completion of [cq], within 5 s. *)
-let completion cq =
-  let deadline = Unix.gettimeofday () +. 5. in
+(* The next completion of [cq], within [s] seconds. *)
+let completion ?(s = 5.) cq =
+  let deadline = Unix.gettimeofday () +. s in
   let rec go () =
     match M.Cq.poll cq with
     | Some c -> c
     | None when Unix.gettimeofday () < deadline -> go ()
-    | None -> fail "no completion within 5 s"
+    | None -> failf "no completion within %g s" s
   in
   go ()
+
+let completions cq n = List.init n (fun _ -> completion cq)
+
+(* The statuses of queue pair [qp]'s completions of [cs], in their order. *)
+let statuses cs qp =
+  List.filter_map
+    (fun (c : C.t) -> if c.qp = M.Qp.number qp then Some c.status else None)
+    cs
 
 let pp_status ppf (s : C.status) =
   match s with
   | Done -> Format.pp_print_string ppf "done"
+  | Received n -> Format.fprintf ppf "received %d" n
   | Failed _ | Unexpected _ ->
       Format.pp_print_string ppf (C.message { qp = 0; index = 0; status = s })
 
 let status = Testable.make ~pp:pp_status ~equal:( = )
+
+(* A status's ring and error, for failures whose vendor syndrome the spec
+   leaves to the NIC. *)
+let failure (s : C.status) =
+  match s with
+  | Failed { ring; error; _ } -> Some (ring, error)
+  | Done | Received _ | Unexpected _ -> None
+
+let ring_name : Rig_mlx5_abi.ring -> string = function
+  | Send -> "send"
+  | Receive -> "receive"
+
+let ring_t =
+  Testable.make
+    ~pp:(fun ppf r -> Format.pp_print_string ppf (ring_name r))
+    ~equal:( = )
+
+let pp_failure ppf = function
+  | None -> Format.pp_print_string ppf "no failure"
+  | Some (ring, error) ->
+      Format.fprintf ppf "%s ring: %s" (ring_name ring)
+        (C.message
+           {
+             qp = 0;
+             index = 0;
+             status = Failed { ring; error; vendor = 0 };
+           })
+
+let failure_t = Testable.make ~pp:pp_failure ~equal:( = )
 let string_of b = String.init (Bigarray.Array1.dim b) (Bigarray.Array1.get b)
 
 let transfers =
@@ -181,6 +228,188 @@ let transfers =
           M.close nic);
     ]
 
+let fill b s = String.iteri (fun i c -> Bigarray.Array1.set b i c) s
+
+(* Sends of queue pair [a] into the receives of its peer [b], both of one
+   NIC. *)
+let sends =
+  group "sends"
+    [
+      test "sends land in the receives posted, in order" (fun () ->
+          let nic = nic () in
+          let cq, a, b = pairs ~receives:4 ~access:Local nic in
+          let src = memory 256 and dst = memory 256 in
+          fill src (String.init 256 (fun i -> Char.chr (i land 0xff)));
+          let s = register nic Local In_order src
+          and d = register nic Local In_order dst in
+          List.iter
+            (fun at -> M.Qp.receive b (M.Region.local d at 64))
+            [ 0; 64; 128 ];
+          List.iter
+            (fun (at, n) ->
+              M.Qp.post a
+                { op = Send { src = M.Region.local s at n }; signal = true })
+            [ (0, 10); (10, 0); (16, 64) ];
+          M.Qp.ring a;
+          let got = completions cq 6 in
+          equal (list status) ~msg:"the sender's" [ Done; Done; Done ]
+            (statuses got a);
+          equal (list status) ~msg:"the receiver's"
+            [ Received 10; Received 0; Received 64 ]
+            (statuses got b);
+          let dst = string_of dst and src = string_of src in
+          equal string ~msg:"the first" (String.sub src 0 10)
+            (String.sub dst 0 10);
+          equal string ~msg:"the empty one's receive" (String.make 64 '\000')
+            (String.sub dst 64 64);
+          equal string ~msg:"the third" (String.sub src 16 64)
+            (String.sub dst 128 64);
+          equal int ~msg:"receive slots" 4 (M.Qp.room b Receive);
+          M.close nic);
+      test "a send posted before its receive lands once the receive is posted"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, b = pairs ~receives:4 ~access:Local nic in
+          let src = memory 64 and dst = memory 64 in
+          Bigarray.Array1.fill src 'p';
+          let s = register nic Local In_order src
+          and d = register nic Local In_order dst in
+          M.Qp.post a
+            { op = Send { src = M.Region.local s 0 32 }; signal = true };
+          M.Qp.ring a;
+          let deadline = Unix.gettimeofday () +. 0.1 in
+          while Unix.gettimeofday () < deadline do
+            match M.Cq.poll cq with
+            | None -> ()
+            | Some c ->
+                failf "a completion before the receive: %s" (C.message c)
+          done;
+          M.Qp.receive b (M.Region.local d 0 64);
+          equal (list status) ~msg:"the receiver's" [ Received 32 ]
+            (statuses (completions cq 2) b);
+          equal string (String.make 32 'p' ^ String.make 32 '\000')
+            (string_of dst);
+          M.close nic);
+      test "a message longer than its receive fails the receive and the send"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, b = pairs ~receives:4 ~access:Local nic in
+          let s = register nic Local In_order (memory 64)
+          and d = register nic Local In_order (memory 64) in
+          M.Qp.receive b (M.Region.local d 0 8);
+          M.Qp.post a
+            { op = Send { src = M.Region.local s 0 16 }; signal = true };
+          M.Qp.ring a;
+          let got = completions cq 2 in
+          equal (list failure_t) ~msg:"the receive"
+            [ Some (Receive, Local_length) ]
+            (List.map failure (statuses got b));
+          equal (list (option ring_t)) ~msg:"the send" [ Some Send ]
+            (List.map (fun s -> Option.map fst (failure s)) (statuses got a));
+          M.close nic);
+      test "a queue pair connected to itself reads and writes its own regions"
+        (fun () ->
+          let nic = nic () in
+          let cq = Result.get_ok (M.Cq.make nic 16) in
+          let qp = Result.get_ok (M.Qp.make cq ~receives:0 4) in
+          connect qp Remote qp;
+          let src = memory 64 and dst = memory 64 in
+          Bigarray.Array1.fill src 'f';
+          let s = register nic Remote In_order src
+          and d = register nic Remote_write In_order dst in
+          M.Qp.post qp
+            {
+              op =
+                Read { src = M.Region.remote s 0; dst = M.Region.local d 0 4 };
+              signal = true;
+            };
+          M.Qp.ring qp;
+          equal status ~msg:"the read" Done (completion cq).status;
+          equal string ~msg:"read" "ffff" (String.sub (string_of dst) 0 4);
+          M.Qp.post qp
+            {
+              op =
+                Write { src = M.Region.local s 0 8; dst = M.Region.remote d 8 };
+              signal = true;
+            };
+          M.Qp.ring qp;
+          equal status ~msg:"the write" Done (completion cq).status;
+          equal string ~msg:"written" "ffffffff"
+            (String.sub (string_of dst) 8 8);
+          M.close nic);
+      test "a queue pair that lets its peer do nothing refuses a write"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, _ = pairs ~access:Local nic in
+          let src = memory 64 and dst = memory 64 in
+          Bigarray.Array1.fill src 'w';
+          let s = register nic Local In_order src
+          and d = register nic Remote In_order dst in
+          M.Qp.post a
+            {
+              op =
+                Write
+                  { src = M.Region.local s 0 64; dst = M.Region.remote d 0 };
+              signal = true;
+            };
+          M.Qp.ring a;
+          equal failure_t ~msg:"the write"
+            (Some (Send, Remote_access))
+            (failure (completion cq).status);
+          equal string (String.make 64 '\000') (string_of dst);
+          M.close nic);
+      test "a queue pair that lets its peer write takes a write and refuses a \
+            read"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, _ = pairs ~access:Remote_write nic in
+          let src = memory 64 and dst = memory 64 in
+          Bigarray.Array1.fill src 'w';
+          let s = register nic Remote In_order src
+          and d = register nic Remote In_order dst in
+          M.Qp.post a
+            {
+              op =
+                Write { src = M.Region.local s 0 8; dst = M.Region.remote d 0 };
+              signal = true;
+            };
+          M.Qp.ring a;
+          equal status ~msg:"the write" Done (completion cq).status;
+          equal string ~msg:"written" "wwwwwwww"
+            (String.sub (string_of dst) 0 8);
+          M.Qp.post a
+            {
+              op =
+                Read { src = M.Region.remote d 0; dst = M.Region.local s 8 8 };
+              signal = true;
+            };
+          M.Qp.ring a;
+          equal failure_t ~msg:"the read"
+            (Some (Send, Remote_access))
+            (failure (completion cq).status);
+          M.close nic);
+      test "a peer's sends land nowhere once its queue pair is destroyed"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, b = pairs ~receives:4 ~access:Local nic in
+          let src = memory 64 and dst = memory 64 in
+          Bigarray.Array1.fill src 'x';
+          let s = register nic Local In_order src
+          and d = register nic Local In_order dst in
+          M.Qp.receive b (M.Region.local d 0 64);
+          require_ok (M.Qp.destroy b);
+          M.Qp.post a
+            { op = Send { src = M.Region.local s 0 64 }; signal = true };
+          M.Qp.ring a;
+          (* Retries end after 7 timeouts of 1.07 s on InfiniBand. *)
+          let c = completion ~s:15. cq in
+          equal int ~msg:"the sender's" (M.Qp.number a) c.qp;
+          equal (option ring_t) ~msg:"the send failed" (Some Send)
+            (Option.map fst (failure c.status));
+          equal string (String.make 64 '\000') (string_of dst);
+          M.close nic);
+    ]
+
 let refusals =
   group "refusals"
     [
@@ -188,10 +417,62 @@ let refusals =
         (fun () ->
           let nic = nic () in
           let cq = Result.get_ok (M.Cq.make nic 16) in
-          ignore (Result.get_ok (M.Qp.make cq 8) : M.Qp.t);
-          ignore (Result.get_ok (M.Qp.make cq 8) : M.Qp.t);
+          ignore (Result.get_ok (M.Qp.make cq ~receives:0 8) : M.Qp.t);
+          ignore (Result.get_ok (M.Qp.make cq ~receives:0 8) : M.Qp.t);
           raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
-              M.Qp.make cq 1);
+              M.Qp.make cq ~receives:0 1);
+          M.close nic);
+      test "receives count against their queue too" (fun () ->
+          let nic = nic () in
+          let cq = Result.get_ok (M.Cq.make nic 16) in
+          ignore (Result.get_ok (M.Qp.make cq ~receives:8 8) : M.Qp.t);
+          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+              M.Qp.make cq ~receives:0 1);
+          M.close nic);
+      test "a receive needs a connected queue pair with a receive ring"
+        (fun () ->
+          let nic = nic () in
+          let cq = Result.get_ok (M.Cq.make nic 64) in
+          let d = register nic Local In_order (memory 64) in
+          let none = Result.get_ok (M.Qp.make cq ~receives:0 4) in
+          connect none Local none;
+          raises_match (Exn.invalid_arg ~substring:"no receive ring") (fun () ->
+              M.Qp.receive none (M.Region.local d 0 8));
+          let unconnected = Result.get_ok (M.Qp.make cq ~receives:4 4) in
+          raises_match (Exn.invalid_arg ~substring:"not connected") (fun () ->
+              M.Qp.receive unconnected (M.Region.local d 0 8));
+          M.close nic);
+      test "a full receive ring refuses a receive until a completion frees one"
+        (fun () ->
+          let nic = nic () in
+          let cq, a, b = pairs ~receives:1 ~access:Local nic in
+          let s = register nic Local In_order (memory 64)
+          and d = register nic Local In_order (memory 64) in
+          equal int ~msg:"rounded up" 4 (M.Qp.room b Receive);
+          for _ = 1 to 4 do
+            M.Qp.receive b (M.Region.local d 0 8)
+          done;
+          equal int ~msg:"posted" 0 (M.Qp.room b Receive);
+          raises_match (Exn.invalid_arg ~substring:"full") (fun () ->
+              M.Qp.receive b (M.Region.local d 0 8));
+          M.Qp.post a
+            { op = Send { src = M.Region.local s 0 8 }; signal = true };
+          M.Qp.ring a;
+          ignore (completions cq 2 : C.t list);
+          equal int ~msg:"once polled" 1 (M.Qp.room b Receive);
+          M.close nic);
+      test "an entry longer than the port's largest message is refused"
+        (fun () ->
+          let nic = nic () in
+          let _, qp = pair nic in
+          let n = M.max_message nic + 1 in
+          raises_match (Exn.invalid_arg ~substring:"Qp.post") (fun () ->
+              M.Qp.post qp
+                {
+                  op = Send { src = { address = 0; bytes = n; key = 0 } };
+                  signal = true;
+                });
+          equal int ~msg:"nothing posted" 16 (M.Qp.room qp Send);
           M.close nic);
       test "a piece whose end overflows is refused" (fun () ->
           let nic = nic () in
@@ -228,9 +509,11 @@ let refusals =
     ]
 
 (* Where the mlx5 driver's answer to the context holds the most entries a
-   queue pair's send ring holds: mlx5_ib_alloc_ucontext_resp's
-   max_send_wqebb, a u32, in Linux's include/uapi/rdma/mlx5-abi.h. *)
+   queue pair's send ring holds, and its receive ring:
+   mlx5_ib_alloc_ucontext_resp's max_send_wqebb and max_recv_wr, u32s, in
+   Linux's include/uapi/rdma/mlx5-abi.h. *)
 let max_send_wqebb_at = 20
+let max_recv_wr_at = 24
 
 (* The rings' own bounds: a queue's consumer count is 24 bits, and a queue
    pair's context gives its ring's size as a 4-bit log. *)
@@ -294,11 +577,11 @@ let bounds =
           in
           let most = min !sends most_entries in
           let cq = require_ok (M.Cq.make nic most) in
-          ignore (require_ok (M.Qp.make cq most) : M.Qp.t);
-          let why = require_error (M.Qp.make cq (most + 1)) in
+          ignore (require_ok (M.Qp.make cq ~receives:0 most) : M.Qp.t);
+          let why = require_error (M.Qp.make cq ~receives:0 (most + 1)) in
           contains ~sub:(Printf.sprintf "at most %d" most) why;
           raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
-              M.Qp.make cq 0);
+              M.Qp.make cq ~receives:0 0);
           M.close nic);
       test "a queue pair's bound is the one the driver's answer states"
         (fun () ->
@@ -309,9 +592,48 @@ let bounds =
               ()
           in
           let cq = require_ok (M.Cq.make nic 256) in
-          is_error ~msg:"128 entries" (M.Qp.make cq 128);
-          is_error ~msg:"65 entries" (M.Qp.make cq 65);
-          ignore (require_ok (M.Qp.make cq 64) : M.Qp.t);
+          is_error ~msg:"128 entries" (M.Qp.make cq ~receives:0 128);
+          is_error ~msg:"65 entries" (M.Qp.make cq ~receives:0 65);
+          ignore (require_ok (M.Qp.make cq ~receives:0 64) : M.Qp.t);
+          M.close nic);
+      test "a receive ring holds the NIC's most receives, and no more"
+        (fun () ->
+          let receives = ref 0 in
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) ->
+                receives := u32 c.answer max_recv_wr_at;
+                c)
+              ()
+          in
+          let most = min !receives most_entries in
+          let cq = require_ok (M.Cq.make nic (most + 1)) in
+          ignore (require_ok (M.Qp.make cq ~receives:most 1) : M.Qp.t);
+          let why = require_error (M.Qp.make cq ~receives:(most + 1) 1) in
+          contains ~sub:(Printf.sprintf "at most %d receives" most) why;
+          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+              M.Qp.make cq ~receives:(-1) 1);
+          M.close nic);
+      test "a receive ring's bound is the one the driver's answer states"
+        (fun () ->
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) ->
+                { c with answer = with_u32 c.answer max_recv_wr_at 64 })
+              ()
+          in
+          let cq = require_ok (M.Cq.make nic 256) in
+          is_error ~msg:"128 receives" (M.Qp.make cq ~receives:128 1);
+          is_error ~msg:"65 receives" (M.Qp.make cq ~receives:65 1);
+          ignore (require_ok (M.Qp.make cq ~receives:64 1) : M.Qp.t);
+          M.close nic);
+      test "the largest message is the one the port reports" (fun () ->
+          let nic =
+            through
+              ~with_context:(fun (c : M.context) -> { c with message = 4096 })
+              ()
+          in
+          equal int 4096 (M.max_message nic);
           M.close nic);
     ]
 
@@ -354,13 +676,13 @@ let kept =
       in
       let nic = require_ok (M.make { p with destroy }) in
       let cq = require_ok (M.Cq.make nic 16) in
-      let qp = require_ok (M.Qp.make cq 16) in
+      let qp = require_ok (M.Qp.make cq ~receives:0 16) in
       is_error ~msg:"the queue pair" (M.Qp.destroy qp);
       is_error ~msg:"a second destroy" (M.Qp.destroy qp);
       raises_match (Exn.invalid_arg ~substring:"destroyed") (fun () ->
           M.Qp.ring qp);
       raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
-          M.Qp.make cq 1);
+          M.Qp.make cq ~receives:0 1);
       is_error ~msg:"its queue" (M.Cq.destroy cq);
       raises_match (Exn.invalid_arg ~substring:"destroyed") (fun () ->
           M.Cq.poll cq);
@@ -419,4 +741,13 @@ let interrupted =
 let () =
   exit
     (run "rig_mlx5"
-       [ transfers; refusals; bounds; lifetime; kept; events; interrupted ])
+       [
+         transfers;
+         sends;
+         refusals;
+         bounds;
+         lifetime;
+         kept;
+         events;
+         interrupted;
+       ])

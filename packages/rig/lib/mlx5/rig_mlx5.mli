@@ -10,7 +10,8 @@
     {!open_} opens the NIC through its user verbs file,
     [/dev/infiniband/uverbsN], and has the kernel make the NIC's objects with
     the verbs ioctls. The NIC then moves bytes between this process's memory
-    and a peer's by RDMA writes and reads, on reliable-connected queue pairs.
+    and a peer's by RDMA writes and reads, and by sends into the receives the
+    peer posted, on reliable-connected queue pairs.
 
     This library is untested on real ConnectX NICs.
 
@@ -21,9 +22,10 @@
     - A {e completion queue} ({!Cq}) is a ring the NIC writes completions in,
       which the process polls.
     - A {e queue pair} ({!Qp}) is a send ring the process writes work entries
-      in, connected to one queue pair of a peer. Posting is stores to memory
-      and one store to the NIC's doorbell register, with no system call. The
-      NIC runs a queue pair's entries in order, and their writes land in that
+      in, and a receive ring of the receives it posts if it was made with one,
+      connected to one queue pair of a peer. Posting is stores to memory and
+      one store to the NIC's doorbell register, with no system call. The NIC
+      runs a queue pair's entries in order, and their writes land in that
       order in a region registered [In_order] ({!Region.type-order}).
 
     A transfer between two processes goes like this:
@@ -32,19 +34,22 @@
       ({!Region.register}).
     + The processes exchange their queue pairs' endpoints
       ({!Qp.val-endpoint}) and their regions' remote addresses
-      ({!Region.remote}) by other means, and connect ({!Qp.connect}).
+      ({!Region.remote}) by other means, and connect ({!Qp.connect}), each
+      saying what its peer may do through its queue pair.
     + A process posts entries ({!Qp.post}), rings the doorbell ({!Qp.ring})
       and polls the completion queue ({!Cq.poll}), or arms it ({!Cq.arm}) and
-      waits ({!val-wait}).
+      waits ({!val-wait}). A process its peer sends to posts receives
+      ({!Qp.receive}) for the messages.
     + It destroys the queue pair, then the completion queue and the regions,
       or closes the NIC ({!val-close}).
 
     {[
     let nic = Result.get_ok (Rig_mlx5.open_ "mlx5_0") in
     let cq = Result.get_ok (Rig_mlx5.Cq.make nic 256) in
-    let qp = Result.get_ok (Rig_mlx5.Qp.make cq 128) in
-    (* send Qp.endpoint qp to the peer, receive its endpoint [peer] *)
-    Result.get_ok (Rig_mlx5.Qp.connect qp peer);
+    let qp = Result.get_ok (Rig_mlx5.Qp.make cq ~receives:0 128) in
+    (* send Qp.endpoint qp to the peer, receive its endpoint [peer]; the
+       peer connects its queue pair with [Remote_write] *)
+    Result.get_ok (Rig_mlx5.Qp.connect qp Local peer);
     (* [src] is Region.local of a region here, [dst] the peer's
        Region.remote *)
     Rig_mlx5.Qp.post qp
@@ -63,7 +68,8 @@
     Any domain may make any call, concurrently with other domains, with these
     exceptions:
     {ul
-    {- {!Qp.post} and {!Qp.ring} of one queue pair run one call at a time.}
+    {- {!Qp.post} and {!Qp.ring} of one queue pair run one call at a time,
+       and so does {!Qp.receive}.}
     {- {!Cq.poll} and {!Cq.arm} of one completion queue run one call at a
        time.}
     {- {!val-wait} of one NIC runs one call at a time.}
@@ -162,6 +168,11 @@ val link : t -> [ `Infiniband | `Ethernet ]
 (** [link nic] is the link layer of [nic]'s port. On [`Ethernet] (RoCE v2)
     every packet carries a global route header. *)
 
+val max_message : t -> int
+(** [max_message nic] is the most bytes one message of [nic]'s port carries,
+    as the kernel reported at {!open_}: the most one write, read or send
+    moves. *)
+
 val close : t -> unit
 (** [close nic] destroys every object of [nic] and closes it. The NIC reads
     and writes no memory of this process once [close] returns. Later calls on
@@ -190,19 +201,26 @@ module Region : sig
             driver exported. The kernel keeps the dma-buf while it is
             registered, so [fd] may be closed once {!val-register} returns. *)
 
-  (** The type for what peers may do to a region. Whatever the access, the
-      NIC reads a region for this process's writes and writes it for this
-      process's reads. *)
+  (** The type for what peers may do: to a region ({!register}), and through
+      a queue pair ({!Qp.connect}). A peer reads or writes a region only
+      through a queue pair whose access allows it, and only if the region's
+      access allows it too. Whatever the access, the NIC reads a region for
+      this process's writes and sends, and writes it for this process's reads
+      and receives. *)
   type access =
-    | Local  (** Peers neither read nor write it. *)
-    | Remote_write  (** Peers write it. *)
-    | Remote  (** Peers read and write it. *)
+    | Local  (** Peers neither read nor write. *)
+    | Remote_write  (** Peers write. *)
+    | Remote  (** Peers read and write. *)
 
   (** The type for the order in which the NIC's writes land in a region.
-      They are a peer's writes and the bytes of this process's reads. *)
+      They are a peer's writes, the bytes of this process's reads, and the
+      bytes of a peer's sends that this process's receives take. *)
   type order =
     | In_order
-        (** The writes of one queue pair land in the order it posted them. *)
+        (** The writes of one queue pair land in the order its entries and
+            its peer's were posted. The bytes of a read or a receive of this
+            process land in host memory before its completion, so they are
+            there once it is polled. *)
     | Any_order
         (** Writes may land in any order. A reader must not take one write's
             bytes as a sign that an earlier write's bytes have landed. *)
@@ -252,8 +270,8 @@ module Cq : sig
   val make : nic -> int -> (t, string) result
   (** [make nic n] is a completion queue of [nic] with room for [n]
       completions, [n] rounded up to a power of two no smaller than [2]. Its
-      queue pairs hold at most that many entries together ({!Qp.make}), so it
-      never overflows.
+      queue pairs hold at most that many entries and receives together
+      ({!Qp.make}), so it never overflows.
 
       It is [Error msg] if the rounded [n] is more than a completion queue of
       [nic] holds, as its kernel driver reports, or more than 2{^24}; [msg]
@@ -282,7 +300,14 @@ end
 
 (** {1:qps Queue pairs} *)
 
-(** A queue pair is a send ring connected to one queue pair of a peer. *)
+(** A queue pair is a send ring, and a receive ring if it was made with one,
+    connected to one queue pair of a peer.
+
+    A {e send} ({!Rig_mlx5_abi.Entry.op}'s [Send]) lands its bytes in the
+    oldest receive the peer posted and has not filled. A send that finds none
+    is retried without end, and lands once the peer posts one. A queue pair
+    of this library asks its peer to retry 0.64 ms later. A message longer
+    than its receive fails the receive, the queue pair and its peer's. *)
 module Qp : sig
   type t
   (** The type for reliable-connected queue pairs. *)
@@ -303,20 +328,23 @@ module Qp : sig
   (** The type for what a peer needs to connect to a queue pair. It is plain
       data, which a program sends to the peer by any means. *)
 
-  val make : Cq.t -> int -> (t, string) result
-  (** [make cq n] is an unconnected queue pair of [cq]'s NIC with room for [n]
-      entries, [n] rounded up to a power of two, whose completions go to [cq].
-      It starts at a random packet sequence number. It has no receive ring, so
-      peers read and write this process's regions through it and send it no
-      messages.
+  val make : Cq.t -> receives:int -> int -> (t, string) result
+  (** [make cq ~receives n] is an unconnected queue pair of [cq]'s NIC with
+      room for [n] entries, [n] rounded up to a power of two, and for
+      [receives] receives, rounded up to a power of two no smaller than [4],
+      or no receive ring if [receives] is [0]. Its completions go to [cq]. It
+      starts at a random packet sequence number. A queue pair with no receive
+      ring takes no messages, so its peer only reads and writes this
+      process's regions through it.
 
-      It is [Error msg] if the rounded [n] is more than a queue pair of
-      [cq]'s NIC holds, as its kernel driver reports, or more than 2{^15};
-      [msg] then names the bound. It is also [Error msg] if the kernel refuses
-      or the process cannot allocate the ring.
+      It is [Error msg] if the rounded [n] or [receives] is more than a queue
+      pair of [cq]'s NIC holds, as its kernel driver reports, or more than
+      2{^15}; [msg] then names the bound. It is also [Error msg] if the
+      kernel refuses or the process cannot allocate the rings.
 
-      Raises [Invalid_argument] if [n < 1], or the queue pairs of [cq], each
-      counted at its rounded size, would hold more entries than [cq]. *)
+      Raises [Invalid_argument] if [n < 1], [receives < 0], or the queue
+      pairs of [cq], each counted at its rounded entries and receives, would
+      hold more than [cq]. *)
 
   val number : t -> int
   (** [number qp] is [qp]'s number, which completions name. *)
@@ -324,30 +352,50 @@ module Qp : sig
   val endpoint : t -> endpoint
   (** [endpoint qp] is what a peer's queue pair connects to [qp] with. *)
 
-  val connect : t -> endpoint -> (unit, string) result
-  (** [connect qp e] connects [qp] to the peer's queue pair [e], at the
-      smaller of both ports' MTUs, and makes it ready to send. A request of
+  val connect : t -> Region.access -> endpoint -> (unit, string) result
+  (** [connect qp a e] connects [qp] to the peer's queue pair [e], at the
+      smaller of both ports' MTUs, and makes it ready to send. The peer may do
+      [a] to this process's regions through [qp] ({!Region.type-access}). A
+      peer that only sends to [qp], or that [qp] only writes, reads and sends
+      to, needs [Local]. A request of
       [qp] that the peer does not acknowledge is retried 7 times, each after
       an acknowledgement timeout of 1.07 s on InfiniBand or 67 ms on Ethernet,
       and its entry then fails with
       {!Rig_mlx5_abi.Completion.Retry_exceeded}.
+
+      [e] may be [qp]'s own endpoint. [qp] is then its own peer, and its
+      writes and reads move bytes between regions of this process, through
+      the NIC, which [a] must allow.
 
       It is [Error msg] if the kernel refuses a change of [qp]'s state.
 
       Raises [Invalid_argument] if [qp] was connected, [e]'s address is not of
       [qp]'s link layer, or a [Gid] is not 16 bytes. *)
 
-  val room : t -> int
-  (** [room qp] is how many entries [qp] takes before its ring is full. An
-      entry's slot is free once a completion of it, or of an entry after it,
-      has been polled. *)
+  val room : t -> Rig_mlx5_abi.ring -> int
+  (** [room qp r] is how many entries or receives [qp] takes before its ring
+      [r] is full. An entry's slot is free once a completion of it, or of an
+      entry after it, has been polled, and a receive's once its completion
+      has been polled. A completion of an unexpected kind
+      ({!Rig_mlx5_abi.Completion.Unexpected}) frees no slot. *)
 
   val post : t -> Rig_mlx5_abi.Entry.t -> unit
-  (** [post qp e] writes [e] in [qp]'s ring. The NIC runs it after the next
-      {!ring}.
+  (** [post qp e] writes [e] in [qp]'s send ring. The NIC runs it after the
+      next {!ring}.
 
-      Raises [Invalid_argument] if [qp] is not connected or [room qp] is
-      [0]. *)
+      Raises [Invalid_argument] if [qp] is not connected, [room qp Send] is
+      [0], [e] moves more than {!max_message} bytes, or as
+      {!Rig_mlx5_abi.Entry.write} does, which refuses an entry of 2{^31} bytes
+      a port's {!max_message} may allow. *)
+
+  val receive : t -> Rig_mlx5_abi.Entry.local -> unit
+  (** [receive qp l] posts the receive of up to [l.bytes] bytes into [l] in
+      [qp]'s receive ring. The NIC may fill it as soon as [receive] returns,
+      with the next message of [qp]'s peer that no earlier receive took.
+
+      Raises [Invalid_argument] if [qp] is not connected, has no receive ring
+      or [room qp Receive] is [0], or as {!Rig_mlx5_abi.Receive.write}
+      does. *)
 
   val ring : t -> unit
   (** [ring qp] hands the NIC the entries posted since the last [ring]. It
@@ -408,8 +456,9 @@ type kernel_event =
 (** The type for a queue pair's state changes, in the order {!Qp.connect}
     makes them. *)
 type transition =
-  | Init
-      (** To initialised, on port 1, with peers allowed to read and write. *)
+  | Init of { access : Region.access }
+      (** To initialised, on port 1, with the peer allowed [access] through
+          the queue pair. *)
   | Ready_to_receive of {
       peer : Qp.endpoint;
       mtu : int;  (** In bytes. *)
@@ -438,6 +487,7 @@ type context = {
       (** The most of the peer's reads in flight a queue pair serves
           concurrently. *)
   cqes : int;  (** The most completions a completion queue holds. *)
+  message : int;  (** The most bytes one message of the port carries. *)
 }
 (** The type for what a path reads of a NIC once it has made the process's
     {e context} of it, the kernel object that holds the process's other
@@ -484,16 +534,18 @@ type path = {
           writer, and counts each event once. *)
   qp :
     cq:int ->
-    entries:int ->
+    sends:int ->
+    receives:int ->
     tag:int ->
     string ->
     int ->
     (int * int * string, string) result;
-      (** [qp ~cq ~entries ~tag d n] makes a reliable-connected queue pair
-          with [entries] send entries and no receive ring, completing into the
-          queue of handle [cq], whose events carry [tag], giving the driver
-          [d]. It is the pair's handle, its number and the driver's answer, of
-          at most [n] bytes. *)
+      (** [qp ~cq ~sends ~receives ~tag d n] makes a reliable-connected queue
+          pair with [sends] send entries and [receives] receives of one
+          scatter segment each, or no receive ring if [receives] is [0],
+          completing into the queue of handle [cq], whose events carry [tag],
+          giving the driver [d]. It is the pair's handle, its number and the
+          driver's answer, of at most [n] bytes. *)
   modify : int -> transition -> (unit, string) result;
       (** [modify h t] changes the state of the queue pair of handle [h]. *)
   destroy : [ `Region | `Cq | `Qp ] -> int -> (unit, string) result;

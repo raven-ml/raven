@@ -124,6 +124,15 @@ value caml_rig_mlx5_consumed(value v_record, value v_count) {
   return Val_unit;
 }
 
+/* Stores the low 16 bits of a receive ring's producer count [v_count] in its
+   queue pair's doorbell record at [v_record], after the receive entries. */
+value caml_rig_mlx5_posted(value v_record, value v_count) {
+  to_device();
+  *(volatile uint32_t *)PTR(v_record) =
+      be32((uint32_t)Long_val(v_count) & 0xffff);
+  return Val_unit;
+}
+
 /* Arms a completion queue: the word [v_word] in its doorbell record's arm
    word at [v_record], then [v_word] and the queue's number [v_cq], both
    big-endian, in its doorbell register at [v_register], flushed. */

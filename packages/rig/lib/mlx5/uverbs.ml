@@ -351,6 +351,7 @@ let context f d n =
       reads = field device Q.max_qp_init_rd_atom;
       served = field device Q.max_qp_rd_atom;
       cqes = field device Q.max_cqe + 1;
+      message = field p P.max_msg_sz;
     }
 
 let rec push a x =
@@ -417,15 +418,17 @@ let reg_dmabuf f ~flags ~fd off n =
       remote = field r.(8) (0, 4);
     }
 
-(* The access flags of an access and an order. *)
+(* The access flags of what peers may do, to a region or through a queue
+   pair. *)
+let peers (a : Path.access) =
+  match a with
+  | Local -> 0
+  | Remote_write -> D.ib_uverbs_access_remote_write
+  | Remote -> D.ib_uverbs_access_remote_write lor D.ib_uverbs_access_remote_read
+
+(* The access flags of a region's access and order. *)
 let flags (a : Path.access) (o : Path.order) =
-  let peers =
-    match a with
-    | Local -> 0
-    | Remote_write -> D.ib_uverbs_access_remote_write
-    | Remote ->
-        D.ib_uverbs_access_remote_write lor D.ib_uverbs_access_remote_read
-  in
+  let peers = peers a in
   let order =
     match o with
     | In_order -> 0
@@ -463,12 +466,12 @@ let cq f ~entries ~tag d n =
   add ();
   Ok (handle, (fun () -> Atomic.get count), answer)
 
-let qp f ~cq ~entries ~tag d n =
+let qp f ~cq ~sends ~receives ~tag d n =
   let module C = D.Uverbs_create_qp in
   let module R = D.Uverbs_create_qp_resp in
   let* resp, answer =
     invoke f
-      (strf "making a queue pair of %d entries" entries)
+      (strf "making a queue pair of %d sends and %d receives" sends receives)
       D.ib_user_verbs_cmd_create_qp
       (encode C.sizeof
          [
@@ -476,17 +479,21 @@ let qp f ~cq ~entries ~tag d n =
            (C.pd_handle, f.pd);
            (C.send_cq_handle, cq);
            (C.recv_cq_handle, cq);
-           (C.max_send_wr, entries);
+           (C.max_send_wr, sends);
            (C.max_send_sge, 1);
+           (C.max_recv_wr, receives);
+           (C.max_recv_sge, Bool.to_int (receives > 0));
            (C.qp_type, D.ib_uverbs_qpt_rc);
          ])
       R.sizeof ~uhw:d ~uhw_out:n ()
   in
   Ok (field resp R.qp_handle, field resp R.qpn, answer)
 
-(* What a queue pair answers a peer's request that finds no receive, after
-   which a peer retries: 12, 0.64 ms, InfiniBand's [min_rnr_timer] encoding.
-   These queue pairs post no receives, and peers send them none. *)
+(* What a queue pair answers a peer's send that finds no receive posted, after
+   which the peer retries: 12, 0.64 ms, InfiniBand's [min_rnr_timer]
+   encoding. A sender given 7 retries such a send without end, as
+   [Rig_mlx5.Qp] states. Linux's drivers/infiniband/sw/rxe/rxe_comp.c is a
+   datapoint: it never counts a retry down from 7. *)
 let rnr_timer = 12
 let rnr_retries = 7
 
@@ -502,14 +509,12 @@ let modify f h (t : Path.transition) =
   let mask bits = (Q.attr_mask, List.fold_left ( lor ) D.ibv_qp_state bits) in
   let what, fields =
     match t with
-    | Init ->
+    | Init { access } ->
         ( "initialising",
           [
             (Q.qp_state, D.ibv_qps_init);
             (Q.port_num, port_num);
-            ( Q.qp_access_flags,
-              D.ib_uverbs_access_remote_write lor D.ib_uverbs_access_remote_read
-            );
+            (Q.qp_access_flags, peers access);
             mask [ D.ibv_qp_pkey_index; D.ibv_qp_port; D.ibv_qp_access_flags ];
           ] )
     | Ready_to_receive { peer = { qp; psn; address; _ }; mtu; gid; served } ->

@@ -58,6 +58,8 @@ let in_range fn what lo hi v =
 
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
+type ring = Send | Receive
+
 module Entry = struct
   let size = D.mlx5_send_wqe_bb
 
@@ -68,6 +70,7 @@ module Entry = struct
     | Write of { src : local; dst : remote }
     | Write_inline of { data : string; dst : remote }
     | Read of { src : remote; dst : local }
+    | Send of { src : local }
 
   type t = { op : op; signal : bool }
 
@@ -87,24 +90,28 @@ module Entry = struct
     in_range "Entry.write" "address" 0 max_int r.address;
     in_range "Entry.write" "key" 0 max_key r.key
 
-  let check_local (l : local) =
-    in_range "Entry.write" "address" 0 max_int l.address;
-    in_range "Entry.write" "key" 0 max_key l.key;
-    in_range "Entry.write" "length" 0 max_length l.bytes
+  let check_local fn (l : local) =
+    in_range fn "address" 0 max_int l.address;
+    in_range fn "key" 0 max_key l.key;
+    in_range fn "length" 0 max_length l.bytes
 
   let write_remote b at (r : remote) =
     set_be64 b (at + off D.Raddr_seg.raddr) r.address;
     set_be32 b (at + off D.Raddr_seg.rkey) r.key
 
-  (* The data segment of [l], and the bytes it ends the entry at. A byte count
-     of 0 means 2^31 to the NIC: a copy of no bytes has no segment. *)
-  let write_local b at (l : local) =
-    if l.bytes = 0 then data
+  let write_segment b at (l : local) =
+    set_be32 b (at + off D.Data_seg.byte_count) l.bytes;
+    set_be32 b (at + off D.Data_seg.lkey) l.key;
+    set_be64 b (at + off D.Data_seg.addr) l.address
+
+  (* The data segment of [l] at byte [seg] of the entry, and the bytes it ends
+     the entry at. A byte count of 0 means 2^31 to the NIC: a copy of no bytes
+     has no segment. *)
+  let write_local b at seg (l : local) =
+    if l.bytes = 0 then seg
     else begin
-      set_be32 b (at + data + off D.Data_seg.byte_count) l.bytes;
-      set_be32 b (at + data + off D.Data_seg.lkey) l.key;
-      set_be64 b (at + data + off D.Data_seg.addr) l.address;
-      data + D.Data_seg.sizeof
+      write_segment b (at + seg) l;
+      seg + D.Data_seg.sizeof
     end
 
   let write b at ~qp ~index e =
@@ -117,8 +124,9 @@ module Entry = struct
     in_range "Entry.write" "index" 0 max_int index;
     (match e.op with
     | Write { src = l; dst = r } | Read { src = r; dst = l } ->
-        check_local l;
+        check_local "Entry.write" l;
         check_remote r
+    | Send { src } -> check_local "Entry.write" src
     | Write_inline { data = s; dst } ->
         if String.length s > max_inline then
           invalid_arg
@@ -132,7 +140,7 @@ module Entry = struct
       match e.op with
       | Write { src; dst } ->
           write_remote b (at + raddr) dst;
-          (D.mlx5_opcode_rdma_write, write_local b at src)
+          (D.mlx5_opcode_rdma_write, write_local b at data src)
       | Write_inline { data = s; dst } ->
           let n = String.length s in
           write_remote b (at + raddr) dst;
@@ -144,7 +152,8 @@ module Entry = struct
           (D.mlx5_opcode_rdma_write, data + D.Inline_seg.sizeof + n)
       | Read { src; dst } ->
           write_remote b (at + raddr) src;
-          (D.mlx5_opcode_rdma_read, write_local b at dst)
+          (D.mlx5_opcode_rdma_read, write_local b at data dst)
+      | Send { src } -> (D.mlx5_opcode_send, write_local b at raddr src)
     in
     let units = (bytes + unit - 1) / unit in
     set_be32 b
@@ -154,6 +163,25 @@ module Entry = struct
     set_byte b
       (at + off D.Ctrl_seg.fm_ce_se)
       (if e.signal then D.mlx5_wqe_ctrl_cq_update else 0)
+end
+
+(* As rdma-core's mlx5_post_recv writes them: one data segment, or, for a
+   receive of no bytes, the segment that ends a scatter list, of no bytes and
+   an invalid key. *)
+module Receive = struct
+  let size = D.Data_seg.sizeof
+
+  let write b at (l : Entry.local) =
+    check_bytes "Receive.write" b at size;
+    if at mod size <> 0 then
+      invalid_arg
+        (strf "Rig_mlx5_abi.Receive.write: byte %d is not a multiple of %d" at
+           size);
+    Entry.check_local "Receive.write" l;
+    if l.bytes > 0 then Entry.write_segment b at l
+    else
+      Entry.write_segment b at
+        { Entry.address = 0; bytes = 0; key = D.mlx5_invalid_lkey }
 end
 
 module Completion = struct
@@ -175,7 +203,8 @@ module Completion = struct
 
   type status =
     | Done
-    | Failed of { error : error; vendor : int }
+    | Received of int
+    | Failed of { ring : ring; error : error; vendor : int }
     | Unexpected of int
 
   type t = { qp : int; index : int; status : status }
@@ -218,14 +247,22 @@ module Completion = struct
     let qp = be32 b (at + off D.Cqe64.sop_drop_qpn) land 0xff_ffff in
     let index = be16 b (at + off D.Cqe64.wqe_counter) in
     let op = opcode (byte b (at + off D.Cqe64.op_own)) in
+    let failed ring =
+      Failed
+        {
+          ring;
+          error = error_of (byte b (at + off D.Err_cqe.syndrome));
+          vendor = byte b (at + off D.Err_cqe.vendor_err_synd);
+        }
+    in
+    (* A requester's error is of the send ring, a responder's of the receive
+       ring, as Linux's drivers/infiniband/hw/mlx5/cq.c reads them. *)
     let status =
       if op = D.mlx5_cqe_req then Done
-      else if op = D.mlx5_cqe_req_err || op = D.mlx5_cqe_resp_err then
-        Failed
-          {
-            error = error_of (byte b (at + off D.Err_cqe.syndrome));
-            vendor = byte b (at + off D.Err_cqe.vendor_err_synd);
-          }
+      else if op = D.mlx5_cqe_resp_send then
+        Received (be32 b (at + off D.Cqe64.byte_cnt))
+      else if op = D.mlx5_cqe_req_err then failed Send
+      else if op = D.mlx5_cqe_resp_err then failed Receive
       else Unexpected op
     in
     { qp; index; status }
@@ -249,20 +286,25 @@ module Completion = struct
     | Other_error s -> strf "syndrome 0x%x" s
 
   let message c =
-    let what =
-      match c.status with
-      | Done -> "completed"
-      | Failed { error; vendor } ->
-          strf "%s (vendor syndrome 0x%x)" (describe error) vendor
-      | Unexpected op -> strf "unexpected completion opcode 0x%x" op
+    let failure error vendor =
+      strf "%s (vendor syndrome 0x%x)" (describe error) vendor
     in
-    strf "queue pair 0x%x, entry %d: %s" c.qp c.index what
+    match c.status with
+    | Done -> strf "queue pair 0x%x, entry %d: completed" c.qp c.index
+    | Received n -> strf "queue pair 0x%x, a receive: %d bytes" c.qp n
+    | Failed { ring = Send; error; vendor } ->
+        strf "queue pair 0x%x, entry %d: %s" c.qp c.index (failure error vendor)
+    | Failed { ring = Receive; error; vendor } ->
+        strf "queue pair 0x%x, a receive: %s" c.qp (failure error vendor)
+    | Unexpected op ->
+        strf "queue pair 0x%x: unexpected completion opcode 0x%x" c.qp op
 end
 
 module Doorbell = struct
   let word = 4
   let size = 2 * word
   let send = D.mlx5_snd_dbr * word
+  let receive = D.mlx5_rcv_dbr * word
   let consumed = D.mlx5_cq_set_ci * word
   let armed = D.mlx5_cq_arm_db * word
 

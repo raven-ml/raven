@@ -5,12 +5,13 @@
 
 (** ConnectX NICs' formats, as values.
 
-    A process and a ConnectX NIC (the [mlx5] family) share four formats in
-    memory: the work entries a queue pair's send ring holds, the completions
-    a completion queue's ring holds, the doorbell records that count both,
-    and the doorbell registers of the NIC's access regions, whose stores tell
-    the NIC that work waits. Each value here describes bytes, and its caller
-    writes or reads them. Nothing here acts on a NIC.
+    A process and a ConnectX NIC (the [mlx5] family) share five formats in
+    memory: the work entries a queue pair's send ring holds, the receive
+    entries its receive ring holds, the completions a completion queue's ring
+    holds, the doorbell records that count them, and the doorbell registers
+    of the NIC's access regions, whose stores tell the NIC that work waits.
+    Each value here describes bytes, and its caller writes or reads them.
+    Nothing here acts on a NIC.
 
     {v
      send ring: n entries of 64 bytes        doorbell record    access region
@@ -24,8 +25,12 @@
     in the queue pair's doorbell record ({!Doorbell}), then stores the first 8
     bytes of the last entry in the queue pair's doorbell register ({!Uar}).
     The NIC runs the entries in order, and writes a completion for each entry
-    that asks for one and for every entry that fails. The process reads a
-    completion once {!Completion.owned} says the NIC has written it, and
+    that asks for one and for every entry that fails. A process posts
+    receives by writing entries at its receive ring's producer count and
+    storing the count in the queue pair's doorbell record, with no store to a
+    register. The NIC fills the oldest posted receive with each message the
+    peer sends, and writes a completion for every receive. The process reads
+    a completion once {!Completion.owned} says the NIC has written it, and
     stores how many it read in the completion queue's doorbell record.
 
     {1:conventions Conventions}
@@ -48,6 +53,11 @@
 type buffer =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 (** The type for memory a process and a NIC share, such as a ring. *)
+
+(** The type for a queue pair's rings. *)
+type ring =
+  | Send  (** The send ring, of work entries ({!Entry}). *)
+  | Receive  (** The receive ring, of receive entries ({!Receive}). *)
 
 (** A work entry is one operation of a queue pair's send ring.
 
@@ -82,6 +92,9 @@ module Entry : sig
         (** [Read {src; dst}] copies [dst.bytes] bytes from [src] to [dst].
             It reads what the writes posted before it on its queue pair
             wrote. *)
+    | Send of { src : local }
+        (** [Send {src}] sends the [src.bytes] bytes of [src] to the peer,
+            whose NIC lands them in the oldest receive the peer posted. *)
 
   type t = {
     op : op;
@@ -108,6 +121,28 @@ module Entry : sig
       {- a length is not in \[[0];[2{^31}-1]\], a key is not in
          \[[0];[2{^32}-1]\], or an address is negative;}
       {- a [Write_inline] carries more than {!max_inline} bytes.}} *)
+end
+
+(** A receive entry is one receive of a queue pair's receive ring: the memory
+    the next message from the peer lands in.
+
+    Every entry here takes {!Receive.size} bytes, one scatter segment, so
+    entry [i] of a ring of [n] entries is at byte [16 * (i mod n)]. The
+    ring's producer count, the receives posted, is stored at
+    {!Doorbell.receive} of the queue pair's doorbell record. A message longer
+    than its receive fails the receive. *)
+module Receive : sig
+  val size : int
+  (** [size] is [16], the bytes of a scatter segment. *)
+
+  val write : buffer -> int -> Entry.local -> unit
+  (** [write b at l] writes the receive of up to [l.bytes] bytes into [l] in
+      the {!size} bytes of [b] at byte [at]. A receive of no bytes takes only
+      a message of no bytes.
+
+      Raises [Invalid_argument] if the bytes are not in [b], [at] is not a
+      multiple of {!size}, [l.bytes] is not in \[[0];[2{^31}-1]\], [l.key]
+      is not in \[[0];[2{^32}-1]\], or [l.address] is negative. *)
 end
 
 (** A completion is what the NIC writes once a work entry completes or fails.
@@ -139,19 +174,27 @@ module Completion : sig
 
   (** The type for the outcomes of entries. *)
   type status =
-    | Done  (** The entry completed. *)
-    | Failed of { error : error; vendor : int }
-        (** The entry failed, and [vendor] is the NIC's own syndrome. *)
+    | Done  (** An entry of the send ring completed. *)
+    | Received of int
+        (** A receive took a message of that many bytes, which have landed
+            in its memory. *)
+    | Failed of { ring : ring; error : error; vendor : int }
+        (** An entry of [ring] failed, and [vendor] is the NIC's own
+            syndrome. *)
     | Unexpected of int
-        (** The completion is of another kind than an entry of a send ring,
-            such as a receive's, by its opcode. *)
+        (** The completion is of a kind that the entries here never make,
+            such as a receive's of a message with immediate data, by its
+            opcode. *)
 
   type t = {
     qp : int;  (** The number of the entry's queue pair. *)
-    index : int;  (** The low 16 bits of the entry's number. *)
+    index : int;
+        (** The low 16 bits of the entry's number, for an entry of the send
+            ring. *)
     status : status;
   }
-  (** The type for completions. *)
+  (** The type for completions. The receives of a queue pair complete in the
+      order they were posted. *)
 
   val owned : buffer -> int -> count:int -> entries:int -> bool
   (** [owned b at ~count ~entries] is [true] iff the completion at byte [at]
@@ -194,6 +237,11 @@ module Doorbell : sig
   val send : int
   (** [send] is the byte offset in a queue pair's record of its send count, a
       32-bit word holding the low 16 bits of the ring's producer count. *)
+
+  val receive : int
+  (** [receive] is the byte offset in a queue pair's record of its receive
+      count, a 32-bit word holding the low 16 bits of the receive ring's
+      producer count. *)
 
   val consumed : int
   (** [consumed] is the byte offset in a completion queue's record of its

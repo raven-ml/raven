@@ -6,9 +6,12 @@
 (* Completions, against rdma-core's mlx5dv.h: the queue pair's number in the low
    24 bits of the big-endian word at byte 56, the entry's index at byte 60, the
    opcode in the high 4 bits of byte 63 and the owner in its bit 0; an error's
-   syndrome at byte 55 and the vendor's at byte 54. The owner rule is
-   rdma-core's cq.c: a completion is the process's when its opcode is not 15
-   (invalid) and its owner bit is the count's bit log2 entries. *)
+   syndrome at byte 55 and the vendor's at byte 54; a receive's byte count at
+   byte 44. The owner rule is rdma-core's cq.c: a completion is the process's
+   when its opcode is not 15 (invalid) and its owner bit is the count's bit
+   log2 entries. The opcodes are mlx5dv.h's: 0 a requester's completion, 2 a
+   receive of a send, 13 a requester's error and 14 a responder's, which
+   Linux's mlx5 cq.c takes as the send ring's and the receive ring's. *)
 
 open Windtrap
 open Rig_mlx5_abi
@@ -29,7 +32,9 @@ let set_be b at n v =
   done
 
 (* A completion the NIC writes at [at]: [op] and [owner] in byte 63. *)
-let completion b at ~qp ~index ~op ~owner ?(syndrome = 0) ?(vendor = 0) () =
+let completion b at ~qp ~index ~op ~owner ?(syndrome = 0) ?(vendor = 0)
+    ?(bytes = 0) () =
+  set_be b (at + 44) 4 bytes;
   set_be b (at + 56) 4 ((0xab lsl 24) lor qp);
   set_be b (at + 60) 2 index;
   set b (at + 55) syndrome;
@@ -38,11 +43,11 @@ let completion b at ~qp ~index ~op ~owner ?(syndrome = 0) ?(vendor = 0) () =
 
 let pp_status ppf = function
   | Completion.Done -> Format.pp_print_string ppf "Done"
-  | Failed { error; vendor } ->
-      Format.fprintf ppf "Failed (%s, vendor 0x%x)"
-        (Completion.message
-           { qp = 0; index = 0; status = Failed { error; vendor } })
-        vendor
+  | Received n -> Format.fprintf ppf "Received %d" n
+  | Failed { ring; _ } as status ->
+      Format.fprintf ppf "Failed (%s ring, %s)"
+        (match ring with Send -> "send" | Receive -> "receive")
+        (Completion.message { qp = 0; index = 0; status })
   | Unexpected op -> Format.fprintf ppf "Unexpected 0x%x" op
 
 let completion_t =
@@ -154,21 +159,44 @@ let reading =
           completion b size ~qp:0x1c3 ~index:7 ~op:13 ~owner:0 ~syndrome
             ~vendor:0x81 ();
           equal completion_t
-            { qp = 0x1c3; index = 7; status = Failed { error; vendor = 0x81 } }
+            {
+              qp = 0x1c3;
+              index = 7;
+              status = Failed { ring = Send; error; vendor = 0x81 };
+            }
             (Completion.read b size));
-      test "a responder's error is a failure too" (fun () ->
+      test "a responder's error is a failure of the receive ring" (fun () ->
           let b = buffer () in
-          completion b 0 ~qp:2 ~index:1 ~op:14 ~owner:0 ~syndrome:0x13
+          completion b 0 ~qp:2 ~index:1 ~op:14 ~owner:0 ~syndrome:0x05
             ~vendor:0x88 ();
           equal completion_t
             {
               qp = 2;
               index = 1;
-              status = Failed { error = Remote_access; vendor = 0x88 };
+              status =
+                Failed { ring = Receive; error = Flushed; vendor = 0x88 };
             }
             (Completion.read b 0));
+      prop "a receive of a send reads back the bytes it took"
+        Gen.(
+          pair (int_range 0 0xff_ffff)
+            (frequency
+               [
+                 (3, int_range 0 (1 lsl 20));
+                 (1, constant 0);
+                 (1, constant 0x8000_0000);
+                 (1, constant 0xffff_ffff);
+               ]))
+        (fun (qp, bytes) ->
+          cover "no bytes" (bytes = 0);
+          cover "a count past 31 bits" (bytes >= 0x8000_0000);
+          let b = buffer () in
+          completion b 0 ~qp ~index:3 ~op:2 ~owner:1 ~bytes ();
+          equal completion_t
+            { qp; index = 3; status = Received bytes }
+            (Completion.read b 0));
       cases ~name:(strf "opcode %d") "another opcode is unexpected"
-        [ 1; 2; 3; 4; 12; 15 ] (fun op ->
+        [ 1; 3; 4; 12; 15 ] (fun op ->
           let b = buffer () in
           completion b 0 ~qp:2 ~index:1 ~op ~owner:0 ();
           equal completion_t
@@ -184,12 +212,22 @@ let reading =
           print_endline (Completion.message (Completion.read b 0));
           completion b 0 ~qp:0x1c3 ~index:9 ~op:0 ~owner:0 ();
           print_endline (Completion.message (Completion.read b 0));
+          completion b 0 ~qp:0x1c3 ~index:0 ~op:2 ~owner:0 ~bytes:4096 ();
+          print_endline (Completion.message (Completion.read b 0));
+          completion b 0 ~qp:0x1c3 ~index:0 ~op:14 ~owner:0 ~syndrome:0x01
+            ~vendor:0x51 ();
+          print_endline (Completion.message (Completion.read b 0));
+          completion b 0 ~qp:0x1c3 ~index:0 ~op:3 ~owner:0 ();
+          print_endline (Completion.message (Completion.read b 0));
           expect (output ())
           @@ __POS_OF__
                {|
             queue pair 0x1c3, entry 7: retry counter exceeded (vendor syndrome 0x81)
             queue pair 0x1c3, entry 8: flushed (vendor syndrome 0x68)
             queue pair 0x1c3, entry 9: completed
+            queue pair 0x1c3, a receive: 4096 bytes
+            queue pair 0x1c3, a receive: local length error (vendor syndrome 0x51)
+            queue pair 0x1c3: unexpected completion opcode 0x3
           |});
     ]
 
