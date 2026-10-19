@@ -49,6 +49,12 @@
 
 static uint64_t align_up(uint64_t n, uint64_t a) { return (n + a - 1) / a * a; }
 
+/* [a + b], or UINT64_MAX past it: a submission's sums of its parts' sizes,
+   each below 2^64, never wrap to a small count. */
+static uint64_t add(uint64_t a, uint64_t b) {
+  return a + b < a ? UINT64_MAX : a + b;
+}
+
 /* A copy of no bytes places nothing. */
 static int is_copy(const struct rig_part *p) {
   return p->kind == RIG_COPY && p->copy.bytes > 0;
@@ -193,7 +199,7 @@ static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
       *args = align_up(arguments(l, 3 * sizeof(uint64_t)), SEGMENT_ALIGN);
       return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
     }
-    return copies(d, p->copy.bytes) * words_of(d, S_COPY);
+    return copies(d, p->copy.bytes) * (uint64_t)words_of(d, S_COPY);
   }
 }
 
@@ -240,28 +246,38 @@ static struct cost part_cost(const struct rig_amd *d, int ring, uint64_t w,
                              uint64_t args, uint64_t joins) {
   struct cost k = {.bytes = args};
   if (ring == RIG_AMD_COPY) {
-    k.copy = w + words_of(d, S_FENCE) + joins * words_of(d, S_POLL);
+    k.copy = add(w, words_of(d, S_FENCE) + joins * words_of(d, S_POLL));
     return k;
   }
   uint64_t pm4 = words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
                  words_of(d, T_SIGNAL) + joins * words_of(d, T_WAIT);
   if (aql(d)) {
-    k.compute = words_of(d, A_IB) + w;
-    k.bytes += 4 * pm4 + SEGMENT_ALIGN;
+    k.compute = add(words_of(d, A_IB), w);
+    k.bytes = add(k.bytes, 4 * pm4 + SEGMENT_ALIGN);
   } else
-    k.compute = pm4 + w;
+    k.compute = add(pm4, w);
   return k;
 }
 
-/* The most a submission may take: fewer words than the compute ring holds,
-   and half the copy ring and half the segment, since a submission's SDMA
-   packets and argument bytes never wrap. The segment grows. */
-static struct cost room_of(const struct rig_amd *d) {
+/* The most a submission may take of rings of [compute] and [copy] words
+   and a segment of [bytes]: fewer words than the compute ring holds, and
+   half the copy ring and half the segment, since a submission's SDMA
+   packets and argument bytes never wrap. */
+static struct cost room_in(uint64_t compute, uint64_t copy, uint64_t bytes) {
   return (struct cost){
-      .compute = d->rings[RIG_AMD_COMPUTE].size - 1,
-      .copy = (d->rings[RIG_AMD_COPY].size - 1) / 2,
-      .bytes = d->segment.size / 2,
-  };
+      .compute = compute - 1, .copy = (copy - 1) / 2, .bytes = bytes / 2};
+}
+
+static struct cost room_of(const struct rig_amd *d) {
+  return room_in(d->rings[RIG_AMD_COMPUTE].size, d->rings[RIG_AMD_COPY].size,
+                 d->segment.size);
+}
+
+/* What a submission may take once [d]'s rings and segment grew: the
+   largest rings the path makes, and a segment the size of the memory. */
+static struct cost most_of(const struct rig_amd *d) {
+  return room_in(d->rings[RIG_AMD_COMPUTE].most, d->rings[RIG_AMD_COPY].most,
+                 UINT64_MAX);
 }
 
 /* The segment bytes of the slot words of a submission of [n] parts. */
@@ -297,13 +313,13 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
 }
 
 /* The most parts an idle device runs in one submission, each of the largest
-   size the guarantee covers, by [need]'s costs and [room_of]'s bounds: a
+   size the guarantee covers, by [need]'s costs and [most_of]'s bounds: a
    launch whose dispatch takes RIG_AMD_LAUNCH_WORDS words and whose
    arguments take RIG_AMD_KERNARG bytes, or a copy of one packet, each
    joined to the part before it on its queue and to one of the other
    queue, and each with its slot word. */
 int rig_amd_most_parts(const struct rig_amd *d) {
-  struct cost room = room_of(d), fixed = fixed_cost(d);
+  struct cost room = most_of(d), fixed = fixed_cost(d);
   uint64_t dispatch =
       RIG_AMD_LAUNCH_WORDS + (aql(d) ? 0 : words_of(d, T_INVALIDATE));
   struct cost launch = part_cost(d, RIG_AMD_COMPUTE, dispatch,
@@ -343,16 +359,12 @@ static int launches(const struct rig_amd *d, const struct rig_part *p,
   return threads <= l->max_threads && b->shared <= l->max_shared;
 }
 
-/* Whether a part is one the device runs. A part's own declaration past its
-   ring or the segment never fits, which also keeps a submission's sum of
-   them far from wrapping. */
+/* Whether a part is one the device runs. */
 static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
                 const uint8_t *args) {
   if (p->queue != RIG_AMD_COMPUTE && p->queue != RIG_AMD_COPY) return 0;
-  uint64_t size = d->rings[p->queue].size;
   switch (p->kind) {
   case RIG_WORDS:
-    if (p->words.n >= size) return 0;
     if (d->rings[p->queue].kind == RING_AQL && p->words.n % AQL_WORDS)
       return 0;
     break;
@@ -372,25 +384,63 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
 
 /* Growth
 
-   A growth (Rig_amd's grow) makes a larger segment and hands it here. The
-   next room whose parts need it, or every room once one did, installs it
-   once the word shows the last value submitted, under rig's turn, so no
-   room or submit runs meanwhile, and answers RIG_LATER until then: the
-   device's work ends even while other threads submit. Installing at idle
-   empties the segment of every value's bytes, so the marks, which bound
-   the values in flight (Times), restart. The segment it replaces then holds
-   no work, and the growth's side frees it once it is neither installed nor
-   handed. */
+   A growth (Rig_amd's grow) makes a larger segment, or new queues on larger
+   rings, and hands them here. The next room whose parts need them, or every
+   room once one did, installs them once the word shows the last value
+   submitted, under rig's turn, so no room or submit runs meanwhile, and
+   answers RIG_LATER until then: the device's work ends even while other
+   threads submit. Installing at idle empties the segment and the rings of
+   every value's work, so the marks, which bound the values in flight
+   (Times), restart, and a new queue starts reading at position 0 of its
+   ring, where the writer places its first word. A queue it replaces has
+   read every packet, and the growth's side destroys it, and frees what it
+   replaced, once that is neither installed nor handed. */
 
-/* Installs what [g] made in [d], which reached every value submitted. */
+/* The room of [d] once what [g] made is installed. */
+static struct cost room_after(const struct rig_amd *d,
+                              const struct rig_amd_grown *g) {
+  uint64_t size[RIG_AMD_QUEUES];
+  for (int q = 0; q < RIG_AMD_QUEUES; q++)
+    size[q] = g->ring[q].size > 0 ? g->ring[q].size : d->rings[q].size;
+  return room_in(size[RIG_AMD_COMPUTE], size[RIG_AMD_COPY],
+                 g->size > 0 ? g->size : d->segment.size);
+}
+
+static int holds(const struct cost *room, const struct cost *k) {
+  return k->compute <= room->compute && k->copy <= room->copy &&
+         k->bytes <= room->bytes;
+}
+
+/* Installs what [g] made in [d], which reached every value submitted: the
+   segment, and each ring with its queue, whose AQL descriptor takes the
+   scratch the old one's last value left. */
 static void install(struct rig_amd *d, const struct rig_amd_grown *g) {
-  struct rig_amd_segment *s = &d->segment;
-  s->host = g->host;
-  s->gpu = g->gpu;
-  s->size = g->size;
-  s->put = s->free = 0;
-  s->marks.head = s->marks.count = 0;
-  d->installed = g->gpu;
+  if (g->size > 0) {
+    struct rig_amd_segment *s = &d->segment;
+    s->host = g->host;
+    s->gpu = g->gpu;
+    s->size = g->size;
+    s->put = s->free = 0;
+    s->marks.head = s->marks.count = 0;
+    d->installed[0] = g->gpu;
+  }
+  for (int q = 0; q < RIG_AMD_QUEUES; q++) {
+    if (g->ring[q].size == 0) continue;
+    struct rig_amd_ring *r = &d->rings[q];
+    r->words = g->ring[q].words;
+    r->size = g->ring[q].size;
+    r->write = g->ring[q].write;
+    r->doorbell = g->ring[q].doorbell;
+    r->put = r->free = 0;
+    r->marks.head = r->marks.count = 0;
+    d->installed[1 + q] = g->ring[q].id;
+  }
+  if (g->desc != NULL) {
+    memcpy(g->desc + RIG_AMD_DESC_SCRATCH, d->desc + RIG_AMD_DESC_SCRATCH,
+           RIG_AMD_DESC_SCRATCH_BYTES);
+    d->desc = g->desc;
+    d->desc_gpu = g->desc_gpu;
+  }
 }
 
 /* Installs what a growth handed, while [d] drains or if it holds [k], once
@@ -400,7 +450,11 @@ static int switch_growth(struct rig_amd *d, const struct cost *k) {
   pthread_mutex_lock(&d->grown_mu);
   struct rig_amd_grown *g = d->grown;
   int r = RIG_FITS;
-  if (g != NULL && (d->draining || k->bytes <= g->size / 2)) {
+  struct cost room = g != NULL ? room_after(d, g) : room_of(d);
+  /* A growth may have taken back all it handed (caml_rig_amd_unhand): the
+     drain then waits for nothing. */
+  if (g == NULL) d->draining = 0;
+  if (g != NULL && (d->draining || holds(&room, k))) {
     uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
     r = seen == atomic_load_explicit(&d->last, memory_order_relaxed)
             ? RIG_FITS
@@ -418,12 +472,18 @@ static int switch_growth(struct rig_amd *d, const struct cost *k) {
 
 _Thread_local struct rig_amd_asked rig_amd_asked;
 
-/* Records, for the growth rig asks next on this thread, the segment [d]
-   must have to hold [k]. Each submission's growth makes what it needs, so
-   another's growth never stands in for it. */
+/* Records, for the growth rig asks next on this thread, the bytes the
+   segment and each ring of [d] must have to hold [k], 0 for those that
+   hold it. Each submission's growth makes what it needs, so another's
+   growth never stands in for it. */
 static void ask(const struct rig_amd *d, const struct cost *k) {
+  struct cost room = room_of(d);
   rig_amd_asked.d = d;
-  rig_amd_asked.bytes = 2 * k->bytes;
+  rig_amd_asked.bytes = k->bytes > room.bytes ? add(k->bytes, k->bytes) : 0;
+  rig_amd_asked.rings[RIG_AMD_COMPUTE] =
+      k->compute > room.compute ? 4 * (k->compute + 1) : 0;
+  rig_amd_asked.rings[RIG_AMD_COPY] =
+      k->copy > room.copy ? 4 * (2 * k->copy + 1) : 0;
 }
 
 int rig_amd_room(void *self, const struct rig_part *parts, int n,
@@ -433,11 +493,12 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   route(d, routes, parts, n);
   struct cost k = need(d, routes, parts, n), room = room_of(d);
-  if (k.compute > room.compute || k.copy > room.copy) return RIG_NEVER;
-  if (d->draining || k.bytes > room.bytes) {
+  struct cost most = most_of(d);
+  if (k.compute > most.compute || k.copy > most.copy) return RIG_NEVER;
+  if (d->draining || !holds(&room, &k)) {
     if (switch_growth(d, &k) == RIG_LATER) return RIG_LATER;
     room = room_of(d);
-    if (k.bytes > room.bytes) {
+    if (!holds(&room, &k)) {
       ask(d, &k);
       return RIG_GROW;
     }
@@ -489,7 +550,8 @@ static void scratch(struct submission *s, struct rig_amd_ring *r) {
   while (!atomic_compare_exchange_weak(&d->scratch_lock, &idle, 1)) idle = 0;
   if (atomic_load_explicit(&d->scratch_ready, memory_order_relaxed)) {
     for (int i = 0; i < d->scratch_n; i++)
-      emit(d, r, T_WRITE, d->scratch_at[i], d->scratch_value[i], 0);
+      emit(d, r, T_WRITE, d->desc_gpu + d->scratch_at[i],
+           d->scratch_value[i], 0);
     d->scratch_gpu = d->scratch_next;
     atomic_store_explicit(&d->scratch_ready, 0, memory_order_relaxed);
     atomic_store_explicit(&d->scratch_taken, s->v, memory_order_release);

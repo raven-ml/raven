@@ -293,6 +293,8 @@ let path g h fn ~index : Memory.region Amd.path =
     queue =
       (fun kind ~ring ~bytes ~read ~write ->
         guard (fun () -> Boot.queue g kind ~ring ~bytes ~read ~write));
+    retire = (fun bell -> guard (fun () -> Boot.retire g bell));
+    most_ring = Boot.most_ring g;
     hdp = Boot.hdp g;
     interrupt;
     hang_ms = Some Driver.hang_ms;

@@ -65,8 +65,8 @@ val make :
   Regs.t -> Gmc.t -> Rig_pci.Window.t -> Rig_pci.Window.t -> mqds:int array -> t
 (** [make r gmc vram doorbells ~mqds] is the GC, whose queue descriptors are
     at the physical addresses [mqds] of the GPU's memory, one page per die
-    each: the compute queue's, and on a virtual function the KIQ's, whose
-    doorbell it rings through [doorbells]. *)
+    each: compute queue 0's, compute queue 1's, and on a virtual function
+    the KIQ's, whose doorbell it rings through [doorbells]. *)
 
 val wait_autoload : t -> unit
 (** [wait_autoload g] waits for the RLC to have loaded the GC's firmware, on
@@ -97,13 +97,27 @@ val queue :
   read:int ->
   write:int ->
   eop:int ->
-  int
-(** [queue g kind ~ring ~bytes ~read ~write ~eop] programs compute queue 0 of
-    [kind], with an end-of-pipe buffer of 4 KiB at [eop], and is its doorbell
-    index. An AQL queue runs on every die, a PM4 queue on the first. A
-    hardware queue left active is dequeued before its registers are written.
+  int option
+(** [queue g kind ~ring ~bytes ~read ~write ~eop] programs a compute queue
+    of [kind] of MEC 1's pipe 0, the first of queues 0 and 1 that runs none
+    {!queue} made, with an end-of-pipe buffer of 4 KiB at [eop], and is its
+    doorbell index, or [None] if both run one. An AQL queue runs on every
+    die, a PM4 queue on the first. A hardware queue left active is dequeued
+    before its registers are written.
 
     Raises {!Regs.Stuck} if that dequeue does not complete within 10 s. *)
+
+val free : t -> int option
+(** [free g] is the doorbell index of the compute queue the next {!queue}
+    programs, or [None] if both run one {!queue} made. *)
+
+val retire : t -> int -> unit
+(** [retire g index] dequeues the compute queue {!queue} made whose doorbell
+    index is [index], which has read every packet up to its write position,
+    so that a later {!queue} may program it again.
+
+    Raises {!Regs.Stuck} if the dequeue does not complete within 10 s, and
+    [Invalid_argument] if {!queue} made no queue of that index. *)
 
 val dequeue : t -> wait:bool -> bool
 (** [dequeue g ~wait] removes every queue this library programs. With

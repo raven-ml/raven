@@ -12,16 +12,38 @@ type t = {
   r : Regs.t;
   v : Discovery.version; (* SDMA0's *)
   name : string; (* its micro-engine's: F32 before SDMA 7, MCU from it *)
+  used : bool array; (* the queues [queue] programmed and none retired *)
 }
 
 let make r =
   let v = Regs.version (Regs.layout_of r) D.sdma0_hwid in
-  { r; v; name = (if v < (7, 0, 0) then "F32" else "MCU") }
+  {
+    r;
+    v;
+    name = (if v < (7, 0, 0) then "F32" else "MCU");
+    used = [| false; false |];
+  }
 
-(* The one queue this library programs, queue 0 of engine 0: SDMA 4 names it
-   regSDMA_GFX, later engines regSDMA0_QUEUE0. *)
-let queue_regs s =
-  match s.v with 4, _, _ -> "regSDMA_GFX" | _ -> "regSDMA0_QUEUE0"
+(* The queues of engine 0 this library programs: on SDMA 4 the one named
+   regSDMA_GFX, on later engines queues 0 and 1, a device's and the one a
+   growth of its ring makes beside it. *)
+let slots s = match s.v with 4, _, _ -> 1 | _ -> 2
+
+let queue_regs s slot =
+  match s.v with 4, _, _ -> "regSDMA_GFX" | _ -> strf "regSDMA0_QUEUE%d" slot
+
+(* Queue [slot]'s doorbell index: the first SDMA engine's, and the next for
+   queue 1, within the range [start] routes to the engine. *)
+let doorbell slot = D.amdgpu_navi10_doorbell_sdma_engine0 + slot
+
+(* Disables queue [slot]'s ring, indirect buffers and doorbell. *)
+let disable s slot =
+  let r = s.r in
+  let reg = queue_regs s slot in
+  Regs.update r (reg ^ "_RB_CNTL") [ ("rb_enable", 0) ];
+  Regs.update r (reg ^ "_IB_CNTL") [ ("ib_enable", 0) ];
+  Regs.update r (reg ^ "_DOORBELL") [ ("enable", 0) ];
+  Regs.update r (reg ^ "_DOORBELL_OFFSET") [ ("offset", 0) ]
 
 (* SDMA 4's engines are sixteen instances of one pipe; later ones one instance
    of pipes named by number. *)
@@ -85,15 +107,14 @@ let halt s =
    kernel's sdma_v7_0_soft_reset waits. *)
 let reset_us = 100
 
-(* The queue is disabled whichever process programmed it: a session that died
-   left it enabled for the next boot. *)
+(* The queues are disabled whichever process programmed them: a session that
+   died left them enabled for the next boot. *)
 let stop s =
   let r = s.r in
-  let reg = queue_regs s in
-  Regs.update r (reg ^ "_RB_CNTL") [ ("rb_enable", 0) ];
-  Regs.update r (reg ^ "_IB_CNTL") [ ("ib_enable", 0) ];
-  Regs.update r (reg ^ "_DOORBELL") [ ("enable", 0) ];
-  Regs.update r (reg ^ "_DOORBELL_OFFSET") [ ("offset", 0) ];
+  for slot = 0 to slots s - 1 do
+    disable s slot;
+    s.used.(slot) <- false
+  done;
   (* The engine halted and held in reset, its queue's preemption cleared, before
      its soft reset, each write of which is read back, as the kernel's
      sdma_v7_0_soft_reset; the next start lets it run. *)
@@ -112,11 +133,12 @@ let stop s =
     Regs.pause reset_us
   end
 
-(* Its doorbell is the first SDMA engine's. *)
-let queue s ~ring ~bytes ~read ~write =
+(* Programs queue [slot] on the ring of [bytes] bytes at [ring], with its read
+   and write positions at 0: its doorbell index. *)
+let program s slot ~ring ~bytes ~read ~write =
   let r = s.r in
-  let reg = queue_regs s in
-  let doorbell = D.amdgpu_navi10_doorbell_sdma_engine0 in
+  let reg = queue_regs s slot in
+  let doorbell = doorbell slot in
   let w64 n ~lo ~hi v = Regs.write64 r (reg ^ n) ~lo ~hi v in
   Regs.write ~value:1 r (reg ^ "_MINOR_PTR_UPDATE") [];
   w64 "_RB_RPTR" ~lo:"" ~hi:"_HI" 0;
@@ -140,4 +162,18 @@ let queue s ~ring ~bytes ~read ~write =
         ("rb_size", log2 (bytes / 4));
       ]);
   Regs.update r (reg ^ "_IB_CNTL") [ ("ib_enable", 1) ];
+  s.used.(slot) <- true;
   doorbell
+
+let queue s ~ring ~bytes ~read ~write =
+  let slots = List.init (slots s) Fun.id in
+  match List.filter (fun i -> not s.used.(i)) slots with
+  | [] -> None
+  | slot :: _ -> Some (program s slot ~ring ~bytes ~read ~write)
+
+let retire s index =
+  let slot = index - D.amdgpu_navi10_doorbell_sdma_engine0 in
+  if slot < 0 || slot >= slots s || not s.used.(slot) then
+    invalid_arg "Sdma.retire: no queue has that doorbell";
+  disable s slot;
+  s.used.(slot) <- false

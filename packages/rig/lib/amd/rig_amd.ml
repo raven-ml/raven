@@ -106,6 +106,8 @@ end
 type 'm memory = { address : int; host : int option; data : 'm }
 type clock = Source of int | Round_trip
 
+type refusal = Lacking of string | Full of string | Refused of string
+
 type 'm path = {
   key : 'm Type.Id.t;
   index : int;
@@ -128,7 +130,9 @@ type 'm path = {
     bytes:int ->
     read:int ->
     write:int ->
-    (int, string) result;
+    (int, refusal) result;
+  retire : int -> unit;
+  most_ring : [ `Pm4 | `Aql | `Sdma ] -> int;
   hdp : int option;
   interrupt : int;
   hang_ms : int option;
@@ -153,6 +157,15 @@ type ops = {
   alloc : Rig_edge.memory -> int -> mem option;
   map_host : (int -> int -> mem option) option;
   map_peer : mem -> mem option;
+  queue :
+    [ `Pm4 | `Aql | `Sdma ] ->
+    ring:int ->
+    bytes:int ->
+    read:int ->
+    write:int ->
+    (int, refusal) result;
+  retire : int -> unit;
+  most_ring : [ `Pm4 | `Aql | `Sdma ] -> int;
   sleep : ms:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
@@ -171,6 +184,9 @@ let ops (type m) (p : m path) =
     map_host = Option.map (fun f a n -> Option.map pack (f a n)) p.map_host;
     map_peer =
       (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
+    queue = p.queue;
+    retire = p.retire;
+    most_ring = p.most_ring;
     sleep = p.sleep;
     stable_power = p.stable_power;
     stop = p.stop;
@@ -198,8 +214,14 @@ external set_memory : int -> int -> int -> unit = "caml_rig_amd_memory"
 
 external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
 
-external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
+external set_ring :
+  int -> int -> int -> int -> int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_ring_byte" "caml_rig_amd_ring"
+
+external set_descriptor : int -> int -> int -> unit = "caml_rig_amd_descriptor"
+
+(* The code of a ring's kind in rig_amd_stubs.h. *)
+let ring_kind = function `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2
 
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
@@ -270,21 +292,23 @@ type scratch = {
   mutable retired : retired list;
 }
 
-(* Memory a growth made, or the device's first of its kind, named by its GPU
-   address, as the C state's growth names it (rig_amd_stubs.h). *)
-type part = { id : int; mems : mem list }
+(* What a growth made, or the device's first of its kind: a segment, or a
+   queue, by its doorbell, with its ring and positions. It is named by the
+   GPU address of the segment or the ring, as the C state's growth names it
+   (rig_amd_stubs.h). *)
+type part = { id : int; mems : mem list; mutable doorbell : int option }
 
 (* What only a running device uses, under the device's guard but for
    [parts], under its growth lock. The handle outlives the device in its
    properties, so stop drops it. *)
 type live = {
   ops : ops;
-  own : mem list; (* rings, pointers, private code *)
+  own : mem list; (* the first queues' positions, private code *)
+  compute : [ `Pm4 | `Aql ]; (* the kind of the compute queue *)
   mutable parts : part list;
-      (* the segments, until neither installed nor handed (rig_amd_ring.c's
-         Growth) *)
+      (* the segments and queues, until neither installed nor handed
+         (rig_amd_ring.c's Growth) *)
   copy_launch : int; (* private launch until confirmed stop; 0 when absent *)
-  desc : int; (* the compute queue's descriptor *)
   scratch : scratch;
   mutable traces : (Abi.Capability.trace * mem list) option;
       (* the trace buffers, made at the first trace: the capability's record and
@@ -300,6 +324,7 @@ type t = {
   gpu : Abi.Gpu.t;
   aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
+  waves : int;
   hdp : int option;
   budget : int;
   hang_ms : int option;
@@ -320,6 +345,12 @@ type t = {
    R9700, MEC firmware 3010. *)
 let wait64_from = [ ((12, 0, 1), 3010) ]
 let ring_bytes = 16 lsl 20
+
+(* The bytes of [p]'s first ring of a queue of kind [k]. *)
+let first_ring (p : _ path) k = Int.min ring_bytes (p.most_ring k)
+
+(* A path's refusal, as an open's error. *)
+let why = function Lacking why | Full why | Refused why -> why
 let segment_bytes = 2 lsl 20
 let pointers_bytes = 4096
 
@@ -362,6 +393,19 @@ let compute_tmpring_size = 140
 let scratch_resource_descriptor = 144
 let scratch_backing_memory_location = 160
 let scratch_wave64_lane_byte_size = 176
+
+(* Zeroes the [pointers_bytes] at [host], where a device's queues' positions
+   lie, and where the compute queue reads AQL packets, writes its descriptor's
+   fields its creator writes. *)
+let init_pointers (gpu : Abi.Gpu.t) ~aql ~waves host =
+  zero host pointers_bytes;
+  if aql then begin
+    let cus = gpu.compute_units * gpu.xccs in
+    poke32 host queue_properties (is_ptr64 lor enable_profiling);
+    poke32 host read_dispatch_id_field_base_byte_offset (read_at ~aql 0);
+    poke32 host max_cu_id (cus - 1);
+    poke32 host max_wave_id (waves - 1)
+  end
 
 (* Templates *)
 
@@ -412,20 +456,21 @@ let waits64 (p : _ path) =
 
 (* AQL scratch *)
 
-(* The writes that point an AQL queue's descriptor at [desc] to scratch [m] for
-   kernels of [n] bytes per lane: GPU addresses and 32-bit values. *)
-let scratch_writes (g : Abi.Gpu.t) ~desc m n bytes =
+(* The writes that point an AQL queue's descriptor to scratch [m] for kernels
+   of [n] bytes per lane: offsets in the descriptor, all between
+   [compute_tmpring_size] and [scratch_wave64_lane_byte_size] (rig_amd_stubs.h's
+   RIG_AMD_DESC_SCRATCH), and 32-bit values. *)
+let scratch_writes (g : Abi.Gpu.t) m n bytes =
   let base = mem_address m in
   let d = Abi.Scratch.descriptor g ~base bytes in
   let word i = Int32.to_int (String.get_int32_le d (4 * i)) land 0xffff_ffff in
   [
-    (desc + scratch_backing_memory_location, base land 0xffff_ffff);
-    (desc + scratch_backing_memory_location + 4, base lsr 32);
-    (desc + scratch_wave64_lane_byte_size, n);
-    (desc + compute_tmpring_size, Abi.Scratch.tmpring g n);
+    (scratch_backing_memory_location, base land 0xffff_ffff);
+    (scratch_backing_memory_location + 4, base lsr 32);
+    (scratch_wave64_lane_byte_size, n);
+    (compute_tmpring_size, Abi.Scratch.tmpring g n);
   ]
-  @ List.init 4 (fun i ->
-      (desc + scratch_resource_descriptor + (4 * i), word i))
+  @ List.init 4 (fun i -> (scratch_resource_descriptor + (4 * i), word i))
 
 (* What installing the pending scratch stores, allocated ahead: the installed
    scratch retired, its value to be set, and the retired list it heads. *)
@@ -466,7 +511,7 @@ let settle_scratch self st =
   retire self st
 
 (* [grow_scratch] under the device's guard, on a device not stopped. *)
-let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
+let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql st n =
   settle_scratch self st;
   let have =
     match (st.pending, st.installed) with
@@ -484,7 +529,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
            than a descriptor holds. The publication hands [m] to the
            submissions, so everything the outcome stores is made before it. *)
         match
-          let writes = if aql then scratch_writes g ~desc m n bytes else [] in
+          let writes = if aql then scratch_writes g m n bytes else [] in
           let ats, values = List.split writes in
           ( mem_address m,
             Array.of_list ats,
@@ -518,7 +563,7 @@ let grow_scratch g n =
   Lock.protect g.guard @@ fun () ->
   match g.live with
   | None -> Stopped
-  | Some l -> grow_held g.self l.ops g.gpu ~aql:g.aql ~desc:l.desc l.scratch n
+  | Some l -> grow_held g.self l.ops g.gpu ~aql:g.aql l.scratch n
 
 (* Traces *)
 
@@ -990,8 +1035,9 @@ let make (type m) ~word (p : m path) =
           Ok own
     in
     let* segment = alloc "argument segment" segment_bytes in
-    let* compute = alloc "compute ring" ring_bytes in
-    let* copy = alloc "copy ring" ring_bytes in
+    let compute_kind = if aql then `Aql else `Pm4 in
+    let* compute = alloc "compute ring" (first_ring p compute_kind) in
+    let* copy = alloc "copy ring" (first_ring p `Sdma) in
     let* pointers = alloc "queue positions" pointers_bytes in
     let* stamps = alloc "stamp ring" stamps_bytes in
     let* stamps_host = host_of "stamp ring" stamps in
@@ -1001,15 +1047,7 @@ let make (type m) ~word (p : m path) =
     let* pointers_host = host_of "queue positions" pointers in
     let* compute_host = host_of "compute ring" compute in
     let* copy_host = host_of "copy ring" copy in
-    zero pointers_host pointers_bytes;
-    if aql then begin
-      let cus = p.gpu.compute_units * p.gpu.xccs in
-      poke32 pointers_host queue_properties (is_ptr64 lor enable_profiling);
-      poke32 pointers_host read_dispatch_id_field_base_byte_offset
-        (read_at ~aql 0);
-      poke32 pointers_host max_cu_id (cus - 1);
-      poke32 pointers_host max_wave_id (p.waves - 1)
-    end;
+    init_pointers p.gpu ~aql ~waves:p.waves pointers_host;
     (* The kernel the device copies with, where Copy_kernel holds one for the
        GPU's processor. rig_amd_ring.c runs a copy of 2 MiB or more within this
        device's Device memory with it, on the compute engine, and every other
@@ -1036,14 +1074,14 @@ let make (type m) ~word (p : m path) =
     let queue q kind ring =
       let at = mem_address pointers in
       let* doorbell =
-        p.queue kind ~ring:(mem_address ring) ~bytes:ring_bytes
-          ~read:(at + read_at ~aql q)
-          ~write:(at + write_at ~aql q)
+        Result.map_error why
+          (p.queue kind ~ring:(mem_address ring) ~bytes:(first_ring p kind)
+             ~read:(at + read_at ~aql q)
+             ~write:(at + write_at ~aql q))
       in
       queues := true;
       Ok doorbell
     in
-    let compute_kind = if aql then `Aql else `Pm4 in
     let* compute_bell = queue 0 compute_kind compute in
     let* copy_bell = queue 1 `Sdma copy in
     (* The queues read none of the C state before a doorbell. *)
@@ -1056,14 +1094,14 @@ let make (type m) ~word (p : m path) =
     Option.iter (set_hdp self) p.hdp;
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     set_copy_launch self !copy_launch;
-    let ring q kind host bell =
-      let kind = match kind with `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2 in
-      set_ring self q host ring_bytes
+    let ring q kind host bell id =
+      set_ring self q host (first_ring p kind) (p.most_ring kind)
         (pointers_host + write_at ~aql q)
-        bell kind
+        bell (ring_kind kind) id
     in
-    ring 0 compute_kind compute_host compute_bell;
-    ring 1 `Sdma copy_host copy_bell;
+    ring 0 compute_kind compute_host compute_bell (mem_address compute);
+    ring 1 `Sdma copy_host copy_bell (mem_address copy);
+    if aql then set_descriptor self pointers_host (mem_address pointers);
     (* The values start after the word's: the device numbers on from it as
        an idle one would. *)
     renumber_device self (signaled_word self + 1);
@@ -1084,6 +1122,7 @@ let make (type m) ~word (p : m path) =
         gpu = p.gpu;
         aql;
         lds = p.lds;
+        waves = p.waves;
         hdp = p.hdp;
         budget = p.budget;
         hang_ms = p.hang_ms;
@@ -1111,11 +1150,27 @@ let make (type m) ~word (p : m path) =
               ops;
               own =
                 copy_code
-                @ [ compute; copy; pointers; stamps ]
-                @ Option.to_list mapped;
-              parts = [ { id = mem_address segment; mems = [ segment ] } ];
+                @ [ pointers; stamps ] @ Option.to_list mapped;
+              compute = compute_kind;
+              parts =
+                [
+                  {
+                    id = mem_address segment;
+                    mems = [ segment ];
+                    doorbell = None;
+                  };
+                  {
+                    id = mem_address compute;
+                    mems = [ compute ];
+                    doorbell = Some compute_bell;
+                  };
+                  {
+                    id = mem_address copy;
+                    mems = [ copy ];
+                    doorbell = Some copy_bell;
+                  };
+                ];
               copy_launch = !copy_launch;
-              desc = mem_address pointers;
               scratch = { installed = None; pending = None; retired = [] };
               traces = None;
             };
@@ -1148,53 +1203,204 @@ let sleep g ~seen ~still_ms =
 
 (* Growth
 
-   A growth makes a larger argument segment and hands it to the C state, whose
-   next room that needs it installs it at idle (rig_amd_ring.c's Growth). *)
+   A growth makes a larger argument segment, or new queues of the path's on
+   larger rings, each with positions of its own, and hands them to the C state,
+   whose next room that needs them installs them at idle (rig_amd_ring.c's
+   Growth). *)
 
-external needed : int -> int = "caml_rig_amd_needed"
-external hand : int -> int -> int -> int -> bool = "caml_rig_amd_hand"
-external growth_state : int -> int * int = "caml_rig_amd_growth"
+external needed : int -> int * int * int = "caml_rig_amd_needed"
+
+external hand : int -> int array -> int array -> int array -> bool
+  = "caml_rig_amd_hand"
+
+external growth_state : int -> int * int * int * int * int * int
+  = "caml_rig_amd_growth"
+
+external unhand : int -> int -> unit = "caml_rig_amd_unhand"
 
 (* The bytes of memory a growth makes for [want] bytes: the first power of two
-   from a page that holds twice them, so that growths come at doublings. *)
-let grown_bytes want =
-  let rec up n = if n >= 2 * want then n else up (2 * n) in
+   from a page that holds twice them, so that growths come at doublings, and at
+   most [most], a power of two of at least [want]. *)
+let grown_bytes ?(most = max_int) want =
+  let rec up n = if n >= 2 * want || n >= most then n else up (2 * n) in
   up 4096
 
-(* Gives back what growths made that is neither installed nor handed: a
-   replaced segment no work reads, as the device was idle when it was
-   replaced, and a handed one no room installed. Each leaves [l.parts] before
-   its free, so an exception leaves the rest for the next call. *)
-let rec retire g l =
-  let installed, handed = growth_state g.self in
-  match List.find_opt (fun p -> p.id <> installed && p.id <> handed) l.parts with
+(* The kinds of [l]'s queues, in the order of its rings. *)
+let kinds l = [| (l.compute :> [ `Pm4 | `Aql | `Sdma ]); `Sdma |]
+
+(* Destroys the queues and gives back the memory growths made, or the device
+   opened with, that is neither installed nor handed: a replaced segment or
+   queue, which no work reads as the device was idle when it was replaced and
+   a queue read every packet up to its write position then, and what a growth
+   handed that a later one replaced. Each leaves [l.parts] before it goes, so
+   an exception leaves the rest for the next call. *)
+let rec retire ?(keep = []) g l =
+  let s, c, k, s', c', k' = growth_state g.self in
+  let held = keep @ [ s; c; k; s'; c'; k' ] in
+  match List.find_opt (fun p -> not (List.mem p.id held)) l.parts with
   | None -> ()
   | Some p ->
       l.parts <- List.filter (fun p' -> p' != p) l.parts;
+      Option.iter l.ops.retire p.doorbell;
       List.iter give_back p.mems;
-      retire g l
+      retire ~keep g l
 
-(* The segment the submission whose room answered RIG_GROW on this thread
-   needs, listed in [l.parts] before it is handed. *)
+(* New [Pinned] memory for a growth, of each of [sizes] bytes, listed in
+   [l.parts] as one part named by the first before anything else may raise,
+   with its host addresses, or [Error n] for [n] bytes the path lacked, having
+   given back what it took. *)
+let spare l sizes =
+  let rec take acc = function
+    | [] -> Ok (List.rev acc)
+    | n :: rest -> (
+        match l.ops.alloc Pinned n with
+        | Some m -> take (m :: acc) rest
+        | None ->
+            List.iter give_back acc;
+            Error n)
+  in
+  let* ms = take [] sizes in
+  let p = { id = mem_address (List.hd ms); mems = ms; doorbell = None } in
+  l.parts <- p :: l.parts;
+  let host m =
+    match mem_host m with
+    | Some h -> h
+    | None -> raise (Fault "the host does not address the memory a growth made")
+  in
+  Ok (p, List.map host ms)
+
+(* What a growth makes for queue [q] of kind [kind]: a ring of [bytes] bytes
+   and positions of its own, at their host addresses, the positions' GPU
+   address, and once [queue] made it, the queue's doorbell. *)
+type made = {
+  q : int;
+  kind : [ `Pm4 | `Aql | `Sdma ];
+  part : part;
+  bytes : int;
+  words : int;
+  host : int;
+  gpu : int;
+}
+
+(* The memory of a queue of kind [kind] on a ring of [bytes] bytes, its
+   positions zeroed, or [Error bytes] for the bytes the path lacked. *)
+let queue_memory (g : t) l q kind bytes =
+  let* part, hosts = spare l [ bytes; pointers_bytes ] in
+  let words = List.nth hosts 0 and host = List.nth hosts 1 in
+  let gpu = mem_address (List.nth part.mems 1) in
+  init_pointers g.gpu ~aql:(kind = `Aql) ~waves:g.waves host;
+  Ok { q; kind; part; bytes; words; host; gpu }
+
+(* Makes the path's queue on [m], or is the path's refusal [Lacking] or
+   [Full]. Raises [Fault] for another refusal. *)
+let make_queue l m =
+  let aql = m.kind = `Aql and at = if m.kind = `Sdma then 1 else 0 in
+  match
+    l.ops.queue m.kind ~ring:m.part.id ~bytes:m.bytes
+      ~read:(m.gpu + read_at ~aql at)
+      ~write:(m.gpu + write_at ~aql at)
+  with
+  | Ok bell ->
+      m.part.doorbell <- Some bell;
+      Ok ()
+  | Error (Lacking _ | Full _) as e -> e
+  | Error (Refused why) -> raise (Fault why)
+
+(* A growth replaces what one handed and no room installed rather than add to
+   it. Everything that can run short comes before the take-back, so that a
+   growth short of anything leaves what one handed alone:
+   1. its memory;
+   2. its queues, but those the path answers [Full] for, as when the
+      installed queue and a handed one hold the kind's slots;
+   3. the take-back of the queues it replaces, which ran no work, and their
+      destruction, as of a queue an install replaced;
+   4. the queues answered [Full], in the slots step 3 freed, for which the
+      path needs no memory ([queue] of [path]), so any refusal is a [Fault].
+   A path that answers [Full] then holds at most two queues of a kind: the
+   installed one and one other. *)
 let grow g =
   Lock.protect g.growth @@ fun () ->
   let l = live g in
   retire g l;
-  match needed g.self with
-  | 0 -> Rig_edge.Grown
-  | want -> (
-      let n = grown_bytes want in
-      match l.ops.alloc Pinned n with
-      | None -> Short n
-      | Some m -> (
-          let id = mem_address m in
-          l.parts <- { id; mems = [ m ] } :: l.parts;
-          match mem_host m with
-          | None -> raise (Fault "the host does not address the segment")
-          | Some host ->
-              if not (hand g.self host id n) then
-                raise (Fault "no host memory for a growth's record");
-              Grown))
+  let segment, compute, copy = needed g.self in
+  if segment = 0 && compute = 0 && copy = 0 then Rig_edge.Grown
+  else
+    let memory =
+      let* s =
+        if segment = 0 then Ok None
+        else
+          let n = grown_bytes segment in
+          Result.map
+            (fun (p, hosts) -> Some (p, List.hd hosts, n))
+            (spare l [ n ])
+      in
+      let ring q want =
+        if want = 0 then Ok None
+        else
+          let kind = (kinds l).(q) in
+          let n = grown_bytes ~most:(l.ops.most_ring kind) want in
+          Result.map Option.some (queue_memory g l q kind n)
+      in
+      let* c = ring 0 compute in
+      let* k = ring 1 copy in
+      Ok (s, List.filter_map Fun.id [ c; k ])
+    in
+    match memory with
+    | Error n ->
+        retire g l;
+        Short n
+    | Ok (s, queues) -> (
+        let rec make full = function
+          | [] -> Ok full
+          | m :: rest -> (
+              match make_queue l m with
+              | Ok () -> make full rest
+              | Error (Full _) -> make (m :: full) rest
+              | Error _ -> Error m.bytes)
+        in
+        match make [] queues with
+        | Error n ->
+            retire g l;
+            Short n
+        | Ok full ->
+            List.iter (fun m -> unhand g.self m.q) queues;
+            let keep =
+              List.map (fun m -> m.part.id) queues
+              @ Option.to_list (Option.map (fun (p, _, _) -> p.id) s)
+            in
+            retire ~keep g l;
+            let again m =
+              match make_queue l m with
+              | Ok () -> ()
+              | Error r -> raise (Fault (why r))
+            in
+            List.iter again full;
+            let segment =
+              match s with
+              | Some (p, host, n) -> [| host; p.id; n |]
+              | None -> [| 0; 0; 0 |]
+            in
+            let ring q =
+              match List.find_opt (fun m -> m.q = q) queues with
+              | Some m ->
+                  let at = if m.kind = `Sdma then 1 else 0 in
+                  [|
+                    m.words;
+                    m.bytes;
+                    m.host + write_at ~aql:(m.kind = `Aql) at;
+                    Option.get m.part.doorbell;
+                    m.part.id;
+                  |]
+              | None -> [| 0; 0; 0; 0; 0 |]
+            in
+            let desc =
+              match List.find_opt (fun m -> m.kind = `Aql) queues with
+              | Some m -> [| m.host; m.gpu |]
+              | None -> [| 0; 0 |]
+            in
+            if not (hand g.self segment (Array.append (ring 0) (ring 1)) desc)
+            then raise (Fault "no host memory for a growth's record");
+            Grown)
 
 (* Loss *)
 

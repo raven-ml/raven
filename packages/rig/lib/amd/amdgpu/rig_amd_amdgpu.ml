@@ -611,7 +611,8 @@ type device = {
   gpu : gpu;
   events : int array;
   mutable events_held : bool; (* until destroyed, once *)
-  mutable queues : (int * mem Amd.memory list) list; (* id, its memory *)
+  mutable queues : (int * int * mem Amd.memory list) list;
+      (* id, doorbell, its memory *)
 }
 
 (* Event ids are the process's: one destroyed twice may already name another
@@ -668,7 +669,7 @@ let queue d kind ~ring ~bytes ~read ~write =
     else
       match alloc d.fd d.gpu Device n with
       | Some m -> Ok (Some m)
-      | None -> Error (strf "no GPU memory for a queue's %s" what)
+      | None -> Error (Amd.Lacking (strf "no GPU memory for a queue's %s" what))
   in
   let address = function Some (m : _ Amd.memory) -> m.address | None -> 0 in
   let node = d.gpu.node in
@@ -698,10 +699,33 @@ let queue d kind ~ring ~bytes ~read ~write =
   with
   | exception Unix.Unix_error (e, _, _) ->
       List.iter (free d.fd d.gpu) taken;
-      Error (strf "making a KFD queue: %s" (message e))
+      let why = strf "making a KFD queue: %s" (message e) in
+      Error (if e = ENOMEM then Amd.Lacking why else Amd.Refused why)
   | id, doorbell_offset ->
-      d.queues <- (id, taken) :: d.queues;
-      Ok (Amd.Lock.protect opening (fun () -> doorbell d doorbell_offset))
+      (* Listed before its doorbell is mapped, so that stop destroys it. *)
+      d.queues <- (id, 0, taken) :: d.queues;
+      let bell =
+        Amd.Lock.protect opening (fun () -> doorbell d doorbell_offset)
+      in
+      d.queues <-
+        List.map
+          (fun ((i, _, t) as q) -> if i = id then (i, bell, t) else q)
+          d.queues;
+      Ok bell
+
+(* Destroys the queue whose doorbell is at [bell] and gives back its memory. *)
+let retire d bell =
+  match List.find_opt (fun (_, b, _) -> b = bell) d.queues with
+  | None -> invalid_arg "Rig_amd_amdgpu: no queue has that doorbell"
+  | Some ((id, _, mems) as q) ->
+      (try kfd_destroy_queue d.fd id
+       with Unix.Unix_error (e, _, _) -> fault "destroying a KFD queue" e);
+      d.queues <- List.filter (fun q' -> q' != q) d.queues;
+      List.iter (free d.fd d.gpu) mems
+
+(* KFD takes a ring's size, a power of two, as 32 bits (kfd_ioctl.h, ring_size
+   of kfd_ioctl_create_queue_args). *)
+let most_ring _ = 1 lsl 31
 
 (* Records the fault [why]. rig refuses the GPU for the rest of the process
    once its work faulted, since by default (amdgpu's
@@ -767,14 +791,14 @@ let stable_power g () =
 let stop d ~fault:_ =
   let gone, kept =
     List.partition
-      (fun (id, _) ->
+      (fun (id, _, _) ->
         match kfd_destroy_queue d.fd id with
         | () -> true
         | exception Unix.Unix_error _ -> false)
       d.queues
   in
   let give_back m = try free d.fd d.gpu m with Amd.Fault _ -> () in
-  List.iter (fun (_, mems) -> List.iter give_back mems) gone;
+  List.iter (fun (_, _, mems) -> List.iter give_back mems) gone;
   d.queues <- kept;
   if kept <> [] then `Unknown
   else begin
@@ -839,6 +863,8 @@ let path d ~gpus ~index : mem Amd.path =
     map_peer = map_peer fd g;
     free = free fd g;
     queue = queue d;
+    retire = retire d;
+    most_ring;
     hdp = g.hdp;
     interrupt = d.events.(0);
     hang_ms = Some hang_ms;

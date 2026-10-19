@@ -31,6 +31,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - NV: each open and close of a device on fudge grows glibc's C heap by
   about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
   leaks it (mallinfo2, heaptrack)
+- rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
+  doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
+  second slot once an AMD host runs it, and drop its 16 MiB ring
 - rig.amd to its spec (_plans/gemini-review-2/REPORT.md,
   _plans/rig-size-audit/): firmware parsing total over the pinned set
 - one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
@@ -49,8 +52,8 @@ raven / llama.cpp (Vulkan; ROCm):
   once (32-64 MiB each). `copy.mli`'s "copies the other way round never hold
   the slot it waits for" is wrong: a waiting copy holds no slot
 - limits no hardware or spec imposes, one commit each
-  (_plans/rig-device-reuse/70-, 71-): AMD's compute and copy rings grow as
-  new queues at idle, then `Rig.most_parts` goes;
+  (_plans/rig-device-reuse/70-, 71-): `Rig.most_parts`, now `max_int` on
+  every driver;
   NV's 256 waits per submission (`MAX_WAITS`, `facts.waits.most`): room
   keeps a fixed reserve because it cannot see the waits, so it goes once
   `room` takes the waits' count;

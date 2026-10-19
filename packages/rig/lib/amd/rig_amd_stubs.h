@@ -42,6 +42,12 @@ enum { RING_PM4, RING_AQL, RING_SDMA };
    the one launches name. */
 #define RIG_AMD_SCRATCH_WRITES 8
 
+/* The bytes of an AQL queue's descriptor that hold its scratch, from
+   compute_tmpring_size to scratch_wave64_lane_byte_size (amd_hsa_queue.h's
+   amd_queue_t), which Rig_amd's scratch writes also name. */
+#define RIG_AMD_DESC_SCRATCH 140
+#define RIG_AMD_DESC_SCRATCH_BYTES 40
+
 /* The packets the writer places, which Rig_amd encodes once per device.
    Their arguments: 0 an address, 1 a value, and for a copy 0 its
    destination, 1 its source, 2 its bytes. */
@@ -212,6 +218,7 @@ struct rig_amd_marks {
 struct rig_amd_ring {
   volatile uint32_t *words;
   uint64_t size;                /* words, a power of two */
+  uint64_t most;                /* words of the largest ring the path makes */
   volatile uint64_t *write;     /* the write position the queue reads */
   volatile uint64_t *doorbell;
   int kind;                     /* RING_PM4, RING_AQL or RING_SDMA */
@@ -229,10 +236,24 @@ struct rig_amd_segment {
 
 /* What a growth made (rig_amd_ring.c's Growth): an argument segment of
    [size] bytes at the host address [host] and the GPU's [gpu], which also
-   names it. */
+   names it, of 0 bytes for none; for each queue, a new queue of the path's
+   on a ring of [size] words at [words], with its write-position word and
+   doorbell, named by [id], the ring's GPU address, of 0 words for none;
+   and for a new compute queue that reads AQL packets, its descriptor, at
+   the host address [desc] and the GPU's [desc_gpu]. A new queue's read and
+   write positions are 0. */
 struct rig_amd_grown {
   uint8_t *host;
   uint64_t gpu, size;
+  struct {
+    volatile uint32_t *words;
+    uint64_t size;
+    volatile uint64_t *write;
+    volatile uint64_t *doorbell;
+    uint64_t id;
+  } ring[RIG_AMD_QUEUES];
+  uint8_t *desc;
+  uint64_t desc_gpu;
 };
 
 struct rig_amd_edge;
@@ -328,21 +349,25 @@ struct rig_amd {
   uint64_t scratch_gpu;         /* the scratch the launches name */
   uint64_t scratch_next;        /* the pending scratch */
   int scratch_n;                /* the descriptor's pending writes */
-  uint64_t scratch_at[RIG_AMD_SCRATCH_WRITES];
+  uint64_t scratch_at[RIG_AMD_SCRATCH_WRITES]; /* offsets in the descriptor */
   uint32_t scratch_value[RIG_AMD_SCRATCH_WRITES];
   _Atomic int scratch_ready;
   _Atomic int scratch_lock;     /* held while the writes change or are read */
   _Atomic uint64_t scratch_taken;   /* the value that placed them */
   _Atomic uint64_t last;
+  /* an AQL compute queue's descriptor, at its host and GPU addresses */
+  uint8_t *desc;
+  uint64_t desc_gpu;
   /* What a growth made, which the next room that needs it installs once
-     the device reached every value submitted, NULL for none, and the GPU
-     address of the segment installed, under [grown_mu], which rooms take
-     only to install and a growth to hand; and whether every room waits for
-     the device to reach every value submitted, to install it: rooms, which
-     run under rig's turn, alone read and write [draining]. */
+     the device reached every value submitted, NULL for none, and the names
+     of the segment and of each queue's ring installed, under [grown_mu],
+     which rooms take only to install and a growth to hand; and whether
+     every room waits for the device to reach every value submitted, to
+     install it: rooms, which run under rig's turn, alone read and write
+     [draining]. */
   pthread_mutex_t grown_mu;
   struct rig_amd_grown *grown;
-  uint64_t installed;
+  uint64_t installed[1 + RIG_AMD_QUEUES];
   int draining;
   /* the stamp ring, as the host reads it and at the GPU's address, and its
      host side; the clock: the path's source, or NULL, the record a stamp
@@ -403,12 +428,12 @@ static inline void rig_amd_barrier(void) {
    submission (rig_amd_ring.c). */
 int rig_amd_most_parts(const struct rig_amd *d);
 
-/* What a growth on a thread makes: the bytes the argument segment of [d]
-   must have for the submission whose rig_amd_room last answered RIG_GROW
-   on the thread. */
+/* What a growth on a thread makes: the bytes the argument segment and
+   each ring of [d] must have for the submission whose rig_amd_room last
+   answered RIG_GROW on the thread, 0 for those that hold it. */
 struct rig_amd_asked {
   const struct rig_amd *d;
-  uint64_t bytes;
+  uint64_t bytes, rings[RIG_AMD_QUEUES];
 };
 
 extern _Thread_local struct rig_amd_asked rig_amd_asked;

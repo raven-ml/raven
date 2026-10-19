@@ -57,6 +57,10 @@ let all_units = 0xffff_ffff
 (* The stride between the descriptors of a queue's dies. *)
 let die_stride = 0x1000
 
+(* The compute queues this library programs at once: a device's, and the one
+   a growth of its ring makes beside it. *)
+let compute_slots = 2
+
 let mqd (g : Gpu.t) q ~base kind ~xcc =
   let { Gpu.gc; xccs; _ } = g in
   let kiq = kind = `Kiq and aql = kind = `Aql in
@@ -146,7 +150,10 @@ type t = {
   vram : Window.t;
   doorbells : Window.t;
   mutable starts : (string * int) list; (* the RS64 engines' start addresses *)
-  mqds : int array; (* the compute queue's descriptors, the KIQ's *)
+  mqds : int array;
+      (* the descriptors of compute queues 0 and 1, then a VF's KIQ's *)
+  slots : [ `Pm4 | `Aql ] option array;
+      (* what compute queues 0 and 1 of MEC 1's pipe 0 run, [None] if free *)
   gc : Discovery.version;
   xccs : int list;
   mutable kiq : (Window.t * int) option; (* a VF's KIQ memory and its address *)
@@ -161,6 +168,7 @@ let make r gmc vram doorbells ~mqds =
     doorbells;
     starts = [];
     mqds;
+    slots = Array.make compute_slots None;
     gc = Regs.version l D.gc_hwid;
     xccs = List.init (Regs.gpu l).xccs Fun.id;
     kiq = None;
@@ -345,21 +353,52 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at kind q =
       grbm_select g ~inst:xcc)
     insts
 
+let insts g kind = if kind = `Aql then g.xccs else [ 0 ]
+
+let free_slot g = List.find_opt (fun s -> g.slots.(s) = None) [ 0; 1 ]
+
+let free g =
+  Option.map (fun s -> D.amdgpu_navi10_doorbell_mec_ring0 + s) (free_slot g)
+
 let queue g kind ~ring ~bytes ~read ~write ~eop =
-  let doorbell = D.amdgpu_navi10_doorbell_mec_ring0 in
-  let insts = if kind = `Aql then g.xccs else [ 0 ] in
-  program g ~me:1 ~pipe:0 ~queue:0 ~insts ~mqd:g.mqds.(0)
-    (kind :> [ `Kiq | `Pm4 | `Aql ])
-    {
-      ring;
-      ring_bytes = bytes;
-      read;
-      write;
-      eop;
-      eop_bytes;
-      doorbell;
-    };
-  doorbell
+  match free_slot g with
+  | None -> None
+  | Some s ->
+      let doorbell = D.amdgpu_navi10_doorbell_mec_ring0 + s in
+      program g ~me:1 ~pipe:0 ~queue:s ~insts:(insts g kind) ~mqd:g.mqds.(s)
+        (kind :> [ `Kiq | `Pm4 | `Aql ])
+        {
+          ring;
+          ring_bytes = bytes;
+          read;
+          write;
+          eop;
+          eop_bytes;
+          doorbell;
+        };
+      g.slots.(s) <- Some kind;
+      Some doorbell
+
+let retire g doorbell =
+  let s = doorbell - D.amdgpu_navi10_doorbell_mec_ring0 in
+  match if s = 0 || s = 1 then g.slots.(s) else None with
+  | None -> invalid_arg "Gfx.retire: no compute queue has that doorbell"
+  | Some kind ->
+      List.iter
+        (fun xcc ->
+          grbm_select g ~me:1 ~pipe:0 ~queue:s ~inst:xcc;
+          let active () =
+            Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1
+          in
+          if active () then begin
+            Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
+            Regs.wait g.r "a retired queue's dequeue" (fun () ->
+                not (active ()));
+            Regs.write ~inst:xcc ~value:0 g.r "regCP_HQD_DEQUEUE_REQUEST" []
+          end;
+          grbm_select g ~inst:xcc)
+        (insts g kind);
+      g.slots.(s) <- None
 
 (* A virtual function's KIQ, per die: a ring of 4 KiB, its pointers, its fence,
    and an end-of-pipe buffer. *)
@@ -378,7 +417,7 @@ let start_kiq g m =
       let w = Option.get (Rig_pci.Memory.host region) in
       each_xcc g (fun xcc ->
           let b = va + (kiq_bytes * xcc) in
-          program g ~me:2 ~pipe:1 ~queue:0 ~insts:[ xcc ] ~mqd:g.mqds.(1) `Kiq
+          program g ~me:2 ~pipe:1 ~queue:0 ~insts:[ xcc ] ~mqd:g.mqds.(2) `Kiq
             {
               ring = b;
               ring_bytes = kiq_ring;

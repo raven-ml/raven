@@ -856,6 +856,22 @@ let gc_11_0_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offs
 let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_CNTL = { name = "regSDMA0_QUEUE1_RB_CNTL"; offset = 0xd8; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_BASE = { name = "regSDMA0_QUEUE1_RB_BASE"; offset = 0xd9; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_BASE_HI = { name = "regSDMA0_QUEUE1_RB_BASE_HI"; offset = 0xda; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR = { name = "regSDMA0_QUEUE1_RB_RPTR"; offset = 0xdb; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_HI"; offset = 0xdc; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR = { name = "regSDMA0_QUEUE1_RB_WPTR"; offset = 0xdd; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_HI"; offset = 0xde; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI"; offset = 0xe0; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO"; offset = 0xe1; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_IB_CNTL = { name = "regSDMA0_QUEUE1_IB_CNTL"; offset = 0xe2; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_DOORBELL = { name = "regSDMA0_QUEUE1_DOORBELL"; offset = 0xea; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE1_DOORBELL_OFFSET"; offset = 0x103; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_PREEMPT = { name = "regSDMA0_QUEUE1_PREEMPT"; offset = 0x108; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI"; offset = 0x10a; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO"; offset = 0x10b; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE1_MINOR_PTR_UPDATE"; offset = 0x10d; segment = 0; fields = [ ("enable", (0, 0)) ] }
 let gc_11_0_0_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
 let gc_11_0_0_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
 let gc_11_0_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
@@ -1087,6 +1103,22 @@ let gc_11_0_0_registers = [
   gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_CNTL;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_BASE;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_BASE_HI;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_HI;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_HI;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO;
+  gc_11_0_0_regSDMA0_QUEUE1_IB_CNTL;
+  gc_11_0_0_regSDMA0_QUEUE1_DOORBELL;
+  gc_11_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET;
+  gc_11_0_0_regSDMA0_QUEUE1_PREEMPT;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI;
+  gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO;
+  gc_11_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE;
   gc_11_0_0_regSDMA1_RLC_CGCG_CTRL;
   gc_11_0_0_regSDMA0_F32_CNTL;
   gc_11_0_0_regGRBM_CNTL;
@@ -1319,6 +1351,22 @@ let gc_11_0_0_find = function
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_QUEUE1_RB_CNTL" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_CNTL
+  | "regSDMA0_QUEUE1_RB_BASE" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_BASE
+  | "regSDMA0_QUEUE1_RB_BASE_HI" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_BASE_HI
+  | "regSDMA0_QUEUE1_RB_RPTR" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR
+  | "regSDMA0_QUEUE1_RB_RPTR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR
+  | "regSDMA0_QUEUE1_RB_WPTR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE1_IB_CNTL" -> Some gc_11_0_0_regSDMA0_QUEUE1_IB_CNTL
+  | "regSDMA0_QUEUE1_DOORBELL" -> Some gc_11_0_0_regSDMA0_QUEUE1_DOORBELL
+  | "regSDMA0_QUEUE1_DOORBELL_OFFSET" -> Some gc_11_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE1_PREEMPT" -> Some gc_11_0_0_regSDMA0_QUEUE1_PREEMPT
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE1_MINOR_PTR_UPDATE" -> Some gc_11_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE
   | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_11_0_0_regSDMA1_RLC_CGCG_CTRL
   | "regSDMA0_F32_CNTL" -> Some gc_11_0_0_regSDMA0_F32_CNTL
   | "regGRBM_CNTL" -> Some gc_11_0_0_regGRBM_CNTL
@@ -1552,6 +1600,22 @@ let gc_11_0_3_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offs
 let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_CNTL = { name = "regSDMA0_QUEUE1_RB_CNTL"; offset = 0xd8; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_BASE = { name = "regSDMA0_QUEUE1_RB_BASE"; offset = 0xd9; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_BASE_HI = { name = "regSDMA0_QUEUE1_RB_BASE_HI"; offset = 0xda; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR = { name = "regSDMA0_QUEUE1_RB_RPTR"; offset = 0xdb; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_HI"; offset = 0xdc; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR = { name = "regSDMA0_QUEUE1_RB_WPTR"; offset = 0xdd; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_HI"; offset = 0xde; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI"; offset = 0xe0; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO"; offset = 0xe1; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_IB_CNTL = { name = "regSDMA0_QUEUE1_IB_CNTL"; offset = 0xe2; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)); ("ib_priv", (31, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_DOORBELL = { name = "regSDMA0_QUEUE1_DOORBELL"; offset = 0xea; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE1_DOORBELL_OFFSET"; offset = 0x103; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_PREEMPT = { name = "regSDMA0_QUEUE1_PREEMPT"; offset = 0x108; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI"; offset = 0x10a; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO"; offset = 0x10b; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE1_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE1_MINOR_PTR_UPDATE"; offset = 0x10d; segment = 0; fields = [ ("enable", (0, 0)) ] }
 let gc_11_0_3_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
 let gc_11_0_3_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("dbg_select_bits", (2, 7)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
 let gc_11_0_3_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
@@ -1783,6 +1847,22 @@ let gc_11_0_3_registers = [
   gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_CNTL;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_BASE;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_BASE_HI;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_HI;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_HI;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO;
+  gc_11_0_3_regSDMA0_QUEUE1_IB_CNTL;
+  gc_11_0_3_regSDMA0_QUEUE1_DOORBELL;
+  gc_11_0_3_regSDMA0_QUEUE1_DOORBELL_OFFSET;
+  gc_11_0_3_regSDMA0_QUEUE1_PREEMPT;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI;
+  gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO;
+  gc_11_0_3_regSDMA0_QUEUE1_MINOR_PTR_UPDATE;
   gc_11_0_3_regSDMA1_RLC_CGCG_CTRL;
   gc_11_0_3_regSDMA0_F32_CNTL;
   gc_11_0_3_regGRBM_CNTL;
@@ -2015,6 +2095,22 @@ let gc_11_0_3_find = function
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_QUEUE1_RB_CNTL" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_CNTL
+  | "regSDMA0_QUEUE1_RB_BASE" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_BASE
+  | "regSDMA0_QUEUE1_RB_BASE_HI" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_BASE_HI
+  | "regSDMA0_QUEUE1_RB_RPTR" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR
+  | "regSDMA0_QUEUE1_RB_RPTR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR
+  | "regSDMA0_QUEUE1_RB_WPTR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE1_IB_CNTL" -> Some gc_11_0_3_regSDMA0_QUEUE1_IB_CNTL
+  | "regSDMA0_QUEUE1_DOORBELL" -> Some gc_11_0_3_regSDMA0_QUEUE1_DOORBELL
+  | "regSDMA0_QUEUE1_DOORBELL_OFFSET" -> Some gc_11_0_3_regSDMA0_QUEUE1_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE1_PREEMPT" -> Some gc_11_0_3_regSDMA0_QUEUE1_PREEMPT
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE1_MINOR_PTR_UPDATE" -> Some gc_11_0_3_regSDMA0_QUEUE1_MINOR_PTR_UPDATE
   | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_11_0_3_regSDMA1_RLC_CGCG_CTRL
   | "regSDMA0_F32_CNTL" -> Some gc_11_0_3_regSDMA0_F32_CNTL
   | "regGRBM_CNTL" -> Some gc_11_0_3_regGRBM_CNTL
@@ -2248,6 +2344,22 @@ let gc_11_5_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offs
 let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_CNTL = { name = "regSDMA0_QUEUE1_RB_CNTL"; offset = 0xd8; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_BASE = { name = "regSDMA0_QUEUE1_RB_BASE"; offset = 0xd9; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_BASE_HI = { name = "regSDMA0_QUEUE1_RB_BASE_HI"; offset = 0xda; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR = { name = "regSDMA0_QUEUE1_RB_RPTR"; offset = 0xdb; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_HI"; offset = 0xdc; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR = { name = "regSDMA0_QUEUE1_RB_WPTR"; offset = 0xdd; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_HI"; offset = 0xde; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI"; offset = 0xe0; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO"; offset = 0xe1; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_IB_CNTL = { name = "regSDMA0_QUEUE1_IB_CNTL"; offset = 0xe2; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_DOORBELL = { name = "regSDMA0_QUEUE1_DOORBELL"; offset = 0xea; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE1_DOORBELL_OFFSET"; offset = 0x103; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_PREEMPT = { name = "regSDMA0_QUEUE1_PREEMPT"; offset = 0x108; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI"; offset = 0x10a; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO"; offset = 0x10b; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE1_MINOR_PTR_UPDATE"; offset = 0x10d; segment = 0; fields = [ ("enable", (0, 0)) ] }
 let gc_11_5_0_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
 let gc_11_5_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
 let gc_11_5_0_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cpaxi", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)) ] }
@@ -2477,6 +2589,22 @@ let gc_11_5_0_registers = [
   gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_CNTL;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_BASE;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_BASE_HI;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_HI;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_HI;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO;
+  gc_11_5_0_regSDMA0_QUEUE1_IB_CNTL;
+  gc_11_5_0_regSDMA0_QUEUE1_DOORBELL;
+  gc_11_5_0_regSDMA0_QUEUE1_DOORBELL_OFFSET;
+  gc_11_5_0_regSDMA0_QUEUE1_PREEMPT;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI;
+  gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO;
+  gc_11_5_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE;
   gc_11_5_0_regSDMA0_F32_CNTL;
   gc_11_5_0_regGRBM_CNTL;
   gc_11_5_0_regGRBM_SOFT_RESET;
@@ -2707,6 +2835,22 @@ let gc_11_5_0_find = function
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_QUEUE1_RB_CNTL" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_CNTL
+  | "regSDMA0_QUEUE1_RB_BASE" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_BASE
+  | "regSDMA0_QUEUE1_RB_BASE_HI" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_BASE_HI
+  | "regSDMA0_QUEUE1_RB_RPTR" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR
+  | "regSDMA0_QUEUE1_RB_RPTR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR
+  | "regSDMA0_QUEUE1_RB_WPTR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE1_IB_CNTL" -> Some gc_11_5_0_regSDMA0_QUEUE1_IB_CNTL
+  | "regSDMA0_QUEUE1_DOORBELL" -> Some gc_11_5_0_regSDMA0_QUEUE1_DOORBELL
+  | "regSDMA0_QUEUE1_DOORBELL_OFFSET" -> Some gc_11_5_0_regSDMA0_QUEUE1_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE1_PREEMPT" -> Some gc_11_5_0_regSDMA0_QUEUE1_PREEMPT
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE1_MINOR_PTR_UPDATE" -> Some gc_11_5_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE
   | "regSDMA0_F32_CNTL" -> Some gc_11_5_0_regSDMA0_F32_CNTL
   | "regGRBM_CNTL" -> Some gc_11_5_0_regGRBM_CNTL
   | "regGRBM_SOFT_RESET" -> Some gc_11_5_0_regGRBM_SOFT_RESET
@@ -2938,6 +3082,22 @@ let gc_12_0_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offs
 let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0x98; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0x99; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0x9b; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_CNTL = { name = "regSDMA0_QUEUE1_RB_CNTL"; offset = 0xd8; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("mcu_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_BASE = { name = "regSDMA0_QUEUE1_RB_BASE"; offset = 0xd9; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_BASE_HI = { name = "regSDMA0_QUEUE1_RB_BASE_HI"; offset = 0xda; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR = { name = "regSDMA0_QUEUE1_RB_RPTR"; offset = 0xdb; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_HI"; offset = 0xdc; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR = { name = "regSDMA0_QUEUE1_RB_WPTR"; offset = 0xdd; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_HI"; offset = 0xde; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO"; offset = 0xdf; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI"; offset = 0xe0; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_IB_CNTL = { name = "regSDMA0_QUEUE1_IB_CNTL"; offset = 0xe1; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_DOORBELL = { name = "regSDMA0_QUEUE1_DOORBELL"; offset = 0xe7; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE1_DOORBELL_OFFSET"; offset = 0xe9; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_PREEMPT = { name = "regSDMA0_QUEUE1_PREEMPT"; offset = 0xee; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO"; offset = 0xf0; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI"; offset = 0xf1; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE1_MINOR_PTR_UPDATE"; offset = 0xf3; segment = 0; fields = [ ("enable", (0, 0)) ] }
 let gc_12_0_0_regSDMA0_MCU_CNTL = { name = "regSDMA0_MCU_CNTL"; offset = 0x588e; segment = 1; fields = [ ("halt", (0, 0)); ("reset", (1, 1)); ("dbg_select_bits", (2, 7)) ] }
 let gc_12_0_0_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x655; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("mcu_cgcg_allow", (4, 4)); ("cgcg_idle_hysteresis", (16, 31)) ] }
 let gc_12_0_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 11)); ("sed_read_timeout", (16, 27)); ("report_last_rderr", (31, 31)) ] }
@@ -3175,6 +3335,22 @@ let gc_12_0_0_registers = [
   gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_CNTL;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_BASE;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_BASE_HI;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_HI;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_HI;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI;
+  gc_12_0_0_regSDMA0_QUEUE1_IB_CNTL;
+  gc_12_0_0_regSDMA0_QUEUE1_DOORBELL;
+  gc_12_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET;
+  gc_12_0_0_regSDMA0_QUEUE1_PREEMPT;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO;
+  gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI;
+  gc_12_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE;
   gc_12_0_0_regSDMA0_MCU_CNTL;
   gc_12_0_0_regSDMA1_RLC_CGCG_CTRL;
   gc_12_0_0_regGRBM_CNTL;
@@ -3413,6 +3589,22 @@ let gc_12_0_0_find = function
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_QUEUE1_RB_CNTL" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_CNTL
+  | "regSDMA0_QUEUE1_RB_BASE" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_BASE
+  | "regSDMA0_QUEUE1_RB_BASE_HI" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_BASE_HI
+  | "regSDMA0_QUEUE1_RB_RPTR" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR
+  | "regSDMA0_QUEUE1_RB_RPTR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_HI
+  | "regSDMA0_QUEUE1_RB_WPTR" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR
+  | "regSDMA0_QUEUE1_RB_WPTR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_HI
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE1_RB_RPTR_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE1_IB_CNTL" -> Some gc_12_0_0_regSDMA0_QUEUE1_IB_CNTL
+  | "regSDMA0_QUEUE1_DOORBELL" -> Some gc_12_0_0_regSDMA0_QUEUE1_DOORBELL
+  | "regSDMA0_QUEUE1_DOORBELL_OFFSET" -> Some gc_12_0_0_regSDMA0_QUEUE1_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE1_PREEMPT" -> Some gc_12_0_0_regSDMA0_QUEUE1_PREEMPT
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE1_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE1_MINOR_PTR_UPDATE" -> Some gc_12_0_0_regSDMA0_QUEUE1_MINOR_PTR_UPDATE
   | "regSDMA0_MCU_CNTL" -> Some gc_12_0_0_regSDMA0_MCU_CNTL
   | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_12_0_0_regSDMA1_RLC_CGCG_CTRL
   | "regGRBM_CNTL" -> Some gc_12_0_0_regGRBM_CNTL

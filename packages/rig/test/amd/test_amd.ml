@@ -81,6 +81,8 @@ let path_of gpu : unit A.path =
     map_peer = (fun _ -> unused ());
     free = (fun _ -> unused ());
     queue = (fun _ ~ring:_ ~bytes:_ ~read:_ ~write:_ -> unused ());
+    retire = (fun _ -> unused ());
+    most_ring = (fun _ -> unused ());
     hdp = None;
     interrupt = 1;
     hang_ms = None;
@@ -803,9 +805,9 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
   set run b;
   Rig.Point.wait (Rig.submit run ~buffers)
 
-let scratch_launch () =
-  S.with_ @@ fun t ->
-  let p = image ~of_:launch_code t in
+(* What [p]'s [scratch] kernel stores, over a group of 64 work-items each
+   storing 5 times its index through its scratch. *)
+let scratch_stores t p =
   let out = buffer ~memory:Pinned t (4 * 64) in
   launch t p "scratch" ~params:12
     ~refs:[ (0, 0) ]
@@ -815,7 +817,59 @@ let scratch_launch () =
       Sub.Run.int32 run b 8 5)
     ~uses:[ (out, Rig.Read_write) ]
     ();
-  equal string ~msg:"out" (multiples 5 64) (get out)
+  get out
+
+let scratch_launch () =
+  S.with_ @@ fun t ->
+  let p = image ~of_:launch_code t in
+  equal string ~msg:"out" (multiples 5 64) (scratch_stores t p)
+
+(* [n] words of [t]'s compute queue that do nothing, [n] a multiple of 16:
+   PM4 NOPs, or AQL packets of the vendor's format that each run an indirect
+   buffer of one PM4 NOP, in a word of [t]'s memory the work holds. *)
+let nop_words (t : S.t) n =
+  let b = Rig.Buffer.create Rig.host (4 * n) in
+  let fill words =
+    Rig.Buffer.write b Bigarray.int32 (fun data ->
+        for i = 0 to n - 1 do
+          data.{i} <- Int32.of_int words.(i mod Array.length words)
+        done)
+  in
+  let work = Rig_gpu_support.work (Sub.words b) in
+  match (A.capability t.g).compute with
+  | Pm4 ->
+      fill [| pm4_nop |];
+      work
+  | Aql _ ->
+      let nop = buffer ~memory:Pinned t 4 in
+      put nop (le32s [ pm4_nop ]);
+      {
+        work with
+        fixed = [ (nop, Rig.Read) ];
+        init =
+          (fun s _ _ ->
+            fill
+              (words
+                 (Abi.Aql.indirect_buffer (Sub.address s nop) ~dwords:1)));
+      }
+
+(* An AQL compute ring grows as a new queue, with a descriptor of its own: a
+   submission of AQL packets that do nothing ([nop_words]) past the ring's
+   room runs whole, and the scratch kernel then runs on the new queue, whose
+   descriptor holds the scratch the old one's last value left. A GPU whose
+   compute queue reads PM4 packets skips. *)
+let aql_growth () =
+  S.with_ @@ fun t ->
+  (match (A.capability t.g).compute with
+  | Pm4 -> skip ~reason:"the compute queue reads PM4 packets" ()
+  | Aql _ -> ());
+  let p = image ~of_:launch_code t in
+  equal string ~msg:"before the growth" (multiples 5 64) (scratch_stores t p);
+  let _, size = A.ring t.g "COMPUTE:0" in
+  Rig.Point.wait (S.submit_work t [ nop_words t (size + 16) ]);
+  let _, grown = A.ring t.g "COMPUTE:0" in
+  at_least int ~msg:"the ring's size" ~than:(2 * size) grown;
+  equal string ~msg:"after the growth" (multiples 5 64) (scratch_stores t p)
 
 (* [lds] over a group of 64 work-items, its tile of [n] words in the dynamic LDS
    after the 256 bytes it takes itself: the tile's last words, which only a
@@ -957,28 +1011,79 @@ let wide_launches n =
   equal string ~msg:"the stored words" (tokens n)
     (stores_wide t (image ~of_:hidden_code t) n)
 
-(* Two domains submit launches of 8 KiB of arguments to one device, from one
-   to past half of what its segment holds after two growths, and each
-   submission stores its words, whatever growth the other's needed. *)
+(* Two domains submit to one device: launches of 8 KiB of arguments, from one
+   to past half of what its segment holds after two growths; words that do
+   nothing, past what its compute ring holds, then past what the ring the first
+   growth makes holds; and copies of 16 bytes, past what its copy ring holds.
+   Each submission runs whole, launches and copies storing their bytes,
+   whatever growth the other's needed. *)
 type grower = { t : S.t; wide : Rig.Image.t }
 
+(* Whether [g]'s copy ring keeps the 16 MiB it opens with, and room answers
+   [`Never] past it: on SDMA 4 over PCI, whose path programs one copy queue
+   (rig_amd.mli). *)
+let copy_ring_fixed g =
+  S.driverless ()
+  &&
+  let major, _, _ = (A.capability g).gpu.sdma in
+  major = 4
+
+let copy_fixed = lazy (S.with_ (fun t -> copy_ring_fixed t.g))
+
+(* A submission of [n] words of [t]'s compute queue that do nothing
+   ([nop_words]). *)
+let nops_on t n = Rig.Point.wait (S.submit_work t [ nop_words t n ])
+
+(* What a submission of [n] copies of 16 bytes on [t] stores, copy [i] taking
+   bytes [16 i] to [16 i + 15] of a pattern. *)
+let copies_on t n =
+  let src = buffer ~memory:Pinned t (16 * n)
+  and dst = buffer ~memory:Pinned t (16 * n) in
+  put src (pattern (16 * n) 7);
+  let part i = copy ~dst:(view dst (16 * i) 16) (view src (16 * i) 16) in
+  Rig.Point.wait (S.submit_work t (List.init n part));
+  get dst
+
+(* The reference side holds whether the copy ring keeps its first size. *)
 let grower = abstract "g" ~release:(fun x -> S.close x.t)
+
+(* What a copy draw answers where the copy ring keeps its first size and the
+   copies exceed it. *)
+let never_fits = "never fits"
 
 let launches =
   Gen.with_pp Format.pp_print_int (Gen.of_list [ 1; 100; 200; 600 ])
+
+let nops =
+  Gen.with_pp Format.pp_print_int
+    (Gen.of_list [ 16; 1 lsl 22; (1 lsl 24) + 16 ])
+
+let copies = Gen.with_pp Format.pp_print_int (Gen.of_list [ 1; 200_000 ])
 
 let growth_commands =
   [
     command "start"
       (Gen.unit @-> makes grower)
-      (fun () -> ())
+      (fun () -> Lazy.force copy_fixed)
       (fun () ->
         let t = S.open_ () in
         { t; wide = image ~of_:hidden_code t });
     command "launches"
       (grower ^-> launches @-> returns string)
-      (fun () n -> tokens n)
+      (fun _ n -> tokens n)
       (fun x n -> stores_wide x.t x.wide n);
+    command "nops"
+      (grower ^-> nops @-> returns unit)
+      (fun _ _ -> ())
+      (fun x n -> nops_on x.t n);
+    command "copies"
+      (grower ^-> copies @-> returns string)
+      (fun fixed n ->
+        if fixed && n > 1 then never_fits else pattern (16 * n) 7)
+      (fun x n ->
+        match copies_on x.t n with
+        | s -> s
+        | exception Invalid_argument _ -> never_fits);
   ]
 
 let launching =
@@ -987,12 +1092,14 @@ let launching =
       test "launch arguments survive segment reuse with work in flight"
         launch_segments_hw;
       test "a launch of a kernel that takes scratch computes" scratch_launch;
+      test "an AQL compute ring grows, its scratch kept" aql_growth;
       test "a launch of a kernel of 8 KiB of arguments runs" wide_launch;
       cases ~name:string_of_int
         "a submission of launches of 8 KiB of arguments each runs whole"
         [ 1; 128; 300; 1000 ] wide_launches;
-      stateful ~count:10 ~steps:8 ~domains:2
-        "submissions from two domains run whole while the segment grows"
+      stateful ~count:6 ~steps:8 ~domains:2
+        "submissions from two domains run whole while the segment and rings \
+         grow"
         growth_commands;
       cases ~name:string_of_int
         "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
@@ -1798,9 +1905,167 @@ let joined (n, carry) =
   A.free g src;
   A.free g out
 
+(* Rings grow
+
+   Words past a ring's room ask for a growth, which makes a new queue on a
+   larger ring, and once the device is idle they run on it, and so does work
+   after them. The compute queue's words are PM4: a GPU whose compute queue
+   reads AQL packets skips. On SDMA 4 over PCI the copy ring keeps its first
+   size, and room answers [`Never] past it ([copy_ring_fixed]). *)
+
+(* [g]'s ring of queue [q], of [size] words, grows for the words [past], which
+   then run on the new queue through [r], as does a write or a copy after them.
+   *)
+let grows_past g q r size past =
+  let compute = q = "COMPUTE:0" in
+  equal room_answer ~msg:"words past the ring" `Grow (E.room g [| past |]);
+  equal grown ~msg:"the growth" Grown (A.grow g);
+  equal room_answer ~msg:"once grown, the device idle" `Fits
+    (E.room g [| past |]);
+  let _, grown_size = A.ring g q in
+  at_least int ~msg:"the ring's size" ~than:(2 * size) grown_size;
+  go r [| past |];
+  let out = Option.get (A.alloc g Pinned 64) in
+  let src = Option.get (A.alloc g Pinned 64) in
+  H.write (host out) (String.make 64 '\000');
+  H.write (host src) (String.make 64 'w');
+  if compute then begin
+    go r
+      [|
+        E.words ~queue:q (words (Pm4.write_data (Memory (address out)) 0x2a));
+      |];
+    equal string ~msg:"the word written after the growth" (le32s [ 0x2a ])
+      (H.read (host out) 4)
+  end
+  else begin
+    go r [| E.copy ~dst:(address out) ~src:(address src) 64 |];
+    equal string ~msg:"the copy after the growth" (String.make 64 'w')
+      (H.read (host out) 64)
+  end;
+  A.free g out;
+  A.free g src
+
+let grown_ring compute () =
+  S.with_ @@ fun { g; _ } ->
+  (match (A.capability g).compute with
+  | Aql _ when compute -> skip ~reason:"the compute queue reads AQL packets" ()
+  | Aql _ | Pm4 -> ());
+  let q = if compute then "COMPUTE:0" else "COPY:0" in
+  let fill n =
+    E.words ~queue:q (Array.make n (if compute then pm4_nop else 0))
+  in
+  let r = device g in
+  let _, size = A.ring g q in
+  let past = fill (if compute then size else size / 2) in
+  if (not compute) && copy_ring_fixed g then
+    equal room_answer ~msg:"words past the ring it keeps" `Never
+      (E.room g [| past |])
+  else grows_past g q r size past
+
+(* A growth that needs more than a queue a growth made and no room installed
+   replaces that queue: while a value is held, words [fill first] past the ring
+   of queue [q] ask for a growth, then words [fill past] past the handed ring
+   ask for another, and once the value is reached the larger queue is
+   installed, runs the words, and [after] then runs on it. A growth's ring
+   holds twice what it was asked for, so [past] is past the ring the first
+   growth handed. Over PCI, which holds two queues of a kind, the second growth
+   takes back the first's queue and makes its own in the slot that frees. *)
+let regrown_past g q fill ~first ~past ~after =
+  waits_on g;
+  let flag = Option.get (A.alloc g Pinned 8) in
+  H.set64 (host flag) 0;
+  let v = A.signaled g + 1 in
+  equal answer ~msg:"the hold" `Ok
+    (E.submit g ~v ~waits:[| (address flag, 1) |] [||]);
+  equal room_answer ~msg:"words past the ring" `Grow
+    (E.room g [| fill first |]);
+  equal grown ~msg:"the first growth" Grown (A.grow g);
+  let n = past in
+  let past = fill n in
+  equal room_answer ~msg:"words past the handed ring" `Grow
+    (E.room g [| past |]);
+  equal grown ~msg:"the second growth" Grown (A.grow g);
+  equal room_answer ~msg:"the value held" `Later (E.room g [| past |]);
+  H.set64 (host flag) 1;
+  S.reached g v;
+  equal room_answer ~msg:"the value reached" `Fits (E.room g [| past |]);
+  let _, size = A.ring g q in
+  at_least int ~msg:"the installed ring's size" ~than:(2 * n) size;
+  let r = device g in
+  go r [| past |];
+  after r;
+  A.free g flag
+
+let regrown () =
+  S.with_ @@ fun { g; _ } ->
+  let fill n = E.words ~queue:"COPY:0" (Array.make n 0) in
+  let _, size = A.ring g "COPY:0" in
+  if copy_ring_fixed g then
+    equal room_answer ~msg:"words past the ring it keeps" `Never
+      (E.room g [| fill (size / 2) |])
+  else
+    let after r =
+      let out = Option.get (A.alloc g Pinned 64) in
+      let src = Option.get (A.alloc g Pinned 64) in
+      H.write (host out) (String.make 64 '\000');
+      H.write (host src) (String.make 64 'w');
+      go r [| E.copy ~dst:(address out) ~src:(address src) 64 |];
+      equal string ~msg:"the copy after the growths" (String.make 64 'w')
+        (H.read (host out) 64);
+      List.iter (A.free g) [ out; src ]
+    in
+    (* The copy ring's room is half its words. *)
+    regrown_past g "COPY:0" fill ~first:(size / 2) ~past:(2 * size) ~after
+
+(* [g]'s compute queue words of the PM4 packets [pm4]: those, or on an AQL
+   queue the words of a packet that runs them as an indirect buffer from
+   [Pinned] memory, which it returns to be freed. *)
+let compute_words g pm4 =
+  match (A.capability g).compute with
+  | Pm4 -> (pm4, None)
+  | Aql _ ->
+      let ib = Option.get (A.alloc g Pinned (4 * Array.length pm4)) in
+      H.write (host ib) (le32s (Array.to_list pm4));
+      ( words
+          (Abi.Aql.indirect_buffer (address ib) ~dwords:(Array.length pm4)),
+        Some ib )
+
+(* The compute ring's twin of [regrown], with words that do nothing as
+   [nop_words] makes them, and a write on the installed queue after them. *)
+let regrown_compute () =
+  S.with_ @@ fun { g; _ } ->
+  let nop, ib = compute_words g [| pm4_nop |] in
+  let fill n =
+    E.words ~queue:"COMPUTE:0"
+      (Array.init n (fun i -> nop.(i mod Array.length nop)))
+  in
+  let _, size = A.ring g "COMPUTE:0" in
+  let after r =
+    let out = Option.get (A.alloc g Pinned 64) in
+    H.write (host out) (String.make 64 '\000');
+    let write, ib =
+      compute_words g (words (Pm4.write_data (Memory (address out)) 0x2a))
+    in
+    go r [| E.words ~queue:"COMPUTE:0" write |];
+    equal string ~msg:"the word written after the growths" (le32s [ 0x2a ])
+      (H.read (host out) 4);
+    List.iter (A.free g) (out :: Option.to_list ib)
+  in
+  (* The compute ring's room is its words less one, and [size] is a multiple
+     of an AQL packet's 16 words. *)
+  regrown_past g "COMPUTE:0" fill ~first:size ~past:(4 * size) ~after;
+  Option.iter (A.free g) ib
+
 let rings =
   group ~timeout:300. "rings"
     [
+      test "a second growth before an install replaces the first's queue"
+        regrown;
+      test
+        "a second compute growth before an install replaces the first's queue"
+        regrown_compute;
+      test "the compute ring grows as a new queue" (grown_ring true);
+      test "the copy ring grows as a new queue" (grown_ring false);
       prop ~count:24 "a submission of parts joined across the queues runs whole"
         joins joined;
       prop ~count:3

@@ -48,7 +48,9 @@ type t = {
   fault : string option ref;
       (* the first report, raised again by each sleep: a fault, a hang, or a
          flush the hubs did not confirm *)
-  mutable eops : Memory.region list;
+  mutable eops : (int * Memory.region) list;
+      (* each compute queue's end-of-pipe buffer, by its doorbell index, kept
+         from its first queue to the stop for every later one *)
   mutable stopped : [ `Clean | `Lost | `Unknown ] option;
   hw : Rig_amd.Lock.t; (* the register sequences and page-table edits *)
 }
@@ -275,7 +277,7 @@ let lay_out tables ~vf ~xccs =
   let fence = alloc ~zero:true D.psp_fence_buffer_size in
   let ring = alloc psp_ring_bytes in
   let smu_table = alloc smu_table_bytes in
-  let mqds = Array.init (if vf then 2 else 1) (fun _ -> alloc (page * xccs)) in
+  let mqds = Array.init (if vf then 3 else 2) (fun _ -> alloc (page * xccs)) in
   {
     scratch;
     ih_rings = (ring0, ring1);
@@ -326,7 +328,7 @@ let stop_locked g =
     step (fun () ->
         ignore (Ih.read g.ih);
         Ih.consume g.ih);
-    step (fun () -> List.iter (Memory.free g.memory) g.eops);
+    step (fun () -> List.iter (fun (_, m) -> Memory.free g.memory m) g.eops);
     g.eops <- [];
     step (fun () -> mark g ~dirty:(!(g.fault) <> None || (not left) || !failed));
     let lost = !(g.fault) <> None || (not left) || !failed in
@@ -592,27 +594,78 @@ let hdp g = host g.mmio (Gmc.hdp g.gmc)
 let eop_bytes = 0x1000
 let doorbell_bytes = 8
 
+let no_slot = Rig_amd.Full "two queues of the kind run already"
+
 let queue g kind ~ring ~bytes ~read ~write =
   Rig_amd.Lock.protect g.hw @@ fun () ->
   let doorbell index =
     match host g.doorbells (doorbell_bytes * index) with
     | Some a -> Ok a
-    | None -> Error "the GPU's doorbells are not mapped into the process"
+    | None ->
+        Error
+          (Rig_amd.Refused
+             "the GPU's doorbells are not mapped into the process")
   in
   match kind with
-  | `Sdma -> doorbell (Sdma.queue g.sdma ~ring ~bytes ~read ~write)
+  | `Sdma -> (
+      match Sdma.queue g.sdma ~ring ~bytes ~read ~write with
+      | Some index -> doorbell index
+      | None -> Error no_slot)
   | (`Pm4 | `Aql) as kind -> (
-      match Memory.alloc g.memory Memory.Gpu eop_bytes with
-      | Error why -> Error why
-      | Ok None -> Error "no GPU memory for a queue's end-of-pipe buffer"
-      | Ok (Some m) -> (
-          g.eops <- m :: g.eops;
-          match
-            Gfx.queue g.gfx kind ~ring ~bytes ~read ~write
-              ~eop:(Memory.address m)
-          with
-          | index -> doorbell index
-          | exception Regs.Stuck why -> Error why))
+      (* A queue's end-of-pipe buffer stays with its slot, so a queue that
+         follows a retired one there allocates nothing. *)
+      let eop index =
+        match List.assoc_opt index g.eops with
+        | Some m -> Ok m
+        | None -> (
+            match Memory.alloc g.memory Memory.Gpu eop_bytes with
+            | Error why -> Error (Rig_amd.Refused why)
+            | Ok None ->
+                Error
+                  (Rig_amd.Lacking
+                     "no GPU memory for a queue's end-of-pipe buffer")
+            | Ok (Some m) ->
+                g.eops <- (index, m) :: g.eops;
+                Ok m)
+      in
+      match Gfx.free g.gfx with
+      | None -> Error no_slot
+      | Some index -> (
+          match eop index with
+          | Error _ as e -> e
+          | Ok m -> (
+              match
+                Gfx.queue g.gfx kind ~ring ~bytes ~read ~write
+                  ~eop:(Memory.address m)
+              with
+              | Some index -> doorbell index
+              | None -> Error no_slot
+              | exception Regs.Stuck why -> Error (Rig_amd.Refused why))))
+
+let retire g bell =
+  Rig_amd.Lock.protect g.hw @@ fun () ->
+  let index = (bell - Window.address g.doorbells) / doorbell_bytes in
+  if List.mem_assoc index g.eops then
+    match Gfx.retire g.gfx index with
+    | () -> ()
+    | exception Regs.Stuck why -> raise (Rig_amd.Fault why)
+  else Sdma.retire g.sdma index
+
+(* The most bytes of a ring, from the queues' register fields:
+   - an SDMA queue's ring takes 2^RB_SIZE words, and RB_SIZE, bits 1 to 5 of
+     SDMA0_QUEUE0_RB_CNTL in the generated tables, holds at most 31: 2^31
+     words, 8 GiB;
+   - a compute queue's read position is CP_HQD_PQ_RPTR's consumed_offset, of
+     32 bits: the Linux kernel's include/asic_reg/gc/gc_11_0_0_sh_mask.h
+     gives CP_HQD_PQ_RPTR__CONSUMED_OFFSET_MASK as 0xFFFFFFFF, and its
+     amdgpu_amdkfd_gfx_v11.c, hqd_load, masks it by the ring's words, a
+     uint32_t ([m->cp_hqd_pq_rptr & (queue_size - 1)]). It addresses 2^32
+     words, 16 GiB.
+   On SDMA 4 a copy queue keeps the ring Rig_amd opens it with, 16 MiB, as
+   this library programs its gfx queue alone ([Sdma.slots]). *)
+let most_ring g = function
+  | `Sdma -> if Sdma.slots g.sdma = 1 then 16 lsl 20 else 1 lsl 33
+  | `Pm4 | `Aql -> 1 lsl 34
 
 (* Sleeping *)
 

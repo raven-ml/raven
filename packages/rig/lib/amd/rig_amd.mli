@@ -282,28 +282,43 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- on ["COPY:0"], a copy between two GPU addresses, its handles, whose
        ranges do not overlap.}}
 
-    [room] returns [RIG_NEVER] if the parts exceed what the device's rings
-    hold when it is idle, or if a part is one it does not run. An idle
-    device holds the words that fit in the compute ring and half the copy
-    ring, and the argument bytes that fit in half the argument segment,
-    since a submission's SDMA packets and argument bytes never wrap. The
-    segment also holds 8 bytes per part, the word through which a part of
-    one queue orders a part of the other. [room] returns [RIG_GROW] for
-    parts whose bytes exceed half the segment, and {!val-grow} makes a
-    segment of [Pinned] memory of the first power of two from 4096 bytes
-    that holds twice them, or answers [Short n] if the path has no memory
-    for its [n] bytes. The next [room] that needs it installs it once the
-    device reached every value submitted, and every [room] answers
+    A submission takes fewer words than the compute ring holds, at most
+    half the copy ring and at most half the argument segment, since its SDMA
+    packets and argument bytes never wrap. The segment also holds 8 bytes
+    per part, the word through which a part of one queue orders a part of
+    the other. [room] returns [RIG_NEVER] for parts that exceed the largest
+    rings the path makes ([most_ring] of {!type-path}: 2 GiB through
+    [Rig_amd_amdgpu]; through [Rig_amd_pci] 16 GiB for the compute queue and
+    8 GiB for the copy queue), or that the device does not
+    run, and [RIG_GROW] for parts that exceed its rings or its segment.
+
+    {!val-grow} then makes, of [Pinned] memory of the first power of two
+    from 4096 bytes that holds twice what the parts need and at most
+    [most_ring], a segment, or for each ring they exceed a new queue of the
+    path's on a new ring, with read and write positions of its own at 0
+    ([queue] of {!type-path}). The next [room] that needs them installs them
+    once the device reached every value submitted, and every [room] answers
     [RIG_LATER] until then, so the device's work ends while other threads
-    submit. The segment it replaced goes back at the next growth or at
-    {!val-stop}; the segment never shrinks. The device's
-    [most_parts] ({!Rig_edge.type-facts}) is the most parts that an idle
-    device holds, each a launch whose arguments take at most 4352 bytes,
-    which every kernel of at most 4096 bytes of explicit arguments and code
-    object version 5's 256 bytes of implicit ones meets, or a copy of at
-    most the bytes of one SDMA copy packet (1 GiB; 4 MiB on SDMA engines
-    before 4.4.2 and on 5.0 and 5.1). A launch of more arguments, a longer
-    copy and words take the room their sizes take. It does not run:
+    submit: later work goes to the new queue, whose doorbell is another,
+    and the replaced queue, which read every packet, runs beside it until
+    the next growth or {!val-stop} destroys it ([retire] of {!type-path})
+    and gives back its ring. A growth whose parts need more than a queue a
+    growth made and no [room] installed replaces that queue, which ran no
+    work. It makes the new queue first and then destroys the one it
+    replaces. Where the path answers [Full] for the new one, as over
+    [Rig_amd_pci], it destroys the old one first and makes the new one in
+    its slot, so over [Rig_amd_pci] a path holds at most two queues of a
+    kind. Segments and rings never shrink. {!val-grow} answers [Short n] if
+    the path lacks [n] bytes of memory, or another resource for a queue,
+    having made nothing that stays and kept what a growth handed, and
+    raises {!Fault} if the path refuses a queue for another reason. The
+    device's [most_parts] ({!Rig_edge.type-facts}) is the most parts that an
+    idle device holds, each a launch whose arguments take at most 4352
+    bytes, which every kernel of at most 4096 bytes of explicit arguments
+    and code object version 5's 256 bytes of implicit ones meets, or a copy
+    of at most the bytes of one SDMA copy packet (1 GiB; 4 MiB on SDMA
+    engines before 4.4.2 and on 5.0 and 5.1). A launch of more arguments, a
+    longer copy and words take the room their sizes take. It does not run:
     {ul
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}
@@ -406,6 +421,16 @@ type clock =
           writes between two readings of the host's clock, the closest of
           eight. *)
 
+(** The type for a path's refusal of a call. *)
+type refusal =
+  | Lacking of string
+      (** The path, the kernel driver or the GPU lacked memory or another
+          resource for it, as the reason says. *)
+  | Full of string
+      (** The queues of the kind already hold every slot the path has for
+          them, as the reason says; a [retire] frees one. *)
+  | Refused of string  (** Any other refusal, as the reason says. *)
+
 type 'm path = {
   key : 'm Type.Id.t;
       (** The path's key: devices whose paths share [key] are of one
@@ -462,13 +487,30 @@ type 'm path = {
     bytes:int ->
     read:int ->
     write:int ->
-    (int, string) result;
+    (int, refusal) result;
       (** [queue k ~ring ~bytes ~read ~write] makes a hardware queue that
           reads packets of [k] from the [bytes] bytes of [Pinned] memory at
-          [ring], writes its read position to the 64-bit word at [read] and
-          reads its write position from the word at [write], all GPU
-          addresses. It is the host address of the queue's 64-bit doorbell, or
-          [Error msg]. *)
+          [ring], a power of two of at most [most_ring k], writes its read
+          position to the 64-bit word at [read] and reads its write position
+          from the word at [write], all GPU addresses. Its read and write
+          positions start at 0, and [write] holds 0. It is the host address
+          of the queue's 64-bit doorbell, or [Error r]. The device makes one
+          queue of each kind at open, and one more of a kind for each growth
+          of that queue's ring ({!section-c}), which runs beside the queue it
+          replaces until that one goes ([retire]). A path whose slots for
+          the kind all hold queues answers [Error (Full _)], and needs no
+          memory for a queue in a slot a [retire] freed; a path that never
+          answers [Full] holds three queues of a kind while a growth
+          replaces a queue no work ran on. *)
+  retire : int -> unit;
+      (** [retire bell] destroys the queue [queue] made whose doorbell is at
+          [bell], which has read every packet up to its write position. The
+          device then gives back its ring and positions. It raises {!Fault}
+          if the path could not destroy it. *)
+  most_ring : [ `Pm4 | `Aql | `Sdma ] -> int;
+      (** [most_ring k] is the most bytes of a ring of a queue of kind [k],
+          a power of two: the bound of the path's interface or of the queue's
+          registers. *)
   hdp : int option;
       (** The host address of the 32-bit register whose store flushes the
           GPU's host data path, after which host writes through the memory BAR
