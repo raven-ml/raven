@@ -140,19 +140,27 @@ NX_INLINE NX_CT NX_Z(nx_exp_raw)(NX_T x, NX_T y) {
   return NX_MK(NX_(nx_exp_times)(x, c, 0), NX_(nx_exp_times)(x, s, 0));
 }
 
-/* 2^z = 2^x cis(y ln2): 2^x as 2^k m, k the integer nearest x, and the
-   phase y ln2 as p + t, ln2 in two parts and t the rounding error of p:
-   cis p turned by cis t, so that the modulus is 2^x's at every y. The
-   phase errs by about |y| 2^(-2p), p the type's precision, from t's
-   own rounding: the bound holds while |y| < 2^p. */
+/* 2^z = 2^x cis(y ln2), 2^x as 2^k m, k the integer nearest x. Below the
+   trigonometric kinds' switch to Payne and Hanek, the phase y ln2 is p + t,
+   ln2 in two parts and t the rounding error of p, and cis p turns by
+   cis t. Past it, y ln2 is reduced by pi/2 as sin and cos reduce their
+   operand, from the bits of 2 ln2 / pi: exactly enough for every finite
+   y, as for theirs. */
 NX_INLINE NX_CT NX_Z(nx_exp2_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_exp2)(x), y);
   if (x != x || !NX_(nx_finite)(y)) return NX_Z(nx_exp_raw)(x, y);
-  NX_T p = y * NX_C(LN2);
-  NX_T t = NX_FMA(y, NX_C(LN2_LOW), NX_FMA(y, NX_C(LN2), -p));
-  NX_T cp = NX_(nx_cos)(p), sp = NX_(nx_sin)(p);
-  NX_T ct = NX_(nx_cos)(t), st = NX_(nx_sin)(t);
-  NX_T c = NX_(nx_det)(cp, ct, sp, st), s = NX_(nx_det)(sp, ct, -cp, st);
+  NX_T p = y * NX_C(LN2), c, s;
+  if (NX_(nx_trig_big)(p)) {
+    NX_(nx_rem) r = NX_(nx_rem_pio2_big)(nx_two_ln2_over_pi, y);
+    c = NX_(nx_cos_at)(p, r);
+    s = NX_(nx_sin_at)(p, r);
+  } else {
+    NX_T t = NX_FMA(y, NX_C(LN2_LOW), NX_FMA(y, NX_C(LN2), -p));
+    NX_T cp = NX_(nx_cos)(p), sp = NX_(nx_sin)(p);
+    NX_T ct = NX_(nx_cos)(t), st = NX_(nx_sin)(t);
+    c = NX_(nx_det)(cp, ct, sp, st);
+    s = NX_(nx_det)(sp, ct, -cp, st);
+  }
   if (!NX_(nx_finite)(x)) {
     NX_T m = x > 0 ? x : 0;
     return NX_MK(m * c, m * s);

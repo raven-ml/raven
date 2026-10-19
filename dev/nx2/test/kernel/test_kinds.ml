@@ -1057,7 +1057,7 @@ let complex_kinds =
 let complex_bounds =
   [
     ("exp", 4., 2.131, 1.779);
-    ("exp2", 5., 2.828, 2.184);
+    ("exp2", 4., 1.901, 1.922);
     ("log", 4., 1.590, 1.547);
     ("log2", 4., 1.684, 1.581);
     ("sqrt", 3., 1.596, 1.534);
@@ -1089,18 +1089,10 @@ let single_row args (re, im) =
 
 let golden_value row n = ((row.(n), row.(n + 1)), (row.(n + 2), row.(n + 3)))
 
-(* exp2's bound holds while |Im z| is below 2^24 at c64 and 2^53 at c128;
-   past it the bound holds for the modulus. *)
-let exp2_limit u = if u = 0x1p-24 then 0x1p24 else 0x1p53
-
+(* |z' - z| / |z| of the moduli alone, in units of [u]. *)
 let modulus_error u (re, im) (((zr, _), (zi, _)) : (float * float) * (float * float)) =
   let m = Float.hypot zr zi in
   Float.abs (Float.hypot re im -. m) /. m /. u
-
-let golden_error kind u args got want =
-  if kind = "exp2" && Float.abs args.(1) >= exp2_limit u then
-    modulus_error u got want
-  else normwise u got want
 
 let test_complex_goldens =
   let check kind ~bound ~ceiling64 ~ceiling32 =
@@ -1118,12 +1110,12 @@ let test_complex_goldens =
           List.init (n / 2) (fun i -> (args.(2 * i), args.(2 * i + 1)))
         in
         let got = c128_call kind ops in
-        let e = golden_error kind 0x1p-53 args got want in
+        let e = normwise 0x1p-53 got want in
         at_most float_exact ~than:bound e ~msg:(at got);
         worst128 := Float.max !worst128 e;
         if single_row args want then begin
           let got = c64_call kind ops in
-          let e = golden_error kind 0x1p-24 args got want in
+          let e = normwise 0x1p-24 got want in
           at_most float_exact ~than:bound e ~msg:(at got);
           worst64 := Float.max !worst64 e
         end)
@@ -1373,34 +1365,46 @@ let test_complex_real_axis =
             (fst (c128_call "pow" [ (x, 0.); (w, 0.) ])));
     ]
 
-(* exp2's modulus is 2^x within exp2's bound at every finite y, past the
-   limit of its phase's bound too: |2^(x + iy)| = 2^x. *)
-let test_complex_exp2_modulus =
-  let check name u call round =
+(* exp2 at every finite y: |2^(x + iy)| = 2^x for y drawn over the whole
+   range of the part's format, and its phase y ln2 within exp2's bound at
+   y up to the largest finite part, where it takes y ln2's every bit:
+   values from mpmath. *)
+let test_complex_exp2_far =
+  let anywhere ~emin ~emax =
+    let open Gen in
+    let* e = int_range emin emax in
+    let* m = float_range 1. 1.99 in
+    let+ s = bool in
+    Float.ldexp (if s then -.m else m) e
+  in
+  let check name u call round ~emin ~emax ~p =
     prop (strf "|exp2 (x + iy)| is 2^x %s" name)
-      Gen.(pair (float_range (-60.) 60.) gen64)
+      Gen.(pair (float_range (-60.) 60.) (anywhere ~emin ~emax))
       (fun (x, y) ->
         let x, y = round (x, y) in
-        assume (Float.is_finite y);
-        cover "past the phase's limit" (Float.abs y >= exp2_limit u);
+        cover "|y| at least 2^p" (Float.abs y >= Float.ldexp 1. p);
         let want = Float.pow 2. x in
         let got = call "exp2" [ (x, y) ] in
-        at_most float_exact ~than:5.
+        at_most float_exact ~than:4.
           (modulus_error u got ((want, 0.), (0., 0.))))
   in
+  let phase u call y (c, s) =
+    let got = call "exp2" [ (0., y) ] in
+    at_most float_exact ~than:4. (normwise u got ((c, 0.), (s, 0.)))
+      ~msg:(strf "exp2 %h i: got %h %h" y (fst got) (snd got))
+  in
   [
-    check "c128" 0x1p-53 c128_call Fun.id;
-    check "c64" 0x1p-24 c64_call f32_pair;
-    test "exp2 far up the imaginary axis keeps its modulus" (fun () ->
-        let at u call z want =
-          at_most float_exact ~than:5.
-            (modulus_error u (call "exp2" [ z ]) ((want, 0.), (0., 0.)))
-        in
-        at 0x1p-24 c64_call (0., 0x1.5eb852p+29) 1.;
-        at 0x1p-24 c64_call (0., 0x1.5eb852p+26) 1.;
-        at 0x1p-53 c128_call (0., 1e300) 1.;
-        at 0x1p-53 c128_call (0.5, 1e300) (Float.sqrt 2.);
-        at 0x1p-53 c128_call (0., 0x1.5eb851eb851ecp+56) 1.);
+    check "c128" 0x1p-53 c128_call Fun.id ~emin:(-1074) ~emax:1023 ~p:53;
+    check "c64" 0x1p-24 c64_call f32_pair ~emin:(-149) ~emax:127 ~p:24;
+    test "exp2's phase far up the imaginary axis" (fun () ->
+        let c128 = phase 0x1p-53 c128_call and c64 = phase 0x1p-24 c64_call in
+        c128 0x1p30 (0x1.66e39f669c166p-1, -0x1.6d2939368da98p-1);
+        c128 0x1.5eb851eb851ecp+74 (0x1.59f6745a8633cp-1, 0x1.796e36e47cb4ap-1);
+        c128 1e300 (0x1.b80528d30f790p-1, -0x1.05c67494c0ab7p-1);
+        c128 Float.max_float (0x1.cedaf85d0796ep-1, -0x1.b5c31ba408c70p-2);
+        c64 0x1p30 (0x1.66e39f669c166p-1, -0x1.6d2939368da98p-1);
+        c64 0x1.5eb852p+74 (-0x1.f0744683c33c2p-1, -0x1.f4d5bd9a1b741p-3);
+        c64 0x1.fffffep+127 (0x1.8a07e4d1b0d09p-1, -0x1.46ee442fa86e9p-1));
   ]
 
 (* pow at the values its .mli states: 1 where the exponent is 0, any base
@@ -1505,7 +1509,7 @@ let () =
               test_complex_goldens; test_complex_pow_goldens;
               test_complex_special;
             ]
-           @ test_complex_exp2_modulus @ test_complex_pow_special
+           @ test_complex_exp2_far @ test_complex_pow_special
            @ [ test_complex_log_circle ]
            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
            @ test_complex_identities);

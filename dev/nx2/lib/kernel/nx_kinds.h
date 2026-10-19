@@ -241,6 +241,13 @@ NX_INLINE uint64_t nx_threefry_u64(uint64_t counter, uint64_t key) {
 #undef NX_THREEFRY_ROUND
 #undef NX_THREEFRY_FOUR
 
+/* A table's address, in the memory NX_TABLE puts it. */
+#if defined(__METAL_VERSION__)
+#define NX_TABLE_PTR constant uint32_t *
+#else
+#define NX_TABLE_PTR const uint32_t *
+#endif
+
 /* The bits of 2/pi after the point, behind one zero word, for the
    Payne-Hanek reductions. */
 NX_TABLE uint32_t nx_two_over_pi[] = {
@@ -254,10 +261,25 @@ NX_TABLE uint32_t nx_two_over_pi[] = {
     0x6BFB5FB1u, 0x1F8D5D08u, 0x56033046u, 0xFC7B6BABu, 0xF0CFBC20u,
     0x9AF4361Du};
 
-/* The 32 bits of 2/pi from bit [g] on, bit 0 the first of the zero word. */
-NX_INLINE uint32_t nx_two_over_pi_at(int32_t g) {
+/* The bits of 2 ln2 / pi after the point, behind one zero word, for the
+   complex exp2's phase y ln2 reduced as the trigonometric kinds reduce
+   theirs. */
+NX_TABLE uint32_t nx_two_ln2_over_pi[] = {
+    0x00000000u, 0x70F7263Du, 0xFA5A6EECu, 0xB608582Eu, 0x55FEF3DDu,
+    0x8E13BECDu, 0x1D495C36u, 0x1D72013Au, 0xEA9F8FCAu, 0x76E866FCu,
+    0x9B48BE48u, 0x15F5CB6Fu, 0xD8BEE211u, 0x0394DB30u, 0x20D6EB52u,
+    0x30FFA9AEu, 0x90CBC735u, 0x51358CEDu, 0x67C0DB3Cu, 0x490D15BDu,
+    0xD91A29F5u, 0x682402AFu, 0x5E8F9C23u, 0xBFF15CBCu, 0x71F05FEDu,
+    0xFE0BB062u, 0x2A8C8F67u, 0x7309C45Au, 0x7502282Au, 0xEAD0C243u,
+    0x5C5527BBu, 0x759F345Eu, 0x2D0628E8u, 0xB1A563A2u, 0x53E62918u,
+    0xEA5FFDABu, 0xEAC0D479u, 0xCFEDB1B6u, 0xFC78B439u, 0xA333A25Fu,
+    0xDC77BE31u};
+
+/* The 32 bits of table t's number from bit [g] on, bit 0 the first of the
+   zero word. */
+NX_INLINE uint32_t nx_bits_at(NX_TABLE_PTR t, int32_t g) {
   int32_t w = g >> 5, sh = g & 31;
-  uint64_t pair = ((uint64_t)nx_two_over_pi[w] << 32) | nx_two_over_pi[w + 1];
+  uint64_t pair = ((uint64_t)t[w] << 32) | t[w + 1];
   return (uint32_t)((pair << sh) >> 32);
 }
 
@@ -403,7 +425,7 @@ NX_INLINE float nx_tanh_t_f32(float z) {
 }
 
 NX_INLINE nx_rem_f32 nx_rem_pio2_cw_f32(float x);
-NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(float x);
+NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(NX_TABLE_PTR t, float x);
 
 #define NX_T float
 #define NX_U uint32_t
@@ -442,19 +464,20 @@ NX_INLINE nx_rem_f32 nx_rem_pio2_cw_f32(float x) {
   return r;
 }
 
-/* Payne and Hanek, for finite |x| >= NX_PIO2_BIG_F32. x = m 2^e with m an
-   integer of 24 bits; the bits of 2/pi worth 4 or more against m 2^e
-   leave x 2/pi unchanged mod 4, so a window W of 96 bits from there gives
-   x 2/pi = m W 2^-94 mod 4. Bits 94 and 95 of m W are q, the 64 below the
-   fraction, rounded to nearest so that it is signed. */
-NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(float x) {
+/* Payne and Hanek: x k reduced by pi/2, for finite |x| >= NX_PIO2_BIG_F32
+   and t the bits of k 2/pi, below 1: nx_two_over_pi for k = 1. x = m 2^e
+   with m an integer of 24 bits; the bits of t worth 4 or more against
+   m 2^e leave x t unchanged mod 4, so a window W of 96 bits from there
+   gives x t = m W 2^-94 mod 4. Bits 94 and 95 of m W are q, the 64 below
+   the fraction, rounded to nearest so that it is signed. */
+NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(NX_TABLE_PTR t, float x) {
   uint32_t ix = nx_float_bits(x) & 0x7FFFFFFFu;
   int32_t e = (int32_t)(ix >> 23) - 150;
   uint64_t m = (ix & 0x007FFFFFu) | 0x00800000u;
   int32_t g = e + 30;
-  uint64_t a0 = m * nx_two_over_pi_at(g + 64);
-  uint64_t a1 = m * nx_two_over_pi_at(g + 32);
-  uint64_t a2 = m * nx_two_over_pi_at(g);
+  uint64_t a0 = m * nx_bits_at(t, g + 64);
+  uint64_t a1 = m * nx_bits_at(t, g + 32);
+  uint64_t a2 = m * nx_bits_at(t, g);
   uint64_t t1 = (a0 >> 32) + a1;
   uint64_t t2 = (t1 >> 32) + a2;
   uint64_t f = (t2 << 34) | ((t1 & 0xFFFFFFFFu) << 2) | ((a0 & 0xFFFFFFFFu) >> 30);
@@ -772,7 +795,7 @@ NX_INLINE double nx_tanh_t_f64(double z) {
 }
 
 NX_INLINE nx_rem_f64 nx_rem_pio2_cw_f64(double x);
-NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(double x);
+NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x);
 
 #define NX_T double
 #define NX_U uint64_t
@@ -814,15 +837,15 @@ NX_INLINE nx_rem_f64 nx_rem_pio2_cw_f64(double x) {
 }
 
 /* Payne and Hanek, for finite |x| >= NX_PIO2_BIG_F64: as f32's, x = m 2^e
-   with m of 53 bits and a window W of 192 bits, x 2/pi = m W 2^-190 mod 4;
+   with m of 53 bits and a window W of 192 bits, x t = m W 2^-190 mod 4;
    the fraction's top 128 bits are kept. */
-NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(double x) {
+NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x) {
   uint64_t ix = nx_double_bits(x) & 0x7FFFFFFFFFFFFFFFu;
   int32_t e = (int32_t)(ix >> 52) - 1075;
   uint64_t m = (ix & 0x000FFFFFFFFFFFFFu) | 0x0010000000000000u;
   int32_t g = e + 30;
   uint32_t w[6], p[8];
-  for (int j = 0; j < 6; j++) w[j] = nx_two_over_pi_at(g + 32 * (5 - j));
+  for (int j = 0; j < 6; j++) w[j] = nx_bits_at(t, g + 32 * (5 - j));
   uint64_t ml = m & 0xFFFFFFFFu, mh = m >> 32, c = 0;
   for (int j = 0; j < 6; j++) {
     uint64_t t = ml * w[j] + c;
@@ -1075,20 +1098,16 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    normwise in u where the result's modulus is a normal float:
 
      sqrt, sign                                3
-     exp, log, log2                            4
-     exp2, asin, acos, atan, asinh, acosh,
-       atanh                                   5
+     exp, exp2, log, log2                      4
+     asin, acos, atan, asinh, acosh, atanh     5
      sin, cos, tan, sinh, cosh, tanh           6
      pow, z^w                                  3 + 3 |w log z|
 
    The bounds are measured, not proven: each kind's worst error at the
    goldens of test/kernel/gen/kinds.py and at ten times as many points of
    the same regions, branch cuts, poles and overflow edges among them, was
-   at least 1u inside its bound (exp2's 3.92u at c128, tan's 4.53u at
-   c64). exp2's bound holds
-   while |Im z| < 2^p, p the part's precision: 2^24 at c64 and 2^53 at
-   c128; past it the phase errs by about |Im z| 2^(-2p), and the bound
-   holds for the modulus. On the real axis, at a non-zero real part where
+   at least 1.3u inside its bound (log2's 2.66u at c128, tan's 4.53u at
+   c64). On the real axis, at a non-zero real part where
    the float kind is defined, the real part is the float kind's result;
    pow's is at a positive base and a real exponent. Every NaN part of their
    results is the quiet NaN of a clear sign bit.

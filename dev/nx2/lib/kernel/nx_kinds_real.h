@@ -441,17 +441,17 @@ NX_INLINE NX_T NX_(nx_tan_near)(NX_T x) {
 }
 
 NX_INLINE NX_T NX_(nx_sin)(NX_T x) {
-  if (NX_(nx_trig_big)(x)) return NX_(nx_sin_at)(x, NX_(nx_rem_pio2_big)(x));
+  if (NX_(nx_trig_big)(x)) return NX_(nx_sin_at)(x, NX_(nx_rem_pio2_big)(nx_two_over_pi, x));
   return NX_(nx_sin_near)(x);
 }
 
 NX_INLINE NX_T NX_(nx_cos)(NX_T x) {
-  if (NX_(nx_trig_big)(x)) return NX_(nx_cos_at)(x, NX_(nx_rem_pio2_big)(x));
+  if (NX_(nx_trig_big)(x)) return NX_(nx_cos_at)(x, NX_(nx_rem_pio2_big)(nx_two_over_pi, x));
   return NX_(nx_cos_near)(x);
 }
 
 NX_INLINE NX_T NX_(nx_tan)(NX_T x) {
-  if (NX_(nx_trig_big)(x)) return NX_(nx_tan_at)(x, NX_(nx_rem_pio2_big)(x));
+  if (NX_(nx_trig_big)(x)) return NX_(nx_tan_at)(x, NX_(nx_rem_pio2_big)(nx_two_over_pi, x));
   return NX_(nx_tan_near)(x);
 }
 

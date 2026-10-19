@@ -978,12 +978,10 @@ end
     [sqrt (-4 + 0i)] is [2i] and [sqrt (-4 - 0i)] is [-2i]. A result [f'] is
     within [k u |f|] of the value [f], where [|f|] is a normal float: [u] is
     the parts' unit roundoff, [2{^-24}] for complex64 and [2{^-53}] for
-    complex128, and [k] is [3] for {!sqrt}, [4] for {!exp}, {!log} and
-    {!log2}, [5] for {!exp2}, {!asin}, {!acos}, {!atan}, {!asinh}, {!acosh}
-    and {!atanh}, and [6] for {!sin}, {!cos}, {!tan}, {!sinh}, {!cosh} and
-    {!tanh}. {!exp2}'s bound holds where [|Im z|] is below [2{^24}] for
-    complex64 and [2{^53}] for complex128; past it the bound holds for its
-    modulus, [2{^Re z}]. On the real axis, at a non-zero real part where the
+    complex128, and [k] is [3] for {!sqrt}, [4] for {!exp}, {!exp2}, {!log}
+    and {!log2}, [5] for {!asin}, {!acos}, {!atan}, {!asinh}, {!acosh} and
+    {!atanh}, and [6] for {!sin}, {!cos}, {!tan}, {!sinh}, {!cosh} and
+    {!tanh}. On the real axis, at a non-zero real part where the
     float function is defined, a function of one operand but {!asinh},
     {!acosh} and {!atanh} gives the float function's result as its real
     part; {!pow} does at a positive base and a real exponent. A NaN part of
