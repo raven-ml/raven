@@ -2161,6 +2161,37 @@ let multiply_adds =
           is_false ~msg:"fma" (mentions "fma" (source prg)));
     ]
 
+(* Reductions that share a range
+
+   [out[0] = max_{i,k} (a[k] + i) + sum_k a[k]] for [i] below 3 and [k] below
+   5: the two reductions close the range [k], the maximum within [i]'s loop and
+   the sum alone, as a sum over [i] of a source that does not read [i] leaves
+   it. No optimisation applies, so both stay loops. With [a[k] = k + 1], it is
+   [(5 + 2) + 15]. *)
+
+let max_and_sum () =
+  let out = Call.param ~shape:[ Int 1 ] 0 Float32 in
+  let a = Call.param ~shape:[ Int 5 ] 1 Float32 in
+  let i = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
+  let k = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
+  let a_k = Ops.index a [ k ] in
+  let max = Ops.reduce (Ops.add a_k (Ops.cast i Float32)) Op.Max [ i; k ] in
+  let sum = Ops.reduce a_k Op.Add [ k ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.add max sum) ]
+
+let shared_ranges =
+  group "reductions that share a range"
+    [
+      test "a range two reductions close at two depths runs as two loops"
+        (fun () ->
+          let prg = Codegen.to_program (max_and_sum ()) (Lazy.force host) in
+          let a = Array.init 5 (fun k -> `Float (float_of_int (k + 1))) in
+          let out = Run.on_host prg [ (1, a) ] in
+          equal (array Dtypes.value) [| `Float 22. |] (List.assoc 0 out));
+    ]
+
 (* Lanes of an unrolled reduce
 
    When every lane of an unrolled reduce reads an Invalid index, the lanes stay
@@ -3067,6 +3098,7 @@ let () =
          accumulators;
          variable_sizes;
          multiply_adds;
+         shared_ranges;
          lanes;
          bfloat16_casts;
          test "a selection between bfloat16 vectors takes each lane's arm"

@@ -3675,6 +3675,7 @@ submission, and a range a loop of rig's program (D146).
 - **tolk:** `lib/schedule/indexing.ml:572` (`reaches`), `:583`
   (`reduce_loops`) and `:709` (its use in `assign_ranges`);
   `lib/codegen/simplify.ml:106` (`merge_reductions`);
+  `lib/codegen/codegen.ml:613` (`merge_reduce_ends`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** a reduction whose output is indexed by the same ranges as an
@@ -3690,7 +3691,15 @@ submission, and a range a loop of rig's program (D146).
   reduction that closes them, when that leaves all of them no more floor
   divisions and remainders: merged in one alone, they would leave its
   siblings' loops apart from its own, a range that runs again after the loop
-  that ends it, which the linearizer refuses.
+  that ends it, which the linearizer refuses. A reduction can stop closing
+  its group's ranges: a sum over a range its source does not read drops it
+  (`pm_reduce_unparented`), so a sum over `i` and `k` of a source that reads
+  `k` alone closes `k` alone, where a maximum beside it closes `k` within
+  `i`'s loop. tinygrad gives a reduction's end fresh ranges only when it
+  closes the same ranges as another at a different depth; tolk gives them to
+  every end that closes a range an earlier end closes, so each range has one
+  end. No recorded kernel has such ends, so the patch leaves tinygrad's
+  `merge_reduce_ends` as it is.
 - **Reason:** (b): rune's reverse mode. The cotangent of a value that
   operations broadcast sums one reduction per operation, each over the same
   cotangent computation: the gradient of an aperture's weights over a 104 x
@@ -3706,7 +3715,9 @@ submission, and a range a loop of rig's program (D146).
   `sum_and_max_grouped`, `ten_shared_sums_group` and
   `ten_shared_sums_group_unfit` cases, and the Codegen suite's
   `two_grouped_stores_local`, whose upstream axes count one loop for the two
-  maximums; all from the equally patched tinygrad. The Simplify suite's
+  maximums; all from the equally patched tinygrad. The Codegen suite's
+  `reductions that share a range › a range two reductions close at two
+  depths runs as two loops`. The Simplify suite's
   `pm_simplify_ranges › merging › reductions that share ranges merge them in
   all of them` and `… keep them when one would divide`. Rune's Packed suite:
   the bit example of `a compiled call computes eager's values`, two views a

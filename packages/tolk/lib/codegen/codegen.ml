@@ -612,7 +612,11 @@ let same_nodes s0 s1 =
 
 let merge_reduce_ends sink =
   (* merge ENDs that share the same range and nesting context (only those created by reduce_to_acc) *)
-  (* ENDs at different nesting depths get cloned RANGEs so each RANGE maps to one END *)
+  (* An END that closes a range an earlier END closes, at another nesting depth
+     or along other ranges, gets cloned RANGEs so each RANGE maps to one END.
+     Reductions that share a loop can stop closing the same ranges: a sum over
+     [i] and [k] of a source that does not read [i] closes [k] alone, where a
+     maximum beside it closes [k] within [i]'s loop. *)
   let slice = Nodes.to_list (backward_slice ~calls:Skip sink) in
   let range_to_ends =
     List.fold_left
@@ -622,7 +626,7 @@ let merge_reduce_ends sink =
         else acc)
       [] slice
   in
-  let subs = ref [] in
+  let subs = ref [] and claimed = Tbl.create 16 in
   let next_axis =
     ref
       (1
@@ -630,43 +634,40 @@ let merge_reduce_ends sink =
           (fun m u -> if is Op.Range u then max m (List.hd (axis_id u)) else m)
           (-1) slice)
   in
+  let clone rr =
+    if not (Tbl.mem claimed rr) then rr
+    else
+      let axis_id = !next_axis :: List.tl (axis_id rr) in
+      incr next_axis;
+      replace rr ~arg:(Range { axis_id; axis_type = axis_type rr })
+  in
   List.iter
     (fun (r, ends) ->
-      if List.length ends > 1 then
-        let by_ctx =
-          List.fold_left
-            (fun acc e -> add_to (ranges e) same_nodes e acc)
-            [] ends
-        in
-        List.iteri
-          (fun i (_, ends) ->
-            let tr =
-              if i = 0 then r
-              else
-                List.mapi
-                  (fun j rr ->
-                    let axis_id = (!next_axis + j) :: List.tl (axis_id rr) in
-                    replace rr
-                      ~arg:(Range { axis_id; axis_type = axis_type rr }))
-                  r
-            in
-            if i > 0 then next_axis := !next_axis + List.length r;
-            let mapped =
-              if i = 0 then ends
-              else
-                List.map
-                  (fun e ->
-                    substitute ~calls:Skip ~pass:Fixed_point e
-                      (List.combine r tr))
-                  ends
-            in
-            let merged =
-              match mapped with
-              | [ e ] -> e
-              | _ -> end_ (group (List.map (fun e -> nth e 0) mapped)) tr
-            in
-            List.iter (fun e -> subs := (e, merged) :: !subs) ends)
-          by_ctx)
+      let by_ctx =
+        List.fold_left (fun acc e -> add_to (ranges e) same_nodes e acc) [] ends
+      in
+      List.iter
+        (fun (_, ends) ->
+          let tr = List.map clone r in
+          List.iter (fun rr -> Tbl.replace claimed rr ()) tr;
+          let mapped =
+            if List.equal ( == ) r tr then ends
+            else
+              List.map
+                (fun e ->
+                  substitute ~calls:Skip ~pass:Fixed_point e (List.combine r tr))
+                ends
+          in
+          match mapped with
+          | [ e ] when e == List.hd ends -> ()
+          | _ ->
+              let merged =
+                match mapped with
+                | [ e ] -> e
+                | _ -> end_ (group (List.map (fun e -> nth e 0) mapped)) tr
+              in
+              List.iter (fun e -> subs := (e, merged) :: !subs) ends)
+        by_ctx)
     range_to_ends;
   match !subs with
   | [] -> None
