@@ -294,6 +294,57 @@ let far_fill () =
     [ ((2, 4), ('z', 0)) ]
     (List.map (fun (o, n, c, l) -> ((o, n), (c, l))) fills)
 
+(* A box from this process's memory whose rows lie apart crosses the link
+   packed and lands at its pitch, and a box into this process's memory lands
+   its rows at theirs. Rig's interface makes no box yet, so the parts go to
+   a proxy opened alone. *)
+let boxes_across () =
+  with_machine @@ fun m ->
+  let module H = Rig_gpu_support.Host in
+  let o =
+    Proxy.device m.far (account 9 ~reaches:[])
+      (Rig_remote_abi.Device { id = 9 })
+  in
+  let (module D : Rig_edge.Driver with type t = Proxy.t) = o.driver in
+  let module E = Rig_gpu_support.Edge (D) in
+  let g = ok_or_fail (Rig_gpu_support.opened o) in
+  let e = E.make g in
+  Fun.protect ~finally:(fun () ->
+      E.release e;
+      D.stop g ~fault:None)
+  @@ fun () ->
+  let far = E.alloc e Device 64 in
+  let from = H.pages 64 and back = H.pages 64 in
+  let s = String.init 64 (fun i -> Char.chr (97 + (i mod 26))) in
+  H.write from s;
+  let box ~dst ~dst_offset ~src ~src_offset ~src_pitch ~dst_pitch :
+      E.part =
+    {
+      dst;
+      dst_offset;
+      src = Some src;
+      src_offset;
+      width = 3;
+      rows = 4;
+      src_pitch;
+      dst_pitch;
+      fill = None;
+    }
+  in
+  E.run e
+    (box ~dst:(Region far) ~dst_offset:0 ~src:(Host from) ~src_offset:1
+       ~src_pitch:5 ~dst_pitch:4);
+  E.run e
+    (box ~dst:(Host back) ~dst_offset:2 ~src:(Region far) ~src_offset:0
+       ~src_pitch:4 ~dst_pitch:7);
+  let model = Bytes.make 64 '\000' in
+  for r = 0 to 3 do
+    Bytes.blit_string s (1 + (5 * r)) model (2 + (7 * r)) 3
+  done;
+  equal string (Bytes.to_string model) (H.read back 64);
+  H.free_pages from 64;
+  H.free_pages back 64
+
 let copies =
   group "copy"
     [
@@ -302,6 +353,8 @@ let copies =
         within_machine;
       test "a fill of the machine's memory is one fill part, carrying no byte"
         far_fill;
+      test "boxes into and out of this process's memory land at their pitches"
+        boxes_across;
     ]
 
 (* Work *)

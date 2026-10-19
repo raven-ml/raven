@@ -21,7 +21,8 @@
   test_point
   test_local
   test_limit
-  test_reuse)
+  test_reuse
+  test_copy_parts)
  (modules :standard \ test_profile test_readers test_model test_model_fork
   rig_model)
  (libraries rig rig_edge rig_support rig_gpu_support threads.posix unix
