@@ -289,6 +289,59 @@ let test_scatter_in_place () =
   in_place ~msg:"scatter" ~bytes:size grew;
   equal (array float_exact) (with_row 5 9.) (elements y)
 
+(* A read for the extent of a call leaves the memory to the next donation,
+   where a crossing ({!Nx.Repr.array}) shares it for good. *)
+let test_read_in_place () =
+  let read c =
+    Nx.Repr.read c (fun a ->
+        Nx_array.read Bigarray.float32 a (fun b ->
+            ignore (Bigarray.Genarray.get b [| 5; 0 |])));
+    c
+  in
+  let y, grew =
+    grown
+      (fun () -> (read (cache ()), nines [| width |]))
+      (fun (c, u) -> Nx.set Nx.[ I 5 ] u (Nx.donate c))
+  in
+  in_place ~msg:"after Repr.read" ~bytes:size grew;
+  equal (array float_exact) (with_row 5 9.) (elements y);
+  let _, grew =
+    grown
+      (fun () ->
+        let c = cache () in
+        ignore (Nx.Repr.array c);
+        (c, nines [| width |]))
+      (fun (c, u) -> Nx.set Nx.[ I 5 ] u (Nx.donate c))
+  in
+  copied ~msg:"after Repr.array" ~bytes:size grew
+
+(* [donated_during_read donate] reads a cache with [Nx.Repr.read] and, while
+   the read holds it, runs [donate c], which donates it: the donation computes
+   into fresh memory and leaves the read's bytes as they were. *)
+let donated_during_read donate =
+  let c = cache () in
+  let y =
+    Nx.Repr.read c (fun a ->
+        let before = A.to_array a in
+        let y = donate c in
+        let fresh = Option.get (Nx.Repr.array y) in
+        equal ~msg:"fresh memory" bool false
+          (Rig.Buffer.overlaps (A.buffer a) (A.buffer fresh));
+        equal ~msg:"the read's bytes" (array float_exact) before (A.to_array a);
+        y)
+  in
+  equal (array float_exact) (with_row 5 9.) (elements y)
+
+let set_row c = Nx.set Nx.[ I 5 ] (nines [| width |]) (Nx.donate c)
+
+let test_read_donated_inside () = donated_during_read set_row
+
+(* The second domain starts inside [f], after Repr.read has taken its claim,
+   and [f] joins it before returning, so its donation runs while the claim is
+   held on every run. *)
+let test_read_donated_across () =
+  donated_during_read (fun c -> Domain.join (Domain.spawn (fun () -> set_row c)))
+
 let test_init_in_place () =
   let a = on_mem [| 2; rows |] (Array.make (2 * rows) 1.) in
   let b = on_mem [| 2; width |] (Array.make (2 * width) 1.) in
@@ -1719,6 +1772,13 @@ let () =
              test "set writes into a donated target" test_set_in_place;
              test "scatter writes into a donated target" test_scatter_in_place;
              test "contract writes into a donated init" test_init_in_place;
+             test "a value read by Repr.read is still written in place"
+               test_read_in_place;
+             test "a donation during Repr.read computes into fresh memory"
+               test_read_donated_inside;
+             test
+               "a donation on another domain during Repr.read computes into \
+                fresh memory" test_read_donated_across;
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;

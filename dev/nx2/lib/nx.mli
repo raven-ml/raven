@@ -3802,6 +3802,26 @@ module Repr : sig
       [None] for a value on several devices or of every set. [a] may be strided
       or offset. It is for reading: writing through it changes [x]. *)
 
+  val read : ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
+  (** [read x f] is [f a], [a] an array on the host of [x]'s elements for the
+      extent of [f]: over [x]'s own memory where [x] lies on one device whose
+      memory the host addresses (the host, a memory device, Metal), and
+      otherwise a copy on the host, made for any placement, including a value
+      cut across devices; a value of every set is computed on the host. It is
+      a {{!section-reads}read}: it waits for [x]'s set and raises a failed
+      check pending on it. [a] may be strided or offset.
+
+      Unlike {!array}, it leaves [x]'s memory unshared, so a donation of [x]
+      after [f] returns may write its result there ({!donate}). [a]'s memory
+      is claimed for the extent of [f]: a donation of [x] meanwhile computes
+      into fresh memory. [f] must not write through [a], and must not keep
+      [a], or a bigarray over it, after it returns. [x] stays reachable until
+      [f] returns.
+
+      Raises [Invalid_argument] naming [Nx.Repr.read] for a dead or a traced
+      [x], or if [x]'s memory is held exclusive, and a failed check as a wait
+      does. *)
+
   val of_shards :
     'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
   (** [of_shards p arrays] is the value whose bytes are [arrays], one per

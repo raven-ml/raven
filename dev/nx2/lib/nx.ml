@@ -139,13 +139,6 @@ let placement = Prim.at
 
 module Rng = Rng
 
-module Repr = struct
-  let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
-  let array = Repr.array
-  let of_shards p arrays = Repr.of_shards ~by:"Nx.Repr.of_shards" p arrays
-  let shards = Repr.shards
-end
-
 (* Constants and arithmetic *)
 
 module D = Nx_array.Dtype
@@ -317,7 +310,7 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
       invalid_argf "Nx.unpack: a value of %s, not %s" (D.name (dtype x))
         (D.name dt)
 
-let on_host a : (_, _, host) t = Repr.of_array Host.v a
+let on_host a : (_, _, host) t = Repr.of_array ~by:"Nx.Repr.of_array" Host.v a
 
 (* The host value of [dt] and shape [s] holding [vs], naming [by] where
    {!create} refuses them. Only integers can lie outside their dtype, and
@@ -387,6 +380,32 @@ let readable ~by x =
 let sync x = ignore (readable ~by:"Nx.sync" x)
 
 let read ~by x = Exec.on_host ~by (readable ~by x)
+
+module Repr = struct
+  let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
+  let array = Repr.array
+  let of_shards p arrays = Repr.of_shards ~by:"Nx.Repr.of_shards" p arrays
+  let shards = Repr.shards
+
+  (* A read's array: [Exec.on_host] shares no memory, so the value's next
+     donation may still write into it once [f] returns. Until then a read claim
+     holds the memory, so a donation meanwhile computes into fresh memory, and
+     [x] stays reachable, so its memory is not collected under [f]. *)
+  let read x f =
+    let by = "Nx.Repr.read" in
+    let a = read ~by x in
+    let entered = ref false in
+    let r =
+      try
+        Rig.Claim.with_ ~read:[ Nx_array.buffer a ] ~donate:[] (fun _ ->
+            entered := true;
+            f a)
+      with Invalid_argument m when not !entered ->
+        invalid_argf "%s: %s" by m
+    in
+    ignore (Sys.opaque_identity x);
+    r
+end
 
 let to_array x = Nx_array.to_array (read ~by:"Nx.to_array" x)
 
