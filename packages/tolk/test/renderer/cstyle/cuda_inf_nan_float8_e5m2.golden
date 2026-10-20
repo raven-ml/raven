@@ -13,13 +13,13 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(__nv_fp8_e5m2* data0_16, _
   float cast1 = ((float)(val0.y));
   float cast2 = ((float)(val0.z));
   float cast3 = ((float)(val0.w));
-  __nv_fp8_e5m2 alu1 = ((cast0<-1.0f)?((__nv_fp8_e5m2)(NAN)):val0.x);
+  __nv_fp8_e5m2 alu1 = ((cast0<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.x);
   __nv_fp8_e5m2 alu2 = ((0.0f<cast0)?val0.x:((__nv_fp8_e5m2)(INFINITY)));
-  __nv_fp8_e5m2 alu3 = ((cast1<-1.0f)?((__nv_fp8_e5m2)(NAN)):val0.y);
+  __nv_fp8_e5m2 alu3 = ((cast1<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.y);
   __nv_fp8_e5m2 alu4 = ((0.0f<cast1)?val0.y:((__nv_fp8_e5m2)(INFINITY)));
-  __nv_fp8_e5m2 alu5 = ((cast2<-1.0f)?((__nv_fp8_e5m2)(NAN)):val0.z);
+  __nv_fp8_e5m2 alu5 = ((cast2<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.z);
   __nv_fp8_e5m2 alu6 = ((0.0f<cast2)?val0.z:((__nv_fp8_e5m2)(INFINITY)));
-  __nv_fp8_e5m2 alu7 = ((cast3<-1.0f)?((__nv_fp8_e5m2)(NAN)):val0.w);
+  __nv_fp8_e5m2 alu7 = ((cast3<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.w);
   __nv_fp8_e5m2 alu8 = ((0.0f<cast3)?val0.w:((__nv_fp8_e5m2)(INFINITY)));
   __nv_fp8_e5m2 alu9 = ((cast0<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.x);
   __nv_fp8_e5m2 alu10 = ((cast1<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.y);

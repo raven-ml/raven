@@ -83,6 +83,8 @@ type lang = {
   type_map : (Dtype.t * string) list;
   infinity : string;
   nan : string;
+  bitcast : string -> string -> string -> string;
+      (* [bitcast t s x] reads [x], of type [s], as a [t] *)
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
   vector_names : (Dtype.t * string) list;
       (* the element names of vector types, where they are not type_map's *)
@@ -188,6 +190,20 @@ let special l v =
   else if Float.sign_bit v then "-" ^ l.infinity
   else l.infinity
 
+(* A NaN constant is a bitcast of its bits, which a conversion of the language's
+   NaN would lose: its sign and payload, a signalling NaN's quiet bit included.
+   A float64 NaN with bits 0x7ff0000020000000 is
+   [__builtin_bit_cast(double, (unsigned long)(0x7ff0000020000000ul))]. *)
+let nan_const ctx x v =
+  let dt = dtype x in
+  let u =
+    List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
+  in
+  let bits = Dtype.Value.to_z (Dtype.bitcast dt u (`Float v)) in
+  let suffix = if Dtype.equal u Dtype.Uint64 then "ul" else "u" in
+  ctx.lang.bitcast (render_type ctx.lang x) (render_scalar ctx.lang u)
+    (strf "0x%Lx%s" (Bigint.to_int64 (Bigint.signed_extract bits 0 64)) suffix)
+
 (* An integer constant is the value its type holds, the integer part of a float
    wrapped to the type's width, written as a literal of the type: a suffix
    states a 64-bit or unsigned type, a cast a narrower one, and the least int64
@@ -252,6 +268,7 @@ let base_rewrite =
       (* const *)
       r (cast_of ~dtype:Dtype.floats ~name:"x" c) (fun ctx m ->
           match value (m "c") with
+          | `Float v when Float.is_nan v -> Some (nan_const ctx (m "x") v)
           | `Float v when not (Float.is_finite v) ->
               Some (strf "(%s)" (render_cast ctx (m "x") (special ctx.lang v)))
           | _ -> None);
@@ -292,8 +309,8 @@ let base_rewrite =
           let x = m "x" in
           let s = nth x 0 in
           Some
-            (strf "__builtin_bit_cast(%s, (%s)(%s))" (render_type ctx.lang x)
-               (render_type ctx.lang s) ctx.%{s}));
+            (ctx.lang.bitcast (render_type ctx.lang x) (render_type ctx.lang s)
+               ctx.%{s}));
       (* GPU stuff *)
       r (Upat.op Op.Barrier) (fun ctx _ -> Some ctx.lang.barrier);
       r (Upat.op ~name:"x" Op.Special) (fun ctx m ->
@@ -654,6 +671,7 @@ let cstyle =
     type_map = [];
     infinity = "INFINITY";
     nan = "NAN";
+    bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Uint8; Int16; Uint16 ];
     vector_names = [];
     code_for_op;
@@ -1230,6 +1248,7 @@ let metal_lang =
         "uint3 lid [[thread_position_in_threadgroup]]";
       ];
     type_map = [ (Dtype.Uint32, "uint"); (Dtype.Bfloat16, "bfloat") ];
+    bitcast = strf "as_type<%s>((%s)(%s))";
     (* Metal's vector types are named after one-word elements *)
     vector_names =
       Dtype.
@@ -1247,7 +1266,7 @@ let metal_lang =
                  else
                    let s = nth x 0 in
                    Some
-                     (strf "as_type<%s>((%s)(%s))"
+                     (l.bitcast
                         (render_scalar l (dtype x))
                         (render_scalar l (dtype s))
                         ctx.%{s}));
@@ -1395,6 +1414,7 @@ let cuda_lang =
         (Dtype.Fp8e4m3, "__nv_fp8_e4m3");
         (Dtype.Fp8e5m2, "__nv_fp8_e5m2");
       ];
+    bitcast = strf "tg_bitcast<%s>((%s)(%s))";
     string_rewrite =
       Pattern_matcher.append
         (Pattern_matcher.fold
@@ -1424,7 +1444,7 @@ let cuda_lang =
                  else
                    let s = nth x 0 in
                    Some
-                     (strf "tg_bitcast<%s>((%s)(%s))"
+                     (l.bitcast
                         (render_scalar l (dtype x))
                         (render_scalar l (dtype s))
                         ctx.%{s}));
@@ -1614,12 +1634,14 @@ let cdna_rewrite =
           let l = ctx.lang in
           let v =
             match cval (m "c") with
-            | `Float v when Float.is_nan v -> l.nan
-            | `Float v when v = Float.infinity -> l.infinity
-            | `Float v when v = Float.neg_infinity -> "-" ^ l.infinity
-            | _ -> const_str (m "c") ^ "f"
+            | `Float v when Float.is_nan v -> None (* written from its bits *)
+            | `Float v when v = Float.infinity -> Some l.infinity
+            | `Float v when v = Float.neg_infinity -> Some ("-" ^ l.infinity)
+            | _ -> Some (const_str (m "c") ^ "f")
           in
-          Some (strf "f32_to_fp8(%s, %d)" v (fp8_index (dtype (m "x")))));
+          Option.map
+            (fun v -> strf "f32_to_fp8(%s, %d)" v (fp8_index (dtype (m "x"))))
+            v);
       rule_ctx
         (Upat.op ~dtype:Dtype.fp8s
            ~src:[ Upat.v ~dtype:[ Dtype.Float32 ] () ]

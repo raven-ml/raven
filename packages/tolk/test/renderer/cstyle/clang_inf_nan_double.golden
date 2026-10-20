@@ -12,7 +12,7 @@ __attribute__((min_vector_width(512))) void E_4_4(double* restrict data0_16, dou
     double val2 = (*(data1_16+alu3));
     double val3 = (*(data1_16+alu0));
     double4 cast0 = (double4){val3,val0,val1,val2};
-    double4 alu4 = ((cast0<-1.0)?((double)(__builtin_nanf(""))):cast0);
+    double4 alu4 = ((cast0<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):cast0);
     double4 alu5 = ((0.0<cast0)?cast0:((double)(__builtin_inff())));
     double4 alu6 = ((cast0<1.0)?((double)(-__builtin_inff())):cast0);
     double4 alu7 = (alu5+alu4+alu6);

@@ -212,16 +212,16 @@ __attribute__((min_vector_width(512))) void E(double* restrict data0_1, double* 
   double alu198 = (alu2?(((alu192+cast8)*1.6751713164886512e-10)+(alu192*1.4426950407214463)+((alu194-alu195)+alu193)+alu195):((double)(__builtin_inff())));
   double alu199 = ((val0!=0.0)?alu198:((double)(-__builtin_inff())));
   double alu200 = ((alu197!=((double)(-__builtin_inff())))?alu199:((double)(-__builtin_inff())));
-  double alu201 = ((val0<-0.0)?((double)(__builtin_nanf(""))):alu200);
+  double alu201 = ((val0<-0.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu200);
   double alu202 = (((val0<1024.0)!=1)?((double)(__builtin_inff())):(((((((((((((((((((((((4.4343590829265295e-10*alu196)+7.0731645980857074e-09)*alu196)+1.0178192609217605e-07)*alu196)+1.3215438725113276e-06)*alu196)+1.5252733535175847e-05)*alu196)+0.00015403530451011478)*alu196)+0.001333355814670499)*alu196)+0.0096181291075976)*alu196)+0.055504108664820466)*alu196)+0.24022650695910122)*alu196)+0.6931471805599453)*alu196)+1.0)*__builtin_bit_cast(double, (long)(((alu162+1023l)<<52l)))*__builtin_bit_cast(double, (long)((((cast2-alu162)+1023l)<<52l)))));
   double alu203 = ((val0<-2000.0)?0.0:alu202);
-  double alu204 = (alu0?((double)(__builtin_nanf(""))):alu201);
-  double alu205 = (alu0?((double)(__builtin_nanf(""))):alu203);
+  double alu204 = (alu0?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu201);
+  double alu205 = (alu0?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu203);
   double alu206 = (((alu187&2)!=0)?-alu189:alu189);
   double alu207 = ((alu5!=0.0)?alu206:alu5);
-  double alu208 = (alu1?alu207:((double)(__builtin_nanf(""))));
-  double alu209 = (alu0?((double)(__builtin_nanf(""))):alu208);
-  double alu210 = (alu2?alu209:((double)(__builtin_nanf(""))));
+  double alu208 = (alu1?alu207:__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)));
+  double alu209 = (alu0?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu208);
+  double alu210 = (alu2?alu209:__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)));
   *(data0_1+0) = (alu205+alu204+alu210+__builtin_sqrt(val0)+alu197+__builtin_trunc(val0));
 }
 

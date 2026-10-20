@@ -84,13 +84,13 @@ __attribute__((min_vector_width(512))) void E(__fp16* restrict data0_1, __fp16* 
   float alu70 = (alu2?(((alu66+cast8)*-0.00017605285393074155f)+(alu66*1.44287109375f)+((alu68-alu69)+alu67)+alu69):((float)(__builtin_inff())));
   float alu71 = ((cast0!=0.0f)?alu70:((float)(-__builtin_inff())));
   float alu72 = (((1.0f/cast0)!=((float)(-__builtin_inff())))?alu71:((float)(-__builtin_inff())));
-  float alu73 = ((cast0<-0.0f)?((float)(__builtin_nanf(""))):alu72);
-  float alu74 = (alu0?((float)(__builtin_nanf(""))):alu73);
+  float alu73 = ((cast0<-0.0f)?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu72);
+  float alu74 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu73);
   int alu75 = (cast3>>1);
   float alu76 = (alu5-((float)(cast3)));
   float alu77 = (((cast0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu76)+0.0013392627006396651f)*alu76)+0.009618384763598442f)*alu76)+0.055503472685813904f)*alu76)+0.24022644758224487f)*alu76)+0.6931471824645996f)*alu76)+1.0f)*__builtin_bit_cast(float, (int)(((alu75+127)<<23)))*__builtin_bit_cast(float, (int)((((cast3-alu75)+127)<<23)))));
   float alu78 = ((cast0<-150.0f)?0.0f:alu77);
-  float alu79 = (alu0?((float)(__builtin_nanf(""))):alu78);
+  float alu79 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu78);
   float alu80 = (((float)((alu61>>42l)))*4398046511104.0f);
   float alu81 = (((float)(((alu61>>21l)&2097151l)))*2097152.0f);
   float alu82 = (alu80+alu81);
@@ -120,9 +120,9 @@ __attribute__((min_vector_width(512))) void E(__fp16* restrict data0_1, __fp16* 
   float alu106 = (alu105*alu7);
   float alu107 = (((alu104&2)!=0)?-alu106:alu106);
   float alu108 = ((alu5!=0.0f)?alu107:alu5);
-  float alu109 = (alu1?alu108:((float)(__builtin_nanf(""))));
-  float alu110 = (alu0?((float)(__builtin_nanf(""))):alu109);
-  float alu111 = (alu2?alu110:((float)(__builtin_nanf(""))));
+  float alu109 = (alu1?alu108:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));
+  float alu110 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu109);
+  float alu111 = (alu2?alu110:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));
   *(data0_1+0) = (((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)(alu79))+((__fp16)(alu74)))))+((__fp16)(alu111)))))+((__fp16)(__builtin_sqrtf(val0))))))+((__fp16)((((__fp16)(1.0f))/val0))))))+((__fp16)(__builtin_truncf(val0))));
 }
 

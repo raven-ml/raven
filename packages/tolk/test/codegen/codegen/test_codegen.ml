@@ -2390,10 +2390,70 @@ let signed_zeros =
           equal (array Dtypes.value)
             (floats [| -0.; 1.; 2.; -0. |])
             (List.assoc (parameter slots 0) results));
+      test "Shape.pad by -0. computes -0. on the padding" (fun () ->
+          let x = Ops.new_buffer ~slot:1 (Single "CPU") 2 Float32 in
+          let value =
+            Shape.pad ~value:(`Float (-0.)) x [ Some (Ops.Int 1, Ops.Int 1) ]
+          in
+          let out = Ops.new_buffer ~slot:0 (Single "CPU") 4 Float32 in
+          let kernel, slots =
+            scheduled (Ops.sink [ Ops.after out [ Ops.store out value ] ])
+          in
+          let prg = Codegen.to_program kernel (Lazy.force host) in
+          let results = Run.on_host prg (input slots [| 1.; 2. |]) in
+          equal (array Dtypes.value)
+            (floats [| -0.; 1.; 2.; -0. |])
+            (List.assoc (parameter slots 0) results));
       prop "a pad and a selection of signed zeros keep the interpreter's bits"
         signed_zero_pads (fun (flip, fill, before, after, xs) ->
           padding_computed ~flip fill before after xs);
     ]
+
+(* NaN constants
+
+   A NaN constant is stored with its bits: its sign and its payload, a
+   signalling NaN staying one. *)
+
+let word w = `Int (Bigint.of_int64_unsigned w)
+
+let unsigned dt =
+  List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
+
+(* The bits [dt] stores into each element of a kernel that stores the NaN of
+   each word of [words]. *)
+let stored_nans dt words =
+  let out = Call.param ~shape:[ Int (List.length words) ] 0 dt in
+  let store i w =
+    let nan = Dtype.bitcast (unsigned dt) dt (word w) in
+    Ops.store
+      (Ops.index out [ Ops.int i ])
+      (Ops.const ~dtype:dt (nan :> Dtype.const))
+  in
+  let sink = Ops.sink ~kernel:(Ops.kernel_info ()) (List.mapi store words) in
+  let prg = Codegen.to_program sink (Lazy.force host) in
+  Array.map (Dtype.bitcast dt (unsigned dt)) (List.assoc 0 (Run.on_host prg []))
+
+let keeps_nan_bits (dt, words) =
+  equal (array Dtypes.value)
+    (Array.of_list (List.map word words))
+    (stored_nans dt words)
+
+let nan_constants =
+  cases
+    ~name:(fun (dt, _) -> Dtype.name dt)
+    "a NaN constant is stored with its sign and payload"
+    [
+      (Dtype.Float16, [ 0x7e00L; 0xfe05L; 0x7d01L; 0xfc01L ]);
+      (Float32, [ 0x7fc00000L; 0xffc00005L; 0x7f800001L; 0xff800003L ]);
+      ( Float64,
+        [
+          0x7ff8000000000000L;
+          0x7ff0000020000000L;
+          0xfff8000000000001L;
+          0xfff0000000000003L;
+        ] );
+    ]
+    keeps_nan_bits
 
 (* Casts to bfloat16
 
@@ -3016,6 +3076,7 @@ let () =
            takes_bfloat16;
          vectors;
          signed_zeros;
+         nan_constants;
          invalid_lanes;
          gated_stores;
          divisions;

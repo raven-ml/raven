@@ -4010,3 +4010,48 @@ submission, and a range a loop of rig's program (D146).
   of variable sizes; `Tolk.Simplify › pm_reduce_unparented › a reduction
   keeps its value over a range that may run no time`; the linearizer's
   `orders_output` goldens.
+
+## D155. A pad by -0. fills its padding with -0.
+
+- **tinygrad:** `mixin/op.py:289` (`_pad_constant`) and `:295` (`pad_to`),
+  which return the plain pad when `value == 0`, true of `-0.`.
+- **tolk:** `lib/uop/shape.ml:654` (`is_zero`), used by `:668` (`pad`) and
+  `:694` (`pad_to`).
+- **Differs:** a fill is left to the pad's own zeros only when its bits are
+  all zero. A `-0.` fill takes the selection off the padded mask, so the
+  padding holds `-0.` where tinygrad's holds `+0.`.
+- **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
+  rune lowers a padded load (`dev/nx2/rune/lib/lower.ml`, `padded`) through
+  `Shape.pad` with that fill, so its compiled pad must compute eager nx's
+  bits.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
+  Shape.pad by -0. computes -0. on the padding`.
+
+## D156. A NaN constant is written from its bits
+
+- **tinygrad:** `renderer/cstyle.py:25-26` (`base_rewrite` writes every NaN
+  constant as the language's `nan` cast to its type), `:138` (`NAN`), `:271`
+  (Clang's `__builtin_nanf("")`), `:445` (CUDA's
+  `#define NAN (__int_as_float(0x7fffffff))`) and `:504-506` (HIP's 8-bit
+  floats, `f32_to_fp8(NAN, …)`).
+- **tolk:** `lib/renderer/cstyle.ml:197` (`nan_const`), the `bitcast` of each
+  language (`:674`, `:1251`, `:1417`) and `cdna_rewrite` (`:1611`);
+  `test/gen/tinygrad.patch`, which renders tinygrad's NaN constants the same
+  way before the goldens are generated.
+- **Differs:** a NaN constant (D27) is written as the language's bitcast of
+  its bits, an unsigned literal of its width:
+  `__builtin_bit_cast(float, (unsigned int)(0xffc00005u))` in C and HIP,
+  `as_type<float>(…)` in Metal, `tg_bitcast<float>(…)` in CUDA. So a program
+  stores the constant's sign and payload, a signalling NaN staying one, where
+  tinygrad's stores the conversion of one NaN of the language: a float64 NaN
+  with bits `0x7ff0000020000000` is stored as `0x7ff8000000000000` by Clang,
+  and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
+  before.
+- **Reason:** (b). nx's values are their bits, and rune lowers every float
+  constant from those bits (`dev/nx2/rune/lib/lower.ml`, `padded`, fills a
+  padded load with its fill's bits through `Shape.pad`), so a compiled kernel
+  must store the bits eager nx stores.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
+  is stored with its sign and payload › *`, which runs a store of NaNs of both
+  signs, quiet and signalling, of half, float and double on the host; and the
+  `*_inf_nan_*` goldens of the `Cstyle` suite, for every renderer.

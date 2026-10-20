@@ -1673,13 +1673,23 @@ index 0dfa777..629350f 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 0dd26d2..dc05e40 100644
+index 0dd26d2..12985b9 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
-@@ -8,6 +8,19 @@ from tinygrad.helpers import strip_parens, getenv, prod, dedup, Target, IMAGE, F
- from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, to_storage_scalar
+@@ -5,9 +5,28 @@ from tinygrad.renderer import tc
+ from tinygrad.uop.ops import GroupOp, Ops, UOp, PatternMatcher, UPat, range_str, axis_letters
+ from tinygrad.uop.weak import commit_weak_consts
+ from tinygrad.helpers import strip_parens, getenv, prod, dedup, Target, IMAGE, FLOAT16, is_image_shape
+-from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, to_storage_scalar
++from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, to_storage_scalar, exact_bitcast
  from tinygrad.renderer import Renderer
  
++# a NaN constant is a bitcast of its bits, which a conversion of the language's NaN would lose: its sign and payload, a
++# signalling NaN's quiet bit included
++def _nan_const(ctx, x, v):
++  u = {1: dtypes.uint8, 2: dtypes.uint16, 4: dtypes.uint32, 8: dtypes.uint64}[x.dtype.itemsize]
++  return ctx.render_bitcast(ctx.render_type(x), ctx.render_dtype(u), f"0x{exact_bitcast(v, x.dtype, u):x}{'ul' if u == dtypes.uint64 else 'u'}")
++
 +# an integer constant is the value its type holds, the integer part of a float wrapped to the type's width, written as a
 +# literal of the type: the least int64 is a difference, its magnitude being no signed literal. an infinity or a NaN has
 +# no integer value, and converts as the program runs
@@ -1696,9 +1706,12 @@ index 0dd26d2..dc05e40 100644
  base_rewrite = PatternMatcher([
    # local/reg buffers
    (UPat(Ops.BUFFER, name="x"), lambda ctx,x: ctx.render_buffer(x)),
-@@ -25,14 +38,10 @@ base_rewrite = PatternMatcher([
+@@ -23,16 +42,12 @@ base_rewrite = PatternMatcher([
+ 
+   # const
    (UPat.cvar("c").cast(dtypes.floats, name="x"), lambda ctx,x,c: None if math.isfinite(v:=c.val) else \
-     f"({ctx.render_cast(x, ctx.nan if math.isnan(v) else ctx.infinity if v > 0 else f'-{ctx.infinity}')})"),
+-    f"({ctx.render_cast(x, ctx.nan if math.isnan(v) else ctx.infinity if v > 0 else f'-{ctx.infinity}')})"),
++    _nan_const(ctx, x, v) if math.isnan(v) else f"({ctx.render_cast(x, ctx.infinity if v > 0 else f'-{ctx.infinity}')})"),
    (UPat.cvar("c").cast(dtypes.float), lambda ctx,c: f"{c.val}f"),
 -  (UPat.cvar("c").cast(dtypes.int64), lambda ctx,c: f"{c.val}l"),
 -  (UPat.cvar("c").cast(dtypes.uint64, name="x"), lambda ctx,x,c: f"{truncate[x.dtype](c.val)}ul"),
@@ -1712,7 +1725,7 @@ index 0dd26d2..dc05e40 100644
    # default const render
    (UPat.cvar("c").cast(), lambda ctx,c: str(c.val)),
  
-@@ -64,7 +73,9 @@ base_rewrite = PatternMatcher([
+@@ -64,7 +79,9 @@ base_rewrite = PatternMatcher([
    # alu/gep
    (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]})"),
    (UPat(GroupOp.ALU, name="x"), lambda ctx,x: ctx.code_for_op[x.op](
@@ -1723,7 +1736,7 @@ index 0dd26d2..dc05e40 100644
  
    # call an external function: the CUSTOM_FUNCTION body holds the callee (a function pointer), the other srcs are the args
    (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, src=(UPat(name="fptr"),)),), allow_any_len=True, name="x"), lambda ctx,x,fptr:
-@@ -106,8 +117,9 @@ pm_manual_bf16_cast = PatternMatcher([
+@@ -106,8 +123,9 @@ pm_manual_bf16_cast = PatternMatcher([
  # a bfloat16 stored as ushort renders its const as the bit pattern
  pm_bf16_ushort_const = PatternMatcher([(UPat.cvar("c").cast(dtypes.bfloat16), lambda ctx,c: f"{to_storage_scalar(c.val, dtypes.bfloat16)}u")])
  
@@ -1735,7 +1748,7 @@ index 0dd26d2..dc05e40 100644
  
  def _wmma_name(u:UOp) -> str:
    # sanitize spaces in DType.name (int8 = "signed char")
-@@ -117,6 +129,24 @@ def _wmma_name(u:UOp) -> str:
+@@ -117,6 +135,24 @@ def _wmma_name(u:UOp) -> str:
  def wmma_args(uops:list[UOp]):
    return dedup((_wmma_name(uop), uop.arg[0], uop.arg[1], uop.dtype, tuple(x.shape[-1] for x in uop.src)) for uop in uops if uop.op is Ops.WMMA)
  
@@ -1760,7 +1773,7 @@ index 0dd26d2..dc05e40 100644
  class CStyleLanguage(Renderer):
    abi: str = ""
    kernel_typedef: str = "void"
-@@ -144,7 +174,8 @@ class CStyleLanguage(Renderer):
+@@ -144,7 +180,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.CMOD: lambda a,b,dtype: f"({a}%{b})", Ops.CDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -1770,7 +1783,15 @@ index 0dd26d2..dc05e40 100644
  
    string_rewrite = base_rewrite
  
-@@ -204,6 +235,7 @@ class CStyleLanguage(Renderer):
+@@ -195,6 +232,7 @@ class CStyleLanguage(Renderer):
+     else: return f"{self[u]}"
+   def render_access(self, u:UOp): return f"*{self.render_ptr(u)}"
+   def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
++  def render_bitcast(self, t:str, s:str, val:str) -> str: return f"__builtin_bit_cast({t}, ({s})({val}))"
+ 
+   # LEGACY
+   def render_dtype(self, dt:DType, mutable=True) -> str:
+@@ -204,6 +242,7 @@ class CStyleLanguage(Renderer):
    def _render(self, uops:list[UOp]) -> tuple[str, list[str], list[tuple[str,tuple[UOp,bool]]]]:
      r: dict[UOp, str] = {}
      self.r = r
@@ -1778,7 +1799,7 @@ index 0dd26d2..dc05e40 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -250,18 +282,102 @@ class CStyleLanguage(Renderer):
+@@ -250,18 +289,102 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -1883,7 +1904,7 @@ index 0dd26d2..dc05e40 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -277,7 +393,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -277,7 +400,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.TRUNC, Ops.RECIPROCAL]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -1893,7 +1914,7 @@ index 0dd26d2..dc05e40 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -292,7 +409,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -292,7 +416,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -1910,7 +1931,7 @@ index 0dd26d2..dc05e40 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -307,6 +432,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -307,6 +439,15 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -1926,7 +1947,31 @@ index 0dd26d2..dc05e40 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -424,7 +558,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -316,6 +457,7 @@ class OpenCLRenderer(CStyleLanguage):
+   smem_prefix = "__local "
+   barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
+   float4 = "(float4)"
++  def render_bitcast(self, t:str, s:str, val:str) -> str: return f"as_{t}(({s})({val}))"
+   code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
+   type_map = { dtypes.int8: "char", dtypes.uint8: "uchar", dtypes.uint32: "uint", dtypes.uint16: "ushort", dtypes.uint64: "ulong",
+               dtypes.bfloat16: "ushort" }
+@@ -343,6 +485,7 @@ class OpenCLRenderer(CStyleLanguage):
+                                       (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
+ 
+ class MetalRenderer(CStyleLanguage):
++  def render_bitcast(self, t:str, s:str, val:str) -> str: return f"as_type<{t}>(({s})({val}))"
+   def __init__(self, target:Target):
+     super().__init__(target)
+     from tinygrad.runtime.ops_metal import MetalCompiler
+@@ -398,6 +541,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+ _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
+ 
+ class CUDARenderer(CStyleLanguage):
++  def render_bitcast(self, t:str, s:str, val:str) -> str: return f"tg_bitcast<{t}>(({s})({val}))"
+   global_max = (2147483647, 65535, 65535)
+   local_max = (1024, 1024, 64)
+   shared_max = 49152
+@@ -424,7 +568,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -1936,7 +1981,19 @@ index 0dd26d2..dc05e40 100644
    type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
      (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
-@@ -519,7 +654,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -501,8 +646,9 @@ class HIPRenderer(CStyleLanguage):
+         (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
+           f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
+         (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
+-        (UPat.cvar("c").cast(dtypes.fp8s, name="x"), lambda ctx,x,c:
+-          f"f32_to_fp8({ctx.nan if math.isnan(v:=c.val) else ctx.infinity if v == math.inf else f'-{ctx.infinity}' if v == -math.inf else f'{v}f'},"
++        # a NaN is written from its bits
++        (UPat.cvar("c").cast(dtypes.fp8s, name="x"), lambda ctx,x,c: None if math.isnan(v:=c.val) else
++          f"f32_to_fp8({ctx.infinity if v == math.inf else f'-{ctx.infinity}' if v == -math.inf else f'{v}f'},"
+           f" {fp8_index(x.dtype)})"),
+         (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
+           lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
+@@ -519,7 +665,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),

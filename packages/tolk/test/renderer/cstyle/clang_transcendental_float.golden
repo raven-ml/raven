@@ -113,16 +113,16 @@ __attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* re
   float alu100 = (alu2?(((alu94+cast7)*-0.00017605285393074155f)+(alu94*1.44287109375f)+((alu96-alu97)+alu95)+alu97):((float)(__builtin_inff())));
   float alu101 = ((val0!=0.0f)?alu100:((float)(-__builtin_inff())));
   float alu102 = ((alu99!=((float)(-__builtin_inff())))?alu101:((float)(-__builtin_inff())));
-  float alu103 = ((val0<-0.0f)?((float)(__builtin_nanf(""))):alu102);
+  float alu103 = ((val0<-0.0f)?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu102);
   float alu104 = (((val0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu98)+0.0013392627006396651f)*alu98)+0.009618384763598442f)*alu98)+0.055503472685813904f)*alu98)+0.24022644758224487f)*alu98)+0.6931471824645996f)*alu98)+1.0f)*__builtin_bit_cast(float, (int)(((alu62+127)<<23)))*__builtin_bit_cast(float, (int)((((cast2-alu62)+127)<<23)))));
   float alu105 = ((val0<-150.0f)?0.0f:alu104);
-  float alu106 = (alu0?((float)(__builtin_nanf(""))):alu103);
-  float alu107 = (alu0?((float)(__builtin_nanf(""))):alu105);
+  float alu106 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu103);
+  float alu107 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu105);
   float alu108 = (((alu89&2)!=0)?-alu91:alu91);
   float alu109 = ((alu5!=0.0f)?alu108:alu5);
-  float alu110 = (alu1?alu109:((float)(__builtin_nanf(""))));
-  float alu111 = (alu0?((float)(__builtin_nanf(""))):alu110);
-  float alu112 = (alu2?alu111:((float)(__builtin_nanf(""))));
+  float alu110 = (alu1?alu109:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));
+  float alu111 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu110);
+  float alu112 = (alu2?alu111:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));
   *(data0_1+0) = (alu107+alu106+alu112+__builtin_sqrtf(val0)+alu99+__builtin_truncf(val0));
 }
 

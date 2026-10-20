@@ -649,10 +649,14 @@ let movement_pad u pads =
              (fun (before, after) s -> (before, Sint.(s + before + after)))
              pads (shape u))))
 
+(* Whether a fill's bits are all zero, which the padding's own zeros already
+   are: a [-0.] fill is not, as it differs from [+0.] in its sign bit. *)
 let is_zero (c : Dtype.const) =
   match c with
   | `Invalid -> false
-  | #Dtype.value as x -> Value.( = ) x (`Int Bigint.zero)
+  | `Bool b -> not b
+  | `Int n -> Bigint.equal n Bigint.zero
+  | `Float x -> Int64.equal (Int64.bits_of_float x) 0L
 
 let const_like ?dtype u c =
   let ret = const ?dtype:(Some (Option.value dtype ~default:(Ops.dtype u))) c in
