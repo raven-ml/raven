@@ -165,6 +165,21 @@ let load g bin =
       let m, bytes = lay r in
       (m, r, bytes)
 
+(* [bin] as [load] lays it, its bytes copied to its memory's start on the copy
+   queue from [Pinned] memory, so that its kernels run. *)
+let placed g bin =
+  let m, r, bytes = load g bin in
+  let n = String.length bytes in
+  let src = Option.get (A.alloc g Pinned n) in
+  H.write (host src) bytes;
+  let v = A.signaled g + 1 in
+  (match E.submit g ~v [| E.copy ~dst:(address r) ~src:(address src) n |] with
+  | `Ok -> ()
+  | `Failed why -> fail why);
+  S.reached g v;
+  A.free g src;
+  (m, r)
+
 (* Misuse *)
 
 let misuse () =
@@ -575,11 +590,11 @@ let held_growth () =
   let out = Option.get (A.alloc g Pinned (4 * n)) in
   H.set64 (host flag) 0;
   H.write (host out) (String.make (4 * n) '\000');
+  let m, r = placed g (read_fixture "hidden_gfx1201.hsaco") in
+  let wide = found (A.entry m "wide") in
   let v = A.signaled g + 1 in
   equal answer ~msg:"the hold" `Ok
     (E.submit g ~v ~waits:[| (address flag, 1) |] [||]);
-  let m, r, _ = load g (read_fixture "hidden_gfx1201.hsaco") in
-  let wide = found (A.entry m "wide") in
   let params i = le64 (4 * i) ^ le32s [ i + 1; 0 ] in
   let launches =
     Array.init n (fun i ->
