@@ -13,6 +13,7 @@
   pairwise
   expand
   partial
+  donate
   exec
   eval
   repr
@@ -33,6 +34,7 @@
   pairwise
   expand
   partial
+  donate
   exec
   eval
   repr

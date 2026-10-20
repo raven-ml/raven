@@ -457,7 +457,7 @@ let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
       fail "not on one device"
 
 let donated_add x =
-  let d = Exec.donate ~by:"t" x in
+  let d = Donate.donate ~by:"t" x in
   let y =
     first
       (Exec.run ~by:"t"
@@ -474,7 +474,7 @@ let test_reuse () =
 (* The same through the fast path of an elementwise operation. *)
 let test_reuse_fast () =
   let x = f32 [| 1.; 2. |] in
-  let d = Exec.donate ~by:"t" x in
+  let d = Donate.donate ~by:"t" x in
   let y =
     Exec.apply2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
   in
@@ -485,7 +485,7 @@ let test_reuse_fast () =
 (* The fast paths of one and three operands, each operand donated in turn. *)
 let test_reuse_fast1 () =
   let x = f32 [| 1.; 2. |] in
-  let y = Exec.apply1 ~by:"t" (Unary Neg) D.Float32 (Exec.donate ~by:"t" x) in
+  let y = Exec.apply1 ~by:"t" (Unary Neg) D.Float32 (Donate.donate ~by:"t" x) in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
   equal ~msg:"the result" (array bits) [| -1.; -2. |] (elements y)
@@ -502,7 +502,7 @@ let test_reuse_fast3 () =
   let where i =
     let ops = [| f32 [| 1.; 2. |]; f32 [| 3.; 4. |] |] in
     let x = ops.(i) in
-    ops.(i) <- Exec.donate ~by:"t" x;
+    ops.(i) <- Donate.donate ~by:"t" x;
     let y = Exec.apply3 ~by:"t" Where (c ()) ops.(0) ops.(1) in
     equal ~msg:"the result" (array bits) [| 1.; 4. |] (elements y);
     Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y))
@@ -511,7 +511,7 @@ let test_reuse_fast3 () =
   equal ~msg:"into the third, in place" bool true (where 1);
   let d = c () in
   let y =
-    Exec.apply3 ~by:"t" Where (Exec.donate ~by:"t" d)
+    Exec.apply3 ~by:"t" Where (Donate.donate ~by:"t" d)
       (f32 [| 1.; 2. |])
       (f32 [| 3.; 4. |])
   in
@@ -549,7 +549,7 @@ let test_no_reuse_strided () =
 let test_reuse_after_view () =
   let x = f32 [| 1.; 2. |] in
   let d =
-    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], Exec.donate ~by:"t" x))
+    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], Donate.donate ~by:"t" x))
   in
   let one =
     Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], f32 [| 1.; 1. |]))
@@ -566,7 +566,7 @@ let test_reuse_after_view () =
    sum. *)
 let test_contract_consumes () =
   let init = f32 [| 10.; 20. |] in
-  let d = Exec.donate ~by:"t" init in
+  let d = Donate.donate ~by:"t" init in
   let y =
     Exec.run ~by:"t"
       (Value.Contract

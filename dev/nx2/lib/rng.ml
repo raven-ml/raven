@@ -521,11 +521,11 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
 (* A sampler checks its parameters before it draws from them, so it reads
    each donated one once: [once ~by p f] is [f] of [p] read as a plain value,
    its donation consumed by the call [by] when [f] returns
-   ({!Exec.resolve}). *)
-let once ~by p f = Exec.resolve ~by [ Value.Any p ] (fun read -> f (read p))
+   ({!Donate.resolve}). *)
+let once ~by p f = Donate.resolve ~by [ Value.Any p ] (fun read -> f (read p))
 
 let once2 ~by a b f =
-  Exec.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
+  Donate.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
       f (read a) (read b))
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53

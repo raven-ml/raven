@@ -112,64 +112,7 @@ val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     function that made the constant. A value that is not a constant is returned
     as it is. *)
 
-val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [donate ~by x] is a handle over [x]'s memory that one operation reads
-    ({!Value.Donated}): [x] lives until that operation is called, then dies with
-    the handle, naming the operation; the operation reads [x] as it was when
-    called. An operation that reads the handle only at its first result's own
-    index (a map's plain load, a scatter's target, a contraction's [init], an
-    assembly's first piece over the whole result) writes that result into the
-    memory, where rig holds it exclusive (no other value reads it), it has the
-    result's dtype and C-contiguous layout, and the operation reads none of it
-    at other indices through another operand; the memory is consumed either
-    way where no other value reads it. A movement passes a new handle on
-    instead. A constant or a traced [x] is [x].
-
-    Raises [Invalid_argument] naming [by] if [x] is dead. *)
-
-val live : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [live x] is a handle's arrays as a live value, for an interpretation that
-    reads them; any other value as it is. *)
-
-val consume : by:string -> 'r Value.prim -> 'r Value.prim
-(** [consume ~by op] checks [op]'s operands and kills the donor of each handle
-    among them, naming [by], as {!run} does before it reads them, a movement's
-    too. It is [op] as it was when called: each handle as its arrays, and each
-    of their donors that is an operand itself as a live value. Raises
-    [Invalid_argument] naming [Nx.donate] for two handles of one donor, then
-    naming [by] for an operand that died. *)
-
-val resolve :
-  by:string ->
-  'd Value.any list ->
-  (('v 's. ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) -> 'a) ->
-  'a
-(** [resolve ~by xs k] is [k read], the call [by] consuming the donated
-    handles among its operands [xs] once, for a call that reads an operand
-    in more than one operation. [read] gives each handle's arrays, and each
-    of their donors among [xs], as live values; any other value as it is.
-    {!consume}'s checks run before [k], operand [i] being [xs]' element [i].
-    The donors die, naming [by], once [k] returns; if [k] raises, they and
-    their handles live on. [k]'s operations reuse none of their memory,
-    which is freed once no value holds it.
-
-    While [k] runs, a hold on the handles' memory ({!Rig.Claim.hold}) shares
-    it, so that a consumer that claims one of the handles meanwhile, on any
-    domain, computes into fresh memory and overwrites nothing [k] reads; the
-    claim after [k] then raises naming that consumer. The hold ends when [k]
-    returns or raises. *)
-
-val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
-(** [consume_list ~by xs] is {!consume} of a consumer [by] of the operands
-    [xs], which is no operation: [xs] as they were when it was called, the
-    donors of their handles dead. *)
-
-val is_handle : ('v, 's, 'd) Value.t -> bool
-(** [is_handle x] is [true] iff [x] is a handle ({!Value.Donated}), live or
-    not. *)
-
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
-
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
     checks the calling domain issued on [x]'s set: it reads them in issue order
     up to the first that fails, which raises its exception, and drops the later

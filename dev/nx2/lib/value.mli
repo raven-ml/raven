@@ -39,7 +39,7 @@ type ('v, 's, 'd) t =
       mutable dead : death; [@atomic]
     }
       (** On [at]'s one device. [dead] is [Died f] once the value was donated
-          to [f] ({!Exec.donate}). *)
+          to [f] ({!Donate.donate}). *)
   | Shards of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)

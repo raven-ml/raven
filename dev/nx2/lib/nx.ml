@@ -373,7 +373,7 @@ let readable ~by x =
   match Eval.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
   | None ->
-      let x = Exec.live x in
+      let x = Donate.live x in
       Exec.wait ~by x;
       x
 
@@ -599,15 +599,15 @@ let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
 
 let copy_by ~by x = Eval.eval ~by (Value.Copy x)
 let copy x = copy_by ~by:"Nx.copy" x
-let donate x = Exec.donate ~by:"Nx.donate" x
+let donate x = Donate.donate ~by:"Nx.donate" x
 
 (* A function that makes more than one operation reads each donated operand
    once: [once ~by x f] is [f] of [x] read as a plain value, its donation
-   consumed by the call [by] when [f] returns ({!Exec.resolve}). *)
-let once ~by x f = Exec.resolve ~by [ Value.Any x ] (fun read -> f (read x))
+   consumed by the call [by] when [f] returns ({!Donate.resolve}). *)
+let once ~by x f = Donate.resolve ~by [ Value.Any x ] (fun read -> f (read x))
 
 let once2 ~by a b f =
-  Exec.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
+  Donate.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
       f (read a) (read b))
 
 (* Shapes, broadcasting and movements *)
@@ -3354,7 +3354,7 @@ let histogram (type s d) ?weights
     List.concat_map (fun (e, x) -> [ Value.Any e; Value.Any x ]) dims
     @ List.map (fun w -> Value.Any w) (Option.to_list weights)
   in
-  Exec.resolve ~by operands @@ fun read ->
+  Donate.resolve ~by operands @@ fun read ->
   let dims = List.map (fun (e, x) -> (read e, read x)) dims in
   let weights = Option.map read weights in
   let points =
@@ -3889,7 +3889,7 @@ let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
 
 let reduce_ranges c ~lo ~hi x =
   let by = "Nx.reduce_ranges" in
-  Exec.resolve ~by [ Value.Any lo; Value.Any hi; Value.Any x ] @@ fun read ->
+  Donate.resolve ~by [ Value.Any lo; Value.Any hi; Value.Any x ] @@ fun read ->
   let lo = read lo and hi = read hi and x = read x in
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
@@ -4360,7 +4360,7 @@ type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 
 let causal p =
   let by = "Nx.causal" in
-  Exec.resolve ~by [ Value.Any p.q; Value.Any p.k; Value.Any p.len ]
+  Donate.resolve ~by [ Value.Any p.q; Value.Any p.k; Value.Any p.len ]
   @@ fun read ->
   let last = scalar_binary ~by (Binary Sub) (read p.len) (Int64.of_int p.tq) in
   let seen = binary ~by (Binary Add) (read p.q) last in
@@ -4712,7 +4712,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     @ Option.to_list (Option.map (fun l -> Value.Any l) lengths)
     @ List.map (fun (Captured (_, x)) -> Value.Any x) captures
   in
-  Exec.resolve ~by operands @@ fun read ->
+  Donate.resolve ~by operands @@ fun read ->
   let k, v, positions =
     match kv with
     | Dense { k; v } -> (read k, read v, None)
@@ -5140,7 +5140,7 @@ let stft dt ~window ?step ?win x =
   let operands =
     Value.Any x :: List.map (fun w -> Value.Any w) (Option.to_list win)
   in
-  Exec.resolve ~by operands @@ fun read ->
+  Donate.resolve ~by operands @@ fun read ->
   let x = read x and win = Option.map read win in
   let step = frame_step ~window step in
   if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
@@ -5158,7 +5158,7 @@ let istft dt ~window ?step ?win ?length z =
   let operands =
     Value.Any z :: List.map (fun w -> Value.Any w) (Option.to_list win)
   in
-  Exec.resolve ~by operands @@ fun read ->
+  Donate.resolve ~by operands @@ fun read ->
   let z = read z and win = Option.map read win in
   let step = frame_step ~window step in
   let r = ndim z in
@@ -5246,7 +5246,7 @@ let pp ppf x =
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
             in
-            let x = Exec.live x in
+            let x = Donate.live x in
             match Exec.wait ~by:"Nx.pp" x with
             | exception Rig.Lost (d, why) -> lost d why
             | () -> (
@@ -5310,7 +5310,7 @@ module Ptree = struct
 
   let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
     let by = "Nx.Ptree.dot" in
-    Exec.resolve ~by (operands s x @ operands s y) @@ fun read ->
+    Donate.resolve ~by (operands s x @ operands s y) @@ fun read ->
     let acc = ref (fill ~by dt [||] 0.) in
     let term : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
@@ -5330,7 +5330,7 @@ module Ptree = struct
      representable, computed at [dt]'s carrier, float32 for a narrower float. *)
   let norm (type c d) s (dt : (float, c) dtype) x : (float, c, d) tensor =
     let by = "Nx.Ptree.norm" in
-    Exec.resolve ~by (operands s x) @@ fun read ->
+    Donate.resolve ~by (operands s x) @@ fun read ->
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let add_components _ a acc =
       List.rev_append (components ~by w (read a)) acc
@@ -5361,7 +5361,7 @@ module Ptree = struct
   let scale (type d) s (k : (float, _, d) tensor) x =
     let by = "Nx.Ptree.scale" in
     factor ~by k;
-    Exec.resolve ~by (Value.Any k :: operands s x) @@ fun read ->
+    Donate.resolve ~by (Value.Any k :: operands s x) @@ fun read ->
     let k = read k in
     let f : type v r. Path.t -> (v, r, d) tensor -> (v, r, d) tensor =
      fun _ a ->
@@ -5373,7 +5373,7 @@ module Ptree = struct
   let axpy (type d) s (k : (float, _, d) tensor) x y =
     let by = "Nx.Ptree.axpy" in
     factor ~by k;
-    Exec.resolve ~by ((Value.Any k :: operands s x) @ operands s y)
+    Donate.resolve ~by ((Value.Any k :: operands s x) @ operands s y)
     @@ fun read ->
     let k = read k in
     let f : type v r.
@@ -5398,7 +5398,7 @@ module Ptree = struct
     in
     let noted = { tensor = (fun _ a -> note a); report = (fun _ _ -> ()) } in
     ignore (walk (module U) note noted x);
-    Exec.resolve ~by (List.rev !seen) @@ fun read ->
+    Donate.resolve ~by (List.rev !seen) @@ fun read ->
     let placed a = Eval.place ~by p (read a) in
     let visitor =
       { tensor = (fun _ a -> placed a); report = (fun _ _ -> ()) }
@@ -5414,7 +5414,7 @@ module Ptree = struct
       a
     in
     ignore (walk (module U) note keep x);
-    Exec.resolve ~by (List.rev !seen) @@ fun read ->
+    Donate.resolve ~by (List.rev !seen) @@ fun read ->
     walk (module U) (fun a -> cast_by ~by dt (read a)) keep x
 end
 
@@ -5502,7 +5502,7 @@ let associative_scan ?axis:(a = 0) s f x =
   in
   if Array.length states = 0 then x
   else
-    Exec.resolve ~by (Array.to_list states) @@ fun read ->
+    Donate.resolve ~by (Array.to_list states) @@ fun read ->
     let states = Array.map (fun (Value.Any t) -> Value.Any (read t)) states in
     structure (Pairwise.circuit Eval.eval ~by axes combine states)
 
@@ -5726,8 +5726,8 @@ module Prim = struct
   let payload = Eval.payload
   let owner = Eval.owner
   let quiet = Eval.quiet
-  let donated = Exec.is_handle
-  let consume = Exec.consume_list
+  let donated = Donate.is_handle
+  let consume = Donate.consume_list
   let eval = Eval.eval
   let expand = Eval.expand
 end

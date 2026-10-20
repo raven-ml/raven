@@ -172,7 +172,7 @@ let donation =
             scatter Set 1
               (positions [| 2; 1 |] [| 2; 0 |])
               (on D.Int32 [| 2; 1 |] [| 9l; 8l |])
-              (Exec.donate ~by:"t" x)
+              (Donate.donate ~by:"t" x)
           in
           equal ~msg:"a copy" bool false
             (Rig.Buffer.overlaps

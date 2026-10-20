@@ -23,7 +23,7 @@
     its rule did not return, rebuilt at the operand's brand, in dependency
     order, each node once per operand; the operation reads its results. The
     operation is the final consumer of its donated handles, a movement too: it
-    kills their donors ({!Exec.consume}), and each handle reaches the rule as
+    kills their donors ({!Donate.consume}), and each handle reaches the rule as
     its arrays. Other operands reach the rule as they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
