@@ -13,16 +13,19 @@ let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
-let of_array ~by s a =
+let unsafe_of_array ~by s a =
   match Devices.position s (A.device a) with
-  | Some k ->
-      (* Its caller keeps the array: no donation writes this memory. *)
-      Rig.Claim.share (A.buffer a);
-      Value.Array { at = Devices.one s k; a; dead = Value.Live }
+  | Some k -> Value.Array { at = Devices.one s k; a; dead = Value.Live }
   | None ->
       invalid_argf "%s: the array lies on %s, which is not a device of %a" by
         (Rig.name (A.device a))
         Devices.pp s
+
+let of_array ~by s a =
+  let x = unsafe_of_array ~by s a in
+  (* Its caller keeps the array: no donation writes this memory. *)
+  Rig.Claim.share (A.buffer a);
+  x
 
 let of_shards ~by p arrays =
   let set = Devices.set p and devices = Grid.devices (Devices.grid p) in

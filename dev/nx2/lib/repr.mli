@@ -9,6 +9,9 @@
 val of_array :
   by:string -> 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) Value.t
 
+val unsafe_of_array :
+  by:string -> 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) Value.t
+
 val array : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t option
 
 val of_shards :

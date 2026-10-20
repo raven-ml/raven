@@ -45,7 +45,8 @@ val value :
 (** [value b dt l] is the host value of [dt] elements laid out by [l] over [b],
     bytes of a file or of host memory, in the host's byte order. It reads [b]'s
     own memory where [b] starts on a multiple of [alignment dt] and the host
-    maps it, and a copy of [b]'s bytes otherwise.
+    maps it, which no donation of the value writes, and otherwise a copy of
+    [b]'s bytes, which the value owns ({!Nx.Repr.unsafe_of_array}).
 
     Raises [Invalid_argument] as {!Nx_array.v} does. *)
 

@@ -25,8 +25,9 @@ let load ?(grayscale = false) path =
     Save.file path @@ fun () -> Codec.decode ~grayscale (map_file path)
   in
   let shape = if grayscale then [| h; w |] else [| h; w; 3 |] in
-  let pixels = Bigarray.reshape (Bigarray.genarray_of_array1 pixels) shape in
-  Nx.Repr.of_array Nx.Host.v (A.of_bigarray A.Dtype.Uint8 pixels)
+  (* The decoded pixels are the value's alone. *)
+  Nx.Repr.unsafe_of_array Nx.Host.v
+    (A.v A.Dtype.Uint8 (L.contiguous shape) pixels)
 
 (* Saving *)
 

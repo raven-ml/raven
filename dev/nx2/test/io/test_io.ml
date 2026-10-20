@@ -111,14 +111,11 @@ let saves =
               Nx_io.save_npy (temp_file ()) x));
       (let device = Nx_support.memory 3 in
        let module Mem = (val Nx.devices [ device ]) in
-       (* Fresh values in memory of their own, computed where they lie: a value
-          made from OCaml data, or placed from the host onto a memory device,
+       (* Values in memory of their own: one made from OCaml data, and one
+          computed on a memory device, since a placement onto it from the host
           shares the host's memory. *)
        let on_host () =
-         let x =
-           Nx.create Nx.float32 [| 1 lsl 16 |] (Array.make (1 lsl 16) 1.)
-         in
-         Nx.add x (Nx.zeros_like x)
+         Nx.create Nx.float32 [| 1 lsl 16 |] (Array.make (1 lsl 16) 1.)
        in
        let on_mem () =
          let x = Nx.place Mem.on (on_host ()) in
@@ -535,6 +532,23 @@ let payload path =
 
 let u8_entry name = raw_safetensors [ (name, "U8", [ 1 ], "\042") ]
 
+(* [f (make ())] and the bytes the host holds more after it, read once
+   collected memory has returned. One uncounted run comes first. *)
+let host_grown make f =
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  ignore (f (make ()));
+  let x = make () in
+  let before = settled () in
+  let y = f x in
+  (y, Rig.allocated Rig.host - before)
+
 let safetensors =
   group "safetensors"
     [
@@ -586,6 +600,29 @@ let safetensors =
           in
           is_true ~msg:"aligned" (over_file (u32 0));
           is_false ~msg:"one byte past" (over_file (u32 1)));
+      test
+        "a misaligned entry's donation writes in place, and an aligned one's \
+         leaves the file's pages" (fun () ->
+          let n = 1 lsl 14 in
+          (* [n] float32 ones, little-endian. *)
+          let ones =
+            String.concat "" (List.init n (fun _ -> "\000\000\128\063"))
+          in
+          let negated pad =
+            let path =
+              file (raw_safetensors ~pad [ ("x", "F32", [ n ], ones) ])
+            in
+            let load () =
+              Nx.unpack Nx.float32 (find (Nx_io.load_safetensors path) "x")
+            in
+            let y, grew = host_grown load (fun x -> Nx.neg (Nx.donate x)) in
+            equal (array float_exact) (Array.make n (-1.)) (Nx.to_array y);
+            grew
+          in
+          less ~msg:"misaligned: no memory of the result's size" int
+            ~than:(4 * n) (negated 1);
+          at_least ~msg:"aligned: a fresh result" int ~than:(4 * n)
+            (negated 0));
       test "a header's JSON string escapes are decoded" (fun () ->
           equal (list string)
             [ "aé🚀\"\\/\b\012\r\n\t" ]

@@ -10,10 +10,10 @@
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-val decode : grayscale:bool -> bytes -> bytes * int * int
-(** [decode ~grayscale src] is the pixels of the PNG or JPEG stream [src], with
-    its height and width: one channel with [grayscale], three otherwise, row by
-    row from the top.
+val decode : grayscale:bool -> bytes -> Rig.Buffer.t * int * int
+(** [decode ~grayscale src] is the pixels of the PNG or JPEG stream [src], in
+    fresh host memory, with its height and width: one channel with
+    [grayscale], three otherwise, row by row from the top.
 
     Raises [Failure] if [src] is no such stream, or a malformed one. *)
 

@@ -43,6 +43,23 @@ let loads_or_fails ~path f =
   | exception Failure m when String.starts_with ~prefix:(path ^ ": ") m -> ()
   | exception e -> failf "%s raised %s" path (Printexc.to_string e)
 
+(* [f (make ())] and the bytes the host holds more after it, read once
+   collected memory has returned. One uncounted run comes first. *)
+let host_grown make f =
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  ignore (f (make ()));
+  let x = make () in
+  let before = settled () in
+  let y = f x in
+  (y, Rig.allocated Rig.host - before)
+
 (* Images compare as their shapes and pixels. *)
 let image =
   Testable.make ~pp:Nx.pp ~equal:(fun a b ->
@@ -241,34 +258,31 @@ let round_trips =
       test "a save leaves its image's memory to the image's next donation"
         (fun () ->
           let n = 256 in
-          (* A fresh image, computed in memory of its own: a value made from
-             OCaml data shares its memory. *)
+          (* An image made from OCaml data, in memory of its own. *)
           let make () =
-            let x =
-              Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7)
-            in
-            Nx.add x (Nx.zeros_like x)
+            Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7)
           in
           let saved_then_donated x =
             Nx_image.save (temp_file ~suffix:".png" ()) x;
             Nx.neg (Nx.donate x)
           in
-          (* The bytes the host holds once collected memory has returned. *)
-          let settled () =
-            for _ = 1 to 4 do
-              Gc.full_major ();
-              ignore (Rig.Buffer.create Rig.host 0);
-              Rig.free_cache Rig.host
-            done;
-            Rig.allocated Rig.host
+          let y, grew = host_grown make saved_then_donated in
+          less ~msg:"no memory of the result's size" int ~than:(n * n * 3)
+            grew;
+          equal (array int) [| 249 |]
+            (Nx.to_array (Nx.slice [ Nx.I 0; Nx.I 0; Nx.R (0, 1) ] y)));
+      test "a loaded image's donation writes in place" (fun () ->
+          let n = 256 in
+          let path = temp_file ~suffix:".png" () in
+          Nx_image.save path
+            (Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7));
+          let y, grew =
+            host_grown
+              (fun () -> Nx_image.load path)
+              (fun x -> Nx.neg (Nx.donate x))
           in
-          ignore (saved_then_donated (make ()));
-          let x = make () in
-          let before = settled () in
-          let y = saved_then_donated x in
-          less ~msg:"no memory of the result's size" int
-            ~than:(n * n * 3)
-            (Rig.allocated Rig.host - before);
+          less ~msg:"no memory of the result's size" int ~than:(n * n * 3)
+            grew;
           equal (array int) [| 249 |]
             (Nx.to_array (Nx.slice [ Nx.I 0; Nx.I 0; Nx.R (0, 1) ] y)));
       test "a value of another set saves" (fun () ->

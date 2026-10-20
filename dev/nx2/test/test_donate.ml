@@ -311,26 +311,30 @@ let on_mem s xs =
 
 let positions s ps = Nx.place Mem.on (Nx.create Nx.int64 s ps)
 
-(* The bytes [device] holds after four rounds of collection, each of which
-   returns to the device what it collected. *)
-let settled () =
+(* The bytes [d] holds after four rounds of collection, each of which returns
+   to the device what it collected. *)
+let settled_on d =
   for _ = 1 to 4 do
     Gc.full_major ();
-    ignore (Rig.Buffer.create device 0);
-    Rig.free_cache device
+    ignore (Rig.Buffer.create d 0);
+    Rig.free_cache d
   done;
-  Rig.allocated device
+  Rig.allocated d
 
-(* [f (make ())] and the bytes [device] holds more after it, its cache
-   included, so that a donor freed after a copy still counts. One uncounted
-   run comes first, and the count before is read settled, so that no memory
-   collected late serves the counted run. *)
-let grown make f =
+let settled () = settled_on device
+
+(* [f (make ())] and the bytes [d] holds more after it, its cache included, so
+   that a donor freed after a copy still counts. One uncounted run comes
+   first, and the count before is read settled, so that no memory collected
+   late serves the counted run. *)
+let grown_on d make f =
   ignore (f (make ()));
   let inputs = make () in
-  let before = settled () in
+  let before = settled_on d in
   let y = f inputs in
-  (y, Rig.allocated device - before)
+  (y, Rig.allocated d - before)
+
+let grown make f = grown_on device make f
 
 (* A cache of [rows] rows of [width] float32, row [r] holding [r], and its
    bytes. *)
@@ -351,6 +355,29 @@ let in_place ~msg ~bytes grew =
 
 let copied ~msg ~bytes grew =
   at_least ~msg:(msg ^ ": a fresh result") int ~than:bytes grew
+
+(* A value made from OCaml data, or over an array its caller gives up, owns its
+   memory, which its donation then writes; one over an array its caller keeps
+   shares it. *)
+let test_made_in_place () =
+  let n = 1 lsl 16 in
+  let xs = Array.make n 1. in
+  let negated ~msg make =
+    let y, grew = grown_on Rig.host make (fun x -> Nx.neg (Nx.donate x)) in
+    equal ~msg (array float_exact) (Array.make n (-1.)) (elements y);
+    grew
+  in
+  let in_place ~msg make =
+    less ~msg:(msg ^ ": no memory of the result's size") int ~than:(4 * n)
+      (negated ~msg make)
+  in
+  in_place ~msg:"Nx.create" (fun () -> Nx.create f32 [| n |] xs);
+  in_place ~msg:"Nx.init" (fun () -> Nx.init f32 [| n |] (fun _ -> 1.));
+  in_place ~msg:"Nx.Repr.unsafe_of_array" (fun () ->
+      Nx.Repr.unsafe_of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs));
+  at_least ~msg:"Nx.Repr.of_array: a fresh result" int ~than:(4 * n)
+    (negated ~msg:"Nx.Repr.of_array" (fun () ->
+         Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs)))
 
 let test_set_in_place () =
   let check ~msg idx s =
@@ -1883,6 +1910,8 @@ let () =
            ];
          group "reuse"
            [
+             test "a value that owns its memory is written in place"
+               test_made_in_place;
              test "set writes into a donated target" test_set_in_place;
              test "scatter writes into a donated target" test_scatter_in_place;
              test "contract writes into a donated init" test_init_in_place;

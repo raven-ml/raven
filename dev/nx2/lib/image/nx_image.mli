@@ -38,7 +38,8 @@ val load : ?grayscale:bool -> string -> Nx.host Nx.uint8_t
     image loads as three equal channels, and [~grayscale:true] reads a colour
     image as its luma [0.299 R + 0.587 G + 0.114 B] (ITU-R BT.601), within one
     level. A 16-bit sample keeps its high byte, and a sample of 1, 2 or 4 bits
-    is scaled to 8 bits, rounded to nearest.
+    is scaled to 8 bits, rounded to nearest. The image lies in host memory of
+    its own, which its donation may write ({!Nx.donate}).
 
     Raises [Failure] if the file is no PNG or JPEG stream, or a malformed or
     truncated one, or if a checksum does not match. *)

@@ -19,6 +19,9 @@
     as Metal's, shares the pages, and onto any other device copies them
     ({!Rig.reaches}). Any other array (a compressed npz entry, a big-endian one,
     one at a misaligned offset) is read at load into host memory of its own.
+    No donation of a value over the file's pages writes them; a big-endian or
+    misaligned array's donation may write its result in place
+    ({!Nx.donate}).
 
     A file stays open while a value over its pages is reachable, and its values
     see the file that was opened: a save to its path, which puts a new file

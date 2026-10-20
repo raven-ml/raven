@@ -322,7 +322,13 @@ let of_values (type v s) ~by (dt : (v, s) D.t) s (vs : v array) =
   (match D.kind dt with
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (Prim.check_value ~by dt) vs);
-  on_host (Nx_array.of_array dt s vs)
+  (* The array is the value's alone, so a donation may write into it. *)
+  Value.Array
+    {
+      at = Devices.one Host.v 0;
+      a = Nx_array.of_array dt s vs;
+      dead = Value.Live;
+    }
 
 let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
@@ -383,6 +389,9 @@ let read ~by x = Exec.on_host ~by (readable ~by x)
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
+
+  let unsafe_of_array s a =
+    Repr.unsafe_of_array ~by:"Nx.Repr.unsafe_of_array" s a
   let array = Repr.array
   let of_shards p arrays = Repr.of_shards ~by:"Nx.Repr.of_shards" p arrays
   let shards = Repr.shards

@@ -3829,10 +3829,24 @@ module Repr : sig
   val of_array : 'd devices -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
   (** [of_array s a] is the value whose bytes are [a]'s. The value reads [a]'s
       memory from then on: a write to it through any handle leaves what values
-      over it read unspecified.
+      over it read unspecified. The memory stays its caller's: no donation of
+      the value writes it ({!donate}).
 
       Raises [Invalid_argument] naming [Nx.Repr.of_array] unless [a] lies on a
       device of [s]. *)
+
+  val unsafe_of_array : 'd devices -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
+  (** [unsafe_of_array s a] is {!of_array}[ s a] for an [a] its caller gives
+      up: the value owns [a]'s memory, as it owns memory nx allocated for it,
+      so a donation of the value may write its result there ({!donate}).
+
+      {b Warning.} After the call, the caller must not read, write or keep
+      [a], an array over its memory or a bigarray over it, and no other value
+      may read that memory: a donation of the value would change what they
+      read.
+
+      Raises [Invalid_argument] naming [Nx.Repr.unsafe_of_array] unless [a]
+      lies on a device of [s]. *)
 
   val array : ('v, 's, 'd) t -> ('v, 's) Nx_array.t option
   (** [array x] is [Some a] iff [x] has bytes on one device, [a] its array, and
