@@ -144,9 +144,10 @@ val attach : 's lock -> siblings:bool -> unit
     another driver stays bound, and the bus is rescanned and its
     [driver_override] cleared if that is set. With [siblings], each other
     function of its device that [vfio-pci] holds, or whose [driver_override]
-    names it, is unbound from it, has its [driver_override] cleared and its
-    drivers probed. Raises {!Fail.Failed} if no driver takes the function or
-    such another one. *)
+    names it, has its [driver_override] set to [vfio-pci] and is unbound
+    from it first, and has its [driver_override] cleared and its drivers
+    probed last. Raises {!Fail.Failed} if [vfio-pci] stays bound to such
+    another one, or if no driver takes the function or such another one. *)
 
 val reset : t -> string -> unit
 (** [reset m bus] resets [bus] with the reset Linux has for it. *)

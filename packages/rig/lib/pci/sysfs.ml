@@ -429,6 +429,21 @@ let unbind m f =
         Fail.fail "the driver %s stays bound to %s" d f
   | _ -> ()
 
+(* A GPU's kernel driver may read the driver data of its device's other
+   functions as its own driver's: NVIDIA's nv_audio_dynamic_power
+   (kernel-open/nvidia/nv.c) reads an audio function's as an ALSA card, and
+   walks vfio-pci's as one. An unbound function's is NULL, which it skips. So
+   a function's other functions leave vfio-pci before its kernel driver
+   probes or unbinds. Each keeps an override that names vfio-pci, so that a
+   change that fails after this leaves it for {!attach} to find. *)
+let release m f =
+  write m (override m f) vfio_pci;
+  if driver_of m f = Some vfio_pci then begin
+    write m (path m f "driver/unbind") f;
+    if driver_of m f <> None then
+      Fail.fail "the driver %s stays bound to %s" vfio_pci f
+  end
+
 (* A function detach leaves on no driver masters the bus no more: without an
    IOMMU it could write any host memory. Behind one that translates, the
    functions it moves stay unbound until {!bind}. The other functions go
@@ -485,15 +500,26 @@ let reset m bus = write m (path m bus "reset") "1"
    its driver off it at the next probe. With [siblings], each other function of
    the device that vfio-pci holds or that its override keeps for vfio-pci, as a
    detach behind a translating IOMMU leaves it, goes back to its driver the
-   same way. *)
+   same way. Each is released before the function's probe, and has its
+   override cleared and its driver probed after it. An attach that fails at
+   the probe, as when the GPU's driver is not loaded, leaves them for the
+   next attach. *)
 let give_back m f =
-  if driver_of m f = Some vfio_pci then write m (path m f "driver/unbind") f;
   write m (override m f) "\n";
   write m (Filename.concat m.bus_files "drivers_probe") f;
   if driver_of m f = None then
     Fail.fail "no kernel driver took %s; load its module first" f
 
 let attach { files = m; bus; _ } ~siblings:others =
+  let held =
+    if not others then []
+    else
+      List.filter
+        (fun f ->
+          driver_of m f = Some vfio_pci || read (override m f) = vfio_pci)
+        (siblings m bus)
+  in
+  List.iter (release m) held;
   (match driver_of m bus with
   | Some d when d <> vfio_pci ->
       if not (List.mem (read (override m bus)) [ ""; "(null)" ]) then begin
@@ -508,12 +534,7 @@ let attach { files = m; bus; _ } ~siblings:others =
       write m (Filename.concat m.bus_files "drivers_probe") bus;
       if driver_of m bus = None then
         Fail.fail "no kernel driver took %s; load its module first" bus);
-  if others then
-    List.iter
-      (fun f ->
-        if driver_of m f = Some vfio_pci || read (override m f) = vfio_pci then
-          give_back m f)
-      (siblings m bus)
+  List.iter (give_back m) held
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size

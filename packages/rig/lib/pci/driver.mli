@@ -46,7 +46,14 @@ type siblings =
   | Remove
       (** {!detach} removes them from the machine until {!attach} or a reboot.
           Behind an IOMMU that translates, it binds them to [vfio-pci] with the
-          function instead, and {!attach} gives them back to their drivers. *)
+          function instead, and {!attach} gives them back to their drivers.
+
+          A kernel driver may read the data of the drivers of its device's
+          other functions as its own driver's for as long as it is bound, as
+          NVIDIA's reads an audio function's as a sound card's. So {!attach}
+          never binds one of them to [vfio-pci] while the function's kernel
+          driver is bound, one that fails included, and takes each off
+          [vfio-pci] before that driver's probe. *)
   | Keep
       (** {!detach} leaves them, and refuses a function that is not bound to
           [vfio-pci] while its device has any and Linux resets it through its
@@ -320,12 +327,18 @@ val attach : t -> Machine.t -> int -> (unit, string) result
     has Linux rescan the bus and clears the override. With [Remove]
     ({!type-siblings}), each other function of the device on [vfio-pci], or
     whose [driver_override] names it, as {!detach} behind a translating IOMMU
-    leaves them, goes back to its driver the same way.
+    leaves them, is unbound from [vfio-pci] before the function's drivers are
+    probed, and goes back to its driver after. An [attach] that fails at that
+    probe leaves the function unbound and disabled, and each such other
+    function unbound with its [driver_override] naming [vfio-pci]. Loading
+    the kernel driver's module then binds the function, and the next [attach]
+    gives the others back.
 
-    [Error why] if no kernel driver takes the function or such another function,
-    such as when the kernel driver's module is not loaded. [Error why], with the
-    function left as it was but bound to [vfio-pci] where it was bound for the
-    reset, if [vfio-pci] or the reset fails, and [why] says how to proceed. An
+    [Error why] if [vfio-pci] stays bound to such another function, or if no
+    kernel driver takes the function or such another function, such as when
+    the kernel driver's module is not loaded. [Error why], with the function
+    left as it was but bound to [vfio-pci] where it was bound for the reset,
+    if [vfio-pci] or the reset fails, and [why] says how to proceed. An
     exception raised by the driver's reset passes through, with the function
     left the same way. *)
 

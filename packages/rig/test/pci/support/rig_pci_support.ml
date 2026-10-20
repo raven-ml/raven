@@ -642,19 +642,21 @@ module Tree = struct
         Unix.unlink (fn_dir k bus / "driver"))
       (driver_of k bus)
 
-  (* A probe binds an unbound function to the driver its [driver_override]
-     names, or to its own without one, if that driver is loaded. A driver's
-     probe runs while it is bound, so a bind is recorded after the link. *)
+  (* The driver a probe may bind to [bus]: the one its [driver_override]
+     names, or its own without one. *)
+  let named k bus =
+    let override = fn_dir k bus / "driver_override" in
+    match In_channel.with_open_bin override In_channel.input_all with
+    | s when List.mem (String.trim s) [ ""; "(null)" ] ->
+        List.assoc_opt bus k.drivers
+    | s -> Some (String.trim s)
+
+  (* A probe binds an unbound function to its named driver if that driver is
+     loaded. A driver's probe runs while it is bound, so a bind is recorded
+     after the link. *)
   let probe k bus =
     if driver_of k bus = None then
-      let named =
-        let override = fn_dir k bus / "driver_override" in
-        match In_channel.with_open_bin override In_channel.input_all with
-        | s when List.mem (String.trim s) [ ""; "(null)" ] ->
-            List.assoc_opt bus k.drivers
-        | s -> Some (String.trim s)
-      in
-      match named with
+      match named k bus with
       | Some d when Sys.file_exists (pci k / "drivers" / d) ->
           relative
             (Unix.realpath (fn_dir k bus) / "driver")
@@ -736,18 +738,36 @@ module Tree = struct
         | _ -> ())
       (Sys.readdir dir)
 
+  let make_driver k d =
+    write (pci k / "drivers" / d / "bind") "";
+    write (pci k / "drivers" / d / "unbind") ""
+
   (* The root is read through no link, so that the links the kernel makes
      between a function and its driver are relative within the tree. *)
-  let kernel ?(refuse = Fun.const false) ~drivers root =
-    let root = Unix.realpath root in
+  let kernel ?(refuse = Fun.const false) ?(unloaded = []) ~drivers root =
+    let k =
+      {
+        root = Unix.realpath root;
+        drivers;
+        refuse;
+        writes = 0;
+        events = [];
+        removed = [];
+        contents = Hashtbl.create 64;
+      }
+    in
     List.iter
-      (fun (_, d) ->
-        write (root / "sys/bus/pci/drivers" / d / "bind") "";
-        write (root / "sys/bus/pci/drivers" / d / "unbind") "")
+      (fun (_, d) -> if not (List.mem d unloaded) then make_driver k d)
       drivers;
-    let contents = Hashtbl.create 64 in
-    snapshot contents (root / "sys");
-    { root; drivers; refuse; writes = 0; events = []; removed = []; contents }
+    snapshot k.contents (k.root / "sys");
+    k
+
+  (* A module's load probes each unbound function the driver may bind. *)
+  let load k d =
+    make_driver k d;
+    Array.iter
+      (fun bus -> if named k bus = Some d then probe k bus)
+      (Sys.readdir (pci k / "devices"))
 
   let machine k = Rig_pci.Machine.at ~kernel:(kernel_write k) k.root
   let events k = List.rev k.events

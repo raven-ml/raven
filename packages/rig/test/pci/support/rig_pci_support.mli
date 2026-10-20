@@ -337,10 +337,15 @@ module Tree : sig
   (** The type for a tree's kernel. *)
 
   val kernel :
-    ?refuse:(int -> bool) -> drivers:(string * string) list -> string -> kernel
+    ?refuse:(int -> bool) ->
+    ?unloaded:string list ->
+    drivers:(string * string) list ->
+    string ->
+    kernel
   (** [kernel ~drivers root] is the kernel of the tree [root], whose functions
       at [bus] have their own driver [d] for each [(bus, d)] of [drivers],
-      each loaded. It acts on writes as Linux does:
+      each loaded but those [unloaded] names (defaults to [[]]). It acts on
+      writes as Linux does:
       - [drivers/D/unbind] given a function bound to [D] unbinds it, and
         refuses another with [ENODEV];
       - [drivers_probe] given an unbound function binds it to the driver its
@@ -352,6 +357,11 @@ module Tree : sig
       [refuse i] is [true] for each write, counted from [0], that the kernel
       refuses with [EIO], acting on none of it (defaults to none). A write
       the kernel refuses leaves its file as it was. *)
+
+  val load : kernel -> string -> unit
+  (** [load k d] loads the driver [d], as a module's load does, and probes
+      each unbound function whose [driver_override] names [d], or names none
+      while [d] is its own. *)
 
   val machine : kernel -> Rig_pci.Machine.t
   (** [machine k] is the machine of [k]'s tree, whose writes [k] acts on. *)
