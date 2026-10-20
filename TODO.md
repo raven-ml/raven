@@ -93,15 +93,12 @@ raven / llama.cpp (Vulkan; ROCm):
   RM's cap if it is below 2^31; re-record rig_nv's bench after both
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
-  whose only Linux rows are kimchi's; on the M1, Metal
-  `launch/pipelined-100`, `buffer/read-64M`, and re-blesses of rig_program's
-  `polled/*` and rig_remote's `request/alloc` and `rail/4K`, recorded under
-  load; the vendor comparison (packages/rig/bench/compare/run.py) on the
-  Mac, then fudge; rig's `submit/polled/pool-two-domains` (0 words warm),
-  `submit/polled/stores-30` and `copy/queue-64K-two-domains` (the words of
-  `copy/queue-64K`) on every machine, and every rig row a run of one
-  submission changed (`submit/polled/*`, `replay/polled/*`, `device/*`,
-  `drain/*`)
+  whose only Linux rows are kimchi's; the vendor comparison
+  (packages/rig/bench/compare/run.py) on fudge; rig's
+  `submit/polled/pool-two-domains` (0 words warm), `submit/polled/stores-30`
+  and `copy/queue-64K-two-domains` (the words of `copy/queue-64K`) on fudge,
+  and every rig row a run of one submission changed (`submit/polled/*`,
+  `replay/polled/*`, `device/*`, `drain/*`)
 
 ### perf
 
@@ -136,7 +133,7 @@ raven / llama.cpp (Vulkan; ROCm):
   in a chained launch (a WFI release costs ~0.67 µs); first a hardware test
   that a release implies the earlier launches completed
 - read a memory's atomic entry once per path (the dropped patch no longer
-  applies), A/B on the M1's `submit/polled/*` and `copy/*`;
+  applies), A/B on fudge's `submit/polled/*` and `copy/*`;
   `Submission.order`'s cheaper design against `submit/polled/make-4096` on
   fudge
 - measure, then keep or cut, each with its keep threshold stated before the
