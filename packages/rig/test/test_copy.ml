@@ -446,10 +446,14 @@ let test_refusals () =
 
 (* Several domains *)
 
-(* Copies through the host's staging memory from two domains: uploads into
-   buffers on two devices that map none of each other's memory, queued
-   copies between them, and reads back, each as some order of the calls
-   says. *)
+(* Copies through the host's staging memory from two domains. rig orders
+   two domains' work on shared memory only where the program orders the
+   calls (rig.mli, Order), so each call copies between buffers of its own:
+   it uploads 64 bytes of [c] into a new buffer on one of two devices that
+   map none of each other's memory, queues a copy of it into a new buffer on
+   the other, and reads that back. The calls share only the staging memory
+   their pieces go through, so every order gives each call its own bytes,
+   and a call that reads others' bytes or fails shows a race in it. *)
 let stage_devices =
   lazy
     (Array.init 2 (fun i ->
@@ -457,31 +461,27 @@ let stage_devices =
            (P.open_ ~host_visible:false ~peers:false ~runs:`Itself
               (Printf.sprintf "copy:domains-%d" i))))
 
-let buf = abstract "b"
+(* The devices, opened by the first call of either domain: a lazy value
+   forced on two domains at once raises [Lazy.Undefined]. *)
+let opening = Mutex.create ()
+let devices () = Mutex.protect opening (fun () -> Lazy.force stage_devices)
+
 let byte = Gen.with_pp Format.pp_print_char (Gen.char_range 'a' 'z')
+let device = Gen.with_pp Format.pp_print_int (Gen.int_range 0 1)
+
+let round_trip c i =
+  let devices = devices () in
+  let a = B.create devices.(i) 64 and b = B.create devices.(1 - i) 64 in
+  ignore (B.submit_copy ~src:(filled 64 c) ~dst:a [| B.row 64 |] : Rig.Point.t);
+  ignore (B.submit_copy ~src:a ~dst:b [| B.row 64 |] : Rig.Point.t);
+  contents b
 
 let domain_commands =
   [
-    command "create"
-      (Gen.with_pp Format.pp_print_int (Gen.int_range 0 1) @-> makes buf)
-      (fun _ -> ref (String.make 64 '\000'))
-      (fun i ->
-        let b = B.create (Lazy.force stage_devices).(i) 64 in
-        B.fill b '\000';
-        b);
-    command "upload"
-      (byte @-> buf ^-> returns unit)
-      (fun c r -> r := String.make 64 c)
-      (fun c b ->
-        ignore (B.submit_copy ~src:(filled 64 c) ~dst:b [| B.row 64 |]
-          : Rig.Point.t));
-    command "copy"
-      (buf ^-> buf ^-> returns unit)
-      (fun a b -> b := !a)
-      (fun a b ->
-        if a != b then
-          ignore (B.submit_copy ~src:a ~dst:b [| B.row 64 |] : Rig.Point.t));
-    command "read" (buf ^-> returns string) (fun r -> !r) contents;
+    command "round trip"
+      (byte @-> device @-> returns string)
+      (fun c _ -> String.make 64 c)
+      round_trip;
   ]
 
 let () =
@@ -527,8 +527,8 @@ let () =
          group ~timeout "domains"
            [
              stateful ~count:20 ~steps:8 ~domains:2
-               "copies through staging memory on two domains answer as some \
-                order of them"
+               "copies of their own through one staging memory on two \
+                domains answer as some order of them"
                domain_commands;
            ];
        ]
