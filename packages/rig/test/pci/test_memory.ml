@@ -1042,11 +1042,7 @@ let test_not_mine () =
   let theirs = given (Memory.alloc y.t_memory Gpu (64 * kib)) in
   let refused msg f = raises_match ~msg (Exn.invalid_arg ~substring:"") f in
   refused "free of another GPU's region" (fun () -> Memory.free y.t_memory mem);
-  refused "map_peer of its own region" (fun () ->
-      Memory.map_peer x.t_memory mem);
   let p = mapped (Memory.map_peer x.t_memory theirs) in
-  refused "map_peer of a region mapped already" (fun () ->
-      Memory.map_peer x.t_memory theirs);
   Memory.free x.t_memory p;
   refused "free of a freed region" (fun () -> Memory.free x.t_memory p);
   Memory.free y.t_memory theirs;
@@ -1281,18 +1277,22 @@ let test_no_room () =
   Memory.free o.t_memory r;
   Function.free_dma o.t_fn lent
 
-(* Memory a GPU maps already, a peer's it mapped or its own through a peer's
-   region, maps again as a region over the same mapping: same address and
-   pages, no pin and no table written, and the mapping stays until the last
-   region over it is freed. *)
-let test_mapped_again (kind, own) =
+(* Memory a GPU maps already, a peer's it mapped or its own, given or through
+   a peer's region, maps again as a region over the same mapping: same
+   address and pages, no pin and no table written, and the mapping stays
+   until the last region over it is freed. *)
+type again = Peers | Own | Own_through_peer
+
+let test_mapped_again (kind, again) =
   with_gpus 2 @@ fun root _ gpus ->
   let o = List.nth gpus 0 and x = List.nth gpus 1 in
   let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
   let p = mapped (Memory.map_peer x.t_memory r) in
+  let own = again <> Peers in
   let y, first = if own then (o, r) else (x, p) in
   let bytes = held_bytes root and touches = y.t_g.touches in
-  let q = mapped (Memory.map_peer y.t_memory (if own then p else r)) in
+  let via = match again with Peers | Own -> r | Own_through_peer -> p in
+  let q = mapped (Memory.map_peer y.t_memory via) in
   equal ~msg:"its source" source (Peer r) (Memory.source q);
   equal ~msg:"its address" hex (Memory.address first) (Memory.address q);
   equal ~msg:"its pages" ranges
@@ -1309,12 +1309,9 @@ let test_mapped_again (kind, own) =
   equal ~msg:"system memory held at the end" int 0 (held_bytes root)
 
 let mapped_again =
-  [
-    (Memory.Gpu, false);
-    (Memory.Host, false);
-    (Memory.Gpu, true);
-    (Memory.Host, true);
-  ]
+  List.concat_map
+    (fun again -> [ (Memory.Gpu, again); (Memory.Host, again) ])
+    [ Peers; Own; Own_through_peer ]
 
 (* A peer's region that was freed is refused, though the region it maps
    lives. *)
@@ -1626,8 +1623,12 @@ let on_files =
       cases
         "a map_peer of memory the GPU maps already shares its mapping until \
          the last free"
-        ~name:(fun (k, own) ->
-          Format.asprintf "%a%s" pp_kind k (if own then ", its own" else ""))
+        ~name:(fun (k, again) ->
+          Format.asprintf "%a%s" pp_kind k
+            (match again with
+            | Peers -> ""
+            | Own -> ", its own"
+            | Own_through_peer -> ", its own through a peer's region"))
         mapped_again test_mapped_again;
       test_after_release;
     ]
