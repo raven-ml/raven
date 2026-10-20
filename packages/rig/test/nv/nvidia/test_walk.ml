@@ -94,9 +94,10 @@ let op_name = function
   | Grow -> "a growth of the channels"
 
 (* The operations other than an open act on an open GPU [g], and [map_host] on
-   [host], host memory starting on a page. A growth asks for channels whose
-   rings hold twice the entries of the last it asked for, [want], from more
-   than the 262,144 a ring holds at open. *)
+   [host], host memory starting on a page. A growth asks for parts of [want]
+   entries, more than the 262,144 a ring holds at open, doubled until they
+   exceed the rings the last growth made, which hold at least twice what it
+   was asked for. *)
 type on = { g : N.t option; host : int; mutable want : int }
 
 let host_bytes = 16 * page
@@ -117,12 +118,28 @@ let take on op =
   | Map_host, Some g ->
       region g (N.map_host g on.host host_bytes)
   | Grow, Some g -> (
-      on.want <- 2 * on.want;
-      let nops = [| (0, Array.make (2 * on.want) 0) |] in
-      match Rig_nv_support.Edge.room g nops with
+      (* A part of [2 n] words takes [1 + n] entries. *)
+      let room n = Rig_nv_support.Edge.room g [| (0, Array.make (2 * n) 0) |] in
+      (* Rings grown for [n] entries hold fewer than [4 (1 + n)], so parts
+         of [8 n] never fit: a fourth FITS from [on.want] is wrong. *)
+      let rec past fits n =
+        match room n with
+        | "FITS" when fits = 3 -> failwith (strf "parts of %d entries fit" n)
+        | "FITS" -> past (fits + 1) (2 * n)
+        | a -> (n, a)
+      in
+      let want, answer = past 0 on.want in
+      on.want <- want;
+      (* A room that needs the new channels installs them (rig_nv.ml), and
+         the next allocation gives back those they replaced (rig_nv.mli). *)
+      let replaced () =
+        ignore (room want : string);
+        Option.iter (N.free g) (N.alloc g Device page)
+      in
+      match answer with
       | "GROW" -> (
           match N.grow g with
-          | Rig_edge.Grown -> ("Grown", ignore)
+          | Rig_edge.Grown -> ("Grown", replaced)
           | Short n -> (strf "Short %d" n, ignore))
       | a -> ("room " ^ a, ignore))
   | (Alloc _ | Map_host | Grow), None -> invalid_arg "no open GPU"
@@ -155,7 +172,7 @@ let attempt ?(cold = false) op lim =
   in
   let host = H.pages host_bytes in
   Fun.protect ~finally:(fun () -> H.free_pages host host_bytes) @@ fun () ->
-  let on = { g; host; want = 140_000 } in
+  let on = { g; host; want = 280_000 } in
   if not cold then ignore (run_once on op);
   let files = S.files () and maps = S.mappings () in
   let got, give = under lim (fun () -> answer on op) in
