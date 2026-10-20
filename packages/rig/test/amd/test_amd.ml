@@ -933,8 +933,6 @@ let copy_ring_fixed g =
   let major, _, _ = (A.capability g).gpu.sdma in
   major = 4
 
-let copy_fixed = lazy (S.with_ (fun t -> copy_ring_fixed t.g))
-
 (* A submission of [n] words of [t]'s compute queue that do nothing
    ([nop_words]). *)
 let nops_on t n = Rig.Point.wait (S.submit_work t [ nop_words t n ])
@@ -949,8 +947,33 @@ let copies_on t n =
   Rig.Point.wait (S.submit_work t (List.init n part));
   get dst
 
+(* The device a program's starts give, opened at its first: a second start
+   gives it again, so that a program's calls reach one device, which a path
+   that opens a GPU once per process also holds. The release closes it. *)
+let started = ref None
+
+let start () =
+  match !started with
+  | Some x -> x
+  | None ->
+      let t = S.open_ () in
+      let x = { t; wide = image ~of_:hidden_code t } in
+      started := Some x;
+      x
+
+(* Whether the copy ring keeps its first size, on the device a program
+   started, or on one of its own before any. *)
+let copy_fixed =
+  lazy
+    (match !started with
+    | Some x -> copy_ring_fixed x.t.g
+    | None -> S.with_ (fun t -> copy_ring_fixed t.g))
+
 (* The reference side holds whether the copy ring keeps its first size. *)
-let grower = abstract "g" ~release:(fun x -> S.close x.t)
+let grower =
+  abstract "g" ~release:(fun x ->
+      started := None;
+      S.close x.t)
 
 (* What a copy draw answers where the copy ring keeps its first size and the
    copies exceed it. *)
@@ -970,9 +993,7 @@ let growth_commands =
     command "start"
       (Gen.unit @-> makes grower)
       (fun () -> Lazy.force copy_fixed)
-      (fun () ->
-        let t = S.open_ () in
-        { t; wide = image ~of_:hidden_code t });
+      start;
     command "launches"
       (grower ^-> launches @-> returns string)
       (fun _ n -> tokens n)
