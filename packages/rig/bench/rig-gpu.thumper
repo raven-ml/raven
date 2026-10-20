@@ -149,7 +149,7 @@ copy/cuda/from-device-off-page-256M	wall_time	batch=1	n=20	1.718e-02	1.716e-02 1
 copy/cuda/host-to-borrow-4M	alloc_words	exact	0
 copy/cuda/host-to-borrow-4M	wall_time	batch=32	n=20	1.834e-04	1.832e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.834e-04 1.834e-04 1.834e-04 1.834e-04 1.834e-04 1.834e-04 1.834e-04 1.835e-04 1.839e-04 1.874e-04
 copy/cuda/queued/host-to-device-8x4K	alloc_words	exact	663
-copy/cuda/queued/host-to-device-8x4K	wall_time	batch=256	n=20	3.110e-05	3.106e-05 3.107e-05 3.108e-05 3.108e-05 3.108e-05 3.109e-05 3.109e-05 3.109e-05 3.110e-05 3.110e-05 3.110e-05 3.111e-05 3.111e-05 3.113e-05 3.113e-05 3.114e-05 3.116e-05 3.118e-05 3.119e-05 3.180e-05
+copy/cuda/queued/host-to-device-8x4K	wall_time	batch=256	n=20	2.057e-05	2.052e-05 2.052e-05 2.054e-05 2.054e-05 2.054e-05 2.054e-05 2.055e-05 2.055e-05 2.056e-05 2.056e-05 2.057e-05 2.058e-05 2.058e-05 2.059e-05 2.059e-05 2.059e-05 2.060e-05 2.061e-05 2.065e-05 2.070e-05
 copy/cuda/to-device-256M	alloc_words	exact	23
 copy/cuda/to-device-256M	wall_time	batch=1	n=20	1.065e-02	1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.065e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.067e-02 1.067e-02
 copy/cuda/to-device-off-page-256M	alloc_words	exact	403
