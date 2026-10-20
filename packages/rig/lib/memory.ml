@@ -1630,8 +1630,14 @@ let make_entry (a : alloc) =
 
 let ensure_entry (a : alloc) = Dev.protect a.owner make_entry a
 
+(* [d]'s mapping among [maps], if any: a loop of its own, so looking builds
+   no closure. *)
+let rec map_on d = function
+  | [] -> None
+  | mp :: maps -> if mp.on == d then Some mp else map_on d maps
+
 (* [d]'s mapping of [e], if any. *)
-let find_map ((e : entry), d) = List.find_opt (fun mp -> mp.on == d) e.maps
+let find_map ((e : entry), d) = map_on d e.maps
 
 (* Counts [mp] in [e], and adds it to [e]'s mappings, unless its device
    mapped [e] meanwhile: that mapping, then. *)
@@ -1734,7 +1740,7 @@ let map_new d (a : alloc) host =
    made at the first borrow and shared by the later ones. *)
 let mapping d (a : alloc) host =
   match Dev.protect a.owner find_map (a.entry, d) with
-  | Some mp -> Some mp
+  | Some _ as found -> found
   | None -> map_new d a host
 
 (* Keeps [got] as [e]'s pages, unless a call kept some first. *)
