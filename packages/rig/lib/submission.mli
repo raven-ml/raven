@@ -191,17 +191,30 @@ end
 val submit : ?waits:int array -> Run.t -> buffers:buffer array -> int
 (** [submit ~waits r ~buffers] is {!Rig.submit}[ ~waits r ~buffers]. *)
 
-val run_copy : device -> src:buffer -> dst:buffer -> int
-(** [run_copy d ~src ~dst] submits a copy of [src] into [dst] on [d]'s copy
-    engine, and is its point. It submits [d]'s submission of the one part
-    [copy ~src:(Slot 0) ~dst:(Slot 1)], made once per device with its run,
-    which holds no bytes, so any number of copies submit it at once. [d]
-    must reach both buffers. They are [d]'s, or, for a device of another
-    machine, one of them may be this process's memory. It raises as
-    {!Rig.Submission.make} and {!Rig.submit} do. *)
+val run_copy : device -> waits:int array -> src:buffer -> dst:buffer -> int
+(** [run_copy d ~waits ~src ~dst] submits a copy of [src] into [dst] on [d]'s
+    copy engine, after the points of [waits], and is its point. It submits
+    [d]'s submission of the one part [copy ~src:(Slot 0) ~dst:(Slot 1)], made
+    once per device with its run, which holds no bytes, so any number of
+    copies submit it at once. [d] must reach both buffers. They are [d]'s,
+    or, for a device of another machine, one of them may be this process's
+    memory. It raises as {!Rig.Submission.make} and {!Rig.submit} do. *)
 
-val run_set : device -> dst:buffer -> char -> int
-(** [run_set d ~dst c] submits a fill of [dst] with [c] on [d]'s copy
-    engine, and is its point. It makes [d]'s submission of the one part
-    [set ~dst:(Slot 0) c] for the call. [dst] must be [d]'s. It raises as
-    {!Rig.Submission.make} and {!Rig.submit} do. *)
+val run_boxes :
+  device -> waits:int array -> src:buffer -> dst:buffer -> box array -> int
+(** [run_boxes d ~waits ~src ~dst boxes] is {!run_copy} of the rows of each
+    box of [boxes], in order, from [src] into [dst]. It makes [d]'s
+    submission of one part per box for the call. Each box must fit [src]
+    and [dst] ({!Rig.Buffer.type-box}), which nothing checks. *)
+
+val run_set : device -> waits:int array -> dst:buffer -> char -> int
+(** [run_set d ~waits ~dst c] submits a fill of [dst] with [c] on [d]'s copy
+    engine, after the points of [waits], and is its point. It makes [d]'s
+    submission of the one part [set ~dst:(Slot 0) c] for the call. [dst]
+    must be [d]'s. It raises as {!Rig.Submission.make} and {!Rig.submit}
+    do. *)
+
+val mark : unit -> int
+(** [mark ()] submits the host's submission of no part, made once, and is
+    its point: the next value of the host's timeline, reached when it
+    returns. *)

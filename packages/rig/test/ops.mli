@@ -53,6 +53,10 @@ val ops : op list
 val staged : op list
 (** [staged] are the copies through staging memory. *)
 
+val queued : op * op list
+(** [queued] are the queued copies and fill, each waited for: a copy of boxes
+    on a device's copy engine, and those through staging memory. *)
+
 val count : string -> Rig_support.Polled.t -> int
 (** [count call p] is the number of [p]'s logged calls named [call]. *)
 

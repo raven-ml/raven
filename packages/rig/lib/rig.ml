@@ -87,6 +87,19 @@ module Buffer = struct
 
   let read = Claim.read_bytes
   let write = Claim.write_bytes
+
+  type box = Def.box = {
+    src_offset : int;
+    dst_offset : int;
+    width : int;
+    rows : int;
+    src_pitch : int;
+    dst_pitch : int;
+  }
+
+  let row = Copy.row
+  let submit_copy = Copy.submit_copy
+  let submit_fill = Copy.submit_fill
   let copy = Copy.copy
   let blit_from_string = Copy.blit_from_string
   let blit_to_bytes = Copy.blit_to_bytes

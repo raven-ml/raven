@@ -278,10 +278,16 @@ int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b);
 /* A copy part of a submission: its index and, for its source and its
    destination, the run's slot, or -1 for a buffer the submission names,
    whose side is in [ends]. A fill, [fill] 1, sets its destination's bytes
-   to [byte] and has no source: [src] is -1 and [ends[0]] zero. */
+   to [byte] and has no source: [src] is -1 and [ends[0]] zero. A box,
+   [boxed] 1, copies the rows of [box] between its two buffers, whose
+   offsets it counts from each buffer's first byte; otherwise the copy is
+   of its whole source, of its destination's length. */
 struct rig_copy {
-  int part, src, dst, fill;
+  int part, src, dst, fill, boxed;
   uint8_t byte;
+  struct {
+    uint64_t src_offset, dst_offset, width, rows, src_pitch, dst_pitch;
+  } box;
   struct rig_side ends[2]; /* the source's, the destination's */
 };
 

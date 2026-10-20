@@ -61,6 +61,17 @@ type kind =
 (** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
 
+(** {!Rig.Buffer.type-box}. C reads its fields in this order
+    ([caml_rig_sub_box]). *)
+type box = {
+  src_offset : int;
+  dst_offset : int;
+  width : int;
+  rows : int;
+  src_pitch : int;
+  dst_pitch : int;
+}
+
 (** The type for the host memory an allocation keeps reachable: none, a
     heap bigarray, whose collection returns its bytes to the host's budget,
     or the caller's bigarray. *)

@@ -223,6 +223,9 @@ type rdev = {
       (** The halves of its own staging memory known made ({!own_stage}). *)
   mutable stagers : rdev list;
       (** Devices whose work may have used its own staging memory. *)
+  mutable queued : bool;
+      (** Whether a queued copy went through its own staging memory: a leg
+          still queued may use a half, so a later copy may make one. *)
 }
 
 (* A memory's stamps as the reference knows them: the device of its last write
@@ -301,6 +304,7 @@ let new_dev w kind =
       followers = [];
       halves = 0;
       stagers = [];
+      queued = false;
     }
   in
   w.next_dev <- w.next_dev + 1;
@@ -533,6 +537,10 @@ let set_pattern b seed =
   Bytes.blit (pattern seed b.length) 0 d b.first b.length;
   Bytes.fill k b.first b.length '\001'
 
+let set_byte b c =
+  Bytes.fill b.mem.data b.first b.length c;
+  Bytes.fill b.mem.defined b.first b.length '\001'
+
 let check_bytes b s =
   let d = b.mem.data and k = b.mem.defined in
   if String.length s <> b.length then
@@ -623,7 +631,7 @@ let own_stage b =
    work may name them may be lost, as rig replaces a half whose stamps name a
    lost device's unfinished work. *)
 let known_halves r =
-  if List.exists (fun d -> d.state <> Fine) (r :: r.stagers) then 0
+  if r.queued || List.exists (fun d -> d.state <> Fine) (r :: r.stagers) then 0
   else r.halves
 
 (* A copy through [r]'s own staging memory, whose legs may run on [users]: the
@@ -1310,6 +1318,38 @@ let fill_sys seed last c =
   end
   else B.copy ~src:(host_pattern seed (B.length b)) ~dst:b
 
+(* A queued fill: the host sets the bytes it addresses, an io device writes
+   its memory, and a copy engine sets any other, staging nothing. *)
+let queued_fill_ref seed last c outcome =
+  with_buf c outcome @@ fun b ->
+  if read_only b.mem then
+    match outcome with
+    | Error Skipped -> drop_if last c
+    | _ -> fail "a fill of memory that admits only reads ran"
+  else
+    let vd = verdict () in
+    invalid_if vd (dead b);
+    owned vd b;
+    if b.on.kind = Host || b.length > 0 then waits_all vd b.mem;
+    let lost () =
+      unknown b;
+      if device_work b.on then maybe_write b.mem.stamps b.on
+    in
+    judge ~lost c.w vd outcome (fun () ->
+        if b.on.kind <> Host && b.local = Remote && b.length > 0 then begin
+          follows b.on vd;
+          if device_work b.on then write b.mem.stamps b.on
+        end;
+        set_byte b (Char.chr (seed land 255)));
+    drop_if last c
+
+let queued_fill_sys seed last c =
+  let sb = take ~last c in
+  if B.access sb.b = Rig.Read then raise Skipped;
+  guard c.sw @@ fun () ->
+  locked [ sb.m ] @@ fun () ->
+  ignore (B.submit_fill sb.b (Char.chr (seed land 255)) : Rig.Point.t)
+
 let read_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
@@ -1397,6 +1437,28 @@ let copy_ref last src dst outcome =
     ~invalid:
       (dead a || dead b || a.length <> b.length || overlaps a b || own_pages a b)
     last src a b outcome
+
+(* A queued copy of the first bytes of [src]'s buffer into the first of
+   [dst]'s, as many in each: one box of one row, refused as a copy of the
+   whole buffers is. Its legs through a device's own staging memory may still
+   run once it returns. *)
+let queued_copy_ref last src dst outcome =
+  with_buf src outcome @@ fun a ->
+  with_buf dst outcome @@ fun b ->
+  let invalid = dead a || dead b || overlaps a b || own_pages a b in
+  List.iter (fun r -> r.queued <- true) (List.filter_map own_stage [ a; b ]);
+  if invalid then copy_judge ~invalid last src a b outcome
+  else
+    let a', b' = prefixes a b in
+    copy_judge ~invalid last src a' b' outcome
+
+let queued_copy_sys last src dst =
+  let b = get dst in
+  let a = take ~last src in
+  guard src.sw @@ fun () ->
+  locked [ a.m; b.m ] @@ fun () ->
+  let n = if a.b == b.b then 0 else min (B.length a.b) (B.length b.b) in
+  ignore (B.submit_copy ~src:a.b ~dst:b.b [| B.row n |] : Rig.Point.t)
 
 (* A copy between the first bytes of two buffers, as many in each: views, made
    only of live buffers. *)
@@ -2391,6 +2453,21 @@ let commands ~two ~fork =
         cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () ->
             copy_prefix_sys l a b))
   in
+  let queued_copy =
+    command "queued copy"
+      (last @-> cell ^-> cell ^-> judges unit)
+      (fun l a b o ->
+        one_world [ a.w; b.w ] o (fun () -> queued_copy_ref l a b o))
+      (fun l a b ->
+        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () ->
+            queued_copy_sys l a b))
+  in
+  let queued_fill =
+    command "queued fill"
+      (seed @-> last @-> cell ^-> judges unit)
+      queued_fill_ref
+      (fun k l c -> one c (fun () -> queued_fill_sys k l c))
+  in
   let transfer =
     command "transfer"
       (device ^-> device ^-> size @-> seed @-> judges octets)
@@ -2598,6 +2675,8 @@ let commands ~two ~fork =
       times 4 read;
       times 3 copy;
       times 4 copy_prefix;
+      times 4 queued_copy;
+      times 2 queued_fill;
       times 2 transfer;
       times 5 make_copy;
       times 4 make_own;

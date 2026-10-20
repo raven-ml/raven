@@ -47,7 +47,7 @@ type side = Slot of int | Buffer of buffer
 type part =
   | Words of buffer
   | Fill of { fill : nativeint; params : int; refs : ref array }
-  | Copy of { src : side; dst : side }
+  | Copy of { src : side; dst : side; box : box option }
   | Set of { dst : side; byte : char }
   | Launch of { fn : func; params : int; refs : ref array }
 
@@ -136,9 +136,10 @@ let copy ~src ~dst =
   | Buffer b when Buffer.access b = Def.Read ->
       invalid_argf "Rig.%s: into a buffer that admits only reads" fn
   | Slot _ | Buffer _ -> ());
-  Copy { src; dst }
+  Copy { src; dst; box = None }
 
-(* Internal: rig's own fills, whose [dst] is checked where they are made. *)
+(* Internal: rig's own boxes and fills, checked where they are made. *)
+let box ~src ~dst x = Copy { src; dst; box = Some x }
 let set ~dst byte = Set { dst; byte }
 
 let words b =
@@ -183,6 +184,8 @@ external sub_code : c -> int -> int -> int -> int -> unit
 external sub_copy : c -> int -> int -> int -> int -> unit = "caml_rig_sub_copy"
 
 external sub_set : c -> int -> int -> int -> char -> unit = "caml_rig_sub_set"
+
+external sub_box : c -> int -> box -> unit = "caml_rig_sub_box"
 
 external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
   = "caml_rig_sub_side_byte" "caml_rig_sub_side"
@@ -267,8 +270,9 @@ type t = {
   span : (string * string) option;
       (** The first part's queue and the launches' functions, or the first
           part's kind. [None] for no parts. *)
-  copies : (side * side) array;
-      (** The sides of the copy parts that read memory, in order. *)
+  copies : (side * side * int) array;
+      (** The sides of the copy parts that read memory, in order, and the
+          bytes of each part's box, [-1] for its whole source. *)
 }
 
 let no_block = (0, -1, 0, 0, "")
@@ -381,7 +385,7 @@ let slot_refs refs =
 (* The slots part [i] names, how its work uses each, and by what: a copy reads
    its [src] and writes its [dst]. *)
 let slots_of = function
-  | Copy { src; dst } ->
+  | Copy { src; dst; _ } ->
       let named use = function
         | Slot k -> [ (k, use, Copies) ]
         | Buffer _ -> []
@@ -444,7 +448,7 @@ let slot writes = { bytes = None; writes }
 
 let reaches = function
   | Words w -> [ named false w ]
-  | Copy { src; dst } ->
+  | Copy { src; dst; _ } ->
       let side writes = function
         | Slot _ -> slot writes
         | Buffer b -> named writes b
@@ -691,7 +695,7 @@ let named_buffers fixed parts =
     (fun p bs ->
       match p with
       | Words w -> w :: bs
-      | Copy { src; dst } ->
+      | Copy { src; dst; _ } ->
           let side s bs = match s with Buffer b -> b :: bs | Slot _ -> bs in
           side src (side dst bs)
       | Set { dst = Buffer b; _ } -> b :: bs
@@ -727,7 +731,7 @@ let build keep ~fixed ~held d parts =
       | Fill _ ->
           nrefs := !nrefs + Array.length slots.(i);
           ncodes := !ncodes + List.length codes.(i)
-      | Copy { src; dst } ->
+      | Copy { src; dst; _ } ->
           check_ends fn d i src dst;
           let buffer = function Buffer _ -> 1 | Slot _ -> 0 in
           nfixed := !nfixed + buffer src + buffer dst;
@@ -759,7 +763,7 @@ let build keep ~fixed ~held d parts =
       !ncodes !ncopies
   in
   let blocks = Array.make (Array.length parts) no_block in
-  let copies = Array.make !nmoves (Slot 0, Slot 0) in
+  let copies = Array.make !nmoves (Slot 0, Slot 0, -1) in
   let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
   let n = ref 0 in
   let fixed = ref [] and images = ref [] in
@@ -796,9 +800,16 @@ let build keep ~fixed ~held d parts =
           place_codes i place;
           blocks.(i) <- (sub_id c, place, f.params, 0, "");
           r := !r + Array.length slots.(i)
-      | Copy { src; dst } ->
+      | Copy { src; dst; box } ->
           sub_copy c !m i (slot_of src) (slot_of dst);
-          copies.(!n) <- (src, dst);
+          let bytes =
+            match box with
+            | None -> -1
+            | Some x ->
+                sub_box c !m x;
+                x.width * x.rows
+          in
+          copies.(!n) <- (src, dst, bytes);
           copy_side ~dst:false Use_read src;
           copy_side ~dst:true Use_write dst;
           incr m;
@@ -1268,9 +1279,10 @@ let rec go s c run buffers waits k =
 let moves_of s buffers =
   let buffer = function Slot k -> buffers.(k) | Buffer b -> b in
   Array.map
-    (fun (src, dst) ->
+    (fun (src, dst, bytes) ->
       let src = buffer src and dst = buffer dst in
-      (Memory.account src.mem.alloc, Memory.account dst.mem.alloc, src.length))
+      let bytes = if bytes < 0 then src.length else bytes in
+      (Memory.account src.mem.alloc, Memory.account dst.mem.alloc, bytes))
     s.copies
 
 (* What a submit reads for the profiles taken before it hands its work over: the
@@ -1429,12 +1441,27 @@ let copiers =
   Dev.new_key (fun d ->
       Run.make (make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
 
-let run_copy d ~src ~dst =
+let run_copy d ~waits ~src ~dst =
   let run = Dev.local copiers d in
-  submit_run run.sub run [| src; dst |] [||]
+  submit_run run.sub run [| src; dst |] waits
+
+(* A box's geometry is part of its submission, so each call makes its own:
+   one part per box, from slot 0 into slot 1, and a run that holds no
+   bytes. *)
+let run_boxes d ~waits ~src ~dst boxes =
+  let parts = Array.map (fun x -> box ~src:(Slot 0) ~dst:(Slot 1) x) boxes in
+  let run = Run.make (make d parts) in
+  submit_run run.sub run [| src; dst |] waits
 
 (* A fill's byte is part of its submission, so each makes its own: one
    part, no launch or fill, and a run that holds no bytes. *)
-let run_set d ~dst c =
+let run_set d ~waits ~dst c =
   let run = Run.make (make d [| set ~dst:(Slot 0) c |]) in
-  submit_run run.sub run [| dst |] [||]
+  submit_run run.sub run [| dst |] waits
+
+(* The host's submission of no part, whose run holds no bytes. *)
+let marks = Dev.new_key (fun d -> Run.make (make d [||]))
+
+let mark () =
+  let run = Dev.local marks Dev.host in
+  submit_run run.sub run [||] [||]

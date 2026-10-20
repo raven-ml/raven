@@ -5,7 +5,8 @@
 
 (* The routes are copy.mli's. Where two devices could copy, [direct] picks
    [dst]'s device when only [src] is memory the host addresses, and [src]'s
-   otherwise. *)
+   otherwise. A route returns the point of its last transfer, [0] where the
+   host made it, which the public calls turn into a point of the host. *)
 
 open Def
 
@@ -14,7 +15,6 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 external memmove : int -> int -> int -> unit = "caml_rig_memmove"
 external reraise : exn -> 'a = "%reraise"
 
-let fn = "Buffer.copy"
 let local m = Dev.same_machine m.dev Dev.host && m.host >= 0
 
 (* Whether [m] is memory an io device owns: its own, or a borrow of its
@@ -42,6 +42,179 @@ let record src dst bytes start =
            start;
            stop = Profile.now ();
          })
+
+(* The points of [waits], waited for on the host. *)
+let wait_all waits = Array.iter (fun p -> Dev.wait_point 0 true p) waits
+
+(* Boxes *)
+
+let row ?(src_offset = 0) ?(dst_offset = 0) n =
+  { src_offset; dst_offset; width = n; rows = 1; src_pitch = n; dst_pitch = n }
+
+let has_bytes x = x.width > 0 && x.rows > 0
+let box_bytes x = x.width * x.rows
+let total boxes = Array.fold_left (fun n x -> n + box_bytes x) 0 boxes
+
+(* Whether the rows of [x] are one run of bytes on both sides. *)
+let one_run x = x.rows = 1 || (x.src_pitch = x.width && x.dst_pitch = x.width)
+
+(* Whether the last row of [x], from [off] at [pitch] on a side of [len]
+   bytes, ends within it, without overflow: [pitch] is at least the width,
+   which is positive. *)
+let ends_within x ~off ~pitch len =
+  off <= len && x.width <= len - off
+  && x.rows - 1 <= (len - off - x.width) / pitch
+
+(* The boxes of [boxes] that have bytes, read once, or [Invalid_argument]
+   for one that does not fit [src] and [dst]. *)
+let fitting fn ~src ~dst boxes =
+  let fits i x =
+    if
+      x.src_offset < 0 || x.dst_offset < 0 || x.width < 0 || x.rows < 0
+      || x.src_pitch < x.width || x.dst_pitch < x.width
+    then
+      invalid_argf "Rig.%s: box %d has a negative field or a pitch under its \
+                    width"
+        fn i;
+    if
+      has_bytes x
+      && not
+           (ends_within x ~off:x.src_offset ~pitch:x.src_pitch
+              (Buffer.length src)
+           && ends_within x ~off:x.dst_offset ~pitch:x.dst_pitch
+                (Buffer.length dst))
+    then invalid_argf "Rig.%s: box %d ends past a buffer" fn i
+  in
+  let boxes = Array.to_list boxes in
+  List.iteri fits boxes;
+  Array.of_list (List.filter has_bytes boxes)
+
+(* The bytes of [b] from [at], [n] of them: [b] itself when they are all of
+   it. *)
+let sub b at n =
+  if at = 0 && n = Buffer.length b then b else Buffer.view b ~first:at ~length:n
+
+(* Transfers *)
+
+(* An io device's read or write of memory it owns, a borrow of its pages
+   included, is a counted call of that device, so its fault loses the io
+   device. Each moves [n] bytes between byte [s] of [src] and byte [t] of
+   [dst]. *)
+let io_read fn src s dst t n =
+  match src.mem.alloc.entry.backing with
+  | Io_memory { region = Io_region { m; h; r }; _ } ->
+      let module I = (val m) in
+      Dev.counted src.mem.alloc.owner Dev.Faults (fun () ->
+          I.read h r ~at:(src.offset + s) ~dst:(host_address dst + t) ~len:n)
+  | Driver_memory _ | Kept _ ->
+      invalid_argf "Rig.%s: the source is no io memory" fn
+
+let io_write fn src s dst t n =
+  match dst.mem.alloc.entry.backing with
+  | Io_memory { region = Io_region { m; h; r }; _ } ->
+      let module I = (val m) in
+      Dev.counted dst.mem.alloc.owner Dev.Faults (fun () ->
+          I.write h r ~at:(dst.offset + t) ~src:(host_address src + s) ~len:n)
+  | Driver_memory _ | Kept _ ->
+      invalid_argf "Rig.%s: the destination is no io memory" fn
+
+(* How the host moves bytes: between memory it addresses, or by an io device's
+   read or write. *)
+type transfer = Move | Io_read | Io_write
+
+let move_run fn transfer src s dst t n =
+  match transfer with
+  | Move -> memmove (host_address dst + t) (host_address src + s) n
+  | Io_read -> io_read fn src s dst t n
+  | Io_write -> io_write fn src s dst t n
+
+(* The host's move of [x]'s rows, in one call where they are one run. *)
+let move_box fn transfer src dst x =
+  if one_run x then
+    move_run fn transfer src x.src_offset dst x.dst_offset (box_bytes x)
+  else
+    for i = 0 to x.rows - 1 do
+      move_run fn transfer src
+        (x.src_offset + (i * x.src_pitch))
+        dst
+        (x.dst_offset + (i * x.dst_pitch))
+        x.width
+    done
+
+(* The host's copy of [boxes] from [src] to [dst], after the points of
+   [waits] and the work it follows, asked at [start]. Into a staging half
+   ([into_half]) it waits for nothing on [dst]: no unfinished work uses the
+   bytes it writes ([through]). *)
+let on_host fn ~waits ~into_half transfer src dst boxes start =
+  wait_all waits;
+  Buffer.wait_points src Buffer.Read;
+  if not into_half then Buffer.wait_points dst Buffer.Read_write;
+  Array.iter (move_box fn transfer src dst) boxes;
+  record src dst (total boxes) start;
+  Some 0
+
+(* [m] as [d]'s copy engine takes it: a device of another machine takes this
+   process's memory as it is, its driver carrying the bytes; another device
+   maps it. *)
+let mine d m =
+  if (not (Dev.same_machine d Dev.host)) && local m then Some m
+  else Memory.borrow d m
+
+(* A copy of [boxes] on [d]'s copy engine between buffers [d] maps, after the
+   points of [waits], as one submission. A box of one run goes as [d]'s
+   cached copy of the run. Its submit records it. *)
+let on_queue ~waits d src dst boxes =
+  match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
+  | Some _, Some s, Some t -> (
+      let src = { src with mem = s } and dst = { dst with mem = t } in
+      match boxes with
+      | [| x |] when one_run x ->
+          let n = box_bytes x in
+          Some
+            (Submission.run_copy d ~waits ~src:(sub src x.src_offset n)
+               ~dst:(sub dst x.dst_offset n))
+      | _ -> Some (Submission.run_boxes d ~waits ~src ~dst boxes))
+  | _ -> None
+
+(* Copies [boxes] from [src] to [dst] in one transfer, where one runs it: the
+   host between memory it addresses or with an io device's, or a device's copy
+   queue between memory it maps. Memory an io device owns moves only through
+   that device's read or write, never through a borrow of its pages, so a
+   file cut short raises in the read where a read of its pages would end the
+   process, and no device maps the pages for a copy. What reads or writes the
+   buffers later follows a queued copy by their stamps. The host records its
+   transfer, a submit a queued one. Is the transfer's point, [0] for the
+   host's, or [None] where no transfer runs it. *)
+let direct fn ~waits ~into_half src dst boxes =
+  let si = io_owned src.mem and di = io_owned dst.mem in
+  let start = Profile.now () in
+  if local src.mem && local dst.mem && not (si || di) then
+    on_host fn ~waits ~into_half Move src dst boxes start
+  else if si && (not di) && local dst.mem then
+    on_host fn ~waits ~into_half Io_read src dst boxes start
+  else if di && (not si) && local src.mem then
+    on_host fn ~waits ~into_half Io_write src dst boxes start
+  else if si || di then None
+  else
+    let side = if local src.mem then dst else src in
+    (* A borrow on a device that runs no copy copies by its memory's own
+       device. *)
+    let runner =
+      match side.mem.dev.live.copy_engine with
+      | Some _ -> side.mem.dev
+      | None -> side.mem.alloc.owner
+    in
+    if Dev.is_io runner then None else on_queue ~waits runner src dst boxes
+
+(* One leg of a staged copy, which a device's queue runs without the host
+   waiting. A leg runs in one transfer by construction: one that finds none,
+   such as into a device that runs no copy, goes no further. *)
+let leg fn ~waits ~into_half src dst boxes =
+  match direct fn ~waits ~into_half src dst boxes with
+  | Some p -> p
+  | None ->
+      invalid_argf "Rig.%s: no device copies between %s and %s" fn
+        src.mem.dev.name dst.mem.dev.name
 
 (* Staging memory
 
@@ -81,7 +254,8 @@ let rec find l ok better i found =
     in
     find l ok better (i + 1) found
 
-let has_room need h = h.buffer <> None && h.cursor + need <= half_bytes
+let has_room need h =
+  h.buffer <> None && h.cursor + need <= half_bytes
 
 let uses_done h =
   match h.buffer with None -> true | Some b -> Memory.uses_done b.mem
@@ -210,7 +384,7 @@ let ready h writer =
    raises [Out_of_memory]. A device's half is its own Pinned memory, which
    another device maps as a peer's or not at all: a refusal is no copy between
    the two. *)
-let map_half stage d b =
+let map_half fn stage d b =
   if not (Memory.maps d b.mem) then
     if Dev.is_host stage then
       Memory.reclaiming d ~pool:d half_bytes (fun () ->
@@ -230,103 +404,12 @@ let runs b = not (local b.mem || Dev.is_io b.mem.dev)
 
 (* Maps the buffers [b0] and [b1] of [stage]'s halves on the device that runs
    [b]'s legs, if one does, before they run. *)
-let map_halves stage b b0 b1 =
+let map_halves fn stage b b0 b1 =
   let d = b.mem.dev in
   if runs b && Dev.same_machine d Dev.host then begin
-    map_half stage d b0;
-    if b1 != b0 then map_half stage d b1
+    map_half fn stage d b0;
+    if b1 != b0 then map_half fn stage d b1
   end
-
-let queued d ~src ~dst =
-  Dev.wait d (Point.value (Submission.run_copy d ~src ~dst))
-
-(* [m] as [d]'s copy engine takes it: a device of another machine takes this
-   process's memory as it is, its driver carrying the bytes; another device
-   maps it. A function of its own, so a copy builds no closure. *)
-let mine d m =
-  if (not (Dev.same_machine d Dev.host)) && local m then Some m
-  else Memory.borrow d m
-
-(* A copy on [d]'s copy engine between buffers [d] maps, waited for when [wait].
-   Its submit records it. *)
-let on_queue ~wait d src dst =
-  match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
-  | Some _, Some s, Some t ->
-      let p =
-        Submission.run_copy d ~src:{ src with mem = s }
-          ~dst:{ dst with mem = t }
-      in
-      if wait then Dev.wait d (Point.value p);
-      true
-  | _ -> false
-
-(* An io device's read or write of memory it owns, a borrow of its pages
-   included, is a counted call of that device, so its fault loses the io
-   device. *)
-let io_read src dst n =
-  match src.mem.alloc.entry.backing with
-  | Io_memory { region = Io_region { m; h; r }; _ } ->
-      let module I = (val m) in
-      Dev.counted src.mem.alloc.owner Dev.Faults (fun () ->
-          I.read h r ~at:src.offset ~dst:(host_address dst) ~len:n)
-  | Driver_memory _ | Kept _ ->
-      invalid_argf "Rig.%s: the source is no io memory" fn
-
-let io_write src dst n =
-  match dst.mem.alloc.entry.backing with
-  | Io_memory { region = Io_region { m; h; r }; _ } ->
-      let module I = (val m) in
-      Dev.counted dst.mem.alloc.owner Dev.Faults (fun () ->
-          I.write h r ~at:dst.offset ~src:(host_address src) ~len:n)
-  | Driver_memory _ | Kept _ ->
-      invalid_argf "Rig.%s: the destination is no io memory" fn
-
-(* How the host moves bytes: between memory it addresses, or by an io device's
-   read or write. A constant, so a host copy allocates nothing. *)
-type transfer = Move | Io_read | Io_write
-
-(* The host's copy of [n] bytes from [src] to [dst], after their devices' work,
-   asked at [start]. Into a staging half ([into_half]) it waits for nothing on
-   [dst]: no unfinished work uses the bytes it writes ([through]). *)
-let on_host ~into_half transfer src dst n start =
-  Buffer.wait_points src Buffer.Read;
-  if not into_half then Buffer.wait_points dst Buffer.Read_write;
-  (match transfer with
-  | Move -> memmove (host_address dst) (host_address src) n
-  | Io_read -> io_read src dst n
-  | Io_write -> io_write src dst n);
-  record src dst n start;
-  true
-
-(* Copies [n] bytes from [src] to [dst] in one transfer, where one runs it: the
-   host between memory it addresses or with an io device's, or a device's copy
-   queue between memory it maps. Memory an io device owns moves only through
-   that device's read or write, never through a borrow of its pages, so a
-   file cut short raises in the read where a read of its pages would end the
-   process, and no device maps the pages for a copy. A copy on a queue
-   returns at once unless [wait]: what reads or writes its buffers later
-   waits for it by their stamps. The host records its transfer, a submit a
-   queued one. Is whether it ran. *)
-let direct ~wait ~into_half src dst n =
-  let si = io_owned src.mem and di = io_owned dst.mem in
-  let start = Profile.now () in
-  if local src.mem && local dst.mem && not (si || di) then
-    on_host ~into_half Move src dst n start
-  else if si && (not di) && local dst.mem then
-    on_host ~into_half Io_read src dst n start
-  else if di && (not si) && local src.mem then
-    on_host ~into_half Io_write src dst n start
-  else if si || di then false
-  else
-    let side = if local src.mem then dst else src in
-    (* A borrow on a device that runs no copy copies by its memory's own
-       device. *)
-    let runner =
-      match side.mem.dev.live.copy_engine with
-      | Some _ -> side.mem.dev
-      | None -> side.mem.alloc.owner
-    in
-    (not (Dev.is_io runner)) && on_queue ~wait runner src dst
 
 (* The device that runs the legs of a staged copy to or from [b]: its device's
    copy engine, or, for a borrow on a device that runs no copy, its memory's own
@@ -356,13 +439,89 @@ let stage_for src dst = if needs_own src then stage_with src else stage_with dst
 let two_stages src dst =
   needs_own src && needs_own dst && runner src != runner dst
 
-let pieces n = (n + half_bytes - 1) / half_bytes
-let piece_bytes n k = Int.min half_bytes (n - (k * half_bytes))
+(* Pieces
 
-(* The bytes of a half from its piece's start that a copy of [n] bytes uses:
-   those of its one piece, or the whole half for more. With a half's base, its
+   A staged copy's boxes go through staging memory in pieces of at most a
+   half. A piece holds whole rows, of one box or of several, packed one after
+   the other, where a row fits a half, and a range of one row's bytes
+   otherwise, so each leg of a piece is one box per part of a box it holds.
+   Each part is a box of the copy's geometry, with the byte of the piece
+   where its rows start. *)
+type piece = { bytes : int; parts : (box * int) list }
+
+let pieces boxes =
+  let out = ref [] and parts = ref [] and fill = ref 0 in
+  let close () =
+    if !parts <> [] then begin
+      out := { bytes = !fill; parts = List.rev !parts } :: !out;
+      parts := [];
+      fill := 0
+    end
+  in
+  let add x =
+    parts := (x, !fill) :: !parts;
+    fill := !fill + box_bytes x
+  in
+  let wide x =
+    close ();
+    for i = 0 to x.rows - 1 do
+      let c = ref 0 in
+      while !c < x.width do
+        let w = Int.min half_bytes (x.width - !c) in
+        add
+          {
+            src_offset = x.src_offset + (i * x.src_pitch) + !c;
+            dst_offset = x.dst_offset + (i * x.dst_pitch) + !c;
+            width = w;
+            rows = 1;
+            src_pitch = w;
+            dst_pitch = w;
+          };
+        close ();
+        c := !c + w
+      done
+    done
+  in
+  let rows x =
+    let r = ref 0 in
+    while !r < x.rows do
+      let fit = (half_bytes - !fill) / x.width in
+      if fit = 0 then close ()
+      else begin
+        let k = Int.min fit (x.rows - !r) in
+        add
+          {
+            x with
+            src_offset = x.src_offset + (!r * x.src_pitch);
+            dst_offset = x.dst_offset + (!r * x.dst_pitch);
+            rows = k;
+          };
+        r := !r + k
+      end
+    done
+  in
+  Array.iter (fun x -> if x.width > half_bytes then wide x else rows x) boxes;
+  close ();
+  Array.of_list (List.rev !out)
+
+(* The boxes of the leg that moves [p] from the copy's source into a half
+   from byte [base], and out of it into the destination. *)
+let into_half base p =
+  Array.of_list
+    (List.map
+       (fun (x, at) -> { x with dst_offset = base + at; dst_pitch = x.width })
+       p.parts)
+
+let out_of_half base p =
+  Array.of_list
+    (List.map
+       (fun (x, at) -> { x with src_offset = base + at; src_pitch = x.width })
+       p.parts)
+
+(* The bytes of a half from its piece's start that the pieces [ps] use: those
+   of the one piece, or the whole half for more. With a half's base, its
    cursor once the copy gives it back. *)
-let extent n = if pieces n = 1 then round n else half_bytes
+let extent ps = if Array.length ps = 1 then round ps.(0).bytes else half_bytes
 
 (* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
    one, [h0] and [h1] the same, unless [two]; the halves given back once it
@@ -376,154 +535,181 @@ let holding d writer need ~two f =
       reraise e
   | h1 -> (
       match f h0 h1 with
-      | () ->
+      | p ->
           give h0;
           if two then give h1;
-          age d
+          age d;
+          p
       | exception e ->
           abandon h0;
           if two then abandon h1;
           reraise e)
 
-(* Moves [n] bytes through halves of [d]'s staging memory: [into h at] fills
-   the half's view [h] with the bytes from byte [at], and [out_of h at] drains
-   it. One piece goes through one half, from its cursor where the host writes
-   it; more alternate between two halves from their start, so one fills while
-   the other drains, and the host waits for a half's last drain before it
-   fills it again. The halves are first mapped on the devices that run legs
-   of [sides]. A leg on a device's queue runs without the host waiting for it:
-   the next leg that reads or writes its half follows it by the half's stamps.
-   With [ahead], the leg into a half runs one piece ahead of the leg out of
-   it, as when a device fills and the host drains; otherwise the host's leg
-   into a half fills one while a device drains the other. *)
-let through d n ~writer ~sides ~ahead ~into ~out_of =
-  let pieces = pieces n in
-  let need = if pieces = 1 && writer = Host then extent n else 0 in
-  holding d writer need ~two:(pieces > 1) (fun h0 h1 ->
+(* Moves [ps] through halves of [d]'s staging memory: [into b base p] moves
+   the piece [p] into the half buffer [b] from byte [base], and [out_of b base
+   p] out of it, each the point of its transfer. One piece goes through one
+   half, from its cursor where the host writes it; more alternate between two
+   halves from their start, so one fills while the other drains, and the host
+   waits for a half's last drain before it fills it again. The halves are
+   first mapped on the devices that run legs of [sides]. With [ahead], the leg
+   into a half runs one piece ahead of the leg out of it, as when a device
+   fills and the host drains; otherwise the host's leg into a half fills one
+   while a device drains the other. Is the point of the last leg out. *)
+let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
+  let n = Array.length ps in
+  let need = if n = 1 && writer = Host then extent ps else 0 in
+  holding d writer need ~two:(n > 1) (fun h0 h1 ->
       let b0 = ready h0 writer in
-      let b1 = if pieces > 1 then ready h1 writer else b0 in
+      let b1 = if n > 1 then ready h1 writer else b0 in
       let base0 = h0.cursor in
-      List.iter (fun b -> map_halves d b b0 b1) sides;
-      let half k =
-        Buffer.view
-          (if k land 1 = 0 then b0 else b1)
-          ~first:(if k = 0 then base0 else 0)
-          ~length:(piece_bytes n k)
-      in
-      let into k =
+      List.iter (fun b -> map_halves fn d b b0 b1) sides;
+      let half k = if k land 1 = 0 then b0 else b1 in
+      let base k = if k = 0 then base0 else 0 in
+      let fill k =
         if writer = Host && k >= 2 then Buffer.wait (half k) Buffer.Read_write;
-        into (half k) (k * half_bytes)
+        ignore (into (half k) (base k) ps.(k) : int)
       in
-      let out_of k = out_of (half k) (k * half_bytes) in
-      if ahead then into 0;
-      for k = 0 to pieces - 1 do
-        if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
-        out_of k
+      let last = ref 0 in
+      if ahead then fill 0;
+      for k = 0 to n - 1 do
+        if ahead then (if k + 1 < n then fill (k + 1)) else fill k;
+        last := out_of (half k) (base k) ps.(k)
       done;
-      h0.cursor <- base0 + extent n;
-      h1.cursor <- base0 + extent n)
+      h0.cursor <- base0 + extent ps;
+      h1.cursor <- base0 + extent ps;
+      !last)
 
-(* The bytes of [b] from [at] that go through the half [h]. *)
-let piece b at h = Buffer.view b ~first:at ~length:(Buffer.length h)
+(* Copies *)
 
-let rec copy ~src ~dst =
-  Dev.check_held fn;
-  let n = Buffer.length src in
-  if n <> Buffer.length dst then
-    invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
+(* Through staging memory, from a device's or the host's side into the
+   other's. *)
+let rec staged fn ~waits src dst boxes =
+  let ps = pieces boxes in
+  if two_stages src dst then between fn ~waits src dst ps
+  else
+    through fn (stage_for src dst) ps
+      ~writer:(if runs src then Device else Host)
+      ~sides:[ src; dst ] ~ahead:(runs src)
+      ~into:(fun h base p ->
+        leg fn ~waits ~into_half:true src h (into_half base p))
+      ~out_of:(fun h base p ->
+        leg fn ~waits ~into_half:false h dst (out_of_half base p))
+
+(* Between two devices that each stage through their own memory: [src]'s
+   device fills a half of its stage, the host moves the half's bytes into a
+   half of [dst]'s device's stage, and that device drains it. The leg into the
+   next half runs while the host moves the last. *)
+and between fn ~waits src dst ps =
+  let n = Array.length ps in
+  let need = if n = 1 then extent ps else 0 in
+  holding (runner src) Device 0 ~two:(n > 1) (fun a0 a1 ->
+      holding (runner dst) Host need ~two:(n > 1) (fun b0 b1 ->
+          let ha0 = ready a0 Device and hb0 = ready b0 Host in
+          let ha1 = if n > 1 then ready a1 Device else ha0 in
+          let hb1 = if n > 1 then ready b1 Host else hb0 in
+          let base0 = b0.cursor in
+          map_halves fn a0.stage src ha0 ha1;
+          map_halves fn b0.stage dst hb0 hb1;
+          let half h0 h1 k = if k land 1 = 0 then h0 else h1 in
+          let base k = if k = 0 then base0 else 0 in
+          let into k =
+            ignore
+              (leg fn ~waits ~into_half:true src (half ha0 ha1 k)
+                 (into_half 0 ps.(k))
+                : int)
+          in
+          let last = ref 0 in
+          into 0;
+          for k = 0 to n - 1 do
+            if k + 1 < n then into (k + 1);
+            let ha = half ha0 ha1 k and hb = half hb0 hb1 k in
+            if k >= 2 then Buffer.wait hb Buffer.Read_write;
+            ignore
+              (leg fn ~waits ~into_half:true ha hb
+                 [| row ~dst_offset:(base k) ps.(k).bytes |]
+                : int);
+            last := leg fn ~waits ~into_half:false hb dst (out_of_half (base k) ps.(k))
+          done;
+          let extent = extent ps in
+          a0.cursor <- extent;
+          a1.cursor <- extent;
+          b0.cursor <- base0 + extent;
+          b1.cursor <- base0 + extent;
+          !last))
+
+(* Copies [boxes] from [src] to [dst], directly or through the staging memory,
+   recording each transfer that ran, and is the point of the last. *)
+let route fn ~waits src dst boxes =
+  match direct fn ~waits ~into_half:false src dst boxes with
+  | Some p -> p
+  | None ->
+      let sd = src.mem.dev and dd = dst.mem.dev in
+      if (far sd || far dd) && not (hosted src || hosted dst) then
+        invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
+          dd.name
+      else staged fn ~waits src dst boxes
+
+(* The checks of a copy that need no claim. An io device's write of its memory
+   from a borrow of its own pages, or its read into them, can wait on itself
+   in the system for good: a file's write from its own mapping on macOS's
+   APFS. *)
+let check fn src dst =
   if Buffer.overlaps src dst then invalid_argf "Rig.%s: the buffers overlap" fn;
-  (* An io device's write of its memory from a borrow of its own pages, or its
-     read into them, can wait on itself in the system for good: a file's write
-     from its own mapping on macOS's APFS. *)
   if
     Dev.is_io src.mem.dev <> Dev.is_io dst.mem.dev
     && src.mem.alloc == dst.mem.alloc
   then
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then
-    invalid_argf "Rig.%s: the destination admits only reads" fn;
-  Claim.reading2 fn src dst claimed n
+    invalid_argf "Rig.%s: the destination admits only reads" fn
 
-(* [copy] under read claims on both sides, which keep a donation from writing
-   either while the copy waits and runs. The claims' release after it keeps the
-   buffers reachable: a read, a write or a move hands over addresses only, and a
-   collection could otherwise free their memory under it. *)
-and claimed src dst n =
+(* Under read claims on both sides, which keep a donation from writing either
+   while the copy routes and the host moves bytes. The claims' release after
+   it keeps the buffers reachable: a read, a write or a move hands over
+   addresses only, and a collection could otherwise free their memory under
+   it. Is the copy's last point, [0] for the host's. *)
+let claimed fn ~waits src dst boxes =
   let sd = src.mem.dev and dd = dst.mem.dev in
   Memory.check_owner src.mem;
   Memory.check_owner dst.mem;
   Memory.drain sd;
   if dd != sd then Memory.drain dd;
-  if n > 0 then route ~wait:true src dst n
+  if Array.length boxes = 0 then begin
+    wait_all waits;
+    0
+  end
+  else route fn ~waits src dst boxes
 
-(* Copies [n] bytes from [src] to [dst], directly or through the staging memory,
-   recording each transfer that ran. *)
-and route ~wait src dst n =
-  let sd = src.mem.dev and dd = dst.mem.dev in
-  if direct ~wait ~into_half:false src dst n then ()
-  else if (far sd || far dd) && not (hosted src || hosted dst) then
-    invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
-      dd.name
-  else staged src dst n
+(* A point of the host for [p], the point of a copy's last transfer, [0] for
+   the host's, whose copy is done. *)
+let point p = if p = 0 then Submission.mark () else p
 
-(* Through staging memory. Where a device runs the legs out of [src], it
-   writes the halves, each piece one ahead. *)
-and staged src dst n =
-  if two_stages src dst then between src dst n
-  else
-    through (stage_for src dst) n
-      ~writer:(if runs src then Device else Host)
-      ~sides:[ src; dst ] ~ahead:(runs src)
-      ~into:(fun h at -> leg ~into_half:true ~src:(piece src at h) ~dst:h)
-      ~out_of:(fun h at -> leg ~into_half:false ~src:h ~dst:(piece dst at h));
-  Buffer.wait dst Buffer.Read_write
+let queue fn src dst (waits, boxes) = claimed fn ~waits src dst boxes
 
-(* Between two devices that each stage through their own memory: [src]'s
-   device fills a half of its stage, the host moves the half's bytes into a
-   half of [dst]'s device's stage, and that device drains it. The leg into the
-   next half runs while the host moves the last. *)
-and between src dst n =
-  let pieces = pieces n in
-  let need = if pieces = 1 then extent n else 0 in
-  holding (runner src) Device 0 ~two:(pieces > 1) (fun a0 a1 ->
-      holding (runner dst) Host need ~two:(pieces > 1) (fun b0 b1 ->
-          let ha0 = ready a0 Device and hb0 = ready b0 Host in
-          let ha1 = if pieces > 1 then ready a1 Device else ha0 in
-          let hb1 = if pieces > 1 then ready b1 Host else hb0 in
-          let base0 = b0.cursor in
-          map_halves a0.stage src ha0 ha1;
-          map_halves b0.stage dst hb0 hb1;
-          let half h0 h1 base k =
-            Buffer.view
-              (if k land 1 = 0 then h0 else h1)
-              ~first:(if k = 0 then base else 0)
-              ~length:(piece_bytes n k)
-          in
-          let into k =
-            let h = half ha0 ha1 0 k in
-            leg ~into_half:true ~src:(piece src (k * half_bytes) h) ~dst:h
-          in
-          into 0;
-          for k = 0 to pieces - 1 do
-            if k + 1 < pieces then into (k + 1);
-            let ha = half ha0 ha1 0 k and hb = half hb0 hb1 base0 k in
-            if k >= 2 then Buffer.wait hb Buffer.Read_write;
-            leg ~into_half:true ~src:ha ~dst:hb;
-            leg ~into_half:false ~src:hb ~dst:(piece dst (k * half_bytes) hb)
-          done;
-          a0.cursor <- extent n;
-          a1.cursor <- extent n;
-          b0.cursor <- base0 + extent n;
-          b1.cursor <- base0 + extent n));
-  Buffer.wait dst Buffer.Read_write
+let submit_copy ?(waits = [||]) ~src ~dst boxes =
+  let fn = "Buffer.submit_copy" in
+  Dev.check_held fn;
+  let boxes = fitting fn ~src ~dst boxes in
+  check fn src dst;
+  point (Claim.reading2 fn src dst (queue fn) (waits, boxes))
 
-(* One leg of a staged copy, which a device's queue runs without the host
-   waiting. A leg runs in one transfer by construction: one that finds none,
-   such as into a device that runs no copy, goes no further. *)
-and leg ~into_half ~src ~dst =
-  if not (direct ~wait:false ~into_half src dst (Buffer.length src)) then
-    invalid_argf "Rig.%s: no device copies between %s and %s" fn
-      src.mem.dev.name dst.mem.dev.name
+(* [copy] under its claims, through its wait. *)
+let copied src dst n =
+  let boxes = if n = 0 then [||] else [| row n |] in
+  let p = claimed "Buffer.copy" ~waits:[||] src dst boxes in
+  if p <> 0 then Dev.wait_point 0 true p
+
+let copy ~src ~dst =
+  let fn = "Buffer.copy" in
+  Dev.check_held fn;
+  let n = Buffer.length src in
+  if n <> Buffer.length dst then
+    invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
+  check fn src dst;
+  Claim.reading2 fn src dst copied n
+
+let queued d ~src ~dst =
+  Dev.wait d (Point.value (Submission.run_copy d ~waits:[||] ~src ~dst))
 
 (* The host's values *)
 
@@ -532,37 +718,49 @@ let writable fn b =
     invalid_argf "Rig.%s: the buffer admits only reads" fn
 
 (* The bytes of [dst], which the host does not address, through staging
-   memory, holding a read claim on it as a copy does: [put h at] writes the
-   bytes from [dst]'s byte [at] into the half [h], which no unfinished work
-   uses. *)
+   memory, holding a read claim on it as a copy does, and waiting for its
+   last leg: [put h base at len] writes the [len] bytes from [dst]'s byte [at]
+   into the half [h] from byte [base]. *)
 let upload fn dst put =
   Claim.reading fn dst (fun () ->
       Memory.check_owner dst.mem;
       Memory.drain dst.mem.dev;
       let n = Buffer.length dst in
-      if n > 0 then begin
-        through (stage_with dst) n ~writer:Host ~sides:[ dst ] ~ahead:false
-          ~into:put ~out_of:(fun h at ->
-            leg ~into_half:false ~src:h
-              ~dst:(Buffer.view dst ~first:at ~length:(Buffer.length h)));
-        Buffer.wait dst Buffer.Read_write
-      end)
+      if n > 0 then
+        let p =
+          through fn (stage_with dst) (pieces [| row n |]) ~writer:Host
+            ~sides:[ dst ] ~ahead:false
+            ~into:(fun h base p ->
+              List.iter (fun (x, at) -> put h (base + at) x.dst_offset x.width)
+                p.parts;
+              0)
+            ~out_of:(fun h base p ->
+              leg fn ~waits:[||] ~into_half:false h dst (out_of_half base p))
+        in
+        if p <> 0 then Dev.wait_point 0 true p)
 
 (* The bytes of [src], which the host does not address, through staging
-   memory, holding a read claim on it: [take h at] reads the bytes from
-   [src]'s byte [at] out of the half [h], after the leg that wrote it. *)
+   memory, holding a read claim on it: [take h base at len] reads the [len]
+   bytes from [src]'s byte [at] out of the half [h] from byte [base], after
+   the leg that wrote it. *)
 let download fn src take =
   Claim.reading fn src (fun () ->
       Memory.check_owner src.mem;
       Memory.drain src.mem.dev;
       let n = Buffer.length src in
       if n > 0 then
-        through (stage_with src) n ~writer:Device ~sides:[ src ] ~ahead:true
-          ~into:(fun h at ->
-            leg ~into_half:true
-              ~src:(Buffer.view src ~first:at ~length:(Buffer.length h))
-              ~dst:h)
-          ~out_of:take)
+        ignore
+          (through fn (stage_with src) (pieces [| row n |]) ~writer:Device
+             ~sides:[ src ] ~ahead:true
+             ~into:(fun h base p ->
+               leg fn ~waits:[||] ~into_half:true src h (into_half base p))
+             ~out_of:(fun h base p ->
+               Buffer.wait h Buffer.Read;
+               List.iter
+                 (fun (x, at) -> take h (base + at) x.src_offset x.width)
+                 p.parts;
+               0)
+            : int))
 
 (* Whether the host moves the bytes of [b] for a blit or a fill itself: [b]'s
    memory is addressed by the host and no io device owns it, whose memory
@@ -588,8 +786,8 @@ let blit_from_string s i b j n =
     (* The view would otherwise name itself for a dead buffer; the check that
        counts runs under the claim. *)
     Buffer.check_live fn b;
-    upload fn (Buffer.view b ~first:j ~length:n) (fun h at ->
-        Buffer.blit_string s (i + at) h 0 (Buffer.length h))
+    upload fn (Buffer.view b ~first:j ~length:n) (fun h base at len ->
+        Buffer.blit_string s (i + at) h base len)
   end
 
 let blit_to_bytes b i s j n =
@@ -604,10 +802,11 @@ let blit_to_bytes b i s j n =
   end
   else begin
     Buffer.check_live fn b;
-    download fn (Buffer.view b ~first:i ~length:n) (fun h at ->
-        Buffer.wait h Buffer.Read;
-        Buffer.blit_bytes h 0 s (j + at) (Buffer.length h))
+    download fn (Buffer.view b ~first:i ~length:n) (fun h base at len ->
+        Buffer.blit_bytes h base s (j + at) len)
   end
+
+(* Fills *)
 
 (* The bytes an io device's fill writes at a time, from host memory holding
    the byte. *)
@@ -615,7 +814,7 @@ let io_fill_bytes = 1 lsl 20
 
 (* Fills [b], memory an io device owns, with [c] through the io device's
    writes, after the work it follows. *)
-let fill_io b c =
+let fill_io fn b c =
   let n = Buffer.length b in
   let k = Int.min n io_fill_bytes in
   let h = Buffer.create Dev.host k in
@@ -624,38 +823,65 @@ let fill_io b c =
   let rec go at =
     if at < n then begin
       let len = Int.min k (n - at) in
-      io_write h (Buffer.view b ~first:at ~length:len) len;
+      io_write fn h 0 b at len;
       go (at + len)
     end
   in
   go 0
 
 (* Fills [b] with [c] on the copy engine of the device that runs its legs
-   ([runner]), reading no memory, and waits for it. *)
-let fill_on_engine fn b c =
+   ([runner]), reading no memory, after the points of [waits]: the fill's
+   point. *)
+let fill_on_engine fn ~waits b c =
   let d = runner b in
   match (d.live.copy_engine, mine d b.mem) with
   | Some _, Some m when not (Dev.is_io d) ->
-      Dev.wait d (Point.value (Submission.run_set d ~dst:{ b with mem = m } c))
+      Submission.run_set d ~waits ~dst:{ b with mem = m } c
   | _ -> invalid_argf "Rig.%s: no device sets the bytes of %s" fn b.mem.dev.name
 
-(* Where the host addresses [b], the host sets its bytes; where [b] is an io
-   device's memory, the io device writes them; otherwise a copy engine sets
-   them. Each holds a read claim on [b] while it runs. *)
+(* A fill of [b], which the host does not move, under a read claim on it: the
+   io device writes an io device's memory, and a copy engine sets any other.
+   Is its point, [0] for the host's. *)
+let filled fn ~waits b c =
+  Memory.check_owner b.mem;
+  Memory.drain b.mem.dev;
+  if Buffer.length b > 0 && not (io_owned b.mem) then
+    fill_on_engine fn ~waits b c
+  else begin
+    wait_all waits;
+    if Buffer.length b > 0 then fill_io fn b c;
+    0
+  end
+
+(* Where the host addresses [b], the host sets its bytes after the points of
+   [waits] and the work it follows, holding a read claim on [b]. *)
+let fill_host fn ~waits b c =
+  wait_all waits;
+  Claim.wait fn Buffer.Read_write b;
+  Buffer.set_bytes b 0 (Buffer.length b) c;
+  Memory.claim_drop b
+
+let submit_fill ?(waits = [||]) b c =
+  let fn = "Buffer.submit_fill" in
+  Dev.check_held fn;
+  writable fn b;
+  if host_moved b then begin
+    fill_host fn ~waits b c;
+    Submission.mark ()
+  end
+  else begin
+    Buffer.check_live fn b;
+    point (Claim.reading fn b (fun () -> filled fn ~waits b c))
+  end
+
 let fill b c =
   let fn = "Buffer.fill" in
   Dev.check_held fn;
   writable fn b;
-  if host_moved b then begin
-    Claim.wait fn Buffer.Read_write b;
-    Buffer.set_bytes b 0 (Buffer.length b) c;
-    Memory.claim_drop b
-  end
+  if host_moved b then fill_host fn ~waits:[||] b c
   else begin
     Buffer.check_live fn b;
     Claim.reading fn b (fun () ->
-        Memory.check_owner b.mem;
-        Memory.drain b.mem.dev;
-        if Buffer.length b > 0 then
-          if io_owned b.mem then fill_io b c else fill_on_engine fn b c)
+        let p = filled fn ~waits:[||] b c in
+        if p <> 0 then Dev.wait_point 0 true p)
   end

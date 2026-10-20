@@ -267,13 +267,14 @@ let () =
   @@ run "rig.walk"
        [
          group ~timeout "every failing call ends as rig.mli states"
-           (List.map (fun op -> test op.name (walk op)) ops
-           @ List.map
-               (fun op ->
-                 test op.name
-                   (walk ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ] op))
-               staged
-           @ List.map exhausted staged);
+           (let boxes, through = queued in
+            List.map (fun op -> test op.name (walk op)) (ops @ [ boxes ])
+            @ List.map
+                (fun op ->
+                  test op.name
+                    (walk ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ] op))
+                (staged @ through)
+            @ List.map exhausted (staged @ through));
          group ~timeout "opening"
            [
              test "every failing fact or opener leaves the name to open"

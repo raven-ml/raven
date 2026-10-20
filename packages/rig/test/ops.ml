@@ -159,6 +159,64 @@ let fill =
         B.copy ~src:on_d ~dst:back;
         equal string (String.make page 'f') (bytes back))
 
+(* A queued copy between the host and [d], waited for: as [copy], returning
+   once queued. *)
+let submit_copy direction =
+  let name =
+    match direction with
+    | `Into -> "submit copy into"
+    | `Out_of -> "submit copy out of"
+  in
+  op name ~opener:staging (fun d ->
+      let on_d = B.create d page in
+      let src, dst =
+        match direction with
+        | `Into -> (filled page, on_d)
+        | `Out_of ->
+            B.copy ~src:(filled page) ~dst:on_d;
+            (on_d, B.create Rig.host page)
+      in
+      fun _ ->
+        Rig.Point.wait (B.submit_copy ~src ~dst [| B.row page |]);
+        let back = B.create Rig.host page in
+        B.copy ~src:dst ~dst:back;
+        equal string (pattern page) (bytes back))
+
+(* A queued fill of [d]'s memory, waited for, read back through the staging
+   memory. *)
+let submit_fill =
+  op "submit fill" ~opener:staging (fun d ->
+      let on_d = B.create d page in
+      fun _ ->
+        Rig.Point.wait (B.submit_fill on_d 'g');
+        let back = B.create Rig.host page in
+        B.copy ~src:on_d ~dst:back;
+        equal string (String.make page 'g') (bytes back))
+
+(* A queued copy of two boxes between buffers of [d], whose memory the host
+   does not address: one submission of a part per box on [d]'s copy engine. *)
+let submit_boxes =
+  op "submit copy of boxes" ~opener:(P.open_ ~host_visible:false) (fun d ->
+      let src = B.create d page and dst = B.create d page in
+      B.copy ~src:(filled page) ~dst:src;
+      let box =
+        {
+          B.src_offset = 0;
+          dst_offset = 0;
+          width = 16;
+          rows = page / 32;
+          src_pitch = 32;
+          dst_pitch = 32;
+        }
+      in
+      fun _ ->
+        Rig.Point.wait
+          (B.submit_copy ~src ~dst
+             [| box; { box with src_offset = 16; dst_offset = 16 } |]);
+        let back = B.create Rig.host page in
+        B.copy ~src:dst ~dst:back;
+        equal string (pattern page) (bytes back))
+
 let load =
   op "load" (fun d failure ->
       match Rig.Image.load d "code:64" with
@@ -213,6 +271,10 @@ let ops =
 (* A copy through the staging memory needs [d] to map it, and so does a
    fill's read back. *)
 let staged = [ copy `Into; copy `Out_of; fill ]
+
+(* The queued copies and fill, each waited for: the copy of boxes on a
+   device's copy engine, and the others through staging memory. *)
+let queued = (submit_boxes, [ submit_copy `Into; submit_copy `Out_of; submit_fill ])
 
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 

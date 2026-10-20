@@ -358,6 +358,21 @@ value caml_rig_sub_copy(value v_s, value v_k, value v_i, value v_src,
   c->part = Int_val(v_i);
   c->src = Int_val(v_src);
   c->dst = Int_val(v_dst);
+  c->boxed = 0;
+  return Val_unit;
+}
+
+/* The submission's [v_k]th copy is the box [v_box], a Def.box whose fields
+   C reads in order, between its two buffers. */
+value caml_rig_sub_box(value v_s, value v_k, value v_box) {
+  struct rig_copy *c = &Sub_val(v_s)->copies[Int_val(v_k)];
+  c->boxed = 1;
+  c->box.src_offset = (uint64_t)Long_val(Field(v_box, 0));
+  c->box.dst_offset = (uint64_t)Long_val(Field(v_box, 1));
+  c->box.width = (uint64_t)Long_val(Field(v_box, 2));
+  c->box.rows = (uint64_t)Long_val(Field(v_box, 3));
+  c->box.src_pitch = (uint64_t)Long_val(Field(v_box, 4));
+  c->box.dst_pitch = (uint64_t)Long_val(Field(v_box, 5));
   return Val_unit;
 }
 
@@ -415,12 +430,21 @@ static void set_copy(struct rig_part *p, const struct rig_copy *c,
     return;
   }
   p->copy.dst = dst->handle;
-  p->copy.dst_offset = dst->offset;
   p->copy.src = src->handle;
-  p->copy.src_offset = src->offset;
-  p->copy.width = src->bytes;
-  p->copy.rows = 1;
-  p->copy.src_pitch = p->copy.dst_pitch = src->bytes;
+  if (c->boxed) {
+    p->copy.dst_offset = dst->offset + c->box.dst_offset;
+    p->copy.src_offset = src->offset + c->box.src_offset;
+    p->copy.width = c->box.width;
+    p->copy.rows = c->box.rows;
+    p->copy.src_pitch = c->box.src_pitch;
+    p->copy.dst_pitch = c->box.dst_pitch;
+  } else {
+    p->copy.dst_offset = dst->offset;
+    p->copy.src_offset = src->offset;
+    p->copy.width = src->bytes;
+    p->copy.rows = 1;
+    p->copy.src_pitch = p->copy.dst_pitch = src->bytes;
+  }
   p->copy.local = src->local   ? RIG_LOCAL_SRC
                   : dst->local ? RIG_LOCAL_DST
                                : RIG_LOCAL_NONE;
@@ -717,8 +741,8 @@ value caml_rig_call_side(value v_c, value v_k, value v_b, value v_local,
 }
 
 /* Sets the call's parts from [s]'s, the fields of each copy with a slot end
-   from the sides of its ends, or refuses a copy whose buffers differ in
-   size, overlap, or are both this process's memory. */
+   from the sides of its ends, or refuses a copy whose buffers overlap or are
+   both this process's memory, or, other than a box, differ in size. */
 static void set_copies(const struct rig_sub *s, struct rig_call *r) {
   memcpy(r->parts, s->parts, (size_t)s->nparts * sizeof *r->parts);
   for (int k = 0; k < s->ncopies; k++) {
@@ -733,7 +757,7 @@ static void set_copies(const struct rig_sub *s, struct rig_call *r) {
       set_copy(&r->parts[c->part], c, src, dst);
       continue;
     }
-    if (src->bytes != dst->bytes)
+    if (!c->boxed && src->bytes != dst->bytes)
       caml_invalid_argument("Rig.submit: a copy's buffers differ in size");
     if (rig_sides_overlap(src, dst))
       caml_invalid_argument("Rig.submit: a copy's buffers overlap");
