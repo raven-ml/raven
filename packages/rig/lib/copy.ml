@@ -68,29 +68,37 @@ let ends_within x ~off ~pitch len =
   off <= len && x.width <= len - off
   && x.rows - 1 <= (len - off - x.width) / pitch
 
-(* The boxes of [boxes] that have bytes, read once, or [Invalid_argument]
-   for one that does not fit [src] and [dst]. *)
+(* [Invalid_argument] for box [i], [x], unless it fits [src] and [dst]. *)
+let fits fn ~src ~dst i x =
+  if
+    x.src_offset < 0 || x.dst_offset < 0 || x.width < 0 || x.rows < 0
+    || x.src_pitch < x.width || x.dst_pitch < x.width
+  then
+    invalid_argf "Rig.%s: box %d has a negative field or a pitch under its \
+                  width"
+      fn i;
+  if
+    has_bytes x
+    && not
+         (ends_within x ~off:x.src_offset ~pitch:x.src_pitch
+            (Buffer.length src)
+         && ends_within x ~off:x.dst_offset ~pitch:x.dst_pitch
+              (Buffer.length dst))
+  then invalid_argf "Rig.%s: box %d ends past a buffer" fn i
+
+(* The boxes of [boxes] that have bytes, read once into a copy of the array,
+   or [Invalid_argument] for one that does not fit [src] and [dst]. The copy
+   is the result unless a box has no bytes. *)
 let fitting fn ~src ~dst boxes =
-  let fits i x =
-    if
-      x.src_offset < 0 || x.dst_offset < 0 || x.width < 0 || x.rows < 0
-      || x.src_pitch < x.width || x.dst_pitch < x.width
-    then
-      invalid_argf "Rig.%s: box %d has a negative field or a pitch under its \
-                    width"
-        fn i;
-    if
-      has_bytes x
-      && not
-           (ends_within x ~off:x.src_offset ~pitch:x.src_pitch
-              (Buffer.length src)
-           && ends_within x ~off:x.dst_offset ~pitch:x.dst_pitch
-                (Buffer.length dst))
-    then invalid_argf "Rig.%s: box %d ends past a buffer" fn i
-  in
-  let boxes = Array.to_list boxes in
-  List.iteri fits boxes;
-  Array.of_list (List.filter has_bytes boxes)
+  let boxes = Array.copy boxes in
+  let empty = ref 0 in
+  for i = 0 to Array.length boxes - 1 do
+    let x = Array.unsafe_get boxes i in
+    fits fn ~src ~dst i x;
+    if not (has_bytes x) then incr empty
+  done;
+  if !empty = 0 then boxes
+  else Array.of_list (List.filter has_bytes (Array.to_list boxes))
 
 (* The bytes of [b] from [at], [n] of them: [b] itself when they are all of
    it. *)
