@@ -1469,6 +1469,16 @@ module Conv = struct
        let spatial = at0 1 spatial and taps = at0 1 taps in
        let stride = at0 2 stride and dilation = at0 1 dilation in
        let los = at0 1 los and his = at0 1 his in
+       (* One case in ten makes axis 0 a padding that cuts past the axis: an
+          input of 1 cropped by 1 on each side. Drawn freely it is about one
+          case in twenty, which some seeds never reach. *)
+       let* past = int_range 0 9 in
+       let cut v a =
+         if past = 0 then Array.mapi (fun i e -> if i = 0 then v else e) a
+         else a
+       in
+       let spatial = cut 1 spatial in
+       let los = cut (-1) los and his = cut (-1) his in
        let c0 =
          { n; spatial; groups; cg; og; taps; stride; dilation;
            padding = Array.map2 (fun a b -> (a, b)) los his; xs = [||]; ws = [||] }
