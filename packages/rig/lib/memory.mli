@@ -100,8 +100,10 @@ val reached_write : memory -> bool
 
 val uses_done : memory -> bool
 (** [uses_done m] is [true] iff every point that {!wait_points}[ m] waits
-    for is done ({!Dev.is_done}). It commits no work, waits for none, never
-    raises and allocates nothing, so it may run under a device's lock. *)
+    for is done as the values rig has seen answer it ({!Dev.seen_done}),
+    which may be [false] for work done behind a transport. It commits no
+    work, waits for none, calls no driver, never raises and allocates
+    nothing, so it may run under a device's lock. *)
 
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost

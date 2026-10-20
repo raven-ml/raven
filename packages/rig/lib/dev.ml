@@ -835,6 +835,16 @@ let is_done p =
     let w = live_word d in
     if is_lost d then c_done p else w >= Point.value p
 
+(* [is_done] from the values rig has seen: the slot's word, which a device
+   behind a transport moves only when rig reads its word through the driver,
+   so it calls no driver. *)
+let seen_done p =
+  let d = of_index (Point.index p) in
+  if not (owns d p) then c_done p
+  else
+    let w = slot_word d in
+    if is_lost d then c_done p else w >= Point.value p
+
 (* [wait_point]'s reads and commit without its wait: a done point answers
    before any commit, and a point not done raises [Lost] once its device is
    lost. *)

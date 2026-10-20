@@ -378,6 +378,12 @@ val is_done : int -> bool
     a device that gave its slot to a later one is done unless that device's
     loss dropped it ({!free_slot}). *)
 
+val seen_done : int -> bool
+(** [seen_done p] is {!is_done}[ p] as the values rig has seen answer it: it
+    calls no driver and never raises, and it may be [false] for a point of a
+    device behind a transport that has reached it, since its word moves only
+    when rig reads it ({!word}). It allocates nothing. *)
+
 val reached_point : int -> bool
 (** [reached_point p] is {!Rig.Point.reached}: {!is_done}[ p], after a commit
     of [p]'s value as {!wait_point} commits it, which waits for no work. It

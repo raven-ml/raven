@@ -102,19 +102,20 @@ let reached_all (a : alloc) every =
 let reached_points m = reached_all m.alloc true
 let reached_write m = reached_all m.alloc false
 
-(* [reached_all]'s walk, asking [Dev.is_done], which commits nothing. *)
+(* [reached_all]'s walk, asking [Dev.seen_done], which commits nothing and
+   calls no driver. *)
 let rec done_from c i =
   c = 0
   ||
   if i = uses then done_from (stamps_next c) 0
   else
     let p = stamps_followed c i true in
-    p = ended || ((p = 0 || Dev.is_done p) && done_from c (i + 1))
+    p = ended || ((p = 0 || Dev.seen_done p) && done_from c (i + 1))
 
 let uses_done m =
   let st = m.alloc.entry.stamps in
   let p = stamps_folded st true in
-  done_from st 0 && (p = 0 || Dev.is_done p)
+  done_from st 0 && (p = 0 || Dev.seen_done p)
 
 (* Visit every point even after a refusal: reading a later transport word may
    discover its device's loss. The walk carries no allocated state. *)
@@ -893,8 +894,9 @@ let release_early (a : alloc) =
 
 (* Staging memory
 
-   A device's staging slots are copy's, in its [live]; memory returns their
-   free halves where it returns cached memory, as collected memory returns. *)
+   A device's staging halves are copy's, in its [live]; memory returns the
+   buffers of free halves where it returns cached memory, as collected memory
+   returns. *)
 
 external buffer_free : buffer -> string -> int = "caml_rig_buffer_free"
 
