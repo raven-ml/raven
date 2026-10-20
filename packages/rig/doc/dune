@@ -15,4 +15,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries rig))
+ (libraries rig unix))

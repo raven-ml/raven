@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries norn norn.model nx))
+ (libraries norn norn.model nx unix))

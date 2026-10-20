@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries jera nx rune))
+ (libraries jera nx rune unix))
