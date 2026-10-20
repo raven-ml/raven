@@ -22,9 +22,10 @@
     decline nx has no expansion for raises naming the
     kernels, the kind, the dtypes, the device and the move the program makes,
     [Nx.place] onto a set whose kernels compute it: no data moves between
-    devices on its own. The decline of a routine also says that its expansion is
-    not available yet. A result shares an operand's memory only as its view, or
-    where the operand was donated. Movements and bitcasts are views where a
+    devices on its own. The decline of [Eig], the one routine without an
+    expansion, also says that its expansion is not available yet. A result
+    shares an operand's memory only as its view, or where the operand was
+    donated. Movements and bitcasts are views where a
     layout expresses them, and a copy, then a view, otherwise. [Check] reduces
     its flags where they lie, to whether all hold and the first failing index.
     One flag is its own reduction: its element, on the device of the window

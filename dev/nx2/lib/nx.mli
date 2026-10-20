@@ -4409,7 +4409,10 @@ module Prim : sig
           go 0 init
       ]}
       A scatter whose targets may repeat loops once per position along its
-      axis.
+      axis. A matrix routine loops once per step of its factorisation or
+      solve, [Eigh] for as many trips as its dtype's precision and its size
+      bound, and [Svd] for 30 sweeps, a matrix not converged by then NaN;
+      [Eig] has no expansion.
 
       Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)
 end

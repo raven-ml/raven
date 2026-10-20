@@ -577,7 +577,7 @@ let call : type r.
       invalid_arg "Exec.call: an operation no kernel computes"
 
 (* Raises for [op], whose kernels on [d] declined it and which nx does not
-   expand: a core case, or a routine whose expansion is not available yet. A
+   expand: a core case, or [Eig], whose expansion is not available yet. A
    one-node map is named by its node, its result's dtype listed first. *)
 let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
     =

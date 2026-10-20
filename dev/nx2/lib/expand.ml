@@ -1950,6 +1950,1223 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
       in
       Some (first values, first positions)
 
+(* Matrices
+
+   A routine computes on [b; m; n], its matrices' batch flattened into one axis,
+   through maps, gathers, reductions, sorts and contractions. Its steps are a
+   loop whose every trip applies the same operations at full size: where a step
+   of the reference touches a part that shrinks, such as the rows below a pivot,
+   a mask of the coordinates against the trip's index keeps the rest. *)
+
+(* A loop of [n] trips from [init]: [loop n step init]. *)
+type 'd loop =
+  int ->
+  ('d trip -> 'd Value.any list -> 'd Value.any list) ->
+  'd Value.any list ->
+  'd Value.any list
+
+(* The parts of a float or complex dtype's elements: the float format [re] of
+   its real parts and the functions between them. *)
+type ('v, 's) field =
+  | Field : {
+      re : (float, 'r) D.t;
+      real : ('v, 's) E.t -> (float, 'r) E.t;
+      imag : ('v, 's) E.t -> (float, 'r) E.t;
+      conj : ('v, 's) E.t -> ('v, 's) E.t;
+      of_real : (float, 'r) E.t -> ('v, 's) E.t;
+      nan : 'v;
+    }
+      -> ('v, 's) field
+
+(* On complex numbers the real part is a cast; the imaginary part the real part
+   of [-i z], [b] of [a + bi], exact for finite parts. *)
+let field (type v s) (dt : (v, s) D.t) : (v, s) field =
+  let reals (type r) (re : (float, r) D.t) : (float, r) field =
+    Field
+      {
+        re;
+        real = Fun.id;
+        imag = (fun _ -> E.const re 0.);
+        conj = Fun.id;
+        of_real = Fun.id;
+        nan = Float.nan;
+      }
+  in
+  let complex (type c r) (dt : (Complex.t, c) D.t) (re : (float, r) D.t) :
+      (Complex.t, c) field =
+    let real z = E.cast re z and of_real x = E.cast dt x in
+    let imag z = real E.(z * const dt { Complex.re = 0.; im = -1. }) in
+    let conj z =
+      E.(of_real (real z) - (const dt Complex.i * of_real (imag z)))
+    in
+    let nan = { Complex.re = Float.nan; im = Float.nan } in
+    Field { re; real; imag; conj; of_real; nan }
+  in
+  match dt with
+  | D.Float32 -> reals D.Float32
+  | D.Float64 -> reals D.Float64
+  | D.Complex64 -> complex D.Complex64 D.Float32
+  | D.Complex128 -> complex D.Complex128 D.Float64
+  | _ -> invalid_arg (Printf.sprintf "Expand: no routine at %s" (D.name dt))
+
+(* [p], the unit roundoff of [dt]'s parts being [2^-p]. *)
+let digits (type v s) (dt : (v, s) D.t) =
+  match dt with D.Float32 | D.Complex64 -> 24 | _ -> 53
+
+let i64 v = E.const D.Int64 (Int64.of_int v)
+let not_ e = E.(e = const D.Bool false)
+let rows = E.coord 1
+let cols = E.coord 2
+
+let move (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by mv x =
+  apply ~by (Value.Move (mv, x))
+
+let reshape (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by s x =
+  move apply ~by (M.Reshape (Iarray.of_array s)) x
+
+(* [x] broadcast to [shape], unit axes put before its own. *)
+let fit (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let r = Array.length shape and s = Prim.shape x in
+  let x =
+    if Array.length s = r then x
+    else
+      reshape apply ~by (Array.append (Array.make (r - Array.length s) 1) s) x
+  in
+  if Prim.has_shape x shape then x
+  else move apply ~by (M.Broadcast (Iarray.of_array shape)) x
+
+(* The map of [e] into [dt] at every index of [shape], [e] reading [xs]'s
+   element [i], fit to [shape], as [E.input i]. *)
+let mapx (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    (dt : (w, r) D.t) (xs : d Value.any list) (e : (w, r) E.t) :
+    (w, r, d) Value.t =
+  let load (Value.Any x) = Value.Plain (fit apply ~by shape x) in
+  let ins = List.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) xs in
+  map1 apply ~by shape
+    (P.of_exprs ~ins:(Iarray.of_list ins) [| E.any e |])
+    dt
+    (Iarray.of_list (List.map load xs))
+
+(* A trip's index as a 0-d value. *)
+let trip_index (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by :
+    d trip -> d Value.index = function
+  | Index k -> k
+  | At i -> mapx apply ~by [||] D.Int64 [] (i64 i)
+
+(* [x]'s matrices as [b; m; n], and its batch's shape. *)
+let matrices (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) : int array * (v, s, d) Value.t =
+  let s = Prim.shape x in
+  let r = Array.length s in
+  let lead = Array.sub s 0 (r - 2) in
+  let b = Array.fold_left ( * ) 1 lead in
+  (lead, reshape apply ~by [| b; s.(r - 2); s.(r - 1) |] x)
+
+(* [x], of a flattened batch, with the batch's shape [lead]. *)
+let batched (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by lead x =
+  let s = Prim.shape x in
+  reshape apply ~by (Array.append lead (Array.sub s 1 (Array.length s - 1))) x
+
+(* Row [i] of [x], [b; m; n], as [b; 1; n], and column [j] as [b; m; 1], for
+   indices [i] and [j] that fit those shapes. *)
+let row (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by i x =
+  let s = Prim.shape x in
+  let idx = fit apply ~by [| s.(0); 1; s.(2) |] i in
+  apply ~by (Value.Gather { axis = 1; idx; x })
+
+let column (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by j x =
+  let s = Prim.shape x in
+  let idx = fit apply ~by [| s.(0); s.(1); 1 |] j in
+  apply ~by (Value.Gather { axis = 2; idx; x })
+
+(* The contraction of [x] and [y] per matrix of the batch along the pair of axes
+   [contracting]. *)
+let product (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    contracting (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let batch : (int * int) iarray = [| (0, 0) |]
+  and contracting : (int * int) iarray = [| contracting |] in
+  let dt = Prim.dtype x in
+  let order = Prim.contract_order ~batch ~contracting x y in
+  apply ~by
+    (Value.Contract
+       {
+         order;
+         batch;
+         contracting;
+         acc = D.Any dt;
+         out = dt;
+         a = x;
+         b = y;
+         init = None;
+       })
+
+let conjugate (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype x in
+  let (Field f) = field dt in
+  match D.kind dt with
+  | D.Complex ->
+      mapx apply ~by (Prim.shape x) dt [ Value.Any x ] (f.conj (E.input 0 dt))
+  | D.Float | D.Signed | D.Unsigned | D.Boolean -> x
+
+(* [x]'s matrices transposed, [b; n; m]: a view. *)
+let transposed (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by x =
+  move apply ~by (M.Permute [| 0; 2; 1 |]) x
+
+(* [x] reduced by [m] along [axis], kept as a unit axis. *)
+let along (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by m axis
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let s = Array.copy (Prim.shape x) in
+  let y = reduce_plain apply ~by [| axis |] m x in
+  s.(axis) <- 1;
+  reshape apply ~by s y
+
+(* How many elements of each matrix of [xs], fit to [b; m; n], are [true] by
+   [e], as [b; 1; 1]. *)
+let count_of (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    (xs : d Value.any list) e : d Value.index =
+  let flag = mapx apply ~by shape D.Int64 xs E.(where e (i64 1) (i64 0)) in
+  let count = reduce_plain apply ~by [| 1; 2 |] Sum flag in
+  reshape apply ~by [| shape.(0); 1; 1 |] count
+
+(* [x] with each matrix whose [count] is positive NaN. *)
+let failing (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (count : d Value.index) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype x and s = Prim.shape x in
+  let (Field f) = field dt in
+  let units = Array.mapi (fun a e -> if a = 0 then e else 1) s in
+  mapx apply ~by s dt
+    [ Value.Any x; Value.Any (reshape apply ~by units count) ]
+    E.(where (input 1 D.Int64 > i64 0) (const dt f.nan) (input 0 dt))
+
+(* Whether each matrix of [x], [b; m; n], holds an infinity or a NaN. *)
+let not_finite (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) =
+  let dt = Prim.dtype x in
+  let (Field f) = field dt in
+  let z = E.input 0 dt in
+  count_of apply ~by (Prim.shape x) [ Value.Any x ]
+    (not_ E.(finite (f.real z) && finite (f.imag z)))
+
+(* The matrix of [b; n; n] whose elements are [one] on the diagonal and [zero]
+   elsewhere. *)
+let identity (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (dt : (v, s) D.t) b n : (v, s, d) Value.t =
+  mapx apply ~by [| b; n; n |] dt []
+    E.(where (rows = cols) (const dt (D.one dt)) (const dt (D.zero dt)))
+
+(* Cholesky's columns, dpotf2's: at trip [j], [v = a_j - L l_jᴴ], [l_j] row [j]
+   of [L] so far, then [L_jj = √(re v_j)] and [L_ij = v_i / L_jj] below it. The
+   lower triangle and the diagonal's real parts alone are read. A matrix whose
+   pivot is not positive, or NaN, is NaN. *)
+let cholesky (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (triangle : Nx_kernel.triangle) (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let lead, a = matrices apply ~by a in
+  let shape = Prim.shape a in
+  let b = shape.(0) and n = shape.(1) in
+  let x i = E.input i dt and k = E.input 3 D.Int64 in
+  let zero = E.const dt (D.zero dt) in
+  let step t = function
+    | [ l ] ->
+        let j = trip_index apply ~by t and l = Prim.expect dt l in
+        let s =
+          product apply ~by (2, 2) l (conjugate apply ~by (row apply ~by j l))
+        in
+        let v =
+          mapx apply ~by [| b; n; 1 |] dt
+            [ Value.Any (column apply ~by j a); Value.Any s ]
+            E.(x 0 - x 1)
+        in
+        let d = f.of_real (E.sqrt (f.real (x 2))) in
+        let next = E.(where (rows > k) (x 1 / d) (where (rows = k) d zero)) in
+        [
+          Value.Any
+            (mapx apply ~by shape dt
+               [
+                 Value.Any l;
+                 Value.Any v;
+                 Value.Any (row apply ~by j v);
+                 Value.Any j;
+               ]
+               E.(where (cols = k) next (x 0)));
+        ]
+    | _ -> invalid_arg "Expand: Cholesky's loop carries its factor alone"
+  in
+  let l =
+    match loop n step [ Value.Any (zeros apply ~by dt shape) ] with
+    | [ l ] -> Prim.expect dt l
+    | _ -> invalid_arg "Expand: Cholesky's loop gives its factor alone"
+  in
+  let bad =
+    count_of apply ~by shape [ Value.Any l ]
+      E.(rows = cols && not_ (f.real (x 0) > const f.re 0.))
+  in
+  let l =
+    match triangle with
+    | Lower -> l
+    | Upper ->
+        conjugate apply ~by (apply ~by (Value.Copy (transposed apply ~by l)))
+  in
+  batched apply ~by lead (failing apply ~by bad l)
+
+(* Substitution, dtrsm's, by rows: [x] of [T x = b], at trip [i] [x_i = (b_i -
+   t_i x) / t_ii], [x] zero below row [i] so far. [T] is [a]'s triangle, or
+   [aᴴ]'s, with ones on its diagonal where [unit_diagonal]; an upper one is
+   solved as the lower [J T J], [J] the reversal, of [J b]. A zero on a diagonal
+   it reads makes [x] NaN. *)
+let solve (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (triangle : Nx_kernel.triangle) ~adjoint ~unit_diagonal
+    (a : (v, s, d) Value.t) (rhs : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let _, a = matrices apply ~by a and lead, rhs = matrices apply ~by rhs in
+  let sb = Prim.shape rhs in
+  let b = sb.(0) and n = sb.(1) in
+  let lower = triangle = Lower <> adjoint in
+  (* [x] reversed along its axes from 1 to [last]. *)
+  let reversed last x =
+    let ranges =
+      Iarray.init 3 (fun i ->
+          let e = Prim.dim x i in
+          if i = 0 || i > last then whole e
+          else { M.start = e - 1; count = e; step = -1 })
+    in
+    move apply ~by (M.Slice ranges) x
+  in
+  let a = if adjoint then transposed apply ~by a else a in
+  let a, rhs = if lower then (a, rhs) else (reversed 2 a, reversed 1 rhs) in
+  let x i = E.input i dt and k i = E.input i D.Int64 in
+  let zero = E.const dt (D.zero dt) and one = E.const dt (D.one dt) in
+  let t =
+    let v = if adjoint then f.conj (x 0) else x 0 in
+    let diagonal = if unit_diagonal then one else v in
+    mapx apply ~by [| b; n; n |] dt [ Value.Any a ]
+      E.(where (rows = cols) diagonal (where (rows > cols) v zero))
+  in
+  let step trip = function
+    | [ y ] ->
+        let i = trip_index apply ~by trip and y = Prim.expect dt y in
+        let ti = row apply ~by i t in
+        let s = product apply ~by (2, 1) ti y in
+        let tii = column apply ~by i ti in
+        [
+          Value.Any
+            (mapx apply ~by sb dt
+               [
+                 Value.Any y;
+                 Value.Any (row apply ~by i rhs);
+                 Value.Any s;
+                 Value.Any tii;
+                 Value.Any i;
+               ]
+               E.(where (rows = k 4) ((x 1 - x 2) / x 3) (x 0)));
+        ]
+    | _ -> invalid_arg "Expand: a solve's loop carries its solution alone"
+  in
+  let y =
+    match loop n step [ Value.Any (zeros apply ~by dt sb) ] with
+    | [ y ] -> Prim.expect dt y
+    | _ -> invalid_arg "Expand: a solve's loop gives its solution alone"
+  in
+  let bad =
+    count_of apply ~by [| b; n; n |] [ Value.Any t ]
+      E.(rows = cols && x 0 = zero)
+  in
+  let y = if lower then y else reversed 1 y in
+  batched apply ~by lead (failing apply ~by bad y)
+
+(* Gaussian elimination with partial pivoting, dgetf2's right-looking steps: at
+   trip [j], the pivot {!Nx_kernel.S.lu} states, rows [j] and [p] interchanged
+   in [a] and in [perm], column [j] below the diagonal divided by a pivot that
+   is not zero, and the trailing rows and columns less its product with row
+   [j]. *)
+let lu (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t * d Value.index * d Value.index =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let lead, a = matrices apply ~by a in
+  let shape = Prim.shape a in
+  let b = shape.(0) and m = shape.(1) and n = shape.(2) in
+  let kk = Stdlib.min m n in
+  let x i = E.input i dt
+  and k i = E.input i D.Int64
+  and re i = E.input i f.re in
+  let flat x = reshape apply ~by [| b; 1 |] x in
+  (* Row [j] and row [p] interchanged: the row each row reads. *)
+  let swapped j p r = E.(where (r = j) p (where (r = p) j r)) in
+  let step t = function
+    | [ w; perm; pivots ] ->
+        let j = trip_index apply ~by t in
+        let w = Prim.expect dt w in
+        let perm = Prim.expect D.Int64 perm
+        and pivots = Prim.expect D.Int64 pivots in
+        let c = column apply ~by j w in
+        (* The magnitudes the scan compares, below row [j], [-1] elsewhere: a
+           NaN at row [j] is greatest, so the scan stays there, and below it is
+           never taken. *)
+        let mags =
+          let mag = E.(abs (f.real (x 0)) + abs (f.imag (x 0))) in
+          let fl v = E.const f.re v in
+          mapx apply ~by [| b; m; 1 |] f.re
+            [ Value.Any c; Value.Any j ]
+            E.(
+              where
+                (rows < k 1)
+                (fl (-1.))
+                (where (mag <> mag)
+                   (where (rows = k 1) (fl Float.infinity) (fl (-1.)))
+                   mag))
+        in
+        let top = along apply ~by Max 1 mags in
+        let p =
+          along apply ~by Min 1
+            (mapx apply ~by [| b; m; 1 |] D.Int64
+               [ Value.Any mags; Value.Any top ]
+               E.(where (re 0 = re 1) rows (i64 m)))
+        in
+        let w =
+          let idx =
+            mapx apply ~by shape D.Int64
+              [ Value.Any j; Value.Any p ]
+              (swapped (k 0) (k 1) rows)
+          in
+          apply ~by (Value.Gather { axis = 1; idx; x = w })
+        in
+        let p2 = flat p in
+        let perm =
+          let r = E.coord 1 in
+          let idx =
+            mapx apply ~by [| b; m |] D.Int64
+              [ Value.Any j; Value.Any p2 ]
+              (swapped (k 0) (k 1) r)
+          in
+          apply ~by (Value.Gather { axis = 1; idx; x = perm })
+        in
+        let pivots =
+          mapx apply ~by [| b; kk |] D.Int64
+            [ Value.Any pivots; Value.Any j; Value.Any p2 ]
+            E.(where (coord 1 = k 1) (k 2) (k 0))
+        in
+        let c = column apply ~by j w and r = row apply ~by j w in
+        let d = column apply ~by j r in
+        let zero = E.const dt (D.zero dt) in
+        let l = E.(where (x 3 = zero) (x 1) (x 1 / x 3)) in
+        let w =
+          mapx apply ~by shape dt
+            [ Value.Any w; Value.Any c; Value.Any r; Value.Any d; Value.Any j ]
+            E.(
+              where
+                (rows > k 4)
+                (where
+                   (cols > k 4)
+                   (x 0 - (l * x 2))
+                   (where (cols = k 4) l (x 0)))
+                (x 0))
+        in
+        [ Value.Any w; Value.Any perm; Value.Any pivots ]
+    | _ -> invalid_arg "Expand: LU's loop carries its factors and positions"
+  in
+  let init =
+    [
+      Value.Any (apply ~by (Value.Copy a));
+      Value.Any (mapx apply ~by [| b; m |] D.Int64 [] (E.coord 1));
+      Value.Any (zeros apply ~by D.Int64 [| b; kk |]);
+    ]
+  in
+  match loop kk step init with
+  | [ w; perm; pivots ] ->
+      let positions x = batched apply ~by lead (Prim.expect D.Int64 x) in
+      ( batched apply ~by lead (Prim.expect dt w),
+        positions pivots,
+        positions perm )
+  | _ -> invalid_arg "Expand: LU's loop gives its factors and positions"
+
+(* The greatest magnitude of [z]'s parts, which a scaled sum of squares divides
+   by. *)
+let largest real imag z = E.(maximum (abs (real z)) (abs (imag z)))
+
+(* A power of two in [t]'s binade, [t] of [dt]'s parts, a subnormal one
+   included, [0] for [t = 0]: dividing by it and multiplying back are exact
+   where the results are normal. *)
+let binade (type v s r) (dt : (v, s) D.t) (t : (float, r) E.t) =
+  let re = E.dtype t in
+  let fl v = E.const re v in
+  let lo, hi = if digits dt = 24 then (-149., 127.) else (-1074., 1023.) in
+  let e = E.(minimum (maximum (floor (log2 t)) (fl lo)) (fl hi)) in
+  E.(where (t > fl 0.) (exp2 e) (fl 0.))
+
+(* Each matrix of [x], [b; m; n], times the power of two nearest the reciprocal
+   of its greatest part's magnitude, which is exact, and that power, [b; 1; 1]
+   of [x]'s dtype: the squares of its elements then neither overflow nor
+   underflow where they matter, as dsyev scales its matrix "to allowable range".
+   A matrix of zeros, or with an infinity or a NaN, keeps a power of [1]. *)
+let scaled (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t * (v, s, d) Value.t =
+  let dt = Prim.dtype x and shape = Prim.shape x in
+  let (Field f) = field dt in
+  let b = shape.(0) in
+  let one = E.const dt (D.one dt) in
+  if Array.exists (( = ) 0) shape then
+    (x, mapx apply ~by [| b; 1; 1 |] dt [] one)
+  else
+    let mags =
+      mapx apply ~by shape f.re [ Value.Any x ]
+        (largest f.real f.imag (E.input 0 dt))
+    in
+    let top =
+      reshape apply ~by [| b; 1; 1 |]
+        (reduce_plain apply ~by [| 1; 2 |] Max mags)
+    in
+    let fl v = E.const f.re v in
+    let lo, hi = if digits dt = 24 then (-126., 127.) else (-1022., 1023.) in
+    let t = E.input 0 f.re in
+    let e = E.(minimum (maximum (neg (round (log2 t))) (fl lo)) (fl hi)) in
+    let usable = E.(t > fl 0. && t < fl Float.infinity) in
+    let power =
+      mapx apply ~by [| b; 1; 1 |] dt [ Value.Any top ]
+        (f.of_real E.(where usable (exp2 e) (fl 1.)))
+    in
+    let y i = E.input i dt in
+    ( mapx apply ~by shape dt [ Value.Any x; Value.Any power ] E.(y 0 * y 1),
+      power )
+
+(* Householder QR, dgeqr2's reflectors as zlarfg makes them: at trip [j], [x]
+   column [j] of [R] from row [j], [α = x_0], [β = -sign(re α) ‖x‖₂], [τ = (β -
+   α) / β] and [v = (1, x_1.. / (α - β))]; [τ = 0] where [x_1..] is zero and [α]
+   real. [‖x‖₂] is [μ √(Σ |x_i / μ|²)], [μ] a power of two near the greatest
+   part's magnitude, so that no square overflows or underflows and the scalings
+   add no rounding. [R] takes [Hᴴ R], [H = I - τ v vᴴ], its column [j] [β] then
+   zeros. The result is [R], of [a]'s shape, the reflectors' vectors as the
+   columns of [b; m; k] and their [τ] as [b; 1; k]. *)
+let householder (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t * (v, s, d) Value.t * (v, s, d) Value.t =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let shape = Prim.shape a in
+  let b = shape.(0) and m = shape.(1) and n = shape.(2) in
+  let k = Stdlib.min m n in
+  let x i = E.input i dt
+  and j i = E.input i D.Int64
+  and re i = E.input i f.re in
+  let zero = E.const dt (D.zero dt) and one = E.const dt (D.one dt) in
+  let fl v = E.const f.re v in
+  let col = [| b; m; 1 |] and one_by = [| b; 1; 1 |] in
+  let step t = function
+    | [ r; vs; taus ] ->
+        let i = trip_index apply ~by t in
+        let r = Prim.expect dt r in
+        let vs = Prim.expect dt vs and taus = Prim.expect dt taus in
+        let c = column apply ~by i r in
+        let alpha = row apply ~by i c in
+        let size = largest f.real f.imag (x 0) in
+        let tail =
+          along apply ~by Max 1
+            (mapx apply ~by col f.re
+               [ Value.Any c; Value.Any i ]
+               E.(where (rows > j 1) size (fl 0.)))
+        in
+        let mu =
+          mapx apply ~by one_by f.re
+            [ Value.Any alpha; Value.Any tail ]
+            (binade dt E.(maximum (largest f.real f.imag (x 0)) (re 1)))
+        in
+        let squares =
+          along apply ~by Sum 1
+            (mapx apply ~by col f.re
+               [ Value.Any c; Value.Any i; Value.Any mu ]
+               (let y = E.(x 0 / f.of_real (re 2)) in
+                E.(
+                  where
+                    (rows > j 1 && re 2 > fl 0.)
+                    (f.real (y * f.conj y))
+                    (fl 0.))))
+        in
+        (* Over [α], the tail's greatest part, [μ] and the tail's scaled
+           squares: [β] as [x]'s, or [α] where [H] is the identity, [τ] and [α -
+           β]. *)
+        let scalar e =
+          mapx apply ~by one_by dt
+            [ Value.Any alpha; Value.Any tail; Value.Any mu; Value.Any squares ]
+            e
+        in
+        (* [τ] and [v] are the same of [x / μ] as of [x], so they are computed
+           there, as zlarfg rescales a column whose [β] would be subnormal: only
+           [β = μ β'] meets the scale, where it is a result. *)
+        let ar = f.real (x 0) and ai = f.imag (x 0) in
+        let alpha' = E.(x 0 / f.of_real (re 2)) in
+        let sr = E.(ar / re 2) and si = E.(ai / re 2) in
+        let norm = E.(sqrt ((sr * sr) + (si * si) + re 3)) in
+        let beta' = f.of_real E.(where (ar < fl 0.) norm (neg norm)) in
+        let plain = E.(re 1 = fl 0. && ai = fl 0.) in
+        let diagonal = scalar E.(where plain (x 0) (beta' * f.of_real (re 2)))
+        and tau = scalar E.(where plain zero ((beta' - alpha') / beta'))
+        and gap = scalar E.(where plain one (alpha' - beta')) in
+        (* The tail over [μ (α' - β')], divided rather than multiplied by a
+           reciprocal, which overflows where [α' - β'] is subnormal. *)
+        let v =
+          mapx apply ~by col dt
+            [ Value.Any c; Value.Any gap; Value.Any i; Value.Any mu ]
+            E.(
+              where
+                (rows < j 2)
+                zero
+                (where
+                   (rows = j 2)
+                   one
+                   (where (re 3 > fl 0.) (x 0 / f.of_real (re 3) / x 1) zero)))
+        in
+        let w = product apply ~by (1, 1) (conjugate apply ~by v) r in
+        let r =
+          mapx apply ~by shape dt
+            [
+              Value.Any r;
+              Value.Any v;
+              Value.Any w;
+              Value.Any tau;
+              Value.Any diagonal;
+              Value.Any i;
+            ]
+            E.(
+              where
+                (cols = j 5)
+                (where (rows > j 5) zero (where (rows = j 5) (x 4) (x 0)))
+                (x 0 - (f.conj (x 3) * x 1 * x 2)))
+        in
+        let put shape v from =
+          mapx apply ~by shape dt
+            [ Value.Any from; Value.Any v; Value.Any i ]
+            E.(where (cols = j 2) (x 1) (x 0))
+        in
+        [
+          Value.Any r;
+          Value.Any (put [| b; m; k |] v vs);
+          Value.Any (put [| b; 1; k |] tau taus);
+        ]
+    | _ -> invalid_arg "Expand: QR's loop carries its factor and reflectors"
+  in
+  let init =
+    [
+      Value.Any (apply ~by (Value.Copy a));
+      Value.Any (zeros apply ~by dt [| b; m; k |]);
+      Value.Any (zeros apply ~by dt [| b; 1; k |]);
+    ]
+  in
+  match loop k step init with
+  | [ r; vs; taus ] -> (Prim.expect dt r, Prim.expect dt vs, Prim.expect dt taus)
+  | _ -> invalid_arg "Expand: QR's loop gives its factor and reflectors"
+
+(* The first [width] columns of [Q = H_0 ⋯ H_(k-1)], dorg2r's: from the
+   identity's first [width] columns, at trip [t], [H_i] applied from the left,
+   [i = k - 1 - t], [Q ← Q - τ_i v_i (v_iᴴ Q)]. O(m k width). *)
+let accumulate (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (vs : (v, s, d) Value.t) (taus : (v, s, d) Value.t) width :
+    (v, s, d) Value.t =
+  let dt = Prim.dtype vs and s = Prim.shape vs in
+  let b = s.(0) and m = s.(1) and k = s.(2) in
+  let x i = E.input i dt and last = i64 (k - 1) in
+  let q0 =
+    mapx apply ~by [| b; m; width |] dt []
+      E.(where (rows = cols) (const dt (D.one dt)) (const dt (D.zero dt)))
+  in
+  let step t = function
+    | [ q ] ->
+        let q = Prim.expect dt q in
+        let i =
+          mapx apply ~by [||] D.Int64
+            [ Value.Any (trip_index apply ~by t) ]
+            E.(last - input 0 D.Int64)
+        in
+        let v = column apply ~by i vs and tau = column apply ~by i taus in
+        let w = product apply ~by (1, 1) (conjugate apply ~by v) q in
+        [
+          Value.Any
+            (mapx apply ~by [| b; m; width |] dt
+               [ Value.Any q; Value.Any v; Value.Any w; Value.Any tau ]
+               E.(x 0 - (x 3 * x 1 * x 2)));
+        ]
+    | _ -> invalid_arg "Expand: Q's loop carries Q alone"
+  in
+  match loop k step [ Value.Any q0 ] with
+  | [ q ] -> Prim.expect dt q
+  | _ -> invalid_arg "Expand: Q's loop gives Q alone"
+
+(* [x]'s matrices cut to [rows] rows and [cols] columns, copied. *)
+let corner (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by rows cols x =
+  let s = Prim.shape x in
+  let ranges : M.range iarray = [| whole s.(0); whole rows; whole cols |] in
+  apply ~by (Value.Copy (move apply ~by (M.Slice ranges) x))
+
+let qr (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~loop
+    (factors : Nx_kernel.factors) (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t * (v, s, d) Value.t =
+  let lead, a = matrices apply ~by a in
+  let s = Prim.shape a in
+  let m = s.(1) and n = s.(2) in
+  let r, vs, taus = householder apply ~by ~loop a in
+  let width = match factors with Reduced -> Stdlib.min m n | Complete -> m in
+  let q = accumulate apply ~by ~loop vs taus width in
+  (batched apply ~by lead q, batched apply ~by lead (corner apply ~by width n r))
+
+(* Jacobi's method
+
+   A rotation of the pair [(p, q)], [p < q], of indices of a Hermitian [G],
+   whose element [g_pq = |g_pq| e] is not zero, has [c = 1 / √(1 + t²)] and [s =
+   t c], [t = sign ζ / (|ζ| + √(1 + ζ²))] (Drmač and Veselić, LAWN 169, §1).
+   Over a value's columns or a matrix's rows and columns it takes index [i] into
+   [c x_i + κ x_π(i)], [π(i)] its partner, [κ_p = -s conj e] and [κ_q = s e],
+   and annihilates [g_pq]. A trip rotates disjoint pairs, a round of a
+   1-factorisation of the indices: of [N] players, [n] for an even [n] and [n +
+   1] for an odd one, its last a stand-in, round [r] of [R = N - 1] pairs player
+   [N - 1] with [r] and [i] with [(2r - i) mod R]. *)
+
+let rounds n = if n mod 2 = 0 then n - 1 else n
+
+(* Index [i]'s partner in round [r], int64 expressions; [n], past the indices,
+   for the stand-in. *)
+let partner n r i =
+  let last = i64 (rounds n) in
+  E.(
+    where (i = last) r
+      (where (i = r) last (((((i64 2 * r) - i) mod last) + last) mod last)))
+
+(* Per index [i], [b; n; 1], of the pairs [π] gives, the cosine [c] and [κ] of
+   the rotation of [ζ], [|g_pq|] and the phase [e] that [ζ], [size] and [phase]
+   compute from [loads], where [rotated]. *)
+let rotation (type v s r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (dt : (v, s) D.t) (re : (float, r) D.t) ~of_real ~conj shape loads ~first
+    ~rotated ~zeta ~phase : (v, s, d) Value.t * (v, s, d) Value.t =
+  let one = E.const re 1. in
+  (* [|ζ| + √(1 + ζ²)], as [|ζ| (1 + √(1 + ζ⁻²))] past [1], where [ζ²] would
+     overflow: dgesvj's [t = 1 / (2ζ)] past its BIGTHETA, a rotation that still
+     clears a small column of a large one. *)
+  let a = E.abs zeta in
+  let denominator =
+    E.(
+      where (a > one)
+        (a * (one + sqrt (one + (one / (a * a)))))
+        (a + sqrt (one + (a * a))))
+  in
+  let t = E.(where (zeta < const re 0.) (neg one) one / denominator) in
+  let c = E.(one / sqrt (one + (t * t))) in
+  let cos = mapx apply ~by shape dt loads (of_real E.(where rotated c one)) in
+  let kappa =
+    let s = of_real E.(t * c) and e = phase in
+    mapx apply ~by shape dt loads
+      E.(
+        where rotated
+          (where first (neg (s * conj e)) (s * e))
+          (const dt (D.zero dt)))
+  in
+  (cos, kappa)
+
+(* [|z|] without a square that overflows or underflows. *)
+let modulus re real imag z =
+  let a = E.abs (real z) and b = E.abs (imag z) in
+  let big = E.maximum a b in
+  let zero = E.const re 0. in
+  let x = E.(a / big) and y = E.(b / big) in
+  E.(where (big = zero) zero (big * sqrt ((x * x) + (y * y))))
+
+(* The trips for [off(G)²] to fall by [2^-(2e)] at least: the least [T] with [(1
+   - 1/R)^T <= 2^-(2e)]. *)
+let jacobi_trips n e =
+  if n <= 1 then 0
+  else
+    let r = rounds n in
+    if r = 1 then 1
+    else
+      let fall = Float.log1p (-1. /. Float.of_int r) in
+      int_of_float (Float.ceil (-2. *. Float.of_int e *. Float.log 2. /. fall))
+
+(* The rotations of the round of greatest weight [Σ |g_iπ(i)|²] of each matrix
+   of [g], Hermitian [b; n; n], given the table of each index's partners per
+   round: [π], [c] and [κ] per index, [b; n; 1], with [ζ = (g_qq - g_pp) / (2
+   |g_pq|)]. *)
+let rotations (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    table (g : (v, s, d) Value.t) =
+  let dt = Prim.dtype g in
+  let (Field f) = field dt in
+  let s = Prim.shape g in
+  let b = s.(0) and n = s.(1) in
+  let col = [| b; n; 1 |] in
+  let x i = E.input i dt and k i = E.input i D.Int64 in
+  let round =
+    let weights =
+      let w =
+        apply ~by
+          (Value.Gather
+             { axis = 2; idx = fit apply ~by [| b; n; rounds n |] table; x = g })
+      in
+      let w2 =
+        mapx apply ~by (Prim.shape w) f.re [ Value.Any w ]
+          (f.real E.(x 0 * f.conj (x 0)))
+      in
+      reduce_plain apply ~by [| 1 |] Sum w2
+    in
+    let _, r = arg apply ~by (Prim.shape weights) [| 1 |] Max weights in
+    reshape apply ~by [| b; 1; 1 |] r
+  in
+  let pi =
+    mapx apply ~by col D.Int64 [ Value.Any round ] (partner n (k 0) rows)
+  in
+  let diagonal = column apply ~by (mapx apply ~by col D.Int64 [] rows) g in
+  let theirs = apply ~by (Value.Gather { axis = 1; idx = pi; x = diagonal }) in
+  let g_i = apply ~by (Value.Gather { axis = 2; idx = pi; x = g }) in
+  (* [g_pq] as [p] reads it, which [q] takes from [p]: computed [g] need not be
+     Hermitian to the bit, and both indices of a pair must rotate by one
+     rotation for [J] to be orthogonal. *)
+  let g_pair = apply ~by (Value.Gather { axis = 1; idx = pi; x = g_i }) in
+  let first = E.(rows < k 3) in
+  let gpq = E.(where first (x 2) (x 4)) in
+  let mine = f.real (x 0) and other = f.real (x 1) in
+  let gpp = E.where first mine other and gqq = E.where first other mine in
+  let size = modulus f.re f.real f.imag gpq in
+  let loads =
+    [
+      Value.Any diagonal;
+      Value.Any theirs;
+      Value.Any g_i;
+      Value.Any pi;
+      Value.Any g_pair;
+    ]
+  in
+  let cos, kappa =
+    rotation apply ~by dt f.re ~of_real:f.of_real ~conj:f.conj col loads ~first
+      ~rotated:E.(size > const f.re 0.)
+      ~zeta:E.((gqq - gpp) / (const f.re 2. * size))
+      ~phase:E.(gpq / f.of_real size)
+  in
+  (pi, cos, kappa)
+
+(* [x J]: column [i] of [x], [b; m; n], as [c_i x_i + κ_i x_π(i)]. *)
+let rotate_columns (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
+    ~by (pi, cos, kappa) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype x and s = Prim.shape x in
+  let across v = reshape apply ~by [| s.(0); 1; s.(2) |] v in
+  let theirs =
+    apply ~by (Value.Gather { axis = 2; idx = fit apply ~by s (across pi); x })
+  in
+  let e i = E.input i dt in
+  mapx apply ~by s dt
+    [
+      Value.Any x;
+      Value.Any theirs;
+      Value.Any (across cos);
+      Value.Any (across kappa);
+    ]
+    E.((e 2 * e 0) + (e 3 * e 1))
+
+(* [Jᴴ x]: row [i] of [x], [b; n; n], as [c_i x_i + conj κ_i x_π(i)], then the
+   rotated pairs' elements [+0] and the diagonal real, as the rotations leave
+   them in exact arithmetic. *)
+let rotate_rows (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (pi, cos, kappa) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype x and s = Prim.shape x in
+  let (Field f) = field dt in
+  let theirs =
+    apply ~by (Value.Gather { axis = 1; idx = fit apply ~by s pi; x })
+  in
+  let y = E.((input 2 dt * input 0 dt) + (f.conj (input 3 dt) * input 1 dt)) in
+  mapx apply ~by s dt
+    [
+      Value.Any x;
+      Value.Any theirs;
+      Value.Any cos;
+      Value.Any kappa;
+      Value.Any pi;
+    ]
+    E.(
+      where
+        (cols = input 4 D.Int64)
+        (const dt (D.zero dt))
+        (where (rows = cols) (f.of_real (f.real y)) y))
+
+(* Each index's partner per round, [n; R], for [rounds n] rounds. *)
+let partners (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by n =
+  mapx apply ~by
+    [| n; Stdlib.max 1 (rounds n) |]
+    D.Int64 []
+    (partner n (E.coord 1) (E.coord 0))
+
+(* The eigenvalues of a Hermitian matrix by two-sided Jacobi: [A] from [a]'s
+   lower triangle and its diagonal's real parts, {!scaled}, then [jacobi_trips n
+   p] trips of [A ← Jᴴ A J] and [V ← V J], each of the round of greatest weight,
+   then [A]'s diagonal ascending, scaled back, and [V]'s columns in its order. A
+   rotation moves [2 |g_pq|²] of [off(A)²] to the diagonal (LAWN 169, §1), and
+   the rounds share [off(A)² / 2] out, so a trip takes at least [off(A)² / R]. A
+   matrix with an infinity or a NaN where it is read is NaN. *)
+let eigh (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) (vectors : (unit, (v, s, d) Value.t, r) Nx_kernel.vectors)
+    (a : (v, s, d) Value.t) : (v, s, d) Value.t * r =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let lead, a = matrices apply ~by a in
+  let shape = Prim.shape a in
+  let b = shape.(0) and n = shape.(1) in
+  let x i = E.input i dt in
+  let a =
+    mapx apply ~by shape dt
+      [ Value.Any a; Value.Any (transposed apply ~by a) ]
+      E.(
+        where (rows > cols) (x 0)
+          (where (rows = cols) (f.of_real (f.real (x 0))) (f.conj (x 1))))
+  in
+  let bad = not_finite apply ~by a in
+  let a, power = scaled apply ~by a in
+  let table = partners apply ~by n in
+  let step _ = function
+    | w :: vs ->
+        let w = Prim.expect dt w in
+        let r = rotations apply ~by table w in
+        let w = rotate_rows apply ~by r (rotate_columns apply ~by r w) in
+        let turned v =
+          Value.Any (rotate_columns apply ~by r (Prim.expect dt v))
+        in
+        Value.Any w :: List.map turned vs
+    | [] -> invalid_arg "Expand: eigh's loop carries its matrix"
+  in
+  let init =
+    match vectors with
+    | No_vectors -> [ Value.Any a ]
+    | Vectors () -> [ Value.Any a; Value.Any (identity apply ~by dt b n) ]
+  in
+  let w, vs =
+    match loop (jacobi_trips n (digits dt)) step init with
+    | w :: vs -> (Prim.expect dt w, List.map (Prim.expect dt) vs)
+    | [] -> invalid_arg "Expand: eigh's loop gives its matrix"
+  in
+  let diagonal =
+    column apply ~by (mapx apply ~by [| b; n; 1 |] D.Int64 [] rows) w
+  in
+  let values =
+    mapx apply ~by [| b; n |] f.re
+      [
+        Value.Any (reshape apply ~by [| b; n |] diagonal);
+        Value.Any (reshape apply ~by [| b; 1 |] power);
+      ]
+      E.(f.real (x 0) / f.real (x 1))
+  in
+  let sorted, order =
+    apply ~by
+      (Value.Sort { axis = 1; descending = false; k = None; x = values })
+  in
+  let w =
+    mapx apply ~by [| b; n |] dt [ Value.Any sorted ]
+      (f.of_real (E.input 0 f.re))
+  in
+  let w = batched apply ~by lead (failing apply ~by bad w) in
+  match (vectors, vs) with
+  | No_vectors, _ -> (w, ())
+  | Vectors (), [ v ] ->
+      let idx = fit apply ~by shape (reshape apply ~by [| b; 1; n |] order) in
+      let v = apply ~by (Value.Gather { axis = 2; idx; x = v }) in
+      (w, batched apply ~by lead (failing apply ~by bad v))
+  | Vectors (), _ -> invalid_arg "Expand: eigh's loop gives its vectors"
+
+(* The sweeps of one-sided Jacobi, dgesvj's NSWEEP. *)
+let sweeps = 30
+
+(* The singular values by one-sided Jacobi as dgesvj computes them (Drmač and
+   Veselić, LAWN 169 and 170; Demmel and Veselić, LAWN 15, §4), on [a], or [aᴴ]
+   where it is wide, of [m'] rows and [k] columns, {!scaled}: {!householder}
+   first reduces it to its triangle [R], [k × k], then [sweeps] sweeps of [R]
+   rounds rotate the columns of [Rᴴ], at trip [t] round [t mod R]. A pair
+   rotates where its columns' cosine exceeds [tol], each column divided by its
+   norm, {!householder}'s, before its products, so no square overflows or
+   underflows. A matrix whose last sweep still rotated, or with an infinity or a
+   NaN, is NaN. The values are the columns' norms, descending, scaled back; the
+   left vectors are [Q] of the first reduction times the rotations, and the
+   right ones the columns over their norms completed by {!householder} of [k ×
+   k] to an orthonormal basis, each column of its [Q] by the sign of its [R]'s
+   diagonal. *)
+let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop)
+    (vectors :
+      ( Nx_kernel.factors,
+        (v, s, d) Value.t * (v, s, d) Value.t,
+        r )
+      Nx_kernel.vectors) (a : (v, s, d) Value.t) : (v, s, d) Value.t * r =
+  let dt = Prim.dtype a in
+  let (Field f) = field dt in
+  let lead, a = matrices apply ~by a in
+  let shape = Prim.shape a in
+  let b = shape.(0) and m = shape.(1) and n = shape.(2) in
+  let k = Stdlib.min m n and mm = Stdlib.max m n in
+  let tall = m >= n in
+  let x i = E.input i dt
+  and re i = E.input i f.re
+  and j i = E.input i D.Int64 in
+  let zero = E.const dt (D.zero dt) and fl v = E.const f.re v in
+  let with_vectors =
+    match vectors with No_vectors -> false | Vectors _ -> true
+  in
+  (* dgesvj's tolerance, plus the floor a pair's cosine reaches here: each
+     column of a rotated pair within [ρ] of exact (LAWN 169, Fact 1) and the
+     cosine computed within [γ(k + 2)]. *)
+  let tol =
+    let unit = Float.ldexp 1. (-digits dt) in
+    let complex = match D.kind dt with D.Complex -> true | _ -> false in
+    let nu = (if complex then 4. else 2.) *. unit in
+    let rho = (if complex then 24. else 6.) *. unit in
+    let g =
+      Float.of_int (k + 2) *. nu /. (1. -. (Float.of_int (k + 2) *. nu))
+    in
+    let ctol =
+      if with_vectors then Float.sqrt (Float.of_int k) else Float.of_int k
+    in
+    (ctol *. unit) +. (2. *. rho) +. g
+  in
+  (* A column of a norm below the least normal number counts as zero, as its
+     value does where results underflow: it neither rotates nor fails the
+     check. *)
+  let least = if digits dt = 24 then 0x1p-126 else 0x1p-1022 in
+  let bad = not_finite apply ~by a in
+  let y =
+    if tall then a
+    else
+      mapx apply ~by [| b; mm; k |] dt
+        [ Value.Any (transposed apply ~by a) ]
+        (f.conj (x 0))
+  in
+  let y, power = scaled apply ~by y in
+  let r0, reflectors, taus = householder apply ~by ~loop y in
+  let square = [| b; k; k |] and across = [| b; 1; k |] in
+  (* Jacobi runs on [Rᴴ], as LAWN 169's Corollary 2.5 takes [X = R̃ᵀ] and dgejsv
+     does: [Rᴴ V = Y], so [R = V Σ Wᴴ], [W] [Y]'s columns over their norms, and
+     the left vectors are [Q V], the right ones [W]. *)
+  let x0 =
+    mapx apply ~by square dt
+      [ Value.Any (transposed apply ~by (corner apply ~by k k r0)) ]
+      (f.conj (x 0))
+  in
+  (* Each column's norm, [b; 1; k], and the columns over their norms, [0] for a
+     zero column. *)
+  let norms y =
+    if k = 0 then (zeros apply ~by f.re across, y)
+    else
+      let mu =
+        let top =
+          along apply ~by Max 1
+            (mapx apply ~by square f.re [ Value.Any y ]
+               (largest f.real f.imag (x 0)))
+        in
+        mapx apply ~by across f.re [ Value.Any top ] (binade dt (re 0))
+      in
+      let sums =
+        along apply ~by Sum 1
+          (mapx apply ~by square f.re
+             [ Value.Any y; Value.Any mu ]
+             (let z = E.(x 0 / f.of_real (re 1)) in
+              E.(where (re 1 > fl 0.) (f.real (z * f.conj z)) (fl 0.))))
+      in
+      let norm =
+        mapx apply ~by across f.re
+          [ Value.Any mu; Value.Any sums ]
+          E.(re 0 * sqrt (re 1))
+      in
+      let units =
+        mapx apply ~by square dt
+          [ Value.Any y; Value.Any norm ]
+          E.(where (re 1 > fl 0.) (x 0 / f.of_real (re 1)) zero)
+      in
+      (norm, units)
+  in
+  let step t = function
+    | y :: count :: vs ->
+        let y = Prim.expect dt y and count = Prim.expect D.Int64 count in
+        let col = [| b; k; 1 |] in
+        let t = trip_index apply ~by t in
+        let pi =
+          mapx apply ~by col D.Int64 [ Value.Any t ]
+            (partner k E.(j 0 mod i64 (rounds k)) rows)
+        in
+        let norm, units = norms y in
+        let norm = reshape apply ~by col norm in
+        let theirs =
+          apply ~by (Value.Gather { axis = 1; idx = pi; x = norm })
+        in
+        let cosine =
+          let partners =
+            apply ~by
+              (Value.Gather
+                 {
+                   axis = 2;
+                   idx = fit apply ~by square (reshape apply ~by across pi);
+                   x = units;
+                 })
+          in
+          let terms =
+            mapx apply ~by square dt
+              [ Value.Any units; Value.Any partners ]
+              E.(f.conj (x 0) * x 1)
+          in
+          reshape apply ~by col (along apply ~by Sum 1 terms)
+        in
+        (* [p]'s cosine for both of the pair, as {!rotations} takes [g_pq]. *)
+        let pair =
+          apply ~by (Value.Gather { axis = 1; idx = pi; x = cosine })
+        in
+        let first = E.(rows < j 3) in
+        let cpq = E.(where first (x 2) (x 4)) in
+        let size = modulus f.re f.real f.imag cpq in
+        let dp = E.where first (re 0) (re 1)
+        and dq = E.where first (re 1) (re 0) in
+        let loads =
+          [
+            Value.Any norm;
+            Value.Any theirs;
+            Value.Any cosine;
+            Value.Any pi;
+            Value.Any pair;
+          ]
+        in
+        let rotated = E.(size > fl tol && dp >= fl least && dq >= fl least) in
+        let cos, kappa =
+          rotation apply ~by dt f.re ~of_real:f.of_real ~conj:f.conj col loads
+            ~first ~rotated
+            ~zeta:E.(((dq / dp) - (dp / dq)) / (fl 2. * size))
+            ~phase:E.(cpq / f.of_real size)
+        in
+        (* The rotations of this sweep so far, [0] at its first round. *)
+        let count =
+          let here =
+            along apply ~by Sum 1
+              (mapx apply ~by col D.Int64 loads
+                 E.(where rotated (i64 1) (i64 0)))
+          in
+          mapx apply ~by [| b; 1; 1 |] D.Int64
+            [ Value.Any count; Value.Any here; Value.Any t ]
+            E.(where (j 2 mod i64 (rounds k) = i64 0) (j 1) (j 0 + j 1))
+        in
+        let turned v =
+          Value.Any
+            (rotate_columns apply ~by (pi, cos, kappa) (Prim.expect dt v))
+        in
+        turned (Value.Any y) :: Value.Any count :: List.map turned vs
+    | _ -> invalid_arg "Expand: svd's loop carries its columns and count"
+  in
+  let init =
+    let count = zeros apply ~by D.Int64 [| b; 1; 1 |] in
+    match vectors with
+    | No_vectors -> [ Value.Any x0; Value.Any count ]
+    | Vectors _ ->
+        [ Value.Any x0; Value.Any count; Value.Any (identity apply ~by dt b k) ]
+  in
+  let trips = if k <= 1 then 0 else sweeps * rounds k in
+  let y, count, vs =
+    match loop trips step init with
+    | y :: count :: vs ->
+        ( Prim.expect dt y,
+          Prim.expect D.Int64 count,
+          List.map (Prim.expect dt) vs )
+    | _ -> invalid_arg "Expand: svd's loop gives its columns and count"
+  in
+  let norm, units = norms y in
+  (* dgesvj's convergence: a sweep that rotates no pair. One that rotates none
+     leaves the matrix as it was, so the next rotates none either: the last
+     sweep rotated nothing iff some sweep did not. *)
+  let failed =
+    mapx apply ~by [| b; 1; 1 |] D.Int64
+      [ Value.Any bad; Value.Any count ]
+      E.(j 0 + j 1)
+  in
+  let values =
+    mapx apply ~by [| b; k |] f.re
+      [
+        Value.Any (reshape apply ~by [| b; k |] norm);
+        Value.Any (reshape apply ~by [| b; 1 |] power);
+      ]
+      E.(re 0 / f.real (x 1))
+  in
+  let sorted, order =
+    apply ~by (Value.Sort { axis = 1; descending = true; k = None; x = values })
+  in
+  let out x = batched apply ~by lead (failing apply ~by failed x) in
+  let s =
+    out
+      (mapx apply ~by [| b; k |] dt [ Value.Any sorted ]
+         (f.of_real (E.input 0 f.re)))
+  in
+  match (vectors, vs) with
+  | No_vectors, _ -> (s, ())
+  | Vectors factors, [ v ] ->
+      let ordered x =
+        let idx =
+          fit apply ~by (Prim.shape x) (reshape apply ~by across order)
+        in
+        apply ~by (Value.Gather { axis = 2; idx; x })
+      in
+      let units = ordered units and v = ordered v in
+      let rr, cvs, ctaus = householder apply ~by ~loop units in
+      let completed = accumulate apply ~by ~loop cvs ctaus k in
+      let signs =
+        let idx = mapx apply ~by across D.Int64 [] cols in
+        apply ~by (Value.Gather { axis = 1; idx; x = rr })
+      in
+      let w =
+        mapx apply ~by square dt
+          [ Value.Any completed; Value.Any signs ]
+          E.(where (f.real (x 1) < fl 0.) (neg (x 0)) (x 0))
+      in
+      let width = match factors with Reduced -> k | Complete -> mm in
+      let q = accumulate apply ~by ~loop reflectors taus width in
+      let rest = { M.start = k; count = width - k; step = 1 } in
+      let u =
+        let main = product apply ~by (2, 1) (corner apply ~by mm k q) v in
+        if width = k then main
+        else
+          apply ~by
+            (Value.Assemble
+               {
+                 dtype = dt;
+                 shape = [| b; mm; width |];
+                 fill = D.zero dt;
+                 pieces =
+                   [
+                     ([| whole b; whole mm; whole k |], main);
+                     ( [| whole b; whole mm; rest |],
+                       move apply ~by (M.Slice [| whole b; whole mm; rest |]) q
+                     );
+                   ];
+               })
+      in
+      let adjoint z =
+        let s = Prim.shape z in
+        mapx apply ~by
+          [| b; s.(2); s.(1) |]
+          dt
+          [ Value.Any (transposed apply ~by z) ]
+          (f.conj (x 0))
+      in
+      if tall then (s, (out u, out (adjoint w)))
+      else (s, (out w, out (adjoint u)))
+  | Vectors _, _ -> invalid_arg "Expand: svd's loop gives its vectors"
+
+(* A routine's expansion; [Eig] has none. *)
+let linalg : type d r.
+    ('q. by:string -> 'q Value.prim -> 'q) ->
+    by:string ->
+    loop:d loop ->
+    (d, r) Value.linalg ->
+    r option =
+ fun apply ~by ~loop l ->
+  match l with
+  | Cholesky { triangle; a } -> Some (cholesky apply ~by ~loop triangle a)
+  | Lu a -> Some (lu apply ~by ~loop a)
+  | Qr { factors; a } -> Some (qr apply ~by ~loop factors a)
+  | Svd { vectors; a } -> Some (svd apply ~by ~loop vectors a)
+  | Eigh { vectors; a } -> Some (eigh apply ~by ~loop vectors a)
+  | Eig _ -> None
+  | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
+      Some (solve apply ~by ~loop triangle ~adjoint ~unit_diagonal a b)
+
 (* [op]'s expansion, its loops run by [loop]. *)
 let expansion : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
@@ -2010,6 +3227,7 @@ let expansion : type r.
   | Value.Fold { shape; pad; x } ->
       Some (fold apply ~by (Iarray.to_array shape) pad x)
   | Value.Fft f -> Some (fft apply ~by f)
+  | Value.Linalg l -> linalg apply ~by ~loop l
   | Value.Copy x ->
       (* A copy is the map of one [Copy]. *)
       let dt = Prim.dtype x in
@@ -2017,7 +3235,7 @@ let expansion : type r.
       let layout = L.contiguous (Prim.shape x) in
       Option.map fst
         (widened apply ~by layout prog Value.[ dt ] [| Value.Plain x |])
-  | Value.Reduce _ | Value.Scan _ | Value.Linalg _ | Value.Move _
+  | Value.Reduce _ | Value.Scan _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None
 

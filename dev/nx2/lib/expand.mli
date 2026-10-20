@@ -96,8 +96,85 @@
     [Sin] within two units in the last place, a transform [y] of [N] points of
     [x] is within [‖ŷ - y‖₂ <= 20 u P √N ‖x‖₂], [P] the sum over its axes of
     [log₂ n] for a power of two and [3 log₂ M + 2] otherwise, [u] the parts'
-    unit roundoff, and a [C2r]'s [x] its completed bins. A routine has no
-    expansion yet. Every other operation is core. *)
+    unit roundoff, and a [C2r]'s [x] its completed bins.
+
+    A matrix routine computes each matrix of its batch by maps, gathers,
+    reductions, sorts and contractions, its steps a loop whose every trip
+    applies the same operations at full size, masked by the coordinates
+    against the trip's index. Its bounds hold where no result overflows or
+    underflows, to first order where they say so, with [u] the unit roundoff
+    of the matrix's parts and [ν] the most one operation errs by: [2u] on
+    floats, a contraction's addition ({!Nx_kernel.S.contract}), and [4u] on
+    complex numbers, a quotient's ([nx_kinds.h]). [γ(k) = k ν / (1 - k ν)]
+    bounds [k] such errors compounded.
+    - [Cholesky] takes dpotf2's columns: [L Lᴴ = A + ΔA] with
+      [|ΔA| <= γ(n + 1) |L| |Lᴴ|]. O(n³).
+    - [Solve_triangular] substitutes row by row, an upper triangle as the
+      lower one of its rows and columns reversed: [(T + ΔT) x = b] with
+      [|ΔT| <= γ(n) |T|]. O(n² r).
+    - [Lu] takes dgetf2's right-looking steps with {!Nx_kernel.S.lu}'s
+      pivots: [L U = P A + ΔA] with [|ΔA| <= γ(k) |L| |U|]. O(m n k).
+    - [Qr] takes dgeqr2's Householder reflectors as zlarfg makes them, each
+      from its column over [μ], a power of two in the column's greatest
+      binade, as zlarfg rescales: [τ] and [v] are the same of [x / μ] as of
+      [x], and [β] is [μ β']. It then accumulates [Q]'s first [w] columns
+      from the identity's, the last reflector first, as dorg2r does:
+      O(m n k). A reflector applied to a vector [x] errs by [τ ‖x‖₂],
+      [τ = ν + 2γ(8m + 24)], and [ε = (1 + τ){^k} - 1] compounds [k] of
+      them (Yang, Fox and Sanders, SISC 2021, (3.9)-(3.10) and Lemma 3.3).
+      There is a unitary [Q̂], the product of the exact reflectors of the
+      computed vectors, with [Q̂ R = A + ΔA] and [‖Δa_j‖₂ <= ε ‖a_j‖₂], and
+      the computed [Q]'s column [j] is within [ε] of [Q̂]'s, the same
+      reflectors applied to the identity's (their Theorem 3.4). So
+      [Qᴴ Q - I]'s elements are at most [2ε + ε²] and the computed
+      product's column [j] is within [(1 + √w (1 + ε)) ε ‖a_j‖₂] of [a_j],
+      on wide and complex matrices too.
+    - [Eigh] is two-sided Jacobi on the Hermitian matrix that [a]'s lower
+      triangle and its diagonal's real parts name, scaled first by the
+      power of two nearest the reciprocal of its greatest magnitude. A trip
+      rotates the pairs of one round of a 1-factorisation of the [n] indices
+      into [R] rounds, [R = n - 1] for an even [n] and [n] for an odd one: the
+      round of greatest weight [Σ |a_pq|²]. A rotation moves [2 |a_pq|²] of
+      [off(A)²], the squared Frobenius norm of [A]'s off-diagonal part, to
+      the diagonal and the rounds share [off(A)² / 2] out, so a trip takes
+      at least [off(A)² / R]. [T] trips, the least with
+      [(1 - 1/R){^T} <= u²], about [1.4 p R] for [u = 2{^-p}], each O(n²),
+      leave [off(A) <= u ‖A‖_F] in exact arithmetic. A rotation applied to
+      a vector errs by [ρ = 6u] on floats and [24u] on complex numbers, and a
+      trip perturbs [A] by [3ρ ‖A‖_F] at most, its two sides and the pair it
+      zeroes, so to first order an eigenvalue is within
+      [(u + (3T + 6R) ρ) ‖A‖_F] of the exact one, [V]'s columns within
+      [(1 + ρ){^T} - 1] of orthonormal ones and
+      [‖A V - V diag w‖_F <= (u + (3T + 6R + 2√n T) ρ) ‖A‖_F].
+    - [Svd] is one-sided Jacobi as dgesvj computes it, on [a], or [aᴴ] where
+      [a] is wide, of [m'] rows and [k] columns, scaled as [Eigh]'s: [Qr]'s
+      reflectors reduce it to its triangle [R], then 30 sweeps of [R] rounds,
+      dgesvj's, rotate the columns of [Rᴴ], as LAWN 169's Corollary 2.5 and
+      dgejsv take it, round [t mod R] at trip [t], each trip O(k²). A pair
+      rotates where its columns' cosine [|y_pᴴ y_q| / (‖y_p‖ ‖y_q‖)] exceeds
+      [tol]: dgesvj's, [√k u] with the vectors and [k u] without, plus
+      [2ρ + γ(k + 2)], the floor a rotated pair's computed cosine reaches
+      here, [ρ] as for [Eigh]. Each column's norm is [Qr]'s; a column of a
+      norm below the least normal number counts as zero and never rotates.
+      As dgesvj, a matrix is converged after a sweep that rotates no pair;
+      one whose last sweep still rotated is NaN. The values are the
+      columns' norms, descending. With [ε_qr] [Qr]'s [ε] for [m'] rows and
+      [ε_J = (1 + ρ){^30 R} - 1], to first order a singular value is within
+      [((k - 1) tol + γ(k + 4)) σ + (ε_qr + ε_J) ‖A‖_F] of the exact one
+      [σ]; for [A = B D] with [D] diagonal, each also relatively within
+      [√k (ε_qr ‖B{^+}‖ + ε_J ‖R_c{^-1}‖)], [R_c] [R] with unit columns
+      (Drmač and Veselić, LAWN 169, Proposition 2.4 and Corollary 2.5).
+      With [Rᴴ V = Y], [R = V Σ Wᴴ], [W] [Y]'s columns over their norms
+      completed by [Qr] of [k × k] to an orthonormal basis, each column by
+      the sign of its [R]'s diagonal: the left vectors are the first
+      reduction's [Q] times [V], the right ones [W], each within
+      [ε_qr + ε_J] of orthonormal ones. To first order
+      [‖u diag s vh - A‖_F <= √k (2k tol + 3ε_qr + ε_J + γ(k + 4)) ‖A‖_F].
+    - [Eig] has no expansion: shifted QR has no bound on its iterations for
+      a matrix that is not normal that a loop of static trips could afford.
+
+    A routine fails as {!Nx_kernel.S} states, in the matrices that fail
+    alone. Every other operation is core. *)
 
 val kept : Nx_array.Dtype.any -> Nx_array.Dtype.any
 (** [kept d] is the dtype a selection, a constant or a copy of [d] computes in
@@ -162,7 +239,7 @@ val run :
   'r Value.prim ->
   'r option
 (** [run apply ~by ~repeat op] is [Some r], [r] [op]'s expansion applied
-    through [apply], or [None] for a core case. A loop of [n] trips runs as
+    through [apply], or [None] for a core case and for [Eig]. A loop of [n] trips runs as
     [repeat n step init], whose law {!Nx.Prim.expand} states. No result of [r]
     is one of [op]'s operands: one that would be is its copy. *)
 
