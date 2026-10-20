@@ -209,10 +209,11 @@ val run_boxes :
 
 val run_set : device -> waits:int array -> dst:buffer -> char -> int
 (** [run_set d ~waits ~dst c] submits a fill of [dst] with [c] on [d]'s copy
-    engine, after the points of [waits], and is its point. It makes [d]'s
-    submission of the one part [set ~dst:(Slot 0) c] for the call. [dst]
-    must be [d]'s. It raises as {!Rig.Submission.make} and {!Rig.submit}
-    do. *)
+    engine, after the points of [waits], and is its point. It submits [d]'s
+    submission of the one part [set ~dst:(Slot 0) c], made with its run at
+    [c]'s first fill on [d], which holds no bytes, so any number of fills
+    submit it at once. [dst] must be [d]'s. It raises as
+    {!Rig.Submission.make} and {!Rig.submit} do. *)
 
 val mark : unit -> int
 (** [mark ()] submits the host's submission of no part, made once, and is

@@ -1595,10 +1595,23 @@ let run_boxes d ~waits ~src ~dst boxes =
   let run = Run.make (make d parts) in
   submit_run run.sub run [| src; dst |] waits
 
-(* A fill's byte is part of its submission, so each makes its own: one
-   part, no launch or fill, and a run that holds no bytes. *)
+(* Each device's runs of one fill of slot 0, by byte: a fill's byte is part
+   of its submission, so each byte's run is made at its first fill. A run
+   holds no bytes, so every domain submits it at once. Two domains that make
+   a byte's run at once keep the first stored. *)
+let setters = Dev.new_key (fun _ -> Array.init 256 (fun _ -> Atomic.make None))
+
+let setter d c =
+  let slot = (Dev.local setters d).(Char.code c) in
+  match Atomic.get slot with
+  | Some run -> run
+  | None ->
+      let run = Run.make (make d [| set ~dst:(Slot 0) c |]) in
+      ignore (Atomic.compare_and_set slot None (Some run) : bool);
+      Option.get (Atomic.get slot)
+
 let run_set d ~waits ~dst c =
-  let run = Run.make (make d [| set ~dst:(Slot 0) c |]) in
+  let run = setter d c in
   submit_run run.sub run [| dst |] waits
 
 (* The host's submission of no part, whose run holds no bytes. *)
