@@ -1053,7 +1053,9 @@ let make (type m) ~word (p : m path) =
   let* () = supported p.gpu in
   let ops = ops p in
   let taken = ref [] and queues = ref false and copy_launch = ref 0 in
-  (* Memory a queue the path could not stop may still read stays. *)
+  let state = ref 0 in
+  (* Memory a queue the path could not stop may still read stays. The C
+     state, which no queue reads, goes either way. *)
   let undo () =
     let stopped =
       (not !queues)
@@ -1063,6 +1065,7 @@ let make (type m) ~word (p : m path) =
       | `Unknown -> false
       | exception Fault _ -> false
     in
+    if !state <> 0 then destroy !state;
     if stopped then begin
       if !copy_launch <> 0 then free_launch !copy_launch;
       List.iter give_back !taken
@@ -1158,6 +1161,7 @@ let make (type m) ~word (p : m path) =
     let* copy_bell = queue 1 `Sdma copy in
     (* The queues read none of the C state before a doorbell. *)
     let self = create () in
+    state := self;
     set_memory self word_host (mem_address word);
     set_segment self segment_host (mem_address segment) segment_bytes;
     (* The GPU's own register takes the first of the empty table's slots, with
@@ -1181,10 +1185,7 @@ let make (type m) ~word (p : m path) =
     let source = match p.clock with Source c -> c | Round_trip -> 0 in
     let* () =
       if set_clock self source then Ok ()
-      else begin
-        destroy self;
-        Error "the GPU's clock could not be read against the host's"
-      end
+      else Error "the GPU's clock could not be read against the host's"
     in
     let rec g =
       {

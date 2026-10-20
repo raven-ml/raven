@@ -931,6 +931,10 @@ let open_ ~root ~word i =
     | exception Amd.Fault why ->
         give_back ();
         Error why
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        give_back ();
+        Printexc.raise_with_backtrace e bt
 
 let gpu_under ~root i : Rig_amd.t Rig_edge.opener =
   {
