@@ -280,10 +280,18 @@ let take ~by b =
         Some (Rig.Claim.consume c ~why:("donated to " ^ by) b)
       else None)
 
+(* Whether no two of [bufs] share memory. Shards placed by borrowing lie in
+   one allocation, where each reads the memory the other holds. *)
+let rec apart = function
+  | [] -> true
+  | b :: rest -> (not (List.exists (Rig.Buffer.overlaps b) rest)) && apart rest
+
 (* Ends the claimed handles [hs] once [by] read them: memory no other value
    reads, every shard of a value or none, and that [by] did not write its
    result into ([reused]), is consumed and then freed, so that it returns to
-   its device once the work on it is done. *)
+   its device once the work on it is done. Shards that share memory with one
+   another are not consumed: each is read by the other, and rig donates no
+   two buffers over one memory together. *)
 let consumed ~by ~reused hs =
   List.iter
     (fun (Handle (_, x) as h) ->
@@ -291,7 +299,10 @@ let consumed ~by ~reused hs =
       | Value.Donated _ ->
           let bufs = buffers h in
           let why = "donated to " ^ by in
-          if not (List.exists (fun b -> List.memq b reused) bufs) then
+          if
+            (not (List.exists (fun b -> List.memq b reused) bufs))
+            && apart bufs
+          then
             Rig.Claim.with_ ~read:[] ~donate:bufs (fun c ->
                 if List.for_all (Rig.Claim.exclusive c) bufs then
                   List.map (Rig.Claim.consume c ~why) bufs

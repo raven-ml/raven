@@ -315,6 +315,17 @@ let sharing =
           let b = require_some (Nx.Repr.shards (Nx.place S4.on x)) in
           equal bool true
             (Rig.Buffer.overlaps (A.buffer a) (A.buffer (Iarray.get b 1))));
+      test "an empty window holds no memory of the value's" (fun () ->
+          let (V x) = host [| 1 |] in
+          let a = require_some (Nx.Repr.array x) in
+          let b =
+            require_some (Nx.Repr.shards (Nx.place (S4.split ~axis:0) x))
+          in
+          for j = 1 to 3 do
+            let e = A.buffer (Iarray.get b j) in
+            equal bool ~msg:"shares" false (Rig.Buffer.overlaps (A.buffer a) e);
+            equal int ~msg:"its bytes" 0 (Rig.Buffer.length e)
+          done);
       narrow "int4" A.Dtype.Int4 Fun.id;
       narrow "int16" A.Dtype.Int16 Fun.id;
       narrow "bool" A.Dtype.Bool (fun i -> i mod 2 = 0);

@@ -534,15 +534,25 @@ let test_check_one () =
   at Count.on;
   at (Count2.split ~axis:0);
   at (Count2.split ~axis:1);
+  let donated (type d) (p : d Nx.Placement.t) =
+    let on dt v =
+      Nx.place p (Nx.Repr.of_array Nx.Host.v (A.of_array dt shape [| v |]))
+    in
+    let x = on D.Float32 5. in
+    (* Computed, so the memory is the flag's alone and a donation may write
+       it. *)
+    let ok = Nx.logical_not (on D.Bool true) in
+    check ok x;
+    ignore (Nx.logical_not (Nx.donate ok));
+    raises failed (fun () -> Nx.sync x)
+  in
+  donated Count.on;
+  donated (Count2.split ~axis:0);
+  donated (Count2.split ~axis:1);
   let on_count dt v =
     Nx.place Count.on (Nx.Repr.of_array Nx.Host.v (A.of_array dt shape [| v |]))
   in
   let x = on_count D.Float32 5. in
-  (* Computed, so the memory is the flag's alone and a donation may write it. *)
-  let ok = Nx.logical_not (on_count D.Bool true) in
-  check ok x;
-  ignore (Nx.logical_not (Nx.donate ok));
-  raises failed (fun () -> Nx.sync x);
   let formula () = Nx.equal_s (Nx.zeros D.Float32 shape) 1. in
   C.reset ();
   ignore (Nx.place Count.on (formula ()));

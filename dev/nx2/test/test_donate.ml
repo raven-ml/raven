@@ -157,6 +157,29 @@ let test_left_alone () =
   equal ~msg:"and still usable" (array float_exact) [| 0.; 0. |]
     (elements (Nx.add c c))
 
+(* A placement onto memory devices borrows the host's memory: the shards of a
+   value placed there lie in one allocation, apart or interleaved, and a
+   device whose window is empty holds none of it. *)
+module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
+
+let test_shards_of_one_allocation () =
+  let donated s axis =
+    let msg = Printf.sprintf "[%d; %d] split along %d" s.(0) s.(1) axis in
+    let xs = Array.init (s.(0) * s.(1)) (fun i -> i mod 3 = 0) in
+    let x =
+      Nx.place (Two.split ~axis)
+        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Bool s xs))
+    in
+    let y = Nx.logical_not (Nx.donate x) in
+    equal ~msg (array bool) (Array.map not xs) (elements y);
+    invalid ~sub:"Nx.copy: operand 1 was donated to Nx.logical_not" (fun () ->
+        Nx.copy x)
+  in
+  donated [| 1; 1 |] 0;
+  donated [| 1; 1 |] 1;
+  donated [| 4; 2 |] 0;
+  donated [| 4; 2 |] 1
+
 (* A consumer that is no operation, such as a compiled call, consumes its
    handles as an operation does: it reads each handle as its arrays and the
    donor beside it as it was, kills the donors naming itself, and kills none
@@ -1835,6 +1858,8 @@ let () =
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;
              test "a value of every set is not donated" test_left_alone;
+             test "a value whose shards lie in one allocation is donated"
+               test_shards_of_one_allocation;
              test "a donor dies at a consumer an interpretation receives"
                test_dies_when_received;
              test "a donor dies naming the function the user called"

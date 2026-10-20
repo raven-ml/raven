@@ -129,4 +129,6 @@ val consumed : by:string -> reused:Rig.Buffer.t list -> handle list -> unit
 (** [consumed ~by ~reused hs] ends the claimed handles [hs] once [by] read
     them: memory no other value reads, every shard of a value or none, and
     not among [reused], is consumed and freed, so that it returns to its
-    device once the work on it is done. *)
+    device once the work on it is done. Shards that share memory with one
+    another, as borrows of one allocation do, are read by each other and
+    consumed by none. *)

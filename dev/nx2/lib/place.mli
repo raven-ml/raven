@@ -8,6 +8,7 @@
     Placing reads and writes memory through nx.array and rig alone and runs no
     kernel, so a set without kernels places. Each device of the destination
     holds its window of the value and allocates at most the window's bytes.
+    An empty window is an array of no bytes of its own.
 
     Where one source array holds the window, the device takes the array itself
     on the same device, a borrow where the host addresses both the array's

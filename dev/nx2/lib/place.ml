@@ -132,13 +132,21 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     in
     let set = Devices.set p in
     let devices = Grid.devices (Devices.grid p) in
+    (* An empty window is memory of no bytes of its own: a view of a source
+       would hold, and share, all of that source's memory. *)
+    let empty (w : M.range array) =
+      Array.exists (fun (r : M.range) -> r.count = 0) w
+    in
     make
       (Iarray.init (Array.length devices) (fun j ->
            let w = Devices.window ~by p shape j
            and d = Devices.rig set devices.(j) in
-           match from_one d w sources with
-           | Some a -> a
-           | None -> gather d dt w sources))
+           if empty w then
+             A.create d dt (Array.map (fun (r : M.range) -> r.count) w)
+           else
+             match from_one d w sources with
+             | Some a -> a
+             | None -> gather d dt w sources))
   end
 
 (* [x]'s window [w] from the array of device [k], which holds it. *)
