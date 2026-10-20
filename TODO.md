@@ -80,13 +80,10 @@ raven / llama.cpp (Vulkan; ROCm):
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
   whose only Linux rows are kimchi's; the vendor comparison
   (packages/rig/bench/compare/run.py) on fudge; rig's
-  `submit/polled/pool-two-domains` (0 words warm), `submit/polled/stores-30`
-  and `copy/queue-64K-two-domains` (the words of `copy/queue-64K`) on fudge,
-  and every rig row a run of one submission changed (`submit/polled/*`,
-  `replay/polled/*`, `device/*`, `drain/*`); rig's
-  `copy/queued/host-to-device-8x4K`, `copy/staged-4K*` and `copy/queue-64K*`,
-  and rig-gpu's `copy/*` with `copy/*/queued/host-to-device-8x4K`, on fudge
-  (NV, CUDA) after the halves and queued copies
+  `submit/polled/pool-two-domains` (0 words warm) and
+  `submit/polled/stores-30` on fudge, and every rig row a run of one
+  submission changed (`submit/polled/*`, `replay/polled/*`, `device/*`,
+  `drain/*`)
 
 ### perf
 
