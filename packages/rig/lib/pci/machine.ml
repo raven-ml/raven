@@ -56,8 +56,8 @@ let address = Bus_address.v
 let compare_address = Bus_address.compare
 let machine name files ops = { name; ops; files; reserved = Atomic.make [] }
 
-let at root =
-  let files = Sysfs.v root in
+let at ?kernel root =
+  let files = Sysfs.v ?kernel root in
   machine None (Some files) (Local.ops files)
 
 let this = at "/"

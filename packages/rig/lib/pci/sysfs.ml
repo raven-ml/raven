@@ -17,12 +17,14 @@ type t = {
   lockdown : string;
   bus_files : string; (* rescan and drivers_probe *)
   vfio : string;
+  kernel : string -> string -> unit; (* a fixture's, acting on a write *)
 }
 
-let v root =
+let v ?(kernel = fun _ _ -> ()) root =
   let ( / ) = Filename.concat in
   {
     root;
+    kernel;
     devices = root / "sys/bus/pci/devices";
     groups = root / "sys/kernel/iommu_groups";
     lockdown = root / "sys/kernel/security/lockdown";
@@ -73,10 +75,12 @@ let read file =
 (* Writes [s] to [file] in one write, which sysfs takes whole or refuses. A
    buffered channel would see the refusal only at its close, which drops it.
    Sysfs ignores the truncation, as a shell's redirection relies on; a plain
-   file holds [s] alone after it. *)
-let put file s =
+   file holds [s] alone after it. [m]'s kernel acts on [s] before the write,
+   as Linux does inside it. *)
+let put m file s =
   let fd = Unix.openfile file [ O_WRONLY; O_TRUNC; O_CLOEXEC ] 0 in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  m.kernel file s;
   ignore (Unix.single_write_substring fd s 0 (String.length s))
 
 let refused file (e : Unix.error) =
@@ -88,8 +92,8 @@ let refused file (e : Unix.error) =
         why
   | _ -> Fail.fail "%s" why
 
-let write file s =
-  try put file s with Unix.Unix_error (e, _, _) -> refused file e
+let write m file s =
+  try put m file s with Unix.Unix_error (e, _, _) -> refused file e
 
 let readlink link =
   try Unix.readlink link
@@ -396,7 +400,7 @@ let keep_off { files = m; bus; _ } ~remove =
   let s = state m bus in
   if s.iommu = Translating then begin
     Option.iter (Fail.fail "%s") (vfio_refusal m bus ~remove);
-    if s.driver <> Some vfio_pci then write (override m bus) vfio_pci
+    if s.driver <> Some vfio_pci then write m (override m bus) vfio_pci
   end
   else if s.driver <> Some vfio_pci then begin
     if (not remove) && s.siblings <> [] && s.bus_reset then begin
@@ -414,13 +418,13 @@ let keep_off { files = m; bus; _ } ~remove =
     let siblings = if remove then [] else s.siblings in
     let detached = { s with driver = None; siblings; enabled = true } in
     Result.iter_error (Fail.fail "%s") (addressing m bus detached);
-    write (override m bus) no_driver
+    write m (override m bus) no_driver
   end
 
 let unbind m f =
   match driver_of m f with
   | Some d when d <> vfio_pci ->
-      write (path m f "driver/unbind") f;
+      write m (path m f "driver/unbind") f;
       if driver_of m f <> None then
         Fail.fail "the driver %s stays bound to %s" d f
   | _ -> ()
@@ -434,7 +438,7 @@ let detach { files = m; bus; _ } ~remove =
   let s = state m bus in
   (if s.iommu = Translating then begin
      let others = List.filter (( <> ) bus) (to_move m bus ~remove) in
-     List.iter (fun f -> write (override m f) vfio_pci) others;
+     List.iter (fun f -> write m (override m f) vfio_pci) others;
      List.iter (unbind m) others;
      unbind m bus
    end
@@ -444,9 +448,9 @@ let detach { files = m; bus; _ } ~remove =
   | Error _ -> (
       unbind m bus;
       if remove then
-        List.iter (fun s -> write (path m s "remove") "1") (siblings m bus);
+        List.iter (fun s -> write m (path m s "remove") "1") (siblings m bus);
       if driver_of m bus = None && not (enabled m bus) then
-        write (path m bus "enable") "1";
+        write m (path m bus "enable") "1";
       let s = state m bus in
       match (addressing m bus s, s) with
       | Ok _, _ -> ()
@@ -462,8 +466,8 @@ let detach { files = m; bus; _ } ~remove =
    probe. *)
 let bind { files = m; bus; _ } ~remove =
   let probe f =
-    write (override m f) vfio_pci;
-    write (Filename.concat m.bus_files "drivers_probe") f;
+    write m (override m f) vfio_pci;
+    write m (Filename.concat m.bus_files "drivers_probe") f;
     if driver_of m f <> Some vfio_pci then
       Fail.fail
         "vfio-pci did not take %s at its probe, for the reason the kernel's \
@@ -473,7 +477,7 @@ let bind { files = m; bus; _ } ~remove =
   in
   if iommu_of m bus = Translating then List.iter probe (to_move m bus ~remove)
 
-let reset m bus = write (path m bus "reset") "1"
+let reset m bus = write m (path m bus "reset") "1"
 
 (* A rescan brings back the functions [detach] removed. The function itself is
    on the bus already, so its driver is probed for it. A detach that stopped
@@ -483,9 +487,9 @@ let reset m bus = write (path m bus "reset") "1"
    detach behind a translating IOMMU leaves it, goes back to its driver the
    same way. *)
 let give_back m f =
-  if driver_of m f = Some vfio_pci then write (path m f "driver/unbind") f;
-  write (override m f) "\n";
-  write (Filename.concat m.bus_files "drivers_probe") f;
+  if driver_of m f = Some vfio_pci then write m (path m f "driver/unbind") f;
+  write m (override m f) "\n";
+  write m (Filename.concat m.bus_files "drivers_probe") f;
   if driver_of m f = None then
     Fail.fail "no kernel driver took %s; load its module first" f
 
@@ -493,15 +497,15 @@ let attach { files = m; bus; _ } ~siblings:others =
   (match driver_of m bus with
   | Some d when d <> vfio_pci ->
       if not (List.mem (read (override m bus)) [ ""; "(null)" ]) then begin
-        write (Filename.concat m.bus_files "rescan") "1";
-        write (override m bus) "\n"
+        write m (Filename.concat m.bus_files "rescan") "1";
+        write m (override m bus) "\n"
       end
   | bound ->
-      if bound = Some vfio_pci then write (path m bus "driver/unbind") bus;
-      if enabled m bus then write (path m bus "enable") "0";
-      write (Filename.concat m.bus_files "rescan") "1";
-      write (override m bus) "\n";
-      write (Filename.concat m.bus_files "drivers_probe") bus;
+      if bound = Some vfio_pci then write m (path m bus "driver/unbind") bus;
+      if enabled m bus then write m (path m bus "enable") "0";
+      write m (Filename.concat m.bus_files "rescan") "1";
+      write m (override m bus) "\n";
+      write m (Filename.concat m.bus_files "drivers_probe") bus;
       if driver_of m bus = None then
         Fail.fail "no kernel driver took %s; load its module first" bus);
   if others then
@@ -526,7 +530,7 @@ let resize { files = m; bus; _ } i =
       if k >= 0 then
         if sizes land (1 lsl k) = 0 then try_from (k - 1)
         else
-          match put file (string_of_int k) with
+          match put m file (string_of_int k) with
           | () -> ()
           | exception Unix.Unix_error (ENOSPC, _, _) -> try_from (k - 1)
           | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->

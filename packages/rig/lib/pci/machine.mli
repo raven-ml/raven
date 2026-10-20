@@ -177,8 +177,19 @@ val address : domain:int -> bus:int -> device:int -> fn:int -> string
    machine with none.
 
    Each call makes another machine. Two machines at one root share no holds
-   ({!Driver}), and the kernel still refuses a second take of one function. *)
-val at : string -> t
+   ({!Driver}), and the kernel still refuses a second take of one function.
+
+   [kernel file s] is called at each write of [s] that the machine makes to
+   an attribute [file] of a driver, the bus or a function under
+   [root/sys/bus/pci], such as [unbind], [drivers_probe], [remove] or
+   [driver_override]. A function's [config] is written without it. It is
+   called once [file] is open and before [s] is written, to act on it as
+   Linux does inside the write, such as unbinding a driver. It may raise
+   [Unix.Unix_error] as Linux's refusal of the write, and [s] is then not
+   written. The open truncated [file], so a fixture's kernel that refuses
+   restores [file] itself. It defaults to doing nothing, as for {!this},
+   whose kernel acts itself. *)
+val at : ?kernel:(string -> string -> unit) -> string -> t
 
 val window : t -> int -> int -> Window.t
 (** [window m a n] is the [n] bytes at address [a] on [m], reached through [m]'s

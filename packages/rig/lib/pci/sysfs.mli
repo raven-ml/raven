@@ -11,9 +11,16 @@
 type t
 (** The type for a machine's files. *)
 
-val v : string -> t
+val v : ?kernel:(string -> string -> unit) -> string -> t
 (** [v root] is the machine whose files are under the directory [root]: [/] for
-    this machine, a fixture's directory in tests. *)
+    this machine, a fixture's directory in tests. [kernel file s] is called
+    at each write of [s] to an attribute [file] of a driver, the bus or a
+    function other than its [config], once [file] is open and before [s] is
+    written, to act on it as Linux does inside the write: a fixture's kernel.
+    It may raise [Unix.Unix_error] as Linux's refusal of the write, and [s]
+    is then not written. The open truncated [file], so a fixture's kernel
+    that refuses restores [file] itself. It defaults to doing nothing, as for
+    this machine, whose kernel acts itself. *)
 
 (** {1:locks Locks}
 
