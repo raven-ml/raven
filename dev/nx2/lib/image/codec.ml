@@ -129,6 +129,6 @@ let decode ~grayscale src =
   if width <= 0 || height <= 0 then failwith "the image has no pixel";
   if width > max_int / height || width * height > max_int / channels then
     failwith "the image is too large";
-  let dst = Rig.Buffer.create Rig.host (width * height * channels) in
-  Rig.Buffer.write dst int8_unsigned (fun a -> decode src a grayscale);
+  let dst = Array1.create int8_unsigned c_layout (width * height * channels) in
+  decode src dst grayscale;
   (dst, height, width)

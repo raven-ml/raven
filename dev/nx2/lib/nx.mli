@@ -3844,7 +3844,7 @@ module Repr : sig
 
       {b Warning.} After the call, the caller must not read, write or keep
       [a], an array over its memory or a bigarray over it, and no other value
-      may read that memory: a donation of the value would change what they
+      must read that memory: a donation of the value would change what they
       read.
 
       Raises [Invalid_argument] naming [Nx.Repr.unsafe_of_array] unless [a]
