@@ -72,8 +72,7 @@ val link :
       its destination's, where that device copies and reaches both sides and
       they are both GPU memory or both memory the host computes on
       ({!Rig.runs_on_host}); otherwise it is a move of the program
-      ({!Rig_program.step}), which returns once queued
-      ({!Rig.Buffer.submit_copy}).
+      ({!Rig_program.step}), one {!Rig.Buffer.submit_copy}.
     - Consecutive kernels and copies of one device are one submission
       ({!Rig.Submission}), and each of them is a submission of its own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
