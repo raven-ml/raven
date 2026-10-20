@@ -932,7 +932,9 @@ static int polled_room(void *self, int nwaits, const struct rig_part *parts,
                        int n, void *scratch, const uint8_t *args) {
   struct polled *p = self;
   struct polled_run *r = p->run;
-  atomic_store(&p->room_waits, nwaits);
+  /* Relaxed: the store sits in every submit the bench times, and a test
+     reads the count after its submit returned. */
+  atomic_store_explicit(&p->room_waits, nwaits, memory_order_relaxed);
   if (!scribble(scratch, n)) return RIG_NEVER;
   for (int i = 0; i < n; i++) {
     int kind = parts[i].kind;
