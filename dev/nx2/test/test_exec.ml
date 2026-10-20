@@ -655,15 +655,15 @@ let allocation =
         test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add a a)));
+          at_most (float 0.5) ~than:42. (words (fun () -> Nx.add a a)));
       test "a copy of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:125. (words (fun () -> Nx.copy a)));
+          at_most (float 0.5) ~than:124. (words (fun () -> Nx.copy a)));
       test "a matmul of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:176. (words (fun () -> Nx.matmul a a)));
+          at_most (float 0.5) ~than:167. (words (fun () -> Nx.matmul a a)));
     ]
 
 (* Placements *)
