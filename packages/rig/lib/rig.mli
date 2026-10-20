@@ -1121,13 +1121,14 @@ module Buffer : sig
       memory takes an allocation whose work is done, or a new one, and no
       copy puts bytes after them. Staging memory so grows by 32 or 64 MiB for
       each copy holding it at once, and by as much for each copy whose bytes
-      a device wrote into it and whose work is still queued. A copy of more
-      than 32 MiB whose bytes the host writes waits before it reuses one of
-      its two allocations until the work that last read it is done; where a
-      device writes them, its queue waits.
+      a device wrote into it and whose work is still queued, or, on a device
+      whose word rig reads through its driver, until a wait reads it. A copy
+      of more than 32 MiB whose bytes the host writes waits before it reuses
+      one of its two allocations until the work that last read it is done;
+      where a device writes them, its queue waits.
 
       A copy's allocations serve the copies after it. Let [n] be the most
-      allocations a staging memory has had held at once. When a copy gives
+      allocations a staging memory has had at once. When a copy gives
       its allocations back, every allocation that no copy holds and that no
       copy took within the last [n] takes returns as {!free} returns memory.
       Copies that run one after another, or several at a time over and over,
