@@ -126,8 +126,11 @@ val detach : 's lock -> remove:bool -> unit
     once unbound, enables it and turns its bus mastering off. Behind an IOMMU
     that translates, it sets the [driver_override] of the other functions of
     the device to [vfio-pci] if [remove] and unbinds their drivers, then the
-    function's, which {!bind} then binds. Raises {!Fail.Failed} if the
-    function is still not takeable, or a file cannot be written. *)
+    function's, which {!bind} then binds. With [remove] and the function
+    bound to a kernel driver, it first sets the [driver_override] of each
+    other function on [vfio-pci] to [vfio-pci] and unbinds [vfio-pci]. Raises
+    {!Fail.Failed} if [vfio-pci] stays bound to such another function, if
+    the function is still not takeable, or if a file cannot be written. *)
 
 val bind : 's lock -> remove:bool -> unit
 (** [bind l ~remove] binds to [vfio-pci], behind an IOMMU that translates, the

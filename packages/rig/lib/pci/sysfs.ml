@@ -448,9 +448,17 @@ let release m f =
    IOMMU it could write any host memory. Behind one that translates, the
    functions it moves stay unbound until {!bind}. The other functions go
    first, so that one whose driver stays bound leaves the GPU bound too,
-   which {!attach} gives back as it is. *)
+   which {!attach} gives back as it is. With [remove], one that vfio-pci
+   holds, as an attach that stopped part-way or an administrator leaves it,
+   is released before the function's kernel driver unbinds. *)
 let detach { files = m; bus; _ } ~remove =
   let s = state m bus in
+  (match s.driver with
+  | Some d when remove && d <> vfio_pci ->
+      List.iter
+        (fun f -> if driver_of m f = Some vfio_pci then release m f)
+        s.siblings
+  | _ -> ());
   (if s.iommu = Translating then begin
      let others = List.filter (( <> ) bus) (to_move m bus ~remove) in
      List.iter (fun f -> write m (override m f) vfio_pci) others;

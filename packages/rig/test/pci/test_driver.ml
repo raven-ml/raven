@@ -1641,6 +1641,78 @@ let test_attach_siblings_again () =
     (Some "amdgpu", Some "snd_hda_intel")
     (drivers root)
 
+(* An attach that stopped part-way, or an administrator, may leave the audio
+   function on vfio-pci with the GPU bound to its kernel driver. Detach takes
+   it off vfio-pci before it unbinds the GPU's kernel driver, without an IOMMU
+   and behind one that translates. *)
+let bound_with_vfio =
+  [
+    ( "without an IOMMU",
+      [
+        Tree.gpu ~driver:"amdgpu" gpu_bus;
+        { (audio audio_bus) with driver = Some vfio };
+      ] );
+    ( "behind a translating IOMMU",
+      [
+        Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus;
+        { (audio audio_bus) with driver = Some vfio; group = Some "12" };
+        vfio_elsewhere;
+      ] );
+  ]
+
+let test_detach_siblings (_, fns) =
+  needs_flock ();
+  let root = Tree.make fns in
+  let k = Tree.kernel ~drivers:own_drivers root in
+  equal progress Detached
+    (require_ok ~pp:Format.pp_print_string
+       (Driver.detach (gpus ()) (Tree.machine k) 0));
+  equal ~msg:"broken" (list event) [] (broken (Tree.events k))
+
+(* Changes that fail part-way keep the rule too. From each start, a state
+   that a change, one that stopped part-way or an administrator may leave,
+   attach, detach and attach again run with each of their writes refused in
+   turn, which leaves every state a failed write can. *)
+let starts =
+  [
+    ( "both on their own drivers without an IOMMU",
+      [ Tree.gpu ~driver:"amdgpu" gpu_bus; audio audio_bus ] );
+    ( "both on their own drivers behind a translating IOMMU",
+      [
+        Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus;
+        { (audio audio_bus) with group = Some "12" };
+        vfio_elsewhere;
+      ] );
+    ( "the GPU unbound and the audio function on vfio-pci",
+      [
+        Tree.gpu ~reset:(Some "flr") gpu_bus;
+        { (audio audio_bus) with driver = Some vfio };
+      ] );
+  ]
+  @ List.map
+      (fun (n, fns) -> ("the audio function on vfio-pci " ^ n, fns))
+      bound_with_vfio
+
+(* The kernel of a tree of [fns] after attach, detach and attach, which
+   refuses the writes [refuse] names. *)
+let changed fns refuse =
+  let k = Tree.kernel ~refuse ~drivers:own_drivers (Tree.make fns) in
+  let g = gpus () and m = Tree.machine k in
+  ignore (Driver.attach g m 0 : (unit, string) result);
+  ignore (Driver.detach g m 0 : (Driver.progress, string) result);
+  ignore (Driver.attach g m 0 : (unit, string) result);
+  k
+
+let test_refused (_, fns) =
+  needs_flock ();
+  let n = Tree.writes (changed fns (Fun.const false)) in
+  for i = 0 to n - 1 do
+    equal
+      ~msg:(strf "write %d of %d refused" i n)
+      (list event) []
+      (broken (Tree.events (changed fns (( = ) i))))
+  done
+
 let tree_changes =
   group ~timeout:patience "changes on a machine's files"
     [
@@ -1658,6 +1730,14 @@ let tree_changes =
         "an attach that fails at the GPU's probe leaves its other functions \
          off vfio-pci for the attach after its module loads"
         test_attach_siblings_again;
+      cases
+        "detach takes the GPU's other functions off vfio-pci before it \
+         unbinds the GPU"
+        ~name:fst bound_with_vfio test_detach_siblings;
+      cases
+        "attach and detach keep the GPU's other functions off vfio-pci \
+         while its kernel driver is bound, whichever write is refused"
+        ~name:fst starts test_refused;
       test
         "attach gives back a GPU that a detach behind a translating IOMMU left \
          part-way"

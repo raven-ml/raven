@@ -771,4 +771,5 @@ module Tree = struct
 
   let machine k = Rig_pci.Machine.at ~kernel:(kernel_write k) k.root
   let events k = List.rev k.events
+  let writes k = k.writes
 end

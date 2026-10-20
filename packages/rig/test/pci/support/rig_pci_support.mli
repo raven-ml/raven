@@ -368,4 +368,7 @@ module Tree : sig
 
   val events : kernel -> event list
   (** [events k] is the binds and unbinds [k] made, oldest first. *)
+
+  val writes : kernel -> int
+  (** [writes k] is the number of writes [k] acted on or refused. *)
 end

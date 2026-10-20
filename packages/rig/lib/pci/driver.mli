@@ -50,10 +50,12 @@ type siblings =
 
           A kernel driver may read the data of the drivers of its device's
           other functions as its own driver's for as long as it is bound, as
-          NVIDIA's reads an audio function's as a sound card's. So {!attach}
-          never binds one of them to [vfio-pci] while the function's kernel
-          driver is bound, one that fails included, and takes each off
-          [vfio-pci] before that driver's probe. *)
+          NVIDIA's reads an audio function's as a sound card's. So {!detach}
+          and {!attach} never bind one of them to [vfio-pci] while the
+          function's kernel driver is bound, ones that fail included, and take
+          each off [vfio-pci] before that driver's probe or unbind. A
+          {!detach} that returns [Error] changes nothing, so it leaves such a
+          function on [vfio-pci] where it found it. *)
   | Keep
       (** {!detach} leaves them, and refuses a function that is not bound to
           [vfio-pci] while its device has any and Linux resets it through its
@@ -202,11 +204,12 @@ val hang_ms : int
     [CAP_SYS_ADMIN] and write access to the files they write, which root has:
     - {!detach} writes the function's [driver_override], its driver's [unbind],
       the [remove] file of each other function of its device if it removes them
-      ({!type-siblings}), and the function's [enable], [config] (its command
-      register) and [resourceN_resize] for its memory BAR, if it has one. Behind
-      an IOMMU that translates, it writes the [driver_override] and the driver's
-      [unbind] of each other function of the device in place of [remove], and
-      [/sys/bus/pci/drivers_probe];
+      ({!type-siblings}), with the [driver_override] and [vfio-pci]'s
+      [unbind] of each that [vfio-pci] holds, and the function's [enable],
+      [config] (its command register) and [resourceN_resize] for its memory
+      BAR, if it has one. Behind an IOMMU that translates, it writes the
+      [driver_override] and the driver's [unbind] of each other function of
+      the device in place of [remove], and [/sys/bus/pci/drivers_probe];
     - {!attach} writes [vfio-pci]'s [unbind], the function's [enable] and
       [driver_override], [/sys/bus/pci/rescan] and [/sys/bus/pci/drivers_probe],
       and, with [Remove], [vfio-pci]'s [unbind] and the [driver_override] of
@@ -271,7 +274,11 @@ val detach : t -> Machine.t -> int -> (progress, string) result
     every kernel driver off the function through probes, rescans and module
     loads until {!attach} or a reboot, and unbinds the kernel driver. It removes
     or keeps the other functions of the function's device, as [siblings] of
-    {!make} says.
+    {!make} says. With [Remove] ({!type-siblings}) and the function bound to
+    its kernel driver, it unbinds [vfio-pci] from each of them that
+    [vfio-pci] holds, as an {!attach} that stopped part-way may leave them,
+    after it sets the function's [driver_override] and before it unbinds the
+    kernel driver.
 
     Behind an IOMMU that translates the function's addresses, a process takes it
     through VFIO, which takes its IOMMU group whole. [detach] then sets the
