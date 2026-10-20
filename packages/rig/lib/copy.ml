@@ -872,14 +872,17 @@ let claimed fn ~waits src dst boxes =
    the host's, whose copy is done. *)
 let point p = if p = 0 then Submission.mark () else p
 
-let queue fn src dst (waits, boxes) = claimed fn ~waits src dst boxes
+(* [submit_copy] under its claims, a top-level function, so that taking them
+   builds no closure. *)
+let queue src dst (waits, boxes) =
+  claimed "Buffer.submit_copy" ~waits src dst boxes
 
 let submit_copy ?(waits = [||]) ~src ~dst boxes =
   let fn = "Buffer.submit_copy" in
   Dev.check_held fn;
   let boxes = fitting fn ~src ~dst boxes in
   check fn src dst;
-  point (Claim.reading2 fn src dst (queue fn) (waits, boxes))
+  point (Claim.reading2 fn src dst queue (waits, boxes))
 
 (* [copy]'s transfer of its [n] bytes on [d]'s queue, as [direct] picks
    [d], as [d]'s cached copy of one run, or through staging memory where [d]
