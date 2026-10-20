@@ -146,6 +146,7 @@ value caml_rig_nv_destroy(value v_self) {
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free_rings(d);
   free(d->copy_launch);
+  free(d->fill_launch);
   free(d->timed);
   pthread_mutex_destroy(&d->channels_mu);
   free(d);
@@ -528,13 +529,14 @@ value caml_rig_nv_launches_free(value v_launches) {
   return Val_unit;
 }
 
-/* Installs the private kernel's image and transfers its launch to the
+/* Installs the private kernels' image and transfers their launches to the
    device. No submission can use the image before make returns. */
-value caml_rig_nv_copy_kernel(value v_self, value v_launch, value v_host,
-                              value v_image) {
+value caml_rig_nv_kernels(value v_self, value v_copy, value v_fill,
+                         value v_host, value v_image) {
   struct device *d = Device_val(v_self);
   memcpy(Pointer_val(v_host), String_val(v_image), caml_string_length(v_image));
-  d->copy_launch = (struct launch *)Nativeint_val(v_launch);
+  d->copy_launch = (struct launch *)Nativeint_val(v_copy);
+  d->fill_launch = (struct launch *)Nativeint_val(v_fill);
   atomic_store_explicit(&d->invalidate, 1, memory_order_release);
   return Val_unit;
 }
@@ -711,7 +713,10 @@ value caml_rig_nv_end(value v_self, value v_stopped) {
   e->d = NULL;
   pthread_mutex_unlock(&e->flush_mu);
   if (d == NULL) return Val_unit;
-  if (Bool_val(v_stopped)) free(d->copy_launch);
+  if (Bool_val(v_stopped)) {
+    free(d->copy_launch);
+    free(d->fill_launch);
+  }
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free_rings(d);
   free(d->timed);

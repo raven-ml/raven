@@ -727,12 +727,23 @@ let edge_boxes (module G : Gpu) b =
   done;
   equal octets (Bytes.to_string model) (E.read e dst ~at:0 nd)
 
-(* A fill of [n] bytes at [offset] into memory of a kind, [slack] bytes
-   before its end. *)
-type fill = { memory : Rig_edge.memory; offset : int; n : int; slack : int }
+(* A fill of [n] bytes of [byte] at [offset] into memory of a kind, [slack]
+   bytes before its end. *)
+type fill = {
+  memory : Rig_edge.memory;
+  offset : int;
+  n : int;
+  slack : int;
+  byte : char;
+}
+
+(* The bytes a fill writes: 0, each side of the high bit, the top, and one
+   whose 32-bit word holds no zero byte. *)
+let fill_bytes = [| '\x00'; '\x7f'; '\x80'; '\xff'; 'f' |]
 
 (* Fills of no bytes, one to seven bytes and their ends, and larger fills
-   with a body of four-byte words and unaligned ends. *)
+   with a body of four-byte words and unaligned ends, of each byte of
+   [fill_bytes]. *)
 let fills =
   let open Gen in
   let n =
@@ -746,18 +757,20 @@ let fills =
   in
   with_pp
     (fun ppf f ->
-      Format.fprintf ppf "%d bytes of %a at %d, slack %d" f.n pp_edge_memory
-        f.memory f.offset f.slack)
+      Format.fprintf ppf "%d bytes %C of %a at %d, slack %d" f.n f.byte
+        pp_edge_memory f.memory f.offset f.slack)
     (let+ memory = edge_memory
      and+ offset = int_range 0 7
      and+ n = n
-     and+ slack = frequency [ (1, constant 0); (2, int_range 1 7) ] in
-     { memory; offset; n; slack })
+     and+ slack = frequency [ (1, constant 0); (2, int_range 1 7) ]
+     and+ byte = of_list ~pp:Format.pp_print_char (Array.to_list fill_bytes) in
+     { memory; offset; n; slack; byte })
 
 (* A fill part sets each byte of its row to its byte, and writes no other. *)
 let edge_fills (module G : Gpu) f =
   cover "a fill of no bytes" (f.n = 0);
   cover "a fill of fewer than 8 bytes" (f.n > 0 && f.n < 8);
+  cover "a byte with its high bit set" (f.n > 0 && Char.code f.byte >= 0x80);
   cover "an unaligned start" (f.n > 0 && f.offset land 3 <> 0);
   cover "an unaligned end" (f.n > 0 && (f.offset + f.n) land 3 <> 0);
   cover "a body of words" (f.n >= 8);
@@ -782,10 +795,10 @@ let edge_fills (module G : Gpu) f =
       rows = 1;
       src_pitch = 0;
       dst_pitch = f.n;
-      fill = Some 'f';
+      fill = Some f.byte;
     };
   let model = Bytes.of_string before in
-  Bytes.fill model f.offset f.n 'f';
+  Bytes.fill model f.offset f.n f.byte;
   equal octets (Bytes.to_string model) (E.read e dst ~at:0 size)
 
 (* [Buffer.fill] sets each byte of its view, on any memory, and no other. *)
@@ -793,13 +806,37 @@ let buffer_fills (module G : Gpu) ((memory : B.kind), f) =
   cover "a fill of no bytes" (f.n = 0);
   cover "an unaligned view" (f.n > 0 && f.offset land 3 <> 0);
   cover "Device memory" (memory = Device && f.n > 0);
+  cover "a byte with its high bit set" (f.n > 0 && Char.code f.byte >= 0x80);
   G.with_ @@ fun t ->
   let size = f.offset + f.n + f.slack in
   let b = filled ~memory t.d (pattern size 4) in
-  B.fill (B.view b ~first:f.offset ~length:f.n) 'f';
+  B.fill (B.view b ~first:f.offset ~length:f.n) f.byte;
   let model = Bytes.of_string (pattern size 4) in
-  Bytes.fill model f.offset f.n 'f';
+  Bytes.fill model f.offset f.n f.byte;
   equal octets (Bytes.to_string model) (get b)
+
+(* [Buffer.fill] of Device memory past 256 KiB, which a driver may run as a
+   kernel of 16-byte stores, sets each byte of its view and no other: from
+   each byte after a 16-byte boundary, ending on each, with each byte of
+   [fill_bytes] in turn. *)
+let large_fills (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  let n = 256 lsl 10 and slack = 19 in
+  let size = 15 + n + 17 + slack in
+  let b = B.create t.d size in
+  for offset = 0 to 15 do
+    List.iter
+      (fun length ->
+        let c = fill_bytes.((offset + length) mod Array.length fill_bytes) in
+        put b (pattern size offset);
+        B.fill (B.view b ~first:offset ~length) c;
+        let model = Bytes.of_string (pattern size offset) in
+        Bytes.fill model offset length c;
+        equal octets
+          ~msg:(strf "%d bytes %C at %d" length c offset)
+          (Bytes.to_string model) (get b))
+      [ n; n + 17 ]
+  done
 
 (* Device order *)
 
@@ -2007,6 +2044,8 @@ let laws (module G : Gpu) =
       prop ~count:60 "a fill sets each byte of its view, and no other"
         (Gen.pair memory fills)
         (buffer_fills g);
+      test "a fill past 256 KiB sets each byte of its view, and no other"
+        (large_fills g);
       test "a value's work starts once every earlier value's completed"
         (device_order g);
       test "a profile around a submission records a span that bounds its work"

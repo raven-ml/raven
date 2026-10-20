@@ -16,9 +16,9 @@
    invalidation come after the waits, once every earlier value's work is
    done.
 
-   Routes: a copy of one row within this device's Device memory from
-   256 KiB runs the driver's copy kernel on COMPUTE, as a launch; every
-   other part runs on its queue's channel. Each part's route is decided
+   Routes: a copy or a fill of one row within this device's Device memory
+   from 256 KiB runs the driver's copy or fill kernel on COMPUTE, as a
+   launch; every other part runs on its queue's channel. Each part's route is decided
    once, before any word is written.
 
    Joins: a part that a later part on the other channel runs after (one
@@ -135,18 +135,25 @@ static void reclaim(const struct device *d, struct channel *c,
   }
 }
 
-/* Below this size, launching the kernel costs more than the copy saves. */
+/* Below this size, launching a kernel costs more than it saves over the
+   copy engine, which writes bytes as fast whether it copies or fills. */
 enum { COPY_KERNEL_BYTES = 256 * 1024 };
 
-/* The copy kernel's parameters: destination, source and bytes. */
+/* The kernels' parameters: destination, then source or byte, then bytes. */
 enum { COPY_PARAMS = 3 * sizeof(uint64_t) };
 
-/* Whether the driver's copy kernel runs [p]: a copy within this device's
-   Device memory, large enough to pay for its launch. */
+/* The driver's kernel for the copy part [p], a copy or a fill, if it has
+   one. */
+static const struct launch *kernel_of(const struct device *d,
+                                      const struct rig_part *p) {
+  return p->copy.fill ? d->fill_launch : d->copy_launch;
+}
+
+/* Whether the driver's kernel runs [p]: a copy or a fill of one row within
+   this device's Device memory, large enough to pay for its launch. */
 static int kernel_copies(const struct device *d, const struct rig_part *p) {
-  return p->kind == RIG_COPY && !p->copy.fill && p->copy.rows == 1 &&
-         p->copy.device_memory && p->copy.width >= COPY_KERNEL_BYTES &&
-         d->copy_launch != NULL;
+  return p->kind == RIG_COPY && p->copy.rows == 1 && p->copy.device_memory &&
+         p->copy.width >= COPY_KERNEL_BYTES && kernel_of(d, p) != NULL;
 }
 
 /* Decides the routes of [p]'s parts into [r], the submission's scratch. The
@@ -383,7 +390,7 @@ static struct cost need(const struct device *d, int nwaits,
       l = p[i].launch.launch;
       params = p[i].launch.args.params;
     } else if (x->kernel) {
-      l = d->copy_launch;
+      l = kernel_of(d, &p[i]);
       params = COPY_PARAMS;
     } else if (p[i].kind == RIG_COPY)
       copies = copy_bytes(d, &p[i]);
@@ -886,8 +893,8 @@ static void launch(struct submission *s, const struct rig_part *p,
   rig_params(params, &a, args, slots);
 }
 
-/* Each thread copies vectors in a grid-stride loop; a bounded grid makes a
-   large copy take a fixed amount of scheduling work. */
+/* Each thread copies or sets vectors in a grid-stride loop; a bounded grid
+   makes a large copy take a fixed amount of scheduling work. */
 #define COPY_THREADS 256
 #define COPY_GROUPS 256
 #define COPY_VECTOR_BYTES 16
@@ -899,9 +906,10 @@ static void copy_compute(struct submission *s, const struct rig_part *p,
   struct rig_block b = {
       .groups = {groups < COPY_GROUPS ? (uint32_t)groups : COPY_GROUPS, 1, 1},
       .threads = {COPY_THREADS, 1, 1}};
-  uint64_t params[3] = {p->copy.dst + p->copy.dst_offset,
-                        p->copy.src + p->copy.src_offset, p->copy.width};
-  memcpy(dispatch(s, s->d->copy_launch, &b, sizeof params, waited), params,
+  uint64_t from =
+      p->copy.fill ? p->copy.byte : p->copy.src + p->copy.src_offset;
+  uint64_t params[3] = {p->copy.dst + p->copy.dst_offset, from, p->copy.width};
+  memcpy(dispatch(s, kernel_of(s->d, p), &b, sizeof params, waited), params,
          sizeof params);
 }
 

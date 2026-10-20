@@ -347,8 +347,9 @@ struct device {
   _Atomic uint64_t local;
   /* whether the compute caches are owed an invalidation */
   _Atomic int invalidate;
-  /* The driver's byte-copy kernel; owned until confirmed channel stop. */
-  struct launch *copy_launch;
+  /* The driver's byte-copy and fill kernels; owned until confirmed channel
+     stop. */
+  struct launch *copy_launch, *fill_launch;
   /* The rings a growth made, which the next room that needs them installs,
      and the rings installed, NULL for those the device opened with: each
      channel's segment ring, then COMPUTE's launch ring. A room retires the

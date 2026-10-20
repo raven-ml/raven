@@ -431,8 +431,8 @@ external hand : int -> int -> int -> int -> int -> bool -> int
 external retired : int -> int -> int = "caml_rig_nv_retired" [@@noalloc]
 external rings_retired : int -> bool = "caml_rig_nv_retiring" [@@noalloc]
 
-external install_copy : int -> nativeint -> int -> string -> unit
-  = "caml_rig_nv_copy_kernel"
+external install_kernels : int -> nativeint -> nativeint -> int -> string -> unit
+  = "caml_rig_nv_kernels"
 [@@noalloc]
 
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
@@ -1172,24 +1172,25 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
       if set_clock self source bar then Ok ()
       else Error "the GPU's timer could not be read"
     in
-    (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of
-       one row of at least 256 KiB between two of the device's own [Device]
-       allocations runs as this kernel on the compute channel
-       (rig_nv_ring.c's [kernel_copies] and [route]). Smaller copies, boxes
-       of more rows, fills, copies that touch host, [Pinned], [Mapped] or a
-       peer's memory, and every copy on other architectures, run on the copy
-       channel. The kernel's image takes
-       [Cubin.size] bytes of [Pinned] memory, and its descriptors lie in host
-       memory until the channels end. *)
+    (* The private copy and fill kernels. On sm_80, sm_86, sm_87 and sm_89,
+       a copy of one row of at least 256 KiB between two of the device's own
+       [Device] allocations, and a fill of as many bytes of one, run as these
+       kernels on the compute channel (rig_nv_ring.c's [kernel_copies] and
+       [route]). Smaller copies and fills, boxes of more rows, copies and
+       fills that touch host, [Pinned], [Mapped] or a peer's memory, and
+       every copy and fill on other architectures, run on the copy channel.
+       The kernels' image takes [Cubin.size] bytes of [Pinned] memory, and
+       their descriptors lie in host memory until the channels end. *)
     let* copy_kernel =
       match Copy_kernel.find (arch_of p.gpu.sm_version) with
       | None -> Ok None
       | Some bin ->
           let* c = Cubin.of_string bin in
           let k = Option.get (Cubin.kernel c "copy_bytes") in
+          let f = Option.get (Cubin.kernel c "fill_bytes") in
           let* code = alloc Pinned (Cubin.size c) "copy kernel" in
           let* code_host = host "copy kernel" code in
-          Ok (Some (c, k, code, code_host))
+          Ok (Some (c, k, f, code, code_host))
     in
     (* rig's word goes back with the device's mapping of it; rig frees a
        word of the device's own, with its page, once no queue waits on it. *)
@@ -1199,7 +1200,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     in
     let owned =
       match copy_kernel with
-      | Some (_, _, code, _) -> code :: owned
+      | Some (_, _, _, code, _) -> code :: owned
       | None -> owned
     in
     let g = p.gpu in
@@ -1247,13 +1248,16 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     let* () =
       match copy_kernel with
       | None -> Ok ()
-      | Some (c, k, code, code_host) ->
-          let* l = Launch.make d.capability k in
+      | Some (c, k, f, code, code_host) ->
+          let* lk = Launch.make d.capability k in
+          let* lf = Launch.make d.capability f in
           let bytes = image_bytes c ~base:code.address in
-          (* This kernel has no stack, calls or local instructions. Its
+          (* These kernels have no stack, calls or local instructions. Their
              descriptors need none of the public launch's local reserve. *)
-          let launch = descriptors l code.address (code.address + k.code) 0 k in
-          install_copy self launch code_host bytes;
+          let launch l (k : Cubin.kernel) =
+            descriptors l code.address (code.address + k.code) 0 k
+          in
+          install_kernels self (launch lk k) (launch lf f) code_host bytes;
           Ok ()
     in
     Ok (T d)

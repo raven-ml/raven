@@ -135,7 +135,10 @@ val capability : t -> Rig_nv_abi.Gpu.t
     each 2 GiB of each row. A fill writes its byte by the copy engine's
     remap of a constant, which reads no memory: in components of four bytes
     from the first multiple of 4 of its address, 2 GiB a launch, and of one
-    byte in the at most three bytes at each end.
+    byte in the at most three bytes at each end. On sm_80, sm_86, sm_87 and
+    sm_89, a copy or a fill of one row of at least 256 KiB within the
+    device's own [Device] memory runs instead as a kernel of the driver on
+    the compute channel.
 
     A wait names an aligned 64-bit word that the device's work addresses,
     and a value [w]. It holds the submission's work back until the word

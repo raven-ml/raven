@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the private copy kernel and embed its ELF object."""
+"""Compile the private copy and fill kernels and embed their ELF object."""
 
 import argparse
 import hashlib
@@ -29,19 +29,25 @@ def sections(blob):
     return {name(n): (offset, size) for n, _, offset, size in heads}
 
 
+# The kernels the driver launches.
+KERNELS = [b"copy_bytes", b"fill_bytes"]
+
+
 def check(blob):
-    """Refuses an object whose copy_bytes takes stack or shared memory: the
-    driver launches it with no local memory."""
+    """Refuses an object whose kernels take stack or shared memory: the
+    driver launches them with no local memory."""
     s = sections(blob)
-    shared = s.get(".nv.shared.copy_bytes", (0, 0))[1]
-    if shared:
-        raise SystemExit(f"copy_bytes takes {shared} shared bytes")
+    for kernel in KERNELS:
+        name = kernel.decode()
+        shared = s.get(".nv.shared." + name, (0, 0))[1]
+        if shared:
+            raise SystemExit(f"{name} takes {shared} shared bytes")
     offset, size = s[".symtab"]
     strtab = s[".strtab"][0]
     entries = struct.iter_unpack("<I20x", blob[offset:offset + size])
     symbols = [blob[strtab + n:blob.index(b"\0", strtab + n)]
                for n, in entries]
-    copy = symbols.index(b"copy_bytes")
+    kernels = {symbols.index(k): k.decode() for k in KERNELS}
     at, size = s[".nv.info"]
     end = at + size
     while at < end:
@@ -49,8 +55,8 @@ def check(blob):
         data = n if fmt == EIFMT_SVAL else 0
         if fmt == EIFMT_SVAL and attribute == EIATTR_MIN_STACK_SIZE:
             symbol, stack = struct.unpack_from("<II", blob, at + 4)
-            if symbol == copy and stack:
-                raise SystemExit(f"copy_bytes takes {stack} stack bytes")
+            if symbol in kernels and stack:
+                raise SystemExit(f"{kernels[symbol]} takes {stack} stack bytes")
         at += 4 + data
 
 
