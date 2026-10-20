@@ -351,9 +351,13 @@ int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
   return rig_sides_overlap(&x, &y);
 }
 
+/* rig_buffers_overlap of the two whole buffers, whose ranges need no
+   check. */
 value caml_rig_buffer_overlaps(value b, value other) {
-  intnat n = (intnat)rig_buffer_bytes(b), m = (intnat)rig_buffer_bytes(other);
-  return Val_bool(rig_buffers_overlap(b, 0, n, other, 0, m));
+  struct rig_side x, y;
+  side_span(b, &x);
+  side_span(other, &y);
+  return Val_bool(rig_sides_overlap(&x, &y));
 }
 
 intnat caml_rig_cached_host(value b) { return cached_host(b); }

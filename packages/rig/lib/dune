@@ -28,4 +28,30 @@
    rig_stamps
    rig_heap
    rig_host_code
-   rig_memory)))
+   rig_memory)
+  (flags
+   (:standard
+    (:include interposition_flags.sexp)))))
+
+; On ELF, a compiler of PIC code takes an exported function for one another
+; library may interpose, so it calls the symbol where it would inline the
+; function, and nothing interposes rig's. Mach-O interposes nothing within an
+; image, and Apple's clang refuses the flag as unused.
+
+(rule
+ (target interposition_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target interposition_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(-fno-semantic-interposition)"))))
