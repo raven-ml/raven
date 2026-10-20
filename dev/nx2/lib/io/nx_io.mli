@@ -30,7 +30,9 @@
     rewriting it may change their values, and what a value over its pages
     reads from a page that a truncation of the file cut off is unspecified: on
     Linux the read ends the process ([SIGBUS]), and on macOS it reads the
-    bytes the page held. A value read into memory of its own is not affected.
+    bytes the page held. A copy of such a value's bytes, as {!Nx.place} makes
+    onto a device whose memory the host does not address, raises [Sys_error]
+    naming the file. A value read into memory of its own is not affected.
     On Windows a file whose pages are mapped can be neither deleted nor
     replaced until its values are collected.
 

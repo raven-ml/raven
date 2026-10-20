@@ -19,3 +19,12 @@
 
 (copy_files
  (files ../../lib/io/fail.{ml,mli}))
+
+; Opens this machine's first GPU in a child, so it holds the lock GPU tests
+; share.
+
+(test
+ (name test_io_gpu)
+ (modules test_io_gpu)
+ (locks %{workspace_root}/gpu)
+ (libraries nx nx_io rig rig.gpus unix windtrap))
