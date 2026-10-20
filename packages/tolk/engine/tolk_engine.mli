@@ -71,8 +71,9 @@ val link :
     - A copy is a copy part of a submission of its source's device, or else of
       its destination's, where that device copies and reaches both sides and
       they are both GPU memory or both memory the host computes on
-      ({!Rig.runs_on_host}); otherwise it is a copy of the host's
-      ({!Rig.Buffer.copy}), which returns once done.
+      ({!Rig.runs_on_host}); otherwise it is a move of the program
+      ({!Rig_program.step}), which returns once queued
+      ({!Rig.Buffer.submit_copy}).
     - Consecutive kernels and copies of one device are one submission
       ({!Rig.Submission}), and each of them is a submission of its own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
@@ -82,9 +83,9 @@ val link :
 
     The variables a run binds, and the values computed from them, are words of
     the run's ints. A value under a range may move with its trips, by a constant
-    factor per range: an offset into a buffer, the offset a copy part reads
-    or writes, or a scalar argument. Everything else, such as a grid, an
-    offset the host's copy reads or a range's trips, is fixed for the run.
+    factor per range: an offset into a buffer, the offset a copy reads or
+    writes, or a scalar argument. Everything else, such as a grid or a
+    range's trips, is fixed for the run.
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     its devices are of several machines, if a kernel's lane is a device of

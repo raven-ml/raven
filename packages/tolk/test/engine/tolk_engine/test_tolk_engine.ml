@@ -1440,16 +1440,17 @@ let copies_in_order () =
   Engine.run s [||];
   equal values (bytes 7) (Run.values Uint8 out_buffer)
 
-(* A loop whose trip [r] copies row [r] of a buffer of CPU:1 into row [r] of
-   one of CPU:2: a copy part whose ends move with the trips. *)
-let copies_moving_rows () =
+(* A loop whose trip [r] copies row [r] of a buffer of [src_device] into row
+   [r] of one of [dst_device], whose ends move with the trips: between memory devices a copy
+   part, and between a GPU and the host a move of the program. *)
+let copies_moving_rows ?(devices = devices) src_device dst_device () =
   let n = 4 in
   let bytes k =
     Array.init (4 * n) (fun i ->
         `Int (Bigint.of_int (((i * k) + 1) land 0xff)))
   in
   let node d = Ops.new_buffer (Single d) (4 * n) Uint8 in
-  let src = node "CPU:1" and dst = node "CPU:2" in
+  let src = node src_device and dst = node dst_device in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row b =
     Shape.shrink b
@@ -1460,18 +1461,57 @@ let copies_moving_rows () =
       ~src:[ Ops.end_ (Call.store_call (row dst) (row src)) [ r ] ]
   in
   let compiled = compile ~devices linear in
-  let dst_buffer = Run.buffer (device "CPU:2") Uint8 (bytes 0) in
+  let dst_buffer = Run.buffer (devices dst_device) Uint8 (bytes 0) in
   let s =
     Engine.link ~devices
       ~bound:
         [
-          (src, [ Run.buffer (device "CPU:1") Uint8 (bytes 3) ]);
+          (src, [ Run.buffer (devices src_device) Uint8 (bytes 3) ]);
           (dst, [ dst_buffer ]);
         ]
       compiled
   in
   Engine.run s [||];
   equal values (bytes 3) (Run.values Uint8 dst_buffer)
+
+(* A loop whose trip [r] moves row [r] of a buffer of CPU:1, a GPU, into row
+   [r] of host storage made at link, which a move then copies whole into a
+   buffer of CPU:1: a move's end in memory made at link moves with the
+   trips. *)
+let moves_rows_into_storage ?(devices = devices) () =
+  let n = 4 in
+  let bytes k =
+    Array.init (4 * n) (fun i ->
+        `Int (Bigint.of_int (((i * k) + 1) land 0xff)))
+  in
+  let node d = Ops.new_buffer (Single d) (4 * n) Uint8 in
+  let src = node "CPU:1" and made = node "CPU" and out = node "CPU:1" in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row b =
+    Shape.shrink b
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+  in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.end_ (Call.store_call (row made) (row src)) [ r ];
+          Call.store_call out made;
+        ]
+  in
+  let compiled = compile ~devices linear in
+  let out_buffer = Run.buffer (devices "CPU:1") Uint8 (bytes 0) in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [
+          (src, [ Run.buffer (devices "CPU:1") Uint8 (bytes 3) ]);
+          (out, [ out_buffer ]);
+        ]
+      compiled
+  in
+  Engine.run s [||];
+  equal values (bytes 3) (Run.values Uint8 out_buffer)
 
 (* A store of [rows], [4; 8], into [pool], [8; 8], at the rows the loaded
    [slots] give, an index that is Invalid where a slot lies outside [pool]: a
@@ -1598,7 +1638,7 @@ let schedules =
       test "a back edge whose flag is bound storage reads that storage"
         reads_a_bound_flag;
       test "a loop's copy part copies the rows its trips name"
-        copies_moving_rows;
+        (copies_moving_rows "CPU:1" "CPU:2");
       test "a planned buffer a range writes is not placed over one it leaves"
         (plans_the_buffers_of_a_range ~through_a_view:false ~loop:`End);
       test "a buffer a range writes through a view is not placed over another"
@@ -2415,6 +2455,10 @@ let on_a_gpu (kind, _) =
         loop_bounds (fun bounds -> loops_around_calls ~devices "CPU:1" bounds);
       reads_trips_on ~devices "CPU:1";
       reads_trips_under_a_back_edge ~devices "CPU:1";
+      test "a loop's move copies the rows its trips name"
+        (copies_moving_rows ~devices "CPU:1" "CPU");
+      test "a loop's move into storage made at link moves with its trips"
+        (moves_rows_into_storage ~devices);
       run_refuses ~devices ~says:off_its_phase
         "a buffer its kernel writes off its phase" "copy"
         (rebound 2 (List.map off_phase));

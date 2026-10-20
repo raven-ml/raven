@@ -48,9 +48,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### API
 
-- copies: run-value offsets in rig_program's queued `Move` step, and nx's
-  placement, allocation and assembly through `Buffer.submit_copy`, boxes and
-  `Buffer.submit_fill`; done when placing on N GPUs costs one wait
+- copies: nx's placement, allocation and assembly through
+  `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
+  N GPUs costs one wait
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
   GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
   dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'

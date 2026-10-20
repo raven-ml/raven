@@ -124,7 +124,14 @@ let sender d binary rail k =
                       });
               |];
           };
-        G.Move { src = G.Input 1; dst = view 1 (k * bytes) bytes };
+        G.Move
+          {
+            src = G.Input 1;
+            src_offset = [||];
+            dst = view 1 (k * bytes) bytes;
+            dst_offset = [||];
+            length = bytes;
+          };
         (* test/fixtures' [ready] stores [value] at [out], then calls [ready]
            with [counts] and [count]; its last parameter names the outbound
            area it follows. *)

@@ -75,7 +75,13 @@ type submit = {
 
 type step =
   | Submit of submit
-  | Move of { src : slot; dst : slot }
+  | Move of {
+      src : slot;
+      src_offset : (value * int) iarray;
+      dst : slot;
+      dst_offset : (value * int) iarray;
+      length : int;
+    }
   | Loop of {
       trips : value;
       trip : int option;
@@ -204,14 +210,7 @@ let check_part t sizes = function
       let n = String.length params.bytes in
       if n mod 4 <> 0 then broken "fill: invalid parameter length %d" n;
       check_holes "fill parameters" n (check_value t) params.holes
-  | Copy { src_offset; dst_offset; length; _ } ->
-      if length < 0 then broken "a copy of %d bytes" length;
-      let term = function
-        | Leaf _, _ -> broken "a copy's offset names a leaf"
-        | x, _ -> check_value t x
-      in
-      Iarray.iter term src_offset;
-      Iarray.iter term dst_offset
+  | Copy _ -> ()
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Iarray.length t.images) image;
@@ -236,39 +235,51 @@ let fixed_offset terms =
       (Some 0) terms
   with Overflow -> broken "a copy's offset past an int"
 
-(* Refuses a copy whose end lies outside its slot, or whose two ends share a
-   byte of one buffer, where load knows the offsets. A view's and the ints'
+(* Refuses a copy part or a move of a negative length, with an offset that
+   names a leaf, or, where load knows the offsets, whose end lies outside its
+   slot or whose two ends share a byte of one buffer. A view's and the ints'
    lengths are known; an input's is only at least its [bytes]. *)
-let check_copy t slots ~src ~src_offset ~dst ~dst_offset ~length =
-  let check_end i offset =
+let check_copy t ~src ~src_offset ~dst ~dst_offset ~length =
+  if length < 0 then broken "a copy of %d bytes" length;
+  let term = function
+    | Leaf _, _ -> broken "a copy's offset names a leaf"
+    | x, _ -> check_value t x
+  in
+  Iarray.iter term src_offset;
+  Iarray.iter term dst_offset;
+  let check_end slot offset =
     match fixed_offset offset with
     | None -> ()
     | Some o -> (
-        if o < 0 then broken "a copy from byte %d of slot %d" o i;
+        if o < 0 then broken "a copy from byte %d of its slot" o;
         let n =
-          match Iarray.get slots i with
+          match slot with
           | Memory v -> Some v.length
           | Ints -> Some (8 * t.ints)
           | Input _ -> None
         in
         match n with
         | Some n when o > n - length ->
-            broken "a copy of %d bytes from byte %d of slot %d's %d" length o i
-              n
+            broken "a copy of %d bytes from byte %d of a slot of %d" length o n
         | _ -> ())
   in
   check_end src src_offset;
   check_end dst dst_offset;
-  let one =
-    match (Iarray.get slots src, Iarray.get slots dst) with
-    | Ints, Ints -> true
-    | Input i, Input j -> i = j
-    | _ -> false
+  (* Where both ends are of one buffer, the byte each slot starts at in it: a
+     view's offset into its memory, which [check_view] bounds, and [0] in the
+     ints or an input. *)
+  let shared =
+    match (src, dst) with
+    | Ints, Ints -> Some (0, 0)
+    | Input i, Input j when i = j -> Some (0, 0)
+    | Memory a, Memory b when a.memory = b.memory -> Some (a.offset, b.offset)
+    | _ -> None
   in
-  match (fixed_offset src_offset, fixed_offset dst_offset) with
-  | Some a, Some b when one && length > 0 && a - b < length && b - a < length
-    ->
-      broken "a copy between overlapping bytes %d and %d of one buffer" a b
+  match (shared, fixed_offset src_offset, fixed_offset dst_offset) with
+  | Some (s, d), Some a, Some b when length > 0 ->
+      let a = s + a and b = d + b in
+      if a - b < length && b - a < length then
+        broken "a copy between overlapping bytes %d and %d of one buffer" a b
   | _ -> ()
 
 let rec check_step t sizes ndev = function
@@ -289,7 +300,8 @@ let rec check_step t sizes ndev = function
           | Copy { src; src_offset; dst; dst_offset; length } ->
               name src;
               name dst;
-              check_copy t s.slots ~src ~src_offset ~dst ~dst_offset ~length
+              check_copy t ~src:(Iarray.get s.slots src) ~src_offset
+                ~dst:(Iarray.get s.slots dst) ~dst_offset ~length
           | p ->
               Iarray.iter
                 (fun r ->
@@ -310,9 +322,10 @@ let rec check_step t sizes ndev = function
         | _ -> ()
       done;
       Iarray.iter (fun (v, _) -> check_view t sizes v) s.fixed
-  | Move { src; dst } ->
+  | Move { src; src_offset; dst; dst_offset; length } ->
       check_slot t sizes src;
-      check_slot t sizes dst
+      check_slot t sizes dst;
+      check_copy t ~src ~src_offset ~dst ~dst_offset ~length
   | Loop { trips; trip; flag; body } ->
       check_value t trips;
       Option.iter (index "int" t.ints) trip;
@@ -508,7 +521,7 @@ let check t sizes devices =
    byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 13
+let version = 14
 
 module R = struct
   exception Malformed of int * string
@@ -955,7 +968,10 @@ module D = struct
   let step =
     fix @@ fun step ->
     let submit = case1 submit (fun s -> Submit s)
-    and move = case2 slot slot (fun src dst -> Move { src; dst })
+    and move =
+      case5 slot (terms value) slot (terms value) int
+        (fun src src_offset dst dst_offset length ->
+          Move { src; src_offset; dst; dst_offset; length })
     and loop =
       case4 value (option int)
         (option (pair slot int))
@@ -964,7 +980,8 @@ module D = struct
     in
     variant "a step" [ Arm submit; Arm move; Arm loop ] (fun b -> function
       | Submit s -> submit.put b s
-      | Move { src; dst } -> move.put b src dst
+      | Move { src; src_offset; dst; dst_offset; length } ->
+          move.put b src src_offset dst dst_offset length
       | Loop { trips; trip; flag; body } -> loop.put b trips trip flag body)
 
   let image =
@@ -1066,7 +1083,13 @@ type prepared = {
 type lstep =
   | Lsubmit of { spec : submit; copies : prepared array; index : int }
     (* [index] numbers the [Submit] steps in step order. *)
-  | Lmove of { src : slot; dst : slot }
+  | Lmove of {
+      src : slot;
+      src_offset : (known * int) array;
+      dst : slot;
+      dst_offset : (known * int) array;
+      boxes : B.box array; (* One row of the move's length. *)
+    }
   | Lloop of {
       trips : known array; (* By copy. *)
       trip : int option;
@@ -1581,7 +1604,19 @@ let rec lstep p next i = function
       let index = !next in
       incr next;
       Lsubmit { spec = s; copies; index }
-  | Move { src; dst } -> Lmove { src; dst }
+  | Move { src; src_offset; dst; dst_offset; length } ->
+      (* An offset names no leaf, so its terms are those of every copy. *)
+      let terms o =
+        Iarray.to_array (Iarray.map (fun (x, f) -> (resolve p 0 x, f)) o)
+      in
+      Lmove
+        {
+          src;
+          src_offset = terms src_offset;
+          dst;
+          dst_offset = terms dst_offset;
+          boxes = [| B.row length |];
+        }
   | Loop { trips; trip; flag; body } ->
       let trips = Array.init 2 (fun k -> resolve p k trips) in
       let body = Array.map (lstep p next i) (Iarray.to_array body) in
@@ -1617,11 +1652,11 @@ let words b =
    KiB or more does (rig.mli, [Buffer.create]). *)
 let page_bytes = 65536
 
+let is_ints = function Ints -> true | Memory _ | Input _ -> false
+
 let rec names_ints = function
-  | Submit s ->
-      let ints = function Ints -> true | Memory _ | Input _ -> false in
-      Iarray.exists ints s.slots
-  | Move _ -> false
+  | Submit s -> Iarray.exists is_ints s.slots
+  | Move { src; dst; _ } -> is_ints src || is_ints dst
   | Loop { body; _ } -> Iarray.exists names_ints body
 
 (* One copy of the run's ints: a view of a buffer a device can borrow where a
@@ -1806,6 +1841,16 @@ let set_trip p k w i =
 
 let run_value (p : here) k = function Known n -> n | Word i -> int_at p k i
 
+(* The sum of a copy's offset [terms] for copy [k], or [Overflow] past an
+   [int]. *)
+let offset_sum p k terms =
+  let o = ref 0 in
+  for t = 0 to Array.length terms - 1 do
+    let v, factor = terms.(t) in
+    o := add_exn !o (mul_exn (run_value p k v) factor)
+  done;
+  !o
+
 let pass p q d =
   for x = 0 to Array.length q.input_slots - 1 do
     let i, j = q.input_slots.(x) in
@@ -1821,16 +1866,6 @@ let unpass q =
   for x = 0 to Array.length q.moving - 1 do
     q.buffers.(q.moving.(x).index) <- unset
   done
-
-let mem_buffer p k (v : view) =
-  B.view
-    p.mem.(v.memory).(copy_of p v.memory k)
-    ~first:v.offset ~length:v.length
-
-let slot_buffer p k = function
-  | Input j -> bound p j (Iarray.get p.t.inputs j).device
-  | Memory v -> mem_buffer p k v
-  | Ints -> mem_buffer p k (ints_view p.t)
 
 (* Stores [q]'s holes and geometry for copy [k] into its run, which the
    caller took, and passes the run's buffers. *)
@@ -1859,16 +1894,13 @@ let prepare_step p k (q : prepared) d =
   for x = 0 to Array.length q.moving - 1 do
     let e = q.moving.(x) in
     let held = match e.from with Input j -> bound p j d | _ -> e.held in
-    let o = ref 0 in
-    (try
-       for t = 0 to Array.length e.offset - 1 do
-         let v, factor = e.offset.(t) in
-         o := add_exn !o (mul_exn (run_value p k v) factor)
-       done
-     with Overflow ->
-       unpass q;
-       invalid "a copy's offset past an int");
-    let o = !o and n = B.length held in
+    let o =
+      try offset_sum p k e.offset
+      with Overflow ->
+        unpass q;
+        invalid "a copy's offset past an int"
+    in
+    let n = B.length held in
     if o < 0 || o > n - e.count then begin
       unpass q;
       invalid "a copy of %d bytes from byte %d of a slot of %d bytes" e.count o
@@ -1878,6 +1910,13 @@ let prepare_step p k (q : prepared) d =
       (if o = 0 && e.count = n then held
        else B.view held ~first:o ~length:e.count)
   done
+
+(* Records [point] as the run's last on its device [d]. *)
+let set_last (p : here) d point =
+  if Array.length p.last = 0 then
+    p.last <- Array.make (Array.length p.devices) point;
+  p.last.(d) <- point;
+  p.ran.(d) <- true
 
 (* The program's lock admits one run at a time, so the step's run is free:
    a submit frees it as it returns or raises, and a run that raises frees
@@ -1897,10 +1936,7 @@ let submit_step p k waits (spec : submit) copies index =
   match Rig.submit ?waits q.srun ~buffers:q.buffers with
   | point ->
       unpass q;
-      if Array.length p.last = 0 then
-        p.last <- Array.make (Array.length p.devices) point;
-      p.last.(d) <- point;
-      p.ran.(d) <- true;
+      set_last p d point;
       p.step_points.(index) <- point
   | exception e ->
       unpass q;
@@ -1915,6 +1951,55 @@ let rec release_runs = function
       Array.iter (fun (q : prepared) -> Sub.Run.release q.srun) copies
   | Lmove _ -> ()
   | Lloop { body; _ } -> Array.iter release_runs body
+
+(* The [length] bytes of [slot]'s buffer from the byte its offset [terms] sum
+   to for copy [k], as a move's end. *)
+let move_end p k slot terms length =
+  let b, first, n =
+    match slot with
+    | Memory v -> (p.mem.(v.memory).(copy_of p v.memory k), v.offset, v.length)
+    | Ints ->
+        let b = ints_buffer p k in
+        (b, 0, B.length b)
+    | Input j ->
+        let b = bound p j (Iarray.get p.t.inputs j).device in
+        (b, 0, B.length b)
+  in
+  let o =
+    try offset_sum p k terms
+    with Overflow -> invalid "a move's offset past an int"
+  in
+  if o < 0 || o > n - length then
+    invalid "a move of %d bytes from byte %d of a slot of %d bytes" length o n;
+  if first + o = 0 && length = B.length b then b
+  else B.view b ~first:(first + o) ~length
+
+(* The index of [point]'s device among [p]'s devices, or [-1]. *)
+let device_index (p : here) point =
+  match Rig.Point.device point with
+  | None -> -1
+  | Some d ->
+      let i = ref (-1) and j = ref 0 in
+      while !i < 0 && !j < Array.length p.devices do
+        if Rig.equal d p.devices.(!j) then i := !j;
+        incr j
+      done;
+      !i
+
+(* A move follows [waits], since it may be the first work of whichever device
+   runs it. Its point becomes the run's last on its device where that device
+   is one of [p]'s. Otherwise the step waits for it, as where a device outside
+   the program copies from a borrow of its memory, so that the run's ends
+   cover every move. A move the host makes is done when [submit_copy]
+   returns. *)
+let move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes =
+  let length = boxes.(0).B.width in
+  let src = move_end p k src src_offset length
+  and dst = move_end p k dst dst_offset length in
+  let point = B.submit_copy ?waits ~src ~dst boxes in
+  match device_index p point with
+  | -1 -> Rig.Point.wait point
+  | d -> set_last p d point
 
 (* Whether byte [at] of [slot]'s buffer is not [0], once the work that wrote
    it is done. *)
@@ -1933,8 +2018,8 @@ let flag_holds p k (slot, at) =
   Bytes.get p.flag 0 <> '\000'
 
 let rec exec (p : here) k waits = function
-  | Lmove { src; dst } ->
-      B.copy ~src:(slot_buffer p k src) ~dst:(slot_buffer p k dst)
+  | Lmove { src; src_offset; dst; dst_offset; boxes } ->
+      move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes
   | Lsubmit { spec; copies; index } -> submit_step p k waits spec copies index
   | Lloop { trips; trip; flag; body } ->
       (* A loop without closures: a run allocates only its answer. *)
@@ -1950,8 +2035,8 @@ let rec exec (p : here) k waits = function
         incr i
       done
 
-(* The run's last point on each device it submitted to, in the devices'
-   order. *)
+(* The run's last point on each device that ran its submissions or moves, in
+   the devices' order. *)
 let ends (p : here) =
   let n = ref 0 in
   Array.iter (fun r -> if r then incr n) p.ran;

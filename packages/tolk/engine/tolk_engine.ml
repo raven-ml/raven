@@ -186,18 +186,12 @@ type word_kind = Computed of (env -> int) | Trip
 
 (* Inputs *)
 
-(* A buffer a run is given: a lane of a parameter's buffers, or a buffer bound
-   at link, with its hold, which keeps every call from consuming what each
-   run accesses while the schedule lives. *)
-type source =
+(* An input of the program, a buffer a run is given: a lane of a parameter's
+   buffers, or a buffer bound at link, with its hold, which keeps every call
+   from consuming what each run accesses while the schedule lives. *)
+type input =
   | Lane of { slot : int; lane : int }
   | Bound of Rig.Buffer.t * Rig.Claim.hold
-
-(* An input of the program: a buffer a run is given, or the bytes of one at an
-   offset the run's words compute. *)
-type input =
-  | Whole of source
-  | Part of { source : source; first : int array -> int; length : int }
 
 (* Where a view lies: in memory made at link, of its bytes from its byte
    [first], or in an input, at an offset; and the alignment and phase its
@@ -383,7 +377,7 @@ let lane_input b ~slot ~lane d n =
   | None ->
       let i =
         add_input b
-          (Whole (Lane { slot; lane }))
+          (Lane { slot; lane })
           { device = device_index b d; bytes = n }
       in
       Hashtbl.replace b.lane_inputs (slot, lane) i;
@@ -400,7 +394,7 @@ let bound_input b buf =
   | Some i -> i
   | None ->
       let i =
-        add_input b (Whole (Bound (buf, hold b buf)))
+        add_input b (Bound (buf, hold b buf))
           {
             device = device_index b (Rig.Buffer.device buf);
             bytes = Rig.Buffer.length buf;
@@ -649,7 +643,7 @@ let note_start b (l : located) =
   | Memory _ -> ()
   | Input i -> (
       match fst (Dynarray.get b.inputs i) with
-      | Whole (Lane { slot; lane }) -> (
+      | Lane { slot; lane } -> (
           match Hashtbl.find_opt b.starts (slot, lane) with
           | None -> Hashtbl.replace b.starts (slot, lane) l.start
           | Some s when s = l.start -> ()
@@ -659,13 +653,13 @@ let note_start b (l : located) =
                 "slot %d is accessed %d bytes past a multiple of %d and %d \
                  past %d"
                 slot p align p' align')
-      | Whole (Bound (buf, _)) when not (starts_at buf l.start) ->
+      | Bound (buf, _) when not (starts_at buf l.start) ->
           let align, p = l.start in
           fail b.fn
             "a bound buffer of %s starts %d bytes past a multiple of %d, not %d"
             (Rig.name (Rig.Buffer.device buf))
             (phase buf align) align p
-      | Whole (Bound _) | Part _ -> ())
+      | Bound _ -> ())
 
 (* The launch of the compiled program [prg] that [call] makes on its lane
    [lane], whose device is [d]. A host program runs on its device's host. *)
@@ -772,8 +766,8 @@ let launch b call prg lane d =
 
 (* Copies *)
 
-(* [l] as a copy's end: its memory or input whole, at the offset each step
-   computes from the run's ints. *)
+(* [l] as the end of a copy part or a move: its memory or input whole, at the
+   offset each step computes from the run's ints. *)
 let copy_end (l : located) :
     Rig_program.slot * (Rig_program.value * int) iarray =
   let slot : Rig_program.slot =
@@ -788,44 +782,9 @@ let copy_end (l : located) :
   in
   (slot, Iarray.of_list (add @ words))
 
-(* The [n] bytes of [l] as a move's end: memory made at link at a constant
-   offset, a bound buffer whole, or the bytes of an input at an offset each run
-   computes. A move copies its ends whole ([Rig.Buffer.copy]). *)
-let move_end b (l : located) n : Rig_program.slot =
-  match l.place with
-  | Memory { memory; first; _ } -> (
-      match l.offset.terms with
-      | [] -> Memory { memory; offset = first + l.offset.add; length = n }
-      | _ -> fail b.fn "a move's offset into storage made at link moves")
-  | Input i ->
-      let input, desc = Dynarray.get b.inputs i in
-      let source = match input with Whole s -> s | Part _ -> assert false in
-      let a = l.offset in
-      let is_trip (w, _) =
-        match Dynarray.get b.words w with Trip -> true | Computed _ -> false
-      in
-      if List.exists is_trip a.terms then
-        fail b.fn "a move's offset into an input moves with its loop's trips";
-      let whole =
-        a.terms = [] && a.add = 0
-        &&
-        match source with
-        | Bound (buf, _) -> Rig.Buffer.length buf = n
-        | Lane _ -> false
-      in
-      if whole then Input i
-      else
-        let first ints =
-          List.fold_left (fun s (w, f) -> s + (f * ints.(w))) a.add a.terms
-        in
-        Input
-          (add_input b
-             (Part { source; first; length = n })
-             { device = desc.device; bytes = n })
-
 (* The copy [call] makes on its lane [lane]: a copy part of the source's device
    or the destination's, the source's first, where it copies between the two
-   ([copies_between]), or else the host's copy. *)
+   ([copies_between]), or else a move of the program. *)
 let copy b call lane =
   match Realize.get_call_arg_uops call with
   | [ dst; src ] ->
@@ -843,7 +802,14 @@ let copy b call lane =
       | None ->
           flush b;
           emit b
-            (Move { src = move_end b s length; dst = move_end b d length })
+            (Move
+               {
+                 src = src_slot;
+                 src_offset;
+                 dst = dst_slot;
+                 dst_offset;
+                 length;
+               })
       end
   | _ -> fail b.fn "a copy of other than two buffers"
 
@@ -972,7 +938,7 @@ let assemble b linear =
    donation right after the raise consumes their memory. *)
 let release_bound (b : builder) =
   Dynarray.iter
-    (function Whole (Bound (_, h)), _ -> Rig.Claim.release h | _ -> ())
+    (function Bound (_, h), _ -> Rig.Claim.release h | Lane _, _ -> ())
     b.inputs
 
 let link_with ~separate ~devices ?(bound = []) linear =
@@ -1091,11 +1057,7 @@ let frame t ~vars slots =
     match t.words.(w) with Computed f -> ints.(w) <- f env | Trip -> ()
   done;
   for k = 0 to Array.length t.inputs - 1 do
-    t.frame.inputs.(k) <-
-      (match t.inputs.(k) with
-      | Whole s -> buffer slots s
-      | Part { source; first; length } ->
-          Rig.Buffer.view (buffer slots source) ~first:(first ints) ~length)
+    t.frame.inputs.(k) <- buffer slots t.inputs.(k)
   done
 
 (* Reports *)

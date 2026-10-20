@@ -308,7 +308,10 @@ let rail_end_to_end () =
           G.Move
             {
               src = G.Memory { memory = 0; offset = 0; length = 8 };
+              src_offset = [||];
               dst = G.Input 0;
+              dst_offset = [||];
+              length = 8;
             };
         |];
     }
@@ -546,7 +549,10 @@ let collected_end () =
             G.Move
               {
                 src = G.Memory { memory = 0; offset = 128; length = 8 };
+                src_offset = [||];
                 dst = G.Input 0;
+                dst_offset = [||];
+                length = 8;
               };
           |];
       }

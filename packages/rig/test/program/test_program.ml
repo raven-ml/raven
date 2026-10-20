@@ -16,8 +16,9 @@ let strf = Printf.sprintf
 (* Fresh Polled devices: a name opens once. *)
 let opened = Atomic.make 0
 
-let polled ?peers name =
-  P.open_ ?peers (strf "program:%s-%d" name (Atomic.fetch_and_add opened 1))
+let polled ?peers ?copies ?host_visible name =
+  P.open_ ?peers ?copies ?host_visible
+    (strf "program:%s-%d" name (Atomic.fetch_and_add opened 1))
 
 let le64 v =
   let b = Bytes.create 8 in
@@ -93,6 +94,12 @@ let pcopy ?(src = 0) ?(src_offset : _ iarray = [||]) ?(dst = 1)
     ?(dst_offset : _ iarray = [||]) length =
   G.Copy { src; src_offset; dst; dst_offset; length }
 
+(* A move of [length] bytes from [src] at [src_offset] (defaults to [0]) to
+   [dst] at [dst_offset] (defaults to [0]). *)
+let move ?(src_offset : _ iarray = [||]) ?(dst_offset : _ iarray = [||]) src
+    dst length =
+  G.Move { src; src_offset; dst; dst_offset; length }
+
 let load_ok t ds =
   require_ok ~pp:Format.pp_print_string (G.load t (Iarray.of_list ds))
 
@@ -109,19 +116,22 @@ let size = 64
 
 type loc = Mem of int | In of int
 
+(* [length] bytes of [src] from [src_at] into [dst] from [dst_at], at
+   offsets the run reads from its ints where [per_run] holds. *)
+type copy = {
+  src : loc;
+  dst : loc;
+  length : int;
+  src_at : int;
+  dst_at : int;
+  per_run : bool;
+}
+
 type op =
   | Fill of { dev : int; dst : loc; groups : int; base : int }
   | Kcopy of { dev : int; src : loc; dst : loc; bytes : int }
-  | Pcopy of {
-      dev : int;
-      src : loc;
-      dst : loc;
-      length : int;
-      src_at : int;
-      dst_at : int;
-      per_run : bool;  (* Whether the run reads the offsets from its ints. *)
-    }
-  | Move of { src : loc; dst : loc }
+  | Pcopy of { dev : int; copy : copy }
+  | Move of copy
 
 type case = {
   mem_dev : int array;
@@ -136,6 +146,11 @@ let pp_loc ppf = function
   | Mem i -> Format.fprintf ppf "m%d" i
   | In i -> Format.fprintf ppf "x%d" i
 
+let pp_copy ppf c =
+  Format.fprintf ppf "%a+%d->%a+%d %d bytes%s" pp_loc c.src c.src_at pp_loc
+    c.dst c.dst_at c.length
+    (if c.per_run then " per run" else "")
+
 let pp_op ppf = function
   | Fill { dev; dst; groups; base } ->
       Format.fprintf ppf "fill@%d %a %d groups from %d" dev pp_loc dst groups
@@ -143,11 +158,8 @@ let pp_op ppf = function
   | Kcopy { dev; src; dst; bytes } ->
       Format.fprintf ppf "copy@%d %a->%a %d bytes" dev pp_loc src pp_loc dst
         bytes
-  | Pcopy { dev; src; dst; length; src_at; dst_at; per_run } ->
-      Format.fprintf ppf "copy part@%d %a+%d->%a+%d %d bytes%s" dev pp_loc src
-        src_at pp_loc dst dst_at length
-        (if per_run then " per run" else "")
-  | Move { src; dst } -> Format.fprintf ppf "move %a->%a" pp_loc src pp_loc dst
+  | Pcopy { dev; copy } -> Format.fprintf ppf "copy part@%d %a" dev pp_copy copy
+  | Move copy -> Format.fprintf ppf "move %a" pp_copy copy
 
 let pp_case ppf c =
   Format.fprintf ppf "memory on [%s] two [%s]; inputs on [%s]; [%a]"
@@ -172,6 +184,33 @@ let gen_case =
     let+ dst = such_that (fun d -> d <> src) loc in
     (src, dst)
   in
+  (* A copy between two slots, or within one slot between its two halves. *)
+  let copy =
+    frequency
+      [
+        ( 2,
+          let+ src, dst = two_locs
+          and+ length = one_of [ constant size; int_range 0 size ]
+          and+ src_at = int_range 0 size
+          and+ dst_at = int_range 0 size
+          and+ per_run = bool in
+          let fit at = at mod (size - length + 1) in
+          { src; dst; length; src_at = fit src_at; dst_at = fit dst_at; per_run }
+        );
+        ( 1,
+          let+ at = loc
+          and+ length = int_range 0 (size / 2)
+          and+ a = int_range 0 size
+          and+ b = int_range 0 size
+          and+ down = bool
+          and+ per_run = bool in
+          let half = size / 2 in
+          let low = a mod (half - length + 1)
+          and high = half + (b mod (half - length + 1)) in
+          let src_at, dst_at = if down then (high, low) else (low, high) in
+          { src = at; dst = at; length; src_at; dst_at; per_run } );
+      ]
+  in
   let op =
     frequency
       [
@@ -186,41 +225,10 @@ let gen_case =
           and+ src, dst = two_locs
           and+ words = int_range 0 (size / 8) in
           Kcopy { dev; src; dst; bytes = 8 * words } );
-        ( 2,
-          let+ dev = dev
-          and+ src, dst = two_locs
-          and+ length = one_of [ constant size; int_range 0 size ]
-          and+ src_at = int_range 0 size
-          and+ dst_at = int_range 0 size
-          and+ per_run = bool in
-          let fit at = at mod (size - length + 1) in
-          Pcopy
-            {
-              dev;
-              src;
-              dst;
-              length;
-              src_at = fit src_at;
-              dst_at = fit dst_at;
-              per_run;
-            } );
-        (* A copy within one slot, between its two halves. *)
-        ( 1,
-          let+ dev = dev
-          and+ at = loc
-          and+ length = int_range 0 (size / 2)
-          and+ a = int_range 0 size
-          and+ b = int_range 0 size
-          and+ down = bool
-          and+ per_run = bool in
-          let half = size / 2 in
-          let low = a mod (half - length + 1)
-          and high = half + (b mod (half - length + 1)) in
-          let src_at, dst_at = if down then (high, low) else (low, high) in
-          Pcopy { dev; src = at; dst = at; length; src_at; dst_at; per_run } );
-        ( 1,
-          let+ src, dst = two_locs in
-          Move { src; dst } );
+        ( 3,
+          let+ dev = dev and+ copy = copy in
+          Pcopy { dev; copy } );
+        (2, map (fun c -> Move c) copy);
       ]
   in
   let bytes = string_of ~size:(constant size) char in
@@ -233,25 +241,38 @@ let gen_case =
   { mem_dev; two; init; in_dev; inputs; ops }
 
 let gen_case = Gen.with_pp pp_case gen_case
+
 let devices = lazy (fst (polled "model-a"), fst (polled "model-b"))
 
-(* The offset [at] of a copy part's end: a constant, or [2 * w + at mod 2]
-   where word [w] of the run's ints holds [at / 2]. *)
+(* Devices whose memory the host does not address, so that a device's copy
+   engine runs each move. *)
+let hidden =
+  lazy
+    ( fst (polled ~host_visible:false "model-hidden-a"),
+      fst (polled ~host_visible:false "model-hidden-b") )
+
+(* The offset [at] of a copy's end: a constant, or [2 * w + at mod 2] where
+   word [w] of the run's ints holds [at / 2]. *)
 let copy_offset ~per_run w at : _ iarray =
   if per_run then [| (G.Int w, 2); (Fixed (at land 1), 1) |]
   else [| (Fixed at, 1) |]
 
 (* The run's ints: words [2 * i] and [2 * i + 1] hold half the offsets of op
-   [i], a copy part whose offsets the run reads. *)
+   [i], a copy part or a move. *)
 let copy_ints c =
   let ops = Array.of_list c.ops in
   Array.init
     (2 * Array.length ops)
     (fun w ->
       match ops.(w / 2) with
-      | Pcopy { src_at; dst_at; _ } ->
+      | Pcopy { copy = { src_at; dst_at; _ }; _ } | Move { src_at; dst_at; _ }
+        ->
           (if w land 1 = 0 then src_at else dst_at) / 2
-      | Fill _ | Kcopy _ | Move _ -> 0)
+      | Fill _ | Kcopy _ -> 0)
+
+(* The device that holds [l]: a move runs on its source's, whose copy engine
+   reaches the other device's memory. *)
+let loc_dev c = function Mem m -> c.mem_dev.(m) | In i -> c.in_dev.(i)
 
 let describe c =
   let slot = function Mem m -> all m | In i -> G.Input i in
@@ -269,7 +290,7 @@ let describe c =
               (slot dst, Rig.Read_write);
             |]
           [| kcopy ~image:(image dev) bytes |]
-    | Pcopy { dev; src; dst; length; src_at; dst_at; per_run } ->
+    | Pcopy { dev; copy = { src; dst; length; src_at; dst_at; per_run } } ->
         submit dev
           ~buffers:[| (slot src, Rig.Read); (slot dst, Rig.Read_write) |]
           [|
@@ -282,9 +303,17 @@ let describe c =
                 length;
               };
           |]
-    | Move { src; dst } -> G.Move { src = slot src; dst = slot dst }
+    | Move { src; dst; length; src_at; dst_at; per_run } ->
+        G.Move
+          {
+            src = slot src;
+            src_offset = copy_offset ~per_run (2 * i) src_at;
+            dst = slot dst;
+            dst_offset = copy_offset ~per_run ((2 * i) + 1) dst_at;
+            length;
+          }
   in
-  let a, b = Lazy.force devices in
+  let a, b = Lazy.force hidden in
   {
     G.devices = [| Rig.arch a; Rig.arch b |];
     ints = 2 * List.length c.ops;
@@ -316,6 +345,9 @@ let model c =
       | Mem m -> mem.(m).(if c.two.(m) then n land 1 else 0)
       | In i -> inputs.(i)
     in
+    let copy { src; dst; length; src_at; dst_at; _ } =
+      Bytes.blit (cell src) src_at (cell dst) dst_at length
+    in
     List.iter
       (function
         | Fill { dst; groups; base; _ } ->
@@ -324,14 +356,19 @@ let model c =
             done
         | Kcopy { src; dst; bytes; _ } ->
             Bytes.blit (cell src) 0 (cell dst) 0 bytes
-        | Pcopy { src; dst; length; src_at; dst_at; _ } ->
-            Bytes.blit (cell src) src_at (cell dst) dst_at length
-        | Move { src; dst } -> Bytes.blit (cell src) 0 (cell dst) 0 size)
+        | Pcopy { copy = c; _ } | Move c -> copy c)
       c.ops;
     Array.map Bytes.to_string inputs
 
+(* The device each op runs on, none for a move of no bytes, which the host
+   makes. *)
+let op_dev c = function
+  | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } -> Some dev
+  | Move { length = 0; _ } -> None
+  | Move { src; _ } -> Some (loc_dev c src)
+
 let model_law c =
-  let a, b = Lazy.force devices in
+  let a, b = Lazy.force hidden in
   let ds = [| a; b |] in
   let p = load_ok (describe c) [ a; b ] in
   let expect = model c in
@@ -342,13 +379,7 @@ let model_law c =
     in
     let ran =
       List.filter
-        (fun d ->
-          List.exists
-            (function
-              | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } ->
-                  dev = d
-              | Move _ -> false)
-            c.ops)
+        (fun d -> List.exists (fun op -> op_dev c op = Some d) c.ops)
         [ 0; 1 ]
     in
     equal ~msg:"one point per device that ran, in their order" (list string)
@@ -366,13 +397,14 @@ let model_law c =
   let rec crossed last = function
     | [] -> false
     | op :: ops ->
-        let dev, reads, writes =
+        let reads, writes =
           match op with
-          | Fill { dev; dst; _ } -> (Some dev, [], [ dst ])
-          | Kcopy { dev; src; dst; _ } | Pcopy { dev; src; dst; _ } ->
-              (Some dev, [ src ], [ dst ])
-          | Move { src; dst } -> (None, [ src ], [ dst ])
+          | Fill { dst; _ } -> ([], [ dst ])
+          | Kcopy { src; dst; _ } | Pcopy { copy = { src; dst; _ }; _ }
+          | Move { src; dst; _ } ->
+              ([ src ], [ dst ])
         in
+        let dev = op_dev c op in
         let seen l =
           match (List.assoc_opt l last, dev) with
           | Some (Some d'), Some d -> d' <> d
@@ -381,6 +413,12 @@ let model_law c =
         List.exists seen (reads @ writes)
         || crossed (List.map (fun l -> (l, dev)) writes @ last) ops
   in
+  let copies f =
+    List.exists
+      (function Pcopy { copy; _ } | Move copy -> f copy | _ -> false)
+      c.ops
+  in
+  let moves f = List.exists (function Move m -> f m | _ -> false) c.ops in
   cover "a step follows another device's step" (crossed [] c.ops);
   cover "memory of two copies" (Array.exists Fun.id c.two);
   cover "an input another device borrows"
@@ -388,31 +426,41 @@ let model_law c =
        (function
          | Fill { dev; dst = In i; _ }
          | Kcopy { dev; dst = In i; _ }
-         | Pcopy { dev; dst = In i; _ } ->
+         | Pcopy { dev; copy = { dst = In i; _ } } ->
              dev <> c.in_dev.(i)
          | _ -> false)
        c.ops);
-  cover "a move" (List.exists (function Move _ -> true | _ -> false) c.ops);
+  let input = function In _ -> true | Mem _ -> false in
+  cover "a move into an input" (moves (fun m -> input m.dst));
+  cover "a move out of an input" (moves (fun m -> input m.src));
+  cover "a move between two devices"
+    (moves (fun m -> loc_dev c m.src <> loc_dev c m.dst));
+  cover "a move within one slot" (moves (fun m -> m.src = m.dst));
+  cover "a move at offsets the run reads"
+    (moves (fun m -> m.per_run && m.src_at + m.dst_at > 0));
   cover "a copy part into an input"
-    (List.exists (function Pcopy { dst = In _; _ } -> true | _ -> false) c.ops);
+    (List.exists
+       (function Pcopy { copy = { dst = In _; _ }; _ } -> true | _ -> false)
+       c.ops);
   cover "a copy part out of an input"
-    (List.exists (function Pcopy { src = In _; _ } -> true | _ -> false) c.ops);
+    (List.exists
+       (function Pcopy { copy = { src = In _; _ }; _ } -> true | _ -> false)
+       c.ops);
   cover "a copy part between memories"
     (List.exists
-       (function Pcopy { src = Mem _; dst = Mem _; _ } -> true | _ -> false)
+       (function
+         | Pcopy { copy = { src = Mem _; dst = Mem _; _ }; _ } -> true
+         | _ -> false)
        c.ops);
-  cover "a copy part of part of its slots"
-    (List.exists
-       (function Pcopy { length; _ } -> length < size | _ -> false)
-       c.ops);
+  cover "a copy of part of its slots" (copies (fun x -> x.length < size));
   cover "a copy part within one slot"
     (List.exists
-       (function Pcopy { src; dst; _ } -> src = dst | _ -> false)
+       (function Pcopy { copy = { src; dst; _ }; _ } -> src = dst | _ -> false)
        c.ops);
   cover "a copy part at offsets the run reads"
     (List.exists
        (function
-         | Pcopy { per_run; src_at; dst_at; _ } ->
+         | Pcopy { copy = { per_run; src_at; dst_at; _ }; _ } ->
              per_run && src_at + dst_at > 0
          | _ -> false)
        c.ops)
@@ -484,11 +532,7 @@ let hole_law h =
             ~buffers:[| (Input 0, Rig.Read_write) |]
             ~fixed:[| ({ memory = 0; offset = 0; length = 8 }, Rig.Read) |]
             [| fill_word 1 (shaped h 8 (G.Leaf address)) |];
-          Move
-            {
-              src = Memory { memory = 1; offset = 0; length = 16 };
-              dst = Input 1;
-            };
+          move (Memory { memory = 1; offset = 0; length = 16 }) (Input 1) 16;
         |];
     }
   in
@@ -629,11 +673,7 @@ let affine_law c =
               fill_word 1
                 (affine 8 (List.map (fun (x, f) -> (value_of x, f)) c.terms));
             |];
-          Move
-            {
-              src = Memory { memory = 1; offset = 0; length = 8 };
-              dst = Input 1;
-            };
+          move (Memory { memory = 1; offset = 0; length = 8 }) (Input 1) 8;
         |];
     }
   in
@@ -1168,6 +1208,63 @@ let breaks =
       copying ~ints:1
         ~src_offset:[| (Int 1, 1) |]
         ~length:8 [| all 0; Input 0 |],
+      one );
+    ( "a move of a negative length",
+      (fun d -> { (base d) with steps = [| move (all 0) (Input 0) (-1) |] }),
+      one );
+    ( "a move past the end of its source",
+      (fun d -> { (base d) with steps = [| move head (Input 0) 16 |] }),
+      one );
+    ( "a move past the end of its destination",
+      (fun d ->
+        {
+          (base d) with
+          steps = [| move ~dst_offset:[| (Fixed 60, 1) |] (Input 0) (all 0) 8 |];
+        }),
+      one );
+    ( "a move at a negative offset",
+      (fun d ->
+        {
+          (base d) with
+          steps = [| move ~src_offset:[| (Fixed (-8), 1) |] (all 0) (Input 0) 8 |];
+        }),
+      one );
+    ( "a move offset of a leaf",
+      (fun d ->
+        {
+          (base d) with
+          steps =
+            [| move ~src_offset:[| (Leaf (Handle 0), 1) |] (all 0) (Input 0) 8 |];
+        }),
+      one );
+    ( "a move offset whose sum passes an int",
+      (fun d ->
+        {
+          (base d) with
+          steps =
+            [|
+              move
+                ~src_offset:[| (Fixed max_int, 1); (Fixed 1, 1) |]
+                (all 0) (Input 0) 8;
+            |];
+        }),
+      one );
+    ( "a move between overlapping bytes of one memory",
+      (fun d ->
+        {
+          (base d) with
+          steps = [| move ~dst_offset:[| (Fixed 4, 1) |] (all 0) head 8 |];
+        }),
+      one );
+    ( "a move between overlapping bytes of an input",
+      (fun d ->
+        {
+          (base d) with
+          steps = [| move ~dst_offset:[| (Fixed 4, 1) |] (Input 0) (Input 0) 8 |];
+        }),
+      one );
+    ( "a copy between overlapping bytes of one memory",
+      copying ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| all 0; all 0 |],
       one );
     ( "a ref past its slots",
       (fun d ->
@@ -2132,8 +2229,12 @@ let gen_t =
          and+ slots = few slot
          and+ fixed = few (pair view access) in
          Submit { device; parts; slots; fixed });
-        (let+ src = slot and+ dst = slot in
-         G.Move { src; dst });
+        (let+ src = slot
+         and+ src_offset = few (pair value int)
+         and+ dst = slot
+         and+ dst_offset = few (pair value int)
+         and+ length = n in
+         G.Move { src; src_offset; dst; dst_offset; length });
       ]
     in
     if depth = 0 then one_of leaves
@@ -2205,7 +2306,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 13" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 14" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2689,7 +2790,7 @@ let test_init_address () =
                       refs = [| { G.slot = 0; at = 0; use = Write } |];
                     });
             |];
-          G.Move { src = Memory (v 0); dst = Input 0 };
+          move (Memory (v 0)) (Input 0) 8;
         |];
     }
   in
@@ -2774,7 +2875,7 @@ let test_frame_read_once () =
           submit 0
             ~buffers:[| (Input 0, Rig.Read_write) |]
             [| fill ~image:0 ~groups:1 42 |];
-          G.Move { src = Input 0; dst = Input 1 };
+          move (Input 0) (Input 1) 8;
           submit 0
             ~buffers:[| (Input 2, Rig.Read_write) |]
             [| fill ~image:0 ~groups:1 7 |];
@@ -2835,11 +2936,7 @@ let test_copy_part () =
               pcopy ~src:2 ~dst:3 8;
               pcopy ~src:3 ~dst:4 8;
             |];
-          G.Move
-            {
-              src = Memory { memory = 1; offset = 8; length = 8 };
-              dst = Input 2;
-            };
+          move (Memory { memory = 1; offset = 8; length = 8 }) (Input 2) 8;
         |];
     }
   in
@@ -2962,7 +3059,7 @@ let test_copy_ints () =
                 ~dst_offset:[| (Int 1, 1) |]
                 8;
             |];
-          G.Move { src = Ints; dst = Input 0 };
+          move Ints (Input 0) 32;
         |];
     }
   in
@@ -2976,6 +3073,198 @@ let test_copy_ints () =
          step_points = G.step_points p;
        });
   equal ~msg:"the ints" string (le64 8 ^ le64 24 ^ le64 42 ^ le64 24) (read x)
+
+let pp_points points =
+  List.map (Format.asprintf "%a" Rig.Point.pp) (Array.to_list points)
+
+(* A move a device's copy engine runs is queued: the run returns without
+   sleeping, its end on that device is the move's point, and the bytes are
+   there once it is reached. *)
+let test_move_queued () =
+  let d, pd = polled ~host_visible:false "move-queued" in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 0;
+      memory = [| alloc ~init:(data (String.make 64 'm')) 0 64 |];
+      images = [||];
+      inputs = [| { G.device = 0; bytes = 64 } |];
+      steps = [| move (all 0) (Input 0) 64 |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = B.create d 64 in
+  let before = P.sleeps pd in
+  let ends =
+    G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p }
+  in
+  equal ~msg:"sleeps" int before (P.sleeps pd);
+  equal ~msg:"the ends" (list string)
+    [ strf "%s:%d" (Rig.name d) (Rig.submitted d) ]
+    (pp_points ends);
+  Array.iter Rig.Point.wait ends;
+  equal ~msg:"the moved bytes" string (String.make 64 'm') (read x)
+
+(* Moves through the ints that a device runs are queued: input 0 into word 0
+   of the ints, and word 0 out into input 1. *)
+let test_move_ints_queued () =
+  let d, pd = polled ~host_visible:false "move-ints-queued" in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 1;
+      memory = [||];
+      images = [||];
+      inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 8 });
+      steps = [| move (Input 0) Ints 8; move Ints (Input 1) 8 |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = of_bytes d (le64 42) and y = one_word d in
+  let before = P.sleeps pd in
+  let ends =
+    G.run p { inputs = [| x; y |]; ints = [||]; step_points = G.step_points p }
+  in
+  equal ~msg:"sleeps" int before (P.sleeps pd);
+  equal ~msg:"the ends" (list string)
+    [ strf "%s:%d" (Rig.name d) (Rig.submitted d) ]
+    (pp_points ends);
+  Array.iter Rig.Point.wait ends;
+  equal ~msg:"the word through the ints" int 42 (word_of y)
+
+(* An [Int] that a queued move wrote is read once the move is done: word 0 of
+   the ints, which a move sets from input 0, picks the row of memory 0 that a
+   second move takes into input 1. *)
+let test_move_writes_int () =
+  let d, _ = polled ~host_visible:false "move-writes-int" in
+  let rows = [ 10; 11; 12; 13 ] in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 1;
+      memory =
+        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+      images = [||];
+      inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 8 });
+      steps =
+        [|
+          move (Input 0) Ints 8;
+          move ~src_offset:[| (Int 0, 8) |]
+            (Memory { memory = 0; offset = 0; length = 32 })
+            (Input 1) 8;
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  List.iter
+    (fun r ->
+      let x = of_bytes d (le64 r) and y = one_word d in
+      ignore
+        (G.run p
+           { inputs = [| x; y |]; ints = [||]; step_points = G.step_points p });
+      equal ~msg:(strf "row %d" r) int (List.nth rows r) (word_of y))
+    [ 2; 0; 3 ]
+
+(* A move in a loop moves with its trips: trip [i] moves row [i] of memory
+   into row [3 - i] of the input, so the input holds the rows reversed. *)
+let test_move_loop () =
+  let d, _ = polled ~host_visible:false "move-loop" in
+  let rows = [ 10; 11; 12; 13 ] in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 1;
+      memory =
+        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+      images = [||];
+      inputs = [| { G.device = 0; bytes = 32 } |];
+      steps =
+        [|
+          Loop
+            {
+              trips = Fixed 4;
+              trip = Some 0;
+              flag = None;
+              body =
+                [|
+                  move
+                    ~src_offset:[| (Int 0, 8) |]
+                    ~dst_offset:[| (Int 0, -8); (Fixed 24, 1) |]
+                    (Memory { memory = 0; offset = 0; length = 32 })
+                    (Input 0) 8;
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = of_bytes d (String.make 32 '\000') in
+  ignore
+    (G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
+  equal ~msg:"the rows reversed" string
+    (String.concat "" (List.map le64 (List.rev rows)))
+    (read x)
+
+(* A move's end that a run's ints put outside its slot, or whose offset is past
+   an int, is refused at that step, with no move queued; ends at the slot's
+   last bytes move. *)
+let test_move_outside_slot () =
+  let d, _ = polled "move-outside-slot" in
+  let load ?src_offset ?dst_offset () =
+    load_ok
+      {
+        (base d) with
+        ints = 1;
+        steps = [| move ?src_offset ?dst_offset (all 0) (Input 0) 8 |];
+      }
+      [ d ]
+  in
+  let input = of_bytes d (String.make 64 '\000') in
+  let run p v =
+    G.run p
+      { inputs = [| input |]; ints = [| v |]; step_points = G.step_points p }
+  in
+  let src = load ~src_offset:[| (Int 0, 1) |] ()
+  and dst = load ~dst_offset:[| (Int 0, 1) |] ()
+  and twice = load ~src_offset:[| (Int 0, 2) |] () in
+  ignore (run src 56);
+  ignore (run dst 56);
+  raises_match ~msg:"a source from byte 60 of 64" Exn.invalid_arg (fun () ->
+      run src 60);
+  raises_match ~msg:"a destination from byte 60 of 64" Exn.invalid_arg
+    (fun () -> run dst 60);
+  raises_match ~msg:"a negative offset" Exn.invalid_arg (fun () ->
+      run src (-8));
+  raises_match ~msg:"an offset past an int" Exn.invalid_arg (fun () ->
+      run twice max_int)
+
+(* A move that a device outside the program's runs is done when the run
+   returns: input 0 is a borrow, on a device that runs no copy, of another
+   device's memory, whose copy engine runs the move. *)
+let test_move_outside () =
+  let a, _ = polled ~copies:false "move-outside-a"
+  and b, _ = polled ~host_visible:false "move-outside-b" in
+  let t =
+    {
+      G.devices = [| Rig.arch a |];
+      ints = 0;
+      memory = [||];
+      images = [||];
+      inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 64 });
+      steps = [| move (Input 0) (Input 1) 64 |];
+    }
+  in
+  let p = load_ok t [ a ] in
+  let src = Option.get (B.borrow a (of_bytes b (String.make 64 'o'))) in
+  let dst = B.create a 64 in
+  let ends =
+    G.run p
+      { inputs = [| src; dst |]; ints = [||]; step_points = G.step_points p }
+  in
+  equal ~msg:"the ends" (list string) [] (pp_points ends);
+  equal ~msg:"every use of the destination reached" bool true
+    (B.reached dst Rig.Read_write);
+  equal ~msg:"the moved bytes" string (String.make 64 'o') (read dst)
 
 (* A memory slot that only copies name takes no slot of the step's
    submission, and the slots after it are numbered without it: memory 0, named
@@ -3561,6 +3850,17 @@ let tests =
           test_copy_outside;
         test "a Copy part copies within the ints at offsets they hold"
           test_copy_ints;
+        test "a move a device runs is queued, its point the run's end there"
+          test_move_queued;
+        test "a move a device outside the program's runs is done at its step"
+          test_move_outside;
+        test "moves through the ints a device runs are queued"
+          test_move_ints_queued;
+        test "an Int a queued move wrote is read once the move is done"
+          test_move_writes_int;
+        test "a move in a loop moves with its trips" test_move_loop;
+        test "run raises for a move its ints put outside its slot"
+          test_move_outside_slot;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
         test "an init Address comes from a step fixing its run's copy"

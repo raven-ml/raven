@@ -3789,9 +3789,9 @@ submission, and a range a loop of rig's program (D146).
   a program of rig (`Rig_program`): a kernel is a launch on each lane's
   device, a host program's on its host, its parameters laid out as
   `hcq2.py`'s `layout_args` lays them out; a copy is a copy part of a device
-  that copies between its two sides, or a copy of the host's; a range or a
-  back edge is a loop; and consecutive calls of one device are one
-  submission. rig's drivers encode each vendor's queues, order the work
+  that copies between its two sides, or else a move, a queued copy of rig's
+  (`Rig.Buffer.submit_copy`); a range or a back edge is a loop; and
+  consecutive calls of one device are one submission. rig's drivers encode each vendor's queues, order the work
   across queues and devices by the memory it uses, stage what no device
   copies directly, and time the submissions where the driver can. A host
   program's entry is rig's (D28). Storage the schedule makes is the

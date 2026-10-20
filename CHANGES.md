@@ -1548,6 +1548,9 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` links a copy between a GPU and the host whose offset
+  moves with a range's trips or lies in storage made at link, which raised.
+  Such a copy is a queued move of the program (`Rig_program.Move`).
 - A kernel reducing over a variable size computes the reduction's identity
   where the size is 0. A sum read its accumulator unwritten; over a value the
   range does not change, a sum of an infinity was NaN and a maximum the value.

@@ -51,9 +51,9 @@
 
     A step's work follows other work by the memory the step names, as every
     {!Rig.submit}'s does ({!Rig.section-order}). A [Submit] step names the
-    memory of its [slots], of its parts' views and of its [fixed]. A step
-    therefore follows the earlier steps whose memory it names, and its
-    device's earlier work.
+    memory of its [slots], of its parts' views and of its [fixed], and a
+    [Move] the memory of its two slots. A step therefore follows the earlier
+    steps whose memory it names, and its device's earlier work.
 
     Work that reaches memory through an address it was given escapes this
     order, so an address or handle may stand only where its step names the
@@ -281,7 +281,17 @@ type submit = {
 (** The type for the steps of a run. *)
 type step =
   | Submit of submit  (** One {!Rig.submit}. *)
-  | Move of { src : slot; dst : slot }  (** One {!Rig.Buffer.copy}. *)
+  | Move of {
+      src : slot;
+      src_offset : (value * int) iarray;
+      dst : slot;
+      dst_offset : (value * int) iarray;
+      length : int;
+    }
+      (** One {!Rig.Buffer.submit_copy} of [length] bytes from byte
+          [src_offset] of [src]'s buffer into byte [dst_offset] of [dst]'s.
+          An offset is the sum of its terms, as a [Copy] part's, so a move in
+          a loop may move with the loop's trips. *)
   | Loop of {
       trips : value;
       trip : int option;
@@ -372,12 +382,12 @@ val load :
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
-    {- a copy's [length] is negative, an offset names a [Leaf], or an end's
-       offset that reads no [Int] is past an [int], is negative or puts the
-       end past its slot where load knows the slot's length: a [Memory]
-       view's [length] and [8 * ints] for the ints;}
-    {- a copy's two ends share a byte of the ints or of one input, at offsets
-       that read no [Int];}
+    {- a copy's or a move's [length] is negative, an offset names a [Leaf],
+       or an end's offset that reads no [Int] is past an [int], is negative or
+       puts the end past its slot where load knows the slot's length: a
+       [Memory] view's [length] and [8 * ints] for the ints;}
+    {- a copy's or a move's two ends share a byte of one memory, of the ints
+       or of one input, at offsets that read no [Int];}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
     {- on another machine, a device is not an agent's.}}
     Raises [Invalid_argument] also if [devices] are of several machines, or
@@ -415,15 +425,18 @@ val step_points : loaded -> Rig.Point.t array
 val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
 (** [run ~waits p f] runs [p]'s steps once, in order, over the frame [f]
     ({!section-order}). It is the run's {e ends}, the points its work ends
-    at: for each device that ran a submission, in the order of [p]'s
-    devices, the point of its last one. Each device's first submission
-    follows the points of [waits] (defaults to none) and the device's
-    earlier work.
+    at: for each device that ran a submission or a move, in the order of
+    [p]'s devices, the point of its last one. A move runs on the device of
+    the point {!Rig.Buffer.submit_copy} returns for it. Each device's first
+    submission, and each move, follows the points of [waits] (defaults to
+    none) and the device's earlier work.
     {ul
     {- It first waits for the work of run [n - 2] on the copies this run
        uses, the run's ints included, then writes [f]'s ints.}
-    {- The work it does on the host, [Move] steps, [Submit] steps on the
-       host and loops' flags, is done when it returns.}
+    {- The work it does on the host, [Submit] steps on the host, moves the
+       host makes and loops' flags, is done when it returns. A move whose
+       point is of a device outside [p]'s is done at its step, which waits
+       for it.}
     {- An [Int] value is read once the run's earlier work that writes the
        ints is done, and a loop stores its trip once the run's earlier work
        that uses the ints is done.}
@@ -445,9 +458,10 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        callback inside a lock ({!Rig.section-domains});}
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
-       ({!Rig.Submission.Run}), if a copy's offset is past an [int] or puts
-       its end outside its slot's buffer, if a loop's flag lies past its
-       input's bytes, and as {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
+       ({!Rig.Submission.Run}), if a copy's or a move's offset is past an
+       [int] or puts its end outside its slot's buffer, if a loop's flag lies
+       past its input's bytes, and as {!Rig.submit} and
+       {!Rig.Buffer.submit_copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}
