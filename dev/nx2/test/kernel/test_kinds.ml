@@ -1276,6 +1276,52 @@ let test_complex_special =
       equal t (re, im) (c128_call kind [ z ]);
       equal t (round_f32 re, round_f32 im) (c64_call kind [ f32_pair z ]))
 
+(* A signalling NaN part beside an infinity or a part past ASIN_BIG: the
+   values of a quiet NaN of its sign. A compiler may fold asin's and acos's
+   test of both parts against ASIN_BIG into a max, which a signalling NaN
+   turns to NaN. *)
+
+let snan = Int64.float_of_bits 0x7FF0_0000_0000_0001L
+let nsnan = Int64.float_of_bits 0xFFF0_0000_0000_0001L
+let far = 0x1p40
+
+let signalling_values =
+  [
+    ("asin", (inf, snan), (nan, inf)); ("asin", (ninf, snan), (nan, inf));
+    ("asin", (inf, nsnan), (nan, ninf)); ("asin", (snan, inf), (nan, inf));
+    ("asin", (snan, ninf), (nan, ninf)); ("asin", (nsnan, inf), (nan, inf));
+    ("asin", (far, snan), (nan, nan)); ("asin", (snan, far), (nan, nan));
+    ("acos", (inf, snan), (nan, ninf)); ("acos", (ninf, snan), (nan, ninf));
+    ("acos", (inf, nsnan), (nan, inf)); ("acos", (snan, inf), (nan, ninf));
+    ("acos", (snan, ninf), (nan, inf)); ("acos", (far, snan), (nan, nan));
+    ("acos", (snan, far), (nan, nan));
+    ("asinh", (inf, snan), (inf, nan)); ("asinh", (ninf, snan), (ninf, nan));
+    ("asinh", (inf, nsnan), (inf, nan)); ("asinh", (snan, inf), (inf, nan));
+    ("asinh", (nsnan, inf), (ninf, nan)); ("asinh", (snan, ninf), (inf, nan));
+    ("asinh", (far, snan), (nan, nan)); ("asinh", (snan, far), (nan, nan));
+    ("acosh", (inf, snan), (inf, nan)); ("acosh", (ninf, snan), (inf, nan));
+    ("acosh", (inf, nsnan), (inf, nan)); ("acosh", (snan, inf), (inf, nan));
+    ("acosh", (snan, ninf), (inf, nan)); ("acosh", (far, snan), (nan, nan));
+    ("acosh", (snan, far), (nan, nan));
+  ]
+
+(* A part's binary32 bits, a signalling NaN kept signalling. *)
+let signalling32 x =
+  if Int64.equal (bits64 x) (bits64 snan) then 0x7F80_0001
+  else if Int64.equal (bits64 x) (bits64 nsnan) then 0xFF80_0001
+  else bits32 (round_f32 x)
+
+let test_complex_signalling =
+  cases
+    ~name:(fun (k, (x, y), _) ->
+      strf "%s 0x%016Lx 0x%016Lx" k (bits64 x) (bits64 y))
+    "signalling NaN parts" signalling_values
+    (fun (kind, ((x, y) as z), (re, im)) ->
+      let t = pair special_part special_part in
+      equal t (re, im) (c128_call kind [ z ]);
+      equal t (round_f32 re, round_f32 im)
+        (pair_of (K.c64 kind [| signalling32 x; signalling32 y |])))
+
 (* Laws over drawn parts, NaNs, infinities, zeros and subnormals among
    them. Each holds bit for bit, any NaN for a NaN. *)
 
@@ -1507,7 +1553,7 @@ let () =
          group ~timeout:10. "complex transcendentals"
            ([
               test_complex_goldens; test_complex_pow_goldens;
-              test_complex_special;
+              test_complex_special; test_complex_signalling;
             ]
            @ test_complex_exp2_far @ test_complex_pow_special
            @ [ test_complex_log_circle ]

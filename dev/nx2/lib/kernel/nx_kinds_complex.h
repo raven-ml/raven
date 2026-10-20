@@ -15,11 +15,12 @@
    - NX_MK, which makes a complex number of two parts;
    - NX_C(c), NX_FMA, NX_BITS and NX_OF_BITS, as for nx_kinds_real.h.
 
-   nx_kinds.h's complex section states what these kinds compute. Each is
-   computed from the part type's kinds in one order, and its NaN parts are
-   made quiet last, so that its bits are the same on every target. A kind
-   whose formula is odd or even in a part computes that part's sign apart,
-   so that its symmetries hold bit for bit. */
+   nx_kinds.h's complex section states what these kinds compute. Each makes
+   its operands' NaN parts quiet first, is computed from the part type's
+   kinds in one order, and makes its NaN parts quiet last, so that its bits
+   are the same on every target. A kind whose formula is odd or even in a
+   part computes that part's sign apart, so that its symmetries hold bit
+   for bit. */
 
 #define NX_ONE ((NX_T)1)
 #define NX_HALF ((NX_T)0.5)
@@ -412,15 +413,33 @@ NX_INLINE NX_CT NX_Z(nx_atanh_raw)(NX_T x, NX_T y) {
    Annex G defines them: sin z = -i sinh(iz), cos z = cosh(iz),
    tan z = -i tanh(iz) and atan z = -i atanh(iz), where iz = -y + ix and
    -i(a + ib) = b - ia; asinh turns asin back, and acosh turns acos. Every
-   NaN part is quieted last. */
+   NaN part of an operand is made quiet first, and every NaN part of a
+   value last.
+
+   C leaves a signalling NaN operand's behaviour undefined, and compilers
+   use the room: clang folds asin's (ax > c || ay > c) into
+   fmaxnm(ax, ay) > c, which is false where ax is infinite and ay a
+   signalling NaN. An operand's NaN part has its quiet bit set, its sign and
+   payload kept; the kinds read no NaN bit but the sign, so a quiet NaN and
+   a number keep their bits. */
 
 #define NX_QUIET(v) (NX_Z(nx_quiet)((v).re, (v).im))
 #define NX_TURN(v) (NX_Z(nx_quiet)((v).im, NX_(nx_neg)((v).re)))
 
+/* x with its quiet bit set where it is NaN. */
+NX_INLINE NX_T NX_(nx_unsignalled)(NX_T x) {
+  return x != x ? NX_OF_BITS(NX_BITS(x) | ((NX_U)1 << (NX_C(MBITS) - 1))) : x;
+}
+
+NX_INLINE NX_CT NX_Z(nx_unsignalled)(NX_CT z) {
+  return NX_MK(NX_(nx_unsignalled)(z.re), NX_(nx_unsignalled)(z.im));
+}
+
 /* The kind K of one operand, of K's raw function. */
 #define NX_KIND1(K)                                                          \
   NX_INLINE NX_CT NX_Z(nx_##K)(NX_CT z) {                                    \
-    return NX_QUIET(NX_Z(nx_##K##_raw)(z.re, z.im));                         \
+    NX_CT u = NX_Z(nx_unsignalled)(z);                                       \
+    return NX_QUIET(NX_Z(nx_##K##_raw)(u.re, u.im));                         \
   }
 
 NX_KIND1(exp)
@@ -436,36 +455,43 @@ NX_KIND1(asin)
 NX_KIND1(acos)
 
 NX_INLINE NX_CT NX_Z(nx_pow)(NX_CT z, NX_CT w) {
-  return NX_QUIET(NX_Z(nx_pow_raw)(z, w));
+  NX_CT u = NX_Z(nx_unsignalled)(z), v = NX_Z(nx_unsignalled)(w);
+  return NX_QUIET(NX_Z(nx_pow_raw)(u, v));
 }
 
 NX_INLINE NX_CT NX_Z(nx_sin)(NX_CT z) {
-  NX_CT v = NX_Z(nx_sinh_raw)(NX_(nx_neg)(z.im), z.re);
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  NX_CT v = NX_Z(nx_sinh_raw)(NX_(nx_neg)(u.im), u.re);
   return NX_TURN(v);
 }
 
 NX_INLINE NX_CT NX_Z(nx_cos)(NX_CT z) {
-  return NX_QUIET(NX_Z(nx_cosh_raw)(NX_(nx_neg)(z.im), z.re));
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  return NX_QUIET(NX_Z(nx_cosh_raw)(NX_(nx_neg)(u.im), u.re));
 }
 
 NX_INLINE NX_CT NX_Z(nx_tan)(NX_CT z) {
-  NX_CT v = NX_Z(nx_tanh_raw)(NX_(nx_neg)(z.im), z.re);
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  NX_CT v = NX_Z(nx_tanh_raw)(NX_(nx_neg)(u.im), u.re);
   return NX_TURN(v);
 }
 
 NX_INLINE NX_CT NX_Z(nx_atan)(NX_CT z) {
-  NX_CT v = NX_Z(nx_atanh_raw)(NX_(nx_neg)(z.im), z.re);
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  NX_CT v = NX_Z(nx_atanh_raw)(NX_(nx_neg)(u.im), u.re);
   return NX_TURN(v);
 }
 
 /* asinh z = i asin(-iz), -iz = y - ix and i(a + ib) = -b + ia. */
 NX_INLINE NX_CT NX_Z(nx_asinh)(NX_CT z) {
-  NX_CT v = NX_Z(nx_asin_raw)(z.im, NX_(nx_neg)(z.re));
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  NX_CT v = NX_Z(nx_asin_raw)(u.im, NX_(nx_neg)(u.re));
   return NX_Z(nx_quiet)(NX_(nx_neg)(v.im), v.re);
 }
 
 NX_INLINE NX_CT NX_Z(nx_atanh)(NX_CT z) {
-  return NX_QUIET(NX_Z(nx_atanh_raw)(z.re, z.im));
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  return NX_QUIET(NX_Z(nx_atanh_raw)(u.re, u.im));
 }
 
 /* acosh z = i acos z above the real axis, where Im(acos z) <= 0 makes the
@@ -473,10 +499,11 @@ NX_INLINE NX_CT NX_Z(nx_atanh)(NX_CT z) {
    NaN imaginary part beside a finite real one is no direction: NaN, as
    Annex G's cacosh(x + iNaN). */
 NX_INLINE NX_CT NX_Z(nx_acosh)(NX_CT z) {
-  if (z.im != z.im && NX_(nx_finite)(z.re))
+  NX_CT u = NX_Z(nx_unsignalled)(z);
+  if (u.im != u.im && NX_(nx_finite)(u.re))
     return NX_MK(NX_C(NAN), NX_C(NAN));
-  NX_CT v = NX_Z(nx_acos_raw)(z.re, NX_(nx_abs_bits)(z.im));
-  return NX_Z(nx_quiet)(NX_(nx_neg)(v.im), NX_(nx_flip)(v.re, z.im));
+  NX_CT v = NX_Z(nx_acos_raw)(u.re, NX_(nx_abs_bits)(u.im));
+  return NX_Z(nx_quiet)(NX_(nx_neg)(v.im), NX_(nx_flip)(v.re, u.im));
 }
 
 #undef NX_KIND1
