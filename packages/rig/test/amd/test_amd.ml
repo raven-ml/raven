@@ -2234,6 +2234,11 @@ let level () =
         (try Some (In_channel.with_open_text file In_channel.input_all)
          with Sys_error _ -> None)
 
+(* What a trace answers while another process holds the GPU's stable power
+   state ([Rig_amd_amdgpu]'s tracing), which the machine, not the device,
+   decides. *)
+let held = "another process holds the GPU's stable power state"
+
 let traces =
   group ~timeout:60. "traces"
     [
@@ -2255,7 +2260,9 @@ let traces =
               if not (S.driverless ()) then
                 equal (option string) ~msg:"the GPU's clocks"
                   (Some "profile_standard") (level ())
-          | Error why, _ | _, Error why -> fail why);
+          | Error why, _ | _, Error why ->
+              if String.starts_with ~prefix:held why then skip ~reason:why ()
+              else fail why);
     ]
 
 let () =

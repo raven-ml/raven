@@ -778,7 +778,9 @@ let stable_power g () =
           g.stable <- true;
           Ok ()
       | exception Unix.Unix_error (EBUSY, _, _) ->
-          Error "another process holds the GPU's stable power state"
+          Error
+            "another process holds the GPU's stable power state, or one that \
+             exited left it held"
       | exception Unix.Unix_error (e, _, _) ->
           Error
             (strf "the amdgpu driver refused the GPU's stable power state: %s"

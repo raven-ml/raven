@@ -112,8 +112,11 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
 
     {b Tracing.} The first thread trace takes the GPU's stable power state,
     which holds its clocks and shader engines steady, until the process
-    exits. The trace fails while another process holds that state. On a
-    GFX 9 GPU, traces take no power state. *)
+    exits. The trace fails while another process holds that state. A kernel
+    driver older than its fix of the state's handling may leave the state
+    held by a process that exited, which writing [auto] to the GPU's
+    [power_dpm_force_performance_level], as root, frees. On a GFX 9 GPU,
+    traces take no power state. *)
 
 (**/**)
 
