@@ -363,6 +363,9 @@ and half = {
   mutable lap : int;
       (** Its device's [laps] when [cursor] was last set to [0]. *)
   mutable last : int;  (** Its device's [takes] at its last take. *)
+  mutable waits : bool;
+      (** Whether its holder waits for its uses before it writes it: its
+          last take restarted it with uses it did not see done. *)
   stage : device;  (** The device whose [live] holds it. *)
 }
 

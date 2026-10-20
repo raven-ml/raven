@@ -290,10 +290,11 @@ let buffered a b = a.buffer <> None && b.buffer = None
 let some_buffer h = h.buffer <> None
 
 (* Under [l]'s lock: [h] held from now, its lap restarted at byte 0 if
-   [restart]. *)
-let hold l ~restart h =
+   [restart], its holder waiting for its uses first if [waits]. *)
+let hold l ~restart ~waits h =
   h.held <- true;
   h.last <- l.takes;
+  h.waits <- waits;
   if restart then begin
     l.laps <- l.laps + 1;
     h.lap <- l.laps;
@@ -304,13 +305,15 @@ let hold l ~restart h =
 (* Under [d]'s lock: a half of [d]'s staging memory for the pieces [writer]
    writes, held now. A piece of [need] bytes that the host writes, [need]
    positive, takes the free half with room after its cursor whose lap started
-   last. Otherwise a half is taken at its start: a free one whose uses are
-   done, one with a buffer first; for the host, else the free half whose lap
-   started first, whose uses its holder waits for; else a new half, so no copy
-   waits for a hold. A new half is published by the last store, so an
-   asynchronous exception before it changes nothing. It makes no buffer, whose
-   creation can run the out-of-memory ladder, which takes every device's
-   lock. *)
+   last, from its start if its uses are seen done: no work uses any of it, and
+   the last copy left those bytes in the caches, where past the cursor each of a
+   run of copies would write bytes that no copy touched for a lap of the half.
+   Otherwise a half is taken at its start: a free one whose uses are done, one
+   with a buffer first; for the host, else the free half whose lap started
+   first, whose uses its holder waits for; else a new half, so no copy waits for
+   a hold. A new half is published by the last store, so an asynchronous
+   exception before it changes nothing. It makes no buffer, whose creation can
+   run the out-of-memory ladder, which takes every device's lock. *)
 let take_locked (d, writer, need) =
   let l = d.live in
   l.takes <- l.takes + 1;
@@ -318,28 +321,31 @@ let take_locked (d, writer, need) =
     if writer = Host && need > 0 then find l (has_room need) later 0 (-1)
     else -1
   in
-  if packed >= 0 then hold l ~restart:false l.halves.(packed)
+  if packed >= 0 then
+    let h = l.halves.(packed) in
+    hold l ~restart:(uses_done h) ~waits:false h
   else
     let i = find l uses_done buffered 0 (-1) in
-    let i =
-      if i < 0 && writer = Host then find l some_buffer earlier 0 (-1) else i
-    in
-    if i >= 0 then hold l ~restart:true l.halves.(i)
-    else begin
-      l.laps <- l.laps + 1;
-      let h =
-        {
-          buffer = None;
-          held = true;
-          cursor = 0;
-          lap = l.laps;
-          last = l.takes;
-          stage = d;
-        }
-      in
-      l.halves <- Array.append l.halves [| h |];
-      h
-    end
+    if i >= 0 then hold l ~restart:true ~waits:false l.halves.(i)
+    else
+      let i = if writer = Host then find l some_buffer earlier 0 (-1) else -1 in
+      if i >= 0 then hold l ~restart:true ~waits:true l.halves.(i)
+      else begin
+        l.laps <- l.laps + 1;
+        let h =
+          {
+            buffer = None;
+            held = true;
+            cursor = 0;
+            lap = l.laps;
+            last = l.takes;
+            waits = false;
+            stage = d;
+          }
+        in
+        l.halves <- Array.append l.halves [| h |];
+        h
+      end
 
 let take d writer need = Dev.protect d take_locked (d, writer, need)
 let release h = h.held <- false
@@ -380,10 +386,11 @@ let take_idle d =
 let age d = List.iter Memory.return_half (Dev.protect d take_idle d)
 
 (* The buffer of [h], made where it is missing or names a lost device's work,
-   outside every lock. A half the host writes from its start waits for its
-   uses first, which a half taken at its start only has if its lap is the
-   oldest; a loss meanwhile replaces it. *)
-let ready h writer =
+   outside every lock. A half whose take did not see its uses done ([waits])
+   waits for them first; a loss meanwhile replaces it. The uses a take saw
+   done stay so: no use of a free half is added until a holder gives it
+   back. *)
+let ready h =
   let make () =
     let d = h.stage in
     let b =
@@ -395,7 +402,7 @@ let ready h writer =
   in
   match h.buffer with
   | Some b when not (names_lost b) -> (
-      if writer = Device || h.cursor > 0 then b
+      if not h.waits then b
       else
         match Buffer.wait b Buffer.Read_write with
         | () -> b
@@ -578,8 +585,8 @@ let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
   let n = Array.length ps in
   let need = if n = 1 && writer = Host then extent Host ps else 0 in
   holding d writer need ~two:(n > 1) (fun h0 h1 ->
-      let b0 = ready h0 writer in
-      let b1 = if n > 1 then ready h1 writer else b0 in
+      let b0 = ready h0 in
+      let b1 = if n > 1 then ready h1 else b0 in
       let base0 = h0.cursor in
       List.iter (fun b -> map_halves fn d b b0 b1) sides;
       let half k = if k land 1 = 0 then b0 else b1 in
@@ -623,9 +630,9 @@ and between fn ~waits src dst ps =
   let need = if n = 1 then extent Host ps else 0 in
   holding (runner src) Device 0 ~two:(n > 1) (fun a0 a1 ->
       holding (runner dst) Host need ~two:(n > 1) (fun b0 b1 ->
-          let ha0 = ready a0 Device and hb0 = ready b0 Host in
-          let ha1 = if n > 1 then ready a1 Device else ha0 in
-          let hb1 = if n > 1 then ready b1 Host else hb0 in
+          let ha0 = ready a0 and hb0 = ready b0 in
+          let ha1 = if n > 1 then ready a1 else ha0 in
+          let hb1 = if n > 1 then ready b1 else hb0 in
           let base0 = b0.cursor in
           map_halves fn a0.stage src ha0 ha1;
           map_halves fn b0.stage dst hb0 hb1;

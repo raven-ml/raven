@@ -1118,9 +1118,10 @@ module Buffer : sig
       done. A copy of at most 32 MiB whose bytes the host writes into staging
       memory puts them after the bytes earlier such copies put in an
       allocation that no copy holds, where it has room, and waits for no work
-      there. Where none has room, it takes an allocation whose work is done,
-      else the one whose bytes were placed from its start longest ago, and
-      waits for its work. A copy whose bytes a device writes into staging
+      there; once rig has seen that allocation's work done, it puts them at
+      its start. Where none has room, it takes an allocation whose work is
+      done, else the one whose bytes were placed from its start longest ago,
+      and waits for its work. A copy whose bytes a device writes into staging
       memory takes an allocation whose work is done, or a new one, and no
       copy puts bytes after them. Staging memory so grows by 32 or 64 MiB for
       each copy holding it at once, and by as much for each copy whose bytes

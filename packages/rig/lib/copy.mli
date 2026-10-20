@@ -39,14 +39,16 @@
     pieces start at multiples of 256 bytes. A copy of one piece that the host
     writes takes the free half with room after its cursor whose lap started
     last, where a half's lap starts when its cursor is set to its start, and
-    writes there without waiting. A piece a device writes is never packed,
-    since its write would follow every use of the half, and no piece is
-    packed after it: the host's write adds no point to the stamps, so the
-    next piece's drain would follow the device's write. Otherwise a copy
-    takes a free half whose uses are done, its cursor at its start; for a
-    piece the host writes, else the free half whose lap started first, and
-    waits for its uses; else, every half being held, a new half, so no copy
-    waits for a hold.
+    writes there without waiting; where rig has seen the half's uses done
+    ([Memory.uses_done]), no work uses any of it, and the copy restarts its
+    lap, writing where the last copy left bytes in the caches. A piece a
+    device writes is never packed, since its write would follow every use of
+    the half, and no piece is packed after it: the host's write adds no point
+    to the stamps, so the next piece's drain would follow the device's write.
+    Otherwise a copy takes a free half whose uses are done, its cursor at its
+    start; for a piece the host writes, else the free half whose lap started
+    first, and waits for its uses; else, every half being held, a new half,
+    so no copy waits for a hold.
 
     A device's halves are part of its state ([halves] in {!Def.live}), taken
     and given under its lock. The host's halves serve every device that maps
