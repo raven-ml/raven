@@ -346,11 +346,17 @@ let worst x =
     (fun w v -> if Float.is_nan v || Float.is_nan w then Float.nan else Float.max w v)
     0. (magnitudes x)
 
+(* [d] below [than], failing on a NaN: [float_exact]'s order puts a NaN
+   below every number. *)
+let below ~msg ~than d =
+  if Float.is_nan d then failf "%s: NaN, not below %h" msg than;
+  less ~msg float_exact ~than d
+
 (* [x] within [tolerance] of [y], relative to [y]'s scale and at least 1. *)
 let near ?(scale = 1.) ?tol ~msg x y =
   let tol = Option.value tol ~default:(tolerance (Nx.dtype y)) in
   let bound = tol *. scale *. Float.max 1. (worst y) in
-  less ~msg float_exact ~than:bound (worst (Nx.sub x y))
+  below ~msg ~than:bound (worst (Nx.sub x y))
 
 let all_nan ~msg x =
   equal ~msg bool true (Array.for_all Float.is_nan (magnitudes x))
