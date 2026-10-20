@@ -806,12 +806,13 @@ let no_allocation () =
   Rig.Point.wait !last;
   equal int ~msg:"bytes of 99 launches" 0 bytes
 
-(* Public launches and a private copy kernel share the compute channel. The
-   edges their memory derives still put the copy between the launches. *)
+(* Public launches and a private copy kernel share the compute channel: a
+   copy of 256 KiB, from which the driver's kernel runs it. The edges their
+   memory derives still put the copy between the launches. *)
 let launch_copy_launch () =
   S.with_ @@ fun { d; _ } ->
   let image = launch_image d in
-  let n = 1024 in
+  let n = 64 * 1024 in
   let out = B.create d (4 * n) and mid = B.create d (4 * n) in
   let dst = B.create d (4 * n) in
   let s =
