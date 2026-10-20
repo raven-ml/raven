@@ -638,6 +638,16 @@ let test_sub_byte_tail () =
       int 0x02 (A.get bytes [| n |])
   done
 
+(* The minor words one call of [f] allocates, over a thousand after one. *)
+let words f =
+  ignore (f ());
+  let n = 1000 in
+  let before = Gc.minor_words () in
+  for _ = 1 to n do
+    ignore (Sys.opaque_identity (f ()))
+  done;
+  (Gc.minor_words () -. before) /. Float.of_int n
+
 let allocation =
   group "allocation"
     [
@@ -645,14 +655,11 @@ let allocation =
         test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          ignore (Nx.add a a);
-          let n = 1000 in
-          let before = Gc.minor_words () in
-          for _ = 1 to n do
-            ignore (Sys.opaque_identity (Nx.add a a))
-          done;
-          let per = (Gc.minor_words () -. before) /. Float.of_int n in
-          at_most (float 0.5) ~than:51. per);
+          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add a a)));
+      test "a copy of a one-element host value allocates its budget"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
+          at_most (float 0.5) ~than:125. (words (fun () -> Nx.copy a)));
     ]
 
 (* Placements *)

@@ -146,7 +146,8 @@ val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 val mapi :
   ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [mapi m op] is [op] with each operand [x] at position [i] in {!operands}
-    replaced by [m i x]. *)
+    replaced by [m i x]: [op] itself where [m] returns each operand
+    itself. *)
 
 val rule : 'r prim -> Route.rule
 (** [rule op] is how [op]'s results depend on its operands: its route and each
