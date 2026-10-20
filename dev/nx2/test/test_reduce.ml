@@ -2621,6 +2621,30 @@ let test_dead_named () =
   names "argmax" (fun () -> Nx.argmax (dead ()));
   names "argmin" (fun () -> Nx.argmin ~keepdims:true (dead ()))
 
+(* A scan with a carry continues each slice from the carry's element. Over a
+   value cut along its axis, each window's results take the terms before it,
+   so it has the bits of the scan on one device. *)
+let test_carried_cut () =
+  let s = [| 5; 3 |] in
+  let xs = Array.init 15 (fun i -> Int32.of_int ((i * 7) - 40)) in
+  let carried x c : (int32, D.int32_elt, _) Nx.t =
+    Nx.Prim.eval ~by:"t"
+      (Scan
+         {
+           layout = L.contiguous s;
+           axis = 0;
+           prog = identity D.Int32;
+           reduction = Monoid (Sum, 0, D.Int32);
+           loads = [| Plain x |];
+           carry = Some (Nx.Prim.Any c);
+         })
+  in
+  let x = value (A.of_array D.Int32 s xs) in
+  let c = value (A.of_array D.Int32 [| 1; 3 |] [| 100l; -7l; 2l |]) in
+  let want = A.to_array (host_array (carried x c)) in
+  let cut = Nx.place (Cpu3.split ~axis:0) x and on = Nx.place Cpu3.on c in
+  equal (array int32) want (A.to_array (host_array (carried cut on)))
+
 let reductions_group =
   group "reductions"
     [
@@ -2643,6 +2667,8 @@ let reductions_group =
       test "integer means of extremes and empty axes" test_int_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_expansions;
+      test "a carried scan over a value cut along its axis is the whole's"
+        test_carried_cut;
       prop
         "a NaN result is the first NaN quieted on the host, through an \
          expansion and cut along the reduced axis"
