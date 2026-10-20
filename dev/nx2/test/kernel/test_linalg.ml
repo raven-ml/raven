@@ -1018,18 +1018,20 @@ let law_eigh_spectrum (b : Support.backend) c =
   let u = reflector_draws r c.dt n in
   check_spectrum b c.dt ~k:(c.seed mod (n + 1)) ~u l
 
-(* [r] of [x] alone, of [x] laid out Transposed, and of [x] repeated in a
-   batch of as many matrices as the host has cores, each then on one
-   thread: every result has the bits of the call's alone. *)
+(* [r] of [x] alone, of [x] laid out Transposed, and of a batch of two
+   copies of [x] on one thread ({!Nx_cpu.one_thread}): each matrix then runs
+   as a unit of a batch with at least the call's threads does, the second at
+   an offset, on the arena the first used. Every result has the bits of the
+   call's alone. *)
 let agree_bits (b : Support.backend) r x =
   let (A.Any a) = x in
-  let t = Domain.recommended_domain_count () in
-  let s = Array.append [| t |] (L.shape (A.layout a)) in
-  let batch =
+  let s = Array.append [| 2 |] (L.shape (A.layout a)) in
+  let pair =
     A.Any (A.copy (Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)))
   in
   let z = run b r [| laid_out Transposed x |] in
-  match (run b r [| x |], z, run b r [| batch |]) with
+  let w = Nx_cpu.one_thread (fun () -> run b r [| pair |]) in
+  match (run b r [| x |], z, w) with
   | Some y, Some z, Some w ->
       Array.iteri
         (fun j y ->
@@ -1038,8 +1040,9 @@ let agree_bits (b : Support.backend) r x =
           equal ~msg:(Printf.sprintf "result %d, transposed" j) same_bits want
             (bits z.(j));
           let got = bits w.(j) in
-          for i = 0 to t - 1 do
-            equal ~msg:(Printf.sprintf "result %d, matrix %d of the batch" j i)
+          for i = 0 to 1 do
+            equal
+              ~msg:(Printf.sprintf "result %d, matrix %d of the batch" j i)
               same_bits want (Array.sub got (i * n) n)
           done)
         y
