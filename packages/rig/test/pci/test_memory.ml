@@ -1327,10 +1327,11 @@ let test_freed_peer () =
 
 (* After the release
 
-   Two GPUs of a tree sharing a space, against a model of what each region
-   holds: the GPU's memory and addresses, or system memory. A free writes its
-   GPU's tables before the release and none after; what the model says nothing
-   holds, the tree holds no more. *)
+   Two GPUs of a tree sharing a space, under one root port as root reads it,
+   so that each reaches the other's memory (Memory.reaches), against a
+   model of what each region holds: the GPU's memory and addresses, or system
+   memory. A free writes its GPU's tables before the release and none after;
+   what the model says nothing holds, the tree holds no more. *)
 
 type m_region = {
   owner : int;
@@ -1384,7 +1385,7 @@ let create_pair () =
   let base = slots_base + (k * slot_size) in
   let borrowed = base + slot_size - (2 * mib) in
   let buses = [ "0000:03:00.0"; "0000:04:00.0" ] in
-  let root = Tree.make (List.map Tree.gpu buses) in
+  let root = Tree.make ~privileged:true (List.map Tree.gpu buses) in
   let m = Machine.at root in
   (match Machine.reserve m ~base:slots_base (slots * slot_size) with
   | Ok () -> ()
