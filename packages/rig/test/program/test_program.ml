@@ -786,6 +786,39 @@ let test_after () =
     (Rig.signaled a);
   Array.iter Rig.Point.wait last
 
+(* A run whose first step on a device is a move follows [waits] there: the
+   move takes them, and the submit after it on that device follows them
+   through the move. *)
+let test_after_move () =
+  let a, _ = polled "after-move-a"
+  and b, _ = polled ~host_visible:false "after-move-b" in
+  let pa = load_ok (one_device_fill a) [ a ] in
+  let t =
+    {
+      (one_device_fill b) with
+      memory = [| alloc 0 64; alloc 0 64 |];
+      steps =
+        [|
+          move (all 1) (all 0) 64;
+          submit 0
+            ~buffers:[| (all 0, Rig.Read_write) |]
+            [| fill ~image:0 ~groups:1 7 |];
+        |];
+    }
+  in
+  let pb = load_ok t [ b ] in
+  let empty p =
+    { G.inputs = [||]; ints = [||]; step_points = G.step_points p }
+  in
+  let pt = (G.run pa (empty pa)).(0) in
+  equal ~msg:"a's run not reached" bool true
+    (Rig.signaled a < Rig.Point.value pt);
+  let last = G.run ~waits:[| pt |] pb (empty pb) in
+  greater ~msg:"b's move followed it" int
+    ~than:(Rig.Point.value pt - 1)
+    (Rig.signaled a);
+  Array.iter Rig.Point.wait last
+
 (* Re-entry *)
 
 let reentered = "Rig_program.run: called on the thread that runs it"
@@ -1015,6 +1048,10 @@ let copying ?(ints = 0) ?use ?src_offset ?dst_offset ?(length = 64) slots d =
 let breaks =
   let one d = [ d ] in
   let head = G.Memory { memory = 0; offset = 0; length = 8 } in
+  (* Bytes [offset] to [offset + length] of memory 0: views [0, 16] and
+     [8, 16] at offsets 8 and 0 lie apart within their views and share bytes
+     8 to 16 of the memory. *)
+  let view offset length = G.Memory { memory = 0; offset; length } in
   [
     ("as many devices as the program's", (fun d -> base d), fun _ -> []);
     ( "a device's arch",
@@ -1253,7 +1290,8 @@ let breaks =
       (fun d ->
         {
           (base d) with
-          steps = [| move ~dst_offset:[| (Fixed 4, 1) |] (all 0) head 8 |];
+          steps =
+            [| move ~src_offset:[| (Fixed 8, 1) |] (view 0 16) (view 8 16) 8 |];
         }),
       one );
     ( "a move between overlapping bytes of an input",
@@ -1264,7 +1302,8 @@ let breaks =
         }),
       one );
     ( "a copy between overlapping bytes of one memory",
-      copying ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| all 0; all 0 |],
+      copying ~src_offset:[| (Fixed 8, 1) |] ~length:8
+        [| view 0 16; view 8 16 |],
       one );
     ( "a ref past its slots",
       (fun d ->
@@ -3209,7 +3248,7 @@ let test_move_loop () =
    an int, is refused at that step, with no move queued; ends at the slot's
    last bytes move. *)
 let test_move_outside_slot () =
-  let d, _ = polled "move-outside-slot" in
+  let d, _ = polled ~host_visible:false "move-outside-slot" in
   let load ?src_offset ?dst_offset () =
     load_ok
       {
@@ -3229,6 +3268,7 @@ let test_move_outside_slot () =
   and twice = load ~src_offset:[| (Int 0, 2) |] () in
   ignore (run src 56);
   ignore (run dst 56);
+  let queued = Rig.submitted d in
   raises_match ~msg:"a source from byte 60 of 64" Exn.invalid_arg (fun () ->
       run src 60);
   raises_match ~msg:"a destination from byte 60 of 64" Exn.invalid_arg
@@ -3236,7 +3276,40 @@ let test_move_outside_slot () =
   raises_match ~msg:"a negative offset" Exn.invalid_arg (fun () ->
       run src (-8));
   raises_match ~msg:"an offset past an int" Exn.invalid_arg (fun () ->
-      run twice max_int)
+      run twice max_int);
+  equal ~msg:"no move queued" int queued (Rig.submitted d)
+
+(* Ends in two views of one memory that share no byte are accepted, though
+   their offsets within the views are equal: a move and a copy part from
+   bytes [0, 32] of memory 0 into bytes [32, 64], each then moved into input
+   0. *)
+let test_disjoint_views () =
+  let d, _ = polled ~host_visible:false "disjoint-views" in
+  let low = G.Memory { memory = 0; offset = 0; length = 32 }
+  and high = G.Memory { memory = 0; offset = 32; length = 32 } in
+  let program first =
+    {
+      (base d) with
+      memory =
+        [|
+          alloc ~init:(data (String.make 32 'l' ^ String.make 32 'h')) 0 64;
+        |];
+      steps = [| first; move (all 0) (Input 0) 64 |];
+    }
+  in
+  let copy_part =
+    submit 0 ~buffers:[| (low, Rig.Read); (high, Rig.Read_write) |]
+      [| pcopy 32 |]
+  in
+  List.iter
+    (fun (what, first) ->
+      let p = load_ok (program first) [ d ] in
+      let x = of_bytes d (String.make 64 '\000') in
+      ignore
+        (G.run p
+           { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
+      equal ~msg:what string (String.make 64 'l') (read x))
+    [ ("a move", move low high 32); ("a copy part", copy_part) ]
 
 (* A move that a device outside the program's runs is done when the run
    returns: input 0 is a borrow, on a device that runs no copy, of another
@@ -3754,6 +3827,7 @@ let tests =
         test "memory of one copy waits for nothing on the host"
           test_one_waits_not;
         test "a run's first submission follows its after points" test_after;
+        test "a run's first move follows its after points" test_after_move;
         test "a loop's trip is stored once the work that reads the ints is done"
           test_trip_follows_work;
         test "an Int is read once the work that writes the ints is done"
@@ -3861,6 +3935,8 @@ let tests =
         test "a move in a loop moves with its trips" test_move_loop;
         test "run raises for a move its ints put outside its slot"
           test_move_outside_slot;
+        test "ends in disjoint views of one memory are accepted"
+          test_disjoint_views;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
         test "an init Address comes from a step fixing its run's copy"
