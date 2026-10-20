@@ -83,6 +83,17 @@ let test_host_done () =
   equal string (String.make 8 '\000' ^ String.make 32 'h' ^ String.make 24 '\000')
     (bytes dst)
 
+(* A copy between host buffers allocates nothing, warm: 1,000 copies take no
+   word of the minor heap. *)
+let test_host_allocates_nothing () =
+  let src = filled 4096 'a' and dst = filled 4096 'b' in
+  B.copy ~src ~dst;
+  let before = Gc.minor_words () in
+  for _ = 1 to 1000 do
+    B.copy ~src ~dst
+  done;
+  equal ~msg:"words" int 0 (int_of_float (Gc.minor_words () -. before))
+
 (* A queued copy follows the points of its waits: on a device whose queue
    waits for no other device's, its submit waits for them on the host. *)
 let test_waits () =
@@ -486,6 +497,8 @@ let () =
              test "a copy the host makes returns done, at a point of the host"
                test_host_done;
              test "a queued copy follows its waits" test_waits;
+             test "a copy between host buffers allocates nothing"
+               test_host_allocates_nothing;
              test "a fill a copy engine runs returns before it runs"
                test_fill_queued;
            ];

@@ -44,7 +44,10 @@ let record src dst bytes start =
          })
 
 (* The points of [waits], waited for on the host. *)
-let wait_all waits = Array.iter (fun p -> Dev.wait_point 0 true p) waits
+let wait_all waits =
+  for i = 0 to Array.length waits - 1 do
+    Dev.wait_point 0 true (Array.unsafe_get waits i)
+  done
 
 (* Boxes *)
 
@@ -120,7 +123,25 @@ let io_write fn src s dst t n =
 
 (* How the host moves bytes: between memory it addresses, or by an io device's
    read or write. *)
-type transfer = Move | Io_read | Io_write
+type host = Move | Io_read | Io_write
+
+(* How one transfer copies between two buffers: the host, a device's copy
+   engine ([Queued]), or none, where an io device owns one side and the other
+   is memory the host does not address ([Staged]). Each is a constant, so
+   choosing allocates nothing. *)
+type transfer = Host of host | Queued | Staged
+
+(* Memory an io device owns moves only through that device's read or write,
+   never through a borrow of its pages, so a file cut short raises in the read
+   where a read of its pages would end the process, and no device maps the
+   pages for a copy. *)
+let transfer src dst =
+  let si = io_owned src.mem and di = io_owned dst.mem in
+  if local src.mem && local dst.mem && not (si || di) then Host Move
+  else if si && (not di) && local dst.mem then Host Io_read
+  else if di && (not si) && local src.mem then Host Io_write
+  else if si || di then Staged
+  else Queued
 
 let move_run fn transfer src s dst t n =
   match transfer with
@@ -149,7 +170,9 @@ let on_host fn ~waits ~into_half transfer src dst boxes start =
   wait_all waits;
   Buffer.wait_points src Buffer.Read;
   if not into_half then Buffer.wait_points dst Buffer.Read_write;
-  Array.iter (move_box fn transfer src dst) boxes;
+  for i = 0 to Array.length boxes - 1 do
+    move_box fn transfer src dst (Array.unsafe_get boxes i)
+  done;
   record src dst (total boxes) start;
   Some 0
 
@@ -178,33 +201,25 @@ let on_queue ~waits d src dst boxes =
 
 (* Copies [boxes] from [src] to [dst] in one transfer, where one runs it: the
    host between memory it addresses or with an io device's, or a device's copy
-   queue between memory it maps. Memory an io device owns moves only through
-   that device's read or write, never through a borrow of its pages, so a
-   file cut short raises in the read where a read of its pages would end the
-   process, and no device maps the pages for a copy. What reads or writes the
+   queue between memory it maps ([transfer]). What reads or writes the
    buffers later follows a queued copy by their stamps. The host records its
    transfer, a submit a queued one. Is the transfer's point, [0] for the
    host's, or [None] where no transfer runs it. *)
 let direct fn ~waits ~into_half src dst boxes =
-  let si = io_owned src.mem and di = io_owned dst.mem in
   let start = Profile.now () in
-  if local src.mem && local dst.mem && not (si || di) then
-    on_host fn ~waits ~into_half Move src dst boxes start
-  else if si && (not di) && local dst.mem then
-    on_host fn ~waits ~into_half Io_read src dst boxes start
-  else if di && (not si) && local src.mem then
-    on_host fn ~waits ~into_half Io_write src dst boxes start
-  else if si || di then None
-  else
-    let side = if local src.mem then dst else src in
-    (* A borrow on a device that runs no copy copies by its memory's own
-       device. *)
-    let runner =
-      match side.mem.dev.live.copy_engine with
-      | Some _ -> side.mem.dev
-      | None -> side.mem.alloc.owner
-    in
-    if Dev.is_io runner then None else on_queue ~waits runner src dst boxes
+  match transfer src dst with
+  | Host t -> on_host fn ~waits ~into_half t src dst boxes start
+  | Staged -> None
+  | Queued ->
+      let side = if local src.mem then dst else src in
+      (* A borrow on a device that runs no copy copies by its memory's own
+         device. *)
+      let runner =
+        match side.mem.dev.live.copy_engine with
+        | Some _ -> side.mem.dev
+        | None -> side.mem.alloc.owner
+      in
+      if Dev.is_io runner then None else on_queue ~waits runner src dst boxes
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. A leg runs in one transfer by construction: one that finds none,
@@ -675,12 +690,15 @@ let check fn src dst =
    it keeps the buffers reachable: a read, a write or a move hands over
    addresses only, and a collection could otherwise free their memory under
    it. Is the copy's last point, [0] for the host's. *)
-let claimed fn ~waits src dst boxes =
+let prepare src dst =
   let sd = src.mem.dev and dd = dst.mem.dev in
   Memory.check_owner src.mem;
   Memory.check_owner dst.mem;
   Memory.drain sd;
-  if dd != sd then Memory.drain dd;
+  if dd != sd then Memory.drain dd
+
+let claimed fn ~waits src dst boxes =
+  prepare src dst;
   if Array.length boxes = 0 then begin
     wait_all waits;
     0
@@ -700,11 +718,22 @@ let submit_copy ?(waits = [||]) ~src ~dst boxes =
   check fn src dst;
   point (Claim.reading2 fn src dst (queue fn) (waits, boxes))
 
-(* [copy] under its claims, through its wait. *)
+(* [copy] under its claims, through its wait. The host's copy of one run
+   builds no box, so it allocates nothing. *)
 let copied src dst n =
-  let boxes = if n = 0 then [||] else [| row n |] in
-  let p = claimed "Buffer.copy" ~waits:[||] src dst boxes in
-  if p <> 0 then Dev.wait_point 0 true p
+  let fn = "Buffer.copy" in
+  prepare src dst;
+  if n > 0 then
+    match transfer src dst with
+    | Host t ->
+        let start = Profile.now () in
+        Buffer.wait_points src Buffer.Read;
+        Buffer.wait_points dst Buffer.Read_write;
+        move_run fn t src 0 dst 0 n;
+        record src dst n start
+    | Queued | Staged ->
+        let p = route fn ~waits:[||] src dst [| row n |] in
+        if p <> 0 then Dev.wait_point 0 true p
 
 let copy ~src ~dst =
   let fn = "Buffer.copy" in
