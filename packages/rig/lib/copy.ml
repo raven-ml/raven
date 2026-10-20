@@ -100,10 +100,12 @@ let fitting fn ~src ~dst boxes =
   if !empty = 0 then boxes
   else Array.of_list (List.filter has_bytes (Array.to_list boxes))
 
-(* The bytes of [b] from [at], [n] of them: [b] itself when they are all of
-   it. *)
-let sub b at n =
-  if at = 0 && n = Buffer.length b then b else Buffer.view b ~first:at ~length:n
+(* The bytes of [b] from [at], [n] of them, as memory [m] holds them, [m]
+   being [b]'s memory or a borrow of it: [b] itself when they are all of it
+   in its own memory. *)
+let sub b m at n =
+  if m == b.mem && at = 0 && n = Buffer.length b then b
+  else { b with mem = m; offset = b.offset + at; length = n }
 
 (* Transfers *)
 
@@ -170,19 +172,35 @@ let move_box fn transfer src dst x =
         x.width
     done
 
-(* The host's copy of [boxes] from [src] to [dst], after the points of
-   [waits] and the work it follows, asked at [start]. Into a staging half
-   ([into_half]) it waits for nothing on [dst]: no unfinished work uses the
-   bytes it writes ([through]). *)
-let on_host fn ~waits ~into_half transfer src dst boxes start =
+(* The host's transfer's point, made once. *)
+let on_host_done = Some 0
+
+(* The host's waits before it moves bytes from [src] to [dst]: the points of
+   [waits] and the work it follows. Into a staging half ([into_half]) it
+   waits for nothing on [dst]: no unfinished work uses the bytes it writes
+   ([through]). *)
+let host_waits ~waits ~into_half src dst =
   wait_all waits;
   Buffer.wait_points src Buffer.Read;
-  if not into_half then Buffer.wait_points dst Buffer.Read_write;
+  if not into_half then Buffer.wait_points dst Buffer.Read_write
+
+(* The host's copy of [boxes] from [src] to [dst], after [host_waits],
+   asked at [start]. *)
+let on_host fn ~waits ~into_half transfer src dst boxes start =
+  host_waits ~waits ~into_half src dst;
   for i = 0 to Array.length boxes - 1 do
     move_box fn transfer src dst (Array.unsafe_get boxes i)
   done;
   record src dst (total boxes) start;
-  Some 0
+  on_host_done
+
+(* [on_host] of the run of [n] bytes from byte [s] of [src] to byte [t] of
+   [dst]. *)
+let on_host_run fn ~waits ~into_half transfer src s dst t n start =
+  host_waits ~waits ~into_half src dst;
+  move_run fn transfer src s dst t n;
+  record src dst n start;
+  on_host_done
 
 (* [m] as [d]'s copy engine takes it: a device of another machine takes this
    process's memory as it is, its driver carrying the bytes; another device
@@ -191,21 +209,30 @@ let mine d m =
   if (not (Dev.same_machine d Dev.host)) && local m then Some m
   else Memory.borrow d m
 
-(* A copy of [boxes] on [d]'s copy engine between buffers [d] maps, after the
-   points of [waits], as one submission. A box of one run goes as [d]'s
-   cached copy of the run. Its submit records it. *)
-let on_queue ~waits d src dst boxes =
+(* A copy of the run of [n] bytes from byte [s] of [src] to byte [t] of
+   [dst] on [d]'s copy engine, which maps both, after the points of [waits],
+   as [d]'s cached copy of one run. Its submit records it. *)
+let on_queue_run ~waits d src s dst t n =
   match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
-  | Some _, Some s, Some t -> (
-      let src = { src with mem = s } and dst = { dst with mem = t } in
-      match boxes with
-      | [| x |] when one_run x ->
-          let n = box_bytes x in
-          Some
-            (Submission.run_copy d ~waits ~src:(sub src x.src_offset n)
-               ~dst:(sub dst x.dst_offset n))
-      | _ -> Some (Submission.run_boxes d ~waits ~src ~dst boxes))
+  | Some _, Some sm, Some tm ->
+      Some
+        (Submission.run_copy d ~waits ~src:(sub src sm s n)
+           ~dst:(sub dst tm t n))
   | _ -> None
+
+(* A copy of [boxes] on [d]'s copy engine between buffers [d] maps, after the
+   points of [waits], as one submission, or [on_queue_run] for a box of one
+   run. *)
+let on_queue ~waits d src dst boxes =
+  match boxes with
+  | [| x |] when one_run x ->
+      on_queue_run ~waits d src x.src_offset dst x.dst_offset (box_bytes x)
+  | _ -> (
+      match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
+      | Some _, Some s, Some t ->
+          let src = { src with mem = s } and dst = { dst with mem = t } in
+          Some (Submission.run_boxes d ~waits ~src ~dst boxes)
+      | _ -> None)
 
 (* The device whose copy engine runs a transfer to or from [b]: [b]'s
    device's, or, for a borrow on a device that runs no copy, its memory's own
@@ -233,15 +260,31 @@ let direct fn ~waits ~into_half src dst boxes =
       let d = runner (queue_side src dst) in
       if Dev.is_io d then None else on_queue ~waits d src dst boxes
 
+(* [direct] of the run of [n] bytes from byte [s] of [src] to byte [t] of
+   [dst], which builds no box. *)
+let direct_run fn ~waits ~into_half src s dst t n =
+  let start = Profile.now () in
+  match transfer src dst with
+  | Host h -> on_host_run fn ~waits ~into_half h src s dst t n start
+  | Staged -> None
+  | Queued ->
+      let d = runner (queue_side src dst) in
+      if Dev.is_io d then None else on_queue_run ~waits d src s dst t n
+
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. A leg runs in one transfer by construction: one that finds none,
    such as into a device that runs no copy, goes no further. *)
-let leg fn ~waits ~into_half src dst boxes =
-  match direct fn ~waits ~into_half src dst boxes with
+let leg_of fn src dst = function
   | Some p -> p
   | None ->
       invalid_argf "Rig.%s: no device copies between %s and %s" fn
         src.mem.dev.name dst.mem.dev.name
+
+let leg fn ~waits ~into_half src dst boxes =
+  leg_of fn src dst (direct fn ~waits ~into_half src dst boxes)
+
+let leg_run fn ~waits ~into_half src s dst t n =
+  leg_of fn src dst (direct_run fn ~waits ~into_half src s dst t n)
 
 (* Staging memory
 
@@ -585,12 +628,34 @@ let split boxes =
   close ();
   Array.of_list (List.rev !out)
 
+(* The parts of a piece of one box. *)
+let at_start = [| 0 |]
+
+(* A row of [n] bytes past a half, from [src_offset] and [dst_offset], in
+   pieces of a half of it each, as [split] would make them. *)
+let wide_row ~src_offset ~dst_offset n =
+  Array.init
+    ((n + half_bytes - 1) / half_bytes)
+    (fun k ->
+      let at = k * half_bytes in
+      let x =
+        row ~src_offset:(src_offset + at) ~dst_offset:(dst_offset + at)
+          (Int.min half_bytes (n - at))
+      in
+      { bytes = x.width; boxes = [| x |]; ats = at_start })
+
 (* Boxes that fit a half are one piece of them whole, over the copy's own
-   array, as [split] would make it. *)
+   array, and a single row past a half, as a copy of a buffer makes it, is
+   its pieces, each as [split] would make it. *)
 let pieces boxes =
   let n = total boxes in
-  if n <= half_bytes then [| { bytes = n; boxes; ats = starts boxes } |]
-  else split boxes
+  match boxes with
+  | _ when n <= half_bytes ->
+      let ats = if Array.length boxes = 1 then at_start else starts boxes in
+      [| { bytes = n; boxes; ats } |]
+  | [| { rows = 1; src_offset; dst_offset; width; _ } |] ->
+      wide_row ~src_offset ~dst_offset width
+  | _ -> split boxes
 
 (* The boxes of the leg that moves [p] from the copy's source into a half
    from byte [base], and out of it into the destination. *)
@@ -609,6 +674,21 @@ let out_of_half base p =
     xs.(i) <- { x with src_offset = base + p.ats.(i); src_pitch = x.width }
   done;
   xs
+
+(* The leg that moves the piece [p] from [src] into the half [h] from byte
+   [base], and the one out of [h] into [dst]: a run where [p] is one box of
+   one run, which builds no box. *)
+let leg_into fn ~waits src h base p =
+  match p.boxes with
+  | [| x |] when one_run x ->
+      leg_run fn ~waits ~into_half:true src x.src_offset h base p.bytes
+  | _ -> leg fn ~waits ~into_half:true src h (into_half base p)
+
+let leg_out_of fn ~waits h base dst p =
+  match p.boxes with
+  | [| x |] when one_run x ->
+      leg_run fn ~waits ~into_half:false h base dst x.dst_offset p.bytes
+  | _ -> leg fn ~waits ~into_half:false h dst (out_of_half base p)
 
 (* The bytes of a half from its piece's start past which [writer]'s pieces
    [ps] leave nothing to pack behind: those of one piece the host writes, and
@@ -651,6 +731,14 @@ let holding d writer need ~two f =
           if two then abandon h1;
           reraise e)
 
+(* [into]'s move of piece [k] of [ps] into its half of [b0] and [b1] from
+   [base0] for the first, after the drain of the half's last piece where
+   the host fills it. *)
+let fill_piece ~writer ~into b0 b1 base0 ps k =
+  let b = alternate b0 b1 k in
+  if writer = Host && k >= 2 then Buffer.wait b Buffer.Read_write;
+  ignore (into b (piece_base base0 k) ps.(k) : int)
+
 (* Moves [ps] through halves of [d]'s staging memory: [into b base p] moves
    the piece [p] into the half buffer [b] from byte [base], and [out_of b base
    p] out of it, each the point of its transfer. One piece goes through one
@@ -669,15 +757,11 @@ let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
       let b1 = if n > 1 then ready h1 else b0 in
       let base0 = h0.cursor in
       map_sides fn d b0 b1 sides;
-      let fill k =
-        let b = alternate b0 b1 k in
-        if writer = Host && k >= 2 then Buffer.wait b Buffer.Read_write;
-        ignore (into b (piece_base base0 k) ps.(k) : int)
-      in
       let last = ref 0 in
-      if ahead then fill 0;
+      if ahead then fill_piece ~writer ~into b0 b1 base0 ps 0;
       for k = 0 to n - 1 do
-        if ahead then (if k + 1 < n then fill (k + 1)) else fill k;
+        if not ahead then fill_piece ~writer ~into b0 b1 base0 ps k
+        else if k + 1 < n then fill_piece ~writer ~into b0 b1 base0 ps (k + 1);
         last := out_of (alternate b0 b1 k) (piece_base base0 k) ps.(k)
       done;
       h0.cursor <- base0 + extent writer ps;
@@ -695,10 +779,8 @@ let rec staged fn ~waits src dst boxes =
     through fn (stage_for src dst) ps
       ~writer:(if runs src then Device else Host)
       ~sides:[ src; dst ] ~ahead:(runs src)
-      ~into:(fun h base p ->
-        leg fn ~waits ~into_half:true src h (into_half base p))
-      ~out_of:(fun h base p ->
-        leg fn ~waits ~into_half:false h dst (out_of_half base p))
+      ~into:(fun h base p -> leg_into fn ~waits src h base p)
+      ~out_of:(fun h base p -> leg_out_of fn ~waits h base dst p)
 
 (* Between two devices that each stage through their own memory: [src]'s
    device fills a half of its stage, the host moves the half's bytes into a
@@ -716,10 +798,7 @@ and between fn ~waits src dst ps =
           map_halves fn a0.stage src ha0 ha1;
           map_halves fn b0.stage dst hb0 hb1;
           let into k =
-            ignore
-              (leg fn ~waits ~into_half:true src (alternate ha0 ha1 k)
-                 (into_half 0 ps.(k))
-                : int)
+            ignore (leg_into fn ~waits src (alternate ha0 ha1 k) 0 ps.(k) : int)
           in
           let last = ref 0 in
           into 0;
@@ -727,13 +806,11 @@ and between fn ~waits src dst ps =
             if k + 1 < n then into (k + 1);
             let ha = alternate ha0 ha1 k and hb = alternate hb0 hb1 k in
             if k >= 2 then Buffer.wait hb Buffer.Read_write;
+            let base = piece_base base0 k in
             ignore
-              (leg fn ~waits ~into_half:true ha hb
-                 [| row ~dst_offset:(piece_base base0 k) ps.(k).bytes |]
+              (leg_run fn ~waits ~into_half:true ha 0 hb base ps.(k).bytes
                 : int);
-            last :=
-              leg fn ~waits ~into_half:false hb dst
-                (out_of_half (piece_base base0 k) ps.(k))
+            last := leg_out_of fn ~waits hb base dst ps.(k)
           done;
           a0.cursor <- half_bytes;
           a1.cursor <- half_bytes;
@@ -810,8 +887,8 @@ let submit_copy ?(waits = [||]) ~src ~dst boxes =
 let queued_run fn d src dst n =
   match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
   | Some _, Some s, Some t ->
-      Submission.run_copy d ~waits:[||] ~src:{ src with mem = s }
-        ~dst:{ dst with mem = t }
+      Submission.run_copy d ~waits:[||] ~src:(sub src s 0 n)
+        ~dst:(sub dst t 0 n)
   | _ -> undirected fn ~waits:[||] src dst [| row n |]
 
 (* [copy] under its claims, through its wait. The host's copy of one run
@@ -876,8 +953,7 @@ let upload fn dst put =
                 put h (base + p.ats.(i)) x.dst_offset x.width
               done;
               0)
-            ~out_of:(fun h base p ->
-              leg fn ~waits:[||] ~into_half:false h dst (out_of_half base p))
+            ~out_of:(fun h base p -> leg_out_of fn ~waits:[||] h base dst p)
         in
         if p <> 0 then Dev.wait_point 0 true p)
 
@@ -894,8 +970,7 @@ let download fn src take =
         ignore
           (through fn (stage_with src) (pieces [| row n |]) ~writer:Device
              ~sides:[ src ] ~ahead:true
-             ~into:(fun h base p ->
-               leg fn ~waits:[||] ~into_half:true src h (into_half base p))
+             ~into:(fun h base p -> leg_into fn ~waits:[||] src h base p)
              ~out_of:(fun h base p ->
                Buffer.wait h Buffer.Read;
                for i = 0 to Array.length p.boxes - 1 do
