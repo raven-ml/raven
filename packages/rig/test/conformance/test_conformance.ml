@@ -333,19 +333,21 @@ let copies (module G : Gpu) (ka, kb, n, (oa, ob)) =
   Rig.Point.wait v;
   equal octets data (get dst)
 
-(* A profile records a copy per copy part, from the device of the allocation its
-   bytes leave to the one they reach, with its bytes and the times of its
-   submission's span where the device times its work. A borrow of host memory
-   names the host. *)
+(* A profile records a copy per copy part, from the device in whose budget the
+   memory its bytes leave counts to the one they reach, with its bytes and the
+   times of its submission's span where the device times its work. A borrow of
+   host memory names the host; [Pinned] memory names the device only where the
+   host addresses the device's memory, and the host elsewhere. *)
 let profiled_copies (module G : Gpu) () =
   G.with_ @@ fun t ->
   if (G.D.facts t.g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
   let n = 4096 in
+  let pinned = if Rig.reaches Rig.host t.d then t.d else Rig.host in
   let src, from =
     match borrowed t.d n with
     | Some b -> (b, Rig.host)
-    | None -> (filled ~memory:Pinned t.d (pattern n 1), t.d)
+    | None -> (filled ~memory:Pinned t.d (pattern n 1), pinned)
   in
   let a = B.create t.d n and b = B.create ~memory:Pinned t.d n in
   let (), events =
@@ -364,7 +366,7 @@ let profiled_copies (module G : Gpu) () =
   in
   equal
     (list (triple string string int))
-    [ (Rig.name from, Rig.name t.d, n); (Rig.name t.d, Rig.name t.d, n) ]
+    [ (Rig.name from, Rig.name t.d, n); (Rig.name t.d, Rig.name pinned, n) ]
     (List.map (fun (s, d, n, _, _) -> (Rig.name s, Rig.name d, n)) copies);
   let span =
     List.find_map
