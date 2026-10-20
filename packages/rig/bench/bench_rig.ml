@@ -544,6 +544,20 @@ let copy_rows =
         (fun (ends, _, _) -> copy ends);
       row "staged-4K" (staged ~closed:0 (4 * kib)) copy;
       row "staged-4K/after-1024-closed" (staged ~closed:1024 (4 * kib)) copy;
+      (* Eight small copies from the host through its staging memory to one
+         device, queued one after the other and waited for once: the host
+         writes each piece without waiting for the device. *)
+      row "queued/host-to-device-8x4K"
+        (fun () ->
+          let d = unaddressed () in
+          Array.init 8 (fun _ -> (B.create Rig.host (4 * kib), B.create d (4 * kib))))
+        (fun ends ->
+          let last = ref None in
+          Array.iter
+            (fun (src, dst) ->
+              last := Some (B.submit_copy ~src ~dst [| B.row (4 * kib) |]))
+            ends;
+          Option.iter Rig.Point.wait !last);
     ]
 
 (* A collection hands the memory of 1,000 dropped buffers back, and the next

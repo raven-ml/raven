@@ -95,6 +95,9 @@ let load ~cold (p, dst) =
 let copy_bytes = 256 lsl 20
 
 (* [n] bytes of host memory written, from 16 bytes past a page if [off]. *)
+(* The copies a queued row submits before its one wait. *)
+let queued = 8
+
 let written ?(off = false) n =
   let at = if off then 16 else 0 in
   let b = B.create Rig.host (n + at) in
@@ -253,6 +256,22 @@ let gpu_rows ?graph v ~opened ~kernel =
     (src, dst)
   in
   let copy (src, dst) = B.copy ~src ~dst in
+  (* Eight small copies from host memory off a page, which no GPU borrows, so
+     each goes through the host's staging memory, queued one after the other
+     and waited for once. *)
+  let uploads () =
+    let g, _ = opened () in
+    Array.init queued (fun _ ->
+        (written ~off:true (4 lsl 10), B.create g (4 lsl 10)))
+  in
+  let upload_all ends =
+    let last = ref None in
+    Array.iter
+      (fun (src, dst) ->
+        last := Some (B.submit_copy ~src ~dst [| B.row (4 lsl 10) |]))
+      ends;
+    Option.iter Rig.Point.wait !last
+  in
   let filling bytes () =
     let g, _ = opened () in
     B.create g bytes
@@ -298,6 +317,9 @@ let gpu_rows ?graph v ~opened ~kernel =
         row "from-device-256M" (copying paged ~to_device:false) copy;
         row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
         row "from-device-off-page-256M" (copying off_page ~to_device:false) copy;
+        row
+          (strf "queued/host-to-device-%dx4K" queued)
+          uploads upload_all;
       ];
     (* A fill of the device's own memory, which its copy engine sets where
        the host does not address it; one byte is what nx sets at the end

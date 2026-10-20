@@ -83,7 +83,10 @@ raven / llama.cpp (Vulkan; ROCm):
   `submit/polled/pool-two-domains` (0 words warm), `submit/polled/stores-30`
   and `copy/queue-64K-two-domains` (the words of `copy/queue-64K`) on fudge,
   and every rig row a run of one submission changed (`submit/polled/*`,
-  `replay/polled/*`, `device/*`, `drain/*`)
+  `replay/polled/*`, `device/*`, `drain/*`); rig's
+  `copy/queued/host-to-device-8x4K`, `copy/staged-4K*` and `copy/queue-64K*`,
+  and rig-gpu's `copy/*` with `copy/*/queued/host-to-device-8x4K`, on fudge
+  (NV, CUDA) after the halves and queued copies
 
 ### perf
 
