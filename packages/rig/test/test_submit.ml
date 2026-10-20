@@ -1225,14 +1225,22 @@ let test_parts_stack () =
 
 (* Order *)
 
-(* A case of the order law: parts on a Polled device, copies between views of
-   three allocations, fills whose refs name slots, words, and fixed memory.
-   The allocations are two of the device's, which the host addresses only with
-   [host_visible], and one of the host's, borrowed. A slot's refs are all of
-   its kind. Each words part reads a host buffer of its own. *)
+(* A case of the order law: parts on a Polled device, copies whose ends are
+   views of three allocations or slots, fills and launches whose refs name
+   slots, words, and fixed memory. The allocations are two of the device's,
+   which the host addresses only with [host_visible], and one of the host's,
+   borrowed. A slot's refs are all of its kind, and a copy names only slots of
+   ordered refs. A launch may also hold an entry ref. Each words part reads a
+   host buffer of its own. *)
 type view = { alloc : int; first : int; length : int }
 type use = Read | Write | Unordered
-type order_part = Copy of view * view | Fill of int list | Words
+type side = View of view | Slot of int
+
+type order_part =
+  | Copy of side * side
+  | Fill of int list
+  | Launch of int list * bool  (** Its slots, and whether an entry ref. *)
+  | Words
 
 type order_case = {
   host_visible : bool;
@@ -1245,13 +1253,22 @@ let pp_view ppf v = Format.fprintf ppf "%d[%d+%d]" v.alloc v.first v.length
 
 let pp_order_case ppf c =
   let kind = function Read -> "r" | Write -> "w" | Unordered -> "u" in
+  let side ppf = function
+    | View v -> pp_view ppf v
+    | Slot k -> Format.fprintf ppf "slot %d" k
+  in
+  let slots ppf ks =
+    Format.pp_print_string ppf
+      (String.concat ";"
+         (List.map (fun k -> string_of_int k ^ kind c.kinds.(k)) ks))
+  in
   let part ppf = function
-    | Copy (s, d) -> Format.fprintf ppf "copy %a->%a" pp_view s pp_view d
+    | Copy (s, d) -> Format.fprintf ppf "copy %a->%a" side s side d
     | Words -> Format.fprintf ppf "words"
-    | Fill slots ->
-        Format.fprintf ppf "fill [%s]"
-          (String.concat ";"
-             (List.map (fun k -> string_of_int k ^ kind c.kinds.(k)) slots))
+    | Fill ks -> Format.fprintf ppf "fill [%a]" slots ks
+    | Launch (ks, entry) ->
+        Format.fprintf ppf "launch [%a]%s" slots ks
+          (if entry then " entry" else "")
   in
   Format.fprintf ppf "%sparts [%a]; fixed [%a]"
     (if c.host_visible then "" else "unaddressed; ")
@@ -1289,21 +1306,47 @@ let gen_order_case =
       (frequency
          [ (1, constant Read); (1, constant Write); (3, constant Unordered) ])
   in
+  (* A slot of ordered refs for a copy's end, or none: slots run 8 bytes, so a
+     copy with a slot end copies 8. *)
+  let ordered = List.filter (fun k -> kinds.(k) <> Unordered) [ 0; 1; 2 ] in
+  let slot_end =
+    if ordered = [] then constant None
+    else
+      frequency
+        [
+          (3, constant None);
+          (1, map Option.some (of_list ~pp:Format.pp_print_int ordered));
+        ]
+  in
+  let slots =
+    map (List.sort_uniq Int.compare) (list ~size:(int_range 0 2) (int_range 0 2))
+  in
   let part =
     one_of
       [
-        (* A copy's buffers share no byte (Submission.copy): a [dst] that
-           would share bytes with [src] moves to the next allocation. *)
-        (let* length = length in
-         let+ src = view length and+ dst = view length in
-         let dst =
-           if overlap src dst then
-             { dst with alloc = (dst.alloc + 1) mod nallocs }
-           else dst
+        (* A copy's buffers share no byte and its slots differ
+           (Submission.copy): a [dst] view that would share bytes with [src]
+           moves to the next allocation, and a [dst] slot equal to [src]'s is
+           a view. *)
+        (let* src_slot, dst_slot = pair slot_end slot_end in
+         let* length =
+           if src_slot = None && dst_slot = None then length else constant 8
          in
-         Copy (src, dst));
-        (let+ slots = list ~size:(int_range 0 2) (int_range 0 2) in
-         Fill (List.sort_uniq Int.compare slots));
+         let+ src = view length and+ dst = view length in
+         match (src_slot, dst_slot) with
+         | Some k, Some k' when k <> k' -> Copy (Slot k, Slot k')
+         | Some k, _ -> Copy (Slot k, View dst)
+         | None, Some k -> Copy (View src, Slot k)
+         | None, None ->
+             let dst =
+               if overlap src dst then
+                 { dst with alloc = (dst.alloc + 1) mod nallocs }
+               else dst
+             in
+             Copy (View src, View dst));
+        map (fun ks -> Fill ks) slots;
+        (let+ ks = slots and+ entry = bool in
+         Launch (ks, entry));
         constant Words;
       ]
   in
@@ -1323,25 +1366,27 @@ let gen_order_case =
   { host_visible; kinds; parts; fixed }
 
 (* The case's slots, renumbered from 0 in their order of use, so that every
-   slot is a ref's. *)
+   slot is a ref's or a copy's. *)
 let slot_order c =
+  let add acc k = if List.mem k acc then acc else acc @ [ k ] in
+  let side acc = function Slot k -> add acc k | View _ -> acc in
   List.fold_left
     (fun acc -> function
-      | Fill slots ->
-          List.fold_left
-            (fun acc k -> if List.mem k acc then acc else acc @ [ k ])
-            acc slots
-      | Copy _ | Words -> acc)
+      | Fill slots | Launch (slots, _) -> List.fold_left add acc slots
+      | Copy (src, dst) -> side (side acc src) dst
+      | Words -> acc)
     [] c.parts
 
 (* What a part uses, as Submission.make states it: [`View] a buffer it names,
-   [`Slot] a run's buffer, with whether it writes. *)
+   [`Words] the host buffer a words part reads, which no other part names, and
+   [`Slot] a run's buffer, which may be any, with whether it writes. *)
 let uses c p =
   let fixed = List.map (fun (v, a) -> (`View v, a = Rig.Read_write)) c.fixed in
+  let side w = function View v -> (`View v, w) | Slot _ -> (`Slot, w) in
   match p with
-  | Copy (src, dst) -> (`View src, false) :: (`View dst, true) :: fixed
-  | Words -> fixed
-  | Fill slots ->
+  | Copy (src, dst) -> side false src :: side true dst :: fixed
+  | Words -> (`Words, false) :: fixed
+  | Fill slots | Launch (slots, _) ->
       List.filter_map
         (fun k ->
           match c.kinds.(k) with
@@ -1360,16 +1405,17 @@ let conflict c p p' =
           &&
           match (u, u') with
           | `View v, `View v' -> overlap v v'
-          | _ -> true)
+          | (`View _ | `Words), (`View _ | `Words) -> false
+          | `Slot, _ | _, `Slot -> true)
         (uses c p'))
     (uses c p)
 
-(* The layout the order law states: a fill on queue 0, the first that runs it;
-   words on queue 0, the first that runs launches and words; a copy on the
-   queue of the last earlier part it follows, else on the copy engine, queue
-   1; and per other queue, the last earlier part it follows. A part follows
-   the earlier parts that may share memory with it, and words every earlier
-   part. *)
+(* The layout the order law states: a fill or a launch on queue 0, the first
+   that runs it; words on queue 0, the first that runs launches and words; a
+   copy on the queue of the last earlier part it follows, else on the copy
+   engine, queue 1; and per other queue, the last earlier part it follows. A
+   part follows the earlier parts that may share memory with it, and words
+   every earlier part. *)
 let expected_layout c =
   let parts = Array.of_list c.parts in
   let queues = Array.make (Array.length parts) 0 in
@@ -1379,7 +1425,7 @@ let expected_layout c =
       let earlier = List.init j Fun.id in
       let q =
         match p with
-        | Fill _ | Words -> 0
+        | Fill _ | Launch _ | Words -> 0
         | Copy _ -> (
             match List.filter follows (List.rev earlier) with
             | i :: _ -> queues.(i)
@@ -1425,20 +1471,45 @@ let order_law c =
     | Write -> Sub.write slot ~at
     | Unordered -> Sub.unordered slot ~at
   in
+  let side = function
+    | View v -> Sub.Buffer (buffer v)
+    | Slot k -> Sub.Slot (index k)
+  in
+  let image =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
+  in
+  let main = require_some (Rig.Image.resolve image "main") in
   let part = function
-    | Copy (src, dst) ->
-        Sub.(copy ~src:(Buffer (buffer src)) ~dst:(Buffer (buffer dst)))
+    | Copy (src, dst) -> Sub.copy ~src:(side src) ~dst:(side dst)
     | Fill ks ->
         Sub.fill
           ~refs:(Array.of_list (List.mapi ref_of ks))
           Support.noop
           ~params:(8 * List.length ks)
+    | Launch (ks, entry) ->
+        let n = List.length ks in
+        let entries = if entry then [ Sub.entry main ~at:(8 * n) ] else [] in
+        Sub.launch
+          ~refs:(Array.of_list (List.mapi ref_of ks @ entries))
+          main
+          ~params:(8 * (n + List.length entries))
     | Words -> Sub.words (B.create Rig.host 8)
   in
   let fixed = List.map (fun (v, a) -> (buffer v, a)) c.fixed in
   let s = Sub.make ~fixed d (Array.of_list (List.map part c.parts)) in
   let buffers = Array.of_list (List.map (fun _ -> B.create d 8) slots) in
-  Rig.Point.wait (submit s ~buffers);
+  (* Each launch runs one group of one thread, which Polled's [main] spends
+     doing nothing. *)
+  let run = Sub.Run.make s in
+  List.iteri
+    (fun i -> function
+      | Launch _ ->
+          let b = Sub.block s i in
+          Sub.Run.groups run b 1 1 1;
+          Sub.Run.threads run b 1 1 1
+      | Copy _ | Fill _ | Words -> ())
+    c.parts;
+  Rig.Point.wait (submit ~run s ~buffers);
   let expected = expected_layout c in
   let copy_after_fill =
     List.exists
@@ -1448,7 +1519,8 @@ let order_law c =
   cover "a copy on the copy engine after a fill" copy_after_fill;
   cover "a copy on a fill's queue"
     (List.exists2
-       (fun p (q, _) -> match p with Copy _ -> q = 0 | Fill _ | Words -> false)
+       (fun p (q, _) ->
+         match p with Copy _ -> q = 0 | Fill _ | Launch _ | Words -> false)
        c.parts expected);
   let parts = Array.of_list c.parts in
   cover "words after a part of another queue"
@@ -1466,12 +1538,26 @@ let order_law c =
   cover "an unordered slot"
     (List.exists
        (function
-         | Fill ks -> List.exists (fun k -> c.kinds.(k) = Unordered) ks
+         | Fill ks | Launch (ks, _) ->
+             List.exists (fun k -> c.kinds.(k) = Unordered) ks
          | Copy _ | Words -> false)
        c.parts);
+  cover "a copy with a slot end"
+    (List.exists
+       (function
+         | Copy (Slot _, _) | Copy (_, Slot _) -> true
+         | Copy _ | Fill _ | Launch _ | Words -> false)
+       c.parts);
+  cover "a launch with an entry ref"
+    (List.exists
+       (function
+         | Launch (_, entry) -> entry | Copy _ | Fill _ | Words -> false)
+       c.parts);
   let views =
+    let side = function View v -> [ v ] | Slot _ -> [] in
     List.concat_map
-      (function Copy (s, d) -> [ s; d ] | Fill _ | Words -> [])
+      (function
+        | Copy (s, d) -> side s @ side d | Fill _ | Launch _ | Words -> [])
       c.parts
     @ List.map fst c.fixed
   in
@@ -1479,6 +1565,25 @@ let order_law c =
     (List.exists
        (fun v -> List.exists (fun v' -> v <> v' && overlap v v') views)
        views);
+  (* Unaddressed, each of the device's allocations is a space of its own, cut
+     at the bounds of the views of it: [m] ranges between them. *)
+  let ranges a =
+    let bounds =
+      List.concat_map
+        (fun v ->
+          if v.alloc = a && v.length > 0 then [ v.first; v.first + v.length ]
+          else [])
+        views
+    in
+    List.length (List.sort_uniq Int.compare bounds) - 1
+  in
+  let spaces = if c.host_visible then [] else [ ranges 0; ranges 1 ] in
+  let pow2 m = m > 0 && m land (m - 1) = 0 in
+  cover "a space of one range" (List.mem 1 spaces);
+  cover "a space of a power of 2 ranges, past 1"
+    (List.exists (fun m -> m > 1 && pow2 m) spaces);
+  cover "a space of one past a power of 2 ranges, past 2"
+    (List.exists (fun m -> m > 2 && pow2 (m - 1)) spaces);
   equal
     (list (pair int (list int)))
     ~msg:"each part's queue and after" expected (P.layout p);
