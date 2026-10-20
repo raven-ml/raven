@@ -485,7 +485,8 @@ let extreme gives_b a b =
    The trigonometric kinds are the hyperbolic ones turned by i: sin z = -i
    sinh(iz), cos z = cosh(iz), tan z = -i tanh(iz) and atan z = -i atanh(iz),
    where iz = -y + ix and -i(a + ib) = b - ia; asinh turns asin back, and acosh
-   turns acos. Every NaN part is quieted last. *)
+   turns acos. Every NaN part of an operand is made quiet first, and every NaN
+   part of a value last. *)
 
 let turn (re, im) = quiet (im, negated re)
 
@@ -499,21 +500,17 @@ let acosh x y =
   let v = quiet (negated vi, flip vr y) in
   cases [ (is_nan y &&: finite x, nans x) ] v
 
-(* Each NaN part of z made quiet, its sign kept. A kind that quiets its result's
-   NaN parts never reads an operand's NaN bits but its sign, and a signalling
-   NaN meets the target compiler's liberties: clang folds (c < a) | (c < b) into
-   c < maxnum(a, b), whose AArch64 fmaxnm gives a NaN, and false, where a is
-   infinite and b a signalling NaN. *)
-let calm (re, im) =
+(* z with each NaN part's quiet bit set, its sign and payload kept, as each
+   transcendental kind reads its operands. *)
+let unsignalled (re, im) =
   let q v = where (is_nan v) (quieted v) v in
   (q re, q im)
 
-(* Every kind but Neg reads z calmed. *)
 let unary (k : Nx_kernel.Prog.unary) ((re, im) as z) =
-  let x, y = calm z in
+  let x, y = unsignalled z in
   match k with
   | Neg -> (negated re, negated im)
-  | Recip -> fdiv (one x, zero x) (x, y)
+  | Recip -> fdiv (one re, zero re) z
   | Sign -> quiet (sign_raw x y)
   | Sqrt -> quiet (sqrt_raw x y)
   | Exp -> quiet (exp_raw x y)
@@ -549,7 +546,7 @@ let binary (k : Nx_kernel.Prog.binary) ((ar, ai) as a) ((br, bi) as b) =
   | Add | Sub -> (R.binary k ar br, R.binary k ai bi)
   | Mul -> mul a b
   | Fdiv -> fdiv a b
-  | Pow -> quiet (pow_raw (calm a) (calm b))
+  | Pow -> quiet (pow_raw (unsignalled a) (unsignalled b))
   | Maximum -> extreme precedes a b
   | Minimum -> extreme (fun a b -> precedes b a) a b
   | Idiv | Mod | Atan2 | And | Or | Xor | Threefry ->
