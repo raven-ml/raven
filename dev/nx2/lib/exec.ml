@@ -1530,12 +1530,12 @@ let rec apply3 : type a b v s d.
   | _ -> run3 ~by k c x y
 
 (* The contraction of live arrays on one device, at physically one placement
-   whose set has kernels, computed by them without building the operation.
-   [None] elsewhere, and where the kernels decline it: the operation decides
-   those. *)
-let contract (type v s a b c e d) ~by ~order ~shape ~batch ~contracting ~acc
-    (dt : (v, s) D.t)
-    (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
+   whose set has kernels, computed by them without building the operation into
+   a result of the shape its rule gives. [None] elsewhere, where the pairs do
+   not fit the operands, and where the kernels decline it: the operation
+   decides those. *)
+let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
+    (dt : (v, s) D.t) (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
   match (x, y) with
   | Value.Array rx, Value.Array ry
@@ -1549,8 +1549,13 @@ let contract (type v s a b c e d) ~by ~order ~shape ~batch ~contracting ~acc
             Some (Some ri.a)
         | Some _ -> None
       in
-      match (array, Grid.one (Devices.grid at), Devices.kernels set) with
-      | Some array, Some k, Some (module K) -> (
+      let shape =
+        Nx_kernel.Shape.contract ~batch ~contracting
+          (L.shape (A.layout rx.a))
+          (L.shape (A.layout ry.a))
+      in
+      match (array, shape, Grid.one (Devices.grid at), Devices.kernels set) with
+      | Some array, Ok shape, Some k, Some (module K) -> (
           let dst = A.create (Devices.rig set k) dt shape in
           match
             K.contract ~order ~batch ~contracting ~acc ~dst ~init:array rx.a

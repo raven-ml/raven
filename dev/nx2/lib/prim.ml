@@ -1375,15 +1375,15 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
   | Some _ | None -> ());
   s
 
-(* The product of [s]'s extents along the axes no pair names on [side],
-   [max_int] past it. *)
-let free_extent ~batch ~contracting s side =
+(* The product of [x]'s extents along the axes no pair names on [side],
+   [max_int] past it: a contraction's rows or columns. *)
+let free_extent ~batch ~contracting x side =
   let rec names ps i k =
     k < Iarray.length ps && (side (Iarray.get ps k) = i || names ps i (k + 1))
   in
   let n = ref 1 in
-  for i = 0 to Array.length s - 1 do
-    let e = s.(i) in
+  for i = 0 to rank x - 1 do
+    let e = dim x i in
     if not (names batch i 0 || names contracting i 0) then
       n :=
         if !n = 0 || e = 0 then 0
@@ -1392,16 +1392,13 @@ let free_extent ~batch ~contracting s side =
   done;
   !n
 
-let contract_order_of ~rows ~columns a b : Nx_kernel.order =
+let contract_order ~batch ~contracting a b : Nx_kernel.order =
+  let rows = free_extent ~batch ~contracting a fst in
+  let columns = free_extent ~batch ~contracting b snd in
   match (at a, at b) with
   | Some p, _ | None, Some p ->
       Devices.contract_order (Devices.set p) ~rows ~columns
   | None, None -> Devices.contract_order Devices.host ~rows ~columns
-
-let contract_order ~batch ~contracting a b =
-  let rows = free_extent ~batch ~contracting (shape a) fst in
-  let columns = free_extent ~batch ~contracting (shape b) snd in
-  contract_order_of ~rows ~columns a b
 
 let linalg_results : type d r.
     by:string ->

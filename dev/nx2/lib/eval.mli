@@ -97,9 +97,6 @@ val apply3 :
 
 val contract :
   by:string ->
-  shape:int array ->
-  rows:int ->
-  columns:int ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
@@ -108,13 +105,10 @@ val contract :
   ('c, 'e, 'd) t ->
   ('v, 's, 'd) t option ->
   ('v, 's, 'd) t
-(** [contract ~by ~shape ~rows ~columns ~batch ~contracting ~acc dt a b init]
-    is {!eval} of the contraction [Contract] of [a] and [b] from [init] into
-    [dt], whose result has [shape] and whose rows and columns are [rows] and
-    [columns] ({!Prim.contract_order_of}), as its caller planned them from
-    operands and an [acc] it checked against the contraction's rule. With no
-    live [Extent], it is {!Exec.contract} where that
-    answers. *)
+(** [contract ~by ~batch ~contracting ~acc dt a b init] is {!eval} of the
+    contraction [Contract] of [a] and [b] from [init] into [dt], in the order
+    of summation {!Prim.contract_order} gives. With no live [Extent], it is
+    {!Exec.contract} where that answers. *)
 
 val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t

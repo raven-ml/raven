@@ -276,22 +276,6 @@ val contract_order :
     [max_int] past it. Where that set has no kernels, as one of devices of
     several kinds, or both are of every set, it is the one nx.cpu chooses. *)
 
-val free_extent :
-  batch:(int * int) iarray ->
-  contracting:(int * int) iarray ->
-  int array ->
-  (int * int -> int) ->
-  int
-(** [free_extent ~batch ~contracting s side] is the product of [s]'s extents
-    along the axes no pair names on [side] ([fst] for [a], [snd] for [b]),
-    [max_int] past it: a contraction's rows or columns as
-    {!contract_order} counts them. *)
-
-val contract_order_of :
-  rows:int -> columns:int -> ('a, 'b, 'd) t -> ('c, 'e, 'd) t -> Nx_kernel.order
-(** [contract_order_of ~rows ~columns a b] is {!contract_order} for [rows] and
-    [columns] its caller computed as it does. *)
-
 (** {1:loads Loads} *)
 
 val load_any : 'd load -> 'd any

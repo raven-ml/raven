@@ -219,10 +219,8 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
     invalid_argf "%s: a contraction of shape %a has more than %d elements" by
       pp_shape kernel Nx_array.Layout.max_numel;
   let batch = pl.batch and contracting = pl.contracting in
-  let rows = Prim.free_extent ~batch ~contracting pl.a fst in
-  let columns = Prim.free_extent ~batch ~contracting pl.b snd in
   let y =
-    Eval.contract ~by ~shape:kernel ~rows ~columns ~batch ~contracting ~acc dt
+    Eval.contract ~by ~batch ~contracting ~acc dt
       (if pl.a_whole then a else reshape ~by pl.a a)
       (if pl.b_whole then b else reshape ~by pl.b b)
       init
