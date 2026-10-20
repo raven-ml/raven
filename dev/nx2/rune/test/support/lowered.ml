@@ -120,6 +120,14 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
 
 (* Lowering *)
 
+(* An expansion's loop, unrolled: the graph holds each trip. *)
+let repeat n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
+
 let rule bound i ~by (type r) (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
@@ -132,7 +140,7 @@ let rule bound i ~by (type r) (op : r Nx.Prim.t) : r =
   | Some ys ->
       Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
   | None -> (
-      match Nx.Prim.expand i ~by op with
+      match Nx.Prim.expand i ~by ~repeat op with
       | Some r -> r
       | None -> invalid_arg ("Lowered: no expansion of " ^ Nx.Prim.name op))
 
