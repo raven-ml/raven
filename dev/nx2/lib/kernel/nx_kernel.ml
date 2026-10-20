@@ -106,14 +106,14 @@ module Shape = struct
   (* Whether [s]'s extents are non-negative and those other than 0 multiply to
      at most max_numel: the shapes a layout admits. *)
   let admitted s =
-    let rec go i n =
-      i = Array.length s
-      ||
-      let d = s.(i) in
-      d >= 0
-      && if d = 0 then go (i + 1) n else d <= L.max_numel / n && go (i + 1) (n * d)
-    in
-    go 0 1
+    let ok = ref true and n = ref 1 and i = ref 0 in
+    while !ok && !i < Array.length s do
+      let d = s.(!i) in
+      if d < 0 || (d > 0 && d > L.max_numel / !n) then ok := false
+      else if d > 0 then n := !n * d;
+      incr i
+    done;
+    !ok
 
   let admit what s =
     if admitted s then Ok s
@@ -262,48 +262,73 @@ module Shape = struct
     in
     go 0
 
+  (* Pair [k] of a contraction: its batch pairs, then its contracting ones. *)
+  let nth_pair batch contracting k =
+    let nb = Iarray.length batch in
+    if k < nb then Iarray.get batch k else Iarray.get contracting (k - nb)
+
+  (* Whether pair [k] is the first to name axis [i] of [side]. *)
+  let first_on side batch contracting k i =
+    let earlier = ref 0 in
+    while !earlier < k && side (nth_pair batch contracting !earlier) <> i do
+      incr earlier
+    done;
+    !earlier = k
+
+  (* Whether a pair names axis [i] of [side]. *)
+  let paired side batch contracting i =
+    let n = Iarray.length batch + Iarray.length contracting in
+    not (first_on side batch contracting n i)
+
+  (* Plain loops: a contraction is checked on the eager path, which allocates
+     nothing here beyond the result. *)
   let contract ~batch ~contracting a b =
     let ra = Array.length a and rb = Array.length b in
-    (* Whether a pair names each axis: [a]'s, then [b]'s. *)
-    let used = Array.make (ra + rb) false in
-    let pair what k (i, j) =
-      if i < 0 || i >= ra then errorf "%s pair %d: no axis %d of a" what k i
-      else if j < 0 || j >= rb then errorf "%s pair %d: no axis %d of b" what k j
-      else if used.(i) then errorf "axis %d of a is in two pairs" i
-      else if used.(ra + j) then errorf "axis %d of b is in two pairs" j
-      else if a.(i) <> b.(j) then
-        errorf "%s pair %d: extents %d and %d" what k a.(i) b.(j)
-      else begin
-        used.(i) <- true;
-        used.(ra + j) <- true;
-        Ok ()
-      end
-    in
-    let rec pairs what ps k =
-      if k = Iarray.length ps then Ok ()
-      else
-        let* () = pair what k (Iarray.get ps k) in
-        pairs what ps (k + 1)
-    in
-    let* () = pairs "batch" batch 0 in
-    let* () = pairs "contracting" contracting 0 in
-    (* The batch extents, then the free ones: [a]'s, then [b]'s. *)
     let nb = Iarray.length batch in
-    let paired = nb + Iarray.length contracting in
-    let y = Array.make (nb + ra + rb - (2 * paired)) 0 in
-    for k = 0 to nb - 1 do
-      y.(k) <- a.(fst (Iarray.get batch k))
+    let n = nb + Iarray.length contracting in
+    let error = ref None and k = ref 0 in
+    while Option.is_none !error && !k < n do
+      let i, j = nth_pair batch contracting !k in
+      let what = if !k < nb then "batch" else "contracting" in
+      let p = if !k < nb then !k else !k - nb in
+      if i < 0 || i >= ra then
+        error := Some (Printf.sprintf "%s pair %d: no axis %d of a" what p i)
+      else if j < 0 || j >= rb then
+        error := Some (Printf.sprintf "%s pair %d: no axis %d of b" what p j)
+      else if not (first_on fst batch contracting !k i) then
+        error := Some (Printf.sprintf "axis %d of a is in two pairs" i)
+      else if not (first_on snd batch contracting !k j) then
+        error := Some (Printf.sprintf "axis %d of b is in two pairs" j)
+      else if a.(i) <> b.(j) then
+        error :=
+          Some
+            (Printf.sprintf "%s pair %d: extents %d and %d" what p a.(i) b.(j));
+      incr k
     done;
-    let k = ref nb in
-    for ax = 0 to ra + rb - 1 do
-      if not used.(ax) then begin
-        y.(!k) <- (if ax < ra then a.(ax) else b.(ax - ra));
-        incr k
-      end
-    done;
-    if Array.length y > L.max_rank then
-      errorf "a result of rank %d" (Array.length y)
-    else admit "a contraction" y
+    match !error with
+    | Some e -> Error e
+    | None ->
+        (* The batch extents, then the free ones: [a]'s, then [b]'s. *)
+        let y = Array.make (nb + ra + rb - (2 * n)) 0 in
+        for k = 0 to nb - 1 do
+          y.(k) <- a.(fst (Iarray.get batch k))
+        done;
+        let k = ref nb in
+        for ax = 0 to ra - 1 do
+          if not (paired fst batch contracting ax) then begin
+            y.(!k) <- a.(ax);
+            incr k
+          end
+        done;
+        for ax = 0 to rb - 1 do
+          if not (paired snd batch contracting ax) then begin
+            y.(!k) <- b.(ax);
+            incr k
+          end
+        done;
+        if Array.length y > L.max_rank then
+          errorf "a result of rank %d" (Array.length y)
+        else admit "a contraction" y
 
   let c2c ~axes x =
     if Iarray.length axes = 0 then Error "a transform along no axis"

@@ -660,6 +660,10 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
           at_most (float 0.5) ~than:125. (words (fun () -> Nx.copy a)));
+      test "a matmul of 4x4 float32 host values allocates its budget"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
+          at_most (float 0.5) ~than:176. (words (fun () -> Nx.matmul a a)));
     ]
 
 (* Placements *)

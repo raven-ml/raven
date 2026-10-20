@@ -1528,14 +1528,16 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
 
 (* The product of [x]'s extents along the axes no pair names on [side],
    [max_int] past it: a contraction's rows or columns. *)
+(* Whether a pair of [ps] from the [k]th on names axis [i] on [side]. *)
+let rec names side ps i k =
+  k < Iarray.length ps
+  && (side (Iarray.get ps k) = i || names side ps i (k + 1))
+
 let free_extent ~batch ~contracting x side =
-  let rec names ps i k =
-    k < Iarray.length ps && (side (Iarray.get ps k) = i || names ps i (k + 1))
-  in
   let n = ref 1 in
   for i = 0 to rank x - 1 do
     let e = dim x i in
-    if not (names batch i 0 || names contracting i 0) then
+    if not (names side batch i 0 || names side contracting i 0) then
       n :=
         if !n = 0 || e = 0 then 0
         else if !n > max_int / e then max_int

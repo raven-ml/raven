@@ -35,26 +35,10 @@ type plan = {
   order : int array; (* The kernel's axes in the result's names' order. *)
   names : int array; (* The result's names' extents, in written order. *)
   shape : int array; (* The result's shape. *)
-  kernel : int array; (* The kernel's result: batch, a's free axes, b's. *)
   a_whole : bool; (* The operand [a] already has [a]: no reshape. *)
   b_whole : bool;
   y_whole : bool; (* The kernel's permuted result already has [shape]. *)
 }
-
-(* Whether [s]'s extents are non-negative and those other than 0 multiply
-   to at most a layout's elements: Nx_kernel.Shape's rule, which it does
-   not export. *)
-let admitted s =
-  let rec go i n =
-    i = Array.length s
-    ||
-    let d = s.(i) in
-    d >= 0
-    &&
-    if d = 0 then go (i + 1) n
-    else d <= Nx_array.Layout.max_numel / n && go (i + 1) (n * d)
-  in
-  go 0 1
 
 (* Whether [x] and [y] hold the same ints. *)
 let same (x : int array) (y : int array) =
@@ -104,7 +88,6 @@ let lower ~ext na nb nr shape =
     order = ints (fun n -> index_of n kernel) nr;
     names = ints (Array.get ext) nr;
     shape;
-    kernel = ints (Array.get ext) kernel;
     a_whole = false;
     b_whole = false;
     y_whole = false;
@@ -210,14 +193,6 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
         if identity pl.order then i else permute ~by (inverse pl.order) i)
       init
   in
-  (* The kernel's result past a layout's axes or elements raises naming
-     [by], as the contraction's rule (Nx_kernel.Shape.contract) words it. *)
-  let kernel = pl.kernel in
-  if Array.length kernel > Nx_array.Layout.max_rank then
-    invalid_argf "%s: a result of rank %d" by (Array.length kernel);
-  if not (admitted kernel) then
-    invalid_argf "%s: a contraction of shape %a has more than %d elements" by
-      pp_shape kernel Nx_array.Layout.max_numel;
   let batch = pl.batch and contracting = pl.contracting in
   let y =
     Eval.contract ~by ~batch ~contracting ~acc dt
@@ -333,13 +308,6 @@ let matmul ~by a b =
       order;
       names = shape;
       shape;
-      kernel =
-        (if identity order then shape
-         else begin
-           let s = Array.make r 0 in
-           Array.iteri (fun i o -> s.(o) <- shape.(i)) order;
-           s
-         end);
       a_whole = same ea sa;
       b_whole = same eb sb;
       y_whole = true;
@@ -376,7 +344,6 @@ let dot ~by a b =
       order = Array.init r Fun.id;
       names = shape;
       shape;
-      kernel = shape;
       a_whole = true;
       b_whole = true;
       y_whole = true;
