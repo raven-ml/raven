@@ -1113,21 +1113,23 @@ module Buffer : sig
       the first copy whose bytes need it. A copy holds one allocation, or two
       for more than 32 MiB, until the transfers the host makes for it are
       done. A copy of at most 32 MiB whose bytes the host writes into staging
-      memory puts them after those of earlier copies in an allocation that no
-      copy holds, where it has room, and waits for no work there. Where none
-      has room, it takes an allocation whose work is done, else the one whose
-      bytes were placed from its start longest ago, and waits for its work. A
-      copy whose bytes a device writes into staging memory takes an
-      allocation whose work is done, or a new one. Staging memory so grows by
-      32 or 64 MiB for each copy holding it at once, and by 32 MiB for each
-      copy whose bytes a device wrote into it and whose work is still queued.
-      A copy of more than 32 MiB waits before it reuses one of its two
-      allocations until the work that last read it is done.
+      memory puts them after the bytes earlier such copies put in an
+      allocation that no copy holds, where it has room, and waits for no work
+      there. Where none has room, it takes an allocation whose work is done,
+      else the one whose bytes were placed from its start longest ago, and
+      waits for its work. A copy whose bytes a device writes into staging
+      memory takes an allocation whose work is done, or a new one, and no
+      copy puts bytes after them. Staging memory so grows by 32 or 64 MiB for
+      each copy holding it at once, and by as much for each copy whose bytes
+      a device wrote into it and whose work is still queued. A copy of more
+      than 32 MiB whose bytes the host writes waits before it reuses one of
+      its two allocations until the work that last read it is done; where a
+      device writes them, its queue waits.
 
-      A copy's allocations serve the copies after it. Let [n] be the number
-      of allocations a staging memory has made. When a copy gives its
-      allocations back, every allocation that no copy holds and that none of
-      the last [n] allocations copies took returns as {!free} returns memory.
+      A copy's allocations serve the copies after it. Let [n] be the most
+      allocations a staging memory has had held at once. When a copy gives
+      its allocations back, every allocation that no copy holds and that no
+      copy took within the last [n] takes returns as {!free} returns memory.
       Copies that run one after another, or several at a time over and over,
       keep theirs.
 
@@ -1208,12 +1210,16 @@ module Buffer : sig
          once the transfers the host makes are done and the others are
          queued. The point is that of its last transfer, which follows the
          others.}
-      {- Where the host or an io device copies, and for a copy of no bytes,
-         [submit_copy] returns once the copy is done, and the point is a
-         point of {!Rig.host} that is reached.}}
+      {- Where the host or an io device copies, [submit_copy] returns once
+         the copy is done, and the point is a point of {!Rig.host} that is
+         reached. A copy of no bytes waits on the host for the points of
+         [waits] and returns such a point.}}
       It blocks where {!Rig.submit} blocks, where the host copies after the
-      work the copy follows, and where a transfer into staging memory waits
-      for the work that last read that memory. It allocates.
+      work the copy follows, where a transfer into staging memory waits for
+      the work that last read that memory, and where the host moves bytes
+      out of staging memory after a device's transfer into it, which it
+      waits for. So a copy from a device's memory into host memory that no
+      device borrows returns once its bytes are there. It allocates.
 
       Memory outside the claims, such as a bigarray's ({!of_bigarray}) or
       an exported array's ({!export}), is read and written by the copy until
@@ -1225,8 +1231,9 @@ module Buffer : sig
       side is an io device's memory and the other a borrow of it, a side's
       memory is held exclusive, or the copy has bytes and no device can copy
       between the two sides. Raises {!Lost} if a device that runs a transfer
-      is lost before its submission, or its submission loses it, or if a
-      point of [waits] is a lost device's and that device never reached it;
+      is lost before its submission, or its submission loses it, or while
+      the host waits for a transfer it moves bytes after, or if a point of
+      [waits] is a lost device's and that device never reached it;
       {!Out_of_memory} if staging memory cannot be allocated or mapped; and
       what an io device's read or write raises. *)
 

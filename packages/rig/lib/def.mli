@@ -351,8 +351,8 @@ and buffer = { mem : memory; offset : int; length : int; generation : int }
     bit says what it admits ({!Memory.admits}). *)
 
 (** The type for a half of a device's staging memory ({!Copy}), whose fields
-    change under its device's lock, and its [buffer] also while a copy holds
-    it. *)
+    change under its device's lock, and its [buffer] and [cursor] also
+    outside it while a copy holds it, which the give's lock publishes. *)
 and half = {
   mutable buffer : buffer option;
       (** Its allocation of 32 MiB, made at the first copy that needs it, and

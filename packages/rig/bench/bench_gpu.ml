@@ -94,10 +94,10 @@ let load ~cold (p, dst) =
 
 let copy_bytes = 256 lsl 20
 
-(* [n] bytes of host memory written, from 16 bytes past a page if [off]. *)
 (* The copies a queued row submits before its one wait. *)
 let queued = 8
 
+(* [n] bytes of host memory written, from 16 bytes past a page if [off]. *)
 let written ?(off = false) n =
   let at = if off then 16 else 0 in
   let b = B.create Rig.host (n + at) in
