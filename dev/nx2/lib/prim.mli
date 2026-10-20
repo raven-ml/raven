@@ -6,12 +6,13 @@
 (** Operations as data, and values' facts: the functions over {!Value.prim} and
     {!Value.t} that the engine and [Nx.Prim] share.
 
-    Every function is total over the constructors. {!route} and {!results_at}
-    state each operation's rule once: the shapes, dtypes, axes and attributes
-    its operands must have, where it reads them, and the form of each result,
-    its placement from {!Route}. The eager engine routes, places and allocates
-    destinations through them, and interpretations make traced results through
-    {!results}, so the two agree in dtype, layout and placement.
+    Every function is total over the constructors. {!route} states each
+    operation's rule once: the shapes, dtypes, axes and attributes its
+    operands must have, where it reads them, and each result's layout and
+    placement, from {!Route}; {!results_at} makes the results' forms from what
+    it decided. The eager engine routes, places and allocates destinations
+    through them, and interpretations make traced results through {!results},
+    so the two agree in dtype, layout and placement.
     A sharded value's shape is the whole's, which it holds; each shard is its
     device's window of it. *)
 
@@ -173,37 +174,52 @@ val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 
     Raises [Invalid_argument] for an operation that is not a loop. *)
 
-val route : by:string -> 'r prim -> unit Route.t option
-(** [route ~by op] is where [op] reads each operand, in {!operands}' order,
-    where its results lie and how its devices compute them, after checking its
-    operands against its rule: [None] where every operand is of every set.
-    Operands that lie at one placement that cuts no axis, the others of every
-    set, are read there and their results lie there; otherwise {!Route.route}
-    of {!rule} decides. [Place] and [Check] are not routed: [None]. A deferred
-    value's placement and its eager twin's come from this one route over the
-    same operands.
+val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
+(** [layouts ~by op] is the layouts of [op]'s results that eager execution
+    gives them, after checking its operands against its rule: one per result
+    of a [Linalg], one that every result of any other operation shares, none
+    for a [Check]. A [Place]'s is its result's at its own placement.
 
-    Raises [Invalid_argument] naming [by] where [op]'s operands break its rule,
-    and as {!Route.route} does. *)
+    Raises [Invalid_argument] naming [by] where [op]'s operands break its
+    rule. *)
+
+(** The type for what an operation's rule decides. *)
+type routed = {
+  route : unit Route.t option;
+      (** Where it reads each operand, in {!operands}' order, where its
+          results lie and how its devices compute them: [None] where every
+          operand is of every set, and for [Place] and [Check], which are not
+          routed. *)
+  layouts : Nx_array.Layout.t array;  (** Its results' ({!layouts}). *)
+}
+
+val route : by:string -> 'r prim -> routed
+(** [route ~by op] is what [op]'s rule decides, checked once. Operands that
+    lie at one placement that cuts no axis, the others of every set, are read
+    there and their results lie there; otherwise {!Route.route} of {!rule}
+    decides. A deferred value's placement and its eager twin's come from this
+    one route over the same operands.
+
+    Raises as {!layouts} does, then as {!Route.route} does. *)
 
 val results_at :
-  by:string ->
   unit Devices.placement option ->
+  Nx_array.Layout.t array ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
   'r prim ->
   'r
-(** [results_at ~by p m op] is [op]'s result, its value at position [k] made by
-    [m k f], [f] the form eager execution gives it at [p], for an [op] whose
-    rule {!route} checked; [()] for [Check]. A [Place]'s result lies at its
-    own placement. *)
+(** [results_at p layouts m op] is [op]'s result, its value at position [k]
+    made by [m k f], [f] the form eager execution gives it at [p], laid out as
+    [layouts], [op]'s {!layouts}; [()] for [Check]. A [Place]'s result lies
+    at its own placement. It checks nothing. *)
 
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
   'r prim ->
   'r
-(** [results ~by m op] is {!results_at} at the placement {!route} gives [op]'s
-    results.
+(** [results ~by m op] is {!results_at} of what {!route} decides for [op]:
+    its results' layouts, at the placement of its results.
 
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)

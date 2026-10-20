@@ -1554,15 +1554,14 @@ let contract_order ~batch ~contracting a b : Nx_kernel.order =
   | None, None -> Devices.contract_order Devices.host ~rows ~columns
 
 let linalg_results : type d r.
-    by:string ->
     ('v 's 'c. int -> ('v, 's, 'c) form -> ('v, 's, 'c) t) ->
+    L.t array ->
     d Devices.placement option ->
     (d, r) linalg ->
     r =
- fun ~by m placement l ->
-  let shapes = linalg_shapes ~by l in
+ fun m layouts placement l ->
   let one : type v s. int -> (v, s) dtype -> (v, s, d) t =
-   fun k dtype -> m k (of_layout dtype (L.contiguous shapes.(k)) placement)
+   fun k dtype -> m k (of_layout dtype layouts.(k) placement)
   in
   (* Results are made in position order. *)
   let two a b =
@@ -1588,31 +1587,52 @@ let linalg_results : type d r.
   | Eig { vectors = Vectors (); dtype; _ } -> two dtype dtype
   | Solve_triangular { a; _ } -> one 0 (dtype a)
 
-(* Raises naming [by] where [op]'s operands break its rule. *)
-let check : type r. by:string -> r prim -> unit =
+(* [op]'s results' layouts, by its rule: one per result of a factorisation,
+   one that every result of another operation shares, none for a check.
+   Raises naming [by] where [op]'s operands break the rule. *)
+let layouts : type r. by:string -> r prim -> L.t array =
  fun ~by op ->
   match op with
-  | Map { layout; prog; outs; loads } -> check_map ~by layout prog outs loads
+  | Map { layout; prog; outs; loads } ->
+      check_map ~by layout prog outs loads;
+      [| layout |]
   | Reduce { layout; axes; prog; reductions; loads } ->
-      ignore (check_reduce ~by layout axes prog reductions loads)
+      [| L.contiguous (check_reduce ~by layout axes prog reductions loads) |]
   | Scan { layout; axis; prog; reduction; loads; carry } ->
-      check_scan ~by layout axis prog reduction loads carry
-  | Gather { axis; idx; x } -> ignore (gather_shape ~by axis idx x)
+      check_scan ~by layout axis prog reduction loads carry;
+      [| layout |]
+  | Gather { axis; idx; x } -> [| L.contiguous (gather_shape ~by axis idx x) |]
   | Scatter { combine; axis; idx; updates; into; _ } ->
-      ignore (scatter_shape ~by combine axis idx updates into)
-  | Sort { axis; k; x; _ } -> ignore (sort_shape ~by axis k x)
-  | Fft f -> ignore (fft_shape ~by f)
-  | Linalg l -> ignore (linalg_shapes ~by l)
-  | Fold { shape; pad; x } -> check_fold ~by (Iarray.to_array shape) pad x
+      [| L.contiguous (scatter_shape ~by combine axis idx updates into) |]
+  | Sort { axis; k; x; _ } -> [| L.contiguous (sort_shape ~by axis k x) |]
+  | Fft f -> [| L.contiguous (fft_shape ~by f) |]
+  | Linalg l -> Array.map L.contiguous (linalg_shapes ~by l)
+  | Fold { shape; pad; x } ->
+      let shape = Iarray.to_array shape in
+      check_fold ~by shape pad x;
+      [| L.contiguous shape |]
   | Assemble { dtype; shape; fill; pieces } ->
-      check_assemble ~by dtype (Iarray.to_array shape) fill pieces
+      let shape = Iarray.to_array shape in
+      check_assemble ~by dtype shape fill pieces;
+      [| L.contiguous shape |]
   | Contract { batch; contracting; acc; a; b; init; _ } ->
-      ignore (contract_shape ~by ~batch ~contracting ~acc a b init)
-  | Copy _ -> ()
-  | Move (mv, x) -> ignore (moved_shape ~by mv x)
+      [| L.contiguous (contract_shape ~by ~batch ~contracting ~acc a b init) |]
+  | Copy x -> [| L.contiguous (shape x) |]
+  | Move (mv, x) -> (
+      let s' = moved_shape ~by mv x in
+      match L.move mv (form_layout x) with
+      | Some l -> [| l |]
+      | None -> [| L.contiguous s' |])
   | Bitcast (dt, x) ->
-      ignore (bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt))
-  | Place (p, x) -> ignore (Devices.window ~by p (shape x) 0)
+      [| bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt) |]
+  | Place (p, x) ->
+      let s = shape x in
+      ignore (Devices.window ~by p s 0);
+      [|
+        (match (x, Devices.device p) with
+        | Array { a; _ }, Some _ -> Nx_array.layout a
+        | _ -> L.contiguous s);
+      |]
   | Check { ok; data; _ } ->
       let s = shape ok in
       List.iteri
@@ -1620,83 +1640,52 @@ let check : type r. by:string -> r prim -> unit =
           if shape x <> s then
             invalid_argf "%s: datum %d has shape %a, the flag %a" by i pp_shape
               (shape x) pp_shape s)
-        (data_any data)
+        (data_any data);
+      [||]
 
-let route : type r. by:string -> r prim -> unit Route.t option =
+type routed = { route : unit Route.t option; layouts : L.t array }
+
+let route : type r. by:string -> r prim -> routed =
  fun ~by op ->
-  check ~by op;
+  let layouts = layouts ~by op in
   match op with
-  | Place _ | Check _ -> None
+  | Place _ | Check _ -> { route = None; layouts }
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
     ->
-      route_of ~by op
+      { route = route_of ~by op; layouts }
 
 let results_at : type r.
-    by:string ->
     unit Devices.placement option ->
+    L.t array ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
     r prim ->
     r =
- fun ~by p m op ->
-  (* The results' placement, at their brand. *)
-  let here () =
-    match p with None -> None | Some q -> Some (Devices.rebrand q)
-  in
+ fun p layouts m op ->
+  let here () = Devices.rebrand_option p in
   match op with
-  | Map { layout; outs; _ } -> make_outs m 0 layout (here ()) outs
-  | Reduce { layout; axes; reductions; _ } ->
-      let out = L.contiguous (reduced_shape ~by layout axes reductions) in
-      make_reductions m 0 out (here ()) reductions
-  | Scan { layout; reduction; _ } ->
-      make_reduction m 0 layout (here ()) reduction
-  | Gather { axis; idx; x } ->
-      let layout = L.contiguous (gather_shape ~by axis idx x) in
-      m 0 (of_layout (dtype x) layout (here ()))
-  | Scatter { combine; axis; idx; updates; into; _ } ->
-      let layout =
-        L.contiguous (scatter_shape ~by combine axis idx updates into)
-      in
-      m 0 (of_layout (dtype into) layout (here ()))
-  | Sort { axis; k; x; _ } ->
-      let layout = L.contiguous (sort_shape ~by axis k x) in
-      let values = m 0 (of_layout (dtype x) layout (here ())) in
-      (values, m 1 (of_layout D.Int64 layout (here ())))
+  | Map { outs; _ } -> make_outs m 0 layouts.(0) (here ()) outs
+  | Reduce { reductions; _ } ->
+      make_reductions m 0 layouts.(0) (here ()) reductions
+  | Scan { reduction; _ } -> make_reduction m 0 layouts.(0) (here ()) reduction
+  | Gather { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
+  | Scatter { into; _ } -> m 0 (of_layout (dtype into) layouts.(0) (here ()))
+  | Sort { x; _ } ->
+      let values = m 0 (of_layout (dtype x) layouts.(0) (here ())) in
+      (values, m 1 (of_layout D.Int64 layouts.(0) (here ())))
   | Fft f -> (
-      let layout = L.contiguous (fft_shape ~by f) in
       match f with
-      | C2c { x; _ } -> m 0 (of_layout (dtype x) layout (here ()))
-      | R2c { dtype; _ } -> m 0 (of_layout dtype layout (here ()))
-      | C2r { dtype; _ } -> m 0 (of_layout dtype layout (here ())))
-  | Linalg l -> linalg_results ~by m (here ()) l
-  | Fold { shape; x; _ } ->
-      let layout = L.contiguous (Iarray.to_array shape) in
-      m 0 (of_layout (dtype x) layout (here ()))
-  | Assemble { dtype; shape; _ } ->
-      m 0 (of_layout dtype (L.contiguous (Iarray.to_array shape)) (here ()))
-  | Contract { batch; contracting; acc; out; a; b; init; _ } ->
-      let shape = contract_shape ~by ~batch ~contracting ~acc a b init in
-      m 0 (of_layout out (L.contiguous shape) (here ()))
-  | Copy x -> m 0 (of_layout (dtype x) (L.contiguous (shape x)) (here ()))
-  | Move (mv, x) ->
-      let layout =
-        match L.move mv (form_layout x) with
-        | Some l -> l
-        | None -> L.contiguous (moved_shape ~by mv x)
-      in
-      m 0 (of_layout (dtype x) layout (here ()))
-  | Bitcast (dt, x) ->
-      let layout =
-        bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt)
-      in
-      m 0 (of_layout dt layout (here ()))
-  | Place (p, x) ->
-      let layout =
-        match (x, Devices.device p) with
-        | Array { a; _ }, Some _ -> Nx_array.layout a
-        | _ -> L.contiguous (shape x)
-      in
-      m 0 (of_layout (dtype x) layout (Some p))
+      | C2c { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
+      | R2c { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ()))
+      | C2r { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ())))
+  | Linalg l -> linalg_results m layouts (here ()) l
+  | Fold { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
+  | Assemble { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ()))
+  | Contract { out; _ } -> m 0 (of_layout out layouts.(0) (here ()))
+  | Copy x -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
+  | Move (_, x) -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
+  | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) (here ()))
+  | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) (Some p))
   | Check _ -> ()
 
 let results : type r.
@@ -1705,8 +1694,9 @@ let results : type r.
     r prim ->
     r =
  fun ~by m op ->
-  let p = Option.map (fun (r : _ Route.t) -> r.result) (route ~by op) in
-  results_at ~by p m op
+  let { route; layouts } = route ~by op in
+  let p = Option.map (fun (r : _ Route.t) -> r.result) route in
+  results_at p layouts m op
 
 (* One-node maps *)
 

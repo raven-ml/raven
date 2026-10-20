@@ -125,6 +125,9 @@ val without_leading_axis : 'd placement -> 'd placement
 val rebrand : 'd placement -> 'e placement
 (** [rebrand p] is [p] at another brand. *)
 
+val rebrand_option : 'd placement option -> 'e placement option
+(** [rebrand_option p] is [p] at another brand, allocating nothing. *)
+
 val pp_placement : Format.formatter -> 'd placement -> unit
 (** [pp_placement] formats a placement on one device as the device's name, and others as the placement that builds them over the
     set: [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]], or a mesh's

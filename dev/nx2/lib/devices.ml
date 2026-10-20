@@ -186,6 +186,7 @@ let without_leading_axis p =
   normal p.set (Grid.map_axes pred (Grid.uncut p.grid ~axis:0))
 
 let rebrand p = p
+let rebrand_option p = p
 
 let pp_placement ppf p =
   Grid.pp
