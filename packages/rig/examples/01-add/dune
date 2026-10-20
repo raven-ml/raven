@@ -5,15 +5,13 @@
 ; The program uses the first GPU here, so it takes the GPU suites' lock.
 
 (rule
+ (alias runtest)
  (deps
   (glob_files kernels/add*))
  (locks %{workspace_root}/gpu)
  (action
-  (with-stdout-to
-   main.output
-   (run ./main.exe))))
-
-(rule
- (alias runtest)
- (action
-  (diff main.expected main.output)))
+  (progn
+   (with-stdout-to
+    main.output
+    (run ./main.exe))
+   (diff? main.expected main.output))))

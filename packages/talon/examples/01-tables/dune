@@ -3,11 +3,10 @@
  (libraries talon nx))
 
 (rule
- (with-stdout-to
-  main.output
-  (run ./main.exe)))
-
-(rule
  (alias runtest)
  (action
-  (diff main.expected main.output)))
+  (progn
+   (with-stdout-to
+    main.output
+    (run ./main.exe))
+   (diff? main.expected main.output))))
