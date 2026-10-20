@@ -44,10 +44,14 @@ let ref_at = function Slot_ref { at; _ } | Entry { at; _ } -> at
 
 type side = Slot of int | Buffer of buffer
 
+(* A copy part's ends and its box, if not the whole of them, which a
+   submission lists among its copies as made. *)
+type copy = { src : side; dst : side; box : box option }
+
 type part =
   | Words of buffer
   | Fill of { fill : nativeint; params : int; refs : ref array }
-  | Copy of { src : side; dst : side; box : box option }
+  | Copy of copy
   | Set of { dst : side; byte : char }
   | Launch of { fn : func; params : int; refs : ref array }
 
@@ -152,10 +156,6 @@ let words b =
       (Buffer.length b);
   Words b
 
-let use_of : Def.access -> use = function
-  | Read -> Use_read
-  | Read_write -> Use_write
-
 (* The C form *)
 
 (* The C form, which a custom block holds and frees once collected. *)
@@ -249,10 +249,10 @@ type t = {
   dev : device;
   c : c;
   fixed : buffer array;
-      (** The buffers [c] names, held ([held]) and kept reachable: [c] holds
-          their stamps without a reference. *)
+      (** The buffers [c] names, in its order, held ([held]) and kept
+          reachable: [c] holds their stamps without a reference. *)
   addressable : int;
-      (** The first [addressable] buffers of [fixed] are the caller's fixed
+      (** The last [addressable] buffers of [fixed] are the caller's fixed
           memory; the others belong to parts. *)
   images : image list;
       (** The images of [c]'s launches, kept loaded: [c] names their templates,
@@ -270,9 +270,8 @@ type t = {
   span : (string * string) option;
       (** The first part's queue and the launches' functions, or the first
           part's kind. [None] for no parts. *)
-  copies : (side * side * int) array;
-      (** The sides of the copy parts that read memory, in order, and the
-          bytes of each part's box, [-1] for its whole source. *)
+  copies : copy array;
+      (** The copy parts that read memory, in order. *)
 }
 
 let no_block = (0, -1, 0, 0, "")
@@ -363,107 +362,111 @@ let check_memory fn d (b, (access : Def.access)) =
   if access = Read_write && Buffer.access b = Def.Read then
     invalid_argf "Rig.%s: a fixed buffer written admits only reads" fn
 
-(* The value of part [i]'s entry ref to [f] on [d]. *)
-let entry_code fn d i (f : func) =
+(* Refuses part [i]'s entry ref to [f] on [d] unless [f]'s image is [d]'s. *)
+let check_entry fn d i (f : func) =
   if f.fimage.idev != d then
     invalid_argf "Rig.%s: part %d's entry ref names an image not loaded on %s"
-      fn i d.name;
-  f.fentry.code
+      fn i d.name
 
-let refs_of = function
-  | Fill { refs; _ } | Launch { refs; _ } -> refs
-  | Words _ | Copy _ | Set _ -> [||]
+let count_slot_refs refs =
+  Array.fold_left
+    (fun n -> function Slot_ref _ -> n + 1 | Entry _ -> n)
+    0 refs
+
+let no_slot_ref = { at = 0; slot = 0; use = Use_read }
 
 (* The buffer refs of [refs], which C places. *)
 let slot_refs refs =
-  Array.to_seq refs
-  |> Seq.filter_map (function Slot_ref r -> Some r | Entry _ -> None)
-  |> Array.of_seq
+  let a = Array.make (count_slot_refs refs) no_slot_ref and k = ref 0 in
+  for i = 0 to Array.length refs - 1 do
+    match refs.(i) with
+    | Slot_ref r ->
+        a.(!k) <- r;
+        incr k
+    | Entry _ -> ()
+  done;
+  a
 
 (* Slots *)
 
-(* The slots part [i] names, how its work uses each, and by what: a copy reads
-   its [src] and writes its [dst]. *)
-let slots_of = function
+(* Calls [f k use by] for each slot [k] part [p] names, with how its work uses
+   it and by what: a copy reads its [src] and writes its [dst]. *)
+let iter_slots f = function
   | Copy { src; dst; _ } ->
-      let named use = function
-        | Slot k -> [ (k, use, Copies) ]
-        | Buffer _ -> []
-      in
-      named Use_read src @ named Use_write dst
-  | Set { dst = Slot k; _ } -> [ (k, Use_write, Copies) ]
-  | Set { dst = Buffer _; _ } -> []
-  | p ->
-      Array.to_list
-        (Array.map (fun r -> (r.slot, r.use, Refs)) (slot_refs (refs_of p)))
+      (match src with Slot k -> f k Use_read Copies | Buffer _ -> ());
+      (match dst with Slot k -> f k Use_write Copies | Buffer _ -> ())
+  | Set { dst = Slot k; _ } -> f k Use_write Copies
+  | Set { dst = Buffer _; _ } | Words _ -> ()
+  | Fill { refs; _ } | Launch { refs; _ } ->
+      for i = 0 to Array.length refs - 1 do
+        match refs.(i) with Slot_ref r -> f r.slot r.use Refs | Entry _ -> ()
+      done
 
 (* Each slot's use and what names it, from the refs and copies that name it:
    [Use_write] if one writes it. The slots are 0 to the highest one named,
    each named, and none used both unordered and ordered: a gap or a mix is a
    mistaken index. *)
 let slot_uses fn parts =
-  let named = Array.map slots_of parts in
-  let n =
-    Array.fold_left
-      (List.fold_left (fun n (k, _, _) -> max n (k + 1)))
-      0 named
+  let n = ref 0 in
+  let count k _ _ = n := Int.max !n (k + 1) in
+  for j = 0 to Array.length parts - 1 do
+    iter_slots count parts.(j)
+  done;
+  let uses = Array.make !n Use_read and naming = Array.make !n Refs in
+  let named = Array.make !n false in
+  let name k use by =
+    if not named.(k) then begin
+      named.(k) <- true;
+      uses.(k) <- use;
+      naming.(k) <- by
+    end
+    else begin
+      uses.(k) <-
+        (match (uses.(k), use) with
+        | Use_unordered, Use_unordered -> Use_unordered
+        | Use_unordered, _ | _, Use_unordered ->
+            invalid_argf "Rig.%s: slot %d is used both unordered and ordered"
+              fn k
+        | Use_write, _ | _, Use_write -> Use_write
+        | Use_read, Use_read -> Use_read);
+      if naming.(k) <> by then naming.(k) <- Both
+    end
   in
-  let uses = Array.make n None and naming = Array.make n None in
-  let name (k, use, by) =
-    uses.(k) <-
-      (match (uses.(k), use) with
-      | None, u -> Some u
-      | Some Use_unordered, Use_unordered -> Some Use_unordered
-      | Some Use_unordered, _ | Some _, Use_unordered ->
-          invalid_argf "Rig.%s: slot %d is used both unordered and ordered" fn
-            k
-      | Some Use_write, _ | _, Use_write -> Some Use_write
-      | Some Use_read, Use_read -> Some Use_read);
-    naming.(k) <-
-      (match naming.(k) with
-      | None -> Some by
-      | Some prev when prev = by -> Some by
-      | Some _ -> Some Both)
-  in
-  Array.iter (List.iter name) named;
-  let get k = function
-    | Some x -> x
-    | None -> invalid_argf "Rig.%s: no ref or copy names slot %d" fn k
-  in
-  (Array.mapi get uses, Array.mapi get naming)
+  for j = 0 to Array.length parts - 1 do
+    iter_slots name parts.(j)
+  done;
+  for k = 0 to !n - 1 do
+    if not named.(k) then
+      invalid_argf "Rig.%s: no ref or copy names slot %d" fn k
+  done;
+  (uses, naming)
 
 (* Placement and order *)
 
-(* What a part reaches, and whether it writes it: a slot, whose buffer only a
-   run knows ([bytes = None]), or the bytes of a buffer it names, as
-   [(space, first, past)] at each of its places ({!Buffer.places}). *)
-type reach = { bytes : (int * int * int) list option; writes : bool }
+(* How a part reaches memory: reading or writing a slot, whose buffer only a
+   run knows, or the bytes of a buffer it names. *)
+type reach = Reads_slot | Writes_slot | Reads | Writes
 
-let named writes b =
-  let n = Buffer.length b in
-  let bytes = List.map (fun (s, a) -> (s, a, a + n)) (Buffer.places b) in
-  { bytes = Some bytes; writes }
+let writes = function Writes_slot | Writes -> true | Reads_slot | Reads -> false
 
-let slot writes = { bytes = None; writes }
+let side slot bytes w = function Slot _ -> slot w | Buffer b -> bytes w b
 
-let reaches = function
-  | Words w -> [ named false w ]
+(* Calls [slot w] for each slot part [p] reaches and [bytes w b] for each
+   buffer [b] it names, in order, [w] whether it writes them. *)
+let iter_reaches slot bytes p =
+  match p with
+  | Words w -> bytes false w
   | Copy { src; dst; _ } ->
-      let side writes = function
-        | Slot _ -> slot writes
-        | Buffer b -> named writes b
-      in
-      [ side false src; side true dst ]
-  | Set { dst = Slot _; _ } -> [ slot true ]
-  | Set { dst = Buffer b; _ } -> [ named true b ]
+      side slot bytes false src;
+      side slot bytes true dst
+  | Set { dst; _ } -> side slot bytes true dst
   | Fill { refs; _ } | Launch { refs; _ } ->
-      Array.fold_right
-        (fun r acc ->
-          match r with
-          | Entry _ | Slot_ref { use = Use_unordered; _ } -> acc
-          | Slot_ref { use = Use_read; _ } -> slot false :: acc
-          | Slot_ref { use = Use_write; _ } -> slot true :: acc)
-        refs []
+      for i = 0 to Array.length refs - 1 do
+        match refs.(i) with
+        | Entry _ | Slot_ref { use = Use_unordered; _ } -> ()
+        | Slot_ref { use = Use_read; _ } -> slot false
+        | Slot_ref { use = Use_write; _ } -> slot true
+      done
 
 (* The parts of one queue that reached bytes of one space: a segment tree over
    [cuts], the sorted bytes where a reached range of the space starts or ends.
@@ -473,7 +476,7 @@ let reaches = function
    order, so the last part marked is the latest. *)
 type ranges = { all : int array; some : int array }
 
-let rec mark t k lo hi a b i =
+let rec mark_range t k lo hi a b i =
   if b <= lo || hi <= a then ()
   else if a <= lo && hi <= b then begin
     t.all.(k) <- i;
@@ -481,8 +484,8 @@ let rec mark t k lo hi a b i =
   end
   else begin
     let mid = (lo + hi) / 2 in
-    mark t (2 * k) lo mid a b i;
-    mark t ((2 * k) + 1) mid hi a b i;
+    mark_range t (2 * k) lo mid a b i;
+    mark_range t ((2 * k) + 1) mid hi a b i;
     t.some.(k) <- i
   end
 
@@ -502,108 +505,226 @@ type space = { cuts : int array; ranges : ranges option array }
 
 (* The index of byte [x] in [cuts], which holds it. *)
 let cut cuts x =
-  let rec go lo hi =
-    if lo >= hi then lo
-    else
-      let mid = (lo + hi) / 2 in
-      if cuts.(mid) < x then go (mid + 1) hi else go lo mid
+  let lo = ref 0 and hi = ref (Array.length cuts) in
+  while !lo < !hi do
+    let mid = (!lo + !hi) / 2 in
+    if cuts.(mid) < x then lo := mid + 1 else hi := mid
+  done;
+  !lo
+
+(* [a] sorted: a merge sort of runs of width 1, 2, 4 and on, back and forth
+   between [a] and a second array, either of which it answers.
+   [Array.stable_sort] would make a closure per merge. *)
+let sort a =
+  let n = Array.length a in
+  let src = ref a and dst = ref (Array.make n 0) and width = ref 1 in
+  while !width < n do
+    let s = !src and d = !dst and w = !width in
+    let lo = ref 0 in
+    while !lo < n do
+      let mid = Int.min (!lo + w) n and hi = Int.min (!lo + (2 * w)) n in
+      let i = ref !lo and j = ref mid in
+      for k = !lo to hi - 1 do
+        if !i < mid && (!j >= hi || s.(!i) <= s.(!j)) then begin
+          d.(k) <- s.(!i);
+          incr i
+        end
+        else begin
+          d.(k) <- s.(!j);
+          incr j
+        end
+      done;
+      lo := hi
+    done;
+    src := d;
+    dst := s;
+    width := 2 * w
+  done;
+  !src
+
+(* [a]'s values sorted, each once. *)
+let cuts_of a =
+  let a = sort a in
+  let m = ref 0 in
+  for i = 0 to Array.length a - 1 do
+    if !m = 0 || a.(i) <> a.(!m - 1) then begin
+      a.(!m) <- a.(i);
+      incr m
+    end
+  done;
+  Array.sub a 0 !m
+
+(* What the parts and the fixed memory reach, in arrays that ordering a part
+   reads without allocating. Part [j]'s reaches are [first.(j)] to
+   [first.(j + 1) - 1], and the fixed memory's [first.(n)] to
+   [first.(n + 1) - 1], for [n] parts. Reach [r] is [how.(r)], and one that
+   names a buffer reaches its places [place.(r)] to [place.(r + 1) - 1]
+   ({!Buffer.places}). Place [p] spans cuts [lo.(p)] to [hi.(p)] of the space
+   [spaces.(space.(p))]. *)
+type reaches = {
+  first : int array;
+  how : reach array;
+  place : int array;
+  space : int array;
+  lo : int array;
+  hi : int array;
+  spaces : space array;
+}
+
+(* The reaches of [parts] and [fixed] on a device of [queues] queues. One pass
+   counts them, one records them with each place's bytes and its space's
+   index, and the last turns the bytes into cuts. A buffer has at most two
+   places, read once: another domain may map its pages meanwhile. *)
+let reaches_of queues parts fixed =
+  let n = Array.length parts in
+  let nreach = ref 0 and nbytes = ref 0 in
+  let count_slot _ = incr nreach in
+  let count_bytes _ _ =
+    incr nreach;
+    incr nbytes
   in
-  go 0 (Array.length cuts)
+  for j = 0 to n - 1 do
+    iter_reaches count_slot count_bytes parts.(j)
+  done;
+  List.iter (fun (b, _) -> count_bytes false b) fixed;
+  let first = Array.make (n + 2) 0 and how = Array.make !nreach Reads in
+  let place = Array.make (!nreach + 1) 0 and most = 2 * !nbytes in
+  let space = Array.make most 0 and lo = Array.make most 0 in
+  let hi = Array.make most 0 in
+  (* Spaces get indices in the order parts first reach them. *)
+  let index = Hashtbl.create 8 in
+  let r = ref 0 and p = ref 0 in
+  let add_place s a length =
+    let i =
+      match Hashtbl.find index s with
+      | i -> i
+      | exception Not_found ->
+          let i = Hashtbl.length index in
+          Hashtbl.add index s i;
+          i
+    in
+    space.(!p) <- i;
+    lo.(!p) <- a;
+    hi.(!p) <- a + length;
+    incr p
+  in
+  let add_slot w =
+    how.(!r) <- (if w then Writes_slot else Reads_slot);
+    incr r;
+    place.(!r) <- !p
+  in
+  let add_bytes w b =
+    let length = Buffer.length b in
+    if length > 0 then begin
+      add_place (Buffer.space b) (Buffer.first b) length;
+      let a = Buffer.alias b in
+      if a <> 0 then add_place 0 a length
+    end;
+    how.(!r) <- (if w then Writes else Reads);
+    incr r;
+    place.(!r) <- !p
+  in
+  for j = 0 to n - 1 do
+    first.(j) <- !r;
+    iter_reaches add_slot add_bytes parts.(j)
+  done;
+  first.(n) <- !r;
+  List.iter (fun (b, (a : Def.access)) -> add_bytes (a = Read_write) b) fixed;
+  first.(n + 1) <- !r;
+  let nplace = !p and nspaces = Hashtbl.length index in
+  (* [count.(s)] counts the places of space [s], then the bounds of them
+     written into its cuts. *)
+  let count = Array.make nspaces 0 in
+  for p = 0 to nplace - 1 do
+    count.(space.(p)) <- count.(space.(p)) + 1
+  done;
+  let cuts = Array.init nspaces (fun s -> Array.make (2 * count.(s)) 0) in
+  Array.fill count 0 nspaces 0;
+  for p = 0 to nplace - 1 do
+    let s = space.(p) in
+    let c = cuts.(s) and k = count.(s) in
+    c.(k) <- lo.(p);
+    c.(k + 1) <- hi.(p);
+    count.(s) <- k + 2
+  done;
+  let spaces =
+    Array.map
+      (fun c -> { cuts = cuts_of c; ranges = Array.make (2 * queues) None })
+      cuts
+  in
+  for p = 0 to nplace - 1 do
+    let c = spaces.(space.(p)).cuts in
+    lo.(p) <- cut c lo.(p);
+    hi.(p) <- cut c hi.(p)
+  done;
+  { first; how; place; space; lo; hi; spaces }
 
 (* The last part of each queue that reached memory, by how: per queue, the
-   last that wrote anything, used anything, wrote a slot and used a slot, and
-   per space, the last that wrote or used each byte. A slot may be any buffer,
-   so it meets every use. *)
+   last that wrote anything, used anything, wrote a slot and used a slot; per
+   space, the ranges of [reaches]. A slot may be any buffer, so it meets every
+   use. *)
 type order = {
   wrote : int array;
   used : int array;
   wrote_slot : int array;
   used_slot : int array;
-  spaces : (int, space) Hashtbl.t;
 }
 
-let order_of queues reach fixed =
-  let cuts = Hashtbl.create 8 in
-  let add r =
-    Option.iter
-      (List.iter (fun (s, a, b) ->
-           let l = Option.value (Hashtbl.find_opt cuts s) ~default:[] in
-           Hashtbl.replace cuts s (a :: b :: l)))
-      r.bytes
-  in
-  Array.iter (List.iter add) reach;
-  List.iter add fixed;
-  let spaces = Hashtbl.create (Hashtbl.length cuts) in
-  Hashtbl.iter
-    (fun s l ->
-      Hashtbl.replace spaces s
-        {
-          cuts = Array.of_list (List.sort_uniq Int.compare l);
-          ranges = Array.make (2 * queues) None;
-        })
-    cuts;
-  let none () = Array.make queues (-1) in
-  {
-    wrote = none ();
-    used = none ();
-    wrote_slot = none ();
-    used_slot = none ();
-    spaces;
-  }
-
 (* Raises [last.(q)] to the last part of queue [q] whose use may share memory
-   with [r] while one of them writes. *)
-let follow o last r =
+   with reach [r] of [rs] while one of them writes. *)
+let follow o rs last r =
+  let how = rs.how.(r) in
+  let w = writes how in
   for q = 0 to Array.length last - 1 do
     let i =
-      match r.bytes with
-      | None -> if r.writes then o.used.(q) else o.wrote.(q)
-      | Some places ->
-          List.fold_left
-            (fun i (s, a, b) ->
-              let sp = Hashtbl.find o.spaces s in
-              match sp.ranges.((2 * q) + Bool.to_int r.writes) with
-              | None -> i
-              | Some t ->
-                  let m = Array.length sp.cuts - 1 in
-                  Int.max i (latest t 1 0 m (cut sp.cuts a) (cut sp.cuts b)))
-            (if r.writes then o.used_slot.(q) else o.wrote_slot.(q))
-            places
+      match how with
+      | Reads_slot | Writes_slot -> if w then o.used.(q) else o.wrote.(q)
+      | Reads | Writes ->
+          let i = ref (if w then o.used_slot.(q) else o.wrote_slot.(q)) in
+          for p = rs.place.(r) to rs.place.(r + 1) - 1 do
+            let sp = rs.spaces.(rs.space.(p)) in
+            match sp.ranges.((2 * q) + Bool.to_int w) with
+            | None -> ()
+            | Some ranges ->
+                let m = Array.length sp.cuts - 1 in
+                i := Int.max !i (latest ranges 1 0 m rs.lo.(p) rs.hi.(p))
+          done;
+          !i
     in
     last.(q) <- Int.max last.(q) i
   done
 
-(* Records that part [i] on queue [q] reached [r]. *)
-let reached o q i r =
-  o.used.(q) <- i;
-  if r.writes then o.wrote.(q) <- i;
-  match r.bytes with
+(* The least power of 2 from [k] on that is at least [m]. *)
+let rec pow2 k m = if k >= m then k else pow2 (2 * k) m
+
+(* The ranges [k] of [sp], made empty at their first use: halving [m] cuts
+   [ceil (log2 m)] times, the tree's nodes number below [2 * pow2 1 m]. *)
+let ranges_of sp k =
+  match sp.ranges.(k) with
+  | Some t -> t
   | None ->
+      let n = 2 * pow2 1 (Array.length sp.cuts - 1) in
+      let t = { all = Array.make n (-1); some = Array.make n (-1) } in
+      sp.ranges.(k) <- Some t;
+      t
+
+(* Records that part [i] on queue [q] reached reach [r] of [rs]. *)
+let reached o rs q i r =
+  let how = rs.how.(r) in
+  let w = writes how in
+  o.used.(q) <- i;
+  if w then o.wrote.(q) <- i;
+  match how with
+  | Reads_slot | Writes_slot ->
       o.used_slot.(q) <- i;
-      if r.writes then o.wrote_slot.(q) <- i
-  | Some places ->
-      List.iter
-        (fun (s, a, b) ->
-          let sp = Hashtbl.find o.spaces s in
-          let m = Array.length sp.cuts - 1 in
-          let a = cut sp.cuts a and b = cut sp.cuts b in
-          let range k =
-            let t =
-              match sp.ranges.(k) with
-              | Some t -> t
-              | None ->
-                  let n = 4 * Array.length sp.cuts in
-                  let t =
-                    { all = Array.make n (-1); some = Array.make n (-1) }
-                  in
-                  sp.ranges.(k) <- Some t;
-                  t
-            in
-            mark t 1 0 m a b i
-          in
-          range ((2 * q) + 1);
-          if r.writes then range (2 * q))
-        places
+      if w then o.wrote_slot.(q) <- i
+  | Reads | Writes ->
+      for p = rs.place.(r) to rs.place.(r + 1) - 1 do
+        let sp = rs.spaces.(rs.space.(p)) in
+        let m = Array.length sp.cuts - 1 and a = rs.lo.(p) and b = rs.hi.(p) in
+        mark_range (ranges_of sp ((2 * q) + 1)) 1 0 m a b i;
+        if w then mark_range (ranges_of sp (2 * q)) 1 0 m a b i
+      done
 
 let first_runs fn d k =
   let rec go i =
@@ -630,9 +751,10 @@ let place fn d last = function
       | None -> first_runs fn d Rig_edge.Words)
   | Copy _ | Set _ -> (
       let q = ref (-1) in
-      Array.iteri
-        (fun q' i -> if i >= 0 && (!q < 0 || i > last.(!q)) then q := q')
-        last;
+      for q' = 0 to Array.length last - 1 do
+        let i = last.(q') in
+        if i >= 0 && (!q < 0 || i > last.(!q)) then q := q'
+      done;
       match !q with
       | q
         when q >= 0 && List.mem Rig_edge.Copy d.live.queues.(q).runs ->
@@ -646,27 +768,45 @@ let place fn d last = function
 (* The parts a part on queue [q] follows on other queues, in order: per queue,
    the last earlier one it follows, since a queue runs its parts in order. *)
 let after q last =
-  let found = ref [] in
-  Array.iteri (fun q' i -> if q' <> q && i >= 0 then found := i :: !found) last;
-  Array.of_list (List.sort Int.compare !found)
+  let n = ref 0 in
+  for q' = 0 to Array.length last - 1 do
+    if q' <> q && last.(q') >= 0 then incr n
+  done;
+  let found = Array.make !n 0 and k = ref 0 in
+  for q' = 0 to Array.length last - 1 do
+    if q' <> q && last.(q') >= 0 then begin
+      found.(!k) <- last.(q');
+      incr k
+    end
+  done;
+  if !n > 1 then Array.sort Int.compare found;
+  found
 
 (* Each part's queue and the parts it follows on other queues. Part [j] follows
    part [i] where they may share memory while one of them writes: every part
-   also uses the [fixed] memory. Words, whose effect rig cannot see, also
+   also uses the fixed memory. Words, whose effect rig cannot see, also
    follow every earlier part; later parts follow them by memory, or by running
    on their queue. One pass keeps, per queue, the last part that reached each
    memory and the last part of all, so the cost grows with the uses, not their
    pairs. *)
-let order fn d reach fixed parts =
+let order fn d rs parts =
   let n = Array.length parts in
   let queues = Array.make n 0 and afters = Array.make n [||] in
   let nq = Array.length d.live.queues in
   let last = Array.make nq (-1) and latest = Array.make nq (-1) in
-  let o = order_of nq reach fixed in
+  let none () = Array.make nq (-1) in
+  let o =
+    { wrote = none (); used = none (); wrote_slot = none (); used_slot = none () }
+  in
+  let fixed = rs.first.(n) and past = rs.first.(n + 1) in
   for j = 0 to n - 1 do
     Array.fill last 0 nq (-1);
-    List.iter (follow o last) reach.(j);
-    List.iter (follow o last) fixed;
+    for r = rs.first.(j) to rs.first.(j + 1) - 1 do
+      follow o rs last r
+    done;
+    for r = fixed to past - 1 do
+      follow o rs last r
+    done;
     (match parts.(j) with
     | Words _ -> Array.blit latest 0 last 0 nq
     | Fill _ | Copy _ | Set _ | Launch _ -> ());
@@ -674,8 +814,12 @@ let order fn d reach fixed parts =
     queues.(j) <- q;
     afters.(j) <- after q last;
     latest.(q) <- j;
-    List.iter (reached o q j) reach.(j);
-    List.iter (reached o q j) fixed
+    for r = rs.first.(j) to rs.first.(j + 1) - 1 do
+      reached o rs q j r
+    done;
+    for r = fixed to past - 1 do
+      reached o rs q j r
+    done
   done;
   (queues, afters)
 
@@ -688,53 +832,60 @@ let keep_token d v =
   if t == Memory.no_token then Dev.raise_lost d;
   t
 
-(* The buffers every run reads: the fixed memory, the words and the copies'
-   buffer sides. *)
+(* The buffers every run reads, with how the work uses each: the words and the
+   copies' buffer sides, in the order of the parts, then the fixed memory. They
+   are the C form's fixed buffers, in this order. *)
 let named_buffers fixed parts =
-  Array.fold_right
-    (fun p bs ->
-      match p with
-      | Words w -> w :: bs
-      | Copy { src; dst; _ } ->
-          let side s bs = match s with Buffer b -> b :: bs | Slot _ -> bs in
-          side src (side dst bs)
-      | Set { dst = Buffer b; _ } -> b :: bs
-      | Set { dst = Slot _; _ } | Fill _ | Launch _ -> bs)
-    parts (List.map fst fixed)
+  let n = ref 0 and any = ref None in
+  let count _ b =
+    if !n = 0 then any := Some b;
+    incr n
+  in
+  for j = 0 to Array.length parts - 1 do
+    iter_reaches ignore count parts.(j)
+  done;
+  List.iter (fun (b, _) -> count false b) fixed;
+  match !any with
+  | None -> ([||], [||])
+  | Some b ->
+      (* [Array.make] needs an element to fill with: the first buffer met. *)
+      let bs = Array.make !n b and uses = Array.make !n Use_read in
+      let k = ref 0 in
+      let add w b =
+        bs.(!k) <- b;
+        if w then uses.(!k) <- Use_write;
+        incr k
+      in
+      for j = 0 to Array.length parts - 1 do
+        iter_reaches ignore add parts.(j)
+      done;
+      List.iter (fun (b, (a : Def.access)) -> add (a = Read_write) b) fixed;
+      (bs, uses)
 
-let build keep ~fixed ~held d parts =
+let build keep ~fixed ~named:(named, named_uses) ~held d parts =
   let fn = "Submission.make" in
   check_device fn d;
   let kept = Option.map (keep_token d) keep in
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
-  let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
+  let nrefs = ref 0 and ncodes = ref 0 in
   let ncopies = ref 0 and nmoves = ref 0 in
-  let slots = Array.map (fun p -> slot_refs (refs_of p)) parts in
-  (* Each part's entry refs: where they lie in its parameters, their value
-     and their image. *)
-  let codes =
-    Array.mapi
-      (fun i p ->
-        Array.to_list (refs_of p)
-        |> List.filter_map (function
-          | Slot_ref _ -> None
-          | Entry { at; fn = f } -> Some (at, entry_code fn d i f, f.fimage)))
-      parts
+  let count_refs i refs =
+    for k = 0 to Array.length refs - 1 do
+      match refs.(k) with
+      | Slot_ref _ -> incr nrefs
+      | Entry { fn = f; _ } ->
+          check_entry fn d i f;
+          incr ncodes
+    done
   in
   Array.iteri
     (fun i p ->
       match p with
-      | Words w ->
-          check_buffer w;
-          incr nfixed
-      | Fill _ ->
-          nrefs := !nrefs + Array.length slots.(i);
-          ncodes := !ncodes + List.length codes.(i)
+      | Words w -> check_buffer w
+      | Fill f -> count_refs i f.refs
       | Copy { src; dst; _ } ->
           check_ends fn d i src dst;
-          let buffer = function Buffer _ -> 1 | Slot _ -> 0 in
-          nfixed := !nfixed + buffer src + buffer dst;
           incr ncopies;
           incr nmoves
       | Set { dst; _ } ->
@@ -742,96 +893,84 @@ let build keep ~fixed ~held d parts =
           (match dst with
           | Buffer b when carried d b ->
               invalid_argf "Rig.%s: part %d fills this process's memory" fn i
-          | Buffer _ -> incr nfixed
-          | Slot _ -> ());
+          | Buffer _ | Slot _ -> ());
           incr ncopies
       | Launch l ->
-          check_launch fn d i l.fn;
-          nrefs := !nrefs + Array.length slots.(i);
-          ncodes := !ncodes + List.length codes.(i))
+          count_refs i l.refs;
+          check_launch fn d i l.fn)
     parts;
   let memory = Array.of_list fixed in
   Array.iter (check_memory fn d) memory;
-  nfixed := !nfixed + Array.length memory;
-  let fixed_reach =
-    List.map (fun (b, (a : Def.access)) -> named (a = Read_write) b) fixed
-  in
-  let queues, afters = order fn d (Array.map reaches parts) fixed_reach parts in
+  let reaches = reaches_of (Array.length d.live.queues) parts fixed in
+  let queues, afters = order fn d reaches parts in
   let nafter = Array.fold_left (fun n a -> n + Array.length a) 0 afters in
   let c =
-    sub_new d.live.c (Array.length parts) nafter !nfixed uses !nrefs
-      !ncodes !ncopies
+    sub_new d.live.c (Array.length parts) nafter (Array.length named) uses
+      !nrefs !ncodes !ncopies
   in
+  Array.iteri (fun k b -> fix c k b named_uses.(k)) named;
   let blocks = Array.make (Array.length parts) no_block in
-  let copies = Array.make !nmoves (Slot 0, Slot 0, -1) in
-  let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
+  let copies = Array.make !nmoves { src = Slot 0; dst = Slot 0; box = None } in
+  let at = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
   let n = ref 0 in
-  let fixed = ref [] and images = ref [] in
-  let fix_next b use =
-    fix c !k b use;
-    incr k;
-    fixed := b :: !fixed
-  in
+  let images = ref [] in
   let slot_of = function Slot k -> k | Buffer _ -> -1 in
-  let copy_side ~dst use = function
+  let copy_side ~dst = function
     | Slot _ -> ()
-    | Buffer b ->
-        sub_side c !m dst b (carried d b) (owns_device_memory d b);
-        fix_next b use
+    | Buffer b -> sub_side c !m dst b (carried d b) (owns_device_memory d b)
   in
-  let place_codes i place =
-    List.iter
-      (fun (at, code, image) ->
-        sub_code c !j place at code;
-        incr j;
-        images := image :: !images)
-      codes.(i)
+  (* Each entry ref of [refs], in the block that starts at [place]. *)
+  let place_codes place refs =
+    for e = 0 to Array.length refs - 1 do
+      match refs.(e) with
+      | Slot_ref _ -> ()
+      | Entry { at; fn = f } ->
+          sub_code c !j place at f.fentry.code;
+          incr j;
+          images := f.fimage :: !images
+    done
   in
   Array.iteri
     (fun i p ->
       sub_part c i queues.(i) afters.(i) !at;
       at := !at + Array.length afters.(i);
       match p with
-      | Words w ->
-          sub_words c i (host_address fn w) (Buffer.length w / 4);
-          fix_next w Use_read
+      | Words w -> sub_words c i (host_address fn w) (Buffer.length w / 4)
       | Fill f ->
-          let place = sub_fill c i f.fill f.params slots.(i) !r in
-          place_codes i place;
+          let slots = slot_refs f.refs in
+          let place = sub_fill c i f.fill f.params slots !r in
+          place_codes place f.refs;
           blocks.(i) <- (sub_id c, place, f.params, 0, "");
-          r := !r + Array.length slots.(i)
-      | Copy { src; dst; box } ->
-          sub_copy c !m i (slot_of src) (slot_of dst);
-          let bytes =
-            match box with
-            | None -> -1
-            | Some x ->
-                sub_box c !m x;
-                x.width * x.rows
-          in
-          copies.(!n) <- (src, dst, bytes);
-          copy_side ~dst:false Use_read src;
-          copy_side ~dst:true Use_write dst;
+          r := !r + Array.length slots
+      | Copy cp ->
+          sub_copy c !m i (slot_of cp.src) (slot_of cp.dst);
+          (match cp.box with Some x -> sub_box c !m x | None -> ());
+          copies.(!n) <- cp;
+          copy_side ~dst:false cp.src;
+          copy_side ~dst:true cp.dst;
           incr m;
           incr n
       | Set { dst; byte } ->
           sub_set c !m i (slot_of dst) byte;
-          copy_side ~dst:true Use_write dst;
+          copy_side ~dst:true dst;
           incr m
       | Launch l ->
-          let e = l.fn.fentry in
-          let place = sub_launch c i e.code e.launch l.params slots.(i) !r in
-          place_codes i place;
+          let e = l.fn.fentry and slots = slot_refs l.refs in
+          let place = sub_launch c i e.code e.launch l.params slots !r in
+          place_codes place l.refs;
           let most = Option.value e.threads ~default:0 in
           blocks.(i) <- (sub_id c, place, l.params, most, l.fn.fname);
-          r := !r + Array.length slots.(i);
+          r := !r + Array.length slots;
           images := l.fn.fimage :: !images)
     parts;
-  Array.iter (fun (b, a) -> fix_next b (use_of a)) memory;
   sub_seal c;
   let kernels =
-    Array.to_list parts
-    |> List.filter_map (function Launch l -> Some l.fn.fname | _ -> None)
+    Array.fold_right
+      (fun p ks ->
+        match p with
+        | Launch l -> l.fn.fname :: ks
+        | Words _ | Fill _ | Copy _ | Set _ -> ks)
+      parts []
   in
   let span =
     if Array.length parts = 0 then None
@@ -844,7 +983,7 @@ let build keep ~fixed ~held d parts =
   {
     dev = d;
     c;
-    fixed = Array.of_list !fixed;
+    fixed = named;
     addressable = Array.length memory;
     images = !images;
     uses;
@@ -862,8 +1001,9 @@ let make ?keep ?(fixed = []) d parts =
   let fn = "Submission.make" in
   Dev.check_held fn;
   let parts = Array.copy parts in
-  let held = Claim.held fn (named_buffers fixed parts) in
-  match build keep ~fixed ~held d parts with
+  let named = named_buffers fixed parts in
+  let held = Claim.held fn (fst named) in
+  match build keep ~fixed ~named ~held d parts with
   | s -> s
   | exception e ->
       Claim.release held;
@@ -883,14 +1023,14 @@ let address s b =
   let fn = "Submission.address" in
   Buffer.check_live fn b;
   let rec find i =
-    if i = s.addressable then
+    if i = Array.length s.fixed then
       invalid_argf "Rig.%s: no fixed memory of the submission holds the buffer"
         fn;
     let f = s.fixed.(i) in
     if within b f then Buffer.address fn f + (b.offset - f.offset)
     else find (i + 1)
   in
-  find 0
+  find (Array.length s.fixed - s.addressable)
 
 (* Runs *)
 
@@ -1279,9 +1419,11 @@ let rec go s c run buffers waits k =
 let moves_of s buffers =
   let buffer = function Slot k -> buffers.(k) | Buffer b -> b in
   Array.map
-    (fun (src, dst, bytes) ->
+    (fun { src; dst; box } ->
       let src = buffer src and dst = buffer dst in
-      let bytes = if bytes < 0 then src.length else bytes in
+      let bytes =
+        match box with None -> src.length | Some x -> x.width * x.rows
+      in
       (Memory.account src.mem.alloc, Memory.account dst.mem.alloc, bytes))
     s.copies
 

@@ -135,7 +135,7 @@ type hold
 (** The type for holds: a token whose collection releases them
     ({!Memory.hold_token}), and their record. *)
 
-val held : string -> Def.buffer list -> hold
+val held : string -> Def.buffer array -> hold
 (** [held fn bs] is {!Rig.Claim.hold}[ bs] for a call of [fn], which its
     errors name. *)
 

@@ -125,9 +125,7 @@ raven / llama.cpp (Vulkan; ROCm):
   in a chained launch (a WFI release costs ~0.67 µs); first a hardware test
   that a release implies the earlier launches completed
 - read a memory's atomic entry once per path (the dropped patch no longer
-  applies), A/B on fudge's `submit/polled/*` and `copy/*`;
-  `Submission.order`'s cheaper design against `submit/polled/make-4096` on
-  fudge
+  applies), A/B on fudge's `submit/polled/*` and `copy/*`
 - measure, then keep or cut, each with its keep threshold stated before the
   run: CUDA's second stream (a 256 MiB upload beside a compute-bound
   launch); the remote link's inline send against one sender thread

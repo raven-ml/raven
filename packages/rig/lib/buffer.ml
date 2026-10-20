@@ -110,12 +110,12 @@ external cached_host : t -> (int[@untagged])
   = "caml_rig_cached_host_byte" "caml_rig_cached_host"
 [@@noalloc]
 
+let alias b = if space b = 0 then 0 else cached_host b
+
 let places b =
   if b.length = 0 then []
   else
-    let s = space b in
-    let place = (s, first b) in
-    let a = if s = 0 then 0 else cached_host b in
+    let place = (space b, first b) and a = alias b in
     if a = 0 then [ place ] else [ place; (0, a) ]
 
 let borrow d b =

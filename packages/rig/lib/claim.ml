@@ -333,28 +333,30 @@ type hold = { token : token; record : holds }
 
 let no_record = { allocs = Weak.create 0; taken = Bytes.empty }
 
-external take_holds : buffer list -> Bytes.t -> int = "caml_rig_claim_holds"
+external take_holds : buffer array -> Bytes.t -> int = "caml_rig_claim_holds"
 [@@noalloc]
 
 let rec take_all fn bs taken =
   let i = take_holds bs taken in
   if i >= 0 then begin
-    refusal fn (List.nth bs i);
+    refusal fn bs.(i);
     take_all fn bs taken
   end
 
 let held fn bs =
-  List.iter (Buffer.check_live fn) bs;
-  match bs with
-  | [] -> { token = Memory.no_hold; record = no_record }
-  | _ ->
-      let n = List.length bs in
-      let allocs = Weak.create n in
-      List.iteri (fun i b -> Weak.set allocs i (Some b.mem.alloc)) bs;
-      let record = { allocs; taken = Bytes.make n '\000' } in
-      let token = Memory.hold_token record in
-      take_all fn bs record.taken;
-      { token; record }
+  Array.iter (Buffer.check_live fn) bs;
+  let n = Array.length bs in
+  if n = 0 then { token = Memory.no_hold; record = no_record }
+  else begin
+    let allocs = Weak.create n in
+    for i = 0 to n - 1 do
+      Weak.set allocs i (Some bs.(i).mem.alloc)
+    done;
+    let record = { allocs; taken = Bytes.make n '\000' } in
+    let token = Memory.hold_token record in
+    take_all fn bs record.taken;
+    { token; record }
+  end
 
-let hold bs = held "Claim.hold" bs
+let hold bs = held "Claim.hold" (Array.of_list bs)
 let release h = Memory.release_hold_now h.token h.record

@@ -115,6 +115,18 @@ val places : t -> (int * int) list
     [length b] and [length b'] of them, meet there. Pages mapped later add
     a place and move none. *)
 
+val space : t -> int
+(** [space b] is the space of [b]'s first place ({!places}). It allocates
+    nothing. *)
+
+val first : t -> int
+(** [first b] is the first byte of [b]'s first place ({!places}). It
+    allocates nothing. *)
+
+val alias : t -> int
+(** [alias b] is the first byte of [b]'s second place, in the host's space
+    [0], or [0] if it has none ({!places}). It allocates nothing. *)
+
 val array :
   string ->
   ('a, 'b) Bigarray.kind ->

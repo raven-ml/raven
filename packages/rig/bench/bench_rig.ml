@@ -274,6 +274,20 @@ let making () =
   let fixed = List.map (fun b -> (b, Rig.Read)) (Array.to_list (words t.d 4)) in
   (t, Array.init many part, fixed)
 
+(* A submission of 65,536 copies of 16 bytes, copy [k] from bytes [16 k] on of
+   one buffer into the same bytes of another, as a strided copy makes: making
+   it orders each part against the others on the copy engine. *)
+let copies = 65536
+
+let copying () =
+  let t = dev () in
+  let src = B.create t.d (16 * copies) and dst = B.create t.d (16 * copies) in
+  let part k =
+    let view b = B.view b ~first:(16 * k) ~length:16 in
+    Sub.(copy ~src:(Buffer (view src)) ~dst:(Buffer (view dst)))
+  in
+  (t, Array.init copies part)
+
 let submit_rows =
   let row name setup f = Thumper.bench_with_setup ~setup name f in
   Thumper.group "submit/polled"
@@ -302,6 +316,8 @@ let submit_rows =
           waited w);
       row "make-4096" making (fun (t, parts, fixed) ->
           ignore (Sub.make ~fixed t.d parts));
+      row "make-copies-64K" copying (fun (t, parts) ->
+          ignore (Sub.make t.d parts));
       row "launch-refs-8" launching (fun (t, run, b, buffers) ->
           take run;
           for k = 0 to refs - 1 do

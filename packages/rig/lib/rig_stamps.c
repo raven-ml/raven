@@ -543,9 +543,15 @@ value caml_rig_sub_fill_byte(value *argv, int argn) {
 value caml_rig_sub_id(value v_s) { return Val_long((intnat)Sub_val(v_s)->id); }
 
 /* Fixed buffer [v_k]: the stamps of a memory a part names and how the
-   part uses it, an rig_use. */
+   part uses it, an rig_use. [v_k] lies among the buffers counted at
+   [caml_rig_sub_new]. */
 value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_use) {
-  struct rig_fixed *f = &Sub_val(v_s)->fixed[Int_val(v_k)];
+  struct rig_sub *s = Sub_val(v_s);
+  intnat k = Long_val(v_k);
+  if (k < 0 || k >= s->nfixed)
+    caml_invalid_argument(
+        "Rig.Submission.make: a fixed buffer past those counted");
+  struct rig_fixed *f = &s->fixed[k];
   f->stamps = Stamps_val(v_stamps);
   f->use = (enum rig_use)Int_val(v_use);
   return Val_unit;
