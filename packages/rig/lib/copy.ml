@@ -199,6 +199,17 @@ let on_queue ~waits d src dst boxes =
       | _ -> Some (Submission.run_boxes d ~waits ~src ~dst boxes))
   | _ -> None
 
+(* The device whose copy engine runs a transfer to or from [b]: [b]'s
+   device's, or, for a borrow on a device that runs no copy, its memory's own
+   device's. *)
+let runner b =
+  match b.mem.dev.live.copy_engine with
+  | Some _ -> b.mem.dev
+  | None -> b.mem.alloc.owner
+
+(* The side of a queued copy between [src] and [dst] whose [runner] runs it. *)
+let queue_side src dst = if local src.mem then dst else src
+
 (* Copies [boxes] from [src] to [dst] in one transfer, where one runs it: the
    host between memory it addresses or with an io device's, or a device's copy
    queue between memory it maps ([transfer]). What reads or writes the
@@ -211,15 +222,8 @@ let direct fn ~waits ~into_half src dst boxes =
   | Host t -> on_host fn ~waits ~into_half t src dst boxes start
   | Staged -> None
   | Queued ->
-      let side = if local src.mem then dst else src in
-      (* A borrow on a device that runs no copy copies by its memory's own
-         device. *)
-      let runner =
-        match side.mem.dev.live.copy_engine with
-        | Some _ -> side.mem.dev
-        | None -> side.mem.alloc.owner
-      in
-      if Dev.is_io runner then None else on_queue ~waits runner src dst boxes
+      let d = runner (queue_side src dst) in
+      if Dev.is_io d then None else on_queue ~waits d src dst boxes
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. A leg runs in one transfer by construction: one that finds none,
@@ -430,14 +434,6 @@ let map_halves fn stage b b0 b1 =
     map_half fn stage d b0;
     if b1 != b0 then map_half fn stage d b1
   end
-
-(* The device that runs the legs of a staged copy to or from [b]: its device's
-   copy engine, or, for a borrow on a device that runs no copy, its memory's own
-   device's, as [direct] picks it. *)
-let runner b =
-  match b.mem.dev.live.copy_engine with
-  | Some _ -> b.mem.dev
-  | None -> b.mem.alloc.owner
 
 (* Whether [b]'s legs run on a device of this machine that maps no host memory,
    which then stages through its own memory. *)
@@ -659,17 +655,21 @@ and between fn ~waits src dst ps =
           b1.cursor <- base0 + extent Host ps;
           !last))
 
-(* Copies [boxes] from [src] to [dst], directly or through the staging memory,
-   recording each transfer that ran, and is the point of the last. *)
+(* Copies [boxes] from [src] to [dst] through the staging memory, where no
+   transfer copies them directly, recording each transfer that ran, and is
+   the point of the last. *)
+let undirected fn ~waits src dst boxes =
+  let sd = src.mem.dev and dd = dst.mem.dev in
+  if (far sd || far dd) && not (hosted src || hosted dst) then
+    invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
+      dd.name
+  else staged fn ~waits src dst boxes
+
+(* [undirected]'s copy, directly where one transfer runs it. *)
 let route fn ~waits src dst boxes =
   match direct fn ~waits ~into_half:false src dst boxes with
   | Some p -> p
-  | None ->
-      let sd = src.mem.dev and dd = dst.mem.dev in
-      if (far sd || far dd) && not (hosted src || hosted dst) then
-        invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
-          dd.name
-      else staged fn ~waits src dst boxes
+  | None -> undirected fn ~waits src dst boxes
 
 (* The checks of a copy that need no claim. An io device's write of its memory
    from a borrow of its own pages, or its read into them, can wait on itself
@@ -718,8 +718,19 @@ let submit_copy ?(waits = [||]) ~src ~dst boxes =
   check fn src dst;
   point (Claim.reading2 fn src dst (queue fn) (waits, boxes))
 
+(* [copy]'s transfer of its [n] bytes on [d]'s queue, as [direct] picks
+   [d], as [d]'s cached copy of one run, or through staging memory where [d]
+   does not map both sides. *)
+let queued_run fn d src dst n =
+  match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
+  | Some _, Some s, Some t ->
+      Submission.run_copy d ~waits:[||] ~src:{ src with mem = s }
+        ~dst:{ dst with mem = t }
+  | _ -> undirected fn ~waits:[||] src dst [| row n |]
+
 (* [copy] under its claims, through its wait. The host's copy of one run
-   builds no box, so it allocates nothing. *)
+   builds no box, so it allocates nothing, and a queue's builds no box
+   either. *)
 let copied src dst n =
   let fn = "Buffer.copy" in
   prepare src dst;
@@ -731,7 +742,14 @@ let copied src dst n =
         Buffer.wait_points dst Buffer.Read_write;
         move_run fn t src 0 dst 0 n;
         record src dst n start
-    | Queued | Staged ->
+    | Queued ->
+        let d = runner (queue_side src dst) in
+        let p =
+          if Dev.is_io d then undirected fn ~waits:[||] src dst [| row n |]
+          else queued_run fn d src dst n
+        in
+        if p <> 0 then Dev.wait_point 0 true p
+    | Staged ->
         let p = route fn ~waits:[||] src dst [| row n |] in
         if p <> 0 then Dev.wait_point 0 true p
 
