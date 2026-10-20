@@ -406,11 +406,12 @@ let replay_rows =
 let kib = 1024
 let mib = 1024 * kib
 
-(* A copy of 64 MiB times at one of three levels 5% apart on an i9-9900K, set by
-   where its two buffers lie physically, apart for each row of a process: the
-   memcpy floor, which runs no rig code, shows them too. The budget admits all
-   three; the 4 KiB rows time the same paths at the default 5%. *)
-let copy_64M = [ Thumper.Budget.no_slower_than 0.15 ]
+(* The bytes of a large copy or blit: the host's copy releases the runtime
+   from 64 KiB, as for any larger one, and its two buffers fit the
+   last-level cache with room. A copy past that cache is bound by the
+   memory bus every process on the host shares, and lands on levels up to
+   30% apart from one run to the next. *)
+let large_bytes = 4 * mib
 
 let memory () =
   incr opened;
@@ -428,6 +429,12 @@ let host_written n =
   b
 
 let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
+
+(* [n] bytes of a bigarray, written, as [host_written] writes its memory. *)
+let written_chars n =
+  let a = chars n in
+  Bigarray.Array1.fill a 'w';
+  a
 
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
 let written d n =
@@ -476,10 +483,9 @@ let buffer_rows =
       row "blit-from-string-4K"
         (fun () -> (String.make (4 * kib) 's', host (4 * kib)))
         (fun (s, b) -> B.blit_from_string s 0 b 0 (4 * kib));
-      Thumper.bench_with_setup ~budgets:copy_64M
-        ~setup:(fun () -> (host (64 * mib), Bytes.create (64 * mib)))
-        "blit-to-bytes-64M"
-        (fun (b, s) -> B.blit_to_bytes b 0 s 0 (64 * mib));
+      row "blit-to-bytes-4M"
+        (fun () -> (host_written large_bytes, Bytes.create large_bytes))
+        (fun (b, s) -> B.blit_to_bytes b 0 s 0 large_bytes);
     ]
 
 let claim_rows =
@@ -540,9 +546,9 @@ let copy_rows =
   Thumper.group "copy"
     [
       row "host-4K" (pair Rig.host (4 * kib)) copy;
-      Thumper.bench_with_setup ~budgets:copy_64M
-        ~setup:(pair Rig.host (64 * mib))
-        "host-64M" copy;
+      row "host-4M"
+        (fun () -> (host_written large_bytes, host large_bytes))
+        copy;
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
       row "queue-64K"
         (fun () ->
@@ -778,9 +784,9 @@ let memory_floor_rows =
         ignore (Atomic.compare_and_set a 0 1);
         ignore (Atomic.compare_and_set a 1 0));
     row "memcpy-4K" (chars2 (4 * kib)) blit;
-    Thumper.bench_with_setup ~budgets:copy_64M
-      ~setup:(chars2 (64 * mib))
-      "memcpy-64M" blit;
+    row "memcpy-4M"
+      (fun () -> (written_chars large_bytes, chars large_bytes))
+      blit;
     Thumper.bench "bigarray-dropped-1000" (fun () ->
         for _ = 1 to dropped do
           ignore (chars (4 * kib))
