@@ -293,12 +293,14 @@ let cover_pad (pad : Nx_kernel.pad) out =
 
 let is_float (D.Any d) = D.is D.Float d || D.is D.Complex d
 
-(* Each float dtype with one special fill, each fill reaching several. *)
+(* Every float dtype with every special fill. *)
 let pad_examples =
   let specials = [ Signalling_nan; Negative_zero; Nan; Negative_nan ] in
   let floats = List.filter is_float D.all in
   List.mapi (fun i d -> (d, Bits, i)) D.all
-  @ List.mapi (fun i d -> (d, List.nth specials (i mod 4), 100 + i)) floats
+  @ List.concat_map
+      (fun f -> List.mapi (fun i d -> (d, f, 100 + i)) floats)
+      specials
 
 let loads =
   let pp ppf (d, f, seed) =
