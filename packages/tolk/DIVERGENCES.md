@@ -915,15 +915,18 @@ stamps nothing (D146).
   `uop/symbolic.py:23-26` (`fold_bitcast` converts the constant with
   `truncate` before reading its bits).
 - **tolk:** `lib/dtype.ml:17` (`equal_const`), `:27` (`hash_const`) and
-  `:647` (`const`); `lib/uop/shape.ml:1835` (`fold_bitcast`);
+  `:647` (`const`); `lib/uop/ops.ml` (`arg_key`, which `key` reads);
+  `lib/uop/shape.ml:1835` (`fold_bitcast`);
   `test/gen/tinygrad.patch`, which applies the same rules to tinygrad before
   the goldens are generated.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
   and the payload its type holds, a signalling NaN staying one, and constants
   compare and hash by their bits, so NaNs of different bits are different
-  nodes. `fold_bitcast` reads a float constant as its type stores it, where
-  tinygrad's conversion quiets a signalling NaN and makes an 8-bit NaN
-  canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives
+  nodes, with different keys: a schedule cached under one NaN's key is never
+  the schedule of another's. No golden reads a key, so the patch leaves
+  tinygrad's, which writes every NaN `nan`. `fold_bitcast` reads a float
+  constant as its type stores it, where tinygrad's conversion quiets a
+  signalling NaN and makes an 8-bit NaN canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives
   `0x7d01`, where tinygrad gives `0x7e00`, and a negative float32 NaN's bits
   survive a fold, where tinygrad makes them `0x7fc00000`. A NaN an operation
   makes from other values is `Dtype.nan`, tinygrad's `math.nan`, whatever the
@@ -935,7 +938,8 @@ stamps nothing (D146).
   reinterpretations, so a bitcast that rune folds must keep the bits as they
   do, and a rewrite must keep a graph's value.
 - **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
-  are different nodes`; `Tolk.Ops › exec_alu › an invalid operation's
+  are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
+  different bits`; `Tolk.Ops › exec_alu › an invalid operation's
   NaN is the canonical positive quiet NaN, whatever the host gives`,
   which compares bits and fails on an x86 host without the canonical NaN; `Tolk.Symbolic › symbolic_simple › casts › a
   bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph

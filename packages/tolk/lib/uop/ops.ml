@@ -1186,6 +1186,14 @@ let compare_structure u0 u1 =
   in
   cmp u0 u1
 
+(* An argument as [key] reads it: its repr, which writes every NaN [nan], with a
+   NaN constant's bits, since NaNs of different bits are different nodes. *)
+let arg_key n =
+  match n.arg with
+  | Const (`Float x) when Float.is_nan x ->
+      strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
+  | _ -> arg_repr n
+
 let key u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.key_memo)
@@ -1194,7 +1202,7 @@ let key u =
       let b = Buffer.create 128 in
       Buffer.add_string b
         (repr_tuple
-           [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_repr n ]);
+           [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_key n ]);
       List.iter
         (fun s -> Buffer.add_string b (Option.get s.memos.key_memo))
         n.src;

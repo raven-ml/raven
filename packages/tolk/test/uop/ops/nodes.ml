@@ -704,6 +704,18 @@ let keys =
           not_equal string
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ()) []))
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ~beam:3 ()) [])));
+      test "tells apart NaN constants of different bits" (fun () ->
+          let nan bits = Ops.float (Int64.float_of_bits bits) in
+          let quiet = nan 0x7FF8_0000_0000_0000L in
+          List.iter
+            (fun (what, b) ->
+              not_equal ~msg:what string (Ops.key quiet) (Ops.key (nan b)))
+            [
+              ("signalling", 0x7FF0_0000_2000_0000L);
+              ("payload", 0x7FF8_0000_0000_0001L);
+              ("sign", 0xFFF8_0000_0000_0000L);
+            ];
+          equal string (Ops.key quiet) (Ops.key (nan 0x7FF8_0000_0000_0000L)));
     ]
 
 (* Data types *)

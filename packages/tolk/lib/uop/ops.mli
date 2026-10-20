@@ -496,8 +496,8 @@ val compare_structure : t -> t -> int
 
 val key : t -> string
 (** [key u] is a digest of [u]'s operation, type, argument and sources,
-    recursively: equal for equal graphs, whenever and wherever they are built.
-*)
+    recursively: equal for equal graphs, whenever and wherever they are built,
+    and different for NaN constants of different bits. *)
 
 module Tbl : Hashtbl.S with type key = t
 (** Hash tables keyed by nodes. *)
