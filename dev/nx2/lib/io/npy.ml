@@ -255,12 +255,20 @@ let layout h =
     done;
     L.v ~strides h.shape
 
-let value h b =
+(* The stream [b]'s array over its data's bytes, read by [read]. *)
+let read_data
+    (read :
+      'v 's.
+      Rig.Buffer.t ->
+      ('v, 's) D.t ->
+      Nx_array.Layout.t ->
+      ('v, 's, Nx.host) Nx.t) h b =
   let (D.Any dt) = h.dtype in
-  let x =
-    Storage.value (Rig.Buffer.view b ~first:h.data ~length:h.size) dt (layout h)
-  in
+  let x = read (Rig.Buffer.view b ~first:h.data ~length:h.size) dt (layout h) in
   Nx.P (if h.swap then Storage.byteswap x else x)
+
+let value h b = read_data Storage.value h b
+let copied h b = read_data Storage.copied h b
 
 (* Writing *)
 

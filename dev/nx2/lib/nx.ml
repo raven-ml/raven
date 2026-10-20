@@ -310,7 +310,10 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
       invalid_argf "Nx.unpack: a value of %s, not %s" (D.name (dtype x))
         (D.name dt)
 
-let on_host a : (_, _, host) t = Repr.of_array ~by:"Nx.Repr.of_array" Host.v a
+(* The host value over [a], an array nx made: the value's alone, so a donation
+   may write into it. *)
+let owned a : (_, _, host) t =
+  Value.Array { at = Devices.one Host.v 0; a; dead = Value.Live }
 
 (* The host value of [dt] and shape [s] holding [vs], naming [by] where
    {!create} refuses them. Only integers can lie outside their dtype, and
@@ -322,13 +325,7 @@ let of_values (type v s) ~by (dt : (v, s) D.t) s (vs : v array) =
   (match D.kind dt with
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (Prim.check_value ~by dt) vs);
-  (* The array is the value's alone, so a donation may write into it. *)
-  Value.Array
-    {
-      at = Devices.one Host.v 0;
-      a = Nx_array.of_array dt s vs;
-      dead = Value.Live;
-    }
+  owned (Nx_array.of_array dt s vs)
 
 let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
@@ -370,7 +367,7 @@ let dtype_of_kind (type v s) (k : (v, s) Bigarray.kind) : (v, s) D.t =
 
 let of_bigarray b =
   let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
-  on_host (Nx_array.copy (Nx_array.of_bigarray dt b))
+  owned (Nx_array.copy (Nx_array.of_bigarray dt b))
 
 (* [x], waited for, for the read [by]. A read is not an operation: no
    interpretation receives it. *)

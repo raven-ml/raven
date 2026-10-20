@@ -479,13 +479,17 @@ let read_npy (archive : in_file) name =
           error "CRC-32 mismatch in ZIP entry %S" entry.name;
         Inflated inflated
   in
-  let b =
-    match data with
-    | Stored (first, length) -> Rig.Buffer.view archive.file ~first ~length
-    | Inflated a -> Rig.Buffer.of_bigarray a
+  let entry b value =
+    let read pos n = Storage.string b ~pos n in
+    value (Npy.header read ~length:(Rig.Buffer.length b)) b
   in
-  let read pos n = Storage.string b ~pos n in
-  Npy.value (Npy.header read ~length:(Rig.Buffer.length b)) b
+  match data with
+  | Stored (first, length) ->
+      entry (Rig.Buffer.view archive.file ~first ~length) Npy.value
+  | Inflated a ->
+      (* The inflated bytes are the entry's alone: its value owns a copy, in
+         memory rig may hand to a donation, which a bigarray's never is. *)
+      entry (Rig.Buffer.of_bigarray a) Npy.copied
 
 let le16 value =
   String.init 2 (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))

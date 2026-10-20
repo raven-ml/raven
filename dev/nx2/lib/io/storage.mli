@@ -50,6 +50,17 @@ val value :
 
     Raises [Invalid_argument] as {!Nx_array.v} does. *)
 
+val copied :
+  Rig.Buffer.t ->
+  ('v, 's) Nx_array.Dtype.t ->
+  Nx_array.Layout.t ->
+  ('v, 's, Nx.host) Nx.t
+(** [copied b dt l] is {!value} over a copy of [b]'s bytes in fresh host
+    memory, which the value owns ({!Nx.Repr.unsafe_of_array}): for bytes
+    nothing else may read once loaded, such as an inflated entry's.
+
+    Raises [Invalid_argument] as {!Nx_array.v} does. *)
+
 val byteswap : ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
 (** [byteswap x] is [x] with the bytes of each element reversed, those of each
     component for a complex dtype. *)

@@ -28,7 +28,12 @@ val header : (int -> int -> string) -> length:int -> header
     less the header's bytes. *)
 
 val value : header -> Rig.Buffer.t -> Nx.host Nx.packed
-(** [value h b] is the array of the stream [b] whose header is [h]. *)
+(** [value h b] is the array of the stream [b] whose header is [h]
+    ({!Storage.value}). *)
+
+val copied : header -> Rig.Buffer.t -> Nx.host Nx.packed
+(** [copied h b] is {!value} over a copy of the array's bytes that the value
+    owns ({!Storage.copied}). *)
 
 val encode : ('v, 's) Nx_array.Dtype.t -> int array -> string
 (** [encode dt s] is the header of a C-order little-endian stream of [dt]

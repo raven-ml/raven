@@ -34,6 +34,23 @@ let over_file (Nx.P x) =
   | Some a -> Rig.Buffer.is_borrowed (Nx_array.buffer a)
   | None -> false
 
+(* [f (make ())] and the bytes the host holds more after it, read once
+   collected memory has returned. One uncounted run comes first. *)
+let host_grown make f =
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  ignore (f (make ()));
+  let x = make () in
+  let before = settled () in
+  let y = f x in
+  (y, Rig.allocated Rig.host - before)
+
 let cut s n = String.sub s 0 (String.length s - n)
 
 let flip_byte s i =
@@ -403,6 +420,18 @@ let npz =
               ("stored", Nx.init Nx.uint8 [| 70_000 |] random, 0);
               ("deflated", Nx.zeros Nx.uint8 [| 70_000 |], 8);
             ]);
+      test "a deflated entry's donation writes in place" (fun () ->
+          let n = 70_000 in
+          let path =
+            saved ".npz" save_npz [ ("w", Nx.P (Nx.zeros Nx.uint8 [| n |])) ]
+          in
+          equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
+          let load () =
+            Nx.unpack Nx.uint8 (Nx_io.load_npz_entry ~name:"w" path)
+          in
+          let y, grew = host_grown load (fun x -> Nx.neg (Nx.donate x)) in
+          less ~msg:"no memory of the result's size" int ~than:n grew;
+          equal (array int) (Array.make n 0) (Nx.to_array y));
       test "a missing entry fails, naming the file" (fun () ->
           let path = saved ".npz" save_npz [ ("w", one) ] in
           fails ~path ~naming:"absent" (fun () ->
@@ -531,23 +560,6 @@ let payload path =
   String.sub s start (String.length s - start)
 
 let u8_entry name = raw_safetensors [ (name, "U8", [ 1 ], "\042") ]
-
-(* [f (make ())] and the bytes the host holds more after it, read once
-   collected memory has returned. One uncounted run comes first. *)
-let host_grown make f =
-  let settled () =
-    for _ = 1 to 4 do
-      Gc.full_major ();
-      ignore (Rig.Buffer.create Rig.host 0);
-      Rig.free_cache Rig.host
-    done;
-    Rig.allocated Rig.host
-  in
-  ignore (f (make ()));
-  let x = make () in
-  let before = settled () in
-  let y = f x in
-  (y, Rig.allocated Rig.host - before)
 
 let safetensors =
   group "safetensors"

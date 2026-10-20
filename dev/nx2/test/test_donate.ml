@@ -356,9 +356,9 @@ let in_place ~msg ~bytes grew =
 let copied ~msg ~bytes grew =
   at_least ~msg:(msg ^ ": a fresh result") int ~than:bytes grew
 
-(* A value made from OCaml data, or over an array its caller gives up, owns its
-   memory, which its donation then writes; one over an array its caller keeps
-   shares it. *)
+(* A value made from OCaml data or a bigarray's copy, or over an array its
+   caller gives up, owns its memory, which its donation then writes; one over
+   an array its caller keeps shares it. *)
 let test_made_in_place () =
   let n = 1 lsl 16 in
   let xs = Array.make n 1. in
@@ -373,6 +373,11 @@ let test_made_in_place () =
   in
   in_place ~msg:"Nx.create" (fun () -> Nx.create f32 [| n |] xs);
   in_place ~msg:"Nx.init" (fun () -> Nx.init f32 [| n |] (fun _ -> 1.));
+  in_place ~msg:"Nx.of_bigarray" (fun () ->
+      Nx.of_bigarray
+        (Bigarray.genarray_of_array1
+           (Bigarray.Array1.init Bigarray.float32 Bigarray.c_layout n (fun _ ->
+                1.))));
   in_place ~msg:"Nx.Repr.unsafe_of_array" (fun () ->
       Nx.Repr.unsafe_of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs));
   at_least ~msg:"Nx.Repr.of_array: a fresh result" int ~than:(4 * n)

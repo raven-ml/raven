@@ -323,7 +323,9 @@ val of_bigarray :
     shape and the dtype that stores its kind. Later writes to [b] do not reach
     it.
 
-    The copy is one pass over [b]. To read [b]'s bytes in place instead,
+    The copy is one pass over [b], into memory the value owns, so its
+    donation may write in place ({!donate}). To read [b]'s bytes in place
+    instead,
     [Repr.of_array Host.v (Nx_array.of_bigarray dt b)] is the value over them
     ({!Nx_array.of_bigarray}, {!Repr.of_array}): a write to [b] from then on
     leaves what that value reads unspecified.
