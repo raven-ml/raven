@@ -417,6 +417,16 @@ let memory () =
   Result.get_ok (Rig.memory_device (strf "memory:%d" !opened))
 
 let host n = B.create Rig.host n
+
+(* [n] bytes of host memory, written. Pages never written all map one page
+   of zeros, from which a copy of 64 KiB reads about ten times slower than
+   from written memory on fudge, and whether an allocation gets such pages
+   depends on what the heap held before. *)
+let host_written n =
+  let b = host n in
+  B.fill b 'w';
+  b
+
 let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
@@ -536,7 +546,7 @@ let copy_rows =
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
       row "queue-64K"
         (fun () ->
-          (B.create Rig.host (64 * kib), B.create (unaddressed ()) (64 * kib)))
+          (host_written (64 * kib), B.create (unaddressed ()) (64 * kib)))
         copy;
       (* Another domain copying on the same device until the row ends: both
          submit the device's one copier run at once. *)
@@ -546,13 +556,13 @@ let copy_rows =
           let stop = Atomic.make false in
           let rival =
             Domain.spawn (fun () ->
-                let src = B.create Rig.host (64 * kib)
+                let src = host_written (64 * kib)
                 and dst = B.create d (64 * kib) in
                 while not (Atomic.get stop) do
                   B.copy ~src ~dst
                 done)
           in
-          ((B.create Rig.host (64 * kib), B.create d (64 * kib)), stop, rival))
+          ((host_written (64 * kib), B.create d (64 * kib)), stop, rival))
         ~teardown:(fun (_, stop, rival) ->
           Atomic.set stop true;
           Domain.join rival)
