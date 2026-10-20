@@ -991,9 +991,9 @@ let test_mapless_pair () =
   equal ~msg:"bytes that differ" int 0 wrong;
   equal ~msg:"host maps" (list int) [] (P.host_maps pd @ P.host_maps pe)
 
-(* Copies between two such devices both ways run concurrently, each through a
-   slot of each device's staging memory. Two copies each way, with both
-   devices' sleeps held: all four wait at the gates at once, none for a slot.
+(* Copies between two such devices both ways run concurrently, each through
+   halves of each device's staging memory. Two copies each way, with both
+   devices' sleeps held: all four wait at the gates at once, none for a half.
    Every copy lands once the gates open. *)
 let test_mapless_pair_slots () =
   let open_ name =
@@ -1021,12 +1021,15 @@ let test_mapless_pair_slots () =
     (List.init 4 (fun k -> String.make 64 (Char.chr (Char.code 'a' + k))))
     (List.map (fun (_, dst) -> contents dst) copies)
 
-(* Three copies at once from the host to [d], a device that maps no host
-   memory, held at [p]'s gate until all three wait there: each makes a half
-   of 32 MiB of [d]'s [Pinned] memory. The copies' destinations. *)
-let staging_burst d p =
-  let srcs = List.map (fun c -> filled 64 c) [ 'a'; 'b'; 'c' ] in
-  let dsts = List.map (fun _ -> B.create d 64) srcs in
+(* Three copies at once from [d], whose memory the host does not address, to
+   the host, held at [p]'s gate until all three wait there for [d]'s legs into
+   staging memory: each makes a half of 32 MiB, since a device writes only a
+   half whose work is done. [burst_from p srcs] copies from [srcs], made by
+   [sources], and is the copies' destinations. *)
+let sources d = List.map (on d) [ 'a'; 'b'; 'c' ]
+
+let burst_from p srcs =
+  let dsts = List.map (fun _ -> B.create Rig.host 64) srcs in
   P.gate p;
   let copier src dst = Thread.create (fun () -> B.copy ~src ~dst) () in
   let copiers = List.map2 copier srcs dsts in
@@ -1035,10 +1038,12 @@ let staging_burst d p =
   List.iter Thread.join copiers;
   dsts
 
+let staging_burst d p = burst_from p (sources d)
+
 let burst_landed dsts =
   equal ~msg:"the copies' bytes" (list string)
     (List.map (String.make 64) [ 'a'; 'b'; 'c' ])
-    (List.map contents dsts)
+    (List.map bytes dsts)
 
 (* Staging memory keeps what concurrent copies made for later copies, through
    collections, and returns it at [Rig.free_cache]. *)
@@ -1072,28 +1077,18 @@ let test_staging_pressure () =
   burst_landed dsts
 
 (* Staging memory keeps the halves that later copies use, and returns those
-   that as many later copies as it has slots did not use, without waiting
-   for a collection. Copies from the
-   host to [d], whose memory the host does not address, stage through the
-   host's halves, each mapped on [d] at its first use. After a burst of
-   three, three copies in turn use one slot alone, the two halves they passed
-   by go back with their mappings at the next drain, and a second burst maps
-   two new halves. *)
+   that as many later takes as it has halves did not take, without waiting
+   for a collection. Copies between the host and [d], whose memory the host
+   does not address, stage through the host's halves, each mapped on [d] at
+   its first use. After a burst of three, three copies in turn put their
+   bytes one after the other in one half, the two halves they passed by go
+   back with their mappings at the next drain, and a second burst maps two
+   new halves. *)
 let test_staging_window () =
   let d, p = P.open_ ~host_visible:false "buffer:staging-window" in
   let maps () = List.length (P.host_maps p) in
-  let burst () =
-    let srcs = List.map (fun c -> filled 64 c) [ 'a'; 'b'; 'c' ] in
-    let dsts = List.map (fun _ -> B.create d 64) srcs in
-    P.gate p;
-    let copier src dst = Thread.create (fun () -> B.copy ~src ~dst) () in
-    let copiers = List.map2 copier srcs dsts in
-    Support.await "three copies waiting" (fun () -> P.sleepers p = 3);
-    P.open_gate p;
-    List.iter Thread.join copiers;
-    dsts
-  in
-  let first = burst () in
+  let srcs = sources d and later = sources d in
+  let first = burst_from p srcs in
   let after_burst = maps () in
   List.iter
     (fun c -> B.copy ~src:(filled 64 c) ~dst:(B.create d 64))
@@ -1102,12 +1097,35 @@ let test_staging_window () =
   ignore (B.create Rig.host 0);
   equal ~msg:"halves mapped once the copies in turn return" int 1
     (List.length (List.filter (( = ) (32 lsl 20)) (P.outstanding p)));
-  let second = burst () in
+  let second = burst_from p later in
   equal ~msg:"maps of the second burst" int (after_burst + 2) (maps ());
   burst_landed first;
   burst_landed second
 
-(* Copies through one staging memory run concurrently, each through a slot of
+(* Copies from host memory that the host writes into staging memory put their
+   pieces one after the other in one half, and wait for no work there: a copy
+   gives its half back once the host wrote its piece, and while it waits for
+   the device's leg, a second copy writes after it in the same half, which the
+   device maps once. *)
+let test_staging_packed () =
+  let d, p = P.open_ ~host_visible:false "buffer:staging-packed" in
+  let dsts = [ B.create d 64; B.create d 64 ] in
+  P.gate p;
+  let copier c dst = Thread.create (fun () -> B.copy ~src:(filled 64 c) ~dst) () in
+  let first = copier 'a' (List.nth dsts 0) in
+  Support.await "the first copy waiting" (fun () -> P.sleepers p = 1);
+  let second = copier 'b' (List.nth dsts 1) in
+  Support.await "both copies waiting" (fun () -> P.sleepers p = 2);
+  P.open_gate p;
+  Thread.join first;
+  Thread.join second;
+  equal ~msg:"halves mapped" int 1
+    (List.length (List.filter (( = ) (32 lsl 20)) (P.host_maps p)));
+  equal ~msg:"the copies' bytes" (list string)
+    [ String.make 64 'a'; String.make 64 'b' ]
+    (List.map contents dsts)
+
+(* Copies through one staging memory run concurrently, each through halves of
    its own: three copies wait on a device at once, and every copy lands once
    the device runs. *)
 let test_staging_turns () =
@@ -1177,12 +1195,13 @@ let breaks f =
     ~finally:(fun () -> Sys.catch_break false)
     (fun () -> match f () with _ -> false | exception Sys.Break -> true)
 
-(* A copy through the staging memory gives its slot back on every exit. A copy
-   of two pieces from an io device to a device that maps no host memory queues
-   the first piece's leg out of its slot, then its second read fails; the wait
-   for that leg is interrupted. Two such copies, then a third that lands, all
-   go through the halves the first made. Each broken copy released its claim
-   on its destination. *)
+(* A copy through the staging memory gives its halves back on every exit. A
+   copy of three pieces from an io device to a device that maps no host
+   memory queues the legs out of both its halves, then waits for the first
+   half's leg before it reads the third piece into it, and that wait is
+   interrupted. Two such copies, then a third that lands, all go through the
+   halves the first made. Each broken copy released its claim on its
+   destination. *)
 let test_staging_gives_back () =
   let d, p = staging_device "buffer:staging-gives-back" in
   let halves () =
@@ -1191,7 +1210,7 @@ let test_staging_gives_back () =
          (fun (k, n, _) -> k = B.Pinned && n = 32 lsl 20)
          (P.allocs p))
   in
-  let n = (32 * 1024 * 1024) + 8 in
+  let n = (2 * 32 * 1024 * 1024) + 8 in
   let copy reads dst = B.copy ~src:(B.create (cut reads) n) ~dst in
   for i = 1 to 2 do
     P.interrupt p;
@@ -1199,7 +1218,7 @@ let test_staging_gives_back () =
     equal
       ~msg:(Printf.sprintf "copy %d broke" i)
       bool true
-      (breaks (fun () -> copy 1 dst));
+      (breaks (fun () -> copy 2 dst));
     is_some
       ~msg:(Printf.sprintf "copy %d's destination donated after it" i)
       (Support.donated dst)
@@ -1207,7 +1226,7 @@ let test_staging_gives_back () =
   let copied = Atomic.make false in
   let third =
     Domain.spawn (fun () ->
-        copy 2 (B.create d n);
+        copy 3 (B.create d n);
         Atomic.set copied true)
   in
   Support.await "the third copy" (fun () -> Atomic.get copied);
@@ -1241,7 +1260,7 @@ module Hooked = struct
 end
 
 (* A staged copy from a callback inside a copy inside a copy, on the thread
-   that holds two slots of the staging memory, makes a third and lands, and
+   that holds two halves of the staging memory, makes a third and lands, and
    so do both outer copies. *)
 let test_staging_held () =
   let d, _ = P.open_ ~host_visible:false "buffer:staging-held" in
@@ -1955,6 +1974,8 @@ let tests =
           test_mapless_pair_slots;
         test "copies through one staging memory run concurrently"
           test_staging_turns;
+        test "small copies the host stages share a half and wait for no work"
+          test_staging_packed;
         test "staging memory keeps its halves until free_cache"
           test_staging_kept;
         test "staging memory's free halves return under pressure"
@@ -1963,7 +1984,7 @@ let tests =
           test_staging_window;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
-        test "a staged copy gives its slot back on every exit"
+        test "a staged copy gives its halves back on every exit"
           test_staging_gives_back;
         test "a staged copy inside two staged copies on one thread lands"
           test_staging_held;

@@ -98,6 +98,11 @@ val reached_write : memory -> bool
 (** [reached_write m] is {!reached_points} for the points {!wait_write}[ m]
     waits for. *)
 
+val uses_done : memory -> bool
+(** [uses_done m] is [true] iff every point that {!wait_points}[ m] waits
+    for is done ({!Dev.is_done}). It commits no work, waits for none, never
+    raises and allocates nothing, so it may run under a device's lock. *)
+
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost
     device and not done. *)
@@ -365,8 +370,8 @@ val of_io : device -> io_region -> access:access -> int -> memory
     drains again. *)
 
 val return_half : buffer -> unit
-(** [return_half b] returns [b], a staging half ({!Def.slot}) that its slot no
-    longer holds, as {!Rig.Buffer.free} returns memory: [b] is consumed, and
+(** [return_half b] returns [b], a staging half's buffer ({!Def.half}) that
+    its half no longer holds, as {!Rig.Buffer.free} returns memory: [b] is consumed, and
     its memory goes back once the work that uses it is done, through its
     device's retiring memory, so a leg still queued on it finishes first. A
     half that a claim holds is left to its collection. The caller holds no

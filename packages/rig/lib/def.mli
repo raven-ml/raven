@@ -201,10 +201,12 @@ and live = {
           lock: the mapping goes back with the entry, or once it is Stopped,
           whichever comes first. Emptied, it goes back to its smallest
           size. *)
-  mutable slots : slot array;
-      (** Its staging memory ({!Copy}): every slot made, held or not, under
+  mutable halves : half array;
+      (** Its staging memory ({!Copy}): every half made, held or not, under
           the lock. The host's serves every device that maps host memory. *)
-  mutable claims : int;  (** The claims of its slots so far, under the lock. *)
+  mutable takes : int;  (** The takes of its halves so far, under the lock. *)
+  mutable laps : int;
+      (** The laps its halves started so far, under the lock. *)
 }
 
 (** The type for how a device's queues wait for the values of a producer
@@ -337,14 +339,20 @@ and buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its allocation's, whose low
     bit says what it admits ({!Memory.admits}). *)
 
-(** The type for a slot of a device's staging memory ({!Copy}): two halves,
-    each made at the first piece that needs it, which change only while a
-    copy holds the slot and as a give or a release drops them. *)
-and slot = {
-  halves : buffer option array;
+(** The type for a half of a device's staging memory ({!Copy}), whose fields
+    change under its device's lock, and its [buffer] also while a copy holds
+    it. *)
+and half = {
+  mutable buffer : buffer option;
+      (** Its allocation of 32 MiB, made at the first copy that needs it, and
+          dropped as a give or a release returns it. *)
   mutable held : bool;  (** Whether a copy holds it. *)
-  mutable last : int;  (** Its device's [claims] at its last claim. *)
-  owner : device;  (** The device whose [live] holds it. *)
+  mutable cursor : int;
+      (** The byte from which no unfinished work uses [buffer]. *)
+  mutable lap : int;
+      (** Its device's [laps] when [cursor] was last set to [0]. *)
+  mutable last : int;  (** Its device's [takes] at its last take. *)
+  stage : device;  (** The device whose [live] holds it. *)
 }
 
 type holds = { allocs : alloc Weak.t; taken : Bytes.t }

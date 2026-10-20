@@ -698,7 +698,7 @@ val failure : unit -> string option
        new buffer over it waits for no work of its earlier use.}
     {- {e Release.} Cached memory returns to the driver when the cache is
        freed ({!free_cache}), when the budget is lowered ({!set_budget}), or
-       when an allocation needs the room. Staging memory that no copy uses
+       when an allocation needs the room. Staging memory that no copy holds
        ({!Buffer.section-copying}) returns at these times too, once the work
        that used it is done. An allocation that finishes waiting while its
        device holds more than its budget skips the cache, as does an io
@@ -750,7 +750,7 @@ val failure : unit -> string option
     {- An allocation that its budget or its driver refuses first reclaims.
        rig frees the cached memory charged to that budget, waits for the work
        that holds back other collected memory, from the second round on
-       returns staging memory that no copy uses and runs the collector, and
+       returns staging memory that no copy holds and runs the collector, and
        tries again. The allocation raises {!Out_of_memory}
        after three such rounds.}
     {- A growth of a device's queues ({!submit}) that its driver has no
@@ -775,7 +775,7 @@ val set_budget : t -> int -> unit
     Raises [Invalid_argument] if [n < 0]. *)
 
 val free_cache : t -> unit
-(** [free_cache d] first returns [d]'s staging memory that no copy uses
+(** [free_cache d] first returns [d]'s staging memory that no copy holds
     ({!Buffer.section-copying}), then moves [d]'s collected memory
     ({!section-reclaim}), then returns [d]'s cached memory to its driver
     once the work using it is done. On a lost [d] that has stopped
@@ -1106,23 +1106,34 @@ module Buffer : sig
 
       A copy that no device can run directly passes through {e staging
       memory}, host memory that rig makes in allocations of 32 MiB, each at
-      the first copy whose bytes need it. A copy uses one allocation, or two
-      for more than 32 MiB, that no other copy uses while it runs. Staging
-      memory so grows by 32 or 64 MiB for each copy running at once.
+      the first copy whose bytes need it. A copy holds one allocation, or two
+      for more than 32 MiB, until the transfers the host makes for it are
+      done. A copy of at most 32 MiB whose bytes the host writes into staging
+      memory puts them after those of earlier copies in an allocation that no
+      copy holds, where it has room, and waits for no work there. Where none
+      has room, it takes an allocation whose work is done, else the one whose
+      bytes were placed from its start longest ago, and waits for its work. A
+      copy whose bytes a device writes into staging memory takes an
+      allocation whose work is done, or a new one. Staging memory so grows by
+      32 or 64 MiB for each copy holding it at once, and by 32 MiB for each
+      copy whose bytes a device wrote into it and whose work is still queued.
+      A copy of more than 32 MiB waits before it reuses one of its two
+      allocations until the work that last read it is done.
 
-      A copy's allocations serve the copies after it. Let [n] be the most
-      copies that have run through one staging memory at once. When a copy
-      returns, the allocations that none of the last [n] copies used return
-      as {!free} returns memory. Copies that run one after another, or
-      several at a time over and over, keep theirs.
+      A copy's allocations serve the copies after it. Let [n] be the number
+      of allocations a staging memory has made. When a copy gives its
+      allocations back, every allocation that no copy holds and that none of
+      the last [n] allocations copies took returns as {!free} returns memory.
+      Copies that run one after another, or several at a time over and over,
+      keep theirs.
 
-      Staging memory that no copy uses also returns with its device's
+      Staging memory that no copy holds also returns with its device's
       cache: at {!free_cache} of that device ({!host} for host memory), at a
       {!set_budget} that leaves the device over its budget, and from
       reclamation's second round ({!Rig.section-reclaim}). After copies to
-      many devices at once, their allocations so stay until [n] later copies
-      have run or one of these returns them. An allocation returns once the
-      work that used it is done.
+      many devices at once, their allocations so stay until [n] later
+      allocations have been taken or one of these returns them. An
+      allocation returns once the work that used it is done.
 
       A device that maps no host memory ([maps_host] in
       {!Rig_edge.type-facts}) stages through [Pinned] memory of its own,

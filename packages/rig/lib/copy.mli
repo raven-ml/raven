@@ -22,29 +22,41 @@
     submission is.
 
     Where no route runs in one transfer, the copy goes through staging memory,
-    in pieces of 32 MiB. Staging memory is slots of two halves. A copy holds a
-    slot that no other copy holds until it returns, and makes a new slot when
-    every slot is held, so no copy waits for one. After a give, the halves of
-    every free slot that none of the last claims took, as many claims as there
-    are slots, return as memory returns free halves ([Memory.return_half]).
-    Copies that keep slots busy, one after another or in lockstep, so keep
-    their halves, and the extra slots of a burst go once that many later
-    claims passed them by. Each half is an allocation of its own, since stamps
-    order the uses of a whole allocation, and is made at the first piece that
-    needs it, outside every lock, so a copy of one piece makes one. A device's
-    slots are part of its state ([slots] in {!Def.live}), taken and given
-    under its lock. The host's slots serve every device that maps host memory,
-    and a device of this machine that maps none has slots of its own
-    ({!Rig.Buffer.section-copying}). A copy between two such devices holds a
-    slot of each. Memory returns free slots' halves where it returns the cache
-    ([Memory.release_staging]). A forked child keeps the host's slots as the
-    parent left them: a slot that a thread of the parent held at the fork
-    stays held, and its halves stay, for good. The legs into and out of a half
-    alternate, so one half fills while the other empties. A leg on a device's
-    queue runs without the host waiting for it, and the next leg on its half
-    follows it by the half's stamps. A half whose stamps name unfinished work
-    of a lost device is replaced, so a loss reaches no later copy. A copy
-    returns once its last transfer is done.
+    in pieces of 32 MiB. Staging memory is halves, each an allocation of
+    32 MiB of its own, since stamps order the uses of a whole allocation, made
+    at the first copy that needs it, outside every lock. A copy holds one half
+    for one piece and two for more, which alternate, so one fills while the
+    other drains, and the host waits for a half's last drain before it fills
+    it again. A copy gives its halves back once the transfers the host makes
+    are done, with legs through them still queued: a half's stamps order every
+    later use after them. A copy returns once its last transfer is done.
+
+    A half's {e cursor} is the byte from which no unfinished work uses it, and
+    pieces start at multiples of 256 bytes. A copy of one piece that the host
+    writes takes the free half with room after its cursor whose lap started
+    last, where a half's lap starts when its cursor is set to its start, and
+    writes there without waiting. A piece a device writes is never packed,
+    since its write would follow every use of the half. Otherwise a copy
+    takes a free half whose uses are done, its cursor at its start; for a
+    piece the host writes, else the free half whose lap started first, and
+    waits for its uses; else, every half being held, a new half, so no copy
+    waits for a hold.
+
+    A device's halves are part of its state ([halves] in {!Def.live}), taken
+    and given under its lock. The host's halves serve every device that maps
+    host memory, and a device of this machine that maps none has halves of
+    its own ({!Rig.Buffer.section-copying}). A copy between two such devices
+    holds halves of each. After a give, the buffers of every free half that
+    none of the last takes took, as many takes as there are halves, return as
+    memory returns free halves ([Memory.return_half]), so they return once the
+    work that used them is done. Copies that keep halves busy so keep them,
+    and the extra halves of a burst go once that many later takes passed them
+    by. Memory returns free halves' buffers where it returns the cache
+    ([Memory.release_staging]). A forked child keeps the host's halves as the
+    parent left them: a half that a thread of the parent held at the fork
+    stays held, and its buffer stays, for good. A half whose stamps name
+    unfinished work of a lost device is replaced, so a loss reaches no later
+    copy.
 
     The host's values reach memory the host addresses by its own copy, and
     other memory through staging memory, as a copy whose one side the host

@@ -102,6 +102,20 @@ let reached_all (a : alloc) every =
 let reached_points m = reached_all m.alloc true
 let reached_write m = reached_all m.alloc false
 
+(* [reached_all]'s walk, asking [Dev.is_done], which commits nothing. *)
+let rec done_from c i =
+  c = 0
+  ||
+  if i = uses then done_from (stamps_next c) 0
+  else
+    let p = stamps_followed c i true in
+    p = ended || ((p = 0 || Dev.is_done p) && done_from c (i + 1))
+
+let uses_done m =
+  let st = m.alloc.entry.stamps in
+  let p = stamps_folded st true in
+  done_from st 0 && (p = 0 || Dev.is_done p)
+
 (* Visit every point even after a refusal: reading a later transport word may
    discover its device's loss. The walk carries no allocated state. *)
 let rec all_from f c i ok =
@@ -884,38 +898,29 @@ let release_early (a : alloc) =
 
 external buffer_free : buffer -> string -> int = "caml_rig_buffer_free"
 
-let rec halves_of hs h (s : slot) =
-  if h = 2 then hs
-  else
-    match s.halves.(h) with
-    | Some b -> halves_of (b :: hs) (h + 1) s
-    | None -> halves_of hs (h + 1) s
-
-(* Under [l]'s lock: the halves of [l]'s free slots, taken out of them, each
-   slot's list made before its stores. *)
+(* Under [l]'s lock: the buffers of [l]'s free halves, taken out of them,
+   each half's cursor back at its start, and the list made before the
+   stores. *)
 let take_free_halves l =
   Array.fold_left
-    (fun hs (s : slot) ->
-      if s.held then hs
-      else
-        let hs = halves_of hs 0 s in
-        s.halves.(0) <- None;
-        s.halves.(1) <- None;
-        hs)
-    [] l.slots
+    (fun bs (h : half) ->
+      match h.buffer with
+      | Some b when not h.held ->
+          let bs = b :: bs in
+          h.buffer <- None;
+          h.cursor <- 0;
+          bs
+      | Some _ | None -> bs)
+    [] l.halves
 
-(* Whether a slot of [l] has a half, which keeps [l]'s device's slot. *)
-let has_halves l =
-  let some = function Some _ -> true | None -> false in
-  Array.exists
-    (fun (s : slot) -> some s.halves.(0) || some s.halves.(1))
-    l.slots
+(* Whether a half of [l] has a buffer, which keeps [l]'s device's slot. *)
+let has_halves l = Array.exists (fun (h : half) -> h.buffer <> None) l.halves
 
 let return_half b = if buffer_free b "freed" = 1 then release_early b.mem.alloc
 
 (* Returns [d]'s free staging halves ([return_half]). *)
 let release_staging d =
-  if Array.length d.live.slots > 0 then
+  if Array.length d.live.halves > 0 then
     List.iter return_half (Dev.protect d take_free_halves d.live)
 
 (* Under [hold_lock]: releases the holds at the front of the list's hand whose
