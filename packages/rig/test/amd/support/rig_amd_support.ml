@@ -156,12 +156,16 @@ let copy_words t ~dst ~src =
    plus the line's rate error over the time since the latest measure, at
    most 62.5 ms. That rate error is at most 10 us over the measures'
    distance, 10 ppm, and the clock's own until they are a second apart."
-   The clock's own is taken within the same 10 ppm. With no kernel driver
-   the device measures at open only, by a round trip through its compute
-   queue, taken as within 10 us as CUDA's is, plus the clock's rate error
-   since open. *)
+   The clock's own is taken within the same 10 ppm. A time through KFD also
+   holds the constant's error: half the round trip through the compute queue
+   it came from, taken as within 20 us (15 us on an R9700), plus the 5 us of
+   the read within the bound it was taken against. With no
+   kernel driver the device measures at open only, by such a round trip,
+   taken as within 10 us as CUDA's is, plus the clock's rate error since
+   open. *)
 let clock_error ~since =
-  if driverless () then 5_000 + (since / 100_000) else 5_000 + 625
+  if driverless () then 5_000 + (since / 100_000)
+  else 5_000 + 625 + 10_000 + 5_000
 
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most 2.1 us
    at 4 GHz, then sets its flag, a word of its own here. *)

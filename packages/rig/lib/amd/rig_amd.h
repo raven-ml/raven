@@ -63,7 +63,8 @@ int rig_amd_settle(void *self, uint64_t v, const char **failure);
 /* A path's reader of the GPU's clock against the host's clock (Rig_amd's
    [Source] clock), which the path keeps while a device may read it,
    usually as the first member of a structure of its own. [read] stores the
-   clock's count into [*ticks], the host's clock (rig_now_ns) at the same
+   count of the clock, or of a counter of its rate a constant apart from
+   it, into [*ticks], the host's clock (rig_now_ns) at the same
    instant into [*host], and into [*width] the interval between the host
    clock's readings that bound that instant, and answers 0, or -1 if it
    could not read them. It never waits for the GPU's work and calls

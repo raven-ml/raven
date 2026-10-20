@@ -207,8 +207,8 @@ value caml_rig_amd_stamps(value v_self, value v_host, value v_gpu,
 
 /* Sets the clock's source to the path's [struct rig_amd_clock] at
    [v_source], or none if it is [0], and takes the first measure
-   (rig_amd_measure): whether it could. Releases the runtime, as a measure
-   without a source waits for the GPU. */
+   (rig_amd_measure): whether it could. Releases the runtime, as every
+   measure waits for stamps of the GPU's compute queue. */
 value caml_rig_amd_clock(value v_self, value v_source) {
   struct rig_amd *d = Device_val(v_self);
   d->source = Host_val(v_source);

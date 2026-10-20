@@ -358,10 +358,17 @@ val capability : t -> Rig_amd_abi.Capability.t
     {!type-clock} says, and converts a stamp along the line through its
     first measure, at open, and its latest, once they lie a second apart,
     and at [clock_hz] from the latest before. A measure through a {!Source}
-    takes the time of a host clock between two readings of it. A re-measure
-    whose readings lie more than 10 µs apart is dropped, and the measure at
-    open keeps the first of sixteen reads within 10 µs, or the narrowest,
-    which the first re-measure within 10 µs replaces. A time is thus within
+    takes the time of a host clock between two readings of it. A source may
+    count another counter of the clock's rate, a constant apart from the
+    clock, as KFD's does on GFX 12: the device takes the constant
+    once, at open, from stamps its compute queue writes between two
+    readings of the host's clock, the closest pair of eight, against a read
+    of the source, and adds it to every read. That read is the first of
+    sixteen before the stamps within 10 µs, else the first of sixteen after
+    them within 10 µs, else the narrowest; it is also the measure at open,
+    which, if wider than 10 µs, the first re-measure within 10 µs replaces
+    in the line. A re-measure whose readings lie more than 10 µs apart is
+    dropped. A time is thus within
     its measure's deviation plus the line's rate error over the time since
     the latest measure, at most 62.5 ms. A measure's deviation is half its
     interval, 5 µs once a measure within the bound is taken. The rate error
@@ -372,9 +379,17 @@ val capability : t -> Rig_amd_abi.Capability.t
     host's clock with a pair of readings of its own. A measure's deviation
     is then half its interval plus KFD's gap between the counter read and
     its host sample. That gap is one-sided, usually one register read, and
-    unbounded under preemption. With {!Round_trip} the device measures at
-    open only, and its times drift from the host's clock at the clock's
-    rate error since open.
+    unbounded under preemption. Through a {!Source} a time also holds the
+    constant's error: half the stamps' interval plus the deviation of the
+    read it was taken against, for the device's life. The constant stays
+    fixed for that life, and a counter that moved against the clock would
+    shift every time by the move: a conversion that puts a value's start
+    before its [submit], or its end after the conversion, by more than
+    1 ms leaves both its times [0], as for work the device cannot time, so
+    a profile records no [Work] for it ({!Rig.Profile.type-event}). A late
+    read of the source, as KFD's under preemption, does the same. With
+    {!Round_trip} the device measures at open only, and its times drift
+    from the host's clock at the clock's rate error since open.
 
     {2:stop Stop}
 
@@ -417,8 +432,10 @@ type clock =
   | Source of int
       (** The address of the path's [struct rig_amd_clock] ([rig_amd.h]),
           which the path keeps while a device may read it. A device reads
-          it at open and again in [rig_amd_settle], at most every
-          62.5 ms. *)
+          it at open and again in [rig_amd_settle] and in a [rig_amd_submit]
+          that converts an earlier value's stamps, at most every 62.5 ms,
+          and takes at open the constant between its counter and the clock
+          ({!section-c}). *)
   | Round_trip
       (** The device measures at open only, with a stamp its compute queue
           writes between two readings of the host's clock, the closest of

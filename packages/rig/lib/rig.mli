@@ -2147,7 +2147,9 @@ module Profile : sig
             run, in the order of its parts, joined by [", "], or, with no
             launch, after its first part's kind, ["copies"], ["fills"] or
             ["words"]. A device whose driver cannot time a submission's work
-            records none of it.
+            records none of it, nor does one whose driver finds the work's
+            converted times outside the host's window around it, from the
+            submit to their conversion, by more than the driver states.
 
             Its driver converts the device's clock to the host's through
             measures of one against the other. A time's error is the

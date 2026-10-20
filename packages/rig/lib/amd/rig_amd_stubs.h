@@ -299,12 +299,21 @@ _Static_assert(sizeof(struct rig_amd_route) <= RIG_SCRATCH, "a route fits");
 
    A stamp converts to the host's clock along the line through two
    measures of the clock against the host's clock, the first, at open, and
-   the latest, which rig_amd_settle takes again once it is
-   RIG_AMD_MEASURE_NS old from a path's source, once they lie
+   the latest, which rig_amd_settle, and a submit that converts an earlier
+   value's stamps, take again once it is RIG_AMD_MEASURE_NS old from a
+   path's source, once they lie
    RIG_AMD_RATE_BASE_NS apart, and at the clock's nominal rate before. A
    read whose host readings lie more than RIG_AMD_READ_BOUND_NS apart is
-   dropped. A device without a source measures at open only, with stamps
-   the compute queue writes between two readings of the host's clock.
+   dropped. A source may count a counter of the clock's rate that runs a
+   constant apart from the clock, as KFD's does on GFX 12: at open the
+   device takes that constant from stamps the compute queue writes between
+   two readings of the host's clock, and adds it to every read: against a
+   read within RIG_AMD_READ_BOUND_NS, taken before the stamps or, if none
+   is, after them. A device without a source measures at open only, with
+   such stamps. With a source, a conversion that puts a value's start
+   before its submit or its end after the conversion, by more than
+   RIG_AMD_MOVED_NS, leaves the value untimed: the clock moved against the
+   source's counter, or a read of the source was late.
    Values convert in value order, and a value's start is never before the
    end of the value converted before it: a value's work starts once the
    work of every value before it has completed, on every queue. */
@@ -312,6 +321,7 @@ _Static_assert(sizeof(struct rig_amd_route) <= RIG_SCRATCH, "a route fits");
 #define RIG_AMD_MEASURE_NS UINT64_C(62500000)
 #define RIG_AMD_READ_BOUND_NS UINT64_C(10000)
 #define RIG_AMD_RATE_BASE_NS UINT64_C(1000000000)
+#define RIG_AMD_MOVED_NS UINT64_C(1000000)
 
 /* A slot's records, as the GPU writes them: counts of its clock, and the
    word the copy queue's fence before its end writes. */
@@ -320,11 +330,13 @@ struct rig_amd_stamps {
 };
 
 /* The host's side of a slot: its value, where its times go, NULL once
-   they are written or dropped, and the queues it entered, a bit each. */
+   they are written or dropped, the queues it entered, a bit each, and the
+   host's time at its submit. */
 struct rig_amd_timed {
   uint64_t v;
   uint64_t *times;
   uint8_t entered;
+  uint64_t submitted;
 };
 
 /* A reading of the GPU's clock and of the host's clock at that instant. */
@@ -375,8 +387,9 @@ struct rig_amd {
   int draining;
   /* the stamp ring, as the host reads it and at the GPU's address, and its
      host side; the clock: the path's source, or NULL, the record a stamp
-     of the measure at open writes, the clock's rate, the first and the
-     latest measures; every timed value up to [converted] converted, and
+     of the measure at open writes, the clock's rate, the clock's count
+     less the source's at one instant, the first and the latest measures,
+     in the clock's counts; every timed value up to [converted] converted, and
      the timed values whose times are still to write; the end of the last
      value converted; and the failure of a conversion a submit made, which
      the next settle reports */
@@ -386,6 +399,7 @@ struct rig_amd {
   struct rig_amd_clock *source;
   volatile uint64_t *clock;
   uint64_t clock_gpu, clock_hz;
+  int64_t offset;
   struct rig_amd_measure first, latest;
   int first_wide; /* the first's readings lie wider than the bound */
   uint64_t converted, unconverted, last_end;
@@ -410,7 +424,8 @@ struct rig_amd_edge {
 
 /* Takes [d]'s first measure of its clock: from its source, the first of
    sixteen reads whose host readings lie within RIG_AMD_READ_BOUND_NS, or
-   the narrowest; without one, from stamps of the compute queue. Answers
+   the narrowest, then the source's constant from stamps of the compute
+   queue; without one, from stamps of the compute queue. Answers
    [1], or [0] if the source could not read the clock or the GPU wrote no
    stamp within a second. Called at open, before any submission. */
 int rig_amd_measure(struct rig_amd *d);

@@ -376,9 +376,12 @@ value caml_rig_amd_amdgpu_store64(value v_at, value v_v) {
 
 /* The GPU's clock
 
-   AMDKFD_IOC_GET_CLOCK_COUNTERS reads the GPU's clock counter, the counter
-   of the queues' timestamps, which ROCr converts its dispatches' times by
-   (amdgpu_amdkfd_get_gpu_clock_counter, GpuAgent::TranslateTime). KFD
+   AMDKFD_IOC_GET_CLOCK_COUNTERS reads the GPU's clock counter
+   (amdgpu_amdkfd_get_gpu_clock_counter), at the rate of the queues'
+   timestamps. Off SR-IOV on GFX 11 and 12 it is SMUIO's GOLDEN_TSC
+   (gfx_v11_0_get_gpu_clock_counter, smuio_v14_0_2_get_gpu_clock_counter),
+   which on an R9700 (GFX 12) runs 2.3 ms behind the queues' timestamps;
+   Rig_amd takes the constant between the two at open. KFD
    samples CLOCK_MONOTONIC_RAW after the counter read returns
    (kfd_ioctl_get_clock_counters, ktime_get_raw_ns). The gap between the
    two is one-sided, the host sample later, usually one register read, and

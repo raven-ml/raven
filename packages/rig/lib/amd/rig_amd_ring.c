@@ -24,10 +24,11 @@
    flushes the host data path if the host wrote GPU memory through the BAR,
    and rings the doorbells.
 
-   A timed value also places its stamps (rig_amd_stubs.h's Times). A
-   device without a source of its clock measures it at open with a stamp
-   the compute queue writes between two readings of the host's clock, the
-   closest pair of eight kept. */
+   A timed value also places its stamps (rig_amd_stubs.h's Times). At open
+   a device measures its clock with a stamp the compute queue writes
+   between two readings of the host's clock, the closest pair of eight
+   kept: against the host's clock without a source of its clock, and with
+   one against the source's read, for the constant between them. */
 
 #define _GNU_SOURCE
 
@@ -585,14 +586,47 @@ static uint64_t host_ns(const struct rig_amd *d, uint64_t ticks) {
   return b->host + (uint64_t)(int64_t)(dh < 0 ? dh - 0.5 : dh + 0.5);
 }
 
+/* Reads [d]'s source into [*m], in the clock's counts, and the interval of
+   its host readings into [*width]: 0, or -1 if the source could not. */
+static int read_source(struct rig_amd *d, struct rig_amd_measure *m,
+                       uint64_t *width) {
+  if (d->source->read(d->source, &m->ticks, &m->host, width) != 0) return -1;
+  m->ticks += (uint64_t)d->offset;
+  return 0;
+}
+
+/* Takes [d]'s latest measure again from its source once it is
+   RIG_AMD_MEASURE_NS old, dropping a read wider than RIG_AMD_READ_BOUND_NS,
+   and replacing a first measure that was wider: 0, or -1 if the source
+   could not be read. It never waits for the GPU. */
+static int remeasure(struct rig_amd *d) {
+  struct rig_amd_measure m;
+  uint64_t width;
+  if (d->source == NULL || rig_now_ns() - d->latest.host < RIG_AMD_MEASURE_NS)
+    return 0;
+  if (read_source(d, &m, &width) != 0) return -1;
+  if (width > RIG_AMD_READ_BOUND_NS) return 0;
+  d->latest = m;
+  if (d->first_wide) {
+    d->first = m;
+    d->first_wide = 0;
+  }
+  return 0;
+}
+
+static const char unread[] = "the GPU's clock could not be read";
 static const char unwritten[] = "a stamp of the GPU's work was never written";
 
-/* Writes the times of slot [k]'s value, whose work has completed and which
-   is the next to convert: the earliest of its queues' starts and its end,
-   each no earlier than the end of the value converted before it, which
-   completed first. Its times go, written or not; a stamp the work did not
-   write is the device's failure. */
-static void convert(struct rig_amd *d, uint64_t k) {
+/* Writes the times of slot [k]'s value, whose work has completed by the
+   host's time [now] and which is the next to convert: the earliest of its
+   queues' starts and its end, each no earlier than the end of the value
+   converted before it, which completed first. Its times go, written or not;
+   a stamp the work did not write is the device's failure. On a device with
+   a source, a start before the value's submit or an end after [now], by
+   more than RIG_AMD_MOVED_NS, leaves both times 0, as for work that cannot
+   be timed: the clock moved against the source's counter, or a read of the
+   source was late. */
+static void convert(struct rig_amd *d, uint64_t k, uint64_t now) {
   struct rig_amd_timed *t = &d->timed[k];
   volatile const struct rig_amd_stamps *x = &d->stamps[k];
   uint64_t *times = t->times, start = UINT64_MAX;
@@ -611,22 +645,27 @@ static void convert(struct rig_amd *d, uint64_t k) {
     d->times_failure = unwritten;
     return;
   }
+  uint64_t end = host_ns(d, x->end);
+  if (d->source != NULL && (start + RIG_AMD_MOVED_NS < t->submitted ||
+                            end > now + RIG_AMD_MOVED_NS))
+    return;
   start = later(start, d->last_end);
-  uint64_t end = later(host_ns(d, x->end), start);
+  end = later(end, start);
   d->last_end = end;
   times[0] = start;
   times[1] = end;
 }
 
 /* Writes, in value order, the times of every timed value up to [v] not
-   yet written, whose work has completed with [v]'s. */
-static void convert_upto(struct rig_amd *d, uint64_t v) {
+   yet written, whose work has completed with [v]'s by the host's time
+   [now]. */
+static void convert_upto(struct rig_amd *d, uint64_t v, uint64_t now) {
   uint64_t u = d->converted + 1;
   if (v >= RIG_AMD_STAMPS && u < v - RIG_AMD_STAMPS + 1)
     u = v - RIG_AMD_STAMPS + 1;
   for (; u <= v && d->unconverted > 0; u++) {
     uint64_t k = u % RIG_AMD_STAMPS;
-    if (d->timed[k].times != NULL && d->timed[k].v == u) convert(d, k);
+    if (d->timed[k].times != NULL && d->timed[k].v == u) convert(d, k, now);
   }
   d->converted = later(d->converted, v);
 }
@@ -641,11 +680,14 @@ static struct rig_amd_timed *take_slot(struct rig_amd *d, uint64_t v,
                                        uint64_t *times) {
   uint64_t k = v % RIG_AMD_STAMPS;
   struct rig_amd_timed *t = &d->timed[k];
-  if (t->times != NULL) convert_upto(d, t->v);
+  if (t->times != NULL) {
+    if (remeasure(d) != 0) d->times_failure = unread;
+    convert_upto(d, t->v, rig_now_ns());
+  }
   if (d->unconverted == 0) d->converted = v - 1;
   if (times == NULL) return NULL;
   memset((void *)&d->stamps[k], 0, sizeof d->stamps[k]);
-  *t = (struct rig_amd_timed){v, times, 0};
+  *t = (struct rig_amd_timed){v, times, 0, rig_now_ns()};
   d->unconverted++;
   return t;
 }
@@ -665,21 +707,11 @@ static void stamp(struct rig_amd *d, int q, uint64_t address) {
 
 int rig_amd_settle(void *self, uint64_t v, const char **failure) {
   struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
-  struct rig_amd_measure m;
-  uint64_t width;
-  if (d->source != NULL &&
-      rig_now_ns() - d->latest.host >= RIG_AMD_MEASURE_NS) {
-    if (d->source->read(d->source, &m.ticks, &m.host, &width) != 0) {
-      *failure = "the GPU's clock could not be read";
-      return RIG_FAILED;
-    }
-    if (width <= RIG_AMD_READ_BOUND_NS) d->latest = m;
-    if (width <= RIG_AMD_READ_BOUND_NS && d->first_wide) {
-      d->first = m;
-      d->first_wide = 0;
-    }
+  if (remeasure(d) != 0) {
+    *failure = unread;
+    return RIG_FAILED;
   }
-  convert_upto(d, v);
+  convert_upto(d, v, rig_now_ns());
   if (d->times_failure == NULL) return RIG_OK;
   *failure = d->times_failure;
   return RIG_FAILED;
@@ -1041,27 +1073,58 @@ static int calibration(struct rig_amd *d, uint64_t *before, uint64_t *after) {
   return 1;
 }
 
-int rig_amd_measure(struct rig_amd *d) {
-  struct rig_amd_measure m;
-  uint64_t best = UINT64_MAX, width;
-  if (d->source != NULL) {
-    for (int i = 0; i < CALIBRATIONS * 2 && best > RIG_AMD_READ_BOUND_NS;
-         i++) {
-      if (d->source->read(d->source, &m.ticks, &m.host, &width) != 0) return 0;
-      if (width >= best) continue;
-      best = width;
-      d->first = d->latest = m;
-    }
-    d->first_wide = best > RIG_AMD_READ_BOUND_NS;
-    return 1;
-  }
+/* Measures [d]'s clock against the host's clock with stamps into [*m]:
+   the closest pair of CALIBRATIONS. Answers 0 if a stamp never showed. */
+static int round_trip(struct rig_amd *d, struct rig_amd_measure *m) {
+  uint64_t best = UINT64_MAX;
   for (int i = 0; i < CALIBRATIONS; i++) {
     uint64_t before, after;
     if (!calibration(d, &before, &after)) return 0;
     if (after - before >= best) continue;
     best = after - before;
-    m = (struct rig_amd_measure){*d->clock, before + best / 2};
+    *m = (struct rig_amd_measure){*d->clock, before + best / 2};
   }
+  return 1;
+}
+
+/* Reads [d]'s source up to sixteen times, keeping in [*m] and [*best] the
+   first read within RIG_AMD_READ_BOUND_NS, or the narrowest if it is
+   narrower than [*best]. Answers 0, or -1 if the source could not be read. */
+static int read_narrow(struct rig_amd *d, struct rig_amd_measure *m,
+                       uint64_t *best) {
+  struct rig_amd_measure r;
+  uint64_t width;
+  for (int i = 0; i < CALIBRATIONS * 2 && *best > RIG_AMD_READ_BOUND_NS;
+       i++) {
+    if (read_source(d, &r, &width) != 0) return -1;
+    if (width >= *best) continue;
+    *best = width;
+    *m = r;
+  }
+  return 0;
+}
+
+int rig_amd_measure(struct rig_amd *d) {
+  struct rig_amd_measure m, s;
+  if (d->source == NULL) {
+    if (!round_trip(d, &m)) return 0;
+    d->first = d->latest = m;
+    return 1;
+  }
+  /* The constant is taken against a read within the bound: reads before the
+     round trip, and if none lies within it, reads after, the narrowest of
+     all kept. Each lies under a millisecond from the stamps, so the
+     nominal rate carries the source's count to the stamps' host time. */
+  uint64_t best = UINT64_MAX;
+  if (read_narrow(d, &m, &best) != 0 || !round_trip(d, &s) ||
+      read_narrow(d, &m, &best) != 0)
+    return 0;
+  d->first_wide = best > RIG_AMD_READ_BOUND_NS;
+  int64_t dt = (int64_t)(s.host - m.host);
+  int64_t hz = (int64_t)d->clock_hz, n = INT64_C(1000000000);
+  int64_t ticks = dt / n * hz + dt % n * hz / n;
+  d->offset = (int64_t)(s.ticks - m.ticks) - ticks;
+  m.ticks += (uint64_t)d->offset;
   d->first = d->latest = m;
   return 1;
 }
