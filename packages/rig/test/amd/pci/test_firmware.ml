@@ -199,6 +199,140 @@ let mi300_images =
         [ (0x100, "RLC"); (0x140, "CN"); (0x150, "GP"); (0x160, "SR") ] );
   ]
 
+let navi31 = gpu ~mp0:(13, 0, 0) ~mp1:(13, 0, 0) ~sdma:(6, 0, 0) ~gc:(11, 0, 0)
+
+(* A GC 11 GPU's images, of the header versions the other GPUs' lack: the PSP's
+   2.0, which lists all its components; SDMA 2.0, its control thread's code
+   apart; the RLC's 2.2. *)
+let navi31_images =
+  let ucode, _, placed = payload [ "SYS"; "SOS!" ] in
+  [
+    ( "amdgpu/psp_13_0_0_sos.bin",
+      image ~major:2 ~minor:0 ~ucode
+        [ (32, 2); (36, 2); (44, 0); (48, 3); (52, 1); (60, 3); (64, 4) ]
+        placed );
+    ( "amdgpu/smu_13_0_0.bin",
+      image ~major:2 ~minor:1 ~ucode:(0x100, 3) [] [ (0x100, "PMF") ] );
+    ( "amdgpu/sdma_6_0_0.bin",
+      image ~major:2 ~minor:0 ~ucode:(0x100, 4)
+        [ (36, 4); (48, 0x110); (52, 3) ]
+        [ (0x100, "CTX!"); (0x110, "CTL") ] );
+    ("amdgpu/gc_11_0_0_mec.bin", rs64 ~ucode_version:0x2b "MECCODE" "CS" 0x3000);
+    ("amdgpu/gc_11_0_0_imu.bin", imu);
+    ( "amdgpu/gc_11_0_0_rlc.bin",
+      image ~major:2 ~minor:2 ~ucode:(0x100, 5)
+        [ (156, 4); (160, 0x140); (164, 4); (168, 0x150) ]
+        [ (0x100, "RLC-G"); (0x140, "IRAM"); (0x150, "DRAM") ] );
+  ]
+
+(* A damage to an image: cut to its first [n] bytes, or little-endian words of 2
+   or 4 bytes written at offsets, most of them in the headers' first 256
+   bytes. *)
+type damage = Cut of int | Words of (int * int * int) list
+
+let pp_damage ppf = function
+  | Cut n -> Format.fprintf ppf "cut to %d bytes" n
+  | Words ws ->
+      Format.fprintf ppf "%s"
+        (String.concat ", "
+           (List.map (fun (at, w, v) -> strf "%d bytes 0x%x at %d" w v at) ws))
+
+let damage img d =
+  match d with
+  | Cut n -> String.sub img 0 n
+  | Words ws ->
+      let b = Bytes.of_string img in
+      List.iter
+        (fun (at, w, v) ->
+          if w = 2 then Bytes.set_uint16_le b at (v land 0xffff)
+          else Bytes.set_int32_le b at (Int32.of_int v))
+        ws;
+      Bytes.to_string b
+
+let gpus =
+  [
+    ("R9700", (r9700_images, lazy (table "r9700.bin")));
+    ("MI300", (mi300_images, lazy mi300));
+    ("Navi 31", (navi31_images, lazy navi31));
+  ]
+
+(* One image of one GPU, damaged. Lengths and values sit at the edges: no byte,
+   a header's 256, one byte short, the image's length and its neighbours, and
+   the largest 16- and 32-bit values. *)
+let damaged =
+  let open Gen in
+  let* gpu, (images, _) = of_list gpus in
+  let* path, img = of_list images in
+  let len = String.length img in
+  let cut =
+    frequency
+      [
+        (1, of_list [ 0; 0x100; len - 1 ]);
+        (1, int_range 0 0x100);
+        (1, int_range 0 len);
+      ]
+  in
+  let word =
+    let* w = of_list [ 2; 4 ] in
+    let+ at =
+      frequency
+        [
+          (3, map (fun i -> 2 * i) (int_range 0 ((0x100 - w) / 2)));
+          (1, int_range 0 (len - w));
+        ]
+    and+ v =
+      frequency
+        [
+          ( 2,
+            of_list
+              [ 0; 1; 0xffff; 0x7fff_ffff; 0xffff_ffff; len - 1; len; len + 1 ]
+          );
+          (1, int_range 0 0xffff_ffff);
+        ]
+    in
+    (at, w, v)
+  in
+  let+ d =
+    frequency
+      [
+        (1, map (fun n -> Cut n) cut);
+        (1, map (fun ws -> Words ws) (list ~size:(int_range 1 3) word));
+      ]
+  in
+  (gpu, path, d)
+
+let damaged =
+  Gen.with_pp
+    (fun ppf (gpu, path, d) ->
+      Format.fprintf ppf "%s's %s, %a" gpu path pp_damage d)
+    damaged
+
+(* An image damaged anywhere is read or refused, naming it, and never raises; a
+   piece it reads lies in its image. *)
+let damage_law (gpu, path, d) =
+  let images, table = List.assoc gpu gpus in
+  let img = damage (List.assoc path images) d in
+  let images = (path, img) :: List.remove_assoc path images in
+  let r = Firmware.load (finder images) (Lazy.force table) in
+  cover "a cut image" (match d with Cut _ -> true | Words _ -> false);
+  cover "an image with words written"
+    (match d with Words _ -> true | Cut _ -> false);
+  cover "refused" (Result.is_error r);
+  cover "read" (Result.is_ok r);
+  match r with
+  | Error why -> starts_with ~affix:(path ^ ": ") why
+  | Ok fw ->
+      let inside (piece : Firmware.piece) =
+        at_least int ~msg:"a piece's offset" ~than:0 piece.off;
+        at_least int ~msg:"a piece's length" ~than:0 piece.len;
+        at_most int ~msg:"a piece's end"
+          ~than:(String.length piece.source)
+          (piece.off + piece.len)
+      in
+      List.iter (fun (_, p) -> inside p) fw.sos;
+      Option.iter (fun (_, p) -> inside p) fw.smu;
+      List.iter (fun (_, p) -> inside p) fw.pieces
+
 let firmware_round_trip =
   let gen =
     let open Gen in
@@ -375,6 +509,33 @@ let firmware =
             (List.map piece_contents fw.pieces);
           equal (list (pair string int)) [] fw.starts;
           equal int 7 fw.mec);
+      test "a GC 11 GPU's images cut into the PSP's pieces" (fun () ->
+          let fw = load navi31_images navi31 in
+          equal
+            (list (pair int string))
+            [ (2, "SYS"); (1, "SOS!") ]
+            (List.map piece_contents fw.sos);
+          equal
+            (option (pair (list int) string))
+            (Some ([ 18 ], "PMF"))
+            (Option.map piece_contents fw.smu);
+          equal pieces
+            [
+              ([ 72 ], "CTL");
+              ([ 71 ], "CTX!");
+              ([ 89 ], "MECCODE");
+              ([ 94 ], "CS");
+              ([ 68 ], "IRM");
+              ([ 69 ], "DRAM");
+              ([ 26 ], "IRAM");
+              ([ 48 ], "DRAM");
+              ([ 8 ], "RLC-G");
+            ]
+            (List.map piece_contents fw.pieces);
+          equal (list (pair string int)) [ ("MEC", 0x3000) ] fw.starts;
+          equal int 0x2b fw.mec);
+      prop "a damaged image is read or refused, naming it, and never raises"
+        damaged damage_law;
       test "an MP1 of 13.0.12 has no image" (fun () ->
           let d =
             gpu ~mp0:(13, 0, 12) ~mp1:(13, 0, 12) ~sdma:(4, 4, 5) ~gc:(9, 5, 0)
