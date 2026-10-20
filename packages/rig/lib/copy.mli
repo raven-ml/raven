@@ -31,7 +31,9 @@
     allocation, made at the first copy that needs it, outside every lock. A
     copy holds one half for one piece and two for more, which alternate, so
     one fills while the other drains, and the host waits for a half's last
-    drain before it fills it again. A copy gives its halves back once the
+    drain before it fills it again. Such a copy commits each leg a device
+    runs as it queues it ({!Dev.commit}), so that the host's wait for one
+    leg waits for no later leg. A copy gives its halves back once the
     transfers the host makes are done, with legs through them still queued:
     a half's stamps order every later use after them.
 

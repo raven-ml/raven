@@ -196,12 +196,8 @@ val capability : t -> Rig_cuda_abi.t
     so the work's writes are visible once the word shows the value. A
     commit ({!Rig_edge.section-calls}) writes nothing if a commit already
     wrote that value or a later one. [rig_cuda_submit] also commits, and
-    returns [RIG_COMMITTED], in two cases:
-    {ul
-    {- a value 64 values past the last commit, so the device commits each
-       value at most 64 values late;}
-    {- a value that holds a copy, as it is enqueued, so that a wait for the
-       copy waits for no work enqueued after it.}}
+    returns [RIG_COMMITTED], for a value 64 values past the last commit, so
+    the device commits each value at most 64 values late.
 
     A fill [f] is called as [f stream arg v], with the device's context
     current on the calling thread ({!Rig_cuda_abi}). A copy part moves its

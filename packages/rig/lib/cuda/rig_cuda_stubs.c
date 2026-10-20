@@ -386,16 +386,6 @@ static CUresult restore(int pushed, CUresult status) {
    its own: a commit, a stream write, costs about a kernel launch. */
 #define COMMIT_EVERY 64
 
-/* Whether [v]'s parts hold a copy. A value with a copy commits as it is
-   encoded: the copy hides the write's cost, and a commit made later lands
-   after the work encoded since, so a wait for one leg of a staged copy
-   would wait for the next leg too. */
-static int copies(const struct rig_part *p, int n) {
-  for (int i = 0; i < n; i++)
-    if (p[i].kind == RIG_COPY) return 1;
-  return 0;
-}
-
 /* Times
 
    A timed value records an event on each stream it enters, after its
@@ -1470,8 +1460,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
       s.stamp->times = times;
       d->unconverted++;
     }
-    if (e == CUDA_SUCCESS && !d->failed &&
-        (v - d->committed >= COMMIT_EVERY || copies(parts, nparts)))
+    if (e == CUDA_SUCCESS && !d->failed && v - d->committed >= COMMIT_EVERY)
       e = in_step(&s, writing, write_word(d, v));
     if (d->failed || e != CUDA_SUCCESS) drain(&s, v);
     e = restore(pushed, e);

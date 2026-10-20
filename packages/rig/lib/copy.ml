@@ -731,13 +731,23 @@ let holding d writer need ~two f =
           if two then abandon h1;
           reraise e)
 
+(* The point [p] of a leg of a copy of [n] pieces, committed on its device
+   if a device runs it and the copy has more: the host waits for such a leg
+   while later legs are queued, and a commit made at the wait would let the
+   device hold the leg until they are done too. *)
+let pipelined n p =
+  if n > 1 && p <> 0 then
+    Dev.commit (Dev.of_index (Point.index p)) (Point.value p);
+  p
+
 (* [into]'s move of piece [k] of [ps] into its half of [b0] and [b1] from
    [base0] for the first, after the drain of the half's last piece where
    the host fills it. *)
 let fill_piece ~writer ~into b0 b1 base0 ps k =
   let b = alternate b0 b1 k in
   if writer = Host && k >= 2 then Buffer.wait b Buffer.Read_write;
-  ignore (into b (piece_base base0 k) ps.(k) : int)
+  let n = Array.length ps in
+  ignore (pipelined n (into b (piece_base base0 k) ps.(k)) : int)
 
 (* Moves [ps] through halves of [d]'s staging memory: [into b base p] moves
    the piece [p] into the half buffer [b] from byte [base], and [out_of b base
@@ -762,7 +772,8 @@ let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
       for k = 0 to n - 1 do
         if not ahead then fill_piece ~writer ~into b0 b1 base0 ps k
         else if k + 1 < n then fill_piece ~writer ~into b0 b1 base0 ps (k + 1);
-        last := out_of (alternate b0 b1 k) (piece_base base0 k) ps.(k)
+        last :=
+          pipelined n (out_of (alternate b0 b1 k) (piece_base base0 k) ps.(k))
       done;
       h0.cursor <- base0 + extent writer ps;
       h1.cursor <- base0 + extent writer ps;
@@ -798,7 +809,8 @@ and between fn ~waits src dst ps =
           map_halves fn a0.stage src ha0 ha1;
           map_halves fn b0.stage dst hb0 hb1;
           let into k =
-            ignore (leg_into fn ~waits src (alternate ha0 ha1 k) 0 ps.(k) : int)
+            let p = leg_into fn ~waits src (alternate ha0 ha1 k) 0 ps.(k) in
+            ignore (pipelined n p : int)
           in
           let last = ref 0 in
           into 0;
@@ -810,7 +822,7 @@ and between fn ~waits src dst ps =
             ignore
               (leg_run fn ~waits ~into_half:true ha 0 hb base ps.(k).bytes
                 : int);
-            last := leg_out_of fn ~waits hb base dst ps.(k)
+            last := pipelined n (leg_out_of fn ~waits hb base dst ps.(k))
           done;
           a0.cursor <- half_bytes;
           a1.cursor <- half_bytes;
