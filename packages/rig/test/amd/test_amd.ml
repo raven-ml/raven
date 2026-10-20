@@ -916,13 +916,43 @@ let wide_launches n =
   equal string ~msg:"the stored words" (tokens n)
     (stores_wide t (image ~of_:hidden_code t) n)
 
-(* Two domains submit to one device: launches of 8 KiB of arguments, from one
-   to past half of what its segment holds after two growths; words that do
-   nothing, past what its compute ring holds, then past what the ring the first
-   growth makes holds; and copies of 16 bytes, past what its copy ring holds.
-   Each submission runs whole, launches and copies storing their bytes,
-   whatever growth the other's needed. *)
-type grower = { t : S.t; wide : Rig.Image.t }
+(* Two domains submit to one device opened with first rings of 16 KiB and a
+   first segment of 32 KiB ([A.set_first_sizes]): launches of 8 KiB of
+   arguments, words that do nothing and copies of 16 bytes. A small draw is one
+   submission that fits; a past draw on a worker domain is two, each past what
+   the device's segment, compute ring or copy ring holds before it, so the
+   first grows that kind and the second grows it again, until it has grown to
+   16 times its first size. Each submission runs whole, launches and copies storing their bytes,
+   whatever growth the other's needed. A copy ring that keeps its first size
+   takes small draws only: the rings group states its [`Never]. *)
+type grower = {
+  t : S.t;
+  wide : Rig.Image.t;
+  home : Domain.id; (* the test's domain, which starts the device *)
+  first : int array; (* each kind's first size, in [sizes]' order *)
+  seen : int list Atomic.t array; (* each kind's sizes after a call *)
+}
+
+let ring_bytes = 16 lsl 10
+let segment_bytes = 32 lsl 10
+
+(* The kinds that grow, in [sizes]' order. *)
+let kinds = [| "the segment"; "the compute ring"; "the copy ring" |]
+
+(* Each kind's size: the segment's bytes, then the compute and copy rings'
+   words. *)
+let sizes (t : S.t) =
+  [| A.segment t.g; snd (A.ring t.g "COMPUTE:0"); snd (A.ring t.g "COPY:0") |]
+
+(* Adds each kind's size now to the sizes [x] has seen, from either domain. *)
+let observe x =
+  let rec add seen n =
+    let l = Atomic.get seen in
+    if not (List.mem n l || Atomic.compare_and_set seen l (n :: l)) then
+      add seen n
+  in
+  let now = sizes x.t in
+  Array.iteri (fun i seen -> add seen now.(i)) x.seen
 
 (* Whether [g]'s copy ring keeps the 16 MiB it opens with, and room answers
    [`Never] past it: on SDMA 4 over PCI, whose path programs one copy queue
@@ -933,21 +963,91 @@ let copy_ring_fixed g =
   let major, _, _ = (A.capability g).gpu.sdma in
   major = 4
 
-(* A submission of [n] words of [t]'s compute queue that do nothing
-   ([nop_words]). *)
-let nops_on t n = Rig.Point.wait (S.submit_work t [ nop_words t n ])
+(* Whether the copy ring keeps its first size, on a device of its own. *)
+let copy_fixed = lazy (S.with_ (fun t -> copy_ring_fixed t.g))
 
-(* What a submission of [n] copies of 16 bytes on [t] stores, copy [i] taking
-   bytes [16 i] to [16 i + 15] of a pattern. *)
-let copies_on t n =
-  let src = buffer ~memory:Pinned t (16 * n)
-  and dst = buffer ~memory:Pinned t (16 * n) in
-  put src (pattern (16 * n) 7);
-  let part i = copy ~dst:(view dst (16 * i) 16) (view src (16 * i) 16) in
-  Rig.Point.wait (S.submit_work t (List.init n part));
-  get dst
+type draw = Small | Past
 
-(* The device a program's starts give, opened at its first: a second start
+let draw =
+  Gen.of_list
+    ~pp:(fun ppf d ->
+      Format.pp_print_string ppf
+        (match d with Small -> "small" | Past -> "past"))
+    [ Small; Past; Past; Past ]
+
+(* The answers of draw [d] for kind [k] of [x]: [run small], or for a past
+   draw on a worker domain [run (past now)] twice, [now] what kind [k] holds
+   before each, while it has not grown to 16 times its first. A draw on the
+   test's domain, which runs alone, is small, so the growths happen beside
+   the other domain's work. *)
+let drawn x d k ~small ~past run =
+  let d = if Domain.self () = x.home then Small else d in
+  let once () =
+    let now = (sizes x.t).(k) in
+    run (if now < 16 * x.first.(k) then past now else small)
+  in
+  match d with
+  | Small -> [ run small ]
+  | Past ->
+      let a = once () in
+      [ a; once () ]
+
+(* A draw's answer: its submissions' one answer, or each in turn. *)
+let draw_answer l =
+  let a = List.hd l in
+  if List.for_all (( = ) a) l then a else String.concat ", then " l
+
+let stored = "stored"
+
+(* The copy ring's words per copy of 16 bytes, as AMD's room counts them:
+   SDMA's linear copy and the fence after it. *)
+let copy_words = 7 + 4
+
+(* A launch's bytes of the segment, at least: its 8 KiB of arguments. *)
+let launch_bytes = 8192
+
+(* Past half the segment, as a submission's arguments never wrap. *)
+let launches_on x d =
+  draw_answer
+  @@ drawn x d 0 ~small:1
+    ~past:(fun b -> (b / 2 / launch_bytes) + 1)
+    (fun n ->
+      let r =
+        if stores_wide x.t x.wide n = tokens n then stored else "wrong"
+      in
+      observe x;
+      r)
+
+(* Past the compute ring, a power of two of words. *)
+let nops_on x d =
+  ignore
+    (drawn x d 1 ~small:16
+       ~past:(fun w -> w + 16)
+       (fun n ->
+         Rig.Point.wait (S.submit_work x.t [ nop_words x.t n ]);
+         observe x)
+      : unit list)
+
+(* Past half the copy ring, as SDMA packets never wrap, but on a copy ring
+   that keeps its first size. Copy [i] of [n] takes bytes [16 i] to
+   [16 i + 15] of a pattern. *)
+let copies_on x d =
+  let d = if Lazy.force copy_fixed then Small else d in
+  draw_answer
+  @@ drawn x d 2 ~small:1
+    ~past:(fun w -> (w / 2 / copy_words) + 1)
+    (fun n ->
+      let t = x.t in
+      let src = buffer ~memory:Pinned t (16 * n)
+      and dst = buffer ~memory:Pinned t (16 * n) in
+      put src (pattern (16 * n) 7);
+      let part i = copy ~dst:(view dst (16 * i) 16) (view src (16 * i) 16) in
+      Rig.Point.wait (S.submit_work t (List.init n part));
+      observe x;
+      if get dst = pattern (16 * n) 7 then stored else "wrong")
+
+(* The device a program's starts give, opened at its first with the first
+   sizes above, but a copy ring that keeps its first at 16 MiB: a second start
    gives it again, so that a program's calls reach one device, which a path
    that opens a GPU once per process also holds. The release closes it. *)
 let started = ref None
@@ -956,60 +1056,62 @@ let start () =
   match !started with
   | Some x -> x
   | None ->
-      let t = S.open_ () in
-      let x = { t; wide = image ~of_:hidden_code t } in
+      let copy = if Lazy.force copy_fixed then 16 lsl 20 else ring_bytes in
+      let was =
+        A.set_first_sizes ~compute:ring_bytes ~copy ~segment:segment_bytes
+      in
+      let t =
+        Fun.protect
+          ~finally:(fun () ->
+            let compute, copy, segment = was in
+            ignore
+              (A.set_first_sizes ~compute ~copy ~segment : int * int * int))
+          S.open_
+      in
+      let first = sizes t in
+      let x =
+        {
+          t;
+          wide = image ~of_:hidden_code t;
+          home = Domain.self ();
+          first;
+          seen = Array.map (fun n -> Atomic.make [ n ]) first;
+        }
+      in
       started := Some x;
       x
 
-(* Whether the copy ring keeps its first size, on the device a program
-   started, or on one of its own before any. *)
-let copy_fixed =
-  lazy
-    (match !started with
-    | Some x -> copy_ring_fixed x.t.g
-    | None -> S.with_ (fun t -> copy_ring_fixed t.g))
+(* Covers each kind's growth and its second, two and three sizes seen, but
+   a copy ring that keeps its first. *)
+let release x =
+  started := None;
+  Array.iteri
+    (fun i seen ->
+      if not (i = 2 && Lazy.force copy_fixed) then begin
+        let n = List.length (Atomic.get seen) in
+        cover (kinds.(i) ^ " grew") (n >= 2);
+        cover (kinds.(i) ^ " grew twice") (n >= 3)
+      end)
+    x.seen;
+  S.close x.t
 
-(* The reference side holds whether the copy ring keeps its first size. *)
-let grower =
-  abstract "g" ~release:(fun x ->
-      started := None;
-      S.close x.t)
-
-(* What a copy draw answers where the copy ring keeps its first size and the
-   copies exceed it. *)
-let never_fits = "never fits"
-
-let launches =
-  Gen.with_pp Format.pp_print_int (Gen.of_list [ 1; 100; 200; 600 ])
-
-let nops =
-  Gen.with_pp Format.pp_print_int
-    (Gen.of_list [ 16; 1 lsl 22; (1 lsl 24) + 16 ])
-
-let copies = Gen.with_pp Format.pp_print_int (Gen.of_list [ 1; 200_000 ])
+let grower = abstract "g" ~release
 
 let growth_commands =
   [
-    command "start"
-      (Gen.unit @-> makes grower)
-      (fun () -> Lazy.force copy_fixed)
-      start;
+    command "start" (Gen.unit @-> makes grower) (fun () -> ()) start;
     command "launches"
-      (grower ^-> launches @-> returns string)
-      (fun _ n -> tokens n)
-      (fun x n -> stores_wide x.t x.wide n);
+      (grower ^-> draw @-> returns string)
+      (fun _ _ -> stored)
+      launches_on;
     command "nops"
-      (grower ^-> nops @-> returns unit)
+      (grower ^-> draw @-> returns unit)
       (fun _ _ -> ())
-      (fun x n -> nops_on x.t n);
+      nops_on;
     command "copies"
-      (grower ^-> copies @-> returns string)
-      (fun fixed n ->
-        if fixed && n > 1 then never_fits else pattern (16 * n) 7)
-      (fun x n ->
-        match copies_on x.t n with
-        | s -> s
-        | exception Invalid_argument _ -> never_fits);
+      (grower ^-> draw @-> returns string)
+      (fun () _ -> stored)
+      copies_on;
   ]
 
 let launching =
@@ -1022,7 +1124,7 @@ let launching =
       cases ~name:string_of_int
         "a submission of launches of 8 KiB of arguments each runs whole"
         [ 1; 128; 300; 1000 ] wide_launches;
-      stateful ~count:6 ~steps:8 ~domains:2
+      stateful ~count:18 ~steps:8 ~domains:2
         "submissions from two domains run whole while the segment and rings \
          grow"
         growth_commands;

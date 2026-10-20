@@ -715,13 +715,30 @@ value caml_rig_amd_renumber(value v_self, value v_v) {
   return Val_unit;
 }
 
-/* The words placed on ring [q] since it was made, and its size in words. */
+/* The words placed on ring [q] since it was made, and its size in words,
+   read under the growth lock, under which an install, in another domain's
+   submit, writes both. A submit places words without it: while one runs,
+   the count may be an earlier one. */
 value caml_rig_amd_placed(value v_self, value v_q) {
   CAMLparam2(v_self, v_q);
   CAMLlocal1(r);
-  const struct rig_amd_ring *q = &Device_val(v_self)->rings[queue_of(v_q)];
+  struct rig_amd *d = Device_val(v_self);
+  const struct rig_amd_ring *q = &d->rings[queue_of(v_q)];
+  pthread_mutex_lock(&d->grown_mu);
+  uint64_t put = q->put, size = q->size;
+  pthread_mutex_unlock(&d->grown_mu);
   r = caml_alloc_tuple(2);
-  Store_field(r, 0, Val_long(q->put));
-  Store_field(r, 1, Val_long(q->size));
+  Store_field(r, 0, Val_long((intnat)put));
+  Store_field(r, 1, Val_long((intnat)size));
   CAMLreturn(r);
+}
+
+/* The bytes of the argument segment installed, read under the growth lock,
+   under which an install writes them. */
+value caml_rig_amd_segment_bytes(value v_self) {
+  struct rig_amd *d = Device_val(v_self);
+  pthread_mutex_lock(&d->grown_mu);
+  uint64_t size = d->segment.size;
+  pthread_mutex_unlock(&d->grown_mu);
+  return Val_long((intnat)size);
 }

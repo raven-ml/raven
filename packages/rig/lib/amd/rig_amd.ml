@@ -350,14 +350,17 @@ type t = {
    comparing all 64 bits of a word the host moved across 2^32. GC 12.0.1: the
    R9700, MEC firmware 3010. *)
 let wait64_from = [ ((12, 0, 1), 3010) ]
-let ring_bytes = 16 lsl 20
+(* The bytes of the first compute ring, copy ring and argument segment of a
+   device made from now on ([set_first_sizes]). *)
+let first_sizes = Atomic.make (16 lsl 20, 16 lsl 20, 2 lsl 20)
 
-(* The bytes of [p]'s first ring of a queue of kind [k]. *)
-let first_ring (p : _ path) k = Int.min ring_bytes (p.most_ring k)
+(* The bytes of [p]'s first ring of a queue of kind [k], of [compute] or
+   [copy] bytes where [p] makes rings that large. *)
+let first_ring (p : _ path) ~compute ~copy k =
+  Int.min (if k = `Sdma then copy else compute) (p.most_ring k)
 
 (* A path's refusal, as an open's error. *)
 let why = function Lacking why | Full why | Refused why -> why
-let segment_bytes = 2 lsl 20
 let pointers_bytes = 4096
 
 (* The stamp ring: RIG_AMD_STAMPS slots of four 8-byte words, then the record
@@ -1106,10 +1109,12 @@ let make (type m) ~word (p : m path) =
           copy_word host word;
           Ok own
     in
+    let compute, copy, segment_bytes = Atomic.get first_sizes in
+    let first_ring = first_ring p ~compute ~copy in
     let* segment = alloc "argument segment" segment_bytes in
     let compute_kind = if aql then `Aql else `Pm4 in
-    let* compute = alloc "compute ring" (first_ring p compute_kind) in
-    let* copy = alloc "copy ring" (first_ring p `Sdma) in
+    let* compute = alloc "compute ring" (first_ring compute_kind) in
+    let* copy = alloc "copy ring" (first_ring `Sdma) in
     let* pointers = alloc "queue positions" pointers_bytes in
     let* stamps = alloc "stamp ring" stamps_bytes in
     let* stamps_host = host_of "stamp ring" stamps in
@@ -1147,7 +1152,7 @@ let make (type m) ~word (p : m path) =
       let at = mem_address pointers in
       let* doorbell =
         Result.map_error why
-          (p.queue kind ~ring:(mem_address ring) ~bytes:(first_ring p kind)
+          (p.queue kind ~ring:(mem_address ring) ~bytes:(first_ring kind)
              ~read:(at + read_at ~aql q)
              ~write:(at + write_at ~aql q))
       in
@@ -1168,7 +1173,7 @@ let make (type m) ~word (p : m path) =
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     set_copy_launch self !copy_launch;
     let ring q kind host bell id =
-      set_ring self q host (first_ring p kind) (p.most_ring kind)
+      set_ring self q host (first_ring kind) (p.most_ring kind)
         (pointers_host + write_at ~aql q)
         bell (ring_kind kind) id
     in
@@ -1538,3 +1543,20 @@ let ring g q =
       refuse_stopped g "ring";
       placed g.self i
   | None -> invalid_argf "Rig_amd.ring: no queue %S" q
+
+external segment_bytes : int -> int = "caml_rig_amd_segment_bytes"
+
+let segment g =
+  Lock.check "Rig_amd.segment";
+  Lock.protect g.guard @@ fun () ->
+  refuse_stopped g "segment";
+  segment_bytes g.self
+
+let set_first_sizes ~compute ~copy ~segment =
+  let sized n = n >= 4096 && n land (n - 1) = 0 in
+  if not (sized compute && sized copy && sized segment) then
+    invalid_argf
+      "Rig_amd.set_first_sizes: %d, %d and %d bytes, expected powers of two \
+       of at least 4096"
+      compute copy segment;
+  Atomic.exchange first_sizes (compute, copy, segment)

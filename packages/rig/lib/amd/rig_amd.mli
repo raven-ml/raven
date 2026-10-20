@@ -672,8 +672,31 @@ val renumber : t -> int -> unit
 (* [ring g q] is [(n, size)]: the 32-bit words [g] placed on the ring of its
    queue [q] since it made the ring, and the ring's size in words. A word's
    place on the ring is its count modulo [size]. Tests check that their
-   submissions wrapped a ring.
+   submissions wrapped a ring. While another domain submits, [n] may be an
+   earlier count.
 
    Raises [Invalid_argument] if [g] has stopped, if it has no queue [q], or
    from a callback inside a lock ({!Lock.check}). *)
 val ring : t -> string -> int * int
+
+(* [segment g] is the bytes of [g]'s argument segment. Tests check that their
+   submissions grew it.
+
+   Raises [Invalid_argument] if [g] has stopped, or from a callback inside a
+   lock ({!Lock.check}). *)
+val segment : t -> int
+
+(* [set_first_sizes ~compute ~copy ~segment] makes the first compute ring,
+   copy ring and argument segment of a device made from then on [compute],
+   [copy] and [segment] bytes, a ring no larger than the most its path makes,
+   and is the sizes it replaces: [(16 MiB, 16 MiB, 2 MiB)] until a call. A
+   test shrinks them so that small submissions reach the growths of rings and
+   segment. A path that makes one queue of a kind, as SDMA 4 over PCI does
+   for copies, cannot grow that kind's ring, and its most is the default
+   first: a smaller first there makes room ask for a growth that faults, so
+   a test leaves that ring at its default. Any domain may call it.
+
+   Raises [Invalid_argument] if a size is not a power of two of at least
+   4096 bytes. *)
+val set_first_sizes :
+  compute:int -> copy:int -> segment:int -> int * int * int
