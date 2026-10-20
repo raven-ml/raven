@@ -340,23 +340,46 @@ value rig_pci_test_flocked_fd(value v_fd) {
 #endif
 }
 
-/* Takes flock's exclusive lock on the file or directory at [v_path] through a
-   new descriptor, without waiting, and returns the descriptor, whose close
-   gives the lock back. Raises Unix_error if it cannot be opened or locked. */
-value rig_pci_test_flock(value v_path) {
+/* Takes a read lock of a new open file description over the file at
+   [v_path], without waiting, as a memory file's process holds one, and
+   returns the descriptor, whose close gives the lock back. Raises Unix_error
+   if it cannot be opened or locked. */
+value rig_pci_test_ofd_hold(value v_path) {
 #ifdef _WIN32
   (void)v_path;
-  caml_failwith("rig_pci_test_flock: Windows has no flock");
+  caml_failwith("rig_pci_test_ofd_hold: Windows has no open file description "
+                "locks");
 #else
   CAMLparam1(v_path);
   int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
   if (fd < 0) caml_uerror("open", v_path);
-  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+  struct flock l = {.l_type = F_RDLCK, .l_whence = SEEK_SET};
+  if (fcntl(fd, F_OFD_SETLK, &l) != 0) {
     int e = errno;
     close(fd);
-    caml_unix_error(e, "flock", v_path);
+    caml_unix_error(e, "fcntl", v_path);
   }
   CAMLreturn(Val_int(fd));
+#endif
+}
+
+/* Whether an open file description holds a lock on the file at [v_path] that
+   a write lock would meet, tested through a new descriptor, which places
+   none. Raises Unix_error if the file cannot be opened. */
+value rig_pci_test_ofd_held(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  caml_failwith("rig_pci_test_ofd_held: Windows has no open file description "
+                "locks");
+#else
+  CAMLparam1(v_path);
+  int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) caml_uerror("open", v_path);
+  struct flock l = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+  int r = fcntl(fd, F_OFD_GETLK, &l), e = errno;
+  close(fd);
+  if (r != 0) caml_unix_error(e, "fcntl", v_path);
+  CAMLreturn(Val_bool(l.l_type != F_UNLCK));
 #endif
 }
 

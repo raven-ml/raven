@@ -47,6 +47,10 @@ val flocks : bool
     maps its BARs, as every system but Windows does. System memory for a
     function needs Linux ({!on_linux}). *)
 
+val ofd_locks : bool
+(** [ofd_locks] is [true] iff the system has open file description locks,
+    which tell a memory file's process alive, as Linux and macOS do. *)
+
 val patience : float
 (** [patience] is 10 s, how long a test waits for what must happen: the
     [~timeout] of each suite's top groups, and {!poll}'s bound. It is
@@ -284,10 +288,15 @@ module Tree : sig
       a check repeated after every call costs two system calls. *)
 
   val hold : string -> Unix.file_descr
-  (** [hold path] takes flock's exclusive lock on the file or directory at
-      [path], as another process would, and is the descriptor whose close
-      gives it back. Raises [Unix.Unix_error] if [path] cannot be opened or
-      another open file holds a lock on it. *)
+  (** [hold file] takes a read lock of a new open file description over
+      [file], as a memory file's live process holds one, and is the
+      descriptor whose close gives it back. Raises [Unix.Unix_error] if
+      [file] cannot be opened or a write lock holds it. *)
+
+  val held : string -> bool
+  (** [held file] is [true] iff an open file description holds a lock on
+      [file], as its live process's read lock, tested without placing one.
+      Raises [Unix.Unix_error] if [file] cannot be opened. *)
 
   val add : string -> string -> string -> unit
   (** [add root file s] writes [s] to [file], a path from the tree [root],

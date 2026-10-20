@@ -71,7 +71,6 @@ value caml_rig_pci_page_size(value unit) {
 
 #ifndef _WIN32
 #include <fcntl.h>
-#include <pthread.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #ifdef __APPLE__
@@ -89,55 +88,16 @@ value caml_rig_pci_flock(value fd) {
   return Val_unit;
 }
 
-/* Takes flock's exclusive lock on [fd], waiting for it with the runtime
-   released; raises Unix_error EINTR if a signal ends the wait. */
-value caml_rig_pci_flock_wait(value fd) {
-  int f = Int_val(fd);
-  caml_release_runtime_system();
-  int r = flock(f, LOCK_EX);
-  int e = errno;
-  caml_acquire_runtime_system();
-  if (r != 0) caml_unix_error(e, "flock", Nothing);
-  return Val_unit;
-}
-
-/* The descriptors a sweep opens, by slot: the directory of the machine's
-   memory files and the file it judges (sysmem.ml). A flock belongs to the
-   open file, which a forked child shares through its copies of the
-   descriptors, so a child that kept them would hold the sweep's locks after
-   this process gives them back. A forked child closes its copies first. One
-   thread sweeps at a time (sysmem.ml's [state]). */
-static int sweep_fds[2] = {-1, -1};
-
-static void sweep_forked(void) {
-  for (int i = 0; i < 2; i++) {
-    if (sweep_fds[i] >= 0) close(sweep_fds[i]);
-    sweep_fds[i] = -1;
-  }
-}
-
-static pthread_once_t sweep_once = PTHREAD_ONCE_INIT;
-static void sweep_watch(void) { pthread_atfork(NULL, NULL, sweep_forked); }
-
-/* Opens [path] for slot [slot], for reading, or reading and writing if
-   [write], and records the descriptor so that a forked child closes its copy.
-   It holds the runtime, so no thread forks between the open and the record. */
-value caml_rig_pci_sweep_open(value path, value slot, value write) {
-  CAMLparam1(path);
-  pthread_once(&sweep_once, sweep_watch);
-  int fd = open(String_val(path), (Bool_val(write) ? O_RDWR : O_RDONLY) |
-                                      O_CLOEXEC);
-  if (fd < 0) caml_uerror("open", path);
-  sweep_fds[Int_val(slot)] = fd;
-  CAMLreturn(Val_int(fd));
-}
-
-/* Closes slot [slot]'s descriptor, which gives back its lock. */
-value caml_rig_pci_sweep_close(value slot) {
-  int i = Int_val(slot);
-  if (sweep_fds[i] >= 0) close(sweep_fds[i]);
-  sweep_fds[i] = -1;
-  return Val_unit;
+/* Whether an open file description holds a lock on the file [fd] is open on
+   that a write lock over the whole file would meet, as a memory file's
+   process holds its read lock while it lives. F_OFD_GETLK only tests
+   (fcntl(2): "If the lock could be placed, fcntl() does not actually place
+   it"), so [fd]'s own description, and a forked child's copy of it, hold
+   nothing. Holds the runtime: nothing waits. */
+value caml_rig_pci_sysmem_held(value fd) {
+  struct flock l = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+  if (fcntl(Int_val(fd), F_OFD_GETLK, &l) != 0) caml_uerror("fcntl", Nothing);
+  return Val_bool(l.l_type != F_UNLCK);
 }
 
 /* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
@@ -166,16 +126,13 @@ value caml_rig_pci_unmap(value a, value n) {
 #else
 
 FAILS1(caml_rig_pci_flock, "flock")
-FAILS1(caml_rig_pci_flock_wait, "flock")
-FAILS3(caml_rig_pci_sweep_open, "open")
-FAILS1(caml_rig_pci_sweep_close, "close")
+FAILS1(caml_rig_pci_sysmem_held, "fcntl")
 FAILS2(caml_rig_pci_unmap, "munmap")
 FAILS3(caml_rig_pci_map, "mmap")
 #endif
 
 #ifdef __linux__
 #include <fcntl.h>
-#include <sys/file.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -209,19 +166,21 @@ static int unmap_released(void *at, size_t len) {
 }
 
 /* Makes the file [path] in the directory [dir], and is its descriptor,
-   which holds flock's shared lock from before the file has a name: the file
-   is made nameless (O_TMPFILE), locked, then linked at [path] through the
-   process's link to it (open(2)), so that no process meets it unlocked. The
-   process holds the lock on its memory's file while it lives. Raises
-   Unix_error on a failing call, the file then gone. Holds the runtime:
-   nothing waits. */
+   whose open file description holds a read lock over the whole file from
+   before the file has a name: the file is made nameless (O_TMPFILE),
+   locked, then linked at [path] through the process's link to it (open(2)),
+   so that no process meets it unlocked. The lock lasts until the
+   description's last close (fcntl(2), open file description locks), which
+   the process's death makes. Raises Unix_error on a failing call, the file
+   then gone. Holds the runtime: nothing waits. */
 value caml_rig_pci_sysmem_create(value dir, value path) {
   int fd = open(String_val(dir), O_TMPFILE | O_RDWR | O_CLOEXEC, 0600);
   if (fd < 0) caml_uerror("open", dir);
-  if (flock(fd, LOCK_SH | LOCK_NB) != 0) {
+  struct flock l = {.l_type = F_RDLCK, .l_whence = SEEK_SET};
+  if (fcntl(fd, F_OFD_SETLK, &l) != 0) {
     int e = errno;
     close(fd);
-    caml_unix_error(e, "flock", path);
+    caml_unix_error(e, "fcntl", path);
   }
   char self[32];
   snprintf(self, sizeof self, "/proc/self/fd/%d", fd);

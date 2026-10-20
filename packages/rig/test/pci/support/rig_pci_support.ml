@@ -38,6 +38,7 @@ let largest_gap lo hi live =
 let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 let flocks = not Sys.win32
+let ofd_locks = not Sys.win32
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 
@@ -295,7 +296,8 @@ external device_number : string -> string = "rig_pci_test_device_number"
 external stored : string -> int = "rig_pci_test_stored"
 external flocked : string -> bool = "rig_pci_test_flocked"
 external flocked_fd : Unix.file_descr -> bool = "rig_pci_test_flocked_fd"
-external flock_hold : string -> Unix.file_descr = "rig_pci_test_flock"
+external ofd_hold : string -> Unix.file_descr = "rig_pci_test_ofd_hold"
+external ofd_held : string -> bool = "rig_pci_test_ofd_held"
 
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
@@ -565,7 +567,8 @@ module Tree = struct
   let stored = stored
   let flocked = flocked
   let flocked_fd = flocked_fd
-  let hold = flock_hold
+  let hold = ofd_hold
+  let held = ofd_held
   let add root file s = write (root / file) s
 
   (* An entry of a page map: bit 63 says the page is present, bits 0-54 hold its

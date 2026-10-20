@@ -871,7 +871,7 @@ let test_memory_file () =
   let w, _ = given (Function.alloc_dma ~va f mib) in
   equal ~msg:"a file of its own" int 1 (List.length (memory_files root));
   let file = memory_file root in
-  equal ~msg:"locked by its process" bool true (Tree.flocked file);
+  equal ~msg:"locked by its process" bool true (Tree.held file);
   equal ~msg:"listing the function" (list string) [ Function.bus f ]
     (reachers file);
   Function.free_dma f w;
@@ -1295,107 +1295,87 @@ let test_left_files () =
   equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
 
 (* Memory a dead process left reaching a function is read as left while
-   another process sweeps the machine's files. The sweep holds the machine's
-   sweep lock, on the directory of the files, and the dead file's own lock while
-   it reads the file's markers; a take waits for the sweep to end. *)
+   another process holds its file open, as a sweep judging it does, since only
+   its process's lock tells it alive; memory whose process lives is not, and
+   stays. *)
 let test_left_while_swept () =
-  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  if not ofd_locks then
+    skip ~reason:"telling a dead process's memory needs file locks" ();
   let gpu0 = "0000:03:00.0" in
   let root = Tree.make [ Tree.gpu gpu0 ] in
   let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
   add "rig-pci-3-3";
   add ("rig-pci-3-3.reach-" ^ gpu0);
   let dir = Filename.concat root "dev/hugepages" in
-  let sweep = Tree.hold dir in
-  let file = Tree.hold (Filename.concat dir "rig-pci-3-3") in
-  let taken = Atomic.make false in
+  let file = Filename.concat dir "rig-pci-3-3" in
   let m = Machine.at root in
-  let taker =
-    Domain.spawn (fun () ->
-        let f = require_ok (Function.take m gpu0) in
-        Atomic.set taken true;
-        let inherited = Function.inherited f in
-        Function.release f;
-        inherited)
+  let inherited () =
+    let f = require_ok (Function.take m gpu0) in
+    Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+    Function.inherited f
   in
-  Unix.sleepf 0.05;
-  let during = Atomic.get taken in
-  Unix.close file;
-  Unix.close sweep;
-  let inherited = Domain.join taker in
-  equal ~msg:"taken while the sweep held its locks" bool false during;
-  equal ~msg:"the dead process's memory, left for the function" bool true
-    inherited
+  let judge = Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 in
+  equal ~msg:"a dead process's memory, open elsewhere" bool true
+    (inherited ());
+  Unix.close judge;
+  let owner = Tree.hold file in
+  equal ~msg:"a live process's memory" bool false (inherited ());
+  equal ~msg:"kept for its live process" (list string)
+    [ "rig-pci-3-3"; "rig-pci-3-3.reach-" ^ gpu0 ]
+    (hugepages root);
+  Unix.close owner
 
-(* The test's executable, run with [forking], is [fork_in_sweep]'s process: a
-   process that forks may have spawned no domain. *)
-let forking = "--fork-in-sweep"
+(* Two functions' resets after a dead process's file listed both: each
+   reset's sweep removes its function's marker, and the file goes once
+   neither is listed, in whichever order the resets run. One process's
+   sweeps take turns; two processes' at once are argued in sysmem.ml. *)
+type dead_file = { root : string; m : Machine.t; gpus : Driver.t }
+type dead_model = { mutable listed : string list }
 
-(* A child forked while a take waits for another process's sweep keeps none of
-   the take's sweeps: once that sweep ends, the take, and a take of another
-   function of the machine after it, end while the child lives. The child
-   closes its copies of the test's own locks, which stand for the other
-   process's. Exits 0 if both takes ended. *)
-let fork_in_sweep () =
-  let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
-  let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
+let dead_buses = [ "0000:03:00.0"; "0000:04:00.0" ]
+
+let make_dead_file () =
+  if not ofd_locks then
+    skip ~reason:"telling a dead process's memory needs file locks" ();
+  let root = Tree.make (List.map Tree.gpu dead_buses) in
   let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
   add "rig-pci-3-3";
-  add ("rig-pci-3-3.reach-" ^ gpu0);
-  let dir = Filename.concat root "dev/hugepages" in
-  let sweep = Tree.hold dir in
-  let file = Tree.hold (Filename.concat dir "rig-pci-3-3") in
-  let m = Machine.at root in
-  let taken = Atomic.make 0 in
-  let takes =
-    Thread.create
-      (fun () ->
-        List.iter
-          (fun bus ->
-            Function.release (require_ok (Function.take m bus));
-            Atomic.incr taken)
-          [ gpu0; gpu1 ])
-      ()
-  in
-  Unix.sleepf 0.05;
-  let ends, end_child = Unix.pipe ~cloexec:true () in
-  let child =
-    match Unix.fork () with
-    | 0 ->
-        List.iter Unix.close [ sweep; file; end_child ];
-        ignore (Unix.read ends (Bytes.create 1) 0 1);
-        Unix._exit 0
-    | pid -> pid
-  in
-  Unix.close ends;
-  Unix.close file;
-  Unix.close sweep;
-  (* Both takes end within 5 s, or wait for the child: it ends once its pipe
-     closes. *)
-  let rec wait n =
-    if Atomic.get taken < 2 && n > 0 then begin
-      Unix.sleepf 0.01;
-      wait (n - 1)
-    end
-  in
-  wait 500;
-  let while_child = Atomic.get taken in
-  Unix.close end_child;
-  ignore (Unix.waitpid [] child);
-  Thread.join takes;
-  exit (if while_child = 2 then 0 else 1)
+  List.iter (fun bus -> add ("rig-pci-3-3.reach-" ^ bus)) dead_buses;
+  { root; m = Machine.at root; gpus = fixture_gpus () }
 
-let test_fork_in_sweep () =
-  if not flocks then skip ~reason:"locking a function's file needs flock" ();
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; forking |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with
-  | _, WEXITED c ->
-      equal ~msg:"another function taken while the forked child lives" int 0 c
-  | _ -> fail "the process that forked did not exit"
+(* The machine's files, as the reference lists them. *)
+let dead_listing r =
+  match r.listed with
+  | [] -> []
+  | buses ->
+      List.sort compare
+        ("rig-pci-3-3" :: List.map (fun b -> "rig-pci-3-3.reach-" ^ b) buses)
+
+let dead_file =
+  abstract
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "listing %s" (String.concat ", " r.listed))
+    "f"
+
+let gpu_index = Gen.with_pp Format.pp_print_int (Gen.int_range 0 1)
+
+let dead_file_commands =
+  [
+    Windtrap.command "open"
+      (Gen.unit @-> makes dead_file)
+      (fun () -> { listed = dead_buses })
+      make_dead_file;
+    Windtrap.command "reset"
+      (dead_file ^-> gpu_index @-> returns unit)
+      (fun r i ->
+        let bus = List.nth dead_buses i in
+        r.listed <- List.filter (( <> ) bus) r.listed)
+      (fun t i -> require_ok (Driver.reset t.gpus t.m i));
+    Windtrap.command "files"
+      (dead_file ^-> returns (list string))
+      dead_listing
+      (fun t -> hugepages t.root);
+  ]
 
 (* A driver that finds firmware it cannot continue from renews the GPU it holds:
    the vendor's reset runs, the memory of processes that died goes, and the
@@ -1585,13 +1565,13 @@ let system_memory =
          function, and keeps one that lists a function until its reset"
         test_left_files;
       test
-        "a take waits for another process's sweep, and reads the memory a \
-         dead process left as left"
+        "a take reads the memory a dead process left as left while its file \
+         is open elsewhere, and a live process's as its own"
         test_left_while_swept;
-      test
-        "a child forked while a take waits for a sweep keeps none of it: a \
-         later take goes on while the child lives (fork in a child process)"
-        test_fork_in_sweep;
+      stateful ~count:10 ~steps:4
+        "a dead process's file goes once the resets of every function it \
+         lists ran"
+        dead_file_commands;
       cases
         "memory on a mount that is no hugetlbfs of 2 MiB pages is refused"
         ~name:fst other_mounts test_other_mount;
@@ -2222,7 +2202,6 @@ let this_machine =
 let () =
   match Sys.argv with
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
-  | [| _; arg |] when arg = forking -> fork_in_sweep ()
   | [| _; arg; how; root; bus; va |] when arg = holding ->
       hold_memory how root bus (int_of_string va)
   | _ ->

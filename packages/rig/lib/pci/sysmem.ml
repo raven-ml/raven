@@ -25,13 +25,7 @@ external region : int -> int = "caml_rig_pci_sysmem_region"
 external create : string -> string -> Unix.file_descr
   = "caml_rig_pci_sysmem_create"
 
-external own_lock : Unix.file_descr -> unit = "caml_rig_pci_flock"
-external flock_wait : Unix.file_descr -> unit = "caml_rig_pci_flock_wait"
-
-external sweep_open : string -> int -> bool -> Unix.file_descr
-  = "caml_rig_pci_sweep_open"
-
-external sweep_close : int -> unit = "caml_rig_pci_sweep_close"
+external held : Unix.file_descr -> bool = "caml_rig_pci_sysmem_held"
 external zero : int -> int -> unit = "caml_rig_pci_sysmem_zero"
 
 let page = page_size ()
@@ -165,18 +159,16 @@ let unmap w = unmap_range (Window.address w) (Window.length w)
    half a list, and two processes that change one file's list lose neither's
    change. [close], [forget], [collect_dead] and [exit] in sysmem.mli state
    when a function leaves a list and when a file goes. The process holds a
-   shared flock on its file from before the file has a name until it dies, so
-   a take or a reset tells a dead process's file by taking the lock, and reads
-   its markers only then, once they can no longer change.
+   read lock of its open file description on its file from before the file
+   has a name until it dies (rig_pci_sysmem.c), so a take or a reset tells a
+   dead process's file by testing for the lock, which places none, and reads
+   its markers only then. A judge then holds no lock, so no judge reads
+   another's file as alive, and a child forked meanwhile holds nothing.
 
-   A sweep holds a dead process's file's lock while it reads and changes its
-   markers, which another process taking the lock would read as the file's
-   process alive. So each sweep, and each look for what dead processes left,
-   holds the machine's sweep lock, an exclusive flock on the directory of the
-   files: under it, a file's lock is held only by its own process. A flock
-   belongs to the open file, which a forked child would share and keep
-   locked, so a sweep opens its descriptors in slots a forked child closes
-   (rig_pci_sysmem.c). *)
+   Two processes may sweep at once. Only a file's own process adds markers,
+   so a dead process's file's markers only go. Each sweep removes its reset
+   function's marker first, then lists the markers and deletes the file if
+   none is left: whichever of two sweeps lists last sees both removals. *)
 
 type file = {
   pid : int; (* the process that made it *)
@@ -234,25 +226,6 @@ let marked name =
       Some (String.sub name 0 i, String.sub name at (String.length name - at))
   | _ -> None
 
-(* The slots of a sweep's descriptors: the directory's and the judged file's. *)
-let dir_slot = 0
-let file_slot = 1
-
-let rec lock_wait fd =
-  match flock_wait fd with
-  | () -> ()
-  | exception Unix.Unix_error (EINTR, _, _) -> lock_wait fd
-
-(* [f ()] under [root]'s sweep lock. Without a directory of memory files there
-   is nothing to sweep, so [f] runs without it. *)
-let swept ~root f =
-  match sweep_open (Filename.concat root hugepages) dir_slot false with
-  | exception Unix.Unix_error _ -> f ()
-  | fd ->
-      Fun.protect ~finally:(fun () -> sweep_close dir_slot) @@ fun () ->
-      lock_wait fd;
-      f ()
-
 let hugetlbfs =
   "it must be a hugetlbfs of 2 MiB pages: mount -t hugetlbfs -o pagesize=2M \
    none /dev/hugepages"
@@ -301,12 +274,6 @@ let markers path =
              | _ -> buses)
            [] names)
 
-(* A file goes before its markers: a marker without its file names nothing, and
-   the next take of a function of the machine removes it. *)
-let delete path buses =
-  unlink path;
-  List.iter (unmark path) buses
-
 let has_blocks f =
   Tables.Address.fold (fun _ b r -> r || b.file == f) blocks false
 
@@ -316,13 +283,13 @@ let exit () =
   let pid = Unix.getpid () in
   if List.exists (fun f -> f.pid = pid) !files then
     Lock.protect state @@ fun () ->
-    List.iter (fun f -> if f.reachers = [] then delete f.path []) !files
+    List.iter (fun f -> if f.reachers = [] then unlink f.path) !files
 
 (* A file that lists no function and holds no block goes. *)
 let collect f =
   if f.reachers = [] && not (has_blocks f) then begin
     files := List.filter (( != ) f) !files;
-    delete f.path [];
+    unlink f.path;
     Unix.close f.fd
   end
 
@@ -391,7 +358,7 @@ let file_of ~root bus =
       in
       (try mark path bus
        with e ->
-         delete path [];
+         unlink path;
          Unix.close fd;
          raise e);
       let f =
@@ -633,14 +600,21 @@ let unreach ~a ~n =
       Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
     (parts a n)
 
-(* [f ()] if the process that made the file at [path] died: the lock it held
-   while it lived is free. *)
+(* Whether the process that made the file at [path] died: the lock it held
+   while it lived is free. A lock that cannot be tested reads as held. Raises
+   Unix_error if the file cannot be opened. *)
+let dead path =
+  let fd = Unix.openfile path [ O_RDONLY; O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  match held fd with
+  | locked -> not locked
+  | exception Unix.Unix_error _ -> false
+
+(* [f ()] if the process that made the file at [path] died. *)
 let if_dead path f =
-  match sweep_open path file_slot true with
-  | exception Unix.Unix_error _ -> ()
-  | fd -> (
-      Fun.protect ~finally:(fun () -> sweep_close file_slot) @@ fun () ->
-      match own_lock fd with () -> f () | exception Unix.Unix_error _ -> ())
+  match dead path with
+  | true -> f ()
+  | false | (exception Unix.Unix_error _) -> ()
 
 (* The memory files under [root] other processes made, and the markers whose
    file is gone: a file is named before its markers and deleted before them, so
@@ -677,39 +651,25 @@ let sweep ~root ~reset =
   List.iter
     (fun path ->
       if_dead path (fun () ->
-          match markers path with
-          | None -> ()
-          | Some buses -> (
-              match List.filter (fun b -> Some b <> reset) buses with
-              | [] -> delete path buses
-              | _ -> Option.iter (unmark path) reset)))
+          Option.iter (unmark path) reset;
+          if markers path = Some [] then unlink path))
     files
 
 let collect_dead ~root =
-  Lock.protect state @@ fun () ->
-  swept ~root @@ fun () -> sweep ~root ~reset:None
+  Lock.protect state @@ fun () -> sweep ~root ~reset:None
 
 let forget ~root ~bus =
-  Lock.protect state @@ fun () ->
-  swept ~root @@ fun () -> sweep ~root ~reset:(Some bus)
+  Lock.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
 
 (* A file that cannot be opened for another reason than its end might hold the
    GPU's memory: it is no answer. *)
 let left ~root ~bus =
   Lock.protect state @@ fun () ->
-  swept ~root @@ fun () ->
-  let listed = ref false in
-  List.iter
+  List.exists
     (fun path ->
-      if not !listed then
-        match sweep_open path file_slot true with
-        | exception Unix.Unix_error (ENOENT, _, _) -> ()
-        | exception Unix.Unix_error (e, _, _) ->
-            Fail.fail "reading %s: %s" path (Unix.error_message e)
-        | fd -> (
-            Fun.protect ~finally:(fun () -> sweep_close file_slot) @@ fun () ->
-            match own_lock fd with
-            | exception Unix.Unix_error _ -> ()
-            | () -> listed := Sys.file_exists (marker path bus)))
-    (fst (others ~root));
-  !listed
+      match dead path with
+      | gone -> gone && Sys.file_exists (marker path bus)
+      | exception Unix.Unix_error (ENOENT, _, _) -> false
+      | exception Unix.Unix_error (e, _, _) ->
+          Fail.fail "reading %s: %s" path (Unix.error_message e))
+    (fst (others ~root))
