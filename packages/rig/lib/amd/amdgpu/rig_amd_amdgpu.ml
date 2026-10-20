@@ -767,6 +767,14 @@ let poll_faults fd g =
         | None | (exception Unix.Unix_error _) -> ())
     g.live
 
+(* The kernel driver answers EBUSY while a context other than the caller's
+   owns the state (amdgpu_ctx.c, amdgpu_ctx_set_stable_pstate). Before Linux
+   1b5e413713c0 ("drm/amdgpu: Fix context pstate override handling"), a
+   context that ends after the level changed forces the level saved when it
+   was made, takes ownership if that is a profile, and is freed, so the state
+   stays owned until a write to power_dpm_force_performance_level, which
+   clears the owner (amdgpu_pm.c,
+   amdgpu_set_power_dpm_force_performance_level). *)
 let stable_power g () =
   Amd.Lock.protect opening @@ fun () ->
   match g.node.gpu.target with
@@ -780,7 +788,8 @@ let stable_power g () =
       | exception Unix.Unix_error (EBUSY, _, _) ->
           Error
             "another process holds the GPU's stable power state, or one that \
-             exited left it held"
+             exited left it held, which writing auto to the GPU's \
+             power_dpm_force_performance_level, as root, frees"
       | exception Unix.Unix_error (e, _, _) ->
           Error
             (strf "the amdgpu driver refused the GPU's stable power state: %s"
