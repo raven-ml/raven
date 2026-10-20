@@ -150,6 +150,15 @@ enum {
   RIG_AMD_HIDDEN
 };
 
+/* The bytes of each implicit argument, which a launch's check and its
+   writer both read. */
+static const uint8_t rig_amd_hidden_bytes[RIG_AMD_HIDDEN] = {
+    [H_BLOCKS] = 4,      [H_BLOCKS + 1] = 4,    [H_BLOCKS + 2] = 4,
+    [H_GROUP] = 2,       [H_GROUP + 1] = 2,     [H_GROUP + 2] = 2,
+    [H_REMAINDER] = 2,   [H_REMAINDER + 1] = 2, [H_REMAINDER + 2] = 2,
+    [H_OFFSET] = 8,      [H_OFFSET + 1] = 8,    [H_OFFSET + 2] = 8,
+    [H_DIMS] = 2,        [H_LDS] = 4};
+
 #define RIG_AMD_LAUNCH_WORDS 64
 #define RIG_AMD_LAUNCH_HOLES 12
 

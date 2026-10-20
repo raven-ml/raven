@@ -23,6 +23,8 @@ val flatten :
     term's [add], [shift] and [set].
 
     Raises [Invalid_argument] if [p] exceeds the bounds [rig_amd_stubs.h]
-    sets for [form]: 16 words, 4 holes and 3 arguments for a [Packet], 64
-    words, 12 holes and 11 arguments for a [Launch], and for either a hole
-    whose shift is outside 0 to 63. *)
+    sets for [form], which [flatten] reads from it: the most words and holes
+    and the arguments a hole reads, [RIG_AMD_TEMPLATE_WORDS],
+    [RIG_AMD_TEMPLATE_HOLES] and [RIG_AMD_TEMPLATE_ARGS] for a [Packet] and
+    their [RIG_AMD_LAUNCH_] counterparts for a [Launch], and for either a
+    hole whose shift is outside 0 to 63. *)

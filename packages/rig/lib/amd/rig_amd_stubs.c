@@ -45,10 +45,60 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
 static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
                                          rig_amd_commit, rig_amd_settle};
 
-/* RIG_AMD_WAITS, the most waits a submission takes. */
-value caml_rig_amd_max_waits(value unit) {
-  (void)unit;
-  return Val_int(RIG_AMD_WAITS);
+/* The header's values that Rig_amd and Template read rather than state,
+   each by its name: caml_rig_amd_<name> is [v]. */
+#define CONSTANT(name, v)                                                     \
+  value caml_rig_amd_##name(value unit) {                                     \
+    (void)unit;                                                               \
+    return Val_int(v);                                                        \
+  }
+
+CONSTANT(max_waits, RIG_AMD_WAITS)
+CONSTANT(ring_pm4, RING_PM4)
+CONSTANT(ring_aql, RING_AQL)
+CONSTANT(ring_sdma, RING_SDMA)
+CONSTANT(template_words, RIG_AMD_TEMPLATE_WORDS)
+CONSTANT(template_holes, RIG_AMD_TEMPLATE_HOLES)
+CONSTANT(template_args, RIG_AMD_TEMPLATE_ARGS)
+CONSTANT(launch_words, RIG_AMD_LAUNCH_WORDS)
+CONSTANT(launch_holes, RIG_AMD_LAUNCH_HOLES)
+CONSTANT(launch_args, RIG_AMD_LAUNCH_ARGS)
+CONSTANT(templates, RIG_AMD_TEMPLATES)
+CONSTANT(t_wait, T_WAIT)
+CONSTANT(t_flush, T_FLUSH)
+CONSTANT(t_acquire, T_ACQUIRE)
+CONSTANT(t_wait64, T_WAIT64)
+CONSTANT(t_signal, T_SIGNAL)
+CONSTANT(t_release, T_RELEASE)
+CONSTANT(t_write, T_WRITE)
+CONSTANT(s_poll, S_POLL)
+CONSTANT(s_fence, S_FENCE)
+CONSTANT(s_trap, S_TRAP)
+CONSTANT(s_copy, S_COPY)
+CONSTANT(a_ib, A_IB)
+CONSTANT(t_invalidate, T_INVALIDATE)
+CONSTANT(t_stamp, T_STAMP)
+CONSTANT(s_stamp, S_STAMP)
+CONSTANT(s_fill, S_FILL)
+CONSTANT(l_args, L_ARGS)
+CONSTANT(l_scratch, L_SCRATCH)
+CONSTANT(l_threads, L_THREADS)
+CONSTANT(l_groups, L_GROUPS)
+CONSTANT(l_grid, L_GRID)
+CONSTANT(h_blocks, H_BLOCKS)
+CONSTANT(h_group, H_GROUP)
+CONSTANT(h_remainder, H_REMAINDER)
+CONSTANT(h_offset, H_OFFSET)
+CONSTANT(h_dims, H_DIMS)
+CONSTANT(h_lds, H_LDS)
+CONSTANT(hidden, RIG_AMD_HIDDEN)
+
+/* Queue [v_q] of a device, which Rig_amd numbers as the header does. */
+static int queue_of(value v_q) {
+  int q = Int_val(v_q);
+  if (q < 0 || q >= RIG_AMD_QUEUES)
+    caml_invalid_argument("Rig_amd: no such queue");
+  return q;
 }
 
 /* The live edges, linked from their create to their end, under [edges_mu],
@@ -271,7 +321,7 @@ value caml_rig_amd_hand(value v_self, value v_segment, value v_rings,
    destroys it before it makes its own. Under the device's growth lock. */
 value caml_rig_amd_unhand(value v_self, value v_q) {
   struct rig_amd *d = Device_val(v_self);
-  int q = Int_val(v_q);
+  int q = queue_of(v_q);
   pthread_mutex_lock(&d->grown_mu);
   struct rig_amd_grown *g = d->grown;
   if (g != NULL && g->ring[q].size > 0) {
@@ -318,14 +368,17 @@ value caml_rig_amd_ring(value v_self, value v_q, value v_words,
                         value v_bytes, value v_most, value v_write,
                         value v_doorbell, value v_kind, value v_id) {
   struct rig_amd *d = Device_val(v_self);
-  struct rig_amd_ring *r = &d->rings[Int_val(v_q)];
+  int q = queue_of(v_q), kind = Int_val(v_kind);
+  if (kind != RING_PM4 && kind != RING_AQL && kind != RING_SDMA)
+    caml_invalid_argument("Rig_amd: no such ring kind");
+  struct rig_amd_ring *r = &d->rings[q];
   r->words = Host_val(v_words);
   r->size = (uint64_t)Long_val(v_bytes) / 4;
   r->most = (uint64_t)Long_val(v_most) / 4;
   r->write = Host_val(v_write);
   r->doorbell = Host_val(v_doorbell);
-  r->kind = Int_val(v_kind);
-  d->installed[1 + Int_val(v_q)] = (uint64_t)Long_val(v_id);
+  r->kind = kind;
+  d->installed[1 + q] = (uint64_t)Long_val(v_id);
   return Val_unit;
 }
 
@@ -374,7 +427,9 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
                             value v_holes) {
   struct rig_amd_template c;
   size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof c.words) caml_invalid_argument(OUT_OF_BOUNDS);
+  if (Int_val(v_t) < 0 || Int_val(v_t) >= RIG_AMD_TEMPLATES ||
+      bytes > sizeof c.words)
+    caml_invalid_argument(OUT_OF_BOUNDS);
   c.n = (int)(bytes / 4);
   memcpy(c.words, String_val(v_words), 4 * (size_t)c.n);
   c.nholes = holes(v_holes, c.holes, RIG_AMD_TEMPLATE_HOLES,
@@ -383,9 +438,10 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
   return Val_unit;
 }
 
-/* The bytes of each implicit argument a launch writes. */
-static const int hidden_bytes[RIG_AMD_HIDDEN] = {4, 4, 4, 2, 2, 2, 2,
-                                                 2, 2, 8, 8, 8, 2, 4};
+/* A macro that names RIG_AMD_HIDDEN after the enumerator would size the
+   offsets past the widths. */
+_Static_assert(sizeof rig_amd_hidden_bytes == RIG_AMD_HIDDEN,
+               "an implicit argument's bytes for each of RIG_AMD_HIDDEN");
 
 /* Reads into [c] what a launch of either form holds: its dispatch's words
    and holes, as a template's; [v_max], the function's own LDS bytes, its most
@@ -410,7 +466,11 @@ static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
     caml_invalid_argument(OUT_OF_BOUNDS);
   for (int i = 0; i < RIG_AMD_HIDDEN; i++) {
     intnat h = at(v_hidden, i);
-    if (h < -1 || (h >= 0 && h + hidden_bytes[i] > (intnat)c->kernarg))
+    int w = rig_amd_hidden_bytes[i];
+    /* An enumerator the table gives no width would leave its bytes
+       unwritten. */
+    if (w != 2 && w != 4 && w != 8) caml_invalid_argument(OUT_OF_BOUNDS);
+    if (h < -1 || (h >= 0 && h + w > (intnat)c->kernarg))
       caml_invalid_argument(LAUNCH "implicit argument lies outside its "
                                    "arguments");
     c->hidden[i] = (int32_t)h;
@@ -660,7 +720,7 @@ value caml_rig_amd_renumber(value v_self, value v_v) {
 value caml_rig_amd_placed(value v_self, value v_q) {
   CAMLparam2(v_self, v_q);
   CAMLlocal1(r);
-  const struct rig_amd_ring *q = &Device_val(v_self)->rings[Int_val(v_q)];
+  const struct rig_amd_ring *q = &Device_val(v_self)->rings[queue_of(v_q)];
   r = caml_alloc_tuple(2);
   Store_field(r, 0, Val_long(q->put));
   Store_field(r, 1, Val_long(q->size));

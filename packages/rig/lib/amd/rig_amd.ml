@@ -221,7 +221,14 @@ external set_ring :
 external set_descriptor : int -> int -> int -> unit = "caml_rig_amd_descriptor"
 
 (* The code of a ring's kind in rig_amd_stubs.h. *)
-let ring_kind = function `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2
+external ring_pm4 : unit -> int = "caml_rig_amd_ring_pm4" [@@noalloc]
+external ring_aql : unit -> int = "caml_rig_amd_ring_aql" [@@noalloc]
+external ring_sdma : unit -> int = "caml_rig_amd_ring_sdma" [@@noalloc]
+
+let ring_kind = function
+  | `Pm4 -> ring_pm4 ()
+  | `Aql -> ring_aql ()
+  | `Sdma -> ring_sdma ()
 
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
@@ -408,38 +415,84 @@ let init_pointers (gpu : Abi.Gpu.t) ~aql ~waves host =
 
 (* Templates *)
 
-(* Each packet the writer places, its values the arguments 0, 1 and 2 of a use,
-   in rig_amd_stubs.h's order. On an AQL queue, whose PM4 words every die runs,
-   a release writes once: on die 0, after the barrier of its packet, every die's
-   work is done. *)
-let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
-  let once p = if aql then Pm4.pred_exec ~xcc_mask:1 p else p in
+(* The index of each packet the writer places, rig_amd_stubs.h's T_WAIT to
+   S_FILL, and their count. *)
+external t_wait : unit -> int = "caml_rig_amd_t_wait" [@@noalloc]
+external t_flush : unit -> int = "caml_rig_amd_t_flush" [@@noalloc]
+external t_acquire : unit -> int = "caml_rig_amd_t_acquire" [@@noalloc]
+external t_wait64 : unit -> int = "caml_rig_amd_t_wait64" [@@noalloc]
+external t_signal : unit -> int = "caml_rig_amd_t_signal" [@@noalloc]
+external t_release : unit -> int = "caml_rig_amd_t_release" [@@noalloc]
+external t_write : unit -> int = "caml_rig_amd_t_write" [@@noalloc]
+external s_poll : unit -> int = "caml_rig_amd_s_poll" [@@noalloc]
+external s_fence : unit -> int = "caml_rig_amd_s_fence" [@@noalloc]
+external s_trap : unit -> int = "caml_rig_amd_s_trap" [@@noalloc]
+external s_copy : unit -> int = "caml_rig_amd_s_copy" [@@noalloc]
+external a_ib : unit -> int = "caml_rig_amd_a_ib" [@@noalloc]
+external t_invalidate : unit -> int = "caml_rig_amd_t_invalidate" [@@noalloc]
+external t_stamp : unit -> int = "caml_rig_amd_t_stamp" [@@noalloc]
+external s_stamp : unit -> int = "caml_rig_amd_s_stamp" [@@noalloc]
+external s_fill : unit -> int = "caml_rig_amd_s_fill" [@@noalloc]
+external template_count : unit -> int = "caml_rig_amd_templates" [@@noalloc]
+
+(* What a device's packets depend on: its GPU, its release's interrupt
+   context, whether its compute queue runs 64-bit waits and whether it reads
+   AQL packets. *)
+module Setting = struct
+  type t = { gpu : Abi.Gpu.t; interrupt : int; waits64 : bool; aql : bool }
+end
+
+(* Each packet the writer places, at its index, its values the arguments 0, 1
+   and 2 of a use. On an AQL queue, whose PM4 words every die runs, a release
+   writes once: on die 0, after the barrier of its packet, every die's work is
+   done. *)
+let templates =
+  let open Setting in
+  let once s p = if s.aql then Pm4.pred_exec ~xcc_mask:1 p else p in
   [
-    Pm4.wait g (Memory 0) Equal 1 ();
-    Pm4.event_write Cs_partial_flush;
-    Pm4.acquire_mem g System;
-    (if waits64 then Pm4.wait_64 g 0 Greater_equal 1 () else []);
-    once (Pm4.release_mem g System 0 (Low_32 1));
-    once (Pm4.release_mem g System ~interrupt 0 (Data_64 1));
-    Pm4.write_data (Memory 0) 1;
-    Sdma.poll 0 Equal 1 ();
-    Sdma.fence g 0 1;
-    Sdma.trap;
-    Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2;
-    Abi.Aql.indirect_buffer 0 ~dwords:1;
-    Pm4.acquire_mem g Agent;
-    Pm4.event_write Cs_partial_flush @ once (Pm4.copy_data Confirmed Clock 0);
-    Sdma.timestamp 0;
-    Sdma.const_fill ~dst:0 ~word:1 ~bytes:2;
+    (t_wait (), fun s -> Pm4.wait s.gpu (Memory 0) Equal 1 ());
+    (t_flush (), fun _ -> Pm4.event_write Cs_partial_flush);
+    (t_acquire (), fun s -> Pm4.acquire_mem s.gpu System);
+    ( t_wait64 (),
+      fun s ->
+        if s.waits64 then Pm4.wait_64 s.gpu 0 Greater_equal 1 () else [] );
+    (t_signal (), fun s -> once s (Pm4.release_mem s.gpu System 0 (Low_32 1)));
+    ( t_release (),
+      fun s ->
+        once s
+          (Pm4.release_mem s.gpu System ~interrupt:s.interrupt 0 (Data_64 1))
+    );
+    (t_write (), fun _ -> Pm4.write_data (Memory 0) 1);
+    (s_poll (), fun _ -> Sdma.poll 0 Equal 1 ());
+    (s_fence (), fun s -> Sdma.fence s.gpu 0 1);
+    (s_trap (), fun _ -> Sdma.trap);
+    (s_copy (), fun _ -> Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2);
+    (a_ib (), fun _ -> Abi.Aql.indirect_buffer 0 ~dwords:1);
+    (t_invalidate (), fun s -> Pm4.acquire_mem s.gpu Agent);
+    ( t_stamp (),
+      fun s ->
+        Pm4.event_write Cs_partial_flush
+        @ once s (Pm4.copy_data Confirmed Clock 0) );
+    (s_stamp (), fun _ -> Sdma.timestamp 0);
+    (s_fill (), fun _ -> Sdma.const_fill ~dst:0 ~word:1 ~bytes:2);
   ]
 
-let set_templates self g ~interrupt ~waits64 ~aql =
-  let set i p =
-    let words, holes = Template.flatten Packet (fun _ -> None) Fun.id p in
+(* The writer reads a template at each index the header numbers. *)
+let () =
+  assert (
+    List.sort compare (List.map fst templates)
+    = List.init (template_count ()) Fun.id)
+
+let set_templates self gpu ~interrupt ~waits64 ~aql =
+  let s = { Setting.gpu; interrupt; waits64; aql } in
+  let set (i, packet) =
+    let words, holes =
+      Template.flatten Packet (fun _ -> None) Fun.id (packet s)
+    in
     set_template self i words holes
   in
-  List.iteri set (templates g ~interrupt ~waits64 ~aql);
-  set_copies self (Sdma.max_copy g) (Sdma.max_fill g)
+  List.iter set templates;
+  set_copies self (Sdma.max_copy gpu) (Sdma.max_fill gpu)
 
 let supported (g : Abi.Gpu.t) =
   let major, _, _ = g.target in
@@ -780,27 +833,46 @@ let image g bin =
         in
         Ok (Rig_edge.Place (Code_object.size co, lay))
 
-(* A dispatch's values: known to its launch, or the hand-over's argument [i], in
-   the order of rig_amd_stubs.h's L_ARGS, L_SCRATCH, L_THREADS, L_GROUPS and
-   L_GRID. *)
+(* A dispatch's values: known to its launch, or the hand-over's argument [i]. *)
 type value = Known of int | Arg of int
+
+(* The index of each of the hand-over's arguments, rig_amd_stubs.h's L_ARGS,
+   L_SCRATCH, and the first along x of L_THREADS, L_GROUPS and L_GRID. *)
+external l_args : unit -> int = "caml_rig_amd_l_args" [@@noalloc]
+external l_scratch : unit -> int = "caml_rig_amd_l_scratch" [@@noalloc]
+external l_threads : unit -> int = "caml_rig_amd_l_threads" [@@noalloc]
+external l_groups : unit -> int = "caml_rig_amd_l_groups" [@@noalloc]
+external l_grid : unit -> int = "caml_rig_amd_l_grid" [@@noalloc]
+
+(* The hand-over's arguments from [first] along x, y and z. *)
+let axes first = (Arg first, Arg (first + 1), Arg (first + 2))
 
 let word s i = Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff
 
-(* The offsets of the implicit arguments [k] reads, in the order of
-   rig_amd_stubs.h's H_BLOCKS, H_GROUP, H_REMAINDER, H_OFFSET, H_DIMS and H_LDS,
-   or -1. *)
+(* The index among a launch's implicit argument offsets of the first of each
+   kind, rig_amd_stubs.h's H_BLOCKS, H_GROUP, H_REMAINDER, H_OFFSET, H_DIMS and
+   H_LDS, and their count, RIG_AMD_HIDDEN. *)
+external h_blocks : unit -> int = "caml_rig_amd_h_blocks" [@@noalloc]
+external h_group : unit -> int = "caml_rig_amd_h_group" [@@noalloc]
+external h_remainder : unit -> int = "caml_rig_amd_h_remainder" [@@noalloc]
+external h_offset : unit -> int = "caml_rig_amd_h_offset" [@@noalloc]
+external h_dims : unit -> int = "caml_rig_amd_h_dims" [@@noalloc]
+external h_lds : unit -> int = "caml_rig_amd_h_lds" [@@noalloc]
+external hidden_count : unit -> int = "caml_rig_amd_hidden" [@@noalloc]
+
+(* The offsets of the implicit arguments [k] reads, at their indices, or
+   -1. *)
 let hidden f (k : Code_object.kernel) =
-  let at = Array.make 14 (-1) in
+  let at = Array.make (hidden_count ()) (-1) in
   let axis : Code_object.axis -> int = function X -> 0 | Y -> 1 | Z -> 2 in
   let set (h : Code_object.hidden) off =
     match h with
-    | Block_count a -> at.(axis a) <- off
-    | Group_size a -> at.(3 + axis a) <- off
-    | Remainder a -> at.(6 + axis a) <- off
-    | Global_offset a -> at.(9 + axis a) <- off
-    | Grid_dims -> at.(12) <- off
-    | Dynamic_lds_size -> at.(13) <- off
+    | Block_count a -> at.(h_blocks () + axis a) <- off
+    | Group_size a -> at.(h_group () + axis a) <- off
+    | Remainder a -> at.(h_remainder () + axis a) <- off
+    | Global_offset a -> at.(h_offset () + axis a) <- off
+    | Grid_dims -> at.(h_dims ()) <- off
+    | Dynamic_lds_size -> at.(h_lds ()) <- off
     | Other kind ->
         invalid_argf
           "Rig_amd.entry: kernel %s reads the implicit argument %s, which a \
@@ -846,7 +918,7 @@ let c_launch_of g (k : Code_object.kernel) ~base ~lds f =
         (Aql.dispatch
            { k with group_segment = 0 }
            ~descriptor:(Known (base + k.descriptor))
-           ~args:(Arg 0) ~threads:(1, 1, 1) ~grid:(Arg 8, Arg 9, Arg 10))
+           ~args:(Arg (l_args ())) ~threads:(1, 1, 1) ~grid:(axes (l_grid ())))
     in
     c_launch_aql words holes
       Aql.
@@ -863,8 +935,9 @@ let c_launch_of g (k : Code_object.kernel) ~base ~lds f =
         (Pm4.dispatch g
            { k with group_segment = group }
            ~program:(Known (base + k.entry))
-           ~scratch:(Arg 1) ~args:(Arg 0) ~packet:(Known 0)
-           ~threads:(Arg 2, Arg 3, Arg 4) ~groups:(Arg 5, Arg 6, Arg 7) ())
+           ~scratch:(Arg (l_scratch ())) ~args:(Arg (l_args ()))
+           ~packet:(Known 0) ~threads:(axes (l_threads ()))
+           ~groups:(axes (l_groups ())) ())
     in
     let granule = Pm4.lds_granule g in
     let words, holes = dispatch 0 and more, _ = dispatch granule in

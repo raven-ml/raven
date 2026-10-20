@@ -808,23 +808,35 @@ static void copy(struct submission *s, const struct rig_part *p) {
     copy_run(d, r, dst + i * dp, src + i * sp, width);
 }
 
+/* Stores the low [n] bytes of [v], for [n] 2, 4 or 8, at [p], in the
+   host's byte order, which is the GPU's. */
+static inline void store_le(uint8_t *p, uint64_t v, int n) {
+  uint16_t h = (uint16_t)v;
+  uint32_t w = (uint32_t)v;
+  switch (n) {
+  case 2: memcpy(p, &h, 2); break;
+  case 4: memcpy(p, &w, 4); break;
+  case 8: memcpy(p, &v, 8); break;
+  default: break;
+  }
+}
+
 /* Writes into [args] the implicit arguments [l] reads, of a launch of
    block [b]: its grid of whole groups starts at thread 0. */
 static void implicit(const struct rig_amd_launch *l, const struct rig_block *b,
                      uint8_t *args) {
-  const int32_t *h = l->hidden;
-  uint16_t dims = 1, zero16 = 0;
-  uint64_t zero64 = 0;
+  uint64_t v[RIG_AMD_HIDDEN] = {0};
+  uint64_t dims = 1;
   for (int k = 0; k < 3; k++) {
-    uint16_t t = (uint16_t)b->threads[k];
-    if ((uint64_t)b->groups[k] * b->threads[k] > 1) dims = (uint16_t)(k + 1);
-    if (h[H_BLOCKS + k] >= 0) memcpy(args + h[H_BLOCKS + k], &b->groups[k], 4);
-    if (h[H_GROUP + k] >= 0) memcpy(args + h[H_GROUP + k], &t, 2);
-    if (h[H_REMAINDER + k] >= 0) memcpy(args + h[H_REMAINDER + k], &zero16, 2);
-    if (h[H_OFFSET + k] >= 0) memcpy(args + h[H_OFFSET + k], &zero64, 8);
+    if ((uint64_t)b->groups[k] * b->threads[k] > 1) dims = (uint64_t)k + 1;
+    v[H_BLOCKS + k] = b->groups[k];
+    v[H_GROUP + k] = b->threads[k];
   }
-  if (h[H_DIMS] >= 0) memcpy(args + h[H_DIMS], &dims, 2);
-  if (h[H_LDS] >= 0) memcpy(args + h[H_LDS], &b->shared, 4);
+  v[H_DIMS] = dims;
+  v[H_LDS] = b->shared;
+  for (int i = 0; i < RIG_AMD_HIDDEN; i++)
+    if (l->hidden[i] >= 0)
+      store_le(args + l->hidden[i], v[i], rig_amd_hidden_bytes[i]);
 }
 
 /* Places [l]'s dispatch of block [b], whose arguments begin at segment offset
