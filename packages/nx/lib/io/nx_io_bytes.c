@@ -7,6 +7,8 @@
   rename.
   --------------------------------------------------------------------------*/
 
+#define _GNU_SOURCE
+
 #include "nx_io_codec.h"
 
 #ifndef NX_IO_CODEC_NO_OCAML

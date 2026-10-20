@@ -6,6 +6,8 @@
   before later changes to the file system.
   --------------------------------------------------------------------------*/
 
+#define _GNU_SOURCE
+
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>

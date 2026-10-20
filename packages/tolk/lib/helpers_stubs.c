@@ -6,6 +6,8 @@
 /* Setting a file's times through a descriptor, which OCaml's Unix library
    does only by path ([Unix.utimes]). */
 
+#define _GNU_SOURCE
+
 #define CAML_NAME_SPACE
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
