@@ -24,11 +24,12 @@
     see the file that was opened: a save to its path, which puts a new file
     there, leaves them their values.
     {b The file must not change in place while a value loaded from it is alive}:
-    rewriting it may change their values, and a value over its pages dies by
-    [SIGBUS], ending the process, when it reads a page that a truncation of the
-    file cut off. A value read into memory of its own is not affected. On
-    Windows a file whose pages are mapped can be neither deleted nor replaced
-    until its values are collected.
+    rewriting it may change their values, and what a value over its pages
+    reads from a page that a truncation of the file cut off is unspecified: on
+    Linux the read ends the process ([SIGBUS]), and on macOS it reads the
+    bytes the page held. A value read into memory of its own is not affected.
+    On Windows a file whose pages are mapped can be neither deleted nor
+    replaced until its values are collected.
 
     {b Saving.} A save takes a value of any set and writes its elements in C
     order, little-endian. It reads the value on the host for the extent of the

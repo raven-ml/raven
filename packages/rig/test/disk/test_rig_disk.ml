@@ -309,6 +309,23 @@ let child args =
   | WEXITED 0 -> String.trim out
   | _ -> failf "the child %s failed: %s" (String.concat " " args) out
 
+(* [ended args] is the trimmed output of this suite run as [args], or the
+   signal that ended it. *)
+let ended args =
+  let ic = Unix.open_process_args_in exe (Array.of_list (exe :: args)) in
+  let out = In_channel.input_all ic in
+  match Unix.close_process_in ic with
+  | WEXITED 0 -> String.trim out
+  | WSIGNALED n -> "killed by " ^ Sys.signal_to_string n
+  | _ -> failf "the child %s failed: %s" (String.concat " " args) out
+
+(* [os ()] is the operating system's name, as [uname -s] prints it. *)
+let os () =
+  let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+  let name = input_line ic in
+  ignore (Unix.close_process_in ic);
+  name
+
 (* Generators *)
 
 let page_edges = [ 0; 1; 2; 4095; 4096; 4097; 16383; 16384; 16385 ]
@@ -1057,20 +1074,32 @@ let test_truncated kind =
   removing [ other ] @@ fun () ->
   equal octets ~msg:"another file" "other" (read (of_file other))
 
+let kind_arg = function Opened -> "opened" | Created -> "created"
+
 (* A copy from a host borrow of a file truncated since raises Sys_error naming
-   the file, where a read of the borrow's pages past the end would end the
-   process: a child copies from a page that the truncation cut off. *)
+   the file: a child copies from a page that the truncation cut off. *)
 let test_truncated_borrow kind =
   if Sys.win32 then skip ~reason:"no truncation of a mapped file" ();
   let path = new_path () in
   removing [ path ] @@ fun () ->
   equal string "Sys_error naming the file"
-    (child
-       [
-         "truncated-borrow";
-         (match kind with Opened -> "opened" | Created -> "created");
-         path;
-       ])
+    (child [ "truncated-borrow"; "copy"; kind_arg kind; path ])
+
+(* A read of a host borrow's page that a truncation cut off ends the process
+   on Linux, and on macOS for a created file; on macOS, an opened file's page
+   keeps the bytes it held. *)
+let test_truncated_pages kind =
+  if Sys.win32 then skip ~reason:"no truncation of a mapped file" ();
+  let expected =
+    match (os (), kind) with
+    | "Linux", _ | "Darwin", Created -> "killed by SIGBUS"
+    | "Darwin", Opened -> "read the bytes it held"
+    | name, _ -> skip ~reason:(name ^ " leaves the read unspecified") ()
+  in
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  equal string expected
+    (ended [ "truncated-borrow"; "read"; kind_arg kind; path ])
 
 let descriptors =
   group ~timeout "descriptors"
@@ -1120,6 +1149,11 @@ let descriptors =
         "a copy from a host borrow of a file truncated since raises \
          Sys_error naming it"
         [ Opened; Created ] test_truncated_borrow;
+      cases
+        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
+        "a read of a host borrow's page that a truncation cut off ends the \
+         process or reads the bytes it held, as the system does"
+        [ Opened; Created ] test_truncated_pages;
     ]
 
 (* Barriers *)
@@ -1672,9 +1706,10 @@ let fork_child path out =
       | WSIGNALED n | WSTOPPED n -> Printf.printf "signal %d" n)
 
 (* Makes a file of three pages at [path], opened or created as [kind] says,
-   borrows it on the host, truncates it to 4 bytes, then copies 5 bytes of its
-   third page out of the borrow, and prints how the copy ended. *)
-let truncated_borrow_child kind path =
+   borrows it on the host, and truncates it to 4 bytes. Then [op] copies 5
+   bytes of its third page out of the borrow, or reads them through the
+   borrow's pages, and prints how it ended. *)
+let truncated_borrow_child op kind path =
   let s = pattern 3 (3 * 16384) in
   let file =
     match kind with
@@ -1688,16 +1723,20 @@ let truncated_borrow_child kind path =
   let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
   Unix.ftruncate fd 4;
   Unix.close fd;
-  print_string
-    (match
-       B.copy
-         ~src:(B.view borrow ~first:(2 * 16384) ~length:5)
-         ~dst:(B.create host 5)
-     with
-    | () -> "copied"
-    | exception Sys_error why when String.starts_with ~prefix:path why ->
-        "Sys_error naming the file"
-    | exception e -> Printexc.to_string e)
+  let third = B.view borrow ~first:(2 * 16384) ~length:5 in
+  match op with
+  | "copy" ->
+      print_string
+        (match B.copy ~src:third ~dst:(B.create host 5) with
+        | () -> "copied"
+        | exception Sys_error why when String.starts_with ~prefix:path why ->
+            "Sys_error naming the file"
+        | exception e -> Printexc.to_string e)
+  | _ ->
+      let got = string_of_host third in
+      if got = String.sub s (2 * 16384) 5 then
+        print_string "read the bytes it held"
+      else Printf.printf "read %S" got
 
 (* Runs [op] at [path] under a limit of this process: a create_file of 1 MiB or
    a copy of 8 KiB into a file made before, under a limit of a file's size of
@@ -1751,7 +1790,8 @@ let () =
   | [ _; "open-files" ] -> open_files_child ()
   | [ _; "limited"; op; path ] -> limited_child op path
   | [ _; "fork"; path; out ] -> fork_child path out
-  | [ _; "truncated-borrow"; kind; path ] -> truncated_borrow_child kind path
+  | [ _; "truncated-borrow"; op; kind; path ] ->
+      truncated_borrow_child op kind path
   | _ ->
       clear dir;
       let code =

@@ -914,9 +914,9 @@ module Buffer : sig
       allocation shares one mapping, which lasts until the allocation
       returns or [d] has stopped. A borrow of an io device's memory is its
       pages, whose reads by the host or by work are as the io device states
-      once the object behind them changes, such as the end of the process
-      by [SIGBUS] for a truncated file ([Rig_disk]). A copy reads such
-      memory through the io device ({!section-copying}).
+      once the object behind them changes, such as a file that a truncation
+      cut short ([Rig_disk]). A copy reads such memory through the io device
+      ({!section-copying}).
 
       Raises [Invalid_argument] if [b] is dead or, on a device other than
       [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is

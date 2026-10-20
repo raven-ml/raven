@@ -48,8 +48,9 @@
     {b References.}
     {ul
     {- {{:https://pubs.opengroup.org/onlinepubs/9799919799/functions/mmap.html}
-       POSIX [mmap]}: private mappings, and [SIGBUS] past the end of a
-       file.}
+       POSIX [mmap]}: private mappings, [SIGBUS] past the end of a file,
+       and the unspecified effect of a reference to a part of a file that a
+       change of its size removed.}
     {- {{:https://pubs.opengroup.org/onlinepubs/9799919799/functions/fsync.html}
        POSIX [fsync]}, and macOS's fsync(2) on [F_BARRIERFSYNC].}} *)
 
@@ -156,9 +157,13 @@ val barrier : Rig.Buffer.t -> unit
     {!of_file} opened admits only reads ({!Rig.Buffer.val-access}).
 
     Nothing outside the process may change a file while its pages are
-    borrowed. A read of a page that a truncation cut off ends the process
-    ([SIGBUS]). Another change may show through the pages of a file
-    {!of_file} opened that the process has not written.
+    borrowed. What a read of a page that a truncation cut off does is
+    unspecified. On Linux it ends the process ([SIGBUS]). On macOS it ends
+    the process for a file {!create_file} made, and reads the bytes the page
+    held for a file {!of_file} opened, whose pages are the process's own copy.
+    Windows refuses to truncate a file whose pages are mapped. Another change
+    may show through the pages of a file {!of_file} opened that the process
+    has not written.
 
     A borrow raises [Sys_error] naming the file if the disk cannot map it for
     the moment, such as when the file cannot be reopened ({!descriptors}),
