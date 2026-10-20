@@ -696,12 +696,16 @@ static struct rig_call *call_take(const struct rig_sub *s) {
 value caml_rig_submit_begin(value v_r, value v_s) {
   struct rig_run *r = Run_val(v_r);
   if (r->nargs > 0) {
-    intptr_t seen = rig_thread_number();
-    if (!atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING)) {
-      if (seen != RUN_FREE) return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
-      if (!atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING))
-        return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
-    }
+    intptr_t me = rig_thread_number();
+    intptr_t seen = atomic_load_explicit(&r->state, memory_order_relaxed);
+    /* A run the calling thread took moves only by this thread, which runs
+       no OCaml here, so a store moves it on; a free run, which another
+       thread may take meanwhile, moves by a compare-and-set. */
+    if (seen == me)
+      atomic_store_explicit(&r->state, RUN_SUBMITTING, memory_order_relaxed);
+    else if (seen != RUN_FREE ||
+             !atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING))
+      return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
   }
   struct rig_call *c = call_take(Sub_val(v_s));
   if (c == NULL) {
