@@ -41,13 +41,6 @@
     has no element, every operand is read as above, whole along its reduced
     axes.
 
-    Operands placed where a route reads them route to it again: each then
-    lies, moved to the results' axes, at the target or at the target with
-    some cuts undone, which makes fewer windows. The engine routes an
-    operation again once it has placed its operands, and a deferred value's
-    placement comes from a route over operands not yet placed: the two
-    agree.
-
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,
     and moving data within a set is the route's, as JAX computes over operands
@@ -209,7 +202,9 @@ val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
     [shapes] whose results are wanted at [p]: the result lies at [p], with
     each axis [r] keeps whole in the results whole ({!keeps}) and each cut an
     operand regroups across rows undone ({!Regroups}); each operand is read at
-    that target moved back to its axes.
+    that target moved back to its axes. It computes by partials where an
+    operand is then read cut along an axis [r] scans, each such axis holding
+    elements, as {!route} decides.
 
     Raises [Invalid_argument] naming [by] if a placement an operand is read at
     cuts an axis its shape lacks. *)

@@ -133,6 +133,14 @@
     maps twice over each tile's results but the first's. *)
 
 val run :
-  ('q. by:string -> 'q Value.prim -> 'q) -> by:string -> 'r Prim.partial -> 'r
-(** [run apply ~by op] is [op], its operands lying where its route reads them,
-    computed through [apply] as stated above. *)
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  unit Route.t ->
+  'r Value.prim ->
+  'r
+(** [run apply ~by route op] is [op], its operands lying where [route], its
+    route, reads them, computed through [apply] as stated above.
+
+    Raises [Invalid_argument] as an internal fault for an operation other than
+    a [Reduce], a [Scan] of no carry or a [Contract]: no route computes
+    another by partials. *)

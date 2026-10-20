@@ -267,6 +267,35 @@ let check ~by rule shapes =
         || not (Array.for_all2 fits t shapes)
       then invalid_argf "%s: a rule that does not name each operand's axes" by
 
+(* The axes of operand [i], of shape [s], that [rule] folds: those it reduces
+   or scans. *)
+let folds rule i s =
+  let r = Array.length s in
+  Array.append (reduced rule i r) (scanned rule i r)
+
+(* Whether an axis [rule] folds of an operand of [shapes] has no element. *)
+let folds_empty rule shapes =
+  Array.exists Fun.id
+    (Array.mapi
+       (fun i s -> Array.exists (fun a -> s.(a) = 0) (folds rule i s))
+       shapes)
+
+(* How the devices compute over operands of [shapes] read at [operands]: by
+   partials where one is read cut along an axis [rule] folds, each such axis
+   holding elements, since the window law fails there; by windows
+   otherwise. *)
+let computed rule shapes operands =
+  let cut i p =
+    Array.exists
+      (fun (a, _) -> Array.mem a (folds rule i shapes.(i)))
+      (Grid.cuts (Devices.grid p))
+  in
+  if
+    Array.exists Fun.id (Array.mapi cut operands)
+    && not (folds_empty rule shapes)
+  then Partials
+  else Windows
+
 (* The number of windows [g] cuts a value into. *)
 let windows g = Array.fold_left (fun n (_, t) -> n * t) 1 (Grid.cuts g)
 
@@ -338,11 +367,8 @@ let general ~by rule ps shapes =
       in
       let target = aligned rule shapes target in
       let wants = Array.init n (fun i -> backward rule i shapes.(i) target) in
-      let folds i =
-        Array.append (reduced rule i (rank i)) (scanned rule i (rank i))
-      in
       (* An axis the operation folds of no element: each reads it whole. *)
-      let empty i = Array.exists (fun a -> shapes.(i).(a) = 0) (folds i) in
+      let empty = folds_empty rule shapes in
       (* Where an operand lies cut along a reduced axis, the grid each operand
          with reduced axes is read at: where it lies, or the first such
          operand's grid where it reads its axes as that one does and lies
@@ -393,7 +419,7 @@ let general ~by rule ps shapes =
         in
         match List.find_opt cuts_reduced concrete with
         | None -> None
-        | Some _ when List.exists empty (List.init n Fun.id) -> None
+        | Some _ when empty -> None
         | Some c ->
             let reads = Array.init n (read c) in
             let all = List.init n Fun.id in
@@ -433,20 +459,7 @@ let general ~by rule ps shapes =
             p)
           ps
       in
-      (* The window law fails where an operand is read cut along an axis
-         the operation folds, each holding elements. *)
-      let cut i p =
-        Array.exists
-          (fun (a, _) -> Array.mem a (folds i))
-          (Grid.cuts (Devices.grid p))
-      in
-      let compute =
-        if
-          Array.exists Fun.id (Array.mapi cut operands)
-          && not (List.exists empty (List.init n Fun.id))
-        then Partials
-        else Windows
-      in
+      let compute = computed rule shapes operands in
       Some { operands; result = Devices.v ~by set target; compute }
 
 let route ~by rule ps shapes =
@@ -485,8 +498,9 @@ let at ~by rule shapes p =
     | Error e -> invalid_argf "%s: %s" by e);
     Devices.v ~by set g
   in
+  let operands = Array.mapi operand shapes in
   {
-    operands = Array.mapi operand shapes;
+    operands;
     result = Devices.v ~by set target;
-    compute = Windows;
+    compute = computed rule shapes operands;
   }

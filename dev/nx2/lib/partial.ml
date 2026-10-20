@@ -602,12 +602,11 @@ struct
 
   (* Reductions *)
 
-  let reduce (type d r) (route : d Route.t) layout axes prog
+  let reduce (type d r) (route : unit Route.t) rule layout axes prog
       (rs : (d, r) Value.reductions) (loads : d Value.load iarray) : r =
     let shape = L.shape layout and ax = Iarray.to_array axes in
-    let p = route.result in
+    let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
-    let rule = Prim.rule (Value.Reduce { layout; axes; prog; reductions = rs; loads }) in
     let out = Prim.reduced shape axes in
     let whole = Array.map (fun a -> shape.(a)) ax in
     let outw j = Devices.window ~by p out j in
@@ -756,16 +755,12 @@ struct
 
   (* Scans *)
 
-  let scan (type d a) (route : d Route.t) layout axis prog
+  let scan (type d a) (route : unit Route.t) rule layout axis prog
       (r : (d, a) Value.reduction) (loads : d Value.load iarray) : a =
     let shape = L.shape layout in
     let n = shape.(axis) in
-    let p = route.result in
+    let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
-    let rule =
-      Prim.rule
-        (Value.Scan { layout; axis; prog; reduction = r; loads; carry = None })
-    in
     let win j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
     let viewed j =
@@ -997,7 +992,7 @@ struct
 
   (* Contractions *)
 
-  let contract (type v s d a b c e) (route : d Route.t) ~order ~batch
+  let contract (type v s d a b c e) (route : unit Route.t) rule ~order ~batch
       ~contracting ~acc (out : (v, s) D.t) (a : (a, b, d) Value.t)
       (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option) :
       (v, s, d) Value.t =
@@ -1006,12 +1001,8 @@ struct
       Array.init (Iarray.length ps) (fun i -> f (Iarray.get ps i))
     in
     let whole = sides (fun (i, _) -> Prim.dim a i) contracting in
-    let p = route.result in
+    let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
-    let rule =
-      Prim.rule
-        (Value.Contract { order; batch; contracting; acc; out; a; b; init })
-    in
     let resw j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
     let tiles = tiles route (Prim.shape a) (sides fst contracting) in
@@ -1117,17 +1108,23 @@ struct
     Prim.expect out (at_placement p shape (Array.map List.hd per))
 end
 
-let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    (op : r Prim.partial) : r =
+let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
+    (op : r Value.prim) : r =
   let module F = Make (struct
     let by = by
     let apply = apply
   end) in
+  let rule = Prim.rule op in
   match op with
-  | Reduce_partial { route; layout; axes; prog; reductions; loads } ->
-      F.reduce route layout axes prog reductions loads
-  | Scan_partial { route; layout; axis; prog; reduction; loads } ->
-      F.scan route layout axis prog reduction loads
-  | Contract_partial { route; order; batch; contracting; acc; out; a; b; init }
-    ->
-      F.contract route ~order ~batch ~contracting ~acc out a b init
+  | Value.Reduce { layout; axes; prog; reductions; loads } ->
+      F.reduce route rule layout axes prog reductions loads
+  | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
+      F.scan route rule layout axis prog reduction loads
+  | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
+      F.contract route rule ~order ~batch ~contracting ~acc out a b init
+  | Value.Scan { carry = Some _; _ }
+  | Value.Map _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
+  | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _
+  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+  | Value.Check _ ->
+      invalid_arg "Partial.run: an operation no route computes by partials"

@@ -556,7 +556,7 @@ let contractions =
         (fun (_, op) ->
           refuses op;
           let (Op o) = op in
-          invalid (fun () -> Prim.prepare ~by:"Nx.f" (fun _ x -> x) o));
+          invalid (fun () -> Prim.route ~by:"Nx.f" o));
     ]
 
 (* Contraction orders *)

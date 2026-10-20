@@ -111,17 +111,15 @@ let fresh ~by p dt shape =
           A.create (Devices.rig set devices.(j)) dt
             (extents (Devices.window ~by p shape j)))
 
-(* A maker of fresh results at [at], or at their form's placement, recording the
-   placement in [where]. *)
-let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
-    (f : (v, s, d) Value.form) : (v, s, d) Value.t =
+(* A maker of fresh results at their form's placement: the first into [into]
+   where it is given. *)
+let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
+    (v, s, d) Value.t =
   let p =
-    match (at, f.placement) with
-    | Some p, _ -> Devices.rebrand p
-    | None, Some p -> p
-    | None, None -> invalid_arg "Exec.alloc: a value of every set"
+    match f.placement with
+    | Some p -> p
+    | None -> invalid_arg "Exec.alloc: a value of every set"
   in
-  Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
   match into with
   | Some a when k = 0 ->
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
@@ -253,24 +251,23 @@ let unravel i shape =
 let uncut p = not (Grid.is_cut (Devices.grid p))
 
 (* The route of the constant operation [op] whose results are wanted at [p]:
-   where it computes them and reads each operand ({!Route.at}); [None] where
-   that is [p] for all: [p] cuts no axis, or the rule is elementwise. *)
+   where it computes them and reads each operand ({!Route.at}). Where [p] cuts
+   no axis, or the rule is elementwise, that is [p] for all. *)
 let route_at : type r.
-    by:string -> r Value.prim -> unit Devices.placement -> unit Route.t option =
+    by:string -> r Value.prim -> unit Devices.placement -> unit Route.t =
  fun ~by op p ->
-  if uncut p then None
+  let shapes = ref [] in
+  Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
+  let shapes = Array.of_list (List.rev !shapes) in
+  let at_p () =
+    let operands = Array.make (Array.length shapes) p in
+    { Route.operands; result = p; compute = Windows }
+  in
+  if uncut p then at_p ()
   else
-    let rule = Prim.rule op in
-    if rule = Route.Elementwise then None
-    else begin
-      let shapes = ref [] in
-      Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
-      Some (Route.at ~by rule (Array.of_list (List.rev !shapes)) p)
-    end
-
-(* Where a route [r] from [route_at] for [p] reads operand [i]. *)
-let read_at (r : unit Route.t option) p i =
-  match r with None -> p | Some r -> r.operands.(i)
+    match Prim.rule op with
+    | Route.Elementwise -> at_p ()
+    | rule -> Route.at ~by rule shapes p
 
 (* How a constant's results are read: from its memo, where they are kept, or
    computed into memory of their own. *)
@@ -303,7 +300,7 @@ let pending (Value.Node n) p =
     (fun i x ->
       match x with
       | Value.Deferred { node = Value.Node m as node; _ } ->
-          let q = read_at r p i in
+          let q = r.operands.(i) in
           if find m.memo q = None then found := (node, q) :: !found
       | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> ())
     n.op;
@@ -449,8 +446,13 @@ let rec data_buffers : type d e. (d, e) Value.data -> Rig.Buffer.t list =
 (* The next node's id. *)
 let nodes = Atomic.make 0
 
-(* A layout no result has, before its first is known. *)
-let no_layout = L.contiguous [||]
+(* The shape of [op]'s first result in [r]. *)
+let first_shape op r =
+  let first = ref None in
+  Prim.iter_results
+    (fun y -> if Option.is_none !first then first := Some (Prim.shape y))
+    op r;
+  Option.get !first
 
 (* The one array of [x], a value on one device. *)
 let one (type v s d) (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) 0
@@ -635,7 +637,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
       let at, shape, arrays =
         if Iarray.length d.arrays <> 1 then moved ()
         else begin
-          ignore (Prim.prepare ~by (fun _ y -> y) op);
+          ignore (Prim.route ~by op);
           match A.move mv (Iarray.get d.arrays 0) with
           | Some v -> (d.at, L.shape (A.layout v), [| v |])
           | None -> moved ()
@@ -694,21 +696,22 @@ and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             (Prim.arrays y);
           y)
   | Value.Check { ok; data; fail } ->
-      Prim.results ~by (fun k f -> alloc ~by k f) op;
+      ignore (Prim.route ~by op);
       check ~by ok data fail
   | _ ->
       if not (Prim.exists is_concrete op) then defer ~by op
-      else compute ~by ?into (Prim.prepare ~by (fun p x -> placer ~by p x) op)
+      else
+        (* A concrete operand has a placement, so the operation has a
+           route. *)
+        let route = Option.get (Prim.route ~by op) in
+        let place i x = placer ~by (Devices.rebrand route.operands.(i)) x in
+        compute ~by ?into route (Prim.mapi place op)
 
-(* [x] readable at [p]. Exec defers an operation over values of every set alone,
-   so [p] is [Some _] here. *)
+(* [x] readable at [p]. *)
 and placer : type v s d.
-    by:string ->
-    d Devices.placement option ->
-    (v, s, d) Value.t ->
-    (v, s, d) Value.t =
+    by:string -> d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t
+    =
  fun ~by p x ->
-  let p = Option.get p in
   match x with
   | Value.Deferred _ -> at p x
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
@@ -720,59 +723,61 @@ and defer : type r. by:string -> r Value.prim -> r =
   let node = Value.Node { id; by; op; memo = Atomic.make [] } in
   Prim.results ~by (fun k form -> Value.Deferred { form; node; k }) op
 
-(* [op] computed over operands that lie where its route reads them, or at [at]
-   for a constant's evaluation: its results are allocated there, and its
-   expansion's operations compute there. A loop of no load, a constant's, has
-   only [at] to place it. *)
+(* [op] computed over operands that lie where [route], its route, reads them:
+   its results lie where the route puts them. For a constant's evaluation at
+   [at], its expansion's operations compute there. *)
 and compute : type r.
-    by:string -> ?into:A.any -> ?at:unit Devices.placement -> r Value.prim -> r
-    =
- fun ~by ?into ?at op ->
+    by:string ->
+    ?into:A.any ->
+    ?at:unit Devices.placement ->
+    unit Route.t ->
+    r Value.prim ->
+    r =
+ fun ~by ?into ?at route op ->
   match op with
-  | (Value.Reduce { loads = [||]; _ } | Value.Scan { loads = [||]; _ })
-    when Option.is_none at ->
-      invalid_arg "Exec.compute: a loop of no load at no placement"
   | Value.Move (mv, x) ->
-      let xp = Prim.placement x and shape = Prim.shape x in
-      let xs = Prim.arrays x in
-      let cuts = Grid.cuts (Devices.grid xp) and set = Devices.set xp in
-      let move a =
-        moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
+      let xp = Prim.placement x and xs = Prim.arrays x in
+      let set = Devices.set xp in
+      let move =
+        if uncut xp then moved ~by set mv
+        else
+          let shape = Prim.shape x and cuts = Grid.cuts (Devices.grid xp) in
+          fun a ->
+            moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
       in
-      shard_views ~by op xp (fun () -> Iarray.map move xs)
+      shard_views ~by route op xp (fun () -> Iarray.map move xs)
   | Value.Bitcast (dt, x) ->
       let xp = Prim.placement x and xs = Prim.arrays x in
       let set = Devices.set xp in
-      shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
+      shard_views ~by route op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
-      sharded ~by ?into ?at op
+      sharded ~by ?into ?at route op
 
-(* [op]'s results, by {!Partial} where its route computes by partials. Else
-   fresh where its route places them or at [at], each device's window [w] of
-   the first computed there by its kernels over each operand's window
-   ({!Route.window}). A device whose kernels decline computes its window by the
-   expansion, over its own operands: no data leaves the device. On one device
-   the expansion's results are the results; on several, or into a donated
-   operand's memory, they are copied into the device's window. *)
+(* [op]'s results, by {!Partial} where [route] computes by partials. Else
+   fresh where it places them, each device's window [w] of the first computed
+   there by its kernels over each operand's window ({!Route.window}). A device
+   whose kernels decline computes its window by the expansion, over its own
+   operands: no data leaves the device. On one device the expansion's results
+   are the results; on several, or into a donated operand's memory, they are
+   copied into the device's window. *)
 and sharded : type r.
-    by:string -> ?into:A.any -> ?at:unit Devices.placement -> r Value.prim -> r
-    =
- fun ~by ?into ?at op ->
-  let where = ref None and first = ref no_layout in
-  let made =
-    Prim.results_or_partial ~by
-      (fun k f ->
-        if k = 0 then first := f.layout;
-        alloc ~by ?at ~where ?into k f)
-      op
-  in
-  match made with
-  | Right c -> Partial.run (fun ~by op -> folded ~by ?at op) ~by c
-  | Left r -> (
-      let p = Option.get !where in
+    by:string ->
+    ?into:A.any ->
+    ?at:unit Devices.placement ->
+    unit Route.t ->
+    r Value.prim ->
+    r =
+ fun ~by ?into ?at route op ->
+  match route.compute with
+  | Partials -> Partial.run (fun ~by op -> folded ~by ?at op) ~by route op
+  | Windows -> (
+      let p = route.result in
+      let r =
+        Prim.results_at ~by (Some p) (fun k f -> alloc ~by ?into k f) op
+      in
       let set = Devices.set p in
       let kernels = kernels_of ~by ~op:(Prim.name op) set in
       match Grid.one (Devices.grid p) with
@@ -793,7 +798,7 @@ and sharded : type r.
           on_device ~by kernels set op r 0 k op;
           r
       | None ->
-          let rule = Prim.rule op and first = L.shape !first in
+          let rule = Prim.rule op and first = first_shape op r in
           Array.iteri
             (fun j k ->
               let w = Devices.window ~by p first j in
@@ -880,34 +885,45 @@ and folded : type r. by:string -> ?at:unit Devices.placement -> r Value.prim -> 
 
 (* An operation of a constant's evaluation at [q]: one over a concrete operand
    computes where its route reads them; a creation, its other operands
-   constants, computes at [q], where the evaluation reads it. *)
+   constants computed at [q], where the evaluation reads it, computes where
+   its route over them puts it, and at [q] where it has no operand. *)
 and apply_at : type r. unit Devices.placement -> by:string -> r Value.prim -> r
     =
  fun q ~by op ->
   if Prim.exists is_concrete op then run ~by op
-  else compute ~by ~at:q (Prim.map (fun y -> at (Devices.rebrand q) y) op)
+  else
+    let op = Prim.map (fun y -> at (Devices.rebrand q) y) op in
+    let route =
+      match Prim.route ~by op with
+      | Some r -> r
+      | None -> { Route.operands = [||]; result = q; compute = Windows }
+    in
+    compute ~by ~at:q route op
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
-   order: at [op]'s placement, whose devices hold them. [views] runs once [op]'s
-   rule holds, so that no kernel copies for an operation it refuses. *)
+   order: at [route]'s result, whose devices hold them. *)
 and shard_views : type v s d.
     by:string ->
+    unit Route.t ->
     (v, s, d) Value.t Value.prim ->
     d Devices.placement ->
     (unit -> (v, s) A.t iarray) ->
     (v, s, d) Value.t =
- fun ~by op xp views ->
-  let xdev = Grid.devices (Devices.grid xp) in
-  Prim.results ~by
+ fun ~by route op xp views ->
+  Prim.results_at ~by (Some route.result)
     (fun _ f ->
       let vs = views () in
-      (* Its operand lies at [xp], so it has a placement. *)
       let p = Option.get f.placement in
-      let devices = Grid.devices (Devices.grid p) in
-      make p ~shape:(L.shape f.layout)
-        (Iarray.init (Array.length devices) (fun i ->
-             let j = Option.get (Array.find_index (( = ) devices.(i)) xdev) in
-             A.expect f.dtype (A.Any (Iarray.get vs j)))))
+      let shape = L.shape f.layout in
+      if Devices.equal p xp then
+        make p ~shape (Iarray.map (fun v -> A.expect f.dtype (A.Any v)) vs)
+      else
+        let xdev = Grid.devices (Devices.grid xp) in
+        let devices = Grid.devices (Devices.grid p) in
+        make p ~shape
+          (Iarray.init (Array.length devices) (fun i ->
+               let j = Option.get (Array.find_index (( = ) devices.(i)) xdev) in
+               A.expect f.dtype (A.Any (Iarray.get vs j)))))
     op
 
 and check : type d e.
@@ -1142,7 +1158,7 @@ and through_views : type v s d.
         | Value.Move (_, Value.Deferred { node = m; _ })
         | Value.Bitcast (_, Value.Deferred { node = m; _ }) ->
             views := (!node, !key) :: !views;
-            key := read_at (route_at ~by:n.by n.op !key) !key 0;
+            key := (route_at ~by:n.by n.op !key).operands.(0);
             node := m
         | Value.Move _ | Value.Bitcast _ | Value.Map _ | Value.Reduce _
         | Value.Scan _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
@@ -1262,39 +1278,24 @@ and compute_node :
          with the axes its rule keeps whole made whole, over operands where the
          route reads them; a creation computes there too. *)
       let route = route_at ~by op p in
-      let q = match route with None -> p | Some r -> r.result in
+      let q = route.result in
       let op' =
         Prim.mapi
-          (fun i y -> resolve (Devices.rebrand (read_at route p i)) y)
+          (fun i y -> resolve (Devices.rebrand route.operands.(i)) y)
           op
       in
-      let r = compute ~by ~at:q op' in
-      let arrays = Prim.result_arrays op' r in
-      if Devices.equal q p then arrays
+      let r = compute ~by ~at:q route op' in
+      if Devices.equal q p then Prim.result_arrays op' r
       else
         (* Each device of [p] keeps its window, cut from its window at [q], in
            memory of its own, so that no memo holds more. *)
-        let shapes = ref [] in
-        Prim.iter_results (fun y -> shapes := Prim.shape y :: !shapes) op' r;
-        let shapes = Array.of_list (List.rev !shapes) in
-        let qs = Grid.devices (Devices.grid q)
-        and ps = Grid.devices (Devices.grid p) in
-        Array.map2
-          (fun per shape ->
-            Array.mapi
-              (fun j k ->
-                let jq = Option.get (Array.find_index (( = ) k) qs) in
-                let wp = Devices.window ~by p shape j in
-                let wq = Devices.window ~by q shape jq in
-                let w =
-                  Iarray.init (Array.length wp) (fun i ->
-                      let (rp : M.range) = wp.(i) in
-                      { rp with M.start = rp.start - wq.(i).start })
-                in
-                let (A.Any a) = per.(jq) in
-                A.Any (A.copy (Option.get (A.move (Slice w) a))))
-              ps)
-          arrays shapes
+        let per = ref [] in
+        Prim.iter_results
+          (fun y ->
+            let y = Place.value ~by (Devices.rebrand p) y in
+            per := Prim.any (Iarray.map A.copy (Prim.arrays y)) :: !per)
+          op' r;
+        Array.of_list (List.rev !per)
 
 (* The fast path *)
 

@@ -453,29 +453,31 @@ let exact =
 (* The engine places operands where their route reads them, then routes the
    operation again, as a deferred value's form does over unplaced operands:
    that route must be the first. *)
-let fixpoint =
-  prop ~count:500 "operands placed where their route reads them route alike"
-    case (fun c ->
-      match route c.rule c.ps c.shapes with
-      | exception Invalid_argument _ -> ()
-      | None -> ()
-      | Some r ->
-          let moved =
-            Array.exists2
-              (fun p q ->
-                match p with
-                | Some p -> not (Devices.equal p q)
-                | None -> true)
-              c.ps r.operands
-          in
-          cover "an operand moved" moved;
-          let r' = placed c.rule r.operands c.shapes in
-          equal placement ~msg:"the results" r.result r'.result;
-          Array.iteri
-            (fun i p ->
-              equal placement ~msg:(Printf.sprintf "operand %d" i) p
-                r'.operands.(i))
-            r.operands)
+(* Whether [c]'s rule folds axis [a] of operand [i]: reduces or scans it. *)
+let folded c i a =
+  match c.rule with
+  | Route.Elementwise -> false
+  | Axes t | Into t -> (
+      match t.(i).(a) with
+      | Route.Reduced _ | Scanned _ -> true
+      | Becomes _ | Whole | Regroups _ -> false)
+
+(* Whether an axis [c]'s rule folds has no element. *)
+let empty_fold c =
+  Array.exists Fun.id
+    (Array.mapi
+       (fun i s ->
+         Array.exists Fun.id (Array.mapi (fun a d -> folded c i a && d = 0) s))
+       c.shapes)
+
+(* Whether operands read at [operands] are read cut along an axis [c]'s rule
+   folds. *)
+let cut_fold c (operands : b Devices.placement array) =
+  Array.exists Fun.id
+    (Array.mapi
+       (fun i p ->
+         Array.exists (fun (a, _) -> folded c i a) (Grid.cuts (Devices.grid p)))
+       operands)
 
 (* Where a route reads an operand cut along an axis the rule reduces or
    scans, every axis it so folds holding elements, the window law does not
@@ -489,31 +491,7 @@ let computes =
       | exception Invalid_argument _ -> ()
       | None -> ()
       | Some r ->
-          let folded i a =
-            match c.rule with
-            | Route.Elementwise -> false
-            | Axes t | Into t -> (
-                match t.(i).(a) with
-                | Route.Reduced _ | Scanned _ -> true
-                | Becomes _ | Whole | Regroups _ -> false)
-          in
-          let empty =
-            Array.exists Fun.id
-              (Array.mapi
-                 (fun i s ->
-                   Array.exists Fun.id
-                     (Array.mapi (fun a d -> folded i a && d = 0) s))
-                 c.shapes)
-          in
-          let cut =
-            Array.exists Fun.id
-              (Array.mapi
-                 (fun i p ->
-                   Array.exists
-                     (fun (a, _) -> folded i a)
-                     (Grid.cuts (Devices.grid p)))
-                 r.operands)
-          in
+          let empty = empty_fold c and cut = cut_fold c r.operands in
           cover "by partials" (cut && not empty);
           cover "a folded axis of no element" empty;
           equal bool ~msg:"by partials" (cut && not empty)
@@ -544,7 +522,9 @@ let keeps =
 
 (* A constant computed for results at [p]: its route keeps [p]'s devices, keeps
    every cut of [p] its rule allows, and reads each operand where each device's
-   window of the results depends on it. *)
+   window of the results depends on it. It computes by partials where it reads
+   an operand cut along an axis the rule scans, as {!computes} states for any
+   route: a scan read so would otherwise scan each window from its start. *)
 let at_law =
   let wanted =
     let open Gen in
@@ -562,6 +542,9 @@ let at_law =
       equal (list int) ~msg:"the devices wanted" (devices_of p)
         (devices_of r.result);
       cover "a cut kept" (Grid.cuts (Devices.grid r.result) <> [||]);
+      let partials = cut_fold c r.operands && not (empty_fold c) in
+      cover "by partials" partials;
+      equal bool ~msg:"by partials" partials (r.compute = Route.Partials);
       Array.iteri
         (fun j k ->
           let w = Devices.window ~by:"t" r.result rs j in
@@ -910,6 +893,6 @@ let () =
     (run "nx route"
        [
          group "laws"
-           [ law; exact; fixpoint; computes; keeps; at_law; move_law ];
+           [ law; exact; computes; keeps; at_law; move_law ];
          cases_;
        ])

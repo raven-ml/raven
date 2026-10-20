@@ -6,11 +6,12 @@
 (** Operations as data, and values' facts: the functions over {!Value.prim} and
     {!Value.t} that the engine and [Nx.Prim] share.
 
-    Every function is total over the constructors. {!results} states each
-    operation's rule once: the shapes, dtypes, axes and attributes its operands
-    must have, and the form of each result, its placement from {!Route}. The
-    eager engine allocates destinations through it, and interpretations make
-    traced results through it, so the two agree in dtype, layout and placement.
+    Every function is total over the constructors. {!route} and {!results_at}
+    state each operation's rule once: the shapes, dtypes, axes and attributes
+    its operands must have, where it reads them, and the form of each result,
+    its placement from {!Route}. The eager engine routes, places and allocates
+    destinations through them, and interpretations make traced results through
+    {!results}, so the two agree in dtype, layout and placement.
     A sharded value's shape is the whole's, which it holds; each shard is its
     device's window of it. *)
 
@@ -171,61 +172,40 @@ val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 
     Raises [Invalid_argument] for an operation that is not a loop. *)
 
+val route : by:string -> 'r prim -> unit Route.t option
+(** [route ~by op] is where [op] reads each operand, in {!operands}' order,
+    where its results lie and how its devices compute them, after checking its
+    operands against its rule: [None] where every operand is of every set.
+    Operands that lie at one placement that cuts no axis, the others of every
+    set, are read there and their results lie there; otherwise {!Route.route}
+    of {!rule} decides. [Place] and [Check] are not routed: [None]. A deferred
+    value's placement and its eager twin's come from this one route over the
+    same operands.
+
+    Raises [Invalid_argument] naming [by] where [op]'s operands break its rule,
+    and as {!Route.route} does. *)
+
+val results_at :
+  by:string ->
+  unit Devices.placement option ->
+  ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+  'r prim ->
+  'r
+(** [results_at ~by p m op] is [op]'s result, its value at position [k] made by
+    [m k f], [f] the form eager execution gives it at [p], for an [op] whose
+    rule {!route} checked; [()] for [Check]. A [Place]'s result lies at its
+    own placement. *)
+
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
   'r prim ->
   'r
-(** [results ~by m op] is [op]'s result, its value at position [k] made by
-    [m k f], [f] the form eager execution gives it; [()] for [Check].
+(** [results ~by m op] is {!results_at} at the placement {!route} gives [op]'s
+    results.
 
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
-
-(** The type for a reduction, a scan of no carry or a contraction whose route
-    computes by partials ({!Route.Partials}): its fields and that route. *)
-type 'r partial =
-  | Reduce_partial : {
-      route : 'd Route.t;
-      layout : Nx_array.Layout.t;
-      axes : int iarray;
-      prog : Nx_kernel.Prog.t;
-      reductions : ('d, 'r) reductions;
-      loads : 'd load iarray;
-    }
-      -> 'r partial
-  | Scan_partial : {
-      route : 'd Route.t;
-      layout : Nx_array.Layout.t;
-      axis : int;
-      prog : Nx_kernel.Prog.t;
-      reduction : ('d, 'r) reduction;
-      loads : 'd load iarray;
-    }
-      -> 'r partial
-  | Contract_partial : {
-      route : 'd Route.t;
-      order : Nx_kernel.order;
-      batch : (int * int) iarray;
-      contracting : (int * int) iarray;
-      acc : Nx_array.Dtype.any;
-      out : ('v, 's) dtype;
-      a : ('a, 'b, 'd) t;
-      b : ('c, 'e, 'd) t;
-      init : ('v, 's, 'd) t option;
-    }
-      -> ('v, 's, 'd) t partial
-
-val results_or_partial :
-  by:string ->
-  ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
-  'r prim ->
-  ('r, 'r partial) Either.t
-(** [results_or_partial ~by m op] is [Right] [op] with its route where that
-    computes by partials, [m] never called, else [Left (results ~by m op)].
-    It routes [op] once.
-
-    Raises as {!results}. *)
 
 val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
 (** [reduction r] is [r] as {!Nx_kernel.S.scan} takes it: what it computes and
@@ -264,19 +244,6 @@ val op3 :
 
     Raises [Invalid_argument] naming [by] where [k] does not take the operands'
     dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
-
-val prepare :
-  by:string ->
-  ('v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t) ->
-  'r prim ->
-  'r prim
-(** [prepare ~by place op] is [op] with each operand [x] replaced by
-    [place p x], [p] where [op]'s route reads [x] ([None] where every operand is
-    of every set); [op] itself where none changes. [Place] and [Check] are [op]
-    itself.
-
-    Raises [Invalid_argument] naming [by], before [place] is called, where
-    [op]'s operands break its rule. *)
 
 val contract_shape :
   by:string ->

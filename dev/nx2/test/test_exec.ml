@@ -847,6 +847,7 @@ let law_placed (Case (k, s, data, w, op)) =
         (not (List.mem (Array.length s - 1) cut))
   | Moved _ -> cover "a movement of a cut value" true
   | Beside a ->
+      cover "a constant scanned along a cut axis" (List.mem a cut);
       cover "a constant computed whole along an axis, beside another cut"
         (List.mem a cut && List.length cut > 1)
   | Combine -> ());
