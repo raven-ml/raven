@@ -134,6 +134,15 @@ static char *get_bytes(nvrtcProgram prog, get_size_t get_size, get_bytes_t get,
   return bytes;
 }
 
+/* Frees the copies [caml_tolk_nvrtc_compile] makes. Each of [options] not yet
+   copied is NULL. */
+static void free_copies(char *src, char **options, int noptions) {
+  if (options != NULL)
+    for (int i = 0; i < noptions; i++) free(options[i]);
+  free(options);
+  free(src);
+}
+
 /* Compiling runs without the runtime lock, so that domains compile at once;
    the source and options are copied out of the OCaml heap first. */
 value caml_tolk_nvrtc_compile(value v_src, value v_options, value v_ptx) {
@@ -142,10 +151,13 @@ value caml_tolk_nvrtc_compile(value v_src, value v_options, value v_ptx) {
   int ptx = Bool_val(v_ptx), noptions = Wosize_val(v_options);
   char *src = strdup(String_val(v_src));
   char **options = calloc(noptions ? noptions : 1, sizeof *options);
-  if (src == NULL || options == NULL) caml_raise_out_of_memory();
-  for (int i = 0; i < noptions; i++)
-    if ((options[i] = strdup(String_val(Field(v_options, i)))) == NULL)
-      caml_raise_out_of_memory();
+  int copied = src != NULL && options != NULL;
+  for (int i = 0; copied && i < noptions; i++)
+    copied = (options[i] = strdup(String_val(Field(v_options, i)))) != NULL;
+  if (!copied) {
+    free_copies(src, options, noptions);
+    caml_raise_out_of_memory();
+  }
 
   nvrtcProgram prog;
   nvrtcResult status;
@@ -165,9 +177,7 @@ value caml_tolk_nvrtc_compile(value v_src, value v_options, value v_ptx) {
     nvrtc.DestroyProgram(&prog);
   }
   caml_acquire_runtime_system();
-  for (int i = 0; i < noptions; i++) free(options[i]);
-  free(options);
-  free(src);
+  free_copies(src, options, noptions);
 
   if (status != 0) {
     /* The log ends with its NUL. */
