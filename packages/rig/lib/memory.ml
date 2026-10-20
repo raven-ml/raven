@@ -959,27 +959,31 @@ let fate d ~lost ~free_lost (e : entry) =
 
 (* Under [d]'s lock: from the retiring entry [judged] on, caches each whose
    uses are reached and takes out the first to free, moving the last entry
-   into its place: it, or [no_entry]. Its judgement reads [d]'s loss and
-   [freeing] at each entry, which only ever become true: a drain of another
-   domain that restarts the pass meanwhile makes it judge entries again,
-   never wrongly. *)
-let rec take_freed d =
+   into its place: it, or [no_entry]. Its judgement reads [freeing] at each
+   entry, and [d]'s loss, a call, once per hold of the lock ([take_freed]):
+   both only ever become true, and a drain of another domain that restarts
+   the pass meanwhile makes it judge entries again, never wrongly. A loss
+   after the read is as one after a judgement, which the entry's free or
+   its device's cache then meets. *)
+let rec take_freed_from d lost =
   let l = d.live in
   let i = l.judged in
   if i >= l.nretiring then no_entry
   else
     let e = l.retiring.(i) in
-    match fate d ~lost:(Dev.is_lost d) ~free_lost:l.freeing e with
+    match fate d ~lost ~free_lost:l.freeing e with
     | Stays ->
         l.judged <- i + 1;
-        take_freed d
+        take_freed_from d lost
     | (Cached | Freed) as f ->
         if f = Cached then cache e;
         let last = l.nretiring - 1 in
         l.retiring.(i) <- l.retiring.(last);
         l.retiring.(last) <- no_entry;
         l.nretiring <- last;
-        if f = Freed then e else take_freed d
+        if f = Freed then e else take_freed_from d lost
+
+let take_freed d = take_freed_from d (Dev.is_lost d)
 
 (* Under [l]'s lock: a pass starts at the first retiring entry, the second
    on a device found lost and Stopped. *)
