@@ -22,9 +22,11 @@
    by scalar loops on blocks of at most LEAF columns and updates the rest
    of the matrix by products (F(gemm)). */
 
-/* The unit roundoff and the least normal number. */
+/* The unit roundoff, the least normal number and the least positive
+   subnormal. */
 #define EPS ((R)(sizeof(R) == 4 ? FLT_EPSILON / 2 : DBL_EPSILON / 2))
 #define TINY ((R)(sizeof(R) == 4 ? FLT_MIN : DBL_MIN))
+#define ETA ((R)(sizeof(R) == 4 ? FLT_TRUE_MIN : DBL_TRUE_MIN))
 
 static R F(abs)(R x) { return x < 0 ? -x : x; }
 
@@ -5324,6 +5326,12 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
   for (int64_t j = 0; j < n; j++) {
     wo[2 * j] = wr[j] * (1 / sigma) + 0;
     wo[2 * j + 1] = wi[j] * (1 / sigma) + 0;
+#if !CPLX
+    /* A pair's imaginary part that rounds to 0 on a scaled up matrix is
+       η, its sign kept, within η of the computed one: the values stay a
+       pair, as their vectors are. */
+    if (wi[j] != 0 && wo[2 * j + 1] == 0) wo[2 * j + 1] = F(sign)(ETA, wi[j]);
+#endif
   }
   if (!vo) return 1;
   /* v = Z X, row-major, then Q from the left: reflector i is a's column i
@@ -5530,4 +5538,5 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
 #undef SAFMIN
 #undef EPS
 #undef TINY
+#undef ETA
 #undef SMLSIZ

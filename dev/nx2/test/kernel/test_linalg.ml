@@ -1721,6 +1721,30 @@ let test_eig_extremes (b : Support.backend) () =
   case (D.Any D.Float64) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ];
   case (D.Any D.Complex128) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ]
 
+(* A real matrix of subnormals whose complex pair's imaginary part lies
+   below half the least subnormal η: a = η [−1 3 1; 3 1 1; 1 −1 2],
+   which balancing leaves, of eigenvalues −3.22 η and (2.61 ± 0.0974 i) η.
+   eig's results meet check_eig's relations and check_real's, with the
+   vectors and without. *)
+let test_eig_subnormal_pair (b : Support.backend) () =
+  let n = 3 and m = [| -1.; 3.; 1.; 3.; 1.; 1.; 1.; -1.; 2. |] in
+  List.iter
+    (fun dt ->
+      let e = tiny ~bits:0 dt in
+      let a =
+        Array.map (fun re -> { Complex.re = Float.ldexp re (-e); im = 0. }) m
+      in
+      let x = of_values dt [| n; n |] a in
+      match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
+      | Some y, Some y' ->
+          let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
+          let msg = Format.asprintf "%a" pp_dtype dt in
+          check_eig dt ~e ~count:1 ~n (up e a) (up e w) v;
+          check_real ~msg:(msg ^ " with vectors") ~count:1 ~n w v;
+          check_real ~msg:(msg ^ " alone") ~count:1 ~n w' [||]
+      | _ -> ())
+    [ D.Any D.Float32; D.Any D.Float64 ]
+
 (* A graded cycle, which xTREVC3's normalisation of each back-transformed
    column keeps finite: a = D b D⁻¹ of order 30, b bidiagonal with
    b_ii = 1 + i 2^-20 and b_(i, i+1) = 1, closed by b_(29, 0) = 1e-8, and
@@ -2731,6 +2755,8 @@ let laws (b : Support.backend) =
           b.around (test_eig_balanced b));
       test "eig balances before it scales" (fun () ->
           b.around (test_eig_extremes b));
+      test "eig keeps a subnormal matrix's pair a pair" (fun () ->
+          b.around (test_eig_subnormal_pair b));
       test "eig keeps a graded cycle's vectors finite" (fun () ->
           b.around (test_eig_graded_cycle b));
       test "svd and eig scale an element whose modulus overflows" (fun () ->
