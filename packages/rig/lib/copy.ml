@@ -507,15 +507,26 @@ let two_stages src dst =
    half. A piece holds whole rows, of one box or of several, packed one after
    the other, where a row fits a half, and a range of one row's bytes
    otherwise, so each leg of a piece is one box per part of a box it holds.
-   Each part is a box of the copy's geometry, with the byte of the piece
-   where its rows start. *)
-type piece = { bytes : int; parts : (box * int) list }
+   Each part [boxes.(i)] is a box of the copy's geometry, whose rows start at
+   byte [ats.(i)] of the piece. *)
+type piece = { bytes : int; boxes : box array; ats : int array }
 
-let pieces boxes =
+(* The byte at which each of [boxes] starts, packed one after the other. *)
+let starts boxes =
+  let ats = Array.make (Array.length boxes) 0 in
+  for i = 1 to Array.length boxes - 1 do
+    ats.(i) <- ats.(i - 1) + box_bytes boxes.(i - 1)
+  done;
+  ats
+
+let split boxes =
   let out = ref [] and parts = ref [] and fill = ref 0 in
   let close () =
     if !parts <> [] then begin
-      out := { bytes = !fill; parts = List.rev !parts } :: !out;
+      let ps = Array.of_list (List.rev !parts) in
+      out :=
+        { bytes = !fill; boxes = Array.map fst ps; ats = Array.map snd ps }
+        :: !out;
       parts := [];
       fill := 0
     end
@@ -566,19 +577,30 @@ let pieces boxes =
   close ();
   Array.of_list (List.rev !out)
 
+(* Boxes that fit a half are one piece of them whole, over the copy's own
+   array, as [split] would make it. *)
+let pieces boxes =
+  let n = total boxes in
+  if n <= half_bytes then [| { bytes = n; boxes; ats = starts boxes } |]
+  else split boxes
+
 (* The boxes of the leg that moves [p] from the copy's source into a half
    from byte [base], and out of it into the destination. *)
 let into_half base p =
-  Array.of_list
-    (List.map
-       (fun (x, at) -> { x with dst_offset = base + at; dst_pitch = x.width })
-       p.parts)
+  let xs = Array.copy p.boxes in
+  for i = 0 to Array.length xs - 1 do
+    let x = xs.(i) in
+    xs.(i) <- { x with dst_offset = base + p.ats.(i); dst_pitch = x.width }
+  done;
+  xs
 
 let out_of_half base p =
-  Array.of_list
-    (List.map
-       (fun (x, at) -> { x with src_offset = base + at; src_pitch = x.width })
-       p.parts)
+  let xs = Array.copy p.boxes in
+  for i = 0 to Array.length xs - 1 do
+    let x = xs.(i) in
+    xs.(i) <- { x with src_offset = base + p.ats.(i); src_pitch = x.width }
+  done;
+  xs
 
 (* The bytes of a half from its piece's start past which [writer]'s pieces
    [ps] leave nothing to pack behind: those of one piece the host writes, and
@@ -587,6 +609,19 @@ let out_of_half base p =
 let extent writer ps =
   if writer = Host && Array.length ps = 1 then round ps.(0).bytes
   else half_bytes
+
+(* The half of piece [k] of a copy through the halves [h0] and [h1], which
+   take the pieces in turn, and the byte of its half where the piece goes:
+   the first from the cursor [base0], the others from their half's start. *)
+let alternate h0 h1 k = if k land 1 = 0 then h0 else h1
+let piece_base base0 k = if k = 0 then base0 else 0
+
+(* Maps [b0] and [b1] for each side of [sides] ([map_halves]). *)
+let rec map_sides fn d b0 b1 = function
+  | [] -> ()
+  | b :: bs ->
+      map_halves fn d b b0 b1;
+      map_sides fn d b0 b1 bs
 
 (* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
    one, [h0] and [h1] the same, unless [two]; the halves given back once it
@@ -625,18 +660,17 @@ let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
       let b0 = ready h0 in
       let b1 = if n > 1 then ready h1 else b0 in
       let base0 = h0.cursor in
-      List.iter (fun b -> map_halves fn d b b0 b1) sides;
-      let half k = if k land 1 = 0 then b0 else b1 in
-      let base k = if k = 0 then base0 else 0 in
+      map_sides fn d b0 b1 sides;
       let fill k =
-        if writer = Host && k >= 2 then Buffer.wait (half k) Buffer.Read_write;
-        ignore (into (half k) (base k) ps.(k) : int)
+        let b = alternate b0 b1 k in
+        if writer = Host && k >= 2 then Buffer.wait b Buffer.Read_write;
+        ignore (into b (piece_base base0 k) ps.(k) : int)
       in
       let last = ref 0 in
       if ahead then fill 0;
       for k = 0 to n - 1 do
         if ahead then (if k + 1 < n then fill (k + 1)) else fill k;
-        last := out_of (half k) (base k) ps.(k)
+        last := out_of (alternate b0 b1 k) (piece_base base0 k) ps.(k)
       done;
       h0.cursor <- base0 + extent writer ps;
       h1.cursor <- base0 + extent writer ps;
@@ -673,11 +707,9 @@ and between fn ~waits src dst ps =
           let base0 = b0.cursor in
           map_halves fn a0.stage src ha0 ha1;
           map_halves fn b0.stage dst hb0 hb1;
-          let half h0 h1 k = if k land 1 = 0 then h0 else h1 in
-          let base k = if k = 0 then base0 else 0 in
           let into k =
             ignore
-              (leg fn ~waits ~into_half:true src (half ha0 ha1 k)
+              (leg fn ~waits ~into_half:true src (alternate ha0 ha1 k)
                  (into_half 0 ps.(k))
                 : int)
           in
@@ -685,13 +717,15 @@ and between fn ~waits src dst ps =
           into 0;
           for k = 0 to n - 1 do
             if k + 1 < n then into (k + 1);
-            let ha = half ha0 ha1 k and hb = half hb0 hb1 k in
+            let ha = alternate ha0 ha1 k and hb = alternate hb0 hb1 k in
             if k >= 2 then Buffer.wait hb Buffer.Read_write;
             ignore
               (leg fn ~waits ~into_half:true ha hb
-                 [| row ~dst_offset:(base k) ps.(k).bytes |]
+                 [| row ~dst_offset:(piece_base base0 k) ps.(k).bytes |]
                 : int);
-            last := leg fn ~waits ~into_half:false hb dst (out_of_half (base k) ps.(k))
+            last :=
+              leg fn ~waits ~into_half:false hb dst
+                (out_of_half (piece_base base0 k) ps.(k))
           done;
           a0.cursor <- half_bytes;
           a1.cursor <- half_bytes;
@@ -829,8 +863,10 @@ let upload fn dst put =
           through fn (stage_with dst) (pieces [| row n |]) ~writer:Host
             ~sides:[ dst ] ~ahead:false
             ~into:(fun h base p ->
-              List.iter (fun (x, at) -> put h (base + at) x.dst_offset x.width)
-                p.parts;
+              for i = 0 to Array.length p.boxes - 1 do
+                let x = p.boxes.(i) in
+                put h (base + p.ats.(i)) x.dst_offset x.width
+              done;
               0)
             ~out_of:(fun h base p ->
               leg fn ~waits:[||] ~into_half:false h dst (out_of_half base p))
@@ -854,9 +890,10 @@ let download fn src take =
                leg fn ~waits:[||] ~into_half:true src h (into_half base p))
              ~out_of:(fun h base p ->
                Buffer.wait h Buffer.Read;
-               List.iter
-                 (fun (x, at) -> take h (base + at) x.src_offset x.width)
-                 p.parts;
+               for i = 0 to Array.length p.boxes - 1 do
+                 let x = p.boxes.(i) in
+                 take h (base + p.ats.(i)) x.src_offset x.width
+               done;
                0)
             : int))
 
