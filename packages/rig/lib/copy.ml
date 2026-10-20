@@ -225,8 +225,13 @@ let leg fn ~waits ~into_half src dst boxes =
    follows every use of the whole allocation (rule 3), so a piece a device
    writes takes a half whose uses are done, or a new one: packed, a device's
    leg into a half would follow another device's drain of it, and the two
-   devices' copies would chain. Pieces start at multiples of [piece_align]
-   bytes in their half. *)
+   devices' copies would chain. Nor is a piece the host writes packed behind
+   a device's write: the host's write adds no point to the stamps, so the
+   half's last write stays the device's leg, and the drain of the host's
+   piece would follow that unrelated work, and its device's loss. A half a
+   device wrote goes back with its cursor at its end, and its lap restarts at
+   its start once its work is done, which asks nothing more of a take. Pieces
+   start at multiples of [piece_align] bytes in their half. *)
 
 let half_bytes = 32 * 1024 * 1024
 let piece_align = 256
@@ -518,10 +523,13 @@ let out_of_half base p =
        (fun (x, at) -> { x with src_offset = base + at; src_pitch = x.width })
        p.parts)
 
-(* The bytes of a half from its piece's start that the pieces [ps] use: those
-   of the one piece, or the whole half for more. With a half's base, its
+(* The bytes of a half from its piece's start past which [writer]'s pieces
+   [ps] leave nothing to pack behind: those of one piece the host writes, and
+   the whole half for more pieces or a device's. With a half's base, its
    cursor once the copy gives it back. *)
-let extent ps = if Array.length ps = 1 then round ps.(0).bytes else half_bytes
+let extent writer ps =
+  if writer = Host && Array.length ps = 1 then round ps.(0).bytes
+  else half_bytes
 
 (* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
    one, [h0] and [h1] the same, unless [two]; the halves given back once it
@@ -557,7 +565,7 @@ let holding d writer need ~two f =
    while a device drains the other. Is the point of the last leg out. *)
 let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
   let n = Array.length ps in
-  let need = if n = 1 && writer = Host then extent ps else 0 in
+  let need = if n = 1 && writer = Host then extent Host ps else 0 in
   holding d writer need ~two:(n > 1) (fun h0 h1 ->
       let b0 = ready h0 writer in
       let b1 = if n > 1 then ready h1 writer else b0 in
@@ -575,8 +583,8 @@ let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
         if ahead then (if k + 1 < n then fill (k + 1)) else fill k;
         last := out_of (half k) (base k) ps.(k)
       done;
-      h0.cursor <- base0 + extent ps;
-      h1.cursor <- base0 + extent ps;
+      h0.cursor <- base0 + extent writer ps;
+      h1.cursor <- base0 + extent writer ps;
       !last)
 
 (* Copies *)
@@ -601,7 +609,7 @@ let rec staged fn ~waits src dst boxes =
    next half runs while the host moves the last. *)
 and between fn ~waits src dst ps =
   let n = Array.length ps in
-  let need = if n = 1 then extent ps else 0 in
+  let need = if n = 1 then extent Host ps else 0 in
   holding (runner src) Device 0 ~two:(n > 1) (fun a0 a1 ->
       holding (runner dst) Host need ~two:(n > 1) (fun b0 b1 ->
           let ha0 = ready a0 Device and hb0 = ready b0 Host in
@@ -630,11 +638,10 @@ and between fn ~waits src dst ps =
                 : int);
             last := leg fn ~waits ~into_half:false hb dst (out_of_half (base k) ps.(k))
           done;
-          let extent = extent ps in
-          a0.cursor <- extent;
-          a1.cursor <- extent;
-          b0.cursor <- base0 + extent;
-          b1.cursor <- base0 + extent;
+          a0.cursor <- half_bytes;
+          a1.cursor <- half_bytes;
+          b0.cursor <- base0 + extent Host ps;
+          b1.cursor <- base0 + extent Host ps;
           !last))
 
 (* Copies [boxes] from [src] to [dst], directly or through the staging memory,

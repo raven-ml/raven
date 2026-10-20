@@ -40,7 +40,9 @@
     writes takes the free half with room after its cursor whose lap started
     last, where a half's lap starts when its cursor is set to its start, and
     writes there without waiting. A piece a device writes is never packed,
-    since its write would follow every use of the half. Otherwise a copy
+    since its write would follow every use of the half, and no piece is
+    packed after it: the host's write adds no point to the stamps, so the
+    next piece's drain would follow the device's write. Otherwise a copy
     takes a free half whose uses are done, its cursor at its start; for a
     piece the host writes, else the free half whose lap started first, and
     waits for its uses; else, every half being held, a new half, so no copy

@@ -165,6 +165,29 @@ let test_fan_out () =
     (List.init 3 (fun _ -> String.make 64 'o'))
     (List.map (fun (dst, _) -> contents dst) dsts)
 
+(* A piece the host writes is never packed behind a device's queued write
+   into the same half: the drain of an upload to [g] follows no work of [s],
+   whose copy to [d] wrote the half the upload could share, so [s]'s loss
+   leaves [g] working and the upload lands. *)
+let test_no_chain () =
+  let open_ ?answer name =
+    P.open_ ~host_visible:false ~peers:false ~waits_on:[ `Host ] ?answer name
+  in
+  let s, ps = open_ ~answer:`Unknown "copy:chain-s" in
+  let d, _ = open_ "copy:chain-d" and g, pg = open_ "copy:chain-g" in
+  let src = holding s (String.make 64 's') in
+  ignore (B.submit_copy ~src ~dst:(B.create d 64) [| B.row 64 |] : Rig.Point.t);
+  let dst = B.create g 64 in
+  let pt = B.submit_copy ~src:(filled 64 'g') ~dst [| B.row 64 |] in
+  P.fault ps "the test's fault";
+  (try B.wait src Rig.Read_write with Rig.Lost _ -> ());
+  equal ~msg:"the source's device" (option string) (Some "the test's fault")
+    (Rig.lost s);
+  ignore (P.run pg : int);
+  equal ~msg:"the upload's device" (option string) None (Rig.lost g);
+  equal ~msg:"the upload reached" bool true (Rig.Point.reached pt);
+  equal string (String.make 64 'g') (contents dst)
+
 (* A staged copy of three pieces through a device's own staging memory holds
    two halves, which take the pieces in turn. *)
 let test_large_halves () =
@@ -473,6 +496,8 @@ let () =
              test "a staged fan-out from one device chains no device to another"
                test_fan_out;
              test "a large staged copy holds two halves" test_large_halves;
+             test "an upload packs behind no device's queued write"
+               test_no_chain;
            ];
          group ~timeout "boxes"
            [
