@@ -98,6 +98,25 @@ value caml_rig_release_list(value unit) {
   return Val_long((intnat)l);
 }
 
+/* Set once a token links onto the list of a device whose stop returned, and
+   at each stop and fork: the next drain of any device clears it and drains
+   each device whose stop returned and whose list holds records
+   ([caml_rig_ended_linked]), and sets it again if that drain raises. No
+   call on such a device is due, so its collected memory and kept values
+   would otherwise wait for the out-of-memory ladder. */
+static _Atomic int ended_linked;
+
+/* A link that reads [ended] before it is set is seen by whichever drain
+   reads [ended_linked] after this fence: the stop's own, or, if the stop
+   raised, the next drain of any device. The link's exchange and read are
+   sequentially consistent, so the link precedes the fence, and a read of
+   the list after the fence sees the node. */
+void rig_release_ended(struct release_list *l) {
+  atomic_store(&l->ended, 1);
+  atomic_thread_fence(memory_order_seq_cst);
+  atomic_store(&ended_linked, 1);
+}
+
 /* Links the node of the token [t] onto its list, once: a token its list
    refused, never made or already linked has no list. The link takes the list
    in one exchange, so of two links on two domains one links the node. */
@@ -111,7 +130,24 @@ static void token_link(struct token *t) {
   do
     n->next = head;
   while (!atomic_compare_exchange_weak_explicit(
-      &l->head, &head, n, memory_order_release, memory_order_relaxed));
+      &l->head, &head, n, memory_order_seq_cst, memory_order_relaxed));
+  if (atomic_load(&l->ended)) atomic_store(&ended_linked, 1);
+}
+
+/* Whether a token linked onto the list of a device whose stop returned, or
+   a stop returned, since the last call that answered [true]. */
+value caml_rig_ended_linked(value unit) {
+  (void)unit;
+  if (atomic_load_explicit(&ended_linked, memory_order_relaxed) == 0)
+    return Val_false;
+  return Val_bool(atomic_exchange(&ended_linked, 0));
+}
+
+/* Asks the next drain again, for a drain of those devices that raised. */
+value caml_rig_ended_rearm(value unit) {
+  (void)unit;
+  atomic_store(&ended_linked, 1);
+  return Val_unit;
 }
 
 static void token_finalize(value v) { token_link(Data_custom_val(v)); }

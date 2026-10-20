@@ -358,8 +358,10 @@ static char no_memory_why[] = "out of memory";
    parent's open files. One whose stop has not returned is orphaned, since
    that stop, owed or under way, is the parent's: the child would end state
    that the parent's thread is still using. One whose stop returned stays
-   as it is, and the child frees its memory as any process does. A device
-   the child opens is its own. */
+   as it is, and the child frees its memory as any process does. An
+   orphaned device's list is ended, as a stopped one's: the child makes no
+   call on it, so any drain routes what is collected onto it. A device the
+   child opens is its own. */
 #ifndef _WIN32
 static void forking(void) {
   mutex_lock(&table_mu);
@@ -389,12 +391,14 @@ static void forked_child(void) {
       if (stopping(d)) {
         atomic_store(&l->state, RIG_ORPHANED);
         set_running(i, 0);
+        rig_release_ended(&d->release);
       }
     } else if (i > 0) {
       char *none = NULL;
       atomic_compare_exchange_strong(&d->lost, &none, forked_why);
       atomic_store(&l->state, RIG_ORPHANED);
       set_running(i, 0);
+      rig_release_ended(&d->release);
     }
   }
 }
@@ -1083,13 +1087,15 @@ value caml_rig_unclaim(value v_d) {
   return Val_unit;
 }
 
-/* Records that [d]'s stop returned: ENDED, and out of the walks. */
+/* Records that [d]'s stop returned: ENDED, out of the walks, and its list
+   drained by any device's drain. */
 value caml_rig_stopped(value v_d) {
   CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
   int released = take(d);
   atomic_store(&d->line->state, RIG_ENDED);
   set_running(d->index, 0);
+  rig_release_ended(&d->release);
   cv_broadcast(d);
   give(d, released);
   CAMLreturn(Val_unit);

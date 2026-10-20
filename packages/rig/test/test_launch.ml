@@ -367,6 +367,7 @@ let refused ~msg f = raises_match ~msg Exn.invalid_arg f
 
 let test_make_refusals () =
   let d, _ = polled "make" and other, _ = polled "make-other" in
+  let opened = Rig.submitted d in
   let image = functions d in
   let make ?(image = image) refs =
     Sub.make d [| launch image "main" ~params:16 ~refs |]
@@ -378,7 +379,7 @@ let test_make_refusals () =
   refused ~msg:"a ref to slot 2 alone" (fun () -> make [| at 0 2 |]);
   ignore (make [| at 0 0; at 8 1 |]);
   let s = make [||] in
-  equal int ~msg:"no value assigned" 0 (Rig.submitted d);
+  equal int ~msg:"no value assigned" opened (Rig.submitted d);
   refused ~msg:"the block of part 1 of 1" (fun () -> Sub.block s 1);
   refused ~msg:"the block of part -1" (fun () -> Sub.block s (-1));
   let copy =
@@ -634,6 +635,7 @@ let test_block_owner () =
    run takes it itself. *)
 let test_take () =
   let d, p = polled "take" in
+  let opened = Rig.submitted d in
   let image = functions d in
   let s = Sub.make d [| launch image "main" ~params:8 |] in
   let run = Run.make s and b = Sub.block s 0 in
@@ -653,7 +655,7 @@ let test_take () =
     (other (fun () -> outcome (fun () -> Run.int64 run b 0 42L)));
   contains ~msg:"another thread's submit" ~sub:"another thread took the run"
     (other (fun () -> outcome (fun () -> submit run)));
-  equal ~msg:"values assigned" int 0 (Rig.submitted d);
+  equal ~msg:"values assigned" int opened (Rig.submitted d);
   Run.release run;
   equal ~msg:"another thread's take of a free run" bool true
     (other (fun () ->

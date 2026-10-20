@@ -447,6 +447,8 @@ let largest_shared = 97
    threads along x and 1024 threads in a group. *)
 let refused_launches () =
   S.with_ @@ fun { d; _ } ->
+  (* A device's values go on past those of its slot's earlier devices. *)
+  let opened = Rig.submitted d in
   let out = B.create ~memory:Pinned d 4096 in
   let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
       ?(shared = 0) () =
@@ -467,7 +469,7 @@ let refused_launches () =
   refuses "a byte of shared memory past the largest" ~kernel:"rotate" ~params:12
     ~shared:(S.attribute largest_shared + 1)
     ();
-  equal int ~msg:"values assigned" 0 (Rig.submitted d);
+  equal int ~msg:"values assigned" opened (Rig.submitted d);
   equal (option string) ~msg:"the device's loss" None (Rig.lost d);
   let n = 65535 * 1024 in
   let run =
@@ -646,9 +648,10 @@ let stop_idle () =
   let p = H.pages H.page in
   let r = require_some (C.map_host g p 64) in
   equal bool ~msg:"locked" true (S.locked p);
-  Rig.Point.wait (S.submit t [||]);
+  let last = S.submit t [||] in
+  Rig.Point.wait last;
   S.close t;
-  equal int ~msg:"the word" 1 (Rig.signaled d);
+  equal int ~msg:"the word" (Rig.Point.value last) (Rig.signaled d);
   C.free g r;
   equal bool ~msg:"locked after free" false (S.locked p);
   H.free_pages p H.page

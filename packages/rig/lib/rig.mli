@@ -598,19 +598,20 @@ val signaled : t -> int
     In a child of [fork], every driver's device inherited from the parent is
     lost, with the reason ["forked"] unless it was lost before, and its
     points count as never reached. The child never calls that device's
-    driver, and a submission on it made before the fork keeps nothing: the
-    child's next call on the device lets go of the value it keeps, without
-    waiting for its work. A value kept by a submission on {!host} returns as
-    in any process, so one kept after work a thread of the parent was
-    submitting on {!host} at the fork stays until the child's next submit
-    on {!host}. rig leaves a live io device as it was, and its library
-    decides what a fork does to it, as a child of [fork] keeps the open
-    files of its parent. An io device whose stop has not returned at the
-    fork, owed or under way, stays lost in the child, which runs no stop of
-    it and frees none of its memory, since that stop is the parent's. The
-    host's staging memory that a thread of the parent was copying through
-    at the fork ({!Buffer.section-copying}) stays in the child for good. A
-    device the child opens is its own. *)
+    driver, and a submission on it made before the fork keeps nothing: once
+    the submission is collected, the child's next call that moves collected
+    memory ({!section-reclaim}), on any device, lets go of the value it
+    keeps, without waiting for its work. A value kept by a submission on
+    {!host} returns as in any process, so one kept after work a thread of
+    the parent was submitting on {!host} at the fork stays until the
+    child's next submit on {!host}. rig leaves a live io device as it was,
+    and its library decides what a fork does to it, as a child of [fork]
+    keeps the open files of its parent. An io device whose stop has not
+    returned at the fork, owed or under way, stays lost in the child, which
+    runs no stop of it and frees none of its memory, since that stop is the
+    parent's. The host's staging memory that a thread of the parent was
+    copying through at the fork ({!Buffer.section-copying}) stays in the
+    child for good. A device the child opens is its own. *)
 
 (** {2:errors Errors and failure}
 
@@ -720,10 +721,12 @@ val failure : unit -> string option
     is done, also when they then raise {!Lost}. {!free_cache} moves memory
     on its device, reclamation on every device, and a lost device's stop on
     its own. Each of these moves first releases the holds collected on any
-    device ({!Claim.hold}). Memory collected while a
-    domain blocks returns through other domains' calls. A device reports its
-    values up to [k] values late ({!section-timeline}), and memory and kept
-    values return by what it reports.
+    device ({!Claim.hold}), and moves the memory and lets go of the kept
+    values collected on any device whose stop returned, such as a closed
+    one. Memory collected while a domain blocks returns through other
+    domains' calls. A device reports its values up to [k] values late
+    ({!section-timeline}), and memory and kept values return by what it
+    reports.
 
     A device's {e budget} is the most bytes it holds at one time of the
     memory that counts in it: its live buffers, its loaded images' code and

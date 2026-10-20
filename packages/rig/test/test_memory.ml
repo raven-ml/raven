@@ -172,6 +172,52 @@ let test_closed_cache () =
   equal ~msg:"regions left with the driver" (list int) []
     (List.filter (fun n -> n = 8 || List.mem n sizes) (P.outstanding p))
 
+(* A closed device's memory collected after its close returns to its driver at
+   a call on any device: a program makes none on a device it closed. *)
+let[@inline never] held_buffer d n held =
+  let b = B.create d n in
+  held := Some b;
+  Support.at b
+
+let test_closed_collected () =
+  let d, p = P.open_ "memory:closed-collected" in
+  let held = ref None in
+  let at = held_buffer d (4 * kib) held in
+  Rig.close d;
+  equal ~msg:"held at the close" bool false (freed p at);
+  held := None;
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create Rig.host 8));
+  equal ~msg:"freed at a call on the host" bool true (freed p at)
+
+(* A drain of closed devices that raises in one device's free leaves the
+   others' collected memory to the next call, which returns it. The first
+   free either device starts raises. *)
+let test_closed_drain_raises () =
+  let d, p = P.open_ "memory:closed-raise-0" in
+  let e, q = P.open_ "memory:closed-raise-1" in
+  let held = ref None and held' = ref None in
+  let at = held_buffer d (4 * kib) held in
+  let at' = held_buffer e (4 * kib) held' in
+  Rig.close d;
+  Rig.close e;
+  let raised = ref None in
+  let raise_once name () =
+    if Option.is_none !raised then begin
+      raised := Some name;
+      raise Exit
+    end
+  in
+  P.before p "free" (raise_once "first");
+  P.before q "free" (raise_once "second");
+  held := None;
+  held' := None;
+  Gc.full_major ();
+  raises ~msg:"the drain's free" Exit (fun () -> B.create Rig.host 8);
+  ignore (Sys.opaque_identity (B.create Rig.host 8));
+  let left = if !raised = Some "first" then freed q at' else freed p at in
+  equal ~msg:"the other device's memory, freed" bool true left
+
 (* Memory goes back to its driver once, when its last mapping goes after its
    device was lost and before its stop returned. The mapper's work keeps the
    mapping until the memory is freed; then, while a free of other memory holds
@@ -1286,6 +1332,11 @@ let tests =
         test "host memory an idle device borrowed returns to an allocation"
           test_idle_borrower;
         test "a closed device's cache returns to its driver" test_closed_cache;
+        test "a closed device's memory collected later returns at any call"
+          test_closed_collected;
+        test "a drain of closed devices that raises leaves the others' memory \
+              to the next call"
+          test_closed_drain_raises;
         test "a mapper closed beside the free of memory it maps raises nothing"
           test_mapper_beside_free;
       ];

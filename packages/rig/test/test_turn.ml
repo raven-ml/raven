@@ -134,8 +134,9 @@ let test_two_threads () =
    returned, and the submit raises Lost. *)
 let test_loss_while_blocked () =
   let d, p = P.open_ ~capacity:1 ~may_block:true "turn:loss" in
+  let base = Rig.submitted d in
   let first = point (one_part d) in
-  equal int 1 (Rig.Point.value first);
+  equal int (base + 1) (Rig.Point.value first);
   let blocked = spawn (fun () -> value (one_part d)) in
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
   P.fault p "the engine hung";

@@ -138,7 +138,7 @@ let test_release_last_submit () =
   equal ~msg:"with both done" int 1 (Atomic.get runs)
 
 (* A device ended while a submission keeps a value holds its slot until a call
-   on it lets the value go: the device's points name it while the submission is
+   lets the value go: the device's points name it while the submission is
    reachable, and once it is not and a drain let the value go, a later device
    takes the slot. The later device's open takes the slot freed last, which
    rig.mli does not promise: it promises only a free slot, and no call names
@@ -180,6 +180,19 @@ let test_slot_lost () =
   slot_passes "keep:slot-lost" ~end_:(fun d p ->
       P.fail p;
       raises_match (lost d) (fun () -> submit (empty d)))
+
+(* A closed device runs no more work, so a value its submission keeps is let
+   go once the submission is unreachable, by a call on any device: a program
+   makes none on a device it closed. *)
+let test_release_closed () =
+  let d, _ = P.open_ "keep:closed" in
+  let runs = Atomic.make 0 and held = ref None in
+  Rig.Point.wait (kept_submission d runs held);
+  Rig.close d;
+  held := None;
+  Gc.full_major ();
+  released Rig.host;
+  equal int 1 (Atomic.get runs)
 
 (* A kept value orders no work: a submission that keeps it follows nothing
    another device's submission that keeps it did. *)
@@ -382,6 +395,8 @@ let tests =
           test_slot_closed;
         test "a lost device keeps its slot while it keeps a value"
           test_slot_lost;
+        test "a closed device's kept value is let go by a call on another"
+          test_release_closed;
       ];
     group ~timeout "fixed memory"
       [

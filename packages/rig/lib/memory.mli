@@ -380,7 +380,9 @@ val return_half : buffer -> unit
     lock. *)
 
 val drain : device -> unit
-(** [drain d] releases the collected holds ({!hold_token}), moves [d]'s
+(** [drain d] releases the collected holds ({!hold_token}) and drains each
+    device whose stop returned and whose release list took records, since
+    no call on such a device is due. It then moves [d]'s
     collected memory whose points are settled to its cache or its driver,
     returns a Stopped device's cache and gives back its mappings of other
     devices' memory and words, and runs the pending releases whose value [d]
@@ -388,7 +390,9 @@ val drain : device -> unit
     kept. On an orphaned device it only routes [d]'s release list and lets
     go of the kept values pending on it, since its frees would call its
     parent's driver. It may raise {!Dev.Lost} when the read of a word with
-    no host address loses its device. *)
+    no host address loses its device, and the exceptions of a driver's
+    free, of [d] or of another device it drains; a drain of the other
+    devices that raises leaves them to the next drain. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]

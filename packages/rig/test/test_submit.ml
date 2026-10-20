@@ -426,7 +426,7 @@ let test_hang_held_read () =
     P.open_ ~hang_ms ~completion:`Store ~waits_on:[ `Host ] "submit:held-read"
   in
   let a = submit (empty producer) in
-  ignore (submit (empty d) ~waits:[| a |]);
+  let first = submit (empty d) ~waits:[| a |] in
   let b = submit (empty d) in
   Rig.Point.wait a;
   P.stall pp max_int;
@@ -442,7 +442,7 @@ let test_hang_held_read () =
   P.gate pp;
   P.open_gate p;
   Support.await "the wait held after its read" (fun () -> P.sleepers pp = 1);
-  P.set_word p 1;
+  P.set_word p (Rig.Point.value first);
   Thread.delay (2. *. Float.of_int hang_ms /. 1000.);
   P.open_gate pp;
   equal (option string) ~msg:"the wait's loss" None (Domain.join waiting);
@@ -611,11 +611,12 @@ let test_failed_names () =
   let d, p = P.open_ "submit:failed-names" in
   let w = B.create Rig.host page_bytes and r = B.create Rig.host page_bytes in
   let s = empty ~uses:[| Sub.read; Sub.write |] d in
+  let opened = Rig.submitted d in
   P.fail p;
   let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
   raises_match ~msg:"the submit" lost (fun () ->
       submit s ~buffers:[| on d r; on d w |]);
-  equal int ~msg:"its value" 1 (Rig.submitted d);
+  equal int ~msg:"its value" (opened + 1) (Rig.submitted d);
   raises_match ~msg:"a read of its write" lost (fun () -> B.wait w Rig.Read);
   B.wait r Rig.Read;
   raises_match ~msg:"a write of its read" lost (fun () ->

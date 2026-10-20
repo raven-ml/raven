@@ -449,17 +449,17 @@ let counted runs =
   Gc.finalise (fun _ -> Atomic.incr runs) v;
   v
 
-(* Drops the submission [h] holds in a forked child, drains its device and the
-   host there, and checks that its value is collected in the child, then in
-   the parent once its work is done. *)
-let collected_in_child d p runs h =
+(* Drops the submission [h] holds in a forked child, drains the devices [on]
+   there, its own and the host unless given, and checks that its value is
+   collected in the child, then in the parent once its work is done. *)
+let collected_in_child ?on d p runs h =
+  let on = Option.value on ~default:[ d; Rig.host ] in
   let lines, ended =
     in_child (fun () ->
         h := None;
         Gc.full_major ();
         Gc.full_major ();
-        drain d;
-        drain Rig.host;
+        List.iter drain on;
         Gc.full_major ();
         [ Printf.sprintf "collected: %d" (Atomic.get runs) ])
   in
@@ -483,6 +483,16 @@ let test_keep () =
   let h = ref (Some (Sub.make ~keep:(counted runs) d [||])) in
   ignore (submit (Option.get !h));
   collected_in_child d p runs h
+
+(* The child makes no call on an orphaned device, so a call on any device lets
+   go of the value a submission on it keeps, here one on the host. *)
+let test_keep_any_call () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let runs = Atomic.make 0 in
+  let d, p = P.open_ "fork:keep-any-call" in
+  let h = ref (Some (Sub.make ~keep:(counted runs) d [||])) in
+  ignore (submit (Option.get !h));
+  collected_in_child ~on:[ Rig.host ] d p runs h
 
 (* A value whose submission the parent collected and drained before the fork,
    and whose work is not done, is kept in the child no longer. *)
@@ -564,6 +574,8 @@ let tests =
           test_staging;
         test "a submission made before a fork keeps nothing in the child"
           test_keep;
+        test "a forked child's call on the host lets go of an orphan's value"
+          test_keep_any_call;
         test "a kept value drained before a fork is let go in the child"
           test_keep_drained;
         test "a forked child gives back no word its parent's devices hold"

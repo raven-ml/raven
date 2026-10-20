@@ -178,6 +178,13 @@ external release_front : int -> int = "caml_rig_release_front" [@@noalloc]
 external release_pop : int -> unit = "caml_rig_release_pop" [@@noalloc]
 external node_record : int -> released = "caml_rig_node_record" [@@noalloc]
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
+
+(* Whether a token was collected onto the list of a device whose stop
+   returned, or a stop returned, since the last call that answered [true]. *)
+external ended_linked : unit -> bool = "caml_rig_ended_linked" [@@noalloc]
+
+(* Asks the next drain to drain those devices again. *)
+external ended_rearm : unit -> unit = "caml_rig_ended_rearm" [@@noalloc]
 external page_size : unit -> int = "caml_rig_page_size"
 
 let no_token = no_token ()
@@ -1310,9 +1317,12 @@ let kept d = Dev.protect d kept_locked d.live
    owed stop first. A device whose stop returned frees its slot once its last
    memory and mapping went back and its last kept value went, then lets go
    of its word. Every drain gives back the words that lost their last
-   mapping, and first releases the holds collected. *)
-let drain d =
+   mapping, and first releases the holds collected and drains the devices
+   whose stop returned and whose list took records: no call on them is due,
+   as a program makes none on a device it closed. *)
+let rec drain d =
   if released_any hold_list then release_holds ();
+  if ended_linked () then drain_every_ended ();
   if Dev.orphaned d then forget d
   else begin
     if Dev.is_lost d then Dev.run_own d;
@@ -1322,6 +1332,19 @@ let drain d =
       let_go_word d;
     give_words ()
   end
+
+and drain_ended d =
+  if Dev.stop_returned d && released_any d.live.release then drain d
+
+(* The request was taken before the walk, so a drain that raises, at an
+   allocation's asynchronous exception or a driver's free, asks again for
+   the devices it leaves. The request goes first, as it allocates nothing. *)
+and drain_every_ended () =
+  match Dev.iter drain_ended with
+  | () -> ()
+  | exception e ->
+      ended_rearm ();
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let () = Dev.answered := drain
 

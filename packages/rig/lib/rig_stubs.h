@@ -126,7 +126,9 @@ static inline uint64_t rig_line_base(int index) {
    [closed] says that the list takes no more tokens, as its device's slot
    is being freed: a token counts itself before it reads [closed], and the
    free closes the list before it reads [count], so one of the two sees the
-   other. */
+   other. [ended] says that the device's stop returned, or that a fork
+   orphaned it: no call on the device is due, so a token linked from then
+   on asks a drain of any device to drain it. */
 struct release_node;
 
 struct release_list {
@@ -134,7 +136,13 @@ struct release_list {
   _Atomic(struct release_node *) hand;
   _Atomic intnat count;
   _Atomic int closed;
+  _Atomic int ended;
 };
+
+/* Marks [l]'s list ended, as its device's stop returned or a fork orphaned
+   it, and asks the next drain of any device to drain the devices whose
+   stop returned ([rig_heap.c]). */
+void rig_release_ended(struct release_list *l);
 
 /* A device's record, which lives as long as the program holds the device.
    The mutex guards [turn], [inside], the record of waits, the moves of the
