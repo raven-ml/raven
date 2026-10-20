@@ -11,9 +11,12 @@
     An exception raised while a lock is held must not leave it held, or the
     next call that takes it waits for good. An asynchronous exception
     ({!Rig.section-errors}) arises where OCaml code allocates, polls or
-    starts a function. So a section
-    between {!hold} and {!release} allocates nothing, loops nowhere and calls
-    no OCaml function, and every other section runs in {!protect}.
+    starts a function. So a section between {!hold} and {!release}
+    allocates nothing, loops nowhere and calls no OCaml function, and every
+    other section runs in {!protect}, or under a handler of its own that
+    gives the lock back before it allocates, as {!protect}'s does, where a
+    caller's arguments would otherwise need a tuple ([Copy]'s takes and
+    gives of staging halves).
 
     Any domain may call any function. A call that blocks, waiting for a lock
     or for a broadcast in {!await}, releases the domain's runtime lock and
@@ -40,7 +43,8 @@ val create : unit -> t
 
 val hold : t -> unit
 (** [hold l] waits for [l] and holds it, for a section that {!release} ends,
-    which allocates nothing, loops nowhere and calls no OCaml function. *)
+    which allocates nothing, loops nowhere and calls no OCaml function, or
+    which a handler ends as {!protect}'s does. *)
 
 external release : t -> unit = "caml_rig_lock_give"
 [@@noalloc]

@@ -289,6 +289,21 @@ let earlier a b = a.lap < b.lap
 let buffered a b = a.buffer <> None && b.buffer = None
 let some_buffer h = h.buffer <> None
 
+(* [find] of the free half with room for [need] bytes after its cursor whose
+   lap started last, a loop of its own so that a take makes no closure. *)
+let rec find_room l need i found =
+  if i = Array.length l.halves then found
+  else
+    let h = l.halves.(i) in
+    let found =
+      if
+        (not h.held) && has_room need h
+        && (found < 0 || later h l.halves.(found))
+      then i
+      else found
+    in
+    find_room l need (i + 1) found
+
 (* Under [l]'s lock: [h] held from now, its lap restarted at byte 0 if
    [restart], its holder waiting for its uses first if [waits]. *)
 let hold l ~restart ~waits h =
@@ -314,12 +329,11 @@ let hold l ~restart ~waits h =
    a hold. A new half is published by the last store, so an asynchronous
    exception before it changes nothing. It makes no buffer, whose creation can
    run the out-of-memory ladder, which takes every device's lock. *)
-let take_locked (d, writer, need) =
+let take_locked d writer need =
   let l = d.live in
   l.takes <- l.takes + 1;
   let packed =
-    if writer = Host && need > 0 then find l (has_room need) later 0 (-1)
-    else -1
+    if writer = Host && need > 0 then find_room l need 0 (-1) else -1
   in
   if packed >= 0 then
     let h = l.halves.(packed) in
@@ -347,7 +361,18 @@ let take_locked (d, writer, need) =
         h
       end
 
-let take d writer need = Dev.protect d take_locked (d, writer, need)
+(* [take_locked] under [d]'s lock, its arguments in no tuple. *)
+let take d writer need =
+  let lock = d.live.lock in
+  Lock.hold lock;
+  match take_locked d writer need with
+  | h ->
+      Lock.release lock;
+      h
+  | exception e ->
+      Lock.release lock;
+      reraise e
+
 let release h = h.held <- false
 
 (* Gives [h] back, its cursor set by its holder, which reads it no more.
@@ -360,30 +385,44 @@ let abandon h =
   h.cursor <- half_bytes;
   give h
 
-(* Under [d]'s lock: the buffers of [d]'s free halves that no take took within
-   the last takes, as many as [d] has halves, taken out of them, the list made
-   before the stores. *)
-let take_idle d =
+(* Under [d]'s lock: gives [h0] and [h1] back, as [give] does, then takes
+   out the buffers of [d]'s free halves that no take took within the last
+   takes, as many as [d] has halves, each list cell made before the stores.
+   Nothing allocates until the halves are given. *)
+let give_locked d h0 h1 =
+  release h0;
+  release h1;
   let l = d.live in
   let n = Array.length l.halves in
-  Array.fold_left
-    (fun bs h ->
-      match h.buffer with
-      | Some b when (not h.held) && l.takes - h.last >= n ->
-          let bs = b :: bs in
-          h.buffer <- None;
-          h.cursor <- 0;
-          bs
-      | Some _ | None -> bs)
-    [] l.halves
+  let bs = ref [] in
+  for i = 0 to n - 1 do
+    let h = l.halves.(i) in
+    match h.buffer with
+    | Some b when (not h.held) && l.takes - h.last >= n ->
+        bs := b :: !bs;
+        h.buffer <- None;
+        h.cursor <- 0
+    | Some _ | None -> ()
+  done;
+  !bs
 
-(* Returns the buffers of [d]'s idle halves as memory returns free halves
-   ([Memory.return_half]), after a give, outside the lock. Copies that keep a
-   half busy, one after another or in lockstep on several threads, take it
-   within every window and keep its buffer; the extra halves of a burst go
-   idle once as many later takes as there are halves have passed them by. An
-   exception meanwhile leaves the buffers it took to their collection. *)
-let age d = List.iter Memory.return_half (Dev.protect d take_idle d)
+(* Gives [h0] and [h1] back, the same half for one, and returns the buffers
+   of [d]'s idle halves as memory returns free halves ([Memory.return_half]),
+   outside the lock, in one hold of it. Copies that keep a half busy, one
+   after another or in lockstep on several threads, take it within every
+   window and keep its buffer; the extra halves of a burst go idle once as
+   many later takes as there are halves have passed them by. An exception
+   meanwhile leaves the buffers it took to their collection. *)
+let give_back d h0 h1 =
+  let lock = d.live.lock in
+  Lock.hold lock;
+  match give_locked d h0 h1 with
+  | bs ->
+      Lock.release lock;
+      List.iter Memory.return_half bs
+  | exception e ->
+      Lock.release lock;
+      reraise e
 
 (* The buffer of [h], made where it is missing or names a lost device's work,
    outside every lock. A half whose take did not see its uses done ([waits])
@@ -562,9 +601,7 @@ let holding d writer need ~two f =
   | h1 -> (
       match f h0 h1 with
       | p ->
-          give h0;
-          if two then give h1;
-          age d;
+          give_back d h0 h1;
           p
       | exception e ->
           abandon h0;
