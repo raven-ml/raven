@@ -291,6 +291,7 @@ NVIDIA = Defs(
         # escapes
         "NV_IOCTL_MAGIC", "NV_ESC_CARD_INFO", "NV_ESC_REGISTER_FD", "NV_ESC_RM_ALLOC", "NV_ESC_RM_ALLOC_MEMORY",
         "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY",
+        "NV_ESC_EXPORT_TO_DMABUF_FD", "NV_DMABUF_EXPORT_MAPPING_TYPE_DEFAULT",
         # memory
         "NV_MAX_DEVICES", "NV_MMU_PTE_KIND_GENERIC_MEMORY", "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS",
         "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
@@ -329,6 +330,9 @@ NVIDIA = Defs(
         "nv_ioctl_card_info_t": ("Card_info", ["valid", "pci_info__domain", "pci_info__bus", "pci_info__slot",
                                                "gpu_id", "minor_number"]),
         "nv_ioctl_register_fd_t": ("Register_fd", ["ctl_fd"]),
+        "nv_ioctl_export_to_dma_buf_fd_t": ("Export_dma_buf", [
+            "fd", "hClient", "totalObjects", "numObjects", "index", "totalSize", "mappingType", "handles",
+            "offsets", "sizes", "status"]),
         "NVOS00_PARAMETERS": ("Nvos00", ["hRoot", "hObjectParent", "hObjectOld", "status"]),
         "NVOS02_PARAMETERS": ("Nvos02", ["hRoot", "hObjectParent", "hObjectNew", "hClass", "flags", "pMemory",
                                          "limit", "status"]),
@@ -377,7 +381,7 @@ NVIDIA = Defs(
     per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NV_VASPACE_ALLOCATION_PARAMETERS",
                  "UVM_FREE_PARAMS", "UVM_UNREGISTER_CHANNEL_PARAMS"},
     statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INSUFFICIENT_RESOURCES", "NV_ERR_INVALID_ADDRESS",
-              "NV_ERR_INVALID_ARGUMENT"],
+              "NV_ERR_INVALID_ARGUMENT", "NV_ERR_NOT_SUPPORTED"],
     # The unified memory driver's mapping types moved to nv_uvm_user_types.h
     # from uvm_types.h.
     since={"nv_uvm_user_types.h": 580},

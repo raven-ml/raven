@@ -81,6 +81,8 @@ let nv_esc_rm_alloc_memory = 0x27
 let nv_esc_rm_control = 0x2a
 let nv_esc_rm_free = 0x29
 let nv_esc_rm_map_memory = 0x4e
+let nv_esc_export_to_dmabuf_fd = 0xd9
+let nv_dmabuf_export_mapping_type_default = 0
 let nv_max_devices = 0x20
 let nv_mmu_pte_kind_generic_memory = 6
 let nvos02_flags_physicality_noncontiguous = 1
@@ -145,6 +147,7 @@ let nv_err_no_memory = 0x51
 let nv_err_insufficient_resources = 0x1a
 let nv_err_invalid_address = 0x1e
 let nv_err_invalid_argument = 0x1f
+let nv_err_not_supported = 0x56
 
 (* Bit fields of their words: (lowest bit, bits). *)
 let nvos02_flags_physicality = (4, 4)
@@ -174,6 +177,21 @@ end
 module Register_fd = struct
   let sizeof = 4
   let ctl_fd = (0, 4)
+end
+
+module Export_dma_buf = struct
+  let sizeof = 2608
+  let fd = (0, 4)
+  let h_client = (4, 4)
+  let total_objects = (8, 4)
+  let num_objects = (0xc, 4)
+  let index = (0x10, 4)
+  let total_size = (0x18, 8)
+  let mapping_type = (0x20, 1)
+  let handles = (0x24, 4, 0x80)
+  let offsets = (0x228, 8, 0x80)
+  let sizes = (0x628, 8, 0x80)
+  let status = (0xa28, 4)
 end
 
 module Nvos00 = struct

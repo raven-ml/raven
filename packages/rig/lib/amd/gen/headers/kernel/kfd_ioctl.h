@@ -204,6 +204,12 @@ struct kfd_ioctl_unmap_memory_from_gpu_args {
 	__u32 n_success;		/* to/from KFD */
 };
 
+struct kfd_ioctl_export_dmabuf_args {
+	__u64 handle;		/* to KFD */
+	__u32 flags;		/* to KFD */
+	__u32 dmabuf_fd;	/* from KFD */
+};
+
 struct kfd_ioctl_runtime_enable_args {
 	__u64 r_debug;
 	__u32 mode_mask;
@@ -256,6 +262,9 @@ struct kfd_ioctl_runtime_enable_args {
 
 #define AMDKFD_IOC_UNMAP_MEMORY_FROM_GPU	\
 		AMDKFD_IOWR(0x19, struct kfd_ioctl_unmap_memory_from_gpu_args)
+
+#define AMDKFD_IOC_EXPORT_DMABUF		\
+		AMDKFD_IOWR(0x24, struct kfd_ioctl_export_dmabuf_args)
 
 #define AMDKFD_IOC_RUNTIME_ENABLE		\
 		AMDKFD_IOWR(0x25, struct kfd_ioctl_runtime_enable_args)

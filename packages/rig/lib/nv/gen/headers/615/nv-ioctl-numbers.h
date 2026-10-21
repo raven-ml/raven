@@ -30,3 +30,5 @@
 #define NV_ESC_CARD_INFO             (NV_IOCTL_BASE + 0)
 
 #define NV_ESC_REGISTER_FD           (NV_IOCTL_BASE + 1)
+
+#define NV_ESC_EXPORT_TO_DMABUF_FD   (NV_IOCTL_BASE + 17)
