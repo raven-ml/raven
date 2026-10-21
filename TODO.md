@@ -28,9 +28,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- NV: each open and close of a device on fudge grows glibc's C heap by
-  about 19.6 KB, against rig_nv.mli's 24 bytes: find whether rig or the RM
-  leaks it (mallinfo2, heaptrack)
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot once an AMD host runs it, and drop its 16 MiB ring

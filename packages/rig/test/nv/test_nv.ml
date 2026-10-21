@@ -1681,11 +1681,46 @@ let stop_running () =
   S.free_launches l;
   List.iter (N.free t.g) [ flag; marked ]
 
+(* Opens and closes keep, of the C heap, each device's edge alone: 80 bytes,
+   which glibc's allocator holds in a chunk of 96. Warm opens first make the
+   process's client and the GPU's objects, which stay. The runtime's own
+   tables may grow by a few hundred bytes over the run. *)
+let edge_chunk = 96
+let runtime_slack = 1024
+
+let opens_keep_edges () =
+  let heap () =
+    match Rig_support.heap_bytes () with
+    | Some n -> n
+    | None -> skip ~reason:"the system counts no C heap" ()
+  in
+  let cycle () =
+    let t = S.open_ () in
+    ignore (B.create t.d 1 : B.t);
+    S.run t [||];
+    S.close t;
+    Gc.full_major ();
+    Rig.free_cache t.d
+  in
+  let opens = 32 in
+  for _ = 1 to 4 do
+    cycle ()
+  done;
+  let c = heap () in
+  for _ = 1 to opens do
+    cycle ()
+  done;
+  at_most int ~msg:"the C heap's growth over the opens"
+    ~than:((opens * edge_chunk) + runtime_slack)
+    (heap () - c)
+
 let timeline =
   group ~timeout:60. "timeline"
     [
       test "a close of an idle device leaves the word at the last value"
         stop_idle;
+      test "opens and closes keep each device's edge alone of the C heap"
+        opens_keep_edges;
       test
         "stop of a device waiting on a word that never moves leaves the word \
          at the last value (sampled)"

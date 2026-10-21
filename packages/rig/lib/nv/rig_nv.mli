@@ -344,7 +344,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
 
     Either way the stop frees the C state the device ran work with, its
     templates and the channels' records, which the channels never read. The
-    edge that reads the word, 24 bytes, stays for the process.
+    edge that reads the word, 80 bytes, stays for the process.
 
     Once the word shows the last value and {!val-stop} has returned, no work
     of the device writes it. A channel's release of a value follows its work,
