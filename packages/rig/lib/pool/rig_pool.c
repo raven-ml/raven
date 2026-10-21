@@ -135,7 +135,9 @@ static long affinity_cpus(int **cpus) {
     size_t size = CPU_ALLOC_SIZE(n);
     if (sched_getaffinity(0, size, set) == 0) {
       long count = CPU_COUNT_S(size, set);
-      *cpus = malloc((size_t)count * sizeof **cpus);
+      /* Zeroed: the loop writes every entry, which a compiler that inlines
+         the list's readers cannot see. */
+      *cpus = calloc((size_t)count, sizeof **cpus);
       for (long cpu = 0, k = 0; *cpus != NULL && k < count; cpu++)
         if (CPU_ISSET_S((size_t)cpu, size, set)) (*cpus)[k++] = (int)cpu;
       CPU_FREE(set);
