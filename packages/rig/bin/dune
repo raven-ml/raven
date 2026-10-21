@@ -42,7 +42,7 @@
   images.ml
   (progn
    (echo "let amd = {|")
-   (cat %{dep:../lib/amd/pci/gen/headers/firmware.tsv})
+   (cat %{dep:../lib/amd/gen/headers/firmware.tsv})
    (echo "|}\n\nlet nv = {|")
-   (cat %{dep:../lib/nv/gen/headers/pci/firmware.tsv})
+   (cat %{dep:../lib/nv/gen/headers/firmware.tsv})
    (echo "|}\n"))))

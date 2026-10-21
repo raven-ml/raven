@@ -1,0 +1,38 @@
+/*******************************************************************************
+    Copyright (c) 2013-2025 NVidia Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be
+        included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*******************************************************************************/
+
+/* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/2af9f1f0f7de4988432d4ae875b5858ffdb09cc2/kernel-open/nvidia-uvm/uvm_ioctl.h. */
+
+typedef struct
+{
+    NvProcessorUuid gpuUuid;  // IN
+    NvHandle        hClient;  // IN
+    NvHandle        hChannel; // IN
+    NV_STATUS       rmStatus; // OUT
+} UVM_UNREGISTER_CHANNEL_PARAMS;
+
+typedef struct
+{
+    NvU64     base      NV_ALIGN_BYTES(8); // IN
+    NvU64     length    NV_ALIGN_BYTES(8); // IN
+    NV_STATUS rmStatus;                    // OUT
+} UVM_FREE_PARAMS;

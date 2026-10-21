@@ -418,7 +418,7 @@ enumerations that aqlprofile ships (`vega10_enum.h`, `soc21_enum.h`,
 For gfx942 and gfx950, 60 of the 91 SQ event names the two share have
 different numbers; for GFX12, `GL2C_HIT` is 39 in the enumeration and 41 in
 the YAML. The AMD ABI library's counter table comes from `counter_defs.yaml`,
-the one AMD's profiler counts with (`lib/amd/abi/gen/gen.py`). The files were
+the one AMD's profiler counts with (`lib/amd/gen/gen.py`). The files were
 compared; no gfx942 or gfx950 GPU ran the counters here.
 
 ### CDNA drops completion interrupts whose context id is 0

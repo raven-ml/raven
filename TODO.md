@@ -31,9 +31,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot once an AMD host runs it, and drop its 16 MiB ring
-- one generator, pins file and excerpt tree per driver (AMD, NV); NV keeps
-  615's headers whole (licence checked first) and only `per_release`
-  structs for older releases
 
 ### limits and size
 

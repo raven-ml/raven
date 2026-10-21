@@ -7,10 +7,10 @@
    their ioctls, packed in the structures of kfd_ioctl.h and amdgpu_drm.h so
    that the compiler lays them out, and the process's mappings of their
    memory. The structures come from pinned excerpts of the headers
-   (gen/headers, made by gen/gen.py), so the build machine's headers, which
-   may predate them, play no part. A descriptor is an int. A stub raises
-   Unix.Unix_error for the kernel's refusal. A request may wait, so each
-   releases the runtime; the other stubs hold it.
+   (../gen/headers/kernel, made by ../gen/gen.py), so the build machine's
+   headers, which may predate them, play no part. A descriptor is an int. A
+   stub raises Unix.Unix_error for the kernel's refusal. A request may wait,
+   so each releases the runtime; the other stubs hold it.
 
    Off Linux every stub raises ENOSYS, so an open fails at its first
    file. */
@@ -42,9 +42,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "gen/headers/drm.h"
-#include "gen/headers/amdgpu_drm.h"
-#include "gen/headers/kfd_ioctl.h"
+#include "../gen/headers/kernel/drm.h"
+#include "../gen/headers/kernel/amdgpu_drm.h"
+#include "../gen/headers/kernel/kfd_ioctl.h"
 
 /* [(r, v)]: a result and a 64-bit value. */
 static value with64(long r, uint64_t v) {

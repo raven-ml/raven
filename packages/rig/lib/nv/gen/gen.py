@@ -1,8 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Generates the tables of rig_nv, rig_nv_nvidia, rig_nv_pci and the GSP's
-formats in rig_nv_abi from NVIDIA's sources:
+"""Generates the tables of NVIDIA's GPUs from NVIDIA's sources:
 
 - lib/nv/defs.ml: the resource manager's classes, controls and parameter
   layouts the driver allocates channels and reads faults with, and the
@@ -21,6 +20,10 @@ formats in rig_nv_abi from NVIDIA's sources:
   messages and the bodies of the RM's calls, the CPU sequences, the WPR
   metadata, the registry, the names of the channel errors, and the
   page-table entries.
+- lib/nv/abi/defs.ml: the methods of the host, compute and copy classes,
+  the fields of their words and the values they take, the layout of a
+  channel's ring entries and method headers, and the layouts of launch
+  descriptors, versions 3 and 5, from release 570.144 and open-gpu-doc.
 
 Run from the worktree root:
 
@@ -28,21 +31,28 @@ Run from the worktree root:
   uv run packages/rig/lib/nv/gen/gen.py --check
   uv run packages/rig/lib/nv/gen/gen.py --excerpt [--check]
 
-The inputs are excerpts, in headers/LIBRARY/RELEASE/ for rig_nv and
-rig_nv_nvidia and in headers/pci/ for rig_nv_pci and the GSP's formats:
-each is a header's licence notice and the definitions that library reads,
-verbatim and in the header's order, with the definitions they depend on,
-as a 64-bit Linux build compiles them. A few small headers of headers/pci/
-are kept whole,
-under the repository's MIT notice where they carry none.
-headers/pci/firmware.tsv lists the firmware images of linux-firmware at
+The inputs are excerpts, in headers/: headers/ORIGIN/NAME is cut from a
+file of ORIGIN, the release of open-gpu-kernel-modules (570, 580, 610,
+615), open-gpu-doc or Linux, one excerpt of each file. Each is the file's
+licence notice, the URL it is cut from, and the definitions the libraries
+read, verbatim and in the file's order, with the definitions they depend
+on, as a 64-bit Linux build compiles them. A few small files are kept
+whole, under the repository's MIT notice where they carry none. The
+newest release's excerpts hold everything rig_nv and rig_nv_nvidia read;
+an older release's hold only what differs between releases.
+headers/firmware.tsv lists the firmware images of linux-firmware at
 FIRMWARE_COMMIT: each image's path, BLAKE2b-256 digest and URL; the page
 of rig firmware, in packages/rig/bin/help.ml, names FIRMWARE_COMMIT too.
+
 --excerpt makes the excerpts and firmware.tsv from the upstream files,
-each pinned in pins.json by URL and SHA-256 and checked against its pin;
-downloads are kept in --cache, and --pin records the digests of files not
-yet pinned. Generating reads the excerpts and firmware.tsv alone, offline,
-and requires firmware.tsv to list exactly the images of FIRMWARE. --check
+each pinned in pins.json by URL and SHA-256 and checked against its pin,
+and fails on a file whose notice is not the MIT licence. It checks that
+what defs.ml takes once is the same in every release, that the structs
+and tables that differ are exactly those it takes per release, and that
+the excerpts generate what the upstream files do. Downloads are kept in
+--cache, and --pin records the digests of files not yet pinned.
+Generating reads the excerpts and firmware.tsv alone, offline, and
+requires firmware.tsv to list exactly the images of FIRMWARE. --check
 generates into memory and fails if a committed file differs.
 
 Text is read and written as latin-1, one character per byte, so every byte
@@ -55,10 +65,10 @@ NV_ALIGN_BYTES raising a field's alignment, and #pragma pack(1) removing
 the padding. The VBIOS's structures are packed as their format strings
 say. A register's address is its define, plus its unit's base for the
 falcon's units, whose headers give offsets within the unit. Every value is
-NVIDIA's. Definitions the same in every release are emitted once; those
-that differ are emitted per release, and the script fails if the split
-changes. Every table is a literal, which the compiler lays out as static
-data.
+NVIDIA's. Where two classes rig_nv_abi supports both define a name (the
+copy classes 0xc7b5 and 0xc9b5, the launch descriptors of 0xc7c0 and
+0xc9c0), the script fails unless they agree. Every table is a literal,
+which the compiler lays out as static data.
 """
 
 import argparse
@@ -76,7 +86,9 @@ HEADERS = HERE / "headers"
 PINS = HERE / "pins.json"
 LIB = HERE.parent
 
-KERNEL = "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/"
+# Origins
+
+REPO = "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/"
 # The driver releases, by the branch the RM reports: the tree each is read
 # from, and its version.
 RELEASES = {
@@ -85,6 +97,31 @@ RELEASES = {
     610: ("610.43.03", "610.43.03"),
     615: ("615.71.09", "615.71.09"),
 }
+NEWEST = max(RELEASES)
+DOC = "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/"
+LINUX = "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/{}?h=v6.18"
+FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
+FIRMWARE_ORIGIN = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
+FIRMWARE_LIST = "firmware.tsv"
+
+
+def tree(r):
+    """The URL of release [r]'s tree."""
+    return REPO + RELEASES[r][0] + "/"
+
+
+def origin(url):
+    """The directory of headers/ that holds the excerpts of [url]'s tree."""
+    for r in RELEASES:
+        if url.startswith(tree(r)):
+            return str(r)
+    if url.startswith(DOC):
+        return "open-gpu-doc"
+    if url.startswith(LINUX.split("{")[0]):
+        return "linux"
+    sys.exit(f"{url}: no origin")
+
+
 SDK = "src/common/sdk/nvidia/inc/"
 UNIX = "src/nvidia/arch/nvalloc/unix/include/"
 UVM = "kernel-open/nvidia-uvm/"
@@ -117,8 +154,6 @@ DEALINGS IN THE SOFTWARE."""
 class Defs:
     """A library's defs.ml and what it reads from its excerpts."""
 
-    # The directory of its excerpts under headers/, and its defs.ml.
-    name: str
     out: pathlib.Path
     # Each excerpt and the header it is cut from, in each release's tree. A
     # name is read from the first header that defines it.
@@ -145,12 +180,11 @@ class Defs:
     since: dict = dataclasses.field(default_factory=dict)
 
     def headers(self, r):
-        """The headers of release [r]."""
-        return [h for h in self.sources if r >= self.since.get(h, 0)]
+        """The headers of release [r], by name, with their URLs."""
+        return {h: tree(r) + p for h, p in self.sources.items() if r >= self.since.get(h, 0)}
 
 
 NV = Defs(
-    name="nv",
     out=LIB / "defs.ml",
     sources={
         "g_allclasses.h": "src/nvidia/generated/g_allclasses.h",
@@ -209,7 +243,7 @@ NV = Defs(
     per_release={"NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS"},
     # The errors leave out the recovery levels and the count, which are no
-    # error. Later releases add errors.
+    # error. Later releases add errors, and give some numbers new names.
     tables=[
         ("robust_channel_errors", "nverror.h", r"ROBUST_CHANNEL_(?!ERROR_RECOVERY_LEVEL_|LAST_ERROR)(\w+)"),
         ("fault_types", "dev_fault.h", r"NV_PFAULT_FAULT_TYPE_(\w+)"),
@@ -219,14 +253,12 @@ NV = Defs(
 )
 
 NVIDIA = Defs(
-    name="nvidia",
     out=LIB / "nvidia/defs.ml",
     sources={
         "g_allclasses.h": "src/nvidia/generated/g_allclasses.h",
         "nvmisc.h": COMMON + "nvmisc.h",
         "nvlimits.h": SDK + "nvlimits.h",
         "nvos.h": SDK + "nvos.h",
-        "cl0070.h": SDK + "class/cl0070.h",
         "cl0080.h": SDK + "class/cl0080.h",
         "cl2080.h": SDK + "class/cl2080.h",
         "ctrlxxxx.h": SDK + "ctrl/ctrlxxxx.h",
@@ -248,17 +280,17 @@ NVIDIA = Defs(
         "uvm_ioctl.h": UVM + "uvm_ioctl.h",
         "uvm_linux_ioctl.h": UVM + "uvm_linux_ioctl.h",
         "nvstatuscodes.h": COMMON + "nvstatuscodes.h",
-        "dev_mmu.h": UVM + "hwref/turing/tu102/dev_mmu.h",
+        "tu102_dev_mmu.h": UVM + "hwref/turing/tu102/dev_mmu.h",
     },
     constants=[
         # classes
-        "NV01_ROOT_CLIENT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0", "NV01_MEMORY_VIRTUAL",
+        "NV01_ROOT_CLIENT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0",
         "NV01_MEMORY_SYSTEM_OS_DESCRIPTOR", "NV1_MEMORY_SYSTEM", "NV1_MEMORY_USER", "FERMI_VASPACE_A",
         "TURING_USERMODE_A", "HOPPER_USERMODE_A", "AMPERE_CHANNEL_GPFIFO_A", "BLACKWELL_CHANNEL_GPFIFO_A",
         "AMPERE_COMPUTE_B", "ADA_COMPUTE_A", "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B", "BLACKWELL_DMA_COPY_B",
         # escapes
         "NV_IOCTL_MAGIC", "NV_ESC_CARD_INFO", "NV_ESC_REGISTER_FD", "NV_ESC_RM_ALLOC", "NV_ESC_RM_ALLOC_MEMORY",
-        "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY", "NV_ESC_RM_MAP_MEMORY_DMA",
+        "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY",
         # memory
         "NV_MAX_DEVICES", "NV_MMU_PTE_KIND_GENERIC_MEMORY", "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS",
         "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
@@ -269,8 +301,7 @@ NVIDIA = Defs(
         "NVOS32_ALLOC_FLAGS_MEMORY_HANDLE_PROVIDED", "NVOS32_ALLOC_FLAGS_ALIGNMENT_FORCE",
         "NVOS32_ALLOC_FLAGS_IGNORE_BANK_PLACEMENT", "NVOS32_ALLOC_FLAGS_PERSISTENT_VIDMEM", "NVOS32_TYPE_IMAGE",
         "NVOS32_TYPE_NOTIFIER", "NVOS33_FLAGS_CACHING_TYPE_CACHED", "NVOS33_FLAGS_CACHING_TYPE_UNCACHED",
-        "NVOS33_FLAGS_CACHING_TYPE_WRITECOMBINED", "NVOS46_FLAGS_PAGE_SIZE_4KB", "NVOS46_FLAGS_CACHE_SNOOP_ENABLE",
-        "NVOS46_FLAGS_DMA_OFFSET_FIXED_TRUE",
+        "NVOS33_FLAGS_CACHING_TYPE_WRITECOMBINED",
         # controls
         "NV0000_CTRL_CMD_SYSTEM_GET_BUILD_VERSION_V2", "NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2",
         "NV0080_CTRL_CMD_GPU_GET_CLASSLIST", "NV2080_CTRL_CMD_GPU_GET_GID_INFO",
@@ -292,8 +323,7 @@ NVIDIA = Defs(
     fields=[
         "NVOS02_FLAGS_PHYSICALITY", "NVOS02_FLAGS_COHERENCY", "NVOS02_FLAGS_MAPPING", "NVOS32_ATTR_PHYSICALITY",
         "NVOS32_ATTR_PAGE_SIZE", "NVOS32_ATTR_LOCATION", "NVOS32_ATTR2_GPU_CACHEABLE", "NVOS32_ATTR2_PAGE_SIZE_HUGE",
-        "NVOS32_ATTR2_ZBC", "NVOS33_FLAGS_CACHING_TYPE", "NVOS46_FLAGS_PAGE_SIZE", "NVOS46_FLAGS_CACHE_SNOOP",
-        "NVOS46_FLAGS_DMA_OFFSET_FIXED", "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT",
+        "NVOS32_ATTR2_ZBC", "NVOS33_FLAGS_CACHING_TYPE", "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT",
     ],
     structs={
         "nv_ioctl_card_info_t": ("Card_info", ["valid", "pci_info__domain", "pci_info__bus", "pci_info__slot",
@@ -311,7 +341,6 @@ NVIDIA = Defs(
         "nv_ioctl_nvos33_parameters_with_fd": ("Nvos33_with_fd", ["params", "fd"]),
         "NV0080_ALLOC_PARAMETERS": ("Nv0080_alloc", ["deviceId", "hClientShare", "vaMode"]),
         "NV2080_ALLOC_PARAMETERS": ("Nv2080_alloc", ["subDeviceId"]),
-        "NV_MEMORY_VIRTUAL_ALLOCATION_PARAMS": ("Memory_virtual_alloc", ["offset", "limit", "hVASpace"]),
         "NV_MEMORY_ALLOCATION_PARAMS": ("Memory_alloc", ["owner", "type", "flags", "attr", "attr2", "format", "size",
                                                          "alignment", "offset", "limit"]),
         "NV0000_CTRL_SYSTEM_GET_BUILD_VERSION_V2_PARAMS": ("Build_version", ["driverVersionBuffer"]),
@@ -340,14 +369,12 @@ NVIDIA = Defs(
         "UVM_UNMAP_EXTERNAL_PARAMS": ("Uvm_unmap_external", ["base", "length", "gpuUuid", "rmStatus"]),
         "NV2080_CTRL_FB_GET_INFO_V2_PARAMS": ("Fb_get_info", ["fbInfoListSize", "fbInfoList"]),
         "NV2080_CTRL_RC_GET_WATCHDOG_INFO_PARAMS": ("Watchdog_info", ["watchdogStatusFlags"]),
-        "NVOS46_PARAMETERS": ("Nvos46", ["hClient", "hDevice", "hDma", "hMemory", "offset", "length", "flags",
-                                         "dmaOffset", "status"]),
         "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
         "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
         "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [
             "gpuUuid?", "hClient", "hChannel", "rmStatus"]),
     },
-    per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NVOS46_PARAMETERS", "NV_VASPACE_ALLOCATION_PARAMETERS",
+    per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NV_VASPACE_ALLOCATION_PARAMETERS",
                  "UVM_FREE_PARAMS", "UVM_UNREGISTER_CHANNEL_PARAMS"},
     statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INSUFFICIENT_RESOURCES", "NV_ERR_INVALID_ADDRESS",
               "NV_ERR_INVALID_ARGUMENT"],
@@ -365,16 +392,11 @@ STATUS_HEADER = "nvstatuscodes.h"
 
 # rig_nv_pci
 
-PCI_HEADERS = HEADERS / "pci"
 PCI_OUT = LIB / "pci/defs.ml"
 GSP_OUT = LIB / "pci/gsp_defs.ml"
-FIRMWARE_LIST = PCI_HEADERS / "firmware.tsv"
 
-PCI_KERNEL = KERNEL + "570.144/"
-LINUX = "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/{}?h=v6.18"
-FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
-ORIGIN = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
-
+# Release 570.144, the GSP firmware's, which rig_nv_abi reads too.
+R570 = tree(570)
 GSP_INC = "src/nvidia/arch/nvalloc/common/inc/"
 SWREF = "src/common/inc/swref/published/"
 HWREF = "kernel-open/nvidia-uvm/hwref/"
@@ -382,52 +404,52 @@ HWREF = "kernel-open/nvidia-uvm/hwref/"
 # Each excerpt and the file it is cut from. A name is read from the first
 # file that defines it.
 PCI_SOURCES = {
-    "msgq_priv.h": PCI_KERNEL + "src/common/shared/msgq/inc/msgq/msgq_priv.h",
-    "message_queue_priv.h": PCI_KERNEL + "src/nvidia/inc/kernel/gpu/gsp/message_queue_priv.h",
-    "g_rpc-message-header.h": PCI_KERNEL + "src/nvidia/generated/g_rpc-message-header.h",
-    "g_rpc-structures.h": PCI_KERNEL + "src/nvidia/generated/g_rpc-structures.h",
-    "g_sdk-structures.h": PCI_KERNEL + "src/nvidia/generated/g_sdk-structures.h",
-    "rpc_headers.h": PCI_KERNEL + "src/nvidia/inc/kernel/vgpu/rpc_headers.h",
-    "gsp_fw_wpr_meta.h": PCI_KERNEL + GSP_INC + "gsp/gsp_fw_wpr_meta.h",
-    "rmRiscvUcode.h": PCI_KERNEL + GSP_INC + "rmRiscvUcode.h",
-    "nverror.h": PCI_KERNEL + "src/common/sdk/nvidia/inc/nverror.h",
-    "pci_exp_table.h": PCI_KERNEL + "src/nvidia/inc/kernel/platform/pci_exp_table.h",
-    "kernel_gsp_fwsec.c": PCI_KERNEL + "src/nvidia/src/kernel/gpu/gsp/kernel_gsp_fwsec.c",
-    "kernel_gsp_frts_tu102.c": PCI_KERNEL + "src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_frts_tu102.c",
-    "kernel_gsp_vbios_tu102.c": PCI_KERNEL + "src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_vbios_tu102.c",
-    "tu102_dev_mmu.h": PCI_KERNEL + HWREF + "turing/tu102/dev_mmu.h",
-    "gh100_dev_mmu.h": PCI_KERNEL + HWREF + "hopper/gh100/dev_mmu.h",
-    "gsp_init_args.h": PCI_KERNEL + "src/nvidia/inc/kernel/gpu/gsp/gsp_init_args.h",
-    "gsp_static_config.h": PCI_KERNEL + "src/nvidia/inc/kernel/gpu/gsp/gsp_static_config.h",
-    "gspifpub.h": PCI_KERNEL + GSP_INC + "gsp/gspifpub.h",
-    "libos_init_args.h": PCI_KERNEL + "src/common/uproc/os/common/include/libos_init_args.h",
-    "rmgspseq.h": PCI_KERNEL + GSP_INC + "rmgspseq.h",
-    "fsp_nvdm_format.h": PCI_KERNEL + GSP_INC + "fsp/fsp_nvdm_format.h",
-    "fsp_mctp_format.h": PCI_KERNEL + GSP_INC + "fsp/fsp_mctp_format.h",
-    "kern_fsp_cot_payload.h": PCI_KERNEL + "src/nvidia/inc/kernel/gpu/fsp/kern_fsp_cot_payload.h",
-    "g_os_nvoc.h": PCI_KERNEL + "src/nvidia/generated/g_os_nvoc.h",
-    "g_mem_desc_nvoc.h": PCI_KERNEL + "src/nvidia/generated/g_mem_desc_nvoc.h",
-    "nv_memory_type.h": PCI_KERNEL + "src/nvidia/inc/kernel/os/nv_memory_type.h",
-    "g_allclasses.h": PCI_KERNEL + "src/nvidia/generated/g_allclasses.h",
-    "nvlimits.h": PCI_KERNEL + SDK + "nvlimits.h",
-    "nvmisc.h": PCI_KERNEL + "kernel-open/common/inc/nvmisc.h",
-    "nvos.h": PCI_KERNEL + SDK + "nvos.h",
-    "alloc_channel.h": PCI_KERNEL + SDK + "alloc/alloc_channel.h",
-    "cl0000.h": PCI_KERNEL + SDK + "class/cl0000.h",
-    "cl0080.h": PCI_KERNEL + SDK + "class/cl0080.h",
-    "cl2080.h": PCI_KERNEL + SDK + "class/cl2080.h",
-    "cl2080_notification.h": PCI_KERNEL + SDK + "class/cl2080_notification.h",
-    "ctrl0080fifo.h": PCI_KERNEL + SDK + "ctrl/ctrl0080/ctrl0080fifo.h",
-    "ctrl2080fifo.h": PCI_KERNEL + SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
-    "ctrl2080gpu.h": PCI_KERNEL + SDK + "ctrl/ctrl2080/ctrl2080gpu.h",
-    "ctrl0080gr.h": PCI_KERNEL + SDK + "ctrl/ctrl0080/ctrl0080gr.h",
-    "ctrl2080gr.h": PCI_KERNEL + SDK + "ctrl/ctrl2080/ctrl2080gr.h",
-    "ctrl2080internal.h": PCI_KERNEL + SDK + "ctrl/ctrl2080/ctrl2080internal.h",
-    "ctrl90f1.h": PCI_KERNEL + SDK + "ctrl/ctrl90f1.h",
-    "ctrlc36f.h": PCI_KERNEL + SDK + "ctrl/ctrlc36f.h",
-    "g_chipset_nvoc.h": PCI_KERNEL + "src/nvidia/generated/g_chipset_nvoc.h",
-    "gpu_acpi_data.h": PCI_KERNEL + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
-    "ctrl0073system.h": PCI_KERNEL + "src/common/sdk/nvidia/inc/ctrl/ctrl0073/ctrl0073system.h",
+    "msgq_priv.h": R570 + "src/common/shared/msgq/inc/msgq/msgq_priv.h",
+    "message_queue_priv.h": R570 + "src/nvidia/inc/kernel/gpu/gsp/message_queue_priv.h",
+    "g_rpc-message-header.h": R570 + "src/nvidia/generated/g_rpc-message-header.h",
+    "g_rpc-structures.h": R570 + "src/nvidia/generated/g_rpc-structures.h",
+    "g_sdk-structures.h": R570 + "src/nvidia/generated/g_sdk-structures.h",
+    "rpc_headers.h": R570 + "src/nvidia/inc/kernel/vgpu/rpc_headers.h",
+    "gsp_fw_wpr_meta.h": R570 + GSP_INC + "gsp/gsp_fw_wpr_meta.h",
+    "rmRiscvUcode.h": R570 + GSP_INC + "rmRiscvUcode.h",
+    "nverror.h": R570 + "src/common/sdk/nvidia/inc/nverror.h",
+    "pci_exp_table.h": R570 + "src/nvidia/inc/kernel/platform/pci_exp_table.h",
+    "kernel_gsp_fwsec.c": R570 + "src/nvidia/src/kernel/gpu/gsp/kernel_gsp_fwsec.c",
+    "kernel_gsp_frts_tu102.c": R570 + "src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_frts_tu102.c",
+    "kernel_gsp_vbios_tu102.c": R570 + "src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_vbios_tu102.c",
+    "tu102_dev_mmu.h": R570 + HWREF + "turing/tu102/dev_mmu.h",
+    "gh100_dev_mmu.h": R570 + HWREF + "hopper/gh100/dev_mmu.h",
+    "gsp_init_args.h": R570 + "src/nvidia/inc/kernel/gpu/gsp/gsp_init_args.h",
+    "gsp_static_config.h": R570 + "src/nvidia/inc/kernel/gpu/gsp/gsp_static_config.h",
+    "gspifpub.h": R570 + GSP_INC + "gsp/gspifpub.h",
+    "libos_init_args.h": R570 + "src/common/uproc/os/common/include/libos_init_args.h",
+    "rmgspseq.h": R570 + GSP_INC + "rmgspseq.h",
+    "fsp_nvdm_format.h": R570 + GSP_INC + "fsp/fsp_nvdm_format.h",
+    "fsp_mctp_format.h": R570 + GSP_INC + "fsp/fsp_mctp_format.h",
+    "kern_fsp_cot_payload.h": R570 + "src/nvidia/inc/kernel/gpu/fsp/kern_fsp_cot_payload.h",
+    "g_os_nvoc.h": R570 + "src/nvidia/generated/g_os_nvoc.h",
+    "g_mem_desc_nvoc.h": R570 + "src/nvidia/generated/g_mem_desc_nvoc.h",
+    "nv_memory_type.h": R570 + "src/nvidia/inc/kernel/os/nv_memory_type.h",
+    "g_allclasses.h": R570 + "src/nvidia/generated/g_allclasses.h",
+    "nvlimits.h": R570 + SDK + "nvlimits.h",
+    "nvmisc.h": R570 + "kernel-open/common/inc/nvmisc.h",
+    "nvos.h": R570 + SDK + "nvos.h",
+    "alloc_channel.h": R570 + SDK + "alloc/alloc_channel.h",
+    "cl0000.h": R570 + SDK + "class/cl0000.h",
+    "cl0080.h": R570 + SDK + "class/cl0080.h",
+    "cl2080.h": R570 + SDK + "class/cl2080.h",
+    "cl2080_notification.h": R570 + SDK + "class/cl2080_notification.h",
+    "ctrl0080fifo.h": R570 + SDK + "ctrl/ctrl0080/ctrl0080fifo.h",
+    "ctrl2080fifo.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
+    "ctrl2080gpu.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080gpu.h",
+    "ctrl0080gr.h": R570 + SDK + "ctrl/ctrl0080/ctrl0080gr.h",
+    "ctrl2080gr.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080gr.h",
+    "ctrl2080internal.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080internal.h",
+    "ctrl90f1.h": R570 + SDK + "ctrl/ctrl90f1.h",
+    "ctrlc36f.h": R570 + SDK + "ctrl/ctrlc36f.h",
+    "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
+    "gpu_acpi_data.h": R570 + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
+    "ctrl0073system.h": R570 + "src/common/sdk/nvidia/inc/ctrl/ctrl0073/ctrl0073system.h",
     "fw.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/fw.h"),
     "hs.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/hs.h"),
 }
@@ -435,7 +457,7 @@ PCI_SOURCES = {
 # Files kept whole: the function and event numbers are X-macro lines, which
 # no definition holds.
 WHOLE = {
-    "rpc_global_enums.h": PCI_KERNEL + "src/nvidia/inc/kernel/vgpu/rpc_global_enums.h",
+    "rpc_global_enums.h": R570 + "src/nvidia/inc/kernel/vgpu/rpc_global_enums.h",
 }
 
 # The register headers, by excerpt: (directory, header). An addendum adds to
@@ -461,7 +483,7 @@ REGISTER_SOURCES = {
     "gb202_dev_therm_addendum.h": "blackwell/gb202/dev_therm_addendum.h",
     "tu102_dev_ext_devices.h": "turing/tu102/dev_ext_devices.h",
 }
-PCI_SOURCES.update({k: PCI_KERNEL + SWREF + v for k, v in REGISTER_SOURCES.items()})
+PCI_SOURCES.update({k: R570 + SWREF + v for k, v in REGISTER_SOURCES.items()})
 
 # The register headers of each family, in the order the first that defines
 # a name gives it.
@@ -734,6 +756,209 @@ FIRMWARE = {
     "Blackwell": ["nvidia/ga102/gsp/gsp-570.144.bin", "nvidia/gb202/gsp/bootloader-570.144.bin",
                   "nvidia/gb202/gsp/fmc-570.144.bin"],
 }
+
+
+# rig_nv_abi
+
+ABI_OUT = LIB / "abi/defs.ml"
+CLASSES = R570 + SDK + "class/"
+
+# Each excerpt and the header it is cut from.
+ABI_SOURCES = {
+    "clc56f.h": CLASSES + "clc56f.h",  # AMPERE_CHANNEL_GPFIFO_A: the host
+    "clc7c0.h": CLASSES + "clc7c0.h",  # AMPERE_COMPUTE_B
+    "clc9c0.h": CLASSES + "clc9c0.h",  # ADA_COMPUTE_A
+    "clcec0.h": CLASSES + "clcec0.h",  # BLACKWELL_COMPUTE_B
+    "clc7b5.h": R570 + UVM + "clc7b5.h",  # AMPERE_DMA_COPY_B
+    "clc9b5.h": R570 + UVM + "clc9b5.h",  # BLACKWELL_DMA_COPY_A
+    "clc7c0qmd.h": DOC + "classes/compute/clc7c0qmd.h",
+    "clc9c0qmd.h": DOC + "classes/compute/clc9c0qmd.h",
+    "clcec0qmd.h": DOC + "classes/compute/clcec0qmd.h",
+}
+
+# The classes the library supports, by header.
+CLASS_IDS = [("clc7c0.h", "AMPERE_COMPUTE_B"), ("clc9c0.h", "ADA_COMPUTE_A"), ("clcec0.h", "BLACKWELL_COMPUTE_B")]
+
+# Constants and bit fields ("hi:lo" in the headers, (lowest bit, bits) here),
+# by header. The copy class's names hold for 0xc9b5 under its prefix.
+HOST = "clc56f.h"
+HOST_CONSTANTS = [
+    "NVC56F_SET_OBJECT", "NVC56F_SEM_ADDR_LO", "NVC56F_NON_STALL_INTERRUPT",
+    "NVC56F_SEM_EXECUTE_OPERATION_ACQ_CIRC_GEQ", "NVC56F_SEM_EXECUTE_OPERATION_RELEASE",
+    "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT", "NVC56F_SEM_EXECUTE_RELEASE_WFI_EN",
+    "NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP_EN", "NVC56F_GP_ENTRY1_LEVEL_SUBROUTINE", "NVC56F_DMA_SEC_OP_INC_METHOD",
+]
+HOST_FIELDS = [
+    "NVC56F_SEM_EXECUTE_OPERATION", "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE", "NVC56F_SEM_EXECUTE_RELEASE_WFI",
+    "NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP", "NVC56F_GP_ENTRY0_GET", "NVC56F_GP_ENTRY1_GET_HI",
+    "NVC56F_GP_ENTRY1_LEVEL", "NVC56F_GP_ENTRY1_LENGTH", "NVC56F_DMA_METHOD_ADDRESS", "NVC56F_DMA_METHOD_SUBCHANNEL",
+    "NVC56F_DMA_METHOD_COUNT", "NVC56F_DMA_SEC_OP",
+]
+COMPUTE = "clc7c0.h"
+COMPUTE_CONSTANTS = [
+    "NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A", "NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A",
+    "NVC7C0_SET_SHADER_LOCAL_MEMORY_A", "NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A",
+    "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI", "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION_TRUE",
+    "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA_TRUE", "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT_TRUE",
+    "NVC7C0_SEND_PCAS_A", "NVC7C0_SEND_SIGNALING_PCAS2_B", "NVC7C0_WAIT_FOR_IDLE",
+    "NVC7C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION_PREFETCH_SCHEDULE",
+]
+COMPUTE_FIELDS = [
+    "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION", "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA",
+    "NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT",
+    "NVC7C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION",
+]
+COPY, LATER_COPY = "clc7b5.h", "clc9b5.h"
+COPY_CONSTANTS = [
+    "NVC7B5_SET_SEMAPHORE_A", "NVC7B5_LAUNCH_DMA", "NVC7B5_OFFSET_IN_UPPER", "NVC7B5_OFFSET_OUT_UPPER",
+    "NVC7B5_LINE_LENGTH_IN", "NVC7B5_SET_REMAP_CONST_B",
+    "NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_NON_PIPELINED", "NVC7B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT_PITCH",
+    "NVC7B5_LAUNCH_DMA_DST_MEMORY_LAYOUT_PITCH", "NVC7B5_LAUNCH_DMA_FLUSH_ENABLE_TRUE",
+    "NVC7B5_LAUNCH_DMA_FLUSH_TYPE_SYS", "NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_ONE_WORD_SEMAPHORE",
+    "NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_FOUR_WORD_SEMAPHORE",
+    "NVC7B5_LAUNCH_DMA_SEMAPHORE_PAYLOAD_SIZE_TWO_WORD", "NVC7B5_LAUNCH_DMA_MULTI_LINE_ENABLE_TRUE",
+    "NVC7B5_LAUNCH_DMA_REMAP_ENABLE_TRUE", "NVC7B5_SET_REMAP_COMPONENTS_DST_X_CONST_B",
+    "NVC7B5_SET_REMAP_COMPONENTS_COMPONENT_SIZE_ONE", "NVC7B5_SET_REMAP_COMPONENTS_COMPONENT_SIZE_FOUR",
+    "NVC7B5_SET_REMAP_COMPONENTS_NUM_DST_COMPONENTS_ONE",
+]
+COPY_FIELDS = [
+    "NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE", "NVC7B5_LAUNCH_DMA_FLUSH_ENABLE", "NVC7B5_LAUNCH_DMA_FLUSH_TYPE",
+    "NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE", "NVC7B5_LAUNCH_DMA_SEMAPHORE_PAYLOAD_SIZE",
+    "NVC7B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT", "NVC7B5_LAUNCH_DMA_DST_MEMORY_LAYOUT",
+    "NVC7B5_LAUNCH_DMA_MULTI_LINE_ENABLE", "NVC7B5_LAUNCH_DMA_REMAP_ENABLE",
+    "NVC7B5_SET_REMAP_COMPONENTS_DST_X", "NVC7B5_SET_REMAP_COMPONENTS_COMPONENT_SIZE",
+    "NVC7B5_SET_REMAP_COMPONENTS_NUM_DST_COMPONENTS",
+]
+
+# The methods an encoder writes after one header, which must be consecutive.
+# Only the first is emitted.
+RUNS = [
+    (HOST, ["NVC56F_SEM_ADDR_LO", "NVC56F_SEM_ADDR_HI", "NVC56F_SEM_PAYLOAD_LO", "NVC56F_SEM_PAYLOAD_HI",
+            "NVC56F_SEM_EXECUTE"]),
+    (COMPUTE, ["NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A", "NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_B"]),
+    (COMPUTE, ["NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A", "NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_B"]),
+    (COMPUTE, ["NVC7C0_SET_SHADER_LOCAL_MEMORY_A", "NVC7C0_SET_SHADER_LOCAL_MEMORY_B"]),
+    (COMPUTE, ["NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A", "NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_B",
+               "NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_C"]),
+    (COPY, ["NVC7B5_SET_SEMAPHORE_A", "NVC7B5_SET_SEMAPHORE_B", "NVC7B5_SET_SEMAPHORE_PAYLOAD",
+            "NVC7B5_SET_SEMAPHORE_PAYLOAD_UPPER"]),
+    (COPY, ["NVC7B5_OFFSET_IN_UPPER", "NVC7B5_OFFSET_IN_LOWER", "NVC7B5_OFFSET_OUT_UPPER", "NVC7B5_OFFSET_OUT_LOWER",
+            "NVC7B5_PITCH_IN", "NVC7B5_PITCH_OUT", "NVC7B5_LINE_LENGTH_IN", "NVC7B5_LINE_COUNT"]),
+    (COPY, ["NVC7B5_OFFSET_OUT_UPPER", "NVC7B5_OFFSET_OUT_LOWER"]),
+    (COPY, ["NVC7B5_SET_REMAP_CONST_B", "NVC7B5_SET_REMAP_COMPONENTS"]),
+]
+
+# Launch descriptors: version 3, which 0xc7c0 and 0xc9c0 read, and version 5,
+# which 0xcec0 reads. Each field the encoder writes is named in OCaml by the
+# first name, and by the name each version gives it; None where the version
+# has none. An (i) name is the field of index i: a constant bank's, or
+# release k's at i = k. A name's suffix _SHIFTEDn says its field holds the value
+# shifted right by n.
+QMD = [("clc7c0qmd.h", "NVC7C0_QMDV03_00", 3), ("clcec0qmd.h", "NVCEC0_QMDV05_00", 5)]
+QMD_SAME = ("clc9c0qmd.h", "NVC9C0_QMDV03_00")
+QMD_FIELDS = [
+    ("qmd_major_version", "QMD_MAJOR_VERSION", "QMD_MAJOR_VERSION"),
+    ("qmd_type", None, "QMD_TYPE"),
+    ("sm_global_caching_enable", "SM_GLOBAL_CACHING_ENABLE", None),
+    ("qmd_group_id", "QMD_GROUP_ID", "QMD_GROUP_ID"),
+    ("grid_width", "CTA_RASTER_WIDTH", "GRID_WIDTH"),
+    ("grid_height", "CTA_RASTER_HEIGHT", "GRID_HEIGHT"),
+    ("grid_depth", "CTA_RASTER_DEPTH", "GRID_DEPTH"),
+    ("cta_thread_dimension0", "CTA_THREAD_DIMENSION0", "CTA_THREAD_DIMENSION0"),
+    ("cta_thread_dimension1", "CTA_THREAD_DIMENSION1", "CTA_THREAD_DIMENSION1"),
+    ("cta_thread_dimension2", "CTA_THREAD_DIMENSION2", "CTA_THREAD_DIMENSION2"),
+    ("register_count", "REGISTER_COUNT_V", "REGISTER_COUNT"),
+    ("barrier_count", "BARRIER_COUNT", "BARRIER_COUNT"),
+    ("shared_memory_size", "SHARED_MEMORY_SIZE", "SHARED_MEMORY_SIZE_SHIFTED7"),
+    ("min_sm_config_shared_mem_size", "MIN_SM_CONFIG_SHARED_MEM_SIZE", "MIN_SM_CONFIG_SHARED_MEM_SIZE"),
+    ("target_sm_config_shared_mem_size", "TARGET_SM_CONFIG_SHARED_MEM_SIZE", "TARGET_SM_CONFIG_SHARED_MEM_SIZE"),
+    ("max_sm_config_shared_mem_size", "MAX_SM_CONFIG_SHARED_MEM_SIZE", "MAX_SM_CONFIG_SHARED_MEM_SIZE"),
+    ("shader_local_memory_high_size", "SHADER_LOCAL_MEMORY_HIGH_SIZE", "SHADER_LOCAL_MEMORY_HIGH_SIZE_SHIFTED4"),
+    ("program_address_lower", "PROGRAM_ADDRESS_LOWER", "PROGRAM_ADDRESS_LOWER_SHIFTED4"),
+    ("program_address_upper", "PROGRAM_ADDRESS_UPPER", "PROGRAM_ADDRESS_UPPER_SHIFTED4"),
+    ("program_prefetch_addr_lower_shifted", "PROGRAM_PREFETCH_ADDR_LOWER_SHIFTED", "PROGRAM_PREFETCH_ADDR_LOWER_SHIFTED"),
+    ("program_prefetch_addr_upper_shifted", "PROGRAM_PREFETCH_ADDR_UPPER_SHIFTED", "PROGRAM_PREFETCH_ADDR_UPPER_SHIFTED"),
+    ("program_prefetch_size", "PROGRAM_PREFETCH_SIZE", "PROGRAM_PREFETCH_SIZE"),
+    ("sass_version", "SASS_VERSION", "SASS_VERSION"),
+    ("api_visible_call_limit", "API_VISIBLE_CALL_LIMIT", "API_VISIBLE_CALL_LIMIT"),
+    ("sampler_index", "SAMPLER_INDEX", "SAMPLER_INDEX"),
+    ("cwd_membar_type", "CWD_MEMBAR_TYPE", "CWD_MEMBAR_TYPE"),
+    ("invalidate_texture_header_cache", "INVALIDATE_TEXTURE_HEADER_CACHE", "INVALIDATE_TEXTURE_HEADER_CACHE"),
+    ("invalidate_texture_sampler_cache", "INVALIDATE_TEXTURE_SAMPLER_CACHE", "INVALIDATE_TEXTURE_SAMPLER_CACHE"),
+    ("invalidate_texture_data_cache", "INVALIDATE_TEXTURE_DATA_CACHE", "INVALIDATE_TEXTURE_DATA_CACHE"),
+    ("invalidate_shader_data_cache", "INVALIDATE_SHADER_DATA_CACHE", "INVALIDATE_SHADER_DATA_CACHE"),
+    ("dependent_qmd0_pointer", "DEPENDENT_QMD0_POINTER", "DEPENDENT_QMD0_POINTER"),
+    ("dependent_qmd0_action", "DEPENDENT_QMD0_ACTION", "DEPENDENT_QMD0_ACTION"),
+    ("dependent_qmd0_prefetch", "DEPENDENT_QMD0_PREFETCH", "DEPENDENT_QMD0_PREFETCH"),
+    ("dependent_qmd0_enable", "DEPENDENT_QMD0_ENABLE", "DEPENDENT_QMD0_ENABLE"),
+]
+QMD_BANK_FIELDS = [
+    ("constant_buffer_addr_lower", "CONSTANT_BUFFER_ADDR_LOWER(i)", "CONSTANT_BUFFER_ADDR_LOWER_SHIFTED6(i)"),
+    ("constant_buffer_addr_upper", "CONSTANT_BUFFER_ADDR_UPPER(i)", "CONSTANT_BUFFER_ADDR_UPPER_SHIFTED6(i)"),
+    ("constant_buffer_size_shifted4", "CONSTANT_BUFFER_SIZE_SHIFTED4(i)", "CONSTANT_BUFFER_SIZE_SHIFTED4(i)"),
+    ("constant_buffer_valid", "CONSTANT_BUFFER_VALID(i)", "CONSTANT_BUFFER_VALID(i)"),
+    ("constant_buffer_invalidate", "CONSTANT_BUFFER_INVALIDATE(i)", "CONSTANT_BUFFER_INVALIDATE(i)"),
+]
+QMD_RELEASES = 2
+QMD_RELEASE_FIELDS = [
+    ("enable", "RELEASE{k}_ENABLE", "RELEASE_ENABLE(i)"),
+    ("structure_size", "RELEASE{k}_STRUCTURE_SIZE", "RELEASE_STRUCTURE_SIZE(i)"),
+    ("payload64b", "RELEASE{k}_PAYLOAD64B", "RELEASE_PAYLOAD64B(i)"),
+    ("membar_type", "RELEASE{k}_MEMBAR_TYPE", "RELEASE_MEMBAR_TYPE(i)"),
+    ("address_lower", "RELEASE{k}_ADDRESS_LOWER", "RELEASE_SEMAPHORE{k}_ADDR_LOWER"),
+    ("address_upper", "RELEASE{k}_ADDRESS_UPPER", "RELEASE_SEMAPHORE{k}_ADDR_UPPER"),
+    ("payload_lower", "RELEASE{k}_PAYLOAD_LOWER", "RELEASE_SEMAPHORE{k}_PAYLOAD_LOWER"),
+    ("payload_upper", "RELEASE{k}_PAYLOAD_UPPER", "RELEASE_SEMAPHORE{k}_PAYLOAD_UPPER"),
+]
+# The values the encoder writes into fields, the same in each version that
+# names them.
+QMD_VALUES = [
+    ("qmd_type_grid_cta", None, "QMD_TYPE_GRID_CTA"),
+    ("cwd_membar_type_l1_sysmembar", "CWD_MEMBAR_TYPE_L1_SYSMEMBAR", "CWD_MEMBAR_TYPE_L1_SYSMEMBAR"),
+    ("api_visible_call_limit_no_check", "API_VISIBLE_CALL_LIMIT_NO_CHECK", "API_VISIBLE_CALL_LIMIT_NO_CHECK"),
+    ("sampler_index_via_header_index", "SAMPLER_INDEX_VIA_HEADER_INDEX", "SAMPLER_INDEX_VIA_HEADER_INDEX"),
+    ("dependent_qmd0_action_qmd_schedule", "DEPENDENT_QMD0_ACTION_QMD_SCHEDULE", "DEPENDENT_QMD0_ACTION_QMD_SCHEDULE"),
+    ("release_structure_size_semaphore_four_words", "RELEASE0_STRUCTURE_SIZE_SEMAPHORE_FOUR_WORDS",
+     "RELEASE_STRUCTURE_SIZE_SEMAPHORE_FOUR_WORDS"),
+    ("release_membar_type_fe_none", "RELEASE0_MEMBAR_TYPE_FE_NONE", "RELEASE_MEMBAR_TYPE_FE_NONE"),
+    ("release_structure_size_semaphore_two_words", "RELEASE0_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS",
+     "RELEASE_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS"),
+]
+# The fields only one version has.
+OPTIONAL = {"qmd_type", "sm_global_caching_enable"}
+# The shifts the encoder applies to its values: (OCaml name, the field each
+# version names it by).
+QMD_SHIFTS = [
+    ("program_address_shift", "PROGRAM_ADDRESS_LOWER", "PROGRAM_ADDRESS_LOWER_SHIFTED4"),
+    ("constant_buffer_addr_shift", "CONSTANT_BUFFER_ADDR_LOWER(i)", "CONSTANT_BUFFER_ADDR_LOWER_SHIFTED6(i)"),
+    ("shader_local_memory_shift", "SHADER_LOCAL_MEMORY_HIGH_SIZE", "SHADER_LOCAL_MEMORY_HIGH_SIZE_SHIFTED4"),
+    ("shared_memory_shift", "SHARED_MEMORY_SIZE", "SHARED_MEMORY_SIZE_SHIFTED7"),
+]
+
+
+# The excerpts
+
+def key(name, url):
+    """The excerpt [name] of [url], as its path under headers/."""
+    return f"{origin(url)}/{name}"
+
+
+def excerpt_sources():
+    """{excerpt: URL} of every excerpt, one of each file, and of the files
+    kept whole."""
+    out = {}
+    named = [(h, u) for d in LIBRARIES for r in RELEASES for h, u in d.headers(r).items()]
+    named += [*PCI_SOURCES.items(), *WHOLE.items(), *ABI_SOURCES.items()]
+    for h, url in named:
+        k = key(h, url)
+        if out.setdefault(k, url) != url:
+            sys.exit(f"{k} is cut from both {out[k]} and {url}")
+    if len(set(out.values())) != len(out):
+        sys.exit("a file has two excerpts")
+    return out
+
+
+SOURCES = excerpt_sources()
 
 
 # C headers
@@ -1111,41 +1336,11 @@ class Model:
                 keep.setdefault(it.header, {})[it.start] = it
         return keep
 
-
-def licence(text):
-    """The file's first comment, its licence notice."""
-    end = text.index("*/") + 2
-    return text[:end] + "\n"
-
-
-def cut(text, spans):
-    """The excerpt of [text]: its licence notice and the spans [spans], in
-    order, a span that starts inside the one before it left out."""
-    body = []
-    for s, e in sorted(spans):
-        if body and s < body[-1][1]:
-            continue
-        body.append((s, e))
-    return licence(text) + "\n" + "\n\n".join(text[s:e] for s, e in body) + "\n"
-
-
-def download(url, cache, pins, pin):
-    path = cache / hashlib.sha256(url.encode()).hexdigest()[:16]
-    if not path.exists():
-        cache.mkdir(parents=True, exist_ok=True)
-        # git.kernel.org refuses urllib's default User-Agent.
-        req = urllib.request.Request(url, headers={"User-Agent": "raven-gen"})
-        with urllib.request.urlopen(req, timeout=300) as r:
-            path.write_bytes(r.read())
-    data = path.read_bytes()
-    digest = hashlib.sha256(data).hexdigest()
-    if url not in pins:
-        if not pin:
-            sys.exit(f"{url} is not pinned; run with --pin to record {digest}")
-        pins[url] = digest
-    if pins[url] != digest:
-        sys.exit(f"{url}: SHA-256 {digest}, pinned {pins[url]}")
-    return data
+    def spans(self, names):
+        """The spans of the definitions [names] need, by header, with the
+        pragmas that pack them."""
+        return {h: {(it.start, it.end) for it in its.values()} | {(p.start, p.end) for p in self.pragmas.get(h, [])}
+                for h, its in self.closure(names).items()}
 
 
 def table_names(model, header, pattern):
@@ -1156,37 +1351,85 @@ def table_names(model, header, pattern):
             and re.fullmatch(r"\(?\s*(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\s*\)?", it.body)}
 
 
-# Excerpts of rig_nv and rig_nv_nvidia
+def table(model, header, pattern):
+    """The entries (value, name) of [header]'s table of the defines [pattern]
+    matches, by value."""
+    return tuple(sorted((model.value(n), re.fullmatch(pattern, n).group(1))
+                        for n in table_names(model, header, pattern)))
 
 
-def wanted(d, model):
-    names = set(d.constants) | set(d.fields) | set(d.structs)
-    for _, h, pattern in d.tables:
-        names |= table_names(model, h, pattern)
-    return names
+def notice(name, text):
+    """The file's first comment, its licence notice, which must be the MIT
+    licence."""
+    end = text.index("*/") + 2
+    if not re.search(r"Permission is hereby granted|SPDX-License-Identifier: MIT\b", text[:end]):
+        sys.exit(f"{name}: its notice is not the MIT licence")
+    return text[:end] + "\n"
 
 
-def excerpts(d, texts):
-    """The excerpts of one release's headers [texts] for [d]: the
-    definitions read from each, with those they need, and the status lines
-    of STATUS_HEADER when [d] reads statuses."""
-    model = Model(texts)
-    keep = model.closure(wanted(d, model))
-    statuses = STATUS_HEADER if d.statuses else None
+def cut(name, text, spans):
+    """The excerpt [name] of [text]: its licence notice, its URL and the
+    spans [spans], in order, a span that starts inside the one before it left
+    out."""
+    body = []
+    for s, e in sorted(spans):
+        if body and s < body[-1][1]:
+            continue
+        body.append((s, e))
+    return (notice(name, text) + f"\n/* Excerpt of {SOURCES[name]}. */\n\n"
+            + "\n\n".join(text[s:e] for s, e in body) + "\n")
+
+
+def whole(url, text):
+    """[text], kept whole, under a notice if it carries none: the repository's
+    COPYING licenses each of its files that notes nothing else under the MIT
+    licence."""
+    if "Permission is hereby granted" in text:
+        return text
+    return (f"/*\n * Copied whole from\n * {url},\n"
+            " * which carries no notice. The repository's COPYING: \"Except where noted\n"
+            " * otherwise, the individual files within this package are licensed as MIT:\"\n *\n"
+            " * Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n *\n"
+            + "".join(f" * {l}".rstrip() + "\n" for l in MIT.splitlines()) + " */\n\n" + text)
+
+
+def release_texts(d, r, texts, every=False):
+    """{header: text} of library [d]'s headers in release [r] among [texts],
+    by excerpt; [every] fails on a missing one."""
     out = {}
-    for h in texts:
-        if h not in keep and h != statuses:
-            sys.exit(f"{h}: nothing read from it")
-        spans = [(it.start, it.end) for it in keep.get(h, {}).values()]
-        if h == statuses:
-            lines = active(blank(texts[h]))
-            spans += [(m.start(), m.end()) for m in STATUS.finditer(texts[h])
-                      if lines[texts[h].count("\n", 0, m.start())]]
-        out[h] = cut(texts[h], spans)
+    for h, url in d.headers(r).items():
+        k = key(h, url)
+        if k in texts:
+            out[h] = texts[k]
+        elif every:
+            sys.exit(f"{k}: no excerpt")
     return out
 
 
-# Excerpts of rig_nv_pci
+def release_spans(d, r, texts):
+    """{header: spans} of release [r]'s [texts] that library [d] reads: all of
+    it from the newest release, only what differs between releases from an
+    older one; and the status lines of STATUS_HEADER when [d] reads statuses."""
+    model = Model(texts)
+    if r == NEWEST:
+        names = set(d.constants) | set(d.fields) | set(d.structs)
+        tables = d.tables
+    else:
+        names = set(d.per_release)
+        tables = [t for t in d.tables if t[0] in d.tables_per_release]
+    for _, h, pattern in tables:
+        names |= table_names(model, h, pattern)
+    spans = model.spans(names)
+    if d.statuses:
+        lines = active(blank(texts[STATUS_HEADER]))
+        spans.setdefault(STATUS_HEADER, set()).update(
+            (m.start(), m.end()) for m in STATUS.finditer(texts[STATUS_HEADER])
+            if lines[texts[STATUS_HEADER].count("\n", 0, m.start())])
+    if r == NEWEST:
+        bare = [h for h in texts if h not in spans]
+        if bare:
+            sys.exit(f"{bare}: nothing read from them")
+    return spans
 
 
 def register_names(model, regs):
@@ -1232,9 +1475,8 @@ def family_wanted(family):
     return names
 
 
-def pci_excerpts(texts):
-    """The excerpts of the files [texts]: the definitions read from each,
-    with those they need, and the pragmas that pack them. Each family's
+def pci_spans(texts):
+    """{file: spans} of the files [texts] that rig_nv_pci reads. Each family's
     register headers are read as that family reads them, the first that
     defines a name giving it."""
     others = [h for h in PCI_SOURCES if h not in REGISTER_SOURCES]
@@ -1242,28 +1484,66 @@ def pci_excerpts(texts):
     keep = {}
     for hs, want in groups:
         model = Model({h: texts[h] for h in hs})
-        for h, its in model.closure(want(model)).items():
-            keep.setdefault(h, {}).update(its)
-            keep[h].update({p.start: p for p in model.pragmas.get(h, [])})
+        for h, spans in model.spans(want(model)).items():
+            keep.setdefault(h, set()).update(spans)
+    bare = [h for h in PCI_SOURCES if h not in keep]
+    if bare:
+        sys.exit(f"{bare}: nothing read from them")
+    return keep
+
+
+def abi_wanted():
+    """The names read from each header of rig_nv_abi, by header, an indexed
+    name without its (i)."""
+    w = {h: set() for h in ABI_SOURCES}
+    for h, n in CLASS_IDS:
+        w[h].add(n)
+    w[HOST] |= set(HOST_CONSTANTS + HOST_FIELDS)
+    w[COMPUTE] |= set(COMPUTE_CONSTANTS + COMPUTE_FIELDS)
+    w[COPY] |= set(COPY_CONSTANTS + COPY_FIELDS)
+    w[LATER_COPY] |= {later(n) for n in COPY_CONSTANTS + COPY_FIELDS}
+    for h, names in RUNS:
+        w[h] |= set(names)
+        if h == COPY:
+            w[LATER_COPY] |= {later(n) for n in names}
+    for v, (h, prefix, _) in enumerate(QMD):
+        w[h] |= {f"{prefix}_{n}" for n in qmd_names(v)}
+        if v == 0:
+            w[QMD_SAME[0]] |= {f"{QMD_SAME[1]}_{n}" for n in qmd_names(v)}
+    return {h: {n.removesuffix("(i)") for n in names} for h, names in w.items()}
+
+
+def abi_spans(texts):
+    """{header: spans} of the headers [texts] that rig_nv_abi reads, with the
+    field that ends each launch descriptor."""
     out = {}
-    for h in PCI_SOURCES:
-        if h not in keep:
-            sys.exit(f"{h}: nothing read from it")
-        out[h] = cut(texts[h], [(it.start, it.end) for it in keep[h].values()])
+    for h, names in abi_wanted().items():
+        model = Model({h: texts[h]})
+        for q, prefix, _ in QMD + [(*QMD_SAME, 3)]:
+            if q == h:
+                names = names | {last_field(model, prefix)}
+        out.update(model.spans(names))
     return out
 
 
-def whole(url, text):
-    """[text], kept whole, under a notice if it carries none: the repository's
-    COPYING licenses each of its files that notes nothing else under the MIT
-    licence."""
-    if "Permission is hereby granted" in text:
-        return text
-    return (f"/*\n * Copied whole from\n * {url},\n"
-            " * which carries no notice. The repository's COPYING: \"Except where noted\n"
-            " * otherwise, the individual files within this package are licensed as MIT:\"\n *\n"
-            " * Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n *\n"
-            + "".join(f" * {l}".rstrip() + "\n" for l in MIT.splitlines()) + " */\n\n" + text)
+def excerpts(texts):
+    """{excerpt: text} of the upstream files [texts], by excerpt: one of each
+    file, holding what every library reads of it."""
+    spans = {}
+
+    def add(found, urls):
+        for h, s in found.items():
+            spans.setdefault(key(h, urls[h]), set()).update(s)
+
+    for d in LIBRARIES:
+        for r in RELEASES:
+            urls = d.headers(r)
+            add(release_spans(d, r, release_texts(d, r, texts, every=True)), urls)
+    add(pci_spans({h: texts[key(h, u)] for h, u in PCI_SOURCES.items()}), PCI_SOURCES)
+    add(abi_spans({h: texts[key(h, u)] for h, u in ABI_SOURCES.items()}), ABI_SOURCES)
+    out = {k: cut(k, texts[k], s) for k, s in spans.items()}
+    out.update({key(h, u): whole(u, texts[key(h, u)]) for h, u in WHOLE.items()})
+    return out
 
 
 # Generation
@@ -1325,14 +1605,13 @@ def joined(items):
     return out
 
 
-def header(out, headers, texts, credit):
+def header(out, texts, credit):
     """The comment that opens the file [out]: the script that generates it,
-    the excerpts in [headers] it reads, [credit], and the owners the files
-    [texts] name."""
+    [credit], and the owners the notices of the files [texts] name."""
     owners = sorted({m.group(1).strip() for t in texts
-                     for m in re.finditer(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t, re.I)})
+                     for m in re.finditer(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t[:t.index("*/")], re.I)})
     script = os.path.relpath(HERE / "gen.py", out.parent)
-    excerpts = os.path.relpath(headers, out.parent)
+    excerpts = os.path.relpath(HEADERS, out.parent)
     notice = "\n".join(f"   {l}".rstrip() for l in MIT.splitlines())
     return (
         "(*---------------------------------------------------------------------------\n"
@@ -1365,65 +1644,84 @@ def struct(d, model, cname, where):
     return size, out
 
 
-def generate(d):
-    models = {r: Model({h: (HEADERS / d.name / str(r) / h).read_text(encoding="latin-1") for h in d.headers(r)})
-              for r in RELEASES}
-    out = []
+def release_tables(d, models):
+    """{name: {release: entries}} of [d]'s tables that differ between
+    releases, and the statuses, from each release's [models]."""
+    tables = {name: {r: table(m, h, pattern) for r, m in models.items()}
+              for name, h, pattern in d.tables if name in d.tables_per_release}
+    if d.statuses:
+        tables["statuses"] = {r: tuple((int(v, 16), n) for n, v in STATUS.findall(m.texts[STATUS_HEADER]))
+                              for r, m in models.items()}
+    return tables
 
+
+def check_releases(d, models):
+    """Fails unless what [d]'s defs.ml takes once is the same in every
+    release's whole [models], and the structs and tables that differ between
+    them are exactly those it takes per release."""
     def same(what, values):
         if len(set(values.values())) != 1:
             sys.exit(f"{what} differs between releases: {values}")
-        return values[min(RELEASES)]
 
+    for c in d.constants:
+        same(c, {r: m.value(c) for r, m in models.items()})
+    if d.statuses:
+        for name in d.statuses:
+            same(name, {r: int(dict(STATUS.findall(m.texts[STATUS_HEADER]))[name], 16) for r, m in models.items()})
+    for f in d.fields:
+        same(f, {r: m.bits(f) for r, m in models.items()})
+    layouts = {c: {r: repr(struct(d, m, c, r)) for r, m in models.items()} for c in d.structs}
+    differ = {c for c, per in layouts.items() if len(set(per.values())) != 1}
+    if differ != d.per_release:
+        sys.exit(f"the structs that differ between releases are {sorted(differ)}, not {sorted(d.per_release)}")
+    tables = {name: {r: table(m, h, pattern) for r, m in models.items()} for name, h, pattern in d.tables}
+    differ = {name for name, per in tables.items() if len(set(per.values())) != 1}
+    if differ != d.tables_per_release:
+        sys.exit(f"the tables that differ between releases are {sorted(differ)}, "
+                 f"not {sorted(d.tables_per_release)}")
+
+
+def generate(d, texts):
+    """[d]'s defs.ml, from [texts] by excerpt: what it takes once from the
+    newest release, what differs from each release."""
+    models = {r: Model(release_texts(d, r, texts, every=r == NEWEST)) for r in RELEASES}
+    newest = models[NEWEST]
+    out = []
     out.append("(* The releases whose layouts are below: "
                + ", ".join(v for _, v in RELEASES.values()) + ". *)")
     out.append("let releases = [ " + "; ".join(str(r) for r in RELEASES) + " ]")
     out.append("")
     out.append("(* Constants, the same in every release. *)")
     for c in d.constants:
-        v = same(c, {r: m.value(c) for r, m in models.items()})
-        out.append(f"let {snake(c)} = {ml_int(v)}")
+        out.append(f"let {snake(c)} = {ml_int(newest.value(c))}")
     out.append("")
     if d.statuses:
-        statuses = {r: tuple((int(v, 16), n) for n, v in STATUS.findall(m.texts[STATUS_HEADER]))
-                    for r, m in models.items()}
+        named = dict(STATUS.findall(newest.texts[STATUS_HEADER]))
         out.append("(* Statuses, the same in every release. *)")
         for name in d.statuses:
-            v = same(name, {r: dict((n, v) for v, n in st)[name] for r, st in statuses.items()})
-            out.append(f"let {snake(name)} = {ml_int(v)}")
+            out.append(f"let {snake(name)} = {ml_int(int(named[name], 16))}")
         out.append("")
     out.append("(* Bit fields of their words: (lowest bit, bits). *)")
     for f in d.fields:
-        v = same(f, {r: m.bits(f) for r, m in models.items()})
-        out.append(f"let {snake(f)} = {ml_tuple(v)}")
+        out.append(f"let {snake(f)} = {ml_tuple(newest.bits(f))}")
     out.append("")
 
-    layouts = {c: {r: struct(d, m, c, r) for r, m in models.items()} for c in d.structs}
-    differ = {c for c, per in layouts.items() if len({repr(v) for v in per.values()}) != 1}
-    if differ != d.per_release:
-        sys.exit(f"the structs that differ between releases are {sorted(differ)}, not {sorted(d.per_release)}")
     out.append("(* Structs: each field is (byte offset, bytes), an array's (offset, bytes")
     out.append("   of an element, elements). *)")
     for c, (module, _) in d.structs.items():
         if c not in d.per_release:
-            emit_struct(out, module, layouts[c][min(RELEASES)])
+            emit_struct(out, module, struct(d, newest, c, NEWEST))
             out.append("")
-
-    tables = {name: {r: tuple(sorted((m.value(n), re.fullmatch(pattern, n).group(1))
-                                     for n in table_names(m, h, pattern))) for r, m in models.items()}
-              for name, h, pattern in d.tables}
-    differ = {name for name, per in tables.items() if len(set(per.values())) != 1}
-    if differ != d.tables_per_release:
-        sys.exit(f"the tables that differ between releases are {sorted(differ)}, "
-                 f"not {sorted(d.tables_per_release)}")
-    for name, h, _ in d.tables:
+    for name, h, pattern in d.tables:
         if name not in d.tables_per_release:
             out.append(f"(* {h}'s {name.replace('_', ' ')}, by value. *)")
-            emit_table(out, name, tables[name][min(RELEASES)])
+            emit_table(out, name, table(newest, h, pattern))
             out.append("")
 
     # The signature and each release's module: one item per struct and
     # table that differs, a blank line between two.
+    layouts = {c: {r: struct(d, m, c, r) for r, m in models.items()} for c in d.per_release}
+    tables = release_tables(d, models)
     sig = []
     for c, (module, _) in d.structs.items():
         if c in d.per_release:
@@ -1450,14 +1748,9 @@ def generate(d):
                 item = []
                 emit_struct(item, module, layouts[c][r], indent="  ")
                 body.append(item)
-        for name, _, _ in d.tables:
-            if name in d.tables_per_release:
-                item = []
-                emit_table(item, name, tables[name][r], indent="  ")
-                body.append(item)
-        if d.statuses:
+        for name in tables:
             item = []
-            emit_table(item, "statuses", statuses[r], indent="  ")
+            emit_table(item, name, tables[name][r], indent="  ")
             body.append(item)
         out.append(f"module R{r} : RELEASE = struct")
         out += joined(body)
@@ -1468,8 +1761,8 @@ def generate(d):
     for r in RELEASES:
         out.append(f"  | {r} -> Some (module R{r} : RELEASE)")
     out.append("  | _ -> None")
-    texts = [t for m in models.values() for t in m.texts.values()]
-    return header(d.out, HEADERS / d.name, texts, NVIDIA_CREDIT) + "\n".join(out) + "\n"
+    read = [t for m in models.values() for t in m.texts.values()]
+    return header(d.out, read, NVIDIA_CREDIT) + "\n".join(out) + "\n"
 
 
 # Registers
@@ -1559,8 +1852,9 @@ def rpc_numbers(text):
     return functions, events
 
 
-def pci_texts():
-    return {h: (PCI_HEADERS / h).read_text(encoding="latin-1") for h in list(PCI_SOURCES) + list(WHOLE)}
+def pci_texts(texts):
+    """{file: text} of rig_nv_pci's files among [texts], by excerpt."""
+    return {h: texts[key(h, u)] for h, u in [*PCI_SOURCES.items(), *WHOLE.items()]}
 
 
 def pci_model(texts):
@@ -1598,16 +1892,15 @@ def emit_gsp(out, model, texts, constants, fields, functions, events, structs):
         out.append("")
 
 
-def generate_gsp():
-    texts = pci_texts()
+def generate_gsp(texts):
+    texts = pci_texts(texts)
     model = pci_model(texts)
     out = []
     emit_gsp(out, model, texts, GSP_CONSTANTS, GSP_FIELDS, GSP_FUNCTIONS, GSP_EVENTS, GSP_STRUCTS)
 
     for name, h, pattern in GSP_TABLES:
-        entries = sorted((model.value(n), re.fullmatch(pattern, n).group(1)) for n in table_names(model, h, pattern))
         out.append(f"(* {h}'s {name.replace('_', ' ')}, by value. *)")
-        emit_table(out, name, entries)
+        emit_table(out, name, table(model, h, pattern))
         out.append("")
 
     out.append("(* Page-table entries: fields as (lowest bit, bits) of the entry, which is")
@@ -1620,11 +1913,12 @@ def generate_gsp():
         for v in values:
             out.append(f"let {snake(prefix + '_' + v)} = {ml_int(model.value(prefix + '_' + v))}")
     read = [texts[h] for h in model.closure(gsp_wanted(model))] + [texts["rpc_global_enums.h"]]
-    return header(GSP_OUT, PCI_HEADERS, read, NVIDIA_CREDIT) + "\n".join(out) + "\n"
+    return header(GSP_OUT, read, NVIDIA_CREDIT) + "\n".join(out) + "\n"
 
 
-def generate_pci():
-    texts = pci_texts()
+def generate_pci(texts):
+    firmware = texts[FIRMWARE_LIST]
+    texts = pci_texts(texts)
     model = pci_model(texts)
     out = []
     emit_gsp(out, model, texts, PCI_CONSTANTS, PCI_FIELDS, PCI_FUNCTIONS, PCI_EVENTS, PCI_STRUCTS)
@@ -1670,11 +1964,11 @@ def generate_pci():
         out.append("")
 
     digests = {}
-    for row in FIRMWARE_LIST.read_text().splitlines():
+    for row in firmware.splitlines():
         if row.startswith("#"):
             continue
         path, digest, url = row.split("\t")
-        if url != ORIGIN + path:
+        if url != FIRMWARE_ORIGIN + path:
             sys.exit(f"{path}: URL {url} is not in the pinned tree")
         digests[path] = digest
     want = {p for ps in FIRMWARE.values() for p in ps}
@@ -1689,7 +1983,203 @@ def generate_pci():
     for p in sorted({p for ps in FIRMWARE.values() for p in ps}):
         out.append(f"  ({json.dumps(p)}, {json.dumps(digests[p])});")
     out.append("]")
-    return header(PCI_OUT, PCI_HEADERS, texts.values(), PCI_CREDIT) + "\n".join(out) + "\n"
+    return header(PCI_OUT, texts.values(), PCI_CREDIT) + "\n".join(out) + "\n"
+
+
+# Classes and launch descriptors
+
+
+def later(name):
+    return name.replace("NVC7B5_", "NVC9B5_")
+
+
+def qmd_names(v):
+    """The names version [v] (0 for 3, 1 for 5) reads, without its prefix."""
+    names = [f[1 + v] for f in QMD_FIELDS + QMD_BANK_FIELDS + QMD_VALUES if f[1 + v]]
+    for f in QMD_RELEASE_FIELDS:
+        names += [f[1 + v].format(k=k) for k in range(QMD_RELEASES)]
+    return names
+
+
+def mw(body, i=None):
+    """A descriptor field "MW(hi:lo)", whose bounds may use i, as (lowest bit, bits)."""
+    m = re.fullmatch(r"MW\((.+):(.+)\)", body.replace(" ", ""))
+    if not m or not re.fullmatch(r"[\d()+*i]+", m.group(1) + m.group(2)):
+        sys.exit(f"not a descriptor field: {body}")
+    env = {"__builtins__": {}, "i": i}
+    hi, lo = eval(m.group(1), env), eval(m.group(2), env)
+    return (lo, hi - lo + 1)
+
+
+def shift(name):
+    m = re.search(r"_SHIFTED(\d+)(\(i\))?$", name)
+    return int(m.group(1)) if m else 0
+
+
+def last_field(model, prefix):
+    """The name of [prefix]'s field that ends last, which sets the descriptor's size."""
+    fields = [(mw(it.body)[0] + mw(it.body)[1], n) for n, it in model.where.items()
+              if n.startswith(prefix + "_") and it.kind == "define" and it.params is None
+              and it.body.startswith("MW(")]
+    return max(fields)[1]
+
+
+def ml_field(f):
+    return f"{{ lo = {ml_int(f[0])}; bits = {ml_int(f[1])} }}"
+
+
+def ml_option(f):
+    return f"Some {ml_field(f)}" if f else "None"
+
+
+def generate_abi(texts):
+    texts = {h: texts[key(h, u)] for h, u in ABI_SOURCES.items()}
+    models = {h: Model({h: t}) for h, t in texts.items()}
+
+    def body(h, n):
+        """The body of [h]'s macro [n], an indexed one named with its (i)."""
+        return models[h].item(n.removesuffix("(i)")).body
+
+    out = []
+
+    def let(name, value):
+        out.append(f"let {name.lower()} = {value}")
+
+    out.append(qmd_types())
+    out.append("\n(* Classes *)\n")
+    for h, n in CLASS_IDS:
+        let(n, ml_int(models[h].value(n)))
+
+    for h, names in RUNS:
+        first = models[h].value(names[0])
+        for k, n in enumerate(names):
+            if models[h].value(n) != first + 4 * k:
+                sys.exit(f"{h}: {n} does not follow {names[k - 1]}")
+
+    for name in COPY_CONSTANTS + COPY_FIELDS + [n for h, ns in RUNS if h == COPY for n in ns]:
+        if body(COPY, name) != body(LATER_COPY, later(name)):
+            sys.exit(f"{name} differs in {LATER_COPY}")
+
+    sections = [("Host methods (clc56f.h)", HOST, HOST_CONSTANTS, HOST_FIELDS),
+                ("Compute methods (clc7c0.h)", COMPUTE, COMPUTE_CONSTANTS, COMPUTE_FIELDS),
+                ("Copy methods (clc7b5.h)", COPY, COPY_CONSTANTS, COPY_FIELDS)]
+    for title, h, constants, fields in sections:
+        out.append(f"\n(* {title} *)\n")
+        for n in constants:
+            let(n, ml_int(models[h].value(n)))
+        for n in fields:
+            let(n, ml_field(models[h].bits(n)))
+
+    out.append("\n(* Launch descriptors *)\n")
+    same_h, same_prefix = QMD_SAME
+    for n in qmd_names(0):
+        if body(QMD[0][0], f"{QMD[0][1]}_{n}") != body(same_h, f"{same_prefix}_{n}"):
+            sys.exit(f"{n} differs in {same_h}")
+    for name, *versions in QMD_VALUES:
+        values = {models[h].value(f"{prefix}_{n}") for (h, prefix, _), n in zip(QMD, versions) if n}
+        if len(values) != 1:
+            sys.exit(f"{name} differs between versions")
+        let(name, ml_int(values.pop()))
+    for v, (h, prefix, version) in enumerate(QMD):
+
+        def field(n, i=None):
+            return mw(body(h, f"{prefix}_{n}"), i)
+
+        last = last_field(models[h], prefix)
+        size = field(last[len(prefix) + 1:])
+        out.append("")
+        out.append(f"(* Version {version}, {prefix} ({h}). *)")
+        out.append(f"let qmd_v{version} =")
+        out.append("  {")
+        out.append(f"    version = {version};")
+        out.append(f"    bytes = {ml_int((size[0] + size[1]) // 8)};")
+        for name, *names in QMD_FIELDS:
+            n = names[v]
+            if name in OPTIONAL:
+                out.append(f"    {name} = {ml_option(field(n) if n else None)};")
+            else:
+                out.append(f"    {name} = {ml_field(field(n))};")
+        for name, *names in QMD_BANK_FIELDS:
+            n = names[v]
+            first, second = field(n, 0), field(n, 1)
+            out.append(f"    {name} = {{ first = {ml_field(first)}; stride = {second[0] - first[0]} }};")
+        for name, *names in QMD_SHIFTS:
+            out.append(f"    {name} = {shift(names[v])};")
+        out.append("    releases =")
+        for k in range(QMD_RELEASES):
+            out.append(f"      {'(' if k == 0 else ','} {{")
+            for f, *names in QMD_RELEASE_FIELDS:
+                out.append(f"          {f} = {ml_field(field(names[v].format(k=k), k))};")
+            out.append("        }")
+        out.append("      );")
+        out.append("  }")
+    return header(ABI_OUT, texts.values(), NVIDIA_CREDIT) + "\n".join(out) + "\n"
+
+
+def qmd_types():
+    fields = ["  version : int;", "  bytes : int;"]
+    for name, *_ in QMD_FIELDS:
+        fields.append(f"  {name} : field{' option' if name in OPTIONAL else ''};")
+    fields += [f"  {name} : banked;" for name, *_ in QMD_BANK_FIELDS]
+    fields += [f"  {name} : int;" for name, *_ in QMD_SHIFTS]
+    fields.append("  releases : release * release;")
+    release = "\n".join(f"  {f} : field;" for f, *_ in QMD_RELEASE_FIELDS)
+    return (
+        "(* A bit field of a word or a descriptor: its lowest bit and its bits. *)\n"
+        "type field = { lo : int; bits : int }\n\n"
+        "(* A field for each constant bank: bank i's starts [i * stride] bits after\n"
+        "   bank 0's. *)\n"
+        "type banked = { first : field; stride : int }\n\n"
+        "(* The fields of a descriptor's release. *)\n"
+        f"type release = {{\n{release}\n}}\n\n"
+        "(* A descriptor version's layout, by NVIDIA's names of its fields. Where the\n"
+        "   versions' names differ by a suffix _SHIFTEDn, which says the field holds\n"
+        "   its value shifted right by n, the name drops it and a [_shift] holds n. A\n"
+        "   field the version lacks is [None]. [bytes] is the descriptor's size, the\n"
+        "   end of its last field. *)\n"
+        "type qmd = {\n" + "\n".join(fields) + "\n}"
+    )
+
+
+def body(text):
+    """[text], a generated file, without its opening comment."""
+    return text.split(" *)\n\n", 1)[1]
+
+
+def generate_all(texts):
+    """{file: text} of every defs.ml, from [texts] by excerpt."""
+    files = {d.out: generate(d, texts) for d in LIBRARIES}
+    files[PCI_OUT] = generate_pci(texts)
+    files[GSP_OUT] = generate_gsp(texts)
+    files[ABI_OUT] = generate_abi(texts)
+    return files
+
+
+def firmware(get):
+    """firmware.tsv: each image's path, BLAKE2b-256 digest and URL."""
+    rows = ["# path\tBLAKE2b-256\tURL, of linux-firmware at " + FIRMWARE_COMMIT]
+    for p in sorted({p for ps in FIRMWARE.values() for p in ps}):
+        rows.append(f"{p}\t{hashlib.blake2b(get(FIRMWARE_ORIGIN + p), digest_size=32).hexdigest()}\t{FIRMWARE_ORIGIN + p}")
+    return "\n".join(rows) + "\n"
+
+
+def download(url, cache, pins, pin):
+    path = cache / hashlib.sha256(url.encode()).hexdigest()[:16]
+    if not path.exists():
+        cache.mkdir(parents=True, exist_ok=True)
+        # git.kernel.org refuses urllib's default User-Agent.
+        req = urllib.request.Request(url, headers={"User-Agent": "raven-gen"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            path.write_bytes(r.read())
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if url not in pins:
+        if not pin:
+            sys.exit(f"{url} is not pinned; run with --pin to record {digest}")
+        pins[url] = digest
+    if pins[url] != digest:
+        sys.exit(f"{url}: SHA-256 {digest}, pinned {pins[url]}")
+    return data
 
 
 def main():
@@ -1702,31 +2192,37 @@ def main():
     if a.excerpt:
         pins = json.loads(PINS.read_text()) if PINS.exists() else {}
         get = lambda url: download(url, a.cache, pins, a.pin)  # noqa: E731
-        files = {}
+        texts = {k: get(url).decode("latin-1") for k, url in SOURCES.items()}
         for d in LIBRARIES:
-            for r, (ref, _) in RELEASES.items():
-                texts = {h: get(KERNEL + ref + "/" + d.sources[h]).decode("latin-1") for h in d.headers(r)}
-                files.update({HEADERS / d.name / str(r) / h: t for h, t in excerpts(d, texts).items()})
-        texts = {h: get(url).decode("latin-1") for h, url in PCI_SOURCES.items()}
-        files.update({PCI_HEADERS / h: t for h, t in pci_excerpts(texts).items()})
-        files.update({PCI_HEADERS / h: whole(url, get(url).decode("latin-1")) for h, url in WHOLE.items()})
-        images = sorted({p for ps in FIRMWARE.values() for p in ps})
-        rows = ["# path\tBLAKE2b-256\tURL, of linux-firmware at " + FIRMWARE_COMMIT]
-        for p in images:
-            rows.append(f"{p}\t{hashlib.blake2b(get(ORIGIN + p), digest_size=32).hexdigest()}\t{ORIGIN + p}")
-        files[FIRMWARE_LIST] = "\n".join(rows) + "\n"
+            check_releases(d, {r: Model(release_texts(d, r, texts, every=True)) for r in RELEASES})
+        made = excerpts(texts)
+        made[FIRMWARE_LIST] = firmware(get)
+        whole_files = {key(h, u): made[key(h, u)] for h, u in WHOLE.items()}
+        upstream = generate_all({**texts, **whole_files, FIRMWARE_LIST: made[FIRMWARE_LIST]})
+        for f, text in generate_all(made).items():
+            if body(text) != body(upstream[f]):
+                sys.exit(f"{f.relative_to(LIB)}: the excerpts generate other tables than the files they are cut from")
+        files = {HEADERS / k: t for k, t in made.items()}
+        urls = set(SOURCES.values()) | {FIRMWARE_ORIGIN + p for ps in FIRMWARE.values() for p in ps}
         if a.pin:
-            files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
+            files[PINS] = json.dumps({u: d for u, d in sorted(pins.items()) if u in urls}, indent=1) + "\n"
     else:
-        files = {d.out: generate(d) for d in LIBRARIES}
-        files[PCI_OUT] = generate_pci()
-        files[GSP_OUT] = generate_gsp()
+        texts = {k: (HEADERS / k).read_text(encoding="latin-1") for k in [*SOURCES, FIRMWARE_LIST]
+                 if (HEADERS / k).exists()}
+        files = generate_all(texts)
     stale = [f for f, text in files.items() if not f.exists() or f.read_text(encoding="latin-1") != text]
+    # An excerpt no source names any more.
+    if a.excerpt:
+        stale += [f for f in HEADERS.rglob("*") if f.is_file() and f not in files]
     if a.check:
         if stale:
             sys.exit("stale: " + ", ".join(str(f.relative_to(LIB)) for f in stale))
+        print("up to date")
         return
     for f in stale:
+        if f not in files:
+            f.unlink()
+            continue
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(files[f], encoding="latin-1")
 

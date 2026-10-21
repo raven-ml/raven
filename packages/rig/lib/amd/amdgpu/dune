@@ -8,5 +8,5 @@
  (foreign_stubs
   (language c)
   (extra_deps
-   (glob_files gen/headers/*.h))
+   (glob_files ../gen/headers/kernel/*.h))
   (names rig_amd_amdgpu_stubs)))

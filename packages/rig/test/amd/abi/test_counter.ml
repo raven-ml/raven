@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Counters of rocprofiler's counter_defs.yaml (gen/headers/counter_defs.yaml)
-   and the layout of a run's samples, as counter.mli states it. *)
+(* Counters of rocprofiler's counter_defs.yaml
+   (lib/amd/gen/headers/rocm/counter_defs.yaml) and the layout of a run's
+   samples, as counter.mli states it. *)
 
 open Windtrap
 open Rig_amd_abi
