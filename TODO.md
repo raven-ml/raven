@@ -64,11 +64,7 @@ raven / llama.cpp (Vulkan; ROCm):
   library on a host with the driver; NV's `entry` `No_memory`, which a
   kernel whose local memory outgrows the GPU's forces
   (_plans/rig-release/failure-paths.md)
-- fudge, NV's channel growth: test_nv's "channels" group, joined_parts and
-  join_alternation, which cross the join words' 32-bit carry; and the
-  largest channel ring the RM accepts (rings of 2^20, 2^24 and 2^31
-  entries): `ENTRIES_MAX` and rig_nv.mli's RIG_NEVER bound become the
-  RM's cap if it is below 2^31; re-record rig_nv's bench after both
+- fudge: re-record rig_nv's bench since NV's channel growth
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
   whose only Linux rows are kimchi's; the vendor comparison

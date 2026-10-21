@@ -37,6 +37,16 @@ A driver that keeps its segments in a ring closes the open segment into its
 entry whenever its write position returns to the ring's start, also when the
 last command ended exactly at the ring's end, and opens a new segment there.
 
+### A channel's ring holds up to 2^31 entries
+
+A channel's DMA engine holds the log2 of its GPFIFO's entries in a 5-bit
+field (`LIMIT2`, set from the allocation's `gpFifoEntries`), so a ring holds
+at most 2^31 entries. On the RTX 5000 Ada the RM made channels whose rings
+held 2^20, 2^24 and 2^31 entries, on the copy engine and, at 2^31, on the
+compute engine too, and 300,000 entries and a release then ran on each. A
+ring of 2^31 entries takes 16 GiB of host memory, which the RM made the
+channel over in about 3 s. Run in forked children on fudge, driver 615.
+
 ### CUDA's compiled code reads the launch sizes from constant bank 0
 
 Code that NVCC compiles reads `blockDim` and `gridDim` from the start of
