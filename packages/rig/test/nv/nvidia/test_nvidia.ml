@@ -232,6 +232,37 @@ let reclose () =
       Gc.full_major ();
       Rig.free_cache d)
 
+(* Host memory maps for the GPU past the 39 GiB at once at which the RM's
+   own mappings of it stopped on a GPU of 32 GiB in a machine of 62: one
+   GiB of a shared memory file, mapped once in the host, maps 40 times. *)
+let gib = 1 lsl 30
+let maps = 40
+
+let many_maps () =
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  if not (Sys.file_exists "/dev/shm") then skip ~reason:"no /dev/shm" ();
+  let file = Filename.temp_file ~temp_dir:"/dev/shm" "rig-nv" ".map" in
+  let fd = Unix.openfile file [ O_RDWR ] 0o600 in
+  let m =
+    Fun.protect ~finally:(fun () -> Unix.close fd; Sys.remove file) @@ fun () ->
+    Unix.map_file fd Bigarray.char Bigarray.c_layout true [| gib |]
+  in
+  let m = Bigarray.array1_of_genarray m in
+  Bigarray.Array1.fill m '\001';
+  let a = Rig_gpu_support.Host.data m in
+  let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
+  let rec map i acc =
+    if i = maps then acc
+    else
+      match Rig_nv.map_host g a gib with
+      | Some r -> map (i + 1) (r :: acc)
+      | None -> List.iter (Rig_nv.free g) acc; failf "map %d refused" i
+  in
+  let rs = map 0 [] in
+  List.iter (Rig_nv.free g) rs;
+  Rig_nv.stop g ~fault:None;
+  ignore (Sys.opaque_identity m)
+
 (* An open inside a lock of its thread's, as from a callback inside one,
    raises naming the opener, having opened nothing: GPU 0 then opens. *)
 let inside_lock () =
@@ -302,4 +333,6 @@ let () =
                 mappings each"
                reclose;
            ];
+         group ~timeout:60. "memory"
+           [ test "40 GiB of host memory maps at once" many_maps ];
        ]

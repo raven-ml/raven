@@ -91,18 +91,52 @@ is stopped").
 
 ### A map into an empty region pays for its page tables
 
-On the RTX 5000 Ada, `NV_ESC_RM_MAP_MEMORY_DMA` of a 64 KiB allocation takes
-21.4 µs when nothing else is mapped in its region of the GPU's address space,
-and 8.6 µs with the same parameters when one other allocation lives there.
-Measured per ioctl with an `LD_PRELOAD` counter. We read the difference as the
-RM building the region's page tables at its first map and freeing them at its
-last unmap. A 64 KiB allocation and free took 73.5 µs alone and 46.0 µs beside
-one live 4 KiB allocation.
+On the RTX 5000 Ada, the RM's own map, `NV_ESC_RM_MAP_MEMORY_DMA`, of a
+64 KiB allocation takes 21.4 µs when nothing else is mapped in its region of
+the GPU's address space, and 8.6 µs with the same parameters when one other
+allocation lives there. Measured per ioctl with an `LD_PRELOAD` counter. We
+read the difference as the RM building the region's page tables at its first
+map and freeing them at its last unmap. A 64 KiB allocation and free through
+that map took 73.5 µs alone and 46.0 µs beside one live 4 KiB allocation. No
+path makes that map now (the next note).
 
-A driver that allocates and frees small buffers in an otherwise empty region
-pays this every time. Long-lived memory of the driver in the same region
-keeps the tables; allocation benches hold one live allocation of the kind, as
-a running program does.
+The unified memory driver's map pays less for an empty region. Through it
+alone, a 64 KiB allocation and free of Device memory takes 50.3 µs alone and
+42.1 µs beside one live 4 KiB allocation, and of Pinned or Mapped memory
+46.8 µs and 56.8 µs either way. Measured on fudge, medians of 7 runs of 200,
+in two runs.
+
+A driver that allocates and frees small Device buffers in an otherwise empty
+region pays this every time. Long-lived memory of the driver in the same
+region keeps the tables; allocation benches hold one live allocation of the
+kind, as a running program does.
+
+### The RM's own mappings stop at about 39 GiB a GPU
+
+`NV_ESC_RM_MAP_MEMORY_DMA` maps a memory object into a device's virtual memory
+object (`NV01_MEMORY_VIRTUAL`), in the RM's own page tables. An object made
+with no address space named (`hVASpace` 0) lies in the device's default
+address space, which the RM makes for a device whose client shares it with
+itself (`vaspaceGetByHandleOrDeviceDefault`, `deviceInitClientShare`; read in
+source, open-gpu-kernel-modules 570 and 615). A channel runs in the address
+space its context share names, and rig's name the externally owned
+`FERMI_VASPACE_A` that the unified memory driver registers and fills, so its
+work never reads the default one's mappings. On the RTX 5000 Ada (32 GiB) in a
+machine of 62 GiB, with every map in 4 KiB pages, the RM refuses it with
+`NV_ERR_NO_MEMORY` once about 39.04 GiB is mapped this way for the GPU,
+counting GPU memory and host memory alike, and every process's: 39 maps of 1
+GiB of one shared memory file, 156 of 256 MiB or 2,498 of 16 MiB; 15 GiB of
+host memory beside 24 GiB of GPU memory; 9 GiB in a second process while the
+first held 30 GiB. A map succeeds again once others are freed. The unified
+memory driver's `UVM_MAP_EXTERNAL_ALLOCATION` maps the same objects into the
+channels' address space, from the memory's own description, and with no RM map
+it mapped 160 maps of 1 GiB of one file, and 70 beside 24 GiB of GPU memory.
+CUDA page-locked 61 maps of 1 GiB of one file, beside 24 GiB of its own GPU
+memory or not, then answered `CUDA_ERROR_OUT_OF_MEMORY`. Measured from forked
+children on fudge, driver 615.
+
+The NVIDIA kernel path maps its memory through the unified memory driver
+alone, so no RM map bounds it.
 
 ### Rings in host memory cost less host time than rings in BAR1
 
@@ -693,12 +727,6 @@ nothing else maps there. Device memory lies at addresses the process reserves
 for each allocation wherever it has room. Unified memory maps a range for a
 GPU only in the lower half of the CPU's addresses (`uvm_gpu_can_address`),
 which bounds where the kernel places a mapping without a hint.
-
-On the kernel path of an RTX 5000 Ada with 62 GiB of RAM, the RM refuses
-`NV_ESC_RM_MAP_MEMORY_DMA` with `NV_ERR_NO_MEMORY` once about 39 GiB of host
-memory is mapped for the GPU in 4 KiB pages, however it is split: after 39
-maps of 1 GiB, or 156 of 256 MiB, of one shared memory file. Run on fudge,
-driver 615.
 
 ### x86_64 AddressSanitizer owns 2.25 GiB to 2 TiB
 

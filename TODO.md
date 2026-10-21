@@ -37,11 +37,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### limits and size
 
-- NV address spaces: Device memory in the 49-bit space on the PCI path;
-  find why the RM refuses `NV_ESC_RM_MAP_MEMORY_DMA` (`NV_ERR_NO_MEMORY`)
-  past ~39 GiB of 4 KiB-page host mappings on fudge (hardware-notes.md;
-  rig_nv_nvidia.mli states the bound): map in larger pages if that is the
-  cause
+- NV address spaces: Device memory in the 49-bit space on the PCI path
 
 ### API
 
