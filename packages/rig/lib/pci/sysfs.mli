@@ -181,6 +181,14 @@ val forwards : provider:route -> client:route -> bool
     of [client]'s function to a BAR of [provider]'s, as {!Memory.reaches}
     states Linux's p2pdma decides. *)
 
+(** The type for how far apart two functions of a machine are:
+    {!Machine.distance}. *)
+type distance = Switch | Bridge | System
+
+val distance : route -> route -> distance
+(** [distance a b] is how far apart the functions of [a] and [b] are, as
+    {!Machine.distance} states. *)
+
 (** {1:open Open devices} *)
 
 val held : t -> string -> string list -> string option

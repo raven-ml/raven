@@ -456,7 +456,135 @@ let transports =
         test_far_released;
     ]
 
+(* Routes
+
+   A GPU at 0000:03:00.0 and a network adapter at 0000:04:00.0, placed as each
+   case says, on a machine whose configuration files hold 4096 bytes, so that
+   ACS reads. Linux's p2pdma (drivers/pci/p2pdma.c) decides what the bus
+   carries: a bridge above both, none of whose devices on the way redirects
+   peer requests, or else a root complex it lists or an AMD CPU from Zen on. *)
+
+let gpu_bus = "0000:03:00.0"
+let nic_bus = "0000:04:00.0"
+
+let nic ?host ?bridges () =
+  {
+    (Tree.gpu ?host ?bridges nic_bus) with
+    vendor = 0x14e4;
+    device = 0x1760;
+    class_ = 0x020000;
+  }
+
+(* The GPU and the adapter under root ports 00:01.0 and 00:02.0 of one host
+   bridge, or under host bridges pci0000:00 and pci0000:40. *)
+let two_ports () =
+  [
+    Tree.gpu ~bridges:[ "0000:00:01.0" ] gpu_bus;
+    nic ~bridges:[ "0000:00:02.0" ] ();
+  ]
+
+let two_hosts () =
+  [
+    Tree.gpu ~host:"pci0000:00" ~bridges:[ "0000:00:01.0" ] gpu_bus;
+    nic ~host:"pci0000:40" ~bridges:[ "0000:40:01.0" ] ();
+  ]
+
+(* A host bridge's first device, at 00.0 of its root bus, Intel's [device]:
+   0x2020 is a Skylake-E root complex Linux lists for every host bridge. *)
+let listed h root =
+  let d = strf "sys/devices/pci0000:%s/0000:%s:00.0/" h h in
+  Tree.add root (d ^ "vendor") "0x8086\n";
+  Tree.add root (d ^ "device") "0x2020\n";
+  Tree.add root (d ^ "class") "0x060000\n"
+
+(* The shared root port's ACS, the first extended capability, set to redirect
+   peer requests. *)
+let acs_redirect root =
+  let b = Bytes.make 4096 '\000' in
+  Bytes.set_int32_le b 0x100 (Int32.of_int (0x0d lor (1 lsl 16)));
+  Bytes.set_uint16_le b 0x106 0x04;
+  Tree.add root "sys/devices/pci0000:00/0000:00:01.0/config" (Bytes.to_string b)
+
+let one_port () = [ Tree.gpu gpu_bus; nic () ]
+
+let pp_distance ppf d =
+  Format.pp_print_string ppf
+    (match d with
+    | Machine.Switch -> "Switch"
+    | Bridge -> "Bridge"
+    | System -> "System")
+
+let distance = Testable.make ~pp:pp_distance ~equal:( = )
+
+let placements =
+  [
+    ("under one root port", one_port, ignore, true, Machine.Switch);
+    ( "under two root ports of an unlisted host bridge",
+      two_ports,
+      ignore,
+      false,
+      Bridge );
+    ( "under two root ports of a listed host bridge",
+      two_ports,
+      listed "00",
+      true,
+      Bridge );
+    ("under two unlisted host bridges", two_hosts, ignore, false, System);
+    ( "under two listed host bridges",
+      two_hosts,
+      (fun root ->
+        listed "00" root;
+        listed "40" root),
+      true,
+      System );
+    ( "under one root port whose ACS redirects",
+      one_port,
+      acs_redirect,
+      false,
+      Switch );
+  ]
+
+let test_placement (_, fns, setup, carried, apart) =
+  let root = Tree.make ~privileged:true (fns ()) in
+  setup root;
+  let m = Machine.at root in
+  equal ~msg:"carried" bool carried
+    (Machine.forwards m ~provider:gpu_bus ~client:nic_bus);
+  equal ~msg:"distance" (option distance) (Some apart)
+    (Machine.distance m gpu_bus nic_bus);
+  equal ~msg:"distance, the other way" (option distance) (Some apart)
+    (Machine.distance m nic_bus gpu_bus)
+
+(* A function that is no bus address, names no function, or is another
+   machine's is unread. *)
+let unread =
+  let here bus () = (Machine.at (Tree.make (one_port ())), bus) in
+  [
+    ("no bus address", here "04:00.0");
+    ("a path for a bus", here "../../..");
+    ("no function of the machine", here "0000:05:00.0");
+    ("a machine a transport reaches", fun () -> ((recorder ()).m, nic_bus));
+  ]
+
+let test_unread (_, make) =
+  let m, bus = make () in
+  equal ~msg:"carried" bool false
+    (Machine.forwards m ~provider:gpu_bus ~client:bus);
+  equal ~msg:"carried, the other way" bool false
+    (Machine.forwards m ~provider:bus ~client:gpu_bus);
+  equal ~msg:"distance" (option distance) None (Machine.distance m gpu_bus bus)
+
+let routes =
+  group ~timeout:patience "routes"
+    [
+      cases "forwards and distance follow Linux's p2pdma and the bridges"
+        ~name:(fun (n, _, _, _, _) -> n)
+        placements test_placement;
+      cases "an unread function is carried nowhere and has no distance"
+        ~name:fst unread test_unread;
+    ]
+
 let () =
   exit
   @@ run "rig_pci.machine"
-       [ addresses; machines; functions; reservations; transports ]
+       [ addresses; machines; functions; reservations; transports; routes ]

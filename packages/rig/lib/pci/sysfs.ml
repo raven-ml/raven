@@ -757,6 +757,17 @@ let forwards ~provider ~client =
   | Some false -> true
   | Some true | None -> through_host ~provider ~client
 
+(* Two functions meet below a bridge both routes pass, a root port included,
+   else at their host bridge if they share one. *)
+type distance = Switch | Bridge | System
+
+let distance a b =
+  let bridges r = List.map fst (List.tl r.nodes) in
+  let theirs = bridges b in
+  if List.exists (fun n -> List.mem n theirs) (bridges a) then Switch
+  else if a.host = b.host then Bridge
+  else System
+
 (* Open devices *)
 
 (* A [dev] file holds a device's number as "MAJOR:MINOR". *)

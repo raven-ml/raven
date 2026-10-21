@@ -78,6 +78,41 @@ val reserve : t -> base:int -> int -> (unit, string) result
     [Error why] if part of the range is in use, or if [m] is reached without a
     transport and its system is not Linux. *)
 
+(** {1:routes Routes}
+
+    A machine's bus carries one function's requests to another function's
+    BAR, as from a network adapter to a GPU's memory, where Linux's p2pdma
+    allows it ({!Memory.reaches} states the rule). The values below read each
+    function's way up to its host bridge from the machine's files. A function
+    is {e unread} if its bus is not a bus address, if it names no function of
+    the machine, or if its files cannot be read, and every function of a
+    machine reached through a transport is. *)
+
+val forwards : t -> provider:string -> client:string -> bool
+(** [forwards m ~provider ~client] is [true] iff the bus of [m] carries the
+    requests of the function at [client] to a BAR of the function at
+    [provider], as {!Memory.reaches} states Linux's p2pdma decides, for a
+    process that reads every bridge's ACS controls. It is [false] if either
+    function is unread.
+
+    A process without [CAP_SYS_ADMIN] cannot read the ACS controls past the
+    first 64 bytes of configuration space, so for it [forwards] answers as
+    the root complex's rule alone decides: [false] also where Linux carries
+    the requests below a common bridge. *)
+
+(** The type for how far apart two functions of a machine are, nearest
+    first. *)
+type distance =
+  | Switch
+      (** Below a bridge that both ways up to the host bridge pass, such as a
+          switch's port or a root port. *)
+  | Bridge  (** Below one host bridge, with no such bridge. *)
+  | System  (** Below two host bridges. *)
+
+val distance : t -> string -> string -> distance option
+(** [distance m a b] is how far apart the functions at [a] and [b] of [m]
+    are, or [None] if either is unread. *)
+
 (** {1:transports Transports}
 
     A library that reaches another machine makes it a machine with {!make},
