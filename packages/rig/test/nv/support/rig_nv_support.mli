@@ -132,6 +132,18 @@ val launch :
     with the 64-bit parameters [args], after making the local memory of [l]'s
     device serve it. The memory it uses is [l]'s until {!reset}. *)
 
+val chained :
+  launches ->
+  kernels ->
+  (string * int * int list) list ->
+  release:int * int ->
+  int array
+(** [chained l k fs ~release:(a, v)] is {!launch} for a chain of the
+    launches [fs], each [(f, blocks, args)]: the ring entry of a segment that
+    schedules the first, whose descriptor schedules the next once it
+    completes ({!Rig_nv_abi.Qmd.t.chain}), and so on. The last writes the
+    64-bit [v] at [a] as it completes ({!Rig_nv_abi.Qmd.release}). *)
+
 val launch_at :
   launches ->
   code:int ->

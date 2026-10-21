@@ -317,12 +317,15 @@ let t_box = 14
 
 (* rig_nv_stubs.h's launch values, by slot: the grid's sizes along X, Y and Z,
    the group's, bank 0's address, the next descriptor's, the dynamic shared
-   memory. *)
+   memory, and the address and value of the release of a launch that ends a
+   submission. *)
 let v_grid_x = 0
 let v_block_x = 3
 let v_bank0 = 6
 let v_next = 7
 let v_shared = 8
+let v_word = 9
+let v_value = 10
 
 (* The sizes in the order of rig_nv_stubs.h's launch limits. *)
 let dims = Abi.Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
@@ -902,7 +905,13 @@ let descriptors l base code per_thread (k : Cubin.kernel) =
   in
   let shared = { d with Abi.Qmd.shared = Some (Slot v_shared) } in
   let chain (d : Abi.Qmd.t) = { d with chain = Some (Slot v_next) } in
-  let qmds = List.map (Abi.Qmd.make l) [ d; chain d; shared; chain shared ] in
+  let released (d : Abi.Qmd.t) =
+    { d with releases = [ Abi.Qmd.Release (Slot v_word, Slot v_value) ] }
+  in
+  let qmds =
+    List.map (Abi.Qmd.make l)
+      [ d; chain d; shared; chain shared; released d; released shared ]
+  in
   let bank0_bytes =
     List.fold_left
       (fun n (b : Cubin.bank) -> if b.index = 0 then b.bytes else n)

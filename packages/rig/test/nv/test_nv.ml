@@ -1029,9 +1029,52 @@ let grid_parameters (groups, threads) =
       buffers
   done
 
+(* The release of the last launch of a chain follows every launch of the
+   chain: the host sees it only once the earlier launches' writes are
+   visible, which copy 4 KiB each after 2 ms and 1 ms. *)
+let chain_delays = [ 2_000_000; 1_000_000 ]
+
+let chain_release () =
+  S.with_ @@ fun t ->
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let n = 4096 in
+  let src = alloc t.g Pinned n and word = alloc t.g Pinned 8 in
+  let dsts = List.map (fun _ -> alloc t.g Pinned n) chain_delays in
+  S.pattern (host src) n 11;
+  List.iter (fun d -> S.pattern (host d) n 12) dsts;
+  H.set64 (host word) 0;
+  let copies =
+    List.map2
+      (fun ns d -> ("copy_after", 1, [ ns; address d; address src; n ]))
+      chain_delays dsts
+  in
+  let e =
+    S.chained l k (copies @ [ ("empty", 1, []) ]) ~release:(address word, 7)
+  in
+  let t0 = Rig.Profile.now () in
+  let p = S.submit t [| S.words e |] in
+  S.watchdog "the chain's release" (fun () ->
+      while H.get64 (host word) <> 7 do
+        Domain.cpu_relax ()
+      done);
+  let waited = Rig.Profile.now () - t0 in
+  List.iteri
+    (fun i d ->
+      equal int ~msg:(strf "copy %d's first byte that differs" i) (-1)
+        (S.mismatch (host d) n 11))
+    dsts;
+  at_least int ~msg:"the ns until the release"
+    ~than:(List.fold_left ( + ) 0 chain_delays)
+    waited;
+  Rig.Point.wait p;
+  S.free_launches l;
+  List.iter (N.free t.g) (src :: word :: dsts)
+
 let launches =
   group ~timeout:120. "launches"
     [
+      test "a chain's last release follows the chain's launches" chain_release;
       test "launches past NV's limits are refused" refused_launches;
       test "a launch takes the most dynamic shared memory" most_shared_memory;
       test "functions with static shared memory run alone and chained"

@@ -485,7 +485,8 @@ enum { l_params_at, l_params, l_bank0_bytes, l_max, l_max_threads = l_max + 6,
        l_max_shared, l_fields };
 
 /* A function set up for launch: [v_structures] holds the bytes and patches
-   of qmd[0][0], qmd[0][1], qmd[1][0], qmd[1][1] and bank0, in turn, and
+   of qmd[0][0], qmd[0][1], qmd[1][0], qmd[1][1], released[0], released[1]
+   and bank0, in turn, and
    [v_ints] its numbers, as above. The caller frees it with
    [caml_rig_nv_launch_free]. */
 value caml_rig_nv_launch(value v_structures, value v_ints) {
@@ -494,10 +495,11 @@ value caml_rig_nv_launch(value v_structures, value v_ints) {
   result = caml_copy_nativeint(0);
   struct launch *l = malloc(sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
-  struct template *s[5] = {&l->qmd[0][0], &l->qmd[0][1], &l->qmd[1][0],
-                           &l->qmd[1][1], &l->bank0};
+  struct template *s[7] = {&l->qmd[0][0], &l->qmd[0][1], &l->qmd[1][0],
+                           &l->qmd[1][1], &l->released[0], &l->released[1],
+                           &l->bank0};
   int ok = 1;
-  for (int i = 0; i < 5; i++)
+  for (int i = 0; i < 7; i++)
     ok = ok && read_template(s[i], Field(v_structures, 2 * i),
                         Field(v_structures, 2 * i + 1), STRUCTURE_BYTES,
                         VALUES);

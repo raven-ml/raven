@@ -31,7 +31,16 @@
    (COMPUTE when there is none, or when v's low 32 bits are 0) waits for
    the other channel's last part, then releases v into the timeline word:
    on COMPUTE a release that waits for the channel to be idle, on COPY a
-   release after its copies completed.
+   release after its copies completed. An untimed submission on COMPUTE
+   alone whose last part is a launch, of a value whose low 32 bits are not
+   0, has that launch's descriptor release v instead, as the launch
+   completes: the launch starts once every earlier launch of the
+   submission completed, chained or after a wait for idle. NVIDIA does not
+   state that a descriptor writes its 64-bit release as one store; with v's
+   low 32 bits not 0, v-1 and v share their high word, so one written in two
+   stores still moves the word from v-1 to v. That release leaves the
+   channel running, so the channel's next submission waits for
+   v first, as one after the other channel's release does.
 
    Order: the parts on one channel run in array order. COPY runs its copies
    one after another; on COMPUTE a part placed after launches the channel
@@ -839,17 +848,31 @@ static void values_of(const struct rig_block *b, uint64_t bank, uint64_t *v) {
   v[V_NEXT] = 0;
 }
 
-/* Writes [o]'s descriptor, chaining the descriptor at [next] if not 0, and
-   leaves no launch open. Built on the stack, then copied, so that the
-   ring's memory is only written. */
-static void settle(const struct channel *c, struct pending *o, uint64_t next) {
-  if (o->l == NULL) return;
+/* Writes [o]'s descriptor from [s], and leaves no launch open. Built on
+   the stack, then copied, so that the ring's memory is only written. */
+static void write_qmd(const struct channel *c, struct pending *o,
+                      const struct template *s) {
   uint8_t w[STRUCTURE_BYTES];
-  o->v[V_NEXT] = next == 0 ? 0 : gpu_at(c, next);
-  const struct template *s = &o->l->qmd[o->v[V_SHARED] > 0][next != 0];
   rig_nv_fill(s, o->v, w);
   memcpy(host_at(c, o->qmd), w, s->nbytes);
   o->l = NULL;
+}
+
+/* Writes [o]'s descriptor, chaining the descriptor at [next] if not 0. */
+static void settle(const struct channel *c, struct pending *o, uint64_t next) {
+  if (o->l == NULL) return;
+  o->v[V_NEXT] = next == 0 ? 0 : gpu_at(c, next);
+  write_qmd(c, o, &o->l->qmd[o->v[V_SHARED] > 0][next != 0]);
+}
+
+/* Writes [o]'s descriptor, which writes [v] at [word] as its launch
+   completes. */
+static void settle_releasing(const struct channel *c, struct pending *o,
+                             uint64_t word, uint64_t v) {
+  o->v[V_NEXT] = 0;
+  o->v[V_WORD] = word;
+  o->v[V_VALUE] = v;
+  write_qmd(c, o, &o->l->released[o->v[V_SHARED] > 0]);
 }
 
 /* Places a launch of [l] over [b] on COMPUTE, after [waited] says its part
@@ -1017,15 +1040,20 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
       }
     }
   }
-  settle(compute, &s.open, 0);
-  enter(&s, r);
   int o = other(r);
-  if (s.used[o])
-    emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), joined(&s, last[o]), 0);
-  if (s.timed != NULL)
-    stamp(d, r, records(d, s.timed) + offsetof(struct stamps, end), v);
-  signal_word(d, r, d->word_gpu, v);
-  d->ch[r].released = v;
+  if (r == COMPUTE && s.open.l != NULL && !s.used[o] && s.timed == NULL &&
+      (uint32_t)v != 0)
+    settle_releasing(compute, &s.open, d->word_gpu, v);
+  else {
+    settle(compute, &s.open, 0);
+    enter(&s, r);
+    if (s.used[o])
+      emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), joined(&s, last[o]), 0);
+    if (s.timed != NULL)
+      stamp(d, r, records(d, s.timed) + offsetof(struct stamps, end), v);
+    signal_word(d, r, d->word_gpu, v);
+    d->ch[r].released = v;
+  }
   for (int q = 0; q < CHANNELS; q++) {
     if (!s.used[q]) continue;
     struct channel *c = &d->ch[q];

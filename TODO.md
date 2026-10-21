@@ -107,9 +107,6 @@ raven / llama.cpp (Vulkan; ROCm):
   27 ms (kimchi, 593e7735a; the warm read alone is 28.7 ms, PCIe 10.7):
   rerun the compare on fudge, then profile whether rig reads the file
   before uploading instead of overlapping them
-- NV: signal through the last launch's QMD release when a submission ends
-  in a chained launch (a WFI release costs ~0.67 µs); first a hardware test
-  that a release implies the earlier launches completed
 - read a memory's atomic entry once per path (the dropped patch no longer
   applies), A/B on fudge's `submit/polled/*` and `copy/*`
 - measure, then keep or cut, each with its keep threshold stated before the

@@ -85,7 +85,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [budget] | The path's {!field-budget}. |
       | [queues] | ["COMPUTE:0"] and ["COPY:0"] ({!section-submitting}). |
       | [copy_engine] | [Some 1], ["COPY:0"]. |
-      | [completion] | [Store]: the channels' releases write the word. |
+      | [completion] | [Store]: the channels' releases, or a submission's last launch, write the word. |
       | [waits] | [stores] and [hosts]. |
       | [may_block] | [false]: its C functions only store to memory. |
       | [hang_ms] | The path's {!field-hang_ms}. |
@@ -124,7 +124,13 @@ val capability : t -> Rig_nv_abi.Gpu.t
 
     The device keeps device order and prefix order
     ({!Rig_edge.section-calls}), and the release of [v] waits for the work
-    of [v] to complete, so two submissions never overlap on the GPU. A part
+    of [v] to complete, so two submissions never overlap on the GPU. An
+    untimed submission whose parts all run on the compute channel and whose
+    last part is a launch, of a value whose low 32 bits are not [0], has
+    that launch release [v] as it completes, which follows every launch
+    before it. Such a [v] has the high 32 bits of [v - 1], so the word goes
+    from [v - 1] to [v] even if the launch writes the 64 bits in two stores,
+    which NVIDIA does not rule out. A part
     starts once the parts before it on its queue have completed, and reads
     what they wrote. [Words] run on their queue's
     channel. A copy runs on either channel and keeps its place in its

@@ -222,8 +222,10 @@ let segment l (p : A.Template.t) =
 
 (* A launch of [kernel] of [cubin], whose first instruction is at [entry], in
    the slot at the GPU address [addr] whose bytes [put] stores, at an offset of
-   the slot: the ring entry of its segment. *)
-let schedule g ~addr ~put cubin name entry ~blocks args =
+   the slot: the ring entry of its segment. It chains the descriptor at
+   [chain] and makes [releases] as it completes. *)
+let schedule ?chain ?(releases = []) g ~addr ~put cubin name entry ~blocks
+    args =
   let kernel =
     match A.Cubin.kernel cubin name with
     | Some k -> k
@@ -252,8 +254,8 @@ let schedule g ~addr ~put cubin name entry ~blocks args =
       grid = (Int blocks, one, one);
       block = (Int 256, one, one);
       shared = None;
-      chain = None;
-      releases = [];
+      chain = Option.map (fun a -> A.Template.Int a) chain;
+      releases;
     }
   in
   put bank_at (A.Qmd.parameters launch q).bytes;
@@ -268,24 +270,40 @@ let schedule g ~addr ~put cubin name entry ~blocks args =
   put segment_at words;
   ring_entry (addr + segment_at) words
 
-let launch_kernel l cubin name entry ~blocks args =
+let launch_kernel ?chain ?releases l cubin name entry ~blocks args =
   let at = take l in
-  schedule l.g ~addr:(at_gpu l at)
-    ~put:(fun o s -> H.write (at_host l (at + o)) s)
-    cubin name entry ~blocks args
+  let addr = at_gpu l at in
+  ( addr,
+    schedule ?chain ?releases l.g ~addr
+      ~put:(fun o s -> H.write (at_host l (at + o)) s)
+      cubin name entry ~blocks args )
+
+let entry_of k f =
+  match Rig.Image.resolve k.image f with
+  | Some fn -> Rig.Image.entry fn
+  | None -> failf "no kernel %s" f
 
 let launch l k f ~blocks args =
-  let entry =
-    match Rig.Image.resolve k.image f with
-    | Some fn -> Rig.Image.entry fn
-    | None -> failf "no kernel %s" f
+  snd (launch_kernel l k.cubin f (entry_of k f) ~blocks args)
+
+(* The descriptors are made last first, so that each knows the one it
+   chains. *)
+let chained l k fs ~release:(a, v) =
+  let last = List.length fs - 1 in
+  let make (next, _) (i, (f, blocks, args)) =
+    let releases = if i = last then [ A.Qmd.Release (Int a, Int v) ] else [] in
+    let addr, e =
+      launch_kernel ?chain:next ~releases l k.cubin f (entry_of k f) ~blocks
+        args
+    in
+    (Some addr, e)
   in
-  launch_kernel l k.cubin f entry ~blocks args
+  snd (List.fold_left make (None, [||]) (List.rev (List.mapi (fun i x -> (i, x)) fs)))
 
 let launch_at l ~code bin f ~blocks args =
   let cubin = cubin_of f bin in
   let kernel = Option.get (A.Cubin.kernel cubin f) in
-  launch_kernel l cubin f (code + kernel.code) ~blocks args
+  snd (launch_kernel l cubin f (code + kernel.code) ~blocks args)
 
 (* Conformance *)
 

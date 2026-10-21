@@ -122,6 +122,8 @@ enum {
   V_BANK0,  /* the address of its constant bank 0 */
   V_NEXT,   /* the address of the descriptor it chains */
   V_SHARED, /* its dynamic shared memory, in bytes, a multiple of 128 */
+  V_WORD,   /* the address its release writes */
+  V_VALUE,  /* the value its release writes */
   VALUES
 };
 
@@ -133,6 +135,9 @@ struct launch {
   /* [qmd[s][c]]: without (s = 0) or with dynamic shared memory, chaining
      no descriptor (c = 0) or the one at V_NEXT */
   struct template qmd[2][2];
+  /* [released[s]]: qmd[s][0], which also writes V_VALUE at V_WORD as its
+     launch completes */
+  struct template released[2];
   struct template bank0;
   /* where the kernel's parameters start in bank 0, how many it reads, and
      the bank's bytes the descriptor names, which hold them */
