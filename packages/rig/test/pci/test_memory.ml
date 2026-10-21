@@ -105,10 +105,10 @@ let needs_linux () =
 (* The machine of a new tree of [n] GPUs under one root port, as root reads
    it, its root and their buses, with the space and the lent range
    reserved. *)
-let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) n =
+let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = []) n =
   needs_linux ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
-  let root = Tree.make ~privileged:true (List.mapi gpu buses) in
+  let root = Tree.make ~privileged:true (List.mapi gpu buses @ others) in
   let m = Machine.at root in
   List.iter
     (fun (base, n) ->
@@ -1634,4 +1634,198 @@ let on_files =
       test_after_release;
     ]
 
-let () = exit @@ run "rig_pci.memory" [ placement; on_files ]
+(* Memory given to another function
+
+   A network adapter at [nic_bus], under the GPUs' root port unless a case
+   places it elsewhere. *)
+
+let nic_bus = "0000:10:00.0"
+
+let nic ?group ?bridges () =
+  {
+    (Tree.gpu ?group ?bridges nic_bus) with
+    vendor = 0x14e4;
+    device = 0x1760;
+    class_ = 0x020000;
+  }
+
+(* The GPU's BAR 0, as [Tree.gpu] places it. *)
+let bar_base = 0x7c_0000_0000
+
+let with_nic ?(nic = nic ()) ?memory f =
+  let root, m, buses = tree_machine ~others:[ nic ] 1 in
+  let space = Space.create ~base:space_base space_length in
+  let x = take_gpu ?memory ~space m (List.hd buses) in
+  Fun.protect
+    ~finally:(fun () -> Function.release x.t_fn)
+    (fun () -> f root m (List.hd buses) x)
+
+let aligned_runs runs =
+  List.for_all (fun (a, n) -> a mod 4096 = 0 && n mod 4096 = 0) runs
+
+(* GPU memory lies at the BAR's bus address plus its physical address, system
+   memory at its physical addresses, in the region's page order. *)
+let test_bus_runs kind =
+  with_nic @@ fun _ _ _ x ->
+  let r = given (Memory.alloc x.t_memory kind (64 * kib)) in
+  let target, pages = Memory.pages r in
+  let expected =
+    match target with
+    | Page_table.Gpu -> List.map (fun (pa, n) -> (pa + bar_base, n)) pages
+    | System | Peer _ -> pages
+  in
+  let runs = require_ok (Memory.bus x.t_memory r ~client:nic_bus) in
+  equal ~msg:"its runs" ranges expected runs;
+  satisfies ~msg:"whole pages" ~claim:"multiples of 4 KiB" ranges aligned_runs
+    runs;
+  equal ~msg:"asked again" (result ranges string) (Ok runs)
+    (Memory.bus x.t_memory r ~client:nic_bus)
+
+(* Once given, the memory never returns: a free gives back nothing, no later
+   allocation takes its pages, and the GPU's release turns its bus mastering
+   off and keeps it taken until the process exits. *)
+let command_of root bus =
+  let c =
+    In_channel.with_open_bin
+      (Filename.concat root (strf "sys/bus/pci/devices/%s/config" bus))
+      In_channel.input_all
+  in
+  String.get_uint16_le c 4
+
+let overlaps runs (a, n) =
+  List.exists (fun (b, k) -> a < b + k && b < a + n) runs
+
+let test_bus_reserved () =
+  with_nic @@ fun root m bus x ->
+  let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  let given_pages = snd (Memory.pages r) in
+  ignore (require_ok (Memory.bus x.t_memory r ~client:nic_bus));
+  Memory.free x.t_memory r;
+  raises_match ~msg:"freed once" (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.free x.t_memory r);
+  let rec fill acc =
+    match Memory.alloc x.t_memory Gpu (64 * kib) with
+    | Ok (Some r) -> fill (r :: acc)
+    | Ok None | Error _ -> acc
+  in
+  let later = fill [] in
+  satisfies ~msg:"later allocations" ~claim:"none over the given pages"
+    (list ranges)
+    (List.for_all (fun pages -> not (List.exists (overlaps given_pages) pages)))
+    (List.map (fun r -> snd (Memory.pages r)) later);
+  List.iter (Memory.free x.t_memory) later;
+  Function.set_bus_master x.t_fn true;
+  Function.release x.t_fn;
+  equal ~msg:"bus mastering after the release" int 0
+    (command_of root bus land 0x4);
+  match Function.take m bus with
+  | Ok f ->
+      Function.release f;
+      fail "a take of a GPU whose memory was given succeeded"
+  | Error why -> contains ~sub:"given to another PCI function" why
+
+(* Each refusal names its cause and reserves nothing: the region frees as
+   any. *)
+let refusals =
+  [
+    ( "a client that is no bus address",
+      (fun f -> with_nic f),
+      Memory.Gpu,
+      "10:00.0",
+      "10:00.0" );
+    ( "a client that names no function",
+      (fun f -> with_nic f),
+      Gpu,
+      "0000:11:00.0",
+      "0000:11:00.0" );
+    ( "a client behind an IOMMU that translates",
+      (fun f -> with_nic ~nic:(nic ~group:"7" ()) f),
+      Host,
+      nic_bus,
+      "behind an IOMMU" );
+    ( "a BAR smaller than the GPU's memory",
+      (fun f -> with_nic ~memory:(512 * mib) f),
+      Gpu,
+      nic_bus,
+      "Resizable BAR" );
+    ( "no route the bus carries",
+      (fun f -> with_nic ~nic:(nic ~bridges:[ "0000:00:02.0" ] ()) f),
+      Gpu,
+      nic_bus,
+      "does not carry" );
+  ]
+
+let test_bus_refused (_, with_, kind, client, sub) =
+  with_ @@ fun root _ _ x ->
+  let before = tree_capacity x and bytes = held_bytes root in
+  let r = given (Memory.alloc x.t_memory kind (64 * kib)) in
+  (match Memory.bus x.t_memory r ~client with
+  | Ok _ -> fail "given"
+  | Error why -> contains ~sub why);
+  Memory.free x.t_memory r;
+  equal ~msg:"the GPU's memory and addresses" (pair int int) before
+    (tree_capacity x);
+  equal ~msg:"the system memory held" int bytes (held_bytes root)
+
+(* What a small BAR or a missing route refuses, system memory still gives. *)
+let test_bus_host_small () =
+  with_nic ~memory:(512 * mib) ~nic:(nic ~bridges:[ "0000:00:02.0" ] ())
+  @@ fun _ _ _ x ->
+  let r = given (Memory.alloc x.t_memory Host (64 * kib)) in
+  equal ~msg:"its physical pages" (result ranges string)
+    (Ok (snd (Memory.pages r)))
+    (Memory.bus x.t_memory r ~client:nic_bus)
+
+let test_bus_far () =
+  with_far_gpu @@ fun x ->
+  let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  (match Memory.bus x.t_memory r ~client:nic_bus with
+  | Ok _ -> fail "given"
+  | Error why -> contains ~sub:"transport" why);
+  Memory.free x.t_memory r
+
+let test_bus_misuse () =
+  with_gpus 2 @@ fun _ _ gpus ->
+  let x = List.nth gpus 0 and o = List.nth gpus 1 in
+  let lent, _ = lend x page in
+  let borrowed =
+    mapped (Memory.map_host x.t_memory (Window.address lent) page)
+  in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let peer = mapped (Memory.map_peer x.t_memory r) in
+  let freed = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  Memory.free x.t_memory freed;
+  List.iter
+    (fun (msg, r) ->
+      raises_match ~msg (Exn.invalid_arg ~substring:"") (fun () ->
+          Memory.bus x.t_memory r ~client:nic_bus))
+    [
+      ("borrowed", borrowed);
+      ("a peer's", peer);
+      ("freed", freed);
+      ("another GPU's", r);
+    ];
+  Memory.free x.t_memory peer;
+  Memory.free o.t_memory r;
+  Memory.free x.t_memory borrowed;
+  Function.free_dma x.t_fn lent
+
+let others =
+  group ~timeout:patience "memory given to another function"
+    [
+      cases "bus gives the memory's bus addresses"
+        ~name:(Format.asprintf "%a" pp_kind)
+        [ Memory.Gpu; Bar; Host ] test_bus_runs;
+      test
+        "given memory never returns, and the GPU stays taken until the \
+         process exits"
+        test_bus_reserved;
+      cases "a refusal names its cause and reserves nothing"
+        ~name:(fun (n, _, _, _, _) -> n)
+        refusals test_bus_refused;
+      test "system memory needs no BAR and no route" test_bus_host_small;
+      test "a GPU a transport reaches gives no memory" test_bus_far;
+      test "bus of memory alloc did not give raises" test_bus_misuse;
+    ]
+
+let () = exit @@ run "rig_pci.memory" [ placement; on_files; others ]

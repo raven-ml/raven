@@ -5,6 +5,7 @@
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let ( let* ) = Result.bind
 
 type kind = Gpu | Bar | Host
 type link = { fabric : int64; node : int }
@@ -40,6 +41,9 @@ and held = {
   regions : shared Tables.Address.t;
   mutable unconfirmed : region list;
   mutable tables : Page_table.t option; (* [None] once released *)
+  mutable given : int list;
+      (* the GPU addresses of the mappings [bus] gave another function, which
+         nothing gives back *)
 }
 
 (* A region maps [mapping] for [owner]'s GPU. Its first byte lies [off] bytes
@@ -106,6 +110,7 @@ let create ?link fn tables ~bar =
           regions = Tables.Address.create 64;
           unconfirmed = [];
           tables = Some tables;
+          given = [];
         };
   }
 
@@ -435,6 +440,88 @@ let map_peer m r =
       e.out <- p :: e.out;
       Ok (Some p)
 
+(* Giving memory to another function
+
+   Another function of the machine, such as a network adapter, reaches GPU
+   memory at its bus address through the memory BAR, as a peer GPU does
+   ([map_new]), and system memory at its physical address. Neither request
+   may cross an IOMMU that translates it, and a BAR request must take a route
+   Linux's p2pdma allows (drivers/pci/p2pdma.c). The function's writes go to
+   the memory itself, whatever the GPU's tables say, and nothing tells this
+   library when they stop: so the memory is never given back, and the GPU's
+   function stays the process's ([Function.keep]). *)
+
+let refuse fmt = Printf.ksprintf (fun s -> Error s) fmt
+
+let reach_check m files ~client =
+  let gpu = m.reach.bus in
+  if m.reach.addressing = Machine.Iommu then
+    refuse
+      "%s is behind an IOMMU, which translates its requests and not another \
+       function's"
+      gpu
+  else if Sysfs.translates files client then
+    refuse "%s is behind an IOMMU, which translates its requests" client
+  else Ok ()
+
+let bar_check m files ~client =
+  let gpu = m.reach.bus in
+  if m.reach.small_bar then
+    refuse
+      "%s's memory BAR is smaller than its memory; Resizable BAR in the \
+       firmware settings makes it as large"
+      gpu
+  else
+    match (m.reach.route, Sysfs.route files client) with
+    | Some provider, Some client when Sysfs.forwards ~provider ~client -> Ok ()
+    | _ ->
+        refuse
+          "the bus does not carry %s's requests to %s's memory BAR, as Linux's \
+           p2pdma decides"
+          client gpu
+
+let known m client =
+  match Machine.functions m.reach.machine with
+  | Error why ->
+      refuse "listing the functions of %s's machine: %s" m.reach.bus why
+  | Ok ids when List.exists (fun (id : Machine.id) -> id.bus = client) ids ->
+      Ok ()
+  | Ok _ -> refuse "%s names no PCI function of %s's machine" client m.reach.bus
+
+let bus m r ~client =
+  let h, _ = live "bus" m in
+  ignore (mine "bus" m r : held);
+  if r.source <> Allocated then
+    invalid_argf "Memory.bus: the memory at 0x%x is not memory alloc gave"
+      r.mapping.va;
+  let* () =
+    if Option.is_none (Bus_address.numbers client) then
+      refuse "%S is no PCI bus address, expected DDDD:BB:DD.F" client
+    else Ok ()
+  in
+  let* files =
+    match Machine.files m.reach.machine with
+    | Some files -> Ok files
+    | None ->
+        refuse
+          "%s's machine is reached through a transport, which no other \
+           function's requests cross"
+          m.reach.bus
+  in
+  let* () = known m client in
+  let* () = reach_check m files ~client in
+  let map = r.mapping in
+  let* runs =
+    match map.target with
+    | Page_table.System -> Ok map.pages
+    | Gpu | Peer _ ->
+        let* () = bar_check m files ~client in
+        Ok (List.map (fun (pa, n) -> (pa + m.bar_base, n)) map.pages)
+  in
+  if not (List.mem map.va h.given) then h.given <- map.va :: h.given;
+  Function.keep h.fn;
+  Ok runs
+
 (* Freeing *)
 
 (* Gives back what [r] holds but its entries, with the GPU's [tables] while it
@@ -463,7 +550,9 @@ let free m r =
   let e = Tables.Address.find h.regions r.mapping.va in
   e.out <- List.filter (fun r' -> r' != r) e.out;
   let tables = if Function.released h.fn then None else h.tables in
-  if e.out = [] then begin
+  if e.out = [] && List.mem r.mapping.va h.given then
+    Tables.Address.remove h.regions r.mapping.va
+  else if e.out = [] then begin
     Tables.Address.remove h.regions r.mapping.va;
     let r = e.holder in
     let confirmed =

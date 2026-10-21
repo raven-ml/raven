@@ -191,9 +191,46 @@ val free : t -> region -> unit
     Once no other region of [m] over [r]'s mapping is out, it unmaps [r], then
     frees its memory or unpins it, and returns its addresses. The memory of a
     region {!map_peer} gave stays its owner's. After the function's release it
-    writes no table.
+    writes no table. A region whose memory {!bus} gave another function gives
+    back nothing.
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)
+
+(** {1:others Other functions}
+
+    Another PCI function of the GPU's machine, such as a network adapter,
+    reaches the GPU's memory through the GPU's memory BAR, and system memory
+    at its physical addresses, with no page table of the GPU's on the way.
+    Its writes land in the memory itself until it stops, which nothing tells
+    this library. *)
+
+val bus : t -> region -> client:string -> ((int * int) list, string) result
+(** [bus m r ~client] is where the function at the bus address [client] of
+    [m]'s machine reaches [r]'s memory by DMA: its bus addresses, as
+    (address, bytes) pairs in order from [r]'s first byte, each a multiple
+    of 4 KiB. GPU memory lies at its BAR's bus address plus its physical
+    address, and system memory at its physical addresses.
+
+    From then on, until the process exits, [r]'s memory and [m]'s GPU are
+    reserved for [client], whatever is freed or released meanwhile: {!free}
+    of [r] gives back nothing, so no later allocation takes its memory, and
+    {!release} turns the GPU's bus mastering off and keeps its function
+    taken, so that no other open, of this process or another, takes it
+    ({!Function.take}). The process's exit turns every function's bus
+    mastering off before it gives any back. Asking again reserves nothing
+    more.
+
+    [Error why], reserving nothing, where [client] cannot reach the memory:
+    - [client] is not a bus address or names no function of the machine,
+      [why] naming it;
+    - the machine is reached through a transport;
+    - the GPU or [client] is behind an IOMMU that translates its requests;
+    - for GPU memory, the memory BAR is smaller than the GPU's memory, or the
+      bus does not carry [client]'s requests to it, as {!reaches} states
+      Linux's p2pdma decides.
+
+    Raises [Invalid_argument] if [r] is not a region {!val-alloc} gave [m],
+    or was freed, or if the GPU's function is released. *)
 
 (**/**)
 

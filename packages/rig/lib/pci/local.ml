@@ -110,10 +110,13 @@ let give_back t s =
    files that list no function go. A child of fork inherits the list, and acts
    on none of it. The exit handler is registered when the library loads, before
    a driver above it registers its own, so it runs after theirs: a driver stops
-   its GPU while it still reaches memory. It is a list in an atomic, so that a
-   child of fork meets no held lock. An exit from a callback inside a lock may
-   hold a lock the handler takes: that take raises, the handler prints it, and
-   goes on with the other functions. *)
+   its GPU while it still reaches memory. It turns every function's bus
+   mastering off before it gives any back, since one function may write
+   memory another's take holds, such as a network adapter writing a GPU's
+   memory through its BAR (Memory.bus). It is a list in an atomic, so that
+   a child of fork meets no held lock. An exit from a callback inside a lock
+   may hold a lock the handler takes: that take raises, the handler prints it,
+   and goes on with the other functions. *)
 let physical = Atomic.make []
 let hold t = update physical (List.cons (Unix.getpid (), t))
 let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
@@ -121,17 +124,19 @@ let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
 let () =
   at_exit (fun () ->
       let pid = Unix.getpid () in
-      let release (owner, t) =
+      let each f (owner, t) =
         if owner = pid then
-          try
-            match t.way with
-            | Physical_take s -> give_back t s
-            | Iommu_take _ -> stop_dma t
+          try f t
           with e ->
             prerr_endline
               (strf "releasing %s at exit: %s" t.bus (Printexc.to_string e))
       in
-      List.iter release (Atomic.get physical);
+      let give_back t =
+        match t.way with Physical_take s -> give_back t s | Iommu_take _ -> ()
+      in
+      let held = Atomic.get physical in
+      List.iter (each stop_dma) held;
+      List.iter (each give_back) held;
       try Sysmem.exit ()
       with e ->
         prerr_endline

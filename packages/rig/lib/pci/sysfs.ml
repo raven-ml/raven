@@ -240,6 +240,8 @@ let iommu_of m bus =
       if Sys.file_exists file && read file = "identity" then Identity
       else Translating
 
+let translates m bus = iommu_of m bus = Translating
+
 (* The kernel's lockdown file lists the modes with the current one in
    brackets. *)
 let locked_down m =

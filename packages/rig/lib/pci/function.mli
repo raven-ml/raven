@@ -79,7 +79,9 @@ val take : Machine.t -> string -> (t, string) result
     the memory files that dead processes left and no function reaches.
 
     [Error why] if [bus] is not a function of [m], if [m] has failed, if a
-    process, this one included, holds it, or if neither way is open:
+    process, this one included, holds it, if this process gave the memory
+    its BAR reaches to another function ({!Memory.bus}), until the process
+    exits, or if neither way is open:
     - it is bound to a driver other than [vfio-pci] ({!Driver.detach});
     - the IOMMU translates its addresses and it is not bound to [vfio-pci];
     - not behind an IOMMU, it is disabled, or it shares its device with
@@ -400,6 +402,16 @@ val set_own_length : int -> int
 (* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
    {!forget} returns [Ok ()], and [false] after. *)
 val inherited : t -> bool
+
+(* [keep f] keeps [f] taken until the process exits, since another function
+   may write the memory its BAR reaches ({!Memory.bus}): from then on
+   {!release} turns [f]'s bus mastering off and gives back nothing else, and
+   {!take} of [f]'s bus on its machine, in this process or a child of fork,
+   is [Error]. The process's exit gives [f] back as it gives back every
+   function it holds. Keeping it again does nothing.
+
+   Raises [Invalid_argument] if [f] was released. *)
+val keep : t -> unit
 
 (* [forget f] is the [forget] of [f]'s take ({!Machine.fn}). The memory this
    process allocated stays listed for [f], so that the process's own death

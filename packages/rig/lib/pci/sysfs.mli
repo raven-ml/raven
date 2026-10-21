@@ -69,6 +69,11 @@ val driver : 's lock -> string option
 val group : t -> string -> string option
 (** [group m bus] is the IOMMU group of the function at [bus]. *)
 
+val translates : t -> string -> bool
+(** [translates m bus] is [true] iff an IOMMU translates the addresses of the
+    requests of the function at [bus], outside VFIO's no-IOMMU mode and an
+    identity domain. *)
+
 val bars : 's lock -> (int * int) option array
 (** [bars l] is, for each of the six BARs of the function [l] locks, its bus
     address, from its register, and its size, or [None] where there is no BAR,
