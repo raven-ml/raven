@@ -369,20 +369,33 @@ let of_bigarray b =
   let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
   owned (Nx_array.copy (Nx_array.of_bigarray dt b))
 
+(* Raises [e], which a read [by] of [x] raised, unless [x] died since the read
+   checked it: memory that a consumer on another domain took meanwhile is
+   refused naming no one, and [x] names that consumer. *)
+let unread ~by x e =
+  let bt = Printexc.get_raw_backtrace () in
+  Prim.alive ~by 0 x;
+  Printexc.raise_with_backtrace e bt
+
 (* [x], waited for, for the read [by]. A read is not an operation: no
    interpretation receives it. *)
 let readable ~by x =
   Prim.alive ~by 0 x;
   match Eval.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
-  | None ->
-      let x = Donate.live x in
-      Exec.wait ~by x;
-      x
+  | None -> (
+      let live = Donate.live x in
+      match Exec.wait ~by live with
+      | () -> live
+      | exception (Invalid_argument _ as e) -> unread ~by x e)
 
 let sync x = ignore (readable ~by:"Nx.sync" x)
 
-let read ~by x = Exec.on_host ~by (readable ~by x)
+let read ~by x =
+  let live = readable ~by x in
+  match Exec.on_host ~by live with
+  | a -> a
+  | exception (Invalid_argument _ as e) -> unread ~by x e
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
@@ -436,13 +449,18 @@ let item i x =
     { Nx_array.Move.start = q; count = 1; step = 1 }
   in
   let one = List.mapi at i in
-  match readable ~by x with
-  | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
-      let start (w : Nx_array.Move.range) = w.start in
-      Nx_array.get a (Array.of_list (List.map start one))
-  | x ->
-      let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), x)) in
-      Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
+  let get live =
+    match live with
+    | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
+        let start (w : Nx_array.Move.range) = w.start in
+        Nx_array.get a (Array.of_list (List.map start one))
+    | live ->
+        let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
+        Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
+  in
+  match get (readable ~by x) with
+  | v -> v
+  | exception (Invalid_argument _ as e) -> unread ~by x e
 
 let broadcast ~by s x =
   if Prim.has_shape x s then x
@@ -5259,15 +5277,22 @@ let pp ppf x =
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
             in
-            let x = Donate.live x in
-            match Exec.wait ~by:"Nx.pp" x with
+            (* A read refused because a consumer on another domain took the
+               memory meanwhile names that consumer. *)
+            let unread why ppf =
+              match Prim.death x with
+              | Value.Died f -> Format.fprintf ppf ", donated to %s" f
+              | Value.Live | Value.Offered _ ->
+                  Format.fprintf ppf ", unread: %s" why
+            in
+            let live = Donate.live x in
+            match Exec.wait ~by:"Nx.pp" live with
             | exception Rig.Lost (d, why) -> lost d why
             | () -> (
-                match Exec.on_host ~by:"Nx.pp" x with
+                match Exec.on_host ~by:"Nx.pp" live with
                 | a -> fun ppf -> Format.fprintf ppf "@ %a" pp_elements a
                 | exception Rig.Lost (d, why) -> lost d why
-                | exception Invalid_argument why ->
-                    fun ppf -> Format.fprintf ppf ", unread: %s" why)))
+                | exception Invalid_argument why -> unread why)))
   in
   Format.fprintf ppf "@[<hv 2>%s %a" (D.name (dtype x)) pp_shape (shape x);
   Option.iter (set ppf) (Prim.at x);

@@ -314,22 +314,39 @@ let declines =
           equal ~msg:"bytes held" int before (settled (m 2)));
     ]
 
-(* Counting nx.cpu, declining every [Add] and [Less], alone or in a map. *)
+(* Counting nx.cpu, declining every [Add] and [Less], alone or in a map. A
+   call first runs what its domain left [pending], once: a call another domain
+   makes after the operation checked its operands and before its kernel reads
+   them or declines. *)
 module Gated = struct
   include C
 
   let name = "nx.gated"
+  let pending = Domain.DLS.new_key (fun () -> None)
+
+  let first () =
+    match Domain.DLS.get pending with
+    | None -> ()
+    | Some f ->
+        Domain.DLS.set pending None;
+        f ()
 
   let declined : Nx_kernel.Prog.node -> bool = function
     | Op2 ((Binary Add | Compare Less), _, _) -> true
     | _ -> false
 
+  let apply1 k ~dst x =
+    first ();
+    C.apply1 k ~dst x
+
   let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
+    first ();
     match k with
     | Binary Add | Compare Less -> A.Declined
     | _ -> C.apply2 k ~dst x y
 
   let map (prog : Nx_kernel.Prog.t) ~dsts loads =
+    first ();
     if Iarray.exists declined prog.nodes then A.Declined
     else C.map prog ~dsts loads
 end
@@ -587,11 +604,9 @@ let raced_decline ~sum by h = function
 let decline_sys h = outcome (fun () -> elements (Nx.add h (twos ())))
 
 (* A read may see the donor dead to a decline in flight, which then gives it
-   back. A read racing a consumer may also be refused by rig while the
-   consumer holds the donor's memory. *)
+   back. *)
 let read_judge x = function
   | Ok (Error ("Nx.add" | "Nx.less")) when List.mem None x.dead -> ()
-  | Ok (Error m) when String.starts_with ~prefix:"refused: " m -> ()
   | out -> read_ref x out
 
 (* A donation and a movement are drawn where the fate is known. *)
@@ -614,10 +629,40 @@ let raced =
     command "read" (donor ^-> judges outcomes) read_judge read_sys;
   ]
 
+(* [f ()] with [g] run on another domain inside its first call into nx.gated:
+   after [f]'s operation checked its operands, before its kernel reads them. *)
+let meanwhile g f =
+  let other () = Domain.join (Domain.spawn g) in
+  Domain.DLS.set Gated.pending (Some other);
+  Fun.protect ~finally:(fun () -> Domain.DLS.set Gated.pending None) f
+
+(* A call that checked [x] live, and whose kernel then meets [x]'s memory
+   consumed by an operation on another domain, raises naming that operation,
+   on the fast path, off it, and through a movement's copy of a handle. *)
+let test_raced_read_names () =
+  let consume h = ignore (Nx.mul h (twos ())) in
+  let raced by f =
+    let x = make_sys [| 1.; 2.; 3.; 4. |] in
+    let h = Nx.donate x in
+    raises
+      (Invalid_argument (by ^ ": operand 1 was donated to Nx.mul"))
+      (fun () -> meanwhile (fun () -> consume h) (fun () -> ignore (f x)))
+  in
+  (* An offered donor is read off the fast path. *)
+  raced "Nx.neg" Nx.neg;
+  raced "Nx.mul" (fun x -> Nx.mul x (twos ()));
+  raced "Nx.reshape" (fun x -> copy_sys (Nx.donate x));
+  let x = make_sys [| 1.; 2.; 3.; 4. |] in
+  raises
+    (Invalid_argument "Nx.neg: operand 1 was donated to Nx.mul")
+    (fun () ->
+      meanwhile (fun () -> consume (Nx.donate x)) (fun () -> ignore (Nx.neg x)))
+
 let donation =
   group "donation"
     [
       stateful "a value lives until a handle of it is consumed" donations;
+      test "a read racing a consumer names it" test_raced_read_names;
       stateful ~domains:2
         "handles of one value declined and consumed on two domains" raced;
     ]
