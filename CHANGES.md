@@ -94,6 +94,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- hugin's marks test library builds in the dev profile only, so a release
+  build of any package from a git pin (`dune build -p rig`, and every package
+  that depends on it) no longer fails on that library's `Marks` module.
 - `Hugin_vg_raster` inks where a stroke's subpaths overlap a dot, the round caps
   of a subpath shorter than a twentieth of a pixel. The dot wound the other way,
   so the overlap cancelled to a hole, as at a line's piece cut short by its

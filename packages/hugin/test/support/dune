@@ -18,5 +18,7 @@
 
 (library
  (name hugin_test_marks)
+ (enabled_if
+  (= %{profile} dev))
  (modules api marks)
  (libraries hugin hugin.gg.kit nx nx.dtype))
