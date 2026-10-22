@@ -377,7 +377,7 @@ let rec clear t d table ~at lo hi =
 
 (* Page tables *)
 
-let create ?base fmt space ~memory ~boot ~tables ~pages =
+let create ~base fmt space ~memory ~boot ~tables ~pages =
   let rec rising = function
     | a :: (b :: _ as rest) -> a < b && rising rest
     | _ -> true
@@ -417,7 +417,6 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
   in
   let shifts = Array.of_list (List.rev fmt.levels) in
   let above d = if d = 0 then fmt.bits else shifts.(d - 1) in
-  let base = Option.value base ~default:(Space.base space) in
   (* The largest page: aligned to it, [base] aligns pages and fragments in the
      tables as in the address space. *)
   let rec largest d =

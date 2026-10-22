@@ -285,7 +285,7 @@ module Buffer_tables = struct
         flush = (fun () -> true);
       }
     in
-    let t = Page_table.create format space ~memory ~boot ~tables:Pool ~pages in
+    let t = Page_table.create ~base:(Space.base space) format space ~memory ~boot ~tables:Pool ~pages in
     Page_table.booted t;
     t
 end

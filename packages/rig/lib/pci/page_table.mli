@@ -109,7 +109,7 @@ type tables =
   | Main  (** The main pool, as other memory does. *)
 
 val create :
-  ?base:int ->
+  base:int ->
   format ->
   Space.t ->
   memory:int ->
@@ -117,13 +117,14 @@ val create :
   tables:tables ->
   pages:(int * int) list ->
   t
-(** [create fmt s ~memory ~boot ~tables ~pages] manages [memory] bytes of a
+(** [create ~base fmt s ~memory ~boot ~tables ~pages] manages [memory] bytes of a
     GPU's physical memory: a boot pool of its first [boot] bytes, the page
     tables' pool if [tables] is {!Pool}, and the main pool. [pages] lists the
     physical block sizes, with their alignments, that {!alloc} tries, largest
-    first. The tables translate the addresses from [base] on (defaults to
-    [Space.base s]), some of which [s] hands out. [create] allocates the root
-    table in the boot pool and starts booting.
+    first. The tables translate the addresses from [base] on, some of which
+    [s] hands out: where the GPU's MMU starts translating, such as address 0
+    for an MMU that indexes each level with the address's own bits.
+    [create] allocates the root table in the boot pool and starts booting.
 
     Raises [Invalid_argument] if [fmt]'s levels do not rise from 12 to below
     [bits], its [pa_bits] is below 12 or past 61, [base] is not a multiple of

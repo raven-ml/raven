@@ -114,7 +114,10 @@ let tables ?(tables = Page_table.Main) ?(memory = 66 * mib) ?(boot = mib)
     ?(length = 1 lsl 40) ?(booted = true) () =
   let g = Tables.memory () in
   let s = Space.create ~base length in
-  let t = Page_table.create (format g) s ~memory ~boot ~tables ~pages in
+  let t =
+    Page_table.create ~base:(Space.base s) (format g) s ~memory ~boot ~tables
+      ~pages
+  in
   if booted then Page_table.booted t;
   (t, g)
 
@@ -143,11 +146,12 @@ let test_create () =
   let g = Tables.memory () in
   let s = Space.create ~base (1 lsl 40) in
   let t =
-    Page_table.create (format g) s ~memory:(66 * mib) ~boot:mib ~tables:Main
+    Page_table.create ~base (format g) s ~memory:(66 * mib) ~boot:mib
+      ~tables:Main
       ~pages:[ (page, page) ]
   in
   equal ~msg:"its space" space s (Page_table.space t);
-  equal ~msg:"translates from the space's base" hex base (Page_table.base t);
+  equal ~msg:"translates from the base given" hex base (Page_table.base t);
   equal ~msg:"2^bits addresses" hex (1 lsl 48) (Page_table.span t);
   less ~msg:"the root in the boot pool" hex ~than:mib (Page_table.root t);
   let t =
@@ -155,7 +159,7 @@ let test_create () =
       ~tables:Main
       ~pages:[ (page, page) ]
   in
-  equal ~msg:"or from the base given" hex 0 (Page_table.base t)
+  equal ~msg:"below the space's" hex 0 (Page_table.base t)
 
 (* The main pool is what the boot pool and the tables' pool leave at the end of
    memory: the tables' pool is [memory / 512] rounded up to 1 MiB. A fresh
@@ -213,7 +217,7 @@ let test_level_refusals =
       let g = Tables.memory () in
       let s = Space.create ~base (1 lsl 40) in
       raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-          Page_table.create
+          Page_table.create ~base:(Space.base s)
             { (format g) with levels; bits }
             s ~memory:(66 * mib) ~boot:mib ~tables:Main
             ~pages:[ (page, page) ]))
@@ -544,7 +548,7 @@ let test_pa_bits_create =
       let g = Tables.memory () in
       let s = Space.create ~base (1 lsl 40) in
       let create () =
-        Page_table.create
+        Page_table.create ~base:(Space.base s)
           { (format g) with pa_bits }
           s ~memory:(66 * mib) ~boot:mib ~tables:Main
           ~pages:[ (page, page) ]
@@ -568,7 +572,7 @@ let test_pa_bits_map =
       let g = Tables.memory () in
       let s = Space.create ~base (1 lsl 40) in
       let t =
-        Page_table.create
+        Page_table.create ~base:(Space.base s)
           { (format g) with pa_bits = 32 }
           s ~memory:(66 * mib) ~boot:mib ~tables:Main
           ~pages:[ (page, page) ]
@@ -914,7 +918,7 @@ let far_tables ?(f = far_machine ()) () =
   let g = Tables.memory () in
   let w = Window.through (Window.unsafe_transport f) 0 far_memory in
   let t =
-    Page_table.create (through g w)
+    Page_table.create ~base (through g w)
       (Space.create ~base (1 lsl 40))
       ~memory:far_memory ~boot:(64 * kib) ~tables:Main
       ~pages:[ (page, page) ]

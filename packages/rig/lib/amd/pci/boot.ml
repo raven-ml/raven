@@ -550,7 +550,10 @@ let start ~gpus ~kept f first =
     refused
     @@ stuck (fun () ->
         let tables =
-          Page_table.create (Gmc.format gmc ~flush) space
+          (* The MMU translates from the start the GMC is given:
+             the space's. *)
+          Page_table.create ~base:(Rig_pci.Space.base space)
+            (Gmc.format gmc ~flush) space
             ~memory:(memory - reserved gc)
             ~boot:boot_pool
             ~tables:

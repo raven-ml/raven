@@ -372,8 +372,11 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed ~lock =
     Fb_layout.top (Chip.layout c.family) ~memory
       ~boot:fw.bootloader.image.length ~image:fw.gsp.length
   in
+  (* The GPU's MMU indexes each level with the address's own bits, from
+     address 0 (mmuFmtVirtAddrToEntryIndex), whatever part of the addresses
+     the space hands out. *)
   let tables =
-    Page_table.create (Mmu.format c bar ~failed) space ~memory:top
+    Page_table.create ~base:0 (Mmu.format c bar ~failed) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= memory then Main else Pool)
       ~pages:(Page_entry.pages (Mmu.version c.family))
