@@ -1898,12 +1898,22 @@ let pp_moments ppf (c : moments) =
     (A.dtype x) L.pp (A.layout x)
     (String.concat ", " c.views)
 
-(* A tenth of the operands are one axis of more than 4096 terms, the law's
-   "long" case, and a tenth slices of one term, its "one term" case, which
-   [shape_gen] alone draws too rarely for every run to cover. Four tenths
-   are tiles: 2 to 130 slices of 32, 33 or more terms, scanned along the
-   last axis, whose lanes the results hold a row apart, or along the first
-   through a transposed operand, whose lanes it holds a row apart. *)
+(* Lengths around a multiple of nx.cpu's network tiles of 256 terms, from
+   [lo] to [hi] tiles. *)
+let tiled lo hi =
+  let open Gen in
+  let* k = int_range lo hi in
+  let+ d = int_range (-2) 2 in
+  (k * 256) + d
+
+(* A tenth of the operands are one axis of 2 to 32 tiles, the law's long
+   case, a tenth 65 to 72 slices of 1 to 8 tiles side by side, past a
+   unit's, and a tenth slices of one term, its "one term" case, which
+   [shape_gen] alone draws too rarely for every run to cover. Four in
+   eleven are rows of 32-term tiles: 2 to 130 slices of 32, 33 or more
+   terms, scanned along the last axis, whose lanes the results hold a row
+   apart, or along the first through a transposed operand, whose lanes it
+   holds a row apart. *)
 let moments_case =
   Gen.with_pp pp_moments
     (let open Gen in
@@ -1914,7 +1924,12 @@ let moments_case =
        let+ axis = int_range 0 (Array.length s - 1) in
        (s, axis, false)
      in
-     let long = map (fun n -> ([| n |], 0, false)) (int_range 4097 6000) in
+     let long = map (fun n -> ([| n |], 0, false)) (tiled 2 32) in
+     let wide =
+       let* n = tiled 1 8 in
+       let+ k = int_range 65 72 in
+       ([| n; k |], 0, false)
+     in
      let one = map (fun n -> ([| n; 1 |], 1, false)) (int_range 1 40) in
      let tiles =
        let* len =
@@ -1933,7 +1948,7 @@ let moments_case =
        if last then ([| slices; len |], 1, false) else ([| len; slices |], 0, true)
      in
      let* s, axis, transposed =
-       frequency [ (4, any); (1, long); (1, one); (4, tiles) ]
+       frequency [ (4, any); (1, long); (1, wide); (1, one); (4, tiles) ]
      in
      let* v = view_of (Array.length s) in
      let v = if transposed then { v with perm = [| 1; 0 |] } else v in
@@ -1943,8 +1958,8 @@ let moments_case =
      let+ seed = int in
      { axis; x = operand d s v ~specials seed; views = view_names v })
 
-(* Slices of more than 4096 terms, about 2^-20 to 2^20 in magnitude, of
-   both signs, whose joins of the tiles' states round differently in each
+(* Slices of 17 to 25 tiles, about 2^-20 to 2^20 in magnitude, of both
+   signs, whose joins of the tiles' states round differently in each
    order. *)
 let moments_examples =
   let mixed d n seed =
@@ -1961,7 +1976,7 @@ let moments_examples =
     | _ -> invalid_arg "moments_examples"
   in
   [
-    { axis = 0; x = mixed f32 4500 1; views = [] };
+    { axis = 0; x = mixed f32 6400 1; views = [] };
     { axis = 0; x = mixed f64 5000 2; views = [] };
   ]
 
@@ -2163,7 +2178,12 @@ let law_moments (b : Support.backend) (c : moments) =
   cover "no result" (total s = 0);
   cover "one term" (len = 1);
   cover "slices past a unit's" (len > 0 && total s / len > 64);
-  cover "long" (len > 4096);
+  cover "one slice past one tile, the last partial"
+    (len > 256 && len mod 256 <> 0 && total s = len);
+  cover "an axis around a multiple of a tile"
+    (len >= 254 && (len + 2) mod 256 <= 4);
+  cover "more than 64 slices side by side, past a tile"
+    (len > 256 && total s / len > 64);
   cover "a tile's terms, or one more" (len = 32 || len = 33);
   (* Lanes a row apart go through rows of the scratch in tiles of 32 terms. *)
   let partial = len > 32 && len mod 32 <> 0 && total s / len > 1 in
@@ -2523,8 +2543,9 @@ let law_stateful (b : Support.backend) c =
 (* Arg and Logsumexp scans *)
 
 (* A scan by Arg of a float, an integer or a boolean, or by Logsumexp of a
-   float, along one axis: a vector past a scan's chunk now and then, so
-   that the chunks' totals and carries run. *)
+   float, along one axis: now and then a vector of 1 to 40 network tiles,
+   past an Arg scan's chunk of 4096 from 16, or 65 to 72 slices of 1 to 8
+   tiles, so that chunks' and tiles' carries run. *)
 let stat_scan_case =
   Gen.with_pp pp_stat
     (let open Gen in
@@ -2537,7 +2558,14 @@ let stat_scan_case =
      in
      let* s =
        frequency
-         [ (4, shape_gen); (1, map (fun n -> [| n |]) (int_range 4097 9000)) ]
+         [
+           (4, shape_gen);
+           (1, map (fun n -> [| n |]) (tiled 1 40));
+           ( 1,
+             let* n = tiled 1 8 in
+             let+ k = int_range 65 72 in
+             [| n; k |] );
+         ]
      in
      let s = if Array.length s = 0 then [| 3 |] else s in
      let rank = Array.length s in
@@ -2743,7 +2771,12 @@ let stat_scan_expected (c : stat) =
 let law_stat_scan (b : Support.backend) (c : stat) =
   let s = shape_of c.x in
   let a = c.axes.(0) in
-  cover "several chunks" (s.(a) > 4096);
+  let n = s.(a) in
+  cover "an Arg scan's several chunks" (n > 4096);
+  cover "an axis around a multiple of a tile" (n >= 254 && (n + 2) mod 256 <= 4);
+  cover "one slice past one tile" (n > 256 && total s = n);
+  cover "more than 64 slices side by side, past a tile"
+    (n > 256 && total s / n > 64);
   let last = Array.length s - 1 in
   cover "slices side by side" (a < last && s.(last) > 1);
   List.iter (fun (k : values) -> cover k.name (c.values = k.name)) value_kinds;
@@ -3037,7 +3070,7 @@ let lanes_case =
    scanned alone, whichever way its lanes run: the rows side by side,
    staged into lanes; their transpose scanned down its columns, whose lanes
    lie side by side; and one row alone, whose chunks run as lanes past a
-   chunk, or a Moments scan's tiles. *)
+   chunk, or a Logsumexp or Moments scan's tiles. *)
 let law_lanes (b : Support.backend) (c : stat) =
   let s = shape_of c.x in
   let k = s.(0) and n = s.(1) in
@@ -3076,9 +3109,9 @@ let lanes_examples =
       stat_example Moments f64 [| 3; 1000 |] [| 1 |] ~specials:100 "small";
     ]
 
-(* Scans past several chunks, one slice's several at a time and slices
-   side by side, and a NaN, an infinity and -∞ among finite terms in a
-   Logsumexp's terms. *)
+(* Scans past several tiles and an Arg's chunks, one slice's several at a
+   time and slices side by side, and a NaN, an infinity and -∞ among finite
+   terms in a Logsumexp's terms. *)
 let stat_scan_examples =
   let vector xs =
     {
@@ -3094,12 +3127,14 @@ let stat_scan_examples =
       stat_example Logsumexp f32 [| 20_000 |] [| 0 |] ~specials:3000
         "wide";
       stat_example Logsumexp f64 [| 5000; 3 |] [| 0 |] "small";
-      (* Sixteen chunks side by side, and sixteen slices, contiguous and
-         staged. *)
+      (* One slice of 274 tiles, the last partial; 40 slices of two tiles,
+         the last partial, contiguous and staged; and 70 slices, past a
+         unit's. *)
       stat_example Logsumexp f32 [| 70_000 |] [| 0 |] ~specials:3000
         "small";
       stat_example Logsumexp f32 [| 300; 40 |] [| 0 |] "wide";
       stat_example Logsumexp f64 [| 40; 300 |] [| 1 |] "offset";
+      stat_example Logsumexp f32 [| 514; 70 |] [| 0 |] ~specials:300 "wide";
       stat_example (Arg Min) f64 [| 70_000 |] [| 0 |] ~specials:3000 "ties";
       stat_example (Arg Max) f32 [| 9000 |] [| 0 |] ~specials:300 "ties";
       stat_example (Arg Min) (D.Any D.Int32) [| 300; 5 |] [| 0 |] "small";
@@ -3550,9 +3585,9 @@ let fused_example ?(d = D.Any D.Float32) ?(scan = false) ?(broadcast = false)
    of slices side by side; a reduction of several blocks; Logsumexp down
    columns, several outputs' blocks computed at once; and outputs
    narrower than their carrier: bfloat16's Arg, Moments scan and scan in
-   quads of chunks, and int4's scan so; Logsumexp scans of one slice past
-   a chunk and of slices side by side down rows, an Arg scan past a chunk,
-   and bfloat16's Arg scan, its extreme the program's term. *)
+   quads of chunks, and int4's scan so; Logsumexp scans by tiles, of one
+   slice and of three side by side, an Arg scan past a chunk, and
+   bfloat16's Arg scan, its extreme the program's term. *)
 let fused_examples =
   let c = D.Any D.Complex64 in
   [
