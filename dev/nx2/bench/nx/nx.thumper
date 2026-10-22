@@ -426,8 +426,8 @@ index/concatenate-2x512K	alloc_words	exact	476
 index/concatenate-2x512K	wall_time	batch=128	n=20	4.689e-05	4.594e-05 4.596e-05 4.599e-05 4.605e-05 4.618e-05 4.669e-05 4.670e-05 4.673e-05 4.677e-05 4.686e-05 4.691e-05 4.694e-05 4.699e-05 4.703e-05 4.709e-05 4.711e-05 4.748e-05 4.755e-05 4.783e-05 4.841e-05
 index/scatter-add-64K-into-1K	alloc_words	exact	288
 index/scatter-add-64K-into-1K	wall_time	batch=128	n=20	4.846e-05	4.687e-05 4.699e-05 4.704e-05 4.704e-05 4.706e-05 4.714e-05 4.731e-05 4.796e-05 4.810e-05 4.829e-05 4.863e-05 4.886e-05 4.896e-05 4.930e-05 4.930e-05 4.960e-05 4.999e-05 5.020e-05 5.035e-05 5.052e-05
-index/set-row-8M	alloc_words	exact	1625
-index/set-row-8M	wall_time	batch=64	n=20	8.410e-05	8.244e-05 8.253e-05 8.273e-05 8.311e-05 8.323e-05 8.340e-05 8.341e-05 8.365e-05 8.388e-05 8.409e-05 8.411e-05 8.411e-05 8.419e-05 8.440e-05 8.441e-05 8.481e-05 8.495e-05 8.507e-05 8.574e-05 8.970e-05
+index/set-row-8M	alloc_words	exact	1316
+index/set-row-8M	wall_time	batch=64	n=20	9.065e-05	8.894e-05 8.897e-05 8.910e-05 8.921e-05 8.999e-05 9.016e-05 9.032e-05 9.038e-05 9.058e-05 9.061e-05 9.069e-05 9.083e-05 9.098e-05 9.105e-05 9.147e-05 9.148e-05 9.182e-05 9.184e-05 9.296e-05 9.305e-05
 index/take-rows-1K-of-8K	alloc_words	exact	634
 index/take-rows-1K-of-8K	wall_time	batch=512	n=20	1.759e-05	1.725e-05 1.735e-05 1.736e-05 1.739e-05 1.741e-05 1.745e-05 1.752e-05 1.752e-05 1.755e-05 1.756e-05 1.762e-05 1.764e-05 1.764e-05 1.766e-05 1.768e-05 1.772e-05 1.773e-05 1.788e-05 1.788e-05 1.809e-05
 interp/add-1-100-beside-extent-on-another-domain	alloc_words	exact	4200
