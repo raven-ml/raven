@@ -65,32 +65,34 @@
     A [Contract] computes per group of its result's devices that hold one
     window of it, in its order of summation, the whole contraction's. A
     device's windows of [a] and [b] along the contracting pairs, alike, are
-    its {e tile}; its terms are numbered as {!Nx_kernel.section-orders}
+    its {e tile}; its products are numbered as {!Nx_kernel.section-orders}
     numbers the whole's, and it lays its windows out as
-    [[batch; rows; terms]] and [[batch; terms; columns]], the terms in
-    their number's order. It reads [init] over its window of the result,
-    from wherever [init] lies.
+    [[batch; rows; products]] and [[batch; products; columns]], in their
+    number's order. It reads [init] over its window of the result, from
+    wherever [init] lies. The products fall into the contraction's blocks
+    of 4096 ({!Nx_kernel.S.contract}). A node of lane order's tree of those
+    blocks whose products one tile holds is a {e unit} there, as is a block
+    that window edges split, on the device that holds most of its products,
+    the others' parts of [a] and [b] moved there first.
 
-    - In lane order, a node of the tree whose terms one tile holds is a
-      {e unit} there, as is a block that window edges split, on the device
-      that holds most of its terms, the others' parts of [a] and [b] moved
-      there first. Each unit is one contraction of exactly its terms into
-      the accumulator from no [init]. Each device of the group takes every
-      unit, combines them up the tree by [Add], adds [init] as the
+    - In lane order, each unit is one contraction of exactly its products
+      into the accumulator from no [init]. Each device of the group takes
+      every unit, combines them up the tree by [Add], adds [init] as the
       accumulator holds it, and rounds once into the result's dtype.
-    - In chain order, the runs of the group's terms, in increasing number,
-      each on the first device holding it, contract in turn into the
+    - In chain order, the units in increasing number, those that one run of
+      a tile holds in turn taken as one, contract in turn into the
       accumulator: the first from [init] as the accumulator holds it, or
       none, each other from the sum before it, moved to it. The last sum
       rounds once into the result's dtype and moves to every device of the
       group.
 
     In lane order, each device takes its window of the results in the
-    accumulator for each unit it does not compute, and a block that window
-    edges split moves the parts of [a] and [b] its device lacks, once. In
-    chain order, each run after the first takes the sum before it, and the
-    devices holding the runs compute one after the other. Laying a window
-    out is one copy where its axes are not in that order already.
+    accumulator for each unit it does not compute. In chain order, each
+    unit after the first takes the sum before it, and the devices holding
+    the units compute one after the other. In both, a block that window
+    edges split moves the parts of [a] and [b] its device lacks, once.
+    Laying a window out is one copy where its axes are not in that order
+    already.
 
     A [Scan] computes per group of its results' devices that hold one window
     of the axes off its axis; a device's window along its axis is its

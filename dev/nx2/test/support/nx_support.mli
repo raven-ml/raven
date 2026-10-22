@@ -33,6 +33,17 @@ end
 module Declining : Nx_kernel.S
 (** nx.cpu, declining [Add] and [Fill], named ["nx.test"]. *)
 
+module Blocked : Nx_kernel.S
+(** nx.cpu with a contraction association of its own, as
+    {!Nx_kernel.S.contract} allows a library, named ["nx.blocks"]. A
+    contraction of one contracting pair sums each block of 4096 products in
+    chain order from [+0]; lane order combines the blocks' sums by lane
+    order's tree of blocks, then adds [init]; chain order adds them in turn
+    to [init], or to the first. Each sum is in [acc], rounded once into
+    [dst]. A contraction of no products is nx.cpu's.
+
+    Raises [Failure] for a contraction over several contracting pairs. *)
+
 (** {1:nans NaN bits}
 
     An OCaml float holds a NaN quiet, so suites make a signalling NaN

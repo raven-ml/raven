@@ -165,13 +165,14 @@ val base : Nx_array.Dtype.any -> bool
 (** {2:orders Orders of summation}
 
     Two orders of a float sum. A reduction adds in lane order in every
-    library; a contraction in the one its library states it follows, so
-    that libraries that state the same order give the same bits. A
-    contraction's terms are each output's products, a reduction's its terms,
-    numbered from [0] by the contracting pairs' or the reduced axes' indices,
-    taken in C order. A contraction's product is fused into the addition that
-    takes it. A complex contraction sums each part of an output as a float
-    sum of products of parts: with [a = ar + i·ai] and [b = br + i·bi], its
+    library. A contraction is asked for one of them and sums in it as
+    {!S.contract} states: across blocks of its products as the order says,
+    within a block as its library states. A contraction's terms are each
+    output's products, a reduction's its terms, numbered from [0] by the
+    contracting pairs' or the reduced axes' indices, taken in C order. A
+    contraction's product is fused into the addition that takes it. A
+    complex contraction sums each part of an output as a float sum of
+    products of parts: with [a = ar + i·ai] and [b = br + i·bi], its
     product [p]'s terms are numbered [2p] and [2p + 1], [ar·br] and
     [ai·(-bi)] in the real part, [ar·bi] and [ai·br] in the imaginary
     part.
@@ -184,24 +185,15 @@ val base : Nx_array.Dtype.any -> bool
     first. Lane [i] takes lane [i + 8] for [i] below 8, then lane [i + 4]
     for [i] below 4, then [i + 2] for [i] below 2, then lane 0 takes lane
     1, a lane holding no term taking no part. The blocks are combined
-    by a binary tree whose left part holds the largest power of two of blocks
-    below their count, each part combined the same way; then [init] is added.
-
-    Both orders compose across windows of a contraction's contracting axes,
-    so that a contraction computed in parts has the bits of one call. In lane
-    order, a node of the blocks' tree has the value of a contraction of
-    exactly its terms from no [init], two nodes combine by {!Prog.Add} in the
-    accumulator, and [init], as the accumulator holds it, is added after the
-    tree. In chain order, a contraction of consecutive terms from an [init]
-    in the accumulator equal to the chain's value before them continues the
-    chain. *)
+    by a binary tree whose left part holds the largest power of two of
+    blocks below their count, each part combined the same way; then [init]
+    is added. *)
 
 type order =
   | Chain  (** {e Chain order}. *)
   | Lane  (** {e Lane order}. *)
-(** The type for the order of summation a contraction is asked for. A library
-    that states it follows {!section-orders} adds in it; another states the
-    association it computes for each. *)
+(** The type for the order of summation a contraction is asked for
+    ({!S.contract}). *)
 
 (** {1:scatters Scatters} *)
 
@@ -635,14 +627,20 @@ module type S = sig
       [order], the dtypes and the contracted extent alone: the batch, row and
       column extents, the layouts and the device's size never enter it, so a
       window of [dst] computed alone has the whole's bits. The kernels of one
-      order never compute a call given the other. A library that states it
-      follows {!section-orders} adds each output's products in [order].
-      Another states the association it computes for each order, one that
-      composes across windows of the contracting axes as those orders do:
-      partial sums over aligned blocks of the contracted extent, combined in
-      an order that extent alone fixes, so that the number of devices a
-      contraction is cut over never enters its bits. A NaN result's sign and
-      payload are unspecified. *)
+      order never compute a call given the other.
+
+      Each output's products fall into blocks of 4096 consecutive ones, in C
+      order of the contracting pairs' indices, and nx cuts a contraction's
+      contracted extent only at the edges of its blocks. Each library
+      states the order in which it sums a block from [+0]. In [Lane] order,
+      the blocks' sums are combined by lane order's tree of blocks, two
+      nodes by {!Prog.Add} in [acc], and then [init] is added as [acc] holds
+      it. In [Chain] order, each library states an association that
+      composes by passing a part's result, in [acc], as the next part's
+      [init]: one chain that the next part continues, or the blocks' sums
+      added in turn to [init], or without one to the first block's. So a
+      contraction cut over devices, of one library or of several, has the
+      bits of one call. A NaN result's sign and payload are unspecified. *)
 
   (** {1:fft Fourier transforms}
 

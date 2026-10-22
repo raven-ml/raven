@@ -48,10 +48,14 @@
     than [acc] takes the sum in [acc] rounded once, as [Cast] rounds it.
 
     A float or complex contraction adds in the order it is given
-    ({!Nx_kernel.section-orders}), at any shape, so its parts compose across
-    windows of the contracting axes as both orders state there.
-    [contract_order ~rows ~columns] is [Chain] where [rows] and [columns]
-    are both above 4 and multiply to at least 64, and [Lane] otherwise.
+    ({!Nx_kernel.section-orders}), at any shape, a block of 4096 products
+    as the whole: in lane order, a block's sum is lane order's tree of its
+    blocks of 1024 terms, so the tree of blocks {!Nx_kernel.S.contract}
+    states is lane order's own; in chain order, its association is one
+    chain from [init] or [+0], which a part given the sum of the products
+    before it as [init] continues. [contract_order ~rows ~columns] is
+    [Chain] where [rows] and [columns] are both above 4 and multiply to at
+    least 64, and [Lane] otherwise.
     With no products, an output is [init] as [acc] holds it, rounded into
     [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
     a NaN result's sign and payload are unspecified.
