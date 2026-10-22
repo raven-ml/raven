@@ -1722,8 +1722,14 @@ let ccase_of ~pairs ~extents =
      let* cols = int_range 1 3 in
      let* ks =
        if two then
-         let+ k0 = of_list [ 1; 2; 3; 5 ]
-         and+ k1 = of_list [ 0; 1; 3; 300; 511; 700; 1700 ] in
+         (* A quarter of them of several blocks, whose edges fall inside
+            the first pair's rows. *)
+         let* many = frequency [ (3, constant false); (1, constant true) ] in
+         let+ k0 = of_list (if many then [ 3; 5 ] else [ 1; 2; 3; 5 ])
+         and+ k1 =
+           of_list
+             (if many then [ 1500; 1700 ] else [ 0; 1; 3; 300; 511; 700; 1700 ])
+         in
          [| k0; k1 |]
        else
          let+ k = of_list extents in
@@ -1738,13 +1744,14 @@ let ccase_of ~pairs ~extents =
 let ccase = ccase_of ~pairs:true ~extents:pair_extents
 
 (* Contractions over one pair either side of a contraction's blocks, for a
-   library that sums them its own way ({!Nx_support.Blocked}). *)
+   library that sums them its own way ({!Nx_support.Blocked}), and over
+   enough blocks that one window holds several. *)
 let bcase =
   ccase_of ~pairs:false
     ~extents:
       [
         1; 2; 1023; 1024; 1025; 2047; 2048; 2049; 4095; 4096; 4097; 8191; 8192;
-        8193; 12289; 20481;
+        8193; 12289; 16384; 20481; 36865;
       ]
 
 (* The case's operands and its contraction's [batch] and [contracting]
@@ -1843,7 +1850,29 @@ let law_cut ~pairs (module S : Sets) c =
   if pairs then begin
     cover "no product" (terms = 0);
     cover "a cut on a pair after the first" (cut_pair > 0);
-    cover "two pairs cut" (c.ccut = Pairs)
+    cover "two pairs cut" (c.ccut = Pairs);
+    cover "several blocks over two pairs, a block's edge inside a row"
+      ((not one_pair) && terms > block && block mod c.ks.(1) <> 0)
+  end
+  else begin
+    (* Whether one window holds two blocks, the second perhaps short, that
+       one unit sums: lane order's tree pairs blocks from an even one,
+       chain order any two in a row. *)
+    let starts = tile_starts kc tiles in
+    let rec within lo hi = function
+      | s :: (e :: _ as rest) -> (s <= lo && hi <= e) || within lo hi rest
+      | _ -> false
+    in
+    let step = match c.order with Lane -> 2 | Chain -> 1 in
+    let rec several j =
+      (j + 1) * block < kc
+      && (within (j * block) (Int.min kc ((j + 2) * block)) starts
+         || several (j + step))
+    in
+    cover "a lane unit of several blocks on one device"
+      (c.order = Lane && one_pair && several 0);
+    cover "a chain unit of several blocks on one device"
+      (c.order = Chain && one_pair && several 0)
   end;
   cover "an empty window along the cut pair" (kc > 0 && kc < tiles);
   cover "an uneven cut" (kc mod tiles <> 0);
