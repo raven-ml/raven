@@ -1001,8 +1001,8 @@ let golden g =
       (Some p)
   in
   (* The channel. The golden context lives as long as the GSP, so its memory
-     is recorded for no object. *)
-  let* area = object_memory g ~client:priv_root 0 page in
+     is recorded for the GSP's own client, which the process never frees. *)
+  let* area = object_memory g ~client:priv_root priv_root page in
   let module G = Defs.Gpfifo_alloc in
   let gp = Rig_nv.params G.sizeof in
   Rig_nv.set gp G.gp_fifo_offset area.va;
@@ -1076,7 +1076,7 @@ let golden g =
   (* Each buffer's memory, mapped in the process's tables, and what the GSP is
      told of it. *)
   let given (id, b) =
-    let* m = object_memory g ~client:priv_root 0 b.size in
+    let* m = object_memory g ~client:priv_root priv_root b.size in
     let phys = if b.phys then Some (paddr m, b.size) else None in
     let virt = if b.virt then Some m.va else None in
     Ok ((id, m.va), { Rpc.buffer = id; phys; virt })
@@ -1318,6 +1318,24 @@ let teardown g ~unloaded =
       Window.write booter_at.w 0 unload.image;
       Falcon.run c (Falcon.unload (booter_hs booter_at.pa unload))
 
+(* Gives back the addresses of the GPU memory the GSP still holds, its golden
+   context's included, to the space every GPU of the process shares. The
+   memory itself is the GPU's, whose tables no later open keeps. They are
+   taken out of [g] first, so an exception leaks them and frees none twice. *)
+let give_addresses g =
+  let held =
+    Rig_nv.Lock.protect g.lock (fun () ->
+        let h = g.held in
+        g.held <- Objects.empty;
+        h)
+  in
+  Objects.iter
+    (fun _ h ->
+      List.iter
+        (function Mapped m -> Space.free g.p.space m.va | Block _ -> ())
+        h.given)
+    held
+
 (* The GSP stops every channel, unless the GPU cannot be reached or the GSP
    left a call unanswered, which an unload would wait for in vain, or the GSP
    never set its queue up and so runs nothing an unload would stop. A fault an
@@ -1343,6 +1361,7 @@ let stop g =
   if not (answers ()) then `Unknown
   else begin
     give_back g.p g.taken;
+    give_addresses g;
     match down with
     | Ok () when unloaded || not ran -> `Clean
     | Ok () | Error _ -> `Lost

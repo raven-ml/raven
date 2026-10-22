@@ -77,10 +77,11 @@ val stop : t -> [> `Clean | `Lost | `Unknown ]
       needs it to boot the GPU again.
 
     It then turns the GPU's bus mastering off and gives back the memory
-    {!create} took. It is [`Unknown], the memory kept, if the GPU stops
-    responding once its bus mastering is off: it may still read that memory.
-    It is [`Lost] if the boot raised WPR2 and the unload did not stop its
-    channels, if the unloading booter failed or left WPR2 up, or, on
+    {!create} took, and the addresses of the GPU memory the GSP still holds
+    to the space every GPU shares. It is [`Unknown], both kept, if the GPU
+    stops responding once its bus mastering is off: it may still read that
+    memory. It is [`Lost] if the boot raised WPR2 and the unload did not stop
+    its channels, if the unloading booter failed or left WPR2 up, or, on
     Blackwell, if the GSP's core did not halt; and [`Clean] otherwise. *)
 
 (** {1:rm The resource manager} *)
