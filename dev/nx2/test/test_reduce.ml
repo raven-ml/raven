@@ -1829,6 +1829,43 @@ let length =
       (1, int_range (chunk - 1) (chunk + 64));
     ]
 
+(* nx.cpu's Logsumexp and Moments scans cut a slice into tiles of 256
+   terms, which several threads share where slices are few. *)
+let tile = 256
+
+(* An axis's length and the slices beside it, for a Logsumexp or Moments
+   scan: a {!length} beside up to two others; one slice of 24 to 32 tiles,
+   two or three of 12 to 24, and 65 to 72 of 1 to 8, each around a multiple
+   of a tile, past one unit's 64 slices for the last. *)
+let net_shape =
+  let open Gen in
+  let tiles lo hi =
+    let* k = int_range lo hi in
+    let+ d = int_range (-2) 2 in
+    (k * tile) + d
+  in
+  frequency
+    [
+      (4, pair length (int_range 1 3));
+      (1, pair (int_range 0 1) (int_range 1 3));
+      (1, pair (tiles 24 32) (constant 1));
+      (1, pair (tiles 12 24) (int_range 2 3));
+      (1, pair (tiles 1 8) (int_range 65 72));
+    ]
+
+(* The covers of a Logsumexp or Moments scan of [slices] slices of [n]
+   terms. *)
+let cover_tiles n slices =
+  cover "an axis around a multiple of a tile"
+    (n >= tile - 2 && (n + 2) mod tile <= 4);
+  cover "one slice past one tile, the last partial"
+    (slices = 1 && n > tile && n mod tile <> 0);
+  cover "one slice of 24 tiles or more" (slices = 1 && n >= (24 * tile) - 2);
+  cover "two or three slices of 12 tiles or more"
+    (slices > 1 && slices <= 3 && n >= (12 * tile) - 2);
+  cover "more than 64 slices side by side, past a tile"
+    (slices > 64 && n > tile)
+
 (* Terms of either sign, with NaNs of two payloads, infinities and signed
    zeros one in twenty. *)
 let prefix_term =
@@ -1943,8 +1980,8 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
         ])
 
 (* Moments scans whose bits nx.cpu and the expansion both state: float32 or
-   float64 terms near an offset, with specials, along an axis of a
-   {!length}, held transposed at times. *)
+   float64 terms near an offset, with specials, of a {!net_shape}, held
+   transposed at times. *)
 type bits_case =
   | Bits_case :
       (float, 's) D.t * int array * int * bool * float array
@@ -1953,8 +1990,7 @@ type bits_case =
 let bits_case =
   let open Gen in
   let make (type s) (dt : (float, s) D.t) =
-    let* n = length in
-    let* outer = int_range 1 3 in
+    let* n, outer = net_shape in
     let* axis = int_range 0 1 in
     let* strided = bool in
     let* c = of_list [ 0.; 1e3; -1e5 ] in
@@ -1981,11 +2017,15 @@ let bits_examples =
     Bits_case (D.Float32, [| 9; 2 |], 0, true, terms 18);
     Bits_case (D.Float64, [| 3; 17 |], 1, true, terms 51);
     Bits_case (D.Float32, [| 1; 1 |], 1, false, [| Float.infinity |]);
+    Bits_case (D.Float32, [| 6401; 1 |], 0, false, terms 6401);
+    Bits_case (D.Float64, [| 3; 3074 |], 1, true, terms 9222);
+    Bits_case (D.Float32, [| 70; 514 |], 1, false, terms 35980);
   ]
 
 let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
   let n = s.(axis) in
   cover "an axis of 1 or 2" (n <= 2);
+  cover_tiles n s.(1 - axis);
   cover "an axis next to a power of two" (next_to_pow2 n);
   cover "a term not finite or -0"
     (Array.exists
@@ -2036,18 +2076,7 @@ let lse_case =
       [ nan_with 5L; nan_with 9L; Float.infinity; Float.neg_infinity; -0. ]
   in
   let make (type s) (dt : (float, s) D.t) =
-    let* n =
-      frequency
-        [
-          (4, length);
-          (1, int_range 0 1);
-          ( 1,
-            let* k = int_range 1 3 in
-            let+ d = int_range (-2) 2 in
-            (k * chunk) + d );
-        ]
-    in
-    let* outer = int_range 1 3 in
+    let* n, outer = net_shape in
     let* axis = int_range 0 1 in
     let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
     let* view =
@@ -2079,8 +2108,8 @@ let lse_case =
        ])
 
 (* Cases the generator draws too rarely for every run: specials in turn
-   along short axes, and long axes with a NaN, an infinity or an outlier
-   late. *)
+   along short axes, long axes with a NaN, an infinity or an outlier late,
+   and many slices side by side past a tile. *)
 let lse_examples =
   let specials =
     [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity; -3. |]
@@ -2095,18 +2124,18 @@ let lse_examples =
     Lse_case (D.Float32, [| 1; 1 |], 1, Plain, [| -0. |]);
     Lse_case (D.Float32, [| 12; 2 |], 0, Transposed, cycle 24);
     Lse_case (D.Float64, [| 3; 18 |], 1, Reversed, cycle 54);
-    Lse_case (D.Bfloat16, [| 4097; 1 |], 0, Plain, late 4097 Float.infinity);
+    Lse_case (D.Bfloat16, [| 6401; 1 |], 0, Plain, late 6401 Float.infinity);
     Lse_case
-      (D.Float32, [| 2; 8193 |], 1, Broadcast 0, late 8193 (nan_with 7L));
-    Lse_case (D.Float64, [| 4095; 3 |], 0, Broadcast 1, late 4095 1e3);
+      (D.Float32, [| 2; 6145 |], 1, Broadcast 0, late 6145 (nan_with 7L));
+    Lse_case (D.Float64, [| 3071; 3 |], 0, Broadcast 1, late 3071 1e3);
+    Lse_case (D.Float32, [| 514; 70 |], 0, Plain, late (514 * 70) 1e3);
   ]
 
 let law_logsumexp_bits (Lse_case (dt, s, axis, view, xs)) =
   let n = s.(axis) in
   cover "an axis of 0 or 1" (n <= 1);
   cover "an axis next to a power of two" (next_to_pow2 n);
-  cover "an axis around a multiple of 4096"
-    (n >= chunk - 2 && (n + 2) mod chunk <= 4);
+  cover_tiles n s.(1 - axis);
   cover "a NaN" (Array.exists Float.is_nan xs);
   cover "an infinity" (Array.exists (fun x -> Float.abs x = Float.infinity) xs);
   cover "a narrow float" (D.bits dt < 32);
