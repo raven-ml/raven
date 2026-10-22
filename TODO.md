@@ -63,7 +63,6 @@ raven / llama.cpp (Vulkan; ROCm):
   (peers); mlx5 and bnxt NICs; NV's `entry` `No_memory`, which a
   kernel whose local memory outgrows the GPU's forces
   (_plans/rig-release/failure-paths.md)
-- fudge: re-record rig_nv's bench since NV's channel growth
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
   whose only Linux rows are kimchi's; the vendor comparison
