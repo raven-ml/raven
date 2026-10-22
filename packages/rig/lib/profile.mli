@@ -99,9 +99,10 @@ val active : unit -> t list
 (** [active ()] is the open profiles, oldest first, and stopped ones that
     remain in the list. *)
 
-val pend : t -> pending -> unit
-(** [pend p e] adds [e] to [p]'s pending entries, or drops it once the
-    function of [p]'s {!take} has returned. *)
+val pend : t list -> pending -> unit
+(** [pend ps e] adds [e] to the pending entries of each profile of [ps], in
+    order, or drops it for each one whose {!take}'s function has
+    returned. *)
 
 val add : t list -> event -> unit
 (** [add ps e] records [e] under one number in each profile of [ps] still

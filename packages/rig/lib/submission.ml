@@ -1498,7 +1498,7 @@ let record s (lane, name) { ps; moves; asked } p pair =
         copies start stop
   in
   let e = { Profile.device; value; read; drop } in
-  List.iter (fun prof -> Profile.pend prof e) ps
+  Profile.pend ps e
 
 (* The taking of a submit of [s] with [buffers], which first gives back
    the device's owed pairs it can. The last profile may stop between the two

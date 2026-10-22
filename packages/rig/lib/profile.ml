@@ -120,12 +120,20 @@ let stop p =
   change Fun.id;
   match events with None -> [] | Some events -> events
 
-let rec pend p e =
+let rec pend_one p e =
   match Atomic.get p.pending with
   | Open l as before ->
       if not (Atomic.compare_and_set p.pending before (Open (e :: l))) then
-        pend p e
+        pend_one p e
   | Reading _ | Closed -> e.drop ()
+
+(* A loop of its own, so that a submit's hand-over builds no closure. *)
+let rec pend ps e =
+  match ps with
+  | [] -> ()
+  | p :: ps ->
+      pend_one p e;
+      pend ps e
 
 (* Takes no more entries into [p]: [take]'s function returned. *)
 let rec seal p =
@@ -149,9 +157,16 @@ let rec push a x =
   | Some l as before ->
       if not (Atomic.compare_and_set a before (Some (x :: l))) then push a x
 
-let add ps e =
-  let n = Atomic.fetch_and_add numbers 1 in
-  List.iter (fun p -> push p.events (n, e)) ps
+let rec push_all ps x =
+  match ps with
+  | [] -> ()
+  | p :: ps ->
+      push p.events x;
+      push_all ps x
+
+(* The numbered event is made once and pushed by a loop of its own, so that
+   a submit's events build no closure. *)
+let add ps e = push_all ps (Atomic.fetch_and_add numbers 1, e)
 
 let record e = match active () with [] -> () | ps -> add ps e
 
