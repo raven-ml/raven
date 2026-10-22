@@ -113,7 +113,8 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
    the same handles, at least one succeeds: a consumer that loses at a word
    lost it to one that claimed that word, which, if it lost too, lost at a word
    above it. Following who each loser lost to climbs the order, so it ends at a
-   consumer that claimed all its words.
+   consumer that claimed all its words. One that then raises before it writes
+   or consumes their memory gives them all back ([unclaim]).
 
    Claimed in operand order, [add h1 h2] and [add h2 h1] on two domains could
    each take its first handle and lose its second to the other. In key order a
@@ -125,8 +126,8 @@ let died_to ~by i earlier =
   invalid_argf "%s: operand %d was donated to %s" by (i + 1) earlier
 
 (* Sets the death word [w] of operand [i] to [died] unless it died first, on
-   any domain, which raises naming that consumer. No death is undone, so a word
-   read live is only retried. *)
+   any domain, which raises naming that consumer. A word that changed since it
+   was read is read again. *)
 let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
   match Atomic.Loc.get w with
   | Value.Died earlier -> died_to ~by i earlier
@@ -184,6 +185,21 @@ let claim ~by hs =
   List.iter
     (fun (_, Handle (i, x)) -> claim_handle ~by i x)
     (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
+
+(* Gives back the claims of the handles [hs] that {!claim} made, before their
+   consumer wrote or consumed their memory: each handle lives again and its
+   donor is offered again, under a new key. No other consumer writes a word
+   once it died, so each is set in place. *)
+let unclaim hs =
+  List.iter
+    (fun (Handle (_, x)) ->
+      match x with
+      | Value.Donated d ->
+          let key = Atomic.fetch_and_add offers 1 in
+          Atomic.Loc.set d.donor (Value.Offered key);
+          Atomic.Loc.set [%atomic.loc d.spent] Value.Live
+      | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
+    hs
 
 (* The keys of the donors of the handles [hs] that are still offered. *)
 let offered hs =
