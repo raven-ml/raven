@@ -2167,15 +2167,18 @@ let timeline =
 (* Two devices of one GPU *)
 
 (* With no kernel driver, a process takes a GPU once: a second open is refused,
-   naming the GPU taken, and the first device goes on. *)
+   naming the GPU taken, and the first device goes on from its last value,
+   which is past 0 where an earlier device held its slot. *)
 let one_gpu_driverless t =
+  let before = Rig.submitted t.d in
   (match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
   | Ok g' ->
       A.stop g' ~fault:None;
       fail "a second open of a GPU the process took"
   | Error why -> contains ~sub:"is open in this process" why);
   let p = S.submit t [||] in
-  equal int ~msg:"the first device's next value" 1 (Rig.Point.value p);
+  equal int ~msg:"the first device's next value" (before + 1)
+    (Rig.Point.value p);
   Rig.Point.wait p
 
 (* Through amdgpu, a process opens a GPU as often as it likes: the devices, [g]
