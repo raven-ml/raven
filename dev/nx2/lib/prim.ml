@@ -22,29 +22,48 @@ let placement : type v s d. (v, s, d) t -> d Devices.placement = function
   | Traced { form = { placement = Some p; _ }; _ } -> p
   | Deferred _ | Traced _ -> invalid_arg "Prim.placement: a value of every set"
 
+let viewed a l =
+  let a = Atomic.Loc.get a in
+  if Nx_array.layout a == l then a
+  else Nx_array.v (Nx_array.dtype a) l (Nx_array.buffer a)
+
+(* The arrays [donor] holds now. *)
+let held : type v s. (v, s) donor -> (v, s) Nx_array.t iarray = function
+  | One (a, l) -> [| viewed a l |]
+  | Many arrays -> Atomic.Loc.get arrays
+
 let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
-  | Array { a; _ } -> Nx_array.dtype a
-  | Shards { arrays; _ } | Donated { arrays; _ } ->
-      Nx_array.dtype (Iarray.get arrays 0)
+  | Array r -> Nx_array.dtype r.a
+  | Shards r -> Nx_array.dtype (Iarray.get r.arrays 0)
+  | Donated { donor = One (a, _); _ } -> Nx_array.dtype (Atomic.Loc.get a)
+  | Donated { donor = Many arrays; _ } ->
+      Nx_array.dtype (Iarray.get (Atomic.Loc.get arrays) 0)
   | Deferred { form; _ } | Traced { form; _ } -> form.dtype
 
 (* The layout of [x]'s array, of its first shard, or of its form. *)
 let own_layout : type v s d. (v, s, d) t -> L.t = function
-  | Array { a; _ } -> Nx_array.layout a
-  | Shards { arrays; _ } | Donated { arrays; _ } ->
-      Nx_array.layout (Iarray.get arrays 0)
+  | Array r -> Nx_array.layout r.a
+  | Shards r -> Nx_array.layout (Iarray.get r.arrays 0)
+  | Donated { donor = One (_, l); _ } -> l
+  | Donated { donor = Many arrays; _ } ->
+      Nx_array.layout (Iarray.get (Atomic.Loc.get arrays) 0)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
 let rank x = L.rank (own_layout x)
 
-let rec death : type v s d. (v, s, d) t -> death = function
+let death : type v s d. (v, s, d) t -> death = function
   | Array r -> r.dead
   | Shards r -> r.dead
   | Donated r -> (
-      (* A handle dies with its donor, whichever handle was consumed. *)
-      match death r.donor with
+      (* A handle an operation read is named by it, as a claim, which sets
+         the handle's word first, names it. Any other dies with its donor,
+         whichever handle was consumed. *)
+      match r.spent with
       | Died _ as died -> died
-      | Live | Offered _ -> r.spent)
+      | Live | Offered _ -> (
+          match Atomic.Loc.get r.word with
+          | Died _ as died -> died
+          | Live | Offered _ -> r.spent))
   | Deferred _ | Traced _ -> Live
 
 let alive ~by i x =
@@ -53,8 +72,9 @@ let alive ~by i x =
   | Died why -> invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 
 let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
-  | Array { a; _ } -> [| a |]
-  | Shards { arrays; _ } | Donated { arrays; _ } -> arrays
+  | Array r -> [| r.a |]
+  | Shards r -> r.arrays
+  | Donated r -> held r.donor
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 
@@ -90,8 +110,8 @@ let rec dims_equal x y i =
 
 let same_shape (type v s w r d) (x : (v, s, d) t) (y : (w, r, d) t) =
   match (x, y) with
-  | Array { a; _ }, Array { a = b; _ } ->
-      let la = Nx_array.layout a and lb = Nx_array.layout b in
+  | Array a, Array b ->
+      let la = Nx_array.layout a.a and lb = Nx_array.layout b.a in
       L.rank la = L.rank lb && layouts_equal la lb 0
   | _ -> rank x = rank y && dims_equal x y 0
 
@@ -167,19 +187,14 @@ let of_layout (type v s d) (dtype : (v, s) dtype) layout
 
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
-  | Array { at; a; _ } ->
+  | Array r ->
       {
-        dtype = Nx_array.dtype a;
-        layout = Nx_array.layout a;
-        placement = Some at;
+        dtype = Nx_array.dtype r.a;
+        layout = Nx_array.layout r.a;
+        placement = Some r.at;
       }
-  | Donated { at; arrays; _ } when Iarray.length arrays = 1 ->
-      let a = Iarray.get arrays 0 in
-      {
-        dtype = Nx_array.dtype a;
-        layout = Nx_array.layout a;
-        placement = Some at;
-      }
+  | Donated { at; donor = One (_, layout); _ } ->
+      { dtype = dtype x; layout; placement = Some at }
   | Shards { at; _ } | Donated { at; _ } ->
       of_layout (dtype x) (L.contiguous (shape x)) (Some at)
   | Deferred { form; _ } | Traced { form; _ } -> form
@@ -1277,9 +1292,8 @@ let rec make_reductions : type d r.
    device. *)
 let form_layout (type v s d) (x : (v, s, d) t) =
   match x with
-  | Array { a; _ } -> Nx_array.layout a
-  | Donated { arrays; _ } when Iarray.length arrays = 1 ->
-      Nx_array.layout (Iarray.get arrays 0)
+  | Array r -> Nx_array.layout r.a
+  | Donated { donor = One (_, l); _ } -> l
   | Shards _ | Donated _ -> L.contiguous (shape x)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
@@ -1642,7 +1656,7 @@ let layouts : type r. by:string -> r prim -> L.t array =
       ignore (Devices.window ~by p s 0);
       [|
         (match (x, Devices.device p) with
-        | Array { a; _ }, Some _ -> Nx_array.layout a
+        | Array r, Some _ -> Nx_array.layout r.a
         | _ -> L.contiguous s);
       |]
   | Check { ok; data; _ } ->
@@ -1841,7 +1855,7 @@ let any xs =
 
 (* [x]'s arrays untyped; a value on one device builds no [iarray] on the way. *)
 let any_arrays : type v s d. (v, s, d) t -> Nx_array.any array = function
-  | Array { a; _ } -> [| Nx_array.Any a |]
+  | Array r -> [| Nx_array.Any r.a |]
   | x -> any (arrays x)
 
 let result_arrays op r =

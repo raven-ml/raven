@@ -336,6 +336,224 @@ let declines =
           kept "Nx.contract" "a contraction's init" (fun h ->
               Nx.contract Nx.float32 ~init:h p y y);
           equal ~msg:"bytes held" int before (settled (m 2)));
+      test "a decline in a donor's memory gives it back to every handle"
+        (fun () ->
+          (* Two handles of [x], made before the decline: the second reads
+             the memory given back, on the fast path and on the general
+             one. *)
+          let y = refused [| 4.; 3.; 2.; 1. |] in
+          let p = Nx.Pattern.v "i k, k j -> i j | k" in
+          let declines =
+            [
+              ("Nx.add", fun h -> Nx.add h y);
+              ("Nx.contract", fun h -> Nx.contract Nx.float32 ~init:h p y y);
+            ]
+          in
+          let consumers =
+            [
+              ("Nx.mul", (fun h -> Nx.mul h y), [| 64.; 27.; 8.; 1. |]);
+              ("Nx.sum", (fun h -> Nx.sum h), [| 30. |]);
+            ]
+          in
+          List.iter
+            (fun (by, decline) ->
+              List.iter
+                (fun (by', consume, expected) ->
+                  let x = Nx.mul y y in
+                  let h1 = Nx.donate x and h2 = Nx.donate x in
+                  invalid ~by (fun () -> ignore (decline h1));
+                  equal ~msg:(by ^ ", then " ^ by') (array bits) expected
+                    (elements (consume h2));
+                  raises_match
+                    (Exn.invalid_arg ~substring:("donated to " ^ by'))
+                    (fun () -> ignore (Nx.copy x)))
+                consumers)
+            declines);
+    ]
+
+(* Donations of one value on nx.test, which declines a sum: handles, views and
+   copies of handles, sums that decline, and a product and a sum that
+   consume. The value and every handle of it die at the first consumer, named
+   by it; a decline leaves them as they were. A handle a movement spent dies
+   naming the movement. *)
+type donor = { xs : float array; mutable dead : string option }
+
+(* A handle reads its donor's elements in [order]. [spent] is what it may be:
+   free, or spent by a named function. In sequence it is known. *)
+type handle = {
+  x : donor;
+  order : int array;
+  mutable spent : string option list;
+}
+
+let donor = abstract "x"
+let handle = abstract "h"
+
+let fours =
+  Gen.with_pp
+    (fun ppf a ->
+      Format.fprintf ppf "[%s]"
+        (String.concat "; " (Array.to_list (Array.map string_of_float a))))
+    (Gen.array ~size:(Gen.int_range 4 4) (Gen.of_list [ 0.; 1.; -2.; 3.5 ]))
+
+let on_dec xs = Nx.place Dec.on (on_host Plain D.Float32 [| 4 |] xs)
+let twos () = on_dec (Array.make 4 2.)
+
+(* Computed, so a consumer may write into its memory. *)
+let make_sys xs = Nx.mul (on_dec xs) (on_dec (Array.make 4 1.))
+let make_ref xs = { xs; dead = None }
+
+(* What a refusal says: a decline, or the function a value went to. *)
+let named m =
+  let has s i =
+    i + String.length s <= String.length m
+    && String.sub m i (String.length s) = s
+  in
+  let rec find s i =
+    if i > String.length m then None
+    else if has s i then Some i
+    else find s (i + 1)
+  in
+  let mark = "was donated to " in
+  match find mark 0 with
+  | Some i ->
+      let i = i + String.length mark in
+      String.sub m i (String.length m - i)
+  | None ->
+      if Option.is_some (find "does not compute" 0) then "declined"
+      else "refused: " ^ m
+
+let outcome f =
+  match f () with ys -> Ok ys | exception Invalid_argument m -> Error (named m)
+
+let outcomes = result (array float_exact) string
+
+(* The deaths [h] may have: the function that spent it, else its donor's. *)
+let deaths h =
+  List.sort_uniq compare
+    (List.map (function Some f -> Some f | None -> h.x.dead) h.spent)
+
+let fate h =
+  match deaths h with [ d ] -> d | _ -> fail "an undecided handle in sequence"
+
+let elements_of h = Array.map (fun i -> h.x.xs.(i)) h.order
+
+let donate_ref x =
+  if Option.is_some x.dead then invalid_arg "dead";
+  { x; order = [| 0; 1; 2; 3 |]; spent = [ None ] }
+
+(* A movement spends [h] and passes on a handle reading [order] of it. *)
+let moved order h =
+  if Option.is_some (fate h) then invalid_arg "dead";
+  h.spent <- [ Some "Nx.reshape" ];
+  { x = h.x; order = Array.map (fun i -> h.order.(i)) order; spent = [ None ] }
+
+let view_ref = moved [| 0; 1; 2; 3 |]
+let view_sys h = Nx.reshape [| 4 |] (Nx.reshape [| 2; 2 |] h)
+
+(* A reshape of a transpose copies. *)
+let copy_ref = moved [| 0; 2; 1; 3 |]
+let copy_sys h = Nx.reshape [| 4 |] (Nx.transpose (Nx.reshape [| 2; 2 |] h))
+
+let decline_ref h =
+  match fate h with Some f -> Error f | None -> Error "declined"
+
+let decline_sys h = outcome (fun () -> elements (Nx.add h (twos ())))
+
+(* A sum beside a constant, off the fast path. *)
+let decline_off_sys h =
+  outcome (fun () -> elements (Nx.add h (Nx.scalar Nx.float32 2.)))
+
+let consumed by f h =
+  match fate h with
+  | Some g -> Error g
+  | None ->
+      h.x.dead <- Some by;
+      h.spent <- [ Some by ];
+      Ok (f (elements_of h))
+
+let mul_ref = consumed "Nx.mul" (Array.map (fun v -> v *. 2.))
+let mul_sys h = outcome (fun () -> elements (Nx.mul h (twos ())))
+let sum_ref = consumed "Nx.sum" (fun ys -> [| Array.fold_left ( +. ) 0. ys |])
+let sum_sys h = outcome (fun () -> elements (Nx.sum h))
+let read_ref x = match x.dead with Some f -> Error f | None -> Ok x.xs
+let read_sys x = outcome (fun () -> elements x)
+
+let donations =
+  [
+    command "make" (fours @-> makes donor) make_ref make_sys;
+    command "donate" (donor ^-> makes handle) donate_ref Nx.donate;
+    command "view" (handle ^-> makes handle) view_ref view_sys;
+    command "copy" (handle ^-> makes handle) copy_ref copy_sys;
+    command "decline" (handle ^-> returns outcomes) decline_ref decline_sys;
+    command "decline off the fast path"
+      (handle ^-> returns outcomes)
+      decline_ref decline_off_sys;
+    command "mul" (handle ^-> returns outcomes) mul_ref mul_sys;
+    command "sum" (handle ^-> returns outcomes) sum_ref sum_sys;
+    command "read" (donor ^-> returns outcomes) read_ref read_sys;
+  ]
+
+(* On two domains a call may lose a word to a sum on the other domain that
+   declines later and gives it back: it raises naming [Nx.add] while the
+   donor lives, and its handle may stay spent by it. *)
+let union a b = List.sort_uniq compare (a @ b)
+
+let judge by reference h = function
+  | Error e -> raise e
+  | Ok out -> (
+      let ds = deaths h in
+      match out with
+      | Error "Nx.add" when List.mem None ds ->
+          cover "a call loses to a decline in flight" true;
+          h.spent <- union h.spent [ Some by ]
+      | Error f when List.mem (Some f) ds ->
+          (* A call that checked the handle before its donor died on the
+             other domain keeps the handle's word when it loses the
+             donor's. *)
+          let raced = List.mem None h.spent && h.x.dead = Some f in
+          h.spent <-
+            List.filter
+              (fun d -> (match d with Some _ -> d | None -> h.x.dead) = Some f)
+              h.spent;
+          if raced then h.spent <- union h.spent [ Some by ]
+      | Ok _ | Error _ ->
+          if not (List.mem None ds) then fail (by ^ " read a dead handle");
+          h.spent <- [ None ];
+          equal outcomes (reference h) out)
+
+(* A read racing a consumer may also be refused by rig while the consumer holds
+   the donor's memory, as on one domain without a decline. *)
+let read_judge x = function
+  | Error e -> raise e
+  | Ok (Error "Nx.add") when Option.is_none x.dead -> ()
+  | Ok (Error m) when String.starts_with ~prefix:"refused: " m -> ()
+  | Ok out -> equal outcomes (read_ref x) out
+
+(* A movement is drawn where the handle's fate is known. *)
+let known h = List.length (deaths h) = 1
+
+let raced =
+  [
+    command "make" (fours @-> makes donor) make_ref make_sys;
+    command "donate" (donor ^-> makes handle) donate_ref Nx.donate;
+    command ~pre:known "view" (handle ^-> makes handle) view_ref view_sys;
+    command ~pre:known "copy" (handle ^-> makes handle) copy_ref copy_sys;
+    command "decline"
+      (handle ^-> judges outcomes)
+      (judge "Nx.add" decline_ref)
+      decline_sys;
+    command "mul" (handle ^-> judges outcomes) (judge "Nx.mul" mul_ref) mul_sys;
+    command "sum" (handle ^-> judges outcomes) (judge "Nx.sum" sum_ref) sum_sys;
+    command "read" (donor ^-> judges outcomes) read_judge read_sys;
+  ]
+
+let donation =
+  group "donation"
+    [
+      stateful "a value lives until a handle of it is consumed" donations;
+      stateful ~domains:2
+        "handles of one value declined and consumed on two domains" raced;
     ]
 
 let kernels =
@@ -2399,6 +2617,7 @@ let () =
          broadcasting;
          kernels;
          declines;
+         donation;
          constants;
          sets;
          allocation;
