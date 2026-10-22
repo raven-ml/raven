@@ -42,10 +42,16 @@ val bar_bytes : string -> bar:int -> (int * int) list -> int -> string
 val has : sub:string -> string -> bool
 (** [has ~sub s] is [true] iff [sub] occurs in [s]. *)
 
-val child : string -> int
-(** [child flag] runs this executable again with the one argument [flag],
-    and is its exit code, or [-1] if a signal ended it. A suite runs a test in a child where the test leaves its process
-    changed for good, as an export of a GPU's memory over PCI does. *)
+val child : string -> unit
+(** [child flag] runs this executable again with the one argument [flag]. A
+    suite runs a test in a child where the test leaves its process changed
+    for good, as an export of a GPU's memory over PCI does. The test fails
+    unless the child exits with [0], and skips for the reason the child
+    gives if the child ends with {!skipped}. *)
+
+val skipped : string -> 'a
+(** [skipped why] ends this process, a child {!child} runs, as a skip of the
+    test for [why]. *)
 
 (** {1:host Host memory} *)
 

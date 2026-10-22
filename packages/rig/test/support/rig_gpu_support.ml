@@ -111,14 +111,32 @@ let has ~sub s =
   in
   at 0
 
+(* A child skips with this exit code, automake's for a skipped test, its
+   reason on its standard output. *)
+let skip_exit = 77
+
 let child flag =
   let exe = Sys.executable_name in
+  let from, into = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process exe [| exe; flag |] Unix.stdin Unix.stdout Unix.stderr
+    Unix.create_process exe [| exe; flag |] Unix.stdin into Unix.stderr
   in
+  Unix.close into;
+  let said = In_channel.input_all (Unix.in_channel_of_descr from) in
+  Unix.close from;
   match snd (Unix.waitpid [] pid) with
-  | WEXITED c -> c
-  | WSIGNALED _ | WSTOPPED _ -> -1
+  | WEXITED c when c = skip_exit -> skip ~reason:said ()
+  | WEXITED 0 -> print_string said
+  | WEXITED c ->
+      print_string said;
+      failf "the child exited with %d" c
+  | WSIGNALED _ | WSTOPPED _ ->
+      print_string said;
+      fail "a signal ended the child"
+
+let skipped why =
+  print_string why;
+  exit skip_exit
 
 let still ?msg w x f ~ms =
   let t0 = Rig.Profile.now () in

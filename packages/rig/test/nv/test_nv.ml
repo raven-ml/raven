@@ -462,6 +462,7 @@ let memory =
 
 let dma_child = "--dma-over-pci"
 let dma_sizes = [ 1; 4095; 4096; 4097; 1 lsl 22 ]
+let small_bar = "memory BAR is smaller than its memory"
 
 (* An [fn] that is no bus address, or no function of the machine, is refused
    naming it. *)
@@ -503,7 +504,9 @@ let exports_dmabuf () =
   refuses_strangers d
 
 (* In the child: the bytes at the ranges are the buffer's, through BAR 1, the
-   memory BAR, and a reopen of the GPU in the process is refused. *)
+   memory BAR, and a reopen of the GPU in the process is refused. The export is
+   refused, and the test skips, where the memory BAR is smaller than the GPU's
+   memory, as on a host that caps the BAR. *)
 let exports_bus () =
   let t = S.open_ () in
   let fn = gpu_bus t.d in
@@ -511,6 +514,9 @@ let exports_bus () =
   let b = B.create t.d n in
   B.fill b 'x';
   (match B.dma b ~fn with
+  | Error why when Rig_gpu_support.has ~sub:small_bar why ->
+      S.close t;
+      Rig_gpu_support.skipped why
   | Error why -> failf "refused: %s" why
   | Ok (Dmabuf _) -> fail "the path over PCI gives bus ranges"
   | Ok (Bus runs) ->
@@ -533,7 +539,7 @@ let exports_bus () =
 let exports () =
   match S.path () with
   | Some Pci ->
-      equal ~msg:"the child's exit" int 0 (Rig_gpu_support.child dma_child);
+      Rig_gpu_support.child dma_child;
       S.with_ ignore
   | Some Kernel | None -> exports_dmabuf ()
 

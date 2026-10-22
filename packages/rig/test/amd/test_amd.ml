@@ -1316,6 +1316,7 @@ module Dmabuf = Rig_gpu_support.Dmabuf
 
 let dma_child = "--dma-over-pci"
 let dma_sizes = [ 1; 4095; 4096; 4097; 1 lsl 22 ]
+let small_bar = "memory BAR is smaller than its memory"
 
 (* An [fn] that is no bus address, or no function of the machine, is refused
    naming it. *)
@@ -1338,7 +1339,8 @@ let exported d fn ~memory n =
   let b = B.create ~memory d n in
   B.fill b 'y';
   match B.dma b ~fn with
-  | Error why when Rig_gpu_support.has ~sub:"ACS controls" why ->
+  | Error why
+    when memory <> Pinned && Rig_gpu_support.has ~sub:"ACS controls" why ->
       skip ~reason:why ()
   | Error why -> failf "%d bytes: %s" n why
   | Ok (Bus _) -> fail "the amdgpu path gives a dma-buf"
@@ -1353,15 +1355,20 @@ let exported d fn ~memory n =
       | Some s -> equal ~msg:"its bytes, mapped" string (String.make n 'y') s
       | None -> fail "amdgpu maps no dma-buf of this memory")
 
+(* Pinned memory first: only an export of the GPU's memory, Device or Mapped,
+   checks the route, which a process without CAP_SYS_ADMIN may not tell. *)
 let exports_dmabuf () =
   S.with_ @@ fun { d; _ } ->
   let fn = gpu_bus d in
+  exported d fn ~memory:Pinned 4097;
+  refuses_strangers d;
   List.iter (exported d fn ~memory:Device) dma_sizes;
-  List.iter (fun memory -> exported d fn ~memory 4097) [ Pinned; Mapped ];
-  refuses_strangers d
+  exported d fn ~memory:Mapped 4097
 
 (* In the child: the bytes at the ranges are the buffer's, through BAR 0, the
-   memory BAR, and a reopen of the GPU in the process is refused. *)
+   memory BAR, and a reopen of the GPU in the process is refused. The export is
+   refused, and the test skips, where the memory BAR is smaller than the GPU's
+   memory, as on a host that caps the BAR. *)
 let exports_bus () =
   let t = S.open_ () in
   let fn = gpu_bus t.d in
@@ -1369,6 +1376,9 @@ let exports_bus () =
   let b = B.create t.d n in
   B.fill b 'x';
   (match B.dma b ~fn with
+  | Error why when Rig_gpu_support.has ~sub:small_bar why ->
+      S.close t;
+      Rig_gpu_support.skipped why
   | Error why -> failf "refused: %s" why
   | Ok (Dmabuf _) -> fail "the path over PCI gives bus ranges"
   | Ok (Bus runs) ->
@@ -1390,7 +1400,7 @@ let exports_bus () =
 
 let exports () =
   if S.driverless () then begin
-    equal ~msg:"the child's exit" int 0 (Rig_gpu_support.child dma_child);
+    Rig_gpu_support.child dma_child;
     S.with_ ignore
   end
   else exports_dmabuf ()
