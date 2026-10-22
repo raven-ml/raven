@@ -8,12 +8,7 @@
    operands equals that window of its whole result, bitwise but for a NaN's
    sign and payload where the operation leaves them unspecified. Each device
    of a set computes its window so, so this is the law a set's results rest
-   on.
-
-   Then the law at work: an operation over operands on a set of three devices
-   whose kernels decline what nx expands, each device computing its window by
-   the expansion, equals it on one device of such kernels, bitwise, whatever
-   the extent its operands are split along. *)
+   on. *)
 
 open Windtrap
 module A = Nx_array
@@ -454,9 +449,8 @@ let contract_op = contract_of [ 0; 1; 3; 5; 8; 9 ]
    fewer than 64 outputs, in lane order; more in chain order. *)
 let threshold_op = contract_of [ 5; 8; 9; 16 ]
 
-(* The families nx expands where a device's kernels decline, then those it does
-   not. *)
-let expanding =
+(* The operations' families. *)
+let ops =
   [
     map_op;
     padded_map_op;
@@ -473,10 +467,14 @@ let expanding =
     r2c_op;
     c2r_op;
     contract_op;
+    gather_op;
+    lu_op;
+    solve_op;
+    qr_op;
+    svd_op;
+    eigh_op;
+    copy_op;
   ]
-
-let ops =
-  expanding @ [ gather_op; lu_op; solve_op; qr_op; svd_op; eigh_op; copy_op ]
 
 (* Each case's family, as the covers name it. *)
 let family (Op op) =
@@ -695,173 +693,6 @@ let threshold_law ((Op op as o), (w : M.range array)) =
   | _ -> ());
   agrees (o, w)
 
-(* Over three devices *)
-
-let declines = Atomic.make 0
-
-let decline () =
-  Atomic.incr declines;
-  A.Declined
-
-(* nx.cpu, declining each case nx expands: a map of several nodes or a padded
-   load, a loop of another reduction than one core monoid or with a padded
-   load, a scatter whose targets may repeat, a sort, a fold, a transform and a
-   contraction. *)
-module Expanding = struct
-  include Nx_cpu
-
-  let name = "nx.expanding"
-
-  let core : (Nx_kernel.reduction * int) array -> bool = function
-    | [| (Monoid (Sum | Prod | Max | Min), _) |] -> true
-    | _ -> false
-
-  let plain (loads : Nx_kernel.load array) =
-    Array.for_all
-      (function Nx_kernel.Plain _ -> true | Nx_kernel.Padded _ -> false)
-      loads
-
-  let map _ ~dsts:_ _ = decline ()
-
-  let reduce p ~shape ~axes rs ~dsts loads =
-    if core rs && plain loads then Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
-    else decline ()
-
-  let scan ?carry p ~axis r ~dsts loads =
-    if core [| r |] && plain loads then Nx_cpu.scan ?carry p ~axis r ~dsts loads
-    else decline ()
-
-  let scatter combine ~unique ~axis ~dst ~into idx updates =
-    if unique then Nx_cpu.scatter combine ~unique ~axis ~dst ~into idx updates
-    else decline ()
-
-  let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
-  let fold _ ~dst:_ _ = decline ()
-  let contract ~order:_ ~batch:_ ~contracting:_ ~acc:_ ~dst:_ ~init:_ _ _ =
-    decline ()
-  let c2c _ ~axes:_ ~dst:_ _ = decline ()
-  let r2c ~axes:_ ~dst:_ _ = decline ()
-  let c2r ~axes:_ ~dst:_ _ = decline ()
-end
-
-let alone : b Devices.t =
-  Devices.mint ~by:"t" ~kernels:(module Expanding) [ m 0 ]
-
-let trio : b Devices.t =
-  Devices.mint ~by:"t" ~kernels:(module Expanding) [ m 1; m 2; m 3 ]
-
-let on_alone (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let a = A.to_device (m 0) (Iarray.get (Prim.arrays x) 0) in
-  let at = Devices.rebrand (Devices.one alone 0) in
-  Value.Array { at; a; dead = Value.Live }
-
-(* [x] on [trio], split along [axis], or whole on each device. *)
-let on_trio axis (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let p =
-    match axis with
-    | Some axis -> Devices.split ~by:"t" ~axis trio
-    | None -> Devices.on trio
-  in
-  let a = A.to_device (m 1) (Iarray.get (Prim.arrays x) 0) in
-  let at = Devices.rebrand (Devices.one trio 0) in
-  let x = Value.Array { at; a; dead = Value.Live } in
-  Exec.run ~by:"t" (Value.Place (Devices.rebrand p, x))
-
-(* The axis of operand [i] that becomes the results' axis [r] by [rule]. *)
-let becoming rule i x r =
-  match (rule : Route.rule) with
-  | Elementwise -> Some r
-  | Axes t | Into t ->
-      List.find_opt
-        (fun a -> t.(i).(a) = Route.Becomes r)
-        (List.init (Prim.rank x) Fun.id)
-
-let expandable =
-  [
-    "Map"; "padded Map"; "Reduce"; "padded Reduce"; "Scan"; "padded Scan";
-    "Scatter"; "Sort"; "Sort k"; "Fold"; "C2c"; "R2c"; "C2r"; "Contract";
-  ]
-
-(* Each operand is split along its axis that becomes the results' axis [axis],
-   whole on each device where none does or there is no [axis]. *)
-let trio_law ((Op op as o), axis) =
-  let whole (_ : int) s = Array.map full s in
-  let one = Prim.mapi (fun _ x -> on_alone x) op in
-  let expected = bytes whole one (Exec.run ~by:"t" one) in
-  let rule = Prim.rule op and s = shape_of_results o in
-  Option.iter
-    (fun a ->
-      cover "a split of an extent three does not divide" (s.(a) mod 3 <> 0);
-      cover "a split leaving a device an empty window" (s.(a) > 0 && s.(a) < 3);
-      cover "a split of an empty axis" (s.(a) = 0))
-    axis;
-  let split i x = Option.bind axis (becoming rule i x) in
-  let three = Prim.mapi (fun i x -> on_trio (split i x) x) op in
-  (* A loop of no load computes where its results are read: on [trio], split
-     along [axis]. *)
-  let at =
-    match Prim.operands op with
-    | Operands [] -> (
-        match axis with
-        | Some axis -> Some (Devices.split ~by:"t" ~axis trio)
-        | None -> Some (Devices.on trio))
-    | Operands _ -> None
-  in
-  let before = Atomic.get declines in
-  let r = Exec.run ~by:"t" three in
-  let cut = ref false in
-  Prim.iter_results
-    (fun x ->
-      let p = Prim.placement (reach at x) in
-      if Grid.is_cut (Devices.grid p) then cut := true)
-    three r;
-  let declined = Atomic.get declines > before in
-  cover "a cut over three devices of a loop of no load"
-    (!cut && unloaded_loop o);
-  let f = family o in
-  List.iter
-    (fun g ->
-      cover
-        ("a decline on a cut over three devices of " ^ g)
-        (declined && !cut && f = g))
-    expandable;
-  let actual = bytes ?at whole three r in
-  Array.iteri
-    (fun i e ->
-      equal (array int) ~msg:(Printf.sprintf "result %d" i) e actual.(i))
-    expected
-
-(* An operation and a result axis to split its operands along: one the results
-   do not keep whole, where there is one. *)
-let split_case ops =
-  let open Gen in
-  let* (Op op as o) = ops in
-  let rule = Prim.rule op and s = shape_of_results o in
-  let free =
-    List.filter
-      (fun a -> not (Route.keeps rule a))
-      (List.init (Array.length s) Fun.id)
-  in
-  let+ axis =
-    if free = [] then constant None else map Option.some (of_list free)
-  in
-  (o, axis)
-
-(* Three in four cases of a family nx expands, and three in four split: the
-   scarcest expanding family then declines on a cut over 20 times in 1000
-   cases. *)
-let trio_case =
-  let open Gen in
-  let any = split_case (frequency [ (3, one_of expanding); (1, one_of ops) ]) in
-  frequency
-    [ (3, such_that (fun (_, axis) -> Option.is_some axis) any); (1, any) ]
-
-let pp_trio_case ppf (Op op, axis) =
-  match axis with
-  | Some a ->
-      Format.fprintf ppf "%a split along the results' axis %d" Prim.pp op a
-  | None -> Format.fprintf ppf "%a whole on each device" Prim.pp op
-
 (* Rows of [1e7 + 0.1 - 1e7]: a window of 4 of 8 rows sums each in the order of
    8. *)
 let test_contract_rows () =
@@ -1069,9 +900,6 @@ let () =
              prop ~count:1000
                "an operation over its operands' windows is that window"
                (Gen.with_pp pp_case case) law;
-             prop ~count:1000
-               "three devices that expand an operation compute it as one"
-               (Gen.with_pp pp_trio_case trio_case) trio_law;
              prop ~count:300
                "a contraction's window adds in the whole's order"
                (Gen.with_pp pp_case threshold_case)

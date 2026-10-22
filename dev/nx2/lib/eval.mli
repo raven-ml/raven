@@ -128,7 +128,7 @@ val expand :
   'r prim ->
   'r option
 (** [expand i ~by ~repeat op] is {!Expand.run} over {!eval} under [i]'s
-    handler again: an optional case as core operations, which reach [i] again,
-    its loops run by [repeat].
+    handler again: [op] as simpler operations, which reach [i] again, its
+    loops run by [repeat].
 
     Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)

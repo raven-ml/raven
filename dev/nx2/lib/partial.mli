@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Operations whose route computes by partials ({!Route.Partials}), as core
+(** Operations whose route computes by partials ({!Route.Partials}), as
     operations applied through [apply]: on one device each, or a [Place].
 
     A [Reduce] of several reductions computes each one alone. One computes

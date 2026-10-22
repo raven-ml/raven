@@ -5,8 +5,8 @@
 
 (* Gather, Scatter and Assemble through the engine's private modules, copied
    here: their rules raise before any kernel, a split placement computes what
-   one device does, a donated target takes the result, and an assembly the
-   kernels decline expands. *)
+   one device does, a donated target takes the result, and nx's expansion of a
+   sub-byte gather and scatter. *)
 
 open Windtrap
 module A = Nx_array
@@ -14,28 +14,11 @@ module D = Nx_array.Dtype
 module M = Nx_array.Move
 module C = Nx_support.Counting
 
-(* nx.cpu, declining gathers and scatters of sub-byte dtypes, as a library
-   may. *)
-module Narrow = struct
-  include Nx_cpu
-
-  let name = "nx.narrow"
-  let sub_byte a = D.bits (A.dtype a) < 8
-
-  let gather ~axis ~dst idx x =
-    if sub_byte x then A.Declined else Nx_cpu.gather ~axis ~dst idx x
-
-  let scatter c ~unique ~axis ~dst ~into idx u =
-    if sub_byte into then A.Declined
-    else Nx_cpu.scatter c ~unique ~axis ~dst ~into idx u
-end
-
 type b
 
 let m = Nx_support.memory
 let s1 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0 ]
 let s2 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0; m 1 ]
-let narrow : b Devices.t = Devices.mint ~by:"t" ~kernels:(module Narrow) [ m 2 ]
 let at1 = Devices.one s1 0
 let split = Devices.split ~by:"t" ~axis:0 s2
 
@@ -183,23 +166,35 @@ let donation =
             (elements v));
     ]
 
-let declines =
-  group "declines"
+(* [op] by its expansion. *)
+let expanded op = Option.get (Expand.folded Exec.run ~by:"t" op)
+
+let expansions =
+  group "expansions"
     [
-      test "a declined sub-byte gather and scatter compute at a wider dtype"
+      test "a sub-byte gather and scatter expand at a wider dtype"
         (fun () ->
-          let on dt = on_at (Devices.one narrow 0) 2 dt in
           let x = on D.Int4 [| 2; 3 |] [| -8; -1; 0; 1; 7; 3 |] in
           let idx = on D.Int64 [| 2; 2 |] [| 2L; 0L; 5L; 1L |] in
           equal ~msg:"gather, position 5 outside the axis" (array int)
             [| 0; -8; 0; 7 |]
-            (elements (gather 1 idx x));
+            (elements (expanded (Value.Gather { axis = 1; idx; x })));
           let into = on D.Int4 [| 3 |] [| 7; -8; 3 |] in
           let idx = on D.Int64 [| 4 |] [| 0L; 2L; 0L; 9L |] in
           let u = on D.Int4 [| 4 |] [| 1; -1; 2; 5 |] in
           equal ~msg:"scatter Add, 7 + 1 + 2 wrapping to -6" (array int)
             [| -6; -8; 2 |]
-            (elements (scatter Add 0 idx u into)));
+            (elements
+               (expanded
+                  (Value.Scatter
+                     {
+                       combine = Add;
+                       unique = false;
+                       axis = 0;
+                       idx;
+                       updates = u;
+                       into;
+                     }))));
     ]
 
-let () = exit (run "nx index ops" [ rules; placements; donation; declines ])
+let () = exit (run "nx index ops" [ rules; placements; donation; expansions ])

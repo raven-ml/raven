@@ -19,6 +19,29 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
+(* Counting nx.cpu, declining every [Add], sort and contraction, as a library
+   may, and counting those declines. *)
+module Refusing = struct
+  include C
+
+  let name = "nx.refusing"
+  let declines = Atomic.make 0
+
+  let decline () =
+    Atomic.incr declines;
+    A.Declined
+
+  let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
+    match k with Binary Add -> decline () | _ -> C.apply2 k ~dst x y
+
+  let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
+
+  let contract ~order:_ ~batch:_ ~contracting:_ ~acc:_ ~dst:_ ~init:_ _ _ =
+    decline ()
+end
+
+module Refuse = (val Nx.devices ~kernels:(module Refusing) [ m 2 ])
+
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
@@ -235,8 +258,8 @@ let kernels =
           ignore (Nx.add a a);
           equal int 1 (C.calls ()));
       test
-        "a declined core kind raises naming the kernels, kind, dtypes, device \
-         and move" (fun () ->
+        "a declined kind raises naming the kernels, kind, dtypes, device and \
+         move" (fun () ->
           let a =
             Nx.place Dec.on (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |])
           in
@@ -245,6 +268,29 @@ let kernels =
                "Nx.add: nx.test does not compute Add on float32, float32, \
                 float32 (m1); place its operands with Nx.place on a set whose \
                 kernels compute it") (fun () -> Nx.add a a));
+      test "a declined operation raises at its one kernel call" (fun () ->
+          let x =
+            Nx.place Refuse.on
+              (on_host Plain D.Float32 [| 2; 2 |] [| 4.; 3.; 2.; 1. |])
+          in
+          let declined by kind dts f =
+            C.reset ();
+            Atomic.set Refusing.declines 0;
+            raises
+              (Invalid_argument
+                 (by ^ ": nx.refusing does not compute " ^ kind ^ " on " ^ dts
+                ^ " (m2); place its operands with Nx.place on a set whose \
+                   kernels compute it"))
+              (fun () -> ignore (f ()));
+            equal ~msg:(kind ^ ": kernel calls") int 0 (C.calls ());
+            equal ~msg:(kind ^ ": declines") int 1
+              (Atomic.get Refusing.declines)
+          in
+          declined "Nx.add" "Add" "float32, float32, float32" (fun () ->
+              Nx.add x x);
+          declined "Nx.sort" "Sort" "float32" (fun () -> fst (Nx.sort x));
+          declined "Nx.matmul" "Contract" "float32, float32" (fun () ->
+              Nx.matmul x x));
       test "a kind the kernels compute beside a declined one runs" (fun () ->
           let a =
             Nx.place Dec.on (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |])
@@ -562,46 +608,12 @@ let test_check_one () =
   equal ~msg:"a formula flag's kernel calls" int alone (C.calls ());
   raises failed (fun () -> Nx.sync x)
 
-(* Counting nx.cpu, declining every scatter whose targets may repeat, as a
-   library may: nx's expansion computes those. *)
-module Unique_counting = struct
-  include C
-
-  let scatter c ~unique ~axis ~dst ~into idx u =
-    if unique then C.scatter c ~unique ~axis ~dst ~into idx u else A.Declined
-end
-
-module Unique = (val Nx.devices ~kernels:(module Unique_counting) [ m 0 ])
-
-(* A declined scatter whose targets may repeat is a loop of one unique scatter
-   per position, which reads that position's indices and updates as views:
-   each position adds one kernel call, two for a narrow float's sum, which
-   runs two loops in its accumulator. *)
-let test_repeat_kernels () =
-  let calls dt m =
-    let idx = Nx.place Unique.on (Nx.zeros Nx.int64 [| m |]) in
-    let updates = Nx.place Unique.on (Nx.ones dt [| m |]) in
-    let into = Nx.place Unique.on (Nx.zeros dt [| 1 |]) in
-    C.reset ();
-    let y = Nx.scatter ~combine:Nx.Add ~axis:0 idx updates into in
-    let n = C.calls () in
-    equal ~msg:"the sum" (array float_exact) [| Float.of_int m |]
-      (elements (Nx.cast D.Float64 y));
-    n
-  in
-  equal ~msg:"float32, per position" int 1
-    (calls D.Float32 4 - calls D.Float32 3);
-  equal ~msg:"float16, per position" int 2
-    (calls D.Float16 4 - calls D.Float16 3)
-
 let sets =
   group "sets"
     [
       test "a check's failure receives its data's elements"
         test_check_elements;
       test "a check of one element reduces nothing" test_check_one;
-      test "a repeating scatter's position costs one scatter a loop"
-        test_repeat_kernels;
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;

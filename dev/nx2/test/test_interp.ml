@@ -695,10 +695,9 @@ let test_ill_formed () =
     (ill_formed ())
 
 (* Expansions keep bits. A selection and a constant move bits, so an
-   interpretation that expands every operation it can, and a library that
-   declines the narrow dtypes' elementwise kernels, give each code of a narrow
-   dtype back unchanged: its infinities, NaNs, [-0], largest finite value and
-   least subnormal among them. *)
+   interpretation that expands every operation it can gives each code of a
+   narrow dtype back unchanged: its infinities, NaNs, [-0], largest finite
+   value and least subnormal among them. *)
 
 let expanding f =
   Nx.Prim.interpret ~name:"test.expand" Extent
@@ -707,52 +706,6 @@ let expanding f =
       | Some r -> r
       | None -> Nx.Prim.eval ~by op)
     (fun _ -> f ())
-
-(* nx.cpu, declining the constants, copies, selections and programs that read or
-   write a dtype outside the base set, as a library may. *)
-module Base_only = struct
-  include Nx_cpu
-
-  let name = "nx.base"
-
-  let base (A.Any a) =
-    match A.dtype a with
-    | D.Float32 | D.Float64 | D.Int64 | D.Uint64 | D.Int32 | D.Uint32 | D.Int16
-    | D.Uint16 | D.Int8 | D.Uint8 | D.Bool ->
-        true
-    | _ -> false
-
-  let all arrays k = if List.for_all base arrays then k () else A.Declined
-  let apply0 op ~dst = all [ A.Any dst ] (fun () -> Nx_cpu.apply0 op ~dst)
-
-  let apply1 op ~dst x =
-    match (op : P.op1) with
-    | Copy -> all [ A.Any dst; A.Any x ] (fun () -> Nx_cpu.apply1 op ~dst x)
-    | Unary _ | Cast | Bitcast -> Nx_cpu.apply1 op ~dst x
-
-  let apply3 op ~dst c x y =
-    match (op : P.op3) with
-    | Where ->
-        all [ A.Any dst; A.Any c; A.Any x; A.Any y ] (fun () ->
-            Nx_cpu.apply3 op ~dst c x y)
-    | Fma -> Nx_cpu.apply3 op ~dst c x y
-
-  let map p ~dsts loads =
-    let load : Nx_kernel.load -> A.any = function
-      | Plain x -> A.Any x
-      | Padded { x; _ } -> A.Any x
-    in
-    all
-      (Array.to_list dsts @ List.map load (Array.to_list loads))
-      (fun () -> Nx_cpu.map p ~dsts loads)
-end
-
-module Base =
-  (val Nx.devices ~kernels:(module Base_only) [ Nx_support.memory 1 ])
-
-(* How a law's operations compute: in an interpretation that expands them, or on
-   a set whose kernels decline them. *)
-type route = Expanded | Declined
 
 (* The bytes of elements of [w] bits holding [codes] in order, a sub-byte
    element in the next bits of its byte from the lowest, a wider one in the
@@ -811,19 +764,13 @@ let changed a b =
     a;
   List.rev !out
 
-let keeps_bits (type v s) route (dt : (v, s) D.t) consts =
+let keeps_bits (type v s) (dt : (v, s) D.t) consts =
   let w = D.bits dt in
   let n = max (1 lsl w) (8 / w) in
-  let msg s =
-    D.name dt
-    ^ (if route = Expanded then ", expanded: " else ", declined: ")
-    ^ s
-  in
+  let msg s = D.name dt ^ ", expanded: " ^ s in
   let same msg a b = equal ~msg (list string) [] (changed a b) in
   let check msg want (f : 'd. 'd Nx.Placement.t -> int array) =
-    match route with
-    | Expanded -> same msg want (expanding (fun () -> f Nx.Host.on))
-    | Declined -> same msg want (f Base.on)
+    same msg want (expanding (fun () -> f Nx.Host.on))
   in
   let x =
     of_bytes dt (pack w (Array.init n (fun j -> j land ((1 lsl w) - 1))))
@@ -857,23 +804,15 @@ let keeps_bits (type v s) route (dt : (v, s) D.t) consts =
           raw (Nx.place on y)))
     consts
 
-(* A declining library is asked for the dtypes of 8 or 16 bits, which the engine
-   moves at the unsigned integer of their width. A sub-byte value comes back
-   into its dtype through a copy, which the engine has no other dtype for. *)
-let test_keeps_bits route () =
-  List.iter
-    (fun (D.Any dt, consts) ->
-      if route = Expanded || D.bits dt >= 8 then keeps_bits route dt consts)
-    narrow
+let test_keeps_bits () =
+  List.iter (fun (D.Any dt, consts) -> keeps_bits dt consts) narrow
 
 let laws =
   group "laws"
     [
       prop "results gives the forms eager execution gives" forms_case law_forms;
       test "an expanded selection or constant keeps each narrow code's bits"
-        (test_keeps_bits Expanded);
-      test "a declined selection or constant keeps each narrow code's bits"
-        (test_keeps_bits Declined);
+        test_keeps_bits;
       test
         "an ill-formed operation raises naming its function, before any kernel"
         test_ill_formed;

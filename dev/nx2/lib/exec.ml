@@ -23,13 +23,6 @@ let refuses ~by ~kernels kind d dts =
   invalid_argf "%s: %s does not compute %s on %s (%s); %s" by kernels kind
     (names dts) (Rig.name d) move
 
-(* As [refuses], for an optional case whose expansion nx does not have yet. *)
-let unexpanded ~by ~kernels kind d dts =
-  invalid_argf
-    "%s: %s does not compute %s on %s (%s), and its expansion is not \
-     available yet; %s"
-    by kernels kind (names dts) (Rig.name d) move
-
 let declined ~by ~kernels node d dts =
   refuses ~by ~kernels (Prim.kind node) d dts
 
@@ -160,28 +153,11 @@ let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
       ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
   | Some _ | None -> ran_loads ~by (K.map prog ~dsts loads) dsts loads
 
-(* [K]'s copy of [a] into [dst]; where it declines [a]'s dtype, its copy of
-   their bits in the dtype {!Expand.kept} gives, where that has their width. *)
-let copy_into (type v s) (module K : Nx_kernel.S) ~(dst : (v, s) A.t)
-    (a : (v, s) A.t) =
-  match K.apply1 Copy ~dst a with
-  | A.Declined ->
-      let dt = A.dtype a in
-      let (D.Any u) = Expand.kept (D.Any dt) in
-      if D.code u = D.code dt || D.bits u <> D.bits dt then A.Declined
-      else
-        (* One width keeps the layout, so both bitcasts are views. *)
-        K.apply1 Copy
-          ~dst:(Option.get (A.bitcast u dst))
-          (Option.get (A.bitcast u a))
-  | answer -> answer
-
 (* [a] stored afresh, C-contiguous, on its device. *)
 let copy_array ~by kernels a =
   let (module K : Nx_kernel.S) = kernels in
   let dst = A.create (A.device a) (A.dtype a) (L.shape (A.layout a)) in
-  if
-    not (done_or_declined ~by (copy_into kernels ~dst a) [ A.Any dst; A.Any a ])
+  if not (done_or_declined ~by (K.apply1 Copy ~dst a) [ A.Any dst; A.Any a ])
   then
     declined ~by ~kernels:K.name
       (Op1 (Copy, D.Any (A.dtype a), 0))
@@ -572,13 +548,13 @@ let call : type r.
         (Array.map (fun (_, v) -> A.Any v) pieces)
   | Value.Copy x ->
       let dst = nth j r and x = one x in
-      ran ~by (copy_into kernels ~dst x) [| A.Any dst |] [| A.Any x |]
+      ran ~by (K.apply1 Copy ~dst x) [| A.Any dst |] [| A.Any x |]
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
-(* Raises for [op], whose kernels on [d] declined it and which nx does not
-   expand: a core case, or [Eig], whose expansion is not available yet. A
-   one-node map is named by its node, its result's dtype listed first. *)
+(* Raises for [op], whose kernels on [d] declined it. A routine is named by
+   its routine, a one-node map by its node, its result's dtype listed
+   first. *)
 let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
     =
  fun ~by ~kernels d op ->
@@ -586,7 +562,7 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
   Prim.iteri (fun _ x -> dts := D.Any (Prim.dtype x) :: !dts) op;
   let dts = List.rev !dts in
   match op with
-  | Value.Linalg l -> unexpanded ~by ~kernels (Prim.routine_name l) d dts
+  | Value.Linalg l -> refuses ~by ~kernels (Prim.routine_name l) d dts
   | Value.Map { prog; _ } -> (
       match Expand.single prog with
       | Some node ->
@@ -722,8 +698,8 @@ and defer : type r. by:string -> r Value.prim -> r =
 
 (* [op] computed over operands that lie where [route], its route, reads them:
    its results lie where the route puts them, laid out as its rule gave them
-   ([layouts], {!Prim.layouts}). For a constant's evaluation at [at], its
-   expansion's operations compute there. *)
+   ([layouts], {!Prim.layouts}). For a constant's evaluation at [at], the
+   operations of its computation by partials compute there. *)
 and compute : type r.
     by:string ->
     ?into:A.any ->
@@ -758,11 +734,8 @@ and compute : type r.
 
 (* [op]'s results, by {!Partial} where [route] computes by partials. Else
    fresh where it places them, each device's window [w] of the first computed
-   there by its kernels over each operand's window ({!Route.window}). A device
-   whose kernels decline computes its window by the expansion, over its own
-   operands: no data leaves the device. On one device the expansion's results
-   are the results; on several, or into a donated operand's memory, they are
-   copied into the device's window. *)
+   there by its kernels over each operand's window ({!Route.window}). A
+   decline raises. *)
 and sharded : type r.
     by:string ->
     ?into:A.any ->
@@ -782,21 +755,8 @@ and sharded : type r.
       let set = Devices.set p in
       let kernels = kernels_of ~by ~op:(Prim.name op) set in
       match Grid.one (Devices.grid p) with
-      | Some k when Option.is_none into ->
-          (* On one device the expansion's results are the results: no result
-             of an expansion is an operand ({!Expand.run}), so nothing is
-             copied. *)
-          let d = Devices.rig set k in
-          if call ~by kernels op r 0 then r
-          else
-            begin match expand ~by ?at op with
-            | Some y -> y
-            | None ->
-                let (module K : Nx_kernel.S) = kernels in
-                refused ~by ~kernels:K.name d op
-            end
       | Some k ->
-          on_device ~by kernels set op r 0 k op;
+          on_device ~by kernels set r 0 k op;
           r
       | None ->
           let rule = Prim.rule op and first = L.shape layouts.(0) in
@@ -809,73 +769,26 @@ and sharded : type r.
                 let a = Place.view ~by x k w' in
                 Value.Array { at; a; dead = Value.Live }
               in
-              on_device ~by kernels set op r j k
+              on_device ~by kernels set r j k
                 (Prim.local (Prim.mapi view op) w))
             (Grid.devices (Devices.grid p));
           r)
 
-(* [local], [op] on device [k] of [set] at position [j], into [op]'s results
-   [r]: by the kernels, or where they decline by the expansion copied there. *)
+(* [local], an operation's part on device [k] of [set], into its results [r]
+   at position [j] by the kernels. A decline raises. *)
 and on_device : type r.
     by:string ->
     (module Nx_kernel.S) ->
     unit Devices.t ->
-    r Value.prim ->
     r ->
     int ->
     int ->
     r Value.prim ->
     unit =
- fun ~by kernels set op r j k local ->
-  let d = Devices.rig set k and q = Devices.one set k in
+ fun ~by kernels set r j k local ->
   if not (call ~by kernels local r j) then
-    match expand ~by ~at:q local with
-    | Some y -> copied ~by kernels q local y op r j
-    | None ->
-        let (module K : Nx_kernel.S) = kernels in
-        refused ~by ~kernels:K.name d local
-
-(* [y], [local]'s results at [q], copied into the results [r] of [op] at
-   position [j]. A result may be a constant, a creation that an expansion of
-   one of the expansion's operations defers: it is computed at [q]. *)
-and copied : type r.
-    by:string ->
-    (module Nx_kernel.S) ->
-    unit Devices.placement ->
-    r Value.prim ->
-    r ->
-    r Value.prim ->
-    r ->
-    int ->
-    unit =
- fun ~by kernels q local y op r j ->
-  let (module K) = kernels in
-  let dsts = Prim.result_arrays op r in
-  let srcs = ref [] in
-  Prim.iter_results
-    (fun x ->
-      let x = if Prim.is_constant x then at (Devices.rebrand q) x else x in
-      srcs := A.Any (one x) :: !srcs)
-    local y;
-  List.iteri
-    (fun i (A.Any src) ->
-      let (A.Any dst) = dsts.(i).(j) in
-      let v = A.expect (A.dtype dst) (A.Any src) in
-      if not (ran ~by (copy_into kernels ~dst v) [| A.Any dst |] [| A.Any v |])
-      then
-        declined ~by ~kernels:K.name
-          (Op1 (Copy, D.Any (A.dtype v), 0))
-          (A.device v) [ D.Any (A.dtype v) ])
-    (List.rev !srcs)
-
-(* [op]'s expansion, its operations applied where their operands lie, or at
-   [at] for a constant's evaluation; [None] for a core case. *)
-and expand : type r.
-    by:string -> ?at:unit Devices.placement -> r Value.prim -> r option =
- fun ~by ?at op ->
-  match at with
-  | None -> Expand.folded run ~by op
-  | Some q -> Expand.folded (fun ~by op -> apply_at q ~by op) ~by op
+    let (module K : Nx_kernel.S) = kernels in
+    refused ~by ~kernels:K.name (Devices.rig set k) local
 
 (* An operation of a computation by partials ({!Partial}), applied where its
    operands lie, or at [at] for a constant's evaluation. *)
@@ -1376,6 +1289,13 @@ let run3 ~by k c x y =
   let v, () = run ~by (Prim.op3 ~by k c x y) in
   v
 
+(* Raises for [node], which [K] declined into the first of [arrays] over the
+   rest, as {!refused} names a one-node map. *)
+let refused_node ~by (module K : Nx_kernel.S) node arrays =
+  let (A.Any dst) = List.hd arrays in
+  let dts = List.map (fun (A.Any a) -> D.Any (A.dtype a)) arrays in
+  declined ~by ~kernels:K.name node (A.device dst) dts
+
 let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
     (x : (v, s, d) Value.t) : (w, r, d) Value.t =
   match x with
@@ -1387,28 +1307,39 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
           let dst = destination dt a in
           match K.apply1 k ~dst a with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype -> run1 ~by k dt x
+          | Declined ->
+              refused_node ~by (module K)
+                (Op1 (k, D.Any dt, 0))
+                [ A.Any dst; A.Any a ]
+          | Wrong_dtype -> run1 ~by k dt x
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Donated dx when handle_at dx.at x ->
       let (module K) = kernels_at dx.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           match K.apply1 k ~dst a with
           | Done -> value_of dx.at dst
-          | Declined | Wrong_dtype -> run1 ~by k dt (value_of dx.at a)
+          | Declined ->
+              refused_node ~by (module K)
+                (Op1 (k, D.Any dt, 0))
+                [ A.Any dst; A.Any a ]
+          | Wrong_dtype -> run1 ~by k dt (value_of dx.at a)
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ])
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
   | Value.Traced _ ->
       run1 ~by k dt x
 
 (* [k] into [dst] over the arrays [a] and [b] at [at]: [Done] is the result, a
-   decline or a dtype or shape refusal the operation run over them as live
-   values. *)
+   decline raises, and a dtype or shape refusal is the operation run over them
+   as live values. *)
 let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
     (dt : (w, r) D.t) (at : d Devices.placement) (dst : (w, r) A.t)
     (a : (v, s) A.t) (b : (v, s) A.t) : (w, r, d) Value.t =
   match K.apply2 k ~dst a b with
   | Done -> value_of at dst
-  | Declined | Wrong_dtype | Shape_mismatch ->
+  | Declined ->
+      refused_node ~by (module K) (Op2 (k, 0, 1))
+        [ A.Any dst; A.Any a; A.Any b ]
+  | Wrong_dtype | Shape_mismatch ->
       run2 ~by k dt (value_of at a) (value_of at b)
   | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
 
@@ -1418,7 +1349,10 @@ let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
     (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
   match K.apply3 k ~dst c x y with
   | Done -> value_of at dst
-  | Declined | Wrong_dtype | Shape_mismatch ->
+  | Declined ->
+      refused_node ~by (module K) (Op3 (k, 0, 1, 2))
+        [ A.Any dst; A.Any c; A.Any x; A.Any y ]
+  | Wrong_dtype | Shape_mismatch ->
       run3 ~by k (value_of at c) (value_of at x) (value_of at y)
   | refusal -> A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
 
@@ -1449,7 +1383,10 @@ let rec apply2 : type v s w r d.
           let dst = destination dt a in
           match K.apply2 k ~dst a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
+          | Declined ->
+              refused_node ~by (module K) (Op2 (k, 0, 1))
+                [ A.Any dst; A.Any a; A.Any b ]
+          | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
   | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
     ->
@@ -1506,7 +1443,10 @@ let rec apply3 : type a b v s d.
           let dst = destination (A.dtype a) a in
           match K.apply3 k ~dst ca a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
+          | Declined ->
+              refused_node ~by (module K) (Op3 (k, 0, 1, 2))
+                [ A.Any dst; A.Any ca; A.Any a; A.Any b ]
+          | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
   | Value.Donated dc, Value.Array rx, Value.Array ry
@@ -1533,9 +1473,8 @@ let rec apply3 : type a b v s d.
 
 (* The contraction of live arrays on one device, at physically one placement
    whose set has kernels, computed by them without building the operation into
-   a result of the shape its rule gives. [None] elsewhere, where the pairs do
-   not fit the operands, and where the kernels decline it: the operation
-   decides those. *)
+   a result of the shape its rule gives; a decline raises. [None] elsewhere and
+   where the pairs do not fit the operands: the operation decides those. *)
 let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
     (dt : (v, s) D.t) (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
@@ -1564,7 +1503,11 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
               ry.a
           with
           | Done -> Some (Value.Array { at; a = dst; dead = Value.Live })
-          | Declined -> None
+          | Declined ->
+              let dtype i = D.Any (A.dtype i) in
+              let init = Option.to_list (Option.map dtype array) in
+              refuses ~by ~kernels:K.name "Contract" (A.device dst)
+                (dtype rx.a :: dtype ry.a :: init)
           | refusal ->
               let init = Option.to_list (Option.map (fun i -> A.Any i) array) in
               A.refused by refusal

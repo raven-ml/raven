@@ -16,14 +16,12 @@
     reads coordinates adds the window's first index to them. Where the route
     computes by partials ({!Route.Partials}), {!Partial} computes it
     instead. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]. A device whose kernels decline
-    computes its window by the expansion ({!Expand.run}) over its own operands
-    there, copied into its window where the results lie on several devices. A
-    decline nx has no expansion for raises naming the
-    kernels, the kind, the dtypes, the device and the move the program makes,
-    [Nx.place] onto a set whose kernels compute it: no data moves between
-    devices on its own. The decline of [Eig], the one routine without an
-    expansion, also says that its expansion is not available yet. A result
+    through {!Nx_array.refused} naming [by]. A decline raises
+    [Invalid_argument] naming [by], the kernels, the operation (a one-node
+    map's kind, a routine's name), the dtypes, the device and the move the
+    program makes, [Nx.place] onto a set whose kernels compute it: nx
+    computes no case on the kernels' behalf and moves no data between
+    devices on its own. A result
     shares an operand's memory only as its view, or where the operand was
     donated. Movements and bitcasts are views where a
     layout expresses them, and a copy, then a view, otherwise. [Check] reduces
@@ -94,10 +92,10 @@ val apply3 :
     operands' dtypes and shapes, it builds no operation: it allocates the
     result, sharing the first operand's layout when that is C-contiguous at
     offset 0 and of the result's dtype, and calls the set's kernel, which checks
-    the dtypes and shapes. Otherwise, and where the kernel declines or refuses
-    them, it is {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose
-    rule raises on operands it does not take; a traced operand raises as in
-    {!run}. *)
+    the dtypes and shapes; a decline raises as in {!run}, at that one call.
+    Otherwise, and where the kernel refuses them, it is {!run} of the operation
+    ({!Prim.op1} to {!Prim.op3}), whose rule raises on operands it does not
+    take; a traced operand raises as in {!run}. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:
@@ -146,7 +144,7 @@ val contract :
     contraction [Value.Contract] of [a] and [b] from [init] into [dt], in
     [order], where no interpretation reaches it, its operands are live arrays
     on one device at physically one placement whose set has kernels, its pairs
-    fit them, and the kernels compute it: it builds no operation and allocates
-    the C-contiguous result of the shape {!Nx_kernel.Shape.contract} gives.
-    [None] otherwise, for the operation to decide. A refusal of the kernels
-    raises naming [by]. *)
+    fit them: it builds no operation and allocates the C-contiguous result of
+    the shape {!Nx_kernel.Shape.contract} gives. [None] otherwise, for the
+    operation to decide. A refusal of the kernels raises naming [by], and a
+    decline as in {!run}. *)

@@ -740,8 +740,8 @@ struct
       | Monoid (((Sum | Prod) as m), o, dt) when lanes m o dt ->
           lane_order m o (D.Any dt)
       | Monoid ((Sum | Prod | Logsumexp), _, _) | Moments _ ->
-          (* No such reduction is core: each has an expansion, whose own
-             reductions compute as above. *)
+          (* Each has an expansion, whose own reductions compute as
+             above. *)
           let op = Value.Reduce { layout; axes; prog; reductions = Value.[ r ]; loads } in
           fst (Option.get (Expand.folded A.apply ~by op))
     in

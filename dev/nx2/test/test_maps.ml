@@ -49,7 +49,7 @@ let expand op = Expand.folded Exec.run ~by:"t" op
 let maps =
   group "maps"
     [
-      test "a map the kernels decline computes node by node" (fun () ->
+      test "a map of several nodes expands node by node" (fun () ->
           (* x0 * x1 + x0 *)
           let prog =
             P.v

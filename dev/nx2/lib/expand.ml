@@ -120,15 +120,15 @@ let plain prog r =
   && same (Nx_kernel.carrier dt) dt
   && not (complex_sum r)
 
-(* Whether a scan is core: a plain [Sum], [Prod], [Max] or [Min]. *)
-let core_scan (type d a) prog (r : (d, a) Value.reduction) =
+(* Whether a scan has no expansion: a plain [Sum], [Prod], [Max] or [Min]. *)
+let simple_scan (type d a) prog (r : (d, a) Value.reduction) =
   match r with
   | Monoid ((Sum | Prod | Max | Min), _, _) -> plain prog r
   | Monoid (Logsumexp, _, _) | Moments _ | Arg _ -> false
 
-(* Whether a reduction is core: one core scan's reduction. *)
-let core_reduce (type d q) prog (rs : (d, q) Value.reductions) =
-  match rs with [ r ] -> core_scan prog r | _ -> false
+(* Whether a reduction has no expansion: one simple scan's reduction. *)
+let simple_reduce (type d q) prog (rs : (d, q) Value.reductions) =
+  match rs with [ r ] -> simple_scan prog r | _ -> false
 
 (* Output [k] of [prog] over [loads], of [layout]'s shape, stored in [acc]: the
    operand itself where [prog] is the identity and [acc] its dtype. *)
@@ -787,8 +787,12 @@ let widened_bits (D.Any from) b (D.Any into) =
       | D.Bit, D.Bool -> P.bits D.Bool (read D.Bit)
       | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
 
-(* float32 would not do for the floats of 8 or 16 bits: a store from it quiets
-   their signalling NaNs. *)
+(* The dtype a selection, a constant or a copy of [d] computes in: [d] itself
+   for a base dtype ({!Nx_kernel.base}); for a float of 8 or 16 bits, the
+   unsigned integer of its width, over the same bits; for a sub-byte dtype, its
+   byte-wide accumulator, which holds each of its codes and gives it back; [d]
+   itself otherwise. float32 would not do for the floats of 8 or 16 bits: a
+   store from it quiets their signalling NaNs. *)
 let kept (D.Any dt as d) =
   if Nx_kernel.base d then d
   else
@@ -807,7 +811,7 @@ let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       apply ~by (Value.Bitcast (dt, x))
   | None -> cast_to apply ~by dt x
 
-(* A one-node map at dtypes some library declines, as the node at dtypes that
+(* A one-node map at a dtype other than a base one, as the node at dtypes that
    hold its values exactly, its result rounded once to its dtype: their
    carriers ({!Nx_kernel.carrier}), or for a selection, a constant and a copy
    the dtypes {!kept} gives, its result read back as {!held} reads it. [None]
@@ -1027,7 +1031,7 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
      checked Int64 arithmetic, clip before multiplying, then Slice the
      source and pad directly to the result without Window axes. Use step 1
      for singleton progressions and retain the ordered map runs. Cover
-     both boundaries through a public Fold on a declining provider. *)
+     both boundaries through a public Fold that expands. *)
   (* The loop's shape: the result's, then an axis of one per axis read every
      [interior + 1] with [interior > 0], in axis order. *)
   let strided =
@@ -1580,8 +1584,8 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
 
 (* Gathers and scatters *)
 
-(* The carrier of [x]'s dtype where it is sub-byte, which kernels may
-   decline to gather or scatter: [None] for a dtype of a byte or more. *)
+(* The carrier of [x]'s dtype where it is sub-byte, which a gather or a
+   scatter computes in: [None] for a dtype of a byte or more. *)
 let sub_byte (type v s d) (x : (v, s, d) Value.t) =
   let dt = Prim.dtype x in
   if D.bits dt >= 8 then None else Some (Nx_kernel.carrier (D.Any dt))
@@ -1934,7 +1938,7 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
          values. Slicing both outputs here gives strides [4;1] for input
          [2;4], axis 1, k=2; Prim.results promises [2;1]. Copy positions
          only when their prefix is not contiguous at offset 0. Pin both
-         result forms on a declining device; gather only the kept values. *)
+         result forms where the sort expands; gather only the kept values. *)
       let values = apply ~by (Value.Gather { axis; idx = positions; x }) in
       let first y =
         match k with
@@ -3206,11 +3210,11 @@ let expansion : type r.
       in
       Some (results outs (List.map out (Iarray.to_list prog.outs)))
   | Value.Reduce { layout; axes; prog; reductions; loads }
-    when Iarray.exists Prim.is_padded loads || not (core_reduce prog reductions)
-    ->
+    when Iarray.exists Prim.is_padded loads
+         || not (simple_reduce prog reductions) ->
       reduce apply ~by layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction = r; loads; carry }
-    when Iarray.exists Prim.is_padded loads || not (core_scan prog r) ->
+    when Iarray.exists Prim.is_padded loads || not (simple_scan prog r) ->
       scan apply ~by layout axis prog r loads carry
   | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
       Some (contract apply ~by ~order ~batch ~contracting ~acc out a b init)

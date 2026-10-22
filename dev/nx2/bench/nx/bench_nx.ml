@@ -823,31 +823,6 @@ let statistics_rows =
         (Nx.ewma ~axis:1 ~alpha:0.1);
     ]
 
-(* Scans by their expansions, the fallback a library that declines them gets:
-   a running logsumexp, mean and variance, and argmax along rows of 1024, on a
-   memory device whose kernels compute the core reductions alone. *)
-module Core_only = struct
-  include Nx_cpu
-
-  let core : Nx_kernel.reduction -> bool = function
-    | Monoid (Sum | Prod | Max | Min) -> true
-    | _ -> false
-
-  let reduce p ~shape ~axes rs ~dsts loads =
-    match rs with
-    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
-    | _ -> A.Declined
-
-  let scan ?carry p ~axis ((r, _) as rk) ~dsts loads =
-    if core r then Nx_cpu.scan ?carry p ~axis rk ~dsts loads else A.Declined
-end
-
-let core_rows () =
-  let module Core =
-    (val Nx.devices ~kernels:(module Core_only) [ memory 0 ])
-  in
-  Value (Nx.place Core.on (m1024 ()))
-
 let scan ?(axis = 1) reduction x =
   let dt = Nx.dtype x in
   Nx.Prim.eval ~by:"bench"
@@ -864,13 +839,7 @@ let scan ?(axis = 1) reduction x =
 let scan_rows =
   Thumper.group "scan"
     [
-      Thumper.bench_with_setup "logsumexp-f32-1024x1024-rows" ~setup:core_rows
-        (fun (Value x) -> Value (scan (Monoid (Logsumexp, 0, D.Float32)) x));
-      Thumper.bench_with_setup "moments-f32-1024x1024-rows" ~setup:core_rows
-        (fun (Value x) -> Value (fst (scan (Moments (0, D.Float32)) x)));
-      Thumper.bench_with_setup "argmax-f32-1024x1024-rows" ~setup:core_rows
-        (fun (Value x) -> Value (fst (scan (Arg (Max, 0, D.Float32)) x)));
-      (* nx.cpu's own: rows side by side, and one slice's chunks. *)
+      (* Rows side by side, and one slice's chunks. *)
       Thumper.bench_with_setup "host-logsumexp-f32-1024x1024-rows"
         ~setup:m1024
         (scan (Monoid (Logsumexp, 0, D.Float32)));

@@ -3,8 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Expansions: an operation's optional case as core operations, applied through
-    [apply].
+(** Expansions: nx operations as simpler nx operations, applied through
+    [apply]. An interpretation without a direct form for an operation
+    computes it by its expansion ({!Eval.expand}, {!Nx.Prim.expand}), and
+    {!Partial} composes the parts of a reduction split over devices from
+    them.
 
     A map of several nodes expands into one-node maps, one per node in order,
     each over the values of the nodes it reads; a constant or a coordinate is a
@@ -15,7 +18,7 @@
     result's dtype. A sum of complex numbers sums their parts, read as floats
     along a last axis of two.
 
-    [Logsumexp], [Moments] and [Arg] reduce through core loops, in the
+    [Logsumexp], [Moments] and [Arg] reduce through plain loops, in the
     accumulator for the first two and in the output's dtype for [Arg]. A
     [Logsumexp] is a [Max] [m], [m'] its finite elements and [0] elsewhere, a
     [Sum] of [exp (x - m')], an [exp] of less than [-87] (float32) or [-708]
@@ -54,10 +57,12 @@
     A one-node map at a dtype other than a base one ({!Nx_kernel.base}), but a
     cast, a bitcast or a copy, computes at its dtypes' accumulators, which hold
     their values exactly, and rounds once to its dtype. A selection, a constant
-    and a copy move bits: they compute at the dtypes {!kept} gives; a [Copy] is
-    the map of one copy. An assembly expands into a fill of its flat result,
-    then per piece in order a scatter of the piece's elements at their flat
-    positions, a map of coordinates: O(n) per piece. A gather, a scatter or a
+    and a copy move bits: a float of 8 or 16 bits computes as the unsigned
+    integer of its width, over the same bits, and a sub-byte dtype in its
+    byte-wide accumulator, which holds each of its codes and gives it back; a
+    [Copy] is the map of one copy. An assembly expands into a fill of its flat
+    result, then per piece in order a scatter of the piece's elements at their
+    flat positions, a map of coordinates: O(n) per piece. A gather, a scatter or a
     sort of a sub-byte dtype casts its values to their accumulator, computes
     there and casts the result back once; an integer's [Add] wraps there to the
     same bits as at its own dtype. Any other scatter whose targets may repeat is
@@ -174,15 +179,7 @@
       a matrix that is not normal that a loop of static trips could afford.
 
     A routine fails as {!Nx_kernel.S} states, in the matrices that fail
-    alone. Every other operation is core. *)
-
-val kept : Nx_array.Dtype.any -> Nx_array.Dtype.any
-(** [kept d] is the dtype a selection, a constant or a copy of [d] computes in
-    where a library declines [d]: [d] itself for a base dtype
-    ({!Nx_kernel.base}); for a float of 8 or 16 bits, the unsigned integer of
-    its width, over the same bits; for a sub-byte dtype, its byte-wide
-    accumulator, which holds each of its codes and gives it back; [d] itself
-    otherwise. *)
+    alone. Every other operation has no expansion. *)
 
 val single : Nx_kernel.Prog.t -> Nx_kernel.Prog.node option
 (** [single p] is [Some n] where [p] is the one node [n] over its operands in
@@ -239,8 +236,9 @@ val run :
   'r Value.prim ->
   'r option
 (** [run apply ~by ~repeat op] is [Some r], [r] [op]'s expansion applied
-    through [apply], or [None] for a core case and for [Eig]. A loop of [n] trips runs as
-    [repeat n step init], whose law {!Nx.Prim.expand} states. No result of [r]
+    through [apply], or [None] for an operation that has no expansion, [Eig]
+    among them. A loop of [n] trips runs as [repeat n step init], whose law
+    {!Nx.Prim.expand} states. No result of [r]
     is one of [op]'s operands: one that would be is its copy. *)
 
 val folded :

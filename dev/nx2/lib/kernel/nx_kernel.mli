@@ -159,8 +159,8 @@ val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
     function of [dt] computes in before it rounds once to [dt]. *)
 
 val base : Nx_array.Dtype.any -> bool
-(** [base dt] is [true] iff [dt] is a {e base dtype}, one every kernel library
-    computes: [float32], [float64], the 8- to 64-bit integers and [bool]. *)
+(** [base dt] is [true] iff [dt] is a {e base dtype}: [float32], [float64],
+    the 8- to 64-bit integers and [bool]. *)
 
 (** {2:orders Orders of summation}
 
@@ -402,8 +402,12 @@ end
     earlier device work on the operands; {!Nx_array.door} holds its claims until
     the work is submitted. A kernel answers [Done] once its work is done on the
     host or queued on the device's timeline; the door's refusal, before any
-    write; [Declined] if it does not compute the case, before any write or
-    queued work. Value-dependent failures are NaN. A kernel's result is a
+    write; [Declined] if the library does not compute the case, before any
+    write or queued work. A library computes what it computes: any case may be
+    declined, and nx computes none in its place. On a decline nx raises
+    [Invalid_argument] naming the library, the operation and its dtypes, with
+    the move that computes it, [Nx.place] onto a set whose kernels do.
+    Value-dependent failures are NaN. A kernel's result is a
     function of its operands' values alone: neither layouts nor threads change a
     bit. Nor do windows: nx computes an operation over a set one window of its
     results at a time, each device over the parts of the operands its window
@@ -421,13 +425,7 @@ end
     differently. A kernel raises [Out_of_memory] if host memory runs out and
     {!Rig.Out_of_memory} if its device's does.
 
-    A kernel answers [Wrong_dtype] for dtypes its doc does not take. A decline
-    of [apply0] to [apply3] at a base dtype ({!base}), of [reduce] or [scan] of
-    one [Sum], [Prod], [Max] or [Min] of a program's one operand into its own
-    dtype, read plain, at a base dtype, of [gather] at a dtype of eight bits
-    or more, or of [scatter] with [unique] at such a dtype, is an error its
-    caller raises; elsewhere its caller computes the case from other
-    operations. *)
+    A kernel answers [Wrong_dtype] for dtypes its doc does not take. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
