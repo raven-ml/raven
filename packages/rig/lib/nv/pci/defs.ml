@@ -21,6 +21,7 @@
    Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2004-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2005-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2022 NVIDIA CORPORATION & AFFILIATES
@@ -168,7 +169,6 @@ let nv_vgpu_msg_function_unloading_guest_driver = 0x2f
 let nv_vgpu_msg_function_free = 0xa
 let nv_vgpu_msg_event_gsp_init_done = 0x1001
 let nv_vgpu_msg_event_gsp_run_cpu_sequencer = 0x1002
-let nv_vgpu_msg_event_os_error_log = 0x1006
 let nv_vgpu_msg_event_ucode_libos_print = 0x100c
 
 (* Structs: each field is (byte offset, bytes), an array's (offset, bytes

@@ -43,6 +43,15 @@ val fault : message -> string option
     since the GSP logs there errors that stop nothing, such as a retired
     page. *)
 
+val report : message -> (string * string) option
+(** [report m] is what [m] says of an error of the GSP, as the error's
+    subject and its report: an error the GSP logged ([OS_ERROR_LOG]), its
+    Xid and its text; a record of the GSP's error journal
+    ([GSP_POST_NOCAT_RECORD]), its source and its error code. A text or a
+    source ends at its first zero byte or its field's end. A message shorter
+    than its structure is a report that says so. It is [None] for any other
+    message. *)
+
 (** {1:calls Calls} *)
 
 val rm_alloc :

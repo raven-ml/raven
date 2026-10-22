@@ -94,6 +94,9 @@ type t = {
   flush : (int * int) list; (* the flush page's registers and their values *)
   start : start;
   mutable fault : string option;
+  mutable reports : (string * string) list;
+      (* since the last call began, the latest report of each error the GSP
+         logged, by subject, the latest first ([Rpc.report]) *)
   mutable unanswered : bool; (* a call waited out its bound *)
   mutable sequencing : bool; (* a CPU sequence runs, or an exception cut it *)
   mutable next : int; (* the next handle the process names an object with *)
@@ -317,6 +320,10 @@ let drain g ~want =
             (match Rpc.fault m with
             | Some f when g.fault = None -> g.fault <- Some f
             | _ -> ());
+            (match Rpc.report m with
+            | Some (k, r) ->
+                g.reports <- (k, r) :: List.remove_assoc k g.reports
+            | None -> ());
             Msgq.consume g.q;
             Ok ()
           end
@@ -333,10 +340,17 @@ let drain g ~want =
 
 (* Records a call the GSP left unanswered past its bound as the GPU's fault:
    the GSP's queue is then in a state no later call can trust, and each would
-   wait out its bound in vain, the stop's unload too. *)
+   wait out its bound in vain, the stop's unload too. The error says what the
+   GSP reported: the GPU's first fault, then the errors it logged while the
+   call waited, each subject's last report once, the earliest first. *)
 let unanswered g = function
   | Ok () -> Ok ()
   | Error why ->
+      let said = Option.to_list g.fault @ List.rev_map snd g.reports in
+      let why =
+        if said = [] then why
+        else strf "%s; the GSP reported: %s" why (String.concat "; " said)
+      in
       g.unanswered <- true;
       if g.fault = None then g.fault <- Some why;
       Error why
@@ -363,6 +377,7 @@ let wait_for g ?(what = "") fn =
   !found
 
 let send g fn body =
+  g.reports <- [];
   unanswered g
     (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
        "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body))
@@ -1051,6 +1066,7 @@ let take p (fw : Images.t) fwsec ~taken =
       flush;
       start;
       fault = None;
+      reports = [];
       unanswered = false;
       sequencing = false;
       next = first_handle;

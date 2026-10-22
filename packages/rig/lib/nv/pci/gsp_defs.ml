@@ -11,6 +11,7 @@
    Copyright (c) 1993-2024, NVIDIA CORPORATION
    Copyright (c) 1993-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2016 NVIDIA Corporation
+   Copyright (c) 2004-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2008-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2019-2020 NVIDIA CORPORATION & AFFILIATES
@@ -62,6 +63,8 @@ let nv_vgpu_msg_header_version_minor = (0x10, 8)
 let nv_vgpu_msg_function_continuation_record = 0x47
 let nv_vgpu_msg_event_rc_triggered = 0x1004
 let nv_vgpu_msg_event_mmu_fault_queued = 0x1005
+let nv_vgpu_msg_event_os_error_log = 0x1006
+let nv_vgpu_msg_event_gsp_post_nocat_record = 0x1020
 
 (* Structs: each field is (byte offset, bytes), an array's (offset, bytes
    of an element, elements). *)
@@ -125,6 +128,18 @@ module Rpc_rc_triggered = struct
   let chid = (4, 4)
   let except_type = (0x10, 4)
   let scope = (0x14, 4)
+end
+
+module Rpc_os_error_log = struct
+  let sizeof = 272
+  let except_type = (0, 4)
+  let err_string = (0xc, 1, 0x100)
+end
+
+module Nocat_record = struct
+  let sizeof = 1208
+  let source = (0x18, 1, 0x41)
+  let error_code = (0x60, 8)
 end
 
 module Wpr_meta = struct

@@ -23,13 +23,19 @@
 
 `test_rpc.ml`, `test_fb_layout.ml` and `test_page_entry.ml` check the
 formats the boot writes and reads, through the library's hidden section:
-the GSP's records and calls, the register accesses its CPU sequences
-become, the region it reserves and the page-table entries.
+the GSP's records, calls and error reports, the tables of its addresses
+it is handed, the register accesses its CPU sequences become, the region
+it reserves and the page-table entries.
 
 What nothing here checks, since no host that runs the suite gives root on
 an NVIDIA GPU:
 
 - the GSP's queues as rings over a window: wrap-around and a full queue;
+- the GPU's page tables as the GPU walks them, translating from address 0,
+  and the golden context's tables handed to the GSP: a fixture's boot
+  stops at the falcons' first DMA, before the tables hold an entry;
+- the error of a call the GSP leaves unanswered, which names the GPU's
+  first fault and the GSP's reports since the call began;
 - the falcons' interpreter and its sequences past FWSEC's DMA, the CPU
   sequences' steps among them;
 - the order of a stop (bus mastering off before the memory is given back),

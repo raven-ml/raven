@@ -116,7 +116,9 @@ val check : t -> string option
 (** [check g] handles the events the GSP sent since the last call, and is the
     first fault one reported ({!Rpc.fault}). A message that cannot be read
     is a fault too, and so is a call the GSP leaves unanswered past its
-    bound. Once it is [Some], it stays. An event stays in the GSP's queue until it is handled, so an
+    bound, whose error names the first fault and the last report of each
+    error the GSP logged since the call began ({!Rpc.report}). Once it is
+    [Some], it stays. An event stays in the GSP's queue until it is handled, so an
     exception that interrupts [check] or a call leaves it for the next one;
     one that interrupts a CPU sequence the GSP asked for counts as a fault,
     since a sequence runs once, front to back. It never waits for the GSP's

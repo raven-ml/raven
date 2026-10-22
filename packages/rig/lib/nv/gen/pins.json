@@ -106,6 +106,7 @@
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gpu.h": "5e7b247d68713323f1110c61691d11bfe8bd1f31bbf67302fb7f98b3ef47fca1",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gr.h": "d2a8f921cf3ad987ffb2af3b35b88b17620cfb0e9bece47715978ea0f1a692ec",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080internal.h": "0fd1d0f4fb88d63f41be533d8f0750e63b5938854085e1d1dbfe7272869ee0c0",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080nvd.h": "1b2b58ee77c7bc15f13cf058cda5f7d937a26978ab3ebc018f8edfbc5adf70c2",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080perf.h": "cf591607496cfd2daf67c7ff65e30a7097288b22a7286f673a2c1f3a859b9abc",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080rc.h": "374661068ee5241c9d2d0265c97ae31dd7a162ee46a60660da282ceb6533ace8",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl83de/ctrl83dedebug.h": "716ea7c8ef9f92bad00b69ce87da79e8fc655b771a6a9922824562739ab16d19",

@@ -91,3 +91,12 @@ typedef struct rpc_rc_triggered_v17_02
     NvU32      rcJournalBufferSize;
     NvU8       rcJournalBuffer[];
 } rpc_rc_triggered_v17_02;
+
+typedef struct rpc_os_error_log_v17_00
+{
+    NvU32      exceptType;
+    NvU32      runlistId;
+    NvU32      chid;
+    char       errString[0x100];
+    NvU32      preemptiveRemovalPreviousXid;
+} rpc_os_error_log_v17_00;

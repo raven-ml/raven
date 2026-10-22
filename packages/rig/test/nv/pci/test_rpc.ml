@@ -7,8 +7,9 @@
    570.144: message_queue_cpu.c and the RPC headers, g_rpc-structures.h
    (rpc_gsp_rm_alloc_v03_00, rpc_gsp_rm_control_v03_00, rpc_free_v03_00,
    rpc_set_page_directory_v1E_05, rpc_unloading_guest_driver_v1F_07,
-   rpc_run_cpu_sequencer_v17_00, rpc_rc_triggered_v17_02), g_os_nvoc.h
-   (PACKED_REGISTRY_TABLE) and rmgspseq.h (the opcodes). *)
+   rpc_run_cpu_sequencer_v17_00, rpc_rc_triggered_v17_02,
+   rpc_os_error_log_v17_00), ctrl2080nvd.h (NV2080CtrlNocatJournalInsertRecord),
+   g_os_nvoc.h (PACKED_REGISTRY_TABLE) and rmgspseq.h (the opcodes). *)
 
 open Windtrap
 open Rig_nv_pci
@@ -25,6 +26,7 @@ let rc_triggered = 0x1004
 let mmu_fault_queued = 0x1005
 let os_error_log = 0x1006
 let libos_print = 0x100c
+let nocat_record = 0x1020
 
 (* Records *)
 
@@ -142,6 +144,83 @@ let test_no_fault =
     (fun (_, fn) -> is_none (Rpc.fault (event fn (String.make 300 'x'))))
 
 let test_mmu () = is_some (Rpc.fault (event mmu_fault_queued ""))
+
+(* Reports *)
+
+(* rpc_os_error_log_v17_00: the exception type at 0, the text at 0xc, 256
+   bytes. *)
+let error_log ~xid text =
+  let b = Bytes.make 0x110 '\000' in
+  Bytes.set_int32_le b 0 (Int32.of_int xid);
+  Bytes.blit_string text 0 b 0xc (Int.min 0x104 (String.length text));
+  Bytes.to_string b
+
+(* NV2080CtrlNocatJournalInsertRecord, of 1208 bytes, as GSP_POST_NOCAT_RECORD
+   carries it: the source at 0x18, 65 bytes, then padding and subsystem to the
+   error code at 0x60, 8 bytes. Those between are not zero here, so a source
+   read past its field shows. *)
+let journal ~source ~code =
+  let b = Bytes.make 1208 '\000' in
+  Bytes.fill b 0x59 7 'z';
+  Bytes.blit_string source 0 b 0x18 (Int.min 65 (String.length source));
+  Bytes.set_int64_le b 0x60 code;
+  Bytes.to_string b
+
+let report = option (pair string string)
+
+let test_reports =
+  cases "an error log and a journal record are reports of their subject"
+    ~name:(fun (n, _, _) -> n)
+    [
+      ( "an error log's text, to its first zero byte",
+        event os_error_log (error_log ~xid:13 "Graphics Exception\000junk"),
+        Some ("Xid 13", "Xid 13: Graphics Exception") );
+      ( "an error log's text, at most its 256 bytes",
+        event os_error_log (error_log ~xid:31 (String.make 0x104 'a')),
+        Some ("Xid 31", "Xid 31: " ^ String.make 0x100 'a') );
+      ( "a journal record's source, to its first zero byte",
+        event nocat_record
+          (journal ~source:"FECS_A\000FECS_B\000FECS_C" ~code:3L),
+        Some ("FECS_A", "FECS_A, error 0x3") );
+      ( "a journal record's source, at most its 65 bytes",
+        event nocat_record
+          (journal ~source:(String.make 70 'b') ~code:0x41b_0143_05ccL),
+        Some (String.make 65 'b', String.make 65 'b' ^ ", error 0x41b014305cc")
+      );
+      ( "a journal record's error code, all 64 bits",
+        event nocat_record
+          (journal ~source:"ASSERT" ~code:0x8000_0000_0000_0001L),
+        Some ("ASSERT", "ASSERT, error 0x8000000000000001") );
+    ]
+    (fun (_, m, expected) -> equal report expected (Rpc.report m))
+
+let test_short_reports =
+  cases "a report shorter than its structure says so"
+    ~name:(fun (n, _, _) -> n)
+    [
+      ("an error log", os_error_log, "abc");
+      ( "an error log cut in its text",
+        os_error_log,
+        String.sub (error_log ~xid:13 "Graphics Exception") 0 0x20 );
+      ("a journal record", nocat_record, "abc");
+      ( "a journal record cut after its error code",
+        nocat_record,
+        String.sub (journal ~source:"FECS_A" ~code:3L) 0 0x68 );
+    ]
+    (fun (_, fn, body) ->
+      let _, why = require_some (Rpc.report (event fn body)) in
+      contains ~sub:"cut short" why)
+
+let test_no_report =
+  cases "other messages report nothing"
+    ~name:(fun (n, _) -> n)
+    [
+      ("a stopped channel", rc_triggered);
+      ("a queued MMU fault", mmu_fault_queued);
+      ("a log print", libos_print);
+      ("an answer", gsp_rm_control);
+    ]
+    (fun (_, fn) -> is_none (Rpc.report (event fn (String.make 1300 'x'))))
 
 (* Calls *)
 
@@ -406,6 +485,8 @@ let () =
              test "a queued MMU fault is a fault" test_mmu;
              test_no_fault;
            ];
+         group ~timeout:10. "reports"
+           [ test_reports; test_short_reports; test_no_report ];
          group ~timeout:10. "calls"
            [
              test "an allocation" test_alloc;

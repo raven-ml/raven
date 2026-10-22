@@ -449,6 +449,7 @@ PCI_SOURCES = {
     "ctrl0080gr.h": R570 + SDK + "ctrl/ctrl0080/ctrl0080gr.h",
     "ctrl2080gr.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080gr.h",
     "ctrl2080internal.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080internal.h",
+    "ctrl2080nvd.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080nvd.h",
     "ctrl90f1.h": R570 + SDK + "ctrl/ctrl90f1.h",
     "ctrlc36f.h": R570 + SDK + "ctrl/ctrlc36f.h",
     "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
@@ -631,10 +632,10 @@ PCI_FIELDS = ["NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION", "NV_BIT_FALCON_UC
 
 # The function and event numbers read, from rpc_global_enums.h.
 GSP_FUNCTIONS = ["CONTINUATION_RECORD"]
-GSP_EVENTS = ["RC_TRIGGERED", "MMU_FAULT_QUEUED"]
+GSP_EVENTS = ["RC_TRIGGERED", "MMU_FAULT_QUEUED", "OS_ERROR_LOG", "GSP_POST_NOCAT_RECORD"]
 PCI_FUNCTIONS = ["GSP_RM_ALLOC", "GSP_RM_CONTROL", "SET_PAGE_DIRECTORY", "GSP_SET_SYSTEM_INFO", "SET_REGISTRY",
                  "UNLOADING_GUEST_DRIVER", "FREE"]
-PCI_EVENTS = ["GSP_INIT_DONE", "GSP_RUN_CPU_SEQUENCER", "OS_ERROR_LOG", "UCODE_LIBOS_PRINT"]
+PCI_EVENTS = ["GSP_INIT_DONE", "GSP_RUN_CPU_SEQUENCER", "UCODE_LIBOS_PRINT"]
 
 # Structs, by C name: the module they become and the fields read ("a__b" for
 # a field b of a struct a).
@@ -649,6 +650,8 @@ GSP_STRUCTS = {
     "rpc_message_header_v": ("Rpc_header", ["header_version", "signature", "length", "function",
                                             "rpc_result", "rpc_result_private", "sequence"]),
     "rpc_rc_triggered_v17_02": ("Rpc_rc_triggered", ["nv2080EngineType", "chid", "exceptType", "scope"]),
+    "rpc_os_error_log_v17_00": ("Rpc_os_error_log", ["exceptType", "errString"]),
+    "NV2080CtrlNocatJournalInsertRecord": ("Nocat_record", ["source", "errorCode"]),
     "GspFwWprMeta": ("Wpr_meta", [
         "magic", "revision", "sysmemAddrOfRadix3Elf", "sizeOfRadix3Elf", "sysmemAddrOfBootloader",
         "sizeOfBootloader", "bootloaderCodeOffset", "bootloaderDataOffset", "bootloaderManifestOffset",

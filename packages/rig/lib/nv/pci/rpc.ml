@@ -133,6 +133,36 @@ let fault m =
     Some "the GPU's MMU queued a fault"
   else None
 
+(* The text of the character array [(off, 1, n)] of [s], which holds it, to
+   its first zero byte. *)
+let text s (off, _, n) =
+  let t = String.sub s off n in
+  match String.index_opt t '\000' with Some i -> String.sub t 0 i | None -> t
+
+(* CPU-RM files the GSP's journal (NOCAT) records into its own
+   (_kgspRpcGspPostNocatRecord): of a record, the source and the error code
+   say what failed. *)
+let report m =
+  if m.fn = Gsp_defs.nv_vgpu_msg_event_os_error_log then
+    let module L = Gsp_defs.Rpc_os_error_log in
+    let b = m.body in
+    if String.length b < L.sizeof then
+      Some ("an error log", "an error log the GSP cut short")
+    else
+      let xid = strf "Xid %d" (get b L.except_type) in
+      Some (xid, strf "%s: %s" xid (text b L.err_string))
+  else if m.fn = Gsp_defs.nv_vgpu_msg_event_gsp_post_nocat_record then
+    let module N = Gsp_defs.Nocat_record in
+    let b = m.body in
+    if String.length b < N.sizeof then
+      Some ("a journal record", "a journal record the GSP cut short")
+    else
+      (* The error code takes 64 bits, which [get] would cut to 63. *)
+      let code = String.get_int64_le b (fst N.error_code) in
+      let source = text b N.source in
+      Some (source, strf "%s, error 0x%Lx" source code)
+  else None
+
 (* Calls *)
 
 let rm_alloc ~client ~parent ~obj ~cls params =
