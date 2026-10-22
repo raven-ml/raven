@@ -360,13 +360,14 @@ let memory =
 let fills_in_a_fresh_domain () =
   S.with_ @@ fun t ->
   let f = S.context () in
+  let before = Rig.submitted t.d in
   let r, current =
     Domain.join
       (Domain.spawn (fun () ->
            let v = S.submit_work t [ S.part t.d f ] in
            (v, S.current ())))
   in
-  equal int ~msg:"the value" 1 (Rig.Point.value r);
+  equal int ~msg:"the value" (before + 1) (Rig.Point.value r);
   equal nativeint ~msg:"the domain's thread has no context after" 0n current;
   Rig.Point.wait r;
   not_equal nativeint ~msg:"the fill saw a context" 0n (S.seen f)
