@@ -1198,29 +1198,30 @@ static int64_t results_at(int k) { return states_at(k) + k; }
   /* A slice alone runs its fast pass by tiles, slices side by side by        \
      pass_, and the exact one, if needed, by pass_. By a span, its step       \
      over tiles [q0, q1), each [L] terms from [t0], its state [st] at         \
-     level NETWORK_P, the states before it at [st - size]; RESULTS answers    \
-     1 where the fast pass met a value not finite. */                         \
-  static int moments_##S(const uint8_t *x_, int64_t xs, int64_t xl,           \
-                         uint8_t *mean_, int64_t ms, int64_t ml,              \
-                         uint8_t *var_, int64_t vs, int64_t vl, int64_t n,    \
-                         int64_t w, uint8_t *scratch_,                        \
-                         const nx_cpu_terms *src, const nx_cpu_span *span) {  \
+     level NETWORK_P, the states before it at [st - size]. */                 \
+  static void moments_##S(const uint8_t *x_, int64_t xs, int64_t xl,          \
+                          uint8_t *mean_, int64_t ms, int64_t ml,             \
+                          uint8_t *var_, int64_t vs, int64_t vl, int64_t n,   \
+                          int64_t w, uint8_t *scratch_,                       \
+                          const nx_cpu_terms *src, nx_cpu_span *span) {       \
     const T *x = (const T *)x_;                                              \
     T *ym = (T *)mean_, *yv = (T *)var_, *scratch = (T *)scratch_;            \
-    if (span == NULL) {                                                       \
-      int bad = w == 1 ? tiles_##S(x, xs, ym, ms, yv, vs, n, src, scratch)    \
+    if (span == NULL || span->step == NX_CPU_EXACT) {                         \
+      int exact = span != NULL;                                               \
+      if (!exact)                                                             \
+        exact = w == 1 ? tiles_##S(x, xs, ym, ms, yv, vs, n, src, scratch)    \
                        : pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, 0, \
                                   n, w, scratch, src, NULL, NULL);            \
-      if (bad)                                                                \
+      if (exact)                                                              \
         pass_##S(EXACT, x, xs, xl, ym, ms, ml, yv, vs, vl, 0, n, w, scratch,  \
                  src, NULL, NULL);                                            \
-      return 0;                                                               \
+      return;                                                                 \
     }                                                                         \
     int64_t size = 4 * w;                                                     \
     T *states = (T *)span->states, c[NX_CPU_NETWORK_LANES];                   \
     if (span->step == NX_CPU_CARRIES) {                                       \
       carries_##S(fast_##S, size, w, span->q1, states, scratch);              \
-      return 0;                                                               \
+      return;                                                                 \
     }                                                                         \
     centers_##S(x, xl, w, src, scratch, c);                                   \
     int bad = 0;                                                             \
@@ -1241,7 +1242,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
         bad |= pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, t0, t0 + L,  \
                         w, scratch, src, before, at);                         \
     }                                                                        \
-    return bad;                                                              \
+    span->bad |= bad;                                                        \
   }
 
 MOMENTS(float, f32)
@@ -1832,11 +1833,11 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     }                                                                        \
   }                                                                          \
   /* As moments_, Logsumexp's steps. */                                       \
-  static int logsumexp_##S(const uint8_t *x_, int64_t xs, int64_t xl,         \
-                           uint8_t *y_, int64_t ys, int64_t yl, uint8_t *y1,  \
-                           int64_t s1, int64_t l1, int64_t n, int64_t w,      \
-                           uint8_t *scratch_, const nx_cpu_terms *src,        \
-                           const nx_cpu_span *span) {                         \
+  static void logsumexp_##S(const uint8_t *x_, int64_t xs, int64_t xl,        \
+                            uint8_t *y_, int64_t ys, int64_t yl, uint8_t *y1, \
+                            int64_t s1, int64_t l1, int64_t n, int64_t w,     \
+                            uint8_t *scratch_, const nx_cpu_terms *src,       \
+                            nx_cpu_span *span) {                              \
     (void)y1;                                                                \
     (void)s1;                                                                \
     (void)l1;                                                                \
@@ -1846,13 +1847,13 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
       if (w == 1) lse_tiles_##S(x, xs, y, ys, n, src, scratch);               \
       else                                                                   \
         lse_pass_##S(x, xs, xl, y, ys, yl, 0, n, w, scratch, src, NULL, NULL); \
-      return 0;                                                               \
+      return;                                                                 \
     }                                                                        \
     int64_t size = 2 * w;                                                     \
     T *states = (T *)span->states;                                            \
     if (span->step == NX_CPU_CARRIES) {                                       \
       carries_##S(lse_join_##S, size, w, span->q1, states, scratch);          \
-      return 0;                                                               \
+      return;                                                                 \
     }                                                                         \
     for (int64_t q = span->q0; q < span->q1; q++) {                           \
       int64_t t0 = q * PT, L = n - t0 < PT ? n - t0 : PT;                     \
@@ -1870,7 +1871,6 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
         lse_pass_##S(x, xs, xl, y, ys, yl, t0, t0 + L, w, scratch, src,       \
                      before, at);                                             \
     }                                                                        \
-    return 0;                                                                 \
   }
 
 STATES(float, f32, NX_NAN_F32, -87)
@@ -3780,10 +3780,10 @@ static void network_quiet(const network *q, int64_t units) {
 }
 
 /* Unit [u]'s run of [run] in [scratch], a program's held values [held]
-   bytes into it, by [span] or whole, quieting its NaN results where
-   whole. */
-static int run_unit(network *q, nx_cpu_network run, int64_t u,
-                    uint8_t *scratch, int64_t held, const nx_cpu_span *span) {
+   bytes into it, by [span] or whole, quieting its NaN results where the
+   run ends the scan. */
+static void run_unit(network *q, nx_cpu_network run, int64_t u,
+                     uint8_t *scratch, int64_t held, nx_cpu_span *span) {
   const nx_loop *l = &q->outer;
   int last = l->rank - 1, w8 = nx_cpu_width(q->a[2]->dtype);
   int64_t at[3], w = unit_at(q, u, at);
@@ -3792,12 +3792,11 @@ static int run_unit(network *q, nx_cpu_network run, int64_t u,
   nx_cpu_terms src = {fill_slices, &c};
   /* A program's operand is virtual, of no buffer. */
   const uint8_t *x = q->fused != NULL ? NULL : q->a[2]->base + at[2] * w8;
-  int bad = run(x, q->along[2], l->step[2][last], q->a[0]->base + at[0] * w8,
-                q->along[0], l->step[0][last], q->a[1]->base + at[1] * w8,
-                q->along[1], l->step[1][last], q->len, w, scratch,
-                q->fused != NULL ? &src : NULL, span);
-  if (span == NULL) quiet_slices(q, at, w);
-  return bad;
+  run(x, q->along[2], l->step[2][last], q->a[0]->base + at[0] * w8,
+      q->along[0], l->step[0][last], q->a[1]->base + at[1] * w8, q->along[1],
+      l->step[1][last], q->len, w, scratch, q->fused != NULL ? &src : NULL,
+      span);
+  if (span == NULL || span->step == NX_CPU_EXACT) quiet_slices(q, at, w);
 }
 
 /* Runs units [lo, hi) whole, or by tiles where [q->per] is not 0: items
@@ -3832,8 +3831,9 @@ static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t q1 = hi - i < q->per - q0 ? q0 + hi - i : q->per;
     /* CARRIES takes all of a unit's full tiles' states at once. */
     nx_cpu_span s = {q->step, q0, q->step == NX_CPU_CARRIES ? q->full : q1,
-                     q->states + u * q->stride};
-    if (run_unit(q, run, u, scratch, states * w8, &s)) q->bad = 1;
+                     q->states + u * q->stride, 0};
+    run_unit(q, run, u, scratch, states * w8, &s);
+    if (s.bad) q->bad = 1;
     i += q1 - q0;
   }
   nx_cpu_give(scratch);
@@ -3905,12 +3905,13 @@ static __attribute__((noinline)) int network_in(
     q.per = per[i];
     nx_cpu_job(units * q.per, bytes, cost, network_units, &q);
   }
-  free(q.states);
-  /* Where Moments' fast pass met a value not finite, every unit runs again
-     whole; else the units quiet their NaN results. */
-  q.per = 0;
+  /* Where Moments' fast pass met a value not finite, every unit runs its
+     exact pass; else the units quiet their NaN results. */
+  q.step = NX_CPU_EXACT;
+  q.per = 1;
   if (!q.failed && q.bad) nx_cpu_job(units, bytes, cost, network_units, &q);
   else if (!q.failed) network_quiet(&q, units);
+  free(q.states);
   return q.failed ? -1 : NX_OK;
 }
 

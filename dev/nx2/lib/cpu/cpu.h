@@ -333,23 +333,30 @@ typedef struct {
    variance at y1 + t s1 + l l1, in elements; [scratch] holds
    (12 nx_cpu_network_levels(n) + 3 NX_CPU_NETWORK_TILE) w elements, and
    for one slice at least the elements its tiles take (reduce.c). With a
-   [span], it runs one step of the scan by tiles and answers 1 where
-   Moments' fast pass met a value not finite; without, the whole scan, and
-   0. */
+   [span], it runs one step of the scan by tiles; without, the whole
+   scan. */
 #define NX_CPU_NETWORK_LANES 64
 
 /* A step of a network scan by tiles of PT terms from its slices' start
    (reduce.c), [states] holding a state of the [w] slices for each
    full tile: TOTALS stores tiles [q0, q1)'s states there, CARRIES takes
    the first [q1] states to the network's results over them, in their
-   place, and RESULTS computes tiles [q0, q1)'s results from those before
-   each tile and at its last term. */
-typedef enum { NX_CPU_TOTALS, NX_CPU_CARRIES, NX_CPU_RESULTS } nx_cpu_step;
+   place, RESULTS computes tiles [q0, q1)'s results from those before
+   each tile and at its last term, setting [bad] where Moments' fast pass
+   met a value not finite, and EXACT, after a RESULTS that set it, runs
+   Moments' exact pass over the whole slices. */
+typedef enum {
+  NX_CPU_TOTALS,
+  NX_CPU_CARRIES,
+  NX_CPU_RESULTS,
+  NX_CPU_EXACT
+} nx_cpu_step;
 
 typedef struct {
   nx_cpu_step step;
   int64_t q0, q1;
   uint8_t *states;
+  int bad;
 } nx_cpu_span;
 
 /* A network scan's terms per tile. On fudge,
@@ -365,11 +372,11 @@ static inline int nx_cpu_network_levels(int64_t n) {
   return k;
 }
 
-typedef int (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
-                              uint8_t *y, int64_t ys, int64_t yl, uint8_t *y1,
-                              int64_t s1, int64_t l1, int64_t n, int64_t w,
-                              uint8_t *scratch, const nx_cpu_terms *src,
-                              const nx_cpu_span *span);
+typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
+                               uint8_t *y, int64_t ys, int64_t yl,
+                               uint8_t *y1, int64_t s1, int64_t l1,
+                               int64_t n, int64_t w, uint8_t *scratch,
+                               const nx_cpu_terms *src, nx_cpu_span *span);
 
 /* The bytes of the largest tile of any target's microkernel: 32 × 32
    float32 on the matrix unit. */
