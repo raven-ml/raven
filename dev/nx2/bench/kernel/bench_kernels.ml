@@ -636,6 +636,16 @@ let reduce_rows =
     moments "scan-moments-f32-4096x1024-axis1" f32 [| 4096; 1024 |] 1;
     moments "scan-moments-f32-1024x4096-axis0" f32 [| 1024; 4096 |] 0;
     moments "scan-moments-f32-1M" f32 [| m |] 0;
+    moments "scan-moments-f32-5x768x5-axis1" f32 [| 5; 768; 5 |] 1;
+    (* A NaN last: the fast pass meets it, and the exact one runs. *)
+    {
+      bench =
+        scan "scan-moments-f32-1M-late-nan" Moments ~axis:0 (fun () ->
+            let x = filled f32 [| m |] in
+            A.set x [| m - 1 |] Float.nan;
+            A.Any x);
+      work = [ F.Copy (bytes f32 [| m |]); F.Copy (bytes f32 [| m |]) ];
+    };
     {
       bench =
         late_nan "reduce-sum-log-f32-1M-late-nan" ~dst:[||]
