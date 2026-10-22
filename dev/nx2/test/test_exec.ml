@@ -312,6 +312,30 @@ let declines =
           kept "Nx.less" "a comparison, of another dtype" (fun h ->
               Nx.less h y);
           equal ~msg:"bytes held" int before (settled (m 2)));
+      test "a decline in a donor's memory gives the memory back" (fun () ->
+          (* [x] is computed on m2, so its memory is its own and the result
+             takes it: rig consumed it before the kernel declined. A sum
+             declines on the fast path, a contraction on the general one. *)
+          let y = refused [| 4.; 3.; 2.; 1. |] in
+          let squares = [| 16.; 9.; 4.; 1. |] in
+          let p = Nx.Pattern.v "i k, k j -> i j | k" in
+          let before = settled (m 2) in
+          let kept by path f =
+            let x = Nx.mul y y in
+            invalid ~by (fun () -> ignore (f (Nx.donate x)));
+            equal ~msg:path (array bits) squares (elements x);
+            let x' = to_count x in
+            equal ~msg:(path ^ ": placed and computed") (array bits)
+              [| 32.; 18.; 8.; 2. |]
+              (elements (Nx.add x' x'));
+            equal ~msg:(path ^ ": donated again") (array bits)
+              [| 64.; 27.; 8.; 1. |]
+              (elements (Nx.mul (Nx.donate x) y))
+          in
+          kept "Nx.add" "a sum" (fun h -> Nx.add h y);
+          kept "Nx.contract" "a contraction's init" (fun h ->
+              Nx.contract Nx.float32 ~init:h p y y);
+          equal ~msg:"bytes held" int before (settled (m 2)));
     ]
 
 let kernels =

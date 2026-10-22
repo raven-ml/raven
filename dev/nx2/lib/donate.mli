@@ -14,21 +14,20 @@
     ({!Exec}) claims an operation's handles before it reads them, writes the
     operation's first result into a handle's memory where {!reuse} allows, and
     ends the handles once it has read them ({!consumed}). An operation that
-    raises before it writes or consumes their memory gives them back
-    ({!unclaim}). *)
+    raises before it writes their memory gives them back ({!unclaim}). *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
     ({!Value.Donated}): [x] lives until that operation is called, then dies with
-    the handle, naming the operation; the operation reads [x] as it was when
-    called. An operation that reads the handle only at its first result's own
+    the handle, naming the operation, unless the operation is refused or its
+    kernels decline it, which raises before it writes the memory and leaves
+    [x] alive ({!unclaim}). The operation reads [x] as it was when called. An operation that reads the handle only at its first result's own
     index (a map's plain load, a scatter's target, a contraction's [init], an
     assembly's first piece over the whole result) writes that result into the
     memory, where rig holds it exclusive (no other value reads it), it has the
     result's dtype and C-contiguous layout, and the operation reads none of it
-    at other indices through another operand; the memory is consumed either
-    way where no other value reads it. A movement passes a new handle on
-    instead. A constant or a traced [x] is [x].
+    at other indices through another operand. A movement passes a new handle
+    on instead. A constant or a traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -96,11 +95,18 @@ val claim : by:string -> handle list -> unit
     Raises [Invalid_argument] naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain. *)
 
-val unclaim : handle list -> unit
-(** [unclaim hs] gives back the claims of [hs] that {!claim} or
-    {!claim_handle} made, for a consumer that raised before it wrote or
-    consumed their memory: each handle and its donor live again, the donor
-    offered under a new key. *)
+val unclaim : ?into:Rig.Buffer.t * Rig.Buffer.t -> handle list -> unit
+(** [unclaim ~into:(b, b') hs] gives back the claims of [hs] that {!claim} or
+    {!claim_handle} made, for a consumer that raised before it wrote their
+    memory: each handle and its donor live again, the donor offered under a
+    new key. [into] is given where the consumer consumed [b]'s memory
+    ({!take}), which lives on in [b']: each array of the handles and of their
+    donors over [b] is then over [b'], of the same dtype, layout and bytes.
+
+    A domain that read a donor's array before the claim and uses it after
+    holds the dead [b]: a kernel's door answers [Dead_buffer] for it, as for
+    any read of a consumed donor. So does another handle of the donor made
+    before the claim, which keeps its arrays. *)
 
 val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
 (** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];
