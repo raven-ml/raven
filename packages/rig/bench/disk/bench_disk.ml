@@ -6,7 +6,8 @@
 (* Copies, borrows, opens and barriers of files on the disk, each row beside the
    floor that bounds it: the system calls the disk makes, called from C on a
    descriptor the floor holds. A row's distance to its floor is the disk's and
-   rig's share.
+   rig's share. A read floor is one thread's pread, which a read of more than
+   2 MiB, cut into segments that several threads read at once, runs below.
 
    The files live under this bench's directory in _build, cleared at its start
    and removed at its end. A file is in the system's cache after a row's first
