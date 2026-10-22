@@ -308,12 +308,22 @@ let fn t =
     release = (fun () -> release t);
   }
 
+(* A failure once the function is in its container gives the container its
+   user back, so that a container left with none closes. *)
 let take_iommu files fds bus bars =
   let c, efd = Vfio.open_ files fds bus in
+  let at =
+    match Vfio.config_offset bus (Vfio.device c) with
+    | at -> at
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        Vfio.close c;
+        Printexc.raise_with_backtrace e bt
+  in
   {
     files;
     bus;
-    config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
+    config = (Vfio.device c, at);
     bars;
     interrupts = Some efd;
     intx = None;
