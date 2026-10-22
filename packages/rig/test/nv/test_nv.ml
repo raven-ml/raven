@@ -1661,6 +1661,67 @@ let handover () =
   S.free_launches l;
   List.iter (N.free t.g) [ flags; out ]
 
+let deep_image = Rig_gpu_support.loader (fun () -> S.fixture "deep_sm89.cubin")
+
+(* The bytes of the local memory that serves [g]'s launches of deep
+   (fixtures/deep.cu). *)
+let deep_local g =
+  let pp = Format.pp_print_string in
+  let c = require_ok ~pp (A.Cubin.of_string (S.fixture "deep_sm89.cubin")) in
+  let k = require_some (A.Cubin.kernel c "deep") in
+  let l = require_ok ~pp (A.Launch.make (N.capability g) k) in
+  (A.Local_memory.make (N.capability g) (A.Launch.local_bytes l)).bytes
+
+(* A function the GPU has no local memory for: [deep] keeps 480 KiB a thread
+   (fixtures/deep.cu), and its local memory holds that for every thread the
+   GPU may run at once, past the GPU's memory. Its resolve runs the rounds of
+   reclamation, which give a dropped buffer back to the driver, then raises
+   Out_of_memory for the bytes of that local memory. It made nothing: the
+   device lives, and [shallow], of the same image, grows the local memory
+   and computes right. The driver refuses one allocation past the GPU's
+   memory, so no memory runs short; a GPU that holds it skips. *)
+let no_local_memory () =
+  S.with_ @@ fun { d; g } ->
+  let bytes = deep_local g in
+  if bytes <= Rig.budget d then
+    skip
+      ~reason:(strf "the GPU holds deep's %d bytes of local memory" bytes)
+      ();
+  let image = deep_image d in
+  let dropped = 64 * 1024 * 1024 in
+  let[@inline never] drop () =
+    ignore (Sys.opaque_identity (B.create d dropped))
+  in
+  drop ();
+  Gc.full_major ();
+  let before = Rig.allocated d in
+  let refused =
+    match Rig.Image.resolve image "deep" with
+    | _ -> fail "deep's local memory was made"
+    | exception Rig.Out_of_memory (d', n) -> (Rig.equal d d', n)
+  in
+  equal (pair bool int) ~msg:"Out_of_memory's device and bytes" (true, bytes)
+    refused;
+  at_most ~msg:"the device's bytes, the dropped buffer reclaimed" int
+    ~than:(before - dropped) (Rig.allocated d);
+  equal (option string) ~msg:"the device's loss" None (Rig.lost d);
+  (* shallow's threads keep [stack] words: thread i writes i + i mod stack. *)
+  let n = 2048 and stack = 1024 in
+  let s =
+    Sub.make d [| launch_part image "shallow" ~params:12 [| refer 0 0 |] |]
+  in
+  let run = Run.make s in
+  let b = Sub.block s 0 in
+  Run.groups run b (n / 256) 1 1;
+  Run.threads run b 256 1 1;
+  Run.shared run b 0;
+  Run.int32 run b 8 n;
+  let out = B.create d (4 * n) in
+  Rig.Point.wait (submitted run ~buffers:[| out |]);
+  equal (array int) ~msg:"shallow's words"
+    (Array.init n (fun i -> i + (i mod stack)))
+    (words out ~at:0 n)
+
 let local =
   group ~timeout:60. "local memory"
     [
@@ -1668,6 +1729,10 @@ let local =
       test "a growth leaves a running kernel's local memory intact" growth;
       test "a replaced local memory stays until the kernels on it ran"
         handover;
+      test
+        "a function the GPU has no local memory for raises Out_of_memory, \
+         having made nothing"
+        no_local_memory;
     ]
 
 let channels =
