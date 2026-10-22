@@ -26,6 +26,9 @@ type op =
       (** [Poll (what, r, mask, c)] waits for [r]'s bits [mask] to meet [c], for
           at most 30 seconds; [what] names what is waited for. *)
   | Delay of int  (** [Delay us] waits [us] microseconds. *)
+  | Read of int
+      (** [Read r] reads [r], which also makes the writes before it reach the
+          GPU. *)
   | When of int * int * cond * op list
       (** [When (r, mask, c, ops)] runs [ops] if [r]'s bits [mask] meet [c]. *)
   | Expect of string * int * int * cond
@@ -50,8 +53,8 @@ val wait_reset : Chip.family -> op list
     FSP [FSP_BOOT_COMPLETE_STATUS_SUCCESS] (Blackwell). *)
 
 val reset : int -> [ `Falcon | `Riscv ] -> op list
-(** [reset base core] resets the falcon at [base] (Ampere and Ada), holding the
-    reset 100 ms, waits for it to scrub its memories, and selects [core]. *)
+(** [reset base core] resets the falcon at [base] (Ampere and Ada) as NVIDIA's
+    RM does, waits for it to scrub its memories, and selects [core]. *)
 
 val start : int -> op list
 (** [start base] starts the falcon's CPU at its boot vector, through its alias

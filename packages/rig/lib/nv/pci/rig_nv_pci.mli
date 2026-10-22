@@ -317,6 +317,7 @@ module Falcon : sig
     | Copy of int * int
     | Poll of string * int * int * cond
     | Delay of int
+    | Read of int
     | When of int * int * cond * op list
     | Expect of string * int * int * cond
 

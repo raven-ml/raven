@@ -35,6 +35,7 @@ type op =
   | Copy of int * int
   | Poll of string * int * int * cond
   | Delay of int
+  | Read of int
   | When of int * int * cond * op list
   | Expect of string * int * int * cond
 
@@ -63,6 +64,9 @@ let rec run c = function
           continue ()
       | Delay us ->
           Unix.sleepf (float us /. 1e6);
+          continue ()
+      | Read r ->
+          ignore (Chip.get c r : int);
           continue ()
       | Poll (what, r, mask, cond) -> (
           match
@@ -125,8 +129,14 @@ let wait_reset : Chip.family -> op list = function
         poll "the GPU's boot" completed;
       ]
 
-(* How long a falcon's reset is held. *)
-let reset_us = 100_000
+(* A falcon's reset as NVIDIA's RM makes it (kflcnPreResetWait_GA102,
+   kgspResetHw_TU102, ksec2ResetHw_TU102): a wait of at most 150 us for the
+   falcon to report itself ready, which the reset goes on without, then the
+   reset asserted and released, each followed by ten reads of the engine
+   register, which let the signal propagate, the first read also making the
+   write reach the GPU. *)
+let pre_reset_us = 150
+let propagation_reads = 10
 
 let reset base core =
   let engine =
@@ -135,10 +145,17 @@ let reset base core =
   let hwcfg2 = base + L.nv_pfalcon_falcon_hwcfg2 in
   let bcr = base + L.nv_priscv_riscv_bcr_ctrl in
   let reset x = Write (engine, put L.nv_pgsp_falcon_engine_reset x) in
+  let propagate = List.init propagation_reads (fun _ -> Read engine) in
   [
+    When
+      ( hwcfg2,
+        mask L.nv_pfalcon_falcon_hwcfg2_reset_ready,
+        Is 0,
+        [ Delay pre_reset_us ] );
     reset 1;
-    Delay reset_us;
-    reset 0;
+  ]
+  @ propagate @ [ reset 0 ] @ propagate
+  @ [
     Poll
       ( "the falcon's memories to be scrubbed",
         hwcfg2,

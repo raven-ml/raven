@@ -628,6 +628,7 @@ let rec pp_op ppf (o : Falcon.op) =
   | Poll (what, r, m, c) ->
       Format.fprintf ppf "poll %S 0x%x 0x%x %a" what r m cond c
   | Delay n -> Format.fprintf ppf "delay %d" n
+  | Read r -> Format.fprintf ppf "read 0x%x" r
   | When (r, m, c, ops) ->
       Format.fprintf ppf "when 0x%x 0x%x %a [%a]" r m cond c
         (Format.pp_print_list pp_op)
