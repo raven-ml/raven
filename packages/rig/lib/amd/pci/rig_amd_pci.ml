@@ -173,13 +173,15 @@ let protect g f = Amd.Lock.protect g.lock f
 
 (* What the path keeps of each machine, from its first open there: the key
    its devices share, so that a GPU's number names the same GPU for each of
-   them, and each GPU's reach as its last open found it, by number. A GPU's
-   reach is the same at every open ([Memory.reach]), so a device's [reaches]
-   answers from its GPU's number alone, also once it is lost, and keeps nothing
-   of the device. *)
+   them, each GPU's reach as its last open found it, by number, and what its
+   boots keep, by bus. A GPU's reach is the same at every open
+   ([Memory.reach]), so a device's [reaches] answers from its GPU's number
+   alone, also once it is lost, and keeps nothing of the device. Each list
+   holds at most the machine's AMD GPUs. *)
 type known = {
   key : Memory.region Type.Id.t;
   mutable reached : (int * Memory.reach) list;
+  mutable kept : (string * Boot.kept) list;
 }
 
 let machines : (Machine.t * known) list ref = ref []
@@ -190,13 +192,24 @@ let known m =
   match List.assq_opt m !machines with
   | Some on -> on
   | None ->
-      let on = { key = Type.Id.make (); reached = [] } in
+      let on = { key = Type.Id.make (); reached = []; kept = [] } in
       machines := (m, on) :: !machines;
       on
 
 let learn on index reach =
   Amd.Lock.protect machines_lock @@ fun () ->
   on.reached <- (index, reach) :: List.remove_assoc index on.reached
+
+(* What the boots of the GPU at [bus] keep. Its opens run one at a time, under
+   the driver's lock. *)
+let kept on bus =
+  Amd.Lock.protect machines_lock @@ fun () ->
+  match List.assoc_opt bus on.kept with
+  | Some k -> k
+  | None ->
+      let k = Boot.kept () in
+      on.kept <- (bus, k) :: on.kept;
+      k
 
 let reaches on ~index j =
   let reach () =
@@ -327,7 +340,9 @@ let boot h fn ~firmware =
     let* _, loads = survey ~firmware d in
     loads
   in
-  match Boot.start ~gpus fn first with
+  let on = known (Rig_pci.Function.machine fn) in
+  let kept = kept on (Rig_pci.Function.bus fn) in
+  match Boot.start ~gpus ~kept fn first with
   | Ok g -> Ok g
   | Error (`Refused why) -> Error (`Refused why)
   | Error `Running -> Error `Running

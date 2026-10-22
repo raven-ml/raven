@@ -151,17 +151,18 @@ let vf_request mmio f ?(ready = true) req =
   in
   Ok (req + 1)
 
-(* The discovery table, read through the memory BAR, or a word at a time through
-   the memory index window when the BAR is smaller than the GPU's memory: the
-   index's low 31 bits with bit 31 set, then its high bits, as the kernel's
-   amdgpu_device_mm_access writes them. *)
-let read_table ~vram ~mmio ~memory =
+(* The first [n] bytes of the discovery table, [n] a multiple of 4, read
+   through the memory BAR, or a word at a time through the memory index window
+   when the BAR is smaller than the GPU's memory: the index's low 31 bits with
+   bit 31 set, then its high bits, as the kernel's amdgpu_device_mm_access
+   writes them. The window takes three register accesses a word, 5 ms for the
+   whole table on an R9700. *)
+let read_table ~vram ~mmio ~memory n =
   let at = memory - Discovery.offset in
-  if Window.length vram >= memory then
-    Window.read vram at Discovery.bytes
+  if Window.length vram >= memory then Window.read vram at n
   else begin
-    let b = Bytes.create Discovery.bytes in
-    for i = 0 to (Discovery.bytes / 4) - 1 do
+    let b = Bytes.create n in
+    for i = 0 to (n / 4) - 1 do
       let w = at + (4 * i) in
       Window.set32 mmio (D.mmmm_index * 4) (w land 0x7fff_ffff lor 0x8000_0000);
       Window.set32 mmio (D.mmmm_index_hi * 4) (w lsr 31);
@@ -170,6 +171,31 @@ let read_table ~vram ~mmio ~memory =
     done;
     Bytes.to_string b
   end
+
+(* What a process keeps of a GPU across its boots: the discovery table a boot
+   last read whole, with its parse. A table's first 12 bytes hold its
+   signature, version, size and the checksum of the rest, so a later boot
+   reads them alone and keeps the table if they are its first bytes. *)
+type kept = { mutable table : (string * Discovery.t) option }
+
+let kept () = { table = None }
+let header_bytes = 12
+
+let table ?kept ~vram ~mmio ~memory () =
+  let known =
+    match kept with
+    | Some { table = Some (s, d) } ->
+        let head = read_table ~vram ~mmio ~memory header_bytes in
+        if String.starts_with ~prefix:head s then Some d else None
+    | Some { table = None } | None -> None
+  in
+  match known with
+  | Some d -> Ok d
+  | None ->
+      let s = read_table ~vram ~mmio ~memory Discovery.bytes in
+      let* d = Discovery.of_string s in
+      Option.iter (fun k -> k.table <- Some (s, d)) kept;
+      Ok d
 
 (* The windows on the GPU's BARs: its memory combined, its doorbells and
    registers uncached. *)
@@ -195,7 +221,7 @@ let unmap_bars f (vram, doorbells, mmio) =
 let give_back_lease mmio f lease =
   if lease <> 0 then ignore (vf_request mmio f ~ready:false lease)
 
-let surveyed f vram doorbells mmio =
+let surveyed ?kept f vram doorbells mmio =
   let vf = Window.get32 mmio (D.mmrcc_iov_func_identifier * 4) land 1 = 1 in
   let* lease =
     if vf then vf_request mmio f D.idh_req_gpu_init_access else Ok 0
@@ -219,7 +245,7 @@ let surveyed f vram doorbells mmio =
     if size = 0 || size = 0xffff_ffff then Error "the GPU reports no memory"
     else Ok (size lsl 20)
   in
-  let* d = Discovery.of_string (read_table ~vram ~mmio ~memory) in
+  let* d = table ?kept ~vram ~mmio ~memory () in
   Ok (vram, doorbells, mmio, vf, lease, memory, d)
 
 (* What the GPU says of itself before any block is touched, its BARs unmapped if
@@ -228,7 +254,7 @@ let surveyed f vram doorbells mmio =
    C: windows a transport reaches but the process does not map are refused
    before the first write, a VF's mailbox's included. A reset writes through
    the transport. *)
-let survey ~driven f =
+let survey ?kept ~driven f =
   with_bar f ~combine:true vram_bar @@ fun vram ->
   with_bar f ~combine:false doorbell_bar @@ fun doorbells ->
   with_bar f ~combine:false register_bar @@ fun mmio ->
@@ -241,7 +267,7 @@ let survey ~driven f =
           "the GPU's registers and doorbells are not mapped into the process, \
            as through a transport"
   in
-  surveyed f vram doorbells mmio
+  surveyed ?kept f vram doorbells mmio
 
 let stuck f =
   match f () with v -> Ok v | exception Regs.Stuck why -> Error why
@@ -457,9 +483,11 @@ let confirm f fault invalidate () =
       if !fault = None then fault := Some why;
       false
 
-let start ~gpus f first =
+let start ~gpus ~kept f first =
   let* vram, doorbells, mmio, vf, lease, memory, d =
-    Result.map_error (fun why -> `Refused why) (survey ~driven:`Driven f)
+    Result.map_error
+      (fun why -> `Refused why)
+      (survey ~kept ~driven:`Driven f)
   in
   let refused r =
     Result.map_error

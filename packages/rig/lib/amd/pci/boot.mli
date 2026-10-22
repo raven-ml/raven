@@ -62,17 +62,27 @@ val space : Rig_pci.Space.t
     process and on its machine: 2{^44} bytes from [0x2000_0000_0000].
     {!start}'s caller reserves it ({!Rig_pci.Machine.val-reserve}). *)
 
+type kept
+(** The type for what a process keeps of one GPU across its boots. *)
+
+val kept : unit -> kept
+(** [kept ()] keeps nothing yet. *)
+
 val start :
   gpus:(int, string) result Lazy.t ->
+  kept:kept ->
   Rig_pci.Function.t ->
   (Discovery.t ->
   (Regs.layout * Firmware.t, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result
-(** [start ~gpus f first] boots the GPU of [f], partially or fully as {!plan}
-    says. The caller took [f], reserved {!space} on its machine, and counts
-    [gpus] AMD GPUs there, or [Error why] if it cannot list them. [first d]
-    returns the registers' layout and the firmware from the GPU's discovery
-    table [d], which the boot reads before it writes anything. The GPU's memory
+(** [start ~gpus ~kept f first] boots the GPU of [f], partially or fully as
+    {!plan} says. The caller took [f], reserved {!space} on its machine, and
+    counts [gpus] AMD GPUs there, or [Error why] if it cannot list them.
+    [first d] returns the registers' layout and the firmware from the GPU's
+    discovery table [d], which the boot reads before it writes anything:
+    whole, or in its first 12 bytes alone when they are those of the table
+    [kept] holds from an earlier boot, which then serves. The caller gives
+    [kept] to the boots of [f]'s GPU alone, one at a time. The GPU's memory
     joins its fabric as {!Gmc.link} says.
 
     The GPU masters the bus only once it is booted, every flush has been
