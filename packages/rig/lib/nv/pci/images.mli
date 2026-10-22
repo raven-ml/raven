@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The firmware a GPU boots with, read from its three files: the GSP's
-    firmware, its bootloader, and the image that starts the GSP, the booter
-    (Ampere, Ada) or the FMC (Blackwell). Reading checks the files'
-    containers and points into the files, so that the boot copies each
-    section once, into the memory the GPU reads. *)
+(** The firmware a GPU boots with, read from its files: the GSP's firmware,
+    its bootloader, and the image that starts the GSP, the booter (Ampere,
+    Ada) or the FMC (Blackwell), then on Ampere and Ada the booter that takes
+    the boot down at its stop. Reading checks the files' containers and
+    points into the files, so that the boot copies each section once, into
+    the memory the GPU reads. *)
 
 type range = { contents : string; at : int; length : int }
 (** The type for bytes of a file: the [length] bytes of the file's [contents]
@@ -31,10 +32,18 @@ type booter = {
   engines : int;  (** The engines it runs on, as a mask. *)
   ucode : int;  (** Its ucode ID. *)
 }
-(** The type for the booter, a heavy-secure ucode SEC2 runs. Its engines and
+(** The type for a booter, a heavy-secure ucode SEC2 runs. Its engines and
     ucode ID come from the container's patch metadata. The signature patched
     in is the one the header's patch index names, whatever SEC2's fuse
     version. *)
+
+type booters = {
+  load : booter;
+      (** It loads the GSP's firmware into the protected memory (WPR2) and
+          starts the GSP. *)
+  unload : booter;  (** It takes the protected memory down. *)
+}
+(** The type for the booters of Ampere and Ada. *)
 
 type fmc = {
   fmc : range;  (** The image the FSP starts. *)
@@ -51,14 +60,15 @@ type t = {
       (** Its signature for the chip's family, its section
           [.fwsignature_<family>x], such as [.fwsignature_ad10x]. *)
   bootloader : bootloader;
-  start : [ `Booter of booter | `Fmc of fmc ];
-      (** The image that starts the GSP. *)
+  start : [ `Booter of booters | `Fmc of fmc ];
+      (** The images that start the GSP, and on Ampere and Ada take it down. *)
 }
 (** The type for a GPU's firmware. *)
 
 val names : Chip.family -> string list
-(** [names f] is the paths of the three files of family [f] under a firmware
-    directory, GSP first. *)
+(** [names f] is the paths of the files of family [f] under a firmware
+    directory, GSP first: the GSP's firmware, its bootloader, the image that
+    starts it, and on Ampere and Ada the booter that unloads it. *)
 
 val gsp_image : file:string * digest:string
 (** [gsp_image] is the GSP's firmware, the first of {!names} for every family: its
@@ -74,7 +84,12 @@ val parse :
   gsp:string ->
   bootloader:string ->
   start:string ->
+  unload:string option ->
   (t, string) result
-(** [parse f ~gsp ~bootloader ~start] is the firmware of family [f] whose three
-    files ({!names}) hold [gsp], [bootloader] and [start]. It is [Error] saying
-    what a file lacks if one is not laid out as its format says. *)
+(** [parse f ~gsp ~bootloader ~start ~unload] is the firmware of family [f]
+    whose files ({!names}) hold [gsp], [bootloader], [start] and, on Ampere
+    and Ada, [unload]. It is [Error] saying what a file lacks if one is not
+    laid out as its format says.
+
+    Raises [Invalid_argument] if [unload] is [None] on Ampere or Ada, or
+    [Some _] on Blackwell. *)

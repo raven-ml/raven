@@ -46,10 +46,24 @@ type placement = {
 
 type buffer = { size : int; phys : bool; virt : bool; local : bool }
 
+(* GPU memory a falcon reads an image from: its physical address and the
+   window on it. *)
+type region = { pa : int; w : Window.t }
+
 (* How the boot starts the GSP: on Ampere and Ada, FWSEC and then the booter,
-   which the falcons read from GPU memory; on Blackwell, the FSP's ops, which
-   point to the FMC in system memory. *)
-type start = Legacy of Vbios.fwsec * Images.booter | Cot of Falcon.op list
+   which the falcons read from GPU memory, FWSEC's FRTS command set up for
+   the GPU's memory; on Blackwell, the FSP's ops, which point to the FMC in
+   system memory. FWSEC's region holds the image of either of its commands,
+   and the booters' the larger booter, so that the stop loads its own. *)
+type start =
+  | Legacy of {
+      fwsec : Vbios.fwsec;
+      frts : int;
+      booters : Images.booters;
+      fwsec_at : region;
+      booter_at : region;
+    }
+  | Cot of Falcon.op list
 
 (* Each channel's runlist changes under the GSP's lock by one store of a map
    made first, so an exception leaves the table whole. *)
@@ -139,18 +153,20 @@ let boot_pool start =
   let room n = 2 * (round_up n page + page) in
   let images =
     match start with
-    | `Booter (b : Images.booter) ->
-        room Vbios.window + room (String.length b.image)
+    | `Booter ({ load; unload } : Images.booters) ->
+        room Vbios.window
+        + room (Int.max (String.length load.image) (String.length unload.image))
     | `Fmc _ -> 0
   in
   round_up (page + images) (2 * mib)
 
 (* GPU memory a falcon reads, from the boot pool, which the memory BAR reaches
-   however small: its physical address and the window on it. *)
+   however small: its physical address and the window on it. Each image is
+   written whole before a falcon reads it, so the memory is not zeroed. *)
 let vram p n =
-  match Page_table.palloc ~boot:true p.tables n with
+  match Page_table.palloc ~zero:false ~boot:true p.tables n with
   | None -> Error "no GPU memory in the boot pool for a falcon's image"
-  | Some pa -> Ok (pa, Window.sub p.bar pa (round_up n page))
+  | Some pa -> Ok { pa; w = Window.sub p.bar pa (round_up n page) }
 
 let blit (r : Images.range) w off =
   Window.blit_string r.contents r.at w off r.length
@@ -966,8 +982,23 @@ let take p (fw : Images.t) fwsec ~taken =
   (* The start, FWSEC set up for the GPU's memory. *)
   let* start =
     match (fw.start, fwsec, c.family) with
-    | `Booter b, Some f, (Ampere | Ada) ->
-        Ok (Legacy (Vbios.patch f ~frts:(Fb_layout.frts ~memory:p.memory), b))
+    | ( `Booter ({ load; unload } as booters : Images.booters),
+        Some (fwsec : Vbios.fwsec),
+        (Ampere | Ada) ) ->
+        let* fwsec_at = vram p (String.length fwsec.image) in
+        let larger =
+          Int.max (String.length load.image) (String.length unload.image)
+        in
+        let* booter_at = vram p larger in
+        Ok
+          (Legacy
+             {
+               fwsec;
+               frts = Fb_layout.frts ~memory:p.memory;
+               booters;
+               fwsec_at;
+               booter_at;
+             })
     | `Fmc m, None, Blackwell ->
         let* args = sys page in
         Window.write args.w 0
@@ -1015,37 +1046,38 @@ let create p fw fwsec =
       give_back p taken;
       Printexc.raise_with_backtrace e bt
 
+(* A falcon's view of FWSEC at [pa], and of a booter at [pa]. *)
+let fwsec_hs pa (f : Vbios.fwsec) =
+  {
+    Falcon.image = pa;
+    code = { off = 0; pa = f.imem_pa; va = f.imem_va; size = f.imem_size };
+    data = { off = f.imem_size; pa = f.dmem_pa; va = 0; size = f.dmem_size };
+    pkc = f.pkc;
+    engines = f.engines;
+    ucode = f.ucode;
+  }
+
+let booter_hs pa (b : Images.booter) =
+  {
+    Falcon.image = pa;
+    code = { off = fst b.code; pa = 0; va = fst b.code; size = snd b.code };
+    data = { off = fst b.data; pa = 0; va = 0; size = snd b.data };
+    pkc = b.pkc;
+    engines = b.engines;
+    ucode = b.ucode;
+  }
+
 let falcons g =
   match g.start with
-  | Cot ops -> Ok ops
-  | Legacy (f, b) ->
-      let* fwsec_pa, fwsec_w = vram g.p (String.length f.image) in
-      Window.write fwsec_w 0 f.image;
-      let* booter_pa, booter_w = vram g.p (String.length b.image) in
-      Window.write booter_w 0 b.image;
-      let fwsec =
-        {
-          Falcon.image = fwsec_pa;
-          code = { off = 0; pa = f.imem_pa; va = f.imem_va; size = f.imem_size };
-          data =
-            { off = f.imem_size; pa = f.dmem_pa; va = 0; size = f.dmem_size };
-          pkc = f.pkc;
-          engines = f.engines;
-          ucode = f.ucode;
-        }
-      in
-      let booter =
-        {
-          Falcon.image = booter_pa;
-          code =
-            { off = fst b.code; pa = 0; va = fst b.code; size = snd b.code };
-          data = { off = fst b.data; pa = 0; va = 0; size = snd b.data };
-          pkc = b.pkc;
-          engines = b.engines;
-          ucode = b.ucode;
-        }
-      in
-      Ok (Falcon.legacy ~fwsec ~booter ~libos:g.libos ~wpr_meta:g.meta)
+  | Cot ops -> ops
+  | Legacy { fwsec; frts; booters = { load; _ }; fwsec_at; booter_at } ->
+      let f = Vbios.patch fwsec (Frts frts) in
+      Window.write fwsec_at.w 0 f.image;
+      Window.write booter_at.w 0 load.image;
+      Falcon.legacy
+        ~fwsec:(fwsec_hs fwsec_at.pa f)
+        ~booter:(booter_hs booter_at.pa load)
+        ~libos:g.libos ~wpr_meta:g.meta
 
 let boot g =
   let c = g.p.chip in
@@ -1055,8 +1087,7 @@ let boot g =
     send g Defs.nv_vgpu_msg_function_gsp_set_system_info (system_info g.p)
   in
   let* () = send g Defs.nv_vgpu_msg_function_set_registry (Rpc.registry keys) in
-  let* ops = falcons g in
-  let* () = Falcon.run c ops in
+  let* () = Falcon.run c (falcons g) in
   (* The GSP runs: its queue, its first answer, then the golden context. *)
   let* () =
     Function.wait c.fn ~us:(answer_ms * 1000) "the GSP's message queue"
@@ -1072,20 +1103,61 @@ let boot g =
       0;
   golden g
 
+(* Takes the boot down as NVIDIA's RM does once the GSP's firmware has
+   unloaded (kgspTeardown_TU102 on Ampere and Ada, kgspTeardown_GH100 on
+   Blackwell): NVIDIA's driver refuses to boot a GPU whose protected memory
+   (WPR2) is up (_kgspBootGspRm), and nouveau, nova-core and the RM each take it
+   down at their stop. As the RM does, a wait for the firmware's suspension
+   that runs out goes on, since the falcon's reset stops the GSP whatever it
+   runs, and so does a FWSEC-SB that fails: the unloading booter's own check
+   that WPR2 is down decides. An open finds WPR2 down before its boot, so only
+   this boot's FWSEC raised it. A boot whose FWSEC never set it up is left as
+   it is: of the RM's steps it skips only SB, which puts back the VBIOS's
+   applications, and an attach's reset reruns the GPU's own boot. *)
+let teardown g ~unloaded =
+  let c = g.p.chip in
+  let suspended () =
+    if unloaded then Falcon.run c (Falcon.suspended c.family) else Ok ()
+  in
+  match g.start with
+  | Cot _ -> suspended ()
+  | Legacy _ when not (Chip.booted c) -> Ok ()
+  | Legacy { fwsec; booters = { unload; _ }; fwsec_at; booter_at; _ } ->
+      ignore (suspended () : (unit, string) result);
+      let sb = Vbios.patch fwsec Sb in
+      Window.write fwsec_at.w 0 sb.image;
+      ignore
+        (Falcon.run c (Falcon.fwsec_sb (fwsec_hs fwsec_at.pa sb))
+          : (unit, string) result);
+      Window.write booter_at.w 0 unload.image;
+      Falcon.run c (Falcon.unload (booter_hs booter_at.pa unload))
+
 (* The GSP stops every channel, unless the GPU cannot be reached or the GSP
    left a call unanswered, which an unload would wait for in vain, or the GSP
    never set its queue up and so runs nothing an unload would stop. A fault an
-   event reported leaves the GSP answering, so its unload still runs. With its bus mastering off the GPU reaches
-   system memory no more, whatever its channels do, and the boot's memory goes
-   back. That write to the configuration space completes before it returns, so a
-   GPU that answers after it took it: one that does not may still read the
-   memory, which stays taken. The GSP runs on, and the next open resets it. *)
+   event reported leaves the GSP answering, so its unload still runs. The boot
+   is then taken down while the GPU still masters the bus, into memory that is
+   still the process's. With its bus mastering off the GPU reaches system
+   memory no more, whatever its channels do, and the boot's memory goes back.
+   That write to the configuration space completes before it returns, so a GPU
+   that answers after it took it: one that does not may still read the
+   memory, which stays taken. A GPU whose boot raised WPR2 ran: if its unload
+   did not stop its channels, or its teardown failed, it is lost, so that its
+   next open resets it before any boot. *)
 let stop g =
-  let answers () = Option.is_none (Function.failed g.p.chip.fn) in
-  if answers () && Msgq.ready g.q && not g.unanswered then ignore (unload g);
-  Function.set_bus_master g.p.chip.fn false;
+  let c = g.p.chip in
+  let answers () = Option.is_none (Function.failed c.fn) in
+  let ran = answers () && Chip.booted c in
+  let unloaded =
+    answers () && Msgq.ready g.q && (not g.unanswered)
+    && Result.is_ok (unload g)
+  in
+  let down = if answers () then teardown g ~unloaded else Ok () in
+  Function.set_bus_master c.fn false;
   if not (answers ()) then `Unknown
   else begin
     give_back g.p g.taken;
-    `Clean
+    match down with
+    | Ok () when unloaded || not ran -> `Clean
+    | Ok () | Error _ -> `Lost
   end

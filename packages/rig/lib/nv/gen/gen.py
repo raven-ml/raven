@@ -499,7 +499,7 @@ FAMILIES = {
     "Blackwell": ["nv_ref.h", "tu102_dev_fb.h", "ga102_dev_gc6_island.h", "ga102_dev_gc6_island_addendum.h",
                   "gh100_dev_vm.h", "tu102_dev_vm.h", "ga102_dev_gsp.h", "gh100_dev_falcon_v4.h",
                   "gh100_dev_fsp_pri.h", "tu102_dev_bus.h", "gb202_dev_therm.h",
-                  "gb202_dev_therm_addendum.h"],
+                  "gb202_dev_therm_addendum.h", "ga102_dev_riscv_pri.h"],
 }
 
 # The units whose headers give offsets within the unit: a falcon's units, at
@@ -524,7 +524,7 @@ REGISTERS = {
         "NV_PFALCON_FALCON_HWCFG2", "NV_PFALCON_FALCON_RM", "NV_PFALCON_FBIF_TRANSCFG", "NV_PFALCON_FBIF_CTL",
         "NV_PFALCON2_FALCON_BROM_PARAADDR", "NV_PFALCON2_FALCON_BROM_ENGIDMASK",
         "NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID", "NV_PFALCON2_FALCON_MOD_SEL", "NV_PRISCV_RISCV_CPUCTL",
-        "NV_PRISCV_RISCV_BCR_CTRL", "NV_PROM_DATA",
+        "NV_PRISCV_RISCV_BCR_CTRL", "NV_PROM_DATA", "NV_PBUS_VBIOS_SCRATCH",
     ],
     "Blackwell": [
         "NV_PMC_BOOT_0", "NV_PMC_BOOT_42", "NV_PFB_PRI_MMU_WPR2_ADDR_LO", "NV_PFB_PRI_MMU_WPR2_ADDR_HI",
@@ -532,6 +532,7 @@ REGISTERS = {
         "NV_VIRTUAL_FUNCTION_PRIV_FUNC_BAR1_BLOCK_LOW_ADDR", "NV_PBUS_BAR1_BLOCK", "NV_PGSP_QUEUE_HEAD",
         "NV_PFALCON_FALCON_HWCFG2", "NV_THERM_I2CS_SCRATCH", "NV_PFSP_EMEMC", "NV_PFSP_EMEMD",
         "NV_PFSP_QUEUE_HEAD", "NV_PFSP_QUEUE_TAIL", "NV_PFSP_MSGQ_HEAD", "NV_PFSP_MSGQ_TAIL",
+        "NV_PRISCV_RISCV_CPUCTL",
     ],
 }
 
@@ -583,6 +584,8 @@ PCI_CONSTANTS = [
     "BIT_TOKEN_V1_00_SIZE_8", "BIT_DATA_FALCON_DATA_V2_SIZE_4", "FALCON_UCODE_ENTRY_APPID_FWSEC_PROD",
     "FALCON_UCODE_DESC_V3_SIZE_44", "BCRT30_RSA3K_SIG_SIZE", "NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION_V3",
     "FALCON_APPLICATION_INTERFACE_ENTRY_ID_DMEMMAPPER", "FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3_CMD_FRTS",
+    "FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3_CMD_SB", "NV_VBIOS_FWSECLIC_SCRATCH_INDEX_15",
+    "NV_VBIOS_FWSECLIC_SB_ERR_CODE_NONE",
     "FWSECLIC_READ_VBIOS_STRUCT_FLAGS", "FWSECLIC_FRTS_REGION_MEDIA_FB", "FWSECLIC_FRTS_REGION_SIZE_1MB_IN_4K",
     "NV_BCRT_HASH_INFO_BASE_CODE_TYPE_VBIOS_BASE", "NV_BCRT_HASH_INFO_BASE_CODE_TYPE_VBIOS_EXT",
     "OFFSETOF_PCI_EXP_ROM_PCI_DATA_STRUCT_PTR", "OFFSETOF_PCI_DATA_STRUCT_IMAGE_LEN",
@@ -618,7 +621,7 @@ PCI_CONSTANTS += [
 GSP_FIELDS = ["NV_VGPU_MSG_HEADER_VERSION_MAJOR", "NV_VGPU_MSG_HEADER_VERSION_MINOR"]
 PCI_FIELDS = ["NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION", "NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_SIZE",
           "MCTP_HEADER_SOM", "MCTP_HEADER_EOM", "MCTP_MSG_HEADER_TYPE", "MCTP_MSG_HEADER_VENDOR_ID",
-          "MCTP_MSG_HEADER_NVDM_TYPE"]
+          "MCTP_MSG_HEADER_NVDM_TYPE", "NV_VBIOS_FWSECLIC_SB_ERR_CODE"]
 
 # The function and event numbers read, from rpc_global_enums.h.
 GSP_FUNCTIONS = ["CONTINUATION_RECORD"]
@@ -670,7 +673,8 @@ PCI_STRUCTS = {
                                                                        "entryCount"]),
     "FALCON_APPLICATION_INTERFACE_ENTRY_V1": ("App_interface_entry", ["id", "dmemOffset"]),
     "FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3": ("Dmem_mapper", ["cmd_in_buffer_offset", "init_cmd"]),
-    "FWSECLIC_READ_VBIOS_DESC": ("Read_vbios_desc", []),
+    "FWSECLIC_READ_VBIOS_DESC": ("Read_vbios_desc", ["version", "size", "gfwImageOffset", "gfwImageSize",
+                                                     "flags"]),
     "FWSECLIC_FRTS_REGION_DESC": ("Frts_region_desc", []),
     "FWSECLIC_FRTS_CMD": ("Frts_cmd", [
         "readVbiosDesc__version", "readVbiosDesc__size", "readVbiosDesc__gfwImageOffset",
@@ -751,12 +755,13 @@ GSP_TABLES = [
 
 # The firmware images, by path under a firmware directory, per family: the
 # GSP's image (one file, with a signature section per family), its
-# bootloader, and the image that starts it.
+# bootloader, the image that starts it, and on Ampere and Ada the booter
+# that takes the boot's protected memory down at its stop.
 FIRMWARE = {
     "Ampere": ["nvidia/ga102/gsp/gsp-570.144.bin", "nvidia/ga102/gsp/bootloader-570.144.bin",
-               "nvidia/ga102/gsp/booter_load-570.144.bin"],
+               "nvidia/ga102/gsp/booter_load-570.144.bin", "nvidia/ga102/gsp/booter_unload-570.144.bin"],
     "Ada": ["nvidia/ga102/gsp/gsp-570.144.bin", "nvidia/ad102/gsp/bootloader-570.144.bin",
-            "nvidia/ad102/gsp/booter_load-570.144.bin"],
+            "nvidia/ad102/gsp/booter_load-570.144.bin", "nvidia/ad102/gsp/booter_unload-570.144.bin"],
     "Blackwell": ["nvidia/ga102/gsp/gsp-570.144.bin", "nvidia/gb202/gsp/bootloader-570.144.bin",
                   "nvidia/gb202/gsp/fmc-570.144.bin"],
 }

@@ -6,7 +6,7 @@
 - boot reports: the chip table, each family's firmware files, their lookup
   by pinned digest, and the VBIOS walk on the fixtures' images;
 - opens of a GPU whose GSP runs, which reset it, and of a GPU another
-  process holds, which never do;
+  process holds, which never do; a reset that leaves WPR2 up, which fails;
 - the order an open searches for firmware in: its caller's directories,
   rig's, then `/lib/firmware`;
 - with NVIDIA's firmware in a directory `RIG_NV_PCI_FIRMWARE` lists, rig's
@@ -33,7 +33,8 @@ an NVIDIA GPU:
 - the falcons' interpreter and its sequences past FWSEC's DMA, the CPU
   sequences' steps among them;
 - the order of a stop (bus mastering off before the memory is given back),
-  of which a fixture shows only the end;
+  of which a fixture shows only the end, and its teardown: the GSP's
+  suspension, FWSEC's SB command and the unloading booter taking WPR2 down;
 - `detach`'s refusal of a GPU a process holds a device file of: `detach`
   acts on this machine only, and the files it reads (`/dev/nvidia*`,
   `/proc/driver/nvidia`, debugfs) cannot be stood in for;

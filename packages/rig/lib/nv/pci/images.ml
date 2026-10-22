@@ -27,13 +27,14 @@ type booter = {
   ucode : int;
 }
 
+type booters = { load : booter; unload : booter }
 type fmc = { fmc : range; hash : range; signature : range; public_key : range }
 
 type t = {
   gsp : range;
   signature : range;
   bootloader : bootloader;
-  start : [ `Booter of booter | `Fmc of fmc ];
+  start : [ `Booter of booters | `Fmc of fmc ];
 }
 
 let names : Chip.family -> string list = function
@@ -87,11 +88,12 @@ let bootloader =
     manifest = field s desc U.manifest_offset;
   }
 
-(* The booter: its container's data with the production signature written at the
+(* A booter: its container's data with the production signature written at the
    place its heavy-secure header names, its code the first application of its
-   load header (nouveau's nvfw/hs.h, v2 headers). *)
-let booter =
-  read "booter's container" @@ fun s ->
+   load header (nouveau's nvfw/hs.h, v2 headers). The unloading booter has the
+   same container as the loading one (nouveau's r535_gsp_oneinit). *)
+let booter what =
+  read (what ^ "'s container") @@ fun s ->
   let module H = Defs.Hs_header in
   let module L = Defs.Hs_load_header in
   let data, hs = container s in
@@ -159,12 +161,19 @@ let fmc s =
 let find dirs name =
   Rig_pci.Firmware.find dirs name ~digest:(List.assoc name pinned)
 
-let parse family ~gsp:g ~bootloader:b ~start:st =
+let parse family ~gsp:g ~bootloader:b ~start:st ~unload =
   let* gsp, signature = gsp family g in
   let* bootloader = bootloader b in
   let* start =
-    match family with
-    | Chip.Blackwell -> Result.map (fun f -> `Fmc f) (fmc st)
-    | Ampere | Ada -> Result.map (fun b -> `Booter b) (booter st)
+    match (family, unload) with
+    | Chip.Blackwell, None -> Result.map (fun f -> `Fmc f) (fmc st)
+    | (Ampere | Ada), Some u ->
+        let* load = booter "booter" st in
+        let* unload = booter "unloading booter" u in
+        Ok (`Booter { load; unload })
+    | Blackwell, Some _ ->
+        invalid_arg "Images.parse: Blackwell has no unloading booter"
+    | (Ampere | Ada), None ->
+        invalid_arg "Images.parse: Ampere and Ada need the unloading booter"
   in
   Ok { gsp; signature; bootloader; start }

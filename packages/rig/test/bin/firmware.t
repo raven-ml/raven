@@ -15,9 +15,13 @@ nothing is written for any of them.
   curl: (22) The requested URL returned error: 404
   rig: nvidia/ad102/gsp/booter_load-570.144.bin: curl exited with status 22
   curl: (22) The requested URL returned error: 404
+  rig: nvidia/ad102/gsp/booter_unload-570.144.bin: curl exited with status 22
+  curl: (22) The requested URL returned error: 404
   rig: nvidia/ad102/gsp/bootloader-570.144.bin: curl exited with status 22
   curl: (22) The requested URL returned error: 404
   rig: nvidia/ga102/gsp/booter_load-570.144.bin: curl exited with status 22
+  curl: (22) The requested URL returned error: 404
+  rig: nvidia/ga102/gsp/booter_unload-570.144.bin: curl exited with status 22
   curl: (22) The requested URL returned error: 404
   rig: nvidia/ga102/gsp/bootloader-570.144.bin: curl exited with status 22
   rig: nvidia/ga102/gsp/gsp-570.144.bin: the download's digest is b22206e1e4cb2d881a7284d716a9665fb2f6400ff179c8c6ea33903dbd377d29; the pin is 877edf9f772d262d1ea72b9a6ebe52643e60a37c1d312f6456ebbf7f03feb03f

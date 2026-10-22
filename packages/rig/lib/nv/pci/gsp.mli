@@ -28,23 +28,26 @@ type placement = {
 }
 (** The type for where a boot places the GSP's memory. *)
 
-val boot_pool : [ `Booter of Images.booter | `Fmc of Images.fmc ] -> int
+val boot_pool : [ `Booter of Images.booters | `Fmc of Images.fmc ] -> int
 (** [boot_pool start] is the size of the boot pool
     ({!Rig_pci.Page_table.create}'s [boot]) a boot started by [start] needs, on
     2 MiB: its root table, and on Ampere and Ada the FWSEC ucode, at most
-    {!Vbios.window} bytes, and the booter's image, which the falcons read from
-    GPU memory that any memory BAR reaches. Every other allocation of the boot
-    comes from the main pool. *)
+    {!Vbios.window} bytes, and the larger of the booters' images, which the
+    falcons read from GPU memory that any memory BAR reaches, at the boot and
+    at the stop. Every other allocation of the boot comes from the main
+    pool. *)
 
 val create : placement -> Images.t -> Vbios.fwsec option -> (t, string) result
 (** [create p fw fwsec] takes the system memory a boot of [p.chip] with the
     firmware [fw] gives the GSP, and writes into it the queues, the libos
     arguments, the radix-3 table and images, the WPR metadata and, on Blackwell,
     the FMC and its arguments. On Ampere and Ada, [fwsec] is the VBIOS's FWSEC,
-    which the boot sets up for the GPU's memory; Blackwell's boot runs none. It
-    writes nothing to the GPU. [Error] if the machine refuses the memory, or
-    if [fw] and [fwsec] are not of the GPU's family. It gives the memory back
-    when it fails or raises. *)
+    which the boot sets up for the GPU's memory, and [create] takes the GPU
+    memory of FWSEC's image and of the larger booter from the boot pool;
+    Blackwell's boot runs none. It writes nothing to the GPU. [Error] if the
+    machine refuses the memory, if the boot pool has no room for the images,
+    or if [fw] and [fwsec] are not of the GPU's family. It gives the system
+    memory back when it fails or raises. *)
 
 val boot : t -> (unit, string) result
 (** [boot g] boots the GSP: it turns the GPU's bus mastering on, sends the
@@ -55,15 +58,24 @@ val boot : t -> (unit, string) result
     the step that failed. Whether it fails or raises, the GPU may then run until
     {!stop}. *)
 
-val stop : t -> [> `Clean | `Unknown ]
-(** [stop g] stops the GPU [g] booted, or began to: it unloads the GSP if the
-    GPU responds ({!Rig_pci.Function.failed}), the GSP set its queue up and
-    answered every call within its bound ({!check}), waiting at most 10
-    seconds for room in its queue and 10 more for its reply, turns the GPU's
-    bus mastering off, and gives back the memory {!create} took. It is
-    [`Unknown], the memory kept, if the GPU stops responding once its bus
-    mastering is off: it may still read that memory. The GSP runs on until
-    the GPU's next reset. *)
+val stop : t -> [> `Clean | `Lost | `Unknown ]
+(** [stop g] stops the GPU [g] booted, or began to. If the GPU responds
+    ({!Rig_pci.Function.failed}):
+    - it unloads the GSP if the GSP set its queue up and answered every call
+      within its bound ({!check}), waiting at most 10 seconds for room in its
+      queue and 10 more for its reply, then up to 30 seconds for the GSP's
+      firmware to suspend ({!Falcon.suspended});
+    - on Ampere and Ada, if the boot set the GPU's protected memory (WPR2)
+      up, it runs FWSEC's SB command and the unloading booter, which take
+      WPR2 down ({!Falcon.fwsec_sb}, {!Falcon.unload}), as NVIDIA's driver
+      needs it to boot the GPU again.
+
+    It then turns the GPU's bus mastering off and gives back the memory
+    {!create} took. It is [`Unknown], the memory kept, if the GPU stops
+    responding once its bus mastering is off: it may still read that memory.
+    It is [`Lost] if the boot raised WPR2 and the unload did not stop its
+    channels, if the unloading booter failed or left WPR2 up, or, on
+    Blackwell, if the GSP's core did not halt; and [`Clean] otherwise. *)
 
 (** {1:rm The resource manager} *)
 

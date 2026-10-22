@@ -50,7 +50,7 @@ val memory : t -> (int, string) result
 
 val booted : t -> bool
 (** [booted c] is [true] iff the GPU's protected region of memory (WPR2) is up:
-    something booted its GSP since its last reset. *)
+    something booted its GSP and has not taken the boot down. *)
 
 val get : t -> int -> int
 (** [get c r] reads the 32-bit register at offset [r] of BAR 0, such as

@@ -8,8 +8,9 @@
    application ID; a version 3 descriptor gives its layout and signature.
    FWSEC runs one command, which a DMEM mapper in its data names: FRTS,
    which reads the VBIOS into a 1 MiB region of the GPU's memory that the
-   GSP's boot checks. Nothing covers the VBIOS with a digest, so a ROM laid
-   out otherwise than this walk reads is an [Error].
+   GSP's boot checks, or SB, which puts back the VBIOS's applications at the
+   GSP's unload (kgspTeardown_TU102). Nothing covers the VBIOS with a
+   digest, so a ROM laid out otherwise than this walk reads is an [Error].
 
    The walk is the RM's (kernel_gsp_vbios_tu102.c, kernel_gsp_fwsec.c): the
    PCI expansion ROM images, by their PCI data structures and NVIDIA's
@@ -24,7 +25,8 @@ let read (c : Chip.t) =
 
 type fwsec = {
   image : string;
-  frts_at : int;
+  cmd_at : int;
+  args_at : int;
   imem_pa : int;
   imem_va : int;
   imem_size : int;
@@ -227,8 +229,10 @@ let fwsec_desc rom =
 (* Patching *)
 
 (* The FRTS command's arguments (FWSECLIC_FRTS_CMD): the VBIOS read from the
-   GPU's own ROM, and the 1 MiB region at [frts] of the GPU's memory. *)
-let frts_command frts =
+   GPU's own ROM, and the 1 MiB region at [frts] of the GPU's memory. The SB
+   command's are the first part alone (FWSECLIC_READ_VBIOS_DESC,
+   s_prepareForFwsec_TU102). *)
+let frts_args frts =
   let module C = Defs.Frts_cmd in
   Field.record C.sizeof (fun b ->
       let set = Field.set b in
@@ -295,12 +299,11 @@ let fwsec rom =
       Bytes.set_int32_le b 0 (Int32.of_int x);
       Bytes.unsafe_to_string b
     in
-    put
-      (mapper + fst M.init_cmd)
-      (word Defs.falcon_application_interface_dmem_mapper_v3_cmd_frts);
-    (* The FRTS command's arguments, zero until {!patch} sets them. *)
-    let frts_at = imem + image_u32 (mapper + fst M.cmd_in_buffer_offset) in
-    put frts_at (String.make Defs.Frts_cmd.sizeof '\000');
+    (* The command and its arguments, zero until {!patch} sets them. *)
+    let cmd_at = mapper + fst M.init_cmd in
+    put cmd_at (word 0);
+    let args_at = imem + image_u32 (mapper + fst M.cmd_in_buffer_offset) in
+    put args_at (String.make Defs.Frts_cmd.sizeof '\000');
     let n = Defs.bcrt30_rsa3k_sig_size in
     let blob = String.sub rom (desc + signatures) (size - signatures) in
     if String.length blob < n then badf "FWSEC's descriptor holds no signature";
@@ -309,7 +312,8 @@ let fwsec rom =
       (String.sub blob (String.length blob - n) n);
     {
       image = Bytes.unsafe_to_string image;
-      frts_at;
+      cmd_at;
+      args_at;
       imem_pa = f D.imem_phys_base;
       imem_va = f D.imem_virt_base;
       imem_size = imem;
@@ -323,8 +327,27 @@ let fwsec rom =
   | v -> Ok v
   | exception Bad why -> Error why
 
-let patch f ~frts =
+type command = Frts of int | Sb
+
+let read_vbios_args =
+  let module C = Defs.Read_vbios_desc in
+  Field.record C.sizeof (fun b ->
+      let set = Field.set b in
+      set C.version 1;
+      set C.size C.sizeof;
+      set C.flags Defs.fwseclic_read_vbios_struct_flags)
+
+let patch f command =
   let image = Bytes.of_string f.image in
-  let cmd = frts_command frts in
-  Bytes.blit_string cmd 0 image f.frts_at (String.length cmd);
+  let cmd, args =
+    match command with
+    | Frts frts ->
+        ( Defs.falcon_application_interface_dmem_mapper_v3_cmd_frts,
+          frts_args frts )
+    | Sb ->
+        ( Defs.falcon_application_interface_dmem_mapper_v3_cmd_sb,
+          read_vbios_args )
+  in
+  Bytes.set_int32_le image f.cmd_at (Int32.of_int cmd);
+  Bytes.blit_string args 0 image f.args_at (String.length args);
   { f with image = Bytes.unsafe_to_string image }

@@ -158,12 +158,14 @@ let files = function
         gsp;
         "nvidia/ga102/gsp/bootloader-570.144.bin";
         "nvidia/ga102/gsp/booter_load-570.144.bin";
+        "nvidia/ga102/gsp/booter_unload-570.144.bin";
       ]
   | `Ada ->
       [
         gsp;
         "nvidia/ad102/gsp/bootloader-570.144.bin";
         "nvidia/ad102/gsp/booter_load-570.144.bin";
+        "nvidia/ad102/gsp/booter_unload-570.144.bin";
       ]
   | `Blackwell ->
       [
@@ -471,11 +473,21 @@ let test_outlived () =
   in
   let reset, why = opened () in
   equal ~msg:"reset" string "1" reset;
-  contains ~msg:"refused" ~sub:"still runs the GSP's firmware after its reset"
-    why;
+  contains ~msg:"refused"
+    ~sub:"keeps its protected memory (WPR2) up after its reset" why;
   let reset, why = opened () in
   equal ~msg:"reset again" string "1" reset;
   contains ~msg:"refused again" ~sub:"after its reset" why
+
+(* A reset that leaves WPR2 up fails, so that no driver is handed a GPU it
+   cannot boot. *)
+let test_reset_up () =
+  let root = fixture () in
+  let machine = Rig_pci.Machine.at root in
+  let why = require_error (Rig_nv_pci.reset ~machine 0) in
+  equal ~msg:"reset" string "1" (resets root);
+  contains ~msg:"names WPR2"
+    ~sub:"keeps its protected memory (WPR2) up after its reset" why
 
 let test_held () =
   let root = fixture () in
@@ -519,6 +531,7 @@ let ad102_images =
     "nvidia/ga102/gsp/gsp-570.144.bin";
     "nvidia/ad102/gsp/bootloader-570.144.bin";
     "nvidia/ad102/gsp/booter_load-570.144.bin";
+    "nvidia/ad102/gsp/booter_unload-570.144.bin";
   ]
 
 let test_search () =
@@ -644,6 +657,7 @@ let booted =
         "a GPU whose WPR2 is up after the open's reset is refused, and reset \
          again by the next open"
         test_outlived;
+      test "a reset that leaves WPR2 up is an error naming it" test_reset_up;
       test "a GPU another process holds is refused, never reset (a child holds)"
         test_held;
       test

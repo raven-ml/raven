@@ -39,13 +39,30 @@ let gib = 1 lsl 30
 (* The memory BAR, BAR 1. *)
 let memory_bar = 1
 
+(* NVIDIA's driver refuses to boot a GPU whose protected memory (WPR2) is up
+   (_kgspBootGspRm in kernel_gsp.c), and so does an open: a reset that leaves
+   it up, as a GPU whose stop could not take it down may keep it, leaves a GPU
+   neither can boot. *)
+let ready fn =
+  let* regs = Function.map ~combine:false fn 0 in
+  let up = Window.get32 regs Defs.nv_pfb_pri_mmu_wpr2_addr_hi <> 0 in
+  Function.unmap fn regs;
+  if not up then Ok ()
+  else
+    Error
+      (strf
+         "%s keeps its protected memory (WPR2) up after its reset, so no \
+          driver can boot it until a reset that takes WPR2 down, such as a \
+          power cycle"
+         (Function.bus fn))
+
 (* NVIDIA's driver holds no file of a GPU's devices past the process that opened
    it, and tells nothing of an unbound GPU. *)
 let gpus =
   Driver.make ~name:"NV-PCI" ~memory_bar:(Some memory_bar)
     ~siblings:Remove ~nodes:Held.nodes
     ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0 ~reset:Function.reset ~ready:(fun _ -> Ok ())
+    ~teardown_ms:0 ~reset:Function.reset ~ready
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let buses ?(machine = Machine.this) () = Driver.buses gpus machine
@@ -81,19 +98,24 @@ let survey ~firmware boot42 rom =
     | Ampere | Ada -> Result.map Option.some (Vbios.fwsec (rom ()))
   in
   let report = { chip = Chip.name family implementation; images } in
+  let parse ~gsp ~bootloader ~start unload =
+    let contents (i : Firmware.image) = i.contents in
+    Images.parse family ~gsp:(contents gsp) ~bootloader:(contents bootloader)
+      ~start:(contents start) ~unload:(Option.map contents unload)
+  in
   match List.map snd looked with
   | [ Ok gsp; Ok bootloader; Ok start ] ->
-      let* fw =
-        Images.parse family ~gsp:gsp.contents ~bootloader:bootloader.contents
-          ~start:start.contents
-      in
+      let* fw = parse ~gsp ~bootloader ~start None in
+      Ok (report, Ok (fw, fwsec))
+  | [ Ok gsp; Ok bootloader; Ok start; Ok unload ] ->
+      let* fw = parse ~gsp ~bootloader ~start (Some unload) in
       Ok (report, Ok (fw, fwsec))
   | rs -> (
       match
         List.find_map (function Error why -> Some why | Ok _ -> None) rs
       with
       | Some why -> Ok (report, Error why)
-      | None -> assert false (* three files, not all found *))
+      | None -> assert false (* each family's files, not all found *))
 
 let report ~firmware ~chip ~vbios =
   Rig_nv.Lock.check "Rig_nv_pci.report";
@@ -274,16 +296,10 @@ let wpr2 c =
 
 (* A GSP that runs, booted by the GPU's kernel driver or a process, is reset
    before anything is written: the take proves no live process holds the GPU,
-   and no boot continues from another's GSP. *)
+   and no boot continues from another's GSP. The reset refuses a GPU it
+   leaves booted. *)
 let started hold (c : Chip.t) =
-  if not (Chip.booted c) then Ok ()
-  else
-    let* () = Driver.renew hold in
-    if not (Chip.booted c) then Ok ()
-    else
-      Error
-        (strf "%s still runs the GSP's firmware after its reset"
-           (Function.bus c.fn))
+  if Chip.booted c then Driver.renew hold else Ok ()
 
 let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =

@@ -62,6 +62,8 @@ typedef struct
 
 #define FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3_CMD_FRTS (0x15)
 
+#define FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3_CMD_SB   (0x19)
+
 typedef struct
 {
     NvU32 version;
@@ -91,3 +93,9 @@ typedef struct
     FWSECLIC_READ_VBIOS_DESC readVbiosDesc;
     FWSECLIC_FRTS_REGION_DESC frtsRegionDesc;
 } FWSECLIC_FRTS_CMD;
+
+#define NV_VBIOS_FWSECLIC_SCRATCH_INDEX_15      0x15
+
+#define NV_VBIOS_FWSECLIC_SB_ERR_CODE           15:0
+
+#define NV_VBIOS_FWSECLIC_SB_ERR_CODE_NONE      0x00000000

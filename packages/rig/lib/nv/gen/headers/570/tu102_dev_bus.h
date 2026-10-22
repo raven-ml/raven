@@ -23,6 +23,8 @@
 
 /* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/inc/swref/published/turing/tu102/dev_bus.h. */
 
+#define NV_PBUS_VBIOS_SCRATCH(i)                  (0x00001400+(i)*4) /*       */
+
 #define NV_PBUS_BAR1_BLOCK                               0x00001704 /* RW-4R */
 
 #define NV_PBUS_BAR1_BLOCK_MAP                                 29:0 /*       */

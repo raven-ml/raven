@@ -78,6 +78,9 @@ let bcrt30_rsa3k_sig_size = 0x180
 let nv_bit_falcon_ucode_desc_header_vdesc_version_v3 = 3
 let falcon_application_interface_entry_id_dmemmapper = 4
 let falcon_application_interface_dmem_mapper_v3_cmd_frts = 0x15
+let falcon_application_interface_dmem_mapper_v3_cmd_sb = 0x19
+let nv_vbios_fwseclic_scratch_index_15 = 0x15
+let nv_vbios_fwseclic_sb_err_code_none = 0
 let fwseclic_read_vbios_struct_flags = 2
 let fwseclic_frts_region_media_fb = 2
 let fwseclic_frts_region_size_1mb_in_4k = 0x100
@@ -153,6 +156,7 @@ let mctp_header_eom = (0x1e, 1)
 let mctp_msg_header_type = (0, 7)
 let mctp_msg_header_vendor_id = (8, 0x10)
 let mctp_msg_header_nvdm_type = (0x18, 8)
+let nv_vbios_fwseclic_sb_err_code = (0, 0x10)
 
 (* The GSP's functions and events (rpc_global_enums.h). *)
 let nv_vgpu_msg_function_gsp_rm_alloc = 0x67
@@ -214,6 +218,11 @@ end
 
 module Read_vbios_desc = struct
   let sizeof = 24
+  let version = (0, 4)
+  let size = (4, 4)
+  let gfw_image_offset = (8, 8)
+  let gfw_image_size = (0x10, 4)
+  let flags = (0x14, 4)
 end
 
 module Frts_region_desc = struct
@@ -585,6 +594,9 @@ let nv_pbus_bar1_block_ptr = (0, 0x1c)
 let nv_pbus_bar1_block_target = (0x1c, 2)
 let nv_pgsp_queue_head i = 0x110c00 + (i * 8)
 let nv_pgsp_queue_head_address = (0, 0x20)
+let nv_priscv_riscv_cpuctl = 0x1388
+let nv_priscv_riscv_cpuctl_active_stat = (7, 1)
+let nv_priscv_riscv_cpuctl_halted = (4, 1)
 let nv_pmc_boot_42_architecture_ga100 = 0x17
 let nv_pmc_boot_42_architecture_ad100 = 0x19
 let nv_pmc_boot_42_architecture_gb200 = 0x1b
@@ -671,14 +683,12 @@ module Legacy = struct
   let nv_pfalcon2_falcon_brom_curr_ucode_id_val = (0, 8)
   let nv_pfalcon2_falcon_mod_sel = 0x1180
   let nv_pfalcon2_falcon_mod_sel_algo = (0, 8)
-  let nv_priscv_riscv_cpuctl = 0x1388
-  let nv_priscv_riscv_cpuctl_active_stat = (7, 1)
-  let nv_priscv_riscv_cpuctl_halted = (4, 1)
   let nv_priscv_riscv_bcr_ctrl = 0x1668
   let nv_priscv_riscv_bcr_ctrl_brfetch = (8, 1)
   let nv_priscv_riscv_bcr_ctrl_core_select = (4, 1)
   let nv_priscv_riscv_bcr_ctrl_valid = (0, 1)
   let nv_prom_data i = 0x300000 + (i * 1)
+  let nv_pbus_vbios_scratch i = 0x1400 + (i * 4)
 end
 
 module Blackwell = struct
@@ -732,14 +742,16 @@ end
 
 (* The firmware images of each family, GSP first, and every image's
    BLAKE2b-256 digest. *)
-let firmware_ampere = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/ga102/gsp/bootloader-570.144.bin"; "nvidia/ga102/gsp/booter_load-570.144.bin" ]
-let firmware_ada = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/ad102/gsp/bootloader-570.144.bin"; "nvidia/ad102/gsp/booter_load-570.144.bin" ]
+let firmware_ampere = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/ga102/gsp/bootloader-570.144.bin"; "nvidia/ga102/gsp/booter_load-570.144.bin"; "nvidia/ga102/gsp/booter_unload-570.144.bin" ]
+let firmware_ada = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/ad102/gsp/bootloader-570.144.bin"; "nvidia/ad102/gsp/booter_load-570.144.bin"; "nvidia/ad102/gsp/booter_unload-570.144.bin" ]
 let firmware_blackwell = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/gb202/gsp/bootloader-570.144.bin"; "nvidia/gb202/gsp/fmc-570.144.bin" ]
 
 let pinned = [
   ("nvidia/ad102/gsp/booter_load-570.144.bin", "3d70b4ad5b9e27983c645019a2dd30f300e0ce869120004eac5357e1e2fe7b40");
+  ("nvidia/ad102/gsp/booter_unload-570.144.bin", "5afefa3797ea1c6bb94b721ccc75546a68fb497fa3911f8135f060897e822b7d");
   ("nvidia/ad102/gsp/bootloader-570.144.bin", "a83162120a5e1b6d8a4ef8f61bd4492423da1bd5aa051112c427148bc3e48b31");
   ("nvidia/ga102/gsp/booter_load-570.144.bin", "5e8b7daacf8bf6bc6a1fb85f556230f584fb06c045b68ed3342caada357f7ea3");
+  ("nvidia/ga102/gsp/booter_unload-570.144.bin", "a50f6fdfdd7795e15dd7ce7b7bf768e154cbd89279ed6713cbab4018d4d612ca");
   ("nvidia/ga102/gsp/bootloader-570.144.bin", "ae4ca5499421f1eb508f2378a242eecd79dcfc6cccb1d038a2c3a65a1d612d22");
   ("nvidia/ga102/gsp/gsp-570.144.bin", "877edf9f772d262d1ea72b9a6ebe52643e60a37c1d312f6456ebbf7f03feb03f");
   ("nvidia/gb202/gsp/bootloader-570.144.bin", "9cba35e93b2a6776fe68319a0bb1486bccb6a2e493dcf3c57ddab2686b2c0426");

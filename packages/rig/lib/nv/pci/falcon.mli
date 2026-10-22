@@ -103,3 +103,21 @@ val cot_payload : args:int -> fmc:int -> Images.fmc -> string
 val cot : string -> op list
 (** [cot payload] sends the FSP the COT [payload] and waits for the GSP's boot
     to release its lockdown (Blackwell). *)
+
+(** {1:stops Stops} *)
+
+val suspended : Chip.family -> op list
+(** [suspended f] waits for the GSP's firmware to suspend after its unload:
+    its libos reports it in the GSP's first mailbox (Ampere, Ada), or its
+    core halts once the FMC has finished the shutdown (Blackwell). *)
+
+val fwsec_sb : hs -> op list
+(** [fwsec_sb fwsec] runs FWSEC with its SB command ({!Vbios.Sb}) on the
+    GSP's reset falcon, which puts back the VBIOS's applications, then checks
+    that the GPU's own boot status is unlocked and complete, and that FWSEC's
+    error code is zero (Ampere, Ada). *)
+
+val unload : hs -> op list
+(** [unload booter] takes the GPU's protected memory (WPR2) down, if it is
+    up, with the unloading booter on SEC2, and checks the booter's mailbox and
+    that WPR2 is down (Ampere, Ada). *)
