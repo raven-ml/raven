@@ -289,7 +289,8 @@ val contract_order :
     ({!Nx_kernel.section-orders}) of a contraction of [a] with [b]: the one the
     kernels of [a]'s set, or of [b]'s where [a] is of every set, choose
     ({!Nx_kernel.S.contract_order}) for its rows, the product of [a]'s extents
-    along the axes no pair names, and its columns, [b]'s likewise, each
+    along the axes no pair names, its columns, [b]'s likewise, and its
+    depth, [a]'s extents along the contracting pairs multiplied, each
     [max_int] past it. Where that set has no kernels, as one of devices of
     several kinds, or both are of every set, it is the one nx.cpu chooses. *)
 

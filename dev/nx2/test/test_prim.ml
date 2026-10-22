@@ -573,28 +573,51 @@ let choosing o : (module Nx_kernel.S) =
   (module struct
     include Nx_cpu
 
-    let contract_order ~rows:_ ~columns:_ = o
+    let contract_order ~rows:_ ~columns:_ ~depth:_ = o
   end)
+
+(* Kernels that choose lane order, recording the extents they choose at. *)
+let asked = ref (0, 0, 0)
+
+let asking : (module Nx_kernel.S) =
+  (module struct
+    include Nx_cpu
+
+    let contract_order ~rows ~columns ~depth =
+      asked := (rows, columns, depth);
+      Nx_kernel.Lane
+  end)
+
+let asked_set : b Devices.t = Devices.mint ~by:"t" ~kernels:asking [ m 3 ]
 
 let orders =
   group "contraction orders"
     [
-      prop "the set's kernels choose at the products of the free extents"
+      prop
+        "the set's kernels choose at the products of the free and contracted \
+         extents"
         Gen.(
           let free = int_range 0 6 in
           let named = of_list [ 0; 1; 3 ] in
-          quad (pair free free) (int_range 0 12) named named)
-        (fun ((r1, r2), c, batch, k) ->
-          (* a [r1; batch; r2; k] by b [k; batch; c]. *)
-          let o =
-            Prim.contract_order ~batch:[| (1, 1) |] ~contracting:[| (3, 0) |]
-              (f32 [| r1; batch; r2; k |])
-              (f32 [| k; batch; c |])
+          quad (pair free free) (int_range 0 12) named (pair named named))
+        (fun ((r1, r2), c, batch, (k1, k2)) ->
+          (* a [r1; batch; r2; k1; k2] by b [k1; batch; c; k2]. *)
+          let on x =
+            Value.Array
+              {
+                at = Devices.one asked_set 0;
+                a = A.to_device (m 3) (A.of_array D.Float32 x (floats x));
+                dead = Value.Live;
+              }
           in
-          let want = Nx_cpu.contract_order ~rows:(r1 * r2) ~columns:c in
-          cover "chain order" (want = Chain);
-          cover "lane order" (want = Lane);
-          equal order want o);
+          let o =
+            Prim.contract_order ~batch:[| (1, 1) |]
+              ~contracting:[| (3, 0); (4, 3) |]
+              (on [| r1; batch; r2; k1; k2 |])
+              (on [| k1; batch; c; k2 |])
+          in
+          equal order Lane o;
+          equal (triple int int int) (r1 * r2, c, k1 * k2) !asked);
       cases "a set minted with kernels takes their order"
         ~name:(fun (o, rows, cols) ->
           Printf.sprintf "%s at %d by %d"

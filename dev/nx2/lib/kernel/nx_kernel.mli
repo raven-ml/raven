@@ -594,12 +594,13 @@ module type S = sig
 
   (** {1:contraction Contraction} *)
 
-  val contract_order : rows:int -> columns:int -> order
-  (** [contract_order ~rows ~columns] is the order these kernels choose for a
-      contraction of [rows] rows, the product of [a]'s extents along the axes
-      no pair names, by [columns] columns, [b]'s likewise. nx asks it once of
-      the whole contraction, whatever part of it each call computes, so that
-      every part sums in the whole's order. *)
+  val contract_order : rows:int -> columns:int -> depth:int -> order
+  (** [contract_order ~rows ~columns ~depth] is the order these kernels
+      choose for a contraction of [rows] rows, the product of [a]'s extents
+      along the axes no pair names, by [columns] columns, [b]'s likewise,
+      over [depth] products, the contracting pairs' extents multiplied. nx
+      asks it once of the whole contraction, whatever part of it each call
+      computes, so that every part sums in the whole's order. *)
 
   val contract :
     order:order ->
