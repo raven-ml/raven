@@ -150,6 +150,8 @@ let mctp_msg_header_type_vendor_pci = 0x7e
 let mctp_msg_header_vendor_id_nv = 0x10de
 let nv2080_engine_type_graphics = 1
 let kepler_channel_group_a = 0xa06c
+let nv2080_ctrl_cmd_perf_boost = 0x2080200a
+let nv2080_ctrl_cmd_internal_perf_boost_set_2x = 0x20800a9a
 let nvos04_flags_channel_userd_index_page_fixed_true = 1
 let nv_virtual_function_doorbell_runlist_doorbell_enable = 1
 
@@ -389,6 +391,18 @@ end
 module Channel_group_alloc = struct
   let sizeof = 20
   let engine_type = (0xc, 4)
+end
+
+module Perf_boost = struct
+  let sizeof = 8
+  let flags = (0, 4)
+  let duration = (4, 4)
+end
+
+module Perf_boost_2x = struct
+  let sizeof = 8
+  let flags = (0, 1)
+  let duration = (4, 4)
 end
 
 module Device_info_table = struct

@@ -184,6 +184,14 @@ val work_submit_token : runlist_doorbell:bool -> runlist:int -> int -> int
     Raises [Invalid_argument] if [runlist] is outside \[[0];[127]\] or [id]
     outside \[[0];[4095]\]. *)
 
+val perf_boost : string -> string
+(** [perf_boost p] is the parameters of [INTERNAL_PERF_BOOST_SET_2X], the
+    command NVIDIA's RM sends the GSP for the parameters [p] of [PERF_BOOST]:
+    [p]'s duration, and its flags cut to their low byte, which the command's
+    boolean field holds. Every flag the boost defines lies in that byte.
+
+    Raises [Invalid_argument] if [p] is not 8 bytes. *)
+
 (** {1:sequences CPU sequences} *)
 
 val sequence : libos:int -> string -> (Falcon.op list, string) result

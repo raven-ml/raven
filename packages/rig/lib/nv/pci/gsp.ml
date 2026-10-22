@@ -754,6 +754,18 @@ let token g obj p =
         (Rpc.work_submit_token ~runlist_doorbell ~runlist id);
       Ok ()
 
+(* A boost of the GPU's clocks, which NVIDIA's RM sends the GSP as the GSP's
+   own command (kperfBoostSet_IMPL). *)
+let boost g ~client obj p =
+  match p with
+  | None -> Error (Rig_nv.Refused "a boost without its parameters")
+  | Some p ->
+      let r = Rpc.perf_boost (string_of_params p) in
+      let q = Rig_nv.params (String.length r) in
+      blit_params r q;
+      control g ~client obj Defs.nv2080_ctrl_cmd_internal_perf_boost_set_2x
+        (Some q)
+
 (* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
    does, whose status is the reply's result. A GPU that left the bus or
    faulted gets no call, which would wait out its bound in vain, as [stop]
@@ -792,6 +804,8 @@ let client_rm g ~client ~locate =
       (fun obj cmd p ->
         if cmd = Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
           token g obj p
+        else if cmd = Defs.nv2080_ctrl_cmd_perf_boost then
+          boost g ~client obj p
         else control g ~client obj cmd p);
     free = Some (fun ~parent:_ obj -> free g ~client obj);
   }

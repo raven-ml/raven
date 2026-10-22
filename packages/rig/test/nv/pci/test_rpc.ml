@@ -577,6 +577,34 @@ let test_token_range () =
   raises_match Exn.invalid_arg (fun () -> token 0 4096);
   raises_match Exn.invalid_arg (fun () -> token (-1) 0)
 
+(* NV2080_CTRL_PERF_BOOST_PARAMS (ctrl2080perf.h): flags, duration, 32 bits
+   each. NVIDIA's RM sends the GSP INTERNAL_PERF_BOOST_SET_2X in its stead
+   (kperfBoostSet, kern_perf_boost.c), whose NvBool flags (ctrl2080internal.h)
+   takes their low byte, the duration at 4. *)
+let boost flags duration =
+  let b = Bytes.make 8 '\000' in
+  Bytes.set_int32_le b 0 (Int32.of_int flags);
+  Bytes.set_int32_le b 4 (Int32.of_int duration);
+  Bytes.to_string b
+
+let test_perf_boost =
+  prop "a boost is sent with its duration and its flags' low byte"
+    (Gen.pair flag_words flag_words) (fun (flags, duration) ->
+      cover "flags past the low byte" (flags > 0xff);
+      let p = Rpc.perf_boost (boost flags duration) in
+      equal ~msg:"size" int 8 (String.length p);
+      equal (list int)
+        [ flags land 0xff; 0; 0; 0; duration ]
+        [ u8 p 0; u8 p 1; u8 p 2; u8 p 3; u32 p 4 ])
+
+(* CUDA's boost to the maximum, of high priority (bits 1:0 = 2, bit 4, bit 6),
+   for ever (0xffffffff). *)
+let test_cuda_boost () =
+  equal string
+    "\x52\x00\x00\x00\xff\xff\xff\xff"
+    (Rpc.perf_boost (boost 0x52 0xffff_ffff));
+  raises_match Exn.invalid_arg (fun () -> ignore (Rpc.perf_boost "\x52"))
+
 (* CPU sequences *)
 
 (* rpc_run_cpu_sequencer_v17_00: bufferSizeDWord, cmdIndex (the words used),
@@ -729,6 +757,9 @@ let () =
              test_token;
              test "a runlist or id the token cannot hold raises"
                test_token_range;
+             test_perf_boost;
+             test "CUDA's boost, and one of another size raises"
+               test_cuda_boost;
            ];
          group ~timeout:10. "sequences"
            [

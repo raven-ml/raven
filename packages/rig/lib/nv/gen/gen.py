@@ -450,6 +450,7 @@ PCI_SOURCES = {
     "ctrl2080gr.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080gr.h",
     "ctrl2080internal.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080internal.h",
     "ctrl2080nvd.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080nvd.h",
+    "ctrl2080perf.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080perf.h",
     "ctrl90f1.h": R570 + SDK + "ctrl/ctrl90f1.h",
     "ctrlc36f.h": R570 + SDK + "ctrl/ctrlc36f.h",
     "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
@@ -625,7 +626,7 @@ PCI_CONSTANTS += [
     "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES",
     "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING", "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
     "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV", "NV2080_ENGINE_TYPE_GRAPHICS",
-    "KEPLER_CHANNEL_GROUP_A",
+    "KEPLER_CHANNEL_GROUP_A", "NV2080_CTRL_CMD_PERF_BOOST", "NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X",
     "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED_TRUE", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL_ENABLE",
 ]
 
@@ -725,6 +726,8 @@ PCI_STRUCTS = {
         "mthdbufMem", "errorNotifierMem", "internalFlags"]),
     "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
     "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS": ("Channel_group_alloc", ["engineType"]),
+    "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
+    "NV2080_CTRL_INTERNAL_PERF_BOOST_SET_PARAMS_2X": ("Perf_boost_2x", ["flags", "duration"]),
     "NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS": ("Device_info_table", ["numEntries", "entries"]),
     "NV2080_CTRL_FIFO_DEVICE_ENTRY": ("Device_entry", ["engineData"]),
     "NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS": ("Static_gr_info", ["engineInfo"]),
