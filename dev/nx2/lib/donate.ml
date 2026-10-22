@@ -67,6 +67,8 @@ let share b b' =
      && Option.is_none (Rig.Buffer.dead b')
      && Rig.Buffer.overlaps b b'
 
+let twice ~by = invalid_argf "Nx.donate: %s reads one donation twice" by
+
 (* The donated operands among [xs]. Two handles of one donor or over one memory
    raise naming [Nx.donate]: the same handle twice, two donations of one value,
    or one handle and a value a movement passed on. *)
@@ -92,8 +94,7 @@ let handles ~by xs =
                        a.arrays
               | _ -> false
             in
-            if same then
-              invalid_argf "Nx.donate: %s reads one donation twice" by)
+            if same then twice ~by)
           rest;
         check rest
   in
@@ -189,11 +190,19 @@ let key (type v s d) ~by i (x : (v, s, d) Value.t) =
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
       invalid_arg "Donate.key: not a handle"
 
-(* Claims the handles [hs] for their consumer [by], in key order. Their keys
-   differ: [handles] refused two handles of one donor. *)
+(* Whether two of the sorted [keyed] share a key. *)
+let rec repeats = function
+  | (k, _) :: ((k', _) :: _ as rest) -> k = k' || repeats rest
+  | [ _ ] | [] -> false
+
+(* Claims the handles [hs] for their consumer [by], in key order. Two handles
+   of one key raise before any claim: [handles] compares keys only while the
+   donors are offered, and another consumer may hold a donor's word then and
+   give it back. *)
 let claim ~by hs =
   let keyed = List.map (fun (Handle (i, x) as h) -> (key ~by i x, h)) hs in
   let sorted = List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed in
+  if repeats sorted then twice ~by;
   List.filter_map
     (fun (_, (Handle (i, x) as h)) ->
       Option.map (fun k -> (k, h)) (claim_one ~by i x))

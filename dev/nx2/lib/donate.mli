@@ -7,29 +7,30 @@
     consumption.
 
     A donor is offered under a key of its own, which it keeps when a claim is
-    given back and which every handle of every donation of it reads. A consumer claims its handles in their donors' key
-    order, each handle's own word before its donor's, without a lock: of
-    consumers racing for the same handles, at least one succeeds, and each
-    loser raises naming the consumer it lost a word to. The eager engine
-    ({!Exec}) claims an operation's handles before it reads them, writes the
-    operation's first result into a handle's memory where {!reuse} allows, and
-    ends the handles once it has read them ({!consumed}). An operation that
-    raises before it writes or consumes their memory gives them back
-    ({!unclaim}); one that raises after it consumed a handle's memory for its
-    result leaves its donors dead, since rig's consumption is one-way. *)
+    given back and which every handle of every donation of it reads. A consumer
+    claims its handles in their donors' key order, each handle's own word before
+    its donor's, without a lock: of consumers racing for the same handles, at
+    least one succeeds, and each loser raises naming the consumer it lost a word
+    to. The eager engine ({!Exec}) claims an operation's handles before it reads
+    them, writes the operation's first result into a handle's memory where
+    {!reuse} allows, and ends the handles once it has read them ({!consumed}).
+    An operation that raises before it writes or consumes their memory gives
+    them back ({!unclaim}); one that raises once it consumed a handle's memory
+    for its result leaves its donors dead: rig's consumption is one-way. *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
     ({!Value.Donated}): [x] lives until that operation is called, then dies with
     the handle, naming the operation, unless the operation gives it back
-    ({!unclaim}); the operation reads [x] as it was when called. An operation that reads the handle only at its first result's own
-    index (a map's plain load, a scatter's target, a contraction's [init], an
-    assembly's first piece over the whole result) writes that result into the
-    memory, where rig holds it exclusive (no other value reads it), it has the
-    result's dtype and C-contiguous layout, and the operation reads none of it
-    at other indices through another operand; the memory is consumed either
-    way where no other value reads it. A movement passes a new handle on
-    instead. A constant or a traced [x] is [x].
+    ({!unclaim}); the operation reads [x] as it was when called. An operation
+    that reads the handle only at its first result's own index (a map's plain
+    load, a scatter's target, a contraction's [init], an assembly's first piece
+    over the whole result) writes that result into the memory, where rig holds
+    it exclusive (no other value reads it), it has the result's dtype and
+    C-contiguous layout, and the operation reads none of it at other indices
+    through another operand; the memory is consumed either way where no other
+    value reads it. A movement passes a new handle on instead. A constant or a
+    traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -84,7 +85,8 @@ val handles : by:string -> 'd Value.any list -> handle list
 (** [handles ~by xs] is the handles among [xs]. Raises [Invalid_argument]
     naming [Nx.donate] and [by] for two handles of one donor or over one
     memory: the same handle twice, two donations of one value, or one handle
-    and a value a movement passed on. *)
+    and a value a movement passed on. While another consumer holds a donor,
+    its handles over different memory pass, and {!claim} raises for them. *)
 
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
 (** [unhandled hs op] is [op] as it is when called, before claiming [hs] kills
@@ -97,7 +99,9 @@ type claims
 val claim : by:string -> handle list -> claims
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
     their donors' key order: each handle and its donor die, naming [by].
-    Raises [Invalid_argument] naming [by] and the earlier consumer for a
+    Raises [Invalid_argument] naming [Nx.donate] and [by], before any claim,
+    for two handles of one donor, which {!handles} lets pass while another
+    consumer holds the donor; or naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain. *)
 
 val unclaim : claims -> unit
