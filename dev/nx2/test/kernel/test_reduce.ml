@@ -1986,7 +1986,7 @@ let run_moments k (c : moments) =
 (* A result: some bits, or a value within a tolerance. *)
 type expect = Is of want | Near of float * float
 
-(* The most combinations a Moments scan's result [i] passes through:
+(* The most combinations a network scan's result [i] passes through:
    [max 0 (2 ⌈log₂ (i + 1)⌉ - 1)]. *)
 let depth i =
   let rec log2 k p = if p >= k then 0 else 1 + log2 k (2 * p) in
@@ -2592,22 +2592,19 @@ let arg_scan d (e : Nx_kernel.extreme) ts =
       [| Is (Bits (quiet_term d !best)); Is (Bits (Int64.of_int !at)) |])
     ts
 
-(* nx_cpu.mli's bound of a Logsumexp scan's result [r] after [n] terms in
-   [c] chunks, [k] terms past every earlier one of their chunk, at the unit
-   roundoff [u]. *)
-let lse_scan_bound ~n ~c ~k u r =
-  let ln = log (Float.of_int n) and c = Float.of_int c in
-  let n = Float.of_int (min n 8192) and k = Float.of_int (min k 8192) in
-  ((n +. c +. (6. *. (k +. c)) +. 5. +. (6. *. ln)) *. u) +. (u *. Float.abs r)
+(* nx_kernel.mli's bound of a Logsumexp scan's result [r] after [n] terms,
+   at the unit roundoff [u]. *)
+let lse_scan_bound ~n u r =
+  (((7. *. depth (n - 1)) +. (6. *. log (Float.of_int n))) *. u)
+  +. (u *. Float.abs r)
 
-(* The running Logsumexp of a slice [ts] within nx_cpu.mli's bound at [u]:
-   past a NaN, its bits; past +∞, +∞; -∞ while every term is; else from a
-   float64 running maximum and a compensated sum rescaled as it rises,
-   within the bound at float64's roundoff besides. *)
+(* The running Logsumexp of a slice [ts] within nx_kernel.mli's bound at
+   [u]: past a NaN, its bits; past +∞, +∞; -∞ while every term is; else
+   from a float64 running maximum and a compensated sum rescaled as it
+   rises, within the bound at float64's roundoff besides. *)
 let lse_scan u ts =
   let nan = ref None and m = ref Float.neg_infinity in
-  let s = ref 0. and comp = ref 0. and rises = ref 0 in
-  let top = ref Float.neg_infinity in
+  let s = ref 0. and comp = ref 0. in
   let add x =
     let t = !s +. x in
     let lost =
@@ -2618,16 +2615,11 @@ let lse_scan u ts =
   in
   Array.mapi
     (fun i t ->
-      if i mod 4096 = 0 then top := Float.neg_infinity;
       (match !nan with
       | Some _ -> ()
       | None when is_nan t -> nan := Some (quiet_u u t)
       | None ->
           let x = value t in
-          if x > !top then begin
-            if !top > Float.neg_infinity then incr rises;
-            top := x
-          end;
           if x > !m then begin
             let f = if Float.is_finite !m then exp (!m -. x) else 0. in
             s := !s *. f;
@@ -2640,20 +2632,19 @@ let lse_scan u ts =
       | None when not (Float.is_finite !m) -> [| Near (!m, 0.) |]
       | None ->
           let r = !m +. log (!s +. !comp) in
-          let c = (i / 4096) + 1 in
-          let b u = lse_scan_bound ~n:(i + 1) ~c ~k:!rises u r in
+          let b u = lse_scan_bound ~n:(i + 1) u r in
           [| Near (r, b u +. b eps) |])
     ts
 
 (* The bits of a Logsumexp scan of a slice [ts], float32 where [f32] else
-   float64, replayed as nx_cpu.mli states it: chunks of 4096 terms; a
-   chunk's total from none, the carry into the next chunk the carry merged
-   with it, each result the carry taken on through the chunk's terms; a
-   term x makes the maximum n and s × exp (m - n) + exp (x - n), s itself
-   where n is m and 0 for exp (x - n) where n is -∞, the result n + log s or
-   n where n is not finite. exp and log are nx_kinds.h's, exp is 0 below the
-   reduction's cut, and each operation rounds to the dtype. From the first
-   NaN term on, the result is its bits, quieted. *)
+   float64, by nx_kernel.mli's network replayed term by term as a stream,
+   as replayed_moments does, each operation as stated: a term [x] is the
+   state [(x, e (x - c))], and states [a] then [b] join into
+   [m = Maximum (ma, mb)] and [sa e (ma - c) + sb e (mb - c)], [c] being [m]
+   where finite and [0] elsewhere and [e] nx_kinds.h's exp, [0] below the
+   reduction's cut; the result is [m + log s], or [m] where [m] is not
+   finite. Each operation rounds to the dtype. From the first NaN term on,
+   the result is its bits, quieted. *)
 let lse_replay ~f32 ts =
   let rnd x = if f32 then round32 x else x in
   (* A kind over a vector, in one call. *)
@@ -2675,67 +2666,58 @@ let lse_replay ~f32 ts =
     end
   in
   let cut = if f32 then -87. else -708. in
-  let past m x =
-    if Float.is_nan m then m else if Float.is_nan x || x > m then x else m
-  in
-  (* The recurrence, its exps from [ex] in the order it takes them: no
-     branch and no exp's argument depends on s, so a first run records the
-     arguments, which run through exp at once, and a second takes them. *)
+  let first = Array.find_index is_nan ts in
+  let k = Option.value first ~default:(Array.length ts) in
+  (* The network, its exps from [ex] in the order it takes them: no exp's
+     argument depends on a sum, so a first run records the arguments,
+     which run through exp at once, and a second takes them. *)
   let replay ex =
-    let rescaled s m n = if m = n then s else rnd (s *. ex (rnd (m -. n))) in
-    (* A state is a float array, its maximum then its s. *)
-    let step st x =
-      let m = st.(0) in
-      let n = past m x in
-      let e = if n = Float.neg_infinity then 0. else ex (rnd (x -. n)) in
-      st.(1) <- rnd (rescaled st.(1) m n +. e);
-      st.(0) <- n
+    let shift m = if Float.is_finite m then m else 0. in
+    let e z = if z < cut then 0. else ex z in
+    let leaf x = (x, e (rnd (x -. shift x))) in
+    let join (ma, sa) (mb, sb) =
+      let m = Float.max ma mb in
+      let c = shift m in
+      let a = rnd (sa *. e (rnd (ma -. c))) in
+      let b = rnd (sb *. e (rnd (mb -. c))) in
+      (m, rnd (a +. b))
     in
-    let k = Array.length ts in
-    let ms = Array.make k 0. and ss = Array.make k 0. in
-    let carry = [| Float.neg_infinity; 0. |] in
-    for c = 0 to ((k + 4095) / 4096) - 1 do
-      let lo = c * 4096 and hi = min k ((c + 1) * 4096) in
-      let st = Array.copy carry and total = [| Float.neg_infinity; 0. |] in
-      for i = lo to hi - 1 do
-        let x = value ts.(i) in
-        step st x;
-        step total x;
-        ms.(i) <- st.(0);
-        ss.(i) <- st.(1)
-      done;
-      if c = 0 then Array.blit total 0 carry 0 2
-      else begin
-        let ma = carry.(0) and mb = total.(0) in
-        let n = past ma mb in
-        carry.(1) <- rnd (rescaled carry.(1) ma n +. rescaled total.(1) mb n);
-        carry.(0) <- n
-      end
-    done;
-    (ms, ss)
+    let held = Array.make 64 (0., 0.) and got = Array.make 65 (0., 0.) in
+    Array.init k (fun t ->
+        let st = ref (leaf (value ts.(t))) and h = ref 0 and j = ref t in
+        while !j land 1 = 1 do
+          st := join held.(!h) !st;
+          incr h;
+          j := !j lsr 1
+        done;
+        let res = if !j = 0 then !st else join got.(!h + 1) !st in
+        held.(!h) <- !st;
+        for g = 0 to !h do
+          got.(g) <- res
+        done;
+        res)
   in
   let args = ref [] in
   ignore (replay (fun y -> args := y :: !args; 0.));
-  let ys = Array.of_list (List.rev !args) in
-  let es = kind "exp" (Array.map (fun y -> if y < cut then cut else y) ys) in
+  let es = kind "exp" (Array.of_list (List.rev !args)) in
   let next = ref 0 in
-  let ms, ss =
-    replay (fun y ->
+  let states =
+    replay (fun _ ->
         let e = es.(!next) in
         incr next;
-        if y < cut then 0. else e)
+        e)
   in
-  let logs = kind "log" ss in
-  let first = Array.find_index is_nan ts in
-  Array.mapi
-    (fun i m ->
-      match first with
-      | Some j when j <= i ->
-          Is (Bits (quiet_u (if f32 then 0x1p-24 else 0x1p-53) ts.(j)))
-      | _ ->
-          let r = if Float.is_finite m then rnd (m +. logs.(i)) else m in
-          Is (Bits (if f32 then Int64.of_int32 (Int32.bits_of_float r) else Int64.bits_of_float r)))
-    ms
+  let logs = kind "log" (Array.map snd states) in
+  let bits r =
+    if f32 then Int64.of_int32 (Int32.bits_of_float r) else Int64.bits_of_float r
+  in
+  Array.init (Array.length ts) (fun i ->
+      if i >= k then
+        Is (Bits (quiet_u (if f32 then 0x1p-24 else 0x1p-53) ts.(k)))
+      else
+        let m, _ = states.(i) in
+        let r = if Float.is_finite m then rnd (m +. logs.(i)) else m in
+        Is (Bits (bits r)))
 
 (* The expected results of [c]'s scan in C order, by destination. *)
 let stat_scan_expected (c : stat) =
@@ -2754,8 +2736,8 @@ let stat_scan_expected (c : stat) =
         ~reduce:(fun _ -> assert false)
         ~scan:(fun ts -> Array.map (fun e -> e.(j)) (slice ts)))
 
-(* Arg scans are exact, Logsumexp scans within nx_cpu.mli's bound and the
-   bits of its recurrence replayed, NaNs and infinities as
+(* Arg scans are exact, Logsumexp scans within nx_kernel.mli's bound and
+   the bits of its network replayed, NaNs and infinities as
    Nx_kernel.reduction states them, and both give the same bits on one
    thread and from a C-contiguous copy of the operand. *)
 let law_stat_scan (b : Support.backend) (c : stat) =
@@ -2795,7 +2777,7 @@ let law_stat_scan (b : Support.backend) (c : stat) =
              ~fill:(Is Some_nan) ~reduce:(fun _ -> assert false)
              ~scan:(lse_replay ~f32)
          in
-         equal ~msg:"the replayed recurrence" (list string) []
+         equal ~msg:"the replayed network" (list string) []
            (misses replay got.(0)));
       let exact = Array.map (Array.map (fun t -> Is (Bits (bits_of t)))) got in
       let (A.Any x) = c.x in
@@ -4723,7 +4705,7 @@ let cpu (b : Support.backend) =
         (fun () -> b.around (test_in_place b));
 
       prop ~examples:stat_scan_examples
-        "Arg scans are exact, Logsumexp scans their recurrence's bits within \
+        "Arg scans are exact, Logsumexp scans their network's bits within \
          their bound, each the same on one thread and from a copy"
         stat_scan_case (run (law_stat_scan b));
       prop ~examples:lanes_examples

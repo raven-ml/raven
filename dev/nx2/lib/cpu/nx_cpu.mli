@@ -83,12 +83,12 @@
     payload: into the operand's own dtype, a NaN result where a term is
     NaN is the first such term quieted. They also compute one [Arg] so, its
     positions into [int64] and its extreme into the operand's own dtype the
-    term itself, quieted where a NaN, and one [Logsumexp] so at every
-    float dtype; [reduce] one [Moments] so, and [scan] one [Moments] so, its
-    operand converted whole into its carrier first where that is not its
-    dtype, or a program's tile by tile. Both take any program [map]
-    computes, over its loads or, with none, over the loop's shape alone, a
-    reduction's [shape] or a scan's destinations': its terms are the
+    term itself, quieted where a NaN, and one [Logsumexp] and one [Moments]
+    so at every float dtype, the operand of a scan by either converted
+    whole into its carrier first where that is not its dtype, or a
+    program's tile by tile. Both take any program [map] computes, over its
+    loads or, with none, over the loop's shape alone, a reduction's [shape]
+    or a scan's destinations': its terms are the
     program's output there as [map] computes it, so a reduction or a scan
     of an output has the bits of the output mapped into an array, then
     reduced or scanned. [reduce] computes several such reductions of one
@@ -114,34 +114,20 @@
     a normwise relative [γ(2n - 2)] of the exact one, barring overflow and
     underflow. Every monoid's scan cuts its chunks and carries as
     {!Nx_kernel.type-reduction} states a float sum's, from a carry where
-    one is given. A scan by [Arg] or [Logsumexp] cuts the same chunks of
-    4096 and carries a state: a chunk's total is the state
-    of its terms taken left to right from none, the carry into the next
-    chunk the carry merged with it, and each result its carry's state taken
-    on through the chunk's terms up to it. [Logsumexp]'s state is the
-    terms' maximum [m] and [s], the sum of [exp (x - m)]: a term [x] makes
-    the maximum [n], and [s] becomes [s exp (m - n) + exp (x - n)], [s]
-    itself where [n] is [m]; a merge rescales each side's [s] so. The
-    result is [n + log s], or [n] where [n] is not finite, an [exp] taken
-    as [0] as the reduction takes it.
+    one is given.
 
     [Logsumexp] and [Moments] reduce an output's terms in the two passes
-    {!Nx_kernel.reduction} states, each summing in lane order: the bits of
-    Nx's own expansion of each.
+    {!Nx_kernel.reduction} states, each summing in lane order, and scan
+    them by its network: the bits of Nx's own expansion of each.
 
     For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
     of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
     blocks' tree, and [u] the carrier's unit roundoff; the rounding into a
     narrower destination adds its own. Barring overflow and underflow, to
     first order in [u], a [Logsumexp] [r] is within
-    [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Logsumexp] scan's
-    result [r] after [N] terms in [C] chunks, where [K] counts the terms,
-    other than a chunk's first, greater than every earlier term of their
-    chunk, is within
-    [(min (N, 8192) + C + 6 (min (K, 8192) + C) + 5 + 6 ln N) u + u|r|] of
-    the exact one.
-    A [Moments] mean is within [E = (L + D) u M + u|μ|] of the exact [μ],
-    [M] the mean of the terms' magnitudes, and its variance within
+    [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
+    within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
+    terms' magnitudes, and its variance within
     [(L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
     exact [V].
 

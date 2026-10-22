@@ -1251,30 +1251,13 @@ let float_scan_case =
 let rounded (type s) (dt : (float, s) D.t) v =
   (A.to_array (A.of_array dt [| 1 |] [| v |])).(0)
 
-(* The expansion's bound: at [n] terms of largest finite magnitude [X], within
-   [D (u (X + ln n + 1) + ε)] in the accumulator, [D] the result's {!depth}
-   and [ε] the error [Exp]
-   and [Log1p] add, at most [(2 + 1/2) 2u] and [(2 + 1/2) 2u ln 2]; then
-   rounded once, so between the roundings of the bound's ends. nx.cpu's is
-   nx_cpu.mli's, for [n] terms in [C] chunks of 4096, [K] of them above
-   every earlier term of their chunk but its first:
-   [(min (n, 8192) + C + 6 (min (K, 8192) + C) + 5 + 6 ln n) u + u |r|].
-   The reference, float64 over each prefix from its maximum, adds its own
-   [2n] units. *)
-let cpu_lse_bound u terms r =
-  let n = List.length terms in
-  let c = Float.of_int ((n + 4095) / 4096) in
-  let rises = ref 0 and top = ref Float.neg_infinity in
-  List.iteri
-    (fun i t ->
-      if i mod 4096 = 0 then top := Float.neg_infinity;
-      if t > !top && !top > Float.neg_infinity then incr rises;
-      top := Float.max !top t)
-    terms;
-  let k = Float.of_int (min !rises 8192) in
-  ((Float.of_int (min n 8192) +. c +. (6. *. (k +. c)) +. 5.
-    +. (6. *. log (Float.of_int n)))
-   *. u)
+(* nx_kernel.mli's bound, one for both paths: at [n] terms through at most
+   [D] combinations, [D] the result's {!depth}, within
+   [(7 D + 6 ln n) u + u |r|] in the accumulator; then rounded once, so
+   between the roundings of the bound's ends. The reference, float64 over
+   each prefix from its maximum, adds its own [2n] units. *)
+let lse_bound u n r =
+  (((7. *. depth n) +. (6. *. log (Float.of_int n))) *. u)
   +. (u *. Float.abs r)
 
 let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
@@ -1312,18 +1295,7 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
                   List.fold_left (fun a t -> a +. exp (t -. m)) 0. terms
                 in
                 let want = m +. log sum in
-                let big =
-                  List.fold_left
-                    (fun a t ->
-                      if Float.is_finite t then Float.max a (Float.abs t)
-                      else a)
-                    0. terms
-                in
-                let d = depth (List.length terms) in
-                let own =
-                  if by = "nx.cpu" then cpu_lse_bound u terms want
-                  else d *. u *. (big +. log n +. 1. +. 8.5)
-                in
+                let own = lse_bound u (List.length terms) want in
                 let bound =
                   own +. (2. *. n *. epsilon_float *. (Float.abs want +. 1.))
                 in
@@ -2031,6 +2003,134 @@ let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
     (expanded (fun () -> scan value))
     (scan value)
 
+(* How a Logsumexp scan's operand is read: as held, transposed, reversed
+   along every axis, or broadcast along axis [b] from an extent of 1. *)
+type view = Plain | Transposed | Reversed | Broadcast of int
+
+let view_name = function
+  | Plain -> "plain"
+  | Transposed -> "transposed"
+  | Reversed -> "reversed"
+  | Broadcast _ -> "broadcast"
+
+(* Logsumexp scans whose bits nx.cpu and the expansion both state: every
+   float dtype, terms from [-w] to [w] with [-0], infinities and NaNs at a
+   drawn rate, along an axis of a {!length}, of [0] or [1], or around a
+   multiple of 4096, read through a {!view}. The terms are the held
+   array's, of the shape the view reads but of extent 1 along a broadcast
+   axis. *)
+type lse_case =
+  | Lse_case :
+      (float, 's) D.t * int array * int * view * float array
+      -> lse_case
+
+(* The shape a case's array is held at. *)
+let held s = function
+  | Broadcast b -> Array.mapi (fun a e -> if a = b then 1 else e) s
+  | Plain | Transposed | Reversed -> s
+
+let lse_case =
+  let open Gen in
+  let special =
+    of_list
+      [ nan_with 5L; nan_with 9L; Float.infinity; Float.neg_infinity; -0. ]
+  in
+  let make (type s) (dt : (float, s) D.t) =
+    let* n =
+      frequency
+        [
+          (4, length);
+          (1, int_range 0 1);
+          ( 1,
+            let* k = int_range 1 3 in
+            let+ d = int_range (-2) 2 in
+            (k * chunk) + d );
+        ]
+    in
+    let* outer = int_range 1 3 in
+    let* axis = int_range 0 1 in
+    let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
+    let* view =
+      of_list [ Plain; Transposed; Reversed; Broadcast 0; Broadcast 1 ]
+    in
+    let* w = of_list [ 3.; 100.; 1000. ] in
+    let* rate = of_list [ 0; 0; 400; 20 ] in
+    let term =
+      if rate = 0 then float_range (-.w) w
+      else frequency [ (rate - 1, float_range (-.w) w); (1, special) ]
+    in
+    let size = Array.fold_left ( * ) 1 (held s view) in
+    let+ xs = array ~size:(constant size) term in
+    Lse_case (dt, s, axis, view, xs)
+  in
+  with_pp
+    (fun ppf (Lse_case (dt, s, axis, view, _)) ->
+      Format.fprintf ppf "%a %a along %d, %s" D.pp dt pp_ints s axis
+        (view_name view))
+    (one_of
+       [
+         make D.Float32;
+         make D.Float64;
+         make D.Float16;
+         make D.Bfloat16;
+         make D.Float8_e4m3fn;
+         make D.Float8_e5m2;
+         make D.Float4_e2m1fn;
+       ])
+
+(* Cases the generator draws too rarely for every run: specials in turn
+   along short axes, and long axes with a NaN, an infinity or an outlier
+   late. *)
+let lse_examples =
+  let specials =
+    [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity; -3. |]
+  in
+  let cycle n = Array.init n (fun i -> specials.(i mod 6)) in
+  let late n v =
+    Array.init n (fun i ->
+        if i = n - 5 then v else 50. *. sin (Float.of_int i))
+  in
+  [
+    Lse_case (D.Float64, [| 2; 0 |], 1, Plain, [||]);
+    Lse_case (D.Float32, [| 1; 1 |], 1, Plain, [| -0. |]);
+    Lse_case (D.Float32, [| 12; 2 |], 0, Transposed, cycle 24);
+    Lse_case (D.Float64, [| 3; 18 |], 1, Reversed, cycle 54);
+    Lse_case (D.Bfloat16, [| 4097; 1 |], 0, Plain, late 4097 Float.infinity);
+    Lse_case
+      (D.Float32, [| 2; 8193 |], 1, Broadcast 0, late 8193 (nan_with 7L));
+    Lse_case (D.Float64, [| 4095; 3 |], 0, Broadcast 1, late 4095 1e3);
+  ]
+
+let law_logsumexp_bits (Lse_case (dt, s, axis, view, xs)) =
+  let n = s.(axis) in
+  cover "an axis of 0 or 1" (n <= 1);
+  cover "an axis next to a power of two" (next_to_pow2 n);
+  cover "an axis around a multiple of 4096"
+    (n >= chunk - 2 && (n + 2) mod chunk <= 4);
+  cover "a NaN" (Array.exists Float.is_nan xs);
+  cover "an infinity" (Array.exists (fun x -> Float.abs x = Float.infinity) xs);
+  cover "a narrow float" (D.bits dt < 32);
+  List.iter
+    (fun v -> cover (view_name v) (view_name view = view_name v))
+    [ Plain; Transposed; Reversed; Broadcast 0 ];
+  let a = A.of_array dt (held s view) xs in
+  let x () =
+    match view with
+    | Plain -> value a
+    | Transposed -> transposed value true a
+    | Reversed ->
+        let k = Array.length xs in
+        let back = Array.init k (fun i -> xs.(k - 1 - i)) in
+        Nx.flip (value (A.of_array dt s back))
+    | Broadcast _ -> Nx.broadcast_to s (value a)
+  in
+  let scan () =
+    let y = scan1 (Logsumexp (0, dt)) axis (x ()) in
+    element_bits (host_array y)
+  in
+  equal ~msg:"nx.cpu's bits, the expansion's" (array (array int))
+    (expanded scan) (scan ())
+
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
   raises (Invalid_argument "t: Logsumexp does not take int32") (fun () ->
@@ -2514,6 +2614,9 @@ let optional_group =
       prop ~examples:bits_examples
         "nx.cpu's Moments scans give the expansion's bits" bits_case
         law_moments_bits;
+      prop ~examples:lse_examples
+        "nx.cpu's Logsumexp scans give the expansion's bits" lse_case
+        law_logsumexp_bits;
       test "their rules raise naming the caller" test_optional_rules;
     ]
 

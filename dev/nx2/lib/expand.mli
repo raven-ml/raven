@@ -38,21 +38,16 @@
     [γ(2n) + u|r| + ε] of the exact one, [ε] the error [Exp] and [Log] add; the
     mean within [γ(n) M], [M = Σ|x| / n], and the variance [V] within
     [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²], for
-    [n] exact in the accumulator. A scan of [Logsumexp], [Moments] or [Arg],
-    the first two in the accumulator, combines its terms' states by {!Pairwise.scan}: output [i]
-    through at most [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations, the
-    earlier state first, O(n) along an axis of [n]. [Logsumexp] combines [a]
-    and [b] into [M + log1p (exp (m - M))], [M] the two's [Maximum] and [m]
-    their [Minimum], or [M] where [M] is not finite; index [0] is its term
-    plus [+0]. Its result at [i] is within [D_i (u (X + ln(i+1) + 1) + ε)]
-    of the exact one, [X] the largest finite magnitude among the terms up to
-    [i] and [ε] the error [Exp] and [Log1p] add, to first order, barring
-    overflow, for [i + 1] exact in the accumulator. [Moments] scans as
-    {!Nx_kernel.reduction} states, in the accumulator. [Arg] combines pairs
-    of an extreme and its position, keeping the earlier pair unless the
-    later extreme is past it in [Max]'s or [Min]'s order: exact. A NaN
-    result of these scans, carried through the combinations with its bits,
-    is then quieted, as the kernels give it.
+    [n] exact in the accumulator. A scan of [Logsumexp], [Moments] or
+    [Arg], the first two in the accumulator, combines its terms' states by
+    {!Pairwise.scan}: output [i] through at most
+    [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations, the earlier state first,
+    O(n) along an axis of [n]. [Logsumexp] and [Moments] scan as
+    {!Nx_kernel.reduction} states. [Arg] combines pairs of an extreme and
+    its position, keeping the earlier pair unless the later extreme is past
+    it in [Max]'s or [Min]'s order: exact. A NaN result of these scans,
+    carried through the combinations with its bits, is then quieted, as the
+    kernels give it.
 
     A one-node map at a dtype other than a base one ([float32], [float64], the
     8- to 64-bit integers and [bool]), but a cast, a bitcast or a copy, computes

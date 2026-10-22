@@ -61,7 +61,7 @@
    float's in float32, int4's and uint4's in int8 and uint8, bit's in bool.
    A narrow operand's terms are converted into it as the paths read them, a
    block of one output's or 16 terms of a row's outputs at a time, each a
-   few KiB, so that they stay in L1; a Moments scan's operand is converted
+   few KiB, so that they stay in L1; a network scan's operand is converted
    whole first. Arg, Logsumexp and Moments reduce in the carrier too.
    Results go into the destination where it is of the carrier, else into a
    carrier copy of it, rounded into it once at the end, as a cast does. A
@@ -78,26 +78,14 @@
    Arg reads a staged operand in the carrier too; its extreme into the
    operand's dtype is the term at its position, copied and quieted.
 
-   Stateful scans. Arg's and Logsumexp's scans cut the same chunks and
-   carry a state per slice: a chunk's total is its terms' state from none,
-   the carry into chunk c + 1 the carry into c merged with c's total, and
-   result i of chunk c the carry taken on through the chunk's terms up to
-   i. A unit's sequences, slices side by side or one slice's chunks, are
-   the kernel's lanes, read and written in place, but a staged operand's
-   and Logsumexp's lanes that are not side by side, which go through rows
-   of the carrier so that its exp and log run over vectors. Arg is exact,
-   so its chunk totals are its reduction's. Logsumexp's bound (nx_cpu.mli),
-   to first order in u, for result i after N terms of maximum M: s >= 1,
-   since the maximum's term adds exp 0 = 1, and a sum of nonnegative
-   values errs relatively by at most its parts' worst error plus u. A
-   term's way to s runs through its chunk's total, the merges and the last
-   chunk: at most min (N, 8192) + C additions, and at most
-   min (K, 8192) + C rescales, each an exp of at most 5u (2.5 ulps) and a
-   product of u; its own exp adds 5u. The rounding of x - n, then of each
-   m - n on its way, shifts term x's exponent by at most u (n - x) +
-   u Σ (n' - m) = u (M - x): with w = exp (x - M), the terms err by
-   u Σ w ln (1/w) <= u s ln N, u ln N relatively. log errs by at most 5u
-   of log s <= ln N, and n + log s rounds once, u |r|.
+   Arg's scans. An Arg scan cuts the same chunks and carries a state per
+   slice: a chunk's total is its terms' state from none, the carry into
+   chunk c + 1 the carry into c merged with c's total, and result i of
+   chunk c the carry taken on through the chunk's terms up to i. A unit's
+   sequences, slices side by side or one slice's chunks, are the kernel's
+   lanes, read and written in place, but a staged operand's, which go
+   through rows of the carrier. Arg is exact, so its chunk totals are its
+   reduction's.
 
    Programs. A reduction of a program's output reads its terms through
    the program: each place that reads terms asks map.c's evaluator for
@@ -108,10 +96,11 @@
    the reduction has the bits of the output mapped into an array, then
    reduced.
 
-   Moments. A Moments scan computes nx_kernel.mli's network on each slice,
-   op by op with the kinds' arithmetic, as Nx's expansion does, so that the
-   two give the same bits; a slice whose results a NaN term reaches has
-   them quieted after. It holds O(log n) states per slice.
+   Networks. A Logsumexp or Moments scan computes nx_kernel.mli's network
+   on each slice, op by op with the kinds' arithmetic, as Nx's expansion
+   does, so that the two give the same bits; a slice whose results a NaN
+   term reaches has them quieted after. It holds O(log n) states per
+   slice.
 
    The kernels come first, compiled once per target: as reduce.c for base
    and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
@@ -782,29 +771,29 @@ COMPLEX(c128, f64, double, 8)
   for (int64_t b = 0; b < (w) * (int64_t)sizeof *(y); b += 64)                \
     __builtin_prefetch((const char *)(y) + b, rw)
 
-/* The terms ahead whose rows a Moments scan prefetches: on fudge,
+/* The terms ahead whose rows a network scan prefetches: on fudge,
    scan-moments-f32-1024x4096-axis0 took 1.41 ms without, 0.89 at 8 terms,
    0.95 at 16. */
-#define MOMENTS_AHEAD 8
+#define NETWORK_AHEAD 8
 
 /* A pass's arithmetic. */
 typedef enum { FAST, EXACT } arith;
 
-/* The terms a Moments scan's tile holds: 2^MOMENTS_P. A float32 scan of
-   1M terms took 4.2 ms on one M1 core at 5, 3.5 at 6, 3.1 at 7, 3.0 at 8,
-   2.9 at 9 and 10. */
-#define MOMENTS_P 8
-#define PT (1 << MOMENTS_P)
+/* The terms a network scan's tile holds: 2^NETWORK_P. A float32 Moments
+   scan of 1M terms took 4.2 ms on one M1 core at 5, 3.5 at 6, 3.1 at 7,
+   3.0 at 8, 2.9 at 9 and 10. */
+#define NETWORK_P 8
+#define PT (1 << NETWORK_P)
 
 /* The streaming network's levels over a slice's tiles: fewer than 2^63
-   terms make fewer than 2^(63 - MOMENTS_P) tiles. */
-#define TILE_LEVELS (64 - MOMENTS_P)
+   terms make fewer than 2^(63 - NETWORK_P) tiles. */
+#define TILE_LEVELS (64 - NETWORK_P)
 
 /* The scratch elements a slice's tiles take: its levels' states, packed,
    their results, packed with one more a level, and the streaming
-   network's sets. */
-#define MOMENTS_ONE                                                         \
-  (4 * PT + 3 * (2 * PT + MOMENTS_P + 1) + 12 * TILE_LEVELS)
+   network's sets; Moments', Logsumexp's being fewer. */
+#define NETWORK_ONE                                                         \
+  (4 * PT + 3 * (2 * PT + NETWORK_P + 1) + 12 * TILE_LEVELS)
 
 /* Where a tile's level k starts among its states, packed level by level,
    level k's PT >> k of them, and among its results, one more a level. */
@@ -815,7 +804,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
    at a tile of PT terms aligned from the slice's start depend only on its
    terms and on the results before it at each level. Bottom-up, its terms'
    states join in pairs level by level, up to the tile's state at level
-   MOMENTS_P, which the streaming network over the tiles' states takes on
+   NETWORK_P, which the streaming network over the tiles' states takes on
    to its result; top-down, each level's results follow from the next
    one's: an odd index's is the next level's result at its half, an even
    one's that level's result before joined with its own state. These are
@@ -874,9 +863,9 @@ static int64_t results_at(int k) { return states_at(k) + k; }
        tiles' states, one lane's. */                                         \
     /* The regions are apart: restrict lets the compiler vectorise. */       \
     T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
-    T *restrict rm = ss + 2 * PT, *restrict rs = rm + 2 * PT + MOMENTS_P + 1;\
-    T *restrict rn = rs + 2 * PT + MOMENTS_P + 1;                            \
-    T *sets = rn + 2 * PT + MOMENTS_P + 1;                                   \
+    T *restrict rm = ss + 2 * PT, *restrict rs = rm + 2 * PT + NETWORK_P + 1;\
+    T *restrict rn = rs + 2 * PT + NETWORK_P + 1;                            \
+    T *sets = rn + 2 * PT + NETWORK_P + 1;                                   \
     T *held[TILE_LEVELS], *in[TILE_LEVELS], *joined[TILE_LEVELS];            \
     const T *got[TILE_LEVELS];                                               \
     for (int k = 0; k < TILE_LEVELS; k++) {                                  \
@@ -891,7 +880,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
       /* The terms into level 0, a program's a tile of its own at a          \
          time, less the center, the first term where finite. */              \
       if (src != NULL)                                                       \
-        for (int64_t i = 0, most = NX_CPU_MOMENTS_TILE; i < L; i += most)    \
+        for (int64_t i = 0, most = NX_CPU_NETWORK_TILE; i < L; i += most)    \
           src->fill(src->ctx, t0 + i, L - i < most ? L - i : most,           \
                     (uint8_t *)(sm + i));                                    \
       else                                                                   \
@@ -901,23 +890,23 @@ static int64_t results_at(int k) { return states_at(k) + k; }
         sm[i] -= c;                                                          \
         ss[i] = 0;                                                           \
       }                                                                      \
-      for (int k = 1; k <= MOMENTS_P; k++) {                                 \
+      for (int k = 1; k <= NETWORK_P; k++) {                                 \
         T half = (T)(1 << (k - 1)), w = half + half, f = half / w;           \
         T g = half * f;                                                      \
         int64_t a = states_at(k - 1), u = states_at(k);                      \
         up_##S(L >> k, f, g, sm + a, ss + a, sm + u, ss + u);                \
       }                                                                      \
       if (L == PT) {                                                         \
-        in[0][0] = sm[states_at(MOMENTS_P)];                                 \
-        in[0][1] = ss[states_at(MOMENTS_P)];                                 \
+        in[0][0] = sm[states_at(NETWORK_P)];                                 \
+        in[0][1] = ss[states_at(NETWORK_P)];                                 \
         in[0][2] = (T)PT;                                                    \
         stream_##S(fast_##S, 1, q, held, in, joined, got);                   \
-        int64_t r = results_at(MOMENTS_P) + 1;                               \
+        int64_t r = results_at(NETWORK_P) + 1;                               \
         rm[r] = got[0][0];                                                   \
         rs[r] = got[0][1];                                                   \
         rn[r] = got[0][2];                                                   \
       }                                                                      \
-      for (int k = MOMENTS_P - 1; k >= 0; k--) {                             \
+      for (int k = NETWORK_P - 1; k >= 0; k--) {                             \
         int64_t m = L >> k, u = results_at(k + 1), o = results_at(k);        \
         T nb = (T)(1 << k);                                                  \
         const T *restrict um = rm + u, *restrict us = rs + u;                \
@@ -942,7 +931,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
       bad |= results_##S(L, c, t0, rm + 1, rs + 1, ym + t0 * ms, ms,         \
                          yv + t0 * vs, vs);                                  \
       /* Each level's last result, the one before the next tile. */          \
-      for (int k = 0; k <= MOMENTS_P; k++) {                                 \
+      for (int k = 0; k <= NETWORK_P; k++) {                                 \
         int64_t o = results_at(k);                                           \
         rm[o] = rm[o + (L >> k)];                                            \
         rs[o] = rs[o + (L >> k)];                                            \
@@ -970,8 +959,8 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     const T *mb = b, *vb = b + w, *zb = b + 3 * w;                            \
     T na = a[2 * w], nb = b[2 * w], k = nx_add_##S(na, nb);                   \
     T f = nx_fdiv_##S(nb, k), g = nx_mul_##S(na, f);                          \
-    T d[NX_CPU_MOMENTS_LANES], t[NX_CPU_MOMENTS_LANES],                       \
-        sum[NX_CPU_MOMENTS_LANES];                                            \
+    T d[NX_CPU_NETWORK_LANES], t[NX_CPU_NETWORK_LANES],                       \
+        sum[NX_CPU_NETWORK_LANES];                                            \
     LANES_OF(d, nx_sub_##S(mb[l], ma[l]));                                    \
     LANES_OF(t, nx_mul_##S(d[l], f));                                         \
     LANES_OF(t, nx_add_##S(ma[l], t[l]));                                     \
@@ -1029,7 +1018,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     for (int h = 0; h < k; h++) got[h] = got[k];                              \
   }                                                                           \
   /* One pass: 0, or 1 where the fast pass met a value not finite. Terms      \
-     go in tiles of NX_CPU_MOMENTS_TILE, and lanes not contiguous in [x],     \
+     go in tiles of NX_CPU_NETWORK_TILE, and lanes not contiguous in [x],     \
      or in a result, through rows of the scratch, so that every loop over     \
      the lanes reads and writes contiguous elements. Terms that [src]         \
      computes go into those rows too, the first tile's first. */              \
@@ -1039,9 +1028,9 @@ static int64_t results_at(int k) { return states_at(k) + k; }
                       const nx_cpu_terms *src) {                              \
     void (*join)(int64_t, const T *, const T *, T *) =                        \
         a == EXACT ? exact_##S : fast_##S;                                    \
-    int64_t size = 4 * w, tile = NX_CPU_MOMENTS_TILE;                         \
-    int bad = 0, levels = nx_cpu_moments_levels(n);                           \
-    T c[NX_CPU_MOMENTS_LANES];                                                \
+    int64_t size = 4 * w, tile = NX_CPU_NETWORK_TILE;                         \
+    int bad = 0, levels = nx_cpu_network_levels(n);                           \
+    T c[NX_CPU_NETWORK_LANES];                                                \
     T *tx = scratch + 3 * levels * size, *tm = tx + tile * w,                 \
       *tv = tm + tile * w;                                                    \
     /* Computed terms are read from the tile's rows: xl is 0 then. */         \
@@ -1066,7 +1055,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
       } else if (xl != 1)                                                     \
         rows_##S(tn, w, x + t0 * xs, xs, xl, tx);                             \
       for (int64_t i = 0; i < tn; i++) {                                      \
-        int64_t t = t0 + i, p = t + MOMENTS_AHEAD;                            \
+        int64_t t = t0 + i, p = t + NETWORK_AHEAD;                            \
         if (p < n && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);                 \
         if (p < n && ml == 1) PREFETCH_ROW(ym + p * ms, w, 1);                \
         if (p < n && vl == 1) PREFETCH_ROW(yv + p * vs, w, 1);                \
@@ -1079,7 +1068,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
         T *dm = ml == 1 ? ym + t * ms : tm + i * w;                           \
         T *dv = vl == 1 ? yv + t * vs : tv + i * w;                           \
         if (a == EXACT) {                                                     \
-          T nan[NX_CPU_MOMENTS_LANES];                                        \
+          T nan[NX_CPU_NETWORK_LANES];                                        \
           LANES_OF(dm, nx_add_##S(c[l], r[l]));                               \
           LANES_OF(dv, nx_fdiv_##S(r[w + l], m));                             \
           LANES_OF(nan, nx_sub_##S(r[l], r[l]));                              \
@@ -1396,29 +1385,6 @@ ARG_COMPLEX(min_c64, c64, nx_minimum_c64)
 ARG_COMPLEX(max_c128, c128, nx_maximum_c128)
 ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
 
-/* lsescan_'s rows over [W] lanes: s rescaled, then s + weight, the
-   rescale's exp run only in rows where a lane's maximum moves. */
-#define LSE_ROWS(T, S, W)                                                    \
-  for (int64_t i = 0; i < m; i++) {                                          \
-    const T *xi = x + i * xs;                                                \
-    T nx[16], r[16];                                                         \
-    int moved = 0;                                                           \
-    for (int64_t l = 0; l < (W); l++) {                                      \
-      nx[l] = past_##S(mx[l], xi[l * xl]);                                   \
-      moved |= !(nx[l] == mx[l]);                                            \
-    }                                                                        \
-    if (moved)                                                               \
-      for (int64_t l = 0; l < (W); l++)                                      \
-        sx[l] = rescaled_##S(sx[l], mx[l], nx[l]);                           \
-    for (int64_t l = 0; l < (W); l++) {                                      \
-      sx[l] = sx[l] + weight_##S(xi[l * xl], nx[l]);                         \
-      mx[l] = nx[l];                                                         \
-    }                                                                        \
-    if (y == NULL) continue;                                                 \
-    for (int64_t l = 0; l < (W); l++) r[l] = result_##S(mx[l], sx[l]);      \
-    for (int64_t l = 0; l < (W); l++) y[i * ys + l * yl] = r[l];             \
-  }
-
 /* Logsumexp and Moments at the float [T] of suffix [S], [MADE] the NaN
    nx_kinds.h makes from numbers, [CUT] the least integer whose exp is a
    normal [T]. */
@@ -1548,68 +1514,173 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     memcpy(d0, &mean, sizeof mean);                                          \
     memcpy(d1, &var, sizeof var);                                            \
   }                                                                          \
-  /* The maximum of [m] and the term [x], the first NaN where one is. */     \
-  static inline T past_##S(T m, T x) {                                       \
-    return m != m ? m : x != x || x > m ? x : m;                             \
+  /* Logsumexp's network (nx_kernel.mli). The sum of state [a], of        \
+     maximum [ma] and sum [sa], then state [b], [m] the two's maximum:       \
+     where m is finite, the sum of the side whose maximum is m as it is,     \
+     its exp 0 being 1, plus the other's rescaled; 0 where m is -∞; m        \
+     itself elsewhere, +∞ as the network makes it, or a NaN no result       \
+     reads. Branch free, so that its loops vectorise. */                     \
+  static inline T lse_sum_##S(T ma, T sa, T mb, T sb, T m) {                 \
+    int hi = ma == m;                                                        \
+    T lo = hi ? mb : ma, sl = hi ? sb : sa, sh = hi ? sa : sb;               \
+    T s = sh + sl * ex_##S(lo - m);                                          \
+    return FINITE(m) ? s : m == -(T)INFINITY ? 0 : m;                        \
   }                                                                          \
-  /* [s] of the maximum [m] rescaled to the maximum [n] >= m: s itself where \
-     n is m, so that exp runs where the maximum moves alone. */              \
-  static inline T rescaled_##S(T s, T m, T n) {                              \
-    T r = s * ex_##S(m - n);                                                 \
-    return m == n ? s : r;                                                   \
+  /* A term's sum: exp 0 where finite, 0 for -∞, else the term. */           \
+  static inline T lse_leaf_##S(T x) {                                        \
+    return FINITE(x) ? 1 : x == -(T)INFINITY ? 0 : x;                        \
   }                                                                          \
-  /* These compute both sides and select, so that a loop of them           \
-     vectorises. */                                                         \
-  /* exp (x - n), 0 where n is -∞. */                                        \
-  static inline T weight_##S(T x, T n) {                                     \
-    T e = ex_##S(x - n);                                                     \
-    return n == -(T)INFINITY ? 0 : e;                                        \
+  static inline T lse_result_##S(T m, T s) {                                 \
+    T r = m + nx_log_##S(s);                                                 \
+    return FINITE(m) ? r : m;                                                \
   }                                                                          \
-  static inline T result_##S(T n, T s) {                                     \
-    T r = n + nx_log_##S(s);                                                 \
-    return FINITE(n) ? r : n;                                                \
-  }                                                                          \
-  /* Logsumexp's scan: a lane's state is the maximum m of its terms, a NaN  \
-     where one is, and s = Σ exp (x - m). A term x makes the maximum        \
-     n = past (m, x) and s = rescaled (s, m, n) + weight (x, n); the result  \
-     is n + log s, or n where n is not finite, whose NaN the driver         \
-     replaces as a monoid scan's. Lanes run row by row, side by side. */    \
-  static void lsescan_##S(nx_cpu_state *restrict a, const uint8_t *x_,       \
-                          int64_t xs, int64_t xl, int64_t m, int64_t w,      \
-                          uint8_t *y_, int64_t ys, int64_t yl, int64_t *p,   \
-                          int64_t ps, int64_t pl) {                          \
-    (void)p;                                                                 \
-    (void)ps;                                                                \
-    (void)pl;                                                                \
-    const T *x = (const T *)x_;                                              \
-    T *y = (T *)y_, mx[16], sx[16];                                          \
+  /* State [b] after state [a], into [r], each [w] maxima then [w] sums. */  \
+  static void lse_join_##S(int64_t w, const T *restrict a,                   \
+                           const T *restrict b, T *restrict r) {             \
     for (int64_t l = 0; l < w; l++) {                                        \
-      mx[l] = (T)a[l].d;                                                     \
-      sx[l] = (T)a[l].s;                                                     \
-    }                                                                        \
-    /* At the widths units take, a constant one, so that the lanes' states \
-       stay in registers and their exp and log run over vectors. */        \
-    if (w == 1) {                                                            \
-      LSE_ROWS(T, S, 1)                                                      \
-    } else if (w == 4) {                                                     \
-      LSE_ROWS(T, S, 4)                                                      \
-    } else if (w == 16) {                                                    \
-      LSE_ROWS(T, S, 16)                                                     \
-    } else {                                                                 \
-      LSE_ROWS(T, S, w)                                                      \
-    }                                                                        \
-    for (int64_t l = 0; l < w; l++) {                                        \
-      a[l].d = mx[l];                                                        \
-      a[l].s = sx[l];                                                        \
-      a[l].n += m;                                                           \
+      T m = nx_maximum_##S(a[l], b[l]);                                      \
+      r[w + l] = lse_sum_##S(a[l], a[w + l], b[l], b[w + l], m);             \
+      r[l] = m;                                                              \
     }                                                                        \
   }                                                                          \
-  static void lsescan_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {    \
-    T ma = (T)a->d, mb = (T)b->d, n = past_##S(ma, mb);                      \
-    T s = rescaled_##S((T)a->s, ma, n) + rescaled_##S((T)b->s, mb, n);       \
-    a->d = n;                                                                \
-    a->s = s;                                                                \
-    a->n = b->n;                                                             \
+  /* Pairs of level k - 1's [2m] states into level k's [m]. */               \
+  static void lse_up_##S(int64_t m, const T *restrict am,                    \
+                         const T *restrict as, T *restrict um,               \
+                         T *restrict us) {                                   \
+    for (int64_t i = 0; i < m; i++) {                                        \
+      T ma = am[2 * i], mb = am[2 * i + 1], g = nx_maximum_##S(ma, mb);      \
+      us[i] = lse_sum_##S(ma, as[2 * i], mb, as[2 * i + 1], g);              \
+      um[i] = g;                                                             \
+    }                                                                        \
+  }                                                                          \
+  /* Level k's results at the even positions from [i0] on, of [e] of        \
+     them: the next level's results before them [um], [us], joined with     \
+     their states [bm], [bs]. */                                            \
+  static void lse_down_##S(int64_t i0, int64_t e, const T *restrict um,      \
+                           const T *restrict us, const T *restrict bm,       \
+                           const T *restrict bs, T *restrict om,             \
+                           T *restrict os) {                                 \
+    for (int64_t i = i0; i < e; i++) {                                       \
+      T ma = um[i], mb = bm[2 * i], g = nx_maximum_##S(ma, mb);              \
+      os[2 * i + 1] = lse_sum_##S(ma, us[i], mb, bs[2 * i], g);              \
+      om[2 * i + 1] = g;                                                     \
+    }                                                                        \
+  }                                                                          \
+  /* One slice by tiles, as tiles_ scans Moments: the same joins in the     \
+     same order as lse_pass_'s, each level's at once. */                     \
+  static void lse_tiles_##S(const T *x, int64_t xs, T *y, int64_t ys,        \
+                            int64_t n, const nx_cpu_terms *src,              \
+                            T *scratch) {                                    \
+    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
+    T *restrict rm = ss + 2 * PT, *restrict rs = rm + 2 * PT + NETWORK_P + 1;\
+    T *sets = rs + 2 * PT + NETWORK_P + 1;                                   \
+    T *held[TILE_LEVELS], *in[TILE_LEVELS], *joined[TILE_LEVELS];            \
+    const T *got[TILE_LEVELS];                                               \
+    for (int k = 0; k < TILE_LEVELS; k++) {                                  \
+      held[k] = sets + 6 * k;                                                \
+      in[k] = held[k] + 2;                                                   \
+      joined[k] = in[k] + 2;                                                 \
+    }                                                                        \
+    for (int64_t t0 = 0, q = 0; t0 < n; t0 += PT, q++) {                     \
+      int64_t L = n - t0 < PT ? n - t0 : PT;                                 \
+      if (src != NULL)                                                       \
+        for (int64_t i = 0, most = NX_CPU_NETWORK_TILE; i < L; i += most)    \
+          src->fill(src->ctx, t0 + i, L - i < most ? L - i : most,           \
+                    (uint8_t *)(sm + i));                                    \
+      else                                                                   \
+        for (int64_t i = 0; i < L; i++) sm[i] = x[(t0 + i) * xs];            \
+      for (int64_t i = 0; i < L; i++) ss[i] = lse_leaf_##S(sm[i]);           \
+      for (int k = 1; k <= NETWORK_P; k++) {                                 \
+        int64_t a = states_at(k - 1), u = states_at(k);                      \
+        lse_up_##S(L >> k, sm + a, ss + a, sm + u, ss + u);                  \
+      }                                                                      \
+      if (L == PT) {                                                         \
+        in[0][0] = sm[states_at(NETWORK_P)];                                 \
+        in[0][1] = ss[states_at(NETWORK_P)];                                 \
+        stream_##S(lse_join_##S, 1, q, held, in, joined, got);               \
+        int64_t r = results_at(NETWORK_P) + 1;                               \
+        rm[r] = got[0][0];                                                   \
+        rs[r] = got[0][1];                                                   \
+      }                                                                      \
+      for (int k = NETWORK_P - 1; k >= 0; k--) {                             \
+        int64_t m = L >> k, u = results_at(k + 1), o = results_at(k);        \
+        const T *restrict um = rm + u, *restrict us = rs + u;                \
+        const T *restrict bm = sm + states_at(k);                            \
+        const T *restrict bs = ss + states_at(k);                            \
+        T *restrict om = rm + o, *restrict os = rs + o;                      \
+        for (int64_t i = 0; i < m / 2; i++) {                                \
+          om[2 * i + 2] = um[i + 1];                                         \
+          os[2 * i + 2] = us[i + 1];                                         \
+        }                                                                    \
+        int64_t i0 = 0;                                                      \
+        if (t0 == 0 && m > 0) {                                              \
+          om[1] = bm[0];                                                     \
+          os[1] = bs[0];                                                     \
+          i0 = 1;                                                            \
+        }                                                                    \
+        lse_down_##S(i0, (m + 1) / 2, um, us, bm, bs, om, os);               \
+      }                                                                      \
+      for (int64_t i = 0; i < L; i++)                                        \
+        y[(t0 + i) * ys] = lse_result_##S(rm[1 + i], rs[1 + i]);             \
+      for (int k = 0; k <= NETWORK_P; k++) {                                 \
+        int64_t o = results_at(k);                                           \
+        rm[o] = rm[o + (L >> k)];                                            \
+        rs[o] = rs[o + (L >> k)];                                            \
+      }                                                                      \
+    }                                                                        \
+  }                                                                          \
+  /* [w] slices side by side, as pass_ scans Moments: a state of rows of   \
+     [w] maxima then [w] sums, terms and results through rows of the        \
+     scratch where their lanes are not contiguous. */                       \
+  static void lse_pass_##S(const T *x, int64_t xs, int64_t xl, T *y,         \
+                           int64_t ys, int64_t yl, int64_t n, int64_t w,     \
+                           T *scratch, const nx_cpu_terms *src) {            \
+    int64_t size = 2 * w, tile = NX_CPU_NETWORK_TILE;                        \
+    int levels = nx_cpu_network_levels(n);                                   \
+    T *tx = scratch + 3 * levels * size, *ty = tx + tile * w;                \
+    /* Computed terms are read from the tile's rows. */                      \
+    if (src != NULL) xl = 0;                                                 \
+    T *held[64], *in[64], *joined[64];                                       \
+    const T *got[64];                                                        \
+    for (int k = 0; k < levels; k++) {                                       \
+      held[k] = scratch + 3 * k * size;                                      \
+      in[k] = held[k] + size;                                                \
+      joined[k] = in[k] + size;                                              \
+    }                                                                        \
+    for (int64_t t0 = 0; t0 < n; t0 += tile) {                               \
+      int64_t tn = n - t0 < tile ? n - t0 : tile;                            \
+      if (src != NULL) src->fill(src->ctx, t0, tn, (uint8_t *)tx);           \
+      else if (xl != 1) rows_##S(tn, w, x + t0 * xs, xs, xl, tx);            \
+      for (int64_t i = 0; i < tn; i++) {                                     \
+        int64_t t = t0 + i, p = t + NETWORK_AHEAD;                           \
+        if (p < n && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);                \
+        if (p < n && yl == 1) PREFETCH_ROW(y + p * ys, w, 1);                \
+        const T *xi = xl == 1 ? x + t * xs : tx + i * w;                     \
+        for (int64_t l = 0; l < w; l++) {                                    \
+          in[0][l] = xi[l];                                                  \
+          in[0][w + l] = lse_leaf_##S(xi[l]);                                \
+        }                                                                    \
+        stream_##S(lse_join_##S, w, t, held, in, joined, got);               \
+        const T *r = got[0];                                                 \
+        T *dy = yl == 1 ? y + t * ys : ty + i * w;                           \
+        for (int64_t l = 0; l < w; l++)                                      \
+          dy[l] = lse_result_##S(r[l], r[w + l]);                            \
+      }                                                                      \
+      if (yl != 1) unrows_##S(tn, w, ty, y + t0 * ys, ys, yl);               \
+    }                                                                        \
+  }                                                                          \
+  static void logsumexp_##S(const uint8_t *x, int64_t xs, int64_t xl,        \
+                            uint8_t *y, int64_t ys, int64_t yl, uint8_t *y1, \
+                            int64_t s1, int64_t l1, int64_t n, int64_t w,    \
+                            uint8_t *scratch, const nx_cpu_terms *src) {     \
+    (void)y1;                                                                \
+    (void)s1;                                                                \
+    (void)l1;                                                                \
+    if (w == 1)                                                              \
+      lse_tiles_##S((const T *)x, xs, (T *)y, ys, n, src, (T *)scratch);     \
+    else                                                                     \
+      lse_pass_##S((const T *)x, xs, xl, (T *)y, ys, yl, n, w, (T *)scratch, \
+                   src);                                                     \
   }
 
 STATES(float, f32, NX_NAN_F32, -87)
@@ -1649,7 +1720,7 @@ STATES(double, f64, NX_NAN_F64, -708)
 #define FLOATS(DT, D)                                                        \
   STATE(NX_CPU_LOGSUMEXP, DT, PASS(top, top_merge, top_finish, D),           \
         PASS(lse, lse_merge, lse_finish, D),                                 \
-        SCAN(lsescan, lsescan_merge, D));                                    \
+        NO_SCAN);                                                            \
   STATE(NX_CPU_MOMENTS, DT, PASS(mean, sum_merge, mean_finish, D),           \
         PASS(var, var_merge, var_finish, D), NO_SCAN)
 
@@ -1683,6 +1754,8 @@ static void set(nx_cpu_target *t) {
   SET(NX_MONOID_MIN, NX_BOOL, min_b);
   ALL4(NX_COMPLEX64, c64);
   ALL4(NX_COMPLEX128, c128);
+  t->logsumexp[NX_FLOAT32] = logsumexp_f32;
+  t->logsumexp[NX_FLOAT64] = logsumexp_f64;
   t->moments[NX_FLOAT32] = moments_f32;
   t->moments[NX_FLOAT64] = moments_f64;
 }
@@ -1755,8 +1828,9 @@ void nx_cpu_set_reduce_base(nx_cpu_target *t) { set(t); }
    exp, Arg's and Moments' two walks of a block. */
 static const double STATE_COST[NX_CPU_STATEFUL] = {8, 2, 2, 3};
 
-/* What a call computes: a reduction, a scan, or a Moments scan. */
-typedef enum { REDUCE, SCAN, MOMENTS } task;
+/* What a call computes: a reduction, a scan, or a scan by nx_kernel.mli's
+   network, Logsumexp's or Moments'. */
+typedef enum { REDUCE, SCAN, NETWORK } task;
 
 /* A program's output as the terms (Programs): output [k] of [prog], bound
    to its [nloads] loads [loads], read at virtual positions, a term's place
@@ -1778,7 +1852,7 @@ typedef struct {
 typedef struct {
   const nx_cpu_monoid *f;   /* a monoid's kernels, or NULL */
   const nx_cpu_pass *r;     /* a stateful reduction's pass, or NULL */
-  const nx_cpu_scan_pass *z; /* a stateful scan's kernels, or NULL */
+  const nx_cpu_scan_pass *z; /* an Arg scan's kernels, or NULL */
   double *centers;          /* its outputs' centers, a row of them a unit */
   int centering;            /* the pass stores the centers */
   int w, nan;               /* nan: NaN results take their first NaN term */
@@ -1905,11 +1979,11 @@ static void identity(int monoid, int dt, uint8_t *id) {
   }
 }
 
-/* A stateful scan's states of no term at [v], [n] of them, their first
+/* An Arg scan's states of no term at [v], [n] of them, their first
    term [t0]. */
 static void none(nx_cpu_state *v, int64_t n, int64_t t0) {
   for (int64_t j = 0; j < n; j++)
-    v[j] = (nx_cpu_state){.n = t0, .at = -1, .s = 0, .d = -INFINITY};
+    v[j] = (nx_cpu_state){.n = t0, .at = -1};
 }
 
 /* [n] identities of the plan's monoid at [d], copied in doubling runs. */
@@ -1920,7 +1994,7 @@ static void ids(const plan *q, uint8_t *d, int64_t n) {
     memcpy(d + k * q->w, d, (k < n - k ? k : n - k) * q->w);
 }
 
-/* [n] values of no term at [d]: identities, or a stateful scan's states
+/* [n] values of no term at [d]: identities, or an Arg scan's states
    of no term. */
 static void fill(const plan *q, uint8_t *d, int64_t n) {
   if (q->z != NULL) {
@@ -2671,13 +2745,6 @@ static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1,
   q->kd1[q->nk++] = d1;
 }
 
-/* The sequences a scan's unit runs side by side, slices or one slice's
-   chunks: SLICES for a monoid or an Arg; a row of states for Logsumexp,
-   whose kernel runs its lanes over vectors. */
-static int side(const plan *q) {
-  return q->z != NULL && !q->arg ? ROW / q->size : SLICES;
-}
-
 /* Picks the path for [q]'s axes and lays out its units. The kept axis that
    steps least through the operand becomes the row axis, last, where it
    steps less than every reduced axis or the outputs have few terms. A
@@ -2720,7 +2787,7 @@ static void choose(plan *q, task op) {
   q->kd1[q->nk - 1] = d1;
   q->kc[q->nk - 1] = c;
   q->slices = !rows;
-  int64_t most = q->slices ? side(q) : ROW / q->size;
+  int64_t most = q->slices ? SLICES : ROW / q->size;
   /* A monoid scan on one thread sweeps long rows; on several, its units
      of ROW share the work more evenly, which gains more. Its bits do not
      depend on the rows. */
@@ -2829,21 +2896,19 @@ static void quiet_rows(const plan *q, uint8_t *y, int64_t m, int64_t W,
       quiet(q->dst->dtype, y + (i * q->rd + l * dl) * q->w);
 }
 
-/* Terms [t0, t0 + n) of a stateful scan's [W] sequences into their states
-   [a], and where [store], each result into the destinations. Sequence l is
+/* Terms [t0, t0 + n) of an Arg scan's [W] sequences into their states
+   [a], and each result into the destinations. Sequence l is
    the unit's slice l, or, where [lt] is not 0, the unit's slice from term
    l·lt on. The kernel reads the operand and writes the destinations in
    place, a staged operand's terms converted into the carrier a piece at a
-   time; Arg's extreme of the operand's dtype goes through a piece of
-   scratch and is then copied from the term at its position. */
+   time; an extreme of the operand's dtype goes through a piece of scratch
+   and is then copied from the term at its position. */
 static void run_states(const plan *q, work *wk, const unit *x, nx_cpu_state *a,
-                       int64_t W, int64_t lt, int64_t t0, int64_t n,
-                       int store) {
+                       int64_t W, int64_t lt, int64_t t0, int64_t n) {
   int64_t rs = q->rs[0], ls = lt ? 0 : x->s, xl = ls + lt * rs;
   int64_t dl = lt ? lt * q->rd : x->sd, d1l = lt ? lt * q->rd1 : x->sd1;
-  /* Logsumexp's lanes, whose exp and log run over vectors, are staged
-     side by side where they are not; a program's terms are computed so. */
-  int staged = sourced(q) || (!q->arg && W > 1 && xl != 1);
+  /* A staged operand's or a program's terms come side by side. */
+  int staged = sourced(q);
   int64_t piece = staged ? LANES * ROW / (W * WIDEST) : n;
   uint8_t *buf = wk->terms, *e = wk->extremes;
   for (int64_t t = t0; t < t0 + n; t += piece) {
@@ -2851,16 +2916,12 @@ static void run_states(const plan *q, work *wk, const unit *x, nx_cpu_state *a,
     const uint8_t *src = staged ? buf : at(q, x->p + t * rs);
     if (staged) stage_lanes(q, wk, x, W, lt, t, m, buf);
     int64_t xs = staged ? W : rs, xli = staged ? 1 : xl;
-    if (!store) {
-      q->z->rows(a, src, xs, xli, m, W, NULL, 0, 0, NULL, 0, 0);
-      continue;
-    }
     uint8_t *y = q->own ? e : q->dst->base + (x->d + t * q->rd) * q->w;
     int64_t *p = (int64_t *)q->dst1->base + x->d1 + t * q->rd1;
     q->z->rows(a, src, xs, xli, m, W, y, q->own ? W : q->rd, q->own ? 1 : dl,
                p, q->rd1, d1l);
     if (!q->own) {
-      if (q->arg) quiet_rows(q, y, m, W, dl);
+      quiet_rows(q, y, m, W, dl);
       continue;
     }
     for (int64_t i = 0; i < m; i++)
@@ -2871,18 +2932,12 @@ static void run_states(const plan *q, work *wk, const unit *x, nx_cpu_state *a,
 }
 
 /* Chunk [c]'s total of the unit's slices, into [v]: slice by slice where
-   they run side by side. A stateful scan's is its states from none, which
-   for Arg, being exact, are its reduction's, numbered on to the chunk's
-   end. */
+   they run side by side. An Arg scan's, being exact, is its reduction's,
+   numbered on to the chunk's end. */
 static void total(const plan *q, work *wk, const unit *x, int64_t c,
                   uint8_t *v) {
   int64_t t0 = c * SCAN_CHUNK;
   int64_t n = q->terms - t0 < SCAN_CHUNK ? q->terms - t0 : SCAN_CHUNK;
-  if (q->z != NULL && !q->arg) {
-    none((nx_cpu_state *)v, x->W, t0);
-    run_states(q, wk, x, (nx_cpu_state *)v, x->W, 0, t0, n, 0);
-    return;
-  }
   int64_t b0 = c * (SCAN_CHUNK / BLOCK), b1 = b0 + SCAN_CHUNK / BLOCK;
   if (b1 > q->blocks) b1 = q->blocks;
   if (!q->slices)
@@ -2952,7 +3007,7 @@ static void rescan(const plan *q, work *wk, const unit *x, int64_t c,
   int64_t t0 = c * SCAN_CHUNK;
   int64_t n = q->terms - t0 < SCAN_CHUNK ? q->terms - t0 : SCAN_CHUNK;
   if (q->z != NULL) {
-    run_states(q, wk, x, (nx_cpu_state *)a, x->W, 0, t0, n, 1);
+    run_states(q, wk, x, (nx_cpu_state *)a, x->W, 0, t0, n);
     return;
   }
   if (c == 0 && bare(q)) {
@@ -3025,8 +3080,8 @@ static void settle_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
 }
 
 /* The carry [a] of [W] slices into the chunk after [c], from [a] into [c]
-   and [c]'s total [v]: the total alone where chunk 0 has no carry, as a
-   stateful scan's has none. */
+   and [c]'s total [v]: the total alone where chunk 0 has no carry, as an
+   Arg scan's has none. */
 static void carry_on(const plan *q, uint8_t *a, const uint8_t *v, int64_t c,
                      int64_t W) {
   if (c == 0 && (bare(q) || q->z != NULL)) memcpy(a, v, W * q->size);
@@ -3066,27 +3121,12 @@ static void total_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
 }
 
 /* The unit of span [v] of a job over each unit's first [chunks] chunks,
-   [side] of them a span, and the span's first chunk [c] and count [k]. */
-static int64_t span(const plan *q, int64_t v, int64_t chunks, int64_t *c,
-                    int *k) {
-  int64_t K = side(q), spans = (chunks + K - 1) / K;
-  *c = v % spans * K;
-  *k = (int)(chunks - *c < K ? chunks - *c : K);
+   SLICES of them a span, and the span's first chunk [c] and count [k]. */
+static int64_t span(int64_t v, int64_t chunks, int64_t *c, int *k) {
+  int64_t spans = (chunks + SLICES - 1) / SLICES;
+  *c = v % spans * SLICES;
+  *k = (int)(chunks - *c < SLICES ? chunks - *c : SLICES);
   return v / spans;
-}
-
-/* A Logsumexp scan's chunk totals, [side] chunks of one slice at a time,
-   side by side; the last chunk's carries nowhere. */
-static void total_quads(const plan *q, work *wk, int64_t lo, int64_t hi) {
-  for (int64_t v = lo; v < hi; v++) {
-    int64_t c;
-    int k;
-    int64_t u = span(q, v, q->groups - 1, &c, &k);
-    unit x = unit_of(q, u * q->groups);
-    nx_cpu_state *a = (nx_cpu_state *)q->scratch + u * q->groups + c;
-    for (int j = 0; j < k; j++) none(a + j, 1, (c + j) * SCAN_CHUNK);
-    run_states(q, wk, &x, a, k, SCAN_CHUNK, c * SCAN_CHUNK, SCAN_CHUNK, 0);
-  }
 }
 
 static void rescan_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
@@ -3102,7 +3142,7 @@ static void rescan_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
 static void quad(const plan *q, work *wk, const unit *x, uint8_t *a,
                  int64_t t0, int k) {
   if (q->z != NULL) {
-    run_states(q, wk, x, (nx_cpu_state *)a, k, SCAN_CHUNK, t0, SCAN_CHUNK, 1);
+    run_states(q, wk, x, (nx_cpu_state *)a, k, SCAN_CHUNK, t0, SCAN_CHUNK);
     return;
   }
   int64_t rs = q->rs[0];
@@ -3121,14 +3161,14 @@ static void quad(const plan *q, work *wk, const unit *x, uint8_t *a,
   }
 }
 
-/* One slice's chunks [side] at a time, side by side, where a unit is one
+/* One slice's chunks SLICES at a time, side by side, where a unit is one
    slice: their carries lie side by side in the scratch. A short last chunk
    runs alone, and so does a chunk 0 that has no carry. */
 static void rescan_quads(const plan *q, work *wk, int64_t lo, int64_t hi) {
   for (int64_t v = lo; v < hi; v++) {
     int64_t c;
     int k;
-    int64_t u = span(q, v, q->groups, &c, &k);
+    int64_t u = span(v, q->groups, &c, &k);
     unit x = unit_of(q, u * q->groups);
     uint8_t *a = q->scratch + (u * q->groups + c) * q->size;
     if (c == 0 && bare(q)) {
@@ -3361,15 +3401,11 @@ static __attribute__((noinline)) int reduce_in(
   if (op == REDUCE) reduce_jobs(&q, units, bytes, cost);
   else if (q.groups == 1) units_job(units, bytes, cost, scan_units, &q);
   else {
-    int64_t K = side(&q);
-    if (q.row == 1 && q.z != NULL && !q.arg)
-      units_job(units * ((q.groups - 1 + K - 1) / K), bytes, cost,
-                total_quads, &q);
-    else units_job(units * q.groups, bytes, cost, total_units, &q);
+    units_job(units * q.groups, bytes, cost, total_units, &q);
     units_serial(units, carries, &q);
     if (q.row == 1)
-      units_job(units * ((q.groups + K - 1) / K), bytes, cost, rescan_quads,
-                &q);
+      units_job(units * ((q.groups + SLICES - 1) / SLICES), bytes, cost,
+                rescan_quads, &q);
     else units_job(units * q.groups, bytes, cost, rescan_units, &q);
     units_serial(units, settle_units, &q);
   }
@@ -3466,21 +3502,23 @@ static int reduce_into(task op, int r, const int *axes, int naxes,
   return e;
 }
 
-/* Moments scans */
+/* Network scans */
 
-/* A Moments scan: the outer axes, those but the scanned one, coalesced,
-   with the steps of the mean (0), the variance (1) and the operand (2);
-   the scanned axis's extent and steps. [failed] is set where a unit's
-   scratch could not be allocated. A unit runs NX_CPU_MOMENTS_LANES slices
-   side by side, along the outer axis that steps least. */
+/* A scan by Logsumexp or Moments [r]: the outer axes, those but the
+   scanned one, coalesced, with the steps of the result (0), Moments'
+   variance (1), the result again for Logsumexp, and the operand (2); the
+   scanned axis's extent and steps. [failed] is set where a unit's scratch
+   could not be allocated. A unit runs NX_CPU_NETWORK_LANES slices side by
+   side, along the outer axis that steps least. */
 typedef struct {
+  int r;
   const nx_array *a[3];
   nx_loop outer;
   int64_t len, along[3];
   int64_t rows, chunks; /* outer positions but the last axis; units along it */
   const fused *fused;   /* a program's terms, or NULL */
   _Atomic int failed;
-} moments;
+} network;
 
 /* A unit's terms of a program: [w] slices from the virtual position [p],
    [lane] apart, each stepping [along], in the carrier [c], their held
@@ -3501,43 +3539,46 @@ static void fill_slices(const void *ctx, int64_t t0, int64_t tn,
           out, c->held);
 }
 
-/* Quiets the NaN results of the [w] slices whose means and variances
-   start at the positions [at]. A slice that a NaN term reaches ends in a
-   NaN mean, and its results from that term on carry its bits through the
-   kinds' arithmetic: such a slice alone is walked again. */
-static void quiet_slices(const moments *q, const int64_t *at, int64_t w) {
+/* Quiets the NaN results of the [w] slices whose results start at the
+   positions [at]. A slice that a NaN term reaches ends in a NaN, and its
+   results from that term on carry its bits through the kinds'
+   arithmetic: such a slice alone is walked again. */
+static void quiet_slices(const network *q, const int64_t *at, int64_t w) {
   const nx_loop *l = &q->outer;
   int last = l->rank - 1, dt = q->a[0]->dtype, w8 = nx_cpu_width(dt);
+  int two = q->r == NX_CPU_MOMENTS;
   for (int64_t j = 0; j < w; j++) {
     uint8_t *m = q->a[0]->base + (at[0] + j * l->step[0][last]) * w8;
     uint8_t *v = q->a[1]->base + (at[1] + j * l->step[1][last]) * w8;
     if (!floats_nan(dt, m + (q->len - 1) * q->along[0] * w8, 1)) continue;
     for (int64_t i = 0; i < q->len; i++) {
       quiet(dt, m + i * q->along[0] * w8);
-      quiet(dt, v + i * q->along[1] * w8);
+      if (two) quiet(dt, v + i * q->along[1] * w8);
     }
   }
 }
 
-static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
-  moments *q = ctx;
+  network *q = ctx;
   const nx_loop *l = &q->outer;
   int last = l->rank - 1, w8 = nx_cpu_width(q->a[2]->dtype);
-  int64_t inner = l->extent[last], most = NX_CPU_MOMENTS_LANES;
+  int64_t inner = l->extent[last], most = NX_CPU_NETWORK_LANES;
   int64_t lanes = inner < most ? inner : most;
-  int64_t levels = nx_cpu_moments_levels(q->len);
-  int64_t states = (12 * levels + 3 * NX_CPU_MOMENTS_TILE) * lanes;
-  if (states < MOMENTS_ONE) states = MOMENTS_ONE;
+  int64_t levels = nx_cpu_network_levels(q->len);
+  int64_t states = (12 * levels + 3 * NX_CPU_NETWORK_TILE) * lanes;
+  if (states < NETWORK_ONE) states = NETWORK_ONE;
   /* The pass's states, then a tile of a program's held values, which are
      no wider than the carrier. */
-  int64_t held = NX_CPU_MOMENTS_TILE * lanes;
+  int64_t held = NX_CPU_NETWORK_TILE * lanes;
   uint8_t *scratch = nx_cpu_take((states + held) * w8);
   if (scratch == NULL) {
     q->failed = 1;
     return;
   }
-  nx_cpu_moments run = nx_cpu_table->moments[q->a[2]->dtype];
+  int dt = q->a[2]->dtype;
+  nx_cpu_network run = q->r == NX_CPU_MOMENTS ? nx_cpu_table->moments[dt]
+                                              : nx_cpu_table->logsumexp[dt];
   for (int64_t u = lo; u < hi; u++) {
     int64_t row = u / q->chunks, from = (u % q->chunks) * most;
     int64_t at[3] = {l->first[0], l->first[1], l->first[2]};
@@ -3562,27 +3603,28 @@ static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   nx_cpu_give(scratch);
 }
 
-/* Scans [x] along [axis], [outputs] slices of [terms] terms, by Moments
-   into the mean [m] and the variance [v], float32 or float64 of [x]'s
-   dtype, all of shapes that fit: NX_OK, or -1 if host memory runs out.
-   [x] is a program's virtual operand in its carrier where [z] is not
-   NULL, the outer axes coalesced with its loads. Apart, so that the
-   casts around it run on a small frame. */
-static __attribute__((noinline)) int moments_in(
-    int axis, int64_t terms, int64_t outputs, const nx_array *m,
-    const nx_array *v, const nx_array *x, const fused *z) {
-  moments q = {.a = {m, v, x}, .len = terms, .fused = z};
+/* Scans [x] along [axis], [outputs] slices of [terms] terms, by
+   Logsumexp or Moments [r] into [y] and Moments' variance [y1], [y1]
+   being [y] for Logsumexp, float32 or float64 of [x]'s dtype, all of
+   shapes that fit: NX_OK, or -1 if host memory runs out. [x] is a
+   program's virtual operand in its carrier where [z] is not NULL, the
+   outer axes coalesced with its loads. Apart, so that the casts around
+   it run on a small frame. */
+static __attribute__((noinline)) int network_in(
+    int r, int axis, int64_t terms, int64_t outputs, const nx_array *y,
+    const nx_array *y1, const nx_array *x, const fused *z) {
+  network q = {.r = r, .a = {y, y1, x}, .len = terms, .fused = z};
   nx_loop *l = &q.outer;
-  int r = x->rank, k = 0, nl = z != NULL ? z->nloads : 0;
+  int rank = x->rank, k = 0, nl = z != NULL ? z->nloads : 0;
   for (int o = 0; o < 3; o++) {
     l->first[o] = q.a[o]->offset;
-    q.along[o] = q.a[o]->dim[r + axis];
+    q.along[o] = q.a[o]->dim[rank + axis];
   }
-  for (int i = 0; i < r; i++) {
+  for (int i = 0; i < rank; i++) {
     if (i == axis) continue;
     l->extent[k] = x->dim[i];
-    for (int o = 0; o < 3; o++) l->step[o][k] = q.a[o]->dim[r + i];
-    for (int o = 0; o < nl; o++) l->step[3 + o][k] = z->loads[o].dim[r + i];
+    for (int o = 0; o < 3; o++) l->step[o][k] = q.a[o]->dim[rank + i];
+    for (int o = 0; o < nl; o++) l->step[3 + o][k] = z->loads[o].dim[rank + i];
     k++;
   }
   /* A slice alone keeps one outer axis, of extent 1. */
@@ -3594,34 +3636,40 @@ static __attribute__((noinline)) int moments_in(
   l->rank = nx_coalesce_dims(3 + nl, k, l->extent, l->step);
   int64_t inner = l->extent[l->rank - 1];
   q.rows = outputs / inner;
-  q.chunks = (inner + NX_CPU_MOMENTS_LANES - 1) / NX_CPU_MOMENTS_LANES;
+  q.chunks = (inner + NX_CPU_NETWORK_LANES - 1) / NX_CPU_NETWORK_LANES;
   int64_t bytes = 3 * terms * outputs * nx_cpu_width(x->dtype);
   double cost = 4.0 * bytes;
   if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes / 3;
-  nx_cpu_job(q.rows * q.chunks, bytes, cost, moments_units, &q);
+  nx_cpu_job(q.rows * q.chunks, bytes, cost, network_units, &q);
   return q.failed ? -1 : NX_OK;
 }
 
-/* As moments_in, of [x] of any float dtype in its carrier, into
+/* As network_in, of [x] of any float dtype in its carrier, into
    destinations of any dtype: a narrow [x] cast whole into carrier_copy's
    array first, or a program's terms converted tile by tile, and
    destinations not of the carrier computed into such arrays, then rounded
    once into them. NX_OK, NX_SHAPE for shapes that do not fit, or -1 if host
    memory runs out. */
-static int moments_into(int axis, const nx_array *m, const nx_array *v,
-                        const nx_array *x, const fused *z) {
+static int network_into(int r, int axis, const nx_array *y,
+                        const nx_array *y1, const nx_array *x,
+                        const fused *z) {
   int64_t terms, outputs;
-  if (!fits(MOMENTS, x->dim, x->rank, m->dim, m->rank, &axis, 1, &terms,
+  if (!fits(NETWORK, x->dim, x->rank, y->dim, y->rank, &axis, 1, &terms,
             &outputs) ||
-      !fits(MOMENTS, x->dim, x->rank, v->dim, v->rank, &axis, 1, &terms,
+      !fits(NETWORK, x->dim, x->rank, y1->dim, y1->rank, &axis, 1, &terms,
             &outputs))
     return NX_SHAPE;
   if (outputs == 0 || terms == 0) return NX_OK;
   int c = nx_cpu_carrier(x->dtype), e = NX_OK;
-  const nx_array *a[3] = {m, v, x}, *d[3] = {m, v, x};
+  int nd = y1 == y ? 1 : 2;
+  const nx_array *a[3] = {y, y1, x}, *d[3] = {y, y1, x};
   nx_array t[3];
   int copied[3] = {0, 0, 0};
   for (int k = 0; k < 3 && e == NX_OK; k++) {
+    if (k == 1 && nd == 1) {
+      d[1] = d[0];
+      continue;
+    }
     if (a[k]->dtype == c) continue;
     if (k == 2 && z != NULL) {
       t[2] = *x;
@@ -3639,7 +3687,7 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
     copied[k] = 1;
   }
   if (e == NX_OK)
-    e = moments_in(axis, terms, outputs, d[0], d[1], d[2], z);
+    e = network_in(r, axis, terms, outputs, d[0], d[1], d[2], z);
   for (int k = 0; k < 3; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK && k < 2) cast(a[k], &t[k]);
@@ -3681,7 +3729,7 @@ static const double TERM_COST[2][5] = {{64, 128, 512, 64, 128},
 
 /* The row of TERM_COST a term of [c] takes. */
 static int term_of(const call *c) {
-  if (c->op == MOMENTS || c->r == NX_CPU_MOMENTS) return BY_MOMENTS;
+  if (c->r == NX_CPU_MOMENTS) return BY_MOMENTS;
   if (c->r == NX_CPU_LOGSUMEXP) return BY_LOGSUMEXP;
   if (c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN) return BY_ARG;
   return c->r <= NX_MONOID_PROD ? BY_SUMS : BY_EXTREMES;
@@ -3797,8 +3845,7 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
                  value vpad, value vcarry) {
   CAMLparam5(d0, d1, vx, vpad, vcarry);
   int nd = d1 == Val_unit ? 1 : 2;
-  int arg =
-      c->op != MOMENTS && (c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN);
+  int arg = c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN;
   /* The pad and the fill, copied before anything that can move them. */
   int padded = Is_block(vpad);
   nx_cpu_pad pad;
@@ -3846,8 +3893,8 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
   }
   if (copy) x = &loaded;
   if (kept_carry.base != NULL) cy = &kept_carry;
-  e = c->op == MOMENTS
-          ? moments_into(c->axes[0], &a[0], &a[1], x, NULL)
+  e = c->op == NETWORK
+          ? network_into(c->r, c->axes[0], &a[0], &a[nd - 1], x, NULL)
           : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
                         x, cy, NULL);
   if (padded) free(loaded.base);
@@ -3867,10 +3914,9 @@ static int axis_of(value v, int *a) {
   return 0;
 }
 
-/* Whether [op] by [r] has two destinations: Arg's and Moments'. */
-static int two(task op, int r) {
-  return op == MOMENTS || r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN ||
-         (op == REDUCE && r == NX_CPU_MOMENTS);
+/* Whether [r] has two destinations: Arg's and Moments'. */
+static int two(int r) {
+  return r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN || r == NX_CPU_MOMENTS;
 }
 
 /* What run_fused holds on the C heap: the program's copy, past
@@ -4009,12 +4055,10 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     ks[i] = Int_val(Field(pair, 1));
     first[i] = want;
     if (want < nd) dts[want] = -1;
-    if (two(c->op, rs[i]) && want + 1 < nd)
-      dts[want + 1] = c->op != MOMENTS && (rs[i] == NX_CPU_ARG_MAX ||
-                                           rs[i] == NX_CPU_ARG_MIN)
-                          ? NX_INT64
-                          : -1;
-    want += 1 + two(c->op, rs[i]);
+    if (two(rs[i]) && want + 1 < nd)
+      dts[want + 1] =
+          rs[i] == NX_CPU_ARG_MAX || rs[i] == NX_CPU_ARG_MIN ? NX_INT64 : -1;
+    want += 1 + two(rs[i]);
     if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_ARITY;
   }
   if (!e && want != nd) e = NX_ARITY;
@@ -4075,7 +4119,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     int64_t terms, outputs;
     const nx_array *y = &a[first[i]];
     e = checked(c->op, rs[i], c->axes, c->naxes, y,
-                two(c->op, rs[i]) ? y + 1 : y, &loop, &terms, &outputs);
+                two(rs[i]) ? y + 1 : y, &loop, &terms, &outputs);
   }
   if (!e && nc) {
     call ci = *c;
@@ -4101,7 +4145,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     call ci = *c;
     ci.r = rs[i];
     cost += call_cost(&ci, &a[nd], shape, rank, 1, per, &a[first[i]],
-                      1 + two(c->op, rs[i]));
+                      1 + two(rs[i]));
   }
   if (!early) released = nx_cpu_release(cost);
   /* The loop of the program and its loads as it reads them, in the
@@ -4144,12 +4188,12 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   }
   for (int i = 0; !oom && !e && i < nr; i++) {
     int dt = nx_cpu_prog_held(g, ks[i]);
-    const nx_array *y = &a[first[i]], *y1 = two(c->op, rs[i]) ? y + 1 : y;
+    const nx_array *y = &a[first[i]], *y1 = two(rs[i]) ? y + 1 : y;
     x.dtype = dt;
     x.bits = nx_dtype_row_of(dt).bits;
     z->k = ks[i];
-    e = c->op == MOMENTS
-            ? moments_into(c->axes[0], y, y1, &x, z)
+    e = c->op == NETWORK
+            ? network_into(rs[i], c->axes[0], y, y1, &x, z)
             : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, cy, z);
   }
   /* A program that could not have its arenas computed nothing. */
@@ -4176,7 +4220,7 @@ static value in_place(call *c, value vp, value vr, value vdsts,
   *done = dt >= 0 && Int_val(Field(vr, 1)) == 0 && Wosize_val(vloads) == 1;
   if (!*done) return Val_unit;
   c->r = code_of(Field(vr, 0));
-  int nd = 1 + two(c->op, c->r);
+  int nd = 1 + two(c->r);
   if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_ARITY);
   value pad = Wosize_val(vpads) > 0 ? Field(vpads, 0) : Val_none;
   return run(c, dt, Field(vdsts, 0), nd == 2 ? Field(vdsts, 1) : Val_unit,
@@ -4214,14 +4258,12 @@ value nx_cpu_reduce_byte(value *argv, int argn) {
 }
 
 /* Scans the program [vp] along [vaxis] by the pair [vr] of a reduction and
-   an output, Moments by its own scan, its [loads] and their paddings
-   [pads], into [vdsts], over their first one's shape, from the carries
-   [vcarry] where it is Some. */
+   an output, Logsumexp and Moments by the network, its [loads] and their
+   paddings [pads], into [vdsts], over their first one's shape, from the
+   carries [vcarry] where it is Some. */
 value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
                   value vpads, value vcarry) {
-  value k = Field(vr, 0);
-  int moments = Is_long(k) && Long_val(k) == NX_REDUCTION_MOMENTS;
-  call c = {.op = moments ? MOMENTS : SCAN, .naxes = 1};
+  call c = {.op = Is_long(Field(vr, 0)) ? NETWORK : SCAN, .naxes = 1};
   if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
   int done = 0;
   value r = in_place(&c, vp, vr, vdsts, vloads, vpads, vcarry, &done);
