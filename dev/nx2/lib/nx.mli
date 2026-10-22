@@ -1664,7 +1664,10 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 
     A contraction multiplies two operands along their paired axes and sums the
     products over the summed ones. Its order of association depends on the
-    shapes alone, so its bits do not depend on where its operands lie.
+    shapes alone, so its bits do not depend on where its operands lie,
+    except where it is a NaN. A NaN result's sign and payload are
+    unspecified, and two placements of the operands may give different
+    ones.
 
     Where both operands' paired summed axes are cut alike across devices,
     each device reads its own windows, and partial sums move instead of the
@@ -1738,8 +1741,8 @@ val einsum :
     each contraction's left part holds the earliest of its operands; of such
     parts, the larger, then the one holding the earliest operand the other
     lacks: equal work gives [((x1 x2) x3) x4]. The tree, and with it the
-    result's bits, is a function of [p] and the shapes alone. Choosing it
-    takes time in [3^n], so [p] has at most 11 operands.
+    result's order of association, is a function of [p] and the shapes
+    alone. Choosing it takes time in [3^n], so [p] has at most 11 operands.
 
     {[
     (* For square matrices, a (b v): j·k multiply-adds, then i·j, where
