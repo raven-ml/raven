@@ -71,7 +71,8 @@
     its addresses from that range.
     - Behind an IOMMU, system memory counts against the process's limit on
       locked memory ([RLIMIT_MEMLOCK]), and {!Rig_nv.val-alloc} returns
-      [None] once it is reached. Raise the limit to allocate more.
+      [None] once it is reached. Raise the limit to allocate more. Such a
+      GPU's device has [maps_host] [true].
     - Taken physically, system memory lies in huge pages of 2 MiB, and
       {!Rig_nv.val-alloc} returns [None] once none is free. Reserve more
       huge pages ([vm.nr_hugepages]) or free memory. Such a GPU's device has

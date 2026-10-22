@@ -455,10 +455,13 @@ let memory =
    Through NVIDIA's kernel driver the device exports a dma-buf. Its bytes are
    not checked here: the export leaves bAllowMmap off, so the host cannot map
    the dma-buf (nv-dmabuf.c), and no other API of this process imports one.
-   Only a NIC that registers it can read them. Over PCI it
-   gives bus ranges and keeps the GPU taken until its process exits, so a
+   Only a NIC that registers it can read them. Over PCI, a GPU taken
+   physically gives bus ranges and stays taken until its process exits, so a
    child of the suite makes that export, and the GPU opens again once the
-   child is gone. *)
+   child is gone. Behind an IOMMU that translates, which a device that maps
+   host memory shows, no other function reaches the memory at a bus address:
+   the export is refused, naming the GPU, and keeps nothing, so the GPU opens
+   again in the process. *)
 
 let dma_child = "--dma-over-pci"
 let dma_sizes = [ 1; 4095; 4096; 4097; 1 lsl 22 ]
@@ -536,10 +539,24 @@ let exports_bus () =
       fail "the GPU opened again in the process"
   | Error why -> contains ~sub:"given to another PCI function" why
 
+(* Whether the GPU is behind an IOMMU that translates; if it is, [dma] refuses
+   and the export is checked here. *)
+let refused_behind_iommu () =
+  S.with_ @@ fun t ->
+  if not (N.facts t.g).maps_host then false
+  else begin
+    let fn = gpu_bus t.d in
+    let why = require_error (B.dma (B.create t.d (1 lsl 16)) ~fn) in
+    contains ~msg:"names the GPU" ~sub:fn why;
+    contains ~msg:"names the IOMMU" ~sub:"IOMMU" why;
+    refuses_strangers t.d;
+    true
+  end
+
 let exports () =
   match S.path () with
   | Some Pci ->
-      Rig_gpu_support.child dma_child;
+      if not (refused_behind_iommu ()) then Rig_gpu_support.child dma_child;
       S.with_ ignore
   | Some Kernel | None -> exports_dmabuf ()
 
@@ -547,8 +564,9 @@ let dma =
   group ~timeout:120. "another function's DMA"
     [
       test
-        "dma exports a dma-buf through the kernel driver, or bus ranges over \
-         PCI that keep the GPU until the process exits"
+        "dma exports a dma-buf through the kernel driver, or over PCI bus \
+         ranges that keep the GPU until the process exits, refused behind an \
+         IOMMU"
         exports;
     ]
 
