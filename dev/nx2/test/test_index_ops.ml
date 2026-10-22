@@ -41,7 +41,7 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
   match x with
-  | Value.Array r -> r.a
+  | Value.Array { a; _ } -> a
   | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
       fail "not on one device"
 

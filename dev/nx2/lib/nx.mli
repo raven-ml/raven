@@ -240,12 +240,12 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     [x] stays usable until an operation consumes a handle of [x]. Then [x] and
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
-    still answer. An operation that raises [Invalid_argument], refused by its
-    checks or declined by its set's kernels, consumes nothing: [x] and every
-    handle of [x] live on with their elements, even where it had begun to
-    compute into [x]'s memory. An operation that raises any other exception
-    while it computes into [x]'s memory, which it may have partly written,
-    kills them; elsewhere it kills nothing.
+    still answer. Unless it lost a race between domains (below), an operation
+    that raises before it takes [x]'s memory kills nothing: one refused by its
+    checks, or declined by its set's kernels where its result goes to fresh
+    memory. One that writes its result into [x]'s memory (below) takes the
+    memory before its kernels answer, so if they decline, or it raises
+    otherwise, [x] and its handles may be dead.
 
     A movement, which rearranges elements without computing them ({!reshape},
     {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
@@ -263,18 +263,16 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     it was when called, so [add (donate x) x] is [x + x].
 
     An operation checks every operand before it consumes any. On any number of
-    domains, no operation starts reading a value after its donor died, a call
-    already reading a donor's elements keeps reading them after the donor
-    dies, and no value is consumed twice. From when an operation claims a
-    handle of [x] until it returns or raises, a call on another domain sees
-    [x] and its handles dead, naming the operation. When operations on several
-    domains race to consume the same handles, at least one claims all it
-    reads. A loser raises naming an operation that claimed one of its
-    operands, which may itself have lost or raised, and the loser's donated
-    operands may be dead. No consumer overwrites elements another call is
-    reading: one that claims a handle while a function of several operations
-    reads it computes into fresh memory, and that function then raises as a
-    loser.
+    domains, no value is consumed twice, and a call on another domain that
+    overlaps the consumer of [x] either reads [x]'s elements as they were or
+    raises [Invalid_argument] naming that consumer; it never reads the
+    consumer's result. When operations on several domains race to consume the
+    same handles, at least one claims all it reads. A loser raises naming an
+    operation that claimed one of its operands, which may itself have lost or
+    raised, and the loser's donated operands may be dead. No consumer
+    overwrites elements another call is reading: one that claims a handle
+    while a call reads its memory computes into fresh memory, and a function
+    of several operations reading it then raises as a loser.
 
     The consumer may write its result into the donated memory when it reads
     that memory only at the result's own index, through the handle or through
