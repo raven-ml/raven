@@ -172,33 +172,21 @@ let test_split_kept () =
 
 (* Expansions *)
 
-let repeat n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
 let padded loads =
   Iarray.exists (function Nx.Prim.Padded _ -> true | Plain _ -> false) loads
 
-(* [expanded f] is [f ()] in an interpretation that computes each fold and each
-   loop with a padded load by its expansion ({!Nx.Prim.expand}), and every
-   other operation as eager execution does. *)
+(* [f ()] with each fold and each loop with a padded load computed by its
+   expansion. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expand () = Nx.Prim.expand i ~by ~repeat op in
-    let expansion =
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
       match op with
-      | Fold _ -> expand ()
-      | Map { loads; _ } when padded loads -> expand ()
-      | Reduce { loads; _ } when padded loads -> expand ()
-      | Scan { loads; _ } when padded loads -> expand ()
-      | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+      | Fold _ -> true
+      | Map { loads; _ } -> padded loads
+      | Reduce { loads; _ } -> padded loads
+      | Scan { loads; _ } -> padded loads
+      | _ -> false)
+    f
 
 (* The elements [pad] loads from [xs], of shape [s], in C order of the loaded
    shape [shape]: an index's windows read the padded index [w·step +

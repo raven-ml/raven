@@ -170,24 +170,12 @@ let test_split () =
 
 (* Expansion *)
 
-(* [expanded f] is [f ()] in an interpretation that computes each sort by its
-   expansion ({!Nx.Prim.expand}), and every other operation as eager execution
-   does. *)
-let repeat n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
+(* [f ()] with each sort computed by its expansion. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expansion =
-      match op with Sort _ -> Nx.Prim.expand i ~by ~repeat op | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
+      match op with Sort _ -> true | _ -> false)
+    f
 
 (* Each element's bits, read as unsigned integers of its width: two per
    complex128. *)

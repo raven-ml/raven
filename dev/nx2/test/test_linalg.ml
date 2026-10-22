@@ -980,26 +980,12 @@ let test_dead_named () =
 (* Expansions: each routine but eig computed by nx's expansion, within the
    bounds Expand states and in agreement with the eager kernels. *)
 
-let folding n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
-(* [expanded f] is [f ()] in an interpretation that computes each routine by its
-   expansion ({!Nx.Prim.expand}), its loops folded, and every other operation
-   as eager execution does. *)
+(* [f ()] with each routine computed by its expansion. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expansion =
-      match op with
-      | Linalg _ -> Nx.Prim.expand i ~by ~repeat:folding op
-      | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
+      match op with Linalg _ -> true | _ -> false)
+    f
 
 let back x = Nx.place Nx.Host.on x
 

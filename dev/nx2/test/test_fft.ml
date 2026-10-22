@@ -212,24 +212,12 @@ let test_rules () =
    convolution runs at, and [u] the parts' unit roundoff; a C2r's
    [‖x‖₂] is its completed bins', at most [√2] times its operand's. *)
 
-let repeat n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
-(* [expanded f] is [f ()] in an interpretation that computes each transform by
-   its expansion ({!Nx.Prim.expand}), and every other operation as eager
-   execution does. *)
+(* [f ()] with each transform computed by its expansion. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expansion =
-      match op with Fft _ -> Nx.Prim.expand i ~by ~repeat op | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
+      match op with Fft _ -> true | _ -> false)
+    f
 
 (* An expanded C2r reads only the real parts of bins 0 and, for an even n, n/2,
    as {!Nx_kernel.S.c2r} states: those of NaN and infinite imaginary parts are
