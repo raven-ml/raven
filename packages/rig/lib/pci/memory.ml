@@ -17,7 +17,8 @@ type reach = {
   addressing : Machine.addressing;
   small_bar : bool;
   link : link option;
-  route : Sysfs.route option; (* its way up the bus, without a transport *)
+  route : Sysfs.route option Lazy.t;
+      (* its way up the bus, without a transport, read at its first use *)
 }
 
 (* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
@@ -96,9 +97,10 @@ let create ?link fn tables ~bar =
         small_bar = bar_size < Page_table.memory tables;
         link;
         route =
-          Option.bind
-            (Machine.files (Function.machine fn))
-            (fun files -> Sysfs.route files (Function.bus fn));
+          lazy
+            (Option.bind
+               (Machine.files (Function.machine fn))
+               (fun files -> Sysfs.route files (Function.bus fn)));
       };
     bar;
     bar_base;
@@ -149,6 +151,12 @@ let rec host r =
 
 let reach m = m.reach
 
+(* A route is read from the machine's files when a peer or another function
+   first needs it, which a session that reaches neither never does: 4 ms of an
+   open on an R9700. Its lock lets two domains ask at once. *)
+let routes = Lock.create ()
+let route (r : reach) = Lock.protect routes (fun () -> Lazy.force r.route)
+
 let linked (r : reach) (o : reach) =
   match (r.link, o.link) with
   | Some l, Some l' -> Int64.equal l.fabric l'.fabric
@@ -157,7 +165,7 @@ let linked (r : reach) (o : reach) =
 (* Whether the bus carries [r]'s requests to [o]'s BAR, which only a machine
    reached without a transport tells. *)
 let carried (r : reach) (o : reach) =
-  match (r.route, o.route) with
+  match (route r, route o) with
   | Some client, Some provider -> Sysfs.forwards ~provider ~client
   | _ -> false
 
@@ -472,7 +480,7 @@ let bar_check m files ~client =
        firmware settings makes it as large"
       gpu
   else
-    match (m.reach.route, Sysfs.route files client) with
+    match (route m.reach, Sysfs.route files client) with
     | Some provider, Some client when Sysfs.forwards ~provider ~client -> Ok ()
     | _ ->
         refuse
