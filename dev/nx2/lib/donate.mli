@@ -6,14 +6,16 @@
 (** Donation: handles over a value's memory that one operation reads, and their
     consumption.
 
-    A donor is offered once, under a key of its own that every handle of every
+    A donor is offered under a key of its own that every handle of every
     donation of it reads. A consumer claims its handles in their donors' key
     order, each handle's own word before its donor's, without a lock: of
     consumers racing for the same handles, at least one succeeds, and each
     loser raises naming the consumer it lost a word to. The eager engine
     ({!Exec}) claims an operation's handles before it reads them, writes the
     operation's first result into a handle's memory where {!reuse} allows, and
-    ends the handles once it has read them ({!consumed}). *)
+    ends the handles once it has read them ({!consumed}). An operation that
+    raises before it writes or consumes their memory gives them back
+    ({!unclaim}). *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
@@ -93,6 +95,12 @@ val claim : by:string -> handle list -> unit
     their donors' key order: each handle and its donor die, naming [by].
     Raises [Invalid_argument] naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain. *)
+
+val unclaim : handle list -> unit
+(** [unclaim hs] gives back the claims of [hs] that {!claim} or
+    {!claim_handle} made, for a consumer that raised before it wrote or
+    consumed their memory: each handle and its donor live again, the donor
+    offered under a new key. *)
 
 val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
 (** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];

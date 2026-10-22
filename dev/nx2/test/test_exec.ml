@@ -19,8 +19,8 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
-(* Counting nx.cpu, declining every [Add], sort and contraction, as a library
-   may, and counting those declines. *)
+(* Counting nx.cpu, declining every [Add], [Less], sort and contraction, as a
+   library may, and counting those declines. *)
 module Refusing = struct
   include C
 
@@ -32,7 +32,9 @@ module Refusing = struct
     A.Declined
 
   let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
-    match k with Binary Add -> decline () | _ -> C.apply2 k ~dst x y
+    match k with
+    | Binary Add | Compare Less -> decline ()
+    | _ -> C.apply2 k ~dst x y
 
   let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
 
@@ -232,6 +234,51 @@ let broadcasting =
 
 let to_count x = Nx.place Count.on x
 
+(* [f ()] raises for one decline by nx.refusing on m2, of [kind] over [dts],
+   naming [by]. *)
+let refused_once by kind dts f =
+  Atomic.set Refusing.declines 0;
+  raises
+    (Invalid_argument
+       (by ^ ": nx.refusing does not compute " ^ kind ^ " on " ^ dts
+      ^ " (m2); place its operands with Nx.place on a set whose kernels \
+         compute it"))
+    (fun () -> ignore (f ()));
+  equal ~msg:(kind ^ ": declines") int 1 (Atomic.get Refusing.declines)
+
+(* The bytes [d] holds after four rounds of collection, each of which returns
+   to the device what it collected. *)
+let settled d =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create d 0);
+    Rig.free_cache d
+  done;
+  Rig.allocated d
+
+let refused x = Nx.place Refuse.on (on_host Plain D.Float32 [| 2; 2 |] x)
+
+let declines =
+  group "declines"
+    [
+      test "a declined operation kills no donated operand" (fun () ->
+          (* [x] borrows the host's memory, which no result takes: a sort
+             computes on the general path, a sum and a comparison on the fast
+             one. *)
+          let data = [| 4.; 3.; 2.; 1. |] in
+          let x = refused data and y = refused data in
+          let before = settled (m 2) in
+          let kept by path f =
+            invalid ~by (fun () -> ignore (f (Nx.donate x)));
+            equal ~msg:path (array bits) data (elements x)
+          in
+          kept "Nx.sort" "a sort" (fun h -> fst (Nx.sort h));
+          kept "Nx.add" "a sum into fresh memory" (fun h -> Nx.add h y);
+          kept "Nx.less" "a comparison, of another dtype" (fun h ->
+              Nx.less h y);
+          equal ~msg:"bytes held" int before (settled (m 2)));
+    ]
+
 let kernels =
   group "kernels"
     [
@@ -275,16 +322,8 @@ let kernels =
           in
           let declined by kind dts f =
             C.reset ();
-            Atomic.set Refusing.declines 0;
-            raises
-              (Invalid_argument
-                 (by ^ ": nx.refusing does not compute " ^ kind ^ " on " ^ dts
-                ^ " (m2); place its operands with Nx.place on a set whose \
-                   kernels compute it"))
-              (fun () -> ignore (f ()));
-            equal ~msg:(kind ^ ": kernel calls") int 0 (C.calls ());
-            equal ~msg:(kind ^ ": declines") int 1
-              (Atomic.get Refusing.declines)
+            refused_once by kind dts f;
+            equal ~msg:(kind ^ ": kernel calls") int 0 (C.calls ())
           in
           declined "Nx.add" "Add" "float32, float32, float32" (fun () ->
               Nx.add x x);
@@ -2267,4 +2306,13 @@ let placements =
 let () =
   exit
     (run "nx exec"
-       [ laws; broadcasting; kernels; constants; sets; allocation; placements ])
+       [
+         laws;
+         broadcasting;
+         kernels;
+         declines;
+         constants;
+         sets;
+         allocation;
+         placements;
+       ])

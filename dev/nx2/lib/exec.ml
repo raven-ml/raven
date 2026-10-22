@@ -552,6 +552,17 @@ let call : type r.
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
+(* [f ()], the claimed handles [hs] given back where it raises: [f] neither
+   writes their memory nor consumes it, so their donors live on, as before the
+   call. *)
+let unclaimed hs f =
+  match f () with
+  | r -> r
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Donate.unclaim hs;
+      Printexc.raise_with_backtrace e bt
+
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
    its routine, a one-node map by its node, its result's dtype listed
    first. *)
@@ -638,7 +649,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           Donate.consumed ~by ~reused:[ b ] hs;
           r
       | None ->
-          let r = run ~by op in
+          let r = unclaimed hs (fun () -> run ~by op) in
           Donate.consumed ~by ~reused:[] hs;
           r)
 
@@ -1230,16 +1241,17 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
 (* The one-node map over the handle [h], operand [i], whose array is [a], its
    result of [dt]: [h] is claimed, then its memory takes the result where rig
    holds it exclusive and it {!Donate.holds} the result, as {!Donate.reuse}
-   decides for any operation; otherwise the result is fresh and the memory,
-   where no other value reads it, is freed after the kernel. Its other
-   operands are live arrays, so none is the donor, whose word is offered, and
-   each is read at the result's own index. [run dst a'] is the kernel into
-   [dst] with [a'] for [h]. *)
+   decides for any operation; otherwise the result is fresh, the memory, where
+   no other value reads it, is freed after the kernel, and [h] is given back
+   where [run] raises. Its other operands are live arrays, so none is the
+   donor, whose word is offered, and each is read at the result's own index.
+   [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
     (w, r, d) Value.t =
   let l = A.layout a in
   let reusable = Donate.holds (D.Any dt) (L.contiguous (L.shape l)) a in
+  let hs = [ Donate.Handle (i, h) ] in
   Donate.claim_handle ~by i h;
   match D.equal_witness (A.dtype a) dt with
   | Some Type.Equal when reusable -> (
@@ -1247,9 +1259,9 @@ let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
       | Some b' ->
           let a' = A.v (A.dtype a) l b' in
           run a' a'
-      | None -> run (destination dt a) a)
+      | None -> unclaimed hs (fun () -> run (destination dt a) a))
   | Some _ | None ->
-      let r = run (destination dt a) a in
+      let r = unclaimed hs (fun () -> run (destination dt a) a) in
       ignore (Rig.Buffer.free (A.buffer a) : bool);
       r
 
