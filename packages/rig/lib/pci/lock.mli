@@ -14,9 +14,8 @@
     come the driver's holds ({!Driver}) and the driver's own locks. Under
     those come VFIO's list of containers, then a container's lock ({!Vfio}),
     then a space's ({!Space}); and system memory's state ({!Sysmem}), then
-    its reservations' lock. A function's lock
-    ({!Function}), a seek ({!Local}) and the firmware found ({!Firmware}) hold
-    no other.
+    its reservations' lock. A function's lock ({!Function}) and the firmware
+    found ({!Firmware}) hold no other.
 
     A vendor's lock is held across a whole open, a boot included, and a
     reset, which wait for the GPU: two of them on one GPU would interleave

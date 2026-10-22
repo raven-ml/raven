@@ -3,8 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* This process's mappings: the files of PCI functions (their locks, BARs and
-   VFIO regions) and memory for GPUs (reservations, locked memory).
+/* This process's mappings: the files of PCI functions (their locks, BARs,
+   VFIO regions and configuration spaces) and memory for GPUs (reservations,
+   locked memory).
 
    A failing system call raises Unix.Unix_error with its errno and its name;
    the OCaml caller says what it was doing. Descriptors are Unix.file_descr,
@@ -16,6 +17,7 @@
 #include <errno.h>
 
 #define CAML_NAME_SPACE
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
@@ -71,6 +73,7 @@ value caml_rig_pci_page_size(value unit) {
 
 #ifndef _WIN32
 #include <fcntl.h>
+#include <string.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #ifdef __APPLE__
@@ -123,12 +126,55 @@ value caml_rig_pci_unmap(value a, value n) {
   return Val_unit;
 }
 
+/* Configuration spaces */
+
+/* A configuration space is read and written at an offset, with pread and
+   pwrite: a VFIO device's file has no position (vfio_device_fops has no
+   llseek, so lseek fails with ESPIPE), and its configuration space is a
+   region at an offset of it. An access may wait while the function resumes
+   from a low-power state, so it runs with the runtime released, through a
+   copy of at most a configuration space's 4 KiB. Each is the bytes moved. */
+#define CONFIG_MAX 4096
+
+value caml_rig_pci_pread(value fd, value b, value n, value off) {
+  CAMLparam1(b);
+  char buf[CONFIG_MAX];
+  int d = Int_val(fd);
+  size_t len = Long_val(n);
+  off_t at = Long_val(off);
+  if (len > CONFIG_MAX) caml_invalid_argument("Rig_pci: pread past 4 KiB");
+  caml_release_runtime_system();
+  ssize_t r = pread(d, buf, len, at);
+  int e = errno;
+  caml_acquire_runtime_system();
+  if (r < 0) caml_unix_error(e, "pread", Nothing);
+  memcpy(Bytes_val(b), buf, r);
+  CAMLreturn(Val_long(r));
+}
+
+value caml_rig_pci_pwrite(value fd, value s, value n, value off) {
+  char buf[CONFIG_MAX];
+  int d = Int_val(fd);
+  size_t len = Long_val(n);
+  off_t at = Long_val(off);
+  if (len > CONFIG_MAX) caml_invalid_argument("Rig_pci: pwrite past 4 KiB");
+  memcpy(buf, String_val(s), len);
+  caml_release_runtime_system();
+  ssize_t r = pwrite(d, buf, len, at);
+  int e = errno;
+  caml_acquire_runtime_system();
+  if (r < 0) caml_unix_error(e, "pwrite", Nothing);
+  return Val_long(r);
+}
+
 #else
 
 FAILS1(caml_rig_pci_flock, "flock")
 FAILS1(caml_rig_pci_sysmem_held, "fcntl")
 FAILS2(caml_rig_pci_unmap, "munmap")
 FAILS3(caml_rig_pci_map, "mmap")
+FAILS4(caml_rig_pci_pread, "pread")
+FAILS4(caml_rig_pci_pwrite, "pwrite")
 #endif
 
 #ifdef __linux__

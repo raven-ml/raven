@@ -109,6 +109,9 @@
       function.
     - {e Misuse} raises [Invalid_argument], such as an index below zero, bytes
       outside a window, or memory given back twice.
+    - A system call that fails only for a bug in this library, such as one on
+      a descriptor it closed, raises [Failure] naming what it was doing and
+      the error.
     - The library's locks count among the locks a thread holds ([rig_hold] in
       [rig_edge.h]), so a call of rig's or of a driver's from a callback
       inside one raises [Invalid_argument] as it starts ([Rig]'s domains

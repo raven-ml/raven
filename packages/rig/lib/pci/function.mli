@@ -168,7 +168,8 @@ val set_bus_master : t -> bool -> unit
     function when it returns. A write the system refuses is dropped.
 
     Each access raises [Invalid_argument] if its bytes are not in the
-    configuration space or the function was released, and nothing else. *)
+    configuration space or the function was released. An error the system gives
+    only for a bug in this library raises [Failure], naming it. *)
 
 val config8 : t -> int -> int
 (** [config8 f off] is the byte at [off] of [f]'s configuration space. *)

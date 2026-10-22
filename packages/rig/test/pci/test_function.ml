@@ -593,6 +593,16 @@ let test_set_bus_master =
         (if on then before lor bus_master else before land lnot bus_master)
         (command_in root fn.bus))
 
+(* Behind an IOMMU a write reaches the function: its bus master bit reads back
+   as set_bus_master sets it. *)
+let test_vfio_bus_master () =
+  let _, f = vfio_function () in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  Function.set_bus_master f true;
+  equal ~msg:"set" hex bus_master (Function.config16 f command land bus_master);
+  Function.set_bus_master f false;
+  equal ~msg:"cleared" hex 0 (Function.config16 f command land bus_master)
+
 (* A function taken physically, with no interrupt route through VFIO, signals no
    legacy interrupt while taken: nothing handles it, and bus mastering does not
    gate it. Release gives its INTx back as it found it. *)
@@ -2197,6 +2207,8 @@ let this_machine =
         test_vfio_fork;
       test "a GPU behind an IOMMU gets device addresses below its DMA bound"
         test_vfio_bits;
+      test "a GPU behind an IOMMU masters the bus as set_bus_master sets it"
+        test_vfio_bus_master;
     ]
 
 let () =
