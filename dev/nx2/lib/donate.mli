@@ -6,8 +6,8 @@
 (** Donation: handles over a value's memory that one operation reads, and their
     consumption.
 
-    A donor is offered under a key of its own that every handle of every
-    donation of it reads. A consumer claims its handles in their donors' key
+    A donor is offered under a key of its own, which it keeps when a claim is
+    given back and which every handle of every donation of it reads. A consumer claims its handles in their donors' key
     order, each handle's own word before its donor's, without a lock: of
     consumers racing for the same handles, at least one succeeds, and each
     loser raises naming the consumer it lost a word to. The eager engine
@@ -91,19 +91,21 @@ val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
     their donors: each handle as its arrays, and each of their donors among
     [op]'s operands as a live value. *)
 
-val claim : by:string -> handle list -> unit
+type claims
+(** The type for the claims a consumer made, which {!unclaim} gives back. *)
+
+val claim : by:string -> handle list -> claims
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
     their donors' key order: each handle and its donor die, naming [by].
     Raises [Invalid_argument] naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain. *)
 
-val unclaim : handle list -> unit
-(** [unclaim hs] gives back the claims of [hs] that {!claim} or
-    {!claim_handle} made, for a consumer that raised before it wrote or
-    consumed their memory: each handle and its donor live again, the donor
-    offered under a new key. *)
+val unclaim : claims -> unit
+(** [unclaim c] gives back the claims [c], for a consumer that raised before
+    it wrote or consumed their memory: each handle and its donor live again,
+    the donor offered under the key it had. *)
 
-val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
+val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> claims
 (** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];
     nothing where [x] is no handle. *)
 

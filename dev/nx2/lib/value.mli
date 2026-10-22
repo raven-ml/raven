@@ -31,7 +31,8 @@ type death =
   | Died of string  (** The function the value was given to. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when
     first donated, and its consumer sets [Died]. A consumer that raises before
-    it computes into its donors' memory undoes it ({!Donate.unclaim}). *)
+    it computes into its donors' memory undoes it, each donor [Offered] under
+    the key it had ({!Donate.unclaim}). *)
 
 type ('v, 's, 'd) t =
   | Array of {
