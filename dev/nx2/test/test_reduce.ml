@@ -575,26 +575,13 @@ let test_scan_expansions () =
 (* Logsumexp, Moments and Arg through Nx.Prim, by nx's expansion, against
    references over each result's terms. *)
 
-let repeat n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
-(* [expanded f] is [f ()] in an interpretation that computes each reduction and
-   scan by its expansion ({!Nx.Prim.expand}) where it has one, and every other
-   operation as eager execution does. *)
+(* [f ()] with each reduction and scan computed by its expansion where it has
+   one. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expansion =
-      match op with
-      | Reduce _ | Scan _ -> Nx.Prim.expand i ~by ~repeat op
-      | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
+      match op with Reduce _ | Scan _ -> true | _ -> false)
+    f
 
 (* [law] whose operations compute by their expansions. *)
 let expanding law c = expanded (fun () -> law c)

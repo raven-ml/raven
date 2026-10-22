@@ -484,26 +484,13 @@ let views =
    definition gives, over float32 updates that repeat targets, among them NaNs
    with payloads, infinities and [-0], compared by bits. *)
 
-let repeat n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
-(* [expanded f] is [f ()] in an interpretation that computes each scatter whose
-   targets may repeat by its expansion ({!Nx.Prim.expand}), and every other
-   operation as eager execution does. *)
+(* [f ()] with each scatter whose targets may repeat computed by its
+   expansion. *)
 let expanded f =
-  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
-    let expansion =
-      match op with
-      | Scatter { unique = false; _ } -> Nx.Prim.expand i ~by ~repeat op
-      | _ -> None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
+  Nx_support.expanded
+    (fun (type r) (op : r Nx.Prim.t) ->
+      match op with Scatter { unique = false; _ } -> true | _ -> false)
+    f
 
 (* Float32 bits: a sum of any of the finite ones is exact in any order. *)
 let finite = [ 0l; 0x80000000l; 0x3f800000l; 0xbf800000l; 0x40000000l ]

@@ -48,14 +48,6 @@ let tag i x = Nx.Prim.traced i (Nx.Prim.form x) (Tag 0)
 let received log = List.rev !log
 let names = list string
 
-(* The [repeat] of an expansion that folds. *)
-let folding n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
 (* The rule *)
 
 let x3 () = vec f32 [| 1.; 2.; 3. |]
@@ -322,7 +314,8 @@ let test_after_return () =
   let expansion = ref ignore in
   Nx.Prim.interpret ~name:"test.extent" Extent
     (fun i ~by op ->
-      (expansion := fun () -> ignore (Nx.Prim.expand i ~by ~repeat:folding op));
+      (expansion :=
+         fun () -> ignore (Nx.Prim.expand i ~by ~repeat:Nx_support.folding op));
       Nx.Prim.eval ~by op)
     (fun _ -> ignore (Nx.add x x));
   invalid ~sub:"Nx.add: an expansion for test.extent after it returned"
@@ -702,7 +695,7 @@ let test_ill_formed () =
 let expanding f =
   Nx.Prim.interpret ~name:"test.expand" Extent
     (fun i ~by op ->
-      match Nx.Prim.expand i ~by ~repeat:folding op with
+      match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
       | Some r -> r
       | None -> Nx.Prim.eval ~by op)
     (fun _ -> f ())
@@ -887,14 +880,16 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
   let primal op = Nx.Prim.map (fun x -> fst (parts i x)) op in
   match op with
   | Map ({ outs = [ _ ]; prog; loads; _ } as m) -> (
-      match (one_node prog, Nx.Prim.expand i ~by ~repeat:folding op) with
+      match
+        (one_node prog, Nx.Prim.expand i ~by ~repeat:Nx_support.folding op)
+      with
       | _, Some r -> r
       | Some node, None ->
           let y, () = Nx.Prim.eval ~by (primal (Map m)) in
           (dual i y (tangent i node loads y), ())
       | None, None -> fail "test.jvp: a map that does not expand")
   | Map _ -> (
-      match Nx.Prim.expand i ~by ~repeat:folding op with
+      match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
       | Some r -> r
       | None -> fail "test.jvp: a map that does not expand")
   | Reduce _ | Scan _ ->
@@ -1335,7 +1330,7 @@ let exprs = Testable.make ~pp:pp_expr ~equal:( = )
 type ('v, 's, 'd) Nx.Prim.payload += Expr : expr -> ('v, 's, 'd) Nx.Prim.payload
 
 let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
-  match Nx.Prim.expand i ~by ~repeat:folding op with
+  match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
   | Some r -> r
   | None ->
       let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
@@ -1880,7 +1875,7 @@ let nesting =
 
 (* [repeat] as a fold, counting its trips. *)
 let fold trips n step init =
-  folding n
+  Nx_support.folding n
     (fun k carry ->
       incr trips;
       step k carry)
