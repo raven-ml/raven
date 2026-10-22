@@ -162,6 +162,7 @@ module Driver = struct
       capability = Capability (capability_key, ());
       word = { at = late_word d.self; raw = 0 };
       edge = d.self;
+      bus = None;
     }
 
   let alloc _ _ n =
@@ -180,6 +181,7 @@ module Driver = struct
   let peer _ _ = false
   let map_peer _ _ _ = None
   let map_host _ _ _ = None
+  let dma _ _ ~fn:_ = Error "late gives no driver its memory"
   let image _ _ = Error "late loads no code"
   let entry () _ = Rig_edge.Absent
   let unload _ () = ()
