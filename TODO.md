@@ -31,6 +31,12 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot once an AMD host runs it, and drop its 16 MiB ring
+- `Rig_amd_pci.machines` and `Rig_nv_pci.machines` grow with each
+  `Machine.t` a process opens on and never shrink: key them by an
+  ephemeron on the machine (about 15 lines a driver), with a test that
+  drops a machine and collects
+- NV over PCI: a refused allocation keeps its memory until its parent is
+  freed
 
 ### limits and size
 
@@ -38,7 +44,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### API
 
-- copies: nx's placement, allocation and assembly through
+- copies: nx2's placement, allocation and assembly through
   `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
   N GPUs costs one wait
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
@@ -52,21 +58,22 @@ raven / llama.cpp (Vulkan; ROCm):
   "two domains allocate and free at once" times out at its 10 s bound in
   60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
   barrier, and in none of 96 with it
-- hardware runs: an AMD host (AMD over PCI since 1090e97484, 31f61d92e5 and
-  dc72412596; the conformance suite's box and fill laws over PCI and on
-  SDMA 4 to 6); root on an NVIDIA host (NV over PCI's open/close law and
-  test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
-  (peers); mlx5 and bnxt NICs; NV's `entry` `No_memory`, which a
-  kernel whose local memory outgrows the GPU's forces
-  (_plans/rig-release/failure-paths.md)
-- baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
-  rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
-  whose only Linux rows are kimchi's; the vendor comparison's scenarios
-  but `load` (packages/rig/bench/compare/run.py) on fudge; rig's
-  `submit/polled/pool-two-domains` (0 words warm) and
-  `submit/polled/stores-30` on fudge, and every rig row a run of one
-  submission changed (`submit/polled/*`, `replay/polled/*`, `device/*`,
-  `drain/*`)
+- hardware runs: AMD over PCI on nonnormal at ad5a46369 (the held sleep,
+  the two-domain growth law, test_amd and test_conformance -f AMD), whose
+  last PCI run was on an earlier form of the wake-up fix; NV through nvidia
+  on fudge at ad5a46369 (test_nv, test_cuda), after `Rig_nv.rm`'s typed
+  commands; the box and fill laws on SDMA 4 to 6; two GPUs (peers); mlx5
+  and bnxt NICs
+- NV over PCI's suites on fudge: test_nv's `map_peer` of a stopped
+  device's memory raises "released"; its dma child is refused behind
+  fudge's translating IOMMU; a heap-edge test and six conformance
+  properties time out on its 5.7 s opens
+- explain fudge's rows that went the wrong way and stay at their old
+  baselines: `submit/polled/pool-two-domains` +9%, `drain/*` +5-8%,
+  `take/submits-100` 599 words more, `buffer/nv/create-drop-64MiB`
+  0.17 -> 0.86 us, `wait/nv/reached` 4.02 -> 4.63 ns, NV `alloc/64KiB`
+  +3-12%, `file/nv/from-device-256M` +0-10%, and the comparison's CUDA
+  start at 172 ms against 134 on 2026-10-11
 
 ### perf
 
@@ -82,34 +89,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
   gpu_metrics) once a decode call's words are shown not to depend on the
   collector's phase, on Metal and CUDA
-- results between about a quarter of the last-level cache and half of it
-  rotate past it under rig's due point (rig_heap.c, heap_cycle_bytes): at
-  a small heap, set-row-8M's 8 MiB results rotate through four buffers,
-  32 MiB against fudge's 24 MiB L3, where three rotated before, and the
-  row went 83 -> 92 us on fudge (counted on the M1 with fudge's floor;
-  fudge's re-time pending). `heap/reuse-8M-x8` is unmeasured under the
-  new due point
-- a pool job's start and join on fudge's 6 P-cores: an empty job costs
-  0.45 µs, and units run 20-40% slower than on one core (5% of it the
-  frequency drop), against nx's f32 64³ gap to MKL on 6 cores (1.66 against
-  1.39 µs): time MKL's or OpenMP's empty parallel region on the same cores,
-  record fudge's rig_pool section, and attribute the gap by an A/B
 - AMD 4 KiB prepared copies are 17-26% slower since 70cca2ae5's wait change
   (the compute route itself starts at 2 MiB): name the row, explain it or
   revert the wait change for small copies
-- CUDA and NV loads of a warm file of 256 MiB take 45 ms in a fresh process
-  on fudge against native CUDA's 26 ms (the read alone 28.5 ms, PCIe 10.7).
-  The copy overlaps its reads and uploads: a second one takes 33 ms. The
-  first takes 8-15 ms more, and a fill of the GPU's buffer first changes
-  nothing: the host's staging halves, made at the first copy, where CUDA
-  makes its own with the context. The steady copy runs at 8.1 GB/s, the
-  read alone at 9.4, CUDA's copy from a mapping of the file at 10.3: time
-  the halves' allocation and first touch, and a staging fill from a mapping
-- read a memory's atomic entry once per path (the dropped patch no longer
-  applies), A/B on fudge's `submit/polled/*` and `copy/*`
-- measure, then keep or cut, with its keep threshold stated before the
-  run: the remote link's inline send against one sender thread
-  (rig_remote's `request/*` and `rail/*` rows)
 
 ## tolk
 
