@@ -15,8 +15,8 @@
     The C stubs read some fields by position, so their order is fixed.
     [rig_memory.c] reads, for the readers and claims [rig.h] declares, the
     fields of {!buffer} and {!memory}, those of {!alloc} up to [entry], those
-    of {!entry} up to [pages], and those of {!device} up to [machine] and its
-    [opened], and takes [Here] to be {!machine}'s first constant constructor.
+    of {!entry} up to [pages], and those of {!device} up to [opened], and
+    takes [Here] to be {!machine}'s first constant constructor.
     [rig.h]'s [enum rig_access] lists {!access}'s constructors in order. A
     change of either changes the C too. *)
 
@@ -109,15 +109,21 @@ type local = Local : 'a Type.Id.t * 'a -> local
 
 (** The type for devices: {!Rig.t}. A device is its facts, fixed at open,
     and its {!live} state. The table of devices holds it at its index until
-    a later device takes its slot. *)
+    a later device takes its slot. C reads its first four fields by position
+    ([rig_memory.c]'s [DEVICE_] constants), so they stay first and in this
+    order, and a new field goes anywhere after them. *)
 type device = {
   index : int;
       (** Its slot, its index in the table of devices, [0] for the host. *)
   name : string;
       (** The opener's name, followed by ["@machine"] on another machine. *)
   machine : machine;  (** The machine it belongs to. *)
+  opened : int;
+      (** The open that made it, unique for the process. The open takes it
+          after its slot, so a later device of the slot has a larger one. *)
   kind : kind;  (** What it is, with the module and handle that run it. *)
   arch : string;  (** Its architecture, as its driver names it. *)
+  bus : string option;  (** {!Rig.bus}. *)
   maps_host : bool;  (** Whether it maps host memory. *)
   alignment : int;  (** {!Rig.alignment}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
@@ -139,12 +145,6 @@ type device = {
       (** The value its timeline started after, which its slot's word held
           when it opened: its points' values lie above it, and those of the
           earlier devices of its slot at or below it. *)
-  opened : int;
-      (** The open that made it, unique for the process. The open takes it
-          after its slot, so a later device of the slot has a larger one. *)
-  bus : string option;
-      (** {!Rig.bus}. Last, since C reads the fields before it by position
-          ([rig_memory.c]). *)
 }
 
 (** The type for a device's state: its C record, its lock, its memory and

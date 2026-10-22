@@ -200,10 +200,10 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
    memory { dev; host; address; handle; alloc }, its allocation
    { owner; host; count; generation; why; entry; ... }, the allocation's
    entry { owner; backing; bytes; access; stamps; ... } and a device
-   { index; name; machine; ...; opened }, as rig's Def module lays them
+   { index; name; machine; opened; ... }, as rig's Def module lays them
    out. */
 
-enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED = 16 };
+enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC };
 enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
