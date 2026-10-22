@@ -173,22 +173,32 @@ let reset base core =
             lor put L.nv_priscv_riscv_bcr_ctrl_brfetch 1 );
       ]
   | `Falcon ->
-      (* A falcon with a RISC-V core starts on it: select the falcon, and give
-         it the chip's identity. *)
+      (* A falcon with a RISC-V core starts on it: select the falcon, unless it
+         is selected already, which NVIDIA's RM skips
+         (kflcnSwitchToFalcon_GA102), and give it the chip's identity. A
+         selection made again after FWSEC ran never reported itself valid. *)
       [
         When
           ( hwcfg2,
             mask L.nv_pfalcon_falcon_hwcfg2_riscv,
             Not 0,
             [
-              Write (bcr, 0);
-              Poll
-                ( "the falcon core's selection",
-                  bcr,
-                  mask L.nv_priscv_riscv_bcr_ctrl_valid,
+              When
+                ( bcr,
+                  mask L.nv_priscv_riscv_bcr_ctrl_core_select,
                   Is
-                    (put L.nv_priscv_riscv_bcr_ctrl_valid
-                       Defs.nv_priscv_riscv_bcr_ctrl_valid_true) );
+                    (put L.nv_priscv_riscv_bcr_ctrl_core_select
+                       Defs.nv_priscv_riscv_bcr_ctrl_core_select_riscv),
+                  [
+                    Write (bcr, 0);
+                    Poll
+                      ( "the falcon core's selection",
+                        bcr,
+                        mask L.nv_priscv_riscv_bcr_ctrl_valid,
+                        Is
+                          (put L.nv_priscv_riscv_bcr_ctrl_valid
+                             Defs.nv_priscv_riscv_bcr_ctrl_valid_true) );
+                  ] );
               Copy (Defs.nv_pmc_boot_0, base + L.nv_pfalcon_falcon_rm);
             ] );
       ]
