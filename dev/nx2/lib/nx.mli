@@ -241,11 +241,11 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
     still answer. Unless it lost a race between domains (below), an operation
-    that raises before it takes [x]'s memory kills nothing: one refused by its
-    checks, or declined by its set's kernels where its result goes to fresh
-    memory. One that writes its result into [x]'s memory (below) takes the
-    memory before its kernels answer, so if they decline, or it raises
-    otherwise, [x] and its handles may be dead.
+    that raises before it takes a handle's memory kills nothing: one refused
+    by its checks, or declined by its set's kernels where its result goes to
+    fresh memory. One that writes its result into a handle's memory (below)
+    takes the memory before its kernels answer, so if they decline, or it
+    raises otherwise, [x] and its handles may be dead.
 
     A movement, which rearranges elements without computing them ({!reshape},
     {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
