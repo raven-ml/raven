@@ -165,7 +165,8 @@ val resize : 's lock -> int -> unit
     supports that its bridge takes. A bound function keeps its size, and so
     does one whose resize the kernel refuses for another reason than room or
     permission, so its BAR may stay small. Raises {!Fail.Failed}, naming the
-    file, if the process may not write it. *)
+    file, if the process may not write it, and [Failure] for an error the
+    kernel gives only for a bug in this library. *)
 
 (** {1:peers Peer requests} *)
 

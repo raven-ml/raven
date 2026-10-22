@@ -549,9 +549,22 @@ let attach { files = m; bus; _ } ~siblings:others =
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size
    refuses it with ENOSPC, and a smaller one may fit. A file the process may not
-   write is refused, naming it. Any other refusal holds for every size, so the
-   BAR keeps its own. The bitmap is an [int], whose highest bit is [largest]. *)
+   write is refused, naming it. Linux 6.12's other refusals hold for every size,
+   so the BAR keeps its own: EBUSY for a BAR in use, ENOTSUPP where the
+   firmware's assignment must stay or the function has no resizable BAR, ENOENT
+   where no bridge window can be released, ENOMEM, ENODEV for a function that
+   left the bus, and EINVAL where the boot console cannot leave a VGA function.
+   Any other errno comes from a mistake of this library's and raises. The
+   bitmap is an [int], whose highest bit is [largest]. *)
 let largest = Sys.int_size - 2
+
+(* Linux's own errno for an operation a device does not support, which [Unix]
+   does not name. *)
+let enotsupp = Unix.EUNKNOWNERR 524
+
+let keeps_size : Unix.error -> bool = function
+  | EBUSY | ENOENT | ENOMEM | ENODEV | EINVAL -> true
+  | e -> e = enotsupp
 
 let resize { files = m; bus; _ } i =
   let file = path m bus (strf "resource%d_resize" i) in
@@ -561,12 +574,13 @@ let resize { files = m; bus; _ } i =
       if k >= 0 then
         if sizes land (1 lsl k) = 0 then try_from (k - 1)
         else
+          Fail.bug ("writing " ^ file) @@ fun () ->
           match put m file (string_of_int k) with
           | () -> ()
           | exception Unix.Unix_error (ENOSPC, _, _) -> try_from (k - 1)
           | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
               refused file e
-          | exception Unix.Unix_error _ -> ()
+          | exception Unix.Unix_error (e, _, _) when keeps_size e -> ()
     in
     try_from largest
 
