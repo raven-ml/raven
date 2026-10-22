@@ -43,8 +43,9 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
-(* [op]'s expansion computed now, its loops folded. *)
-let expand op = Expand.folded Exec.run ~by:"t" op
+(* [op]'s expansion computed now, which runs no loop. *)
+let expand op =
+  Expand.run Exec.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op
 
 let maps =
   group "maps"

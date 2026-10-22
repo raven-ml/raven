@@ -44,7 +44,7 @@
       Where a unit has a NaN term, the result is the first such unit's
       reduction into the result's dtype, the first NaN term quieted; a complex
       product with a NaN part and no NaN term is the quiet NaN in each part.
-    - A [Logsumexp] and [Moments] compute by their expansion ({!Expand.run}),
+    - A [Logsumexp] and [Moments] compute by their expansion ({!Expand.reduced}),
       whose reductions compute as above.
 
     For an exact or ranked reduction, each device moves one partial per output

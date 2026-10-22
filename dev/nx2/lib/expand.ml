@@ -770,6 +770,17 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
 
 (* Narrow dtypes *)
 
+(* Whether [dt] is a base dtype: float32, float64, the 8- to 64-bit integers
+   and bool. *)
+let base (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Float64 | D.Int64 | D.Uint64 | D.Int32 | D.Uint32 | D.Int16
+  | D.Uint16 | D.Int8 | D.Uint8 | D.Bool ->
+      true
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
+  | D.Int4 | D.Uint4 | D.Bit | D.Complex64 | D.Complex128 ->
+      false
+
 (* The bits [b] of an element of [from], as an element of [into], which holds
    its value exactly. *)
 let widened_bits (D.Any from) b (D.Any into) =
@@ -788,13 +799,13 @@ let widened_bits (D.Any from) b (D.Any into) =
       | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
 
 (* The dtype a selection, a constant or a copy of [d] computes in: [d] itself
-   for a base dtype ({!Nx_kernel.base}); for a float of 8 or 16 bits, the
+   for a base dtype ({!base}); for a float of 8 or 16 bits, the
    unsigned integer of its width, over the same bits; for a sub-byte dtype, its
    byte-wide accumulator, which holds each of its codes and gives it back; [d]
    itself otherwise. float32 would not do for the floats of 8 or 16 bits: a
    store from it quiets their signalling NaNs. *)
 let kept (D.Any dt as d) =
-  if Nx_kernel.base d then d
+  if base d then d
   else
     match D.bits dt with
     | 8 -> D.Any D.Uint8
@@ -835,7 +846,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     match (node : P.node) with
     | Op1 ((Cast | Bitcast), _, _) | In _ | Coord _ -> false
     | Const _ | Op1 _ | Op2 _ | Op3 _ ->
-        Array.for_all (fun d -> Nx_kernel.base (wide d) || stays d) all
+        Array.for_all (fun d -> base (wide d) || stays d) all
         && not (Array.for_all stays all)
   in
   if not widens then None
@@ -1600,20 +1611,16 @@ let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
       let y = apply ~by (Value.Gather { axis; idx; x = x' }) in
       Some (cast_to apply ~by (Prim.dtype x) y)
 
-(* A loop's trip: a position known now, where the expansion folds, or an
-   interpretation's index, a 0-d int64 value. *)
-type 'd trip = At of int | Index of 'd Value.index
-
 (* A scatter whose targets may repeat as a loop of one unique scatter per
    position along [axis], in order: a position's updates differ off [axis], so
    their targets do, and updates to one target land in C order. A sum
-   associates left to right. A trip at a known position reads that position
-   of [idx] and [updates] as views; one at an index gathers it at the index
-   broadcast over a position's slice. Both have one form at every trip. *)
+   associates left to right. A trip gathers its position of [idx] and
+   [updates] at its index, a 0-d int64 value, broadcast over a position's
+   slice. *)
 let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     ~(loop :
        int ->
-       (d trip -> d Value.any list -> d Value.any list) ->
+       (d Value.index -> d Value.any list -> d Value.any list) ->
        d Value.any list ->
        d Value.any list) combine axis idx (updates : (v, s, d) Value.t)
     (into : (v, s, d) Value.t) : (v, s, d) Value.t =
@@ -1625,24 +1632,12 @@ let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   else
     let ones = Iarray.init r (fun _ -> 1) in
     let slice = Iarray.init r (fun a -> if a = axis then 1 else s.(a)) in
-    let window i =
-      Iarray.init r (fun a ->
-          if a = axis then { M.start = i; count = 1; step = 1 }
-          else { M.start = 0; count = s.(a); step = 1 })
-    in
-    let step t carry =
-      (* An index, broadcast once per trip over a position's slice. *)
-      let t =
-        match t with
-        | At _ -> t
-        | Index k ->
-            let k = apply ~by (Value.Move (Reshape ones, k)) in
-            Index (apply ~by (Value.Move (Broadcast slice, k)))
-      in
+    let step k carry =
+      (* The index, broadcast once per trip over a position's slice. *)
+      let k = apply ~by (Value.Move (Reshape ones, k)) in
+      let pos = apply ~by (Value.Move (Broadcast slice, k)) in
       let at (type w q) (x : (w, q, d) Value.t) : (w, q, d) Value.t =
-        match t with
-        | At i -> apply ~by (Value.Move (Slice (window i), x))
-        | Index pos -> apply ~by (Value.Gather { axis; idx = pos; x })
+        apply ~by (Value.Gather { axis; idx = pos; x })
       in
       match carry with
       | [ acc ] ->
@@ -1965,7 +1960,7 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by ~bits
 (* A loop of [n] trips from [init]: [loop n step init]. *)
 type 'd loop =
   int ->
-  ('d trip -> 'd Value.any list -> 'd Value.any list) ->
+  ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
   'd Value.any list ->
   'd Value.any list
 
@@ -2051,12 +2046,6 @@ let mapx (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     (P.of_exprs ~ins:(Iarray.of_list ins) [| E.any e |])
     dt
     (Iarray.of_list (List.map load xs))
-
-(* A trip's index as a 0-d value. *)
-let trip_index (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by :
-    d trip -> d Value.index = function
-  | Index k -> k
-  | At i -> mapx apply ~by [||] D.Int64 [] (i64 i)
 
 (* [x]'s matrices as [b; m; n], and its batch's shape. *)
 let matrices (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
@@ -2175,9 +2164,9 @@ let cholesky (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let b = shape.(0) and n = shape.(1) in
   let x i = E.input i dt and k = E.input 3 D.Int64 in
   let zero = E.const dt (D.zero dt) in
-  let step t = function
+  let step j = function
     | [ l ] ->
-        let j = trip_index apply ~by t and l = Prim.expect dt l in
+        let l = Prim.expect dt l in
         let s =
           product apply ~by (2, 2) l (conjugate apply ~by (row apply ~by j l))
         in
@@ -2252,9 +2241,9 @@ let solve (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     mapx apply ~by [| b; n; n |] dt [ Value.Any a ]
       E.(where (rows = cols) diagonal (where (rows > cols) v zero))
   in
-  let step trip = function
+  let step i = function
     | [ y ] ->
-        let i = trip_index apply ~by trip and y = Prim.expect dt y in
+        let y = Prim.expect dt y in
         let ti = row apply ~by i t in
         let s = product apply ~by (2, 1) ti y in
         let tii = column apply ~by i ti in
@@ -2304,9 +2293,8 @@ let lu (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let flat x = reshape apply ~by [| b; 1 |] x in
   (* Row [j] and row [p] interchanged: the row each row reads. *)
   let swapped j p r = E.(where (r = j) p (where (r = p) j r)) in
-  let step t = function
+  let step j = function
     | [ w; perm; pivots ] ->
-        let j = trip_index apply ~by t in
         let w = Prim.expect dt w in
         let perm = Prim.expect D.Int64 perm
         and pivots = Prim.expect D.Int64 pivots in
@@ -2462,9 +2450,8 @@ let householder (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let zero = E.const dt (D.zero dt) and one = E.const dt (D.one dt) in
   let fl v = E.const f.re v in
   let col = [| b; m; 1 |] and one_by = [| b; 1; 1 |] in
-  let step t = function
+  let step i = function
     | [ r; vs; taus ] ->
-        let i = trip_index apply ~by t in
         let r = Prim.expect dt r in
         let vs = Prim.expect dt vs and taus = Prim.expect dt taus in
         let c = column apply ~by i r in
@@ -2584,7 +2571,7 @@ let accumulate (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         let q = Prim.expect dt q in
         let i =
           mapx apply ~by [||] D.Int64
-            [ Value.Any (trip_index apply ~by t) ]
+            [ Value.Any t ]
             E.(last - input 0 D.Int64)
         in
         let v = column apply ~by i vs and tau = column apply ~by i taus in
@@ -2986,7 +2973,6 @@ let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     | y :: count :: vs ->
         let y = Prim.expect dt y and count = Prim.expect D.Int64 count in
         let col = [| b; k; 1 |] in
-        let t = trip_index apply ~by t in
         let pi =
           mapx apply ~by col D.Int64 [ Value.Any t ]
             (partner k E.(j 0 mod i64 (rounds k)) rows)
@@ -3171,19 +3157,25 @@ let linalg : type d r.
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
       Some (solve apply ~by ~loop triangle ~adjoint ~unit_diagonal a b)
 
-(* [op]'s expansion, its loops run by [loop]. *)
-let expansion : type r.
+let reduced (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by
+    layout axes prog (rs : (d, q) Value.reductions)
+    (loads : d Value.load iarray) : q option =
+  if Iarray.exists Prim.is_padded loads || not (simple_reduce prog rs) then
+    reduce apply ~by layout axes prog rs loads
+  else None
+
+let run : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
-    loop:
+    repeat:
       ('d.
       int ->
-      ('d trip -> 'd Value.any list -> 'd Value.any list) ->
+      ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
       'd Value.any list ->
       'd Value.any list) ->
     r Value.prim ->
     r option =
- fun apply ~by ~loop op ->
+ fun apply ~by ~repeat:loop op ->
   match op with
   | Value.Map { layout; prog; outs; loads }
     when Iarray.exists Prim.is_padded loads ->
@@ -3209,10 +3201,8 @@ let expansion : type r.
         | Const _ | Coord _ | Op1 _ | Op2 _ | Op3 _ -> value o
       in
       Some (results outs (List.map out (Iarray.to_list prog.outs)))
-  | Value.Reduce { layout; axes; prog; reductions; loads }
-    when Iarray.exists Prim.is_padded loads
-         || not (simple_reduce prog reductions) ->
-      reduce apply ~by layout axes prog reductions loads
+  | Value.Reduce { layout; axes; prog; reductions; loads } ->
+      reduced apply ~by layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction = r; loads; carry }
     when Iarray.exists Prim.is_padded loads || not (simple_scan prog r) ->
       scan apply ~by layout axis prog r loads carry
@@ -3239,25 +3229,7 @@ let expansion : type r.
       let layout = L.contiguous (Prim.shape x) in
       Option.map fst
         (widened apply ~by layout prog Value.[ dt ] [| Value.Plain x |])
-  | Value.Reduce _ | Value.Scan _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Scan _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+  | Value.Check _ ->
       None
 
-let run (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    ~(repeat :
-       'd.
-       int ->
-       ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
-       'd Value.any list ->
-       'd Value.any list) op =
-  let loop n step init = repeat n (fun k carry -> step (Index k) carry) init in
-  expansion apply ~by ~loop op
-
-let folded (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by op =
-  let loop n step init =
-    let rec go i carry =
-      if i = n then carry else go (i + 1) (step (At i) carry)
-    in
-    go 0 init
-  in
-  expansion apply ~by ~loop op
