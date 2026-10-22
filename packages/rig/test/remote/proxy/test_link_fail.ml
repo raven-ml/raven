@@ -561,6 +561,58 @@ let drained_until_bound () =
         ~than:(Float.of_int bound -. skew)
         t
 
+(* After the abort the link reads a peer that sends nothing, as a stopped
+   process does, only until the bound from its last byte: the job fails of
+   another cause half the bound in, and its close returns at the bound. *)
+let drained_until_silent () =
+  let d, p = connected () in
+  let job = Link.job () in
+  let t0 = Unix.gettimeofday () in
+  ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
+  Thread.delay (Float.of_int bound /. 2.);
+  let t_fail = Unix.gettimeofday () in
+  Link.fail job why;
+  Link.close job;
+  let t = Unix.gettimeofday () -. t0 in
+  equal ~msg:"the job" state (Link.Failed why) (Link.wait job ~ms:0);
+  equal ~msg:"what the peer received" (list frame)
+    [ (k_abort, str why) ]
+    (frames p);
+  Unix.close p;
+  at_least ~msg:"the seconds until the close returned" float_exact
+    ~than:(Float.of_int bound -. skew)
+    t;
+  less ~msg:"the seconds until the close returned" float_exact
+    ~than:(t_fail -. t0 +. Float.of_int bound -. skew)
+    t
+
+(* A peer quiet until the job fails, then beating a while, as a peer that has
+   not read the abort yet does: each byte it sends restarts its silence, so the
+   link reads it for the bound after the failure, the most a read after an
+   abort lasts. *)
+let drained_while_beating () =
+  let d, p = connected () in
+  let job = Link.job () in
+  ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
+  Thread.delay (Float.of_int bound /. 2.);
+  let t_fail = Unix.gettimeofday () in
+  Link.fail job why;
+  let stop = beating p in
+  let closed =
+    spawn (fun () ->
+        Link.close job;
+        Unix.gettimeofday ())
+  in
+  Thread.delay (Float.of_int bound /. 2.);
+  stop ();
+  let t = closed () -. t_fail in
+  Unix.close p;
+  equal ~msg:"the job" state (Link.Failed why) (Link.wait job ~ms:0);
+  at_least ~msg:"the seconds from the failure until the close returned"
+    float_exact
+    ~than:(Float.of_int bound -. skew)
+    t
+
 let () =
   Watchdog.start ();
   (* A failed link closes its socket once its peer has ended its stream or
@@ -607,5 +659,9 @@ let () =
                stalled_abort;
              slow "a link reads its peer's bytes until the bound, then closes"
                drained_until_bound;
+             slow "a link reads a silent peer's bytes until its silence"
+               drained_until_silent;
+             slow "a link reads a peer that beats after the failure"
+               drained_while_beating;
            ];
        ])

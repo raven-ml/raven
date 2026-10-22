@@ -260,15 +260,16 @@ val launched : unit -> (t, string) result option
     other processes an abort with its root cause, after the message each
     connection is sending, and ends its side of each connection. It then
     reads and discards what arrives on each connection until the other end
-    has ended its side too, for 10 seconds at most, and closes the
-    connection only then, since a connection closed over unread bytes is
-    reset, which may lose the abort. {!serve} returns, and {!connect} and
-    {!launched} return their [Error], once every connection of the job is
-    closed, and the controller's process waits for its last job's
-    connections at exit. A process misses an abort only when the network
-    fails, when it reads nothing of the connection for 10 seconds, or when
-    the aborting process ends otherwise, such as by a signal. It then
-    records its own cause, such as the end of the connection.
+    has ended its side too, for 10 seconds at most and no longer than 10
+    seconds after the other end's last byte, and closes the connection only
+    then, since a connection closed over unread bytes is reset, which may
+    lose the abort. {!serve} returns, and {!connect} and {!launched} return
+    their [Error], once every connection of the job is closed, and the
+    controller's process waits for its last job's connections at exit. A
+    process misses an abort only when the network fails, when it reads
+    nothing of the connection for 10 seconds, or when the aborting process
+    ends otherwise, such as by a signal. It then records its own cause, such
+    as the end of the connection.
 
     An agent fails its process with the root cause ({!Rig.fail}) before it
     returns from {!serve}. On the controller, each host and proxy of the job

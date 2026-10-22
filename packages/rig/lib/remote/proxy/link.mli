@@ -57,9 +57,10 @@
     send failed sends no abort, its stream cut. A failed link sends no
     message it is given and handles no message it receives. It gives up the
     abort's send when it makes no progress for 10 seconds, and the reading
-    10 seconds after it starts. A peer misses the abort in the cases that
-    section lists, and this process's end before {!close} has returned is
-    one of them. Nothing raises from a C thread, and nothing calls OCaml.
+    10 seconds after it starts, or once the peer has sent nothing for 10
+    seconds, as a stopped process does. A peer misses the abort in the cases
+    that section lists, and this process's end before {!close} has returned
+    is one of them. Nothing raises from a C thread, and nothing calls OCaml.
     The process learns of the failure from {!failed}, {!wait} or a
     function's [Error].
 
