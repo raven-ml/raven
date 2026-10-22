@@ -221,6 +221,12 @@ let bits (type b d) (t : (float, b, d) Nx.t) =
       Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint16 t))
   | dt -> failf "no bits for %a" D.pp dt
 
+(* [bits t], every NaN alike: a product leaves a NaN's sign and payload
+   unspecified ({!Nx_kernel.S.contract}). *)
+let product_bits t =
+  let nan = Array.map Float.is_nan (Nx.to_array (Nx.cast Nx.float64 t)) in
+  Array.map2 (fun n b -> if n then Int64.min_int else b) nan (bits t)
+
 (* Weights *)
 
 (* A view of every part that keeps them a weight, where its logical shape and
@@ -948,8 +954,8 @@ let placement_law ((_, w), c) =
   let _, _, k = dims w in
   let x = random_floats [| 3; k |] in
   equal ~msg:"apply" (array int64)
-    (bits (Nx_quant.apply w x))
-    (bits (Nx_quant.apply wp (Nx.place Mem.on x)))
+    (product_bits (Nx_quant.apply w x))
+    (product_bits (Nx_quant.apply wp (Nx.place Mem.on x)))
 
 (* Work. Kernels that count the positions their maps compute, over four memory
    devices and over one, show where a weight decodes: each device all of [k], or

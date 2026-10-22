@@ -107,6 +107,90 @@ module Declining = struct
     | _ -> Nx_cpu.apply2 k ~dst x y
 end
 
+module Blocked = struct
+  include Nx_cpu
+
+  let name = "nx.blocks"
+  let block = 4096
+  let shape x = Nx_array.Layout.shape (Nx_array.layout x)
+
+  let ok what = function
+    | Nx_array.Done -> ()
+    | _ -> failwith ("nx.blocks: nx.cpu refused a " ^ what)
+
+  (* [x]'s elements [lo, hi) along [axis]. *)
+  let slice axis lo hi x =
+    let r =
+      Array.map
+        (fun n -> { Nx_array.Move.start = 0; count = n; step = 1 })
+        (shape x)
+    in
+    r.(axis) <- { start = lo; count = hi - lo; step = 1 };
+    Option.get (Nx_array.move (Slice (Iarray.of_array r)) x)
+
+  (* Lane order's tree of [n] blocks from [lo]: the left part holds the
+     largest power of two of them below their count. *)
+  let rec tree add parts lo n =
+    if n = 1 then parts.(lo)
+    else begin
+      let h = ref 1 in
+      while 2 * !h < n do
+        h := 2 * !h
+      done;
+      add (tree add parts lo !h) (tree add parts (lo + !h) (n - !h))
+    end
+
+  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+    if Iarray.length contracting > 1 then
+      failwith "nx.blocks: a contraction over several pairs";
+    let k =
+      Iarray.fold_left (fun k (i, _) -> k * (shape a).(i)) 1 contracting
+    in
+    if k = 0 then Nx_cpu.contract ~order ~batch ~contracting ~acc ~dst ~init a b
+    else begin
+      let ia, ib = Iarray.get contracting 0 in
+      let (Nx_array.Dtype.Any ad) = acc in
+      let fresh () = Nx_array.create (Nx_array.device dst) ad (shape dst) in
+      let part i =
+        let lo = i * block and hi = Int.min k ((i + 1) * block) in
+        let y = fresh () in
+        ok "contraction"
+          (Nx_cpu.contract ~order:Chain ~batch ~contracting ~acc ~dst:y
+             ~init:None (slice ia lo hi a) (slice ib lo hi b));
+        y
+      in
+      let add x y =
+        let z = fresh () in
+        ok "sum" (Nx_cpu.apply2 (Binary Add) ~dst:z x y);
+        z
+      in
+      let parts = Array.init (((k - 1) / block) + 1) part in
+      let n = Array.length parts in
+      let init =
+        Option.map
+          (fun i ->
+            let z = fresh () in
+            ok "cast" (Nx_cpu.apply1 Cast ~dst:z i);
+            z)
+          init
+      in
+      let sum =
+        match (order : Nx_kernel.order) with
+        | Lane ->
+            let t = tree add parts 0 n in
+            Option.fold ~none:t ~some:(add t) init
+        | Chain ->
+            let first i = add i parts.(0) in
+            let s = ref (Option.fold ~none:parts.(0) ~some:first init) in
+            for i = 1 to n - 1 do
+              s := add !s parts.(i)
+            done;
+            !s
+      in
+      Nx_cpu.apply1 Cast ~dst sum
+    end
+end
+
 (* NaN bits *)
 
 (* The bytes of [dt]'s floats, or of its parts, and their exponent and

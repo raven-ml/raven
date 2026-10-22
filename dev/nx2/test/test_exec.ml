@@ -1499,16 +1499,23 @@ let spread st =
   else
     Float.ldexp (Random.State.float st 2. -. 1.) (Random.State.int st 41 - 20)
 
+(* A contraction's bits, every NaN alike: a contraction leaves a NaN's sign
+   and payload unspecified, and windows keep the bits of the rest
+   ({!Nx_kernel.S}). Where a float16 operand overflows to infinities, their
+   sums are NaNs. *)
+let product_bits v = if Float.is_nan v then "nan" else float_bits v
+let complex_product_bits c = product_bits c.Complex.re ^ "," ^ product_bits c.im
+
 let ckinds =
   let float dt acc =
-    Ckind { cdtype = dt; acc = D.Any acc; cshow = float_bits; draw = spread }
+    Ckind { cdtype = dt; acc = D.Any acc; cshow = product_bits; draw = spread }
   in
   let complex dt =
     Ckind
       {
         cdtype = dt;
         acc = D.Any dt;
-        cshow = complex_bits;
+        cshow = complex_product_bits;
         draw = (fun st -> { Complex.re = spread st; im = spread st });
       }
   in
@@ -1602,11 +1609,25 @@ let pair_axes c p =
 let tile_starts extent t =
   List.init (t + 1) (fun j -> (j * (extent / t)) + Stdlib.min j (extent mod t))
 
-let ccase =
+(* Extents of one contracting pair either side of lane order's blocks of
+   1024 terms, 512 complex products, and of a contraction's blocks of 4096
+   products, and of several of those. *)
+let pair_extents =
+  [
+    0; 1; 2; 3; 5; 511; 512; 513; 1023; 1024; 1025; 1500; 2047; 2048; 2049;
+    4095; 4096; 4097; 8191; 8192; 8193; 12289; 20481;
+  ]
+
+(* Cases over one contracting pair of [extents], or, where [pairs], over
+   two a quarter of the time. *)
+let ccase_of ~pairs ~extents =
   let open Gen in
   with_pp pp_ccase
     (let* ck = of_list ckinds in
-     let* two = frequency [ (3, constant false); (1, constant true) ] in
+     let* two =
+       if pairs then frequency [ (3, constant false); (1, constant true) ]
+       else constant false
+     in
      let* ccut =
        if two then
          of_list
@@ -1625,21 +1646,13 @@ let ccase =
      in
      let* rows = int_range 1 3 in
      let* cols = int_range 1 3 in
-     (* Extents either side of lane order's blocks: of 1024 terms, 512
-        complex products. *)
      let* ks =
        if two then
          let+ k0 = of_list [ 1; 2; 3; 5 ]
-         and+ k1 = of_list [ 0; 1; 3; 300; 511; 700 ] in
+         and+ k1 = of_list [ 0; 1; 3; 300; 511; 700; 1700 ] in
          [| k0; k1 |]
        else
-         let+ k =
-           of_list
-             [
-               0; 1; 2; 3; 5; 511; 512; 513; 1023; 1024; 1025; 1500; 2048; 2049;
-               4096;
-             ]
-         in
+         let+ k = of_list extents in
          [| k |]
      in
      let* order = of_list [ Nx_kernel.Lane; Chain ] in
@@ -1647,6 +1660,18 @@ let ccase =
      let* iwhere = of_list [ Init_as_result; Init_everywhere ] in
      let+ cseed = int in
      { ck; nb; rows; cols; ks; ccut; order; init; iwhere; cseed })
+
+let ccase = ccase_of ~pairs:true ~extents:pair_extents
+
+(* Contractions over one pair either side of a contraction's blocks, for a
+   library that sums them its own way ({!Nx_support.Blocked}). *)
+let bcase =
+  ccase_of ~pairs:false
+    ~extents:
+      [
+        1; 2; 1023; 1024; 1025; 2047; 2048; 2049; 4095; 4096; 4097; 8191; 8192;
+        8193; 12289; 20481;
+      ]
 
 (* The case's operands and its contraction's [batch] and [contracting]
    pairs. *)
@@ -1685,7 +1710,36 @@ let ccontract (type v s d) (cshow : v -> string) c acc batch contracting
   in
   Array.map cshow (elements y)
 
-let law_ccase c =
+(* One kernel library's sets of memory devices: one, three and four, and a
+   2 x 2 mesh of the four. *)
+module type Sets = sig
+  module One : Nx.Devices
+  module Three : Nx.Devices
+  module Four : Nx.Devices
+
+  val mesh : Four.d Nx.Mesh.t
+end
+
+module Cpu_sets = struct
+  module One = Nx.Host
+  module Three = Set3
+  module Four = Set4
+
+  let mesh = mesh4
+end
+
+module Blocked_sets = struct
+  let on ds = Nx.devices ~kernels:(module Nx_support.Blocked) (List.map m ds)
+
+  module One = (val on [ 0 ])
+  module Three = (val on [ 0; 1; 2 ])
+  module Four = (val on [ 0; 1; 2; 3 ])
+
+  let mesh = Nx.Mesh.v Four.v [ ("a", 2); ("b", 2) ]
+end
+
+(* [pairs] where cases may have no product or two pairs. *)
+let law_cut ~pairs (module S : Sets) c =
   let (Ckind k) = c.ck in
   let a, b, init, batch, contracting = ccase_values k.cdtype k.draw c in
   let cut_pair, tiles =
@@ -1698,8 +1752,9 @@ let law_ccase c =
   let kc = c.ks.(cut_pair) in
   let terms = Array.fold_left ( * ) 1 c.ks in
   let one_pair = Array.length c.ks = 1 in
-  (* Products per block of lane order, and where windows of one pair end. *)
-  let block = if D.is D.Complex k.cdtype then 512 else 1024 in
+  (* Products per block of a contraction, and where windows of one pair
+     end. *)
+  let block = 4096 in
   let edges = List.filter (fun s -> s > 0 && s < kc) (tile_starts kc tiles) in
   cover ("a contraction of " ^ D.name k.cdtype) true;
   cover "lane order" (c.order = Lane);
@@ -1711,11 +1766,13 @@ let law_ccase c =
     match c.ccut with
     | Pair_rows _ | Pair_batch _ | Batch_rows _ -> true
     | _ -> false);
-  cover "no product" (terms = 0);
+  if pairs then begin
+    cover "no product" (terms = 0);
+    cover "a cut on a pair after the first" (cut_pair > 0);
+    cover "two pairs cut" (c.ccut = Pairs)
+  end;
   cover "an empty window along the cut pair" (kc > 0 && kc < tiles);
   cover "an uneven cut" (kc mod tiles <> 0);
-  cover "a cut on a pair after the first" (cut_pair > 0);
-  cover "two pairs cut" (c.ccut = Pairs);
   cover "a pair cut over both mesh axes"
     (match c.ccut with Pair_mesh _ -> true | _ -> false);
   cover "a pair cut beside rows"
@@ -1724,32 +1781,39 @@ let law_ccase c =
     (match c.ccut with Pair_batch _ -> true | _ -> false);
   cover "a pair cut in b alone beside a's batch and rows"
     (match c.ccut with Batch_rows _ -> true | _ -> false);
-  cover "a lane block that window edges split"
-    (c.order = Lane && one_pair && terms > block
-    && List.exists (fun e -> e mod block <> 0) edges);
-  cover "several lane blocks, each in one window"
-    (c.order = Lane && one_pair && terms > block
+  let split = one_pair && List.exists (fun e -> e mod block <> 0) edges in
+  cover "a lane block that window edges split" (c.order = Lane && split);
+  cover "a chain block that window edges split" (c.order = Chain && split);
+  cover "several blocks, each in one window"
+    (one_pair && terms > block
     && List.for_all (fun e -> e mod block = 0) edges);
-  let expected = ccontract k.cshow c k.acc batch contracting a b init in
+  cover "several blocks, some split by window edges"
+    (one_pair && terms > 2 * block && split);
+  let expected =
+    ccontract k.cshow c k.acc batch contracting (Nx.place S.One.on a)
+      (Nx.place S.One.on b) (Nx.place S.One.on init)
+  in
   let at (type d) (pa : d Nx.Placement.t) (pb : d Nx.Placement.t)
       (pi : d Nx.Placement.t) =
     ccontract k.cshow c k.acc batch contracting (Nx.place pa a) (Nx.place pb b)
       (Nx.place pi init)
   in
-  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let mesh cuts = Nx.Placement.mesh S.mesh cuts in
   let result cuts =
     match c.iwhere with
     | Init_as_result -> mesh cuts
-    | Init_everywhere -> Set4.on
+    | Init_everywhere -> S.Four.on
   in
   let pa p = fst (pair_axes c p) and pb p = snd (pair_axes c p) in
   let actual =
     match c.ccut with
-    | Pair3 p -> at (Set3.split ~axis:(pa p)) (Set3.split ~axis:(pb p)) Set3.on
-    | Pair4 p -> at (Set4.split ~axis:(pa p)) (Set4.split ~axis:(pb p)) Set4.on
+    | Pair3 p ->
+        at (S.Three.split ~axis:(pa p)) (S.Three.split ~axis:(pb p)) S.Three.on
+    | Pair4 p ->
+        at (S.Four.split ~axis:(pa p)) (S.Four.split ~axis:(pb p)) S.Four.on
     | Pair_mesh p ->
         let both axis = mesh [ (axis, [ "a"; "b" ]) ] in
-        at (both (pa p)) (both (pb p)) Set4.on
+        at (both (pa p)) (both (pb p)) S.Four.on
     | Pair_rows p ->
         let rows = if Option.is_some c.nb then 1 else 0 in
         at
@@ -1768,7 +1832,7 @@ let law_ccase c =
         at
           (mesh [ (pa 0, [ "a" ]); (pa 1, [ "b" ]) ])
           (mesh [ (pb 0, [ "a" ]); (pb 1, [ "b" ]) ])
-          Set4.on
+          S.Four.on
   in
   equal (array string) expected actual
 
@@ -1805,10 +1869,15 @@ let nx_case =
   let open Gen in
   with_pp pp_nx_case
     (let* nk = of_list ckinds in
-     let* product = of_list [ Matmul; Dot_vector; Einsum ] in
-     (* Few rows or columns sum in lane order, more in chain order. *)
-     let* nrows = of_list [ 1; 2; 5; 9 ] in
-     let* ncols = of_list [ 1; 2; 5; 9 ] in
+     (* Few rows or columns sum in lane order, more in chain order: half the
+        cases have many of both. *)
+     let* many = bool in
+     let* product =
+       of_list
+         (if many then [ Matmul; Einsum ] else [ Matmul; Dot_vector; Einsum ])
+     in
+     let* nrows = of_list (if many then [ 9; 12 ] else [ 1; 2; 5; 9 ]) in
+     let* ncols = of_list (if many then [ 9; 12 ] else [ 1; 2; 5; 9 ]) in
      let* k = of_list [ 0; 1; 2; 3; 7; 1025; 1500; 2049 ] in
      let* nwhere = of_list [ Pair3 0; Pair4 0; Pair_mesh 0; Pair_rows 0 ] in
      let+ nseed = int in
@@ -1828,9 +1897,11 @@ let law_nx_case c =
     | Dot_vector -> host [| c.k |]
     | Matmul | Einsum -> host [| c.k; c.ncols |]
   in
-  let columns = match c.product with Dot_vector -> 1 | _ -> c.ncols in
-  cover "lane order" (c.nrows <= 4 || columns <= 4 || c.nrows * columns < 64);
-  cover "chain order" (c.nrows > 4 && columns > 4 && c.nrows * columns >= 64);
+  let order =
+    Nx.Prim.contract_order ~batch:[||] ~contracting:[| (1, 0) |] a b
+  in
+  cover "lane order" (order = Lane);
+  cover "chain order" (order = Chain);
   cover "an empty window" (c.k > 0 && c.k < 3);
   let product (type d) (a : (_, _, d) Nx.t) (b : (_, _, d) Nx.t) =
     let y =
@@ -2171,7 +2242,13 @@ let placements =
         test_float_partials_move;
       prop ~count:400
         "a contraction over cut contracting axes gives its bits on one device"
-        ccase law_ccase;
+        ccase
+        (law_cut ~pairs:true (module Cpu_sets));
+      prop ~count:300
+        "a contraction cut over its contracted extent gives its bits on one \
+         device, for a library that sums blocks its own way"
+        bcase
+        (law_cut ~pairs:false (module Blocked_sets));
       prop ~count:200
         "a matrix product over a cut contracting axis gives its bits on one \
          device"

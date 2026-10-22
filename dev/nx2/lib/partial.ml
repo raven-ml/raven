@@ -58,9 +58,11 @@ let rounded (type v s w r) (c : (v, s) D.t) (qt : (w, r) D.t) : (w, r) E.t =
   | Some Type.Equal -> E.input 0 c
   | None -> E.cast qt (E.input 0 c)
 
-(* The terms of a block of lane order ({!Nx_kernel.section-orders}), and of
-   a scan's chunk ({!Nx_kernel.type-reduction}). *)
+(* The terms of a block of lane order ({!Nx_kernel.section-orders}), the
+   products of a contraction's block ({!Nx_kernel.S.contract}), and the
+   terms of a scan's chunk ({!Nx_kernel.type-reduction}). *)
 let block = 1024
+let contract_block = 4096
 let chunk = 4096
 
 (* The position of device [k] among [p]'s. *)
@@ -165,11 +167,12 @@ type tree = Leaf of int | Node of tree * tree
    [parts] are the runs that hold them, cut to them. *)
 type leaf = { lo : int; hi : int; dest : int; parts : run list }
 
-(* Lane order's tree of [n] terms whose runs, of [tiles] tiles, are [runs],
-   in increasing number, and its leaves in term order. A node of blocks
-   [b, b + count) has the value of a lane-order reduction of exactly its
-   terms: it is a leaf where one tile holds them all or it is one block. *)
-let tree n tiles (runs : run array) =
+(* Lane order's tree of [n] terms in blocks of [block] whose runs, of
+   [tiles] tiles, are [runs], in increasing number, and its leaves in term
+   order. A node of blocks [b, b + count) has the value of a lane-order sum
+   of exactly its terms: it is a leaf where one tile holds them all or it
+   is one block. *)
+let tree ~block n tiles (runs : run array) =
   let find t =
     let lo = ref 0 and hi = ref (Array.length runs - 1) in
     while !lo < !hi do
@@ -214,6 +217,20 @@ let tree n tiles (runs : run array) =
   in
   let t = walk 0 ((n + block - 1) / block) in
   (t, Array.of_list (List.rev !leaves))
+
+(* Chain order's units over the same: lane order's leaves in term order,
+   each run of them one run of a tile holds merged into one, so that every
+   unit starts and ends at a block's edge or [n]. *)
+let chain_units ~block n tiles runs =
+  let merge units lf =
+    match (units, lf.parts) with
+    | ({ parts = [ r ]; _ } as last) :: rest, [ r' ]
+      when r'.owner = r.owner && r'.g = r.g + r.len && r'.l = r.l + r.len ->
+        { last with hi = lf.hi; parts = [ { r with len = r.len + r'.len } ] }
+        :: rest
+    | _ -> lf :: units
+  in
+  List.rev (Array.fold_left merge [] (snd (tree ~block n tiles runs)))
 
 (* [n > 0] leaves combined in their order. *)
 let chain n =
@@ -417,8 +434,8 @@ struct
 
   (* Lane order's tree over [g]'s [n] terms, whose runs are [held], its
      leaves' partials by [unit], combined as {!combine}. *)
-  let lane_fold here g n held unit node settle =
-    let tree, leaves = tree n (Array.length g.tiles) held in
+  let lane_fold ~block here g n held unit node settle =
+    let tree, leaves = tree ~block n (Array.length g.tiles) held in
     let values = Array.map unit leaves in
     combine here g tree (Array.get values) node settle
 
@@ -709,8 +726,8 @@ struct
               let (Value.Any v) = if parts then bitcast (D.Any dt) v else v in
               [ Value.Any (reshape (counts (outw j)) v) ]
             in
-            lane_fold here g (numel whole) g.held value (lane (binary m))
-              (store settle))
+            lane_fold ~block here g (numel whole) g.held value
+              (lane (binary m)) (store settle))
           gs;
         result r p out per
       in
@@ -1071,36 +1088,33 @@ struct
     let group g =
       let slabs = Array.map (fun j -> lazy (slab j)) g.holder in
       let slab t = Lazy.force slabs.(t) in
+      (* A unit's holder and its terms there. *)
+      let terms lf =
+        let j = g.holder.(lf.dest) in
+        (j, gather (here j) slab lf.lo lf.hi lf.parts)
+      in
+      let block = contract_block and n = numel whole in
       match (order : Nx_kernel.order) with
       | Lane ->
-          (* A complex sum's product is two terms, one of each part. *)
-          let two = if complex acc then 2 else 1 in
-          let scale f r = { r with g = f r.g; l = f r.l; len = f r.len } in
-          let value lf =
-            let j = g.holder.(lf.dest) in
-            let parts = List.map (scale (fun x -> x / two)) lf.parts in
-            let sl = gather (here j) slab (lf.lo / two) (lf.hi / two) parts in
-            [ contracted sl None ]
-          in
+          let value lf = [ contracted (snd (terms lf)) None ] in
           let settle j s =
             let s = match init_on j with None -> s | Some x -> exact Add s [ x ] in
             per.(j) <- [ rounded j (List.hd s) ]
           in
-          lane_fold here g (numel whole * two)
-            (Array.map (scale (fun x -> x * two)) g.held)
-            value (exact Add) settle
+          lane_fold ~block here g n g.held value (exact Add) settle
       | Chain ->
-          (* Each run continues the sum before it, on its holder. *)
-          let step sum r =
-            let j = g.holder.(r.owner) in
+          (* Each unit continues the sum before it, on its holder. *)
+          let step sum lf =
+            let j, sl = terms lf in
             let from =
               match sum with
               | None -> init_on j
               | Some (Value.Any v) -> Some (Value.Any (move (here j) v))
             in
-            Some (contracted (cut (slab r.owner) r.l r.len) from)
+            Some (contracted sl from)
           in
-          let sum = Option.get (Array.fold_left step None g.held) in
+          let units = chain_units ~block n (Array.length g.tiles) g.held in
+          let sum = Option.get (List.fold_left step None units) in
           let (Value.Any r) = rounded (List.hd g.members) sum in
           List.iter (fun j -> per.(j) <- [ Value.Any (move (here j) r) ]) g.members
     in
