@@ -87,8 +87,8 @@
     asks ([Rig_nv.rm]'s [free] is [Some]), so a device of this path gives
     back the channels a growth replaces as {!Rig_nv.section-submitting}
     states. With each set goes the GPU memory the path gave the GSP for it:
-    the instance blocks and method buffers of its two channels and the
-    compute engine's context buffers. *)
+    the instance blocks of its two channels, the method buffer of their
+    group and the compute engine's context buffers. *)
 
 (** {1:gpus GPUs}
 

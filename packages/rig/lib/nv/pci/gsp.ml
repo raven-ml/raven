@@ -84,8 +84,12 @@ module Channels = Map.Make (Int)
    runlist is [None] where the GPU has no engine of the channel's type. *)
 type channel = { id : int; runlist : int option }
 
+(* A channel group's runlist, as [channel]'s, and the physical address of its
+   method buffer, which each of its channels is described with. *)
+type group = { runlist : int option; mthd : int }
+
 (* GPU memory the process gave the GSP for an object: a channel's instance
-   block and method buffer, or a compute engine's context buffers. *)
+   block, a method buffer, or a compute engine's context buffers. *)
 type given = Mapped of Page_table.mapping | Block of int
 
 (* An object of one of the process's clients: its parent, and the memory the
@@ -117,7 +121,7 @@ type t = {
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
   mutable runlists : (int * int) list; (* each engine's runlist *)
-  mutable groups : int option Channels.t; (* each channel group's runlist *)
+  mutable groups : group Channels.t;
   mutable channels : channel Channels.t;
   mutable held : held Objects.t; (* under [lock] *)
   mutable graphics : graphics;
@@ -558,8 +562,8 @@ let memdesc p field ~base ~size ~space =
   Rig_nv.set p (at field M.address_space) space;
   Rig_nv.set p (at field M.cache_attrib) Defs.nv_memory_cached
 
-(* A channel's instance block, RAMFC and method buffer, which CPU-RM gives the
-   GSP: a page, its first 0x200 bytes the RAMFC, and 0x5000 bytes. *)
+(* A channel's instance block and RAMFC, which CPU-RM gives the GSP, a page and
+   its first 0x200 bytes, and the 0x5000 bytes of a method buffer. *)
 let instance_size = 0x1000
 let ramfc_size = 0x200
 let method_buffer_size = 0x5000
@@ -568,16 +572,27 @@ let userd_size = 0x400
 (* The size the error notifier is described with. *)
 let notifier_size = 0xecc
 
-let channel_memory g ~client ~locate obj p =
+(* A method buffer, recorded for [obj] of [client]. *)
+let method_buffer g ~client obj =
+  match on_tables g (fun t -> Page_table.palloc t method_buffer_size) with
+  | Some pa ->
+      given g ~client obj (Block pa);
+      Ok pa
+  | None -> Error (Rig_nv.Lacking "no GPU memory for a method buffer")
+
+(* The memory the channel [obj] that [p] allocates under [parent] is described
+   with. A channel of a group takes the group's method buffer; any other, as
+   it stands for a group of its own, one of its own. *)
+let channel_memory g ~client ~locate ~parent obj p =
   let module G = Defs.Gpfifo_alloc in
   let* ramfc = lacking (object_memory g ~client obj instance_size) in
+  let group =
+    Rig_nv.Lock.protect g.lock (fun () -> Channels.find_opt parent g.groups)
+  in
   let* mthd =
-    match on_tables g (fun t -> Page_table.palloc t method_buffer_size) with
-    | Some pa ->
-        given g ~client obj (Block pa);
-        Ok pa
-    | None ->
-        Error (Rig_nv.Lacking "no GPU memory for a channel's method buffer")
+    match group with
+    | Some { mthd; _ } -> Ok mthd
+    | None -> method_buffer g ~client obj
   in
   let fb = Defs.addr_fbmem in
   memdesc p G.ramfc_mem ~base:(paddr ramfc) ~size:ramfc_size ~space:fb;
@@ -657,13 +672,21 @@ let runlist g e =
   let e = if e = 0 then Defs.nv2080_engine_type_graphics else e in
   List.assoc_opt e g.runlists
 
-(* Records the runlist of the channel group [obj] that [p] allocates: its
-   engine's, which every channel of the group takes
-   (kchangrpapiConstruct_IMPL). *)
-let name_group g obj p =
-  let r = runlist g (Rig_nv.get p Defs.Channel_group_alloc.engine_type) in
+(* Records the channel group [obj] of [client] that [p] allocates: its
+   engine's runlist, which every channel of the group takes
+   (kchangrpapiConstruct_IMPL), and its method buffer. CPU-RM allocates a
+   buffer for each of the group's runqueues with the group
+   (kchangrpAllocFaultMethodBuffers_GV100) and describes the one of a
+   channel's runqueue in the channel's allocation; the GSP keeps the first
+   it is given for each runqueue (kchannelConstruct_IMPL). The driver's
+   channels all run on runqueue 0, as their flags leave
+   NVOS04_FLAGS_GROUP_CHANNEL_RUNQUEUE at 0, so a group takes one buffer. *)
+let name_group g ~client obj p =
+  let* mthd = method_buffer g ~client obj in
+  let runlist = runlist g (Rig_nv.get p Defs.Channel_group_alloc.engine_type) in
   Rig_nv.Lock.protect g.lock (fun () ->
-      g.groups <- Channels.add obj r g.groups)
+      g.groups <- Channels.add obj { runlist; mthd } g.groups);
+  Ok ()
 
 (* Names the hardware id of the channel [obj] that [p] allocates under
    [parent], and records it with the channel's runlist, before the GSP makes
@@ -688,7 +711,7 @@ let name_channel g ~parent obj p =
       Rig_nv.set p G.flags (Rpc.channel_flags flags id);
       let runlist =
         match Channels.find_opt parent g.groups with
-        | Some r -> r
+        | Some group -> group.runlist
         | None -> runlist g (Rig_nv.get p G.engine_type)
       in
       g.channels <- Channels.add obj { id; runlist } g.channels;
@@ -701,11 +724,10 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   let* () =
     match p with
     | Some p when cls = channel_class ->
-        let* () = channel_memory g ~client ~locate obj p in
+        let* () = channel_memory g ~client ~locate ~parent obj p in
         name_channel g ~parent obj p
     | Some p when cls = Defs.kepler_channel_group_a ->
-        name_group g obj p;
-        Ok ()
+        name_group g ~client obj p
     | _ -> Ok ()
   in
   let* bind =
