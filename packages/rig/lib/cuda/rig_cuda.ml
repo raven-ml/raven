@@ -787,8 +787,8 @@ let known fn =
 let not_supported g (r : region) =
   if r.kind = Host then
     "CUDA exports no dma-buf of page-locked host memory on this GPU \
-     (CU_DEVICE_ATTRIBUTE_HOST_ALLOC_DMA_BUF_SUPPORTED is false, as before \
-     CUDA 13)"
+     (CU_DEVICE_ATTRIBUTE_HOST_ALLOC_DMA_BUF_SUPPORTED is false, or unknown \
+     before CUDA 13)"
   else if not (supports g attribute_dma_buf_supported) then
     "CUDA exports no dma-buf of this GPU's memory here \
      (CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED is false): that needs Linux and \
