@@ -298,8 +298,9 @@ host-visible GPU memory (below).
 
 ### Without resizable BAR no GPU memory is host-visible
 
-With resizable BAR off, the R9700's BAR0 is 256 MiB and KFD's topology lists
-no memory bank of the public heap type (`heap_type` 1), only private ones.
+With resizable BAR off, the R9700's BAR0 is 256 MiB (512 MiB at most once
+resized, below) and KFD's topology lists no memory bank of the public heap
+type (`heap_type` 1), only private ones.
 Memory the host writes in GPU memory through the BAR does not exist on that
 machine, and a driver falls back to host memory: reading 1 MiB took 0.041 ms
 from both, where reading it across the bus would take milliseconds. A driver
@@ -484,6 +485,62 @@ whose low half is above the target's. The AMD driver waits in its queue on
 another device's word only from a firmware version seen to do this, per GC
 version (`wait64_from` in `lib/amd/rig_amd.ml`); elsewhere the wait is the
 host's.
+
+### A KFD process can outlive its process and pin amdgpu
+
+On the R9700, KFD kept a process for 44 hours after it exited: a directory
+under `/sys/class/kfd/kfd/proc/` with 320 KiB of GPU memory and no queues,
+and a client of the GPU's DRM device in debugfs's `clients` list, named
+`<unknown>`, whose process did not exist. No live process held a KFD, DRM
+or dma-buf file. While it stayed, `Rig_amd_pci.detach` refused the GPU (the
+kernel holds a file of its DRM device for that process) and
+`modprobe -r amdgpu` answered that the module is in use. Only a reboot
+cleared it. What left it is not known.
+
+## AMD over PCI
+
+### On the R9700's host BAR0 grows to 512 MiB at most
+
+The R9700's BAR0 offers every size from 256 MiB to 32 GiB
+(`resource0_resize` reads `0xff00`), and the host's firmware assigns it
+256 MiB below 4 GiB. Asked for the largest size its bridges hold, as
+`Rig_amd_pci.detach` asks, Linux refused each size from 32 GiB down to
+1 GiB, with "can't assign; no space" for every bridge up to the root port,
+and assigned 512 MiB at `0xc0000000`, the bridges' prefetchable window
+becoming `0xb0000000`–`0xdfffffff`. The host gives the GPU no 64-bit window
+above 4 GiB, likely because its firmware's Above 4G decoding is off; that
+setting was not read. amdgpu, bound after the resize, reports
+`BAR=512M` against 32,624 MiB of memory. A driver-less boot of this GPU
+therefore reads the discovery table a word at a time through `MM_INDEX`,
+`MM_INDEX_HI` and `MM_DATA`, and places its page tables in their own pool
+(`Page_table.Pool`).
+
+### The R9700's blocks
+
+The R9700's discovery table, read through the index window after a detach,
+lists GC 12.0.1, SDMA0 and SDMA1 7.0.1, MP0 and MP1 14.0.3, MMHUB 4.1.0,
+OSSSYS 7.0.0, NBIF 6.3.1, HDP 7.0.0, ATHUB 4.1.0, DF 4.15.1, UMC 8.14.0,
+PCIE 6.1.0, LSDMA 7.0.1, DMU 4.1.0, SMUIO, THM, FUSE and CLKA 14.0.2, with
+no instance fused off. Its GC has 4 shader engines of 2 arrays of 8
+compute units, 64 in all, 16 waves per SIMD and 64 KiB of LDS. Its
+register BAR (BAR 5) holds 131,072 words, so the registers a boot's plan
+reads (`SCRATCH_REG6`, `SCRATCH_REG7`, the GC hub's fault status) lie
+inside it, with no access through the RSMU window. The boot report finds
+the eight images `rig_amd_pci.mli` names for it, and each is laid out as
+its format says.
+
+### amdgpu leaves the security processor's OS running
+
+Right after amdgpu unbinds from the R9700, the security processor's OS
+runs (its `C2PMSG_81` is not zero), its bootloader is not ready, and
+`SCRATCH_REG6`, `SCRATCH_REG7` and the GC hub's fault status read 0: no
+mark of this library, so a driver-less open plans a reset first (`Booted`
+in `lib/amd/pci/boot.mli`). `Rig_amd_pci.reset` resets it whole in 1.1 s
+with bus mastering off throughout, and its configuration reads back as
+saved. amdgpu's probe resets the GPU itself (mode 1) when it finds the OS
+running, as it does at every rebind and module load after its own session;
+after `Rig_amd_pci.reset` and `Rig_amd_pci.attach` its probe initialized
+the GPU with no reset of its own, which shows that no firmware ran.
 
 ## Apple GPUs under Metal
 
