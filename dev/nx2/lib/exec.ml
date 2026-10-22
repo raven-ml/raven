@@ -564,8 +564,9 @@ let unclaimed hs f =
       Printexc.raise_with_backtrace e bt
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
-   its routine, a one-node map by its node, its result's dtype listed
-   first. *)
+   its routine, a reduction and a scan by what they compute, as
+   ["Reduce Sum and Moments"], and a one-node map by its node, its result's
+   dtype listed first. *)
 let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
     =
  fun ~by ~kernels d op ->
@@ -574,6 +575,13 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
   let dts = List.rev !dts in
   match op with
   | Value.Linalg l -> refuses ~by ~kernels (Prim.routine_name l) d dts
+  | Value.Reduce { reductions; _ } ->
+      let name (r, _) = Prim.reduction_name r in
+      let names = Array.to_list (Array.map name (Prim.reductions reductions)) in
+      refuses ~by ~kernels ("Reduce " ^ String.concat " and " names) d dts
+  | Value.Scan { reduction; _ } ->
+      let r, _ = Prim.reduction reduction in
+      refuses ~by ~kernels ("Scan " ^ Prim.reduction_name r) d dts
   | Value.Map { prog; _ } -> (
       match Expand.single prog with
       | Some node ->

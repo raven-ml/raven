@@ -19,8 +19,9 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
-(* Counting nx.cpu, declining every [Add], [Less], sort and contraction, as a
-   library may, and counting those declines. *)
+(* Counting nx.cpu, declining every [Add], [Less], [Logsumexp] and [Arg]
+   reduction, sort and contraction, as a library may, and counting those
+   declines. *)
 module Refusing = struct
   include C
 
@@ -35,6 +36,13 @@ module Refusing = struct
     match k with
     | Binary Add | Compare Less -> decline ()
     | _ -> C.apply2 k ~dst x y
+
+  let reduce p ~shape ~axes rs ~dsts loads =
+    let declined ((r : Nx_kernel.reduction), _) =
+      match r with Monoid Logsumexp | Arg _ -> true | _ -> false
+    in
+    if Array.exists declined rs then decline ()
+    else C.reduce p ~shape ~axes rs ~dsts loads
 
   let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
 
@@ -261,6 +269,12 @@ let refused x = Nx.place Refuse.on (on_host Plain D.Float32 [| 2; 2 |] x)
 let declines =
   group "declines"
     [
+      test "a declined reduction names its kinds" (fun () ->
+          let x = refused [| 4.; 3.; 2.; 1. |] in
+          refused_once "Nx.logsumexp" "Reduce Logsumexp" "float32" (fun () ->
+              Nx.logsumexp ~axes:[ 1 ] x);
+          refused_once "Nx.argmax" "Reduce Arg Max" "float32" (fun () ->
+              Nx.argmax ~axis:1 x));
       test "a declined operation kills no donated operand" (fun () ->
           (* [x] borrows the host's memory, which no result takes: a sort
              computes on the general path, a sum and a comparison on the fast
