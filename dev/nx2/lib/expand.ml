@@ -249,8 +249,9 @@ let reduce_plain (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 (* [x] where it is a NaN, else [y]: [Where (x ≠ x) x y]. *)
 let nan_or x y = E.(where (x <> x) x y)
 
-(* The least integer whose [exp] is a normal float of [dt], float32 or float64:
-   nx.cpu takes an [exp] below it as [0], so that no lane makes a subnormal. *)
+(* The reduction's cut ({!Nx_kernel.type-reduction}): the least integer whose
+   [exp] is a normal float of [dt], float32 or float64, below which an [exp] is
+   taken as [0]. *)
 let exp_cutoff (type s) (dt : (float, s) D.t) =
   match dt with D.Float64 -> -708. | _ -> -87.
 
@@ -495,25 +496,56 @@ let finite v =
   let dt = E.dtype v in
   E.(abs v < const dt (D.of_float dt Float.infinity))
 
-(* Logsumexp by {!Pairwise.scan}: results [a] and [b] combine as
-   [M + log1p (exp (m - M))], [M] their [Maximum] and [m] their [Minimum], or
-   as [M] where [M] is not finite: [-∞] for terms all [-∞], [+∞] past a [+∞],
-   the first NaN with its bits, quieted once at the end. Index [0] is its
-   term [x] as [x + 0], so that a lone [-0] gives [+0], as the reduction
-   does. Each combination shifts by its own maximum, so no prefix is lost
-   below a later one. *)
+(* {!Nx_kernel.reduction}'s Logsumexp scan by {!Pairwise.scan}, over states
+   [(m, s)] of a maximum and a sum of [e (x - c)], [c] being [m] where finite
+   and [0] elsewhere, [e] an [exp] cut as the reduction cuts it.
+
+   The derivation of its bound, to first order, at index [i] of [N = i + 1]
+   terms through [D = D_i] combinations, with [M] the terms' maximum, finite,
+   and [S = Σ w], [w = exp (x - M)], so [1 <= S <= N]. A term's [w] reaches
+   [s] through at most [D] combinations. One where its state's maximum is
+   the combined one multiplies by [exp 0 = 1], exactly; any other rescales
+   by an [exp], within [5 u] (2 ulps and the rounding), and a product,
+   within [u]; each adds within [u]: [7 u] a combination. The rescales'
+   arguments [ma - c] round within [u (c - ma)], whose sum along the term's
+   path is at most [u (M - x)]: they move [w] by a relative [u (M - x)], and
+   [Σ w (M - x) = Σ w ln (1 / w) <= S ln N]. So [s] is within a relative
+   [7 D u + u ln N], [log s] within that plus [Log]'s [5 u ln N], and
+   [M + log s] rounds within [u |r|]. *)
 let running_logsumexp (type s d)
     (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape axis
     (x : (float, s, d) Value.t) : (float, s, d) Value.t =
   let dt = Prim.dtype x in
-  let a = E.input 0 dt and y = E.input 1 dt in
-  let big = E.maximum a y and small = E.minimum a y in
-  let combine =
-    [| E.(any (where (finite big) (big + log1p (exp (small - big))) big)) |]
+  let f v = E.const dt (D.of_float dt v) in
+  let shift m = E.where (finite m) m (f 0.) in
+  let e z = E.(where (z < f (exp_cutoff dt)) (f 0.) (exp z)) in
+  let two : D.any iarray = [| D.Any dt; D.Any dt |] in
+  let terms =
+    let t = E.input 0 dt in
+    map_n apply ~by shape
+      (P.of_exprs ~ins:[| D.Any dt |] E.[| any t; any (e (t - shift t)) |])
+      [| D.Any dt; D.Any dt |]
+      [| Value.Plain x |]
   in
-  let first = [| E.(any (input 0 dt + const dt (D.of_float dt 0.))) |] in
-  let y = Pairwise.scan apply ~by shape axis ~first combine [| Value.Any x |] in
-  quieted apply ~by (Prim.expect dt y.(0))
+  let combine =
+    let ma = E.input 0 dt and sa = E.input 1 dt in
+    let mb = E.input 2 dt and sb = E.input 3 dt in
+    let m = E.maximum ma mb in
+    let c = shift m in
+    E.[| any m; any ((sa * e (ma - c)) + (sb * e (mb - c))) |]
+  in
+  let state = Pairwise.scan apply ~by shape axis combine terms in
+  let m = E.input 0 dt and s = E.input 1 dt in
+  let y =
+    map1 apply ~by shape
+      (P.of_exprs ~ins:two [| E.any E.(where (finite m) (m + log s) m) |])
+      dt
+      [|
+        Value.Plain (Prim.expect dt state.(0));
+        Value.Plain (Prim.expect dt state.(1));
+      |]
+  in
+  quieted apply ~by y
 
 (* {!Nx_kernel.reduction}'s Moments scan by {!Pairwise.scan}, over Chan, Golub
    and LeVeque's combination, their (1.5b), of states [(μ, S, n, z)], [z]

@@ -267,11 +267,10 @@ enum {
 /* The state of a block of an output's terms, or of several merged: Arg's
    extreme's bits [v], a complex128's at most, and its position [at], or a
    value [s] of the terms and their count [n]: Logsumexp's maximum, or its
-   sum, and Moments' sums, [d] the deviations' with [s] their squares'. A
-   scan's state numbers its next term [n]: Arg's holds its extreme and
-   position, none where [at] is -1; Logsumexp's its maximum [d] and the
-   sum [s] of exp (x - d). A float is its dtype's value, which a double
-   holds exactly. */
+   sum, and Moments' sums, [d] the deviations' with [s] their squares'. An
+   Arg scan's state numbers its next term [n] and holds its extreme and
+   position, none where [at] is -1. A float is its dtype's value, which a
+   double holds exactly. */
 typedef struct {
   int64_t n, at;
   union {
@@ -295,14 +294,13 @@ typedef struct {
   void (*finish)(const nx_cpu_state *st, double c, uint8_t *d0, uint8_t *d1);
 } nx_cpu_pass;
 
-/* A stateful scan at a dtype (reduce.c). [rows] runs [w] lanes, at most
+/* An Arg scan at a dtype (reduce.c). [rows] runs [w] lanes, at most
    16, of [m] terms each: lane l's state a[l] takes the terms at
    x + (i xs + l xl)·size in order of i, the first numbered a[l].n, and
-   where [y] is not NULL, stores its result after each at y + (i ys + l yl)
-   elements and, for Arg, its position at p + i ps + l pl; Arg's [y] is
-   never NULL, its chunks' totals being its reduction's. [merge] makes
-   [a] the state of [a]'s terms then [b]'s, [b]'s n. A state of no term has
-   n its first term's number, at -1, s 0 and d -∞. */
+   stores its extreme after each at y + (i ys + l yl) elements and its
+   position at p + i ps + l pl, its chunks' totals being its reduction's.
+   [merge] makes [a] the state of [a]'s terms then [b]'s, [b]'s n. A state
+   of no term has n its first term's number and at -1. */
 typedef struct {
   void (*rows)(nx_cpu_state *a, const uint8_t *x, int64_t xs, int64_t xl,
                int64_t m, int64_t w, uint8_t *y, int64_t ys, int64_t yl,
@@ -313,8 +311,8 @@ typedef struct {
 /* A stateful reduction at a dtype: where [center.block] is not NULL, a
    first pass whose [finish] stores each output's center at [d0], a double,
    then the [value] pass, which takes it. Logsumexp's center is the terms'
-   maximum where finite, else 0; Moments', their mean. [scan] scans by it,
-   rows NULL where the table declines. */
+   maximum where finite, else 0; Moments', their mean. [scan] scans by an
+   Arg, rows NULL where the table declines. */
 typedef struct {
   nx_cpu_pass center, value;
   nx_cpu_scan_pass scan;
@@ -328,30 +326,31 @@ typedef struct {
   const void *ctx;
 } nx_cpu_terms;
 
-/* A Moments scan of [w] slices of [n] terms side by side (reduce.c), w at
-   most NX_CPU_MOMENTS_LANES: slice l's term t at x + t xs + l xl, or from
-   [src] where it is not NULL, its mean and variance at mean + t ms + l ml
-   and var + t vs + l vl, in elements; [scratch] holds
-   (12 nx_cpu_moments_levels(n) + 3 NX_CPU_MOMENTS_TILE) w elements, and
+/* A scan by nx_kernel.mli's network, Logsumexp's or Moments', of [w]
+   slices of [n] terms side by side (reduce.c), w at most
+   NX_CPU_NETWORK_LANES: slice l's term t at x + t xs + l xl, or from [src]
+   where it is not NULL, its result at y + t ys + l yl and Moments'
+   variance at y1 + t s1 + l l1, in elements; [scratch] holds
+   (12 nx_cpu_network_levels(n) + 3 NX_CPU_NETWORK_TILE) w elements, and
    for one slice at least the elements its tiles take (reduce.c). */
-#define NX_CPU_MOMENTS_LANES 64
+#define NX_CPU_NETWORK_LANES 64
 
-/* A Moments scan's terms per tile. On fudge,
+/* A network scan's terms per tile. On fudge,
    scan-moments-f32-4096x1024-axis1 took 1.18 ms at 16, 1.04 at 32, 1.12 at
    64. */
-#define NX_CPU_MOMENTS_TILE 32
+#define NX_CPU_NETWORK_TILE 32
 
-/* The levels of a Moments scan's network over [n] terms, n >= 1: one per
-   bit of n. */
-static inline int nx_cpu_moments_levels(int64_t n) {
+/* The levels of a network scan over [n] terms, n >= 1: one per bit of
+   n. */
+static inline int nx_cpu_network_levels(int64_t n) {
   int k = 1;
   for (; n > 1; n >>= 1) k++;
   return k;
 }
 
-typedef void (*nx_cpu_moments)(const uint8_t *x, int64_t xs, int64_t xl,
-                               uint8_t *mean, int64_t ms, int64_t ml,
-                               uint8_t *var, int64_t vs, int64_t vl,
+typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
+                               uint8_t *y, int64_t ys, int64_t yl,
+                               uint8_t *y1, int64_t s1, int64_t l1,
                                int64_t n, int64_t w, uint8_t *scratch,
                                const nx_cpu_terms *src);
 
@@ -411,8 +410,9 @@ typedef struct {
   /* monoid[m][dt] reduces by the monoid m (NX_MONOID_SUM to
      NX_MONOID_MIN) at dt: lanes NULL where the table declines. */
   nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
-  /* moments[dt] scans by Moments at float32 and float64. */
-  nx_cpu_moments moments[NX_DTYPE_COUNT];
+  /* logsumexp[dt] and moments[dt] scan by Logsumexp and Moments at
+     float32 and float64. */
+  nx_cpu_network logsumexp[NX_DTYPE_COUNT], moments[NX_DTYPE_COUNT];
   /* stateful[r - NX_CPU_MONOIDS][dt] reduces by r (NX_CPU_LOGSUMEXP to
      NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
   nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];

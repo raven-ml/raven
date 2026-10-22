@@ -96,10 +96,12 @@ type extreme = Max | Min
     - [Logsumexp]: the terms' maximum [m], then [c + log s], [c] being [m]
       where finite and [0] elsewhere and [s] the sum of [exp (x - c)], an
       [exp] of less than [-87] ([float32]) or [-708] ([float64]), the least
-      integers whose [exp] is normal, taken as [0]; [m] where it is a NaN.
+      integers whose [exp] is normal, taken as [0]: the {e cut}. The result
+      is [m] where it is a NaN.
     - [Moments]: the mean [c], the terms' sum over their count, then the
       variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
       negative or [Σ d²] where that is [+∞]; both are [c] where it is a NaN.
+    Each kernel library states the bounds of these two.
 
     In every library, a float or complex [Sum] or [Prod] scan cuts each
     slice along its axis into {e chunks} of 4096 terms from its start. A
@@ -110,34 +112,46 @@ type extreme = Max | Min
     and each result of a chunk is its carry combined with the chunk's terms
     up to it, left to right. Combining is {!Prog.Add} or {!Prog.Mul} in the
     carrier ({!carrier}), and each result rounds once into its destination.
-    Any other float scan associates in an order that is a function of the
-    shapes alone, which each kernel library states with the bounds of
-    [Logsumexp], reduced and scanned, and those of [Moments] reduced. A float
-    sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact sum, a product
-    within a relative [γ(n - 1)] barring overflow and underflow, where
-    [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
+    A float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact sum, a
+    product within a relative [γ(n - 1)] barring overflow and underflow,
+    where [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
 
-    A [Moments] scan gives the same bits in every library that computes
-    one. On each slice, a term [t] is the state [(t - c, +0, 1)] of a mean
-    [μ], a sum [S] of squared deviations and a count [n], [c] the slice's
-    first term, or [0] where that term is not finite. The states combine by
-    the odd/even network: neighbours [2j] and [2j + 1] combine into pairs,
-    the pairs scan by the same network, result [2j + 1] is the pairs' result
-    [j], and result [2j], for [j > 0], is the pairs' result [j - 1] combined
-    with state [2j]. A state [a] then a state [b] combine as
-    [n = na + nb], [δ = μb - μa], [w = nb / n], [μ = μa + δ w] and
-    [S = (Sa + Sb) + (δ δ) (na w)], each operation in the output's dtype as
-    {!Prog} computes it. Where [μa] or [μb] is not finite, [μ] is [μa] where
-    a term of [a] is a NaN, else [μb] where one of [b] is, else [μa + μb].
-    Result [i] is the mean [c + μ] and the variance [S / (i + 1)], or
-    [μ - μ] where [μ] is not finite. So the first NaN term makes both
-    results its bits, quieted, from there on, and with no NaN an infinity makes the
-    mean the sum of the infinities so far and the variance a NaN. Result
-    [i] passes through at most [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)]
-    combinations. Barring overflow, for [i + 1] exact in the dtype, [R] the
-    range of the terms up to [i] and [V] their variance, the mean [μ] is
-    within [(4 D + 1) u R + u|μ|] of the exact one and the variance within
-    [(7 D + 1) u V + (4 D² - 2 D) u R √V], to first order in [u]. *)
+    A [Logsumexp] or [Moments] scan gives the same bits in every library
+    that computes one. On each slice, each term is a state, and the states
+    combine by the odd/even network: neighbours [2j] and [2j + 1] combine
+    into pairs, the pairs scan by the same network, result [2j + 1] is the
+    pairs' result [j], and result [2j], for [j > 0], is the pairs' result
+    [j - 1] combined with state [2j]. The earlier state comes first in each
+    combination, and result [i] passes through at most
+    [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] of them. Each operation computes in
+    the output's carrier as {!Prog} computes it, and each result rounds once
+    into its destination. Bounds are to first order in the carrier's unit
+    roundoff [u], barring overflow.
+    - [Logsumexp]: a state is a maximum [m] and a sum [s]. A term [x] is the
+      state [(x, e (x - c))], and a state [a] then a state [b] combine as
+      [m = Maximum (ma, mb)] and [s = sa e (ma - c) + sb e (mb - c)], where
+      [c] is [m] where finite and [0] elsewhere, and [e z] is [exp z], or
+      [0] for [z] below the reduction's cut. Result [i] is [m + log s], or
+      [m] where [m] is not finite. So from the first NaN term on, every
+      result is its bits, quieted; with no NaN, from a [+∞] term on every
+      result is [+∞], and while every term is [-∞] it is [-∞]. Where the
+      terms up to [i] have a finite maximum, and no [exp] underflows or is
+      cut, the result is within [(7 D + 6 ln (i + 1)) u + u|r|] of the exact
+      [r], with {!Prog.Exp} and {!Prog.Log} within 2 ulps.
+    - [Moments]: a term [t] is the state [(t - c, +0, 1)] of a mean [μ], a
+      sum [S] of squared deviations and a count [n], [c] the slice's first
+      term, or [0] where that term is not finite. A state [a] then a state
+      [b] combine as [n = na + nb], [δ = μb - μa], [w = nb / n],
+      [μ = μa + δ w] and [S = (Sa + Sb) + (δ δ) (na w)]. Where [μa] or [μb]
+      is not finite, [μ] is [μa] where a term of [a] is a NaN, else [μb]
+      where one of [b] is, else [μa + μb]. Result [i] is the mean [c + μ]
+      and the variance [S / (i + 1)], or [μ - μ] where [μ] is not finite.
+      So the first NaN term makes both results its bits, quieted, from
+      there on, and with no NaN an infinity makes the mean the sum of the
+      infinities so far and the variance a NaN. For [i + 1] exact in the
+      carrier, [R] the range of the terms up to [i] and [V] their variance,
+      the mean [μ] is within [(4 D + 1) u R + u|μ|] of the exact one and
+      the variance within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
 type reduction = Monoid of monoid | Logsumexp | Moments | Arg of extreme
 
 val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
