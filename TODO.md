@@ -60,8 +60,7 @@ raven / llama.cpp (Vulkan; ROCm):
   dc72412596; the conformance suite's box and fill laws over PCI and on
   SDMA 4 to 6); root on an NVIDIA host (NV over PCI's open/close law and
   test_nv, the PCI clocks' span laws, VFIO behind an IOMMU); two GPUs
-  (peers); mlx5 and bnxt NICs; test_cuda's open without a loadable
-  library on a host with the driver; NV's `entry` `No_memory`, which a
+  (peers); mlx5 and bnxt NICs; NV's `entry` `No_memory`, which a
   kernel whose local memory outgrows the GPU's forces
   (_plans/rig-release/failure-paths.md)
 - fudge: re-record rig_nv's bench since NV's channel growth
@@ -103,10 +102,14 @@ raven / llama.cpp (Vulkan; ROCm):
 - AMD 4 KiB prepared copies are 17-26% slower since 70cca2ae5's wait change
   (the compute route itself starts at 2 MiB): name the row, explain it or
   revert the wait change for small copies
-- CUDA and NV file loads take 46-49 ms for 256 MiB against native CUDA's
-  27 ms (kimchi, 593e7735a; the warm read alone is 28.7 ms, PCIe 10.7):
-  rerun the compare on fudge, then profile whether rig reads the file
-  before uploading instead of overlapping them
+- CUDA and NV loads of a warm file of 256 MiB take 45 ms in a fresh process
+  on fudge against native CUDA's 26 ms (the read alone 28.5 ms, PCIe 10.7).
+  The copy overlaps its reads and uploads: a second one takes 33 ms. The
+  first takes 8-15 ms more, and a fill of the GPU's buffer first changes
+  nothing: the host's staging halves, made at the first copy, where CUDA
+  makes its own with the context. The steady copy runs at 8.1 GB/s, the
+  read alone at 9.4, CUDA's copy from a mapping of the file at 10.3: time
+  the halves' allocation and first touch, and a staging fill from a mapping
 - read a memory's atomic entry once per path (the dropped patch no longer
   applies), A/B on fudge's `submit/polled/*` and `copy/*`
 - measure, then keep or cut, with its keep threshold stated before the
