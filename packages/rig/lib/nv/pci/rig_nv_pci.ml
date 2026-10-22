@@ -128,7 +128,8 @@ let report ~firmware ~chip ~vbios =
    of memory the host addresses, and where an IOMMU maps device addresses.
    System memory lies at the same address for the process and the GPU, so the
    range is reserved on the GPU's machine. One range serves every GPU: a peer's
-   memory maps at its owner's address. *)
+   memory maps at its owner's address. It lies above the GSP's addresses
+   ({!Rpc.reserved}), which the GPU's tables must leave unmapped. *)
 let space = Space.create ~base:(64 * gib) (Rig_nv.windows - (64 * gib))
 
 module Handles = Map.Make (Int)

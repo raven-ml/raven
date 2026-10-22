@@ -213,6 +213,50 @@ let test_page_directory () =
     [ 4; 8; 3; 0; 1; 0xffffffff ]
     (List.map (fun o -> u32 b (0x10 + o)) [ 8; 12; 16; 20; 24; 28 ])
 
+(* NV90F1_CTRL_VASPACE_COPY_SERVER_RESERVED_PDES_PARAMS (ctrl90f1.h): pageSize
+   at 8, virtAddrLo at 0x10, virtAddrHi at 0x18, numLevelsToCopy at 0x20, then
+   from 0x28 levels of 24 bytes: physAddress, size at 8, aperture at 16,
+   pageShift at 20. CPU-RM hands over the tables of the 512 MiB from 4 GiB
+   (SPLIT_VAS_SERVER_RM_MANAGED_VA_START and _SIZE), from the root down to the
+   level whose entries map 2 MiB, each in the GPU's memory (GMMU_APERTURE_VIDEO,
+   1) and of its size: 8 bytes an entry, 16 on that level
+   (_gvaspacePopulatePDEentries). Version 2's root has 4 entries, version 3's
+   2. *)
+let test_reserved_pdes =
+  cases "the GSP's range hands over its tables down to 2 MiB"
+    ~name:(fun (n, _, _) -> n)
+    [
+      ( "version 2",
+        Page_entry.V2,
+        [ (47, 32); (38, 4096); (29, 4096); (21, 4096) ] );
+      ( "version 3",
+        Page_entry.V3,
+        [ (56, 16); (47, 4096); (38, 4096); (29, 4096); (21, 4096) ] );
+    ]
+    (fun (_, v, levels) ->
+      let tables = List.mapi (fun i _ -> 0x40_0000 + (i * 0x1000)) levels in
+      let b = Rpc.reserved_pdes v tables in
+      equal int 184 (String.length b);
+      equal ~msg:"the range" (pair int int)
+        (0x1_0000_0000, 0x2000_0000)
+        Rpc.reserved;
+      equal ~msg:"page size, range, levels" (list int)
+        [ 0x20_0000; 0x1_0000_0000; 0x1_1fff_ffff; List.length levels ]
+        [ u64 b 8; u64 b 0x10; u64 b 0x18; u32 b 0x20 ];
+      List.iteri
+        (fun i (shift, size) ->
+          let l = 0x28 + (24 * i) in
+          equal
+            ~msg:(Printf.sprintf "level %d" i)
+            (list int)
+            [ List.nth tables i; size; 1; shift ]
+            [ u64 b l; u64 b (l + 8); u32 b (l + 16); u8 b (l + 20) ])
+        levels)
+
+let test_reserved_depth () =
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Rpc.reserved_pdes V2 [ 0; 0x1000; 0x2000 ]))
+
 (* rpc_unloading_guest_driver_v1F_07: bInPMTransition, bGc6Entering, then
    newLevel at 4. *)
 let test_unloading () =
@@ -370,6 +414,8 @@ let () =
              test_answer;
              test "a short answer is refused" test_short_answer;
              test "a page directory" test_page_directory;
+             test_reserved_pdes;
+             test "tables of another depth raise" test_reserved_depth;
              test "unloading" test_unloading;
              test_registry;
            ];

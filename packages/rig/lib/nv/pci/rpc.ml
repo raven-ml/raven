@@ -195,6 +195,49 @@ let page_directory ~client ~device ~vaspace ~root ~entries =
       set b (p P.pasid) 0xffff_ffff;
       set b (p P.sub_device_id) 1)
 
+(* The GSP's range of an address space whose tables the process keeps: 512 MiB
+   from 4 GiB (g_gpu_vaspace_nvoc.h's SPLIT_VAS_SERVER_RM_MANAGED_VA_START and
+   _SIZE). The GSP computes the same range itself (gvaspaceReserveSplitVaSpace)
+   and takes the tables over at its start (gvaspaceCopyServerReservedPdes). *)
+let reserved = (1 lsl 32, 512 lsl 20)
+
+(* GMMU_APERTURE_VIDEO: the tables are in the GPU's memory. *)
+let aperture_video = 1
+
+(* The bytes of an entry, dev_mmu.h's NV_MMU_VER2_PDE__SIZE and
+   NV_MMU_VER2_DUAL_PDE__SIZE, the same on version 3. *)
+let pde_size = 8
+let dual_pde_size = 16
+
+(* Each table, root first, as _gvaspacePopulatePDEentries describes it: its
+   address, its bytes and the bit its level indexes. *)
+let reserved_pdes v tables =
+  let module R = Defs.Reserved_pdes in
+  let shifts = Array.of_list (List.rev (Page_entry.levels v)) in
+  let n = Array.length shifts - 1 in
+  if List.length tables <> n then
+    invalid_arg
+      (strf "Rpc.reserved_pdes: %d tables, expected %d" (List.length tables) n);
+  let first, size = reserved in
+  let level (off, bytes, _) i (f, w) = (off + (i * bytes) + f, w) in
+  record R.sizeof (fun b ->
+      (* The lowest table is the dual level's, whose 16-byte entries map
+         2 MiB each. *)
+      set b R.page_size (1 lsl shifts.(n - 1));
+      set b R.virt_addr_lo first;
+      set b R.virt_addr_hi (first + size - 1);
+      set b R.num_levels_to_copy n;
+      List.iteri
+        (fun i pa ->
+          let f = level R.levels i in
+          let above = if i = 0 then Page_entry.bits v else shifts.(i - 1) in
+          let entry = if i = n - 1 then dual_pde_size else pde_size in
+          set b (f R.levels_phys_address) pa;
+          set b (f R.levels_size) ((1 lsl (above - shifts.(i))) * entry);
+          set b (f R.levels_page_shift) shifts.(i);
+          set b (f R.levels_aperture) aperture_video)
+        tables)
+
 (* Unloading to level 6, NV2080_CTRL_GPU_SET_POWER_STATE_GPU_LEVEL_3's bit (RM's
    unload to the deepest state the GSP keeps). *)
 let unload_level = 1 lsl 6

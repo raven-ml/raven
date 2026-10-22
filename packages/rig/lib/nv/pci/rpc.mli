@@ -72,6 +72,25 @@ val page_directory :
     the root table at the physical address [root] of the GPU's memory, of
     [entries] entries. *)
 
+val reserved : int * int
+(** [reserved] is the GSP's own addresses in an address space whose page
+    tables the process keeps, as their first address and their size: the 512
+    MiB from 4 GiB. The GSP maps its own buffers of that space there, so the
+    process must map nothing there. *)
+
+val reserved_pdes : Page_entry.version -> int list -> string
+(** [reserved_pdes v tables] is the parameters of the command
+    [COPY_SERVER_RESERVED_PDES], which hands the GSP the tables that translate
+    {!reserved}: the physical addresses [tables] in the GPU's memory, root
+    first, down to the dual level, whose entries map 2 MiB. The GSP takes
+    them over as its own, the root as the space's page directory, and writes
+    only the dual level's entries and the tables below them. The process
+    writes the tables above, so the addresses it maps in the space translate
+    through them.
+
+    Raises [Invalid_argument] if [tables] is not one table per level from the
+    root to the dual level. *)
+
 val unloading : string
 (** [unloading] is the body of [UNLOADING_GUEST_DRIVER], unloading to level 6:
     the GSP stops every channel and stays idle for the next boot. *)

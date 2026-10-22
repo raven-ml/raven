@@ -640,6 +640,10 @@ let alloc g ~client ~locate ~objects ~parent cls p =
             g.channels <- Channels.add obj runlist g.channels))
       p;
   if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
+  (* The golden context's objects get none of this: its address space is the
+     RM's own, whose root the GSP takes with the tables of its range
+     ([golden]), as SET_PAGE_DIRECTORY applies only to a space another owner
+     keeps (gvaspaceExternalRootDirCommit); its context is promoted whole. *)
   let* () =
     if client = priv_root then Ok ()
     else if cls = Defs.fermi_vaspace_a then
@@ -803,10 +807,6 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
 
 (* The golden context *)
 
-(* The GPU memory the GSP's internal address space reserves for its own page
-   directory entries: 512 MiB, whose tables the server copies. *)
-let reserved = 512 * mib
-
 (* The golden channel: 32 entries, its USERD 0x100 into its page, of the
    graphics engine, with the flags and internal flags CPU-RM gives the GSP's own
    channel. *)
@@ -855,37 +855,25 @@ let golden g =
           Rig_nv.get t (elt T.entries i (elt E.engine_data k (0, 4)))
         in
         (data 2, data 3));
-  (* The reserved page directory entries. *)
-  let space = Page_table.space g.p.tables in
-  let* va =
-    match Space.alloc ~align:reserved space reserved with
-    | Some va -> Ok va
-    | None -> Error "no addresses for the GSP's page directory"
-  in
-  let* levels =
-    match on_tables g (fun t -> Page_table.tables t ~va reserved) with
+  (* The address space's tables, as NVIDIA's RM gives the GSP those of its
+     own spaces: the GSP takes over the tables of its range down to the dual
+     level, the root as the space's page directory, and maps its own buffers
+     there; the golden objects take addresses of the process's, which start
+     at 64 GiB, above that range. *)
+  let v = Mmu.version g.p.chip.family in
+  let first, _ = Rpc.reserved in
+  let dual = fst (List.nth (Page_entry.pages v) 1) in
+  let* tables =
+    match on_tables g (fun t -> Page_table.tables t ~va:first dual) with
     | Some l -> Ok l
-    | None -> Error "no GPU memory for the GSP's page directory"
+    | None -> Error "no GPU memory for the tables of the GSP's addresses"
   in
-  let module R = Defs.Reserved_pdes in
-  let r = Rig_nv.params R.sizeof in
-  Rig_nv.set r R.page_size reserved;
-  Rig_nv.set r R.num_levels_to_copy (List.length levels);
-  Rig_nv.set r R.virt_addr_lo va;
-  Rig_nv.set r R.virt_addr_hi (va + reserved - 1);
-  let shifts = List.rev (Page_entry.levels (Mmu.version g.p.chip.family)) in
-  List.iteri
-    (fun i table ->
-      let f x = elt R.levels i x in
-      Rig_nv.set r (f R.levels_phys_address) table;
-      Rig_nv.set r (f R.levels_size)
-        (if i = 0 then root_entries g.p.chip * 8 else page);
-      Rig_nv.set r (f R.levels_page_shift) (List.nth shifts i);
-      Rig_nv.set r (f R.levels_aperture) 1)
-    levels;
+  let r = Rpc.reserved_pdes v tables in
+  let p = Rig_nv.params (String.length r) in
+  blit_params r p;
   let* () =
     control vaspace Defs.nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes
-      (Some r)
+      (Some p)
   in
   (* The channel. The golden context lives as long as the GSP, so its memory
      is recorded for no object. *)

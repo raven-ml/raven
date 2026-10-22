@@ -18,7 +18,8 @@ type placement = {
   memory : int;  (** The size of the GPU's memory ({!Chip.memory}). *)
   tables : Rig_pci.Page_table.t;
       (** The GPU's page tables, which must translate from address 0, as the
-          GPU's MMU does: the GSP's objects' memory comes from them. *)
+          GPU's MMU does, and leave the GSP's addresses ({!Rpc.reserved})
+          unmapped: the GSP's objects' memory comes from them. *)
   tables_lock : Rig_nv.Lock.t;
       (** The lock under which every call of [tables] runs, which the GSP
           takes too after its boot. *)
