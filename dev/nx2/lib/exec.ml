@@ -36,6 +36,19 @@ let kernels_of ~by ~op set : (module Nx_kernel.S) =
          compiler stages it"
         by Devices.pp set op
 
+(* Raises naming its consumer where operand [i], [x], died since it was
+   checked: a kernel's door refuses memory that a consumer on another domain
+   took meanwhile, and its refusal names no one. A handle is the call's own,
+   claimed, and named by its claim. *)
+let recheck ~by i x = if not (Donate.is_handle x) then Prim.alive ~by i x
+
+(* Raises [e], which [op]'s run raised, unless an operand died since it was
+   checked ({!recheck}). *)
+let rechecked ~by op e =
+  let bt = Printexc.get_raw_backtrace () in
+  Prim.iteri (fun i x -> recheck ~by i x) op;
+  Printexc.raise_with_backtrace e bt
+
 (* A kernel's answer: [Done], a refusal raised, or [Declined] passed on. *)
 let done_or_declined ~by answer operands =
   match (answer : A.answer) with
@@ -595,7 +608,9 @@ let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   if not (Prim.exists Donate.is_handle op) then begin
     Prim.iteri (fun i x -> checked ~by i x) op;
-    plain ~by op
+    match plain ~by op with
+    | r -> r
+    | exception (Invalid_argument _ as e) -> rechecked ~by op e
   end
   else
     let (Prim.Operands xs) = Prim.operands op in
@@ -617,8 +632,13 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
          an operation that aligns its operands by movements kills nothing when
          it is refused. *)
       let moved () =
-        let r = run ~by (Value.Move (mv, Donate.live x)) in
-        (Prim.placement r, Prim.shape r, Prim.arrays r)
+        match run ~by (Value.Move (mv, Donate.live x)) with
+        | r -> (Prim.placement r, Prim.shape r, Prim.arrays r)
+        | exception (Invalid_argument _ as e) ->
+            (* The copy read the memory without a claim. *)
+            let bt = Printexc.get_raw_backtrace () in
+            Prim.alive ~by 0 x;
+            Printexc.raise_with_backtrace e bt
       in
       let at, shape, arrays =
         if Iarray.length d.arrays <> 1 then moved ()
@@ -638,7 +658,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
       let op = Donate.unhandled hs op in
       let c = Donate.claim ~by hs in
       match Donate.reuse ~by op hs with
-      | Some (i, b, b') ->
+      | Some (i, b, b') -> (
           (* Operand [i]'s memory is the result's, now over [b']: the kernel
              reads each index of it before it writes the result there. rig
              consumed the memory before the kernel answers, for good, so the
@@ -654,9 +674,11 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
           let (Value.Any target) = List.nth xs i in
-          let r = plain ~by ~into:(A.Any (one target)) op in
-          Donate.consumed ~by ~reused:[ b ] hs;
-          r
+          match plain ~by ~into:(A.Any (one target)) op with
+          | r ->
+              Donate.consumed ~by ~reused:[ b ] hs;
+              r
+          | exception (Invalid_argument _ as e) -> rechecked ~by op e)
       | None ->
           let r = unclaimed c (fun () -> run ~by op) in
           Donate.consumed ~by ~reused:[] hs;
@@ -1336,7 +1358,9 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
                 (Op1 (k, D.Any dt, 0))
                 [ A.Any dst; A.Any a ]
           | Wrong_dtype -> run1 ~by k dt x
-          | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
+          | refusal ->
+              recheck ~by 0 x;
+              A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Donated dx when handle_at dx.at x ->
       let (module K) = kernels_at dx.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
@@ -1356,8 +1380,9 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
    decline raises, and a dtype or shape refusal is the operation run over them
    as live values. *)
 let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
-    (dt : (w, r) D.t) (at : d Devices.placement) (dst : (w, r) A.t)
-    (a : (v, s) A.t) (b : (v, s) A.t) : (w, r, d) Value.t =
+    (dt : (w, r) D.t) (at : d Devices.placement) (x : (v, s, d) Value.t)
+    (y : (v, s, d) Value.t) (dst : (w, r) A.t) (a : (v, s) A.t)
+    (b : (v, s) A.t) : (w, r, d) Value.t =
   match K.apply2 k ~dst a b with
   | Done -> value_of at dst
   | Declined ->
@@ -1365,11 +1390,15 @@ let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
         [ A.Any dst; A.Any a; A.Any b ]
   | Wrong_dtype | Shape_mismatch ->
       run2 ~by k dt (value_of at a) (value_of at b)
-  | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
+  | refusal ->
+      recheck ~by 0 x;
+      recheck ~by 1 y;
+      A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
 
 (* As [kernel2], for [apply3]. *)
 let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
-    (at : d Devices.placement) (dst : (v, s) A.t) (c : (a, b) A.t)
+    (at : d Devices.placement) (vc : (a, b, d) Value.t) (vx : (v, s, d) Value.t)
+    (vy : (v, s, d) Value.t) (dst : (v, s) A.t) (c : (a, b) A.t)
     (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
   match K.apply3 k ~dst c x y with
   | Done -> value_of at dst
@@ -1378,7 +1407,11 @@ let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
         [ A.Any dst; A.Any c; A.Any x; A.Any y ]
   | Wrong_dtype | Shape_mismatch ->
       run3 ~by k (value_of at c) (value_of at x) (value_of at y)
-  | refusal -> A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
+  | refusal ->
+      recheck ~by 0 vc;
+      recheck ~by 1 vx;
+      recheck ~by 2 vy;
+      A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
 
 (* Whether the one-node map [k] over [x] and [y] is well formed. A constant is
    read for an operation only once its rule holds, so that a refused operation
@@ -1411,17 +1444,20 @@ let rec apply2 : type v s w r d.
               refused_node ~by (module K) (Op2 (k, 0, 1))
                 [ A.Any dst; A.Any a; A.Any b ]
           | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
-          | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
+          | refusal ->
+              recheck ~by 0 x;
+              recheck ~by 1 y;
+              A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
   | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
     ->
       let (module K) = kernels_at ry.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
-          kernel2 ~by (module K) k dt ry.at dst a ry.a)
+          kernel2 ~by (module K) k dt ry.at x y dst a ry.a)
   | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
     ->
       let (module K) = kernels_at rx.at in
       donated ~by 1 dt y (Iarray.get dy.arrays 0) (fun dst b ->
-          kernel2 ~by (module K) k dt rx.at dst rx.a b)
+          kernel2 ~by (module K) k dt rx.at x y dst rx.a b)
   | Value.Array rx, Value.Deferred _
     when rx.dead == Value.Live && well_formed2 k x y ->
       (* A constant beside a value is read where the value lies. *)
@@ -1472,22 +1508,25 @@ let rec apply3 : type a b v s d.
                 [ A.Any dst; A.Any ca; A.Any a; A.Any b ]
           | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
           | refusal ->
+              recheck ~by 0 c;
+              recheck ~by 1 x;
+              recheck ~by 2 y;
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
   | Value.Donated dc, Value.Array rx, Value.Array ry
     when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
       let (module K) = kernels_at rx.at in
       donated ~by 0 (A.dtype rx.a) c (Iarray.get dc.arrays 0)
-        (fun dst c' -> kernel3 ~by (module K) k rx.at dst c' rx.a ry.a)
+        (fun dst c' -> kernel3 ~by (module K) k rx.at c x y dst c' rx.a ry.a)
   | Value.Array rc, Value.Donated dx, Value.Array ry
     when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
       let (module K) = kernels_at rc.at in
       donated ~by 1 (A.dtype ry.a) x (Iarray.get dx.arrays 0)
-        (fun dst x' -> kernel3 ~by (module K) k rc.at dst rc.a x' ry.a)
+        (fun dst x' -> kernel3 ~by (module K) k rc.at c x y dst rc.a x' ry.a)
   | Value.Array rc, Value.Array rx, Value.Donated dy
     when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
       let (module K) = kernels_at rc.at in
       donated ~by 2 (A.dtype rx.a) y (Iarray.get dy.arrays 0)
-        (fun dst y' -> kernel3 ~by (module K) k rc.at dst rc.a rx.a y')
+        (fun dst y' -> kernel3 ~by (module K) k rc.at c x y dst rc.a rx.a y')
   | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
     when well_formed3 k c x y -> (
       match beside3 c x y with
@@ -1533,6 +1572,9 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
               refuses ~by ~kernels:K.name "Contract" (A.device dst)
                 (dtype rx.a :: dtype ry.a :: init)
           | refusal ->
+              recheck ~by 0 x;
+              recheck ~by 1 y;
+              Option.iter (recheck ~by 2) init;
               let init = Option.to_list (Option.map (fun i -> A.Any i) array) in
               A.refused by refusal
                 (A.Any dst :: A.Any rx.a :: A.Any ry.a :: init))
