@@ -146,6 +146,44 @@ val registry : (string * int) list -> string
 (** [registry keys] is the RM's registry the GSP reads at boot
     ([PACKED_REGISTRY_TABLE]): each key with its 32-bit value. *)
 
+(** {1:channels Channels}
+
+    A GPU tells channels apart by a hardware id, which NVIDIA's RM chooses
+    when it runs beside a GSP and gives the GSP in the channel's allocation. *)
+
+val channel_ids : int
+(** [channel_ids] is the number of hardware ids a channel's flags hold, 4096,
+    from [0]. *)
+
+val channel_flags : int -> int -> int
+(** [channel_flags flags id] is the flags [flags] of a channel's allocation
+    ([NVOS04_FLAGS]) with the channel's hardware id fixed to [id]: its USERD's
+    page of 8, [id / 8], fixed, and its index within the page, [id mod 8], not
+    fixed by itself. The other flags are [flags]'s.
+
+    Raises [Invalid_argument] if [id] is outside \[[0];[channel_ids - 1]\]. *)
+
+val free_channel_id : (int -> bool) -> int option
+(** [free_channel_id held] is the hardware id NVIDIA's RM gives a channel
+    beside a GSP: the lowest from [1] that [held] does not hold, below
+    {!channel_ids}, or [None] if [held] holds them all. Id [0] is kept for the
+    GSP's own channel. *)
+
+val channel_id : int -> int option
+(** [channel_id flags] is the hardware id the flags [flags] fix as
+    {!channel_flags} does, or [None] if they fix no USERD page. *)
+
+val work_submit_token : runlist_doorbell:bool -> runlist:int -> int -> int
+(** [work_submit_token ~runlist_doorbell ~runlist id] is the work submit token
+    of the channel of hardware id [id] on the runlist [runlist], the word the
+    host writes to the GPU's doorbell to have it fetch the channel's work:
+    [runlist] in bits 22:16 and [id] in bits 11:0, and with
+    [runlist_doorbell], as on Blackwell, bit 30, which rings the runlist's own
+    doorbell. NVIDIA's RM makes the token itself, without the GSP.
+
+    Raises [Invalid_argument] if [runlist] is outside \[[0];[127]\] or [id]
+    outside \[[0];[4095]\]. *)
+
 (** {1:sequences CPU sequences} *)
 
 val sequence : libos:int -> string -> (Falcon.op list, string) result

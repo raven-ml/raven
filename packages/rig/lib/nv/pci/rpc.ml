@@ -327,6 +327,74 @@ let compute_context ~main ~pm ~patch ~globals =
   ( List.map init own,
     List.map bind (at main_id :: at patch_id :: at pm_id :: globals) )
 
+(* Channels *)
+
+(* A channel's flags name its USERD's page and its index in the page, of 8
+   (NVOS04_FLAGS_CHANNEL_USERD_INDEX_VALUE's bits): together its hardware id,
+   page * 8 + index (kfifoChidMgrAllocChid). *)
+let index_value = Defs.nvos04_flags_channel_userd_index_value
+let page_value = Defs.nvos04_flags_channel_userd_index_page_value
+let page_fixed = Defs.nvos04_flags_channel_userd_index_page_fixed
+let per_page = 1 lsl snd index_value
+let channel_ids = per_page lsl snd page_value
+let field (lo, n) x = (x lsr lo) land ((1 lsl n) - 1)
+
+(* The ids kept for the GSP's own channels, from 0: CPU-RM allocates every
+   other channel above them (KFIFO_NUM_GSP_RESERVED_CHANNELS, a define of
+   kernel_fifo.c, which no header carries; kfifoChidMgrAllocChid). *)
+let gsp_channels = 1
+
+let free_channel_id held =
+  let rec lowest id =
+    if id >= channel_ids then None
+    else if held id then lowest (id + 1)
+    else Some id
+  in
+  lowest gsp_channels
+
+let userd_fields =
+  [
+    index_value;
+    Defs.nvos04_flags_channel_userd_index_fixed;
+    page_value;
+    page_fixed;
+  ]
+
+let channel_flags flags id =
+  if id < 0 || id >= channel_ids then
+    invalid_arg
+      (strf "Rpc.channel_flags: id %d, expected 0 to %d" id (channel_ids - 1));
+  let others =
+    List.fold_left (fun f x -> f land lnot (mask x)) flags userd_fields
+  in
+  others
+  lor put page_fixed Defs.nvos04_flags_channel_userd_index_page_fixed_true
+  lor put page_value (id / per_page)
+  lor put index_value (id mod per_page)
+
+let channel_id flags =
+  if
+    field page_fixed flags
+    <> Defs.nvos04_flags_channel_userd_index_page_fixed_true
+  then None
+  else Some ((field page_value flags * per_page) + field index_value flags)
+
+let work_submit_token ~runlist_doorbell ~runlist id =
+  let fits (_, n) x = x >= 0 && x < 1 lsl n in
+  let token ~runlist_id ~vector =
+    if not (fits runlist_id runlist && fits vector id) then
+      invalid_arg (strf "Rpc.work_submit_token: runlist %d, id %d" runlist id);
+    put runlist_id runlist lor put vector id
+  in
+  if runlist_doorbell then
+    token ~runlist_id:Defs.nv_virtual_function_doorbell_runlist_id
+      ~vector:Defs.nv_virtual_function_doorbell_vector
+    lor put Defs.nv_virtual_function_doorbell_runlist_doorbell
+          Defs.nv_virtual_function_doorbell_runlist_doorbell_enable
+  else
+    token ~runlist_id:Defs.nv_ctrl_vf_doorbell_runlist_id
+      ~vector:Defs.nv_ctrl_vf_doorbell_vector
+
 (* Unloading to level 6, NV2080_CTRL_GPU_SET_POWER_STATE_GPU_LEVEL_3's bit (RM's
    unload to the deepest state the GSP keeps). *)
 let unload_level = 1 lsl 6

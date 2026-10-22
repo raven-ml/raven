@@ -455,6 +455,8 @@ PCI_SOURCES = {
     "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
     "gpu_acpi_data.h": R570 + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
     "ctrl0073system.h": R570 + "src/common/sdk/nvidia/inc/ctrl/ctrl0073/ctrl0073system.h",
+    "ga100_dev_ctrl.h": R570 + SWREF + "ampere/ga100/dev_ctrl.h",
+    "gb202_dev_vm.h": R570 + SWREF + "blackwell/gb202/dev_vm.h",
     "fw.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/fw.h"),
     "hs.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/hs.h"),
 }
@@ -623,13 +625,19 @@ PCI_CONSTANTS += [
     "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES",
     "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING", "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
     "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV", "NV2080_ENGINE_TYPE_GRAPHICS",
+    "KEPLER_CHANNEL_GROUP_A",
+    "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED_TRUE", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL_ENABLE",
 ]
 
 # Bit fields of 32-bit words, "hi:lo": (lowest bit, bits).
 GSP_FIELDS = ["NV_VGPU_MSG_HEADER_VERSION_MAJOR", "NV_VGPU_MSG_HEADER_VERSION_MINOR"]
 PCI_FIELDS = ["NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION", "NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_SIZE",
           "MCTP_HEADER_SOM", "MCTP_HEADER_EOM", "MCTP_MSG_HEADER_TYPE", "MCTP_MSG_HEADER_VENDOR_ID",
-          "MCTP_MSG_HEADER_NVDM_TYPE", "NV_VBIOS_FWSECLIC_SB_ERR_CODE"]
+          "MCTP_MSG_HEADER_NVDM_TYPE", "NV_VBIOS_FWSECLIC_SB_ERR_CODE",
+          "NVOS04_FLAGS_CHANNEL_USERD_INDEX_VALUE", "NVOS04_FLAGS_CHANNEL_USERD_INDEX_FIXED",
+          "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_VALUE", "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED",
+          "NV_CTRL_VF_DOORBELL_VECTOR", "NV_CTRL_VF_DOORBELL_RUNLIST_ID", "NV_VIRTUAL_FUNCTION_DOORBELL_VECTOR",
+          "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_ID", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL"]
 
 # The function and event numbers read, from rpc_global_enums.h.
 GSP_FUNCTIONS = ["CONTINUATION_RECORD"]
@@ -716,6 +724,7 @@ PCI_STRUCTS = {
         "engineType", "cid", "hObjectError", "hObjectBuffer", "instanceMem", "userdMem", "ramfcMem",
         "mthdbufMem", "errorNotifierMem", "internalFlags"]),
     "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
+    "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS": ("Channel_group_alloc", ["engineType"]),
     "NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS": ("Device_info_table", ["numEntries", "entries"]),
     "NV2080_CTRL_FIFO_DEVICE_ENTRY": ("Device_entry", ["engineData"]),
     "NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS": ("Static_gr_info", ["engineInfo"]),

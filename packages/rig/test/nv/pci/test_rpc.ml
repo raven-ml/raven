@@ -488,6 +488,95 @@ let test_registry =
             [ u8 t (e + 4); u32 t (e + 8); u32 t (e + 12) ])
         keys)
 
+(* Channels *)
+
+(* NVOS04_FLAGS (alloc_channel.h): the index of a channel's USERD within its
+   page of 8 in bits 10:8, the index fixed in bit 11, the page in bits 20:12,
+   the page fixed in bit 21. NVIDIA's RM gives the GSP the hardware id it chose
+   with the page fixed and the index not, id / 8 and id mod 8
+   (_kchannelSendChannelAllocRpc, kernel_channel.c). *)
+let userd_bits = 0x3f_ff00
+let ids = Gen.one_of [ Gen.int_range 0 4095; Gen.of_list [ 0; 7; 8; 4095 ] ]
+let flag_words = Gen.int_range 0 0xffff_ffff
+
+let test_channel_flags =
+  prop "a channel's flags fix its id, the other flags kept"
+    (Gen.pair flag_words ids) (fun (flags, id) ->
+      cover "the first id" (id = 0);
+      cover "the last of a page" (id = 7);
+      cover "a second page" (id = 8);
+      cover "the last id" (id = 4095);
+      let f = Rpc.channel_flags flags id in
+      equal ~msg:"the other flags" int
+        (flags land lnot userd_bits)
+        (f land lnot userd_bits);
+      equal ~msg:"index, its page, the page fixed and the index not" (list int)
+        [ id mod 8; id / 8; 1; 0 ]
+        [ (f lsr 8) land 7; (f lsr 12) land 0x1ff; (f lsr 21) land 1;
+          (f lsr 11) land 1 ];
+      equal (option int) (Some id) (Rpc.channel_id f))
+
+let test_channel_id =
+  cases "flags that fix no page name no id"
+    ~name:(fun (n, _, _) -> n)
+    [
+      ("no flags", 0, None);
+      ("an index without its page", 0x0b00, None);
+      ("the golden channel's", 0x20_0320, Some 3);
+      ("a later page's", 0x20_1520, Some 13);
+    ]
+    (fun (_, flags, id) -> equal (option int) id (Rpc.channel_id flags))
+
+let test_channel_range () =
+  equal ~msg:"512 pages of 8" int 4096 Rpc.channel_ids;
+  raises_match Exn.invalid_arg (fun () -> ignore (Rpc.channel_flags 0 (-1)));
+  raises_match Exn.invalid_arg (fun () -> ignore (Rpc.channel_flags 0 4096))
+
+(* Beside a GSP, NVIDIA's RM allocates a channel that is not the GSP's own from
+   id 1 up, the lowest free: id 0 is kept for the GSP's
+   (KFIFO_NUM_GSP_RESERVED_CHANNELS and kfifoChidMgrAllocChid, kernel_fifo.c,
+   with eheap's growing-up allocation). *)
+let test_free_channel_id =
+  let ids = Gen.list ~size:(Gen.int_range 0 12) (Gen.int_range 0 10) in
+  let zeros = Gen.list ~size:(Gen.int_range 1 3) (Gen.constant 0) in
+  let held = Gen.one_of [ Gen.constant []; zeros; ids ] in
+  prop "a channel takes the lowest free id from 1" held (fun held ->
+      cover "none held" (held = []);
+      cover "id 1 held" (List.mem 1 held);
+      cover "only id 0 held" (held <> [] && List.for_all (( = ) 0) held);
+      let rec lowest id = if List.mem id held then lowest (id + 1) else id in
+      equal (option int) (Some (lowest 1))
+        (Rpc.free_channel_id (fun id -> List.mem id held)))
+
+let test_no_channel_id () =
+  equal (option int) None (Rpc.free_channel_id (fun id -> id < 4096));
+  equal (option int) (Some 4095) (Rpc.free_channel_id (fun id -> id < 4095))
+
+(* NV_CTRL_VF_DOORBELL (ga100 dev_ctrl.h), which NVIDIA's RM builds the token
+   in on Ampere and Ada: the id in bits 11:0, the runlist in bits 22:16;
+   NV_VIRTUAL_FUNCTION_DOORBELL (gb202 dev_vm.h) on Blackwell adds
+   RUNLIST_DOORBELL, bit 30, enabled (kfifoGenerateWorkSubmitTokenHal_GA100,
+   _GB202). *)
+let test_token =
+  cases "a work submit token is its channel's runlist and id"
+    ~name:(fun (n, _, _, _, _) -> n)
+    [
+      ("Ada's", false, 2, 5, 0x2_0005);
+      ("the last runlist and id", false, 127, 4095, 0x7f_0fff);
+      ("the first", false, 0, 0, 0);
+      ("Blackwell's", true, 2, 5, 0x4002_0005);
+    ]
+    (fun (_, runlist_doorbell, runlist, id, token) ->
+      equal int token (Rpc.work_submit_token ~runlist_doorbell ~runlist id))
+
+let test_token_range () =
+  let token runlist id =
+    ignore (Rpc.work_submit_token ~runlist_doorbell:false ~runlist id)
+  in
+  raises_match Exn.invalid_arg (fun () -> token 128 0);
+  raises_match Exn.invalid_arg (fun () -> token 0 4096);
+  raises_match Exn.invalid_arg (fun () -> token (-1) 0)
+
 (* CPU sequences *)
 
 (* rpc_run_cpu_sequencer_v17_00: bufferSizeDWord, cmdIndex (the words used),
@@ -629,6 +718,17 @@ let () =
                test_compute_context;
              test "unloading" test_unloading;
              test_registry;
+           ];
+         group ~timeout:10. "channels"
+           [
+             test_channel_flags;
+             test_channel_id;
+             test "an id the flags cannot hold raises" test_channel_range;
+             test_free_channel_id;
+             test "every id held leaves none" test_no_channel_id;
+             test_token;
+             test "a runlist or id the token cannot hold raises"
+               test_token_range;
            ];
          group ~timeout:10. "sequences"
            [

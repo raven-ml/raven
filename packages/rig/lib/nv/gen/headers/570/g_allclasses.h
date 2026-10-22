@@ -35,6 +35,8 @@
 
 #define FERMI_VASPACE_A                          (0x000090f1)
 
+#define KEPLER_CHANNEL_GROUP_A                   (0x0000a06c)
+
 #define AMPERE_DMA_COPY_B                        (0x0000c7b5)
 
 #define BLACKWELL_DMA_COPY_B                     (0x0000cab5)

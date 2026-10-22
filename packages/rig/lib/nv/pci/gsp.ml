@@ -76,9 +76,13 @@ type start =
     }
   | Cot of Falcon.op list
 
-(* Each channel's runlist changes under the GSP's lock by one store of a map
-   made first, so an exception leaves the table whole. *)
+(* Channels and channel groups by handle. Each table changes under the GSP's
+   lock by one store of a map made first, so an exception leaves it whole. *)
 module Channels = Map.Make (Int)
+
+(* A channel's hardware id and runlist, which its work submit token names. The
+   runlist is [None] where the GPU has no engine of the channel's type. *)
+type channel = { id : int; runlist : int option }
 
 (* GPU memory the process gave the GSP for an object: a channel's instance
    block and method buffer, or a compute engine's context buffers. *)
@@ -113,7 +117,8 @@ type t = {
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
   mutable runlists : (int * int) list; (* each engine's runlist *)
-  mutable channels : int Channels.t; (* each channel's runlist *)
+  mutable groups : int option Channels.t; (* each channel group's runlist *)
+  mutable channels : channel Channels.t;
   mutable held : held Objects.t; (* under [lock] *)
   mutable graphics : graphics;
   taken : sys list ref; (* the system memory the boot took *)
@@ -499,7 +504,8 @@ let given g ~client obj m =
           g.held)
 
 (* Under [g]'s lock: takes [obj] of [client] and every object under it out of
-   [g]'s records and runlists, and is the memory given for them. *)
+   [g]'s records and its channels' and groups' tables, which frees the
+   channels' hardware ids, and is the memory given for them. *)
 let take_freed g ~client obj =
   let rec under gone =
     let more =
@@ -521,6 +527,7 @@ let take_freed g ~client obj =
   in
   let drop f t = List.fold_left (fun t o -> f o t) t gone in
   g.held <- drop (fun o -> Objects.remove (client, o)) g.held;
+  g.groups <- drop Channels.remove g.groups;
   g.channels <- drop Channels.remove g.channels;
   memory
 
@@ -642,6 +649,51 @@ let root_entries (c : Chip.t) =
    promoted. *)
 type objects = { mutable subdevice : int }
 
+(* The runlist of the engine of type [e], the graphics engine's for none, as
+   for a channel given no engine (kfifoGetDefaultRunlist_GM107). [e] is an
+   NV2080 engine type, the table's are RM engine types: the two agree for the
+   graphics and copy engines (cl2080_notification.h, gpu_engine_type.h). *)
+let runlist g e =
+  let e = if e = 0 then Defs.nv2080_engine_type_graphics else e in
+  List.assoc_opt e g.runlists
+
+(* Records the runlist of the channel group [obj] that [p] allocates: its
+   engine's, which every channel of the group takes
+   (kchangrpapiConstruct_IMPL). *)
+let name_group g obj p =
+  let r = runlist g (Rig_nv.get p Defs.Channel_group_alloc.engine_type) in
+  Rig_nv.Lock.protect g.lock (fun () ->
+      g.groups <- Channels.add obj r g.groups)
+
+(* Names the hardware id of the channel [obj] that [p] allocates under
+   [parent], and records it with the channel's runlist, before the GSP makes
+   the channel. Beside a GSP, NVIDIA's RM chooses the id
+   ([Rpc.free_channel_id], kchannelAllocHwID_GM107) and gives it in the flags
+   (_kchannelSendChannelAllocRpc); flags that fix one already, as the golden
+   channel's do, keep it. A channel in a group takes the group's engine, and
+   so its runlist; any other, its own engine's (kchannelConstruct_IMPL). *)
+let name_channel g ~parent obj p =
+  let module G = Defs.Gpfifo_alloc in
+  Rig_nv.Lock.protect g.lock @@ fun () ->
+  let held id = Channels.exists (fun _ c -> c.id = id) g.channels in
+  let flags = Rig_nv.get p G.flags in
+  let id =
+    match Rpc.channel_id flags with
+    | Some _ as id -> id
+    | None -> Rpc.free_channel_id held
+  in
+  match id with
+  | None -> Error (Rig_nv.Lacking "no hardware id is free for another channel")
+  | Some id ->
+      Rig_nv.set p G.flags (Rpc.channel_flags flags id);
+      let runlist =
+        match Channels.find_opt parent g.groups with
+        | Some r -> r
+        | None -> runlist g (Rig_nv.get p G.engine_type)
+      in
+      g.channels <- Channels.add obj { id; runlist } g.channels;
+      Ok ()
+
 let alloc g ~client ~locate ~objects ~parent cls p =
   let channel_class, compute_class, _ = classes g.p.chip.family in
   let h, obj = made g ~client ~parent cls in
@@ -649,7 +701,11 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   let* () =
     match p with
     | Some p when cls = channel_class ->
-        channel_memory g ~client ~locate obj p
+        let* () = channel_memory g ~client ~locate obj p in
+        name_channel g ~parent obj p
+    | Some p when cls = Defs.kepler_channel_group_a ->
+        name_group g obj p;
+        Ok ()
     | _ -> Ok ()
   in
   let* bind =
@@ -658,14 +714,6 @@ let alloc g ~client ~locate ~objects ~parent cls p =
     else Ok (fun () -> Ok ())
   in
   let* _ = alloc_object g ~client ~parent ~obj:h cls p in
-  if cls = channel_class then
-    Option.iter
-      (fun p ->
-        let e = Rig_nv.get p Defs.Gpfifo_alloc.engine_type in
-        let runlist = Option.value ~default:0 (List.assoc_opt e g.runlists) in
-        Rig_nv.Lock.protect g.lock (fun () ->
-            g.channels <- Channels.add obj runlist g.channels))
-      p;
   if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
   (* The golden context's objects get none of this: its address space is the
      RM's own, whose root the GSP takes with the tables of its range
@@ -687,15 +735,24 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   in
   Ok obj
 
-(* A channel's work submit token carries its runlist in bits 31:16, and on
-   Blackwell bit 30 set. *)
+(* The work submit token of the channel [obj] into [p]. Beside a GSP, NVIDIA's
+   RM makes it from the channel's runlist and hardware id and asks the GSP
+   nothing (kchannelCtrlCmdGpfifoGetWorkSubmitToken_IMPL,
+   kfifoGenerateWorkSubmitTokenHal_GA100 and _GB202). *)
 let token g obj p =
   let module W = Defs.Work_submit_token in
-  let runlist = Option.value ~default:0 (Channels.find_opt obj g.channels) in
-  let blackwell = g.p.chip.family = Blackwell in
-  Rig_nv.set p W.work_submit_token
-    (Rig_nv.get p W.work_submit_token lor (runlist lsl 16)
-    lor if blackwell then 1 lsl 30 else 0)
+  match (Channels.find_opt obj g.channels, p) with
+  | None, _ -> Error (Rig_nv.Refused (strf "object 0x%x is no channel" obj))
+  | Some _, None ->
+      Error (Rig_nv.Refused "a work submit token without its parameters")
+  | Some { runlist = None; _ }, Some _ ->
+      Error
+        (Rig_nv.Refused "a channel of an engine the GPU lacks has no runlist")
+  | Some { id; runlist = Some runlist }, Some p ->
+      let runlist_doorbell = g.p.chip.family = Blackwell in
+      Rig_nv.set p W.work_submit_token
+        (Rpc.work_submit_token ~runlist_doorbell ~runlist id);
+      Ok ()
 
 (* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
    does, whose status is the reply's result. A GPU that left the bus or
@@ -733,10 +790,9 @@ let client_rm g ~client ~locate =
       (fun ~parent cls p -> alloc g ~client ~locate ~objects ~parent cls p);
     control =
       (fun obj cmd p ->
-        let* () = control g ~client obj cmd p in
         if cmd = Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
-          Option.iter (token g obj) p;
-        Ok ());
+          token g obj p
+        else control g ~client obj cmd p);
     free = Some (fun ~parent:_ obj -> free g ~client obj);
   }
 
@@ -1102,6 +1158,7 @@ let take p (fw : Images.t) fwsec ~taken =
       next = first_handle;
       clients = first_client;
       runlists = [];
+      groups = Channels.empty;
       channels = Channels.empty;
       held = Objects.empty;
       graphics = { main = 0; pm = 0; patch = 0; globals = [] };

@@ -149,6 +149,9 @@ let nv_vaspace_allocation_flags_is_externally_owned = 8
 let mctp_msg_header_type_vendor_pci = 0x7e
 let mctp_msg_header_vendor_id_nv = 0x10de
 let nv2080_engine_type_graphics = 1
+let kepler_channel_group_a = 0xa06c
+let nvos04_flags_channel_userd_index_page_fixed_true = 1
+let nv_virtual_function_doorbell_runlist_doorbell_enable = 1
 
 (* Bit fields of 32-bit words: (lowest bit, bits). *)
 let nv_bit_falcon_ucode_desc_header_vdesc_version = (8, 8)
@@ -159,6 +162,15 @@ let mctp_msg_header_type = (0, 7)
 let mctp_msg_header_vendor_id = (8, 0x10)
 let mctp_msg_header_nvdm_type = (0x18, 8)
 let nv_vbios_fwseclic_sb_err_code = (0, 0x10)
+let nvos04_flags_channel_userd_index_value = (8, 3)
+let nvos04_flags_channel_userd_index_fixed = (0xb, 1)
+let nvos04_flags_channel_userd_index_page_value = (0xc, 9)
+let nvos04_flags_channel_userd_index_page_fixed = (0x15, 1)
+let nv_ctrl_vf_doorbell_vector = (0, 0xc)
+let nv_ctrl_vf_doorbell_runlist_id = (0x10, 7)
+let nv_virtual_function_doorbell_vector = (0, 0xc)
+let nv_virtual_function_doorbell_runlist_id = (0x10, 7)
+let nv_virtual_function_doorbell_runlist_doorbell = (0x1e, 1)
 
 (* The GSP's functions and events (rpc_global_enums.h). *)
 let nv_vgpu_msg_function_gsp_rm_alloc = 0x67
@@ -372,6 +384,11 @@ end
 module Work_submit_token = struct
   let sizeof = 4
   let work_submit_token = (0, 4)
+end
+
+module Channel_group_alloc = struct
+  let sizeof = 20
+  let engine_type = (0xc, 4)
 end
 
 module Device_info_table = struct
