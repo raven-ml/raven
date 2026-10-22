@@ -15,7 +15,7 @@
 (library
  (name rig_gpu_support)
  (modules rig_gpu_support)
- (libraries rig rig_edge windtrap)
+ (libraries rig rig_edge unix windtrap)
  (foreign_stubs
   (language c)
   (names rig_gpu_support_stubs)))

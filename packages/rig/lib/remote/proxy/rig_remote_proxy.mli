@@ -73,6 +73,7 @@ val capability : t -> Rig_remote_abi.t
       | [host_addresses] | [false]                                           |
       | [capability]     | {!capability} ({!Rig_remote_abi.declare})         |
       | [word]           | The word [make] was given                         |
+      | [bus]            | [None]                                            |
     }
 
     Each queue runs [Copy], and on the machine's host [Words] too. The
@@ -145,7 +146,8 @@ val capability : t -> Rig_remote_abi.t
     [None] for proxies of two links. A word maps as itself. For memory, it
     asks the agent to map [r]'s object on [d]'s device as a new object, and is
     [None] if the agent cannot or refuses; it raises {!Fault} if it asks and
-    the job has failed. {!map_host} is [None]. *)
+    the job has failed. {!map_host} is [None]. {!val-dma} is [Error], since
+    the memory is another machine's, which its agent describes there. *)
 
 (** {1:images Code}
 

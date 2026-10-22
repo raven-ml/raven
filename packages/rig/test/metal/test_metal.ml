@@ -1439,6 +1439,16 @@ let no_peer () =
   equal (option pass) None (Rig_metal.map_peer t.g other o);
   Rig_metal.free other o
 
+(* No other function reaches a Metal buffer, which has no bus address. *)
+let no_dma () =
+  let t = dev () in
+  let r = alloc t 64 in
+  equal (result pass string)
+    (Error "Metal gives no other device DMA to its buffers")
+    (Rig_metal.dma t.g r ~fn:"0000:41:00.0");
+  equal (option string) None (Rig.bus t.d);
+  Rig_metal.free t.g r
+
 let given_back () =
   let t = dev () in
   let r = alloc t 64 in
@@ -1470,6 +1480,7 @@ let memory =
         aligned_256;
       test "alloc and map_host refuse no bytes" empty_regions;
       test "another device of the GPU maps none of its memory" no_peer;
+      test "no other function reaches its memory, and it has no bus" no_dma;
       test "free releases an allocation's or a mapping's buffer" given_back;
       test "a mapping's host address is its first byte's page" mapped_pages;
     ]

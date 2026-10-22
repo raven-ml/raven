@@ -45,6 +45,7 @@ module D = struct
       alignment;
       capability = Capability (capability_key, ());
       word = { at = d.word; base = 0 };
+      bus = None;
       edge = d.self;
     }
 
@@ -60,6 +61,10 @@ module D = struct
   let peer _ _ = true
   let map_peer _ _ r = Some { r with base = 0 }
   let map_host _ p _ = Some { at = p; base = 0 }
+
+  (* rig asks no memory device: its memory is the host's. *)
+  let dma _ _ ~fn:_ =
+    Error "a memory device's memory is the process's own, which no driver gives"
   let image _ _ = Error "a memory device loads no code"
   let entry () _ = Rig_edge.Absent
   let unload _ () = ()

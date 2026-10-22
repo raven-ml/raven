@@ -94,6 +94,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [alignment] | [4096]: each path allocates whole pages of 4 KiB. |
       | [capability] | {!val-capability} ({!Rig_nv_abi.declare}). |
       | [word] | The word [make] was given, mapped through the path. |
+      | [bus] | The path's {!field-bus}. |
     }
 
     The device maps the 64 KiB of rig's array of words that holds its word
@@ -290,7 +291,16 @@ val capability : t -> Rig_nv_abi.Gpu.t
     device's later work until the other device stops. {!val-map_peer} of a
     stopped device's [Mapped] memory is [None]. Peer access between GPUs is
     untested. {!val-map_host} returns [None] if the
-    path maps no host memory or refuses the pages ({!field-map_host}). *)
+    path maps no host memory or refuses the pages ({!field-map_host}).
+
+    {!val-dma} is the path's answer ({!field-dma}). Another function reads
+    what a value's work wrote once the value is reached: a copy's release
+    writes the word once the copy engine's earlier copies are complete
+    ({!Rig_nv_abi.Method.copy_release}), and a compute release once its
+    launches' writes are visible to the system. The device's later work
+    reads what the function wrote once its writes are complete: a copy
+    engine reads the memory itself, and each launch's descriptor invalidates
+    the compute engine's data caches as the launch starts. *)
 
 (** {1:images Images}
 
@@ -512,6 +522,12 @@ type 'm path = {
           for this GPU, or [None] if this GPU cannot address it. *)
   free : 'm memory -> unit;
       (** [free m] gives back what [alloc], [map_host] or [map_peer] gave. *)
+  bus : string option;
+      (** The bus address of the GPU's PCI function on its machine. *)
+  dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
+      (** [dma m ~fn] is how the function at [fn] reaches the memory [m] that
+          [alloc] gave, as {!Rig_edge.Driver.val-dma} states, or [Error]
+          with the path's reason. *)
   register : int -> (unit, string) result;
       (** [register c] makes the channel [c], which the device allocated under
           [device], ready to run, as the path requires. *)

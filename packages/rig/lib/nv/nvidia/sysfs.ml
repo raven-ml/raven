@@ -22,6 +22,35 @@ let key bus =
       | _ -> [])
   | _ -> []
 
+(* Linux spells a bus address in lowercase hexadecimal, the domain in four
+   digits or more. *)
+let hex n s =
+  String.length s >= n
+  && String.for_all (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false) s
+
+let spelled bus =
+  match String.split_on_char ':' bus with
+  | [ domain; b; df ] -> (
+      match String.split_on_char '.' df with
+      | [ d; f ] ->
+          hex 4 domain
+          && String.length b = 2
+          && hex 2 b
+          && String.length d = 2
+          && hex 2 d
+          && String.length f = 1
+          && hex 1 f
+      | _ -> false)
+  | _ -> false
+
+let known root bus =
+  if not (spelled bus) then
+    Error (Printf.sprintf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
+  else if
+    not (Sys.file_exists (Filename.concat root ("sys/bus/pci/devices/" ^ bus)))
+  then Error (Printf.sprintf "%s names no PCI function of the machine" bus)
+  else Ok ()
+
 (* A function whose files cannot be read, as while the kernel removes it, is
    left out, as rig.pci leaves it out, so that one card is listed by every
    path or by none. *)

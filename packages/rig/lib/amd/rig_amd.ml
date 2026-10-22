@@ -124,6 +124,8 @@ type 'm path = {
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
+  bus : string option;
+  dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
   queue :
     [ `Pm4 | `Aql | `Sdma ] ->
     ring:int ->
@@ -157,6 +159,7 @@ type ops = {
   alloc : Rig_edge.memory -> int -> mem option;
   map_host : (int -> int -> mem option) option;
   map_peer : mem -> mem option;
+  dma : mem -> fn:string -> (Rig_edge.dma, string) result;
   queue :
     [ `Pm4 | `Aql | `Sdma ] ->
     ring:int ->
@@ -184,6 +187,11 @@ let ops (type m) (p : m path) =
     map_host = Option.map (fun f a n -> Option.map pack (f a n)) p.map_host;
     map_peer =
       (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
+    dma =
+      (fun m ~fn ->
+        match own m with
+        | Some m -> p.dma m ~fn
+        | None -> invalid_arg "Rig_amd.dma: another path's memory");
     queue = p.queue;
     retire = p.retire;
     most_ring = p.most_ring;
@@ -338,6 +346,7 @@ type t = {
   maps_host : bool;
   word : region; (* rig frees a word of the device's own after stop *)
   reaches : int -> bool; (* the path's *)
+  bus : string option; (* the path's *)
   capability : Abi.Capability.t;
   guard : Lock.t;
       (* held by [grow_scratch], [make_trace], and stop over [live] *)
@@ -707,6 +716,7 @@ let facts g =
     alignment = region_alignment;
     capability = Abi.declare g.capability;
     word = g.word;
+    bus = g.bus;
     edge = Nativeint.of_int g.self;
   }
 
@@ -773,6 +783,33 @@ let map_peer g _ r =
           free_mem m;
           None
       | None -> view None)
+
+(* Another function's writes through the memory BAR pass the host data path
+   (HDP) as the host's do, so every hand-over flushes it once a region is
+   given: the region counts for the process's life, as the function may write
+   it until then. Its reads through the BAR may hit the HDP's read cache, which
+   the kernel invalidates before its own reads (amdgpu_device.c,
+   amdgpu_device_aper_access) on HDP 4.0 to 4.2, 5.0 and 5.2.0 alone:
+   hdp_v4_0.c's invalidate_hdp returns at once on 4.4.0, 4.4.2 and 4.4.5, and
+   hdp_v5_2.c, hdp_v6_0.c and hdp_v7_0.c have none (amdgpu_discovery.c pairs
+   each version with its file). The GPUs this driver drives report HDP 4.4.2
+   (gfx942), 4.4.5 (gfx950), 6 (GFX 11) and 7 (GFX 12) in their discovery
+   tables, so their releases need no invalidation: a value's release writes
+   the L2 back, and the function reads what the work wrote once the value is
+   reached. *)
+let dma g r ~fn =
+  match g.hdp with
+  | None ->
+      Error
+        "the host reaches no register that flushes the GPU's host data path, \
+         through which another function's writes reach the GPU's memory"
+  | Some _ ->
+      if not (count_hdp g g.self 1) then
+        Error "the device stopped, or flushes no more host data paths"
+      else
+        let answer = (live g).ops.dma r.mem ~fn in
+        if Result.is_error answer then ignore (count_hdp g g.self (-1));
+        answer
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
@@ -1205,6 +1242,7 @@ let make (type m) ~word (p : m path) =
         maps_host = Option.is_some ops.map_host;
         word = region 8 word;
         reaches = p.reaches;
+        bus = p.bus;
         capability =
           {
             gpu = p.gpu;

@@ -49,7 +49,11 @@ let driver_facts () =
   equal rec_w c (Proxy.capability p);
   equal string "mem3" f.arch;
   equal int ((1 lsl 30) + 3) f.budget;
-  equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment
+  equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment;
+  equal ~msg:"no bus" (option string) None f.bus;
+  equal ~msg:"no DMA to another machine's memory" (result pass string)
+    (Error "memory of another machine: its agent describes it there")
+    (Proxy.dma p f.word ~fn:"0000:41:00.0")
 
 let reaches (forward, backward) =
   with_machine

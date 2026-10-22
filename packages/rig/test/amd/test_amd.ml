@@ -80,6 +80,8 @@ let path_of gpu : unit A.path =
     reaches = (fun _ -> unused ());
     map_peer = (fun _ -> unused ());
     free = (fun _ -> unused ());
+    bus = None;
+    dma = (fun _ ~fn:_ -> unused ());
     queue = (fun _ ~ring:_ ~bytes:_ ~read:_ ~write:_ -> unused ());
     retire = (fun _ -> unused ());
     most_ring = (fun _ -> unused ());
@@ -1294,6 +1296,114 @@ let memory =
         around_the_packet;
     ]
 
+(* Another function's DMA
+
+   The GPU's own function stands for the other one, as every machine has it.
+   The bus carries a function's requests to its own BAR, which a process
+   that cannot read the function's ACS controls cannot tell: such an export
+   of GPU memory is refused, and the test skips. Through amdgpu the device
+   exports a dma-buf, which amdgpu maps for the host whatever its memory:
+   KFD sets no AMDGPU_GEM_CREATE_NO_CPU_ACCESS (amdgpu_amdkfd_gpuvm.c), which
+   alone makes amdgpu_gem_object_mmap refuse. A host read of VRAM outside
+   the BAR moves the object into it first, so on a GPU whose BAR is smaller
+   than its memory the read checks the bytes after a move. Over PCI it
+   gives bus ranges and keeps the GPU taken until its process exits, so a
+   child of the suite makes that export, and the GPU opens again once the
+   child is gone. *)
+
+module B = Rig.Buffer
+module Dmabuf = Rig_gpu_support.Dmabuf
+
+let dma_child = "--dma-over-pci"
+let dma_sizes = [ 1; 4095; 4096; 4097; 1 lsl 22 ]
+
+(* An [fn] that is no bus address, or no function of the machine, is refused
+   naming it. *)
+let refuses_strangers d =
+  List.iter
+    (fun fn ->
+      match B.dma (B.create d 64) ~fn with
+      | Ok _ -> failf "%s reaches the memory" fn
+      | Error why -> contains ~msg:fn ~sub:fn why)
+    [ "41:00.0"; "ffff:ff:1f.7" ]
+
+let gpu_bus d =
+  let fn = require_some ~msg:"the device's bus" (Rig.bus d) in
+  equal ~msg:"GPU 0's function" (option string)
+    (List.nth_opt (require_ok (Rig_amd_amdgpu.buses ())) 0)
+    (Some fn);
+  fn
+
+let exported d fn ~memory n =
+  let b = B.create ~memory d n in
+  B.fill b 'y';
+  match B.dma b ~fn with
+  | Error why when Rig_gpu_support.has ~sub:"ACS controls" why ->
+      skip ~reason:why ()
+  | Error why -> failf "%d bytes: %s" n why
+  | Ok (Bus _) -> fail "the amdgpu path gives a dma-buf"
+  | Ok (Dmabuf { fd; offset }) -> (
+      Fun.protect ~finally:(fun () -> Dmabuf.close fd) @@ fun () ->
+      equal ~msg:"close-on-exec" bool true (Dmabuf.cloexec fd);
+      equal ~msg:"the region's offset" int 0 offset;
+      (match Dmabuf.size fd with
+      | Some bytes -> at_least ~msg:"its bytes" int ~than:n bytes
+      | None -> fail "the descriptor is no dma-buf");
+      match Dmabuf.read fd ~at:offset n with
+      | Some s -> equal ~msg:"its bytes, mapped" string (String.make n 'y') s
+      | None -> fail "amdgpu maps no dma-buf of this memory")
+
+let exports_dmabuf () =
+  S.with_ @@ fun { d; _ } ->
+  let fn = gpu_bus d in
+  List.iter (exported d fn ~memory:Device) dma_sizes;
+  List.iter (fun memory -> exported d fn ~memory 4097) [ Pinned; Mapped ];
+  refuses_strangers d
+
+(* In the child: the bytes at the ranges are the buffer's, through BAR 0, the
+   memory BAR, and a reopen of the GPU in the process is refused. *)
+let exports_bus () =
+  let t = S.open_ () in
+  let fn = gpu_bus t.d in
+  let n = 1 lsl 16 in
+  let b = B.create t.d n in
+  B.fill b 'x';
+  (match B.dma b ~fn with
+  | Error why -> failf "refused: %s" why
+  | Ok (Dmabuf _) -> fail "the path over PCI gives bus ranges"
+  | Ok (Bus runs) ->
+      satisfies ~msg:"the ranges" ~claim:"pages that hold the buffer"
+        (list (pair int int))
+        (fun runs ->
+          List.for_all (fun (a, k) -> a mod 4096 = 0 && k mod 4096 = 0) runs
+          && List.fold_left (fun s (_, k) -> s + k) 0 runs >= n)
+        runs;
+      equal ~msg:"the bytes through the BAR" string (String.make n 'x')
+        (Rig_gpu_support.bar_bytes fn ~bar:0 runs n));
+  refuses_strangers t.d;
+  S.close t;
+  match Rig.open_ (S.gpu ()) with
+  | Ok d ->
+      Rig.close d;
+      fail "the GPU opened again in the process"
+  | Error why -> contains ~sub:"given to another PCI function" why
+
+let exports () =
+  if S.driverless () then begin
+    equal ~msg:"the child's exit" int 0 (Rig_gpu_support.child dma_child);
+    S.with_ ignore
+  end
+  else exports_dmabuf ()
+
+let dma =
+  group ~timeout:120. "another function's DMA"
+    [
+      test
+        "dma exports a dma-buf through amdgpu, or bus ranges over PCI that \
+         keep the GPU until the process exits"
+        exports;
+    ]
+
 let spin t p flag n =
   kernel t p "spin" ~groups:1
     ~fixed:[ (flag, Rig.Read_write) ]
@@ -2389,9 +2499,17 @@ let traces =
     ]
 
 let () =
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
+    exit
+      (match exports_bus () with
+      | () -> 0
+      | exception e ->
+          prerr_endline (Printexc.to_string e);
+          1);
   exit
     (Windtrap.run "rig_amd"
        [
+         dma;
          gpus;
          misuse;
          images;

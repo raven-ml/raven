@@ -36,6 +36,11 @@ type t = buffer
 (** {!Rig.Buffer.kind}. *)
 type kind = Rig_edge.memory = Device | Pinned | Mapped
 
+(** {!Rig.Buffer.dma}. *)
+type dma = Rig_edge.dma =
+  | Bus of (int * int) list
+  | Dmabuf of { fd : int; offset : int }
+
 (** {!Rig.Buffer.access}. *)
 type access = Def.access = Read | Read_write
 
@@ -174,6 +179,9 @@ val address : string -> t -> int
 
 val aligned : t -> at:int -> int -> bool
 (** [aligned b ~at n] is {!Rig.Buffer.aligned}[ b ~at n]. *)
+
+val dma : t -> fn:string -> (dma, string) result
+(** [dma b ~fn] is {!Rig.Buffer.dma}[ b ~fn]. *)
 
 val handle : t -> nativeint
 (** [handle b] is {!Rig.Buffer.handle}[ b]. *)

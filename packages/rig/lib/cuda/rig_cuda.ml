@@ -290,6 +290,7 @@ type t = {
   self : int;
   context : int; (* its GPU's primary context *)
   gpu : int; (* its GPU's number *)
+  device : int; (* its CUdevice *)
   reached : int list Atomic.t; (* its GPU's [reached] *)
   facts : region Rig_edge.facts;
   held : int Atomic.t;
@@ -616,6 +617,7 @@ let open_ ~word i =
               alignment = allocation_alignment;
               capability = Rig_cuda_abi.declare cap;
               word;
+              bus = List.nth_opt g.buses i;
               edge = Nativeint.of_int self;
             }
           in
@@ -625,6 +627,7 @@ let open_ ~word i =
               self;
               context;
               gpu = i;
+              device = d;
               reached;
               facts;
               held;
@@ -725,6 +728,100 @@ let map_host g a n =
           match locked g None a with
           | Ok r -> Some r
           | Error s -> fault (page_locking n a) s)
+
+(* Another function's DMA
+
+   cuMemGetHandleForAddressRange exports a range of one allocation as a
+   dma-buf, where the driver supports it (CUDA driver API, Memory
+   Management): NVIDIA's open kernel modules on Linux. It needs the range on
+   the host's page, which cuMemAlloc does not promise, and the export is of
+   the whole allocation, so a region's offset in it is its distance from the
+   allocation's start. With flags 0 the kernel maps the memory for the
+   importer as its topology allows, through BAR1 or a coherent link alike. *)
+
+external range_size : int -> int -> int = "caml_rig_cuda_range_size"
+external export_dmabuf : int -> int -> int -> int = "caml_rig_cuda_dmabuf"
+external host_page : unit -> int = "caml_rig_cuda_page" [@@noalloc]
+
+let cuda_error_not_supported = 801
+
+(* cuda.h's: whether the device exports its own memory, and memory
+   cuMemHostAlloc gave, as dma-bufs. CUDA before 13 lacks the second, which
+   it then answers with an error: page-locked memory exports only on Tegra
+   there. *)
+let attribute_dma_buf_supported = 124
+let attribute_host_alloc_dma_buf_supported = 146
+let supports g a = attribute g.device a > 0
+
+(* A bus address of this machine, as Linux spells it: "DDDD:BB:DD.F" in
+   hexadecimal, the domain in four digits or more, under /sys/bus/pci. *)
+let hex n s =
+  String.length s >= n
+  && String.for_all (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false) s
+
+let bus_function fn =
+  match String.split_on_char ':' fn with
+  | [ domain; bus; slot ] -> (
+      match String.split_on_char '.' slot with
+      | [ device; f ] ->
+          hex 4 domain
+          && String.length bus = 2
+          && hex 2 bus
+          && String.length device = 2
+          && hex 2 device
+          && String.length f = 1
+          && hex 1 f
+      | _ -> false)
+  | _ -> false
+
+let known fn =
+  if not (bus_function fn) then
+    Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" fn)
+  else if not (Sys.file_exists (Filename.concat "/sys/bus/pci/devices" fn)) then
+    Error (strf "%s names no PCI function of this machine" fn)
+  else Ok ()
+
+(* CUDA ties the export of page-locked host memory to an attribute of its
+   own, and states no other cause of refusing GPU memory than the device's
+   attribute: each refusal names the attribute that decides it. *)
+let not_supported g (r : region) =
+  if r.kind = Host then
+    "CUDA exports no dma-buf of page-locked host memory on this GPU \
+     (CU_DEVICE_ATTRIBUTE_HOST_ALLOC_DMA_BUF_SUPPORTED is false, as before \
+     CUDA 13)"
+  else if not (supports g attribute_dma_buf_supported) then
+    "CUDA exports no dma-buf of this GPU's memory here \
+     (CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED is false): that needs Linux and \
+     NVIDIA's open kernel modules"
+  else "CUDA refused to export the memory as a dma-buf: CUDA_ERROR_NOT_SUPPORTED"
+
+(* The whole allocation [r] lies in, as one dma-buf. *)
+let export g (r : region) =
+  let step = "exporting GPU memory as a dma-buf" in
+  let base = get step (allocation g.context r.address) in
+  let size = get step (range_size g.context r.address) in
+  let page = host_page () in
+  if base mod page <> 0 || size mod page <> 0 then
+    Error
+      (strf
+         "the allocation of %d bytes at 0x%x is off the host's page of %d \
+          bytes, which CUDA's export needs"
+         size base page)
+  else
+    match export_dmabuf g.context base size with
+    | fd when fd >= 0 -> Ok (Rig_edge.Dmabuf { fd; offset = r.address - base })
+    | s when -s = cuda_error_not_supported ->
+        refused step g.self (Error (not_supported g r))
+    | s -> refused step g.self (Error (strf "%s: %s" step (error (-s))))
+
+let dma g (r : region) ~fn =
+  let* () = known fn in
+  match r.kind with
+  | Host when not (supports g attribute_host_alloc_dma_buf_supported) ->
+      Error (not_supported g r)
+  | Device | Host -> export g r
+  | Word | Own_word | Locked _ | Peer _ ->
+      invalid_arg "Rig_cuda.dma: a region alloc did not make"
 
 let free g (r : region) =
   match r.kind with
@@ -876,6 +973,7 @@ module Driver = struct
   let peer = peer
   let map_peer = map_peer
   let map_host = map_host
+  let dma = dma
   let image = image
   let entry = entry
   let unload = unload

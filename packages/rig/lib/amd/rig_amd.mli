@@ -161,6 +161,16 @@
     access between two GPUs, with the flushes of each other's host writes,
     is untested, and so is a path whose [hdp] is [None].
 
+    {!val-dma} is the path's answer ([dma] of {!type-path}), or [Error]
+    where the path gives no register that flushes the GPU's host data path
+    ([hdp] of {!type-path}), since another function's writes through the
+    memory BAR pass it as the host's do. Once a region is given, each
+    submission flushes that path before the GPU reads, for the rest of the
+    process, so the device's later work reads what the function wrote. The
+    function reads what a value's work wrote once the value is reached,
+    since its release writes the L2 back, and the host data path of the
+    GPUs this driver drives keeps no read cache to invalidate.
+
     {!val-map_host} returns a region the GPU addresses, or [None] if the
     path maps no host memory or refuses the pages. Both paths map host
     pages for writing, so it returns [None] for pages mapped read-only,
@@ -234,7 +244,8 @@ val capability : t -> Rig_amd_abi.Capability.t
        the GPU, at addresses that start on one;}
     {- [capability], {!capability}, declared with
        {!Rig_amd_abi.declare};}
-    {- [word], the device's timeline word, as {b Word.} below states.}}
+    {- [word], the device's timeline word, as {b Word.} below states;}
+    {- [bus], the path's [bus], the GPU's PCI function.}}
 
     {b Capability.} The record holds the GPU, its clock, its compute queue's
     packets, its work-group processors that run work, and its trace buffers,
@@ -501,6 +512,14 @@ type 'm path = {
           nothing, and [free] of it gives nothing back. *)
   free : 'm memory -> unit;
       (** [free m] gives back what [alloc], [map_host] or [map_peer] gave. *)
+  bus : string option;
+      (** The bus address of the GPU's PCI function on its machine. *)
+  dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
+      (** [dma m ~fn] is how the function at [fn] reaches the memory [m] that
+          [alloc] gave, as {!Rig_edge.Driver.val-dma} states, or [Error]
+          with the path's reason. The path keeps the memory where it lies:
+          it refuses where [fn] would reach GPU memory only once the memory
+          moved. *)
   queue :
     [ `Pm4 | `Aql | `Sdma ] ->
     ring:int ->

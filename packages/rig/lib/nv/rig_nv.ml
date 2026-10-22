@@ -212,6 +212,8 @@ type 'm path = {
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
+  bus : string option;
+  dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
   register : int -> (unit, string) result;
   unregister : int -> (unit, string) result;
   check : unit -> unit;
@@ -537,6 +539,7 @@ type 'm dev = {
   key : 'm Type.Id.t;
   index : int;
   reaches : int -> bool; (* the path's *)
+  bus : string option; (* the path's *)
   capability : Abi.Gpu.t;
   flush : int option; (* the path's flush word *)
   word : 'm reg; (* kept, with the C state, for the process *)
@@ -609,6 +612,7 @@ let facts (T d) =
     alignment = region_alignment;
     capability = Abi.declare d.capability;
     word = R d.word;
+    bus = d.bus;
     edge = Nativeint.of_int d.self;
   }
 
@@ -1223,6 +1227,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         key = p.key;
         index = p.index;
         reaches = p.reaches;
+        bus = p.bus;
         capability =
           {
             Abi.Gpu.compute_class = g.compute_class;
@@ -1383,6 +1388,12 @@ let map_host (T d) a n =
   | Some map ->
       let m = placed Below_windows n (map a n) in
       Option.map (region d p None n) m
+
+(* rig asks only of the device's own regions. *)
+let dma (T d) (R r) ~fn =
+  match Type.Id.provably_equal d.key r.dev.key with
+  | None -> invalid_arg "Rig_nv.dma: another driver's region"
+  | Some Type.Equal -> (live d).path.dma r.mem ~fn
 
 (* Rings *)
 

@@ -103,6 +103,20 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
     device reaches the memory of another GPU's device where the kernel
     driver's topology lists a link between the two GPUs.
 
+    {b Other functions.} {!Rig_amd.val-dma} exports the buffer object a
+    region lies in as a new dma-buf ({!Rig_edge.Dmabuf}), through KFD. The
+    dma-buf holds the object until its last reference goes, freed or not.
+    The kernel driver serves an importer the bus does not carry to the GPU's
+    BAR from host memory, and moves the object there for the GPU's own work
+    too, so the export of GPU memory is [Error] where Linux's p2pdma would
+    not carry [fn]'s requests to the GPU ({!Rig_pci.Machine.forwards}), and
+    also, for a process that cannot read the bridges' ACS controls, as one
+    without [CAP_SYS_ADMIN], wherever only a common bridge would carry them;
+    its reason names that cause. It
+    is [Error] too for an [fn] that names no PCI function of the machine,
+    and below KFD 1.12, Linux 6.4. The device's facts name the GPU's
+    function as [bus].
+
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or
     cause, and {!Rig_amd.val-sleep} raises it. The kernel driver bounds no

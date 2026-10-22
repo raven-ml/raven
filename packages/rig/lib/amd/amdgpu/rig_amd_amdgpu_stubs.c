@@ -159,6 +159,14 @@ value caml_rig_amd_amdgpu_free(value v_kfd, value v_handle) {
   return Val_unit;
 }
 
+/* A new dma-buf descriptor, close-on-exec, over the memory [v_handle]. */
+value caml_rig_amd_amdgpu_export(value v_kfd, value v_handle) {
+  struct kfd_ioctl_export_dmabuf_args a = {.handle = Long_val(v_handle),
+                                           .flags = O_CLOEXEC};
+  check(call(Int_val(v_kfd), AMDKFD_IOC_EXPORT_DMABUF, &a));
+  return Val_int((int)a.dmabuf_fd);
+}
+
 /* Maps [v_handle] for GPU [v_gpu], or unmaps it if [v_map] is false: the
    GPUs it reached. KFD maps and unmaps with the same layout. */
 value caml_rig_amd_amdgpu_map_gpu(value v_kfd, value v_handle, value v_gpu,
@@ -448,6 +456,7 @@ NONE(runtime_enable, value a UNUSED)
 NONE(alloc, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED)
 NONE(free, value a UNUSED, value b UNUSED)
+NONE(export, value a UNUSED, value b UNUSED)
 NONE(map_gpu, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
 NONE(event, value a UNUSED, value b UNUSED, value c UNUSED)
 NONE(destroy_event, value a UNUSED, value b UNUSED)

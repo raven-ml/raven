@@ -9,6 +9,10 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = buffer
 type kind = Rig_edge.memory = Device | Pinned | Mapped
+
+type dma = Rig_edge.dma =
+  | Bus of (int * int) list
+  | Dmabuf of { fd : int; offset : int }
 type access = Def.access = Read | Read_write
 
 let generation (a : alloc) = Atomic.Loc.get [%atomic.loc a.generation]
@@ -313,6 +317,32 @@ let aligned b ~at n =
   if n <= 0 || n land (n - 1) <> 0 then
     invalid_argf "Rig.Buffer.aligned: %d is not a positive power of two" n;
   (address "Buffer.aligned" b + at) land (n - 1) = 0
+
+(* The driver answers for the allocation's own region, whichever device's
+   buffer [b] is. The memory leaves the claims before the driver is asked, so
+   that no donation writes what the function may read; a refusal leaves it
+   outside, which costs only its donations. *)
+let dma b ~fn =
+  let name = "Buffer.dma" in
+  Dev.check_held name;
+  check_live name b;
+  let a = b.mem.alloc in
+  let e = a.entry in
+  match e.backing with
+  | Driver_memory { region = Region { m; h; r; _ }; _ }
+    when not a.owner.memory_device ->
+      let module D = (val m) in
+      if not (Memory.mark_outside a) then
+        invalid_argf "Rig.%s: the memory is held exclusive" name;
+      check_live name b;
+      let answer = Dev.counted a.owner Dev.Any (fun () -> D.dma h r ~fn) in
+      if Result.is_ok answer then Memory.mark_reached e;
+      answer
+  | Kept _ when not (Dev.is_host a.owner) ->
+      invalid_argf "Rig.%s: the buffer is empty, so no memory holds it" name
+  | Driver_memory _ | Io_memory _ | Kept _ ->
+      invalid_argf "Rig.%s: no driver gives DMA to %s's memory" name
+        a.owner.name
 
 let handle b =
   check_live "Buffer.handle" b;

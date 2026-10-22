@@ -142,6 +142,9 @@ type device = {
   opened : int;
       (** The open that made it, unique for the process. The open takes it
           after its slot, so a later device of the slot has a larger one. *)
+  bus : string option;
+      (** {!Rig.bus}. Last, since C reads the fields before it by position
+          ([rig_memory.c]). *)
 }
 
 (** The type for a device's state: its C record, its lock, its memory and
@@ -254,6 +257,10 @@ and entry = {
   mutable proxy : int;
       (** The C proxy of the bigarrays over it, [0] before the first. *)
   id : int;  (** Unique for the life of the process. *)
+  mutable reached : bool;
+      (** Whether a PCI function other than its owner's reaches it by DMA
+          ({!Rig.Buffer.dma}), so that it never returns to the cache. Set
+          under [owner]'s lock. *)
 }
 
 (** The type for the entries of one key of a device's cache: the first [n]

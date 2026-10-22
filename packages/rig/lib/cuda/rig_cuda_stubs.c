@@ -27,6 +27,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#endif
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -138,6 +141,8 @@ enum {
   CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN = 97,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
   CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
+  CU_POINTER_ATTRIBUTE_RANGE_SIZE = 12,
+  CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD = 1,
   CU_STREAM_NON_BLOCKING = 0x1,
   CU_EVENT_DISABLE_TIMING = 0x2,
   CU_MEMHOST_PORTABLE_DEVICEMAP = 0x3,
@@ -189,6 +194,8 @@ enum {
   X(cuMemHostUnregister, (void *))                                             \
   X(cuMemHostGetDevicePointer_v2, (CUdeviceptr *, void *, unsigned int))       \
   X(cuPointerGetAttribute, (void *, int, CUdeviceptr))                         \
+  X(cuMemGetHandleForAddressRange,                                             \
+    (void *, CUdeviceptr, size_t, int, unsigned long long))                    \
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
   X(cuMemcpy2DAsync_v2, (const memcpy2d *, CUstream))                          \
   X(cuMemsetD8Async, (CUdeviceptr, unsigned char, size_t, CUstream))           \
@@ -785,6 +792,47 @@ value caml_rig_cuda_allocation(value v_context, value v_address) {
                                      CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
                                      (CUdeviceptr)Long_val(v_address)));
   return answer(s, (intnat)start);
+}
+
+/* The bytes of the CUDA allocation that holds [v_address], or CUDA's status
+   negated, as caml_rig_cuda_allocation finds its start. */
+value caml_rig_cuda_range_size(value v_context, value v_address) {
+  size_t n = 0;
+  CUresult s;
+  IN_CONTEXT(s, Context_val(v_context),
+             p_cuPointerGetAttribute(&n, CU_POINTER_ATTRIBUTE_RANGE_SIZE,
+                                     (CUdeviceptr)Long_val(v_address)));
+  return answer(s, (intnat)n);
+}
+
+/* A new dma-buf descriptor over the [v_n] bytes at [v_address], which start
+   and end on the host's page: the descriptor, made close-on-exec, or CUDA's
+   status negated. Releases the runtime: CUDA pins the memory for export. */
+value caml_rig_cuda_dmabuf(value v_context, value v_address, value v_n) {
+  CUcontext c = Context_val(v_context);
+  CUdeviceptr a = (CUdeviceptr)Long_val(v_address);
+  size_t n = Long_val(v_n);
+  int fd = -1;
+  CUresult s;
+  RELEASED(IN_CONTEXT(s, c,
+                      p_cuMemGetHandleForAddressRange(
+                          &fd, a, n, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0)));
+#if !defined(_WIN32)
+  if (s == CUDA_SUCCESS) (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
+  return answer(s, fd);
+}
+
+/* The host's page, in bytes. */
+value caml_rig_cuda_page(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  SYSTEM_INFO i;
+  GetSystemInfo(&i);
+  return Val_long(i.dwPageSize);
+#else
+  return Val_long(sysconf(_SC_PAGESIZE));
+#endif
 }
 
 /* Page-locks the [v_n] bytes of host memory at [v_address] for every

@@ -53,11 +53,11 @@
     Each function's doc says what it does, and a driver's implementation
     must do that. Further obligations say "must".
 
-    While rig is 1.x, a minor release may add values to {!Driver} and {!Io},
-    fields to the records they take and return, such as {!type-facts},
-    {!type-waits}, {!type-queue} and {!type-opener}, and members to
-    [rig_edge.h]'s structures, as GPU memory shared between machines needs.
-    A driver outside rig must pin the exact rig version it builds against. *)
+    While rig is 1.x, a minor release may change {!Driver}, {!Io}, the
+    records they take and return, and [rig_edge.h]'s structures. The types
+    [Rig] re-exports, [Rig.Buffer.kind] and [Rig.Buffer.dma], change only
+    as [Rig] does. A driver outside rig must pin the exact rig version it
+    builds against. *)
 
 (** {1:facts Facts}
 
@@ -169,6 +169,10 @@ type 'region facts = {
           caller gave [make]. rig frees a word of the driver's own
           ({!Driver.val-free}) only after {!Driver.stop}, and never frees
           the word it gave. *)
+  bus : string option;
+      (** The bus address of the device's PCI function on its machine, such
+          as ["0000:03:00.0"], or [None] for a device that has none, such as
+          a Metal device or a device of another machine. *)
   edge : nativeint;
       (** The address of the device's C state, valid until its stop returns
           ({!Driver.stop}). The state's first member must point to the
@@ -293,6 +297,19 @@ type location = {
 }
 (** The type for where a region lies. *)
 
+type dma =
+  | Bus of (int * int) list
+      (** The memory's bus addresses on the device's machine, as (address,
+          bytes) pairs in order, each a multiple of 4096. They hold until the
+          process exits. *)
+  | Dmabuf of { fd : int; offset : int }
+      (** A new dma-buf file descriptor, close-on-exec, which the caller owns
+          and closes, and the offset of the region's first byte in it. The
+          dma-buf keeps the memory until its last reference goes, such as a
+          NIC's registration of it. *)
+(** The type for how another PCI function of a device's machine, such as a
+    NIC, reaches a region's memory by DMA. *)
+
 (** {1:code Code} *)
 
 (** The type for a binary a driver took. *)
@@ -387,11 +404,11 @@ type grown =
     threads wait for each other for good.
 
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
-    {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-image}, the
-    function of a [Place], {!Driver.val-entry}, {!Driver.val-grow} or
-    {!Driver.unload} on a device that is not lost also loses it, with the
-    exception's text, since the call may have left the driver's state half
-    changed. An
+    {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-dma},
+    {!Driver.val-image}, the function of a [Place], {!Driver.val-entry},
+    {!Driver.val-grow} or {!Driver.unload} on a device that is not lost also
+    loses it, with the exception's text, since the call may have left the
+    driver's state half changed. An
     [Invalid_argument] from [entry] loses nothing. Neither does any
     exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
     or one other than [Fault] from {!Driver.sleep} or
@@ -413,6 +430,8 @@ type grown =
        it;}
     {- it calls {!Driver.peer} and {!Driver.val-map_peer} with two distinct
        devices of the driver;}
+    {- it calls {!Driver.val-dma} only with a region {!Driver.val-alloc}
+       made, on a device that is not lost;}
     {- it unloads each image once, and calls {!Driver.val-entry} only on a
        loaded image;}
     {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
@@ -472,6 +491,24 @@ module type Driver = sig
       [p] starts a page and [n] is positive. rig calls it only where [d]
       declares [maps_host]. The memory must stay mapped until the region is
       freed ({!val-free}). Counted. *)
+
+  val dma : t -> region -> fn:string -> (dma, string) result
+  (** [dma d r ~fn] is how the PCI function at the bus address [fn] of [d]'s
+      machine, such as ["0000:41:00.0"], reaches all of [r]'s bytes by DMA,
+      or [Error why] if it cannot, [why] naming the cause, such as a memory
+      BAR smaller than the GPU's memory. It is [Error why], [why] naming
+      [fn], if [fn] is not a bus address or names no function of the
+      machine. rig calls it only with a region {!val-alloc} made. Counted.
+
+      The driver decides whether [fn] reaches the memory where it lies, and
+      must return [Error] rather than move the memory where [fn] reaches it.
+      It must make the memory visible to [fn] after each value's work that
+      wrote it, and visible to the device's later work after [fn] wrote it
+      and a call of rig's submits that work.
+
+      For [Bus], the driver must keep the memory where it is, out of any
+      other allocation, and keep [d]'s function from any other open, until
+      the process exits, whatever rig frees or stops meanwhile. *)
 
   (** {1:driver_code Code} *)
 

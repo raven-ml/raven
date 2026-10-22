@@ -254,6 +254,17 @@ let profile =
         ignore
           (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers run))))
 
+(* The memory a function reaches never returns to the cache, so each attempt
+   makes its own. *)
+let dma =
+  op "dma" (fun d ->
+      let b = B.create d page in
+      fun failure ->
+        match B.dma b ~fn:"0000:41:00.0" with
+        | Ok (Rig_edge.Bus [ (_, n) ]) -> equal ~msg:"its bytes" int page n
+        | Ok _ -> fail "Polled describes a region as one run"
+        | Error _ -> equal ~msg:"dma refused" bool true (refusing failure))
+
 let ops =
   [
     create B.Device;
@@ -266,6 +277,7 @@ let ops =
     wait_transport;
     keep;
     profile;
+    dma;
   ]
 
 (* A copy through the staging memory needs [d] to map it, and so does a

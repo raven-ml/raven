@@ -25,11 +25,65 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
 
+#if defined(__linux__)
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
+#endif
+
 #define Addr_val(v) ((void *)Long_val(v))
+
+/* Dma-bufs */
+
+/* [v_n] bytes from byte [v_at] of the dma-buf [v_fd], read through a mapping
+   of the pages that hold them, inside DMA_BUF_IOCTL_SYNC's start and end
+   (Linux's Documentation/driver-api/dma-buf.rst, CPU access), or [None] if
+   the exporter maps none. */
+value rig_gpu_dmabuf_read(value v_fd, value v_at, value v_n) {
+  CAMLparam3(v_fd, v_at, v_n);
+  CAMLlocal1(s);
+#if defined(__linux__)
+  int fd = Int_val(v_fd);
+  size_t at = Long_val(v_at), n = Long_val(v_n);
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  size_t first = at / page * page, len = at + n - first;
+  void *p = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, (off_t)first);
+  if (p == MAP_FAILED) CAMLreturn(Val_none);
+  struct dma_buf_sync sync = {.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
+  (void)ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+  s = caml_alloc_initialized_string(n, (const char *)p + (at - first));
+  sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+  (void)ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+  munmap(p, len);
+  CAMLreturn(caml_alloc_some(s));
+#else
+  (void)s;
+  CAMLreturn(Val_none);
+#endif
+}
+
+value rig_gpu_cloexec(value v_fd) {
+#if defined(_WIN32)
+  (void)v_fd;
+  return Val_false;
+#else
+  int f = fcntl(Int_val(v_fd), F_GETFD);
+  return Val_bool(f >= 0 && (f & FD_CLOEXEC));
+#endif
+}
+
+value rig_gpu_close(value v_fd) {
+#if !defined(_WIN32)
+  close(Int_val(v_fd));
+#else
+  (void)v_fd;
+#endif
+  return Val_unit;
+}
 
 value rig_gpu_host_data(value array) {
   return Val_long((intnat)Caml_ba_data_val(array));

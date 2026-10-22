@@ -1876,6 +1876,108 @@ let test_bigarray_shares () =
   equal ~msg:"the bytes" char 's' view.{4095};
   ignore (Sys.opaque_identity m)
 
+(* Another function's DMA
+
+   Polled describes a region as one run of its own address and bytes. *)
+
+let fn = "0000:41:00.0"
+
+let pp_dma ppf = function
+  | Rig_edge.Bus runs ->
+      Format.fprintf ppf "Bus [%s]"
+        (String.concat "; "
+           (List.map (fun (a, n) -> Printf.sprintf "(0x%x, %d)" a n) runs))
+  | Dmabuf { fd; offset } ->
+      Format.fprintf ppf "Dmabuf { fd = %d; offset = %d }" fd offset
+
+let dma_answer = result (Testable.make ~pp:pp_dma ~equal:( = )) string
+
+(* A view's answer describes the allocation it lies in, and the memory leaves
+   the claims, so no donation writes what the function reads. *)
+let test_dma () =
+  let d, p = P.open_ "buffer:dma" in
+  let b = B.create d 4096 in
+  let v = B.view b ~first:16 ~length:32 in
+  equal ~msg:"the whole allocation" dma_answer
+    (Ok (Rig_edge.Bus [ (Support.at b, 4096) ]))
+    (B.dma v ~fn);
+  equal ~msg:"asked of the driver" int 1 (count "dma" p);
+  is_none ~msg:"never donated" (Support.donated b);
+  let other = B.create d 64 in
+  P.fail_at p 1 (`Refuse 1);
+  equal ~msg:"the driver's refusal" dma_answer (Error "Polled: dma refused")
+    (B.dma other ~fn)
+
+(* A borrow's answer is its memory's owner's: the owner's driver describes
+   its own region, and the borrower's is not asked. *)
+let test_dma_borrow () =
+  let owner, p = P.open_ "buffer:dma-owner" in
+  let borrower, q = P.open_ "buffer:dma-borrower" in
+  let b = B.create owner 4096 in
+  let borrowed = require_some (B.borrow borrower b) in
+  equal ~msg:"the owner's allocation" dma_answer
+    (Ok (Rig_edge.Bus [ (Support.at b, 4096) ]))
+    (B.dma borrowed ~fn);
+  equal ~msg:"asked of the owner" int 1 (count "dma" p);
+  equal ~msg:"not of the borrower" int 0 (count "dma" q)
+
+(* Collected memory a function reaches goes back to its driver, where memory
+   no function reaches returns to the cache and is reused. *)
+let test_dma_uncached () =
+  let d, p = P.open_ "buffer:dma-uncached" in
+  let n = 4096 in
+  let freed at = List.exists (fun (a, _) -> a = at) (P.frees p) in
+  let first = ref (Some (B.create d n)) in
+  let at = Support.at (Option.get !first) in
+  first := None;
+  collect d;
+  equal ~msg:"cached, not freed" bool false (freed at);
+  let second = ref (Some (B.create d n)) in
+  equal ~msg:"reused from the cache" int at (Support.at (Option.get !second));
+  ignore (B.dma (Option.get !second) ~fn : (Rig_edge.dma, string) result);
+  second := None;
+  collect d;
+  equal ~msg:"given back to the driver" bool true (freed at)
+
+let dma b () = ignore (B.dma b ~fn : (Rig_edge.dma, string) result)
+
+let dma_refusals =
+  let polled name = fst (P.open_ name) in
+  [
+    ("the host's memory", fun () -> B.create Rig.host 64);
+    ("a memory device's", fun () -> B.create (memory "buffer:dma-memory") 64);
+    ("an io device's", fun () -> B.create (Support.io "buffer:dma-io") 64);
+    ("an empty buffer", fun () -> B.create (polled "buffer:dma-empty") 0);
+    ( "a dead buffer",
+      fun () ->
+        let b = B.create (polled "buffer:dma-dead") 64 in
+        ignore (Support.donated b);
+        b );
+  ]
+
+let test_dma_refused (_, make) = raises_match Exn.invalid_arg (dma (make ()))
+
+let test_dma_exclusive () =
+  let d, _ = P.open_ "buffer:dma-exclusive" in
+  let held = B.create d 64 in
+  Rig.Claim.with_ ~read:[] ~donate:[ held ] (fun c ->
+      equal ~msg:"held exclusive" bool true (Rig.Claim.exclusive c held);
+      raises_match ~msg:"memory held exclusive" Exn.invalid_arg (dma held))
+
+let test_dma_lost () =
+  let d, p = P.open_ "buffer:dma-lost" in
+  let b = B.create d 64 in
+  P.fault p "gone";
+  raises_match lost (dma b)
+
+let test_bus () =
+  let d, _ = P.open_ ~bus:"0000:03:00.0" "buffer:bus" in
+  let none, _ = P.open_ "buffer:no-bus" in
+  equal ~msg:"its driver's fact" (option string) (Some "0000:03:00.0")
+    (Rig.bus d);
+  equal ~msg:"none stated" (option string) None (Rig.bus none);
+  equal ~msg:"the host" (option string) None (Rig.bus Rig.host)
+
 let tests =
   [
     group ~timeout "host buffers"
@@ -2067,6 +2169,21 @@ let tests =
         test "reached raises Lost where a wait does" test_reached_lost;
         cases ~name:fst "a host access keeps its buffer through its wait"
           host_accesses test_wait_keeps;
+      ];
+    group ~timeout "another function's DMA"
+      [
+        test
+          "dma describes the whole allocation as its driver does and shares \
+           the memory"
+          test_dma;
+        test "a borrow's answer is its memory's owner's" test_dma_borrow;
+        test "memory dma described goes back to its driver, never the cache"
+          test_dma_uncached;
+        cases ~name:fst "dma refuses memory no driver gives" dma_refusals
+          test_dma_refused;
+        test "dma refuses memory held exclusive" test_dma_exclusive;
+        test "dma of a lost device's memory raises Lost" test_dma_lost;
+        test "bus is the driver's fact" test_bus;
       ];
   ]
 

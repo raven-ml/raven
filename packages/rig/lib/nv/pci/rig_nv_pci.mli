@@ -142,6 +142,14 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     one machine, each BAR reaches all of its GPU's memory, and the bus carries
     requests between them ({!Rig_pci.Memory.reaches}).
 
+    {!Rig_nv.val-dma} gives another function, such as a NIC that a process
+    drives over PCI, a region's bus ranges ({!Rig_edge.Bus}), or the reason
+    it cannot reach them, as {!Rig_pci.Memory.bus} states: GPU memory
+    through BAR 1, the memory BAR. The region's memory and the GPU then stay
+    the process's until it exits, so no later open of the GPU, in this
+    process or another, succeeds meanwhile. The device's facts name the
+    GPU's function as [bus].
+
     A device reads the GPU's timer registers through BAR 0
     ({!Rig_nv.Registers}), so its profiles' times drift from the host's
     clock as {!Rig_nv.section-submitting} states.

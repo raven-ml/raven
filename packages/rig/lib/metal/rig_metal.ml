@@ -372,6 +372,7 @@ let open_ ~word i =
           alignment = region_align;
           capability = Rig_metal_abi.declare cap;
           word;
+          bus = None;
           edge = Nativeint.of_int self;
         }
       in
@@ -584,6 +585,8 @@ let stop d ~fault:_ = locked d.guard halt d
 
 external grow_arena : int -> int = "caml_rig_metal_grow"
 
+let dma _ _ ~fn:_ = Error "Metal gives no other device DMA to its buffers"
+
 (* Its room answers RIG_GROW for parameters its arena does not hold. *)
 let grow d =
   match grow_arena d.self with 0 -> Rig_edge.Grown | n -> Short n
@@ -603,6 +606,7 @@ module Driver = struct
   let peer = peer
   let map_peer = map_peer
   let map_host = map_host
+  let dma = dma
   let image = image
   let entry = entry
   let unload = unload

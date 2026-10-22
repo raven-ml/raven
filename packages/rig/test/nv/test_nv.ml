@@ -449,6 +449,103 @@ let memory =
         shared_page;
     ]
 
+(* Another function's DMA
+
+   The GPU's own function stands for the other one, as every machine has it.
+   Through NVIDIA's kernel driver the device exports a dma-buf. Its bytes are
+   not checked here: the export leaves bAllowMmap off, so the host cannot map
+   the dma-buf (nv-dmabuf.c), and no other API of this process imports one.
+   Only a NIC that registers it can read them. Over PCI it
+   gives bus ranges and keeps the GPU taken until its process exits, so a
+   child of the suite makes that export, and the GPU opens again once the
+   child is gone. *)
+
+let dma_child = "--dma-over-pci"
+let dma_sizes = [ 1; 4095; 4096; 4097; 1 lsl 22 ]
+
+(* An [fn] that is no bus address, or no function of the machine, is refused
+   naming it. *)
+let refuses_strangers d =
+  List.iter
+    (fun fn ->
+      match B.dma (B.create d 64) ~fn with
+      | Ok _ -> failf "%s reaches the memory" fn
+      | Error why -> contains ~msg:fn ~sub:fn why)
+    [ "41:00.0"; "ffff:ff:1f.7" ]
+
+let gpu_bus d =
+  let fn = require_some ~msg:"the device's bus" (Rig.bus d) in
+  equal ~msg:"GPU 0's function" (option string)
+    (List.nth_opt (require_ok (Rig_nv_pci.buses ())) 0)
+    (Some fn);
+  fn
+
+let exports_dmabuf () =
+  S.with_ @@ fun { d; _ } ->
+  let fn = gpu_bus d in
+  List.iter
+    (fun n ->
+      match B.dma (B.create d n) ~fn with
+      | Error why when Rig_gpu_support.has ~sub:"open kernel modules" why ->
+          skip ~reason:why ()
+      | Error why -> failf "%d bytes: %s" n why
+      | Ok (Bus _) -> fail "the kernel driver's path gives a dma-buf"
+      | Ok (Dmabuf { fd; offset }) -> (
+          Fun.protect ~finally:(fun () -> Rig_gpu_support.Dmabuf.close fd)
+          @@ fun () ->
+          equal ~msg:"close-on-exec" bool true
+            (Rig_gpu_support.Dmabuf.cloexec fd);
+          equal ~msg:"the region's offset" int 0 offset;
+          match Rig_gpu_support.Dmabuf.size fd with
+          | Some bytes -> at_least ~msg:"its bytes" int ~than:n bytes
+          | None -> fail "the descriptor is no dma-buf"))
+    dma_sizes;
+  refuses_strangers d
+
+(* In the child: the bytes at the ranges are the buffer's, through BAR 1, the
+   memory BAR, and a reopen of the GPU in the process is refused. *)
+let exports_bus () =
+  let t = S.open_ () in
+  let fn = gpu_bus t.d in
+  let n = 1 lsl 16 in
+  let b = B.create t.d n in
+  B.fill b 'x';
+  (match B.dma b ~fn with
+  | Error why -> failf "refused: %s" why
+  | Ok (Dmabuf _) -> fail "the path over PCI gives bus ranges"
+  | Ok (Bus runs) ->
+      satisfies ~msg:"the ranges" ~claim:"pages that hold the buffer"
+        (list (pair int int))
+        (fun runs ->
+          List.for_all (fun (a, k) -> a mod 4096 = 0 && k mod 4096 = 0) runs
+          && List.fold_left (fun s (_, k) -> s + k) 0 runs >= n)
+        runs;
+      equal ~msg:"the bytes through the BAR" string (String.make n 'x')
+        (Rig_gpu_support.bar_bytes fn ~bar:1 runs n));
+  refuses_strangers t.d;
+  S.close t;
+  match Rig.open_ (S.opener 0) with
+  | Ok d ->
+      Rig.close d;
+      fail "the GPU opened again in the process"
+  | Error why -> contains ~sub:"given to another PCI function" why
+
+let exports () =
+  match S.path () with
+  | Some Pci ->
+      equal ~msg:"the child's exit" int 0 (Rig_gpu_support.child dma_child);
+      S.with_ ignore
+  | Some Kernel | None -> exports_dmabuf ()
+
+let dma =
+  group ~timeout:120. "another function's DMA"
+    [
+      test
+        "dma exports a dma-buf through the kernel driver, or bus ranges over \
+         PCI that keep the GPU until the process exits"
+        exports;
+    ]
+
 (* Work *)
 
 let launch () =
@@ -1923,6 +2020,13 @@ let stateful =
     ]
 
 let () =
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
+    exit
+      (match exports_bus () with
+      | () -> 0
+      | exception e ->
+          prerr_endline (Printexc.to_string e);
+          1);
   exit
     (run "rig_nv"
        [
@@ -1931,6 +2035,7 @@ let () =
          parameters;
          facts;
          memory;
+         dma;
          work;
          launches;
          room;

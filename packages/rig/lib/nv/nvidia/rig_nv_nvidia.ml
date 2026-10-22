@@ -60,7 +60,9 @@ let hang_ms = 30_000
 
 type gpu = {
   c : Rm.t;
+  root : string; (* the machine's root *)
   file : string; (* its device file, [/dev/nvidiaN] under the machine's root *)
+  bus : string;
   device : int;
   subdevice : int;
   vaspace : int;
@@ -502,6 +504,58 @@ let map_peer g (m : mem Rig_nv.memory) =
 
 let free g (m : mem Rig_nv.memory) = give g m.data.range
 
+(* Another function's DMA
+
+   The kernel driver exports RM memory objects as one dma-buf through
+   NV_ESC_EXPORT_TO_DMABUF_FD on a device file of the GPU (nv.c,
+   nv-dmabuf.c's nv_dma_buf_export): with [fd] -1 it makes the dma-buf,
+   [totalSize] bytes, from [numObjects] handles with their offsets and sizes,
+   dups each object, so the dma-buf keeps its memory past the region's free,
+   and returns the descriptor, opened O_RDWR | O_CLOEXEC, in [fd]. It answers
+   NV_ERR_NOT_SUPPORTED where the module exports no dma-buf, as only the open
+   modules do. The default mapping type serves every importer, mapping video
+   memory through BAR1, or as the host's own pages on a GPU coherent with the
+   host, and the importer's attach refuses a topology the module does not
+   support (nv_dma_buf_attach). A region lies in its range's object, at its
+   distance from the range's first byte. *)
+let dma g (m : mem Rig_nv.memory) ~fn =
+  let* () = Sysfs.known g.root fn in
+  let r = m.data.range in
+  let page = Rm.host_page () in
+  if r.bytes mod page <> 0 then
+    Error
+      (strf
+         "the memory's %d bytes are no whole number of the host's %d-byte pages"
+         r.bytes page)
+  else
+    let module E = D.Export_dma_buf in
+    let p = params E.sizeof in
+    let first (at, n, _) = (at, n) in
+    set p E.fd (-1);
+    set p E.h_client g.c.root;
+    set p E.total_objects 1;
+    set p E.num_objects 1;
+    set p E.index 0;
+    set p E.total_size r.bytes;
+    set p E.mapping_type D.nv_dmabuf_export_mapping_type_default;
+    set p (first E.handles) r.memory;
+    set p (first E.offsets) 0;
+    set p (first E.sizes) r.bytes;
+    let what = "exporting GPU memory as a dma-buf" in
+    let* exported =
+      with_file g (fun fd -> Rm.escape fd D.nv_esc_export_to_dmabuf_fd p what)
+    in
+    match exported with
+    | None -> Error (what ^ ": the process has no file left")
+    | Some () when get p E.status = D.nv_err_not_supported ->
+        Error
+          "NVIDIA's kernel driver exports no dma-buf of this GPU's memory: \
+           that needs its open kernel modules"
+    | Some () ->
+        let* () = Rm.check g.c what (get p E.status) in
+        Ok
+          (Rig_edge.Dmabuf { fd = get p E.fd; offset = m.data.va - r.gpu_addr })
+
 (* Channels *)
 
 (* Registers the channel [ch] with unified memory at a range of its own. *)
@@ -767,7 +821,9 @@ let make_gpu c ~dev ~index bus =
     let g =
       {
         c;
+        root = Filename.dirname dev;
         file = path;
+        bus;
         device;
         subdevice;
         vaspace;
@@ -885,6 +941,8 @@ let path g =
     reaches = (fun i -> not (List.mem i g.refused));
     map_peer = map_peer g;
     free = free g;
+    bus = Some g.bus;
+    dma = dma g;
     register = register g;
     unregister = unregister g;
     (* The RM reports the GPU's faults through the channels; channels the

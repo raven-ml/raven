@@ -191,6 +191,7 @@ module Driver = struct
     hang_ms : int option;
     answer : [ `Stopped | `Unknown ];
     capability : Rig_edge.capability;
+    bus : string option;
     lock : Mutex.t;
     opened : Condition.t;
     mutable calls : string list;
@@ -289,6 +290,7 @@ module Driver = struct
           addressed = true;
           mapper = None;
         };
+      bus = d.bus;
       edge = polled_edge d.c;
     }
 
@@ -437,6 +439,11 @@ module Driver = struct
         }
     end
 
+  (* Its memory reaches a function at its own addresses. *)
+  let dma d r ~fn:_ =
+    if counted d "dma" then Error "Polled: dma refused"
+    else Ok (Rig_edge.Bus [ (r.at, r.bytes) ])
+
   let image d b =
     if counted d "image" then Error "refused"
     else
@@ -561,7 +568,7 @@ module Polled = struct
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
       ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
-      ?(capability = Rig_edge.Capability (capability_key, ())) () =
+      ?(capability = Rig_edge.Capability (capability_key, ())) ?bus () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
       | Rig_edge.Device -> memory
@@ -588,6 +595,7 @@ module Polled = struct
         hang_ms;
         answer;
         capability;
+        bus;
         lock = Mutex.create ();
         opened = Condition.create ();
         calls = [];
@@ -631,11 +639,11 @@ module Polled = struct
 
   let open_ ?capacity ?grows ?copies ?host_visible ?addresses
       ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window ?may_block
-      ?completion ?waits_on ?answer ?runs ?lag ?hang_ms name =
+      ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?addresses
         ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window
-        ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ()
+        ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

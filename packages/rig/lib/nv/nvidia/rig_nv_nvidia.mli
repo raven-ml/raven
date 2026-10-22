@@ -53,6 +53,22 @@
     tmpfs's, so there {!Rig_nv.val-map_host} returns [None] for those pages,
     as for unmapped ones.
 
+    {!Rig_nv.val-dma} exports the RM object a region lies in as a new
+    dma-buf ({!Rig_edge.Dmabuf}), through the GPU's file, at the region's
+    offset in it. The dma-buf holds the object until its last reference
+    goes, freed or not. It is [Error] where the kernel driver exports none,
+    as only NVIDIA's open kernel modules do, for an [fn] that is no function
+    under [/sys/bus/pci/devices], and for an object that is no whole number
+    of the host's pages. The kernel driver maps the memory for the importer
+    where the importer registers the dma-buf, and refuses there a topology
+    it does not support. The export takes the driver's default mapping,
+    which serves every importer: through BAR1, or on a GPU coherent with the
+    host as the host's own pages, over the GPU's link to the host, so that a
+    NIC behind the GPU's own PCIe switch reaches it through the host's
+    memory system, at that link's bandwidth, where a BAR1 mapping would
+    cross only the switch. The device's facts name the GPU's function as
+    [bus].
+
     {!buses}, {!count} and an opener's [make] read the machine's files: its
     PCI functions under [/sys/bus/pci], and the kernel driver's files under
     [/dev]. Listing GPUs changes nothing on the machine.

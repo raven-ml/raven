@@ -41,10 +41,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - copies: nx's placement, allocation and assembly through
   `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
   N GPUs costs one wait
-- GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
-  GPU drivers give a buffer's bus ranges (PCI paths, for rig.bnxt) or a
-  dma-buf (kernel paths, for rig.mlx5), and a copy between two machines'
-  GPUs runs through rig.mlx5 or rig.bnxt, not TCP
+- GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
+  copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
+  TCP, over the memory `Rig.Buffer.dma` describes
 
 ### tests and runs
 

@@ -242,6 +242,14 @@ let map_peer g fn (m : Memory.region Amd.memory) =
 let free g (m : Memory.region Amd.memory) =
   protect g (fun () -> Memory.free g.memory m.data)
 
+(* Another function reaches the memory as a peer GPU does, at its runs through
+   the memory BAR, and rig.pci keeps them and the GPU's function for it until
+   the process exits. *)
+let dma g (m : Memory.region Amd.memory) ~client =
+  Result.map
+    (fun runs -> Rig_edge.Bus runs)
+    (protect g (fun () -> Memory.bus g.memory m.data ~client))
+
 (* Opening *)
 
 (* The reference clock of SOC15 and SOC21 GPUs, which the timestamps of their
@@ -290,6 +298,8 @@ let path g h fn ~index : Memory.region Amd.path =
     reaches = reaches on ~index;
     map_peer = (fun m -> guard (fun () -> map_peer mem fn m));
     free = (fun m -> guard (fun () -> free mem m));
+    bus = Some (Rig_pci.Function.bus fn);
+    dma = (fun m ~fn:client -> dma mem m ~client);
     queue =
       (fun kind ~ring ~bytes ~read ~write ->
         guard (fun () -> Boot.queue g kind ~ring ~bytes ~read ~write));

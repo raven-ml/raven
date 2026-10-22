@@ -13,6 +13,7 @@ let host = Dev.host
 let name (d : t) = d.name
 let host_of = Dev.host_of
 let arch d = d.arch
+let bus d = d.bus
 let computes d =
   match d.kind with Host | Driver _ -> true | Io _ -> false
 let runs_on_host d = Dev.is_host d || d.memory_device

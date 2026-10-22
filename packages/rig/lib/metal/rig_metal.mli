@@ -119,7 +119,8 @@ val gpu : int -> t Rig_edge.opener
 (** {1:driver The driver}
 
     rig calls these functions. On Metal, {!alloc}, {!free}, {!locate},
-    {!map_host}, {!peer} and {!map_peer} behave as in {!section-memory};
+    {!map_host}, {!peer}, {!map_peer} and {!val-dma} behave as in
+    {!section-memory};
     {!val-image}, {!entry} and {!unload} as in {!section-code}; {!sleep} and
     {!stop} as in {!section-failure}; and the C functions as in
     {!section-work}. *)
@@ -154,6 +155,7 @@ val capability : t -> Rig_metal_abi.t
       | [alignment]      | [256] ({!section-memory})                      |
       | [capability]     | {!Rig_metal_abi.t} ({!val-capability})         |
       | [word]           | The word [make] was given, which no work reads |
+      | [bus]            | [None]                                         |
     }
 
     [arch] is the highest Apple GPU family the GPU supports, such as
@@ -290,7 +292,8 @@ val capability : t -> Rig_metal_abi.t
     cannot wrap the memory.
 
     {!peer} is [false] and {!map_peer} is [None], since a Metal device maps
-    only its own memory and the host's. *)
+    only its own memory and the host's. {!val-dma} is [Error], since Metal
+    gives no other device DMA to its buffers. *)
 
 (** {1:code Code}
 

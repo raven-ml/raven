@@ -240,6 +240,14 @@ let free g (m : Memory.region Rig_nv.memory) =
   Option.iter (fun n -> n.regions <- Handles.remove m.handle n.regions) g.names;
   Memory.free g.memory m.data
 
+(* Another function reaches the memory as a peer GPU does, at its runs through
+   the memory BAR, and rig.pci keeps them and the GPU's function for it until
+   the process exits. *)
+let dma g (m : Memory.region Rig_nv.memory) ~fn =
+  Result.map
+    (fun runs -> Rig_edge.Bus runs)
+    (protect g (fun () -> Memory.bus g.memory m.data ~client:fn))
+
 (* Faults, hangs and stops *)
 
 let check g gsp () =
@@ -319,6 +327,8 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
       reaches = reaches on ~index:g.index;
       map_peer = map_peer g;
       free = free g;
+      bus = Some (Function.bus g.fn);
+      dma = dma g;
       register = (fun _ -> Ok ());
       unregister = (fun _ -> Ok ());
       check = check g gsp;

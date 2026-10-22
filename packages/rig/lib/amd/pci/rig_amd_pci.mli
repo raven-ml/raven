@@ -142,6 +142,14 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     kernel driver resets them when it takes them back, so {!reset} only
     stops such a GPU, and an open refuses one left running.
 
+    {b Other functions.} {!Rig_amd.val-dma} gives another function, such as
+    a NIC that a process drives over PCI, a region's bus ranges
+    ({!Rig_edge.Bus}), or the reason it cannot reach them, as
+    {!Rig_pci.Memory.bus} states: GPU memory through the memory BAR. The
+    region's memory and the GPU then stay the process's until it exits, so
+    no later open of the GPU, in this process or another, succeeds
+    meanwhile. The device's facts name the GPU's function as [bus].
+
     {b Faults and hangs.} The GPU reports faults on its interrupt ring: page
     faults with their address, shader errors, and fatal hardware errors with
     its machine-check banks. {!Rig_amd.val-sleep} raises them. No kernel

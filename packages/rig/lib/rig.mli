@@ -217,6 +217,12 @@ val arch : t -> string
     such as ["gfx1100"], ["sm_89"] or ["Apple7"]; the machine's instruction
     set for a host, ["arm64"] or ["x86_64"]; and [""] for an io device. *)
 
+val bus : t -> string option
+(** [bus d] is the bus address of [d]'s PCI function on its machine, such as
+    ["0000:03:00.0"], as its driver states it ({!Rig_edge.type-facts}), or
+    [None] for a device that has none: {!host}, a memory device, an io
+    device, a Metal device and a device of another machine. *)
+
 val computes : t -> bool
 (** [computes d] is [true] iff [d] runs work, as every device but an io
     device does. *)
@@ -1319,6 +1325,41 @@ module Buffer : sig
   (** [offset b] is the number of bytes of [b]'s memory before [b]'s first
       byte. *)
 
+  (** The type for how another PCI function of a buffer's machine, such as a
+      network adapter, reaches its memory by DMA ({!dma}). *)
+  type dma = Rig_edge.dma =
+    | Bus of (int * int) list
+        (** The memory's bus addresses on its machine, as (address, bytes)
+            pairs in order, each a multiple of 4096. They hold until the
+            process exits. *)
+    | Dmabuf of { fd : int; offset : int }
+        (** A new dma-buf file descriptor, close-on-exec, which the caller
+            owns and closes, and the offset of the allocation's first byte
+            in it. The dma-buf keeps the memory until its last reference
+            goes, such as a NIC's registration of it. *)
+
+  val dma : t -> fn:string -> (dma, string) result
+  (** [dma b ~fn] is how the PCI function at the bus address [fn] of [b]'s
+      machine, such as a network adapter, reaches the whole allocation [b]'s
+      memory lies in, which starts {!offset} bytes before [b]'s first byte,
+      as the driver of the device whose memory it is describes it, or
+      [Error why] where that driver cannot ({!Rig_edge.Driver.val-dma}). A
+      borrow's answer is its memory's owner's.
+
+      The memory is then outside the claims for good ({!Claim.share}), also
+      where the driver refused, and once described the allocation never
+      returns to its device's cache.
+
+      {b Warning.} No stamp records [fn]'s reads and writes. The caller lets
+      [fn] read the memory only once the work that last wrote it is reached,
+      and lets work use bytes [fn] wrote only after [fn]'s writes are done,
+      submitting that work afterwards. A [Dmabuf] descriptor is the caller's
+      to close.
+
+      Raises [Invalid_argument] if [b] is dead or empty, or is {!host}'s, a
+      memory device's or an io device's memory, or if a {!Claim.with_} holds
+      it exclusive, and {!Lost} if the device whose memory it is is lost. *)
+
   val handle : t -> nativeint
   (** [handle b] is the driver's object for [b]'s memory
       ({!Rig_edge.location}), such as an [MTLBuffer], which [b] starts
@@ -2079,8 +2120,9 @@ end
     {- Memory that something outside rig can read or write is
        {e outside the claims}
        and never exclusive. This holds for memory {!Buffer.of_bigarray} and
-       {!Buffer.of_io} make, memory {!Buffer.export} exported, and memory
-       {!Claim.share} marked. Memory that admits only [Read]
+       {!Buffer.of_io} make, memory {!Buffer.export} exported, memory
+       {!Buffer.dma} described or refused, and memory {!Claim.share}
+       marked. Memory that admits only [Read]
        ({!Buffer.val-access}) is never exclusive either.}
     {- {!Claim.consume} consumes an allocation. A call that uses a dead
        buffer's bytes raises [Invalid_argument] with the reason given to the

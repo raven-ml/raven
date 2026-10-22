@@ -36,6 +36,90 @@ end
 
 let opened (o : _ Rig_edge.opener) = o.make ~word:(Host.word ())
 
+(* Dma-bufs *)
+
+module Dmabuf = struct
+  external read : int -> int -> int -> string option = "rig_gpu_dmabuf_read"
+  external cloexec : int -> bool = "rig_gpu_cloexec"
+  external close : int -> unit = "rig_gpu_close"
+
+  let read fd ~at n = read fd at n
+
+  (* fdinfo's lines are "key:\tvalue". *)
+  let size fd =
+    match
+      In_channel.with_open_text
+        (Printf.sprintf "/proc/self/fdinfo/%d" fd)
+        In_channel.input_all
+    with
+    | exception Sys_error _ -> None
+    | s ->
+        let field k =
+          String.split_on_char '\n' s
+          |> List.find_map (fun line ->
+              match String.index_opt line ':' with
+              | Some i when String.sub line 0 i = k ->
+                  Some
+                    (String.trim
+                       (String.sub line (i + 1) (String.length line - i - 1)))
+              | _ -> None)
+        in
+        if field "exp_name" = None then None
+        else Option.bind (field "size") int_of_string_opt
+end
+
+(* A BAR's bus address is the start of its line of the function's [resource]
+   file, "0xSTART 0xEND 0xFLAGS". *)
+let bar_base bus bar =
+  let lines =
+    In_channel.with_open_text
+      (Printf.sprintf "/sys/bus/pci/devices/%s/resource" bus)
+      In_channel.input_lines
+  in
+  Scanf.sscanf (List.nth lines bar) "%x" Fun.id
+
+let bar_bytes bus ~bar runs n =
+  let base = bar_base bus bar in
+  let fd =
+    Unix.openfile
+      (Printf.sprintf "/sys/bus/pci/devices/%s/resource%d" bus bar)
+      [ O_RDONLY ] 0
+  in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  let out = Buffer.create n in
+  List.iter
+    (fun (a, k) ->
+      let k = Int.min k (n - Buffer.length out) in
+      if k > 0 then begin
+        let m =
+          Bigarray.array1_of_genarray
+            (Unix.map_file fd
+               ~pos:(Int64.of_int (a - base))
+               Bigarray.char Bigarray.c_layout false [| k |])
+        in
+        for i = 0 to k - 1 do
+          Buffer.add_char out m.{i}
+        done
+      end)
+    runs;
+  Buffer.contents out
+
+let has ~sub s =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
+let child flag =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; flag |] Unix.stdin Unix.stdout Unix.stderr
+  in
+  match snd (Unix.waitpid [] pid) with
+  | WEXITED c -> c
+  | WSIGNALED _ | WSTOPPED _ -> -1
+
 let still ?msg w x f ~ms =
   let t0 = Rig.Profile.now () in
   while Rig.Profile.now () - t0 < ms * 1_000_000 do

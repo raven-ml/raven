@@ -102,6 +102,10 @@ external kfd_alloc : int -> int -> int -> int -> memory -> int * int64
 
 external kfd_free : int -> int -> unit = "caml_rig_amd_amdgpu_free"
 
+(* [kfd_export kfd handle] is a new dma-buf descriptor over [handle],
+   close-on-exec. *)
+external kfd_export : int -> int -> int = "caml_rig_amd_amdgpu_export"
+
 (* [kfd_map_gpu kfd handle gpu map] maps [handle] for GPU [gpu], or unmaps it
    if [map] is [false]: the GPUs it reached. *)
 external kfd_map_gpu : int -> int -> int -> bool -> int
@@ -189,6 +193,10 @@ let opened path what =
 
 type gpu = {
   node : Topology.node;
+  root : string; (* its machine's files *)
+  bus : string;
+  machine : Rig_pci.Machine.t; (* its machine's files, at the path's root *)
+  version : int; (* KFD's, major * 1000 + minor *)
   drm : int; (* its render node *)
   hdp : int option; (* the register whose store flushes the HDP *)
   clock_khz : int;
@@ -275,6 +283,7 @@ type mem = {
   at : int; (* the process's addresses, unmapped at the free *)
   kind : kind;
   owner : gpu; (* the GPU it was allocated for *)
+  vram : bool; (* whether it is the GPU's memory *)
 }
 
 (* Maps or unmaps [handle] for GPU [gpu]. Raises [Unix.Unix_error], [EIO] if
@@ -345,7 +354,16 @@ let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
          with Unix.Unix_error (e, _, _) ->
            undo fd handle at n "mapping memory for the GPU" e);
         let host = if kind = Device then None else Some at in
-        let data = { handle; bytes = n; at; kind = Own; owner = g } in
+        let data =
+          {
+            handle;
+            bytes = n;
+            at;
+            kind = Own;
+            owner = g;
+            vram = kind <> Pinned;
+          }
+        in
         Some { Amd.address = at; host; data }
 
 (* The kernel driver lets go of memory before the process unmaps it: unmapping
@@ -382,7 +400,14 @@ let map_host fd g a n : mem Amd.memory option =
   in
   let region (e : registration) =
     let data =
-      { handle = e.handle; bytes; at = start; kind = Borrowed e; owner = g }
+      {
+        handle = e.handle;
+        bytes;
+        at = start;
+        kind = Borrowed e;
+        owner = g;
+        vram = false;
+      }
     in
     Some { Amd.address = a; host = Some a; data }
   in
@@ -418,6 +443,74 @@ let map_peer fd g (m : mem Amd.memory) =
     (* Made before the view counts, so that nothing allocates after. *)
     let view = Some { m with data = { m.data with kind = Peer } } in
     if take_view fd m.data.handle g.node.gpu_id then view else None
+
+(* Another function's DMA
+
+   KFD exports a buffer object of the process as a dma-buf, KFD 1.12 on
+   (kfd_chardev.c, kfd_ioctl_export_dmabuf), with the descriptor flags the
+   caller gives. amdgpu decides at each attach whether the importer reaches
+   the GPU's memory by peer-to-peer DMA (amdgpu_dma_buf.c,
+   amdgpu_dma_buf_attach): it does not where neither an XGMI link nor
+   Linux's p2pdma carries the importer's requests to the GPU's BAR, and then
+   pins the object into system memory, under the GPU's own work too
+   (amdgpu_dma_buf_pin). So GPU memory goes only to a function the bus
+   carries, by p2pdma's rule, which Rig_pci.Machine.forwards states; a NIC
+   has no XGMI link. The attach's other two refusals cannot arise: rig makes
+   no GFX12 object with compressed metadata (AMDGPU_GEM_CREATE_GFX12_DCC),
+   and the process's open KFD file keeps the GPU runtime-active. *)
+
+let export_from = 1012
+
+let known g fn =
+  match Rig_pci.Machine.functions g.machine with
+  | Error why -> Error why
+  | Ok ids when List.exists (fun (id : Rig_pci.Machine.id) -> id.bus = fn) ids
+    ->
+      Ok ()
+  | Ok _ -> Error (strf "%S names no PCI function of the machine" fn)
+
+(* Whether the process reads the GPU's whole configuration space, where the
+   bridges' ACS controls lie, as Machine.forwards needs to tell a route
+   below a common bridge. *)
+let reads_acs g =
+  match
+    In_channel.with_open_bin
+      (Filename.concat g.root ("sys/bus/pci/devices/" ^ g.bus ^ "/config"))
+      In_channel.input_all
+  with
+  | c -> String.length c > 64
+  | exception Sys_error _ -> false
+
+let unrouted g fn =
+  if reads_acs g then
+    strf
+      "the bus does not carry %s's requests to %s's memory BAR, as Linux's \
+       p2pdma decides, and amdgpu would serve them from system memory"
+      fn g.bus
+  else
+    strf
+      "this process cannot read the bridges' ACS controls, which needs \
+       CAP_SYS_ADMIN, so it cannot tell whether the bus carries %s's \
+       requests to %s's memory BAR, which amdgpu would otherwise serve from \
+       system memory"
+      fn g.bus
+
+let dma fd g (m : mem Amd.memory) ~fn =
+  let p = m.data in
+  if p.kind <> Own then
+    invalid_arg "Rig_amd_amdgpu.dma: memory alloc did not give";
+  let* () = known g fn in
+  if g.version < export_from then
+    Error "KFD exports no dma-buf before its version 1.12, in Linux 6.4"
+  else if
+    p.vram
+    && not (Rig_pci.Machine.forwards g.machine ~provider:g.bus ~client:fn)
+  then Error (unrouted g fn)
+  else
+    match kfd_export fd p.handle with
+    | dmabuf -> Ok (Rig_edge.Dmabuf { fd = dmabuf; offset = m.address - p.at })
+    | exception Unix.Unix_error (e, _, _) ->
+        Error (strf "exporting GPU memory as a dma-buf: %s" (message e))
 
 (* Opening a GPU *)
 
@@ -501,7 +594,7 @@ let topology root =
   Ok (nodes m)
 
 (* [gpus] is the machine's topology, as [topology] gave it. *)
-let acquire fd ~root ~gpus (node : Topology.node) =
+let acquire fd ~root ~gpus ~bus (node : Topology.node) =
   match Ids.find_opt node.gpu_id !acquired with
   | Some g -> Ok g
   | None ->
@@ -534,9 +627,16 @@ let acquire fd ~root ~gpus (node : Topology.node) =
               Some n.index
           | _ -> None)
       in
+      let machine =
+        if root = "/" then Rig_pci.Machine.this else Rig_pci.Machine.at root
+      in
       let g =
         {
           node;
+          root;
+          bus;
+          machine;
+          version;
           drm;
           hdp = remap_hdp fd node.gpu_id;
           clock = clock fd node.gpu_id;
@@ -873,6 +973,8 @@ let path d ~gpus ~index : mem Amd.path =
        fun j -> j >= 0 && j < Array.length reached && reached.(j));
     map_peer = map_peer fd g;
     free = free fd g;
+    bus = Some g.bus;
+    dma = dma fd g;
     queue = queue d;
     retire = retire d;
     most_ring;
@@ -915,7 +1017,7 @@ let open_ ~root ~word i =
     let* fd, g, events =
       Amd.Lock.protect opening (fun () ->
           let* fd = kfd_fd ~dev:(Filename.concat root "dev") in
-          let* g = acquire fd ~root ~gpus node in
+          let* g = acquire fd ~root ~gpus ~bus:(fst gpus.(i)) node in
           poll_faults fd g;
           match Atomic.get g.faulted with
           | Some why ->

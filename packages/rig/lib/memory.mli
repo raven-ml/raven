@@ -270,6 +270,10 @@ val mark_outside : alloc -> bool
 (** [mark_outside a] marks [a]'s memory outside the claims for good. It is
     [false], changing nothing, while claims hold the memory exclusive. *)
 
+val mark_reached : entry -> unit
+(** [mark_reached e] keeps [e] out of its owner's cache for good, since
+    another PCI function reaches it ({!Rig.Buffer.dma}). *)
+
 (** {1:borrows Mappings and borrows}
 
     A borrow of an allocation on a device is a memory record of that device

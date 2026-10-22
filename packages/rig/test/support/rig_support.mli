@@ -51,6 +51,7 @@ module Polled : sig
     ?lag:int ->
     ?hang_ms:int ->
     ?capability:Rig_edge.capability ->
+    ?bus:string ->
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
@@ -93,7 +94,10 @@ module Polled : sig
       queued, its word unmoved, raises [Failure "Polled: nothing committed"], as
       a wait for work nobody committed would hang. With [hang_ms] its facts
       bound hangs to that many milliseconds (defaults to no bound). Its facts
-      declare [capability] (defaults to [()] under {!capability_key}).
+      declare [capability] (defaults to [()] under {!capability_key}), and
+      [bus] (defaults to none). Its [dma] describes a region as [Bus] of the
+      region's own address and bytes, and answers [Error] where it refuses
+      ({!fail_at}).
 
       Raises [Invalid_argument] if [lag < 1]. *)
 
@@ -129,6 +133,7 @@ module Polled : sig
     ?runs:[ `When_slept | `Itself ] ->
     ?lag:int ->
     ?hang_ms:int ->
+    ?bus:string ->
     string ->
     Rig.t * t
   (** [open_ name] opens a fresh device named [name]. *)
@@ -181,8 +186,9 @@ module Polled : sig
       device that faulted; from then on a commit of uncommitted values fails
       with [why] too, uncounted. With [`Refuse k] that call and the [k - 1]
       after it refuse where they can, as on a device short of memory: [alloc],
-      [map_peer] and [map_host] answer [None], [image] [Error], [entry]
-      [No_memory entry_scratch] and [grow] [Short 4096]; other calls go on.
+      [map_peer] and [map_host] answer [None], [dma] and [image] [Error],
+      [entry] [No_memory entry_scratch] and [grow] [Short 4096]; other calls
+      go on.
       [`Refuse 0] ends an earlier refusal. *)
 
   val steps : t -> int

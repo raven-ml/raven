@@ -78,6 +78,7 @@ let facts d =
     alignment = d.account.alignment;
     capability = Rig_remote_abi.declare d.capability;
     word = d.word;
+    bus = None;
     edge = d.c;
   }
 
@@ -122,6 +123,9 @@ let map_peer d d' r =
         | Ok false | Error _ -> None)
 
 let map_host _ _ _ = None
+
+let dma _ _ ~fn:_ =
+  Error "memory of another machine: its agent describes it there"
 
 (* Code *)
 
@@ -190,6 +194,7 @@ module Driver = struct
   let peer = peer
   let map_peer = map_peer
   let map_host = map_host
+  let dma = dma
   let image = image
   let entry = entry
   let unload = unload

@@ -146,7 +146,7 @@ module Strings = Tbl.Make (String)
 
 let no_waits = { Rig_edge.stores = false; hosts = false }
 
-let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
+let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~host_addresses ~word
     ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
   let live =
@@ -199,6 +199,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     live;
     base = c_base c;
     opened;
+    bus;
   }
 
 (* The host's fault, which nothing raises. *)
@@ -214,9 +215,9 @@ let host =
   let queues = [| { Rig_edge.name = "COMPUTE:0"; runs = [ Launch ] } |] in
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
-      ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
-      ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~alignment:malloc_alignment ~host_addresses:false
+      ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~bus:None ~queues
+      ~copy_engine:None ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
+      ~maps_host:false ~alignment:malloc_alignment ~host_addresses:false
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
@@ -1101,7 +1102,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
-      ~c ~arch:f.arch ~queues ~copy_engine:f.copy_engine
+      ~c ~arch:f.arch ~bus:f.bus ~queues ~copy_engine:f.copy_engine
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
       ~alignment:f.alignment ~host_addresses:f.host_addresses ~word
@@ -1154,11 +1155,12 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
         let d =
           make_device ~index ~name:full ~machine
             ~kind:(Io { m = (module I); h })
-            ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
-            ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
-            ~host_addresses:false ~word:0 ~word_region:None ~key
-            ~memory_device:false ~fault:[%extension_constructor I.Fault]
-            ~capability:None ~budget ~opened
+            ~c ~arch:"" ~bus:None ~queues:[||] ~copy_engine:None
+            ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
+            ~maps_host:false ~alignment:1 ~host_addresses:false ~word:0
+            ~word_region:None ~key ~memory_device:false
+            ~fault:[%extension_constructor I.Fault] ~capability:None ~budget
+            ~opened
         in
         register d;
         d

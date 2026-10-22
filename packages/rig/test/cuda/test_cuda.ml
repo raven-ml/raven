@@ -298,11 +298,61 @@ let written_on_return () =
     (H.read (H.at dst) n);
   C.free g flag
 
+(* Another function's DMA. The GPU's own function stands for the other one,
+   as every machine has it. CUDA exports a dma-buf of an allocation on the
+   host's page, where its kernel driver can: an export is [Ok] iff the
+   buffer spans an allocation that starts on the page and is a whole number
+   of pages, and then lies at offset 0. A buffer that spans no allocation,
+   as one rig rounded up, says nothing of it and is skipped. *)
+let dma_sizes = [ 1; 4095; 4096; 4097; 8192; 1 lsl 22; (1 lsl 22) + 1 ]
+
+let exports () =
+  S.with_ @@ fun { d; _ } ->
+  let module Dmabuf = Rig_gpu_support.Dmabuf in
+  let page = H.page in
+  let fn = require_some ~msg:"the device's bus" (Rig.bus d) in
+  equal ~msg:"GPU 0's function" (option string)
+    (List.nth_opt (require_ok (C.buses ())) 0)
+    (Some fn);
+  let law memory n =
+    let b = B.create ~memory d n in
+    let on_pages = B.aligned b ~at:0 page && n mod page = 0 in
+    match B.dma b ~fn with
+    | Error why when Rig_gpu_support.has ~sub:"_DMA_BUF_SUPPORTED is false" why
+      ->
+        skip ~reason:why ()
+    | _ when not (B.spans b) -> ()
+    | Error why ->
+        equal ~msg:(strf "%d bytes refused: %s" n why) bool false on_pages;
+        contains ~msg:"its cause" ~sub:"off the host's page" why
+    | Ok (Bus _) -> fail "CUDA gives a dma-buf"
+    | Ok (Dmabuf { fd; offset }) -> (
+        Fun.protect ~finally:(fun () -> Dmabuf.close fd) @@ fun () ->
+        equal ~msg:(strf "%d bytes exported" n) bool true on_pages;
+        equal ~msg:"close-on-exec" bool true (Dmabuf.cloexec fd);
+        equal ~msg:"its offset" int 0 offset;
+        match Dmabuf.size fd with
+        | Some bytes -> at_least ~msg:"its bytes" int ~than:n bytes
+        | None -> fail "the descriptor is no dma-buf")
+  in
+  List.iter (law Device) dma_sizes;
+  List.iter
+    (fun fn ->
+      match B.dma (B.create d 64) ~fn with
+      | Ok _ -> failf "%s reaches the memory" fn
+      | Error why -> contains ~msg:fn ~sub:fn why)
+    [ "41:00.0"; "ffff:ff:1f.7" ];
+  law Pinned (1 lsl 22)
+
 let memory =
   group ~timeout:120. "memory"
     [
       test "an allocation past the GPU's memory is None" past_memory;
       test "write_gpu's bytes are on the GPU when it returns" written_on_return;
+      test
+        "dma exports an allocation on the host's page as a dma-buf, and \
+         refuses another"
+        exports;
     ]
 
 (* Work *)

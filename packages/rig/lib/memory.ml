@@ -244,6 +244,7 @@ let entry ?(access = Read_write) owner backing bytes stamps =
     unmaps = 1;
     pages = Unasked;
     proxy = 0;
+    reached = false;
   }
 
 let no_entry = entry Dev.host (Kept Nothing) 0 0
@@ -695,10 +696,18 @@ let key n kind =
   let k = match kind with Device -> 0 | Pinned -> 1 | Mapped -> 2 in
   (n * 4) + k
 
-(* Memory the cache never takes: io memory, and host memory a device borrowed,
-   which returns to its keeper once its uses are reached. *)
+(* Memory the cache never takes: io memory, host memory a device borrowed,
+   which returns to its keeper once its uses are reached, and memory another
+   PCI function reaches, which may still write it. *)
 let uncached (e : entry) =
-  match e.backing with Driver_memory _ -> false | Io_memory _ | Kept _ -> true
+  e.reached
+  ||
+  match e.backing with
+  | Driver_memory _ -> false
+  | Io_memory _ | Kept _ -> true
+
+let mark_reached (e : entry) =
+  Dev.protect e.owner (fun (e : entry) -> e.reached <- true) e
 
 let cache_key (e : entry) =
   match e.backing with
