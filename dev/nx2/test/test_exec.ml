@@ -353,6 +353,13 @@ end
 
 module Gate = (val Nx.devices ~kernels:(module Gated) [ m 1 ])
 
+(* [f ()] with [g] run on another domain inside its first call into nx.gated:
+   after [f]'s operation checked its operands, before its kernel reads them. *)
+let meanwhile g f =
+  let other () = Domain.join (Domain.spawn g) in
+  Domain.DLS.set Gated.pending (Some other);
+  Fun.protect ~finally:(fun () -> Domain.DLS.set Gated.pending None) f
+
 (* Donations of one value on nx.gated: handles, views and copies of handles,
    sums and comparisons that decline, on the fast path and off it, and a
    product and a sum that consume. The value and every handle of it die at the
@@ -360,7 +367,8 @@ module Gate = (val Nx.devices ~kernels:(module Gated) [ m 1 ])
    where its result would take a handle's memory: a copy's, or the value's
    while no value outside its handles shares it. Any other decline kills
    nothing: a comparison's result has another dtype. A handle a movement spent
-   dies naming the movement. *)
+   dies naming the movement. A call made on another domain while a decline
+   holds a value's handles is held there deterministically ([meanwhile]). *)
 type donor = {
   xs : float array;
   mutable dead : string option list;  (* Every death it may have. *)
@@ -561,6 +569,58 @@ let read_ref x = function
 
 let read_sys x = outcome (fun () -> elements x)
 
+(* A decline [by] of [h] that runs [inner] on another domain meanwhile, whose
+   outcome [met] is [None] where the decline raised before its kernel. While
+   the decline holds [h] and its donor they are dead to it, so a call meanwhile
+   that reads them loses to it; then the decline kills nothing, or, a sum's in
+   a handle's memory, may kill them. *)
+let during ~sum by inner h = function
+  | Error e -> raise e
+  | Ok (out, met) -> (
+      match (deaths h, met) with
+      | [ None ], Some r ->
+          let spent = h.spent and dead = h.x.dead in
+          h.spent <- [ Some by ];
+          h.x.dead <- [ Some by ];
+          inner r;
+          h.spent <- spent;
+          h.x.dead <- dead;
+          declined ~sum by h (Ok out)
+      | [ None ], None -> fail (by ^ ": nothing ran meanwhile")
+      | _, None -> declined ~sum by h (Ok out)
+      | _, Some _ -> fail (by ^ " ran a call meanwhile though refused"))
+
+(* [f h], then [h] seen, with [g] run on another domain meanwhile. *)
+let while_sys f g h =
+  let met = ref None in
+  let out = meanwhile (fun () -> met := Some (g ())) (fun () -> f h) in
+  (out, !met)
+
+let lost_in_flight by r =
+  cover "a call loses to a decline in flight" (r = Error by)
+
+let add_while_mul =
+  command "add, meanwhile mul"
+    (handle ^-> handle ^-> judges (pair seen_outcomes (option outcomes)))
+    (fun h h' ->
+      during ~sum:true "Nx.add"
+        (fun r ->
+          lost_in_flight "Nx.add" r;
+          mul_ref ~raced:false h' (Ok r))
+        h)
+    (fun h h' -> while_sys add_sys (fun () -> mul_sys h') h)
+
+let less_while_read =
+  command "less, meanwhile read"
+    (handle ^-> donor ^-> judges (pair seen_outcomes (option outcomes)))
+    (fun h x ->
+      during ~sum:false "Nx.less"
+        (fun r ->
+          lost_in_flight "Nx.less" r;
+          read_ref x (Ok r))
+        h)
+    (fun h x -> while_sys less_sys (fun () -> read_sys x) h)
+
 let donations =
   [
     command "make" (fours @-> makes donor) make_ref make_sys;
@@ -586,6 +646,8 @@ let donations =
     command "mul" (handle ^-> judges outcomes) (mul_ref ~raced:false) mul_sys;
     command "sum" (handle ^-> judges outcomes) (sum_ref ~raced:false) sum_sys;
     command "read" (donor ^-> judges outcomes) read_ref read_sys;
+    add_while_mul;
+    less_while_read;
   ]
 
 (* On two domains a sum's decline may or may not kill its donor, as in
@@ -601,7 +663,21 @@ let raced_decline ~sum by h = function
       end
   | Ok (Error e) -> lost ~raced:true by e h
 
-let decline_sys h = outcome (fun () -> elements (Nx.add h (twos ())))
+let raced_sys f h = outcome (fun () -> elements (f h))
+
+(* A movement on two domains: it spends [h], or loses it. *)
+let raced_moved h = function
+  | Error e -> raise e
+  | Ok (Ok _) ->
+      lives h;
+      h.spent <- [ Some "Nx.reshape" ]
+  | Ok (Error e) -> lost ~raced:true "Nx.reshape" e h
+
+(* The movement's handle, which no command reads. *)
+let moved_sys f h =
+  outcome (fun () ->
+      ignore (f h);
+      [||])
 
 (* A read may see the donor dead to a decline in flight, which then gives it
    back. *)
@@ -620,21 +696,31 @@ let raced =
       Nx.donate;
     command ~pre:known "view" (handle ^-> makes handle) view_ref view_sys;
     command ~pre:known "copy" (handle ^-> makes handle) copy_ref copy_sys;
+    command "view racing" (handle ^-> judges outcomes) raced_moved
+      (moved_sys view_sys);
+    command "copy racing" (handle ^-> judges outcomes) raced_moved
+      (moved_sys copy_sys);
     command "add"
       (handle ^-> judges outcomes)
       (raced_decline ~sum:true "Nx.add")
-      decline_sys;
+      (raced_sys (fun h -> Nx.add h (twos ())));
+    command "add off the fast path"
+      (handle ^-> judges outcomes)
+      (raced_decline ~sum:true "Nx.add")
+      (raced_sys (fun h -> Nx.add h (Nx.scalar Nx.float32 2.)));
+    command "less"
+      (handle ^-> judges outcomes)
+      (raced_decline ~sum:false "Nx.less")
+      (raced_sys (fun h -> Nx.cast D.Float32 (Nx.less h (twos ()))));
+    command "less off the fast path"
+      (handle ^-> judges outcomes)
+      (raced_decline ~sum:false "Nx.less")
+      (raced_sys (fun h ->
+           Nx.cast D.Float32 (Nx.less h (Nx.scalar Nx.float32 2.))));
     command "mul" (handle ^-> judges outcomes) (mul_ref ~raced:true) mul_sys;
     command "sum" (handle ^-> judges outcomes) (sum_ref ~raced:true) sum_sys;
     command "read" (donor ^-> judges outcomes) read_judge read_sys;
   ]
-
-(* [f ()] with [g] run on another domain inside its first call into nx.gated:
-   after [f]'s operation checked its operands, before its kernel reads them. *)
-let meanwhile g f =
-  let other () = Domain.join (Domain.spawn g) in
-  Domain.DLS.set Gated.pending (Some other);
-  Fun.protect ~finally:(fun () -> Domain.DLS.set Gated.pending None) f
 
 (* A call that checked [x] live, and whose kernel then meets [x]'s memory
    consumed by an operation on another domain, raises naming that operation,
