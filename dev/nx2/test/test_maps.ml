@@ -628,6 +628,39 @@ let test_given_back_keeps_key () =
         (Exec.run ~by:"t"
            (Prim.op2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]))))
 
+(* Two handles of one donor, one a copy a movement passed on, reach a
+   consumer while another consumer holds the donor's word, so [handles] cannot
+   tell their donors apart; the other gives the word back before the claim,
+   which then finds one key twice. It raises naming [Nx.donate] and kills
+   nothing. *)
+let test_one_donor_twice_given_back () =
+  let x =
+    Value.Array
+      {
+        at = at1;
+        a =
+          A.to_device (m 0)
+            (A.of_array D.Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]);
+        dead = Value.Live;
+      }
+  in
+  let moved mv h = Exec.run ~by:"t" (Value.Move (mv, h)) in
+  let h1 = Donate.donate ~by:"t" x in
+  (* A reshape of a transpose copies. *)
+  let h2 =
+    moved (Reshape [| 4 |])
+      (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
+  in
+  let other = Donate.claim_handle ~by:"other" 0 (Donate.donate ~by:"t" x) in
+  let hs = Donate.handles ~by:"t" [ Value.Any h1; Value.Any h2 ] in
+  Donate.unclaim other;
+  raises_match
+    (Exn.invalid_arg ~substring:"Nx.donate: t reads one donation twice")
+    (fun () -> ignore (Donate.claim ~by:"t" hs));
+  Prim.alive ~by:"t" 0 x;
+  Prim.alive ~by:"t" 0 h1;
+  Prim.alive ~by:"t" 1 h2
+
 let donation =
   group "donation"
     [
@@ -642,6 +675,8 @@ let donation =
       test "shared memory is not written" test_no_reuse_shared;
       test "a strided operand is not written" test_no_reuse_strided;
       test "a donor given back keeps its key" test_given_back_keeps_key;
+      test "one donor claimed twice after a give-back raises first"
+        test_one_donor_twice_given_back;
     ]
 
 (* Expansions return values of their own: an output that is an operand, and a

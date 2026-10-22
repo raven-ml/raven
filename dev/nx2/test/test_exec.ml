@@ -618,8 +618,8 @@ let donation =
   group "donation"
     [
       stateful "a value lives until a handle of it is consumed" donations;
-      stateful ~domains:2 "handles of one value declined and consumed on two domains"
-        raced;
+      stateful ~domains:2
+        "handles of one value declined and consumed on two domains" raced;
     ]
 
 let kernels =
