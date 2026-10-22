@@ -273,6 +273,31 @@ let test_facts transport () =
   equal int (base + 2) (Rig.signaled d);
   equal (option string) (Some "the engine hung") (Rig.lost d)
 
+(* A lost device whose word is its driver's own reports the last value its stop
+   wrote there, before any close: the stop that a wait's fault left owed. *)
+let test_own_word_stop () =
+  let d, p = P.open_ ~transport:true "loss:own-word-stop" in
+  let pt = submit (empty d) in
+  P.fault p "the engine hung";
+  raises_match (lost d) (fun () -> Rig.Point.wait pt);
+  equal ~msg:"the word" int (Rig.Point.value pt) (Rig.signaled d);
+  equal ~msg:"stops" int 1 (count "stop" p);
+  Rig.close d
+
+(* A lost device whose word is its driver's own, and whose stop left its work
+   running, reports the values that work writes there, before any close. *)
+let test_own_word_work () =
+  let d, p = P.open_ ~transport:true ~answer:`Unknown "loss:own-word-work" in
+  let base = Rig.submitted d in
+  let pt = submit (empty d) in
+  P.fault p "the engine hung";
+  raises_match (lost d) (fun () -> Rig.Point.wait pt);
+  equal ~msg:"the word at the loss" int base (Rig.signaled d);
+  P.set_word p (Rig.Point.value pt);
+  equal ~msg:"the word the work wrote" int (Rig.Point.value pt)
+    (Rig.signaled d);
+  Rig.close d
+
 (* A loss reaches the lost device; memory of other devices whose points it
    reached is ordinary memory again, and other devices go on. *)
 let test_others_go_on () =
@@ -767,6 +792,14 @@ let tests =
         test "a lost device answers its facts and values" (test_facts false);
         test "a lost device behind a transport answers its last reading"
           (test_facts true);
+        test
+          "a lost device behind a transport reports its stop's value before \
+           a close"
+          test_own_word_stop;
+        test
+          "a lost device behind a transport reports the values its running \
+           work writes"
+          test_own_word_work;
         test "memory whose points a lost device reached is ordinary"
           test_others_go_on;
         test "memory a lost device's work did not reach raises its loss"

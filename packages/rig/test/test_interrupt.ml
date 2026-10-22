@@ -487,6 +487,11 @@ let probes () =
   let polled, pp = P.open_ polled_name in
   let image = Result.get_ok (Rig.Image.load polled "functions") in
   let fill = Option.get (Rig.Image.resolve image "fill") in
+  (* Lost by a wait's fault, which leaves its stop owed. *)
+  let own, own_p = P.open_ ~transport:true (fresh "reenter:own-word") in
+  let own_pt = Rig.submit (Sub.Run.make (Sub.make own [||])) ~buffers:[||] in
+  P.fault own_p "the engine hung";
+  (try Rig.Point.wait own_pt with Rig.Lost _ -> ());
   let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
   let run = Sub.Run.make (Sub.make d [||]) in
   let pt = Rig.submit run ~buffers:[||] in
@@ -542,6 +547,8 @@ let probes () =
       free "allocated" (fun () -> ignore (Rig.allocated d));
       free "submitted" (fun () -> ignore (Rig.submitted d));
       free "signaled" (fun () -> ignore (Rig.signaled d));
+      free ~what:"signaled of a lost device's own word" "signaled" (fun () ->
+          ignore (Rig.signaled own));
       free "lost" (fun () -> ignore (Rig.lost victim));
       free "failure" (fun () -> ignore (Rig.failure ()));
       free "Point.reached" (fun () -> ignore (Rig.Point.reached pt));

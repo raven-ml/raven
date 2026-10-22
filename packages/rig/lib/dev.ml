@@ -714,7 +714,20 @@ let rec settle d v =
   if r = Answer.failed then run_own d;
   if r = Answer.busy then settle d v else r = Answer.ok
 
-let signaled = word
+(* A lost device's word of its driver's own moves only where rig reads it
+   through the driver: its stop raises it, or the work the stop left running
+   writes it. A read there is a driver call refused as lost, so it runs the
+   owed stop first, and reads the word once the stop returned. Inside a lock it
+   takes neither lock and answers the slot's word. A word in rig's array moves
+   by itself. *)
+let signaled d =
+  if d.live.word <> 0 || not (is_lost d) then word d
+  else if holds () <> 0 then slot_word d
+  else begin
+    run_own d;
+    if state d = ended_state then refresh d;
+    slot_word d
+  end
 
 (* The word of a live device, or [-1] once a read of a word of its driver's
    own found it lost, which its line then answers for. A word in rig's array

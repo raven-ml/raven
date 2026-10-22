@@ -376,7 +376,11 @@ val signaled : t -> int
 (** [signaled d] is the last value [d] has reported. While [d] is live,
     [d] has reached it, and the writes of the work up to it are visible to
     the host. On a lost [d] it may move on to dropped values
-    ({!section-loss}). It commits no work and waits for no work
+    ({!section-loss}). Where [d]'s driver keeps a word of its own
+    ({!Rig_edge.type-facts}), [signaled] on a lost [d] runs its owed stop
+    if it can ({!section-stops}), and reads that word once the stop has
+    returned. Otherwise, and inside a lock ({!section-domains}), it answers
+    the last value read. It commits no work and waits for no work
     ({!section-timeline}).
 
     Raises {!Lost} if reading the value through [d]'s driver loses [d], as
@@ -478,7 +482,7 @@ val signaled : t -> int
     they are. A function that takes no lock may be called from a callback at
     any point, and never raises it: {!name}, {!equal}, {!pp}, {!arch},
     {!computes}, {!runs_on_host}, {!alignment}, {!capability},
-    {!host_of}, {!reaches}, {!submitted}, {!signaled}, {!lost}, {!failure},
+    {!host_of}, {!reaches}, {!submitted}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of
     {!Buffer}, {!Buffer.view}, {!Buffer.reached}, {!Buffer.of_bigarray},
@@ -486,7 +490,8 @@ val signaled : t -> int
     {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
     {!Submission.block}, {!Submission.address}, {!Submission.Run},
     {!Claim}, {!Profile} but {!Profile.take}, {!Local.new_key}, and
-    {!Local.get} of a value already made for the device. Nor does {!fail}.
+    {!Local.get} of a value already made for the device. Nor do
+    {!signaled} and {!fail}.
     Outside a lock, a call from a callback runs as any call does.
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
