@@ -588,6 +588,46 @@ let test_contract_consumes () =
   raises_match (Exn.invalid_arg ~substring:"t: operand 1 was donated to t")
     (fun () -> Exec.run ~by:"t" (Value.Copy init))
 
+(* Values on a set whose kernels decline a sum. *)
+let declining : b Devices.t =
+  Devices.mint ~by:"t" ~kernels:(module Nx_support.Declining) [ m 0 ]
+
+let dec data : (float, D.float32_elt, b) Value.t =
+  Value.Array
+    {
+      at = Devices.one declining 0;
+      a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
+      dead = Value.Live;
+    }
+
+let key x =
+  match Prim.death x with
+  | Value.Offered k -> k
+  | Value.Live | Value.Died _ -> fail "a donor not offered"
+
+(* A decline into fresh memory gives a donor back under the key it had, on the
+   fast path and off it. The key orders every claim of the donor's handles: a
+   new one would let two consumers, one ordering by the old key and one by the
+   new, each take one of two donors and lose the other. *)
+let test_given_back_keeps_key () =
+  let declined path f =
+    let x = dec [| 1.; 2. |] in
+    (* Shared, so the sum computes into fresh memory. *)
+    Rig.Claim.share (A.buffer (array_of x));
+    let h = Donate.donate ~by:"t" x in
+    let k = key x in
+    raises_match
+      (Exn.invalid_arg ~substring:"t: nx.test does not compute Add")
+      (fun () -> ignore (f h));
+    equal ~msg:path int k (key x)
+  in
+  declined "the fast path" (fun h ->
+      Exec.apply2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]));
+  declined "off it" (fun h ->
+      first
+        (Exec.run ~by:"t"
+           (Prim.op2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]))))
+
 let donation =
   group "donation"
     [
@@ -601,6 +641,7 @@ let donation =
         test_reuse_fast3;
       test "shared memory is not written" test_no_reuse_shared;
       test "a strided operand is not written" test_no_reuse_strided;
+      test "a donor given back keeps its key" test_given_back_keeps_key;
     ]
 
 (* Expansions return values of their own: an output that is an operand, and a

@@ -108,8 +108,9 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
    A consumer claims its handles in their donors' key order, each handle's own
    word before its donor's, setting each word to its death; it gives none back
    when it loses one. Each word has one place in the order, since every handle
-   of a donor reads the donor's one key, and a consumer's words rise strictly,
-   since [handles] refuses two handles of one donor. So of consumers racing for
+   of a donor reads the donor's one key, which it keeps when given back
+   ([unclaim]), and a consumer's words rise strictly, since [handles] refuses
+   two handles of one donor. So of consumers racing for
    the same handles, at least one succeeds: a consumer that loses at a word
    lost it to one that claimed that word, which, if it lost too, lost at a word
    above it. Following who each loser lost to climbs the order, so it ends at a
@@ -125,15 +126,17 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
 let died_to ~by i earlier =
   invalid_argf "%s: operand %d was donated to %s" by (i + 1) earlier
 
-(* Sets the death word [w] of operand [i] to [died] unless it died first, on
-   any domain, which raises naming that consumer. A word that changed since it
-   was read is read again. *)
+(* Sets the donor word [w] of operand [i] to [died] unless it died first, on
+   any domain, which raises naming that consumer, and is the key it held. A
+   word that changed since it was read is read again: an [unclaim] sets a new
+   [Offered] block, so a word read before a claim and its give-back fails. *)
 let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
   match Atomic.Loc.get w with
   | Value.Died earlier -> died_to ~by i earlier
-  | (Value.Live | Value.Offered _) as seen ->
-      if not (Atomic.Loc.compare_and_set w seen died) then
-        claim_word ~by i w died
+  | Value.Live -> invalid_arg "Donate.claim: a handle's donor was not offered"
+  | Value.Offered k as seen ->
+      if Atomic.Loc.compare_and_set w seen died then k
+      else claim_word ~by i w died
 
 (* Sets the handle [x]'s own word, operand [i], to [died] unless an operation
    read the handle first, which raises naming it. The word is set in place:
@@ -154,16 +157,24 @@ let rec spend_word : type v s d.
    new handle on: one operation reads a handle. *)
 let spend ~by i x = spend_word ~by i (Value.Died by) x
 
+(* The handles a consumer claimed, each with the key its donor's word held. *)
+type claims = (int * handle) list
+
 (* Claims the handle [x], operand [i], for its consumer [by], before it reads
    it: its own word, then its donor's, which orders the consumers of all the
    donor's handles. *)
-let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
+let claim_one (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
   | Value.Donated d ->
       let died = Value.Died by in
       spend_word ~by i died x;
-      claim_word ~by i d.donor died
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
+      Some (claim_word ~by i d.donor died)
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> None
+
+let claim_handle ~by i x =
+  match claim_one ~by i x with
+  | Some k -> [ (k, Handle (i, x)) ]
+  | None -> []
 
 (* The key of the handle [x]'s donor, operand [i]. A donor that died raises
    naming its consumer. *)
@@ -182,24 +193,25 @@ let key (type v s d) ~by i (x : (v, s, d) Value.t) =
    differ: [handles] refused two handles of one donor. *)
 let claim ~by hs =
   let keyed = List.map (fun (Handle (i, x) as h) -> (key ~by i x, h)) hs in
-  List.iter
-    (fun (_, Handle (i, x)) -> claim_handle ~by i x)
-    (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
+  let sorted = List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed in
+  List.filter_map
+    (fun (_, (Handle (i, x) as h)) ->
+      Option.map (fun k -> (k, h)) (claim_one ~by i x))
+    sorted
 
-(* Gives back the claims of the handles [hs] that {!claim} made, before their
-   consumer wrote or consumed their memory: each handle lives again and its
-   donor is offered again, under a new key. No other consumer writes a word
-   once it died, so each is set in place. *)
-let unclaim hs =
+(* Gives back the claims [c], before their consumer wrote or consumed their
+   memory: each handle lives again and its donor is offered again under the
+   key it held, in a new block. No other consumer writes a word once it died,
+   so each is set in place. *)
+let unclaim (c : claims) =
   List.iter
-    (fun (Handle (_, x)) ->
+    (fun (k, Handle (_, x)) ->
       match x with
       | Value.Donated d ->
-          let key = Atomic.fetch_and_add offers 1 in
-          Atomic.Loc.set d.donor (Value.Offered key);
+          Atomic.Loc.set d.donor (Value.Offered k);
           Atomic.Loc.set [%atomic.loc d.spent] Value.Live
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
-    hs
+    c
 
 (* The keys of the donors of the handles [hs] that are still offered. *)
 let offered hs =
@@ -244,7 +256,7 @@ let consume ~by op =
   let hs = if Prim.exists is_handle op then handles ~by xs else [] in
   Prim.iteri (fun i x -> Prim.alive ~by i x) op;
   let read = unhandled hs op in
-  claim ~by hs;
+  ignore (claim ~by hs : claims);
   read
 
 let resolve (type d a) ~by (xs : d Value.any list)
@@ -274,7 +286,7 @@ let resolve (type d a) ~by (xs : d Value.any list)
         ~finally:(fun () -> Rig.Claim.release held)
         (fun () ->
           let result = k (fun y -> as_called keys y) in
-          claim ~by hs;
+          ignore (claim ~by hs : claims);
           result)
 
 let consume_list ~by xs =
@@ -285,7 +297,7 @@ let consume_list ~by xs =
   List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
   let keys = offered hs in
   let read = List.map (fun (Value.Any x) -> Value.Any (as_called keys x)) xs in
-  claim ~by hs;
+  ignore (claim ~by hs : claims);
   read
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
