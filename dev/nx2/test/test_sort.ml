@@ -5,8 +5,7 @@
 
 (* Sort through Nx.Prim: the order and stability Nx_kernel.S.sort states,
    against a stable sort of the slices, sub-byte dtypes in one kernel call, its
-   rule before any kernel, a split placement, and a library that declines every
-   sort, whose sorts are nx's expansion. *)
+   rule before any kernel, a split placement, and nx's expansion of a sort. *)
 
 open Windtrap
 module A = Nx_array
@@ -17,16 +16,6 @@ let m = Nx_support.memory
 
 module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
-
-(* nx.cpu, declining every sort. *)
-module Unsorted = struct
-  include Nx_cpu
-
-  let name = "nx.unsorted"
-  let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = A.Declined
-end
-
-module Dec = (val Nx.devices ~kernels:(module Unsorted) [ m 2 ])
 
 let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
 let read x = A.to_array (host_array x)
@@ -179,7 +168,26 @@ let test_split () =
        (Nx.placement (fst two))
        (Some (Count2.split ~axis:0)))
 
-(* Declines *)
+(* Expansion *)
+
+(* [expanded f] is [f ()] in an interpretation that computes each sort by its
+   expansion ({!Nx.Prim.expand}), and every other operation as eager execution
+   does. *)
+let repeat n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
+
+let expanded f =
+  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
+    let expansion =
+      match op with Sort _ -> Nx.Prim.expand i ~by ~repeat op | _ -> None
+    in
+    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
 
 (* Each element's bits, read as unsigned integers of its width: two per
    complex128. *)
@@ -253,21 +261,21 @@ let dtypes =
     Elts (D.Bool, bool);
   ]
 
-type declined =
+type expansion =
   | Case :
       ('v, 's) D.t * int array * int * bool * int option * 'v array
-      -> declined
+      -> expansion
 
-let pp_declined ppf (Case (dt, s, axis, descending, k, _)) =
+let pp_expansion ppf (Case (dt, s, axis, descending, k, _)) =
   Format.fprintf ppf "%s [%s] axis %d%s%s" (D.name dt)
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
     axis
     (if descending then " descending" else "")
     (match k with None -> "" | Some k -> Printf.sprintf " k %d" k)
 
-let declined_case =
+let expansion_case =
   let open Gen in
-  with_pp pp_declined
+  with_pp pp_expansion
   @@ let* (Elts (dt, elt)) = of_list dtypes in
      let* s = array ~size:(int_range 1 3) (int_range 0 4) in
      let* axis = int_range 0 (Array.length s - 1) in
@@ -285,7 +293,7 @@ let declined_case =
      let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) elt in
      Case (dt, s, axis, descending, k, xs)
 
-let law_declined (Case (dt, s, axis, descending, k, xs)) =
+let law_expansion (Case (dt, s, axis, descending, k, xs)) =
   cover "a complex dtype"
     (match D.kind dt with D.Complex -> true | _ -> false);
   cover "two keys or more" (D.bits dt >= 64);
@@ -293,13 +301,11 @@ let law_declined (Case (dt, s, axis, descending, k, xs)) =
   cover "k" (k <> None);
   let a = A.of_array dt s xs in
   let v, p = sort ~descending ?k axis (Nx.place Count.on (value a)) in
-  let v', p' = sort ~descending ?k axis (Nx.place Dec.on (value a)) in
+  let v', p' = expanded (fun () -> sort ~descending ?k axis (value a)) in
   equal ~msg:"values, bit for bit" (array int64)
     (bits_of (host_array v))
     (bits_of (host_array v'));
-  equal ~msg:"positions" (array int64) (read p) (read p');
-  equal ~msg:"on the declining device" bool true
-    (Option.equal Nx.Placement.equal (Nx.placement v') (Some Dec.on))
+  equal ~msg:"positions" (array int64) (read p) (read p')
 
 let () =
   exit
@@ -317,9 +323,8 @@ let () =
              test "the rule raises before any kernel" test_rules;
              test "a split value sorts as on one device" test_split;
            ];
-         group "declines"
+         group "expansion"
            [
-             prop "a library that declines sorts as nx.cpu" declined_case
-               law_declined;
+             prop "the expansion sorts as nx.cpu" expansion_case law_expansion;
            ];
        ])

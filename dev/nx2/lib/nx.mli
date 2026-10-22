@@ -4383,7 +4383,7 @@ module Prim : sig
       'd any list) ->
     'r t ->
     'r option
-  (** [expand i ~by ~repeat op] is [Some r], [r] [op] as core operations
+  (** [expand i ~by ~repeat op] is [Some r], [r] [op] as simpler operations
       applied by {!eval} around [i] again, so that they reach [i]; [None] for
       an operation that has no expansion. A map of several nodes expands into
       one map per node.

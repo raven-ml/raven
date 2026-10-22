@@ -30,7 +30,7 @@
     let add z x y =
       match add_kernel z x y with
       | Done -> z
-      | Declined -> add_by_parts z x y
+      | Declined -> invalid_arg "Nx.add: nx_cpu_add does not compute this case"
       | refusal -> Nx_array.refused "Nx.add" refusal [ Any z; Any x; Any y ]
     ]}
     Kernels that submit device work from OCaml claim their arrays through

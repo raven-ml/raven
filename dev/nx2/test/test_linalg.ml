@@ -6,7 +6,7 @@
 (* Linalg through Nx.Prim: the shapes and dtypes Nx_kernel.Shape states for
    each routine's results, its rule before any kernel, the routine and
    operands each constructor gives the kernels and the order their results come
-   back in, a split batch, and a library that declines. *)
+   back in, a split batch, a library that declines, and nx's expansions. *)
 
 open Windtrap
 module A = Nx_array
@@ -308,7 +308,6 @@ let test_declined () =
           "nx.declining";
           "Eig";
           "complex64";
-          "not available yet";
           "Nx.place";
         ]
 
@@ -941,8 +940,7 @@ let test_refusals () =
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two (Nx.zeros Nx.float64 [| 2; 0 |]));
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`One (Nx.zeros Nx.float64 [| 2; 0 |]))
 
-(* nx.cpu without lu, svd, eigh, eig and gathers, which the routines'
-   expansions take. *)
+(* nx.cpu without lu, svd, eigh, eig and gathers. *)
 module Gatherless = struct
   include Declining
 
@@ -950,8 +948,7 @@ module Gatherless = struct
 end
 
 (* On a library that declines lu, svd, eigh and gathers, a composite's
-   refusal names the function called, whatever function it calls inside, an
-   expansion's included. *)
+   refusal names the function called, whatever function it calls inside. *)
 let test_composites_named () =
   let module Declines = (val Nx.devices ~kernels:(module Gatherless) [ m 0 ]) in
   let on s = Nx.place Declines.on (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Float64 s)) in
@@ -980,27 +977,30 @@ let test_dead_named () =
       Nx.solve_triangular ~transpose:Transpose (Nx.eye Nx.complex64 2)
         (dead Nx.complex64 [| 2; 1 |] Complex.one))
 
-(* Expansions: on a set whose kernels decline every routine, each routine but
-   eig computes through nx's expansion, within the bounds Expand states and in
-   agreement with the eager kernels. *)
+(* Expansions: each routine but eig computed by nx's expansion, within the
+   bounds Expand states and in agreement with the eager kernels. *)
 
-(* nx.cpu without its matrix routines. *)
-module Bare = struct
-  include Nx_cpu
+let folding n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
 
-  let name = "nx.bare"
-  let cholesky _ ~dst:_ _ = A.Declined
-  let lu ~lu:_ ~pivots:_ ~perm:_ _ = A.Declined
-  let qr ~q:_ ~r:_ _ = A.Declined
-  let svd ~s:_ ?vectors:_ _ = A.Declined
-  let eigh ~w:_ ?v:_ _ = A.Declined
-  let eig ~w:_ ?v:_ _ = A.Declined
-  let solve_triangular _ ~adjoint:_ ~unit_diagonal:_ ~dst:_ _ _ = A.Declined
-end
+(* [expanded f] is [f ()] in an interpretation that computes each routine by its
+   expansion ({!Nx.Prim.expand}), its loops folded, and every other operation
+   as eager execution does. *)
+let expanded f =
+  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
+    let expansion =
+      match op with
+      | Linalg _ -> Nx.Prim.expand i ~by ~repeat:folding op
+      | _ -> None
+    in
+    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
 
-module Expanding = (val Nx.devices ~kernels:(module Bare) [ m 0 ])
-
-let expanding x = Nx.place Expanding.on x
 let back x = Nx.place Nx.Host.on x
 
 (* The bounds Expand states: [u] the parts' unit roundoff, [ν] the most one
@@ -1206,7 +1206,7 @@ let test_cholesky_expanded =
       let noise = Nx.tril ~k:(-1) (value dt s im re) in
       List.iter
         (fun (triangle, read, l_of) ->
-          let l = l_of (back (Nx.cholesky ~triangle (expanding read))) in
+          let l = l_of (expanded (fun () -> Nx.cholesky ~triangle read)) in
           check_cholesky dt a l;
           if kind <> Graded then
             near ~scale:10. ~msg:"eager" l (l_of (Nx.cholesky ~triangle read)))
@@ -1219,7 +1219,7 @@ let test_cholesky_expanded_fails () =
   let a =
     Nx.create Nx.float64 [| 2; 2; 2 |] [| 2.; 1.; 1.; 2.; 1.; 2.; 2.; 1. |]
   in
-  let l = back (Nx.cholesky (expanding a)) in
+  let l = back (expanded (fun () -> Nx.cholesky a)) in
   near ~msg:"the definite one" (Nx.get [ 0 ] l) (Nx.get [ 0 ] (Nx.cholesky a));
   all_nan ~msg:"the indefinite one" (Nx.get [ 1 ] l)
 
@@ -1233,8 +1233,8 @@ let test_solve_expanded =
       List.iter
         (fun (triangle, transpose, unit_diag) ->
           let x =
-            Nx.solve_triangular ~triangle ?transpose ~unit_diag (expanding a)
-              (expanding b)
+            expanded (fun () ->
+                Nx.solve_triangular ~triangle ?transpose ~unit_diag a b)
           in
           let t =
             match triangle with Nx.Lower -> Nx.tril a | Nx.Upper -> Nx.triu a
@@ -1276,9 +1276,8 @@ let test_solve_expanded_singular () =
     Nx.create Nx.float64 [| 2; 2; 2 |] [| 1.; 0.; 3.; 0.; 2.; 0.; 1.; 2. |]
   in
   let x =
-    back
-      (Nx.solve_triangular (expanding a)
-         (expanding (Nx.ones Nx.float64 [| 2; 2; 1 |])))
+    expanded (fun () ->
+        Nx.solve_triangular a (Nx.ones Nx.float64 [| 2; 2; 1 |]))
   in
   all_nan ~msg:"a zero on the diagonal" (Nx.get [ 0 ] x);
   near ~msg:"the regular one" (Nx.get [ 1 ] x)
@@ -1292,7 +1291,7 @@ let test_lu_expanded =
       let a = operand dt kind s re im in
       let r = Array.length s in
       let k = Stdlib.min s.(r - 2) s.(r - 1) in
-      let perm, l, u = Nx.lu (expanding a) in
+      let perm, l, u = expanded (fun () -> Nx.lu a) in
       let rows =
         Nx.take_along_axis ~axis:(-2) (Nx.unsqueeze ~axes:[ -1 ] (back perm)) a
       in
@@ -1349,7 +1348,7 @@ let test_qr_expanded =
       let m = s.(r - 2) and n = s.(r - 1) in
       List.iter
         (fun (factors, cols) ->
-          let q, rr = Nx.qr ~factors (expanding a) in
+          let q, rr = expanded (fun () -> Nx.qr ~factors a) in
           let q = back q and rr = back rr in
           equal ~msg:"q" (array int)
             (Array.append (lead s) [| m; cols |])
@@ -1391,9 +1390,9 @@ let check_svd dt a =
         +. ((eq +. ej +. eager) *. fro.(i)))
       (parts ~k:1 got) want
   in
-  let u, sv, vh = Nx.svd (expanding a) in
+  let u, sv, vh = expanded (fun () -> Nx.svd a) in
   values "s" tol (back sv);
-  let _, alone, _ = Nx.svd ~vectors:false (expanding a) in
+  let _, alone, _ = expanded (fun () -> Nx.svd ~vectors:false a) in
   values "s alone" tol_alone (back alone);
   let ksq = Float.sqrt (Float.of_int (Stdlib.max 1 k)) in
   within ~msg:"u diag s vh"
@@ -1415,7 +1414,7 @@ let check_svd dt a =
   let e = eq +. ej in
   ortho "uᴴ u" (Nx.matmul (adj (c128 u)) (c128 u)) k e;
   ortho "vh vhᴴ" (Nx.matmul (c128 vh) (adj (c128 vh))) k e;
-  let u, _, vh = Nx.svd ~factors:Complete (expanding a) in
+  let u, _, vh = expanded (fun () -> Nx.svd ~factors:Complete a) in
   ortho "complete uᴴ u" (Nx.matmul (adj (c128 u)) (c128 u)) m e;
   ortho "complete vh vhᴴ" (Nx.matmul (c128 vh) (adj (c128 vh))) n e
 
@@ -1440,10 +1439,10 @@ let check_eigh dt a =
   let values msg got =
     within ~msg (fun i _ -> (bound +. eager) *. fro.(i)) (parts ~k:1 got) want
   in
-  let w, v = Nx.eigh (expanding a) in
+  let w, v = expanded (fun () -> Nx.eigh a) in
   let w = back w and v = back v in
   values "w" w;
-  values "w alone" (back (fst (Nx.eigh ~vectors:false (expanding a))));
+  values "w alone" (back (fst (expanded (fun () -> Nx.eigh ~vectors:false a))));
   let residual =
     u0
     +. (Float.of_int ((3 * t) + (6 * r)) *. rh)
@@ -1475,7 +1474,8 @@ let test_eigh_expanded =
       let upper = Nx.add (Nx.triu a) noise in
       within ~msg:"upper triangle"
         (fun _ _ -> 0.)
-        (parts ~k:1 (back (fst (Nx.eigh ~triangle:Upper (expanding upper)))))
+        (parts ~k:1
+           (fst (expanded (fun () -> Nx.eigh ~triangle:Upper upper))))
         (parts ~k:1 w))
 
 let test_jacobi_nan () =
@@ -1483,13 +1483,13 @@ let test_jacobi_nan () =
     Nx.create Nx.float64 [| 2; 2; 2 |]
       [| 2.; 1.; 1.; 3.; 1.; Float.nan; Float.nan; 1. |]
   in
-  let w, v = Nx.eigh (expanding a) in
+  let w, v = expanded (fun () -> Nx.eigh a) in
   all_nan ~msg:"eigh's w" (Nx.get [ 1 ] (back w));
   all_nan ~msg:"eigh's v" (Nx.get [ 1 ] (back v));
   near ~msg:"eigh's finite one"
     (Nx.get [ 0 ] (back w))
     (Nx.get [ 0 ] (fst (Nx.eigh a)));
-  let u, s, vh = Nx.svd (expanding a) in
+  let u, s, vh = expanded (fun () -> Nx.svd a) in
   List.iter
     (fun (msg, x) -> all_nan ~msg (Nx.get [ 1 ] (back x)))
     [ ("u", u); ("s", s); ("vh", vh) ];
@@ -1576,7 +1576,7 @@ let test_subnormal_column () =
   in
   List.iter
     (fun factors ->
-      let q, r = Nx.qr ~factors (expanding a) in
+      let q, r = expanded (fun () -> Nx.qr ~factors a) in
       check_qr D.Float64 a (back q) (back r))
     [ Nx.Reduced; Nx.Complete ];
   check_svd D.Float64 a
@@ -1592,8 +1592,8 @@ let test_svd_converges () =
           List.iter
             (fun (m, n) ->
               let a = spectral_matrix dt rng ~m ~n ~g:3 ~e:0 ~hermitian:false in
-              let _, s, _ = Nx.svd (expanding a) in
-              let _, alone, _ = Nx.svd ~vectors:false (expanding a) in
+              let _, s, _ = expanded (fun () -> Nx.svd a) in
+              let _, alone, _ = expanded (fun () -> Nx.svd ~vectors:false a) in
               List.iter
                 (fun (msg, x) ->
                   equal
@@ -1615,7 +1615,7 @@ let test_large_qr () =
           let a = spectral_matrix dt rng ~m ~n ~g ~e ~hermitian:false in
           List.iter
             (fun factors ->
-              let q, r = Nx.qr ~factors (expanding a) in
+              let q, r = expanded (fun () -> Nx.qr ~factors a) in
               check_qr dt a (back q) (back r))
             [ Nx.Reduced; Nx.Complete ])
         [ (n + 3, n); (n, n + 5) ])
@@ -1631,8 +1631,8 @@ let test_large_eigh () =
       ignore
         (check_eigh dt (spectral_matrix dt rng ~m:n ~n ~g ~e ~hermitian:true)))
 
-(* Loops: each routine through an interpretation whose [repeat] folds, every
-   trip keeping its carry's forms, has the bits of the eager expansion. *)
+(* Loops: each routine through an interpretation whose [repeat] folds keeps
+   its carry's forms at every trip, as {!Nx.Prim.expand} states. *)
 
 let form_of (Nx.Prim.Any x) =
   let f = Nx.Prim.form x in
@@ -1662,43 +1662,19 @@ let looping f =
       | _ -> Nx.Prim.eval ~by op)
     (fun _ -> f ())
 
-let bits_of x =
-  Array.map
-    (fun (z : Complex.t) ->
-      (Int64.bits_of_float z.re, Int64.bits_of_float z.im))
-    (Nx.to_array (Nx.cast Nx.complex128 (back x)))
-
-let same_bits ~msg x y =
-  equal ~msg (array (pair int64 int64)) (bits_of x) (bits_of y)
-
 let test_loops_fold =
-  expansion "a folding repeat gives the eager expansion's bits" ~square:true
+  expansion "a folding repeat keeps each trip's forms" ~square:true
     (fun (Drawn (dt, kind, s, re, im)) ->
       cover_drawn dt kind s;
-      let g = expanding (operand dt kind s re im) in
-      let a = Nx.add g (adj g)
-      and p = expanding (definite (operand dt kind s re im)) in
-      let both msg f =
-        let x = f () and y = looping f in
-        List.iter2
-          (fun (n, x) (_, y) -> same_bits ~msg:(msg ^ ", " ^ n) x y)
-          x y
-      in
-      both "cholesky" (fun () -> [ ("l", Nx.cholesky p) ]);
-      both "solve" (fun () ->
-          [ ("x", Nx.solve_triangular ~transpose:Adjoint p g) ]);
-      both "lu" (fun () ->
-          let _, l, u = Nx.lu g in
-          [ ("l", l); ("u", u) ]);
-      both "qr" (fun () ->
-          let q, r = Nx.qr g in
-          [ ("q", q); ("r", r) ]);
-      both "eigh" (fun () ->
-          let w, v = Nx.eigh a in
-          [ ("w", w); ("v", v) ]);
-      both "svd" (fun () ->
-          let u, s, vh = Nx.svd g in
-          [ ("u", u); ("s", s); ("vh", vh) ]))
+      let g = operand dt kind s re im in
+      let a = Nx.add g (adj g) and p = definite (operand dt kind s re im) in
+      let each f = ignore (looping f) in
+      each (fun () -> Nx.cholesky p);
+      each (fun () -> Nx.solve_triangular ~transpose:Adjoint p g);
+      each (fun () -> Nx.lu g);
+      each (fun () -> Nx.qr g);
+      each (fun () -> Nx.eigh a);
+      each (fun () -> Nx.svd g))
 
 let () =
   exit

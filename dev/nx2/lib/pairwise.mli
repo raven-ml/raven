@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scans by an associative combination, as core operations applied through
-    [apply]: the expansions' running reductions and Nx's recurrences, which
-    no kernel offers, share it. *)
+(** Scans by an associative combination, as simpler operations applied
+    through [apply]: the expansions' running reductions and Nx's recurrences,
+    which no kernel offers, share it. *)
 
 val circuit :
   ('q. by:string -> 'q Value.prim -> 'q) ->

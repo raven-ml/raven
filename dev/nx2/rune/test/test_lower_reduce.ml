@@ -1144,7 +1144,7 @@ let refused_complex ~scan m () =
     (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Lowered.run op)
 
-(* Expansions: the operations lower through core reductions and maps. *)
+(* Expansions: the operations lower through plain reductions and maps. *)
 
 let nan_payload = Int32.float_of_bits 0xffa00001l
 

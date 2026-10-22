@@ -8,8 +8,8 @@
    its doc states, as the host's kernel over the same axes (the narrower floats
    at float32, rounded once, a NaN result the first NaN element quieted), and
    raises naming itself elsewhere. A NaN result is the first NaN quieted on
-   every path: the host, a set whose kernels decline what nx expands, and
-   values cut along the reduced axis. *)
+   every path: the host's kernels, nx's expansions, and values cut along the
+   reduced axis. *)
 
 open Windtrap
 module A = Nx_array
@@ -572,33 +572,32 @@ let test_scan_expansions () =
   equal ~msg:"bfloat16 cumsum, rounded once" (array float_exact) want
     (A.to_array (host_array (Nx.cumsum (value b))))
 
-(* Logsumexp, Moments and Arg through Nx.Prim, on a set whose kernels compute
-   the core reductions alone, against references over each result's terms. *)
+(* Logsumexp, Moments and Arg through Nx.Prim, by nx's expansion, against
+   references over each result's terms. *)
 
-(* nx.cpu, declining every reduction and scan but one Sum, Prod, Max or Min, as
-   a library that computes the core alone may. *)
-module Core_only = struct
-  include Nx_cpu
+let repeat n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
 
-  let name = "nx.core"
+(* [expanded f] is [f ()] in an interpretation that computes each reduction and
+   scan by its expansion ({!Nx.Prim.expand}) where it has one, and every other
+   operation as eager execution does. *)
+let expanded f =
+  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
+    let expansion =
+      match op with
+      | Reduce _ | Scan _ -> Nx.Prim.expand i ~by ~repeat op
+      | _ -> None
+    in
+    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
 
-  let core : Nx_kernel.reduction -> bool = function
-    | Monoid (Sum | Prod | Max | Min) -> true
-    | _ -> false
-
-  let reduce p ~shape ~axes rs ~dsts loads =
-    match rs with
-    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
-    | _ -> A.Declined
-
-  let scan ?carry p ~axis ((r, _) as rk) ~dsts loads =
-    if core r then Nx_cpu.scan ?carry p ~axis rk ~dsts loads else A.Declined
-end
-
-module Core =
-  (val Nx.devices ~kernels:(module Core_only) [ Nx_support.memory 1 ])
-
-let core a = Nx.place Core.on (value a)
+(* [law] whose operations compute by their expansions. *)
+let expanding law c = expanded (fun () -> law c)
 
 let reduce1 r axes x =
   let y, () =
@@ -646,7 +645,7 @@ let float64_case =
 
 let law_logsumexp (s, axes, xs) =
   let ax = normal (Array.length s) axes in
-  let x = core (A.of_array D.Float64 s xs) in
+  let x = value (A.of_array D.Float64 s xs) in
   let got =
     read (reduce1 (Monoid (Logsumexp, 0, Nx.float64)) (Iarray.of_list ax) x)
   in
@@ -706,7 +705,7 @@ let moments_case =
    float64 two-pass sums, whose own error is the slack. *)
 let law_moments (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
-  let x = core (A.of_array D.Float32 s xs) in
+  let x = value (A.of_array D.Float32 s xs) in
   let mean, var = reduce1 (Moments (0, Nx.float32)) (Iarray.of_list ax) x in
   let mean = read mean and var = read var in
   let u = ldexp 1. (-24) in
@@ -745,9 +744,9 @@ let law_moments (s, axes, _, xs) =
       end)
     (terms s ax xs)
 
-(* Moments scans: by the expansion on a set whose kernels decline them,
-   within its stated bounds of float64 references over each prefix, and by
-   nx.cpu on the host, with the expansion's bits. *)
+(* Moments scans: by the expansion, within its stated bounds of float64
+   references over each prefix, and by nx.cpu on the host, with the
+   expansion's bits. *)
 
 let scan1 r axis x =
   Nx.Prim.eval ~by:"t"
@@ -761,8 +760,8 @@ let scan1 r axis x =
          carry = None;
        })
 
-(* Where a Moments scan computes: by the expansion on {!Core}, by nx.cpu on
-   the host. *)
+(* Where a Moments scan computes: by the expansion, by nx.cpu, on the
+   host. *)
 type path = Expansion | Cpu
 
 let path_name = function Expansion -> "expansion" | Cpu -> "nx.cpu"
@@ -772,8 +771,9 @@ let scan_moments (type v s) path axis (a : (v, s) A.t) =
   let dt = A.dtype a in
   match path with
   | Expansion ->
-      let m, v = scan1 (Moments (0, dt)) axis (core a) in
-      (read m, read v)
+      expanded (fun () ->
+          let m, v = scan1 (Moments (0, dt)) axis (value a) in
+          (read m, read v))
   | Cpu ->
       let m, v = scan1 (Moments (0, dt)) axis (value a) in
       (read m, read v)
@@ -999,7 +999,7 @@ let first_extreme better ts =
 let law_arg (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
   if not (List.exists (fun a -> s.(a) = 0) ax) then begin
-    let x = core (A.of_array D.Int32 s xs) in
+    let x = value (A.of_array D.Int32 s xs) in
     List.iter
       (fun (name, e, better) ->
         let v, p = reduce1 (Arg (e, 0, Nx.int32)) (Iarray.of_list ax) x in
@@ -1014,11 +1014,11 @@ let law_arg (s, axes, _, xs) =
       ]
   end
 
-let vector dt xs = core (A.of_array dt [| Array.length xs |] xs)
+let vector dt xs = value (A.of_array dt [| Array.length xs |] xs)
 
 let test_arg_cases () =
   let arg (type v s) e (dt : (v, s) D.t) axes shape (xs : v array) =
-    let v, p = reduce1 (Arg (e, 0, dt)) axes (core (A.of_array dt shape xs)) in
+    let v, p = reduce1 (Arg (e, 0, dt)) axes (value (A.of_array dt shape xs)) in
     (read v, read p)
   in
   let f64 e xs =
@@ -1166,8 +1166,8 @@ let test_logsumexp_cases () =
     (A.to_array (cast D.Bfloat16 wide))
     (lse D.Bfloat16 [| 0.; 0. |])
 
-(* Logsumexp and Arg scans: by the expansion on {!Core} and on the host, whose
-   kernels decline them both, against references over each prefix. *)
+(* Logsumexp and Arg scans: by the expansion and by nx.cpu, on the host,
+   against references over each prefix. *)
 
 (* [a] by [on], read through a transposed view where [strided]: the elements
    of [a], held in a layout that runs its axes backwards. *)
@@ -1185,13 +1185,14 @@ let transposed on strided a =
     let held = Array.of_list (List.map (fun i -> xs.(at i)) (indices back)) in
     Nx.transpose (on (A.of_array (A.dtype a) back held))
 
-(* [f] on {!Core} then on the host, given the path's name and its placement of
-   an array. *)
+(* [f] by the expansion then by nx.cpu, given the path's name and its placement
+   of an array. *)
 let each_path
     (f :
       'd.
       string -> ('v 's. bool -> ('v, 's) A.t -> ('v, 's, 'd) Nx.t) -> unit) =
-  f "expansion" (fun strided a -> transposed core strided a);
+  expanded (fun () ->
+      f "expansion" (fun strided a -> transposed value strided a));
   f "nx.cpu" (fun strided a -> transposed value strided a)
 
 (* Each element's bits, as the integers of its bytes. *)
@@ -1563,27 +1564,6 @@ let test_arg_scan_cases () =
         (want [| z 1. 0.; z 2. a; z 2. a |] [| 0L; 1L; 1L |])
         (parts (arg Max D.Complex128 [| 3 |] [| z 1. 0.; z 2. a; z 5. 0. |])))
 
-module Core3 =
-  (val Nx.devices ~kernels:(module Core_only)
-         [ Nx_support.memory 0; Nx_support.memory 1; Nx_support.memory 2 ])
-
-(* An Arg scan along an axis cut over three devices whose kernels decline
-   it, each device's window one term or none, has the host's results. *)
-let test_arg_scan_cut () =
-  let found = pair (array float_exact) (array int64) in
-  let scan x =
-    let v, q = scan1 (Arg (Max, 0, D.Float32)) 1 x in
-    (read v, read q)
-  in
-  List.iter
-    (fun (s, xs) ->
-      let a = A.of_array D.Float32 s xs in
-      equal
-        ~msg:(Format.asprintf "%a" pp_ints s)
-        found (scan (value a))
-        (scan (Nx.place (Core3.split ~axis:1) (value a))))
-    [ ([| 2; 1 |], [| 3.; -1. |]); ([| 1; 2 |], [| -1.; 3. |]) ]
-
 (* Complex products, extremes and their first positions, reduced and scanned
    through Nx on the host, against folds of their terms. A number with a NaN
    part is a NaN. A product's terms are Gaussian integers whose parts are 0 or
@@ -1858,7 +1838,7 @@ let complex_group =
     ]
 
 (* The prefix law: a scan's result at an index is a function of the terms up
-   to it alone, for each reduction, by the expansion on {!Core} and on the
+   to it alone, for each reduction, by the expansion and by nx.cpu, on the
    host. Axes and prefixes are 1 or 2 long, a power of two or next to one,
    or next to nx.cpu's chunks of 4096, so that a network or a path chosen
    by the axis's length would give the prefix other bits. *)
@@ -2059,7 +2039,8 @@ let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
   in
   equal ~msg:"nx.cpu's bits, the expansion's"
     (pair (array (array int)) (array (array int)))
-    (scan core) (scan value)
+    (expanded (fun () -> scan value))
+    (scan value)
 
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
@@ -2074,45 +2055,7 @@ let test_optional_rules () =
 
 (* NaN results on every path *)
 
-(* nx.cpu, declining every reduction and scan but one Sum, Prod, Max or Min
-   of operands of no float narrower than float32, as a library that computes
-   the base dtypes alone may: nx expands a narrow float's monoids too. *)
-module Wide_only = struct
-  include Nx_cpu
-
-  let name = "nx.wide"
-
-  let base (type v s) (dt : (v, s) D.t) =
-    match D.kind dt with D.Float -> D.bits dt >= 32 | _ -> true
-
-  let wide (loads : Nx_kernel.load array) =
-    Array.for_all
-      (function
-        | Nx_kernel.Plain x -> base (A.dtype x)
-        | Nx_kernel.Padded { x; _ } -> base (A.dtype x))
-      loads
-
-  let core : Nx_kernel.reduction -> bool = function
-    | Monoid (Sum | Prod | Max | Min) -> true
-    | _ -> false
-
-  let reduce p ~shape ~axes rs ~dsts loads =
-    match rs with
-    | [| (r, _) |] when core r && wide loads ->
-        Nx_cpu.reduce p ~shape ~axes rs ~dsts loads
-    | _ -> A.Declined
-
-  let scan ?carry p ~axis ((r, _) as rk) ~dsts loads =
-    if core r && wide loads then Nx_cpu.scan ?carry p ~axis rk ~dsts loads
-    else A.Declined
-end
-
 let mem = Nx_support.memory
-
-module Wide1 = (val Nx.devices ~kernels:(module Wide_only) [ mem 2 ])
-
-module Wide3 =
-  (val Nx.devices ~kernels:(module Wide_only) [ mem 0; mem 1; mem 2 ])
 
 module Cpu3 = (val Nx.devices [ mem 0; mem 1; mem 3 ])
 
@@ -2418,8 +2361,8 @@ let nan_ops =
     };
   ]
 
-(* Where a value lies: the host's nx.cpu, one device whose kernels decline
-   what nx expands, and three of each, split along the rows' axis. *)
+(* How a value computes: by the host's nx.cpu or by nx's expansions, on the
+   host or over three devices split along the rows' axis. *)
 type placing = {
   pname : string;
   go : 'v 's. nan_op -> ('v, 's) A.t -> string array;
@@ -2430,7 +2373,7 @@ let placings =
     { pname = "nx.cpu"; go = (fun o a -> o.run (value a)) };
     {
       pname = "an expansion";
-      go = (fun o a -> o.run (Nx.place Wide1.on (value a)));
+      go = (fun o a -> expanded (fun () -> o.run (value a)));
     };
     {
       pname = "nx.cpu over three devices";
@@ -2438,7 +2381,10 @@ let placings =
     };
     {
       pname = "an expansion over three devices";
-      go = (fun o a -> o.run (Nx.place (Wide3.split ~axis:row_axis) (value a)));
+      go =
+        (fun o a ->
+          expanded (fun () ->
+              o.run (Nx.place (Cpu3.split ~axis:row_axis) (value a))));
     };
   ]
 
@@ -2550,29 +2496,29 @@ let optional_group =
   group "optional reductions"
     [
       prop "logsumexp is m + log Σ exp (x - m), its specials exact" float64_case
-        law_logsumexp;
-      prop "moments are within their stated bounds" moments_case law_moments;
+        (expanding law_logsumexp);
+      prop "moments are within their stated bounds" moments_case
+        (expanding law_moments);
       prop "float32 moments are within their bounds where (Σ d)² overflows"
         (overflow_case ((1 lsl 23) + 2) 0x1p59)
-        (law_overflow D.Float32 0x1p-24);
+        (expanding (law_overflow D.Float32 0x1p-24));
       prop "float64 moments are within their bounds where (Σ d)² overflows"
         (overflow_case ((1 lsl 52) + 2) 0x1p507)
-        (law_overflow D.Float64 0x1p-53);
+        (expanding (law_overflow D.Float64 0x1p-53));
       prop "moment scans are within their stated bounds" moments_scan_case
         law_moments_scan;
-      prop "arg is the extreme and its first position" int32_case law_arg;
-      test "arg's cases" test_arg_cases;
-      test "moments' cases" test_moments_cases;
+      prop "arg is the extreme and its first position" int32_case
+        (expanding law_arg);
+      test "arg's cases" (expanding test_arg_cases);
+      test "moments' cases" (expanding test_moments_cases);
       test "moment scans' cases" test_moments_scan_cases;
-      test "logsumexp's cases" test_logsumexp_cases;
+      test "logsumexp's cases" (expanding test_logsumexp_cases);
       prop "logsumexp scans are within their stated bound, specials exact"
         float_scan_case law_logsumexp_scan;
       test "logsumexp scans' cases" test_logsumexp_scan_cases;
       prop "arg scans are each prefix's extreme and its first position"
         arg_scan_case law_arg_scan;
       test "arg scans' cases" test_arg_scan_cases;
-      test "an arg scan cut to a term or none a device has the host's results"
-        test_arg_scan_cut;
       prop ~examples:prefix_examples
         "a scan's prefix is the prefix of its scan, bit for bit" prefix_case
         law_scan_prefix;

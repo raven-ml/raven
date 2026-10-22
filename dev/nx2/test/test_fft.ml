@@ -6,7 +6,7 @@
 (* Fft through Nx.Prim, on a library whose transforms are the sums
    Nx_kernel.S.c2c, r2c and c2r state, computed term by term: the values they
    give for small operands, the shapes and dtypes of each transform, its rule
-   before any kernel, a split placement, and a library that declines. *)
+   before any kernel, a split placement, and nx's expansion of each. *)
 
 open Windtrap
 module A = Nx_array
@@ -205,29 +205,36 @@ let test_rules () =
   raises (fun () -> fft (C2c { direction = Forward; axes = [| 1 |]; x = c }));
   equal ~msg:"kernel calls" int 0 (Atomic.get Dft.calls)
 
-(* Declines: on a library that declines every transform, a transform is nx's
-   expansion. Against the direct sums, within the bound Expand states: [‖ŷ - y‖₂
-   <= 20 u P √N ‖x‖₂], [N] the points transformed, [P] the passes, [log₂ n] for
-   an axis of a power of two [n] and [3 log₂ M + 2] for another, [M] the power
-   of two its convolution runs at, and [u] the parts' unit roundoff; a C2r's
+(* Expansion: a transform computed by nx's expansion. Against the direct
+   sums, within the bound Expand states: [‖ŷ - y‖₂ <= 20 u P √N ‖x‖₂], [N]
+   the points transformed, [P] the passes, [log₂ n] for an axis of a power of
+   two [n] and [3 log₂ M + 2] for another, [M] the power of two its
+   convolution runs at, and [u] the parts' unit roundoff; a C2r's
    [‖x‖₂] is its completed bins', at most [√2] times its operand's. *)
 
-(* nx.cpu, declining every transform. *)
-module Untransformed = struct
-  include Nx_cpu
+let repeat n step init =
+  let rec go k c =
+    if k = n then c
+    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
+  in
+  go 0 init
 
-  let name = "nx.untransformed"
-  let c2c _ ~axes:_ ~dst:_ _ = A.Declined
-  let r2c ~axes:_ ~dst:_ _ = A.Declined
-  let c2r ~axes:_ ~dst:_ _ = A.Declined
-end
+(* [expanded f] is [f ()] in an interpretation that computes each transform by
+   its expansion ({!Nx.Prim.expand}), and every other operation as eager
+   execution does. *)
+let expanded f =
+  let rule (type r) i ~by (op : r Nx.Prim.t) : r =
+    let expansion =
+      match op with Fft _ -> Nx.Prim.expand i ~by ~repeat op | _ -> None
+    in
+    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
+  in
+  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())
 
-module Dec = (val Nx.devices ~kernels:(module Untransformed) [ m 2 ])
-
-(* A declined C2r reads only the real parts of bins 0 and, for an even n, n/2,
+(* An expanded C2r reads only the real parts of bins 0 and, for an even n, n/2,
    as {!Nx_kernel.S.c2r} states: those of NaN and infinite imaginary parts are
    those of +0 ones. *)
-let test_declined_c2r () =
+let test_expanded_c2r () =
   List.iter
     (fun n ->
       let h = (n / 2) + 1 in
@@ -237,10 +244,10 @@ let test_declined_c2r () =
       in
       let c2r xs =
         let x =
-          Nx.place Dec.on
-            (Nx.Repr.of_array Nx.Host.v (A.of_array D.Complex128 [| h |] xs))
+          Nx.Repr.of_array Nx.Host.v (A.of_array D.Complex128 [| h |] xs)
         in
-        read (fft (C2r { dtype = Nx.float64; n; axes = [| 0 |]; x }))
+        expanded (fun () ->
+            read (fft (C2r { dtype = Nx.float64; n; axes = [| 0 |]; x })))
       in
       equal
         ~msg:(Printf.sprintf "%d points" n)
@@ -317,7 +324,7 @@ let log2_up n =
 let passes n =
   if n land (n - 1) = 0 then log2_up n else (3 * log2_up ((2 * n) - 1)) + 2
 
-let law_declined c =
+let law_expansion c =
   let l = c.axes.(Array.length c.axes - 1) in
   let points a =
     match c.kind with Back n when a = l -> n | _ -> c.shape.(a)
@@ -363,7 +370,8 @@ let law_declined c =
         let x = on (A.of_array D.Complex64 s c.xs) in
         complexes (read (fft (C2r { dtype = Nx.float32; n; axes; x })))
   in
-  let want = compute One.on and got = compute Dec.on in
+  let want = compute One.on
+  and got = expanded (fun () -> compute Nx.Host.on) in
   equal ~msg:"shape" int (Array.length want) (Array.length got);
   let err =
     sqrt
@@ -529,7 +537,7 @@ let errors c seed =
       want;
     !sum
   in
-  (error (compute Cpu.on), error (compute Dec.on))
+  (error (compute Cpu.on), error (expanded (fun () -> compute Nx.Host.on)))
 
 let accuracy_cases =
   let each route ns kinds =
@@ -924,12 +932,13 @@ let () =
              test "real to complex and back" test_real;
              test "a split value transforms as on one device" test_split;
            ];
-         group "rules and declines"
+         group "rules and expansion"
            [
              test "the rule raises before any kernel" test_rules;
-             test "a declined c2r ignores bins 0's and n/2's imaginary parts"
-               test_declined_c2r;
-             prop "a declined transform is within its bound" case law_declined;
+             test "an expanded c2r ignores bins 0's and n/2's imaginary parts"
+               test_expanded_c2r;
+             prop "an expanded transform is within its bound" case
+               law_expansion;
              test "nx.cpu is as accurate as the expansion on each route"
                test_accuracy;
            ];
