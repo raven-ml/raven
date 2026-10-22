@@ -158,10 +158,6 @@ val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
 (** [float_carrier dt] is {!carrier} of the float [dt]: the dtype a float
     function of [dt] computes in before it rounds once to [dt]. *)
 
-val base : Nx_array.Dtype.any -> bool
-(** [base dt] is [true] iff [dt] is a {e base dtype}: [float32], [float64],
-    the 8- to 64-bit integers and [bool]. *)
-
 (** {2:orders Orders of summation}
 
     Two orders of a float sum. A reduction adds in lane order in every

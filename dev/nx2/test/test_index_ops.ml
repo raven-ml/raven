@@ -166,8 +166,10 @@ let donation =
             (elements v));
     ]
 
-(* [op] by its expansion. *)
-let expanded op = Option.get (Expand.folded Exec.run ~by:"t" op)
+(* [op] by its expansion, which runs no loop. *)
+let expanded op =
+  Option.get
+    (Expand.run Exec.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op)
 
 let expansions =
   group "expansions"

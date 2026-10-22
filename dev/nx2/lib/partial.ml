@@ -759,8 +759,9 @@ struct
       | Monoid ((Sum | Prod | Logsumexp), _, _) | Moments _ ->
           (* Each has an expansion, whose own reductions compute as
              above. *)
-          let op = Value.Reduce { layout; axes; prog; reductions = Value.[ r ]; loads } in
-          fst (Option.get (Expand.folded A.apply ~by op))
+          fst
+            (Option.get
+               (Expand.reduced A.apply ~by layout axes prog Value.[ r ] loads))
     in
     let rec each : type q. (d, q) Value.reductions -> q = function
       | [] -> ()

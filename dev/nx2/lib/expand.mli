@@ -54,24 +54,25 @@
     result of these scans, carried through the combinations with its bits,
     is then quieted, as the kernels give it.
 
-    A one-node map at a dtype other than a base one ({!Nx_kernel.base}), but a
-    cast, a bitcast or a copy, computes at its dtypes' accumulators, which hold
-    their values exactly, and rounds once to its dtype. A selection, a constant
-    and a copy move bits: a float of 8 or 16 bits computes as the unsigned
-    integer of its width, over the same bits, and a sub-byte dtype in its
-    byte-wide accumulator, which holds each of its codes and gives it back; a
-    [Copy] is the map of one copy. An assembly expands into a fill of its flat
-    result, then per piece in order a scatter of the piece's elements at their
-    flat positions, a map of coordinates: O(n) per piece. A gather, a scatter or a
-    sort of a sub-byte dtype casts its values to their accumulator, computes
-    there and casts the result back once; an integer's [Add] wraps there to the
-    same bits as at its own dtype. Any other scatter whose targets may repeat is
-    a loop of one unique scatter per position along its axis, in order, each of
-    the target so far and of that position's indices and updates, gathered at a
-    broadcast of the trip's index: O(m |into|) for m positions. A sum associates left to right; a
-    narrow float's sums in its accumulator, rounded once, and a [Set] of [true]
-    at the same targets keeps the bits of each target no update reaches: twice
-    the scatters.
+    A one-node map at a dtype other than a base one ([float32], [float64], the
+    8- to 64-bit integers and [bool]), but a cast, a bitcast or a copy, computes
+    at its dtypes' accumulators, which hold their values exactly, and rounds
+    once to its dtype. A selection, a constant and a copy move bits: a float of
+    8 or 16 bits computes as the unsigned integer of its width, over the same
+    bits, and a sub-byte dtype in its byte-wide accumulator, which holds each of
+    its codes and gives it back; a [Copy] is the map of one copy. An assembly
+    expands into a fill of its flat result, then per piece in order a scatter of
+    the piece's elements at their flat positions, a map of coordinates: O(n) per
+    piece. A gather, a scatter or a sort of a sub-byte dtype casts its values to
+    their accumulator, computes there and casts the result back once; an
+    integer's [Add] wraps there to the same bits as at its own dtype. Any other
+    scatter whose targets may repeat is a loop of one unique scatter per
+    position along its axis, in order, each of the target so far and of that
+    position's indices and updates, gathered at a broadcast of the trip's index:
+    O(m |into|) for m positions. A sum associates left to right; a narrow
+    float's sums in its accumulator, rounded once, and a [Set] of [true] at the
+    same targets keeps the bits of each target no update reaches: twice the
+    scatters.
 
     A contraction whose accumulator is not its output's dtype first runs as a
     contraction into the accumulator, then casts to the output. Any other
@@ -241,12 +242,16 @@ val run :
     {!Nx.Prim.expand} states. No result of [r]
     is one of [op]'s operands: one that would be is its copy. *)
 
-val folded :
+val reduced :
   ('q. by:string -> 'q Value.prim -> 'q) ->
   by:string ->
-  'r Value.prim ->
+  Nx_array.Layout.t ->
+  int iarray ->
+  Nx_kernel.Prog.t ->
+  ('d, 'r) Value.reductions ->
+  'd Value.load iarray ->
   'r option
-(** [folded apply ~by op] is {!run} with its loops folded now: each trip's
-    position is known, so a step reads it as views where {!run}'s gathers it
-    at a 0-d index. Its values are {!run}'s with a [repeat] that folds. *)
+(** [reduced apply ~by layout axes prog rs loads] is {!run} of
+    [Value.Reduce { layout; axes; prog; reductions = rs; loads }], whose
+    expansion has no loop. *)
 
