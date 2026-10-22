@@ -23,9 +23,16 @@
 
 /* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080perf.h. */
 
-#define NV2080_CTRL_CMD_PERF_BOOST                    (0x2080200a) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_PERF_INTERFACE_ID << 8) | NV2080_CTRL_PERF_BOOST_PARAMS_MESSAGE_ID" */
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CMD                1:0
 
-typedef struct NV2080_CTRL_PERF_BOOST_PARAMS {
-    NvU32 flags;
-    NvU32 duration;
-} NV2080_CTRL_PERF_BOOST_PARAMS;
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX (0x00000002)
+
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CUDA               4:4
+
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES         (0x00000001)
+
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY          6:6
+
+#define NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH     (0x00000001)
+
+#define NV2080_CTRL_PERF_BOOST_DURATION_INFINITE      0xffffffff // If set this way, the boost will last until cleared.

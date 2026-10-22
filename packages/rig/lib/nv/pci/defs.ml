@@ -27,8 +27,8 @@
    Copyright (c) 2006-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2008-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES
-   Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2018-2019 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES
@@ -129,7 +129,6 @@ let ada_compute_a = 0xc9c0
 let blackwell_compute_b = 0xcec0
 let ampere_dma_copy_b = 0xc7b5
 let blackwell_dma_copy_b = 0xcab5
-let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
 let nv2080_ctrl_cmd_internal_static_kgr_get_info = 0x20800a2a
 let nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info = 0x20800a32
 let nv2080_ctrl_cmd_gpu_promote_ctx = 0x2080012b
@@ -150,8 +149,14 @@ let mctp_msg_header_type_vendor_pci = 0x7e
 let mctp_msg_header_vendor_id_nv = 0x10de
 let nv2080_engine_type_graphics = 1
 let kepler_channel_group_a = 0xa06c
-let nv2080_ctrl_cmd_perf_boost = 0x2080200a
 let nv2080_ctrl_cmd_internal_perf_boost_set_2x = 0x20800a9a
+let nv2080_ctrl_perf_boost_flags_cmd_boost_to_max = 2
+let nv2080_ctrl_perf_boost_flags_cuda_yes = 1
+let nv2080_ctrl_perf_boost_flags_cuda_priority_high = 1
+let nv2080_ctrl_perf_boost_duration_infinite = 0xffffffff
+let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
+let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
+let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
 let nvos04_flags_channel_userd_index_page_fixed_true = 1
 let nv_virtual_function_doorbell_runlist_doorbell_enable = 1
 
@@ -173,6 +178,9 @@ let nv_ctrl_vf_doorbell_runlist_id = (0x10, 7)
 let nv_virtual_function_doorbell_vector = (0, 0xc)
 let nv_virtual_function_doorbell_runlist_id = (0x10, 7)
 let nv_virtual_function_doorbell_runlist_doorbell = (0x1e, 1)
+let nv2080_ctrl_perf_boost_flags_cmd = (0, 2)
+let nv2080_ctrl_perf_boost_flags_cuda = (4, 1)
+let nv2080_ctrl_perf_boost_flags_cuda_priority = (6, 1)
 
 (* The GSP's functions and events (rpc_global_enums.h). *)
 let nv_vgpu_msg_function_gsp_rm_alloc = 0x67
@@ -383,20 +391,9 @@ module Gpfifo_alloc = struct
   let internal_flags = (0xf4, 4)
 end
 
-module Work_submit_token = struct
-  let sizeof = 4
-  let work_submit_token = (0, 4)
-end
-
 module Channel_group_alloc = struct
   let sizeof = 20
   let engine_type = (0xc, 4)
-end
-
-module Perf_boost = struct
-  let sizeof = 8
-  let flags = (0, 4)
-  let duration = (4, 4)
 end
 
 module Perf_boost_2x = struct

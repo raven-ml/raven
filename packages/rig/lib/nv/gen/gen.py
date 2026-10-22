@@ -3,14 +3,15 @@
 # ///
 """Generates the tables of NVIDIA's GPUs from NVIDIA's sources:
 
-- lib/nv/defs.ml: the resource manager's classes, controls and parameter
+- lib/nv/defs.ml: the resource manager's classes and the parameter
   layouts the driver allocates channels and reads faults with, and the
   names of the errors and faults it reports, per release of NVIDIA's
   driver where they differ;
 - lib/nv/nvidia/defs.ml: the escapes of NVIDIA's kernel driver and the
   layouts of their parameters, the resource manager's classes and controls
-  a path opens a GPU with, the unified memory driver's ioctls, and each
-  release's status names, per release where they differ;
+  a path opens a GPU and sends the driver's commands with, the unified
+  memory driver's ioctls, and each release's status names, per release
+  where they differ;
 - lib/nv/pci/defs.ml: what booting an NVIDIA GPU over PCI reads. The
   structures the GSP's boot takes, the VBIOS's structures, the firmware
   containers, the registers per family, and the firmware images, pinned.
@@ -198,34 +199,23 @@ NV = Defs(
         "cl2080_notification.h": SDK + "class/cl2080_notification.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
         "ctrla06fgpfifo.h": SDK + "ctrl/ctrla06f/ctrla06fgpfifo.h",
-        "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
-        "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "dev_fault.h": UVM + "hwref/ampere/ga100/dev_fault.h",
     },
     constants=[
         # classes
         "KEPLER_CHANNEL_GROUP_A", "FERMI_CONTEXT_SHARE_A", "GT200_DEBUGGER",
-        # controls
-        "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN",
-        "NV2080_CTRL_CMD_PERF_BOOST", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
-        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH",
-        "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
-        "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
         # allocations
         "NV2080_ENGINE_TYPE_GRAPHICS", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC",
         # a channel's error notifier
         "NV_CHANNELGPFIFO_NOTIFICATION_TYPE_ERROR", "NV_CHANNELGPFIFO_NOTIFICATION_TYPE__SIZE_1",
     ],
     fields=[
-        "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
-        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
+        "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
     ],
     structs={
         "NV_CTXSHARE_ALLOCATION_PARAMETERS": ("Ctxshare_alloc", ["hVASpace", "flags"]),
         "NV83DE_ALLOC_PARAMETERS": ("Nv83de_alloc", ["hAppClient", "hClass3dObject"]),
-        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
-        "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
         "NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS": ("Sm_error_states", [
             "hTargetChannel", "numSMsToRead", "smErrorStateArray", "mmuFault__valid"]),
         "NV83DE_SM_ERROR_STATE_REGISTERS": ("Sm_error_state", ["hwwGlobalEsr", "hwwWarpEsr", "hwwWarpEsrPc64"]),
@@ -270,6 +260,10 @@ NVIDIA = Defs(
         "ctrl2080gr.h": SDK + "ctrl/ctrl2080/ctrl2080gr.h",
         "ctrl2080fb.h": SDK + "ctrl/ctrl2080/ctrl2080fb.h",
         "ctrl2080rc.h": SDK + "ctrl/ctrl2080/ctrl2080rc.h",
+        "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
+        "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
+        "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
+        "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "nv-ioctl.h": COMMON + "nv-ioctl.h",
         "nv-ioctl-numbers.h": COMMON + "nv-ioctl-numbers.h",
         "nv_escape.h": UNIX + "nv_escape.h",
@@ -312,6 +306,11 @@ NVIDIA = Defs(
         "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV2080_CTRL_CMD_FB_GET_INFO_V2",
         "NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE", "NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE",
         "NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO", "NV2080_CTRL_RC_GET_WATCHDOG_INFO_FLAGS_RUNNING",
+        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
+        "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
+        "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH",
+        "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE",
         # allocations
         "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES", "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING",
         "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
@@ -325,6 +324,8 @@ NVIDIA = Defs(
         "NVOS02_FLAGS_PHYSICALITY", "NVOS02_FLAGS_COHERENCY", "NVOS02_FLAGS_MAPPING", "NVOS32_ATTR_PHYSICALITY",
         "NVOS32_ATTR_PAGE_SIZE", "NVOS32_ATTR_LOCATION", "NVOS32_ATTR2_GPU_CACHEABLE", "NVOS32_ATTR2_PAGE_SIZE_HUGE",
         "NVOS32_ATTR2_ZBC", "NVOS33_FLAGS_CACHING_TYPE", "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT",
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY",
     ],
     structs={
         "nv_ioctl_card_info_t": ("Card_info", ["valid", "pci_info__domain", "pci_info__bus", "pci_info__slot",
@@ -373,6 +374,8 @@ NVIDIA = Defs(
         "UVM_UNMAP_EXTERNAL_PARAMS": ("Uvm_unmap_external", ["base", "length", "gpuUuid", "rmStatus"]),
         "NV2080_CTRL_FB_GET_INFO_V2_PARAMS": ("Fb_get_info", ["fbInfoListSize", "fbInfoList"]),
         "NV2080_CTRL_RC_GET_WATCHDOG_INFO_PARAMS": ("Watchdog_info", ["watchdogStatusFlags"]),
+        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
+        "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
         "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
         "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
         "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [
@@ -452,7 +455,8 @@ PCI_SOURCES = {
     "ctrl2080nvd.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080nvd.h",
     "ctrl2080perf.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080perf.h",
     "ctrl90f1.h": R570 + SDK + "ctrl/ctrl90f1.h",
-    "ctrlc36f.h": R570 + SDK + "ctrl/ctrlc36f.h",
+    "ctrla06c.h": R570 + SDK + "ctrl/ctrla06c.h",
+    "ctrl83dedebug.h": R570 + SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
     "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
     "gpu_acpi_data.h": R570 + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
     "ctrl0073system.h": R570 + "src/common/sdk/nvidia/inc/ctrl/ctrl0073/ctrl0073system.h",
@@ -614,7 +618,7 @@ PCI_CONSTANTS += [
     "GSP_DMA_TARGET_COHERENT_SYSTEM", "NVDM_TYPE_COT", "ADDR_SYSMEM", "ADDR_FBMEM", "NV_MEMORY_CACHED",
     "NV01_ROOT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0", "FERMI_VASPACE_A", "AMPERE_CHANNEL_GPFIFO_A",
     "BLACKWELL_CHANNEL_GPFIFO_A", "AMPERE_COMPUTE_B", "ADA_COMPUTE_A", "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B",
-    "BLACKWELL_DMA_COPY_B", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN",
+    "BLACKWELL_DMA_COPY_B",
     "NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO", "NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO",
     "NV2080_CTRL_CMD_GPU_PROMOTE_CTX", "NV2080_CTRL_CMD_FIFO_GET_DEVICE_INFO_TABLE",
     "NV90F1_CTRL_CMD_VASPACE_COPY_SERVER_RESERVED_PDES",
@@ -626,7 +630,11 @@ PCI_CONSTANTS += [
     "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES",
     "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING", "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
     "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV", "NV2080_ENGINE_TYPE_GRAPHICS",
-    "KEPLER_CHANNEL_GROUP_A", "NV2080_CTRL_CMD_PERF_BOOST", "NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X",
+    "KEPLER_CHANNEL_GROUP_A", "NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X",
+    "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES",
+    "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE",
+    "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
+    "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
     "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED_TRUE", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL_ENABLE",
 ]
 
@@ -638,7 +646,9 @@ PCI_FIELDS = ["NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION", "NV_BIT_FALCON_UC
           "NVOS04_FLAGS_CHANNEL_USERD_INDEX_VALUE", "NVOS04_FLAGS_CHANNEL_USERD_INDEX_FIXED",
           "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_VALUE", "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED",
           "NV_CTRL_VF_DOORBELL_VECTOR", "NV_CTRL_VF_DOORBELL_RUNLIST_ID", "NV_VIRTUAL_FUNCTION_DOORBELL_VECTOR",
-          "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_ID", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL"]
+          "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_ID", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL",
+          "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
+          "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY"]
 
 # The function and event numbers read, from rpc_global_enums.h.
 GSP_FUNCTIONS = ["CONTINUATION_RECORD"]
@@ -724,9 +734,7 @@ PCI_STRUCTS = {
         "gpFifoOffset", "gpFifoEntries", "flags", "hContextShare", "hVASpace", "hUserdMemory", "userdOffset",
         "engineType", "cid", "hObjectError", "hObjectBuffer", "instanceMem", "userdMem", "ramfcMem",
         "mthdbufMem", "errorNotifierMem", "internalFlags"]),
-    "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
     "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS": ("Channel_group_alloc", ["engineType"]),
-    "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
     "NV2080_CTRL_INTERNAL_PERF_BOOST_SET_PARAMS_2X": ("Perf_boost_2x", ["flags", "duration"]),
     "NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS": ("Device_info_table", ["numEntries", "entries"]),
     "NV2080_CTRL_FIFO_DEVICE_ENTRY": ("Device_entry", ["engineData"]),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,10 +21,8 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-/* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrlc36f.h. */
+/* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrl83de/ctrl83dedebug.h. */
 
-#define NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN (0xc36f0108) /* finn: Evaluated from "(FINN_VOLTA_CHANNEL_GPFIFO_A_GPFIFO_INTERFACE_ID << 8) | NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS_MESSAGE_ID" */
+#define NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES (0x83de030c) /* finn: Evaluated from "(FINN_GT200_DEBUGGER_DEBUG_INTERFACE_ID << 8) | NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS_MESSAGE_ID" */
 
-typedef struct NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS {
-    NvU32 workSubmitToken;
-} NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS;
+#define NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO (0x83de0328) /* finn: Evaluated from "(FINN_GT200_DEBUGGER_DEBUG_INTERFACE_ID << 8) | NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_PARAMS_MESSAGE_ID" */

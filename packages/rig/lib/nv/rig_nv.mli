@@ -424,9 +424,35 @@ type rm = {
   alloc : parent:int -> int -> params option -> (int, refusal) result;
       (** [alloc ~parent cls p] is a new object of class [cls] under [parent],
           made with the parameters [p], or the RM's refusal. *)
-  control : int -> int -> params option -> (unit, refusal) result;
-      (** [control obj cmd p] runs the command [cmd] on [obj], which reads and
-          writes [p] in place, or is the RM's refusal. *)
+  token : int -> (int, refusal) result;
+      (** [token ch] is the work submit token of the channel [ch], the word a
+          device stores at the path's {!field-doorbell} to wake it
+          ([NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN]), or the RM's
+          refusal. *)
+  schedule : int -> params -> (unit, refusal) result;
+      (** [schedule group p] schedules the channels of the channel group
+          [group] as [p], an [NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS] of
+          {!field-release}, says ([NVA06C_CTRL_CMD_GPFIFO_SCHEDULE]), or is the
+          RM's refusal. *)
+  boost : int -> (unit, refusal) result;
+      (** [boost subdevice] raises the clocks of the GPU of [subdevice] to
+          their maximum, at CUDA's high priority, with no end
+          ([NV2080_CTRL_CMD_PERF_BOOST] with the flags [_CMD_BOOST_TO_MAX],
+          [_CUDA_YES] and [_CUDA_PRIORITY_HIGH], for
+          [NV2080_CTRL_PERF_BOOST_DURATION_INFINITE]), or is the RM's
+          refusal. *)
+  sm_errors : int -> params -> (unit, refusal) result;
+      (** [sm_errors debugger p] reads into [p], an
+          [NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS], the errors of
+          the multiprocessors [p] asks for, through the debugger object
+          [debugger] ([NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES]), or is
+          the RM's refusal. *)
+  mmu_faults : int -> params -> (unit, refusal) result;
+      (** [mmu_faults debugger p] reads into [p], an
+          [NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_PARAMS], the MMU's faults the
+          debugger object [debugger] recorded
+          ([NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO]), or is the RM's
+          refusal. *)
   free : (parent:int -> int -> (unit, refusal) result) option;
       (** [Some f] if the RM frees objects before it stops, where [f ~parent
           obj] frees [obj] and every object under it, or is the RM's refusal;
@@ -434,8 +460,10 @@ type rm = {
           keeps the channels a growth replaces until it stops
           ({!section-submitting}). *)
 }
-(** The type for a GPU's resource manager, as a path reaches it. Any domain may
-    call its functions at any time. *)
+(** The type for a GPU's resource manager, as a path reaches it: its
+    allocations, frees, and each command the driver sends, which the path
+    answers as NVIDIA's RM does. Any domain may call its functions at any
+    time. *)
 
 type gpu = {
   channel_class : int;  (** The class of its channels. *)

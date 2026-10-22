@@ -735,36 +735,38 @@ let alloc g ~client ~locate ~objects ~parent cls p =
   in
   Ok obj
 
-(* The work submit token of the channel [obj] into [p]. Beside a GSP, NVIDIA's
-   RM makes it from the channel's runlist and hardware id and asks the GSP
+(* The work submit token of the channel [obj]. Beside a GSP, NVIDIA's RM
+   makes it from the channel's runlist and hardware id and asks the GSP
    nothing (kchannelCtrlCmdGpfifoGetWorkSubmitToken_IMPL,
    kfifoGenerateWorkSubmitTokenHal_GA100 and _GB202). *)
-let token g obj p =
-  let module W = Defs.Work_submit_token in
-  match (Channels.find_opt obj g.channels, p) with
-  | None, _ -> Error (Rig_nv.Refused (strf "object 0x%x is no channel" obj))
-  | Some _, None ->
-      Error (Rig_nv.Refused "a work submit token without its parameters")
-  | Some { runlist = None; _ }, Some _ ->
+let token g obj =
+  match Channels.find_opt obj g.channels with
+  | None -> Error (Rig_nv.Refused (strf "object 0x%x is no channel" obj))
+  | Some { runlist = None; _ } ->
       Error
         (Rig_nv.Refused "a channel of an engine the GPU lacks has no runlist")
-  | Some { id; runlist = Some runlist }, Some p ->
+  | Some { id; runlist = Some runlist } ->
       let runlist_doorbell = g.p.chip.family = Blackwell in
-      Rig_nv.set p W.work_submit_token
-        (Rpc.work_submit_token ~runlist_doorbell ~runlist id);
-      Ok ()
+      Ok (Rpc.work_submit_token ~runlist_doorbell ~runlist id)
 
-(* A boost of the GPU's clocks, which NVIDIA's RM sends the GSP as the GSP's
-   own command (kperfBoostSet_IMPL). *)
-let boost g ~client obj p =
-  match p with
-  | None -> Error (Rig_nv.Refused "a boost without its parameters")
-  | Some p ->
-      let r = Rpc.perf_boost (string_of_params p) in
-      let q = Rig_nv.params (String.length r) in
-      blit_params r q;
-      control g ~client obj Defs.nv2080_ctrl_cmd_internal_perf_boost_set_2x
-        (Some q)
+(* CUDA's boost of the GPU's clocks through [subdevice]: to their maximum, at
+   high priority, with no end (ctrl2080perf.h). NVIDIA's RM sends the GSP the
+   boost as the GSP's own command (kperfBoostSet_IMPL). *)
+let boost g ~client subdevice =
+  let flags =
+    put Defs.nv2080_ctrl_perf_boost_flags_cmd
+      Defs.nv2080_ctrl_perf_boost_flags_cmd_boost_to_max
+    lor put Defs.nv2080_ctrl_perf_boost_flags_cuda
+          Defs.nv2080_ctrl_perf_boost_flags_cuda_yes
+    lor put Defs.nv2080_ctrl_perf_boost_flags_cuda_priority
+          Defs.nv2080_ctrl_perf_boost_flags_cuda_priority_high
+  in
+  let duration = Defs.nv2080_ctrl_perf_boost_duration_infinite in
+  let r = Rpc.perf_boost ~flags ~duration in
+  let p = Rig_nv.params (String.length r) in
+  blit_params r p;
+  control g ~client subdevice Defs.nv2080_ctrl_cmd_internal_perf_boost_set_2x
+    (Some p)
 
 (* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
    does, whose status is the reply's result. A GPU that left the bus or
@@ -793,20 +795,31 @@ let free g ~client obj =
         memory);
   Ok ()
 
+(* A client's RM, which handles each command as NVIDIA's RM does beside a
+   GSP, from the flags of its exported method tables (g_*_nvoc.c) and the
+   command's handler: it answers some itself, translates others, and sends
+   the rest to the GSP as they are. *)
 let client_rm g ~client ~locate =
   let objects = { subdevice = 0 } in
+  let forward cmd obj p = control g ~client obj cmd (Some p) in
   {
     Rig_nv.release = 570;
     client;
     alloc =
       (fun ~parent cls p -> alloc g ~client ~locate ~objects ~parent cls p);
-    control =
-      (fun obj cmd p ->
-        if cmd = Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
-          token g obj p
-        else if cmd = Defs.nv2080_ctrl_cmd_perf_boost then
-          boost g ~client obj p
-        else control g ~client obj cmd p);
+    token = token g;
+    (* Its handler refuses a graphics channel whose context is not yet bound,
+       then sends the command as it is (kchangrpapiCtrlCmdGpFifoSchedule_IMPL,
+       kchannelIsSchedulable_IMPL). A client's compute context is bound when
+       its object is made ([alloc]), before any schedule. *)
+    schedule = forward Defs.nva06c_ctrl_cmd_gpfifo_schedule;
+    boost = boost g ~client;
+    (* Its method table marks it ROUTE_TO_PHYSICAL, which sends it to the GSP
+       as it is (rmresControl_Prologue_IMPL). *)
+    sm_errors = forward Defs.nv83de_ctrl_cmd_debug_read_all_sm_error_states;
+    (* Its handler sends the command as it is
+       (ksmdbgssnCtrlCmdDebugReadMMUFaultInfo_IMPL). *)
+    mmu_faults = forward Defs.nv83de_ctrl_cmd_debug_read_mmu_fault_info;
     free = Some (fun ~parent:_ obj -> free g ~client obj);
   }
 
@@ -867,10 +880,13 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
   let module L = Defs.Gr_info_list in
   let module I = Defs.Internal_gr_info in
   let p = Rig_nv.params S.sizeof in
+  (* An internal command, which NVIDIA's RM refuses from a client's control
+     and sends the GSP on a client of its own (kgraphicsLoadStaticInfo_KERNEL);
+     it goes here on the caller's client, as the GSP answers it there too. *)
   let* () =
     Result.map_error why
-      (rm.control subdevice Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info
-         (Some p))
+      (control g ~client:rm.client subdevice
+         Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info (Some p))
   in
   let info i =
     let engine = elt S.engine_info 0 (0, 0) in

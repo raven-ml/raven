@@ -50,7 +50,7 @@ let channel_range = 0x400_0000
 let va_base = 0x1000
 let va_size = 0x1fffffb000000
 let round_up n a = (n + a - 1) / a * a
-let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
+let bits = Rm.bits
 
 (* Work that the RM's watchdog does not bound is hung once it has not advanced
    for 30 s, the bound of a GPU driven without a kernel driver. *)
@@ -676,10 +676,10 @@ let gr_info c subdevice =
   Ok
     (List.init n (fun i -> get infos (fst I.data + (i * I.sizeof), snd I.data)))
 
-(* The frame buffer's fact [index], in bytes. *)
 let why = function Rig_nv.Lacking why | Refused why -> why
 
-let fb_info c rm subdevice index =
+(* The frame buffer's fact [index], in bytes. *)
+let fb_info c subdevice index =
   let (module R : D.RELEASE) = c.Rm.layouts in
   let module G = R.Fb_get_info in
   let module F = D.Fb_info in
@@ -691,24 +691,17 @@ let fb_info c rm subdevice index =
     (at + f, n)
   in
   set p (elt F.index) index;
-  let* () =
-    Result.map_error why
-      (rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p))
-  in
+  let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 p in
   (* The RM reports the frame buffer's facts in KiB. *)
   Ok (get p (elt F.data) * 1024)
 
 (* The path's hang bound: [None] while the RM's watchdog runs on the GPU and
    ends work that holds it too long. It does not run on a GPU without a
    display. *)
-let hang_bound rm subdevice =
+let hang_bound c subdevice =
   let module W = D.Watchdog_info in
   let p = params W.sizeof in
-  let* () =
-    Result.map_error why
-      (rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_rc_get_watchdog_info
-         (Some p))
-  in
+  let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_rc_get_watchdog_info p in
   let running = D.nv2080_ctrl_rc_get_watchdog_info_flags_running in
   if get p W.watchdog_status_flags land running <> 0 then Ok None
   else Ok (Some hang_ms)
@@ -735,10 +728,7 @@ let make_gpu c ~dev ~index bus =
     let* () = Rm.register file ~ctl:c.ctl in
     let id = params D.Id_info.sizeof in
     set id D.Id_info.gpu_id gpu_id;
-    let* () =
-      Result.map_error why
-        (rm.control c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 (Some id))
-    in
+    let* () = Rm.control c c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 id in
     let instance = get id D.Id_info.device_instance in
     let alloc ~parent cls f size =
       let p = params size in
@@ -793,20 +783,15 @@ let make_gpu c ~dev ~index bus =
       | [ a; b; d; e; f ] -> Ok (a, b, d, e, f)
       | _ -> Error "reading the graphics engine's facts"
     in
-    let* budget =
-      fb_info c rm subdevice D.nv2080_ctrl_fb_info_index_heap_size
-    in
-    let* hang_ms = hang_bound rm subdevice in
+    let* budget = fb_info c subdevice D.nv2080_ctrl_fb_info_index_heap_size in
+    let* hang_ms = hang_bound c subdevice in
     let module Gi = D.Gid_info in
     let gid = params Gi.sizeof in
     set gid Gi.flags
       (bits D.nv2080_gpu_cmd_gpu_get_gid_flags_format
          D.nv2080_gpu_cmd_gpu_get_gid_flags_format_binary);
     set gid Gi.length 16;
-    let* () =
-      Result.map_error why
-        (rm.control subdevice D.nv2080_ctrl_cmd_gpu_get_gid_info (Some gid))
-    in
+    let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_gpu_get_gid_info gid in
     let data, _, _ = Gi.data in
     let uuid = String.init 16 (fun i -> Bigarray.Array1.get gid (data + i)) in
     let* usermode =

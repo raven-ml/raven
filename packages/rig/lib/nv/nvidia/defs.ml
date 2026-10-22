@@ -18,10 +18,12 @@
    Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2004-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2005-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2005-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2005-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2026 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2013 NVidia Corporation
    Copyright (c) 2013-2024 NVidia Corporation
    Copyright (c) 2013-2025 NVidia Corporation
@@ -29,6 +31,7 @@
    Copyright (c) 2014-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2014-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2015-2021 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES
@@ -123,6 +126,15 @@ let nv2080_ctrl_fb_info_index_heap_size = 9
 let nv2080_ctrl_fb_info_index_bar1_size = 5
 let nv2080_ctrl_cmd_rc_get_watchdog_info = 0x20802209
 let nv2080_ctrl_rc_get_watchdog_info_flags_running = 2
+let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
+let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
+let nv2080_ctrl_cmd_perf_boost = 0x2080200a
+let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
+let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
+let nv2080_ctrl_perf_boost_flags_cmd_boost_to_max = 2
+let nv2080_ctrl_perf_boost_flags_cuda_yes = 1
+let nv2080_ctrl_perf_boost_flags_cuda_priority_high = 1
+let nv2080_ctrl_perf_boost_duration_infinite = 0xffffffff
 let nv_device_allocation_vamode_optional_multiple_vaspaces = 0
 let nv_vaspace_allocation_flags_enable_page_faulting = 0x40
 let nv_vaspace_allocation_flags_is_externally_owned = 8
@@ -161,6 +173,9 @@ let nvos32_attr2_page_size_huge = (0x14, 2)
 let nvos32_attr2_zbc = (0, 2)
 let nvos33_flags_caching_type = (0x17, 3)
 let nv2080_gpu_cmd_gpu_get_gid_flags_format = (0, 2)
+let nv2080_ctrl_perf_boost_flags_cmd = (0, 2)
+let nv2080_ctrl_perf_boost_flags_cuda = (4, 1)
+let nv2080_ctrl_perf_boost_flags_cuda_priority = (6, 1)
 
 (* Structs: each field is (byte offset, bytes), an array's (offset, bytes
    of an element, elements). *)
@@ -425,6 +440,17 @@ end
 module Watchdog_info = struct
   let sizeof = 4
   let watchdog_status_flags = (0, 4)
+end
+
+module Work_submit_token = struct
+  let sizeof = 4
+  let work_submit_token = (0, 4)
+end
+
+module Perf_boost = struct
+  let sizeof = 8
+  let flags = (0, 4)
+  let duration = (4, 4)
 end
 
 (* What differs between the releases. *)

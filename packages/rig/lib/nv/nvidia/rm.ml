@@ -35,6 +35,7 @@ let guard what f =
 let params = Rig_nv.params
 let get = Rig_nv.get
 let set = Rig_nv.set
+let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Files and mappings *)
 
@@ -178,15 +179,37 @@ let answer c what x = function
         Error (Rig_nv.Lacking why)
       else Error (Refused why)
 
+(* The driver's RM: each of its commands is the RM's control of that name,
+   which the kernel driver runs as it is. *)
 let rm c =
   let alloc ~parent cls p =
     match alloc_raw c.ctl ~root:c.root ~parent cls p with
     | Ok (s, h) -> answer c (strf "allocating class 0x%x" cls) h (Ok s)
     | Error _ as e -> e
   in
-  let control obj cmd p =
+  let control cmd obj p =
     answer c (strf "command 0x%x" cmd) ()
-      (control_raw c.ctl ~root:c.root obj cmd p)
+      (control_raw c.ctl ~root:c.root obj cmd (Some p))
+  in
+  let token ch =
+    let module W = D.Work_submit_token in
+    let p = params W.sizeof in
+    set p W.work_submit_token 0xffff_ffff;
+    let* () = control D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token ch p in
+    Ok (get p W.work_submit_token)
+  in
+  let boost subdevice =
+    let module B = D.Perf_boost in
+    let p = params B.sizeof in
+    set p B.flags
+      (bits D.nv2080_ctrl_perf_boost_flags_cmd
+         D.nv2080_ctrl_perf_boost_flags_cmd_boost_to_max
+      lor bits D.nv2080_ctrl_perf_boost_flags_cuda
+            D.nv2080_ctrl_perf_boost_flags_cuda_yes
+      lor bits D.nv2080_ctrl_perf_boost_flags_cuda_priority
+            D.nv2080_ctrl_perf_boost_flags_cuda_priority_high);
+    set p B.duration D.nv2080_ctrl_perf_boost_duration_infinite;
+    control D.nv2080_ctrl_cmd_perf_boost subdevice p
   in
   let free ~parent obj =
     answer c "freeing a GPU object" () (free_raw c ~parent obj)
@@ -195,7 +218,11 @@ let rm c =
     Rig_nv.release = c.release;
     client = c.root;
     alloc;
-    control;
+    token;
+    schedule = control D.nva06c_ctrl_cmd_gpfifo_schedule;
+    boost;
+    sm_errors = control D.nv83de_ctrl_cmd_debug_read_all_sm_error_states;
+    mmu_faults = control D.nv83de_ctrl_cmd_debug_read_mmu_fault_info;
     free = Some free;
   }
 

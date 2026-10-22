@@ -16,14 +16,11 @@
    Copyright (c) 1993-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 1993-2026, NVIDIA CORPORATION
    Copyright (c) 2003-2016 NVIDIA Corporation
-   Copyright (c) 2005-2024 NVIDIA CORPORATION & AFFILIATES
-   Copyright (c) 2005-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2007-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2007-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2010-2022 NVIDIA CORPORATION & AFFILIATES
-   Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
@@ -56,24 +53,12 @@ let releases = [ 570; 580; 610; 615 ]
 let kepler_channel_group_a = 0xa06c
 let fermi_context_share_a = 0x9067
 let gt200_debugger = 0x83de
-let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
-let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
-let nv2080_ctrl_cmd_perf_boost = 0x2080200a
-let nv2080_ctrl_perf_boost_flags_cmd_boost_to_max = 2
-let nv2080_ctrl_perf_boost_flags_cuda_yes = 1
-let nv2080_ctrl_perf_boost_flags_cuda_priority_high = 1
-let nv2080_ctrl_perf_boost_duration_infinite = 0xffffffff
-let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
-let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
 let nv2080_engine_type_graphics = 1
 let nv_ctxshare_allocation_flags_subcontext_async = 1
 let nv_channelgpfifo_notification_type_error = 0
 let nv_channelgpfifo_notification_type__size_1 = 3
 
 (* Bit fields of their words: (lowest bit, bits). *)
-let nv2080_ctrl_perf_boost_flags_cmd = (0, 2)
-let nv2080_ctrl_perf_boost_flags_cuda = (4, 1)
-let nv2080_ctrl_perf_boost_flags_cuda_priority = (6, 1)
 let nv_ctxshare_allocation_flags_subcontext = (0, 2)
 
 (* Structs: each field is (byte offset, bytes), an array's (offset, bytes
@@ -88,17 +73,6 @@ module Nv83de_alloc = struct
   let sizeof = 12
   let h_app_client = (4, 4)
   let h_class3d_object = (8, 4)
-end
-
-module Work_submit_token = struct
-  let sizeof = 4
-  let work_submit_token = (0, 4)
-end
-
-module Perf_boost = struct
-  let sizeof = 8
-  let flags = (0, 4)
-  let duration = (4, 4)
 end
 
 module Sm_error_states = struct

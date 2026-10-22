@@ -398,15 +398,11 @@ let work_submit_token ~runlist_doorbell ~runlist id =
 (* The command's NvBool field takes the low byte of the flags, as C's
    conversion of kperfBoostSet_IMPL's assignment does; [set] writes the low
    bytes of a value. *)
-let perf_boost p =
-  let module B = Defs.Perf_boost in
+let perf_boost ~flags ~duration =
   let module X = Defs.Perf_boost_2x in
-  if String.length p <> B.sizeof then
-    invalid_arg
-      (strf "Rpc.perf_boost: %d bytes, expected %d" (String.length p) B.sizeof);
   record X.sizeof (fun b ->
-      set b X.flags (get p B.flags);
-      set b X.duration (get p B.duration))
+      set b X.flags flags;
+      set b X.duration duration)
 
 (* Unloading to level 6, NV2080_CTRL_GPU_SET_POWER_STATE_GPU_LEVEL_3's bit (RM's
    unload to the deepest state the GSP keeps). *)

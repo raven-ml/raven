@@ -95,11 +95,13 @@ val rm :
     handle [h] at offset [off] (a physical address in the GPU's memory, a bus
     address in system memory); a virtual address space gets the GPU's page
     directory; a compute object's context is handed over as NVIDIA's RM and
-    its UVM do ({!Rpc.compute_context}); a channel's work submit token carries
-    its runlist. Its [free] frees an object and every
-    object under it, then gives back the GPU memory the client gave the GSP
-    for them; once the GPU has left the bus or faulted ({!check}) it is a
-    refusal, and calls nothing. *)
+    its UVM do ({!Rpc.compute_context}). Its commands go to the GSP as NVIDIA's
+    RM sends them, but for a channel's work submit token, which it makes
+    without the GSP and which carries the channel's runlist, and a boost,
+    which goes as the GSP's own command ({!Rpc.perf_boost}). Its [free] frees
+    an object and every object under it, then gives back the GPU memory the
+    client gave the GSP for them; once the GPU has left the bus or faulted
+    ({!check}) it is a refusal, and calls nothing. *)
 
 val objects : Rig_nv.rm -> (int * int * int, string) result
 (** [objects rm] is the GPU's device, subdevice and virtual address space, new

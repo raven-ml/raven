@@ -77,6 +77,10 @@ val free_handle : int -> unit
 
 (** {1:rm The RM} *)
 
+val bits : int * int -> int -> int
+(** [bits f x] is [x] in the bit field [f], (lowest bit, bits), cut to its
+    bits. *)
+
 val escape : int -> int -> Rig_nv.params -> string -> (unit, string) result
 (** [escape fd nr p what] runs the escape [nr] on [fd] with [p]. *)
 
@@ -108,7 +112,8 @@ val free : t -> parent:int -> int -> (unit, string) result
     under it, or is the RM's refusal ([NV_ESC_RM_FREE]). *)
 
 val rm : t -> Rig_nv.rm
-(** [rm c] is the RM as the driver calls it, whose [free] is {!free}. *)
+(** [rm c] is the RM as the driver calls it, whose [free] is {!free} and whose
+    commands are the RM's controls of their names. *)
 
 val control_request : int
 (** [control_request] is the ioctl of a control on the control file

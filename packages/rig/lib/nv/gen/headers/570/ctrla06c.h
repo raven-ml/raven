@@ -23,4 +23,6 @@
 
 /* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/ctrl/ctrla06c.h. */
 
+#define NVA06C_CTRL_CMD_GPFIFO_SCHEDULE (0xa06c0101) /* finn: Evaluated from "(FINN_KEPLER_CHANNEL_GROUP_A_GPFIFO_INTERFACE_ID << 8) | NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS_MESSAGE_ID" */
+
 typedef NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS;
