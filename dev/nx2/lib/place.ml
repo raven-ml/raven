@@ -114,8 +114,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   let at = Prim.placement x in
   let arrays =
     match x with
-    | Value.Array r -> ([| r.a |] : _ iarray)
-    | Value.Shards r -> r.arrays
+    | Value.Array { a; _ } -> ([| a |] : _ iarray)
+    | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ ->
         invalid_arg "Place.value: a constant is placed computed"
     | Value.Traced _ ->
@@ -154,8 +154,8 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   let at = Prim.placement x and shape = Prim.shape x in
   let arrays =
     match x with
-    | Value.Array r -> ([| r.a |] : _ iarray)
-    | Value.Shards r -> r.arrays
+    | Value.Array { a; _ } -> ([| a |] : _ iarray)
+    | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
     | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
     | Value.Donated _ ->
@@ -172,10 +172,10 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
 
 let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   match x with
-  | Value.Array r -> (
+  | Value.Array { at; a; _ } -> (
       (* On one device the array is the whole. *)
-      match Grid.one (Devices.grid r.at) with
-      | Some j when j = k -> slice r.a w
+      match Grid.one (Devices.grid at) with
+      | Some j when j = k -> slice a w
       | Some _ | None -> held ~by x k w)
   | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
       held ~by x k w

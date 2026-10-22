@@ -552,19 +552,15 @@ let call : type r.
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
-(* [f ()], the claimed handles [hs] given back where it raises as
-   {!Donate.unclaim} says: without [into], [f] neither writes nor consumes
-   their memory; with [into = (b, b')], [f] computes into the memory rig
-   consumed from [b], which lives on in [b']. *)
-let unclaimed ?into hs f =
+(* [f ()], the claimed handles [hs] given back where it raises: [f] neither
+   writes their memory nor consumes it, so their donors live on, as before the
+   call. *)
+let unclaimed hs f =
   match f () with
   | r -> r
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      (match (into, e) with
-      | None, _ -> Donate.unclaim hs
-      | Some into, Invalid_argument _ -> Donate.unclaim ~into hs
-      | Some _, _ -> ());
+      Donate.unclaim hs;
       Printexc.raise_with_backtrace e bt
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
@@ -617,41 +613,37 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
   match op with
   | Value.Move (mv, (Value.Donated d as x)) ->
       (* A view of a handle leaves the memory unshared: the handle it passes on
-         has the same donor, so its consumer may still write into it. A copy
-         is the donor of the handle passed on, which dies with the same word.
-         The deaths wait for that consumer, which checks every operand first,
-         so an operation that aligns its operands by movements kills nothing
-         when it is refused. *)
+         has the same donor, so its consumer may still write into it. The
+         deaths wait for that consumer, which checks every operand first, so
+         an operation that aligns its operands by movements kills nothing when
+         it is refused. *)
       let moved () =
-        Donate.over d.word (run ~by (Value.Move (mv, Donate.live x)))
+        let r = run ~by (Value.Move (mv, Donate.live x)) in
+        (Prim.placement r, Prim.shape r, Prim.arrays r)
       in
-      let h =
-        match d.donor with
-        | Value.Many _ -> moved ()
-        | Value.One (a, l) -> (
-            ignore (Prim.layouts ~by op);
-            match L.move mv l with
-            | Some l ->
-                Value.Donated
-                  {
-                    d with
-                    shape = L.shape l;
-                    donor = Value.One (a, l);
-                    spent = Value.Live;
-                  }
-            | None -> moved ())
+      let at, shape, arrays =
+        if Iarray.length d.arrays <> 1 then moved ()
+        else begin
+          ignore (Prim.layouts ~by op);
+          match A.move mv (Iarray.get d.arrays 0) with
+          | Some v -> (d.at, L.shape (A.layout v), [| v |])
+          | None -> moved ()
+        end
       in
       Donate.spend ~by 0 x;
-      h
+      Value.Donated { at; shape; arrays; donor = d.donor; spent = Value.Live }
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
-      let op = Donate.unhandled (Donate.claim ~by hs) op in
+      let op = Donate.unhandled hs op in
+      Donate.claim ~by hs;
       match Donate.reuse ~by op hs with
       | Some (i, b, b') ->
           (* Operand [i]'s memory is the result's, now over [b']: the kernel
-             reads each index of it before it writes the result there. *)
+             reads each index of it before it writes the result there. rig
+             consumed the memory before the kernel answers, for good, so the
+             donors stay dead if it raises. *)
           let over (type v s d) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
             match y with
             | Value.Array r when A.buffer r.a == b ->
@@ -663,10 +655,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
           let (Value.Any target) = List.nth xs i in
-          let r =
-            unclaimed ~into:(b, b') hs (fun () ->
-                plain ~by ~into:(A.Any (one target)) op)
-          in
+          let r = plain ~by ~into:(A.Any (one target)) op in
           Donate.consumed ~by ~reused:[ b ] hs;
           r
       | None ->
@@ -1259,32 +1248,31 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-(* The one-node map over the handle [h] over one array, operand [i], its
-   result of [dt]: [h] is claimed, then its array read, then its memory takes
-   the result where rig holds it exclusive and it {!Donate.holds} the result,
-   as {!Donate.reuse} decides for any operation; otherwise the result is
-   fresh, and the memory, where no other value reads it, is freed after the
-   kernel. [h] is given back where [run] raises ({!unclaimed}). Its other
+(* The one-node map over the handle [h], operand [i], whose array is [a], its
+   result of [dt]: [h] is claimed, then its memory takes the result where rig
+   holds it exclusive and it {!Donate.holds} the result, as {!Donate.reuse}
+   decides for any operation, and [h] stays dead if [run] raises; otherwise
+   the result is fresh, the memory, where no other value reads it, is freed
+   after the kernel, and [h] is given back where [run] raises. Its other
    operands are live arrays, so none is the donor, whose word is offered, and
-   each is read at the result's own index. [run dst a] is the kernel into
-   [dst] with [a] for [h]. *)
+   each is read at the result's own index. [run dst a'] is the kernel into
+   [dst] with [a'] for [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
-    (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) : (w, r, d) Value.t
-    =
+    (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
+    (w, r, d) Value.t =
+  let l = A.layout a in
+  let reusable = Donate.holds (D.Any dt) (L.contiguous (L.shape l)) a in
   let hs = [ Donate.Handle (i, h) ] in
   (* Checked first, as any operation's operands are: a claim that loses at
      the donor's word keeps the handle's. *)
   Prim.alive ~by i h;
   Donate.claim_handle ~by i h;
-  let a = Donate.array h in
-  let l = A.layout a in
-  let reusable = Donate.holds (D.Any dt) (L.contiguous (L.shape l)) a in
   match D.equal_witness (A.dtype a) dt with
   | Some Type.Equal when reusable -> (
       match Donate.take ~by (A.buffer a) with
       | Some b' ->
           let a' = A.v (A.dtype a) l b' in
-          unclaimed ~into:(A.buffer a, b') hs (fun () -> run a' a')
+          run a' a'
       | None -> unclaimed hs (fun () -> run (destination dt a) a))
   | Some _ | None ->
       let r = unclaimed hs (fun () -> run (destination dt a) a) in
@@ -1302,11 +1290,11 @@ let live_at (type v s d) (at : d Devices.placement) (x : (v, s, d) Value.t) =
    donated fast paths'. *)
 let handle_at (type v s d) (at : d Devices.placement) (h : (v, s, d) Value.t) =
   match h with
-  | Value.Donated { at = at'; donor = Value.One _; _ } ->
-      at' == at && Devices.kernels (Devices.set at) <> None
-  | Value.Donated _ | Value.Array _ | Value.Shards _ | Value.Deferred _
-  | Value.Traced _ ->
-      false
+  | Value.Donated d ->
+      d.at == at
+      && Iarray.length d.arrays = 1
+      && Devices.kernels (Devices.set at) <> None
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
 
 (* [a] as a live value at [at]. *)
 let value_of at a = Value.Array { at; a; dead = Value.Live }
@@ -1353,7 +1341,7 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Donated dx when handle_at dx.at x ->
       let (module K) = kernels_at dx.at in
-      donated ~by 0 dt x (fun dst a ->
+      donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           match K.apply1 k ~dst a with
           | Done -> value_of dx.at dst
           | Declined ->
@@ -1426,15 +1414,15 @@ let rec apply2 : type v s w r d.
                 [ A.Any dst; A.Any a; A.Any b ]
           | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
-  | Value.Donated _, Value.Array ry when handle_at ry.at x && live_at ry.at y
+  | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
     ->
       let (module K) = kernels_at ry.at in
-      donated ~by 0 dt x (fun dst a ->
+      donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           kernel2 ~by (module K) k dt ry.at dst a ry.a)
-  | Value.Array rx, Value.Donated _ when handle_at rx.at y && live_at rx.at x
+  | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
     ->
       let (module K) = kernels_at rx.at in
-      donated ~by 1 dt y (fun dst b ->
+      donated ~by 1 dt y (Iarray.get dy.arrays 0) (fun dst b ->
           kernel2 ~by (module K) k dt rx.at dst rx.a b)
   | Value.Array rx, Value.Deferred _
     when rx.dead == Value.Live && well_formed2 k x y ->
@@ -1487,20 +1475,20 @@ let rec apply3 : type a b v s d.
           | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
-  | Value.Donated _, Value.Array rx, Value.Array ry
+  | Value.Donated dc, Value.Array rx, Value.Array ry
     when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
       let (module K) = kernels_at rx.at in
-      donated ~by 0 (A.dtype rx.a) c
+      donated ~by 0 (A.dtype rx.a) c (Iarray.get dc.arrays 0)
         (fun dst c' -> kernel3 ~by (module K) k rx.at dst c' rx.a ry.a)
-  | Value.Array rc, Value.Donated _, Value.Array ry
+  | Value.Array rc, Value.Donated dx, Value.Array ry
     when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
       let (module K) = kernels_at rc.at in
-      donated ~by 1 (A.dtype ry.a) x
+      donated ~by 1 (A.dtype ry.a) x (Iarray.get dx.arrays 0)
         (fun dst x' -> kernel3 ~by (module K) k rc.at dst rc.a x' ry.a)
-  | Value.Array rc, Value.Array rx, Value.Donated _
+  | Value.Array rc, Value.Array rx, Value.Donated dy
     when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
       let (module K) = kernels_at rc.at in
-      donated ~by 2 (A.dtype rx.a) y
+      donated ~by 2 (A.dtype rx.a) y (Iarray.get dy.arrays 0)
         (fun dst y' -> kernel3 ~by (module K) k rc.at dst rc.a rx.a y')
   | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
     when well_formed3 k c x y -> (
