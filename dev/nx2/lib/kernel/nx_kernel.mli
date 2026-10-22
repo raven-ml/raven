@@ -119,25 +119,27 @@ type extreme = Max | Min
     A [Logsumexp] or [Moments] scan gives the same bits in every library
     that computes one. On each slice, each term is a state, and the states
     combine by the odd/even network: neighbours [2j] and [2j + 1] combine
-    into pairs, the pairs scan by the same network, result [2j + 1] is the
-    pairs' result [j], and result [2j], for [j > 0], is the pairs' result
-    [j - 1] combined with state [2j]. The earlier state comes first in each
-    combination, and result [i] passes through at most
-    [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] of them. Each operation computes in
-    the output's carrier as {!Prog} computes it, and each result rounds once
-    into its destination. Bounds are to first order in the carrier's unit
-    roundoff [u], barring overflow.
-    - [Logsumexp]: a state is a maximum [m] and a sum [s]. A term [x] is the
-      state [(x, e (x - c))], and a state [a] then a state [b] combine as
-      [m = Maximum (ma, mb)] and [s = sa e (ma - c) + sb e (mb - c)], where
-      [c] is [m] where finite and [0] elsewhere, and [e z] is [exp z], or
-      [0] for [z] below the reduction's cut. Result [i] is [m + log s], or
-      [m] where [m] is not finite. So from the first NaN term on, every
-      result is its bits, quieted; with no NaN, from a [+∞] term on every
-      result is [+∞], and while every term is [-∞] it is [-∞]. Where the
-      terms up to [i] have a finite maximum, and no [exp] underflows or is
-      cut, the result is within [(7 D + 6 ln (i + 1)) u + u|r|] of the exact
-      [r], with {!Prog.Exp} and {!Prog.Log} within 2 ulps.
+    into pairs, the pairs scan by the same network, result [0] is state
+    [0], result [2j + 1] is the pairs' result [j], and result [2j], for
+    [j > 0], is the pairs' result [j - 1] combined with state [2j]. The
+    earlier state comes first in each combination, and result [i] passes
+    through at most [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] of them. Each
+    operation computes in the output's carrier as {!Prog} computes it, and
+    each result rounds once into its destination. Bounds are on the result
+    in the carrier, before the rounding into the destination, which adds
+    its own; they are to first order in the carrier's unit roundoff [u],
+    barring overflow.
+    - [Logsumexp]: a state is a maximum [m] and a sum [s], and [e z] is
+      [exp z], or [0] for [z] below the reduction's cut. A term [x] is the
+      state [(x, e (x - c))], [c] being [x] where finite and [0] elsewhere,
+      and a state [a] then a state [b] combine as [m = Maximum (ma, mb)]
+      and [s = sa e (ma - c) + sb e (mb - c)], [c] being [m] where finite
+      and [0] elsewhere. Result [i] is [m + log s], or [m] where [m] is not
+      finite. So from the first NaN term on, every result is its bits,
+      quieted; with no NaN, from a [+∞] term on every result is [+∞], and
+      while every term is [-∞] it is [-∞]. Where the terms up to [i] have a
+      finite maximum, the result is within [(7 D + 6 ln (i + 1)) u + u|r|]
+      of the exact [r], with {!Prog.Exp} and {!Prog.Log} within 2 ulps.
     - [Moments]: a term [t] is the state [(t - c, +0, 1)] of a mean [μ], a
       sum [S] of squared deviations and a count [n], [c] the slice's first
       term, or [0] where that term is not finite. A state [a] then a state

@@ -117,8 +117,9 @@
     one is given.
 
     [Logsumexp] and [Moments] reduce an output's terms in the two passes
-    {!Nx_kernel.reduction} states, each summing in lane order, and scan
-    them by its network: the bits of Nx's own expansion of each.
+    {!Nx_kernel.reduction} states, each summing in lane order: the bits of
+    Nx's own expansion of each. They scan them as
+    {!Nx_kernel.type-reduction} states.
 
     For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
     of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
