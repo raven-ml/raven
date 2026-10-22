@@ -907,7 +907,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
         layout = A.Layout.contiguous shape;
         axes = Iarray.of_array axes;
         prog = P.of_node ~ins:[| D.Any dt |] (In 0);
-        reductions = Value.[ Monoid (Logsumexp, 0, dt) ];
+        reductions = Value.[ Logsumexp (0, dt) ];
         loads = [| Plain x |];
       }
   in

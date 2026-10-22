@@ -46,7 +46,6 @@ let binary : Nx_kernel.monoid -> P.binary = function
   | Prod -> Mul
   | Max -> Maximum
   | Min -> Minimum
-  | Logsumexp -> invalid_arg "Partial.binary: Logsumexp"
 
 (* The quiet NaN of a clear sign bit, the NaN Prog's kinds make from numbers
    ({!Nx_kernel.type-reduction}). *)
@@ -342,12 +341,14 @@ struct
     let nth i = at_placement p shape (Array.map (fun vs -> List.nth vs i) per) in
     match r with
     | Monoid (_, _, dt) -> Prim.expect dt (nth 0)
+    | Logsumexp (_, dt) -> Prim.expect dt (nth 0)
     | Moments (_, dt) -> (Prim.expect dt (nth 0), Prim.expect dt (nth 1))
     | Arg (_, _, dt) -> (Prim.expect dt (nth 0), Prim.expect D.Int64 (nth 1))
 
   let listed : type d a. (d, a) Value.reduction -> a -> d Value.any list =
     function
     | Monoid _ -> fun v -> [ Value.Any v ]
+    | Logsumexp _ -> fun v -> [ Value.Any v ]
     | Moments _ -> fun (m, v) -> [ Value.Any m; Value.Any v ]
     | Arg _ -> fun (e, p) -> [ Value.Any e; Value.Any p ]
 
@@ -756,7 +757,7 @@ struct
       | Arg (e, o, dt) -> ranked e o (D.Any dt) Extreme_and_position
       | Monoid (((Sum | Prod) as m), o, dt) when lanes m o dt ->
           lane_order m o (D.Any dt)
-      | Monoid ((Sum | Prod | Logsumexp), _, _) | Moments _ ->
+      | Monoid ((Sum | Prod), _, _) | Logsumexp _ | Moments _ ->
           (* Each has an expansion, whose own reductions compute as
              above. *)
           fst
@@ -794,6 +795,7 @@ struct
     let into =
       match r with
       | Monoid (_, _, dt) -> D.Any dt
+      | Logsumexp (_, dt) -> D.Any dt
       | Moments (_, dt) -> D.Any dt
       | Arg (_, _, dt) -> D.Any dt
     in
@@ -899,7 +901,7 @@ struct
                 first_of e (List.map wide cv) local
           in
           (false, total, first_of e, continued)
-      | Monoid (Logsumexp, _, _) | Moments _ ->
+      | Logsumexp _ | Moments _ ->
           invalid_arg "Partial.scan: a scan that reads its axis whole"
     in
     let per = Array.make (Array.length ks) [] in

@@ -42,7 +42,7 @@ module Refusing = struct
 
   let reduce p ~shape ~axes rs ~dsts loads =
     let declined ((r : Nx_kernel.reduction), _) =
-      match r with Monoid Logsumexp | Arg _ -> true | _ -> false
+      match r with Logsumexp | Arg _ -> true | _ -> false
     in
     if Array.exists declined rs then decline ()
     else C.reduce p ~shape ~axes rs ~dsts loads

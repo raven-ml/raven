@@ -582,6 +582,7 @@ let same_reduction : type d a.
  fun msg r a b ->
   match (r, a, b) with
   | Monoid _, a, b -> same_form ~msg a b
+  | Logsumexp _, a, b -> same_form ~msg a b
   | Moments _, (a, a'), (b, b') ->
       same_form ~msg a b;
       same_form ~msg a' b'

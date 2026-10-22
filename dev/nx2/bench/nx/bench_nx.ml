@@ -852,12 +852,12 @@ let scan_rows =
       (* Rows side by side, and one slice's chunks. *)
       Thumper.bench_with_setup "host-logsumexp-f32-1024x1024-rows"
         ~setup:m1024
-        (scan (Monoid (Logsumexp, 0, D.Float32)));
+        (scan (Logsumexp (0, D.Float32)));
       Thumper.bench_with_setup "host-logsumexp-f32-1024x1024-cols"
         ~setup:m1024
-        (scan ~axis:0 (Monoid (Logsumexp, 0, D.Float32)));
+        (scan ~axis:0 (Logsumexp (0, D.Float32)));
       Thumper.bench_with_setup "host-logsumexp-f32-1M" ~setup:f1m
-        (scan ~axis:0 (Monoid (Logsumexp, 0, D.Float32)));
+        (scan ~axis:0 (Logsumexp (0, D.Float32)));
       Thumper.bench_with_setup "host-argmax-f32-1024x1024-rows" ~setup:m1024
         (fun x -> fst (scan (Arg (Max, 0, D.Float32)) x));
       Thumper.bench_with_setup "host-argmax-f32-1M" ~setup:f1m (fun x ->

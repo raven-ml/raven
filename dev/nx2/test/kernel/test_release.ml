@@ -96,7 +96,7 @@ let reductions =
               Nx_cpu.one_thread (fun () ->
                   done_
                     (Nx_cpu.reduce exp ~shape:[| n |] ~axes:[| 0 |]
-                       [| (Monoid Logsumexp, 0); (Monoid Sum, 0) |]
+                       [| (Logsumexp, 0); (Monoid Sum, 0) |]
                        ~dsts:[| A.Any lse; A.Any sum |]
                        [| Nx_kernel.Plain x |]))));
       test "many reductions of a program" (fun () ->
@@ -112,7 +112,7 @@ let reductions =
           let x = Lazy.force ones and dst = f32 [||] in
           releases (fun () ->
               Nx_cpu.one_thread (fun () ->
-                  reduce (Monoid Logsumexp) [| 0 |] ~dst x)));
+                  reduce Logsumexp [| 0 |] ~dst x)));
       test "a scan on one thread" (fun () ->
           let x = Lazy.force ones and dst = f32 [| n |] in
           releases (fun () -> scan (Monoid Sum) ~dsts:[| A.Any dst |] x));

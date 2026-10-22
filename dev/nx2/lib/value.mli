@@ -136,6 +136,7 @@ and ('d, _) reduction =
   | Monoid :
       Nx_kernel.monoid * int * ('v, 's) dtype
       -> ('d, ('v, 's, 'd) t) reduction
+  | Logsumexp : int * ('v, 's) dtype -> ('d, ('v, 's, 'd) t) reduction
   | Moments :
       int * ('v, 's) dtype
       -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) reduction

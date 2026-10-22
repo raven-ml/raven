@@ -3991,6 +3991,9 @@ module Prim : sig
         -> ('d, ('v, 's, 'd) nx) reduction
         (** [Monoid (m, k, dt)] folds output [k] by [m] in its carrier and
             rounds once to [dt]. *)
+    | Logsumexp : int * ('v, 's) dtype -> ('d, ('v, 's, 'd) nx) reduction
+        (** [Logsumexp (k, dt)] is [log Σ exp] of output [k], in its carrier,
+            rounded once to [dt]. *)
     | Moments :
         int * ('v, 's) dtype
         -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) reduction

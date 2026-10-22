@@ -430,7 +430,7 @@ let reductions_all : Nx_kernel.reduction list =
     Monoid Prod;
     Monoid Max;
     Monoid Min;
-    Monoid Logsumexp;
+    Logsumexp;
     Moments;
     Arg Max;
     Arg Min;
@@ -441,7 +441,7 @@ let reduction_name : Nx_kernel.reduction -> string = function
   | Monoid Prod -> "Prod"
   | Monoid Max -> "Max"
   | Monoid Min -> "Min"
-  | Monoid Logsumexp -> "Logsumexp"
+  | Logsumexp -> "Logsumexp"
   | Moments -> "Moments"
   | Arg Max -> "Arg Max"
   | Arg Min -> "Arg Min"
@@ -450,7 +450,7 @@ let pp_reduction ppf r = Format.pp_print_string ppf (reduction_name r)
 
 let extreme : Nx_kernel.reduction -> bool = function
   | Monoid (Max | Min) | Arg _ -> true
-  | Monoid (Sum | Prod | Logsumexp) | Moments -> false
+  | Monoid (Sum | Prod) | Logsumexp | Moments -> false
 
 type reduce_case = {
   y : int array;
@@ -536,7 +536,7 @@ let test_accepts () =
             match (r : Nx_kernel.reduction) with
             | Monoid (Sum | Prod) -> not boolean
             | Monoid (Max | Min) | Arg _ -> true
-            | Monoid Logsumexp | Moments -> float
+            | Logsumexp | Moments -> float
           in
           equal
             ~msg:(Format.asprintf "%s of %a" (reduction_name r) D.pp dt)
@@ -916,9 +916,9 @@ let test_codes () =
       ("NX_MONOID_PROD", tag (Prod : Nx_kernel.monoid));
       ("NX_MONOID_MAX", tag (Max : Nx_kernel.monoid));
       ("NX_MONOID_MIN", tag (Min : Nx_kernel.monoid));
-      ("NX_MONOID_LOGSUMEXP", tag (Logsumexp : Nx_kernel.monoid));
       ("NX_REDUCTION_MONOID", tag (Nx_kernel.Monoid Sum));
       ("NX_REDUCTION_ARG", tag (Nx_kernel.Arg Max));
+      ("NX_REDUCTION_LOGSUMEXP", tag Nx_kernel.Logsumexp);
       ("NX_REDUCTION_MOMENTS", tag Nx_kernel.Moments);
       ("NX_COMBINE_SET", tag (Set : Nx_kernel.combine));
       ("NX_COMBINE_ADD", tag (Add : Nx_kernel.combine));
