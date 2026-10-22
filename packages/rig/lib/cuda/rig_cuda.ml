@@ -783,17 +783,25 @@ let known fn =
 
 (* CUDA ties the export of page-locked host memory to an attribute of its
    own, and states no other cause of refusing GPU memory than the device's
-   attribute: each refusal names the attribute that decides it. *)
+   attribute: a refusal names the attribute that decides it when that
+   attribute is false, and CUDA's status otherwise. *)
 let not_supported g (r : region) =
-  if r.kind = Host then
+  let attribute =
+    match r.kind with
+    | Host -> attribute_host_alloc_dma_buf_supported
+    | Device | Word | Own_word | Locked _ | Peer _ ->
+        attribute_dma_buf_supported
+  in
+  if supports g attribute then
+    "CUDA refused to export the memory as a dma-buf: CUDA_ERROR_NOT_SUPPORTED"
+  else if r.kind = Host then
     "CUDA exports no dma-buf of page-locked host memory on this GPU \
      (CU_DEVICE_ATTRIBUTE_HOST_ALLOC_DMA_BUF_SUPPORTED is false, or unknown \
      before CUDA 13)"
-  else if not (supports g attribute_dma_buf_supported) then
+  else
     "CUDA exports no dma-buf of this GPU's memory here \
      (CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED is false): that needs Linux and \
      NVIDIA's open kernel modules"
-  else "CUDA refused to export the memory as a dma-buf: CUDA_ERROR_NOT_SUPPORTED"
 
 (* The whole allocation [r] lies in, as one dma-buf. *)
 let export g (r : region) =
