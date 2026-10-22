@@ -231,6 +231,10 @@ val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
 val reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
 (** [reductions rs] is [rs] as {!Nx_kernel.S.reduce} takes them. *)
 
+val reduction_name : Nx_kernel.reduction -> string
+(** [reduction_name r] names [r] in messages, as ["Logsumexp"] or
+    ["Arg Max"]. *)
+
 val reduced : int array -> int iarray -> int array
 (** [reduced s axes] is [s] without [axes]. *)
 

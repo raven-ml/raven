@@ -18,7 +18,8 @@
     instead. [Done] is the result; a refusal raises
     through {!Nx_array.refused} naming [by]. A decline raises
     [Invalid_argument] naming [by], the kernels, the operation (a one-node
-    map's kind, a routine's name), the dtypes, the device and the move the
+    map's kind, a routine's name, what a reduction or a scan computes, as
+    ["Reduce Sum and Moments"]), the dtypes, the device and the move the
     program makes, [Nx.place] onto a set whose kernels compute it: nx
     computes no case on the kernels' behalf and moves no data between
     devices on its own. A result
