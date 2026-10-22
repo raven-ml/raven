@@ -119,7 +119,7 @@ let survey ~firmware boot42 rom =
 
 let report ~firmware ~chip ~vbios =
   Rig_nv.Lock.check "Rig_nv_pci.report";
-  Result.map fst (survey ~firmware chip (fun () -> vbios))
+  Result.map fst (survey ~firmware chip (fun () -> Vbios.of_string vbios))
 
 (* Memory *)
 

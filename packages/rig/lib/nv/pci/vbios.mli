@@ -5,16 +5,24 @@
 
 (** FWSEC, the ucode of an Ampere or Ada GPU's VBIOS that sets up the GPU's
     protected memory at a boot and puts back the VBIOS's own applications at
-    a stop, found by walking the VBIOS's bytes. Every function but {!read} is
-    pure. *)
+    a stop, found by walking the VBIOS's bytes. Every function but {!read} and
+    a walk of what it gives is pure. *)
 
 val window : int
-(** [window] is the size of the PROM window {!read} reads, 1 MiB, which holds
-    every FWSEC image. *)
+(** [window] is the size of the PROM window, 1 MiB, which holds every FWSEC
+    image. *)
 
-val read : Chip.t -> string
-(** [read c] is the GPU's VBIOS, read through the PROM window of its registers.
-*)
+type rom
+(** The type for a VBIOS's bytes: those of its chain of images, or all of
+    them, at most {!window}, where the chain cannot be walked or passes
+    them. *)
+
+val of_string : string -> rom
+(** [of_string s] is the VBIOS of the ROM's bytes [s]. *)
+
+val read : Chip.t -> rom
+(** [read c] is the GPU's VBIOS, read through the PROM window of its registers
+    as a walk reaches its bytes, while [c]'s registers stay mapped. *)
 
 type fwsec = {
   image : string;
@@ -36,7 +44,7 @@ type fwsec = {
 }
 (** The type for FWSEC. *)
 
-val fwsec : string -> (fwsec, string) result
+val fwsec : rom -> (fwsec, string) result
 (** [fwsec rom] is the first production FWSEC of the VBIOS [rom], the last of
     its descriptor's signatures in place. [Error] names what the ROM lacks:
     valid images, the BIT table, a production FWSEC with a version 3

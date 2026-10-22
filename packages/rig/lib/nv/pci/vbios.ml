@@ -20,9 +20,6 @@
 
 let window = 0x100000
 
-let read (c : Chip.t) =
-  Rig_pci.Window.read c.regs (Defs.Legacy.nv_prom_data 0) window
-
 type fwsec = {
   image : string;
   cmd_at : int;
@@ -42,14 +39,19 @@ exception Bad of string
 
 let badf fmt = Printf.ksprintf (fun s -> raise (Bad s)) fmt
 
+(* A ROM's bytes, [sub off n] the [n] from [off]. *)
+type rom = { length : int; sub : int -> int -> string }
+
+let bytes s = { length = String.length s; sub = String.sub s }
+
 let check rom off n =
-  if off < 0 || off + n > String.length rom then
+  if off < 0 || off + n > rom.length then
     badf "the VBIOS ends before a structure it points to, at 0x%x" off
 
 (* A field of a packed structure at [base], (offset, bytes). *)
 let get rom base (off, n) =
   check rom (base + off) n;
-  Field.get rom (base + off, n)
+  Field.get (rom.sub (base + off) n) (0, n)
 
 let u8 rom off = get rom off (0, 1)
 let u16 rom off = get rom off (0, 2)
@@ -69,49 +71,47 @@ let pci_data_signatures =
       pci_data_struct_signature_nv2;
     ]
 
-(* The offset the falcon data's pointers are relative to: the extension image's
-   offset less the base image's size, or 0 without both (s_locateExpansionRoms).
-   An image's length is that of NVIDIA's extension of its PCI data structure
-   where it has one. *)
-let expansion rom =
+(* The chain of images whose [n]-byte values at [at] are [get at n]: the offset
+   the falcon data's pointers are relative to, the extension image's offset
+   less the base image's size, or 0 without both, and the end of the last
+   image, the VBIOS's size (s_locateExpansionRoms). An image's length is that
+   of NVIDIA's extension of its PCI data structure where it has one. *)
+let chain get =
+  let u8 at = get at 1 and u16 at = get at 2 and u32 at = get at 4 in
   let rec walk block ext base =
     let pci =
-      block + u16 rom (block + Defs.offsetof_pci_exp_rom_pci_data_struct_ptr)
+      block + u16 (block + Defs.offsetof_pci_exp_rom_pci_data_struct_ptr)
     in
-    if not (List.mem (u32 rom pci) pci_data_signatures) then
+    if not (List.mem (u32 pci) pci_data_signatures) then
       badf "the VBIOS's image at 0x%x has no PCI data structure" block;
-    let len = u16 rom (pci + Defs.offsetof_pci_data_struct_image_len) in
+    let len = u16 (pci + Defs.offsetof_pci_data_struct_image_len) in
     let last =
-      u8 rom (pci + Defs.offsetof_pci_data_struct_last_image) land last_image
-      <> 0
+      u8 (pci + Defs.offsetof_pci_data_struct_last_image) land last_image <> 0
     in
     let x =
-      (pci + u16 rom (pci + Defs.offsetof_pci_data_struct_len) + 0xf)
-      land lnot 0xf
+      (pci + u16 (pci + Defs.offsetof_pci_data_struct_len) + 0xf) land lnot 0xf
     in
     let len, last =
-      let rev = u16 rom (x + Defs.offsetof_pci_data_ext_struct_rev) in
+      let rev = u16 (x + Defs.offsetof_pci_data_ext_struct_rev) in
       if
-        u32 rom (x + Defs.offsetof_pci_data_ext_struct_sig)
+        u32 (x + Defs.offsetof_pci_data_ext_struct_sig)
         <> Defs.nv_pci_data_ext_sig
         || not
              (rev = Defs.nv_pci_data_ext_rev_10
              || rev = Defs.nv_pci_data_ext_rev_11)
       then (len, last)
       else
-        let sub =
-          u16 rom (x + Defs.offsetof_pci_data_ext_struct_subimage_len)
-        in
-        let ext_len = u16 rom (x + Defs.offsetof_pci_data_ext_struct_len) in
+        let sub = u16 (x + Defs.offsetof_pci_data_ext_struct_subimage_len) in
+        let ext_len = u16 (x + Defs.offsetof_pci_data_ext_struct_len) in
         if Defs.offsetof_pci_data_ext_struct_last_image + 1 <= ext_len then
           ( sub,
-            u8 rom (x + Defs.offsetof_pci_data_ext_struct_last_image)
+            u8 (x + Defs.offsetof_pci_data_ext_struct_last_image)
             land last_image
             <> 0 )
         else (sub, last && sub >= len)
     in
     let size = len * Defs.pci_rom_image_block_size in
-    let kind = u8 rom (pci + Defs.offsetof_pci_data_struct_code_type) in
+    let kind = u8 (pci + Defs.offsetof_pci_data_struct_code_type) in
     let ext =
       if ext = None && kind = Defs.nv_bcrt_hash_info_base_code_type_vbios_ext
       then Some block
@@ -122,12 +122,62 @@ let expansion rom =
       then Some size
       else base
     in
-    if last then match (ext, base) with Some e, Some b -> e - b | _ -> 0
+    if last then
+      ((match (ext, base) with Some e, Some b -> e - b | _ -> 0), block + size)
     else if size = 0 then
       badf "the VBIOS's image at 0x%x is empty and not the last" block
     else walk (block + size) ext base
   in
   walk 0 None None
+
+let expansion rom = fst (chain (fun at n -> get rom at (0, n)))
+
+(* The VBIOS of the [length] bytes [sub] gives, at most [window]: it ends where
+   its chain of images does, as NVIDIA's RM bounds it
+   (kgspExtractVbiosFromRom_TU102), or at their end where the chain cannot be
+   walked or passes it, so that {!fwsec}'s walk names what the ROM lacks. *)
+let bounded length sub =
+  let whole = { length = Int.min length window; sub } in
+  let length =
+    match chain (fun at n -> get whole at (0, n)) with
+    | _, n when n > 0 && n <= whole.length -> n
+    | _ -> whole.length
+    | exception Bad _ -> whole.length
+  in
+  { length; sub }
+
+let of_string s = bounded (String.length s) (String.sub s)
+
+(* A read of the ROM takes about two microseconds a word: its pages are read
+   once each, as the walk reaches them, 22 of the 154 its images take on an
+   AD102. *)
+let rom_page = 0x1000
+
+let read (c : Chip.t) =
+  let prom = Defs.Legacy.nv_prom_data 0 in
+  let pages = Hashtbl.create 64 in
+  let page i =
+    match Hashtbl.find_opt pages i with
+    | Some p -> p
+    | None ->
+        let p = Rig_pci.Window.read c.regs (prom + (i * rom_page)) rom_page in
+        Hashtbl.add pages i p;
+        p
+  in
+  let sub off n =
+    let b = Buffer.create n in
+    let rec go off n =
+      if n > 0 then begin
+        let at = off mod rom_page in
+        let k = Int.min n (rom_page - at) in
+        Buffer.add_string b (String.sub (page (off / rom_page)) at k);
+        go (off + k) (n - k)
+      end
+    in
+    go off n;
+    Buffer.contents b
+  in
+  bounded window sub
 
 (* The BIT table *)
 
@@ -146,7 +196,7 @@ let bit rom =
     !sum land 0xff = 0
   in
   let rec find at =
-    if at + 6 > String.length rom then badf "the VBIOS has no BIT table"
+    if at + 6 > rom.length then badf "the VBIOS has no BIT table"
     else if header at then at
     else find (at + 1)
   in
@@ -260,15 +310,16 @@ let fwsec rom =
     check rom (desc + signatures) (size - signatures);
     check rom (desc + size) (round_up stored 256);
     let image =
-      Bytes.of_string (String.sub rom (desc + size) (round_up stored 256))
+      Bytes.of_string (rom.sub (desc + size) (round_up stored 256))
     in
     let put at s =
       if at < 0 || at + String.length s > Bytes.length image then
         badf "FWSEC's image ends before the place of its patch, 0x%x" at;
       Bytes.blit_string s 0 image at (String.length s)
     in
-    let image_u8 at = u8 (Bytes.unsafe_to_string image) at in
-    let image_u32 at = u32 (Bytes.unsafe_to_string image) at in
+    let patched = bytes (Bytes.unsafe_to_string image) in
+    let image_u8 at = u8 patched at in
+    let image_u32 at = u32 patched at in
     (* The application interface in the data names the DMEM mapper, whose
        command the patch sets and whose input buffer takes its arguments. *)
     let module A = Defs.App_interface_header in
@@ -305,7 +356,7 @@ let fwsec rom =
     let args_at = imem + image_u32 (mapper + fst M.cmd_in_buffer_offset) in
     put args_at (String.make Defs.Frts_cmd.sizeof '\000');
     let n = Defs.bcrt30_rsa3k_sig_size in
-    let blob = String.sub rom (desc + signatures) (size - signatures) in
+    let blob = rom.sub (desc + signatures) (size - signatures) in
     if String.length blob < n then badf "FWSEC's descriptor holds no signature";
     put
       (imem + f D.pkc_data_offset)
