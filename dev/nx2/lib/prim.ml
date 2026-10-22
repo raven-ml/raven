@@ -758,6 +758,7 @@ let pp_operand ppf (Any x) =
 let reduction : type d a. (d, a) reduction -> Nx_kernel.reduction * int =
   function
   | Monoid (m, k, _) -> (Monoid m, k)
+  | Logsumexp (k, _) -> (Logsumexp, k)
   | Moments (k, _) -> (Moments, k)
   | Arg (e, k, _) -> (Arg e, k)
 
@@ -766,7 +767,7 @@ let reduction_name : Nx_kernel.reduction -> string = function
   | Monoid Prod -> "Prod"
   | Monoid Max -> "Max"
   | Monoid Min -> "Min"
-  | Monoid Logsumexp -> "Logsumexp"
+  | Logsumexp -> "Logsumexp"
   | Moments -> "Moments"
   | Arg Max -> "Arg Max"
   | Arg Min -> "Arg Min"
@@ -939,7 +940,7 @@ let check_reduction ~by (prog : P.t) (r, k) =
     invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have)
 
 let reduction_width : type d a. (d, a) reduction -> int = function
-  | Monoid _ -> 1
+  | Monoid _ | Logsumexp _ -> 1
   | Moments _ | Arg _ -> 2
 
 let rec results_width : type d r. (d, r) reductions -> int = function
@@ -992,7 +993,7 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
       if not (same_dtype want (dtype c)) then
         invalid_argf "%s: a carry of %s where the terms carry in %s" by
           (D.name (dtype c)) (D.name want)
-  | Some _, (Monoid (Logsumexp, _, _) | Moments _ | Arg _) ->
+  | Some _, (Logsumexp _ | Moments _ | Arg _) ->
       invalid_argf "%s: a carry for %s" by (reduction_name (fst (reduction r)))
 
 (* [shape] without [axes]. *)
@@ -1055,7 +1056,7 @@ let load_ranks (type d) layout (loads : d load iarray) =
    results combine exactly. *)
 let carries : type d a. (d, a) reduction -> bool = function
   | Monoid ((Sum | Prod | Max | Min), _, _) | Arg _ -> true
-  | Monoid (Logsumexp, _, _) | Moments _ -> false
+  | Logsumexp _ | Moments _ -> false
 
 (* A loop's rule over loads of [ranks]: a load's axis becomes the results' axis
    of its index less the axes reduced before it, but those read whole, those
@@ -1251,6 +1252,7 @@ let make_reduction : type d a.
     a =
  fun m k layout placement -> function
   | Monoid (_, _, dtype) -> m k (of_layout dtype layout placement)
+  | Logsumexp (_, dtype) -> m k (of_layout dtype layout placement)
   | Moments (_, dtype) ->
       let mean = m k (of_layout dtype layout placement) in
       (mean, m (k + 1) (of_layout dtype layout placement))
@@ -1761,6 +1763,7 @@ let iter_reduction : type d a.
  fun f r v ->
   match (r, v) with
   | Monoid _, v -> f v
+  | Logsumexp _, v -> f v
   | Moments _, (a, b) ->
       f a;
       f b

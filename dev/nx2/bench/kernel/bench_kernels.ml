@@ -520,7 +520,7 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
       let like () = A.Any (A.create Rig.host (A.dtype x) y) in
       let dsts =
         match r with
-        | Monoid _ -> [| like () |]
+        | Monoid _ | Logsumexp -> [| like () |]
         | Moments -> [| like (); like () |]
         | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 y) |]
       in
@@ -534,7 +534,9 @@ let scan name r ~axis a (module K : Nx_kernel.S) =
       let (A.Any x) = a () in
       let dt = D.Any (A.dtype x) in
       let s = A.Layout.shape (A.layout x) in
-      let results = match r with Nx_kernel.Monoid _ -> 1 | _ -> 2 in
+      let results =
+        match r with Nx_kernel.Monoid _ | Logsumexp -> 1 | _ -> 2
+      in
       ( identity dt,
         (r, 0),
         [| Nx_kernel.Plain x |],
@@ -652,7 +654,7 @@ let reduce_rows =
   ]
   (* The reductions computed by a state of each block. *)
   @ stated (Arg Max) "argmax"
-  @ stated (Monoid Logsumexp) "logsumexp"
+  @ stated Logsumexp "logsumexp"
   @ stated Moments "moments"
   @ [ along "reduce-moments-f64-1M" f64 [| m |] [| 0 |] Moments ]
 

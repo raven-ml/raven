@@ -16,12 +16,12 @@
 enum { NX_LOAD_PLAIN, NX_LOAD_PADDED };
 
 /* Nx_kernel.monoid. */
-enum { NX_MONOID_SUM, NX_MONOID_PROD, NX_MONOID_MAX, NX_MONOID_MIN,
-       NX_MONOID_LOGSUMEXP };
+enum { NX_MONOID_SUM, NX_MONOID_PROD, NX_MONOID_MAX, NX_MONOID_MIN };
 
-/* Nx_kernel.reduction: Monoid and Arg are blocks, Moments a constant. */
+/* Nx_kernel.reduction: Monoid and Arg are blocks, Logsumexp and Moments
+   constants. */
 enum { NX_REDUCTION_MONOID, NX_REDUCTION_ARG };
-enum { NX_REDUCTION_MOMENTS };
+enum { NX_REDUCTION_LOGSUMEXP, NX_REDUCTION_MOMENTS };
 
 /* Nx_kernel.combine. */
 enum { NX_COMBINE_SET, NX_COMBINE_ADD, NX_COMBINE_MAX, NX_COMBINE_MIN };

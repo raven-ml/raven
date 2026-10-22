@@ -1603,9 +1603,9 @@ let reduced_axes ~by x l =
   | None -> Iarray.init (ndim x) Fun.id
   | Some l -> Iarray.of_list (List.sort Int.compare (axes ~by x l))
 
-(* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
-let reduce (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
-    (w, r, d) t =
+(* The one-operand reduction [r] of [x] along [axes]. *)
+let reduce_by_one (type v s a d) ~by (r : (d, a) Value.reduction) axes
+    (x : (v, s, d) t) : a =
   let prog = P.of_node ~ins:[| D.Any (dtype x) |] (In 0) in
   let y, () =
     Eval.eval ~by
@@ -1614,11 +1614,14 @@ let reduce (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
            layout = Nx_array.Layout.contiguous (shape x);
            axes;
            prog;
-           reductions = Value.[ Monoid (m, 0, dt) ];
+           reductions = Value.[ r ];
            loads = [| Plain x |];
          })
   in
   y
+
+(* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
+let reduce ~by m dt axes x = reduce_by_one ~by (Monoid (m, 0, dt)) axes x
 
 (* [y], reduced from a value of shape [s] along [axes], with each reduced axis
    kept of extent 1 where [keepdims]. *)
@@ -2231,8 +2234,12 @@ let std ?axes ?keepdims ?ddof x =
   let by = "Nx.std" in
   once ~by x (spread ~by ~root:true ?axes ?keepdims ?ddof)
 
-let logsumexp ?axes ?keepdims x =
-  reduction ~by:"Nx.logsumexp" Logsumexp ?axes ?keepdims x
+let logsumexp ?axes ?(keepdims = false) x =
+  let by = "Nx.logsumexp" in
+  let s = shape x in
+  let axes = reduced_axes ~by x axes in
+  kept ~by ~keepdims s axes
+    (reduce_by_one ~by (Logsumexp (0, dtype x)) axes x)
 
 let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
@@ -2242,7 +2249,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-  let l = reduce ~by Logsumexp w axes x in
+  let l = reduce_by_one ~by (Logsumexp (0, w)) axes x in
   let y =
     elementwise ~by dt [ Any l ] E.(cast dt (operand 0 l - log (const w n)))
   in
@@ -4763,7 +4770,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     let outs = Value.[ D.Float32 ] in
     Eval.eval ~by (Value.Map { layout; prog; outs; loads })
   in
-  let lse = reduce ~by Logsumexp D.Float32 [| r - 1 |] m in
+  let lse = reduce_by_one ~by (Logsumexp (0, D.Float32)) [| r - 1 |] m in
   (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
      weights and [o] are zero, whatever its values hold. *)
   let row = reshaped ~by (with_lead [| hq; tq; 1 |]) lse in
@@ -5541,6 +5548,7 @@ module Prim = struct
     | Monoid :
         Nx_kernel.monoid * int * ('v, 's) dtype
         -> ('d, ('v, 's, 'd) Value.t) reduction
+    | Logsumexp : int * ('v, 's) dtype -> ('d, ('v, 's, 'd) Value.t) reduction
     | Moments :
         int * ('v, 's) dtype
         -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) reduction

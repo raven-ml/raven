@@ -289,7 +289,7 @@ let documented (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
   | (D.Float | D.Signed | D.Unsigned), _ -> true
   | D.Boolean, (Max | Min) -> true
   | D.Complex, (Sum | Prod | Max | Min) -> true
-  | D.Boolean, (Sum | Prod | Logsumexp) | D.Complex, Logsumexp -> false
+  | D.Boolean, (Sum | Prod) -> false
 
 let reductions =
   [
@@ -634,7 +634,7 @@ let law_logsumexp (s, axes, xs) =
   let ax = normal (Array.length s) axes in
   let x = value (A.of_array D.Float64 s xs) in
   let got =
-    read (reduce1 (Monoid (Logsumexp, 0, Nx.float64)) (Iarray.of_list ax) x)
+    read (reduce1 (Logsumexp (0, Nx.float64)) (Iarray.of_list ax) x)
   in
   Array.iteri
     (fun i ts ->
@@ -1140,7 +1140,7 @@ let test_moments_cases () =
 
 let test_logsumexp_cases () =
   let lse (type v s) (dt : (v, s) D.t) (xs : v array) =
-    read (reduce1 (Monoid (Logsumexp, 0, dt)) [| 0 |] (vector dt xs))
+    read (reduce1 (Logsumexp (0, dt)) [| 0 |] (vector dt xs))
   in
   equal ~msg:"no term" int64 (bits Float.neg_infinity)
     (bits (lse D.Float64 [||]).(0));
@@ -1284,7 +1284,7 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
   each_path (fun by place ->
       let x = place strided a in
       let ts = read x and tb = element_bits (host_array x) in
-      let y = scan1 (Monoid (Logsumexp, 0, dt)) axis x in
+      let y = scan1 (Logsumexp (0, dt)) axis x in
       let got = read y and gb = element_bits (host_array y) in
       List.iter
         (fun ps ->
@@ -1337,7 +1337,7 @@ let test_logsumexp_scan_cases () =
   each_path (fun by place ->
       let lse (type s) (dt : (float, s) D.t) s xs =
         let x = place false (A.of_array dt s xs) in
-        read (scan1 (Monoid (Logsumexp, 0, dt)) (Array.length s - 1) x)
+        read (scan1 (Logsumexp (0, dt)) (Array.length s - 1) x)
       in
       let msg m = m ^ ", " ^ by in
       let inf = Float.infinity and ninf = Float.neg_infinity in
@@ -1895,6 +1895,8 @@ let scanned (type s d) (r : Nx_kernel.reduction) (dt : (float, s) D.t) axis
     (x : (float, s, d) Nx.t) =
   match r with
   | Monoid m -> [ element_bits (host_array (scan1 (Monoid (m, 0, dt)) axis x)) ]
+  | Logsumexp ->
+      [ element_bits (host_array (scan1 (Logsumexp (0, dt)) axis x)) ]
   | Moments ->
       let m, v = scan1 (Moments (0, dt)) axis x in
       [ element_bits (host_array m); element_bits (host_array v) ]
@@ -1962,7 +1964,7 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
           ("prod", Monoid Prod);
           ("max", Monoid Max);
           ("min", Monoid Min);
-          ("logsumexp", Monoid Logsumexp);
+          ("logsumexp", Logsumexp);
           ("moments", Moments);
           ("arg max", Arg Max);
           ("arg min", Arg Min);
@@ -2032,7 +2034,7 @@ let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
   raises (Invalid_argument "t: Logsumexp does not take int32") (fun () ->
-      scan1 (Monoid (Logsumexp, 0, Nx.int32)) 0 x);
+      scan1 (Logsumexp (0, Nx.int32)) 0 x);
   raises (Invalid_argument "t: Moments does not take int32") (fun () ->
       reduce1 (Moments (0, Nx.int32)) [| 0 |] x);
   raises (Invalid_argument "t: Moments does not take int32") (fun () ->

@@ -21,15 +21,15 @@ type load =
   | Plain : ('v, 's) a -> load
   | Padded : { x : ('v, 's) a; fill : 'v; pad : pad } -> load
 
-type monoid = Sum | Prod | Max | Min | Logsumexp
+type monoid = Sum | Prod | Max | Min
 type extreme = Max | Min
-type reduction = Monoid of monoid | Moments | Arg of extreme
+type reduction = Monoid of monoid | Logsumexp | Moments | Arg of extreme
 
 let accepts (type v s) r (dt : (v, s) D.t) =
   match (r, D.kind dt) with
   | Monoid (Sum | Prod), D.Boolean -> false
-  | (Monoid Logsumexp | Moments), D.Float -> true
-  | (Monoid Logsumexp | Moments), _ -> false
+  | (Logsumexp | Moments), D.Float -> true
+  | (Logsumexp | Moments), _ -> false
   | _ -> true
 
 type any_float = Any_float : (float, 's) D.t -> any_float [@@unboxed]

@@ -50,6 +50,7 @@ let rec outs_at : type e r d. (e, r) outs -> d outs_at = function
 
 let reduction_at : type e r d. (e, r) reduction -> d reduction_at = function
   | Monoid (m, k, dt) -> Reduction (Monoid (m, k, dt))
+  | Logsumexp (k, dt) -> Reduction (Logsumexp (k, dt))
   | Moments (k, dt) -> Reduction (Moments (k, dt))
   | Arg (x, k, dt) -> Reduction (Arg (x, k, dt))
 

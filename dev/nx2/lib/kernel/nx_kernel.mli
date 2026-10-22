@@ -51,7 +51,7 @@ type load =
       (** [x] padded with [fill] as [pad] says: the loop's shape is the padded
           one. *)
 
-type monoid = Sum | Prod | Max | Min | Logsumexp
+type monoid = Sum | Prod | Max | Min
 (** The type for monoids a reduction folds with. *)
 
 type extreme = Max | Min
@@ -68,8 +68,8 @@ type extreme = Max | Min
       wrap.
     - [Monoid Max] and [Monoid Min] are {!Prog.Maximum} and {!Prog.Minimum} of
       the terms: [-0] below [+0], any and all on booleans.
-    - [Monoid Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum:
-      [-∞] for no term or terms all [-∞], [+∞] where a term is [+∞] and none is
+    - [Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum: [-∞]
+      for no term or terms all [-∞], [+∞] where a term is [+∞] and none is
       NaN.
     - [Moments] is the terms' population mean, then their variance; NaN for no
       term. With an infinite term and no NaN term, the mean is the sum of the
@@ -91,8 +91,8 @@ type extreme = Max | Min
     In every library, a float [Sum] or [Prod] reduction adds or multiplies
     each output's terms in lane order ({!section-orders}), a float narrower
     than [float32] in [float32], and a complex [Prod] multiplies them so by
-    {!Prog.Mul}. [Logsumexp] and [Moments] reduce in two passes, each
-    summing so:
+    {!Prog.Mul}. [Logsumexp] and [Moments] reduce in two passes, which a
+    kernel may run on one read of terms that fit on chip, each summing so:
     - [Logsumexp]: the terms' maximum [m], then [c + log s], [c] being [m]
       where finite and [0] elsewhere and [s] the sum of [exp (x - c)], an
       [exp] of less than [-87] ([float32]) or [-708] ([float64]), the least
@@ -138,7 +138,7 @@ type extreme = Max | Min
     range of the terms up to [i] and [V] their variance, the mean [μ] is
     within [(4 D + 1) u R + u|μ|] of the exact one and the variance within
     [(7 D + 1) u V + (4 D² - 2 D) u R √V], to first order in [u]. *)
-type reduction = Monoid of monoid | Moments | Arg of extreme
+type reduction = Monoid of monoid | Logsumexp | Moments | Arg of extreme
 
 val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
 (** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
@@ -468,11 +468,11 @@ module type S = sig
   (** [reduce p ~shape ~axes rs ~dsts loads] reduces, for each [(r, k)] of
       [rs], output [k] of [p] over the loop of shape [shape] along [axes] by
       [r], in that output's carrier ({!carrier}), rounded once to its
-      destination's. Destinations follow [rs]: one for a [Monoid], the mean
-      then the variance for [Moments], the extreme then its [int64] position
-      for [Arg]. Each has the shape {!Shape.reduce} gives of [shape]. It
-      answers [Wrong_dtype] where {!accepts} is [false] of a reduction and its
-      output's dtype. *)
+      destination's. Destinations follow [rs]: one for a [Monoid] or a
+      [Logsumexp], the mean then the variance for [Moments], the extreme
+      then its [int64] position for [Arg]. Each has the shape {!Shape.reduce}
+      gives of [shape]. It answers [Wrong_dtype] where {!accepts} is [false]
+      of a reduction and its output's dtype. *)
 
   val scan :
     ?carry:any ->

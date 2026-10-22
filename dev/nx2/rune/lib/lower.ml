@@ -127,20 +127,15 @@ let body (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout prog loads =
 let output prog k =
   Nx_kernel.Prog.dtype prog (Iarray.get prog.Nx_kernel.Prog.outs k)
 
-let monoid (m : Nx_kernel.monoid) : Reduce.monoid option =
-  match m with
-  | Sum -> Some Sum
-  | Prod -> Some Prod
-  | Max -> Some Max
-  | Min -> Some Min
-  | Logsumexp -> None
+let monoid (m : Nx_kernel.monoid) : Reduce.monoid =
+  match m with Sum -> Sum | Prod -> Prod | Max -> Max | Min -> Min
 
 (* [reduction r] is the monoid and the output a reduction folds where a graph
    folds it, and its dtype. *)
 let reduction (type d a) (r : (d, a) P.reduction) =
   match r with
-  | Monoid (m, k, dt) -> Option.map (fun m -> (m, k, D.Any dt)) (monoid m)
-  | Moments _ | Arg _ -> None
+  | Monoid (m, k, dt) -> Some (monoid m, k, D.Any dt)
+  | Logsumexp _ | Moments _ | Arg _ -> None
 
 let rec reductions : type d r.
     (d, r) P.reductions -> (Reduce.monoid * int * D.any) list option = function

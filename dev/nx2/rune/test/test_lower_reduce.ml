@@ -221,7 +221,6 @@ let monoid_name : K.monoid -> string = function
   | Prod -> "prod"
   | Max -> "max"
   | Min -> "min"
-  | Logsumexp -> "logsumexp"
 
 let pp_case ppf c =
   let (D.Any dt) = c.dt in
@@ -1209,7 +1208,7 @@ let logsumexp () =
               layout = Nx_array.Layout.contiguous [| 2; 4 |];
               axes = Iarray.of_list [ 1 ];
               prog = identity D.Float32;
-              reductions = [ Monoid (Logsumexp, 0, D.Float32) ];
+              reductions = [ Logsumexp (0, D.Float32) ];
               loads = Iarray.of_list [ P.Plain x ];
             }))
   in

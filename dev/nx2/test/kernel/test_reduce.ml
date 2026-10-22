@@ -19,7 +19,7 @@ module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 module Support = Nx_kernels_support
 
-type monoid = Nx_kernel.monoid = Sum | Prod | Max | Min | Logsumexp
+type monoid = Nx_kernel.monoid = Sum | Prod | Max | Min
 
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let total s = Array.fold_left ( * ) 1 s
@@ -30,7 +30,6 @@ let monoid_name = function
   | Prod -> "Prod"
   | Max -> "Max"
   | Min -> "Min"
-  | Logsumexp -> "Logsumexp"
 
 (* Cases *)
 
@@ -588,7 +587,6 @@ let op (D.Any dt as d) m =
   | Min ->
       ( both fmin (fun x y -> if cmp x y <= 0 then x else y),
         if is_float then float infinity else I greatest )
-  | Logsumexp -> invalid_arg "op: Logsumexp"
 
 (* [ts] reduced in nx.cpu's order: blocks of 1024 terms in 16 lanes from
    the identity, or from their first term where [first], term t into lane
@@ -864,7 +862,7 @@ let zop narrow m =
   | Prod -> (zmul narrow, zof narrow 1. 0.)
   | Max -> (extreme (fun c -> c >= 0), zof narrow neg_infinity neg_infinity)
   | Min -> (extreme (fun c -> c <= 0), zof narrow infinity infinity)
-  | Sum | Logsumexp -> invalid_arg "zop: Sum or Logsumexp"
+  | Sum -> invalid_arg "zop: Sum"
 
 (* The quiet NaN of a clear sign bit in each part. *)
 let zmade narrow =
@@ -1380,14 +1378,14 @@ let test_nan_bits (b : Support.backend) () =
       Array.map Elements.elements dsts
     in
     equal ~msg:(msg "Logsumexp") (array (array string)) [| [| nan |] |]
-      (stat ~scan:false (Monoid Logsumexp) 1);
+      (stat ~scan:false Logsumexp 1);
     equal ~msg:(msg "Moments") (array (array string))
       [| [| nan |]; [| nan |] |]
       (stat ~scan:false Moments 2);
     equal ~msg:(msg "Moments, scanned") (array (array string))
       [| running; running |]
       (stat ~scan:true Moments 2);
-    let lse = (stat ~scan:true (Monoid Logsumexp) 1).(0) in
+    let lse = (stat ~scan:true Logsumexp 1).(0) in
     equal ~msg:(msg "Logsumexp, scanned, from the first NaN") (array string)
       (Array.sub running i (n - i))
       (Array.sub lse i (n - i));
@@ -2290,6 +2288,7 @@ let reduction_name : Nx_kernel.reduction -> string = function
   | Arg Max -> "Arg Max"
   | Arg Min -> "Arg Min"
   | Monoid m -> monoid_name m
+  | Logsumexp -> "Logsumexp"
   | Moments -> "Moments"
 
 let pp_stat ppf c =
@@ -2321,7 +2320,7 @@ let stat_case =
      let* d = of_list ~pp:pp_dtype (floats @ floats @ ints) in
      let* r =
        of_list
-         (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Monoid Logsumexp; Moments ]
+         (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
           else Nx_kernel.[ Arg Max; Arg Min ])
      in
      let* s = shape_gen in
@@ -2358,7 +2357,7 @@ let stat_dsts c =
   match c.r with
   | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 s) |]
   | Moments -> [| like (); like () |]
-  | Monoid _ -> [| like () |]
+  | Monoid _ | Logsumexp -> [| like () |]
 
 (* [c] by [k] into fresh destinations, their terms; [None] if declined. *)
 let run_stat k c =
@@ -2473,8 +2472,9 @@ let stat_expected c =
   let one ts =
     match c.r with
     | Arg e -> arg_expect d e ts
-    | Monoid _ -> lse_expect u ts
+    | Logsumexp -> lse_expect u ts
     | Moments -> moments_expect u ts
+    | Monoid _ -> invalid_arg "stat_expected: a monoid"
   in
   let all = List.map one per in
   Array.init (Array.length (stat_dsts c)) (fun k ->
@@ -2532,7 +2532,7 @@ let stat_scan_case =
      let* d = of_list ~pp:pp_dtype (floats @ floats @ ints) in
      let* r =
        of_list
-         (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Monoid Logsumexp ]
+         (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp ]
           else Nx_kernel.[ Arg Max; Arg Min ])
      in
      let* s =
@@ -2566,7 +2566,7 @@ let run_stat_scan k (c : stat) =
     match c.r with
     | Arg _ -> [| like (A.dtype x); like D.Int64 |]
     | Moments -> [| like (A.dtype x); like (A.dtype x) |]
-    | Monoid _ -> [| like (A.dtype x) |]
+    | Monoid _ | Logsumexp -> [| like (A.dtype x) |]
   in
   match
     K.scan (identity (dtype_of c.x)) ~axis:c.axes.(0) (c.r, 0) ~dsts
@@ -2773,7 +2773,7 @@ let law_stat_scan (b : Support.backend) (c : stat) =
   | Some got ->
       let want = stat_scan_expected c in
       let wanted p = Array.exists (Array.exists p) want in
-      let lse = c.r = Monoid Logsumexp in
+      let lse = c.r = Logsumexp in
       cover "a NaN" (lse && wanted (function Is (Bits _) -> true | _ -> false));
       cover "a -∞ term"
         (lse
@@ -2866,7 +2866,7 @@ let spread_examples =
   List.concat_map
     (fun dt ->
       List.map
-        (fun seed -> { r = Nx_kernel.Monoid Logsumexp; dt; spread = "ramp"; n = 70_000; seed })
+        (fun seed -> { r = Nx_kernel.Logsumexp; dt; spread = "ramp"; n = 70_000; seed })
         [ 0; 1; 2; 3 ])
     floats
 
@@ -2876,7 +2876,7 @@ let spread_case =
       Format.fprintf ppf "%s of %d %a terms, %s (seed %d)" (reduction_name c.r)
         c.n pp_dtype c.dt c.spread c.seed)
     (let open Gen in
-     let* r = of_list Nx_kernel.[ Monoid Logsumexp; Moments ] in
+     let* r = of_list Nx_kernel.[ Logsumexp; Moments ] in
      let* dt = of_list floats in
      let* spread = of_list (List.map fst spreads) in
      let* n = of_list [ 1; 2; 17; 1023; 1025; 4097; 70_000 ] in
@@ -2930,7 +2930,7 @@ let law_record (b : Support.backend) c =
     if bits = 32 then Int64.of_int32 (Int32.bits_of_float x) else Int64.bits_of_float x
   in
   match c.r with
-  | Monoid _ ->
+  | Logsumexp ->
       let m = value (reduce_terms b.kernels c.dt (Monoid Max) xs).(0).(0) in
       let c0 = if Float.is_finite m then m else 0. in
       let cut = if bits = 32 then -87. else -708. in
@@ -2955,8 +2955,8 @@ let stat_examples =
     [
       (* Groups of blocks on several threads, an outlier among offset terms. *)
       stat_example Moments f32 [| 70_000 |] [| 0 |] ~outliers:5000 "offset";
-      stat_example (Monoid Logsumexp) f32 [| 3000 |] [| 0 |] ~specials:20 "wide";
-      stat_example (Monoid Logsumexp) f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
+      stat_example Logsumexp f32 [| 3000 |] [| 0 |] ~specials:20 "wide";
+      stat_example Logsumexp f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
       stat_example Moments f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
       stat_example (Arg Max) f32 [| 46; 13; 2 |] [| 2 |] ~specials:300 "ties";
       stat_example (Arg Min) (D.Any D.Int64) [| 5; 2000 |] [| 0 |] "small";
@@ -2965,7 +2965,7 @@ let stat_examples =
       stat_example (Arg Min) f32 [| 3 |] [||] "small";
       stat_example Moments f32 [| 3; 0 |] [| 1 |] "small";
       stat_example Moments f32 [| 0; 3 |] [| 0 |] "small";
-      stat_example (Monoid Logsumexp) f64 [| 2; 0 |] [| 1 |] "small";
+      stat_example Logsumexp f64 [| 2; 0 |] [| 1 |] "small";
       stat_example (Arg Max) (D.Any D.Uint8) [| 200; 64 |] [| 1 |] "small";
       (* Every block's extreme ties with the others'. *)
       stat_example (Arg Max) (D.Any D.Int16) [| 70_000 |] [| 0 |] "small";
@@ -2998,7 +2998,7 @@ let test_in_place (b : Support.backend) () =
           A.Any (A.create Rig.host D.Int64 (shape_of x))
       | _ -> fresh x
     in
-    let n = match r with Moments | Arg _ -> 2 | Monoid _ -> 1 in
+    let n = match r with Moments | Arg _ -> 2 | Monoid _ | Logsumexp -> 1 in
     let want = scan r axis x (Array.init n dst) in
     let x' = copy x in
     let dsts = Array.init n (fun j -> if j = k then x' else dst j) in
@@ -3012,7 +3012,7 @@ let test_in_place (b : Support.backend) () =
   check "a Moments scan's mean in place" Moments 0 terms 0;
   check "a Moments scan's variance in place" Moments 0 terms 1;
   check "running sums in place" (Monoid Sum) 1 long 0;
-  check "a Logsumexp scan in place" (Monoid Logsumexp) 1 long 0;
+  check "a Logsumexp scan in place" Logsumexp 1 long 0;
   check "an Arg scan's extreme in place" (Arg Max) 1 long 0;
   let codes = [| "\001\124"; "\000\060"; "\001\252" |] in
   let x = Elements.of_elements (D.Any D.Float16) [| 3 |] codes in
@@ -3032,7 +3032,7 @@ let lanes_case =
   Gen.with_pp pp_stat
     (let open Gen in
      let* r =
-       of_list Nx_kernel.[ Arg Max; Arg Min; Monoid Logsumexp; Moments ]
+       of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
      in
      let* d =
        of_list ~pp:pp_dtype
@@ -3088,7 +3088,7 @@ let law_lanes (b : Support.backend) (c : stat) =
 let lanes_examples =
   Nx_kernel.
     [
-      stat_example (Monoid Logsumexp) f32 [| 17; 5000 |] [| 1 |] "wide";
+      stat_example Logsumexp f32 [| 17; 5000 |] [| 1 |] "wide";
       stat_example (Arg Max) f32 [| 17; 5000 |] [| 1 |] ~specials:100 "ties";
       stat_example Moments f32 [| 17; 5000 |] [| 1 |] "offset";
       stat_example Moments f64 [| 3; 1000 |] [| 1 |] ~specials:100 "small";
@@ -3100,7 +3100,7 @@ let lanes_examples =
 let stat_scan_examples =
   let vector xs =
     {
-      r = Monoid Logsumexp;
+      r = Logsumexp;
       axes = [| 0 |];
       x = A.Any (A.of_array D.Float32 [| Array.length xs |] xs);
       views = [];
@@ -3109,15 +3109,15 @@ let stat_scan_examples =
   in
   Nx_kernel.
     [
-      stat_example (Monoid Logsumexp) f32 [| 20_000 |] [| 0 |] ~specials:3000
+      stat_example Logsumexp f32 [| 20_000 |] [| 0 |] ~specials:3000
         "wide";
-      stat_example (Monoid Logsumexp) f64 [| 5000; 3 |] [| 0 |] "small";
+      stat_example Logsumexp f64 [| 5000; 3 |] [| 0 |] "small";
       (* Sixteen chunks side by side, and sixteen slices, contiguous and
          staged. *)
-      stat_example (Monoid Logsumexp) f32 [| 70_000 |] [| 0 |] ~specials:3000
+      stat_example Logsumexp f32 [| 70_000 |] [| 0 |] ~specials:3000
         "small";
-      stat_example (Monoid Logsumexp) f32 [| 300; 40 |] [| 0 |] "wide";
-      stat_example (Monoid Logsumexp) f64 [| 40; 300 |] [| 1 |] "offset";
+      stat_example Logsumexp f32 [| 300; 40 |] [| 0 |] "wide";
+      stat_example Logsumexp f64 [| 40; 300 |] [| 1 |] "offset";
       stat_example (Arg Min) f64 [| 70_000 |] [| 0 |] ~specials:3000 "ties";
       stat_example (Arg Max) f32 [| 9000 |] [| 0 |] ~specials:300 "ties";
       stat_example (Arg Min) (D.Any D.Int32) [| 300; 5 |] [| 0 |] "small";
@@ -3229,7 +3229,7 @@ let guard_case =
          @ (if boolean then [] else Nx_kernel.[ Monoid Sum; Monoid Prod ])
          @ (if float then Nx_kernel.[ Moments; Moments ] else [])
          @ Nx_kernel.[ Arg Max; Arg Min ]
-         @ if float then Nx_kernel.[ Monoid Logsumexp; Monoid Logsumexp ]
+         @ if float then Nx_kernel.[ Logsumexp; Logsumexp ]
            else [])
      in
      let* n = inner in
@@ -3269,10 +3269,10 @@ let law_guards (b : Support.backend) ((g : guard), side) =
   let is r = g.r = r in
   cover "a monoid reduced" ((not g.scan) && is (Monoid Sum));
   cover "a monoid scanned" (g.scan && is (Monoid Max));
-  cover "Logsumexp" (is (Monoid Logsumexp));
+  cover "Logsumexp" (is Logsumexp);
   cover "an Arg" (is (Arg Max) || is (Arg Min));
   cover "an Arg or Logsumexp scanned"
-    (g.scan && (is (Arg Max) || is (Arg Min) || is (Monoid Logsumexp)));
+    (g.scan && (is (Arg Max) || is (Arg Min) || is Logsumexp));
   cover "Moments reduced" ((not g.scan) && is Moments);
   cover "Moments scanned" (g.scan && is Moments);
   cover "the innermost axis reduced" (Array.mem (rank - 1) g.axes);
@@ -3298,7 +3298,7 @@ let law_guards (b : Support.backend) ((g : guard), side) =
     match g.r with
     | Arg _ -> [| (dt, s); (D.Any D.Int64, s) |]
     | Moments -> [| (dt, s); (dt, s) |]
-    | Monoid _ -> [| (dt, s) |]
+    | Monoid _ | Logsumexp -> [| (dt, s) |]
   in
   let call xs ds =
     let p = identity dt and loads = [| plain_of xs.(0) |] in
@@ -3349,6 +3349,7 @@ type fused = {
 
 let reduction_label : Nx_kernel.reduction -> string = function
   | Monoid m -> monoid_name m
+  | Logsumexp -> "Logsumexp"
   | Arg Max -> "Arg Max"
   | Arg Min -> "Arg Min"
   | Moments -> "Moments"
@@ -3429,10 +3430,10 @@ let templates (D.Any dt as d) rank =
 let reductions_of ~scan (D.Any dt) : Nx_kernel.reduction list =
   match D.kind dt with
   | D.Float when scan ->
-      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Monoid Logsumexp;
+      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Logsumexp;
         Arg Max; Arg Min; Moments ]
   | D.Float ->
-      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Monoid Logsumexp;
+      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Logsumexp;
         Arg Max; Arg Min; Moments ]
   | D.Complex when scan ->
       [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Arg Max; Arg Min ]
@@ -3588,13 +3589,13 @@ let fused_examples =
     fused_example ~scan:true 3 (Monoid Max) [| 9000; 3 |] [| 0 |];
     fused_example ~scan:true 2 (Monoid Prod) [| 20000 |] [| 0 |];
     fused_example 2 (Monoid Sum) [| 5000 |] [| 0 |];
-    fused_example 0 (Monoid Logsumexp) [| 300; 20 |] [| 0 |];
+    fused_example 0 Logsumexp [| 300; 20 |] [| 0 |];
     fused_example 9 (Arg Max) [| 3; 40 |] [| 1 |];
     fused_example ~scan:true 9 Moments [| 3; 100 |] [| 1 |];
     fused_example ~scan:true 9 (Monoid Sum) [| 20000 |] [| 0 |];
     fused_example ~scan:true 10 (Monoid Max) [| 20000 |] [| 0 |];
-    fused_example ~scan:true 0 (Monoid Logsumexp) [| 20000 |] [| 0 |];
-    fused_example ~scan:true 1 (Monoid Logsumexp) [| 9000; 3 |] [| 0 |];
+    fused_example ~scan:true 0 Logsumexp [| 20000 |] [| 0 |];
+    fused_example ~scan:true 1 Logsumexp [| 9000; 3 |] [| 0 |];
     fused_example ~scan:true 3 (Arg Min) [| 20000 |] [| 0 |];
     fused_example ~scan:true 9 (Arg Max) [| 3; 40 |] [| 1 |];
   ]
@@ -3611,7 +3612,7 @@ let fused_dsts (b : Support.backend) c =
   let (D.Any dt) = P.dtype c.prog (Iarray.get c.prog.outs c.k) in
   let make () = A.Any (A.create b.device dt y) in
   match c.red with
-  | Monoid _ -> [| make () |]
+  | Monoid _ | Logsumexp -> [| make () |]
   | Moments -> [| make (); make () |]
   | Arg _ -> [| make (); A.Any (A.create b.device D.Int64 y) |]
 
@@ -3644,7 +3645,7 @@ let law_fused (b : Support.backend) c =
   cover "a scan" c.scan;
   cover "a Moments scan" (c.scan && c.red = Moments);
   cover "a stateful scan"
-    (c.scan && (c.red = Monoid Logsumexp || c.red = Arg Max || c.red = Arg Min));
+    (c.scan && (c.red = Logsumexp || c.red = Arg Max || c.red = Arg Min));
   cover "a scan past a chunk" (c.scan && s.(c.axes.(0)) > 4096);
   cover "a row of lanes" c.lanes;
   cover "a lane or fewer terms an output" (terms <= 16);
@@ -3896,7 +3897,7 @@ let carried_kinds =
         (function
         | Sum -> Some (infinity, neg_infinity)
         | Prod -> Some (0., infinity)
-        | Max | Min | Logsumexp -> None);
+        | Max | Min -> None);
     }
   in
   let float dt = Carried (dt, float_values) in
@@ -3914,7 +3915,7 @@ let carried_kinds =
             (function
             | Sum -> Some (c infinity 0., c neg_infinity 1.)
             | Prod -> Some (c 0. 0., c infinity 0.)
-            | Max | Min | Logsumexp -> None);
+            | Max | Min -> None);
         } )
   in
   let ints dt ~small ~edges =
@@ -4123,7 +4124,7 @@ let law_carry (b : Support.backend) c =
         | Sum -> Add
         | Prod -> Mul
         | Max -> Maximum
-        | Min | Logsumexp -> Minimum
+        | Min -> Minimum
       in
       let combine =
         P.v
@@ -4164,7 +4165,7 @@ let test_carry_refusals (b : Support.backend) () =
   let refuses msg want got = equal ~msg Elements.answer want got in
   let carry = f32 [| 2; 1 |] in
   refuses "a Logsumexp's carry" A.Bad_arity
-    (scan D.Float32 ~carry (Monoid Logsumexp) [| f32 [| 2; 3 |] |]);
+    (scan D.Float32 ~carry Logsumexp [| f32 [| 2; 3 |] |]);
   refuses "a Moments' carry" A.Bad_arity
     (scan D.Float32 ~carry Moments [| f32 [| 2; 3 |]; f32 [| 2; 3 |] |]);
   refuses "an Arg's carry" A.Bad_arity
@@ -4322,7 +4323,7 @@ let stat_into_case =
   Gen.with_pp pp_stat_into
     (let open Gen in
      let* r =
-       of_list Nx_kernel.[ Arg Max; Arg Min; Monoid Logsumexp; Moments ]
+       of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
      in
      let arg = match r with Nx_kernel.Arg _ -> true | _ -> false in
      let* (D.Any dt as d) =
@@ -4390,7 +4391,7 @@ let stat_run k ~scan (c : stat) (D.Any d) x =
     match c.r with
     | Arg _ -> [| make d; make D.Int64 |]
     | Moments -> [| make d; make d |]
-    | Monoid _ -> [| make d |]
+    | Monoid _ | Logsumexp -> [| make d |]
   in
   let p = identity (dtype_of x) and loads = [| plain_of x |] in
   let answer =
@@ -4528,7 +4529,7 @@ let test_many_reductions (b : Support.backend) () =
       [| 1.; 5.; 2.; 0.5; 7.; 3.; 9.; 4.; 4.; 2.; 8.; 6. |]
   in
   let width : Nx_kernel.reduction -> int = function
-    | Monoid _ -> 1
+    | Monoid _ | Logsumexp -> 1
     | Arg _ | Moments -> 2
   in
   (* An Arg's second destination is its int64 positions. *)

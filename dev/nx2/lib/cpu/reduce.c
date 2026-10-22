@@ -3765,10 +3765,12 @@ static int carried(const call *c, const nx_array *cy, const nx_array *y) {
 }
 
 /* reduce.c's code of the Nx_kernel.reduction [r]: a Monoid's monoid,
-   NX_CPU_ARG_MAX or NX_CPU_ARG_MIN for an Arg, NX_CPU_MOMENTS for
-   Moments. */
+   NX_CPU_LOGSUMEXP for Logsumexp, NX_CPU_ARG_MAX or NX_CPU_ARG_MIN for an
+   Arg, NX_CPU_MOMENTS for Moments. */
 static int code_of(value r) {
-  if (Is_long(r)) return NX_CPU_MOMENTS;
+  if (Is_long(r))
+    return Long_val(r) == NX_REDUCTION_LOGSUMEXP ? NX_CPU_LOGSUMEXP
+                                                 : NX_CPU_MOMENTS;
   int k = Int_val(Field(r, 0));
   return Tag_val(r) == 0 ? k : NX_CPU_ARG_MAX + k;
 }
@@ -4217,7 +4219,9 @@ value nx_cpu_reduce_byte(value *argv, int argn) {
    [vcarry] where it is Some. */
 value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
                   value vpads, value vcarry) {
-  call c = {.op = Is_long(Field(vr, 0)) ? MOMENTS : SCAN, .naxes = 1};
+  value k = Field(vr, 0);
+  int moments = Is_long(k) && Long_val(k) == NX_REDUCTION_MOMENTS;
+  call c = {.op = moments ? MOMENTS : SCAN, .naxes = 1};
   if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
   int done = 0;
   value r = in_place(&c, vp, vr, vdsts, vloads, vpads, vcarry, &done);

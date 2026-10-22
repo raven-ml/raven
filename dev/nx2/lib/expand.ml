@@ -93,6 +93,7 @@ let floats ~by (Value.Any x) =
 (* The output a reduction reads and its result's dtype. *)
 let target : type d a. (d, a) Value.reduction -> int * D.any = function
   | Monoid (_, k, dt) -> (k, D.Any dt)
+  | Logsumexp (k, dt) -> (k, D.Any dt)
   | Moments (k, dt) -> (k, D.Any dt)
   | Arg (_, k, dt) -> (k, D.Any dt)
 
@@ -108,7 +109,7 @@ let parts (D.Any dt) =
 (* Whether [r] is a sum of complex numbers, which adds their parts. *)
 let complex_sum : type d a. (d, a) Value.reduction -> bool = function
   | Monoid (Sum, _, dt) -> parts (D.Any dt) <> None
-  | Monoid _ | Moments _ | Arg _ -> false
+  | Monoid _ | Logsumexp _ | Moments _ | Arg _ -> false
 
 (* Whether a loop of [prog] by [r] is plain: the identity of its operand,
    accumulated and rounded in the operand's own dtype, and no complex sum. Any
@@ -124,7 +125,7 @@ let plain prog r =
 let simple_scan (type d a) prog (r : (d, a) Value.reduction) =
   match r with
   | Monoid ((Sum | Prod | Max | Min), _, _) -> plain prog r
-  | Monoid (Logsumexp, _, _) | Moments _ | Arg _ -> false
+  | Logsumexp _ | Moments _ | Arg _ -> false
 
 (* Whether a reduction has no expansion: one simple scan's reduction. *)
 let simple_reduce (type d q) prog (rs : (d, q) Value.reductions) =
@@ -196,7 +197,7 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         | Some _ | None -> plain b
       in
       Some (cast_to apply ~by dt v)
-  | Moments _ | Arg _ -> None
+  | Logsumexp _ | Moments _ | Arg _ -> None
 
 (* Optional reductions *)
 
@@ -693,7 +694,7 @@ let reduce (type d q) (apply : 'a. by:string -> 'a Value.prim -> 'a) ~by layout
   in
   let shape = L.shape layout in
   let one : type a. (d, a) Value.reduction -> a option = function
-    | Monoid (Logsumexp, k, dt) ->
+    | Logsumexp (k, dt) ->
         let (Floats x) =
           floats ~by
             (body apply ~by layout prog k loads
@@ -754,7 +755,7 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
       in
       let mean, var = running_moments apply ~by (L.shape layout) axis x in
       Some (cast_to apply ~by dt mean, cast_to apply ~by dt var)
-  | Monoid (Logsumexp, k, dt) ->
+  | Logsumexp (k, dt) ->
       let (Floats x) =
         floats ~by
           (body apply ~by layout prog k loads
