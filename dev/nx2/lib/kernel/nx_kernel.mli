@@ -628,16 +628,20 @@ module type S = sig
 
       Each output's products fall into blocks of 4096 consecutive ones, in C
       order of the contracting pairs' indices, and nx cuts a contraction's
-      contracted extent only at the edges of its blocks. Each library
-      states the order in which it sums a block from [+0]. In [Lane] order,
+      contracted extent only at the edges of its blocks. In [Lane] order,
+      each library states the order in which it sums a block from [+0], and
       the blocks' sums are combined by lane order's tree of blocks, two
       nodes by {!Prog.Add} in [acc], and then [init] is added as [acc] holds
       it. In [Chain] order, each library states an association that
       composes by passing a part's result, in [acc], as the next part's
-      [init]: one chain that the next part continues, or the blocks' sums
-      added in turn to [init], or without one to the first block's. So a
-      contraction cut over devices, of one library or of several, has the
-      bits of one call. A NaN result's sign and payload are unspecified. *)
+      [init]. It is one chain from [init] or [+0], which each block
+      continues, or each block summed from [+0] in an order the library
+      states and the blocks' sums added in turn to [init], or without one
+      to the first block's. So a contraction cut over devices of one
+      library has the bits of that library's one call. Cut over devices of
+      several libraries, each block sums as the library that computes it
+      states, and the blocks compose by the order's rule. A NaN result's
+      sign and payload are unspecified. *)
 
   (** {1:fft Fourier transforms}
 
