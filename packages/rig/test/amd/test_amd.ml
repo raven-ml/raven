@@ -2136,6 +2136,64 @@ let regrown_compute () =
   regrown_past g "COMPUTE:0" fill ~first:size ~past:(4 * size) ~after;
   Option.iter (A.free g) ib
 
+(* A growth destroys the queue an install replaced beside the installed one,
+   on which a value waits: the compute ring grows and its queue is installed,
+   the queue's first work is a value held behind a word, the ring grows again
+   past it at once, which destroys the replaced queue, and once the word lets
+   the value go it is reached, and a write after it, on the larger queue,
+   lands. The device opens on a small compute ring, so that both growths make
+   larger ones. *)
+let regrown_beside_held () =
+  let c, k, s =
+    A.set_first_sizes ~compute:ring_bytes ~copy:(16 lsl 20)
+      ~segment:(2 lsl 20)
+  in
+  ignore (A.set_first_sizes ~compute:ring_bytes ~copy:k ~segment:s);
+  let t =
+    Fun.protect
+      ~finally:(fun () ->
+        ignore (A.set_first_sizes ~compute:c ~copy:k ~segment:s))
+      S.open_
+  in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  let g = t.g in
+  waits_on g;
+  let nop, ib = compute_words g [| pm4_nop |] in
+  let fill n =
+    E.words ~queue:"COMPUTE:0"
+      (Array.init n (fun i -> nop.(i mod Array.length nop)))
+  in
+  let _, size = A.ring g "COMPUTE:0" in
+  equal room_answer ~msg:"words past the ring" `Grow (E.room g [| fill size |]);
+  equal grown ~msg:"the first growth" Grown (A.grow g);
+  equal room_answer ~msg:"once grown, the device idle" `Fits
+    (E.room g [| fill size |]);
+  let _, installed = A.ring g "COMPUTE:0" in
+  at_least int ~msg:"the installed ring's size" ~than:(2 * size) installed;
+  let flag = Option.get (A.alloc g Pinned 8) in
+  H.set64 (host flag) 0;
+  let v = A.signaled g + 1 in
+  equal answer ~msg:"the hold" `Ok
+    (E.submit g ~v ~waits:[| (address flag, 1) |] [||]);
+  let past = fill installed in
+  equal room_answer ~msg:"words past the installed ring" `Grow
+    (E.room g [| past |]);
+  equal grown ~msg:"the growth beside the held value" Grown (A.grow g);
+  H.set64 (host flag) 1;
+  S.reached g v;
+  equal room_answer ~msg:"the value reached" `Fits (E.room g [| past |]);
+  let out = Option.get (A.alloc g Pinned 64) in
+  H.write (host out) (String.make 64 '\000');
+  let write, ib' =
+    compute_words g (words (Pm4.write_data (Memory (address out)) 0x2a))
+  in
+  let r = device g in
+  go r [| past |];
+  go r [| E.words ~queue:"COMPUTE:0" write |];
+  equal string ~msg:"the word written after the growths" (le32s [ 0x2a ])
+    (H.read (host out) 4);
+  List.iter (A.free g) ((flag :: out :: Option.to_list ib) @ Option.to_list ib')
+
 let rings =
   group ~timeout:300. "rings"
     [
@@ -2144,6 +2202,10 @@ let rings =
       test
         "a second compute growth before an install replaces the first's queue"
         regrown_compute;
+      test
+        "a compute growth destroys the replaced queue beside one holding a \
+         value"
+        regrown_beside_held;
       test "the compute ring grows as a new queue" (grown_ring true);
       test "the copy ring grows as a new queue" (grown_ring false);
       prop ~count:24 "a submission of parts joined across the queues runs whole"
