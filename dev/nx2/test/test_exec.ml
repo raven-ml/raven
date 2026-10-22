@@ -19,8 +19,8 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
-(* Counting nx.cpu, declining every [Add], [Less], [Logsumexp] and [Arg]
-   reduction, sort and contraction, as a library may, and counting those
+(* Counting nx.cpu, declining every copy, [Add], [Less], [Logsumexp] and
+   [Arg] reduction, sort and contraction, as a library may, and counting those
    declines. *)
 module Refusing = struct
   include C
@@ -31,6 +31,9 @@ module Refusing = struct
   let decline () =
     Atomic.incr declines;
     A.Declined
+
+  let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
+    match k with Copy -> decline () | _ -> C.apply1 k ~dst x
 
   let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
     match k with
@@ -51,6 +54,7 @@ module Refusing = struct
 end
 
 module Refuse = (val Nx.devices ~kernels:(module Refusing) [ m 2 ])
+module Refuse2 = (val Nx.devices ~kernels:(module Refusing) [ m 2; m 3 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
@@ -275,6 +279,23 @@ let declines =
               Nx.logsumexp ~axes:[ 1 ] x);
           refused_once "Nx.argmax" "Reduce Arg Max" "float32" (fun () ->
               Nx.argmax ~axis:1 x));
+      test "a decline on a set cut over devices raises once" (fun () ->
+          let x =
+            Nx.place (Refuse2.split ~axis:0)
+              (on_host Plain D.Float32 [| 2; 2 |] [| 4.; 3.; 2.; 1. |])
+          in
+          refused_once "Nx.sort" "Sort" "float32" (fun () -> fst (Nx.sort x)));
+      test "a decline in a computation by partials raises once" (fun () ->
+          let x =
+            Nx.place (Refuse2.split ~axis:0)
+              (on_host Plain D.Float32 [| 4 |] [| 4.; 3.; 2.; 1. |])
+          in
+          refused_once "Nx.argmax" "Reduce Arg Max" "float32" (fun () ->
+              Nx.argmax ~axis:0 x));
+      test "a declined copy raises once" (fun () ->
+          let x = refused [| 4.; 3.; 2.; 1. |] in
+          refused_once "Nx.reshape" "Copy" "float32" (fun () ->
+              Nx.reshape [| 4 |] (Nx.transpose x)));
       test "a declined operation kills no donated operand" (fun () ->
           (* [x] borrows the host's memory, which no result takes: a sort
              computes on the general path, a sum and a comparison on the fast
