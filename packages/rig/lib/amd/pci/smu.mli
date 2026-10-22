@@ -39,9 +39,22 @@ val clock_request : clock:int -> int -> int
 type t
 (** The type for power managers. *)
 
-val make : Regs.t -> Gmc.t -> table:int -> t
-(** [make r gmc ~table] is the power manager, whose driver table is at the
-    physical address [table] of the GPU's memory. *)
+type levels
+(** The type for the frequencies of each clock that power managers of one
+    GPU reported, by the version of the firmware that ran: the firmware's
+    tables give them. *)
+
+val levels : unit -> levels
+(** [levels ()] holds no frequencies. *)
+
+val make : Regs.t -> Gmc.t -> table:int -> levels:levels -> t
+(** [make r gmc ~table ~levels] is the power manager, whose driver table is at
+    the physical address [table] of the GPU's memory. Before its first
+    clock request it asks the firmware's version, then asks the firmware
+    for a clock's frequencies only if [levels] lacks them for that version,
+    and adds them there, so that the GPU's later power managers made with
+    [levels] over the same firmware ask for none. The caller gives [levels]
+    to the power managers of one GPU alone, one at a time. *)
 
 val alive : t -> bool
 (** [alive s] is [true] iff the power manager's firmware responds to a message

@@ -173,21 +173,29 @@ let read_table ~vram ~mmio ~memory n =
   end
 
 (* What a process keeps of a GPU across its boots: the discovery table a boot
-   last read whole, with its parse. A table's first 12 bytes hold its
+   last read whole, with its parse, and the frequencies of each clock the
+   power managers of its boots reported. A table's first 12 bytes hold its
    signature, version, size and the checksum of the rest, so a later boot
-   reads them alone and keeps the table if they are its first bytes. *)
-type kept = { mutable table : (string * Discovery.t) option }
+   reads them alone and keeps the table if they are its first bytes. The
+   frequencies are kept by the version of the firmware that reported them,
+   which a boot asks in one message, since a partial boot runs whatever
+   firmware the last session left; otherwise each boot would ask for them
+   again, 16 messages on an R9700, 1 ms. *)
+type kept = {
+  mutable table : (string * Discovery.t) option;
+  levels : Smu.levels;
+}
 
-let kept () = { table = None }
+let kept () = { table = None; levels = Smu.levels () }
 let header_bytes = 12
 
 let table ?kept ~vram ~mmio ~memory () =
   let known =
-    match kept with
-    | Some { table = Some (s, d) } ->
+    match Option.bind kept (fun k -> k.table) with
+    | Some (s, d) ->
         let head = read_table ~vram ~mmio ~memory header_bytes in
         if String.starts_with ~prefix:head s then Some d else None
-    | Some { table = None } | None -> None
+    | None -> None
   in
   match known with
   | Some d -> Ok d
@@ -567,7 +575,7 @@ let start ~gpus ~kept f first =
       memory = Memory.create ?link f tables ~bar:vram_bar;
       ih = Ih.make r gmc vram ~rings:pool.ih_rings ~wptr:pool.ih_wptr;
       psp = Psp.make r gmc vram tables pool.psp;
-      smu = Smu.make r gmc ~table:pool.smu_table;
+      smu = Smu.make r gmc ~table:pool.smu_table ~levels:kept.levels;
       gfx = Gfx.make r gmc vram doorbells ~mqds:pool.mqds;
       sdma = Sdma.make r;
       images;
@@ -871,7 +879,9 @@ let reset f =
         let r = Regs.make f mmio l ~vf in
         stuck (fun () ->
             let gmc = Gmc.make r vram in
-            let smu = Smu.make r gmc ~table:0 in
+            (* A reset runs with the function alone, before a boot, and keeps
+               no levels. *)
+            let smu = Smu.make r gmc ~table:0 ~levels:(Smu.levels ()) in
             (* A fabric's GPUs reset together, as their kernel driver does when
                it takes them back: a GPU of a fabric is only stopped. *)
             let hive = Gmc.hive gmc in

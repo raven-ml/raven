@@ -26,16 +26,24 @@ let dpm mp1 ~features clock =
 
 (* The power manager *)
 
+(* Each clock's frequencies, by clock, by the firmware version that reported
+   them. *)
+type levels = (int * (int, int list) Hashtbl.t) list ref
+
+let levels () = ref []
+
 type t = {
   r : Regs.t;
   gmc : Gmc.t;
   mp0 : Discovery.version;
   mp1 : Discovery.version;
   table : int; (* the driver table's physical address *)
-  levels : (int, int list) Hashtbl.t; (* each clock's frequencies, read once *)
+  levels : levels;
+  mutable running : (int, int list) Hashtbl.t option;
+      (* the frequencies of the firmware this value talks to, once asked *)
 }
 
-let make r gmc ~table =
+let make r gmc ~table ~levels =
   let l = Regs.layout_of r in
   let mp1 = Regs.version l D.mp1_hwid in
   {
@@ -44,7 +52,8 @@ let make r gmc ~table =
     mp0 = Regs.version l D.mp0_hwid;
     mp1;
     table;
-    levels = Hashtbl.create 4;
+    levels;
+    running = None;
   }
 
 let id s name =
@@ -130,8 +139,27 @@ let features s =
    smu_v13_0.h and smu_v14_0.h). *)
 let max_levels = 16
 
+(* The frequencies of the firmware that runs, which its version names: one
+   message per power manager value. *)
+let running s =
+  match s.running with
+  | Some h -> h
+  | None ->
+      let v = send s (id s "PPSMC_MSG_GetSmuVersion") 0 in
+      let h =
+        match List.assoc_opt v !(s.levels) with
+        | Some h -> h
+        | None ->
+            let h = Hashtbl.create 4 in
+            s.levels := (v, h) :: !(s.levels);
+            h
+      in
+      s.running <- Some h;
+      h
+
 let frequencies s clock =
-  match Hashtbl.find_opt s.levels clock with
+  let known = running s in
+  match Hashtbl.find_opt known clock with
   | Some l -> l
   | None ->
       let by_index = id s "PPSMC_MSG_GetDpmFreqByIndex" in
@@ -143,7 +171,7 @@ let frequencies s clock =
              (strf "the power manager counts %d levels of clock %d, past %d" n
                 clock max_levels));
       let l = List.init n q in
-      Hashtbl.replace s.levels clock l;
+      Hashtbl.replace known clock l;
       l
 
 (* A clock whose DPM is off, as before the power manager's features are enabled,
