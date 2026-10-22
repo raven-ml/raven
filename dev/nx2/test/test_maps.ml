@@ -453,7 +453,7 @@ let rules =
    memory where rig holds it exclusive and it fits the result. *)
 let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
   match x with
-  | Value.Array { a; _ } -> a
+  | Value.Array r -> r.a
   | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
       fail "not on one device"
 

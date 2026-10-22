@@ -437,9 +437,9 @@ let item i x =
   in
   let one = List.mapi at i in
   match readable ~by x with
-  | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
+  | Value.Array r when Rig.reaches Rig.host (Nx_array.device r.a) ->
       let start (w : Nx_array.Move.range) = w.start in
-      Nx_array.get a (Array.of_list (List.map start one))
+      Nx_array.get r.a (Array.of_list (List.map start one))
   | x ->
       let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), x)) in
       Nx_array.get (Exec.on_host ~by v) (Array.make r 0)

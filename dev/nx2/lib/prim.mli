@@ -41,9 +41,8 @@ val of_arrays :
     otherwise. Nothing checks the windows. *)
 
 val death : ('v, 's, 'd) t -> death
-(** [death x] is whether [x] lives: for a handle, its donor's death where the
-    donor died, else whether an operation read the handle. It allocates
-    nothing. *)
+(** [death x] is whether [x] lives: for a handle, the function that read it,
+    else its donor's death. It allocates nothing. *)
 
 val alive : by:string -> int -> ('v, 's, 'd) t -> unit
 (** [alive ~by i x] raises [Invalid_argument] naming [by], operand [i + 1] and
@@ -51,7 +50,15 @@ val alive : by:string -> int -> ('v, 's, 'd) t -> unit
 
 val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
 (** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]
-    lives or not. Raises [Invalid_argument] for a constant or a traced value. *)
+    lives or not: a handle's as its donor holds them now ({!Value.donor}).
+    Raises [Invalid_argument] for a constant, a traced value, or a handle that
+    views memory that died through a movement. *)
+
+val viewed :
+  ('v, 's) Nx_array.t Atomic.Loc.t -> Nx_array.Layout.t -> ('v, 's) Nx_array.t
+(** [viewed a l] is the array at [a] now, laid out as [l] over its memory: a
+    {!Value.One} donor's array. Raises [Invalid_argument] if [l] is not the
+    array's layout and its memory died. *)
 
 val any : ('v, 's) Nx_array.t iarray -> Nx_array.any array
 (** [any xs] is [xs] untyped, in order. *)
