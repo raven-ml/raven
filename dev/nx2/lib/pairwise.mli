@@ -11,18 +11,15 @@ val circuit :
   ('q. by:string -> 'q Value.prim -> 'q) ->
   by:string ->
   int array ->
-  ?first:('d Value.any array -> 'd Value.any array) ->
   ('d Value.any array -> 'd Value.any array -> 'd Value.any array) ->
   'd Value.any array ->
   'd Value.any array
-(** [circuit apply ~by axes ?first combine states] scans [states], the
-    components of each term's state, along [axes.(k)] for component [k], by
-    the odd/even recursion, through [apply]. Every component has the same
+(** [circuit apply ~by axes combine states] scans [states], the components
+    of each term's state, along [axes.(k)] for component [k], by the
+    odd/even recursion, through [apply]. Every component has the same
     extent [n] along its axis; shapes may differ otherwise. [combine e l] is
     the state of an earlier run of terms [e] followed by a later one [l],
-    computed index by index, each of its components of [e]'s shape; [first]
-    is index [0]'s result from its state, the state itself if [first] is
-    absent.
+    computed index by index, each of its components of [e]'s shape.
 
     Of [m] states [s], pairs [p_j = combine s_2j s_2j+1] for [j < ⌊m/2⌋]
     scan recursively into [q]; then [y_2j+1 = q_j], [y_0 = s_0] and
@@ -39,13 +36,11 @@ val scan :
   by:string ->
   int array ->
   int ->
-  ?first:Nx_kernel.Prog.E.any array ->
   Nx_kernel.Prog.E.any array ->
   'd Value.any array ->
   'd Value.any array
-(** [scan apply ~by shape axis ?first combine states] is {!circuit} over
-    [states] of [shape] along [axis], each combination one map of the
-    program [combine] over operands [0] to [n - 1], the earlier state's [n]
-    components, and [n] to [2n - 1], the later's; [first] the program over
-    operands [0] to [n - 1]. A level writes fewer than [4n] elements along
-    an axis of [n], in about [3⌈log₂ n⌉] steps. *)
+(** [scan apply ~by shape axis combine states] is {!circuit} over [states]
+    of [shape] along [axis], each combination one map of the program
+    [combine] over operands [0] to [n - 1], the earlier state's [n]
+    components, and [n] to [2n - 1], the later's. A level writes fewer than
+    [4n] elements along an axis of [n], in about [3⌈log₂ n⌉] steps. *)

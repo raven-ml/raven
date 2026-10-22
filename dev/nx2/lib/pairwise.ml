@@ -60,26 +60,20 @@ let plain xs =
    Output [i]'s depth [f(i)] follows [f(0) = 0], [f(2j+1) = 1 + f(j)] and
    [f(2j) = 2 + f(j-1)], so [f(i) <= max(0, 2⌈log₂(i+1)⌉ - 1)]. *)
 let circuit (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axes
-    ?first combine (state : d Value.any array) : d Value.any array =
+    combine (state : d Value.any array) : d Value.any array =
   let parts start count step =
     Array.mapi (fun k x -> part apply ~by axes.(k) start count step x)
   in
-  let head first state =
-    let s0 = parts 0 1 1 state in
-    match first with None -> s0 | Some first -> first s0
-  in
-  let rec level first state m =
-    if m = 0 || (m = 1 && Option.is_none first) then state
-    else if m = 1 then head first state
+  let rec level state m =
+    if m <= 1 then state
     else
       let half = m / 2 and rows = (m + 1) / 2 in
       let p = combine (parts 0 half 2 state) (parts 1 half 2 state) in
-      let q = level None p half in
+      let q = level p half in
       let evens =
         if rows = 1 then [||]
         else combine (parts 0 (rows - 1) 1 q) (parts 2 (rows - 1) 2 state)
       in
-      let h = head first state in
       Array.mapi
         (fun k (Value.Any y0) ->
           let dt = Prim.dtype y0 in
@@ -95,13 +89,13 @@ let circuit (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axes
           let fill = D.zero dt and shape = Iarray.of_array shape in
           Value.Any
             (apply ~by (Value.Assemble { dtype = dt; shape; fill; pieces })))
-        h
+        (parts 0 1 1 state)
   in
   if Array.length state = 0 then state
-  else level first state (shape_of state.(0)).(axes.(0))
+  else level state (shape_of state.(0)).(axes.(0))
 
 let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    axis ?first combine (state : d Value.any array) : d Value.any array =
+    axis combine (state : d Value.any array) : d Value.any array =
   let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
   let along e =
     let s = Array.copy shape in
@@ -118,5 +112,4 @@ let scan (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     mapped (Iarray.of_array (Array.append dts dts)) combine
       (Array.append earlier later)
   in
-  let first = Option.map (fun f -> mapped (Iarray.of_array dts) f) first in
-  circuit apply ~by (Array.make (Array.length state) axis) ?first combine state
+  circuit apply ~by (Array.make (Array.length state) axis) combine state
