@@ -42,6 +42,47 @@ scratch/descriptor/gfx12	wall_time	batch=262144	n=20	2.637e-08	2.565e-08 2.592e-
 thread-trace/waves/gfx9-4096	alloc_words	exact	147570
 thread-trace/waves/gfx9-4096	wall_time	batch=32	n=20	2.525e-04	2.467e-04 2.480e-04 2.483e-04 2.490e-04 2.494e-04 2.496e-04 2.501e-04 2.504e-04 2.509e-04 2.521e-04 2.529e-04 2.552e-04 2.557e-04 2.557e-04 2.558e-04 2.576e-04 2.601e-04 2.611e-04 2.642e-04 2.716e-04
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+aql/dispatch	alloc_words	exact	150
+aql/dispatch	wall_time	batch=32768	n=20	2.421e-07	2.399e-07 2.408e-07 2.409e-07 2.411e-07 2.412e-07 2.412e-07 2.413e-07 2.414e-07 2.418e-07 2.420e-07 2.422e-07 2.426e-07 2.427e-07 2.428e-07 2.440e-07 2.452e-07 2.460e-07 2.461e-07 2.471e-07 2.504e-07
+aql/encode	alloc_words	exact	198
+aql/encode	wall_time	batch=16384	n=20	3.144e-07	3.064e-07 3.067e-07 3.077e-07 3.088e-07 3.111e-07 3.121e-07 3.128e-07 3.132e-07 3.132e-07 3.143e-07 3.145e-07 3.149e-07 3.166e-07 3.191e-07 3.217e-07 3.222e-07 3.231e-07 3.238e-07 3.309e-07 3.312e-07
+aql/fill-into-bytes	alloc_words	exact	0
+aql/fill-into-bytes	wall_time	batch=1048576	n=20	7.745e-09	7.733e-09 7.734e-09 7.736e-09 7.737e-09 7.737e-09 7.738e-09 7.739e-09 7.740e-09 7.744e-09 7.745e-09 7.746e-09 7.748e-09 7.750e-09 7.752e-09 7.754e-09 7.758e-09 7.760e-09 7.762e-09 7.769e-09 7.775e-09
+code-object/kernel/last-of-128	alloc_words	exact	0
+code-object/kernel/last-of-128	wall_time	batch=262144	n=20	2.619e-08	2.605e-08 2.607e-08 2.609e-08 2.614e-08 2.614e-08 2.616e-08 2.616e-08 2.617e-08 2.617e-08 2.617e-08 2.621e-08 2.621e-08 2.622e-08 2.625e-08 2.625e-08 2.627e-08 2.647e-08 2.650e-08 2.654e-08 2.657e-08
+code-object/of-string/amd-128-kernels	alloc_words	exact	24215
+code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	7.520e-05	7.386e-05 7.395e-05 7.397e-05 7.426e-05 7.434e-05 7.470e-05 7.486e-05 7.501e-05 7.512e-05 7.519e-05 7.521e-05 7.527e-05 7.533e-05 7.536e-05 7.540e-05 7.553e-05 7.572e-05 7.578e-05 7.591e-05 7.676e-05
+pm4/dispatch/gfx11	alloc_words	exact	566
+pm4/dispatch/gfx11	wall_time	batch=32768	n=20	2.758e-07	2.723e-07 2.729e-07 2.741e-07 2.744e-07 2.745e-07 2.747e-07 2.748e-07 2.750e-07 2.753e-07 2.757e-07 2.760e-07 2.762e-07 2.763e-07 2.765e-07 2.766e-07 2.772e-07 2.776e-07 2.777e-07 2.780e-07 2.788e-07
+pm4/dispatch/gfx12	alloc_words	exact	566
+pm4/dispatch/gfx12	wall_time	batch=32768	n=20	2.726e-07	2.707e-07 2.707e-07 2.708e-07 2.712e-07 2.717e-07 2.722e-07 2.722e-07 2.722e-07 2.725e-07 2.726e-07 2.726e-07 2.736e-07 2.738e-07 2.740e-07 2.741e-07 2.743e-07 2.745e-07 2.755e-07 2.782e-07 2.791e-07
+pm4/dispatch/gfx9	alloc_words	exact	602
+pm4/dispatch/gfx9	wall_time	batch=32768	n=20	2.893e-07	2.871e-07 2.873e-07 2.877e-07 2.877e-07 2.878e-07 2.880e-07 2.880e-07 2.890e-07 2.892e-07 2.892e-07 2.893e-07 2.895e-07 2.896e-07 2.898e-07 2.899e-07 2.909e-07 2.912e-07 2.916e-07 2.918e-07 2.918e-07
+pm4/encode/gfx12	alloc_words	exact	657
+pm4/encode/gfx12	wall_time	batch=16384	n=20	5.037e-07	4.911e-07 4.925e-07 4.948e-07 4.956e-07 4.970e-07 4.975e-07 4.989e-07 5.002e-07 5.016e-07 5.032e-07 5.042e-07 5.056e-07 5.073e-07 5.073e-07 5.091e-07 5.094e-07 5.118e-07 5.123e-07 5.241e-07 5.291e-07
+pm4/fill-into-bytes/gfx12	alloc_words	exact	0
+pm4/fill-into-bytes/gfx12	wall_time	batch=1048576	n=20	8.241e-09	8.227e-09 8.230e-09 8.234e-09 8.234e-09 8.235e-09 8.235e-09 8.236e-09 8.237e-09 8.237e-09 8.240e-09 8.242e-09 8.243e-09 8.244e-09 8.247e-09 8.248e-09 8.249e-09 8.251e-09 8.263e-09 8.263e-09 8.271e-09
+pm4/release-encode/gfx12	alloc_words	exact	66
+pm4/release-encode/gfx12	wall_time	batch=131072	n=20	3.748e-08	3.728e-08 3.734e-08 3.735e-08 3.736e-08 3.736e-08 3.744e-08 3.745e-08 3.745e-08 3.748e-08 3.748e-08 3.748e-08 3.752e-08 3.759e-08 3.767e-08 3.769e-08 3.787e-08 3.788e-08 3.827e-08 3.932e-08 4.001e-08
+pm4/release-fill-into-bytes/gfx12	alloc_words	exact	0
+pm4/release-fill-into-bytes/gfx12	wall_time	batch=1048576	n=20	5.131e-09	5.117e-09 5.123e-09 5.123e-09 5.125e-09 5.125e-09 5.126e-09 5.126e-09 5.130e-09 5.131e-09 5.131e-09 5.131e-09 5.132e-09 5.133e-09 5.138e-09 5.147e-09 5.151e-09 5.159e-09 5.161e-09 5.180e-09 5.190e-09
+pm4/template/gfx12	alloc_words	exact	840
+pm4/template/gfx12	wall_time	batch=8192	n=20	6.299e-07	6.123e-07 6.159e-07 6.186e-07 6.196e-07 6.211e-07 6.225e-07 6.242e-07 6.260e-07 6.275e-07 6.294e-07 6.305e-07 6.314e-07 6.337e-07 6.353e-07 6.364e-07 6.371e-07 6.393e-07 6.430e-07 6.454e-07 6.455e-07
+register/find/compute/gfx11	alloc_words	exact	4
+register/find/compute/gfx11	wall_time	batch=131072	n=20	5.222e-08	5.209e-08 5.209e-08 5.209e-08 5.212e-08 5.215e-08 5.218e-08 5.220e-08 5.221e-08 5.221e-08 5.221e-08 5.223e-08 5.225e-08 5.225e-08 5.225e-08 5.228e-08 5.230e-08 5.231e-08 5.233e-08 5.235e-08 5.259e-08
+register/find/compute/gfx12	alloc_words	exact	4
+register/find/compute/gfx12	wall_time	batch=131072	n=20	5.010e-08	5.004e-08 5.005e-08 5.006e-08 5.007e-08 5.007e-08 5.009e-08 5.009e-08 5.009e-08 5.010e-08 5.010e-08 5.010e-08 5.010e-08 5.010e-08 5.012e-08 5.014e-08 5.015e-08 5.015e-08 5.018e-08 5.018e-08 5.049e-08
+register/find/compute/gfx9	alloc_words	exact	4
+register/find/compute/gfx9	wall_time	batch=131072	n=20	4.916e-08	4.854e-08 4.865e-08 4.893e-08 4.893e-08 4.897e-08 4.902e-08 4.908e-08 4.913e-08 4.913e-08 4.916e-08 4.916e-08 4.917e-08 4.917e-08 4.918e-08 4.920e-08 4.920e-08 4.923e-08 4.925e-08 4.933e-08 4.937e-08
+scratch/descriptor/gfx12	alloc_words	exact	15
+scratch/descriptor/gfx12	wall_time	batch=262144	n=20	2.720e-08	2.677e-08 2.679e-08 2.688e-08 2.692e-08 2.692e-08 2.706e-08 2.708e-08 2.710e-08 2.712e-08 2.718e-08 2.722e-08 2.734e-08 2.742e-08 2.763e-08 2.776e-08 2.780e-08 2.799e-08 2.818e-08 2.820e-08 2.853e-08
+thread-trace/waves/gfx9-4096	alloc_words	exact	147570
+thread-trace/waves/gfx9-4096	wall_time	batch=32	n=20	2.532e-04	2.459e-04 2.496e-04 2.498e-04 2.500e-04 2.502e-04 2.506e-04 2.510e-04 2.512e-04 2.512e-04 2.520e-04 2.543e-04 2.551e-04 2.555e-04 2.557e-04 2.576e-04 2.581e-04 2.590e-04 2.599e-04 2.617e-04 2.627e-04
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

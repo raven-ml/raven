@@ -52,6 +52,41 @@ split/scale-4Mi	wall_time	batch=1	n=20	2.189e-02	2.178e-02 2.178e-02 2.178e-02 2
 split/serial-scale-4Mi	alloc_words	exact	0
 split/serial-scale-4Mi	wall_time	batch=1	n=20	1.254e-01	1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.255e-01 1.255e-01 1.255e-01 1.256e-01 1.256e-01 1.256e-01 1.256e-01
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+launch/empty	alloc_words	exact	0
+launch/empty	wall_time	batch=131072	n=20	4.861e-08	4.857e-08 4.857e-08 4.859e-08 4.859e-08 4.860e-08 4.860e-08 4.860e-08 4.860e-08 4.861e-08 4.861e-08 4.861e-08 4.862e-08 4.862e-08 4.863e-08 4.863e-08 4.863e-08 4.863e-08 4.869e-08 4.871e-08 4.891e-08
+launch/floor-pool-job	alloc_words	exact	0
+launch/floor-pool-job	wall_time	batch=16384	n=20	5.139e-07	5.030e-07 5.046e-07 5.048e-07 5.057e-07 5.082e-07 5.086e-07 5.086e-07 5.105e-07 5.130e-07 5.139e-07 5.140e-07 5.144e-07 5.144e-07 5.146e-07 5.175e-07 5.187e-07 5.188e-07 5.188e-07 5.210e-07 5.251e-07
+launch/floor-release-acquire	alloc_words	exact	0
+launch/floor-release-acquire	wall_time	batch=524288	n=20	1.091e-08	1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.092e-08 1.120e-08
+launch/workers-empty	alloc_words	exact	0
+launch/workers-empty	wall_time	batch=16384	n=20	3.513e-07	3.388e-07 3.452e-07 3.461e-07 3.473e-07 3.473e-07 3.481e-07 3.485e-07 3.488e-07 3.498e-07 3.504e-07 3.521e-07 3.521e-07 3.521e-07 3.528e-07 3.528e-07 3.529e-07 3.530e-07 3.535e-07 3.538e-07 3.583e-07
+load/affine	alloc_words	exact	456
+load/affine	wall_time	batch=2048	n=20	3.470e-06	3.126e-06 3.134e-06 3.171e-06 3.174e-06 3.219e-06 3.228e-06 3.329e-06 3.400e-06 3.415e-06 3.467e-06 3.473e-06 3.501e-06 3.554e-06 3.623e-06 3.635e-06 3.736e-06 3.857e-06 3.860e-06 4.021e-06 4.074e-06
+load/floor-elf-affine	alloc_words	exact	328
+load/floor-elf-affine	wall_time	batch=16384	n=20	2.996e-07	2.967e-07 2.972e-07 2.975e-07 2.986e-07 2.986e-07 2.989e-07 2.992e-07 2.992e-07 2.994e-07 2.995e-07 2.996e-07 2.998e-07 3.006e-07 3.017e-07 3.019e-07 3.023e-07 3.062e-07 3.064e-07 3.075e-07 3.120e-07
+load/floor-elf-linked	alloc_words	exact	467
+load/floor-elf-linked	wall_time	batch=16384	n=20	4.528e-07	4.421e-07 4.448e-07 4.449e-07 4.456e-07 4.468e-07 4.486e-07 4.491e-07 4.502e-07 4.525e-07 4.527e-07 4.529e-07 4.535e-07 4.563e-07 4.564e-07 4.571e-07 4.583e-07 4.601e-07 4.606e-07 4.615e-07 4.666e-07
+load/floor-elf-many	alloc_words	exact	20386
+load/floor-elf-many	wall_time	batch=512	n=20	1.430e-05	1.384e-05 1.395e-05 1.395e-05 1.400e-05 1.403e-05 1.406e-05 1.406e-05 1.406e-05 1.411e-05 1.429e-05 1.430e-05 1.431e-05 1.440e-05 1.441e-05 1.445e-05 1.450e-05 1.456e-05 1.459e-05 1.465e-05 1.471e-05
+load/floor-lookup	alloc_words	exact	0
+load/floor-lookup	wall_time	batch=262144	n=20	2.715e-08	2.649e-08 2.658e-08 2.658e-08 2.662e-08 2.667e-08 2.693e-08 2.703e-08 2.708e-08 2.709e-08 2.713e-08 2.717e-08 2.729e-08 2.734e-08 2.735e-08 2.773e-08 2.774e-08 2.778e-08 2.794e-08 2.811e-08 2.826e-08
+load/floor-map-install-unmap-affine	alloc_words	exact	0
+load/floor-map-install-unmap-affine	wall_time	batch=4096	n=20	1.973e-06	1.894e-06 1.895e-06 1.902e-06 1.906e-06 1.908e-06 1.912e-06 1.913e-06 1.914e-06 1.945e-06 1.965e-06 1.982e-06 2.018e-06 2.026e-06 2.032e-06 2.037e-06 2.046e-06 2.110e-06 2.127e-06 2.148e-06 2.177e-06
+load/floor-map-install-unmap-many	alloc_words	exact	0
+load/floor-map-install-unmap-many	wall_time	batch=512	n=20	1.143e-05	1.131e-05 1.132e-05 1.132e-05 1.133e-05 1.134e-05 1.137e-05 1.137e-05 1.140e-05 1.140e-05 1.141e-05 1.145e-05 1.162e-05 1.174e-05 1.176e-05 1.177e-05 1.178e-05 1.182e-05 1.182e-05 1.183e-05 1.183e-05
+load/linked	alloc_words	exact	631
+load/linked	wall_time	batch=2048	n=20	4.006e-06	3.545e-06 3.566e-06 3.630e-06 3.656e-06 3.711e-06 3.761e-06 3.829e-06 3.976e-06 3.976e-06 3.991e-06 4.020e-06 4.073e-06 4.196e-06 4.213e-06 4.225e-06 4.254e-06 4.283e-06 4.467e-06 4.566e-06 4.759e-06
+load/many-relocations	alloc_words	exact	23773
+load/many-relocations	wall_time	batch=128	n=20	5.271e-05	5.007e-05 5.017e-05 5.052e-05 5.077e-05 5.122e-05 5.123e-05 5.173e-05 5.174e-05 5.254e-05 5.265e-05 5.277e-05 5.294e-05 5.307e-05 5.339e-05 5.344e-05 5.356e-05 5.364e-05 5.421e-05 5.426e-05 5.463e-05
+split/scale-4Mi	alloc_words	exact	0
+split/scale-4Mi	wall_time	batch=1	n=20	2.178e-02	2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.179e-02 2.179e-02 2.179e-02 2.179e-02 2.179e-02 2.190e-02
+split/serial-scale-4Mi	alloc_words	exact	0
+split/serial-scale-4Mi	wall_time	batch=1	n=20	1.256e-01	1.255e-01 1.255e-01 1.255e-01 1.255e-01 1.255e-01 1.255e-01 1.255e-01 1.256e-01 1.256e-01 1.256e-01 1.257e-01 1.259e-01 1.259e-01 1.262e-01 1.265e-01 1.266e-01 1.268e-01 1.275e-01 1.282e-01 1.330e-01
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

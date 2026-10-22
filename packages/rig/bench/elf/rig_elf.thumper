@@ -20,6 +20,25 @@ of-string/host-aarch64	wall_time	batch=8192	n=20	9.618e-07	9.464e-07 9.485e-07 9
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
 symbol/amd-128-kernels-last-kernel	wall_time	batch=16384	n=20	5.630e-07	5.592e-07 5.596e-07 5.596e-07 5.596e-07 5.597e-07 5.598e-07 5.607e-07 5.609e-07 5.611e-07 5.611e-07 5.649e-07 5.653e-07 5.662e-07 5.666e-07 5.666e-07 5.668e-07 5.669e-07 5.678e-07 5.681e-07 5.684e-07
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+of-string/amd-128-kernels	alloc_words	exact	5277
+of-string/amd-128-kernels	wall_time	batch=256	n=20	2.096e-05	2.048e-05 2.061e-05 2.072e-05 2.073e-05 2.083e-05 2.085e-05 2.087e-05 2.089e-05 2.091e-05 2.096e-05 2.096e-05 2.097e-05 2.108e-05 2.120e-05 2.121e-05 2.130e-05 2.151e-05 2.155e-05 2.159e-05 2.162e-05
+of-string/amd-16-kernels	alloc_words	exact	1133
+of-string/amd-16-kernels	wall_time	batch=4096	n=20	1.609e-06	1.580e-06 1.598e-06 1.604e-06 1.604e-06 1.606e-06 1.606e-06 1.607e-06 1.607e-06 1.608e-06 1.609e-06 1.609e-06 1.610e-06 1.611e-06 1.612e-06 1.614e-06 1.616e-06 1.619e-06 1.621e-06 1.630e-06 1.637e-06
+of-string/cubin-sm89	alloc_words	exact	560
+of-string/cubin-sm89	wall_time	batch=8192	n=20	6.320e-07	6.176e-07 6.217e-07 6.222e-07 6.224e-07 6.262e-07 6.281e-07 6.284e-07 6.289e-07 6.299e-07 6.308e-07 6.333e-07 6.414e-07 6.427e-07 6.437e-07 6.440e-07 6.469e-07 6.472e-07 6.519e-07 6.560e-07 6.611e-07
+of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
+of-string/floor-bytes-amd-128-kernels	wall_time	batch=2048	n=20	3.551e-06	3.388e-06 3.398e-06 3.410e-06 3.418e-06 3.419e-06 3.429e-06 3.438e-06 3.440e-06 3.450e-06 3.509e-06 3.593e-06 3.611e-06 3.613e-06 3.613e-06 3.616e-06 3.636e-06 3.636e-06 3.641e-06 3.642e-06 3.658e-06
+of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
+of-string/floor-symbols-amd-128-kernels	wall_time	batch=512	n=20	1.496e-05	1.433e-05 1.442e-05 1.445e-05 1.451e-05 1.454e-05 1.455e-05 1.458e-05 1.462e-05 1.467e-05 1.490e-05 1.502e-05 1.502e-05 1.505e-05 1.506e-05 1.507e-05 1.510e-05 1.518e-05 1.527e-05 1.540e-05 1.551e-05
+of-string/host-aarch64	alloc_words	exact	818
+of-string/host-aarch64	wall_time	batch=8192	n=20	8.544e-07	8.348e-07 8.394e-07 8.397e-07 8.425e-07 8.491e-07 8.495e-07 8.518e-07 8.529e-07 8.543e-07 8.544e-07 8.544e-07 8.605e-07 8.613e-07 8.616e-07 8.633e-07 8.660e-07 8.664e-07 8.666e-07 8.756e-07 8.824e-07
+symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
+symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.644e-07	5.556e-07 5.597e-07 5.598e-07 5.599e-07 5.608e-07 5.613e-07 5.614e-07 5.615e-07 5.618e-07 5.641e-07 5.648e-07 5.651e-07 5.652e-07 5.654e-07 5.658e-07 5.659e-07 5.661e-07 5.662e-07 5.662e-07 5.686e-07
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
