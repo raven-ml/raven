@@ -29,38 +29,44 @@ type death =
       (** Live and donated: the key that orders the claims of its handles,
           one per donor. *)
   | Died of string  (** The function the value was given to. *)
-(** Whether a value lives. Values are made [Live]; a donor is [Offered] once,
-    and a death is set once and never undone. *)
+(** Whether a value lives. Values are made [Live], a donor is [Offered] when
+    first donated, and its consumer sets [Died]. A consumer that raises before
+    it writes its donors' memory gives them back, each [Offered] again under a
+    new key ({!Donate.unclaim}). *)
 
 type ('v, 's, 'd) t =
   | Array of {
       at : 'd Devices.placement;
-      a : ('v, 's) Nx_array.t;
+      mutable a : ('v, 's) Nx_array.t;
       mutable dead : death; [@atomic]
     }
       (** On [at]'s one device. [dead] is [Died f] once the value was donated
-          to [f] ({!Donate.donate}). *)
+          to [f] ({!Donate.donate}). [a] changes only when a consumer that
+          consumed its memory, which no other value read, is refused or
+          declined and gives the memory back: [a] is then of the same dtype,
+          layout and bytes, over the buffer the consumption made. *)
   | Shards of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
-      arrays : ('v, 's) Nx_array.t iarray;
+      mutable arrays : ('v, 's) Nx_array.t iarray;
       mutable dead : death; [@atomic]
     }
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value
-          ({!Grid.window}). *)
+          ({!Grid.window}). [arrays] changes as [Array]'s [a] does. *)
   | Donated of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
-      arrays : ('v, 's) Nx_array.t iarray;
-      donor : death Atomic.Loc.t;  (** The donor's [dead]. *)
+      mutable arrays : ('v, 's) Nx_array.t iarray;
+      donor : ('v, 's, 'd) t;  (** The donated [Array] or [Shards]. *)
       mutable spent : death; [@atomic]
     }
       (** A handle one operation reads: [arrays] over its donor's memory, one
           per device of [at], each its window, or a copy of it a movement made.
           [spent] is [Live] until an operation reads it: the one that consumed
           it, killing the donor, or a movement that passed a new handle of the
-          donor on. *)
+          donor on. [arrays] changes as the donor's do, when the handle's
+          consumer gives the memory back. *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
   | Traced of {

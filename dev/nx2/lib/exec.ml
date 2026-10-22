@@ -552,15 +552,22 @@ let call : type r.
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
-(* [f ()], the claimed handles [hs] given back where it raises: [f] neither
-   writes their memory nor consumes it, so their donors live on, as before the
-   call. *)
-let unclaimed hs f =
+(* [f ()], the claimed handles [hs] given back where it raises before it wrote
+   their memory, so that their donors live on as before the call. Without
+   [into], [f] neither writes nor consumes that memory. With [into = (b, b')],
+   [f] computes into the memory rig consumed from [b], which lives on in [b']:
+   a decline or a refusal raises [Invalid_argument] before any write, and the
+   donors' arrays move onto [b']; any other exception may follow a partial
+   write, and the donors stay dead. *)
+let unclaimed ?into hs f =
   match f () with
   | r -> r
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      Donate.unclaim hs;
+      (match (into, e) with
+      | None, _ -> Donate.unclaim hs
+      | Some into, Invalid_argument _ -> Donate.unclaim ~into hs
+      | Some _, _ -> ());
       Printexc.raise_with_backtrace e bt
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
@@ -653,7 +660,10 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
           let (Value.Any target) = List.nth xs i in
-          let r = plain ~by ~into:(A.Any (one target)) op in
+          let r =
+            unclaimed ~into:(b, b') hs (fun () ->
+                plain ~by ~into:(A.Any (one target)) op)
+          in
           Donate.consumed ~by ~reused:[ b ] hs;
           r
       | None ->
@@ -1249,11 +1259,12 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
 (* The one-node map over the handle [h], operand [i], whose array is [a], its
    result of [dt]: [h] is claimed, then its memory takes the result where rig
    holds it exclusive and it {!Donate.holds} the result, as {!Donate.reuse}
-   decides for any operation; otherwise the result is fresh, the memory, where
-   no other value reads it, is freed after the kernel, and [h] is given back
-   where [run] raises. Its other operands are live arrays, so none is the
-   donor, whose word is offered, and each is read at the result's own index.
-   [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
+   decides for any operation; otherwise the result is fresh, and the memory,
+   where no other value reads it, is freed after the kernel. [h] is given back
+   where [run] raises before it writes its memory ({!unclaimed}). Its other
+   operands are live arrays, so none is the donor, whose word is offered, and
+   each is read at the result's own index. [run dst a'] is the kernel into
+   [dst] with [a'] for [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
     (w, r, d) Value.t =
@@ -1266,7 +1277,7 @@ let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
       match Donate.take ~by (A.buffer a) with
       | Some b' ->
           let a' = A.v (A.dtype a) l b' in
-          run a' a'
+          unclaimed ~into:(A.buffer a, b') hs (fun () -> run a' a')
       | None -> unclaimed hs (fun () -> run (destination dt a) a))
   | Some _ | None ->
       let r = unclaimed hs (fun () -> run (destination dt a) a) in

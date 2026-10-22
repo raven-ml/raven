@@ -12,6 +12,14 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 (* The key the next donor is offered with. *)
 let offers = Atomic.make 0
 
+(* The donor [x]'s death word, its [dead]. *)
+let word (type v s d) (x : (v, s, d) Value.t) : Value.death Atomic.Loc.t =
+  match x with
+  | Value.Array r -> [%atomic.loc r.dead]
+  | Value.Shards r -> [%atomic.loc r.dead]
+  | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
+      invalid_arg "Donate.word: not a donor"
+
 (* Gives the live donor word [w] a key of its own, which every handle of every
    donation of it reads. *)
 let offer (w : Value.death Atomic.Loc.t) =
@@ -25,17 +33,13 @@ let offer (w : Value.death Atomic.Loc.t) =
 
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   Prim.alive ~by 0 x;
-  let handle at shape arrays donor =
-    offer donor;
-    Value.Donated { at; shape; arrays; donor; spent = Value.Live }
+  let handle at shape arrays =
+    offer (word x);
+    Value.Donated { at; shape; arrays; donor = x; spent = Value.Live }
   in
   match x with
-  | Value.Array r ->
-      handle r.at
-        (L.shape (A.layout r.a))
-        ([| r.a |] : _ iarray)
-        [%atomic.loc r.dead]
-  | Value.Shards r -> handle r.at r.shape r.arrays [%atomic.loc r.dead]
+  | Value.Array r -> handle r.at (L.shape (A.layout r.a)) ([| r.a |] : _ iarray)
+  | Value.Shards r -> handle r.at r.shape r.arrays
   | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> x
 
 (* A handle's arrays as a live value, which the operation reads. *)
@@ -52,10 +56,9 @@ let is_handle (type v s d) (x : (v, s, d) Value.t) =
   | Value.Donated _ -> true
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
 
-(* Whether the donor words [w] and [w'] are one donor's: an offered donor has
-   one key. *)
-let one_donor (w : Value.death Atomic.Loc.t) w' =
-  match (Atomic.Loc.get w, Atomic.Loc.get w') with
+(* Whether the donors [x] and [y] are one: an offered donor has one key. *)
+let one_donor x y =
+  match (Prim.death x, Prim.death y) with
   | Value.Offered k, Value.Offered k' -> k = k'
   | (Value.Live | Value.Offered _ | Value.Died _), _ -> false
 
@@ -162,7 +165,7 @@ let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
   | Value.Donated d ->
       let died = Value.Died by in
       spend_word ~by i died x;
-      claim_word ~by i d.donor died
+      claim_word ~by i (word d.donor) died
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
 (* The key of the handle [x]'s donor, operand [i]. A donor that died raises
@@ -170,7 +173,7 @@ let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
 let key (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
   | Value.Donated d -> (
-      match Atomic.Loc.get d.donor with
+      match Prim.death d.donor with
       | Value.Offered k -> k
       | Value.Died earlier -> died_to ~by i earlier
       | Value.Live ->
@@ -186,27 +189,47 @@ let claim ~by hs =
     (fun (_, Handle (i, x)) -> claim_handle ~by i x)
     (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
 
+(* [arrays], each over [b] moved onto [b']. *)
+let onto b b' arrays =
+  Iarray.map
+    (fun a -> if A.buffer a == b then A.v (A.dtype a) (A.layout a) b' else a)
+    arrays
+
 (* Gives back the claims of the handles [hs] that {!claim} made, before their
-   consumer wrote or consumed their memory: each handle lives again and its
-   donor is offered again, under a new key. No other consumer writes a word
-   once it died, so each is set in place. *)
-let unclaim hs =
-  List.iter
-    (fun (Handle (_, x)) ->
-      match x with
-      | Value.Donated d ->
-          let key = Atomic.fetch_and_add offers 1 in
-          Atomic.Loc.set d.donor (Value.Offered key);
-          Atomic.Loc.set [%atomic.loc d.spent] Value.Live
-      | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
-    hs
+   consumer wrote their memory: each handle lives again and its donor is
+   offered again, under a new key. With [into = (b, b')], the consumer
+   consumed [b]'s memory, which lives on in [b']: the arrays of the handles
+   and their donors over [b] move onto [b'] first. A movement keeps its
+   operand's buffer, so [==] finds the views too. No other consumer writes a
+   word once it died, so each is set in place; the donor's word, set after the
+   arrays, publishes them to a domain that reads it. *)
+let unclaim ?into hs =
+  let give_back (type v s d) (x : (v, s, d) Value.t) =
+    match x with
+    | Value.Donated d ->
+        (match into with
+        | None -> ()
+        | Some (b, b') -> (
+            d.arrays <- onto b b' d.arrays;
+            match d.donor with
+            | Value.Array r ->
+                if A.buffer r.a == b then
+                  r.a <- A.v (A.dtype r.a) (A.layout r.a) b'
+            | Value.Shards r -> r.arrays <- onto b b' r.arrays
+            | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> ()));
+        let key = Atomic.fetch_and_add offers 1 in
+        Atomic.Loc.set (word d.donor) (Value.Offered key);
+        Atomic.Loc.set [%atomic.loc d.spent] Value.Live
+    | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
+  in
+  List.iter (fun (Handle (_, x)) -> give_back x) hs
 
 (* The keys of the donors of the handles [hs] that are still offered. *)
 let offered hs =
   let key (Handle (_, x)) =
     match x with
     | Value.Donated d -> (
-        match Atomic.Loc.get d.donor with
+        match Prim.death d.donor with
         | Value.Offered k -> Some k
         | Value.Live | Value.Died _ -> None)
     | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->

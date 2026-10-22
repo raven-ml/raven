@@ -37,12 +37,12 @@ let own_layout : type v s d. (v, s, d) t -> L.t = function
 
 let rank x = L.rank (own_layout x)
 
-let death : type v s d. (v, s, d) t -> death = function
+let rec death : type v s d. (v, s, d) t -> death = function
   | Array r -> r.dead
   | Shards r -> r.dead
   | Donated r -> (
       (* A handle dies with its donor, whichever handle was consumed. *)
-      match Atomic.Loc.get r.donor with
+      match death r.donor with
       | Died _ as died -> died
       | Live | Offered _ -> r.spent)
   | Deferred _ | Traced _ -> Live
