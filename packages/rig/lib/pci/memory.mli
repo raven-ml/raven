@@ -22,9 +22,11 @@
     {b After the GPU is given back.} Once the GPU's function is released
     ({!Function.release}, which {!Driver.stop} and {!release} do), {!free}
     writes none of the GPU's tables. It gives back system memory, pins and
-    virtual addresses only, and {!val-alloc}, {!map_host} and {!map_peer} raise
-    [Invalid_argument]. Once the function is released, another open may reset
-    the GPU, and this {!t} never writes it again.
+    virtual addresses only, and {!val-alloc}, {!map_host} and {!map_peer} on
+    this {!t} raise [Invalid_argument]. Once the function is released, another
+    open may reset the GPU, and this {!t} never writes it again. Its system
+    memory stays until its region's {!free}, and another GPU maps it as before
+    ({!map_peer}).
 
     {b Unconfirmed flushes.} A {!free} whose flush the GPU does not confirm
     ({!Page_table.unmap}) keeps the region's memory and addresses, which the GPU
@@ -179,8 +181,10 @@ val map_peer : t -> region -> (region option, string) result
 
     [Error why] if the GPUs are on different machines, if their page tables
     take addresses from different spaces, naming both, if [r] is GPU memory
-    that [m]'s GPU does not reach ({!reaches}), or if the system memory cannot
-    be pinned, with {!Function.pin}'s reason.
+    that [m]'s GPU does not reach ({!reaches}), or GPU memory of a GPU whose
+    function was released, naming it, since another open may have reset that
+    GPU and given the memory out, or if the system memory cannot be pinned,
+    with {!Function.pin}'s reason.
 
     Raises [Invalid_argument] if [r], or the region it maps, was freed, or if
     [m]'s GPU maps other memory at [r]'s addresses, as a free out of the

@@ -606,8 +606,6 @@ let test_released_refused =
       ("alloc Host", fun x _ _ _ -> ignore (Memory.alloc x.t_memory Host page));
       ( "map_host",
         fun x _ _ _ -> ignore (Memory.map_host x.t_memory lend_base page) );
-      ( "map_peer of its memory",
-        fun _ o mine _ -> ignore (Memory.map_peer o.t_memory mine) );
       ( "map_peer for it",
         fun x _ _ theirs -> ignore (Memory.map_peer x.t_memory theirs) );
     ]
@@ -623,6 +621,31 @@ let test_released_refused =
       equal ~msg:"entries, zeroes and flushes" int touches x.t_g.touches;
       equal ~msg:"nothing taken" (pair int int) before (tree_capacity x);
       Memory.free o.t_memory theirs)
+
+(* A released GPU's memory, allocated before its release, mapped by the other
+   GPU: its system memory stays until its region's free, so it maps as before;
+   its GPU memory another open may have reset and given out, so a view of it
+   is refused, naming the GPU, taking nothing. *)
+let test_released_peer () =
+  with_gpus 2 @@ fun _ _ gpus ->
+  let x = List.nth gpus 0 and o = List.nth gpus 1 in
+  let host = given (Memory.alloc x.t_memory Host page) in
+  let gpu = given (Memory.alloc x.t_memory Gpu page) in
+  let bar = given (Memory.alloc x.t_memory Bar page) in
+  Function.release x.t_fn;
+  let before = tree_capacity o in
+  List.iter
+    (fun (msg, r) ->
+      contains ~msg ~sub:(Function.bus x.t_fn)
+        (require_error (Memory.map_peer o.t_memory r)))
+    [ ("Gpu memory", gpu); ("Bar memory", bar) ];
+  equal ~msg:"nothing taken" (pair int int) before (tree_capacity o);
+  let p = mapped (Memory.map_peer o.t_memory host) in
+  equal ~msg:"the view's address" hex (Memory.address host) (Memory.address p);
+  equal ~msg:"the view's pages" (pair target ranges) (Memory.pages host)
+    (Memory.pages p);
+  Memory.free o.t_memory p;
+  List.iter (Memory.free x.t_memory) [ host; gpu; bar ]
 
 (* Placement *)
 
@@ -1337,6 +1360,7 @@ let test_freed_peer () =
 type m_region = {
   owner : int;
   system : bool;  (** It holds system memory of the space's blocks. *)
+  gpu : bool;  (** Its memory is a GPU's own. *)
   owning : bool;  (** It holds addresses or the GPU's memory. *)
   origin : m_region option;  (** For a peer's region, the region it maps. *)
   label : string;
@@ -1435,11 +1459,12 @@ let add m r =
 
 let live_gpu m i what = if m.released.(i) then invalid_arg (what ^ ": released")
 
-let new_region m ?origin ?(mapping = ref []) ~system ~owning ~label i =
+let new_region m ?origin ?(mapping = ref []) ~system ~gpu ~owning ~label i =
   let r =
     {
       owner = i;
       system;
+      gpu;
       owning;
       origin;
       label;
@@ -1455,14 +1480,17 @@ let new_region m ?origin ?(mapping = ref []) ~system ~owning ~label i =
 let alloc_ref m i kind =
   live_gpu m i "alloc";
   let label = Format.asprintf "%a" pp_kind kind in
-  add m (new_region m ~system:(kind = Host) ~owning:true ~label i)
+  add m
+    (new_region m ~system:(kind = Host) ~gpu:(kind <> Host) ~owning:true ~label
+       i)
 
 let alloc_sys s i kind =
   made s i (given (Memory.alloc s.gpus.(i).t_memory kind (64 * kib)))
 
 let map_host_ref m i _ =
   live_gpu m i "map_host";
-  add m (new_region m ~system:false ~owning:true ~label:"Borrowed" i)
+  add m
+    (new_region m ~system:false ~gpu:false ~owning:true ~label:"Borrowed" i)
 
 let map_host_sys s i slot =
   let a = Window.address s.lent + (slot * page) in
@@ -1479,14 +1507,17 @@ let peer_pre _ _ r =
 (* A region of another pair's GPU is of another machine. *)
 exception Other_machine
 
+(* A view of a released GPU's own memory is refused. *)
+exception Released_memory
+
 let map_peer_ref m i r =
   let o = origin r in
   live_gpu m i "map_peer";
   if r.freed || o.freed then invalid_arg "map_peer: freed";
-  if o.gpus_released.(o.owner) then invalid_arg "map_peer: released";
   let same = o.gpus_released == m.released in
   cover "a region of another machine" (not same);
   if not same then raise Other_machine;
+  if o.gpus_released.(o.owner) && o.gpu then raise Released_memory;
   (* The GPU maps the memory already: its own, or a peer's it mapped. *)
   let over p = p.owner = i && origin p == o in
   let mapping =
@@ -1495,7 +1526,7 @@ let map_peer_ref m i r =
   cover "memory the GPU maps already" (Option.is_some mapping);
   o.peers <- o.peers + 1;
   add m
-    (new_region m ~origin:o ?mapping ~system:o.system ~owning:false
+    (new_region m ~origin:o ?mapping ~system:o.system ~gpu:o.gpu ~owning:false
        ~label:("Peer of " ^ o.label) i)
 
 let map_peer_sys s i (_, _, r) =
@@ -1504,6 +1535,8 @@ let map_peer_sys s i (_, _, r) =
   | Ok None -> fail "no room"
   | Error why when String.starts_with ~prefix:"the GPUs are on different" why ->
       raise Other_machine
+  | Error why when String.ends_with ~suffix:"given its memory out" why ->
+      raise Released_memory
   | Error why -> fail why
 
 let free_ref r =
@@ -1605,6 +1638,10 @@ let on_files =
       test "a peer whose reach cannot be recorded is refused"
         test_peer_unrecorded;
       test_released_refused;
+      test
+        "a released GPU's system memory maps, and its GPU memory is refused, \
+         naming it"
+        test_released_peer;
       cases "after the release, a free writes no table"
         ~name:(Format.asprintf "%a" pp_from)
         froms test_free_released;

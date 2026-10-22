@@ -421,16 +421,28 @@ let map_new m h tables r =
                         }))))
 
 (* Misuse is refused before anything is pinned or written: a region freed, or
-   its origin freed. Memory the GPU maps already, its own or a peer's it
-   mapped, lies at its owner's address, so a new region there shares that
-   mapping. *)
+   its origin freed. A released GPU's own memory is refused: another open may
+   have reset that GPU and given the memory out. Its system memory stays until
+   its region's free, and maps as a live GPU's does. Memory the GPU maps
+   already, its own or a peer's it mapped, lies at its owner's address, so a
+   new region there shares that mapping. *)
 let map_peer m r =
   let h, tables = live "map_peer" m in
   ignore (mine "map_peer" r.owner r : held);
   let r = origin r in
-  ignore (live "map_peer" r.owner : held * Page_table.t);
-  ignore (mine "map_peer" r.owner r : held);
+  let owner = mine "map_peer" r.owner r in
+  let gone =
+    m.reach.machine == r.owner.reach.machine
+    && r.mapping.target <> System
+    && Function.released owner.fn
+  in
   match Tables.Address.find_opt h.regions r.mapping.va with
+  | _ when gone ->
+      Error
+        (strf
+           "%s was released, and another open may have reset it and given its \
+            memory out"
+           r.owner.reach.bus)
   | None -> map_new m h tables r
   | Some e when origin e.holder != r ->
       invalid_argf "Memory.map_peer: %s maps other memory at 0x%x" m.reach.bus
