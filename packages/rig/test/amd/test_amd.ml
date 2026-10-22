@@ -88,7 +88,8 @@ let path_of gpu : unit A.path =
     hdp = None;
     interrupt = 1;
     hang_ms = None;
-    sleep = (fun ~ms:_ -> unused ());
+    interrupts = unused;
+    sleep = (fun ~ms:_ ~after:_ -> unused ());
     stable_power = unused;
     stop = (fun ~fault:_ -> unused ());
   }
@@ -1451,6 +1452,49 @@ let stale_code () =
   if base kernels first <> base other second then
     skip ~reason:"the second object got other addresses" ()
 
+(* A worker domain's sleep on the word is held after it read the word and
+   before the path's sleep ([Rig_amd.hold_sleeps]). Meanwhile the test's
+   domain submits work, reads the word until the work's release wrote it, and
+   sleeps on the new word, which takes the release's interrupt. The held sleep
+   then waits: the word differs from its [seen], so it returns well before its
+   bound (Rig_edge's [sleep]). *)
+let held_sleep () =
+  if (not (S.driverless ())) && not (Rig_amd_amdgpu.event_age ()) then
+    skip ~reason:"KFD before 1.14 keeps no event age (rig_amd_amdgpu.mli)" ();
+  S.with_ @@ fun t ->
+  let seen = A.signaled t.g in
+  let sleeper = Atomic.make None in
+  let held = Atomic.make false and go = Atomic.make false in
+  A.hold_sleeps (fun () ->
+      if Atomic.get sleeper = Some (Domain.self ()) then begin
+        Atomic.set sleeper None;
+        Atomic.set held true;
+        while not (Atomic.get go) do
+          Domain.cpu_relax ()
+        done
+      end);
+  Fun.protect ~finally:(fun () ->
+      A.hold_sleeps ignore;
+      Atomic.set go true)
+  @@ fun () ->
+  let worker =
+    Domain.spawn (fun () ->
+        Atomic.set sleeper (Some (Domain.self ()));
+        let t0 = Rig.Profile.now () in
+        A.sleep t.g ~seen ~still_ms:5_000;
+        (Rig.Profile.now () - t0) / 1_000_000)
+  in
+  while not (Atomic.get held) do
+    Domain.cpu_relax ()
+  done;
+  let v = Rig.Point.value (S.submit_work t [ nop_words t 16 ]) in
+  while A.signaled t.g < v do
+    Domain.cpu_relax ()
+  done;
+  A.sleep t.g ~seen:v ~still_ms:1_000;
+  Atomic.set go true;
+  less int ~msg:"ms the held sleep slept" ~than:1_000 (Domain.join worker)
+
 let code =
   group ~timeout:60. "kernels"
     [
@@ -1493,6 +1537,10 @@ let code =
           done;
           less int ~msg:"ms asleep" ~than:1_000
             ((Rig.Profile.now () - t0) / 1_000_000));
+      test
+        "a release wakes a sleep that waits once another domain's sleep read \
+         its interrupt"
+        held_sleep;
       test "closing completes submitted work" (fun () ->
           (* Close waits for the kernel. Its mapped output remains readable. *)
           S.with_ @@ fun t ->

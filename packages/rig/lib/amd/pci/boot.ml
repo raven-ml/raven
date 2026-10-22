@@ -48,6 +48,9 @@ type t = {
   fault : string option ref;
       (* the first report, raised again by each sleep: a fault, a hang, or a
          flush the hubs did not confirm *)
+  reads : int Atomic.t;
+      (* moves each time a sleep consumes entries of the interrupt ring or
+         records a fault: [interrupts] *)
   mutable eops : (int * Memory.region) list;
       (* each compute queue's end-of-pipe buffer, by its doorbell index, kept
          from its first queue to the stop for every later one *)
@@ -327,7 +330,7 @@ let stop_locked g =
     if not g.vf then step (fun () -> Smu.clocks g.smu `Lowest);
     step (fun () ->
         ignore (Ih.read g.ih);
-        Ih.consume g.ih);
+        ignore (Ih.consume g.ih : bool));
     step (fun () -> List.iter (fun (_, m) -> Memory.free g.memory m) g.eops);
     g.eops <- [];
     step (fun () -> mark g ~dirty:(!(g.fault) <> None || (not left) || !failed));
@@ -545,6 +548,7 @@ let start ~gpus f first =
       vf;
       lease;
       fault;
+      reads = Atomic.make 0;
       eops = [];
       stopped = None;
       hw = Rig_amd.Lock.create ();
@@ -671,6 +675,7 @@ let most_ring g = function
 
 let fault g why =
   g.fault := Some why;
+  Atomic.incr g.reads;
   raise (Rig_amd.Fault why)
 
 let faulted g why =
@@ -725,17 +730,22 @@ let events g reports =
   if reports <> [] then g.fault := Some (String.concat "; " reports);
   if Option.is_some page then Gmc.clear_fault g.gmc;
   Option.iter (fun (_, flags) -> clear_fatal g flags) fatal;
-  Ih.consume g.ih;
+  if Ih.consume g.ih || reports <> [] then Atomic.incr g.reads;
   Option.iter (fun why -> raise (Rig_amd.Fault why)) !(g.fault)
+
+let interrupts g = Atomic.get g.reads
 
 (* A sleep that a stop overtakes reads nothing more: the stop's release unmaps
    the windows the interrupt ring lies in. Each look at the ring holds the lock
-   the stop takes. *)
-let sleep g ~ms =
+   the stop takes. A sleep consumes every entry it reads, those of releases
+   other domains sleep on included: the count moving past [after] wakes them,
+   as an eventcount does. *)
+let sleep g ~ms ~after =
   (match !(g.fault) with Some why -> raise (Rig_amd.Fault why) | None -> ());
   let stopped () = Option.is_some g.stopped in
   let moved () =
-    Rig_amd.Lock.protect g.hw (fun () -> stopped () || Ih.pending g.ih)
+    Atomic.get g.reads <> after
+    || Rig_amd.Lock.protect g.hw (fun () -> stopped () || Ih.pending g.ih)
   in
   (* A failed wait is read below, with the ring. *)
   ignore

@@ -147,6 +147,14 @@ external kfd_destroy_queue : int -> int -> unit
 external kfd_wait : int -> int array -> int -> int -> fault option
   = "caml_rig_amd_amdgpu_wait"
 
+(* [kfd_sleep kfd ids ms me after] waits at most [ms] for the signal event
+   [ids.(0)] or the exception events after it, as [kfd_wait] does, with
+   [after] as the signal's last age. It is the signal's age once it woke the
+   wait, [after] if it did not, or -1 for a fault of GPU [me], which
+   [kfd_wait] then reads. It allocates nothing. *)
+external kfd_sleep : int -> int array -> int -> int -> int -> int
+  = "caml_rig_amd_amdgpu_sleep"
+
 (* The render node *)
 
 (* [device_info drm] is the GPU's clock in kHz and its active compute units, 16
@@ -710,6 +718,8 @@ type device = {
   fd : int;
   gpu : gpu;
   events : int array;
+  age : int Atomic.t;
+      (* the newest age of the signal event a wait gave back: [interrupts] *)
   mutable events_held : bool; (* until destroyed, once *)
   mutable queues : (int * int * mem Amd.memory list) list;
       (* id, doorbell, its memory *)
@@ -839,22 +849,42 @@ let raise_fault g =
   | Some why -> raise (Amd.Fault why)
   | None -> ()
 
-let sleep d ~ms =
+(* The signal event resets as a wait takes it, and an interrupt latches it only
+   while no wait is in the kernel's queue: a sleep that looked at the word
+   while another waits would miss it. KFD counts the event's signals, from 1 at
+   its creation (kfd_events.c, event_age), and a wait given the age a sleep
+   read before the word returns at once if the event fired since. The newest
+   age is stored once the slot is armed again, so that a sleep that reads it
+   reads the word after the arm: an interrupt the unarmed slot dropped came
+   after its release wrote the word. A KFD before ioctl 1.14 ignores the age
+   and gives none back, so there a sleep between its look and the kernel's
+   wait may still wait out [ms] ([event_age]). *)
+let first_age = 1
+
+let rec newer a v =
+  let o = Atomic.get a in
+  if v > o && not (Atomic.compare_and_set a o v) then newer a v
+
+let sleep d ~ms ~after =
   let g = d.gpu in
   raise_fault g;
-  let f =
-    match kfd_wait d.fd d.events ms g.node.gpu_id with
-    | f -> f
+  let age =
+    match kfd_sleep d.fd d.events ms g.node.gpu_id after with
+    | age -> age
     | exception Unix.Unix_error (e, _, _) ->
         arm d.events.(0);
         fault "waiting for KFD events" e
   in
   arm d.events.(0);
-  match f with
-  | None -> ()
-  | Some f ->
-      report g (fault_message f);
-      raise_fault g
+  if age >= 0 then newer d.age age
+  else begin
+    (* The exception events stay set, so a second look reads the fault. *)
+    (match kfd_wait d.fd [| d.events.(1); d.events.(2) |] 0 g.node.gpu_id with
+    | Some f -> report g (fault_message f)
+    | None | (exception Unix.Unix_error _) ->
+        report g "a KFD exception event reported a fault of the GPU");
+    raise_fault g
+  end
 
 (* Asks the exception events of the GPU's open devices, without waiting, for a
    fault no sleep has read yet. The events stay set: they reset only by hand. *)
@@ -981,6 +1011,7 @@ let path d ~gpus ~index : mem Amd.path =
     hdp = g.hdp;
     interrupt = d.events.(0);
     hang_ms = Some hang_ms;
+    interrupts = (fun () -> Atomic.get d.age);
     sleep = sleep d;
     stable_power = stable_power g;
     stop = stop d;
@@ -1030,7 +1061,16 @@ let open_ ~root ~word i =
               | events -> Ok (fd, g, events)
               | exception Amd.Fault why -> Error why))
     in
-    let d = { fd; gpu = g; events; events_held = true; queues = [] } in
+    let d =
+      {
+        fd;
+        gpu = g;
+        events;
+        age = Atomic.make first_age;
+        events_held = true;
+        queues = [];
+      }
+    in
     (* The events stay while a queue the path could not stop may still raise the
        interrupt. *)
     let give_back () = if d.queues = [] then drop_events d in
@@ -1057,3 +1097,17 @@ let gpu_under ~root i : Rig_amd.t Rig_edge.opener =
   }
 
 let gpu i = gpu_under ~root:"/" i
+
+(* KFD keeps the age of signal events from ioctl 1.14 (kfd_ioctl.h, "Update
+   kfd_event_data"). *)
+let age_from = 1014
+
+let event_age () =
+  Amd.Lock.check "Rig_amd_amdgpu.event_age";
+  Amd.Lock.protect opening @@ fun () ->
+  match kfd_fd ~dev:"/dev" with
+  | Error _ -> false
+  | Ok fd -> (
+      match kfd_version fd with
+      | v -> v >= age_from
+      | exception Unix.Unix_error _ -> false)

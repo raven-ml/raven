@@ -566,10 +566,19 @@ type 'm path = {
           where nothing else bounds the GPU's work; [None] where the path's
           kernel driver does. It is the [hang_ms] of the device's facts
           ({!Rig_edge.type-facts}). *)
-  sleep : ms:int -> unit;
-      (** [sleep ~ms] returns once the GPU interrupts, or after [ms]
-          milliseconds. It raises {!Fault} with the path's report of a fault
-          of the GPU's work. *)
+  interrupts : unit -> int;
+      (** [interrupts ()] is the path's count of the interrupts its sleeps
+          took and the faults they recorded, as [sleep] compares it. *)
+  sleep : ms:int -> after:int -> unit;
+      (** [sleep ~ms ~after] returns once the GPU interrupts, at once if a
+          sleep of the path, in any domain, took an interrupt or recorded a
+          fault since [interrupts ()] was [after], or after [ms]
+          milliseconds. {!val-sleep} reads [after] before it reads the word
+          it sleeps on, so a release after that read wakes the sleep even
+          when another domain's sleep took its interrupt. A path that cannot
+          keep the count must say which sleeps may wait out [ms] instead. It
+          raises {!Fault} with the path's report of a fault of the GPU's
+          work. *)
   stable_power : unit -> (unit, string) result;
       (** [stable_power ()] holds the GPU's clocks and shader engines steady,
           as tracing needs, for the life of the process. *)
@@ -678,6 +687,12 @@ end
        GFX version.}} *)
 
 (**/**)
+
+(* [hold_sleeps f] makes each later {!val-sleep} that reads the word unmoved
+   call [f ()] before the path's sleep, until the next [hold_sleeps]: a test
+   holds one domain's sleep there while another domain's sleep takes the
+   interrupt. [hold_sleeps ignore] holds none. Any domain may call it. *)
+val hold_sleeps : (unit -> unit) -> unit
 
 (* [renumber g v] makes [v] the value after [g]'s last one: the timeline word
    and the last value given become [v - 1]. [g] is idle: its word holds the

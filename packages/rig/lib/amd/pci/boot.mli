@@ -207,10 +207,15 @@ val hdp : t -> int option
 (** [hdp g] is the host address of the HDP flush register, if the register
     BAR is mapped into the process. *)
 
-val sleep : t -> ms:int -> unit
-(** [sleep g ~ms] is [Rig_amd.path]'s [sleep]. It waits at most [ms]
-    milliseconds for the interrupt ring to move, then reads it. A sleep that
-    a {!stop} overtakes returns without reading the ring again.
+val interrupts : t -> int
+(** [interrupts g] is [Rig_amd.path]'s [interrupts]: a count that moves each
+    time a sleep consumes entries of the interrupt ring or records a fault. *)
+
+val sleep : t -> ms:int -> after:int -> unit
+(** [sleep g ~ms ~after] is [Rig_amd.path]'s [sleep]. It waits at most [ms]
+    milliseconds for the interrupt ring to move or {!interrupts} to differ
+    from [after], then reads the ring. A sleep that a {!stop} overtakes
+    returns without reading the ring again.
 
     Raises [Rig_amd.Fault] with every report of a fault, a fatal hardware
     error with the GPU's machine-check banks, or the function's or machine's

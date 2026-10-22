@@ -261,32 +261,67 @@ value caml_rig_amd_amdgpu_destroy_queue(value v_kfd, value v_id) {
    events. */
 #define MOST_EVENTS 3
 
-/* Waits at most [v_ms] for any of the events [v_ids], a signal, then a
-   memory and a hardware exception event, or the two exception events
-   alone. Is [Some f] for a fault of GPU [v_me] an exception event reports,
-   [f] a fault, else [None], allocating nothing.
+/* Waits at most [ms] for any of the [n] events [v_ids] into [ev], a signal,
+   then a memory and a hardware exception event, or the two exception events
+   alone, the signal's last age [age]: whether an exception event reports a
+   fault of GPU [me].
 
    An exception event another GPU's fault set does not reset itself, and
    would end every later wait at once: the wait resets it. */
-value caml_rig_amd_amdgpu_wait(value v_kfd, value v_ids, value v_ms,
-                               value v_me) {
-  CAMLparam0();
-  CAMLlocal1(f);
-  int kfd = Int_val(v_kfd), n = Wosize_val(v_ids);
-  uint32_t me = Int_val(v_me);
+static int wait_events(int kfd, struct kfd_event_data *ev, value v_ids,
+                       int ms, uint32_t me, uint64_t age) {
+  int n = Wosize_val(v_ids);
   if (n < 2 || n > MOST_EVENTS)
     caml_invalid_argument("kfd_wait: 2 or 3 events");
-  struct kfd_event_data ev[MOST_EVENTS];
-  memset(ev, 0, sizeof ev);
+  memset(ev, 0, MOST_EVENTS * sizeof *ev);
   for (int i = 0; i < n; i++) ev[i].event_id = Int_val(Field(v_ids, i));
+  if (n == MOST_EVENTS) ev[0].signal_event_data.last_event_age = age;
   struct kfd_ioctl_wait_events_args a = {
-      .events_ptr = (uintptr_t)ev, .num_events = n, .timeout = Int_val(v_ms)};
+      .events_ptr = (uintptr_t)ev, .num_events = n, .timeout = ms};
   check(call(kfd, AMDKFD_IOC_WAIT_EVENTS, &a));
   const struct kfd_hsa_memory_exception_data *m =
       &ev[n - 2].memory_exception_data;
   const struct kfd_hsa_hw_exception_data *h = &ev[n - 1].hw_exception_data;
   if (m->gpu_id != 0 && m->gpu_id != me) reset_event(kfd, ev[n - 2].event_id);
   if (h->gpu_id != 0 && h->gpu_id != me) reset_event(kfd, ev[n - 1].event_id);
+  return m->gpu_id == me || h->gpu_id == me;
+}
+
+/* Waits at most [v_ms] for the signal event [v_ids.(0)] or the memory and
+   hardware exception events after it, passing [v_after] as the signal's last
+   age. KFD from ioctl 1.14 returns at once if the signal fired since that
+   age, and writes the event's age back when the signal woke the wait; an
+   earlier KFD ignores the age and writes none. Is the age, [v_after] if
+   none came back, or -1 if an exception event reports a fault of GPU
+   [v_me], which a [caml_rig_amd_amdgpu_wait] then reads, as exception events
+   stay set. Allocates nothing. */
+value caml_rig_amd_amdgpu_sleep(value v_kfd, value v_ids, value v_ms,
+                                value v_me, value v_after) {
+  struct kfd_event_data ev[MOST_EVENTS];
+  if (Wosize_val(v_ids) != MOST_EVENTS)
+    caml_invalid_argument("kfd_sleep: 3 events");
+  if (wait_events(Int_val(v_kfd), ev, v_ids, Int_val(v_ms), Int_val(v_me),
+                  (uint64_t)Long_val(v_after)))
+    return Val_long(-1);
+  return Val_long((intnat)ev[0].signal_event_data.last_event_age);
+}
+
+/* Waits at most [v_ms] for any of the events [v_ids], a signal, then a
+   memory and a hardware exception event, or the two exception events
+   alone. Is [Some f] for a fault of GPU [v_me] an exception event reports,
+   [f] a fault, else [None], allocating nothing. */
+value caml_rig_amd_amdgpu_wait(value v_kfd, value v_ids, value v_ms,
+                               value v_me) {
+  CAMLparam0();
+  CAMLlocal1(f);
+  int n = Wosize_val(v_ids);
+  uint32_t me = Int_val(v_me);
+  struct kfd_event_data ev[MOST_EVENTS];
+  if (!wait_events(Int_val(v_kfd), ev, v_ids, Int_val(v_ms), me, 0))
+    CAMLreturn(Val_none);
+  const struct kfd_hsa_memory_exception_data *m =
+      &ev[n - 2].memory_exception_data;
+  const struct kfd_hsa_hw_exception_data *h = &ev[n - 1].hw_exception_data;
   if (m->gpu_id == me) {
     f = caml_alloc_small(6, 0);
     Field(f, 0) = Val_long((intnat)m->va);
@@ -466,6 +501,8 @@ NONE(queue, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value i UNUSED, value j UNUSED, value k UNUSED, value l UNUSED)
 NONE(destroy_queue, value a UNUSED, value b UNUSED)
 NONE(wait, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
+NONE(sleep, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
+     value e UNUSED)
 NONE(device_info, value a UNUSED)
 NONE(stable_pstate, value a UNUSED)
 NONE(reserve, value a UNUSED)

@@ -117,6 +117,12 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
     and below KFD 1.12, Linux 6.4. The device's facts name the GPU's
     function as [bus].
 
+    {b Sleeps.} From KFD 1.14, Linux 6.5, a release wakes every
+    {!Rig_amd.val-sleep} that waits for it. Before, a sleep that looked at
+    the word while another domain's sleep was waiting may miss the release's
+    interrupt, which that one takes, and wait out rig's still interval,
+    200 ms, before it looks again.
+
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or
     cause, and {!Rig_amd.val-sleep} raises it. The kernel driver bounds no
@@ -144,6 +150,13 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
 val buses_under : root:string -> (string list, string) result
 val count_under : root:string -> (int, string) result
 val gpu_under : root:string -> int -> Rig_amd.t Rig_edge.opener
+
+(* [event_age ()] is [true] iff this process's KFD, which it opens from
+   [/dev/kfd] as an open does, keeps the age of signal events (KFD 1.14), so
+   that no sleep misses a release's interrupt, as the module's sleeps
+   paragraph says. [false] if KFD cannot be opened. Raises [Invalid_argument]
+   from a callback inside a lock. *)
+val event_age : unit -> bool
 
 (* [gpu_at root bus] is the GPU at bus address [bus] as the [amdgpu] driver
    describes it under the directory [root]: its topology node and its blocks'

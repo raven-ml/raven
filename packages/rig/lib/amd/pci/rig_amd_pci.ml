@@ -309,7 +309,8 @@ let path g h fn ~index : Memory.region Amd.path =
     hdp = Boot.hdp g;
     interrupt;
     hang_ms = Some Driver.hang_ms;
-    sleep = (fun ~ms -> guard (fun () -> Boot.sleep g ~ms));
+    interrupts = (fun () -> Boot.interrupts g);
+    sleep = (fun ~ms ~after -> guard (fun () -> Boot.sleep g ~ms ~after));
     stable_power = (fun () -> guard (fun () -> Boot.stable_power g));
     stop;
   }

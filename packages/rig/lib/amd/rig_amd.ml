@@ -138,7 +138,8 @@ type 'm path = {
   hdp : int option;
   interrupt : int;
   hang_ms : int option;
-  sleep : ms:int -> unit;
+  interrupts : unit -> int;
+  sleep : ms:int -> after:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
 }
@@ -169,7 +170,8 @@ type ops = {
     (int, refusal) result;
   retire : int -> unit;
   most_ring : [ `Pm4 | `Aql | `Sdma ] -> int;
-  sleep : ms:int -> unit;
+  interrupts : unit -> int;
+  sleep : ms:int -> after:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
 }
@@ -195,6 +197,7 @@ let ops (type m) (p : m path) =
     queue = p.queue;
     retire = p.retire;
     most_ring = p.most_ring;
+    interrupts = p.interrupts;
     sleep = p.sleep;
     stable_power = p.stable_power;
     stop = p.stop;
@@ -1311,8 +1314,21 @@ external raise_word : int -> unit = "caml_rig_amd_raise"
 
 let signaled g = signaled_word g.self
 
+(* What each sleep calls between its read of the word and the path's sleep,
+   for the suites. *)
+let before_sleep = Atomic.make ignore
+let hold_sleeps f = Atomic.set before_sleep f
+
+(* The path's count is read before the word, as an eventcount's: a release
+   that moves the word after this read raises an interrupt, which either waits
+   for the path's sleep or moves the count, as another domain's sleep took
+   it. *)
 let sleep g ~seen ~still_ms =
-  if signaled g = seen then (live g).ops.sleep ~ms:still_ms
+  let after = match g.live with Some l -> l.ops.interrupts () | None -> 0 in
+  if signaled g = seen then begin
+    (Atomic.get before_sleep) ();
+    (live g).ops.sleep ~ms:still_ms ~after
+  end
 
 (* Growth
 

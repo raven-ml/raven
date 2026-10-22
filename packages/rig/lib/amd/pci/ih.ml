@@ -297,5 +297,7 @@ let read t =
   reports
 
 let consume t =
+  let moved = t.upto <> t.rptr in
   t.rptr <- t.upto;
-  Regs.write ~value:t.rptr t.r "regIH_RB_RPTR" []
+  Regs.write ~value:t.rptr t.r "regIH_RB_RPTR" [];
+  moved

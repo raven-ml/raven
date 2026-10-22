@@ -74,6 +74,7 @@ val read : t -> report list
     Raises {!Regs.Stuck} if the GPU's function or its machine failed
     ({!Rig_pci.Function.failed}). *)
 
-val consume : t -> unit
+val consume : t -> bool
 (** [consume ih] writes the read pointer back past the entries the last
-    {!read} reported, which no later [read] reports. *)
+    {!read} reported, which no later [read] reports. It is [true] iff that
+    read found entries, so that the pointer moved. *)
