@@ -605,8 +605,15 @@ let gen_affine =
   in
   let+ width = of_list [ G.W32; G.W64 ]
   and+ add = int_range (-(1 lsl 20)) (1 lsl 20)
+  (* A quarter of the shifts at the 32-bit boundary, so that 100 cases all
+     miss it with odds about 5e-14. *)
   and+ shift =
-    frequency [ (1, of_list [ 0; 1; 31; 32; 33; 61; 62 ]); (2, int_range 0 62) ]
+    frequency
+      [
+        (1, of_list [ 31; 32 ]);
+        (1, of_list [ 0; 1; 33; 61; 62 ]);
+        (2, int_range 0 62);
+      ]
   and+ terms = list ~size:(int_range 0 4) (pair term factor)
   and+ frames = list ~size:(int_range 1 3) (pair int int) in
   { width; add; shift; terms; frames }
