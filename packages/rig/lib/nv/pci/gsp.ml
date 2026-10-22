@@ -91,6 +91,7 @@ type t = {
   lock : Rig_nv.Lock.t;
   libos : int; (* the libos arguments' bus address, for a resumption *)
   meta : int; (* the WPR metadata's bus address *)
+  flush : (int * int) list; (* the flush page's registers and their values *)
   start : start;
   mutable fault : string option;
   mutable unanswered : bool; (* a call waited out its bound *)
@@ -237,6 +238,41 @@ let radix3 sys (image : Images.range) =
   done;
   Ok s
 
+(* The registers that name the page the GPU reads when it flushes its writes
+   to system memory, and their values for the page at bus address [a], the
+   high word first, as NVIDIA's RM writes them
+   (kmemsysProgramSysmemFlushBuffer_GA100 and _GB10B). The flush, a read of
+   the page, runs at every system memory barrier, a falcon's reset among them;
+   a reset leaves the registers at address 0. Ampere and Ada take [a]'s bits
+   46:8, Blackwell its bits 51:0. *)
+let flush_registers (c : Chip.t) a =
+  let module L = Defs.Legacy in
+  let module B = Defs.Blackwell in
+  let low = 0xffff_ffff in
+  let regs, limit =
+    match c.family with
+    | Ampere | Ada ->
+        let shift = Defs.nv_pfb_niso_flush_sysmem_addr_shift in
+        let s = a lsr shift in
+        ( [
+            ( L.nv_pfb_niso_flush_sysmem_addr_hi,
+              put L.nv_pfb_niso_flush_sysmem_addr_hi_adr_63_40 (s lsr 32) );
+            ( L.nv_pfb_niso_flush_sysmem_addr,
+              put L.nv_pfb_niso_flush_sysmem_addr_adr_39_08 (s land low) );
+          ],
+          (Defs.nv_pfb_niso_flush_sysmem_addr_hi_mask + 1) lsl (32 + shift) )
+    | Blackwell ->
+        ( [
+            ( B.nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi,
+              put B.nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi_adr (a lsr 32) );
+            ( B.nv_pfb_fbhub0_pcie_flush_sysmem_addr_lo,
+              put B.nv_pfb_fbhub0_pcie_flush_sysmem_addr_lo_adr (a land low) );
+          ],
+          (Defs.nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi_adr_mask + 1) lsl 32 )
+  in
+  if a < limit then Ok regs
+  else Error (strf "the GPU cannot name its flush page at bus address 0x%x" a)
+
 (* Calls *)
 
 (* How long the GSP takes to answer a call, and to boot. *)
@@ -305,8 +341,9 @@ let unanswered g = function
       if g.fault = None then g.fault <- Some why;
       Error why
 
-let wait_for g fn =
-  let found = ref (Error (strf "no answer to call %d" fn)) in
+(* [what] names the call in errors: its number, and what it asks. *)
+let wait_for g ?(what = "") fn =
+  let found = ref (Error (strf "no answer to call %d%s" fn what)) in
   let answered () =
     match drain g ~want:(Some fn) with
     | Ok None -> false
@@ -320,7 +357,7 @@ let wait_for g fn =
   let* () =
     unanswered g
       (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
-         (strf "the GSP's answer to call %d" fn)
+         (strf "the GSP's answer to call %d%s" fn what)
          answered)
   in
   !found
@@ -330,10 +367,10 @@ let send g fn body =
     (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
        "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body))
 
-let call g fn body =
+let call g ?what fn body =
   Rig_nv.Lock.protect g.lock (fun () ->
       let* () = send g fn body in
-      wait_for g fn)
+      wait_for g ?what fn)
 
 (* Every error of a drain is recorded as the GPU's fault inside it. *)
 let drained g = ignore (drain g ~want:None : (_, _) result)
@@ -388,6 +425,7 @@ let control g ~client obj cmd p =
   let* answer =
     failed
       (call g Defs.nv_vgpu_msg_function_gsp_rm_control
+         ~what:(strf " (command 0x%x)" cmd)
          (Rpc.rm_control ~client ~obj ~cmd body))
   in
   let* status, out = failed (Rpc.rm_answer `Control answer) in
@@ -403,6 +441,7 @@ let alloc_object g ~client ~parent ~obj cls p =
   let* answer =
     failed
       (call g Defs.nv_vgpu_msg_function_gsp_rm_alloc
+         ~what:(strf " (class 0x%x)" cls)
          (Rpc.rm_alloc ~client ~parent ~obj ~cls body))
   in
   let* status, _ = failed (Rpc.rm_answer `Alloc answer) in
@@ -969,6 +1008,8 @@ let take p (fw : Images.t) fwsec ~taken =
   let* bootloader = sys ~contiguous:true fw.bootloader.image.length in
   blit fw.bootloader.image bootloader.w 0;
   let* meta = sys page in
+  let* flush = sys page in
+  let* flush = flush_registers c (first flush) in
   let wpr_meta =
     Fb_layout.wpr_meta (Chip.layout c.family) ~memory:p.memory
       ~gsp:{ address = first radix; size = fw.gsp.length }
@@ -1019,6 +1060,7 @@ let take p (fw : Images.t) fwsec ~taken =
       lock = Rig_nv.Lock.create ();
       libos = first libos;
       meta = first meta;
+      flush;
       start;
       fault = None;
       unanswered = false;
@@ -1081,6 +1123,7 @@ let falcons g =
 
 let boot g =
   let c = g.p.chip in
+  List.iter (fun (r, v) -> Chip.set c r v) g.flush;
   Function.set_bus_master c.fn true;
   (* What the GSP reads first, before it runs. *)
   let* () =

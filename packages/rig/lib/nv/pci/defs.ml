@@ -609,6 +609,9 @@ let nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done = 1
 let nv_pfalcon_falcon_hwcfg2_mem_scrubbing_done = 0
 let nv_priscv_riscv_cpuctl_active_stat_active = 1
 let nv_priscv_riscv_bcr_ctrl_valid_true = 1
+let nv_pfb_niso_flush_sysmem_addr_shift = 8
+let nv_pfb_niso_flush_sysmem_addr_hi_mask = 0x7f
+let nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi_adr_mask = 0xfffff
 let nv_priscv_riscv_bcr_ctrl_core_select_riscv = 1
 let nv_therm_i2cs_scratch_fsp_boot_complete_status_success = 0xff
 let nv_pgsp = 0x110000
@@ -689,6 +692,10 @@ module Legacy = struct
   let nv_priscv_riscv_bcr_ctrl_valid = (0, 1)
   let nv_prom_data i = 0x300000 + (i * 1)
   let nv_pbus_vbios_scratch i = 0x1400 + (i * 4)
+  let nv_pfb_niso_flush_sysmem_addr = 0x100c10
+  let nv_pfb_niso_flush_sysmem_addr_adr_39_08 = (0, 0x20)
+  let nv_pfb_niso_flush_sysmem_addr_hi_adr_63_40 = (0, 0x18)
+  let nv_pfb_niso_flush_sysmem_addr_hi = 0x100c40
 end
 
 module Blackwell = struct
@@ -738,6 +745,10 @@ module Blackwell = struct
   let nv_pfsp_msgq_head_val = (0, 0x20)
   let nv_pfsp_msgq_tail i = 0x8f2c84 + (i * 8)
   let nv_pfsp_msgq_tail_val = (0, 0x20)
+  let nv_pfb_fbhub0_pcie_flush_sysmem_addr_lo = 0x8a1d58
+  let nv_pfb_fbhub0_pcie_flush_sysmem_addr_lo_adr = (0, 0x20)
+  let nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi = 0x8a1d5c
+  let nv_pfb_fbhub0_pcie_flush_sysmem_addr_hi_adr = (0, 0x20)
 end
 
 (* The firmware images of each family, GSP first, and every image's

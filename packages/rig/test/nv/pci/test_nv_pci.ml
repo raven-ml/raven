@@ -567,10 +567,11 @@ let test_search () =
    of. Its registers keep what is written, so the falcon's first DMA never
    completes: the open fails at the poll's bound, 30 s, having taken the boot's
    system memory from the tree's huge pages, at the frames its page map gives
-   from 64 GiB on, where this library places it, and having written FWSEC to the
-   GPU's memory. A boot needs NVIDIA's firmware, which a test run cannot hold:
-   its licence keeps it out of the repository, so the test runs where
-   RIG_NV_PCI_FIRMWARE lists it. *)
+   from 64 GiB on, where this library places it, having written FWSEC to the
+   GPU's memory, and having named a page of that system memory as the one the
+   GPU reads to flush its writes there. A boot needs NVIDIA's firmware, which a
+   test run cannot hold: its licence keeps it out of the repository, so the
+   test runs where RIG_NV_PCI_FIRMWARE lists it. *)
 
 let gpu_memory = 8 * 1024 * mib
 let system_base = 64 * 1024 * mib
@@ -598,6 +599,17 @@ let fwsec root =
   in
   find 0
 
+(* The bus address the GPU flushes its writes to system memory by reading:
+   NV_PFB_NISO_FLUSH_SYSMEM_ADDR holds its bits 39:8, _HI its bits 63:40
+   (ga100/dev_fb.h). *)
+let flush_page root =
+  In_channel.with_open_bin (device_file root "resource0") @@ fun ic ->
+  let reg r =
+    In_channel.seek ic (Int64.of_int r);
+    u32 (really_input_string ic 4) 0
+  in
+  (reg 0x100c40 lsl 40) lor (reg 0x100c10 lsl 8)
+
 let memory_files root =
   Sys.readdir (Filename.concat root "dev/hugepages")
   |> Array.to_list
@@ -616,8 +628,10 @@ let test_failed_boot () =
   let firmware = firmware () in
   let machine = Rig_pci.Machine.at root in
   let page = Rig_pci.Machine.page machine in
+  let first_frame = 0x10_0000 in
+  let frames = 256 * mib / page in
   Tree.pagemap root ~page system_base
-    (List.init (256 * mib / page) (fun i -> 0x10_0000 + i));
+    (List.init frames (fun i -> first_frame + i));
   let why =
     require_error
       (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine ~firmware 0))
@@ -634,6 +648,14 @@ let test_failed_boot () =
        [ 0; 4; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x28 ]);
   equal ~msg:"the signature" string (String.make 384 '\x22')
     (String.sub f (imem + 0x200) 384);
+  (* A reset leaves the flush page at 0, which the GPU cannot read. *)
+  let flush = flush_page root in
+  let base = first_frame * page in
+  at_least ~msg:"the flush page, in the boot's memory" int ~than:base flush;
+  less ~msg:"the flush page, in the boot's memory" int
+    ~than:(base + (frames * page))
+    flush;
+  equal ~msg:"the flush page's offset in its page" int 0 (flush mod page);
   let command =
     In_channel.with_open_bin (device_file root "config") @@ fun ic ->
     In_channel.seek ic 4L;
@@ -675,9 +697,9 @@ let failed_boot =
   group ~timeout:60. "a failed boot"
     [
       test
-        "a boot that fails stops the GPU: FWSEC was set up for its memory, bus \
-         mastering is off, its system memory given back, and it is reset by \
-         the next open (RIG_NV_PCI_FIRMWARE)"
+        "a boot that fails stops the GPU: FWSEC was set up for its memory, its \
+         flush page named, bus mastering is off, its system memory given back, \
+         and it is reset by the next open (RIG_NV_PCI_FIRMWARE)"
         test_failed_boot;
     ]
 

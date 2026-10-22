@@ -469,6 +469,8 @@ WHOLE = {
 REGISTER_SOURCES = {
     "nv_ref.h": "nv_ref.h",
     "tu102_dev_fb.h": "turing/tu102/dev_fb.h",
+    "ga100_dev_fb.h": "ampere/ga100/dev_fb.h",
+    "gb10b_dev_fbhub.h": "blackwell/gb10b/dev_fbhub.h",
     "tu102_dev_vm.h": "turing/tu102/dev_vm.h",
     "tu102_dev_bus.h": "turing/tu102/dev_bus.h",
     "ga102_dev_gc6_island.h": "ampere/ga102/dev_gc6_island.h",
@@ -492,14 +494,14 @@ PCI_SOURCES.update({k: R570 + SWREF + v for k, v in REGISTER_SOURCES.items()})
 # The register headers of each family, in the order the first that defines
 # a name gives it.
 FAMILIES = {
-    "Legacy": ["nv_ref.h", "tu102_dev_fb.h", "ga102_dev_gc6_island.h", "ga102_dev_gc6_island_addendum.h",
+    "Legacy": ["nv_ref.h", "tu102_dev_fb.h", "ga100_dev_fb.h", "ga102_dev_gc6_island.h", "ga102_dev_gc6_island_addendum.h",
                "tu102_dev_vm.h", "ga102_dev_gsp.h", "ga102_dev_falcon_v4.h", "ga102_dev_falcon_v4_addendum.h",
                "ga102_dev_riscv_pri.h", "ga102_dev_fbif_v4.h", "ga102_dev_falcon_second_pri.h",
                "ga102_dev_sec_pri.h", "tu102_dev_bus.h", "tu102_dev_ext_devices.h"],
     "Blackwell": ["nv_ref.h", "tu102_dev_fb.h", "ga102_dev_gc6_island.h", "ga102_dev_gc6_island_addendum.h",
                   "gh100_dev_vm.h", "tu102_dev_vm.h", "ga102_dev_gsp.h", "gh100_dev_falcon_v4.h",
                   "gh100_dev_fsp_pri.h", "tu102_dev_bus.h", "gb202_dev_therm.h",
-                  "gb202_dev_therm_addendum.h", "ga102_dev_riscv_pri.h"],
+                  "gb202_dev_therm_addendum.h", "ga102_dev_riscv_pri.h", "gb10b_dev_fbhub.h"],
 }
 
 # The units whose headers give offsets within the unit: a falcon's units, at
@@ -525,6 +527,7 @@ REGISTERS = {
         "NV_PFALCON2_FALCON_BROM_PARAADDR", "NV_PFALCON2_FALCON_BROM_ENGIDMASK",
         "NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID", "NV_PFALCON2_FALCON_MOD_SEL", "NV_PRISCV_RISCV_CPUCTL",
         "NV_PRISCV_RISCV_BCR_CTRL", "NV_PROM_DATA", "NV_PBUS_VBIOS_SCRATCH",
+        "NV_PFB_NISO_FLUSH_SYSMEM_ADDR", "NV_PFB_NISO_FLUSH_SYSMEM_ADDR_HI",
     ],
     "Blackwell": [
         "NV_PMC_BOOT_0", "NV_PMC_BOOT_42", "NV_PFB_PRI_MMU_WPR2_ADDR_LO", "NV_PFB_PRI_MMU_WPR2_ADDR_HI",
@@ -532,7 +535,8 @@ REGISTERS = {
         "NV_VIRTUAL_FUNCTION_PRIV_FUNC_BAR1_BLOCK_LOW_ADDR", "NV_PBUS_BAR1_BLOCK", "NV_PGSP_QUEUE_HEAD",
         "NV_PFALCON_FALCON_HWCFG2", "NV_THERM_I2CS_SCRATCH", "NV_PFSP_EMEMC", "NV_PFSP_EMEMD",
         "NV_PFSP_QUEUE_HEAD", "NV_PFSP_QUEUE_TAIL", "NV_PFSP_MSGQ_HEAD", "NV_PFSP_MSGQ_TAIL",
-        "NV_PRISCV_RISCV_CPUCTL",
+        "NV_PRISCV_RISCV_CPUCTL", "NV_PFB_FBHUB0_PCIE_FLUSH_SYSMEM_ADDR_LO",
+        "NV_PFB_FBHUB0_PCIE_FLUSH_SYSMEM_ADDR_HI",
     ],
 }
 
@@ -545,6 +549,8 @@ REGISTER_VALUES = [
     "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT_PROGRESS_COMPLETED",
     "NV_PGC6_BSI_SECURE_SCRATCH_14_BOOT_STAGE_3_HANDOFF_VALUE_DONE", "NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING_DONE",
     "NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT_ACTIVE", "NV_PRISCV_RISCV_BCR_CTRL_VALID_TRUE",
+    "NV_PFB_NISO_FLUSH_SYSMEM_ADDR_SHIFT", "NV_PFB_NISO_FLUSH_SYSMEM_ADDR_HI_MASK",
+    "NV_PFB_FBHUB0_PCIE_FLUSH_SYSMEM_ADDR_HI_ADR_MASK",
     "NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_RISCV", "NV_THERM_I2CS_SCRATCH_FSP_BOOT_COMPLETE_STATUS_SUCCESS",
 ]
 

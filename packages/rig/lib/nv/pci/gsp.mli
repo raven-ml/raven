@@ -41,16 +41,20 @@ val create : placement -> Images.t -> Vbios.fwsec option -> (t, string) result
 (** [create p fw fwsec] takes the system memory a boot of [p.chip] with the
     firmware [fw] gives the GSP, and writes into it the queues, the libos
     arguments, the radix-3 table and images, the WPR metadata and, on Blackwell,
-    the FMC and its arguments. On Ampere and Ada, [fwsec] is the VBIOS's FWSEC,
-    which the boot sets up for the GPU's memory, and [create] takes the GPU
-    memory of FWSEC's image and of the larger booter from the boot pool;
-    Blackwell's boot runs none. It writes nothing to the GPU. [Error] if the
-    machine refuses the memory, if the boot pool has no room for the images,
-    or if [fw] and [fwsec] are not of the GPU's family. It gives the system
-    memory back when it fails or raises. *)
+    the FMC and its arguments. It also takes a page for the GPU's flushes of
+    its writes to system memory, which read it. On Ampere and Ada, [fwsec] is
+    the VBIOS's FWSEC, which the boot sets up for the GPU's memory, and
+    [create] takes the GPU memory of FWSEC's image and of the larger booter
+    from the boot pool; Blackwell's boot runs none. It writes nothing to the
+    GPU. [Error] if the machine refuses the memory, if the flush page lies past
+    the bus addresses the GPU's registers hold (2{^47} on Ampere and Ada,
+    2{^52} on Blackwell), if the boot pool has no room for the images, or if
+    [fw] and [fwsec] are not of the GPU's family. It gives the system memory
+    back when it fails or raises. *)
 
 val boot : t -> (unit, string) result
-(** [boot g] boots the GSP: it turns the GPU's bus mastering on, sends the
+(** [boot g] boots the GSP: it gives the GPU the flush page's bus address,
+    which a reset sets to 0, turns the GPU's bus mastering on, sends the
     system's description and the registry, writes the falcons' images to GPU
     memory, starts the GSP ({!Falcon.legacy} or {!Falcon.cot}), waits for its
     [GSP_INIT_DONE], and sets up its golden context: a channel of the GSP's own
