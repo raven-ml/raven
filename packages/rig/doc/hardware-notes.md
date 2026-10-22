@@ -246,6 +246,15 @@ alone, medians of three runs.
 The CUDA driver orders work within a device by events, and waits on other
 devices' words in batches of at most 255.
 
+### A copy beside a kernel runs at its own speed
+
+On the RTX 5000 Ada, an upload of 256 MiB from page-locked host memory on a
+second stream took 10.69 ms beside a 10 ms launch of 600 groups of 256
+threads, enough to fill every multiprocessor: as long as it took alone. The
+two one after the other took 20.69 ms. Measured through rig.cuda's two
+streams on fudge, medians of 9. A driver that runs its copies on a stream
+of their own beside its kernels halves such a pair's time.
+
 ## AMD under KFD
 
 ### KFD refuses a queue whose context save area is short of its rule

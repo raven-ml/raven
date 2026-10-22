@@ -109,9 +109,8 @@ raven / llama.cpp (Vulkan; ROCm):
   before uploading instead of overlapping them
 - read a memory's atomic entry once per path (the dropped patch no longer
   applies), A/B on fudge's `submit/polled/*` and `copy/*`
-- measure, then keep or cut, each with its keep threshold stated before the
-  run: CUDA's second stream (a 256 MiB upload beside a compute-bound
-  launch); the remote link's inline send against one sender thread
+- measure, then keep or cut, with its keep threshold stated before the
+  run: the remote link's inline send against one sender thread
   (rig_remote's `request/*` and `rail/*` rows)
 
 ## tolk
