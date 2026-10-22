@@ -1,0 +1,150 @@
+{
+ "date": "2026-10-22",
+ "machine": {
+  "gpu": "NVIDIA RTX 5000 Ada Generation",
+  "driver": "615.71.09",
+  "system": "Linux 6.12.111+deb13-amd64 x86_64"
+ },
+ "scenarios": {
+  "load": {
+   "utc": "2026-10-22T00:43:49+00:00",
+   "commit": "6624f0029",
+   "profile": "release",
+   "load_average": [
+    0.19189453125,
+    0.29248046875,
+    0.27783203125
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      86004236,
+      83624647,
+      85192750,
+      84907531,
+      84850026
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "6624f0029",
+     "samples": [
+      102370635,
+      100362714,
+      104422289,
+      105437329,
+      103128880
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "6624f0029",
+     "samples": [
+      110330952,
+      109837093,
+      110366296,
+      109818815,
+      110398120
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      89158617,
+      88923635,
+      88172383,
+      90491212,
+      90358540
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      27000917,
+      26922821,
+      26539115,
+      27497322,
+      27112556
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "6624f0029",
+     "samples": [
+      45865492,
+      45456704,
+      45478631,
+      45581893,
+      47326817
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "6624f0029",
+     "samples": [
+      44786260,
+      44334055,
+      40218999,
+      41942404,
+      44720560
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      26015010,
+      27229380,
+      25828184,
+      25895169,
+      26045287
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "floor",
+     "device": "pcie",
+     "version": null,
+     "samples": [
+      10671123,
+      10691321,
+      10684818,
+      10668396,
+      10719533
+     ],
+     "case": null,
+     "bytes": 268435456
+    }
+   ]
+  }
+ }
+}

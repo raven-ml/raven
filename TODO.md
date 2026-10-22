@@ -65,8 +65,8 @@ raven / llama.cpp (Vulkan; ROCm):
   (_plans/rig-release/failure-paths.md)
 - baselines: fudge sections for rig_cuda, rig_disk, rig_elf, rig_host,
   rig_pci_space, rig_pci_window, rig_pool, rig_program and rig_remote,
-  whose only Linux rows are kimchi's; the vendor comparison
-  (packages/rig/bench/compare/run.py) on fudge; rig's
+  whose only Linux rows are kimchi's; the vendor comparison's scenarios
+  but `load` (packages/rig/bench/compare/run.py) on fudge; rig's
   `submit/polled/pool-two-domains` (0 words warm) and
   `submit/polled/stores-30` on fudge, and every rig row a run of one
   submission changed (`submit/polled/*`, `replay/polled/*`, `device/*`,
