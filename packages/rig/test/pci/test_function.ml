@@ -977,11 +977,11 @@ let test_memory_machines () =
   Function.free_dma f' w';
   Function.free_dma f w
 
-let fixture_gpus ?(reset = fun _ -> Ok ()) () =
+let fixture_gpus ?(reset = fun _ -> Ok ()) ?(ready = fun _ -> Ok ()) () =
   Driver.make ~name:"fixture" ~memory_bar:(Some 0) ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0 ~reset
+    ~teardown_ms:0 ~reset ~ready
     (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
 
 (* The test's executable, run with [holding], is [hold_memory]'s process. *)
@@ -1117,6 +1117,29 @@ let test_death () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
   death (Tree.make [ fn ]) fn
+
+(* A reset that answers, of a function its driver then finds not ready, gives
+   back what a dead process left all the same, and loses the function: the
+   next open resets it again. *)
+let test_not_ready () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let root = left_by_death () in
+  equal ~msg:"left by the dead process" int 1 (List.length (memory_files root));
+  let resets = Atomic.make 0 in
+  let g =
+    fixture_gpus
+      ~reset:(fun _ ->
+        Atomic.incr resets;
+        Ok ())
+      ~ready:(fun _ -> Error "not ready")
+      ()
+  in
+  let m = Machine.at root in
+  contains ~msg:"the driver's reason" ~sub:"not ready"
+    (require_error (Driver.reset g m 0));
+  equal ~msg:"gone though not ready" (list string) [] (memory_files root);
+  ignore (open_held g m);
+  equal ~msg:"the next open resets it" int 2 (Atomic.get resets)
 
 (* A directory of its own on this machine's hugetlbfs of 2 MiB pages at
    /dev/hugepages, if it has a free page and this process may write it. A
@@ -1547,6 +1570,10 @@ let system_memory =
         "memory a killed process left on a hugetlbfs stays through a release \
          and goes at its GPU's reset (SIGKILL in a child)"
         test_death_hugetlbfs;
+      test
+        "a reset of a function its driver finds not ready gives back what a \
+         killed process left and loses it (SIGKILL in a child)"
+        test_not_ready;
       test
         "a reset of a GPU another process holds is refused, its memory kept (a \
          child holds)"

@@ -47,7 +47,7 @@ let name = "AMD-PCI"
 let gpus ?(reset = counted) ?(nodes = no_nodes) ?(unreleased = released)
     ?(teardown_ms = teardown_ms) ?(siblings = Driver.Remove) () =
   Driver.make ~name ~memory_bar:(Some 0) ~siblings ~nodes ~unreleased
-    ~teardown_ms ~reset is_gpu
+    ~teardown_ms ~reset ~ready:(fun _ -> Ok ()) is_gpu
 
 let pp_progress ppf (d : Driver.progress) =
   match d with
@@ -467,7 +467,7 @@ let test_this_none () =
   let g =
     Driver.make ~name ~memory_bar:(Some 0) ~siblings:Remove
       ~nodes:no_nodes ~unreleased:released
-      ~teardown_ms ~reset:counted (fun _ -> false)
+      ~teardown_ms ~reset:counted ~ready:(fun _ -> Ok ()) (fun _ -> false)
   in
   let this = Machine.this in
   equal (result (list string) string) (Ok []) (Driver.buses g this);

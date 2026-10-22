@@ -771,7 +771,9 @@ let nics =
   Driver.make ~name:"BNXT" ~memory_bar:None ~siblings:Keep
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:10_000 ~reset:Function.reset is_bnxt
+    ~teardown_ms:10_000 ~reset:Function.reset
+    ~ready:(fun _ -> Ok ())
+    is_bnxt
 
 let buses ?(machine = Machine.this) () = Driver.buses nics machine
 let count ?machine () = Result.map List.length (buses ?machine ())

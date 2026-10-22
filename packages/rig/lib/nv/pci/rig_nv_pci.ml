@@ -45,7 +45,7 @@ let gpus =
   Driver.make ~name:"NV-PCI" ~memory_bar:(Some memory_bar)
     ~siblings:Remove ~nodes:Held.nodes
     ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0 ~reset:Function.reset
+    ~teardown_ms:0 ~reset:Function.reset ~ready:(fun _ -> Ok ())
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let buses ?(machine = Machine.this) () = Driver.buses gpus machine

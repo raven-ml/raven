@@ -24,6 +24,7 @@ type t = {
   unreleased : root:string -> string -> string option;
   teardown_ms : int;
   reset : Function.t -> (unit, string) result;
+  ready : Function.t -> (unit, string) result;
   matches : Machine.id -> bool;
   mutex : Lock.t;
   mutable exits : bool;
@@ -53,7 +54,7 @@ and hold = {
 }
 
 let make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
-    matches =
+    ~ready matches =
   {
     name;
     memory_bar;
@@ -62,6 +63,7 @@ let make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
     unreleased;
     teardown_ms;
     reset;
+    ready;
     matches;
     mutex = Lock.create ();
     exits = false;
@@ -116,13 +118,15 @@ let mark g m bus ~lost =
   g.spent <- (if lost then (m, bus) :: others else others)
 
 (* Resets the taken function [fn] as its vendor does: it reaches none of the
-   memory processes that died left then. One whose reset failed or raised is
-   lost, and renewed by its next open. *)
+   memory processes that died left then, which goes before the driver asks
+   whether the function is ready, whatever it answers. One whose reset failed
+   or raised, or that is not ready, is lost, and renewed by its next open. *)
 let renew_taken g m bus fn =
   let reset () =
     Function.set_bus_master fn false;
     let* () = g.reset fn in
-    Function.forget fn
+    let* () = Function.forget fn in
+    g.ready fn
   in
   match reset () with
   | r ->

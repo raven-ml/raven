@@ -293,6 +293,7 @@ let gpus () =
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Rig_pci.Function.reset
+    ~ready:(fun _ -> Ok ())
     (fun (id : Rig_pci.Machine.id) ->
       Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 

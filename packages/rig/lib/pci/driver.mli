@@ -70,12 +70,13 @@ val make :
   unreleased:(root:string -> string -> string option) ->
   teardown_ms:int ->
   reset:(Function.t -> (unit, string) result) ->
+  ready:(Function.t -> (unit, string) result) ->
   (Machine.id -> bool) ->
   t
 (** [make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
-     matches] is the driver of the functions [f] with [matches f], named after
-    [name] ({!val-name}). [nodes] and [unreleased] read the machine's files
-    under [root], which is ["/"] for {!Machine.this}.
+     ~ready matches] is the driver of the functions [f] with [matches f],
+    named after [name] ({!val-name}). [nodes] and [unreleased] read the
+    machine's files under [root], which is ["/"] for {!Machine.this}.
     - [memory_bar] is the BAR through which the process reaches the function's
       memory, which {!detach} enlarges, or [None] for a function with no memory
       to reach.
@@ -96,7 +97,12 @@ val make :
       ran on it before, its kernel driver included, and reset it as its vendor
       does. It returns [Ok ()] once the function answers again with nothing
       running on it, or [Error why]. The function's bus mastering is off when
-      [reset] is called. *)
+      [reset] is called.
+    - [ready fn] is [Ok ()] if the function [fn], just reset, can serve its
+      kernel driver and an open, and [Error why] if not, such as an NVIDIA GPU
+      whose reset left its protected memory up. It is asked after each reset
+      that returns [Ok ()], once the memory dead processes left for the
+      function has gone, and a function it refuses is lost. *)
 
 val name : t -> int -> string
 (** [name d i] is the name of function [i]. It is [name] of {!make} for [0],
@@ -185,8 +191,9 @@ val renew : hold -> (unit, string) result
     driver calls [renew] from its [f], before it keeps any of the function's
     state, when it finds the function running firmware it cannot continue from.
 
-    [Error why] with the reset's reason. The open then loses the function,
-    whatever its [f] returns. An exception raised by the reset passes through,
+    [Error why] with the reset's reason, or with [ready]'s ({!make}) if it
+    refuses the function. The open then loses the function, whatever its [f]
+    returns. An exception raised by the reset or by [ready] passes through,
     and the function is lost the same way. *)
 
 val hang_ms : int
@@ -345,17 +352,19 @@ val attach : t -> Machine.t -> int -> (unit, string) result
     kernel driver takes the function or such another function, such as when
     the kernel driver's module is not loaded. [Error why], with the function
     left as it was but bound to [vfio-pci] where it was bound for the reset,
-    if [vfio-pci] or the reset fails, and [why] says how to proceed. An
-    exception raised by the driver's reset passes through, with the function
-    left the same way. *)
+    if [vfio-pci] or the reset fails or [ready] ({!make}) refuses the
+    function, and [why] says how to proceed. An exception raised by the
+    driver's reset or by [ready] passes through, with the function left the
+    same way. *)
 
 val reset : t -> Machine.t -> int -> (unit, string) result
 (** [reset d m i] takes function [i] of [m], turns its bus mastering off, resets
-    it as its vendor does ({!make}) and releases it, whatever the driver's reset
-    returns or raises. After a reset that returns [Ok ()], the memory dead
-    processes left for the function goes ({{!Function.dma}system memory}), and
-    the next open does not renew the function. A reset that fails leaves the
-    function lost. An exception raised by the driver's reset passes through, as
-    in an open.
+    it as its vendor does ({!make}), asks [ready] of {!make} whether it is
+    ready, and releases it, whatever the driver's reset or [ready] returns or
+    raises. After a reset that returns [Ok ()], the memory dead processes left
+    for the function goes ({{!Function.dma}system memory}). A reset that fails
+    or a function [ready] refuses is lost; otherwise the next open does not
+    renew the function. An exception raised by the driver's reset or by
+    [ready] passes through, as in an open.
 
-    [Error why] with the driver's reset's reason. *)
+    [Error why] with the driver's reset's reason or [ready]'s. *)
