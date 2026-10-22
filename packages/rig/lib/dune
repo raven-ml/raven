@@ -28,20 +28,15 @@
    rig_stamps
    rig_heap
    rig_host_code
-   rig_memory)))
+   rig_memory)
+  (flags
+   (:standard
+    (:include interposition_flags.sexp)))))
 
 ; On ELF, a compiler of PIC code takes an exported function for one another
 ; library may interpose, so it calls the symbol where it would inline the
-; function. Nothing interposes the functions of rig or of its drivers, whose C
-; calls its own exported functions too, so the C of every library under lib/
-; compiles without semantic interposition. Mach-O interposes nothing within an
+; function, and nothing interposes rig's. Mach-O interposes nothing within an
 ; image, and Apple's clang refuses the flag as unused.
-
-(env
- (_
-  (c_flags
-   (:standard
-    (:include interposition_flags.sexp)))))
 
 (rule
  (target interposition_flags.sexp)
