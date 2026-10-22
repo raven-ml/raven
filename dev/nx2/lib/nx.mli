@@ -1669,16 +1669,30 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     unspecified, and two placements of the operands may give different
     ones.
 
-    Where both operands' paired summed axes are cut alike across devices,
-    each device reads its own windows, and partial sums move instead of the
-    operands. In lane order ({!Nx_kernel.section-orders}), each device sums
-    the part of the order its windows hold, a block that a window's edge
-    cuts moving to one device first, and the devices that hold one window of
-    the result combine those sums. In chain order, the devices holding the
-    summed axes run one after another, each continuing the sum from the one
-    before. On devices that compute apart, as GPUs, that serialises them for
-    the contraction. Summed axes cut otherwise are read whole on each
-    device. *)
+    Each output's products fall into blocks of 4096 consecutive ones in its
+    order of summation ({!Nx_kernel.S.contract}). Where both operands'
+    paired summed axes are cut alike across devices, each device reads its
+    own windows of them, and the devices that hold one window of the result
+    compute it together, cutting the sum only at the edges of blocks. A
+    block that window edges split is gathered first. The device holding
+    most of its products, the earliest along the summed axes of those
+    holding as many, takes the block's parts of both operands that it lacks
+    and sums the block alone. A summed extent of 4096 cut over four devices
+    is one block, so three quarters of both operands' windows along it move
+    to the first device, and the others sum none of it.
+
+    In lane order ({!Nx_kernel.section-orders}), each device sums from [+0]
+    each largest node of lane order's tree of blocks that its windows hold,
+    and each block gathered on it. Each of those devices then takes the
+    others' sums, in the accumulator, combines them up the tree, adds
+    [init], read from where it lies, and rounds once. In chain order, each
+    run of blocks that one device's windows hold whole, and each gathered
+    block, is summed in turn along the order on its device, from the sum
+    before it, which moves there, the first from [init] read where it lies.
+    The last sum rounds once and moves to every device holding that window
+    of the result. On devices that compute apart, as GPUs, chain order
+    serialises them for the contraction. Summed axes cut otherwise are read
+    whole on each device. *)
 
 val contract :
   ?sizes:(string * int) list ->
