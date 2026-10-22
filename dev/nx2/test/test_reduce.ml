@@ -1836,7 +1836,8 @@ let tile = 256
 (* An axis's length and the slices beside it, for a Logsumexp or Moments
    scan: a {!length} beside up to two others; one slice of 24 to 32 tiles,
    two or three of 12 to 24, and 65 to 72 of 1 to 8, each around a multiple
-   of a tile, past one unit's 64 slices for the last. *)
+   of a tile, the last run in units of 16 slices side by side, one
+   partial. *)
 let net_shape =
   let open Gen in
   let tiles lo hi =
@@ -1866,6 +1867,10 @@ let cover_tiles n slices =
   cover "more than 64 slices side by side, past a tile"
     (slices > 64 && n > tile)
 
+(* Finite terms of either sign. *)
+let finite_term =
+  Gen.(frequency [ (15, float_range 0.5 2.); (4, float_range (-2.) (-0.5)) ])
+
 (* Terms of either sign, with NaNs of two payloads, infinities and signed
    zeros one in twenty. *)
 let prefix_term =
@@ -1876,10 +1881,7 @@ let prefix_term =
         nan_with 5L; nan_with 9L; Float.infinity; Float.neg_infinity; -0.; 0.;
       ]
   in
-  frequency
-    [
-      (15, float_range 0.5 2.); (4, float_range (-2.) (-0.5)); (1, special);
-    ]
+  frequency [ (19, finite_term); (1, special) ]
 
 (* Terms along an axis of a slice or two and the length of a prefix of it. *)
 let prefix_case =
@@ -1980,8 +1982,10 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
         ])
 
 (* Moments scans whose bits nx.cpu and the expansion both state: float32 or
-   float64 terms near an offset, with specials, of a {!net_shape}, held
-   transposed at times. *)
+   float64 terms near an offset, half the time with specials, of a
+   {!net_shape}, held transposed at times. A term not finite sends nx.cpu's
+   fast pass to its exact one, so finite terms alone check the fast
+   pass's results over many tiles. *)
 type bits_case =
   | Bits_case :
       (float, 's) D.t * int array * int * bool * float array
@@ -1995,8 +1999,9 @@ let bits_case =
     let* strided = bool in
     let* c = of_list [ 0.; 1e3; -1e5 ] in
     let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
+    let* finite = bool in
     let shift t = if Float.is_finite t then c +. t else t in
-    let term = map shift prefix_term in
+    let term = map shift (if finite then finite_term else prefix_term) in
     let+ xs = array ~size:(constant (n * outer)) term in
     Bits_case (dt, s, axis, strided, xs)
   in
@@ -2012,6 +2017,9 @@ let bits_examples =
     [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity |]
   in
   let terms n = Array.init n (fun i -> specials.(i mod 5)) in
+  let finite n =
+    Array.init n (fun i -> 1e3 +. Float.of_int (i * 7919 mod 251))
+  in
   [
     Bits_case (D.Float64, [| 1; 2 |], 1, false, terms 2);
     Bits_case (D.Float32, [| 9; 2 |], 0, true, terms 18);
@@ -2020,12 +2028,18 @@ let bits_examples =
     Bits_case (D.Float32, [| 6401; 1 |], 0, false, terms 6401);
     Bits_case (D.Float64, [| 3; 3074 |], 1, true, terms 9222);
     Bits_case (D.Float32, [| 70; 514 |], 1, false, terms 35980);
+    Bits_case (D.Float32, [| 3070; 3 |], 0, false, finite 9210);
+    Bits_case (D.Float64, [| 2; 6146 |], 1, true, finite 12292);
   ]
 
 let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
   let n = s.(axis) in
   cover "an axis of 1 or 2" (n <= 2);
   cover_tiles n s.(1 - axis);
+  cover "one to three slices of 12 tiles or more, every term finite"
+    (s.(1 - axis) <= 3
+    && n >= (12 * tile) - 2
+    && Array.for_all Float.is_finite xs);
   cover "an axis next to a power of two" (next_to_pow2 n);
   cover "a term not finite or -0"
     (Array.exists

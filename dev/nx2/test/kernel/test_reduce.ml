@@ -1906,14 +1906,16 @@ let tiled lo hi =
   let+ d = int_range (-2) 2 in
   (k * 256) + d
 
-(* A tenth of the operands are one axis of 2 to 32 tiles, the law's long
-   case, a tenth 65 to 72 slices of 1 to 8 tiles side by side, past a
-   unit's, and a tenth slices of one term, its "one term" case, which
-   [shape_gen] alone draws too rarely for every run to cover. Four in
-   eleven are rows of 32-term tiles: 2 to 130 slices of 32, 33 or more
-   terms, scanned along the last axis, whose lanes the results hold a row
-   apart, or along the first through a transposed operand, whose lanes it
-   holds a row apart. *)
+(* One in twelve operands is one axis of 2 to 32 tiles, the law's long
+   case; one in twelve 2 or 3 slices of 12 to 24 tiles side by side, of
+   finite terms, which a few threads run as one unit by tiles; one in
+   twelve 65 to 72 slices of 1 to 8 tiles side by side, in units of 16
+   slices, the last partial; and one in twelve slices of one term, its
+   "one term" case, which [shape_gen] alone draws too rarely for every run
+   to cover. Four in twelve are rows of 32-term tiles: 2 to 130 slices of
+   32, 33 or more terms, scanned along the last axis, whose lanes the
+   results hold a row apart, or along the first through a transposed
+   operand, whose lanes it holds a row apart. *)
 let moments_case =
   Gen.with_pp pp_moments
     (let open Gen in
@@ -1922,15 +1924,20 @@ let moments_case =
        let* s = shape_gen in
        let s = if Array.length s = 0 then [| 3 |] else s in
        let+ axis = int_range 0 (Array.length s - 1) in
-       (s, axis, false)
+       (s, axis, false, false)
      in
-     let long = map (fun n -> ([| n |], 0, false)) (tiled 2 32) in
+     let long = map (fun n -> ([| n |], 0, false, false)) (tiled 2 32) in
+     let few =
+       let* n = tiled 12 24 in
+       let+ k = int_range 2 3 in
+       ([| n; k |], 0, false, true)
+     in
      let wide =
        let* n = tiled 1 8 in
        let+ k = int_range 65 72 in
-       ([| n; k |], 0, false)
+       ([| n; k |], 0, false, false)
      in
-     let one = map (fun n -> ([| n; 1 |], 1, false)) (int_range 1 40) in
+     let one = map (fun n -> ([| n; 1 |], 1, false, false)) (int_range 1 40) in
      let tiles =
        let* len =
          frequency
@@ -1945,24 +1952,28 @@ let moments_case =
        in
        let* slices = int_range 2 130 in
        let+ last = bool in
-       if last then ([| slices; len |], 1, false) else ([| len; slices |], 0, true)
+       if last then ([| slices; len |], 1, false, false)
+       else ([| len; slices |], 0, true, false)
      in
-     let* s, axis, transposed =
-       frequency [ (4, any); (1, long); (1, wide); (1, one); (4, tiles) ]
+     let* s, axis, transposed, finite =
+       frequency
+         [ (4, any); (1, long); (1, few); (1, wide); (1, one); (4, tiles) ]
      in
      let* v = view_of (Array.length s) in
      let v = if transposed then { v with perm = [| 1; 0 |] } else v in
      let* specials =
-       frequency [ (3, constant 0); (1, constant 300); (1, constant 4) ]
+       if finite then constant 0
+       else frequency [ (3, constant 0); (1, constant 300); (1, constant 4) ]
      in
      let+ seed = int in
      { axis; x = operand d s v ~specials seed; views = view_names v })
 
-(* Slices of 17 to 25 tiles, about 2^-20 to 2^20 in magnitude, of both
-   signs, whose joins of the tiles' states round differently in each
-   order. *)
+(* Slices of 15 to 25 tiles, one alone or three side by side, about 2^-20
+   to 2^20 in magnitude, of both signs, whose joins of the tiles' states
+   round differently in each order. *)
 let moments_examples =
-  let mixed d n seed =
+  let mixed d s seed =
+    let n = Array.fold_left ( * ) 1 s in
     let r = Random.State.make [| seed |] in
     let term _ =
       let sign = if Random.State.bool r then 1. else -1. in
@@ -1971,13 +1982,14 @@ let moments_examples =
     in
     let xs = Array.init n term in
     match d with
-    | D.Any D.Float32 -> A.Any (A.of_array D.Float32 [| n |] xs)
-    | D.Any D.Float64 -> A.Any (A.of_array D.Float64 [| n |] xs)
+    | D.Any D.Float32 -> A.Any (A.of_array D.Float32 s xs)
+    | D.Any D.Float64 -> A.Any (A.of_array D.Float64 s xs)
     | _ -> invalid_arg "moments_examples"
   in
   [
-    { axis = 0; x = mixed f32 6400 1; views = [] };
-    { axis = 0; x = mixed f64 5000 2; views = [] };
+    { axis = 0; x = mixed f32 [| 6400 |] 1; views = [] };
+    { axis = 0; x = mixed f64 [| 5000 |] 2; views = [] };
+    { axis = 0; x = mixed f32 [| 4000; 3 |] 3; views = [] };
   ]
 
 (* [c] by [k] into fresh destinations, the mean's and the variance's terms;
@@ -2177,13 +2189,15 @@ let law_moments (b : Support.backend) (c : moments) =
   let len = s.(c.axis) in
   cover "no result" (total s = 0);
   cover "one term" (len = 1);
-  cover "slices past a unit's" (len > 0 && total s / len > 64);
+  cover "more than 64 slices" (len > 0 && total s / len > 64);
   cover "one slice past one tile, the last partial"
     (len > 256 && len mod 256 <> 0 && total s = len);
   cover "an axis around a multiple of a tile"
     (len >= 254 && (len + 2) mod 256 <= 4);
   cover "more than 64 slices side by side, past a tile"
     (len > 256 && total s / len > 64);
+  cover "two or three slices side by side of 12 tiles or more"
+    (len >= (12 * 256) - 2 && total s / len >= 2 && total s / len <= 3);
   cover "a tile's terms, or one more" (len = 32 || len = 33);
   (* Lanes a row apart go through rows of the scratch in tiles of 32 terms. *)
   let partial = len > 32 && len mod 32 <> 0 && total s / len > 1 in
