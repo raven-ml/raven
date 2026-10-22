@@ -218,7 +218,10 @@ val map :
     physically. Elsewhere it is the window [~combine:false] makes. Map
     registers and doorbells with [~combine:false]. Without [combine], the
     window maps BAR [i] as its live windows do, or with [~combine:false] if it
-    has none.
+    has none. A window mapped into the process on a BAR whose register marks
+    it prefetchable, memory into which host bridges may merge the processor's
+    writes (PCI Local Bus Specification 2.2, 6.2.5.1), takes copies wider than
+    a word, whatever [combine] ({!Window.accesses}).
 
     [Error why] if VFIO or the kernel does not let the process map the BAR, or
     if [f] is taken physically and the file of its BAR [i] is shorter than the

@@ -334,6 +334,55 @@ let long_copies make (skew, n, off) =
   in
   cover "the heap compacted during the copies" moved
 
+(* Writes and fills on a prefetchable window, whose stores go 64 bytes at a
+   time where the processor stores 64 bytes as one write: at each alignment
+   around a 64-byte block, they change their bytes alone. The window lies 64
+   bytes into memory that a plain window [all] reads whole. *)
+let blocks =
+  let open Gen in
+  (* A count from [0] to [most] that ends or starts on a block one draw in
+     three, so that each run reaches both. *)
+  let on_block skew most =
+    let k = (64 - (skew land 63)) land 63 in
+    if k > most then int_range 0 most
+    else
+      frequency
+        [
+          (2, int_range 0 most);
+          (1, map (fun j -> k + (64 * j)) (int_range 0 ((most - k) / 64)));
+        ]
+  in
+  bind
+    (triple (int_range 0 63) (int_range 0 320) bool)
+    (fun (skew, n, fill) ->
+      bind (on_block skew 320) (fun ending ->
+          let n = if n mod 2 = 0 then ending else n in
+          map (fun off -> (skew, n, off, fill)) (on_block skew n)))
+  |> with_pp (fun ppf (skew, n, off, fill) ->
+      Format.fprintf ppf "%s of %d bytes from %d, at %d past 64"
+        (if fill then "fill" else "write")
+        (n - off) off skew)
+
+let test_blocks (skew, n, off, fill) =
+  let k = n - off in
+  let at = ((memory (n + 256) + 63) land lnot 63) + 64 + skew in
+  let all = Window.v (at - 64) (n + 128) in
+  let w = Window.v ~prefetchable:true at n in
+  let gap = (64 - ((at + off) land 63)) land 63 in
+  cover "a whole 64-byte block" (k >= gap + 64);
+  cover "fewer bytes than a block" (k < 64);
+  cover "a start on a block" ((at + off) land 63 = 0);
+  cover "an end on a block" ((at + n) land 63 = 0);
+  let s = String.init k (fun i -> Char.chr (((i * 13) + skew + 1) land 0xff)) in
+  if fill then Window.fill w off k 'f' else Window.write w off s;
+  let want =
+    String.make (64 + off) '\000'
+    ^ (if fill then String.make k 'f' else s)
+    ^ String.make 64 '\000'
+  in
+  equal ~msg:"the bytes, and those around the window" string want
+    (Window.read all 0 (n + 128))
+
 let long =
   group ~timeout:patience "long copies"
     [
@@ -345,6 +394,10 @@ let long =
         "on a combining window, read, write, blit_string and fill agree with \
          the bytes while the heap moves"
         long_place (long_copies combining);
+      prop
+        "on a prefetchable window, write and fill change their bytes alone at \
+         every alignment around a 64-byte block"
+        blocks test_blocks;
     ]
 
 (* Transports *)

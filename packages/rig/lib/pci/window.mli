@@ -27,8 +27,8 @@
 
 type t
 (** The type for windows. Windows are values. Two windows are equal iff they
-    have the same {!address}, {!length} and machine, and both combine or
-    neither does. *)
+    have the same {!address}, {!length} and machine, both combine or neither
+    does, and both map a prefetchable BAR or neither does. *)
 
 val address : t -> int
 (** [address w] is the address of [w]'s first byte on its machine. For a mapped
@@ -65,10 +65,13 @@ val sub : t -> int -> int -> t
 
     {!read}, {!blit_string}, {!write} and {!fill} copy memory, at widths they
     choose. On a mapped window they move a 32-bit word at a time, which memory
-    behind any BAR accepts, or 16 bytes at a time through a window that
-    combines. A long copy lets the domain's other threads and other domains'
-    collections run meanwhile, and a long read or write pays for that with a
-    copy through a buffer.
+    behind any BAR accepts. Through a window that combines, or on a
+    prefetchable BAR ({!Function.map}), they move 16 bytes at a time. On a
+    prefetchable BAR mapped without combining, {!blit_string}, {!write} and
+    {!fill} move 64 where the processor stores 64 bytes as one write (x86's
+    MOVDIR64B). A long copy lets the domain's other
+    threads and other domains' collections run meanwhile, and a long read or
+    write pays for that with a copy through a buffer.
 
     Each access raises [Invalid_argument] if the bytes it accesses do not lie
     in the window, a count below zero included, or if a 32- or 64-bit access is
@@ -145,7 +148,8 @@ val through : transport -> int -> int -> t
 
 (**/**)
 
-val v : ?combines:bool -> int -> int -> t
+val v : ?combines:bool -> ?prefetchable:bool -> int -> int -> t
 (* [v a n] is the [n] bytes mapped at [a] in the process, for the library's own
-   mappings, which combine if [combines] (defaults to [false]). Raises
-   [Invalid_argument] if [n < 0]. *)
+   mappings, which combine if [combines] and map a prefetchable BAR if
+   [prefetchable] (both default to [false]). Raises [Invalid_argument] if
+   [n < 0]. *)

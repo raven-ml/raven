@@ -10,6 +10,7 @@ open Rig_pci_support
 let strf = Printf.sprintf
 
 external c_combines : Window.t -> bool = "rig_pci_test_combines"
+external c_prefetchable : Window.t -> bool = "rig_pci_test_prefetchable"
 
 let map ?combine ?off ?length f i =
   require_ok (Function.map ?combine ?off ?length f i)
@@ -690,6 +691,26 @@ let test_combining () =
   let _, c = combines ~combine:true 5 in
   equal ~msg:"a BAR that is not prefetchable, asked" bool false c
 
+(* A window on a BAR whose register marks it prefetchable takes wide copies
+   whatever [combine], as rig_pci.h sees it: BARs 0 and 2 of the fixture's GPU
+   are prefetchable, BAR 5 is not. *)
+let test_prefetchable () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let f = require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus) in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  List.iter
+    (fun (msg, combine, i, want) ->
+      let w = map ~combine ~length:4096 f i in
+      equal ~msg bool want (c_prefetchable w);
+      Function.unmap f w)
+    [
+      ("a prefetchable BAR, combining", true, 0, true);
+      ("a prefetchable BAR, not combining", false, 0, true);
+      ("another prefetchable BAR", false, 2, true);
+      ("a BAR that is not prefetchable", false, 5, false);
+    ]
+
 let tree_files =
   group ~timeout:patience "a machine's files"
     [
@@ -722,6 +743,10 @@ let tree_files =
         "a prefetchable BAR of a function taken physically combines where \
          asked, one way at a time"
         test_combining;
+      test
+        "a window on a prefetchable BAR takes wide copies whatever combine, \
+         and one on another BAR does not"
+        test_prefetchable;
       test_set_bus_master;
       test "a function taken physically stops mastering the bus when released"
         test_release_stops_dma;

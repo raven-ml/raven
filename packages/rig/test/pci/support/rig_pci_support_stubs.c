@@ -251,6 +251,11 @@ value rig_pci_test_combines(value w) {
   return Val_bool(v.combines);
 }
 
+value rig_pci_test_prefetchable(value w) {
+  struct rig_pci_window v = window(w);
+  return Val_bool(v.prefetchable);
+}
+
 value rig_pci_test_failed(value w) {
   CAMLparam1(w);
   struct rig_pci_window v = window(w);

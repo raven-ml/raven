@@ -384,7 +384,7 @@ module Tree = struct
     List.concat_map
       (function
         | Mem32 (a, _) -> [ a ]
-        | Mem64 (a, _) -> [ a land 0xffff_fff0 lor 0b100; a lsr 32 ]
+        | Mem64 (a, _) -> [ a land 0xffff_fff0 lor 0b1100; a lsr 32 ]
         | Io (a, _) -> [ a lor 1 ])
       bars
 

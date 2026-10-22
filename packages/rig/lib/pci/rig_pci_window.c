@@ -75,14 +75,58 @@ value caml_rig_pci_set64_byte(value a, value off, value x) {
 
 /* Bulk accesses go a 32-bit word at a time wherever the mapped side is
    aligned: memory behind a BAR need not accept the wider or narrower
-   accesses the C library's copies make. A combining window, memory behind a
-   prefetchable BAR, takes them 16 bytes at a time from its first 16-byte
-   boundary: a write-combining buffer then fills in four stores. The
-   process's side takes any alignment. Each wide access returns the offset where it
-   stopped, before the last 16 bytes the copy does not hold. */
+   accesses the C library's copies make. Memory behind a prefetchable BAR,
+   which takes merged writes (PCI Local Bus Specification 2.2, 6.2.5.1),
+   takes them 16 bytes at a time from its first 16-byte boundary: a
+   combining window's write-combining buffer then fills in four stores.
+   Through a mapping that does not combine, as VFIO's, each store waits for
+   the last, 165 ns on an RTX 5000 Ada whatever its width: there, where the
+   processor stores 64 bytes as one write, writes and fills go 64 bytes at a
+   time from the first 64-byte boundary, as direct stores, which do not. The
+   process's side takes any alignment. Each wide access returns the offset
+   where it stopped, before the last bytes the copy does not hold. */
 
 #if defined(__x86_64__)
-#include <emmintrin.h>
+#include <cpuid.h>
+#include <immintrin.h>
+#include <stdatomic.h>
+
+/* Whether the processor has MOVDIR64B (CPUID leaf 7, ECX bit 28), whose
+   direct store writes 64 bytes as one write whatever the memory type, and is
+   weakly ordered (Intel SDM, MOVDIR64B). Asked once; two threads that ask
+   at once store the same answer. */
+static int direct64(void) {
+  static atomic_int known; /* 0 unknown, 1 has it, 2 does not */
+  int k = atomic_load_explicit(&known, memory_order_relaxed);
+  if (k == 0) {
+    unsigned a, b, c, d;
+    k = __get_cpuid_count(7, 0, &a, &b, &c, &d) && (c & bit_MOVDIR64B) ? 1
+                                                                         : 2;
+    atomic_store_explicit(&known, k, memory_order_relaxed);
+  }
+  return k == 1;
+}
+
+/* Direct stores from a 64-byte boundary of [dst], then a barrier that
+   orders them before the accesses after the copy, as the stores they
+   replace are ordered. */
+__attribute__((target("movdir64b"))) static size_t
+store64(volatile uint8_t *dst, const uint8_t *src, size_t i, size_t n) {
+  if (i + 64 > n) return i;
+  for (; i + 64 <= n; i += 64) _movdir64b((void *)(dst + i), src + i);
+  rig_pci_barrier();
+  return i;
+}
+
+__attribute__((target("movdir64b"))) static size_t
+fill64(volatile uint8_t *p, size_t i, size_t n, uint8_t b) {
+  if (i + 64 > n) return i;
+  uint8_t block[64] __attribute__((aligned(64)));
+  memset(block, b, sizeof block);
+  for (; i + 64 <= n; i += 64) _movdir64b((void *)(p + i), block);
+  rig_pci_barrier();
+  return i;
+}
 
 static size_t load16(uint8_t *dst, const volatile uint8_t *src, size_t i,
                      size_t n) {
@@ -107,6 +151,19 @@ static size_t fill16(volatile uint8_t *p, size_t i, size_t n, uint8_t b) {
 #elif defined(__aarch64__)
 #include <arm_neon.h>
 
+static int direct64(void) { return 0; }
+
+static size_t store64(volatile uint8_t *dst, const uint8_t *src, size_t i,
+                      size_t n) {
+  (void)dst, (void)src, (void)n;
+  return i;
+}
+
+static size_t fill64(volatile uint8_t *p, size_t i, size_t n, uint8_t b) {
+  (void)p, (void)n, (void)b;
+  return i;
+}
+
 static size_t load16(uint8_t *dst, const volatile uint8_t *src, size_t i,
                      size_t n) {
   for (; i + 16 <= n; i += 16)
@@ -128,6 +185,19 @@ static size_t fill16(volatile uint8_t *p, size_t i, size_t n, uint8_t b) {
 }
 
 #else
+static int direct64(void) { return 0; }
+
+static size_t store64(volatile uint8_t *dst, const uint8_t *src, size_t i,
+                      size_t n) {
+  (void)dst, (void)src, (void)n;
+  return i;
+}
+
+static size_t fill64(volatile uint8_t *p, size_t i, size_t n, uint8_t b) {
+  (void)p, (void)n, (void)b;
+  return i;
+}
+
 static size_t load16(uint8_t *dst, const volatile uint8_t *src, size_t i,
                      size_t n) {
   (void)dst, (void)src, (void)n;
@@ -175,10 +245,16 @@ static void fill_words(volatile uint8_t *p, size_t n, uint8_t b) {
   for (; i < n; i++) p[i] = b;
 }
 
+/* The offset of the first [a]-byte boundary of [p] at or after offset [i],
+   at most [n], for [a] a power of two. */
+static size_t until(const volatile uint8_t *p, size_t i, size_t n, size_t a) {
+  size_t k = i + ((a - ((uintptr_t)(p + i) & (a - 1))) & (a - 1));
+  return k < n ? k : n;
+}
+
 /* The bytes from [p] to its next 16-byte boundary, at most [n]. */
 static size_t head(const volatile uint8_t *p, size_t n) {
-  size_t k = (16 - ((uintptr_t)p & 15)) & 15;
-  return k < n ? k : n;
+  return until(p, 0, n, 16);
 }
 
 /* Loads from write-combined memory may complete out of order with later
@@ -191,39 +267,54 @@ static void read_wide(uint8_t *dst, const volatile uint8_t *src, size_t n) {
   rig_pci_barrier();
 }
 
-static void write_wide(volatile uint8_t *dst, const uint8_t *src, size_t n) {
+static void write_wide(volatile uint8_t *dst, const uint8_t *src, size_t n,
+                       int direct) {
   size_t i = head(dst, n);
   write_words(dst, src, i);
+  if (direct && direct64()) {
+    i = store16(dst, src, i, until(dst, i, n, 64));
+    i = store64(dst, src, i, n);
+  }
   i = store16(dst, src, i, n);
   write_words(dst + i, src + i, n - i);
 }
 
-static void fill_wide(volatile uint8_t *p, size_t n, uint8_t b) {
+static void fill_wide(volatile uint8_t *p, size_t n, uint8_t b, int direct) {
   size_t i = head(p, n);
   fill_words(p, i, b);
+  if (direct && direct64()) {
+    i = fill16(p, i, until(p, i, n, 64), b);
+    i = fill64(p, i, n, b);
+  }
   i = fill16(p, i, n, b);
   fill_words(p + i, n - i, b);
 }
 
+/* A copy's width, from Window: 0 a word at a time, 16 bytes at a time
+   through a combining window, whose buffer merges them, or on a
+   prefetchable BAR mapped otherwise, 64 bytes at a time for writes and
+   fills where the processor stores them as one write. */
+enum width { WORDS = 0, WIDE = 16, DIRECT = 64 };
+
 static void read_bytes(uint8_t *dst, const volatile uint8_t *src, size_t n,
-                       int wide) {
-  if (wide)
+                       int width) {
+  if (width != WORDS)
     read_wide(dst, src, n);
   else
     read_words(dst, src, n);
 }
 
 static void write_bytes(volatile uint8_t *dst, const uint8_t *src, size_t n,
-                        int wide) {
-  if (wide)
-    write_wide(dst, src, n);
+                        int width) {
+  if (width != WORDS)
+    write_wide(dst, src, n, width == DIRECT);
   else
     write_words(dst, src, n);
 }
 
-static void fill_bytes(volatile uint8_t *p, size_t n, uint8_t b, int wide) {
-  if (wide)
-    fill_wide(p, n, b);
+static void fill_bytes(volatile uint8_t *p, size_t n, uint8_t b, int width) {
+  if (width != WORDS)
+    fill_wide(p, n, b, width == DIRECT);
   else
     fill_words(p, n, b);
 }
@@ -244,7 +335,7 @@ static size_t piece(size_t at, size_t n) {
   return n - at < PIECE ? n - at : PIECE;
 }
 
-static value read_pieces(const volatile uint8_t *src, size_t n, int wide) {
+static value read_pieces(const volatile uint8_t *src, size_t n, int width) {
   CAMLparam0();
   CAMLlocal1(s);
   uint8_t buf[PIECE];
@@ -252,62 +343,62 @@ static value read_pieces(const volatile uint8_t *src, size_t n, int wide) {
   for (size_t at = 0; at < n; at += PIECE) {
     size_t k = piece(at, n);
     caml_release_runtime_system();
-    read_bytes(buf, src + at, k, wide);
+    read_bytes(buf, src + at, k, width);
     caml_acquire_runtime_system();
     memcpy(Bytes_val(s) + at, buf, k);
   }
   CAMLreturn(s);
 }
 
-value caml_rig_pci_read(value a, value n, value wide) {
-  CAMLparam3(a, n, wide);
+value caml_rig_pci_read(value a, value n, value width) {
+  CAMLparam3(a, n, width);
   CAMLlocal1(s);
   size_t len = Long_val(n);
   if (len >= PIECE)
-    CAMLreturn(read_pieces(AT(Long_val(a)), len, Bool_val(wide)));
+    CAMLreturn(read_pieces(AT(Long_val(a)), len, Int_val(width)));
   s = caml_alloc_string(len);
-  read_bytes(Bytes_val(s), AT(Long_val(a)), len, Bool_val(wide));
+  read_bytes(Bytes_val(s), AT(Long_val(a)), len, Int_val(width));
   CAMLreturn(s);
 }
 
 static void write_pieces(volatile uint8_t *dst, value s, size_t off, size_t n,
-                         int wide) {
+                         int width) {
   CAMLparam1(s);
   uint8_t buf[PIECE];
   for (size_t at = 0; at < n; at += PIECE) {
     size_t k = piece(at, n);
     memcpy(buf, String_val(s) + off + at, k);
     caml_release_runtime_system();
-    write_bytes(dst + at, buf, k, wide);
+    write_bytes(dst + at, buf, k, width);
     caml_acquire_runtime_system();
   }
   CAMLreturn0;
 }
 
 value caml_rig_pci_write_at(value a, value s, value off, value n,
-                               value wide) {
+                               value width) {
   CAMLparam1(s);
   size_t len = Long_val(n);
   if (len >= PIECE)
-    write_pieces(AT(Long_val(a)), s, Long_val(off), len, Bool_val(wide));
+    write_pieces(AT(Long_val(a)), s, Long_val(off), len, Int_val(width));
   else
     write_bytes(AT(Long_val(a)), (const uint8_t *)String_val(s) + Long_val(off),
-                len, Bool_val(wide));
+                len, Int_val(width));
   CAMLreturn(Val_unit);
 }
 
 /* A fill reads no OCaml value: one of PIECE bytes or more runs with the
    runtime released throughout. */
-value caml_rig_pci_fill(value a, value n, value c, value wide) {
+value caml_rig_pci_fill(value a, value n, value c, value width) {
   volatile uint8_t *p = AT(Long_val(a));
   size_t len = Long_val(n);
   uint8_t b = (uint8_t)Long_val(c);
   if (len < PIECE) {
-    fill_bytes(p, len, b, Bool_val(wide));
+    fill_bytes(p, len, b, Int_val(width));
     return Val_unit;
   }
   caml_release_runtime_system();
-  fill_bytes(p, len, b, Bool_val(wide));
+  fill_bytes(p, len, b, Int_val(width));
   caml_acquire_runtime_system();
   return Val_unit;
 }
@@ -416,7 +507,8 @@ enum window_field {
   WINDOW_ADDRESS,
   WINDOW_LENGTH,
   WINDOW_TRANSPORT,
-  WINDOW_COMBINES
+  WINDOW_COMBINES,
+  WINDOW_PREFETCHABLE
 };
 
 void rig_pci_window_of(value w, struct rig_pci_window *out) {
@@ -428,12 +520,14 @@ void rig_pci_window_of(value w, struct rig_pci_window *out) {
   out->mapped = tr ? NULL : AT(a);
   out->transport = tr;
   out->combines = Bool_val(Field(w, WINDOW_COMBINES));
+  out->prefetchable = Bool_val(Field(w, WINDOW_PREFETCHABLE));
 }
 
 void rig_pci_write(const struct rig_pci_window *w, size_t off,
                       const void *src, size_t n) {
   if (w->mapped)
-    write_bytes(w->mapped + off, src, n, w->combines);
+    write_bytes(w->mapped + off, src, n,
+                w->combines ? WIDE : w->prefetchable ? DIRECT : WORDS);
   else
     (void)w->transport->write(w->transport->ctx, w->address + off, src, n);
 }

@@ -203,6 +203,16 @@ let address regs i =
     if wide i && i + 1 < bars then Some (low lor (regs.(i + 1) lsl 32))
     else Some low
 
+(* The memory BARs whose register marks them prefetchable, by index. *)
+let prefetchable_bar = 0b1000
+
+let prefetchable { files = m; bus; _ } =
+  let regs = registers m bus in
+  Array.init bars (fun i ->
+      address regs i <> None
+      && regs.(i) land io_bar = 0
+      && regs.(i) land prefetchable_bar <> 0)
+
 let bars { files = m; bus; _ } =
   let regs = registers m bus and file = path m bus "resource" in
   let lines = Array.of_list (String.split_on_char '\n' (read file)) in

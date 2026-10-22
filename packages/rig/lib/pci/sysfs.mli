@@ -80,6 +80,13 @@ val bars : 's lock -> (int * int) option array
     such as at the upper index of a 64-bit BAR. Raises {!Fail.Failed} if a file
     cannot be read. *)
 
+val prefetchable : 's lock -> bool array
+(** [prefetchable l] is, for each of the six BARs of the function [l] locks,
+    whether it is memory its register marks prefetchable: memory without side
+    effects on reads, into which host bridges may merge the processor's writes
+    (PCI Local Bus Specification 2.2, 6.2.5.1). Raises {!Fail.Failed} if its
+    configuration space cannot be read. *)
+
 val root : t -> string
 (** [root m] is the directory {!v} took. *)
 

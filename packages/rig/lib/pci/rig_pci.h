@@ -54,6 +54,7 @@ struct rig_pci_window {
   volatile uint8_t *mapped;                     /* in this process, or NULL */
   const struct rig_pci_transport *transport; /* when not mapped */
   int combines;                                 /* stores may merge until a barrier */
+  int prefetchable;                             /* memory of a prefetchable BAR */
 };
 
 /* Reads the window [w], a Window.t, into [out]. It reads the OCaml heap, so

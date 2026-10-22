@@ -37,6 +37,7 @@ type taken = {
   bus : string;
   config : Unix.file_descr * int; (* where configuration space starts in it *)
   bars : (int * int) option array; (* read once: a held function keeps them *)
+  prefetchable : bool array; (* each BAR's, read with [bars] *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   way : way;
@@ -178,7 +179,7 @@ let map t ~combine i off n =
         Fail.step (strf "mapping BAR %d of %s" i t.bus) (fun () ->
             file_map fd (base + first) len)
       in
-      Window.v ?combines (a + off - first) n
+      Window.v ?combines ~prefetchable:t.prefetchable.(i) (a + off - first) n
     in
     match t.way with
     | Iommu_take c ->
@@ -310,7 +311,7 @@ let fn t =
 
 (* A failure once the function is in its container gives the container its
    user back, so that a container left with none closes. *)
-let take_iommu files fds bus bars =
+let take_iommu files fds bus bars prefetchable =
   let c, efd = Vfio.open_ files fds bus in
   let at =
     match Vfio.config_offset bus (Vfio.device c) with
@@ -325,6 +326,7 @@ let take_iommu files fds bus bars =
     bus;
     config = (Vfio.device c, at);
     bars;
+    prefetchable;
     interrupts = Some efd;
     intx = None;
     way = Iommu_take c;
@@ -336,7 +338,7 @@ let take_iommu files fds bus bars =
    VFIO's no-IOMMU mode. Otherwise nothing handles them: the take turns its INTx
    off, which bus mastering does not gate, so that a GPU left running signals no
    line another device's handler shares. *)
-let take_physical l fds bars =
+let take_physical l fds bars prefetchable =
   let files = Sysfs.files l and bus = Sysfs.bus l in
   let file = Sysfs.path files bus "config" in
   let config =
@@ -370,6 +372,7 @@ let take_physical l fds bars =
       bus;
       config = (config, 0);
       bars;
+      prefetchable;
         interrupts;
       intx = None;
       way = Physical_take (Sysmem.store ~root ~bus);
@@ -394,11 +397,13 @@ let take l =
   in
   match
     let* addressing = Sysfs.access l in
-    let bars = Sysfs.bars l in
+    let bars = Sysfs.bars l and prefetchable = Sysfs.prefetchable l in
     match addressing with
     | Ops.Iommu ->
-        Ok (fn (take_iommu (Sysfs.files l) fds (Sysfs.bus l) bars))
-    | Physical -> Ok (fn (take_physical l fds bars))
+        Ok
+          (fn
+             (take_iommu (Sysfs.files l) fds (Sysfs.bus l) bars prefetchable))
+    | Physical -> Ok (fn (take_physical l fds bars prefetchable))
   with
   | Ok _ as fn -> fn
   | Error why -> refused why
