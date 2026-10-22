@@ -281,8 +281,10 @@ val capability : t -> Rig_nv_abi.Gpu.t
     {!locate} returns the address of a region's first byte in the GPU's
     virtual address space ({!Rig_nv_abi.Gpu}). Its handle is the same
     address, and its host address is [None] for [Device] memory. Freeing a
-    region leaves the memory it maps, and other regions over that memory, in
-    place.
+    view ({!val-map_peer}) leaves the memory it maps and the other views in
+    place. A view must be freed before the region it maps, as rig does
+    ({!Rig_edge.Driver}): freeing that region first may give its memory or
+    its addresses out again while the view still reaches them.
 
     {!peer} is [true] iff paths of one [key] opened both devices and this
     device's path reaches the other GPU's memory ([reaches] of

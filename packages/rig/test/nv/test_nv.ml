@@ -392,8 +392,8 @@ let shared_page () =
   end
 
 (* Views a GPU's reopened device makes of memory the GPU already maps: each
-   region over it keeps it mapped until its own free, in whatever order they
-   go. *)
+   view keeps it mapped until its own free, whichever view goes first, and the
+   memory's own region goes after them, as rig frees them. *)
 let views_of_mapped () =
   let n = 4096 in
   let a = S.driver () in
@@ -406,7 +406,6 @@ let views_of_mapped () =
   in
   let v = view () in
   let v' = view () in
-  N.free a src;
   N.free t.g v;
   let k = S.kernels t in
   let l = S.launches t.g in
@@ -415,7 +414,8 @@ let views_of_mapped () =
   equal int ~msg:"the first byte that differs" (-1) (S.mismatch (host out) n 5);
   S.free_launches l;
   N.free t.g out;
-  N.free t.g v'
+  N.free t.g v';
+  N.free a src
 
 (* A stopped device's Mapped memory lies behind a BAR word that no viewer's
    submissions read any more, so nothing would order the host's writes
