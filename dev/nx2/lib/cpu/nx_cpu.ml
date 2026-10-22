@@ -333,14 +333,27 @@ let fold p ~dst x =
 let chain_outputs = 64
 let lane_most = 4
 
-let contract_order ~rows ~columns : Nx_kernel.order =
+(* Lane order also where the depth is at least [lane_depth] products per
+   output, as a weight gradient's few outputs over many tokens are: chain
+   order's threads take tiles of outputs, too few to share the depth, where
+   lane order's take ranges of its blocks. On the Core Ultra 5 235, 8 × 8
+   outputs over 16384 products took 84-125 µs in chain order against 42-57
+   in lane, 16 × 16 over 65536 663-873 against 272-293; 64 × 64 over 262144
+   14.1 ms against 15.0-16.5, and 8 × 8 over 4096 21-25 µs against 44-46. *)
+let lane_depth = 128
+
+let contract_order ~rows ~columns ~depth : Nx_kernel.order =
   (* [rows · columns >= chain_outputs], without overflow: a factor of
      chain_outputs or more makes it, and below that the product fits. *)
   let outputs =
     rows >= chain_outputs || columns >= chain_outputs
     || rows * columns >= chain_outputs
   in
-  if rows > lane_most && columns > lane_most && outputs then Chain else Lane
+  (* [rows · columns <= depth / lane_depth], without overflow. *)
+  let per = depth / lane_depth in
+  let long = rows <= per && columns <= per / Int.max 1 rows in
+  if rows > lane_most && columns > lane_most && outputs && not long then Chain
+  else Lane
 
 (* [contract_c order ~batch ~contracting acc ~dst ~init a b] contracts [a]
    and [b], with [init] if given, in [order] and the dtype of code [acc],

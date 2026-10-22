@@ -1901,35 +1901,46 @@ let order =
     ~equal:( = )
 
 let orders =
-  cases "nx.cpu chooses chain order at rows and columns above 4 and 64 outputs"
-    ~name:(fun (m, n, _) -> Printf.sprintf "%d by %d" m n)
+  cases
+    "nx.cpu chooses chain order at rows and columns above 4, 64 outputs and \
+     fewer than 128 products per output"
+    ~name:(fun (m, n, k, _) -> Printf.sprintf "%d by %d over %d" m n k)
     Nx_kernel.
       [
-        (0, 1000, Lane);
-        (1000, 0, Lane);
-        (1, 1, Lane);
-        (4, 1000, Lane);
-        (5, 1000, Chain);
-        (1000, 4, Lane);
-        (1000, 5, Chain);
-        (5, 5, Lane);
-        (5, 12, Lane);
-        (5, 13, Chain);
-        (12, 5, Lane);
-        (13, 5, Chain);
-        (7, 9, Lane);
-        (9, 7, Lane);
-        (8, 8, Chain);
-        (16, 4, Lane);
-        (max_int, max_int, Chain);
-        (max_int, 5, Chain);
-        (5, max_int, Chain);
-        (max_int, 4, Lane);
-        (4, max_int, Lane);
-        (max_int, 0, Lane);
+        (0, 1000, 4096, Lane);
+        (1000, 0, 4096, Lane);
+        (1, 1, 4096, Lane);
+        (4, 1000, 4096, Lane);
+        (5, 1000, 4096, Chain);
+        (1000, 4, 4096, Lane);
+        (1000, 5, 4096, Chain);
+        (5, 5, 4096, Lane);
+        (5, 12, 4096, Lane);
+        (5, 13, 4096, Chain);
+        (12, 5, 4096, Lane);
+        (13, 5, 4096, Chain);
+        (7, 9, 4096, Lane);
+        (9, 7, 4096, Lane);
+        (8, 8, 4096, Chain);
+        (16, 4, 4096, Lane);
+        (8, 8, 0, Chain);
+        (8, 8, 8191, Chain);
+        (8, 8, 8192, Lane);
+        (16, 16, 32767, Chain);
+        (16, 16, 32768, Lane);
+        (64, 64, 524287, Chain);
+        (64, 64, 524288, Lane);
+        (8, 8, max_int, Lane);
+        (max_int, max_int, 4096, Chain);
+        (max_int, max_int, max_int, Chain);
+        (max_int, 5, max_int, Chain);
+        (5, max_int, max_int, Chain);
+        (max_int, 4, 4096, Lane);
+        (4, max_int, 4096, Lane);
+        (max_int, 0, 4096, Lane);
       ]
-    (fun (rows, columns, want) ->
-      equal order want (Nx_cpu.contract_order ~rows ~columns))
+    (fun (rows, columns, depth, want) ->
+      equal order want (Nx_cpu.contract_order ~rows ~columns ~depth))
 
 let () =
   exit

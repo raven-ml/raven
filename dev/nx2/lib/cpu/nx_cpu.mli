@@ -53,9 +53,11 @@
     blocks of 1024 terms, so the tree of blocks {!Nx_kernel.S.contract}
     states is lane order's own; in chain order, its association is one
     chain from [init] or [+0], which a part given the sum of the products
-    before it as [init] continues. [contract_order ~rows ~columns] is
-    [Chain] where [rows] and [columns] are both above 4 and multiply to at
-    least 64, and [Lane] otherwise.
+    before it as [init] continues. [contract_order ~rows ~columns ~depth]
+    is [Chain] where [rows] and [columns] are both above 4 and multiply to
+    at least 64, and [depth] is below 128 times their product; [Lane]
+    otherwise, so that the threads share the depth of a contraction of few
+    outputs.
     With no products, an output is [init] as [acc] holds it, rounded into
     [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
     a NaN result's sign and payload are unspecified.

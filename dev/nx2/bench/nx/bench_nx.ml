@@ -426,6 +426,16 @@ let plan_row n =
   Thumper.bench_with_setup (Printf.sprintf "einsum-plan-%d" n)
     ~setup:operands (fun xs -> Nx.Repr.array (Nx.einsum p xs))
 
+(* A weight gradient's product: 16 × 16 outputs over 65536 rows of
+   activations read transposed, few outputs over a long depth, which the
+   threads share. *)
+let gradient_rows =
+  [
+    Thumper.bench_with_setup "matmul-f32-tn-16x16x65536"
+      ~setup:(pair D.Float32 [| 65536; 16 |] [| 65536; 16 |] 1.)
+      (fun (x, dy) -> Nx.Repr.array (Nx.matmul (Nx.transpose x) dy));
+  ]
+
 (* Products at the dtypes beside float32. *)
 let square_rows (type v s) name (dt : (v, s) D.t) (v : v) sizes =
   List.map
@@ -531,7 +541,7 @@ let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 8 @ matmul_rows 16 @ matmul_rows 32
    @ matmul_rows 64 @ matmul_rows 1024 @ dot_rows @ tile_rows @ split_rows
-   @ decode_rows @ chain_rows @ attention_rows
+   @ decode_rows @ chain_rows @ attention_rows @ gradient_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates at

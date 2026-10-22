@@ -486,7 +486,7 @@ module type S = sig
     answer
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
-  val contract_order : rows:int -> columns:int -> order
+  val contract_order : rows:int -> columns:int -> depth:int -> order
 
   val contract :
     order:order ->

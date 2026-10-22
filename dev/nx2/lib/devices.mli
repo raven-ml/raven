@@ -58,9 +58,11 @@ val position : 'd t -> Rig.t -> int option
 val kernels : 'd t -> (module Nx_kernel.S) option
 (** [kernels s] is who computes on [s] eagerly. It reads a field. *)
 
-val contract_order : 'd t -> rows:int -> columns:int -> Nx_kernel.order
-(** [contract_order s ~rows ~columns] is the order of summation of a
-    contraction of [rows] rows by [columns] columns on [s]: the one [s]'s
+val contract_order :
+  'd t -> rows:int -> columns:int -> depth:int -> Nx_kernel.order
+(** [contract_order s ~rows ~columns ~depth] is the order of summation of a
+    contraction of [rows] rows by [columns] columns over [depth] products on
+    [s]: the one [s]'s
     kernels choose ({!Nx_kernel.S.contract_order}), nx.cpu's where [s] has
     none. *)
 
