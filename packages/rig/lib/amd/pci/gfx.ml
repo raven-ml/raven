@@ -269,20 +269,30 @@ let config_mec g =
    boot may have left, and a virtual function's KIQ. *)
 let kiq_queue = (2, 1, 0)
 
+(* A hardware queue's dequeue, CP_HQD_DEQUEUE_REQUEST's dequeue_req: the
+   kernel's RESET_WAVES, with which KFD destroys a queue
+   (destroy_queue_nocpsch_locked, through hqd_destroy_v11) and amdgpu resets
+   one (mes_v12_0_reset_queue_mmio). Its DRAIN_PIPE, 1, drains the pipe: on
+   the R9700 a drain of an idle queue just after the pipe's other queue's first
+   doorbell, before that queue read its ring, never ended, and the other
+   queue's doorbell was disabled under it. *)
+let reset_waves = 2
+
 let dequeue g ~wait =
   let queues =
     [ (1, 0, 0); (1, 0, 1) ] @ if Regs.vf g.r then [ kiq_queue ] else []
   in
   let left = ref true in
   (* Under the RLC's safe mode, which holds the GC's clocks ungated, as the
-     kernel's gfx_v12_0_reset_kcq resets a queue. *)
+     kernel's mes_v12_0_reset_queue_mmio resets a queue. *)
   each_xcc g (fun inst ->
       safe_mode g ~inst @@ fun () ->
       List.iter
         (fun (me, pipe, queue) ->
           grbm_select g ~me ~pipe ~queue ~inst;
           if Regs.read ~inst g.r "regCP_HQD_ACTIVE" land 1 = 1 then begin
-            Regs.write ~inst ~value:2 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
+            Regs.write ~inst g.r "regCP_HQD_DEQUEUE_REQUEST"
+              [ ("dequeue_req", reset_waves) ];
             Regs.write ~inst ~value:1 g.r "regSPI_COMPUTE_QUEUE_RESET" [];
             if wait then
               (* A wave the reset cannot stop holds the queue. *)
@@ -314,9 +324,11 @@ let eop_bytes = 0x1000
 
 (* Programs queue [q] of MEC [me], pipe [pipe], queue [queue] on each of
    [insts], from the descriptor at [mqd] (one page per die): dequeues the
-   hardware queue if it is active, as the kernel's kiq_init_register does, so
-   that no running queue has its registers rewritten under it, writes the
-   descriptor, copies its registers into the hardware queue and activates it. *)
+   hardware queue if it is active, so that no running queue has its registers
+   rewritten under it, writes the descriptor, copies its registers into the
+   hardware queue and activates it. A queue found active is none this session
+   made, and its work is no one's to wait for: the dequeue resets its waves,
+   where the kernel's kiq_init_register drains its pipe. *)
 let program g ~me ~pipe ~queue ~insts ~mqd:at kind q =
   let l = Regs.layout_of g.r in
   List.iter
@@ -324,7 +336,8 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at kind q =
       grbm_select g ~me ~pipe ~queue ~inst:xcc;
       let active () = Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1 in
       if active () then begin
-        Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
+        Regs.write ~inst:xcc g.r "regCP_HQD_DEQUEUE_REQUEST"
+          [ ("dequeue_req", reset_waves) ];
         Regs.wait g.r "an active queue's dequeue before its descriptor"
           (fun () -> not (active ()));
         Regs.write ~inst:xcc ~value:0 g.r "regCP_HQD_DEQUEUE_REQUEST" []
@@ -391,7 +404,8 @@ let retire g doorbell =
             Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1
           in
           if active () then begin
-            Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
+            Regs.write ~inst:xcc g.r "regCP_HQD_DEQUEUE_REQUEST"
+              [ ("dequeue_req", reset_waves) ];
             Regs.wait g.r "a retired queue's dequeue" (fun () ->
                 not (active ()));
             Regs.write ~inst:xcc ~value:0 g.r "regCP_HQD_DEQUEUE_REQUEST" []
