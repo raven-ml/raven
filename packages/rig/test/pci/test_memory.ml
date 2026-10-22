@@ -105,7 +105,8 @@ let needs_linux () =
 (* The machine of a new tree of [n] GPUs under one root port, as root reads
    it, its root and their buses, with the space and the lent range
    reserved. *)
-let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = []) n =
+let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = [])
+    ?(space = space_base) n =
   needs_linux ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
   let root = Tree.make ~privileged:true (List.mapi gpu buses @ others) in
@@ -115,9 +116,9 @@ let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = []) n =
       match Machine.reserve m ~base n with
       | Ok () -> ()
       | Error why -> skip ~reason:why ())
-    [ (space_base, space_length); (lend_base, 2 * mib) ];
+    [ (space, space_length); (lend_base, 2 * mib) ];
   let page = Machine.page m in
-  Tree.pagemap root ~page space_base
+  Tree.pagemap root ~page space
     (List.init (space_frames / page) (fun i -> first_frame + i));
   Tree.pagemap root ~page lend_base
     (List.init (2 * mib / page) (fun i -> 0x30_0000 + i));
@@ -1652,9 +1653,17 @@ let nic ?group ?bridges () =
 (* The GPU's BAR 0, as [Tree.gpu] places it. *)
 let bar_base = 0x7c_0000_0000
 
+(* Memory [Memory.bus] gave stays held until the process exits, its system
+   memory included, which the process holds by address: each GPU here takes
+   its space at addresses of its own, so no later test's system memory lands
+   on the addresses of memory an earlier one gave. *)
+let given_spaces = ref 0
+
 let with_nic ?(nic = nic ()) ?memory f =
-  let root, m, buses = tree_machine ~others:[ nic ] 1 in
-  let space = Space.create ~base:space_base space_length in
+  incr given_spaces;
+  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let root, m, buses = tree_machine ~others:[ nic ] ~space:base 1 in
+  let space = Space.create ~base space_length in
   let x = take_gpu ?memory ~space m (List.hd buses) in
   Fun.protect
     ~finally:(fun () -> Function.release x.t_fn)
