@@ -136,6 +136,7 @@ let nv2080_ctrl_cmd_gpu_promote_ctx = 0x2080012b
 let nv2080_ctrl_cmd_fifo_get_device_info_table = 0x20801112
 let nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes = 0x90f10106
 let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics = 0
+let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_pm = 9
 let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch = 0x10
 let nv2080_ctrl_gr_info_index_litter_num_gpcs = 0x14
 let nv2080_ctrl_gr_info_index_litter_num_tpc_per_gpc = 0x17

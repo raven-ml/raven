@@ -336,6 +336,131 @@ let test_reserved_depth () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Rpc.reserved_pdes V2 [ 0; 0x1000; 0x2000 ]))
 
+(* NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS (ctrl2080gpu.h): engineType, hClient,
+   ChID, hChanClient at 0xc, hObject at 0x10, entryCount at 0x28, then from
+   0x30 16 entries of 32 bytes: gpuPhysAddr, gpuVirtAddr at 8, size at 0x10,
+   physAttr at 0x18, bufferId at 0x1c (16 bits), bInitialize at 0x1e,
+   bNonmapped at 0x1f. Each entry decodes to [buffer; initialize; unmapped;
+   physical address; size; attributes; virtual address]. *)
+let promoted b =
+  let entry i =
+    let e = 0x30 + (0x20 * i) in
+    [
+      u32 b (e + 0x1c) land 0xffff;
+      u8 b (e + 0x1e);
+      u8 b (e + 0x1f);
+      u64 b e;
+      u64 b (e + 0x10);
+      u32 b (e + 0x18);
+      u64 b (e + 8);
+    ]
+  in
+  List.init (u32 b 0x28) entry
+
+(* What CPU-RM sends for a buffer (kgrctxPrepareInitializeCtxBuffer,
+   kgrctxPreparePromoteCtxBuffer): one it initializes carries its physical
+   address and size, in the GPU's memory and not cached by the GPU
+   (NV2080_CTRL_GPU_INITIALIZE_CTX_APERTURE_VIDMEM and _GPU_CACHEABLE_NO,
+   0x4), and is unmapped unless it also carries a virtual address. *)
+let expected (p : Rpc.promotion) =
+  let init, pa, size, attr =
+    match p.phys with
+    | Some (pa, size) -> (1, pa, size, 0x4)
+    | None -> (0, 0, 0, 0)
+  in
+  let unmapped = if init = 1 && p.virt = None then 1 else 0 in
+  [ p.buffer; init; unmapped; pa; size; attr; Option.value p.virt ~default:0 ]
+
+let promotions =
+  (* Pages up to the top of the GPU's 49-bit addresses, the last among them. *)
+  let page = Gen.int_range 1 ((1 lsl 37) - 1) in
+  let addr =
+    Gen.map
+      (fun p -> p * 0x1000)
+      (Gen.one_of [ page; Gen.constant ((1 lsl 37) - 1) ])
+  in
+  let at =
+    Gen.one_of
+      [
+        Gen.map (fun pa -> (Some pa, None)) (Gen.pair addr addr);
+        Gen.map (fun va -> (None, Some va)) addr;
+        Gen.map
+          (fun (pa, va) -> (Some pa, Some va))
+          (Gen.pair (Gen.pair addr addr) addr);
+      ]
+  in
+  let promotion =
+    Gen.map
+      (fun (buffer, (phys, virt)) -> { Rpc.buffer; phys; virt })
+      (Gen.pair (Gen.one_of [ Gen.int_range 0 12; Gen.constant 0xffff ]) at)
+  in
+  let size =
+    Gen.one_of [ Gen.int_range 0 16; Gen.constant 0; Gen.constant 16 ]
+  in
+  Gen.list ~size promotion
+
+let test_promote_ctx =
+  prop "a promotion carries each buffer's addresses" promotions (fun l ->
+      let has f = List.exists f l in
+      cover "initialized and mapped"
+        (has (fun (p : Rpc.promotion) -> p.phys <> None && p.virt <> None));
+      cover "initialized, unmapped"
+        (has (fun (p : Rpc.promotion) -> p.virt = None));
+      cover "mapped only" (has (fun (p : Rpc.promotion) -> p.phys = None));
+      cover "no buffer" (l = []);
+      cover "16 buffers" (List.length l = 16);
+      cover "the last id" (has (fun (p : Rpc.promotion) -> p.buffer = 0xffff));
+      let b = Rpc.promote_ctx ~client:0xc100_0000 ~channel:0xcf00_0007 l in
+      equal ~msg:"size" int 560 (String.length b);
+      equal ~msg:"graphics engine, client, channel" (list int)
+        [ 1; 0xc100_0000; 0xcf00_0007 ]
+        [ u32 b 0; u32 b 0xc; u32 b 0x10 ];
+      equal (list (list int)) (List.map expected l) (promoted b))
+
+let test_promote_refused () =
+  let p = { Rpc.buffer = 0; phys = None; virt = Some 0x1000 } in
+  raises_match Exn.invalid_arg (fun () ->
+      ignore
+        (Rpc.promote_ctx ~client:1 ~channel:2 (List.init 17 (fun _ -> p))));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Rpc.promote_ctx ~client:1 ~channel:2 [ { p with virt = None } ]))
+
+(* A compute object in an address space another owner keeps (UVM's, rig's), as
+   NVIDIA's RM promotes its context: the object's constructor initializes the
+   main context (0), PM (1) and patch (2) buffers before the object's RPC
+   (kgrobjPromoteContext, kgrobjGetPromoteIds_FWCLIENT; alloc_free.c:869), the
+   PM buffer allocated from the start in such a space
+   (kgrctxShouldPreAllocPmBuffer_PF), and promotes no virtual address there
+   (kgrctxPreparePromoteCtxBuffer). The space's owner then binds the address
+   of each of the context's buffers, the main, the patch, the PM and every
+   global buffer, in one call (nvGpuOpsBindChannelResources,
+   kgrctxGetCtxBuffers). *)
+let test_compute_context () =
+  let main = { Rpc.pa = 0x10_0000; size = 0x6_0000; va = 0x10_0000_0000 }
+  and pm = { Rpc.pa = 0x30_0000; size = 0x2_0000; va = 0x10_0050_0000 }
+  and patch = { Rpc.pa = 0x20_0000; size = 0x1_0000; va = 0x10_0010_0000 } in
+  let globals =
+    [ (3, 0x10_0020_0000); (9, 0x10_0030_0000); (11, 0x10_0040_0000) ]
+  in
+  let first, second = Rpc.compute_context ~main ~pm ~patch ~globals in
+  equal ~msg:"initialized before the object" (list (list int))
+    [
+      [ 0; 1; 1; 0x10_0000; 0x6_0000; 4; 0 ];
+      [ 1; 1; 1; 0x30_0000; 0x2_0000; 4; 0 ];
+      [ 2; 1; 1; 0x20_0000; 0x1_0000; 4; 0 ];
+    ]
+    (List.map expected first);
+  equal ~msg:"bound after it" (list (list int))
+    [
+      [ 0; 0; 0; 0; 0; 0; 0x10_0000_0000 ];
+      [ 2; 0; 0; 0; 0; 0; 0x10_0010_0000 ];
+      [ 1; 0; 0; 0; 0; 0; 0x10_0050_0000 ];
+      [ 3; 0; 0; 0; 0; 0; 0x10_0020_0000 ];
+      [ 9; 0; 0; 0; 0; 0; 0x10_0030_0000 ];
+      [ 11; 0; 0; 0; 0; 0; 0x10_0040_0000 ];
+    ]
+    (List.map expected second)
+
 (* rpc_unloading_guest_driver_v1F_07: bInPMTransition, bGc6Entering, then
    newLevel at 4. *)
 let test_unloading () =
@@ -497,6 +622,11 @@ let () =
              test "a page directory" test_page_directory;
              test_reserved_pdes;
              test "tables of another depth raise" test_reserved_depth;
+             test_promote_ctx;
+             test "a promotion of 17 buffers or of an addressless one raises"
+               test_promote_refused;
+             test "a compute context is initialized, then bound"
+               test_compute_context;
              test "unloading" test_unloading;
              test_registry;
            ];

@@ -100,6 +100,44 @@ val reserved_pdes : Page_entry.version -> int list -> string
     Raises [Invalid_argument] if [tables] is not one table per level from the
     root to the dual level. *)
 
+type promotion = {
+  buffer : int;
+  phys : (int * int) option;
+  virt : int option;
+}
+(** The type for a buffer of a graphics context handed to the GSP: its promote
+    id ([NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_*]), its physical address and
+    size in the GPU's memory if the GSP initializes it there, and its address
+    in the channel's virtual address space if the GSP maps it there. *)
+
+val promote_ctx : client:int -> channel:int -> promotion list -> string
+(** [promote_ctx ~client ~channel l] is the parameters of the command
+    [GPU_PROMOTE_CTX] that hands the GSP the buffers [l] of the graphics
+    context of the channel [channel] of [client]. A buffer the GSP initializes
+    is in the GPU's memory, uncached by the GPU, and unmapped unless it has a
+    virtual address.
+
+    Raises [Invalid_argument] if [l] has more than 16 buffers or one with
+    neither address. *)
+
+type context_buffer = { pa : int; size : int; va : int }
+(** The type for a buffer of a graphics context's own: its physical address
+    and size in the GPU's memory, and its address in the channel's virtual
+    address space. *)
+
+val compute_context :
+  main:context_buffer ->
+  pm:context_buffer ->
+  patch:context_buffer ->
+  globals:(int * int) list ->
+  promotion list * promotion list
+(** [compute_context ~main ~pm ~patch ~globals] is what the channel of a
+    compute object in an address space another owner keeps hands the GSP, as
+    NVIDIA's RM and its UVM do, in two calls: first, before the object is
+    made, the context's main, PM and patch buffers to initialize; then, once
+    it is made, the virtual address of each of the context's buffers, those
+    three and the GPU's global buffers [globals], by promote id. *)
+
 val unloading : string
 (** [unloading] is the body of [UNLOADING_GUEST_DRIVER], unloading to level 6:
     the GSP stops every channel and stays idle for the next boot. *)

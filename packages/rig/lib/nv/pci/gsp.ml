@@ -44,7 +44,18 @@ type placement = {
   space : Space.t;
 }
 
-type buffer = { size : int; phys : bool; virt : bool; local : bool }
+type buffer = { size : int; phys : bool; virt : bool }
+
+(* The graphics engine's buffers, from the golden context: the size of a
+   context's own main, PM and patch buffers, and each of the GPU's global
+   buffers, by promote id, at its address in the process's page tables, which
+   every address space of the process's clients shares. *)
+type graphics = {
+  main : int;
+  pm : int;
+  patch : int;
+  globals : (int * int) list;
+}
 
 (* GPU memory a falcon reads an image from: its physical address and the
    window on it. *)
@@ -104,7 +115,7 @@ type t = {
   mutable runlists : (int * int) list; (* each engine's runlist *)
   mutable channels : int Channels.t; (* each channel's runlist *)
   mutable held : held Objects.t; (* under [lock] *)
-  mutable buffers : (int * buffer) list; (* the graphics context's *)
+  mutable graphics : graphics;
   taken : sys list ref; (* the system memory the boot took *)
 }
 
@@ -585,45 +596,40 @@ let channel_memory g ~client ~locate obj p =
         Ok ()
   end
 
-(* The context buffers a compute engine's channel needs, promoted twice: their
-   physical memory, then their virtual addresses. The memory is recorded for
-   the engine [obj]. *)
-let promote g ~client ~subdevice ~obj channel buffers ?(have = []) ~virt ~phys
-    () =
-  let module Pr = Defs.Promote_ctx in
-  let module E = Defs.Promote_entry in
-  let p = Rig_nv.params Pr.sizeof in
-  Rig_nv.set p Pr.entry_count (List.length buffers);
-  Rig_nv.set p Pr.engine_type Defs.nv2080_engine_type_graphics;
-  Rig_nv.set p Pr.h_chan_client client;
-  Rig_nv.set p Pr.h_object channel;
-  let rec fill i made = function
-    | [] -> Ok (List.rev made)
-    | (id, b) :: rest ->
-        let v = Option.value virt ~default:b.virt
-        and ph = Option.value phys ~default:b.phys in
-        let* m =
-          match List.assoc_opt id have with
-          | Some m -> Ok m
-          | None -> lacking (object_memory g ~client obj b.size)
-        in
-        let f x = elt Pr.promote_entry i x in
-        Rig_nv.set p (f E.buffer_id) id;
-        Rig_nv.set p (f E.gpu_virt_addr) (if v then m.Page_table.va else 0);
-        Rig_nv.set p (f E.b_initialize) (Bool.to_int ph);
-        Rig_nv.set p (f E.gpu_phys_addr) (if ph then paddr m else 0);
-        Rig_nv.set p (f E.size) (if ph then b.size else 0);
-        (* NV2080_CTRL_GPU_PROMOTE_CTX_PHYS_ATTR: in the GPU's memory,
-           cached. *)
-        Rig_nv.set p (f E.phys_attr) (if ph then 0x4 else 0);
-        Rig_nv.set p (f E.b_nonmapped) (Bool.to_int (ph && not v));
-        fill (i + 1) ((id, m) :: made) rest
+(* Hands the GSP the buffers [l] of the graphics context of [channel] of
+   [client], through the client's [subdevice]. *)
+let promote g ~client ~subdevice ~channel l =
+  let r = Rpc.promote_ctx ~client ~channel l in
+  let p = Rig_nv.params (String.length r) in
+  blit_params r p;
+  control g ~client subdevice Defs.nv2080_ctrl_cmd_gpu_promote_ctx (Some p)
+
+(* The context of the compute object [obj] of [client] on [channel], in an
+   address space another owner keeps, as NVIDIA's RM and its UVM hand it
+   over: its main, PM and patch buffers, recorded for [obj], initialized before
+   the object is made (kgrobjPromoteContext, from the object's constructor,
+   runs before the RPC); then, by the function this returns once the object
+   is made, their addresses and the global buffers' bound
+   (nvGpuOpsBindChannelResources). *)
+let context g ~client ~subdevice ~obj channel =
+  let gr = g.graphics in
+  let own size =
+    let* m = lacking (object_memory g ~client obj size) in
+    Ok { Rpc.pa = paddr m; size; va = m.va }
   in
-  let* made = fill 0 [] buffers in
-  let* () =
-    control g ~client subdevice Defs.nv2080_ctrl_cmd_gpu_promote_ctx (Some p)
+  let* main = own gr.main in
+  (* NVIDIA's RM fails such an object when the GPU has no PM buffer
+     (kgrctxShouldPreAllocPmBuffer, kgrctxAllocPmBuffer). *)
+  let* pm =
+    if gr.pm = 0 then
+      Error (Rig_nv.Refused "the GPU reports no PM context buffer")
+    else own gr.pm
   in
-  Ok made
+  let* patch = own gr.patch in
+  let init, bind = Rpc.compute_context ~main ~pm ~patch ~globals:gr.globals in
+  let promote = promote g ~client ~subdevice ~channel in
+  let* () = promote init in
+  Ok (fun () -> promote bind)
 
 (* The root table's entries: 4 on version 2, 2 on version 3. *)
 let root_entries (c : Chip.t) =
@@ -639,11 +645,17 @@ type objects = { mutable subdevice : int }
 let alloc g ~client ~locate ~objects ~parent cls p =
   let channel_class, compute_class, _ = classes g.p.chip.family in
   let h, obj = made g ~client ~parent cls in
+  let compute = cls = compute_class && client <> priv_root in
   let* () =
     match p with
     | Some p when cls = channel_class ->
         channel_memory g ~client ~locate obj p
     | _ -> Ok ()
+  in
+  let* bind =
+    if compute then
+      context g ~client ~subdevice:objects.subdevice ~obj parent
+    else Ok (fun () -> Ok ())
   in
   let* _ = alloc_object g ~client ~parent ~obj:h cls p in
   if cls = channel_class then
@@ -670,17 +682,7 @@ let alloc g ~client ~locate ~objects ~parent cls p =
                 ~entries:(root_entries g.p.chip)))
       in
       Ok ()
-    else if cls = compute_class then
-      let bufs = List.filter (fun (k, _) -> List.mem k [ 0; 1; 2 ]) g.buffers in
-      let* phys =
-        promote g ~client ~subdevice:objects.subdevice ~obj parent bufs
-          ~virt:(Some false) ~phys:None ()
-      in
-      let* _ =
-        promote g ~client ~subdevice:objects.subdevice ~obj parent bufs
-          ~have:phys ~virt:None ~phys:(Some false) ()
-      in
-      Ok ()
+    else if compute then bind ()
     else Ok ()
   in
   Ok obj
@@ -917,11 +919,13 @@ let golden g =
     control subdev
       Defs.nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info (Some c)
   in
+  let field idx x =
+    Rig_nv.get c (elt C.engine_context_buffers_info 0 (elt Cb.engine idx x))
+  in
   let info ?(add = 0) ?align idx =
-    let f x =
-      Rig_nv.get c (elt C.engine_context_buffers_info 0 (elt Cb.engine idx x))
-    in
-    round_up (f B.size + add) (Option.value align ~default:(f B.alignment))
+    round_up
+      (field idx B.size + add)
+      (Option.value align ~default:(field idx B.alignment))
   in
   (* The graphics context and its patch buffer, then the global buffers from
      index 14 on of the engine's context properties, the fifth aligned to 2 MiB.
@@ -935,14 +939,21 @@ let golden g =
       Defs
       .nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch
   in
+  (* A context in an address space another owner keeps has a PM buffer from
+     its start, of this size ([context]). *)
+  let pm =
+    let id =
+      Defs.nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_pm
+    in
+    if field id B.size = 0 then 0 else info id
+  in
   let global x =
     info ?align:(if x = 5 then Some (2 * mib) else None) (x + 14)
   in
-  let buf ?(local = false) ~phys ~virt size = { size; phys; virt; local } in
-  g.buffers <-
+  let buf ~phys ~virt size = { size; phys; virt } in
+  let buffers =
     [
       (0, buf graphics ~phys:true ~virt:true);
-      (1, buf patch ~phys:true ~virt:true ~local:true);
       (2, buf patch ~phys:true ~virt:true);
     ]
     @ List.map
@@ -952,13 +963,32 @@ let golden g =
         (9, buf (global 9) ~phys:true ~virt:true);
         (10, buf (global 10) ~phys:true ~virt:false);
         (11, buf (global 10) ~phys:true ~virt:true);
-      ];
-  let* _ =
-    Result.map_error why
-      (promote g ~client:priv_root ~subdevice:subdev ~obj:0 channel
-         (List.filter (fun (_, b) -> not b.local) g.buffers)
-         ~virt:None ~phys:None ())
+      ]
   in
+  (* Each buffer's memory, mapped in the process's tables, and what the GSP is
+     told of it. *)
+  let given (id, b) =
+    let* m = object_memory g ~client:priv_root 0 b.size in
+    let phys = if b.phys then Some (paddr m, b.size) else None in
+    let virt = if b.virt then Some m.va else None in
+    Ok ((id, m.va), { Rpc.buffer = id; phys; virt })
+  in
+  let rec give acc = function
+    | [] -> Ok (List.rev acc)
+    | x :: rest ->
+        let* y = given x in
+        give (y :: acc) rest
+  in
+  let* l = give [] buffers in
+  let* () =
+    Result.map_error why
+      (promote g ~client:priv_root ~subdevice:subdev ~channel
+         (List.map snd l))
+  in
+  (* Ids from 3 on are the GPU's global buffers, which every context maps; the
+     main (0) and patch (2) buffers are this context's own. *)
+  let globals = List.filter (fun (id, _) -> id > 2) (List.map fst l) in
+  g.graphics <- { main = graphics; pm; patch; globals };
   let* _ = alloc ~parent:channel compute_class None in
   let* _ = alloc ~parent:channel copy_class None in
   Ok ()
@@ -1074,7 +1104,7 @@ let take p (fw : Images.t) fwsec ~taken =
       runlists = [];
       channels = Channels.empty;
       held = Objects.empty;
-      buffers = [];
+      graphics = { main = 0; pm = 0; patch = 0; globals = [] };
       taken;
     }
 

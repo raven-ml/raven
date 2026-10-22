@@ -268,6 +268,65 @@ let reserved_pdes v tables =
           set b (f R.levels_aperture) aperture_video)
         tables)
 
+(* Graphics contexts *)
+
+type promotion = { buffer : int; phys : (int * int) option; virt : int option }
+
+(* NV2080_CTRL_GPU_PROMOTE_CONTEXT_MAX_ENTRIES. *)
+let promote_max = 16
+
+(* NV2080_CTRL_GPU_INITIALIZE_CTX_APERTURE_VIDMEM (0) with _GPU_CACHEABLE_NO
+   (bit 2): a buffer CPU-RM initializes in the GPU's memory
+   (kgrctxPrepareInitializeCtxBuffer). *)
+let video_uncached = 0x4
+
+let promote_ctx ~client ~channel l =
+  let module P = Defs.Promote_ctx in
+  let module E = Defs.Promote_entry in
+  let n = List.length l in
+  if n > promote_max then
+    invalid_arg (strf "Rpc.promote_ctx: %d buffers, at most %d" n promote_max);
+  if List.exists (fun p -> p.phys = None && p.virt = None) l then
+    invalid_arg "Rpc.promote_ctx: a buffer with no address";
+  let off, size, _ = P.promote_entry in
+  let entry i (f, w) = (off + (i * size) + f, w) in
+  record P.sizeof (fun b ->
+      set b P.engine_type Defs.nv2080_engine_type_graphics;
+      set b P.h_chan_client client;
+      set b P.h_object channel;
+      set b P.entry_count n;
+      List.iteri
+        (fun i p ->
+          let f = entry i in
+          set b (f E.buffer_id) p.buffer;
+          Option.iter (fun va -> set b (f E.gpu_virt_addr) va) p.virt;
+          match p.phys with
+          | None -> ()
+          | Some (pa, size) ->
+              set b (f E.gpu_phys_addr) pa;
+              set b (f E.size) size;
+              set b (f E.phys_attr) video_uncached;
+              set b (f E.b_initialize) 1;
+              set b (f E.b_nonmapped) (Bool.to_int (p.virt = None)))
+        l)
+
+type context_buffer = { pa : int; size : int; va : int }
+
+(* NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_MAIN, _PM and _PATCH. *)
+let main_id = 0
+let pm_id = 1
+let patch_id = 2
+
+(* The initialization follows kgrobjGetPromoteIds_FWCLIENT's order, the binding
+   kgrctxGetCtxBuffers'. *)
+let compute_context ~main ~pm ~patch ~globals =
+  let init (buffer, b) = { buffer; phys = Some (b.pa, b.size); virt = None } in
+  let bind (buffer, va) = { buffer; phys = None; virt = Some va } in
+  let own = [ (main_id, main); (pm_id, pm); (patch_id, patch) ] in
+  let at id = (id, (List.assoc id own).va) in
+  ( List.map init own,
+    List.map bind (at main_id :: at patch_id :: at pm_id :: globals) )
+
 (* Unloading to level 6, NV2080_CTRL_GPU_SET_POWER_STATE_GPU_LEVEL_3's bit (RM's
    unload to the deepest state the GSP keeps). *)
 let unload_level = 1 lsl 6

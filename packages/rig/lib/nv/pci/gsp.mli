@@ -94,8 +94,9 @@ val rm :
     in the memory and at the address [locate h off] gives for the memory of
     handle [h] at offset [off] (a physical address in the GPU's memory, a bus
     address in system memory); a virtual address space gets the GPU's page
-    directory; a compute engine's context buffers are promoted; a channel's work
-    submit token carries its runlist. Its [free] frees an object and every
+    directory; a compute object's context is handed over as NVIDIA's RM and
+    its UVM do ({!Rpc.compute_context}); a channel's work submit token carries
+    its runlist. Its [free] frees an object and every
     object under it, then gives back the GPU memory the client gave the GSP
     for them; once the GPU has left the bus or faulted ({!check}) it is a
     refusal, and calls nothing. *)
