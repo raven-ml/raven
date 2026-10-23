@@ -1235,7 +1235,7 @@ let dirichlet_by ~by ?key a =
 
 let dirichlet ?key a =
   let by = "Nx.Rng.dirichlet" in
-  Donate.resolve ~by (with_operands [ Value.Any a ] key) @@ fun read ->
+  Eval.once ~by (with_operands [ Value.Any a ] key) @@ fun read ->
   dirichlet_by ~by ?key:(Option.map read key) (read a)
 
 (* Categorical *)
@@ -1277,7 +1277,7 @@ let categorical ?key ?(axis = -1) logits =
     invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
       pp_shape s;
   Prim.alive ~by 0 logits;
-  Donate.resolve ~by (with_operands [ Value.Any logits ] key) @@ fun read ->
+  Eval.once ~by (with_operands [ Value.Any logits ] key) @@ fun read ->
   let logits = read logits in
   let key = resolve ~by ~after:1 (Option.map read key) in
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
@@ -1323,7 +1323,7 @@ let permutation ?key n =
   let prog =
     lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
   in
-  Donate.resolve ~by (with_operands [] key) @@ fun read ->
+  Eval.once ~by (with_operands [] key) @@ fun read ->
   let key = resolve ~by ~after:0 (Option.map read key) in
   let words = draw ~by key D.Uint64 [| n |] prog in
   let axis = Array.length (Prim.shape words) - 1 in

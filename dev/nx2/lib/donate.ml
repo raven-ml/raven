@@ -199,8 +199,12 @@ let as_called : type v s d.
 
 let unhandled hs op = Prim.map (fun y -> as_called hs y) op
 
-let resolve (type d a) ~by (xs : d Value.any list)
-    (k : ('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) -> a) : a =
+(* [k read], the call [by] consuming the handles among [xs] once, then
+   [ended hs y] of its handles [hs] and [k]'s value [y] once their donors
+   died and their hold ended. *)
+let resolving (type d a) ~by (xs : d Value.any list)
+    (k : ('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) -> a)
+    (ended : handle list -> a -> unit) : a =
   let hs =
     if List.exists (fun (Value.Any x) -> is_handle x) xs then handles ~by xs
     else []
@@ -231,12 +235,18 @@ let resolve (type d a) ~by (xs : d Value.any list)
       (* A donor among [xs] that a consumer on another domain claims meanwhile
          is read as it was too: the hold keeps its memory, and the claim after
          [k] names that consumer. *)
-      Fun.protect
-        ~finally:(fun () -> Rig.Claim.release held)
-        (fun () ->
-          let result = k (fun y -> as_called hs y) in
-          claim ~by hs;
-          result)
+      let result =
+        Fun.protect
+          ~finally:(fun () -> Rig.Claim.release held)
+          (fun () ->
+            let result = k (fun y -> as_called hs y) in
+            claim ~by hs;
+            result)
+      in
+      ended hs result;
+      result
+
+let resolve ~by xs k = resolving ~by xs k (fun _ _ -> ())
 
 let consume_list ~by xs =
   let hs =
@@ -285,6 +295,20 @@ let consumed ~by ~reused hs =
             |> List.iter (fun b -> ignore (Rig.Buffer.free b : bool))
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
+
+(* An array or shards hold their memory, which [consumed] keeps, and a
+   constant none of the handles'; a traced value may hold the handles' arrays
+   in its interpretation's payload, so it frees none. *)
+let resolve_value (type v s d) ~by xs k : (v, s, d) Value.t =
+  let ended hs (y : (v, s, d) Value.t) =
+    match y with
+    | Value.Array _ | Value.Shards _ ->
+        let reused = Iarray.to_list (Iarray.map A.buffer (Prim.arrays y)) in
+        consumed ~by ~reused hs
+    | Value.Deferred _ -> consumed ~by ~reused:[] hs
+    | Value.Donated _ | Value.Traced _ -> ()
+  in
+  resolving ~by xs k ended
 
 (* Whether [a] may hold a result of [dt] and [layout] in its memory: of that
    dtype and layout, over all of its memory. *)

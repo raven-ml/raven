@@ -1320,7 +1320,7 @@ let slice_by ~by idx x =
   let picks = picks ~by idx x in
   Prim.alive ~by (index_alive ~by idx) x;
   let consume =
-    if several picks && held_donated idx then Donate.resolve else Eval.call
+    if several picks && held_donated idx then Eval.once else Eval.call
   in
   consume ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
   let picks = List.map (fun (p, a) -> (read_pick read p, a)) picks in
@@ -1624,7 +1624,7 @@ let set idx v x =
     | At _ | Span _ | Rows _ | New -> false
   in
   let consume =
-    if List.exists mapped data && held_donated idx then Donate.resolve
+    if List.exists mapped data && held_donated idx then Eval.once
     else Eval.call
   in
   consume ~by (index_operands idx [ Value.Any v; Value.Any x ]) @@ fun read ->
@@ -2548,7 +2548,8 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
   alive2 ~by re im;
   (* Each part's cast and the assembly read the operands: once, eagerly
      too. *)
-  once2 ~by re im @@ fun re im ->
+  Eval.once ~by [ Value.Any re; Value.Any im ] @@ fun read ->
+  let re = read re and im = read im in
   let r = Array.length s in
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in

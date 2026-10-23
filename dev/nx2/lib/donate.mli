@@ -67,6 +67,18 @@ val resolve :
     apart from the handle's, and both are held. The hold ends when [k]
     returns or raises. *)
 
+val resolve_value :
+  by:string ->
+  'd Value.any list ->
+  (('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) ->
+  ('w, 'q, 'd) Value.t) ->
+  ('w, 'q, 'd) Value.t
+(** [resolve_value ~by xs k] is {!resolve}[ ~by xs k], [k]'s value [y] an
+    array, shards or a constant, whose operations ran on live values alone;
+    once the donors die, their handles' memory that [y] does not hold is
+    consumed and freed as {!consumed} does. For a traced [y] it is
+    {!resolve}: an interpretation may keep the handles' arrays. *)
+
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
 (** [consume_list ~by xs] is [xs] read by a consumer [by] that is no
     operation, with {!resolve}'s checks: [xs] as they were when it was called,
