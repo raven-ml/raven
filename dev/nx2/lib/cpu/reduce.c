@@ -2863,11 +2863,13 @@ static void reduce_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
     int64_t b0 = x.g * q->group, b1 = b0 + q->group;
     if (b1 > q->blocks) b1 = q->blocks;
     double *c = q->centers ? q->centers + u / q->groups * q->row : NULL;
+    /* The center pass's blocks take no centers: it stores them. */
+    const double *bc = q->centering ? NULL : c;
     if (q->groups == 1) {
-      blocks(q, wk, x.p, x.s, x.W, c, b0, b1, v);
+      blocks(q, wk, x.p, x.s, x.W, bc, b0, b1, v);
       store(q, wk, &x, c, v);
     } else
-      blocks(q, wk, x.p, x.s, x.W, c, b0, b1,
+      blocks(q, wk, x.p, x.s, x.W, bc, b0, b1,
              q->scratch + u * q->row * q->size);
   }
 }
