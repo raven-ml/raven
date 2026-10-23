@@ -489,15 +489,18 @@ let alloc_object g ~client ~parent ~obj cls p =
 (* Names a new object of class [cls] of [client] under [parent], and records
    it before the call that makes it, so that what the process gives the GSP
    for it from then on goes back with it, whether the GSP made it or not. Is
-   the handle the call names, and the object's, which for a client's root is
-   the client. *)
+   the handle the call names, the object's, which for a client's root is the
+   client, and whether the record is new: a second root of a client keeps the
+   client's. *)
 let made g ~client ~parent cls =
   Rig_nv.Lock.protect g.lock (fun () ->
       let h = g.next in
       g.next <- h + 1;
       let obj = if cls = Defs.nv01_root then client else h in
-      g.held <- Objects.add (client, obj) { parent; given = [] } g.held;
-      (h, obj))
+      let fresh = not (Objects.mem (client, obj) g.held) in
+      if fresh then
+        g.held <- Objects.add (client, obj) { parent; given = [] } g.held;
+      (h, obj, fresh))
 
 (* Records [m] as given for [obj] of [client]. *)
 let given g ~client obj m =
@@ -506,6 +509,26 @@ let given g ~client obj m =
         Objects.update (client, obj)
           (Option.map (fun h -> { h with given = m :: h.given }))
           g.held)
+
+(* Records the memory given for [obj] of [client] as given for the graphics
+   context of [channel]'s: its channel group's, or the channel's own where it
+   is in no group. *)
+let hand g ~client ~obj channel =
+  Rig_nv.Lock.protect g.lock @@ fun () ->
+  let owner =
+    match Objects.find_opt (client, channel) g.held with
+    | Some c when Channels.mem c.parent g.groups -> c.parent
+    | Some _ | None -> channel
+  in
+  match
+    (Objects.find_opt (client, obj) g.held, Objects.mem (client, owner) g.held)
+  with
+  | Some h, true ->
+      let add o = { o with given = h.given @ o.given } in
+      g.held <-
+        Objects.add (client, obj) { h with given = [] } g.held
+        |> Objects.update (client, owner) (Option.map add)
+  | _ -> ()
 
 (* Under [g]'s lock: takes [obj] of [client] and every object under it out of
    [g]'s records and its channels' and groups' tables, which frees the
@@ -632,7 +655,11 @@ let promote g ~client ~subdevice ~channel l =
    the object is made (kgrobjPromoteContext, from the object's constructor,
    runs before the RPC); then, by the function this returns once the object
    is made, their addresses and the global buffers' bound
-   (nvGpuOpsBindChannelResources). *)
+   (nvGpuOpsBindChannelResources). Once promoted, the buffers are recorded
+   for the channel's group, or for a channel in no group: NVIDIA's RM keeps
+   them in the group's graphics context (kchangrpapiConstruct_IMPL makes it),
+   whatever becomes of the object or the channel, whose frees unmap them
+   (_kgrobjDestruct, shrkgrctxDetach_IMPL) and free nothing. *)
 let context g ~client ~subdevice ~obj channel =
   let gr = g.graphics in
   let own size =
@@ -651,6 +678,7 @@ let context g ~client ~subdevice ~obj channel =
   let init, bind = Rpc.compute_context ~main ~pm ~patch ~globals:gr.globals in
   let promote = promote g ~client ~subdevice ~channel in
   let* () = promote init in
+  hand g ~client ~obj channel;
   Ok (fun () -> promote bind)
 
 (* The root table's entries: 4 on version 2, 2 on version 3. *)
@@ -717,45 +745,102 @@ let name_channel g ~parent obj p =
       g.channels <- Channels.add obj { id; runlist } g.channels;
       Ok ()
 
-let alloc g ~client ~locate ~objects ~parent cls p =
-  let channel_class, compute_class, _ = classes g.p.chip.family in
-  let h, obj = made g ~client ~parent cls in
-  let compute = cls = compute_class && client <> priv_root in
-  let* () =
-    match p with
-    | Some p when cls = channel_class ->
-        let* () = channel_memory g ~client ~locate ~parent obj p in
-        name_channel g ~parent obj p
-    | Some p when cls = Defs.kepler_channel_group_a ->
-        name_group g ~client obj p
-    | _ -> Ok ()
+(* Gives back the memory the process gave the GSP for [obj] of [client] and
+   every object under it, which the GSP holds no more, and drops their
+   records. A mapping whose unmap the GPU did not confirm stays, as the GPU
+   may still reach it. *)
+let drop_objects g ~client obj =
+  let memory =
+    Rig_nv.Lock.protect g.lock (fun () -> take_freed g ~client obj)
   in
-  let* bind =
-    if compute then
-      context g ~client ~subdevice:objects.subdevice ~obj parent
-    else Ok (fun () -> Ok ())
-  in
-  let* _ = alloc_object g ~client ~parent ~obj:h cls p in
-  if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
-  (* The golden context's objects get none of this: its address space is the
-     RM's own, whose root the GSP takes with the tables of its range
-     ([golden]), as SET_PAGE_DIRECTORY applies only to a space another owner
-     keeps (gvaspaceExternalRootDirCommit); its context is promoted whole. *)
+  on_tables g (fun t ->
+      List.iter
+        (function
+          | Mapped m -> ignore (Page_table.free t m : bool)
+          | Block pa -> Page_table.pfree t pa)
+        memory)
+
+(* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
+   does, whose status is the reply's result. A GPU that left the bus or
+   faulted gets no call, which would wait out its bound in vain, as [stop]
+   sends it no unload. The GPU reads the memory the process gave the GSP for
+   the objects no more once the GSP freed them, so it goes back then. A
+   refusal keeps the records. *)
+let free g ~client obj =
   let* () =
-    if client = priv_root then Ok ()
-    else if cls = Defs.fermi_vaspace_a then
-      let* _ =
-        failed
-          (call g Defs.nv_vgpu_msg_function_set_page_directory
-             (Rpc.page_directory ~client ~device:parent ~vaspace:obj
-                ~root:(Page_table.root g.p.tables)
-                ~entries:(root_entries g.p.chip)))
-      in
-      Ok ()
-    else if compute then bind ()
+    if Option.is_some (Function.failed g.p.chip.fn) || Option.is_some g.fault
+    then Error (Rig_nv.Refused "the GSP cannot be reached to free an object")
     else Ok ()
   in
-  Ok obj
+  let* _ =
+    failed (call g Defs.nv_vgpu_msg_function_free (Rpc.free ~client ~obj))
+  in
+  drop_objects g ~client obj;
+  Ok ()
+
+(* Makes [obj] of [client], named [h], under [parent]: [Error (`Unmade, e)]
+   if the GSP did not make it, [Error (`Made, e)] if a step after failed. *)
+let construct g ~client ~locate ~objects ~parent ~h ~obj cls p =
+  let channel_class, compute_class, _ = classes g.p.chip.family in
+  let compute = cls = compute_class && client <> priv_root in
+  let made =
+    let* () =
+      match p with
+      | Some p when cls = channel_class ->
+          let* () = channel_memory g ~client ~locate ~parent obj p in
+          name_channel g ~parent obj p
+      | Some p when cls = Defs.kepler_channel_group_a ->
+          name_group g ~client obj p
+      | _ -> Ok ()
+    in
+    let* bind =
+      if compute then
+        context g ~client ~subdevice:objects.subdevice ~obj parent
+      else Ok (fun () -> Ok ())
+    in
+    let* _ = alloc_object g ~client ~parent ~obj:h cls p in
+    Ok bind
+  in
+  match made with
+  | Error e -> Error (`Unmade, e)
+  | Ok bind -> (
+      if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
+      (* The golden context's objects get none of this: its address space is
+         the RM's own, whose root the GSP takes with the tables of its range
+         ([golden]), as SET_PAGE_DIRECTORY applies only to a space another
+         owner keeps (gvaspaceExternalRootDirCommit); its context is promoted
+         whole. *)
+      let finished =
+        if client = priv_root then Ok ()
+        else if cls = Defs.fermi_vaspace_a then
+          let* _ =
+            failed
+              (call g Defs.nv_vgpu_msg_function_set_page_directory
+                 (Rpc.page_directory ~client ~device:parent ~vaspace:obj
+                    ~root:(Page_table.root g.p.tables)
+                    ~entries:(root_entries g.p.chip)))
+          in
+          Ok ()
+        else if compute then bind ()
+        else Ok ()
+      in
+      match finished with Ok () -> Ok () | Error e -> Error (`Made, e))
+
+(* A failed allocation gives back the memory the process gave the GSP for its
+   object, as CPU-RM's constructors free theirs when they fail
+   (kchannelConstruct_IMPL, kchangrpapiConstruct_IMPL), and an object the GSP
+   made is freed first, as CPU-RM frees it (NV_RM_RPC_FREE_ON_ERROR). After a
+   fault the memory stays with the records: the GSP may hold it. *)
+let alloc g ~client ~locate ~objects ~parent cls p =
+  let h, obj, fresh = made g ~client ~parent cls in
+  match construct g ~client ~locate ~objects ~parent ~h ~obj cls p with
+  | Ok () -> Ok obj
+  | Error (`Made, e) ->
+      ignore (free g ~client obj : (unit, Rig_nv.refusal) result);
+      Error e
+  | Error (`Unmade, e) ->
+      if fresh && Option.is_none g.fault then drop_objects g ~client obj;
+      Error e
 
 (* The work submit token of the channel [obj]. Beside a GSP, NVIDIA's RM
    makes it from the channel's runlist and hardware id and asks the GSP
@@ -789,33 +874,6 @@ let boost g ~client subdevice =
   blit_params r p;
   control g ~client subdevice Defs.nv2080_ctrl_cmd_internal_perf_boost_set_2x
     (Some p)
-
-(* Frees [obj] of [client] and every object under it, as rpcRmApiFree_GSP
-   does, whose status is the reply's result. A GPU that left the bus or
-   faulted gets no call, which would wait out its bound in vain, as [stop]
-   sends it no unload. The GPU reads the memory the process gave the GSP for
-   the objects no more once the GSP freed them, so it goes back then; a
-   mapping whose unmap the GPU did not confirm stays, as the GPU may still
-   reach it. A refusal keeps the records. *)
-let free g ~client obj =
-  let* () =
-    if Option.is_some (Function.failed g.p.chip.fn) || Option.is_some g.fault
-    then Error (Rig_nv.Refused "the GSP cannot be reached to free an object")
-    else Ok ()
-  in
-  let* _ =
-    failed (call g Defs.nv_vgpu_msg_function_free (Rpc.free ~client ~obj))
-  in
-  let memory =
-    Rig_nv.Lock.protect g.lock (fun () -> take_freed g ~client obj)
-  in
-  on_tables g (fun t ->
-      List.iter
-        (function
-          | Mapped m -> ignore (Page_table.free t m : bool)
-          | Block pa -> Page_table.pfree t pa)
-        memory);
-  Ok ()
 
 (* A client's RM, which handles each command as NVIDIA's RM does beside a
    GSP, from the flags of its exported method tables (g_*_nvoc.c) and the

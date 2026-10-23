@@ -1753,6 +1753,47 @@ let local =
         no_local_memory;
     ]
 
+(* An object the RM refuses keeps none of the memory the path gave for it.
+   Over PCI a channel's instance block lies at addresses the GPUs share,
+   which [Rig_nv_pci.taken] counts; its method buffer has none, and goes
+   uncounted. The path refuses a channel whose USERD
+   lies in memory of a handle it never gave; the GSP refuses one on the
+   second graphics engine, which no channel runs on without MIG. *)
+
+(* NV_CHANNEL_ALLOC_PARAMS of release 570 (nvos.h): its size and the fields
+   the cases set; NV2080_ENGINE_TYPE_GR1 (cl2080_notification.h). *)
+let channel_params = 368
+let h_object_error = (0, 4)
+let h_userd_memory = (0x20, 4)
+let engine_type = (0x80, 4)
+let gr1 = 2
+
+let channel_refusals =
+  [
+    ( "by the path, for a USERD in no memory it gave",
+      fun p ->
+        N.set p h_object_error 1;
+        N.set p h_userd_memory 0xbad );
+    ("by the GSP, for the second graphics engine", fun p -> N.set p engine_type gr1);
+  ]
+
+let refused_channel (_, fill) =
+  if S.path () <> Some S.Pci then
+    skip ~reason:"the addresses it counts are those of GPUs over PCI" ();
+  S.with_ @@ fun t ->
+  let rm, device, gpu = N.rm t.g in
+  equal ~msg:"the release whose layout the cases fill" int 570 rm.release;
+  let p = N.params channel_params in
+  fill p;
+  let before = Rig_nv_pci.taken () in
+  (match rm.alloc ~parent:device gpu.channel_class (Some p) with
+  | Error _ -> ()
+  | Ok h ->
+      Option.iter (fun free -> ignore (free ~parent:device h)) rm.free;
+      fail "the RM made the channel");
+  equal ~msg:"the ranges of the GPUs' addresses taken" int before
+    (Rig_nv_pci.taken ())
+
 let channels =
   group ~timeout:120. "channels"
     [
@@ -1761,6 +1802,8 @@ let channels =
       test "a growth of the channels waits for the work in flight"
         drained_growth;
       test "32,768 values stay in flight, and the next waits" in_flight;
+      cases "a channel the RM refuses gives back its instance block" ~name:fst
+        channel_refusals refused_channel;
     ]
 
 (* Images *)

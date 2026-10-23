@@ -1777,3 +1777,7 @@ let stop (T d) ~fault:_ =
     l
   in
   Option.iter (halt d) l
+
+let rm (T d) =
+  let p = (live d).path in
+  (p.rm, p.device, p.gpu)

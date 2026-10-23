@@ -92,7 +92,9 @@
     back the channels a growth replaces as {!Rig_nv.section-submitting}
     states. With each set goes the GPU memory the path gave the GSP for it:
     the instance blocks of its two channels, the method buffer of their
-    group and the compute engine's context buffers. *)
+    group and the compute engine's context buffers. An allocation the path or
+    the GSP refuses gives back at once the memory the path gave for it,
+    unless the GPU faulted meanwhile. *)
 
 (** {1:gpus GPUs}
 

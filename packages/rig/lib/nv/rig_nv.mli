@@ -662,3 +662,10 @@ val is_gpu : vendor:int -> class_:int -> bool
     Every path numbers a machine's NVIDIA GPUs [0], [1], … in bus order among
     such functions, whichever kernel driver holds each: GPU [i] of one path is
     GPU [i] of every other. *)
+
+(**/**)
+
+(* [rm t] is the RM of the path of [t], with the RM's device object of the GPU
+   and what the path read of the GPU, for the suites that ask the RM for what
+   no device does. Raises [Invalid_argument] once [t] stopped. *)
+val rm : t -> rm * int * gpu
