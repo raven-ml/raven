@@ -687,7 +687,7 @@ module type S = sig
       block of the contracted extent is whole; a library states which, a
       function of the dtypes and the contracted extent alone, so that
       windows of [K] aligned to blocks compose, and the roundings its
-      scaling adds to the bound, barring overflow of a scaled term. A
+      scaling adds to the bound, barring overflow of what it scales. A
       [Value] or code that is NaN makes its block's terms NaN.
 
       A float sum's association, which fixes its bits, is a function of
