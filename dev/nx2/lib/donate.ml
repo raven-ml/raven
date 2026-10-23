@@ -21,7 +21,7 @@ let offers = Atomic.make 0
 let rec offer ~by (w : Value.death Atomic.Loc.t) =
   match Atomic.Loc.get w with
   | Value.Offered k -> k
-  | Value.Died earlier -> died_to ~by 0 earlier
+  | Value.Died { by = earlier; _ } -> died_to ~by 0 earlier
   | Value.Live ->
       (* Fails only where another donation offered it first. *)
       let k = Atomic.fetch_and_add offers 1 in
@@ -136,7 +136,7 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
    was read is read again. *)
 let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
   match Atomic.Loc.get w with
-  | Value.Died earlier -> died_to ~by i earlier
+  | Value.Died { by = earlier; _ } -> died_to ~by i earlier
   | Value.Live -> invalid_arg "Donate.claim: a handle's donor was not offered"
   | Value.Offered _ as seen ->
       if not (Atomic.Loc.compare_and_set w seen died) then
@@ -153,13 +153,16 @@ let rec spend_word : type v s d.
       if not (Atomic.Loc.compare_and_set [%atomic.loc d.spent] Value.Live died)
       then
         match d.spent with
-        | Value.Died earlier -> died_to ~by i earlier
+        | Value.Died { by = earlier; _ } -> died_to ~by i earlier
         | Value.Live | Value.Offered _ -> spend_word ~by i died x)
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
 (* Marks the handle [x], operand [i], read by the movement [by], which passes a
    new handle on: one operation reads a handle. *)
-let spend ~by i x = spend_word ~by i (Value.Died by) x
+let spend (type v s d) ~by i (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Donated d -> spend_word ~by i (Value.Died { by; key = d.key }) x
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
 (* Gives back the claims of the handles [hs], whose consumer neither wrote nor
    consumed their memory: each handle lives again and its donor is offered
@@ -175,12 +178,13 @@ let unclaim hs =
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
 
-(* Claims the handle [x], operand [i], setting its words to [died]: its own
-   word, then its donor's, which orders the consumers of all the donor's
-   handles. Losing the donor's word gives its own back. *)
-let claim_one (type v s d) ~by died i (x : (v, s, d) Value.t) =
+(* Claims the handle [x], operand [i], for [by]: its own word, then its
+   donor's, which orders the consumers of all the donor's handles. Losing the
+   donor's word gives its own back. *)
+let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
   | Value.Donated d -> (
+      let died = Value.Died { by; key = d.key } in
       spend_word ~by i died x;
       match claim_word ~by i d.donor died with
       | () -> ()
@@ -190,20 +194,13 @@ let claim_one (type v s d) ~by died i (x : (v, s, d) Value.t) =
           Printexc.raise_with_backtrace e bt)
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
-let claim_handle ~by i x = claim_one ~by (Value.Died by) i x
-
-(* The death a consumer's claim set in its donors' words: one block per claim,
-   so that a word holding it is one of that claim's donors. *)
-type claim = Value.death
-
 (* Claims the handles [hs] for their consumer [by], in key order. A loss gives
    back the handles taken before it. *)
 let claim ~by hs =
-  let died = Value.Died by in
   let rec take taken = function
-    | [] -> died
+    | [] -> ()
     | (Handle (i, x) as h) :: rest -> (
-        match claim_one ~by died i x with
+        match claim_handle ~by i x with
         | () -> take (h :: taken) rest
         | exception e ->
             let bt = Printexc.get_raw_backtrace () in
@@ -212,28 +209,37 @@ let claim ~by hs =
   in
   take [] (List.sort (fun h h' -> Int.compare (key h) (key h')) hs)
 
-(* [y] read as it was when its call was made, [ours] telling the deaths of the
-   donors of its handles: a handle as its arrays, and one of those donors as a
-   live value over its arrays. *)
+(* Whether the word [w] is a donor's of one of the handles [hs]: offered, or
+   dead, under one of their keys. Every handle among [hs] was checked live, so
+   a word dead under one of their keys died to [hs]' claim, or to a consumer
+   on another domain that claimed it since. *)
+let ours hs (w : Value.death) =
+  match w with
+  | Value.Offered k | Value.Died { key = k; _ } ->
+      List.exists (fun h -> key h = k) hs
+  | Value.Live -> false
+
+(* [y] read as it was when its call, of the handles [hs], was made: a handle
+   as its arrays, and a donor of one of [hs] as a live value over its
+   arrays. *)
 let as_called : type v s d.
-    (Value.death -> bool) -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun ours y ->
+    handle list -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun hs y ->
   match y with
   | Value.Donated _ -> live y
-  | Value.Array r when ours r.dead -> Value.Array { r with dead = Value.Live }
-  | Value.Shards r when ours r.dead -> Value.Shards { r with dead = Value.Live }
+  | Value.Array r when ours hs r.dead -> Value.Array { r with dead = Value.Live }
+  | Value.Shards r when ours hs r.dead ->
+      Value.Shards { r with dead = Value.Live }
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
 
-(* [op] read as it was when called, after its claim [c]: a donor whose word
-   holds [c]'s death is one of the call's own, whatever another consumer held
-   before the claim. *)
-let unhandled (c : claim) op = Prim.map (fun y -> as_called (( == ) c) y) op
+let unhandled hs op = Prim.map (fun y -> as_called hs y) op
 
 let consume ~by op =
   let (Prim.Operands xs) = Prim.operands op in
   let hs = if Prim.exists is_handle op then handles ~by xs else [] in
   Prim.iteri (fun i x -> Prim.alive ~by i x) op;
-  unhandled (claim ~by hs) op
+  claim ~by hs;
+  unhandled hs op
 
 let resolve (type d a) ~by (xs : d Value.any list)
     (k : ('v 's. ('v, 's, d) Value.t -> ('v, 's, d) Value.t) -> a) : a =
@@ -257,18 +263,14 @@ let resolve (type d a) ~by (xs : d Value.any list)
             alive ();
             raise e
       in
-      (* Before the claim, a donor of the handles is offered under one of
-         their keys. *)
-      let keys = List.map key hs in
-      let ours = function
-        | Value.Offered k -> List.mem k keys
-        | Value.Live | Value.Died _ -> false
-      in
+      (* A donor among [xs] that a consumer on another domain claims meanwhile
+         is read as it was too: the hold keeps its memory, and the claim after
+         [k] names that consumer. *)
       Fun.protect
         ~finally:(fun () -> Rig.Claim.release held)
         (fun () ->
-          let result = k (fun y -> as_called ours y) in
-          ignore (claim ~by hs : claim);
+          let result = k (fun y -> as_called hs y) in
+          claim ~by hs;
           result)
 
 let consume_list ~by xs =
@@ -277,8 +279,8 @@ let consume_list ~by xs =
     else []
   in
   List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
-  let c = claim ~by hs in
-  List.map (fun (Value.Any x) -> Value.Any (as_called (( == ) c) x)) xs
+  claim ~by hs;
+  List.map (fun (Value.Any x) -> Value.Any (as_called hs x)) xs
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)

@@ -88,20 +88,17 @@ val handles : by:string -> 'd Value.any list -> handle list
     memory: the same handle twice, two donations of one value, or one handle
     and a value a movement passed on. *)
 
-type claim
-(** The type for a consumer's claim of its handles. *)
-
-val claim : by:string -> handle list -> claim
+val claim : by:string -> handle list -> unit
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
     their donors' key order: each handle and its donor die, naming [by].
     Raises [Invalid_argument] naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain, having given back the
     handles it claimed. *)
 
-val unhandled : claim -> 'r Value.prim -> 'r Value.prim
-(** [unhandled c op] is [op] as it was when called, read after [c] claimed
-    its handles: each handle as its arrays, and each donor [c] killed among
-    [op]'s operands as a live value. *)
+val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
+(** [unhandled hs op] is [op] as it was when called, read after {!claim}
+    claimed its handles [hs]: each handle as its arrays, and each donor of
+    [hs] among [op]'s operands as a live value. *)
 
 val unclaim : handle list -> unit
 (** [unclaim hs] gives back the claimed handles [hs], for a consumer that

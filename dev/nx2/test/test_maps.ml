@@ -671,12 +671,12 @@ let test_loser_gives_back () =
   Donate.claim_handle ~by:"other" 0 held;
   raises
     (Invalid_argument "t: operand 2 was donated to other")
-    (fun () -> ignore (Donate.claim ~by:"t" hs));
+    (fun () -> Donate.claim ~by:"t" hs);
   Prim.alive ~by:"t" 0 x;
   Prim.alive ~by:"t" 0 hx;
   Donate.unclaim [ Donate.Handle (0, held) ];
   Prim.alive ~by:"t" 1 hy;
-  ignore (Donate.claim ~by:"t" hs);
+  Donate.claim ~by:"t" hs;
   raises
     (Invalid_argument "u: operand 1 was donated to t")
     (fun () -> Prim.alive ~by:"u" 0 x)
@@ -684,7 +684,7 @@ let test_loser_gives_back () =
 (* A consumer of a handle beside its donor reads the donor live once it has
    claimed it, though another consumer held the donor after the first checked
    its operands and gave it back before the first claimed: the read tells the
-   call's own donors by its claim. *)
+   call's own donors by their keys. *)
 let test_read_after_claim () =
   let x = f32 [| 1.; 2. |] in
   let h = Donate.donate ~by:"t" x and other = Donate.donate ~by:"t" x in
@@ -694,7 +694,8 @@ let test_read_after_claim () =
   Prim.iteri (fun i y -> Prim.alive ~by:"t" i y) op;
   Donate.claim_handle ~by:"other" 0 other;
   Donate.unclaim [ Donate.Handle (0, other) ];
-  let read = Donate.unhandled (Donate.claim ~by:"t" hs) op in
+  Donate.claim ~by:"t" hs;
+  let read = Donate.unhandled hs op in
   equal (array bits) [| 1.; 4. |] (elements (first (Exec.run ~by:"t" read)))
 
 let donation =
