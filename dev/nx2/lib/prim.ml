@@ -40,16 +40,7 @@ let rank x = L.rank (own_layout x)
 let death : type v s d. (v, s, d) t -> death = function
   | Array r -> r.dead
   | Shards r -> r.dead
-  | Donated r -> (
-      (* A handle an operation read is named by it, as a claim, which sets
-         the handle's word first, names it. Any other dies with its donor,
-         whichever handle was consumed. *)
-      match r.spent with
-      | Died _ as died -> died
-      | Live | Offered _ -> (
-          match Atomic.Loc.get r.donor with
-          | Died _ as died -> died
-          | Live | Offered _ -> r.spent))
+  | Donated r -> Atomic.Loc.get r.donor
   | Deferred _ | Traced _ -> Live
 
 let alive ~by i x =

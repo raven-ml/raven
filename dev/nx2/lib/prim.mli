@@ -41,8 +41,8 @@ val of_arrays :
     otherwise. Nothing checks the windows. *)
 
 val death : ('v, 's, 'd) t -> death
-(** [death x] is whether [x] lives: for a handle, the function that read it,
-    else its donor's death. It allocates nothing. *)
+(** [death x] is whether [x] lives: for a handle, its donor's death. It
+    allocates nothing. *)
 
 val alive : by:string -> int -> ('v, 's, 'd) t -> unit
 (** [alive ~by i x] raises [Invalid_argument] naming [by], operand [i + 1] and

@@ -31,7 +31,7 @@ let rec offer ~by (w : Value.death Atomic.Loc.t) =
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let handle at shape arrays donor =
     let key = offer ~by donor in
-    Value.Donated { key; at; shape; arrays; donor; spent = Value.Live }
+    Value.Donated { key; at; shape; arrays; donor }
   in
   match x with
   | Value.Array r ->
@@ -112,18 +112,17 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
 
 (* Claims
 
-   A consumer claims its handles in their donors' key order, each handle's own
-   word before its donor's, setting each word to its death. Each word has one
-   place in the order, since every handle of a donor holds the donor's one
-   key, and a consumer's words rise strictly, since [handles] refuses two
-   handles of one donor. So of consumers racing for the same handles, at least
-   one succeeds: a consumer that loses at a word lost it to one that held that
-   word, which had claimed it, and which, if it lost too, lost at a word above
-   it. Following who each loser lost to climbs the order, so it ends at a
-   consumer that claimed all its words. A loser gives back the words it took,
-   as does a consumer that raises before it writes or consumes their memory
-   ([unclaim]): a word given back was never consumed, and each loss is still
-   to the consumer that held the word then.
+   A consumer claims its handles' donors in key order, setting each donor's
+   word to its death. Each word has one place in the order, since every handle
+   of a donor holds the donor's one key, and a consumer's words rise strictly,
+   since [handles] refuses two handles of one donor. So of consumers racing for
+   the same handles, at least one succeeds: a consumer that loses at a word
+   lost it to one that held that word, which had claimed it, and which, if it
+   lost too, lost at a word above it. Following who each loser lost to climbs
+   the order, so it ends at a consumer that claimed all its words. A loser
+   gives back the words it took, as does a consumer that raises before it
+   writes or consumes their memory ([unclaim]): a word given back was never
+   consumed, and each loss is still to the consumer that held the word then.
 
    Claimed in operand order, [add h1 h2] and [add h2 h1] on two domains could
    each take its first handle and lose its second to the other. In key order a
@@ -142,56 +141,22 @@ let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
       if not (Atomic.Loc.compare_and_set w seen died) then
         claim_word ~by i w died
 
-(* Sets the handle [x]'s own word, operand [i], to [died] unless an operation
-   read the handle first, which raises naming it. The word is set in place:
-   passed to [claim_word], its location would be allocated. *)
-let rec spend_word : type v s d.
-    by:string -> int -> Value.death -> (v, s, d) Value.t -> unit =
- fun ~by i died x ->
-  match x with
-  | Value.Donated d -> (
-      if not (Atomic.Loc.compare_and_set [%atomic.loc d.spent] Value.Live died)
-      then
-        match d.spent with
-        | Value.Died { by = earlier; _ } -> died_to ~by i earlier
-        | Value.Live | Value.Offered _ -> spend_word ~by i died x)
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
-
-(* Marks the handle [x], operand [i], read by the movement [by], which passes a
-   new handle on: one operation reads a handle. *)
-let spend (type v s d) ~by i (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Donated d -> spend_word ~by i (Value.Died { by; key = d.key }) x
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
-
 (* Gives back the claims of the handles [hs], whose consumer neither wrote nor
-   consumed their memory: each handle lives again and its donor is offered
-   again under its key. No other consumer writes a word once it died, so each
-   is set in place. *)
+   consumed their memory: each donor is offered again under its key. No other
+   consumer writes a word once it died, so each is set in place. *)
 let unclaim hs =
   List.iter
     (fun (Handle (_, x)) ->
       match x with
-      | Value.Donated d ->
-          Atomic.Loc.set d.donor (Value.Offered d.key);
-          Atomic.Loc.set [%atomic.loc d.spent] Value.Live
+      | Value.Donated d -> Atomic.Loc.set d.donor (Value.Offered d.key)
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
 
-(* Claims the handle [x], operand [i], for [by]: its own word, then its
-   donor's, which orders the consumers of all the donor's handles. Losing the
-   donor's word gives its own back. *)
+(* Claims the donor of the handle [x], operand [i], for [by]. *)
 let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
-  | Value.Donated d -> (
-      let died = Value.Died { by; key = d.key } in
-      spend_word ~by i died x;
-      match claim_word ~by i d.donor died with
-      | () -> ()
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          Atomic.Loc.set [%atomic.loc d.spent] Value.Live;
-          Printexc.raise_with_backtrace e bt)
+  | Value.Donated d ->
+      claim_word ~by i d.donor (Value.Died { by; key = d.key })
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
 (* Claims the handles [hs] for their consumer [by], in key order. A loss gives

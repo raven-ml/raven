@@ -7,11 +7,11 @@
     consumption.
 
     A donor is offered under a key of its own, which it keeps for life and
-    every handle of every donation of it holds. A consumer claims its handles
-    in their donors' key order, each handle's own word before its donor's,
-    without a lock: of consumers racing for the same handles, at least one
-    succeeds, and each loser gives back what it claimed and raises naming the
-    consumer it lost a word to. The eager engine ({!Exec}) claims an
+    every handle of every donation of it holds. A handle has no state of its
+    own: it lives while its donor does. A consumer claims its handles' donors
+    in key order, without a lock: of consumers racing for the same handles, at
+    least one succeeds, and each loser gives back what it claimed and raises
+    naming the consumer it lost a donor to. The eager engine ({!Exec}) claims an
     operation's handles before it reads them, writes the operation's first
     result into a handle's memory where {!reuse} allows, and ends the handles
     once it has read them ({!consumed}). An operation that raises before it
@@ -30,8 +30,9 @@ val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     it exclusive (no other value reads it), it has the result's dtype and
     C-contiguous layout, and the operation reads none of it at other indices
     through another operand; the memory is consumed either way where no other
-    value reads it. A movement passes a new handle on instead. A constant or a
-    traced [x] is [x].
+    value reads it. A movement passes a new handle of [x] on instead and kills
+    nothing: the handle it read and the one it passed on die with [x]. A
+    constant or a traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -90,9 +91,9 @@ val handles : by:string -> 'd Value.any list -> handle list
 
 val claim : by:string -> handle list -> unit
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
-    their donors' key order: each handle and its donor die, naming [by].
-    Raises [Invalid_argument] naming [by] and the earlier consumer for a
-    handle or donor that died first, on any domain, having given back the
+    their donors' key order: each donor, and with it each of its handles, dies
+    naming [by]. Raises [Invalid_argument] naming [by] and the earlier
+    consumer for a donor that died first, on any domain, having given back the
     handles it claimed. *)
 
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
@@ -102,17 +103,12 @@ val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
 
 val unclaim : handle list -> unit
 (** [unclaim hs] gives back the claimed handles [hs], for a consumer that
-    raised before it wrote or consumed their memory: each handle and its
-    donor live again, the donor offered under its key. *)
+    raised before it wrote or consumed their memory: each donor, and with it
+    each of its handles, lives again, offered under its key. *)
 
 val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
 (** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];
     nothing where [x] is no handle. *)
-
-val spend : by:string -> int -> ('v, 's, 'd) Value.t -> unit
-(** [spend ~by i x] marks the handle [x], operand [i], read by the movement
-    [by], which passes a new handle of the same donor on. Raises as
-    {!claim}. *)
 
 val holds :
   Nx_array.Dtype.any -> Nx_array.Layout.t -> ('v, 's) Nx_array.t -> bool
