@@ -574,10 +574,14 @@ statistics/sum-c64-1M	alloc_words	exact	391
 statistics/sum-c64-1M	wall_time	batch=512	n=20	1.533e-05	1.531e-05 1.531e-05 1.531e-05 1.532e-05 1.533e-05 1.533e-05 1.533e-05 1.533e-05 1.533e-05 1.533e-05 1.533e-05 1.534e-05 1.534e-05 1.534e-05 1.534e-05 1.534e-05 1.535e-05 1.535e-05 1.536e-05 1.551e-05
 statistics/var-bf16-1M	alloc_words	exact	548
 statistics/var-bf16-1M	wall_time	batch=128	n=20	4.214e-05	4.199e-05 4.200e-05 4.204e-05 4.207e-05 4.210e-05 4.211e-05 4.212e-05 4.213e-05 4.214e-05 4.214e-05 4.215e-05 4.218e-05 4.219e-05 4.222e-05 4.229e-05 4.230e-05 4.232e-05 4.234e-05 4.242e-05 4.332e-05
+statistics/var-bf16-8192x4096-rows	alloc_words	exact	580
+statistics/var-bf16-8192x4096-rows	wall_time	batch=8	n=20	7.476e-04	7.236e-04 7.275e-04 7.286e-04 7.311e-04 7.326e-04 7.330e-04 7.396e-04 7.409e-04 7.411e-04 7.449e-04 7.503e-04 7.504e-04 7.509e-04 7.553e-04 7.564e-04 7.627e-04 7.698e-04 7.715e-04 8.143e-04 8.785e-04
 statistics/var-f32-1024x1024-cols	alloc_words	exact	594
 statistics/var-f32-1024x1024-cols	wall_time	batch=64	n=20	1.016e-04	1.000e-04 1.002e-04 1.004e-04 1.004e-04 1.008e-04 1.010e-04 1.012e-04 1.013e-04 1.015e-04 1.015e-04 1.016e-04 1.019e-04 1.021e-04 1.021e-04 1.023e-04 1.025e-04 1.027e-04 1.028e-04 1.050e-04 1.098e-04
 statistics/var-f32-1M	alloc_words	exact	504
 statistics/var-f32-1M	wall_time	batch=256	n=20	2.085e-05	2.073e-05 2.074e-05 2.076e-05 2.078e-05 2.078e-05 2.079e-05 2.081e-05 2.083e-05 2.084e-05 2.084e-05 2.086e-05 2.089e-05 2.089e-05 2.091e-05 2.091e-05 2.094e-05 2.094e-05 2.099e-05 2.099e-05 2.137e-05
+statistics/var-f32-8192x4096-rows	alloc_words	exact	528
+statistics/var-f32-8192x4096-rows	wall_time	batch=4	n=20	1.366e-03	1.305e-03 1.305e-03 1.310e-03 1.319e-03 1.334e-03 1.335e-03 1.341e-03 1.352e-03 1.356e-03 1.364e-03 1.368e-03 1.368e-03 1.370e-03 1.379e-03 1.379e-03 1.381e-03 1.394e-03 1.423e-03 1.997e-03 2.247e-03
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
