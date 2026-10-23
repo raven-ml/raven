@@ -583,10 +583,15 @@ module type S = sig
       element, its bits unchanged, a signalling NaN's included. Where the
       updates [u1], …, [un], in C order of their indices, land on [x], it
       is:
-      - for [Set], [un];
+      - for [Set], [un], in every library;
       - for [Add], [+0 + x + u1 + … + un] by {!Prog.Add}, a narrow float's sum
-        computed in float32 and rounded once. Each kernel library states how
-        it associates the sum, a function of [n] alone;
+        computed in float32 and rounded once, the same bits on every run.
+        Each kernel library states how it associates the sum, a function of
+        [n] alone; libraries may associate differently. A float sum is within
+        [γ(n + 1) (|x| + Σ |ui|)] of the exact one, barring overflow, before
+        a narrow float's rounding, where [γ(k) = k u / (1 - k u)] and [u] is
+        the unit roundoff of float32 for a narrow float, else of the dtype's
+        parts;
       - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x], [u1],
         …, [un]; a NaN result is the first NaN among them quieted, as IEEE
         754 returns a NaN operand: its quiet bit, the top bit of its

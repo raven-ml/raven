@@ -749,7 +749,11 @@ val scatter :
     first NaN among them quieted: its quiet bit, the top bit of its fraction,
     set, its sign and payload kept. Where no update lands, the element keeps
     its bits, a signalling NaN's included. A position outside [\[0, d)]
-    writes nothing. A float [Add] gives the same bits on every run. Without
+    writes nothing. A float [Add] gives the same bits on every run, adding in
+    an order its kernel library states, within [γ(n + 1) (|x| + Σ |ui|)] of
+    the exact sum of an element [x] and its [n] updates, barring overflow,
+    before a narrow float's rounding: [γ(k) = k u / (1 - k u)], [u] the unit
+    roundoff of float32 for a narrow float, else of the dtype's parts. Without
     {!donate} it costs a copy of [x]; [scatter ~axis p u (donate x)] writes
     only the updates, into [x]'s memory, where {!donate} lets the consumer
     write there.

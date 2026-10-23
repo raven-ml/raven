@@ -147,7 +147,8 @@
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
-    scatter's [Add] adds a target's updates left to right.
+    scatter's [Add] adds a target's updates left to right,
+    [(… ((+0 + x) + u1) + …) + un].
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
