@@ -324,6 +324,22 @@ let test_selected_one_consumer () =
   equal ~msg:"the donor lives" (array float_exact) [| 2.; 4.; 6.; 8. |]
     (elements (Nx.reshape [| 4 |] (Nx.add x x)))
 
+(* A complex value of float32 parts at complex128 casts each part, then
+   assembles them: operations that read the parts once, eagerly too. *)
+let test_parts_one_consumer () =
+  let x = fresh [| 1.; 2. |] in
+  let h = Nx.donate x in
+  invalid ~sub:"Nx.donate: Nx.complex reads one donation twice" (fun () ->
+      Nx.complex Nx.complex128 ~re:h ~im:h);
+  equal ~msg:"the donor lives" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add x x));
+  let z = Nx.complex Nx.complex128 ~re:h ~im:(fresh [| 3.; 4. |]) in
+  equal ~msg:"the real parts" (array float_exact) [| 1.; 2. |]
+    (elements (Nx.real Nx.float32 z));
+  equal ~msg:"the imaginary parts" (array float_exact) [| 3.; 4. |]
+    (elements (Nx.imag Nx.float32 z));
+  invalid ~sub:"operand 1 was donated to Nx.complex" (fun () -> Nx.add x x)
+
 (* Inside an interpretation that receives every operation, a call that
    broadcasts a handle consumes it once, when it returns: the donor lives
    while the call's operations run, and dies naming the call. *)
@@ -2269,14 +2285,75 @@ let seeds =
 let law_donated (k, mask) =
   let name, c = case_at.(k) in
   let plain = c.run (fun _ x -> x) in
-  let donated =
-    c.run (fun i x -> if mask land (1 lsl i) <> 0 then Nx.donate x else x)
+  let donating : 'v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
+      =
+   fun i x -> if mask land (1 lsl i) <> 0 then Nx.donate x else x
   in
-  equal ~msg:name string plain donated
+  equal ~msg:name string plain (c.run donating);
+  let received =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> c.run donating)
+  in
+  equal ~msg:(name ^ ", received") string plain received
 
 let test_donated =
-  prop ~examples:seeds "a donated operand gives the undonated result" donations
+  prop ~examples:seeds
+    "a donated operand gives the undonated result, received too" donations
     law_donated
+
+(* Case [c] inside an Extent whose rule refuses the [k]th operation other
+   than a movement it receives, none for [k = 0]: the operations it received
+   then, whether the call raised, and the donors it left dead. *)
+let refused_at k c =
+  let n = ref 0 and donors = ref [] in
+  let rule (type r) _ ~by (op : r Nx.Prim.t) : r =
+    (match op with
+    | Move _ -> ()
+    | _ ->
+        incr n;
+        if !n = k then invalid_arg "test.extent: refused");
+    Nx.Prim.eval ~by op
+  in
+  let donate : 'v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
+      =
+   fun i x ->
+    let dead () =
+      match Nx.copy x with _ -> None | exception Invalid_argument _ -> Some i
+    in
+    donors := dead :: !donors;
+    Nx.donate x
+  in
+  let raised =
+    match
+      Nx.Prim.interpret ~name:"test.extent" Extent rule (fun _ -> c.run donate)
+    with
+    | _ -> false
+    | exception _ -> true
+  in
+  (!n, raised, List.filter_map (fun dead -> dead ()) !donors)
+
+(* The rule refusing each operation of a case in turn, but movements: a
+   function of movements alone, or one that moves its results, consumes its
+   handles at the first one. *)
+let test_refused_received =
+  cases ~name:fst "a call refused inside an Extent kills no donor" named_cases
+    (fun (name, c) ->
+      let total, _, _ = refused_at 0 c in
+      let killed = ref [] in
+      for k = 1 to total do
+        match refused_at k c with
+        | _, true, (_ :: _ as dead) ->
+            List.iter
+              (fun i ->
+                killed :=
+                  Printf.sprintf "operation %d of %d, operand %d" k total
+                    (i + 1)
+                  :: !killed)
+              dead
+        | _ -> ()
+      done;
+      equal ~msg:name (list string) [] (List.rev !killed))
 
 let () =
   exit
@@ -2305,6 +2382,8 @@ let () =
              test
                "a selection an interpretation receives is its movements' one \
                 consumer" test_selected_one_consumer;
+             test "a complex value reads its parts once"
+               test_parts_one_consumer;
              test
                "a broadcast handle an interpretation receives dies when the \
                 call returns" test_broadcast_consumed_once;
@@ -2322,6 +2401,7 @@ let () =
                test_dies_at_the_call;
              test_dead_names;
              test_donated;
+             test_refused_received;
              test "a captured array dies at the call that reads it"
                test_captured;
              stateful ~domains:2 "reads and consumers on two domains" commands;

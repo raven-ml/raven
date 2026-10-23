@@ -1958,7 +1958,8 @@ let predicate (type v s d) ~by
   match D.kind (dtype x) with
   | D.Float -> elementwise ~by D.Bool [ Any x ] (p (dtype x) (operand 0 x))
   | D.Complex ->
-      let (Parts (f, part)) = parts ~by x in
+      Eval.call ~by [ Value.Any x ] @@ fun read ->
+      let (Parts (f, part)) = parts ~by (read x) in
       let re = part 0 and im = part 1 in
       elementwise ~by D.Bool [ Any re; Any im ]
         (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
@@ -2504,12 +2505,17 @@ let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
 
 (* Complex parts *)
 
+(* A function of a complex value's parts bitcasts it, then reads the bitcast
+   in one operation: inside an [Extent] the bitcast would consume its
+   handle before that operation's checks. *)
 let real_by ~by dt z =
-  let (Parts (_, part)) = parts ~by z in
+  Eval.call ~by [ Value.Any z ] @@ fun read ->
+  let (Parts (_, part)) = parts ~by (read z) in
   cast_by ~by dt (part 0)
 
 let imag_by ~by dt z =
-  let (Parts (_, part)) = parts ~by z in
+  Eval.call ~by [ Value.Any z ] @@ fun read ->
+  let (Parts (_, part)) = parts ~by (read z) in
   cast_by ~by dt (part 1)
 
 let real dt z = real_by ~by:"Nx.real" dt z
@@ -2519,7 +2525,8 @@ let imag dt z = imag_by ~by:"Nx.imag" dt z
    parts' format, then stored in [dt]. *)
 let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
     (body : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t) : (float, r, d) t =
-  let (Parts (f, part)) = parts ~by z in
+  Eval.call ~by [ Value.Any z ] @@ fun read ->
+  let (Parts (f, part)) = parts ~by (read z) in
   let (Nx_kernel.Any_float w) =
     if D.bits dt > D.bits f then Nx_kernel.Any_float dt
     else Nx_kernel.Any_float f
@@ -2539,6 +2546,9 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
   alive2 ~by re im;
+  (* Each part's cast and the assembly read the operands: once, eagerly
+     too. *)
+  once2 ~by re im @@ fun re im ->
   let r = Array.length s in
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
@@ -2557,12 +2567,14 @@ let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
   match dtype x with
   | D.Complex64 ->
+      Eval.call ~by [ Value.Any x ] @@ fun read ->
       let sign = if Sys.big_endian then 0x8000_0000L else Int64.min_int in
-      let u = Eval.eval ~by (Value.Bitcast (D.Uint64, x)) in
+      let u = Eval.eval ~by (Value.Bitcast (D.Uint64, read x)) in
       let flipped = binary ~by (Binary Xor) u (fill ~by D.Uint64 [||] sign) in
       Eval.eval ~by (Value.Bitcast (D.Complex64, flipped))
   | D.Complex128 ->
-      let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, x)) in
+      Eval.call ~by [ Value.Any x ] @@ fun read ->
+      let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, read x)) in
       let last = ndim pairs - 1 in
       let y =
         let e = operand 0 pairs in
@@ -2638,7 +2650,8 @@ let diagonal ?offset ?axis1 ?axis2 x =
 
 let trace ?(offset = 0) x =
   let by = "Nx.trace" in
-  reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset x)
+  Eval.call ~by [ Value.Any x ] @@ fun read ->
+  reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset (read x))
 
 (* A vector [v] of [n] elements on the [k]th diagonal of an [n + |k|] square:
    [v] padded to the square's extent and read along the rows for [k >= 0],
@@ -3980,7 +3993,9 @@ let correlate ?(padding = `Valid) x kernel =
     Array.init kr (fun i -> snd runs.(i) + ks.(i) - 1 - spatial.(i) - lo.(i))
   in
   let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
-  let w = reshaped ~by (Array.append [| 1; 1; 1 |] ks) kernel in
+  Eval.call ~by [ Value.Any x; Value.Any kernel ] @@ fun read ->
+  let x = read x in
+  let w = reshaped ~by (Array.append [| 1; 1; 1 |] ks) (read kernel) in
   let y =
     windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi
       ~interior:(Array.make kr 0) ~dilation:(Array.make kr 1)
@@ -4015,7 +4030,8 @@ let reduce_segments c ~segments ids x =
   let start = identity ~by c dt in
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
-  let idx = broadcast ~by s (reshaped ~by along ids) in
+  Eval.call ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
+  let idx = broadcast ~by s (reshaped ~by along (read ids)) in
   Eval.eval ~by
     (Value.Scatter
        {
@@ -4023,7 +4039,7 @@ let reduce_segments c ~segments ids x =
          unique = false;
          axis = 0;
          idx;
-         updates = x;
+         updates = read x;
          into = fill ~by dt into start;
        })
 
@@ -4545,6 +4561,8 @@ let conv ?stride ?padding ?dilation ?groups x w =
   let k = ndim x - 2 in
   (* [[g; og; k…; cg]] to [[g; og; cg; k…]]. *)
   let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
+  Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
+  let x = read x and w = read w in
   windows_of ~by ~stride ~lo:(Array.map fst padding)
     ~hi:(Array.map snd padding) ~interior:(Array.make k 0) ~dilation x
     (permute ~by p (by_groups ~by groups w))
@@ -4587,7 +4605,9 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let hi = Array.init k (fun i -> target.(i) + span i - spread i - lo.(i)) in
   (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
-  let w = permute ~by p (by_groups ~by groups w) in
+  Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
+  let x = read x in
+  let w = permute ~by p (by_groups ~by groups (read w)) in
   let taps_axes = List.init k (fun i -> 3 + i) in
   let w = flip_by ~by ~axes:taps_axes w in
   windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
@@ -5738,17 +5758,19 @@ let check s ok data fail =
      [ok] then [data]'s arrays in walk order. *)
   Prim.alive ~by 0 ok;
   List.iteri (fun i (P x) -> Prim.alive ~by (i + 1) x) leaves;
+  Eval.call ~by (Value.Any ok :: List.map (fun (P x) -> Value.Any x) leaves)
+  @@ fun live ->
   let rec datum = function
     | [] -> Datum (Value.[], fun () -> [])
     | P x :: rest ->
         let (Datum (d, read)) = datum rest in
-        let x = broadcast ~by target x in
+        let x = broadcast ~by target (live x) in
         let read (v, e) = P (fill ~by (dtype x) [||] v) :: read e in
         Datum (Value.( :: ) (x, d), read)
   in
   let (Datum (d, read)) = datum leaves in
   let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
-  Eval.eval ~by (Value.Check { ok; data = d; fail })
+  Eval.eval ~by (Value.Check { ok = live ok; data = d; fail })
 
 (* The scan by [Pairwise.circuit], whose states are the structure's arrays: each
    combination rebuilds two runs as structures for [f] and flattens its
