@@ -4067,15 +4067,16 @@ let product_prog ~same (D.Any l as ldt) (D.Any p as pdt) =
    narrow float. *)
 let product_elements (D.Any dt as d) n ~specials seed =
   match dt with
-  | D.Float16 | D.Bfloat16 ->
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
+  | D.Float4_e2m1fn ->
       cast_into d (A.Any (elements D.Float32 n ~specials seed))
   | _ -> A.Any (elements dt n ~specials seed)
 
 let product_operand d s v ~specials seed =
   operand_with (fun n -> product_elements d n ~specials seed) s v
 
-(* The loads' and the product's dtypes: each float at itself, float16 and
-   bfloat16 cast into float32, and float32 into float64. *)
+(* The loads' and the product's dtypes: each float at itself, the narrow
+   floats and float64 cast into float32, and float32 into float64. *)
 let product_dtypes =
   let open Gen in
   let pair a b = constant ~pp:(fun ppf _ -> pp_dtype ppf a) (a, b) in
@@ -4083,6 +4084,8 @@ let product_dtypes =
     [
       (3, pair f32 f32); (3, pair f64 f64);
       (2, pair (D.Any D.Bfloat16) f32); (2, pair (D.Any D.Float16) f32);
+      (1, pair (D.Any D.Float8_e4m3fn) f32); (1, pair (D.Any D.Float8_e5m2) f32);
+      (1, pair (D.Any D.Float4_e2m1fn) f32); (1, pair f64 f32);
       (1, pair f32 f64);
     ]
 
@@ -4114,27 +4117,59 @@ let product_loop =
   in
   (shape, axes)
 
-(* A second load broadcast along the kept axes, as a convolution's kernel
-   is, from a row of its reduced axes' elements. *)
+(* A load broadcast along the kept axes, as a convolution's kernel is,
+   from a row of its reduced axes' elements. *)
 let broadcast_factor d shape axes v ~specials seed =
   let row = Array.mapi (fun i e -> if Array.mem i axes then e else 1) shape in
   let (A.Any x) = product_operand d row v ~specials seed in
   A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array shape)) x))
 
-(* A case over the loop [shape] along [axes], its loads drawn from [seed]. *)
-let product_of ~same ~broadcast ldt pdt shape axes v lv ~specials seed =
+(* A case over the loop [shape] along [axes], its loads drawn from [seed];
+   the second factor broadcast where [broadcast], and the product's first
+   where [first]. *)
+let product_of ?(first = false) ~same ~broadcast ldt pdt shape axes v lv
+    ~specials seed =
   let x = product_operand ldt shape v ~specials seed in
   let y =
     if broadcast then broadcast_factor ldt shape axes lv ~specials (seed + 1)
     else product_operand ldt shape lv ~specials (seed + 1)
   in
-  let reads = if same then [| x |] else [| x; y |] in
+  let reads = if same then [| x |] else if first then [| y; x |] else [| x; y |] in
   {
     ldt; pdt; pshape = shape; paxes = axes; same; pad = None;
     loads = Array.map plain_of reads; reads;
     pnames =
-      view_names v @ (if broadcast then [ "a broadcast factor" ] else [])
+      view_names v
+      @ (match (broadcast, first) with
+        | true, true -> [ "a broadcast first factor" ]
+        | true, false -> [ "a broadcast factor" ]
+        | false, _ -> [])
       @ (if specials > 0 then [ "specials" ] else []);
+  }
+
+(* Sums along axis 1 of [160; 2; 64], more outputs than a thread's unit
+   of a sum of products, of a broadcast first factor by one with a NaN at
+   [0; 0; 5]: the NaN's output takes its first NaN term while the units
+   after it on the thread read the broadcast factor's terms. *)
+let nan_before_units =
+  let shape = [| 160; 2; 64 |] in
+  let n = Array.fold_left ( * ) 1 shape in
+  let r = Random.State.make [| 17 |] in
+  let bits = Bytes.create (4 * n) in
+  for i = 0 to n - 1 do
+    Bytes.set_int32_le bits (4 * i) (Int32.bits_of_float (full r 23))
+  done;
+  Bytes.set_int32_le bits (4 * 5) (Int32.bits_of_float Float.nan);
+  let b =
+    A.Any
+      (A.v D.Float32 (L.contiguous shape)
+         (Rig.Buffer.of_string (Bytes.to_string bits)))
+  in
+  let a = broadcast_factor f32 shape [| 1 |] (plain_view 3) ~specials:0 19 in
+  {
+    ldt = f32; pdt = f32; pshape = shape; paxes = [| 1 |]; same = false;
+    pad = None; loads = [| plain_of a; plain_of b |]; reads = [| a; b |];
+    pnames = [ "a broadcast first factor"; "specials" ];
   }
 
 (* A depthwise convolution's loop: [x], [[b; h; w; c]], padded by [lo] and
@@ -4180,7 +4215,9 @@ let product_case =
      let* specials = frequency [ (3, constant 0); (1, constant 8) ] in
      let* seed = int in
      let* padded = frequency [ (3, constant false); (1, constant true) ] in
-     if padded then
+     (* pad_array pads whole bytes: float4_e2m1fn's loads are plain. *)
+     let (D.Any l) = ldt in
+     if padded && D.bits l >= 8 then
        let* b = int_range 1 2 in
        let* c = frequency [ (3, int_range 1 20); (1, constant 64) ] in
        let* lo = int_range 0 2 in
@@ -4202,8 +4239,10 @@ let product_case =
        let* v = view_of r in
        let* lv = view_of r in
        let* same = frequency [ (5, constant false); (1, constant true) ] in
-       let+ broadcast = bool in
-       product_of ~same ~broadcast ldt pdt shape axes v lv ~specials seed
+       let* broadcast = bool in
+       let+ first = bool in
+       product_of ~first ~same ~broadcast ldt pdt shape axes v lv ~specials
+         seed
 
 (* Each count of terms from 1 to 17 at float32, rows of 64 outputs and of
    one, and the regimes the law covers. *)
@@ -4222,9 +4261,14 @@ let product_examples =
   List.init 17 (fun i -> flat ~broadcast:true [| 64; i + 1 |] [| 1 |])
   @ List.init 17 (fun i -> flat [| 3; i + 1 |] [| 1 |])
   @ [
+      nan_before_units;
       flat ~d:f64 ~p:f64 [| 37; 9 |] [| 1 |];
       flat ~d:(D.Any D.Bfloat16) [| 70; 5 |] [| 1 |];
       flat ~d:(D.Any D.Float16) [| 70; 5 |] [| 1 |];
+      flat ~d:(D.Any D.Float8_e4m3fn) ~specials:3 [| 70; 5 |] [| 1 |];
+      flat ~d:(D.Any D.Float8_e5m2) ~specials:3 [| 70; 5 |] [| 1 |];
+      flat ~d:(D.Any D.Float4_e2m1fn) ~specials:3 [| 70; 5 |] [| 1 |];
+      flat ~d:f64 ~specials:3 [| 70; 5 |] [| 1 |];
       flat ~p:f64 [| 9; 3 |] [| 1 |];
       flat ~same:true [| 20; 7 |] [| 1 |];
       flat [| 3; 4; 5 |] [| 0; 2 |] ~v:(plain 3);
@@ -4242,6 +4286,22 @@ let product_examples =
       dw 4 5;
     ]
 
+(* The bytes of [c]'s Sum of [p]'s output over [loads] by [M]. *)
+let sum_products (module M : Nx_kernel.S) (b : Support.backend) c p loads =
+  let s = c.pshape in
+  let kept =
+    Array.of_list
+      (List.filteri (fun i _ -> not (Array.mem i c.paxes)) (Array.to_list s))
+  in
+  let (D.Any pt) = c.pdt in
+  let dst = A.Any (A.create b.device pt kept) in
+  match
+    M.reduce p ~shape:s ~axes:(Iarray.of_array c.paxes) [| (Monoid Sum, 0) |]
+      ~dsts:[| dst |] loads
+  with
+  | A.Done -> bytes_of (host dst)
+  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
 (* The products summed as the program's output mapped into an array, then
    reduced: the same bits, on the job's threads and on one. *)
 let law_products (b : Support.backend) c =
@@ -4253,6 +4313,10 @@ let law_products (b : Support.backend) c =
   cover "bfloat16 factors" (same c.ldt (D.Any D.Bfloat16));
   cover "float16 factors" (same c.ldt (D.Any D.Float16));
   cover "float32 factors at float64" (same c.pdt f64 && same c.ldt f32);
+  cover "float64 factors at float32" (same c.pdt f32 && same c.ldt f64);
+  cover "float8_e4m3fn factors" (same c.ldt (D.Any D.Float8_e4m3fn));
+  cover "float8_e5m2 factors" (same c.ldt (D.Any D.Float8_e5m2));
+  cover "float4_e2m1fn factors" (same c.ldt (D.Any D.Float4_e2m1fn));
   cover "a load by itself" c.same;
   cover "a padded load" (c.pad <> None);
   for n = 1 to 16 do
@@ -4262,31 +4326,39 @@ let law_products (b : Support.backend) c =
   cover "more terms" (terms > 17);
   cover "two reduced axes" (Array.length c.paxes = 2);
   List.iter (fun name -> cover name (List.mem name c.pnames))
-    [ "a broadcast factor"; "stepped"; "reversed"; "permuted"; "broadcast";
-      "specials" ];
+    [ "a broadcast factor"; "a broadcast first factor"; "stepped"; "reversed";
+      "permuted"; "broadcast"; "specials" ];
   let prog = product_prog ~same:c.same c.ldt c.pdt in
   let (D.Any pt) = c.pdt in
   let y = A.create b.device pt s in
   (match K.map prog ~dsts:[| A.Any y |] (Array.map plain_of c.reads) with
   | A.Done -> ()
   | r -> failf "the map answered %a" Nx_array_support.pp_answer r);
-  let kept =
-    Array.of_list
-      (List.filteri (fun i _ -> not (Array.mem i c.paxes)) (Array.to_list s))
-  in
-  let fresh () = A.Any (A.create b.device pt kept) in
-  let reduce (module M : Nx_kernel.S) p loads =
-    let dst = fresh () in
-    match
-      M.reduce p ~shape:s ~axes:(Iarray.of_array c.paxes)
-        [| (Monoid Sum, 0) |] ~dsts:[| dst |] loads
-    with
-    | A.Done -> bytes_of (host dst)
-    | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
-  in
+  let reduce k p loads = sum_products k b c p loads in
   let want = reduce b.kernels (identity c.pdt) [| Nx_kernel.Plain y |] in
   equal ~msg:"the job's threads" (list int) want (reduce b.kernels prog c.loads);
   equal ~msg:"one thread" (list int) want (reduce (module One) prog c.loads)
+
+(* A Sum adds its terms from +0, so products of -0 by positive factors sum
+   to +0: a row of 64 outputs of 9 terms, the positive factor broadcast. *)
+let test_zero_products (b : Support.backend) () =
+  let s = [| 64; 9 |] in
+  let x = A.Any (A.of_array D.Float32 s (Array.make (64 * 9) (-0.))) in
+  let row = A.of_array D.Float32 [| 1; 9 |] (Array.init 9 (fun i -> 0.5 +. Float.of_int i)) in
+  let y = A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) row)) in
+  let c =
+    {
+      ldt = f32; pdt = f32; pshape = s; paxes = [| 1 |]; same = false;
+      pad = None; loads = [| plain_of x; plain_of y |]; reads = [| x; y |];
+      pnames = [];
+    }
+  in
+  let prog = product_prog ~same:false f32 f32 in
+  let zero = bytes_of (A.Any (A.of_array D.Float32 [| 64 |] (Array.make 64 0.))) in
+  equal ~msg:"the job's threads" (list int) zero
+    (sum_products b.kernels b c prog c.loads);
+  equal ~msg:"one thread" (list int) zero
+    (sum_products (module One) b c prog c.loads)
 
 (* Carries *)
 
@@ -5147,6 +5219,8 @@ let cpu (b : Support.backend) =
       prop ~examples:product_examples
         "a sum of few products of two loads gives the bits of their map's"
         product_case (run (law_products b));
+      test "a sum of products of -0 by positive factors is +0"
+        (test_zero_products b);
       test "a destination aliasing a load computes as a fresh one" (fun () ->
           b.around (test_program_in_place b));
       prop

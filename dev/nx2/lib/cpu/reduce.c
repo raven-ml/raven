@@ -2991,6 +2991,8 @@ static void few(const plan *q, work *wk, const unit *x, staged *kept) {
   int64_t n = q->terms;
   if (q->factor[0] >= 0) {
     if (!products(q, wk, x, kept)) return;
+    /* first_nan stages its terms over factor 0's. */
+    kept->at[0] = -1;
   } else if (!sourced(q)) {
     q->f->few(at(q, x->p), q->off, (int)n, x->s, x->W, x->s2, x->H, q->id,
               q->dst->base + x->d * q->w, x->sd, x->sd2, wk->lanes);
