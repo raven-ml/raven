@@ -1135,6 +1135,48 @@ let int16_contraction () =
   in
   equal (array int) (Nx.to_array (op ())) (Lowered.run op)
 
+(* A [2; 0] by [0; 3] contraction has no products: each output is its init
+   as the accumulator holds it, rounded into [dt], bit for bit. *)
+let no_products (type v s) (dt : (v, s) D.t) acc raws () =
+  let a = value dt [| 2; 0 |] [||] and b = value dt [| 0; 3 |] [||] in
+  let init = value dt [| 2; 3 |] raws in
+  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 0) ] in
+  let op () =
+    P.eval ~by:"t"
+      (P.Contract
+         {
+           order = P.contract_order ~batch ~contracting a b;
+           batch;
+           contracting;
+           acc;
+           out = dt;
+           a;
+           b;
+           init = Some init;
+           a_scale = None;
+           b_scale = None;
+           segments = None;
+         })
+  in
+  same_bits dt (Nx.to_array init) (Nx.to_array (op ()));
+  same_bits dt (Nx.to_array (op ())) (Lowered.run op)
+
+(* -0, +0, +inf, -inf, a NaN with a payload and 1.5. *)
+let f32_inits =
+  [| 0x80000000L; 0L; 0x7f800000L; 0xff800000L; 0x7fc00001L; 0x3fc00000L |]
+
+let f16_inits = [| 0x8000L; 0L; 0x7c00L; 0xfc00L; 0x7e01L; 0x3e00L |]
+
+let f64_inits =
+  [|
+    Int64.min_int;
+    0L;
+    0x7ff0000000000000L;
+    0xfff0000000000000L;
+    0x7ff8000000000001L;
+    0x3ff8000000000000L;
+  |]
+
 (* A contraction with a scale or segments is not lowered. *)
 let scaled_contraction ~segmented () =
   let a = Nx.create D.Float32 [| 2; 4 |] (Array.init 8 Float.of_int) in
@@ -1287,6 +1329,12 @@ let cases =
       test "a uint16 running product wraps past int"
         (uint16_products ~scan:true);
       test "an int16 contraction wraps at the extremes" int16_contraction;
+      test "a float32 contraction of no products is its init"
+        (no_products D.Float32 (D.Any D.Float32) f32_inits);
+      test "a float64 contraction of no products is its init"
+        (no_products D.Float64 (D.Any D.Float64) f64_inits);
+      test "a float16 contraction of no products in float32 is its init"
+        (no_products D.Float16 (D.Any D.Float32) f16_inits);
       test "a scaled contraction is not lowered"
         (scaled_contraction ~segmented:false);
       test "a segmented contraction is not lowered"
