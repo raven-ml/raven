@@ -834,6 +834,32 @@ int nx_cpu_prog_held(const nx_cpu_prog *g, int o) {
   return held(nx_cpu_prog_out(g, o));
 }
 
+/* The load node [i] of [g] reads at the dtype [dt]: itself where it is of
+   [dt], or through a Copy or a Cast into [dt] of a float load; else -1. */
+static int load_at(const nx_cpu_prog *g, int i, int dt) {
+  const step *s = &g->s[i];
+  if (s->tag == NX_NODE_OP1 && s->dt == dt &&
+      (s->kind == NX_OP1_COPY || s->kind == NX_OP1_CAST)) {
+    const step *x = &g->s[s->x[0]];
+    int kind = nx_dtype_row_of(x->dt).kind;
+    if (x->tag == NX_NODE_IN && (x->dt == dt || kind == NX_KIND_FLOAT))
+      return x->x[0];
+    return -1;
+  }
+  return s->tag == NX_NODE_IN && s->dt == dt ? s->x[0] : -1;
+}
+
+int nx_cpu_prog_product(const nx_cpu_prog *g, int o, int *k) {
+  const step *s = &g->s[g->outs[o]];
+  int dt = s->dt;
+  if (s->tag != NX_NODE_OP2 || s->kind != NX_OP2_MUL ||
+      (dt != NX_FLOAT32 && dt != NX_FLOAT64))
+    return -1;
+  k[0] = load_at(g, s->x[0], dt);
+  k[1] = load_at(g, s->x[1], dt);
+  return k[0] >= 0 && k[1] >= 0 ? dt : -1;
+}
+
 int nx_cpu_prog_failed(const nx_cpu_prog *g) {
   return __atomic_load_n(&g->heap.failed, __ATOMIC_RELAXED);
 }

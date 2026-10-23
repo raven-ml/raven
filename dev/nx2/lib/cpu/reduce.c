@@ -99,7 +99,10 @@
    operand read a program's output too. Each term is the output there as
    a map computes it, and the order is a function of the shapes alone, so
    the reduction has the bits of the output mapped into an array, then
-   reduced.
+   reduced. A Sum of a lane or fewer terms an output, each the product of
+   two loads at float32 or float64, as a depthwise convolution's, reads
+   the loads itself: the table's products multiply and sum them in
+   registers, in the lanes' order.
 
    Networks. A Logsumexp or Moments scan computes nx_kernel.mli's network
    on each slice, op by op with the kinds' arithmetic, as Nx's expansion
@@ -732,6 +735,96 @@ XMONOID(min_b, b, uint8_t, 1, ALL, V_ALL)
 
 COMPLEX(c64, f32, float, 4)
 COMPLEX(c128, f64, double, 8)
+
+/* Sums of few products of a float [T] at the suffix [D], a vector of the
+   target's width at a time. Lane t starts from +0 and takes product t,
+   then the lanes' tree, as few gives them for the products as terms: +0
+   plus a product is the product but at -0, whose lane holds +0, and a sum
+   is -0 only where both its operands are, so the tree over the products
+   themselves, plus +0 once, has the same bits. Each count of products is
+   compiled apart, its tree unrolled in registers. */
+#define PRODUCTS(D, T, U)                                                    \
+  typedef T D##_pv __attribute__((vector_size(NX_VECTOR_BYTES)));            \
+  typedef U D##_pu __attribute__((vector_size(NX_VECTOR_BYTES)));            \
+  typedef T D##_pm                                                           \
+      __attribute__((vector_size(NX_VECTOR_BYTES), aligned(1), may_alias));  \
+  static inline __attribute__((always_inline)) int products_n_##D(           \
+      int n, int64_t w, int64_t h, const T *a, const int64_t *oa,            \
+      int64_t sa, const T *b, const int64_t *ob, int64_t sb, T *y,           \
+      int64_t sy, int64_t sy2) {                                             \
+    enum { V = NX_VECTOR_BYTES / sizeof(T) };                                \
+    /* The rows apart from the offsets, which a store could alias. */       \
+    const T *pa[NX_CPU_LANES], *pb[NX_CPU_LANES];                            \
+    for (int t = 0; t < n; t++) {                                            \
+      pa[t] = a + oa[t];                                                     \
+      pb[t] = b + ob[t];                                                     \
+    }                                                                        \
+    D##_pu bad = {0};                                                        \
+    T one = 0;                                                               \
+    for (int64_t i = 0; i < h; i++, y += sy2) {                              \
+      int64_t j = 0;                                                         \
+      for (; j + V <= w; j += V) {                                           \
+        D##_pv l[NX_CPU_LANES];                                              \
+        UNROLL(16)                                                           \
+        for (int t = 0; t < n; t++)                                          \
+          l[t] = *(const D##_pm *)(pa[t] + j) * *(const D##_pm *)(pb[t] + j); \
+        UNROLL(4)                                                            \
+        for (int g = 8; g >= 1; g /= 2) {                                    \
+          UNROLL(8)                                                          \
+          for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];         \
+        }                                                                    \
+        D##_pv r = l[0] + (D##_pv){0};                                       \
+        bad |= (D##_pu)(r != r);                                             \
+        if (sy == 1) *(D##_pm *)(y + j) = r;                                 \
+        else                                                                 \
+          for (int k = 0; k < V; k++) y[(j + k) * sy] = r[k];                \
+      }                                                                      \
+      for (; j < w; j++) {                                                   \
+        T l[NX_CPU_LANES];                                                   \
+        UNROLL(16)                                                           \
+        for (int t = 0; t < n; t++) l[t] = pa[t][j] * pb[t][j];              \
+        UNROLL(4)                                                            \
+        for (int g = 8; g >= 1; g /= 2) {                                    \
+          UNROLL(8)                                                          \
+          for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];         \
+        }                                                                    \
+        T r = l[0] + 0;                                                      \
+        one = r != r ? r : one;                                              \
+        y[j * sy] = r;                                                       \
+      }                                                                      \
+      for (int t = 0; t < n; t++) {                                          \
+        pa[t] += sa;                                                         \
+        pb[t] += sb;                                                         \
+      }                                                                      \
+    }                                                                        \
+    U any = one != one;                                                      \
+    for (int k = 0; k < V; k++) any |= bad[k];                               \
+    return any != 0;                                                         \
+  }                                                                          \
+  static int products_##D(int n, int64_t w, int64_t h, const uint8_t *a_,    \
+                          const int64_t *oa, int64_t sa, const uint8_t *b_,  \
+                          const int64_t *ob, int64_t sb, uint8_t *y_,        \
+                          int64_t sy, int64_t sy2) {                         \
+    const T *a = (const T *)a_, *b = (const T *)b_;                          \
+    T *y = (T *)y_;                                                          \
+    switch (n) {                                                             \
+      PRODUCTS_CASES(D)                                                      \
+    }                                                                        \
+    return 0;                                                                \
+  }
+
+#define PRODUCTS_CASE(D, n)                                                  \
+  case n: return products_n_##D(n, w, h, a, oa, sa, b, ob, sb, y, sy, sy2);
+#define PRODUCTS_CASES(D)                                                    \
+  PRODUCTS_CASE(D, 1) PRODUCTS_CASE(D, 2) PRODUCTS_CASE(D, 3)                \
+  PRODUCTS_CASE(D, 4) PRODUCTS_CASE(D, 5) PRODUCTS_CASE(D, 6)                \
+  PRODUCTS_CASE(D, 7) PRODUCTS_CASE(D, 8) PRODUCTS_CASE(D, 9)                \
+  PRODUCTS_CASE(D, 10) PRODUCTS_CASE(D, 11) PRODUCTS_CASE(D, 12)             \
+  PRODUCTS_CASE(D, 13) PRODUCTS_CASE(D, 14) PRODUCTS_CASE(D, 15)             \
+  PRODUCTS_CASE(D, 16)
+
+PRODUCTS(f32, float, int32_t)
+PRODUCTS(f64, double, int64_t)
 
 /* Moments scans. A unit scans [w] slices side by side by the network of
    nx_kernel.mli, a state rows of [w] lanes: its mu, S and n, and in the
@@ -1953,6 +2046,8 @@ static void set(nx_cpu_target *t) {
   t->logsumexp[NX_FLOAT64] = logsumexp_f64;
   t->moments[NX_FLOAT32] = moments_f32;
   t->moments[NX_FLOAT64] = moments_f64;
+  t->products[NX_FLOAT32] = products_f32;
+  t->products[NX_FLOAT64] = products_f64;
 }
 
 #if defined(NX_CPU_V3)
@@ -2009,6 +2104,11 @@ void nx_cpu_set_reduce_base(nx_cpu_target *t) { set(t); }
 
 /* Full blocks whose values the table computes in one call. */
 #define RUN 64
+
+/* The outputs a unit of a sum of products aims for: a 3x3 depthwise
+   convolution of one 56x56x64 image took 165 us on one fudge core in
+   units of 1024, 147 in these. */
+#define PRODUCTS_UNIT 8192
 
 /* Units the groups of blocks aim for where outputs are few. */
 #define UNITS 64
@@ -2096,6 +2196,12 @@ typedef struct {
   const uint8_t *staged_unit; /* a unit's terms in the carrier, or NULL */
   int64_t off[LANES]; /* a lane or fewer terms: their positions from the
                          output's first */
+  /* A program's terms that are the products of two of its loads, a lane or
+     fewer an output, which the table's products sum: the loads, or -1, and
+     each one's positions of an output's terms from its first, and its steps
+     along the row axis and the band's. */
+  int factor[2];
+  int64_t foff[2][LANES], fs[2], fs2[2];
   _Atomic int *failed; /* set where a thread's work could not be taken */
 } plan;
 
@@ -2120,8 +2226,8 @@ typedef struct {
      (few). */
   _Alignas(64) uint8_t lanes[NX_CPU_FEW_BYTES];
   /* Terms in the carrier: a block's (states, staged_block), a unit's
-     (few, center_units), a piece's (run_states, quad), or one output's
-     (nan_term). */
+     (few, center_units), a sum of products' factors (products), a piece's
+     (run_states, quad), or one output's (nan_term). */
   _Alignas(64) uint8_t terms[2 * BLOCK * WIDEST];
   /* Arg's extremes in the carrier, before their terms (run_states). */
   _Alignas(64) uint8_t extremes[LANES * ROW];
@@ -2821,12 +2927,71 @@ static void store(const plan *q, work *wk, const unit *x, double *c,
       first_nan(q, wk, x->p + j * x->s, d + j * x->sd * q->w);
 }
 
+/* The terms of a factor of a sum of products that a thread staged last
+   (products): the position of their row's first and its outputs, or -1. */
+typedef struct {
+  int64_t at[2], w[2];
+} staged;
+
+/* The unit's sums of the products of two loads, a lane or fewer an output,
+   and whether one is NaN. Each factor's terms are read in place where they
+   are of the carrier and step one along a row, else staged into the
+   carrier, a row of the unit's outputs a term, once for the rows and units
+   that read the same ones, as a broadcast factor's do: the table then
+   computes the unit's rows at once, but one at a time where a staged
+   factor steps along them. */
+static int products(const plan *q, work *wk, const unit *x, staged *kept) {
+  const fused *z = q->fused;
+  int64_t at[NX_MAX_OPERANDS + 1], rows[LANES];
+  loads_at(z, x->p, at);
+  int n = (int)q->terms, place[2];
+  for (int t = 0; t < n; t++) rows[t] = t * x->W;
+  int64_t each = x->H;
+  for (int f = 0; f < 2; f++) {
+    const nx_array *l = &z->loads[q->factor[f]];
+    place[f] = l->dtype == q->carrier && (q->fs[f] == 1 || x->W == 1);
+    if (!place[f] && q->fs2[f] != 0) each = 1;
+  }
+  uint8_t *buf[2] = {wk->terms, wk->terms + sizeof wk->terms / 2};
+  const uint8_t *base[2];
+  const int64_t *off[2];
+  int64_t step[2];
+  int bad = 0;
+  for (int64_t h = 0; h < x->H; h += each) {
+    for (int f = 0; f < 2; f++) {
+      const nx_array *l = &z->loads[q->factor[f]];
+      int64_t p = at[q->factor[f]] + h * q->fs2[f];
+      if (place[f]) {
+        base[f] = l->base + p * q->w;
+        off[f] = q->foff[f];
+        step[f] = q->fs2[f];
+        continue;
+      }
+      base[f] = buf[f];
+      off[f] = rows;
+      step[f] = 0;
+      if (kept->at[f] == p && kept->w[f] == x->W) continue;
+      for (int t = 0; t < n; t++)
+        nx_cpu_stage_as(l, p + q->foff[f][t], q->fs[f], 0, x->W, 1,
+                        q->carrier, buf[f] + t * x->W * q->w, x->W);
+      kept->at[f] = p;
+      kept->w[f] = x->W;
+    }
+    bad |= nx_cpu_table->products[q->carrier](
+        n, x->W, each, base[0], off[0], step[0], base[1], off[1], step[1],
+        q->dst->base + (x->d + h * x->sd2) * q->w, x->sd, x->sd2);
+  }
+  return bad;
+}
+
 /* Outputs of a lane or fewer each, one block: their terms' positions from
    an output's first are the same for every output, and the table reduces
    the unit's rows at once, its lanes side by side. */
-static void few(const plan *q, work *wk, const unit *x) {
+static void few(const plan *q, work *wk, const unit *x, staged *kept) {
   int64_t n = q->terms;
-  if (!sourced(q)) {
+  if (q->factor[0] >= 0) {
+    if (!products(q, wk, x, kept)) return;
+  } else if (!sourced(q)) {
     q->f->few(at(q, x->p), q->off, (int)n, x->s, x->W, x->s2, x->H, q->id,
               q->dst->base + x->d * q->w, x->sd, x->sd2, wk->lanes);
   } else {
@@ -2855,10 +3020,11 @@ static void few(const plan *q, work *wk, const unit *x) {
 
 static void reduce_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
   _Alignas(16) uint8_t v[ROW];
+  staged kept = {{-1, -1}, {-1, -1}};
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
     if (q->f != NULL && !q->first && q->terms <= LANES) {
-      few(q, wk, &x);
+      few(q, wk, &x, &kept);
       continue;
     }
     int64_t b0 = x.g * q->group, b1 = b0 + q->group;
@@ -3031,10 +3197,48 @@ static void choose(plan *q, task op) {
   if (op == SCAN || q->f == NULL || q->first || q->terms > LANES ||
       q->nk < 2 || q->chunks > 1)
     return;
-  int64_t next = q->ke[q->nk - 2], want = (most + q->row - 1) / q->row;
+  /* A sum of products stores its rows as it computes them: its units take
+     more of them. */
+  int64_t per = q->factor[0] >= 0 ? PRODUCTS_UNIT : most;
+  int64_t next = q->ke[q->nk - 2], want = (per + q->row - 1) / q->row;
   q->bands = (next + want - 1) / want;
   q->band = (next + q->bands - 1) / q->bands;
   q->outer /= next;
+}
+
+/* Sets the plan's factors where its terms, a lane or fewer an output, are
+   a Sum's of the products of two of a program's loads at the carrier, which
+   the table's products sum: the products' bits are the program's, and the
+   sums' the lanes'. */
+static void factors(plan *q) {
+  int k[2];
+  const fused *z = q->fused;
+  q->factor[0] = q->factor[1] = -1;
+  if (z == NULL || q->f != &nx_cpu_table->monoid[NX_MONOID_SUM][q->carrier] ||
+      q->terms > LANES || nx_cpu_table->products[q->carrier] == NULL ||
+      nx_cpu_prog_product(z->prog, z->k, k) != q->carrier)
+    return;
+  int64_t at0[NX_MAX_OPERANDS + 1], at[NX_MAX_OPERANDS + 1];
+  loads_at(z, 0, at0);
+  for (int64_t t = 0; t < q->terms; t++) {
+    loads_at(z, q->off[t], at);
+    for (int f = 0; f < 2; f++) q->foff[f][t] = at[k[f]] - at0[k[f]];
+  }
+  q->factor[0] = k[0];
+  q->factor[1] = k[1];
+}
+
+/* The factors' steps along the row axis and the band's, where the plan has
+   factors and those axes. */
+static void factor_steps(plan *q) {
+  if (q->factor[0] < 0) return;
+  int64_t s[NX_MAX_OPERANDS + 1], s2[NX_MAX_OPERANDS + 1];
+  loads_along(q->fused, q->row > 1 ? q->ks[q->nk - 1] : 0, s);
+  loads_along(q->fused, q->band > 1 ? q->ks[q->nk - 2] : 0, s2);
+  for (int f = 0; f < 2; f++) {
+    q->fs[f] = s[q->factor[f]];
+    q->fs2[f] = s2[q->factor[f]];
+  }
 }
 
 /* Lays out a reduction from the coalesced loop [l] over the destinations
@@ -3058,8 +3262,10 @@ static void plan_reduce(plan *q, const nx_loop *l) {
   q->x0 = l->first[2];
   q->d0 = l->first[0];
   q->d1 = l->first[1];
-  choose(q, REDUCE);
   for (int64_t t = 0; t < q->terms && t < LANES; t++) q->off[t] = term(q, 0, t);
+  factors(q);
+  choose(q, REDUCE);
+  factor_steps(q);
   int64_t units = q->outer * q->bands * q->chunks;
   q->group = q->blocks > 0 ? q->blocks : 1;
   if (units < UNITS && q->blocks > 1) {
@@ -3594,6 +3800,7 @@ static __attribute__((noinline)) int reduce_in(
             .fused = z,
             .cy = cy,
             .terms = terms,
+            .factor = {-1, -1},
             .failed = &failed};
   if (outputs > 0 && terms == 0 && op == REDUCE) {
     /* The results of no term: the identity, or a state of none's. */
@@ -3613,6 +3820,9 @@ static __attribute__((noinline)) int reduce_in(
   if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes;
   q.threads = nx_cpu_threads(bytes, cost);
   lay_out(&q, op, axes, naxes, y, y1, x);
+  /* A sum of products takes no more than memcpy's time for its terms: on
+     one fudge core, 1 ms for the 58 MB of a 3x3 depthwise convolution's. */
+  if (q.factor[0] >= 0) cost = (double)bytes;
   int64_t units = q.outer * q.bands * q.chunks;
   if (q.groups > 1)
     q.scratch = malloc((size_t)(units * q.groups * q.row * q.size));

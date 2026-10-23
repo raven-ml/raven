@@ -263,6 +263,18 @@ typedef struct {
                  int64_t s, int64_t w);
 } nx_cpu_monoid;
 
+/* A sum of few products at a float dtype (reduce.c) stores the [h] rows of
+   [w] sums of [n] products each, n from 1 to NX_CPU_LANES, row i's output
+   j at [y + i·sy2 + j·sy], and answers whether one is NaN: its product t
+   is the element [i·sa + oa[t] + j] of [a] times the element
+   [i·sb + ob[t] + j] of [b], each a term in lane t from +0, then the
+   lanes' tree, as one block of a monoid's [lanes] gives them. */
+typedef int (*nx_cpu_products)(int n, int64_t w, int64_t h, const uint8_t *a,
+                               const int64_t *oa, int64_t sa,
+                               const uint8_t *b, const int64_t *ob,
+                               int64_t sb, uint8_t *y, int64_t sy,
+                               int64_t sy2);
+
 /* The reductions nx.cpu computes by a state of each block of terms
    (reduce.c), numbered on from the monoids: Logsumexp, Arg by Max and by
    Min, and Moments. */
@@ -449,6 +461,9 @@ typedef struct {
   /* monoid[m][dt] reduces by the monoid m (NX_MONOID_SUM to
      NX_MONOID_MIN) at dt: lanes NULL where the table declines. */
   nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
+  /* products[dt] sums few products at float32 and float64: NULL where the
+     table declines. */
+  nx_cpu_products products[NX_DTYPE_COUNT];
   /* logsumexp[dt] and moments[dt] scan by Logsumexp and Moments at
      float32 and float64. */
   nx_cpu_network logsumexp[NX_DTYPE_COUNT], moments[NX_DTYPE_COUNT];
@@ -943,6 +958,13 @@ int nx_cpu_prog_ins(const nx_cpu_prog *j);
 int nx_cpu_prog_in(const nx_cpu_prog *j, int k);
 int nx_cpu_prog_outs(const nx_cpu_prog *j);
 int nx_cpu_prog_out(const nx_cpu_prog *j, int o);
+
+/* Whether output [o] of [j] is the product of two of its loads, each read
+   at its own dtype or a float cast into the product's: its dtype, float32
+   or float64, with the loads into [k], else -1. A load of another dtype
+   than the product's, staged as nx_cpu_stage_as stages it, gives that
+   cast's elements. */
+int nx_cpu_prog_product(const nx_cpu_prog *j, int o, int *k);
 
 /* Binds [j] to its loads [a], read by the door, over a loop of [rank] axes
    of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank or
