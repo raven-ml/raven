@@ -730,7 +730,9 @@ let test_declined_contract (b : Support.backend) () =
   let before = bits_of (host y) in
   match
     K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |]
-      ~acc:(D.Any D.Float32) ~dst:y ~init:None x z
+      ~segments:None ~acc:(D.Any D.Float32) ~dst:y ~init:None
+      { Nx_kernel.array = A.Any x; scale = None }
+      { Nx_kernel.array = A.Any z; scale = None }
   with
   | A.Declined -> equal (array int) before (bits_of (host y))
   | A.Done -> ()

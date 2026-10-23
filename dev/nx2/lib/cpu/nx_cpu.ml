@@ -372,9 +372,15 @@ external contract_c :
 
 (* An [acc] {!Nx_kernel.accumulates} refuses is the caller's error, refused
    before the kernel is asked. *)
-let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+    (oa : Nx_kernel.operand) (ob : Nx_kernel.operand) =
   let (Nx_array.Dtype.Any dt) = acc in
+  let (Nx_array.Any a) = oa.array in
+  let (Nx_array.Any b) = ob.array in
   if not (Nx_kernel.accumulates dt) then Nx_array.Wrong_dtype
+  else if Option.is_some segments || Option.is_some oa.scale
+          || Option.is_some ob.scale
+  then Nx_array.Declined
   else
     match
       contract_c order ~batch ~contracting (Nx_array.Dtype.code dt) ~dst

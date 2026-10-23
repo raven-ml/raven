@@ -85,12 +85,14 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.fold p ~dst x
 
-  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+  let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+      (a : Nx_kernel.operand) b =
     Atomic.incr count;
-    let s = Nx_array.Layout.shape (Nx_array.layout a) in
+    let (Nx_array.Any x) = a.array in
+    let s = Nx_array.Layout.shape (Nx_array.layout x) in
     let k = Iarray.fold_left (fun k (i, _) -> k * s.(i)) 1 contracting in
     ignore (Atomic.fetch_and_add multiplied (loop (Nx_array.Any dst) * k));
-    Nx_cpu.contract ~order ~batch ~contracting ~acc ~dst ~init a b
+    Nx_cpu.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b
 end
 
 module Declining = struct
@@ -140,13 +142,23 @@ module Blocked = struct
       add (tree add parts lo !h) (tree add parts (lo + !h) (n - !h))
     end
 
-  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+  (* A scaled or segmented contraction goes to nx.cpu whole. *)
+  let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+      (oa : Nx_kernel.operand) (ob : Nx_kernel.operand) =
     if Iarray.length contracting > 1 then
       failwith "nx.blocks: a contraction over several pairs";
+    let (Nx_array.Any a) = oa.array in
+    let (Nx_array.Any b) = ob.array in
     let k =
       Iarray.fold_left (fun k (i, _) -> k * (shape a).(i)) 1 contracting
     in
-    if k = 0 then Nx_cpu.contract ~order ~batch ~contracting ~acc ~dst ~init a b
+    let whole =
+      k = 0 || Option.is_some segments || Option.is_some oa.scale
+      || Option.is_some ob.scale
+    in
+    if whole then
+      Nx_cpu.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init oa
+        ob
     else begin
       let ia, ib = Iarray.get contracting 0 in
       let (Nx_array.Dtype.Any ad) = acc in
@@ -155,8 +167,10 @@ module Blocked = struct
         let lo = i * block and hi = Int.min k ((i + 1) * block) in
         let y = fresh () in
         ok "contraction"
-          (Nx_cpu.contract ~order:Chain ~batch ~contracting ~acc ~dst:y
-             ~init:None (slice ia lo hi a) (slice ib lo hi b));
+          (Nx_cpu.contract ~order:Chain ~batch ~contracting ~segments:None
+             ~acc ~dst:y ~init:None
+             { array = Nx_array.Any (slice ia lo hi a); scale = None }
+             { array = Nx_array.Any (slice ib lo hi b); scale = None });
         y
       in
       let add x y =

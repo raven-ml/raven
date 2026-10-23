@@ -324,8 +324,10 @@ let direct_operands ~contracting make () =
 let contract_direct ~contracting s (order, a, b) =
   let dst = A.create Rig.host D.Float32 s in
   match
-    Nx_cpu.contract ~order ~batch:[||] ~contracting ~acc:(D.Any D.Float32)
-      ~dst ~init:None a b
+    Nx_cpu.contract ~order ~batch:[||] ~contracting ~segments:None
+      ~acc:(D.Any D.Float32) ~dst ~init:None
+      { array = A.Any a; scale = None }
+      { array = A.Any b; scale = None }
   with
   | Done -> dst
   | refusal -> A.refused "contract-direct" refusal [ A.Any dst ]

@@ -1449,7 +1449,9 @@ let law_contract (b : Support.backend) c =
       let dst = A.create Rig.host (A.dtype x) [||] in
       let summed =
         K.contract ~order:Lane ~batch:[||] ~contracting:[| (0, 0) |]
-          ~acc:(dtype_of c.x) ~dst ~init:None x ones
+          ~segments:None ~acc:(dtype_of c.x) ~dst ~init:None
+          { Nx_kernel.array = A.Any x; scale = None }
+          { Nx_kernel.array = A.Any ones; scale = None }
       in
       match (run b c, summed) with
       | Some y, A.Done ->

@@ -18,6 +18,9 @@ module Support = Nx_kernels_support
 
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 
+(* An operand without a scale. *)
+let plain x : Nx_kernel.operand = { array = A.Any x; scale = None }
+
 let pp_any ppf (A.Any x) =
   Format.fprintf ppf "%a %a" D.pp (A.dtype x) L.pp (A.layout x)
 
@@ -336,8 +339,8 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
   let y =
     match
       Nx_kernel.Shape.contract ~batch:(Iarray.of_array pairs)
-        ~contracting:(Iarray.of_array contracting) (shape_of a)
-        (shape_of b)
+        ~contracting:(Iarray.of_array contracting) ~segments:None
+        (shape_of a, None) (shape_of b, None)
     with
     | Ok y -> y
     | Error e -> invalid_arg ("make: " ^ e)
@@ -826,8 +829,8 @@ let sizes c =
   let y =
     match
       Nx_kernel.Shape.contract ~batch:(Iarray.of_array c.batch)
-          ~contracting:(Iarray.of_array c.contracting) sa
-        (shape_of c.b)
+        ~contracting:(Iarray.of_array c.contracting) ~segments:None (sa, None)
+        (shape_of c.b, None)
     with
     | Ok y -> y
     | Error e -> failf "the case's shapes do not fit its pairs: %s" e
@@ -839,12 +842,13 @@ let operands c = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init)
 
 (* [k]'s contraction of [c] into [dst], with the operands [a], [b] and
    [init] in place of [c]'s. *)
-let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
-    init =
+let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) a b init =
   let init = Option.map (A.expect (A.dtype d)) init in
   K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
-    ~contracting:(Iarray.of_array c.contracting)
-    ~acc:c.acc ~dst:d ~init a b
+    ~contracting:(Iarray.of_array c.contracting) ~segments:None ~acc:c.acc
+    ~dst:d ~init
+    { array = a; scale = None }
+    { array = b; scale = None }
 
 (* Whether nx_cpu.mli says nx.cpu computes [c]: an acc it computes in, of
    operands of any dtype, into any result, at any layout. *)
@@ -1611,8 +1615,8 @@ let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
     let a = A.create Rig.host fd [| m; 0 |] and b = A.create Rig.host fd [| 0; n |] in
     let dst = A.create Rig.host fd [| m; n |] in
     (match
-       K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any fd)
-         ~dst ~init:(Some init) a b
+       K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+         ~acc:(D.Any fd) ~dst ~init:(Some init) (plain a) (plain b)
      with
     | A.Done -> ()
     | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
@@ -1638,7 +1642,8 @@ let fresh (b : Support.backend) () =
       try
         Ok
           (K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |]
-             ~acc:(D.Any D.Float32) ~dst ~init a b)
+             ~segments:None ~acc:(D.Any D.Float32) ~dst ~init (plain a)
+             (plain b))
       with e -> Error e
     in
     (match Domain.join (Domain.spawn call) with
@@ -1669,8 +1674,8 @@ let test_misfits (b : Support.backend) () =
   let refused ~msg ?(batch : _ iarray = [||]) contracting dst a b' =
     let before = A.to_array (to64 (host (A.Any dst))) in
     equal ~msg answer A.Shape_mismatch
-      (K.contract ~order:Chain ~batch ~contracting ~acc:(D.Any D.Float32) ~dst
-         ~init:None a b');
+      (K.contract ~order:Chain ~batch ~contracting ~segments:None
+         ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain b'));
     equal ~msg:(msg ^ ": untouched") (array float_exact) before
       (A.to_array (to64 (host (A.Any dst))))
   in
@@ -1796,8 +1801,9 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   in
   let product ~dst a x =
     match
-      K.contract ~order:Nx_kernel.Chain ~batch ~contracting ~acc:(D.Any dt) ~dst
-        ~init:None a (window x)
+      K.contract ~order:Nx_kernel.Chain ~batch ~contracting ~segments:None
+        ~acc:(D.Any dt) ~dst ~init:None (plain a)
+        (plain (window x))
     with
     | A.Done -> ()
     | r -> failf "contract answered %a" Nx_array_support.pp_answer r
@@ -1856,8 +1862,8 @@ let test_acc_refused (b : Support.backend) () =
     (fun acc ->
       equal ~msg:(Format.asprintf "%a" pp_dtype acc) Elements.answer
         A.Wrong_dtype
-        (K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |] ~acc ~dst
-           ~init:None a x))
+        (K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |]
+           ~segments:None ~acc ~dst ~init:None (plain a) (plain x)))
     D.[ Any Float16; Any Bfloat16; Any Bool ]
 
 let cpu (b : Support.backend) =

@@ -218,6 +218,42 @@ val accumulates : ('v, 's) Nx_array.Dtype.t -> bool
 (** [accumulates dt] is [true] iff a contraction computes in [dt]: every
     dtype but booleans and floats narrower than [float32]. *)
 
+(** The type for a block scale of a contraction operand's array: an array of
+    its rank, each extent dividing the operand's, [0] only along an empty
+    axis. The operand's element at index [i] is in block [i] divided by the
+    ratio of the extents, axis by axis. A scale indexes the operand's own
+    index, whatever its layout: a kernel sees no stored array behind a view,
+    so a view that cuts an axis within its blocks has no scale. *)
+type scale =
+  | Exponent of (int, Nx_array.Dtype.int8_unsigned_elt) Nx_array.t
+      (** Code [e] scales its block by [2^(e - 127)]; [255] makes it NaN. *)
+  | Value : ('v, 's) Nx_array.t -> scale
+      (** Each scale read in its own dtype into the accumulator. *)
+
+(** The type for a contraction's operand: an array, through any layout
+    (strided, broadcast, windowed), never padded, and its scale. Its element
+    at an index is the array's times its block's scale. *)
+type operand = { array : Nx_array.any; scale : scale option }
+
+(** The type for a contraction cut into groups by [offsets]: an {!index}
+    for {!S.contract}, its shape for {!Shape.contract}. [offsets] has the
+    batch extents, then [g + 1] entries. At each batch index, the segmented
+    axis's index [r] is in the largest group [e < g] with
+    [offsets.(e) <= r] when [offsets.(0) <= r < offsets.(g)], else in
+    none. *)
+type 'i segments =
+  | Rows of { offsets : 'i; a_axis : int; b_axis : int }
+      (** [a]'s free axis [a_axis] is segmented; [b]'s free axis [b_axis] has
+          extent [g] and leaves the result; row [r] multiplies [b]'s group
+          [e] of [r], its index [e] along [b_axis]. A row in no group is
+          [init]'s element, or [+0]. *)
+  | Contracting of { offsets : 'i; pair : int }
+      (** Contracting pair [pair] is segmented on both sides; the result
+          gains a leading axis of [g], slice [e] summing group [e]'s rows
+          alone: its products are numbered from its group's first and its
+          contracted extent is the group's count. The transpose of [Rows]
+          with respect to [b]. *)
+
 (** {1:fft Fourier transforms} *)
 
 (** The type for a transform's direction. Along an axis of [n] points,
@@ -323,12 +359,22 @@ module Shape : sig
   (** {1:contraction Contraction} *)
 
   val contract :
-    batch:(int * int) iarray -> contracting:(int * int) iarray -> t -> t -> t result
-  (** [contract ~batch ~contracting a b] is the shape of a contraction of [a]
-      with [b]: the batch axes in pair order, then [a]'s free axes, then
-      [b]'s, in axis order. It is an [Error] unless each pair names an axis
-      of [a] and an axis of [b] of one extent, and no axis is in two pairs. A
-      contraction's [init] has its destination's shape. *)
+    batch:(int * int) iarray ->
+    contracting:(int * int) iarray ->
+    segments:t segments option ->
+    t * t option ->
+    t * t option ->
+    t result
+  (** [contract ~batch ~contracting ~segments (a, sa) (b, sb)] is the shape of
+      a contraction of [a] with [b], [sa] and [sb] their scales' shapes: the
+      batch axes in pair order, then [a]'s free axes, then [b]'s, in axis
+      order. [Rows] drops [b]'s [b_axis]; [Contracting] puts the groups'
+      axis first. It is an [Error] unless each pair names an axis of [a] and
+      an axis of [b] of one extent, no axis is in two pairs, each scale fits
+      its operand ({!type-scale}) and the segments' offsets have the shape
+      {!type-segments} states, with [a_axis] and [b_axis] free axes and
+      [pair] a contracting pair. A contraction's [init] has its destination's
+      shape. *)
 
   (** {1:fft Fourier transforms} *)
 
@@ -618,23 +664,30 @@ module type S = sig
     order:order ->
     batch:(int * int) iarray ->
     contracting:(int * int) iarray ->
+    segments:index segments option ->
     acc:Nx_array.Dtype.any ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
-    ('a, 'b) a ->
-    ('c, 'e) a ->
+    operand ->
+    operand ->
     answer
-  (** [contract ~order ~batch ~contracting ~acc ~dst ~init a b] stores into
-      [dst] the contraction of [a] with [b], of the shape {!Shape.contract}
-      gives:
+  (** [contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b]
+      stores into [dst] the contraction of [a] with [b], of the shape
+      {!Shape.contract} gives:
       {[
       dst[B, I, J] = init[B, I, J] + Σ_K a[B, I, K] · b[B, K, J]
       ]}
       computed in [acc], a dtype {!accumulates} takes, and rounded once to
-      [dst]'s dtype. Without [init] the sum starts from [+0]. Integers wrap in
-      [acc]. A float or complex [acc] errs by at most twice its unit
-      roundoff, its parts' for a complex one, per addition, barring
-      underflow.
+      [dst]'s dtype, each operand's elements times their scales, each group
+      of [segments] as {!type-segments} states. Without [init] the sum starts
+      from [+0]. Integers wrap in [acc]. A float or complex [acc] errs by at
+      most twice its unit roundoff, its parts' for a complex one, per
+      addition, barring underflow. A scale multiplies each product, or its
+      block's partial sum where a block of the contracted extent is whole,
+      inside the stated bound; a library states which, a function of the
+      dtypes and the contracted extent alone, so that windows of [K] aligned
+      to blocks compose. A [Value] or code that is NaN makes its block's
+      terms NaN.
 
       A float sum's association, which fixes its bits, is a function of
       [order], the dtypes and the contracted extent alone: the batch, row and

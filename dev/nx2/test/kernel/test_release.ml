@@ -151,10 +151,12 @@ let transforms =
 
 (* Contractions *)
 
+let plain x : Nx_kernel.operand = { array = A.Any x; scale = None }
+
 let contract ~acc ~dst a b =
   done_
-    (Nx_cpu.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 0) |] ~acc
-       ~dst ~init:None a b)
+    (Nx_cpu.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 0) |]
+       ~segments:None ~acc ~dst ~init:None (plain a) (plain b))
 
 let contractions =
   group "contractions"
@@ -166,8 +168,8 @@ let contractions =
           releases (fun () ->
               done_
                 (Nx_cpu.contract ~order:Chain ~batch:[| (0, 0) |]
-                   ~contracting:[| (2, 1) |] ~acc:(D.Any D.Float32) ~dst
-                   ~init:None a x)));
+                   ~contracting:[| (2, 1) |] ~segments:None
+                   ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain x))));
       test "a complex one whose operand is converted" (fun () ->
           let m = 2048 and k = 4096 in
           let a = c64 [| m; k |] and b = c64 [| k; 1 |] in
