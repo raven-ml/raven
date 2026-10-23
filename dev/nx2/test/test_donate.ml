@@ -163,6 +163,59 @@ let test_dtype_refused () =
   equal ~msg:"the booleans live" (array bool) [| true; false |]
     (elements (Nx.copy p))
 
+(* An operation whose rule refuses its operands kills nothing, though its
+   result would take a handle's memory: a scatter's combine refusing the
+   target's dtype or updates of another shape than the positions, a
+   contraction's init of another shape than its result, a map's load of
+   another shape than its loop. *)
+let test_rule_refused () =
+  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
+  let b = truths () and u = truths () in
+  let p = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
+  invalid ~sub:"Nx.scatter: Add does not take bool" (fun () ->
+      Nx.scatter ~combine:Add ~axis:0 p u (Nx.donate b));
+  equal ~msg:"the booleans live" (array bool) [| true; false |]
+    (elements (Nx.copy b));
+  let x = fresh [| 1.; 2. |] in
+  invalid ~sub:"Nx.scatter" (fun () ->
+      Nx.scatter ~axis:0 p (fresh [| 1.; 2.; 3. |]) (Nx.donate x));
+  equal ~msg:"the scatter's target lives" (array float_exact) [| 1.; 2. |]
+    (elements (Nx.copy x));
+  let a = fresh_at [| 2; 3 |] (Array.make 6 1.) in
+  let g = fresh_at [| 2; 3 |] (Array.make 6 2.) in
+  invalid ~sub:"test: init of shape" (fun () ->
+      Nx.Prim.eval ~by:"test"
+        (Contract
+           {
+             order = Chain;
+             batch = [||];
+             contracting = [| (1, 1) |];
+             acc = D.Any D.Float32;
+             out = f32;
+             a;
+             b = a;
+             init = Some (Nx.donate g);
+           }));
+  equal ~msg:"the init lives" (array float_exact) (Array.make 6 2.)
+    (elements (Nx.copy g));
+  let x = fresh [| 1.; 2. |] in
+  let prog =
+    Nx_kernel.Prog.v
+      ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+      [| Nx_kernel.Prog.In 0 |] ~outs:[| 0 |]
+  in
+  invalid ~sub:"test: load 1 has shape" (fun () ->
+      Nx.Prim.eval ~by:"test"
+        (Map
+           {
+             layout = Nx_array.Layout.contiguous [| 2 |];
+             prog;
+             outs = [ f32 ];
+             loads = [| Plain (Nx.donate x); Plain (fresh [| 1.; 2.; 3. |]) |];
+           }));
+  equal ~msg:"the map's load lives" (array float_exact) [| 1.; 2. |]
+    (elements (Nx.copy x))
+
 (* A function that computes through several operations kills its donors only
    when it returns: refused, from its own checks or from an operation inside,
    it leaves each donor and its handle usable. *)
@@ -1968,6 +2021,7 @@ let () =
                test_sharer_keeps;
              test "a refused consumer kills no donor" test_refused_kills_none;
              test "a dtype refusal kills no donor" test_dtype_refused;
+             test "a rule's refusal kills no donor" test_rule_refused;
              test "a refused broadcast kills no donor" test_broadcast_refused;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
