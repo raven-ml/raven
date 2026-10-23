@@ -70,6 +70,19 @@ val inside : unit -> bool
 (** [inside ()] is [true] iff an [Extent] interpretation's handler is around
     the caller. With none live ({!quiet}) it performs nothing. *)
 
+val call :
+  by:string ->
+  'd any list ->
+  (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> 'a) ->
+  'a
+(** [call ~by xs k] is [k read], the call [by] the one consumer of the
+    donated handles among its operands [xs], though [k] moves them before
+    the operation that reads them. Inside an [Extent] ({!inside}), whose rule
+    consumes the handles of each operation it receives, a movement's too, it
+    is {!Donate.resolve}: a refusal by [k]'s checks or by the rule kills no
+    donor. Elsewhere [read] is the identity: a movement passes a handle on
+    and [k]'s operation consumes it. *)
+
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
 

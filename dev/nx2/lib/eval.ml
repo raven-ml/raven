@@ -280,6 +280,8 @@ let inside () =
   | () -> true
   | exception Effect.Unhandled Within -> false
 
+let call ~by xs k = if inside () then Donate.resolve ~by xs k else k Fun.id
+
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
    interpretation; one [i] adopts is around by construction ({!interpret}). An

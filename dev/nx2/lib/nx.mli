@@ -253,11 +253,13 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!sliding_window}), passes a new handle of [x] to its result, whether it
     makes a view or a copy, and kills nothing; the deaths wait for the final
     consumer. The handle it read stays a handle of [x]: once an operation
-    consumes either, the other raises naming that consumer. Any other operation
-    consumes its handles. A function that computes through others, as {!trace}
-    sums a diagonal, is the consumer the deaths name. One that makes several
-    operations, as {!lstsq}, reads its handles as they were when called and
-    consumes them when it returns; it reuses none of their memory. Two handles
+    consumes either, the other raises naming that consumer. An interpretation
+    that receives a movement the user calls ({!Prim.interpret}) makes the
+    movement its consumer instead. Any other operation consumes its handles. A
+    function that computes through others, as {!trace} sums a diagonal, is the
+    consumer the deaths name. One that makes several operations, as {!lstsq},
+    reads its handles as they were when called and consumes them when it
+    returns, and none if it raises; it reuses none of their memory. Two handles
     of one donor or over one memory reaching one operation raise naming
     [Nx.donate]: the same handle twice, two donations of one value, or a handle
     and one a movement passed on. The donor itself beside one of its handles is
@@ -4416,18 +4418,13 @@ module Prim : sig
       named by the functions it calls, and what it raises reaches the caller
       as raised.
 
-
-      An operation [rule] receives is the final consumer of the donated
-      handles among its operands ({!Nx.donate}), a movement too, since its
-      results hold no handle to pass on: their donors die when [rule] returns,
-      and live on if it raises. [rule] reads the operation as it was called: the handles'
-      arrays, and a donor beside its handle as a live value. A function that
-      broadcasts its operands for one operation, as {!Nx.add} of two shapes
-      does, is their handles' one consumer instead, as a function of several
-      operations is: [rule] receives its broadcasts and its operation over
-      the handles' arrays, and the donors die when it returns. Refused, by
-      its own checks or by [rule], it kills no donor, as when no interpretation
-      receives it.
+      A function the user calls is the one consumer of the donated handles
+      among its operands ({!Nx.donate}): [rule] receives the movements and
+      operations it makes over the handles' arrays, and a donor beside its
+      handle as a live value, and the donors die, naming the function, when
+      it returns. Refused, by its own checks or by [rule], it kills no donor,
+      as when no interpretation receives it. A movement the user calls is
+      such a function: its result holds no handle to pass on.
 
       With [Adopting p], [i] receives the operations on [p]'s values as on its
       own, without asking whether [p] is around them: [p] is around [i]'s

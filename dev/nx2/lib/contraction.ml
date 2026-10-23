@@ -183,22 +183,29 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
   let acc =
     accumulator ~by ?acc dt (D.Any (Prim.dtype a)) (D.Any (Prim.dtype b))
   in
-  let init =
-    Option.map
-      (fun i ->
-        if not (Prim.has_shape i pl.shape) then
-          invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
-            (Prim.shape i) pp_shape pl.shape;
-        let i = reshape ~by pl.names i in
-        if identity pl.order then i else permute ~by (inverse pl.order) i)
-      init
-  in
+  (match init with
+  | Some i when not (Prim.has_shape i pl.shape) ->
+      invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
+        (Prim.shape i) pp_shape pl.shape
+  | Some _ | None -> ());
   let batch = pl.batch and contracting = pl.contracting in
   let y =
-    Eval.contract ~by ~batch ~contracting ~acc dt
-      (if pl.a_whole then a else reshape ~by pl.a a)
-      (if pl.b_whole then b else reshape ~by pl.b b)
-      init
+    if pl.a_whole && pl.b_whole && Option.is_none init then
+      Eval.contract ~by ~batch ~contracting ~acc dt a b None
+    else
+      let operands =
+        Value.Any a :: Value.Any b
+        :: Option.fold ~none:[] ~some:(fun i -> [ Value.Any i ]) init
+      in
+      Eval.call ~by operands @@ fun read ->
+      let laid i =
+        let i = reshape ~by pl.names (read i) in
+        if identity pl.order then i else permute ~by (inverse pl.order) i
+      in
+      Eval.contract ~by ~batch ~contracting ~acc dt
+        (if pl.a_whole then read a else reshape ~by pl.a (read a))
+        (if pl.b_whole then read b else reshape ~by pl.b (read b))
+        (Option.map laid init)
   in
   let y = if identity pl.order then y else permute ~by pl.order y in
   if pl.y_whole then y else reshape ~by pl.shape y
@@ -479,6 +486,10 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
   let leaf i = (ns.(i), Value.Any xs.(i)) in
   if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
   else
+    (* Several contractions read the operands: the call consumes them once. *)
+    Donate.resolve ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
+    @@ fun read ->
+    let leaf i = (ns.(i), Value.Any (read xs.(i))) in
     let split = order ~ext ~result:nr ns in
     let full = (1 lsl n) - 1 in
     if split.(full) = 0 then
