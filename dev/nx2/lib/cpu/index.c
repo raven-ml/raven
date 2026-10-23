@@ -20,7 +20,8 @@
    any thread may take; within a slice the updates apply in increasing
    index along the axis, which is C order of the updates for each target.
    A unit is a run of at most UNIT_ROW slices along the innermost axis off
-   the scattered one, and walks the scattered axis once, the whole run at
+   the scattered one, of one where a narrow float sums positions that
+   differ along it (Narrow sums), and walks the scattered axis once, the whole run at
    each step: where the positions step 0 along the run, as an embedding
    gradient's do, the step is one row of the kind. Where runs are fewer
    than the job's threads and the axis long, as a 1-d scatter's is, each
@@ -263,7 +264,8 @@ struct scatter {
      axis, whose [len] slices are a row of slices. */
   nx_loop l;
   int64_t sd, si, su, st, len;
-  int64_t pieces; /* runs per row of slices */
+  int64_t run_len; /* slices per run */
+  int64_t pieces;  /* runs per row of slices */
   int64_t parts;  /* parts of the axis's targets, each a unit's */
   /* Along the axis: the updates' extent, their steps through the positions
      and the updates, the destination's and into's strides, the
@@ -574,7 +576,7 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
   const nx_loop *l = &c->l;
   int r = l->rank;
   int64_t len = l->extent[r - 1];
-  int64_t i0 = v % c->pieces * UNIT_ROW;
+  int64_t i0 = v % c->pieces * c->run_len;
   v /= c->pieces;
   for (int k = 0; k < 4; k++) p[k] = l->first[k] + i0 * l->step[k][r - 1];
   for (int i = r - 2; i >= 0; i--) {
@@ -582,7 +584,7 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
     v /= l->extent[i];
     for (int k = 0; k < 4; k++) p[k] += x * l->step[k][i];
   }
-  return len - i0 < UNIT_ROW ? len - i0 : UNIT_ROW;
+  return len - i0 < c->run_len ? len - i0 : c->run_len;
 }
 
 /* Narrow sums
@@ -606,11 +608,14 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
      a flag beside each that an update reached, then encode the reached
      targets in the updates' order. Such a scatter sorts the whole axis as
      one block, so that each sum spans its target's updates.
-   - Otherwise a unit (narrow_run) sorts the positions its run applies by
+   - Otherwise a unit (narrow_run), of a part of the targets where units
+     are fewer than the threads, sorts the positions its run applies by
      target, stably, and sums one target after another, as a row's pieces
-     do: one sort serves a run whose positions step 0 along it, else each
-     slice sorts its own, in its worker's scratch of four words per update
-     along the axis. */
+     do, in its worker's scratch of four words per update along the axis.
+     A run whose positions differ along it is one slice, so that one sort
+     serves each run and the threads share the slices: [1M, 64] bfloat16
+     updates with a position each took 3.8 s on one thread, each run of 64
+     slices sorting them a slice at a time. */
 
 /* The bytes of a bin's flags, padded to a line. */
 static int64_t flag_bytes(int shift) { return (((int64_t)1 << shift) + 63) & -64; }
@@ -791,20 +796,15 @@ static void narrow_run(const scatter *c, int worker, int64_t pd, int64_t pi,
   uint64_t *p = (uint64_t *)(c->sums + worker * c->each), *p2 = p + m;
   int64_t *r = (int64_t *)(p2 + m), *r2 = r + m;
   float *sum = (float *)(r2 + m), *row = sum + UNIT_ROW, *next = row + UNIT_ROW;
-  int shared = n == 1 || c->si == 0;
-  int64_t width = shared ? n : 1;
-  for (int64_t i = 0; i < (shared ? 1 : n); i++) {
-    int64_t k = 0;
-    for (int64_t t = 0; t < m; t++) {
-      uint64_t q = (uint64_t)x[pi + i * c->si + t * ia];
-      if (q - lo >= span) continue;
-      p[k] = q;
-      r[k++] = t;
-    }
-    int moved = sort_steps(p, r, p2, r2, k);
-    sum_sorted(c, pd + i * c->sd, pu + i * c->su, width, moved ? p2 : p,
-               moved ? r2 : r, k, sum, row, next);
+  int64_t k = 0;
+  for (int64_t t = 0; t < m; t++) {
+    uint64_t q = (uint64_t)x[pi + t * ia];
+    if (q - lo >= span) continue;
+    p[k] = q;
+    r[k++] = t;
   }
+  int moved = sort_steps(p, r, p2, r2, k);
+  sum_sorted(c, pd, pu, n, moved ? p2 : p, moved ? r2 : r, k, sum, row, next);
 }
 
 static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -1080,7 +1080,10 @@ static int64_t slices(scatter *c, const int64_t *us, int r, intnat axis,
   c->su = l->step[2][lr - 1];
   c->st = l->step[3][lr - 1];
   c->len = l->extent[lr - 1];
-  c->pieces = (c->len + UNIT_ROW - 1) / UNIT_ROW;
+  /* A narrow float's sums sort a run's positions once (narrow_run): where
+     they differ along the run, it is one slice. */
+  c->run_len = c->narrow && c->si != 0 ? 1 : UNIT_ROW;
+  c->pieces = (c->len + c->run_len - 1) / c->run_len;
   int64_t rows = 1;
   for (int i = 0; i < lr - 1; i++) rows *= l->extent[i];
   return rows * c->pieces;
@@ -1150,22 +1153,22 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
      updates; a dtype of under a byte shares its bytes across bins, so
      doesn't; a narrow float's rows of several slices sort them by target
      once a row (narrow_rows). Otherwise each thread takes a part of the
-     targets and walks every update of its run, but for a narrow float's
-     sums, whose scratch would grow with the parts. */
+     targets and walks every update of its run. */
   c.parts = 1;
   int few = units < threads && (c.m >= PART_UPDATES || c.narrow);
   int rows = few && c.narrow && c.len > 1 && c.si == 0;
   int sort = few && !rows && (c.len == 1 || c.si == 0) && a[0].bits >= 8;
-  if (few && !sort && !c.narrow) c.parts = (threads + units - 1) / units;
+  if (few && !sort && !rows) c.parts = (threads + units - 1) / units;
   /* Into's steps may part the loop's axes further; a row of one slice, or
      of positions stepping 0, stays one. */
   if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
   if ((uint64_t)c.parts > c.dim) c.parts = (int64_t)c.dim;
   if (!sort) copy_into(a, total);
-  /* A unit's scratch for a narrow float's sums: two words for each of its
-     positions and two for their sort, and three rows of floats; a row's
-     sort keeps those words once, and a word more for each run. */
-  int workers = units < threads ? (int)units : threads;
+  /* A worker's scratch for a narrow float's sums: two words for each of
+     its unit's positions and two for their sort, and three rows of floats;
+     a row's sort keeps those words once, and a word more for each run. */
+  int64_t jobs = units * c.parts;
+  int workers = jobs < threads ? (int)jobs : threads;
   if (c.narrow && !sort) c.each = (rows ? 0 : 32 * c.m) + 12 * UNIT_ROW;
   if (rows) {
     workers = threads;
@@ -1213,7 +1216,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   else if (sort)
     for (int64_t v = 0; v < units; v++) sorted(&c, v, threads);
   else
-    nx_cpu_job(units * c.parts, bytes, bytes, scatter_units, &c);
+    nx_cpu_job(jobs, bytes, bytes, scatter_units, &c);
   free(c.sums);
   free(c.order);
   free(c.pos);
