@@ -2777,6 +2777,18 @@ static void block(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
   memcpy(v, l, row);
 }
 
+/* The full blocks of one output's staged or computed terms that the
+   work's buffers hold at once: its terms in the carrier, and a program's
+   held values where they differ from it. */
+static int64_t staged_run(const plan *q, const work *wk) {
+  int64_t most = (int64_t)sizeof wk->terms / (BLOCK * q->w);
+  if (q->fused == NULL) return most;
+  int h = nx_cpu_prog_held(q->fused->prog, q->fused->k);
+  if (h == q->carrier) return most;
+  int64_t held = (int64_t)sizeof wk->held / (BLOCK * nx_cpu_width(h));
+  return held < most ? held : most;
+}
+
 /* The value of blocks [b0, b1) of the unit's outputs, of centers [c], by
    the counter, into [v]: the identity for no block. */
 static void blocks(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
@@ -2784,16 +2796,22 @@ static void blocks(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
   uint8_t(*stack)[ROW] = wk->tree, *run = wk->run;
   int top = 0;
   int64_t row = W * q->size;
-  /* A monoid's output's full blocks of contiguous terms take the table's
-     blocks, RUN at a time, whose lanes start from the identity. */
+  /* A monoid's output's full blocks take the table's blocks, whose lanes
+     start from the identity: RUN at a time of contiguous terms, or as many
+     as the work holds of staged or computed ones, staged in one call. On
+     one fudge core, Σ exp (x - m) over [64, 128256] float32 took 7.1 ms a
+     block at a time through the lanes, 5.7 so. */
   int contiguous = W == 1 && q->nr == 1 && q->rs[0] == 1;
-  int64_t full = q->f != NULL && !sourced(q) && !q->first && contiguous
-                     ? q->terms / BLOCK
-                     : 0;
+  int fits = sourced(q) ? W == 1 : contiguous;
+  int64_t full = q->f != NULL && !q->first && fits ? q->terms / BLOCK : 0;
+  int64_t most = sourced(q) ? staged_run(q, wk) : RUN;
   for (int64_t b = b0; b < b1;) {
     int64_t n = (b1 < full ? b1 : full) - b;
-    if (n > RUN) n = RUN;
-    if (n > 0)
+    if (n > most) n = most;
+    if (n > 0 && sourced(q)) {
+      stage_terms(q, wk, p, 0, 1, b * BLOCK, n * BLOCK, wk->terms);
+      q->f->blocks(wk->terms, n, q->id, run);
+    } else if (n > 0)
       q->f->blocks(at(q, p + b * BLOCK), n, q->id, run);
     else
       n = 1;

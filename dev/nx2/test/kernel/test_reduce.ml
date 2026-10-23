@@ -1314,6 +1314,11 @@ let law_into (b : Support.backend) (c, d) =
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   cover "several blocks" (per > 1024);
   cover "a scan of several chunks" (c.scan && per > 4096);
+  (* An output's full blocks staged several at once. *)
+  let r = Array.length s in
+  cover "several full blocks of a narrow output's terms in a row"
+    (staged x && (not c.scan) && r > 0 && Array.mem (r - 1) c.axes
+     && per >= 2048);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
@@ -3987,6 +3992,11 @@ let law_fused (b : Support.backend) c =
   cover "several blocks of terms" (terms > 1024);
   let r = Array.length s in
   let side = r > 1 && not (Array.mem (r - 1) c.axes) in
+  (* A monoid's full blocks of one output's computed terms, several
+     computed at once. *)
+  let monoid = match c.red with Monoid _ -> true | _ -> false in
+  cover "several full blocks of an output's terms in a row"
+    (monoid && (not complex) && (not c.scan) && (not side) && terms >= 2048);
   let split =
     Array.exists (fun a -> a + 1 < r && not (Array.mem (a + 1) c.axes)
                            && Array.exists (fun b -> b > a + 1) c.axes) c.axes
