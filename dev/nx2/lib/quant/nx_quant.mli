@@ -170,6 +170,12 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     broadcast as {!Nx.matmul}'s, and the result is [[| …; m; n |]], or
     [[| …; n |]] for a vector.
 
+    An [Mxfp4] weight applied to a float32, bfloat16 or float16 [x], where
+    every device of each placement holds all of its value, is read where it
+    lies: the product decodes each block as it sums it and stores no decoded
+    weight. Any other product first decodes [w] as {!dequant} does, at [x]'s
+    dtype or at float32.
+
     Raises [Invalid_argument] if [x] is 0-d, if [x]'s last axis is not [k], or
     if the batch axes do not broadcast. *)
 

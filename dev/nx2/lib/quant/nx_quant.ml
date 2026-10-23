@@ -349,13 +349,103 @@ let exact (type b) (dt : (float, b) Nx.dtype) w =
   | Nx.Dtype.Bfloat16, (Mxfp4 _ | Mxfp4_blocks _) -> true
   | _ -> false
 
+(* Whether every device of [x]'s placement holds all of [x]. *)
+let whole x =
+  match Nx.placement x with
+  | None -> true
+  | Some p ->
+      let s = Nx.Placement.devices p in
+      Nx.Placement.equal p (Nx.Placement.on s)
+      || List.exists
+           (fun d -> Nx.Placement.equal p (Nx.Placement.device s d))
+           (Nx.rigs s)
+
+(* Whether [x]'s dtype sums at float32 with float32 operands. *)
+let at_float32 (type b d) (x : (float, b, d) Nx.t) =
+  match Nx.dtype x with
+  | Nx.Dtype.Float32 | Nx.Dtype.Bfloat16 | Nx.Dtype.Float16 -> true
+  | _ -> false
+
+(* [scaled ~by x codes scales] is the product of [x], [[| …; m; k |]] or
+   [[| k |]], with the MXFP4 weight of [codes] and [scales], [[| …; n; k |]],
+   in one contraction that reads the codes as float4 values and the scales as
+   their blocks' exponents: each element of the weight enters the sum as its
+   value, exact at float32. Its axes are planned as [Nx.matmul] plans them,
+   so that it sums in the order, and gives the bits, of [x] by the decoded
+   weight transposed: a leading axis is a batch axis where both operands hold
+   the result's extent, else a free axis of the operand that holds it, from
+   which a unit axis of the other drops. *)
+let scaled ~by x codes scales =
+  let ws = shape (Mxfp4 { codes; scales }) and xs = Nx.shape x in
+  let wr = Array.length ws and xr = Array.length xs in
+  let k = ws.(wr - 1) and n = ws.(wr - 2) in
+  let lead_w = Array.sub ws 0 (wr - 2) in
+  let lead_x = if xr <= 2 then [||] else Array.sub xs 0 (xr - 2) in
+  let lead = Nx.broadcast_shapes [ lead_x; lead_w ] in
+  let l = Array.length lead in
+  let holds s i =
+    let j = i - (l - Array.length s) in
+    j >= 0 && s.(j) = lead.(i)
+  in
+  let leads p = List.filter p (List.init l Fun.id) in
+  let x_lead = leads (holds lead_x) in
+  let w_lead = leads (fun i -> holds lead_w i || not (holds lead_x i)) in
+  let both = List.filter (fun i -> List.mem i w_lead) x_lead in
+  let only ax = List.filter (fun i -> not (List.mem i both)) ax in
+  let index ax i = Option.get (List.find_index (Int.equal i) ax) in
+  let extents ax last = Array.of_list (List.map (Array.get lead) ax @ last) in
+  let m = if xr = 1 then [] else [ xs.(xr - 2) ] in
+  let a = Nx.reshape (extents x_lead (m @ [ k ])) x in
+  let b =
+    Nx.reshape (extents w_lead [ n; k ]) (Nx.bitcast Nx.float4_e2m1fn codes)
+  in
+  let s = Nx.reshape (extents w_lead [ n; k / mxfp4_group ]) scales in
+  let batch =
+    Iarray.of_list (List.map (fun i -> (index x_lead i, index w_lead i)) both)
+  in
+  let contracting = Iarray.of_list [ (Nx.ndim a - 1, Nx.ndim b - 1) ] in
+  let y =
+    Nx.Prim.eval ~by
+      (Contract
+         {
+           order = Nx.Prim.contract_order ~batch ~contracting a b;
+           batch;
+           contracting;
+           acc = Nx.Dtype.Any Nx.float32;
+           out = Nx.dtype x;
+           a;
+           b;
+           init = None;
+           a_scale = None;
+           b_scale = Some (Exponent s);
+           segments = None;
+         })
+  in
+  (* The kernel's axes are the batch axes, x's free axes and row, then w's
+     free axes and column, the result's the leading axes in order, the row and
+     the column: the leading axes are named by their number, the row [l] and
+     the column [l + 1]. *)
+  let row = if xr = 1 then [] else [ l ] in
+  let kernel = both @ only x_lead @ row @ only w_lead @ [ l + 1 ] in
+  let result = List.init l Fun.id @ row @ [ l + 1 ] in
+  if kernel = result then y
+  else Nx.transpose ~axes:(List.map (index kernel) result) y
+
 let apply w x =
   check_input (shape w) (Nx.shape x);
   let dt = Nx.dtype x in
-  if exact dt w then Nx.matmul x (Nx.matrix_transpose (dequant dt w))
-  else
-    Nx.cast dt
-      (Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose (values w)))
+  match w with
+  | Mxfp4 { codes; scales }
+    when at_float32 x && whole x && whole codes && whole scales ->
+      if exact dt w then scaled ~by:"Nx_quant.apply" x codes scales
+      else
+        Nx.cast dt
+          (scaled ~by:"Nx_quant.apply" (Nx.cast Nx.float32 x) codes scales)
+  | _ ->
+      if exact dt w then Nx.matmul x (Nx.matrix_transpose (dequant dt w))
+      else
+        Nx.cast dt
+          (Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose (values w)))
 
 (* [map f w] is [w] with [f] of each part. *)
 let map f = function
