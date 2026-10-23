@@ -1022,6 +1022,46 @@ let test_several_free () =
   let y = Nx.slice [ A; A ] (Nx.donate c) in
   equal ~msg:"the operand itself" (array float_exact) original (elements y)
 
+(* An eager call that moves a donation before its operations read it frees
+   the donor's memory once it returns, as one operation does: the views it
+   made of that memory die with the call. A complex value's real part,
+   reshaped to its assembly; an einsum's grouped operand, reshaped to its
+   names; a key a permutation bitcasts to its words. Each leaves at least
+   half its donor's bytes less held than the same call undonated. *)
+let test_views_free () =
+  let left make f =
+    let run () =
+      let xs = make () in
+      let before = settled () in
+      let y = f xs in
+      Rig.free_cache device;
+      (xs, y, Rig.allocated device - before)
+    in
+    ignore (run ());
+    let _, _, grew = run () in
+    grew
+  in
+  let freed ~msg ~bytes make f =
+    let kept = left make (f Fun.id) in
+    let given = left make (f Nx.donate) in
+    less ~msg int ~than:(kept - (bytes / 2)) given
+  in
+  let n = rows * width in
+  freed ~msg:"the complex value's real part" ~bytes:(4 * n)
+    (fun () -> (cache (), cache ()))
+    (fun d (re, im) -> Nx.complex Nx.complex64 ~re:(d re) ~im);
+  let p = Nx.Pattern.v "(i j) k, k l, l m -> i j m | k l" in
+  let ones = on_mem [| width; 1 |] (Array.make width 1.) in
+  let two = on_mem [| 1; 1 |] [| 2. |] in
+  freed ~msg:"the einsum's grouped operand" ~bytes:size cache (fun d c ->
+      Nx.einsum ~sizes:[ ("i", 2) ] p [ d c; ones; two ]);
+  let keys = 16384 in
+  let words () =
+    Nx.cast Nx.int32 (on_mem [| keys; 2 |] (Array.init (2 * keys) Float.of_int))
+  in
+  freed ~msg:"the permutation's key" ~bytes:(8 * keys) words (fun d t ->
+      Nx.Rng.permutation ~key:(Nx.Rng.of_tensor (d t)) 1)
+
 (* A Values rule may keep the arrays it receives, as a tape keeps a
    derivative's primals. An eager call that reads a donation in several
    operations, one of which the rule receives beside a traced value, leaves
@@ -2637,6 +2677,7 @@ let () =
                 donor" test_extent_elsewhere;
              test "an eager call of several operations frees its donor"
                test_several_free;
+             test "an eager call frees a donor it moved" test_views_free;
              test "an eager call leaves the arrays a rule kept"
                test_kept_by_rule;
              law_scatter_bits;
