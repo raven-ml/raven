@@ -440,12 +440,12 @@ end
     A destination shares no byte with an operand, except one it is identical
     to ({!Nx_array.door}) that the kernel reads only at the result's own index:
     a [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
-    [assemble]'s first piece where its region is the whole result. A kernel reads such an operand at an index before it
-    writes there, so the result is the one a fresh destination receives. The
-    door refuses an operand that shares a byte with a destination without
-    being identical to it; an identical operand the kernel reads at other
-    indices, as a gather's source or a contraction's [a] and [b], is the
-    caller's error.
+    [assemble]'s first piece where its region is the whole result. A kernel
+    reads such an operand at an index before it writes there, so the result
+    is the one a fresh destination receives. The door refuses an operand that
+    shares a byte with a destination without being identical to it; an
+    identical operand the kernel reads at other indices, as a gather's source
+    or a contraction's [a] and [b], is the caller's error.
 
     A kernel claims its destinations and operands for the extent of its call
     through a door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door}
@@ -501,9 +501,9 @@ module type S = sig
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
-      [dsts.(k)], of that output's dtype. It is the one elementwise kernel:
-      one kind over operands is the program {!Prog.of_node} makes, which a
-      library recognises by {!Prog.single}. *)
+      [dsts.(k)], of that output's dtype. It is the one elementwise kernel.
+      A kind over operands is the program {!Prog.of_node} makes of it, which
+      {!Prog.single} recognises. *)
 
   val reduce :
     Prog.t ->
