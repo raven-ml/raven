@@ -4,10 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx's activations and its moving average: sigmoid and softplus within their
-   stated ulps of mpmath's values, softmax, log_softmax and rms_norm against
-   their definitions computed in float64, rms_norm against the composition
-   its doc names, ewma against its recurrence and its
-   prefix law, and the narrow floats at float32, rounded once. *)
+   stated ulps of mpmath's values, softmax and log_softmax against their
+   definitions computed in float64, rms_norm against its definition
+   computed to twice float64's digits and the composition its doc names,
+   ewma against its recurrence and its prefix law, and the narrow floats
+   at float32, rounded once. *)
 
 open Windtrap
 module A = Nx_array
@@ -761,11 +762,49 @@ let test_softmax_cases () =
 
 (* RMS norm *)
 
-(* A lane of [n] values in float64, by the definition. *)
+(* [a + b] as a float64 and its rounding error. *)
+let two_sum a b =
+  let s = a +. b in
+  let v = s -. a in
+  (s, (a -. (s -. v)) +. (b -. v))
+
+(* [a + b] as [two_sum], for [|a| >= |b|]. *)
+let fast_two_sum a b =
+  let s = a +. b in
+  (s, b -. (s -. a))
+
+(* A lane of [n] values by the definition, each a pair [hi + lo] within
+   about [n² 2^-106] of the exact value, relatively, far below either
+   format's tolerance: the squares and their sum compensated, then the
+   mean, [eps], the root and the quotient carried to twice float64's
+   digits. *)
 let lane_rms eps xs =
   let n = Float.of_int (Array.length xs) in
-  let ms = Array.fold_left (fun s x -> s +. (x *. x)) 0. xs /. n in
-  Array.map (fun x -> x /. Float.sqrt (ms +. eps)) xs
+  let hi = ref 0. and lo = ref 0. in
+  Array.iter
+    (fun x ->
+      let p = x *. x in
+      let s, e = two_sum !hi p in
+      hi := s;
+      lo := !lo +. e +. Float.fma x x (-.p))
+    xs;
+  let s, l = fast_two_sum !hi !lo in
+  let q = s /. n in
+  let m, ml = fast_two_sum q ((Float.fma (-.q) n s +. l) /. n) in
+  let a, e = two_sum m eps in
+  let a, al = fast_two_sum a (e +. ml) in
+  let r = Float.sqrt a in
+  let rh, rl =
+    if a = 0. then (0., 0.)
+    else fast_two_sum r ((Float.fma (-.r) r a +. al) /. (2. *. r))
+  in
+  Array.map
+    (fun x ->
+      if rh = 0. then (x /. 0., 0.)
+      else
+        let q = x /. rh in
+        fast_two_sum q ((Float.fma (-.q) rh x -. (q *. rl)) /. rh))
+    xs
 
 (* Lanes along the last axis of a few to several blocks of terms, each
    drawn often; values of either sign, zeros of both. *)
@@ -801,22 +840,28 @@ let covers_rms (s, _, eps) =
   cover "several full blocks a lane" (k >= 2048);
   cover "no eps" (eps = 0.)
 
-(* Within [((n + 7) / 2) u] of the definition, relatively: the squares'
-   sum within [(n - 1) u], halved by the root, and four roundings after
-   it. *)
+(* Within [k u / (1 - 4 k u)] of the definition, relatively, for
+   [k = (n + 8) / 2], as its doc states; NaN exactly where the definition
+   is. *)
 let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps) as c) =
   covers_rms c;
   let xs = Array.map (D.of_float dt) xs in
   let y = Nx.to_array (Nx.rms_norm ~eps (value dt s xs)) in
   let n = s.(Array.length s - 1) in
-  let tol = (Float.of_int (n + 7) /. 2.) *. u in
+  let k = Float.of_int (n + 8) /. 2. in
+  let tol = k *. u /. (1. -. (4. *. k *. u)) in
+  let off y (hi, lo) =
+    if Float.is_nan y || Float.is_nan hi then Float.is_nan y <> Float.is_nan hi
+    else y <> hi && Float.abs (y -. hi -. lo) > (tol *. Float.abs hi) +. tiny
+  in
   List.iter
     (fun lane ->
       let want = lane_rms eps (Array.map (fun i -> xs.(i)) lane) in
       Array.iteri
         (fun j i ->
-          if Float.abs (y.(i) -. want.(j)) > (tol *. Float.abs want.(j)) +. tiny
-          then failf "rms_norm at %d: %h, by definition %h" i y.(i) want.(j))
+          if off y.(i) want.(j) then
+            failf "rms_norm at %d: %h, by definition %h" i y.(i)
+              (fst want.(j)))
         lane)
     (lanes s)
 
@@ -837,6 +882,10 @@ let test_rms_cases () =
   equal same_bits [| 0.; 0. |] (Nx.to_array (Nx.rms_norm (f32 [| 0.; 0. |])));
   equal same_bits [| 1.; -1. |]
     (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 3.; -3. |])));
+  equal same_bits [| nan; nan |]
+    (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 0.; 0. |])));
+  equal same_bits [| infinity |]
+    (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 1e-30 |])));
   equal (array int) [| 0; 3 |]
     (Nx.shape (Nx.rms_norm (Nx.zeros Nx.float32 [| 0; 3 |])));
   let x =
