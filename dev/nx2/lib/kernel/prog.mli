@@ -119,6 +119,30 @@ type op3 =
       (** The product of the first two plus the third, rounded once; wrapping
           on integers. *)
 
+(** {1:codes Codes}
+
+    Each kind has a {e code}, the number [nx_prog.h] gives it among the kinds
+    of its arity. The codes of an arity's [n] kinds are [0] to [n - 1], one
+    per kind. *)
+
+val code1 : op1 -> int
+(** [code1 k] is [k]'s code, below {!kinds1}. *)
+
+val code2 : op2 -> int
+(** [code2 k] is [k]'s code, below {!kinds2}. *)
+
+val code3 : op3 -> int
+(** [code3 k] is [k]'s code, below {!kinds3}. *)
+
+val kinds1 : int
+(** [kinds1] is the number of kinds of one operand. *)
+
+val kinds2 : int
+(** [kinds2] is the number of kinds of two operands. *)
+
+val kinds3 : int
+(** [kinds3] is the number of kinds of three operands. *)
+
 (** {1:domains Domains}
 
     Where each kind is defined. Every dtype has one order: [false < true];

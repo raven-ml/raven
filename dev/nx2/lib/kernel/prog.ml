@@ -560,6 +560,72 @@ let op2s =
 
 let op3s = [| Where; Fma |]
 
+(* Each kind's code, its index in [op1s], [op2s] or [op3s]: [op1s.(code1 k)]
+   is [k]. *)
+let unary_code : unary -> int = function
+  | Neg -> 0
+  | Recip -> 1
+  | Abs -> 2
+  | Sign -> 3
+  | Sqrt -> 4
+  | Exp -> 5
+  | Exp2 -> 6
+  | Log -> 7
+  | Log2 -> 8
+  | Log1p -> 9
+  | Expm1 -> 10
+  | Sin -> 11
+  | Cos -> 12
+  | Tan -> 13
+  | Asin -> 14
+  | Acos -> 15
+  | Atan -> 16
+  | Sinh -> 17
+  | Cosh -> 18
+  | Tanh -> 19
+  | Asinh -> 20
+  | Acosh -> 21
+  | Atanh -> 22
+  | Erf -> 23
+  | Floor -> 24
+  | Ceil -> 25
+  | Round -> 26
+  | Trunc -> 27
+
+let code1 = function
+  | Copy -> 0
+  | Cast -> 1
+  | Bitcast -> 2
+  | Unary u -> 3 + unary_code u
+
+let binary_code : binary -> int = function
+  | Add -> 0
+  | Sub -> 1
+  | Mul -> 2
+  | Fdiv -> 3
+  | Idiv -> 4
+  | Mod -> 5
+  | Pow -> 6
+  | Atan2 -> 7
+  | Maximum -> 8
+  | Minimum -> 9
+  | And -> 10
+  | Or -> 11
+  | Xor -> 12
+  | Threefry -> 13
+
+let code2 = function
+  | Binary b -> binary_code b
+  | Compare Equal -> 14
+  | Compare Not_equal -> 15
+  | Compare Less -> 16
+  | Compare Less_equal -> 17
+
+let code3 = function Where -> 0 | Fma -> 1
+let kinds1 = Array.length op1s
+let kinds2 = Array.length op2s
+let kinds3 = Array.length op3s
+
 (* The dtype of code [c], which the walk read from a dtype. *)
 let dtype_of_code c = Option.get (D.of_code c)
 
