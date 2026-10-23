@@ -155,8 +155,11 @@ val rule : 'r prim -> Route.rule
     loop of no load has the rule of one load of its shape: each device of its
     placement computes its window of the loop. A contraction's scale is read
     at its operand's windows where a cut keeps its blocks whole, and whole
-    elsewhere; its segmented axes are read whole, and a scaled or segmented
-    contraction's contracting pairs too. *)
+    elsewhere; its segmented axes are read whole. A segmented contraction
+    is read whole along its contracting pairs, as is a scaled one unless
+    each scale's blocks merge with its operand's batch, free and
+    contracting axes ({!block_run}) and the run of a block of its contracted
+    extent divides {!contract_block} or that extent is at most one block. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over
@@ -297,6 +300,21 @@ val contract_shape :
     Raises [Invalid_argument] naming [by] where the pairs, the scales or the
     segments do not fit [a] and [b], [init] has another shape, or [acc] is a
     boolean or a float narrower than float32. *)
+
+val scale_shape : 'd scale -> int array
+(** [scale_shape s] is the shape of [s]'s array. *)
+
+val contract_block : int
+(** [contract_block] is [4096], the products of a contraction's block
+    ({!Nx_kernel.S.contract}). *)
+
+val block_run : int array -> int array -> int array -> int option
+(** [block_run s ss axes] is [Some r] where the axes [axes] of an operand of
+    shape [s], merged into one in order, leave each block of its scale of
+    shape [ss] [r] consecutive elements of that axis: [axes] hold one
+    element per block, then one axis of any blocks, then axes of one block.
+    It is [Some 1] where one of [axes] has no element, and [None] where
+    blocks do not merge so. *)
 
 val contract_order :
   batch:(int * int) iarray ->

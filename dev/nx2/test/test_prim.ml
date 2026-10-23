@@ -702,6 +702,91 @@ let orders =
                (on [| rows; 3 |]) (on [| 3; cols |])));
     ]
 
+(* Partials take a scaled contraction cut along its contracting pairs where
+   each scale's blocks merge with its operand's axes and a block of the
+   contracted extent lies in one of the contraction's blocks of 4096
+   products; they never take a segmented one. *)
+let partials =
+  let compute =
+    Testable.make
+      ~pp:(fun ppf c ->
+        Format.pp_print_string ppf
+          (match c with Route.Windows -> "windows" | Partials -> "partials"))
+      ~equal:( = )
+  in
+  let placed p x = Exec.run ~by:"t" (Value.Place (p, x)) in
+  let split axis = Devices.split ~by:"t" ~axis s2 in
+  let every = Devices.on s2 in
+  let codes shape =
+    let n = Array.fold_left ( * ) 1 shape in
+    placed every (value 0 (A.of_array D.Uint8 shape (Array.make n 127)))
+  in
+  (* [a] [[2; ks]] by [b] [[ks; 3]], cut along the first pair, [b] scaled by
+     codes of [blocks]. *)
+  let route ?segments ks blocks =
+    let r = Array.length ks in
+    let a = placed (split 1) (f32 (Array.append [| 2 |] ks)) in
+    let b = placed (split 0) (f32 (Array.append ks [| 3 |])) in
+    let contracting = Iarray.init r (fun i -> (i + 1, i)) in
+    let segments =
+      Option.map
+        (fun g : b Value.index Nx_kernel.segments ->
+          (* [Rows]' groups are [b]'s 3 columns. *)
+          let os =
+            match g with
+            | `Rows -> [| 0L; 1L; 1L; 2L |]
+            | `Contracting -> [| 0L; 8L |]
+          in
+          let offsets =
+            placed every
+              (value 0 (A.of_array D.Int64 [| Array.length os |] os))
+          in
+          match g with
+          | `Rows -> Rows { offsets; a_axis = 0; b_axis = r }
+          | `Contracting -> Contracting { offsets; pair = 0 })
+        segments
+    in
+    let b_scale = Option.map (fun s -> Value.Exponent (codes s)) blocks in
+    let op =
+      Value.Contract
+        {
+          order = Lane;
+          batch = [||];
+          contracting;
+          acc = D.Any D.Float32;
+          out = D.Float32;
+          a;
+          b;
+          init = None;
+          a_scale = None;
+          b_scale;
+          segments;
+        }
+    in
+    match (Prim.route ~by:"t" op).route with
+    | Some r -> r.compute
+    | None -> fail "a contraction of no route"
+  in
+  group "partials"
+    [
+      cases "a scaled contraction cut along its pairs"
+        ~name:(fun (n, _, _, _) -> n)
+        [
+          ("unscaled", [| 64 |], None, Route.Partials);
+          ("blocks of 32", [| 64 |], Some [| 2; 3 |], Partials);
+          ("a block of 64, all its terms", [| 64 |], Some [| 1; 3 |], Partials);
+          ("blocks of 4096", [| 8192 |], Some [| 2; 3 |], Partials);
+          ("blocks of 8192", [| 16384 |], Some [| 2; 3 |], Windows);
+          ("blocks across two pairs", [| 8; 4 |], Some [| 4; 2; 3 |], Windows);
+          ("blocks of a second pair", [| 8; 4 |], Some [| 8; 2; 3 |], Partials);
+        ]
+        (fun (_, ks, blocks, want) -> equal compute want (route ks blocks));
+      cases "a segmented contraction cut along its pairs"
+        ~name:(fun (n, _) -> n)
+        [ ("rows", `Rows); ("contracting", `Contracting) ]
+        (fun (_, g) -> equal compute Windows (route ~segments:g [| 64 |] None));
+    ]
+
 let operations =
   group "operations"
     [
@@ -750,4 +835,13 @@ let operations =
 let () =
   exit
     (run "nx prim"
-       [ maps; movements; bitcasts; others; contractions; orders; operations ])
+       [
+         maps;
+         movements;
+         bitcasts;
+         others;
+         contractions;
+         partials;
+         orders;
+         operations;
+       ])
