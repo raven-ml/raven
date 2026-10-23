@@ -1641,7 +1641,13 @@ type loaded =
 
 (* A reduction or scan of a padded load: the operand, its padding and its
    fill's bits, and what it reads. *)
-type padded = { x : A.any; fill : string; pad : Nx_kernel.pad; loaded : loaded }
+type padded = {
+  x : A.any;
+  view : view;
+  fill : string;
+  pad : Nx_kernel.pad;
+  loaded : loaded;
+}
 
 let pp_padded ppf p =
   let pp_window ppf (w : M.window) =
@@ -1652,6 +1658,7 @@ let pp_padded ppf p =
     (Iarray.to_array p.pad.interior)
     (Format.pp_print_list pp_window)
     (Iarray.to_list p.pad.windows) pp_ints (shape_of p.x);
+  Format.fprintf ppf "(%s) " (String.concat ", " (view_names p.view));
   match p.loaded with
   | Reads c -> pp_case ppf c
   | Refused r ->
@@ -1778,18 +1785,19 @@ let refuses ~scan monoid axes load =
 
 (* The reduction or scan by [monoid] along [axes] of an operand of dtype
    [d] and shape [s] drawn from [seed], loaded as [pad] with [fill]. *)
-let padded ~scan d monoid s pad fill axes seed =
+let padded ?view ~scan d monoid s pad fill axes seed =
   let r = Array.length s in
   let plain =
     { perm = Array.init r Fun.id; stepped = false; reversed = None; broadcast = false }
   in
-  let x = operand d s plain ~specials:20 seed in
+  let view = Option.value view ~default:plain in
+  let x = operand d s view ~specials:20 seed in
   let loaded =
     if refuses ~scan monoid axes (padded_load x fill pad) then
       Refused { scan; monoid; axes; read = unchecked s pad }
     else Reads { scan; monoid; axes; x = pad_array x fill pad; views = [] }
   in
-  { x; fill; pad; loaded }
+  { x; view; fill; pad; loaded }
 
 let padded_case =
   Gen.with_pp pp_padded
@@ -1800,6 +1808,18 @@ let padded_case =
      in
      let* s = array ~size:(int_range 1 3) (int_range 0 6) in
      let* pad = pad_of s in
+     (* One operand in three broadcast along axis 0, which half of them
+        leave unpadded: drawn freely that is one case in a hundred. *)
+     let* view = view_of (Array.length s) in
+     let* broadcast = frequency [ (2, constant false); (1, constant true) ] in
+     let* alone = bool in
+     let view = { view with broadcast } in
+     let pad =
+       if not (broadcast && alone) then pad
+       else
+         let zero a = Iarray.mapi (fun i e -> if i = 0 then 0 else e) a in
+         { pad with lo = zero pad.lo; hi = zero pad.hi; interior = zero pad.interior }
+     in
      let* fill = of_list (fills d) in
      let* seed = int in
      let lr = Array.length (unchecked s pad) in
@@ -1809,7 +1829,7 @@ let padded_case =
          let+ keep = array ~size:(constant lr) bool in
          Array.of_list (List.filter (fun i -> keep.(i)) (List.init lr Fun.id))
      in
-     padded ~scan d monoid s pad fill axes seed)
+     padded ~view ~scan d monoid s pad fill axes seed)
 
 (* One padded load of each regime the law covers, float32 filled with
    one. *)
@@ -1854,6 +1874,9 @@ let law_padded (b : Support.backend) p =
   cover "windows" (pad.windows <> [||]);
   cover "cropped" (Iarray.exists (fun l -> l < 0) pad.lo);
   cover "interior" (Iarray.exists (fun i -> i > 0) pad.interior);
+  cover "a broadcast axis the padding leaves alone"
+    (p.view.broadcast && s.(0) > 1 && Iarray.get pad.lo 0 = 0
+    && Iarray.get pad.hi 0 = 0 && Iarray.get pad.interior 0 = 0);
   match p.loaded with
   | Reads c ->
       let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
