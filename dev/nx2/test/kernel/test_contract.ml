@@ -842,13 +842,13 @@ let operands c = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init)
 
 (* [k]'s contraction of [c] into [dst], with the operands [a], [b] and
    [init] in place of [c]'s. *)
-let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) a b init =
+let contract ?sa ?sb (module K : Nx_kernel.S) c ~dst:(A.Any d) a b init =
   let init = Option.map (A.expect (A.dtype d)) init in
   K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
     ~contracting:(Iarray.of_array c.contracting) ~segments:None ~acc:c.acc
     ~dst:d ~init
-    { array = a; scale = None }
-    { array = b; scale = None }
+    { array = a; scale = sa }
+    { array = b; scale = sb }
 
 (* Whether nx_cpu.mli says nx.cpu computes [c]: an acc it computes in, of
    operands of any dtype, into any result, at any layout. *)
@@ -1017,14 +1017,22 @@ let covers c =
   cover "a batch of several runs over 512 KiB of operands or more"
     (rb > 1 && batch * ((m * k) + (k * n) + (m * n)) * 4 >= 512 * 1024)
 
+(* A scale on [b]'s device. *)
+let scale_on b : Nx_kernel.scale -> Nx_kernel.scale = function
+  | Exponent x -> Exponent (A.expect D.Uint8 (on b (A.Any x)))
+  | Value x ->
+      let (A.Any y) = on b (A.Any x) in
+      Value y
+
 (* The kernels' result on [b]'s device, read back where the host reads it;
    [None] if they declined. *)
-let run (b : Support.backend) c =
+let run ?sa ?sb (b : Support.backend) c =
   let y, _, _ = sizes c in
   let (D.Any out) = c.out in
   let dst = A.Any (A.create b.device out y) in
   let init = Option.map (on b) c.init in
-  match contract b.kernels c ~dst (on b c.a) (on b c.b) init with
+  let sa = Option.map (scale_on b) sa and sb = Option.map (scale_on b) sb in
+  match contract ?sa ?sb b.kernels c ~dst (on b c.a) (on b c.b) init with
   | A.Done -> Some (host dst)
   | A.Declined -> None
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
@@ -1721,6 +1729,329 @@ let laws (b : Support.backend) =
         (fun () -> b.around (test_misfits b));
     ]
 
+(* Scales *)
+
+(* How a scale's array lies: C-contiguous, stepped along its last axis, or
+   broadcast along its first. *)
+type lies = Contiguous | Stepped | Broadcast
+
+(* A scale drawn for an operand: [Exponent] codes, or [Value]s of [kind];
+   its extents; how it lies; its values from [seed], led by the specials
+   where [specials]. *)
+type spec = {
+  kind : D.any option;
+  extents : int array;
+  lies : lies;
+  specials : bool;
+  seed : int;
+}
+
+let pp_spec ppf s =
+  let kind ppf = function
+    | None -> Format.pp_print_string ppf "Exponent"
+    | Some d -> Format.fprintf ppf "Value %a" pp_dtype d
+  in
+  let lies = function
+    | Contiguous -> "contiguous"
+    | Stepped -> "stepped"
+    | Broadcast -> "broadcast"
+  in
+  Format.fprintf ppf "%a %a %s%s (seed %d)" kind s.kind pp_ints s.extents
+    (lies s.lies)
+    (if s.specials then " with specials" else "")
+    s.seed
+
+let pp_scaled ppf (c, sa, sb) =
+  let spec ppf = function
+    | None -> Format.pp_print_string ppf "none"
+    | Some s -> pp_spec ppf s
+  in
+  Format.fprintf ppf "%a@ a scale %a@ b scale %a" pp_case c spec sa spec sb
+
+(* The codes at a format's edges: the smallest scale, 1, the largest two,
+   NaN. *)
+let codes = [| 0; 127; 253; 254; 255 |]
+
+(* [s]'s scale. Codes are near 1, values as [value] draws them; with
+   [specials], led by each code of [codes] or by NaN. *)
+let scale_of s : Nx_kernel.scale =
+  let r = Random.State.make [| s.seed |] in
+  let e = s.extents and rank = Array.length s.extents in
+  let stored =
+    match s.lies with
+    | Stepped when rank > 0 ->
+        Array.mapi (fun i x -> if i = rank - 1 then 2 * x else x) e
+    | Broadcast when rank > 0 -> Array.mapi (fun i x -> if i = 0 then 1 else x) e
+    | _ -> e
+  in
+  let view (A.Any x) =
+    let move m x = Option.get (A.move m x) in
+    let step i x =
+      if i = rank - 1 then { M.start = 1; count = x; step = 2 }
+      else { M.start = 0; count = x; step = 1 }
+    in
+    match s.lies with
+    | Stepped when rank > 0 ->
+        A.Any (move (M.Slice (Iarray.of_array (Array.mapi step e))) x)
+    | Broadcast when rank > 0 -> A.Any (move (M.Broadcast (Iarray.of_array e)) x)
+    | _ -> A.Any x
+  in
+  let n = total stored in
+  match s.kind with
+  | None ->
+      let code i =
+        if s.specials && i < Array.length codes then codes.(i)
+        else if Random.State.int r 4 = 0 then
+          codes.(Random.State.int r (Array.length codes))
+        else 117 + Random.State.int r 21
+      in
+      Exponent
+        (A.expect D.Uint8 (view (A.Any (A.of_array D.Uint8 stored (Array.init n code)))))
+  | Some dt ->
+      let v i = if s.specials && i = 0 then nan else value dt r in
+      let (A.Any x) =
+        view (cast_to dt (A.Any (A.of_array D.Float64 stored (Array.init n v))))
+      in
+      Value x
+
+let scale_extents : Nx_kernel.scale -> int array = function
+  | Exponent x -> L.shape (A.layout x)
+  | Value x -> L.shape (A.layout x)
+
+(* A scale's values in C order of its indices, read into [acc]. *)
+let decoded acc : Nx_kernel.scale -> float array = function
+  | Exponent x ->
+      Array.map
+        (fun e -> if e = 255 then nan else Float.ldexp 1. (e - 127))
+        (A.to_array x)
+  | Value x -> A.to_array (to64 (cast_to acc (A.Any x)))
+
+(* [x] read into [acc], each element times its block's scale of [s] rounded
+   once in [acc], C-contiguous in [acc]: what a scaled contraction reads;
+   and whether a product of finite factors overflowed. *)
+let host_scaled acc x s =
+  let shape = shape_of x and se = scale_extents s in
+  let xs = A.to_array (to64 (cast_to acc x)) and ss = decoded acc s in
+  let r = Array.length shape in
+  let ratio = Array.init r (fun i -> if se.(i) = 0 then 1 else shape.(i) / se.(i)) in
+  let stride = Array.make r 1 in
+  for i = r - 2 downto 0 do
+    stride.(i) <- stride.(i + 1) * se.(i + 1)
+  done;
+  let f32 = acc = D.Any D.Float32 and over = ref false in
+  let scaled flat v =
+    let q = ref flat and at = ref 0 in
+    for i = r - 1 downto 0 do
+      at := !at + (!q mod shape.(i) / ratio.(i) * stride.(i));
+      q := !q / shape.(i)
+    done;
+    let y = v *. ss.(!at) in
+    let y = if f32 then round32 y else y in
+    if Float.is_finite v && Float.is_finite ss.(!at) && not (Float.is_finite y)
+    then over := true;
+    y
+  in
+  let ys = Array.mapi scaled xs in
+  (cast_to acc (A.Any (A.of_array D.Float64 shape ys)), !over)
+
+(* A scale for an operand of shape [s]: along each axis a ratio of 1, the
+   whole axis, or a divisor of it. *)
+let spec_for s =
+  let open Gen in
+  let axis e =
+    let ds = List.filter (fun d -> d < e && e mod d = 0) [ 2; 3; 4; 32 ] in
+    if e = 0 then of_list [ 0; 1 ]
+    else
+      frequency
+        ([ (3, constant e); (2, constant 1) ]
+        @ if ds = [] then [] else [ (3, map (fun d -> e / d) (of_list ds)) ])
+  in
+  let rec axes = function
+    | [] -> constant []
+    | e :: es ->
+        let* x = axis e in
+        let+ xs = axes es in
+        x :: xs
+  in
+  let* extents = axes (Array.to_list s) in
+  let* kind =
+    frequency
+      [
+        (1, constant None);
+        (1, map Option.some (of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Float16; Any Bfloat16 ]));
+      ]
+  in
+  let* lies = of_list [ Contiguous; Contiguous; Stepped; Broadcast ] in
+  let* specials = bool in
+  let+ seed = int in
+  { kind; extents = Array.of_list extents; lies; specials; seed }
+
+(* [c] with a scale on [a], on [b] or on both. *)
+let with_scales c =
+  let open Gen in
+  let* sa = spec_for (shape_of c.a) and+ sb = spec_for (shape_of c.b) in
+  let+ which = of_list [ `A; `B; `Both; `Both ] in
+  match which with
+  | `A -> (c, Some sa, None)
+  | `B -> (c, None, Some sb)
+  | `Both -> (c, Some sa, Some sb)
+
+(* Float cases of operands of any dtype, into acc or a narrow float. *)
+let scaled_cases =
+  let open Gen in
+  with_pp pp_scaled
+    (let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+     let* dts =
+       frequency
+         [ (2, constant (held acc)); (1, constant (others (held acc))) ]
+     in
+     let* out =
+       frequency [ (3, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype narrow) ]
+     in
+     let* c = case_of ~acc ~out ~dts () in
+     with_scales c)
+
+(* The ratio along a contraction of [k]: 32 where it divides [k], else
+   [k]'s largest divisor up to 64. *)
+let ratio_of k =
+  if k mod 32 = 0 then 32
+  else
+    let rec down d = if k mod d = 0 then d else down (d - 1) in
+    down (min k 64)
+
+(* Products either side of lane order's blocks of 1024 and nx's cut at
+   4096, in both orders and accs: a float32 [2; k] times bfloat16 [k; 3],
+   each scaled in blocks along k; and the cases whose groups make several
+   runs, scaled in 2-D blocks, stepped or broadcast. *)
+let scaled_examples =
+  let plain r =
+    let axes = Array.init r Fun.id in
+    { stepped = false; broadcast = false; stored = axes; perm = axes }
+  in
+  let spec ?(lies = Contiguous) kind extents seed =
+    Some { kind; extents; lies; specials = true; seed }
+  in
+  let along (order, acc) k =
+    let c =
+      make ~order ~acc ~out:acc ([||], [| 2 |], [| 3 |], [| k |])
+        (D.Any D.Float32, plain 2) (D.Any D.Bfloat16, plain 2) None k
+    in
+    let q = k / ratio_of k in
+    (c, spec (Some (D.Any D.Float16)) [| 2; q |] 1, spec None [| q; 3 |] 2)
+  in
+  let ks = [ 1; 1023; 1024; 1025; 4095; 4096; 4097 ] in
+  let pairs =
+    Nx_kernel.[ (Chain, D.Any D.Float32); (Lane, D.Any D.Float64);
+                (Lane, D.Any D.Float32); (Chain, D.Any D.Float64) ]
+  in
+  let several c =
+    let rb, rr, rc, rk = runs c in
+    rb > 1 || rr > 1 || rc > 1 || rk > 1
+  in
+  let blocks x =
+    Array.map
+      (fun e ->
+        match List.find_opt (fun d -> d < e && e mod d = 0) [ 2; 3; 4 ] with
+        | Some d -> e / d
+        | None -> e)
+      (shape_of x)
+  in
+  let runs_of i c =
+    let lies = if i mod 2 = 0 then Stepped else Broadcast in
+    (c, spec ~lies None (blocks c.a) i, spec ~lies (Some c.acc) (blocks c.b) i)
+  in
+  List.concat_map (fun p -> List.map (along p) ks) pairs
+  @ List.mapi runs_of
+      (List.filter several
+         (regimes (D.Any D.Float32) @ regimes (D.Any D.Float64)))
+
+let scaled_covers (c, sa, sb) =
+  cover "float32" (c.acc = D.Any D.Float32);
+  cover "float64" (c.acc = D.Any D.Float64);
+  cover "chain order" (c.order = Chain);
+  cover "lane order" (c.order = Lane);
+  let specs =
+    List.filter_map
+      (fun (x, s) -> Option.map (fun s -> (shape_of x, s)) s)
+      [ (c.a, sa); (c.b, sb) ]
+  in
+  let any f = List.exists f specs in
+  let axes f (x, s) = List.length (List.filter Fun.id (Array.to_list (Array.map2 f x s.extents))) in
+  cover "an Exponent scale" (any (fun (_, s) -> s.kind = None));
+  cover "a Value scale" (any (fun (_, s) -> s.kind <> None));
+  cover "a ratio of 1" (any (fun xs -> axes (fun e d -> e > 1 && d = e) xs > 0));
+  cover "a whole axis" (any (fun xs -> axes (fun e d -> e > 1 && d = 1) xs > 0));
+  cover "2-D blocks" (any (fun xs -> axes (fun e d -> e > 1 && d < e) xs >= 2));
+  cover "a stepped scale" (any (fun (_, s) -> s.lies = Stepped));
+  cover "a broadcast scale" (any (fun (_, s) -> s.lies = Broadcast));
+  cover "a transposed operand" (List.mem "permuted" c.views);
+  cover "a broadcast operand" (List.mem "broadcast" c.views);
+  let rb, rr, rc, rk = runs c in
+  cover "groups of several runs" (rb > 1 || rr > 1 || rc > 1 || rk > 1);
+  let _, k, _ = sizes c in
+  List.iter
+    (fun n -> cover (Printf.sprintf "%d products" n) (k = n))
+    [ 1; 1023; 1024; 1025; 4095; 4096; 4097 ];
+  let made = List.map (fun (_, s) -> (s, scale_of s)) specs in
+  let has_code e =
+    List.exists
+      (fun (_, sc) ->
+        match sc with
+        | Nx_kernel.Exponent x -> Array.mem e (A.to_array x)
+        | Value _ -> false)
+      made
+  in
+  Array.iter (fun e -> cover (Printf.sprintf "code %d" e) (has_code e)) codes;
+  cover "a NaN value"
+    (List.exists
+       (fun (_, sc) ->
+         match sc with
+         | Nx_kernel.Value _ -> Array.exists Float.is_nan (decoded c.acc sc)
+         | Exponent _ -> false)
+       made)
+
+(* A scaled contraction has the bits of the contraction of its operands
+   scaled on the host, each element rounded once into acc. *)
+let law_scaled b (c, sa, sb) =
+  scaled_covers (c, sa, sb);
+  let sa = Option.map scale_of sa and sb = Option.map scale_of sb in
+  let scaled x = function None -> (x, false) | Some s -> host_scaled c.acc x s in
+  let a, oa = scaled c.a sa and b', ob = scaled c.b sb in
+  cover "a product that overflows" (oa || ob);
+  match (run ?sa ?sb b c, run b { c with a; b = b' }) with
+  | Some y, Some y' ->
+      equal (list string) [] (differ_bits c.acc ~other:"host-scaled" y y')
+  | _ -> failf "nx.cpu declined a float contraction"
+
+(* Integer and complex cases with scales. *)
+let unscalable =
+  let open Gen in
+  with_pp pp_scaled
+    (let* acc =
+       of_list ~pp:pp_dtype
+         D.[ Any Int4; Any Int8; Any Int32; Any Int64; Any Complex64; Any Complex128 ]
+     in
+     let dts = if is_integer acc then integers else held acc in
+     let* c = case_of ~acc ~out:acc ~dts () in
+     with_scales c)
+
+(* nx.cpu declines a scale with an integer or complex acc, and writes
+   nothing. *)
+let law_unscalable b (c, sa, sb) =
+  cover "integer" (is_integer c.acc);
+  cover "complex" (is_complex c.acc);
+  let y, _, _ = sizes c in
+  let threes = A.Any (A.of_array D.Float64 y (Array.make (total y) 3.)) in
+  let dst = on b (cast_to c.out threes) in
+  let before = planes c.out (host dst) in
+  let init = Option.map (on b) c.init in
+  let sa = Option.map (fun s -> scale_on b (scale_of s)) sa in
+  let sb = Option.map (fun s -> scale_on b (scale_of s)) sb in
+  match contract ?sa ?sb b.kernels c ~dst (on b c.a) (on b c.b) init with
+  | A.Declined ->
+      equal (array (array float_exact)) before (planes c.out (host dst))
+  | r -> failf "contract answered %a" Nx_array_support.pp_answer r
+
 (* Guard pages *)
 
 (* A [m × k] by [k × n] product whose operands and dst each lie against an
@@ -1885,6 +2216,11 @@ let cpu (b : Support.backend) =
         (run (law_rounds_once b));
       prop "computes every contraction nx_cpu.mli lists"
         any_case (run (law_computes b));
+      prop ~examples:scaled_examples
+        "a scaled contraction has the bits of its operands scaled on the host"
+        scaled_cases (run (law_scaled b));
+      prop "declines scales in an integer or complex accumulator" unscalable
+        (run (law_unscalable b));
       prop ~count:500
         "reads and writes no byte past its operands and dst, whatever pages lie \
          beside them"

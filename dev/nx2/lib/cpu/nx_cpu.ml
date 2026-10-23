@@ -355,10 +355,10 @@ let contract_order ~rows ~columns ~depth : Nx_kernel.order =
   if rows > lane_most && columns > lane_most && outputs && not long then Chain
   else Lane
 
-(* [contract_c order ~batch ~contracting acc ~dst ~init a b] contracts [a]
-   and [b], with [init] if given, in [order] and the dtype of code [acc],
-   over the view C groups from the pairs on its stack
-   ([nx_contract_view_fill]). *)
+(* [contract_c order ~batch ~contracting acc ~dst ~init a b sa sb]
+   contracts [a] and [b], scaled by [sa] and [sb] and with [init] if given,
+   in [order] and the dtype of code [acc], over the view C groups from the
+   pairs on its stack ([nx_contract_view_fill]). *)
 external contract_c :
   Nx_kernel.order ->
   batch:(int * int) iarray ->
@@ -368,6 +368,8 @@ external contract_c :
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
   ('c, 'd) Nx_array.t ->
+  Nx_kernel.scale option ->
+  Nx_kernel.scale option ->
   Nx_array.answer = "nx_cpu_contract_byte" "nx_cpu_contract"
 
 (* An [acc] {!Nx_kernel.accumulates} refuses is the caller's error, refused
@@ -377,14 +379,15 @@ let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
   let (Nx_array.Dtype.Any dt) = acc in
   let (Nx_array.Any a) = oa.array in
   let (Nx_array.Any b) = ob.array in
+  let scaled = Option.is_some oa.scale || Option.is_some ob.scale in
+  let float = match acc with Any (Float32 | Float64) -> true | _ -> false in
   if not (Nx_kernel.accumulates dt) then Nx_array.Wrong_dtype
-  else if Option.is_some segments || Option.is_some oa.scale
-          || Option.is_some ob.scale
-  then Nx_array.Declined
+  else if Option.is_some segments || (scaled && not float) then
+    Nx_array.Declined
   else
     match
       contract_c order ~batch ~contracting (Nx_array.Dtype.code dt) ~dst
-        ~init a b
+        ~init a b oa.scale ob.scale
     with
     | Nx_array.Declined ->
         let init =
