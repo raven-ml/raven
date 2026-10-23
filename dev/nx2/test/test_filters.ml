@@ -43,7 +43,8 @@ let float_gen =
   let open Gen in
   frequency
     [
-      (1, map (fun i -> specials.(i)) (int_range 0 (Array.length specials - 1)));
+      ( 1,
+        map (fun i -> specials.(i)) (int_range 0 (Array.length specials - 1)) );
       (1, float_range (-8.) 8.);
     ]
 
@@ -190,7 +191,9 @@ let windows_gen =
 
 let pp_case pp_x ppf c =
   Format.fprintf ppf "%a, kernel %a, stride %s, %a" pp_x c.x pp_ints c.kernel
-    (match c.stride with None -> "default" | Some s -> Format.asprintf "%a" pp_ints s)
+    (match c.stride with
+    | None -> "default"
+    | Some s -> Format.asprintf "%a" pp_ints s)
     pp_view c.view
 
 let pp_value ppf x =
@@ -231,11 +234,16 @@ let cover_windows s c ~nan ~zeros =
   let along f = List.exists Fun.id (List.init k f) in
   cover "no filtered axis" (k = 0);
   cover "three filtered axes" (k = 3);
-  cover "a kernel extent of an axis's" (along (fun i -> c.kernel.(i) = s.(r - k + i)));
-  cover "a kernel extent past an axis's" (along (fun i -> c.kernel.(i) > s.(r - k + i)));
-  cover "one-element windows" (k > 0 && Array.for_all (fun e -> e = 1) c.kernel);
+  let extent i = s.(r - k + i) in
+  cover "a kernel extent of an axis's"
+    (along (fun i -> c.kernel.(i) = extent i));
+  cover "a kernel extent past an axis's"
+    (along (fun i -> c.kernel.(i) > extent i));
+  cover "one-element windows"
+    (k > 0 && Array.for_all (fun e -> e = 1) c.kernel);
   cover "overlapping windows" (along (fun i -> st.(i) < c.kernel.(i)));
-  cover "a stride past its kernel extent" (along (fun i -> st.(i) > c.kernel.(i)));
+  cover "a stride past its kernel extent"
+    (along (fun i -> st.(i) > c.kernel.(i)));
   cover "the stride defaulted" (c.stride = None);
   cover "an empty operand" (Array.mem 0 s);
   cover "a view" (c.view <> Plain);
@@ -282,12 +290,15 @@ let any_case =
 let fixed (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
   let n = Array.fold_left ( * ) 1 s in
   let byte i =
-    match dt with D.Bool -> Char.chr (i land 1) | _ -> Char.chr ((i * 37) land 0xff)
+    match dt with
+    | D.Bool -> Char.chr (i land 1)
+    | _ -> Char.chr ((i * 37) land 0xff)
   in
-  A.v dt (L.contiguous s) (Rig.Buffer.of_string (String.init (D.bytes dt n) byte))
+  let bytes = String.init (D.bytes dt n) byte in
+  A.v dt (L.contiguous s) (Rig.Buffer.of_string bytes)
 
-(* A float32 case of NaNs and signed zeros in windows, and one of each
-   dtype: every run reaches them. *)
+(* A float32 case of NaNs and signed zeros in windows, one of three
+   filtered axes, and one of each dtype: every run reaches them. *)
 let extreme_examples =
   let float32 xs s kernel stride =
     {
@@ -297,12 +308,20 @@ let extreme_examples =
   in
   [
     float32 [| 1.; Float.nan; -0.; 0.; -.Float.nan; 2. |] [| 6 |] [| 2 |] None;
-    float32 [| 0.; -0.; 3.; -0.; 0.; 5. |] [| 2; 3 |] [| 2; 2 |] (Some [| 1; 1 |]);
+    float32 [| 0.; -0.; 3.; -0.; 0.; 5. |] [| 2; 3 |] [| 2; 2 |]
+      (Some [| 1; 1 |]);
+    float32 (Array.init 24 Float.of_int) [| 2; 3; 4 |] [| 2; 2; 3 |]
+      (Some [| 1; 2; 1 |]);
   ]
   @ List.map
       (fun (D.Any dt) ->
         let a = fixed dt [| 3; 5 |] in
-        { x = Any (value a); kernel = [| 2; 2 |]; stride = Some [| 1; 2 |]; view = Plain })
+        {
+          x = Any (value a);
+          kernel = [| 2; 2 |];
+          stride = Some [| 1; 2 |];
+          view = Plain;
+        })
       D.all
 
 let law_extremes c =
@@ -319,7 +338,9 @@ let law_extremes c =
     let got = filter ~kernel_size:c.kernel ?stride:c.stride x in
     let want = reduce ~axes:last g in
     equal ~msg:(name ^ "'s shape") (array int) (Nx.shape want) (Nx.shape got);
-    equal ~msg:name (array int) (bits_of (host_array want)) (bits_of (host_array got))
+    equal ~msg:name (array int)
+      (bits_of (host_array want))
+      (bits_of (host_array got))
   in
   check "maximum_filter" Nx.maximum_filter (fun ~axes g -> Nx.max ~axes g);
   check "minimum_filter" Nx.minimum_filter (fun ~axes g -> Nx.min ~axes g)
@@ -354,9 +375,12 @@ let mean_examples =
       [| 2 |] None;
     case (F D.Float32) [| 0.; -0.; 3.; -0.; 0.; 5. |] [| 2; 3 |] [| 2; 2 |]
       (Some [| 1; 1 |]);
+    case (F D.Float32) (Array.init 24 Float.of_int) [| 2; 3; 4 |]
+      [| 2; 2; 3 |] (Some [| 1; 2; 1 |]);
   ]
   @ List.map
-      (fun d -> case d [| 1.; 2.; -0.5; 3.; 0.; -1. |] [| 6 |] [| 4 |] (Some [| 1 |]))
+      (fun d ->
+        case d [| 1.; 2.; -0.5; 3.; 0.; -1. |] [| 6 |] [| 4 |] (Some [| 1 |]))
       float_dtypes
 
 let law_mean c =
@@ -382,14 +406,24 @@ let test_errors () =
   in
   List.iter
     (fun (name, f) ->
-      names name (fun () -> ignore (f ~kernel_size:[| 1; 1; 1 |] ?stride:None x));
-      names name (fun () -> ignore (f ~kernel_size:[| 1; 1 |] ?stride:(Some [| 1 |]) x));
-      names name (fun () -> ignore (f ~kernel_size:[| 0; 1 |] ?stride:None x));
-      names name (fun () -> ignore (f ~kernel_size:[| 1 |] ?stride:(Some [| 0 |]) x)))
+      let raises kernel_size stride =
+        names name (fun () -> ignore (f ~kernel_size ?stride x))
+      in
+      raises [| 1; 1; 1 |] None;
+      raises [| 1; 1 |] (Some [| 1 |]);
+      raises [| 1; 1 |] (Some [| 1; 1; 1 |]);
+      raises [| 0; 1 |] None;
+      raises [| 1 |] (Some [| 0 |]))
     [
-      ("maximum_filter", fun ~kernel_size ?stride x -> Nx.maximum_filter ~kernel_size ?stride x);
-      ("minimum_filter", fun ~kernel_size ?stride x -> Nx.minimum_filter ~kernel_size ?stride x);
-      ("uniform_filter", fun ~kernel_size ?stride x -> Nx.uniform_filter ~kernel_size ?stride x);
+      ( "maximum_filter",
+        fun ~kernel_size ?stride x -> Nx.maximum_filter ~kernel_size ?stride x
+      );
+      ( "minimum_filter",
+        fun ~kernel_size ?stride x -> Nx.minimum_filter ~kernel_size ?stride x
+      );
+      ( "uniform_filter",
+        fun ~kernel_size ?stride x -> Nx.uniform_filter ~kernel_size ?stride x
+      );
     ]
 
 let () =
@@ -403,7 +437,9 @@ let () =
                any_case law_extremes;
              prop ~examples:mean_examples "uniform_filter is each window's mean"
                float_case law_mean;
-             test "a rank below the kernel's, or a kernel or stride below 1, raises"
+             test
+               "a rank below the kernel's, a stride of another length, or a \
+                kernel or stride below 1, raises"
                test_errors;
            ];
        ])

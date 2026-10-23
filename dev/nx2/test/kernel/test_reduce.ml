@@ -4196,7 +4196,8 @@ let product_dtypes =
     [
       (3, pair f32 f32); (3, pair f64 f64);
       (2, pair (D.Any D.Bfloat16) f32); (2, pair (D.Any D.Float16) f32);
-      (1, pair (D.Any D.Float8_e4m3fn) f32); (1, pair (D.Any D.Float8_e5m2) f32);
+      (1, pair (D.Any D.Float8_e4m3fn) f32);
+      (1, pair (D.Any D.Float8_e5m2) f32);
       (1, pair (D.Any D.Float4_e2m1fn) f32); (1, pair f64 f32);
       (1, pair f32 f64);
     ]
@@ -4246,16 +4247,18 @@ let product_of ?(first = false) ~same ~broadcast ldt pdt shape axes v lv
     if broadcast then broadcast_factor ldt shape axes lv ~specials (seed + 1)
     else product_operand ldt shape lv ~specials (seed + 1)
   in
-  let reads = if same then [| x |] else if first then [| y; x |] else [| x; y |] in
+  let reads =
+    if same then [| x |] else if first then [| y; x |] else [| x; y |]
+  in
   {
     ldt; pdt; pshape = shape; paxes = axes; same; pad = None;
     loads = Array.map plain_of reads; reads;
     pnames =
       view_names v
-      @ (match (broadcast, first) with
-        | true, true -> [ "a broadcast first factor" ]
-        | true, false -> [ "a broadcast factor" ]
-        | false, _ -> [])
+      @ (match (same, broadcast, first) with
+        | true, _, _ | false, false, _ -> []
+        | false, true, true -> [ "a broadcast first factor" ]
+        | false, true, false -> [ "a broadcast factor" ])
       @ (if specials > 0 then [ "specials" ] else []);
   }
 
@@ -4470,7 +4473,10 @@ let law_products (b : Support.backend) c =
 let test_zero_products (b : Support.backend) () =
   let s = [| 64; 9 |] in
   let x = A.Any (A.of_array D.Float32 s (Array.make (64 * 9) (-0.))) in
-  let row = A.of_array D.Float32 [| 1; 9 |] (Array.init 9 (fun i -> 0.5 +. Float.of_int i)) in
+  let row =
+    A.of_array D.Float32 [| 1; 9 |]
+      (Array.init 9 (fun i -> 0.5 +. Float.of_int i))
+  in
   let y = A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) row)) in
   let c =
     {
@@ -4480,7 +4486,9 @@ let test_zero_products (b : Support.backend) () =
     }
   in
   let prog = product_prog ~same:false f32 f32 in
-  let zero = bytes_of (A.Any (A.of_array D.Float32 [| 64 |] (Array.make 64 0.))) in
+  let zero =
+    bytes_of (A.Any (A.of_array D.Float32 [| 64 |] (Array.make 64 0.)))
+  in
   equal ~msg:"the job's threads" (list int) zero
     (sum_products b.kernels b c prog c.loads);
   equal ~msg:"one thread" (list int) zero
