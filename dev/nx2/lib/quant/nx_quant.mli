@@ -188,10 +188,15 @@ val apply_experts :
     whatever that row holds. [w] is [[| e; n; k |]], [ids] [[| s… |]] and [x]
     [[| s'…; k |]], [s'…] broadcasting to [s…]; the result is [[| s…; n |]].
 
-    Where {!apply} reads an [Mxfp4] [w] where it lies and [ids] lies whole on
-    each device, every position is summed in one contraction grouped by
-    expert, which needs kernels that compute a segmented block-scaled
-    contraction, as nx.cpu's do. Any other product, a cut [w]'s among them, is
+    Where [w] is [Mxfp4], [x] is float32, bfloat16 or float16, [ids] and
+    [x] lie whole on each device, and each part of [w] lies whole on each
+    device or split along [n] ({!Nx.Placement.split} [~axis:1]), every
+    position is summed in one contraction grouped by expert, which needs
+    kernels that compute a segmented block-scaled contraction, as nx.cpu's
+    do. Split along [n], each device sums its own columns over every
+    position, in the order of the whole, so the bits are those of [w] whole
+    on one device. Any other product, of a [w] cut along [k], along its
+    experts, or along [n] with copies, among them, is
 
     {[
     Nx.map_segments ~segments:e ids
@@ -199,8 +204,8 @@ val apply_experts :
       x
     ]}
 
-    So its bits depend on whether [w], [ids] and [x] lie whole: the two sums
-    may round differently, each within {!Nx.contract}'s bound.
+    So its bits depend on where [w], [ids] and [x] lie: the two sums may
+    round differently, each within {!Nx.contract}'s bound.
 
     Raises [Invalid_argument] if the grouped sum lies on a set whose kernels
     decline it, if [w] is not 3-d, if [x] does not have one axis
