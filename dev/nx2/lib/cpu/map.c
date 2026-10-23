@@ -864,12 +864,6 @@ int nx_cpu_prog_failed(const nx_cpu_prog *g) {
   return __atomic_load_n(&g->heap.failed, __ATOMIC_RELAXED);
 }
 
-int nx_cpu_prog_coords(const nx_cpu_prog *g) {
-  for (int i = 0; i < g->nn; i++)
-    if (g->s[i].tag == NX_NODE_COORD) return 1;
-  return 0;
-}
-
 int nx_cpu_prog_bind(nx_cpu_prog *g, const nx_array *a, int rank,
                      const int64_t *shape, int *index) {
   if (g->nouts + g->nins >= NX_MAX_OPERANDS) return NX_SHAPE;
