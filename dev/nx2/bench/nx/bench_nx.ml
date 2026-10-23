@@ -630,9 +630,66 @@ let set_8m () =
   let pos = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [||] [| 1000L |]) in
   (cache, filled D.Float32 [| 1; 8; 1; 64 |] 1., pos)
 
+(* An embedding's gradient, the adjoint of a take of its rows: the rows of
+   8192 tokens, 4096 wide, added into a table of 128256 rows, each call into
+   the last call's table, donated. The ids are drawn once from a fixed seed,
+   uniform, or by a Zipf law of exponent 1 as words in a text fall, so that
+   a few rows take most of the tokens. *)
+let vocab = 128256
+let tokens = 8192
+let width = 4096
+
+let uniform_ids () =
+  let rs = Random.State.make [| 7 |] in
+  Array.init tokens (fun _ -> Int64.of_int (Random.State.int rs vocab))
+
+(* Rank k weighs 1 / (k + 1): each id is the first rank whose cumulative
+   weight reaches a uniform draw of the total. *)
+let zipf_ids () =
+  let rs = Random.State.make [| 7 |] in
+  let cdf = Array.make vocab 0. in
+  let total = ref 0. in
+  for k = 0 to vocab - 1 do
+    total := !total +. (1. /. float (k + 1));
+    cdf.(k) <- !total
+  done;
+  Array.init tokens (fun _ ->
+      let u = Random.State.float rs !total in
+      let lo = ref 0 and hi = ref (vocab - 1) in
+      while !lo < !hi do
+        let mid = (!lo + !hi) / 2 in
+        if cdf.(mid) < u then lo := mid + 1 else hi := mid
+      done;
+      Int64.of_int !lo)
+
+let embedding_grad dt ids () =
+  let ids = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| tokens |] (ids ())) in
+  let p = Nx.broadcast_to [| tokens; width |] (Nx.reshape [| tokens; 1 |] ids) in
+  let g =
+    on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 11) dt [| tokens; width |])
+  in
+  let table = Nx.copy (on_host (Nx.zeros dt [| vocab; width |])) in
+  (p, g, ref table)
+
+let add_rows (p, g, table) =
+  table := Nx.scatter ~combine:Add ~axis:0 p g (Nx.donate !table)
+
+let embedding_rows =
+  List.concat_map
+    (fun (name, ids) ->
+      [
+        Thumper.bench_with_setup ("embedding-grad-bf16-" ^ name)
+          ~setup:(embedding_grad D.Bfloat16 ids)
+          add_rows;
+        Thumper.bench_with_setup ("embedding-grad-f32-" ^ name)
+          ~setup:(embedding_grad D.Float32 ids)
+          add_rows;
+      ])
+    [ ("uniform", uniform_ids); ("zipf", zipf_ids) ]
+
 let index_rows =
   Thumper.group "index"
-    [
+    ([
       Thumper.bench_with_setup "take-rows-1K-of-8K" ~setup:take_1k
         (fun (ids, table) -> Nx.take ~axis:0 ids table);
       Thumper.bench_with_setup "scatter-add-64K-into-1K" ~setup:scatter_64k
@@ -644,6 +701,7 @@ let index_rows =
         ~setup:(fun () -> host (1 lsl 19))
         (fun x -> Nx.concatenate ~axis:0 [ x; x ]);
     ]
+    @ embedding_rows)
 
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
