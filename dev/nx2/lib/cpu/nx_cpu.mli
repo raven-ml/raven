@@ -148,7 +148,11 @@
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right,
-    [(… ((+0 + x) + u1) + …) + un].
+    [(… ((+0 + x) + u1) + …) + un]. A narrow float's keeps its float32 sums
+    in host memory the call holds until it returns: on each of its threads
+    at most a few words for each update along the scattered axis and the
+    sums of a bin of the axis's targets, half a core's L2 or a 1024th of
+    [into].
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
