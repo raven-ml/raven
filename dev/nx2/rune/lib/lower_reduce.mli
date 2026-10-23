@@ -75,7 +75,8 @@ val contract :
     [batch] and [contracting], as {!Nx_kernel.S.contract} states: each operand
     stored into [acc], each product in [acc], their sum along the contracted
     axes and [init], a value of [out] where present, added in [acc], then
-    rounded once to [out]. An integer [acc] wraps exactly. A float [acc]'s
+    rounded once to [out]. With no contracted term the result is [init]
+    in [acc], rounded to [out], or [+0]. An integer [acc] wraps exactly. A float [acc]'s
     result is within [γ(K + 1) (|init| + Σ|a·b|)] of the exact one for [K]
     contracted terms, barring overflow and underflow: tolk may fuse a product
     into the sum that takes it. A complex [acc]'s real part is within

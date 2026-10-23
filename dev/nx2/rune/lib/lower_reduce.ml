@@ -345,14 +345,18 @@ let contract ~batch ~contracting ~acc ~out (da, a) (db, b) init =
     | [ a ], [ b ] -> [ sum (Ops.mul a b) ]
     | _ -> invalid_arg "Lower_reduce.contract: operands of another dtype"
   in
-  (* The sum starts from [init], or from [+0] added last. *)
-  let start =
+  (* The sum starts from [init], or from [+0] added last. With no products
+     the result is [init] itself: adding the empty sum's [+0] would turn an
+     [init] of [-0] into [+0]. *)
+  let empty = List.exists (Int.equal 0) (pick sa ka) in
+  let r =
     match init with
-    | Some i -> List.map held (Arith.parts acc (Arith.cast ~src:out acc i))
+    | Some i ->
+        let i = List.map held (Arith.parts acc (Arith.cast ~src:out acc i)) in
+        if empty then i else List.map2 Ops.add r i
     | None ->
         let zero = if float then `Float 0. else `Int Bigint.zero in
-        List.map (fun r -> Shape.const_like r zero) r
+        List.map (fun r -> Ops.add r (Shape.const_like r zero)) r
   in
-  let r = List.map2 (fun r s -> Ops.add r s) r start in
   let r = if float then r else List.map (store t) r in
   Arith.cast ~src:acc out (wrap acc (Arith.of_parts acc r))
