@@ -200,12 +200,12 @@ val apply_experts :
     ]}
 
     So its bits depend on whether [w], [ids] and [x] lie whole: the two sums
-    round differently, each within {!Nx.contract}'s bound.
+    may round differently, each within {!Nx.contract}'s bound.
 
     Raises [Invalid_argument] if the grouped sum lies on a set whose kernels
     decline it, if [w] is not 3-d, if [x] does not have one axis
-    more than [ids], if [x]'s last axis is not [k], or if [x]'s leading axes
-    do not broadcast to [ids]'. *)
+    more than [ids], if [x]'s last axis is not [k], if [x]'s leading axes
+    do not broadcast to [ids]', or as {!apply} raises in the map. *)
 
 val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
 (** [take ~axis p w] is the rows or matrices of [w] at the positions [p] along
