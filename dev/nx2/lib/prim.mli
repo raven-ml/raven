@@ -265,6 +265,15 @@ val op3 :
     Raises [Invalid_argument] naming [by] where [k] does not take the operands'
     dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
 
+val accepted2 : by:string -> Nx_kernel.Prog.op2 -> ('v, 's, 'd) t -> unit
+(** [accepted2 ~by k x] raises as {!op2} does where [k] does not take operands
+    of [x]'s dtype. *)
+
+val accepted3 :
+  by:string -> Nx_kernel.Prog.op3 -> ('a, 'b, 'd) t -> ('v, 's, 'd) t -> unit
+(** [accepted3 ~by k c x] raises as {!op3} does where [k] does not take [c] and
+    operands of [x]'s dtype. *)
+
 val contract_shape :
   by:string ->
   batch:(int * int) iarray ->
