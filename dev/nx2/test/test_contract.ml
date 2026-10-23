@@ -2261,8 +2261,9 @@ module Conv = struct
     !j
 
   (* The sum over the taps and the group's channels, at each output index,
-     of [plus] of each product's operands from [zero]. *)
-  let fold_terms ~zero ~plus c =
+     of [plus] of each product's operands from [zero], [x]'s values [xs]
+     and [w]'s [ws]. *)
+  let fold_terms ~zero ~plus xs ws c =
     let k = Array.length c.spatial in
     let t = Array.init k (windows c) in
     let o = c.groups * c.og in
@@ -2278,14 +2279,28 @@ module Conv = struct
           let pos = Array.init k (fun i -> (idx.(1 + i) * c.stride.(i)) + (q.(i) * c.dilation.(i)) - fst c.padding.(i)) in
           if Array.for_all2 (fun p d -> p >= 0 && p < d) pos c.spatial then
             for i = 0 to c.cg - 1 do
-              let xv = c.xs.(ravel xs_shape (Array.concat [ [| b |]; pos; [| (g * c.cg) + i |] ])) in
-              let wv = c.ws.(ravel ws_shape (Array.concat [ [| j |]; q; [| i |] ])) in
+              let xv = xs.(ravel xs_shape (Array.concat [ [| b |]; pos; [| (g * c.cg) + i |] ])) in
+              let wv = ws.(ravel ws_shape (Array.concat [ [| j |]; q; [| i |] ])) in
               sum := plus !sum xv wv
             done
         done;
         !sum)
 
-  let reference c = fold_terms ~zero:0. ~plus:(fun s x w -> s +. (x *. w)) c
+  let reference c =
+    fold_terms ~zero:0. ~plus:(fun s x w -> s +. (x *. w)) c.xs c.ws c
+
+  (* [xs] as complex numbers, each value with the next as its imaginary
+     part. *)
+  let complex xs =
+    let m = Array.length xs in
+    Array.mapi (fun i re -> { Complex.re; im = xs.((i + 1) mod m) }) xs
+
+  let complex_reference c =
+    fold_terms ~zero:Complex.zero
+      ~plus:(fun s x w -> Complex.add s (Complex.mul x w))
+      (complex c.xs) (complex c.ws) c
+
+  let parts zs = Array.concat (List.map (fun (z : Complex.t) -> [| z.re; z.im |]) (Array.to_list zs))
 
   (* [s + x w] in two floats, each sum and product split exactly (Ogita,
      Rump and Oishi, "Accurate Sum and Dot Product", 2005): within a few
@@ -2303,13 +2318,21 @@ module Conv = struct
         let e = Float.fma x w (-.p) in
         let s, t = two_sum hi p in
         (s, lo +. t +. e, mag +. Float.abs p))
-      c
+      c.xs c.ws c
+
+  let conv_of c x w =
+    Nx.conv ~stride:c.stride ~padding:c.padding ~dilation:c.dilation ~groups:c.groups x w
 
   let run (type v s) (dt : (v, s) D.t) c =
     let x = Nx.cast dt (Nx.create Nx.float64 (x_shape c) c.xs) in
     let w = Nx.cast dt (Nx.create Nx.float64 (w_shape c) c.ws) in
-    let y = Nx.conv ~stride:c.stride ~padding:c.padding ~dilation:c.dilation ~groups:c.groups x w in
-    Nx.to_array (Nx.cast Nx.float64 y)
+    Nx.to_array (Nx.cast Nx.float64 (conv_of c x w))
+
+  (* [c]'s convolution in complex64, its values as [complex] makes them. *)
+  let run_complex c =
+    let x = Nx.create Nx.complex64 (x_shape c) (complex c.xs) in
+    let w = Nx.create Nx.complex64 (w_shape c) (complex c.ws) in
+    parts (Nx.to_array (conv_of c x w))
 
   let law_conv =
     prop "conv is its sum over the taps, at every dtype" case (fun c ->
@@ -2329,7 +2352,46 @@ module Conv = struct
         equal ~msg:"float64" (array float_exact) want (run D.Float64 c);
         equal ~msg:"float32" (array float_exact) want (run D.Float32 c);
         equal ~msg:"float16, summed at float32" (array float_exact) want (run D.Float16 c);
-        equal ~msg:"int32" (array float_exact) want (run D.Int32 c))
+        equal ~msg:"int32" (array float_exact) want (run D.Int32 c);
+        equal ~msg:"complex64" (array float_exact) (parts (complex_reference c))
+          (run_complex c))
+
+  (* With other than one input channel a group, conv is the contraction of
+     its windows, stored, with [w]: [[n; t; g; q · cg + i]] against
+     [[g; o; q · cg + i]], bit for bit. *)
+  let law_order =
+    prop "conv in complex64 has the bits of its windows' contraction" float_case
+      (fun c ->
+        let k = Array.length c.spatial and cg = c.cg in
+        cover "output channels past 4, over rows past 4" (chained c);
+        cover "lane order over rows past 4" (cg > 1 && not (chained c) && rows c > 4);
+        cover "a dilation above 1"
+          (cg > 1 && Array.exists (fun d -> d > 1) c.dilation);
+        let xs = complex c.xs and ws = complex c.ws in
+        let t = Array.init k (windows c) and q = numel c.taps in
+        let shape = [| c.n; numel t; c.groups; q * cg |] in
+        let window flat =
+          let idx = unravel shape flat in
+          let tw = unravel t idx.(1) and tap = unravel c.taps (idx.(3) / cg) in
+          let pos =
+            Array.init k (fun a ->
+                (tw.(a) * c.stride.(a)) + (tap.(a) * c.dilation.(a)) - fst c.padding.(a))
+          in
+          if not (Array.for_all2 (fun p d -> p >= 0 && p < d) pos c.spatial) then Complex.zero
+          else
+            let ch = (idx.(2) * cg) + (idx.(3) mod cg) in
+            xs.(ravel (x_shape c) (Array.concat [ [| idx.(0) |]; pos; [| ch |] ]))
+        in
+        let bits y =
+          Array.map Int64.bits_of_float (parts (Nx.to_array y))
+        in
+        if cg <> 1 then
+          let a = Nx.create Nx.complex64 shape (Array.init (numel shape) window) in
+          let b = Nx.create Nx.complex64 [| c.groups; c.og; q * cg |] ws in
+          let want = Nx.contract Nx.complex64 (Nx.Pattern.v "n t g k, g o k -> n t g o | k") a b in
+          let x = Nx.create Nx.complex64 (x_shape c) xs in
+          let w = Nx.create Nx.complex64 (w_shape c) ws in
+          equal (array int64) (bits want) (bits (conv_of c x w)))
 
   (* [c]'s values rounded to [dt] and read back, the convolution of those,
      in float64. *)
@@ -2605,6 +2667,7 @@ module Conv = struct
     group "convolution"
       [
         law_conv;
+        law_order;
         law_bound;
         law_transpose;
         test "float16 sums at float32" test_narrow;
